@@ -1,0 +1,13 @@
+Litmus,Expected,Source
+# Expected outcomes for the GPU-only corpus, copied from the PLDI'23 Compound
+# Memory Models artifact oracle (PLDI23_Compound_Simulation/expected.csv,
+# rows tagged "GPU-Only"). "Allowed"/"Disallowed" are the gem5 reference
+# verdicts; these are the targets the HetLitmus pipeline must reproduce.
+MP-sys,Allowed,PLDI23 expected.csv (GPU-Only)
+MP-sys-F,Disallowed,PLDI23 expected.csv (GPU-Only)
+MP-cta-F,Allowed,PLDI23 expected.csv (GPU-Only)
+LB-sys,Disallowed,PLDI23 expected.csv (GPU-Only)
+SB-sys,Allowed,PLDI23 expected.csv (GPU-Only)
+SB-sys-F,Disallowed,PLDI23 expected.csv (GPU-Only)
+IRIW-sys,Allowed,PLDI23 expected.csv (GPU-Only)
+IRIW-sys-F,Disallowed,PLDI23 expected.csv (GPU-Only)

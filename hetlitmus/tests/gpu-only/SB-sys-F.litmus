@@ -1,0 +1,14 @@
+LISA SB-sys-F
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys 0 1)
+Prefetch=0:x=F,0:y=T,1:y=F,1:x=T
+Com=Fr Fr
+Orig=PodWRReleaseSysAcquireSys FreAcquireSysReleaseSys PodWRReleaseSysAcquireSys FreAcquireSysReleaseSys
+"PodWRReleaseSysAcquireSys FreAcquireSysReleaseSys PodWRReleaseSysAcquireSys FreAcquireSysReleaseSys"
+{
+}
+ P0                  | P1                  ;
+ w[release,sys] x 1  | w[release,sys] y 1  ;
+ r[acquire,sys] r0 y | r[acquire,sys] r0 x ;
+
+exists (0:r0=0 /\ 1:r0=0)

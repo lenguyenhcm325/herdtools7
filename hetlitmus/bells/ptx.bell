@@ -1,0 +1,54 @@
+"PTX/HRF scoped Bell annotations (HetLitmus)"
+
+(*
+ * Bell annotation vocabulary for scoped GPU litmus tests, used by diy7 to
+ * generate scoped LISA tests and (later) by herd7 as a faithfulness oracle.
+ *
+ * Design = the C11 memory-order Bell + the GPU scope Bell, combined so that a
+ * single load/store/fence carries BOTH a memory order AND a scope (PTX-style
+ * `ld.acquire.gpu`, `st.release.cta`, ...). Bell instruction declarations take
+ * a comma-separated list of annotation groups (lib/modelParser.mly `argsN`),
+ * so `instructions W[<orders>, scopes]` attaches one tag from each group.
+ *
+ * Sources:
+ *  - Memory-order tags and R/W/F structure: herd/libdir/c11.bell (C11 model).
+ *  - Scope hierarchy cta < gpu < system and narrower/wider:
+ *    catalogue/tutorial/bells/jaguar.bell.
+ *  - Scope semantics (membar.cta < membar.gl < membar.sys):
+ *    catalogue/demo/cats/ptx.cat (Alglave et al., "GPU Concurrency: Weak
+ *    Behaviours and Programming Assumptions", ASPLOS 2015).
+ *  - Vocabulary scoped to what the corpus exercises (relaxed / release /
+ *    acquire at cta and sys scope): PLDI'23 Compound Memory Models artifact
+ *    GPU-only tests (see hetlitmus/docs/gpu-only-corpus.md).
+ *)
+
+(* Memory orders. acq_rel and sc are retained for completeness; the PLDI'23
+   GPU-only corpus uses only relaxed (plain), release and acquire. *)
+enum memory_order = 'relaxed || 'acquire || 'release || 'acq_rel || 'sc
+
+(* Scope hierarchy: cta (PTX .cta / HIP workgroup) is narrower than gpu
+   (.gpu / agent), narrower than sys (.sys / system). Names follow PTX. *)
+enum scopes = 'cta || 'gpu || 'sys
+
+let narrower(s) = match s with
+  || 'sys -> 'gpu
+  || 'gpu -> 'cta
+end
+
+let wider(s) = match s with
+  || 'gpu -> 'sys
+  || 'cta -> 'gpu
+end
+
+(* Each memory operation carries one memory-order tag and one scope tag.
+   Reads cannot be 'release; writes cannot be 'acquire (as in c11.bell). *)
+instructions R[{'relaxed,'acquire,'sc}, scopes]
+instructions W[{'relaxed,'release,'sc}, scopes]
+instructions F[{'acquire,'release,'acq_rel,'sc}, scopes]
+
+(* Convenience sets for the accompanying .cat oracle (Task 7). *)
+let ACQ = tag2set('acquire)
+let REL = tag2set('release)
+let RLX = tag2set('relaxed)
+let ACQ_REL = tag2set('acq_rel)
+let SC = tag2set('sc)

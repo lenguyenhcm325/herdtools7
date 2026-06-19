@@ -1,0 +1,14 @@
+LISA MP-cta-F
+Generator=diyone7 (version 7.58+1)
+Scopes=(cta 0) (cta 1)
+Prefetch=0:x=F,0:y=W,1:y=F,1:x=T
+Com=Rf Fr
+Orig=PodWWRelaxedCtaReleaseCta RfeReleaseCtaAcquireCta PodRRAcquireCtaRelaxedCta FreRelaxedCtaRelaxedCta
+"PodWWRelaxedCtaReleaseCta RfeReleaseCtaAcquireCta PodRRAcquireCtaRelaxedCta FreRelaxedCtaRelaxedCta"
+{
+}
+ P0                 | P1                  ;
+ w[relaxed,cta] x 1 | r[acquire,cta] r0 y ;
+ w[release,cta] y 1 | r[relaxed,cta] r1 x ;
+
+exists (1:r0=1 /\ 1:r1=0)
