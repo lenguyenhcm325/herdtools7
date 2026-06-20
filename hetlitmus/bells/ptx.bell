@@ -46,9 +46,10 @@ instructions R[{'relaxed,'acquire,'sc}, scopes]
 instructions W[{'relaxed,'release,'sc}, scopes]
 instructions F[{'acquire,'release,'acq_rel,'sc}, scopes]
 
-(* Convenience sets for the accompanying .cat oracle (Task 7). *)
-let ACQ = tag2set('acquire)
-let REL = tag2set('release)
-let RLX = tag2set('relaxed)
-let ACQ_REL = tag2set('acq_rel)
-let SC = tag2set('sc)
+(* NB: the memory-order / scope convenience sets (ACQ, REL, RLX, and the scope
+   sets CTA/GPU/SYS) live in the accompanying .cat oracle, NOT here. `tag2set`
+   is interpreter-internal and is NOT exposed in either Bell or cat scope (a
+   bell or cat that uses it fails to load with "unbound var: tag2set"). The Bell
+   only needs to declare the annotation vocabulary (the enums + `instructions`
+   lines above); herd then exposes one event set per tag, which the .cat
+   retrieves with `tag2events('<tag>)`. See hetlitmus/cats/amd-gcn3.cat. *)

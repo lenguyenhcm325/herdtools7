@@ -1,0 +1,97 @@
+"AMD GCN3 scoped axiomatic model (HetLitmus GPU-only oracle, Task 7)"
+
+(*
+ * Axiomatic (herd7) model for the HetLitmus GPU-only litmus corpus, targeting
+ * the AMD GCN3 + x86 oracle of the PLDI'23 Compound Memory Models artifact
+ * (gem5 build target GCN3_X86). Pairs with hetlitmus/bells/ptx.bell.
+ *
+ * GOAL: reproduce hetlitmus/tests/gpu-only/expected-amd-gcn3.csv (8/8).
+ *
+ * LINEAGE: derived from the in-tree HRF formalism
+ *   (catalogue/hrf/cats/{hrfd,hrfi}.cat, Hower et al. "Heterogeneous-Race-Free
+ *   Memory Models", ASPLOS'14), which is the scoped AMD/OpenCL race-freedom
+ *   model. HRF is a race-FREEDOM model (`undefined_unless empty race`); this
+ *   corpus is deliberately racy, so we keep HRF's scoped release->acquire
+ *   synchronisation backbone (so / heterogeneous-happens-before) but turn it
+ *   into an ALLOWABILITY model that emits Allowed/Forbidden. The NVIDIA
+ *   catalogue/demo/cats/ptx.cat was consulted for STRUCTURE only; it is
+ *   fence-based pure-ordering and computes SB/IRIW wrong for AMD, so it is not
+ *   ported (see hetlitmus/docs/gpu-only-corpus.md).
+ *
+ * SCOPE ENCODING (important, read this):
+ *   herd derives scope-instance relations (tag2scope) ONLY from a parseable
+ *   `scopes: (...)` tree in the .litmus body. The diy-generated corpus carries
+ *   its scope structure in a `Scopes=(...)` INFO FIELD instead, which herd does
+ *   NOT parse into a scope tree -- so tag2scope is unavailable here. We are also
+ *   constrained not to edit the .litmus corpus. We therefore read scope from the
+ *   per-access ANNOTATION (tag2events('cta|'gpu|'sys)), which herd DOES parse,
+ *   and encode the scope hierarchy's MEANING in this .cat -- consistent with the
+ *   project principle that the vendor/scope semantics live downstream in the
+ *   .cat, never in the vendor-neutral .litmus layer.
+ *
+ *   The modelling assumption this forces (matches the corpus exactly): accesses
+ *   are co-scoped at their annotated level; `sys` (and `gpu`/device) span both
+ *   threads, whereas the cta-scope test (MP-cta-F) places its two threads in
+ *   DISTINCT CTAs, so cta-scope release/acquire establishes NO cross-thread
+ *   synchronisation (moral strength: the scope is too narrow). A proper
+ *   scopes-tree + tag2scope would generalise this; see the results note.
+ *)
+
+(* ------------------------------------------------------------------ *)
+(* Communication. cos.cat generates the coherence order `co` (off by    *)
+(* default for bell models) and derives `fr`; we add `rfe` and `com`.   *)
+(* ------------------------------------------------------------------ *)
+include "cos.cat"
+let rfe = rf & ext
+let com = rf | co | fr
+
+(* ------------------------------------------------------------------ *)
+(* Annotation event sets (from ptx.bell tags, via the cat primitive    *)
+(* tag2events -- NB tag2set is interpreter-internal and not exposed).   *)
+(* ------------------------------------------------------------------ *)
+let REL = tag2events('release)
+let ACQ = tag2events('acquire)
+let RLX = tag2events('relaxed)
+
+let CTA = tag2events('cta)
+let GPU = tag2events('gpu)
+let SYS = tag2events('sys)
+
+(* Scopes that span both threads in this corpus (see header). cta is the only
+   "narrow" scope exercised, so it is deliberately excluded. *)
+let WIDE = SYS | GPU
+
+(* ================================================================== *)
+(* (1) Load->store program order: forbids load buffering (LB-sys).     *)
+(*     AMD GPU lanes preserve R->W program order, so the LB cycle       *)
+(*     (R->W po ; rfe ; R->W po ; rfe) is broken. This does NOT touch   *)
+(*     MP (W->W,R->R po), SB (W->R po) or IRIW (R->R po): none use a     *)
+(*     read-before-write program-order edge.                            *)
+(* ================================================================== *)
+let load-store = (po & (R * W)) | rfe
+acyclic load-store as no-load-buffering
+
+(* ================================================================== *)
+(* (2) Scoped release->acquire synchronisation (HRF so / hhb).          *)
+(*     A release synchronises-with an acquire that reads it WHEN the     *)
+(*     synchronising scope spans both threads (WIDE). This forbids       *)
+(*     MP-sys-F (sys-scope sync fires) while leaving MP-cta-F Allowed    *)
+(*     (cta-scope sync is too narrow to cross threads -> sw empty).      *)
+(* ================================================================== *)
+let sw = [REL & WIDE] ; rfe ; [ACQ & WIDE]
+let hb = (po | sw)+
+acyclic hb as happens-before
+irreflexive (hb ; fr) as coherence
+
+(* ================================================================== *)
+(* (3) System-scope release/acquire is STRONG.                          *)
+(*     On AMD a system-scope rel/acq is a heavyweight flush+invalidate   *)
+(*     to the system coherence point: store completion + multi-copy      *)
+(*     atomicity, i.e. sequentially consistent AMONG sys-scope atomics.  *)
+(*     This is what forbids SB-sys-F and IRIW-sys-F (plain release/       *)
+(*     acquire alone would leave them Allowed -- their acquire loads      *)
+(*     read the initial value, so the so-pairing of (2) never fires).    *)
+(* ================================================================== *)
+let strong    = (REL | ACQ) & SYS
+let strong-po = [strong] ; po ; [strong]
+acyclic strong-po | com as sys-strong
