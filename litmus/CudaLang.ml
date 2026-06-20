@@ -67,14 +67,20 @@ let thread_scope = function
 (* Cluster scope (NVIDIA Hopper thread-block clusters, PTX .cluster,   *)
 (* between .cta and .gpu).  libcu++ exposes no atomic_ref form for it,  *)
 (* so cluster loads/stores/fences are emitted as inline PTX -- the very *)
-(* strings libcu++ itself lowers cluster atomics to.  Grounded against  *)
-(* cccl cuda_ptx_generated.h and __ptx/instructions/fence.h:            *)
+(* strings libcu++ itself lowers scoped atomics/fences to.  Grounded    *)
+(* against the installed libcu++ (CUDA 12.2) support/atomic headers     *)
+(* (atomic_cuda_generated.h: __cuda_load_*/__cuda_store_*/__cuda_fence_*  *)
+(* and __atomic_thread_fence_cuda):                                     *)
 (*   ld.{relaxed,acquire}.cluster.b32 %0,[%1];                          *)
 (*   st.{relaxed,release}.cluster.b32 [%0],%1;                          *)
-(*   fence.{acquire,release,acq_rel,sc}.cluster;                        *)
+(*   fence.{acq_rel,sc}.cluster;                                        *)
+(* Note PTX `fence' takes ONLY .acq_rel or .sc -- there is NO           *)
+(* fence.acquire/fence.release (ptxas rejects them).  libcu++ lowers an *)
+(* acquire/release/acq_rel thread-fence to fence.acq_rel and a seq_cst  *)
+(* one to fence.sc; we mirror that at .cluster scope.                   *)
 (* Generic addressing, .b32; requires PTX ISA >= 7.8 and sm_90.         *)
-(* Not nvcc-compiled here (Task 8); grounded against the PTX libcu++    *)
-(* emits, not eyeballed asm.                                            *)
+(* nvcc-verified (Task 8): the emitted cluster .cu assemble with        *)
+(* `nvcc -std=c++17 -arch=sm_90'.                                       *)
 (* ------------------------------------------------------------------ *)
 
 let ptx_load_sem = function
@@ -93,11 +99,17 @@ let ptx_store_sem = function
        form (PTX st has only .relaxed/.release; sc needs a fence.sc.cluster \
        sequence -- not yet emitted)" s
 
+(* PTX `fence{.sem}.scope' admits only .sem in {.acq_rel,.sc} (PTX ISA;
+   ptxas rejects fence.acquire/fence.release).  Mirror libcu++'s lowering
+   (atomic_cuda_generated.h __atomic_thread_fence_cuda): an acquire / release
+   / acq_rel thread-fence -> fence.acq_rel, a seq_cst one -> fence.sc.  A
+   relaxed fence is a no-op in libcu++ and has no PTX form; the corpus never
+   emits one (ptx.bell F = {acquire,release,acq_rel,sc}), so fail loudly. *)
 let ptx_fence_sem = function
-  | "acquire" -> "acquire"
-  | "release" -> "release"
-  | "acq_rel" -> "acq_rel"
+  | "acquire" | "release" | "acq_rel" -> "acq_rel"
   | "sc"      -> "sc"
+  | "relaxed" -> Warn.user_error
+      "CudaLang: a relaxed fence has no PTX form (relaxed fence is a no-op)"
   | s -> Warn.user_error "CudaLang: unknown cluster fence order %S" s
 
 (* Split a Bell annotation list (e.g. ["release";"sys"]) into the
@@ -289,8 +301,10 @@ let dump_instr chan ind i = match i with
         fprintf chan "%sasm volatile(\"fence.%s.cluster;\" ::: \"memory\"); // sm_90\n"
           ind (ptx_fence_sem ord)
       else
-        fprintf chan "%scuda::atomic_thread_fence(cuda::memory_order_seq_cst, %s);\n"
-          ind (thread_scope scp)
+        (* cta/gpu/sys: libcu++ atomic_thread_fence carries the fence's own
+           order (NOT hardcoded seq_cst -- a release fence must stay release). *)
+        fprintf chan "%scuda::atomic_thread_fence(%s, %s);\n"
+          ind (memory_order ord) (thread_scope scp)
   | BellBase.Pnop -> ()
   | _ ->
       fprintf chan "%s// UNSUPPORTED: %s\n" ind (BellBase.dump_instruction i)

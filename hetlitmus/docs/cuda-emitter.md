@@ -101,12 +101,45 @@ Concurrency") MP/SB/IRIW shapes and the scope mapping above.
 carrying its annotated order+scope (relaxed data included), so the kernels are
 data‑race‑free under the C++/CUDA model rather than relying on plain accesses.
 
+## Task 8 — nvcc compile (DONE)
+Done on this WSL box (CUDA Toolkit 12.2, `nvcc /usr/local/cuda-12.2/bin/nvcc`;
+`export PATH=/usr/local/cuda/bin:$PATH`). Every emitted kernel assembles
+**exit 0**.
+
+- **Corpus (cta/sys), Ampere** — each of the 8 `cuda-out/*.cu`:
+
+  ```
+  nvcc -std=c++17 -arch=sm_86 <test>.cu -o /tmp/<test>
+  ```
+
+  All 8 (MP/LB/SB/IRIW × relaxed/-F, plus MP-cta-F) compile exit 0. `sm_86` =
+  this box's RTX 3060 Laptop (Ampere), so the non-cluster corpus can also smoke
+  *run* here.
+
+- **Cluster (inline-PTX path), Hopper** — the hand-written
+  `tests/cluster/*.litmus` (`MP-cluster-F` = rel/acq cluster atomics;
+  `MP-cluster` = explicit cluster fences) emit to `cluster-out/` and assemble
+  with:
+
+  ```
+  nvcc -std=c++17 -arch=sm_90 <test>.cu -o /tmp/<test>
+  ```
+
+  Both exit 0, proving the inline-PTX cluster ops assemble. `sm_90` (Hopper) is
+  required for `.cluster`; these won't *run* here (no Hopper), only assemble.
+
+**Surface fix made during Task 8** (in `litmus/CudaLang.ml`, never by hand-editing
+`.cu`): the cluster *fence* lowering was wrong. PTX `fence{.sem}.scope` admits
+only `.sem ∈ {.acq_rel,.sc}` — `fence.acquire`/`fence.release` do **not** exist
+and ptxas rejects them. `ptx_fence_sem` now mirrors libcu++
+(`atomic_cuda_generated.h __atomic_thread_fence_cuda`): acquire/release/acq_rel →
+`fence.acq_rel.cluster`, sc → `fence.sc.cluster`. The non-cluster fence path was
+also corrected to carry the fence's annotated order (it had hardcoded
+`memory_order_seq_cst`); the corpus has no fences, so the 8 `.cu` stay
+byte-stable. The load/store cluster strings and all 8 corpus kernels needed **no**
+changes (no `__out`/header/atomic_ref fixes were required).
+
 ## Out of scope / next steps
-- **Task 8 (nvcc compile):** not done — nvcc is not installed in this
-  environment. The emitted host `main()` is *illustrative scaffolding* (launch
-  geometry + result‑buffer layout) and has **not** been compiled. First step on a
-  CUDA box: `nvcc -std=c++17 --expt-relaxed-constexpr <test>.cu` and fix any
-  surface issues (e.g. `__out` indexing, header set).
 - **Task 9 (hardware):** deferred — GH200 / MI300A runs + stressing + tallying
   `__out` against the `condition` line.
 - The host harness currently has no result tally and no stress (timing jitter,
@@ -114,7 +147,10 @@ data‑race‑free under the C++/CUDA model rather than relying on plain accesse
   (see thesis principles); that lands with Task 9.
 - Oracle: `expected-amd-gcn3.csv` is AMD‑only; GH200 needs its own oracle (memory
   `hetlitmus-amd-oracle-task7`).
-- Cluster scope is supported in the *emitter* (inline PTX, see Mappings), but the
-  corpus does not yet exercise it: `diy7` generation of cluster tests needs
-  `'cluster` added to `bells/ptx.bell`'s `enum scopes` + scope order
-  (`cta < cluster < gpu < sys`), and running them needs the Task‑9 cluster launch.
+- Cluster scope is supported in the *emitter* (inline PTX, see Mappings) and now
+  exercised by the **hand-written** `tests/cluster/*.litmus` (emitted to
+  `cluster-out/`, sm_90-assembled in Task 8). The diy-generated **gpu-only**
+  corpus still does not cover cluster: that needs `'cluster` added to
+  `bells/ptx.bell`'s `enum scopes` + scope order (`cta < cluster < gpu < sys`) —
+  deliberately deferred (the ptx.bell cluster extension). *Running* cluster tests
+  also needs the Task-9 cluster launch (`cudaLaunchKernelEx` / `__cluster_dims__`).
