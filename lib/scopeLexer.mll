@@ -37,6 +37,7 @@ rule token = parse
 | ')' { RPAR  }
 | name as x
     { NAME x }
+| eof { EOF }
 | ""  { error "Scope lexer" lexbuf }
 
 {

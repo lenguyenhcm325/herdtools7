@@ -53,16 +53,27 @@ The three discriminating tests all pass: **MP-cta-F** Allowed (scope too narrow)
   (`unbound var: tag2set`); those convenience lines were removed from the Bell and
   the sets re-expressed with `tag2events` in the `.cat` (the only `ptx.bell` change).
 
-- **`Scopes=(…)` info field ≠ herd's `scopes:` tree.** herd builds scope-instance
-  relations (`tag2scope`) only from a parseable `scopes: (sys (gpu (cta P0) …))`
-  section in the `.litmus` body. diy emits scope structure as a `Scopes=(sys 0 1)`
-  **info field** only — `BellInfo.pp` (the body-`scopes:` printer) has *zero callers*
-  in the dump path, so diy never writes a parseable tree and `tag2scope('sys)`
-  raises *"cannot find scope instance sys"*. **Fixed at the generator:**
-  `generate.sh` now appends the full 3-level tree `(sys (gpu (cta P0) (cta P1) …))`
-  to each test (all levels present so `tag2scope('cta|'gpu|'sys)` resolve
-  everywhere), and the model reads scope-instance structure via `tag2scope` — not
-  from annotations and not from any baked-in assumption.
+- **diy could not emit a herd-parseable `scopes:` tree (two real tool bugs, now
+  fixed).** herd builds scope-instance relations (`tag2scope`) only from a parseable
+  `scopes: (sys (gpu (cta 0) …))` section in the `.litmus` body. diy could not
+  produce that, for two independent reasons:
+    1. **The dumper dropped it.** `diyone7` already builds the structured scope tree
+       and hands it to the dumper (`gen/top_gen.ml` → `extra_data = [BellExtra …]`),
+       but `lib/coreDumper.ml` `do_dump` printed info + init + prog + condition and
+       *silently discarded* `extra_data`. Fix: emit the tree (via the existing
+       `BellInfo.pp`) before the condition; guarded, so it is inert for tests with no
+       scope tree. This restores round-trip symmetry — herd's parser already *reads*
+       `scopes:`, now the dumper *writes* it.
+    2. **The literal `-scopes "(tree)"` path was broken.** `lib/scopeParser.mly`
+       requires `main: top_scope_tree EOF`, but `lib/scopeLexer.mll` had **no `eof`
+       rule**, so at end of input it fell through to the error case → *"Lex error
+       Scope lexer"*. Any nested literal tree failed. Fix: add `| eof { EOF }`.
+
+  With both fixed, `generate.sh` passes each test its full tree via
+  `diyone7 -scopes "(sys (gpu (cta 0) (cta 1) …))"` and diy writes the `scopes:`
+  line itself — **no shell post-processing.** All three levels are present so
+  `tag2scope('cta|'gpu|'sys)` resolve in every test, and the model reads
+  scope-instance structure via `tag2scope` — no annotation shortcut, no assumption.
 
 ## Scope strength is read, not assumed (generalises to same-CTA tests)
 
@@ -73,8 +84,8 @@ threads share one CTA. That assumption is **removed**. With the real tree +
 
 | variant                              | `scopes:` tree                  | verdict   |
 |--------------------------------------|---------------------------------|-----------|
-| MP-cta-F (corpus): P0,P1 distinct CTAs | `(sys (gpu (cta P0) (cta P1)))`  | Allowed   |
-| same test, P0,P1 in ONE CTA          | `(sys (gpu (cta P0 P1)))`        | Forbidden |
+| MP-cta-F (corpus): P0,P1 distinct CTAs | `(sys (gpu (cta 0) (cta 1)))`   | Allowed   |
+| same test, P0,P1 in ONE CTA          | `(sys (gpu (cta 0 1)))`          | Forbidden |
 
 Both come from the *same* `amd-gcn3.cat` with no edits — `tag2scope('cta)` relates
 the two events in the second case (cta-scope sync fires) but not the first. This

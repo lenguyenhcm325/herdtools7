@@ -1,6 +1,6 @@
 LISA IRIW-sys-F
 Generator=diyone7 (version 7.58+1)
-Scopes=(sys 0 1 2 3)
+Scopes=(sys (gpu (cta 0) (cta 1) (cta 2) (cta 3)))
 Prefetch=0:x=F,0:y=T,2:y=F,2:x=T
 Com=Fr Rf Fr Rf
 Orig=RfeReleaseSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysReleaseSys RfeReleaseSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysReleaseSys
@@ -11,6 +11,5 @@ Orig=RfeReleaseSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysReleaseSys R
  r[acquire,sys] r0 x | w[release,sys] y 1 | r[acquire,sys] r0 y | w[release,sys] x 1 ;
  r[acquire,sys] r1 y |                    | r[acquire,sys] r1 x |                    ;
 
-scopes: (sys (gpu (cta P0) (cta P1) (cta P2) (cta P3)))
-
+scopes: (sys (gpu (cta 0) (cta 1) (cta 2) (cta 3)))
 exists (0:r0=1 /\ 0:r1=0 /\ 2:r0=1 /\ 2:r1=0)
