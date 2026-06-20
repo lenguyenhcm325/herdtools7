@@ -202,9 +202,9 @@ let get_default arch = match arch with
 | `ARM -> armopt
 | `MIPS|`RISCV -> mipsopt
 | `C -> copt
+| `LISA -> copt (* HetLitmus: LISA tests are emitted to CUDA, no native ASM opts *)
 | `BPF
 | `CPP
-| `LISA
 | `GPU_PTX
 | `OpenCL
 | `ASL

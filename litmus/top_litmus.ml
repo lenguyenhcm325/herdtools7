@@ -605,7 +605,38 @@ end = struct
                end in
              let module X = Make'(Cfg)(Arch') in
              X.compile
-          | `CPP | `LISA | `JAVA | `ASL | `BPF -> assert false
+          | `LISA ->
+             (* HetLitmus Route B: parse the scoped LISA/Bell test and emit a
+                CUDA (.cu) litmus kernel via CudaLang.  litmus7 had no LISA
+                path (this branch was `assert false'); GPU codegen reuses the
+                Bell scoped IR rather than a native PTX arch.  See memory
+                hetlitmus-route-b-frontend. *)
+             let module LISAInstr =
+               Instr.No(struct type instr = BellBase.instruction end) in
+             let module V = Int64Constant.Make(LISAInstr) in
+             let module Arch' = LISAArch_litmus.Make(V) in
+             let module LexParse = struct
+                 type instruction = Arch'.parsedPseudo
+                 type token = LISAParser.token
+                 module Lexer = BellLexer.Make(LexConfig)
+                 let lexer = Lexer.token
+                 let parser = LISAParser.main
+               end in
+             let module P = GenParser.Make(Cfg)(Arch')(LexParse) in
+             (fun _hash_env name in_chan _out_chan splitted ->
+               try
+                 let parsed = P.parse in_chan splitted in
+                 close_in in_chan ;
+                 let tname = splitted.Splitter.name.Name.name in
+                 let outname = Tar.outname (MyName.outname name ".cu") in
+                 Misc.output_protect
+                   (fun chan -> CudaLang.dump chan tname parsed)
+                   outname ;
+                 if OT.verbose >= 0 then
+                   Printf.eprintf "HetLitmus: emitted CUDA %s\n%!" outname ;
+                 Absent
+               with e -> if OT.nocatch then raise e ; Interrupted e)
+          | `CPP | `JAVA | `ASL | `BPF -> assert false
         in
         aux arch hash_env name in_chan out_chan splitted
       end else begin (* Excluded explicitely, (check_tname), do not warn *)
