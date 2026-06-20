@@ -54,6 +54,27 @@ with `ref.store(v, order)` / `ref.load(order)`. Memory locations are kernel
 | scope `gpu`     | `cuda::thread_scope_device` |
 | scope `sys`     | `cuda::thread_scope_system` |
 
+**Cluster scope → inline PTX.** libcu++'s `enum thread_scope` has only
+`{thread,block,device,system}` — there is **no `thread_scope_cluster`**, so a
+cluster-scoped op cannot go through `atomic_ref`. `CudaLang` emits it as inline
+PTX instead — the exact strings libcu++ itself lowers cluster atomics to
+(grounded against cccl `cuda_ptx_generated.h` / `__ptx/.../fence.h`):
+
+| LISA op (scope `cluster`) | emitted PTX |
+|---------------------------|-------------|
+| load `relaxed`/`acquire`  | `ld.{relaxed,acquire}.cluster.b32 %0,[%1];` |
+| store `relaxed`/`release` | `st.{relaxed,release}.cluster.b32 [%0],%1;` |
+| fence `acquire`/`release`/`acq_rel`/`sc` | `fence.{…}.cluster;` |
+
+Generic addressing, `.b32`; **requires PTX ISA ≥ 7.8 and `sm_90`** (Hopper).
+Caveats: (a) `sc`/`acq_rel` on a cluster *load/store* has no single PTX
+instruction, so it raises a loud error (the SC fence-sequence is not yet
+emitted); cluster *fences* cover all four orders. (b) Forming an actual cluster
+at launch (`cudaLaunchKernelEx` cluster dim / `__cluster_dims__`) is part of the
+host run — Task 9 — so cluster-scoped ordering only takes effect once that
+lands; the per-op codegen here is the piece this change makes correct. (c) Not
+nvcc-compiled (Task 8); grounded against the PTX libcu++ emits.
+
 CTA layout: a *block* = a maximal subtree rooted at a `cta` node in the scope
 tree; CTAs numbered in DFS order, procs guarded by
 `if (blockIdx.x == B && threadIdx.x == L)`. Every test in this corpus places each
@@ -67,7 +88,7 @@ Concurrency") MP/SB/IRIW shapes and the scope mapping above.
 
 | test | scoped-atomic ops emitted | scope → thread_scope | CTA/thread layout | matches ASPLOS'15? |
 |------|---------------------------|----------------------|-------------------|--------------------|
-| MP-sys     | store rlx + store rel; load rlx + load rlx¹ | sys → thread_scope_system | `<<<2,1>>>` P0=CTA0, P1=CTA1 | yes (MP) |
+| MP-sys     | store rlx + store rlx; load rlx + load rlx¹ | sys → thread_scope_system | `<<<2,1>>>` P0=CTA0, P1=CTA1 | yes (MP) |
 | MP-sys-F   | store rlx + **store rel**; **load acq** + load rlx | sys → thread_scope_system | `<<<2,1>>>` P0=CTA0, P1=CTA1 | yes (MP) |
 | MP-cta-F   | store rlx + **store rel**; **load acq** + load rlx | **cta → thread_scope_block** | `<<<2,1>>>` P0=CTA0, P1=CTA1 (distinct) | yes (MP, scope-mismatch) |
 | LB-sys     | load rlx + store rlx (both procs) | sys → thread_scope_system | `<<<2,1>>>` P0=CTA0, P1=CTA1 | yes (LB) |
@@ -93,3 +114,7 @@ data‑race‑free under the C++/CUDA model rather than relying on plain accesse
   (see thesis principles); that lands with Task 9.
 - Oracle: `expected-amd-gcn3.csv` is AMD‑only; GH200 needs its own oracle (memory
   `hetlitmus-amd-oracle-task7`).
+- Cluster scope is supported in the *emitter* (inline PTX, see Mappings), but the
+  corpus does not yet exercise it: `diy7` generation of cluster tests needs
+  `'cluster` added to `bells/ptx.bell`'s `enum scopes` + scope order
+  (`cta < cluster < gpu < sys`), and running them needs the Task‑9 cluster launch.

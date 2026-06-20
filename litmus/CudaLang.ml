@@ -51,8 +51,54 @@ let thread_scope = function
   | "cta"     -> "cuda::thread_scope_block"
   | "gpu"     -> "cuda::thread_scope_device"
   | "sys"     -> "cuda::thread_scope_system"
-  | "cluster" -> "cuda::thread_scope_cluster"
+  | "cluster" ->
+      (* Unreachable guard.  libcu++'s `enum thread_scope' has only
+         {thread,block,device,system} -- there is NO thread_scope_cluster
+         enumerator (only an internal __thread_scope_cluster_tag).  So a
+         cluster-scoped op cannot go through atomic_ref; dump_instr emits it
+         as inline PTX instead (see ptx_* below).  We fail loudly rather than
+         emit a token that does not exist. *)
+      Warn.user_error
+        "CudaLang: cluster scope is emitted as inline PTX, not atomic_ref \
+         (libcu++ has no cuda::thread_scope_cluster)"
   | s -> Warn.user_error "CudaLang: unknown scope %S" s
+
+(* ------------------------------------------------------------------ *)
+(* Cluster scope (NVIDIA Hopper thread-block clusters, PTX .cluster,   *)
+(* between .cta and .gpu).  libcu++ exposes no atomic_ref form for it,  *)
+(* so cluster loads/stores/fences are emitted as inline PTX -- the very *)
+(* strings libcu++ itself lowers cluster atomics to.  Grounded against  *)
+(* cccl cuda_ptx_generated.h and __ptx/instructions/fence.h:            *)
+(*   ld.{relaxed,acquire}.cluster.b32 %0,[%1];                          *)
+(*   st.{relaxed,release}.cluster.b32 [%0],%1;                          *)
+(*   fence.{acquire,release,acq_rel,sc}.cluster;                        *)
+(* Generic addressing, .b32; requires PTX ISA >= 7.8 and sm_90.         *)
+(* Not nvcc-compiled here (Task 8); grounded against the PTX libcu++    *)
+(* emits, not eyeballed asm.                                            *)
+(* ------------------------------------------------------------------ *)
+
+let ptx_load_sem = function
+  | "relaxed" -> "relaxed"
+  | "acquire" -> "acquire"
+  | s -> Warn.user_error
+      "CudaLang: cluster-scope load order %S has no single-instruction PTX \
+       form (PTX ld has only .relaxed/.acquire; sc needs a fence.sc.cluster \
+       sequence -- not yet emitted)" s
+
+let ptx_store_sem = function
+  | "relaxed" -> "relaxed"
+  | "release" -> "release"
+  | s -> Warn.user_error
+      "CudaLang: cluster-scope store order %S has no single-instruction PTX \
+       form (PTX st has only .relaxed/.release; sc needs a fence.sc.cluster \
+       sequence -- not yet emitted)" s
+
+let ptx_fence_sem = function
+  | "acquire" -> "acquire"
+  | "release" -> "release"
+  | "acq_rel" -> "acq_rel"
+  | "sc"      -> "sc"
+  | s -> Warn.user_error "CudaLang: unknown cluster fence order %S" s
 
 (* Split a Bell annotation list (e.g. ["release";"sys"]) into the
    (order, scope) pair.  Defaults are the strongest-context-neutral
@@ -212,21 +258,39 @@ let dump_instr chan ind i = match i with
       and v = value_of_roi roi in
       let ord, scp = order_scope_of annots in
       fprintf chan "%s{ // w[%s,%s] %s %s\n" ind ord scp var v ;
-      scoped_ref (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
-      fprintf chan "%s  ref.store(%s, %s);\n" ind v (memory_order ord) ;
+      if scp = "cluster" then
+        (* inline PTX: the operand is the bare pointer (an address), not the
+           *deref lvalue the atomic_ref path binds. *)
+        fprintf chan
+          "%s  asm volatile(\"st.%s.cluster.b32 [%%0],%%1;\" :: \"l\"(%s), \"r\"(%s) : \"memory\"); // sm_90\n"
+          ind (ptx_store_sem ord) (var_of_addr_op ao) v
+      else begin
+        scoped_ref (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
+        fprintf chan "%s  ref.store(%s, %s);\n" ind v (memory_order ord)
+      end ;
       fprintf chan "%s}\n" ind
   | BellBase.Pld (r, ao, annots) ->
       let var = var_of_addr_op ao
       and dst = reg_name r in
       let ord, scp = order_scope_of annots in
       fprintf chan "%s{ // r[%s,%s] %s %s\n" ind ord scp dst var ;
-      scoped_ref (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
-      fprintf chan "%s  %s = ref.load(%s);\n" ind dst (memory_order ord) ;
+      if scp = "cluster" then
+        fprintf chan
+          "%s  asm volatile(\"ld.%s.cluster.b32 %%0,[%%1];\" : \"=r\"(%s) : \"l\"(%s) : \"memory\"); // sm_90\n"
+          ind (ptx_load_sem ord) dst (var_of_addr_op ao)
+      else begin
+        scoped_ref (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
+        fprintf chan "%s  %s = ref.load(%s);\n" ind dst (memory_order ord)
+      end ;
       fprintf chan "%s}\n" ind
   | BellBase.Pfence (BellBase.Fence (annots, _)) ->
-      let _, scp = order_scope_of annots in
-      fprintf chan "%scuda::atomic_thread_fence(cuda::memory_order_seq_cst, %s);\n"
-        ind (thread_scope scp)
+      let ord, scp = order_scope_of annots in
+      if scp = "cluster" then
+        fprintf chan "%sasm volatile(\"fence.%s.cluster;\" ::: \"memory\"); // sm_90\n"
+          ind (ptx_fence_sem ord)
+      else
+        fprintf chan "%scuda::atomic_thread_fence(cuda::memory_order_seq_cst, %s);\n"
+          ind (thread_scope scp)
   | BellBase.Pnop -> ()
   | _ ->
       fprintf chan "%s// UNSUPPORTED: %s\n" ind (BellBase.dump_instruction i)
