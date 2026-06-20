@@ -11,4 +11,6 @@ Orig=PodWWRelaxedCtaReleaseCta RfeReleaseCtaAcquireCta PodRRAcquireCtaRelaxedCta
  w[relaxed,cta] x 1 | r[acquire,cta] r0 y ;
  w[release,cta] y 1 | r[relaxed,cta] r1 x ;
 
+scopes: (sys (gpu (cta P0) (cta P1)))
+
 exists (1:r0=1 /\ 1:r1=0)

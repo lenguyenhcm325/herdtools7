@@ -11,4 +11,6 @@ Orig=RfeRelaxedSysRelaxedSys PodRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys R
  r[relaxed,sys] r0 x | w[relaxed,sys] y 1 | r[relaxed,sys] r0 y | w[relaxed,sys] x 1 ;
  r[relaxed,sys] r1 y |                    | r[relaxed,sys] r1 x |                    ;
 
+scopes: (sys (gpu (cta P0) (cta P1) (cta P2) (cta P3)))
+
 exists (0:r0=1 /\ 0:r1=0 /\ 2:r0=1 /\ 2:r1=0)

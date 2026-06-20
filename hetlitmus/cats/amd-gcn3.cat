@@ -18,23 +18,21 @@
  *   fence-based pure-ordering and computes SB/IRIW wrong for AMD, so it is not
  *   ported (see hetlitmus/docs/gpu-only-corpus.md).
  *
- * SCOPE ENCODING (important, read this):
- *   herd derives scope-instance relations (tag2scope) ONLY from a parseable
- *   `scopes: (...)` tree in the .litmus body. The diy-generated corpus carries
- *   its scope structure in a `Scopes=(...)` INFO FIELD instead, which herd does
- *   NOT parse into a scope tree -- so tag2scope is unavailable here. We are also
- *   constrained not to edit the .litmus corpus. We therefore read scope from the
- *   per-access ANNOTATION (tag2events('cta|'gpu|'sys)), which herd DOES parse,
- *   and encode the scope hierarchy's MEANING in this .cat -- consistent with the
- *   project principle that the vendor/scope semantics live downstream in the
- *   .cat, never in the vendor-neutral .litmus layer.
+ * SCOPE ENCODING:
+ *   Synchronisation reads TRUE scope-instance structure via herd's `tag2scope`,
+ *   so a release/acquire pair synchronises iff (a) both are annotated at the same
+ *   scope level S and (b) the two events actually share an S-instance. herd builds
+ *   tag2scope only from a parseable `scopes: (sys (gpu (cta P0) ...))` tree in the
+ *   .litmus body; the corpus now carries that full 3-level tree (emitted by
+ *   generate.sh -- the diy `Scopes=(...)` info field is NOT parsed by herd), so
+ *   tag2scope('cta|'gpu|'sys) resolve in every test.
  *
- *   The modelling assumption this forces (matches the corpus exactly): accesses
- *   are co-scoped at their annotated level; `sys` (and `gpu`/device) span both
- *   threads, whereas the cta-scope test (MP-cta-F) places its two threads in
- *   DISTINCT CTAs, so cta-scope release/acquire establishes NO cross-thread
- *   synchronisation (moral strength: the scope is too narrow). A proper
- *   scopes-tree + tag2scope would generalise this; see the results note.
+ *   Consequence (this is the point): the cta-scope test MP-cta-F is Allowed
+ *   because its two threads sit in DISTINCT CTAs, so tag2scope('cta) does not
+ *   relate them and the cta release/acquire is too narrow to cross threads. Put
+ *   the same two threads in ONE CTA and tag2scope('cta) relates them, so the
+ *   cta-scope sync fires and the weak outcome becomes Forbidden -- with no change
+ *   to this .cat. Scope strength is read, not assumed.
  *)
 
 (* ------------------------------------------------------------------ *)
@@ -57,10 +55,6 @@ let CTA = tag2events('cta)
 let GPU = tag2events('gpu)
 let SYS = tag2events('sys)
 
-(* Scopes that span both threads in this corpus (see header). cta is the only
-   "narrow" scope exercised, so it is deliberately excluded. *)
-let WIDE = SYS | GPU
-
 (* ================================================================== *)
 (* (1) Load->store program order: forbids load buffering (LB-sys).     *)
 (*     AMD GPU lanes preserve R->W program order, so the LB cycle       *)
@@ -73,12 +67,17 @@ acyclic load-store as no-load-buffering
 
 (* ================================================================== *)
 (* (2) Scoped release->acquire synchronisation (HRF so / hhb).          *)
-(*     A release synchronises-with an acquire that reads it WHEN the     *)
-(*     synchronising scope spans both threads (WIDE). This forbids       *)
-(*     MP-sys-F (sys-scope sync fires) while leaving MP-cta-F Allowed    *)
-(*     (cta-scope sync is too narrow to cross threads -> sw empty).      *)
+(*     so(S): a release and an acquire, BOTH annotated at scope S, that  *)
+(*     share an S-instance (tag2scope S) and where the acquire reads the  *)
+(*     release. Reading the real scope tree is what discriminates         *)
+(*     MP-sys-F (sys-instance shared -> sync fires -> Forbidden) from     *)
+(*     MP-cta-F (threads in distinct CTAs -> tag2scope('cta) empty across  *)
+(*     them -> no sync -> Allowed); two threads in one CTA would sync.    *)
 (* ================================================================== *)
-let sw = [REL & WIDE] ; rfe ; [ACQ & WIDE]
+let so_cta = ([REL & CTA] ; rfe ; [ACQ & CTA]) & tag2scope('cta)
+let so_gpu = ([REL & GPU] ; rfe ; [ACQ & GPU]) & tag2scope('gpu)
+let so_sys = ([REL & SYS] ; rfe ; [ACQ & SYS]) & tag2scope('sys)
+let sw = so_cta | so_gpu | so_sys
 let hb = (po | sw)+
 acyclic hb as happens-before
 irreflexive (hb ; fr) as coherence

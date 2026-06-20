@@ -11,4 +11,6 @@ Orig=RfeReleaseSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysReleaseSys R
  r[acquire,sys] r0 x | w[release,sys] y 1 | r[acquire,sys] r0 y | w[release,sys] x 1 ;
  r[acquire,sys] r1 y |                    | r[acquire,sys] r1 x |                    ;
 
+scopes: (sys (gpu (cta P0) (cta P1) (cta P2) (cta P3)))
+
 exists (0:r0=1 /\ 0:r1=0 /\ 2:r0=1 /\ 2:r1=0)

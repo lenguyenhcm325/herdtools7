@@ -11,4 +11,6 @@ Orig=PodWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys PodWRRelaxedSysRelaxedSys
  w[relaxed,sys] x 1  | w[relaxed,sys] y 1  ;
  r[relaxed,sys] r0 y | r[relaxed,sys] r0 x ;
 
+scopes: (sys (gpu (cta P0) (cta P1)))
+
 exists (0:r0=0 /\ 1:r0=0)
