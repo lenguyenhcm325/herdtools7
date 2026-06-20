@@ -1,0 +1,25 @@
+Litmus,Expected,Model,Source
+# Expected outcomes for the GPU-only corpus, copied from the PLDI'23 Compound
+# Memory Models artifact oracle (PLDI23_Compound_Simulation/expected.csv, rows
+# tagged "GPU-Only").
+#
+# PROVENANCE / VENDOR SCOPE (important): these verdicts are produced by the
+# artifact's gem5 build target "GCN3_X86" — i.e. an AMD GCN3 GPU coupled with an
+# x86 CPU. They are therefore AMD-GCN3-specific, NOT vendor-neutral. The
+# "Allowed"/"Disallowed" values are the gem5 reference predictions for the AMD
+# model and are the targets the HetLitmus pipeline must reproduce *for the AMD
+# side* (e.g. MI300A, with the caveat that MI300A is CDNA3, several generations
+# past GCN3). The NVIDIA side (GH200) needs a SEPARATE oracle derived from the
+# NVIDIA PTX model; do not reuse this file as the NVIDIA reference. See
+# hetlitmus/docs/gpu-only-corpus.md ("Oracle provenance & vendor scope").
+#
+# Model column = the (GPU,CPU) model the verdict belongs to, so a future
+# expected-nvidia.csv can slot in alongside this AMD file.
+MP-sys,Allowed,AMD-GCN3-x86,PLDI23 GCN3_X86 (GPU-Only)
+MP-sys-F,Disallowed,AMD-GCN3-x86,PLDI23 GCN3_X86 (GPU-Only)
+MP-cta-F,Allowed,AMD-GCN3-x86,PLDI23 GCN3_X86 (GPU-Only)
+LB-sys,Disallowed,AMD-GCN3-x86,PLDI23 GCN3_X86 (GPU-Only)
+SB-sys,Allowed,AMD-GCN3-x86,PLDI23 GCN3_X86 (GPU-Only)
+SB-sys-F,Disallowed,AMD-GCN3-x86,PLDI23 GCN3_X86 (GPU-Only)
+IRIW-sys,Allowed,AMD-GCN3-x86,PLDI23 GCN3_X86 (GPU-Only)
+IRIW-sys-F,Disallowed,AMD-GCN3-x86,PLDI23 GCN3_X86 (GPU-Only)

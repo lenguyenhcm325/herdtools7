@@ -4,12 +4,40 @@ Inventory of the GPU-only test family the HetLitmus frontend must be able to
 express and generate. Derived by inspecting the PLDI'23 Compound Memory Models
 artifact (gem5 + HIP litmus tests), cross-checked against the in-tree PTX `.cat`.
 
+## Oracle provenance & vendor scope (read this first)
+The Allowed/Disallowed verdicts in this corpus come from the artifact's gem5
+build target **`GCN3_X86`** — an **AMD GCN3 GPU + x86 CPU** (the HIP sources build
+for `gfx801,gfx803`). They are therefore **AMD-specific, not vendor-neutral**, and
+live in `tests/gpu-only/expected-amd-gcn3.csv`.
+
+Note the deliberate split this creates:
+- **Vocabulary** (`cta`/`gpu`/`sys`, and the `ptx.cat` cross-check below) is
+  **NVIDIA PTX** naming, chosen only because it maps 1:1 onto the levels this
+  corpus uses (`cta`↔workgroup, `sys`↔system).
+- **Corpus + oracle** (which accesses are rel/acq, and the verdicts themselves)
+  are **AMD**.
+
+So this is *NVIDIA vocabulary over an AMD corpus with an AMD oracle.* The
+`.litmus` files themselves stay vendor-neutral (only the shared
+relaxed/acquire/release × cta/sys words appear), so they are reused unchanged for
+both vendors; the vendor difference lives **downstream** — in the `.cat` (meaning)
+and the emitter (instruction selection) — never in the `.litmus` layer.
+
+Consequence for the two hardware targets:
+- **MI300A (AMD):** `expected-amd-gcn3.csv` is the right reference — caveat:
+  MI300A is CDNA3, several generations past GCN3, so confirm rather than assume.
+- **GH200 (NVIDIA):** PLDI'23 provides **no** NVIDIA oracle. A separate
+  `expected-nvidia.csv` must be derived from the NVIDIA PTX model; the AMD
+  verdicts for `SB-sys-F` / `IRIW-sys-F` in particular may **not** carry over
+  (see "Why the synchronised verdicts hold").
+
 ## Sources
 - **Goens, Chakraborty, Sarkar, Agarwal, Oswald, Nagarajan. "Compound Memory
   Models." PLDI 2023.** Artifact: `PLDI23_Compound_Simulation`
   (https://github.com/sukarnagarwal/PLDI23_Compound_Simulation), paper:
   https://homepages.inf.ed.ac.uk/vnagaraj/papers/pldi23.pdf
-  - Oracle: `expected.csv` (Allowed/Disallowed per test).
+  - Oracle: `expected-amd-gcn3.csv` (Allowed/Disallowed per test; **AMD GCN3 +
+    x86** — see "Oracle provenance & vendor scope" above).
   - Runner: `runall_gpu_only.sh`.
   - Test sources: `gem5-resources/gpu/GPU_Litmus_test/{MP,LB,SB,IRIW}/`
     (HIP `__atomic_*` C++ kernels for the AMD GCN3 gem5 model).
@@ -34,6 +62,31 @@ Four classic shapes, each in a relaxed and a synchronised variant:
 
 (LB-sys-F is intentionally skipped by `runall_gpu_only.sh`.)
 
+### Why the synchronised verdicts hold (the rel/acq caveat)
+The `-F` variants synchronise with **plain release/acquire only** — no fences. (A
+grep for `threadfence`/`thread_fence`/`membar` over the `-F` sources matches only
+filenames and ReadMe comments, e.g. the informal name "MP Fence"; the actual
+`.cpp` kernels contain no fence intrinsics.)
+
+Release/acquire alone is enough to forbid **MP**: the acquire load reads the
+*released* value, so the release→acquire pairing fires. It is **not**, on its own,
+enough to forbid **SB** or **IRIW** — those are the canonical tests that need
+sequential consistency / full fences (SB needs store→load ordering; IRIW needs
+multi-copy atomicity), and in their forbidden outcome the acquire loads read the
+*initial* value, so the rel/acq pairing never engages.
+
+`SB-sys-F` and `IRIW-sys-F` are nonetheless **Disallowed** in the oracle because
+on AMD a **system-scope** release/acquire is implemented as a heavyweight **cache
+flush/invalidate to the system coherence point** (HRF semantics), behaving far
+more strongly than textbook release/acquire. That extra strength — *not* the
+rel/acq annotation itself — is what forbids SB and IRIW.
+
+**Implication for Task 7 (the `.cat` oracle):** the AMD `.cat` must model
+system-scope release/acquire as **strong** (store-completion + multi-copy
+atomicity at `sys`). A port of the NVIDIA `ptx.cat`, or any pure-ordering rel/acq
+model, will compute `SB-sys-F` / `IRIW-sys-F` as **Allowed** and contradict
+`expected-amd-gcn3.csv`.
+
 ### Naming decoded (from `runall_gpu_only.sh` `genFileName` + source files)
 - `Relax` (suffix `-sys`): plain non-atomic loads/stores, compiler reordering
   blocked with `#pragma GCC optimize ("O0")`; relies on hardware reordering.
@@ -48,9 +101,13 @@ Four classic shapes, each in a relaxed and a synchronised variant:
   Source `MP/MP-cta-F/MP_RelAcq_Wg_Scope.cpp`.
 
 ## Minimum vocabulary the frontend must express
-Confirmed by `grep __ATOMIC_*` over the whole GPU corpus: only
-`__ATOMIC_ACQUIRE` and `__ATOMIC_RELEASE` appear (no acq_rel/seq_cst, no RMW,
-no standalone `__threadfence` — ordering is via atomic order qualifiers).
+A `grep __ATOMIC_*` over the GPU corpus shows only `__ATOMIC_ACQUIRE` and
+`__ATOMIC_RELEASE` (no `acq_rel`/`seq_cst`, no RMW) — ordering is via atomic order
+qualifiers. NB: that grep does **not** by itself rule out fences: HIP/CUDA fences
+are intrinsics (`__threadfence_*()`, `atomic_thread_fence(...)`), not `__atomic_*`,
+so they would not match. A separate grep for `threadfence`/`thread_fence`/`membar`
+over the `-F` sources confirms none are present in the kernels (matches are only
+in filenames/ReadMe text).
 
 - **Memory orders**: `relaxed` (plain access), `release` (stores),
   `acquire` (loads). Keep `acq_rel`, `sc` in the vocabulary for completeness /

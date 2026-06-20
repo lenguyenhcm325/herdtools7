@@ -8,7 +8,9 @@
 #
 # Cycles, variants and expected outcomes follow the PLDI'23 Compound Memory
 # Models artifact (Goens, Chakraborty, Sarkar, Agarwal, Oswald, Nagarajan,
-# PLDI 2023): expected.csv + gem5-resources/gpu/GPU_Litmus_test/{MP,LB,SB,IRIW}.
+# PLDI 2023): the artifact's expected.csv (build target GCN3_X86 = AMD GCN3 GPU +
+# x86 CPU; mirrored locally, AMD-tagged, as expected-amd-gcn3.csv) +
+# gem5-resources/gpu/GPU_Litmus_test/{MP,LB,SB,IRIW}.
 # Faithful detail from the HIP sources: the relaxed ("-sys") variants use plain
 # accesses (modelled here as 'relaxed); the synchronised ("-F") variants use
 # release stores + acquire loads (NOT full fences) — confirmed for MP, SB, IRIW.
