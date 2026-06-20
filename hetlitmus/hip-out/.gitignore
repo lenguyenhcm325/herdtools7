@@ -1,0 +1,4 @@
+# litmus7 ObjUtil C-runtime boilerplate + the sibling .cu dropped here on emit; keep only the .hip
+*
+!.gitignore
+!*.hip

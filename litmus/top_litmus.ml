@@ -634,6 +634,15 @@ end = struct
                    outname ;
                  if OT.verbose >= 0 then
                    Printf.eprintf "HetLitmus: emitted CUDA %s\n%!" outname ;
+                 (* AMD sibling: emit a HIP (.hip) kernel from the same parsed
+                    scoped test (HipLang).  Emit-only -- the hipcc compile is
+                    the HIP analog of Task 8, deferred (no ROCm here). *)
+                 let hipname = Tar.outname (MyName.outname name ".hip") in
+                 Misc.output_protect
+                   (fun chan -> HipLang.dump chan tname parsed)
+                   hipname ;
+                 if OT.verbose >= 0 then
+                   Printf.eprintf "HetLitmus: emitted HIP %s\n%!" hipname ;
                  Absent
                with e -> if OT.nocatch then raise e ; Interrupted e)
           | `CPP | `JAVA | `ASL | `BPF -> assert false
