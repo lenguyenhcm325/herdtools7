@@ -14,6 +14,15 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
+(* HetLitmus Tier-4: a single-arch test rendered as device-neutral string
+   fragments, so gen/hetGen.ml can merge per-proc columns from two single-arch
+   runs (one per device) into one Tier-0 `Het` test.  See gen/hetGen.ml. *)
+type het_cells = {
+  hc_init : (int option * string) list ; (* (owning proc, atom); None = global *)
+  hc_cols : (int * string list) list ;   (* per proc: instruction-cell strings *)
+  hc_cond : string ;                      (* full condition, e.g. "exists (..)" *)
+}
+
 (* Event components *)
 type loc = Data of string | Code of Label.t
 val as_data : loc -> string

@@ -1,0 +1,11 @@
+Het SB-het
+"Heterogeneous store-buffering: P0 on the CPU (AArch64), P1 on the GPU (LISA/PTX)"
+{
+0:X1=x;
+0:X2=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#1   | w[release,sys] y 1  ;
+ STR W0,[X1] | r[acquire,sys] r0 x ;
+ LDR W3,[X2] |                     ;
+exists (0:X3=0 /\ 1:r0=0)

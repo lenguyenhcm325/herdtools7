@@ -1164,6 +1164,9 @@ module Make(O:Config) : Builder.S
         | Misc.Fatal msg ->
             Warn.fatal "Test %s [%s] failed:\n%s" name (E.pp_edges es) msg
 
-
+      (* HetLitmus Tier-4 only targets ASM (AArch64) + LISA procs; the C backend
+         is never a het column. *)
+      let het_cells _ =
+        Warn.fatal "het_cells: the C/C++ backend is not a HetLitmus device"
 
     end

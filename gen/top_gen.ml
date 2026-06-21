@@ -984,6 +984,33 @@ let max_set = IntSet.max_elt
     else
       dump_test_channel_full chan t
 
+(* HetLitmus Tier-4: expose the test as device-neutral string fragments.
+   `fmt_io` mirrors lib/simpleDumper.ml so a proc's cells render exactly as in a
+   normal dump.  The proc owner of each init atom (and, downstream, of each
+   condition atom) lets the het driver pick the right column from each run. *)
+  let het_cells t =
+    let rec fmt_io io = match io with
+      | A.Nop -> ""
+      | A.Instruction ins -> A.dump_instruction ins
+      | A.Label (lbl,io) -> lbl ^ ": " ^ fmt_io io
+      | A.Symbolic s -> "codevar:"^s
+      | A.Macro (f,regs) ->
+          sprintf "%s(%s)" f
+            (String.concat "," (List.map A.pp_reg regs))
+      | A.Pagealign -> ".pagealign"
+      | A.Skip _ -> assert false in
+    let hc_cols =
+      List.mapi (fun i is -> (i,List.map fmt_io is)) t.prog in
+    let hc_init =
+      List.map
+        (fun ((loc,_) as atom) ->
+          let p = match loc with
+            | A.Location.Location_reg (i,_) -> Some i
+            | _ -> None in
+          (p,State.dump_state_atom atom))
+        (State.init_type_env_to_states t.init t.env) in
+    { Code.hc_init ; hc_cols ; hc_cond = F.dump_constr t.final ; }
+
   let num_labels =
 
     let rec num_ins p m = function

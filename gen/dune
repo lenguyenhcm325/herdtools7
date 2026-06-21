@@ -20,6 +20,7 @@
    mexpand
    atomize
    diyone
+   hetGen
    nexts
    classify
    diy
@@ -34,6 +35,7 @@
   mexpand
   atomize
   diyone
+  hetGen
   nexts
   classify
   diy
@@ -45,6 +47,7 @@
   mexpand
   atomize
   diyone
+  hetGen
   nexts
   classify
   diy
@@ -56,6 +59,7 @@
   mexpand7
   atomize7
   diyone7
+  hetgen7
   nexts7
   classify7
   diy7

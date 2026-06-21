@@ -14,6 +14,22 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
+(* HetLitmus Tier-4 generation support.
+   A single-arch test rendered as device-neutral STRING fragments, so that a
+   heterogeneous driver (gen/hetGen.ml) can merge per-proc columns taken from
+   two single-arch runs (one per device) into one Tier-0 `Het` test.
+   Strings (not arch-typed values) are the erasure boundary that lets the
+   AArch64 and LISA builders -- two different `A` modules -- be combined. *)
+type het_cells = {
+  (* Initial state atoms with their owning proc: (Some p,"0:X1=x") is proc-p's,
+     (None,"x=0") is a global.  No trailing ';'. *)
+  hc_init : (int option * string) list ;
+  (* Per proc: (proc index, instruction-cell strings in that arch's syntax). *)
+  hc_cols : (int * string list) list ;
+  (* The whole final condition, e.g. "exists (1:r0=1 /\\ 1:r1=0)". *)
+  hc_cond : string ;
+}
+
 (* Event components *)
 (* TODO introduce a monad operation? *)
 type loc = Data of string | Code of Label.t
