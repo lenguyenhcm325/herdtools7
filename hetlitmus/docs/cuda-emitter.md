@@ -102,9 +102,10 @@ carrying its annotated order+scope (relaxed data included), so the kernels are
 data‑race‑free under the C++/CUDA model rather than relying on plain accesses.
 
 ## Task 8 — nvcc compile (DONE)
-Done on this WSL box (CUDA Toolkit 12.2, `nvcc /usr/local/cuda-12.2/bin/nvcc`;
-`export PATH=/usr/local/cuda/bin:$PATH`). Every emitted kernel assembles
-**exit 0**.
+Done on this WSL box (CUDA Toolkit **12.9**, `nvcc /usr/local/cuda/bin/nvcc`;
+`export PATH=/usr/local/cuda/bin:$PATH`; originally Task 8 ran on 12.2 — see the
+fence-lowering note below for what the upgrade changed). Every emitted kernel
+assembles **exit 0**.
 
 - **Corpus (cta/sys), Ampere** — each of the 8 `cuda-out/*.cu`:
 
@@ -128,16 +129,25 @@ Done on this WSL box (CUDA Toolkit 12.2, `nvcc /usr/local/cuda-12.2/bin/nvcc`;
   Both exit 0, proving the inline-PTX cluster ops assemble. `sm_90` (Hopper) is
   required for `.cluster`; these won't *run* here (no Hopper), only assemble.
 
-**Surface fix made during Task 8** (in `litmus/CudaLang.ml`, never by hand-editing
-`.cu`): the cluster *fence* lowering was wrong. PTX `fence{.sem}.scope` admits
-only `.sem ∈ {.acq_rel,.sc}` — `fence.acquire`/`fence.release` do **not** exist
-and ptxas rejects them. `ptx_fence_sem` now mirrors libcu++
-(`atomic_cuda_generated.h __atomic_thread_fence_cuda`): acquire/release/acq_rel →
-`fence.acq_rel.cluster`, sc → `fence.sc.cluster`. The non-cluster fence path was
-also corrected to carry the fence's annotated order (it had hardcoded
-`memory_order_seq_cst`); the corpus has no fences, so the 8 `.cu` stay
-byte-stable. The load/store cluster strings and all 8 corpus kernels needed **no**
-changes (no `__out`/header/atomic_ref fixes were required).
+**Fence lowering (revised — faithful inline PTX).** During Task 8 (on CUDA 12.2)
+the cluster *fence* path was first written to collapse acquire/release/acq_rel →
+`fence.acq_rel` and sc → `fence.sc`, because **that toolkit's ptxas (PTX ISA 8.2)
+rejected `fence.acquire`/`fence.release`**. That was a *toolkit-version* limit,
+not a PTX-ISA one: `fence.acquire`/`fence.release` are real instructions added in
+**PTX ISA 8.6 (SM_90)** and they assemble on this box's current **CUDA 12.9**
+(`nvcc -std=c++17 -arch=sm_90`). The emitter now lowers fences **faithfully** at
+every scope via inline PTX — `fence.<order>.<scope>`, `<order> ∈
+{acquire,release,acq_rel,sc}`, `<scope> ∈ {cta,gpu,sys,cluster}` — bypassing
+`cuda::atomic_thread_fence`, which (verified in CUDA 12.9
+`cuda/std/__atomic/functions/cuda_ptx_generated.h`) **still** collapses
+acquire/release → `fence.acq_rel`. So `MP-cluster` now emits a true
+`fence.release.cluster` on the writer and `fence.acquire.cluster` on the reader
+(was `fence.acq_rel.cluster` for both). Availability: `fence.{acq_rel,sc}` work on
+SM_70+ (cluster needs SM_90); `fence.{acquire,release}` need SM_90 — so a
+fence-bearing test now assembles only for sm_90 (fine for the GH200 target; the
+corpus has no fences, so the 8 `.cu` stay byte-stable). Load/store mapping is
+unchanged: rel/acq on ops already map exactly (`st.release.<scope>` /
+`ld.acquire.<scope>`); only standalone fences were affected.
 
 ## Out of scope / next steps
 - **Task 9 (hardware):** deferred — GH200 / MI300A runs + stressing + tallying

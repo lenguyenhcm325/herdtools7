@@ -24,7 +24,7 @@ __global__ void litmus_MP_cluster(int* x, int* y, int* __out) {
     { // w[relaxed,cluster] x 1
       asm volatile("st.relaxed.cluster.b32 [%0],%1;" :: "l"(x), "r"(1) : "memory"); // sm_90
     }
-    asm volatile("fence.acq_rel.cluster;" ::: "memory"); // sm_90
+    asm volatile("fence.release.cluster;" ::: "memory"); // requires sm_90
     { // w[relaxed,cluster] y 1
       asm volatile("st.relaxed.cluster.b32 [%0],%1;" :: "l"(y), "r"(1) : "memory"); // sm_90
     }
@@ -37,7 +37,7 @@ __global__ void litmus_MP_cluster(int* x, int* y, int* __out) {
     { // r[relaxed,cluster] r0 y
       asm volatile("ld.relaxed.cluster.b32 %0,[%1];" : "=r"(r0) : "l"(y) : "memory"); // sm_90
     }
-    asm volatile("fence.acq_rel.cluster;" ::: "memory"); // sm_90
+    asm volatile("fence.acquire.cluster;" ::: "memory"); // requires sm_90
     { // r[relaxed,cluster] r1 x
       asm volatile("ld.relaxed.cluster.b32 %0,[%1];" : "=r"(r1) : "l"(x) : "memory"); // sm_90
     }
