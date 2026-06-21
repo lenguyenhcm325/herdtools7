@@ -9,7 +9,8 @@
  prefetch
  showcode
  lexO
- infoAlign)
+ infoAlign
+ hetSlurp)
 
 (executables
  (names litmus klitmus)

@@ -75,6 +75,7 @@ type t = [
   | `LISA
   | `JAVA
   | `ASL
+  | `Het
 ]
 
 let tags =
@@ -83,6 +84,7 @@ let tags =
   ::"LISA"
   :: "JAVA"
   :: "ASL"
+  :: "Het"
   ::System.tags
 
 let parse s = match System.parse s with
@@ -96,6 +98,11 @@ let parse s = match System.parse s with
       | "LISA" -> Some `LISA
       | "JAVA" | "Java" -> Some `JAVA
       | "ASL" -> Some `ASL
+      (* HetLitmus Tier-0: the compound pseudo-arch (fork (a)).  A single
+         `Het' arch value lets the rest of the pipeline stay single-arch-typed
+         (one Archs.t in the splitter); the CPU-vs-GPU split lives INSIDE the
+         HetArch functor and a per-proc device tag.  See hetlitmus/docs. *)
+      | "Het" -> Some `Het
       | _ -> None
   end
   | a -> a
@@ -106,6 +113,7 @@ let pp = function
   | `LISA -> "LISA"
   | `JAVA -> "Java"
   | `ASL -> "ASL"
+  | `Het -> "Het"
   | #System.arch as a -> System.pp a
 
 let aarch64 = `AArch64
@@ -121,6 +129,7 @@ let lisa = `LISA
 let x86_64 = `X86_64
 let java = `JAVA
 let asl = `ASL
+let het = `Het
 
 let compare = compare
 
@@ -130,7 +139,7 @@ let has_mixed_mode = function
 
 let get_sysarch a ca = match a with
   | #System.arch as a -> a
-  |`CPP|`LISA | `JAVA | `ASL -> `Unknown
+  |`CPP|`LISA | `JAVA | `ASL | `Het -> `Unknown
   | `C -> ca
 
 let check_carch a = match a with

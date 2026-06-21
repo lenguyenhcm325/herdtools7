@@ -645,6 +645,69 @@ end = struct
                    Printf.eprintf "HetLitmus: emitted HIP %s\n%!" hipname ;
                  Absent
                with e -> if OT.nocatch then raise e ; Interrupted e)
+          | `Het ->
+             (* HetLitmus Tier-0: the compound pseudo-arch.  Instantiate the
+                HetArch functor for the GH200 pairing -- AArch64 (CPU) + LISA/PTX
+                (GPU) -- and route each processor's cells to its backend's
+                sub-parser.  This is the single dispatch arm fork (a) costs per
+                {cpu}x{gpu} pairing; the het logic itself lives once, in
+                litmus/HetArch.ml.  Parsing proves the single-arch break; full
+                cross-device EMISSION is Tier 2 (out of scope here). *)
+             let module CpuV =
+               SymbConstant.Make
+                 (Int64Scalar)(AArch64PteVal)(AArch64AddrReg)
+                 (AArch64Instr.Std) in
+             let module Cpu = AArch64Arch_litmus.Make(OC)(CpuV) in
+             let module GpuInstr =
+               Instr.No(struct type instr = BellBase.instruction end) in
+             let module GpuV = Int64Constant.Make(GpuInstr) in
+             let module Gpu = LISAArch_litmus.Make(GpuV) in
+             let module Arch' = HetArch.Make(Cpu)(Gpu) in
+             let module CpuLexer =
+               AArch64Lexer.Make
+                 (struct include LexConfig let is_morello = false end) in
+             let module GpuLexer = BellLexer.Make(LexConfig) in
+             (* per-column sub-parsers: one column's ';'-separated cells -> a
+                list of compound parsed pseudos, tagged for its device *)
+             let parse_cpu txt =
+               List.map Arch'.of_cpu_parsed
+                 (AArch64Parser.instr_option_seq CpuLexer.token
+                    (Lexing.from_string txt)) in
+             let parse_gpu txt =
+               List.map Arch'.of_gpu_parsed
+                 (LISAParser.instr_option_seq GpuLexer.token
+                    (Lexing.from_string txt)) in
+             let module LexParse = struct
+                 type instruction = Arch'.parsedPseudo
+                 type token = unit
+                 let lexer = fun _ -> ()
+                 let parser = Arch'.het_parser ~cpu:parse_cpu ~gpu:parse_gpu
+               end in
+             let module P = GenParser.Make(Cfg)(Arch')(LexParse) in
+             (fun _hash_env name in_chan _out_chan splitted ->
+               try
+                 let parsed = P.parse in_chan splitted in
+                 close_in in_chan ;
+                 let tname = splitted.Splitter.name.Name.name in
+                 if OT.verbose >= 0 then begin
+                   Printf.eprintf
+                     "HetLitmus: parsed heterogeneous test %s (%d procs)\n%!"
+                     tname (List.length parsed.MiscParser.prog) ;
+                   List.iter
+                     (fun ((p,annot,_),_code) ->
+                       let dev = match annot with
+                         | Some (d::_) -> d | _ -> "?" in
+                       let backend = match dev with
+                         | "cpu" -> "ASMLang (AArch64)"
+                         | "gpu" -> "CudaLang (LISA/PTX)"
+                         | _ -> "unknown" in
+                       Printf.eprintf "  P%d device=%s -> %s\n%!" p dev backend)
+                     parsed.MiscParser.prog
+                 end ;
+                 (* Tier-0 stops at representation + parse + dispatch wiring;
+                    cross-device codegen emission is Tier 2. *)
+                 Absent
+               with e -> if OT.nocatch then raise e ; Interrupted e)
           | `CPP | `JAVA | `ASL | `BPF -> assert false
         in
         aux arch hash_env name in_chan out_chan splitted

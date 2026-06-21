@@ -24,6 +24,10 @@ type info = string * string
 
 type result =
   {
+    (* HetLitmus Tier-0: a single Archs.t even for heterogeneous tests.  The
+       compound arch [`Het] (parsed below via Archs.parse, no grammar change)
+       carries the CPU/GPU split inside the HetArch functor + a per-proc device
+       tag in the program header.  See hetlitmus/docs/het-litmus-format.md. *)
     arch : Archs.t ;
     name : Name.t ;
     info : info list ;

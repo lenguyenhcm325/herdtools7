@@ -14,68 +14,15 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(** Implemented archituctures *)
+(* HetLitmus Tier-0 helper: read an entire (bounded) lexbuf section into a
+   string.  The generic parser (lib/genParser.ml) hands the heterogeneous
+   parser a lexbuf positioned over the program section; HetArch must re-lex
+   that text per processor with the right sub-architecture lexer, so it first
+   slurps the whole section verbatim.  See litmus/HetArch.ml and
+   hetlitmus/docs/het-litmus-format.md. *)
 
-module System : sig
+{ }
 
-  (* Native architectures *)
-    type arch = [
-    | `AArch64
-    | `ARM
-    | `BPF
-    | `MIPS
-    | `PPC
-    | `X86
-    | `RISCV
-    | `X86_64
-   ]
-
-  (* Native architecture may be unknown, some features
-     will notbe available *)
-    type t = [ arch | `Unknown ]
-
-    val tags : string list
-
-    val parse : string -> t option
-
-    val pp : t -> string
-
-end
-
-(* All implement architectures *)
-type t = [
-    System.arch
-  | `C
-  | `CPP
-  | `LISA
-  | `JAVA
-  | `ASL
-  | `Het (* HetLitmus Tier-0 compound pseudo-arch; see lib/Archs.ml and hetlitmus/docs *)
-  ]
-
-val tags : string list
-
-val parse : string -> t option
-val pp : t -> string
-
-val compare : t -> t -> int
-
-val  aarch64 : t
-val  arm : t
-val  bpf : t
-val  mips : t
-val  ppc : t
-val  x86 : t
-val  riscv : t
-val  c : t
-val  cpp : t
-val  java : t
-val  lisa : t
-val  x86_64 : t
-val  asl : t
-val  het : t
-
-val has_mixed_mode : t -> bool
-
-val get_sysarch : [< t ] ->  System.t -> System.t
-val check_carch : [< System.t ] -> System.arch
+rule slurp buf = parse
+| eof    { Buffer.contents buf }
+| _ as c { Buffer.add_char buf c ; slurp buf lexbuf }

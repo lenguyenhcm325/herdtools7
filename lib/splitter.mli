@@ -36,7 +36,13 @@
 type info = string * string
 type result =
   {
-   (* architecture *)
+   (* architecture.  HetLitmus Tier-0: this stays a SINGLE Archs.t even for a
+      heterogeneous CPU-GPU test -- fork (a) introduces one compound value
+      [`Het] whose CPU-vs-GPU split is hidden inside the HetArch functor and a
+      per-processor device tag (e.g. "P0:cpu | P1:gpu") in the program header.
+      So the splitter, and the whole pipeline, stay single-arch-typed; the
+      first-line token "Het" is parsed here exactly like any other arch (via
+      Archs.parse).  See litmus/HetArch.ml and hetlitmus/docs/het-litmus-format.md. *)
     arch : Archs.t ;
    (* All names of the test grouped *)
     name : Name.t ;

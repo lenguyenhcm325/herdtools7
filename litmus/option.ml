@@ -203,6 +203,7 @@ let get_default arch = match arch with
 | `MIPS|`RISCV -> mipsopt
 | `C -> copt
 | `LISA -> copt (* HetLitmus: LISA tests are emitted to CUDA, no native ASM opts *)
+| `Het -> copt (* HetLitmus Tier-0: compound CPU+GPU pseudo-arch; parse/dispatch only *)
 | `BPF
 | `CPP
 | `GPU_PTX
