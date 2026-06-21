@@ -17,7 +17,7 @@ scoped IR; no native PTX architecture) — see memory `hetlitmus-route-b-fronten
   (a dead path); now returns `copt` so the LISA test can reach the dispatch.
 - **`hetlitmus/emit-cuda.sh`** — regenerates all `.cu` from the corpus.
 
-Build: `make all` in the repo root (branch `hetlitmus-tier1`). Emit:
+Build: `make all` in the repo root (branch `hetlitmus-work`). Emit:
 `./hetlitmus/emit-cuda.sh [OUTDIR]` (default `hetlitmus/cuda-out/`).
 
 ## How it works (and why this shape)

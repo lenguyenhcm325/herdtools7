@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # HetLitmus Tier-1: emit CUDA (.cu) litmus kernels from the GPU-only LISA corpus.
 #
-# Drives the litmus7 binary (built on branch hetlitmus-tier1) over every
+# Drives the litmus7 binary (built on branch hetlitmus-work) over every
 # tests/gpu-only/*.litmus test; litmus7's `LISA arch branch parses the scoped
 # Bell IR and CudaLang emits one .cu per test (cuda::atomic_ref scoped atomics,
 # CTA layout from the scope tree).  See litmus/CudaLang.ml + litmus/top_litmus.ml.

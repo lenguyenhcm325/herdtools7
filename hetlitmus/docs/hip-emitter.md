@@ -21,7 +21,7 @@ same corpus feeds both vendors; the vendor difference lives only in the emitter
   `hetlitmus/hip-out/` (the same litmus7 run also drops a sibling `.cu`;
   `hip-out/.gitignore` keeps only `*.hip`).
 
-Build: `make all` (branch `hetlitmus-tier1`). Emit: `./hetlitmus/emit-hip.sh`.
+Build: `make all` (branch `hetlitmus-work`). Emit: `./hetlitmus/emit-hip.sh`.
 
 ## Mappings (grounded)
 HIP scoped atomics are Clang builtins. Memory locations are kernel `int*`

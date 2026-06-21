@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # HetLitmus Tier-1: emit AMD HIP (.hip) litmus kernels from the GPU-only LISA corpus.
 #
-# Drives the litmus7 binary (built on branch hetlitmus-tier1) over every
+# Drives the litmus7 binary (built on branch hetlitmus-work) over every
 # tests/gpu-only/*.litmus test; litmus7's `LISA arch branch parses the scoped
 # Bell IR and HipLang emits one .hip per test (__hip_atomic_* scoped atomics,
 # workgroup layout from the scope tree).  See litmus/HipLang.ml + litmus/top_litmus.ml.
