@@ -168,9 +168,13 @@ HetLitmus: parsed heterogeneous test MP-het (2 procs)
 **Tier-0 lexical limitations of the per-column splitter** (documented, safe for
 the hand-written corpus): the program body must not contain `;` or `|` *inside*
 an instruction cell, and must not contain comments — these characters are
-treated purely as table delimiters. `map_labels` is identity across the sum
-(faithful only for label-free instructions); the Tier-0 corpus has no branch
-targets.
+treated purely as table delimiters. `map_labels` is **not** a placeholder: it
+delegates per constructor to each sub-architecture's `map_labels_base` (see §4),
+so labels and branch targets *within* a processor are renamed faithfully. The
+only structural caveat is that a label cannot cross devices — each processor's
+column is parsed independently — but a cross-device branch is meaningless
+anyway. The Tier-0 corpus happens to use no branch targets, so this path is
+currently unexercised in practice.
 
 ## 6. Files
 

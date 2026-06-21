@@ -668,15 +668,43 @@ end = struct
                  (struct include LexConfig let is_morello = false end) in
              let module GpuLexer = BellLexer.Make(LexConfig) in
              (* per-column sub-parsers: one column's ';'-separated cells -> a
-                list of compound parsed pseudos, tagged for its device *)
-             let parse_cpu txt =
-               List.map Arch'.of_cpu_parsed
-                 (AArch64Parser.instr_option_seq CpuLexer.token
-                    (Lexing.from_string txt)) in
-             let parse_gpu txt =
-               List.map Arch'.of_gpu_parsed
-                 (LISAParser.instr_option_seq GpuLexer.token
-                    (Lexing.from_string txt)) in
+                list of compound parsed pseudos, tagged for its device.  A
+                sub-parser failure is caught here and re-raised naming the
+                processor + ISA + offending column text: without this, the bare
+                Parsing.Parse_error propagates to genParser's call_parser, which
+                reports the position of the *outer* (already slurped-to-EOF)
+                lexbuf -- i.e. an identical, useless "unexpected '' (in prog)"
+                regardless of which cell on which side is malformed. *)
+             let parse_cpu p txt =
+               let lexbuf = Lexing.from_string txt in
+               (try
+                  List.map Arch'.of_cpu_parsed
+                    (AArch64Parser.instr_option_seq CpuLexer.token lexbuf)
+                with
+                | Parsing.Parse_error ->
+                   Warn.user_error
+                     "HetLitmus: P%d (cpu, AArch64) parse error near offset %d \
+                      of its instruction column %S"
+                     p lexbuf.Lexing.lex_curr_p.Lexing.pos_cnum txt
+                | LexMisc.Error (msg,_) ->
+                   Warn.user_error
+                     "HetLitmus: P%d (cpu, AArch64) lexing error: %s (in column %S)"
+                     p msg txt) in
+             let parse_gpu p txt =
+               let lexbuf = Lexing.from_string txt in
+               (try
+                  List.map Arch'.of_gpu_parsed
+                    (LISAParser.instr_option_seq GpuLexer.token lexbuf)
+                with
+                | Parsing.Parse_error ->
+                   Warn.user_error
+                     "HetLitmus: P%d (gpu, LISA/Bell) parse error near offset %d \
+                      of its instruction column %S"
+                     p lexbuf.Lexing.lex_curr_p.Lexing.pos_cnum txt
+                | LexMisc.Error (msg,_) ->
+                   Warn.user_error
+                     "HetLitmus: P%d (gpu, LISA/Bell) lexing error: %s (in column %S)"
+                     p msg txt) in
              let module LexParse = struct
                  type instruction = Arch'.parsedPseudo
                  type token = unit
@@ -684,7 +712,7 @@ end = struct
                  let parser = Arch'.het_parser ~cpu:parse_cpu ~gpu:parse_gpu
                end in
              let module P = GenParser.Make(Cfg)(Arch')(LexParse) in
-             (fun _hash_env name in_chan _out_chan splitted ->
+             (fun _hash_env _name in_chan _out_chan splitted ->
                try
                  let parsed = P.parse in_chan splitted in
                  close_in in_chan ;

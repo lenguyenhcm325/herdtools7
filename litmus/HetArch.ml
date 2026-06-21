@@ -344,9 +344,11 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
        (* parse each column with its device's sub-architecture *)
        let parsed_columns =
          List.map2
-           (fun (_,dev) col ->
+           (fun (p,dev) col ->
              let txt = String.concat " ; " col in
-             match dev with DevCpu -> cpu txt | DevGpu -> gpu txt)
+             (* the proc number rides into the sub-parser so a malformed cell
+                names its processor + ISA instead of failing at the section EOF *)
+             match dev with DevCpu -> cpu p txt | DevGpu -> gpu p txt)
            procs_dev columns in
        (* genParser wants rows (it transposes rows -> columns internally) *)
        let prog_rows =
