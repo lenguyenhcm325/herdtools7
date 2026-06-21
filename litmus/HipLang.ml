@@ -315,23 +315,24 @@ let dump chan tname parsed =
       p "  }\n")
     prog ;
   p "}\n\n" ;
-  (* ---- minimal illustrative host harness (NOT hipcc-checked: ROCm is not
-         installed here; the AMD-compile step is the HIP analog of Task 8 and
-         is deferred -- see hetlitmus/docs/hip-emitter.md) ---- *)
-  p "// ---- host harness (illustrative; emit-only, NOT hipcc-compiled here) ----\n" ;
+  (* ---- minimal illustrative host harness.  The device kernel + this harness
+         are compile-checked for the MI300A ISA (gfx942) by
+         hetlitmus/compile-hip.sh (the HIP analog of CUDA Task 8); hardware
+         execution stays Task 9 / MI300A-gated.  See hetlitmus/docs/hip-emitter.md. *)
+  p "// ---- host harness (illustrative; compile-checked for gfx942 via hetlitmus/compile-hip.sh; run = Task 9, MI300A) ----\n" ;
   p "// Result buffer layout: __out[proc * %d + regIndex].\n" nregs_layout ;
   p "// Reset all globals to 0 before each launch; the weak outcome under\n" ;
   p "// test is exactly the `condition' line above.\n" ;
   p "int main(void) {\n" ;
-  List.iter (fun g -> p "  int *%s;   hipMallocManaged(&%s, sizeof(int));\n" g g) globals ;
-  p "  int *__out; hipMallocManaged(&__out, sizeof(int) * %d * %d);\n"
+  List.iter (fun g -> p "  int *%s;   (void)hipMallocManaged(&%s, sizeof(int));\n" g g) globals ;
+  p "  int *__out; (void)hipMallocManaged(&__out, sizeof(int) * %d * %d);\n"
     (max 1 nprocs) nregs_layout ;
   p "  for (int it = 0; it < 100000; ++it) {\n" ;
   List.iter (fun g -> p "    *%s = 0;\n" g) globals ;
   p "    hipLaunchKernelGGL(litmus_%s, dim3(%d), dim3(%d), 0, 0, %s);\n"
     (c_ident tname) n_blocks block_dim
     (String.concat ", " (globals @ ["__out"])) ;
-  p "    hipDeviceSynchronize();\n" ;
+  p "    (void)hipDeviceSynchronize();\n" ;
   p "    // TODO(hardware, Task 9): tally __out against the condition.\n" ;
   p "  }\n" ;
   p "  return 0;\n" ;

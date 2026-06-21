@@ -92,13 +92,17 @@ its own workgroup, so `MP-cta-F` puts the two threads in *distinct* workgroups �
 the moral-strength / scope-mismatch demonstration. Host launch uses
 `hipLaunchKernelGGL(litmus_X, dim3(nblocks), dim3(blockdim), 0, 0, ...)`.
 
-## Out of scope / next steps (the HIP analog of CUDA Task 8/9)
-- **HIP compile (deferred):** ROCm/`hipcc` is **not installed** here, so the
-  `.hip` are **emit-only** (not compiled). This is the HIP counterpart of CUDA
-  Task 8. First step on a ROCm box (target MI300A, `gfx942`):
-  `hipcc -std=c++17 --offload-arch=gfx942 <test>.hip -o <test>` and fix any
-  surface issues. The host `main()` is illustrative scaffolding (launch geometry
-  + result-buffer layout), as on the CUDA side.
+## Compile status & next steps (HIP analog of CUDA Task 8/9)
+- **HIP compile (Task 8 — DONE):** ROCm/`hipcc` (HIP-Clang 7.2.4) is installed,
+  so the emitted `.hip` are **compile-checked**, not merely emitted. Run
+  `hetlitmus/compile-hip.sh` to cross-compile every corpus `.hip` for the MI300A
+  ISA (`gfx942`) with `hipcc --offload-arch=gfx942 -std=c++17 <test>.hip -o <test>`;
+  all 8 gpu-only tests build clean. `amdclang++` accepts the `__hip_atomic_*` /
+  `__HIP_MEMORY_SCOPE_*` builtins (nvcc does **not**, so this requires the
+  HIP-Clang stack, not HIP-over-CUDA). A clean build proves the scope/order
+  lowering is valid for the target ISA; it does NOT validate memory-model
+  behaviour. The host `main()` is illustrative scaffolding (launch geometry +
+  result-buffer layout), as on the CUDA side.
 - **Task 9 (hardware):** deferred — MI300A runs + stressing + tallying `__out`
   against the `condition` line.
 - **Oracle:** `expected-amd-gcn3.csv` is the AMD GCN3 reference; MI300A is CDNA3

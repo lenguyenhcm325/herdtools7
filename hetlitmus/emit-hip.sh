@@ -7,8 +7,10 @@
 # workgroup layout from the scope tree).  See litmus/HipLang.ml + litmus/top_litmus.ml.
 #
 # NB: the same litmus7 run also drops a .cu (CudaLang); this script keeps only the
-# .hip (see hip-out/.gitignore).  The hipcc compile is the HIP analog of CUDA's
-# Task 8 and is deferred (ROCm/hipcc is not installed here).
+# .hip (see hip-out/.gitignore).  Compile-checking the emitted .hip (the HIP
+# analog of CUDA's Task 8) is now wired: run ./compile-hip.sh afterwards to
+# cross-compile each .hip for the MI300A ISA (gfx942) with hipcc.  Hardware
+# execution stays Task 9 / MI300A-gated.
 #
 # Usage:  ./emit-hip.sh [OUTDIR]      (default OUTDIR=./hip-out)
 set -euo pipefail
