@@ -398,6 +398,583 @@ end = struct
 
   module SP = Splitter.Make(LexConfig)
 
+  (* ===================== HetLitmus: GPU back-end dialect ===================
+     Phase B: the combined CPU+GPU harness is emitted for BOTH CUDA and HIP from
+     ONE LISA parse.  CudaLang and HipLang share the layout / globals /
+     result-register analysis byte-for-byte; only the per-instruction lowering
+     (dump_instr) and a few host tokens differ, so a `gpu_dialect' captures just
+     that delta and the same driver template is rendered twice (<t>.cu, <t>.hip). *)
+  type gpu_dialect = {
+      gd_ext : string ;             (* output extension: "cu" | "hip" *)
+      gd_name : string ;            (* "CUDA" | "HIP" *)
+      gd_runtime_include : string ; (* the differing GPU atomics/runtime header *)
+      gd_dump_instr : out_channel -> string -> BellBase.instruction -> unit ;
+      gd_malloc_managed : string -> string -> string ; (* var, bytes -> stmt *)
+      gd_device_sync : string ;     (* host-side device-sync statement *)
+      gd_free : string -> string ;  (* var -> free statement *)
+      gd_bar : string -> string -> string ; (* indent, ptr-expr -> arrive+spin *)
+    }
+
+  let cuda_dialect = {
+      gd_ext = "cu" ; gd_name = "CUDA" ;
+      gd_runtime_include = "#include <cuda/atomic>" ;
+      gd_dump_instr = CudaLang.dump_instr ;
+      gd_malloc_managed =
+        (fun v bytes -> Printf.sprintf "cudaMallocManaged(&%s, %s);" v bytes) ;
+      gd_device_sync = "cudaDeviceSynchronize();" ;
+      gd_free = (fun v -> Printf.sprintf "cudaFree(%s);" v) ;
+      gd_bar =
+        (fun ind ptr ->
+          Printf.sprintf
+            "%scuda::atomic_ref<int, cuda::thread_scope_system> _bar(*(%s));\n\
+             %s_bar.fetch_add(1, cuda::memory_order_seq_cst);\n\
+             %swhile (_bar.load(cuda::memory_order_seq_cst) < NPART) { }\n"
+            ind ptr ind ind) ;
+    }
+
+  let hip_dialect = {
+      gd_ext = "hip" ; gd_name = "HIP" ;
+      gd_runtime_include = "#include <hip/hip_runtime.h>" ;
+      gd_dump_instr = HipLang.dump_instr ;
+      gd_malloc_managed =
+        (fun v bytes -> Printf.sprintf "(void)hipMallocManaged(&%s, %s);" v bytes) ;
+      gd_device_sync = "(void)hipDeviceSynchronize();" ;
+      gd_free = (fun v -> Printf.sprintf "(void)hipFree(%s);" v) ;
+      gd_bar =
+        (fun ind ptr ->
+          Printf.sprintf
+            "%s(void)__hip_atomic_fetch_add((%s), 1, __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_SYSTEM);\n\
+             %swhile (__hip_atomic_load((%s), __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_SYSTEM) < NPART) { }\n"
+            ind ptr ind ptr) ;
+    }
+
+  (* ===================== HetLitmus: the compound emitter ===================
+     Phase A: the AArch64-specific Tier-2 body is now a functor over the CPU
+     module chain (Arch_litmus + Compile_litmus + a small column frontend); the
+     `Het' dispatch arm pre-scans the device tag and applies it at AArch64 or
+     X86_64.  The GPU side is fixed (LISA/Bell -> CudaLang/HipLang).  Every CPU
+     reference below goes through the [Cpu]/[CpuF] parameters, so the body is
+     ISA-agnostic.  See hetlitmus/docs/het-emission.md. *)
+  module HetEmit
+      (Cfg : Config)
+      (Cpu : Arch_litmus.S)
+      (CpuComp : XXXCompile_litmus.S with module A = Cpu)
+      (CpuLP : GenParser.LexParse with type instruction = Cpu.parsedPseudo)
+      (CpuF : sig
+         (* lex+parse ONE processor column's ';'-free instruction text with the
+            matching ISA sub-parser (errors name the proc + ISA + column) *)
+         val parse_column : int -> string -> Cpu.parsedPseudo list
+         val isa_name : string         (* human label, e.g. "AArch64" *)
+         val host_macro : string       (* CPP macro true on the CPU host ISA *)
+         (* (clang triple, -std) to cross-assemble the real CPU asm on a foreign
+            dev host; None when the build host already IS this ISA (native gcc) *)
+         val cross : (string * string) option
+       end) =
+    struct
+      (* GPU side is fixed: LISA/Bell frontend + CudaLang/HipLang lowering. *)
+      module GpuInstr = Instr.No(struct type instr = BellBase.instruction end)
+      module GpuV = Int64Constant.Make(GpuInstr)
+      module Gpu = LISAArch_litmus.Make(GpuV)
+      module Arch' = HetArch.Make(Cpu)(Gpu)
+      module GpuLexer = BellLexer.Make(LexConfig)
+
+      let parse_cpu p txt = List.map Arch'.of_cpu_parsed (CpuF.parse_column p txt)
+      let parse_gpu p txt =
+        let lexbuf = Lexing.from_string txt in
+        (try
+           List.map Arch'.of_gpu_parsed
+             (LISAParser.instr_option_seq GpuLexer.token lexbuf)
+         with
+         | Parsing.Parse_error ->
+            Warn.user_error
+              "HetLitmus: P%d (gpu, LISA/Bell) parse error near offset %d \
+               of its instruction column %S"
+              p lexbuf.Lexing.lex_curr_p.Lexing.pos_cnum txt
+         | LexMisc.Error (msg,_) ->
+            Warn.user_error
+              "HetLitmus: P%d (gpu, LISA/Bell) lexing error: %s (in column %S)"
+              p msg txt)
+
+      module LexParse = struct
+          type instruction = Arch'.parsedPseudo
+          type token = unit
+          let lexer = fun _ -> ()
+          let parser = Arch'.het_parser ~cpu:parse_cpu ~gpu:parse_gpu
+        end
+      module P = GenParser.Make(Cfg)(Arch')(LexParse)
+
+      (* Tier-2 CPU backend: the REAL litmus7 compile pipeline for this ISA,
+         reused so the CPU thread's inline asm comes from ASMLang (not a
+         hand-rolled emitter).  Driven on a CPU-only projection of the het test. *)
+      module CpuX = Make(Cfg)(Cpu)(CpuLP)(CpuComp)
+      module AllocArchCpu = struct
+          include Cpu
+          type v = Cpu.V.v
+          let maybevToV = Cpu.maybevToV
+          type global = Global_litmus.t
+          let maybevToGlobal = Cpu.tr_global
+        end
+      module AllocCpu = SymbReg.Make(AllocArchCpu)
+
+      let outs_h_content = HetArch.outs_h
+      let outs_c_content = HetArch.outs_c
+
+      let run _hash_env _name in_chan _out_chan splitted =
+        try
+          let parsed = P.parse in_chan splitted in
+          close_in in_chan ;
+          let tname = splitted.Splitter.name.Name.name in
+          let doc = splitted.Splitter.name in
+          let nprocs_total = List.length parsed.MiscParser.prog in
+          (* ---- classify processors by device tag ---- *)
+          let dev_of_proc p =
+            let rec find = function
+              | ((q,annot,_),_)::_ when q=p ->
+                 (match annot with Some (d::_) -> d | _ -> "?")
+              | _::rest -> find rest
+              | [] -> "?" in
+            find parsed.MiscParser.prog in
+          let is_cpu p = dev_of_proc p = "cpu" in
+          if OT.verbose >= 0 then begin
+            Printf.eprintf
+              "HetLitmus: emitting Tier-2 harness for %s (%d procs, CPU=%s)\n%!"
+              tname nprocs_total CpuF.isa_name ;
+            List.iter
+              (fun ((p,annot,_),_code) ->
+                let dev = match annot with Some (d::_) -> d | _ -> "?" in
+                Printf.eprintf "  P%d device=%s -> %s\n%!" p dev
+                  (match dev with
+                   | "cpu" ->
+                      Printf.sprintf "CPU pthread (%s asm via ASMLang)" CpuF.isa_name
+                   | "gpu" -> "GPU kernel (LISA/PTX via CudaLang/HipLang)"
+                   | _ -> "unknown"))
+              parsed.MiscParser.prog
+          end ;
+          (* ---- CPU-only projection -> compile -> templates ---- *)
+          let cpu_prog =
+            List.filter_map
+              (fun ((p,annot,f),code) -> match annot with
+                | Some ("cpu"::_) ->
+                   Some ((p,annot,f),List.map Arch'.to_cpu_pseudo code)
+                | _ -> None)
+              parsed.MiscParser.prog in
+          let cpu_init =
+            List.filter
+              (fun (loc,_) -> match loc with
+                | MiscParser.Location_reg (p,_) -> is_cpu p
+                | _ -> true)
+              parsed.MiscParser.init in
+          let prop_of = function
+            | ConstrGen.ForallStates p | ConstrGen.ExistsState p
+            | ConstrGen.NotExistsState p -> p in
+          let rec filt_cpu p =
+            let open ConstrGen in
+            match p with
+            | Atom (LV (Loc (MiscParser.Location_reg (pr,_)),_)) ->
+               if is_cpu pr then Some p else None
+            | Atom _ -> None
+            | Not q -> (match filt_cpu q with Some q' -> Some (Not q') | None -> None)
+            | And ps -> Some (And (List.filter_map filt_cpu ps))
+            | Or ps ->
+               (match List.filter_map filt_cpu ps with [] -> None | xs -> Some (Or xs))
+            | Implies (a,b) ->
+               (match filt_cpu a, filt_cpu b with
+                | Some a',Some b' -> Some (Implies (a',b')) | _ -> None) in
+          let cpu_prop =
+            match filt_cpu (prop_of parsed.MiscParser.condition) with
+            | Some p -> p | None -> ConstrGen.And [] in
+          let cpu_parsed =
+            { MiscParser.info = parsed.MiscParser.info ;
+              init = cpu_init ;
+              prog = cpu_prog ;
+              filter = None ;
+              condition = ConstrGen.ExistsState cpu_prop ;
+              locations = [] ;
+              extra_data = MiscParser.empty_extra ; } in
+          let cpu_allocated = AllocCpu.allocate_regs cpu_parsed in
+          let cpu_compiled = CpuX.Comp.compile doc cpu_allocated in
+          let global_env =
+            List.map
+              (fun (loc,t) ->
+                let t = match t with CType.Array (b,_) -> CType.Base b | _ -> t in
+                loc,t)
+              cpu_compiled.CpuX.Utils.T.globals in
+          (* per-CPU-proc inline-asm function signature (mirrors exactly what
+             ASMLang.dump_fun emits: addresses then output regs). *)
+          let cpu_param_types out proc =
+            let addrs,_ptes = Cpu.Out.get_addrs out in
+            let addr_params =
+              List.map
+                (fun a ->
+                  let ty = try List.assoc a global_env with Not_found -> Compile.base in
+                  (Printf.sprintf "%s *%s" (SkelUtil.dump_global_type a ty) a), a)
+                addrs in
+            let out_params =
+              List.map
+                (fun reg ->
+                  let ty =
+                    let t = Cpu.Out.RegMap.find reg out.Cpu.Out.ty_env in
+                    if CType.is_tag_ptr t then CType.pointer_type t else t in
+                  (Printf.sprintf "%s *%s" (CType.dump ty) (Cpu.Out.dump_out_reg proc reg)),
+                  (Cpu.Out.dump_out_reg proc reg))
+                out.Cpu.Out.final in
+            addr_params, out_params in
+          let params =
+            List.map
+              (fun (proc,(out,(_outregs,envV))) ->
+                (proc,out,envV,cpu_param_types out proc))
+              cpu_compiled.CpuX.Utils.T.code in
+          (* ---- GPU-only projection (reuse CudaLang translation) ---- *)
+          let gpu_prog =
+            List.filter_map
+              (fun ((p,annot,f),code) -> match annot with
+                | Some ("gpu"::_) ->
+                   Some ((p,annot,f),List.map Arch'.to_gpu_pseudo code)
+                | _ -> None)
+              parsed.MiscParser.prog in
+          let gpu_globals = CudaLang.collect_globals gpu_prog in
+          let gpu_procs = List.map (fun ((p,_,_),_) -> p) gpu_prog in
+          let layout,n_blocks,block_dim =
+            CudaLang.layout_of_scopes None gpu_procs in
+          let gpu_slots =
+            List.concat_map
+              (fun ((p,_,_),code) ->
+                List.map
+                  (fun n ->
+                    (p, Printf.sprintf "r%d" n,
+                     Printf.sprintf "__out[%d*%d+%d]" p CudaLang.nregs_layout n))
+                  (CudaLang.result_regs code))
+              gpu_prog in
+          let cpu_slots =
+            List.concat_map
+              (fun (proc,out,_,_) ->
+                List.mapi
+                  (fun i reg ->
+                    (proc, Cpu.pp_reg reg,
+                     Printf.sprintf "cpu_outs_P%d[%d]" proc i))
+                  out.Cpu.Out.final)
+              params in
+          let slots = cpu_slots @ gpu_slots in
+          let nslots = List.length slots in
+          (* ---- condition -> C predicate over the outcome vector ---- *)
+          let slot_index =
+            let tbl = Hashtbl.create 8 in
+            List.iteri (fun i (p,r,_) -> Hashtbl.replace tbl (p,r) i) slots ;
+            fun p r -> Hashtbl.find_opt tbl (p,r) in
+          let cval v = ParsedConstant.pp_v v in
+          let rec c_of_prop p =
+            let open ConstrGen in
+            match p with
+            | Atom (LV (Loc (MiscParser.Location_reg (pr,r)),v)) ->
+               (match slot_index pr r with
+                | Some i -> Printf.sprintf "(o[%d] == %s)" i (cval v)
+                | None -> "1 /*unmapped*/")
+            | Atom _ -> "1 /*unsupported atom*/"
+            | Not q -> Printf.sprintf "(!%s)" (c_of_prop q)
+            | And [] -> "1"
+            | And ps -> "(" ^ String.concat " && " (List.map c_of_prop ps) ^ ")"
+            | Or [] -> "0"
+            | Or ps -> "(" ^ String.concat " || " (List.map c_of_prop ps) ^ ")"
+            | Implies (a,b) ->
+               Printf.sprintf "(!(%s) || %s)" (c_of_prop a) (c_of_prop b) in
+          let cond_expr = c_of_prop (prop_of parsed.MiscParser.condition) in
+          (* ---- shared globals (allocated once, coherent to both) ---- *)
+          let cpu_addrs =
+            List.concat_map (fun (_,_,_,(ap,_)) -> List.map snd ap) params in
+          let all_globals =
+            let seen = Hashtbl.create 8 in
+            List.filter
+              (fun g -> if Hashtbl.mem seen g then false
+                        else (Hashtbl.add seen g () ; true))
+              (cpu_addrs @ gpu_globals) in
+          let npart = List.length params + List.length gpu_prog in
+          let id = CudaLang.c_ident tname in
+          (* ================= file emission ================= *)
+          let base =
+            if OT.is_out && (try Sys.is_directory OT.tarname with _ -> false)
+            then OT.tarname else Sys.getcwd () in
+          let dir = Filename.concat base tname in
+          if not (Sys.file_exists dir) then Sys.mkdir dir 0o755 ;
+          let write fname f =
+            Misc.output_protect f (Filename.concat dir fname) in
+          (* ---- <tname>_cpu.c : the CPU threads (real ISA asm) ---- *)
+          let dump_cpu_file ch =
+            let s = output_string ch in
+            s (Printf.sprintf
+                 "/* HetLitmus Tier-2: CPU threads for %s (%s).\n   \
+                  The bodies below are emitted by litmus7 ASMLang.dump_fun\n   \
+                  (genuine litmus7 %s compile pipeline).  DO NOT EDIT. */\n"
+                 tname CpuF.isa_name CpuF.isa_name) ;
+            s "#include <stdint.h>\n\n" ;
+            s (Printf.sprintf "#if defined(%s)\n" CpuF.host_macro) ;
+            List.iter
+              (fun (proc,out,envV,_sig) ->
+                CpuX.Lang.dump_fun ch Template.no_extra_args global_env envV proc out)
+              params ;
+            s "#else\n" ;
+            s (Printf.sprintf
+                 "/* Portable shim so the harness also compiles on a host whose\n   \
+                  ISA is not %s.  NOT the tested path -- the %s asm above is the\n   \
+                  real CPU thread; build on %s (or cross-assemble) to run it. */\n"
+                 CpuF.isa_name CpuF.isa_name CpuF.isa_name) ;
+            List.iter
+              (fun (proc,_out,_envV,(addr_params,out_params)) ->
+                let ps =
+                  String.concat ","
+                    (List.map fst (addr_params @ out_params)) in
+                s (Printf.sprintf "static void code%d(%s) {\n" proc ps) ;
+                List.iter (fun (_,a) -> s (Printf.sprintf "  (void)%s;\n" a)) addr_params ;
+                List.iter (fun (_,nm) -> s (Printf.sprintf "  *%s = 0;\n" nm)) out_params ;
+                s "}\n")
+              params ;
+            s "#endif\n\n" ;
+            (* non-static entry points the GPU-side driver calls *)
+            List.iter
+              (fun (proc,_out,_envV,(addr_params,out_params)) ->
+                let ps = String.concat "," (List.map fst (addr_params @ out_params)) in
+                let args = String.concat "," (List.map snd (addr_params @ out_params)) in
+                s (Printf.sprintf "void het_run_P%d(%s) { code%d(%s); }\n"
+                     proc ps proc args))
+              params in
+          (* ---- <tname>.{cu,hip} : GPU kernel + driver (per dialect) ---- *)
+          let dump_gpu_file dialect ch =
+            let s = output_string ch in
+            s (Printf.sprintf
+                 "// HetLitmus Tier-2 GPU kernel + driver for %s (%s dialect).\n"
+                 tname dialect.gd_name) ;
+            s "// P(gpu) run as a GPU kernel; P(cpu) as a pthread (see _cpu.c).\n" ;
+            s (Printf.sprintf
+                 "// Shared vars are %sMallocManaged (CPU/GPU-coherent on GH200/MI300A);\n"
+                 (if dialect.gd_ext = "cu" then "cuda" else "hip")) ;
+            s "// a system-scope atomic barrier rendezvouses both sides.\n" ;
+            s (Printf.sprintf
+                 "// COMPILE-ONLY (%s -c); GPU execution is Task 9.  DO NOT EDIT.\n"
+                 (if dialect.gd_ext = "cu" then "nvcc" else "hipcc")) ;
+            s (dialect.gd_runtime_include ^ "\n") ;
+            s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
+            s "#include <pthread.h>\n#include <inttypes.h>\n" ;
+            s "extern \"C\" {\n" ;
+            s "#include \"outs.h\"\n" ;
+            List.iter
+              (fun (proc,_out,_envV,(addr_params,out_params)) ->
+                let ps = String.concat "," (List.map fst (addr_params @ out_params)) in
+                s (Printf.sprintf "  void het_run_P%d(%s);\n" proc ps))
+              params ;
+            s "}\n" ;
+            s {ocaml|extern "C" void *malloc_check(size_t sz){
+  void *p = malloc(sz);
+  if (p == NULL) { fprintf(stderr,"out of memory\n"); exit(2); }
+  return p;
+}
+|ocaml} ;
+            s (Printf.sprintf "\n#define NPART %d\n\n" npart) ;
+            (* kernel *)
+            let kparams =
+              String.concat ", "
+                (List.map (fun g -> Printf.sprintf "int* %s" g) gpu_globals
+                 @ ["int* __out"; "int* barrier"]) in
+            s (Printf.sprintf "__global__ void litmus_%s(%s) {\n" id kparams) ;
+            List.iter
+              (fun ((proc,_,_),code) ->
+                let blk,lane = layout proc in
+                let instrs = CudaLang.instrs_of_code code in
+                let regs = CudaLang.result_regs code in
+                s (Printf.sprintf "  if (blockIdx.x == %d && threadIdx.x == %d) {\n" blk lane) ;
+                s (dialect.gd_bar "    " "barrier") ;
+                List.iter (fun n -> s (Printf.sprintf "    int r%d = 0;\n" n)) regs ;
+                List.iter (fun i -> dialect.gd_dump_instr ch "    " i) instrs ;
+                List.iter
+                  (fun n ->
+                    s (Printf.sprintf "    __out[%d*%d+%d] = r%d;\n"
+                         proc CudaLang.nregs_layout n n))
+                  regs ;
+                s "  }\n")
+              gpu_prog ;
+            s "}\n\n" ;
+            (* CPU pthread wrappers (arrive at barrier, then run asm) *)
+            List.iter
+              (fun (proc,_out,_envV,(addr_params,out_params)) ->
+                s (Printf.sprintf "struct cpu_args_P%d {\n" proc) ;
+                List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) addr_params ;
+                s "  int* barrier;\n" ;
+                List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) out_params ;
+                s "};\n" ;
+                s (Printf.sprintf "static void* cpu_thread_P%d(void* _a) {\n" proc) ;
+                s (Printf.sprintf "  cpu_args_P%d* a = (cpu_args_P%d*)_a;\n" proc proc) ;
+                s (dialect.gd_bar "  " "a->barrier") ;
+                let call_args =
+                  String.concat ","
+                    (List.map (fun (_,a) -> "a->"^a) (addr_params @ out_params)) in
+                s (Printf.sprintf "  het_run_P%d(%s);\n  return NULL;\n}\n\n" proc call_args))
+              params ;
+            (* outcome labels, condition, dump callback *)
+            let labelstr =
+              String.concat ", "
+                (List.map (fun (p,r,_) -> Printf.sprintf "\"%d:%s\"" p r) slots) in
+            s (Printf.sprintf "static const char* _labels[%d] = { %s };\n"
+                 (max 1 nslots) labelstr) ;
+            s (Printf.sprintf
+                 "static int _cond(intmax_t* o){ (void)o; return %s; }\n" cond_expr) ;
+            s {ocaml|static void _dump_one(FILE* _ch, intmax_t* o, count_t c, int show){
+  fprintf(_ch, "%-8" PRIu64 "%c> ", c, show ? '*' : ' ');
+|ocaml} ;
+            s (Printf.sprintf "  for (int i=0;i<%d;i++)" nslots) ;
+            s {ocaml| fprintf(_ch, "%s=%" PRIdMAX "; ", _labels[i], o[i]);
+  fprintf(_ch, "\n");
+}
+
+|ocaml} ;
+            (* driver *)
+            s "int main(void){\n" ;
+            List.iter
+              (fun g ->
+                s (Printf.sprintf "  int *%s; %s\n" g
+                     (dialect.gd_malloc_managed g "sizeof(int)")))
+              all_globals ;
+            s (Printf.sprintf "  int *__out; %s\n"
+                 (dialect.gd_malloc_managed "__out"
+                    (Printf.sprintf "sizeof(int)*%d*%d"
+                       (max 1 nprocs_total) CudaLang.nregs_layout))) ;
+            s (Printf.sprintf "  int *barrier; %s\n"
+                 (dialect.gd_malloc_managed "barrier" "sizeof(int)")) ;
+            List.iter
+              (fun (proc,_out,_envV,(_ap,out_params)) ->
+                if out_params <> [] then
+                  s (Printf.sprintf "  int cpu_outs_P%d[%d];\n"
+                       proc (List.length out_params)))
+              params ;
+            s "  outs_t* hist = NULL;\n  const int iterations = 100000;\n" ;
+            s "  for (int _it=0; _it<iterations; ++_it) {\n" ;
+            List.iter (fun g -> s (Printf.sprintf "    *%s = 0;\n" g)) all_globals ;
+            s "    *barrier = 0;\n" ;
+            s (Printf.sprintf "    for (int _k=0;_k<%d*%d;_k++) __out[_k]=0;\n"
+                 (max 1 nprocs_total) CudaLang.nregs_layout) ;
+            List.iter
+              (fun (proc,_out,_envV,(addr_params,out_params)) ->
+                let fields =
+                  String.concat ", "
+                    (List.map snd addr_params
+                     @ ["barrier"]
+                     @ List.mapi
+                         (fun i _ -> Printf.sprintf "&cpu_outs_P%d[%d]" proc i)
+                         out_params) in
+                s (Printf.sprintf "    cpu_args_P%d _ca%d = { %s };\n" proc proc fields) ;
+                s (Printf.sprintf
+                     "    pthread_t _th%d; pthread_create(&_th%d, NULL, cpu_thread_P%d, &_ca%d);\n"
+                     proc proc proc proc))
+              params ;
+            let kargs = String.concat ", " (gpu_globals @ ["__out"; "barrier"]) in
+            s (Printf.sprintf "    litmus_%s<<<%d, %d>>>(%s);\n"
+                 id n_blocks block_dim kargs) ;
+            List.iter
+              (fun (proc,_,_,_) -> s (Printf.sprintf "    pthread_join(_th%d, NULL);\n" proc))
+              params ;
+            s (Printf.sprintf "    %s\n" dialect.gd_device_sync) ;
+            s (Printf.sprintf "    intmax_t _o[%d];\n" (max 1 nslots)) ;
+            List.iteri
+              (fun i (_p,_r,src) -> s (Printf.sprintf "    _o[%d] = %s;\n" i src))
+              slots ;
+            s (Printf.sprintf
+                 "    hist = add_outcome_outs(hist, _o, %d, 1, _cond(_o));\n" nslots) ;
+            s "  }\n" ;
+            s (Printf.sprintf "  intmax_t _buff[%d];\n" (max 1 nslots)) ;
+            s (Printf.sprintf "  printf(\"Test %s\\n\");\n" tname) ;
+            s (Printf.sprintf "  dump_outs(stdout, _dump_one, hist, _buff, %d);\n" nslots) ;
+            s "  free_outs(hist);\n" ;
+            List.iter (fun g -> s (Printf.sprintf "  %s\n" (dialect.gd_free g))) all_globals ;
+            s (Printf.sprintf "  %s %s\n  return 0;\n}\n"
+                 (dialect.gd_free "__out") (dialect.gd_free "barrier")) in
+          (* ---- comp.sh / Makefile / README ---- *)
+          let dump_comp ch =
+            let s = output_string ch in
+            s "#!/bin/sh\n" ;
+            s (Printf.sprintf
+                 "# Compile-only check for HetLitmus Tier-2 harness '%s'.\n" tname) ;
+            s "# COMPILE-ONLY (-c, no link, no GPU run -- execution is Task 9).\n" ;
+            s "# Usage: sh comp.sh [cuda|hip]   (default cuda)\n" ;
+            s "set -e\n" ;
+            s "TARGET=\"${1:-cuda}\"\n" ;
+            s "NVCC=\"${NVCC:-nvcc}\" ; CUDA_ARCH=\"${CUDA_ARCH:-sm_90}\"   # GH200=sm_90\n" ;
+            s "HIPCC=\"${HIPCC:-hipcc}\" ; HIP_ARCH=\"${HIP_ARCH:-gfx942}\" # MI300A=gfx942\n" ;
+            (* shared CPU compile steps *)
+            s "echo \"+ gcc -c outs.c\"\ngcc -c outs.c -o outs.o\n" ;
+            s (Printf.sprintf
+                 "echo \"+ gcc -c %s_cpu.c  (host build; %s asm under #if defined(%s))\"\n"
+                 tname CpuF.isa_name CpuF.host_macro) ;
+            s (Printf.sprintf "gcc -c %s_cpu.c -o %s_cpu_host.o\n" tname tname) ;
+            (match CpuF.cross with
+             | Some (triple,std) ->
+                s "if command -v clang >/dev/null 2>&1; then\n" ;
+                s (Printf.sprintf
+                     "  echo \"+ clang --target=%s -c %s_cpu.c  (real %s asm)\"\n"
+                     triple tname CpuF.isa_name) ;
+                s (Printf.sprintf
+                     "  clang --target=%s -std=%s -c %s_cpu.c -o %s_cpu.o\n"
+                     triple std tname tname) ;
+                s (Printf.sprintf
+                     "else\n  echo \"(no clang: skipped %s cross-assembly of %s_cpu.c)\"\nfi\n"
+                     CpuF.isa_name tname)
+             | None ->
+                s (Printf.sprintf
+                     "# (%s host == build host: the gcc -c above already assembled the real %s asm)\n"
+                     CpuF.isa_name CpuF.isa_name)) ;
+            (* GPU step branches by target; hard-fail if the toolchain is absent *)
+            s "case \"$TARGET\" in\n" ;
+            s "  cuda)\n" ;
+            s "    command -v \"$NVCC\" >/dev/null 2>&1 || { echo \"error: $NVCC not found (CUDA toolchain absent)\" >&2 ; exit 1 ; }\n" ;
+            s (Printf.sprintf "    echo \"+ $NVCC -std=c++17 -arch=$CUDA_ARCH -c %s.cu\"\n" tname) ;
+            s (Printf.sprintf "    $NVCC -std=c++17 -arch=$CUDA_ARCH -c %s.cu -o %s.o ;;\n" tname tname) ;
+            s "  hip)\n" ;
+            s "    command -v \"$HIPCC\" >/dev/null 2>&1 || { echo \"error: $HIPCC not found (HIP/ROCm toolchain absent)\" >&2 ; exit 1 ; }\n" ;
+            s (Printf.sprintf "    echo \"+ $HIPCC --offload-arch=$HIP_ARCH -std=c++17 -c %s.hip\"\n" tname) ;
+            s (Printf.sprintf "    $HIPCC --offload-arch=$HIP_ARCH -std=c++17 -c %s.hip -o %s_hip.o ;;\n" tname tname) ;
+            s "  *) echo \"usage: sh comp.sh [cuda|hip]\" >&2 ; exit 2 ;;\n" ;
+            s "esac\n" ;
+            s "echo 'HetLitmus: compile OK'\n" in
+          let dump_makefile ch =
+            let s = output_string ch in
+            s (Printf.sprintf
+                 "# HetLitmus Tier-2 harness '%s' -- compile-only (objects; no link/run).\n" tname) ;
+            s "NVCC ?= nvcc\nCUDA_ARCH ?= sm_90\nHIPCC ?= hipcc\nHIP_ARCH ?= gfx942\nCC ?= gcc\n\n" ;
+            s "all: cuda\n\n" ;
+            s (Printf.sprintf "cuda: %s.o outs.o %s_cpu_host.o\n" tname tname) ;
+            s (Printf.sprintf "hip: %s_hip.o outs.o %s_cpu_host.o\n\n" tname tname) ;
+            s (Printf.sprintf "%s.o: %s.cu\n\t$(NVCC) -std=c++17 -arch=$(CUDA_ARCH) -c $< -o $@\n\n" tname tname) ;
+            s (Printf.sprintf "%s_hip.o: %s.hip\n\t$(HIPCC) --offload-arch=$(HIP_ARCH) -std=c++17 -c $< -o $@\n\n" tname tname) ;
+            s "outs.o: outs.c\n\t$(CC) -c $< -o $@\n\n" ;
+            s (Printf.sprintf "%s_cpu_host.o: %s_cpu.c\n\t$(CC) -c $< -o $@\n\n" tname tname) ;
+            s ".PHONY: all cuda hip clean\nclean:\n\trm -f *.o\n" in
+          let dump_readme ch =
+            let s = output_string ch in
+            s (Printf.sprintf "# HetLitmus Tier-2 harness: %s\n\n" tname) ;
+            s "Heterogeneous CPU+GPU litmus harness emitted by litmus7 (`Het` arch).\n\n" ;
+            s (Printf.sprintf "CPU ISA: %s.  GPU dialects: CUDA (`.cu`) + HIP (`.hip`).\n\n" CpuF.isa_name) ;
+            s "Files:\n" ;
+            s (Printf.sprintf "- `%s.cu`     GPU kernel + host driver, CUDA dialect (cudaMallocManaged,\n" tname) ;
+            s "             cuda::atomic_ref system-scope barrier, pthread + kernel launch).\n" ;
+            s (Printf.sprintf "- `%s.hip`    same harness, HIP dialect (hipMallocManaged, __hip_atomic_*).\n" tname) ;
+            s (Printf.sprintf "- `%s_cpu.c`  CPU thread(s): real %s inline asm (litmus7 ASMLang).\n" tname CpuF.isa_name) ;
+            s "- `outs.c/.h` litmus7's outcome histogram (verbatim from litmus/libdir).\n" ;
+            s "- `comp.sh` / `Makefile`  compile-only build.\n\n" ;
+            s "Build (compile-only; no GPU needed): `sh comp.sh [cuda|hip]` (default cuda),\n" ;
+            s "or `make cuda` / `make hip`.\n" ;
+            s "Targets: NVIDIA GH200 Grace-Hopper (CUDA) and AMD MI300A (HIP).\n" in
+          write "outs.h" (fun ch -> output_string ch outs_h_content) ;
+          write "outs.c" (fun ch -> output_string ch outs_c_content) ;
+          write (tname ^ "_cpu.c") dump_cpu_file ;
+          write (tname ^ ".cu") (dump_gpu_file cuda_dialect) ;
+          write (tname ^ ".hip") (dump_gpu_file hip_dialect) ;
+          write "comp.sh" dump_comp ;
+          write "Makefile" dump_makefile ;
+          write "README.md" dump_readme ;
+          if OT.verbose >= 0 then
+            Printf.eprintf
+              "HetLitmus: emitted harness directory %s (%s.cu + %s.hip)\n%!"
+              dir tname tname ;
+          Absent
+        with e -> if OT.nocatch then raise e ; Interrupted e
+    end
+
   let from_chan hash_env name in_chan out_chan =
     (* First split the input file in sections *)
     let { Splitter.arch=arch ; _ } as splitted =
@@ -646,522 +1223,103 @@ end = struct
                  Absent
                with e -> if OT.nocatch then raise e ; Interrupted e)
           | `Het ->
-             (* HetLitmus Tier-0/Tier-2: the compound pseudo-arch + cross-device
-                harness emitter.  Instantiate the HetArch functor for the GH200
-                pairing -- AArch64 (CPU) + LISA/PTX (GPU) -- route each
-                processor's cells to its backend's sub-parser (Tier-0), then
-                emit ONE compilable CPU+GPU harness directory (Tier-2):
-                  * each CPU processor -> a pthread running real AArch64 inline
-                    asm produced by the genuine litmus7 AArch64 compile pipeline
-                    + ASMLang.dump_fun (reused, not reimplemented);
-                  * each GPU processor -> a CUDA kernel built from CudaLang's
-                    scoped-atomic translation (reused);
-                  * shared vars in cudaMallocManaged (CPU/GPU-coherent on GH200);
-                  * a system-scope (thread_scope_system) rendezvous barrier so
-                    the CPU and GPU race in the same window;
-                  * GPU register readback merged with the CPU asm outputs into
-                    litmus7's own outs.c outcome histogram.
-                The compile check is COMPILE-ONLY (nvcc -c + gcc -c, clang
-                cross-assembles the AArch64 thread); execution on real hardware
-                is Task 9.  All het logic lives here + in litmus/HetArch.ml; see
+             (* HetLitmus Phase A: the per-column device tag NAMES the CPU ISA.
+                Pre-scan the program-section header to pick the ONE CPU ISA the
+                test's CPU columns share, instantiate the matching CPU module
+                chain (lexer + parser + Arch_litmus + Compile_litmus), and drive
+                the shared HetEmit functor.  The GPU side stays LISA/Bell ->
+                CudaLang/HipLang; HetEmit dual-emits <t>.cu and <t>.hip from the
+                one parse.  All het logic lives here + in litmus/HetArch.ml; see
                 hetlitmus/docs/het-emission.md. *)
-             let module CpuV =
-               SymbConstant.Make
-                 (Int64Scalar)(AArch64PteVal)(AArch64AddrReg)
-                 (AArch64Instr.Std) in
-             let module Cpu = AArch64Arch_litmus.Make(OC)(CpuV) in
-             let module GpuInstr =
-               Instr.No(struct type instr = BellBase.instruction end) in
-             let module GpuV = Int64Constant.Make(GpuInstr) in
-             let module Gpu = LISAArch_litmus.Make(GpuV) in
-             let module Arch' = HetArch.Make(Cpu)(Gpu) in
-             let module CpuLexer =
-               AArch64Lexer.Make
-                 (struct include LexConfig let is_morello = false end) in
-             let module GpuLexer = BellLexer.Make(LexConfig) in
-             (* per-column sub-parsers: one column's ';'-separated cells -> a
-                list of compound parsed pseudos, tagged for its device.  A
-                sub-parser failure is caught here and re-raised naming the
-                processor + ISA + offending column text: without this, the bare
-                Parsing.Parse_error propagates to genParser's call_parser, which
-                reports the position of the *outer* (already slurped-to-EOF)
-                lexbuf -- i.e. an identical, useless "unexpected '' (in prog)"
-                regardless of which cell on which side is malformed. *)
-             let parse_cpu p txt =
-               let lexbuf = Lexing.from_string txt in
-               (try
-                  List.map Arch'.of_cpu_parsed
-                    (AArch64Parser.instr_option_seq CpuLexer.token lexbuf)
-                with
-                | Parsing.Parse_error ->
-                   Warn.user_error
-                     "HetLitmus: P%d (cpu, AArch64) parse error near offset %d \
-                      of its instruction column %S"
-                     p lexbuf.Lexing.lex_curr_p.Lexing.pos_cnum txt
-                | LexMisc.Error (msg,_) ->
-                   Warn.user_error
-                     "HetLitmus: P%d (cpu, AArch64) lexing error: %s (in column %S)"
-                     p msg txt) in
-             let parse_gpu p txt =
-               let lexbuf = Lexing.from_string txt in
-               (try
-                  List.map Arch'.of_gpu_parsed
-                    (LISAParser.instr_option_seq GpuLexer.token lexbuf)
-                with
-                | Parsing.Parse_error ->
-                   Warn.user_error
-                     "HetLitmus: P%d (gpu, LISA/Bell) parse error near offset %d \
-                      of its instruction column %S"
-                     p lexbuf.Lexing.lex_curr_p.Lexing.pos_cnum txt
-                | LexMisc.Error (msg,_) ->
-                   Warn.user_error
-                     "HetLitmus: P%d (gpu, LISA/Bell) lexing error: %s (in column %S)"
-                     p msg txt) in
-             let module LexParse = struct
-                 type instruction = Arch'.parsedPseudo
-                 type token = unit
-                 let lexer = fun _ -> ()
-                 let parser = Arch'.het_parser ~cpu:parse_cpu ~gpu:parse_gpu
-               end in
-             let module P = GenParser.Make(Cfg)(Arch')(LexParse) in
-             (* Tier-2 CPU backend: the REAL litmus7 AArch64 compile pipeline,
-                reused so the CPU thread's inline asm comes from ASMLang (not a
-                hand-rolled emitter).  We drive Comp.compile + Lang.dump_fun on a
-                CPU-only projection of the parsed het test. *)
-             let module CpuLexParse = struct
-                 type instruction = Cpu.parsedPseudo
-                 type token = AArch64Parser.token
-                 let lexer = CpuLexer.token
-                 let parser = AArch64Parser.main
-               end in
-             let module CpuComp = AArch64Compile_litmus.Make(CpuV)(OC) in
-             let module CpuX = Make(Cfg)(Cpu)(CpuLexParse)(CpuComp) in
-             let module AllocArchCpu = struct
-                 include Cpu
-                 type v = Cpu.V.v
-                 let maybevToV = Cpu.maybevToV
-                 type global = Global_litmus.t
-                 let maybevToGlobal = Cpu.tr_global
-               end in
-             let module AllocCpu = SymbReg.Make(AllocArchCpu) in
-             (* litmus7's own outcome histogram, embedded verbatim from
-                litmus/libdir/_outs.{c,h} so the harness is self-contained
-                (the repro uses -set-libdir herd/libdir, which lacks them). *)
-             let outs_h_content = HetArch.outs_h in
-             let outs_c_content = HetArch.outs_c in
-             (fun _hash_env _name in_chan _out_chan splitted ->
+             (fun hash_env name in_chan out_chan splitted ->
                try
-                 let parsed = P.parse in_chan splitted in
-                 close_in in_chan ;
-                 let tname = splitted.Splitter.name.Name.name in
-                 let doc = splitted.Splitter.name in
-                 let nprocs_total = List.length parsed.MiscParser.prog in
-                 (* ---- classify processors by device tag ---- *)
-                 let dev_of_proc p =
-                   let rec find = function
-                     | ((q,annot,_),_)::_ when q=p ->
-                        (match annot with Some (d::_) -> d | _ -> "?")
-                     | _::rest -> find rest
-                     | [] -> "?" in
-                   find parsed.MiscParser.prog in
-                 let is_cpu p = dev_of_proc p = "cpu" in
-                 if OT.verbose >= 0 then begin
-                   Printf.eprintf
-                     "HetLitmus: emitting Tier-2 harness for %s (%d procs)\n%!"
-                     tname nprocs_total ;
-                   List.iter
-                     (fun ((p,annot,_),_code) ->
-                       let dev = match annot with Some (d::_) -> d | _ -> "?" in
-                       Printf.eprintf "  P%d device=%s -> %s\n%!" p dev
-                         (match dev with
-                          | "cpu" -> "CPU pthread (AArch64 asm via ASMLang)"
-                          | "gpu" -> "GPU kernel (LISA/PTX via CudaLang)"
-                          | _ -> "unknown"))
-                     parsed.MiscParser.prog
-                 end ;
-                 (* ---- CPU-only projection -> AArch64 compile -> templates ---- *)
-                 let cpu_prog =
-                   List.filter_map
-                     (fun ((p,annot,f),code) -> match annot with
-                       | Some ("cpu"::_) ->
-                          Some ((p,annot,f),List.map Arch'.to_cpu_pseudo code)
-                       | _ -> None)
-                     parsed.MiscParser.prog in
-                 let cpu_init =
-                   List.filter
-                     (fun (loc,_) -> match loc with
-                       | MiscParser.Location_reg (p,_) -> is_cpu p
-                       | _ -> true)
-                     parsed.MiscParser.init in
-                 let prop_of = function
-                   | ConstrGen.ForallStates p | ConstrGen.ExistsState p
-                   | ConstrGen.NotExistsState p -> p in
-                 let rec filt_cpu p =
-                   let open ConstrGen in
-                   match p with
-                   | Atom (LV (Loc (MiscParser.Location_reg (pr,_)),_)) ->
-                      if is_cpu pr then Some p else None
-                   | Atom _ -> None
-                   | Not q -> (match filt_cpu q with Some q' -> Some (Not q') | None -> None)
-                   | And ps -> Some (And (List.filter_map filt_cpu ps))
-                   | Or ps ->
-                      (match List.filter_map filt_cpu ps with [] -> None | xs -> Some (Or xs))
-                   | Implies (a,b) ->
-                      (match filt_cpu a, filt_cpu b with
-                       | Some a',Some b' -> Some (Implies (a',b')) | _ -> None) in
-                 let cpu_prop =
-                   match filt_cpu (prop_of parsed.MiscParser.condition) with
-                   | Some p -> p | None -> ConstrGen.And [] in
-                 let cpu_parsed =
-                   { MiscParser.info = parsed.MiscParser.info ;
-                     init = cpu_init ;
-                     prog = cpu_prog ;
-                     filter = None ;
-                     condition = ConstrGen.ExistsState cpu_prop ;
-                     locations = [] ;
-                     extra_data = MiscParser.empty_extra ; } in
-                 let cpu_allocated = AllocCpu.allocate_regs cpu_parsed in
-                 let cpu_compiled = CpuX.Comp.compile doc cpu_allocated in
-                 let global_env =
-                   List.map
-                     (fun (loc,t) ->
-                       let t = match t with CType.Array (b,_) -> CType.Base b | _ -> t in
-                       loc,t)
-                     cpu_compiled.CpuX.Utils.T.globals in
-                 (* per-CPU-proc inline-asm function signature (mirrors exactly
-                    what ASMLang.dump_fun emits: addresses then output regs). *)
-                 let cpu_param_types out proc =
-                   let addrs,_ptes = Cpu.Out.get_addrs out in
-                   let addr_params =
-                     List.map
-                       (fun a ->
-                         let ty = try List.assoc a global_env with Not_found -> Compile.base in
-                         (Printf.sprintf "%s *%s" (SkelUtil.dump_global_type a ty) a), a)
-                       addrs in
-                   let out_params =
-                     List.map
-                       (fun reg ->
-                         let ty =
-                           let t = Cpu.Out.RegMap.find reg out.Cpu.Out.ty_env in
-                           if CType.is_tag_ptr t then CType.pointer_type t else t in
-                         (Printf.sprintf "%s *%s" (CType.dump ty) (Cpu.Out.dump_out_reg proc reg)),
-                         (Cpu.Out.dump_out_reg proc reg))
-                       out.Cpu.Out.final in
-                   addr_params, out_params in
-                 let params =
-                   List.map
-                     (fun (proc,(out,(_outregs,envV))) ->
-                       (proc,out,envV,cpu_param_types out proc))
-                     cpu_compiled.CpuX.Utils.T.code in
-                 (* ---- GPU-only projection (reuse CudaLang translation) ---- *)
-                 let gpu_prog =
-                   List.filter_map
-                     (fun ((p,annot,f),code) -> match annot with
-                       | Some ("gpu"::_) ->
-                          Some ((p,annot,f),List.map Arch'.to_gpu_pseudo code)
-                       | _ -> None)
-                     parsed.MiscParser.prog in
-                 let gpu_globals = CudaLang.collect_globals gpu_prog in
-                 let gpu_procs = List.map (fun ((p,_,_),_) -> p) gpu_prog in
-                 let layout,n_blocks,block_dim =
-                   CudaLang.layout_of_scopes None gpu_procs in
-                 let gpu_slots =
-                   List.concat_map
-                     (fun ((p,_,_),code) ->
-                       List.map
-                         (fun n ->
-                           (p, Printf.sprintf "r%d" n,
-                            Printf.sprintf "__out[%d*%d+%d]" p CudaLang.nregs_layout n))
-                         (CudaLang.result_regs code))
-                     gpu_prog in
-                 let cpu_slots =
-                   List.concat_map
-                     (fun (proc,out,_,_) ->
-                       List.mapi
-                         (fun i reg ->
-                           (proc, Cpu.pp_reg reg,
-                            Printf.sprintf "cpu_outs_P%d[%d]" proc i))
-                         out.Cpu.Out.final)
-                     params in
-                 let slots = cpu_slots @ gpu_slots in
-                 let nslots = List.length slots in
-                 (* ---- condition -> C predicate over the outcome vector ---- *)
-                 let slot_index =
-                   let tbl = Hashtbl.create 8 in
-                   List.iteri (fun i (p,r,_) -> Hashtbl.replace tbl (p,r) i) slots ;
-                   fun p r -> Hashtbl.find_opt tbl (p,r) in
-                 let cval v = ParsedConstant.pp_v v in
-                 let rec c_of_prop p =
-                   let open ConstrGen in
-                   match p with
-                   | Atom (LV (Loc (MiscParser.Location_reg (pr,r)),v)) ->
-                      (match slot_index pr r with
-                       | Some i -> Printf.sprintf "(o[%d] == %s)" i (cval v)
-                       | None -> "1 /*unmapped*/")
-                   | Atom _ -> "1 /*unsupported atom*/"
-                   | Not q -> Printf.sprintf "(!%s)" (c_of_prop q)
-                   | And [] -> "1"
-                   | And ps -> "(" ^ String.concat " && " (List.map c_of_prop ps) ^ ")"
-                   | Or [] -> "0"
-                   | Or ps -> "(" ^ String.concat " || " (List.map c_of_prop ps) ^ ")"
-                   | Implies (a,b) ->
-                      Printf.sprintf "(!(%s) || %s)" (c_of_prop a) (c_of_prop b) in
-                 let cond_expr = c_of_prop (prop_of parsed.MiscParser.condition) in
-                 (* ---- shared globals (allocated once, coherent to both) ---- *)
-                 let cpu_addrs =
-                   List.concat_map (fun (_,_,_,(ap,_)) -> List.map snd ap) params in
-                 let all_globals =
-                   let seen = Hashtbl.create 8 in
-                   List.filter
-                     (fun g -> if Hashtbl.mem seen g then false
-                               else (Hashtbl.add seen g () ; true))
-                     (cpu_addrs @ gpu_globals) in
-                 let npart = List.length params + List.length gpu_prog in
-                 (* ================= file emission ================= *)
-                 let base =
-                   if OT.is_out && (try Sys.is_directory OT.tarname with _ -> false)
-                   then OT.tarname else Sys.getcwd () in
-                 let dir = Filename.concat base tname in
-                 if not (Sys.file_exists dir) then Sys.mkdir dir 0o755 ;
-                 let write fname f =
-                   Misc.output_protect f (Filename.concat dir fname) in
-                 (* ---- <tname>_cpu.c : the CPU threads (AArch64 asm) ---- *)
-                 let dump_cpu_file ch =
-                   let s = output_string ch in
-                   s (Printf.sprintf
-                        "/* HetLitmus Tier-2: CPU threads for %s (AArch64).\n   \
-                         The bodies below are emitted by litmus7 ASMLang.dump_fun\n   \
-                         (genuine litmus7 AArch64 compile pipeline); assembled on\n   \
-                         aarch64 hosts (GH200 Grace) -- or here via\n   \
-                         'clang --target=aarch64-linux-gnu'.  DO NOT EDIT. */\n"
-                        tname) ;
-                   s "#include <stdint.h>\n\n" ;
-                   s "#if defined(__aarch64__)\n" ;
-                   List.iter
-                     (fun (proc,out,envV,_sig) ->
-                       CpuX.Lang.dump_fun ch Template.no_extra_args global_env envV proc out)
-                     params ;
-                   s "#else\n" ;
-                   s "/* Portable shim so the harness also compiles on a non-aarch64\n   \
-                      dev host.  NOT the tested path -- the AArch64 asm above is the\n   \
-                      real CPU thread; build on aarch64 to assemble it. */\n" ;
-                   List.iter
-                     (fun (proc,_out,_envV,(addr_params,out_params)) ->
-                       let ps =
-                         String.concat ","
-                           (List.map fst (addr_params @ out_params)) in
-                       s (Printf.sprintf "static void code%d(%s) {\n" proc ps) ;
-                       List.iter (fun (_,a) -> s (Printf.sprintf "  (void)%s;\n" a)) addr_params ;
-                       List.iter (fun (_,nm) -> s (Printf.sprintf "  *%s = 0;\n" nm)) out_params ;
-                       s "}\n")
-                     params ;
-                   s "#endif\n\n" ;
-                   (* non-static entry points the GPU-side driver calls *)
-                   List.iter
-                     (fun (proc,_out,_envV,(addr_params,out_params)) ->
-                       let ps = String.concat "," (List.map fst (addr_params @ out_params)) in
-                       let args = String.concat "," (List.map snd (addr_params @ out_params)) in
-                       s (Printf.sprintf "void het_run_P%d(%s) { code%d(%s); }\n"
-                            proc ps proc args))
-                     params in
-                 (* ---- <tname>.cu : GPU kernel + driver ---- *)
-                 let id = CudaLang.c_ident tname in
-                 let dump_cu_file ch =
-                   let s = output_string ch in
-                   s (Printf.sprintf "// HetLitmus Tier-2 GPU kernel + driver for %s.\n" tname) ;
-                   s "// P(gpu) run as a CUDA kernel; P(cpu) as a pthread (see _cpu.c).\n" ;
-                   s "// Shared vars are cudaMallocManaged (CPU/GPU-coherent on GH200);\n" ;
-                   s "// a system-scope atomic barrier rendezvouses both sides.\n" ;
-                   s "// COMPILE-ONLY (nvcc -c); GPU execution is Task 9.  DO NOT EDIT.\n" ;
-                   s "#include <cuda/atomic>\n#include <cstdio>\n#include <cstdint>\n" ;
-                   s "#include <cstdlib>\n#include <pthread.h>\n#include <inttypes.h>\n" ;
-                   s "extern \"C\" {\n" ;
-                   s "#include \"outs.h\"\n" ;
-                   List.iter
-                     (fun (proc,_out,_envV,(addr_params,out_params)) ->
-                       let ps = String.concat "," (List.map fst (addr_params @ out_params)) in
-                       s (Printf.sprintf "  void het_run_P%d(%s);\n" proc ps))
-                     params ;
-                   s "}\n" ;
-                   s {ocaml|extern "C" void *malloc_check(size_t sz){
-  void *p = malloc(sz);
-  if (p == NULL) { fprintf(stderr,"out of memory\n"); exit(2); }
-  return p;
-}
-|ocaml} ;
-                   s (Printf.sprintf "\n#define NPART %d\n\n" npart) ;
-                   (* kernel *)
-                   let kparams =
-                     String.concat ", "
-                       (List.map (fun g -> Printf.sprintf "int* %s" g) gpu_globals
-                        @ ["int* __out"; "int* barrier"]) in
-                   s (Printf.sprintf "__global__ void litmus_%s(%s) {\n" id kparams) ;
-                   List.iter
-                     (fun ((proc,_,_),code) ->
-                       let blk,lane = layout proc in
-                       let instrs = CudaLang.instrs_of_code code in
-                       let regs = CudaLang.result_regs code in
-                       s (Printf.sprintf "  if (blockIdx.x == %d && threadIdx.x == %d) {\n" blk lane) ;
-                       s "    cuda::atomic_ref<int, cuda::thread_scope_system> _bar(*barrier);\n" ;
-                       s "    _bar.fetch_add(1, cuda::memory_order_seq_cst);\n" ;
-                       s "    while (_bar.load(cuda::memory_order_seq_cst) < NPART) { }\n" ;
-                       List.iter (fun n -> s (Printf.sprintf "    int r%d = 0;\n" n)) regs ;
-                       List.iter (fun i -> CudaLang.dump_instr ch "    " i) instrs ;
-                       List.iter
-                         (fun n ->
-                           s (Printf.sprintf "    __out[%d*%d+%d] = r%d;\n"
-                                proc CudaLang.nregs_layout n n))
-                         regs ;
-                       s "  }\n")
-                     gpu_prog ;
-                   s "}\n\n" ;
-                   (* CPU pthread wrappers (arrive at barrier, then run asm) *)
-                   List.iter
-                     (fun (proc,_out,_envV,(addr_params,out_params)) ->
-                       s (Printf.sprintf "struct cpu_args_P%d {\n" proc) ;
-                       List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) addr_params ;
-                       s "  int* barrier;\n" ;
-                       List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) out_params ;
-                       s "};\n" ;
-                       s (Printf.sprintf "static void* cpu_thread_P%d(void* _a) {\n" proc) ;
-                       s (Printf.sprintf "  cpu_args_P%d* a = (cpu_args_P%d*)_a;\n" proc proc) ;
-                       s "  cuda::atomic_ref<int, cuda::thread_scope_system> _bar(*a->barrier);\n" ;
-                       s "  _bar.fetch_add(1, cuda::memory_order_seq_cst);\n" ;
-                       s "  while (_bar.load(cuda::memory_order_seq_cst) < NPART) { }\n" ;
-                       let call_args =
-                         String.concat ","
-                           (List.map (fun (_,a) -> "a->"^a) (addr_params @ out_params)) in
-                       s (Printf.sprintf "  het_run_P%d(%s);\n  return NULL;\n}\n\n" proc call_args))
-                     params ;
-                   (* outcome labels, condition, dump callback *)
-                   let labelstr =
-                     String.concat ", "
-                       (List.map (fun (p,r,_) -> Printf.sprintf "\"%d:%s\"" p r) slots) in
-                   s (Printf.sprintf "static const char* _labels[%d] = { %s };\n"
-                        (max 1 nslots) labelstr) ;
-                   s (Printf.sprintf
-                        "static int _cond(intmax_t* o){ (void)o; return %s; }\n" cond_expr) ;
-                   s {ocaml|static void _dump_one(FILE* _ch, intmax_t* o, count_t c, int show){
-  fprintf(_ch, "%-8" PRIu64 "%c> ", c, show ? '*' : ' ');
-|ocaml} ;
-                   s (Printf.sprintf "  for (int i=0;i<%d;i++)" nslots) ;
-                   s {ocaml| fprintf(_ch, "%s=%" PRIdMAX "; ", _labels[i], o[i]);
-  fprintf(_ch, "\n");
-}
-
-|ocaml} ;
-                   (* driver *)
-                   s "int main(void){\n" ;
-                   List.iter
-                     (fun g ->
-                       s (Printf.sprintf
-                            "  int *%s; cudaMallocManaged(&%s, sizeof(int));\n" g g))
-                     all_globals ;
-                   s (Printf.sprintf
-                        "  int *__out; cudaMallocManaged(&__out, sizeof(int)*%d*%d);\n"
-                        (max 1 nprocs_total) CudaLang.nregs_layout) ;
-                   s "  int *barrier; cudaMallocManaged(&barrier, sizeof(int));\n" ;
-                   List.iter
-                     (fun (proc,_out,_envV,(_ap,out_params)) ->
-                       if out_params <> [] then
-                         s (Printf.sprintf "  int cpu_outs_P%d[%d];\n"
-                              proc (List.length out_params)))
-                     params ;
-                   s "  outs_t* hist = NULL;\n  const int iterations = 100000;\n" ;
-                   s "  for (int _it=0; _it<iterations; ++_it) {\n" ;
-                   List.iter (fun g -> s (Printf.sprintf "    *%s = 0;\n" g)) all_globals ;
-                   s "    *barrier = 0;\n" ;
-                   s (Printf.sprintf "    for (int _k=0;_k<%d*%d;_k++) __out[_k]=0;\n"
-                        (max 1 nprocs_total) CudaLang.nregs_layout) ;
-                   List.iter
-                     (fun (proc,_out,_envV,(addr_params,out_params)) ->
-                       let fields =
-                         String.concat ", "
-                           (List.map snd addr_params
-                            @ ["barrier"]
-                            @ List.mapi
-                                (fun i _ -> Printf.sprintf "&cpu_outs_P%d[%d]" proc i)
-                                out_params) in
-                       s (Printf.sprintf "    cpu_args_P%d _ca%d = { %s };\n" proc proc fields) ;
-                       s (Printf.sprintf
-                            "    pthread_t _th%d; pthread_create(&_th%d, NULL, cpu_thread_P%d, &_ca%d);\n"
-                            proc proc proc proc))
-                     params ;
-                   let kargs = String.concat ", " (gpu_globals @ ["__out"; "barrier"]) in
-                   s (Printf.sprintf "    litmus_%s<<<%d, %d>>>(%s);\n"
-                        id n_blocks block_dim kargs) ;
-                   List.iter
-                     (fun (proc,_,_,_) -> s (Printf.sprintf "    pthread_join(_th%d, NULL);\n" proc))
-                     params ;
-                   s "    cudaDeviceSynchronize();\n" ;
-                   s (Printf.sprintf "    intmax_t _o[%d];\n" (max 1 nslots)) ;
-                   List.iteri
-                     (fun i (_p,_r,src) -> s (Printf.sprintf "    _o[%d] = %s;\n" i src))
-                     slots ;
-                   s (Printf.sprintf
-                        "    hist = add_outcome_outs(hist, _o, %d, 1, _cond(_o));\n" nslots) ;
-                   s "  }\n" ;
-                   s (Printf.sprintf "  intmax_t _buff[%d];\n" (max 1 nslots)) ;
-                   s (Printf.sprintf "  printf(\"Test %s\\n\");\n" tname) ;
-                   s (Printf.sprintf "  dump_outs(stdout, _dump_one, hist, _buff, %d);\n" nslots) ;
-                   s "  free_outs(hist);\n" ;
-                   List.iter (fun g -> s (Printf.sprintf "  cudaFree(%s);\n" g)) all_globals ;
-                   s "  cudaFree(__out); cudaFree(barrier);\n  return 0;\n}\n" in
-                 (* ---- comp.sh / Makefile / README ---- *)
-                 let dump_comp ch =
-                   let s = output_string ch in
-                   s "#!/bin/sh\n" ;
-                   s (Printf.sprintf
-                        "# Compile-only check for HetLitmus Tier-2 harness '%s'.\n" tname) ;
-                   s "# COMPILE-ONLY (-c, no link, no GPU run -- execution is Task 9).\n" ;
-                   s "set -e\nNVCC=\"${NVCC:-nvcc}\"\nCUDA_ARCH=\"${CUDA_ARCH:-sm_90}\"  # GH200=sm_90\n" ;
-                   s (Printf.sprintf "echo \"+ $NVCC -std=c++17 -arch=$CUDA_ARCH -c %s.cu\"\n" tname) ;
-                   s (Printf.sprintf "$NVCC -std=c++17 -arch=$CUDA_ARCH -c %s.cu -o %s.o\n" tname tname) ;
-                   s "echo \"+ gcc -c outs.c\"\ngcc -c outs.c -o outs.o\n" ;
-                   s (Printf.sprintf
-                        "echo \"+ gcc -c %s_cpu.c  (host build; AArch64 asm under #ifdef)\"\n" tname) ;
-                   s (Printf.sprintf "gcc -c %s_cpu.c -o %s_cpu_host.o\n" tname tname) ;
-                   s "if command -v clang >/dev/null 2>&1; then\n" ;
-                   s (Printf.sprintf
-                        "  echo \"+ clang --target=aarch64-linux-gnu -c %s_cpu.c  (real AArch64 asm)\"\n" tname) ;
-                   s (Printf.sprintf
-                        "  clang --target=aarch64-linux-gnu -std=gnu11 -c %s_cpu.c -o %s_cpu.o\n" tname tname) ;
-                   s (Printf.sprintf
-                        "else\n  echo \"(no clang: skipped AArch64 cross-assembly of %s_cpu.c)\"\nfi\n" tname) ;
-                   s "echo 'HetLitmus: compile OK'\n" in
-                 let dump_makefile ch =
-                   let s = output_string ch in
-                   s (Printf.sprintf
-                        "# HetLitmus Tier-2 harness '%s' -- compile-only (objects; no link/run).\n" tname) ;
-                   s "NVCC ?= nvcc\nCUDA_ARCH ?= sm_90\nCC ?= gcc\n\n" ;
-                   s (Printf.sprintf "all: %s.o outs.o %s_cpu_host.o\n\n" tname tname) ;
-                   s (Printf.sprintf "%s.o: %s.cu\n\t$(NVCC) -std=c++17 -arch=$(CUDA_ARCH) -c $< -o $@\n\n" tname tname) ;
-                   s "outs.o: outs.c\n\t$(CC) -c $< -o $@\n\n" ;
-                   s (Printf.sprintf "%s_cpu_host.o: %s_cpu.c\n\t$(CC) -c $< -o $@\n\n" tname tname) ;
-                   s "clean:\n\trm -f *.o\n" in
-                 let dump_readme ch =
-                   let s = output_string ch in
-                   s (Printf.sprintf "# HetLitmus Tier-2 harness: %s\n\n" tname) ;
-                   s "Heterogeneous CPU+GPU litmus harness emitted by litmus7 (`Het` arch).\n\n" ;
-                   s "Files:\n" ;
-                   s (Printf.sprintf "- `%s.cu`     GPU kernel + host driver (cudaMallocManaged, system-scope\n" tname) ;
-                   s "             rendezvous barrier, pthread launch, kernel launch, readback).\n" ;
-                   s (Printf.sprintf "- `%s_cpu.c`  CPU thread(s): real AArch64 inline asm (litmus7 ASMLang).\n" tname) ;
-                   s "- `outs.c/.h` litmus7's outcome histogram (verbatim from litmus/libdir).\n" ;
-                   s "- `comp.sh` / `Makefile`  compile-only build (nvcc -c + gcc -c).\n\n" ;
-                   s "Build (compile-only; no GPU needed): `sh comp.sh`.\n" ;
-                   s "Target: NVIDIA GH200 Grace-Hopper (aarch64 host + Hopper GPU).\n" in
-                 write "outs.h" (fun ch -> output_string ch outs_h_content) ;
-                 write "outs.c" (fun ch -> output_string ch outs_c_content) ;
-                 write (tname ^ "_cpu.c") dump_cpu_file ;
-                 write (tname ^ ".cu") dump_cu_file ;
-                 write "comp.sh" dump_comp ;
-                 write "Makefile" dump_makefile ;
-                 write "README.md" dump_readme ;
-                 if OT.verbose >= 0 then
-                   Printf.eprintf
-                     "HetLitmus: emitted harness directory %s\n%!" dir ;
-                 Absent
+                 let (_,prog_loc,_,_) = splitted.Splitter.locs in
+                 let prog_text =
+                   let (p1,p2) = prog_loc in
+                   let a = p1.Lexing.pos_cnum and b = p2.Lexing.pos_cnum in
+                   let ic = open_in_bin name in
+                   let len = max 0 (b - a) in
+                   seek_in ic a ;
+                   let txt = really_input_string ic len in
+                   close_in ic ; txt in
+                 let run =
+                   match HetArch.scan_cpu_isa prog_text with
+                   | HetArch.IsaAArch64 ->
+                      let module CpuV =
+                        SymbConstant.Make
+                          (Int64Scalar)(AArch64PteVal)(AArch64AddrReg)
+                          (AArch64Instr.Std) in
+                      let module Cpu = AArch64Arch_litmus.Make(OC)(CpuV) in
+                      let module CpuComp = AArch64Compile_litmus.Make(CpuV)(OC) in
+                      let module CpuLexer =
+                        AArch64Lexer.Make
+                          (struct include LexConfig let is_morello = false end) in
+                      let module CpuLP = struct
+                          type instruction = Cpu.parsedPseudo
+                          type token = AArch64Parser.token
+                          let lexer = CpuLexer.token
+                          let parser = AArch64Parser.main
+                        end in
+                      let module CpuF = struct
+                          let isa_name = "AArch64"
+                          let host_macro = "__aarch64__"
+                          let cross = Some ("aarch64-linux-gnu","gnu11")
+                          let parse_column p txt =
+                            let lexbuf = Lexing.from_string txt in
+                            (try AArch64Parser.instr_option_seq CpuLexer.token lexbuf
+                             with
+                             | Parsing.Parse_error ->
+                                Warn.user_error
+                                  "HetLitmus: P%d (cpu, AArch64) parse error near offset %d \
+                                   of its instruction column %S"
+                                  p lexbuf.Lexing.lex_curr_p.Lexing.pos_cnum txt
+                             | LexMisc.Error (msg,_) ->
+                                Warn.user_error
+                                  "HetLitmus: P%d (cpu, AArch64) lexing error: %s (in column %S)"
+                                  p msg txt)
+                        end in
+                      let module H = HetEmit(Cfg)(Cpu)(CpuComp)(CpuLP)(CpuF) in
+                      H.run
+                   | HetArch.IsaX86_64 ->
+                      let module CpuV = Int64Constant.Make(X86_64Base.Instr) in
+                      let module Cpu = X86_64Arch_litmus.Make(OC)(CpuV) in
+                      let module X86_64Config = struct
+                          let sse =
+                            match OT.mode with
+                            | Mode.Kvm -> false
+                            | Mode.PreSi|Mode.Std -> true
+                          let reason = "-mode kvm"
+                        end in
+                      let module CpuComp =
+                        X86_64Compile_litmus.Make(X86_64Config)(CpuV)(OC) in
+                      let module CpuLexer = X86_64Lexer.Make(LexConfig) in
+                      let module CpuLP = struct
+                          type instruction = Cpu.parsedPseudo
+                          type token = X86_64Parser.token
+                          let lexer = CpuLexer.token
+                          let parser = MiscParser.mach2generic X86_64Parser.main
+                        end in
+                      let module CpuF = struct
+                          let isa_name = "X86_64"
+                          let host_macro = "__x86_64__"
+                          let cross = None
+                          let parse_column p txt =
+                            let lexbuf = Lexing.from_string txt in
+                            (try X86_64Parser.instr_option_seq CpuLexer.token lexbuf
+                             with
+                             | Parsing.Parse_error ->
+                                Warn.user_error
+                                  "HetLitmus: P%d (cpu, X86_64) parse error near offset %d \
+                                   of its instruction column %S"
+                                  p lexbuf.Lexing.lex_curr_p.Lexing.pos_cnum txt
+                             | LexMisc.Error (msg,_) ->
+                                Warn.user_error
+                                  "HetLitmus: P%d (cpu, X86_64) lexing error: %s (in column %S)"
+                                  p msg txt)
+                        end in
+                      let module H = HetEmit(Cfg)(Cpu)(CpuComp)(CpuLP)(CpuF) in
+                      H.run in
+                 run hash_env name in_chan out_chan splitted
                with e -> if OT.nocatch then raise e ; Interrupted e)
           | `CPP | `JAVA | `ASL | `BPF -> assert false
         in

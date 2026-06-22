@@ -39,6 +39,46 @@
    members that only feed emission (register init/class, macros, ...) are
    deliberately inert and flagged below.  See hetlitmus/docs/het-litmus-format.md. *)
 
+(* HetLitmus Phase A: the per-column device tag NAMES the CPU ISA.  `cpu' stays
+   a back-compat alias for AArch64 (so pre-Phase-A tests and hetgen7 output are
+   byte-unchanged); `aarch64'/`x86_64' name the ISA explicitly.  These are
+   top-level (outside the Make functor) because the litmus7 `Het' dispatch arm
+   must pick the CPU ISA -- and so which CPU modules to feed the functor -- by
+   pre-scanning the program header BEFORE any HetArch.Make application exists.
+   cpu_isa_of_tag returns None for GPU tags, so it doubles as the CPU/GPU test. *)
+type cpu_isa = IsaAArch64 | IsaX86_64
+
+let cpu_isa_of_tag s = match String.lowercase_ascii (String.trim s) with
+  | "cpu" | "aarch64" | "arm" -> Some IsaAArch64
+  | "x86_64" | "x86-64" | "amd64" | "x64" -> Some IsaX86_64
+  | _ -> None
+
+let cpu_isa_tag = function IsaAArch64 -> "aarch64" | IsaX86_64 -> "x86_64"
+
+(* Pre-scan the program-section header ("P0:aarch64 | P1:gpu ; ...") to pick the
+   ONE CPU ISA the test's CPU columns share.  Returns the first CPU column's
+   ISA; defaults to AArch64 (back-compat) if the test has no CPU column. *)
+let scan_cpu_isa prog_text =
+  let is_blank s = String.trim s = "" in
+  let rows =
+    List.filter (fun r -> not (is_blank r))
+      (String.split_on_char ';' prog_text) in
+  match rows with
+  | [] -> IsaAArch64
+  | header :: _ ->
+     let cells = String.split_on_char '|' header in
+     let tag_of cell =
+       match String.split_on_char ':' (String.trim cell) with
+       | [_;d] -> String.trim d
+       | _ -> "" in
+     let rec first = function
+       | [] -> IsaAArch64
+       | cell :: rest ->
+          (match cpu_isa_of_tag (tag_of cell) with
+           | Some isa -> isa
+           | None -> first rest) in
+     first cells
+
 module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
 
   (* Who am I *)
@@ -334,10 +374,20 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
 
   let device_tag = function DevCpu -> "cpu" | DevGpu -> "gpu"
 
-  let parse_device s = match String.lowercase_ascii (String.trim s) with
-    | "cpu" | "aarch64" | "arm" -> DevCpu
-    | "gpu" | "lisa" | "ptx" | "hip" -> DevGpu
-    | d -> Warn.user_error "HetArch: unknown device tag %S (use cpu|gpu)" d
+  (* parse_device classifies a raw column tag into the CPU/GPU device class.
+     The ISA naming itself (which CPU ISA a `cpu'/`aarch64'/`x86_64' tag means)
+     lives in the top-level cpu_isa_of_tag / scan_cpu_isa, so the litmus7 `Het'
+     dispatch arm can pick the ISA BEFORE this functor is even applied. *)
+  let parse_device s =
+    match cpu_isa_of_tag s with
+    | Some _ -> DevCpu
+    | None ->
+       begin match String.lowercase_ascii (String.trim s) with
+       | "gpu" | "lisa" | "ptx" | "hip" -> DevGpu
+       | d ->
+          Warn.user_error
+            "HetArch: unknown device tag %S (use aarch64|x86_64|cpu|gpu)" d
+       end
 
   (* "P0:cpu" -> (0, DevCpu).  The per-proc device tag is the compound test's
      only extra syntax; see hetlitmus/docs/het-litmus-format.md. *)

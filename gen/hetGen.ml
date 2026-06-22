@@ -42,9 +42,22 @@ let cpu_edges = ref ""
 let gpu_edges = ref ""
 let devices = ref "cpu,gpu"
 let comment = ref None
+(* HetLitmus Phase A: the CPU ISA the cpu-tagged procs are generated for.  The
+   emitted device tag names this ISA so litmus7's `Het' arm can pick the
+   matching CPU sub-parser/compiler.  Default AArch64 keeps pre-Phase-A output
+   byte-identical (cpu procs still tagged `cpu', the AArch64 back-compat alias). *)
+let cpu_arch = ref `AArch64
 
 let myspec =
   [
+   "-cpu-arch",
+   Arg.String
+     (fun s -> cpu_arch :=
+        (match String.lowercase_ascii s with
+         | "aarch64" | "arm" | "cpu" -> `AArch64
+         | "x86_64" | "x86-64" | "amd64" | "x64" -> `X86_64
+         | _ -> Warn.fatal "-cpu-arch: unknown ISA %S (use aarch64|x86_64)" s)),
+   "<isa> CPU ISA for cpu-tagged procs (aarch64|x86_64; default aarch64)";
    "-cpu", Arg.String (fun s -> cpu_edges := s),
    "<edges> edge cycle for the CPU (AArch64) procs";
    "-gpu", Arg.String (fun s -> gpu_edges := s),
@@ -140,20 +153,13 @@ let () =
     let variant = !Config.variant
     let wildcard = false
   end in
-  (* The two single-arch builders, instantiated exactly as in diyone.ml. *)
-  let module Mcpu = Top_gen.Make(Co)(AArch64Compile_gen.Make(C)) in
+  (* The GPU builder is fixed (LISA/Bell); the CPU builder is dispatched by
+     -cpu-arch below.  Both instantiated exactly as in diyone.ml. *)
   let module BellConfig = Config.ToLisa(Config) in
   let module Mgpu = Top_gen.Make(Co)(BellCompile.Make(C)(BellConfig)) in
 
   let name = match !Config.name with Some n -> n | None -> "HET" in
 
-  let parse_cpu () =
-    match
-      Mcpu.R.parse_sequence_ast Parser.main (split_tokens !cpu_edges)
-      |> Mcpu.R.parse_expand_relaxs ~ppo:Mcpu.ppo
-    with
-    | [x] -> x
-    | _ -> Warn.fatal "-cpu must specify exactly one cycle" in
   let parse_gpu () =
     match
       Mgpu.R.parse_sequence_ast Parser.main (split_tokens !gpu_edges)
@@ -167,7 +173,31 @@ let () =
   if !Config.bell = None then
     Warn.fatal "missing -bell <ptx.bell> (the GPU side needs a Bell model)" ;
 
-  let ccpu = Mcpu.het_cells (Mcpu.make_test name (parse_cpu ())) in
+  (* CPU side: dispatch the single-arch Compile_gen module by -cpu-arch, exactly
+     as diyone.ml dispatches by -arch.  het_cells erases the arch to strings, so
+     ccpu's type is ISA-independent regardless of which branch builds it. *)
+  let ccpu =
+    match !cpu_arch with
+    | `AArch64 ->
+       let module Mcpu = Top_gen.Make(Co)(AArch64Compile_gen.Make(C)) in
+       let cy =
+         match
+           Mcpu.R.parse_sequence_ast Parser.main (split_tokens !cpu_edges)
+           |> Mcpu.R.parse_expand_relaxs ~ppo:Mcpu.ppo
+         with
+         | [x] -> x
+         | _ -> Warn.fatal "-cpu must specify exactly one cycle" in
+       Mcpu.het_cells (Mcpu.make_test name cy)
+    | `X86_64 ->
+       let module Mcpu = Top_gen.Make(Co)(X86_64Compile_gen.Make(C)) in
+       let cy =
+         match
+           Mcpu.R.parse_sequence_ast Parser.main (split_tokens !cpu_edges)
+           |> Mcpu.R.parse_expand_relaxs ~ppo:Mcpu.ppo
+         with
+         | [x] -> x
+         | _ -> Warn.fatal "-cpu must specify exactly one cycle" in
+       Mcpu.het_cells (Mcpu.make_test name cy) in
   let cgpu = Mgpu.het_cells (Mgpu.make_test name (parse_gpu ())) in
 
   let devs = split_comma !devices in
@@ -186,6 +216,12 @@ let () =
           nprocs who (List.length hc.Code.hc_cols))
     ["cpu",ccpu; "gpu",cgpu] ;
 
+  (* The emitted header tag for a cpu proc NAMES its ISA (Phase A): default
+     AArch64 keeps the back-compat `cpu' alias, x86_64 names itself.  gpu procs
+     keep their `gpu' tag.  (run_of still keys on the device class cpu|gpu.) *)
+  let cpu_tag = match !cpu_arch with `AArch64 -> "cpu" | `X86_64 -> "x86_64" in
+  let header_tag = function "cpu" -> cpu_tag | other -> other in
+
   (* Columns: each proc's cells come from the run owning that proc's device. *)
   let cols =
     List.mapi
@@ -194,7 +230,7 @@ let () =
         let cells =
           try List.assoc i hc.Code.hc_cols
           with Not_found -> Warn.fatal "%s run has no proc P%d" dev i in
-        sprintf "P%d:%s" i dev :: cells)
+        sprintf "P%d:%s" i (header_tag dev) :: cells)
       devs in
   let table = Misc.string_of_prog cols in
 
@@ -235,9 +271,11 @@ let () =
   (match !comment with
    | Some c -> bprintf buf "\"%s\"\n" c
    | None ->
+       let cpu_arch_name =
+         match !cpu_arch with `AArch64 -> "AArch64" | `X86_64 -> "x86_64" in
        bprintf buf
-         "\"Heterogeneous %s: per-proc device assignment %s (cpu=AArch64, gpu=LISA/PTX)\"\n"
-         name !devices) ;
+         "\"Heterogeneous %s: per-proc device assignment %s (cpu=%s, gpu=LISA/PTX)\"\n"
+         name !devices cpu_arch_name) ;
   bprintf buf "{\n" ;
   List.iter (fun l -> bprintf buf "%s;\n" l) init_lines ;
   bprintf buf "}\n" ;
