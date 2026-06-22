@@ -202,7 +202,7 @@ module Make(O:Config)(Tar:Tar.S) =
               cpy' fnames "showLabel" "show" ".awk"
             else
               cpy fnames "show" ".awk"
-        |`BPF | `CPP|`LISA | `JAVA | `ASL -> Warn.fatal "no support for arch '%s'" (Archs.pp O.arch)
+        |`BPF | `CPP|`LISA | `JAVA | `ASL | `Het -> Warn.fatal "no support for arch '%s'" (Archs.pp O.arch)
       in
       let fnames =
         let fnames = cpy fnames "litmus_rand" ".c" in

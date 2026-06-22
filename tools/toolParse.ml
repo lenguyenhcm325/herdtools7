@@ -162,8 +162,9 @@ end = struct
         let module X = Make (BPF) (PteVal.No) (AddrReg.No) (BPFLexParse) in
         X.zyva chan splitted
 
-    | `JAVA 
+    | `JAVA
     | `ASL
+    | `Het
     | `CPP as a -> Warn.fatal "no support for arch '%s'" (Archs.pp a)
     | `C ->
         let module C = CBase in

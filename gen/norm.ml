@@ -134,6 +134,7 @@ let () =
         let module M = BellArch_gen.Make(BellConfig) in
         (module M),(module M)
     | `C | `CPP -> (module CArch_gen),(module CArch_gen)
-    | `JAVA | `ASL | `BPF -> assert false in
+    | `JAVA | `ASL | `BPF -> assert false
+    | `Het -> Warn.fatal "Het arch in norm (generated via hetgen7)" in
   let module M = Make(Co)(FenceImpl)(AtomImpl) in
   M.zyva args

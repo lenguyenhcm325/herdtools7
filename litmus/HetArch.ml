@@ -289,6 +289,47 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
     | Gpu.Pagealign -> Pagealign
     | Gpu.Skip n -> Skip n
 
+  (* ---------------- Tier-2 emission support ----------------
+
+     A compound (internal) pseudo carries one device's instruction in its
+     [Instruction] payload; the structural skeleton (labels, nop, skip) is
+     device-agnostic.  to_{cpu,gpu}_pseudo project a single processor's column
+     back onto its native sub-architecture's pseudo, so that processor can be
+     fed to that backend's *own* compiler/emitter (AArch64 -> ASMLang,
+     LISA/Bell -> CudaLang).  The cross-device arms are unreachable for a
+     well-formed test (the het parser tags every cell with its column's device)
+     and fail loudly if reached.  This is the projection inverse of
+     of_{cpu,gpu}_parsed, one level down (internal pseudo, not parsed). *)
+
+  let cpu_reg_of = function
+    | CPUreg r -> r
+    | GPUreg _ -> Warn.fatal "HetArch: GPU register on a CPU processor"
+  let gpu_reg_of = function
+    | GPUreg r -> r
+    | CPUreg _ -> Warn.fatal "HetArch: CPU register on a GPU processor"
+
+  let rec to_cpu_pseudo : pseudo -> Cpu.pseudo = function
+    | Nop -> Cpu.Nop
+    | Instruction (CPUins i) -> Cpu.Instruction i
+    | Instruction (GPUins _) ->
+       Warn.fatal "HetArch: a GPU instruction appears on a CPU processor"
+    | Label (l,k) -> Cpu.Label (l,to_cpu_pseudo k)
+    | Macro (s,rs) -> Cpu.Macro (s,List.map cpu_reg_of rs)
+    | Symbolic s -> Cpu.Symbolic s
+    | Pagealign -> Cpu.Pagealign
+    | Skip n -> Cpu.Skip n
+
+  let rec to_gpu_pseudo : pseudo -> Gpu.pseudo = function
+    | Nop -> Gpu.Nop
+    | Instruction (GPUins i) -> Gpu.Instruction i
+    | Instruction (CPUins _) ->
+       Warn.fatal "HetArch: a CPU instruction appears on a GPU processor"
+    | Label (l,k) -> Gpu.Label (l,to_gpu_pseudo k)
+    | Macro (s,rs) -> Gpu.Macro (s,List.map gpu_reg_of rs)
+    | Symbolic s -> Gpu.Symbolic s
+    | Pagealign -> Gpu.Pagealign
+    | Skip n -> Gpu.Skip n
+
   type device = DevCpu | DevGpu
 
   let device_tag = function DevCpu -> "cpu" | DevGpu -> "gpu"
@@ -366,3 +407,214 @@ end
    arm can reach the parser helpers above. *)
 module Check (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) : Arch_litmus.S =
   Make (Cpu) (Gpu)
+
+(* ---------------- Tier-2 emission: embedded litmus7 histogram ----------------
+
+   The emitted het harness reuses litmus7's OWN outcome histogram
+   (litmus/libdir/_outs.{c,h}) to tally the merged CPU+GPU register readback.
+   We embed those two files VERBATIM (CeCILL-B, as in the rest of the tree) so a
+   het harness directory is self-contained and does not depend on a libdir at
+   emit time -- the repro command uses '-set-libdir herd/libdir', which ships
+   the herd .cat models, not litmus7's C runtime.  Keep these byte-identical to
+   litmus/libdir/_outs.{c,h}. *)
+
+let outs_h = {ocaml|/****************************************************************************/
+/*                           the diy toolsuite                              */
+/*                                                                          */
+/* Jade Alglave, University College London, UK.                             */
+/* Luc Maranget, INRIA Paris-Rocquencourt, France.                          */
+/*                                                                          */
+/* Copyright 2015-present Institut National de Recherche en Informatique et */
+/* en Automatique and the authors. All rights reserved.                     */
+/*                                                                          */
+/* This software is governed by the CeCILL-B license under French law and   */
+/* abiding by the rules of distribution of free software. You can use,      */
+/* modify and/ or redistribute the software under the terms of the CeCILL-B */
+/* license as circulated by CEA, CNRS and INRIA at the following URL        */
+/* "http://www.cecill.info". We also give a copy in LICENSE.txt.            */
+/****************************************************************************/
+#ifndef _OUTS_H
+#define _OUTS_H 1
+
+#include <stdio.h>
+
+/************************/
+/* Histogram structure  */
+/************************/
+
+
+/* 64bit counters, should be enough! */
+#include <inttypes.h>
+typedef uint64_t count_t;
+#define PCTR PRIu64
+
+
+
+
+typedef struct outs_t {
+  struct outs_t *next,*down ;
+  count_t c ;
+  intmax_t k ;
+  int show ;
+} outs_t ;
+
+void free_outs(outs_t *p) ;
+outs_t *add_outcome_outs(outs_t *p, intmax_t *o, int sz, count_t v, int show) ;
+int finals_outs(outs_t *p) ;
+count_t sum_outs(outs_t *p) ;
+typedef void dump_outcome(FILE *chan, intmax_t *o, count_t c, int show) ;
+void dump_outs (FILE *chan, dump_outcome *dout,outs_t *p, intmax_t *buff, int sz) ;
+outs_t *merge_outs(outs_t *p,outs_t *q, int sz) ;
+int same_outs(outs_t *p,outs_t *q) ;
+#endif
+|ocaml}
+
+let outs_c = {ocaml|/****************************************************************************/
+/*                           the diy toolsuite                              */
+/*                                                                          */
+/* Jade Alglave, University College London, UK.                             */
+/* Luc Maranget, INRIA Paris-Rocquencourt, France.                          */
+/*                                                                          */
+/* Copyright 2015-present Institut National de Recherche en Informatique et */
+/* en Automatique and the authors. All rights reserved.                     */
+/*                                                                          */
+/* This software is governed by the CeCILL-B license under French law and   */
+/* abiding by the rules of distribution of free software. You can use,      */
+/* modify and/ or redistribute the software under the terms of the CeCILL-B */
+/* license as circulated by CEA, CNRS and INRIA at the following URL        */
+/* "http://www.cecill.info". We also give a copy in LICENSE.txt.            */
+/****************************************************************************/
+#include <stdlib.h>
+#include <stdio.h>
+#include "outs.h"
+
+/**********************/
+/* Lexicographic tree */
+/**********************/
+
+#if 0
+static void debug(int *t, int i, int j) {
+  for (int k=i ; k <= j ; k++)
+    fprintf(stderr,"%i",t[k]) ;
+  fprintf(stderr,"\n") ;
+}
+#endif
+
+
+void *malloc_check(size_t sz) ;
+
+static outs_t *alloc_outs(intmax_t k) {
+  outs_t *r = malloc_check(sizeof(*r)) ;
+  r->k = k ;
+  r->c = 0 ;
+  r->show = 0 ;
+  r->next = r->down = NULL ;
+  return r ;
+}
+
+void free_outs(outs_t *p) {
+  if (p == NULL) return ;
+  free_outs(p->next) ;
+  free_outs(p->down) ;
+  free(p) ;
+}
+
+/* Worth writing as a loop, since called many times */
+static outs_t *loop_add_outcome_outs(outs_t *p, intmax_t *k, int i, count_t c, int show) {
+  outs_t *r = p ;
+  if (p == NULL || k[i] < p->k) {
+    r = alloc_outs(k[i]) ;
+    r->next = p ;
+    p = r ;
+  }
+  for ( ; ; ) {
+    outs_t **q ;
+    if (k[i] > p->k) {
+      q = &(p->next) ;
+      p = p->next ;
+    } else if (i <= 0) {
+      p->c += c ;
+      p->show = show || p->show ;
+      return r ;
+    } else {
+      i-- ;
+      q = &(p->down) ;
+      p = p->down ;
+    }
+    if (p == NULL || k[i] < p->k) {
+      outs_t *a = alloc_outs(k[i]) ;
+      a->next = p ;
+      p = a ;
+      *q = a ;
+    }
+  }
+}
+
+outs_t *add_outcome_outs(outs_t *p, intmax_t *k, int sz, count_t c, int show) {
+  return loop_add_outcome_outs(p,k,sz-1,c,show) ;
+}
+
+count_t sum_outs(outs_t *p) {
+  count_t r = 0 ;
+  for ( ; p ; p = p->next) {
+    r += p->c ;
+    r += sum_outs(p->down) ;
+  }
+  return r ;
+}
+
+int finals_outs(outs_t *p) {
+  int r = 0 ;
+  for ( ; p ; p = p->next) {
+    if (p->c > 0) r++ ;
+    r += finals_outs(p->down) ;
+  }
+  return r ;
+}
+
+void dump_outs (FILE *chan, dump_outcome *dout,outs_t *p, intmax_t *buff,int sz) {
+  for ( ; p ; p = p->next) {
+    buff[sz-1] = p->k ;
+    if (p->c > 0) {
+      dout(chan,buff,p->c,p->show) ;
+    } else if (p->down) {
+      dump_outs(chan,dout,p->down,buff,sz-1) ;
+    }
+  }
+}
+
+/* merge p and q into p */
+static outs_t *do_merge_outs(outs_t *p, outs_t *q) {
+  if (q == NULL) { // Nothing to add
+    return p ;
+  }
+  if (p == NULL || q->k < p->k) { // Need a cell
+    outs_t *r = alloc_outs(q->k) ;
+    r->next = p ;
+    p = r ;
+  }
+  if (p->k == q->k) {
+    p->c += q->c ;
+    p->show = p->show || q->show ;
+    p->down = do_merge_outs(p->down,q->down) ;
+    p->next = do_merge_outs(p->next,q->next) ;
+  } else {
+    p->next = do_merge_outs(p->next,q) ;
+  }
+  return p ;
+}
+
+outs_t *merge_outs(outs_t *p, outs_t *q, int sz) {
+  return do_merge_outs(p,q) ;
+}
+
+int same_outs(outs_t *p,outs_t *q) {
+  while (p && q) {
+    if (p->k != q->k || p->c != q->c || p->show != q->show) return 0 ;
+    if (!same_outs(p->down,q->down)) return 0 ;
+    p = p->next ;
+    q = q->next ;
+  }
+  return p == q ; /* == NULL */
+}
+|ocaml}

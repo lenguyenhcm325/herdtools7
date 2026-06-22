@@ -105,6 +105,7 @@ let () =
     | `ASL -> Warn.fatal "ASL arch in atoms"
     | `BPF -> Warn.fatal "BPF arch in atoms"
     | `CPP -> Warn.fatal "CPP arch in atoms"
-    | `JAVA -> Warn.fatal "JAVA arch in atoms" in
+    | `JAVA -> Warn.fatal "JAVA arch in atoms"
+    | `Het -> Warn.fatal "Het arch in atoms (generated via hetgen7)" in
   let module M = Make(FenceImpl)(AtomImpl) in
   M.zyva ()

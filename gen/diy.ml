@@ -285,6 +285,7 @@ let () =
       end in
       (module CCompile_gen.Make(CoC) : Builder.S)
   | `JAVA | `ASL | `BPF -> assert false
+  | `Het -> Warn.fatal "Het arch in diy (generated via hetgen7)"
   in
   let module Builder = (val builder : Builder.S) in
   let module M = Make(Builder)(Co) in

@@ -180,6 +180,7 @@ let () =
         let module M = Make(C)(T) in
         M.zyva
     | `JAVA | `ASL | `BPF -> assert false
+    | `Het -> Warn.fatal "Het arch in diycross (generated via hetgen7)"
     end pp_es
         with
         | Misc.Exit -> ()

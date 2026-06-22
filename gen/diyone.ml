@@ -302,5 +302,6 @@ let () =
       let module M = Build(T) in
       M.zyva
   | `JAVA | `ASL | `BPF -> assert false
+  | `Het -> Warn.fatal "Het arch in diyone (generated via hetgen7)"
 )
     pp_es

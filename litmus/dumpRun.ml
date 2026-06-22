@@ -291,15 +291,26 @@ let run_tests names flags out_chan =
     | None -> `X86 (* No tests compiled, arch is irrelevant *)
     | Some arch -> arch in
   let utils =
-    let module O = struct
-      include Cfg
-      let cached =
-        match Cfg.threadstyle with ThreadStyle.Cached -> true | _ -> false
-      let arch = arch
-      let sysarch  = Archs.get_sysarch arch Cfg.carch
-    end in
-    let module Obj = ObjUtil.Make(O)(Tar) in
-    Obj.dump flags in
+    match one_arch with
+    | None ->
+        (* No test compiled to a C run-harness (e.g. a HetLitmus `Het' test,
+           which emits its OWN self-contained CPU+GPU harness directory, or a
+           batch where every test was Absent/excluded).  There is nothing to
+           run, so do not copy the run-harness runtime (cache.h, _show.awk, ...)
+           from the libdir -- that copy is pointless here and would abort the
+           command when the libdir ships no litmus7 C runtime (e.g.
+           -set-libdir herd/libdir). *)
+        []
+    | Some _ ->
+        let module O = struct
+          include Cfg
+          let cached =
+            match Cfg.threadstyle with ThreadStyle.Cached -> true | _ -> false
+          let arch = arch
+          let sysarch  = Archs.get_sysarch arch Cfg.carch
+        end in
+        let module Obj = ObjUtil.Make(O)(Tar) in
+        Obj.dump flags in
   arch,docs,srcs,utils,nthreads
 
 (* Run tests (command line mode) *)

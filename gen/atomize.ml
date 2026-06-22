@@ -135,6 +135,7 @@ let () =
     | `ASL -> Warn.fatal "ASL arch in atomize"
     | `BPF -> Warn.fatal "BPF arch in atomize"
     | `CPP -> Warn.fatal "CPP arch in atomize"
-    | `JAVA -> Warn.fatal "JAVA arch in atomize" in
+    | `JAVA -> Warn.fatal "JAVA arch in atomize"
+    | `Het -> Warn.fatal "Het arch in atomize (generated via hetgen7)" in
   let module M = Make(FenceImpl)(AtomImpl) in
   M.zyva pp_es
