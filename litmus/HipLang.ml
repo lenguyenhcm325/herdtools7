@@ -7,8 +7,12 @@
 (* LISA/Bell scoped test.  The AMD sibling of CudaLang (Route B of the      *)
 (* HetLitmus frontend, memory hetlitmus-route-b-frontend): reuse the        *)
 (* Bell/LISA scoped IR as the GPU frontend and translate its scoped         *)
-(* loads/stores/fences into HIP scoped-atomic builtins                      *)
-(* __hip_atomic_load/store(..., order, __HIP_MEMORY_SCOPE_<s>).             *)
+(* loads/stores into HIP scoped-atomic builtins                            *)
+(* __hip_atomic_load/store(..., order, __HIP_MEMORY_SCOPE_<s>), and its     *)
+(* scoped fences into the Clang builtin                                    *)
+(* __builtin_amdgcn_fence(order, "<scope-string>") -- which carries BOTH    *)
+(* the order and the scope (the AMD counterpart of CudaLang's faithful      *)
+(* inline-PTX fence.<order>.<scope>).                                       *)
 (*                                                                          *)
 (* This software is governed by the CeCILL-B license under French law and   *)
 (* abiding by the rules of distribution of free software.                   *)
@@ -75,19 +79,40 @@ let hip_scope = function
   | "cluster" -> "__HIP_MEMORY_SCOPE_AGENT" (* degradation, see above *)
   | s -> Warn.user_error "HipLang: unknown scope %S" s
 
-(* HIP scoped thread fences (ROCm HIP C++ language extensions): __threadfence
-   primitives carry a SCOPE but not a memory order (they are full fences at
-   that scope).  cta -> __threadfence_block (workgroup), gpu -> __threadfence
-   (agent/device), sys -> __threadfence_system (system).  cluster degrades to
-   the agent-scope __threadfence (same rule as the atomics above).  The corpus
-   uses no fences (the -F variants synchronise with release/acquire atomics,
-   not fences -- memory hetlitmus-amd-oracle-task7); this path exists only for
-   parity with hand-written fence tests. *)
-let hip_threadfence = function
-  | "cta"     -> "__threadfence_block()"
-  | "gpu"     -> "__threadfence()"
-  | "sys"     -> "__threadfence_system()"
-  | "cluster" -> "__threadfence()" (* cluster -> agent, see hip_scope *)
+(* Faithful HIP fence lowering via the Clang builtin __builtin_amdgcn_fence,
+   the AMD counterpart of CudaLang's inline-PTX `fence.<order>.<scope>'.
+     __builtin_amdgcn_fence(<order>, "<scope-string>")
+   carries BOTH the memory order AND the sync scope.  This SUPERSEDES the old
+   __threadfence{,_block,_system} primitives, which carried only the scope and
+   were always FULL fences -- they silently dropped the annotated order and
+   over-synchronised (e.g. a release fence became a full fence).
+
+   Grounded (web-fetched, not memory):
+   - LLVM review D75917 ("Expose llvm fence instruction as clang intrinsic")
+     and the Clang LanguageExtensions docs: the first arg is a C11 memory-order
+     constant -- one of __ATOMIC_{ACQUIRE,RELEASE,ACQ_REL,SEQ_CST} -- and the
+     second arg is an AMDHSA LLVM sync-scope STRING.  The clang builtin tests in
+     D75917 use exactly "workgroup", "agent", and "" (the empty string) for the
+     system scope.
+   - LLVM AMDGPUUsage "AMDHSA LLVM Sync Scopes" table: the named scopes are
+     "workgroup", "agent", "wavefront", "singlethread", "cluster"; SYSTEM is the
+     DEFAULT and is the EMPTY STRING "" (no syncscope name).  Getting `sys' wrong
+     (e.g. naming a scope instead of "") would silently NARROW the scope, so the
+     empty string is load-bearing.
+
+   Scope map mirrors hip_scope: cta -> "workgroup", gpu -> "agent",
+   sys -> "" (system, the default), cluster -> "agent" (same documented
+   degradation as the atomics above; HIP/LLVM "cluster" is not source-expressible
+   here, see hip_scope and hip-emitter.md).
+
+   The corpus uses no fences (the -F variants synchronise with release/acquire
+   atomics, not fences -- memory hetlitmus-amd-oracle-task7); this path exists
+   only for hand-written fence tests. *)
+let hip_fence_scope = function
+  | "cta"     -> "workgroup"
+  | "gpu"     -> "agent"
+  | "sys"     -> ""        (* system = the default = empty syncscope string *)
+  | "cluster" -> "agent"   (* cluster -> agent, see hip_scope *)
   | s -> Warn.user_error "HipLang: unknown fence scope %S" s
 
 (* Split a Bell annotation list into the (order, scope) pair, same defaults
@@ -245,10 +270,17 @@ let dump_instr chan ind i = match i with
         (cluster_note scp)
   | BellBase.Pfence (BellBase.Fence (annots, _)) ->
       let ord, scp = order_scope_of annots in
-      (* HIP scoped threadfences carry scope but not order: note the annotated
-         order in a comment for traceability. *)
-      fprintf chan "%s%s; // f[%s,%s]%s\n"
-        ind (hip_threadfence scp) ord scp (cluster_note scp)
+      (* Faithful fence: __builtin_amdgcn_fence carries BOTH order and scope.
+         A `relaxed' fence is meaningless (a no-op in the C11/AMDGPU model) and
+         __builtin_amdgcn_fence accepts only acquire/release/acq_rel/seq_cst, so
+         emit nothing executable for it -- just a traceability comment. *)
+      if ord = "relaxed" then
+        fprintf chan "%s// f[%s,%s] (relaxed fence = no-op; nothing emitted)%s\n"
+          ind ord scp (cluster_note scp)
+      else
+        fprintf chan "%s__builtin_amdgcn_fence(%s, %S); // f[%s,%s]%s\n"
+          ind (hip_memory_order ord) (hip_fence_scope scp) ord scp
+          (cluster_note scp)
   | BellBase.Pnop -> ()
   | _ ->
       fprintf chan "%s// UNSUPPORTED: %s\n" ind (BellBase.dump_instruction i)
