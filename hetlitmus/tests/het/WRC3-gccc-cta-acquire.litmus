@@ -1,0 +1,14 @@
+Het WRC3-gccc-cta-acquire
+"Heterogeneous WRC3-gccc-cta-acquire: per-proc device assignment gpu,cpu,cpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X3=y;
+1:X4=z;
+2:X0=x;
+2:X4=z;
+3:X0=x;
+}
+ P0:gpu              | P1:cpu      | P2:cpu      | P3:cpu      ;
+ r[acquire,cta] r0 x | LDR W1,[X3] | LDR W1,[X4] | MOV W1,#1   ;
+ w[relaxed,cta] y 1  | MOV W2,#1   | LDR W2,[X0] | STR W1,[X0] ;
+                     | STR W2,[X4] |             |             ;
+exists (0:r0=1 /\ 1:X1=1 /\ 2:X1=1 /\ 2:X2=0)

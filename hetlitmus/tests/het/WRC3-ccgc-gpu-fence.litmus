@@ -1,0 +1,14 @@
+Het WRC3-ccgc-gpu-fence
+"Heterogeneous WRC3-ccgc-gpu-fence: per-proc device assignment cpu,cpu,gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X0=x;
+0:X3=y;
+1:X3=y;
+1:X4=z;
+3:X0=x;
+}
+ P0:cpu      | P1:cpu      | P2:gpu              | P3:cpu      ;
+ LDR W1,[X0] | LDR W1,[X3] | r[relaxed,gpu] r0 z | MOV W1,#1   ;
+ MOV W2,#1   | MOV W2,#1   | f[sc,gpu]           | STR W1,[X0] ;
+ STR W2,[X3] | STR W2,[X4] | r[relaxed,gpu] r1 x |             ;
+exists (0:X1=1 /\ 1:X1=1 /\ 2:r0=1 /\ 2:r1=0)

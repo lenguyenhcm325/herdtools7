@@ -1,0 +1,12 @@
+Het 2+2W-gc-sys-release
+"Heterogeneous 2+2W-gc-sys-release: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X1=x;
+1:X3=y;
+}
+ P0:gpu             | P1:cpu      ;
+ w[release,sys] x 2 | MOV W0,#2   ;
+ w[release,sys] y 1 | STR W0,[X3] ;
+                    | MOV W2,#1   ;
+                    | STR W2,[X1] ;
+exists ([x]=2 /\ [y]=2)

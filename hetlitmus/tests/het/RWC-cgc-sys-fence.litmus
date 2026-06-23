@@ -1,0 +1,12 @@
+Het RWC-cgc-sys-fence
+"Heterogeneous RWC-cgc-sys-fence: per-proc device assignment cpu,gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X0=x;
+0:X2=y;
+2:X0=x;
+}
+ P0:cpu      | P1:gpu              | P2:cpu      ;
+ LDR W1,[X0] | w[relaxed,sys] y 1  | MOV W1,#1   ;
+ LDR W3,[X2] | f[sc,sys]           | STR W1,[X0] ;
+             | r[relaxed,sys] r0 x |             ;
+exists (0:X1=1 /\ 0:X3=0 /\ 1:r0=0)

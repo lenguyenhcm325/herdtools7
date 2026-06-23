@@ -1,0 +1,14 @@
+Het ISA2-ccg-cta-acquire
+"Heterogeneous ISA2-ccg-cta-acquire: per-proc device assignment cpu,cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X1=x;
+0:X3=y;
+1:X3=y;
+1:X4=z;
+}
+ P0:cpu      | P1:cpu      | P2:gpu              ;
+ MOV W0,#1   | LDR W0,[X3] | r[acquire,cta] r0 z ;
+ STR W0,[X1] | MOV W2,#1   | r[acquire,cta] r1 x ;
+ MOV W2,#1   | STR W2,[X4] |                     ;
+ STR W2,[X3] |             |                     ;
+exists (1:X0=1 /\ 2:r0=1 /\ 2:r1=0)

@@ -1,0 +1,16 @@
+LISA ISA2-sys-fence
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1) (cta 2)))
+Prefetch=0:x=F,0:y=W,1:y=F,1:z=W,2:z=F,2:x=T
+Com=Rf Rf Fr
+Orig=FenceScSysdWWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys FenceScSysdRWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys FenceScSysdRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
+"FenceScSysdWWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys FenceScSysdRWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys FenceScSysdRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys"
+{
+}
+ P0                 | P1                  | P2                  ;
+ w[relaxed,sys] x 1 | r[relaxed,sys] r0 y | r[relaxed,sys] r0 z ;
+ f[sc,sys]          | f[sc,sys]           | f[sc,sys]           ;
+ w[relaxed,sys] y 1 | w[relaxed,sys] z 1  | r[relaxed,sys] r1 x ;
+
+scopes: (sys (gpu (cta 0) (cta 1) (cta 2)))
+exists (1:r0=1 /\ 2:r0=1 /\ 2:r1=0)

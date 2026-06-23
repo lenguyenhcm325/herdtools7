@@ -1,0 +1,16 @@
+LISA MP-sys-fence
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1)))
+Prefetch=0:x=F,0:y=W,1:y=F,1:x=T
+Com=Rf Fr
+Orig=FenceScSysdWWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys FenceScSysdRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
+"FenceScSysdWWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys FenceScSysdRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys"
+{
+}
+ P0                 | P1                  ;
+ w[relaxed,sys] x 1 | r[relaxed,sys] r0 y ;
+ f[sc,sys]          | f[sc,sys]           ;
+ w[relaxed,sys] y 1 | r[relaxed,sys] r1 x ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists (1:r0=1 /\ 1:r1=0)

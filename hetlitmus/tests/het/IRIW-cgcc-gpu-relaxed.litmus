@@ -1,0 +1,13 @@
+Het IRIW-cgcc-gpu-relaxed
+"Heterogeneous IRIW-cgcc-gpu-relaxed: per-proc device assignment cpu,gpu,cpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X0=x;
+0:X2=y;
+2:X0=x;
+2:X2=y;
+3:X0=x;
+}
+ P0:cpu      | P1:gpu             | P2:cpu      | P3:cpu      ;
+ LDR W1,[X0] | w[relaxed,gpu] y 1 | LDR W1,[X2] | MOV W1,#1   ;
+ LDR W3,[X2] |                    | LDR W3,[X0] | STR W1,[X0] ;
+exists (0:X1=1 /\ 0:X3=0 /\ 2:X1=1 /\ 2:X3=0)

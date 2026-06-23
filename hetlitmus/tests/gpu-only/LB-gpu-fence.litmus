@@ -1,0 +1,16 @@
+LISA LB-gpu-fence
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1)))
+Prefetch=0:x=F,0:y=W,1:y=F,1:x=W
+Com=Rf Rf
+Orig=FenceScGpudRWRelaxedGpuRelaxedGpu RfeRelaxedGpuRelaxedGpu FenceScGpudRWRelaxedGpuRelaxedGpu RfeRelaxedGpuRelaxedGpu
+"FenceScGpudRWRelaxedGpuRelaxedGpu RfeRelaxedGpuRelaxedGpu FenceScGpudRWRelaxedGpuRelaxedGpu RfeRelaxedGpuRelaxedGpu"
+{
+}
+ P0                  | P1                  ;
+ r[relaxed,gpu] r0 x | r[relaxed,gpu] r0 y ;
+ f[sc,gpu]           | f[sc,gpu]           ;
+ w[relaxed,gpu] y 1  | w[relaxed,gpu] x 1  ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists (0:r0=1 /\ 1:r0=1)

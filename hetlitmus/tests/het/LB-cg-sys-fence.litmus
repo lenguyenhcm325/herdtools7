@@ -1,0 +1,11 @@
+Het LB-cg-sys-fence
+"Heterogeneous LB-cg-sys-fence: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X0=x;
+0:X3=y;
+}
+ P0:cpu      | P1:gpu              ;
+ LDR W1,[X0] | r[relaxed,sys] r0 y ;
+ MOV W2,#1   | f[sc,sys]           ;
+ STR W2,[X3] | w[relaxed,sys] x 1  ;
+exists (0:X1=1 /\ 1:r0=1)

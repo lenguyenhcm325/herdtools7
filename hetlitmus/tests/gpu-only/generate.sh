@@ -1,35 +1,42 @@
 #!/bin/bash
-# Task 3 — generate the PLDI'23 GPU-only litmus corpus as scoped LISA tests.
+# Generate the GPU-only HetLitmus litmus corpus as scoped LISA tests.
+#
+# Two parts:
+#  (A) The 8 PLDI'23-anchored tests (MP/LB/SB/IRIW, the relaxed + "-F"
+#      release/acquire variants, plus MP-cta-F).  These keep their original
+#      names because they are the oracle-anchored set verified 8/8 against
+#      expected-amd-gcn3.csv by ../../cats/run-gpu-only.sh.  Generated verbatim.
+#  (B) The systematic grid: every standard shape
+#         MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3
+#      swept over  scope in {cta,gpu,sys}  x  order in {relaxed,acquire,release,
+#      fence}, named <shape>-<scope>-<order>.litmus.
 #
 # Each test is a closed critical cycle of annotated edges; diy7 attaches one
-# memory-order tag and one scope tag per memory access (vocabulary defined in
-# hetlitmus/bells/ptx.bell). Edge token = <base-edge><atom(src)><atom(dst)>,
-# atom rendered as <Order><Scope> (gen/common/edge.ml `pp_edge_compat`).
+# memory-order tag and one scope tag per access (vocabulary in
+# hetlitmus/bells/ptx.bell).  Edge token = <base-edge><atom(src)><atom(dst)>,
+# atom rendered <Order><Scope> (gen/common/edge.ml pp_edge_compat).  The grid
+# annotation rule + the fence column are defined in ../_grid_lib.sh.
 #
-# Cycles, variants and expected outcomes follow the PLDI'23 Compound Memory
-# Models artifact (Goens, Chakraborty, Sarkar, Agarwal, Oswald, Nagarajan,
-# PLDI 2023): the artifact's expected.csv (build target GCN3_X86 = AMD GCN3 GPU +
-# x86 CPU; mirrored locally, AMD-tagged, as expected-amd-gcn3.csv) +
-# gem5-resources/gpu/GPU_Litmus_test/{MP,LB,SB,IRIW}.
-# Faithful detail from the HIP sources: the relaxed ("-sys") variants use plain
-# accesses (modelled here as 'relaxed); the synchronised ("-F") variants use
-# release stores + acquire loads (NOT full fences) — confirmed for MP, SB, IRIW.
-# In MP only the flag variable is rel/acq, data stays relaxed.
-# See hetlitmus/docs/gpu-only-corpus.md.
+# ORACLE STATUS: only the 8 part-(A) tests have a reference verdict
+# (expected-amd-gcn3.csv, AMD GCN3 + x86).  Every part-(B) grid test is
+# NO-ORACLE in the oracle-compare sense.  In particular the `fence' column is
+# ADVISORY: amd-gcn3.cat deliberately does not model fences (its header explains
+# the HRF fence model computes AMD SB/IRIW wrong), so herd7 leaves the fence
+# event unconstrained and the accesses read like relaxed -- herd still prints an
+# Observation, but it must not be read as a fence verdict.
+# See hetlitmus/docs/{gpu-only-corpus,corpus-grid}.md.
 
 set -e
 cd "$(dirname "$0")"
 REPO=$(cd ../../.. && pwd)
 BIN="$REPO/_build/install/default/bin"
 COMMON="-set-libdir $REPO/herd/libdir -bell $REPO/hetlitmus/bells/ptx.bell -arch LISA"
+# shellcheck source=../_grid_lib.sh
+source ../_grid_lib.sh
 
-# Scope trees. diyone7 emits the `-scopes` structure directly into the test body
-# as a parseable `scopes:` tree (lib/coreDumper.ml), which herd reads into the
-# tag2scope relations the .cat uses. We pass an explicit nested tree so all three
-# levels (system > gpu > cta) are present and tag2scope('cta|'gpu|'sys) resolve in
-# every test; each thread is in its own CTA. To synchronise two threads at CTA
-# scope, place them in the SAME `(cta P0 P1)` group -- the .cat reads the instance
-# structure and fires the sync, no model change needed.
+# ---------------------------------------------------------------------------
+# (A) PLDI'23-anchored tests (oracle set) -- generated verbatim, names fixed.
+# ---------------------------------------------------------------------------
 TREE2="(sys (gpu (cta P0) (cta P1)))"
 TREE4="(sys (gpu (cta P0) (cta P1) (cta P2) (cta P3)))"
 
@@ -39,38 +46,56 @@ gen () { # name  scopes-tree  edges...
   echo "  generated $name.litmus  [scopes: $tree]"
 }
 
-# --- MP: P0:{Wx,Wy} | P1:{Ry,Rx}  cycle PodWW Rfe PodRR Fre ---
-# MP-sys (Allowed): fully relaxed
+# MP: P0:{Wx,Wy} | P1:{Ry,Rx}  cycle PodWW Rfe PodRR Fre
 gen MP-sys "$TREE2" \
   PodWWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys PodRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
-# MP-sys-F (Disallowed): flag release/acquire at system scope, data relaxed
 gen MP-sys-F "$TREE2" \
   PodWWRelaxedSysReleaseSys RfeReleaseSysAcquireSys PodRRAcquireSysRelaxedSys FreRelaxedSysRelaxedSys
-# MP-cta-F (Allowed): flag release/acquire at CTA scope, threads in distinct CTAs
 gen MP-cta-F "$TREE2" \
   PodWWRelaxedCtaReleaseCta RfeReleaseCtaAcquireCta PodRRAcquireCtaRelaxedCta FreRelaxedCtaRelaxedCta
-
-# --- LB: P0:{Rx,Wy} | P1:{Ry,Wx}  cycle PodRW Rfe PodRW Rfe ---
-# LB-sys (Disallowed): fully relaxed (LB-sys-F is omitted by the artifact)
+# LB: P0:{Rx,Wy} | P1:{Ry,Wx}  cycle PodRW Rfe PodRW Rfe
 gen LB-sys "$TREE2" \
   PodRWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys PodRWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys
-
-# --- SB: P0:{Wx,Ry} | P1:{Wy,Rx}  cycle PodWR Fre PodWR Fre ---
-# SB-sys (Allowed): fully relaxed
+# SB: P0:{Wx,Ry} | P1:{Wy,Rx}  cycle PodWR Fre PodWR Fre
 gen SB-sys "$TREE2" \
   PodWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys PodWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
-# SB-sys-F (Disallowed): release stores + acquire loads at system scope
 gen SB-sys-F "$TREE2" \
   PodWRReleaseSysAcquireSys FreAcquireSysReleaseSys PodWRReleaseSysAcquireSys FreAcquireSysReleaseSys
-
-# --- IRIW: 2 writers + 2 readers  cycle Rfe PodRR Fre Rfe PodRR Fre ---
-# IRIW-sys (Allowed): fully relaxed
+# IRIW: 2 writers + 2 readers  cycle Rfe PodRR Fre Rfe PodRR Fre
 gen IRIW-sys "$TREE4" \
   RfeRelaxedSysRelaxedSys PodRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys \
   RfeRelaxedSysRelaxedSys PodRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
-# IRIW-sys-F (Disallowed): release stores + acquire loads at system scope
 gen IRIW-sys-F "$TREE4" \
   RfeReleaseSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysReleaseSys \
   RfeReleaseSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysReleaseSys
 
-echo "Done. Corpus in $(pwd)"
+# ---------------------------------------------------------------------------
+# (B) Systematic shape x scope x order grid.
+# ---------------------------------------------------------------------------
+grid_count=0 skip_count=0
+for shape in $SHAPE_ORDER; do
+  cyc="${SHAPE_CYCLE[$shape]}"
+  n="${SHAPE_NPROCS[$shape]}"
+  tree=$(scope_tree "$n")
+  for scope in $GRID_SCOPES; do
+    relaxed_ref=$(render_cycle "$scope" relaxed $cyc)
+    for order in $GRID_ORDERS; do
+      toks=$(render_cycle "$scope" "$order" $cyc)
+      # Skip a column that is byte-identical to relaxed (e.g. `acquire' on an
+      # all-write shape has no read to upgrade): redundant, not a new test.
+      if [ "$order" != relaxed ] && [ "$toks" = "$relaxed_ref" ]; then
+        echo "  skip $shape-$scope-$order (degenerate: == $shape-$scope-relaxed)"
+        skip_count=$((skip_count+1)); continue
+      fi
+      "$BIN/diyone7" $COMMON -name "$shape-$scope-$order" -scopes "$tree" $toks
+      grid_count=$((grid_count+1))
+    done
+  done
+done
+
+# ---------------------------------------------------------------------------
+# @all manifest (herd7/litmus7 list-file: one .litmus per line, relative to
+# this dir; lib/misc.ml is_list).  Drives the end-state herd7 sweep.
+# ---------------------------------------------------------------------------
+ls *.litmus | LC_ALL=C sort > @all
+echo "Done. $(wc -l < @all) tests in $(pwd) (grid: $grid_count generated, $skip_count degenerate skipped); manifest @all written."

@@ -1,0 +1,15 @@
+LISA 2+2W-cta-relaxed
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1)))
+Prefetch=0:x=F,0:y=W,1:y=F,1:x=W
+Com=Co Co
+Orig=PodWWRelaxedCtaRelaxedCta CoeRelaxedCtaRelaxedCta PodWWRelaxedCtaRelaxedCta CoeRelaxedCtaRelaxedCta
+"PodWWRelaxedCtaRelaxedCta CoeRelaxedCtaRelaxedCta PodWWRelaxedCtaRelaxedCta CoeRelaxedCtaRelaxedCta"
+{
+}
+ P0                 | P1                 ;
+ w[relaxed,cta] x 2 | w[relaxed,cta] y 2 ;
+ w[relaxed,cta] y 1 | w[relaxed,cta] x 1 ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists ([x]=2 /\ [y]=2)

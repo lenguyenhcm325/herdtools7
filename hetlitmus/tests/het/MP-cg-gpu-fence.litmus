@@ -1,0 +1,12 @@
+Het MP-cg-gpu-fence
+"Heterogeneous MP-cg-gpu-fence: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X1=x;
+0:X3=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#1   | r[relaxed,gpu] r0 y ;
+ STR W0,[X1] | f[sc,gpu]           ;
+ MOV W2,#1   | r[relaxed,gpu] r1 x ;
+ STR W2,[X3] |                     ;
+exists (1:r0=1 /\ 1:r1=0)

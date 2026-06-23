@@ -1,0 +1,12 @@
+Het MP-cg-sys-acquire
+"Heterogeneous MP-cg-sys-acquire: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X1=x;
+0:X3=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#1   | r[acquire,sys] r0 y ;
+ STR W0,[X1] | r[acquire,sys] r1 x ;
+ MOV W2,#1   |                     ;
+ STR W2,[X3] |                     ;
+exists (1:r0=1 /\ 1:r1=0)

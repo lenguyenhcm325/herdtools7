@@ -1,0 +1,15 @@
+LISA S-cta-release
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1)))
+Prefetch=0:x=F,0:y=W,1:y=F,1:x=W
+Com=Rf Co
+Orig=PodWWReleaseCtaReleaseCta RfeReleaseCtaRelaxedCta PodRWRelaxedCtaReleaseCta CoeReleaseCtaReleaseCta
+"PodWWReleaseCtaReleaseCta RfeReleaseCtaRelaxedCta PodRWRelaxedCtaReleaseCta CoeReleaseCtaReleaseCta"
+{
+}
+ P0                 | P1                  ;
+ w[release,cta] x 2 | r[relaxed,cta] r0 y ;
+ w[release,cta] y 1 | w[release,cta] x 1  ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists ([x]=2 /\ 1:r0=1)

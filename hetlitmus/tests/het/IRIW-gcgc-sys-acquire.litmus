@@ -1,0 +1,10 @@
+Het IRIW-gcgc-sys-acquire
+"Heterogeneous IRIW-gcgc-sys-acquire: per-proc device assignment gpu,cpu,gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X2=y;
+3:X0=x;
+}
+ P0:gpu              | P1:cpu      | P2:gpu              | P3:cpu      ;
+ r[acquire,sys] r0 x | MOV W1,#1   | r[acquire,sys] r0 y | MOV W1,#1   ;
+ r[acquire,sys] r1 y | STR W1,[X2] | r[acquire,sys] r1 x | STR W1,[X0] ;
+exists (0:r0=1 /\ 0:r1=0 /\ 2:r0=1 /\ 2:r1=0)

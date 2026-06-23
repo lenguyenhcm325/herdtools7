@@ -1,0 +1,15 @@
+LISA WRC-sys-acquire
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1) (cta 2)))
+Prefetch=0:x=F,0:y=W,1:y=F,1:x=T
+Com=Rf Fr Rf
+Orig=RfeRelaxedSysAcquireSys PodRWAcquireSysRelaxedSys RfeRelaxedSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysRelaxedSys
+"RfeRelaxedSysAcquireSys PodRWAcquireSysRelaxedSys RfeRelaxedSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysRelaxedSys"
+{
+}
+ P0                  | P1                  | P2                 ;
+ r[acquire,sys] r0 x | r[acquire,sys] r0 y | w[relaxed,sys] x 1 ;
+ w[relaxed,sys] y 1  | r[acquire,sys] r1 x |                    ;
+
+scopes: (sys (gpu (cta 0) (cta 1) (cta 2)))
+exists (0:r0=1 /\ 1:r0=1 /\ 1:r1=0)

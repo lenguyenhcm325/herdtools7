@@ -1,0 +1,12 @@
+Het RWC-gcc-gpu-acquire
+"Heterogeneous RWC-gcc-gpu-acquire: per-proc device assignment gpu,cpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X0=x;
+1:X2=y;
+2:X0=x;
+}
+ P0:gpu              | P1:cpu      | P2:cpu      ;
+ r[acquire,gpu] r0 x | MOV W1,#1   | MOV W1,#1   ;
+ r[acquire,gpu] r1 y | STR W1,[X2] | STR W1,[X0] ;
+                     | LDR W3,[X0] |             ;
+exists (0:r0=1 /\ 0:r1=0 /\ 1:X3=0)

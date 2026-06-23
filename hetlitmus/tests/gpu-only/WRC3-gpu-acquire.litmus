@@ -1,0 +1,15 @@
+LISA WRC3-gpu-acquire
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1) (cta 2) (cta 3)))
+Prefetch=0:x=F,0:y=W,1:y=F,1:z=W,2:z=F,2:x=T
+Com=Rf Rf Fr Rf
+Orig=RfeRelaxedGpuAcquireGpu PodRWAcquireGpuRelaxedGpu RfeRelaxedGpuAcquireGpu PodRWAcquireGpuRelaxedGpu RfeRelaxedGpuAcquireGpu PodRRAcquireGpuAcquireGpu FreAcquireGpuRelaxedGpu
+"RfeRelaxedGpuAcquireGpu PodRWAcquireGpuRelaxedGpu RfeRelaxedGpuAcquireGpu PodRWAcquireGpuRelaxedGpu RfeRelaxedGpuAcquireGpu PodRRAcquireGpuAcquireGpu FreAcquireGpuRelaxedGpu"
+{
+}
+ P0                  | P1                  | P2                  | P3                 ;
+ r[acquire,gpu] r0 x | r[acquire,gpu] r0 y | r[acquire,gpu] r0 z | w[relaxed,gpu] x 1 ;
+ w[relaxed,gpu] y 1  | w[relaxed,gpu] z 1  | r[acquire,gpu] r1 x |                    ;
+
+scopes: (sys (gpu (cta 0) (cta 1) (cta 2) (cta 3)))
+exists (0:r0=1 /\ 1:r0=1 /\ 2:r0=1 /\ 2:r1=0)

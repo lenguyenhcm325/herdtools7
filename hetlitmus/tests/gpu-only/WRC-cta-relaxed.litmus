@@ -1,0 +1,15 @@
+LISA WRC-cta-relaxed
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1) (cta 2)))
+Prefetch=0:x=F,0:y=W,1:y=F,1:x=T
+Com=Rf Fr Rf
+Orig=RfeRelaxedCtaRelaxedCta PodRWRelaxedCtaRelaxedCta RfeRelaxedCtaRelaxedCta PodRRRelaxedCtaRelaxedCta FreRelaxedCtaRelaxedCta
+"RfeRelaxedCtaRelaxedCta PodRWRelaxedCtaRelaxedCta RfeRelaxedCtaRelaxedCta PodRRRelaxedCtaRelaxedCta FreRelaxedCtaRelaxedCta"
+{
+}
+ P0                  | P1                  | P2                 ;
+ r[relaxed,cta] r0 x | r[relaxed,cta] r0 y | w[relaxed,cta] x 1 ;
+ w[relaxed,cta] y 1  | r[relaxed,cta] r1 x |                    ;
+
+scopes: (sys (gpu (cta 0) (cta 1) (cta 2)))
+exists (0:r0=1 /\ 1:r0=1 /\ 1:r1=0)

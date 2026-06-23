@@ -1,0 +1,11 @@
+Het WRC-gcc-gpu-release
+"Heterogeneous WRC-gcc-gpu-release: per-proc device assignment gpu,cpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X0=x;
+1:X3=y;
+2:X0=x;
+}
+ P0:gpu              | P1:cpu      | P2:cpu      ;
+ r[relaxed,gpu] r0 x | LDR W1,[X3] | MOV W1,#1   ;
+ w[release,gpu] y 1  | LDR W2,[X0] | STR W1,[X0] ;
+exists (0:r0=1 /\ 1:X1=1 /\ 1:X2=0)

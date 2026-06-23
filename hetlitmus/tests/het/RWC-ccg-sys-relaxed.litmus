@@ -1,0 +1,13 @@
+Het RWC-ccg-sys-relaxed
+"Heterogeneous RWC-ccg-sys-relaxed: per-proc device assignment cpu,cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X0=x;
+0:X2=y;
+1:X0=x;
+1:X2=y;
+}
+ P0:cpu      | P1:cpu      | P2:gpu             ;
+ LDR W1,[X0] | MOV W1,#1   | w[relaxed,sys] x 1 ;
+ LDR W3,[X2] | STR W1,[X2] |                    ;
+             | LDR W3,[X0] |                    ;
+exists (0:X1=1 /\ 0:X3=0 /\ 1:X3=0)

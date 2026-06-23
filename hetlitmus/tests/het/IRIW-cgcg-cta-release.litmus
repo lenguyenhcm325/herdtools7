@@ -1,0 +1,12 @@
+Het IRIW-cgcg-cta-release
+"Heterogeneous IRIW-cgcg-cta-release: per-proc device assignment cpu,gpu,cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X0=x;
+0:X2=y;
+2:X0=x;
+2:X2=y;
+}
+ P0:cpu      | P1:gpu             | P2:cpu      | P3:gpu             ;
+ LDR W1,[X0] | w[release,cta] y 1 | LDR W1,[X2] | w[release,cta] x 1 ;
+ LDR W3,[X2] |                    | LDR W3,[X0] |                    ;
+exists (0:X1=1 /\ 0:X3=0 /\ 2:X1=1 /\ 2:X3=0)

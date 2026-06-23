@@ -1,0 +1,11 @@
+Het SB-gc-gpu-release
+"Heterogeneous SB-gc-gpu-release: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X1=x;
+1:X2=y;
+}
+ P0:gpu              | P1:cpu      ;
+ w[release,gpu] x 1  | MOV W0,#1   ;
+ r[relaxed,gpu] r0 y | STR W0,[X2] ;
+                     | LDR W3,[X1] ;
+exists (0:r0=0 /\ 1:X3=0)

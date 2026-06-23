@@ -1,0 +1,15 @@
+LISA RWC-cta-acquire
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1) (cta 2)))
+Prefetch=0:x=F,0:y=T,1:y=F,1:x=T
+Com=Fr Fr Rf
+Orig=RfeRelaxedCtaAcquireCta PodRRAcquireCtaAcquireCta FreAcquireCtaRelaxedCta PodWRRelaxedCtaAcquireCta FreAcquireCtaRelaxedCta
+"RfeRelaxedCtaAcquireCta PodRRAcquireCtaAcquireCta FreAcquireCtaRelaxedCta PodWRRelaxedCtaAcquireCta FreAcquireCtaRelaxedCta"
+{
+}
+ P0                  | P1                  | P2                 ;
+ r[acquire,cta] r0 x | w[relaxed,cta] y 1  | w[relaxed,cta] x 1 ;
+ r[acquire,cta] r1 y | r[acquire,cta] r0 x |                    ;
+
+scopes: (sys (gpu (cta 0) (cta 1) (cta 2)))
+exists (0:r0=1 /\ 0:r1=0 /\ 1:r0=0)

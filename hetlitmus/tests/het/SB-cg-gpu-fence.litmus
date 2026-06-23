@@ -1,0 +1,11 @@
+Het SB-cg-gpu-fence
+"Heterogeneous SB-cg-gpu-fence: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X1=x;
+0:X2=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#1   | w[relaxed,gpu] y 1  ;
+ STR W0,[X1] | f[sc,gpu]           ;
+ LDR W3,[X2] | r[relaxed,gpu] r0 x ;
+exists (0:X3=0 /\ 1:r0=0)

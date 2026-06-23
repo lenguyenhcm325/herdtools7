@@ -1,0 +1,11 @@
+Het IRIW-gcgc-cta-fence
+"Heterogeneous IRIW-gcgc-cta-fence: per-proc device assignment gpu,cpu,gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X2=y;
+3:X0=x;
+}
+ P0:gpu              | P1:cpu      | P2:gpu              | P3:cpu      ;
+ r[relaxed,cta] r0 x | MOV W1,#1   | r[relaxed,cta] r0 y | MOV W1,#1   ;
+ f[sc,cta]           | STR W1,[X2] | f[sc,cta]           | STR W1,[X0] ;
+ r[relaxed,cta] r1 y |             | r[relaxed,cta] r1 x |             ;
+exists (0:r0=1 /\ 0:r1=0 /\ 2:r0=1 /\ 2:r1=0)

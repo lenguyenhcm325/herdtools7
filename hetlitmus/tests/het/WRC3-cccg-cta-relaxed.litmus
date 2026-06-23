@@ -1,0 +1,15 @@
+Het WRC3-cccg-cta-relaxed
+"Heterogeneous WRC3-cccg-cta-relaxed: per-proc device assignment cpu,cpu,cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X0=x;
+0:X3=y;
+1:X3=y;
+1:X4=z;
+2:X0=x;
+2:X4=z;
+}
+ P0:cpu      | P1:cpu      | P2:cpu      | P3:gpu             ;
+ LDR W1,[X0] | LDR W1,[X3] | LDR W1,[X4] | w[relaxed,cta] x 1 ;
+ MOV W2,#1   | MOV W2,#1   | LDR W2,[X0] |                    ;
+ STR W2,[X3] | STR W2,[X4] |             |                    ;
+exists (0:X1=1 /\ 1:X1=1 /\ 2:X1=1 /\ 2:X2=0)

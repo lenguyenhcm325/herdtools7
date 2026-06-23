@@ -1,0 +1,16 @@
+LISA SB-sys-fence
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1)))
+Prefetch=0:x=F,0:y=T,1:y=F,1:x=T
+Com=Fr Fr
+Orig=FenceScSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys FenceScSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
+"FenceScSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys FenceScSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys"
+{
+}
+ P0                  | P1                  ;
+ w[relaxed,sys] x 1  | w[relaxed,sys] y 1  ;
+ f[sc,sys]           | f[sc,sys]           ;
+ r[relaxed,sys] r0 y | r[relaxed,sys] r0 x ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists (0:r0=0 /\ 1:r0=0)

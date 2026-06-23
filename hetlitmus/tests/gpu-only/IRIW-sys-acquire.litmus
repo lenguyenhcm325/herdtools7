@@ -1,0 +1,15 @@
+LISA IRIW-sys-acquire
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1) (cta 2) (cta 3)))
+Prefetch=0:x=F,0:y=T,2:y=F,2:x=T
+Com=Fr Rf Fr Rf
+Orig=RfeRelaxedSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysRelaxedSys RfeRelaxedSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysRelaxedSys
+"RfeRelaxedSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysRelaxedSys RfeRelaxedSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysRelaxedSys"
+{
+}
+ P0                  | P1                 | P2                  | P3                 ;
+ r[acquire,sys] r0 x | w[relaxed,sys] y 1 | r[acquire,sys] r0 y | w[relaxed,sys] x 1 ;
+ r[acquire,sys] r1 y |                    | r[acquire,sys] r1 x |                    ;
+
+scopes: (sys (gpu (cta 0) (cta 1) (cta 2) (cta 3)))
+exists (0:r0=1 /\ 0:r1=0 /\ 2:r0=1 /\ 2:r1=0)

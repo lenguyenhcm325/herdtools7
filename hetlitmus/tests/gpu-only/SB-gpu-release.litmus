@@ -1,0 +1,15 @@
+LISA SB-gpu-release
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1)))
+Prefetch=0:x=F,0:y=T,1:y=F,1:x=T
+Com=Fr Fr
+Orig=PodWRReleaseGpuRelaxedGpu FreRelaxedGpuReleaseGpu PodWRReleaseGpuRelaxedGpu FreRelaxedGpuReleaseGpu
+"PodWRReleaseGpuRelaxedGpu FreRelaxedGpuReleaseGpu PodWRReleaseGpuRelaxedGpu FreRelaxedGpuReleaseGpu"
+{
+}
+ P0                  | P1                  ;
+ w[release,gpu] x 1  | w[release,gpu] y 1  ;
+ r[relaxed,gpu] r0 y | r[relaxed,gpu] r0 x ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists (0:r0=0 /\ 1:r0=0)

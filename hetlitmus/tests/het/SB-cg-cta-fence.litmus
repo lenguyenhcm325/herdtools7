@@ -1,0 +1,11 @@
+Het SB-cg-cta-fence
+"Heterogeneous SB-cg-cta-fence: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X1=x;
+0:X2=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#1   | w[relaxed,cta] y 1  ;
+ STR W0,[X1] | f[sc,cta]           ;
+ LDR W3,[X2] | r[relaxed,cta] r0 x ;
+exists (0:X3=0 /\ 1:r0=0)
