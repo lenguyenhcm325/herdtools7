@@ -20,11 +20,29 @@ conformance.
 Observation <name> <Never|Sometimes|Always> <count_target> <count_other>
 ```
 
-`Never` means the `exists` outcome under test was never observed across all
-iterations; `Sometimes`/`Always` mean it was observed. The harness keys on the
-first three fields and ignores the counts and any other log lines.
+For an `exists` test, `Never` means the outcome under test was never observed
+across all iterations; `Sometimes`/`Always` mean it was observed. The harness
+keys on the first three fields and ignores the counts and any other log lines.
 `tests/het/sample-observations.txt` is a **synthesized** sample (clearly marked)
 that drives every branch.
+
+**Condition lines (quantifier recovery).** litmus7 also prints, immediately
+*before* each Observation, a line naming the test's quantifier
+(`litmus/skelUtil.ml:949`):
+
+```
+Condition <exists|forall|~exists> (...) is [NOT ]validated
+```
+
+This matters because litmus reports `Never|Sometimes|Always` relative to the
+test's *validation* and, for a `forall` test, swaps the `p_true`/`p_false` roles
+internally (`litmus/skelUtil.ml:1000-1013`). So for `forall`, `Never` is the
+**mirror image** of `exists`: it means the targeted predicate held in *every*
+execution (no counterexample), not that it was never seen. The harness stashes
+the quantifier from each `Condition` line and applies it to the next
+`Observation`; `~exists` reads like `exists` (only `forall` flips). A log with
+no `Condition` lines (e.g. the synthesized sample) defaults to `exists`, so
+older logs classify exactly as before.
 
 **Oracle CSV.** Columns `Litmus,Expected,Model,Source`; `#` comment lines and the
 header are skipped. The reference shipped here is
@@ -46,15 +64,24 @@ makes the missing NVIDIA oracle visible per test rather than hidden.
 
 The only **hard contradiction** in litmus methodology is observing a *forbidden*
 outcome. An *allowed* relaxation that simply is not exhibited on a given run is
-consistent with the model (it *may* happen). Hence:
+consistent with the model (it *may* happen). The harness reduces each Observation
+to a single boolean — **was the oracle's targeted predicate witnessed?** — and
+that reduction is where the quantifier enters: for `exists`/`~exists` it is
+`obs ≠ Never`, for `forall` it is `obs = Never` (the inversion above). The
+classification then keys on that boolean (`seen`):
 
-| Oracle `Expected` | Observation        | Result    | Note                     |
-|-------------------|--------------------|-----------|--------------------------|
-| `Disallowed`      | `Never`            | MATCH     | forbidden, not seen      |
-| `Disallowed`      | `Sometimes`/`Always` | MISMATCH | FORBIDDEN OUTCOME SEEN (violation) |
-| `Allowed`         | `Sometimes`/`Always` | MATCH    | relaxation seen          |
-| `Allowed`         | `Never`            | MATCH     | allowed, not exhibited   |
-| *(absent)*        | any                | NO-ORACLE | not in this oracle (GH200/PTX?) |
+| Oracle `Expected` | `seen` (predicate witnessed) | Result    | Note                  |
+|-------------------|------------------------------|-----------|-----------------------|
+| `Disallowed`      | no                           | MATCH     | forbidden, not seen   |
+| `Disallowed`      | yes                          | MISMATCH  | FORBIDDEN OUTCOME SEEN (violation) |
+| `Allowed`         | yes                          | MATCH     | relaxation seen       |
+| `Allowed`         | no                           | MATCH     | allowed, not exhibited |
+| *(absent)*        | —                            | NO-ORACLE | not in this oracle (GH200/PTX?) |
+
+Concretely, for a `Disallowed` oracle the **same** observation flips verdict by
+quantifier: `exists … Never` → MATCH but `forall … Never` → MISMATCH, and
+`exists … Sometimes` → MISMATCH but `forall … Sometimes` → MATCH. The output
+table carries a `QUANT` column so this is legible per row.
 
 The harness exits **1 if any MISMATCH** (so it is CI-usable) and **0** otherwise;
 the table prints regardless of exit status.
@@ -72,17 +99,21 @@ $ ./hetlitmus/oracle-compare.sh \
       hetlitmus/tests/het/sample-observations.txt \
       hetlitmus/tests/gpu-only/expected-amd-gcn3.csv
 
-TEST           OBSERVED   ORACLE       MODEL          RESULT     NOTE
-----           --------   ------       -----          ------     ----
-MP-sys         Sometimes  Allowed      AMD-GCN3-x86   MATCH      relaxation seen
-MP-sys-F       Never      Disallowed   AMD-GCN3-x86   MATCH      forbidden, not seen
-IRIW-sys-F     Never      Disallowed   AMD-GCN3-x86   MATCH      forbidden, not seen
-SB-sys-F       Sometimes  Disallowed   AMD-GCN3-x86   MISMATCH   FORBIDDEN OUTCOME SEEN
-MP-het         Sometimes  -            -              NO-ORACLE  not in this oracle (GH200/PTX?)
-SB-het         Never      -            -              NO-ORACLE  not in this oracle (GH200/PTX?)
+TEST           QUANT   OBSERVED   ORACLE       MODEL          RESULT     NOTE
+----           -----   --------   ------       -----          ------     ----
+MP-sys         exists  Sometimes  Allowed      AMD-GCN3-x86   MATCH      relaxation seen
+MP-sys-F       exists  Never      Disallowed   AMD-GCN3-x86   MATCH      forbidden, not seen
+IRIW-sys-F     exists  Never      Disallowed   AMD-GCN3-x86   MATCH      forbidden, not seen
+SB-sys-F       exists  Sometimes  Disallowed   AMD-GCN3-x86   MISMATCH   FORBIDDEN OUTCOME SEEN
+MP-het         exists  Sometimes  -            -              NO-ORACLE  not in this oracle (GH200/PTX?)
+SB-het         exists  Never      -            -              NO-ORACLE  not in this oracle (GH200/PTX?)
 
 6 test(s): 3 MATCH, 1 MISMATCH, 2 NO-ORACLE
 ```
+
+(The synthesized sample carries no `Condition` lines, so every row defaults to
+`QUANT = exists`. A log with `forall` `Condition` lines exercises the inversion
+described in §3.)
 
 The AMD GPU-only tests are grounded by the AMD oracle (MATCH, and the planted
 `SB-sys-F` violation surfaces as MISMATCH); the heterogeneous GH200 tests come

@@ -8,4 +8,5 @@ Het IRIW-gcgc-gpu-fence
  r[relaxed,gpu] r0 x | MOV W1,#1   | r[relaxed,gpu] r0 y | MOV W1,#1   ;
  f[sc,gpu]           | STR W1,[X2] | f[sc,gpu]           | STR W1,[X0] ;
  r[relaxed,gpu] r1 y |             | r[relaxed,gpu] r1 x |             ;
+scopes: (sys (gpu (cta P0) (cta P2)))
 exists (0:r0=1 /\ 0:r1=0 /\ 2:r0=1 /\ 2:r1=0)

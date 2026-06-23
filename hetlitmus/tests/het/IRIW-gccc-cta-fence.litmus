@@ -10,4 +10,5 @@ Het IRIW-gccc-cta-fence
  r[relaxed,cta] r0 x | MOV W1,#1   | LDR W1,[X2] | MOV W1,#1   ;
  f[sc,cta]           | STR W1,[X2] | LDR W3,[X0] | STR W1,[X0] ;
  r[relaxed,cta] r1 y |             |             |             ;
+scopes: (sys (gpu (cta P0)))
 exists (0:r0=1 /\ 0:r1=0 /\ 2:X1=1 /\ 2:X3=0)

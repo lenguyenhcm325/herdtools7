@@ -9,4 +9,5 @@ Het MP-cg-cta-fence
  STR W0,[X1] | f[sc,cta]           ;
  MOV W2,#1   | r[relaxed,cta] r1 x ;
  STR W2,[X3] |                     ;
+scopes: (sys (gpu (cta P1)))
 exists (1:r0=1 /\ 1:r1=0)

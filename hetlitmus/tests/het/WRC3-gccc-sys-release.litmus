@@ -11,4 +11,5 @@ Het WRC3-gccc-sys-release
  r[relaxed,sys] r0 x | LDR W1,[X3] | LDR W1,[X4] | MOV W1,#1   ;
  w[release,sys] y 1  | MOV W2,#1   | LDR W2,[X0] | STR W1,[X0] ;
                      | STR W2,[X4] |             |             ;
+scopes: (sys (gpu (cta P0)))
 exists (0:r0=1 /\ 1:X1=1 /\ 2:X1=1 /\ 2:X2=0)

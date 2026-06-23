@@ -11,4 +11,5 @@ Het ISA2-cgc-gpu-acquire
  STR W0,[X1] | w[relaxed,gpu] z 1  | LDR W2,[X1] ;
  MOV W2,#1   |                     |             ;
  STR W2,[X3] |                     |             ;
+scopes: (sys (gpu (cta P1)))
 exists (1:r0=1 /\ 2:X0=1 /\ 2:X2=0)

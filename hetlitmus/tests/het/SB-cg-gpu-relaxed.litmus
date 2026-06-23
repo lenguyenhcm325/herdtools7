@@ -8,4 +8,5 @@ Het SB-cg-gpu-relaxed
  MOV W0,#1   | w[relaxed,gpu] y 1  ;
  STR W0,[X1] | r[relaxed,gpu] r0 x ;
  LDR W3,[X2] |                     ;
+scopes: (sys (gpu (cta P1)))
 exists (0:X3=0 /\ 1:r0=0)

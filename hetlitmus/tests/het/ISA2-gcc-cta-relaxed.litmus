@@ -10,4 +10,5 @@ Het ISA2-gcc-cta-relaxed
  w[relaxed,cta] x 1 | LDR W0,[X3] | LDR W0,[X4] ;
  w[relaxed,cta] y 1 | MOV W2,#1   | LDR W2,[X1] ;
                     | STR W2,[X4] |             ;
+scopes: (sys (gpu (cta P0)))
 exists (1:X0=1 /\ 2:X0=1 /\ 2:X2=0)

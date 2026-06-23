@@ -11,4 +11,5 @@ Het WRC3-ccgc-sys-relaxed
  LDR W1,[X0] | LDR W1,[X3] | r[relaxed,sys] r0 z | MOV W1,#1   ;
  MOV W2,#1   | MOV W2,#1   | r[relaxed,sys] r1 x | STR W1,[X0] ;
  STR W2,[X3] | STR W2,[X4] |                     |             ;
+scopes: (sys (gpu (cta P2)))
 exists (0:X1=1 /\ 1:X1=1 /\ 2:r0=1 /\ 2:r1=0)

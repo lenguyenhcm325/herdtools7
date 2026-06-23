@@ -24,6 +24,18 @@
 # exhibited on a given run is consistent with the model (it MAY happen), so it
 # is a MATCH (annotated "allowed, not exhibited").
 #
+# QUANTIFIER (exists vs forall): litmus reports "Never|Sometimes|Always"
+# relative to the test's *validation*, and for a `forall' test it swaps the
+# p_true/p_false roles internally (litmus/skelUtil.ml).  So for `forall' the
+# meaning of "Never" is the MIRROR IMAGE of `exists': "Never" means the targeted
+# predicate held in EVERY execution (no counterexample), whereas for `exists'
+# "Never" means it was never witnessed.  The harness therefore recovers the
+# quantifier from the litmus "Condition <exists|forall|~exists> (...)" line that
+# precedes each Observation and INVERTS which observation counts as "the
+# targeted outcome was seen" for forall (`~exists' reads like `exists').  A log
+# with no Condition line (e.g. the synthesized sample) defaults to `exists', so
+# existing behaviour is unchanged.
+#
 # Usage:   ./oracle-compare.sh <observations-file> <oracle-csv>
 #   observations-file : a litmus7 log, or any file containing Observation lines
 #   oracle-csv        : reference CSV, columns "Litmus,Expected,Model,Source"
@@ -59,21 +71,35 @@ BEGIN {
     model[name] = (n >= 3) ? trim(f[3]) : "?"
   }
   close(oracle_csv)
-  fmt = "%-14s %-10s %-12s %-14s %-10s %s\n"
-  printf fmt, "TEST", "OBSERVED", "ORACLE", "MODEL", "RESULT", "NOTE"
-  printf fmt, "----", "--------", "------", "-----", "------", "----"
+  fmt = "%-14s %-7s %-10s %-12s %-14s %-10s %s\n"
+  printf fmt, "TEST", "QUANT", "OBSERVED", "ORACLE", "MODEL", "RESULT", "NOTE"
+  printf fmt, "----", "-----", "--------", "------", "-----", "------", "----"
   nmatch = 0; nmis = 0; nno = 0
+  pending_quant = ""
+}
+# The litmus "Condition <quant> (...) is [NOT ]validated" line precedes the
+# Observation line of its test (litmus/skelUtil.ml); stash the quantifier so the
+# next Observation can read it.  "~exists" reads like "exists" (only forall flips).
+/^Condition/ {
+  pending_quant = ($0 ~ /forall/) ? "forall" : "exists"
+  next
 }
 /^Observation/ {
   test = $2; obs = $3
+  quant = (pending_quant != "") ? pending_quant : "exists"
+  pending_quant = ""
+  # Was the targeted predicate of the oracle witnessed?  For exists/~exists that
+  # is obs != "Never"; for forall the Never/Sometimes-Always reading is inverted
+  # ("Never" = predicate held for ALL executions; see header), so "seen" flips.
+  if (quant == "forall") seen = (obs == "Never")
+  else                   seen = (obs != "Never")
   if (test in orac) {
     verdict = orac[test]; mdl = model[test]
     if (verdict == "Disallowed") {
-      if (obs == "Never") { result="MATCH";    note="forbidden, not seen" }
-      else                { result="MISMATCH"; note="FORBIDDEN OUTCOME SEEN" }
+      if (seen) { result="MISMATCH"; note="FORBIDDEN OUTCOME SEEN" }
+      else      { result="MATCH";    note="forbidden, not seen" }
     } else if (verdict == "Allowed") {
-      if (obs == "Never") { result="MATCH"; note="allowed, not exhibited" }
-      else                { result="MATCH"; note="relaxation seen" }
+      result="MATCH"; note = seen ? "relaxation seen" : "allowed, not exhibited"
     } else {
       result="NO-ORACLE"; note="unknown oracle verdict \"" verdict "\""
       verdict="?"; mdl="-"
@@ -84,7 +110,7 @@ BEGIN {
   if (result=="MATCH") nmatch++
   else if (result=="MISMATCH") nmis++
   else nno++
-  printf fmt, test, obs, verdict, mdl, result, note
+  printf fmt, test, quant, obs, verdict, mdl, result, note
 }
 END {
   printf "\n%d test(s): %d MATCH, %d MISMATCH, %d NO-ORACLE\n", \

@@ -8,4 +8,5 @@ Het SB-gc-gpu-release
  w[release,gpu] x 1  | MOV W0,#1   ;
  r[relaxed,gpu] r0 y | STR W0,[X2] ;
                      | LDR W3,[X1] ;
+scopes: (sys (gpu (cta P0)))
 exists (0:r0=0 /\ 1:X3=0)

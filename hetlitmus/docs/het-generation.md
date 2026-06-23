@@ -121,11 +121,27 @@ strings as the erasure boundary.
 
 `-devices` carries the device axis; the **scope** axis rides on the GPU edge
 annotations themselves (`ReleaseSys`, `AcquireCta`, … — order+scope per access,
-exactly as in the GPU-only corpus, `bells/ptx.bell`). Tier 4 does **not** emit a
-body `scopes:` tree into the het file (the Tier-0 het parser does not consume
-one); the inline per-access scope tags are what carry into the GPU column. A
-future extension can thread a `scopes:` tree through once the het parser accepts
-one.
+exactly as in the GPU-only corpus, `bells/ptx.bell`). These inline per-access
+scope tags are what carry into the GPU column.
+
+In addition, hetgen7 now emits a **parseable nested `scopes:` body tree** (the
+grammar is `lib/scopeRules.mly`; diy's `Scopes=` header info field is *not*
+herd-parseable, so we follow the GPU-only `generate.sh` precedent of writing the
+tree into the test body). Each GPU-owned proc nests in its own CTA under the GPU
+device, e.g. `scopes: (sys (gpu (cta P1)))` for `-devices cpu,gpu`. CPU procs are
+system-scope and are therefore *omitted* from the tree — a proc absent from every
+sub-scope group sits at the `sys` root by default (and the scope grammar makes a
+node either all-procs or all-subtrees, so a CPU proc could not share the `sys`
+node with the `gpu` subtree in any case). With no GPU proc the tree degenerates
+to `scopes: (sys)`.
+
+The het tests are **not** herd-ingested (the single-arch assumption blocks that),
+so the tree is documentary rather than load-bearing: litmus7's `Het` arm parser
+(`HetArch.het_parser`) explicitly **skips** the `scopes:` line — it carries no
+`;` and would otherwise survive HetSlurp as a spurious trailing program row — and
+the CPU/GPU emission does not consume it. Emitting a herd-parseable tree is the
+deliverable; making herd *read* it for a het test remains future work behind the
+single-arch break.
 
 ## 5. End-to-end check
 

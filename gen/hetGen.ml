@@ -252,7 +252,11 @@ let () =
       [] (globals_of ccpu @ globals_of cgpu) in
   let init_lines = global_init @ per_proc_init in
 
-  (* Condition: each proc's atoms from its owner, globals from the cpu run. *)
+  (* Condition: each proc's atoms from its owner; global atoms (proc = None)
+     unioned across BOTH runs and de-duplicated -- mirroring [global_init]
+     above.  Taking globals from the cpu run alone dropped any global condition
+     atom that only the gpu run carries (e.g. a location condition [x]=N on the
+     GPU column), silently weakening the merged test's condition. *)
   let merged_cond =
     let quant,_ = parse_cond ccpu.Code.hc_cond in
     let per_proc =
@@ -262,9 +266,39 @@ let () =
             let _,atoms = parse_cond (run_of dev).Code.hc_cond in
             List.filter (fun a -> proc_of_atom a = Some i) atoms)
           devs) in
-    let _,cpu_atoms = parse_cond ccpu.Code.hc_cond in
-    let globals = List.filter (fun a -> proc_of_atom a = None) cpu_atoms in
-    sprintf "%s (%s)" quant (String.concat " /\\ " (per_proc @ globals)) in
+    let cond_globals_of hc =
+      let _,atoms = parse_cond hc.Code.hc_cond in
+      List.filter (fun a -> proc_of_atom a = None) atoms in
+    let globals =
+      List.fold_left
+        (fun acc s -> if List.mem s acc then acc else acc @ [s])
+        [] (cond_globals_of ccpu @ cond_globals_of cgpu) in
+    let atoms = per_proc @ globals in
+    (* Guard: an empty atom list would emit a malformed "exists ()".  herd and
+       litmus spell the trivially-true condition "<quant> (true)" (the grammar
+       reduces prop: TRUE -> And [], i.e. ConstrGen.constr_true). *)
+    if atoms = [] then sprintf "%s (true)" quant
+    else sprintf "%s (%s)" quant (String.concat " /\\ " atoms) in
+
+  (* HetLitmus Task 8: a parseable nested `scopes:' body tree (grammar
+     lib/scopeRules.mly).  diy's `Scopes=' header info field is NOT herd-
+     parseable, so we follow the gpu-only generate.sh precedent and emit the
+     tree into the test body instead.  Each GPU-owned proc nests in its own CTA
+     under the GPU device: (sys (gpu (cta P<i>) ...)).  CPU procs are
+     system-scope and are therefore omitted -- a proc absent from every
+     sub-scope group sits at the sys root by default (the scope grammar makes a
+     node either all-procs or all-subtrees, so a CPU proc cannot share the sys
+     node with the gpu subtree anyway).  With no GPU proc the tree degenerates
+     to (sys). *)
+  let gpu_procs =
+    Misc.filter_map (fun (i,dev) -> if dev = "gpu" then Some i else None)
+      (List.mapi (fun i dev -> (i,dev)) devs) in
+  let scopes_line =
+    match gpu_procs with
+    | [] -> "scopes: (sys)"
+    | ps ->
+        sprintf "scopes: (sys (gpu %s))"
+          (String.concat " " (List.map (fun i -> sprintf "(cta P%d)" i) ps)) in
 
   let buf = Buffer.create 512 in
   bprintf buf "Het %s\n" name ;
@@ -280,5 +314,6 @@ let () =
   List.iter (fun l -> bprintf buf "%s;\n" l) init_lines ;
   bprintf buf "}\n" ;
   bprintf buf "%s" table ;
+  bprintf buf "%s\n" scopes_line ;
   bprintf buf "%s\n" merged_cond ;
   print_string (Buffer.contents buf)

@@ -412,7 +412,18 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
   let het_parser ~cpu ~gpu _lexer lexbuf =
     let text = HetSlurp.slurp (Buffer.create 256) lexbuf in
     let is_blank s = String.trim s = "" in
-    let rows = List.filter (fun r -> not (is_blank r)) (String.split_on_char ';' text) in
+    (* A `scopes:' tree (HetLitmus Task 8) sits in the program section between
+       the last instruction row and the condition, so HetSlurp pulls it in
+       here.  It carries no `;', so it would survive as a spurious trailing
+       "row"; drop it.  het tests are not herd-ingested (the single-arch
+       assumption blocks that), so the tree is documentary -- the CPU emission
+       does not consume it. *)
+    let is_scopes s =
+      let t = String.trim s in
+      String.length t >= 7 && String.sub t 0 7 = "scopes:" in
+    let rows =
+      List.filter (fun r -> not (is_blank r) && not (is_scopes r))
+        (String.split_on_char ';' text) in
     match rows with
     | [] -> Warn.user_error "HetArch: empty heterogeneous program"
     | header::instr_rows ->

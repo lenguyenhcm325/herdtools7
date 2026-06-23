@@ -9,4 +9,5 @@ Het MP-cg-sys-relaxed
  STR W0,[X1] | r[relaxed,sys] r1 x ;
  MOV W2,#1   |                     ;
  STR W2,[X3] |                     ;
+scopes: (sys (gpu (cta P1)))
 exists (1:r0=1 /\ 1:r1=0)

@@ -8,4 +8,5 @@ Het LB-gc-cta-release
  r[relaxed,cta] r0 x | LDR W1,[X3] ;
  w[release,cta] y 1  | MOV W2,#1   ;
                      | STR W2,[X0] ;
+scopes: (sys (gpu (cta P0)))
 exists (0:r0=1 /\ 1:X1=1)

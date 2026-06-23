@@ -10,4 +10,5 @@ Het RWC-ccg-cta-release
  LDR W1,[X0] | MOV W1,#1   | w[release,cta] x 1 ;
  LDR W3,[X2] | STR W1,[X2] |                    ;
              | LDR W3,[X0] |                    ;
+scopes: (sys (gpu (cta P2)))
 exists (0:X1=1 /\ 0:X3=0 /\ 1:X3=0)

@@ -9,4 +9,5 @@ Het S-cg-cta-acquire
  STR W0,[X1] | w[relaxed,cta] x 1  ;
  MOV W2,#1   |                     ;
  STR W2,[X3] |                     ;
+scopes: (sys (gpu (cta P1)))
 exists (1:r0=1 /\ [x]=2)

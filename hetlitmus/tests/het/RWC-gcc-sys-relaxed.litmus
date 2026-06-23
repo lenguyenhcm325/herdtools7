@@ -9,4 +9,5 @@ Het RWC-gcc-sys-relaxed
  r[relaxed,sys] r0 x | MOV W1,#1   | MOV W1,#1   ;
  r[relaxed,sys] r1 y | STR W1,[X2] | STR W1,[X0] ;
                      | LDR W3,[X0] |             ;
+scopes: (sys (gpu (cta P0)))
 exists (0:r0=1 /\ 0:r1=0 /\ 1:X3=0)

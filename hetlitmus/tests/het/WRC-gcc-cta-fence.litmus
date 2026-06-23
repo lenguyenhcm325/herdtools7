@@ -9,4 +9,5 @@ Het WRC-gcc-cta-fence
  r[relaxed,cta] r0 x | LDR W1,[X3] | MOV W1,#1   ;
  f[sc,cta]           | LDR W2,[X0] | STR W1,[X0] ;
  w[relaxed,cta] y 1  |             |             ;
+scopes: (sys (gpu (cta P0)))
 exists (0:r0=1 /\ 1:X1=1 /\ 1:X2=0)

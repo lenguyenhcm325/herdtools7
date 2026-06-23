@@ -9,4 +9,5 @@ Het 2+2W-gc-sys-relaxed
  w[relaxed,sys] y 1 | STR W0,[X3] ;
                     | MOV W2,#1   ;
                     | STR W2,[X1] ;
+scopes: (sys (gpu (cta P0)))
 exists ([x]=2 /\ [y]=2)

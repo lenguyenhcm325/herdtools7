@@ -8,4 +8,5 @@ Het RWC-cgc-sys-release
  P0:cpu      | P1:gpu              | P2:cpu      ;
  LDR W1,[X0] | w[release,sys] y 1  | MOV W1,#1   ;
  LDR W3,[X2] | r[relaxed,sys] r0 x | STR W1,[X0] ;
+scopes: (sys (gpu (cta P1)))
 exists (0:X1=1 /\ 0:X3=0 /\ 1:r0=0)

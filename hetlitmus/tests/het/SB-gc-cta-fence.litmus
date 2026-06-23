@@ -8,4 +8,5 @@ Het SB-gc-cta-fence
  w[relaxed,cta] x 1  | MOV W0,#1   ;
  f[sc,cta]           | STR W0,[X2] ;
  r[relaxed,cta] r0 y | LDR W3,[X1] ;
+scopes: (sys (gpu (cta P0)))
 exists (0:r0=0 /\ 1:X3=0)
