@@ -1,0 +1,47 @@
+# HetLitmus -- SAMPLE observation inputs for driving oracle-compare.sh against
+# the NVIDIA GH200 het oracle (tests/het/expected-nvidia.csv).
+#
+# These "Observation <name> <verdict> <c_target> <c_other>" lines have the SAME
+# shape litmus7 prints after a run (litmus/skelUtil.ml:1010).  They are
+# SYNTHESIZED stand-ins, NOT real GH200 measurements -- running the het tests on
+# hardware is Task 9 and out of scope here.  They exist only to exercise the
+# harness end to end against the new NVIDIA oracle.
+#
+# Branches exercised against tests/het/expected-nvidia.csv:
+#   - Allowed het test seen      (Sometimes/Always) -> MATCH (relaxation seen)
+#   - Allowed het test not seen  (Never)            -> MATCH (allowed, not exhibited)
+#   - NO-ORACLE het test (IRIW-gcgc-sys-acquire/fence) -> NO-ORACLE (verdict is
+#     literally "NO-ORACLE": the compound ARM-MCA x PTX-non-MCA verdict is
+#     unestablished, so the harness makes no claim)
+#   - a GPU-only name absent from the het oracle    -> NO-ORACLE (not in oracle)
+#
+# NOTE: the NVIDIA het oracle currently contains NO "Disallowed" rows (the het
+# corpus, with its always-plain ARMv9 CPU procs, cannot complete a morally-strong
+# release/acquire pair across the device boundary -- see docs/het-oracle.md), so
+# a MISMATCH is IMPOSSIBLE against this oracle: no observation can contradict a
+# verdict that forbids nothing.  The harness MISMATCH branch is exercised by the
+# AMD sample (sample-observations.txt vs expected-amd-gcn3.csv).
+#
+# A Condition line before an Observation sets that row's QUANT (exists/forall);
+# rows with no Condition line default to exists.
+
+# --- Allowed het tests, weak outcome WAS observed -> MATCH (relaxation seen) ---
+Observation MP-het                 Sometimes 27  999973
+Observation MP-cg-sys-acquire      Sometimes 5   999995
+Observation 2+2W-cg-sys-release    Sometimes 11  999989
+Observation WRC-cgc-sys-acquire    Always    1000000 0
+
+# --- Allowed het test, weak outcome NOT observed this run -> MATCH (allowed, not exhibited) ---
+Observation SB-het                 Never     0   1000000
+Observation ISA2-cgc-sys-acquire   Never     0   1000000
+
+# --- forall quantifier: Allowed stays MATCH; shows QUANT column populated ---
+Condition forall (...) is validated
+Observation IRIW-gcgc-gpu-acquire  Never     1000000 0
+
+# --- NO-ORACLE: the two MCA-dependent IRIW-gcgc tests (verdict "NO-ORACLE") ---
+Observation IRIW-gcgc-sys-acquire  Sometimes 2   999998
+Observation IRIW-gcgc-sys-fence    Never     0   1000000
+
+# --- NO-ORACLE: a GPU-only name that is not part of the het oracle at all ---
+Observation MP-sys                 Sometimes 412 999588
