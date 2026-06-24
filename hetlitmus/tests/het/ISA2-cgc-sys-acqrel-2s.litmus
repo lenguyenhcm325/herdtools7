@@ -1,0 +1,15 @@
+Het ISA2-cgc-sys-acqrel-2s
+"Heterogeneous ISA2-cgc-sys-acqrel-2s: per-proc device assignment cpu,gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X1=x;
+0:X3=y;
+2:X1=x;
+2:X4=z;
+}
+ P0:cpu       | P1:gpu              | P2:cpu        ;
+ MOV W0,#1    | r[acquire,sys] r0 y | LDAPR W0,[X4] ;
+ STLR W0,[X1] | w[release,sys] z 1  | LDAPR W2,[X1] ;
+ MOV W2,#1    |                     |               ;
+ STLR W2,[X3] |                     |               ;
+scopes: (sys (gpu (cta P1)))
+exists (1:r0=1 /\ 2:X0=1 /\ 2:X2=0)

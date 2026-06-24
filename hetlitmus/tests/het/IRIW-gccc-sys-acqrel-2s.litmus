@@ -1,0 +1,13 @@
+Het IRIW-gccc-sys-acqrel-2s
+"Heterogeneous IRIW-gccc-sys-acqrel-2s: per-proc device assignment gpu,cpu,cpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X2=y;
+2:X0=x;
+2:X2=y;
+3:X0=x;
+}
+ P0:gpu              | P1:cpu       | P2:cpu        | P3:cpu       ;
+ r[acquire,sys] r0 x | MOV W1,#1    | LDAPR W1,[X2] | MOV W1,#1    ;
+ r[acquire,sys] r1 y | STLR W1,[X2] | LDAPR W3,[X0] | STLR W1,[X0] ;
+scopes: (sys (gpu (cta P0)))
+exists (0:r0=1 /\ 0:r1=0 /\ 2:X1=1 /\ 2:X3=0)

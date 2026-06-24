@@ -1,0 +1,14 @@
+Het RWC-ccg-sys-acqrel-2s
+"Heterogeneous RWC-ccg-sys-acqrel-2s: per-proc device assignment cpu,cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X0=x;
+0:X2=y;
+1:X0=x;
+1:X2=y;
+}
+ P0:cpu        | P1:cpu        | P2:gpu             ;
+ LDAPR W1,[X0] | MOV W1,#1     | w[release,sys] x 1 ;
+ LDAPR W3,[X2] | STLR W1,[X2]  |                    ;
+               | LDAPR W3,[X0] |                    ;
+scopes: (sys (gpu (cta P2)))
+exists (0:X1=1 /\ 0:X3=0 /\ 1:X3=0)

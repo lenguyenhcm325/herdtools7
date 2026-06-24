@@ -1,0 +1,15 @@
+Het WRC3-gccc-sys-acqrel-2s
+"Heterogeneous WRC3-gccc-sys-acqrel-2s: per-proc device assignment gpu,cpu,cpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X3=y;
+1:X4=z;
+2:X0=x;
+2:X4=z;
+3:X0=x;
+}
+ P0:gpu              | P1:cpu        | P2:cpu        | P3:cpu       ;
+ r[acquire,sys] r0 x | LDAPR W1,[X3] | LDAPR W1,[X4] | MOV W1,#1    ;
+ w[release,sys] y 1  | MOV W2,#1     | LDAPR W2,[X0] | STLR W1,[X0] ;
+                     | STLR W2,[X4]  |               |              ;
+scopes: (sys (gpu (cta P0)))
+exists (0:r0=1 /\ 1:X1=1 /\ 2:X1=1 /\ 2:X2=0)

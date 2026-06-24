@@ -69,6 +69,13 @@ declare -A SHAPE_HET_CUTS=(
 GRID_SCOPES="cta gpu sys"
 GRID_ORDERS="relaxed acquire release fence"
 
+# Two-sided het orders: the COMPLETE morally-strong pairings, applied to BOTH
+# devices at sys scope so the cross-device pair actually closes (see the het
+# generate.sh "(D) two-sided" section and docs/het-oracle.md).
+#   acqrel : reads -> acquire, writes -> release   (forbids MP-family + LB)
+#   fence  : DMB.SY (CPU) + fence.sc.sys (GPU)      (also forbids SB/R/RWC)
+TWO_SIDED_ORDERS="acqrel fence"
+
 # --- helpers ----------------------------------------------------------------
 
 # scope_cc <scope>  ->  CamelCase scope token used inside edge names
@@ -90,11 +97,17 @@ edge_src_dst() {
 #   relaxed/fence : everything relaxed (fence supplies ordering via a fence event)
 #   acquire       : reads -> Acquire, writes -> Relaxed
 #   release       : writes -> Release, reads -> Relaxed
+#   acqrel        : reads -> Acquire, writes -> Release  (the COMPLETE morally-
+#                   strong release/acquire pair -- used by the TWO-SIDED het
+#                   variants, where it is applied to BOTH devices so both halves
+#                   of the pair are present; see render_cpu_cycle and the het
+#                   generate.sh "(D) two-sided" section)
 ord_for() {
   case "$2" in
     relaxed|fence) echo Relaxed;;
     acquire) [ "$1" = R ] && echo Acquire || echo Relaxed;;
     release) [ "$1" = W ] && echo Release || echo Relaxed;;
+    acqrel)  [ "$1" = R ] && echo Acquire || echo Release;;
     *) echo "bad order: $2" >&2; return 1;;
   esac
 }
@@ -116,6 +129,66 @@ render_cycle() {
       base="FenceSc${SC}d${e#Pod}"
     fi
     out="$out ${base}${os}${SC}${od}${SC}"
+  done
+  echo "${out# }"
+}
+
+# --- CPU (AArch64) annotator: the OTHER half of the morally-strong pair --------
+# The het generator runs the cycle engine once per device; the CPU run gets its
+# edge cycle from hetgen7's `-cpu <edges>' (parsed VERBATIM by the AArch64
+# builder -- no OCaml change).  By default generate.sh passes the PLAIN base
+# cycle there, so every CPU proc is a plain ARMv9 ld/st and a GPU sys
+# release/acquire on the other proc can never CLOSE the morally-strong pair the
+# CMCM needs to cut a cycle (the GH200 CPU is ARMv9, not x86, so it supplies no
+# implicit acquire/release -- Bagchi ISMM'26 Fig 1, CMCM PLDI'23 Fig 2a).  The
+# TWO-SIDED variants instead pass an ANNOTATED CPU cycle here, so the CPU proc
+# carries its half of the pair and a complete cross-device pair can form.
+#
+# INSTRUCTION MAPPING (grounded; see hetlitmus/docs/het-oracle.md "Mapping"):
+#   release  -> STLR    (ARM store-release; Bagchi Fig 1 shows the GH200
+#                        toolchain compiling C++ memory_order_release to STLR)
+#   acquire  -> LDAPR   (ARM RCpc load-acquire; GCC>=13.1/LLVM>=16 emit LDAPR for
+#                        std::atomic acquire on -mcpu=neoverse-v* (Grace = Armv9
+#                        Neoverse V2, FEAT_LRCPC); RCpc matches C++/PTX acquire,
+#                        whereas LDAR/RCsc would OVER-strengthen and wrongly
+#                        forbid SB/R/RWC -- see the doc)
+#   fence    -> DMB.SY  (full system barrier; Bagchi Fig 2c uses DMB to order
+#                        store->load)
+# ARM ops are scope-free: an unscoped ARM access is treated as SYSTEM scope
+# (Bagchi 3.2), so no scope token is appended (unlike the GPU/Bell side).
+#
+# diy atom letters (probed via `diyone7 -arch AArch64 -show annotations'):
+#   L = release (STLR) ; Q = LDAPR (RCpc acquire) ; A = LDAR (RCsc, unused).
+
+# arm_ord <dir W|R> <order>  ->  AArch64 diy atom letter for that access
+#   acqrel : reads -> Q (LDAPR) , writes -> L (STLR)   [the complete pair]
+arm_ord() {
+  case "$2" in
+    acqrel) [ "$1" = R ] && echo Q || echo L;;
+    *) echo "bad cpu order: $2 (only acqrel uses per-access atoms)" >&2; return 1;;
+  esac
+}
+
+# render_cpu_cycle <order> <base-edge>...  ->  annotated AArch64 edge token list
+# (the CPU-side mirror of render_cycle, but with ARM atoms and NO scope).
+#   acqrel : every read -> LDAPR (Q), every write -> STLR (L)   (atom on each end)
+#   fence  : every access plain; each intra-proc Pod<XY> becomes the full-barrier
+#            edge `DMB.SYd<XY>' (emits a DMB SY between the two accesses); the
+#            external edges (Rfe/Fre/Coe) stay bare (their plain ends agree with
+#            the adjacent atoms -- verified with diyone7).
+render_cpu_cycle() {
+  local order="$1"; shift
+  local out="" e as ad base
+  for e in "$@"; do
+    edge_src_dst "$e" || return 1
+    if [ "$order" = fence ]; then
+      if [ "$IS_PO" = 1 ]; then base="DMB.SYd${e#Pod}"; else base="$e"; fi
+      out="$out $base"
+    else
+      as=$(arm_ord "$SRC" "$order") || return 1
+      ad=$(arm_ord "$DST" "$order") || return 1
+      out="$out ${e}${as}${ad}"
+    fi
   done
   echo "${out# }"
 }

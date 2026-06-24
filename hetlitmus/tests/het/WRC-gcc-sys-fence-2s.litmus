@@ -1,0 +1,13 @@
+Het WRC-gcc-sys-fence-2s
+"Heterogeneous WRC-gcc-sys-fence-2s: per-proc device assignment gpu,cpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X0=x;
+1:X3=y;
+2:X0=x;
+}
+ P0:gpu              | P1:cpu      | P2:cpu      ;
+ r[relaxed,sys] r0 x | LDR W1,[X3] | MOV W1,#1   ;
+ f[sc,sys]           | DMB SY      | STR W1,[X0] ;
+ w[relaxed,sys] y 1  | LDR W2,[X0] |             ;
+scopes: (sys (gpu (cta P0)))
+exists (0:r0=1 /\ 1:X1=1 /\ 1:X2=0)

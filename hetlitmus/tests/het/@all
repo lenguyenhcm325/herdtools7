@@ -4,6 +4,8 @@
 2+2W-cg-gpu-fence.litmus
 2+2W-cg-gpu-relaxed.litmus
 2+2W-cg-gpu-release.litmus
+2+2W-cg-sys-acqrel-2s.litmus
+2+2W-cg-sys-fence-2s.litmus
 2+2W-cg-sys-fence.litmus
 2+2W-cg-sys-relaxed.litmus
 2+2W-cg-sys-release.litmus
@@ -13,6 +15,8 @@
 2+2W-gc-gpu-fence.litmus
 2+2W-gc-gpu-relaxed.litmus
 2+2W-gc-gpu-release.litmus
+2+2W-gc-sys-acqrel-2s.litmus
+2+2W-gc-sys-fence-2s.litmus
 2+2W-gc-sys-fence.litmus
 2+2W-gc-sys-relaxed.litmus
 2+2W-gc-sys-release.litmus
@@ -20,12 +24,16 @@ IRIW-cgcc-cta-relaxed.litmus
 IRIW-cgcc-cta-release.litmus
 IRIW-cgcc-gpu-relaxed.litmus
 IRIW-cgcc-gpu-release.litmus
+IRIW-cgcc-sys-acqrel-2s.litmus
+IRIW-cgcc-sys-fence-2s.litmus
 IRIW-cgcc-sys-relaxed.litmus
 IRIW-cgcc-sys-release.litmus
 IRIW-cgcg-cta-relaxed.litmus
 IRIW-cgcg-cta-release.litmus
 IRIW-cgcg-gpu-relaxed.litmus
 IRIW-cgcg-gpu-release.litmus
+IRIW-cgcg-sys-acqrel-2s.litmus
+IRIW-cgcg-sys-fence-2s.litmus
 IRIW-cgcg-sys-relaxed.litmus
 IRIW-cgcg-sys-release.litmus
 IRIW-gccc-cta-acquire.litmus
@@ -34,7 +42,9 @@ IRIW-gccc-cta-relaxed.litmus
 IRIW-gccc-gpu-acquire.litmus
 IRIW-gccc-gpu-fence.litmus
 IRIW-gccc-gpu-relaxed.litmus
+IRIW-gccc-sys-acqrel-2s.litmus
 IRIW-gccc-sys-acquire.litmus
+IRIW-gccc-sys-fence-2s.litmus
 IRIW-gccc-sys-fence.litmus
 IRIW-gccc-sys-relaxed.litmus
 IRIW-gcgc-cta-acquire.litmus
@@ -43,6 +53,7 @@ IRIW-gcgc-cta-relaxed.litmus
 IRIW-gcgc-gpu-acquire.litmus
 IRIW-gcgc-gpu-fence.litmus
 IRIW-gcgc-gpu-relaxed.litmus
+IRIW-gcgc-sys-acqrel-2s.litmus
 IRIW-gcgc-sys-acquire.litmus
 IRIW-gcgc-sys-fence.litmus
 IRIW-gcgc-sys-relaxed.litmus
@@ -52,7 +63,9 @@ ISA2-ccg-cta-relaxed.litmus
 ISA2-ccg-gpu-acquire.litmus
 ISA2-ccg-gpu-fence.litmus
 ISA2-ccg-gpu-relaxed.litmus
+ISA2-ccg-sys-acqrel-2s.litmus
 ISA2-ccg-sys-acquire.litmus
+ISA2-ccg-sys-fence-2s.litmus
 ISA2-ccg-sys-fence.litmus
 ISA2-ccg-sys-relaxed.litmus
 ISA2-cgc-cta-acquire.litmus
@@ -63,7 +76,9 @@ ISA2-cgc-gpu-acquire.litmus
 ISA2-cgc-gpu-fence.litmus
 ISA2-cgc-gpu-relaxed.litmus
 ISA2-cgc-gpu-release.litmus
+ISA2-cgc-sys-acqrel-2s.litmus
 ISA2-cgc-sys-acquire.litmus
+ISA2-cgc-sys-fence-2s.litmus
 ISA2-cgc-sys-fence.litmus
 ISA2-cgc-sys-relaxed.litmus
 ISA2-cgc-sys-release.litmus
@@ -73,6 +88,8 @@ ISA2-gcc-cta-release.litmus
 ISA2-gcc-gpu-fence.litmus
 ISA2-gcc-gpu-relaxed.litmus
 ISA2-gcc-gpu-release.litmus
+ISA2-gcc-sys-acqrel-2s.litmus
+ISA2-gcc-sys-fence-2s.litmus
 ISA2-gcc-sys-fence.litmus
 ISA2-gcc-sys-relaxed.litmus
 ISA2-gcc-sys-release.litmus
@@ -84,7 +101,9 @@ LB-cg-gpu-acquire.litmus
 LB-cg-gpu-fence.litmus
 LB-cg-gpu-relaxed.litmus
 LB-cg-gpu-release.litmus
+LB-cg-sys-acqrel-2s.litmus
 LB-cg-sys-acquire.litmus
+LB-cg-sys-fence-2s.litmus
 LB-cg-sys-fence.litmus
 LB-cg-sys-relaxed.litmus
 LB-cg-sys-release.litmus
@@ -96,7 +115,9 @@ LB-gc-gpu-acquire.litmus
 LB-gc-gpu-fence.litmus
 LB-gc-gpu-relaxed.litmus
 LB-gc-gpu-release.litmus
+LB-gc-sys-acqrel-2s.litmus
 LB-gc-sys-acquire.litmus
+LB-gc-sys-fence-2s.litmus
 LB-gc-sys-fence.litmus
 LB-gc-sys-relaxed.litmus
 LB-gc-sys-release.litmus
@@ -106,7 +127,9 @@ MP-cg-cta-relaxed.litmus
 MP-cg-gpu-acquire.litmus
 MP-cg-gpu-fence.litmus
 MP-cg-gpu-relaxed.litmus
+MP-cg-sys-acqrel-2s.litmus
 MP-cg-sys-acquire.litmus
+MP-cg-sys-fence-2s.litmus
 MP-cg-sys-fence.litmus
 MP-cg-sys-relaxed.litmus
 MP-gc-cta-fence.litmus
@@ -115,6 +138,8 @@ MP-gc-cta-release.litmus
 MP-gc-gpu-fence.litmus
 MP-gc-gpu-relaxed.litmus
 MP-gc-gpu-release.litmus
+MP-gc-sys-acqrel-2s.litmus
+MP-gc-sys-fence-2s.litmus
 MP-gc-sys-fence.litmus
 MP-gc-sys-relaxed.litmus
 MP-gc-sys-release.litmus
@@ -127,7 +152,9 @@ R-cg-gpu-acquire.litmus
 R-cg-gpu-fence.litmus
 R-cg-gpu-relaxed.litmus
 R-cg-gpu-release.litmus
+R-cg-sys-acqrel-2s.litmus
 R-cg-sys-acquire.litmus
+R-cg-sys-fence-2s.litmus
 R-cg-sys-fence.litmus
 R-cg-sys-relaxed.litmus
 R-cg-sys-release.litmus
@@ -137,6 +164,8 @@ R-gc-cta-release.litmus
 R-gc-gpu-fence.litmus
 R-gc-gpu-relaxed.litmus
 R-gc-gpu-release.litmus
+R-gc-sys-acqrel-2s.litmus
+R-gc-sys-fence-2s.litmus
 R-gc-sys-fence.litmus
 R-gc-sys-relaxed.litmus
 R-gc-sys-release.litmus
@@ -144,6 +173,8 @@ RWC-ccg-cta-relaxed.litmus
 RWC-ccg-cta-release.litmus
 RWC-ccg-gpu-relaxed.litmus
 RWC-ccg-gpu-release.litmus
+RWC-ccg-sys-acqrel-2s.litmus
+RWC-ccg-sys-fence-2s.litmus
 RWC-ccg-sys-relaxed.litmus
 RWC-ccg-sys-release.litmus
 RWC-cgc-cta-acquire.litmus
@@ -154,7 +185,9 @@ RWC-cgc-gpu-acquire.litmus
 RWC-cgc-gpu-fence.litmus
 RWC-cgc-gpu-relaxed.litmus
 RWC-cgc-gpu-release.litmus
+RWC-cgc-sys-acqrel-2s.litmus
 RWC-cgc-sys-acquire.litmus
+RWC-cgc-sys-fence-2s.litmus
 RWC-cgc-sys-fence.litmus
 RWC-cgc-sys-relaxed.litmus
 RWC-cgc-sys-release.litmus
@@ -164,7 +197,9 @@ RWC-gcc-cta-relaxed.litmus
 RWC-gcc-gpu-acquire.litmus
 RWC-gcc-gpu-fence.litmus
 RWC-gcc-gpu-relaxed.litmus
+RWC-gcc-sys-acqrel-2s.litmus
 RWC-gcc-sys-acquire.litmus
+RWC-gcc-sys-fence-2s.litmus
 RWC-gcc-sys-fence.litmus
 RWC-gcc-sys-relaxed.litmus
 S-cg-cta-acquire.litmus
@@ -175,7 +210,9 @@ S-cg-gpu-acquire.litmus
 S-cg-gpu-fence.litmus
 S-cg-gpu-relaxed.litmus
 S-cg-gpu-release.litmus
+S-cg-sys-acqrel-2s.litmus
 S-cg-sys-acquire.litmus
+S-cg-sys-fence-2s.litmus
 S-cg-sys-fence.litmus
 S-cg-sys-relaxed.litmus
 S-cg-sys-release.litmus
@@ -185,6 +222,8 @@ S-gc-cta-release.litmus
 S-gc-gpu-fence.litmus
 S-gc-gpu-relaxed.litmus
 S-gc-gpu-release.litmus
+S-gc-sys-acqrel-2s.litmus
+S-gc-sys-fence-2s.litmus
 S-gc-sys-fence.litmus
 S-gc-sys-relaxed.litmus
 S-gc-sys-release.litmus
@@ -196,7 +235,9 @@ SB-cg-gpu-acquire.litmus
 SB-cg-gpu-fence.litmus
 SB-cg-gpu-relaxed.litmus
 SB-cg-gpu-release.litmus
+SB-cg-sys-acqrel-2s.litmus
 SB-cg-sys-acquire.litmus
+SB-cg-sys-fence-2s.litmus
 SB-cg-sys-fence.litmus
 SB-cg-sys-relaxed.litmus
 SB-cg-sys-release.litmus
@@ -208,7 +249,9 @@ SB-gc-gpu-acquire.litmus
 SB-gc-gpu-fence.litmus
 SB-gc-gpu-relaxed.litmus
 SB-gc-gpu-release.litmus
+SB-gc-sys-acqrel-2s.litmus
 SB-gc-sys-acquire.litmus
+SB-gc-sys-fence-2s.litmus
 SB-gc-sys-fence.litmus
 SB-gc-sys-relaxed.litmus
 SB-gc-sys-release.litmus
@@ -217,6 +260,8 @@ WRC-ccg-cta-relaxed.litmus
 WRC-ccg-cta-release.litmus
 WRC-ccg-gpu-relaxed.litmus
 WRC-ccg-gpu-release.litmus
+WRC-ccg-sys-acqrel-2s.litmus
+WRC-ccg-sys-fence-2s.litmus
 WRC-ccg-sys-relaxed.litmus
 WRC-ccg-sys-release.litmus
 WRC-cgc-cta-acquire.litmus
@@ -225,7 +270,9 @@ WRC-cgc-cta-relaxed.litmus
 WRC-cgc-gpu-acquire.litmus
 WRC-cgc-gpu-fence.litmus
 WRC-cgc-gpu-relaxed.litmus
+WRC-cgc-sys-acqrel-2s.litmus
 WRC-cgc-sys-acquire.litmus
+WRC-cgc-sys-fence-2s.litmus
 WRC-cgc-sys-fence.litmus
 WRC-cgc-sys-relaxed.litmus
 WRC-gcc-cta-acquire.litmus
@@ -236,7 +283,9 @@ WRC-gcc-gpu-acquire.litmus
 WRC-gcc-gpu-fence.litmus
 WRC-gcc-gpu-relaxed.litmus
 WRC-gcc-gpu-release.litmus
+WRC-gcc-sys-acqrel-2s.litmus
 WRC-gcc-sys-acquire.litmus
+WRC-gcc-sys-fence-2s.litmus
 WRC-gcc-sys-fence.litmus
 WRC-gcc-sys-relaxed.litmus
 WRC-gcc-sys-release.litmus
@@ -244,6 +293,8 @@ WRC3-cccg-cta-relaxed.litmus
 WRC3-cccg-cta-release.litmus
 WRC3-cccg-gpu-relaxed.litmus
 WRC3-cccg-gpu-release.litmus
+WRC3-cccg-sys-acqrel-2s.litmus
+WRC3-cccg-sys-fence-2s.litmus
 WRC3-cccg-sys-relaxed.litmus
 WRC3-cccg-sys-release.litmus
 WRC3-ccgc-cta-acquire.litmus
@@ -252,7 +303,9 @@ WRC3-ccgc-cta-relaxed.litmus
 WRC3-ccgc-gpu-acquire.litmus
 WRC3-ccgc-gpu-fence.litmus
 WRC3-ccgc-gpu-relaxed.litmus
+WRC3-ccgc-sys-acqrel-2s.litmus
 WRC3-ccgc-sys-acquire.litmus
+WRC3-ccgc-sys-fence-2s.litmus
 WRC3-ccgc-sys-fence.litmus
 WRC3-ccgc-sys-relaxed.litmus
 WRC3-cgcc-cta-acquire.litmus
@@ -263,7 +316,9 @@ WRC3-cgcc-gpu-acquire.litmus
 WRC3-cgcc-gpu-fence.litmus
 WRC3-cgcc-gpu-relaxed.litmus
 WRC3-cgcc-gpu-release.litmus
+WRC3-cgcc-sys-acqrel-2s.litmus
 WRC3-cgcc-sys-acquire.litmus
+WRC3-cgcc-sys-fence-2s.litmus
 WRC3-cgcc-sys-fence.litmus
 WRC3-cgcc-sys-relaxed.litmus
 WRC3-cgcc-sys-release.litmus
@@ -275,7 +330,9 @@ WRC3-gccc-gpu-acquire.litmus
 WRC3-gccc-gpu-fence.litmus
 WRC3-gccc-gpu-relaxed.litmus
 WRC3-gccc-gpu-release.litmus
+WRC3-gccc-sys-acqrel-2s.litmus
 WRC3-gccc-sys-acquire.litmus
+WRC3-gccc-sys-fence-2s.litmus
 WRC3-gccc-sys-fence.litmus
 WRC3-gccc-sys-relaxed.litmus
 WRC3-gccc-sys-release.litmus

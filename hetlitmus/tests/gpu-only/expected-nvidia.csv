@@ -1,0 +1,41 @@
+Litmus,Expected,Model,Source
+# Expected outcomes for the GPU-ONLY corpus on the NVIDIA Hopper GPU, i.e. the
+# pure PTX memory model (BOTH procs are GPU threads, in distinct CTAs).  This is
+# the NVIDIA counterpart to tests/gpu-only/expected-amd-gcn3.csv; the .litmus
+# files are vendor-neutral and shared, but the VERDICTS differ wherever AMD GCN3
+# and NVIDIA PTX disagree -- which is the whole reason a separate oracle exists.
+#
+# Verdicts are DERIVED from the formal PTX model (hardware-free; running on a
+# GH200 Hopper is Task 9), grounded PURELY in:
+#   [PTX]    Lustig, Sahasrabuddhe, Giroux, "A Formal Analysis of the NVIDIA PTX
+#            Memory Consistency Model", ASPLOS'19 -- the six axioms of Fig 7, the
+#            release/acquire synchronisation of Fig 5, the fence.sc requirement
+#            for SB of Fig 6, and 3.4 "the PTX model is NOT multi-copy atomic".
+#   [Bagchi] Bagchi et al., ISMM'26 -- empirical Hopper-GPU confirmation: "across
+#            560 litmus tests, whenever a morally strong release-acquire
+#            synchronization was established at gpu scope or higher, no weak
+#            behaviors were observed" (4.1); narrower scopes/insufficient
+#            ordering always showed weak behaviour.
+#
+# KEY VENDOR DIFFERENCE (do NOT reuse the AMD CSV): on AMD GCN3, system-scope
+# release/acquire is a heavyweight cache flush/invalidate to the system coherence
+# point (HRF), so it forbids SB, IRIW and LB.  PTX release/acquire is pure
+# ORDERING, not a flush: by the PTX axioms it forbids MP (Fig 5) but is provably
+# insufficient for SB (Fig 6 -- needs fence.sc), for IRIW (3.4 -- needs multi-copy
+# atomicity, which PTX lacks), and for relaxed LB (Axiom 4 No-Thin-Air is
+# acyclic(rf u dep): with no dependency the load->store po edges are not in dep).
+# Hence the three rows below where NVIDIA = Allowed but AMD = Disallowed.
+#
+# Model column = NVIDIA-PTX (the Hopper GPU model the verdict belongs to),
+# mirroring the AMD file so the two GPU-only oracles slot in side by side.  The
+# remaining 129 grid GPU-only tests are NO-ORACLE here (as for AMD: the oracle
+# covers only the 8 PLDI'23-anchored tests).  The het (AArch64+PTX) oracle is the
+# separate tests/het/expected-nvidia.csv.
+MP-sys,Allowed,NVIDIA-PTX,relaxed writes are not releases -> no synchronizes-with -> Causality axiom vacuous; MP weak permitted [PTX Fig5/Axiom6; Bagchi 4.1]
+MP-sys-F,Disallowed,NVIDIA-PTX,sys release/acquire pair (both CTAs in sys scope) gives sw -> cause -> Causality axiom forbids the MP weak outcome [PTX Fig5/Axiom6 3.3; Bagchi 4.1 'no weak at gpu+ scope']
+MP-cta-F,Allowed,NVIDIA-PTX,release/acquire are cta-scoped but the two procs are in different CTAs -> scope does not encompass the other thread -> not morally strong -> no sw [PTX 3.3; Bagchi Fig2e]
+LB-sys,Allowed,NVIDIA-PTX,No-Thin-Air axiom is acyclic(rf u dep); LB has no dependency from load to store so the po edges are not in dep -> rf u dep acyclic -> not forbidden (PTX differs from AMD-GCN3 here) [PTX Axiom4 Fig7]
+SB-sys,Allowed,NVIDIA-PTX,relaxed: no synchronizing op; store->load not ordered; SB weak permitted [PTX Fig6; Axiom6 vacuous]
+SB-sys-F,Allowed,NVIDIA-PTX,release/acquire alone cannot prevent SB -- it needs fence.sc (PTX differs from AMD-GCN3 HRF flush here) [PTX Fig6 3.4.3 'acquire/release alone cannot prevent ... SB']
+IRIW-sys,Allowed,NVIDIA-PTX,relaxed: no synchronizing op; PTX is non-MCA so independent writes need not be seen in one order; IRIW weak permitted [PTX 3.4]
+IRIW-sys-F,Allowed,NVIDIA-PTX,release/acquire on the readers orders their loads but IRIW forbidding needs multi-copy atomicity, which PTX lacks (PTX differs from AMD-GCN3 here) [PTX 3.4 non-MCA; Fig7]

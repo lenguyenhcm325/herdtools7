@@ -7,20 +7,19 @@
 # hardware is Task 9 and out of scope here.  They exist only to exercise the
 # harness end to end against the new NVIDIA oracle.
 #
-# Branches exercised against tests/het/expected-nvidia.csv:
-#   - Allowed het test seen      (Sometimes/Always) -> MATCH (relaxation seen)
-#   - Allowed het test not seen  (Never)            -> MATCH (allowed, not exhibited)
-#   - NO-ORACLE het test (IRIW-gcgc-sys-acquire/fence) -> NO-ORACLE (verdict is
-#     literally "NO-ORACLE": the compound ARM-MCA x PTX-non-MCA verdict is
-#     unestablished, so the harness makes no claim)
-#   - a GPU-only name absent from the het oracle    -> NO-ORACLE (not in oracle)
+# Since Task 3 the oracle CONTAINS Disallowed rows (the two-sided `-2s' tests
+# complete a morally-strong cross-device pair), so the harness can now exercise
+# ALL THREE result branches:
+#   - MATCH      : Allowed seen/not-seen, or Disallowed NOT seen ("forbidden, not
+#                  seen") -- the expected, healthy case for a Disallowed test
+#   - MISMATCH   : a Disallowed (forbidden) outcome WAS observed -- a genuine
+#                  model-violation finding (the falsification the pipeline hunts)
+#   - NO-ORACLE  : the test has verdict NO-ORACLE, or is absent from the oracle
 #
-# NOTE: the NVIDIA het oracle currently contains NO "Disallowed" rows (the het
-# corpus, with its always-plain ARMv9 CPU procs, cannot complete a morally-strong
-# release/acquire pair across the device boundary -- see docs/het-oracle.md), so
-# a MISMATCH is IMPOSSIBLE against this oracle: no observation can contradict a
-# verdict that forbids nothing.  The harness MISMATCH branch is exercised by the
-# AMD sample (sample-observations.txt vs expected-amd-gcn3.csv).
+# HONESTY: an observed weak outcome makes Allowed robust; a NON-observation never
+# proves Disallowed (a Disallowed test merely seen as Never is MATCH "forbidden,
+# not seen", NOT a confirmation).  Only an OBSERVED forbidden outcome is a hard
+# contradiction (MISMATCH).
 #
 # A Condition line before an Observation sets that row's QUANT (exists/forall);
 # rows with no Condition line default to exists.
@@ -28,20 +27,34 @@
 # --- Allowed het tests, weak outcome WAS observed -> MATCH (relaxation seen) ---
 Observation MP-het                 Sometimes 27  999973
 Observation MP-cg-sys-acquire      Sometimes 5   999995
-Observation 2+2W-cg-sys-release    Sometimes 11  999989
-Observation WRC-cgc-sys-acquire    Always    1000000 0
+Observation SB-cg-sys-acqrel-2s    Sometimes 8   999992
+Observation RWC-gcc-sys-acqrel-2s  Sometimes 3   999997
 
 # --- Allowed het test, weak outcome NOT observed this run -> MATCH (allowed, not exhibited) ---
 Observation SB-het                 Never     0   1000000
 Observation ISA2-cgc-sys-acquire   Never     0   1000000
 
+# --- Disallowed (two-sided) tests NOT observed -> MATCH (forbidden, not seen) ---
+# The healthy outcome: the morally-strong pair held, the weak outcome was absent.
+# It does NOT "prove" the verdict -- non-observation is never proof.
+Observation MP-cg-sys-acqrel-2s    Never     0   1000000
+Observation LB-gc-sys-fence-2s     Never     0   1000000
+Observation S-cg-sys-acqrel-2s     Never     0   1000000
+
+# --- Disallowed (two-sided) test FORBIDDEN OUTCOME observed -> MISMATCH ---
+# A genuine model-violation finding: the oracle (CMCM) forbids this weak outcome,
+# yet hardware exhibited it -> the compound model is violated (or the test/harness
+# is wrong).  This is the falsification the whole pipeline exists to surface.
+Observation SB-cg-sys-fence-2s     Sometimes 2   999998
+
 # --- forall quantifier: Allowed stays MATCH; shows QUANT column populated ---
 Condition forall (...) is validated
 Observation IRIW-gcgc-gpu-acquire  Never     1000000 0
 
-# --- NO-ORACLE: the two MCA-dependent IRIW-gcgc tests (verdict "NO-ORACLE") ---
-Observation IRIW-gcgc-sys-acquire  Sometimes 2   999998
-Observation IRIW-gcgc-sys-fence    Never     0   1000000
+# --- NO-ORACLE: verdict is literally "NO-ORACLE" (MCA / cumulativity frontier) ---
+Observation IRIW-gcgc-sys-acquire    Sometimes 2   999998
+Observation 2+2W-cg-sys-fence-2s     Never     0   1000000
+Observation WRC-gcc-sys-acqrel-2s    Sometimes 1   999999
 
 # --- NO-ORACLE: a GPU-only name that is not part of the het oracle at all ---
 Observation MP-sys                 Sometimes 412 999588

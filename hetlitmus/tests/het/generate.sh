@@ -25,12 +25,20 @@
 #         CPU_ARCHS="aarch64 x86_64" ./generate.sh
 #      to also emit x86_64 het variants (suffix -x86_64) with no code edit; the
 #      x86_64 files are NOT committed by default.
+#  (D) The TWO-SIDED family: <shape>-<cuttag>-sys-{acqrel,fence}-2s.  Unlike (A)-
+#      (C) (GPU annotated, CPU plain), these annotate BOTH devices so a complete
+#      morally-strong cross-device pair forms (CPU: STLR/LDAPR/DMB.SY via
+#      render_cpu_cycle; GPU: matching sys release/acquire/fence).  These are the
+#      tests that can be Disallowed -- see expected-nvidia.csv and docs/het-
+#      oracle.md.
 #
-# ORACLE STATUS: every het test here is NO-ORACLE -- the PLDI'23 expected.csv is
-# AMD-GCN3 + x86 only and contains no AArch64+PTX (GH200) heterogeneous verdict.
-# These tests are validated by routing through litmus7 (Tier-2 emission), not by
-# a herd7 verdict.  The `fence' column is additionally advisory (see the GPU-only
-# generate.sh header).
+# ORACLE: the NVIDIA GH200 oracle is tests/het/expected-nvidia.csv (Model
+# NVIDIA-PTX-AArch64), regenerated reproducibly by build-nvidia-oracle.sh.  The
+# one-sided tests (A)-(C) are Allowed/NO-ORACLE (the plain-CPU baseline); the
+# two-sided tests (D) carry the grounded Disallowed verdicts.  The PLDI'23
+# expected.csv is AMD-GCN3+x86 and is NOT reused here.  The `fence' column on the
+# (B) grid is additionally advisory under herd (see the GPU-only generate.sh
+# header); litmus7 (Tier-2 emission) routes every test regardless.
 
 set -e
 cd "$(dirname "$0")"
@@ -100,7 +108,58 @@ for cpu_arch in $CPU_ARCHS; do
 done
 
 # ---------------------------------------------------------------------------
+# (D) The TWO-SIDED family: complete the morally-strong cross-device pair.
+# ---------------------------------------------------------------------------
+# The grid above (B) annotates ONLY the GPU procs; every CPU proc is a plain
+# ARMv9 ld/st, so a GPU sys release/acquire/fence on one proc can never CLOSE the
+# morally-strong pair the CMCM needs to cut a cycle -- the other ordering-critical
+# proc contributes nothing.  Those one-sided tests are PRESERVED above (they stay
+# Allowed: the plain-CPU baseline).  Here we ADD two-sided variants that annotate
+# BOTH halves: the CPU cycle is rendered with ARM atoms (render_cpu_cycle -> STLR
+# release / LDAPR RCpc acquire / DMB.SY fence; scope-free, ARM ops are implicitly
+# system-scope -- Bagchi 3.2) and the GPU cycle with the matching sys annotation,
+# so a complete pair can form and the targeted outcome can be Disallowed.
+#
+# Restricted to SYS scope and to the COMPLETE pairings {acqrel, fence}:
+#   - cta/gpu GPU scope can never encompass the CPU thread regardless of how the
+#     CPU is annotated (Bagchi r3-5,21-22; PTX 3.3), so a two-sided cta/gpu test
+#     adds no new verdict -- skipped.
+#   - acquire/release ALONE annotate only one role (reads xor writes), so they
+#     never complete a pair; only `acqrel' (release on writes + acquire on reads)
+#     and `fence' (DMB.SY + fence.sc.sys) are complete pairings.
+# Naming: <shape>-<cuttag>-sys-<order>-2s.litmus  (`-2s' = two-sided).  The GH200
+# target is AArch64+PTX, so two-sided is generated for aarch64 only (the x86 CPU
+# is the AMD/x86 model, a different oracle); see expected-nvidia.csv for verdicts.
+twosided_count=0
+for shape in $SHAPE_ORDER; do
+  cyc="${SHAPE_CYCLE[$shape]}"
+  for cut in ${SHAPE_HET_CUTS[$shape]}; do
+    tag=$(cut_tag "$cut")
+    for order in $TWO_SIDED_ORDERS; do
+      name="$shape-$tag-sys-$order-2s"
+      cpu_toks=$(render_cpu_cycle "$order" $cyc)
+      gpu_toks=$(render_cycle sys "$order" $cyc)
+      "$BIN/hetgen7" $COMMON -cpu-arch aarch64 -devices "$cut" -name "$name" \
+        -cpu "$cpu_toks" -gpu "$gpu_toks" > "$name.litmus"
+      # Drop a two-sided test that does NOT actually differ from its one-sided
+      # sibling: when every CPU proc of the cut is a single-access proc the
+      # annotation has nothing to attach to (e.g. IRIW-gcgc fence -- both CPU
+      # procs are single writers), so the body equals the one-sided
+      # <shape>-<tag>-sys-<order> and it is not genuinely two-sided.
+      onesided="$shape-$tag-sys-$order.litmus"
+      if [ -f "$onesided" ] \
+         && diff -q <(tail -n +3 "$onesided") <(tail -n +3 "$name.litmus") >/dev/null; then
+        rm -f "$name.litmus"
+        echo "  skip $name (not two-sided: == $shape-$tag-sys-$order)"
+        skip_count=$((skip_count+1)); continue
+      fi
+      twosided_count=$((twosided_count+1))
+    done
+  done
+done
+
+# ---------------------------------------------------------------------------
 # @all manifest (only the committed, default-arch tests if CPU_ARCHS=aarch64).
 # ---------------------------------------------------------------------------
 ls *.litmus | LC_ALL=C sort > @all
-echo "Done. $(wc -l < @all) tests in $(pwd) (grid: $grid_count generated, $skip_count degenerate skipped); manifest @all written."
+echo "Done. $(wc -l < @all) tests in $(pwd) (grid: $grid_count generated, $skip_count degenerate skipped; two-sided: $twosided_count); manifest @all written."
