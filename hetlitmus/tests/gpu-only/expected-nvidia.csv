@@ -1,41 +1,163 @@
 Litmus,Expected,Model,Source
-# Expected outcomes for the GPU-ONLY corpus on the NVIDIA Hopper GPU, i.e. the
-# pure PTX memory model (BOTH procs are GPU threads, in distinct CTAs).  This is
-# the NVIDIA counterpart to tests/gpu-only/expected-amd-gcn3.csv; the .litmus
-# files are vendor-neutral and shared, but the VERDICTS differ wherever AMD GCN3
-# and NVIDIA PTX disagree -- which is the whole reason a separate oracle exists.
+# Expected outcomes for the GPU-ONLY corpus on the NVIDIA Hopper GPU = the pure
+# scoped PTX memory model (both procs are GPU threads, each in its own CTA).
+# Counterpart to expected-amd-gcn3.csv; the .litmus files are vendor-neutral and
+# shared, but VERDICTS differ wherever AMD GCN3 and NVIDIA PTX disagree.
 #
-# Verdicts are DERIVED from the formal PTX model (hardware-free; running on a
-# GH200 Hopper is Task 9), grounded PURELY in:
-#   [PTX]    Lustig, Sahasrabuddhe, Giroux, "A Formal Analysis of the NVIDIA PTX
-#            Memory Consistency Model", ASPLOS'19 -- the six axioms of Fig 7, the
-#            release/acquire synchronisation of Fig 5, the fence.sc requirement
-#            for SB of Fig 6, and 3.4 "the PTX model is NOT multi-copy atomic".
-#   [Bagchi] Bagchi et al., ISMM'26 -- empirical Hopper-GPU confirmation: "across
-#            560 litmus tests, whenever a morally strong release-acquire
-#            synchronization was established at gpu scope or higher, no weak
-#            behaviors were observed" (4.1); narrower scopes/insufficient
-#            ordering always showed weak behaviour.
+# ALL 137 verdicts are MACHINE-COMPUTED by herd7 with hetlitmus/bells/ptx.bell +
+# hetlitmus/cats/nvidia-ptx.cat (a line-by-line encoding of the Lustig'19 ASPLOS
+# PTX axiomatic model: Fig 4 relations + Fig 7 axioms). Re-derive/verify with
+#     bash hetlitmus/cats/run-gpu-only-nvidia.sh   (prints RESULT: 137/137 match)
+# The 8 PLDI'23-anchored rows (MP-sys, MP-sys-F, MP-cta-F, LB-sys, SB-sys,
+# SB-sys-F, IRIW-sys, IRIW-sys-F) were ALSO derived BY HAND from the PTX model
+# before the cat existed; the cat reproduces all 8 (anchors, see run script).
+# Provenance + source-authority writeup: hetlitmus/docs/nvidia-ptx-cat.md.
 #
-# KEY VENDOR DIFFERENCE (do NOT reuse the AMD CSV): on AMD GCN3, system-scope
-# release/acquire is a heavyweight cache flush/invalidate to the system coherence
-# point (HRF), so it forbids SB, IRIW and LB.  PTX release/acquire is pure
-# ORDERING, not a flush: by the PTX axioms it forbids MP (Fig 5) but is provably
-# insufficient for SB (Fig 6 -- needs fence.sc), for IRIW (3.4 -- needs multi-copy
-# atomicity, which PTX lacks), and for relaxed LB (Axiom 4 No-Thin-Air is
-# acyclic(rf u dep): with no dependency the load->store po edges are not in dep).
-# Hence the three rows below where NVIDIA = Allowed but AMD = Disallowed.
+# Grounding: [PTX] Lustig/Sahasrabuddhe/Giroux ASPLOS'19 (Fig4 sw, Fig5 MP,
+# Fig6 'fence.sc required for SB', Fig7 six axioms, 3.3 moral strength, 3.4
+# non-MCA); [Bagchi] ISMM'26 (3.2 moral strength = mutual scope encompassment;
+# 4.1 morally-strong gpu+ rel/acq => no weak, one-sided/cta => weak observed).
 #
-# Model column = NVIDIA-PTX (the Hopper GPU model the verdict belongs to),
-# mirroring the AMD file so the two GPU-only oracles slot in side by side.  The
-# remaining 129 grid GPU-only tests are NO-ORACLE here (as for AMD: the oracle
-# covers only the 8 PLDI'23-anchored tests).  The het (AArch64+PTX) oracle is the
-# separate tests/het/expected-nvidia.csv.
-MP-sys,Allowed,NVIDIA-PTX,relaxed writes are not releases -> no synchronizes-with -> Causality axiom vacuous; MP weak permitted [PTX Fig5/Axiom6; Bagchi 4.1]
-MP-sys-F,Disallowed,NVIDIA-PTX,sys release/acquire pair (both CTAs in sys scope) gives sw -> cause -> Causality axiom forbids the MP weak outcome [PTX Fig5/Axiom6 3.3; Bagchi 4.1 'no weak at gpu+ scope']
-MP-cta-F,Allowed,NVIDIA-PTX,release/acquire are cta-scoped but the two procs are in different CTAs -> scope does not encompass the other thread -> not morally strong -> no sw [PTX 3.3; Bagchi Fig2e]
-LB-sys,Allowed,NVIDIA-PTX,No-Thin-Air axiom is acyclic(rf u dep); LB has no dependency from load to store so the po edges are not in dep -> rf u dep acyclic -> not forbidden (PTX differs from AMD-GCN3 here) [PTX Axiom4 Fig7]
-SB-sys,Allowed,NVIDIA-PTX,relaxed: no synchronizing op; store->load not ordered; SB weak permitted [PTX Fig6; Axiom6 vacuous]
-SB-sys-F,Allowed,NVIDIA-PTX,release/acquire alone cannot prevent SB -- it needs fence.sc (PTX differs from AMD-GCN3 HRF flush here) [PTX Fig6 3.4.3 'acquire/release alone cannot prevent ... SB']
+# KEY VENDOR DIFFERENCES vs the AMD CSV (do NOT reuse it): PTX rel/acq is pure
+# scoped ORDERING, not an AMD HRF system flush -- so LB-sys, SB-sys-F and
+# IRIW-sys-F are Allowed here but Disallowed for AMD-GCN3. PTX forbids SB / IRIW
+# / LB only with a morally-strong fence.sc (the *-gpu-fence and *-sys-fence
+# rows); at cta scope the fences sit in different CTAs, are not morally strong,
+# and the weak outcome stays Allowed.
+2+2W-cta-fence,Allowed,NVIDIA-PTX,fence.sc on procs in distinct CTAs => fences not morally strong => sc order empty => weak permitted [PTX 3.3/3.4.3; Bagchi Fig2e]
+2+2W-cta-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+2+2W-cta-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+2+2W-gpu-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+2+2W-gpu-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+2+2W-gpu-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+2+2W-sys-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+2+2W-sys-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+2+2W-sys-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+IRIW-cta-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+IRIW-cta-fence,Allowed,NVIDIA-PTX,fence.sc on procs in distinct CTAs => fences not morally strong => sc order empty => weak permitted [PTX 3.3/3.4.3; Bagchi Fig2e]
+IRIW-cta-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+IRIW-cta-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+IRIW-gpu-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+IRIW-gpu-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+IRIW-gpu-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+IRIW-gpu-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
 IRIW-sys,Allowed,NVIDIA-PTX,relaxed: no synchronizing op; PTX is non-MCA so independent writes need not be seen in one order; IRIW weak permitted [PTX 3.4]
 IRIW-sys-F,Allowed,NVIDIA-PTX,release/acquire on the readers orders their loads but IRIW forbidding needs multi-copy atomicity, which PTX lacks (PTX differs from AMD-GCN3 here) [PTX 3.4 non-MCA; Fig7]
+IRIW-sys-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+IRIW-sys-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+IRIW-sys-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+IRIW-sys-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+ISA2-cta-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+ISA2-cta-fence,Allowed,NVIDIA-PTX,fence.sc on procs in distinct CTAs => fences not morally strong => sc order empty => weak permitted [PTX 3.3/3.4.3; Bagchi Fig2e]
+ISA2-cta-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+ISA2-cta-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+ISA2-gpu-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+ISA2-gpu-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+ISA2-gpu-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+ISA2-gpu-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+ISA2-sys-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+ISA2-sys-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+ISA2-sys-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+ISA2-sys-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+LB-cta-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+LB-cta-fence,Allowed,NVIDIA-PTX,fence.sc on procs in distinct CTAs => fences not morally strong => sc order empty => weak permitted [PTX 3.3/3.4.3; Bagchi Fig2e]
+LB-cta-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+LB-cta-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+LB-gpu-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+LB-gpu-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+LB-gpu-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+LB-gpu-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+LB-sys,Allowed,NVIDIA-PTX,No-Thin-Air axiom is acyclic(rf u dep); LB has no dependency from load to store so the po edges are not in dep -> rf u dep acyclic -> not forbidden (PTX differs from AMD-GCN3 here) [PTX Axiom4 Fig7]
+LB-sys-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+LB-sys-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+LB-sys-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+LB-sys-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+MP-cta-F,Allowed,NVIDIA-PTX,release/acquire are cta-scoped but the two procs are in different CTAs -> scope does not encompass the other thread -> not morally strong -> no sw [PTX 3.3; Bagchi Fig2e]
+MP-cta-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+MP-cta-fence,Allowed,NVIDIA-PTX,fence.sc on procs in distinct CTAs => fences not morally strong => sc order empty => weak permitted [PTX 3.3/3.4.3; Bagchi Fig2e]
+MP-cta-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+MP-cta-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+MP-gpu-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+MP-gpu-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+MP-gpu-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+MP-gpu-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+MP-sys,Allowed,NVIDIA-PTX,relaxed writes are not releases -> no synchronizes-with -> Causality axiom vacuous; MP weak permitted [PTX Fig5/Axiom6; Bagchi 4.1]
+MP-sys-F,Disallowed,NVIDIA-PTX,sys release/acquire pair (both CTAs in sys scope) gives sw -> cause -> Causality axiom forbids the MP weak outcome [PTX Fig5/Axiom6 3.3; Bagchi 4.1 'no weak at gpu+ scope']
+MP-sys-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+MP-sys-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+MP-sys-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+MP-sys-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+R-cta-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+R-cta-fence,Allowed,NVIDIA-PTX,fence.sc on procs in distinct CTAs => fences not morally strong => sc order empty => weak permitted [PTX 3.3/3.4.3; Bagchi Fig2e]
+R-cta-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+R-cta-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+R-gpu-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+R-gpu-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+R-gpu-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+R-gpu-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+R-sys-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+R-sys-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+R-sys-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+R-sys-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+RWC-cta-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+RWC-cta-fence,Allowed,NVIDIA-PTX,fence.sc on procs in distinct CTAs => fences not morally strong => sc order empty => weak permitted [PTX 3.3/3.4.3; Bagchi Fig2e]
+RWC-cta-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+RWC-cta-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+RWC-gpu-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+RWC-gpu-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+RWC-gpu-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+RWC-gpu-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+RWC-sys-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+RWC-sys-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+RWC-sys-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+RWC-sys-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+S-cta-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+S-cta-fence,Allowed,NVIDIA-PTX,fence.sc on procs in distinct CTAs => fences not morally strong => sc order empty => weak permitted [PTX 3.3/3.4.3; Bagchi Fig2e]
+S-cta-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+S-cta-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+S-gpu-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+S-gpu-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+S-gpu-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+S-gpu-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+S-sys-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+S-sys-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+S-sys-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+S-sys-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+SB-cta-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+SB-cta-fence,Allowed,NVIDIA-PTX,fence.sc on procs in distinct CTAs => fences not morally strong => sc order empty => weak permitted [PTX 3.3/3.4.3; Bagchi Fig2e]
+SB-cta-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+SB-cta-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+SB-gpu-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+SB-gpu-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+SB-gpu-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+SB-gpu-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+SB-sys,Allowed,NVIDIA-PTX,relaxed: no synchronizing op; store->load not ordered; SB weak permitted [PTX Fig6; Axiom6 vacuous]
+SB-sys-F,Allowed,NVIDIA-PTX,release/acquire alone cannot prevent SB -- it needs fence.sc (PTX differs from AMD-GCN3 HRF flush here) [PTX Fig6 3.4.3 'acquire/release alone cannot prevent ... SB']
+SB-sys-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+SB-sys-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+SB-sys-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+SB-sys-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+WRC-cta-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+WRC-cta-fence,Allowed,NVIDIA-PTX,fence.sc on procs in distinct CTAs => fences not morally strong => sc order empty => weak permitted [PTX 3.3/3.4.3; Bagchi Fig2e]
+WRC-cta-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+WRC-cta-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+WRC-gpu-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+WRC-gpu-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+WRC-gpu-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+WRC-gpu-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+WRC-sys-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+WRC-sys-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+WRC-sys-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+WRC-sys-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+WRC3-cta-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+WRC3-cta-fence,Allowed,NVIDIA-PTX,fence.sc on procs in distinct CTAs => fences not morally strong => sc order empty => weak permitted [PTX 3.3/3.4.3; Bagchi Fig2e]
+WRC3-cta-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+WRC3-cta-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+WRC3-gpu-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+WRC3-gpu-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+WRC3-gpu-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+WRC3-gpu-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+WRC3-sys-acquire,Allowed,NVIDIA-PTX,one-sided: acquire reads but non-release writes => pattern_rel empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
+WRC3-sys-fence,Disallowed,NVIDIA-PTX,morally-strong fence.sc => Fence-SC order sc => Causality/FenceSC/Coherence cut the critical cycle => Disallowed [PTX Fig6/Fig7 Ax1-2-6 3.4.3]
+WRC3-sys-relaxed,Allowed,NVIDIA-PTX,relaxed scoped accesses; no rel/acq pair and no fence => sw empty => weak permitted [PTX Fig4 sw; Bagchi 4.1]
+WRC3-sys-release,Allowed,NVIDIA-PTX,one-sided: release writes but non-acquire reads => pattern_acq empty => no sw => weak permitted [PTX Fig4 sw; Bagchi 4.1 asymmetric]
