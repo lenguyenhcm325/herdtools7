@@ -1,0 +1,637 @@
+#!/usr/bin/env python3
+# ---------------------------------------------------------------------------
+# ptxcheck.py  --  HetLitmus L0 static faithfulness checker
+# ---------------------------------------------------------------------------
+# Proves that the GPU (and, for het tests, CPU) harness litmus7 emits carries
+# EXACTLY the memory order + scope its .litmus annotation specifies -- catching
+# any weakening, strengthening, miscount, misplacement, missing qualifier, or
+# wrong op-kind in the lowering chain.
+#
+#   .litmus annotation  --(CudaLang)-->  .cu  --(nvcc --ptx)-->  PTX  --(this)-->
+#       expected (kind,order,scope) profile  ==  observed PTX instructions ?
+#
+# STATIC + HARDWARE-FREE: emits, compiles to PTX, and inspects the text.  It
+# NEVER launches a kernel.  This is *not* a herd re-check, a mutation, or a
+# differential test -- it is one thing: token-level lowering faithfulness.
+#
+# The bug this guards (see hetlitmus/docs/cuda-emitter.md "Fence lowering"):
+# libcu++'s cuda::atomic_thread_fence COLLAPSES acquire/release -> fence.acq_rel,
+# losing the order.  CudaLang therefore emits faithful inline PTX; this checker
+# proves it stays faithful, and would FAIL the day a collapse/weakening returns.
+#
+# Why inspecting nvcc --ptx is sound (not luck):
+#   * libcu++ scoped atomics ARE implemented as `asm volatile(... : : : "memory")`
+#     -- they appear in the PTX wrapped in `// begin/end inline asm` markers.  An
+#     asm-volatile with a memory clobber is a HARD compiler-ordering barrier, so
+#     nvcc cannot reorder model ops relative to one another even when relaxed.
+#     => the textual order of inline-asm ops == source program order (a theorem,
+#        not an empirical accident).  Scaffolding (ld.param / st.global / cvta)
+#        sits OUTSIDE the inline-asm markers and is ignored.
+#   * nvcc emits procs in column order, cells in row order (CudaLang dump loop).
+#     => the flattened PTX op stream == flattened expected stream.
+#
+# Grounding of the mapping table is in hetlitmus/docs/verify-l0.md.  The single
+# strongest primary source is nvcc itself: every token below was emitted AND
+# assembled (exit 0) by `nvcc -std=c++17 -arch=sm_86/90 --ptx`.
+#
+# Exit code 0 = PASS, nonzero = FAIL (with an exact diff on stderr/stdout).
+# ---------------------------------------------------------------------------
+
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from collections import Counter
+
+# ---------------------------------------------------------------------------
+# Repo layout
+# ---------------------------------------------------------------------------
+HERE = os.path.dirname(os.path.abspath(__file__))            # hetlitmus/verify
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))       # herdtools7
+LITMUS7 = os.path.join(REPO, "_build", "install", "default", "bin", "litmus7")
+LIBDIR = os.path.join(REPO, "litmus", "libdir")
+NVCC = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
+
+# ===========================================================================
+# 1. THE MAPPING TABLE  (annotation  ->  expected PTX / ARM profile)
+#    Grounded in hetlitmus/docs/verify-l0.md.  Used to build the expected
+#    profile AND as the COMPLETENESS GUARD: any annotation token NOT a key
+#    here is unrecognized and HARD-FAILS -- nothing is ever silently skipped.
+# ===========================================================================
+
+# GPU memory orders: LISA/Bell tag  ->  PTX semantics token.
+# (ld accepts relaxed/acquire; st accepts relaxed/release; fence accepts
+#  sc/acq_rel/acquire/release.  PTX uses the SAME spelling as the LISA tag.)
+GPU_ORDER = {
+    "relaxed": "relaxed",
+    "acquire": "acquire",
+    "release": "release",
+    "acq_rel": "acq_rel",
+    "sc":      "sc",
+}
+
+# GPU scopes: LISA/Bell tag  ->  PTX scope token (identical spelling).
+GPU_SCOPE = {
+    "cta":     "cta",
+    "gpu":     "gpu",
+    "sys":     "sys",
+    "cluster": "cluster",
+}
+
+# Op kind: LISA mnemonic  ->  expected PTX opcode class.
+#   load  -> ld         store -> st         fence -> fence
+#   RMW   -> atom (returns old value) or red (no-return reduction)
+# The corpus (ptx.bell declares only R/W/F) contains NO RMW; the mapping is
+# kept so the completeness guard *recognizes* one rather than skipping it.
+GPU_KIND = {
+    "w": "st",
+    "r": "ld",
+    "f": "fence",
+    "rmw": ("atom", "red"),
+}
+
+# CPU (AArch64) ordering mnemonics.  ARM ARM + Bagchi ISMM'26 Fig 1:
+#   STLR  = store-release        LDAR  = load-acquire (RCsc)
+#   LDAPR = load-acquire (RCpc)  DMB SY = full system barrier
+# `mov` is folded into an asm input operand by ASMLang and is therefore NOT a
+# memory op; it is recognized (so the guard does not fail) but not compared.
+CPU_MNEMONIC = {
+    "mov":   ("move",          False),  # folded; not a memory/ordering op
+    "str":   ("plain-store",   True),
+    "ldr":   ("plain-load",    True),
+    "stlr":  ("release-store", True),
+    "ldar":  ("acquire-load-rcsc", True),
+    "ldapr": ("acquire-load-rcpc", True),
+    "dmb":   ("fence",         True),
+}
+
+PTX_ORDERS = set(GPU_ORDER.values())          # {relaxed,acquire,release,acq_rel,sc}
+PTX_SCOPES = set(GPU_SCOPE.values())          # {cta,gpu,sys,cluster}
+
+
+class CompletenessError(Exception):
+    """Raised when an annotation token is not in the mapping table."""
+
+
+# ===========================================================================
+# 2. .litmus PARSING
+# ===========================================================================
+
+GPU_CELL = re.compile(r'^([wrf])\[([a-z_]+)\s*,\s*([a-z]+)\]')
+
+
+def read_litmus(path):
+    with open(path) as f:
+        return f.read()
+
+
+def litmus_kind(text):
+    """'LISA' (gpu-only) or 'Het' (heterogeneous), from the first header word."""
+    first = text.strip().splitlines()[0].split()
+    return first[0]
+
+
+def litmus_name(text):
+    return text.strip().splitlines()[0].split()[1]
+
+
+def parse_body(text):
+    """Return (procs, body_rows).
+
+    procs    : list of (proc_index, device_tag)  in column order
+    body_rows: list of rows, each a list of raw cell strings (one per column)
+
+    The body is the grid between the `{...}` init block header row `P0:.. | ..;`
+    and the `scopes:`/`exists` lines.
+    """
+    lines = text.splitlines()
+    # find the header row: starts (after strip) with 'P<digit>'
+    hdr_i = None
+    for i, ln in enumerate(lines):
+        if re.match(r'^\s*P\d+\b', ln):
+            hdr_i = i
+            break
+    if hdr_i is None:
+        raise ValueError("no 'P0..' program header row found")
+
+    def split_row(ln):
+        ln = ln.strip()
+        if ln.endswith(';'):
+            ln = ln[:-1]
+        return [c.strip() for c in ln.split('|')]
+
+    hdr = split_row(lines[hdr_i])
+    procs = []
+    for col, tok in enumerate(hdr):
+        m = re.match(r'^P(\d+)(?::(\w+))?$', tok.strip())
+        if not m:
+            raise ValueError("bad proc header column: %r" % tok)
+        idx = int(m.group(1))
+        dev = (m.group(2) or "gpu")   # gpu-only LISA tests omit the tag => gpu
+        procs.append((idx, dev))
+
+    rows = []
+    for ln in lines[hdr_i + 1:]:
+        s = ln.strip()
+        if s.startswith('scopes:') or s.startswith('exists') or \
+           s.startswith('forall') or s.startswith('locations') or s == '':
+            if s == '':
+                continue
+            break
+        rows.append(split_row(ln))
+    return procs, rows
+
+
+def device_class(dev):
+    """Map a column device tag to 'gpu' or 'cpu'."""
+    d = dev.lower()
+    if d == 'gpu':
+        return 'gpu'
+    if d in ('cpu', 'aarch64', 'arm', 'x86_64', 'amd64'):
+        return 'cpu'
+    raise CompletenessError("unrecognized device tag %r (not gpu/cpu/...)" % dev)
+
+
+# ----- per-column op extraction --------------------------------------------
+
+def gpu_ops_of_column(cells):
+    """Parse a GPU column's non-empty cells into ordered (kind,order,scope).
+
+    COMPLETENESS GUARD: every w/r/f cell's order & scope must be in the mapping
+    table; an unknown token raises CompletenessError (hard fail upstream)."""
+    ops = []
+    for c in cells:
+        c = c.strip()
+        if c == '':
+            continue
+        m = GPU_CELL.match(c)
+        if not m:
+            # A GPU column cell that is neither w[..]/r[..]/f[..] nor empty:
+            # could be an RMW or an unknown form -> do not silently skip.
+            raise CompletenessError("unrecognized GPU cell %r" % c)
+        op, order, scope = m.group(1), m.group(2), m.group(3)
+        if op not in GPU_KIND:
+            raise CompletenessError("unknown GPU op kind %r in %r" % (op, c))
+        if order not in GPU_ORDER:
+            raise CompletenessError("unknown memory order %r in %r" % (order, c))
+        if scope not in GPU_SCOPE:
+            raise CompletenessError("unknown scope %r in %r" % (scope, c))
+        ops.append((GPU_KIND[op], GPU_ORDER[order], GPU_SCOPE[scope]))
+    return ops
+
+
+def cpu_ops_of_column(cells):
+    """Parse a CPU column's cells into ordered memory-op descriptors.
+
+    Returns a list of (mnemonic, qualifier) for MEMORY/ordering ops only
+    (mov is folded by ASMLang and excluded).  COMPLETENESS GUARD: any
+    mnemonic not in CPU_MNEMONIC hard-fails."""
+    ops = []
+    for c in cells:
+        c = c.strip()
+        if c == '':
+            continue
+        toks = c.replace(',', ' ').split()
+        mn = toks[0].lower()
+        if mn not in CPU_MNEMONIC:
+            raise CompletenessError("unknown CPU mnemonic %r in %r" % (mn, c))
+        _sem, is_mem = CPU_MNEMONIC[mn]
+        if not is_mem:
+            continue  # mov: folded, not emitted as an asm memory op
+        qual = ''
+        if mn == 'dmb':
+            qual = toks[1].lower() if len(toks) > 1 else ''
+        ops.append((mn, qual))
+    return ops
+
+
+# ===========================================================================
+# 3. EMIT  (.litmus -> .cu [+ _cpu.c])  and COMPILE (.cu -> PTX)
+# ===========================================================================
+
+def run(cmd, **kw):
+    return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          text=True, **kw)
+
+
+def emit_harness(litmus_path, outdir):
+    """Run litmus7 to emit the harness. Returns (cu_path, cpu_c_path_or_None)."""
+    name = litmus_name(read_litmus(litmus_path))
+    r = run([LITMUS7, "-set-libdir", LIBDIR, "-o", outdir, litmus_path])
+    # gpu-only: <outdir>/<name>.cu ; het: <outdir>/<name>/<name>.cu
+    flat_cu = os.path.join(outdir, name + ".cu")
+    het_cu = os.path.join(outdir, name, name + ".cu")
+    if os.path.exists(het_cu):
+        cpu_c = os.path.join(outdir, name, name + "_cpu.c")
+        return het_cu, (cpu_c if os.path.exists(cpu_c) else None)
+    if os.path.exists(flat_cu):
+        return flat_cu, None
+    raise RuntimeError("litmus7 emitted no .cu for %s\n%s" % (litmus_path, r.stdout))
+
+
+def needs_sm90(text):
+    """cluster scope anywhere => sm_90 required (else sm_86 suffices)."""
+    return 'cluster' in text
+
+
+def compile_ptx(cu_path, ptx_path, arch):
+    r = run([NVCC, "-std=c++17", "-arch=" + arch, "--ptx", "-o", ptx_path, cu_path])
+    if r.returncode != 0 or not os.path.exists(ptx_path):
+        raise RuntimeError("nvcc --ptx failed for %s (arch=%s):\n%s"
+                           % (cu_path, arch, r.stdout))
+    return r.stdout
+
+
+# ===========================================================================
+# 4. PTX EXTRACTION  (observed model ops, in textual order)
+# ===========================================================================
+
+OPLINE = re.compile(r'^\s*(ld|st|atom|red|fence|membar)\.([a-z0-9_.]+)')
+
+
+def classify_ptx_op(line):
+    """Parse a PTX memory-instruction line into (kind, order, scope) or None.
+
+    None  => the line is scaffolding (ld.param / st.global / ld.global / membar
+             with no memory-model order token) and is not a synchronizing op.
+    For ld/st/atom/red the order token must be present (relaxed/acquire/release/
+    acq_rel/sc) else it is plain addressing and returns None.
+    For fence/membar the two qualifier tokens are classified order-agnostically
+    (CudaLang emits `fence.<order>.<scope>`, libcu++'s barrier emits the scope
+    first as `fence.<scope>.<order>` -- we accept either ordering)."""
+    m = OPLINE.match(line)
+    if not m:
+        return None
+    kind = m.group(1)
+    quals = m.group(2).split('.')
+    order = next((q for q in quals if q in PTX_ORDERS), None)
+    scope = next((q for q in quals if q in PTX_SCOPES), None)
+    if kind in ('fence', 'membar'):
+        # a fence MUST carry an order (sc/acq_rel/acquire/release); scope may be
+        # implicit only for legacy membar (not used here).
+        if order is None:
+            return None
+        return ('fence', order, scope)
+    # ld/st/atom/red: only a model op if it carries an order qualifier.
+    if order is None:
+        return None
+    return (kind, order, scope)
+
+
+def extract_ptx_ops(ptx_text):
+    """Ordered list of (kind,order,scope) for every inline-asm model op."""
+    ops = []
+    in_asm = False
+    for line in ptx_text.splitlines():
+        s = line.strip()
+        if s.startswith('// begin inline asm'):
+            in_asm = True
+            continue
+        if s.startswith('// end inline asm'):
+            in_asm = False
+            continue
+        if not in_asm:
+            continue
+        op = classify_ptx_op(s)
+        if op is not None:
+            ops.append(op)
+    return ops
+
+
+# ===========================================================================
+# 5. CPU _cpu.c EXTRACTION  (real AArch64 asm block only)
+# ===========================================================================
+
+ASM_STR = re.compile(r'"\s*([a-zA-Z][a-zA-Z0-9.]*)([^"]*)\\n"')
+
+
+def extract_cpu_ops(cpu_c_text):
+    """Ordered (mnemonic,qualifier) memory ops from the REAL aarch64 asm block
+    (between `#if defined(__aarch64__)` and `#else`).  mov is excluded."""
+    lines = cpu_c_text.splitlines()
+    start = end = None
+    for i, ln in enumerate(lines):
+        if '__aarch64__' in ln and start is None:
+            start = i
+        elif start is not None and ln.strip().startswith('#else'):
+            end = i
+            break
+    block = lines[start:end] if start is not None else lines
+    ops = []
+    for ln in block:
+        m = ASM_STR.search(ln)
+        if not m:
+            continue
+        mn = m.group(1).lower()
+        rest = m.group(2).strip().lower()
+        if mn not in CPU_MNEMONIC:
+            # asm we didn't expect in the real block -> surface, don't skip
+            raise CompletenessError("unexpected asm mnemonic %r in _cpu.c" % mn)
+        _sem, is_mem = CPU_MNEMONIC[mn]
+        if not is_mem:
+            continue
+        qual = ''
+        if mn == 'dmb':
+            qual = rest.replace(',', ' ').split()[0] if rest else ''
+        ops.append((mn, qual))
+    return ops
+
+
+# ===========================================================================
+# 6. CHECK
+# ===========================================================================
+
+def fmt(op):
+    if op[0] == 'fence':
+        return "fence.%s.%s" % (op[1], op[2])
+    return "%s.%s.%s" % (op[0], op[1], op[2])
+
+
+def diff_sequences(expected, actual):
+    """Return a list of human diff lines (empty == identical)."""
+    out = []
+    n = max(len(expected), len(actual))
+    for i in range(n):
+        e = fmt(expected[i]) if i < len(expected) else "<none>"
+        a = fmt(actual[i]) if i < len(actual) else "<none>"
+        mark = "" if e == a else "   <<< MISMATCH"
+        if e != a:
+            out.append("  [%d] expected %-22s observed %-22s%s" % (i, e, a, mark))
+    return out
+
+
+class Result:
+    def __init__(self):
+        self.ok = True
+        self.lines = []
+
+    def fail(self, msg):
+        self.ok = False
+        self.lines.append("FAIL: " + msg)
+
+    def note(self, msg):
+        self.lines.append(msg)
+
+
+def check_gpu(result, expected_per_proc, observed, label):
+    """expected_per_proc: list of (proc_idx, [ops]).  observed: flat PTX ops.
+    Runs the ORDERED check (placement+order) and the PER-PROC MULTISET check
+    (multiplicity, equality not subset)."""
+    expected_flat = [op for _, ops in expected_per_proc for op in ops]
+
+    # ----- ORDERED check (subsumes placement; the multiset is order-blind) ---
+    if observed != expected_flat:
+        result.fail("%s ordered model-op stream differs" % label)
+        for d in diff_sequences(expected_flat, observed):
+            result.note(d)
+    else:
+        result.note("  %s ordered stream OK (%d ops)" % (label, len(expected_flat)))
+
+    # ----- GLOBAL multiset equality (cheap independent corroboration) --------
+    if Counter(observed) != Counter(expected_flat):
+        result.fail("%s global multiset differs: expected %s observed %s"
+                    % (label, dict(Counter(expected_flat)), dict(Counter(observed))))
+
+    # ----- PER-PROC multiset equality (slice observed by expected counts) ----
+    pos = 0
+    for pidx, ops in expected_per_proc:
+        seg = observed[pos:pos + len(ops)]
+        pos += len(ops)
+        ce, ca = Counter(ops), Counter(seg)
+        if ce != ca:
+            result.fail("%s P%d per-proc multiset differs: expected %s observed %s"
+                        % (label, pidx, dict(ce), dict(ca)))
+    return expected_flat
+
+
+def split_het_segments(observed, n_gpu_procs):
+    """Separate barrier ops from GPU model ops in a het kernel.
+
+    Each GPU proc is emitted as its OWN guarded block `{ barrier; model... }`
+    (every GPU thread must rendezvous), so the barrier is NOT a single prologue
+    -- there is one barrier instance per GPU proc.  The barrier's fetch_add is
+    the unique anchor: the corpus model (ptx.bell declares R/W/F only) has NO
+    atom/red, so every atom/red in the kernel is a barrier fetch_add.  We segment
+    the op stream at each fetch_add and strip the fixed barrier template
+    [leading fence.sc][atom.sys][spin fence.sc][spin ld.sys] from each segment's
+    front; what remains is that proc's model ops, in proc order.
+
+    Returns (barrier_ops, model_per_segment).  model_per_segment is one list per
+    GPU proc, in proc order."""
+    atom_idx = [i for i, op in enumerate(observed) if op[0] in ('atom', 'red')]
+    if not atom_idx:
+        return [], [observed]   # no fetch_add -> barrier check fails separately
+    # segment start = the atom's leading seq_cst fence if present, else the atom.
+    starts = []
+    for i in atom_idx:
+        if i - 1 >= 0 and observed[i - 1][0] == 'fence' and observed[i - 1][1] == 'sc':
+            starts.append(i - 1)
+        else:
+            starts.append(i)
+    barrier_ops, model_per_segment = [], []
+    for k, ai in enumerate(atom_idx):
+        s = starts[k]
+        end = starts[k + 1] if k + 1 < len(starts) else len(observed)
+        seg = observed[s:end]
+        bi = 0
+        if bi < len(seg) and seg[bi][0] == 'fence':              # leading fence.sc
+            barrier_ops.append(seg[bi]); bi += 1
+        if bi < len(seg) and seg[bi][0] in ('atom', 'red'):      # the fetch_add
+            barrier_ops.append(seg[bi]); bi += 1
+        if bi < len(seg) and seg[bi][0] == 'fence':              # spin leading fence.sc
+            barrier_ops.append(seg[bi]); bi += 1
+        if bi < len(seg) and seg[bi][0] == 'ld':                 # spin seq_cst load
+            barrier_ops.append(seg[bi]); bi += 1
+        model_per_segment.append(seg[bi:])
+    return barrier_ops, model_per_segment
+
+
+def check_barrier_whitelist(result, barrier_ops, n_gpu_procs):
+    """The het sys-scope rendezvous barrier(s) must stay STRONG: every barrier op
+    system-scoped (not narrowed), one fetch_add (atom/red) PER GPU proc, and a
+    seq_cst fence present.  N GPU procs => N barrier instances."""
+    if not barrier_ops:
+        result.fail("het kernel has NO barrier (expected sys-scope rendezvous)")
+        return
+    for op in barrier_ops:
+        if op[2] != 'sys':
+            result.fail("barrier op %s is NOT system scope (weakened/narrowed)" % fmt(op))
+    fences = [o for o in barrier_ops if o[0] == 'fence']
+    atoms = [o for o in barrier_ops if o[0] in ('atom', 'red')]
+    if not any(o[1] == 'sc' for o in fences):
+        result.fail("barrier has no seq_cst fence (fence.sc.sys) -- weakened")
+    if len(atoms) != n_gpu_procs:
+        result.fail("expected one barrier fetch_add per GPU proc (%d); found %d"
+                    % (n_gpu_procs, len(atoms)))
+    for a in atoms:
+        if a[2] != 'sys':
+            result.fail("barrier fetch_add %s not system scope" % fmt(a))
+    result.note("  barrier whitelist OK (%d ops, %d fetch_add for %d GPU procs, all sys, seq_cst fence)"
+                % (len(barrier_ops), len(atoms), n_gpu_procs))
+
+
+def check_cpu(result, expected_per_proc, cpu_c_text):
+    """Compare the CPU column's memory/ordering mnemonics (ordered) against the
+    emitted _cpu.c real-asm block.  Catches STLR->STR, LDAPR->LDR, DMB SY drop/
+    narrowing, etc."""
+    expected_flat = [op for _, ops in expected_per_proc for op in ops]
+    observed = extract_cpu_ops(cpu_c_text)
+    if observed != expected_flat:
+        result.fail("CPU memory-op stream differs (litmus column vs _cpu.c)")
+        n = max(len(expected_flat), len(observed))
+        for i in range(n):
+            e = ("%s %s" % expected_flat[i]).strip() if i < len(expected_flat) else "<none>"
+            a = ("%s %s" % observed[i]).strip() if i < len(observed) else "<none>"
+            if e != a:
+                result.note("  [%d] expected %-14s observed %-14s   <<< MISMATCH" % (i, e, a))
+    else:
+        result.note("  CPU ordered stream OK (%d mem ops)" % len(expected_flat))
+
+
+# ===========================================================================
+# 7. DRIVER
+# ===========================================================================
+
+def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
+               keep=False, arch=None, verbose=True):
+    text = read_litmus(litmus_path)
+    kind = litmus_kind(text)
+    name = litmus_name(text)
+    procs, rows = parse_body(text)
+
+    # transpose rows -> per-column cell lists
+    ncol = len(procs)
+    cols = [[] for _ in range(ncol)]
+    for row in rows:
+        for c in range(ncol):
+            cols[c].append(row[c] if c < len(row) else '')
+
+    # classify columns; build expected GPU/CPU profiles (completeness guard fires here)
+    gpu_expected = []   # list of (proc_idx, [ (kind,order,scope) ])
+    cpu_expected = []   # list of (proc_idx, [ (mnemonic,qual) ])
+    for col, (pidx, dev) in enumerate(procs):
+        dc = device_class(dev)
+        if dc == 'gpu':
+            gpu_expected.append((pidx, gpu_ops_of_column(cols[col])))
+        else:
+            cpu_expected.append((pidx, cpu_ops_of_column(cols[col])))
+
+    result = Result()
+    result.note("=== %s [%s] ===" % (name, kind))
+
+    # ---- emit + compile (unless a PTX override is supplied for self-test) ----
+    tmp = tempfile.mkdtemp(prefix="ptxcheck_")
+    try:
+        if ptx_override is not None:
+            with open(ptx_override) as f:
+                ptx_text = f.read()
+            cpu_c_text = open(cpu_c_override).read() if cpu_c_override else None
+        else:
+            cu_path, cpu_c_path = emit_harness(litmus_path, tmp)
+            use_arch = arch or ("sm_90" if needs_sm90(text) else "sm_86")
+            ptx_path = os.path.join(tmp, name + ".ptx")
+            compile_ptx(cu_path, ptx_path, use_arch)
+            with open(ptx_path) as f:
+                ptx_text = f.read()
+            cpu_c_text = open(cpu_c_path).read() if cpu_c_path else None
+            if keep:
+                result.note("  artifacts kept in %s" % tmp)
+
+        observed = extract_ptx_ops(ptx_text)
+
+        if kind == 'Het':
+            # one barrier instance per GPU proc; segment on the fetch_add anchor
+            # and strip the barrier template, leaving per-proc model ops.
+            n_gpu = len(gpu_expected)
+            barrier_ops, model_per_seg = split_het_segments(observed, n_gpu)
+            check_barrier_whitelist(result, barrier_ops, n_gpu)
+            if len(model_per_seg) != n_gpu:
+                result.fail("expected %d GPU-proc segments; found %d"
+                            % (n_gpu, len(model_per_seg)))
+            model_ops = [op for seg in model_per_seg for op in seg]
+            check_gpu(result, gpu_expected, model_ops, "GPU")
+            if cpu_expected:
+                if cpu_c_text is None:
+                    result.fail("het test has CPU columns but no _cpu.c emitted")
+                else:
+                    check_cpu(result, cpu_expected, cpu_c_text)
+        else:
+            # gpu-only: ALL inline-asm ops are model ops (no barrier).
+            check_gpu(result, gpu_expected, observed, "GPU")
+    finally:
+        if not keep:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    if verbose:
+        for ln in result.lines:
+            print(ln)
+    return result.ok
+
+
+def main():
+    ap = argparse.ArgumentParser(description="HetLitmus L0 PTX faithfulness checker")
+    ap.add_argument("litmus", help=".litmus test path")
+    ap.add_argument("--ptx", help="use this PTX file instead of emitting+nvcc (self-test)")
+    ap.add_argument("--cpu-c", help="use this _cpu.c instead of emitting (self-test)")
+    ap.add_argument("--arch", help="override nvcc -arch (default sm_86, sm_90 if cluster)")
+    ap.add_argument("--keep", action="store_true", help="keep emitted artifacts")
+    ap.add_argument("-q", "--quiet", action="store_true")
+    args = ap.parse_args()
+    try:
+        ok = check_test(args.litmus, ptx_override=args.ptx, cpu_c_override=args.cpu_c,
+                        keep=args.keep, arch=args.arch, verbose=not args.quiet)
+    except CompletenessError as e:
+        print("COMPLETENESS HARD-FAIL: %s" % e)
+        sys.exit(2)
+    except Exception as e:
+        print("ERROR: %s" % e)
+        sys.exit(3)
+    print("RESULT:", "PASS" if ok else "FAIL")
+    sys.exit(0 if ok else 1)
+
+
+if __name__ == "__main__":
+    main()
