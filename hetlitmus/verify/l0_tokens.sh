@@ -126,7 +126,7 @@ selftest() {
   local sc="$RESDIR/self" T=MP-sys-F
   mkdir -p "$sc"
   litmus7 -set-libdir litmus/libdir -o "$sc" "$GPU_DIR/$T.litmus" >/dev/null 2>&1
-  nvcc -std=c++17 -arch=sm_86 --ptx -o "$sc/clean.ptx" "$sc/$T.cu" >/dev/null 2>&1
+  nvcc -std=c++17 -arch=sm_90 --ptx -o "$sc/clean.ptx" "$sc/$T.cu" >/dev/null 2>&1
   printf '\n[0] clean PTX (control): expect PASS\n'
   python3 "$CHECK" "$GPU_DIR/$T.litmus" --ptx "$sc/clean.ptx" -q; printf 'exit=%d\n' "$?"
   printf '\n[1] WEAKENING st.release.sys -> st.relaxed.sys: expect FAIL\n'

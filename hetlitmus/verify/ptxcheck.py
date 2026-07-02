@@ -272,11 +272,6 @@ def emit_harness(litmus_path, outdir):
     raise RuntimeError("litmus7 emitted no .cu for %s\n%s" % (litmus_path, r.stdout))
 
 
-def needs_sm90(text):
-    """cluster scope anywhere => sm_90 required (else sm_86 suffices)."""
-    return 'cluster' in text
-
-
 def compile_ptx(cu_path, ptx_path, arch):
     r = run([NVCC, "-std=c++17", "-arch=" + arch, "--ptx", "-o", ptx_path, cu_path])
     if r.returncode != 0 or not os.path.exists(ptx_path):
@@ -571,7 +566,12 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
             cpu_c_text = open(cpu_c_override).read() if cpu_c_override else None
         else:
             cu_path, cpu_c_path = emit_harness(litmus_path, tmp)
-            use_arch = arch or ("sm_90" if needs_sm90(text) else "sm_86")
+            # Default to sm_90 to MATCH the run harness, whose emitted Makefile/
+            # run.sh compile the SAME .cu with `CUDA_ARCH ?= sm_90' (GH200) --
+            # see litmus/top_litmus.ml.  Checking a different arch than the one
+            # that runs would leave a soundness gap; sm_90 is also a superset
+            # (it covers cluster scope, Hopper-only).  --arch overrides.
+            use_arch = arch or "sm_90"
             ptx_path = os.path.join(tmp, name + ".ptx")
             compile_ptx(cu_path, ptx_path, use_arch)
             with open(ptx_path) as f:
@@ -616,7 +616,7 @@ def main():
     ap.add_argument("litmus", help=".litmus test path")
     ap.add_argument("--ptx", help="use this PTX file instead of emitting+nvcc (self-test)")
     ap.add_argument("--cpu-c", help="use this _cpu.c instead of emitting (self-test)")
-    ap.add_argument("--arch", help="override nvcc -arch (default sm_86, sm_90 if cluster)")
+    ap.add_argument("--arch", help="override nvcc -arch (default sm_90, matching the litmus7 run harness CUDA_ARCH)")
     ap.add_argument("--keep", action="store_true", help="keep emitted artifacts")
     ap.add_argument("-q", "--quiet", action="store_true")
     args = ap.parse_args()
