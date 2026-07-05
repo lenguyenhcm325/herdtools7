@@ -1,0 +1,5 @@
+Litmus,Expected,Model,Source
+SB-sys,Allowed,PTX,nvidia-ptx.cat
+MP-sys-F,Disallowed,PTX,nvidia-ptx.cat
+SB-sys-fa,Disallowed,PTX,nvidia-ptx.cat
+MP-sys-fa,Disallowed,PTX,nvidia-ptx.cat

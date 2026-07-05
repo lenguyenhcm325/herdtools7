@@ -1,0 +1,17 @@
+; HetLitmus Layer-1 (Static) cram tests -- see hetlitmus/docs/TEST-PLAN.md sec 4.
+; Pure bash/python, no toolchain, no GPU: they exercise the rule functions of
+; _grid_lib.sh (basics.t), the oracle-compare.sh decision logic (oracle-
+; negatives.t), and ptxcheck.py's discriminating power on a frozen corrupt PTX
+; (ptx-negatives.t).  Adapted from TEST-PLAN sec 6: the scripts under test live in
+; parent dirs, so they are depended on by their real relative paths (the cram
+; sandbox reconstructs the workspace tree and runs with cwd = this dir).  The
+; binaries (%{bin:...}) are intentionally omitted -- Layer 1 needs no OCaml build.
+(cram
+ (deps
+  ../_grid_lib.sh
+  ../../oracle-compare.sh
+  ../../verify/ptxcheck.py
+  obs.txt
+  oracle.csv
+  corrupt-strengthen.ptx
+  (glob_files ../gpu-only/*.litmus)))

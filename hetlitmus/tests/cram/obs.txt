@@ -1,0 +1,16 @@
+# Synthetic litmus7 log fixture for oracle-compare.sh (Layer-1 cram).
+# Six tests exercise the full {MATCH,MISMATCH,NO-ORACLE} x {exists,forall}
+# decision matrix.  Each `Observation' is preceded by the `Condition' line that
+# fixes its quantifier (litmus/skelUtil.ml), so the forall inversion is driven.
+Condition exists (1:r0=1 /\ 1:r1=0) is validated
+Observation SB-sys Sometimes 24 5976
+Condition exists (1:r0=1 /\ 1:r1=0) is NOT validated
+Observation MP-sys-F Sometimes 3 5997
+Condition exists (1:r0=1 /\ 1:r1=0) is NOT validated
+Observation LB-sys Never 0 6000
+Condition forall (1:r0=0 \/ 1:r1=1) is validated
+Observation SB-sys-fa Sometimes 12 5988
+Condition forall (1:r0=0 \/ 1:r1=1) is NOT validated
+Observation MP-sys-fa Never 0 6000
+Condition forall (1:r0=0 \/ 1:r1=1) is validated
+Observation LB-sys-fa Sometimes 7 5993
