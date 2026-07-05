@@ -636,5 +636,58 @@ RUN_TESTS?=false
 $(V).SILENT:
 $(V)SILENTOPT=-s
 
+### HetLitmus test targets (Layer 1-3; see hetlitmus/docs/TEST-PLAN.md sec.6).
+### Mirror the herdtools7 idiom (`| build` order-only prereq + `@ echo OK`).
+### Deliberately NOT wired into upstream `test::`: the main suite stays fast and
+### CUDA-free (folding in `hetlitmus-test` is a documented open decision, sec.10).
+### The verify scripts self-export PATH (`_build/install/default/bin`, plus
+### `/usr/local/cuda/bin` on the nvcc lane), so leaf targets just invoke them.
+
+### Building blocks (run solo while iterating).
+hetlitmus-cram: | build
+	@ echo
+	dune runtest hetlitmus/tests/cram
+	@ echo "HetLitmus Layer-1 cram: OK"
+
+hetlitmus-corpus: | build
+	@ echo
+	bash hetlitmus/verify/corpus-gate.sh
+	@ echo "HetLitmus Layer-2 corpus golden: OK"
+
+hetlitmus-faithful: | build
+	@ echo
+	bash hetlitmus/verify/l0_tokens.sh all
+	@ echo "HetLitmus Layer-3 PTX faithfulness (475): OK"
+
+hetlitmus-smoke: | build
+	@ echo
+	bash hetlitmus/verify/smoke.sh
+	@ echo "HetLitmus Layer-3 compile-smoke: OK"
+
+### Umbrellas (what you press).  `::` accumulation, order-only `| build`.
+hetlitmus-test:: | build
+hetlitmus-test:: hetlitmus-cram
+hetlitmus-test:: hetlitmus-corpus
+
+hetlitmus-test-nvcc:: | build
+hetlitmus-test-nvcc:: hetlitmus-faithful
+hetlitmus-test-nvcc:: hetlitmus-smoke
+
+hetlitmus-test-all:: | build
+hetlitmus-test-all:: hetlitmus-test
+hetlitmus-test-all:: hetlitmus-test-nvcc
+
+### Regenerate both corpora in place + promote cram goldens.  Does NOT commit.
+hetlitmus-promote: | build
+	@ echo
+	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/gpu-only/generate.sh
+	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/het/generate.sh
+	dune test hetlitmus/tests/cram --auto-promote
+	@ echo "hetlitmus-promote: corpora regenerated + cram goldens promoted (NOT committed)."
+	@ echo "hetlitmus-promote: review 'git diff' then commit yourself."
+
+.PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
+.PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
+
 include Makefile.x86_64
 include Makefile.aarch64
