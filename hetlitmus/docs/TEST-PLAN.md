@@ -28,7 +28,7 @@ All verified on the dev box (has `dune`/`ocaml`, `herd7`/`litmus7`/`hetgen7`/
   (137) and `tests/het/generate.sh` (338) reproduces the committed `.litmus`
   corpus with **zero diff** (`git status --short` empty). Het ~6.8 s.
   → golden-master via `git diff` is viable and nearly free.
-- **Emitters are byte-reproducible.** Re-emitting the 8 committed `cuda-out/*.cu`
+- **Emitters are byte-reproducible.** Re-emitting the 10 committed `cuda-out/*.cu`
   samples is byte-identical (modulo the `//` banner).
 - **Compilation needs `nvcc`+`clang` but NOT a GPU.** Proved by compiling with
   **all GPUs hidden**, targeting an arch the box does not have:
@@ -156,9 +156,11 @@ already does "run herd over a dir, compare outcomes to expected", so we would
 - ✓ `generate.sh` (both dirs), byte-stable.
 - ○ **golden gate**: regenerate, then fail on any tree change including added/removed
   files — use `git status --porcelain -- hetlitmus/tests/`, **not** bare `git diff`.
-- ○ emission golden: the 8 `cuda-out/*.cu` samples are **already committed**. Re-emit
-  them in place and fold `cuda-out/` into the **same** `git status --porcelain` check
-  as the corpus — emitter drift shows up as a dirty working tree.
+- ○ emission golden: the 10 `cuda-out/*.cu` samples are **already committed**. Emit
+  via `emit-cuda.sh` to a **temp dir** and diff the 10 committed `.cu` against it
+  (`emit-cuda` emits all 137; only these 10 are committed) — emitter drift shows up
+  as a nonzero diff. (Do **not** re-emit in place: `emit-cuda` would drop all 137
+  `.cu` into `cuda-out/`, littering 129 untracked files.)
 - ~ parse-smoke (every `.litmus` emits without error) already comes free from the
   Layer-3 faithfulness sweep, which emits every test.
 - ○ (optional) census contracts: counts 137/338; het proc-header column count ==

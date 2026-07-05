@@ -82,18 +82,21 @@ proc in its **own** CTA — so the two MP threads sit in *distinct* CTAs, which 
 exactly what makes `MP-cta-F` (block‑scope rel/acq across distinct CTAs) the
 moral‑strength / scope‑mismatch demonstration.
 
-## Task‑6 gate — eyeball checklist (8/8)
+## Task‑6 gate — eyeball checklist (10/10)
 Each emitted kernel checked against the ASPLOS'15 (Alglave et al., "GPU
-Concurrency") MP/SB/IRIW shapes and the scope mapping above.
+Concurrency") MP/SB/IRIW shapes (plus the standard 3‑proc write‑read‑causality
+WRC shape) and the scope mapping above.
 
-| test | scoped-atomic ops emitted | scope → thread_scope | CTA/thread layout | matches ASPLOS'15? |
+| test | scoped-atomic ops emitted | scope → thread_scope | CTA/thread layout | matches shape? |
 |------|---------------------------|----------------------|-------------------|--------------------|
 | MP-sys     | store rlx + store rlx; load rlx + load rlx¹ | sys → thread_scope_system | `<<<2,1>>>` P0=CTA0, P1=CTA1 | yes (MP) |
 | MP-sys-F   | store rlx + **store rel**; **load acq** + load rlx | sys → thread_scope_system | `<<<2,1>>>` P0=CTA0, P1=CTA1 | yes (MP) |
 | MP-cta-F   | store rlx + **store rel**; **load acq** + load rlx | **cta → thread_scope_block** | `<<<2,1>>>` P0=CTA0, P1=CTA1 (distinct) | yes (MP, scope-mismatch) |
+| MP-gpu-release | **store rel** + **store rel**; load rlx + load rlx | **gpu → thread_scope_device** | `<<<2,1>>>` P0=CTA0, P1=CTA1 | yes (MP; device-scope sample²) |
 | LB-sys     | load rlx + store rlx (both procs) | sys → thread_scope_system | `<<<2,1>>>` P0=CTA0, P1=CTA1 | yes (LB) |
 | SB-sys     | store rlx + load rlx (both procs) | sys → thread_scope_system | `<<<2,1>>>` P0=CTA0, P1=CTA1 | yes (SB) |
 | SB-sys-F   | **store rel** + **load acq** (both procs) | sys → thread_scope_system | `<<<2,1>>>` P0=CTA0, P1=CTA1 | yes (SB) |
+| WRC-sys-relaxed | P0 load rlx + store rlx; P1 load rlx + load rlx; P2 store rlx | sys → thread_scope_system | `<<<3,1>>>` P0=CTA0, P1=CTA1, P2=CTA2 | yes (WRC; 3-proc sample²) |
 | IRIW-sys   | writers store rlx; readers load rlx ×2 | sys → thread_scope_system | `<<<4,1>>>` P0..P3 = CTA0..3 | yes (IRIW) |
 | IRIW-sys-F | writers **store rel**; readers **load acq** ×2 | sys → thread_scope_system | `<<<4,1>>>` P0..P3 = CTA0..3 | yes (IRIW) |
 
@@ -101,21 +104,26 @@ Concurrency") MP/SB/IRIW shapes and the scope mapping above.
 carrying its annotated order+scope (relaxed data included), so the kernels are
 data‑race‑free under the C++/CUDA model rather than relying on plain accesses.
 
+² `MP-gpu-release` and `WRC-sys-relaxed` were added to sample the last two
+un‑eyeballed codegen branches: `MP-gpu-release` is the only **device‑scope** kernel
+(`gpu → thread_scope_device`; all other samples are sys/cta), and `WRC-sys-relaxed`
+is the only **3‑proc** launch geometry (`<<<3,1>>>`, three distinct CTAs).
+
 ## Task 8 — nvcc compile (DONE)
 Done on this WSL box (CUDA Toolkit **12.9**, `nvcc /usr/local/cuda/bin/nvcc`;
 `export PATH=/usr/local/cuda/bin:$PATH`; originally Task 8 ran on 12.2 — see the
 fence-lowering note below for what the upgrade changed). Every emitted kernel
 assembles **exit 0**.
 
-- **Corpus (cta/sys), Ampere** — each of the 8 `cuda-out/*.cu`:
+- **Corpus (cta/sys/gpu), Ampere** — each of the 10 `cuda-out/*.cu`:
 
   ```
   nvcc -std=c++17 -arch=sm_86 <test>.cu -o /tmp/<test>
   ```
 
-  All 8 (MP/LB/SB/IRIW × relaxed/-F, plus MP-cta-F) compile exit 0. `sm_86` =
-  this box's RTX 3060 Laptop (Ampere), so the non-cluster corpus can also smoke
-  *run* here.
+  All 10 (MP/LB/SB/IRIW × relaxed/-F, MP-cta-F, plus MP-gpu-release and
+  WRC-sys-relaxed) compile exit 0. `sm_86` = this box's RTX 3060 Laptop
+  (Ampere), so the non-cluster corpus can also smoke *run* here.
 
 - **Cluster (inline-PTX path), Hopper** — the hand-written
   `tests/cluster/*.litmus` (`MP-cluster-F` = rel/acq cluster atomics;
@@ -145,7 +153,7 @@ acquire/release → `fence.acq_rel`. So `MP-cluster` now emits a true
 (was `fence.acq_rel.cluster` for both). Availability: `fence.{acq_rel,sc}` work on
 SM_70+ (cluster needs SM_90); `fence.{acquire,release}` need SM_90 — so a
 fence-bearing test now assembles only for sm_90 (fine for the GH200 target; the
-corpus has no fences, so the 8 `.cu` stay byte-stable). Load/store mapping is
+corpus has no fences, so the 10 `.cu` stay byte-stable). Load/store mapping is
 unchanged: rel/acq on ops already map exactly (`st.release.<scope>` /
 `ld.acquire.<scope>`); only standalone fences were affected.
 
