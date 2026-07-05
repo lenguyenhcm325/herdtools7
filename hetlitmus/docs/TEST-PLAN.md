@@ -75,7 +75,7 @@ was dropped: old L0,L3→**1**; L1,L2-golden→**2**; L2-faithful,L4→**3**; L5
 |---|---|---|---|---|
 | **1 Static** | rule-fns as spec (unit); checker discriminating-power (negatives) | dune **cram** | bash/python | anywhere, ms |
 | **2 Generate** | corpus + emission regression golden; parse-smoke; census | **git-diff** + make | `make build` | local/CI, ~10 s |
-| **3 Compile** | PTX faithfulness (all 475); compile-smoke (5 reps) | shell drivers | nvcc+clang, **no GPU** | local / CI-with-CUDA, ~min |
+| **3 Compile** | PTX faithfulness (all 475); compile-smoke (6 reps) | shell drivers | nvcc+clang, **no GPU** | local / CI-with-CUDA, ~min |
 | **4 Hardware** | behavioral falsification; positive controls | `oracle-compare.sh` | **GH200** | manual, off-CI |
 
 Goal mapping: **regression = Layer 2** (goldens); **works-as-expected = Layers 1,
@@ -169,9 +169,10 @@ already does "run herd over a dir, compare outcomes to expected", so we would
 ### Layer 3 — Compile (shell drivers; nvcc+clang, no GPU)
 - ✓ faithfulness: `verify/l0_tokens.sh all` (already gated).
 - ✓ `comp.sh` per test (verified compiles no-GPU).
-- ○ `smoke.sh` (~10 lines): emit + run `comp.sh` on the 5 reps (§5), fail on any
-  nonzero. `nvcc --ptx` from faithfulness already covers the gpu-only `.cu`, so
-  smoke only needs the het harnesses (CPU side + `nvcc -c`/ptxas + link).
+- ✓ `smoke.sh` (built, `4e1718593`): emit + compile the 6 reps (§5), fail on any
+  nonzero. `nvcc --ptx` from faithfulness already covers gpu-only/het `.cu`, so smoke
+  adds the het CPU side (clang AArch64) + `nvcc -c`/ptxas, plus the cluster test
+  (gpu-only, *outside* faithfulness — smoke is its only compile check).
 
 ### Layer 4 — Hardware (GH200; later)
 - ✓ `oracle-compare.sh`.
@@ -184,18 +185,20 @@ already does "run herd over a dir, compare outcomes to expected", so we would
 ## 5. Compile-smoke spec (settled)
 
 Single "before every commit" run — **no tiers, no nightly**. **Not all 475**
-(gpu-only `.cu` already gets `nvcc --ptx` from faithfulness). Run `comp.sh` (assert
-exit 0) on **5 het representatives**, chosen to hit each distinct compile path once:
+(gpu-only `.cu` already gets `nvcc --ptx` from faithfulness). Emit + compile **6
+representatives** — 5 het via their `comp.sh`, 1 gpu-only cluster via bare `nvcc -c`
+— chosen to hit each distinct compile path once:
 
 | Rep | Covers |
 |---|---|
-| one het one-sided (e.g. `MP-cg-sys-relaxed`) | plain CPU STR/LDR + barrier + `nvcc -c` |
-| one `*-acqrel-2s` | CPU STLR + LDAPR |
-| one `*-fence-2s` | CPU DMB.SY |
-| one `tests/cluster/*` | Hopper-only cluster path |
-| one 4-proc het (an IRIW cut) | largest barrier / proc count |
+| one het one-sided (`MP-cg-cta-acquire`) | plain CPU STR/LDR + barrier + `nvcc -c` |
+| one `*-acqrel-2s` (`2+2W-cg-sys-acqrel-2s`) | CPU STLR + LDAPR |
+| one `*-fence-2s` (`2+2W-cg-sys-fence-2s`) | CPU DMB.SY |
+| one 4-proc het (`IRIW-cgcc-cta-relaxed`) | largest barrier / proc count |
+| one 3-proc het (`WRC-ccg-cta-relaxed`) | 3-proc scaffolding — buys down the proc-scaling assumption |
+| one cluster (`tests/cluster/MP-cluster`, gpu-only, `nvcc -c`) | Hopper inline-PTX cluster fence; **outside faithfulness**, so this is its only compile check |
 
-~20 s total. Residual risk (5 reps ≠ proof all 475 build) is accepted once: the
+~30 s total. Residual risk (6 reps ≠ proof all 475 build) is accepted once: the
 same gate `nvcc --ptx`-compiles every one of the 475 via faithfulness, and the
 stages smoke adds (ptxas / CPU clang / link) are near-constant across tests.
 
@@ -247,7 +250,7 @@ either** (promote blindly enshrines current output, bugs and all):
 1. **Layer 1 cram** (`basics.t`, `oracle-negatives.t`, `ptx-negatives.t` + fixtures
    + `dune`) — pins the spec *and* closes the eyeball-only-negatives gap.
 2. **`hetlitmus-corpus`** — cheapest, broadest regression net.
-3. **`smoke.sh`** (5 reps) — reuses `comp.sh`.
+3. **`smoke.sh`** (6 reps) — reuses `comp.sh`.
 4. **Wire the Makefile targets.**
 5. **Layer 4** — later, on the GH200.
 
@@ -273,7 +276,6 @@ Steps 1–4 all run on the dev box (and in CI, Layer 3 with a CUDA-install step)
 ## 10. Open items / pending decisions
 
 - Layer 4 (hardware) run wiring + positive-control design — deferred to GH200 access.
-- Exact 5 rep test names for `smoke.sh` (pattern is settled; pick concrete names at build).
 - Whether to also unit-test `ptxcheck.py` parsers (optional; low priority).
 - Whether to fold `hetlitmus-test` into upstream `test::`.
 
