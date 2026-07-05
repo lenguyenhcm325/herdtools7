@@ -1,7 +1,8 @@
 # HetLitmus — Test Plan & Spec
 
-**Status as of 2026-07-05.** Living document. Captures the design decisions and
-the empirical findings they rest on. `✓` = exists today, `○` = to build.
+**Status as of 2026-07-06.** Living document. Captures the design decisions and
+the empirical findings they rest on. `✓` = exists today, `○` = to build. **Build
+status: Layers 1–3 + Makefile wiring are COMPLETE; only Layer 4 (hardware) remains.**
 
 ## 0. Goals
 
@@ -136,40 +137,39 @@ already does "run herd over a dir, compare outcomes to expected", so we would
 ## 4. Layer-by-layer contents
 
 ### Layer 1 — Static (cram; no toolchain)
-- ○ `basics.t` — executable spec of `_grid_lib.sh`: **~10 lines, one per rule branch,
+- ✓ `basics.t` (`0d5940b5e`) — executable spec of `_grid_lib.sh`: **~10 lines, one per rule branch,
   NOT the 132-cell grid** (that is the Layer-2 golden's job). Cover the 4
   `render_cycle` orders (relaxed/acquire/release/fence, varying scope so all of
   Sys/Gpu/Cta appear), the 2 `render_cpu_cycle` orders (acqrel→STLR `L`/LDAPR `Q`,
   fence→`DMB.SYd*`), `cut_tag` (2- and 3-proc), `scope_tree` (2- and 3-proc). Exact
   list + real outputs in Appendix B. (Optional +2: unit `arm_ord R/W acqrel`→`Q`/`L`
   to pin the atom mapping directly.)
-- ○ `oracle-negatives.t` — `oracle-compare` on frozen fixtures. Make this one
+- ✓ `oracle-negatives.t` (`0d5940b5e`) — `oracle-compare` on frozen fixtures. This one is
   **exhaustive**: the full 6-cell decision matrix **{MATCH, MISMATCH, NO-ORACLE} ×
   {exists, forall}** (no golden covers this logic; the `forall` quantifier inversion
   is subtle). Any MISMATCH → exit 1.
-- ○ `ptx-negatives.t` — `ptxcheck --ptx <frozen-corrupt.ptx>` → exit 1 (no GPU). A
+- ✓ `ptx-negatives.t` (`0d5940b5e`) — `ptxcheck --ptx <frozen-corrupt.ptx>` → exit 1 (no GPU). A
   thin **byte-freeze** of one corruption; the eyeball gap is already closed in the
   gated `l0_tokens.sh selftest` (`c2e4df4c5`), so this is belt-and-suspenders.
 - (optional, lower priority) unit-test `ptxcheck.py` parsers (`classify_ptx_op`, …).
 
 ### Layer 2 — Generate (git-diff + make; OCaml build)
 - ✓ `generate.sh` (both dirs), byte-stable.
-- ○ **golden gate**: regenerate, then fail on any tree change including added/removed
-  files — use `git status --porcelain -- hetlitmus/tests/`, **not** bare `git diff`.
-- ○ emission golden: the 10 `cuda-out/*.cu` samples are **already committed**. Emit
-  via `emit-cuda.sh` to a **temp dir** and diff the 10 committed `.cu` against it
-  (`emit-cuda` emits all 137; only these 10 are committed) — emitter drift shows up
-  as a nonzero diff. (Do **not** re-emit in place: `emit-cuda` would drop all 137
-  `.cu` into `cuda-out/`, littering 129 untracked files.)
+- ✓ **golden gate** (`verify/corpus-gate.sh`, `6e92f2657`): regenerate, then fail on
+  any tree change including added/removed files — `git status --porcelain -- hetlitmus/tests/`, **not** bare `git diff`.
+- ✓ emission golden (in `corpus-gate.sh`): the 10 `cuda-out/*.cu` samples are committed;
+  `emit-cuda.sh` emits to a **temp dir** and the 10 are diffed against it (`emit-cuda`
+  emits all 137; only these 10 are committed) — emitter drift = nonzero diff. (Not
+  re-emitted in place: that would litter 127 untracked `.cu` in `cuda-out/`.)
 - ~ parse-smoke (every `.litmus` emits without error) already comes free from the
   Layer-3 faithfulness sweep, which emits every test.
-- ○ (optional) census contracts: counts 137/338; het proc-header column count ==
-  number of device tags; `@all` lists exactly the `.litmus` files.
+- ✓ census (in `corpus-gate.sh`): asserts counts 137/338. The extra per-test
+  column-count / `@all` contracts remain optional (not implemented).
 
 ### Layer 3 — Compile (shell drivers; nvcc+clang, no GPU)
 - ✓ faithfulness: `verify/l0_tokens.sh all` (already gated).
 - ✓ `comp.sh` per test (verified compiles no-GPU).
-- ✓ `smoke.sh` (built, `4e1718593`): emit + compile the 6 reps (§5), fail on any
+- ✓ `smoke.sh` (built, `fa2adc9db`): emit + compile the 6 reps (§5), fail on any
   nonzero. `nvcc --ptx` from faithfulness already covers gpu-only/het `.cu`, so smoke
   adds the het CPU side (clang AArch64) + `nvcc -c`/ptxas, plus the cluster test
   (gpu-only, *outside* faithfulness — smoke is its only compile check).
@@ -208,6 +208,7 @@ stages smoke adds (ptxas / CPU clang / link) are near-constant across tests.
 
 Mirror herdtools7's `::` accumulation + `| build` order-only prereq + `@ echo OK`.
 Renamed the CUDA lane `-gpu`→`-nvcc` (nothing here needs a GPU).
+**✓ All targets wired into the top-level Makefile (`68d102ef5`).**
 
 Umbrellas (what you press):
 - **`make hetlitmus-test`** → Layer 1+2 (`hetlitmus-cram` + `hetlitmus-corpus`). No CUDA.
@@ -221,7 +222,8 @@ Building blocks (run solo while iterating):
 
 Notes:
 - `hetlitmus-corpus` uses `git status --porcelain` (catches add/remove; non-invasive).
-- GPU/nvcc targets are never wired into upstream `test::`. Optional: `test:: hetlitmus-test`.
+- GPU/nvcc targets are never wired into upstream `test::`. **Decided: hetlitmus targets
+  stay standalone (not folded into `test::`) to keep the main suite fast + CUDA-free.**
 - Layer 4 is a separate `hetlitmus-run` on the GH200, in no umbrella.
 
 Cram `dune` stanza (in `hetlitmus/tests/cram/dune`):
@@ -247,12 +249,11 @@ either** (promote blindly enshrines current output, bugs and all):
 
 ## 8. Build order (highest ROI first)
 
-1. **Layer 1 cram** (`basics.t`, `oracle-negatives.t`, `ptx-negatives.t` + fixtures
-   + `dune`) — pins the spec *and* closes the eyeball-only-negatives gap.
-2. **`hetlitmus-corpus`** — cheapest, broadest regression net.
-3. **`smoke.sh`** (6 reps) — reuses `comp.sh`.
-4. **Wire the Makefile targets.**
-5. **Layer 4** — later, on the GH200.
+1. ✓ **Layer 1 cram** (`0d5940b5e`) — `basics.t`, `oracle-negatives.t`, `ptx-negatives.t` + fixtures + `dune`.
+2. ✓ **`hetlitmus-corpus`** (`6e92f2657`) — corpus + emission golden gate.
+3. ✓ **`smoke.sh`** (6 reps, `fa2adc9db`) — reuses `comp.sh`.
+4. ✓ **Makefile targets wired** (`68d102ef5`).
+5. ○ **Layer 4** — later, on the GH200.
 
 Steps 1–4 all run on the dev box (and in CI, Layer 3 with a CUDA-install step).
 
