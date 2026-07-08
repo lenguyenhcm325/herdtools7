@@ -413,6 +413,15 @@ end = struct
       gd_device_sync : string ;     (* host-side device-sync statement *)
       gd_free : string -> string ;  (* var -> free statement *)
       gd_bar : string -> string -> string ; (* indent, ptr-expr -> arrive+spin *)
+      (* B1 (Q8 R1/R2/R4): per-target allocator for the shared litmus vars + the
+         rendezvous barrier.  The allocator SELECTS THE PROPERTY UNDER TEST, so
+         this is correctness, not tuning (system malloc/ATS on GH200; fine-grained
+         hipMallocManaged on MI300A; cudaMallocManaged only as the dev-box/CI
+         fallback).  [gd_shared_mem_defs] emits the file-scope gd_alloc_shared /
+         gd_free_shared helpers (call sites are dialect-agnostic C); [gd_shared_mem_note]
+         is the corrected banner comment.  __out is NOT routed through these. *)
+      gd_shared_mem_note : string ;  (* corrected "shared vars" banner comment *)
+      gd_shared_mem_defs : string ;  (* file-scope gd_alloc_shared / gd_free_shared defs *)
       (* B2: cooperative-launch API tokens.  Used PURELY for the co-residency +
          weak-progress guarantee of the persistent kernel; the CPU<->GPU rendezvous
          stays [gd_bar] (system-scope atomic), so NO grid.sync / cooperative_groups.h. *)
@@ -441,6 +450,45 @@ end = struct
              %s_bar.fetch_add(1, cuda::memory_order_seq_cst);\n\
              %swhile (_bar.load(cuda::memory_order_seq_cst) < NPART) { }\n"
             ind ptr ind ind) ;
+      gd_shared_mem_note =
+        "// Shared vars + barrier use gd_alloc_shared: system malloc() on GH200 (ATS =>\n\
+         // cache-line CHI coherence over NVLink-C2C, the real inter-device protocol);\n\
+         // cudaMallocManaged only as the dev-box/CI fallback (managed = 2 MB page\n\
+         // migration on GH200, which masks the race -- Q8 R1).\n" ;
+      gd_shared_mem_defs =
+        {ocaml|/* B1 (Q8 R1/R4): per-target allocator for the shared litmus vars + rendezvous
+   barrier.  The allocator SELECTS THE PROPERTY UNDER TEST -- not a perf detail.
+   Runtime dispatch (mirrors B2's cooperative support-check): on a pageable-
+   memory-access device (GH200: ATS gives CPU+GPU one page table) the shared
+   objects go through system malloc(), so both sides touch the SAME cache line in
+   place over NVLink-C2C via the real CHI/SWMR hardware coherence -- exactly what
+   Bagchi et al. (ISMM'26) used.  cudaMallocManaged is the dev-box/CI FALLBACK
+   only: on GH200 it 2 MB-page-migrates under the concurrent race and MASKS the
+   weak behaviour.  The free MUST match the allocator (malloc=>free, managed=>
+   cudaFree); a mismatched free is UB that may not fault on the managed dev-box
+   path and only surfaces on GH200.  __out is NOT routed here (off the race path).
+   Dev box: guard cudaDevAttrConcurrentManagedAccess before treating any local run
+   as a result -- the CI path is compile-only, so it never reaches this at run time. */
+static int _shared_pageable(void){
+  int _p = 0;
+  (void)cudaDeviceGetAttribute(&_p, cudaDevAttrPageableMemoryAccess, 0);
+  return _p;
+}
+static void gd_alloc_shared(void** _pp, size_t _bytes){
+  if (_shared_pageable()) {
+    *_pp = malloc(_bytes);   /* GH200: ATS, in-place cache-line CHI coherence */
+    /* B5 SEAM: cudaMemAdvise(*_pp,_bytes,cudaMemAdviseSetPreferredLocation,dev)
+       + cudaMemAdvise(...,cudaMemAdviseSetAccessedBy,...) pins the page remote to
+       its consumer, forcing every access across C2C -- the interconnect-stress
+       lever.  Attaches HERE (GH200 malloc branch only); leave unbuilt for B5. */
+  } else {
+    cudaMallocManaged(_pp, _bytes);   /* dev-box / CI fallback only */
+  }
+}
+static void gd_free_shared(void* _p){
+  if (_shared_pageable()) { free(_p); } else { cudaFree(_p); }
+}
+|ocaml} ;
       gd_err_t = "cudaError_t" ;
       gd_success = "cudaSuccess" ;
       gd_errstr = "cudaGetErrorString" ;
@@ -465,6 +513,28 @@ end = struct
             "%s(void)__hip_atomic_fetch_add((%s), 1, __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_SYSTEM);\n\
              %swhile (__hip_atomic_load((%s), __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_SYSTEM) < NPART) { }\n"
             ind ptr ind ptr) ;
+      gd_shared_mem_note =
+        "// Shared vars + barrier use gd_alloc_shared: fine-grained hipMallocManaged on\n\
+         // MI300A -- the only mode coherent for system-scope CPU<->GPU sync during a\n\
+         // live kernel (coarse-grained is visible only at kernel boundary; Q8 R2).\n" ;
+      gd_shared_mem_defs =
+        {ocaml|/* B1 (Q8 R2/R4): shared litmus vars + barrier use fine-grained coherent memory.
+   hipMallocManaged is fine-grained BY DEFAULT on MI300A -- the only coherence mode
+   usable for system-scope CPU<->GPU synchronisation *while the kernel is live*
+   (coarse-grained memory is visible only at a kernel-boundary sync, which would
+   void every heterogeneous test).  MI300A's unified HBM pool needs no page
+   migration, so no malloc/ATS dispatch is required for correctness; the free
+   matches (hipFree).  A malloc+HSA_XNACK=1 variant is a runtime-env choice, not a
+   codegen one.  __out is NOT routed here (off the race path). */
+static void gd_alloc_shared(void** _pp, size_t _bytes){
+  (void)hipMallocManaged(_pp, _bytes);   /* fine-grained by default */
+  /* B5 SEAM: MI300A has a single HBM pool -- no LPDDR/HBM placement knob; the
+     interconnect-stress placement attaches on the GH200 CUDA twin, not here. */
+}
+static void gd_free_shared(void* _p){
+  (void)hipFree(_p);
+}
+|ocaml} ;
       gd_err_t = "hipError_t" ;
       gd_success = "hipSuccess" ;
       gd_errstr = "hipGetErrorString" ;
@@ -804,9 +874,7 @@ end = struct
                  "// HetLitmus Tier-2 GPU kernel + driver for %s (%s dialect).\n"
                  tname dialect.gd_name) ;
             s "// P(gpu) run as a GPU kernel; P(cpu) as a pthread (see _cpu.c).\n" ;
-            s (Printf.sprintf
-                 "// Shared vars are %sMallocManaged (CPU/GPU-coherent on GH200/MI300A);\n"
-                 (if dialect.gd_ext = "cu" then "cuda" else "hip")) ;
+            s dialect.gd_shared_mem_note ;
             s "// a system-scope atomic barrier rendezvouses both sides.\n" ;
             s (Printf.sprintf
                  "// COMPILE-ONLY (%s -c); GPU execution is Task 9.  DO NOT EDIT.\n"
@@ -898,19 +966,35 @@ end = struct
 }
 
 |ocaml} ;
+            (* B1: file-scope per-target shared-memory allocator (gd_alloc_shared /
+               gd_free_shared).  Emitted once, just before main(), after the runtime
+               include + <cstdlib> so malloc/free and the *DeviceGetAttribute query
+               are in scope. *)
+            s dialect.gd_shared_mem_defs ;
+            s "\n" ;
             (* driver *)
             s "int main(void){\n" ;
+            (* B1 (Q8 R1/R2/R4): the shared litmus vars go through gd_alloc_shared --
+               the per-target allocator that selects the coherence property under
+               test (system malloc()/ATS on GH200; fine-grained hipMallocManaged on
+               MI300A; cudaMallocManaged only as the dev-box/CI fallback). *)
             List.iter
               (fun g ->
-                s (Printf.sprintf "  int *%s; %s\n" g
-                     (dialect.gd_malloc_managed g "sizeof(int)")))
+                s (Printf.sprintf
+                     "  int *%s; gd_alloc_shared((void**)&%s, sizeof(int));\n" g g))
               all_globals ;
+            (* __out is written by the GPU and read by the host post-sync -- OFF the
+               concurrent-race path (Q8 R1 / §4.B-6), so it stays managed, NOT
+               gd_alloc_shared, and keeps gd_free below. *)
             s (Printf.sprintf "  int *__out; %s\n"
                  (dialect.gd_malloc_managed "__out"
                     (Printf.sprintf "sizeof(int)*%d*%d"
                        (max 1 nprocs_total) CudaLang.nregs_layout))) ;
-            s (Printf.sprintf "  int *barrier; %s\n"
-                 (dialect.gd_malloc_managed "barrier" "sizeof(int)")) ;
+            (* The rendezvous barrier is the hottest cross-device atomic -- it MUST
+               be hardware-coherent (system malloc + C2C atomics on GH200), so it
+               also goes through gd_alloc_shared. *)
+            s (Printf.sprintf
+                 "  int *barrier; gd_alloc_shared((void**)&barrier, sizeof(int));\n") ;
             List.iter
               (fun (proc,_out,_envV,(_ap,out_params)) ->
                 if out_params <> [] then
@@ -1000,9 +1084,12 @@ end = struct
             s (Printf.sprintf "  printf(\"Test %s\\n\");\n" tname) ;
             s (Printf.sprintf "  dump_outs(stdout, _dump_one, hist, _buff, %d);\n" nslots) ;
             s "  free_outs(hist);\n" ;
-            List.iter (fun g -> s (Printf.sprintf "  %s\n" (dialect.gd_free g))) all_globals ;
-            s (Printf.sprintf "  %s %s\n  return 0;\n}\n"
-                 (dialect.gd_free "__out") (dialect.gd_free "barrier")) in
+            (* B1: shared vars + barrier free through gd_free_shared (allocator-aware:
+               free() for the malloc branch, cudaFree/hipFree for managed) -- the free
+               MUST match the allocator or it is UB.  __out stays managed => gd_free. *)
+            List.iter (fun g -> s (Printf.sprintf "  gd_free_shared(%s);\n" g)) all_globals ;
+            s (Printf.sprintf "  %s gd_free_shared(barrier);\n  return 0;\n}\n"
+                 (dialect.gd_free "__out")) in
           (* ---- comp.sh / Makefile / README ---- *)
           let dump_comp ch =
             let s = output_string ch in
@@ -1069,9 +1156,11 @@ end = struct
             s "Heterogeneous CPU+GPU litmus harness emitted by litmus7 (`Het` arch).\n\n" ;
             s (Printf.sprintf "CPU ISA: %s.  GPU dialects: CUDA (`.cu`) + HIP (`.hip`).\n\n" CpuF.isa_name) ;
             s "Files:\n" ;
-            s (Printf.sprintf "- `%s.cu`     GPU kernel + host driver, CUDA dialect (cudaMallocManaged,\n" tname) ;
-            s "             cuda::atomic_ref system-scope barrier, pthread + kernel launch).\n" ;
-            s (Printf.sprintf "- `%s.hip`    same harness, HIP dialect (hipMallocManaged, __hip_atomic_*).\n" tname) ;
+            s (Printf.sprintf "- `%s.cu`     GPU kernel + host driver, CUDA dialect (gd_alloc_shared:\n" tname) ;
+            s "             system malloc on GH200 / cudaMallocManaged fallback for the shared vars +\n" ;
+            s "             barrier, cuda::atomic_ref system-scope barrier, pthread + kernel launch).\n" ;
+            s (Printf.sprintf "- `%s.hip`    same harness, HIP dialect (gd_alloc_shared: fine-grained\n" tname) ;
+            s "             hipMallocManaged, __hip_atomic_*).\n" ;
             s (Printf.sprintf "- `%s_cpu.c`  CPU thread(s): real %s inline asm (litmus7 ASMLang).\n" tname CpuF.isa_name) ;
             s "- `outs.c/.h` litmus7's outcome histogram (verbatim from litmus/libdir).\n" ;
             s "- `comp.sh` / `Makefile`  compile-only build.\n\n" ;
