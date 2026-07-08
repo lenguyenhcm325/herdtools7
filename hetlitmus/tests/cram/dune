@@ -7,6 +7,7 @@
 ; sandbox reconstructs the workspace tree and runs with cwd = this dir).  The
 ; binaries (%{bin:...}) are intentionally omitted -- Layer 1 needs no OCaml build.
 (cram
+ (applies_to basics oracle-negatives ptx-negatives)
  (deps
   ../_grid_lib.sh
   ../../oracle-compare.sh
@@ -15,3 +16,18 @@
   oracle.csv
   corrupt-strengthen.ptx
   (glob_files ../gpu-only/*.litmus)))
+
+; pfix-cond.t is the one exception that DOES need the OCaml build: it emits the
+; four representative het tests through litmus7 and reads the generated _cond /
+; _labels to guard the Task P condition-compiler fix (7a/7b).  Scoped so the
+; three Layer-1 tests above stay toolchain-free.  litmus7 het emission needs no
+; -set-libdir, so only the binary + the four .litmus inputs are required.
+(cram
+ (applies_to pfix-cond)
+ (package herdtools7)
+ (deps
+  %{bin:litmus7}
+  ../het/2+2W-cg-sys-fence.litmus
+  ../het/R-cg-sys-fence.litmus
+  ../het/S-cg-sys-fence.litmus
+  ../het/MP-cg-sys-acqrel-2s.litmus))

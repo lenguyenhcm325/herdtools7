@@ -655,12 +655,46 @@ end = struct
                   out.Cpu.Out.final)
               params in
           let slots = cpu_slots @ gpu_slots in
-          let nslots = List.length slots in
+          let n_reg = List.length slots in
+          (* ---- shared globals (allocated once, coherent to both) ----
+             Moved above the condition compiler (Task P 7a): the location-atom
+             arm reads a global's quiescent post-join value, so it needs the
+             allocated set. *)
+          let cpu_addrs =
+            List.concat_map (fun (_,_,_,(ap,_)) -> List.map snd ap) params in
+          let all_globals =
+            let seen = Hashtbl.create 8 in
+            List.filter
+              (fun g -> if Hashtbl.mem seen g then false
+                        else (Hashtbl.add seen g () ; true))
+              (cpu_addrs @ gpu_globals) in
+          (* ---- location slots (Task P 7a): one outcome-vector cell per
+             Location_global atom in the condition (e.g. [x]=2), read ONCE after
+             pthread_join / device-sync from the quiescent managed global.  In
+             this single-instance emitter every condition location is backed by
+             an allocated global, so it becomes a real final-memory read; a
+             location with no backing global (perpetual mode, B6) is left out of
+             loc_slots and c_of_prop emits a compile-visible HET_UNCONVERTIBLE
+             marker instead of silently collapsing to constant-true. *)
+          let loc_slots =
+            List.filter_map
+              (fun g ->
+                let name = MiscParser.dump_value g in
+                if List.mem name all_globals
+                then Some (name, Printf.sprintf "(*%s)" name)
+                else None)
+              (HetCond.condition_locations (prop_of parsed.MiscParser.condition)) in
+          let nslots = n_reg + List.length loc_slots in
           (* ---- condition -> C predicate over the outcome vector ---- *)
           let slot_index =
             let tbl = Hashtbl.create 8 in
             List.iteri (fun i (p,r,_) -> Hashtbl.replace tbl (p,r) i) slots ;
             fun p r -> Hashtbl.find_opt tbl (p,r) in
+          let loc_index =
+            let tbl = Hashtbl.create 8 in
+            List.iteri
+              (fun i (name,_) -> Hashtbl.replace tbl name (n_reg+i)) loc_slots ;
+            fun name -> Hashtbl.find_opt tbl name in
           let cval v = ParsedConstant.pp_v v in
           let rec c_of_prop p =
             let open ConstrGen in
@@ -669,6 +703,15 @@ end = struct
                (match slot_index pr r with
                 | Some i -> Printf.sprintf "(o[%d] == %s)" i (cval v)
                 | None -> "1 /*unmapped*/")
+            | Atom (LV (Loc (MiscParser.Location_global g),v)) ->
+               (* Task P 7a: real final-memory read (single-instance) or a
+                  compile-visible marker -- never a silent constant-true. *)
+               (match loc_index (MiscParser.dump_value g) with
+                | Some i -> Printf.sprintf "(o[%d] == %s)" i (cval v)
+                | None ->
+                   Printf.sprintf
+                     "HET_UNCONVERTIBLE /* [%s]=%s: no per-iteration final value (perpetual scheme, B6) */"
+                     (MiscParser.dump_value g) (cval v))
             | Atom _ -> "1 /*unsupported atom*/"
             | Not q -> Printf.sprintf "(!%s)" (c_of_prop q)
             | And [] -> "1"
@@ -678,15 +721,6 @@ end = struct
             | Implies (a,b) ->
                Printf.sprintf "(!(%s) || %s)" (c_of_prop a) (c_of_prop b) in
           let cond_expr = c_of_prop (prop_of parsed.MiscParser.condition) in
-          (* ---- shared globals (allocated once, coherent to both) ---- *)
-          let cpu_addrs =
-            List.concat_map (fun (_,_,_,(ap,_)) -> List.map snd ap) params in
-          let all_globals =
-            let seen = Hashtbl.create 8 in
-            List.filter
-              (fun g -> if Hashtbl.mem seen g then false
-                        else (Hashtbl.add seen g () ; true))
-              (cpu_addrs @ gpu_globals) in
           let npart = List.length params + List.length gpu_prog in
           let id = CudaLang.c_ident tname in
           (* ================= file emission ================= *)
@@ -810,7 +844,8 @@ end = struct
             (* outcome labels, condition, dump callback *)
             let labelstr =
               String.concat ", "
-                (List.map (fun (p,r,_) -> Printf.sprintf "\"%d:%s\"" p r) slots) in
+                (List.map (fun (p,r,_) -> Printf.sprintf "\"%d:%s\"" p r) slots
+                 @ List.map (fun (name,_) -> Printf.sprintf "\"[%s]\"" name) loc_slots) in
             s (Printf.sprintf "static const char* _labels[%d] = { %s };\n"
                  (max 1 nslots) labelstr) ;
             s (Printf.sprintf
@@ -874,6 +909,13 @@ end = struct
             List.iteri
               (fun i (_p,_r,src) -> s (Printf.sprintf "    _o[%d] = %s;\n" i src))
               slots ;
+            (* Task P 7a: final-memory reads of the condition's Location_global
+               atoms, appended after the register slots (memory is quiescent
+               post-join). *)
+            List.iteri
+              (fun i (_name,src) ->
+                s (Printf.sprintf "    _o[%d] = %s;\n" (n_reg+i) src))
+              loc_slots ;
             s (Printf.sprintf
                  "    hist = add_outcome_outs(hist, _o, %d, 1, _cond(_o));\n" nslots) ;
             s "  }\n" ;
