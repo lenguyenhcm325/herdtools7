@@ -33,11 +33,14 @@ MATCHING free (free() for malloc, cudaFree for managed -- a mismatched free is U
   $ grep -cE 'free\(_p\).*cudaFree\(_p\)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 
-(d) __out is OFF the concurrent-race path -- it stays managed (cudaMallocManaged +
-cudaFree), NOT routed through gd_alloc_shared.
-  $ grep -c 'int \*__out; cudaMallocManaged' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
-  1
-  $ grep -c 'cudaFree(__out)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+(d) B3: __out is gone; the per-load read buffers are OFF the concurrent-race path
+-- device memory (cudaMalloc) + a host mirror for the post-run scan -- NOT routed
+through gd_alloc_shared, and the shared vars are widened to uint64_t.
+  $ grep -c '__out' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
+  0
+  $ grep -c 'cudaMalloc(&bufP' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  2
+  $ grep -c 'uint64_t \*x; gd_alloc_shared' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 
 (e) the design-doc-flagged wrong banner ("*MallocManaged (CPU/GPU-coherent ...)")
@@ -47,12 +50,14 @@ is gone.
 
 The HIP twin renders from the same template: gd_alloc_shared is fine-grained
 hipMallocManaged (no malloc/ATS dispatch -- MI300A's unified HBM pool needs none),
-and __out likewise stays hipMallocManaged.
+and the read buffers are device hipMalloc (off the race path), no __out.
   $ grep -c 'hipMallocManaged(_pp' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip
   1
   $ grep -cE '_shared_pageable|\*_pp = malloc' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip || true
   0
   $ grep -c 'gd_alloc_shared((void\*\*)&' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip
   3
-  $ grep -c 'int \*__out; (void)hipMallocManaged' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip
-  1
+  $ grep -c '__out' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip || true
+  0
+  $ grep -c '(void)hipMalloc(&bufP' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip
+  2

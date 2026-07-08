@@ -25,11 +25,12 @@
 ; Scoped so the three Layer-1 tests above stay toolchain-free.  litmus7 het emission
 ; needs no -set-libdir, so only the binary + the .litmus inputs are required.
 (cram
- (applies_to pfix-cond coop-launch shared-alloc)
+ (applies_to pfix-cond coop-launch shared-alloc tagged-recover)
  (package herdtools7)
  (deps
   %{bin:litmus7}
   ../het/2+2W-cg-sys-fence.litmus
   ../het/R-cg-sys-fence.litmus
   ../het/S-cg-sys-fence.litmus
-  ../het/MP-cg-sys-acqrel-2s.litmus))
+  ../het/MP-cg-sys-acqrel-2s.litmus
+  ../gpu-only/MP-sys-acquire.litmus))

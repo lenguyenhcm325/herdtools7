@@ -280,28 +280,64 @@ let cond_to_string cond =
   ConstrGen.constraints_to_string pp_atom cond
 
 (* ------------------------------------------------------------------ *)
+(* HetLitmus B3: store-tagging context (K*_n + mu).                    *)
+(* ------------------------------------------------------------------ *)
+
+(* When [dump_instr] is given [~tag:(Some (iter,k,mu))] it emits the HetLitmus
+   tagged/uint64 path: every store's value becomes the per-iteration tag
+   (uint64_t)(K*iter + mu) (mu resolved per store node by the caller) and every
+   load/store binds a cuda::atomic_ref<uint64_t> / .b64 inline PTX.  [~tag:None]
+   is the standalone GPU-only path (int / .b32), left byte-for-byte unchanged.
+   The context is a plain (iter,k,mu) tuple (not a record) so CudaLang and
+   HipLang share the type structurally and the one gpu_dialect.gd_dump_instr
+   field unifies across both.  See env-research/decisions/B3-decision.md. *)
+type tag_ctx = (string * int * int) option
+
+(* The tagged store value, computed in C: (uint64_t)K*iter + mu.  K is cast
+   first so iter is promoted to 64-bit before the multiply (no int overflow at
+   large N -- B3-decision Decision 2). *)
+let tagged_value iter k mu = sprintf "((uint64_t)%d * %s + %d)" k iter mu
+
+(* Element type of the scoped atomic_ref: widened to uint64_t on the het
+   tag path (B3 Decision 3), plain int on the GPU-only path. *)
+let ref_elt_type : tag_ctx -> string = function Some _ -> "uint64_t" | None -> "int"
+
+(* PTX width suffix for the cluster inline-PTX arm: .b64 tagged, .b32 plain. *)
+let ptx_width : tag_ctx -> string = function Some _ -> "b64" | None -> "b32"
+
+(* Inline-PTX operand constraint for the cluster value/dest: "l" (64-bit) on
+   the tagged path, "r" (32-bit) on the GPU-only path. *)
+let ptx_val_constraint : tag_ctx -> string = function Some _ -> "l" | None -> "r"
+
+(* ------------------------------------------------------------------ *)
 (* Instruction translation                                            *)
 (* ------------------------------------------------------------------ *)
 
-let scoped_ref ind chan var scope =
-  fprintf chan "%scuda::atomic_ref<int, %s> ref(%s);\n"
-    ind (thread_scope scope) var
+let scoped_ref ~tag ind chan var scope =
+  fprintf chan "%scuda::atomic_ref<%s, %s> ref(%s);\n"
+    ind (ref_elt_type tag) (thread_scope scope) var
 
-(* dest reg of a load is declared at proc scope; here we just assign. *)
-let dump_instr chan ind i = match i with
+(* dest reg of a load is declared at proc scope; here we just assign.
+   [~tag] gates the HetLitmus tagged/uint64 path (Some) vs the standalone
+   GPU-only path (None, byte-for-byte unchanged). *)
+let dump_instr chan ~tag ind i = match i with
   | BellBase.Pst (ao, roi, annots) ->
-      let var = var_of_addr_op ao
-      and v = value_of_roi roi in
+      let var = var_of_addr_op ao in
+      (* GPU-only: the parsed store value; het: the per-iteration tag. *)
+      let v = match tag with
+        | Some (iter,k,mu) -> tagged_value iter k mu
+        | None -> value_of_roi roi in
       let ord, scp = order_scope_of annots in
       fprintf chan "%s{ // w[%s,%s] %s %s\n" ind ord scp var v ;
       if scp = "cluster" then
         (* inline PTX: the operand is the bare pointer (an address), not the
            *deref lvalue the atomic_ref path binds. *)
         fprintf chan
-          "%s  asm volatile(\"st.%s.cluster.b32 [%%0],%%1;\" :: \"l\"(%s), \"r\"(%s) : \"memory\"); // sm_90\n"
-          ind (ptx_store_sem ord) (var_of_addr_op ao) v
+          "%s  asm volatile(\"st.%s.cluster.%s [%%0],%%1;\" :: \"l\"(%s), \"%s\"(%s) : \"memory\"); // sm_90\n"
+          ind (ptx_store_sem ord) (ptx_width tag) (var_of_addr_op ao)
+          (ptx_val_constraint tag) v
       else begin
-        scoped_ref (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
+        scoped_ref ~tag (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
         fprintf chan "%s  ref.store(%s, %s);\n" ind v (memory_order ord)
       end ;
       fprintf chan "%s}\n" ind
@@ -312,10 +348,11 @@ let dump_instr chan ind i = match i with
       fprintf chan "%s{ // r[%s,%s] %s %s\n" ind ord scp dst var ;
       if scp = "cluster" then
         fprintf chan
-          "%s  asm volatile(\"ld.%s.cluster.b32 %%0,[%%1];\" : \"=r\"(%s) : \"l\"(%s) : \"memory\"); // sm_90\n"
-          ind (ptx_load_sem ord) dst (var_of_addr_op ao)
+          "%s  asm volatile(\"ld.%s.cluster.%s %%0,[%%1];\" : \"=%s\"(%s) : \"l\"(%s) : \"memory\"); // sm_90\n"
+          ind (ptx_load_sem ord) (ptx_width tag) (ptx_val_constraint tag) dst
+          (var_of_addr_op ao)
       else begin
-        scoped_ref (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
+        scoped_ref ~tag (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
         fprintf chan "%s  %s = ref.load(%s);\n" ind dst (memory_order ord)
       end ;
       fprintf chan "%s}\n" ind
@@ -385,7 +422,7 @@ let dump chan tname parsed =
       p "  // ---- P%i  (CTA %d, lane %d) ----\n" proc blk lane ;
       p "  if (blockIdx.x == %d && threadIdx.x == %d) {\n" blk lane ;
       List.iter (fun n -> p "    int r%i = 0;\n" n) regs ;
-      List.iter (fun i -> dump_instr chan "    " i) instrs ;
+      List.iter (fun i -> dump_instr chan ~tag:None "    " i) instrs ;
       List.iter
         (fun n -> p "    __out[%d * %d + %d] = r%i;\n" proc nregs_layout n n)
         regs ;

@@ -251,10 +251,23 @@ let cluster_note scp =
     "  // cluster -> AGENT (HIP has no __HIP_MEMORY_SCOPE_CLUSTER; see hip-emitter.md)"
   else ""
 
-let dump_instr chan ind i = match i with
+(* HetLitmus B3 store-tagging context, structurally identical to
+   CudaLang.tag_ctx (a plain (iter,k,mu) option, so the one
+   gpu_dialect.gd_dump_instr field unifies across both dialects).  Some => the
+   tagged/uint64 path: the store value becomes (uint64_t)(K*iter + mu); the
+   __hip_atomic_* builtins are type-generic, so widening is carried by the
+   uint64_t* kernel parameters (emitted in top_litmus), not by these builtins.
+   None => the standalone GPU-only path, byte-for-byte unchanged. *)
+type tag_ctx = (string * int * int) option
+
+let tagged_value iter k mu = sprintf "((uint64_t)%d * %s + %d)" k iter mu
+
+let dump_instr chan ~tag ind i = match i with
   | BellBase.Pst (ao, roi, annots) ->
-      let var = var_of_addr_op ao
-      and v = value_of_roi roi in
+      let var = var_of_addr_op ao in
+      let v = match tag with
+        | Some (iter,k,mu) -> tagged_value iter k mu
+        | None -> value_of_roi roi in
       let ord, scp = order_scope_of annots in
       fprintf chan "%s// w[%s,%s] %s %s\n" ind ord scp var v ;
       fprintf chan "%s__hip_atomic_store(%s, %s, %s, %s);%s\n"
@@ -340,7 +353,7 @@ let dump chan tname parsed =
       p "  // ---- P%i  (workgroup %d, lane %d) ----\n" proc blk lane ;
       p "  if (blockIdx.x == %d && threadIdx.x == %d) {\n" blk lane ;
       List.iter (fun n -> p "    int r%i = 0;\n" n) regs ;
-      List.iter (fun i -> dump_instr chan "    " i) instrs ;
+      List.iter (fun i -> dump_instr chan ~tag:None "    " i) instrs ;
       List.iter
         (fun n -> p "    __out[%d * %d + %d] = r%i;\n" proc nregs_layout n n)
         regs ;
