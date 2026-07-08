@@ -413,6 +413,17 @@ end = struct
       gd_device_sync : string ;     (* host-side device-sync statement *)
       gd_free : string -> string ;  (* var -> free statement *)
       gd_bar : string -> string -> string ; (* indent, ptr-expr -> arrive+spin *)
+      (* B2: cooperative-launch API tokens.  Used PURELY for the co-residency +
+         weak-progress guarantee of the persistent kernel; the CPU<->GPU rendezvous
+         stays [gd_bar] (system-scope atomic), so NO grid.sync / cooperative_groups.h. *)
+      gd_err_t : string ;         (* "cudaError_t"      | "hipError_t" *)
+      gd_success : string ;       (* "cudaSuccess"      | "hipSuccess" *)
+      gd_errstr : string ;        (* error-code -> message fn *)
+      gd_dev_attr : string ;      (* device-attribute query fn *)
+      gd_attr_coop : string ;     (* cooperative-launch support attribute enum *)
+      gd_attr_smcount : string ;  (* multiprocessor-count attribute enum *)
+      gd_occupancy : string ;     (* max-active-blocks-per-SM occupancy query fn *)
+      gd_coop_launch : string ;   (* cooperative kernel-launch fn *)
     }
 
   let cuda_dialect = {
@@ -430,6 +441,14 @@ end = struct
              %s_bar.fetch_add(1, cuda::memory_order_seq_cst);\n\
              %swhile (_bar.load(cuda::memory_order_seq_cst) < NPART) { }\n"
             ind ptr ind ind) ;
+      gd_err_t = "cudaError_t" ;
+      gd_success = "cudaSuccess" ;
+      gd_errstr = "cudaGetErrorString" ;
+      gd_dev_attr = "cudaDeviceGetAttribute" ;
+      gd_attr_coop = "cudaDevAttrCooperativeLaunch" ;
+      gd_attr_smcount = "cudaDevAttrMultiProcessorCount" ;
+      gd_occupancy = "cudaOccupancyMaxActiveBlocksPerMultiprocessor" ;
+      gd_coop_launch = "cudaLaunchCooperativeKernel" ;
     }
 
   let hip_dialect = {
@@ -438,7 +457,7 @@ end = struct
       gd_dump_instr = HipLang.dump_instr ;
       gd_malloc_managed =
         (fun v bytes -> Printf.sprintf "(void)hipMallocManaged(&%s, %s);" v bytes) ;
-      gd_device_sync = "(void)hipDeviceSynchronize();" ;
+      gd_device_sync = "hipDeviceSynchronize();" ; (* B2: no (void) cast -- the terminal sync's return is now error-checked *)
       gd_free = (fun v -> Printf.sprintf "(void)hipFree(%s);" v) ;
       gd_bar =
         (fun ind ptr ->
@@ -446,6 +465,14 @@ end = struct
             "%s(void)__hip_atomic_fetch_add((%s), 1, __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_SYSTEM);\n\
              %swhile (__hip_atomic_load((%s), __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_SYSTEM) < NPART) { }\n"
             ind ptr ind ptr) ;
+      gd_err_t = "hipError_t" ;
+      gd_success = "hipSuccess" ;
+      gd_errstr = "hipGetErrorString" ;
+      gd_dev_attr = "hipDeviceGetAttribute" ;
+      gd_attr_coop = "hipDeviceAttributeCooperativeLaunch" ;
+      gd_attr_smcount = "hipDeviceAttributeMultiprocessorCount" ;
+      gd_occupancy = "hipOccupancyMaxActiveBlocksPerMultiprocessor" ;
+      gd_coop_launch = "hipLaunchCooperativeKernel" ;
     }
 
   (* ===================== HetLitmus: the compound emitter ===================
@@ -801,7 +828,11 @@ end = struct
   return p;
 }
 |ocaml} ;
-            s (Printf.sprintf "\n#define NPART %d\n\n" npart) ;
+            s (Printf.sprintf "\n#define NPART %d\n" npart) ;
+            (* B2/B0: perpetual-loop bounds, Cfg-driven (was the literal 100000).
+               SIZE_OF_TEST = free-running inner window; NUMBER_OF_RUN = outer runs. *)
+            s (Printf.sprintf "#define SIZE_OF_TEST %d\n" Cfg.size) ;
+            s (Printf.sprintf "#define NUMBER_OF_RUN %d\n\n" Cfg.runs) ;
             (* kernel *)
             let kparams =
               String.concat ", "
@@ -814,14 +845,20 @@ end = struct
                 let instrs = CudaLang.instrs_of_code code in
                 let regs = CudaLang.result_regs code in
                 s (Printf.sprintf "  if (blockIdx.x == %d && threadIdx.x == %d) {\n" blk lane) ;
+                (* B2: gd_bar fires ONCE (start rendezvous, outside the loop); the
+                   result-reg decls also stay outside.  The tested instrs + __out
+                   writes run the free-running inner window.  (B3 will turn the
+                   scalar __out writes into tagged N-buffer writes.) *)
                 s (dialect.gd_bar "    " "barrier") ;
                 List.iter (fun n -> s (Printf.sprintf "    int r%d = 0;\n" n)) regs ;
-                List.iter (fun i -> dialect.gd_dump_instr ch "    " i) instrs ;
+                s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+                List.iter (fun i -> dialect.gd_dump_instr ch "      " i) instrs ;
                 List.iter
                   (fun n ->
-                    s (Printf.sprintf "    __out[%d*%d+%d] = r%d;\n"
+                    s (Printf.sprintf "      __out[%d*%d+%d] = r%d;\n"
                          proc CudaLang.nregs_layout n n))
                   regs ;
+                s "    }\n" ;
                 s "  }\n")
               gpu_prog ;
             s "}\n\n" ;
@@ -839,7 +876,9 @@ end = struct
                 let call_args =
                   String.concat ","
                     (List.map (fun (_,a) -> "a->"^a) (addr_params @ out_params)) in
-                s (Printf.sprintf "  het_run_P%d(%s);\n  return NULL;\n}\n\n" proc call_args))
+                (* B2: gd_bar once (above); the tested body runs the free-running
+                   inner window, matching the kernel.  (B3 threads _n into the call.) *)
+                s (Printf.sprintf "  for (int _n=0; _n<SIZE_OF_TEST; ++_n)\n    het_run_P%d(%s);\n  return NULL;\n}\n\n" proc call_args))
               params ;
             (* outcome labels, condition, dump callback *)
             let labelstr =
@@ -878,8 +917,32 @@ end = struct
                   s (Printf.sprintf "  int cpu_outs_P%d[%d];\n"
                        proc (List.length out_params)))
               params ;
-            s "  outs_t* hist = NULL;\n  const int iterations = 100000;\n" ;
-            s "  for (int _it=0; _it<iterations; ++_it) {\n" ;
+            (* B2: cooperative-launch prelude -- compute the co-resident grid ONCE.
+               cudaLaunchCooperativeKernel gives the persistent kernel its documented
+               co-residency + weak-progress guarantee, and REJECTS an over-large grid
+               (cudaErrorCooperativeLaunchTooLarge) instead of silently deadlocking.
+               (main stays (void): B0's "no literal 100000" is met by the Cfg-driven
+               SIZE_OF_TEST/NUMBER_OF_RUN macros; the memo's argv override is optional
+               and cannot consistently override the kernel's compile-time inner bound.) *)
+            (* (void)-cast the discarded query returns: HIP's runtime decls are
+               [[nodiscard]] (matches the existing gd_malloc_managed/gd_free idiom);
+               harmless for CUDA.  The launch + terminal sync ARE error-checked. *)
+            s "  int _coop = 0;\n" ;
+            s (Printf.sprintf "  (void)%s(&_coop, %s, 0);\n"
+                 dialect.gd_dev_attr dialect.gd_attr_coop) ;
+            s "  if (!_coop) { fprintf(stderr, \"cooperative launch unsupported on this device\\n\"); return 2; }\n" ;
+            s "  int _nsm = 0;\n" ;
+            s (Printf.sprintf "  (void)%s(&_nsm, %s, 0);\n"
+                 dialect.gd_dev_attr dialect.gd_attr_smcount) ;
+            s "  int _bpsm = 0;\n" ;
+            s (Printf.sprintf "  (void)%s(&_bpsm, litmus_%s, %d, 0);\n"
+                 dialect.gd_occupancy id block_dim) ;
+            s "  int _maxGrid = _bpsm * _nsm;\n" ;
+            (* B2: test blocks only (SQ4); B4 raises _grid toward _maxGrid and MUST keep this guard. *)
+            s (Printf.sprintf "  int _grid = %d;\n" n_blocks) ;
+            s "  if (_grid > _maxGrid) { fprintf(stderr, \"grid %d exceeds co-resident cap %d\\n\", _grid, _maxGrid); return 2; }\n" ;
+            s "  outs_t* hist = NULL;\n" ;
+            s "  for (int _run=0; _run<NUMBER_OF_RUN; ++_run) {\n" ;
             List.iter (fun g -> s (Printf.sprintf "    *%s = 0;\n" g)) all_globals ;
             s "    *barrier = 0;\n" ;
             s (Printf.sprintf "    for (int _k=0;_k<%d*%d;_k++) __out[_k]=0;\n"
@@ -898,13 +961,27 @@ end = struct
                      "    pthread_t _th%d; pthread_create(&_th%d, NULL, cpu_thread_P%d, &_ca%d);\n"
                      proc proc proc proc))
               params ;
-            let kargs = String.concat ", " (gpu_globals @ ["__out"; "barrier"]) in
-            s (Printf.sprintf "    litmus_%s<<<%d, %d>>>(%s);\n"
-                 id n_blocks block_dim kargs) ;
+            (* B2: args[] in KERNEL-PARAM order (gpu_globals @ [__out; barrier]); each
+               entry is the address of the int* variable.  ONE cooperative launch per
+               run, async; error-checked (over-large grid => clean error, never a hang). *)
+            let args_addrs =
+              String.concat ", "
+                (List.map (fun g -> "&"^g) (gpu_globals @ ["__out"; "barrier"])) in
+            s (Printf.sprintf "    void* _args[] = { %s };\n" args_addrs) ;
+            s (Printf.sprintf
+                 "    %s _e = %s((void*)litmus_%s, dim3(_grid), dim3(%d), _args, 0, 0);\n"
+                 dialect.gd_err_t dialect.gd_coop_launch id block_dim) ;
+            s (Printf.sprintf
+                 "    if (_e != %s) { fprintf(stderr, \"coop launch: %%s\\n\", %s(_e)); return 2; }\n"
+                 dialect.gd_success dialect.gd_errstr) ;
             List.iter
               (fun (proc,_,_,_) -> s (Printf.sprintf "    pthread_join(_th%d, NULL);\n" proc))
               params ;
-            s (Printf.sprintf "    %s\n" dialect.gd_device_sync) ;
+            (* B2: SINGLE terminal sync per run (was per-iteration), now error-checked. *)
+            s (Printf.sprintf "    %s _s = %s\n" dialect.gd_err_t dialect.gd_device_sync) ;
+            s (Printf.sprintf
+                 "    if (_s != %s) { fprintf(stderr, \"sync: %%s\\n\", %s(_s)); return 2; }\n"
+                 dialect.gd_success dialect.gd_errstr) ;
             s (Printf.sprintf "    intmax_t _o[%d];\n" (max 1 nslots)) ;
             List.iteri
               (fun i (_p,_r,src) -> s (Printf.sprintf "    _o[%d] = %s;\n" i src))
