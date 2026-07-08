@@ -36,11 +36,22 @@ Driver (Decision 3/4): uint64 shared vars, per-load read buffers in device memor
   $ grep -c '__out' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
   0
 
-GPU side (Decision 2): a GPU store carries the tag as a uint64 atomic_ref store.
+GPU side (Decision 2): the two GPU stores carry the tag as uint64 atomic_ref
+stores (the observer lane's uint64 loads are counted separately below).
   $ litmus7 -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
-  $ grep -c 'atomic_ref<uint64_t' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+  $ grep -c 'ref.store(' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   2
   $ grep -c 'ref.store(((uint64_t)5 \* (_n + 1) + 3)' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+  1
+
+Observers (Decision 4/5): the 72 add ONE GPU observer lane + ONE CPU observer
+pthread (NPART grows by 2); each snoops every observed location, and a per-run
+ws scan (Eq 3.12) fills _loc with the same-observer-thread cycle.
+  $ grep -c '#define NPART 4' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+  1
+  $ grep -c 'cpu_obs_thread' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+  2
+  $ grep -c 'int _loc = ((_ws_x_c && _ws_y_c) || (_ws_x_g && _ws_y_g))' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   1
 
 GATE: the standalone GPU-only path (CudaLang.dump) is UNtagged -- plain int

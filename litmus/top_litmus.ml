@@ -445,6 +445,10 @@ end = struct
       gd_dev_malloc : string -> string -> string ;   (* var, bytes -> device alloc *)
       gd_memcpy_d2h : string -> string -> string -> string ; (* dst, src, bytes *)
       gd_dev_memset0 : string -> string -> string ;  (* ptr, bytes -> zero device mem *)
+      (* B3 observer: a relaxed system-scope uint64 load of a shared var, used by
+         the GPU observer lane to snoop a coherence (ws) location.  Analysis-only
+         (never the tested order); given the global's C pointer name. *)
+      gd_sys_load_u64 : string -> string ;           (* ptr -> load expression *)
     }
 
   let cuda_dialect = {
@@ -516,6 +520,11 @@ static void gd_free_shared(void* _p){
             dst src bytes) ;
       gd_dev_memset0 =
         (fun p bytes -> Printf.sprintf "cudaMemset(%s, 0, %s);" p bytes) ;
+      gd_sys_load_u64 =
+        (fun ptr ->
+          Printf.sprintf
+            "cuda::atomic_ref<uint64_t, cuda::thread_scope_system>(*%s).load(cuda::memory_order_relaxed)"
+            ptr) ;
     }
 
   let hip_dialect = {
@@ -569,6 +578,10 @@ static void gd_free_shared(void* _p){
             dst src bytes) ;
       gd_dev_memset0 =
         (fun p bytes -> Printf.sprintf "(void)hipMemset(%s, 0, %s);" p bytes) ;
+      gd_sys_load_u64 =
+        (fun ptr ->
+          Printf.sprintf
+            "__hip_atomic_load(%s, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM)" ptr) ;
     }
 
   (* ===================== HetLitmus: the compound emitter ===================
@@ -936,6 +949,41 @@ static void gd_free_shared(void* _p){
               | _::rest -> f rest
               | [] -> buf_name p li in
             f read_buffers in
+          (* ---- B3 observers (Decision 4/5): the 72 tests whose condition has a
+             coherence-final [ell]=v atom need a ws-edge witness.  Per B3-decision
+             5, ONE GPU observer lane + ONE CPU observer pthread snoop every such
+             location ell into obsG_<ell> (device, mirrored) / obsC_<ell> (host),
+             each covering ALL observed locations so a two-ws (2+2W) cycle is
+             recovered within a SINGLE observer thread (Eq 3.12).  Observer loads
+             are analysis-only (relaxed sys), never the tested order. *)
+          let obs_locs =
+            List.filter_map
+              (fun g ->
+                let name = MiscParser.dump_value g in
+                if List.mem name all_globals then Some name else None)
+              (HetCond.condition_locations (prop_of parsed.MiscParser.condition)) in
+          let has_observers = obs_locs <> [] in
+          (* the mu of every store to a given location (its coherence writers). *)
+          let writers_of l =
+            List.concat_map
+              (fun (p,_dev,stores,_loads) ->
+                List.concat
+                  (List.mapi
+                     (fun si (g,_v) -> if g=l then [store_mu p si] else [])
+                     stores))
+              proc_infos in
+          (* the value each observed location is tested against ([l]=v -> v). *)
+          let loc_value l =
+            let r = ref None in
+            let rec scan p = let open ConstrGen in match p with
+              | Atom (LV (Loc (MiscParser.Location_global g),v)) ->
+                 if !r = None && MiscParser.dump_value g = l then
+                   r := int_of_string_opt (ParsedConstant.pp_v v)
+              | Not q -> scan q
+              | And ps | Or ps -> List.iter scan ps
+              | Implies (a,b) -> scan a ; scan b
+              | Atom _ -> () in
+            scan (prop_of parsed.MiscParser.condition) ; !r in
           (* ---- location slots (Task P 7a): one outcome-vector cell per
              Location_global atom in the condition (e.g. [x]=2), read ONCE after
              pthread_join / device-sync from the quiescent managed global.  In
@@ -963,6 +1011,27 @@ static void gd_free_shared(void* _p){
               | _::rest -> f rest
               | [] -> None in
             f read_buffers in
+          (* Boolean constant-folding for the emitted C: drop the constant-true
+             operands "1" / "1 /*..*/" from an AND (else clang's
+             -Wconstant-logical-operand fires on `1 && x'), the constant-false
+             "0" / "0 /*..*/" from an OR.  HET_PENDING (a macro, not a literal) is
+             left as-is -- clang does not flag macro operands. *)
+          let is_true s =
+            s = "1" || (String.length s >= 2 && s.[0]='1' && s.[1]=' ') in
+          let is_false s =
+            s = "0" || (String.length s >= 2 && s.[0]='0' && s.[1]=' ') in
+          let mk_and parts =
+            if List.exists is_false parts then "0"
+            else match List.filter (fun p -> not (is_true p)) parts with
+            | [] -> "1"
+            | [p] -> p
+            | ps -> "(" ^ String.concat " && " ps ^ ")" in
+          let mk_or parts =
+            if List.exists is_true parts then "1"
+            else match List.filter (fun p -> not (is_false p)) parts with
+              | [] -> "0"
+              | [p] -> p
+              | ps -> "(" ^ String.concat " || " ps ^ ")" in
           (* rf ANCHOR: the first register read atom p:r=v (v<>0) whose value
              decodes to a store mu.  It pins the synchrony iteration _m = tag/K at
              frame _f (Srivastava Eq 3.13/3.14), against which the fr reads are
@@ -1032,18 +1101,50 @@ static void gd_free_shared(void* _p){
                 | None ->
                    "HET_PENDING /* CPU-side / unmapped read: B3 observer commit */")
             | Atom (LV (Loc (MiscParser.Location_global g),v)) ->
-               Printf.sprintf
-                 "HET_PENDING /* [%s]=%s coherence-final: observer ws-edge, B3 observer commit */"
-                 (MiscParser.dump_value g) (cval v)
+               (* register pass: a coherence-final [ell]=v atom is carried by the
+                  per-run observer ws cycle (_loc, below), so it does not constrain
+                  the per-frame register part -- unless the location is unbacked
+                  (no observer), in which case it stays HET_PENDING. *)
+               let name = MiscParser.dump_value g in
+               if List.mem name obs_locs then
+                 Printf.sprintf "1 /* [%s] via observer _loc */" name
+               else
+                 Printf.sprintf
+                   "HET_PENDING /* [%s]=%s: no backing global, unobservable */"
+                   name (cval v)
             | Atom _ -> "HET_PENDING /* unsupported atom */"
             | Not q -> Printf.sprintf "(!%s)" (c_tag_of_prop q)
-            | And [] -> "1"
-            | And ps -> "(" ^ String.concat " && " (List.map c_tag_of_prop ps) ^ ")"
-            | Or [] -> "0"
-            | Or ps -> "(" ^ String.concat " || " (List.map c_tag_of_prop ps) ^ ")"
+            | And ps -> mk_and (List.map c_tag_of_prop ps)
+            | Or ps -> mk_or (List.map c_tag_of_prop ps)
             | Implies (a,b) ->
                Printf.sprintf "(!(%s) || %s)" (c_tag_of_prop a) (c_tag_of_prop b) in
           let cond_expr = c_tag_of_prop (prop_of parsed.MiscParser.condition) in
+          (* per-run observer ws name: _ws_<location>_<c|g> (CPU/GPU observer). *)
+          let ws_var l dev = Printf.sprintf "_ws_%s_%s" l dev in
+          (* location pass (per observer device): register atoms are unconstrained
+             (-> 1); a coherence-final [ell]=v atom -> that device's ws witness.
+             _loc = (cpu observer sees all its ws) || (gpu observer sees all its
+             ws) -- the SAME-observer-thread constraint of Eq 3.12 (B3-decision
+             4.3): a two-ws (2+2W) cycle must be recovered within one thread. *)
+          let rec c_loc dev p =
+            let open ConstrGen in
+            match p with
+            | Atom (LV (Loc (MiscParser.Location_reg _),_)) -> "1"
+            | Atom (LV (Loc (MiscParser.Location_global g),_)) ->
+               let name = MiscParser.dump_value g in
+               if List.mem name obs_locs then ws_var name dev
+               else "0 /* unobservable location */"
+            | Atom _ -> "0"
+            | Not q -> Printf.sprintf "(!%s)" (c_loc dev q)
+            | And ps -> mk_and (List.map (c_loc dev) ps)
+            | Or ps -> mk_or (List.map (c_loc dev) ps)
+            | Implies (a,b) ->
+               Printf.sprintf "(!(%s) || %s)" (c_loc dev a) (c_loc dev b) in
+          let loc_expr =
+            if has_observers then
+              mk_or [ c_loc "c" (prop_of parsed.MiscParser.condition) ;
+                      c_loc "g" (prop_of parsed.MiscParser.condition) ]
+            else "1" in
           (* "harness was hot at _f": any read observed a real (non-init) writer.
              Feeds het_obs_record.interleavings_detected. *)
           let hot_expr =
@@ -1056,7 +1157,11 @@ static void gd_free_shared(void* _p){
                     (fun (p,li,_,_,_) -> Printf.sprintf "%s[_f] != 0" (scan_buf p li))
                     read_buffers)
                ^ ")" in
-          let npart = List.length params + List.length gpu_prog in
+          (* B3: the 72 add ONE GPU observer lane + ONE CPU observer pthread, both
+             joining the start barrier (Srivastava Alg 2 SYNCHRONIZE), so NPART
+             grows by 2 for them. *)
+          let n_observers = if has_observers then 2 else 0 in
+          let npart = List.length params + List.length gpu_prog + n_observers in
           let id = CudaLang.c_ident tname in
           (* ================= file emission ================= *)
           let base =
@@ -1227,11 +1332,13 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
               mu_value ;
             s "    default: return 0;\n  }\n}\n\n" ;
             (* kernel: uint64_t globals + GPU read buffers + barrier. *)
+            let obsG l = Printf.sprintf "obsG_%s" l in  (* GPU observer buffer (device) *)
             let kparams =
               String.concat ", "
                 (List.map (fun g -> Printf.sprintf "uint64_t* %s" g) gpu_globals
                  @ List.map (fun (_,_,name,_,_) -> Printf.sprintf "uint64_t* %s" name)
                      gpu_read_buffers
+                 @ List.map (fun l -> Printf.sprintf "uint64_t* %s" (obsG l)) obs_locs
                  @ ["int* barrier"]) in
             s (Printf.sprintf "__global__ void litmus_%s(%s) {\n" id kparams) ;
             List.iter
@@ -1266,6 +1373,23 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                 s "    }\n" ;
                 s "  }\n")
               gpu_prog ;
+            (* B3 observer: one extra co-resident lane (block n_blocks, thread 0)
+               snoops every observed location into its device buffer; joins the
+               start barrier.  Analysis-only relaxed sys loads, never the tested
+               order.  Its ws stream is scanned host-side for coherence edges. *)
+            if has_observers then begin
+              s (Printf.sprintf
+                   "  if (blockIdx.x == %d && threadIdx.x == 0) {\n" n_blocks) ;
+              s (dialect.gd_bar "    " "barrier") ;
+              s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+              List.iter
+                (fun l ->
+                  s (Printf.sprintf "      %s[_n] = %s;\n"
+                       (obsG l) (dialect.gd_sys_load_u64 l)))
+                obs_locs ;
+              s "    }\n" ;
+              s "  }\n"
+            end ;
             s "}\n\n" ;
             (* CPU pthread wrappers (arrive at barrier, then run the tagged body).
                Struct carries the uint64_t* globals, the barrier and this proc's
@@ -1288,6 +1412,25 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                      "  for (int _n=0; _n<SIZE_OF_TEST; ++_n)\n    het_run_P%d(%s);\n  return NULL;\n}\n\n"
                      proc call_args))
               params ;
+            (* B3 observer: one CPU pthread snooping every observed location into
+               its host buffer; joins the start barrier.  Plain 64-bit loads
+               (analysis-only, not the tested order). *)
+            let obsC l = Printf.sprintf "obsC_%s" l in  (* CPU observer buffer (host) *)
+            if has_observers then begin
+              s "struct cpu_obs_args {\n" ;
+              List.iter (fun l -> s (Printf.sprintf "  uint64_t* %s;\n" l)) all_globals ;
+              s "  int* barrier;\n" ;
+              List.iter (fun l -> s (Printf.sprintf "  uint64_t* %s;\n" (obsC l))) obs_locs ;
+              s "};\n" ;
+              s "static void* cpu_obs_thread(void* _a) {\n" ;
+              s "  cpu_obs_args* a = (cpu_obs_args*)_a;\n" ;
+              s (dialect.gd_bar "  " "a->barrier") ;
+              s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+              List.iter
+                (fun l -> s (Printf.sprintf "    a->%s[_n] = *a->%s;\n" (obsC l) l))
+                obs_locs ;
+              s "  }\n  return NULL;\n}\n\n"
+            end ;
             (* outcome labels + decoded-outcome dump callback (histogram of the
                decoded read values over "hot" frames). *)
             let labelstr =
@@ -1333,6 +1476,18 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                    s (Printf.sprintf
                         "  uint64_t *%s = (uint64_t*)malloc_check(%s);\n" name buf_bytes))
               read_buffers ;
+            (* B3 observer buffers: obsG_<l> device (+ host mirror) / obsC_<l> host. *)
+            let obsG l = Printf.sprintf "obsG_%s" l in
+            let obsC l = Printf.sprintf "obsC_%s" l in
+            List.iter
+              (fun l ->
+                s (Printf.sprintf "  uint64_t *%s; %s\n" (obsG l)
+                     (dialect.gd_dev_malloc (obsG l) buf_bytes)) ;
+                s (Printf.sprintf "  uint64_t *%s_h = (uint64_t*)malloc_check(%s);\n"
+                     (obsG l) buf_bytes) ;
+                s (Printf.sprintf "  uint64_t *%s = (uint64_t*)malloc_check(%s);\n"
+                     (obsC l) buf_bytes))
+              obs_locs ;
             (* B2: cooperative-launch prelude -- compute the co-resident grid ONCE. *)
             s "  int _coop = 0;\n" ;
             s (Printf.sprintf "  (void)%s(&_coop, %s, 0);\n"
@@ -1345,10 +1500,11 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s (Printf.sprintf "  (void)%s(&_bpsm, litmus_%s, %d, 0);\n"
                  dialect.gd_occupancy id block_dim) ;
             s "  int _maxGrid = _bpsm * _nsm;\n" ;
-            (* B2: test blocks only (SQ4); B4 raises _grid toward _maxGrid, MUST keep
-               this guard AND (B3 hand-off) reserve co-resident lanes for the GPU
-               observers the observer commit adds for the 72. *)
-            s (Printf.sprintf "  int _grid = %d;\n" n_blocks) ;
+            (* B2/B3: test blocks + the GPU observer lane (for the 72).  B4 raises
+               _grid toward _maxGrid and MUST keep this guard AND keep reserving
+               the observer lane(s) counted here. *)
+            s (Printf.sprintf "  int _grid = %d;\n"
+                 (n_blocks + (if has_observers then 1 else 0))) ;
             s "  if (_grid > _maxGrid) { fprintf(stderr, \"grid %d exceeds co-resident cap %d\\n\", _grid, _maxGrid); return 2; }\n" ;
             s "  outs_t* hist = NULL;\n" ;
             s "  for (int _run=0; _run<NUMBER_OF_RUN; ++_run) {\n" ;
@@ -1363,6 +1519,11 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                 | `Cpu -> s (Printf.sprintf "    memset(%s, 0, %s);\n" name buf_bytes))
               read_buffers ;
             List.iter
+              (fun l ->
+                s (Printf.sprintf "    %s\n" (dialect.gd_dev_memset0 (obsG l) buf_bytes)) ;
+                s (Printf.sprintf "    memset(%s, 0, %s);\n" (obsC l) buf_bytes))
+              obs_locs ;
+            List.iter
               (fun (proc,_out,_envV,(addr_params,_out_params)) ->
                 let addr = cpu_addr_u64 addr_params and bufs = cpu_bufs proc in
                 let fields =
@@ -1373,12 +1534,22 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                      "    pthread_t _th%d; pthread_create(&_th%d, NULL, cpu_thread_P%d, &_ca%d);\n"
                      proc proc proc proc))
               params ;
+            (* B3: launch the CPU observer pthread (fields: all shared globals,
+               barrier, then this run's obsC buffers -- matches cpu_obs_args). *)
+            if has_observers then begin
+              let fields =
+                String.concat ", "
+                  (all_globals @ ["barrier"] @ List.map obsC obs_locs) in
+              s (Printf.sprintf "    cpu_obs_args _cao = { %s };\n" fields) ;
+              s "    pthread_t _tho; pthread_create(&_tho, NULL, cpu_obs_thread, &_cao);\n"
+            end ;
             (* B2: args[] in KERNEL-PARAM order (gpu_globals @ gpu read buffers @
                [barrier]); each entry is the address of the pointer variable. *)
             let args_addrs =
               String.concat ", "
                 (List.map (fun g -> "&"^g) gpu_globals
                  @ List.map (fun (_,_,name,_,_) -> "&"^name) gpu_read_buffers
+                 @ List.map (fun l -> "&"^obsG l) obs_locs
                  @ ["&barrier"]) in
             s (Printf.sprintf "    void* _args[] = { %s };\n" args_addrs) ;
             s (Printf.sprintf
@@ -1390,21 +1561,28 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             List.iter
               (fun (proc,_,_,_) -> s (Printf.sprintf "    pthread_join(_th%d, NULL);\n" proc))
               params ;
+            if has_observers then s "    pthread_join(_tho, NULL);\n" ;
             (* B2: SINGLE terminal sync per run, error-checked. *)
             s (Printf.sprintf "    %s _s = %s\n" dialect.gd_err_t dialect.gd_device_sync) ;
             s (Printf.sprintf
                  "    if (_s != %s) { fprintf(stderr, \"sync: %%s\\n\", %s(_s)); return 2; }\n"
                  dialect.gd_success dialect.gd_errstr) ;
-            (* B3: mirror GPU device read buffers to the host for the scan. *)
+            (* B3: mirror GPU device read + observer buffers to the host scan. *)
             List.iter
               (fun (_,_,name,_,_) ->
                 s (Printf.sprintf "    %s\n"
                      (dialect.gd_memcpy_d2h (name^"_h") name buf_bytes)))
               gpu_read_buffers ;
-            (* ======== B3 recovery scan: read buffers -> het_obs_record ========
-               COMMIT-1 SCOPE: read-buffer rf/init edges at a single synchrony frame
-               (exact for the MP family; cross-thread windowing + observer ws-edges
-               are the B3 observer commit).  See c_tag_of_prop / hot_expr above. *)
+            List.iter
+              (fun l ->
+                s (Printf.sprintf "    %s\n"
+                     (dialect.gd_memcpy_d2h (obsG l^"_h") (obsG l) buf_bytes)))
+              obs_locs ;
+            (* ======== B3 recovery scan: read + observer buffers -> het_obs_record.
+               Register atoms: rf/fr read-buffer decode at one synchrony frame (exact
+               for the MP family).  Coherence-final [l]=v atoms: the per-run observer
+               ws witness _loc (below).  Cross-thread windowing (T_L>=2 SB/IRIW and
+               CPU-side reads) stays HET_PENDING.  See c_tag_of_prop / c_loc. ==== *)
             s "    het_obs_record _rec; memset(&_rec, 0, sizeof _rec);\n" ;
             s (Printf.sprintf
                  "    _rec.test_name = \"%s\"; _rec.instance_id = 0; _rec.run_id = _run;\n"
@@ -1420,6 +1598,53 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                 s "    int32_t _skew_lo = INT32_MAX, _skew_hi = INT32_MIN;\n" ;
                 s "    uint64_t _prev_m = 0; int _have_prev = 0;\n"
              | None -> ()) ;
+            (* B3 observer ws recovery (per run): for each observed location scan
+               EACH observer thread's buffer for a ws witness -- an OTHER writer's
+               tag appears coherence-before the [l]=v writer's tag (Eq 3.12,
+               single O(N) pass).  Kept per device ("_c"/"_g") so _loc's OR honours
+               the same-thread constraint (4.3).  guard-2 observer_unique_count =
+               min distinct decoded iterations across observer buffers. *)
+            if has_observers then begin
+              s "    uint64_t _obs_uniq = UINT64_MAX;\n" ;
+              List.iter
+                (fun l ->
+                  List.iter
+                    (fun (dev, bufexpr) ->
+                      let wsv = ws_var l dev in
+                      let muf = match loc_value l with
+                        | Some v -> Hashtbl.find_opt value_mu (l,v) | None -> None in
+                      let others = match muf with
+                        | Some mf -> List.filter (fun m -> m <> mf) (writers_of l)
+                        | None -> [] in
+                      s (Printf.sprintf "    int %s = 0;\n" wsv) ;
+                      (match muf, others with
+                       | Some mf, (_::_ as os) ->
+                          let seen =
+                            String.concat " || "
+                              (List.map (Printf.sprintf "_mu == %d") os) in
+                          s "    {\n      int _seen = 0;\n" ;
+                          s "      for (int _w=0; _w<SIZE_OF_TEST; ++_w) {\n" ;
+                          s (Printf.sprintf "        uint64_t _t = %s[_w];\n" bufexpr) ;
+                          s "        if (_t != 0) {\n          uint64_t _mu = _t % K_TAG;\n" ;
+                          s (Printf.sprintf "          if (%s) _seen = 1;\n" seen) ;
+                          s (Printf.sprintf
+                               "          if (_mu == %d && _seen) { %s = 1; break; }\n" mf wsv) ;
+                          s "        }\n      }\n    }\n"
+                       | _ ->
+                          s (Printf.sprintf
+                               "    /* %s: no competing writer, ws unobservable */\n" wsv)) ;
+                      (* guard-2: distinct decoded iterations in this observer buffer *)
+                      s "    {\n      uint64_t _u = 0, _pm = 0; int _hp = 0;\n" ;
+                      s "      for (int _w=0; _w<SIZE_OF_TEST; ++_w) {\n" ;
+                      s (Printf.sprintf "        uint64_t _t = %s[_w];\n" bufexpr) ;
+                      s "        if (_t != 0) { uint64_t _mi = _t / K_TAG;\n" ;
+                      s "          if (!_hp || _mi != _pm) { _u++; _pm = _mi; _hp = 1; } }\n" ;
+                      s "      }\n      if (_u < _obs_uniq) _obs_uniq = _u;\n    }\n")
+                    [("c", obsC l); ("g", obsG l ^ "_h")])
+                obs_locs ;
+              s "    _rec.observer_unique_count = (_obs_uniq == UINT64_MAX) ? 0 : _obs_uniq;\n" ;
+              s (Printf.sprintf "    int _loc = %s;\n" loc_expr)
+            end ;
             s "    for (int _f=0; _f<SIZE_OF_TEST; ++_f) {\n" ;
             s "      _rec.frames_examined++;\n" ;
             (* synchrony iteration from the rf anchor (0 = no rf this frame); the
@@ -1430,7 +1655,10 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
              | None -> ()) ;
             s (Printf.sprintf "      int _hot = %s;\n" hot_expr) ;
             s "      if (_hot) _rec.interleavings_detected++;\n" ;
-            s (Printf.sprintf "      int _weak = %s;\n" cond_expr) ;
+            (* register part (per frame) AND the per-run observer ws cycle _loc
+               (mk_and folds a constant-true register part to just _loc). *)
+            s (Printf.sprintf "      int _weak = %s;\n"
+                 (if has_observers then mk_and [cond_expr; "_loc"] else cond_expr)) ;
             s "      if (_weak) { _rec.target_count_exhaustive++; _rec.target_count_heuristic++; }\n" ;
             (match anchor with
              | Some (abuf,_,_) ->
@@ -1468,6 +1696,23 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                 s "      _rec.skew_stddev = _var > 0.0 ? sqrt(_var) : 0.0;\n" ;
                 s "    }\n"
              | None -> ()) ;
+            (* B3: a pure-location (store-only) test's weak result is per-RUN (the
+               observer ws witness), not per-frame -- collapse the frame-summed
+               target to a 0/1 per-run count, and record one outcome so the
+               histogram / oracle-compare parse is non-empty. *)
+            if has_observers && read_buffers = [] then begin
+              s "    _rec.target_count_exhaustive = _rec.target_count_exhaustive ? 1 : 0;\n" ;
+              s "    _rec.target_count_heuristic  = _rec.target_count_heuristic  ? 1 : 0;\n" ;
+              s (Printf.sprintf "    { intmax_t _o[%d];\n" (max 1 nslots)) ;
+              List.iteri (fun i _ -> s (Printf.sprintf "      _o[%d] = 0;\n" i)) slots ;
+              List.iteri (fun j _ -> s (Printf.sprintf "      _o[%d] = 0;\n" (n_reg+j))) loc_slots ;
+              s (Printf.sprintf
+                   "      hist = add_outcome_outs(hist, _o, %d, 1, _loc); }\n" nslots)
+            end ;
+            (* ws_edges_via_observer: the weak frames whose ws half was confirmed
+               only via an observer buffer (all of them, when observers are used). *)
+            if has_observers then
+              s "    _rec.ws_edges_via_observer = _rec.target_count_exhaustive;\n" ;
             s "    het_obs_record_print(stdout, &_rec);\n" ;
             s "  }\n" ;
             s (Printf.sprintf "  intmax_t _buff[%d];\n" (max 1 nslots)) ;
@@ -1485,6 +1730,12 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                    s (Printf.sprintf "  %s free(%s_h);\n" (dialect.gd_free name) name)
                 | `Cpu -> s (Printf.sprintf "  free(%s);\n" name))
               read_buffers ;
+            (* B3: observer buffers -- GPU device + host mirror, CPU host. *)
+            List.iter
+              (fun l ->
+                s (Printf.sprintf "  %s free(%s_h);\n" (dialect.gd_free (obsG l)) (obsG l)) ;
+                s (Printf.sprintf "  free(%s);\n" (obsC l)))
+              obs_locs ;
             s "  return 0;\n}\n" in
           (* ---- comp.sh / Makefile / README ---- *)
           let dump_comp ch =
