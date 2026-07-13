@@ -445,6 +445,12 @@ end = struct
       gd_dev_malloc : string -> string -> string ;   (* var, bytes -> device alloc *)
       gd_memcpy_d2h : string -> string -> string -> string ; (* dst, src, bytes *)
       gd_dev_memset0 : string -> string -> string ;  (* ptr, bytes -> zero device mem *)
+      (* B4: host->device copy, for the per-run stress scratch-location layout
+         (chosen host-side by het_set_scratch_locations, consumed by every
+         stressing lane).  The scratchpad itself is DEVICE memory -- GPU-only and
+         disjoint from every test location -- so it never goes through
+         gd_alloc_shared.  Two object classes, two allocators (Q5 F4). *)
+      gd_memcpy_h2d : string -> string -> string -> string ; (* dst, src, bytes *)
       (* B3 observer: a relaxed system-scope uint64 load of a shared var, used by
          the GPU observer lane to snoop a coherence (ws) location.  Analysis-only
          (never the tested order); given the global's C pointer name. *)
@@ -518,6 +524,10 @@ static void gd_free_shared(void* _p){
         (fun dst src bytes ->
           Printf.sprintf "cudaMemcpy(%s, %s, %s, cudaMemcpyDeviceToHost);"
             dst src bytes) ;
+      gd_memcpy_h2d =
+        (fun dst src bytes ->
+          Printf.sprintf "cudaMemcpy(%s, %s, %s, cudaMemcpyHostToDevice);"
+            dst src bytes) ;
       gd_dev_memset0 =
         (fun p bytes -> Printf.sprintf "cudaMemset(%s, 0, %s);" p bytes) ;
       gd_sys_load_u64 =
@@ -575,6 +585,10 @@ static void gd_free_shared(void* _p){
       gd_memcpy_d2h =
         (fun dst src bytes ->
           Printf.sprintf "(void)hipMemcpy(%s, %s, %s, hipMemcpyDeviceToHost);"
+            dst src bytes) ;
+      gd_memcpy_h2d =
+        (fun dst src bytes ->
+          Printf.sprintf "(void)hipMemcpy(%s, %s, %s, hipMemcpyHostToDevice);"
             dst src bytes) ;
       gd_dev_memset0 =
         (fun p bytes -> Printf.sprintf "(void)hipMemset(%s, 0, %s);" p bytes) ;
@@ -670,6 +684,9 @@ static void gd_free_shared(void* _p){
 
       let outs_h_content = HetArch.outs_h
       let outs_c_content = HetArch.outs_c
+      (* B4: the ported cuda-litmus GPU stress layer, emitted verbatim into every
+         het harness dir and #include'd by both the .cu and the .hip render. *)
+      let het_stress_content = HetArch.het_stress_cuh
 
       let run _hash_env _name in_chan _out_chan splitted =
         try
@@ -1447,6 +1464,11 @@ static void gd_free_shared(void* _p){
             s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
             s "#include <cstring>\n#include <cmath>\n" ;
             s "#include <pthread.h>\n#include <inttypes.h>\n" ;
+            (* B4: the ported cuda-litmus stress layer (do_stress / het_spin /
+               seeded Park-Miller RNG / scratch-location layout) + every stress
+               knob.  A SHARED header, included by both renders, so all reused
+               code and its mandatory citations live in one auditable file. *)
+            s "#include \"het_stress.cuh\"\n" ;
             s "extern \"C\" {\n" ;
             s "#include \"outs.h\"\n" ;
             List.iter
@@ -1480,6 +1502,31 @@ static void gd_free_shared(void* _p){
                het_obs_record.exhaustive_valid says so.  Both -D-overridable. *)
             s "#ifndef HET_WINDOW\n#define HET_WINDOW 8\n#endif\n" ;
             s "#ifndef HET_EXHAUSTIVE_MAX\n#define HET_EXHAUSTIVE_MAX 4096\n#endif\n\n" ;
+            (* ---- B4 stress geometry (per-test; the stress KNOBS themselves are
+               in het_stress.cuh).  A het test's GPU side is a handful of lanes:
+               HET_TEST_BLOCKS blocks hold the GPU test lane(s) plus (for the 72
+               observer tests) the observer lane; every block ABOVE that is a pure
+               stressing workgroup.  HET_GPU_LANES counts the lanes that run the
+               perpetual loop and therefore signal completion -- the stressers run
+               until all of them are done, so stress covers exactly the tested
+               window (upstream gets this for free by relaunching per iteration).
+
+               HET_BLOCK_DIM is the launch block size.  The het scope-tree layout
+               (CudaLang.layout_of_scopes) gives each GPU proc its OWN block with
+               a single lane, so it is 1: a stressing workgroup is ONE thread, and
+               the stress population is bounded by the block count alone.  That is
+               a real cap on stress intensity (upstream runs 128-thread
+               workgroups).  Raising it is an OCCUPANCY-GEOMETRY decision, which
+               is hardware-tuned and owned by the tuning task -- the seam is here
+               and needs no re-emission: the test lanes are guarded on
+               threadIdx.x, so with a larger block dim the extra threads of a
+               STRESS block all stress, while test blocks simply idle theirs. *)
+            s (Printf.sprintf "#ifndef HET_BLOCK_DIM\n#define HET_BLOCK_DIM %d\n#endif\n"
+                 block_dim) ;
+            s (Printf.sprintf "#define HET_TEST_BLOCKS %d\n"
+                 (n_blocks + (if has_observers then 1 else 0))) ;
+            s (Printf.sprintf "#define HET_GPU_LANES %d\n\n"
+                 (List.length gpu_prog + (if has_observers then 1 else 0))) ;
             s (HetCond.het_confidence_enum_c ^ "\n") ;
             (* B3 het_obs_record (B3-decision Decision 5): one per (test,instance,run).
                COMMIT-1 fills N/frames/target/interleavings/distinct/skew from the
@@ -1541,8 +1588,18 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                  @ List.map (fun (_,_,name,_,_) -> Printf.sprintf "uint64_t* %s" name)
                      gpu_read_buffers
                  @ List.map (fun l -> Printf.sprintf "uint64_t* %s" (obsG l)) obs_locs
-                 @ ["int* barrier"]) in
+                 @ ["int* barrier"]
+                 (* B4: the stress layer's device-only objects.  DISJOINT from
+                    every test location by construction, so they perturb the
+                    memory system without changing the tested behaviour set. *)
+                 @ ["uint32_t* _scratch" ; "uint32_t* _scratch_loc" ;
+                    "uint32_t* _gpu_done" ; "uint32_t _seed"]) in
             s (Printf.sprintf "__global__ void litmus_%s(%s) {\n" id kparams) ;
+            (* B4: each lane draws from its OWN seeded Park-Miller stream, so the
+               probabilistic stress toggles are decided device-side (the perpetual
+               kernel has no per-iteration host round-trip to re-roll them) and a
+               run replays exactly from its seed (GPUHarbor ISSTA'23). *)
+            s "  het_rng_t _rng = het_rng_init(_seed, blockIdx.x * blockDim.x + threadIdx.x);\n" ;
             List.iter
               (fun ((proc,_,_),code) ->
                 let blk,lane = layout proc in
@@ -1562,6 +1619,20 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                    iteration.  Do NOT remove (l0_tokens.sh het lane depends on it). *)
                 s "    #pragma unroll 1\n" ;
                 s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+                (* B4 PRE-STRESS (cuda-litmus PRE_STRESS, litmus.cuh:336).  The
+                   TESTING thread stresses its OWN L1/pipeline before the litmus
+                   body: the disjoint stressing workgroups never touch the testing
+                   thread's private hardware, so without this "these testing thread
+                   hardware components may not be stressed" (Kirkham OOPSLA'20).
+                   Probabilistic per iteration, off the lane's own RNG stream.
+                   Runs INSIDE the loop because one perpetual iteration is what one
+                   upstream kernel launch was.  Its scratchpad accesses are plain
+                   (non-atomic, unordered) loads/stores on a device-only region, so
+                   they add no ordering edge to the test and do not appear in the
+                   PTX model-op stream the L0 faithfulness gate checks. *)
+                s (Printf.sprintf
+                     "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n\
+                      \        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, HET_PRE_STRESS_PATTERN);\n") ;
                 (* B3: tagged stores (mu per store node); loads unchanged, recorded
                    below.  Some(...) also widens the atomic_ref to uint64_t. *)
                 let st_ctr = ref 0 in
@@ -1582,6 +1653,10 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                          (buf_name proc li) n))
                   regs ;
                 s "    }\n" ;
+                (* B4: signal completion so the stressing workgroups stop.  A
+                   builtin atomic on a device-only word: scaffolding, not a model
+                   op, and it runs AFTER the tested loop. *)
+                s "    het_scratch_bump(_gpu_done);\n" ;
                 s "  }\n")
               gpu_prog ;
             (* B3 observer: one extra co-resident lane (block n_blocks, thread 0)
@@ -1605,8 +1680,43 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                        (obsG l) (dialect.gd_sys_load_u64 l)))
                 obs_locs ;
               s "    }\n" ;
+              (* B4: the observer is a perpetual lane too -- the stressers must
+                 not stop while it is still snooping.  No pre-stress here: its job
+                 is to SAMPLE the shared locations as densely as it can, and
+                 self-stress would only thin the sampling. *)
+              s "    het_scratch_bump(_gpu_done);\n" ;
               s "  }\n"
             end ;
+            (* ================= B4: pure stressing workgroups =================
+               Every block above the test/observer blocks is a stresser: it does
+               nothing but hammer the scratchpad for as long as ANY tested lane is
+               still looping.  This is cuda-litmus's testing-vs-stressing workgroup
+               split (MC Mutants ASPLOS'23 section 4.1) and S&D's occupancy-scaled
+               stressing-thread count, and it is the whole reason the campaign can
+               observe anything: Alglave ASPLOS'15 Table 6 reports ZERO weak
+               behaviours for sb/lb in every column without the incantations, and
+               S&D went 0/1000 -> 102/1000 by adding stress.
+
+               The termination condition is the adaptation the perpetual frame
+               forces.  Upstream relaunches the kernel per test iteration, so its
+               stressers simply end with the launch.  Ours must cover the whole
+               free-running window and no longer: they spin on the completion
+               counter that each tested lane bumps on its way out.  The round cap
+               is only a safety net so a stresser can never outlive a hung lane
+               for ever (a silent hang is indistinguishable from a genuine
+               non-observation).
+
+               Its ops are plain, unordered accesses on a device-only scratchpad
+               that is disjoint from every test location: no ordering edge, and
+               nothing in the PTX model-op stream. *)
+            s "  if (blockIdx.x >= HET_TEST_BLOCKS) {\n" ;
+            s "    for (uint32_t _s = 0;\n\
+               \         _s < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;\n\
+               \         ++_s) {\n" ;
+            s "      if (het_rng_pct(&_rng, HET_MEM_STRESS_PCT))\n" ;
+            s "        het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, HET_MEM_STRESS_PATTERN);\n" ;
+            s "    }\n" ;
+            s "  }\n" ;
             s "}\n\n" ;
             (* CPU pthread wrappers (arrive at barrier, then run the tagged body).
                Struct carries the uint64_t* globals, the barrier and this proc's
@@ -1714,19 +1824,60 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s (Printf.sprintf "  (void)%s(&_nsm, %s, 0);\n"
                  dialect.gd_dev_attr dialect.gd_attr_smcount) ;
             s "  int _bpsm = 0;\n" ;
-            s (Printf.sprintf "  (void)%s(&_bpsm, litmus_%s, %d, 0);\n"
-                 dialect.gd_occupancy id block_dim) ;
+            s (Printf.sprintf "  (void)%s(&_bpsm, litmus_%s, HET_BLOCK_DIM, 0);\n"
+                 dialect.gd_occupancy id) ;
             s "  int _maxGrid = _bpsm * _nsm;\n" ;
-            (* B2/B3: test blocks + the GPU observer lane (for the 72).  B4 raises
-               _grid toward _maxGrid and MUST keep this guard AND keep reserving
-               the observer lane(s) counted here. *)
-            s (Printf.sprintf "  int _grid = %d;\n"
-                 (n_blocks + (if has_observers then 1 else 0))) ;
+            (* B2/B3/B4: HET_TEST_BLOCKS holds the GPU test lane(s) + (for the 72)
+               the observer lane; the rest of the co-resident grid is filled with
+               pure stressing workgroups.  The <= _maxGrid guard is LOAD-BEARING
+               and stays: the kernel is persistent and cooperatively launched, so
+               an over-large grid must be REJECTED at launch
+               (cudaErrorCooperativeLaunchTooLarge) rather than silently deadlock
+               on a block that is never scheduled -- and a silent hang is
+               indistinguishable from a genuine non-observation.
+               HET_STRESS_BLOCKS = -1 (default) means "fill to the cap", which
+               lands exactly ON it; an explicit -DHET_STRESS_BLOCKS=n keeps the
+               guard live (an over-large n is caught here). *)
+            s "  int _testBlocks = HET_TEST_BLOCKS;\n" ;
+            s "  int _stressBlocks = (HET_STRESS_BLOCKS >= 0) ? HET_STRESS_BLOCKS\n\
+               \                                              : (_maxGrid - _testBlocks);\n" ;
+            s "  if (_stressBlocks < 0) _stressBlocks = 0;\n" ;
+            s "  int _grid = _testBlocks + _stressBlocks;\n" ;
             s "  if (_grid > _maxGrid) { fprintf(stderr, \"grid %d exceeds co-resident cap %d\\n\", _grid, _maxGrid); return 2; }\n" ;
+            (* Report the realised stress population: the tuning task needs the
+               per-test stress-lane count to tune against, and it is a runtime
+               property of the device (SM count x resident blocks/SM). *)
+            s "  fprintf(stderr, \"HetLitmus: blockDim=%d grid=%d (test=%d stress=%d, co-resident cap=%d)\\n\",\n\
+               \          (int)HET_BLOCK_DIM, _grid, _testBlocks, _stressBlocks, _maxGrid);\n" ;
+            (* B4 stress objects: DEVICE memory (gd_dev_malloc), never
+               gd_alloc_shared -- they are GPU-only and disjoint from every test
+               location, which is exactly what makes the stress sound.  The
+               scratch-location layout is chosen host-side per run and copied in. *)
+            s (Printf.sprintf "  uint32_t *_scratch; %s\n"
+                 (dialect.gd_dev_malloc "_scratch" "sizeof(uint32_t)*HET_SCRATCH_SIZE")) ;
+            s (Printf.sprintf "  uint32_t *_scratch_loc; %s\n"
+                 (dialect.gd_dev_malloc "_scratch_loc" "sizeof(uint32_t)*_grid")) ;
+            s (Printf.sprintf "  uint32_t *_gpu_done; %s\n"
+                 (dialect.gd_dev_malloc "_gpu_done" "sizeof(uint32_t)")) ;
+            s "  uint32_t *_scratch_loc_h = (uint32_t*)malloc_check(sizeof(uint32_t)*_grid);\n" ;
             s "  outs_t* hist = NULL;\n" ;
             s "  for (int _run=0; _run<NUMBER_OF_RUN; ++_run) {\n" ;
             List.iter (fun g -> s (Printf.sprintf "    *%s = 0;\n" g)) all_globals ;
             s "    *barrier = 0;\n" ;
+            (* B4 per-run stress setup.  Re-rolling the scratch-line layout each
+               run keeps the stress non-stationary; seeding both the host rand()
+               and the device RNG from (HET_SEED + run) keeps the whole run
+               replayable (GPUHarbor's reproducibility discipline). *)
+            s "    uint32_t _seed = (uint32_t)(HET_SEED + _run);\n" ;
+            s "    srand((unsigned int)_seed);\n" ;
+            s "    het_set_scratch_locations(_scratch_loc_h, _grid);\n" ;
+            s (Printf.sprintf "    %s\n"
+                 (dialect.gd_memcpy_h2d "_scratch_loc" "_scratch_loc_h"
+                    "sizeof(uint32_t)*_grid")) ;
+            s (Printf.sprintf "    %s\n"
+                 (dialect.gd_dev_memset0 "_scratch" "sizeof(uint32_t)*HET_SCRATCH_SIZE")) ;
+            s (Printf.sprintf "    %s\n"
+                 (dialect.gd_dev_memset0 "_gpu_done" "sizeof(uint32_t)")) ;
             (* reset read buffers (all N entries are overwritten by the loop, but
                reset keeps unreached tail entries at the init marker 0). *)
             List.iter
@@ -1767,11 +1918,12 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                 (List.map (fun g -> "&"^g) gpu_globals
                  @ List.map (fun (_,_,name,_,_) -> "&"^name) gpu_read_buffers
                  @ List.map (fun l -> "&"^obsG l) obs_locs
-                 @ ["&barrier"]) in
+                 @ ["&barrier"]
+                 @ ["&_scratch" ; "&_scratch_loc" ; "&_gpu_done" ; "&_seed"]) in
             s (Printf.sprintf "    void* _args[] = { %s };\n" args_addrs) ;
             s (Printf.sprintf
-                 "    %s _e = %s((void*)litmus_%s, dim3(_grid), dim3(%d), _args, 0, 0);\n"
-                 dialect.gd_err_t dialect.gd_coop_launch id block_dim) ;
+                 "    %s _e = %s((void*)litmus_%s, dim3(_grid), dim3(HET_BLOCK_DIM), _args, 0, 0);\n"
+                 dialect.gd_err_t dialect.gd_coop_launch id) ;
             s (Printf.sprintf
                  "    if (_e != %s) { fprintf(stderr, \"coop launch: %%s\\n\", %s(_e)); return 2; }\n"
                  dialect.gd_success dialect.gd_errstr) ;
@@ -2126,6 +2278,11 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                 s (Printf.sprintf "  %s free(%s_h);\n" (dialect.gd_free (obsG l)) (obsG l)) ;
                 s (Printf.sprintf "  free(%s);\n" (obsC l)))
               obs_locs ;
+            (* B4: the stress objects are device memory -> the device free. *)
+            s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch")) ;
+            s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch_loc")) ;
+            s (Printf.sprintf "  %s\n" (dialect.gd_free "_gpu_done")) ;
+            s "  free(_scratch_loc_h);\n" ;
             s "  return 0;\n}\n" in
           (* ---- comp.sh / Makefile / README ---- *)
           let dump_comp ch =
@@ -2206,6 +2363,7 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s "Targets: NVIDIA GH200 Grace-Hopper (CUDA) and AMD MI300A (HIP).\n" in
           write "outs.h" (fun ch -> output_string ch outs_h_content) ;
           write "outs.c" (fun ch -> output_string ch outs_c_content) ;
+          write "het_stress.cuh" (fun ch -> output_string ch het_stress_content) ;
           write (tname ^ "_cpu.c") dump_cpu_file ;
           write (tname ^ ".cu") (dump_gpu_file cuda_dialect) ;
           write (tname ^ ".hip") (dump_gpu_file hip_dialect) ;
