@@ -15,7 +15,11 @@
    mu map, the read-buffer plan and the (loc,value)->mu recovery map. *)
 type cpu_plan = {
     stores : (string * int option) list ;  (* (global, orig `mov #imm' value)  *)
-    loads : string list ;                   (* global each recorded load reads  *)
+    (* (global read, destination register as the CONDITION names it -- pp_reg,
+       e.g. "X0").  B3c: the register is what lets the recovery scan bind a
+       condition atom (`1:X0=0') to this load's read buffer, so a CPU-side read
+       is scanned exactly like a GPU-side one (B3-decision 4.1). *)
+    loads : (string * string) list ;
   }
 
 val empty_plan : cpu_plan

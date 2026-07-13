@@ -33,4 +33,12 @@
   ../het/R-cg-sys-fence.litmus
   ../het/S-cg-sys-fence.litmus
   ../het/MP-cg-sys-acqrel-2s.litmus
+  ; B3c (tagged-recover): the recovery scan's shape depends on WHERE the reads
+  ; live, so the guard needs one test per binding class -- MP-gc (CPU-side reads,
+  ; exact), SB-cg (no rf anchor -> windowed), LB-cg (two rf edges -> mutually
+  ; decoded, no window), WRC-ccg (plain LDR -> no .arch_extension).
+  ../het/MP-gc-sys-acqrel-2s.litmus
+  ../het/SB-cg-sys-acqrel-2s.litmus
+  ../het/LB-cg-sys-acqrel-2s.litmus
+  ../het/WRC-ccg-cta-relaxed.litmus
   ../gpu-only/MP-sys-acquire.litmus))

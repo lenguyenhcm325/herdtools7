@@ -44,8 +44,12 @@ type cpu_plan = {
     (* one entry per tagged store node, program order:
        (address global, original immediate value if a `mov #imm' fed it) *)
     stores : (string * int option) list ;
-    (* one entry per recorded load node, program order: address global *)
-    loads : string list ;
+    (* one entry per recorded load node, program order:
+       (address global, destination register under pp_reg -- "X0").  The reg is
+       how the recovery scan maps a condition atom `1:X0=0' back to THIS load's
+       read buffer (B3c); pp_reg is width-agnostic, so `LDAPR W0' records "X0",
+       which is exactly how the condition names it. *)
+    loads : (string * string) list ;
   }
 
 let empty_plan = { stores = [] ; loads = [] }
@@ -105,9 +109,9 @@ let analyze ~reg_env instrs =
       | I_STR (_, rval, raddr, _) | I_STLR (_, rval, raddr) ->
          let g = reg_env (addr_reg_name raddr) in
          stores := (g, get_imm rval) :: !stores
-      | I_LDR (_, _, raddr, _) | I_LDAR (_, _, _, raddr) ->
+      | I_LDR (_, rt, raddr, _) | I_LDAR (_, _, rt, raddr) ->
          let g = reg_env (addr_reg_name raddr) in
-         loads := g :: !loads
+         loads := (g, pp_reg rt) :: !loads
       | _ -> ())
     instrs ;
   { stores = List.rev !stores ; loads = List.rev !loads }
@@ -150,6 +154,15 @@ let emit_body chan ~proc ~k ~store_mu ~load_buf ~reg_env ~iter
     instrs ;
   (* The single asm block: tested mnemonics verbatim, 64-bit operands. *)
   s "  asm __volatile__(\n" ;
+  (* LDAPR is RCpc (ARMv8.3); every other mnemonic in the het vocabulary
+     (str/stlr/ldr/ldar/dmb sy) is base ARMv8.0.  Neither gcc's native default on
+     Grace nor `clang --target=aarch64-linux-gnu' enables RCpc, so an LDAPR in
+     inline asm fails to ASSEMBLE ("instruction requires: rcpc") -- which would
+     make every two-sided (-2s) test unbuildable, on the dev box and on GH200
+     alike.  Enable exactly that extension, and only for a proc that uses it, so
+     a plain-LDR body stays byte-identical. *)
+  if List.exists (function I_LDAR (_,AQ,_,_) -> true | _ -> false) instrs then
+    s "    \".arch_extension rcpc\\n\"\n" ;
   let globals_used = ref [] in
   let use_global g =
     if not (List.mem g !globals_used) then globals_used := g :: !globals_used in

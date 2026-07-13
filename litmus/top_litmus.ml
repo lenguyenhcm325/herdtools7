@@ -864,12 +864,16 @@ static void gd_free_shared(void* _p){
                            Some (g,v)
                         | _ -> None)
                        instrs in
+                   (* (global, dest reg) -- the reg is spelled as the condition
+                      spells it ("r0"), so the B3c scan binds a GPU atom exactly
+                      like a CPU one.  Program order == read-buffer index. *)
                    let loads =
                      List.filter_map
                        (function
-                        | BellBase.Pld (_,ao,_) ->
-                           Some (match CudaLang.abs_of_addr_op ao with
-                                 | Some s -> s | None -> "?")
+                        | BellBase.Pld (BellBase.GPRreg n,ao,_) ->
+                           let g = match CudaLang.abs_of_addr_op ao with
+                             | Some s -> s | None -> "?" in
+                           Some (g, Printf.sprintf "r%d" n)
                         | _ -> None)
                        instrs in
                    (p, `Gpu, stores, loads)
@@ -924,20 +928,25 @@ static void gd_free_shared(void* _p){
             List.concat_map
               (fun (p,dev,_stores,loads) ->
                 List.mapi
-                  (fun li g -> (p, li, Printf.sprintf "bufP%d_%d" p li, dev, g))
+                  (fun li (g,_r) -> (p, li, Printf.sprintf "bufP%d_%d" p li, dev, g))
                   loads)
               proc_infos in
-          (* Map a GPU proc's result register name ("r<n>") to its load index
-             (program order == result_regs order == buffer index). *)
-          let gpu_read_of p =
-            let tbl = Hashtbl.create 8 in
-            (match List.find_opt (fun ((q,_,_),_) -> q=p) gpu_prog with
-             | Some (_,code) ->
-                List.iteri
-                  (fun li n -> Hashtbl.replace tbl (Printf.sprintf "r%d" n) li)
-                  (CudaLang.result_regs code)
-             | None -> ()) ;
-            fun r -> Hashtbl.find_opt tbl r in
+          (* B3c: bind a condition's register atom to a read buffer by LOAD NODE,
+             not by device (B3-decision 4.1).  A CPU read buffer and a GPU read
+             buffer are the same uint64_t[N] object (the GPU's is host-mirrored
+             D2H), so the scan must not care which side performed the load --
+             that is what makes MP-gc fall out as literally the same logic as
+             MP-cg.  [read_of p r] = the load index of proc p's load into
+             register r (program order == read-buffer index), for BOTH devices;
+             the reg is spelled as the condition spells it ("r0" / "X0"). *)
+          let loads_of p =
+            match List.find_opt (fun (q,_,_,_) -> q=p) proc_infos with
+            | Some (_,_,_,loads) -> loads | None -> [] in
+          let read_of p r =
+            let rec f li = function
+              | (_,rr)::rest -> if rr = r then Some li else f (li+1) rest
+              | [] -> None in
+            f 0 (loads_of p) in
           let buf_name p li = Printf.sprintf "bufP%d_%d" p li in
           (* Buffer name the HOST recovery scan reads: GPU buffers live in device
              memory (cudaMalloc) and are mirrored to a host copy "<buf>_h" after
@@ -1032,93 +1041,251 @@ static void gd_free_shared(void* _p){
               | [] -> "0"
               | [p] -> p
               | ps -> "(" ^ String.concat " || " ps ^ ")" in
-          (* rf ANCHOR: the first register read atom p:r=v (v<>0) whose value
-             decodes to a store mu.  It pins the synchrony iteration _m = tag/K at
-             frame _f (Srivastava Eq 3.13/3.14), against which the fr reads are
-             checked.  Returns (scan-buffer, mu, writer-proc). *)
-          let find_anchor prop =
-            let found = ref None in
+          (* ================== B3c: FRAME BINDING ==========================
+             (env-research/decisions/B3-decision.md 4.1-4.2, Srivastava Eqs
+             3.8-3.14.)  Each proc runs its OWN perpetual loop, so each has its
+             own iteration space; a read buffer entry is indexed by the iteration
+             of the proc that PERFORMED the load.  Recovering a cycle therefore
+             means choosing one frame per participating proc.  We do that by
+             DECODING, not searching, wherever the tags allow it (Eq 3.14):
+
+               Base    : the proc carrying the anchor read.  Frame = the scan's
+                         loop var _f.
+               Pinned  : a proc W whose store was read by an rf atom on an
+                         already-bound proc.  The tag DECODES W's iteration
+                         exactly -- _mW = tag / K (Eq 3.13).  No search.
+               Windowed: a reader whose frame no rf atom decodes (SB/LB's second
+                         reader, the 3-hop shapes' third proc).  Searched over
+                         [c-W, c+W] where the centre c is itself decoded from a
+                         bound proc's read of a location THIS proc writes -- a
+                         stale-but-real rf edge.  This is the T_L>=2 window.
+
+             Every cycle edge is then one predicate over those frames:
+               rf  (Eq 3.13): tag % K == mu_writer  [+ tag / K == it(W) when W's
+                              frame is already bound by another atom]
+               fr  (Fig 3.7 = rf+ws): tag < K*it(W) + mu_target -- the read took
+                              a write coherence-BEFORE the cycle's target write.
+                              Subsumes literal init (tag 0) and stale writes.
+             MP (T_L=1) needs no window at all and stays the exact O(N) scan. *)
+          let read_atoms =    (* (proc, load idx, global, value) in source order *)
+            let acc = ref [] in
             let rec scan p = let open ConstrGen in match p with
               | Atom (LV (Loc (MiscParser.Location_reg (pr,r)),v)) ->
-                 (match !found, gpu_read_of pr r, cint v with
-                  | None, Some li, Some n when n <> 0 ->
+                 (match read_of pr r, cint v with
+                  | Some li, Some n ->
                      (match read_global pr li with
-                      | Some g ->
-                         (match Hashtbl.find_opt value_mu (g,n) with
-                          | Some mu ->
-                             (match Hashtbl.find_opt mu_proc mu with
-                              | Some wp -> found := Some (scan_buf pr li, mu, wp)
-                              | None -> ())
-                          | None -> ())
-                      | None -> ())
-                  | _ -> ())
+                      | Some g -> acc := (pr,li,g,n) :: !acc
+                      | None ->
+                         Warn.fatal
+                           "hetlitmus: condition reads %d:%s, whose load has no \
+                            resolvable location" pr r)
+                  | None, _ ->
+                     (* Loud by construction: a condition register we cannot bind
+                        to a load node would silently become a constant-false
+                        detector (the B3 HET_PENDING bug).  Refuse to emit. *)
+                     Warn.fatal
+                       "hetlitmus: condition names %d:%s but proc %d has no load \
+                        into that register (cannot bind a read buffer)" pr r pr
+                  | _, None ->
+                     Warn.fatal
+                       "hetlitmus: condition value for %d:%s is not an integer" pr r)
+              | Atom _ -> ()
               | Not q -> scan q
               | And ps | Or ps -> List.iter scan ps
-              | Implies (a,b) -> scan a ; scan b
-              | Atom _ -> () in
-            scan prop ; !found in
-          let anchor = find_anchor (prop_of parsed.MiscParser.condition) in
-          (* ---- B3 recovery: condition -> C boolean over the read buffers at
-             frame [_f] (env-research/decisions/B3-decision.md Decision 4).  Per
-             Srivastava's MP derivation (§4.1): an rf read p:r=v decodes to
-             (tag % K == mu_v); an fr/init read p:r=0 holds when the read observed
-             the location from BEFORE the anchor's synchrony iteration _m --
-             tag < K*_m + mu_target (mu_target = the anchor-proc's write to that
-             location) -- which subsumes literal init (tag 0) AND stale earlier
-             writes (the perpetual scheme rarely leaves init standing).
-             COMMIT-1 SCOPE: read-buffer rf/fr edges at ONE synchrony frame -- exact
-             for the MP family (all reads on one proc + one rf anchor).  Cross-
-             thread windowing (T_L>=2 SB/IRIW/...) and observer ws-edges of the 72
-             are HET_PENDING (=0, conservative) pending the B3 observer commit. *)
-          let rec c_tag_of_prop p =
+              | Implies (a,b) -> scan a ; scan b in
+            scan (prop_of parsed.MiscParser.condition) ;
+            List.rev !acc in
+          let is_reader p = List.exists (fun (q,_,_,_) -> q=p) read_atoms in
+          (* The write an fr read falsifies against: the store to [g] by a proc
+             OTHER than the reader (the cycle's target write).  Returns its proc
+             and mu. *)
+          let fr_target pr g =
+            let rec f = function
+              | (p,_,stores,_)::rest when p <> pr ->
+                 let rec h i = function
+                   | (sg,_)::t -> if sg=g then Some (p, store_mu p i) else h (i+1) t
+                   | [] -> None in
+                 (match h 0 stores with Some x -> Some x | None -> f rest)
+              | _::rest -> f rest
+              | [] -> None in
+            f proc_infos in
+          (* --- the binding itself ------------------------------------------ *)
+          let frame_kind = Hashtbl.create 8 in   (* proc -> `Base|`Pin|`Win     *)
+          let pin_src = Hashtbl.create 8 in      (* pinned  -> (reader,li) decoding it *)
+          let win_src = Hashtbl.create 8 in      (* windowed-> (reader,li) centring it *)
+          let bound_by = Hashtbl.create 8 in     (* (reader,li) -> proc it bound *)
+          let win_order = ref [] in              (* windowed procs, nesting order *)
+          let is_bound p = Hashtbl.mem frame_kind p in
+          (* Bind every writer that a bound proc's rf atom decodes (fixpoint).
+             An fr atom (v=0) must NOT bind its own target: the decode would be
+             self-referential (tag < K*(tag/K)+mu degenerates), so R's synchrony
+             stays observer-pinned exactly as B3-decision 4.2 requires. *)
+          let propagate () =
+            let changed = ref true in
+            while !changed do
+              changed := false ;
+              List.iter
+                (fun (pr,li,g,v) ->
+                  if is_bound pr && v <> 0 then
+                    match Hashtbl.find_opt value_mu (g,v) with
+                    | Some mu ->
+                       (match Hashtbl.find_opt mu_proc mu with
+                        | Some w when w <> pr && not (is_bound w) ->
+                           Hashtbl.replace frame_kind w `Pin ;
+                           Hashtbl.replace pin_src w (pr,li) ;
+                           Hashtbl.replace bound_by (pr,li) w ;
+                           changed := true
+                        | _ -> ())
+                    | None -> ())
+                read_atoms
+            done in
+          (* Anchor = the first rf atom (its tag decodes a writer); failing that
+             (SB: both reads are fr) the first read atom.  Its proc is the base. *)
+          let anchor_atom =
+            let rf =
+              List.find_opt
+                (fun (_,_,g,v) ->
+                  v <> 0 && Hashtbl.mem value_mu (g,v))
+                read_atoms in
+            match rf with Some a -> Some a | None -> (match read_atoms with
+                                                      | a::_ -> Some a | [] -> None) in
+          (match anchor_atom with
+           | None -> ()            (* 2+2W: no reads at all; observer-only cycle *)
+           | Some (b,_,_,_) ->
+              Hashtbl.replace frame_kind b `Base ;
+              propagate () ;
+              (* Readers still unbound get a searched window, outermost first. *)
+              let rec add_windows () =
+                let unbound =
+                  List.sort_uniq compare
+                    (List.filter_map
+                       (fun (p,_,_,_) -> if is_bound p then None else Some p)
+                       read_atoms) in
+                match unbound with
+                | [] -> ()
+                | p::_ ->
+                   Hashtbl.replace frame_kind p `Win ;
+                   (* Centre: a BOUND proc's read of a location p writes -- its
+                      tag decodes one of p's iterations (Eq 3.14), stale or not. *)
+                   (match
+                      List.find_opt
+                        (fun (q,_,g,_) ->
+                          is_bound q && proc_store_mu p g <> None)
+                        read_atoms
+                    with
+                    | Some (q,li,_,_) -> Hashtbl.replace win_src p (q,li)
+                    | None -> ()) ;
+                   win_order := !win_order @ [p] ;
+                   propagate () ;
+                   add_windows () in
+              add_windows ()) ;
+          (* --- frame expressions (mode = the heuristic scan or the exhaustive
+                 ground-truth scan; they differ only in the search RANGE, so they
+                 need disjoint variable names) ------------------------------- *)
+          let mvar mode p =
+            Printf.sprintf "%s%d" (match mode with `Exh -> "_em" | `Heur -> "_m") p in
+          let tvar mode p =
+            Printf.sprintf "%s%d" (match mode with `Exh -> "_et" | `Heur -> "_t") p in
+          let idx_of mode p =        (* 0-based read-buffer index for proc p *)
+            match Hashtbl.find_opt frame_kind p with
+            | Some `Base -> "_f"
+            | Some `Pin -> Printf.sprintf "(%s - 1)" (mvar mode p)
+            | Some `Win -> tvar mode p
+            | None -> "_f" in
+          let it_of mode p =         (* 1-based iteration, for tag arithmetic *)
+            match Hashtbl.find_opt frame_kind p with
+            | Some `Base -> "(_f + 1)"
+            | Some `Pin -> mvar mode p
+            | Some `Win -> Printf.sprintf "(%s + 1)" (tvar mode p)
+            | None -> "0" in
+          let buf_at mode p li =
+            Printf.sprintf "%s[%s]" (scan_buf p li) (idx_of mode p) in
+          (* A pinned proc's index comes from a decoded tag, so it is only a legal
+             buffer index when the tag was a real write (>=1) and in range. *)
+          let pin_guards mode =
+            List.filter_map
+              (fun (p,_) ->
+                match Hashtbl.find_opt frame_kind p with
+                | Some `Pin when is_reader p ->
+                   let v = mvar mode p in
+                   Some (Printf.sprintf
+                           "(%s >= 1 && %s <= (uint64_t)SIZE_OF_TEST)" v v)
+                | _ -> None)
+              (List.map (fun (p,_,_,_) -> (p,())) read_atoms
+               |> List.sort_uniq compare) in
+          (* ---- condition -> C boolean over the bound frames ---- *)
+          let rec c_tag_of_prop mode p =
             let open ConstrGen in
             match p with
             | Atom (LV (Loc (MiscParser.Location_reg (pr,r)),v)) ->
-               (match gpu_read_of pr r with
-                | Some li ->
-                   let buf = Printf.sprintf "%s[_f]" (scan_buf pr li) in
-                   (match cint v with
-                    | Some 0 ->
-                       (* fr/init: read location from before the anchor's write. *)
-                       (match anchor, read_global pr li with
-                        | Some (_,_,wp), Some g ->
-                           (match proc_store_mu wp g with
-                            | Some mu_t ->
-                               Printf.sprintf "(%s < (uint64_t)%d*_m + %d)" buf k_tag mu_t
-                            | None -> Printf.sprintf "(%s == 0)" buf)
-                        | _ -> Printf.sprintf "(%s == 0)" buf)
-                    | Some n ->
-                       (match read_global pr li with
-                        | Some g ->
-                           (match Hashtbl.find_opt value_mu (g,n) with
-                            | Some mu ->
-                               Printf.sprintf "(%s != 0 && %s %% %d == %d)"
-                                 buf buf k_tag mu
-                            | None ->
-                               Printf.sprintf "0 /* r=%d: no store writes it */" n)
-                        | None -> "HET_PENDING /* unresolved read location */")
-                    | None -> "HET_PENDING /* non-integer read value */")
-                | None ->
-                   "HET_PENDING /* CPU-side / unmapped read: B3 observer commit */")
+               let li = match read_of pr r with
+                 | Some li -> li
+                 | None -> assert false (* read_atoms already Warn.fatal'd *) in
+               let g = match read_global pr li with
+                 | Some g -> g | None -> assert false in
+               let buf = buf_at mode pr li in
+               (match cint v with
+                | Some 0 ->
+                   (* fr (Fig 3.7): the read took a write coherence-before the
+                      cycle's target write.  When the target's frame is bound we
+                      can say exactly which write that is; when it is not (R: the
+                      only read is this fr, so nothing decodes the writer -- 4.2)
+                      we fall back to literal init, which is sound but blind to
+                      stale writes.  R's full cycle rests on the observer ws. *)
+                   (match fr_target pr g with
+                    | Some (w,mu) when is_bound w ->
+                       Printf.sprintf "(%s < (uint64_t)%d*%s + %d)"
+                         buf k_tag (it_of mode w) mu
+                    | _ -> Printf.sprintf "(%s == 0)" buf)
+                | Some n ->
+                   (match Hashtbl.find_opt value_mu (g,n) with
+                    | Some mu ->
+                       let same_iter =
+                         (* If the writer's frame is already bound by ANOTHER atom,
+                            this rf must land on that exact iteration; if THIS atom
+                            is what bound it, the equality is a tautology. *)
+                         match Hashtbl.find_opt mu_proc mu with
+                         | Some w when is_bound w
+                                       && Hashtbl.find_opt bound_by (pr,li) <> Some w ->
+                            Printf.sprintf " && %s / %d == (uint64_t)%s"
+                              buf k_tag (it_of mode w)
+                         | _ -> "" in
+                       Printf.sprintf "(%s != 0 && %s %% %d == %d%s)"
+                         buf buf k_tag mu same_iter
+                    | None ->
+                       (* No store writes that value: the outcome is unreachable
+                          by construction, not un-implemented.  Loud rather than
+                          a silent 0. *)
+                       Warn.fatal
+                         "hetlitmus: condition wants %d:%s=%d but no store writes \
+                          %d to %s" pr r n n g)
+                | None -> assert false)
             | Atom (LV (Loc (MiscParser.Location_global g),v)) ->
-               (* register pass: a coherence-final [ell]=v atom is carried by the
-                  per-run observer ws cycle (_loc, below), so it does not constrain
-                  the per-frame register part -- unless the location is unbacked
-                  (no observer), in which case it stays HET_PENDING. *)
+               (* A coherence-final [ell]=v atom is carried by the per-run observer
+                  ws cycle (_loc), so it does not constrain the per-frame register
+                  part.  An unbacked location would be unobservable -- refuse to
+                  emit rather than fold it to a silent constant. *)
                let name = MiscParser.dump_value g in
                if List.mem name obs_locs then
                  Printf.sprintf "1 /* [%s] via observer _loc */" name
                else
-                 Printf.sprintf
-                   "HET_PENDING /* [%s]=%s: no backing global, unobservable */"
-                   name (cval v)
-            | Atom _ -> "HET_PENDING /* unsupported atom */"
-            | Not q -> Printf.sprintf "(!%s)" (c_tag_of_prop q)
-            | And ps -> mk_and (List.map c_tag_of_prop ps)
-            | Or ps -> mk_or (List.map c_tag_of_prop ps)
+                 Warn.fatal
+                   "hetlitmus: condition observes [%s]=%s but no global backs it \
+                    (no observer buffer can be allocated)" name (cval v)
+            | Atom _ ->
+               Warn.fatal "hetlitmus: unsupported condition atom (not loc=v)"
+            | Not q -> Printf.sprintf "(!%s)" (c_tag_of_prop mode q)
+            | And ps -> mk_and (List.map (c_tag_of_prop mode) ps)
+            | Or ps -> mk_or (List.map (c_tag_of_prop mode) ps)
             | Implies (a,b) ->
-               Printf.sprintf "(!(%s) || %s)" (c_tag_of_prop a) (c_tag_of_prop b) in
-          let cond_expr = c_tag_of_prop (prop_of parsed.MiscParser.condition) in
+               Printf.sprintf "(!(%s) || %s)"
+                 (c_tag_of_prop mode a) (c_tag_of_prop mode b) in
+          (* The register half of the cycle, at the bound frames. *)
+          let cond_at mode =
+            mk_and
+              (pin_guards mode
+               @ [c_tag_of_prop mode (prop_of parsed.MiscParser.condition)]) in
+          let cond_expr = cond_at `Heur in
           (* per-run observer ws name: _ws_<location>_<c|g> (CPU/GPU observer). *)
           let ws_var l dev = Printf.sprintf "_ws_%s_%s" l dev in
           (* location pass (per observer device): register atoms are unconstrained
@@ -1145,6 +1312,30 @@ static void gd_free_shared(void* _p){
               mk_or [ c_loc "c" (prop_of parsed.MiscParser.condition) ;
                       c_loc "g" (prop_of parsed.MiscParser.condition) ]
             else "1" in
+          (* B3c HARD INVARIANT (SHARED-CHARGE, "incompleteness is NOT a
+             placeholder").  The emitted detector may never be a CONSTANT.  A
+             constant-true _weak reports the weak behaviour on every run; a
+             constant-false one reports "Never" on every run -- and a spurious
+             "Never" on a should-be-forbidden test reads as CONFIRMATION of the
+             memory model.  Both silently falsify the science, so refuse to emit
+             rather than ship one (this is what B3's HET_PENDING=0 did to 266 of
+             the 338 het tests).  Structural, not a test: it cannot regress. *)
+          let weak_expr =
+            if has_observers then mk_and [cond_expr ; "_loc"] else cond_expr in
+          if is_true weak_expr || is_false weak_expr then
+            Warn.fatal
+              "hetlitmus: %s would emit a CONSTANT weak-behaviour detector \
+               (_weak = %s) -- refusing to emit (SHARED-CHARGE.md)"
+              tname weak_expr ;
+          (* Synchrony source for the guards (Eq 3.14): the base proc's first read
+             of a location somebody writes -- its tag decodes a partner iteration.
+             This is the rf anchor for MP/S, the window centre's decoder for SB.
+             2+2W (no reads) has none, so it carries no skew/distinct stats. *)
+          let sync_src =
+            List.find_opt
+              (fun (p,_,g,_) ->
+                Hashtbl.find_opt frame_kind p = Some `Base && writers_of g <> [])
+              read_atoms in
           (* "harness was hot at _f": any read observed a real (non-init) writer.
              Feeds het_obs_record.interleavings_detected. *)
           let hot_expr =
@@ -1279,10 +1470,16 @@ static void gd_free_shared(void* _p){
             s (Printf.sprintf "#define SIZE_OF_TEST %d\n" Cfg.size) ;
             s (Printf.sprintf "#define NUMBER_OF_RUN %d\n" Cfg.runs) ;
             s (Printf.sprintf "#define K_TAG %d\n" k_tag) ;
-            (* HET_PENDING: condition atoms not yet decodable by the read-buffer scan
-               (location/ws-edges of the 72, CPU-side reads, cross-thread windowing)
-               are 0 -- conservative; they are completed in the B3 observer commit. *)
-            s "#define HET_PENDING 0\n\n" ;
+            (* B3c knobs.  HET_WINDOW = the T_L>=2 search radius W: how far the
+               partner proc's iteration may drift from the synchrony point decoded
+               out of the tag (B3-decision 4.1).  Its VALUE is hardware-tuned (it
+               tracks the measured CPU/GPU iteration-rate mismatch, Q2 3.3) and is
+               owned by Q7/B8 -- 8 is a placeholder, not a measurement.
+               HET_EXHAUSTIVE_MAX caps the O(N^T_L) ground-truth scan so it cannot
+               blow up at N=1e6; above it only the windowed heuristic runs, and
+               het_obs_record.exhaustive_valid says so.  Both -D-overridable. *)
+            s "#ifndef HET_WINDOW\n#define HET_WINDOW 8\n#endif\n" ;
+            s "#ifndef HET_EXHAUSTIVE_MAX\n#define HET_EXHAUSTIVE_MAX 4096\n#endif\n\n" ;
             s (HetCond.het_confidence_enum_c ^ "\n") ;
             (* B3 het_obs_record (B3-decision Decision 5): one per (test,instance,run).
                COMMIT-1 fills N/frames/target/interleavings/distinct/skew from the
@@ -1294,6 +1491,10 @@ static void gd_free_shared(void* _p){
   het_confidence confidence;
   uint64_t N, frames_examined;
   uint64_t target_count_exhaustive, target_count_heuristic;
+  /* 0 = the O(N^T_L) exhaustive scan did NOT run at this N (capped by
+     HET_EXHAUSTIVE_MAX), so target_count_exhaustive is NOT a count of zero
+     observations -- it is "not measured".  B7 must not read it as data. */
+  int exhaustive_valid;
   uint64_t interleavings_detected;
   uint64_t distinct_decoded_iters;
   uint64_t ws_edges_via_observer;
@@ -1303,11 +1504,12 @@ static void gd_free_shared(void* _p){
 } het_obs_record;
 static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
   fprintf(_ch,
-    "HetObs %s inst=%d run=%d conf=%d N=%llu frames=%llu target=%llu/%llu "
+    "HetObs %s inst=%d run=%d conf=%d N=%llu frames=%llu target=%s%llu/%llu "
     "interleavings=%llu distinct_iters=%llu ws_via_obs=%llu obs_unique=%llu "
     "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%llu\n",
     _r->test_name,_r->instance_id,_r->run_id,(int)_r->confidence,
     (unsigned long long)_r->N,(unsigned long long)_r->frames_examined,
+    _r->exhaustive_valid ? "" : "NA:",
     (unsigned long long)_r->target_count_exhaustive,
     (unsigned long long)_r->target_count_heuristic,
     (unsigned long long)_r->interleavings_detected,
@@ -1579,10 +1781,15 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                      (dialect.gd_memcpy_d2h (obsG l^"_h") (obsG l) buf_bytes)))
               obs_locs ;
             (* ======== B3 recovery scan: read + observer buffers -> het_obs_record.
-               Register atoms: rf/fr read-buffer decode at one synchrony frame (exact
-               for the MP family).  Coherence-final [l]=v atoms: the per-run observer
-               ws witness _loc (below).  Cross-thread windowing (T_L>=2 SB/IRIW and
-               CPU-side reads) stays HET_PENDING.  See c_tag_of_prop / c_loc. ==== *)
+               Register atoms: rf/fr read-buffer decode.  Reads bind by LOAD NODE,
+               not by device, so a CPU read buffer scans exactly like a GPU one
+               (B3c).  Each proc gets its own frame, decoded where tags allow: base /
+               rf-pinned (_m = tag/K, no search) / windowed (HET_WINDOW) only for a
+               reader no rf atom decodes.  Coherence-final [l]=v atoms: the per-run
+               observer ws witness _loc (below).  A frame with no decodable synchrony
+               point is REFUSED (else a cold run reports 100% weak).  NOTHING is
+               HET_PENDING any more -- the emitter Warn.fatals rather than ship a
+               constant detector.  See c_tag_of_prop / c_loc. ==== *)
             s "    het_obs_record _rec; memset(&_rec, 0, sizeof _rec);\n" ;
             s (Printf.sprintf
                  "    _rec.test_name = \"%s\"; _rec.instance_id = 0; _rec.run_id = _run;\n"
@@ -1590,9 +1797,9 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s (Printf.sprintf "    _rec.confidence = %s;\n"
                  (HetCond.confidence_c_name mech_class)) ;
             s "    _rec.N = SIZE_OF_TEST;\n" ;
-            (* skew/distinct accumulators only exist when there is an rf anchor to
-               decode a synchrony iteration from (a store-only test has none). *)
-            (match anchor with
+            (* skew/distinct accumulators only exist when a read buffer decodes a
+               synchrony iteration at all (a store-only test -- 2+2W -- has none). *)
+            (match sync_src with
              | Some _ ->
                 s "    long _skew_sum = 0; double _skew_sq = 0.0; uint64_t _skew_n = 0;\n" ;
                 s "    int32_t _skew_lo = INT32_MAX, _skew_hi = INT32_MIN;\n" ;
@@ -1645,39 +1852,207 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
               s "    _rec.observer_unique_count = (_obs_uniq == UINT64_MAX) ? 0 : _obs_uniq;\n" ;
               s (Printf.sprintf "    int _loc = %s;\n" loc_expr)
             end ;
+            (* B3c: the exhaustive ground-truth scan is O(N^T_L); only run it at a
+               small N (HET_EXHAUSTIVE_MAX).  Recorded, so a capped-out run cannot
+               be misread as "exhaustively counted zero". *)
+            s "    const int _exh = (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX);\n" ;
+            s "    _rec.exhaustive_valid = _exh;\n" ;
             s "    for (int _f=0; _f<SIZE_OF_TEST; ++_f) {\n" ;
             s "      _rec.frames_examined++;\n" ;
-            (* synchrony iteration from the rf anchor (0 = no rf this frame); the
-               fr atoms of cond_expr are checked against it (Srivastava Eq 3.14). *)
-            (match anchor with
-             | Some (abuf,_,_) ->
-                s (Printf.sprintf "      uint64_t _m = %s[_f] / K_TAG;\n" abuf)
-             | None -> ()) ;
+            (* ---- B3c frame binding, emitted (see the FRAME BINDING block).
+               Level-0 pins decode straight off the base proc's buffers; each
+               windowed proc then adds a search loop, inside which the pins it in
+               turn decodes are (re)assigned. ------------------------------- *)
+            let pins_at mode lvl =   (* pinned procs whose decoder sits at level lvl *)
+              Hashtbl.fold
+                (fun w (q,li) acc ->
+                  let qlvl =
+                    match Hashtbl.find_opt frame_kind q with
+                    | Some `Base -> 0
+                    | Some `Win ->
+                       1 + (let rec ix i = function
+                              | [] -> 0
+                              | p::t -> if p=q then i else ix (i+1) t in
+                            ix 0 !win_order)
+                    | _ -> 0 in
+                  if qlvl = lvl then (w,q,li) :: acc else acc)
+                pin_src []
+              |> List.sort compare
+              |> List.map
+                   (fun (w,q,li) ->
+                     Printf.sprintf "%s = %s / K_TAG;"
+                       (mvar mode w) (buf_at mode q li)) in
+            let decl_pins mode ind lvl =
+              List.iter
+                (fun a -> s (Printf.sprintf "%suint64_t %s\n" ind a))
+                (pins_at mode lvl) in
+            let assign_pins mode ind lvl =
+              List.iter (fun a -> s (Printf.sprintf "%s%s\n" ind a)) (pins_at mode lvl) in
+            (* window bounds for proc p at nesting level lvl (1-based) *)
+            let win_centre mode p =
+              match Hashtbl.find_opt win_src p with
+              | Some (q,li) ->
+                 Printf.sprintf "(long)(%s / K_TAG) - 1" (buf_at mode q li)
+              | None -> "(long)_f" in
+            let win_guard mode p =
+              match Hashtbl.find_opt win_src p with
+              | Some (q,li) ->
+                 (* No decoded tag = no synchrony point (Eq 3.14) = this frame is
+                    not a valid virtual test instance.  Skipping it is what stops
+                    an all-init (cold) run from reporting 100% weak behaviours --
+                    Srivastava's constant-read degeneracy, 4.4 guard 1. *)
+                 Some (Printf.sprintf "%s != 0" (buf_at mode q li))
+              | None -> None in
+            decl_pins `Heur "      " 0 ;
+            (* windowed frame vars live at FRAME scope (the histogram below reads
+               them after the search): default = the synchrony centre, overwritten
+               by a hit. *)
+            List.iteri
+              (fun i p ->
+                let lvl = i+1 in
+                s (Printf.sprintf "      long %s = %s;\n"
+                     (tvar `Heur p) (win_centre `Heur p)) ;
+                s (Printf.sprintf "      if (%s < 0) %s = 0;\n"
+                     (tvar `Heur p) (tvar `Heur p)) ;
+                s (Printf.sprintf
+                     "      if (%s >= SIZE_OF_TEST) %s = SIZE_OF_TEST-1;\n"
+                     (tvar `Heur p) (tvar `Heur p)) ;
+                decl_pins `Heur "      " lvl)
+              !win_order ;
             s (Printf.sprintf "      int _hot = %s;\n" hot_expr) ;
             s "      if (_hot) _rec.interleavings_detected++;\n" ;
-            (* register part (per frame) AND the per-run observer ws cycle _loc
-               (mk_and folds a constant-true register part to just _loc). *)
-            s (Printf.sprintf "      int _weak = %s;\n"
-                 (if has_observers then mk_and [cond_expr; "_loc"] else cond_expr)) ;
-            s "      if (_weak) { _rec.target_count_exhaustive++; _rec.target_count_heuristic++; }\n" ;
-            (match anchor with
-             | Some (abuf,_,_) ->
-                s (Printf.sprintf "      if (%s[_f] != 0) {\n" abuf) ;
-                s "        int32_t _sk = (int32_t)((long)_m - (long)(_f+1));\n" ;
+            (* ---- the weak-behaviour detector ---- *)
+            (match !win_order with
+             | [] ->
+                (* T_L<=1 (MP/S/R/2+2W): every frame is decoded exactly; the
+                   exhaustive count IS the heuristic count. *)
+                s (Printf.sprintf "      int _weak = %s;\n" weak_expr) ;
+                s "      if (_weak) { _rec.target_count_exhaustive++; _rec.target_count_heuristic++; }\n"
+             | _ ->
+                (* T_L>=2: search each unbound reader's window around its decoded
+                   synchrony centre (COUNTH), and -- at small N -- the whole range
+                   (COUNT, ground truth for calibrating W). *)
+                let emit_search mode weakv exhaustive =
+                  let ind = ref "      " in
+                  let bump () = ind := !ind ^ "  " in
+                  List.iteri
+                    (fun i p ->
+                      let lvl = i+1 in
+                      let t = tvar mode p in
+                      let c = Printf.sprintf "_c%d%s" p
+                                (match mode with `Exh -> "e" | `Heur -> "") in
+                      (match win_guard mode p with
+                       | Some g ->
+                          s (Printf.sprintf "%sif (%s) {\n" !ind g) ; bump ()
+                       | None -> s (Printf.sprintf "%s{\n" !ind) ; bump ()) ;
+                      if exhaustive then begin
+                        s (Printf.sprintf "%slong %s_lo = 0, %s_hi = SIZE_OF_TEST-1;\n"
+                             !ind c c)
+                      end else begin
+                        s (Printf.sprintf "%slong %s = %s;\n" !ind c (win_centre mode p)) ;
+                        s (Printf.sprintf
+                             "%slong %s_lo = %s - HET_WINDOW, %s_hi = %s + HET_WINDOW;\n"
+                             !ind c c c c) ;
+                        s (Printf.sprintf "%sif (%s_lo < 0) %s_lo = 0;\n" !ind c c) ;
+                        s (Printf.sprintf
+                             "%sif (%s_hi > SIZE_OF_TEST-1) %s_hi = SIZE_OF_TEST-1;\n"
+                             !ind c c)
+                      end ;
+                      s (Printf.sprintf
+                           "%sfor (%s = %s_lo; %s <= %s_hi && !%s; ++%s) {\n"
+                           !ind t c t c weakv t) ;
+                      bump () ;
+                      assign_pins mode !ind lvl)
+                    !win_order ;
+                  s (Printf.sprintf "%sif (%s) %s = 1;\n" !ind (cond_at mode) weakv) ;
+                  List.iter
+                    (fun _ ->
+                      ind := String.sub !ind 0 (String.length !ind - 2) ;
+                      s (Printf.sprintf "%s}\n" !ind) ;
+                      ind := String.sub !ind 0 (String.length !ind - 2) ;
+                      s (Printf.sprintf "%s}\n" !ind))
+                    !win_order in
+                (* the register half, searched *)
+                s "      int _rwin = 0;\n" ;
+                emit_search `Heur "_rwin" false ;
+                (* no hit: leave the frame vars at the synchrony centre so the
+                   histogram below reports the decoded partner frame, not the last
+                   window step. *)
+                List.iteri
+                  (fun i p ->
+                    let lvl = i+1 in
+                    s (Printf.sprintf "      if (!_rwin) {\n        %s = %s;\n"
+                         (tvar `Heur p) (win_centre `Heur p)) ;
+                    s (Printf.sprintf "        if (%s < 0) %s = 0;\n"
+                         (tvar `Heur p) (tvar `Heur p)) ;
+                    s (Printf.sprintf
+                         "        if (%s >= SIZE_OF_TEST) %s = SIZE_OF_TEST-1;\n"
+                         (tvar `Heur p) (tvar `Heur p)) ;
+                    assign_pins `Heur "        " lvl ;
+                    s "      }\n")
+                  !win_order ;
+                s (Printf.sprintf "      int _weak = %s;\n"
+                     (if has_observers then mk_and ["_rwin"; "_loc"] else "_rwin")) ;
+                s "      if (_weak) _rec.target_count_heuristic++;\n" ;
+                (* COUNT: the same predicate over the FULL range (ground truth). *)
+                s "      int _rex = 0;\n" ;
+                s "      if (_exh) {\n" ;
+                List.iter
+                  (fun p ->
+                    s (Printf.sprintf "        long %s = 0;\n" (tvar `Exh p)))
+                  !win_order ;
+                List.iter
+                  (fun a -> s (Printf.sprintf "        uint64_t %s\n" a))
+                  (List.concat_map (fun l -> pins_at `Exh l)
+                     (List.init (List.length !win_order + 1) (fun i -> i))) ;
+                emit_search `Exh "_rex" true ;
+                s "      }\n" ;
+                s (Printf.sprintf "      int _weak_ex = %s;\n"
+                     (if has_observers then mk_and ["_rex"; "_loc"] else "_rex")) ;
+                s "      if (_weak_ex) _rec.target_count_exhaustive++;\n") ;
+            (* guard 1 (4.4): the synchrony decode must actually VARY.  A read
+               buffer that decodes to a constant iteration means the two sides
+               never interleaved, and every "weak" frame it produced is spurious
+               (Srivastava 4.1: "recorded 100% weak behaviors").  B6/B7 gate on
+               distinct_decoded_iters + the skew spread. *)
+            (match sync_src with
+             | Some (p,li,_,_) ->
+                let sb = Printf.sprintf "%s[_f]" (scan_buf p li) in
+                s (Printf.sprintf "      if (%s != 0) {\n" sb) ;
+                s (Printf.sprintf "        uint64_t _ms = %s / K_TAG;\n" sb) ;
+                s "        int32_t _sk = (int32_t)((long)_ms - (long)(_f+1));\n" ;
                 s "        _skew_sum += _sk; _skew_sq += (double)_sk*(double)_sk; _skew_n++;\n" ;
                 s "        if (_sk < _skew_lo) _skew_lo = _sk; if (_sk > _skew_hi) _skew_hi = _sk;\n" ;
-                s "        if (!_have_prev || _m != _prev_m) { _rec.distinct_decoded_iters++; _prev_m = _m; _have_prev = 1; }\n" ;
+                s "        if (!_have_prev || _ms != _prev_m) { _rec.distinct_decoded_iters++; _prev_m = _ms; _have_prev = 1; }\n" ;
                 s "      }\n"
              | None -> ()) ;
-            s "      if (_hot) {\n" ;
+            (* Histogram: every frame that is hot OR validated.  "|| _weak" is load
+               bearing -- an fr-against-init cycle (R) is weak precisely when its
+               read is COLD, so gating on _hot alone would drop exactly the frames
+               the test exists to count, and oracle-compare.sh would read the empty
+               histogram as "Never" (a spurious confirmation of the model). *)
+            s "      if (_hot || _weak) {\n" ;
             s (Printf.sprintf "        intmax_t _o[%d];\n" (max 1 nslots)) ;
+            (* Decoded outcome vector, read at each proc's OWN bound frame (B3c) --
+               a CPU reader's buffer is decoded exactly like a GPU reader's.
+               A PINNED proc's index is (_mP - 1) with _mP a decoded uint64 tag,
+               so a cold read (_mP = 0) would underflow it to UINT64_MAX and index
+               out of bounds.  The predicate short-circuits on pin_guards; this
+               path does not (it runs whenever the frame is _hot), so it needs the
+               same range check.  Windowed/base indices are already clamped. *)
             List.iteri
               (fun i (p,r,_) ->
-                match gpu_read_of p r with
+                match read_of p r with
                 | Some li ->
-                   s (Printf.sprintf
-                        "        _o[%d] = (intmax_t)_decode_value(%s[_f]);\n"
-                        i (scan_buf p li))
+                   let e = Printf.sprintf "_decode_value(%s)" (buf_at `Heur p li) in
+                   let e =
+                     match Hashtbl.find_opt frame_kind p with
+                     | Some `Pin ->
+                        let v = mvar `Heur p in
+                        Printf.sprintf
+                          "(%s >= 1 && %s <= (uint64_t)SIZE_OF_TEST) ? %s : 0" v v e
+                     | _ -> e in
+                   s (Printf.sprintf "        _o[%d] = (intmax_t)(%s);\n" i e)
                 | None -> s (Printf.sprintf "        _o[%d] = 0;\n" i))
               slots ;
             List.iteri
@@ -1687,7 +2062,7 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                  "        hist = add_outcome_outs(hist, _o, %d, 1, _weak);\n" nslots) ;
             s "      }\n" ;
             s "    }\n" ;
-            (match anchor with
+            (match sync_src with
              | Some _ ->
                 s "    if (_skew_n > 0) {\n" ;
                 s "      _rec.skew_min = _skew_lo; _rec.skew_max = _skew_hi;\n" ;

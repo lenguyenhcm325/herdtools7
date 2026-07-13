@@ -6,26 +6,31 @@
 # sweep (l0_tokens.sh) already `nvcc --ptx`-compiles every gpu-only .cu, but it
 # does NOT exercise the het harness's CPU side, the `nvcc -c`/ptxas object
 # stage, or the Hopper-cluster inline-PTX path.  smoke.sh closes that gap by
-# emitting a curated 6-rep sample and driving each test's OWN `comp.sh`
+# emitting a curated 7-rep sample and driving each test's OWN `comp.sh`
 # (compile-only: gcc host + `clang --target=aarch64-linux-gnu` real AArch64 asm
 # + `nvcc -std=c++17 -arch=sm_90 -c`).  Needs nvcc+clang but NO GPU -- `-arch`
 # is a compile target, not a device requirement; only *launching* a kernel
 # needs hardware (that is Layer 4).  Reuses `comp.sh` verbatim (no new build
 # code); see hetlitmus/docs/TEST-PLAN.md sec.5.
 #
-# The 6 reps -- each hits one distinct compile path once:
+# The 7 reps -- each hits one distinct compile path once:
 #   1. MP-cg-cta-acquire       het one-sided; plain CPU STR/LDR + barrier
-#   2. 2+2W-cg-sys-acqrel-2s   het two-sided; CPU STLR + LDAPR (release/acquire)
-#   3. 2+2W-cg-sys-fence-2s    het two-sided; CPU DMB.SY fence
-#   4. IRIW-cgcc-cta-relaxed   het 4-proc; largest barrier / scaffolding
-#   5. WRC-ccg-cta-relaxed     het 3-proc; buys down the proc-scaling assumption
-#   6. tests/cluster/MP-cluster  gpu-only Hopper cluster inline-PTX fence path
+#   2. 2+2W-cg-sys-acqrel-2s   het two-sided; CPU STLR (store-only shape: NO load)
+#   3. MP-gc-sys-acqrel-2s     het two-sided GPU->CPU; CPU LDAPR (RCpc) -- the only
+#                              rep that emits a load-acquire.  Added after the RCpc
+#                              /.arch_extension bug reached GH200 unseen: rep 2 was
+#                              LABELLED "STLR + LDAPR" but 2+2W is store-only, so NO
+#                              rep ever emitted an LDAPR.
+#   4. 2+2W-cg-sys-fence-2s    het two-sided; CPU DMB.SY fence
+#   5. IRIW-cgcc-cta-relaxed   het 4-proc; largest barrier / scaffolding
+#   6. WRC-ccg-cta-relaxed     het 3-proc; buys down the proc-scaling assumption
+#   7. tests/cluster/MP-cluster  gpu-only Hopper cluster inline-PTX fence path
 #
 # Usage:
-#   bash hetlitmus/verify/smoke.sh          # run all 6 reps (pre-commit gate)
+#   bash hetlitmus/verify/smoke.sh          # run all 7 reps (pre-commit gate)
 #   bash hetlitmus/verify/smoke.sh bite      # prove the gate has TEETH (self-test)
 #
-# Exit 0 (prints `SMOKE OK`) iff all 6 reps compile; nonzero if any rep fails.
+# Exit 0 (prints `SMOKE OK`) iff all 7 reps compile; nonzero if any rep fails.
 # ---------------------------------------------------------------------------
 set -u
 
@@ -48,7 +53,7 @@ n=0
 smoke_het() { # name blurb
   local name="$1" blurb="$2" d out rc
   n=$((n+1))
-  printf '\n[%d/6] het      %-22s -- %s\n' "$n" "$name" "$blurb"
+  printf '\n[%d/7] het      %-22s -- %s\n' "$n" "$name" "$blurb"
   d="$WORK/e_$name"; mkdir -p "$d"
   if ! out="$(litmus7 -set-libdir litmus/libdir -o "$d" "$HET_DIR/$name.litmus" 2>&1)"; then
     printf '%s\n' "$out"; printf '  FAIL %s (emission)\n' "$name"; fails=$((fails+1)); return
@@ -69,7 +74,7 @@ smoke_het() { # name blurb
 smoke_cluster() { # name blurb
   local name="$1" blurb="$2" d out rc
   n=$((n+1))
-  printf '\n[%d/6] cluster  %-22s -- %s\n' "$n" "$name" "$blurb"
+  printf '\n[%d/7] cluster  %-22s -- %s\n' "$n" "$name" "$blurb"
   d="$WORK/e_$name"; mkdir -p "$d"
   if ! out="$(litmus7 -set-libdir litmus/libdir -o "$d" "$CLU_DIR/$name.litmus" 2>&1)"; then
     printf '%s\n' "$out"; printf '  FAIL %s (emission)\n' "$name"; fails=$((fails+1)); return
@@ -114,17 +119,22 @@ cmd="${1:-all}"
 case "$cmd" in
   bite) bite; exit $? ;;
   all)
-    printf '===== HetLitmus Layer-3 compile-smoke (6 reps; nvcc+clang, NO GPU) =====\n'
+    printf '===== HetLitmus Layer-3 compile-smoke (7 reps; nvcc+clang, NO GPU) =====\n'
     smoke_het     MP-cg-cta-acquire     "one-sided; plain CPU STR/LDR + barrier + nvcc -c"
-    smoke_het     2+2W-cg-sys-acqrel-2s "two-sided; CPU STLR + LDAPR (release/acquire)"
+    smoke_het     2+2W-cg-sys-acqrel-2s "two-sided; CPU STLR (2+2W is store-only: NO load)"
+    # A CPU *load*-acquire rep.  2+2W above is store-only, so despite its old
+    # "STLR + LDAPR" label NO rep ever emitted an LDAPR -- which is exactly why the
+    # RCpc/.arch_extension bug (every -2s CPU body failed to assemble) survived to
+    # B3c.  MP-gc puts the loads on the CPU, so -2s acqrel emits real LDAPR.
+    smoke_het     MP-gc-sys-acqrel-2s   "two-sided GPU->CPU; CPU LDAPR (RCpc, needs .arch_extension rcpc)"
     smoke_het     2+2W-cg-sys-fence-2s  "two-sided; CPU DMB.SY fence"
     smoke_het     IRIW-cgcc-cta-relaxed "4-proc; largest barrier / scaffolding"
     smoke_het     WRC-ccg-cta-relaxed   "3-proc; buys down the proc-scaling assumption"
     smoke_cluster MP-cluster            "Hopper cluster inline-PTX fence path (nvcc -c)"
     printf '\n=====================================================================\n'
     if [ "$fails" -eq 0 ]; then
-      printf 'SMOKE OK  (6/6 reps compiled)\n'; exit 0
+      printf 'SMOKE OK  (7/7 reps compiled)\n'; exit 0
     fi
-    printf 'SMOKE FAILED: %d/6 rep(s) did not compile\n' "$fails"; exit 1 ;;
+    printf 'SMOKE FAILED: %d/7 rep(s) did not compile\n' "$fails"; exit 1 ;;
   *) printf 'usage: %s [all|bite]\n' "$0"; exit 64 ;;
 esac
