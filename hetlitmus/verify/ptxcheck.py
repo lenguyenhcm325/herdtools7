@@ -476,15 +476,25 @@ def split_het_segments(observed, n_gpu_procs):
     Each GPU proc is emitted as its OWN guarded block `{ barrier; model... }`
     (every GPU thread must rendezvous), so the barrier is NOT a single prologue
     -- there is one barrier instance per GPU proc.  The barrier's fetch_add is
-    the unique anchor: the corpus model (ptx.bell declares R/W/F only) has NO
-    atom/red, so every atom/red in the kernel is a barrier fetch_add.  We segment
-    the op stream at each fetch_add and strip the fixed barrier template
-    [leading fence.sc][atom.sys][spin fence.sc][spin ld.sys] from each segment's
-    front; what remains is that proc's model ops, in proc order.
+    the anchor.  We segment the op stream at each fetch_add and strip the fixed
+    barrier template [leading fence.sc][atom.sys][spin fence.sc][spin ld.sys]
+    from each segment's front; what remains is that proc's model ops (plus, for a
+    test lane, the window-opener stripped by check_spin), in proc order.
+
+    ANCHOR = a SYSTEM-SCOPE atom/red.  The corpus model (ptx.bell declares R/W/F
+    only) has no RMW, so every atom/red in the kernel is scaffolding -- but there
+    are now two KINDS of it, and only one is a barrier: the rendezvous fetch_add
+    is system-scoped, while the B4 window-opener (het_stress.cuh het_spin) is
+    DEVICE-scoped.  Anchoring on scope keeps the two apart.  It is also the
+    check, not a bypass: a spin that ever became system-scoped would be counted
+    as a barrier fetch_add here and blow the per-lane count in
+    check_barrier_whitelist -- which is exactly the alarm we want, because a
+    system-scope spin IS a per-iteration cross-device barrier.
 
     Returns (barrier_ops, model_per_segment).  model_per_segment is one list per
-    GPU proc, in proc order."""
-    atom_idx = [i for i, op in enumerate(observed) if op[0] in ('atom', 'red')]
+    barrier-joining GPU lane, in emission order (test lanes, then the observer)."""
+    atom_idx = [i for i, op in enumerate(observed)
+                if op[0] in ('atom', 'red') and op[2] == 'sys']
     if not atom_idx:
         return [], [observed]   # no fetch_add -> barrier check fails separately
     # segment start = the atom's leading seq_cst fence if present, else the atom.
@@ -543,6 +553,86 @@ def check_barrier_whitelist(result, barrier_ops, n_lanes):
 # The observer's snoop: `atomic_ref<uint64_t, thread_scope_system>(*l).load(relaxed)`
 # (litmus/top_litmus.ml gd_sys_load_u64) -> ld.relaxed.sys.
 OBS_OP = ('ld', 'relaxed', 'sys')
+
+# The B4 device-scope window-opener (het_stress.cuh het_spin, ported from
+# cuda-litmus `spin'): a relaxed fetch_add on a device-only scratch word, then
+# the relaxed load of its bounded busy-wait.  Emitted once per GPU TEST lane, at
+# the top of the perpetual loop (the `#pragma unroll 1' pins it to exactly one
+# textual copy, as it does for the tested ops).
+SPIN_OPS = [('atom', 'relaxed', 'gpu'), ('ld', 'relaxed', 'gpu')]
+
+
+def check_spin(result, seg, pidx):
+    """A GPU TEST lane must open its window with EXACTLY the device-scope spin,
+    and the spin must be DEVICE-scoped.  Returns the segment with the spin
+    stripped, so what remains is the lane's model ops.
+
+    This is a load-bearing scientific check, not bookkeeping.  The spin aligns
+    the GPU test lanes of an instance; the CPU-GPU rendezvous is the SEPARATE
+    system-scope gd_bar, which fires once, OUTSIDE the perpetual loop.  If the
+    spin were ever widened to system scope it would become a per-iteration
+    CROSS-DEVICE barrier -- which masks the very order under test and stalls the
+    run (Srivastava 4.1).  Pinning the scope to `gpu' here makes that regression
+    impossible to land silently.  It equally fails if the window-opener is
+    dropped, duplicated, strengthened (relaxed -> acquire), or moved after the
+    tested ops."""
+    got = seg[:len(SPIN_OPS)]
+    if got != SPIN_OPS:
+        result.fail("P%d window-opener (het_spin) op stream differs -- expected the "
+                    "device-scope spin before the tested ops" % pidx)
+        for d in diff_sequences(SPIN_OPS, got):
+            result.note(d)
+        return seg          # strip nothing: let the model-op check report the rest
+    result.note("  P%d window-opener OK (device-scope spin: %s)"
+                % (pidx, ", ".join(fmt(o) for o in SPIN_OPS)))
+    return seg[len(SPIN_OPS):]
+
+
+def stray_sys_ops(ptx_text):
+    """SYSTEM-scope memory ops emitted OUTSIDE the inline-asm markers.
+
+    extract_ptx_ops only sees inline-asm ops -- which is sound for the MODEL ops,
+    because libcu++'s scoped atomics and CudaLang's inline PTX both compile to
+    asm-volatile.  But it means a system-scope op emitted by a compiler BUILTIN
+    (__threadfence_system, atomicAdd_system, ...) would sit outside the markers
+    and never be compared against anything.
+
+    B4 is where such an op could hide: the stress layer deliberately uses
+    builtins and plain accesses so that its scaffolding stays OUT of the model-op
+    stream (correctly -- unordered, device-scope traffic on a disjoint scratchpad
+    is not a tested op).  So close the blind spot rather than widen it: no
+    SYSTEM-scope memory op may appear outside the inline-asm stream at all.
+    Scaffolding is allowed to be invisible precisely because it is device-scope
+    and unordered; a system-scope op is never scaffolding -- on this hardware it
+    is, by definition, traffic that crosses the CPU-GPU boundary."""
+    stray = []
+    in_asm = False
+    for line in ptx_text.splitlines():
+        s = line.strip()
+        if s.startswith('// begin inline asm'):
+            in_asm = True
+            continue
+        if s.startswith('// end inline asm'):
+            in_asm = False
+            continue
+        if in_asm:
+            continue
+        m = OPLINE.match(s)
+        if m and 'sys' in m.group(2).split('.'):
+            stray.append(s)
+    return stray
+
+
+def check_no_stray_sys(result, ptx_text):
+    stray = stray_sys_ops(ptx_text)
+    if stray:
+        result.fail("%d system-scope op(s) emitted OUTSIDE the inline-asm stream "
+                    "(a builtin sys-scope op is invisible to the model-op check)"
+                    % len(stray))
+        for s in stray[:8]:
+            result.note("  stray: %s" % s)
+    else:
+        result.note("  no stray system-scope ops outside the model-op stream")
 
 
 def check_observer(result, seg, obs_locs):
@@ -659,18 +749,31 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
                                " + 1 observer" if obs_locs else "",
                                len(model_per_seg)))
             if obs_locs and len(model_per_seg) == n_lanes:
+                # The observer snoops; it does NOT stress and does NOT spin (its
+                # job is to sample densely, and gating it on the test lanes would
+                # couple two lanes that run at different rates).  So it is the one
+                # barrier-joining lane with no window-opener: strip it first, then
+                # every remaining segment is a test lane and must carry the spin.
                 check_observer(result, model_per_seg[-1], obs_locs)
                 model_per_seg = model_per_seg[:-1]
+            # B4: each GPU TEST lane opens its window with the device-scope spin.
+            # Model it (so the expectation is COMPLETE) and check it exactly (so
+            # the gate does not go blind to it).
+            if len(model_per_seg) == len(gpu_expected):
+                model_per_seg = [check_spin(result, seg, gpu_expected[i][0])
+                                 for i, seg in enumerate(model_per_seg)]
             model_ops = [op for seg in model_per_seg for op in seg]
             check_gpu(result, gpu_expected, model_ops, "GPU")
+            check_no_stray_sys(result, ptx_text)
             if cpu_expected:
                 if cpu_c_text is None:
                     result.fail("het test has CPU columns but no _cpu.c emitted")
                 else:
                     check_cpu(result, cpu_expected, cpu_c_text)
         else:
-            # gpu-only: ALL inline-asm ops are model ops (no barrier).
+            # gpu-only: ALL inline-asm ops are model ops (no barrier, no stress).
             check_gpu(result, gpu_expected, observed, "GPU")
+            check_no_stray_sys(result, ptx_text)
     finally:
         if not keep:
             shutil.rmtree(tmp, ignore_errors=True)

@@ -21,11 +21,14 @@
 ; OCaml build: they emit representative het tests through litmus7 and read the
 ; generated driver.  pfix-cond guards the Task P condition-compiler fix (7a/7b);
 ; coop-launch guards the B2 perpetual-loop + cooperative-launch driver shape;
-; shared-alloc guards the B1 per-target gd_alloc_shared / gd_free_shared allocator.
+; shared-alloc guards the B1 per-target gd_alloc_shared / gd_free_shared allocator;
+; stress guards the B4 GPU memory-stress layer (device-memory scratchpad, pure-stress
+; workgroups, and the device-scope window-opener kept SEPARATE from the system-scope
+; cross-device rendezvous).
 ; Scoped so the three Layer-1 tests above stay toolchain-free.  litmus7 het emission
 ; needs no -set-libdir, so only the binary + the .litmus inputs are required.
 (cram
- (applies_to pfix-cond coop-launch shared-alloc tagged-recover)
+ (applies_to pfix-cond coop-launch shared-alloc tagged-recover stress)
  (package herdtools7)
  (deps
   %{bin:litmus7}

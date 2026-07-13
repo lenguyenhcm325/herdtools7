@@ -1525,8 +1525,22 @@ static void gd_free_shared(void* _p){
                  block_dim) ;
             s (Printf.sprintf "#define HET_TEST_BLOCKS %d\n"
                  (n_blocks + (if has_observers then 1 else 0))) ;
-            s (Printf.sprintf "#define HET_GPU_LANES %d\n\n"
+            s (Printf.sprintf "#define HET_GPU_LANES %d\n"
                  (List.length gpu_prog + (if has_observers then 1 else 0))) ;
+            (* HET_SPIN_LANES = the GPU TEST lanes the device-scope window-opener
+               aligns.  The observer is excluded on purpose: it runs at its own
+               rate and gating the test lanes on it would couple the two.
+
+               Be honest about what this buys per test: most het shapes put a
+               SINGLE proc on the GPU, and a barrier over one lane aligns nothing
+               -- there it is a self-barrier whose only effect is scratch-word
+               traffic (still stress, but not alignment).  It aligns real partners
+               only where the shape puts two procs on the GPU.  The CPU-GPU
+               alignment is never bought here: it is bought with volume + stress,
+               because a per-iteration cross-device barrier would mask the very
+               order under test. *)
+            s (Printf.sprintf "#define HET_SPIN_LANES %d\n\n"
+                 (List.length gpu_prog)) ;
             s (HetCond.het_confidence_enum_c ^ "\n") ;
             (* B3 het_obs_record (B3-decision Decision 5): one per (test,instance,run).
                COMMIT-1 fills N/frames/target/interleavings/distinct/skew from the
@@ -1593,7 +1607,8 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                     every test location by construction, so they perturb the
                     memory system without changing the tested behaviour set. *)
                  @ ["uint32_t* _scratch" ; "uint32_t* _scratch_loc" ;
-                    "uint32_t* _gpu_done" ; "uint32_t _seed"]) in
+                    "uint32_t* _spin_bar" ; "uint32_t* _gpu_done" ;
+                    "uint32_t _seed"]) in
             s (Printf.sprintf "__global__ void litmus_%s(%s) {\n" id kparams) ;
             (* B4: each lane draws from its OWN seeded Park-Miller stream, so the
                probabilistic stress toggles are decided device-side (the perpetual
@@ -1633,6 +1648,26 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                 s (Printf.sprintf
                      "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n\
                       \        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, HET_PRE_STRESS_PATTERN);\n") ;
+                (* B4 WINDOW-OPENER (cuda-litmus's `spin', Alglave's
+                   thread-synchronisation incantation).  DEVICE scope, on a scratch
+                   word that is not a test location: it aligns the GPU test lanes so
+                   their critical accesses race, and adds no ordering edge to the
+                   test.  It is NOT the cross-device rendezvous -- that is the
+                   system-scope gd_bar above, fired ONCE outside this loop.  The two
+                   must never merge: a per-iteration CROSS-DEVICE barrier masks the
+                   tested order and stalls (Srivastava 4.1).  ptxcheck pins the scope
+                   to `gpu' so that regression cannot land silently.
+
+                   The limit is iteration-indexed because the loop is perpetual:
+                   upstream relaunches per iteration and so gets a fresh counter,
+                   but a counter that only grows would be satisfied from iteration 1
+                   onward and the barrier would silently stop barriering.  Each lane
+                   adds exactly 1 per iteration, so (_n+1)*lanes is reached only once
+                   every lane has entered iteration _n.  The 1024-spin cap inside
+                   het_spin still bounds the wait (GPUs give no cross-workgroup
+                   forward-progress guarantee). *)
+                s "      if (het_rng_pct(&_rng, HET_BARRIER_PCT))\n" ;
+                s "        het_spin(_spin_bar, (uint32_t)(_n + 1) * HET_SPIN_LANES);\n" ;
                 (* B3: tagged stores (mu per store node); loads unchanged, recorded
                    below.  Some(...) also widens the atomic_ref to uint64_t. *)
                 let st_ctr = ref 0 in
@@ -1857,6 +1892,8 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                  (dialect.gd_dev_malloc "_scratch" "sizeof(uint32_t)*HET_SCRATCH_SIZE")) ;
             s (Printf.sprintf "  uint32_t *_scratch_loc; %s\n"
                  (dialect.gd_dev_malloc "_scratch_loc" "sizeof(uint32_t)*_grid")) ;
+            s (Printf.sprintf "  uint32_t *_spin_bar; %s\n"
+                 (dialect.gd_dev_malloc "_spin_bar" "sizeof(uint32_t)")) ;
             s (Printf.sprintf "  uint32_t *_gpu_done; %s\n"
                  (dialect.gd_dev_malloc "_gpu_done" "sizeof(uint32_t)")) ;
             s "  uint32_t *_scratch_loc_h = (uint32_t*)malloc_check(sizeof(uint32_t)*_grid);\n" ;
@@ -1876,6 +1913,8 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                     "sizeof(uint32_t)*_grid")) ;
             s (Printf.sprintf "    %s\n"
                  (dialect.gd_dev_memset0 "_scratch" "sizeof(uint32_t)*HET_SCRATCH_SIZE")) ;
+            s (Printf.sprintf "    %s\n"
+                 (dialect.gd_dev_memset0 "_spin_bar" "sizeof(uint32_t)")) ;
             s (Printf.sprintf "    %s\n"
                  (dialect.gd_dev_memset0 "_gpu_done" "sizeof(uint32_t)")) ;
             (* reset read buffers (all N entries are overwritten by the loop, but
@@ -1919,7 +1958,8 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                  @ List.map (fun (_,_,name,_,_) -> "&"^name) gpu_read_buffers
                  @ List.map (fun l -> "&"^obsG l) obs_locs
                  @ ["&barrier"]
-                 @ ["&_scratch" ; "&_scratch_loc" ; "&_gpu_done" ; "&_seed"]) in
+                 @ ["&_scratch" ; "&_scratch_loc" ; "&_spin_bar" ; "&_gpu_done" ;
+                    "&_seed"]) in
             s (Printf.sprintf "    void* _args[] = { %s };\n" args_addrs) ;
             s (Printf.sprintf
                  "    %s _e = %s((void*)litmus_%s, dim3(_grid), dim3(HET_BLOCK_DIM), _args, 0, 0);\n"
@@ -2281,6 +2321,7 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             (* B4: the stress objects are device memory -> the device free. *)
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch")) ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch_loc")) ;
+            s (Printf.sprintf "  %s\n" (dialect.gd_free "_spin_bar")) ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_gpu_done")) ;
             s "  free(_scratch_loc_h);\n" ;
             s "  return 0;\n}\n" in

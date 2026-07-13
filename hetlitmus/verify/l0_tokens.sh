@@ -264,6 +264,86 @@ selftest() {
     _expect "het CPU STLR->STR injection" 1 "$rc" || fails=$((fails+1))
   fi
 
+  # ---- [6] B4: the GPU stress layer's ops are MODELLED, and the model bites ----
+  # The stress layer adds ops to the kernel, so ptxcheck had to grow an
+  # expectation for them.  An expectation that cannot fail is worse than none, so
+  # prove each one bites.  The load-bearing case is the FIRST: widening the
+  # device-scope window-opener to SYSTEM scope would silently turn it into a
+  # per-iteration CROSS-DEVICE barrier, which masks the very order under test
+  # (Srivastava 4.1).  The last case guards the blind spot the stress layer could
+  # otherwise hide in: a sys-scope op emitted by a compiler BUILTIN sits outside
+  # the PTX inline-asm markers, where the model-op check cannot see it.
+  #
+  # Each injection is verified to ACTUALLY change the file first -- a sed that
+  # silently matches nothing would make this whole section a vacuous pass.
+  printf '\n[6] B4 stress layer: spin + stray-sys injections must FAIL(1)\n'
+  local B4T=MP-cg-sys-acqrel-2s
+  local B4L="$HET_DIR/$B4T.litmus" b4="$sc/b4" b4cpu b4rc
+  mkdir -p "$b4"
+  litmus7 -set-libdir litmus/libdir -o "$b4" "$B4L" >/dev/null 2>&1
+  b4cpu="$b4/$B4T/${B4T}_cpu.c"
+  nvcc -std=c++17 -arch=sm_90 --ptx -o "$b4/clean.ptx" "$b4/$B4T/$B4T.cu" >/dev/null 2>&1
+  if [ ! -s "$b4/clean.ptx" ] || [ ! -s "$b4cpu" ]; then
+    echo "  *** could not emit/compile the B4 het harness for $B4T"
+    fails=$((fails+1))
+  elif ! grep -q 'het_spin' "$b4/$B4T/$B4T.cu"; then
+    echo "  *** $B4T.cu has no het_spin -- the stress layer is not emitted"
+    fails=$((fails+1))
+  else
+    # control: the unmodified stress-bearing harness must PASS
+    python3 "$CHECK" "$B4L" --ptx "$b4/clean.ptx" --cpu-c "$b4cpu" -q >/dev/null 2>&1; b4rc=$?
+    _expect "B4 control (stress layer present)" 0 "$b4rc" || fails=$((fails+1))
+
+    _b4bite() { # label sed-expr
+      local lbl="$1" expr="$2" rc
+      sed "$expr" "$b4/clean.ptx" > "$b4/bite.ptx"
+      if cmp -s "$b4/clean.ptx" "$b4/bite.ptx"; then
+        printf '  *** VACUOUS BITE: injection changed nothing    [%s]\n' "$lbl"
+        return 1
+      fi
+      python3 "$CHECK" "$B4L" --ptx "$b4/bite.ptx" --cpu-c "$b4cpu" -q >/dev/null 2>&1; rc=$?
+      _expect "$lbl" 1 "$rc"
+    }
+    _b4bite "spin WIDENED to sys scope (= a per-iteration cross-device barrier)" \
+            's/atom\.add\.relaxed\.gpu/atom.add.relaxed.sys/' || fails=$((fails+1))
+    _b4bite "spin narrowed gpu -> cta" \
+            's/atom\.add\.relaxed\.gpu/atom.add.relaxed.cta/' || fails=$((fails+1))
+    _b4bite "spin strengthened relaxed -> acquire" \
+            's/atom\.add\.relaxed\.gpu/atom.add.acquire.gpu/' || fails=$((fails+1))
+    _b4bite "spin fetch_add dropped" \
+            '/atom\.add\.relaxed\.gpu/d' || fails=$((fails+1))
+    _b4bite "spin busy-wait load dropped" \
+            '/ld\.relaxed\.gpu/d' || fails=$((fails+1))
+
+    # a builtin sys-scope op (e.g. __threadfence_system() sneaking into stress
+    # code) lands OUTSIDE the inline-asm markers -- invisible to the op-stream
+    # check, which is exactly why check_no_stray_sys exists.
+    python3 - "$b4/clean.ptx" "$b4/bite.ptx" <<'PY'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+out, in_asm, done = [], False, False
+for l in open(src).read().splitlines():
+    s = l.strip()
+    if s.startswith('// begin inline asm'):
+        in_asm = True
+    if not in_asm and not done and s.startswith('ret;'):
+        out.append('\tfence.sc.sys;')   # mimics __threadfence_system()
+        done = True
+    out.append(l)
+    if s.startswith('// end inline asm'):
+        in_asm = False
+open(dst, 'w').write("\n".join(out) + "\n")
+sys.exit(0 if done else 1)
+PY
+    if cmp -s "$b4/clean.ptx" "$b4/bite.ptx"; then
+      printf '  *** VACUOUS BITE: injection changed nothing    [stray builtin sys-scope op]\n'
+      fails=$((fails+1))
+    else
+      python3 "$CHECK" "$B4L" --ptx "$b4/bite.ptx" --cpu-c "$b4cpu" -q >/dev/null 2>&1; b4rc=$?
+      _expect "stray builtin sys-scope op (outside inline asm)" 1 "$b4rc" || fails=$((fails+1))
+    fi
+  fi
+
   printf '\n'
   if [ "$fails" -eq 0 ]; then
     echo "SELFTEST OK"
