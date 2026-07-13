@@ -1552,6 +1552,15 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                 (* B2: gd_bar fires ONCE (start rendezvous, outside the loop). *)
                 s (dialect.gd_bar "    " "barrier") ;
                 List.iter (fun n -> s (Printf.sprintf "    uint64_t r%d = 0;\n" n)) regs ;
+                (* FAITHFULNESS: SIZE_OF_TEST is a compile-time constant, so nvcc
+                   unrolls this loop ~16x and the emitted PTX carries 16x the tested
+                   instructions (33 ld.acquire where the test declares 2) -- the whole
+                   het corpus failed the L0 faithfulness gate.  An unrolled body is
+                   also a DIFFERENT program microarchitecturally (ILP/scheduling),
+                   which perturbs the very timing window the test probes.  Pin the
+                   trip count to 1 so the PTX contains exactly the tested sequence per
+                   iteration.  Do NOT remove (l0_tokens.sh het lane depends on it). *)
+                s "    #pragma unroll 1\n" ;
                 s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
                 (* B3: tagged stores (mu per store node); loads unchanged, recorded
                    below.  Some(...) also widens the atomic_ref to uint64_t. *)
@@ -1583,6 +1592,12 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
               s (Printf.sprintf
                    "  if (blockIdx.x == %d && threadIdx.x == 0) {\n" n_blocks) ;
               s (dialect.gd_bar "    " "barrier") ;
+              (* FAITHFULNESS: pin the observer's trip count too, so the kernel PTX
+                 carries exactly ONE relaxed/sys load per observed location (not
+                 nvcc's ~16x unroll).  l0_tokens.sh models the observer lane as a
+                 fixed [ld.relaxed.sys] x |obs_locs| segment; an unrolled observer
+                 would make that count nondeterministic.  Do NOT remove. *)
+              s "    #pragma unroll 1\n" ;
               s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
               List.iter
                 (fun l ->

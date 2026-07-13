@@ -185,6 +185,34 @@ def parse_body(text):
     return procs, rows
 
 
+# Coherence-final atom in a condition:  `[x]=2`  (as opposed to a register atom
+# `1:r0=1`).  Each one observes a ws/co edge.
+COND_LOC = re.compile(r'\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]\s*=')
+
+
+def condition_locations(text):
+    """Shared LOCATIONS named by coherence-final atoms (`[x]=v`) in the condition,
+    de-duplicated in source order.
+
+    Mirrors HetCond.condition_locations in the emitter (litmus/hetCond.ml).  A
+    ws/co edge has no read node, so the het emitter answers each such atom by
+    launching ONE extra OBSERVER lane that snoops EVERY one of these locations
+    (relaxed, system scope) once per iteration.  That lane joins the rendezvous
+    barrier, so it contributes one extra fetch_add AND exactly |locs| extra
+    `ld.relaxed.sys` to the kernel's op stream.  ptxcheck must MODEL that lane, or
+    the 72 observer tests (S/R/2+2W) look like they carry stray memory ops.
+    Register atoms (`1:r0=1`) are recovered from read buffers and need no
+    observer, so they are ignored here."""
+    locs = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if s.startswith('exists') or s.startswith('forall') or s.startswith('filter'):
+            for m in COND_LOC.finditer(s):
+                if m.group(1) not in locs:
+                    locs.append(m.group(1))
+    return locs
+
+
 def device_class(dev):
     """Map a column device tag to 'gpu' or 'cpu'."""
     d = dev.lower()
@@ -484,10 +512,14 @@ def split_het_segments(observed, n_gpu_procs):
     return barrier_ops, model_per_segment
 
 
-def check_barrier_whitelist(result, barrier_ops, n_gpu_procs):
+def check_barrier_whitelist(result, barrier_ops, n_lanes):
     """The het sys-scope rendezvous barrier(s) must stay STRONG: every barrier op
-    system-scoped (not narrowed), one fetch_add (atom/red) PER GPU proc, and a
-    seq_cst fence present.  N GPU procs => N barrier instances."""
+    system-scoped (not narrowed), one fetch_add (atom/red) PER BARRIER-JOINING GPU
+    LANE, and a seq_cst fence present.
+
+    n_lanes = (#GPU procs) + (1 if the test has an observer lane).  The observer
+    lane rendezvouses too (it must not start snooping before the test threads run),
+    so it contributes its own fetch_add."""
     if not barrier_ops:
         result.fail("het kernel has NO barrier (expected sys-scope rendezvous)")
         return
@@ -498,14 +530,41 @@ def check_barrier_whitelist(result, barrier_ops, n_gpu_procs):
     atoms = [o for o in barrier_ops if o[0] in ('atom', 'red')]
     if not any(o[1] == 'sc' for o in fences):
         result.fail("barrier has no seq_cst fence (fence.sc.sys) -- weakened")
-    if len(atoms) != n_gpu_procs:
-        result.fail("expected one barrier fetch_add per GPU proc (%d); found %d"
-                    % (n_gpu_procs, len(atoms)))
+    if len(atoms) != n_lanes:
+        result.fail("expected one barrier fetch_add per barrier-joining GPU lane (%d); found %d"
+                    % (n_lanes, len(atoms)))
     for a in atoms:
         if a[2] != 'sys':
             result.fail("barrier fetch_add %s not system scope" % fmt(a))
-    result.note("  barrier whitelist OK (%d ops, %d fetch_add for %d GPU procs, all sys, seq_cst fence)"
-                % (len(barrier_ops), len(atoms), n_gpu_procs))
+    result.note("  barrier whitelist OK (%d ops, %d fetch_add for %d lane(s), all sys, seq_cst fence)"
+                % (len(barrier_ops), len(atoms), n_lanes))
+
+
+# The observer's snoop: `atomic_ref<uint64_t, thread_scope_system>(*l).load(relaxed)`
+# (litmus/top_litmus.ml gd_sys_load_u64) -> ld.relaxed.sys.
+OBS_OP = ('ld', 'relaxed', 'sys')
+
+
+def check_observer(result, seg, obs_locs):
+    """The observer lane must contribute EXACTLY one relaxed/system-scope load per
+    observed location, and nothing else.
+
+    This is NOT a relaxation of the gate.  The observer's loads are real memory ops
+    on the tested locations -- a deliberate, documented perturbation, and the only
+    way a ws/co edge (which has no read node) is recoverable at all (B3-decision
+    5; Srivastava 3.3).  Modelling them makes the EXPECTATION complete; the check
+    itself stays exact.  It still fails if the observer is narrowed (sys -> cta),
+    strengthened (relaxed -> acquire), or gains/loses a load -- e.g. if someone
+    drops the `#pragma unroll 1` that pins its trip count."""
+    expected = [OBS_OP] * len(obs_locs)
+    if seg != expected:
+        result.fail("observer lane op stream differs (observes %s)"
+                    % ", ".join(obs_locs))
+        for d in diff_sequences(expected, seg):
+            result.note(d)
+    else:
+        result.note("  observer lane OK (%d relaxed/sys load(s): %s)"
+                    % (len(expected), ", ".join(obs_locs)))
 
 
 def check_cpu(result, expected_per_proc, cpu_c_text):
@@ -583,14 +642,25 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
         observed = extract_ptx_ops(ptx_text)
 
         if kind == 'Het':
-            # one barrier instance per GPU proc; segment on the fetch_add anchor
-            # and strip the barrier template, leaving per-proc model ops.
+            # One barrier instance per barrier-joining GPU lane; segment on the
+            # fetch_add anchor and strip the barrier template, leaving each lane's
+            # model ops.  A test whose condition names a coherence-final location
+            # (`[x]=2`) also gets an OBSERVER lane, emitted LAST (after every GPU
+            # proc -- see top_litmus.ml dump_gpu_file, the `blockIdx.x == n_blocks`
+            # block).  It joins the barrier and snoops each observed location once.
             n_gpu = len(gpu_expected)
-            barrier_ops, model_per_seg = split_het_segments(observed, n_gpu)
-            check_barrier_whitelist(result, barrier_ops, n_gpu)
-            if len(model_per_seg) != n_gpu:
-                result.fail("expected %d GPU-proc segments; found %d"
-                            % (n_gpu, len(model_per_seg)))
+            obs_locs = condition_locations(text)
+            n_lanes = n_gpu + (1 if obs_locs else 0)
+            barrier_ops, model_per_seg = split_het_segments(observed, n_lanes)
+            check_barrier_whitelist(result, barrier_ops, n_lanes)
+            if len(model_per_seg) != n_lanes:
+                result.fail("expected %d barrier-joining GPU lane(s) (%d proc(s)%s); found %d"
+                            % (n_lanes, n_gpu,
+                               " + 1 observer" if obs_locs else "",
+                               len(model_per_seg)))
+            if obs_locs and len(model_per_seg) == n_lanes:
+                check_observer(result, model_per_seg[-1], obs_locs)
+                model_per_seg = model_per_seg[:-1]
             model_ops = [op for seg in model_per_seg for op in seg]
             check_gpu(result, gpu_expected, model_ops, "GPU")
             if cpu_expected:
