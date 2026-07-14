@@ -23,10 +23,24 @@ been satisfied by a genuine THIRD BARRIER ARRIVAL -- exactly the regression it e
 to catch.  Matching the barrier's own spelling keeps it discriminating.  (ptxcheck's
 barrier whitelist guards the same invariant independently, at the PTX level: one
 system-scope fetch_add per barrier-joining GPU lane.)
+B6b: MP-cg-sys-acqrel-2s is a should-be-FORBIDDEN test, so its harness CO-RUNS three
+het instances (T, mu(T), the canary).  The invariant is per-participant and unchanged
+-- ONE free-running window per lane and per CPU wrapper, ONE barrier arrival before
+each -- so the totals are 3x2 = 6.  Scoped to T's own GPU lane as well, so a total of
+6 cannot be satisfied by a lane that lost its barrier while another gained a second
+loop: bumping a count without scoping it is how a guard stops guarding.
   $ grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
-  2
+  6
   $ grep -c '_bar.fetch_add' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
-  2
+  6
+  $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n)'
+  1
+  $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c '_bar.fetch_add'
+  1
+
+and NPART is the SUM over the instances, so the rendezvous waits for all six.
+  $ grep -c '#define NPART 6' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  1
 
 (d) a SINGLE terminal device sync per RUN.  This is B2's invariant: the kernel is
 persistent, so the run loop must sync exactly ONCE, at the end -- a sync inside the

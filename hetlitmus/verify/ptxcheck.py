@@ -223,6 +223,99 @@ def device_class(dev):
     raise CompletenessError("unrecognized device tag %r (not gpu/cpu/...)" % dev)
 
 
+# ---------------------------------------------------------------------------
+# B6b: the CO-RUN.  A should-be-FORBIDDEN het test is emitted as a harness with
+# THREE co-running instances -- T, its minimal mutant mu(T), and the Layer-B
+# canary -- in one kernel and one _cpu.c.  extract_ptx_ops is file-scoped and
+# flat, so the gate now sees three tests' worth of ops in one stream.
+#
+# THE EXPECTATION IS MADE COMPLETE; THE CHECK IS NOT WEAKENED.  Every lane of
+# every instance is modelled exactly as before -- same barrier whitelist, same
+# device-scope spin, same observer profile, same ordered + per-proc multiset
+# comparison -- and the CPU side compares all three instances' asm blocks.  A
+# weakening, strengthening, miscount or misplacement in ANY of the three still
+# fails, and so does a control whose lanes are missing entirely (which would be
+# a harness reporting a positive control that is not there).
+# ---------------------------------------------------------------------------
+
+def load_control_map(litmus_path):
+    """(mu, canary) for this test from tests/het/control-map.csv, or (None, None).
+
+    The map is DERIVED from the corpus + the oracle by controlmap.py and gated by
+    `make hetlitmus-controlmap'; it is never a name rewrite (MP-gc-sys-acquire and
+    friends do not exist).  Read the same file the emitter reads, so the gate
+    cannot disagree with the harness about what is co-running."""
+    d = os.path.dirname(os.path.abspath(litmus_path))
+    f = os.path.join(d, "control-map.csv")
+    if not os.path.exists(f):
+        return None, None
+    name = litmus_name(read_litmus(litmus_path))
+    with open(f) as fh:
+        for line in fh:
+            if line.startswith('#'):
+                continue
+            c = line.rstrip('\n').split(',')
+            if len(c) >= 8 and c[0] == name and c[0] != 'Test':
+                mu = c[2] if c[2] != '-' else None
+                can = c[7] if c[7] not in ('-', 'self') else None
+                return mu, can
+    return None, None
+
+
+def instance_of(litmus_path):
+    """Parse one .litmus into the profile the checker compares against."""
+    text = read_litmus(litmus_path)
+    procs, rows = parse_body(text)
+    ncol = len(procs)
+    cols = [[] for _ in range(ncol)]
+    for row in rows:
+        for c in range(ncol):
+            cols[c].append(row[c] if c < len(row) else '')
+    gpu, cpu = [], []
+    for col, (pidx, dev) in enumerate(procs):
+        if device_class(dev) == 'gpu':
+            gpu.append((pidx, gpu_ops_of_column(cols[col])))
+        else:
+            cpu.append((pidx, cpu_ops_of_column(cols[col])))
+    return dict(name=litmus_name(text), kind=litmus_kind(text),
+                gpu=gpu, cpu=cpu, obs=condition_locations(text))
+
+
+def het_instances(litmus_path):
+    """The instances this harness co-runs, IN EMISSION ORDER (T, mu(T), canary).
+
+    Mirrors top_litmus.ml's instance population exactly: a test for which the map
+    names a mu is a three-instance co-run harness; everything else is one
+    instance.  If these two ever disagree the lane count will not match and the
+    gate fails -- which is the point."""
+    d = os.path.dirname(os.path.abspath(litmus_path))
+    insts = [instance_of(litmus_path)]
+    mu, can = load_control_map(litmus_path)
+    if mu and can:
+        for n in (mu, can):
+            p = os.path.join(d, n + ".litmus")
+            if not os.path.exists(p):
+                raise CompletenessError(
+                    "control-map.csv names %r as a control of %s but %s does not "
+                    "exist -- the harness cannot be co-running it" % (n, insts[0]['name'], p))
+            insts.append(instance_of(p))
+    return insts
+
+
+def het_lane_plan(insts):
+    """The barrier-joining GPU lanes, in the order dump_gpu_file emits them:
+    for each instance, its GPU test lanes (proc order), then its observer lane.
+
+    Returns a list of ('test', proc, ops, instname) / ('obs', None, locs, instname)."""
+    lanes = []
+    for i in insts:
+        for pidx, ops in i['gpu']:
+            lanes.append(('test', pidx, ops, i['name']))
+        if i['obs']:
+            lanes.append(('obs', None, i['obs'], i['name']))
+    return lanes
+
+
 # ----- per-column op extraction --------------------------------------------
 
 def gpu_ops_of_column(cells):
@@ -385,21 +478,28 @@ def extract_cpu_ops(cpu_c_text):
     block = lines[start:end] if start is not None else lines
     ops = []
     for ln in block:
-        m = ASM_STR.search(ln)
-        if not m:
-            continue
-        mn = m.group(1).lower()
-        rest = m.group(2).strip().lower()
-        if mn not in CPU_MNEMONIC:
-            # asm we didn't expect in the real block -> surface, don't skip
-            raise CompletenessError("unexpected asm mnemonic %r in _cpu.c" % mn)
-        _sem, is_mem = CPU_MNEMONIC[mn]
-        if not is_mem:
-            continue
-        qual = ''
-        if mn == 'dmb':
-            qual = rest.replace(',', ' ').split()[0] if rest else ''
-        ops.append((mn, qual))
+        # finditer, NOT search.  C concatenates adjacent string literals, so
+        #     "str %x[_v1],[%[y]]\n"    "dmb sy\n"
+        # is ONE asm line carrying TWO instructions -- and re.search sees only the
+        # first, which made every instruction after the first on any line invisible
+        # to this gate.  Found by a B6b bite test that injected a `dmb sy' into the
+        # MUTANT's body and PASSED: a silently strengthened mutant is not a mutant,
+        # it may never fire, and a control that never fires discards every null it
+        # was supposed to vouch for.  The emitter happens to emit one per line, but
+        # a gate that only works because of how its input is formatted is not a gate.
+        for m in ASM_STR.finditer(ln):
+            mn = m.group(1).lower()
+            rest = m.group(2).strip().lower()
+            if mn not in CPU_MNEMONIC:
+                # asm we didn't expect in the real block -> surface, don't skip
+                raise CompletenessError("unexpected asm mnemonic %r in _cpu.c" % mn)
+            _sem, is_mem = CPU_MNEMONIC[mn]
+            if not is_mem:
+                continue
+            qual = ''
+            if mn == 'dmb':
+                qual = rest.replace(',', ' ').split()[0] if rest else ''
+            ops.append((mn, qual))
     return ops
 
 
@@ -440,9 +540,13 @@ class Result:
 
 
 def check_gpu(result, expected_per_proc, observed, label):
-    """expected_per_proc: list of (proc_idx, [ops]).  observed: flat PTX ops.
+    """expected_per_proc: list of (proc_label, [ops]).  observed: flat PTX ops.
     Runs the ORDERED check (placement+order) and the PER-PROC MULTISET check
-    (multiplicity, equality not subset)."""
+    (multiplicity, equality not subset).
+
+    B6b: proc_label is a plain string so a co-run harness can name the INSTANCE as
+    well as the proc ("MP-cg-sys-fence:P1") -- otherwise a mismatch in the mutant
+    would be reported against the test's proc number and read as a bug in T."""
     expected_flat = [op for _, ops in expected_per_proc for op in ops]
 
     # ----- ORDERED check (subsumes placement; the multiset is order-blind) ---
@@ -460,13 +564,13 @@ def check_gpu(result, expected_per_proc, observed, label):
 
     # ----- PER-PROC multiset equality (slice observed by expected counts) ----
     pos = 0
-    for pidx, ops in expected_per_proc:
+    for plabel, ops in expected_per_proc:
         seg = observed[pos:pos + len(ops)]
         pos += len(ops)
         ce, ca = Counter(ops), Counter(seg)
         if ce != ca:
-            result.fail("%s P%d per-proc multiset differs: expected %s observed %s"
-                        % (label, pidx, dict(ce), dict(ca)))
+            result.fail("%s %s per-proc multiset differs: expected %s observed %s"
+                        % (label, plabel, dict(ce), dict(ca)))
     return expected_flat
 
 
@@ -562,7 +666,7 @@ OBS_OP = ('ld', 'relaxed', 'sys')
 SPIN_OPS = [('atom', 'relaxed', 'gpu'), ('ld', 'relaxed', 'gpu')]
 
 
-def check_spin(result, seg, pidx):
+def check_spin(result, seg, pidx, iname=""):
     """A GPU TEST lane must open its window with EXACTLY the device-scope spin,
     and the spin must be DEVICE-scoped.  Returns the segment with the spin
     stripped, so what remains is the lane's model ops.
@@ -576,15 +680,16 @@ def check_spin(result, seg, pidx):
     impossible to land silently.  It equally fails if the window-opener is
     dropped, duplicated, strengthened (relaxed -> acquire), or moved after the
     tested ops."""
+    who = ("%s:P%d" % (iname, pidx)) if iname else ("P%d" % pidx)
     got = seg[:len(SPIN_OPS)]
     if got != SPIN_OPS:
-        result.fail("P%d window-opener (het_spin) op stream differs -- expected the "
-                    "device-scope spin before the tested ops" % pidx)
+        result.fail("%s window-opener (het_spin) op stream differs -- expected the "
+                    "device-scope spin before the tested ops" % who)
         for d in diff_sequences(SPIN_OPS, got):
             result.note(d)
         return seg          # strip nothing: let the model-op check report the rest
-    result.note("  P%d window-opener OK (device-scope spin: %s)"
-                % (pidx, ", ".join(fmt(o) for o in SPIN_OPS)))
+    result.note("  %s window-opener OK (device-scope spin: %s)"
+                % (who, ", ".join(fmt(o) for o in SPIN_OPS)))
     return seg[len(SPIN_OPS):]
 
 
@@ -635,7 +740,7 @@ def check_no_stray_sys(result, ptx_text):
         result.note("  no stray system-scope ops outside the model-op stream")
 
 
-def check_observer(result, seg, obs_locs):
+def check_observer(result, seg, obs_locs, iname=""):
     """The observer lane must contribute EXACTLY one relaxed/system-scope load per
     observed location, and nothing else.
 
@@ -646,21 +751,28 @@ def check_observer(result, seg, obs_locs):
     itself stays exact.  It still fails if the observer is narrowed (sys -> cta),
     strengthened (relaxed -> acquire), or gains/loses a load -- e.g. if someone
     drops the `#pragma unroll 1` that pins its trip count."""
+    who = ("%s observer" % iname) if iname else "observer"
     expected = [OBS_OP] * len(obs_locs)
     if seg != expected:
-        result.fail("observer lane op stream differs (observes %s)"
-                    % ", ".join(obs_locs))
+        result.fail("%s lane op stream differs (observes %s)"
+                    % (who, ", ".join(obs_locs)))
         for d in diff_sequences(expected, seg):
             result.note(d)
     else:
-        result.note("  observer lane OK (%d relaxed/sys load(s): %s)"
-                    % (len(expected), ", ".join(obs_locs)))
+        result.note("  %s lane OK (%d relaxed/sys load(s): %s)"
+                    % (who, len(expected), ", ".join(obs_locs)))
 
 
 def check_cpu(result, expected_per_proc, cpu_c_text):
     """Compare the CPU column's memory/ordering mnemonics (ordered) against the
     emitted _cpu.c real-asm block.  Catches STLR->STR, LDAPR->LDR, DMB SY drop/
-    narrowing, etc."""
+    narrowing, etc.
+
+    B6b: in a co-run harness the ONE `#if defined(__aarch64__)' region holds all
+    three instances' bodies (het_run_t_P0 / het_run_mu_P0 / het_run_can_P0), in
+    instance order, so the flattened expectation is simply their concatenation.
+    A dropped STLR in the MUTANT is caught here exactly as one in T would be --
+    and a mutant whose ordering silently matched T's would not be a mutant."""
     expected_flat = [op for _, ops in expected_per_proc for op in ops]
     observed = extract_cpu_ops(cpu_c_text)
     if observed != expected_flat:
@@ -732,39 +844,50 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
         observed = extract_ptx_ops(ptx_text)
 
         if kind == 'Het':
+            # B6b: the harness may co-run THREE instances (T, mu(T), the canary).
+            # Model every lane of every one of them; the check itself is unchanged.
+            insts = het_instances(litmus_path)
+            if len(insts) > 1:
+                result.note("  CO-RUN harness: %s"
+                            % " + ".join("%s (%s)" % (i['name'], r)
+                                         for i, r in zip(insts, ("T", "mu(T)", "canary"))))
+            lanes = het_lane_plan(insts)
+            n_lanes = len(lanes)
             # One barrier instance per barrier-joining GPU lane; segment on the
             # fetch_add anchor and strip the barrier template, leaving each lane's
-            # model ops.  A test whose condition names a coherence-final location
-            # (`[x]=2`) also gets an OBSERVER lane, emitted LAST (after every GPU
-            # proc -- see top_litmus.ml dump_gpu_file, the `blockIdx.x == n_blocks`
-            # block).  It joins the barrier and snoops each observed location once.
-            n_gpu = len(gpu_expected)
-            obs_locs = condition_locations(text)
-            n_lanes = n_gpu + (1 if obs_locs else 0)
+            # model ops.
             barrier_ops, model_per_seg = split_het_segments(observed, n_lanes)
             check_barrier_whitelist(result, barrier_ops, n_lanes)
             if len(model_per_seg) != n_lanes:
-                result.fail("expected %d barrier-joining GPU lane(s) (%d proc(s)%s); found %d"
-                            % (n_lanes, n_gpu,
-                               " + 1 observer" if obs_locs else "",
+                result.fail("expected %d barrier-joining GPU lane(s) (%s); found %d.  "
+                            "A MISSING lane on a control instance means the harness "
+                            "reports a positive control it is not actually running."
+                            % (n_lanes,
+                               ", ".join("%s:%s" % (l[3], "P%d" % l[1] if l[0] == 'test'
+                                                    else "obs")
+                                         for l in lanes),
                                len(model_per_seg)))
-            if obs_locs and len(model_per_seg) == n_lanes:
-                # The observer snoops; it does NOT stress and does NOT spin (its
-                # job is to sample densely, and gating it on the test lanes would
-                # couple two lanes that run at different rates).  So it is the one
-                # barrier-joining lane with no window-opener: strip it first, then
-                # every remaining segment is a test lane and must carry the spin.
-                check_observer(result, model_per_seg[-1], obs_locs)
-                model_per_seg = model_per_seg[:-1]
-            # B4: each GPU TEST lane opens its window with the device-scope spin.
-            # Model it (so the expectation is COMPLETE) and check it exactly (so
-            # the gate does not go blind to it).
-            if len(model_per_seg) == len(gpu_expected):
-                model_per_seg = [check_spin(result, seg, gpu_expected[i][0])
-                                 for i, seg in enumerate(model_per_seg)]
-            model_ops = [op for seg in model_per_seg for op in seg]
-            check_gpu(result, gpu_expected, model_ops, "GPU")
+            else:
+                # Walk lanes and PTX segments in lockstep.  The observer snoops; it
+                # does NOT spin (its job is to sample densely, and gating it on the
+                # test lanes would couple two lanes that run at different rates), so
+                # it is the one barrier-joining lane with no window-opener.  Every
+                # other lane must carry the device-scope spin, exactly.
+                gpu_expected = []
+                model_ops = []
+                for (kindl, pidx, payload, iname), seg in zip(lanes, model_per_seg):
+                    if kindl == 'obs':
+                        check_observer(result, seg, payload, iname)
+                    else:
+                        seg = check_spin(result, seg, pidx, iname)
+                        gpu_expected.append(("%s:P%d" % (iname, pidx), payload))
+                        model_ops.extend(seg)
+                check_gpu(result, gpu_expected, model_ops, "GPU")
             check_no_stray_sys(result, ptx_text)
+            # The CPU side: _cpu.c carries every instance's tagged asm block, in the
+            # same instance order, inside ONE `#if defined(__aarch64__)' region.
+            cpu_expected = [("%s:P%d" % (i['name'], p), ops)
+                            for i in insts for p, ops in i['cpu']]
             if cpu_expected:
                 if cpu_c_text is None:
                     result.fail("het test has CPU columns but no _cpu.c emitted")

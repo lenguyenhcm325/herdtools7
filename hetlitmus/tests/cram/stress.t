@@ -63,9 +63,25 @@ non-observation).
 het_spin aligns the GPU test lanes; gd_bar is the CPU<->GPU start barrier and
 fires ONCE, outside the perpetual loop.  Merging them would put a per-iteration
 CROSS-DEVICE barrier in the loop, which masks the tested order and stalls
-(Srivastava 4.1).  One spin call per GPU test lane; the two gd_bar fetch_adds
-(GPU lane + CPU thread) are untouched.
+(Srivastava 4.1).  One spin call per GPU test lane; one gd_bar fetch_add per
+barrier-joining participant.
+
+B6b: MP-cg-sys-acqrel-2s is now a CO-RUN harness -- T, mu(T) and the canary share
+this launch -- so there are THREE GPU test lanes and three CPU threads.  The
+per-lane invariant is unchanged and is what is asserted: exactly ONE spin per test
+lane, and (below) exactly one spin inside T's own lane, so a total of 3 cannot be
+satisfied by a lane that lost its spin while another gained two.
   $ grep -c 'het_spin(_spin_bar' $MP.cu
+  3
+  $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' $MP.cu | grep -c 'het_spin(_spin_bar'
+  1
+
+ALL THREE lanes spin on the SAME device-scope word, and HET_SPIN_LANES is their SUM.
+That is required, not incidental: the barrier's limit is _nb*HET_SPIN_LANES, so a
+lane that joined the spin without being counted in HET_SPIN_LANES would make the
+limit unreachable and every spin would burn the 1024-iteration deadlock cap -- the
+B4 regression, restaged.
+  $ grep -c '#define HET_SPIN_LANES 3' $MP.cu
   1
 
 (The arrival count matches `_bar.fetch_add', the barrier's OWN atomic, not a bare
@@ -74,7 +90,9 @@ stress tally -- and a bare count would have swept it up; bumping the expectation
 3 would then have left the check satisfiable by a real THIRD BARRIER ARRIVAL, which
 is the regression it exists to catch.  Same reasoning in coop-launch.t.)
   $ grep -c '_bar.fetch_add' $MP.cu
-  2
+  6
+  $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' $MP.cu | grep -c '_bar.fetch_add'
+  1
 
 and the barrier is ALL-OR-NONE, with its limit indexed by the barriers TAKEN --
 the adaptation the perpetual loop forces.  Upstream relaunches per iteration, so
@@ -84,10 +102,13 @@ counter grows, so the limit must grow with it -- and it is only ATTAINABLE if
 every lane contributes exactly one increment to each barrier.  Hence: the roll is
 drawn from a LANE-INDEPENDENT stream (keyed by the iteration, not the lane), and
 the limit counts taken barriers (_nb), not iterations.
+(One per GPU test lane, and the draw is keyed by the ITERATION alone -- so all three
+co-running instances' lanes reach the same verdict for iteration _n and the barrier
+stays all-or-none across the whole harness.)
   $ grep -c 'het_rng_init(_seed ^ 0x9e3779b9u, (uint32_t)_n)' $MP.cu
-  1
+  3
   $ grep -c 'het_spin(_spin_bar, _nb \* HET_SPIN_LANES, _stress_tally)' $MP.cu
-  1
+  3
 
 A per-lane roll with an iteration-indexed limit ((_n+1)*lanes) is the B4 bug: a
 lane increments on only HET_BARRIER_PCT% of iterations while the limit rises every
@@ -105,9 +126,13 @@ pattern lets nvcc fold the if-chain to the one live branch, and the tuned defaul
 (3 = ld;ld, whose loads only feed a `break') is then side-effect-free -- so nvcc
 DELETED the whole loop (0 scratchpad ops in the emitted PTX; -DHET_MEM_STRESS_
 PATTERN=3 emptied the entire kernel).  hetlitmus/verify/stresscheck.py is the gate.
-  $ grep -c 'het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat)' $MP.cu
-  1
-  $ grep -c 'het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat)' $MP.cu
+(B6b adds the runtime round tally: het_do_stress now takes _stress_tally and counts
+the rounds it completed, so a stress layer that is present in the PTX and never
+EXECUTES is finally visible to het_verdict().  The pre-stress runs in every test lane
+-- all three instances -- so the control is stressed exactly as T is.)
+  $ grep -c 'het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally)' $MP.cu
+  3
+  $ grep -c 'het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally)' $MP.cu
   1
   $ grep -c 'uint32_t _pre_pat = (uint32_t)HET_PRE_STRESS_PATTERN;' $MP.cu
   1

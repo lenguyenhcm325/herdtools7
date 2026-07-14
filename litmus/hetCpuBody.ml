@@ -128,13 +128,13 @@ let analyze ~reg_env instrs =
 (*              i=0 stays the init/stale marker (B3 Decision 3).           *)
 (* addr_params/buf_params : (decl, name) for the het_run signature; the    *)
 (*              SAME lists top_litmus uses for the .cu extern decl + call.  *)
-let emit_body chan ~proc ~k ~store_mu ~load_buf ~reg_env ~iter
+let emit_body chan ~prefix ~proc ~k ~store_mu ~load_buf ~reg_env ~iter
       ~addr_params ~buf_params instrs =
   let s = output_string chan in
   let params =
     String.concat ", "
       (List.map fst addr_params @ List.map fst buf_params @ ["int _n"]) in
-  s (Printf.sprintf "void het_run_P%d(%s) {\n" proc params) ;
+  s (Printf.sprintf "void het_run_%sP%d(%s) {\n" prefix proc params) ;
   (* Tag values + load temps, materialised in C BEFORE the single asm block
      (so the block contains ONLY the tested instructions, in order). *)
   let n_stores = ref 0 and n_loads = ref 0 in
@@ -214,12 +214,12 @@ let emit_body chan ~proc ~k ~store_mu ~load_buf ~reg_env ~iter
 (* links; it does NOT tag (never executed as a result).                 *)
 (* ------------------------------------------------------------------ *)
 
-let emit_stub chan ~proc ~addr_params ~buf_params =
+let emit_stub chan ~prefix ~proc ~addr_params ~buf_params =
   let s = output_string chan in
   let params =
     String.concat ", "
       (List.map fst addr_params @ List.map fst buf_params @ ["int _n"]) in
-  s (Printf.sprintf "void het_run_P%d(%s) {\n" proc params) ;
+  s (Printf.sprintf "void het_run_%sP%d(%s) {\n" prefix proc params) ;
   s "  /* x86_64 het CPU body: compile-only stub (MI300A de-prioritised, B3\n" ;
   s "     Decision 1 -- the AArch64 tagged body is the real path). */\n" ;
   s "  (void)_n;\n" ;

@@ -10,20 +10,32 @@ verbatim, and widens to 64-bit %x.
   0
   $ grep -c 'stlr %x\[_v0\],\[%\[x\]\]' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
   1
-  $ grep -c 'uint64_t _v0 = (uint64_t)3 \* (_n + 1) + 1;' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
+  $ sed -n '/^void het_run_t_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -c 'uint64_t _v0 = (uint64_t)3 \* (_n + 1) + 1;'
   1
 
-CPU signature is widened + threads _n (no *out pointers).
-  $ grep -c 'void het_run_P0(uint64_t \*x, uint64_t \*y, int _n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
+B6b: this is a CO-RUN harness (T + mu(T) + the canary), so the tag plan is asserted
+per INSTANCE.  All three MP instances happen to have K=3 -- and each still tags with
+its OWN K, which is what matters the moment an R/S harness puts K=4 beside K=3.
+  $ grep -c 'uint64_t _v0 = (uint64_t)3 \* (_n + 1) + 1;' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
+  3
+
+CPU signature is widened + threads _n (no *out pointers) -- and PREFIXED, so T's P0
+and mu(T)'s P0 are not the same symbol.
+  $ grep -c 'void het_run_t_P0(uint64_t \*x, uint64_t \*y, int _n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
+  1
+  $ grep -c 'void het_run_mu_P0(uint64_t \*x, uint64_t \*y, int _n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
   1
 
 Driver (Decision 3/4): uint64 shared vars, per-load read buffers in device memory
 (cudaMalloc) mirrored to the host, and the het_obs_record recovery scan; no __out.
-  $ grep -c 'uint64_t \*x; gd_alloc_shared' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+(The shared vars come from the co-run's ONE cache-line-padded gd_alloc_shared arena
+-- still the coherent allocator, which is what selects the property under test; see
+shared-alloc.t (f).  The read buffers stay OFF the race path, per instance.)
+  $ grep -c 'uint64_t \*t_x = (uint64_t\*)(_sa + (size_t)HET_CACHE_LINE\*0)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
-  $ grep -c 'cudaMalloc(&bufP1_0' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  $ grep -c 'cudaMalloc(&t_bufP1_0' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
-  $ grep -c 'cudaMemcpy(bufP1_0_h' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  $ grep -c 'cudaMemcpy(t_bufP1_0_h' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 B6: het_obs_record moved OUT of the .cu and into the shared het_verdict.h, next to
 the decision rule that reads it -- one definition, shared by every harness and by
@@ -35,10 +47,14 @@ verdictcheck.py, so the gate exercises the struct that actually ships.
   1
   $ grep -c 'het_obs_record_print(stdout' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
-  $ grep -c '#define K_TAG 3' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  $ grep -c '#define T_K_TAG   3' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
+
+THREE INSTANCES, THREE DETECTORS -- and B3c GATE 1 below now covers all three, so a
+constant-false detector on the CONTROL (which would leave it permanently cold, and
+so discard every null it was supposed to vouch for) is refused exactly as one on T is.
   $ grep -c 'int _weak =' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
-  1
+  3
   $ grep -c '__out' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
   0
 
@@ -74,7 +90,7 @@ B3c GATE 2: a CPU-side read is bound to its buffer by LOAD NODE, not by device -
 so MP-gc (GPU writes, CPU reads) is the SAME exact O(N) scan as MP-cg, just over
 the host buffer.  Before B3c its detector was the constant HET_PENDING.
   $ litmus7 -o . ../het/MP-gc-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ grep -c 'int _weak = ((bufP1_0\[_f\] != 0 && bufP1_0\[_f\] % 3 == 2) && (bufP1_1\[_f\] < (uint64_t)3\*_m0 + 1));' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
+  $ grep -c 'int _weak = ((t_bufP1_0\[_f\] != 0 && t_bufP1_0\[_f\] % T_K_TAG == 2) && (t_bufP1_1\[_f\] < (uint64_t)T_K_TAG\*_m0 + 1));' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
   1
 
 B3c GATE 3: T_L>=2 windowing.  SB has no rf anchor (both reads are fr), so the
@@ -100,7 +116,7 @@ is never misread as "exhaustively counted zero".
 B3c GATE 4: LB's two rf edges decode each other exactly (no window): P1's frame
 is pinned by P0's read, and P1's read must decode back to P0's own frame _f.
   $ litmus7 -o . ../het/LB-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ grep -c 'bufP1_0_h\[(_m1 - 1)\] / 3 == (uint64_t)(_f + 1)' LB-cg-sys-acqrel-2s/LB-cg-sys-acqrel-2s.cu
+  $ grep -c 't_bufP1_0_h\[(_m1 - 1)\] / T_K_TAG == (uint64_t)(_f + 1)' LB-cg-sys-acqrel-2s/LB-cg-sys-acqrel-2s.cu
   1
   $ grep -c 'HET_WINDOW' LB-cg-sys-acqrel-2s/LB-cg-sys-acqrel-2s.cu || true
   2

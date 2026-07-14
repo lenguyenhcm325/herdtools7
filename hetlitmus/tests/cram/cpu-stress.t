@@ -63,9 +63,24 @@ two-sided test the CPU issues the ordering instructions under test (STLR/LDAPR/
 DMB.SY) -- they ARE the hypothesis, so a fence or atomic between the two tested
 accesses would change what is being tested.  het_run_P0 must therefore still be
 exactly its two tested stores, and the preload must sit OUTSIDE it, before the call.
-  $ sed -n '/^#if defined(__aarch64__)/,/^#else/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE '"(stlr|ldapr|dmb|str|ldr)'
+B6b: this file now carries THREE instances' bodies (T, mu(T), the canary), so a
+file-wide count would be 6 and could be satisfied by a bug that moved an
+instruction from one instance to another.  SCOPE to T's OWN body: it must still be
+exactly its two tested stores, and nothing may be injected between them.
+  $ sed -n '/^void het_run_t_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE '"(stlr|ldapr|dmb|str|ldr)'
   2
   $ sed -n '/^#if defined(__aarch64__)/,/^#else/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE 'het_cpu_preload|het_cpu_affinity|dc civac|prfm' || true
+  0
+
+and the mutant's body is a DIFFERENT program from T's -- that is the whole point of a
+mutant.  T is two-sided (the CPU issues the release stores under test); mu(T) is the
+one-sided weakening, so its CPU side is plain.  If they were identical, mu(T) would
+not be a weakening and the control would vouch for nothing.
+  $ sed -n '/^void het_run_mu_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"(stlr|str) '
+  2
+  $ sed -n '/^void het_run_t_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"stlr '
+  2
+  $ sed -n '/^void het_run_mu_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"stlr ' || true
   0
 
 The preload is called per iteration, before het_run_P0, on THIS proc's own test
@@ -73,14 +88,21 @@ variables.  A cache hint changes RESIDENCY, not program order, so preloading the
 very variables under test is -2s-safe -- and it cannot drift into the tested
 sequence, because het_run_P0 is a call into another translation unit and every
 primitive is asm volatile with a "memory" clobber.
-  $ grep -A2 'for (int _n=0; _n<SIZE_OF_TEST; ++_n) {' $MP.cu | grep -c 'het_cpu_preload(_pl, 2, &_plrng, HET_CPU_PRELOAD_PCT)'
+(Scoped to T's OWN wrapper: the co-run harness has three, and a file-wide count of 3
+could be satisfied by a bug that gave one instance two preloads and another none.)
+  $ sed -n '/^static void\* cpu_thread_t_P0/,/^}/p' $MP.cu | grep -c 'het_cpu_preload(_pl, 2, &_plrng, HET_CPU_PRELOAD_PCT)'
   1
-  $ grep -c 'void\* const _pl\[2\] = { (void\*)a->x, (void\*)a->y }' $MP.cu
+  $ sed -n '/^static void\* cpu_thread_t_P0/,/^}/p' $MP.cu | grep -c 'void\* const _pl\[2\] = { (void\*)a->x, (void\*)a->y }'
   1
+
+and EVERY instance preloads its own vars -- the control must be stressed exactly as T
+is, or it is not certifying T's window (Q4 3.1: same run, same stress, same C2C path).
+  $ grep -c 'het_cpu_preload(_pl, 2, &_plrng, HET_CPU_PRELOAD_PCT)' $MP.cu
+  3
 
 and affinity is applied BEFORE the rendezvous, so the thread is already on its core
 when the race starts:
-  $ grep -A2 'static void\* cpu_thread_P0' $MP.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
+  $ grep -A2 'static void\* cpu_thread_t_P0' $MP.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
   1
 
 (c) -2s INVARIANT (i): THE ENEMY AND NOISE TRAFFIC IS DISJOINT FROM THE TEST.  An
@@ -102,8 +124,23 @@ test); the GPU stress scratchpad through cudaMalloc (device-only, disjoint); the
 enemy scratchpad through plain host malloc (CPU-only, disjoint -- new in B5); and the
 noise buffers through gd_alloc_noise (homed on the OTHER processing unit -- new in
 B5).
+B6b: in a CO-RUN harness the shared vars and the barrier are carved out of ONE
+gd_alloc_shared arena, ONE CACHE LINE APART.  Six separate 8-byte allocations would
+let the three instances' locations share cache lines, and two variables on one line
+are ONE coherence unit -- mu(T)'s traffic would drag T's line around and the control
+would perturb the very test it exists to vouch for (Q4 3.1 / 8.4).  What must NOT
+change is the allocator: it still SELECTS the property under test, so the arena goes
+through gd_alloc_shared (system malloc/ATS on GH200), never plain malloc.
+  $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $MP.cu
+  1
   $ grep -c 'gd_alloc_shared((void\*\*)&' $MP.cu
-  3
+  1
+  $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $MP.cu
+  6
+  $ grep -cE 'int \*barrier = \(int\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*6\)' $MP.cu
+  1
+  $ grep -c 'gd_free_shared(_shared_arena)' $MP.cu
+  1
   $ grep -c 'cudaMalloc(&_scratch, sizeof(uint32_t)\*HET_SCRATCH_SIZE)' $MP.cu
   1
   $ grep -c 'malloc_check(sizeof(uint64_t)\*HET_CPU_SCRATCH_WORDS)' $MP.cu
@@ -122,12 +159,20 @@ IS the mechanism: raise stress_go, THEN spawn the enemies and the noise, THEN th
 test threads and the kernel.  A flag raised after the enemies were spawned races
 them; one raised after the test finished means they never ran at all, which is
 precisely the failure B4 shipped twice.
+(B6b: the test-thread spawn is matched on the WRAPPER (`, cpu_thread_'), not on a
+literal `&_th0' -- the three co-running instances name theirs _t_th0 / _mu_th0 /
+_can_th0, and a pattern that silently matched none would leave $TH empty and this
+guard vacuously true.  FIRST spawn after the enemies, LAST spawn before the launch,
+so the ordering is asserted for ALL THREE instances, not just T's.)
   $ GO=$(grep -n '__atomic_store_n(&_stress_go, 1' $MP.cu | cut -d: -f1)
   $ EN=$(grep -n 'pthread_create(&_eth' $MP.cu | cut -d: -f1)
-  $ TH=$(grep -n 'pthread_create(&_th0' $MP.cu | cut -d: -f1)
+  $ TH=$(grep -n ', cpu_thread_' $MP.cu | head -1 | cut -d: -f1)
+  $ TZ=$(grep -n ', cpu_thread_' $MP.cu | tail -1 | cut -d: -f1)
   $ LA=$(grep -n 'cudaLaunchCooperativeKernel' $MP.cu | cut -d: -f1)
-  $ [ "$GO" -lt "$EN" ] && [ "$EN" -lt "$TH" ] && [ "$TH" -lt "$LA" ] && echo 'go < enemies < test threads < launch'
-  go < enemies < test threads < launch
+  $ [ -n "$TH" ] && [ -n "$TZ" ] && echo 'test-thread spawns found'
+  test-thread spawns found
+  $ [ "$GO" -lt "$EN" ] && [ "$EN" -lt "$TH" ] && [ "$TZ" -lt "$LA" ] && echo 'go < enemies < test threads (all) < launch'
+  go < enemies < test threads (all) < launch
 
 and it comes DOWN only after the device has drained, so the stress covers the whole
 tested window and no more (S&D knob F: the enemy runs at least as long as the test).
@@ -249,7 +294,7 @@ working.  Every counter below exists because its mechanism has a way to die.
   1
   $ grep -c 'sched_setaffinity call(s) FAILED' $MP.cu
   1
-  $ grep -c 'enemies=%u enemy_rounds=%llu' MP-cg-sys-acqrel-2s/het_verdict.h
+  $ sed -n '/^static void het_obs_record_print/,/^}/p' MP-cg-sys-acqrel-2s/het_verdict.h | grep -c 'enemies=%u enemy_rounds=%llu'
   1
 
 and the two knobs B8 tunes the interconnect lever against travel WITH the result.

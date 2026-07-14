@@ -804,14 +804,17 @@ static void gd_free_noise(void* _p){
             [het_analyze] resolves one CPU proc's store/load structure (addresses
             resolved via [reg_env]: addr-reg-name -> global C name); the generic
             emitter uses it for the mu map + read-buffer plan + recovery map.
-            [het_emit_body] emits the tagged het_run_P<proc> (K*(_n+1)+mu store
-            values from register operands, loads recorded into per-iteration
-            buffers, tested mnemonics + DMB SY verbatim). *)
+            [het_emit_body] emits the tagged het_run_<prefix>P<proc> (K*(_n+1)+mu
+            store values from register operands, loads recorded into per-iteration
+            buffers, tested mnemonics + DMB SY verbatim).  B6b: [~prefix] is what
+            keeps the three co-running instances of a control harness apart --
+            without it T's P0 and mu(T)'s P0 are both `het_run_P0'. *)
          val het_analyze :
            reg_env:(string -> string) -> Cpu.pseudo list -> HetCpuBody.cpu_plan
          val het_emit_body :
-           out_channel -> proc:int -> k:int -> store_mu:(int -> int) ->
-           load_buf:(int -> string) -> reg_env:(string -> string) ->
+           out_channel -> prefix:string -> proc:int -> k:int ->
+           store_mu:(int -> int) -> load_buf:(int -> string) ->
+           reg_env:(string -> string) ->
            iter:string -> addr_params:(string * string) list ->
            buf_params:(string * string) list -> Cpu.pseudo list -> unit
        end) =
@@ -879,6 +882,111 @@ static void gd_free_noise(void* _p){
          verdictcheck unit test so the gate runs the rule that ships. *)
       let het_verdict_content = HetArch.het_verdict_h
 
+      (* ==================== B6b: THE CO-RUN EMITTER =========================
+         Q4 2.4 calls the positive control "just another het instance ... No new
+         machinery" and 2.3 "essentially free".  Against this emitter that was
+         FALSE: it was a SINGLE-INSTANCE emitter, and four things collided the
+         moment a second test entered the same translation unit.
+
+           1. K_TAG was one #define per TU -- and it is 3 for MP/SB/LB but 4 for
+              R/S (three stores, not two).  The canary is always an MP, so EVERY
+              R/S harness mixes K=4 and K=3.  A single K_TAG cannot serve, and a
+              tag decoded with the wrong K silently mis-attributes writers and
+              iterations: the "recovered" cycles become fiction and no gate would
+              say so.  K is therefore PER INSTANCE ([i_kmac]), and every decode
+              site spells that instance's macro.
+           2. het_run_P<proc> was named from the proc number ALONE, so T's P0 and
+              mu(T)'s P0 were both `het_run_P0' -- a duplicate symbol at best, and
+              at worst a driver calling the WRONG TEST'S BODY.  Hence ~prefix
+              (HetCpuBody), threaded through the extern decl, the arg struct, the
+              thread wrapper and the call.
+           3. NPART is NOT "2 -> 6".  S and R carry observer lanes, so their NPART
+              is 4, not 2, and their co-run harnesses are NPART 10.  Every
+              participant count is a SUM over the instances -- a hardcoded 6 lets
+              the system-scope rendezvous release before the S/R observers arrive,
+              which is a barrier that looks alive and is not.
+           4. Three instances = three frame bindings, three detectors, three
+              recovery scans, three exhaustive_valid.
+
+         The instance's C identifiers are PREFIXED (t_ / mu_ / can_), and the
+         prefix is "" on the single-instance path -- so the 322 non-Disallowed
+         harnesses stay byte-for-byte what they were.  Prefixing ALL THREE (rather
+         than leaving T bare) is deliberate: a missed prefix then fails to COMPILE
+         instead of silently binding to T's object.
+
+         The one thing NOT prefixed is the GPU lane's view of its own locations:
+         CudaLang/HipLang name a global by its LISA name (`*x'), and those are
+         SHARED backends we may not touch.  So each lane opens with a local alias
+         (`uint64_t* x = t_x;'), which binds the emitted `*x' to this instance's
+         object with no change to the shared lowering at all. *)
+
+      type dev = [ `Cpu | `Gpu ]
+      type mode = [ `Exh | `Heur ]
+      type role = RTest | RMu | RCanary
+
+      (* One CPU proc of one instance, pre-digested so the record carries no
+         arch-polymorphic type. *)
+      type cpu_proc = {
+          cp_proc : int ;
+          cp_addrs : string list ;       (* ASMLang address params, in ASMLang order *)
+          cp_code : Cpu.pseudo list ;
+          cp_reg_env : string -> string ;
+          cp_nloads : int ;              (* read buffers this proc needs *)
+        }
+
+      (* One GPU proc of one instance.  [gp_blk] is the block index WITHIN the
+         instance; the composed grid adds the instance's base. *)
+      type gpu_proc = {
+          gp_proc : int ;
+          gp_blk : int ; gp_lane : int ;
+          gp_instrs : BellBase.instruction list ;
+          gp_regs : int list ;
+        }
+
+      type inst = {
+          i_role : role ;
+          i_pre : string ;               (* C identifier prefix: "" | "t_" | ... *)
+          i_kmac : string ;              (* this instance's K macro *)
+          i_name : string ;
+          i_k : int ;
+          i_cpus : cpu_proc list ;
+          i_gpus : gpu_proc list ;
+          i_store_mu : int -> int -> int ;   (* proc -> store index -> mu *)
+          i_gpu_globals : string list ;  (* raw (unprefixed) names *)
+          i_all_globals : string list ;  (* raw (unprefixed) names *)
+          i_obs_locs : string list ;     (* raw (unprefixed) names *)
+          i_obs : bool ;
+          i_bdim : int ;
+          i_nblocks : int ;              (* GPU test blocks (observer NOT counted) *)
+          i_npart : int ;                (* cpu procs + gpu procs + observers *)
+          i_blocks : int ;               (* i_nblocks + the observer block *)
+          i_lanes : int ;                (* gpu procs + the observer lane *)
+          i_spin : int ;                 (* gpu TEST lanes (observer excluded) *)
+          (* read buffers: (proc, load idx, PREFIXED name, device, global) *)
+          i_bufs : (int * int * string * dev * string) list ;
+          i_decode : string ;            (* the _<pre>decode_value fn ("" unless T) *)
+          i_scan : string ;              (* the whole pre-rendered recovery scan *)
+          i_labels : string ;            (* _labels + _dump_one ("" unless T) *)
+          i_nslots : int ;
+          i_mech : HetCond.mechanism_class ;
+          i_report : HetCond.mechanism_class ;
+        }
+
+      (* ---- naming helpers, shared by derive and the emitters ---------------- *)
+      (* an identifier that already starts with '_': keep the underscore leading.
+         (C++ reserves every identifier CONTAINING a double underscore, so
+         "t_" ^ "_decode_value" is not an option.) *)
+      let usym pre s =
+        if pre = "" then s
+        else "_" ^ pre ^ String.sub s 1 (String.length s - 1)
+      let buf_name_of pre p li = Printf.sprintf "%sbufP%d_%d" pre p li
+      let obsG_of pre l = Printf.sprintf "%sobsG_%s" pre l
+      let obsC_of pre l = Printf.sprintf "%sobsC_%s" pre l
+      let role_note = function
+        | RTest -> "the test under study"
+        | RMu -> "Layer A: the minimal mutant mu(T)"
+        | RCanary -> "Layer B: the universal het-MP canary"
+
       let run _hash_env src_name in_chan _out_chan splitted =
         try
           let parsed = P.parse in_chan splitted in
@@ -905,10 +1013,10 @@ static void gd_free_noise(void* _p){
 
              Absent map => no names, and control_compiled_in stays 0, which makes
              het_verdict() return COLD and SAY SO.  It never quietly proceeds. *)
+          let src_dir = Filename.dirname src_name in
           let control_of, canary_of =
             let tbl = Hashtbl.create 512 in
-            let dir = Filename.dirname src_name in
-            let f = Filename.concat dir "control-map.csv" in
+            let f = Filename.concat src_dir "control-map.csv" in
             (try
                let ch = open_in f in
                (try
@@ -944,15 +1052,977 @@ static void gd_free_noise(void* _p){
                       | _ -> None) in
           let mu_name = control_of tname
           and canary_name = canary_of tname in
-          (* ---- classify processors by device tag ---- *)
-          let dev_of_proc p =
-            let rec find = function
-              | ((q,annot,_),_)::_ when q=p ->
-                 (match annot with Some (d::_) -> d | _ -> "?")
-              | _::rest -> find rest
-              | [] -> "?" in
-            find parsed.MiscParser.prog in
-          let is_cpu p = dev_of_proc p = "cpu" in
+
+          (* ============ derive ONE instance from a parsed het test =============
+             Everything here was `run's body before B6b.  It is now a function of
+             (role, prefix, K-macro, name, parse), so the same derivation produces
+             T, its minimal mutant and the canary.  The decode function and the
+             recovery scan are RENDERED HERE -- they are pure C over host buffers,
+             so they need no dialect -- which keeps the record small and the two
+             render passes readable. *)
+          let derive ~role ~pre ~kmac ~tname ~parsed ~doc =
+            (* ---- classify processors by device tag ---- *)
+            let dev_of_proc p =
+              let rec find = function
+                | ((q,annot,_),_)::_ when q=p ->
+                   (match annot with Some (d::_) -> d | _ -> "?")
+                | _::rest -> find rest
+                | [] -> "?" in
+              find parsed.MiscParser.prog in
+            let is_cpu p = dev_of_proc p = "cpu" in
+            (* ---- CPU-only projection -> compile -> templates ---- *)
+            let cpu_prog =
+              List.filter_map
+                (fun ((p,annot,f),code) -> match annot with
+                  | Some ("cpu"::_) ->
+                     Some ((p,annot,f),List.map Arch'.to_cpu_pseudo code)
+                  | _ -> None)
+                parsed.MiscParser.prog in
+            let cpu_init =
+              List.filter
+                (fun (loc,_) -> match loc with
+                  | MiscParser.Location_reg (p,_) -> is_cpu p
+                  | _ -> true)
+                parsed.MiscParser.init in
+            let prop_of = function
+              | ConstrGen.ForallStates p | ConstrGen.ExistsState p
+              | ConstrGen.NotExistsState p -> p in
+            let rec filt_cpu p =
+              let open ConstrGen in
+              match p with
+              | Atom (LV (Loc (MiscParser.Location_reg (pr,_)),_)) ->
+                 if is_cpu pr then Some p else None
+              | Atom _ -> None
+              | Not q -> (match filt_cpu q with Some q' -> Some (Not q') | None -> None)
+              | And ps -> Some (And (List.filter_map filt_cpu ps))
+              | Or ps ->
+                 (match List.filter_map filt_cpu ps with [] -> None | xs -> Some (Or xs))
+              | Implies (a,b) ->
+                 (match filt_cpu a, filt_cpu b with
+                  | Some a',Some b' -> Some (Implies (a',b')) | _ -> None) in
+            let cpu_prop =
+              match filt_cpu (prop_of parsed.MiscParser.condition) with
+              | Some p -> p | None -> ConstrGen.And [] in
+            let cpu_parsed =
+              { MiscParser.info = parsed.MiscParser.info ;
+                init = cpu_init ;
+                prog = cpu_prog ;
+                filter = None ;
+                condition = ConstrGen.ExistsState cpu_prop ;
+                locations = [] ;
+                extra_data = MiscParser.empty_extra ; } in
+            let cpu_allocated = AllocCpu.allocate_regs cpu_parsed in
+            let cpu_compiled = CpuX.Comp.compile doc cpu_allocated in
+            (* the ASMLang address params of one CPU proc, in ASMLang's order *)
+            let cpu_addrs_of out =
+              let addrs,_ptes = Cpu.Out.get_addrs out in addrs in
+            let params =
+              List.map
+                (fun (proc,(out,(_outregs,_envV))) -> (proc, out, cpu_addrs_of out))
+                cpu_compiled.CpuX.Utils.T.code in
+            (* ---- GPU-only projection (reuse CudaLang translation) ---- *)
+            let gpu_prog =
+              List.filter_map
+                (fun ((p,annot,f),code) -> match annot with
+                  | Some ("gpu"::_) ->
+                     Some ((p,annot,f),List.map Arch'.to_gpu_pseudo code)
+                  | _ -> None)
+                parsed.MiscParser.prog in
+            let gpu_globals = CudaLang.collect_globals gpu_prog in
+            let gpu_procs = List.map (fun ((p,_,_),_) -> p) gpu_prog in
+            let layout,n_blocks,block_dim =
+              CudaLang.layout_of_scopes None gpu_procs in
+            let gpu_slots =
+              List.concat_map
+                (fun ((p,_,_),code) ->
+                  List.map (fun n -> (p, Printf.sprintf "r%d" n))
+                    (CudaLang.result_regs code))
+                gpu_prog in
+            let cpu_slots =
+              List.concat_map
+                (fun (proc,out,_) ->
+                  List.map (fun reg -> (proc, Cpu.pp_reg reg)) out.Cpu.Out.final)
+                params in
+            let slots = cpu_slots @ gpu_slots in
+            let n_reg = List.length slots in
+            (* ---- shared globals (allocated once, coherent to both) ---- *)
+            let cpu_addrs = List.concat_map (fun (_,_,ap) -> ap) params in
+            let all_globals =
+              let seen = Hashtbl.create 8 in
+              List.filter
+                (fun g -> if Hashtbl.mem seen g then false
+                          else (Hashtbl.add seen g () ; true))
+                (cpu_addrs @ gpu_globals) in
+            (* ================= B3: K*(_n+1)+mu store-tagging plan ============= *)
+            let reg_env_of proc =
+              let tbl = Hashtbl.create 8 in
+              List.iter
+                (fun (loc,(_,v)) -> match loc with
+                  | MiscParser.Location_reg (p,r) when p = proc ->
+                     let g = MiscParser.dump_value v in
+                     if List.mem g all_globals then Hashtbl.replace tbl r g
+                  | _ -> ())
+                parsed.MiscParser.init ;
+              fun r -> match Hashtbl.find_opt tbl r with Some g -> g | None -> r in
+            let proc_infos =
+              List.map
+                (fun ((p,annot,_),code) -> match annot with
+                  | Some ("cpu"::_) ->
+                     let plan =
+                       CpuF.het_analyze ~reg_env:(reg_env_of p)
+                         (List.map Arch'.to_cpu_pseudo code) in
+                     (p, `Cpu, plan.HetCpuBody.stores, plan.HetCpuBody.loads)
+                  | Some ("gpu"::_) ->
+                     let instrs =
+                       CudaLang.instrs_of_code (List.map Arch'.to_gpu_pseudo code) in
+                     let stores =
+                       List.filter_map
+                         (function
+                          | BellBase.Pst (ao,roi,_) ->
+                             let g = match CudaLang.abs_of_addr_op ao with
+                               | Some s -> s | None -> "?" in
+                             let v = match roi with
+                               | BellBase.Imm i -> Some i | _ -> None in
+                             Some (g,v)
+                          | _ -> None)
+                         instrs in
+                     let loads =
+                       List.filter_map
+                         (function
+                          | BellBase.Pld (BellBase.GPRreg n,ao,_) ->
+                             let g = match CudaLang.abs_of_addr_op ao with
+                               | Some s -> s | None -> "?" in
+                             Some (g, Printf.sprintf "r%d" n)
+                          | _ -> None)
+                         instrs in
+                     (p, `Gpu, stores, loads)
+                  | _ -> (p, `Gpu, [], []))
+                (List.sort
+                   (fun ((a,_,_),_) ((b,_,_),_) -> compare a b)
+                   parsed.MiscParser.prog) in
+            let store_mu_tbl = Hashtbl.create 16 in
+            let mu_counter = ref 0 in
+            List.iter
+              (fun (p,_dev,stores,_loads) ->
+                List.iteri
+                  (fun si _ -> incr mu_counter ;
+                               Hashtbl.replace store_mu_tbl (p,si) !mu_counter)
+                  stores)
+              proc_infos ;
+            let n_stores_total = !mu_counter in
+            let k_tag = 1 + n_stores_total in
+            let store_mu p si =
+              try Hashtbl.find store_mu_tbl (p,si) with Not_found -> 0 in
+            let value_mu = Hashtbl.create 16 and mu_value = Hashtbl.create 16 in
+            let mu_proc = Hashtbl.create 16 in
+            List.iter
+              (fun (p,_dev,stores,_loads) ->
+                List.iteri
+                  (fun si (g,vopt) ->
+                    let mu = store_mu p si in
+                    Hashtbl.replace mu_proc mu p ;
+                    match vopt with
+                    | Some v ->
+                       Hashtbl.replace value_mu (g,v) mu ;
+                       Hashtbl.replace mu_value mu v
+                    | None -> ())
+                  stores)
+              proc_infos ;
+            let proc_store_mu proc g =
+              match List.find_opt (fun (p,_,_,_) -> p=proc) proc_infos with
+              | Some (_,_,stores,_) ->
+                 let rec f i = function
+                   | (sg,_)::rest -> if sg=g then Some (store_mu proc i) else f (i+1) rest
+                   | [] -> None in
+                 f 0 stores
+              | None -> None in
+            (* Read buffers: one per (load-performing proc, load index), size N. *)
+            let read_buffers =
+              List.concat_map
+                (fun (p,dev,_stores,loads) ->
+                  List.mapi
+                    (fun li (g,_r) -> (p, li, buf_name_of pre p li, dev, g))
+                    loads)
+                proc_infos in
+            let loads_of p =
+              match List.find_opt (fun (q,_,_,_) -> q=p) proc_infos with
+              | Some (_,_,_,loads) -> loads | None -> [] in
+            let read_of p r =
+              let rec f li = function
+                | (_,rr)::rest -> if rr = r then Some li else f (li+1) rest
+                | [] -> None in
+              f 0 (loads_of p) in
+            let buf_name p li = buf_name_of pre p li in
+            let scan_buf p li =
+              let rec f = function
+                | (q,l,name,dev,_)::_ when q=p && l=li ->
+                   (match dev with `Gpu -> name ^ "_h" | `Cpu -> name)
+                | _::rest -> f rest
+                | [] -> buf_name p li in
+              f read_buffers in
+            (* ---- B3 observers (Decision 4/5) ---- *)
+            let obs_locs =
+              List.filter_map
+                (fun g ->
+                  let name = MiscParser.dump_value g in
+                  if List.mem name all_globals then Some name else None)
+                (HetCond.condition_locations (prop_of parsed.MiscParser.condition)) in
+            let has_observers = obs_locs <> [] in
+            let writers_of l =
+              List.concat_map
+                (fun (p,_dev,stores,_loads) ->
+                  List.concat
+                    (List.mapi
+                       (fun si (g,_v) -> if g=l then [store_mu p si] else [])
+                       stores))
+                proc_infos in
+            let loc_value l =
+              let r = ref None in
+              let rec scan p = let open ConstrGen in match p with
+                | Atom (LV (Loc (MiscParser.Location_global g),v)) ->
+                   if !r = None && MiscParser.dump_value g = l then
+                     r := int_of_string_opt (ParsedConstant.pp_v v)
+                | Not q -> scan q
+                | And ps | Or ps -> List.iter scan ps
+                | Implies (a,b) -> scan a ; scan b
+                | Atom _ -> () in
+              scan (prop_of parsed.MiscParser.condition) ; !r in
+            let loc_slots =
+              List.filter_map
+                (fun g ->
+                  let name = MiscParser.dump_value g in
+                  if List.mem name all_globals then Some name else None)
+                (HetCond.condition_locations (prop_of parsed.MiscParser.condition)) in
+            let nslots = n_reg + List.length loc_slots in
+            (* ---- condition -> C predicate over the read buffers (B3) ---- *)
+            let cval v = ParsedConstant.pp_v v in
+            let cint v = int_of_string_opt (ParsedConstant.pp_v v) in
+            let read_global pr li =
+              let rec f = function
+                | (p,l,_,_,g)::_ when p=pr && l=li -> Some g
+                | _::rest -> f rest
+                | [] -> None in
+              f read_buffers in
+            let is_true s =
+              s = "1" || (String.length s >= 2 && s.[0]='1' && s.[1]=' ') in
+            let is_false s =
+              s = "0" || (String.length s >= 2 && s.[0]='0' && s.[1]=' ') in
+            let mk_and parts =
+              if List.exists is_false parts then "0"
+              else match List.filter (fun p -> not (is_true p)) parts with
+              | [] -> "1"
+              | [p] -> p
+              | ps -> "(" ^ String.concat " && " ps ^ ")" in
+            let mk_or parts =
+              if List.exists is_true parts then "1"
+              else match List.filter (fun p -> not (is_false p)) parts with
+                | [] -> "0"
+                | [p] -> p
+                | ps -> "(" ^ String.concat " || " ps ^ ")" in
+            (* ================== B3c: FRAME BINDING ========================== *)
+            let read_atoms =
+              let acc = ref [] in
+              let rec scan p = let open ConstrGen in match p with
+                | Atom (LV (Loc (MiscParser.Location_reg (pr,r)),v)) ->
+                   (match read_of pr r, cint v with
+                    | Some li, Some n ->
+                       (match read_global pr li with
+                        | Some g -> acc := (pr,li,g,n) :: !acc
+                        | None ->
+                           Warn.fatal
+                             "hetlitmus: condition reads %d:%s, whose load has no \
+                              resolvable location" pr r)
+                    | None, _ ->
+                       Warn.fatal
+                         "hetlitmus: condition names %d:%s but proc %d has no load \
+                          into that register (cannot bind a read buffer)" pr r pr
+                    | _, None ->
+                       Warn.fatal
+                         "hetlitmus: condition value for %d:%s is not an integer" pr r)
+                | Atom _ -> ()
+                | Not q -> scan q
+                | And ps | Or ps -> List.iter scan ps
+                | Implies (a,b) -> scan a ; scan b in
+              scan (prop_of parsed.MiscParser.condition) ;
+              List.rev !acc in
+            let is_reader p = List.exists (fun (q,_,_,_) -> q=p) read_atoms in
+            let fr_target pr g =
+              let rec f = function
+                | (p,_,stores,_)::rest when p <> pr ->
+                   let rec h i = function
+                     | (sg,_)::t -> if sg=g then Some (p, store_mu p i) else h (i+1) t
+                     | [] -> None in
+                   (match h 0 stores with Some x -> Some x | None -> f rest)
+                | _::rest -> f rest
+                | [] -> None in
+              f proc_infos in
+            let frame_kind = Hashtbl.create 8 in
+            let pin_src = Hashtbl.create 8 in
+            let win_src = Hashtbl.create 8 in
+            let bound_by = Hashtbl.create 8 in
+            let win_order = ref [] in
+            let is_bound p = Hashtbl.mem frame_kind p in
+            let propagate () =
+              let changed = ref true in
+              while !changed do
+                changed := false ;
+                List.iter
+                  (fun (pr,li,g,v) ->
+                    if is_bound pr && v <> 0 then
+                      match Hashtbl.find_opt value_mu (g,v) with
+                      | Some mu ->
+                         (match Hashtbl.find_opt mu_proc mu with
+                          | Some w when w <> pr && not (is_bound w) ->
+                             Hashtbl.replace frame_kind w `Pin ;
+                             Hashtbl.replace pin_src w (pr,li) ;
+                             Hashtbl.replace bound_by (pr,li) w ;
+                             changed := true
+                          | _ -> ())
+                      | None -> ())
+                  read_atoms
+              done in
+            let rf_atom =
+              List.find_opt
+                (fun (_,_,g,v) -> v <> 0 && Hashtbl.mem value_mu (g,v))
+                read_atoms in
+            let has_rf_anchor = rf_atom <> None in
+            let anchor_atom =
+              match rf_atom with
+              | Some a -> Some a
+              | None -> (match read_atoms with a::_ -> Some a | [] -> None) in
+            (match anchor_atom with
+             | None -> ()
+             | Some (b,_,_,_) ->
+                Hashtbl.replace frame_kind b `Base ;
+                propagate () ;
+                let rec add_windows () =
+                  let unbound =
+                    List.sort_uniq compare
+                      (List.filter_map
+                         (fun (p,_,_,_) -> if is_bound p then None else Some p)
+                         read_atoms) in
+                  match unbound with
+                  | [] -> ()
+                  | p::_ ->
+                     Hashtbl.replace frame_kind p `Win ;
+                     (match
+                        List.find_opt
+                          (fun (q,_,g,_) ->
+                            is_bound q && proc_store_mu p g <> None)
+                          read_atoms
+                      with
+                      | Some (q,li,_,_) -> Hashtbl.replace win_src p (q,li)
+                      | None -> ()) ;
+                     win_order := !win_order @ [p] ;
+                     propagate () ;
+                     add_windows () in
+                add_windows ()) ;
+            let mvar (m:mode) p =
+              Printf.sprintf "%s%d" (match m with `Exh -> "_em" | `Heur -> "_m") p in
+            let tvar (m:mode) p =
+              Printf.sprintf "%s%d" (match m with `Exh -> "_et" | `Heur -> "_t") p in
+            let idx_of m p =
+              match Hashtbl.find_opt frame_kind p with
+              | Some `Base -> "_f"
+              | Some `Pin -> Printf.sprintf "(%s - 1)" (mvar m p)
+              | Some `Win -> tvar m p
+              | None -> "_f" in
+            let it_of m p =
+              match Hashtbl.find_opt frame_kind p with
+              | Some `Base -> "(_f + 1)"
+              | Some `Pin -> mvar m p
+              | Some `Win -> Printf.sprintf "(%s + 1)" (tvar m p)
+              | None -> "0" in
+            let buf_at m p li =
+              Printf.sprintf "%s[%s]" (scan_buf p li) (idx_of m p) in
+            let pin_guards m =
+              List.filter_map
+                (fun (p,_) ->
+                  match Hashtbl.find_opt frame_kind p with
+                  | Some `Pin when is_reader p ->
+                     let v = mvar m p in
+                     Some (Printf.sprintf
+                             "(%s >= 1 && %s <= (uint64_t)SIZE_OF_TEST)" v v)
+                  | _ -> None)
+                (List.map (fun (p,_,_,_) -> (p,())) read_atoms
+                 |> List.sort_uniq compare) in
+            (* Every tag decode below spells K as THIS INSTANCE's macro [kmac], not
+               a TU-wide K_TAG.  With an MP canary (K=3) co-running beside an S test
+               (K=4) in one file, a shared K would decode one instance's tags with
+               the other's modulus: writer and iteration both come out wrong, the
+               "recovered" cycles are fiction, and no structural gate would see it. *)
+            let rec c_tag_of_prop m p =
+              let open ConstrGen in
+              match p with
+              | Atom (LV (Loc (MiscParser.Location_reg (pr,r)),v)) ->
+                 let li = match read_of pr r with
+                   | Some li -> li
+                   | None -> assert false in
+                 let g = match read_global pr li with
+                   | Some g -> g | None -> assert false in
+                 let buf = buf_at m pr li in
+                 (match cint v with
+                  | Some 0 ->
+                     (match fr_target pr g with
+                      | Some (w,mu) when is_bound w ->
+                         Printf.sprintf "(%s < (uint64_t)%s*%s + %d)"
+                           buf kmac (it_of m w) mu
+                      | _ -> Printf.sprintf "(%s == 0)" buf)
+                  | Some n ->
+                     (match Hashtbl.find_opt value_mu (g,n) with
+                      | Some mu ->
+                         let same_iter =
+                           match Hashtbl.find_opt mu_proc mu with
+                           | Some w when is_bound w
+                                         && Hashtbl.find_opt bound_by (pr,li) <> Some w ->
+                              Printf.sprintf " && %s / %s == (uint64_t)%s"
+                                buf kmac (it_of m w)
+                           | _ -> "" in
+                         Printf.sprintf "(%s != 0 && %s %% %s == %d%s)"
+                           buf buf kmac mu same_iter
+                      | None ->
+                         Warn.fatal
+                           "hetlitmus: condition wants %d:%s=%d but no store writes \
+                            %d to %s" pr r n n g)
+                  | None -> assert false)
+              | Atom (LV (Loc (MiscParser.Location_global g),v)) ->
+                 let name = MiscParser.dump_value g in
+                 if List.mem name obs_locs then
+                   Printf.sprintf "1 /* [%s] via observer _loc */" name
+                 else
+                   Warn.fatal
+                     "hetlitmus: condition observes [%s]=%s but no global backs it \
+                      (no observer buffer can be allocated)" name (cval v)
+              | Atom _ ->
+                 Warn.fatal "hetlitmus: unsupported condition atom (not loc=v)"
+              | Not q -> Printf.sprintf "(!%s)" (c_tag_of_prop m q)
+              | And ps -> mk_and (List.map (c_tag_of_prop m) ps)
+              | Or ps -> mk_or (List.map (c_tag_of_prop m) ps)
+              | Implies (a,b) ->
+                 Printf.sprintf "(!(%s) || %s)"
+                   (c_tag_of_prop m a) (c_tag_of_prop m b) in
+            let cond_at m =
+              mk_and
+                (pin_guards m
+                 @ [c_tag_of_prop m (prop_of parsed.MiscParser.condition)]) in
+            let cond_expr = cond_at `Heur in
+            let ws_var l d = Printf.sprintf "%s_ws_%s_%s" pre l d in
+            let rec c_loc d p =
+              let open ConstrGen in
+              match p with
+              | Atom (LV (Loc (MiscParser.Location_reg _),_)) -> "1"
+              | Atom (LV (Loc (MiscParser.Location_global g),_)) ->
+                 let name = MiscParser.dump_value g in
+                 if List.mem name obs_locs then ws_var name d
+                 else "0 /* unobservable location */"
+              | Atom _ -> "0"
+              | Not q -> Printf.sprintf "(!%s)" (c_loc d q)
+              | And ps -> mk_and (List.map (c_loc d) ps)
+              | Or ps -> mk_or (List.map (c_loc d) ps)
+              | Implies (a,b) ->
+                 Printf.sprintf "(!(%s) || %s)" (c_loc d a) (c_loc d b) in
+            let loc_expr =
+              if has_observers then
+                mk_or [ c_loc "c" (prop_of parsed.MiscParser.condition) ;
+                        c_loc "g" (prop_of parsed.MiscParser.condition) ]
+              else "1" in
+            let locv = usym pre "_loc" in
+            (* B3c HARD INVARIANT (SHARED-CHARGE, "incompleteness is NOT a
+               placeholder").  The emitted detector may never be a CONSTANT.  A
+               constant-true _weak reports the weak behaviour on every run; a
+               constant-false one reports "Never" on every run -- and a spurious
+               "Never" on a should-be-forbidden test reads as CONFIRMATION of the
+               memory model.  Both silently falsify the science, so refuse to emit
+               rather than ship one (this is what B3's HET_PENDING=0 did to 266 of
+               the 338 het tests).  Structural, not a test: it cannot regress.
+
+               B6b: it now fires PER INSTANCE, and a constant detector on the
+               CONTROL is the same catastrophe wearing a different hat.  A
+               constant-FALSE mu(T) is permanently cold, so every null it gates is
+               discarded forever; a constant-TRUE one makes every null credible for
+               free.  Both look exactly like a working control from outside. *)
+            let weak_expr =
+              if has_observers then mk_and [cond_expr ; locv] else cond_expr in
+            if is_true weak_expr || is_false weak_expr then
+              Warn.fatal
+                "hetlitmus: %s (%s) would emit a CONSTANT weak-behaviour detector \
+                 (_weak = %s) -- refusing to emit (SHARED-CHARGE.md)"
+                tname (role_note role) weak_expr ;
+            let sync_src =
+              List.find_opt
+                (fun (p,_,g,_) ->
+                  Hashtbl.find_opt frame_kind p = Some `Base && writers_of g <> [])
+                read_atoms in
+            let hot_expr =
+              match read_buffers with
+              | [] -> "0"
+              | _ ->
+                 "(" ^
+                 String.concat " || "
+                   (List.map
+                      (fun (p,li,_,_,_) -> Printf.sprintf "%s[_f] != 0" (scan_buf p li))
+                      read_buffers)
+                 ^ ")" in
+            let n_observers = if has_observers then 2 else 0 in
+            let mech_class =
+              HetCond.perpetual_class (prop_of parsed.MiscParser.condition) in
+            let report_class = HetCond.reporting_class ~has_rf_anchor mech_class in
+            (* ---------------- the pre-rendered _decode_value ------------------
+               Only T feeds the outcome histogram (Q4 3.2: "the control is a
+               separate instance, so its outcomes never pollute T's histogram"), so
+               only T needs a decoder -- and each decoder is keyed on ITS OWN K. *)
+            let decode_fn =
+              if role <> RTest then ""
+              else begin
+                let b = Buffer.create 256 in
+                let s = Buffer.add_string b in
+                s (Printf.sprintf
+                     "[[maybe_unused]] static uint64_t %s(uint64_t _tag){\n"
+                     (usym pre "_decode_value")) ;
+                s "  if (_tag == 0) return 0;\n" ;
+                s (Printf.sprintf "  switch (_tag %% %s) {\n" kmac) ;
+                Hashtbl.iter
+                  (fun mu v -> s (Printf.sprintf "    case %d: return %d;\n" mu v))
+                  mu_value ;
+                s "    default: return 0;\n  }\n}\n\n" ;
+                Buffer.contents b
+              end in
+            (* ---------------- the pre-rendered _labels / _dump_one ------------ *)
+            let labels =
+              if role <> RTest then ""
+              else begin
+                let b = Buffer.create 256 in
+                let s = Buffer.add_string b in
+                let labelstr =
+                  String.concat ", "
+                    (List.map (fun (p,r) -> Printf.sprintf "\"%d:%s\"" p r) slots
+                     @ List.map (Printf.sprintf "\"[%s]\"") loc_slots) in
+                s (Printf.sprintf "static const char* _labels[%d] = { %s };\n"
+                     (max 1 nslots) labelstr) ;
+                s {ocaml|static void _dump_one(FILE* _ch, intmax_t* o, count_t c, int show){
+  fprintf(_ch, "%-8" PRIu64 "%c> ", c, show ? '*' : ' ');
+|ocaml} ;
+                s (Printf.sprintf "  for (int i=0;i<%d;i++)" nslots) ;
+                s {ocaml| fprintf(_ch, "%s=%" PRIdMAX "; ", _labels[i], o[i]);
+  fprintf(_ch, "\n");
+}
+
+|ocaml} ;
+                Buffer.contents b
+              end in
+            (* ================= the pre-rendered RECOVERY SCAN =================
+               Pure C over host buffers, so it needs no dialect.  The instance's
+               ROLE decides which channel of het_obs_record it feeds:
+                 RTest   -> target_count_{exhaustive,heuristic}, interleavings,
+                            frames_examined, skew/distinct, observer, the histogram
+                 RMu     -> control_target_count / control_frames_examined
+                 RCanary -> canary_target_count / canary_frames_examined
+               All three are the SAME scan -- "the control is not special-cased, it
+               is another instance whose target is tallied by the identical scan"
+               (Q4 3.2).  Each carries its own frame binding, its own detector and
+               its own exhaustive_valid, because the shapes differ. *)
+            let scan =
+              let b = Buffer.create 4096 in
+              let s = Buffer.add_string b in
+              let is_test = role = RTest in
+              let frames_field, exh_field = match role with
+                | RTest -> "frames_examined", "exhaustive_valid"
+                | RMu -> "control_frames_examined", "control_exhaustive_valid"
+                | RCanary -> "canary_frames_examined", "canary_exhaustive_valid" in
+              let count_field = match role with
+                | RTest -> None                     (* two channels; see below *)
+                | RMu -> Some "control_target_count"
+                | RCanary -> Some "canary_target_count" in
+              if pre <> "" then
+                s (Printf.sprintf "    /* ---- recovery scan: %s -- %s (K=%d) ---- */\n"
+                     tname (role_note role) k_tag) ;
+              (* Every scan-local name lives in its own block, so only the BUFFERS
+                 (which are main-scope) carry the instance prefix. *)
+              if pre <> "" then s "    {\n" ;
+              (match sync_src with
+               | Some _ when is_test ->
+                  s "    long _skew_sum = 0; double _skew_sq = 0.0; uint64_t _skew_n = 0;\n" ;
+                  s "    int32_t _skew_lo = INT32_MAX, _skew_hi = INT32_MIN;\n" ;
+                  s "    uint64_t _prev_m = 0; int _have_prev = 0;\n"
+               | _ -> ()) ;
+              (* B3 observer ws recovery (per run). *)
+              if has_observers then begin
+                s "    uint64_t _obs_uniq = UINT64_MAX;\n" ;
+                List.iter
+                  (fun l ->
+                    List.iter
+                      (fun (d, bufexpr) ->
+                        let wsv = ws_var l d in
+                        let muf = match loc_value l with
+                          | Some v -> Hashtbl.find_opt value_mu (l,v) | None -> None in
+                        let others = match muf with
+                          | Some mf -> List.filter (fun m -> m <> mf) (writers_of l)
+                          | None -> [] in
+                        s (Printf.sprintf "    int %s = 0;\n" wsv) ;
+                        (match muf, others with
+                         | Some mf, (_::_ as os) ->
+                            let seen =
+                              String.concat " || "
+                                (List.map (Printf.sprintf "_mu == %d") os) in
+                            s "    {\n      int _seen = 0;\n" ;
+                            s "      for (int _w=0; _w<SIZE_OF_TEST; ++_w) {\n" ;
+                            s (Printf.sprintf "        uint64_t _t = %s[_w];\n" bufexpr) ;
+                            s (Printf.sprintf
+                                 "        if (_t != 0) {\n          uint64_t _mu = _t %% %s;\n"
+                                 kmac) ;
+                            s (Printf.sprintf "          if (%s) _seen = 1;\n" seen) ;
+                            s (Printf.sprintf
+                                 "          if (_mu == %d && _seen) { %s = 1; break; }\n" mf wsv) ;
+                            s "        }\n      }\n    }\n"
+                         | _ ->
+                            s (Printf.sprintf
+                                 "    /* %s: no competing writer, ws unobservable */\n" wsv)) ;
+                        s "    {\n      uint64_t _u = 0, _pm = 0; int _hp = 0;\n" ;
+                        s "      for (int _w=0; _w<SIZE_OF_TEST; ++_w) {\n" ;
+                        s (Printf.sprintf "        uint64_t _t = %s[_w];\n" bufexpr) ;
+                        s (Printf.sprintf
+                             "        if (_t != 0) { uint64_t _mi = _t / %s;\n" kmac) ;
+                        s "          if (!_hp || _mi != _pm) { _u++; _pm = _mi; _hp = 1; } }\n" ;
+                        s "      }\n      if (_u < _obs_uniq) _obs_uniq = _u;\n    }\n")
+                      [("c", obsC_of pre l); ("g", obsG_of pre l ^ "_h")])
+                  obs_locs ;
+                if is_test then
+                  s "    _rec.observer_unique_count = (_obs_uniq == UINT64_MAX) ? 0 : _obs_uniq;\n"
+                else
+                  s "    (void)_obs_uniq;  /* the controls report only their target count */\n" ;
+                s (Printf.sprintf "    int %s = %s;\n" locv loc_expr)
+              end ;
+              (* exhaustive_valid -- PER INSTANCE.  T_L<=1: every frame is decoded
+                 exactly, so the O(N) scan IS the ground truth at any N.  T_L>=2:
+                 only when the O(N^T_L) search actually ran.  (B6a: setting it to
+                 (N <= HET_EXHAUSTIVE_MAX) for every test made it 0 on all 338 at
+                 the default N, so the rule would have been constant-COLD forever.) *)
+              let exhv = usym pre "_exh" in
+              let windowed = !win_order <> [] in
+              (match windowed with
+               | false ->
+                  s (Printf.sprintf
+                       "    _rec.%s = 1;  /* T_L<=1: the O(N) scan is exact at any N */\n"
+                       exh_field)
+               | true ->
+                  s (Printf.sprintf
+                       "    const int %s = (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX);\n" exhv) ;
+                  s (Printf.sprintf
+                       "    _rec.%s = %s;  /* T_L>=2: only if the O(N^T_L) search ran */\n"
+                       exh_field exhv)) ;
+              s "    for (int _f=0; _f<SIZE_OF_TEST; ++_f) {\n" ;
+              s (Printf.sprintf "      _rec.%s++;\n" frames_field) ;
+              let pins_at m lvl =
+                Hashtbl.fold
+                  (fun w (q,li) acc ->
+                    let qlvl =
+                      match Hashtbl.find_opt frame_kind q with
+                      | Some `Base -> 0
+                      | Some `Win ->
+                         1 + (let rec ix i = function
+                                | [] -> 0
+                                | p::t -> if p=q then i else ix (i+1) t in
+                              ix 0 !win_order)
+                      | _ -> 0 in
+                    if qlvl = lvl then (w,q,li) :: acc else acc)
+                  pin_src []
+                |> List.sort compare
+                |> List.map
+                     (fun (w,q,li) ->
+                       Printf.sprintf "%s = %s / %s;"
+                         (mvar m w) (buf_at m q li) kmac) in
+              let decl_pins m ind lvl =
+                List.iter
+                  (fun a -> s (Printf.sprintf "%suint64_t %s\n" ind a))
+                  (pins_at m lvl) in
+              let assign_pins m ind lvl =
+                List.iter (fun a -> s (Printf.sprintf "%s%s\n" ind a)) (pins_at m lvl) in
+              let win_centre m p =
+                match Hashtbl.find_opt win_src p with
+                | Some (q,li) ->
+                   Printf.sprintf "(long)(%s / %s) - 1" (buf_at m q li) kmac
+                | None -> "(long)_f" in
+              let win_guard m p =
+                match Hashtbl.find_opt win_src p with
+                | Some (q,li) ->
+                   Some (Printf.sprintf "%s != 0" (buf_at m q li))
+                | None -> None in
+              decl_pins `Heur "      " 0 ;
+              List.iteri
+                (fun i p ->
+                  let lvl = i+1 in
+                  s (Printf.sprintf "      long %s = %s;\n"
+                       (tvar `Heur p) (win_centre `Heur p)) ;
+                  s (Printf.sprintf "      if (%s < 0) %s = 0;\n"
+                       (tvar `Heur p) (tvar `Heur p)) ;
+                  s (Printf.sprintf
+                       "      if (%s >= SIZE_OF_TEST) %s = SIZE_OF_TEST-1;\n"
+                       (tvar `Heur p) (tvar `Heur p)) ;
+                  decl_pins `Heur "      " lvl)
+                !win_order ;
+              if is_test then begin
+                s (Printf.sprintf "      int _hot = %s;\n" hot_expr) ;
+                s "      if (_hot) _rec.interleavings_detected++;\n"
+              end ;
+              (* ---- the weak-behaviour detector ---- *)
+              (match windowed with
+               | false ->
+                  s (Printf.sprintf "      int _weak = %s;\n" weak_expr) ;
+                  (match count_field with
+                   | None ->
+                      s "      if (_weak) { _rec.target_count_exhaustive++; _rec.target_count_heuristic++; }\n"
+                   | Some f ->
+                      s (Printf.sprintf "      if (_weak) _rec.%s++;\n" f))
+               | true ->
+                  let emit_search m weakv exhaustive =
+                    let ind = ref "      " in
+                    let bump () = ind := !ind ^ "  " in
+                    List.iteri
+                      (fun i p ->
+                        let lvl = i+1 in
+                        let t = tvar m p in
+                        let c = Printf.sprintf "_c%d%s" p
+                                  (match m with `Exh -> "e" | `Heur -> "") in
+                        (match win_guard m p with
+                         | Some g ->
+                            s (Printf.sprintf "%sif (%s) {\n" !ind g) ; bump ()
+                         | None -> s (Printf.sprintf "%s{\n" !ind) ; bump ()) ;
+                        if exhaustive then begin
+                          s (Printf.sprintf "%slong %s_lo = 0, %s_hi = SIZE_OF_TEST-1;\n"
+                               !ind c c)
+                        end else begin
+                          s (Printf.sprintf "%slong %s = %s;\n" !ind c (win_centre m p)) ;
+                          s (Printf.sprintf
+                               "%slong %s_lo = %s - HET_WINDOW, %s_hi = %s + HET_WINDOW;\n"
+                               !ind c c c c) ;
+                          s (Printf.sprintf "%sif (%s_lo < 0) %s_lo = 0;\n" !ind c c) ;
+                          s (Printf.sprintf
+                               "%sif (%s_hi > SIZE_OF_TEST-1) %s_hi = SIZE_OF_TEST-1;\n"
+                               !ind c c)
+                        end ;
+                        s (Printf.sprintf
+                             "%sfor (%s = %s_lo; %s <= %s_hi && !%s; ++%s) {\n"
+                             !ind t c t c weakv t) ;
+                        bump () ;
+                        assign_pins m !ind lvl)
+                      !win_order ;
+                    s (Printf.sprintf "%sif (%s) %s = 1;\n" !ind (cond_at m) weakv) ;
+                    List.iter
+                      (fun _ ->
+                        ind := String.sub !ind 0 (String.length !ind - 2) ;
+                        s (Printf.sprintf "%s}\n" !ind) ;
+                        ind := String.sub !ind 0 (String.length !ind - 2) ;
+                        s (Printf.sprintf "%s}\n" !ind))
+                      !win_order in
+                  s "      int _rwin = 0;\n" ;
+                  emit_search `Heur "_rwin" false ;
+                  List.iteri
+                    (fun i p ->
+                      let lvl = i+1 in
+                      s (Printf.sprintf "      if (!_rwin) {\n        %s = %s;\n"
+                           (tvar `Heur p) (win_centre `Heur p)) ;
+                      s (Printf.sprintf "        if (%s < 0) %s = 0;\n"
+                           (tvar `Heur p) (tvar `Heur p)) ;
+                      s (Printf.sprintf
+                           "        if (%s >= SIZE_OF_TEST) %s = SIZE_OF_TEST-1;\n"
+                           (tvar `Heur p) (tvar `Heur p)) ;
+                      assign_pins `Heur "        " lvl ;
+                      s "      }\n")
+                    !win_order ;
+                  s (Printf.sprintf "      int _weak = %s;\n"
+                       (if has_observers then mk_and ["_rwin"; locv] else "_rwin")) ;
+                  (match count_field with
+                   | None ->
+                      s "      if (_weak) _rec.target_count_heuristic++;\n" ;
+                      s "      int _rex = 0;\n" ;
+                      s (Printf.sprintf "      if (%s) {\n" exhv) ;
+                      List.iter
+                        (fun p ->
+                          s (Printf.sprintf "        long %s = 0;\n" (tvar `Exh p)))
+                        !win_order ;
+                      List.iter
+                        (fun a -> s (Printf.sprintf "        uint64_t %s\n" a))
+                        (List.concat_map (fun l -> pins_at `Exh l)
+                           (List.init (List.length !win_order + 1) (fun i -> i))) ;
+                      emit_search `Exh "_rex" true ;
+                      s "      }\n" ;
+                      s (Printf.sprintf "      int _weak_ex = %s;\n"
+                           (if has_observers then mk_and ["_rex"; locv] else "_rex")) ;
+                      s "      if (_weak_ex) _rec.target_count_exhaustive++;\n"
+                   | Some f ->
+                      (* THE CONTROL'S COUNT MUST BE THE ONE THAT IS ACTUALLY
+                         MEASURED AT PRODUCTION N.  mu(SB-*-sys-fence-2s) is
+                         SB-*-sys-acqrel-2s -- itself a T_L>=2 shape -- so its
+                         exhaustive scan does NOT run at N=100000 (> the
+                         HET_EXHAUSTIVE_MAX cap) and its exhaustive count is 0 BY
+                         CONSTRUCTION.  Keying the control off that count would make
+                         control_target_count structurally zero on 2 of the 16
+                         control harnesses, so those nulls would be COLD-INVALID
+                         forever: a positive control that CANNOT FIRE is not a
+                         control, it is the dead mechanism this task exists to stop.
+
+                         The windowed count is sound for this: the window is a subset
+                         of the full range under the SAME predicate, so a windowed hit
+                         is a genuine recovered cycle (it can MISS cycles, it cannot
+                         invent them).  Under-counting the control errs toward COLD --
+                         the safe direction.  control_exhaustive_valid travels with it
+                         so a reader can see which kind of count it is. *)
+                      s (Printf.sprintf "      if (_weak) _rec.%s++;\n" f))) ;
+              (* guard 1 (4.4): the synchrony decode must actually VARY. *)
+              (match sync_src with
+               | Some (p,li,_,_) when is_test ->
+                  let sb = Printf.sprintf "%s[_f]" (scan_buf p li) in
+                  s (Printf.sprintf "      if (%s != 0) {\n" sb) ;
+                  s (Printf.sprintf "        uint64_t _ms = %s / %s;\n" sb kmac) ;
+                  s "        int32_t _sk = (int32_t)((long)_ms - (long)(_f+1));\n" ;
+                  s "        _skew_sum += _sk; _skew_sq += (double)_sk*(double)_sk; _skew_n++;\n" ;
+                  s "        if (_sk < _skew_lo) _skew_lo = _sk; if (_sk > _skew_hi) _skew_hi = _sk;\n" ;
+                  s "        if (!_have_prev || _ms != _prev_m) { _rec.distinct_decoded_iters++; _prev_m = _ms; _have_prev = 1; }\n" ;
+                  s "      }\n"
+               | _ -> ()) ;
+              (* Histogram: T only. *)
+              if is_test then begin
+                s "      if (_hot || _weak) {\n" ;
+                s (Printf.sprintf "        intmax_t _o[%d];\n" (max 1 nslots)) ;
+                List.iteri
+                  (fun i (p,r) ->
+                    match read_of p r with
+                    | Some li ->
+                       let e =
+                         Printf.sprintf "%s(%s)" (usym pre "_decode_value")
+                           (buf_at `Heur p li) in
+                       let e =
+                         match Hashtbl.find_opt frame_kind p with
+                         | Some `Pin ->
+                            let v = mvar `Heur p in
+                            Printf.sprintf
+                              "(%s >= 1 && %s <= (uint64_t)SIZE_OF_TEST) ? %s : 0" v v e
+                         | _ -> e in
+                       s (Printf.sprintf "        _o[%d] = (intmax_t)(%s);\n" i e)
+                    | None -> s (Printf.sprintf "        _o[%d] = 0;\n" i))
+                  slots ;
+                List.iteri
+                  (fun j _ -> s (Printf.sprintf "        _o[%d] = 0;\n" (n_reg+j)))
+                  loc_slots ;
+                s (Printf.sprintf
+                     "        hist = add_outcome_outs(hist, _o, %d, 1, _weak);\n" nslots) ;
+                s "      }\n"
+              end ;
+              s "    }\n" ;                                (* end for (_f) *)
+              (match sync_src with
+               | Some _ when is_test ->
+                  s "    if (_skew_n > 0) {\n" ;
+                  s "      _rec.skew_min = _skew_lo; _rec.skew_max = _skew_hi;\n" ;
+                  s "      _rec.skew_mean = (double)_skew_sum / (double)_skew_n;\n" ;
+                  s "      double _var = (_skew_sq / (double)_skew_n) - _rec.skew_mean*_rec.skew_mean;\n" ;
+                  s "      _rec.skew_stddev = _var > 0.0 ? sqrt(_var) : 0.0;\n" ;
+                  s "    }\n"
+               | _ -> ()) ;
+              (* A pure-location (store-only) test's weak result is per-RUN. *)
+              if has_observers && read_buffers = [] then begin
+                (match count_field with
+                 | None ->
+                    s "    _rec.target_count_exhaustive = _rec.target_count_exhaustive ? 1 : 0;\n" ;
+                    s "    _rec.target_count_heuristic  = _rec.target_count_heuristic  ? 1 : 0;\n"
+                 | Some f ->
+                    s (Printf.sprintf "    _rec.%s = _rec.%s ? 1 : 0;\n" f f)) ;
+                if is_test then begin
+                  s (Printf.sprintf "    { intmax_t _o[%d];\n" (max 1 nslots)) ;
+                  List.iteri (fun i _ -> s (Printf.sprintf "      _o[%d] = 0;\n" i)) slots ;
+                  List.iteri (fun j _ -> s (Printf.sprintf "      _o[%d] = 0;\n" (n_reg+j)))
+                    loc_slots ;
+                  s (Printf.sprintf
+                       "      hist = add_outcome_outs(hist, _o, %d, 1, %s); }\n" nslots locv)
+                end
+              end ;
+              if has_observers && is_test then
+                s "    _rec.ws_edges_via_observer = _rec.target_count_exhaustive;\n" ;
+              if pre <> "" then s "    }\n" ;
+              Buffer.contents b in
+            let cpus =
+              List.map
+                (fun (proc,_out,addrs) ->
+                  { cp_proc = proc ;
+                    cp_addrs = addrs ;
+                    cp_code =
+                      (match List.find_opt (fun ((p,_,_),_) -> p=proc) cpu_prog with
+                       | Some (_,code) -> code | None -> []) ;
+                    cp_reg_env = reg_env_of proc ;
+                    cp_nloads = List.length (loads_of proc) })
+                params in
+            let gpus =
+              List.map
+                (fun ((p,_,_),code) ->
+                  let blk,lane = layout p in
+                  { gp_proc = p ; gp_blk = blk ; gp_lane = lane ;
+                    gp_instrs = CudaLang.instrs_of_code code ;
+                    gp_regs = CudaLang.result_regs code })
+                gpu_prog in
+            { i_role = role ; i_pre = pre ; i_kmac = kmac ; i_name = tname ;
+              i_k = k_tag ;
+              i_cpus = cpus ; i_gpus = gpus ; i_store_mu = store_mu ;
+              i_gpu_globals = gpu_globals ; i_all_globals = all_globals ;
+              i_obs_locs = obs_locs ; i_obs = has_observers ;
+              i_bdim = block_dim ; i_nblocks = n_blocks ;
+              i_npart = List.length params + List.length gpu_prog + n_observers ;
+              i_blocks = n_blocks + (if has_observers then 1 else 0) ;
+              i_lanes = List.length gpu_prog + (if has_observers then 1 else 0) ;
+              i_spin = List.length gpu_prog ;
+              i_bufs = read_buffers ;
+              i_decode = decode_fn ; i_scan = scan ; i_labels = labels ;
+              i_nslots = nslots ;
+              i_mech = mech_class ; i_report = report_class ; } in
+
+          (* ---- parse a sibling corpus test (mu(T) / the canary) -------------- *)
+          let parse_sibling name =
+            let f = Filename.concat src_dir (name ^ ".litmus") in
+            if not (Sys.file_exists f) then
+              Warn.fatal
+                "hetlitmus: %s names the control %s, but %s does not exist.  A \
+                 control that cannot be BUILT cannot vouch for anything, and a \
+                 harness that silently drops it turns its null into an \
+                 unfalsifiable claim -- regenerate control-map.csv \
+                 (hetlitmus/verify/controlmap.py --emit)."
+                tname name f ;
+            let ch = open_in f in
+            let sp = SP.split f ch in
+            let p = P.parse ch sp in
+            close_in ch ;
+            (p, sp.Splitter.name) in
+
+          (* ================= the instance population ==========================
+             A should-be-FORBIDDEN test (the only kind for which control-map.csv
+             names a mu) becomes a THREE-instance harness: T + mu(T) + the canary,
+             in the SAME launch, under the SAME stress, on the SAME C2C path, on
+             disjoint cache-line-padded locations.  Everything else stays a single
+             instance with prefix "" -- byte-for-byte what it was. *)
+          let insts =
+            match mu_name, canary_name with
+            | Some m, Some c ->
+               let (mp,mdoc) = parse_sibling m
+               and (cp,cdoc) = parse_sibling c in
+               [ derive ~role:RTest ~pre:"t_" ~kmac:"T_K_TAG" ~tname ~parsed ~doc ;
+                 derive ~role:RMu ~pre:"mu_" ~kmac:"MU_K_TAG"
+                   ~tname:m ~parsed:mp ~doc:mdoc ;
+                 derive ~role:RCanary ~pre:"can_" ~kmac:"CAN_K_TAG"
+                   ~tname:c ~parsed:cp ~doc:cdoc ]
+            | _ -> [ derive ~role:RTest ~pre:"" ~kmac:"K_TAG" ~tname ~parsed ~doc ] in
+          let co_run = List.length insts > 1 in
+          let it = List.hd insts in            (* the test under study *)
+          (* Composed geometry -- every participant count is a SUM over instances. *)
+          let npart = List.fold_left (fun a i -> a + i.i_npart) 0 insts in
+          let test_blocks = List.fold_left (fun a i -> a + i.i_blocks) 0 insts in
+          let gpu_lanes = List.fold_left (fun a i -> a + i.i_lanes) 0 insts in
+          let spin_lanes = List.fold_left (fun a i -> a + i.i_spin) 0 insts in
+          let block_dim = List.fold_left (fun a i -> max a i.i_bdim) 1 insts in
+          (* each instance's block base in the composed grid *)
+          let bases =
+            let _,acc =
+              List.fold_left
+                (fun (b,acc) i -> (b + i.i_blocks, (i.i_pre, b) :: acc))
+                (0,[]) insts in
+            List.rev acc in
+          let base_of i = List.assoc i.i_pre bases in
           if OT.verbose >= 0 then begin
             Printf.eprintf
               "HetLitmus: emitting Tier-2 harness for %s (%d procs, CPU=%s)\n%!"
@@ -966,674 +2036,24 @@ static void gd_free_noise(void* _p){
                       Printf.sprintf "CPU pthread (%s asm via ASMLang)" CpuF.isa_name
                    | "gpu" -> "GPU kernel (LISA/PTX via CudaLang/HipLang)"
                    | _ -> "unknown"))
-              parsed.MiscParser.prog
-          end ;
-          (* ---- CPU-only projection -> compile -> templates ---- *)
-          let cpu_prog =
-            List.filter_map
-              (fun ((p,annot,f),code) -> match annot with
-                | Some ("cpu"::_) ->
-                   Some ((p,annot,f),List.map Arch'.to_cpu_pseudo code)
-                | _ -> None)
-              parsed.MiscParser.prog in
-          let cpu_init =
-            List.filter
-              (fun (loc,_) -> match loc with
-                | MiscParser.Location_reg (p,_) -> is_cpu p
-                | _ -> true)
-              parsed.MiscParser.init in
-          let prop_of = function
-            | ConstrGen.ForallStates p | ConstrGen.ExistsState p
-            | ConstrGen.NotExistsState p -> p in
-          let rec filt_cpu p =
-            let open ConstrGen in
-            match p with
-            | Atom (LV (Loc (MiscParser.Location_reg (pr,_)),_)) ->
-               if is_cpu pr then Some p else None
-            | Atom _ -> None
-            | Not q -> (match filt_cpu q with Some q' -> Some (Not q') | None -> None)
-            | And ps -> Some (And (List.filter_map filt_cpu ps))
-            | Or ps ->
-               (match List.filter_map filt_cpu ps with [] -> None | xs -> Some (Or xs))
-            | Implies (a,b) ->
-               (match filt_cpu a, filt_cpu b with
-                | Some a',Some b' -> Some (Implies (a',b')) | _ -> None) in
-          let cpu_prop =
-            match filt_cpu (prop_of parsed.MiscParser.condition) with
-            | Some p -> p | None -> ConstrGen.And [] in
-          let cpu_parsed =
-            { MiscParser.info = parsed.MiscParser.info ;
-              init = cpu_init ;
-              prog = cpu_prog ;
-              filter = None ;
-              condition = ConstrGen.ExistsState cpu_prop ;
-              locations = [] ;
-              extra_data = MiscParser.empty_extra ; } in
-          let cpu_allocated = AllocCpu.allocate_regs cpu_parsed in
-          let cpu_compiled = CpuX.Comp.compile doc cpu_allocated in
-          let global_env =
-            List.map
-              (fun (loc,t) ->
-                let t = match t with CType.Array (b,_) -> CType.Base b | _ -> t in
-                loc,t)
-              cpu_compiled.CpuX.Utils.T.globals in
-          (* per-CPU-proc inline-asm function signature (mirrors exactly what
-             ASMLang.dump_fun emits: addresses then output regs). *)
-          let cpu_param_types out proc =
-            let addrs,_ptes = Cpu.Out.get_addrs out in
-            let addr_params =
-              List.map
-                (fun a ->
-                  let ty = try List.assoc a global_env with Not_found -> Compile.base in
-                  (Printf.sprintf "%s *%s" (SkelUtil.dump_global_type a ty) a), a)
-                addrs in
-            let out_params =
-              List.map
-                (fun reg ->
-                  let ty =
-                    let t = Cpu.Out.RegMap.find reg out.Cpu.Out.ty_env in
-                    if CType.is_tag_ptr t then CType.pointer_type t else t in
-                  (Printf.sprintf "%s *%s" (CType.dump ty) (Cpu.Out.dump_out_reg proc reg)),
-                  (Cpu.Out.dump_out_reg proc reg))
-                out.Cpu.Out.final in
-            addr_params, out_params in
-          let params =
-            List.map
-              (fun (proc,(out,(_outregs,envV))) ->
-                (proc,out,envV,cpu_param_types out proc))
-              cpu_compiled.CpuX.Utils.T.code in
-          (* ---- GPU-only projection (reuse CudaLang translation) ---- *)
-          let gpu_prog =
-            List.filter_map
-              (fun ((p,annot,f),code) -> match annot with
-                | Some ("gpu"::_) ->
-                   Some ((p,annot,f),List.map Arch'.to_gpu_pseudo code)
-                | _ -> None)
-              parsed.MiscParser.prog in
-          let gpu_globals = CudaLang.collect_globals gpu_prog in
-          let gpu_procs = List.map (fun ((p,_,_),_) -> p) gpu_prog in
-          let layout,n_blocks,block_dim =
-            CudaLang.layout_of_scopes None gpu_procs in
-          let gpu_slots =
-            List.concat_map
-              (fun ((p,_,_),code) ->
-                List.map
-                  (fun n ->
-                    (p, Printf.sprintf "r%d" n,
-                     Printf.sprintf "__out[%d*%d+%d]" p CudaLang.nregs_layout n))
-                  (CudaLang.result_regs code))
-              gpu_prog in
-          let cpu_slots =
-            List.concat_map
-              (fun (proc,out,_,_) ->
-                List.mapi
-                  (fun i reg ->
-                    (proc, Cpu.pp_reg reg,
-                     Printf.sprintf "cpu_outs_P%d[%d]" proc i))
-                  out.Cpu.Out.final)
-              params in
-          let slots = cpu_slots @ gpu_slots in
-          let n_reg = List.length slots in
-          (* ---- shared globals (allocated once, coherent to both) ----
-             Moved above the condition compiler (Task P 7a): the location-atom
-             arm reads a global's quiescent post-join value, so it needs the
-             allocated set. *)
-          let cpu_addrs =
-            List.concat_map (fun (_,_,_,(ap,_)) -> List.map snd ap) params in
-          let all_globals =
-            let seen = Hashtbl.create 8 in
-            List.filter
-              (fun g -> if Hashtbl.mem seen g then false
-                        else (Hashtbl.add seen g () ; true))
-              (cpu_addrs @ gpu_globals) in
-          (* ================= B3: K*(_n+1)+mu store-tagging plan =================
-             (env-research/decisions/B3-decision.md, Decisions 2+3).  Every store
-             node (CPU + GPU) gets a distinct mu in [1,#stores]; K = 1 + #stores;
-             a store writes the per-iteration tag (uint64_t)K*(_n+1)+mu, so a read
-             that observes it decodes (tag mod K)=writer mu and (tag div K)=writer
-             iteration (>=1; 0 = init/stale, unambiguous).  The SAME map feeds the
-             CPU body (HetCpuBody) and the GPU dump_instr tag ctx. *)
-          let het_iter = "(_n + 1)" in   (* tag iteration starts at 1 (reserve 0) *)
-          (* reg_env for a CPU proc: init "P:reg=global" -> (regname -> global). *)
-          let reg_env_of proc =
-            let tbl = Hashtbl.create 8 in
-            List.iter
-              (fun (loc,(_,v)) -> match loc with
-                | MiscParser.Location_reg (p,r) when p = proc ->
-                   let g = MiscParser.dump_value v in
-                   if List.mem g all_globals then Hashtbl.replace tbl r g
-                | _ -> ())
-              parsed.MiscParser.init ;
-            fun r -> match Hashtbl.find_opt tbl r with Some g -> g | None -> r in
-          (* Per proc (canonical proc order): device, ordered stores
-             [(global,value opt)], ordered loads [global].  CPU via HetCpuBody
-             (CpuF.het_analyze); GPU via BellBase Pst/Pld. *)
-          let proc_infos =
-            List.map
-              (fun ((p,annot,_),code) -> match annot with
-                | Some ("cpu"::_) ->
-                   let plan =
-                     CpuF.het_analyze ~reg_env:(reg_env_of p)
-                       (List.map Arch'.to_cpu_pseudo code) in
-                   (p, `Cpu, plan.HetCpuBody.stores, plan.HetCpuBody.loads)
-                | Some ("gpu"::_) ->
-                   let instrs =
-                     CudaLang.instrs_of_code (List.map Arch'.to_gpu_pseudo code) in
-                   let stores =
-                     List.filter_map
-                       (function
-                        | BellBase.Pst (ao,roi,_) ->
-                           let g = match CudaLang.abs_of_addr_op ao with
-                             | Some s -> s | None -> "?" in
-                           let v = match roi with
-                             | BellBase.Imm i -> Some i | _ -> None in
-                           Some (g,v)
-                        | _ -> None)
-                       instrs in
-                   (* (global, dest reg) -- the reg is spelled as the condition
-                      spells it ("r0"), so the B3c scan binds a GPU atom exactly
-                      like a CPU one.  Program order == read-buffer index. *)
-                   let loads =
-                     List.filter_map
-                       (function
-                        | BellBase.Pld (BellBase.GPRreg n,ao,_) ->
-                           let g = match CudaLang.abs_of_addr_op ao with
-                             | Some s -> s | None -> "?" in
-                           Some (g, Printf.sprintf "r%d" n)
-                        | _ -> None)
-                       instrs in
-                   (p, `Gpu, stores, loads)
-                | _ -> (p, `Gpu, [], []))
-              (List.sort
-                 (fun ((a,_,_),_) ((b,_,_),_) -> compare a b)
-                 parsed.MiscParser.prog) in
-          (* mu = 1,2,3,... in (proc order, program order); K = 1 + #stores. *)
-          let store_mu_tbl = Hashtbl.create 16 in  (* (proc,store_idx) -> mu *)
-          let mu_counter = ref 0 in
-          List.iter
-            (fun (p,_dev,stores,_loads) ->
-              List.iteri
-                (fun si _ -> incr mu_counter ;
-                             Hashtbl.replace store_mu_tbl (p,si) !mu_counter)
-                stores)
-            proc_infos ;
-          let n_stores_total = !mu_counter in
-          let k_tag = 1 + n_stores_total in
-          let store_mu p si =
-            try Hashtbl.find store_mu_tbl (p,si) with Not_found -> 0 in
-          (* (global, orig value) -> mu : decode a read's tag to a writer;
-             mu -> orig value : decode a tag to the value that write carried. *)
-          let value_mu = Hashtbl.create 16 and mu_value = Hashtbl.create 16 in
-          let mu_proc = Hashtbl.create 16 in  (* mu -> writer proc *)
-          List.iter
-            (fun (p,_dev,stores,_loads) ->
-              List.iteri
-                (fun si (g,vopt) ->
-                  let mu = store_mu p si in
-                  Hashtbl.replace mu_proc mu p ;
-                  match vopt with
-                  | Some v ->
-                     Hashtbl.replace value_mu (g,v) mu ;
-                     Hashtbl.replace mu_value mu v
-                  | None -> ())
-                stores)
-            proc_infos ;
-          (* mu of proc's store to global g (the fr edge's target write). *)
-          let proc_store_mu proc g =
-            match List.find_opt (fun (p,_,_,_) -> p=proc) proc_infos with
-            | Some (_,_,stores,_) ->
-               let rec f i = function
-                 | (sg,_)::rest -> if sg=g then Some (store_mu proc i) else f (i+1) rest
-                 | [] -> None in
-               f 0 stores
-            | None -> None in
-          (* Read buffers: one per (load-performing proc, load index), size N.
-             GPU buffers -> cudaMalloc device mem (+ D2H copy for the host scan);
-             CPU buffers -> host malloc.  OFF the coherent race path. *)
-          let read_buffers =  (* (proc, load_idx, name, dev, global) *)
-            List.concat_map
-              (fun (p,dev,_stores,loads) ->
-                List.mapi
-                  (fun li (g,_r) -> (p, li, Printf.sprintf "bufP%d_%d" p li, dev, g))
-                  loads)
-              proc_infos in
-          (* B3c: bind a condition's register atom to a read buffer by LOAD NODE,
-             not by device (B3-decision 4.1).  A CPU read buffer and a GPU read
-             buffer are the same uint64_t[N] object (the GPU's is host-mirrored
-             D2H), so the scan must not care which side performed the load --
-             that is what makes MP-gc fall out as literally the same logic as
-             MP-cg.  [read_of p r] = the load index of proc p's load into
-             register r (program order == read-buffer index), for BOTH devices;
-             the reg is spelled as the condition spells it ("r0" / "X0"). *)
-          let loads_of p =
-            match List.find_opt (fun (q,_,_,_) -> q=p) proc_infos with
-            | Some (_,_,_,loads) -> loads | None -> [] in
-          let read_of p r =
-            let rec f li = function
-              | (_,rr)::rest -> if rr = r then Some li else f (li+1) rest
-              | [] -> None in
-            f 0 (loads_of p) in
-          let buf_name p li = Printf.sprintf "bufP%d_%d" p li in
-          (* Buffer name the HOST recovery scan reads: GPU buffers live in device
-             memory (cudaMalloc) and are mirrored to a host copy "<buf>_h" after
-             the terminal sync; CPU buffers are host malloc'd and read in place. *)
-          let scan_buf p li =
-            let rec f = function
-              | (q,l,name,dev,_)::_ when q=p && l=li ->
-                 (match dev with `Gpu -> name ^ "_h" | `Cpu -> name)
-              | _::rest -> f rest
-              | [] -> buf_name p li in
-            f read_buffers in
-          (* ---- B3 observers (Decision 4/5): the 72 tests whose condition has a
-             coherence-final [ell]=v atom need a ws-edge witness.  Per B3-decision
-             5, ONE GPU observer lane + ONE CPU observer pthread snoop every such
-             location ell into obsG_<ell> (device, mirrored) / obsC_<ell> (host),
-             each covering ALL observed locations so a two-ws (2+2W) cycle is
-             recovered within a SINGLE observer thread (Eq 3.12).  Observer loads
-             are analysis-only (relaxed sys), never the tested order. *)
-          let obs_locs =
-            List.filter_map
-              (fun g ->
-                let name = MiscParser.dump_value g in
-                if List.mem name all_globals then Some name else None)
-              (HetCond.condition_locations (prop_of parsed.MiscParser.condition)) in
-          let has_observers = obs_locs <> [] in
-          (* the mu of every store to a given location (its coherence writers). *)
-          let writers_of l =
-            List.concat_map
-              (fun (p,_dev,stores,_loads) ->
-                List.concat
-                  (List.mapi
-                     (fun si (g,_v) -> if g=l then [store_mu p si] else [])
-                     stores))
-              proc_infos in
-          (* the value each observed location is tested against ([l]=v -> v). *)
-          let loc_value l =
-            let r = ref None in
-            let rec scan p = let open ConstrGen in match p with
-              | Atom (LV (Loc (MiscParser.Location_global g),v)) ->
-                 if !r = None && MiscParser.dump_value g = l then
-                   r := int_of_string_opt (ParsedConstant.pp_v v)
-              | Not q -> scan q
-              | And ps | Or ps -> List.iter scan ps
-              | Implies (a,b) -> scan a ; scan b
-              | Atom _ -> () in
-            scan (prop_of parsed.MiscParser.condition) ; !r in
-          (* ---- location slots (Task P 7a): one outcome-vector cell per
-             Location_global atom in the condition (e.g. [x]=2), read ONCE after
-             pthread_join / device-sync from the quiescent managed global.  In
-             this single-instance emitter every condition location is backed by
-             an allocated global, so it becomes a real final-memory read; a
-             location with no backing global (perpetual mode, B6) is left out of
-             loc_slots and c_of_prop emits a compile-visible HET_UNCONVERTIBLE
-             marker instead of silently collapsing to constant-true. *)
-          let loc_slots =
-            List.filter_map
-              (fun g ->
-                let name = MiscParser.dump_value g in
-                if List.mem name all_globals
-                then Some (name, Printf.sprintf "(*%s)" name)
-                else None)
-              (HetCond.condition_locations (prop_of parsed.MiscParser.condition)) in
-          let nslots = n_reg + List.length loc_slots in
-          (* ---- condition -> C predicate over the read buffers (B3) ---- *)
-          let cval v = ParsedConstant.pp_v v in
-          let cint v = int_of_string_opt (ParsedConstant.pp_v v) in
-          (* Global that a given (proc,load-index) buffer reads. *)
-          let read_global pr li =
-            let rec f = function
-              | (p,l,_,_,g)::_ when p=pr && l=li -> Some g
-              | _::rest -> f rest
-              | [] -> None in
-            f read_buffers in
-          (* Boolean constant-folding for the emitted C: drop the constant-true
-             operands "1" / "1 /*..*/" from an AND (else clang's
-             -Wconstant-logical-operand fires on `1 && x'), the constant-false
-             "0" / "0 /*..*/" from an OR.  HET_PENDING (a macro, not a literal) is
-             left as-is -- clang does not flag macro operands. *)
-          let is_true s =
-            s = "1" || (String.length s >= 2 && s.[0]='1' && s.[1]=' ') in
-          let is_false s =
-            s = "0" || (String.length s >= 2 && s.[0]='0' && s.[1]=' ') in
-          let mk_and parts =
-            if List.exists is_false parts then "0"
-            else match List.filter (fun p -> not (is_true p)) parts with
-            | [] -> "1"
-            | [p] -> p
-            | ps -> "(" ^ String.concat " && " ps ^ ")" in
-          let mk_or parts =
-            if List.exists is_true parts then "1"
-            else match List.filter (fun p -> not (is_false p)) parts with
-              | [] -> "0"
-              | [p] -> p
-              | ps -> "(" ^ String.concat " || " ps ^ ")" in
-          (* ================== B3c: FRAME BINDING ==========================
-             (env-research/decisions/B3-decision.md 4.1-4.2, Srivastava Eqs
-             3.8-3.14.)  Each proc runs its OWN perpetual loop, so each has its
-             own iteration space; a read buffer entry is indexed by the iteration
-             of the proc that PERFORMED the load.  Recovering a cycle therefore
-             means choosing one frame per participating proc.  We do that by
-             DECODING, not searching, wherever the tags allow it (Eq 3.14):
-
-               Base    : the proc carrying the anchor read.  Frame = the scan's
-                         loop var _f.
-               Pinned  : a proc W whose store was read by an rf atom on an
-                         already-bound proc.  The tag DECODES W's iteration
-                         exactly -- _mW = tag / K (Eq 3.13).  No search.
-               Windowed: a reader whose frame no rf atom decodes (SB/LB's second
-                         reader, the 3-hop shapes' third proc).  Searched over
-                         [c-W, c+W] where the centre c is itself decoded from a
-                         bound proc's read of a location THIS proc writes -- a
-                         stale-but-real rf edge.  This is the T_L>=2 window.
-
-             Every cycle edge is then one predicate over those frames:
-               rf  (Eq 3.13): tag % K == mu_writer  [+ tag / K == it(W) when W's
-                              frame is already bound by another atom]
-               fr  (Fig 3.7 = rf+ws): tag < K*it(W) + mu_target -- the read took
-                              a write coherence-BEFORE the cycle's target write.
-                              Subsumes literal init (tag 0) and stale writes.
-             MP (T_L=1) needs no window at all and stays the exact O(N) scan. *)
-          let read_atoms =    (* (proc, load idx, global, value) in source order *)
-            let acc = ref [] in
-            let rec scan p = let open ConstrGen in match p with
-              | Atom (LV (Loc (MiscParser.Location_reg (pr,r)),v)) ->
-                 (match read_of pr r, cint v with
-                  | Some li, Some n ->
-                     (match read_global pr li with
-                      | Some g -> acc := (pr,li,g,n) :: !acc
-                      | None ->
-                         Warn.fatal
-                           "hetlitmus: condition reads %d:%s, whose load has no \
-                            resolvable location" pr r)
-                  | None, _ ->
-                     (* Loud by construction: a condition register we cannot bind
-                        to a load node would silently become a constant-false
-                        detector (the B3 HET_PENDING bug).  Refuse to emit. *)
-                     Warn.fatal
-                       "hetlitmus: condition names %d:%s but proc %d has no load \
-                        into that register (cannot bind a read buffer)" pr r pr
-                  | _, None ->
-                     Warn.fatal
-                       "hetlitmus: condition value for %d:%s is not an integer" pr r)
-              | Atom _ -> ()
-              | Not q -> scan q
-              | And ps | Or ps -> List.iter scan ps
-              | Implies (a,b) -> scan a ; scan b in
-            scan (prop_of parsed.MiscParser.condition) ;
-            List.rev !acc in
-          let is_reader p = List.exists (fun (q,_,_,_) -> q=p) read_atoms in
-          (* The write an fr read falsifies against: the store to [g] by a proc
-             OTHER than the reader (the cycle's target write).  Returns its proc
-             and mu. *)
-          let fr_target pr g =
-            let rec f = function
-              | (p,_,stores,_)::rest when p <> pr ->
-                 let rec h i = function
-                   | (sg,_)::t -> if sg=g then Some (p, store_mu p i) else h (i+1) t
-                   | [] -> None in
-                 (match h 0 stores with Some x -> Some x | None -> f rest)
-              | _::rest -> f rest
-              | [] -> None in
-            f proc_infos in
-          (* --- the binding itself ------------------------------------------ *)
-          let frame_kind = Hashtbl.create 8 in   (* proc -> `Base|`Pin|`Win     *)
-          let pin_src = Hashtbl.create 8 in      (* pinned  -> (reader,li) decoding it *)
-          let win_src = Hashtbl.create 8 in      (* windowed-> (reader,li) centring it *)
-          let bound_by = Hashtbl.create 8 in     (* (reader,li) -> proc it bound *)
-          let win_order = ref [] in              (* windowed procs, nesting order *)
-          let is_bound p = Hashtbl.mem frame_kind p in
-          (* Bind every writer that a bound proc's rf atom decodes (fixpoint).
-             An fr atom (v=0) must NOT bind its own target: the decode would be
-             self-referential (tag < K*(tag/K)+mu degenerates), so R's synchrony
-             stays observer-pinned exactly as B3-decision 4.2 requires. *)
-          let propagate () =
-            let changed = ref true in
-            while !changed do
-              changed := false ;
+              parsed.MiscParser.prog ;
+            if co_run then begin
               List.iter
-                (fun (pr,li,g,v) ->
-                  if is_bound pr && v <> 0 then
-                    match Hashtbl.find_opt value_mu (g,v) with
-                    | Some mu ->
-                       (match Hashtbl.find_opt mu_proc mu with
-                        | Some w when w <> pr && not (is_bound w) ->
-                           Hashtbl.replace frame_kind w `Pin ;
-                           Hashtbl.replace pin_src w (pr,li) ;
-                           Hashtbl.replace bound_by (pr,li) w ;
-                           changed := true
-                        | _ -> ())
-                    | None -> ())
-                read_atoms
-            done in
-          (* An rf atom: its tested value is some store's value, so its tag DECODES
-             a writer AND that writer's iteration.  An fr atom (value 0) decodes
-             nothing -- it is a read of init.
-
-             B6 (Item E.3) reuses this exact predicate as the REPORTING tier's
-             discriminator, because it is precisely what separates S from R.  Both
-             are mechanically `Advisory (one ws-location + a register), but S's
-             read is an rf read -- a real synchrony anchor -- whereas R has ZERO rf
-             edges: its only read is the fr-against-init, and in the WEAK case (the
-             one we care about) that read returns init, tag 0, i.e. no writer and no
-             synchrony.  R must therefore borrow BOTH its synchrony point and its ws
-             edge from the fragile observer, exactly as 2+2W does, so its result is
-             reported at the 2+2W floor (B3-decision 4.2).  One predicate, two
-             consumers -- a second copy would be free to drift. *)
-          let rf_atom =
-            List.find_opt
-              (fun (_,_,g,v) -> v <> 0 && Hashtbl.mem value_mu (g,v))
-              read_atoms in
-          let has_rf_anchor = rf_atom <> None in
-          (* Anchor = the first rf atom (its tag decodes a writer); failing that
-             (SB: both reads are fr) the first read atom.  Its proc is the base. *)
-          let anchor_atom =
-            match rf_atom with
-            | Some a -> Some a
-            | None -> (match read_atoms with a::_ -> Some a | [] -> None) in
-          (match anchor_atom with
-           | None -> ()            (* 2+2W: no reads at all; observer-only cycle *)
-           | Some (b,_,_,_) ->
-              Hashtbl.replace frame_kind b `Base ;
-              propagate () ;
-              (* Readers still unbound get a searched window, outermost first. *)
-              let rec add_windows () =
-                let unbound =
-                  List.sort_uniq compare
-                    (List.filter_map
-                       (fun (p,_,_,_) -> if is_bound p then None else Some p)
-                       read_atoms) in
-                match unbound with
-                | [] -> ()
-                | p::_ ->
-                   Hashtbl.replace frame_kind p `Win ;
-                   (* Centre: a BOUND proc's read of a location p writes -- its
-                      tag decodes one of p's iterations (Eq 3.14), stale or not. *)
-                   (match
-                      List.find_opt
-                        (fun (q,_,g,_) ->
-                          is_bound q && proc_store_mu p g <> None)
-                        read_atoms
-                    with
-                    | Some (q,li,_,_) -> Hashtbl.replace win_src p (q,li)
-                    | None -> ()) ;
-                   win_order := !win_order @ [p] ;
-                   propagate () ;
-                   add_windows () in
-              add_windows ()) ;
-          (* --- frame expressions (mode = the heuristic scan or the exhaustive
-                 ground-truth scan; they differ only in the search RANGE, so they
-                 need disjoint variable names) ------------------------------- *)
-          let mvar mode p =
-            Printf.sprintf "%s%d" (match mode with `Exh -> "_em" | `Heur -> "_m") p in
-          let tvar mode p =
-            Printf.sprintf "%s%d" (match mode with `Exh -> "_et" | `Heur -> "_t") p in
-          let idx_of mode p =        (* 0-based read-buffer index for proc p *)
-            match Hashtbl.find_opt frame_kind p with
-            | Some `Base -> "_f"
-            | Some `Pin -> Printf.sprintf "(%s - 1)" (mvar mode p)
-            | Some `Win -> tvar mode p
-            | None -> "_f" in
-          let it_of mode p =         (* 1-based iteration, for tag arithmetic *)
-            match Hashtbl.find_opt frame_kind p with
-            | Some `Base -> "(_f + 1)"
-            | Some `Pin -> mvar mode p
-            | Some `Win -> Printf.sprintf "(%s + 1)" (tvar mode p)
-            | None -> "0" in
-          let buf_at mode p li =
-            Printf.sprintf "%s[%s]" (scan_buf p li) (idx_of mode p) in
-          (* A pinned proc's index comes from a decoded tag, so it is only a legal
-             buffer index when the tag was a real write (>=1) and in range. *)
-          let pin_guards mode =
-            List.filter_map
-              (fun (p,_) ->
-                match Hashtbl.find_opt frame_kind p with
-                | Some `Pin when is_reader p ->
-                   let v = mvar mode p in
-                   Some (Printf.sprintf
-                           "(%s >= 1 && %s <= (uint64_t)SIZE_OF_TEST)" v v)
-                | _ -> None)
-              (List.map (fun (p,_,_,_) -> (p,())) read_atoms
-               |> List.sort_uniq compare) in
-          (* ---- condition -> C boolean over the bound frames ---- *)
-          let rec c_tag_of_prop mode p =
-            let open ConstrGen in
-            match p with
-            | Atom (LV (Loc (MiscParser.Location_reg (pr,r)),v)) ->
-               let li = match read_of pr r with
-                 | Some li -> li
-                 | None -> assert false (* read_atoms already Warn.fatal'd *) in
-               let g = match read_global pr li with
-                 | Some g -> g | None -> assert false in
-               let buf = buf_at mode pr li in
-               (match cint v with
-                | Some 0 ->
-                   (* fr (Fig 3.7): the read took a write coherence-before the
-                      cycle's target write.  When the target's frame is bound we
-                      can say exactly which write that is; when it is not (R: the
-                      only read is this fr, so nothing decodes the writer -- 4.2)
-                      we fall back to literal init, which is sound but blind to
-                      stale writes.  R's full cycle rests on the observer ws. *)
-                   (match fr_target pr g with
-                    | Some (w,mu) when is_bound w ->
-                       Printf.sprintf "(%s < (uint64_t)%d*%s + %d)"
-                         buf k_tag (it_of mode w) mu
-                    | _ -> Printf.sprintf "(%s == 0)" buf)
-                | Some n ->
-                   (match Hashtbl.find_opt value_mu (g,n) with
-                    | Some mu ->
-                       let same_iter =
-                         (* If the writer's frame is already bound by ANOTHER atom,
-                            this rf must land on that exact iteration; if THIS atom
-                            is what bound it, the equality is a tautology. *)
-                         match Hashtbl.find_opt mu_proc mu with
-                         | Some w when is_bound w
-                                       && Hashtbl.find_opt bound_by (pr,li) <> Some w ->
-                            Printf.sprintf " && %s / %d == (uint64_t)%s"
-                              buf k_tag (it_of mode w)
-                         | _ -> "" in
-                       Printf.sprintf "(%s != 0 && %s %% %d == %d%s)"
-                         buf buf k_tag mu same_iter
-                    | None ->
-                       (* No store writes that value: the outcome is unreachable
-                          by construction, not un-implemented.  Loud rather than
-                          a silent 0. *)
-                       Warn.fatal
-                         "hetlitmus: condition wants %d:%s=%d but no store writes \
-                          %d to %s" pr r n n g)
-                | None -> assert false)
-            | Atom (LV (Loc (MiscParser.Location_global g),v)) ->
-               (* A coherence-final [ell]=v atom is carried by the per-run observer
-                  ws cycle (_loc), so it does not constrain the per-frame register
-                  part.  An unbacked location would be unobservable -- refuse to
-                  emit rather than fold it to a silent constant. *)
-               let name = MiscParser.dump_value g in
-               if List.mem name obs_locs then
-                 Printf.sprintf "1 /* [%s] via observer _loc */" name
-               else
-                 Warn.fatal
-                   "hetlitmus: condition observes [%s]=%s but no global backs it \
-                    (no observer buffer can be allocated)" name (cval v)
-            | Atom _ ->
-               Warn.fatal "hetlitmus: unsupported condition atom (not loc=v)"
-            | Not q -> Printf.sprintf "(!%s)" (c_tag_of_prop mode q)
-            | And ps -> mk_and (List.map (c_tag_of_prop mode) ps)
-            | Or ps -> mk_or (List.map (c_tag_of_prop mode) ps)
-            | Implies (a,b) ->
-               Printf.sprintf "(!(%s) || %s)"
-                 (c_tag_of_prop mode a) (c_tag_of_prop mode b) in
-          (* The register half of the cycle, at the bound frames. *)
-          let cond_at mode =
-            mk_and
-              (pin_guards mode
-               @ [c_tag_of_prop mode (prop_of parsed.MiscParser.condition)]) in
-          let cond_expr = cond_at `Heur in
-          (* per-run observer ws name: _ws_<location>_<c|g> (CPU/GPU observer). *)
-          let ws_var l dev = Printf.sprintf "_ws_%s_%s" l dev in
-          (* location pass (per observer device): register atoms are unconstrained
-             (-> 1); a coherence-final [ell]=v atom -> that device's ws witness.
-             _loc = (cpu observer sees all its ws) || (gpu observer sees all its
-             ws) -- the SAME-observer-thread constraint of Eq 3.12 (B3-decision
-             4.3): a two-ws (2+2W) cycle must be recovered within one thread. *)
-          let rec c_loc dev p =
-            let open ConstrGen in
-            match p with
-            | Atom (LV (Loc (MiscParser.Location_reg _),_)) -> "1"
-            | Atom (LV (Loc (MiscParser.Location_global g),_)) ->
-               let name = MiscParser.dump_value g in
-               if List.mem name obs_locs then ws_var name dev
-               else "0 /* unobservable location */"
-            | Atom _ -> "0"
-            | Not q -> Printf.sprintf "(!%s)" (c_loc dev q)
-            | And ps -> mk_and (List.map (c_loc dev) ps)
-            | Or ps -> mk_or (List.map (c_loc dev) ps)
-            | Implies (a,b) ->
-               Printf.sprintf "(!(%s) || %s)" (c_loc dev a) (c_loc dev b) in
-          let loc_expr =
-            if has_observers then
-              mk_or [ c_loc "c" (prop_of parsed.MiscParser.condition) ;
-                      c_loc "g" (prop_of parsed.MiscParser.condition) ]
-            else "1" in
-          (* B3c HARD INVARIANT (SHARED-CHARGE, "incompleteness is NOT a
-             placeholder").  The emitted detector may never be a CONSTANT.  A
-             constant-true _weak reports the weak behaviour on every run; a
-             constant-false one reports "Never" on every run -- and a spurious
-             "Never" on a should-be-forbidden test reads as CONFIRMATION of the
-             memory model.  Both silently falsify the science, so refuse to emit
-             rather than ship one (this is what B3's HET_PENDING=0 did to 266 of
-             the 338 het tests).  Structural, not a test: it cannot regress. *)
-          let weak_expr =
-            if has_observers then mk_and [cond_expr ; "_loc"] else cond_expr in
-          if is_true weak_expr || is_false weak_expr then
-            Warn.fatal
-              "hetlitmus: %s would emit a CONSTANT weak-behaviour detector \
-               (_weak = %s) -- refusing to emit (SHARED-CHARGE.md)"
-              tname weak_expr ;
-          (* Synchrony source for the guards (Eq 3.14): the base proc's first read
-             of a location somebody writes -- its tag decodes a partner iteration.
-             This is the rf anchor for MP/S, the window centre's decoder for SB.
-             2+2W (no reads) has none, so it carries no skew/distinct stats. *)
-          let sync_src =
-            List.find_opt
-              (fun (p,_,g,_) ->
-                Hashtbl.find_opt frame_kind p = Some `Base && writers_of g <> [])
-              read_atoms in
-          (* "harness was hot at _f": any read observed a real (non-init) writer.
-             Feeds het_obs_record.interleavings_detected. *)
-          let hot_expr =
-            match read_buffers with
-            | [] -> "0"
-            | _ ->
-               "(" ^
-               String.concat " || "
-                 (List.map
-                    (fun (p,li,_,_,_) -> Printf.sprintf "%s[_f] != 0" (scan_buf p li))
-                    read_buffers)
-               ^ ")" in
-          (* B3: the 72 add ONE GPU observer lane + ONE CPU observer pthread, both
-             joining the start barrier (Srivastava Alg 2 SYNCHRONIZE), so NPART
-             grows by 2 for them. *)
-          let n_observers = if has_observers then 2 else 0 in
-          let npart = List.length params + List.length gpu_prog + n_observers in
+                (fun i ->
+                  if i.i_role <> RTest then
+                    Printf.eprintf
+                      "  co-run %-6s %-22s K=%d  +%d part  +%d blk  +%d lane\n%!"
+                      (match i.i_role with
+                       | RMu -> "mu(T)" | RCanary -> "canary" | RTest -> "")
+                      i.i_name i.i_k i.i_npart i.i_blocks i.i_lanes)
+                insts ;
+              Printf.eprintf
+                "  => NPART=%d HET_TEST_BLOCKS=%d HET_GPU_LANES=%d HET_SPIN_LANES=%d, \
+                 HET_CONTROL_COMPILED_IN=1\n%!"
+                npart test_blocks gpu_lanes spin_lanes
+            end
+          end ;
+          let het_iter = "(_n + 1)" in
           let id = CudaLang.c_ident tname in
           (* ================= file emission ================= *)
           let base =
@@ -1643,26 +2063,22 @@ static void gd_free_noise(void* _p){
           if not (Sys.file_exists dir) then Sys.mkdir dir 0o755 ;
           let write fname f =
             Misc.output_protect f (Filename.concat dir fname) in
-          (* ---- <tname>_cpu.c : the CPU threads (real ISA asm) ---- *)
           (* B3 het-CPU signature helpers, SHARED by _cpu.c (the body), the .cu
-             extern decl, the cpu_args struct and the driver call so all four
-             stay consistent (addresses widened to uint64_t*; one buffer pointer
-             per CPU load; trailing int _n). *)
-          let cpu_addr_u64 addr_params =
-            List.map
-              (fun (_,name) -> (Printf.sprintf "uint64_t *%s" name, name))
-              addr_params in
-          let loads_of_proc proc =
-            match List.find_opt (fun (p,_,_,_) -> p=proc) proc_infos with
-            | Some (_,_,_,loads) -> loads | None -> [] in
-          let cpu_bufs proc =
-            List.mapi
-              (fun li _ ->
-                let b = buf_name proc li in (Printf.sprintf "uint64_t *%s" b, b))
-              (loads_of_proc proc) in
-          let cpu_code_of proc =
-            match List.find_opt (fun ((p,_,_),_) -> p=proc) cpu_prog with
-            | Some (_,code) -> code | None -> [] in
+             extern decl, the cpu_args struct and the driver call, so all four stay
+             consistent (addresses widened to uint64_t*; one buffer pointer per CPU
+             load; trailing int _n). *)
+          let cpu_addr_u64 cp =
+            List.map (fun n -> (Printf.sprintf "uint64_t *%s" n, n)) cp.cp_addrs in
+          let cpu_bufs i cp =
+            List.init cp.cp_nloads
+              (fun li ->
+                let b = buf_name_of i.i_pre cp.cp_proc li in
+                (Printf.sprintf "uint64_t *%s" b, b)) in
+          let cpu_sig i cp =
+            String.concat ","
+              (List.map fst (cpu_addr_u64 cp @ cpu_bufs i cp) @ ["int _n"]) in
+          let gsym i g = i.i_pre ^ g in     (* this instance's copy of global [g] *)
+          (* ---- <tname>_cpu.c : the CPU threads (real ISA asm) ---- *)
           let dump_cpu_file ch =
             let s = output_string ch in
             s (Printf.sprintf
@@ -1672,6 +2088,22 @@ static void gd_free_noise(void* _p){
                   iteration tag K*(_n+1)+mu, loads recorded into buffers.\n   \
                   DO NOT EDIT. */\n"
                  tname CpuF.isa_name) ;
+            if co_run then
+              s (Printf.sprintf
+                   "/* B6b CO-RUN: this file carries the CPU threads of THREE het\n   \
+                    instances, so every body is named het_run_<prefix>P<proc> and\n   \
+                    each keeps its OWN K:\n     \
+                    %s\n   \
+                    A shared K would decode one instance's tags with another's\n   \
+                    modulus -- wrong writer, wrong iteration, fictional cycles. */\n"
+                   (String.concat "\n     "
+                      (List.map
+                         (fun i ->
+                           Printf.sprintf "%-6s %-22s K=%d"
+                             (match i.i_role with
+                              | RTest -> "T" | RMu -> "mu(T)" | RCanary -> "canary")
+                             i.i_name i.i_k)
+                         insts))) ;
             (* B5: _GNU_SOURCE must precede EVERY libc header -- het_cpu_stress.h
                needs cpu_set_t / sched_setaffinity (M6 affinity), which glibc hides
                behind it.  Defining it after <stdint.h> would be too late. *)
@@ -1679,23 +2111,26 @@ static void gd_free_noise(void* _p){
             s "#include <stdint.h>\n\n" ;
             (* B5: THIS translation unit -- and only this one -- compiles the CPU
                stress bodies.  It is built by gcc for the host and by
-               `clang --target=aarch64-linux-gnu' for the real AArch64 asm, so it
-               is the one place the host-ISA cache primitives can live; nvcc
-               compiles the .cu and must never see them. *)
+               `clang --target=aarch64-linux-gnu' for the real AArch64 asm, so it is
+               the one place the host-ISA cache primitives can live; nvcc compiles
+               the .cu and must never see them. *)
             s "#define HET_CPU_STRESS_IMPL\n" ;
             s "#include \"het_cpu_stress.h\"\n\n" ;
             s (Printf.sprintf "#if defined(%s)\n" CpuF.host_macro) ;
             List.iter
-              (fun (proc,_out,_envV,(addr_params,_out_params)) ->
-                CpuF.het_emit_body ch ~proc ~k:k_tag
-                  ~store_mu:(store_mu proc)
-                  ~load_buf:(fun li -> buf_name proc li)
-                  ~reg_env:(reg_env_of proc)
-                  ~iter:het_iter
-                  ~addr_params:(cpu_addr_u64 addr_params)
-                  ~buf_params:(cpu_bufs proc)
-                  (cpu_code_of proc))
-              params ;
+              (fun i ->
+                List.iter
+                  (fun cp ->
+                    CpuF.het_emit_body ch ~prefix:i.i_pre ~proc:cp.cp_proc ~k:i.i_k
+                      ~store_mu:(i.i_store_mu cp.cp_proc)
+                      ~load_buf:(fun li -> buf_name_of i.i_pre cp.cp_proc li)
+                      ~reg_env:cp.cp_reg_env
+                      ~iter:het_iter
+                      ~addr_params:(cpu_addr_u64 cp)
+                      ~buf_params:(cpu_bufs i cp)
+                      cp.cp_code)
+                  i.i_cpus)
+              insts ;
             s "#else\n" ;
             s (Printf.sprintf
                  "/* Portable shim so the harness also compiles on a host whose\n   \
@@ -1703,32 +2138,25 @@ static void gd_free_noise(void* _p){
                   is the real CPU thread; build on %s (or cross-assemble). */\n"
                  CpuF.isa_name CpuF.isa_name CpuF.isa_name) ;
             List.iter
-              (fun (proc,_out,_envV,(addr_params,_out_params)) ->
-                let addr = cpu_addr_u64 addr_params and bufs = cpu_bufs proc in
-                let ps =
-                  String.concat ","
-                    (List.map fst (addr @ bufs) @ ["int _n"]) in
-                s (Printf.sprintf "void het_run_P%d(%s) {\n" proc ps) ;
-                s "  (void)_n;\n" ;
-                List.iter (fun (_,n) -> s (Printf.sprintf "  (void)%s;\n" n)) addr ;
-                List.iter (fun (_,n) -> s (Printf.sprintf "  (void)%s;\n" n)) bufs ;
-                s "}\n")
-              params ;
+              (fun i ->
+                List.iter
+                  (fun cp ->
+                    let addr = cpu_addr_u64 cp and bufs = cpu_bufs i cp in
+                    s (Printf.sprintf "void het_run_%sP%d(%s) {\n"
+                         i.i_pre cp.cp_proc (cpu_sig i cp)) ;
+                    s "  (void)_n;\n" ;
+                    List.iter (fun (_,n) -> s (Printf.sprintf "  (void)%s;\n" n)) addr ;
+                    List.iter (fun (_,n) -> s (Printf.sprintf "  (void)%s;\n" n)) bufs ;
+                    s "}\n")
+                  i.i_cpus)
+              insts ;
             s "#endif\n" in
           (* ---- <tname>.{cu,hip} : GPU kernel + driver (per dialect) ---- *)
           let dump_gpu_file dialect ch =
             let s = output_string ch in
-            let mech_class =
-              HetCond.perpetual_class (prop_of parsed.MiscParser.condition) in
-            (* B6: the REPORTING tier is not the MECHANISM tier.  perpetual_class
-               says how well the cycle can be RECOVERED; this says what a null may
-               be CLAIMED as.  R is demoted to the 2+2W floor (no rf anchor -- see
-               rf_atom above).  Keep both: B7/B8 tune against the mechanism, the
-               write-up quotes the reporting tier. *)
-            let report_class = HetCond.reporting_class ~has_rf_anchor mech_class in
-            let gpu_read_buffers =
-              List.filter (fun (_,_,_,dev,_) -> dev = `Gpu) read_buffers in
             let buf_bytes = "sizeof(uint64_t)*SIZE_OF_TEST" in
+            let gpu_bufs i =
+              List.filter (fun (_,_,_,dev,_) -> dev = `Gpu) i.i_bufs in
             s (Printf.sprintf
                  "// HetLitmus Tier-2 GPU kernel + driver for %s (%s dialect).\n"
                  tname dialect.gd_name) ;
@@ -1736,6 +2164,21 @@ static void gd_free_noise(void* _p){
             s "// B3: stores carry the tag K*(_n+1)+mu; loads are recorded into\n" ;
             s "// per-iteration read buffers; a post-run scan decodes rf/init edges\n" ;
             s "// into a het_obs_record (observer ws-edges land in the B3 observer commit).\n" ;
+            if co_run then begin
+              s "//\n// B6b THE POSITIVE CONTROL IS CO-RUNNING IN THIS HARNESS.\n" ;
+              s "// Three het instances share this launch, this stress config and this\n" ;
+              s "// C2C path, on disjoint cache-line-padded locations:\n" ;
+              List.iter
+                (fun i ->
+                  s (Printf.sprintf "//   %-6s %-22s prefix %-5s K=%d  %s\n"
+                       (match i.i_role with
+                        | RTest -> "T" | RMu -> "mu(T)" | RCanary -> "canary")
+                       i.i_name i.i_pre i.i_k (role_note i.i_role)))
+                insts ;
+              s "// A null on T means \"not observed on a harness that demonstrably\n" ;
+              s "// produced the very interleaving T's ordering is claimed to prevent\"\n" ;
+              s "// -- and NOTHING AT ALL if the control did not fire (het_verdict.h).\n"
+            end ;
             s dialect.gd_shared_mem_note ;
             s "// a system-scope atomic barrier rendezvouses both sides.\n" ;
             s (Printf.sprintf
@@ -1745,35 +2188,19 @@ static void gd_free_noise(void* _p){
             s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
             s "#include <cstring>\n#include <cmath>\n" ;
             s "#include <pthread.h>\n#include <inttypes.h>\n" ;
-            (* B4: the ported cuda-litmus stress layer (do_stress / het_spin /
-               seeded Park-Miller RNG / scratch-location layout) + every stress
-               knob.  A SHARED header, included by both renders, so all reused
-               code and its mandatory citations live in one auditable file. *)
             s "#include \"het_stress.cuh\"\n" ;
-            (* B5: the CPU + interconnect stress layer.  This side of the header
-               is asm-free BY CONSTRUCTION (the bodies are behind
-               HET_CPU_STRESS_IMPL, which only <test>_cpu.c defines), so nvcc sees
-               only the knobs, the argument structs and the declarations.  It
-               self-guards with extern "C", hence outside the block below. *)
             s "#include \"het_cpu_stress.h\"\n" ;
-            (* B6: het_obs_record + the null-credibility decision rule.  A SHARED
-               header rather than a struct inlined per test, because the rule is
-               the deliverable and it has to be unit-testable: verdictcheck.py
-               compiles THIS header against synthetic records, so the gate
-               exercises the exact struct and the exact rule the harness runs.  A
-               re-declared copy in the test would be free to drift away from the
-               one that ships. *)
             s "#include \"het_verdict.h\"\n" ;
             s "extern \"C\" {\n" ;
             s "#include \"outs.h\"\n" ;
             List.iter
-              (fun (proc,_out,_envV,(addr_params,_out_params)) ->
-                let ps =
-                  String.concat ","
-                    (List.map fst
-                       (cpu_addr_u64 addr_params @ cpu_bufs proc) @ ["int _n"]) in
-                s (Printf.sprintf "  void het_run_P%d(%s);\n" proc ps))
-              params ;
+              (fun i ->
+                List.iter
+                  (fun cp ->
+                    s (Printf.sprintf "  void het_run_%sP%d(%s);\n"
+                         i.i_pre cp.cp_proc (cpu_sig i cp)))
+                  i.i_cpus)
+              insts ;
             s "}\n" ;
             s {ocaml|extern "C" void *malloc_check(size_t sz){
   void *p = malloc(sz);
@@ -1782,25 +2209,20 @@ static void gd_free_noise(void* _p){
 }
 |ocaml} ;
             s (Printf.sprintf "\n#define NPART %d\n" npart) ;
-            (* ---- B6 THE POSITIVE CONTROL, AND THE FACT THAT IT IS NOT HERE YET.
-               HET_CONTROL_COMPILED_IN is the LOUD sentinel required by
-               SHARED-CHARGE ("if you must stub a detection path, make it loud").
-               0 => no control instance is co-running in this harness, so
-               control_target_count / canary_target_count are STRUCTURALLY zero and
-               carry no information whatsoever.  het_verdict() reads this flag,
-               returns COLD-INVALID, and prints "*** NO CONTROL COMPILED INTO THIS
-               HARNESS ***" -- it will not let a null be reported as "not observed".
+            (* ---- B6/B6b THE POSITIVE CONTROL.
+               HET_CONTROL_COMPILED_IN is the highest-stakes value in this file.  0
+               means control_target_count / canary_target_count are STRUCTURALLY
+               zero and carry no information whatsoever; het_verdict() then returns
+               COLD-INVALID and refuses to report the null at all.  1 means a real
+               mu(T) and a real canary are CO-RUNNING here, in this launch, and the
+               null may be read against them.
 
-               That is the safe direction and it is deliberate: with no control, a
-               null is uninterpretable, and refusing to report it is correct.  What
-               would NOT be correct is printing "Never" and letting it read as
-               confirmation of the memory model.
-
-               B6b (the multi-instance emitter) co-runs mu(T) and the canary as
-               additional het instances on disjoint cache-line-padded locations and
-               flips this to 1.  The names are already carried in the record below,
-               so nothing downstream has to change when it does. *)
-            s "#define HET_CONTROL_COMPILED_IN 0\n" ;
+               It must never be 1 without the co-run behind it: every "Never" would
+               silently become a *credible* "Never" -- an unfalsifiable null that
+               reads as confirmation of the CMCM.  It is set from the instance
+               population, not by hand, so it cannot drift. *)
+            s (Printf.sprintf "#define HET_CONTROL_COMPILED_IN %d\n"
+                 (if co_run then 1 else 0)) ;
             (match mu_name with
              | Some m ->
                 s (Printf.sprintf "#define HET_MU_NAME \"%s\"      /* Layer A: the minimal mutant */\n" m)
@@ -1809,314 +2231,163 @@ static void gd_free_noise(void* _p){
              | Some c ->
                 s (Printf.sprintf "#define HET_CANARY_NAME \"%s\"  /* Layer B: the universal het-MP floor */\n" c)
              | None -> s "#define HET_CANARY_NAME NULL\n") ;
-            (* B2/B0: perpetual-loop bounds, Cfg-driven (was the literal 100000).
-               SIZE_OF_TEST = free-running inner window; NUMBER_OF_RUN = outer runs. *)
             s (Printf.sprintf "#define SIZE_OF_TEST %d\n" Cfg.size) ;
             s (Printf.sprintf "#define NUMBER_OF_RUN %d\n" Cfg.runs) ;
-            s (Printf.sprintf "#define K_TAG %d\n" k_tag) ;
-            (* B3c knobs.  HET_WINDOW = the T_L>=2 search radius W: how far the
-               partner proc's iteration may drift from the synchrony point decoded
-               out of the tag (B3-decision 4.1).  Its VALUE is hardware-tuned (it
-               tracks the measured CPU/GPU iteration-rate mismatch, Q2 3.3) and is
-               owned by Q7/B8 -- 8 is a placeholder, not a measurement.
-               HET_EXHAUSTIVE_MAX caps the O(N^T_L) ground-truth scan so it cannot
-               blow up at N=1e6; above it only the windowed heuristic runs, and
-               het_obs_record.exhaustive_valid says so.  Both -D-overridable. *)
+            (* K IS PER INSTANCE.  It is 3 for MP/SB/LB but 4 for R/S (three stores,
+               not two), and the canary is always an MP -- so every R/S control
+               harness genuinely mixes K=4 and K=3 in one translation unit.  A tag
+               decoded with the wrong K mis-attributes both the writer (tag % K) and
+               the iteration (tag / K), and the "recovered" cycles become fiction
+               that no structural gate can see. *)
+            List.iter
+              (fun i ->
+                if co_run then
+                  s (Printf.sprintf "#define %-9s %d   /* %s (%s) */\n"
+                       i.i_kmac i.i_k i.i_name
+                       (match i.i_role with
+                        | RTest -> "T" | RMu -> "mu(T)" | RCanary -> "canary"))
+                else s (Printf.sprintf "#define %s %d\n" i.i_kmac i.i_k))
+              insts ;
             s "#ifndef HET_WINDOW\n#define HET_WINDOW 8\n#endif\n" ;
-            s "#ifndef HET_EXHAUSTIVE_MAX\n#define HET_EXHAUSTIVE_MAX 4096\n#endif\n\n" ;
-            (* ---- B4 stress geometry (per-test; the stress KNOBS themselves are
-               in het_stress.cuh).  A het test's GPU side is a handful of lanes:
-               HET_TEST_BLOCKS blocks hold the GPU test lane(s) plus (for the 72
-               observer tests) the observer lane; every block ABOVE that is a pure
-               stressing workgroup.  HET_GPU_LANES counts the lanes that run the
-               perpetual loop and therefore signal completion -- the stressers run
-               until all of them are done, so stress covers exactly the tested
-               window (upstream gets this for free by relaunching per iteration).
-
-               HET_BLOCK_DIM is the launch block size.  The het scope-tree layout
-               (CudaLang.layout_of_scopes) gives each GPU proc its OWN block with
-               a single lane, so it is 1: a stressing workgroup is ONE thread, and
-               the stress population is bounded by the block count alone.  That is
-               a real cap on stress intensity (upstream runs 128-thread
-               workgroups).  Raising it is an OCCUPANCY-GEOMETRY decision, which
-               is hardware-tuned and owned by the tuning task -- the seam is here
-               and needs no re-emission: the test lanes are guarded on
-               threadIdx.x, so with a larger block dim the extra threads of a
-               STRESS block all stress, while test blocks simply idle theirs. *)
+            s "#ifndef HET_EXHAUSTIVE_MAX\n#define HET_EXHAUSTIVE_MAX 4096\n#endif\n" ;
+            if co_run then begin
+              (* Q4 3.1 / 8.4: the three instances must not share a coherence unit.
+                 Disjoint ADDRESSES are not enough -- two variables on one cache line
+                 are one coherence unit, so mu(T)'s traffic would drag T's line
+                 around and the control would be perturbing the very test it exists
+                 to vouch for.  128 B covers both targets (Grace/Neoverse-V2 = 64 B,
+                 Hopper L2 sector = 128 B). *)
+              s "\n/* B6b: one cache line per shared location, so the three co-running\n\
+                 \   instances never share a coherence unit (Q4 3.1: \"disjoint\n\
+                 \   cache-line-padded locations\").  128 B covers Grace (64 B lines) and\n\
+                 \   Hopper's 128 B L2 sector. */\n" ;
+              s "#ifndef HET_CACHE_LINE\n#define HET_CACHE_LINE 128\n#endif\n"
+            end ;
+            s "\n" ;
             s (Printf.sprintf "#ifndef HET_BLOCK_DIM\n#define HET_BLOCK_DIM %d\n#endif\n"
                  block_dim) ;
-            s (Printf.sprintf "#define HET_TEST_BLOCKS %d\n"
-                 (n_blocks + (if has_observers then 1 else 0))) ;
-            s (Printf.sprintf "#define HET_GPU_LANES %d\n"
-                 (List.length gpu_prog + (if has_observers then 1 else 0))) ;
-            (* HET_SPIN_LANES = the GPU TEST lanes the device-scope window-opener
-               aligns.  The observer is excluded on purpose: it runs at its own
-               rate and gating the test lanes on it would couple the two.
-
-               Be honest about what this buys per test: most het shapes put a
-               SINGLE proc on the GPU, and a barrier over one lane aligns nothing
-               -- there it is a self-barrier whose only effect is scratch-word
-               traffic (still stress, but not alignment).  It aligns real partners
-               only where the shape puts two procs on the GPU.  The CPU-GPU
-               alignment is never bought here: it is bought with volume + stress,
-               because a per-iteration cross-device barrier would mask the very
-               order under test. *)
-            s (Printf.sprintf "#define HET_SPIN_LANES %d\n\n"
-                 (List.length gpu_prog)) ;
-            (* B6: het_obs_record, the het_confidence enum and
-               het_obs_record_print used to be emitted INLINE here.  They now live
-               in het_verdict.h (HetArch.het_verdict_h, #included above) together
-               with the null-credibility rule that reads them, so there is exactly
-               ONE definition -- shared by every harness and by the verdictcheck
-               unit test.  Nothing about the record is per-test, so nothing is lost
-               by hoisting it, and the gate now tests the struct that ships.
-
-               B6 ADDS to it: control_/canary_ counts, control_Prep,
-               control_compiled_in + the two control names, the `reporting' tier,
-               and stress_requested.  See het_verdict.h. *)
-            (* _decode_value: a store tag -> the ORIGINAL value that write carried
-               (0 = init/stale).  Used only to fill the decoded outcome vector for
-               the human-readable histogram; the weak-behaviour test itself uses the
-               tag arithmetic (mu = tag % K_TAG) directly. *)
-            (* [[maybe_unused]]: a store-only test (e.g. 2+2W) has no register
-               reads to decode, so this is unreferenced there. *)
-            s "[[maybe_unused]] static uint64_t _decode_value(uint64_t _tag){\n" ;
-            s "  if (_tag == 0) return 0;\n" ;
-            s "  switch (_tag % K_TAG) {\n" ;
-            Hashtbl.iter
-              (fun mu v -> s (Printf.sprintf "    case %d: return %d;\n" mu v))
-              mu_value ;
-            s "    default: return 0;\n  }\n}\n\n" ;
-            (* kernel: uint64_t globals + GPU read buffers + barrier. *)
-            let obsG l = Printf.sprintf "obsG_%s" l in  (* GPU observer buffer (device) *)
+            (* HET_TEST_BLOCKS / HET_GPU_LANES / HET_SPIN_LANES are SUMS over the
+               instances.  Each instance's own count is shape-dependent (S and R
+               carry an observer lane, MP/SB/LB do not), so a hardcoded number is
+               wrong for exactly the harnesses that need it most: the sys-scope
+               rendezvous would release before the S/R observers arrived, and the
+               stressers would stop while lanes were still looping. *)
+            s (Printf.sprintf "#define HET_TEST_BLOCKS %d\n" test_blocks) ;
+            s (Printf.sprintf "#define HET_GPU_LANES %d\n" gpu_lanes) ;
+            s (Printf.sprintf "#define HET_SPIN_LANES %d\n\n" spin_lanes) ;
+            (* _decode_value (T only): a store tag -> the ORIGINAL value that write
+               carried.  Keyed on T's OWN K. *)
+            List.iter (fun i -> s i.i_decode) insts ;
+            (* ---------------------------- the kernel ------------------------- *)
             let kparams =
               String.concat ", "
-                (List.map (fun g -> Printf.sprintf "uint64_t* %s" g) gpu_globals
-                 @ List.map (fun (_,_,name,_,_) -> Printf.sprintf "uint64_t* %s" name)
-                     gpu_read_buffers
-                 @ List.map (fun l -> Printf.sprintf "uint64_t* %s" (obsG l)) obs_locs
+                (List.concat_map
+                   (fun i ->
+                     List.map (fun g -> Printf.sprintf "uint64_t* %s" (gsym i g))
+                       i.i_gpu_globals
+                     @ List.map (fun (_,_,name,_,_) -> Printf.sprintf "uint64_t* %s" name)
+                         (gpu_bufs i)
+                     @ List.map
+                         (fun l -> Printf.sprintf "uint64_t* %s" (obsG_of i.i_pre l))
+                         i.i_obs_locs)
+                   insts
                  @ ["int* barrier"]
-                 (* B4: the stress layer's device-only objects.  DISJOINT from
-                    every test location by construction, so they perturb the
-                    memory system without changing the tested behaviour set.
-                    B4-fix: the two access PATTERNS are kernel ARGUMENTS, not
-                    -D constants baked into the device code.  Hand het_do_stress
-                    a compile-time pattern and nvcc folds its if-chain to the one
-                    live branch -- and the tuned default (3 = ld;ld, whose loads
-                    only feed a `break') is then provably side-effect-free, so the
-                    whole stress loop is DELETED (measured: 0 scratchpad ops in
-                    the emitted PTX).  Upstream is immune only because its pattern
-                    arrives through a runtime kernel_params pointer.  The -D knobs
-                    still drive them -- host-side, below. *)
                  @ ["uint32_t* _scratch" ; "uint32_t* _scratch_loc" ;
                     "uint32_t* _spin_bar" ; "uint32_t* _gpu_done" ;
                     "uint32_t* _stress_tally" ;
                     "uint32_t _seed" ; "uint32_t _pre_pat" ; "uint32_t _mem_pat" ;
-                    (* B5 Half 2b: the Hopper noise blocks' arguments.  RUNTIME, like
-                       B4's patterns -- the block-class boundary and the working set
-                       must not be compile-time constants the device code can fold
-                       (and B8 must be able to sweep them without re-emitting). *)
                     "uint64_t* _noise_ddr" ; "uint64_t _noise_words" ;
                     "uint32_t _noise_blocks" ; "uint32_t _noise_chunk" ;
                     "uint32_t _noise_stride"]) in
             s (Printf.sprintf "__global__ void litmus_%s(%s) {\n" id kparams) ;
-            (* B4: each lane draws from its OWN seeded Park-Miller stream, so the
-               probabilistic stress toggles are decided device-side (the perpetual
-               kernel has no per-iteration host round-trip to re-roll them) and a
-               run replays exactly from its seed (GPUHarbor ISSTA'23). *)
             s "  het_rng_t _rng = het_rng_init(_seed, blockIdx.x * blockDim.x + threadIdx.x);\n" ;
             List.iter
-              (fun ((proc,_,_),code) ->
-                let blk,lane = layout proc in
-                let instrs = CudaLang.instrs_of_code code in
-                let regs = CudaLang.result_regs code in
-                s (Printf.sprintf "  if (blockIdx.x == %d && threadIdx.x == %d) {\n" blk lane) ;
-                (* B2: gd_bar fires ONCE (start rendezvous, outside the loop). *)
-                s (dialect.gd_bar "    " "barrier") ;
-                List.iter (fun n -> s (Printf.sprintf "    uint64_t r%d = 0;\n" n)) regs ;
-                (* FAITHFULNESS: SIZE_OF_TEST is a compile-time constant, so nvcc
-                   unrolls this loop ~16x and the emitted PTX carries 16x the tested
-                   instructions (33 ld.acquire where the test declares 2) -- the whole
-                   het corpus failed the L0 faithfulness gate.  An unrolled body is
-                   also a DIFFERENT program microarchitecturally (ILP/scheduling),
-                   which perturbs the very timing window the test probes.  Pin the
-                   trip count to 1 so the PTX contains exactly the tested sequence per
-                   iteration.  Do NOT remove (l0_tokens.sh het lane depends on it). *)
-                (* B4-fix: barriers TAKEN by this lane.  It indexes the spin's
-                   limit; see the window-opener block below. *)
-                s "    uint32_t _nb = 0;\n" ;
-                s "    #pragma unroll 1\n" ;
-                s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
-                (* B4 PRE-STRESS (cuda-litmus PRE_STRESS, litmus.cuh:336).  The
-                   TESTING thread stresses its OWN L1/pipeline before the litmus
-                   body: the disjoint stressing workgroups never touch the testing
-                   thread's private hardware, so without this "these testing thread
-                   hardware components may not be stressed" (Kirkham OOPSLA'20).
-                   Probabilistic per iteration, off the lane's own RNG stream (this
-                   toggle MAY stay per-lane: it feeds no shared counter, unlike the
-                   barrier below).  Runs INSIDE the loop because one perpetual
-                   iteration is what one upstream kernel launch was.  Its scratchpad
-                   accesses are plain (non-atomic, unordered) loads/stores on a
-                   device-only region, so they add no ordering edge to the test and
-                   do not appear in the PTX model-op stream the L0 faithfulness gate
-                   checks -- which is why they get their OWN gate
-                   (hetlitmus/verify/stresscheck.py): the pattern reaches
-                   het_do_stress as a RUNTIME argument (_pre_pat), because a
-                   compile-time one is dead-code-eliminated to nothing. *)
-                s (Printf.sprintf
-                     "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n\
-                      \        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat);\n") ;
-                (* B4 WINDOW-OPENER (cuda-litmus's `spin', Alglave's
-                   thread-synchronisation incantation).  DEVICE scope, on a scratch
-                   word that is not a test location: it aligns the GPU test lanes so
-                   their critical accesses race, and adds no ordering edge to the
-                   test.  It is NOT the cross-device rendezvous -- that is the
-                   system-scope gd_bar above, fired ONCE outside this loop.  The two
-                   must never merge: a per-iteration CROSS-DEVICE barrier masks the
-                   tested order and stalls (Srivastava 4.1).  ptxcheck pins the scope
-                   to `gpu' so that regression cannot land silently.
-
-                   ALL-OR-NONE, AND THE LIMIT COUNTS TAKEN BARRIERS (B4-fix).  The
-                   loop is perpetual, so the counter cannot be fresh per iteration
-                   (upstream relaunches, and so gets that for free); it grows, and
-                   the limit must grow with it.  The invariant that makes ANY such
-                   limit attainable is Alglave 4.3.4's: wait for "the number of
-                   threads PARTICIPATING in the test".  So the roll is drawn from a
-                   LANE-INDEPENDENT stream (keyed by the iteration, not the lane):
-                   every lane reaches the same verdict for iteration _n, so a barrier
-                   is taken by ALL the test lanes or by NONE, each contributes exactly
-                   one increment to it, and the counter hits _nb*HET_SPIN_LANES
-                   EXACTLY when the last lane arrives.
-
-                   Do NOT roll this from the lane's own stream with an
-                   iteration-indexed limit ((_n+1)*lanes): a lane then increments on
-                   only HET_BARRIER_PCT% of iterations while the limit rises every
-                   iteration, so the counter falls permanently behind, the limit is
-                   unreachable after the first skipped roll, and every spin burns the
-                   full 1024-spin cap instead of rendezvousing.  That was the shipped
-                   behaviour and it aligned nothing (99% cap-released in simulation).
-                   The het_spin tally + the HetObs `spin=' field exist so that this
-                   cannot silently return: they report rendezvous vs cap exits. *)
-                s "      het_rng_t _brng = het_rng_init(_seed ^ 0x9e3779b9u, (uint32_t)_n);\n" ;
-                s "      if (het_rng_pct(&_brng, HET_BARRIER_PCT)) {\n" ;
-                s "        _nb++;\n" ;
-                s "        het_spin(_spin_bar, _nb * HET_SPIN_LANES, _stress_tally);\n" ;
-                s "      }\n" ;
-                (* B3: tagged stores (mu per store node); loads unchanged, recorded
-                   below.  Some(...) also widens the atomic_ref to uint64_t. *)
-                let st_ctr = ref 0 in
+              (fun i ->
+                let bb = base_of i in
+                (* the GPU TEST lanes of this instance *)
                 List.iter
-                  (fun i ->
-                    let tag = match i with
-                      | BellBase.Pst _ ->
-                         let si = !st_ctr in incr st_ctr ;
-                         Some (het_iter, k_tag, store_mu proc si)
-                      | _ -> Some (het_iter, k_tag, 0) in
-                    dialect.gd_dump_instr ch ~tag "      " i)
-                  instrs ;
-                (* B3: record each load into its per-iteration device buffer
-                   (li-th load's dest reg = result_regs[li]). *)
-                List.iteri
-                  (fun li n ->
-                    s (Printf.sprintf "      %s[_n] = (uint64_t)r%d;\n"
-                         (buf_name proc li) n))
-                  regs ;
-                s "    }\n" ;
-                (* B4: signal completion so the stressing workgroups stop.  A
-                   builtin atomic on a device-only word: scaffolding, not a model
-                   op, and it runs AFTER the tested loop. *)
-                s "    het_scratch_bump(_gpu_done);\n" ;
-                s "  }\n")
-              gpu_prog ;
-            (* B3 observer: one extra co-resident lane (block n_blocks, thread 0)
-               snoops every observed location into its device buffer; joins the
-               start barrier.  Analysis-only relaxed sys loads, never the tested
-               order.  Its ws stream is scanned host-side for coherence edges. *)
-            if has_observers then begin
-              s (Printf.sprintf
-                   "  if (blockIdx.x == %d && threadIdx.x == 0) {\n" n_blocks) ;
-              s (dialect.gd_bar "    " "barrier") ;
-              (* FAITHFULNESS: pin the observer's trip count too, so the kernel PTX
-                 carries exactly ONE relaxed/sys load per observed location (not
-                 nvcc's ~16x unroll).  l0_tokens.sh models the observer lane as a
-                 fixed [ld.relaxed.sys] x |obs_locs| segment; an unrolled observer
-                 would make that count nondeterministic.  Do NOT remove. *)
-              s "    #pragma unroll 1\n" ;
-              s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
-              List.iter
-                (fun l ->
-                  s (Printf.sprintf "      %s[_n] = %s;\n"
-                       (obsG l) (dialect.gd_sys_load_u64 l)))
-                obs_locs ;
-              s "    }\n" ;
-              (* B4: the observer is a perpetual lane too -- the stressers must
-                 not stop while it is still snooping.  No pre-stress here: its job
-                 is to SAMPLE the shared locations as densely as it can, and
-                 self-stress would only thin the sampling. *)
-              s "    het_scratch_bump(_gpu_done);\n" ;
-              s "  }\n"
-            end ;
-            (* ================= B4: pure stressing workgroups =================
-               Every block above the test/observer blocks is a stresser: it does
-               nothing but hammer the scratchpad for as long as ANY tested lane is
-               still looping.  This is cuda-litmus's testing-vs-stressing workgroup
-               split (MC Mutants ASPLOS'23 section 4.1) and S&D's occupancy-scaled
-               stressing-thread count, and on NVIDIA silicon -- our GH200 target --
-               it is the whole reason the campaign can observe anything: "we did not
-               observe sb and lb on Titan without this incantation" (Alglave
-               ASPLOS'15 4.3.1), Table 6 showing sb/lb at 0 in every column without
-               memory stress; S&D went 0/1000 -> 102/1000 on a Tesla K20 by adding
-               it.  On AMD the same paper found weak behaviours WITHOUT stress (lb:
-               10959/100k with no incantations), so for the .hip render this layer
-               is a rate amplifier, not an on/off switch.  See het_stress.cuh's
-               VENDOR SPLIT note -- the unqualified claim is a Nvidia-only result.
-
-               The termination condition is the adaptation the perpetual frame
-               forces.  Upstream relaunches the kernel per test iteration, so its
-               stressers simply end with the launch.  Ours must cover the whole
-               free-running window and no longer: they spin on the completion
-               counter that each tested lane bumps on its way out.  The round cap
-               is only a safety net so a stresser can never outlive a hung lane
-               for ever (a silent hang is indistinguishable from a genuine
-               non-observation) -- and if it EVER fires it means stress stopped
-               while the test was still running, which is not comparable with a
-               stressed run, so it is tallied and the host says so.  A stress
-               window that silently stopped stressing is exactly the failure this
-               commit exists to end.
-
-               Its ops are plain, unordered accesses on a device-only scratchpad
-               that is disjoint from every test location: no ordering edge, and
-               nothing in the PTX model-op stream (hence stresscheck.py). *)
+                  (fun gp ->
+                    s (Printf.sprintf "  if (blockIdx.x == %d && threadIdx.x == %d) {\n"
+                         (bb + gp.gp_blk) gp.gp_lane) ;
+                    (* B6b: CudaLang/HipLang name a location by its LISA name (`*x'),
+                       and they are SHARED backends we may not touch.  So bind this
+                       instance's object to that name locally: the emitted `*x' then
+                       refers to t_x / mu_x / can_x with no change to the lowering at
+                       all.  (Single-instance harnesses keep prefix "" and emit no
+                       alias, so they are byte-for-byte unchanged.) *)
+                    if co_run then
+                      List.iter
+                        (fun g ->
+                          s (Printf.sprintf
+                               "    uint64_t* %s = %s;  /* B6b: this instance's %s */\n"
+                               g (gsym i g) g))
+                        i.i_gpu_globals ;
+                    s (dialect.gd_bar "    " "barrier") ;
+                    List.iter (fun n -> s (Printf.sprintf "    uint64_t r%d = 0;\n" n))
+                      gp.gp_regs ;
+                    s "    uint32_t _nb = 0;\n" ;
+                    (* FAITHFULNESS: SIZE_OF_TEST is a compile-time constant, so nvcc
+                       unrolls this loop ~16x and the emitted PTX carries 16x the
+                       tested instructions -- the whole het corpus failed the L0
+                       faithfulness gate.  An unrolled body is also a DIFFERENT
+                       program microarchitecturally, which perturbs the very timing
+                       window the test probes.  Do NOT remove. *)
+                    s "    #pragma unroll 1\n" ;
+                    s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+                    s "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n" ;
+                    s "        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally);\n" ;
+                    (* B4-fix: the roll is drawn from a LANE-INDEPENDENT stream (keyed
+                       by the iteration, not the lane), so every test lane -- across
+                       ALL co-running instances -- reaches the same verdict for
+                       iteration _n.  A barrier is therefore taken by ALL the spin
+                       lanes or by NONE, each contributes exactly one increment, and
+                       the counter hits _nb*HET_SPIN_LANES EXACTLY when the last lane
+                       arrives.  Roll it per-lane instead and the limit becomes
+                       unreachable after the first skipped roll (B4's 99.6% cap). *)
+                    s "      het_rng_t _brng = het_rng_init(_seed ^ 0x9e3779b9u, (uint32_t)_n);\n" ;
+                    s "      if (het_rng_pct(&_brng, HET_BARRIER_PCT)) {\n" ;
+                    s "        _nb++;\n" ;
+                    s "        het_spin(_spin_bar, _nb * HET_SPIN_LANES, _stress_tally);\n" ;
+                    s "      }\n" ;
+                    let st_ctr = ref 0 in
+                    List.iter
+                      (fun instr ->
+                        let tag = match instr with
+                          | BellBase.Pst _ ->
+                             let si = !st_ctr in incr st_ctr ;
+                             Some (het_iter, i.i_k, i.i_store_mu gp.gp_proc si)
+                          | _ -> Some (het_iter, i.i_k, 0) in
+                        dialect.gd_dump_instr ch ~tag "      " instr)
+                      gp.gp_instrs ;
+                    List.iteri
+                      (fun li n ->
+                        s (Printf.sprintf "      %s[_n] = (uint64_t)r%d;\n"
+                             (buf_name_of i.i_pre gp.gp_proc li) n))
+                      gp.gp_regs ;
+                    s "    }\n" ;
+                    s "    het_scratch_bump(_gpu_done);\n" ;
+                    s "  }\n")
+                  i.i_gpus ;
+                (* this instance's observer lane (block bb + i_nblocks) *)
+                if i.i_obs then begin
+                  s (Printf.sprintf
+                       "  if (blockIdx.x == %d && threadIdx.x == 0) {\n"
+                       (bb + i.i_nblocks)) ;
+                  s (dialect.gd_bar "    " "barrier") ;
+                  s "    #pragma unroll 1\n" ;
+                  s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+                  List.iter
+                    (fun l ->
+                      s (Printf.sprintf "      %s[_n] = %s;\n"
+                           (obsG_of i.i_pre l) (dialect.gd_sys_load_u64 (gsym i l))))
+                    i.i_obs_locs ;
+                  s "    }\n" ;
+                  s "    het_scratch_bump(_gpu_done);\n" ;
+                  s "  }\n"
+                end)
+              insts ;
+            (* ================= B4: pure stressing workgroups ================= *)
             s "  if (blockIdx.x >= HET_TEST_BLOCKS) {\n" ;
-            (* ============ B5 Half 2b: the HOPPER NOISE blocks ==================
-               Fusco's Hopper noise kernel: "the Hopper noise kernel reads DDR
-               allocated memory" -- i.e. the GPU continuously stream-reads the
-               CPU's memory, so every read that misses cache crosses C2C.  Effect
-               (Fusco, on bandwidth): a Grace bandwidth of 17% and a Hopper
-               bandwidth of 65% of theoretical.
-
-               IT IS EXTRA BLOCKS OF *THIS* KERNEL, NOT A SECOND __global__, AND
-               THAT IS NOT A STYLE CHOICE.  ptxcheck (the L0 faithfulness gate)
-               scans the whole PTX file in FLAT ORDER and slices that one op stream
-               per lane; a second kernel would drop its ops into the middle of the
-               stream being sliced.  Emitting the noise as blocks of the persistent
-               grid keeps the op stream single-kernel, and the noise's own ops stay
-               invisible to the gate for the right reason: they are PLAIN loads with
-               no order or scope qualifier, so classify_ptx_op rejects them, exactly
-               as it rejects the B4 scratchpad traffic.  They are 64-bit, so they
-               also stay clear of stresscheck.py's u32 scratchpad signature -- and
-               stresscheck's isolation anchor (both stress toggles off => ZERO u32
-               ops) is what PROVES that rather than asserting it.
-
-               `volatile' is load-bearing, for the same reason as on the CPU side:
-               the accumulator is otherwise dead and nvcc deletes the entire stream.
-               The sink below forces it to escape as well -- belt and braces, because
-               a noise loop compiled to nothing would be the fourth instance of this
-               project's signature bug.
-
-               MI300A: the same code is the contention analogue (see gd_alloc_noise
-               in the .hip render) -- there is no placement there, so the pressure
-               comes from both chiplets hammering one coherent pool. *)
             s "    if (_noise_ddr != NULL && blockIdx.x < HET_TEST_BLOCKS + _noise_blocks) {\n" ;
             s "      volatile const uint64_t* _nb = (volatile const uint64_t*)_noise_ddr;\n" ;
             s "      uint64_t _t = (uint64_t)(blockIdx.x - HET_TEST_BLOCKS) * blockDim.x + threadIdx.x;\n" ;
@@ -2124,10 +2395,6 @@ static void gd_free_noise(void* _p){
             s "      uint64_t _i = (_noise_words > 0) ? (_t % _noise_words) : 0;\n" ;
             s "      uint64_t _acc = 0;\n" ;
             s "      uint32_t _r = 0;\n" ;
-            (* The stop flag is re-tested once per CHUNK, not once per full pass:
-               an 8 GB pass takes far longer than the tested window, and a noise
-               block that only checks between passes would outlive the test (or, on
-               a cooperative launch, refuse to return). *)
             s "      for (;\n\
                \           _r < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;\n\
                \           ++_r) {\n" ;
@@ -2137,7 +2404,6 @@ static void gd_free_noise(void* _p){
             s "          if (_i >= _noise_words) _i = (_noise_words > 0) ? (_i % _noise_words) : 0;\n" ;
             s "        }\n" ;
             s "      }\n" ;
-            (* Liveness (bounded, so it cannot overflow) + volume (atomicMax, ditto). *)
             s "      if (_r > 0) het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);\n" ;
             s "      het_scratch_max(&_stress_tally[HET_TALLY_NOISE_ROUNDS], _r);\n" ;
             s "      if (_acc == 0xFFFFFFFFFFFFFFFFull)\n" ;
@@ -2148,131 +2414,82 @@ static void gd_free_noise(void* _p){
                \         _s < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;\n\
                \         ++_s) {\n" ;
             s "      if (het_rng_pct(&_rng, HET_MEM_STRESS_PCT))\n" ;
-            s "        het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat);\n" ;
+            s "        het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally);\n" ;
             s "    }\n" ;
             s "    if (_s >= HET_STRESS_MAX_ROUNDS)\n" ;
             s "      het_scratch_bump(&_stress_tally[HET_TALLY_TRUNC]);\n" ;
             s "    }\n" ;
             s "  }\n" ;
             s "}\n\n" ;
-            (* CPU pthread wrappers (arrive at barrier, then run the tagged body).
-               Struct carries the uint64_t* globals, the barrier and this proc's
-               read-buffer pointers; the loop threads _n into het_run_P.
-
-               B5 SITE A (Q6 2.2).  Two CPU-stress mechanisms attach here:
-
-                 M6 affinity -- pinned BEFORE the rendezvous, so the thread is
-                 already on its core when the race starts.  het_cpu_affinity
-                 COUNTS a failure instead of dying (litmus7 errexit()s); a pin that
-                 silently failed leaves every thread wherever the scheduler put it,
-                 which changes the stress topology while looking identical.
-
-                 M3 preload -- per iteration, on THIS proc's test variables, and
-                 strictly BEFORE the call to het_run_P<n>.  Both halves of that
-                 sentence are the -2s invariant (Q6 2.4): the tested order is an
-                 opaque compiled unit in _cpu.c, so nothing can be injected INSIDE
-                 it, and a cache hint (dc civac / prfm / clflush / prefetcht0)
-                 changes RESIDENCY, not program order -- so preloading the very
-                 variables under test is safe even where the CPU issues the
-                 ordering instructions being tested (STLR/LDAPR/DMB.SY).  It cannot
-                 drift into the tested sequence either: het_run_P<n> is a call into
-                 another translation unit and every primitive is asm volatile with a
-                 "memory" clobber.
-
-               The hint count is accumulated in a LOCAL and flushed once at the end.
-               An atomic bump per hint would put contended scaffolding traffic in
-               the middle of the tested loop -- the one place it must not be. *)
+            (* ---------------- CPU pthread wrappers, per instance -------------- *)
             List.iter
-              (fun (proc,_out,_envV,(addr_params,_out_params)) ->
-                let addr = cpu_addr_u64 addr_params and bufs = cpu_bufs proc in
-                s (Printf.sprintf "struct cpu_args_P%d {\n" proc) ;
-                List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) addr ;
-                s "  int* barrier;\n" ;
-                List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) bufs ;
-                (* B5: core to pin to (-1 = unpinned), this run's seed, the tally *)
-                s "  int _core; uint32_t _seed; het_cpu_tally* _tally;\n" ;
-                s "};\n" ;
-                s (Printf.sprintf "static void* cpu_thread_P%d(void* _a) {\n" proc) ;
-                s (Printf.sprintf "  cpu_args_P%d* a = (cpu_args_P%d*)_a;\n" proc proc) ;
-                s "  het_cpu_affinity(a->_core, a->_tally);\n" ;
-                (* M3 target set = exactly this proc's test variables. *)
-                let npl = List.length addr in
-                if npl > 0 then begin
-                  s (Printf.sprintf "  void* const _pl[%d] = { %s };\n" npl
-                       (String.concat ", "
-                          (List.map (fun (_,n) -> Printf.sprintf "(void*)a->%s" n)
-                             addr))) ;
-                  s (Printf.sprintf
-                       "  uint32_t _plrng = het_cpu_rng_init(a->_seed, %du);\n" proc) ;
-                  s "  uint64_t _plops = 0;\n"
-                end ;
-                s (dialect.gd_bar "  " "a->barrier") ;
-                let call_args =
-                  String.concat ","
-                    (List.map (fun (_,a) -> "a->"^a) (addr @ bufs) @ ["_n"]) in
-                s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
-                if npl > 0 then
-                  s (Printf.sprintf
-                       "    _plops += het_cpu_preload(_pl, %d, &_plrng, HET_CPU_PRELOAD_PCT);\n"
-                       npl) ;
-                s (Printf.sprintf "    het_run_P%d(%s);\n" proc call_args) ;
-                s "  }\n" ;
-                if npl > 0 then
-                  s "  __atomic_fetch_add(&a->_tally->preload_ops, _plops, __ATOMIC_RELAXED);\n" ;
-                s "  return NULL;\n}\n\n")
-              params ;
-            (* B3 observer: one CPU pthread snooping every observed location into
-               its host buffer; joins the start barrier.  Plain 64-bit loads
-               (analysis-only, not the tested order).
-
-               B5: it is PINNED (M6) but deliberately NOT preloaded.  Its job is to
-               sample the shared locations as densely as it can, and a per-iteration
-               cache hint would only thin the sampling -- the same reason B4 gave the
-               GPU observer lane no pre-stress. *)
-            let obsC l = Printf.sprintf "obsC_%s" l in  (* CPU observer buffer (host) *)
-            if has_observers then begin
-              s "struct cpu_obs_args {\n" ;
-              List.iter (fun l -> s (Printf.sprintf "  uint64_t* %s;\n" l)) all_globals ;
-              s "  int* barrier;\n" ;
-              List.iter (fun l -> s (Printf.sprintf "  uint64_t* %s;\n" (obsC l))) obs_locs ;
-              s "  int _core; het_cpu_tally* _tally;\n" ;
-              s "};\n" ;
-              s "static void* cpu_obs_thread(void* _a) {\n" ;
-              s "  cpu_obs_args* a = (cpu_obs_args*)_a;\n" ;
-              s "  het_cpu_affinity(a->_core, a->_tally);\n" ;
-              s (dialect.gd_bar "  " "a->barrier") ;
-              s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
-              List.iter
-                (fun l -> s (Printf.sprintf "    a->%s[_n] = *a->%s;\n" (obsC l) l))
-                obs_locs ;
-              s "  }\n  return NULL;\n}\n\n"
-            end ;
-            (* outcome labels + decoded-outcome dump callback (histogram of the
-               decoded read values over "hot" frames). *)
-            let labelstr =
-              String.concat ", "
-                (List.map (fun (p,r,_) -> Printf.sprintf "\"%d:%s\"" p r) slots
-                 @ List.map (fun (name,_) -> Printf.sprintf "\"[%s]\"" name) loc_slots) in
-            s (Printf.sprintf "static const char* _labels[%d] = { %s };\n"
-                 (max 1 nslots) labelstr) ;
-            s {ocaml|static void _dump_one(FILE* _ch, intmax_t* o, count_t c, int show){
-  fprintf(_ch, "%-8" PRIu64 "%c> ", c, show ? '*' : ' ');
-|ocaml} ;
-            s (Printf.sprintf "  for (int i=0;i<%d;i++)" nslots) ;
-            s {ocaml| fprintf(_ch, "%s=%" PRIdMAX "; ", _labels[i], o[i]);
-  fprintf(_ch, "\n");
-}
-
-|ocaml} ;
-            (* B5: the placement-failure counter belongs to the SHARED template, not
-               to a dialect's defs.  "How many placement calls were refused" is a
-               dialect-agnostic fact -- the HetObs record reports it on BOTH renders --
-               and only the mechanism that increments it (cudaMemAdvise) is
-               CUDA-specific.  Declaring it inside the CUDA gd_shared_mem_defs string
-               compiled fine under nvcc and BROKE THE .hip BUILD, because the shared
-               driver below reads it on both paths.  On the HIP render it therefore
-               stays 0, which is exactly right: MI300A has one HBM pool and no
-               placement to refuse. *)
+              (fun i ->
+                List.iter
+                  (fun cp ->
+                    let proc = cp.cp_proc in
+                    let addr = cpu_addr_u64 cp and bufs = cpu_bufs i cp in
+                    s (Printf.sprintf "struct cpu_args_%sP%d {\n" i.i_pre proc) ;
+                    List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) addr ;
+                    s "  int* barrier;\n" ;
+                    List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) bufs ;
+                    s "  int _core; uint32_t _seed; het_cpu_tally* _tally;\n" ;
+                    s "};\n" ;
+                    s (Printf.sprintf "static void* cpu_thread_%sP%d(void* _a) {\n"
+                         i.i_pre proc) ;
+                    s (Printf.sprintf "  cpu_args_%sP%d* a = (cpu_args_%sP%d*)_a;\n"
+                         i.i_pre proc i.i_pre proc) ;
+                    s "  het_cpu_affinity(a->_core, a->_tally);\n" ;
+                    let npl = List.length addr in
+                    if npl > 0 then begin
+                      s (Printf.sprintf "  void* const _pl[%d] = { %s };\n" npl
+                           (String.concat ", "
+                              (List.map (fun (_,n) -> Printf.sprintf "(void*)a->%s" n)
+                                 addr))) ;
+                      s (Printf.sprintf
+                           "  uint32_t _plrng = het_cpu_rng_init(a->_seed, %du);\n" proc) ;
+                      s "  uint64_t _plops = 0;\n"
+                    end ;
+                    s (dialect.gd_bar "  " "a->barrier") ;
+                    let call_args =
+                      String.concat ","
+                        (List.map (fun (_,a) -> "a->"^a) (addr @ bufs) @ ["_n"]) in
+                    s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+                    if npl > 0 then
+                      s (Printf.sprintf
+                           "    _plops += het_cpu_preload(_pl, %d, &_plrng, HET_CPU_PRELOAD_PCT);\n"
+                           npl) ;
+                    s (Printf.sprintf "    het_run_%sP%d(%s);\n" i.i_pre proc call_args) ;
+                    s "  }\n" ;
+                    if npl > 0 then
+                      s "  __atomic_fetch_add(&a->_tally->preload_ops, _plops, __ATOMIC_RELAXED);\n" ;
+                    s "  return NULL;\n}\n\n")
+                  i.i_cpus ;
+                (* this instance's CPU observer pthread *)
+                if i.i_obs then begin
+                  s (Printf.sprintf "struct %scpu_obs_args {\n" i.i_pre) ;
+                  List.iter (fun l -> s (Printf.sprintf "  uint64_t* %s;\n" l))
+                    i.i_all_globals ;
+                  s "  int* barrier;\n" ;
+                  List.iter
+                    (fun l -> s (Printf.sprintf "  uint64_t* %s;\n" (obsC_of "" l)))
+                    i.i_obs_locs ;
+                  s "  int _core; het_cpu_tally* _tally;\n" ;
+                  s "};\n" ;
+                  s (Printf.sprintf "static void* %scpu_obs_thread(void* _a) {\n" i.i_pre) ;
+                  s (Printf.sprintf "  %scpu_obs_args* a = (%scpu_obs_args*)_a;\n"
+                       i.i_pre i.i_pre) ;
+                  s "  het_cpu_affinity(a->_core, a->_tally);\n" ;
+                  s (dialect.gd_bar "  " "a->barrier") ;
+                  s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+                  List.iter
+                    (fun l ->
+                      s (Printf.sprintf "    a->%s[_n] = *a->%s;\n" (obsC_of "" l) l))
+                    i.i_obs_locs ;
+                  s "  }\n  return NULL;\n}\n\n"
+                end)
+              insts ;
+            (* outcome labels + decoded-outcome dump callback (T only) *)
+            List.iter (fun i -> s i.i_labels) insts ;
             s "/* B5: placement refusals.  Incremented only where placement EXISTS\n\
                \   (the CUDA/GH200 render); stays 0 on the HIP/MI300A render, which has a\n\
                \   single HBM pool and therefore nothing to place. */\n" ;
@@ -2281,45 +2498,77 @@ static void gd_free_noise(void* _p){
             s "\n" ;
             s dialect.gd_noise_mem_defs ;
             s "\n" ;
-            (* driver *)
+            (* ------------------------------ driver --------------------------- *)
             s "int main(void){\n" ;
-            (* B1: shared litmus vars (now uint64_t) + barrier via gd_alloc_shared. *)
+            (* B1: shared litmus vars + barrier through gd_alloc_shared.
+               B6b: in a co-run harness they are carved out of ONE gd_alloc_shared
+               arena, ONE CACHE LINE APART.  Separate 8-byte mallocs would land the
+               three instances' locations (and the barrier) on shared lines, and two
+               variables on one line are ONE coherence unit -- mu(T)'s traffic would
+               then drag T's line around and the control would perturb the very test
+               it exists to vouch for.  One allocation, one free, and the free still
+               matches the allocator (Q8: malloc/ATS on GH200, managed fallback). *)
+            let shared_slots =
+              List.concat_map
+                (fun i -> List.map (fun g -> (i,g)) i.i_all_globals) insts in
+            if co_run then begin
+              let nslot = List.length shared_slots + 1 in    (* +1 for the barrier *)
+              s (Printf.sprintf
+                   "  /* %d cache-line-padded shared slots: %s + barrier */\n" nslot
+                   (String.concat " " (List.map (fun (i,g) -> gsym i g) shared_slots))) ;
+              s "  unsigned char *_shared_arena;\n" ;
+              s (Printf.sprintf
+                   "  gd_alloc_shared((void**)&_shared_arena, (size_t)HET_CACHE_LINE*%d);\n"
+                   (nslot + 1)) ;
+              s "  uintptr_t _sa = ((uintptr_t)_shared_arena + (HET_CACHE_LINE-1))\n\
+                 \                  & ~(uintptr_t)(HET_CACHE_LINE-1);\n" ;
+              List.iteri
+                (fun k (i,g) ->
+                  s (Printf.sprintf
+                       "  uint64_t *%s = (uint64_t*)(_sa + (size_t)HET_CACHE_LINE*%d);\n"
+                       (gsym i g) k))
+                shared_slots ;
+              s (Printf.sprintf
+                   "  int *barrier = (int*)(_sa + (size_t)HET_CACHE_LINE*%d);\n"
+                   (List.length shared_slots))
+            end else begin
+              List.iter
+                (fun (i,g) ->
+                  s (Printf.sprintf
+                       "  uint64_t *%s; gd_alloc_shared((void**)&%s, sizeof(uint64_t));\n"
+                       (gsym i g) (gsym i g)))
+                shared_slots ;
+              s "  int *barrier; gd_alloc_shared((void**)&barrier, sizeof(int));\n"
+            end ;
+            (* B3: read buffers -- OFF the coherent race path. *)
             List.iter
-              (fun g ->
-                s (Printf.sprintf
-                     "  uint64_t *%s; gd_alloc_shared((void**)&%s, sizeof(uint64_t));\n" g g))
-              all_globals ;
-            s (Printf.sprintf
-                 "  int *barrier; gd_alloc_shared((void**)&barrier, sizeof(int));\n") ;
-            (* B3: read buffers -- OFF the coherent race path.  GPU buffers in device
-               memory (gd_dev_malloc) + a host mirror "<buf>_h" for the scan; CPU
-               buffers host-malloc'd and read in place. *)
-            List.iter
-              (fun (p,li,name,dev,_g) ->
-                match dev with
-                | `Gpu ->
-                   s (Printf.sprintf "  uint64_t *%s; %s\n" name
-                        (dialect.gd_dev_malloc name buf_bytes)) ;
-                   s (Printf.sprintf
-                        "  uint64_t *%s_h = (uint64_t*)malloc_check(%s);\n" name buf_bytes)
-                | `Cpu ->
-                   ignore p ; ignore li ;
-                   s (Printf.sprintf
-                        "  uint64_t *%s = (uint64_t*)malloc_check(%s);\n" name buf_bytes))
-              read_buffers ;
-            (* B3 observer buffers: obsG_<l> device (+ host mirror) / obsC_<l> host. *)
-            let obsG l = Printf.sprintf "obsG_%s" l in
-            let obsC l = Printf.sprintf "obsC_%s" l in
-            List.iter
-              (fun l ->
-                s (Printf.sprintf "  uint64_t *%s; %s\n" (obsG l)
-                     (dialect.gd_dev_malloc (obsG l) buf_bytes)) ;
-                s (Printf.sprintf "  uint64_t *%s_h = (uint64_t*)malloc_check(%s);\n"
-                     (obsG l) buf_bytes) ;
-                s (Printf.sprintf "  uint64_t *%s = (uint64_t*)malloc_check(%s);\n"
-                     (obsC l) buf_bytes))
-              obs_locs ;
-            (* B2: cooperative-launch prelude -- compute the co-resident grid ONCE. *)
+              (fun i ->
+                List.iter
+                  (fun (_,_,name,dev,_) ->
+                    match dev with
+                    | `Gpu ->
+                       s (Printf.sprintf "  uint64_t *%s; %s\n" name
+                            (dialect.gd_dev_malloc name buf_bytes)) ;
+                       s (Printf.sprintf
+                            "  uint64_t *%s_h = (uint64_t*)malloc_check(%s);\n"
+                            name buf_bytes)
+                    | `Cpu ->
+                       s (Printf.sprintf
+                            "  uint64_t *%s = (uint64_t*)malloc_check(%s);\n"
+                            name buf_bytes))
+                  i.i_bufs ;
+                List.iter
+                  (fun l ->
+                    let og = obsG_of i.i_pre l and oc = obsC_of i.i_pre l in
+                    s (Printf.sprintf "  uint64_t *%s; %s\n" og
+                         (dialect.gd_dev_malloc og buf_bytes)) ;
+                    s (Printf.sprintf "  uint64_t *%s_h = (uint64_t*)malloc_check(%s);\n"
+                         og buf_bytes) ;
+                    s (Printf.sprintf "  uint64_t *%s = (uint64_t*)malloc_check(%s);\n"
+                         oc buf_bytes))
+                  i.i_obs_locs)
+              insts ;
+            (* B2: cooperative-launch prelude *)
             s "  int _coop = 0;\n" ;
             s (Printf.sprintf "  (void)%s(&_coop, %s, 0);\n"
                  dialect.gd_dev_attr dialect.gd_attr_coop) ;
@@ -2331,24 +2580,7 @@ static void gd_free_noise(void* _p){
             s (Printf.sprintf "  (void)%s(&_bpsm, litmus_%s, HET_BLOCK_DIM, 0);\n"
                  dialect.gd_occupancy id) ;
             s "  int _maxGrid = _bpsm * _nsm;\n" ;
-            (* B2/B3/B4: HET_TEST_BLOCKS holds the GPU test lane(s) + (for the 72)
-               the observer lane; the rest of the co-resident grid is filled with
-               pure stressing workgroups.  The <= _maxGrid guard is LOAD-BEARING
-               and stays: the kernel is persistent and cooperatively launched, so
-               an over-large grid must be REJECTED at launch
-               (cudaErrorCooperativeLaunchTooLarge) rather than silently deadlock
-               on a block that is never scheduled -- and a silent hang is
-               indistinguishable from a genuine non-observation.
-               HET_STRESS_BLOCKS = -1 (default) means "fill to the cap", which
-               lands exactly ON it; an explicit -DHET_STRESS_BLOCKS=n keeps the
-               guard live (an over-large n is caught here). *)
             s "  int _testBlocks = HET_TEST_BLOCKS;\n" ;
-            (* B5 Half 2b: the noise blocks sit BETWEEN the test blocks and the
-               scratchpad stressers, so the existing `blockIdx.x >= HET_TEST_BLOCKS'
-               class boundary is untouched and the noise nests inside it.  They take
-               their share out of the stress population rather than growing the grid:
-               the co-residency cap is a hard limit for a persistent cooperative
-               kernel, and exceeding it deadlocks on a block that is never scheduled. *)
             s "  int _noiseBlocks = HET_NOISE_GPU_BLOCKS;\n" ;
             s "  if (_noiseBlocks < 0) _noiseBlocks = 0;\n" ;
             s "  int _stressBlocks = (HET_STRESS_BLOCKS >= 0) ? HET_STRESS_BLOCKS\n\
@@ -2356,25 +2588,19 @@ static void gd_free_noise(void* _p){
             s "  if (_stressBlocks < 0) _stressBlocks = 0;\n" ;
             s "  int _grid = _testBlocks + _noiseBlocks + _stressBlocks;\n" ;
             s "  if (_grid > _maxGrid) { fprintf(stderr, \"grid %d exceeds co-resident cap %d\\n\", _grid, _maxGrid); return 2; }\n" ;
-            (* B4-fix: the access patterns are LAUNCH ARGUMENTS (a compile-time
-               pattern is folded away and the stress loop dead-code-eliminated --
-               see the kernel-parameter note).  The -D knobs still choose them;
-               het_stress.cuh #errors on a value outside 0..3, which is how
-               upstream's silent "pattern 57 matches no branch" no-op is refused
-               here.  Printed with the geometry so a tuning log records what the
-               run actually stressed with. *)
+            (* B6b: a co-run harness reserves 3x-5x the test blocks, so the stress
+               population is the first thing the co-residency cap squeezes out.  An
+               empty stress population is a run with NO memory stress at all -- and
+               on NVIDIA silicon that is a run that observes nothing (Alglave 4.3.1).
+               The GPU-stress tally would catch it after the fact; say it BEFORE. *)
+            s "  if (HET_MEM_STRESS_PCT > 0 && _stressBlocks == 0)\n" ;
+            s "    fprintf(stderr, \"HetLitmus WARNING: the mem-stress population is EMPTY (test=%d + noise=%d fills the co-resident cap %d).  HET_MEM_STRESS_PCT=%d asks for scratchpad stress and NO block will do any.  On NVIDIA silicon an unstressed run observes nothing (Alglave ASPLOS'15 4.3.1).\\n\",\n\
+               \            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_MEM_STRESS_PCT);\n" ;
             s "  uint32_t _pre_pat = (uint32_t)HET_PRE_STRESS_PATTERN;\n" ;
             s "  uint32_t _mem_pat = (uint32_t)HET_MEM_STRESS_PATTERN;\n" ;
-            (* Report the realised stress population: the tuning task needs the
-               per-test stress-lane count to tune against, and it is a runtime
-               property of the device (SM count x resident blocks/SM). *)
             s "  fprintf(stderr, \"HetLitmus: blockDim=%d grid=%d (test=%d stress=%d, co-resident cap=%d) pre_pat=%u mem_pat=%u\\n\",\n\
                \          (int)HET_BLOCK_DIM, _grid, _testBlocks, _stressBlocks, _maxGrid,\n\
                \          _pre_pat, _mem_pat);\n" ;
-            (* B4 stress objects: DEVICE memory (gd_dev_malloc), never
-               gd_alloc_shared -- they are GPU-only and disjoint from every test
-               location, which is exactly what makes the stress sound.  The
-               scratch-location layout is chosen host-side per run and copied in. *)
             s (Printf.sprintf "  uint32_t *_scratch; %s\n"
                  (dialect.gd_dev_malloc "_scratch" "sizeof(uint32_t)*HET_SCRATCH_SIZE")) ;
             s (Printf.sprintf "  uint32_t *_scratch_loc; %s\n"
@@ -2383,32 +2609,19 @@ static void gd_free_noise(void* _p){
                  (dialect.gd_dev_malloc "_spin_bar" "sizeof(uint32_t)")) ;
             s (Printf.sprintf "  uint32_t *_gpu_done; %s\n"
                  (dialect.gd_dev_malloc "_gpu_done" "sizeof(uint32_t)")) ;
-            (* B4-fix: the stress-liveness tally (rendezvous / cap / truncation).
-               Device memory like the rest of the scaffolding. *)
             s (Printf.sprintf "  uint32_t *_stress_tally; %s\n"
                  (dialect.gd_dev_malloc "_stress_tally"
                     "sizeof(uint32_t)*HET_TALLY_N")) ;
             s "  uint32_t _stress_tally_h[HET_TALLY_N];\n" ;
             s "  uint32_t *_scratch_loc_h = (uint32_t*)malloc_check(sizeof(uint32_t)*_grid);\n" ;
-            (* ================= B5 Half 1: the CPU stress population =============
-               Site B (Q6 2.2).  The enemy scratchpad is a THIRD object class --
-               plain host malloc.  It is CPU-only and disjoint from every test
-               location, so it needs neither the coherent allocator (gd_alloc_shared,
-               which selects the property under test) nor device memory
-               (gd_dev_malloc, the GPU scratchpad).  Confusing any two of the three
-               would put stress traffic on a tested cache line, which is precisely
-               what the S&D invariant forbids. *)
+            (* ---------------- B5 Half 1: the CPU stress population ------------ *)
             let n_cpu_threads =
-              List.length params + (if has_observers then 1 else 0) in
+              List.fold_left
+                (fun a i -> a + List.length i.i_cpus + (if i.i_obs then 1 else 0))
+                0 insts in
             s "  int _ncores = het_cpu_ncores();\n" ;
             s "  int _aff = HET_CPU_AFFINITY;\n" ;
             s (Printf.sprintf "  int _nCpuTest = %d;\n" n_cpu_threads) ;
-            (* Enemy budget.  Auto = every core not already carrying a test thread or
-               the Grace noise thread, less a reserve for the OS, the driver and the
-               GPU-launch thread.  Grace has 72 cores and NO SMT, so litmus7's SMT /
-               hyperthread knobs are inert there and this reduces to which core; on
-               the x86 MI300A host (24c/48t/3 CCD) they are live.  The COUNT itself is
-               hardware-only (Q6 6.4) -- this is a structural default, not a tuning. *)
             s "  int _nEnemy = HET_CPU_ENEMIES;\n" ;
             s "  if (_nEnemy < 0) {\n" ;
             s "    _nEnemy = _ncores - _nCpuTest - (HET_NOISE_CPU ? 1 : 0) - HET_CPU_RESERVE_CORES;\n" ;
@@ -2419,11 +2632,6 @@ static void gd_free_noise(void* _p){
             s "  uint64_t *_cpu_scratch =\n\
                \    (uint64_t*)malloc_check(sizeof(uint64_t)*HET_CPU_SCRATCH_WORDS);\n" ;
             s "  memset(_cpu_scratch, 0, sizeof(uint64_t)*HET_CPU_SCRATCH_WORDS);\n" ;
-            (* M4: regions are STRIDE words apart, so consecutive ones land on
-               distinct cache lines.  The REALISED spread can be smaller than the
-               knob if the scratchpad cannot hold m of them -- say so rather than let
-               a tuning log record a spread the run never had (het_report_spread in
-               het_stress.cuh learned this the hard way). *)
             s "  uint32_t _cpu_nregions = (uint32_t)(HET_CPU_SCRATCH_WORDS / HET_CPU_STRIDE);\n" ;
             s "  if (_cpu_nregions < 1) _cpu_nregions = 1;\n" ;
             s "  uint32_t _cpu_spread = HET_CPU_SPREAD;\n" ;
@@ -2435,7 +2643,6 @@ static void gd_free_noise(void* _p){
             s "  uint32_t *_cpu_idx = (uint32_t*)malloc_check(sizeof(uint32_t)*_cpu_nregions);\n" ;
             s "  het_cpu_enemy_args *_ea = (het_cpu_enemy_args*)malloc_check(sizeof(het_cpu_enemy_args)*(_nEnemy>0?_nEnemy:1));\n" ;
             s "  pthread_t *_eth = (pthread_t*)malloc_check(sizeof(pthread_t)*(_nEnemy>0?_nEnemy:1));\n" ;
-            (* ================= B5 Half 2b: the noise buffers ==================== *)
             s "  uint64_t _noise_words = (uint64_t)HET_NOISE_MB * 1024ull * 1024ull / sizeof(uint64_t);\n" ;
             s "  uint32_t _noise_blocks = (uint32_t)_noiseBlocks;\n" ;
             s "  uint32_t _noise_chunk = (uint32_t)HET_NOISE_CHUNK;\n" ;
@@ -2443,9 +2650,6 @@ static void gd_free_noise(void* _p){
             s "  uint64_t *_noise_ddr = NULL;   /* CPU-homed: the GPU streams it */\n" ;
             s "  uint64_t *_noise_hbm = NULL;   /* GPU-homed: the CPU streams it */\n" ;
             s "  het_cpu_noise_args _na; pthread_t _nth; int _noise_cpu_on = 0;\n" ;
-            (* The working set is the whole point: a buffer that fits in cache is
-               served from cache and crosses NOTHING (Fusco: Hopper's L2 caches HBM
-               "both local and peer").  Grace L3 = 114 MB, Hopper L2 = 51 MB. *)
             s "  if (HET_NOISE_MB < HET_LLC_MB)\n" ;
             s "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%d is BELOW the last-level cache (%d MB) -- the noise buffers fit in cache, so the reads are served locally and generate NO interconnect traffic.  This run is NOT C2C-stressed (Fusco: Hopper L2 caches HBM, local and peer).\\n\",\n\
                \            (int)HET_NOISE_MB, (int)HET_LLC_MB);\n" ;
@@ -2459,9 +2663,6 @@ static void gd_free_noise(void* _p){
             s "    if (_rc < 0) { fprintf(stderr, \"HetLitmus WARNING: could not allocate the %d MB HBM noise buffer -- the Grace half of the C2C noise is DISABLED for this run.\\n\", (int)HET_NOISE_MB); _noise_hbm = NULL; }\n" ;
             s "    else if (_rc > 0) fprintf(stderr, \"HetLitmus WARNING: the HBM noise buffer could not be homed on the GPU -- the Grace noise is exercising plumbing, not C2C.\\n\");\n" ;
             s "  }\n" ;
-            (* Report the REALISED configuration, not the requested one: B8 tunes
-               against what the hardware actually did, and a knob that says 9 while
-               the run realised 1 silently mis-tunes it. *)
             s "  fprintf(stderr, \"HetLitmus cpu-stress: cores=%d test=%d enemies=%d spread=%u stride=%d seq=%d preload=%d%% aff=%d | noise: gpu_blocks=%u cpu=%d words=%llu (%d MB) place=%d\\n\",\n\
                \          _ncores, _nCpuTest, _nEnemy, _cpu_spread, (int)HET_CPU_STRIDE,\n\
                \          (int)HET_CPU_ENEMY_SEQ, (int)HET_CPU_PRELOAD_PCT, _aff,\n\
@@ -2469,22 +2670,14 @@ static void gd_free_noise(void* _p){
                \          (unsigned long long)_noise_words, (int)HET_NOISE_MB, (int)HET_PLACE);\n" ;
             s "  outs_t* hist = NULL;\n" ;
             s "  for (int _run=0; _run<NUMBER_OF_RUN; ++_run) {\n" ;
-            List.iter (fun g -> s (Printf.sprintf "    *%s = 0;\n" g)) all_globals ;
+            List.iter
+              (fun (i,g) -> s (Printf.sprintf "    *%s = 0;\n" (gsym i g)))
+              shared_slots ;
             s "    *barrier = 0;\n" ;
-            (* B4 per-run stress setup.  Re-rolling the scratch-line layout each
-               run keeps the stress non-stationary; seeding both the host rand()
-               and the device RNG from (HET_SEED + run) keeps the whole run
-               replayable (GPUHarbor's reproducibility discipline). *)
             s "    uint32_t _seed = (uint32_t)(HET_SEED + _run);\n" ;
             s "    srand((unsigned int)_seed);\n" ;
             s "    het_set_scratch_locations(_scratch_loc_h, _grid);\n" ;
-            (* ---- B5: the CPU stress population, spawned BEFORE the test threads.
-               THE ORDER IS THE MECHANISM.  _stress_go is raised first, then the
-               enemies and the noise thread start, and only then do the test threads
-               and the kernel go.  A stress_go raised after the enemies were spawned
-               races them; one raised after the test finished means they never ran at
-               all -- and an enemy population that never ran is exactly the failure
-               B4 shipped twice.  The tally below is what proves it did not happen. *)
+            (* ---- B5: the CPU stress population, spawned BEFORE the test threads. *)
             s "    memset(&_ct, 0, sizeof _ct);\n" ;
             s "    het_cpu_shuffle(_cpu_idx, _cpu_nregions);   /* M2: reshuffled per run, off the run seed */\n" ;
             s "    __atomic_store_n(&_stress_go, 1, __ATOMIC_RELAXED);\n" ;
@@ -2500,17 +2693,12 @@ static void gd_free_noise(void* _p){
             s "      _ea[_e].idx     = _cpu_idx + _off;\n" ;
             s "      _ea[_e].nidx    = _cpu_spread;\n" ;
             s "      _ea[_e].stride  = (uint32_t)HET_CPU_STRIDE;\n" ;
-            (* sigma is a RUNTIME field.  See het_cpu_stress.h divergence (1): the
-               -D knob is read HERE, host-side, and never reaches the enemy as a
-               compile-time constant an optimiser could fold a branch out of. *)
             s "      _ea[_e].seq     = (uint32_t)HET_CPU_ENEMY_SEQ;\n" ;
             s "      _ea[_e].core    = _aff ? ((_ecore0 + _e) % _ncores) : -1;\n" ;
             s "      _ea[_e].go      = &_stress_go;\n" ;
             s "      _ea[_e].tally   = &_ct;\n" ;
             s "      pthread_create(&_eth[_e], NULL, het_cpu_enemy, &_ea[_e]);\n" ;
             s "    }\n" ;
-            (* The Grace half of the C2C noise: a CPU thread stream-reading the
-               GPU-homed buffer.  Its Hopper twin is already inside the kernel. *)
             s "    _noise_cpu_on = 0;\n" ;
             s "    if (HET_NOISE_CPU && _noise_hbm != NULL) {\n" ;
             s "      _na.buf    = (volatile const uint64_t*)_noise_hbm;\n" ;
@@ -2535,65 +2723,83 @@ static void gd_free_noise(void* _p){
             s (Printf.sprintf "    %s\n"
                  (dialect.gd_dev_memset0 "_stress_tally"
                     "sizeof(uint32_t)*HET_TALLY_N")) ;
-            (* reset read buffers (all N entries are overwritten by the loop, but
-               reset keeps unreached tail entries at the init marker 0). *)
             List.iter
-              (fun (_,_,name,dev,_) ->
-                match dev with
-                | `Gpu -> s (Printf.sprintf "    %s\n" (dialect.gd_dev_memset0 name buf_bytes))
-                | `Cpu -> s (Printf.sprintf "    memset(%s, 0, %s);\n" name buf_bytes))
-              read_buffers ;
+              (fun i ->
+                List.iter
+                  (fun (_,_,name,dev,_) ->
+                    match dev with
+                    | `Gpu ->
+                       s (Printf.sprintf "    %s\n"
+                            (dialect.gd_dev_memset0 name buf_bytes))
+                    | `Cpu ->
+                       s (Printf.sprintf "    memset(%s, 0, %s);\n" name buf_bytes))
+                  i.i_bufs ;
+                List.iter
+                  (fun l ->
+                    s (Printf.sprintf "    %s\n"
+                         (dialect.gd_dev_memset0 (obsG_of i.i_pre l) buf_bytes)) ;
+                    s (Printf.sprintf "    memset(%s, 0, %s);\n"
+                         (obsC_of i.i_pre l) buf_bytes))
+                  i.i_obs_locs)
+              insts ;
+            (* spawn the CPU test threads of every instance; cores are handed out in
+               emission order so the instances never share one. *)
+            let ti = ref 0 in
             List.iter
-              (fun l ->
-                s (Printf.sprintf "    %s\n" (dialect.gd_dev_memset0 (obsG l) buf_bytes)) ;
-                s (Printf.sprintf "    memset(%s, 0, %s);\n" (obsC l) buf_bytes))
-              obs_locs ;
-            List.iteri
-              (fun ti (proc,_out,_envV,(addr_params,_out_params)) ->
-                let addr = cpu_addr_u64 addr_params and bufs = cpu_bufs proc in
-                (* B5: ... plus this proc's pinned core (M6), the run seed (which
-                   drives its M3 preload rolls, so a run replays from its seed) and
-                   the shared tally.  Test procs take the first cores; the observer,
-                   the noise thread and then the enemies follow, disjointly. *)
-                let core =
-                  Printf.sprintf "(_aff ? ((HET_CPU_TEST_CORE0 + %d) %% _ncores) : -1)" ti in
-                let fields =
-                  String.concat ", "
-                    (List.map snd addr @ ["barrier"] @ List.map snd bufs
-                     @ [core ; "_seed" ; "&_ct"]) in
-                s (Printf.sprintf "    cpu_args_P%d _ca%d = { %s };\n" proc proc fields) ;
-                s (Printf.sprintf
-                     "    pthread_t _th%d; pthread_create(&_th%d, NULL, cpu_thread_P%d, &_ca%d);\n"
-                     proc proc proc proc))
-              params ;
-            (* B3: launch the CPU observer pthread (fields: all shared globals,
-               barrier, then this run's obsC buffers -- matches cpu_obs_args). *)
-            if has_observers then begin
-              (* B5: the observer is PINNED (the core after the test procs) but not
-                 preloaded -- it must sample densely, and a cache hint per iteration
-                 would only thin the sampling. *)
-              let core =
-                Printf.sprintf
-                  "(_aff ? ((HET_CPU_TEST_CORE0 + %d) %% _ncores) : -1)"
-                  (List.length params) in
-              let fields =
-                String.concat ", "
-                  (all_globals @ ["barrier"] @ List.map obsC obs_locs
-                   @ [core ; "&_ct"]) in
-              s (Printf.sprintf "    cpu_obs_args _cao = { %s };\n" fields) ;
-              s "    pthread_t _tho; pthread_create(&_tho, NULL, cpu_obs_thread, &_cao);\n"
-            end ;
-            (* B2: args[] in KERNEL-PARAM order (gpu_globals @ gpu read buffers @
-               [barrier]); each entry is the address of the pointer variable. *)
+              (fun i ->
+                List.iter
+                  (fun cp ->
+                    let proc = cp.cp_proc in
+                    let addr = cpu_addr_u64 cp and bufs = cpu_bufs i cp in
+                    let core =
+                      Printf.sprintf
+                        "(_aff ? ((HET_CPU_TEST_CORE0 + %d) %% _ncores) : -1)" !ti in
+                    incr ti ;
+                    let fields =
+                      String.concat ", "
+                        (List.map (fun (_,n) -> gsym i n) addr
+                         @ ["barrier"] @ List.map snd bufs
+                         @ [core ; "_seed" ; "&_ct"]) in
+                    s (Printf.sprintf "    cpu_args_%sP%d %s = { %s };\n"
+                         i.i_pre proc (usym i.i_pre (Printf.sprintf "_ca%d" proc))
+                         fields) ;
+                    s (Printf.sprintf
+                         "    pthread_t %s; pthread_create(&%s, NULL, cpu_thread_%sP%d, &%s);\n"
+                         (usym i.i_pre (Printf.sprintf "_th%d" proc))
+                         (usym i.i_pre (Printf.sprintf "_th%d" proc))
+                         i.i_pre proc
+                         (usym i.i_pre (Printf.sprintf "_ca%d" proc))))
+                  i.i_cpus ;
+                if i.i_obs then begin
+                  let core =
+                    Printf.sprintf
+                      "(_aff ? ((HET_CPU_TEST_CORE0 + %d) %% _ncores) : -1)" !ti in
+                  incr ti ;
+                  let fields =
+                    String.concat ", "
+                      (List.map (gsym i) i.i_all_globals @ ["barrier"]
+                       @ List.map (obsC_of i.i_pre) i.i_obs_locs
+                       @ [core ; "&_ct"]) in
+                  s (Printf.sprintf "    %scpu_obs_args %s = { %s };\n"
+                       i.i_pre (usym i.i_pre "_cao") fields) ;
+                  s (Printf.sprintf
+                       "    pthread_t %s; pthread_create(&%s, NULL, %scpu_obs_thread, &%s);\n"
+                       (usym i.i_pre "_tho") (usym i.i_pre "_tho") i.i_pre
+                       (usym i.i_pre "_cao"))
+                end)
+              insts ;
+            (* B2: args[] in KERNEL-PARAM order. *)
             let args_addrs =
               String.concat ", "
-                (List.map (fun g -> "&"^g) gpu_globals
-                 @ List.map (fun (_,_,name,_,_) -> "&"^name) gpu_read_buffers
-                 @ List.map (fun l -> "&"^obsG l) obs_locs
+                (List.concat_map
+                   (fun i ->
+                     List.map (fun g -> "&" ^ gsym i g) i.i_gpu_globals
+                     @ List.map (fun (_,_,name,_,_) -> "&"^name) (gpu_bufs i)
+                     @ List.map (fun l -> "&" ^ obsG_of i.i_pre l) i.i_obs_locs)
+                   insts
                  @ ["&barrier"]
                  @ ["&_scratch" ; "&_scratch_loc" ; "&_spin_bar" ; "&_gpu_done" ;
                     "&_stress_tally" ; "&_seed" ; "&_pre_pat" ; "&_mem_pat" ;
-                    (* B5: must stay in lockstep with the kernel parameter list. *)
                     "&_noise_ddr" ; "&_noise_words" ; "&_noise_blocks" ;
                     "&_noise_chunk" ; "&_noise_stride"]) in
             s (Printf.sprintf "    void* _args[] = { %s };\n" args_addrs) ;
@@ -2604,32 +2810,23 @@ static void gd_free_noise(void* _p){
                  "    if (_e != %s) { fprintf(stderr, \"coop launch: %%s\\n\", %s(_e)); return 2; }\n"
                  dialect.gd_success dialect.gd_errstr) ;
             List.iter
-              (fun (proc,_,_,_) -> s (Printf.sprintf "    pthread_join(_th%d, NULL);\n" proc))
-              params ;
-            if has_observers then s "    pthread_join(_tho, NULL);\n" ;
-            (* B2: SINGLE terminal sync per run, error-checked. *)
+              (fun i ->
+                List.iter
+                  (fun cp ->
+                    s (Printf.sprintf "    pthread_join(%s, NULL);\n"
+                         (usym i.i_pre (Printf.sprintf "_th%d" cp.cp_proc))))
+                  i.i_cpus ;
+                if i.i_obs then
+                  s (Printf.sprintf "    pthread_join(%s, NULL);\n"
+                       (usym i.i_pre "_tho")))
+              insts ;
             s (Printf.sprintf "    %s _s = %s\n" dialect.gd_err_t dialect.gd_device_sync) ;
             s (Printf.sprintf
                  "    if (_s != %s) { fprintf(stderr, \"sync: %%s\\n\", %s(_s)); return 2; }\n"
                  dialect.gd_success dialect.gd_errstr) ;
-            (* ---- B5: tear the CPU stress down, but only NOW.  The enemies and the
-               noise thread must cover the WHOLE tested window and no more (S&D knob
-               F: the enemy runs at least as long as the test).  Lowering the flag
-               before the device sync would stop the stress while GPU lanes were
-               still looping; leaving it up would hang the join.  So: after the last
-               test thread has joined AND the device has drained. ---- */ *)
             s "    __atomic_store_n(&_stress_go, 0, __ATOMIC_RELAXED);\n" ;
             s "    for (int _e = 0; _e < _nEnemy; ++_e) pthread_join(_eth[_e], NULL);\n" ;
             s "    if (_noise_cpu_on) pthread_join(_nth, NULL);\n" ;
-            (* B4-fix: read back the stress-liveness tally and SAY what it says.
-               Everything in the stress layer is invisible to the L0 faithfulness
-               gate (it is scaffolding, not tested ops), so a stress layer that
-               has stopped working looks exactly like one that is working -- which
-               is what happened: two mechanisms shipped inert through five green
-               gates.  These counters are the only thing that can tell the
-               difference at run time.  Printed to stderr AND recorded in the
-               HetObs line, because B7 must be able to disqualify a run and B8
-               must be able to tune against it. *)
             s (Printf.sprintf "    %s\n"
                  (dialect.gd_memcpy_d2h "_stress_tally_h" "_stress_tally"
                     "sizeof(uint32_t)*HET_TALLY_N")) ;
@@ -2637,24 +2834,26 @@ static void gd_free_noise(void* _p){
             s "      unsigned long long _rdv = _stress_tally_h[HET_TALLY_RDV];\n" ;
             s "      unsigned long long _cap = _stress_tally_h[HET_TALLY_CAP];\n" ;
             s "      unsigned long long _spins = _rdv + _cap;\n" ;
-            s "      fprintf(stderr, \"HetLitmus stress: spins=%llu rendezvous=%llu cap=%llu (%.1f%% rendezvous)\\n\",\n\
-               \              _spins, _rdv, _cap, _spins ? 100.0*(double)_rdv/(double)_spins : 0.0);\n" ;
-            (* The window-opener's PURPOSE is the rendezvous; the 1024-spin cap is
-               a deadlock guard.  A spin population dominated by cap exits is a
-               fixed-length delay loop that aligns nothing -- say so rather than
-               let a tuned-looking HET_BARRIER_PCT hide it. *)
+            s "      fprintf(stderr, \"HetLitmus stress: spins=%llu rendezvous=%llu cap=%llu (%.1f%% rendezvous) do_stress_rounds=%u\\n\",\n\
+               \              _spins, _rdv, _cap, _spins ? 100.0*(double)_rdv/(double)_spins : 0.0,\n\
+               \              _stress_tally_h[HET_TALLY_STRESS_ROUNDS]);\n" ;
             s "      if (_spins && _rdv * 2 < _spins)\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: the device-scope window-opener released on the 1024-spin DEADLOCK CAP in %.1f%% of spins -- it is aligning the GPU test lanes weakly or not at all (expect ~0%% cap on a healthy run; see het_stress.cuh het_spin)\\n\",\n\
                \                100.0*(double)_cap/(double)_spins);\n" ;
             s "      if (_stress_tally_h[HET_TALLY_TRUNC])\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: %u stress lane(s) hit HET_STRESS_MAX_ROUNDS -- stress STOPPED while tested lanes were still running.  This run is NOT a stressed run and its non-observations are not comparable with one.\\n\",\n\
                \                _stress_tally_h[HET_TALLY_TRUNC]);\n" ;
+            (* B6b fix 2: het_do_stress now has a runtime tally, so a GPU scratchpad
+               layer that never EXECUTED is finally visible.  stresscheck.py proves
+               (structurally) that its accesses survive into the PTX; this proves they
+               ran.  Neither alone is enough -- that division of labour is the whole
+               lesson of B4, which shipped a stress layer that was in the source, gone
+               from the PTX, and green on every gate. *)
+            s "      if ((HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0)\n\
+               \          && _stress_tally_h[HET_TALLY_STRESS_ROUNDS] == 0)\n" ;
+            s "        fprintf(stderr, \"HetLitmus WARNING: the GPU scratchpad stress was REQUESTED (pre=%d%% mem=%d%%) but het_do_stress completed ZERO rounds -- the layer did NOT run.  Its non-observations are not those of a stressed run.\\n\",\n\
+               \                (int)HET_PRE_STRESS_PCT, (int)HET_MEM_STRESS_PCT);\n" ;
             s "    }\n" ;
-            (* ---- B5: the CPU + interconnect layer's vital signs.  Same discipline
-               as B4's block above, and for the same reason: NOTHING in this layer is
-               visible to a structural gate, so a layer that has silently stopped
-               working looks exactly like one that is working.  Each warning below
-               names a mechanism that is DEAD, not merely suboptimal. ---- *)
             s "    {\n" ;
             s "      unsigned long long _er = _ct.enemy_rounds;\n" ;
             s "      unsigned long long _pl = _ct.preload_ops;\n" ;
@@ -2675,47 +2874,31 @@ static void gd_free_noise(void* _p){
             s "      if (_ct.aff_failures)\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: %u sched_setaffinity call(s) FAILED -- those threads are wherever the scheduler put them.  The pinning is fiction and the stress topology is not the one being tuned.\\n\", _ct.aff_failures);\n" ;
             s "    }\n" ;
-            (* B3: mirror GPU device read + observer buffers to the host scan. *)
+            (* B3: mirror every instance's GPU device read + observer buffers. *)
             List.iter
-              (fun (_,_,name,_,_) ->
-                s (Printf.sprintf "    %s\n"
-                     (dialect.gd_memcpy_d2h (name^"_h") name buf_bytes)))
-              gpu_read_buffers ;
-            List.iter
-              (fun l ->
-                s (Printf.sprintf "    %s\n"
-                     (dialect.gd_memcpy_d2h (obsG l^"_h") (obsG l) buf_bytes)))
-              obs_locs ;
-            (* ======== B3 recovery scan: read + observer buffers -> het_obs_record.
-               Register atoms: rf/fr read-buffer decode.  Reads bind by LOAD NODE,
-               not by device, so a CPU read buffer scans exactly like a GPU one
-               (B3c).  Each proc gets its own frame, decoded where tags allow: base /
-               rf-pinned (_m = tag/K, no search) / windowed (HET_WINDOW) only for a
-               reader no rf atom decodes.  Coherence-final [l]=v atoms: the per-run
-               observer ws witness _loc (below).  A frame with no decodable synchrony
-               point is REFUSED (else a cold run reports 100% weak).  NOTHING is
-               HET_PENDING any more -- the emitter Warn.fatals rather than ship a
-               constant detector.  See c_tag_of_prop / c_loc. ==== *)
+              (fun i ->
+                List.iter
+                  (fun (_,_,name,_,_) ->
+                    s (Printf.sprintf "    %s\n"
+                         (dialect.gd_memcpy_d2h (name^"_h") name buf_bytes)))
+                  (gpu_bufs i) ;
+                List.iter
+                  (fun l ->
+                    let og = obsG_of i.i_pre l in
+                    s (Printf.sprintf "    %s\n"
+                         (dialect.gd_memcpy_d2h (og^"_h") og buf_bytes)))
+                  i.i_obs_locs)
+              insts ;
+            (* ======== the recovery scans: one per instance ==================== *)
             s "    het_obs_record _rec; memset(&_rec, 0, sizeof _rec);\n" ;
             s (Printf.sprintf
                  "    _rec.test_name = \"%s\"; _rec.instance_id = 0; _rec.run_id = _run;\n"
                  tname) ;
             s (Printf.sprintf "    _rec.confidence = %s;\n"
-                 (HetCond.confidence_c_name mech_class)) ;
+                 (HetCond.confidence_c_name it.i_mech)) ;
             s (Printf.sprintf "    _rec.reporting = %s;\n"
-                 (HetCond.confidence_c_name report_class)) ;
+                 (HetCond.confidence_c_name it.i_report)) ;
             s "    _rec.N = SIZE_OF_TEST;\n" ;
-            (* ---- B6 POSITIVE CONTROL (Q4 2.4 / 3.2).  The names of the two
-               controls this test's null is gated on, so the report can PAIR every
-               null with them by name instead of printing a bare "Never".
-
-               control_compiled_in = 0: B6a wires the map, the record, the rule and
-               the report; the multi-instance emitter that actually CO-RUNS mu(T)
-               and the canary in this harness is B6b.  Until then
-               control_target_count is STRUCTURALLY zero, so het_verdict() returns
-               COLD-INVALID and names the reason -- it never lets a null through as
-               "not observed".  Failing closed and loudly is the point: a control
-               that is silently absent turns a null into an unfalsifiable claim. *)
             (match mu_name with
              | Some m -> s (Printf.sprintf "    _rec.control_name = \"%s\";\n" m)
              | None -> s "    _rec.control_name = NULL;  /* not a Disallowed test */\n") ;
@@ -2723,23 +2906,6 @@ static void gd_free_noise(void* _p){
              | Some c -> s (Printf.sprintf "    _rec.canary_name = \"%s\";\n" c)
              | None -> s "    _rec.canary_name = NULL;\n") ;
             s "    _rec.control_compiled_in = HET_CONTROL_COMPILED_IN;\n" ;
-            s "    _rec.control_Prep = 1.0 - exp(-(double)_rec.control_target_count);\n" ;
-            (* Which stress mechanisms this BUILD asked for.  het_verdict() can then
-               tell a DEAD mechanism (requested, zero work -- the B4/B5 bug class)
-               from a deliberately disabled one; without it, an intentional
-               no-stress baseline would be classified COLD forever, which is just
-               another rule that always says the same thing. *)
-            (* NB the preload bit reads _ct.preload_inert (a RUNTIME flag the
-               _cpu.c side sets) and NOT the HET_CPU_PRELOAD_LIVE macro.  Two
-               reasons, and the second is the load-bearing one:
-                 (1) the macro lives behind HET_CPU_STRESS_IMPL, which only
-                     <test>_cpu.c defines -- this translation unit cannot see it;
-                 (2) more importantly, .cu and _cpu.c are NOT always compiled for
-                     the same host ISA (on the dev box the .cu is nvcc/x86 while
-                     _cpu.c is cross-assembled by `clang --target=aarch64'), so a
-                     compile-time answer here could contradict the one the thread
-                     that actually issues the hints computed.  The runtime tally
-                     cannot disagree with itself. *)
             s "    _rec.stress_requested =\n\
                \        ((HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0) ? HET_REQ_GPU_STRESS : 0u)\n\
                \      | ((HET_BARRIER_PCT > 0) ? HET_REQ_SPIN : 0u)\n\
@@ -2747,18 +2913,10 @@ static void gd_free_noise(void* _p){
                \      | ((HET_CPU_PRELOAD_PCT > 0 && !_ct.preload_inert) ? HET_REQ_CPU_PRELOAD : 0u)\n\
                \      | ((HET_NOISE_CPU && _noise_cpu_on) ? HET_REQ_NOISE_CPU : 0u)\n\
                \      | ((_noise_blocks > 0) ? HET_REQ_NOISE_GPU : 0u);\n" ;
-            (* B4-fix: the stress layer's own vital signs travel WITH the result --
-               a target count from a run whose stress was inert is not the same
-               datum as one from a stressed run, and nothing else in this record
-               would say so. *)
             s "    _rec.spin_rendezvous = _stress_tally_h[HET_TALLY_RDV];\n" ;
             s "    _rec.spin_cap = _stress_tally_h[HET_TALLY_CAP];\n" ;
             s "    _rec.stress_truncated = _stress_tally_h[HET_TALLY_TRUNC];\n" ;
-            (* B5: the CPU + interconnect layer's vital signs travel WITH the result,
-               for the same reason B4's do -- a target count from a run whose CPU
-               stress was inert, or whose C2C noise never ran, is not the same datum
-               as one from a fully stressed run, and nothing else in this record
-               would say so. *)
+            s "    _rec.gpu_stress_rounds = _stress_tally_h[HET_TALLY_STRESS_ROUNDS];\n" ;
             s "    _rec.cpu_enemies = _ct.enemies_realised;\n" ;
             s "    _rec.cpu_enemy_rounds = _ct.enemy_rounds;\n" ;
             s "    _rec.cpu_enemy_accesses = _ct.enemy_accesses;\n" ;
@@ -2769,373 +2927,60 @@ static void gd_free_noise(void* _p){
             s "    _rec.noise_gpu_rounds = _stress_tally_h[HET_TALLY_NOISE_ROUNDS];\n" ;
             s "    _rec.cpu_aff_failures = _ct.aff_failures;\n" ;
             s "    _rec.place_failures = (uint32_t)_het_place_failures;\n" ;
-            (* B8 tunes the interconnect lever against these two.  The working set is
-               the knob that decides whether the noise crosses anything at all -- below
-               the LLC it is served from cache -- so a tuning log that does not record
-               it cannot tell a good config from a dead stressor. *)
             s "    _rec.noise_ws_mb = (uint32_t)HET_NOISE_MB;\n" ;
             s "    _rec.place_mode = (uint32_t)HET_PLACE;\n" ;
-            (* skew/distinct accumulators only exist when a read buffer decodes a
-               synchrony iteration at all (a store-only test -- 2+2W -- has none). *)
-            (match sync_src with
-             | Some _ ->
-                s "    long _skew_sum = 0; double _skew_sq = 0.0; uint64_t _skew_n = 0;\n" ;
-                s "    int32_t _skew_lo = INT32_MAX, _skew_hi = INT32_MIN;\n" ;
-                s "    uint64_t _prev_m = 0; int _have_prev = 0;\n"
-             | None -> ()) ;
-            (* B3 observer ws recovery (per run): for each observed location scan
-               EACH observer thread's buffer for a ws witness -- an OTHER writer's
-               tag appears coherence-before the [l]=v writer's tag (Eq 3.12,
-               single O(N) pass).  Kept per device ("_c"/"_g") so _loc's OR honours
-               the same-thread constraint (4.3).  guard-2 observer_unique_count =
-               min distinct decoded iterations across observer buffers. *)
-            if has_observers then begin
-              s "    uint64_t _obs_uniq = UINT64_MAX;\n" ;
-              List.iter
-                (fun l ->
-                  List.iter
-                    (fun (dev, bufexpr) ->
-                      let wsv = ws_var l dev in
-                      let muf = match loc_value l with
-                        | Some v -> Hashtbl.find_opt value_mu (l,v) | None -> None in
-                      let others = match muf with
-                        | Some mf -> List.filter (fun m -> m <> mf) (writers_of l)
-                        | None -> [] in
-                      s (Printf.sprintf "    int %s = 0;\n" wsv) ;
-                      (match muf, others with
-                       | Some mf, (_::_ as os) ->
-                          let seen =
-                            String.concat " || "
-                              (List.map (Printf.sprintf "_mu == %d") os) in
-                          s "    {\n      int _seen = 0;\n" ;
-                          s "      for (int _w=0; _w<SIZE_OF_TEST; ++_w) {\n" ;
-                          s (Printf.sprintf "        uint64_t _t = %s[_w];\n" bufexpr) ;
-                          s "        if (_t != 0) {\n          uint64_t _mu = _t % K_TAG;\n" ;
-                          s (Printf.sprintf "          if (%s) _seen = 1;\n" seen) ;
-                          s (Printf.sprintf
-                               "          if (_mu == %d && _seen) { %s = 1; break; }\n" mf wsv) ;
-                          s "        }\n      }\n    }\n"
-                       | _ ->
-                          s (Printf.sprintf
-                               "    /* %s: no competing writer, ws unobservable */\n" wsv)) ;
-                      (* guard-2: distinct decoded iterations in this observer buffer *)
-                      s "    {\n      uint64_t _u = 0, _pm = 0; int _hp = 0;\n" ;
-                      s "      for (int _w=0; _w<SIZE_OF_TEST; ++_w) {\n" ;
-                      s (Printf.sprintf "        uint64_t _t = %s[_w];\n" bufexpr) ;
-                      s "        if (_t != 0) { uint64_t _mi = _t / K_TAG;\n" ;
-                      s "          if (!_hp || _mi != _pm) { _u++; _pm = _mi; _hp = 1; } }\n" ;
-                      s "      }\n      if (_u < _obs_uniq) _obs_uniq = _u;\n    }\n")
-                    [("c", obsC l); ("g", obsG l ^ "_h")])
-                obs_locs ;
-              s "    _rec.observer_unique_count = (_obs_uniq == UINT64_MAX) ? 0 : _obs_uniq;\n" ;
-              s (Printf.sprintf "    int _loc = %s;\n" loc_expr)
-            end ;
-            (* B3c: the exhaustive ground-truth scan is O(N^T_L); only run it at a
-               small N (HET_EXHAUSTIVE_MAX).  Recorded, so a capped-out run cannot
-               be misread as "exhaustively counted zero".
-
-               B6 CORRECTION -- exhaustive_valid is a VALIDITY FLAG, and it was
-               lying.  It was set to (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX) for EVERY
-               test, but at the default N=100000 (> 4096) that is 0 for all 338 --
-               while a T_L<=1 test (no windowed proc: MP/S/R/2+2W and friends -- 123
-               of the 338, and 14 of the 16 Disallowed) decodes every frame EXACTLY
-               and increments target_count_exhaustive UNCONDITIONALLY below.  Its
-               count is exact ground truth at any N; the flag was marking it "not
-               measured".
-
-               That matters because B6's rule REFUSES a credible null unless
-               exhaustive_valid == 1.  Left as it was, every null on every test
-               would have been classified COLD forever -- a decision rule that
-               always says the same thing, i.e. exactly the dead mechanism this
-               task exists to prevent.
-
-               So: the flag now says what it means -- "target_count_exhaustive is a
-               real measurement".  T_L<=1 => always (the O(N) scan IS the ground
-               truth).  T_L>=2 => only when the O(N^T_L) search actually ran. *)
-            (match !win_order with
-             | [] ->
-                (* T_L<=1: every frame is decoded exactly, the O(N) scan IS the
-                   ground truth at any N, and there is no capped search to gate --
-                   so no _exh is emitted (it would be an unused variable). *)
-                s "    _rec.exhaustive_valid = 1;  /* T_L<=1: the O(N) scan is exact at any N */\n"
-             | _ ->
-                s "    const int _exh = (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX);\n" ;
-                s "    _rec.exhaustive_valid = _exh;  /* T_L>=2: only if the O(N^T_L) search ran */\n") ;
-            s "    for (int _f=0; _f<SIZE_OF_TEST; ++_f) {\n" ;
-            s "      _rec.frames_examined++;\n" ;
-            (* ---- B3c frame binding, emitted (see the FRAME BINDING block).
-               Level-0 pins decode straight off the base proc's buffers; each
-               windowed proc then adds a search loop, inside which the pins it in
-               turn decodes are (re)assigned. ------------------------------- *)
-            let pins_at mode lvl =   (* pinned procs whose decoder sits at level lvl *)
-              Hashtbl.fold
-                (fun w (q,li) acc ->
-                  let qlvl =
-                    match Hashtbl.find_opt frame_kind q with
-                    | Some `Base -> 0
-                    | Some `Win ->
-                       1 + (let rec ix i = function
-                              | [] -> 0
-                              | p::t -> if p=q then i else ix (i+1) t in
-                            ix 0 !win_order)
-                    | _ -> 0 in
-                  if qlvl = lvl then (w,q,li) :: acc else acc)
-                pin_src []
-              |> List.sort compare
-              |> List.map
-                   (fun (w,q,li) ->
-                     Printf.sprintf "%s = %s / K_TAG;"
-                       (mvar mode w) (buf_at mode q li)) in
-            let decl_pins mode ind lvl =
-              List.iter
-                (fun a -> s (Printf.sprintf "%suint64_t %s\n" ind a))
-                (pins_at mode lvl) in
-            let assign_pins mode ind lvl =
-              List.iter (fun a -> s (Printf.sprintf "%s%s\n" ind a)) (pins_at mode lvl) in
-            (* window bounds for proc p at nesting level lvl (1-based) *)
-            let win_centre mode p =
-              match Hashtbl.find_opt win_src p with
-              | Some (q,li) ->
-                 Printf.sprintf "(long)(%s / K_TAG) - 1" (buf_at mode q li)
-              | None -> "(long)_f" in
-            let win_guard mode p =
-              match Hashtbl.find_opt win_src p with
-              | Some (q,li) ->
-                 (* No decoded tag = no synchrony point (Eq 3.14) = this frame is
-                    not a valid virtual test instance.  Skipping it is what stops
-                    an all-init (cold) run from reporting 100% weak behaviours --
-                    Srivastava's constant-read degeneracy, 4.4 guard 1. *)
-                 Some (Printf.sprintf "%s != 0" (buf_at mode q li))
-              | None -> None in
-            decl_pins `Heur "      " 0 ;
-            (* windowed frame vars live at FRAME scope (the histogram below reads
-               them after the search): default = the synchrony centre, overwritten
-               by a hit. *)
-            List.iteri
-              (fun i p ->
-                let lvl = i+1 in
-                s (Printf.sprintf "      long %s = %s;\n"
-                     (tvar `Heur p) (win_centre `Heur p)) ;
-                s (Printf.sprintf "      if (%s < 0) %s = 0;\n"
-                     (tvar `Heur p) (tvar `Heur p)) ;
-                s (Printf.sprintf
-                     "      if (%s >= SIZE_OF_TEST) %s = SIZE_OF_TEST-1;\n"
-                     (tvar `Heur p) (tvar `Heur p)) ;
-                decl_pins `Heur "      " lvl)
-              !win_order ;
-            s (Printf.sprintf "      int _hot = %s;\n" hot_expr) ;
-            s "      if (_hot) _rec.interleavings_detected++;\n" ;
-            (* ---- the weak-behaviour detector ---- *)
-            (match !win_order with
-             | [] ->
-                (* T_L<=1 (MP/S/R/2+2W): every frame is decoded exactly; the
-                   exhaustive count IS the heuristic count. *)
-                s (Printf.sprintf "      int _weak = %s;\n" weak_expr) ;
-                s "      if (_weak) { _rec.target_count_exhaustive++; _rec.target_count_heuristic++; }\n"
-             | _ ->
-                (* T_L>=2: search each unbound reader's window around its decoded
-                   synchrony centre (COUNTH), and -- at small N -- the whole range
-                   (COUNT, ground truth for calibrating W). *)
-                let emit_search mode weakv exhaustive =
-                  let ind = ref "      " in
-                  let bump () = ind := !ind ^ "  " in
-                  List.iteri
-                    (fun i p ->
-                      let lvl = i+1 in
-                      let t = tvar mode p in
-                      let c = Printf.sprintf "_c%d%s" p
-                                (match mode with `Exh -> "e" | `Heur -> "") in
-                      (match win_guard mode p with
-                       | Some g ->
-                          s (Printf.sprintf "%sif (%s) {\n" !ind g) ; bump ()
-                       | None -> s (Printf.sprintf "%s{\n" !ind) ; bump ()) ;
-                      if exhaustive then begin
-                        s (Printf.sprintf "%slong %s_lo = 0, %s_hi = SIZE_OF_TEST-1;\n"
-                             !ind c c)
-                      end else begin
-                        s (Printf.sprintf "%slong %s = %s;\n" !ind c (win_centre mode p)) ;
-                        s (Printf.sprintf
-                             "%slong %s_lo = %s - HET_WINDOW, %s_hi = %s + HET_WINDOW;\n"
-                             !ind c c c c) ;
-                        s (Printf.sprintf "%sif (%s_lo < 0) %s_lo = 0;\n" !ind c c) ;
-                        s (Printf.sprintf
-                             "%sif (%s_hi > SIZE_OF_TEST-1) %s_hi = SIZE_OF_TEST-1;\n"
-                             !ind c c)
-                      end ;
-                      s (Printf.sprintf
-                           "%sfor (%s = %s_lo; %s <= %s_hi && !%s; ++%s) {\n"
-                           !ind t c t c weakv t) ;
-                      bump () ;
-                      assign_pins mode !ind lvl)
-                    !win_order ;
-                  s (Printf.sprintf "%sif (%s) %s = 1;\n" !ind (cond_at mode) weakv) ;
-                  List.iter
-                    (fun _ ->
-                      ind := String.sub !ind 0 (String.length !ind - 2) ;
-                      s (Printf.sprintf "%s}\n" !ind) ;
-                      ind := String.sub !ind 0 (String.length !ind - 2) ;
-                      s (Printf.sprintf "%s}\n" !ind))
-                    !win_order in
-                (* the register half, searched *)
-                s "      int _rwin = 0;\n" ;
-                emit_search `Heur "_rwin" false ;
-                (* no hit: leave the frame vars at the synchrony centre so the
-                   histogram below reports the decoded partner frame, not the last
-                   window step. *)
-                List.iteri
-                  (fun i p ->
-                    let lvl = i+1 in
-                    s (Printf.sprintf "      if (!_rwin) {\n        %s = %s;\n"
-                         (tvar `Heur p) (win_centre `Heur p)) ;
-                    s (Printf.sprintf "        if (%s < 0) %s = 0;\n"
-                         (tvar `Heur p) (tvar `Heur p)) ;
-                    s (Printf.sprintf
-                         "        if (%s >= SIZE_OF_TEST) %s = SIZE_OF_TEST-1;\n"
-                         (tvar `Heur p) (tvar `Heur p)) ;
-                    assign_pins `Heur "        " lvl ;
-                    s "      }\n")
-                  !win_order ;
-                s (Printf.sprintf "      int _weak = %s;\n"
-                     (if has_observers then mk_and ["_rwin"; "_loc"] else "_rwin")) ;
-                s "      if (_weak) _rec.target_count_heuristic++;\n" ;
-                (* COUNT: the same predicate over the FULL range (ground truth). *)
-                s "      int _rex = 0;\n" ;
-                s "      if (_exh) {\n" ;
-                List.iter
-                  (fun p ->
-                    s (Printf.sprintf "        long %s = 0;\n" (tvar `Exh p)))
-                  !win_order ;
-                List.iter
-                  (fun a -> s (Printf.sprintf "        uint64_t %s\n" a))
-                  (List.concat_map (fun l -> pins_at `Exh l)
-                     (List.init (List.length !win_order + 1) (fun i -> i))) ;
-                emit_search `Exh "_rex" true ;
-                s "      }\n" ;
-                s (Printf.sprintf "      int _weak_ex = %s;\n"
-                     (if has_observers then mk_and ["_rex"; "_loc"] else "_rex")) ;
-                s "      if (_weak_ex) _rec.target_count_exhaustive++;\n") ;
-            (* guard 1 (4.4): the synchrony decode must actually VARY.  A read
-               buffer that decodes to a constant iteration means the two sides
-               never interleaved, and every "weak" frame it produced is spurious
-               (Srivastava 4.1: "recorded 100% weak behaviors").  B6/B7 gate on
-               distinct_decoded_iters + the skew spread. *)
-            (match sync_src with
-             | Some (p,li,_,_) ->
-                let sb = Printf.sprintf "%s[_f]" (scan_buf p li) in
-                s (Printf.sprintf "      if (%s != 0) {\n" sb) ;
-                s (Printf.sprintf "        uint64_t _ms = %s / K_TAG;\n" sb) ;
-                s "        int32_t _sk = (int32_t)((long)_ms - (long)(_f+1));\n" ;
-                s "        _skew_sum += _sk; _skew_sq += (double)_sk*(double)_sk; _skew_n++;\n" ;
-                s "        if (_sk < _skew_lo) _skew_lo = _sk; if (_sk > _skew_hi) _skew_hi = _sk;\n" ;
-                s "        if (!_have_prev || _ms != _prev_m) { _rec.distinct_decoded_iters++; _prev_m = _ms; _have_prev = 1; }\n" ;
-                s "      }\n"
-             | None -> ()) ;
-            (* Histogram: every frame that is hot OR validated.  "|| _weak" is load
-               bearing -- an fr-against-init cycle (R) is weak precisely when its
-               read is COLD, so gating on _hot alone would drop exactly the frames
-               the test exists to count, and oracle-compare.sh would read the empty
-               histogram as "Never" (a spurious confirmation of the model). *)
-            s "      if (_hot || _weak) {\n" ;
-            s (Printf.sprintf "        intmax_t _o[%d];\n" (max 1 nslots)) ;
-            (* Decoded outcome vector, read at each proc's OWN bound frame (B3c) --
-               a CPU reader's buffer is decoded exactly like a GPU reader's.
-               A PINNED proc's index is (_mP - 1) with _mP a decoded uint64 tag,
-               so a cold read (_mP = 0) would underflow it to UINT64_MAX and index
-               out of bounds.  The predicate short-circuits on pin_guards; this
-               path does not (it runs whenever the frame is _hot), so it needs the
-               same range check.  Windowed/base indices are already clamped. *)
-            List.iteri
-              (fun i (p,r,_) ->
-                match read_of p r with
-                | Some li ->
-                   let e = Printf.sprintf "_decode_value(%s)" (buf_at `Heur p li) in
-                   let e =
-                     match Hashtbl.find_opt frame_kind p with
-                     | Some `Pin ->
-                        let v = mvar `Heur p in
-                        Printf.sprintf
-                          "(%s >= 1 && %s <= (uint64_t)SIZE_OF_TEST) ? %s : 0" v v e
-                     | _ -> e in
-                   s (Printf.sprintf "        _o[%d] = (intmax_t)(%s);\n" i e)
-                | None -> s (Printf.sprintf "        _o[%d] = 0;\n" i))
-              slots ;
-            List.iteri
-              (fun j _ -> s (Printf.sprintf "        _o[%d] = 0;\n" (n_reg+j)))
-              loc_slots ;
-            s (Printf.sprintf
-                 "        hist = add_outcome_outs(hist, _o, %d, 1, _weak);\n" nslots) ;
-            s "      }\n" ;
-            s "    }\n" ;
-            (match sync_src with
-             | Some _ ->
-                s "    if (_skew_n > 0) {\n" ;
-                s "      _rec.skew_min = _skew_lo; _rec.skew_max = _skew_hi;\n" ;
-                s "      _rec.skew_mean = (double)_skew_sum / (double)_skew_n;\n" ;
-                s "      double _var = (_skew_sq / (double)_skew_n) - _rec.skew_mean*_rec.skew_mean;\n" ;
-                s "      _rec.skew_stddev = _var > 0.0 ? sqrt(_var) : 0.0;\n" ;
-                s "    }\n"
-             | None -> ()) ;
-            (* B3: a pure-location (store-only) test's weak result is per-RUN (the
-               observer ws witness), not per-frame -- collapse the frame-summed
-               target to a 0/1 per-run count, and record one outcome so the
-               histogram / oracle-compare parse is non-empty. *)
-            if has_observers && read_buffers = [] then begin
-              s "    _rec.target_count_exhaustive = _rec.target_count_exhaustive ? 1 : 0;\n" ;
-              s "    _rec.target_count_heuristic  = _rec.target_count_heuristic  ? 1 : 0;\n" ;
-              s (Printf.sprintf "    { intmax_t _o[%d];\n" (max 1 nslots)) ;
-              List.iteri (fun i _ -> s (Printf.sprintf "      _o[%d] = 0;\n" i)) slots ;
-              List.iteri (fun j _ -> s (Printf.sprintf "      _o[%d] = 0;\n" (n_reg+j))) loc_slots ;
-              s (Printf.sprintf
-                   "      hist = add_outcome_outs(hist, _o, %d, 1, _loc); }\n" nslots)
-            end ;
-            (* ws_edges_via_observer: the weak frames whose ws half was confirmed
-               only via an observer buffer (all of them, when observers are used). *)
-            if has_observers then
-              s "    _rec.ws_edges_via_observer = _rec.target_count_exhaustive;\n" ;
+            List.iter (fun i -> s i.i_scan) insts ;
+            (* control_Prep is computed AFTER the control's scan -- it reads
+               control_target_count, which is still 0 (memset) until the mu(T) scan
+               above has run.  (B6a computed it up front, where it could only ever be
+               1 - e^0 = 0; harmless while no control was compiled in, a silent lie
+               the moment one was.) *)
+            s "    _rec.control_Prep = 1.0 - exp(-(double)_rec.control_target_count);\n" ;
             s "    het_obs_record_print(stdout, &_rec);\n" ;
             (* B6 THE REPORTING CONTRACT (Q4 5): never print a bare "Never".  Every
-               null is printed PAIRED with the control that is supposed to vouch for
-               it, by name and with absolute numbers, and a null the controls do not
-               vouch for is printed as DISCARD-THIS, not as a result.  This is the
-               harness's own output, not a note in the thesis -- the interpretation
-               travels with the number, so it cannot be lost between here and the
-               write-up. *)
+               null is printed PAIRED with the control that vouches for it, by name
+               and with absolute numbers, and a null the controls do not vouch for is
+               printed as DISCARD-THIS, not as a result.  This is the harness's own
+               output, so the interpretation travels with the number instead of
+               living in a note in the thesis. *)
             s "    het_verdict_print(stdout, &_rec);\n" ;
             s "  }\n" ;
-            s (Printf.sprintf "  intmax_t _buff[%d];\n" (max 1 nslots)) ;
+            s (Printf.sprintf "  intmax_t _buff[%d];\n" (max 1 it.i_nslots)) ;
             s (Printf.sprintf "  printf(\"Test %s\\n\");\n" tname) ;
-            s (Printf.sprintf "  dump_outs(stdout, _dump_one, hist, _buff, %d);\n" nslots) ;
+            s (Printf.sprintf "  dump_outs(stdout, _dump_one, hist, _buff, %d);\n"
+                 it.i_nslots) ;
             s "  free_outs(hist);\n" ;
-            (* B1: shared vars + barrier free through gd_free_shared (allocator-aware).
-               B3: read buffers free through gd_free (device) / free (host mirror + CPU). *)
-            List.iter (fun g -> s (Printf.sprintf "  gd_free_shared(%s);\n" g)) all_globals ;
-            s "  gd_free_shared(barrier);\n" ;
+            if co_run then
+              s "  gd_free_shared(_shared_arena);   /* the one padded arena */\n"
+            else begin
+              List.iter
+                (fun (i,g) -> s (Printf.sprintf "  gd_free_shared(%s);\n" (gsym i g)))
+                shared_slots ;
+              s "  gd_free_shared(barrier);\n"
+            end ;
             List.iter
-              (fun (_,_,name,dev,_) ->
-                match dev with
-                | `Gpu ->
-                   s (Printf.sprintf "  %s free(%s_h);\n" (dialect.gd_free name) name)
-                | `Cpu -> s (Printf.sprintf "  free(%s);\n" name))
-              read_buffers ;
-            (* B3: observer buffers -- GPU device + host mirror, CPU host. *)
-            List.iter
-              (fun l ->
-                s (Printf.sprintf "  %s free(%s_h);\n" (dialect.gd_free (obsG l)) (obsG l)) ;
-                s (Printf.sprintf "  free(%s);\n" (obsC l)))
-              obs_locs ;
-            (* B4: the stress objects are device memory -> the device free. *)
+              (fun i ->
+                List.iter
+                  (fun (_,_,name,dev,_) ->
+                    match dev with
+                    | `Gpu ->
+                       s (Printf.sprintf "  %s free(%s_h);\n"
+                            (dialect.gd_free name) name)
+                    | `Cpu -> s (Printf.sprintf "  free(%s);\n" name))
+                  i.i_bufs ;
+                List.iter
+                  (fun l ->
+                    let og = obsG_of i.i_pre l and oc = obsC_of i.i_pre l in
+                    s (Printf.sprintf "  %s free(%s_h);\n" (dialect.gd_free og) og) ;
+                    s (Printf.sprintf "  free(%s);\n" oc))
+                  i.i_obs_locs)
+              insts ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch")) ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch_loc")) ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_spin_bar")) ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_gpu_done")) ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_stress_tally")) ;
             s "  free(_scratch_loc_h);\n" ;
-            (* B5: the CPU enemy scratchpad is HOST memory (the third object class),
-               so it takes the host free -- not the device one.  The noise buffers are
-               the fourth class and take gd_free_noise, which matches whichever
-               allocator gd_alloc_noise used (malloc on GH200, managed on the dev-box
-               fallback); a mismatched free is UB that may not fault on the managed
-               path and only surfaces on the target. *)
             s "  free(_cpu_scratch);\n" ;
             s "  free(_cpu_idx);\n" ;
             s "  free(_ea);\n" ;
@@ -3155,7 +3000,6 @@ static void gd_free_noise(void* _p){
             s "TARGET=\"${1:-cuda}\"\n" ;
             s "NVCC=\"${NVCC:-nvcc}\" ; CUDA_ARCH=\"${CUDA_ARCH:-sm_90}\"   # GH200=sm_90\n" ;
             s "HIPCC=\"${HIPCC:-hipcc}\" ; HIP_ARCH=\"${HIP_ARCH:-gfx942}\" # MI300A=gfx942\n" ;
-            (* shared CPU compile steps *)
             s "echo \"+ gcc -c outs.c\"\ngcc -c outs.c -o outs.o\n" ;
             s (Printf.sprintf
                  "echo \"+ gcc -c %s_cpu.c  (host build; %s asm under #if defined(%s))\"\n"
@@ -3177,7 +3021,6 @@ static void gd_free_noise(void* _p){
                 s (Printf.sprintf
                      "# (%s host == build host: the gcc -c above already assembled the real %s asm)\n"
                      CpuF.isa_name CpuF.isa_name)) ;
-            (* GPU step branches by target; hard-fail if the toolchain is absent *)
             s "case \"$TARGET\" in\n" ;
             s "  cuda)\n" ;
             s "    command -v \"$NVCC\" >/dev/null 2>&1 || { echo \"error: $NVCC not found (CUDA toolchain absent)\" >&2 ; exit 1 ; }\n" ;
@@ -3208,6 +3051,19 @@ static void gd_free_noise(void* _p){
             s (Printf.sprintf "# HetLitmus Tier-2 harness: %s\n\n" tname) ;
             s "Heterogeneous CPU+GPU litmus harness emitted by litmus7 (`Het` arch).\n\n" ;
             s (Printf.sprintf "CPU ISA: %s.  GPU dialects: CUDA (`.cu`) + HIP (`.hip`).\n\n" CpuF.isa_name) ;
+            if co_run then begin
+              s "## The positive control is CO-RUNNING in this harness\n\n" ;
+              s "This is a should-be-FORBIDDEN test, so its result is a NULL -- and a null\n" ;
+              s "is evidence only if the harness would have seen a weak behaviour had one\n" ;
+              s "been permitted.  Three het instances therefore share this launch, this\n" ;
+              s "stress config and this C2C path, on disjoint cache-line-padded locations:\n\n" ;
+              List.iter
+                (fun i ->
+                  s (Printf.sprintf "- `%s` (%s) -- prefix `%s`, K=%d\n"
+                       i.i_name (role_note i.i_role) i.i_pre i.i_k))
+                insts ;
+              s "\nSee `het_verdict.h` for the rule that turns their counts into a verdict.\n\n"
+            end ;
             s "Files:\n" ;
             s (Printf.sprintf "- `%s.cu`     GPU kernel + host driver, CUDA dialect (gd_alloc_shared:\n" tname) ;
             s "             system malloc on GH200 / cudaMallocManaged fallback for the shared vars +\n" ;
@@ -3549,10 +3405,10 @@ static void gd_free_noise(void* _p){
                           let het_analyze ~reg_env pseudos =
                             HetCpuBody.analyze ~reg_env
                               (HetCpuBody.instrs_of_code pseudos)
-                          let het_emit_body ch ~proc ~k ~store_mu ~load_buf
+                          let het_emit_body ch ~prefix ~proc ~k ~store_mu ~load_buf
                                 ~reg_env ~iter ~addr_params ~buf_params pseudos =
-                            HetCpuBody.emit_body ch ~proc ~k ~store_mu ~load_buf
-                              ~reg_env ~iter ~addr_params ~buf_params
+                            HetCpuBody.emit_body ch ~prefix ~proc ~k ~store_mu
+                              ~load_buf ~reg_env ~iter ~addr_params ~buf_params
                               (HetCpuBody.instrs_of_code pseudos)
                         end in
                       let module H = HetEmit(Cfg)(Cpu)(CpuComp)(CpuLP)(CpuF) in
@@ -3598,9 +3454,11 @@ static void gd_free_noise(void* _p){
                              stores/loads; het_emit_body emits a no-op body with
                              the matching signature. *)
                           let het_analyze ~reg_env:_ _pseudos = HetCpuBody.empty_plan
-                          let het_emit_body ch ~proc ~k:_ ~store_mu:_ ~load_buf:_
-                                ~reg_env:_ ~iter:_ ~addr_params ~buf_params _pseudos =
-                            HetCpuBody.emit_stub ch ~proc ~addr_params ~buf_params
+                          let het_emit_body ch ~prefix ~proc ~k:_ ~store_mu:_
+                                ~load_buf:_ ~reg_env:_ ~iter:_ ~addr_params
+                                ~buf_params _pseudos =
+                            HetCpuBody.emit_stub ch ~prefix ~proc ~addr_params
+                              ~buf_params
                         end in
                       let module H = HetEmit(Cfg)(Cpu)(CpuComp)(CpuLP)(CpuF) in
                       H.run in

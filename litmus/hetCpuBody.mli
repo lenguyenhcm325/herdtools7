@@ -32,15 +32,23 @@ val instrs_of_code : AArch64Base.pseudo list -> AArch64Base.instruction list
 val analyze :
   reg_env:(string -> string) -> AArch64Base.instruction list -> cpu_plan
 
-(* Emit the tagged het_run_P<proc>.  Each store's value is rebound to the
+(* Emit the tagged het_run_<prefix>P<proc>.  Each store's value is rebound to the
    register operand (uint64_t)K*iter + store_mu(store-index) (the `mov #imm' is
    dropped); each load is recorded into load_buf(load-index)[_n]; the tested
    mnemonic and DMB SY are reproduced verbatim as one asm block, widened to %x.
    [iter] is the C tag-index expression (the caller passes "(_n + 1)").
    [addr_params]/[buf_params] are (decl,name) pairs -- the SAME lists
-   top_litmus uses for the extern decl, the arg struct and the driver call. *)
+   top_litmus uses for the extern decl, the arg struct and the driver call.
+
+   B6b -- [prefix] IS LOAD-BEARING, NOT COSMETIC.  A co-run harness carries THREE
+   het instances (T, its minimal mutant mu(T), and the Layer-B canary), and a
+   function named from the proc number ALONE gives all three a `het_run_P0': a
+   duplicate symbol at best, and at worst a driver silently calling the WRONG
+   TEST'S BODY -- which would tally one instance's cycles against another's name
+   and make the whole positive control a fiction.  The prefix is "" on the
+   single-instance path, so those harnesses are byte-for-byte unchanged. *)
 val emit_body :
-  out_channel -> proc:int -> k:int -> store_mu:(int -> int) ->
+  out_channel -> prefix:string -> proc:int -> k:int -> store_mu:(int -> int) ->
   load_buf:(int -> string) -> reg_env:(string -> string) -> iter:string ->
   addr_params:(string * string) list -> buf_params:(string * string) list ->
   AArch64Base.instruction list -> unit
@@ -48,5 +56,6 @@ val emit_body :
 (* x86_64 twin: a compile-only no-op body with the matching signature (MI300A
    de-prioritised; never executed as a result). *)
 val emit_stub :
-  out_channel -> proc:int -> addr_params:(string * string) list ->
+  out_channel -> prefix:string -> proc:int ->
+  addr_params:(string * string) list ->
   buf_params:(string * string) list -> unit

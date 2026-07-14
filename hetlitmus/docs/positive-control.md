@@ -1,10 +1,12 @@
 # B6 — the positive control: what makes a "Never" mean anything
 
 **Spec:** `env-research/Q4-positive-control.md`. **Design doc:** §3.8.
-**Status:** B6a landed (map, record, rule, report, gates). **B6b — the co-run
-emitter — is NOT landed**, and until it is, `control_target_count` is structurally
-zero and the harness reports every null as `COLD-INVALID`. That is deliberate; see
-§5.
+**Status:** COMPLETE. B6a landed the map, the record, the rule, the report and the
+gates; **B6b landed the co-run emitter** — for each of the 16 Disallowed tests the
+harness now genuinely co-runs `mu(T)` and the canary, in the same launch, under the
+same stress, on the same C2C path, on disjoint cache-line-padded locations.
+`HET_CONTROL_COMPILED_IN` is **1** on those 16 and **0** on the other 322 (which have
+no forbidden cycle and so no mutant). See §5.
 
 ## 1. The problem
 
@@ -125,32 +127,52 @@ bug, and treating "counter == 0" as disqualifying on its own would make an
 intentional no-stress baseline COLD forever — which is just another way of building
 a rule that always says the same thing.
 
-## 5. What is NOT here yet, and why the harness says so out loud
+## 5. The co-run (B6b), and what Q4's cost model got wrong
 
-**`HET_CONTROL_COMPILED_IN` is 0.** B6a wires the map, the record, the rule, the
-report and the gates. The **multi-instance emitter that actually co-runs μ(T) and
-the canary inside T's harness is B6b.** Until it lands, `control_target_count` is
-structurally zero and means nothing, so `het_verdict()` returns `COLD-INVALID` and
-prints:
+Q4 §2.4 calls the control "just another het instance… **No new machinery**" and §2.3
+"essentially free". **Against live code that was false**, and the four collisions are
+worth recording because each one would have failed *silently*:
 
-```
-companion MP-cg-sys-fence (minimal mutant): *** NO CONTROL COMPILED INTO THIS HARNESS ***
-  -- control_target_count is structurally 0 and means NOTHING.
-  This null is UNINTERPRETABLE and MUST NOT be reported as "not observed".
-```
+1. **`K_TAG` was one `#define` per translation unit** — and it is 3 for MP/SB/LB but
+   4 for R/S (three stores, not two). The canary is always an MP, so **every R/S
+   control harness genuinely mixes K=4 and K=3 in one file.** A tag decoded with the
+   wrong K mis-attributes both the writer (`tag % K`) and the iteration (`tag / K`):
+   the recovered cycles become fiction, and no structural gate can see it. K is now
+   **per instance** (`T_K_TAG` / `MU_K_TAG` / `CAN_K_TAG`), and every decode site
+   spells its own.
+2. **`het_run_P<proc>` was named from the proc number alone**, so T's P0 and μ(T)'s P0
+   were both `het_run_P0` — a duplicate symbol at best, and at worst the driver
+   calling the *wrong test's body*. Hence `~prefix` (`het_run_t_P0` / `_mu_` / `_can_`).
+3. **`NPART` is not "2 → 6".** S and R carry observer lanes, so their instances are
+   NPART 4, not 2, and their co-run harnesses are **10**. Every participant count is a
+   **sum over the instances**; a hardcoded 6 would let the system-scope rendezvous
+   release before the S/R observers arrived — a barrier that looks alive and is not.
+4. **Three instances = three frame bindings, three detectors, three recovery scans,
+   three `exhaustive_valid`.**
 
-This is the safe direction and it is deliberate. With no control a null *is*
-uninterpretable, and refusing to report it is correct. What would not be correct is
-printing "Never" and letting it read as confirmation of the memory model.
+**The control's count is the one that is actually measured.** μ(`SB-*-sys-fence-2s`)
+*is* `SB-*-sys-acqrel-2s` — itself a T_L≥2 shape — so its exhaustive scan does not run
+at production N and its exhaustive count is 0 *by construction*. Keying the control
+off it would leave `control_target_count` structurally zero on 2 of the 16 harnesses,
+and their nulls `COLD-INVALID` forever: **a positive control that cannot fire is not a
+control.** The control therefore counts the *windowed* detector, whose hits are a
+strict subset of the exhaustive scan's under the same predicate — it can miss cycles,
+it cannot invent them — so it *under*-counts, which errs toward COLD, the safe
+direction. `control_exhaustive_valid` records which kind of count it is, and
+`het_verdict()` deliberately does **not** gate the control on it.
 
-Q4 §2.4 says the control is "just another het instance… **No new machinery**" and
-§2.3 that it is "essentially free". **Against live code that is false.**
-`top_litmus.ml` is explicitly a *single-instance* emitter (`instance_id` is
-hardcoded 0); there is no instance-slot machinery, no multi-test emission and no
-symbol prefixing. Co-running means the emitted `.cu` must carry **three** tests'
-worth of GPU lanes, CPU pthreads, shared globals, tag plans (per-instance `K_TAG` —
-3 for MP/SB/LB, 4 for R/S), read buffers, detectors and recovery scans, with `NPART`
-2→6. That is a generalisation of the whole single-test emitter, and it is B6b.
+**Disjoint cache-line-padded locations.** Disjoint *addresses* are not enough: two
+variables on one cache line are one coherence unit, so μ(T)'s traffic would drag T's
+line around and the control would perturb the very test it exists to vouch for
+(Q4 §8.4). The three instances' shared vars and the barrier are carved out of **one
+`gd_alloc_shared` arena, one cache line apart** — still the coherent allocator, which
+is what selects the property under test.
+
+**The 322 non-Disallowed tests keep `HET_CONTROL_COMPILED_IN 0`**, and that is right:
+they have no known-forbidden cycle, so no mutant exists (Q4 §4.2), and `het_verdict()`
+still refuses to call any of their nulls credible. Giving the 36 NO-ORACLE rows a
+Layer-B-only co-run (Q4 R5, "characterization, never validation") is **not** done and
+is the one piece of Q4 left open — see §10.
 
 ## 6. Reporting stance
 
@@ -205,14 +227,41 @@ crossing C2C**. There is **no published numeric het hit-rate anywhere in the pap
 | `l0_tokens.sh selftest [8]` | B5's CPU/interconnect liveness gate **bites** — six injections, each `cmp -s`-verified to have actually changed the file. |
 | `hetlitmus-cram positive-control.t` | the emitted wiring: control names, the loud sentinel, `exhaustive_valid` per T_L class, the R→EXPLORATORY reporting demotion. |
 
-## 9. A known gap, stated plainly
+## 9. The gap B6a stated plainly — now closed
 
-`het_do_stress` — the scratchpad loop that *is* the GPU stress — has **no runtime
-tally**. `het_stress.cuh` counts RDV / CAP / TRUNC / NOISE / NOISE_ROUNDS and
-nothing else, so `het_obs_record` carries no evidence that the stress loop
-**executed**; `stresscheck.py` only proves (structurally) that it survived into the
-emitted PTX. `het_verdict()` therefore deliberately does **not** disqualify on
-`HET_REQ_GPU_STRESS`: checking it against the spin counters — which measure a
-different mechanism — would look like a check while proving nothing about the one it
-names, and *a check that cannot fail is worse than no check*. Closing this needs a
-device-side `do_stress` counter (B4/B8).
+B6a recorded that `het_do_stress` (the scratchpad loop that *is* the GPU stress) had
+**no runtime tally**, so `het_obs_record` carried no evidence the loop had *executed*
+— only `stresscheck.py`'s structural proof that it had survived into the PTX. The rule
+therefore refused to disqualify on `HET_REQ_GPU_STRESS`, because *a check that cannot
+fail is worse than no check*.
+
+**B6b closes it.** `het_stress.cuh` gained `HET_TALLY_STRESS_ROUNDS` (an `atomicMax` of
+the rounds any single `het_do_stress` call completed — overflow-free, like
+`NOISE_ROUNDS`), the record gained `gpu_stress_rounds`, and `het_verdict()` gained
+`HET_DQ_GPU_STRESS_DEAD`. `stresscheck.py` gained a **D1 device probe** that drives
+`het_do_stress` on real hardware and requires the tally to be **nonzero when on and
+zero when off**, for every access pattern — a counter that cannot go to zero is not
+evidence of liveness.
+
+The two checks are **not redundant**, and that distinction is the whole lesson of B4:
+the runtime tally proves the loop *ran*; `stresscheck.py` proves it still *contains*
+its scratchpad accesses and that they are invariant under the `-D` pattern knobs
+(which is what makes them undeletable). B4's layer was in the source, gone from the
+PTX, and green on every gate — neither check alone would have caught it.
+
+It also has a **new** job. A co-run harness reserves 3×–5× the test blocks, so the
+stress population is the first thing the co-residency cap squeezes to zero: the code
+present, requested, and executed by nobody. The driver now warns about that case
+explicitly, *before* the run.
+
+## 10. Still open
+
+- **The 36 NO-ORACLE rows get no co-run.** Q4 R5 asks for Layer-B (canary) liveness on
+  them, reported as *characterization, never validation*. B6b scoped the co-run to the
+  16 Disallowed tests (the only rows for which the map names a mutant), so the
+  NO-ORACLE rows still report `COLD-INVALID`. Adding a canary-only co-run for them is
+  a small extension of the same instance machinery.
+- Everything in §7 remains hardware-only, and the co-run makes one of them sharper:
+  whether the co-running control **perturbs** T through C2C contention is now a live
+  question about a harness that actually exists (Q4 §8.4). Disjoint padded locations
+  prevent *semantic* masking; contention on the window is unmeasured.

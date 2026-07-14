@@ -39,19 +39,16 @@
  (package herdtools7)
  (deps
   %{bin:litmus7}
-  ../het/2+2W-cg-sys-fence.litmus
-  ../het/R-cg-sys-fence.litmus
-  ../het/S-cg-sys-fence.litmus
-  ../het/MP-cg-sys-acqrel-2s.litmus
-  ; B3c (tagged-recover): the recovery scan's shape depends on WHERE the reads
-  ; live, so the guard needs one test per binding class -- MP-gc (CPU-side reads,
-  ; exact), SB-cg (no rf anchor -> windowed), LB-cg (two rf edges -> mutually
-  ; decoded, no window), WRC-ccg (plain LDR -> no .arch_extension).
-  ../het/MP-gc-sys-acqrel-2s.litmus
-  ../het/SB-cg-sys-acqrel-2s.litmus
-  ../het/LB-cg-sys-acqrel-2s.litmus
-  ../het/WRC-ccg-cta-relaxed.litmus
-  ; B6 (positive-control): the emitter reads mu(T) + the canary out of the
-  ; DERIVED control map, so the map is an input to emission, not just a doc.
+  ; B6b: emitting a should-be-FORBIDDEN test now READS two more corpus tests --
+  ; mu(T) and the canary, named by the derived control map -- because the harness
+  ; CO-RUNS them.  Naming each one here would silently break the moment a cram
+  ; test touched a different Disallowed row (the emitter would refuse, and the
+  ; guard would fail with "no such file" rather than on its own subject), so the
+  ; whole corpus is staged.  The corpus IS the mutation lattice; the controls are
+  ; drawn from it, and there is no principled subset.
+  (glob_files ../het/*.litmus)
+  ; The map itself is an INPUT to emission, not just a doc: it is what names the
+  ; controls, and it is DERIVED from the corpus + the oracle (controlmap.py), never
+  ; rewritten from the test's name.
   ../het/control-map.csv
   ../gpu-only/MP-sys-acquire.litmus))

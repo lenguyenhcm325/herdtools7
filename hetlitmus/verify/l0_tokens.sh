@@ -483,12 +483,123 @@ PY
     # (6) DRIVER: the enemies pointed at a TEST VARIABLE.  Not a weaker experiment --
     # a fabricated one: an enemy writing the location under test can manufacture the
     # weak behaviour outright.  Caught by S6 (which is why S6 had to be written).
+    # B6b: the tested location is `t_x', not `x' -- MP-cg-sys-acqrel-2s is a
+    # should-be-FORBIDDEN test, so its harness CO-RUNS T + mu(T) + the canary and
+    # every instance's locations are prefixed.  Aliasing onto a name that does not
+    # exist would make the harness fail to COMPILE, and cpustresscheck would exit 2
+    # (toolchain error) instead of 1 (the S6 violation) -- a bite that "fails" for
+    # the wrong reason is not a bite.  Point it at a location that is genuinely
+    # under test, which is the corruption S6 exists to catch.
     _b5bite "enemy scratchpad ALIASED onto a test variable (fabricates outcomes)" \
             "$B5T.cu" \
-            's/_ea\[_e\]\.scratch = _cpu_scratch;/_ea[_e].scratch = x;/' \
+            's/_ea\[_e\]\.scratch = _cpu_scratch;/_ea[_e].scratch = t_x;/' \
             || fails=$((fails+1))
 
     rm -rf "$b5/mut"
+  fi
+
+  # =========================================================================
+  # [9] B6b -- THE CO-RUN.  Does the faithfulness gate actually SEE the control?
+  # =========================================================================
+  # The whole point of B6b is that mu(T) and the canary run INSIDE T's harness, so
+  # a null on T can be read against a known-ALLOWED weak behaviour that fired on the
+  # same C2C path.  That makes the CONTROL's lowering as load-bearing as T's:
+  #
+  #   * a control whose lanes are MISSING is a positive control that is not there --
+  #     but HET_CONTROL_COMPILED_IN still says 1, so every null it gates silently
+  #     becomes a *credible* null.  The most dangerous failure available here.
+  #   * a mutant whose ordering was silently WEAKENED is a different mutant: it no
+  #     longer isolates the primitive under test, so the vouch is for the wrong thing.
+  #   * a mutant whose ordering was silently STRENGTHENED may not fire at all,
+  #     leaving the control permanently cold -- which DISCARDS every null on T.
+  #
+  # ptxcheck now models every lane of every instance.  Prove it BITES on each.
+  printf '\n[9] B6b co-run: the gate must FAIL(1) when a CONTROL instance is corrupted\n'
+  local B6T=MP-cg-sys-fence-2s
+  local B6L="$HET_DIR/$B6T.litmus" b6="$sc/b6" b6rc
+  mkdir -p "$b6"
+  litmus7 -set-libdir litmus/libdir -o "$b6" "$B6L" >/dev/null 2>&1
+  if [ ! -s "$b6/$B6T/$B6T.cu" ]; then
+    echo "  *** could not emit the B6b co-run harness for $B6T"
+    fails=$((fails+1))
+  elif ! grep -q '#define HET_CONTROL_COMPILED_IN 1' "$b6/$B6T/$B6T.cu"; then
+    # A co-run harness that is not co-running is the failure this whole task exists
+    # to prevent.  Never let the section pass vacuously on a single-instance emit.
+    echo "  *** $B6T did not emit a CO-RUN harness (HET_CONTROL_COMPILED_IN != 1)"
+    fails=$((fails+1))
+  else
+    nvcc -std=c++17 -arch=sm_90 --ptx -o "$b6/clean.ptx" "$b6/$B6T/$B6T.cu" 2>/dev/null
+    python3 "$CHECK" "$B6L" --ptx "$b6/clean.ptx" --cpu-c "$b6/$B6T/${B6T}_cpu.c" \
+      >/dev/null 2>&1; b6rc=$?
+    _expect "B6b control (shipped co-run harness: T + mu(T) + canary)" 0 "$b6rc" \
+      || fails=$((fails+1))
+
+    _b6bite() { # label  file  python-corruption-of-$IN-to-$OUT  ptx|cpu
+      local lbl="$1" src="$2" prog="$3" kind="$4" rc
+      rm -rf "$b6/mut"; cp -r "$b6/$B6T" "$b6/mut"
+      IN="$b6/$B6T/$src" OUT="$b6/mut/$src" python3 -c "$prog" 2>/dev/null || {
+        printf '  *** BITE SCRIPT FAILED (nothing to corrupt)    [%s]\n' "$lbl"; return 1; }
+      if cmp -s "$b6/$B6T/$src" "$b6/mut/$src"; then
+        printf '  *** VACUOUS BITE: injection changed nothing    [%s]\n' "$lbl"
+        return 1
+      fi
+      if [ "$kind" = ptx ]; then
+        nvcc -std=c++17 -arch=sm_90 --ptx -o "$b6/mut.ptx" "$b6/mut/$B6T.cu" 2>/dev/null
+        python3 "$CHECK" "$B6L" --ptx "$b6/mut.ptx" \
+          --cpu-c "$b6/$B6T/${B6T}_cpu.c" >/dev/null 2>&1; rc=$?
+      else
+        python3 "$CHECK" "$B6L" --ptx "$b6/clean.ptx" \
+          --cpu-c "$b6/mut/${B6T}_cpu.c" >/dev/null 2>&1; rc=$?
+      fi
+      _expect "$lbl" 1 "$rc"
+    }
+
+    # (1) the mutant's ordering primitive silently WEAKENED.  mu(MP-*-fence-2s) is
+    # MP-*-fence: its GPU fence.sc IS the primitive whose absence T's null is about.
+    # Weaken it and mu is no longer THE minimal mutant -- it vouches for a different
+    # interleaving than the one T's ordering is claimed to prevent.
+    _b6bite "mu(T)'s GPU fence.sc WEAKENED to acq_rel (no longer the minimal mutant)" \
+            "$B6T.cu" '
+import os
+s=open(os.environ["IN"]).read()
+i=s.index("if (blockIdx.x == 1 && threadIdx.x == 0) {")
+j=s.index("if (blockIdx.x == 2 && threadIdx.x == 0) {")
+b=s[i:j]; nb=b.replace("fence.sc.sys","fence.acq_rel.sys")
+assert nb!=b
+open(os.environ["OUT"],"w").write(s[:i]+nb+s[j:])' ptx || fails=$((fails+1))
+
+    # (2) the canary's lane DELETED.  HET_CONTROL_COMPILED_IN still says 1, so every
+    # null this harness prints would be gated on a control that is not running.
+    _b6bite "the canary's entire GPU lane DELETED (a control that is not there)" \
+            "$B6T.cu" '
+import os
+s=open(os.environ["IN"]).read()
+i=s.index("if (blockIdx.x == 2 && threadIdx.x == 0) {")
+j=s.index("if (blockIdx.x >= HET_TEST_BLOCKS) {")
+assert i<j
+open(os.environ["OUT"],"w").write(s[:i]+s[j:])' ptx || fails=$((fails+1))
+
+    # (3) the mutant's CPU body silently STRENGTHENED.  A mutant that is not strictly
+    # weaker than T may never fire -- and a control that never fires does not weaken
+    # a null, it DISCARDS it (COLD-INVALID), forever, on a test that looks healthy.
+    # (No backslashes in this program: it is passed through bash single quotes to
+    # python -c, and an escaped \n here would be mangled into a bite that corrupts
+    # nothing -- which passes for free.  chr(92) is the backslash the asm needs.)
+    _b6bite "mu(T)'s CPU body STRENGTHENED with a dmb sy (mutant no longer weaker)" \
+            "${B6T}_cpu.c" '
+import os
+BS = chr(92); Q = chr(34); NL = chr(10)
+s = open(os.environ["IN"]).read()
+i = s.index("void het_run_mu_P0"); j = s.index("void het_run_can_P0")
+b = s[i:j]
+anchor = "asm __volatile__(" + NL
+k = b.index(anchor) + len(anchor)
+ins = "    " + Q + "dmb sy" + BS + "n" + Q + NL
+nb = b[:k] + ins + b[k:]
+assert nb != b
+open(os.environ["OUT"], "w").write(s[:i] + nb + s[j:])' cpu || fails=$((fails+1))
+
+    rm -rf "$b6/mut"
   fi
 
   printf '\n'

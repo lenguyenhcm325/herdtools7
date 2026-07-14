@@ -54,8 +54,11 @@ BASE = dict(
     control_compiled_in=1,
     control_target_count=30,          # == HET_TAU_HOT
     canary_target_count=500,
+    control_exhaustive_valid=1,
+    canary_exhaustive_valid=1,
     stress_truncated=0,
     spin_rendezvous=900, spin_cap=100,
+    gpu_stress_rounds=64,             # B6b: het_do_stress actually ran
     cpu_enemy_rounds=1000,
     cpu_preload_ops=1000,
     noise_cpu_rounds=1000,
@@ -65,13 +68,6 @@ BASE = dict(
     # every mechanism requested (GPU_STRESS|SPIN|CPU_ENEMY|CPU_PRELOAD|NOISE_CPU|NOISE_GPU)
     stress_requested=0x3F,
 )
-
-# NOTE there is no "gpu-stress-dead" case below, and that is not an omission:
-# het_do_stress has NO runtime tally (het_stress.cuh counts RDV/CAP/TRUNC/NOISE/
-# NOISE_ROUNDS and nothing else), so the record cannot say whether the scratchpad
-# loop executed -- only stresscheck.py can say it survived into the PTX.  A case
-# asserting a disqualifier we cannot actually evaluate would be a gate that passes
-# for free.  Closing it needs a device-side counter (B4/B8).
 
 
 def case(name, verdict, dq=(), cv=(), **kw):
@@ -132,6 +128,14 @@ CASES = [
     case("cold-noise-gpu-dead", "COLD-INVALID", dq=["NOISE_GPU_DEAD"],
          noise_gpu_blocks=0),
 
+    # B6b: the gap B6a stated plainly and left open.  het_do_stress now has a
+    # runtime tally (HET_TALLY_STRESS_ROUNDS), so "the GPU scratchpad stress was
+    # requested and completed ZERO rounds" is finally a check that can FAIL.  It has
+    # to be, because a co-run harness reserves 3x-5x the test blocks and the stress
+    # population is the first thing the co-residency cap squeezes to zero.
+    case("cold-gpu-stress-dead", "COLD-INVALID", dq=["GPU_STRESS_DEAD"],
+         gpu_stress_rounds=0),
+
     # ---- 4. NOT-requested mechanisms must NOT disqualify -------------------
     # THE ANTI-CONSTANT-COLD CASE.  A deliberately unstressed baseline run has
     # every stress counter at zero.  If "counter == 0" alone disqualified, this
@@ -156,6 +160,38 @@ CASES = [
          place_failures=1),
     case("credible-but-spin-is-a-delay-loop", "CREDIBLE-NULL", cv=["SPIN_CAP"],
          spin_rendezvous=100, spin_cap=900),
+
+    # ---- 7. B6b: A MISMATCH MUST CARRY ITS STRESS PROVENANCE ---------------
+    # The caveats used to be computed BELOW the MISMATCH return, so the single most
+    # valuable outcome the campaign can produce -- an observed weak behaviour that
+    # REFUTES the CMCM -- was reported with no record of the config it was seen
+    # under.  Alglave (ASPLOS'15 4.3) requires the incantations to travel with the
+    # sighting or it is not reproducible, and an unreproducible refutation is a much
+    # weaker result than a reproducible one.  The verdict is unchanged; the
+    # provenance is not lost.
+    case("mismatch-carries-its-caveats", "MISMATCH",
+         cv=["AFF_FAILED", "PLACE_REFUSED", "SPIN_CAP"],
+         target_count_exhaustive=1,
+         cpu_aff_failures=3, place_failures=1,
+         spin_rendezvous=100, spin_cap=900),
+    case("mismatch-on-an-unstressed-run-says-so", "MISMATCH", cv=["UNSTRESSED"],
+         target_count_exhaustive=1, stress_requested=0,
+         spin_rendezvous=0, spin_cap=0, gpu_stress_rounds=0,
+         cpu_enemy_rounds=0, cpu_preload_ops=0,
+         noise_cpu_rounds=0, noise_gpu_blocks=0),
+
+    # ---- 8. B6b: THE CONTROL'S OWN exhaustive_valid MUST NOT GATE THE NULL ----
+    # mu(SB-*-sys-fence-2s) IS SB-*-sys-acqrel-2s -- itself a T_L>=2 shape -- so at
+    # production N its exhaustive scan does not run and control_exhaustive_valid is
+    # 0.  Its count then comes from the WINDOWED scan, whose hits are a strict
+    # subset of the exhaustive scan's under the same predicate: a windowed hit is a
+    # genuine recovered cycle.  If the rule refused to trust it, the control would
+    # be structurally cold on 2 of the 16 control harnesses and their nulls would be
+    # COLD-INVALID forever -- a positive control that cannot fire is not a control.
+    # T's OWN exhaustive_valid still gates the null (case 2 above); the control's
+    # does not.
+    case("control-count-from-the-window-still-vouches", "CREDIBLE-NULL",
+         control_exhaustive_valid=0, control_target_count=500),
 ]
 
 C_MAIN = r"""

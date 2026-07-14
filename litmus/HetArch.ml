@@ -958,13 +958,38 @@ let het_stress_cuh = {ocaml|/* =================================================
  *                 mechanism, which is the failure this whole tally exists to
  *                 prevent).  Zero NOISE with the noise enabled = the interconnect
  *                 stressor is not running, and the run is not C2C-stressed.
+ *   STRESS_ROUNDS: B6b.  The gap B6a stated plainly and left open: het_do_stress
+ *                 -- the scratchpad loop that IS the GPU stress -- had NO runtime
+ *                 tally at all, so het_obs_record could not say whether it had
+ *                 EXECUTED, only (via stresscheck.py, structurally) that it had
+ *                 survived into the PTX.  het_verdict() therefore refused to
+ *                 disqualify on HET_REQ_GPU_STRESS, because "a check that cannot
+ *                 fail is worse than no check".  This closes it: the MAX rounds any
+ *                 single het_do_stress call completed (atomicMax => overflow-safe,
+ *                 like NOISE_ROUNDS; a summed count would wrap on a long run and a
+ *                 wrapped-to-zero tally reads exactly like a dead mechanism).
+ *
+ *                 WHAT IT DOES AND DOES NOT PROVE, because the distinction is the
+ *                 entire lesson of B4.  It proves the loop RAN.  It does NOT prove
+ *                 the loop still CONTAINS its scratchpad accesses -- that is
+ *                 stresscheck.py's job (the accesses must be in the emitted PTX and
+ *                 INVARIANT under the -D pattern knobs, which is what makes them
+ *                 undeletable).  B4 shipped a stress layer that was in the source,
+ *                 dead-code-eliminated out of the PTX, and green on every gate;
+ *                 neither check alone would have caught it, and neither is redundant.
+ *
+ *                 It has a NEW job in B6b too: a co-run harness reserves 3x-5x the
+ *                 test blocks, so the stress population is the first thing the
+ *                 co-residency cap squeezes to zero -- a run with the stress code
+ *                 present, requested, and executed by nobody.
  * ------------------------------------------------------------------------- */
-#define HET_TALLY_RDV          0
-#define HET_TALLY_CAP          1
-#define HET_TALLY_TRUNC        2
-#define HET_TALLY_NOISE        3
-#define HET_TALLY_NOISE_ROUNDS 4
-#define HET_TALLY_N            5
+#define HET_TALLY_RDV           0
+#define HET_TALLY_CAP           1
+#define HET_TALLY_TRUNC         2
+#define HET_TALLY_NOISE         3
+#define HET_TALLY_NOISE_ROUNDS  4
+#define HET_TALLY_STRESS_ROUNDS 5
+#define HET_TALLY_N             6
 
 /* -------------------------------------------------------------------------
  * Seeded Park-Miller (Lehmer minimal-standard) RNG.       [GPUHarbor ISSTA'23]
@@ -1043,10 +1068,19 @@ __device__ static inline void het_scratch_max(uint32_t* p, uint32_t v) {
  * whole point) and adds no ordering edge to the test.  Keeping them plain is
  * what makes the runtime pattern load-bearing rather than a style choice.
  * ------------------------------------------------------------------------- */
+/* B6b DIVERGENCE (4) from cuda-litmus's do_stress: the [tally] parameter and the
+   het_scratch_max at the end.  Upstream's loop body is reproduced VERBATIM (the
+   four access patterns, the >100 early-outs, the plain non-volatile accesses); the
+   only addition is a round counter, taken OUTSIDE the loop so the tested traffic is
+   byte-for-byte upstream's and no atomic lands in the middle of the stress stream.
+   It exists because B6a could not disqualify a run whose GPU stress never executed
+   -- see HET_TALLY_STRESS_ROUNDS above. */
 __device__ static void het_do_stress(uint32_t* scratchpad,
                                      uint32_t* scratch_locations,
                                      uint32_t iterations,
-                                     uint32_t pattern) {
+                                     uint32_t pattern,
+                                     uint32_t* tally) {
+  uint32_t rounds = 0;
   for (uint32_t i = 0; i < iterations; i++) {
     if (pattern == 0) {
       scratchpad[scratch_locations[blockIdx.x]] = i;
@@ -1065,7 +1099,9 @@ __device__ static void het_do_stress(uint32_t* scratchpad,
       uint32_t tmp2 = scratchpad[scratch_locations[blockIdx.x]];
       if (tmp2 > 100) { break; }
     }
+    rounds++;
   }
+  het_scratch_max(&tally[HET_TALLY_STRESS_ROUNDS], rounds);
 }
 
 /* -------------------------------------------------------------------------
@@ -2146,6 +2182,17 @@ typedef struct het_obs_record {
   uint64_t control_frames_examined;
   uint64_t canary_target_count;
   uint64_t canary_frames_examined;
+  /* Each co-running instance has its OWN T_L class, so it has its own
+     exhaustive_valid -- and mu(SB-*-sys-fence-2s) IS SB-*-sys-acqrel-2s, a T_L>=2
+     shape whose exhaustive scan does not run at production N.  Its count therefore
+     comes from the WINDOWED scan, whose hits are a strict subset of the exhaustive
+     scan's under the same predicate: a windowed hit is a genuine recovered cycle
+     (it can MISS cycles, it cannot invent them), so it UNDER-counts the control,
+     which errs toward COLD -- the safe direction.  These flags say which kind of
+     count you are reading; het_verdict() deliberately does NOT gate the control on
+     them, because a control that cannot fire is not a control (B6b). */
+  int control_exhaustive_valid;
+  int canary_exhaustive_valid;
   /* 1 - e^{-control_target_count} (Kirkham's reproducibility score).  A HOTNESS
      INDICATOR, not a guarantee: its Bernoulli/Poisson assumptions (stationary,
      independent, non-bursty trials) are exactly what het CPU-GPU drift breaks,
@@ -2153,7 +2200,9 @@ typedef struct het_obs_record {
   double control_Prep;
   /* 0 => NO control was compiled into this harness, so control_target_count is
      structurally zero and means NOTHING.  het_verdict() returns COLD and says
-     so by name.  (B6a ships this 0; the multi-instance co-run emitter is B6b.) */
+     so by name.  1 => mu(T) and the canary are genuinely CO-RUNNING in this
+     harness, in the same launch, under the same stress, on the same C2C path
+     (B6b: the multi-instance emitter). */
   int control_compiled_in;
   const char *control_name;   /* mu(T), from tests/het/control-map.csv */
   const char *canary_name;    /* the Layer-B canary                    */
@@ -2165,8 +2214,17 @@ typedef struct het_obs_record {
      HET_BARRIER_PCT against this ratio.  stress_truncated: stress lanes that hit
      HET_STRESS_MAX_ROUNDS, i.e. stopped stressing while the test was still
      running -- such a run's non-observations are NOT comparable with a stressed
-     run's, so it is DISQUALIFYING, not cosmetic. */
+     run's, so it is DISQUALIFYING, not cosmetic.
+
+     gpu_stress_rounds (B6b): the max rounds any single het_do_stress call
+     completed.  B6a had NO such counter and said so plainly: the record could not
+     tell whether the GPU scratchpad loop had EXECUTED, so the rule refused to
+     disqualify on HET_REQ_GPU_STRESS ("a check that cannot fail is worse than no
+     check").  It can now, and it must: a co-run harness reserves 3x-5x the test
+     blocks, so an empty stress population -- the code present, requested, and run
+     by nobody -- is exactly the regression B6b makes plausible. */
   uint64_t spin_rendezvous, spin_cap, stress_truncated;
+  uint64_t gpu_stress_rounds;
   /* B5 CPU + INTERCONNECT LIVENESS.  Same argument as the B4 block above, for the
      two levers B4 did not have.  Every field is here because the mechanism it
      measures has a plausible way to die silently:
@@ -2235,6 +2293,7 @@ typedef enum {
 #define HET_DQ_CPU_PRELOAD_DEAD (1u << 6)
 #define HET_DQ_NOISE_CPU_DEAD   (1u << 7)  /* NOT interconnect-stressed           */
 #define HET_DQ_NOISE_GPU_DEAD   (1u << 8)
+#define HET_DQ_GPU_STRESS_DEAD  (1u << 9)  /* het_do_stress requested, never ran  */
 
 /* Why a null was CAVEATED (still reportable, but weaker than it looks). */
 #define HET_CV_NO_EXHAUSTIVE    (1u << 0)  /* ground-truth scan did not run       */
@@ -2258,7 +2317,32 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   het_verdict_t v;
   int hot_control, hot_canary;
 
-  /* ---- 1. A SIGHTING REFUTES.  Unconditional: no control is needed to believe
+  hot_control = (r->control_compiled_in && r->control_target_count >= HET_TAU_HOT);
+  hot_canary  = (r->control_compiled_in && r->canary_target_count  >= HET_TAU_HOT);
+
+  /* ---- 1. THE CAVEATS ARE COMPUTED FIRST, BECAUSE A MISMATCH NEEDS THEM TOO.
+     (B6b fix.)  They used to be computed BELOW the MISMATCH return, so the single
+     most valuable outcome the campaign can produce -- an observed weak behaviour
+     that REFUTES the CMCM -- was reported with no record of the stress config it
+     was observed under.  An unreproducible sighting is a much weaker result than a
+     reproducible one, and Alglave requires the incantations to travel with it:
+
+         "we report the number of times the weak behaviour was observed out of
+          the total number of runs, together with the configuration of the
+          stress ... so that our results can be reproduced."
+                                        -- Alglave et al., ASPLOS'15, 4.3.
+
+     The verdict is unchanged (a sighting is a sighting); what changes is that its
+     PROVENANCE now travels with it. */
+  if (!r->exhaustive_valid)         cv |= HET_CV_NO_EXHAUSTIVE;
+  if (!hot_control && hot_canary)   cv |= HET_CV_CANARY_ONLY;
+  if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
+  if (r->place_failures > 0)        cv |= HET_CV_PLACE_REFUSED;
+  if (req == 0)                     cv |= HET_CV_UNSTRESSED;
+  { uint64_t spins = r->spin_rendezvous + r->spin_cap;
+    if (spins && r->spin_rendezvous * 2 < spins) cv |= HET_CV_SPIN_CAP; }
+
+  /* ---- 2. A SIGHTING REFUTES.  Unconditional: no control is needed to believe
      a positive, and an inert-stress run that nevertheless SAW the forbidden
      outcome still saw it.
      ON THE HEURISTIC COUNT -- a deliberate, disclosed strengthening of the
@@ -2280,7 +2364,7 @@ static het_verdict_t het_verdict(const het_obs_record *r,
     return HET_MISMATCH;
   }
 
-  /* ---- 2. Liveness: is this run's null even a datum?
+  /* ---- 3. Liveness: is this run's null even a datum?
      "A null from an inert-stress run is not the same datum as a null from a
      stressed run, and nothing else in the record would say so." */
   if (!r->control_compiled_in)                    dq |= HET_DQ_NO_CONTROL_BUILT;
@@ -2290,16 +2374,21 @@ static het_verdict_t het_verdict(const het_obs_record *r,
      tally.  Zero spins across an entire run means it never ran. */
   if (het_dead(req, HET_REQ_SPIN, r->spin_rendezvous + r->spin_cap))
                                                   dq |= HET_DQ_SPIN_DEAD;
-  /* THERE IS DELIBERATELY NO DISQUALIFIER FOR HET_REQ_GPU_STRESS.  het_do_stress
-     -- the scratchpad loop that IS the GPU stress -- has no runtime tally at all:
-     het_stress.cuh's five slots are RDV / CAP / TRUNC / NOISE / NOISE_ROUNDS, and
-     none of them counts a do_stress round.  So this record carries no evidence
-     that the stress loop EXECUTED, only (via stresscheck.py, structurally) that
-     it survived into the emitted PTX.  Checking it against the spin counters --
-     which measure a different mechanism -- would look like a check while proving
-     nothing about the one it names, and a check that cannot fail is worse than no
-     check.  The bit is still RECORDED so B8 knows what the config asked for.
-     Closing the gap needs a device-side do_stress counter (B4/B8's to add). */
+  /* THE GPU SCRATCHPAD STRESS (B6b).  B6a had to leave this unchecked and said so:
+     het_do_stress had NO runtime tally, so the record could not say whether the
+     loop EXECUTED -- only stresscheck.py could say (structurally) that it had
+     survived into the PTX.  Checking it against the spin counters, which measure a
+     different mechanism, would have looked like a check while proving nothing, and
+     a check that cannot fail is worse than no check.  het_stress.cuh now counts
+     het_do_stress rounds (HET_TALLY_STRESS_ROUNDS), so the check is real.
+
+     The two checks are NOT redundant, and that is the whole lesson of B4: this one
+     proves the loop RAN; stresscheck.py proves it still CONTAINS its scratchpad
+     accesses and that they are invariant under the -D pattern knobs (which is what
+     makes them undeletable).  B4's layer was in the source, gone from the PTX, and
+     green on every gate -- neither check alone would have caught it. */
+  if (het_dead(req, HET_REQ_GPU_STRESS,  r->gpu_stress_rounds))
+                                                  dq |= HET_DQ_GPU_STRESS_DEAD;
   if (het_dead(req, HET_REQ_CPU_ENEMY,   r->cpu_enemy_rounds))
                                                   dq |= HET_DQ_CPU_ENEMY_DEAD;
   if (het_dead(req, HET_REQ_CPU_PRELOAD, r->cpu_preload_ops))
@@ -2309,19 +2398,9 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   if (het_dead(req, HET_REQ_NOISE_GPU,   (uint64_t)r->noise_gpu_blocks))
                                                   dq |= HET_DQ_NOISE_GPU_DEAD;
 
-  /* ---- 3. Was the harness hot? */
-  hot_control = (r->control_compiled_in && r->control_target_count >= HET_TAU_HOT);
-  hot_canary  = (r->control_compiled_in && r->canary_target_count  >= HET_TAU_HOT);
+  /* ---- 4. Was the harness hot?  (hot_control / hot_canary were computed at the
+     top, because the caveat block above needs them.) */
   if (!hot_control && !hot_canary)                dq |= HET_DQ_CONTROLS_COLD;
-
-  /* ---- 4. Caveats (do not invalidate, but must travel with the number). */
-  if (!r->exhaustive_valid)         cv |= HET_CV_NO_EXHAUSTIVE;
-  if (!hot_control && hot_canary)   cv |= HET_CV_CANARY_ONLY;
-  if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
-  if (r->place_failures > 0)        cv |= HET_CV_PLACE_REFUSED;
-  if (req == 0)                     cv |= HET_CV_UNSTRESSED;
-  { uint64_t spins = r->spin_rendezvous + r->spin_cap;
-    if (spins && r->spin_rendezvous * 2 < spins) cv |= HET_CV_SPIN_CAP; }
 
   /* ---- 5. The verdict. */
   if (dq) {
@@ -2365,8 +2444,8 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
     "HetObs %s inst=%d run=%d conf=%d report=%d N=%llu frames=%llu target=%s%llu/%llu "
     "interleavings=%llu distinct_iters=%llu ws_via_obs=%llu obs_unique=%llu "
-    "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%llu/%llu canary=%llu/%llu Prep=%.6f built=%d "
-    "spin=%llu/%llu stress_trunc=%llu req=0x%x "
+    "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%s%llu/%llu canary=%s%llu/%llu Prep=%.6f built=%d "
+    "spin=%llu/%llu stress_trunc=%llu do_stress_rounds=%llu req=0x%x "
     "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
     "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u "
     "aff_fail=%u place_fail=%u\n",
@@ -2381,14 +2460,19 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     (unsigned long long)_r->ws_edges_via_observer,
     (unsigned long long)_r->observer_unique_count,
     _r->skew_min, _r->skew_max, _r->skew_mean, _r->skew_stddev,
+    /* "NA:" = this count came from the WINDOWED scan, not the ground-truth one.
+       It is still a real count of real recovered cycles -- it just under-counts. */
+    _r->control_exhaustive_valid ? "" : "NA:",
     (unsigned long long)_r->control_target_count,
     (unsigned long long)_r->control_frames_examined,
+    _r->canary_exhaustive_valid ? "" : "NA:",
     (unsigned long long)_r->canary_target_count,
     (unsigned long long)_r->canary_frames_examined,
     _r->control_Prep, _r->control_compiled_in,
     (unsigned long long)_r->spin_rendezvous,
     (unsigned long long)_r->spin_cap,
     (unsigned long long)_r->stress_truncated,
+    (unsigned long long)_r->gpu_stress_rounds,
     _r->stress_requested,
     _r->cpu_enemies,
     (unsigned long long)_r->cpu_enemy_rounds,
@@ -2418,6 +2502,25 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
  *      behaviours using our method on the Nvidia GTX 280 chip they used."
  *        -- Alglave et al., ASPLOS'15, footnote 7, p.577.
  * ------------------------------------------------------------------------- */
+/* The stress-provenance caveats.  Printed for a MISMATCH as well as a null: a weak
+   behaviour observed under a stress config nobody recorded is not reproducible, and
+   an unreproducible refutation is a much weaker result than a reproducible one. */
+static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) {
+  if (cv & HET_CV_UNSTRESSED)
+    fprintf(_ch, "  CAVEAT: no stress was requested.  Kirkham (6.2) exposed only "
+                 "ONE of six mutants with no stress -- an unstressed null is weak "
+                 "evidence whatever the controls say.\n");
+  if (cv & HET_CV_SPIN_CAP)
+    fprintf(_ch, "  CAVEAT: the window-opener released on the deadlock cap in most "
+                 "spins -- it is a delay loop, not a rendezvous.\n");
+  if (cv & HET_CV_AFF_FAILED)
+    fprintf(_ch, "  CAVEAT: %u sched_setaffinity call(s) FAILED -- the pinning is "
+                 "fiction and the stress topology is not the one being tuned.\n",
+            _r->cpu_aff_failures);
+  if (cv & HET_CV_PLACE_REFUSED)
+    fprintf(_ch, "  CAVEAT: cudaMemAdvise was REFUSED -- HET_PLACE placed nothing.\n");
+}
+
 static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   uint32_t dq = 0, cv = 0;
   het_verdict_t v = het_verdict(_r, &dq, &cv);
@@ -2442,6 +2545,22 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
         "ground-truth scan did not run at this N).  The window is a subset of "
         "the full range, so the recovered cycle is real -- but confirm it by "
         "re-running with -DHET_EXHAUSTIVE_MAX above N.\n");
+    /* The incantations must travel WITH the sighting, or it is not reproducible
+       (Alglave ASPLOS'15 4.3).  This is the outcome we most want someone else to
+       be able to reproduce, so it is the last place to be silent about the config. */
+    fprintf(_ch,
+      "  config: stress_requested=0x%x spins=%llu/%llu do_stress_rounds=%llu "
+      "enemies=%u enemy_rounds=%llu preload=%llu noise=%llu/%u (%u MB) place=%u\n",
+      _r->stress_requested,
+      (unsigned long long)_r->spin_rendezvous,
+      (unsigned long long)(_r->spin_rendezvous + _r->spin_cap),
+      (unsigned long long)_r->gpu_stress_rounds,
+      _r->cpu_enemies,
+      (unsigned long long)_r->cpu_enemy_rounds,
+      (unsigned long long)_r->cpu_preload_ops,
+      (unsigned long long)_r->noise_cpu_rounds, _r->noise_gpu_blocks,
+      _r->noise_ws_mb, _r->place_mode);
+    het_print_caveats(_ch, _r, cv);
     return;
   }
 
@@ -2502,6 +2621,12 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     if (dq & HET_DQ_NOISE_GPU_DEAD)
       fprintf(_ch, "    - the Hopper half of the C2C noise did NOT run: this run "
                    "is not interconnect-stressed\n");
+    if (dq & HET_DQ_GPU_STRESS_DEAD)
+      fprintf(_ch, "    - the GPU scratchpad stress was requested "
+                   "(HET_PRE_STRESS_PCT/HET_MEM_STRESS_PCT) but het_do_stress "
+                   "completed ZERO rounds: it never ran.  On NVIDIA silicon an "
+                   "unstressed run observes nothing (Alglave 4.3.1)\n");
+    het_print_caveats(_ch, _r, cv);
     return;
   }
 
@@ -2527,19 +2652,7 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
               (unsigned long long)_r->N);
   }
 
-  if (cv & HET_CV_UNSTRESSED)
-    fprintf(_ch, "  CAVEAT: no stress was requested.  Kirkham (6.2) exposed only "
-                 "ONE of six mutants with no stress -- an unstressed null is weak "
-                 "evidence whatever the controls say.\n");
-  if (cv & HET_CV_SPIN_CAP)
-    fprintf(_ch, "  CAVEAT: the window-opener released on the deadlock cap in most "
-                 "spins -- it is a delay loop, not a rendezvous.\n");
-  if (cv & HET_CV_AFF_FAILED)
-    fprintf(_ch, "  CAVEAT: %u sched_setaffinity call(s) FAILED -- the pinning is "
-                 "fiction and the stress topology is not the one being tuned.\n",
-            _r->cpu_aff_failures);
-  if (cv & HET_CV_PLACE_REFUSED)
-    fprintf(_ch, "  CAVEAT: cudaMemAdvise was REFUSED -- HET_PLACE placed nothing.\n");
+  het_print_caveats(_ch, _r, cv);
 }
 
 #endif /* HET_VERDICT_H */
