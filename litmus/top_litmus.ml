@@ -2817,12 +2817,32 @@ static void gd_free_noise(void* _p){
                the n that goes into the reproducibility and rule-of-three math. *)
             s "  het_obs_record _recs[NUMBER_OF_RUN];\n" ;
             s "  memset(_recs, 0, sizeof _recs);\n" ;
-            s "  for (int _run=0; _run<NUMBER_OF_RUN; ++_run) {\n" ;
+            (* B7b: the campaign knobs are RUNTIME (getenv), never -D -- a
+               compile-time knob threaded through an if-chain is how B4's stress
+               layer got folded away, and the scheduler retunes these per
+               invocation without a rebuild.  Unset envs leave the compiled
+               defaults, so a bare ./run behaves exactly as B7 did.  HET_RUNS_MAX
+               can only CURTAIL within one invocation (the record array is
+               compiled at NUMBER_OF_RUN); growing R is the outer scheduler's
+               job, one fresh-HET_SEED invocation at a time -- re-running the
+               same seeds adds no fresh phase draws and pooling them would
+               double-count R_eff. *)
+            s "  int _runs_budget = (int)het_env_long(\"HET_RUNS_MAX\", NUMBER_OF_RUN);\n" ;
+            s "  if (_runs_budget > NUMBER_OF_RUN) {\n" ;
+            s "    fprintf(stderr, \"HetLitmus WARNING: HET_RUNS_MAX=%d exceeds the compiled NUMBER_OF_RUN=%d -- clamped.  Grow R by re-invoking with a FRESH HET_SEED (hetlitmus/campaign.py), never by replaying the same seeds.\\n\", _runs_budget, (int)NUMBER_OF_RUN);\n" ;
+            s "    _runs_budget = NUMBER_OF_RUN;\n" ;
+            s "  }\n" ;
+            s "  if (_runs_budget < 1) _runs_budget = 1;\n" ;
+            s "  int _adaptive = (int)het_env_long(\"HET_ADAPTIVE\", 0);\n" ;
+            s "  double _p_goal = het_env_double(\"HET_P_GOAL\", -1.0);\n" ;
+            s "  uint32_t _seed0 = (uint32_t)het_env_long(\"HET_SEED\", (long)HET_SEED);\n" ;
+            s "  int _nrec = 0;\n" ;
+            s "  for (int _run=0; _run<_runs_budget; ++_run) {\n" ;
             List.iter
               (fun (i,g) -> s (Printf.sprintf "    *%s = 0;\n" (gsym i g)))
               shared_slots ;
             s "    *barrier = 0;\n" ;
-            s "    uint32_t _seed = (uint32_t)(HET_SEED + _run);\n" ;
+            s "    uint32_t _seed = _seed0 + (uint32_t)_run;\n" ;
             s "    srand((unsigned int)_seed);\n" ;
             s "    het_set_scratch_locations(_scratch_loc_h, _grid);\n" ;
             (* ---- B5: the CPU stress population, spawned BEFORE the test threads. *)
@@ -3085,6 +3105,10 @@ static void gd_free_noise(void* _p){
             s "    _rec.place_failures = (uint32_t)_het_place_failures;\n" ;
             s "    _rec.noise_ws_mb = (uint32_t)HET_NOISE_MB;\n" ;
             s "    _rec.place_mode = (uint32_t)HET_PLACE;\n" ;
+            (* B7b: the window resolution this run REALISED.  HET_NWIN is swept,
+               and tau_w/F_win/N_eff are resolution-dependent -- a record scored
+               at one nwin must never be silently pooled with another. *)
+            s "    _rec.nwin = (uint32_t)HET_NWIN;\n" ;
             List.iter (fun i -> s i.i_scan) insts ;
             (* control_Prep is computed AFTER the control's scan -- it reads
                control_target_count, which is still 0 (memset) until the mu(T) scan
@@ -3100,7 +3124,23 @@ static void gd_free_noise(void* _p){
                output, so the interpretation travels with the number instead of
                living in a note in the thesis. *)
             s "    het_verdict_print(stdout, &_rec);\n" ;
-            s "    _recs[_run] = _rec;\n" ;
+            s "    _recs[_nrec++] = _rec;\n" ;
+            (* B7b: the in-binary adaptive loop.  het_campaign_should_stop() is a
+               pure function of the records accumulated so far (it inherits every
+               B6c oracle frame and B7 statistic for free), so consulting it after
+               each run gives the per-test early stop the campaign scheduler needs
+               WITHOUT any new decision machinery.  Off (HET_ADAPTIVE unset) the
+               loop runs to _runs_budget exactly as B7 did. *)
+            s "    if (_adaptive) {\n" ;
+            s "      het_campaign_stop_t _stop = het_campaign_should_stop(_recs, _nrec, _runs_budget, _p_goal);\n" ;
+            s "      if (_stop != HET_CAMPAIGN_CONTINUE) {\n" ;
+            s (Printf.sprintf
+                 "        printf(\"HetCampaign %s stop=%%s runs=%%d budget=%%d p_goal=%%g\\n\",\n\
+                  \               het_campaign_stop_name(_stop), _nrec, _runs_budget, _p_goal);\n"
+                 tname) ;
+            s "        break;\n" ;
+            s "      }\n" ;
+            s "    }\n" ;
             s "  }\n" ;
             (* ======== B7: the statistics post-pass over the aggregated cells =====
                het_verdict() is a PURE function of one record, so the aggregate reuses
@@ -3111,7 +3151,7 @@ static void gd_free_noise(void* _p){
                makes a Never carry a bound at all. *)
             s "  {\n" ;
             s "    het_stats_t _st;\n" ;
-            s "    het_stats_compute(_recs, NUMBER_OF_RUN, &_st);\n" ;
+            s "    het_stats_compute(_recs, _nrec, &_st);\n" ;
             s "    het_stats_print(stdout, &_st);\n" ;
             s "  }\n" ;
             s (Printf.sprintf "  intmax_t _buff[%d];\n" (max 1 it.i_nslots)) ;

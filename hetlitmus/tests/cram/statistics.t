@@ -20,12 +20,43 @@ instance of this project's recurring failure.
 
 THE RECORDS MUST OUTLIVE THE RUN LOOP.  The statistics are computed over the
 (instance,run) CELLS, so a single reused _rec would leave nothing to aggregate.
+(B7b: the loop may stop EARLY -- HET_ADAPTIVE -- so the records land at _nrec and
+the post-pass scores _nrec, the cells actually run, never the compiled constant.)
 
   $ grep -c 'het_obs_record _recs\[NUMBER_OF_RUN\];' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
-  $ grep -c '_recs\[_run\] = _rec;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  $ grep -c '_recs\[_nrec++\] = _rec;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
-  $ grep -c 'het_stats_compute(_recs, NUMBER_OF_RUN, &_st);' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  $ grep -c 'het_stats_compute(_recs, _nrec, &_st);' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+
+B7b: THE CAMPAIGN KNOBS ARE RUNTIME (getenv), NEVER -D.  A compile-time knob threaded
+through an if-chain is how B4's stress layer got folded away by nvcc; and the campaign
+scheduler retunes budget/goal/seed per invocation without a rebuild.  The seed base is
+env-overridable for exactly one reason: growing R happens by RE-INVOKING with a fresh
+HET_SEED, and replaying the same seeds would double-count R_eff.
+
+  $ grep -c 'het_env_long("HET_RUNS_MAX", NUMBER_OF_RUN)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -c 'het_env_long("HET_ADAPTIVE", 0)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -c 'het_env_double("HET_P_GOAL", -1.0)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -c 'het_env_long("HET_SEED", (long)HET_SEED)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -c 'uint32_t _seed = _seed0 + (uint32_t)_run;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+
+B7b: THE ADAPTIVE STOP IS THE HEADER'S RULE, CONSULTED AFTER EVERY RUN -- the same
+pure function the campaign scheduler applies across invocations, so there is exactly
+ONE stopping policy.  And the record reports the window resolution the run REALISED
+(HET_NWIN is swept; a record scored at one nwin must never be pooled with another).
+
+  $ grep -c 'het_campaign_should_stop(_recs, _nrec, _runs_budget, _p_goal)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -c 'HetCampaign MP-cg-sys-fence-2s stop=%s' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -c '_rec.nwin = (uint32_t)HET_NWIN;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
 
 THE COUNT AND ITS WINDOW BUMP RIDE ONE LINE, UNDER ONE PREDICATE.  This is what makes
@@ -86,7 +117,7 @@ their aggregate; they simply cannot bound anything.
   $ grep -c 'het_win_of' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   0
   [1]
-  $ grep -c 'het_stats_compute(_recs, NUMBER_OF_RUN, &_st);' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  $ grep -c 'het_stats_compute(_recs, _nrec, &_st);' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
 THE ESTIMATOR ITSELF IS IN THE EMITTED HEADER, NOT IN A SCRIPT.  The bound has to travel
@@ -99,6 +130,17 @@ with the harness -- a number a reader cannot recompute from the artefact is not 
   $ grep -c 'static int het_ks2' MP-cg-sys-fence-2s/het_verdict.h
   1
   $ grep -c 'static int het_cell_degenerate' MP-cg-sys-fence-2s/het_verdict.h
+  1
+
+B7b: SO IS THE AUTOCORRELATION TIME -- the estimator that turns one-bit-per-run into
+N_eff effective samples travels with the harness too, cited (Geyer 1992, the
+initial-positive-sequence estimator) and clamped to [1, HET_NWIN] in one direction.
+
+  $ grep -c 'static double het_tau_ips' MP-cg-sys-fence-2s/het_verdict.h
+  1
+  $ grep -q 'Statistical Science 7(4), 1992' MP-cg-sys-fence-2s/het_verdict.h && echo cited
+  cited
+  $ grep -c 'static het_campaign_stop_t het_campaign_should_stop' MP-cg-sys-fence-2s/het_verdict.h
   1
 
 NO FIFTH CONSTANT.  The bound must never silently fall back to the textbook 3/N: on a

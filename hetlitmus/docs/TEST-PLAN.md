@@ -211,15 +211,24 @@ Renamed the CUDA lane `-gpu`→`-nvcc` (nothing here needs a GPU).
 **✓ All targets wired into the top-level Makefile (`68d102ef5`).**
 
 Umbrellas (what you press):
-- **`make hetlitmus-test`** → Layer 1+2 (`hetlitmus-cram` + `hetlitmus-corpus`). No CUDA.
-- **`make hetlitmus-test-nvcc`** → Layer 3 (`hetlitmus-faithful` + `hetlitmus-stress` +
-  `hetlitmus-smoke`). CUDA, no GPU.
+- **`make hetlitmus-test`** → the CUDA-free lane: `hetlitmus-cram` + `hetlitmus-corpus`
+  + `hetlitmus-controlmap` + `hetlitmus-verdict` + `hetlitmus-stats`.
+- **`make hetlitmus-test-nvcc`** → the compile lane: `hetlitmus-faithful` +
+  `hetlitmus-stress` + `hetlitmus-cpustress` + `hetlitmus-smoke`. CUDA, no GPU.
 - **`make hetlitmus-test-all`** → both. ← pre-commit gate on the dev box.
 - **`make hetlitmus-promote`** → regenerate + `dune test hetlitmus/tests --auto-promote`;
   does **not** commit; prints "review `git diff` then commit".
 
 Building blocks (run solo while iterating):
-`hetlitmus-cram` · `hetlitmus-corpus` · `hetlitmus-faithful` · `hetlitmus-stress` · `hetlitmus-smoke`.
+`hetlitmus-cram` · `hetlitmus-corpus` · `hetlitmus-faithful` · `hetlitmus-stress` ·
+`hetlitmus-cpustress` · `hetlitmus-smoke` · `hetlitmus-controlmap` · `hetlitmus-verdict` ·
+`hetlitmus-stats`.
+
+**The B7b lesson on wiring (`hetlitmus-stats`):** `statscheck.py` existed for a full task
+cycle with **no Makefile target invoking it** — a build with `ks_pass` forced constant
+returned rc=0 from `hetlitmus-test-all`, fully green, while the script returned rc=1.  A
+gate that is not in the build is a script, not a gate.  When a verify script lands, its
+target and its `hetlitmus-test` hookup land **in the same commit**.
 
 `hetlitmus-faithful` proves the harness carries **exactly the tested ops**; it is blind to
 the **scaffolding** (stress carries no order/scope qualifier, so it is not a model op — by

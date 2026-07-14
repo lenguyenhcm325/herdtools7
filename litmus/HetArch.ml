@@ -919,7 +919,12 @@ let het_stress_cuh = {ocaml|/* =================================================
                                           hit the device-scope window-opener   */
 #endif
 #ifndef HET_SEED
-#define HET_SEED 1                     /* fixed => a run is replayable (GPUHarbor) */
+#define HET_SEED 1                     /* fixed => a run is replayable (GPUHarbor).
+                                          The HET_SEED *env var* overrides it at
+                                          run time (B7b): the campaign scheduler
+                                          must vary the seed base per invocation,
+                                          and a rebuild per invocation is not a
+                                          knob.  Unset env => this value.        */
 #endif
 #ifndef HET_STRESS_BLOCKS
 #define HET_STRESS_BLOCKS (-1)         /* -1 = auto: fill the co-resident grid */
@@ -2009,9 +2014,10 @@ void het_cpu_first_touch(void *p, size_t bytes) {
 }
 
 /* ---- M2: the shuffle behind the indirection ------------------------------
- * Fisher-Yates over rand(), which the driver seeds per run from (HET_SEED + run),
- * so the layout is replayable.  This is the CPU twin of het_set_scratch_locations'
- * random line choice in het_stress.cuh.
+ * Fisher-Yates over rand(), which the driver seeds per run from (seed0 + run)
+ * -- seed0 being HET_SEED or its runtime env override (B7b) -- so the layout is
+ * replayable.  This is the CPU twin of het_set_scratch_locations' random line
+ * choice in het_stress.cuh.
  * ------------------------------------------------------------------------- */
 void het_cpu_shuffle(uint32_t *idx, uint32_t n) {
   for (uint32_t i = 0; i < n; i++) idx[i] = i;
@@ -2134,10 +2140,25 @@ let het_verdict_h = {ocaml|/* ==================================================
  * control counts, not just the run total."  W windows x R runs is the sample
  * that F_win, the lag-1 autocorrelation and the KS precheck all consume.
  *
- * 32 is a resolution choice, not a tuned one: enough windows that Kirkham's
- * first-20%-vs-last-10% split has 6 and 3 window positions to work with, few
- * enough that a window still collects a countable number of sightings at
- * tau_hot=30.  B8 may calibrate it against the measured het hit-rate.
+ * HET_NWIN IS A SWEPT KNOB, AND IT IS A RESOLUTION FLOOR (B7b).  The window is
+ * the finest time-scale the record can see, so the integrated autocorrelation
+ * time tau (het_tau_ips below) cannot be resolved below ONE WINDOW -- which is
+ * why N_eff = HET_NWIN/tau_w is CLAMPED to [1, HET_NWIN]: HET_NWIN caps the
+ * effective sample size a run can ever claim.  At the B7 default of 32 and
+ * N = 100000 a window was 3,125 iterations; if the true tau were, say, 100
+ * iterations the 32-bucket stream would look nearly white (tau_w ~ 1) and the
+ * run would recover N_eff = 32, NOT the ~1000 the physics would support.  The
+ * default is therefore raised to 128 (781 iterations/window at the default N),
+ * and the knob is SWEPT (-DHET_NWIN=...), not tuned here: make the windows too
+ * fine and adjacent windows become correlated, tau_w rises above 1, and the
+ * gain cancels -- finding where the returns stop is exactly the estimator's
+ * job, so let it tell you.  Do not hardcode a new constant and call it
+ * measured.  Every run REPORTS the value it realised (het_obs_record.nwin, and
+ * nwin= in the HetStats line), because a knob that says one thing while the
+ * run realised another would silently mis-tune B8.
+ *
+ * (Raising it also strengthens Kirkham's first-20%-vs-last-10% split: 25 early
+ * and 12 late window positions per run instead of 6 and 3.)
  *
  * HET_THETA_DISTINCT (theta_d).  The degeneracy guard's floor -- see
  * het_cell_degenerate().  It is deliberately the LITERAL-degeneracy floor (2 =
@@ -2148,7 +2169,7 @@ let het_verdict_h = {ocaml|/* ==================================================
  * matters" -- Alglave ASPLOS'15 4.3).  Raising it is a hardware-calibration
  * decision, not a free tightening. */
 #ifndef HET_NWIN
-#define HET_NWIN 32
+#define HET_NWIN 128
 #endif
 #ifndef HET_THETA_DISTINCT
 #define HET_THETA_DISTINCT 2
@@ -2445,6 +2466,13 @@ typedef struct het_obs_record {
      served from cache and generates no interconnect traffic, so a config that scores
      well at 8 MB scored a stressor that was not running. */
   uint32_t noise_ws_mb, place_mode;
+  /* The window resolution this run REALISED (= HET_NWIN of the binary that
+     produced it).  Same rule as noise_ws_mb/place_mode above: B8 and the B7b
+     campaign scheduler read what the run actually did, not what a build was
+     asked for -- HET_NWIN is swept, and a record scored at one resolution must
+     never be silently pooled with a record scored at another (tau_w and F_win
+     are resolution-dependent; N_eff's clamp ceiling IS nwin). */
+  uint32_t nwin;
   uint32_t stress_requested;    /* HET_REQ_* bitmask -- see above */
 } het_obs_record;
 
@@ -2462,6 +2490,43 @@ static int het_win_of(long f, long n) {
   if (w < 0) w = 0;
   if (w >= HET_NWIN) w = HET_NWIN - 1;
   return (int)w;
+}
+
+/* ---------------------------------------------------------------------------
+ * RUNTIME knobs (B7b).  getenv, never a -D the device code can see: a
+ * compile-time constant threaded through an if-chain is exactly how B4's
+ * stress layer came to be silently deleted (nvcc folds the knob and removes
+ * the only branch with side effects).  These are HOST-side reads the campaign
+ * scheduler (hetlitmus/campaign.py) retunes per invocation without a rebuild:
+ *
+ *   HET_RUNS_MAX   run at most this many runs this invocation (clamped to the
+ *                  compiled NUMBER_OF_RUN -- the record array is that size;
+ *                  GROWING R happens by re-invoking with a fresh HET_SEED)
+ *   HET_ADAPTIVE   1 => consult het_campaign_should_stop() after every run
+ *   HET_P_GOAL     stop a bound-needing test once p_bound <= this (unset/<=0
+ *                  => never bound-stop; run to budget)
+ *   HET_SEED       overrides the compiled HET_SEED base.  THE SCHEDULER MUST
+ *                  VARY THIS PER INVOCATION: re-running the same seeds adds no
+ *                  fresh phase/seed draws, and pooling two such invocations as
+ *                  2R independent cells would silently double-count R_eff.
+ *
+ * Unset => the compiled default, so a bare ./run is byte-for-byte the B7
+ * behaviour. */
+static long het_env_long(const char *name, long dflt) {
+  const char *v = getenv(name);
+  char *end;
+  long x;
+  if (v == NULL || *v == '\0') return dflt;
+  x = strtol(v, &end, 0);
+  return (end == v) ? dflt : x;
+}
+static double het_env_double(const char *name, double dflt) {
+  const char *v = getenv(name);
+  char *end;
+  double x;
+  if (v == NULL || *v == '\0') return dflt;
+  x = strtod(v, &end);
+  return (end == v) ? dflt : x;
 }
 
 /* ---------------------------------------------------------------------------
@@ -2779,7 +2844,7 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%s%llu/%llu canary=%s%llu/%llu Prep=%.6f built=%d/%d "
     "spin=%llu/%llu stress_trunc=%llu do_stress_rounds=%llu req=0x%x "
     "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
-    "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u "
+    "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u nwin=%u "
     "aff_fail=%u place_fail=%u\n",
     /* oracle= is FIRST-CLASS in the machine-readable line: B7 aggregates these
        records into (instance, run) units, and Y = 1[target_count >= 1] means the
@@ -2819,7 +2884,7 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     (unsigned long long)_r->noise_cpu_rounds,
     (unsigned long long)_r->noise_cpu_words,
     _r->noise_gpu_blocks, _r->noise_gpu_rounds,
-    _r->noise_ws_mb, _r->place_mode,
+    _r->noise_ws_mb, _r->place_mode, _r->nwin,
     _r->cpu_aff_failures, _r->place_failures);
 }
 
@@ -3208,23 +3273,35 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
  * cannot be measured, NO BOUND IS PRINTED -- we do not fall back to 3/N.
  *
  * ---------------------------------------------------------------------------
- * TWO STRATA, TWO CORRECTIONS (a disclosed reading of Q3 4.2).
+ * THREE STRATA, THREE MEASUREMENTS (Q3 4.2, completed by B7b).
  *
- * Q3 3.2(b) writes the bound as mu_upper(r_hat)/R_eff with R_eff = R/F_hat, and 4.2
- * lists TWO separate estimators feeding them -- the per-window stream (within-run
- * autocorrelation -> N_eff) and the across-cell correlation (the H-discount).  They
- * answer different questions, so they are measured on different strata here rather
- * than applying ONE measured number twice:
+ * Q3 3.2(b) writes the bound as mu_upper(r_hat)/R_eff, and 4.2 lists the separate
+ * estimators feeding it.  B7 measured two of them; B7b adds the one B7 left as
+ * "DIAGNOSTIC ONLY" -- and that omission was the binding constraint on the whole
+ * campaign: each run was collapsed to ONE Bernoulli bit, so the denominator paid
+ * the burstiness penalty (3 -> 19 via F_win) without ever collecting the
+ * burstiness dividend (a correlated stream still carries more than one bit).
+ * Each instrument answers its own question on its own stratum -- applying one
+ * number to two corrections would double-count it:
  *
- *     F_win   Var/Mean of the PER-WINDOW control counts (within a run)
- *             -> the burstiness of the count process   -> r_hat -> mu_upper(r_hat)
+ *     F_win   Var/Mean of the PER-WINDOW control counts (marginal, within run)
+ *             -> within-window burst MULTIPLICITY -> r_hat -> mu_upper(r_hat)
+ *     tau_w   integrated autocorrelation time of the SAME stream's TEMPORAL
+ *             axis (Geyer initial-positive-sequence, B7b)
+ *             -> window-to-window correlation -> N_eff = HET_NWIN/tau_w
+ *                clamped to [1, HET_NWIN]  (1 = B7's one-bit-per-run reading)
  *     F_cell  Var/Mean of the PER-CELL control totals  (across the R cells)
- *             -> the design effect DEFF = 1 + (m-1)rho -> R_eff = R / F_cell
+ *             -> the design effect DEFF = 1 + (m-1)rho
  *
- * Both corrections WIDEN the bound, so either reading is conservative; this one is
- * the faithful one.  Neither is ever allowed to make the bound TIGHTER than the
- * rule of three: an under-dispersed estimate (F < 1, which at these sample sizes is
- * usually noise) clamps to the Poisson floor and says so.
+ *     R_eff = R_usable * N_eff / max(1, F_cell)
+ *
+ * All corrections point the conservative way and every clamp is one-directional:
+ * an under-dispersed F clamps to the Poisson floor, an unmeasured or at-cap tau
+ * leaves N_eff = 1 (exactly B7), and N_eff can never exceed the resolution
+ * HET_NWIN.  Disclosed interaction: F_cell, measured on run totals, absorbs part
+ * of the same within-run correlation tau_w prices (E[F_cell] ~ tau_w*F_win under
+ * run-independence), so the composition can pay for correlation twice -- wider,
+ * never tighter; see the section-4b comment in het_stats_compute.
  *
  * ---------------------------------------------------------------------------
  * DIVERGENCE FROM KIRKHAM, DISCLOSED (we cite them, so we say where we differ).
@@ -3292,6 +3369,17 @@ typedef enum {
                                               canary, not this test's own mu(T)    */
 #define HET_ST_BOUND_VACUOUS    (1u << 10) /* p_bound >= 1: it bounds NOTHING      */
 #define HET_ST_SELF_CONTROL     (1u << 11) /* co-runs no control: usable == fired  */
+#define HET_ST_TAU_UNMEASURED   (1u << 12) /* no usable stream for the IPS: N_eff
+                                              stays 1 -- each run counts as ONE
+                                              trial, B7's maximally conservative
+                                              reading (never a silent optimism)  */
+#define HET_ST_TAU_AT_CAP       (1u << 13) /* tau_w clamped at HET_NWIN: the skew
+                                              regime outlives the run at this
+                                              resolution, so one run IS one
+                                              alignment draw -- N_eff = 1 and
+                                              B7's answer was right all along.
+                                              Raise the swept HET_NWIN to probe
+                                              whether finer windows resolve it. */
 
 typedef struct het_stats {
   const char *test_name;
@@ -3311,7 +3399,12 @@ typedef struct het_stats {
   double F_win, F_cell;             /* the two strata                             */
   double r_hat;                     /* NB dispersion from F_win (inf = Poisson)   */
   double mu_upper;                  /* r(0.05^{-1/r} - 1)                         */
-  double R_eff;                     /* R_usable / max(1, F_cell)                  */
+  double tau_w;                     /* integrated autocorrelation time, WINDOW
+                                       units (Geyer IPS); -1 = NOT MEASURED       */
+  double N_eff;                     /* effective independent samples PER RUN =
+                                       HET_NWIN/tau_w, clamped to [1, HET_NWIN];
+                                       1 when tau is unmeasured (= B7 exactly)    */
+  double R_eff;                     /* R_usable * N_eff / max(1, F_cell)          */
   double p_bound;                   /* mu_upper / R_eff   (-1 = NOT COMPUTED)     */
   double P_rep;                     /* 1 - e^{-k_eff}     (-1 = NOT APPLICABLE)   */
   double acf1;                      /* lag-1 autocorrelation -- DIAGNOSTIC ONLY   */
@@ -3366,6 +3459,84 @@ static double het_fano(const double *x, int n, double *mean_out, double *var_out
   if (var_out)  *var_out  = v;
   if (!(m > 0.0)) return -1.0;                /* an all-zero stream measures nothing */
   return v / m;
+}
+
+/* ---------------------------------------------------------------------------
+ * B7b -- THE INFORMATION B7 THREW AWAY: the integrated autocorrelation time.
+ *
+ * B7 collapses each run to ONE Bernoulli bit (Y = 1[count >= 1]): 100,000
+ * iterations become one trial.  That is the tau = run-length WORST CASE, and it
+ * pays the burstiness penalty (F_win widens mu_upper, 3 -> 19) without ever
+ * collecting the burstiness dividend (a correlated stream still carries MORE
+ * than one trial of information).  The standard treatment of a correlated
+ * sequence is to DISCOUNT it, not discard it:
+ *
+ *     N_eff = N / tau ,   tau = integrated autocorrelation time
+ *                             = 1 + 2 * sum_k rho_k
+ *
+ * -- the same design-effect logic Q3 2.3 already applies ACROSS cells (DEFF,
+ * F_cell), applied WITHIN the run (Q3 4.2: "autocorrelation / N_eff within a
+ * run"; open question 2).  tau is estimated from the control's per-window
+ * stream with GEYER'S INITIAL-POSITIVE-SEQUENCE estimator (Geyer, "Practical
+ * Markov Chain Monte Carlo", Statistical Science 7(4), 1992, 3.3: sum the
+ * adjacent-pair sums Gamma_m = rho_{2m} + rho_{2m+1} while they stay positive):
+ * the standard IACT estimator in MCMC practice, robust on short series, and --
+ * unlike 1/(1-acf1), which a slowly-decaying ACF makes arbitrarily optimistic
+ * -- it reads the WHOLE initial decay.  On an AR(1) stream it recovers the
+ * closed form tau = (1+rho)/(1-rho) exactly in expectation, which is what
+ * statscheck.py pins it against (rho in {0, 0.5, 0.9, 0.99}).
+ *
+ * Estimator mechanics, disclosed:
+ *   - lags are computed WITHIN runs only and pooled across them (a lag across a
+ *     run boundary is not a lag: runs are re-seeded), deviations taken from the
+ *     GLOBAL mean -- so an across-run rate difference inflates tau, which errs
+ *     toward N_eff = 1, the conservative direction;
+ *   - autocovariances use the biased 1/n normalisation (standard for IACT:
+ *     damps the noisy high lags);
+ *   - the result is CLAMPED to [1, wlen].  The floor: tau < 1 is estimation
+ *     noise (an anti-correlated stream cannot yield more independent samples
+ *     than it has windows).  The ceiling: a correlation the stream cannot
+ *     resolve must saturate at "one run = one draw", never extrapolate.  Both
+ *     clamps are one-directional honesty, same as het_r_from_fano's.
+ *
+ * Returns -1 when tau CANNOT be measured (a stream shorter than one whole run,
+ * fewer than 2 windows/run, or zero variance) -- the caller then keeps
+ * N_eff = 1, which IS B7's reading.  A correct implementation contains B7 as
+ * its conservative special case. */
+static double het_tau_ips(const double *win, int nwin, int wlen, double mean) {
+  double g0 = 0.0, s = 0.0, tau;
+  int nrun, r, w, k, m, exhausted = 1;
+  if (wlen < 2 || nwin < wlen) return -1.0;
+  nrun = nwin / wlen;                    /* whole runs only (callers pass whole runs) */
+  for (r = 0; r < nrun; r++)
+    for (w = 0; w < wlen; w++) {
+      double d = win[r * wlen + w] - mean;
+      g0 += d * d;
+    }
+  g0 /= (double)(nrun * wlen);
+  if (!(g0 > 0.0)) return -1.0;          /* a flat stream has no time structure */
+  for (m = 0; 2 * m < wlen; m++) {
+    double G = 0.0;
+    for (k = 2 * m; k <= 2 * m + 1 && k < wlen; k++) {
+      double g = 0.0;
+      if (k == 0) { G += 1.0; continue; }             /* rho_0 = 1 */
+      for (r = 0; r < nrun; r++)
+        for (w = 0; w + k < wlen; w++)
+          g += (win[r * wlen + w] - mean) * (win[r * wlen + w + k] - mean);
+      G += (g / (double)(nrun * wlen)) / g0;          /* biased 1/n, then rho_k */
+    }
+    if (!(G > 0.0)) { exhausted = 0; break; }  /* Geyer: first non-positive pair */
+    s += G;
+  }
+  /* Ran out of lags with every pair still positive: the stream NEVER
+     decorrelated in view, so the honest answer is the ceiling ("one run is one
+     regime"), not the truncated partial sum -- which would under-read tau and
+     over-credit N_eff, the one direction the clamps exist to forbid. */
+  if (exhausted) return (double)wlen;
+  tau = 2.0 * s - 1.0;
+  if (tau < 1.0) tau = 1.0;
+  if (tau > (double)wlen) tau = (double)wlen;
+  return tau;
 }
 
 /* R3 -- HOW LONG TO RUN BEFORE A "NEVER" MEANS ANYTHING.  Kirkham's necessary-iteration
@@ -3491,6 +3662,12 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   st->F_win   = -1.0;
   st->F_cell  = -1.0;
   st->r_hat   = HUGE_VAL;
+  st->tau_w   = -1.0;                 /* -1 = NOT MEASURED                       */
+  st->N_eff   = 1.0;                  /* one trial per run: B7's reading, until
+                                         a MEASURED tau says otherwise.  The
+                                         default is the conservative case, so an
+                                         unmeasured stream can never buy a
+                                         tighter bound than B7 reported.        */
   st->ks_split_window = -1;
   if (n <= 0) { st->obs = HET_OBS_VOID; st->flags |= HET_ST_FANO_UNMEASURED; return; }
   st->test_name = recs[0].test_name;
@@ -3596,10 +3773,43 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     st->r_hat = het_r_from_fano(st->ctrl_mean, st->F_win);
   }
 
+  /* ---- 4b. B7b -- THE THIRD INSTRUMENT, on the third stratum: the TEMPORAL
+     axis of the same per-window stream.  F_win prices the within-window burst
+     MULTIPLICITY (it widens the numerator, mu_upper); tau_w prices the
+     window-to-window CORRELATION (it discounts the denominator's sample count);
+     F_cell prices the across-cell spread.  Three different questions, three
+     measurements -- applying any one of them to another's correction would
+     double-count it (the F_win/F_cell separation rule, extended).
+     One interaction IS disclosed rather than removed: F_cell is measured on
+     run TOTALS, and under across-run independence a within-run correlation
+     also inflates run-total variance (E[F_cell] ~ tau_w * F_win for a
+     stationary stream), so composing N_eff with F_cell can price part of the
+     correlation twice.  Both corrections point the same way -- WIDER -- so the
+     composition is conservative, never optimistic; B8 may sharpen it once
+     GH200 numbers exist.  Measured only where the dispersion itself was (a
+     desynced or dead stream measures nothing). */
+  if (st->flags & HET_ST_FANO_UNMEASURED) {
+    st->flags |= HET_ST_TAU_UNMEASURED;
+  } else {
+    st->tau_w = het_tau_ips(win, nwin, HET_NWIN, st->ctrl_mean);
+    if (st->tau_w > 0.0) {
+      if (st->tau_w >= (double)HET_NWIN) st->flags |= HET_ST_TAU_AT_CAP;
+      st->N_eff = (double)HET_NWIN / st->tau_w;
+      /* The clamp is the honesty: a stream of HET_NWIN windows cannot witness
+         more than HET_NWIN independent samples, nor fewer than 1. */
+      if (st->N_eff < 1.0)               st->N_eff = 1.0;
+      if (st->N_eff > (double)HET_NWIN)  st->N_eff = (double)HET_NWIN;
+    } else {
+      st->flags |= HET_ST_TAU_UNMEASURED;   /* N_eff stays 1: the B7 reading */
+    }
+  }
+
   /* lag-1 autocorrelation, WITHIN runs (never across a run boundary -- the runs are
-     re-seeded, so a lag across one is not a lag).  DIAGNOSTIC ONLY: it explains the
-     burstiness, it does not enter the bound (Q3 4.1-3 keeps MMPP/autocorrelation off
-     the headline; the reported bound uses F_win). */
+     re-seeded, so a lag across one is not a lag).  DIAGNOSTIC ONLY, still: what
+     enters the bound is tau_w (section 4b), the INTEGRATED autocorrelation time --
+     acf1 alone is not enough, because a slowly-decaying ACF has a tau far larger
+     than 1/(1-acf1) suggests.  acf1 survives as the one-number burstiness
+     explainer and as a cross-check on tau_w's direction. */
   if (nwin >= 2 && st->ctrl_var > 0.0) {
     double num = 0.0, den = 0.0;
     for (i = 0; i + HET_NWIN <= nwin; i += HET_NWIN)
@@ -3667,10 +3877,19 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
 
   /* ---- 7. R3 -- UNOBSERVED: the dispersion-aware false-negative bound.
      NOT COMPUTED (and emphatically NOT replaced by 3/N) when the dispersion could
-     not be measured. */
+     not be measured.
+
+     B7b: the denominator collects the dividend the numerator already paid for.
+     R_eff = R_usable * N_eff / DEFF -- each usable run contributes its MEASURED
+     effective sample count instead of the worst-case 1.  The unit of p_bound
+     therefore refines from "per run" to "per effective sample" (one
+     tau_w-window alignment epoch); the implied RUN-level bound is
+     N_eff * p_bound = mu_upper * DEFF / R_usable, i.e. EXACTLY B7's number --
+     the discount never weakens the run-level claim, it adds resolution beneath
+     it, and at N_eff = 1 (tau unmeasured or at cap) it IS B7. */
   if (st->obs == HET_OBS_NEVER && !(st->flags & HET_ST_FANO_UNMEASURED)) {
     double deff = (st->F_cell > 1.0) ? st->F_cell : 1.0;
-    st->R_eff    = (double)st->R_usable / deff;
+    st->R_eff    = (double)st->R_usable * st->N_eff / deff;
     st->mu_upper = het_mu_upper(st->r_hat);
     if (st->R_eff > 0.0) st->p_bound = st->mu_upper / st->R_eff;
     /* A BOUND ABOVE 1 IS NOT A BOUND.  p_run is a PROBABILITY, so "p < 6e10" is not a
@@ -3716,16 +3935,17 @@ static const char *het_tier_name(het_mismatch_tier t) {
 static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
     "HetStats %s oracle=%s obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d degen=%d "
-    "ctrl=%s win_n=%d F_win=%.4f F_cell=%.4f r_hat=%.4f mu_upper=%.4f R_eff=%.4f "
+    "ctrl=%s win_n=%d nwin=%d F_win=%.4f F_cell=%.4f r_hat=%.4f mu_upper=%.4f "
+    "tau_w=%.4f N_eff=%.4f R_eff=%.4f "
     "p_bound=%.6g P_rep=%.6g acf1=%.4f ks=%s ks_D=%.4f ks_Dcrit=%.4f ks_split=%d "
     "tier=%s N=%llu frames=%llu flags=0x%x\n",
     _s->test_name ? _s->test_name : "(none)", het_oracle_name(_s->oracle),
     het_obs_class_name(_s->obs), _s->R, _s->R_usable, _s->k, _s->k_eff, _s->k_runs,
     _s->n_degen,
     (_s->flags & HET_ST_CTRL_IS_CANARY) ? "canary" : "mu(T)",
-    _s->win_samples, _s->F_win, _s->F_cell,
+    _s->win_samples, (int)HET_NWIN, _s->F_win, _s->F_cell,
     (_s->r_hat >= HET_R_POISSON) ? INFINITY : _s->r_hat,
-    _s->mu_upper, _s->R_eff, _s->p_bound, _s->P_rep, _s->acf1,
+    _s->mu_upper, _s->tau_w, _s->N_eff, _s->R_eff, _s->p_bound, _s->P_rep, _s->acf1,
     (_s->flags & HET_ST_KS_UNDERPOWERED) ? "underpowered"
       : (_s->ks_pass ? "pass" : "SPLIT"),
     _s->ks_D, _s->ks_Dcrit, _s->ks_split_window,
@@ -3785,6 +4005,29 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
       _s->win_samples, _s->F_win, _s->ctrl_var, _s->ctrl_mean,
       (_s->r_hat >= HET_R_POISSON) ? "inf (Poisson)" : "finite (see HetStats line)",
       _s->acf1, _s->F_cell);
+    if (_s->flags & HET_ST_TAU_UNMEASURED)
+      fprintf(_ch,
+        "  within-run correlation: tau NOT MEASURED -> each run counts as ONE "
+        "trial (N_eff = 1).  That is B7's maximally conservative reading, kept "
+        "because an unmeasured tau must never buy a tighter bound.\n");
+    else if (_s->flags & HET_ST_TAU_AT_CAP)
+      fprintf(_ch,
+        "  within-run correlation: tau_w = %.1f window(s) -- AT THE RESOLUTION "
+        "CEILING (%d windows/run).  The alignment regime outlives the run at "
+        "this window size, so one run IS one independent draw (N_eff = 1): "
+        "B7's one-bit-per-run answer was right on this channel.  HET_NWIN is a "
+        "SWEPT knob -- rebuild with a finer resolution to probe whether the "
+        "regime resolves.\n",
+        _s->tau_w, (int)HET_NWIN);
+    else
+      fprintf(_ch,
+        "  within-run correlation: tau_w = %.2f window(s) (Geyer "
+        "initial-positive-sequence over the %d-window control stream) -> "
+        "N_eff = %.1f effective independent samples per run, clamped to "
+        "[1, %d] -- a stream of %d windows cannot witness more.  A correlated "
+        "sequence is DISCOUNTED, not discarded: B7 scored each run as ONE "
+        "Bernoulli bit, the tau = run-length worst case.\n",
+        _s->tau_w, (int)HET_NWIN, _s->N_eff, (int)HET_NWIN, (int)HET_NWIN);
     if (_s->flags & HET_ST_CTRL_IS_CANARY)
       fprintf(_ch, "  NOTE: calibrated off the Layer-B canary, not this test's own "
                    "mu(T) -- a different SHAPE's burstiness.  Weaker than a "
@@ -3836,10 +4079,10 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     } else if (_s->flags & HET_ST_BOUND_VACUOUS) {
       fprintf(_ch,
         "  NOT OBSERVED in any of the %d usable cell(s) -- but THE BOUND IS VACUOUS:\n"
-        "      p_run < mu_upper(r_hat) / R_eff = %.4g / %.2f = %.4g   >= 1\n"
-        "  p_run is a PROBABILITY, so a bound above 1 bounds NOTHING.  This is not a "
-        "weak claim, it is the ABSENCE of one, and it must NOT be tabulated as a "
-        "number.\n"
+        "      p < mu_upper(r_hat) / R_eff = %.4g / %.2f = %.4g   >= 1\n"
+        "  the bounded rate is a PROBABILITY, so a bound above 1 bounds NOTHING.  "
+        "This is not a weak claim, it is the ABSENCE of one, and it must NOT be "
+        "tabulated as a number.\n"
         "  WHY: the control channel is bursty (F_win = %.2f), so the process parks so "
         "much probability mass at zero that observing zero is nearly free.  That IS "
         "the finding -- and it is exactly the case in which a bare p < 3/N would have "
@@ -3849,16 +4092,25 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
         "inside the same few alignment windows.\n",
         _s->R_usable, _s->mu_upper, _s->R_eff, _s->p_bound, _s->F_win);
     } else {
+      double deff = (_s->F_cell > 1.0) ? _s->F_cell : 1.0;
       fprintf(_ch,
         "  NOT OBSERVED in any of the %d usable cell(s).  95%% upper bound on its "
-        "RUN-LEVEL rate:\n"
-        "      p_run < mu_upper(r_hat) / R_eff = %.4f / %.2f = %.4g\n"
-        "  (R_eff = %d usable cells / DEFF %.2f.  The unit is the (instance,run) "
-        "CELL, NOT the frame: the scan validates N^{T_L} overlapping frames per N "
-        "iterations, so a frame count fed to 1-e^{-n} returns ~1 vacuously --\n"
-        "   PerpLE VI-B.1, and PerpLE never makes that mistake either.)\n",
+        "rate PER EFFECTIVE SAMPLE (one tau_w-window alignment epoch):\n"
+        "      p < mu_upper(r_hat) / R_eff = %.4f / %.2f = %.4g\n"
+        "  (R_eff = %d usable runs x N_eff %.1f / DEFF %.2f.  The base unit is "
+        "the (instance,run) CELL, NOT the frame -- the scan validates N^{T_L} "
+        "overlapping frames per N iterations, so a frame count fed to 1-e^{-n} "
+        "returns ~1 vacuously (PerpLE VI-B.1) -- and B7b DISCOUNTS the "
+        "within-run stream by its measured autocorrelation instead of "
+        "discarding it to one bit.)\n"
+        "  implied RUN-level bound: p_run < N_eff x p = %.4g -- identical to "
+        "B7's, BY CONSTRUCTION: the discount adds resolution beneath the "
+        "run-level claim, it never tightens it for free.  The dividend is paid "
+        "where the hours are: the budget below is met with N_eff-fold fewer "
+        "runs.\n",
         _s->R_usable, _s->mu_upper, _s->R_eff, _s->p_bound,
-        _s->R_usable, (_s->F_cell > 1.0) ? _s->F_cell : 1.0);
+        _s->R_usable, _s->N_eff, deff,
+        _s->N_eff * _s->p_bound);
     }
     switch (_s->oracle) {
     case ORACLE_DISALLOWED:
@@ -3886,29 +4138,40 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
        shown up.  We cannot state that budget yet, and saying so is the honest move --
        an unsized null is not a wrong result, it is an unquantified one. */
     { double need = het_budget_runs((double)HET_P_MIN, _s->F_win);
+      /* B7b: het_budget_runs sizes the budget in EFFECTIVE CELLS (its p_min is a
+         per-effective-sample rate, measured from the ALLOWED-OBSERVED rows at
+         the SAME HET_NWIN resolution -- a p_min measured at another window size
+         is a different number).  Each usable run now supplies N_eff of them, so
+         the RUN budget is need/N_eff: this division is where B7's
+         1,500-30,000-run estimate shrinks, and it is exactly N_eff-fold. */
       if (need < 0.0)
         fprintf(_ch,
-          "  budget: NOT SIZED.  p_min -- the run-level rate of the hardest het "
-          "behaviour we can actually observe -- is HARDWARE-ONLY and unset (HET_P_MIN).\n"
+          "  budget: NOT SIZED.  p_min -- the per-effective-sample rate of the "
+          "hardest het behaviour we can actually observe -- is HARDWARE-ONLY and "
+          "unset (HET_P_MIN).\n"
           "          It is NOT Bagchi's ~0.2%%: that is the GPU-only INTER-CTA rate "
           "(their 5.1/4.1), which fires with no CPU participation and never crosses "
           "C2C.  There is no published numeric het hit-rate.\n"
           "          Derive it on GH200 from the ALLOWED-OBSERVED rows (they ARE the "
-          "observed-rate population) and re-run with -DHET_P_MIN=<rate>.\n");
-      else if ((double)_s->R_usable < need)
+          "observed-rate population, at THIS HET_NWIN) and re-run with "
+          "-DHET_P_MIN=<rate>.\n");
+      else if ((double)_s->R_usable * _s->N_eff < need)
         fprintf(_ch,
-          "  budget: UNDER-RUN.  %d usable cell(s), but %.0f are needed to have had a "
-          "95%% chance of catching a behaviour at p_min=%g (dispersion-inflated by "
-          "F_win=%.2f).\n"
+          "  budget: UNDER-RUN.  %d usable run(s) x N_eff %.1f = %.0f effective "
+          "cell(s), but %.0f are needed to have had a 95%% chance of catching a "
+          "behaviour at p_min=%g (dispersion-inflated by F_win=%.2f) -- i.e. %.0f "
+          "run(s) at this N_eff.\n"
           "          This null is NOT yet meaningful.  Grow R -- more independent runs "
           "-- NOT N (Q3 F4).\n",
-          _s->R_usable, need, (double)HET_P_MIN, _s->F_win);
+          _s->R_usable, _s->N_eff, (double)_s->R_usable * _s->N_eff, need,
+          (double)HET_P_MIN, _s->F_win, ceil(need / _s->N_eff));
       else
         fprintf(_ch,
-          "  budget: MET.  %d usable cell(s) >= the %.0f needed for a 95%% chance of "
-          "catching a behaviour at p_min=%g (F_win=%.2f).  Not seeing it after THAT is "
-          "the claim.\n",
-          _s->R_usable, need, (double)HET_P_MIN, _s->F_win);
+          "  budget: MET.  %d usable run(s) x N_eff %.1f = %.0f effective cell(s) "
+          ">= the %.0f needed for a 95%% chance of catching a behaviour at "
+          "p_min=%g (F_win=%.2f).  Not seeing it after THAT is the claim.\n",
+          _s->R_usable, _s->N_eff, (double)_s->R_usable * _s->N_eff, need,
+          (double)HET_P_MIN, _s->F_win);
     }
     return;
   }
@@ -3969,6 +4232,99 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
         "IT to >=3 clean runs before writing it up as a model violation.\n",
         het_tier_name(_s->tier), _s->k_runs);
   }
+}
+
+/* =========================================================================
+ * B7b -- THE CAMPAIGN STOPPING RULE: where the GH200 hours are actually saved.
+ *
+ * Only 52 of the 338 tests need a bound at all: the 16 Disallowed (the CMCM
+ * validation claim) and the 36 NO-ORACLE (characterization).  The 286 Allowed
+ * just need to FIRE ONCE -- a positive is self-vouching (B6c ALLOWED-OBSERVED;
+ * falsification and confirmation-from-below are one-sided) -- so running them
+ * to a bound-grade budget burns ~6.5x the campaign time for nothing.  On top
+ * of that, a bound-needing test stops the moment its bound is MET: most tests
+ * converge early and only the stubborn shapes (Kirkham 4.2: SB is hardest on
+ * every chip) need the long tail.  Do not run 30,000 runs on a test that
+ * converged at 500.
+ *
+ * This is a PURE FUNCTION of the record stream, like het_verdict() and
+ * het_stats_compute() before it -- so the driver's in-binary adaptive loop
+ * (HET_ADAPTIVE=1) and hetlitmus/campaign.py's cross-invocation loop apply the
+ * SAME policy, and statscheck.py can unit-test it from synthetic records.
+ *
+ * Per oracle class:
+ *   ALLOWED     stop at the first CLEAN sighting (k_eff >= 1, not k >= 1: a
+ *               sighting the decode guard rejected is possibly Srivastava's
+ *               constant-read artefact, and an artefact must not de-schedule a
+ *               test).  Its absence needs no bound -- an unobserved Allowed row
+ *               is an observability datum for B8, priced by the budget cap.
+ *   DISALLOWED  a sighting does NOT stop the test at 1: a MISMATCH must be
+ *               corroborated to >=3 distinct clean runs (HET_MT_CONFIRMED)
+ *               before the campaign moves on -- an uncorroborated refutation is
+ *               the most damaging thing we could write up, so the scheduler
+ *               ESCALATES it rather than banking it.  With no sighting, stop
+ *               once the bound is met: p_bound valid, non-vacuous, <= p_goal.
+ *   NO-ORACLE   same bound-met rule; a sighting is characterization and wants
+ *               the full budget (a RATE needs more data than an existence).
+ *   UNSET       fail closed: no early stop on a harness whose oracle tag is
+ *               missing (het_verdict() already brands it a BUILD BUG).
+ *
+ * Stopping on a bound is NOT data-peeking in the Kirkham 5.1 sense: p_bound is
+ * computed only over all-zero records and only shrinks as zero-runs accumulate,
+ * so stopping when it first reaches p_goal reports a bound that holds at that
+ * fixed sample size.  (Kirkham's caution targets tuning-parameter selection --
+ * that is B8's problem, and B8 must use the EFFECTIVE sample count in its CI.)
+ *
+ * p_goal <= 0 means "no bound target": bound rows then run to budget.  There is
+ * NO default p_goal baked in here -- a stopping target is a campaign decision,
+ * like p_min, not a header constant. */
+typedef enum {
+  HET_CAMPAIGN_CONTINUE = 0,
+  HET_CAMPAIGN_STOP_OBSERVED,    /* Allowed row fired cleanly: self-vouching     */
+  HET_CAMPAIGN_STOP_CONFIRMED,   /* Disallowed row corroborated to >=3 runs      */
+  HET_CAMPAIGN_STOP_BOUND_MET,   /* null row: p_bound <= p_goal                  */
+  HET_CAMPAIGN_STOP_BUDGET       /* budget exhausted (the only stop with nothing
+                                    to show; the verdict says what it means)     */
+} het_campaign_stop_t;
+
+static const char *het_campaign_stop_name(het_campaign_stop_t s) {
+  switch (s) {
+  case HET_CAMPAIGN_STOP_OBSERVED:  return "OBSERVED";
+  case HET_CAMPAIGN_STOP_CONFIRMED: return "CONFIRMED";
+  case HET_CAMPAIGN_STOP_BOUND_MET: return "BOUND-MET";
+  case HET_CAMPAIGN_STOP_BUDGET:    return "BUDGET";
+  default:                          return "CONTINUE";
+  }
+}
+
+static het_campaign_stop_t het_campaign_should_stop(const het_obs_record *recs,
+                                                    int n, int budget,
+                                                    double p_goal) {
+  het_stats_t st;
+  if (n <= 0) return HET_CAMPAIGN_CONTINUE;
+  het_stats_compute(recs, n, &st);
+  switch (st.oracle) {
+  case ORACLE_ALLOWED:
+    if (st.k_eff >= 1) return HET_CAMPAIGN_STOP_OBSERVED;
+    break;
+  case ORACLE_DISALLOWED:
+    if (st.tier == HET_MT_CONFIRMED) return HET_CAMPAIGN_STOP_CONFIRMED;
+    /* p_bound >= 0 already implies obs == NEVER (it is computed nowhere else);
+       the k == 0 guard restates it so the policy reads as it is meant. */
+    if (st.k == 0 && p_goal > 0.0 && st.p_bound >= 0.0
+        && !(st.flags & HET_ST_BOUND_VACUOUS) && st.p_bound <= p_goal)
+      return HET_CAMPAIGN_STOP_BOUND_MET;
+    break;
+  case ORACLE_NONE:
+    if (st.k == 0 && p_goal > 0.0 && st.p_bound >= 0.0
+        && !(st.flags & HET_ST_BOUND_VACUOUS) && st.p_bound <= p_goal)
+      return HET_CAMPAIGN_STOP_BOUND_MET;
+    break;
+  default:
+    break;
+  }
+  if (budget > 0 && n >= budget) return HET_CAMPAIGN_STOP_BUDGET;
+  return HET_CAMPAIGN_CONTINUE;
 }
 
 #endif /* HET_VERDICT_H */

@@ -725,12 +725,36 @@ hetlitmus-verdict: | build
 	python3 hetlitmus/verify/verdictcheck.py --bite
 	@ echo "HetLitmus B6/B6c decision rule: OK (and the gate bites)"
 
+### hetlitmus-stats: het_stats_compute() -- what a "Never" is WORTH -- compiled from
+### the REAL emitted header and driven with synthetic record streams (statscheck.py).
+### B7 SHIPPED THIS SCRIPT UNWIRED: no Makefile target invoked it, so a build with
+### ks_pass forced to a constant 1 (one of the three bugs B7 itself caught) returned
+### rc=0 from `make hetlitmus-test-all` -- fully green -- while statscheck.py returned
+### rc=1.  A gate that exists but is not in the build is not a gate; it is a script.
+###   estimator   mu_upper pinned to the closed form (3 -> 19 -> 199.5); budget symbol
+###   aggregate   every statistic differentially checked vs an independent Python
+###               re-derivation; every class/flag/tier reachable (anti-constant)
+###   tau/N_eff   (B7b) Geyer initial-positive-sequence recovers known AR(1)
+###               autocorrelation times; N_eff clamped to [1, HET_NWIN]; the
+###               tau-at-cap regime reproduces B7's run-level bound EXACTLY
+###   producer    the per-window sub-tallies live BOTH ways on the real emitted scan
+###   corpus      all 338 carry the post-pass + a decode channel
+###   scheduler   (B7b) campaign.py stopping policy on a stub runner: Allowed rows
+###               stop at first clean sighting, bound rows at p_goal or budget
+### --bite then PROVES THE GATE FAILS when the statistics break, cmp-verified.
+hetlitmus-stats: | build
+	@ echo
+	python3 hetlitmus/verify/statscheck.py
+	python3 hetlitmus/verify/statscheck.py --bite
+	@ echo "HetLitmus B7/B7b statistics layer: OK (and the gate bites)"
+
 ### Umbrellas (what you press).  `::` accumulation, order-only `| build`.
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-verdict
+hetlitmus-test:: hetlitmus-stats
 
 hetlitmus-test-nvcc:: | build
 hetlitmus-test-nvcc:: hetlitmus-faithful
@@ -752,7 +776,7 @@ hetlitmus-promote: | build
 	@ echo "hetlitmus-promote: review 'git diff' then commit yourself."
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
-.PHONY: hetlitmus-stress hetlitmus-cpustress
+.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64

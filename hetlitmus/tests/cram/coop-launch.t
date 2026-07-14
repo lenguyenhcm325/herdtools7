@@ -52,7 +52,7 @@ the HBM noise buffer across the interconnect), which happens ONCE at start-up, b
 any run, and does not touch this invariant.  Bumping the count to 2 would have made
 this check satisfiable by a genuine SECOND SYNC IN THE RUN LOOP -- exactly the
 regression it exists to catch.  Scope, don't bump.
-  $ sed -n '/for (int _run=0; _run<NUMBER_OF_RUN/,/^  }$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c 'cudaDeviceSynchronize'
+  $ sed -n '/for (int _run=0; _run<_runs_budget/,/^  }$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c 'cudaDeviceSynchronize'
   1
   $ sed -n '/^static int gd_alloc_noise/,/^}$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c 'cudaDeviceSynchronize'
   1
