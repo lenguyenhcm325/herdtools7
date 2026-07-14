@@ -540,6 +540,14 @@ static void anchors(void) {
   /* het_win_of must MAP, not return a constant. */
   printf("WIN|%d|%d|%d|%d\n", het_win_of(0, 100000), het_win_of(50000, 100000),
          het_win_of(99999, 100000), (int)HET_NWIN);
+  /* R3, the campaign budget.  p_min MUST be unset in the shipped header -- the het
+     hit-rate is unpublished, and any number here would be imported from the wrong
+     experiment (Bagchi's 0.2% is GPU-only inter-CTA).  UNSET must return NOT SIZED. */
+  printf("BUDGET|%.17g|%.17g|%.17g|%.17g\n",
+         (double)HET_P_MIN,                     /* must be 0 = UNSET in the shipped hdr */
+         het_budget_runs((double)HET_P_MIN, 1.0),   /* -> -1 (not sized)                */
+         het_budget_runs(0.002, 1.0),               /* a rate: the Poisson budget        */
+         het_budget_runs(0.002, 20.0));             /* ... dispersion-inflated 20x       */
 }
 
 int main(void) {
@@ -637,6 +645,31 @@ def phase1(lines, quiet):
             elif not quiet:
                 print("      het_win_of maps 0->0, N/2->%d, N-1->%d (it is not a "
                       "constant)" % (NWIN // 2, NWIN - 1))
+
+    # --- R3: the campaign budget.  p_min is a SYMBOL, not a number, until GH200. ---
+    for l in lines:
+        if not l.startswith("BUDGET|"):
+            continue
+        _, pmin, unset, b1, b20 = l.split("|")
+        pmin, unset, b1, b20 = float(pmin), float(unset), float(b1), float(b20)
+        if pmin != 0.0:
+            print("  *** HET_P_MIN IS HARDCODED TO %g IN THE SHIPPED HEADER.  The het "
+                  "hit-rate is UNPUBLISHED -- Bagchi's ~0.2%% is the GPU-only INTER-CTA "
+                  "rate, which never crosses C2C.  A campaign sized off it is sized off "
+                  "the wrong experiment." % pmin)
+            bad += 1
+        if unset >= 0.0:
+            print("  *** an UNSET p_min produced a budget (%g) instead of NOT SIZED.  A "
+                  "budget invented from no data looks like one." % unset)
+            bad += 1
+        want1 = math.log(0.05) / math.log(1.0 - 0.002)
+        if not (close(b1, want1) and close(b20, 20.0 * want1)):
+            print("  *** het_budget_runs is not F*log(0.05)/log(1-p): got %.6g / %.6g, "
+                  "want %.6g / %.6g" % (b1, b20, want1, 20.0 * want1))
+            bad += 1
+        elif not quiet:
+            print("      budget: p_min UNSET -> NOT SIZED (correct); at p=0.2%% it needs "
+                  "%.0f runs, and %.0f if the channel is 20x overdispersed" % (b1, b20))
 
     for r in (0.5, 1.0, 2.0, 5.0, 10.0, float("inf")):
         want = py_mu_upper(r)

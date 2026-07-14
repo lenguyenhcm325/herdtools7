@@ -2159,6 +2159,30 @@ let het_verdict_h = {ocaml|/* ==================================================
 #ifndef HET_STATS_MAX_CELLS
 #define HET_STATS_MAX_CELLS 128
 #endif
+/* ---------------------------------------------------------------------------
+ * HET_P_MIN -- the run-level hit-rate of the HARDEST het behaviour we have actually
+ * OBSERVED on our own harness.  It sizes the campaign (het_budget_runs below): run
+ * enough near-independent cells that, HAD the target's rate equalled the hardest
+ * behaviour we CAN see, we would have had a 95% chance to catch it.  A null after that
+ * budget means something; a null before it means we did not look hard enough.
+ *
+ * IT IS 0 -- UNSET -- AND IT MUST STAY THAT WAY UNTIL GH200 MEASURES IT.
+ *
+ * DO NOT seed it with Bagchi's ~0.2%.  On re-reading the primary PDF that number is
+ * the GPU-only INTER-CTA rate (Bagchi 5.1 p.74, attributed to their 4.1 results, where
+ * producer and consumer are both GPU threads on different CTAs): it fires with NO CPU
+ * participation and WITHOUT crossing C2C.  There is no published numeric het hit-rate
+ * anywhere in that paper -- Table 4 is qualitative.  Sizing the whole campaign off it
+ * would be sizing it off a different experiment on a different interconnect.
+ *
+ * The het p_min is HARDWARE-ONLY, and B6c already hands us the population to derive it
+ * from: the ALLOWED-OBSERVED rows ARE the observed-rate sample, and ALLOWED-UNOBSERVED
+ * marks the shapes that are too hard.  Until then p_min is a SYMBOL, not a number, and
+ * het_budget_runs() returns "NOT SIZED" rather than inventing one. */
+#ifndef HET_P_MIN
+#define HET_P_MIN 0.0
+#endif
+
 /* Above this the NB fit is numerically Poisson (r -> inf; see het_mu_upper). */
 #define HET_R_POISSON 1e9
 /* c(0.05) for the asymptotic two-sample Kolmogorov-Smirnov critical value. */
@@ -3343,6 +3367,28 @@ static double het_fano(const double *x, int n, double *mean_out, double *var_out
   return v / m;
 }
 
+/* R3 -- HOW LONG TO RUN BEFORE A "NEVER" MEANS ANYTHING.  Kirkham's necessary-iteration
+   inverse N = log(1-P_rep)/log(1-p) (1.1 p.226:4), fed with RUN-LEVEL rates and inflated
+   by the measured dispersion:
+
+       R  >=  F_hat * log(0.05) / log(1 - p_min)
+
+   i.e. run enough near-independent CELLS that, had the target's rate equalled p_min --
+   the hardest behaviour we can actually see -- we would have had a 95% chance to catch
+   it.  Grow R, NOT N (Q3 F4): beyond the point where a run has explored its skew range,
+   extra N adds CORRELATED frames inside the same alignment windows, while extra R adds
+   genuinely fresh phase/seed/thermal draws.
+
+   Returns -1 when p_min is UNSET.  It is unset today and that is not a stub: the het
+   p_min does not exist in the literature (see HET_P_MIN), so any number here would be
+   imported from a different experiment.  A budget invented from the wrong experiment is
+   worse than no budget, because it looks like one. */
+static double het_budget_runs(double p_min, double F) {
+  if (!(p_min > 0.0) || !(p_min < 1.0)) return -1.0;   /* UNSET -> NOT SIZED */
+  if (!(F > 1.0)) F = 1.0;
+  return F * log(0.05) / log(1.0 - p_min);
+}
+
 static int het_dcmp(const void *a, const void *b) {
   double x = *(const double *)a, y = *(const double *)b;
   return (x < y) ? -1 : ((x > y) ? 1 : 0);
@@ -3818,6 +3864,36 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     fprintf(_ch, "  effort: %d run(s) x N=%llu iterations, %llu frames examined.\n",
             _s->R_usable, (unsigned long long)_s->N,
             (unsigned long long)_s->frames_examined);
+
+    /* R3 -- WAS THE EFFORT EVER SIZED?  A null is only meaningful against a budget: run
+       enough cells that a behaviour as rare as the hardest one we CAN see would have
+       shown up.  We cannot state that budget yet, and saying so is the honest move --
+       an unsized null is not a wrong result, it is an unquantified one. */
+    { double need = het_budget_runs((double)HET_P_MIN, _s->F_win);
+      if (need < 0.0)
+        fprintf(_ch,
+          "  budget: NOT SIZED.  p_min -- the run-level rate of the hardest het "
+          "behaviour we can actually observe -- is HARDWARE-ONLY and unset (HET_P_MIN).\n"
+          "          It is NOT Bagchi's ~0.2%%: that is the GPU-only INTER-CTA rate "
+          "(their 5.1/4.1), which fires with no CPU participation and never crosses "
+          "C2C.  There is no published numeric het hit-rate.\n"
+          "          Derive it on GH200 from the ALLOWED-OBSERVED rows (they ARE the "
+          "observed-rate population) and re-run with -DHET_P_MIN=<rate>.\n");
+      else if ((double)_s->R_usable < need)
+        fprintf(_ch,
+          "  budget: UNDER-RUN.  %d usable cell(s), but %.0f are needed to have had a "
+          "95%% chance of catching a behaviour at p_min=%g (dispersion-inflated by "
+          "F_win=%.2f).\n"
+          "          This null is NOT yet meaningful.  Grow R -- more independent runs "
+          "-- NOT N (Q3 F4).\n",
+          _s->R_usable, need, (double)HET_P_MIN, _s->F_win);
+      else
+        fprintf(_ch,
+          "  budget: MET.  %d usable cell(s) >= the %.0f needed for a 95%% chance of "
+          "catching a behaviour at p_min=%g (F_win=%.2f).  Not seeing it after THAT is "
+          "the claim.\n",
+          _s->R_usable, need, (double)HET_P_MIN, _s->F_win);
+    }
     return;
   }
 
