@@ -2212,6 +2212,57 @@ let het_verdict_h = {ocaml|/* ==================================================
    that the reader must be told the rule of three no longer applies. */
 #define HET_BURSTY_F 2.0
 
+/* ---------------------------------------------------------------------------
+ * B7c -- WHEN IS tau ITSELF TRUSTWORTHY?  An integrated autocorrelation time is
+ * estimated from a finite series, and the estimate is worthless unless the series
+ * is long compared with the very quantity it is estimating.  The standard rule of
+ * thumb, from the emcee autocorrelation tutorial (Foreman-Mackey et al., "emcee:
+ * The MCMC Hammer", PASP 125:306, 2013; docs at emcee.readthedocs.io):
+ *
+ *     "you probably shouldn't trust any estimate of tau unless you have more
+ *      than F x tau samples for some F >= 50"
+ *
+ * emcee treats this as a HARD ERROR, not a warning: integrated_time(tol=50) raises
+ * AutocorrError -- "The chain is shorter than {0} times the integrated
+ * autocorrelation time ... Use this estimate with caution and run a longer chain!"
+ * -- and its tol default IS 50 ("the minimum number of autocorrelation times needed
+ * to trust the estimate").  Stan's ESS guidance is the same family.
+ *
+ * DIVERGENCE FROM THE CITED SOURCE, DISCLOSED (this matters, and it is why the
+ * guard below fixes the THRESHOLD and not the direction).  emcee's estimator is
+ * SOKAL AUTOMATIC WINDOWING; ours (het_tau_ips) is GEYER'S INITIAL POSITIVE
+ * SEQUENCE, which truncates at the first non-positive pair.  The two fail in
+ * OPPOSITE directions on a short series: emcee's docs report theirs going
+ * "dangerously over-confident" on short chains, whereas Geyer IPS is MEASURED here
+ * to UNDER-read tau -- a noisy short stream throws up a spurious non-positive pair,
+ * the sum is cut off early, and tau comes back far below both the truth AND the
+ * HET_NWIN ceiling (so HET_ST_TAU_AT_CAP never fires).  An under-read tau
+ * OVER-credits N_eff and makes the false-negative bound TIGHTER THAN THE TRUTH --
+ * the one direction every clamp in this file exists to forbid.  Measured on an
+ * AR(1)-rate/Poisson-count control stream at the shipped configuration (R = 10,
+ * HET_NWIN = 128): true tau 181, het_tau_ips 53.8, N_eff credited 2.4 against an
+ * honest 1.0 -- a 2.4x over-credit that nothing flagged.
+ *
+ * So we import the RELIABILITY THRESHOLD (F >= 50), which is estimator-independent,
+ * and NOT emcee's bias direction, which is not.  Below the threshold tau is NOT
+ * RESOLVED and buys nothing: N_eff falls back to 1, which IS B7's reading.  A tau
+ * that could not be measured must never buy a tighter bound -- exactly as a KS test
+ * that could not run must never unlock P_rep (HET_ST_KS_UNDERPOWERED).
+ *
+ * WHAT THIS GUARD DOES *NOT* DO -- disclosed, because it bounds what may be claimed.
+ * It bounds the UNRESOLVED regime; it does NOT make het_tau_ips unbiased INSIDE the
+ * resolved band.  On the same AR(1)-rate/Poisson-count fixtures, tau estimates that
+ * DO clear the threshold still over-credited N_eff by up to ~1.7x (true tau 17.4,
+ * estimated 10.3).  That residual is (a) one-sided in the same optimistic direction,
+ * (b) far smaller than the ~6x rule-of-three overclaim B7 exists to prevent and the
+ * 2.4x this guard removes, and (c) bounded by the estimator's noise rather than
+ * unbounded.  It is NOT corrected here: a bias correction is estimator-specific and
+ * would have to be re-derived for the real GH200 control stream, whereas the
+ * reliability threshold transfers.  B8 must treat an in-band N_eff as accurate to a
+ * FACTOR, not to a digit, and must not build a confidence interval that assumes
+ * otherwise. */
+#define HET_TAU_MIN_SAMPLES 50.0
+
 typedef enum { CONF_ROBUST, CONF_ADVISORY, CONF_EXPLORATORY } het_confidence;
 
 /* ---------------------------------------------------------------------------
@@ -3380,6 +3431,16 @@ typedef enum {
                                               B7's answer was right all along.
                                               Raise the swept HET_NWIN to probe
                                               whether finer windows resolve it. */
+#define HET_ST_TAU_UNRESOLVED   (1u << 14) /* B7c: the pooled stream is shorter
+                                              than HET_TAU_MIN_SAMPLES * tau_w, so
+                                              tau is NOT RESOLVED and buys nothing:
+                                              N_eff = 1 (B7's reading).  NOT a veto
+                                              and NOT a failure -- an ACTIONABLE
+                                              signal, "run more runs": the criterion
+                                              is on the POOLED count R x HET_NWIN,
+                                              so the guard RELAXES on its own as the
+                                              campaign runs longer.  tau_runs_needed
+                                              says how many usable runs it takes. */
 
 typedef struct het_stats {
   const char *test_name;
@@ -3403,7 +3464,14 @@ typedef struct het_stats {
                                        units (Geyer IPS); -1 = NOT MEASURED       */
   double N_eff;                     /* effective independent samples PER RUN =
                                        HET_NWIN/tau_w, clamped to [1, HET_NWIN];
-                                       1 when tau is unmeasured (= B7 exactly)    */
+                                       1 when tau is unmeasured, or UNRESOLVED
+                                       (B7c), which both = B7 exactly             */
+  int    tau_runs_needed;           /* B7c: usable runs the aggregate needs for
+                                       tau_w to clear HET_TAU_MIN_SAMPLES; 0 when
+                                       tau was never measured.  THE PRICE OF THE
+                                       CLAIM -- quoted whether or not it has been
+                                       paid, so the invariant is exact:
+                                       TAU_UNRESOLVED <=> R_usable < this          */
   double R_eff;                     /* R_usable * N_eff / max(1, F_cell)          */
   double p_bound;                   /* mu_upper / R_eff   (-1 = NOT COMPUTED)     */
   double P_rep;                     /* 1 - e^{-k_eff}     (-1 = NOT APPLICABLE)   */
@@ -3537,6 +3605,26 @@ static double het_tau_ips(const double *win, int nwin, int wlen, double mean) {
   if (tau < 1.0) tau = 1.0;
   if (tau > (double)wlen) tau = (double)wlen;
   return tau;
+}
+
+/* B7c -- THE COST OF THE CLAIM.  The reliability criterion is on the POOLED sample
+   count (nwin = usable runs x HET_NWIN), so an unresolved tau is not a dead end: it
+   is a PRICE, and this is the price.  Returns the number of USABLE runs the
+   aggregate would have to hold for tau_w to clear HET_TAU_MIN_SAMPLES * tau_w
+   samples -- i.e. what "run more runs" actually costs, in runs.
+
+   This is why the guard is a signal and not a veto: at HET_NWIN = 128, R = 10 pools
+   1,280 samples and resolves tau <= 25.6; R = 100 pools 12,800 and resolves tau <=
+   256.  Grow R, not N (Q3 F4) -- a bigger N adds correlated frames inside the same
+   alignment windows, while a fresh run adds a fresh phase/seed/thermal draw.
+   (Raising the swept HET_NWIN also raises the pooled count, but it trades against
+   resolution: finer windows correlate with each other and push tau_w back up.  R is
+   the clean lever.)  0 = nothing to buy: tau resolved, or never measured. */
+static int het_tau_runs_needed(double tau_w) {
+  double need;
+  if (!(tau_w > 0.0)) return 0;                     /* unmeasured: no price to quote */
+  need = HET_TAU_MIN_SAMPLES * tau_w / (double)HET_NWIN;
+  return (int)need + (((double)(int)need < need) ? 1 : 0);   /* ceil */
 }
 
 /* R3 -- HOW LONG TO RUN BEFORE A "NEVER" MEANS ANYTHING.  Kirkham's necessary-iteration
@@ -3792,13 +3880,36 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     st->flags |= HET_ST_TAU_UNMEASURED;
   } else {
     st->tau_w = het_tau_ips(win, nwin, HET_NWIN, st->ctrl_mean);
+    st->tau_runs_needed = het_tau_runs_needed(st->tau_w);
     if (st->tau_w > 0.0) {
-      if (st->tau_w >= (double)HET_NWIN) st->flags |= HET_ST_TAU_AT_CAP;
-      st->N_eff = (double)HET_NWIN / st->tau_w;
-      /* The clamp is the honesty: a stream of HET_NWIN windows cannot witness
-         more than HET_NWIN independent samples, nor fewer than 1. */
-      if (st->N_eff < 1.0)               st->N_eff = 1.0;
-      if (st->N_eff > (double)HET_NWIN)  st->N_eff = (double)HET_NWIN;
+      /* ---- B7c: IS tau ITSELF RESOLVED?  B7b clamped tau in the one direction it
+         could see (exhaustion -> cap, raw < 1 -> 1) and then TRUSTED the number in
+         between.  But the ESTIMATOR is not one-directional: Geyer IPS truncates at
+         the first non-positive pair, and on a stream too short for its own tau a
+         spurious non-positive pair arrives early, the sum is cut off, and tau comes
+         back far BELOW both the truth and the HET_NWIN ceiling -- so TAU_AT_CAP
+         never fires, nothing is flagged, and the under-read tau OVER-credits N_eff
+         and makes the false-negative bound TIGHTER THAN THE TRUTH.  That is an
+         overclaim, and it bites hardest in exactly the regime we most expect (slow
+         skew drift, "one run is one alignment regime") -- precisely where B7's
+         conservative reading was RIGHT.
+         The fix is the reliability threshold, NOT a bias correction: a series must
+         be ~HET_TAU_MIN_SAMPLES times longer than the tau it claims to measure
+         (see HET_TAU_MIN_SAMPLES for the grounding, and for why the THRESHOLD
+         transfers between estimators but the DIRECTION does not).
+         nwin is the POOLED count across usable runs, so the guard SELF-RELAXES as
+         the campaign grows -- it is a price, not a veto (het_tau_runs_needed). */
+      if ((double)nwin < HET_TAU_MIN_SAMPLES * st->tau_w) {
+        st->flags |= HET_ST_TAU_UNRESOLVED;
+        st->N_eff  = 1.0;                    /* the B7 reading, kept intact */
+      } else {
+        if (st->tau_w >= (double)HET_NWIN) st->flags |= HET_ST_TAU_AT_CAP;
+        st->N_eff = (double)HET_NWIN / st->tau_w;
+        /* The clamp is the honesty: a stream of HET_NWIN windows cannot witness
+           more than HET_NWIN independent samples, nor fewer than 1. */
+        if (st->N_eff < 1.0)               st->N_eff = 1.0;
+        if (st->N_eff > (double)HET_NWIN)  st->N_eff = (double)HET_NWIN;
+      }
     } else {
       st->flags |= HET_ST_TAU_UNMEASURED;   /* N_eff stays 1: the B7 reading */
     }
@@ -3936,7 +4047,7 @@ static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
     "HetStats %s oracle=%s obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d degen=%d "
     "ctrl=%s win_n=%d nwin=%d F_win=%.4f F_cell=%.4f r_hat=%.4f mu_upper=%.4f "
-    "tau_w=%.4f N_eff=%.4f R_eff=%.4f "
+    "tau_w=%.4f N_eff=%.4f tau_need=%d R_eff=%.4f "
     "p_bound=%.6g P_rep=%.6g acf1=%.4f ks=%s ks_D=%.4f ks_Dcrit=%.4f ks_split=%d "
     "tier=%s N=%llu frames=%llu flags=0x%x\n",
     _s->test_name ? _s->test_name : "(none)", het_oracle_name(_s->oracle),
@@ -3945,7 +4056,8 @@ static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
     (_s->flags & HET_ST_CTRL_IS_CANARY) ? "canary" : "mu(T)",
     _s->win_samples, (int)HET_NWIN, _s->F_win, _s->F_cell,
     (_s->r_hat >= HET_R_POISSON) ? INFINITY : _s->r_hat,
-    _s->mu_upper, _s->tau_w, _s->N_eff, _s->R_eff, _s->p_bound, _s->P_rep, _s->acf1,
+    _s->mu_upper, _s->tau_w, _s->N_eff, _s->tau_runs_needed,
+    _s->R_eff, _s->p_bound, _s->P_rep, _s->acf1,
     (_s->flags & HET_ST_KS_UNDERPOWERED) ? "underpowered"
       : (_s->ks_pass ? "pass" : "SPLIT"),
     _s->ks_D, _s->ks_Dcrit, _s->ks_split_window,
@@ -4010,15 +4122,39 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
         "  within-run correlation: tau NOT MEASURED -> each run counts as ONE "
         "trial (N_eff = 1).  That is B7's maximally conservative reading, kept "
         "because an unmeasured tau must never buy a tighter bound.\n");
+    else if (_s->flags & HET_ST_TAU_UNRESOLVED)
+      fprintf(_ch,
+        "  within-run correlation: tau_w = %.2f window(s), but tau IS NOT RESOLVED "
+        "-- the pooled control stream is only %d sample(s) long and an estimate of "
+        "tau needs about %.0fx tau (= %.0f) behind it before it can be trusted.  "
+        "N_eff FALLS BACK TO 1 (B7's one-bit-per-run reading): a tau we could not "
+        "measure must never buy a tighter bound, exactly as a KS test that could "
+        "not run must never unlock P_rep.\n"
+        "  NOTE the direction: this estimator (Geyer initial-positive-sequence) "
+        "UNDER-reads tau on a stream too short for it -- a spurious non-positive "
+        "pair truncates the sum early -- so the number above is a FLOOR, it is NOT "
+        "at the %d-window ceiling, and believing it would have OVER-credited N_eff "
+        "and reported a bound TIGHTER THAN THE TRUTH.\n"
+        "  THIS IS NOT A FAILURE AND NOT A VETO -- it is a PRICE, and the price is "
+        "RUNS: the criterion is on the POOLED count (usable runs x %d windows), so "
+        "it relaxes on its own.  Re-run this test with >= %d usable run(s) (it has "
+        "%d) and N_eff becomes claimable.  Grow R, NOT N: extra iterations only add "
+        "correlated frames inside the same alignment windows, while a fresh run adds "
+        "a fresh phase/seed/thermal draw (Q3 F4).\n",
+        _s->tau_w, _s->win_samples, (double)HET_TAU_MIN_SAMPLES,
+        (double)HET_TAU_MIN_SAMPLES * _s->tau_w, (int)HET_NWIN, (int)HET_NWIN,
+        _s->tau_runs_needed, _s->R_usable);
     else if (_s->flags & HET_ST_TAU_AT_CAP)
       fprintf(_ch,
         "  within-run correlation: tau_w = %.1f window(s) -- AT THE RESOLUTION "
-        "CEILING (%d windows/run).  The alignment regime outlives the run at "
-        "this window size, so one run IS one independent draw (N_eff = 1): "
-        "B7's one-bit-per-run answer was right on this channel.  HET_NWIN is a "
-        "SWEPT knob -- rebuild with a finer resolution to probe whether the "
-        "regime resolves.\n",
-        _s->tau_w, (int)HET_NWIN);
+        "CEILING (%d windows/run), and RESOLVED there (%d pooled samples >= %.0fx "
+        "tau).  The alignment regime outlives the run at this window size, so one "
+        "run IS one independent draw (N_eff = 1): B7's one-bit-per-run answer was "
+        "right on this channel.  The remedy here is NOT more runs (this reading is "
+        "already resolved) -- HET_NWIN is a SWEPT knob, so rebuild with a FINER "
+        "resolution to probe whether the regime resolves.  (Contrast "
+        "TAU_UNRESOLVED, whose remedy IS more runs.)\n",
+        _s->tau_w, (int)HET_NWIN, _s->win_samples, (double)HET_TAU_MIN_SAMPLES);
     else
       fprintf(_ch,
         "  within-run correlation: tau_w = %.2f window(s) (Geyer "
@@ -4274,6 +4410,24 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
  * so stopping when it first reaches p_goal reports a bound that holds at that
  * fixed sample size.  (Kirkham's caution targets tuning-parameter selection --
  * that is B8's problem, and B8 must use the EFFECTIVE sample count in its CI.)
+ *
+ * B7c -- WHAT AN UNRESOLVED tau DOES HERE, AND WHY IT IS THE POINT.  This is where
+ * an over-credited N_eff would actually have SPENT the error: a tau under-read by
+ * the estimator inflates N_eff, shrinks p_bound, and the row hits p_goal and STOPS
+ * EARLY -- the campaign banks a bound it never earned and moves the GH200 hours
+ * somewhere else.  With the guard, an unresolved tau scores N_eff = 1, p_bound is
+ * B7's (wider) number, the goal is NOT met, and the row KEEPS RUNNING.  So the
+ * scheduler needs no special case: HET_ST_TAU_UNRESOLVED is
+ *   - never a STOP: it is not a failure, and nothing here branches on it;
+ *   - never a VETO: a BOUND-MET earned while it is set was earned on the
+ *     CONSERVATIVE (N_eff = 1) reading, so it is honest and must stand;
+ *   - self-clearing: the criterion is on the POOLED count (usable runs x HET_NWIN),
+ *     and HET_ADAPTIVE re-runs het_stats_compute() after every run, so nwin grows
+ *     as the invocation proceeds and the guard can lift itself mid-run.
+ * The one thing it must NOT be is silent: st.tau_runs_needed prices it in runs, and
+ * both het_stats_line() (tau_need=) and het_stats_print() report it, so an operator
+ * (and hetlitmus/campaign.py) can see that this row's N_eff is unclaimable at the
+ * run count it was given -- and exactly what it would cost to claim it.
  *
  * p_goal <= 0 means "no bound target": bound rows then run to budget.  There is
  * NO default p_goal baked in here -- a stopping target is a campaign decision,

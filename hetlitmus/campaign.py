@@ -142,6 +142,19 @@ def fnum(kv, key, dflt=0.0):
         return dflt
 
 
+# het_verdict.h: HET_ST_TAU_UNRESOLVED (1u << 14) -- tau was not resolved by this
+# invocation's pooled stream, so N_eff fell back to 1 (B7's reading).
+HET_ST_TAU_UNRESOLVED = 1 << 14
+
+
+def flags(kv):
+    """The HetStats line carries flags=0x<hex>."""
+    try:
+        return int(kv.get("flags", "0"), 16)
+    except ValueError:
+        return 0
+
+
 class TestState(object):
     def __init__(self, name, oclass):
         self.name, self.oclass = name, oclass
@@ -153,6 +166,12 @@ class TestState(object):
         self.mu_upper_max = 0.0
         self.nwin = 0
         self.tau_w = self.N_eff = -1.0   # last measured (reporting only)
+        # B7c: an invocation whose tau was NOT RESOLVED scored N_eff = 1 (B7's
+        # reading).  That is not an error and not a dead end -- it is a PRICE, and
+        # tau_need is the price in runs.  Carried so the campaign can SAY which rows
+        # bought no dividend and what it would cost to buy one.
+        self.tau_unresolved = 0          # invocations whose tau was unresolved
+        self.tau_need_max = 0            # ... and the largest run count they wanted
         self.stop = ""
         self.note = ""
 
@@ -188,6 +207,15 @@ class TestState(object):
         if fnum(kv, "tau_w", -1.0) > 0.0:
             self.tau_w = fnum(kv, "tau_w")
             self.N_eff = fnum(kv, "N_eff", -1.0)
+        # B7c.  KEEP GOING, do not give up: an unresolved tau scored N_eff = 1, so this
+        # invocation's R_eff is B7's conservative number, the pooled bound is WIDER, and
+        # the row therefore keeps running of its own accord.  It must never be treated
+        # as an ERROR (that would de-schedule a test for being honest), and a BOUND-MET
+        # it can still earn was earned on the conservative reading, so it stands.  All
+        # the campaign owes the operator is the PRICE, in runs.
+        if flags(kv) & HET_ST_TAU_UNRESOLVED:
+            self.tau_unresolved += 1
+            self.tau_need_max = max(self.tau_need_max, int(fnum(kv, "tau_need", 0)))
 
     def decide(self, p_goal, budget):
         if self.stop:
@@ -227,7 +255,7 @@ def load_state(path):
 def save_state(path, states):
     cols = ["test", "class", "stop", "invocations", "runs", "usable", "k", "k_eff",
             "k_runs", "R_eff", "mu_upper_max", "pooled_bound", "nwin", "tau_w",
-            "N_eff", "note"]
+            "N_eff", "tau_unresolved", "tau_need", "note"]
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(cols)
@@ -235,7 +263,8 @@ def save_state(path, states):
             w.writerow([s.name, s.oclass, s.stop, s.invocations, s.runs, s.usable,
                         s.k, s.k_eff, s.k_runs, "%.6g" % s.R_eff,
                         "%.6g" % s.mu_upper_max, "%.6g" % s.pooled_bound(),
-                        s.nwin, "%.4g" % s.tau_w, "%.4g" % s.N_eff, s.note])
+                        s.nwin, "%.4g" % s.tau_w, "%.4g" % s.N_eff,
+                        s.tau_unresolved, s.tau_need_max, s.note])
 
 
 def main():
@@ -336,9 +365,12 @@ def main():
                 break
         b = st.pooled_bound()
         print("done  %-11s %-28s %-9s inv=%d runs=%d k=%d k_eff=%d k_runs=%d "
-              "R_eff=%.4g bound=%s%s"
+              "R_eff=%.4g bound=%s%s%s"
               % (st.oclass, t, st.stop, st.invocations, st.runs, st.k, st.k_eff,
                  st.k_runs, st.R_eff, ("%.4g" % b) if b >= 0 else "-",
+                 ("  tau-UNRESOLVED in %d/%d inv (needs >=%d runs/inv)"
+                  % (st.tau_unresolved, st.invocations, st.tau_need_max))
+                 if st.tau_unresolved else "",
                  ("  ** " + st.note + " **") if st.stop == "CONFIRMED" else ""))
         if st.stop == "ERROR":
             errors += 1
@@ -352,6 +384,28 @@ def main():
     print("\ncampaign: %d Allowed row(s) OBSERVED (the p_min candidate population "
           "-- derive HET_P_MIN from their per-effective-sample rates; it is NOT "
           "set automatically)." % len(fired))
+
+    # B7c: THE PRICE OF THE UNCLAIMED DIVIDEND.  These rows are not failures and
+    # their bounds are not wrong -- they are B7's (conservative) bounds, because the
+    # run count they were given could not resolve their tau.  Surfaced, never
+    # auto-applied: raising the run count is a campaign decision that spends GH200
+    # hours, exactly like --p-goal and HET_P_MIN.
+    unres = [s for s in states if s.tau_unresolved]
+    if unres:
+        need = max(s.tau_need_max for s in unres)
+        print("campaign: %d test(s) ended with tau UNRESOLVED -- their N_eff could "
+              "NOT be claimed, so they report B7's conservative (wider) bound.  This "
+              "is a PRICE, not a failure: the criterion is on the POOLED window count "
+              "(usable runs x HET_NWIN), so it relaxes with RUNS.  The hungriest row "
+              "wants >= %d usable run(s) per invocation; re-run those tests with a "
+              "larger NUMBER_OF_RUN / --budget-runs to buy the dividend.  (Grow R, "
+              "NOT N: extra iterations only add correlated frames inside the same "
+              "alignment windows.)" % (len(unres), need))
+        for s in unres:
+            print("            %-28s %-11s tau_w=%.4g  needs >=%d runs/inv "
+                  "(had %d over %d invocation(s))"
+                  % (s.name, s.oclass, s.tau_w, s.tau_need_max,
+                     s.runs // max(s.invocations, 1), s.invocations))
     if errors:
         print("campaign: %d test(s) ERRORED -- their rows are not results." % errors)
     if confirmed:

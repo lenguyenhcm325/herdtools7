@@ -82,6 +82,34 @@ every harness, not a copy free to drift -- and drives it, in four phases:
       B7's run-level number EXACTLY -- a correct implementation contains B7 as its
       conservative special case.
 
+  B7c -- and what B7b still got wrong.  B7b clamped tau in the directions it could
+  SEE (exhaustion -> cap, raw tau < 1 -> 1) and then TRUSTED the number in between.
+  But the ESTIMATOR is not one-directional.  Geyer IPS truncates at the first
+  non-positive pair, and on a stream too short for its own tau a SPURIOUS
+  non-positive pair arrives early: the sum is cut off and tau comes back far below
+  BOTH the truth and the HET_NWIN ceiling -- so TAU_AT_CAP never fires, nothing is
+  flagged, and the under-read tau OVER-CREDITS N_eff and reports a false-negative
+  bound TIGHTER THAN THE TRUTH.  Measured on the shipped header at the shipped
+  configuration (R = 10, HET_NWIN = 128): true tau 181, estimated 54, N_eff credited
+  2.4 against an honest 1.0.  Same bug as the KS gate that "passed" without running,
+  one field over -- and this one runs in the OVERCLAIM direction.
+    * a fixture note that IS the finding: the bare AR(1) of PHASE 1 CANNOT SHOW THIS.
+      Noiseless, it never decorrelates in view, the estimator exhausts, and the cap
+      correctly fires.  The bug needs the COUNTING NOISE a real control channel
+      carries, so PHASE 2 adds a Cox fixture (AR(1) latent rate + Poisson counts)
+      with its own exact closed form, tau = 1 + 2*lam*rho/(1-rho);
+    * HET_TAU_MIN_SAMPLES (= 50) imports the emcee/Stan reliability threshold
+      ("you probably shouldn't trust any estimate of tau unless you have more than
+      F x tau samples for some F >= 50"), NOT emcee's bias DIRECTION -- theirs is
+      Sokal windowing and errs the other way.  The threshold transfers between
+      estimators; the direction does not;
+    * the guard is a PRICE, not a veto: the criterion is on the POOLED count
+      (usable runs x HET_NWIN), so it relaxes as R grows, and het_tau_runs_needed()
+      quotes the cost in runs.  Both branches are pinned REACHABLE on correlated
+      fixtures -- fire (N_eff -> 1, containment == B7 exactly) and stay silent
+      (N_eff claimed) -- because a guard that always fires would silently revert B7b
+      to B7, which is as dead as one that never fires.
+
 Usage:  statscheck.py [-q]          run the gate
         statscheck.py --bite        prove the gate FAILS when the mechanism breaks
 """
@@ -112,6 +140,7 @@ KS_C05 = 1.358
 NWIN = 128                  # must match HET_NWIN (raised 32 -> 128 by B7b; swept)
 THETA_D = 2                 # must match HET_THETA_DISTINCT
 TAU_HOT = 30                # must match HET_TAU_HOT
+TAU_MIN_SAMPLES = 50.0      # must match HET_TAU_MIN_SAMPLES (B7c; emcee's tol)
 
 TOL = 1e-9
 
@@ -126,6 +155,13 @@ AR1_BANDS = [
     (0.90,  19.00,   13.00, 25.00),
     (0.99, 199.00,  140.00, 280.00),
 ]
+
+# B7c -- THE RELIABILITY BAND.  At the SHIPPED configuration (R = 10 runs x NWIN = 128
+# windows) the pooled stream is 1,280 samples, so the 50*tau criterion resolves tau up
+# to 1280/50 = 25.6 and no further.  This number is what makes TAU_UNRESOLVED an
+# actionable signal rather than a veto: it is not a property of the channel, it is a
+# property of HOW MANY RUNS WE DID, and it relaxes as R grows (R=100 -> tau <= 256).
+RESOLVABLE_TAU_AT_R10 = 10 * NWIN / TAU_MIN_SAMPLES     # 25.6
 
 
 # ---------------------------------------------------------------------------
@@ -335,6 +371,44 @@ def ramp_cells(nrun=10):
     return [[5 * (r + 1)] * NWIN for r in range(nrun)]
 
 
+def cox_cells(rng, nrun=10, rho=0.99, mu=10.0, s=10.0):
+    """B7c -- THE FIXTURE THAT EXPOSES THE OVERCLAIM: a Cox process (doubly-stochastic
+    Poisson).  A latent AR(1) RATE that drifts, sampled by COUNTING -- which is what a
+    control stream physically IS, and the crucial difference from the bare AR(1) of
+    PHASE 1.  A smooth AR(1) read through 128 windows never decorrelates in view, so
+    het_tau_ips exhausts, saturates at the cap, and TAU_AT_CAP correctly fires: no bug.
+    Add the COUNTING NOISE that a real control channel carries and the Geyer sum meets
+    a SPURIOUS non-positive pair early, truncates, and returns a tau far BELOW both the
+    truth and the cap -- so TAU_AT_CAP never fires, nothing is flagged, and the
+    under-read tau OVER-CREDITS N_eff.  That is the B7c bug, and it is invisible to a
+    noiseless fixture.
+
+    It is still an EXACT instrument.  With latent ACF rho^k and Poisson counting on
+    top, the count series has
+        ACF_k = lam * rho^k,   lam = var_rate / (mean + var_rate)      (k >= 1)
+        tau   = 1 + 2 * lam * rho / (1 - rho)
+    -- the counting noise is white, so it lands entirely at lag 0 and simply scales the
+    ACF by lam.  No GPU: the estimator either recovers this or it does not."""
+    sd = math.sqrt(1.0 / 12.0) / math.sqrt(1.0 - rho * rho)   # sd of the latent AR(1)
+    out = []
+    for _ in range(nrun):
+        x, w = 0.0, []
+        for _i in range(200):                      # burn-in to stationarity
+            x = rho * x + (rng.u() - 0.5)
+        for _i in range(NWIN):
+            x = rho * x + (rng.u() - 0.5)
+            rate = mu + s * x / sd
+            w.append(_poisson(rng, rate if rate > 0.01 else 0.01))
+        out.append(w)
+    return out
+
+
+def cox_tau(rho, mu=10.0, s=10.0):
+    """The closed form the fixture above is pinned against."""
+    lam = (s * s) / (mu + s * s)
+    return 1.0 + 2.0 * lam * rho / (1.0 - rho)
+
+
 def negacf_cells(rng, nrun=10, rho=-0.6):
     """B7b: an ANTI-correlated count stream -- AR(1) with rho < 0, rounded to
     counts.  True tau = (1+rho)/(1-rho) = 0.25 < 1: the floor must clamp it to 1
@@ -363,6 +437,28 @@ FLAT_CELLS = [[10] * NWIN for _ in range(10)]     # F = 0: must clamp UP to Pois
 ZERO_CELLS = [[0] * NWIN for _ in range(10)]
 RAMP_CELLS = ramp_cells()
 NEGACF_CELLS = negacf_cells(_R)
+
+# B7c -- THE TWO SIDES OF THE RELIABILITY THRESHOLD, both on CORRELATED count streams
+# with an exact closed-form tau.  A guard that always fires is as useless as one that
+# never does, so BOTH must be reachable at the SHIPPED R = 10:
+#   COX_SLOW  rho=0.99 -> tau_true 181, estimated ~54: needs 50*54 = 2,690 samples,
+#             has 1,280  -> UNRESOLVED.  Pre-B7c this credited N_eff = 2.4 against an
+#             honest 1.0 -- a 2.4x over-credit that NOTHING flagged, because the
+#             under-read tau (54) sits well below the 128 cap.
+#   COX_FAST  rho=0.90 -> tau_true 17.4, estimated ~10: needs 513, has 1,280
+#             -> RESOLVED, and N_eff ~ 12.5 is CLAIMED.  This is the case that proves
+#             B7c did not just revert B7b to B7.
+COX_SLOW_RHO, COX_FAST_RHO = 0.99, 0.90
+COX_SLOW_CELLS = cox_cells(_Rng(20260714), 10, COX_SLOW_RHO)
+COX_FAST_CELLS = cox_cells(_Rng(20260714), 10, COX_FAST_RHO)
+# TAU AT THE CAP, RESOLVED.  The 50*tau criterion is on the POOLED count, so a tau at
+# the 128-window ceiling needs 50*128 = 6,400 samples = 50 usable runs before it may be
+# BELIEVED to be at the ceiling.  At R = 10 the honest reading of a ramp is "I cannot
+# resolve this" (UNRESOLVED), not "the regime outlives the run" (AT_CAP) -- so the
+# at-cap CASE runs 64 cells.  This is not fixture-tuning: it is the guard's own
+# semantics.  The two flags prescribe DIFFERENT remedies (AT_CAP -> raise HET_NWIN;
+# UNRESOLVED -> raise R), and confusing them would spend GH200 hours on the wrong knob.
+RAMP_CELLS_RESOLVED = ramp_cells(64)
 # 100 runs of the same Poisson channel.  The bound MUST tighten with R -- if it does
 # not, R_eff is not in the formula and the "bound" is a constant wearing a fraction.
 POISSON_CELLS_100 = [poisson_stream(_R) for _ in range(100)]
@@ -460,10 +556,43 @@ case("never-underdispersed-clamps-to-poisson", stream(FLAT_CELLS),
 # case.  (The across-run spread also blows up F_cell here, so the bound goes
 # vacuous -- which keeps BOUND_VACUOUS reachable now that the bursty case no
 # longer is.)
-case("never-tau-at-cap-is-B7-exactly", stream(RAMP_CELLS),
+#
+# B7c MOVED THIS FROM 10 CELLS TO 64.  Claiming "the regime outlives the run" is
+# itself a claim ABOUT tau, and it needs the same 50*tau evidence as any other: a
+# tau at the 128-window ceiling requires 50*128 = 6,400 pooled samples = 50 usable
+# runs.  At R = 10 (1,280 samples) the honest answer is TAU_UNRESOLVED, not
+# TAU_AT_CAP -- and if this case had been left at 10, TAU_AT_CAP would have become
+# UNREACHABLE at every R the campaign actually runs, i.e. a diagnostic that never
+# fires.  The two flags are NOT interchangeable: AT_CAP says "raise HET_NWIN",
+# UNRESOLVED says "raise R".
+case("never-tau-at-cap-is-B7-exactly", stream(RAMP_CELLS_RESOLVED),
      obs="Never", flags_any=["TAU_AT_CAP", "BOUND_VACUOUS"],
-     flags_none=["FANO_UNMEASURED", "TAU_UNMEASURED"],
-     tau_w=float(NWIN), N_eff=1.0)
+     flags_none=["FANO_UNMEASURED", "TAU_UNMEASURED", "TAU_UNRESOLVED"],
+     tau_w=float(NWIN), N_eff=1.0, tau_need=int(TAU_MIN_SAMPLES))
+
+# --- B7c: THE RELIABILITY GUARD, BOTH DIRECTIONS ----------------------------
+# THE OVERCLAIM CASE.  A slow-drifting control rate sampled by counting (Cox): the
+# true tau is 181, but the Geyer sum meets a spurious non-positive pair early,
+# truncates, and returns ~54 -- BELOW the 128 cap, so TAU_AT_CAP does NOT fire and
+# B7b credited N_eff = 2.4 where the honest answer is 1.0.  A 2.4x over-credit makes
+# the false-negative bound 2.4x TIGHTER THAN THE TRUTH, and it bites hardest in
+# exactly the regime we most expect on real C2C (slow skew drift -- "one run is one
+# alignment regime"), which is precisely where B7's conservative reading was RIGHT.
+# 1,280 pooled samples cannot resolve a tau of 54 (it needs 50*54 = 2,690), so the
+# guard must FIRE, N_eff must fall back to 1, and the bound must be B7's EXACTLY.
+case("never-tau-unresolved-falls-back-to-B7", stream(COX_SLOW_CELLS),
+     obs="Never", flags_any=["TAU_UNRESOLVED"],
+     flags_none=["FANO_UNMEASURED", "TAU_UNMEASURED", "TAU_AT_CAP"],
+     N_eff=1.0)
+
+# THE CASE THAT PROVES B7c IS NOT A SIXTH CONSTANT.  A guard that always fires would
+# silently revert B7b to B7 and quietly discard the dividend the whole task exists to
+# collect.  Same channel, same counting noise, FASTER decorrelation: tau_true = 17.4,
+# estimated ~10, and 1,280 samples resolve it comfortably (it needs 513).  The guard
+# must stay SILENT and N_eff (~12.5) must be CLAIMED.
+case("never-tau-resolved-still-claims-Neff", stream(COX_FAST_CELLS),
+     obs="Never", flags_none=["FANO_UNMEASURED", "TAU_UNMEASURED", "TAU_AT_CAP",
+                              "TAU_UNRESOLVED"])
 
 # THE FLOOR / CEILING CLAMP -- an ANTI-correlated stream has raw tau < 1, which
 # would credit MORE independent samples than the stream has windows.  The clamp
@@ -698,11 +827,21 @@ def py_reference(cells_):
     # B7b: tau on the same stream's temporal axis; N_eff = NWIN/tau in [1, NWIN].
     # Unmeasured (or a dead stream) leaves N_eff = 1: each run is one trial, the
     # B7 reading -- the conservative special case a correct implementation contains.
-    tau_w, N_eff = -1.0, 1.0
+    #
+    # B7c: ... and a tau that the stream is TOO SHORT TO RESOLVE leaves N_eff = 1 too.
+    # The criterion (Foreman-Mackey: don't trust tau without >= 50*tau samples) is
+    # applied to the POOLED sample count, so it relaxes as runs accumulate.  Note
+    # tau_w is still REPORTED when unresolved -- you may look at the estimate, you
+    # just may not SPEND it.
+    tau_w, N_eff, tau_need, unresolved = -1.0, 1.0, 0, False
     if not unmeasured:
         tau_w = py_tau_ips(win, NWIN, mean)
         if tau_w > 0.0:
-            N_eff = min(max(NWIN / tau_w, 1.0), float(NWIN))
+            tau_need = int(math.ceil(TAU_MIN_SAMPLES * tau_w / NWIN))
+            if len(win) < TAU_MIN_SAMPLES * tau_w:
+                unresolved = True                 # N_eff stays 1: B7's reading
+            else:
+                N_eff = min(max(NWIN / tau_w, 1.0), float(NWIN))
 
     n_early = max(1, (NWIN * 20) // 100)
     n_late = max(1, (NWIN * 10) // 100)
@@ -737,6 +876,7 @@ def py_reference(cells_):
     return dict(obs=obs, k=k, k_eff=k_eff, k_runs=len(runs), n_degen=n_degen,
                 R_usable=R_usable, F_win=F_win, F_cell=F_cell, r_hat=r_hat,
                 mu_upper=mu_up, tau_w=tau_w, N_eff=N_eff, R_eff=R_eff,
+                tau_need=tau_need, unresolved=unresolved,
                 p_bound=p_bound, P_rep=P_rep,
                 ks=("underpowered" if ks < 0 else ("pass" if ks else "SPLIT")),
                 ks_D=D, tier=tier, unmeasured=unmeasured)
@@ -752,14 +892,14 @@ C_MAIN = r"""
 static void run_case(const char *name, const het_obs_record *recs, int n) {
   het_stats_t st;
   het_stats_compute(recs, n, &st);
-  printf("CASE|%s|%s|%d|%d|%d|%d|%d|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%s|%.12g|%s|0x%x\n",
+  printf("CASE|%s|%s|%d|%d|%d|%d|%d|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%s|%.12g|%s|%d|0x%x\n",
          name, het_obs_class_name(st.obs), st.k, st.k_eff, st.k_runs, st.n_degen,
          st.R_usable, st.F_win, st.F_cell,
          (st.r_hat >= HET_R_POISSON) ? INFINITY : st.r_hat,
          st.mu_upper, st.tau_w, st.N_eff, st.R_eff, st.p_bound, st.P_rep,
          (st.flags & HET_ST_KS_UNDERPOWERED) ? "underpowered"
            : (st.ks_pass ? "pass" : "SPLIT"),
-         st.ks_D, het_tier_name(st.tier), st.flags);
+         st.ks_D, het_tier_name(st.tier), st.tau_runs_needed, st.flags);
   printf("PRINT-BEGIN|%s\n", name);
   het_stats_print(stdout, &st);
   printf("PRINT-END|%s\n", name);
@@ -831,9 +971,22 @@ static void ar1(void) {
   ar1_case("floor", -0.5, 128, 16);
 }
 
+/* PHASE 1c -- B7c: het_tau_runs_needed() is the PRICE the operator acts on ("run
+   this many runs and N_eff becomes claimable"), so it is pinned against the closed
+   form ceil(HET_TAU_MIN_SAMPLES * tau / HET_NWIN), not merely eyeballed.  A price
+   that is silently 0 would make TAU_UNRESOLVED a dead end instead of a signal. */
+static void need(void) {
+  static const double ts[] = { -1.0, 0.0, 1.0, 2.56, 25.6, 26.0, 54.0, 128.0 };
+  int i;
+  printf("MINSAMP|%.17g\n", (double)HET_TAU_MIN_SAMPLES);
+  for (i = 0; i < 8; i++)
+    printf("NEED|%.17g|%d\n", ts[i], het_tau_runs_needed(ts[i]));
+}
+
 int main(void) {
   anchors();
   ar1();
+  need();
 __CASES__
   return 0;
 }
@@ -908,7 +1061,7 @@ def close(a, b, tol=TOL):
 FLAGS = ["FANO_UNMEASURED", "NONSTATIONARY", "DEGEN_SIGHTING", "UNDERDISPERSED",
          "BURSTY", "NO_DECODE_CHANNEL", "WIN_DESYNC", "KS_UNDERPOWERED",
          "CELLS_TRUNCATED", "CTRL_IS_CANARY", "BOUND_VACUOUS", "SELF_CONTROL",
-         "TAU_UNMEASURED", "TAU_AT_CAP"]
+         "TAU_UNMEASURED", "TAU_AT_CAP", "TAU_UNRESOLVED"]
 FLAG_BIT = {f: 1 << i for i, f in enumerate(FLAGS)}
 
 
@@ -1024,6 +1177,37 @@ def phase1(lines, quiet):
         print("      TAU ceiling saturates at wlen; floor clamps to 1 "
               "(both one-directional)")
 
+    # --- B7c: HET_TAU_MIN_SAMPLES, and the PRICE function.  TAU_UNRESOLVED is only a
+    # signal if it comes with a number the operator can act on; a price that silently
+    # returns 0 turns the guard into a dead end.
+    for l in lines:
+        if l.startswith("MINSAMP|"):
+            got_ms = float(l.split("|")[1])
+            if got_ms != TAU_MIN_SAMPLES:
+                print("  *** HET_TAU_MIN_SAMPLES is %g, statscheck assumes %g.  The "
+                      "F >= 50 threshold is the emcee/Stan rule of thumb; moving it "
+                      "silently changes what may be CLAIMED." % (got_ms, TAU_MIN_SAMPLES))
+                bad += 1
+            elif not quiet:
+                print("      HET_TAU_MIN_SAMPLES = %g (Foreman-Mackey: don't trust tau "
+                      "without >= 50*tau samples); at R=10 that resolves tau <= %.1f"
+                      % (got_ms, RESOLVABLE_TAU_AT_R10))
+    for l in lines:
+        if not l.startswith("NEED|"):
+            continue
+        _, t, n = l.split("|")
+        t, n = float(t), int(n)
+        want = 0 if not (t > 0.0) else int(math.ceil(TAU_MIN_SAMPLES * t / NWIN))
+        if n != want:
+            print("  *** het_tau_runs_needed(%g) = %d, closed form ceil(%g*tau/%d) = %d"
+                  % (t, n, TAU_MIN_SAMPLES, NWIN, want))
+            bad += 1
+    if not quiet and not bad:
+        print("      the PRICE of an unresolved tau: tau=54 -> %d usable runs, "
+              "tau=128 (the cap) -> %d -- so TAU_UNRESOLVED is actionable, not a veto"
+              % (int(math.ceil(TAU_MIN_SAMPLES * 54.0 / NWIN)),
+                 int(math.ceil(TAU_MIN_SAMPLES * NWIN / NWIN))))
+
     if bad:
         print("\nESTIMATOR FAILED: %d problem(s).  A bound whose r->inf limit has "
               "drifted is the rule of three wearing a dispersion-aware hat." % bad)
@@ -1046,7 +1230,7 @@ def phase2(lines, quiet):
             f = l.split("|")
             (_, name, obs, k, k_eff, k_runs, n_degen, R_usable, F_win, F_cell,
              r_hat, mu_up, tau_w, N_eff, R_eff, p_bound, P_rep, ks, ks_D, tier,
-             flags) = f
+             tau_need, flags) = f
             got[name] = dict(
                 obs=obs, k=int(k), k_eff=int(k_eff), k_runs=int(k_runs),
                 n_degen=int(n_degen), R_usable=int(R_usable),
@@ -1054,7 +1238,7 @@ def phase2(lines, quiet):
                 mu_upper=float(mu_up), tau_w=float(tau_w), N_eff=float(N_eff),
                 R_eff=float(R_eff), p_bound=float(p_bound),
                 P_rep=float(P_rep), ks=ks, ks_D=float(ks_D), tier=tier,
-                flags=int(flags, 16))
+                tau_need=int(tau_need), flags=int(flags, 16))
             seen_obs.add(obs)
             seen_tier.add(tier)
             seen_ks.add(ks)
@@ -1097,9 +1281,31 @@ def phase2(lines, quiet):
             if not close(g["p_bound"], want_b):
                 errs.append("p_bound %.12g != mu_upper/(R*N_eff/DEFF) %.12g"
                             % (g["p_bound"], want_b))
-        for fld in ("obs", "k", "k_eff", "k_runs", "n_degen", "R_usable", "ks", "tier"):
+        for fld in ("obs", "k", "k_eff", "k_runs", "n_degen", "R_usable", "ks", "tier",
+                    "tau_need"):
             if g[fld] != ref[fld]:
                 errs.append("%s: C %s != py %s" % (fld, g[fld], ref[fld]))
+
+        # (a'') B7c THE EXACT INVARIANT.  The guard's criterion is nwin >= 50*tau on the
+        # POOLED count, and nwin = R_usable * NWIN, so it is EXACTLY equivalent to
+        # R_usable >= tau_runs_needed.  Pinning the equivalence means the flag and the
+        # price can never drift apart -- a price the flag disagrees with would send the
+        # operator to buy runs that change nothing.
+        if g["tau_w"] > 0.0:
+            fired = bool(g["flags"] & FLAG_BIT["TAU_UNRESOLVED"])
+            want_fired = g["R_usable"] < g["tau_need"]
+            if fired != want_fired:
+                errs.append("TAU_UNRESOLVED=%s but R_usable=%d vs tau_need=%d"
+                            % (fired, g["R_usable"], g["tau_need"]))
+            # AN UNRESOLVED TAU MUST BUY NOTHING.  This is the whole task in one line.
+            if fired and g["N_eff"] != 1.0:
+                errs.append("TAU_UNRESOLVED but N_eff = %.6g (must be exactly 1: an "
+                            "unmeasurable tau may not buy a tighter bound)" % g["N_eff"])
+            # ... and the two tau flags must never BOTH fire: they prescribe different
+            # remedies (AT_CAP -> raise HET_NWIN; UNRESOLVED -> raise R).
+            if fired and (g["flags"] & FLAG_BIT["TAU_AT_CAP"]):
+                errs.append("both TAU_UNRESOLVED and TAU_AT_CAP set -- they prescribe "
+                            "contradictory remedies")
 
         # (b) the case's own expectations
         w = c["want"]
@@ -1155,7 +1361,7 @@ def phase2(lines, quiet):
     need_flags = {"FANO_UNMEASURED", "NONSTATIONARY", "DEGEN_SIGHTING",
                   "UNDERDISPERSED", "BURSTY", "NO_DECODE_CHANNEL", "WIN_DESYNC",
                   "KS_UNDERPOWERED", "CTRL_IS_CANARY", "BOUND_VACUOUS",
-                  "SELF_CONTROL", "TAU_UNMEASURED", "TAU_AT_CAP"}
+                  "SELF_CONTROL", "TAU_UNMEASURED", "TAU_AT_CAP", "TAU_UNRESOLVED"}
     print("  diagnostic flags    : %d/%d  (%s)"
           % (len(seen_flags & need_flags), len(need_flags),
              ", ".join(sorted(seen_flags))))
@@ -1232,6 +1438,81 @@ def phase2(lines, quiet):
         elif not quiet:
             print("      containment: at-cap bound == B7's formula to 1e-9 "
                   "(the conservative special case is contained)")
+
+    # ---- B7c: THE GUARD, BOTH DIRECTIONS, AND ITS CONTAINMENT.
+    # A guard that never fires leaves the overclaim in place; a guard that ALWAYS
+    # fires silently reverts B7b to B7 and throws the dividend away.  Both fixtures
+    # are correlated count streams with an exact closed-form tau, so this is a
+    # measurement, not an assertion about a fixture we hand-picked.
+    gu = got.get("never-tau-unresolved-falls-back-to-B7", {})
+    gr = got.get("never-tau-resolved-still-claims-Neff", {})
+    print()
+    if gu and gr:
+        print("  the tau reliability guard:  UNRESOLVED tau_w = %.1f (needs %d runs, "
+              "has %d) -> N_eff = %.1f   |   RESOLVED tau_w = %.1f (needs %d) -> "
+              "N_eff = %.1f"
+              % (gu["tau_w"], gu["tau_need"], gu["R_usable"], gu["N_eff"],
+                 gr["tau_w"], gr["tau_need"], gr["N_eff"]))
+        # THE OVERCLAIM THIS TASK EXISTS TO KILL.  The unresolved fixture's tau is
+        # UNDER-read (54 against a true 181) and sits BELOW the 128 cap, so TAU_AT_CAP
+        # cannot catch it.  Without the guard it would credit N_eff = NWIN/54 = 2.4 and
+        # report a bound 2.4x TIGHTER THAN THE TRUTH.
+        naive = min(max(NWIN / gu["tau_w"], 1.0), float(NWIN)) if gu["tau_w"] > 0 else 1.0
+        if naive <= 1.0:
+            print("  *** THE UNRESOLVED FIXTURE IS NOT AN OVERCLAIM FIXTURE: believing "
+                  "its tau would have credited N_eff = %.2f, so this case cannot show "
+                  "that the guard prevents anything.  It has stopped being an "
+                  "instrument." % naive)
+            bad += 1
+        elif not quiet:
+            print("      without the guard this fixture would have credited N_eff = "
+                  "%.1f (tau under-read to %.1f, BELOW the %d cap -- so TAU_AT_CAP "
+                  "could never have caught it): a %.1fx tighter bound than the truth "
+                  "supports" % (naive, gu["tau_w"], NWIN, naive))
+        if gr["N_eff"] <= 1.0:
+            print("  *** THE GUARD IS A SIXTH CONSTANT: it fired on a tau the stream "
+                  "RESOLVES (%.1f, needing only %d runs of the %d it has), so N_eff is "
+                  "pinned at 1 and B7b has been silently reverted to B7 -- the dividend "
+                  "is thrown away on every channel."
+                  % (gr["tau_w"], gr["tau_need"], gr["R_usable"]))
+            bad += 1
+        # CONTAINMENT: when the guard fires, the bound must be B7's number EXACTLY.
+        # This is what makes B7c safe rather than a trade-off -- it can never be worse
+        # than the baseline it falls back to.
+        if gu.get("p_bound", -1.0) >= 0.0:
+            deff = gu["F_cell"] if gu["F_cell"] > 1.0 else 1.0
+            b7 = gu["mu_upper"] / (gu["R_usable"] / deff)
+            if not close(gu["p_bound"], b7):
+                print("  *** unresolved p_bound %.12g != B7's mu_upper/(R_usable/DEFF) "
+                      "%.12g -- the fallback is NOT B7, so the guard is a trade-off "
+                      "rather than a strict improvement" % (gu["p_bound"], b7))
+                bad += 1
+            elif not quiet:
+                print("      containment: the unresolved fallback == B7's formula to "
+                      "1e-9 (it can never be worse than the baseline)")
+
+    # THE PRINTOUT IS THE DELIVERABLE, NOT THE ENUM (the B6c lesson).  A flag nobody
+    # reads changes nothing: the human block must SAY that tau was not resolved, that
+    # N_eff fell back, and -- because this is a signal and not a veto -- what it would
+    # COST to resolve it.  Assert the sentences, not the bit.
+    for name, g in sorted(got.items()):
+        txt = blocks.get(name, "")
+        if g["flags"] & FLAG_BIT["TAU_UNRESOLVED"]:
+            for frag, why in (
+                    ("NOT RESOLVED", "it does not SAY tau is unresolved"),
+                    ("N_eff FALLS BACK TO 1", "it does not say N_eff fell back"),
+                    ("NOT A FAILURE AND NOT A VETO",
+                     "it does not say the guard is a signal, not a veto"),
+                    ("usable run(s)", "it does not PRICE the claim in runs")):
+                if frag not in txt:
+                    print("  *** %s sets TAU_UNRESOLVED but %s.  A flag the printout "
+                          "does not explain is a flag nobody acts on." % (name, why))
+                    bad += 1
+            if ("%d usable run" % g["tau_need"]) not in txt:
+                print("  *** %s does not print the runs needed (%d) to resolve its tau "
+                      "-- the operator cannot act on a price that is not quoted"
+                      % (name, g["tau_need"]))
+                bad += 1
 
     # No bound may EVER be printed when the dispersion was not measured.
     for name, g in sorted(got.items()):
@@ -1590,11 +1871,12 @@ with open(os.path.join(d, "seeds.log"), "a") as fh:
 base = ("R=10 usable=10 degen=0 ctrl=canary win_n=1280 nwin=128 F_win=1.05 "
         "F_cell=1.02 r_hat=inf acf1=0.01 ks=pass ks_D=0.1 ks_Dcrit=0.2 "
         "ks_split=-1 N=100000 frames=100000 flags=0x0")
-NULL = "mu_upper=2.9957 tau_w=1.28 N_eff=100 R_eff=100 p_bound=0.029957 P_rep=-1"
+NULL = ("mu_upper=2.9957 tau_w=1.28 N_eff=100 tau_need=1 R_eff=100 "
+        "p_bound=0.029957 P_rep=-1")
 if test == "ALW-fires":
     k = 1 if inv >= 2 else 0
     print("HetStats %s oracle=Allowed obs=%s k=%d k_eff=%d k_runs=%d tier=none "
-          "mu_upper=0 tau_w=1.28 N_eff=100 R_eff=0 p_bound=-1 P_rep=-1 %s"
+          "mu_upper=0 tau_w=1.28 N_eff=100 tau_need=1 R_eff=0 p_bound=-1 P_rep=-1 %s"
           % (test, "Sometimes" if k else "Never", k, k, k, base))
 elif test == "ALW-cold":
     print("HetStats %s oracle=Allowed obs=Never k=0 k_eff=0 k_runs=0 tier=none "
@@ -1602,10 +1884,25 @@ elif test == "ALW-cold":
 elif test == "DIS-null":
     print("HetStats %s oracle=Disallowed obs=Never k=0 k_eff=0 k_runs=0 "
           "tier=none %s %s" % (test, NULL, base))
+elif test == "DIS-unres":
+    # B7c.  THE SAME NULL, THE SAME EFFORT -- but this channel's tau (53.8) needs 22
+    # usable runs and the invocation has 10, so it is UNRESOLVED: N_eff falls back to
+    # 1 and R_eff is 10, not 100.  THIS IS WHERE THE OVER-CREDIT WOULD HAVE SPENT THE
+    # ERROR.  Believing the under-read tau would give R_eff = 100, the pooled bound
+    # 2.9957/(100*i) crosses p_goal=0.01 at invocation 3, and the campaign would BANK
+    # A BOUND IT NEVER EARNED and move the GH200 hours elsewhere.  With the guard the
+    # pooled bound is 2.9957/(10*i), which never reaches 0.01 inside the budget -- so
+    # the row KEEPS RUNNING to BUDGET.  "Run more runs", not "give up", and emphatically
+    # not "stop early".
+    print("HetStats %s oracle=Disallowed obs=Never k=0 k_eff=0 k_runs=0 tier=none "
+          "mu_upper=2.9957 tau_w=53.8 N_eff=1 tau_need=22 R_eff=10 p_bound=0.29957 "
+          "P_rep=-1 R=10 usable=10 degen=0 ctrl=canary win_n=1280 nwin=128 F_win=1.05 "
+          "F_cell=1.02 r_hat=inf acf1=0.01 ks=pass ks_D=0.1 ks_Dcrit=0.2 ks_split=-1 "
+          "N=100000 frames=100000 flags=0x4000" % test)
 elif test == "DIS-fires":
     print("HetStats %s oracle=Disallowed obs=Sometimes k=1 k_eff=1 k_runs=1 "
-          "tier=MISMATCH-UNCORROBORATED mu_upper=0 tau_w=1.28 N_eff=100 R_eff=0 "
-          "p_bound=-1 P_rep=0.632 %s" % (test, base))
+          "tier=MISMATCH-UNCORROBORATED mu_upper=0 tau_w=1.28 N_eff=100 tau_need=1 "
+          "R_eff=0 p_bound=-1 P_rep=0.632 %s" % (test, base))
 elif test == "NOR-null":
     print("HetStats %s oracle=NO-ORACLE obs=Never k=0 k_eff=0 k_runs=0 "
           "tier=none %s %s" % (test, NULL, base))
@@ -1624,7 +1921,8 @@ def phase6_campaign(quiet):
     bad = 0
     try:
         corpus = os.path.join(tmp, "corpus")
-        tests = ["ALW-fires", "ALW-cold", "DIS-null", "DIS-fires", "NOR-null"]
+        tests = ["ALW-fires", "ALW-cold", "DIS-null", "DIS-unres", "DIS-fires",
+                 "NOR-null"]
         for t in tests:
             os.makedirs(os.path.join(corpus, t))
         cmap = os.path.join(tmp, "control-map.csv")
@@ -1632,6 +1930,7 @@ def phase6_campaign(quiet):
             fh.write("ALW-fires,Allowed,-,MP-cg-sys-relaxed\n"
                      "ALW-cold,Allowed,-,MP-cg-sys-relaxed\n"
                      "DIS-null,Disallowed,mu,MP-cg-sys-relaxed\n"
+                     "DIS-unres,Disallowed,mu,MP-cg-sys-relaxed\n"
                      "DIS-fires,Disallowed,mu,MP-cg-sys-relaxed\n"
                      "NOR-null,NO-ORACLE,-,MP-cg-sys-relaxed\n")
         stub = os.path.join(tmp, "stub.py")
@@ -1645,6 +1944,16 @@ def phase6_campaign(quiet):
              "--allowed-budget-runs", "30", "--seed0", "777", "--state", state],
             capture_output=True, text=True)
         out = r.stdout
+
+        # A CRASH EXITS 1 TOO.  The fixture set contains a CONFIRMED refutation, so the
+        # campaign is EXPECTED to exit 1 -- which means an unhandled exception produces
+        # the "right" exit code by accident and the rc check below passes for free.
+        # (That is not hypothetical: it happened while B7c was being written.)  A
+        # traceback is never a result.
+        if "Traceback" in r.stderr:
+            print("  *** the campaign CRASHED (its exit code 1 is indistinguishable "
+                  "from the expected CONFIRMED exit):\n%s" % r.stderr[-800:])
+            bad += 1
 
         # CONFIRMED is present in this fixture set, so the campaign must exit 1
         # (a recorded refutation demands a human, not a green build of the run).
@@ -1665,7 +1974,7 @@ def phase6_campaign(quiet):
 
         # LEVER 1 -- the schedule: the Allowed sweep runs FIRST (it is both the
         # cheap 6.5x cut and the p_min candidate population).
-        if order[:2] != ["ALW-cold", "ALW-fires"] or len(order) != 5:
+        if order[:2] != ["ALW-cold", "ALW-fires"] or len(order) != 6:
             print("  *** scheduling order %s -- the Allowed sweep must run first"
                   % order)
             bad += 1
@@ -1676,6 +1985,15 @@ def phase6_campaign(quiet):
             "ALW-cold": ("BUDGET", 3),
             # pooled bound 2.9957/(100*i) <= 0.01 first at i=3: EXACT arithmetic.
             "DIS-null": ("BOUND-MET", 3),
+            # B7c -- THE STOP THE OVER-CREDIT WOULD HAVE STOLEN.  Same null, same
+            # effort, but tau UNRESOLVED -> N_eff = 1 -> R_eff = 10/invocation, so the
+            # pooled bound is 2.9957/(10*i) and never reaches p_goal=0.01 inside the
+            # 100-run budget: the row runs to BUDGET (10 invocations).  Had the guard
+            # not fired, the under-read tau would have credited R_eff = 100, the bound
+            # would have crossed 0.01 at invocation 3 exactly like DIS-null, and the
+            # campaign would have BANKED A BOUND IT NEVER EARNED.  This pair of rows is
+            # the whole point of B7c, expressed in GH200 hours.
+            "DIS-unres": ("BUDGET", 10),
             # clean sightings pool to k_runs>=3 at invocation 3 -> CONFIRMED.
             "DIS-fires": ("CONFIRMED", 3),
             "NOR-null": ("BOUND-MET", 3),
@@ -1695,6 +2013,38 @@ def phase6_campaign(quiet):
         if "CONFIRMED refutation" not in out:
             print("  *** the CONFIRMED refutation is not called out in the summary")
             bad += 1
+
+        # B7c -- THE SCHEDULER MUST TREAT AN UNRESOLVED TAU AS A PRICE, NOT A FAILURE.
+        # Three things, all of which a naive wiring gets wrong:
+        #   (1) it must NOT be an ERROR (that would de-schedule a test for being honest);
+        #   (2) it must KEEP RUNNING -- asserted above by DIS-unres reaching BUDGET at
+        #       invocation 10 rather than banking BOUND-MET at 3 like DIS-null;
+        #   (3) the operator must be TOLD the price, in runs, or the "signal" is a veto.
+        gu = done.get("DIS-unres", {})
+        if gu.get("stop") == "ERROR":
+            print("  *** an UNRESOLVED tau was recorded as an ERROR.  It is not a "
+                  "failure -- it is a conservative (B7) bound plus a price in runs.")
+            bad += 1
+        if done.get("DIS-null", {}).get("stop") != "BOUND-MET" or gu.get("stop") != "BUDGET":
+            print("  *** DIS-null (tau resolved) and DIS-unres (tau UNRESOLVED) must "
+                  "diverge: the resolved row earns BOUND-MET, the unresolved row must "
+                  "NOT -- it keeps running.  Got %s / %s."
+                  % (done.get("DIS-null", {}).get("stop"), gu.get("stop")))
+            bad += 1
+        for frag, why in (
+                ("tau UNRESOLVED", "the campaign does not report which rows could not "
+                                   "claim their N_eff"),
+                ("PRICE, not a failure", "the campaign does not say an unresolved tau "
+                                         "is a price rather than a failure"),
+                ("22 usable run", "the campaign does not quote the runs needed")):
+            if frag not in out:
+                print("  *** %s -- an unclaimable dividend the operator cannot see is "
+                      "an unclaimable dividend forever." % why)
+                bad += 1
+        if not quiet:
+            print("      DIS-unres  tau UNRESOLVED -> N_eff not claimed -> keeps "
+                  "running to BUDGET (the early BOUND-MET the over-credit would have "
+                  "stolen); price surfaced as >=22 runs/inv")
 
         # Every invocation must carry a FRESH seed base (seed0 + i*stride) and the
         # adaptive knobs -- replayed seeds would double-count R_eff.
@@ -1918,6 +2268,42 @@ def bite():
                         "return HET_CAMPAIGN_STOP_CONFIRMED;",
                         "    if (st.k > 0) return HET_CAMPAIGN_STOP_CONFIRMED;"))
 
+        # ---- B7c: the tau RELIABILITY guard ------------------------------------
+        # (12) THE GUARD DELETED -- B7b restored, and with it the overclaim.  A tau
+        # the stream cannot resolve is believed anyway; because Geyer IPS UNDER-reads
+        # it (truncating at a spurious non-positive pair), the returned tau sits BELOW
+        # the HET_NWIN cap, TAU_AT_CAP does not fire, and N_eff is credited ~2.4x too
+        # high -- a false-negative bound 2.4x TIGHTER THAN THE TRUTH, with nothing
+        # flagged.  This is the bug the task exists to close, so it MUST fail.
+        ok &= _bite("the tau reliability guard deleted (an unresolvable tau is "
+                    "believed, and OVER-credits N_eff)", hdir,
+                    lambda s: s.replace(
+                        "      if ((double)nwin < HET_TAU_MIN_SAMPLES * st->tau_w) {",
+                        "      if (0) {"))
+
+        # (13) THE GUARD FORCED ALWAYS-ON -- the opposite failure, and just as dead.
+        # N_eff would be pinned at 1 on EVERY channel, silently reverting B7b to B7:
+        # the dividend is thrown away, the 1,500-30,000-run budgets come back, and
+        # every gate still passes because nothing is "wrong", only worthless.  A guard
+        # that always fires is as useless as one that never does.
+        ok &= _bite("the tau guard forced always-on (a sixth constant: B7b silently "
+                    "reverted to B7)", hdir,
+                    lambda s: s.replace(
+                        "      if ((double)nwin < HET_TAU_MIN_SAMPLES * st->tau_w) {",
+                        "      if (1) {"))
+
+        # (14) THE PRICE SILENCED.  The flag still fires and N_eff still falls back --
+        # the arithmetic is correct -- but tau_runs_needed returns 0, so the printout
+        # cannot tell the operator what it would COST to resolve tau.  TAU_UNRESOLVED
+        # then reads as a dead end ("give up") instead of what it is ("run more runs"),
+        # and the guard silently becomes a veto.  The enum is not the deliverable; the
+        # SENTENCE is (B6c).
+        ok &= _bite("the runs-needed price silenced (the signal becomes a veto)", hdir,
+                    lambda s: s.replace(
+                        "static int het_tau_runs_needed(double tau_w) {\n  double need;",
+                        "static int het_tau_runs_needed(double tau_w) {\n  double need;\n"
+                        "  if (tau_w > 0.0) return 0;"))
+
         # (5) THE WINDOW BUMP DELETED FROM THE PRODUCER.  het_win_of still exists and
         # the aggregate still computes -- but the sub-tallies never move, so every
         # dispersion number is fiction.  Only PHASE 3 can see this.
@@ -1966,11 +2352,13 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 11 injections were caught -- 4 against the B7")
+        print("BITE OK: all 14 injections were caught -- 4 against the B7")
         print("         ESTIMATOR/RULE, 5 against the B7b tau/N_eff/stop machinery,")
-        print("         1 against the PRODUCER (the sub-tallies), 1 against the")
-        print("         EMITTED CORPUS.  The gate is live both ways: it passes on the")
-        print("         shipped code and fails on every way of breaking it.")
+        print("         3 against the B7c reliability guard (deleted / always-on /")
+        print("         price silenced -- both directions AND the signal), 1 against")
+        print("         the PRODUCER (the sub-tallies), 1 against the EMITTED CORPUS.")
+        print("         The gate is live both ways: it passes on the shipped code and")
+        print("         fails on every way of breaking it.")
         return 0
     print("BITE FAILED: an injection slipped through -- this gate is decorative")
     return 1
