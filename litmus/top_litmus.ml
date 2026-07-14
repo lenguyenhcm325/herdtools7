@@ -1562,12 +1562,23 @@ static void gd_free_shared(void* _p){
   uint64_t observer_unique_count;
   int32_t skew_min, skew_max; double skew_mean, skew_stddev;
   uint64_t control_target_count;
+  /* B4-fix STRESS LIVENESS.  The stress layer is invisible to the L0
+     faithfulness gate by design, so its health has to be MEASURED at run time or
+     it is not known at all (it was inert for two commits and every gate stayed
+     green).  spin_rendezvous/spin_cap: how the window-opener's spins ended -- a
+     mostly-cap-released spin is a delay loop, not a rendezvous, and B8 tunes
+     HET_BARRIER_PCT against this ratio.  stress_truncated: stress lanes that hit
+     HET_STRESS_MAX_ROUNDS, i.e. stopped stressing while the test was still
+     running -- such a run's non-observations are NOT comparable with a stressed
+     run's, so B7 must treat a nonzero value as disqualifying, not cosmetic. */
+  uint64_t spin_rendezvous, spin_cap, stress_truncated;
 } het_obs_record;
 static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
   fprintf(_ch,
     "HetObs %s inst=%d run=%d conf=%d N=%llu frames=%llu target=%s%llu/%llu "
     "interleavings=%llu distinct_iters=%llu ws_via_obs=%llu obs_unique=%llu "
-    "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%llu\n",
+    "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%llu "
+    "spin=%llu/%llu stress_trunc=%llu\n",
     _r->test_name,_r->instance_id,_r->run_id,(int)_r->confidence,
     (unsigned long long)_r->N,(unsigned long long)_r->frames_examined,
     _r->exhaustive_valid ? "" : "NA:",
@@ -1578,7 +1589,10 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
     (unsigned long long)_r->ws_edges_via_observer,
     (unsigned long long)_r->observer_unique_count,
     _r->skew_min,_r->skew_max,_r->skew_mean,_r->skew_stddev,
-    (unsigned long long)_r->control_target_count);
+    (unsigned long long)_r->control_target_count,
+    (unsigned long long)_r->spin_rendezvous,
+    (unsigned long long)_r->spin_cap,
+    (unsigned long long)_r->stress_truncated);
 }
 |ocaml} ;
             (* _decode_value: a store tag -> the ORIGINAL value that write carried
@@ -1605,10 +1619,20 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                  @ ["int* barrier"]
                  (* B4: the stress layer's device-only objects.  DISJOINT from
                     every test location by construction, so they perturb the
-                    memory system without changing the tested behaviour set. *)
+                    memory system without changing the tested behaviour set.
+                    B4-fix: the two access PATTERNS are kernel ARGUMENTS, not
+                    -D constants baked into the device code.  Hand het_do_stress
+                    a compile-time pattern and nvcc folds its if-chain to the one
+                    live branch -- and the tuned default (3 = ld;ld, whose loads
+                    only feed a `break') is then provably side-effect-free, so the
+                    whole stress loop is DELETED (measured: 0 scratchpad ops in
+                    the emitted PTX).  Upstream is immune only because its pattern
+                    arrives through a runtime kernel_params pointer.  The -D knobs
+                    still drive them -- host-side, below. *)
                  @ ["uint32_t* _scratch" ; "uint32_t* _scratch_loc" ;
                     "uint32_t* _spin_bar" ; "uint32_t* _gpu_done" ;
-                    "uint32_t _seed"]) in
+                    "uint32_t* _stress_tally" ;
+                    "uint32_t _seed" ; "uint32_t _pre_pat" ; "uint32_t _mem_pat"]) in
             s (Printf.sprintf "__global__ void litmus_%s(%s) {\n" id kparams) ;
             (* B4: each lane draws from its OWN seeded Park-Miller stream, so the
                probabilistic stress toggles are decided device-side (the perpetual
@@ -1632,6 +1656,9 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                    which perturbs the very timing window the test probes.  Pin the
                    trip count to 1 so the PTX contains exactly the tested sequence per
                    iteration.  Do NOT remove (l0_tokens.sh het lane depends on it). *)
+                (* B4-fix: barriers TAKEN by this lane.  It indexes the spin's
+                   limit; see the window-opener block below. *)
+                s "    uint32_t _nb = 0;\n" ;
                 s "    #pragma unroll 1\n" ;
                 s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
                 (* B4 PRE-STRESS (cuda-litmus PRE_STRESS, litmus.cuh:336).  The
@@ -1639,15 +1666,20 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                    body: the disjoint stressing workgroups never touch the testing
                    thread's private hardware, so without this "these testing thread
                    hardware components may not be stressed" (Kirkham OOPSLA'20).
-                   Probabilistic per iteration, off the lane's own RNG stream.
-                   Runs INSIDE the loop because one perpetual iteration is what one
-                   upstream kernel launch was.  Its scratchpad accesses are plain
-                   (non-atomic, unordered) loads/stores on a device-only region, so
-                   they add no ordering edge to the test and do not appear in the
-                   PTX model-op stream the L0 faithfulness gate checks. *)
+                   Probabilistic per iteration, off the lane's own RNG stream (this
+                   toggle MAY stay per-lane: it feeds no shared counter, unlike the
+                   barrier below).  Runs INSIDE the loop because one perpetual
+                   iteration is what one upstream kernel launch was.  Its scratchpad
+                   accesses are plain (non-atomic, unordered) loads/stores on a
+                   device-only region, so they add no ordering edge to the test and
+                   do not appear in the PTX model-op stream the L0 faithfulness gate
+                   checks -- which is why they get their OWN gate
+                   (hetlitmus/verify/stresscheck.py): the pattern reaches
+                   het_do_stress as a RUNTIME argument (_pre_pat), because a
+                   compile-time one is dead-code-eliminated to nothing. *)
                 s (Printf.sprintf
                      "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n\
-                      \        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, HET_PRE_STRESS_PATTERN);\n") ;
+                      \        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat);\n") ;
                 (* B4 WINDOW-OPENER (cuda-litmus's `spin', Alglave's
                    thread-synchronisation incantation).  DEVICE scope, on a scratch
                    word that is not a test location: it aligns the GPU test lanes so
@@ -1658,16 +1690,32 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                    tested order and stalls (Srivastava 4.1).  ptxcheck pins the scope
                    to `gpu' so that regression cannot land silently.
 
-                   The limit is iteration-indexed because the loop is perpetual:
-                   upstream relaunches per iteration and so gets a fresh counter,
-                   but a counter that only grows would be satisfied from iteration 1
-                   onward and the barrier would silently stop barriering.  Each lane
-                   adds exactly 1 per iteration, so (_n+1)*lanes is reached only once
-                   every lane has entered iteration _n.  The 1024-spin cap inside
-                   het_spin still bounds the wait (GPUs give no cross-workgroup
-                   forward-progress guarantee). *)
-                s "      if (het_rng_pct(&_rng, HET_BARRIER_PCT))\n" ;
-                s "        het_spin(_spin_bar, (uint32_t)(_n + 1) * HET_SPIN_LANES);\n" ;
+                   ALL-OR-NONE, AND THE LIMIT COUNTS TAKEN BARRIERS (B4-fix).  The
+                   loop is perpetual, so the counter cannot be fresh per iteration
+                   (upstream relaunches, and so gets that for free); it grows, and
+                   the limit must grow with it.  The invariant that makes ANY such
+                   limit attainable is Alglave 4.3.4's: wait for "the number of
+                   threads PARTICIPATING in the test".  So the roll is drawn from a
+                   LANE-INDEPENDENT stream (keyed by the iteration, not the lane):
+                   every lane reaches the same verdict for iteration _n, so a barrier
+                   is taken by ALL the test lanes or by NONE, each contributes exactly
+                   one increment to it, and the counter hits _nb*HET_SPIN_LANES
+                   EXACTLY when the last lane arrives.
+
+                   Do NOT roll this from the lane's own stream with an
+                   iteration-indexed limit ((_n+1)*lanes): a lane then increments on
+                   only HET_BARRIER_PCT% of iterations while the limit rises every
+                   iteration, so the counter falls permanently behind, the limit is
+                   unreachable after the first skipped roll, and every spin burns the
+                   full 1024-spin cap instead of rendezvousing.  That was the shipped
+                   behaviour and it aligned nothing (99% cap-released in simulation).
+                   The het_spin tally + the HetObs `spin=' field exist so that this
+                   cannot silently return: they report rendezvous vs cap exits. *)
+                s "      het_rng_t _brng = het_rng_init(_seed ^ 0x9e3779b9u, (uint32_t)_n);\n" ;
+                s "      if (het_rng_pct(&_brng, HET_BARRIER_PCT)) {\n" ;
+                s "        _nb++;\n" ;
+                s "        het_spin(_spin_bar, _nb * HET_SPIN_LANES, _stress_tally);\n" ;
+                s "      }\n" ;
                 (* B3: tagged stores (mu per store node); loads unchanged, recorded
                    below.  Some(...) also widens the atomic_ref to uint64_t. *)
                 let st_ctr = ref 0 in
@@ -1727,10 +1775,15 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                nothing but hammer the scratchpad for as long as ANY tested lane is
                still looping.  This is cuda-litmus's testing-vs-stressing workgroup
                split (MC Mutants ASPLOS'23 section 4.1) and S&D's occupancy-scaled
-               stressing-thread count, and it is the whole reason the campaign can
-               observe anything: Alglave ASPLOS'15 Table 6 reports ZERO weak
-               behaviours for sb/lb in every column without the incantations, and
-               S&D went 0/1000 -> 102/1000 by adding stress.
+               stressing-thread count, and on NVIDIA silicon -- our GH200 target --
+               it is the whole reason the campaign can observe anything: "we did not
+               observe sb and lb on Titan without this incantation" (Alglave
+               ASPLOS'15 4.3.1), Table 6 showing sb/lb at 0 in every column without
+               memory stress; S&D went 0/1000 -> 102/1000 on a Tesla K20 by adding
+               it.  On AMD the same paper found weak behaviours WITHOUT stress (lb:
+               10959/100k with no incantations), so for the .hip render this layer
+               is a rate amplifier, not an on/off switch.  See het_stress.cuh's
+               VENDOR SPLIT note -- the unqualified claim is a Nvidia-only result.
 
                The termination condition is the adaptation the perpetual frame
                forces.  Upstream relaunches the kernel per test iteration, so its
@@ -1739,18 +1792,25 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                counter that each tested lane bumps on its way out.  The round cap
                is only a safety net so a stresser can never outlive a hung lane
                for ever (a silent hang is indistinguishable from a genuine
-               non-observation).
+               non-observation) -- and if it EVER fires it means stress stopped
+               while the test was still running, which is not comparable with a
+               stressed run, so it is tallied and the host says so.  A stress
+               window that silently stopped stressing is exactly the failure this
+               commit exists to end.
 
                Its ops are plain, unordered accesses on a device-only scratchpad
                that is disjoint from every test location: no ordering edge, and
-               nothing in the PTX model-op stream. *)
+               nothing in the PTX model-op stream (hence stresscheck.py). *)
             s "  if (blockIdx.x >= HET_TEST_BLOCKS) {\n" ;
-            s "    for (uint32_t _s = 0;\n\
+            s "    uint32_t _s = 0;\n" ;
+            s "    for (;\n\
                \         _s < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;\n\
                \         ++_s) {\n" ;
             s "      if (het_rng_pct(&_rng, HET_MEM_STRESS_PCT))\n" ;
-            s "        het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, HET_MEM_STRESS_PATTERN);\n" ;
+            s "        het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat);\n" ;
             s "    }\n" ;
+            s "    if (_s >= HET_STRESS_MAX_ROUNDS)\n" ;
+            s "      het_scratch_bump(&_stress_tally[HET_TALLY_TRUNC]);\n" ;
             s "  }\n" ;
             s "}\n\n" ;
             (* CPU pthread wrappers (arrive at barrier, then run the tagged body).
@@ -1879,11 +1939,21 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s "  if (_stressBlocks < 0) _stressBlocks = 0;\n" ;
             s "  int _grid = _testBlocks + _stressBlocks;\n" ;
             s "  if (_grid > _maxGrid) { fprintf(stderr, \"grid %d exceeds co-resident cap %d\\n\", _grid, _maxGrid); return 2; }\n" ;
+            (* B4-fix: the access patterns are LAUNCH ARGUMENTS (a compile-time
+               pattern is folded away and the stress loop dead-code-eliminated --
+               see the kernel-parameter note).  The -D knobs still choose them;
+               het_stress.cuh #errors on a value outside 0..3, which is how
+               upstream's silent "pattern 57 matches no branch" no-op is refused
+               here.  Printed with the geometry so a tuning log records what the
+               run actually stressed with. *)
+            s "  uint32_t _pre_pat = (uint32_t)HET_PRE_STRESS_PATTERN;\n" ;
+            s "  uint32_t _mem_pat = (uint32_t)HET_MEM_STRESS_PATTERN;\n" ;
             (* Report the realised stress population: the tuning task needs the
                per-test stress-lane count to tune against, and it is a runtime
                property of the device (SM count x resident blocks/SM). *)
-            s "  fprintf(stderr, \"HetLitmus: blockDim=%d grid=%d (test=%d stress=%d, co-resident cap=%d)\\n\",\n\
-               \          (int)HET_BLOCK_DIM, _grid, _testBlocks, _stressBlocks, _maxGrid);\n" ;
+            s "  fprintf(stderr, \"HetLitmus: blockDim=%d grid=%d (test=%d stress=%d, co-resident cap=%d) pre_pat=%u mem_pat=%u\\n\",\n\
+               \          (int)HET_BLOCK_DIM, _grid, _testBlocks, _stressBlocks, _maxGrid,\n\
+               \          _pre_pat, _mem_pat);\n" ;
             (* B4 stress objects: DEVICE memory (gd_dev_malloc), never
                gd_alloc_shared -- they are GPU-only and disjoint from every test
                location, which is exactly what makes the stress sound.  The
@@ -1896,6 +1966,12 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                  (dialect.gd_dev_malloc "_spin_bar" "sizeof(uint32_t)")) ;
             s (Printf.sprintf "  uint32_t *_gpu_done; %s\n"
                  (dialect.gd_dev_malloc "_gpu_done" "sizeof(uint32_t)")) ;
+            (* B4-fix: the stress-liveness tally (rendezvous / cap / truncation).
+               Device memory like the rest of the scaffolding. *)
+            s (Printf.sprintf "  uint32_t *_stress_tally; %s\n"
+                 (dialect.gd_dev_malloc "_stress_tally"
+                    "sizeof(uint32_t)*HET_TALLY_N")) ;
+            s "  uint32_t _stress_tally_h[HET_TALLY_N];\n" ;
             s "  uint32_t *_scratch_loc_h = (uint32_t*)malloc_check(sizeof(uint32_t)*_grid);\n" ;
             s "  outs_t* hist = NULL;\n" ;
             s "  for (int _run=0; _run<NUMBER_OF_RUN; ++_run) {\n" ;
@@ -1917,6 +1993,9 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                  (dialect.gd_dev_memset0 "_spin_bar" "sizeof(uint32_t)")) ;
             s (Printf.sprintf "    %s\n"
                  (dialect.gd_dev_memset0 "_gpu_done" "sizeof(uint32_t)")) ;
+            s (Printf.sprintf "    %s\n"
+                 (dialect.gd_dev_memset0 "_stress_tally"
+                    "sizeof(uint32_t)*HET_TALLY_N")) ;
             (* reset read buffers (all N entries are overwritten by the loop, but
                reset keeps unreached tail entries at the init marker 0). *)
             List.iter
@@ -1959,7 +2038,7 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                  @ List.map (fun l -> "&"^obsG l) obs_locs
                  @ ["&barrier"]
                  @ ["&_scratch" ; "&_scratch_loc" ; "&_spin_bar" ; "&_gpu_done" ;
-                    "&_seed"]) in
+                    "&_stress_tally" ; "&_seed" ; "&_pre_pat" ; "&_mem_pat"]) in
             s (Printf.sprintf "    void* _args[] = { %s };\n" args_addrs) ;
             s (Printf.sprintf
                  "    %s _e = %s((void*)litmus_%s, dim3(_grid), dim3(HET_BLOCK_DIM), _args, 0, 0);\n"
@@ -1976,6 +2055,35 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s (Printf.sprintf
                  "    if (_s != %s) { fprintf(stderr, \"sync: %%s\\n\", %s(_s)); return 2; }\n"
                  dialect.gd_success dialect.gd_errstr) ;
+            (* B4-fix: read back the stress-liveness tally and SAY what it says.
+               Everything in the stress layer is invisible to the L0 faithfulness
+               gate (it is scaffolding, not tested ops), so a stress layer that
+               has stopped working looks exactly like one that is working -- which
+               is what happened: two mechanisms shipped inert through five green
+               gates.  These counters are the only thing that can tell the
+               difference at run time.  Printed to stderr AND recorded in the
+               HetObs line, because B7 must be able to disqualify a run and B8
+               must be able to tune against it. *)
+            s (Printf.sprintf "    %s\n"
+                 (dialect.gd_memcpy_d2h "_stress_tally_h" "_stress_tally"
+                    "sizeof(uint32_t)*HET_TALLY_N")) ;
+            s "    {\n" ;
+            s "      unsigned long long _rdv = _stress_tally_h[HET_TALLY_RDV];\n" ;
+            s "      unsigned long long _cap = _stress_tally_h[HET_TALLY_CAP];\n" ;
+            s "      unsigned long long _spins = _rdv + _cap;\n" ;
+            s "      fprintf(stderr, \"HetLitmus stress: spins=%llu rendezvous=%llu cap=%llu (%.1f%% rendezvous)\\n\",\n\
+               \              _spins, _rdv, _cap, _spins ? 100.0*(double)_rdv/(double)_spins : 0.0);\n" ;
+            (* The window-opener's PURPOSE is the rendezvous; the 1024-spin cap is
+               a deadlock guard.  A spin population dominated by cap exits is a
+               fixed-length delay loop that aligns nothing -- say so rather than
+               let a tuned-looking HET_BARRIER_PCT hide it. *)
+            s "      if (_spins && _rdv * 2 < _spins)\n" ;
+            s "        fprintf(stderr, \"HetLitmus WARNING: the device-scope window-opener released on the 1024-spin DEADLOCK CAP in %.1f%% of spins -- it is aligning the GPU test lanes weakly or not at all (expect ~0%% cap on a healthy run; see het_stress.cuh het_spin)\\n\",\n\
+               \                100.0*(double)_cap/(double)_spins);\n" ;
+            s "      if (_stress_tally_h[HET_TALLY_TRUNC])\n" ;
+            s "        fprintf(stderr, \"HetLitmus WARNING: %u stress lane(s) hit HET_STRESS_MAX_ROUNDS -- stress STOPPED while tested lanes were still running.  This run is NOT a stressed run and its non-observations are not comparable with one.\\n\",\n\
+               \                _stress_tally_h[HET_TALLY_TRUNC]);\n" ;
+            s "    }\n" ;
             (* B3: mirror GPU device read + observer buffers to the host scan. *)
             List.iter
               (fun (_,_,name,_,_) ->
@@ -2004,6 +2112,13 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s (Printf.sprintf "    _rec.confidence = %s;\n"
                  (HetCond.confidence_c_name mech_class)) ;
             s "    _rec.N = SIZE_OF_TEST;\n" ;
+            (* B4-fix: the stress layer's own vital signs travel WITH the result --
+               a target count from a run whose stress was inert is not the same
+               datum as one from a stressed run, and nothing else in this record
+               would say so. *)
+            s "    _rec.spin_rendezvous = _stress_tally_h[HET_TALLY_RDV];\n" ;
+            s "    _rec.spin_cap = _stress_tally_h[HET_TALLY_CAP];\n" ;
+            s "    _rec.stress_truncated = _stress_tally_h[HET_TALLY_TRUNC];\n" ;
             (* skew/distinct accumulators only exist when a read buffer decodes a
                synchrony iteration at all (a store-only test -- 2+2W -- has none). *)
             (match sync_src with
@@ -2323,6 +2438,7 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch_loc")) ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_spin_bar")) ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_gpu_done")) ;
+            s (Printf.sprintf "  %s\n" (dialect.gd_free "_stress_tally")) ;
             s "  free(_scratch_loc_h);\n" ;
             s "  return 0;\n}\n" in
           (* ---- comp.sh / Makefile / README ---- *)

@@ -715,8 +715,10 @@ let het_stress_cuh = {ocaml|/* =================================================
  *   scratchpad; critical patch size P; access sequence sigma; spread m;
  *   occupancy-scaled stressing-thread count
  *     -- Sorensen & Donaldson, "Exposing Errors Related to Weak Memory in GPU
- *        Applications", PLDI'16, sections 1/3.  (Their headline: 0/1000 weak
- *        observations without stress, 102/1000 with it.)
+ *        Applications", PLDI'16, sections 1/3.  (Their headline: "no erroneous
+ *        behaviour is observed when conducting 1000 executions ... on a Tesla
+ *        K20" -> "errors ... appear in 102 out of 1000 executions" once stressed,
+ *        p.101.  Nvidia silicon -- see the VENDOR SPLIT below.)
  *   the named, enumerable stress-parameter space + autotuning + the
  *   reproducibility bound
  *     -- Kirkham, Sorensen, Tureci, Martonosi, "Foundations of Empirical Memory
@@ -724,9 +726,33 @@ let het_stress_cuh = {ocaml|/* =================================================
  *   the four "incantations" (memory stress, thread synchronisation, thread
  *   randomisation, occupancy) and the busy-wait DEADLOCK GUARD
  *     -- Alglave et al., "GPU Concurrency: Weak Behaviours and Programming
- *        Assumptions", ASPLOS'15, section 4.3.  Table 6 shows sb/lb weak counts
- *        of ZERO in every no-incantation column: this layer is the reason the
- *        HetLitmus campaign is not vacuous.
+ *        Assumptions", ASPLOS'15, section 4.3.
+ *
+ * VENDOR SPLIT -- why this layer exists, stated honestly, because this header is
+ * included by the .hip (AMD MI300A) render as well as the .cu (Nvidia GH200) one:
+ *
+ *   * NVIDIA (GTX Titan, and by lineage our GH200 target): the stress layer is
+ *     the difference between observing something and observing nothing.
+ *     "we did not observe sb and lb on Titan without this incantation"
+ *     (Alglave 4.3.1, p.585).  Table 6 (p.584): sb and lb are 0 in EVERY column
+ *     without memory stress (cols 1-8), and become non-zero only once it is
+ *     enabled (cols 9-16).  Without stress the campaign is vacuous.
+ *
+ *   * AMD (Radeon HD 7970, the MI300A render's ancestor): NOT so, and the
+ *     unqualified claim would be false.  "For AMD HD7970 we did not need memory
+ *     stress to observe weak behaviour, although we observe mp consistently more
+ *     often when this incantation is enabled" (Alglave 4.3.1, p.585).  Table 6:
+ *     lb is 10959/100k in column 1 -- no incantations at all -- while sb stays
+ *     ~0 in every column.
+ *
+ *   * The paper's own summary (4.3, p.585): "The setup of Sec. 4.2 only witnessed
+ *     weak behaviours in combination with incantations ON NVIDIA CHIPS; these
+ *     incantations also influenced the incidence of weak behaviours on AMD chips."
+ *
+ *   So: on Nvidia this layer is load-bearing for observing anything; on AMD it is
+ *   a rate and coverage amplifier, not an on/off switch.  Do not repeat the
+ *   unqualified "zero without stress" line -- it is a Nvidia result.
+ *
  *   the co-prime permutation / Parallel Test Environment (permute_id,
  *   stripe_workgroup)
  *     -- Levine et al., "MC Mutants", ASPLOS'23, section 4.1 ("(vP) mod N ...
@@ -755,7 +781,10 @@ let het_stress_cuh = {ocaml|/* =================================================
  * page placement), which is a separate build.  Do not claim otherwise.
  *
  * -------------------------------------------------------------------------
- * FIXED ON THE WAY IN: the cuda-litmus MEM_STRESS pattern-argument bug.
+ * DIVERGENCES FROM UPSTREAM.  Three, all deliberate.  We cite Levine, so a
+ * reviewer must be able to tell which lines are theirs and which are not.
+ *
+ * (1) UPSTREAM BUG, FIXED: the MEM_STRESS pattern-argument slot.
  *
  *   do_stress(scratchpad, locations, iterations, PATTERN)     [functions.cu:19]
  *
@@ -779,11 +808,45 @@ let het_stress_cuh = {ocaml|/* =================================================
  * traffic appears here for the first time.  CONSEQUENCE: cuda-litmus's committed
  * params/stress_params.txt is NOT a valid tuning seed for us, and re-tuning on
  * the target hardware is MANDATORY, not optional.
+ *
+ * (2) UPSTREAM BUG, DIVERGED: setScratchLocations' region dedup is DEAD CODE.
+ *     Upstream declares `std::set<int> usedRegions' [runner.cu:131] and queries
+ *     it -- `while (usedRegions.count(region)) region = rand() % numRegions;'
+ *     [runner.cu:135] -- but NEVER INSERTS INTO IT (`grep -n "\.insert"
+ *     runner.cu' finds nothing).  count() is therefore always 0: the loop never
+ *     spins, upstream never dedups, and the SAME region can be drawn for several
+ *     of its stressTargetLines.  Its realised spread is <= m, not m.
+ *     het_set_scratch_locations below implements the dedup upstream INTENDED
+ *     (a linear scan; no std::set dependency), so HetLitmus really does hammer m
+ *     DISTINCT stress lines -- closer to S&D's "spread" than upstream is.  This
+ *     is a behavioural divergence, not a faithful port: their tuned m and ours
+ *     do not mean the same thing, which is a second reason re-tuning is
+ *     mandatory.
+ *
+ * (3) OUR OWN BUG, FIXED (B4-fix): the ACCESS PATTERN MUST BE A RUNTIME VALUE.
+ *     The first port passed the pattern as a compile-time -D constant.  nvcc then
+ *     constant-folds do_stress's if(p==0)...else if(p==3) chain down to the one
+ *     live branch -- and the tuned default, pattern 3, is `ld;ld' whose loaded
+ *     values only feed a `break'.  That is provably side-effect-free, so nvcc
+ *     DELETED THE WHOLE LOOP: measured on the emitted PTX (sm_90), the test lane
+ *     carried 0 scratchpad ops, and -DHET_MEM_STRESS_PATTERN=3 emptied the entire
+ *     kernel (0 ops).  The stress layer compiled, satisfied every gate, and did
+ *     nothing.  Upstream is immune by accident of design: its pattern arrives
+ *     through kernel_params (a runtime pointer), so the storing branches always
+ *     survive.
+ *     FIX: the patterns are passed to the kernel as ARGUMENTS (_pre_pat/_mem_pat
+ *     in top_litmus.ml), sourced from the -D knobs HOST-side.  The knobs keep
+ *     working; the device code cannot fold them.  DO NOT "simplify" them back
+ *     into #defines here -- hetlitmus/verify/stresscheck.py fails the build if
+ *     anyone does (it asserts the PTX scratchpad-op count is INVARIANT under
+ *     -DHET_*_PATTERN, which is exactly the property a compile-time pattern
+ *     destroys).
  * ========================================================================= */
 #ifndef HET_STRESS_CUH
 #define HET_STRESS_CUH
 
 #include <stdint.h>
+#include <stdio.h>      /* het_report_spread: a degraded stress layer must SAY so */
 
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_DEVICE_COMPILE__)
 #include <hip/hip_runtime.h>
@@ -837,6 +900,20 @@ let het_stress_cuh = {ocaml|/* =================================================
 #ifndef HET_PRE_STRESS_PATTERN
 #define HET_PRE_STRESS_PATTERN 3       /* 3 = ld;ld                            */
 #endif
+
+/* het_do_stress's if-chain has NO else, so a pattern outside 0..3 makes the
+   stress loop spin doing NOTHING -- silently.  That is exactly how upstream's
+   MEM_STRESS bug hid (it passed 57).  A silent no-op stress layer is a silent
+   falsification of every non-observation, so refuse to compile instead.
+   (B8 note: if you ever source a pattern from a config file at RUN time rather
+   than from these -D knobs, re-validate it there -- this guard cannot see it.) */
+#if (HET_PRE_STRESS_PATTERN) < 0 || (HET_PRE_STRESS_PATTERN) > 3
+#error "HET_PRE_STRESS_PATTERN must be 0..3 (0=st;st 1=st;ld 2=ld;st 3=ld;ld)"
+#endif
+#if (HET_MEM_STRESS_PATTERN) < 0 || (HET_MEM_STRESS_PATTERN) > 3
+#error "HET_MEM_STRESS_PATTERN must be 0..3 (0=st;st 1=st;ld 2=ld;st 3=ld;ld)"
+#endif
+
 #ifndef HET_BARRIER_PCT
 #define HET_BARRIER_PCT 68             /* % of iterations the GPU test lanes
                                           hit the device-scope window-opener   */
@@ -850,9 +927,33 @@ let het_stress_cuh = {ocaml|/* =================================================
 #ifndef HET_STRESS_MAX_ROUNDS
 #define HET_STRESS_MAX_ROUNDS 1000000000u  /* safety net only: a stress lane must
                                           never outlive a hung test lane for
-                                          ever.  NOT a tuning knob -- it is far
-                                          above any reachable round count.     */
+                                          ever.  NOT a tuning knob.            */
 #endif
+
+/* -------------------------------------------------------------------------
+ * LIVENESS TALLY (B4-fix).  Three device counters the host reads back and
+ * prints, because every mechanism in this file is INVISIBLE to the L0
+ * faithfulness gate by design (stress is scaffolding, not a tested op) -- and a
+ * scaffolding layer that silently stops scaffolding produces a clean-looking
+ * "Never" that is worth nothing.  Two of the three exist because that is
+ * precisely what happened here (see divergence (3) above).
+ *
+ *   RDV   / CAP : how each het_spin ended.  The window-opener is meant to
+ *                 RENDEZVOUS the GPU test lanes; the 1024-spin deadlock cap is
+ *                 only a safety net (Alglave 4.3.4).  A spin that mostly exits
+ *                 on the CAP is not a window-opener, it is a fixed-length delay
+ *                 loop -- and only a runtime counter can tell the two apart.
+ *                 This ratio is also the datum the tuning task (B8) tunes
+ *                 HET_BARRIER_PCT against.
+ *   TRUNC       : stress lanes that hit HET_STRESS_MAX_ROUNDS, i.e. STOPPED
+ *                 STRESSING while tested lanes were still running.  Its result
+ *                 is not comparable with a fully stressed one, so it must never
+ *                 be silent.
+ * ------------------------------------------------------------------------- */
+#define HET_TALLY_RDV   0
+#define HET_TALLY_CAP   1
+#define HET_TALLY_TRUNC 2
+#define HET_TALLY_N     3
 
 /* -------------------------------------------------------------------------
  * Seeded Park-Miller (Lehmer minimal-standard) RNG.       [GPUHarbor ISSTA'23]
@@ -914,6 +1015,16 @@ __device__ static inline void het_scratch_bump(uint32_t* p) {
  * Pattern 0 is the only pure WRITER.  Store traffic invalidates lines and forces
  * ownership transfer, which is the strong coherence stressor -- and it is
  * precisely what cuda-litmus's shipped configuration never emitted (header).
+ *
+ * CALLER CONTRACT (load-bearing -- header divergence (3)): `pattern' MUST reach
+ * this function as a RUNTIME value (a kernel argument).  Hand it a compile-time
+ * constant and nvcc folds the if-chain to one branch; if that branch is 3
+ * (`ld;ld', the tuned default) the body becomes provably side-effect-free and
+ * THE ENTIRE LOOP IS DELETED.  The accesses below are deliberately plain and
+ * non-volatile -- exactly upstream's -- so that the stress traffic is ordinary
+ * cacheable traffic that thrashes the testing thread's own L1 (Kirkham 3.1's
+ * whole point) and adds no ordering edge to the test.  Keeping them plain is
+ * what makes the runtime pattern load-bearing rather than a style choice.
  * ------------------------------------------------------------------------- */
 __device__ static void het_do_stress(uint32_t* scratchpad,
                                      uint32_t* scratch_locations,
@@ -961,16 +1072,40 @@ __device__ static void het_do_stress(uint32_t* scratchpad,
  *
  * ADAPTATION (perpetual loop): upstream relaunches the kernel per test
  * iteration, so its barrier counter is fresh each time and it waits for
- * `blockDim.x * testing_workgroups'.  Our kernel loops INSIDE, so a counter that
- * only ever grows would be satisfied from iteration 1 onward and the barrier
- * would silently stop barriering.  The caller therefore passes an
- * ITERATION-INDEXED limit ((_n+1) * lanes): each of `lanes' lanes contributes
- * exactly one increment per iteration, so the counter reaches (_n+1)*lanes only
- * once every lane has entered iteration _n.  Monotonic counter, advancing
- * target -- lanes that run ahead wait, lanes that fall behind pass straight
- * through, and the 1024 cap still bounds the wait.
+ * `blockDim.x * testing_workgroups' -- Alglave 4.3.4: "busy-waiting until the
+ * counter reaches THE NUMBER OF THREADS PARTICIPATING IN THE TEST".  Our kernel
+ * loops INSIDE, so a counter that only ever grows would be satisfied from
+ * iteration 1 onward and the barrier would silently stop barriering.  The caller
+ * therefore passes a limit indexed by the number of barriers TAKEN SO FAR
+ * (_nb * lanes), and takes them ALL-OR-NONE: the caller's roll is drawn from a
+ * LANE-INDEPENDENT stream (seeded by the iteration, not by the lane), so every
+ * lane takes the same barriers, contributes exactly one increment to each, and
+ * the counter reaches _nb*lanes EXACTLY when the last lane arrives.  Monotonic
+ * counter, exactly-attainable target.
+ *
+ * B4-fix -- WHY THAT SENTENCE IS THE WHOLE MECHANISM.  The first version rolled
+ * the toggle from the LANE'S OWN stream and indexed the limit by the ITERATION
+ * ((_n+1)*lanes).  A lane then incremented on only ~68% of iterations while the
+ * limit rose by `lanes' every iteration, so the counter fell permanently behind:
+ * after the first skipped roll the limit was UNREACHABLE FOREVER, every spin ran
+ * out the full 1024-iteration deadlock cap, and the "window-opener" was a
+ * fixed-length delay loop that aligned nothing (simulated over the emitted
+ * protocol: 99% of spins cap-released, final counter deficit 625; with the fix,
+ * 100% rendezvous-released, deficit 0).  Upstream never hit this because its
+ * toggle is ONE host-set boolean, uniform across the launch [litmus.cuh:340] --
+ * all testing threads spin, or none do.  The uniformity is the invariant; the
+ * per-lane draw broke it.  KEEP THE DRAW LANE-INDEPENDENT.
+ *
+ * DEADLOCK GUARD + LIVENESS TALLY: the wait is capped at 1024 spins (Alglave,
+ * verbatim from upstream) -- GPUs give no forward-progress guarantee across
+ * workgroups, and a silent hang is indistinguishable from a genuine
+ * non-observation.  But a cap that fires is a barrier that did NOT rendezvous,
+ * so each exit is tallied by its reason and the host prints the ratio: that is
+ * the only way this mechanism can be seen to be alive (the L0 gate cannot see
+ * it, and did not).
  * ------------------------------------------------------------------------- */
-__device__ static void het_spin(uint32_t* barrier, uint32_t limit) {
+__device__ static void het_spin(uint32_t* barrier, uint32_t limit,
+                                uint32_t* tally) {
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_DEVICE_COMPILE__)
   uint32_t val = __hip_atomic_fetch_add(barrier, 1u, __ATOMIC_RELAXED,
                                         __HIP_MEMORY_SCOPE_AGENT);
@@ -988,6 +1123,11 @@ __device__ static void het_spin(uint32_t* barrier, uint32_t limit) {
     i++;
   }
 #endif
+  /* Released by the rendezvous, or by the deadlock cap?  (val >= limit) is the
+     loop's success exit; anything else means i hit 1024 with the counter still
+     short.  A builtin atomicAdd on a device-only word: scaffolding, invisible to
+     the model-op stream, which is why ptxcheck's stray-sys check exists. */
+  het_scratch_bump(&tally[(val >= limit) ? HET_TALLY_RDV : HET_TALLY_CAP]);
 }
 
 /* -------------------------------------------------------------------------
@@ -1021,14 +1161,52 @@ __device__ static void het_spin(uint32_t* barrier, uint32_t limit) {
  * Distinct lines keep each stresser on a fresh cache line (S&D's critical patch);
  * the spread controls how many lines are contended at once.
  *
- * ADAPTATION: upstream dedups regions with std::set; with HET_STRESS_TARGETS <= 16
- * a linear scan over the chosen regions is the same algorithm without the
- * dependency.  Driven by rand(), which the driver seeds per run, so the layout
+ * DIVERGENCE (header (2)) -- WE DEDUP, UPSTREAM ONLY LOOKS LIKE IT DOES.  Upstream
+ * declares `std::set<int> usedRegions' [runner.cu:131] and guards its draw with
+ * `while (usedRegions.count(region)) region = rand() % numRegions;' [runner.cu:135]
+ * -- but it never inserts into the set (`grep -n "\.insert" runner.cu' finds
+ * nothing), so count() is always 0, the guard never spins, and two of its
+ * stressTargetLines can land on the SAME region.  Upstream's realised spread is
+ * therefore <= m, not m.
+ *
+ * The linear scan below is the dedup upstream INTENDED, and it is real: the m
+ * lines are distinct, which is what S&D's "spread" means.  Consequences to keep
+ * in mind: (a) upstream's tuned m is not our m -- another reason re-tuning is
+ * mandatory; (b) OUR loop would spin forever if it ever ran out of regions
+ * (m > num_regions), which upstream's dead code could not -- hence the explicit
+ * break below.  Driven by rand(), which the driver seeds per run, so the layout
  * is replayable.
  * ------------------------------------------------------------------------- */
 #if HET_STRESS_TARGETS < 1
 #error "HET_STRESS_TARGETS must be >= 1 (it is S&D's spread m)"
 #endif
+/* The REALISED spread can be smaller than the knob, silently.  Chunking divides
+   num_workgroups by HET_STRESS_TARGETS, so a grid SMALLER than the target count
+   gives workgroupsPerLocation = 0 and the tail case then dumps EVERY workgroup on
+   the LAST line -- realised spread 1, while the knob still says m (verified on
+   device: 6 workgroups, m=9 -> all 6 on one line; 64 workgroups, m=9 -> 9 distinct
+   lines, as intended).  Round-robin degrades more gently but still leaves targets
+   unused.  Either way the stress is weaker than the configuration claims, and B8
+   sweeps exactly these knobs (HET_STRESS_BLOCKS x HET_STRESS_TARGETS), so it must
+   never score a spread-1 config as if it were spread-m.  Count what was actually
+   assigned and say so. */
+__host__ static void het_report_spread(const uint32_t* locations, int num_workgroups) {
+  int distinct = 0;
+  for (int i = 0; i < num_workgroups; i++) {
+    int seen = 0;
+    for (int j = 0; j < i; j++) { if (locations[j] == locations[i]) { seen = 1; break; } }
+    if (!seen) distinct++;
+  }
+  if (distinct < HET_STRESS_TARGETS) {
+    fprintf(stderr,
+            "HetLitmus WARNING: realised stress spread is %d line(s), not "
+            "HET_STRESS_TARGETS=%d -- %d stressing workgroup(s) cannot cover %d "
+            "lines (S&D's spread m).  The stress is weaker than the configuration "
+            "says; raise the grid or lower HET_STRESS_TARGETS.\n",
+            distinct, (int)HET_STRESS_TARGETS, num_workgroups,
+            (int)HET_STRESS_TARGETS);
+  }
+}
 __host__ static void het_set_scratch_locations(uint32_t* locations, int num_workgroups) {
   int num_regions = HET_SCRATCH_SIZE / HET_STRESS_LINE_SIZE;
   int used[HET_STRESS_TARGETS];
@@ -1041,9 +1219,9 @@ __host__ static void het_set_scratch_locations(uint32_t* locations, int num_work
   for (int j = 0; j < num_workgroups; j++) { locations[j] = 0u; }
   for (int i = 0; i < HET_STRESS_TARGETS; i++) {
     int region, dup;
-    /* Upstream retries until it draws an unused region; with more targets than
-       regions that never terminates.  Stop instead -- the targets we already
-       have are still a valid (smaller) spread. */
+    /* Our dedup is REAL (upstream's is dead code, see above), so it can exhaust
+       the region pool and spin forever.  Stop instead -- the targets we already
+       have are still a valid, smaller spread. */
     if (n_used >= num_regions) { break; }
     do {
       region = rand() % num_regions;
@@ -1069,6 +1247,7 @@ __host__ static void het_set_scratch_locations(uint32_t* locations, int num_work
     }
 #endif
   }
+  het_report_spread(locations, num_workgroups);
 }
 
 #endif /* HET_STRESS_CUH */

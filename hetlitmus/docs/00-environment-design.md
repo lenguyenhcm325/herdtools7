@@ -32,9 +32,13 @@ silicon it would almost certainly observe **nothing**:
 - **no stress**, **no cross-device alignment**, **no positive control**;
 - shared vars allocated with `*MallocManaged`, which on GH200 page-migrates at 2 MB and *masks* the race.
 
-Per the GPU-litmus literature (Alglave'15: **zero** weak behaviours without stress; S&D: 0/1000 native →
-102/1000 stressed), every "Never" from this harness is meaningless. This document specifies the environment
-that makes a "Never" mean something.
+Per the GPU-litmus literature — on **Nvidia** silicon, which is the GH200 target (Alglave'15 §4.3.1: *"we
+did not observe sb and lb on Titan without this incantation"*, Table 6 showing them at **zero** in every
+column without memory stress; S&D: 0/1000 → 102/1000 on a Tesla K20) — every "Never" from this harness is
+meaningless. (On **AMD** the same paper found weak behaviours *without* stress — `lb` at 10959/100k with no
+incantations — so for MI300A the layer amplifies rates rather than enabling observation; do not carry the
+unqualified claim across vendors.) This document specifies the environment that makes a "Never" mean
+something.
 
 ---
 

@@ -344,12 +344,97 @@ PY
     fi
   fi
 
+  # ---- [7] B4-fix: the stress layer is LIVE, and the liveness gate bites ------
+  # ptxcheck is blind to the stress layer BY DESIGN (scaffolding carries no
+  # order/scope qualifier, so it is not a model op).  That blind spot let B4 ship
+  # a pre-stress incantation that nvcc DELETED -- a compile-time access pattern
+  # folds do_stress's if-chain to `ld;ld', whose loads only feed a `break', which
+  # is provably side-effect-free.  Zero instructions, five green gates.
+  #
+  # stresscheck.py closes it: it counts scratchpad ops in the emitted PTX per
+  # lane class, and asserts the count is INVARIANT under -DHET_*_PATTERN (which
+  # is the property "the pattern is a runtime value" -- i.e. no autotuner config
+  # can silently switch the stress off).  Prove it BITES, or it is decoration.
+  #
+  # Each injection mutates a COPY of the emitted .cu and is verified to actually
+  # change the file first (cmp -s), so no bite can pass vacuously.
+  printf '\n[7] B4-fix stress liveness: the gate must FAIL(1) on a dead stress layer\n'
+  local SL="$ROOT/hetlitmus/verify/stresscheck.py"
+  local S4T=MP-cg-sys-acqrel-2s
+  local S4L="$HET_DIR/$S4T.litmus" s4="$sc/s4" s4cu s4rc
+  mkdir -p "$s4"
+  litmus7 -set-libdir litmus/libdir -o "$s4" "$S4L" >/dev/null 2>&1
+  s4cu="$s4/$S4T/$S4T.cu"
+  if [ ! -s "$s4cu" ]; then
+    echo "  *** could not emit the het harness for $S4T"
+    fails=$((fails+1))
+  else
+    # control: the shipped harness must PASS (this is also the gate's own
+    # regression test -- it failed here before the B4-fix, with 0 pre-stress ops)
+    python3 "$SL" --cu "$s4cu" -q >/dev/null 2>&1; s4rc=$?
+    _expect "stress liveness control (unmodified harness)" 0 "$s4rc" || fails=$((fails+1))
+
+    _s4bite() { # label sed-expr
+      local lbl="$1" expr="$2" rc
+      rm -rf "$s4/mut"; cp -r "$s4/$S4T" "$s4/mut"
+      sed -i "$expr" "$s4/mut/$S4T.cu"
+      if cmp -s "$s4cu" "$s4/mut/$S4T.cu"; then
+        printf '  *** VACUOUS BITE: injection changed nothing    [%s]\n' "$lbl"
+        return 1
+      fi
+      python3 "$SL" --cu "$s4/mut/$S4T.cu" -q >/dev/null 2>&1; rc=$?
+      _expect "$lbl" 1 "$rc"
+    }
+    # THE historical B4 bug, both call sites: hand het_do_stress a compile-time
+    # pattern and the tuned default (3 = ld;ld) is dead-code-eliminated away.
+    _s4bite "pre-stress pattern made compile-time (the B4 regression itself)" \
+            's/HET_PRE_STRESS_ITER, _pre_pat/HET_PRE_STRESS_ITER, HET_PRE_STRESS_PATTERN/' \
+            || fails=$((fails+1))
+    _s4bite "mem-stress pattern made compile-time (the B8 autotune blast radius)" \
+            's/HET_MEM_STRESS_ITER, _mem_pat/HET_MEM_STRESS_ITER, HET_MEM_STRESS_PATTERN/' \
+            || fails=$((fails+1))
+    _s4bite "pre-stress call dropped (test lanes stop self-stressing)" \
+            '/het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER/d' \
+            || fails=$((fails+1))
+    _s4bite "mem-stress call dropped (stressing workgroups stop stressing)" \
+            '/het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER/d' \
+            || fails=$((fails+1))
+    rm -rf "$s4/mut"
+  fi
+
   printf '\n'
   if [ "$fails" -eq 0 ]; then
     echo "SELFTEST OK"
     return 0
   fi
   echo "SELFTEST FAILED: $fails control(s) did not behave as expected"
+  return 1
+}
+
+# ---- stress liveness (the OTHER L0 gate; see stresscheck.py) ----------------
+# ptxcheck proves the harness carries exactly the TESTED ops.  It is blind to the
+# stress layer by design -- and B4 shipped a stress layer that compiled to zero
+# instructions and passed every gate.  stresscheck.py proves the scaffolding is
+# there at all.  Three reps, one per GPU-lane shape, because the pre-stress lives
+# in the test lanes and the mem-stress in the pure-stress blocks:
+#   MP-cg-sys-acqrel-2s   1 GPU test lane, no observer
+#   S-cg-sys-fence        1 GPU test lane + the observer lane (which must NOT spin)
+#   IRIW-gcgc-sys-fence   2 GPU test lanes (the shape where the spin has partners)
+stress_report() {
+  local reps="MP-cg-sys-acqrel-2s S-cg-sys-fence IRIW-gcgc-sys-fence"
+  local fails=0 rc t
+  printf '\n===== STRESS LIVENESS: is the B4 layer actually in the PTX? =====\n'
+  for t in $reps; do
+    printf '\n-- %s --\n' "$t"
+    python3 "$ROOT/hetlitmus/verify/stresscheck.py" "$HET_DIR/$t.litmus"; rc=$?
+    [ "$rc" -ne 0 ] && fails=$((fails+1))
+  done
+  printf '\n'
+  if [ "$fails" -eq 0 ]; then
+    echo "STRESS OK (${reps// /, })"
+    return 0
+  fi
+  echo "STRESS FAILED: $fails rep(s) carry a dead stress layer"
   return 1
 }
 
@@ -360,10 +445,11 @@ case "$cmd" in
   het)      run_dir "$HET_DIR" het ;;
   guard)    guard_report; exit $? ;;
   selftest) selftest; exit $? ;;
+  stress)   stress_report; exit $? ;;
   all)
     rc=0
     run_dir "$GPU_DIR" gpu-only || rc=1
     run_dir "$HET_DIR" het || rc=1
     exit $rc ;;
-  *) echo "usage: $0 [all|gpu-only|het|guard|selftest]"; exit 64 ;;
+  *) echo "usage: $0 [all|gpu-only|het|guard|selftest|stress]"; exit 64 ;;
 esac

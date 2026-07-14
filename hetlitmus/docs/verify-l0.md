@@ -228,3 +228,18 @@ whole corpus.
   the CPU comparison; only memory/ordering mnemonics are compared.
 * No `cluster`/`acq_rel`/RMW/`sc`-on-access appears in the 137+338 corpus; the
   mapping covers them so the guard recognizes (never skips) them if added.
+* **ptxcheck is BLIND to the stress layer, by design — and that blind spot has
+  already cost us.** Stress is scaffolding, not a tested op: it carries no
+  order/scope qualifier and sits outside the inline-asm markers, so it can never
+  enter the op stream this checker compares. Correct — but it means *no gate here
+  can tell whether the stress layer exists at all*. B4 duly shipped a pre-stress
+  incantation that nvcc had **deleted** (a compile-time access pattern folds
+  `do_stress`'s if-chain to `ld;ld`, whose loads only feed a `break`, which is
+  provably side-effect-free) and a device-scope window-opener that released on its
+  deadlock cap 99.6% of the time. Both passed every gate in this suite.
+  The other half of L0 is therefore **`hetlitmus/verify/stresscheck.py`**
+  (`make hetlitmus-stress`), which counts scratchpad ops in the emitted PTX per
+  lane class and asserts the count is *invariant* under `-DHET_*_PATTERN` — i.e.
+  that no autotune config can silently switch the stress off. Bite-tested in
+  `l0_tokens.sh selftest` section [7]. **A mechanism no gate can observe must be
+  assumed dead**: if you add scaffolding here, add the gate that watches it.

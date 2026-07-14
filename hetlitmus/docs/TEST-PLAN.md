@@ -212,13 +212,20 @@ Renamed the CUDA lane `-gpu`→`-nvcc` (nothing here needs a GPU).
 
 Umbrellas (what you press):
 - **`make hetlitmus-test`** → Layer 1+2 (`hetlitmus-cram` + `hetlitmus-corpus`). No CUDA.
-- **`make hetlitmus-test-nvcc`** → Layer 3 (`hetlitmus-faithful` + `hetlitmus-smoke`). CUDA, no GPU.
+- **`make hetlitmus-test-nvcc`** → Layer 3 (`hetlitmus-faithful` + `hetlitmus-stress` +
+  `hetlitmus-smoke`). CUDA, no GPU.
 - **`make hetlitmus-test-all`** → both. ← pre-commit gate on the dev box.
 - **`make hetlitmus-promote`** → regenerate + `dune test hetlitmus/tests --auto-promote`;
   does **not** commit; prints "review `git diff` then commit".
 
 Building blocks (run solo while iterating):
-`hetlitmus-cram` · `hetlitmus-corpus` · `hetlitmus-faithful` · `hetlitmus-smoke`.
+`hetlitmus-cram` · `hetlitmus-corpus` · `hetlitmus-faithful` · `hetlitmus-stress` · `hetlitmus-smoke`.
+
+`hetlitmus-faithful` proves the harness carries **exactly the tested ops**; it is blind to
+the **scaffolding** (stress carries no order/scope qualifier, so it is not a model op — by
+design). `hetlitmus-stress` (`verify/stresscheck.py`) is the other half: it proves the stress
+layer is **in the PTX at all**. It exists because B4 shipped a pre-stress incantation that
+nvcc had dead-code-eliminated to zero instructions, and every other gate stayed green.
 
 Notes:
 - `hetlitmus-corpus` uses `git status --porcelain` (catches add/remove; non-invasive).

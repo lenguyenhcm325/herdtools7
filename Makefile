@@ -664,6 +664,15 @@ hetlitmus-smoke: | build
 	bash hetlitmus/verify/smoke.sh
 	@ echo "HetLitmus Layer-3 compile-smoke: OK"
 
+### hetlitmus-faithful proves the harness carries exactly the TESTED ops; it is
+### blind to the stress layer by design (scaffolding is not a model op) -- and B4
+### shipped a stress layer that compiled to ZERO instructions and passed it.  This
+### gate is the other half: the scaffolding must be IN the PTX.
+hetlitmus-stress: | build
+	@ echo
+	bash hetlitmus/verify/l0_tokens.sh stress
+	@ echo "HetLitmus Layer-3 stress liveness: OK"
+
 ### Umbrellas (what you press).  `::` accumulation, order-only `| build`.
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
@@ -671,6 +680,7 @@ hetlitmus-test:: hetlitmus-corpus
 
 hetlitmus-test-nvcc:: | build
 hetlitmus-test-nvcc:: hetlitmus-faithful
+hetlitmus-test-nvcc:: hetlitmus-stress
 hetlitmus-test-nvcc:: hetlitmus-smoke
 
 hetlitmus-test-all:: | build
@@ -687,6 +697,7 @@ hetlitmus-promote: | build
 	@ echo "hetlitmus-promote: review 'git diff' then commit yourself."
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
+.PHONY: hetlitmus-stress
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64
