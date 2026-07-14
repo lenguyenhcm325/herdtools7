@@ -402,6 +402,95 @@ PY
     rm -rf "$s4/mut"
   fi
 
+  # ---- [8] B5: the CPU + interconnect stress layer's gate must BITE -----------
+  # B5 shipped cpustresscheck.py with NO negative control.  That is the sharpest
+  # possible omission: cpustresscheck is the ONE checker able to catch a regression
+  # that preserves the source text while killing the COMPILED mechanism (strip
+  # `volatile' and the enemy still reads beautifully and issues nothing), and it was
+  # itself unguarded.  A checker nobody has ever seen fail is not evidence.
+  #
+  # Six injections, one per way the layer can silently die.  Four mutate
+  # het_cpu_stress.h (the mechanisms); two mutate the emitted .cu DRIVER (the
+  # invariants S5/S6 -- a noise buffer that fits in cache, and enemies pointed at
+  # the very locations under test).  Every one is verified to ACTUALLY change the
+  # file (cmp -s) before its result is believed: a sed that silently matched nothing
+  # would make this whole section a vacuous pass, and that has happened here before.
+  printf '\n[8] B5 CPU/interconnect stress: the liveness gate must FAIL(1) on a dead layer\n'
+  local CS="$ROOT/hetlitmus/verify/cpustresscheck.py"
+  local B5T=MP-cg-sys-acqrel-2s
+  local B5L="$HET_DIR/$B5T.litmus" b5="$sc/b5" b5rc
+  mkdir -p "$b5"
+  litmus7 -set-libdir litmus/libdir -o "$b5" "$B5L" >/dev/null 2>&1
+  if [ ! -s "$b5/$B5T/het_cpu_stress.h" ] || [ ! -s "$b5/$B5T/$B5T.cu" ]; then
+    echo "  *** could not emit the B5 het harness for $B5T"
+    fails=$((fails+1))
+  else
+    # control: the SHIPPED harness must PASS.  (This doubles as cpustresscheck's own
+    # regression test -- it is what fails if B5's fixes are ever reverted.)
+    python3 "$CS" "$B5L" --harness-dir "$b5/$B5T" >/dev/null 2>&1; b5rc=$?
+    _expect "B5 control (shipped CPU/interconnect layer)" 0 "$b5rc" || fails=$((fails+1))
+
+    _b5bite() { # label  file  sed-expr
+      local lbl="$1" file="$2" expr="$3" rc
+      rm -rf "$b5/mut"; cp -r "$b5/$B5T" "$b5/mut"
+      sed -i "$expr" "$b5/mut/$file"
+      if cmp -s "$b5/$B5T/$file" "$b5/mut/$file"; then
+        printf '  *** VACUOUS BITE: injection changed nothing    [%s]\n' "$lbl"
+        return 1
+      fi
+      python3 "$CS" "$B5L" --harness-dir "$b5/mut" >/dev/null 2>&1; rc=$?
+      _expect "$lbl" 1 "$rc"
+    }
+
+    # (1) THE one that a naive gate waves through.  Without `volatile' the enemy's
+    # discarded reads `(void)*l' are provably useless and clang deletes ALL of them,
+    # and sigma 0's double store collapses to one.  The loop survives, so it still
+    # LOOKS like a stressor; it just issues no read traffic and half the writes.
+    _b5bite "enemy scratchpad volatile STRIPPED (all read traffic deleted)" \
+            het_cpu_stress.h \
+            's/volatile uint64_t \*scratch/uint64_t *scratch/; s/volatile uint64_t \*l =/uint64_t *l =/' \
+            || fails=$((fails+1))
+
+    # (2) sigma as a compile-time constant: the optimiser folds the switch to one
+    # branch and, for ld;ld, deletes the loop.  This is B4's bug on the CPU side.
+    _b5bite "sigma made COMPILE-TIME (an autotuner config can delete the stress)" \
+            het_cpu_stress.h \
+            's/switch (a->seq) {/switch (HET_CPU_ENEMY_SEQ) {/' \
+            || fails=$((fails+1))
+
+    # (3) the M3 preload made inert -- the incantation is still there and still
+    # called, it just issues no cache hints.  Only a RUN can see this.
+    _b5bite "preload hints DROPPED (M3 incantation inert)" \
+            het_cpu_stress.h \
+            's/^  uint32_t n = 0u;/  uint32_t n = 0u; return n;/' \
+            || fails=$((fails+1))
+
+    # (4) first-touch dropped: an unwritten malloc'd buffer is ONE shared zero page,
+    # so the 8 GB "noise" streams a single cache line out of L1 and crosses nothing.
+    _b5bite "noise first-touch DROPPED (8 GB buffer is one shared zero page)" \
+            het_cpu_stress.h \
+            's|^void het_cpu_first_touch(void \*p, size_t bytes) {|void het_cpu_first_touch(void *p, size_t bytes) { (void)p; (void)bytes; return;|' \
+            || fails=$((fails+1))
+
+    # (5) DRIVER: the noise working set decoupled from HET_NOISE_MB and shrunk below
+    # the LLC -- served from cache, zero interconnect traffic, every counter still
+    # moving.  Caught by S5 (which is why S5 had to be written).
+    _b5bite "noise buffer UNDERSIZED (fits in cache => no C2C traffic)" \
+            "$B5T.cu" \
+            's|uint64_t _noise_words = (uint64_t)HET_NOISE_MB \* 1024ull \* 1024ull / sizeof(uint64_t);|uint64_t _noise_words = 4096ull;|' \
+            || fails=$((fails+1))
+
+    # (6) DRIVER: the enemies pointed at a TEST VARIABLE.  Not a weaker experiment --
+    # a fabricated one: an enemy writing the location under test can manufacture the
+    # weak behaviour outright.  Caught by S6 (which is why S6 had to be written).
+    _b5bite "enemy scratchpad ALIASED onto a test variable (fabricates outcomes)" \
+            "$B5T.cu" \
+            's/_ea\[_e\]\.scratch = _cpu_scratch;/_ea[_e].scratch = x;/' \
+            || fails=$((fails+1))
+
+    rm -rf "$b5/mut"
+  fi
+
   printf '\n'
   if [ "$fails" -eq 0 ]; then
     echo "SELFTEST OK"

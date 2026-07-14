@@ -25,7 +25,13 @@ Driver (Decision 3/4): uint64 shared vars, per-load read buffers in device memor
   1
   $ grep -c 'cudaMemcpy(bufP1_0_h' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
-  $ grep -c 'typedef struct het_obs_record' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+B6: het_obs_record moved OUT of the .cu and into the shared het_verdict.h, next to
+the decision rule that reads it -- one definition, shared by every harness and by
+verdictcheck.py, so the gate exercises the struct that actually ships.
+
+  $ grep -c '#include "het_verdict.h"' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  1
+  $ grep -c 'typedef struct het_obs_record' MP-cg-sys-acqrel-2s/het_verdict.h
   1
   $ grep -c 'het_obs_record_print(stdout' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1

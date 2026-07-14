@@ -249,7 +249,7 @@ working.  Every counter below exists because its mechanism has a way to die.
   1
   $ grep -c 'sched_setaffinity call(s) FAILED' $MP.cu
   1
-  $ grep -c 'enemies=%u enemy_rounds=%llu' $MP.cu
+  $ grep -c 'enemies=%u enemy_rounds=%llu' MP-cg-sys-acqrel-2s/het_verdict.h
   1
 
 and the two knobs B8 tunes the interconnect lever against travel WITH the result.
@@ -257,7 +257,7 @@ The working set is the one that decides whether the noise crosses anything at al
 below the last-level cache the buffer is served from cache and generates no
 interconnect traffic -- so a tuning log that does not record it cannot tell a good
 config from a dead stressor.
-  $ grep -c 'noise_ws=%uMB place=%u' $MP.cu
+  $ grep -c 'noise_ws=%uMB place=%u' MP-cg-sys-acqrel-2s/het_verdict.h
   1
   $ grep -c '_rec.noise_ws_mb = (uint32_t)HET_NOISE_MB' $MP.cu
   1

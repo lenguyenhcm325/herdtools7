@@ -875,14 +875,75 @@ static void gd_free_noise(void* _p){
          compiles the bodies; the .cu gets the knobs, the arg structs and the
          declarations, and NOT ONE LINE of host ISA. *)
       let het_cpu_stress_content = HetArch.het_cpu_stress_h
+      (* B6: het_obs_record + the null-credibility decision rule.  Shared with the
+         verdictcheck unit test so the gate runs the rule that ships. *)
+      let het_verdict_content = HetArch.het_verdict_h
 
-      let run _hash_env _name in_chan _out_chan splitted =
+      let run _hash_env src_name in_chan _out_chan splitted =
         try
           let parsed = P.parse in_chan splitted in
           close_in in_chan ;
           let tname = splitted.Splitter.name.Name.name in
           let doc = splitted.Splitter.name in
           let nprocs_total = List.length parsed.MiscParser.prog in
+          (* ================= B6: the positive-control map =====================
+             (Q4 2.3/2.4.)  For a should-be-FORBIDDEN test T we co-run mu(T), its
+             nearest ALLOWED grid neighbour, so that `target_count = 0' means "not
+             observed on a demonstrably hot harness" instead of nothing at all.
+
+             mu(T) is looked up in tests/het/control-map.csv, which sits next to
+             the input .litmus and is DERIVED from the corpus sources + the oracle
+             by hetlitmus/verify/controlmap.py (gated by `make
+             hetlitmus-controlmap').  It is NOT computed here by rewriting T's
+             name: the one-sided grid variants are named for the op THE GPU
+             performs, and the GPU's role flips with the device cut, so
+             MP-gc-sys-acquire / S-gc-sys-acquire / R-gc-sys-acquire DO NOT EXIST
+             and a naive `acqrel-2s -> acquire' rewrite would name a nonexistent
+             test for 2 of the 16.  A silently-missing control is the worst
+             failure available here: the null still prints, still looks green, and
+             is now unfalsifiably wrong.
+
+             Absent map => no names, and control_compiled_in stays 0, which makes
+             het_verdict() return COLD and SAY SO.  It never quietly proceeds. *)
+          let control_of, canary_of =
+            let tbl = Hashtbl.create 512 in
+            let dir = Filename.dirname src_name in
+            let f = Filename.concat dir "control-map.csv" in
+            (try
+               let ch = open_in f in
+               (try
+                  while true do
+                    let line = input_line ch in
+                    if String.length line > 0 && line.[0] <> '#' then
+                      match String.split_on_char ',' line with
+                      | t :: _exp :: mu :: _muexp :: _rule :: _alt :: _rlx :: can :: _
+                           when t <> "Test" ->
+                         Hashtbl.replace tbl t (mu, can)
+                      | _ -> ()
+                  done
+                with End_of_file -> ()) ;
+               close_in ch
+             with Sys_error _ ->
+               (* Say it out loud.  Without the map no control is NAMED, and a
+                  control nobody can name is a control nobody will notice is
+                  missing.  The harness still fails closed (control_compiled_in
+                  stays 0 => het_verdict returns COLD), but silence here is how a
+                  null quietly becomes unfalsifiable. *)
+               if OT.verbose >= 0 then
+                 Printf.eprintf
+                   "HetLitmus WARNING: no control-map.csv next to %s -- this \
+                    harness names NO positive control, so every null it produces \
+                    is uninterpretable (het_verdict will return COLD-INVALID).  \
+                    Regenerate with hetlitmus/verify/controlmap.py --emit.\n%!"
+                   src_name) ;
+            (fun t -> match Hashtbl.find_opt tbl t with
+                      | Some (mu,_) when mu <> "-" -> Some mu
+                      | _ -> None),
+            (fun t -> match Hashtbl.find_opt tbl t with
+                      | Some (_,can) when can <> "-" && can <> "self" -> Some can
+                      | _ -> None) in
+          let mu_name = control_of tname
+          and canary_name = canary_of tname in
           (* ---- classify processors by device tag ---- *)
           let dev_of_proc p =
             let rec find = function
@@ -1344,16 +1405,31 @@ static void gd_free_noise(void* _p){
                     | None -> ())
                 read_atoms
             done in
+          (* An rf atom: its tested value is some store's value, so its tag DECODES
+             a writer AND that writer's iteration.  An fr atom (value 0) decodes
+             nothing -- it is a read of init.
+
+             B6 (Item E.3) reuses this exact predicate as the REPORTING tier's
+             discriminator, because it is precisely what separates S from R.  Both
+             are mechanically `Advisory (one ws-location + a register), but S's
+             read is an rf read -- a real synchrony anchor -- whereas R has ZERO rf
+             edges: its only read is the fr-against-init, and in the WEAK case (the
+             one we care about) that read returns init, tag 0, i.e. no writer and no
+             synchrony.  R must therefore borrow BOTH its synchrony point and its ws
+             edge from the fragile observer, exactly as 2+2W does, so its result is
+             reported at the 2+2W floor (B3-decision 4.2).  One predicate, two
+             consumers -- a second copy would be free to drift. *)
+          let rf_atom =
+            List.find_opt
+              (fun (_,_,g,v) -> v <> 0 && Hashtbl.mem value_mu (g,v))
+              read_atoms in
+          let has_rf_anchor = rf_atom <> None in
           (* Anchor = the first rf atom (its tag decodes a writer); failing that
              (SB: both reads are fr) the first read atom.  Its proc is the base. *)
           let anchor_atom =
-            let rf =
-              List.find_opt
-                (fun (_,_,g,v) ->
-                  v <> 0 && Hashtbl.mem value_mu (g,v))
-                read_atoms in
-            match rf with Some a -> Some a | None -> (match read_atoms with
-                                                      | a::_ -> Some a | [] -> None) in
+            match rf_atom with
+            | Some a -> Some a
+            | None -> (match read_atoms with a::_ -> Some a | [] -> None) in
           (match anchor_atom with
            | None -> ()            (* 2+2W: no reads at all; observer-only cycle *)
            | Some (b,_,_,_) ->
@@ -1644,6 +1720,12 @@ static void gd_free_noise(void* _p){
             let s = output_string ch in
             let mech_class =
               HetCond.perpetual_class (prop_of parsed.MiscParser.condition) in
+            (* B6: the REPORTING tier is not the MECHANISM tier.  perpetual_class
+               says how well the cycle can be RECOVERED; this says what a null may
+               be CLAIMED as.  R is demoted to the 2+2W floor (no rf anchor -- see
+               rf_atom above).  Keep both: B7/B8 tune against the mechanism, the
+               write-up quotes the reporting tier. *)
+            let report_class = HetCond.reporting_class ~has_rf_anchor mech_class in
             let gpu_read_buffers =
               List.filter (fun (_,_,_,dev,_) -> dev = `Gpu) read_buffers in
             let buf_bytes = "sizeof(uint64_t)*SIZE_OF_TEST" in
@@ -1674,6 +1756,14 @@ static void gd_free_noise(void* _p){
                only the knobs, the argument structs and the declarations.  It
                self-guards with extern "C", hence outside the block below. *)
             s "#include \"het_cpu_stress.h\"\n" ;
+            (* B6: het_obs_record + the null-credibility decision rule.  A SHARED
+               header rather than a struct inlined per test, because the rule is
+               the deliverable and it has to be unit-testable: verdictcheck.py
+               compiles THIS header against synthetic records, so the gate
+               exercises the exact struct and the exact rule the harness runs.  A
+               re-declared copy in the test would be free to drift away from the
+               one that ships. *)
+            s "#include \"het_verdict.h\"\n" ;
             s "extern \"C\" {\n" ;
             s "#include \"outs.h\"\n" ;
             List.iter
@@ -1692,6 +1782,33 @@ static void gd_free_noise(void* _p){
 }
 |ocaml} ;
             s (Printf.sprintf "\n#define NPART %d\n" npart) ;
+            (* ---- B6 THE POSITIVE CONTROL, AND THE FACT THAT IT IS NOT HERE YET.
+               HET_CONTROL_COMPILED_IN is the LOUD sentinel required by
+               SHARED-CHARGE ("if you must stub a detection path, make it loud").
+               0 => no control instance is co-running in this harness, so
+               control_target_count / canary_target_count are STRUCTURALLY zero and
+               carry no information whatsoever.  het_verdict() reads this flag,
+               returns COLD-INVALID, and prints "*** NO CONTROL COMPILED INTO THIS
+               HARNESS ***" -- it will not let a null be reported as "not observed".
+
+               That is the safe direction and it is deliberate: with no control, a
+               null is uninterpretable, and refusing to report it is correct.  What
+               would NOT be correct is printing "Never" and letting it read as
+               confirmation of the memory model.
+
+               B6b (the multi-instance emitter) co-runs mu(T) and the canary as
+               additional het instances on disjoint cache-line-padded locations and
+               flips this to 1.  The names are already carried in the record below,
+               so nothing downstream has to change when it does. *)
+            s "#define HET_CONTROL_COMPILED_IN 0\n" ;
+            (match mu_name with
+             | Some m ->
+                s (Printf.sprintf "#define HET_MU_NAME \"%s\"      /* Layer A: the minimal mutant */\n" m)
+             | None -> s "#define HET_MU_NAME NULL\n") ;
+            (match canary_name with
+             | Some c ->
+                s (Printf.sprintf "#define HET_CANARY_NAME \"%s\"  /* Layer B: the universal het-MP floor */\n" c)
+             | None -> s "#define HET_CANARY_NAME NULL\n") ;
             (* B2/B0: perpetual-loop bounds, Cfg-driven (was the literal 100000).
                SIZE_OF_TEST = free-running inner window; NUMBER_OF_RUN = outer runs. *)
             s (Printf.sprintf "#define SIZE_OF_TEST %d\n" Cfg.size) ;
@@ -1746,100 +1863,17 @@ static void gd_free_noise(void* _p){
                order under test. *)
             s (Printf.sprintf "#define HET_SPIN_LANES %d\n\n"
                  (List.length gpu_prog)) ;
-            s (HetCond.het_confidence_enum_c ^ "\n") ;
-            (* B3 het_obs_record (B3-decision Decision 5): one per (test,instance,run).
-               COMMIT-1 fills N/frames/target/interleavings/distinct/skew from the
-               read-buffer scan; observer fields (ws_edges_via_observer,
-               observer_unique_count) and control_target_count stay 0 pending the
-               observer commit / B6. *)
-            s {ocaml|typedef struct het_obs_record {
-  const char *test_name; int instance_id; int run_id;
-  het_confidence confidence;
-  uint64_t N, frames_examined;
-  uint64_t target_count_exhaustive, target_count_heuristic;
-  /* 0 = the O(N^T_L) exhaustive scan did NOT run at this N (capped by
-     HET_EXHAUSTIVE_MAX), so target_count_exhaustive is NOT a count of zero
-     observations -- it is "not measured".  B7 must not read it as data. */
-  int exhaustive_valid;
-  uint64_t interleavings_detected;
-  uint64_t distinct_decoded_iters;
-  uint64_t ws_edges_via_observer;
-  uint64_t observer_unique_count;
-  int32_t skew_min, skew_max; double skew_mean, skew_stddev;
-  uint64_t control_target_count;
-  /* B4-fix STRESS LIVENESS.  The stress layer is invisible to the L0
-     faithfulness gate by design, so its health has to be MEASURED at run time or
-     it is not known at all (it was inert for two commits and every gate stayed
-     green).  spin_rendezvous/spin_cap: how the window-opener's spins ended -- a
-     mostly-cap-released spin is a delay loop, not a rendezvous, and B8 tunes
-     HET_BARRIER_PCT against this ratio.  stress_truncated: stress lanes that hit
-     HET_STRESS_MAX_ROUNDS, i.e. stopped stressing while the test was still
-     running -- such a run's non-observations are NOT comparable with a stressed
-     run's, so B7 must treat a nonzero value as disqualifying, not cosmetic. */
-  uint64_t spin_rendezvous, spin_cap, stress_truncated;
-  /* B5 CPU + INTERCONNECT LIVENESS.  Same argument as the B4 block above, for the
-     two levers B4 did not have.  Every field is here because the mechanism it
-     measures has a plausible way to die silently:
-       cpu_enemy_rounds  0 => the CPU enemies never ran (stress_go ordering, or a
-                         loop the optimiser deleted).
-       cpu_preload_ops   0 => the M3 incantation is inert (a host with no cache
-                         primitives, or a 0% roll).
-       noise_cpu_rounds  0 => the Grace half of the C2C noise never ran;
-       noise_gpu_blocks  0 => the Hopper half never ran.  Either way the run is NOT
-                         interconnect-stressed, whatever HET_NOISE_* claimed.
-       cpu_aff_failures >0 => sched_setaffinity FAILED: the threads are wherever the
-                         scheduler put them and the pinning is fiction.
-       place_failures   >0 => cudaMemAdvise was REFUSED: HET_PLACE placed nothing.
-     B7 must be able to disqualify a run on these; B8 must be able to tune against
-     them.  A target count from a run whose stress was inert is not the same datum
-     as one from a stressed run, and nothing else in this record would say so. */
-  uint64_t cpu_enemy_rounds, cpu_enemy_accesses, cpu_preload_ops;
-  uint64_t noise_cpu_rounds, noise_cpu_words;
-  uint32_t noise_gpu_blocks, noise_gpu_rounds;
-  uint32_t cpu_enemies, cpu_aff_failures, place_failures;
-  /* The two knobs B8 tunes the interconnect lever against, carried per run so the
-     autotuner reads what the run REALISED rather than what it asked for.  ws_mb is
-     the noise WORKING SET, and it is the knob that decides whether the noise crosses
-     anything at all: below the last-level cache (Grace L3 = 114 MB) the buffer is
-     served from cache and generates no interconnect traffic, so a config that scores
-     well at 8 MB scored a stressor that was not running.  place is the realised
-     HET_PLACE (0 on the HIP render, which has no placement lever). */
-  uint32_t noise_ws_mb, place_mode;
-} het_obs_record;
-static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
-  fprintf(_ch,
-    "HetObs %s inst=%d run=%d conf=%d N=%llu frames=%llu target=%s%llu/%llu "
-    "interleavings=%llu distinct_iters=%llu ws_via_obs=%llu obs_unique=%llu "
-    "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%llu "
-    "spin=%llu/%llu stress_trunc=%llu "
-    "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
-    "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u "
-    "aff_fail=%u place_fail=%u\n",
-    _r->test_name,_r->instance_id,_r->run_id,(int)_r->confidence,
-    (unsigned long long)_r->N,(unsigned long long)_r->frames_examined,
-    _r->exhaustive_valid ? "" : "NA:",
-    (unsigned long long)_r->target_count_exhaustive,
-    (unsigned long long)_r->target_count_heuristic,
-    (unsigned long long)_r->interleavings_detected,
-    (unsigned long long)_r->distinct_decoded_iters,
-    (unsigned long long)_r->ws_edges_via_observer,
-    (unsigned long long)_r->observer_unique_count,
-    _r->skew_min,_r->skew_max,_r->skew_mean,_r->skew_stddev,
-    (unsigned long long)_r->control_target_count,
-    (unsigned long long)_r->spin_rendezvous,
-    (unsigned long long)_r->spin_cap,
-    (unsigned long long)_r->stress_truncated,
-    _r->cpu_enemies,
-    (unsigned long long)_r->cpu_enemy_rounds,
-    (unsigned long long)_r->cpu_enemy_accesses,
-    (unsigned long long)_r->cpu_preload_ops,
-    (unsigned long long)_r->noise_cpu_rounds,
-    (unsigned long long)_r->noise_cpu_words,
-    _r->noise_gpu_blocks, _r->noise_gpu_rounds,
-    _r->noise_ws_mb, _r->place_mode,
-    _r->cpu_aff_failures, _r->place_failures);
-}
-|ocaml} ;
+            (* B6: het_obs_record, the het_confidence enum and
+               het_obs_record_print used to be emitted INLINE here.  They now live
+               in het_verdict.h (HetArch.het_verdict_h, #included above) together
+               with the null-credibility rule that reads them, so there is exactly
+               ONE definition -- shared by every harness and by the verdictcheck
+               unit test.  Nothing about the record is per-test, so nothing is lost
+               by hoisting it, and the gate now tests the struct that ships.
+
+               B6 ADDS to it: control_/canary_ counts, control_Prep,
+               control_compiled_in + the two control names, the `reporting' tier,
+               and stress_requested.  See het_verdict.h. *)
             (* _decode_value: a store tag -> the ORIGINAL value that write carried
                (0 = init/stale).  Used only to fill the decoded outcome vector for
                the human-readable histogram; the weak-behaviour test itself uses the
@@ -2668,7 +2702,51 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                  tname) ;
             s (Printf.sprintf "    _rec.confidence = %s;\n"
                  (HetCond.confidence_c_name mech_class)) ;
+            s (Printf.sprintf "    _rec.reporting = %s;\n"
+                 (HetCond.confidence_c_name report_class)) ;
             s "    _rec.N = SIZE_OF_TEST;\n" ;
+            (* ---- B6 POSITIVE CONTROL (Q4 2.4 / 3.2).  The names of the two
+               controls this test's null is gated on, so the report can PAIR every
+               null with them by name instead of printing a bare "Never".
+
+               control_compiled_in = 0: B6a wires the map, the record, the rule and
+               the report; the multi-instance emitter that actually CO-RUNS mu(T)
+               and the canary in this harness is B6b.  Until then
+               control_target_count is STRUCTURALLY zero, so het_verdict() returns
+               COLD-INVALID and names the reason -- it never lets a null through as
+               "not observed".  Failing closed and loudly is the point: a control
+               that is silently absent turns a null into an unfalsifiable claim. *)
+            (match mu_name with
+             | Some m -> s (Printf.sprintf "    _rec.control_name = \"%s\";\n" m)
+             | None -> s "    _rec.control_name = NULL;  /* not a Disallowed test */\n") ;
+            (match canary_name with
+             | Some c -> s (Printf.sprintf "    _rec.canary_name = \"%s\";\n" c)
+             | None -> s "    _rec.canary_name = NULL;\n") ;
+            s "    _rec.control_compiled_in = HET_CONTROL_COMPILED_IN;\n" ;
+            s "    _rec.control_Prep = 1.0 - exp(-(double)_rec.control_target_count);\n" ;
+            (* Which stress mechanisms this BUILD asked for.  het_verdict() can then
+               tell a DEAD mechanism (requested, zero work -- the B4/B5 bug class)
+               from a deliberately disabled one; without it, an intentional
+               no-stress baseline would be classified COLD forever, which is just
+               another rule that always says the same thing. *)
+            (* NB the preload bit reads _ct.preload_inert (a RUNTIME flag the
+               _cpu.c side sets) and NOT the HET_CPU_PRELOAD_LIVE macro.  Two
+               reasons, and the second is the load-bearing one:
+                 (1) the macro lives behind HET_CPU_STRESS_IMPL, which only
+                     <test>_cpu.c defines -- this translation unit cannot see it;
+                 (2) more importantly, .cu and _cpu.c are NOT always compiled for
+                     the same host ISA (on the dev box the .cu is nvcc/x86 while
+                     _cpu.c is cross-assembled by `clang --target=aarch64'), so a
+                     compile-time answer here could contradict the one the thread
+                     that actually issues the hints computed.  The runtime tally
+                     cannot disagree with itself. *)
+            s "    _rec.stress_requested =\n\
+               \        ((HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0) ? HET_REQ_GPU_STRESS : 0u)\n\
+               \      | ((HET_BARRIER_PCT > 0) ? HET_REQ_SPIN : 0u)\n\
+               \      | ((_nEnemy > 0) ? HET_REQ_CPU_ENEMY : 0u)\n\
+               \      | ((HET_CPU_PRELOAD_PCT > 0 && !_ct.preload_inert) ? HET_REQ_CPU_PRELOAD : 0u)\n\
+               \      | ((HET_NOISE_CPU && _noise_cpu_on) ? HET_REQ_NOISE_CPU : 0u)\n\
+               \      | ((_noise_blocks > 0) ? HET_REQ_NOISE_GPU : 0u);\n" ;
             (* B4-fix: the stress layer's own vital signs travel WITH the result --
                a target count from a run whose stress was inert is not the same
                datum as one from a stressed run, and nothing else in this record
@@ -2754,9 +2832,35 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             end ;
             (* B3c: the exhaustive ground-truth scan is O(N^T_L); only run it at a
                small N (HET_EXHAUSTIVE_MAX).  Recorded, so a capped-out run cannot
-               be misread as "exhaustively counted zero". *)
-            s "    const int _exh = (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX);\n" ;
-            s "    _rec.exhaustive_valid = _exh;\n" ;
+               be misread as "exhaustively counted zero".
+
+               B6 CORRECTION -- exhaustive_valid is a VALIDITY FLAG, and it was
+               lying.  It was set to (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX) for EVERY
+               test, but at the default N=100000 (> 4096) that is 0 for all 338 --
+               while a T_L<=1 test (no windowed proc: MP/S/R/2+2W and friends -- 123
+               of the 338, and 14 of the 16 Disallowed) decodes every frame EXACTLY
+               and increments target_count_exhaustive UNCONDITIONALLY below.  Its
+               count is exact ground truth at any N; the flag was marking it "not
+               measured".
+
+               That matters because B6's rule REFUSES a credible null unless
+               exhaustive_valid == 1.  Left as it was, every null on every test
+               would have been classified COLD forever -- a decision rule that
+               always says the same thing, i.e. exactly the dead mechanism this
+               task exists to prevent.
+
+               So: the flag now says what it means -- "target_count_exhaustive is a
+               real measurement".  T_L<=1 => always (the O(N) scan IS the ground
+               truth).  T_L>=2 => only when the O(N^T_L) search actually ran. *)
+            (match !win_order with
+             | [] ->
+                (* T_L<=1: every frame is decoded exactly, the O(N) scan IS the
+                   ground truth at any N, and there is no capped search to gate --
+                   so no _exh is emitted (it would be an unused variable). *)
+                s "    _rec.exhaustive_valid = 1;  /* T_L<=1: the O(N) scan is exact at any N */\n"
+             | _ ->
+                s "    const int _exh = (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX);\n" ;
+                s "    _rec.exhaustive_valid = _exh;  /* T_L>=2: only if the O(N^T_L) search ran */\n") ;
             s "    for (int _f=0; _f<SIZE_OF_TEST; ++_f) {\n" ;
             s "      _rec.frames_examined++;\n" ;
             (* ---- B3c frame binding, emitted (see the FRAME BINDING block).
@@ -2989,6 +3093,14 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             if has_observers then
               s "    _rec.ws_edges_via_observer = _rec.target_count_exhaustive;\n" ;
             s "    het_obs_record_print(stdout, &_rec);\n" ;
+            (* B6 THE REPORTING CONTRACT (Q4 5): never print a bare "Never".  Every
+               null is printed PAIRED with the control that is supposed to vouch for
+               it, by name and with absolute numbers, and a null the controls do not
+               vouch for is printed as DISCARD-THIS, not as a result.  This is the
+               harness's own output, not a note in the thesis -- the interpretation
+               travels with the number, so it cannot be lost between here and the
+               write-up. *)
+            s "    het_verdict_print(stdout, &_rec);\n" ;
             s "  }\n" ;
             s (Printf.sprintf "  intmax_t _buff[%d];\n" (max 1 nslots)) ;
             s (Printf.sprintf "  printf(\"Test %s\\n\");\n" tname) ;
@@ -3113,6 +3225,8 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
           write "het_stress.cuh" (fun ch -> output_string ch het_stress_content) ;
           write "het_cpu_stress.h"
             (fun ch -> output_string ch het_cpu_stress_content) ;
+          write "het_verdict.h"
+            (fun ch -> output_string ch het_verdict_content) ;
           write (tname ^ "_cpu.c") dump_cpu_file ;
           write (tname ^ ".cu") (dump_gpu_file cuda_dialect) ;
           write (tname ^ ".hip") (dump_gpu_file hip_dialect) ;

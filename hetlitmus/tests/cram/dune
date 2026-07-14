@@ -34,7 +34,8 @@
 ; Scoped so the three Layer-1 tests above stay toolchain-free.  litmus7 het emission
 ; needs no -set-libdir, so only the binary + the .litmus inputs are required.
 (cram
- (applies_to pfix-cond coop-launch shared-alloc tagged-recover stress cpu-stress)
+ (applies_to pfix-cond coop-launch shared-alloc tagged-recover stress cpu-stress
+   positive-control)
  (package herdtools7)
  (deps
   %{bin:litmus7}
@@ -50,4 +51,7 @@
   ../het/SB-cg-sys-acqrel-2s.litmus
   ../het/LB-cg-sys-acqrel-2s.litmus
   ../het/WRC-ccg-cta-relaxed.litmus
+  ; B6 (positive-control): the emitter reads mu(T) + the canary out of the
+  ; DERIVED control map, so the map is an input to emission, not just a doc.
+  ../het/control-map.csv
   ../gpu-only/MP-sys-acquire.litmus))

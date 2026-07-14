@@ -30,9 +30,32 @@ type mechanism_class = [ `Robust | `Advisory | `Exploratory ]
                  and any other unanticipated shape (lowest-confidence floor). *)
 val perpetual_class : MiscParser.prop -> mechanism_class
 
-(* The C enum introduced for B6's het_obs_record.confidence field.  P-fix only
-   *introduces* it here; B6 owns emitting it alongside het_obs_record. *)
-val het_confidence_enum_c : string
+(* B6 REPORTING tier -- what a null from this test may be CLAIMED as.  It is NOT
+   the mechanism tier and must not be folded back into perpetual_class.
 
-(* Map a mechanism_class to its C enum constant name (CONF_ROBUST etc.). *)
+   R and S are both mechanically `Advisory (one ws-location + >= 1 register), but
+   they are not equally trustworthy.  S's read is an `rf' read: it observes a real
+   writer's tag, which DECODES a synchrony point.  R has ZERO rf edges -- its only
+   read is the `fr'-against-init read, and in the WEAK case (the only case we care
+   about) that read returns the init value, whose tag is 0: no writer, no
+   iteration, no synchrony.  R must therefore borrow BOTH its synchrony point and
+   its ws edge from the fragile observer, exactly as 2+2W does, so its full-cycle
+   result is reported at the 2+2W floor (B3-decision 4.2, worked against
+   Srivastava's Read/Store derivations).
+
+   Resulting tiers over the 338 het tests:
+     ROBUST      266   (no ws-location at all)
+     ADVISORY     25   (S)
+     EXPLORATORY  47   (2+2W 22 + R 25)
+
+   [has_rf_anchor]: does the condition carry at least one read atom whose tested
+   value is some store's value -- i.e. a real rf edge the recovery scan can decode?
+   This module never sees the program, so the emitter (which holds the store-value
+   map) supplies it. *)
+val reporting_class : has_rf_anchor:bool -> mechanism_class -> mechanism_class
+
+(* Map a mechanism_class to its C enum constant name (CONF_ROBUST etc.).  The C
+   enum itself now lives in het_verdict.h (HetArch.het_verdict_h), next to the
+   het_obs_record it labels -- one definition, shared by the harness and the
+   verdictcheck unit test. *)
 val confidence_c_name : mechanism_class -> string

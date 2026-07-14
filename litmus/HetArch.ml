@@ -1992,3 +1992,555 @@ void het_cpu_shuffle(uint32_t *idx, uint32_t n) {
 #endif
 #endif /* HET_CPU_STRESS_H */
 |ocaml}
+
+(* ===========================================================================
+   B6 -- het_verdict.h: het_obs_record + the null-credibility decision rule.
+
+   This is the EPISTEMIC CORE of the campaign, not bookkeeping.  Every "Never"
+   the harness prints is otherwise uninterpretable: a cold harness and a
+   genuinely forbidden behaviour produce the IDENTICAL empty histogram.
+
+     "When testing, it is impossible to tell if an unobserved illegal execution
+      is not allowed or if it is simply rare and was not exposed by the tests."
+        -- MC Mutants (Levine et al., ASPLOS'23) 1.1, p.474.
+
+   The record and the rule live in ONE header, included by <test>.cu/.hip AND by
+   the verdictcheck unit test, so the gate exercises the exact struct and the
+   exact rule the harness runs.  A re-declared copy in the test would be free to
+   drift away from the one that ships -- which is how you end up gating a rule
+   nobody executes.
+
+   See env-research/Q4-positive-control.md (2.3 the mutation lattice, 2.4 the
+   two-layer design, 3.2 the record fields, 3.3 the decision rule, 5 the
+   reporting stance) and hetlitmus/docs/positive-control.md. *)
+
+let het_verdict_h = {ocaml|/* =========================================================================
+ * het_verdict.h -- HetLitmus observation record + null-credibility rule.
+ * Emitted by litmus7 (HetArch.het_verdict_h).   DO NOT EDIT.
+ *
+ * WHAT THIS FILE IS FOR.  A litmus campaign's Disallowed half is the half that
+ * validates the compound memory model, and it validates it with NULLS -- with
+ * outcomes we did not see.  A null is evidence only if the harness WOULD have
+ * seen a weak behaviour had one been permitted.  So every null is gated on a
+ * POSITIVE CONTROL that fired on the same run, on the same C2C path, under the
+ * same stress:
+ *
+ *   Layer A  mu(T)   the nearest ALLOWED grid neighbour of the forbidden test
+ *                    T -- same shape, same direction, same sys scope, same
+ *                    accesses, ONE ordering primitive weaker.  If mu(T) fires,
+ *                    the harness demonstrably produced the precise cross-device
+ *                    interleaving that T's ordering is claimed to prevent.
+ *                    (MC-Mutants "Weakening sw" mutator; the corpus grid
+ *                    already contains it -- see tests/het/control-map.csv.)
+ *
+ *   Layer B  canary  a fixed het MP-{cg,gc}-sys-relaxed instance.  MP is the
+ *                    only het shape with a published detected-weak result on
+ *                    GH200 (Bagchi ISMM'26 Table 4), so it is the robust floor
+ *                    that fires when a stubborn shape does not.
+ *
+ * BOTH LAYERS ARE THEMSELVES HETEROGENEOUS AND CROSS C2C.  That is the whole
+ * point and it is what rules out the obvious cheap controls: a GPU-only (or
+ * CPU-only) known-weak behaviour vouches for the on-die window, NOT for the
+ * interconnect window the forbidden het tests actually inhabit.
+ *
+ * DO NOT cite Bagchi's ~0.2% relaxed-MP rate as this control's expected hit
+ * rate.  On re-reading the primary PDF that number is the GPU-only INTER-CTA
+ * rate (Bagchi 5.1 p.74, attributed to "our Section 4.1 results", where the
+ * producer and consumer are both GPU threads on different CTAs).  It fires with
+ * no CPU participation and without crossing C2C.  There is NO published numeric
+ * het hit-rate anywhere in that paper (Table 4 is qualitative).  The het
+ * control/canary hit-rate is HARDWARE-ONLY: measure it, never assume it.
+ *
+ * WHAT A NULL CAN AND CANNOT BECOME.  The control does NOT upgrade a null to a
+ * proof.  It upgrades it from UNINTERPRETABLE to CREDIBLE-NOT-OBSERVED.
+ * Falsification is one-sided:
+ *
+ *     "we emphasise that for correct GPU programming the possibility, not
+ *      probability of weak behaviours is what matters."
+ *        -- Alglave et al., ASPLOS'15, 4.3, p.585.
+ * ========================================================================= */
+#ifndef HET_VERDICT_H
+#define HET_VERDICT_H
+
+#include <stdint.h>
+#include <stdio.h>
+#include <math.h>
+
+/* ---------------------------------------------------------------------------
+ * tau_hot -- how many control sightings make the harness "demonstrably hot".
+ *
+ * 3 is Kirkham's 95% floor (P_rep = 1 - e^-3 = 95.02%; OOPSLA'20 1.1).  We
+ * default to 30 so that "hot" is comfortable rather than marginal -- cheap in a
+ * perpetual harness driving N to 1e6-1e7.  Its CALIBRATION is hardware-only
+ * (Q4 8.1) and couples to Q3/B7: het CPU-GPU drift and shared-fabric contention
+ * can break the stationarity/independence that the Poisson arithmetic assumes,
+ * which is exactly why control_Prep below is a HOTNESS INDICATOR and not a
+ * guarantee. */
+#ifndef HET_TAU_HOT
+#define HET_TAU_HOT 30
+#endif
+
+typedef enum { CONF_ROBUST, CONF_ADVISORY, CONF_EXPLORATORY } het_confidence;
+
+/* ---------------------------------------------------------------------------
+ * Which stress mechanisms this BUILD asked for.
+ *
+ * A mechanism that produced zero work is a DEAD mechanism only if it was
+ * requested.  A deliberately disabled one is not a bug -- and without this
+ * distinction an intentional no-stress baseline run would be classified COLD
+ * forever, which is just a different way of building a rule that always says
+ * the same thing.  The emitter fills this from the compile-time knobs, so the
+ * verdict stays a PURE FUNCTION OF THE RECORD (and is therefore unit-testable
+ * from synthetic records -- see hetlitmus/verify/verdictcheck.py). */
+#define HET_REQ_GPU_STRESS  (1u << 0)   /* HET_PRE_STRESS_PCT | HET_MEM_STRESS_PCT */
+#define HET_REQ_SPIN        (1u << 1)   /* HET_BARRIER_PCT -> spin_rendezvous+cap  */
+#define HET_REQ_CPU_ENEMY   (1u << 2)   /* HET_CPU_ENEMIES                         */
+#define HET_REQ_CPU_PRELOAD (1u << 3)   /* HET_CPU_PRELOAD_PCT && _PRELOAD_LIVE    */
+#define HET_REQ_NOISE_CPU   (1u << 4)   /* HET_NOISE_CPU                           */
+#define HET_REQ_NOISE_GPU   (1u << 5)   /* HET_NOISE_GPU_BLOCKS                    */
+
+typedef struct het_obs_record {
+  const char *test_name; int instance_id; int run_id;
+  /* MECHANISM tier: how well this test's cycle can be RECOVERED from the read
+     and observer buffers (HetCond.perpetual_class).  Distinct from `reporting'
+     below -- do not conflate them. */
+  het_confidence confidence;
+  /* REPORTING tier: what a null from this test may be CLAIMED as.  R and S are
+     both mechanically `Advisory' (one ws-location + >=1 register), but R has
+     ZERO rf edges -- its only read is the fr-against-init read, which in the
+     WEAK case decodes to tag 0: no writer, no synchrony (B3-decision 4.2).  R
+     therefore leans on the fragile observer for BOTH the synchrony point and
+     the ws edge, exactly like 2+2W, so it is DEMOTED to EXPLORATORY for
+     reporting.  Tiers: ROBUST 266 / ADVISORY 25 (S) / EXPLORATORY 47 (2+2W 22
+     + R 25). */
+  het_confidence reporting;
+  uint64_t N, frames_examined;
+  uint64_t target_count_exhaustive, target_count_heuristic;
+  /* 0 = the O(N^T_L) exhaustive scan did NOT run at this N (capped by
+     HET_EXHAUSTIVE_MAX), so target_count_exhaustive is NOT a count of zero
+     observations -- it is "not measured".  Reading it as data would manufacture
+     a false "Never", which is the same class of silent falsification as a
+     constant-false detector.  het_verdict() below REFUSES to return
+     HET_CREDIBLE_NULL when this is 0.
+
+     NOTE the T_L<=1 case (MP/S/R/2+2W and every other shape with no windowed
+     proc -- 123 of the 338 het tests, and 14 of the 16 Disallowed): there every
+     frame is decoded EXACTLY, the O(N) scan is the ground truth, and this flag
+     is 1 regardless of N.  Before B6 it was set to (N <= HET_EXHAUSTIVE_MAX)
+     for every test, which at the default N=100000 was 0 for ALL 338 -- so the
+     rule below would have called every run COLD, forever. */
+  int exhaustive_valid;
+  uint64_t interleavings_detected;
+  uint64_t distinct_decoded_iters;
+  uint64_t ws_edges_via_observer;
+  uint64_t observer_unique_count;
+  int32_t skew_min, skew_max; double skew_mean, skew_stddev;
+  /* ---- B6 POSITIVE CONTROL (Q4 3.2).  control_* = Layer A (the minimal mutant
+     mu(T) of THIS test); canary_* = Layer B (the universal het MP floor).  Both
+     are tallied by the SAME recovery scan as the test's own target_count, on
+     disjoint cache-line-padded locations, in the same launch under the same
+     stress -- a control that ran at another time, under another stress roll and
+     another thermal state, certifies nothing about THIS window (Kirkham shows
+     the weak-behaviour rate is not even stationary within one run, 4.3). */
+  uint64_t control_target_count;
+  uint64_t control_frames_examined;
+  uint64_t canary_target_count;
+  uint64_t canary_frames_examined;
+  /* 1 - e^{-control_target_count} (Kirkham's reproducibility score).  A HOTNESS
+     INDICATOR, not a guarantee: its Bernoulli/Poisson assumptions (stationary,
+     independent, non-bursty trials) are exactly what het CPU-GPU drift breaks,
+     and replacing them is Q3/B7's job. */
+  double control_Prep;
+  /* 0 => NO control was compiled into this harness, so control_target_count is
+     structurally zero and means NOTHING.  het_verdict() returns COLD and says
+     so by name.  (B6a ships this 0; the multi-instance co-run emitter is B6b.) */
+  int control_compiled_in;
+  const char *control_name;   /* mu(T), from tests/het/control-map.csv */
+  const char *canary_name;    /* the Layer-B canary                    */
+  /* B4-fix STRESS LIVENESS.  The stress layer is invisible to the L0
+     faithfulness gate by design, so its health has to be MEASURED at run time or
+     it is not known at all (it was inert for two commits and every gate stayed
+     green).  spin_rendezvous/spin_cap: how the window-opener's spins ended -- a
+     mostly-cap-released spin is a delay loop, not a rendezvous, and B8 tunes
+     HET_BARRIER_PCT against this ratio.  stress_truncated: stress lanes that hit
+     HET_STRESS_MAX_ROUNDS, i.e. stopped stressing while the test was still
+     running -- such a run's non-observations are NOT comparable with a stressed
+     run's, so it is DISQUALIFYING, not cosmetic. */
+  uint64_t spin_rendezvous, spin_cap, stress_truncated;
+  /* B5 CPU + INTERCONNECT LIVENESS.  Same argument as the B4 block above, for the
+     two levers B4 did not have.  Every field is here because the mechanism it
+     measures has a plausible way to die silently:
+       cpu_enemy_rounds  0 => the CPU enemies never ran (stress_go ordering, or a
+                         loop the optimiser deleted).
+       cpu_preload_ops   0 => the M3 incantation is inert (a host with no cache
+                         primitives, or a 0% roll).
+       noise_cpu_rounds  0 => the Grace half of the C2C noise never ran;
+       noise_gpu_blocks  0 => the Hopper half never ran.  Either way the run is NOT
+                         interconnect-stressed, whatever HET_NOISE_* claimed.
+       cpu_aff_failures >0 => sched_setaffinity FAILED: the threads are wherever the
+                         scheduler put them and the pinning is fiction.
+       place_failures   >0 => cudaMemAdvise was REFUSED: HET_PLACE placed nothing.
+     A target count from a run whose stress was inert is not the same datum as one
+     from a stressed run, and nothing else in this record would say so. */
+  uint64_t cpu_enemy_rounds, cpu_enemy_accesses, cpu_preload_ops;
+  uint64_t noise_cpu_rounds, noise_cpu_words;
+  uint32_t noise_gpu_blocks, noise_gpu_rounds;
+  uint32_t cpu_enemies, cpu_aff_failures, place_failures;
+  /* The two knobs B8 tunes the interconnect lever against, carried per run so the
+     autotuner reads what the run REALISED rather than what it asked for.  ws_mb is
+     the noise WORKING SET, and it is the knob that decides whether the noise crosses
+     anything at all: below the last-level cache (Grace L3 = 114 MB) the buffer is
+     served from cache and generates no interconnect traffic, so a config that scores
+     well at 8 MB scored a stressor that was not running. */
+  uint32_t noise_ws_mb, place_mode;
+  uint32_t stress_requested;    /* HET_REQ_* bitmask -- see above */
+} het_obs_record;
+
+/* ---------------------------------------------------------------------------
+ * The verdict.
+ *
+ *   HET_MISMATCH        the Disallowed outcome was OBSERVED.  A single sighting
+ *                       REFUTES the CMCM prediction.  Falsification is one-sided,
+ *                       so NO control is needed to believe a positive -- this is
+ *                       the scientifically most valuable outcome and it is
+ *                       reported loudly and unconditionally.
+ *   HET_CREDIBLE_NULL   not observed, and the harness was demonstrably hot ON
+ *                       THIS MACHINERY: mu(T) fired >= tau_hot on the same run,
+ *                       and T's own two engines provably overlapped.
+ *   HET_WEAK_NULL       not observed; the cross-device path is alive (the canary
+ *                       fired, or mu(T) fired but the ground-truth scan did not
+ *                       run) but we cannot independently confirm the harness
+ *                       reaches T's specific interleaving.  Escalate stress
+ *                       tuning for T's shape (B8).
+ *   HET_COLD_INVALID    the harness was NOT demonstrably hot.  The empty
+ *                       histogram carries NO information.  DISCARD the null; do
+ *                       NOT report it as "not observed".  This is the run a
+ *                       naive harness would silently mis-report as a pass.
+ * ------------------------------------------------------------------------- */
+typedef enum {
+  HET_MISMATCH = 0,
+  HET_CREDIBLE_NULL,
+  HET_WEAK_NULL,
+  HET_COLD_INVALID
+} het_verdict_t;
+
+/* Why a run was DISQUALIFIED (its null is discarded).  Each names a mechanism
+   that is DEAD, not merely suboptimal. */
+#define HET_DQ_NO_CONTROL_BUILT (1u << 0)  /* no control compiled in (B6a)        */
+#define HET_DQ_NO_INTERLEAVING  (1u << 1)  /* the two engines never overlapped    */
+#define HET_DQ_CONTROLS_COLD    (1u << 2)  /* neither mu(T) nor the canary fired  */
+#define HET_DQ_STRESS_TRUNCATED (1u << 3)  /* stress stopped mid-run              */
+#define HET_DQ_SPIN_DEAD        (1u << 4)  /* window-opener requested, never spun */
+#define HET_DQ_CPU_ENEMY_DEAD   (1u << 5)
+#define HET_DQ_CPU_PRELOAD_DEAD (1u << 6)
+#define HET_DQ_NOISE_CPU_DEAD   (1u << 7)  /* NOT interconnect-stressed           */
+#define HET_DQ_NOISE_GPU_DEAD   (1u << 8)
+
+/* Why a null was CAVEATED (still reportable, but weaker than it looks). */
+#define HET_CV_NO_EXHAUSTIVE    (1u << 0)  /* ground-truth scan did not run       */
+#define HET_CV_CANARY_ONLY      (1u << 1)  /* Layer B fired, Layer A did not      */
+#define HET_CV_HEURISTIC_SIGHT  (1u << 2)  /* sighting via the windowed heuristic */
+#define HET_CV_AFF_FAILED       (1u << 3)  /* pinning is fiction                  */
+#define HET_CV_PLACE_REFUSED    (1u << 4)  /* cudaMemAdvise placed nothing        */
+#define HET_CV_SPIN_CAP         (1u << 5)  /* a delay loop, not a rendezvous      */
+#define HET_CV_UNSTRESSED       (1u << 6)  /* no stress requested at all          */
+
+static int het_dead(uint32_t req, uint32_t bit, uint64_t rounds) {
+  return (req & bit) && rounds == 0;
+}
+
+/* The rule.  Q4 3.3, plus the exhaustive_valid gate (Item E.1) and the B4/B5
+   liveness disqualifiers.  A PURE function of the record. */
+static het_verdict_t het_verdict(const het_obs_record *r,
+                                 uint32_t *dq_out, uint32_t *cv_out) {
+  uint32_t dq = 0, cv = 0;
+  uint32_t req = r->stress_requested;
+  het_verdict_t v;
+  int hot_control, hot_canary;
+
+  /* ---- 1. A SIGHTING REFUTES.  Unconditional: no control is needed to believe
+     a positive, and an inert-stress run that nevertheless SAW the forbidden
+     outcome still saw it.
+     ON THE HEURISTIC COUNT -- a deliberate, disclosed strengthening of the
+     literal rule in Q4 3.3, which keys MISMATCH off target_count_exhaustive
+     alone.  For a T_L>=2 shape at production N the exhaustive scan does not run
+     (HET_EXHAUSTIVE_MAX), so target_count_exhaustive is 0 BY CONSTRUCTION and a
+     real sighting would be silently dropped -- a false negative on the single
+     most valuable outcome we can produce.  The windowed heuristic searches
+     [c-W, c+W] and the exhaustive scan searches [0, N-1] with the SAME
+     predicate, so the heuristic's hits are a SUBSET of the exhaustive scan's:
+     a heuristic hit is a genuine recovered cycle (it can miss cycles, it cannot
+     invent them).  Counting it is therefore sound and strictly safer.  It is
+     flagged HET_CV_HEURISTIC_SIGHT so the report never passes it off as
+     ground truth. */
+  if (r->target_count_exhaustive > 0 || r->target_count_heuristic > 0) {
+    if (r->target_count_exhaustive == 0) cv |= HET_CV_HEURISTIC_SIGHT;
+    if (dq_out) *dq_out = 0;
+    if (cv_out) *cv_out = cv;
+    return HET_MISMATCH;
+  }
+
+  /* ---- 2. Liveness: is this run's null even a datum?
+     "A null from an inert-stress run is not the same datum as a null from a
+     stressed run, and nothing else in the record would say so." */
+  if (!r->control_compiled_in)                    dq |= HET_DQ_NO_CONTROL_BUILT;
+  if (r->interleavings_detected == 0)             dq |= HET_DQ_NO_INTERLEAVING;
+  if (r->stress_truncated > 0)                    dq |= HET_DQ_STRESS_TRUNCATED;
+  /* The window-opener: requested via HET_BARRIER_PCT, evidenced by the spin
+     tally.  Zero spins across an entire run means it never ran. */
+  if (het_dead(req, HET_REQ_SPIN, r->spin_rendezvous + r->spin_cap))
+                                                  dq |= HET_DQ_SPIN_DEAD;
+  /* THERE IS DELIBERATELY NO DISQUALIFIER FOR HET_REQ_GPU_STRESS.  het_do_stress
+     -- the scratchpad loop that IS the GPU stress -- has no runtime tally at all:
+     het_stress.cuh's five slots are RDV / CAP / TRUNC / NOISE / NOISE_ROUNDS, and
+     none of them counts a do_stress round.  So this record carries no evidence
+     that the stress loop EXECUTED, only (via stresscheck.py, structurally) that
+     it survived into the emitted PTX.  Checking it against the spin counters --
+     which measure a different mechanism -- would look like a check while proving
+     nothing about the one it names, and a check that cannot fail is worse than no
+     check.  The bit is still RECORDED so B8 knows what the config asked for.
+     Closing the gap needs a device-side do_stress counter (B4/B8's to add). */
+  if (het_dead(req, HET_REQ_CPU_ENEMY,   r->cpu_enemy_rounds))
+                                                  dq |= HET_DQ_CPU_ENEMY_DEAD;
+  if (het_dead(req, HET_REQ_CPU_PRELOAD, r->cpu_preload_ops))
+                                                  dq |= HET_DQ_CPU_PRELOAD_DEAD;
+  if (het_dead(req, HET_REQ_NOISE_CPU,   r->noise_cpu_rounds))
+                                                  dq |= HET_DQ_NOISE_CPU_DEAD;
+  if (het_dead(req, HET_REQ_NOISE_GPU,   (uint64_t)r->noise_gpu_blocks))
+                                                  dq |= HET_DQ_NOISE_GPU_DEAD;
+
+  /* ---- 3. Was the harness hot? */
+  hot_control = (r->control_compiled_in && r->control_target_count >= HET_TAU_HOT);
+  hot_canary  = (r->control_compiled_in && r->canary_target_count  >= HET_TAU_HOT);
+  if (!hot_control && !hot_canary)                dq |= HET_DQ_CONTROLS_COLD;
+
+  /* ---- 4. Caveats (do not invalidate, but must travel with the number). */
+  if (!r->exhaustive_valid)         cv |= HET_CV_NO_EXHAUSTIVE;
+  if (!hot_control && hot_canary)   cv |= HET_CV_CANARY_ONLY;
+  if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
+  if (r->place_failures > 0)        cv |= HET_CV_PLACE_REFUSED;
+  if (req == 0)                     cv |= HET_CV_UNSTRESSED;
+  { uint64_t spins = r->spin_rendezvous + r->spin_cap;
+    if (spins && r->spin_rendezvous * 2 < spins) cv |= HET_CV_SPIN_CAP; }
+
+  /* ---- 5. The verdict. */
+  if (dq) {
+    v = HET_COLD_INVALID;
+  } else if (hot_control && r->exhaustive_valid) {
+    /* mu(T) -- the minimal mutant of THIS test -- fired reproducibly on the same
+       run, the same stress and the same C2C path, and T's own two engines
+       provably overlapped.  The harness demonstrably produced the precise
+       cross-device interleaving that T's ordering is claimed to prevent. */
+    v = HET_CREDIBLE_NULL;
+  } else {
+    /* Either only the canary fired (the C2C path is alive, but we cannot confirm
+       we reach THIS shape's window -- escalate stress tuning, B8), or the
+       ground-truth scan never ran, so the zero is not a measured zero. */
+    v = HET_WEAK_NULL;
+  }
+
+  if (dq_out) *dq_out = dq;
+  if (cv_out) *cv_out = cv;
+  return v;
+}
+
+static const char *het_verdict_name(het_verdict_t v) {
+  switch (v) {
+  case HET_MISMATCH:      return "MISMATCH";
+  case HET_CREDIBLE_NULL: return "CREDIBLE-NULL";
+  case HET_WEAK_NULL:     return "WEAK-NULL";
+  default:                return "COLD-INVALID";
+  }
+}
+
+static const char *het_conf_name(het_confidence c) {
+  switch (c) {
+  case CONF_ROBUST:    return "ROBUST";
+  case CONF_ADVISORY:  return "ADVISORY";
+  default:             return "EXPLORATORY";
+  }
+}
+
+static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
+  fprintf(_ch,
+    "HetObs %s inst=%d run=%d conf=%d report=%d N=%llu frames=%llu target=%s%llu/%llu "
+    "interleavings=%llu distinct_iters=%llu ws_via_obs=%llu obs_unique=%llu "
+    "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%llu/%llu canary=%llu/%llu Prep=%.6f built=%d "
+    "spin=%llu/%llu stress_trunc=%llu req=0x%x "
+    "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
+    "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u "
+    "aff_fail=%u place_fail=%u\n",
+    _r->test_name, _r->instance_id, _r->run_id,
+    (int)_r->confidence, (int)_r->reporting,
+    (unsigned long long)_r->N, (unsigned long long)_r->frames_examined,
+    _r->exhaustive_valid ? "" : "NA:",
+    (unsigned long long)_r->target_count_exhaustive,
+    (unsigned long long)_r->target_count_heuristic,
+    (unsigned long long)_r->interleavings_detected,
+    (unsigned long long)_r->distinct_decoded_iters,
+    (unsigned long long)_r->ws_edges_via_observer,
+    (unsigned long long)_r->observer_unique_count,
+    _r->skew_min, _r->skew_max, _r->skew_mean, _r->skew_stddev,
+    (unsigned long long)_r->control_target_count,
+    (unsigned long long)_r->control_frames_examined,
+    (unsigned long long)_r->canary_target_count,
+    (unsigned long long)_r->canary_frames_examined,
+    _r->control_Prep, _r->control_compiled_in,
+    (unsigned long long)_r->spin_rendezvous,
+    (unsigned long long)_r->spin_cap,
+    (unsigned long long)_r->stress_truncated,
+    _r->stress_requested,
+    _r->cpu_enemies,
+    (unsigned long long)_r->cpu_enemy_rounds,
+    (unsigned long long)_r->cpu_enemy_accesses,
+    (unsigned long long)_r->cpu_preload_ops,
+    (unsigned long long)_r->noise_cpu_rounds,
+    (unsigned long long)_r->noise_cpu_words,
+    _r->noise_gpu_blocks, _r->noise_gpu_rounds,
+    _r->noise_ws_mb, _r->place_mode,
+    _r->cpu_aff_failures, _r->place_failures);
+}
+
+/* ---------------------------------------------------------------------------
+ * THE REPORTING CONTRACT (Q4 5): NEVER PRINT A BARE "Never".
+ *
+ * Every null is printed PAIRED with the control that vouches for it, with
+ * absolute numbers, so a reader can recalibrate the bar instead of taking our
+ * word for it (Alglave 4.3: absolute numbers over N runs + the tuned config).
+ * The two halves of the model verdict come from the same run, Iorga-style
+ * (4.4): Disallowed-never-observed = the CMCM is not OVER-PERMISSIVE;
+ * Allowed-sometimes-observed (the controls) = it is not OVER-STRONG.
+ *
+ * Where a shape's control cannot be made hot, we say so plainly rather than
+ * quietly reporting the null anyway -- the GTX-280 precedent:
+ *
+ *     "In fairness to the authors of [19], we were unable to observe weak
+ *      behaviours using our method on the Nvidia GTX 280 chip they used."
+ *        -- Alglave et al., ASPLOS'15, footnote 7, p.577.
+ * ------------------------------------------------------------------------- */
+static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
+  uint32_t dq = 0, cv = 0;
+  het_verdict_t v = het_verdict(_r, &dq, &cv);
+
+  fprintf(_ch, "HetVerdict %s [%s] run=%d: %s\n",
+          _r->test_name, het_conf_name(_r->reporting), _r->run_id,
+          het_verdict_name(v));
+
+  if (v == HET_MISMATCH) {
+    fprintf(_ch,
+      "  ** %s: the should-be-FORBIDDEN outcome was OBSERVED %llu time(s) "
+      "(exhaustive) / %llu (heuristic) in N=%llu frames.\n"
+      "  ** A single sighting REFUTES the model's prediction for this test.  "
+      "This is a result, not a bug -- report it.\n",
+      _r->test_name,
+      (unsigned long long)_r->target_count_exhaustive,
+      (unsigned long long)_r->target_count_heuristic,
+      (unsigned long long)_r->N);
+    if (cv & HET_CV_HEURISTIC_SIGHT)
+      fprintf(_ch,
+        "  NOTE: the sighting came from the WINDOWED heuristic (the O(N^T_L) "
+        "ground-truth scan did not run at this N).  The window is a subset of "
+        "the full range, so the recovered cycle is real -- but confirm it by "
+        "re-running with -DHET_EXHAUSTIVE_MAX above N.\n");
+    return;
+  }
+
+  /* ---- a null.  It NEVER prints alone. */
+  fprintf(_ch,
+    "  %s: Disallowed outcome 0 / N=%llu frames (%llu examined); "
+    "interleavings_detected=%llu.\n",
+    _r->test_name, (unsigned long long)_r->N,
+    (unsigned long long)_r->frames_examined,
+    (unsigned long long)_r->interleavings_detected);
+
+  if (!_r->control_compiled_in) {
+    fprintf(_ch,
+      "  companion %s (minimal mutant): *** NO CONTROL COMPILED INTO THIS "
+      "HARNESS *** -- control_target_count is structurally 0 and means NOTHING.\n"
+      "  This null is UNINTERPRETABLE and MUST NOT be reported as "
+      "\"not observed\".  (The co-run emitter is B6b.)\n",
+      _r->control_name ? _r->control_name : "(none)");
+  } else {
+    fprintf(_ch,
+      "  companion %s (minimal mutant) fired %llu time(s), P_rep=%.4f%%, "
+      "on the same runs under the same stress config (tau_hot=%d).\n"
+      "  canary %s fired %llu time(s).\n",
+      _r->control_name ? _r->control_name : "(none)",
+      (unsigned long long)_r->control_target_count,
+      100.0 * _r->control_Prep,
+      (int)HET_TAU_HOT,
+      _r->canary_name ? _r->canary_name : "(none)",
+      (unsigned long long)_r->canary_target_count);
+  }
+
+  if (v == HET_COLD_INVALID) {
+    fprintf(_ch, "  DISCARD this null -- the harness was not demonstrably hot:\n");
+    if (dq & HET_DQ_NO_CONTROL_BUILT)
+      fprintf(_ch, "    - no positive control was compiled in (B6b)\n");
+    if (dq & HET_DQ_NO_INTERLEAVING)
+      fprintf(_ch, "    - interleavings_detected == 0: the two engines never "
+                   "overlapped; nothing raced, so nothing could have been seen\n");
+    if (dq & HET_DQ_CONTROLS_COLD)
+      fprintf(_ch, "    - neither mu(T) nor the canary reached tau_hot=%d: a "
+                   "known-ALLOWED weak behaviour on this very machinery did not "
+                   "fire, so this harness is not shown to expose anything\n",
+              (int)HET_TAU_HOT);
+    if (dq & HET_DQ_STRESS_TRUNCATED)
+      fprintf(_ch, "    - stress_truncated=%llu: stress STOPPED while tested "
+                   "lanes were still running\n",
+              (unsigned long long)_r->stress_truncated);
+    if (dq & HET_DQ_SPIN_DEAD)
+      fprintf(_ch, "    - the device-scope window-opener was requested "
+                   "(HET_BARRIER_PCT) but recorded ZERO spins: it never ran\n");
+    if (dq & HET_DQ_CPU_ENEMY_DEAD)
+      fprintf(_ch, "    - the CPU enemies were requested but completed ZERO rounds\n");
+    if (dq & HET_DQ_CPU_PRELOAD_DEAD)
+      fprintf(_ch, "    - the M3 preload was requested but issued ZERO hints\n");
+    if (dq & HET_DQ_NOISE_CPU_DEAD)
+      fprintf(_ch, "    - the Grace half of the C2C noise did NOT run: this run "
+                   "is not interconnect-stressed\n");
+    if (dq & HET_DQ_NOISE_GPU_DEAD)
+      fprintf(_ch, "    - the Hopper half of the C2C noise did NOT run: this run "
+                   "is not interconnect-stressed\n");
+    return;
+  }
+
+  if (v == HET_CREDIBLE_NULL)
+    fprintf(_ch,
+      "  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on "
+      "the same run, so the harness demonstrably produced the cross-device "
+      "interleaving this test's ordering is claimed to prevent.\n"
+      "  Consistency evidence FOR the model -- NOT a proof.  Report as \"not "
+      "observed under this effort\", never as \"forbidden\".\n");
+
+  if (v == HET_WEAK_NULL) {
+    fprintf(_ch, "  WEAK NULL -- reportable, but weaker than it looks:\n");
+    if (cv & HET_CV_CANARY_ONLY)
+      fprintf(_ch, "    - only the Layer-B canary fired: the C2C path is alive, "
+                   "but this SHAPE's window was not demonstrably hit.  Escalate "
+                   "stress tuning for it (B8).\n");
+    if (cv & HET_CV_NO_EXHAUSTIVE)
+      fprintf(_ch, "    - the O(N^T_L) ground-truth scan did not run at N=%llu "
+                   "(HET_EXHAUSTIVE_MAX): the zero rests on the WINDOWED "
+                   "heuristic, whose radius HET_WINDOW is an uncalibrated "
+                   "placeholder (owned by B8).  It is not a measured zero.\n",
+              (unsigned long long)_r->N);
+  }
+
+  if (cv & HET_CV_UNSTRESSED)
+    fprintf(_ch, "  CAVEAT: no stress was requested.  Kirkham (6.2) exposed only "
+                 "ONE of six mutants with no stress -- an unstressed null is weak "
+                 "evidence whatever the controls say.\n");
+  if (cv & HET_CV_SPIN_CAP)
+    fprintf(_ch, "  CAVEAT: the window-opener released on the deadlock cap in most "
+                 "spins -- it is a delay loop, not a rendezvous.\n");
+  if (cv & HET_CV_AFF_FAILED)
+    fprintf(_ch, "  CAVEAT: %u sched_setaffinity call(s) FAILED -- the pinning is "
+                 "fiction and the stress topology is not the one being tuned.\n",
+            _r->cpu_aff_failures);
+  if (cv & HET_CV_PLACE_REFUSED)
+    fprintf(_ch, "  CAVEAT: cudaMemAdvise was REFUSED -- HET_PLACE placed nothing.\n");
+}
+
+#endif /* HET_VERDICT_H */
+|ocaml}

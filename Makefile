@@ -684,10 +684,37 @@ hetlitmus-cpustress: | build
 	bash hetlitmus/verify/l0_tokens.sh cpustress
 	@ echo "HetLitmus Layer-3 CPU+interconnect stress liveness: OK"
 
+### B6 THE POSITIVE CONTROL.  Two gates, both CUDA-free.
+###
+### hetlitmus-controlmap: every one of the 16 Disallowed tests must have a mu(T)
+### that EXISTS as a .litmus and is labelled Allowed -- re-derived from the corpus
+### sources + the oracle, never from the test's name (the one-sided grid variants
+### are named for the op the GPU performs, so MP-gc-sys-acquire / S-gc-sys-acquire /
+### R-gc-sys-acquire do not exist at all).  It FAILS CLOSED: a missing mutant breaks
+### the build rather than skipping the control, because a silently-absent control
+### does not weaken a null -- it makes it unfalsifiable.
+hetlitmus-controlmap: | build
+	@ echo
+	python3 hetlitmus/verify/controlmap.py --check
+	@ echo "HetLitmus B6 control map: OK"
+
+### hetlitmus-verdict: het_verdict() -- the rule that decides whether a "Never" may
+### be reported at all -- compiled from the REAL emitted header and fed synthetic
+### records.  Asserts all four branches are reachable (a rule that always returns
+### the same verdict is not a decision), that exhaustive_valid==0 can NEVER yield a
+### credible null, and that every liveness disqualifier bites.  This is the gate for
+### the deliverable itself.
+hetlitmus-verdict: | build
+	@ echo
+	python3 hetlitmus/verify/verdictcheck.py
+	@ echo "HetLitmus B6 decision rule: OK"
+
 ### Umbrellas (what you press).  `::` accumulation, order-only `| build`.
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-corpus
+hetlitmus-test:: hetlitmus-controlmap
+hetlitmus-test:: hetlitmus-verdict
 
 hetlitmus-test-nvcc:: | build
 hetlitmus-test-nvcc:: hetlitmus-faithful

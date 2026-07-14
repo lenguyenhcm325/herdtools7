@@ -299,20 +299,35 @@ def run(cmd, **kw):
                           text=True, **kw)
 
 
-def emit_harness(litmus_path, outdir):
-    r = run([LITMUS7, "-set-libdir", LIBDIR, "-o", outdir,
-             os.path.abspath(litmus_path)])
-    if r.returncode != 0:
-        raise RuntimeError("litmus7 failed:\n" + r.stdout)
-    name = os.path.splitext(os.path.basename(litmus_path))[0]
-    d = os.path.join(outdir, name)
+def harness_paths(d, name):
     cpu_c = os.path.join(d, name + "_cpu.c")
     cu = os.path.join(d, name + ".cu")
     hdr = os.path.join(d, "het_cpu_stress.h")
     for p in (cpu_c, cu, hdr):
         if not os.path.exists(p):
-            raise RuntimeError("litmus7 did not emit %s" % p)
+            raise RuntimeError("no %s in the harness dir" % p)
     return d, cpu_c, cu, hdr
+
+
+def emit_harness(litmus_path, outdir, harness_dir=None):
+    """Emit the harness -- or, when [harness_dir] is given, check the one already
+    sitting there.
+
+    The second mode exists so this checker can be BITTEN.  Without it, a negative
+    control cannot exist at all: the checker re-emits from source on every run, so
+    a mutation has nothing to land on and the whole gate would be untestable.  That
+    is not hypothetical -- B5 shipped this checker with NO negative control, which
+    is how the one gate able to catch a regression that preserves the source text
+    while killing the compiled mechanism ended up unguarded itself.
+    See l0_tokens.sh selftest section [8]. """
+    name = os.path.splitext(os.path.basename(litmus_path))[0]
+    if harness_dir:
+        return harness_paths(harness_dir, name)
+    r = run([LITMUS7, "-set-libdir", LIBDIR, "-o", outdir,
+             os.path.abspath(litmus_path)])
+    if r.returncode != 0:
+        raise RuntimeError("litmus7 failed:\n" + r.stdout)
+    return harness_paths(os.path.join(outdir, name), name)
 
 
 def asm_of(cpu_c, cross, extra=()):
@@ -379,7 +394,8 @@ def count_noise_ops(ptx_text):
     return sum(1 for ln in ptx_text.splitlines() if NOISE_OP.match(ln))
 
 
-def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True):
+def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True,
+          harness_dir=None):
     lines, ok = [], [True]
 
     def fail(msg):
@@ -394,7 +410,7 @@ def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True):
 
     tmp = tempfile.mkdtemp(prefix="cpustresscheck_")
     try:
-        d, cpu_c, cu, hdr = emit_harness(litmus_path, tmp)
+        d, cpu_c, cu, hdr = emit_harness(litmus_path, tmp, harness_dir)
 
         # Never pass vacuously on a harness with no CPU stress layer at all.
         with open(cu) as f:
@@ -475,6 +491,60 @@ def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True):
             note("  S4 sigma is a RUNTIME value: het_cpu_enemy's op count is INVARIANT "
                  "over -DHET_CPU_ENEMY_SEQ=0..3 (%d ld + %d st)"
                  % (per_seq[0][0], per_seq[0][1]))
+
+        # ---- S5/S6: the DRIVER's two stress invariants --------------------------
+        # S1-S4 and D1-D3 all exercise het_cpu_stress.h -- the header -- because the
+        # dynamic probe compiles its OWN main() against it.  Nothing here has ever
+        # looked at the emitted <test>.cu DRIVER, and the driver is where the two
+        # remaining ways to silently destroy the CPU/interconnect layer live: give
+        # the noise a buffer that fits in cache, or point the enemies at the very
+        # locations under test.  Both leave every other check green.
+        cu_src = open(cu).read()
+
+        # S5: the noise WORKING SET is the knob that decides whether the C2C noise
+        # crosses anything at all.  Below the last-level cache (Grace L3 = 114 MB)
+        # the buffer is served from cache and generates NO interconnect traffic, so
+        # a run that "scored well" at 8 MB scored a stressor that was not running.
+        # The allocation must therefore DERIVE from HET_NOISE_MB (so the autotuner
+        # and the het_obs_record's noise_ws_mb describe the buffer that was really
+        # allocated), and the below-LLC guard must still be there.
+        m = re.search(r"_noise_words\s*=\s*([^;]+);", cu_src)
+        if not m:
+            fail("S5: the driver does not compute _noise_words at all -- the C2C "
+                 "noise buffer is not sized by anything.")
+        elif "HET_NOISE_MB" not in m.group(1):
+            fail("S5: the C2C noise working set is NOT derived from HET_NOISE_MB "
+                 "(_noise_words = %s).  A hard-coded buffer silently decouples the "
+                 "noise from the knob B8 tunes and from noise_ws_mb in the record, "
+                 "and a buffer below the LLC (%s) is served from cache and stresses "
+                 "NOTHING while every counter still moves."
+                 % (m.group(1).strip(), "Grace L3 = 114 MB"))
+        elif "HET_LLC_MB" not in cu_src:
+            fail("S5: the below-last-level-cache guard is gone.  A noise buffer that "
+                 "fits in cache generates no interconnect traffic, and nothing else "
+                 "in the run would say so.")
+        else:
+            note("  S5 the C2C noise working set derives from HET_NOISE_MB and the "
+                 "below-LLC guard is present (a cache-resident buffer stresses nothing)")
+
+        # S6: THE DISJOINT-SCRATCHPAD INVARIANT (S&D PLDI'16 3.3).  The enemies must
+        # hammer a PRIVATE buffer.  An enemy pointed at a tested location does not
+        # merely add noise -- it writes the variable under test, so it can MANUFACTURE
+        # the very weak behaviour we are trying to observe, or destroy it.  That is
+        # not a weaker experiment, it is a fabricated one.
+        scratch_assigns = re.findall(r"\.scratch\s*=\s*([A-Za-z_]\w*)", cu_src)
+        if not scratch_assigns:
+            fail("S6: no enemy .scratch assignment found in the driver -- the enemies "
+                 "have no scratchpad.")
+        elif any(v != "_cpu_scratch" for v in scratch_assigns):
+            fail("S6: an enemy scratchpad is assigned from %s, not the private "
+                 "_cpu_scratch.  The enemies must hammer a buffer DISJOINT from the "
+                 "test variables (S&D PLDI'16 3.3): an enemy writing a tested "
+                 "location can manufacture or destroy the weak behaviour outright."
+                 % sorted({v for v in scratch_assigns if v != "_cpu_scratch"}))
+        else:
+            note("  S6 the enemy scratchpad is the private _cpu_scratch, disjoint "
+                 "from every test variable (%d enemy arg(s))" % len(scratch_assigns))
 
         # ---- D1/D2: the layer actually runs, and stops when switched off --------
         probe_c = os.path.join(d, "_probe.c")
@@ -596,6 +666,10 @@ def main():
     ap.add_argument("litmus", nargs="+")
     ap.add_argument("--arch", default="sm_90")
     ap.add_argument("--skip-gpu", action="store_true")
+    ap.add_argument("--harness-dir", default=None,
+                    help="check an ALREADY-emitted (possibly mutated) harness "
+                         "dir instead of emitting a fresh one -- this is what "
+                         "lets the gate be bitten (l0_tokens.sh selftest [8])")
     a = ap.parse_args()
 
     if not os.path.exists(LITMUS7):
@@ -605,7 +679,8 @@ def main():
     allok = True
     for p in a.litmus:
         try:
-            ok, lines = check(p, arch=a.arch, skip_gpu=a.skip_gpu)
+            ok, lines = check(p, arch=a.arch, skip_gpu=a.skip_gpu,
+                              harness_dir=a.harness_dir)
         except Exception as e:                                 # toolchain problems
             print("ERROR on %s: %s" % (p, e), file=sys.stderr)
             return 2

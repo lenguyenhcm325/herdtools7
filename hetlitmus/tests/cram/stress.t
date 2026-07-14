@@ -132,7 +132,7 @@ into the HetObs record, so B7 can disqualify a run and B8 can tune against it.
   1
   $ grep -c 'HetLitmus stress: spins=%llu rendezvous=%llu cap=%llu' $MP.cu
   1
-  $ grep -c 'spin=%llu/%llu stress_trunc=%llu' $MP.cu
+  $ grep -c 'spin=%llu/%llu stress_trunc=%llu' MP-cg-sys-acqrel-2s/het_verdict.h
   1
   $ grep -c 'het_scratch_bump(&tally\[(val >= limit) ? HET_TALLY_RDV : HET_TALLY_CAP\])' MP-cg-sys-acqrel-2s/het_stress.cuh
   1

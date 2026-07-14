@@ -1,0 +1,364 @@
+# HetLitmus B6 positive-control map.  GENERATED -- do not hand-edit;
+#   regenerate with  hetlitmus/verify/controlmap.py --emit,
+#   gate with        hetlitmus/verify/controlmap.py --check  (make hetlitmus-controlmap).
+#
+# Mu      = Layer-A minimal-mutant control: the nearest ALLOWED grid neighbour of a
+#           Disallowed test, co-run on the SAME run/stress/C2C path so that a null on
+#           T means 'not observed on a demonstrably hot harness' rather than nothing
+#           at all (Q4 2.3/2.4; MC-Mutants ASPLOS'23 'Weakening sw' mutator, Table 2).
+# Canary  = Layer-B universal floor: a het MP-*-sys-relaxed instance, the only het
+#           shape with a published detected-weak result on GH200 (Bagchi ISMM'26 Tab 4).
+#           'self' = the test IS the canary.
+# MuAlt   = the OTHER equally-minimal mutant, where the grid contains two (see below).
+# MuRelaxed = the fully-relaxed companion; the documented HW fallback for Layer A if the
+#           minimal mutant cannot be driven to tau_hot (Q4 8.3).  Hardware-only choice.
+#
+# HONEST SCOPE OF 'minimal'.  Q4 calls these single-edge mutants.  At the grid's
+# granularity the cell-adjacent neighbour is the smallest weakening AVAILABLE, but it is
+# not always literally one edge: 'acqrel-2s -> acquire' drops the CPU half of the pair AND
+# the GPU's release (the grid has no one-sided 'acqrel' cell), and 'fence-2s -> acqrel-2s'
+# weakens both sides from SC fence to RCpc rel/acq.  What IS machine-checked (--check) is
+# the property the vouch actually rests on: mu(T) is STRUCTURALLY IDENTICAL to T (same
+# procs, devices and ordered accesses -- a pure ordering weakening, not another program)
+# and STRICTLY WEAKER componentwise on the (cpu,gpu) strength lattice.
+#
+# Test,Expected,Mu,MuExpected,MuRule,MuAlt,MuRelaxed,Canary
+Test,Expected,Mu,MuExpected,MuRule,MuAlt,MuRelaxed,Canary
+2+2W-cg-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+2+2W-cg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+2+2W-cg-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+2+2W-cg-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+2+2W-cg-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+2+2W-cg-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+2+2W-cg-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+2+2W-cg-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+2+2W-cg-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+2+2W-cg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+2+2W-cg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+2+2W-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+2+2W-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+2+2W-gc-cta-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+2+2W-gc-gpu-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+2+2W-gc-gpu-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+2+2W-gc-gpu-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+2+2W-gc-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-gc-sys-relaxed
+2+2W-gc-sys-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+2+2W-gc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-gc-sys-relaxed
+2+2W-gc-sys-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+2+2W-gc-sys-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+IRIW-cgcc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcc-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcc-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcc-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcc-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcc-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcg-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcg-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcg-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcg-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcg-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-cgcg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gccc-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gccc-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gccc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gccc-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gccc-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gccc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gccc-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gccc-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gccc-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gccc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gccc-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gcgc-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gcgc-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gcgc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gcgc-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gcgc-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gcgc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gcgc-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gcgc-sys-acquire,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gcgc-sys-fence,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+IRIW-gcgc-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-ccg-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-ccg-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-ccg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-ccg-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-ccg-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-ccg-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-ccg-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-ccg-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-ccg-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-ccg-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-ccg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-cgc-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-gcc-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-gcc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-gcc-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-gcc-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-gcc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-gcc-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-gcc-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-gcc-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-gcc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-gcc-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+ISA2-gcc-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-sys-acqrel-2s,Disallowed,LB-cg-sys-acquire,Allowed,acqrel-2s->acquire (drop CPU half; GPU acquire kept),LB-cg-sys-release,LB-cg-sys-relaxed,MP-cg-sys-relaxed
+LB-cg-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-sys-fence-2s,Disallowed,LB-cg-sys-fence,Allowed,fence-2s->fence (drop CPU DMB.SY; GPU fence kept),-,LB-cg-sys-relaxed,MP-cg-sys-relaxed
+LB-cg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-gc-cta-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+LB-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+LB-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+LB-gc-cta-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+LB-gc-gpu-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+LB-gc-gpu-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+LB-gc-gpu-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+LB-gc-gpu-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+LB-gc-sys-acqrel-2s,Disallowed,LB-gc-sys-acquire,Allowed,acqrel-2s->acquire (drop CPU half; GPU acquire kept),LB-gc-sys-release,LB-gc-sys-relaxed,MP-gc-sys-relaxed
+LB-gc-sys-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+LB-gc-sys-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+LB-gc-sys-fence-2s,Disallowed,LB-gc-sys-fence,Allowed,fence-2s->fence (drop CPU DMB.SY; GPU fence kept),-,LB-gc-sys-relaxed,MP-gc-sys-relaxed
+LB-gc-sys-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+LB-gc-sys-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+MP-cg-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+MP-cg-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+MP-cg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+MP-cg-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+MP-cg-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+MP-cg-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+MP-cg-sys-acqrel-2s,Disallowed,MP-cg-sys-acquire,Allowed,acqrel-2s->acquire (drop CPU half; GPU acquire kept),-,MP-cg-sys-relaxed,MP-cg-sys-relaxed
+MP-cg-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+MP-cg-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+MP-cg-sys-fence-2s,Disallowed,MP-cg-sys-fence,Allowed,fence-2s->fence (drop CPU DMB.SY; GPU fence kept),-,MP-cg-sys-relaxed,MP-cg-sys-relaxed
+MP-cg-sys-relaxed,Allowed,-,-,-,-,-,self
+MP-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+MP-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+MP-gc-cta-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+MP-gc-gpu-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+MP-gc-gpu-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+MP-gc-gpu-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+MP-gc-sys-acqrel-2s,Disallowed,MP-gc-sys-release,Allowed,acqrel-2s->release (drop CPU half; GPU release kept),-,MP-gc-sys-relaxed,MP-gc-sys-relaxed
+MP-gc-sys-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+MP-gc-sys-fence-2s,Disallowed,MP-gc-sys-fence,Allowed,fence-2s->fence (drop CPU DMB.SY; GPU fence kept),-,MP-gc-sys-relaxed,MP-gc-sys-relaxed
+MP-gc-sys-relaxed,Allowed,-,-,-,-,-,self
+MP-gc-sys-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+MP-het,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-sys-acqrel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-sys-fence-2s,Disallowed,R-cg-sys-acqrel-2s,Allowed,fence-2s->acqrel-2s (SC fence -> RCpc rel/acq; pair kept),-,R-cg-sys-relaxed,MP-cg-sys-relaxed
+R-cg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-cta-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-gpu-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-gpu-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-gpu-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-sys-acqrel-2s,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-sys-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-sys-fence-2s,Disallowed,R-gc-sys-acqrel-2s,Allowed,fence-2s->acqrel-2s (SC fence -> RCpc rel/acq; pair kept),-,R-gc-sys-relaxed,MP-gc-sys-relaxed
+R-gc-sys-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-sys-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+RWC-ccg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-ccg-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-ccg-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-ccg-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-ccg-sys-acqrel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-ccg-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-ccg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-ccg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-sys-acqrel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-cgc-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-gcc-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-gcc-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-gcc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-gcc-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-gcc-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-gcc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-gcc-sys-acqrel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-gcc-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-gcc-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-gcc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+RWC-gcc-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-sys-acqrel-2s,Disallowed,S-cg-sys-acquire,Allowed,acqrel-2s->acquire (drop CPU half; GPU acquire kept),S-cg-sys-release,S-cg-sys-relaxed,MP-cg-sys-relaxed
+S-cg-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-sys-fence-2s,Disallowed,S-cg-sys-fence,Allowed,fence-2s->fence (drop CPU DMB.SY; GPU fence kept),-,S-cg-sys-relaxed,MP-cg-sys-relaxed
+S-cg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+S-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+S-gc-cta-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+S-gc-gpu-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+S-gc-gpu-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+S-gc-gpu-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+S-gc-sys-acqrel-2s,Disallowed,S-gc-sys-release,Allowed,acqrel-2s->release (drop CPU half; GPU release kept),-,S-gc-sys-relaxed,MP-gc-sys-relaxed
+S-gc-sys-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+S-gc-sys-fence-2s,Disallowed,S-gc-sys-fence,Allowed,fence-2s->fence (drop CPU DMB.SY; GPU fence kept),-,S-gc-sys-relaxed,MP-gc-sys-relaxed
+S-gc-sys-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+S-gc-sys-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-cg-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-sys-acqrel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-sys-fence-2s,Disallowed,SB-cg-sys-acqrel-2s,Allowed,fence-2s->acqrel-2s (SC fence -> RCpc rel/acq; pair kept),-,SB-cg-sys-relaxed,MP-cg-sys-relaxed
+SB-cg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-gc-cta-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-gc-cta-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-gc-gpu-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-gc-gpu-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-gc-gpu-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-gc-gpu-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-gc-sys-acqrel-2s,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-gc-sys-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-gc-sys-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-gc-sys-fence-2s,Disallowed,SB-gc-sys-acqrel-2s,Allowed,fence-2s->acqrel-2s (SC fence -> RCpc rel/acq; pair kept),-,SB-gc-sys-relaxed,MP-gc-sys-relaxed
+SB-gc-sys-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-gc-sys-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+SB-het,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-ccg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-ccg-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-ccg-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-ccg-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-ccg-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-ccg-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-ccg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-ccg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-cgc-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-cgc-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-cgc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-cgc-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-cgc-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-cgc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-cgc-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-cgc-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-cgc-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-cgc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-cgc-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC-gcc-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cccg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cccg-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cccg-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cccg-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cccg-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cccg-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cccg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cccg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-ccgc-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-ccgc-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-ccgc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-ccgc-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-ccgc-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-ccgc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-ccgc-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-ccgc-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-ccgc-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-ccgc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-ccgc-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-cgcc-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-gpu-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-gpu-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-gpu-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+WRC3-gccc-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed

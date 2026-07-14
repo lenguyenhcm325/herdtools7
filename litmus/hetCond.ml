@@ -41,8 +41,15 @@ let perpetual_class p =
   else if !nregs >= 1 && !nlocs = 1 then `Advisory    (* R / S: one ws-location *)
   else `Exploratory                                   (* 2+2W + any other shape *)
 
-let het_confidence_enum_c =
-  "typedef enum { CONF_ROBUST, CONF_ADVISORY, CONF_EXPLORATORY } het_confidence;"
+(* B6 (Q4 Item E.3): the REPORTING tier is not the MECHANISM tier.  R and S are
+   both `Advisory above, but only S has an rf anchor; R's sole read is the
+   fr-against-init read, which in the weak case decodes to tag 0 -- no writer, no
+   synchrony -- so R leans on the fragile observer for both the synchrony point
+   and the ws edge, exactly like 2+2W.  Demote it for reporting; leave
+   perpetual_class (the mechanism) alone.  See hetCond.mli. *)
+let reporting_class ~has_rf_anchor m = match m with
+  | `Advisory when not has_rf_anchor -> `Exploratory
+  | (`Robust | `Advisory | `Exploratory) as c -> c
 
 let confidence_c_name = function
   | `Robust -> "CONF_ROBUST"
