@@ -1797,6 +1797,14 @@ static void gd_free_noise(void* _p){
   uint64_t noise_cpu_rounds, noise_cpu_words;
   uint32_t noise_gpu_blocks, noise_gpu_rounds;
   uint32_t cpu_enemies, cpu_aff_failures, place_failures;
+  /* The two knobs B8 tunes the interconnect lever against, carried per run so the
+     autotuner reads what the run REALISED rather than what it asked for.  ws_mb is
+     the noise WORKING SET, and it is the knob that decides whether the noise crosses
+     anything at all: below the last-level cache (Grace L3 = 114 MB) the buffer is
+     served from cache and generates no interconnect traffic, so a config that scores
+     well at 8 MB scored a stressor that was not running.  place is the realised
+     HET_PLACE (0 on the HIP render, which has no placement lever). */
+  uint32_t noise_ws_mb, place_mode;
 } het_obs_record;
 static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
   fprintf(_ch,
@@ -1805,7 +1813,8 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
     "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%llu "
     "spin=%llu/%llu stress_trunc=%llu "
     "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
-    "noise_cpu=%llu/%lluw noise_gpu=%u/%u aff_fail=%u place_fail=%u\n",
+    "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u "
+    "aff_fail=%u place_fail=%u\n",
     _r->test_name,_r->instance_id,_r->run_id,(int)_r->confidence,
     (unsigned long long)_r->N,(unsigned long long)_r->frames_examined,
     _r->exhaustive_valid ? "" : "NA:",
@@ -1827,6 +1836,7 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
     (unsigned long long)_r->noise_cpu_rounds,
     (unsigned long long)_r->noise_cpu_words,
     _r->noise_gpu_blocks, _r->noise_gpu_rounds,
+    _r->noise_ws_mb, _r->place_mode,
     _r->cpu_aff_failures, _r->place_failures);
 }
 |ocaml} ;
@@ -2681,6 +2691,12 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s "    _rec.noise_gpu_rounds = _stress_tally_h[HET_TALLY_NOISE_ROUNDS];\n" ;
             s "    _rec.cpu_aff_failures = _ct.aff_failures;\n" ;
             s "    _rec.place_failures = (uint32_t)_het_place_failures;\n" ;
+            (* B8 tunes the interconnect lever against these two.  The working set is
+               the knob that decides whether the noise crosses anything at all -- below
+               the LLC it is served from cache -- so a tuning log that does not record
+               it cannot tell a good config from a dead stressor. *)
+            s "    _rec.noise_ws_mb = (uint32_t)HET_NOISE_MB;\n" ;
+            s "    _rec.place_mode = (uint32_t)HET_PLACE;\n" ;
             (* skew/distinct accumulators only exist when a read buffer decodes a
                synchrony iteration at all (a store-only test -- 2+2W -- has none). *)
             (match sync_src with

@@ -252,6 +252,16 @@ working.  Every counter below exists because its mechanism has a way to die.
   $ grep -c 'enemies=%u enemy_rounds=%llu' $MP.cu
   1
 
+and the two knobs B8 tunes the interconnect lever against travel WITH the result.
+The working set is the one that decides whether the noise crosses anything at all --
+below the last-level cache the buffer is served from cache and generates no
+interconnect traffic -- so a tuning log that does not record it cannot tell a good
+config from a dead stressor.
+  $ grep -c 'noise_ws=%uMB place=%u' $MP.cu
+  1
+  $ grep -c '_rec.noise_ws_mb = (uint32_t)HET_NOISE_MB' $MP.cu
+  1
+
 (j) THE SOURCES ARE CITED IN THE EMITTED HEADER, not merely in a commit message: we
 reuse this work, and for cuda-litmus (no licence file) citation is the condition of
 reuse.  A reader must be able to tell which ideas are ours.
