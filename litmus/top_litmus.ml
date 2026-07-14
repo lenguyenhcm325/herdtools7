@@ -1014,7 +1014,7 @@ static void gd_free_noise(void* _p){
              Absent map => no names, and control_compiled_in stays 0, which makes
              het_verdict() return COLD and SAY SO.  It never quietly proceeds. *)
           let src_dir = Filename.dirname src_name in
-          let control_of, canary_of =
+          let control_of, canary_of, oracle_of, canary_self_of =
             let tbl = Hashtbl.create 512 in
             let f = Filename.concat src_dir "control-map.csv" in
             (try
@@ -1024,9 +1024,17 @@ static void gd_free_noise(void* _p){
                     let line = input_line ch in
                     if String.length line > 0 && line.[0] <> '#' then
                       match String.split_on_char ',' line with
-                      | t :: _exp :: mu :: _muexp :: _rule :: _alt :: _rlx :: can :: _
+                      (* B6c: `exp' -- field 2, the ORACLE VERDICT -- was bound as
+                         `_exp' and DISCARDED.  With it thrown away het_verdict()
+                         could not tell a should-be-forbidden test from an
+                         oracle-ALLOWED one, so it framed all 338 as forbidden and
+                         stood ready to print "the should-be-FORBIDDEN outcome was
+                         OBSERVED ... a single sighting REFUTES the model" on the 322
+                         where the weak outcome is EXPECTED or the model is SILENT.
+                         The oracle was in this file the whole time. *)
+                      | t :: exp :: mu :: _muexp :: _rule :: _alt :: _rlx :: can :: _
                            when t <> "Test" ->
-                         Hashtbl.replace tbl t (mu, can)
+                         Hashtbl.replace tbl t (exp, mu, can)
                       | _ -> ()
                   done
                 with End_of_file -> ()) ;
@@ -1045,13 +1053,47 @@ static void gd_free_noise(void* _p){
                     Regenerate with hetlitmus/verify/controlmap.py --emit.\n%!"
                    src_name) ;
             (fun t -> match Hashtbl.find_opt tbl t with
-                      | Some (mu,_) when mu <> "-" -> Some mu
+                      | Some (_,mu,_) when mu <> "-" -> Some mu
                       | _ -> None),
+            (* `self' is NOT a canary to co-run: MP-{cg,gc}-sys-relaxed ARE the
+               Layer-B canary and cannot co-run themselves.  They are named below
+               (the map's answer to "what vouches for you?" is "I do"), but no
+               canary INSTANCE is built for them -- so HET_CANARY_COMPILED_IN is 0
+               and het_verdict() correctly refuses to call their nulls anything but
+               COLD.  That is not a gap: a canary that did not fire IS a cold
+               harness. *)
             (fun t -> match Hashtbl.find_opt tbl t with
-                      | Some (_,can) when can <> "-" && can <> "self" -> Some can
-                      | _ -> None) in
+                      | Some (_,_,can) when can <> "-" && can <> "self" -> Some can
+                      | _ -> None),
+            (* B6c: the oracle class -> the C enum in het_verdict.h.  A test absent
+               from the map (or a map that would not open) yields ORACLE_UNSET, which
+               het_verdict() fails CLOSED on: it prints "this is a BUILD BUG, not a
+               result" and claims nothing.  It must never silently default to a
+               class, because whichever class it defaulted to would be a lie about
+               the other two. *)
+            (fun t -> match Hashtbl.find_opt tbl t with
+                      | Some ("Disallowed",_,_) -> "ORACLE_DISALLOWED"
+                      | Some ("Allowed",_,_)    -> "ORACLE_ALLOWED"
+                      | Some ("NO-ORACLE",_,_)  -> "ORACLE_NONE"
+                      | _                       -> "ORACLE_UNSET"),
+            (* The `self' rows name THEMSELVES.  het_verdict.h tells the DESIGNED
+               case (this test IS the canary, so nothing can vouch for it) from the
+               BUG case (the canary silently went missing) by comparing canary_name
+               with test_name -- so the NAME must be honest even where no canary
+               INSTANCE is built. *)
+            (fun t -> match Hashtbl.find_opt tbl t with
+                      | Some (_,_,"self") -> true
+                      | _ -> false) in
           let mu_name = control_of tname
-          and canary_name = canary_of tname in
+          and canary_name = canary_of tname
+          and oracle = oracle_of tname in
+          (* What goes in HET_CANARY_NAME / _rec.canary_name.  NOT a co-run signal:
+             the map names a canary for all 338, but only 320 co-run one.  The co-run
+             is HET_CANARY_COMPILED_IN, set from the instance population. *)
+          let canary_named =
+            match canary_name with
+            | Some _ as c -> c
+            | None -> if canary_self_of tname then Some tname else None in
 
           (* ============ derive ONE instance from a parsed het test =============
              Everything here was `run's body before B6b.  It is now a function of
@@ -1994,8 +2036,25 @@ static void gd_free_noise(void* _p){
              A should-be-FORBIDDEN test (the only kind for which control-map.csv
              names a mu) becomes a THREE-instance harness: T + mu(T) + the canary,
              in the SAME launch, under the SAME stress, on the SAME C2C path, on
-             disjoint cache-line-padded locations.  Everything else stays a single
-             instance with prefix "" -- byte-for-byte what it was. *)
+             disjoint cache-line-padded locations.
+
+             B6c: EVERY OTHER TEST NOW CO-RUNS THE CANARY TOO (T + canary), which is
+             Q4 R5 and the incompleteness B6b reported.  Without it a non-firing test
+             is exactly as uninterpretable as a bare "Never": there is no way to tell
+             "the harness was hot and this behaviour did not surface" (an
+             OBSERVABILITY result -- Iorga's taxonomy, Alglave's GTX-280 honesty)
+             from "the harness was dead" (no result at all).  The 36 NO-ORACLE rows
+             need it to be reportable AS ANYTHING (Q4 R5: characterization against a
+             demonstrably-hot harness); the 286 Allowed rows need it to distinguish
+             ALLOWED-UNOBSERVED from COLD-INVALID.
+
+             Only Layer A is absent from them, and necessarily so: a mutant
+             presupposes a known-forbidden cycle to weaken (MC-Mutants 1.2), which is
+             exactly what a non-Disallowed row does not have.
+
+             The two `self' rows (MP-{cg,gc}-sys-relaxed) ARE the canary and cannot
+             co-run themselves; they stay single-instance, prefix "", byte-for-byte
+             what they were. *)
           let insts =
             match mu_name, canary_name with
             | Some m, Some c ->
@@ -2006,8 +2065,19 @@ static void gd_free_noise(void* _p){
                    ~tname:m ~parsed:mp ~doc:mdoc ;
                  derive ~role:RCanary ~pre:"can_" ~kmac:"CAN_K_TAG"
                    ~tname:c ~parsed:cp ~doc:cdoc ]
+            | None, Some c ->
+               let (cp,cdoc) = parse_sibling c in
+               [ derive ~role:RTest ~pre:"t_" ~kmac:"T_K_TAG" ~tname ~parsed ~doc ;
+                 derive ~role:RCanary ~pre:"can_" ~kmac:"CAN_K_TAG"
+                   ~tname:c ~parsed:cp ~doc:cdoc ]
             | _ -> [ derive ~role:RTest ~pre:"" ~kmac:"K_TAG" ~tname ~parsed ~doc ] in
           let co_run = List.length insts > 1 in
+          (* THE TWO FLAGS ARE NOT THE SAME CLAIM, and collapsing them is how a null
+             on a test with no mutant would start reading as vouched-for.  They are
+             computed from the emitted instance POPULATION -- never from the map,
+             which NAMES a canary for all 338 while only 320 co-run one. *)
+          let has_mu = List.exists (fun i -> i.i_role = RMu) insts
+          and has_canary = List.exists (fun i -> i.i_role = RCanary) insts in
           let it = List.hd insts in            (* the test under study *)
           (* Composed geometry -- every participant count is a SUM over instances. *)
           let npart = List.fold_left (fun a i -> a + i.i_npart) 0 insts in
@@ -2049,8 +2119,9 @@ static void gd_free_noise(void* _p){
                 insts ;
               Printf.eprintf
                 "  => NPART=%d HET_TEST_BLOCKS=%d HET_GPU_LANES=%d HET_SPIN_LANES=%d, \
-                 HET_CONTROL_COMPILED_IN=1\n%!"
+                 HET_CONTROL_COMPILED_IN=%d HET_CANARY_COMPILED_IN=%d (oracle: %s)\n%!"
                 npart test_blocks gpu_lanes spin_lanes
+                (if has_mu then 1 else 0) (if has_canary then 1 else 0) oracle
             end
           end ;
           let het_iter = "(_n + 1)" in
@@ -2165,8 +2236,10 @@ static void gd_free_noise(void* _p){
             s "// per-iteration read buffers; a post-run scan decodes rf/init edges\n" ;
             s "// into a het_obs_record (observer ws-edges land in the B3 observer commit).\n" ;
             if co_run then begin
-              s "//\n// B6b THE POSITIVE CONTROL IS CO-RUNNING IN THIS HARNESS.\n" ;
-              s "// Three het instances share this launch, this stress config and this\n" ;
+              s "//\n// B6b/B6c THE POSITIVE CONTROL IS CO-RUNNING IN THIS HARNESS.\n" ;
+              s (Printf.sprintf
+                   "// %d het instances share this launch, this stress config and this\n"
+                   (List.length insts)) ;
               s "// C2C path, on disjoint cache-line-padded locations:\n" ;
               List.iter
                 (fun i ->
@@ -2175,9 +2248,21 @@ static void gd_free_noise(void* _p){
                         | RTest -> "T" | RMu -> "mu(T)" | RCanary -> "canary")
                        i.i_name i.i_pre i.i_k (role_note i.i_role)))
                 insts ;
-              s "// A null on T means \"not observed on a harness that demonstrably\n" ;
-              s "// produced the very interleaving T's ordering is claimed to prevent\"\n" ;
-              s "// -- and NOTHING AT ALL if the control did not fire (het_verdict.h).\n"
+              if has_mu then begin
+                s "// A null on T means \"not observed on a harness that demonstrably\n" ;
+                s "// produced the very interleaving T's ordering is claimed to prevent\"\n" ;
+                s "// -- and NOTHING AT ALL if the control did not fire (het_verdict.h).\n"
+              end else begin
+                (* B6c.  This test has no forbidden cycle, so it has no mutant, so it
+                   gets Layer B only (Q4 R5).  The canary is what separates "permitted
+                   but not exposed here" -- an OBSERVABILITY result -- from "the
+                   harness was dead", which is no result at all. *)
+                s "// This test is NOT should-be-forbidden, so it has no minimal mutant\n" ;
+                s "// (Layer A) -- a mutant presupposes a forbidden cycle to weaken.  It\n" ;
+                s "// co-runs the Layer-B canary ONLY, which is what makes a\n" ;
+                s "// non-observation here mean \"permitted, but we could not expose it\n" ;
+                s "// on a demonstrably HOT harness\" instead of nothing at all.\n"
+              end
             end ;
             s dialect.gd_shared_mem_note ;
             s "// a system-scope atomic barrier rendezvouses both sides.\n" ;
@@ -2209,25 +2294,39 @@ static void gd_free_noise(void* _p){
 }
 |ocaml} ;
             s (Printf.sprintf "\n#define NPART %d\n" npart) ;
-            (* ---- B6/B6b THE POSITIVE CONTROL.
-               HET_CONTROL_COMPILED_IN is the highest-stakes value in this file.  0
-               means control_target_count / canary_target_count are STRUCTURALLY
-               zero and carry no information whatsoever; het_verdict() then returns
-               COLD-INVALID and refuses to report the null at all.  1 means a real
-               mu(T) and a real canary are CO-RUNNING here, in this launch, and the
-               null may be read against them.
+            (* ---- B6/B6b/B6c THE POSITIVE CONTROL.  TWO LAYERS, TWO FLAGS.
+               These are the highest-stakes values in this file.  0 means the
+               corresponding *_target_count is STRUCTURALLY zero and carries no
+               information whatsoever; 1 means that layer is genuinely CO-RUNNING
+               here, in this launch, under this stress, on this C2C path, and a
+               count may be read against it.
 
-               It must never be 1 without the co-run behind it: every "Never" would
-               silently become a *credible* "Never" -- an unfalsifiable null that
-               reads as confirmation of the CMCM.  It is set from the instance
-               population, not by hand, so it cannot drift. *)
+               Neither may EVER be 1 without the co-run behind it: every "Never"
+               would silently become a *credible* "Never" -- an unfalsifiable null
+               that reads as confirmation of the CMCM.  Both are set from the
+               instance population, not by hand, so they cannot drift.
+
+               HET_CONTROL_COMPILED_IN (Layer A, mu(T)) IS STILL 1 ON EXACTLY THE 16
+               DISALLOWED TESTS.  B6c did not widen it -- it added a SECOND flag.
+               Only a should-be-forbidden test has a minimal mutant (a mutant
+               presupposes a known-forbidden cycle to weaken), so the other 322 have
+               no Layer A and never will; what they gained is a Layer-B canary, and
+               "the canary is co-running" is a different, weaker claim than "the
+               mutant of THIS test is co-running".  One bit cannot carry both without
+               lying about one of them. *)
             s (Printf.sprintf "#define HET_CONTROL_COMPILED_IN %d\n"
-                 (if co_run then 1 else 0)) ;
+                 (if has_mu then 1 else 0)) ;
+            s (Printf.sprintf "#define HET_CANARY_COMPILED_IN %d\n"
+                 (if has_canary then 1 else 0)) ;
             (match mu_name with
              | Some m ->
                 s (Printf.sprintf "#define HET_MU_NAME \"%s\"      /* Layer A: the minimal mutant */\n" m)
              | None -> s "#define HET_MU_NAME NULL\n") ;
-            (match canary_name with
+            (* NAMED for all 338; CO-RUN on 320.  The name is not the co-run --
+               HET_CANARY_COMPILED_IN above is.  The two `self' rows name themselves,
+               which is how het_verdict.h tells "this test IS the canary" from "the
+               canary went missing". *)
+            (match canary_named with
              | Some c ->
                 s (Printf.sprintf "#define HET_CANARY_NAME \"%s\"  /* Layer B: the universal het-MP floor */\n" c)
              | None -> s "#define HET_CANARY_NAME NULL\n") ;
@@ -2899,13 +2998,21 @@ static void gd_free_noise(void* _p){
             s (Printf.sprintf "    _rec.reporting = %s;\n"
                  (HetCond.confidence_c_name it.i_report)) ;
             s "    _rec.N = SIZE_OF_TEST;\n" ;
+            (* B6c: WHAT THE MODEL PREDICTS FOR THIS TEST.  Read from field 2 of
+               control-map.csv (the grounded oracle).  Without it het_verdict()
+               framed every test as should-be-forbidden and 322 of the 338 harnesses
+               stood ready to print a false REFUTATION of the compound model on a
+               weak outcome the model EXPECTS.  ORACLE_UNSET (a test missing from the
+               map) fails closed: the harness prints "BUILD BUG, not a result". *)
+            s (Printf.sprintf "    _rec.het_oracle = %s;\n" oracle) ;
             (match mu_name with
              | Some m -> s (Printf.sprintf "    _rec.control_name = \"%s\";\n" m)
-             | None -> s "    _rec.control_name = NULL;  /* not a Disallowed test */\n") ;
-            (match canary_name with
+             | None -> s "    _rec.control_name = NULL;  /* no mu(T): not a Disallowed test */\n") ;
+            (match canary_named with
              | Some c -> s (Printf.sprintf "    _rec.canary_name = \"%s\";\n" c)
              | None -> s "    _rec.canary_name = NULL;\n") ;
             s "    _rec.control_compiled_in = HET_CONTROL_COMPILED_IN;\n" ;
+            s "    _rec.canary_compiled_in = HET_CANARY_COMPILED_IN;\n" ;
             s "    _rec.stress_requested =\n\
                \        ((HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0) ? HET_REQ_GPU_STRESS : 0u)\n\
                \      | ((HET_BARRIER_PCT > 0) ? HET_REQ_SPIN : 0u)\n\

@@ -698,16 +698,32 @@ hetlitmus-controlmap: | build
 	python3 hetlitmus/verify/controlmap.py --check
 	@ echo "HetLitmus B6 control map: OK"
 
-### hetlitmus-verdict: het_verdict() -- the rule that decides whether a "Never" may
-### be reported at all -- compiled from the REAL emitted header and fed synthetic
-### records.  Asserts all four branches are reachable (a rule that always returns
-### the same verdict is not a decision), that exhaustive_valid==0 can NEVER yield a
-### credible null, and that every liveness disqualifier bites.  This is the gate for
-### the deliverable itself.
+### hetlitmus-verdict: het_verdict() -- the rule that decides WHAT AN OBSERVATION
+### MEANS -- compiled from the REAL emitted header and fed synthetic records.
+###   Phase 1 (rule)     all SEVEN verdicts and all THREE oracle classes reachable (a
+###                      rule that always returns the same verdict is not a decision,
+###                      and a three-way oracle branch keyed off a constant field is
+###                      the same bug); exhaustive_valid==0 can NEVER yield a credible
+###                      null; every liveness disqualifier bites; ORACLE_UNSET fails
+###                      closed.
+###   Phase 2 (printout) the REFUTATION CLAIMS ("should-be-FORBIDDEN", "REFUTES the
+###                      model's prediction", "Disallowed outcome") are reachable from
+###                      ORACLE_DISALLOWED and from NOTHING ELSE.  322 of the 338 het
+###                      tests are not should-be-forbidden, and a refutation printed on
+###                      one of them is a FALSE REFUTATION of the compound model.  The
+###                      verdict enum changing is not the deliverable; the SENTENCE is.
+###   Phase 3 (corpus)   all 338 emitted harnesses carry the oracle class control-map.csv
+###                      gives them (census 16 / 286 / 36, and ZERO untagged).  A rule
+###                      that branches on a class the emitter never sets is a rule
+###                      nobody runs.
+### --bite then PROVES THE GATE FAILS when the mechanism breaks: 5 injections (3 against
+### the rule, 2 against the emitted corpus), each verified to have actually changed the
+### code it corrupts.  A gate never seen to fail is not evidence.
 hetlitmus-verdict: | build
 	@ echo
 	python3 hetlitmus/verify/verdictcheck.py
-	@ echo "HetLitmus B6 decision rule: OK"
+	python3 hetlitmus/verify/verdictcheck.py --bite
+	@ echo "HetLitmus B6/B6c decision rule: OK (and the gate bites)"
 
 ### Umbrellas (what you press).  `::` accumulation, order-only `| build`.
 hetlitmus-test:: | build

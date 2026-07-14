@@ -284,21 +284,34 @@ def instance_of(litmus_path):
 def het_instances(litmus_path):
     """The instances this harness co-runs, IN EMISSION ORDER (T, mu(T), canary).
 
-    Mirrors top_litmus.ml's instance population exactly: a test for which the map
-    names a mu is a three-instance co-run harness; everything else is one
-    instance.  If these two ever disagree the lane count will not match and the
-    gate fails -- which is the point."""
+    Mirrors top_litmus.ml's instance population exactly:
+
+      mu and canary  ->  [T, mu(T), canary]   the 16 Disallowed tests (B6b)
+      canary only    ->  [T, canary]          the 320 that have a canary but no
+                                              mutant -- a mutant presupposes a
+                                              known-forbidden cycle to weaken, so
+                                              only a Disallowed test has one (B6c)
+      neither        ->  [T]                  MP-{cg,gc}-sys-relaxed, which ARE the
+                                              canary (control-map.csv: `self') and
+                                              cannot co-run themselves
+
+    If these two ever disagree the lane count will not match and the gate fails --
+    which is the point, and is exactly what happened when B6c added the canary-only
+    population and this function still said "mu and can".  A missing lane on a
+    control instance means the harness REPORTS a positive control it is not running,
+    and no other check in the project would see it."""
     d = os.path.dirname(os.path.abspath(litmus_path))
     insts = [instance_of(litmus_path)]
     mu, can = load_control_map(litmus_path)
-    if mu and can:
-        for n in (mu, can):
-            p = os.path.join(d, n + ".litmus")
-            if not os.path.exists(p):
-                raise CompletenessError(
-                    "control-map.csv names %r as a control of %s but %s does not "
-                    "exist -- the harness cannot be co-running it" % (n, insts[0]['name'], p))
-            insts.append(instance_of(p))
+    for n in (mu, can):
+        if not n:
+            continue
+        p = os.path.join(d, n + ".litmus")
+        if not os.path.exists(p):
+            raise CompletenessError(
+                "control-map.csv names %r as a control of %s but %s does not "
+                "exist -- the harness cannot be co-running it" % (n, insts[0]['name'], p))
+        insts.append(instance_of(p))
     return insts
 
 

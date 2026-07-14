@@ -69,12 +69,25 @@ stores (the observer lane's uint64 loads are counted separately below).
 Observers (Decision 4/5): the 72 add ONE GPU observer lane + ONE CPU observer
 pthread (NPART grows by 2); each snoops every observed location, and a per-run
 ws scan (Eq 3.12) fills _loc with the same-observer-thread cycle.
-  $ grep -c '#define NPART 4' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+
+B6c: NPART IS A SUM OVER INSTANCES.  2+2W-cg-sys-fence is oracle-ALLOWED, so it now
+co-runs the Layer-B canary, and its NPART is 4 (2 procs + 2 observers) + 2 (the
+canary's MP) = 6.  The OBSERVER contribution -- the thing this section guards -- is
+unchanged at +2, which is why the canary (an MP: no observers) adds exactly 2 and
+not 4.  Pin the sum, and state the arithmetic, so a wrong instance count cannot hide
+inside a plausible-looking number.
+  $ grep -c '#define NPART 6' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   1
   $ grep -c 'cpu_obs_thread' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   2
-  $ grep -c 'int _loc = ((_ws_x_c && _ws_y_c) || (_ws_x_g && _ws_y_g))' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+  $ grep -c 'int _t_loc = ((t__ws_x_c && t__ws_y_c) || (t__ws_x_g && t__ws_y_g))' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   1
+
+The canary brought NO second observer (MP's condition names no coherence-final
+location), so cpu_obs_thread stays at 2 occurrences -- definition + pthread_create --
+for the ONE observer T actually has.
+  $ grep -c 'can_cpu_obs_thread' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu || true
+  0
 
 B3c GATE 1: NO test may emit a constant detector.  HET_PENDING (=0) is gone from
 the emitter entirely -- a constant-false _weak reports "Never" on every run, and
@@ -97,8 +110,13 @@ B3c GATE 3: T_L>=2 windowing.  SB has no rf anchor (both reads are fr), so the
 partner's frame is SEARCHED over [c-W, c+W] around the synchrony point decoded
 from read-buffer 1 -- guarded by that tag being real (a cold frame has no
 synchrony point, and counting it would report 100% weak; Srivastava 4.4).
+(B6c: SB-cg-sys-acqrel-2s is oracle-ALLOWED, so it now co-runs the Layer-B canary
+and the test under study carries the `t_' prefix -- `bufP0_0' is `t_bufP0_0', `_exh'
+is `_t_exh'.  Same scan, same counts, same window; the names carry the instance.
+The counts below are UNCHANGED from B3c, which is the point: the co-run added an
+instance, it did not perturb T's recovery.)
   $ litmus7 -o . ../het/SB-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ grep -c 'if (bufP0_0\[_f\] != 0) {' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
+  $ grep -c 'if (t_bufP0_0\[_f\] != 0) {' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
   3
   $ grep -c 'for (_t1 = _c1_lo; _t1 <= _c1_hi && !_rwin; ++_t1)' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
   1
@@ -108,9 +126,15 @@ synchrony point, and counting it would report 100% weak; Srivastava 4.4).
 The exhaustive COUNT (ground truth for calibrating W) is emitted too, capped so
 it cannot blow up at N=1e6 -- and it records WHETHER it ran, so a capped-out run
 is never misread as "exhaustively counted zero".
-  $ grep -c 'const int _exh = (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX);' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
+  $ grep -c 'const int _t_exh = (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX);' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
   1
-  $ grep -c '_rec.exhaustive_valid = _exh;' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
+  $ grep -c '_rec.exhaustive_valid = _t_exh;' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
+  1
+
+The CANARY's own exhaustive_valid is separate and is 1 (MP is T_L<=1: its O(N) scan
+is exact at any N).  T's is the one that gates T's null; the canary's does not gate
+anything -- a control that cannot fire is not a control (B6b).
+  $ grep -c '_rec.canary_exhaustive_valid = 1;' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
   1
 
 B3c GATE 4: LB's two rf edges decode each other exactly (no window): P1's frame

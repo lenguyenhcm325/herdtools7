@@ -6,27 +6,43 @@ hipMallocManaged on MI300A; cudaMallocManaged only as the dev-box/CI fallback), 
 this is correctness, not tuning.  We emit the representative MP shape once (both
 .cu and .hip) and assert the structural invariants with robust counts.
 
-B6b: the representative is MP-cg-sys-ACQUIRE, not MP-cg-sys-acqrel-2s.  The latter is
-a should-be-FORBIDDEN test, so its harness now CO-RUNS three instances and carves
-their shared vars out of ONE cache-line-padded arena (guarded at the bottom of this
-file).  The PER-VARIABLE path checked here is still what 322 of the 338 het harnesses
-use, so it keeps its own guard, at full strength, on a harness that still takes it --
-rather than being loosened to accommodate the 16.
+THE REPRESENTATIVE FOR THE PER-VARIABLE PATH IS NOW MP-cg-sys-RELAXED.
 
-  $ litmus7 -o . ../het/MP-cg-sys-acquire.litmus >/dev/null 2>&1
+B6b co-ran mu(T) + canary on the 16 Disallowed tests, which carve their shared vars
+out of ONE cache-line-padded arena (guarded in (f) below).  This file then picked
+MP-cg-sys-ACQUIRE to keep guarding the per-variable path, on the reasoning that it was
+"still what 322 of the 338 het harnesses use".
+
+B6c MAKES THAT REASONING FALSE, and the honest move is to say so rather than to leave
+the guard pointing at a harness that no longer takes the path.  Every test that has a
+canary to co-run now co-runs one (Q4 R5), so 336 of the 338 take the ARENA.  The only
+harnesses still on the per-variable path are the two that ARE the Layer-B canary and so
+cannot co-run themselves -- MP-{cg,gc}-sys-relaxed (control-map.csv: `self').  The
+guard therefore MOVES to one of them, at full strength, rather than being deleted or
+loosened.  The path is still live, still emitted, and still checked; it is simply no
+longer the common case.
+
+  $ litmus7 -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
   $ litmus7 -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+
+It really is single-instance: no co-run, so no arena, so the per-variable calls below
+are the ones this harness actually makes.
+  $ grep -c '#define HET_CANARY_COMPILED_IN 0' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  1
+  $ grep -c '_shared_arena' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu || true
+  0
 
 (a) the shared vars (x, y) AND the barrier route through gd_alloc_shared (3 call
 sites), and each is freed by the allocator-aware gd_free_shared (3 frees).
-  $ grep -c 'gd_alloc_shared((void\*\*)&' MP-cg-sys-acquire/MP-cg-sys-acquire.cu
+  $ grep -c 'gd_alloc_shared((void\*\*)&' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   3
-  $ grep -cE 'gd_free_shared\((x|y|barrier)\)' MP-cg-sys-acquire/MP-cg-sys-acquire.cu
+  $ grep -cE 'gd_free_shared\((x|y|barrier)\)' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   3
 
 (b) gd_alloc_shared / gd_free_shared are each defined exactly once (file scope).
-  $ grep -c 'static void gd_alloc_shared' MP-cg-sys-acquire/MP-cg-sys-acquire.cu
+  $ grep -c 'static void gd_alloc_shared' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
-  $ grep -c 'static void gd_free_shared' MP-cg-sys-acquire/MP-cg-sys-acquire.cu
+  $ grep -c 'static void gd_free_shared' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
 (c) CUDA dispatch: query cudaDevAttrPageableMemoryAccess, take the malloc branch on
@@ -38,29 +54,29 @@ which makes the same pageable-vs-managed dispatch for a different object class (
 C2C noise buffers), so a file-wide count would now read 2 -- and bumping it to 2
 would have made this check satisfiable by a SECOND allocator sneaking into
 gd_alloc_shared, which is the very confusion it exists to prevent.  Scope, don't bump.
-  $ grep -c 'cudaDevAttrPageableMemoryAccess' MP-cg-sys-acquire/MP-cg-sys-acquire.cu
+  $ grep -c 'cudaDevAttrPageableMemoryAccess' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
-  $ ALLOC=$(sed -n '/^static void gd_alloc_shared/,/^}/p' MP-cg-sys-acquire/MP-cg-sys-acquire.cu)
+  $ ALLOC=$(sed -n '/^static void gd_alloc_shared/,/^}/p' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu)
   $ printf '%s\n' "$ALLOC" | grep -c '\*_pp = malloc'
   1
   $ printf '%s\n' "$ALLOC" | grep -c 'cudaMallocManaged(_pp'
   1
-  $ sed -n '/^static void gd_free_shared/,/^}/p' MP-cg-sys-acquire/MP-cg-sys-acquire.cu | grep -cE 'free\(_p\).*cudaFree\(_p\)'
+  $ sed -n '/^static void gd_free_shared/,/^}/p' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu | grep -cE 'free\(_p\).*cudaFree\(_p\)'
   1
 
 (d) B3: __out is gone; the per-load read buffers are OFF the concurrent-race path
 -- device memory (cudaMalloc) + a host mirror for the post-run scan -- NOT routed
 through gd_alloc_shared, and the shared vars are widened to uint64_t.
-  $ grep -c '__out' MP-cg-sys-acquire/MP-cg-sys-acquire.cu || true
+  $ grep -c '__out' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu || true
   0
-  $ grep -c 'cudaMalloc(&bufP' MP-cg-sys-acquire/MP-cg-sys-acquire.cu
+  $ grep -c 'cudaMalloc(&bufP' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   2
-  $ grep -c 'uint64_t \*x; gd_alloc_shared' MP-cg-sys-acquire/MP-cg-sys-acquire.cu
+  $ grep -c 'uint64_t \*x; gd_alloc_shared' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
 (e) the design-doc-flagged wrong banner ("*MallocManaged (CPU/GPU-coherent ...)")
 is gone.
-  $ grep -c 'CPU/GPU-coherent on GH200' MP-cg-sys-acquire/MP-cg-sys-acquire.cu || true
+  $ grep -c 'CPU/GPU-coherent on GH200' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu || true
   0
 
 The HIP twin renders from the same template: gd_alloc_shared is fine-grained
@@ -68,15 +84,15 @@ hipMallocManaged (no malloc/ATS dispatch -- MI300A's unified HBM pool needs none
 and the read buffers are device hipMalloc (off the race path), no __out.  Scoped to
 gd_alloc_shared's body for the same reason as (c): B5's gd_alloc_noise allocates the
 C2C noise buffers the same way, and a file-wide count would stop discriminating.
-  $ sed -n '/^static void gd_alloc_shared/,/^}/p' MP-cg-sys-acquire/MP-cg-sys-acquire.hip | grep -c 'hipMallocManaged(_pp'
+  $ sed -n '/^static void gd_alloc_shared/,/^}/p' MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip | grep -c 'hipMallocManaged(_pp'
   1
-  $ grep -cE '_shared_pageable|\*_pp = malloc' MP-cg-sys-acquire/MP-cg-sys-acquire.hip || true
+  $ grep -cE '_shared_pageable|\*_pp = malloc' MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip || true
   0
-  $ grep -c 'gd_alloc_shared((void\*\*)&' MP-cg-sys-acquire/MP-cg-sys-acquire.hip
+  $ grep -c 'gd_alloc_shared((void\*\*)&' MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
   3
-  $ grep -c '__out' MP-cg-sys-acquire/MP-cg-sys-acquire.hip || true
+  $ grep -c '__out' MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip || true
   0
-  $ grep -c '(void)hipMalloc(&bufP' MP-cg-sys-acquire/MP-cg-sys-acquire.hip
+  $ grep -c '(void)hipMalloc(&bufP' MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
   2
 
 (f) B6b -- THE CO-RUN ARENA.  A should-be-FORBIDDEN test co-runs mu(T) and the canary,
@@ -113,3 +129,27 @@ hipMallocManaged): one template, two renders.
   1
   $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $CO.hip
   6
+
+(g) B6c -- THE ARENA IS SIZED FROM THE INSTANCE POPULATION, NOT FROM THE NUMBER 3.
+The 320 canary-only harnesses carve a TWO-instance arena, and this is the case the
+B6b code was never asked to produce.  A slot count still computed for three instances
+would either overlap the barrier onto a tested variable (silent, catastrophic: the
+rendezvous counter and a litmus location become ONE coherence unit) or leave the
+last slot past the end of the allocation.  Count the slots and pin the size.
+
+MP-cg-sys-acquire is Allowed -> T + canary, 2 instances, 2 vars each: 4 shared slots
++ barrier = 5, allocated 6 lines (one line of alignment slack, because _sa rounds the
+base UP).
+  $ litmus7 -o . ../het/MP-cg-sys-acquire.litmus >/dev/null 2>&1
+  $ AC=MP-cg-sys-acquire/MP-cg-sys-acquire
+  $ grep -c 'cache-line-padded shared slots: t_x t_y can_x can_y + barrier' $AC.cu
+  1
+  $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena, (size_t)HET_CACHE_LINE\*6)' $AC.cu
+  1
+  $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $AC.cu
+  4
+
+The barrier gets its OWN line, past the last variable -- never sharing one with a
+tested location.
+  $ grep -c 'int \*barrier = (int\*)(_sa + (size_t)HET_CACHE_LINE\*4);' $AC.cu
+  1

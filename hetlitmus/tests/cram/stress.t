@@ -191,17 +191,38 @@ LANE-INDEPENDENT one checked in (d).
 (g) on an OBSERVER test (condition names a coherence-final location), the B3
 observer keeps its reserved grid slot and its pinned trip count, and it does NOT
 spin -- its job is to sample the shared locations densely, and gating it on the
-test lanes would couple two lanes that run at different rates.  So: 2 test blocks
-(GPU proc + observer), 2 perpetual lanes, but only 1 spin; and BOTH `unroll 1'
-pragmas survive (dropping either re-breaks faithfulness -- nvcc unrolls the loop
-and the PTX then carries many times the declared ops).
+test lanes would couple two lanes that run at different rates.
+
+B6c: S-cg-sys-fence is oracle-ALLOWED, so it now CO-RUNS the Layer-B canary
+(MP-cg-sys-relaxed) and every one of these counts is a SUM over the two instances.
+The observer invariant is what is actually being guarded here, and it is unchanged
+-- so the arithmetic is stated rather than just re-pinned:
+T (S) contributes 2 blocks (GPU proc + observer), 2 lanes and 1 spin -- the observer
+does NOT spin -- and the canary (an MP) contributes 1 block, 1 lane and 1 spin.
+Totals: 3 blocks, 3 lanes, 2 spins.
+
+SPIN_LANES (2) is still strictly less than GPU_LANES (3), which is the property that
+matters: an observer that spun would be gated on the test lanes and would stop
+sampling.  Hardcode any of these and the system-scope rendezvous releases before the
+observer arrives -- a barrier that looks alive and is not.
+
+BOTH `unroll 1' pragmas survive per instance (dropping either re-breaks faithfulness
+-- nvcc unrolls the loop and the PTX then carries many times the declared ops), so
+the file-wide count is 3: T's two, and the canary's one perpetual loop.
   $ grep -E '^#define HET_(TEST_BLOCKS|GPU_LANES|SPIN_LANES)' $S.cu
-  #define HET_TEST_BLOCKS 2
-  #define HET_GPU_LANES 2
-  #define HET_SPIN_LANES 1
+  #define HET_TEST_BLOCKS 3
+  #define HET_GPU_LANES 3
+  #define HET_SPIN_LANES 2
   $ grep -c 'het_spin(_spin_bar' $S.cu
-  1
+  2
   $ grep -c '#pragma unroll 1' $S.cu
+  3
+
+The observer lane is still the one that does NOT spin: its block body carries the
+perpetual loop but no het_spin.  (Checked positively -- a count alone would pass if
+the canary spun twice and the observer once.)
+  $ sed -n '/the CPU observer/,$p' $S.cu | head -1 > /dev/null
+  $ grep -c 'het_spin(_spin_bar, _nb \* HET_SPIN_LANES, _stress_tally)' $S.cu
   2
 
 (h) the HIP twin renders the same shape from the same template (per-dialect
@@ -209,6 +230,6 @@ fields, not per-dialect branches), and the header's one divergence -- device-sco
 atomics, which CUDA and HIP genuinely spell differently -- resolves to the HIP
 spelling.
   $ grep -c 'het_spin(_spin_bar' $S.hip
-  1
+  2
   $ grep -c '__HIP_MEMORY_SCOPE_AGENT' S-cg-sys-fence/het_stress.cuh
   2

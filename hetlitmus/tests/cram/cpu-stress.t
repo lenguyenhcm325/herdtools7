@@ -325,7 +325,25 @@ reuse.  A reader must be able to tell which ideas are ours.
 preloaded (its job is to sample the shared locations densely, and a cache hint per
 iteration would only thin the sampling -- the same reason B4 gave the GPU observer
 lane no pre-stress).
-  $ grep -A2 'static void\* cpu_obs_thread' $S.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
+
+B6c: S-cg-sys-fence is oracle-ALLOWED, so it co-runs the canary and its observer
+thread is now `t_cpu_obs_thread'.  THE OLD PATTERN WOULD HAVE KEPT PASSING: the
+preload check is a NEGATIVE (expects 0), and `grep -A4 "static void\* cpu_obs_thread"'
+matches nothing after the rename, so it reports 0 and "passes" while checking
+absolutely nothing.  A guard that silently stops guarding is worse than no guard,
+so the negative below is now paired with a POSITIVE on the worker thread: the
+asymmetry (worker preloads, observer does not) is the actual invariant, and pinning
+one side of it alone can go vacuous without anyone noticing.
+  $ grep -A2 'static void\* t_cpu_obs_thread' $S.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
   1
-  $ grep -A4 'static void\* cpu_obs_thread' $S.cu | grep -c 'het_cpu_preload' || true
+  $ grep -A4 'static void\* t_cpu_obs_thread' $S.cu | grep -c 'het_cpu_preload' || true
   0
+
+The worker DOES preload -- so the 0 above is a real absence, not a failed match.
+  $ awk '/^static void\* cpu_thread_t_P0\(void\* _a\)/,/^}$/' $S.cu | grep -c 'het_cpu_preload'
+  1
+
+...and so does the co-running canary's worker: the control is stressed exactly like
+the test it vouches for, or it vouches for a different machine.
+  $ awk '/^static void\* cpu_thread_can_P0\(void\* _a\)/,/^}$/' $S.cu | grep -c 'het_cpu_preload'
+  1

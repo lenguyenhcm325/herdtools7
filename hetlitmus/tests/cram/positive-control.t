@@ -24,21 +24,81 @@ The gc mirror: the GPU produces, so the mutant keeps the GPU's RELEASE.
   1
 
 THE HIGHEST-STAKES VALUE IN THE CODEBASE.  HET_CONTROL_COMPILED_IN=1 says a real
-mu(T) and a real canary are CO-RUNNING in this launch, so a null may be read against
-them.  Flip it without the co-run behind it and every "Never" silently becomes a
-*credible* "Never" -- an unfalsifiable null that reads as confirmation of the CMCM.
-Everything below this line exists to make the 1 TRUE, not merely present.
+mu(T) (Layer A) is CO-RUNNING in this launch, so a null may be read against it.  Flip
+it without the co-run behind it and every "Never" silently becomes a *credible*
+"Never" -- an unfalsifiable null that reads as confirmation of the CMCM.  Everything
+below this line exists to make the 1 TRUE, not merely present.
 
   $ grep -c '#define HET_CONTROL_COMPILED_IN 1' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 
-An Allowed row is not a forbidden test: it has no null to vouch for, so it gets no
-Layer-A mutant, no co-run, and the flag stays 0 -- which keeps het_verdict() refusing
-to call any of its nulls credible.
+B6c GAVE THE OTHER 322 TESTS A CANARY -- AND DID NOT TOUCH THIS FLAG.
+B6c co-runs the Layer-B canary on every test that has one (Q4 R5), which is the whole
+non-Disallowed corpus.  The obvious way to record that would have been to let
+HET_CONTROL_COMPILED_IN rise to 1 on all of them.  THAT WOULD HAVE BEEN THE BUG: "a
+canary is co-running" and "the minimal mutant OF THIS TEST is co-running" are
+different claims, and only the second licenses a CREDIBLE-NULL.  Collapsed into one
+bit, a null on a test that has no mutant at all would start reading as vouched-for.
+
+So the flag SPLIT rather than widened, and the Layer-A guard below is UNCHANGED --
+still exactly the 16 Disallowed tests.  A canary-only harness says so in its own flag.
   $ litmus7 -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -c 'HET_MU_NAME NULL' S-cg-sys-fence/S-cg-sys-fence.cu
   1
   $ grep -c '#define HET_CONTROL_COMPILED_IN 0' S-cg-sys-fence/S-cg-sys-fence.cu
+  1
+  $ grep -c '#define HET_CANARY_COMPILED_IN 1' S-cg-sys-fence/S-cg-sys-fence.cu
+  1
+
+...and the canary really is IN there, not merely named: its own instance, its own K,
+its own recovery scan feeding its own channel.  A NAME IS NOT A CO-RUN -- the map
+names a canary for all 338 rows, and before B6c 320 of them named one they did not
+run.  That is exactly the drift the flag exists to catch, so both are checked.
+  $ grep -c 'HET_CANARY_NAME "MP-cg-sys-relaxed"' S-cg-sys-fence/S-cg-sys-fence.cu
+  1
+  $ grep -c 'recovery scan: MP-cg-sys-relaxed' S-cg-sys-fence/S-cg-sys-fence.cu
+  1
+  $ grep -c 'if (_weak) _rec.canary_target_count++;' S-cg-sys-fence/S-cg-sys-fence.cu
+  1
+  $ grep -cE '^#define CAN_K_TAG 3' S-cg-sys-fence/S-cg-sys-fence.cu
+  1
+
+THE ORACLE CLASS (B6c).  Without it het_verdict() framed all 338 tests as
+should-be-forbidden, so any test that observed its weak outcome printed "the
+should-be-FORBIDDEN outcome was OBSERVED ... A single sighting REFUTES the model's
+prediction".  Only 16 of the 338 are Disallowed.  286 are oracle-ALLOWED -- there the
+weak outcome is EXPECTED, and seeing it CONFIRMS the model is not over-strong -- and
+36 are NO-ORACLE.  322 harnesses stood ready to print a LOUD FALSE REFUTATION of the
+compound memory model.  Each class must carry its own tag, read from control-map.csv
+field 2, and the emitter must never fall back to a default.
+  $ litmus7 -o . ../het/IRIW-cgcg-sys-fence-2s.litmus >/dev/null 2>&1
+  $ grep -h '_rec.het_oracle' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu S-cg-sys-fence/S-cg-sys-fence.cu IRIW-cgcg-sys-fence-2s/IRIW-cgcg-sys-fence-2s.cu
+      _rec.het_oracle = ORACLE_DISALLOWED;
+      _rec.het_oracle = ORACLE_ALLOWED;
+      _rec.het_oracle = ORACLE_NONE;
+
+ORACLE_UNSET IS 0 SO THAT A FORGOTTEN TAG FAILS LOUD.  het_obs_record is memset(0)
+before it is filled, so the zero value is what an emitter that skipped the field would
+produce.  Had DISALLOWED been 0, that omission would have silently restored the false
+refutation.  It is the first enumerator, and het_verdict() fails closed on it.
+  $ grep -c 'ORACLE_UNSET = 0,' MP-cg-sys-acqrel-2s/het_verdict.h
+  1
+  $ grep -c 'if (r->het_oracle == ORACLE_UNSET) {' MP-cg-sys-acqrel-2s/het_verdict.h
+  1
+
+THE SHARPEST INSTANCE: THE CANARY ITSELF.  MP-cg-sys-relaxed is oracle-Allowed AND is
+the Layer-B canary for 265 rows of control-map.csv.  It cannot co-run itself (the map
+says `self'), so BOTH flags are 0 and it stays single-instance -- and pre-B6c, the one
+test whose entire job is to FIRE would have printed a refutation of the compound model
+every time it did its job.  It names itself as its canary, which is how het_verdict.h
+tells "this test IS the canary" (designed) from "the canary went missing" (a bug).
+  $ litmus7 -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
+  $ grep -E '^#define HET_(CONTROL|CANARY)_COMPILED_IN' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  #define HET_CONTROL_COMPILED_IN 0
+  #define HET_CANARY_COMPILED_IN 0
+  $ grep -c 'HET_CANARY_NAME "MP-cg-sys-relaxed"' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  1
+  $ grep -c '_rec.het_oracle = ORACLE_ALLOWED;' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
 THREE INSTANCES, THREE K's.  K is 3 for MP/SB/LB but 4 for R/S (three stores, not
