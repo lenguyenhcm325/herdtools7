@@ -28,8 +28,19 @@ system-scope fetch_add per barrier-joining GPU lane.)
   $ grep -c '_bar.fetch_add' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   2
 
-(d) a SINGLE terminal device sync per run.
-  $ grep -c 'cudaDeviceSynchronize' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+(d) a SINGLE terminal device sync per RUN.  This is B2's invariant: the kernel is
+persistent, so the run loop must sync exactly ONCE, at the end -- a sync inside the
+loop would serialise the free-running window and destroy the whole design.
+
+Scoped to the run loop, not counted file-wide.  B5 added a second
+cudaDeviceSynchronize in gd_alloc_noise (waiting for the one-shot prefetch that moves
+the HBM noise buffer across the interconnect), which happens ONCE at start-up, before
+any run, and does not touch this invariant.  Bumping the count to 2 would have made
+this check satisfiable by a genuine SECOND SYNC IN THE RUN LOOP -- exactly the
+regression it exists to catch.  Scope, don't bump.
+  $ sed -n '/for (int _run=0; _run<NUMBER_OF_RUN/,/^  }$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c 'cudaDeviceSynchronize'
+  1
+  $ sed -n '/^static int gd_alloc_noise/,/^}$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c 'cudaDeviceSynchronize'
   1
 
 (e) cooperative launch is used ONLY for co-residency: no cooperative_groups.h, no

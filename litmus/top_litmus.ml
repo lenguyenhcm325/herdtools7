@@ -531,8 +531,11 @@ static int _shared_pageable(void){
 
    A REFUSED cudaMemAdvise is counted, never swallowed: a placement knob that says
    "remote" while the pages sat where first touch left them is an inert mechanism
-   reporting itself as live, which is this project's signature bug. */
-static int _het_place_failures = 0;
+   reporting itself as live, which is this project's signature bug.  The counter
+   itself (_het_place_failures) is declared by the SHARED driver template, not here:
+   "how many placement calls were refused" is a dialect-agnostic fact that the
+   HetObs record reports on both renders, and only the MECHANISM that increments it
+   is CUDA-specific.  Declaring it in this string is what broke the .hip build. */
 static void _het_place(void* _p, size_t _bytes, int _where){
   if (_where == 0) return;                  /* first-touch: nothing to advise */
   int _dev = 0;
@@ -594,12 +597,46 @@ static int gd_alloc_noise(void** _pp, size_t _bytes, int _where){
        is exercised, but this is NOT interconnect stress and the driver says so. */
     *_pp = NULL;
     if (cudaMallocManaged(_pp, _bytes) != cudaSuccess || *_pp == NULL) return -1;
+    het_cpu_first_touch(*_pp, _bytes);   /* managed memory is lazily populated too */
     return 1;
   }
   *_pp = malloc(_bytes);
   if (*_pp == NULL) return -1;
   int _before = _het_place_failures;
+  /* ADVISE FIRST, then FAULT THE PAGES IN.  Order matters both ways:
+
+     - the advice must precede the touch, because on GH200 FIRST TOUCH IS WHAT
+       PLACES THE PAGE -- advising afterwards would be advising about pages that
+       already have a home.
+
+     - and the touch is not optional.  An untouched malloc'd buffer is not backed by
+       physical memory at all: Linux maps every untouched anonymous page to ONE
+       shared zero page, so reading 8 GB of it would hit a single cache line, be
+       served from L1, and generate NO memory traffic and NO C2C traffic whatsoever.
+       The noise kernel would run, report healthy round counts, and stress nothing.
+       (Measured: reading 1 GiB of untouched malloc'd memory grows RSS by 388 KB;
+       first-touching it grows RSS to 1,050,392 KB.)  See het_cpu_first_touch. */
   _het_place(*_pp, _bytes, _where);
+  het_cpu_first_touch(*_pp, _bytes);
+  /* The CPU did the touching, so the pages are now homed on DDR.  For the buffer
+     that is supposed to live on HBM (the one the Grace noise thread streams, so that
+     each of its reads CROSSES C2C) the advice alone will not move them -- it is a
+     hint, and the pages are already resident.  Prefetch them across, and say so if
+     the driver refuses: a "HBM" noise buffer that is really on DDR generates local
+     traffic, not interconnect traffic, and the run is not C2C-stressed. */
+  if (_where == 1) {
+    cudaError_t _e = cudaMemPrefetchAsync(*_pp, _bytes, 0, 0);
+    if (_e == cudaSuccess) _e = cudaDeviceSynchronize();
+    if (_e != cudaSuccess) {
+      _het_place_failures++;
+      fprintf(stderr,
+              "HetLitmus WARNING: cudaMemPrefetchAsync of the HBM noise buffer FAILED "
+              "(%s) -- its pages are still homed where the CPU first touched them "
+              "(DDR), so the Grace noise thread is streaming LOCAL memory and crosses "
+              "no interconnect.  This run is not C2C-stressed on the Grace side.\n",
+              cudaGetErrorString(_e));
+    }
+  }
   return (_het_place_failures > _before) ? 1 : 0;
 }
 static void gd_free_noise(void* _p){
@@ -702,6 +739,12 @@ static int gd_alloc_noise(void** _pp, size_t _bytes, int _where){
   (void)_where;
   *_pp = NULL;
   if (hipMallocManaged(_pp, _bytes) != hipSuccess || *_pp == NULL) return -1;
+  /* FAULT THE PAGES IN.  Managed memory is lazily populated, and an untouched
+     buffer is backed by a single shared zero page -- so streaming 8 GB of it would
+     hit ONE cache line, be served from L1, and generate no coherence traffic at all.
+     The contention analogue this render depends on needs the lines to EXIST before
+     the two chiplets can bounce them.  See het_cpu_first_touch. */
+  het_cpu_first_touch(*_pp, _bytes);
   return 0;
 }
 static void gd_free_noise(void* _p){
@@ -2177,6 +2220,19 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
 }
 
 |ocaml} ;
+            (* B5: the placement-failure counter belongs to the SHARED template, not
+               to a dialect's defs.  "How many placement calls were refused" is a
+               dialect-agnostic fact -- the HetObs record reports it on BOTH renders --
+               and only the mechanism that increments it (cudaMemAdvise) is
+               CUDA-specific.  Declaring it inside the CUDA gd_shared_mem_defs string
+               compiled fine under nvcc and BROKE THE .hip BUILD, because the shared
+               driver below reads it on both paths.  On the HIP render it therefore
+               stays 0, which is exactly right: MI300A has one HBM pool and no
+               placement to refuse. *)
+            s "/* B5: placement refusals.  Incremented only where placement EXISTS\n\
+               \   (the CUDA/GH200 render); stays 0 on the HIP/MI300A render, which has a\n\
+               \   single HBM pool and therefore nothing to place. */\n" ;
+            s "static int _het_place_failures = 0;\n\n" ;
             s dialect.gd_shared_mem_defs ;
             s "\n" ;
             s dialect.gd_noise_mem_defs ;

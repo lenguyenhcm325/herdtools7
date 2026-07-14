@@ -1621,6 +1621,22 @@ extern "C" {
 #if (HET_CPU_STRIDE) < 1
 #error "HET_CPU_STRIDE must be >= 1"
 #endif
+/* A zero stride or a zero chunk turns the noise stream into a no-op WITHOUT any
+   other symptom: with stride 0 the index never advances, so the thread re-reads ONE
+   location for ever (served from L1 -- no DRAM traffic, no C2C traffic); with chunk
+   0 the inner loop never executes and the outer loop spins on the stop flag doing
+   nothing.  Both would report healthy round counts.  This is the same shape as the
+   upstream cuda-litmus MEM_STRESS bug -- a knob whose out-of-range value silently
+   disables the mechanism it configures -- so, as there, refuse to compile. */
+#if (HET_NOISE_STRIDE) < 1
+#error "HET_NOISE_STRIDE must be >= 1 (0 re-reads ONE location for ever: no traffic)"
+#endif
+#if (HET_NOISE_CHUNK) < 1
+#error "HET_NOISE_CHUNK must be >= 1 (0 streams nothing)"
+#endif
+#if (HET_NOISE_MB) < 1
+#error "HET_NOISE_MB must be >= 1"
+#endif
 
 /* -------------------------------------------------------------------------
  * LIVENESS TALLY.  The CPU twin of het_stress.cuh's.  Same reason, restated
@@ -1698,6 +1714,30 @@ uint32_t het_cpu_rng_init(uint32_t seed, uint32_t lane);
 uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t *rng, int pct);
 void    *het_cpu_enemy(void *a);   /* pthread body; NOT a pthread dependency       */
 void    *het_cpu_noise(void *a);   /* pthread body; the Grace half of the C2C noise*/
+/* -------------------------------------------------------------------------
+ * FIRST-TOUCH -- and this one is not a detail, it is the difference between a
+ * noise buffer that stresses the interconnect and one that stresses NOTHING.
+ *
+ * A malloc'd buffer that has never been WRITTEN is not backed by physical memory.
+ * Linux maps every untouched anonymous page to a single shared, read-only ZERO
+ * PAGE.  So READING such a buffer -- which is exactly what a noise kernel does --
+ * touches ONE physical cache line no matter how large the buffer is: every read
+ * hits L1, and it generates no memory traffic, no DRAM traffic, and NO INTERCONNECT
+ * TRAFFIC AT ALL.  An 8 GB noise buffer would be 4 KB of physical memory.
+ *
+ * Measured on the dev box, to make sure this is real and not folklore: reading 1 GiB
+ * of untouched malloc'd memory grew RSS by 388 KB; first-touching the same buffer
+ * grew RSS to 1,050,392 KB -- the actual gigabyte.
+ *
+ * A noise layer without this compiles, links, runs, reports healthy round counts,
+ * and stresses nothing.  That is this project's signature failure, and it would have
+ * been its fourth instance.
+ *
+ * It also decides the page's NUMA HOME on GH200 (first touch places it), which is
+ * why the caller advises the preferred location BEFORE calling this, and prefetches
+ * afterwards if the pages must end up on the far side.  One write per page suffices.
+ * ------------------------------------------------------------------------- */
+void     het_cpu_first_touch(void *p, size_t bytes);
 /* Host-side, seeded from srand() by the driver, so a run replays from its seed
    (GPUHarbor ISSTA'23 3.4's reproducibility discipline). */
 void     het_cpu_shuffle(uint32_t *idx, uint32_t n);
@@ -1917,6 +1957,19 @@ void *het_cpu_noise(void *_a) {
   __atomic_fetch_add(&a->tally->noise_cpu_words, words, __ATOMIC_RELAXED);
   __atomic_fetch_add(&a->tally->noise_sink, acc, __ATOMIC_RELAXED);
   return NULL;
+}
+
+/* ---- first-touch (see the declaration above for why this is load-bearing) --
+ * One write per page.  `volatile' so it cannot be optimised away -- a first-touch
+ * loop the compiler deletes leaves the buffer on the zero page, which is precisely
+ * the failure it exists to prevent.
+ * ------------------------------------------------------------------------- */
+void het_cpu_first_touch(void *p, size_t bytes) {
+  long ps = sysconf(_SC_PAGESIZE);
+  if (ps < 1) ps = 4096;
+  volatile unsigned char *b = (volatile unsigned char *)p;
+  for (size_t i = 0; i < bytes; i += (size_t)ps) b[i] = 1u;
+  if (bytes > 0) b[bytes - 1] = 1u;      /* the tail page, if bytes is not a multiple */
 }
 
 /* ---- M2: the shuffle behind the indirection ------------------------------

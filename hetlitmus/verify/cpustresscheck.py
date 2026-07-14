@@ -173,6 +173,17 @@ PROBE_C = r"""
 
 #define PROBE_WORDS (1u << 16)
 #define PROBE_ENEMIES 2
+#define PROBE_NOISE_BYTES (256ull * 1024ull * 1024ull)   /* 256 MiB */
+
+/* resident set size, in KB (/proc/self/statm field 2 = resident pages) */
+static long probe_rss_kb(void) {
+  FILE* f = fopen("/proc/self/statm", "r");
+  long total, res;
+  if (!f) return -1;
+  if (fscanf(f, "%ld %ld", &total, &res) != 2) res = -1;
+  fclose(f);
+  return (res < 0) ? -1 : res * (sysconf(_SC_PAGESIZE) / 1024);
+}
 
 int main(int argc, char** argv) {
   int on = (argc > 1 && argv[1][0] == '1');
@@ -242,6 +253,31 @@ int main(int argc, char** argv) {
   __atomic_store_n(&go, 0, __ATOMIC_RELAXED);
   for (int e = 0; e < nEnemy; e++) pthread_join(eth[e], NULL);
   if (noise) pthread_join(nth, NULL);
+
+  /* ---- FIRST-TOUCH: the hazard, and the fix, both measured -----------------
+     An untouched malloc'd buffer is backed by a single shared ZERO PAGE, so a noise
+     buffer that is never written stresses NOTHING however large it is -- every read
+     hits one cache line and is served from L1.  Prove BOTH halves on this host:
+     (a) merely READING the buffer leaves it unbacked (the hazard is real), and
+     (b) het_cpu_first_touch actually faults the pages in (the fix works).
+     RSS is the witness. */
+  {
+    volatile uint64_t* nb2 = (volatile uint64_t*)malloc(PROBE_NOISE_BYTES);
+    long r0 = probe_rss_kb(), r1 = -1, r2 = -1;
+    unsigned long long a2 = 0;
+    if (nb2) {
+      for (size_t i = 0; i < PROBE_NOISE_BYTES / 8; i += 8) a2 += nb2[i];
+      r1 = probe_rss_kb();
+      het_cpu_first_touch((void*)nb2, PROBE_NOISE_BYTES);
+      r2 = probe_rss_kb();
+      free((void*)nb2);
+    }
+    printf("ft_bytes=%llu ft_rss_after_read=%ld ft_rss_after_touch=%ld ft_sink=%llu\n",
+           (unsigned long long)PROBE_NOISE_BYTES,
+           (r1 >= 0 && r0 >= 0) ? (r1 - r0) : -1,
+           (r2 >= 0 && r1 >= 0) ? (r2 - r1) : -1,
+           a2);
+  }
 
   printf("enemy_rounds=%llu enemy_accesses=%llu preload_ops=%llu "
          "noise_rounds=%llu noise_words=%llu enemies=%u preload_live=%d\n",
@@ -456,10 +492,48 @@ def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True):
             r = run([probe_bin, "1" if on else "0"], cwd=d)
             if r.returncode != 0:
                 raise RuntimeError("probe failed:\n" + r.stdout)
-            return dict(kv.split("=") for kv in r.stdout.strip().split())
+            out = {}
+            for line in r.stdout.strip().splitlines():
+                out.update(dict(kv.split("=") for kv in line.split()))
+            return out
 
         on = probe(True)
         off = probe(False)
+
+        # ---- D3: the noise buffer is REAL MEMORY, not the shared zero page -----
+        # The sharpest dead-mechanism trap in this layer, and the least obvious.  A
+        # malloc'd buffer that has never been WRITTEN is not backed by physical
+        # memory: Linux maps every untouched anonymous page to ONE shared, read-only
+        # zero page.  So a noise kernel READING an 8 GB buffer that was never
+        # first-touched touches a single cache line, is served entirely from L1, and
+        # generates no DRAM traffic and NO INTERCONNECT TRAFFIC AT ALL -- while
+        # reporting perfectly healthy round counts.  gd_alloc_noise therefore calls
+        # het_cpu_first_touch, and this asserts that it works, on BOTH sides of the
+        # question: reading alone must NOT back the pages (the hazard is real here),
+        # and first-touching must back essentially all of them (the fix works).
+        ft_bytes = int(on["ft_bytes"])
+        ft_read = int(on["ft_rss_after_read"])
+        ft_touch = int(on["ft_rss_after_touch"])
+        want_kb = ft_bytes // 1024
+        if ft_read < 0 or ft_touch < 0:
+            note("  D3 SKIPPED (no /proc/self/statm on this host)")
+        elif ft_touch < (want_kb * 9) // 10:
+            fail("D3: het_cpu_first_touch grew RSS by only %d KB for a %d KB buffer.  "
+                 "It is NOT faulting the pages in, so a noise buffer stays on the "
+                 "shared zero page -- one physical cache line, served from L1, "
+                 "generating NO interconnect traffic however large the buffer is."
+                 % (ft_touch, want_kb))
+        elif ft_read > want_kb // 10:
+            note("  D3 first-touch works (RSS +%d KB / %d KB), though on this host "
+                 "reading alone already backed %d KB -- the zero-page hazard may be "
+                 "absent (huge pages? pre-faulted allocator?).  The fix is still "
+                 "correct and required on Linux/GH200." % (ft_touch, want_kb, ft_read))
+        else:
+            note("  D3 the noise buffer is REAL memory: reading %d KB of it backs only "
+                 "%d KB (the shared zero page -- the hazard is real on this host), "
+                 "while het_cpu_first_touch backs %d KB.  Without it the C2C noise "
+                 "would stream ONE cache line out of L1 and stress nothing."
+                 % (want_kb, ft_read, ft_touch))
 
         live = ("enemy_rounds", "enemy_accesses", "preload_ops", "noise_rounds")
         for k in live:

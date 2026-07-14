@@ -133,7 +133,10 @@ and it comes DOWN only after the device has drained, so the stress covers the wh
 tested window and no more (S&D knob F: the enemy runs at least as long as the test).
 Lowering it before the sync would stop the stress while GPU lanes were still
 looping; never lowering it would hang the join.
-  $ SY=$(grep -n 'cudaDeviceSynchronize' $MP.cu | cut -d: -f1)
+(The anchor is the TERMINAL sync -- `cudaError_t _s = cudaDeviceSynchronize()' -- not
+any cudaDeviceSynchronize: gd_alloc_noise has its own, one-shot at start-up, waiting
+for the prefetch that moves the HBM noise buffer across the interconnect.)
+  $ SY=$(grep -n '_s = cudaDeviceSynchronize' $MP.cu | cut -d: -f1)
   $ OFF=$(grep -n '__atomic_store_n(&_stress_go, 0' $MP.cu | cut -d: -f1)
   $ JN=$(grep -n 'pthread_join(_eth' $MP.cu | cut -d: -f1)
   $ [ "$SY" -lt "$OFF" ] && [ "$OFF" -lt "$JN" ] && echo 'device sync < lower go < join enemies'
@@ -167,7 +170,7 @@ mechanism reporting itself as live.
   $ grep -c '_het_place(\*_pp, _bytes, HET_PLACE)' $MP.cu
   1
   $ grep -c '_het_place_failures++' $MP.cu
-  1
+  2
 
 The default is 0 = first-touch, deliberately: that is Bagchi's baseline, and Q6 3.3
 finds the net effect of pinning confounded (it widens the window but slows the loop,
@@ -210,6 +213,29 @@ Fusco's buffer is 8 GB.  A sub-LLC configuration is warned about at run time.
   $ grep -A1 '#ifndef HET_NOISE_MB' MP-cg-sys-acqrel-2s/het_cpu_stress.h | grep -c '#define HET_NOISE_MB 8192'
   1
   $ grep -c 'HET_NOISE_MB < HET_LLC_MB' $MP.cu
+  1
+
+(h2) AND THE NOISE BUFFER MUST BE REAL MEMORY.  The sharpest trap in this layer, and
+the least obvious: a malloc'd buffer that has never been WRITTEN is not backed by
+physical memory at all -- Linux maps every untouched anonymous page to ONE shared,
+read-only zero page.  A noise kernel READING an 8 GB buffer that was never
+first-touched therefore touches a SINGLE cache line, is served entirely from L1, and
+generates no DRAM traffic and NO INTERCONNECT TRAFFIC WHATSOEVER, while reporting
+perfectly healthy round counts.  (Measured on the dev box: reading 256 MB of
+untouched memory backs 64 KB; first-touching it backs 262144 KB.)  So both renders
+fault the pages in, and cpustresscheck.py D3 proves at run time that it works.
+  $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MP.cu
+  2
+  $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MP.hip
+  1
+
+and on GH200 the CPU's first touch homes the pages on DDR, so the buffer that must
+live on HBM -- the one the Grace thread streams, so each read CROSSES C2C -- is
+prefetched across; a refusal is reported, because an "HBM" buffer that is really on
+DDR generates local traffic, not interconnect traffic.
+  $ grep -c 'cudaMemPrefetchAsync(\*_pp, _bytes, 0, 0)' $MP.cu
+  1
+  $ grep -c 'cudaMemPrefetchAsync of the HBM noise buffer FAILED' $MP.cu
   1
 
 (i) LIVENESS IS REPORTED, because nothing in this layer is visible to a structural
