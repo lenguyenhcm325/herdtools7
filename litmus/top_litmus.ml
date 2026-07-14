@@ -426,6 +426,14 @@ end = struct
          is the corrected banner comment.  __out is NOT routed through these. *)
       gd_shared_mem_note : string ;  (* corrected "shared vars" banner comment *)
       gd_shared_mem_defs : string ;  (* file-scope gd_alloc_shared / gd_free_shared defs *)
+      (* B5 (Q6 3.2/3.4): the interconnect-stress allocator.  A FOURTH object class
+         -- large system buffers HOMED ON THE OTHER processing unit, so that
+         stream-reading them crosses the interconnect (Fusco's noise kernels).  It
+         is a per-dialect FIELD, not a branch, because the two targets differ in
+         KIND: GH200 places (LPDDR/HBM split + cudaMemAdvise), MI300A cannot (one
+         HBM pool) and gets its interconnect pressure from cross-chiplet CONTENTION
+         instead.  Same threads, same buffers, different physics. *)
+      gd_noise_mem_defs : string ;   (* file-scope gd_alloc_noise / gd_free_noise *)
       (* B2: cooperative-launch API tokens.  Used PURELY for the co-residency +
          weak-progress guarantee of the persistent kernel; the CPU<->GPU rendezvous
          stays [gd_bar] (system-scope atomic), so NO grid.sync / cooperative_groups.h. *)
@@ -495,18 +503,107 @@ static int _shared_pageable(void){
   (void)cudaDeviceGetAttribute(&_p, cudaDevAttrPageableMemoryAccess, 0);
   return _p;
 }
+/* B5 HALF 2a -- PLACEMENT, the first of the two interconnect-stress levers (Q6 3.2
+   steps 1-2).  Pin the shared pages away from the participant that will read them,
+   so the tested accesses actually cross NVLink-C2C instead of hitting a local copy.
+
+   WHY IT IS NOT ENOUGH ON ITS OWN, stated here because the temptation to ship (a)
+   and call the interconnect stressed is exactly the mistake Fusco's data forbids:
+   "Hopper L2 cache can cache data that is physically allocated on HBM, both local
+   and peer.  L2 resident peer HBM accesses are faster than local DDR accesses."
+   A remote-pinned line that stays L2-resident crosses NOTHING.  Sustained C2C
+   traffic comes from the noise pair (Half 2b), and from the test's own coherence
+   race; placement tunes the home/PoC and the first-touch latency.  Ship BOTH.
+
+   ACCESS-COUNTER MIGRATION.  SetPreferredLocation alone can be undone by the
+   driver's access counters (threshold 256), which migrate a hot page local and
+   silence the very traffic we are trying to create; SetAccessedBy on both
+   participants is the documented way to hold the mapping.  Whether that SUFFICES on
+   a given driver is a HARDWARE question (Q8 open item 5) -- if it does not, the
+   fallback is an open-gpu-kernel-module parameter, which needs root at the eval
+   site.  Do not assume the pin held; the failure counter below is why.
+
+   DEFAULT IS 0 = FIRST-TOUCH, DELIBERATELY.  That is Bagchi's baseline (plain
+   malloc, placement uncontrolled) and it is the honest default, because Q6 3.3
+   finds the net effect CONFOUNDED: pinning widens the window but slows the loop, so
+   sightings = yield x rate could move either way, and nobody has measured it.  B8
+   sweeps HET_PLACE.  Do not promote a non-zero default without hardware evidence.
+
+   A REFUSED cudaMemAdvise is counted, never swallowed: a placement knob that says
+   "remote" while the pages sat where first touch left them is an inert mechanism
+   reporting itself as live, which is this project's signature bug. */
+static int _het_place_failures = 0;
+static void _het_place(void* _p, size_t _bytes, int _where){
+  if (_where == 0) return;                  /* first-touch: nothing to advise */
+  int _dev = 0;
+  int _home = (_where == 1) ? _dev : cudaCpuDeviceId;   /* 1 = HBM, 2 = DDR */
+  cudaError_t _e1 = cudaMemAdvise(_p, _bytes, cudaMemAdviseSetPreferredLocation, _home);
+  cudaError_t _e2 = cudaMemAdvise(_p, _bytes, cudaMemAdviseSetAccessedBy, _dev);
+  cudaError_t _e3 = cudaMemAdvise(_p, _bytes, cudaMemAdviseSetAccessedBy, cudaCpuDeviceId);
+  if (_e1 != cudaSuccess || _e2 != cudaSuccess || _e3 != cudaSuccess) {
+    _het_place_failures++;
+    fprintf(stderr,
+            "HetLitmus WARNING: cudaMemAdvise REFUSED (%s / %s / %s) -- HET_PLACE=%d "
+            "did NOT place these pages; they are wherever first touch put them, so "
+            "the tested accesses may never cross C2C.  This run is NOT "
+            "placement-stressed.\n",
+            cudaGetErrorString(_e1), cudaGetErrorString(_e2), cudaGetErrorString(_e3),
+            _where);
+  }
+}
 static void gd_alloc_shared(void** _pp, size_t _bytes){
   if (_shared_pageable()) {
     *_pp = malloc(_bytes);   /* GH200: ATS, in-place cache-line CHI coherence */
-    /* B5 SEAM: cudaMemAdvise(*_pp,_bytes,cudaMemAdviseSetPreferredLocation,dev)
-       + cudaMemAdvise(...,cudaMemAdviseSetAccessedBy,...) pins the page remote to
-       its consumer, forcing every access across C2C -- the interconnect-stress
-       lever.  Attaches HERE (GH200 malloc branch only); leave unbuilt for B5. */
+    _het_place(*_pp, _bytes, HET_PLACE);   /* B5 Half 2a -- see above */
   } else {
     cudaMallocManaged(_pp, _bytes);   /* dev-box / CI fallback only */
+    /* No placement here BY DESIGN: without pageable-memory access there is no ATS,
+       no C2C and no placement lever at all -- managed memory just page-migrates over
+       PCIe.  Advising it would be a no-op that looked like a knob. */
   }
 }
 static void gd_free_shared(void* _p){
+  if (_shared_pageable()) { free(_p); } else { cudaFree(_p); }
+}
+|ocaml} ;
+      gd_noise_mem_defs =
+        {ocaml|/* B5 HALF 2b -- the NOISE BUFFERS.  A FOURTH object class, and the four must not
+   be confused (each existed as a bug once):
+
+     shared test vars + barrier -> gd_alloc_shared  (coherent; the property under test)
+     GPU stress scratchpad      -> cudaMalloc       (device-only, disjoint)
+     CPU enemy scratchpad       -> host malloc      (CPU-only, disjoint)
+     noise buffers              -> HERE             (system memory homed on the OTHER
+                                                     PU, so streaming it crosses C2C)
+
+   Fusco's construction, verbatim: "we develop a Grace and a Hopper noise kernel that
+   continuously reads from a large buffer of 8 GB.  To stress the C2C interconnect,
+   the Grace noise kernel reads HBM system allocated memory and the Hopper noise
+   kernel reads DDR allocated memory."  So BOTH buffers are system-allocated; they
+   differ only in where their pages are homed -- which is what `_where' selects.
+   Measured effect: "Writes to HBM are the most impacted, with a Grace bandwidth of
+   17% and a Hopper bandwidth of 65% of the theoretical maximum."
+
+   Returns 0 = placed, 1 = allocated but NOT interconnect-capable (degraded), -1 =
+   failed.  The caller must say which -- a noise buffer that could not be homed
+   remotely generates no cross-device traffic, and a run whose interconnect stressor
+   is inert must never be reported as an interconnect-stressed run. */
+static int gd_alloc_noise(void** _pp, size_t _bytes, int _where){
+  if (!_shared_pageable()) {
+    /* Dev box: no ATS, no C2C, no placement lever (Q8 3).  Allocate so the plumbing
+       is exercised, but this is NOT interconnect stress and the driver says so. */
+    *_pp = NULL;
+    if (cudaMallocManaged(_pp, _bytes) != cudaSuccess || *_pp == NULL) return -1;
+    return 1;
+  }
+  *_pp = malloc(_bytes);
+  if (*_pp == NULL) return -1;
+  int _before = _het_place_failures;
+  _het_place(*_pp, _bytes, _where);
+  return (_het_place_failures > _before) ? 1 : 0;
+}
+static void gd_free_noise(void* _p){
+  if (_p == NULL) return;
   if (_shared_pageable()) { free(_p); } else { cudaFree(_p); }
 }
 |ocaml} ;
@@ -565,11 +662,50 @@ static void gd_free_shared(void* _p){
    (hipMalloc), off the coherent race path. */
 static void gd_alloc_shared(void** _pp, size_t _bytes){
   (void)hipMallocManaged(_pp, _bytes);   /* fine-grained by default */
-  /* B5 SEAM: MI300A has a single HBM pool -- no LPDDR/HBM placement knob; the
-     interconnect-stress placement attaches on the GH200 CUDA twin, not here. */
+  /* B5 Half 2a DOES NOT TRANSFER HERE, and that is a finding, not an omission.
+     MI300A has ONE HBM pool shared by the CCD (CPU) and XCD (GPU) chiplets: no
+     LPDDR/HBM split, no first-touch home to choose, no cudaMemAdvise-style remote
+     pin.  There is nothing to place (Q6 3.4).  The MI300A analogue of the
+     interconnect lever is the OTHER half -- CONTENTION -- and that is exactly what
+     the Half 2b noise pair does when both sides stream the same coherent pool; see
+     gd_alloc_noise below. */
 }
 static void gd_free_shared(void* _p){
   (void)hipFree(_p);
+}
+|ocaml} ;
+      gd_noise_mem_defs =
+        {ocaml|/* B5 HALF 2b -- the NOISE BUFFERS on MI300A.  Same threads, same streaming, same
+   disjointness; a DIFFERENT mechanism, because the hardware is different.
+
+   On GH200 the noise crosses the interconnect because each buffer is HOMED on the
+   other processing unit (Fusco).  MI300A has a single HBM pool, so there is no
+   "other" memory to home it in -- placement does not transfer.  What transfers is
+   CROSS-CHIPLET COHERENCE CONTENTION: both sides hammering the same fine-grained-
+   coherent region, with a working set that defeats L2 / Infinity-Cache residency,
+   keeps the coherence protocol bouncing lines between the CCDs and the XCDs.
+
+   Contention is NECESSARY on MI300A precisely because caching is ALLOWED there.
+   Schieffer et al. (arXiv:2410.00801) on the predecessor MI250X: GPU-side caching
+   of coherent memory is disabled, so "each access to data located in remote
+   coherent memory generates traffic over the CPU-GPU interconnect" -- fabric traffic
+   came for free.  But "on more recent systems, such as AMD MI300A, the no-caching
+   restriction can be lifted", so per-access traffic is NOT automatic and the lines
+   must be kept moving by contention.  Corroborated by arXiv:2508.12743, where
+   co-running CPU and GPU atomics on a contended shared array drops CPU throughput
+   to 11-25% of baseline.
+
+   hipMallocManaged is fine-grained by default on MI300A, which is the coherence mode
+   this needs.  `_where' is accepted and ignored: there is no home to select.
+   Returns 0 (no placement step can fail, because there is none) or -1. */
+static int gd_alloc_noise(void** _pp, size_t _bytes, int _where){
+  (void)_where;
+  *_pp = NULL;
+  if (hipMallocManaged(_pp, _bytes) != hipSuccess || *_pp == NULL) return -1;
+  return 0;
+}
+static void gd_free_noise(void* _p){
+  if (_p != NULL) (void)hipFree(_p);
 }
 |ocaml} ;
       gd_err_t = "hipError_t" ;
@@ -1598,13 +1734,35 @@ static void gd_free_shared(void* _p){
      running -- such a run's non-observations are NOT comparable with a stressed
      run's, so B7 must treat a nonzero value as disqualifying, not cosmetic. */
   uint64_t spin_rendezvous, spin_cap, stress_truncated;
+  /* B5 CPU + INTERCONNECT LIVENESS.  Same argument as the B4 block above, for the
+     two levers B4 did not have.  Every field is here because the mechanism it
+     measures has a plausible way to die silently:
+       cpu_enemy_rounds  0 => the CPU enemies never ran (stress_go ordering, or a
+                         loop the optimiser deleted).
+       cpu_preload_ops   0 => the M3 incantation is inert (a host with no cache
+                         primitives, or a 0% roll).
+       noise_cpu_rounds  0 => the Grace half of the C2C noise never ran;
+       noise_gpu_blocks  0 => the Hopper half never ran.  Either way the run is NOT
+                         interconnect-stressed, whatever HET_NOISE_* claimed.
+       cpu_aff_failures >0 => sched_setaffinity FAILED: the threads are wherever the
+                         scheduler put them and the pinning is fiction.
+       place_failures   >0 => cudaMemAdvise was REFUSED: HET_PLACE placed nothing.
+     B7 must be able to disqualify a run on these; B8 must be able to tune against
+     them.  A target count from a run whose stress was inert is not the same datum
+     as one from a stressed run, and nothing else in this record would say so. */
+  uint64_t cpu_enemy_rounds, cpu_enemy_accesses, cpu_preload_ops;
+  uint64_t noise_cpu_rounds, noise_cpu_words;
+  uint32_t noise_gpu_blocks, noise_gpu_rounds;
+  uint32_t cpu_enemies, cpu_aff_failures, place_failures;
 } het_obs_record;
 static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
   fprintf(_ch,
     "HetObs %s inst=%d run=%d conf=%d N=%llu frames=%llu target=%s%llu/%llu "
     "interleavings=%llu distinct_iters=%llu ws_via_obs=%llu obs_unique=%llu "
     "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%llu "
-    "spin=%llu/%llu stress_trunc=%llu\n",
+    "spin=%llu/%llu stress_trunc=%llu "
+    "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
+    "noise_cpu=%llu/%lluw noise_gpu=%u/%u aff_fail=%u place_fail=%u\n",
     _r->test_name,_r->instance_id,_r->run_id,(int)_r->confidence,
     (unsigned long long)_r->N,(unsigned long long)_r->frames_examined,
     _r->exhaustive_valid ? "" : "NA:",
@@ -1618,7 +1776,15 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
     (unsigned long long)_r->control_target_count,
     (unsigned long long)_r->spin_rendezvous,
     (unsigned long long)_r->spin_cap,
-    (unsigned long long)_r->stress_truncated);
+    (unsigned long long)_r->stress_truncated,
+    _r->cpu_enemies,
+    (unsigned long long)_r->cpu_enemy_rounds,
+    (unsigned long long)_r->cpu_enemy_accesses,
+    (unsigned long long)_r->cpu_preload_ops,
+    (unsigned long long)_r->noise_cpu_rounds,
+    (unsigned long long)_r->noise_cpu_words,
+    _r->noise_gpu_blocks, _r->noise_gpu_rounds,
+    _r->cpu_aff_failures, _r->place_failures);
 }
 |ocaml} ;
             (* _decode_value: a store tag -> the ORIGINAL value that write carried
@@ -1658,7 +1824,14 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                  @ ["uint32_t* _scratch" ; "uint32_t* _scratch_loc" ;
                     "uint32_t* _spin_bar" ; "uint32_t* _gpu_done" ;
                     "uint32_t* _stress_tally" ;
-                    "uint32_t _seed" ; "uint32_t _pre_pat" ; "uint32_t _mem_pat"]) in
+                    "uint32_t _seed" ; "uint32_t _pre_pat" ; "uint32_t _mem_pat" ;
+                    (* B5 Half 2b: the Hopper noise blocks' arguments.  RUNTIME, like
+                       B4's patterns -- the block-class boundary and the working set
+                       must not be compile-time constants the device code can fold
+                       (and B8 must be able to sweep them without re-emitting). *)
+                    "uint64_t* _noise_ddr" ; "uint64_t _noise_words" ;
+                    "uint32_t _noise_blocks" ; "uint32_t _noise_chunk" ;
+                    "uint32_t _noise_stride"]) in
             s (Printf.sprintf "__global__ void litmus_%s(%s) {\n" id kparams) ;
             (* B4: each lane draws from its OWN seeded Park-Miller stream, so the
                probabilistic stress toggles are decided device-side (the perpetual
@@ -1828,6 +2001,61 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                that is disjoint from every test location: no ordering edge, and
                nothing in the PTX model-op stream (hence stresscheck.py). *)
             s "  if (blockIdx.x >= HET_TEST_BLOCKS) {\n" ;
+            (* ============ B5 Half 2b: the HOPPER NOISE blocks ==================
+               Fusco's Hopper noise kernel: "the Hopper noise kernel reads DDR
+               allocated memory" -- i.e. the GPU continuously stream-reads the
+               CPU's memory, so every read that misses cache crosses C2C.  Effect
+               (Fusco, on bandwidth): a Grace bandwidth of 17% and a Hopper
+               bandwidth of 65% of theoretical.
+
+               IT IS EXTRA BLOCKS OF *THIS* KERNEL, NOT A SECOND __global__, AND
+               THAT IS NOT A STYLE CHOICE.  ptxcheck (the L0 faithfulness gate)
+               scans the whole PTX file in FLAT ORDER and slices that one op stream
+               per lane; a second kernel would drop its ops into the middle of the
+               stream being sliced.  Emitting the noise as blocks of the persistent
+               grid keeps the op stream single-kernel, and the noise's own ops stay
+               invisible to the gate for the right reason: they are PLAIN loads with
+               no order or scope qualifier, so classify_ptx_op rejects them, exactly
+               as it rejects the B4 scratchpad traffic.  They are 64-bit, so they
+               also stay clear of stresscheck.py's u32 scratchpad signature -- and
+               stresscheck's isolation anchor (both stress toggles off => ZERO u32
+               ops) is what PROVES that rather than asserting it.
+
+               `volatile' is load-bearing, for the same reason as on the CPU side:
+               the accumulator is otherwise dead and nvcc deletes the entire stream.
+               The sink below forces it to escape as well -- belt and braces, because
+               a noise loop compiled to nothing would be the fourth instance of this
+               project's signature bug.
+
+               MI300A: the same code is the contention analogue (see gd_alloc_noise
+               in the .hip render) -- there is no placement there, so the pressure
+               comes from both chiplets hammering one coherent pool. *)
+            s "    if (_noise_ddr != NULL && blockIdx.x < HET_TEST_BLOCKS + _noise_blocks) {\n" ;
+            s "      volatile const uint64_t* _nb = (volatile const uint64_t*)_noise_ddr;\n" ;
+            s "      uint64_t _t = (uint64_t)(blockIdx.x - HET_TEST_BLOCKS) * blockDim.x + threadIdx.x;\n" ;
+            s "      uint64_t _step = (uint64_t)_noise_blocks * blockDim.x * _noise_stride;\n" ;
+            s "      uint64_t _i = (_noise_words > 0) ? (_t % _noise_words) : 0;\n" ;
+            s "      uint64_t _acc = 0;\n" ;
+            s "      uint32_t _r = 0;\n" ;
+            (* The stop flag is re-tested once per CHUNK, not once per full pass:
+               an 8 GB pass takes far longer than the tested window, and a noise
+               block that only checks between passes would outlive the test (or, on
+               a cooperative launch, refuse to return). *)
+            s "      for (;\n\
+               \           _r < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;\n\
+               \           ++_r) {\n" ;
+            s "        for (uint32_t _c = 0; _c < _noise_chunk; ++_c) {\n" ;
+            s "          _acc += _nb[_i];\n" ;
+            s "          _i += _step;\n" ;
+            s "          if (_i >= _noise_words) _i = (_noise_words > 0) ? (_i % _noise_words) : 0;\n" ;
+            s "        }\n" ;
+            s "      }\n" ;
+            (* Liveness (bounded, so it cannot overflow) + volume (atomicMax, ditto). *)
+            s "      if (_r > 0) het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);\n" ;
+            s "      het_scratch_max(&_stress_tally[HET_TALLY_NOISE_ROUNDS], _r);\n" ;
+            s "      if (_acc == 0xFFFFFFFFFFFFFFFFull)\n" ;
+            s "        het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);  /* sink: force _acc to escape */\n" ;
+            s "    } else {\n" ;
             s "    uint32_t _s = 0;\n" ;
             s "    for (;\n\
                \         _s < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;\n\
@@ -1837,11 +2065,36 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s "    }\n" ;
             s "    if (_s >= HET_STRESS_MAX_ROUNDS)\n" ;
             s "      het_scratch_bump(&_stress_tally[HET_TALLY_TRUNC]);\n" ;
+            s "    }\n" ;
             s "  }\n" ;
             s "}\n\n" ;
             (* CPU pthread wrappers (arrive at barrier, then run the tagged body).
                Struct carries the uint64_t* globals, the barrier and this proc's
-               read-buffer pointers; the loop threads _n into het_run_P. *)
+               read-buffer pointers; the loop threads _n into het_run_P.
+
+               B5 SITE A (Q6 2.2).  Two CPU-stress mechanisms attach here:
+
+                 M6 affinity -- pinned BEFORE the rendezvous, so the thread is
+                 already on its core when the race starts.  het_cpu_affinity
+                 COUNTS a failure instead of dying (litmus7 errexit()s); a pin that
+                 silently failed leaves every thread wherever the scheduler put it,
+                 which changes the stress topology while looking identical.
+
+                 M3 preload -- per iteration, on THIS proc's test variables, and
+                 strictly BEFORE the call to het_run_P<n>.  Both halves of that
+                 sentence are the -2s invariant (Q6 2.4): the tested order is an
+                 opaque compiled unit in _cpu.c, so nothing can be injected INSIDE
+                 it, and a cache hint (dc civac / prfm / clflush / prefetcht0)
+                 changes RESIDENCY, not program order -- so preloading the very
+                 variables under test is safe even where the CPU issues the
+                 ordering instructions being tested (STLR/LDAPR/DMB.SY).  It cannot
+                 drift into the tested sequence either: het_run_P<n> is a call into
+                 another translation unit and every primitive is asm volatile with a
+                 "memory" clobber.
+
+               The hint count is accumulated in a LOCAL and flushed once at the end.
+               An atomic bump per hint would put contended scaffolding traffic in
+               the middle of the tested loop -- the one place it must not be. *)
             List.iter
               (fun (proc,_out,_envV,(addr_params,_out_params)) ->
                 let addr = cpu_addr_u64 addr_params and bufs = cpu_bufs proc in
@@ -1849,29 +2102,57 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                 List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) addr ;
                 s "  int* barrier;\n" ;
                 List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) bufs ;
+                (* B5: core to pin to (-1 = unpinned), this run's seed, the tally *)
+                s "  int _core; uint32_t _seed; het_cpu_tally* _tally;\n" ;
                 s "};\n" ;
                 s (Printf.sprintf "static void* cpu_thread_P%d(void* _a) {\n" proc) ;
                 s (Printf.sprintf "  cpu_args_P%d* a = (cpu_args_P%d*)_a;\n" proc proc) ;
+                s "  het_cpu_affinity(a->_core, a->_tally);\n" ;
+                (* M3 target set = exactly this proc's test variables. *)
+                let npl = List.length addr in
+                if npl > 0 then begin
+                  s (Printf.sprintf "  void* const _pl[%d] = { %s };\n" npl
+                       (String.concat ", "
+                          (List.map (fun (_,n) -> Printf.sprintf "(void*)a->%s" n)
+                             addr))) ;
+                  s (Printf.sprintf
+                       "  uint32_t _plrng = het_cpu_rng_init(a->_seed, %du);\n" proc) ;
+                  s "  uint64_t _plops = 0;\n"
+                end ;
                 s (dialect.gd_bar "  " "a->barrier") ;
                 let call_args =
                   String.concat ","
                     (List.map (fun (_,a) -> "a->"^a) (addr @ bufs) @ ["_n"]) in
-                s (Printf.sprintf
-                     "  for (int _n=0; _n<SIZE_OF_TEST; ++_n)\n    het_run_P%d(%s);\n  return NULL;\n}\n\n"
-                     proc call_args))
+                s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+                if npl > 0 then
+                  s (Printf.sprintf
+                       "    _plops += het_cpu_preload(_pl, %d, &_plrng, HET_CPU_PRELOAD_PCT);\n"
+                       npl) ;
+                s (Printf.sprintf "    het_run_P%d(%s);\n" proc call_args) ;
+                s "  }\n" ;
+                if npl > 0 then
+                  s "  __atomic_fetch_add(&a->_tally->preload_ops, _plops, __ATOMIC_RELAXED);\n" ;
+                s "  return NULL;\n}\n\n")
               params ;
             (* B3 observer: one CPU pthread snooping every observed location into
                its host buffer; joins the start barrier.  Plain 64-bit loads
-               (analysis-only, not the tested order). *)
+               (analysis-only, not the tested order).
+
+               B5: it is PINNED (M6) but deliberately NOT preloaded.  Its job is to
+               sample the shared locations as densely as it can, and a per-iteration
+               cache hint would only thin the sampling -- the same reason B4 gave the
+               GPU observer lane no pre-stress. *)
             let obsC l = Printf.sprintf "obsC_%s" l in  (* CPU observer buffer (host) *)
             if has_observers then begin
               s "struct cpu_obs_args {\n" ;
               List.iter (fun l -> s (Printf.sprintf "  uint64_t* %s;\n" l)) all_globals ;
               s "  int* barrier;\n" ;
               List.iter (fun l -> s (Printf.sprintf "  uint64_t* %s;\n" (obsC l))) obs_locs ;
+              s "  int _core; het_cpu_tally* _tally;\n" ;
               s "};\n" ;
               s "static void* cpu_obs_thread(void* _a) {\n" ;
               s "  cpu_obs_args* a = (cpu_obs_args*)_a;\n" ;
+              s "  het_cpu_affinity(a->_core, a->_tally);\n" ;
               s (dialect.gd_bar "  " "a->barrier") ;
               s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
               List.iter
@@ -1897,6 +2178,8 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
 
 |ocaml} ;
             s dialect.gd_shared_mem_defs ;
+            s "\n" ;
+            s dialect.gd_noise_mem_defs ;
             s "\n" ;
             (* driver *)
             s "int main(void){\n" ;
@@ -1960,10 +2243,18 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                lands exactly ON it; an explicit -DHET_STRESS_BLOCKS=n keeps the
                guard live (an over-large n is caught here). *)
             s "  int _testBlocks = HET_TEST_BLOCKS;\n" ;
+            (* B5 Half 2b: the noise blocks sit BETWEEN the test blocks and the
+               scratchpad stressers, so the existing `blockIdx.x >= HET_TEST_BLOCKS'
+               class boundary is untouched and the noise nests inside it.  They take
+               their share out of the stress population rather than growing the grid:
+               the co-residency cap is a hard limit for a persistent cooperative
+               kernel, and exceeding it deadlocks on a block that is never scheduled. *)
+            s "  int _noiseBlocks = HET_NOISE_GPU_BLOCKS;\n" ;
+            s "  if (_noiseBlocks < 0) _noiseBlocks = 0;\n" ;
             s "  int _stressBlocks = (HET_STRESS_BLOCKS >= 0) ? HET_STRESS_BLOCKS\n\
-               \                                              : (_maxGrid - _testBlocks);\n" ;
+               \                                              : (_maxGrid - _testBlocks - _noiseBlocks);\n" ;
             s "  if (_stressBlocks < 0) _stressBlocks = 0;\n" ;
-            s "  int _grid = _testBlocks + _stressBlocks;\n" ;
+            s "  int _grid = _testBlocks + _noiseBlocks + _stressBlocks;\n" ;
             s "  if (_grid > _maxGrid) { fprintf(stderr, \"grid %d exceeds co-resident cap %d\\n\", _grid, _maxGrid); return 2; }\n" ;
             (* B4-fix: the access patterns are LAUNCH ARGUMENTS (a compile-time
                pattern is folded away and the stress loop dead-code-eliminated --
@@ -1999,6 +2290,83 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                     "sizeof(uint32_t)*HET_TALLY_N")) ;
             s "  uint32_t _stress_tally_h[HET_TALLY_N];\n" ;
             s "  uint32_t *_scratch_loc_h = (uint32_t*)malloc_check(sizeof(uint32_t)*_grid);\n" ;
+            (* ================= B5 Half 1: the CPU stress population =============
+               Site B (Q6 2.2).  The enemy scratchpad is a THIRD object class --
+               plain host malloc.  It is CPU-only and disjoint from every test
+               location, so it needs neither the coherent allocator (gd_alloc_shared,
+               which selects the property under test) nor device memory
+               (gd_dev_malloc, the GPU scratchpad).  Confusing any two of the three
+               would put stress traffic on a tested cache line, which is precisely
+               what the S&D invariant forbids. *)
+            let n_cpu_threads =
+              List.length params + (if has_observers then 1 else 0) in
+            s "  int _ncores = het_cpu_ncores();\n" ;
+            s "  int _aff = HET_CPU_AFFINITY;\n" ;
+            s (Printf.sprintf "  int _nCpuTest = %d;\n" n_cpu_threads) ;
+            (* Enemy budget.  Auto = every core not already carrying a test thread or
+               the Grace noise thread, less a reserve for the OS, the driver and the
+               GPU-launch thread.  Grace has 72 cores and NO SMT, so litmus7's SMT /
+               hyperthread knobs are inert there and this reduces to which core; on
+               the x86 MI300A host (24c/48t/3 CCD) they are live.  The COUNT itself is
+               hardware-only (Q6 6.4) -- this is a structural default, not a tuning. *)
+            s "  int _nEnemy = HET_CPU_ENEMIES;\n" ;
+            s "  if (_nEnemy < 0) {\n" ;
+            s "    _nEnemy = _ncores - _nCpuTest - (HET_NOISE_CPU ? 1 : 0) - HET_CPU_RESERVE_CORES;\n" ;
+            s "    if (_nEnemy < 0) _nEnemy = 0;\n" ;
+            s "  }\n" ;
+            s "  het_cpu_tally _ct;\n" ;
+            s "  int _stress_go = 0;\n" ;
+            s "  uint64_t *_cpu_scratch =\n\
+               \    (uint64_t*)malloc_check(sizeof(uint64_t)*HET_CPU_SCRATCH_WORDS);\n" ;
+            s "  memset(_cpu_scratch, 0, sizeof(uint64_t)*HET_CPU_SCRATCH_WORDS);\n" ;
+            (* M4: regions are STRIDE words apart, so consecutive ones land on
+               distinct cache lines.  The REALISED spread can be smaller than the
+               knob if the scratchpad cannot hold m of them -- say so rather than let
+               a tuning log record a spread the run never had (het_report_spread in
+               het_stress.cuh learned this the hard way). *)
+            s "  uint32_t _cpu_nregions = (uint32_t)(HET_CPU_SCRATCH_WORDS / HET_CPU_STRIDE);\n" ;
+            s "  if (_cpu_nregions < 1) _cpu_nregions = 1;\n" ;
+            s "  uint32_t _cpu_spread = HET_CPU_SPREAD;\n" ;
+            s "  if (_cpu_spread > _cpu_nregions) {\n" ;
+            s "    fprintf(stderr, \"HetLitmus WARNING: realised CPU stress spread is %u region(s), not HET_CPU_SPREAD=%d -- the enemy scratchpad (HET_CPU_SCRATCH_WORDS/HET_CPU_STRIDE) holds only %u.  The CPU stress is weaker than the configuration says.\\n\",\n\
+               \            _cpu_nregions, (int)HET_CPU_SPREAD, _cpu_nregions);\n" ;
+            s "    _cpu_spread = _cpu_nregions;\n" ;
+            s "  }\n" ;
+            s "  uint32_t *_cpu_idx = (uint32_t*)malloc_check(sizeof(uint32_t)*_cpu_nregions);\n" ;
+            s "  het_cpu_enemy_args *_ea = (het_cpu_enemy_args*)malloc_check(sizeof(het_cpu_enemy_args)*(_nEnemy>0?_nEnemy:1));\n" ;
+            s "  pthread_t *_eth = (pthread_t*)malloc_check(sizeof(pthread_t)*(_nEnemy>0?_nEnemy:1));\n" ;
+            (* ================= B5 Half 2b: the noise buffers ==================== *)
+            s "  uint64_t _noise_words = (uint64_t)HET_NOISE_MB * 1024ull * 1024ull / sizeof(uint64_t);\n" ;
+            s "  uint32_t _noise_blocks = (uint32_t)_noiseBlocks;\n" ;
+            s "  uint32_t _noise_chunk = (uint32_t)HET_NOISE_CHUNK;\n" ;
+            s "  uint32_t _noise_stride = (uint32_t)HET_NOISE_STRIDE;\n" ;
+            s "  uint64_t *_noise_ddr = NULL;   /* CPU-homed: the GPU streams it */\n" ;
+            s "  uint64_t *_noise_hbm = NULL;   /* GPU-homed: the CPU streams it */\n" ;
+            s "  het_cpu_noise_args _na; pthread_t _nth; int _noise_cpu_on = 0;\n" ;
+            (* The working set is the whole point: a buffer that fits in cache is
+               served from cache and crosses NOTHING (Fusco: Hopper's L2 caches HBM
+               "both local and peer").  Grace L3 = 114 MB, Hopper L2 = 51 MB. *)
+            s "  if (HET_NOISE_MB < HET_LLC_MB)\n" ;
+            s "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%d is BELOW the last-level cache (%d MB) -- the noise buffers fit in cache, so the reads are served locally and generate NO interconnect traffic.  This run is NOT C2C-stressed (Fusco: Hopper L2 caches HBM, local and peer).\\n\",\n\
+               \            (int)HET_NOISE_MB, (int)HET_LLC_MB);\n" ;
+            s "  if (_noiseBlocks > 0) {\n" ;
+            s "    int _rc = gd_alloc_noise((void**)&_noise_ddr, (size_t)_noise_words*sizeof(uint64_t), 2);\n" ;
+            s "    if (_rc < 0) { fprintf(stderr, \"HetLitmus WARNING: could not allocate the %d MB DDR noise buffer -- the Hopper half of the C2C noise is DISABLED for this run.\\n\", (int)HET_NOISE_MB); _noise_ddr = NULL; _noise_blocks = 0; }\n" ;
+            s "    else if (_rc > 0) fprintf(stderr, \"HetLitmus WARNING: the DDR noise buffer could not be homed on the CPU -- this device has no interconnect-stress lever (no ATS/C2C), so the Hopper noise is exercising plumbing, not C2C.\\n\");\n" ;
+            s "  }\n" ;
+            s "  if (HET_NOISE_CPU) {\n" ;
+            s "    int _rc = gd_alloc_noise((void**)&_noise_hbm, (size_t)_noise_words*sizeof(uint64_t), 1);\n" ;
+            s "    if (_rc < 0) { fprintf(stderr, \"HetLitmus WARNING: could not allocate the %d MB HBM noise buffer -- the Grace half of the C2C noise is DISABLED for this run.\\n\", (int)HET_NOISE_MB); _noise_hbm = NULL; }\n" ;
+            s "    else if (_rc > 0) fprintf(stderr, \"HetLitmus WARNING: the HBM noise buffer could not be homed on the GPU -- the Grace noise is exercising plumbing, not C2C.\\n\");\n" ;
+            s "  }\n" ;
+            (* Report the REALISED configuration, not the requested one: B8 tunes
+               against what the hardware actually did, and a knob that says 9 while
+               the run realised 1 silently mis-tunes it. *)
+            s "  fprintf(stderr, \"HetLitmus cpu-stress: cores=%d test=%d enemies=%d spread=%u stride=%d seq=%d preload=%d%% aff=%d | noise: gpu_blocks=%u cpu=%d words=%llu (%d MB) place=%d\\n\",\n\
+               \          _ncores, _nCpuTest, _nEnemy, _cpu_spread, (int)HET_CPU_STRIDE,\n\
+               \          (int)HET_CPU_ENEMY_SEQ, (int)HET_CPU_PRELOAD_PCT, _aff,\n\
+               \          _noise_blocks, (int)HET_NOISE_CPU,\n\
+               \          (unsigned long long)_noise_words, (int)HET_NOISE_MB, (int)HET_PLACE);\n" ;
             s "  outs_t* hist = NULL;\n" ;
             s "  for (int _run=0; _run<NUMBER_OF_RUN; ++_run) {\n" ;
             List.iter (fun g -> s (Printf.sprintf "    *%s = 0;\n" g)) all_globals ;
@@ -2010,6 +2378,51 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s "    uint32_t _seed = (uint32_t)(HET_SEED + _run);\n" ;
             s "    srand((unsigned int)_seed);\n" ;
             s "    het_set_scratch_locations(_scratch_loc_h, _grid);\n" ;
+            (* ---- B5: the CPU stress population, spawned BEFORE the test threads.
+               THE ORDER IS THE MECHANISM.  _stress_go is raised first, then the
+               enemies and the noise thread start, and only then do the test threads
+               and the kernel go.  A stress_go raised after the enemies were spawned
+               races them; one raised after the test finished means they never ran at
+               all -- and an enemy population that never ran is exactly the failure
+               B4 shipped twice.  The tally below is what proves it did not happen. *)
+            s "    memset(&_ct, 0, sizeof _ct);\n" ;
+            s "    het_cpu_shuffle(_cpu_idx, _cpu_nregions);   /* M2: reshuffled per run, off the run seed */\n" ;
+            s "    __atomic_store_n(&_stress_go, 1, __ATOMIC_RELAXED);\n" ;
+            s "    int _ecore0 = HET_CPU_TEST_CORE0 + _nCpuTest + (HET_NOISE_CPU ? 1 : 0);\n" ;
+            s "    if (_aff && _ecore0 + _nEnemy > _ncores)\n" ;
+            s "      fprintf(stderr, \"HetLitmus WARNING: %d enemy thread(s) from core %d exceed %d core(s) -- enemy pins WRAP onto the test threads' cores, so the test threads no longer have a core to themselves and the stress topology is not the one being tuned.\\n\",\n\
+               \              _nEnemy, _ecore0, _ncores);\n" ;
+            s "    for (int _e = 0; _e < _nEnemy; ++_e) {\n" ;
+            s "      uint32_t _off = (_cpu_nregions > _cpu_spread)\n\
+               \                    ? ((uint32_t)_e * _cpu_spread) % (_cpu_nregions - _cpu_spread + 1)\n\
+               \                    : 0u;\n" ;
+            s "      _ea[_e].scratch = _cpu_scratch;\n" ;
+            s "      _ea[_e].idx     = _cpu_idx + _off;\n" ;
+            s "      _ea[_e].nidx    = _cpu_spread;\n" ;
+            s "      _ea[_e].stride  = (uint32_t)HET_CPU_STRIDE;\n" ;
+            (* sigma is a RUNTIME field.  See het_cpu_stress.h divergence (1): the
+               -D knob is read HERE, host-side, and never reaches the enemy as a
+               compile-time constant an optimiser could fold a branch out of. *)
+            s "      _ea[_e].seq     = (uint32_t)HET_CPU_ENEMY_SEQ;\n" ;
+            s "      _ea[_e].core    = _aff ? ((_ecore0 + _e) % _ncores) : -1;\n" ;
+            s "      _ea[_e].go      = &_stress_go;\n" ;
+            s "      _ea[_e].tally   = &_ct;\n" ;
+            s "      pthread_create(&_eth[_e], NULL, het_cpu_enemy, &_ea[_e]);\n" ;
+            s "    }\n" ;
+            (* The Grace half of the C2C noise: a CPU thread stream-reading the
+               GPU-homed buffer.  Its Hopper twin is already inside the kernel. *)
+            s "    _noise_cpu_on = 0;\n" ;
+            s "    if (HET_NOISE_CPU && _noise_hbm != NULL) {\n" ;
+            s "      _na.buf    = (volatile const uint64_t*)_noise_hbm;\n" ;
+            s "      _na.words  = _noise_words;\n" ;
+            s "      _na.chunk  = _noise_chunk;\n" ;
+            s "      _na.stride = _noise_stride;\n" ;
+            s "      _na.core   = _aff ? ((HET_CPU_TEST_CORE0 + _nCpuTest) % _ncores) : -1;\n" ;
+            s "      _na.go     = &_stress_go;\n" ;
+            s "      _na.tally  = &_ct;\n" ;
+            s "      pthread_create(&_nth, NULL, het_cpu_noise, &_na);\n" ;
+            s "      _noise_cpu_on = 1;\n" ;
+            s "    }\n" ;
             s (Printf.sprintf "    %s\n"
                  (dialect.gd_memcpy_h2d "_scratch_loc" "_scratch_loc_h"
                     "sizeof(uint32_t)*_grid")) ;
@@ -2035,12 +2448,19 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                 s (Printf.sprintf "    %s\n" (dialect.gd_dev_memset0 (obsG l) buf_bytes)) ;
                 s (Printf.sprintf "    memset(%s, 0, %s);\n" (obsC l) buf_bytes))
               obs_locs ;
-            List.iter
-              (fun (proc,_out,_envV,(addr_params,_out_params)) ->
+            List.iteri
+              (fun ti (proc,_out,_envV,(addr_params,_out_params)) ->
                 let addr = cpu_addr_u64 addr_params and bufs = cpu_bufs proc in
+                (* B5: ... plus this proc's pinned core (M6), the run seed (which
+                   drives its M3 preload rolls, so a run replays from its seed) and
+                   the shared tally.  Test procs take the first cores; the observer,
+                   the noise thread and then the enemies follow, disjointly. *)
+                let core =
+                  Printf.sprintf "(_aff ? ((HET_CPU_TEST_CORE0 + %d) %% _ncores) : -1)" ti in
                 let fields =
                   String.concat ", "
-                    (List.map snd addr @ ["barrier"] @ List.map snd bufs) in
+                    (List.map snd addr @ ["barrier"] @ List.map snd bufs
+                     @ [core ; "_seed" ; "&_ct"]) in
                 s (Printf.sprintf "    cpu_args_P%d _ca%d = { %s };\n" proc proc fields) ;
                 s (Printf.sprintf
                      "    pthread_t _th%d; pthread_create(&_th%d, NULL, cpu_thread_P%d, &_ca%d);\n"
@@ -2049,9 +2469,17 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             (* B3: launch the CPU observer pthread (fields: all shared globals,
                barrier, then this run's obsC buffers -- matches cpu_obs_args). *)
             if has_observers then begin
+              (* B5: the observer is PINNED (the core after the test procs) but not
+                 preloaded -- it must sample densely, and a cache hint per iteration
+                 would only thin the sampling. *)
+              let core =
+                Printf.sprintf
+                  "(_aff ? ((HET_CPU_TEST_CORE0 + %d) %% _ncores) : -1)"
+                  (List.length params) in
               let fields =
                 String.concat ", "
-                  (all_globals @ ["barrier"] @ List.map obsC obs_locs) in
+                  (all_globals @ ["barrier"] @ List.map obsC obs_locs
+                   @ [core ; "&_ct"]) in
               s (Printf.sprintf "    cpu_obs_args _cao = { %s };\n" fields) ;
               s "    pthread_t _tho; pthread_create(&_tho, NULL, cpu_obs_thread, &_cao);\n"
             end ;
@@ -2064,7 +2492,10 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
                  @ List.map (fun l -> "&"^obsG l) obs_locs
                  @ ["&barrier"]
                  @ ["&_scratch" ; "&_scratch_loc" ; "&_spin_bar" ; "&_gpu_done" ;
-                    "&_stress_tally" ; "&_seed" ; "&_pre_pat" ; "&_mem_pat"]) in
+                    "&_stress_tally" ; "&_seed" ; "&_pre_pat" ; "&_mem_pat" ;
+                    (* B5: must stay in lockstep with the kernel parameter list. *)
+                    "&_noise_ddr" ; "&_noise_words" ; "&_noise_blocks" ;
+                    "&_noise_chunk" ; "&_noise_stride"]) in
             s (Printf.sprintf "    void* _args[] = { %s };\n" args_addrs) ;
             s (Printf.sprintf
                  "    %s _e = %s((void*)litmus_%s, dim3(_grid), dim3(HET_BLOCK_DIM), _args, 0, 0);\n"
@@ -2081,6 +2512,15 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s (Printf.sprintf
                  "    if (_s != %s) { fprintf(stderr, \"sync: %%s\\n\", %s(_s)); return 2; }\n"
                  dialect.gd_success dialect.gd_errstr) ;
+            (* ---- B5: tear the CPU stress down, but only NOW.  The enemies and the
+               noise thread must cover the WHOLE tested window and no more (S&D knob
+               F: the enemy runs at least as long as the test).  Lowering the flag
+               before the device sync would stop the stress while GPU lanes were
+               still looping; leaving it up would hang the join.  So: after the last
+               test thread has joined AND the device has drained. ---- */ *)
+            s "    __atomic_store_n(&_stress_go, 0, __ATOMIC_RELAXED);\n" ;
+            s "    for (int _e = 0; _e < _nEnemy; ++_e) pthread_join(_eth[_e], NULL);\n" ;
+            s "    if (_noise_cpu_on) pthread_join(_nth, NULL);\n" ;
             (* B4-fix: read back the stress-liveness tally and SAY what it says.
                Everything in the stress layer is invisible to the L0 faithfulness
                gate (it is scaffolding, not tested ops), so a stress layer that
@@ -2109,6 +2549,31 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s "      if (_stress_tally_h[HET_TALLY_TRUNC])\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: %u stress lane(s) hit HET_STRESS_MAX_ROUNDS -- stress STOPPED while tested lanes were still running.  This run is NOT a stressed run and its non-observations are not comparable with one.\\n\",\n\
                \                _stress_tally_h[HET_TALLY_TRUNC]);\n" ;
+            s "    }\n" ;
+            (* ---- B5: the CPU + interconnect layer's vital signs.  Same discipline
+               as B4's block above, and for the same reason: NOTHING in this layer is
+               visible to a structural gate, so a layer that has silently stopped
+               working looks exactly like one that is working.  Each warning below
+               names a mechanism that is DEAD, not merely suboptimal. ---- *)
+            s "    {\n" ;
+            s "      unsigned long long _er = _ct.enemy_rounds;\n" ;
+            s "      unsigned long long _pl = _ct.preload_ops;\n" ;
+            s "      unsigned long long _nc = _ct.noise_cpu_rounds;\n" ;
+            s "      uint32_t _ng = _stress_tally_h[HET_TALLY_NOISE];\n" ;
+            s "      fprintf(stderr, \"HetLitmus cpu-stress: enemies=%u rounds=%llu accesses=%llu preload_hints=%llu | noise: cpu_rounds=%llu gpu_blocks=%u (max %u rounds) | aff_fail=%u place_fail=%d\\n\",\n\
+               \              _ct.enemies_realised, _er, (unsigned long long)_ct.enemy_accesses,\n\
+               \              _pl, _nc, _ng, _stress_tally_h[HET_TALLY_NOISE_ROUNDS],\n\
+               \              _ct.aff_failures, _het_place_failures);\n" ;
+            s "      if (_nEnemy > 0 && _er == 0)\n" ;
+            s "        fprintf(stderr, \"HetLitmus WARNING: %d CPU enemy thread(s) were spawned but completed ZERO rounds -- the CPU-side stress did NOT run.  Its non-observations are not those of a CPU-stressed run.\\n\", _nEnemy);\n" ;
+            s "      if (HET_CPU_PRELOAD_PCT > 0 && _pl == 0)\n" ;
+            s "        fprintf(stderr, \"HetLitmus WARNING: HET_CPU_PRELOAD_PCT=%d but ZERO preload hints were issued -- the M3 incantation is INERT (this host may have no cache primitives; see het_cpu_stress.h HET_CPU_PRELOAD_LIVE).\\n\", (int)HET_CPU_PRELOAD_PCT);\n" ;
+            s "      if (HET_NOISE_CPU && _noise_cpu_on && _nc == 0)\n" ;
+            s "        fprintf(stderr, \"HetLitmus WARNING: the Grace noise thread completed ZERO rounds -- the CPU half of the C2C noise did NOT run.\\n\");\n" ;
+            s "      if (_noise_blocks > 0 && _ng == 0)\n" ;
+            s "        fprintf(stderr, \"HetLitmus WARNING: %u Hopper noise block(s) were launched but NONE completed a round -- the GPU half of the C2C noise did NOT run.  This run is not interconnect-stressed.\\n\", _noise_blocks);\n" ;
+            s "      if (_ct.aff_failures)\n" ;
+            s "        fprintf(stderr, \"HetLitmus WARNING: %u sched_setaffinity call(s) FAILED -- those threads are wherever the scheduler put them.  The pinning is fiction and the stress topology is not the one being tuned.\\n\", _ct.aff_failures);\n" ;
             s "    }\n" ;
             (* B3: mirror GPU device read + observer buffers to the host scan. *)
             List.iter
@@ -2145,6 +2610,21 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s "    _rec.spin_rendezvous = _stress_tally_h[HET_TALLY_RDV];\n" ;
             s "    _rec.spin_cap = _stress_tally_h[HET_TALLY_CAP];\n" ;
             s "    _rec.stress_truncated = _stress_tally_h[HET_TALLY_TRUNC];\n" ;
+            (* B5: the CPU + interconnect layer's vital signs travel WITH the result,
+               for the same reason B4's do -- a target count from a run whose CPU
+               stress was inert, or whose C2C noise never ran, is not the same datum
+               as one from a fully stressed run, and nothing else in this record
+               would say so. *)
+            s "    _rec.cpu_enemies = _ct.enemies_realised;\n" ;
+            s "    _rec.cpu_enemy_rounds = _ct.enemy_rounds;\n" ;
+            s "    _rec.cpu_enemy_accesses = _ct.enemy_accesses;\n" ;
+            s "    _rec.cpu_preload_ops = _ct.preload_ops;\n" ;
+            s "    _rec.noise_cpu_rounds = _ct.noise_cpu_rounds;\n" ;
+            s "    _rec.noise_cpu_words = _ct.noise_cpu_words;\n" ;
+            s "    _rec.noise_gpu_blocks = _stress_tally_h[HET_TALLY_NOISE];\n" ;
+            s "    _rec.noise_gpu_rounds = _stress_tally_h[HET_TALLY_NOISE_ROUNDS];\n" ;
+            s "    _rec.cpu_aff_failures = _ct.aff_failures;\n" ;
+            s "    _rec.place_failures = (uint32_t)_het_place_failures;\n" ;
             (* skew/distinct accumulators only exist when a read buffer decodes a
                synchrony iteration at all (a store-only test -- 2+2W -- has none). *)
             (match sync_src with
@@ -2466,6 +2946,18 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_gpu_done")) ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_stress_tally")) ;
             s "  free(_scratch_loc_h);\n" ;
+            (* B5: the CPU enemy scratchpad is HOST memory (the third object class),
+               so it takes the host free -- not the device one.  The noise buffers are
+               the fourth class and take gd_free_noise, which matches whichever
+               allocator gd_alloc_noise used (malloc on GH200, managed on the dev-box
+               fallback); a mismatched free is UB that may not fault on the managed
+               path and only surfaces on the target. *)
+            s "  free(_cpu_scratch);\n" ;
+            s "  free(_cpu_idx);\n" ;
+            s "  free(_ea);\n" ;
+            s "  free(_eth);\n" ;
+            s "  gd_free_noise(_noise_ddr);\n" ;
+            s "  gd_free_noise(_noise_hbm);\n" ;
             s "  return 0;\n}\n" in
           (* ---- comp.sh / Makefile / README ---- *)
           let dump_comp ch =

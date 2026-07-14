@@ -67,7 +67,13 @@ CROSS-DEVICE barrier in the loop, which masks the tested order and stalls
 (GPU lane + CPU thread) are untouched.
   $ grep -c 'het_spin(_spin_bar' $MP.cu
   1
-  $ grep -c 'fetch_add' $MP.cu
+
+(The arrival count matches `_bar.fetch_add', the barrier's OWN atomic, not a bare
+`fetch_add'.  B5 added the first non-barrier atomic RMW to this file -- the CPU
+stress tally -- and a bare count would have swept it up; bumping the expectation to
+3 would then have left the check satisfiable by a real THIRD BARRIER ARRIVAL, which
+is the regression it exists to catch.  Same reasoning in coop-launch.t.)
+  $ grep -c '_bar.fetch_add' $MP.cu
   2
 
 and the barrier is ALL-OR-NONE, with its limit indexed by the barriers TAKEN --

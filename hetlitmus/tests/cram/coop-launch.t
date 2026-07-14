@@ -13,10 +13,19 @@ emits both .cu and .hip) and assert the structural invariants with robust counts
   0
 
 (b,c) the inner free-running window: one for(_n<SIZE_OF_TEST) in the kernel AND one
-in the CPU wrapper (2 total), each with gd_bar fired ONCE before it (2 fetch_add).
+in the CPU wrapper (2 total), each with gd_bar fired ONCE before it (2 arrivals).
+
+The arrival count is matched on `_bar.fetch_add' -- the barrier's OWN atomic -- and
+NOT on a bare `fetch_add'.  B5 added the first non-barrier atomic RMW to this file
+(the CPU stress tally's __atomic_fetch_add), which a bare `fetch_add' count would
+have swept up: the check would then have read 3 and, once bumped to 3, would have
+been satisfied by a genuine THIRD BARRIER ARRIVAL -- exactly the regression it exists
+to catch.  Matching the barrier's own spelling keeps it discriminating.  (ptxcheck's
+barrier whitelist guards the same invariant independently, at the PTX level: one
+system-scope fetch_add per barrier-joining GPU lane.)
   $ grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   2
-  $ grep -c 'fetch_add' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  $ grep -c '_bar.fetch_add' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   2
 
 (d) a SINGLE terminal device sync per run.

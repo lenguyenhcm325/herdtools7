@@ -24,11 +24,17 @@
 ; shared-alloc guards the B1 per-target gd_alloc_shared / gd_free_shared allocator;
 ; stress guards the B4 GPU memory-stress layer (device-memory scratchpad, pure-stress
 ; workgroups, and the device-scope window-opener kept SEPARATE from the system-scope
-; cross-device rendezvous).
+; cross-device rendezvous); cpu-stress guards the B5 CPU + interconnect layer -- the
+; host ISA kept out of the nvcc TU, the -2s invariants, the four object classes, and
+; above all the stress_go ORDERING, which is the one B5 property the liveness gate
+; (hetlitmus/verify/cpustresscheck.py) structurally cannot see: its dynamic probe
+; drives het_cpu_stress.h's mechanisms with its own flag and never exercises the
+; emitted driver's orchestration.  Confirmed by bite test -- moving the stress_go
+; raise after the joins passes cpustresscheck and fails here.
 ; Scoped so the three Layer-1 tests above stay toolchain-free.  litmus7 het emission
 ; needs no -set-libdir, so only the binary + the .litmus inputs are required.
 (cram
- (applies_to pfix-cond coop-launch shared-alloc tagged-recover stress)
+ (applies_to pfix-cond coop-launch shared-alloc tagged-recover stress cpu-stress)
  (package herdtools7)
  (deps
   %{bin:litmus7}

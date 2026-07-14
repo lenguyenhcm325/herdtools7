@@ -673,6 +673,17 @@ hetlitmus-stress: | build
 	bash hetlitmus/verify/l0_tokens.sh stress
 	@ echo "HetLitmus Layer-3 stress liveness: OK"
 
+### hetlitmus-stress covers the B4 GPU scratchpad layer.  B5 adds the CPU-side and
+### interconnect (C2C) levers, and NOT ONE of them is visible to ptxcheck or
+### stresscheck: the M3 preload emits host cache hints (no order, no scope, not a
+### model op), the enemies are host threads that never enter the PTX, and the noise
+### streams a disjoint buffer.  This gate reads the COMPILED -O2 asm (both host
+### ISAs) and RUNS the layer, requiring it to be live when on and zero when off.
+hetlitmus-cpustress: | build
+	@ echo
+	bash hetlitmus/verify/l0_tokens.sh cpustress
+	@ echo "HetLitmus Layer-3 CPU+interconnect stress liveness: OK"
+
 ### Umbrellas (what you press).  `::` accumulation, order-only `| build`.
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
@@ -681,6 +692,7 @@ hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test-nvcc:: | build
 hetlitmus-test-nvcc:: hetlitmus-faithful
 hetlitmus-test-nvcc:: hetlitmus-stress
+hetlitmus-test-nvcc:: hetlitmus-cpustress
 hetlitmus-test-nvcc:: hetlitmus-smoke
 
 hetlitmus-test-all:: | build
@@ -697,7 +709,7 @@ hetlitmus-promote: | build
 	@ echo "hetlitmus-promote: review 'git diff' then commit yourself."
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
-.PHONY: hetlitmus-stress
+.PHONY: hetlitmus-stress hetlitmus-cpustress
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64

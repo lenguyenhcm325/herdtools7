@@ -438,18 +438,51 @@ stress_report() {
   return 1
 }
 
+# ---- CPU + interconnect stress liveness (B5; see cpustresscheck.py) ---------
+# stresscheck.py above covers the B4 GPU scratchpad layer.  B5 adds two more
+# mechanisms that NO structural gate can see -- the M3 preload (host cache hints:
+# no order, no scope, not a model op), the CPU enemies (host threads that never
+# enter the PTX at all) and the C2C noise pair.  cpustresscheck.py asks the two
+# questions the structural gates cannot: did they survive the OPTIMISER (read off
+# the COMPILED -O2 asm, on both host ISAs), and do they actually DO anything at run
+# time (a host-side probe, checked LIVE-when-on and ZERO-when-off -- a tally that
+# cannot go to zero is not evidence of liveness).
+#
+# Two reps are enough: the CPU stress layer is per-PROC, not per-GPU-lane shape.
+#   MP-cg-sys-acqrel-2s   the -2s shape -- the CPU issues the tested STLRs, so this
+#                         is where injecting stress could corrupt the hypothesis
+#   S-cg-sys-fence        has the observer thread (pinned, but NOT preloaded)
+cpustress_report() {
+  local reps="MP-cg-sys-acqrel-2s S-cg-sys-fence"
+  local fails=0 rc t
+  printf '\n===== CPU + INTERCONNECT STRESS LIVENESS: does the B5 layer run? =====\n'
+  for t in $reps; do
+    printf '\n-- %s --\n' "$t"
+    python3 "$ROOT/hetlitmus/verify/cpustresscheck.py" "$HET_DIR/$t.litmus"; rc=$?
+    [ "$rc" -ne 0 ] && fails=$((fails+1))
+  done
+  printf '\n'
+  if [ "$fails" -eq 0 ]; then
+    echo "CPUSTRESS OK (${reps// /, })"
+    return 0
+  fi
+  echo "CPUSTRESS FAILED: $fails rep(s) carry a dead CPU/interconnect stress layer"
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 cmd="${1:-all}"
 case "$cmd" in
-  gpu-only) run_dir "$GPU_DIR" gpu-only ;;
-  het)      run_dir "$HET_DIR" het ;;
-  guard)    guard_report; exit $? ;;
-  selftest) selftest; exit $? ;;
-  stress)   stress_report; exit $? ;;
+  gpu-only)  run_dir "$GPU_DIR" gpu-only ;;
+  het)       run_dir "$HET_DIR" het ;;
+  guard)     guard_report; exit $? ;;
+  selftest)  selftest; exit $? ;;
+  stress)    stress_report; exit $? ;;
+  cpustress) cpustress_report; exit $? ;;
   all)
     rc=0
     run_dir "$GPU_DIR" gpu-only || rc=1
     run_dir "$HET_DIR" het || rc=1
     exit $rc ;;
-  *) echo "usage: $0 [all|gpu-only|het|guard|selftest|stress]"; exit 64 ;;
+  *) echo "usage: $0 [all|gpu-only|het|guard|selftest|stress|cpustress]"; exit 64 ;;
 esac

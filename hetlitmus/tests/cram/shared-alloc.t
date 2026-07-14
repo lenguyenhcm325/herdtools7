@@ -24,13 +24,20 @@ sites), and each is freed by the allocator-aware gd_free_shared (3 frees).
 (c) CUDA dispatch: query cudaDevAttrPageableMemoryAccess, take the malloc branch on
 a pageable device (GH200) and the cudaMallocManaged fallback otherwise, with a
 MATCHING free (free() for malloc, cudaFree for managed -- a mismatched free is UB).
+
+Each grep below is SCOPED to gd_alloc_shared's own body.  B5 added gd_alloc_noise,
+which makes the same pageable-vs-managed dispatch for a different object class (the
+C2C noise buffers), so a file-wide count would now read 2 -- and bumping it to 2
+would have made this check satisfiable by a SECOND allocator sneaking into
+gd_alloc_shared, which is the very confusion it exists to prevent.  Scope, don't bump.
   $ grep -c 'cudaDevAttrPageableMemoryAccess' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
-  $ grep -c '\*_pp = malloc' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  $ ALLOC=$(sed -n '/^static void gd_alloc_shared/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu)
+  $ printf '%s\n' "$ALLOC" | grep -c '\*_pp = malloc'
   1
-  $ grep -c 'cudaMallocManaged(_pp' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  $ printf '%s\n' "$ALLOC" | grep -c 'cudaMallocManaged(_pp'
   1
-  $ grep -cE 'free\(_p\).*cudaFree\(_p\)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  $ sed -n '/^static void gd_free_shared/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -cE 'free\(_p\).*cudaFree\(_p\)'
   1
 
 (d) B3: __out is gone; the per-load read buffers are OFF the concurrent-race path
@@ -50,8 +57,10 @@ is gone.
 
 The HIP twin renders from the same template: gd_alloc_shared is fine-grained
 hipMallocManaged (no malloc/ATS dispatch -- MI300A's unified HBM pool needs none),
-and the read buffers are device hipMalloc (off the race path), no __out.
-  $ grep -c 'hipMallocManaged(_pp' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip
+and the read buffers are device hipMalloc (off the race path), no __out.  Scoped to
+gd_alloc_shared's body for the same reason as (c): B5's gd_alloc_noise allocates the
+C2C noise buffers the same way, and a file-wide count would stop discriminating.
+  $ sed -n '/^static void gd_alloc_shared/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip | grep -c 'hipMallocManaged(_pp'
   1
   $ grep -cE '_shared_pageable|\*_pp = malloc' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip || true
   0
