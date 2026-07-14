@@ -687,6 +687,15 @@ static void gd_free_shared(void* _p){
       (* B4: the ported cuda-litmus GPU stress layer, emitted verbatim into every
          het harness dir and #include'd by both the .cu and the .hip render. *)
       let het_stress_content = HetArch.het_stress_cuh
+      (* B5: the CPU-side + interconnect stress layer.  A SEPARATE header from
+         het_stress.cuh because it is the only place host-ISA asm may live: the
+         .cu is nvcc's translation unit, and the M3 preload primitives are AArch64
+         (dc civac / prfm) or x86 (clflush / prefetcht0) inline asm.  Only
+         <test>_cpu.c -- compiled by gcc, and cross-assembled by
+         `clang --target=aarch64-linux-gnu' -- defines HET_CPU_STRESS_IMPL and so
+         compiles the bodies; the .cu gets the knobs, the arg structs and the
+         declarations, and NOT ONE LINE of host ISA. *)
+      let het_cpu_stress_content = HetArch.het_cpu_stress_h
 
       let run _hash_env _name in_chan _out_chan splitted =
         try
@@ -1408,7 +1417,18 @@ static void gd_free_shared(void* _p){
                   iteration tag K*(_n+1)+mu, loads recorded into buffers.\n   \
                   DO NOT EDIT. */\n"
                  tname CpuF.isa_name) ;
+            (* B5: _GNU_SOURCE must precede EVERY libc header -- het_cpu_stress.h
+               needs cpu_set_t / sched_setaffinity (M6 affinity), which glibc hides
+               behind it.  Defining it after <stdint.h> would be too late. *)
+            s "#define _GNU_SOURCE\n" ;
             s "#include <stdint.h>\n\n" ;
+            (* B5: THIS translation unit -- and only this one -- compiles the CPU
+               stress bodies.  It is built by gcc for the host and by
+               `clang --target=aarch64-linux-gnu' for the real AArch64 asm, so it
+               is the one place the host-ISA cache primitives can live; nvcc
+               compiles the .cu and must never see them. *)
+            s "#define HET_CPU_STRESS_IMPL\n" ;
+            s "#include \"het_cpu_stress.h\"\n\n" ;
             s (Printf.sprintf "#if defined(%s)\n" CpuF.host_macro) ;
             List.iter
               (fun (proc,_out,_envV,(addr_params,_out_params)) ->
@@ -1469,6 +1489,12 @@ static void gd_free_shared(void* _p){
                knob.  A SHARED header, included by both renders, so all reused
                code and its mandatory citations live in one auditable file. *)
             s "#include \"het_stress.cuh\"\n" ;
+            (* B5: the CPU + interconnect stress layer.  This side of the header
+               is asm-free BY CONSTRUCTION (the bodies are behind
+               HET_CPU_STRESS_IMPL, which only <test>_cpu.c defines), so nvcc sees
+               only the knobs, the argument structs and the declarations.  It
+               self-guards with extern "C", hence outside the block below. *)
+            s "#include \"het_cpu_stress.h\"\n" ;
             s "extern \"C\" {\n" ;
             s "#include \"outs.h\"\n" ;
             List.iter
@@ -2521,6 +2547,8 @@ static void het_obs_record_print(FILE* _ch, const het_obs_record* _r){
           write "outs.h" (fun ch -> output_string ch outs_h_content) ;
           write "outs.c" (fun ch -> output_string ch outs_c_content) ;
           write "het_stress.cuh" (fun ch -> output_string ch het_stress_content) ;
+          write "het_cpu_stress.h"
+            (fun ch -> output_string ch het_cpu_stress_content) ;
           write (tname ^ "_cpu.c") dump_cpu_file ;
           write (tname ^ ".cu") (dump_gpu_file cuda_dialect) ;
           write (tname ^ ".hip") (dump_gpu_file hip_dialect) ;
