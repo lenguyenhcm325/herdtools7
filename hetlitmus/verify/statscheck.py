@@ -395,6 +395,22 @@ case("canary-calibrated-when-no-mutant",
             control_compiled_in=0, control_target_count=0),
      obs="Never", flags_any=["CTRL_IS_CANARY"], flags_none=["FANO_UNMEASURED"])
 
+# --- THE SELF-CANARY SELECTION EFFECT ---------------------------------------
+# MP-{cg,gc}-sys-relaxed ARE the Layer-B canary and co-run no control (a test cannot
+# control itself, B6b).  So a run in which they did NOT fire is COLD and is discarded,
+# and "usable cells" is DEFINED BY firing: the survivors are tautologically the ones
+# that fired.  Classifying over usable cells would report ALWAYS for a canary that fired
+# in 3 runs of 10 -- and THAT RATE is what the rest of the campaign is calibrated
+# against.  The denominator must be R.  (It also gets NO BOUND: nothing independent to
+# calibrate dispersion or stationarity against.)
+case("self-canary-fired-3-of-10-is-SOMETIMES-not-ALWAYS",
+     observed(stream(ZERO_CELLS, het_oracle="ORACLE_ALLOWED",
+                     control_compiled_in=0, canary_compiled_in=0,
+                     control_target_count=0, canary_target_count=0), 3),
+     obs="Sometimes", k=3, k_eff=3, R_usable=3,
+     flags_any=["SELF_CONTROL", "FANO_UNMEASURED", "KS_UNDERPOWERED"],
+     P_rep=-1.0, p_bound=-1.0)
+
 # --- ALLOWED / NO-ORACLE nulls still get a bound (a different CLAIM, same maths) ---
 case("allowed-unobserved-gets-an-observability-bound",
      stream(POISSON_CELLS, het_oracle="ORACLE_ALLOWED"),
@@ -457,11 +473,18 @@ def py_reference(cells_):
             cellv.append(float(ctrl_total(c)))
             win.extend(float(x) for x in ctrl_win(c))
 
+    # THE SELF-CANARY SELECTION EFFECT.  For the 2 `self' rows (which co-run no control
+    # at all) "usable" is DEFINED BY firing, so classifying over usable cells would
+    # report ALWAYS for a canary that fired in 3 runs of 10 -- and that rate is what the
+    # whole campaign is calibrated against.  Their denominator is R.
+    self_control = not any(c["control_compiled_in"] or c["canary_compiled_in"]
+                           for c in cells_)
+    denom = n if self_control else R_usable
     if R_usable == 0:
         obs = "VOID"
     elif k == 0:
         obs = "Never"
-    elif k >= R_usable:
+    elif k >= denom:
         obs = "Always"
     else:
         obs = "Sometimes"
@@ -618,7 +641,7 @@ def close(a, b, tol=TOL):
 
 FLAGS = ["FANO_UNMEASURED", "NONSTATIONARY", "DEGEN_SIGHTING", "UNDERDISPERSED",
          "BURSTY", "NO_DECODE_CHANNEL", "WIN_DESYNC", "KS_UNDERPOWERED",
-         "CELLS_TRUNCATED", "CTRL_IS_CANARY", "BOUND_VACUOUS"]
+         "CELLS_TRUNCATED", "CTRL_IS_CANARY", "BOUND_VACUOUS", "SELF_CONTROL"]
 FLAG_BIT = {f: 1 << i for i, f in enumerate(FLAGS)}
 
 
@@ -812,7 +835,7 @@ def phase2(lines, quiet):
 
     need_flags = {"FANO_UNMEASURED", "NONSTATIONARY", "DEGEN_SIGHTING",
                   "UNDERDISPERSED", "BURSTY", "NO_DECODE_CHANNEL", "WIN_DESYNC",
-                  "KS_UNDERPOWERED", "CTRL_IS_CANARY", "BOUND_VACUOUS"}
+                  "KS_UNDERPOWERED", "CTRL_IS_CANARY", "BOUND_VACUOUS", "SELF_CONTROL"}
     print("  diagnostic flags    : %d/%d  (%s)"
           % (len(seen_flags & need_flags), len(need_flags),
              ", ".join(sorted(seen_flags))))

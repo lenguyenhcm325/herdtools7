@@ -3291,6 +3291,7 @@ typedef enum {
 #define HET_ST_CTRL_IS_CANARY    (1u << 9) /* dispersion calibrated off the Layer-B
                                               canary, not this test's own mu(T)    */
 #define HET_ST_BOUND_VACUOUS    (1u << 10) /* p_bound >= 1: it bounds NOTHING      */
+#define HET_ST_SELF_CONTROL     (1u << 11) /* co-runs no control: usable == fired  */
 
 typedef struct het_stats {
   const char *test_name;
@@ -3562,11 +3563,26 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   }
   st->k_runs = nruns;
 
-  /* ---- 3. The observation class at the (instance,run) unit (R1). */
-  if (st->R_usable == 0)       st->obs = HET_OBS_VOID;
-  else if (st->k == 0)         st->obs = HET_OBS_NEVER;
-  else if (st->k >= st->R_usable) st->obs = HET_OBS_ALWAYS;
-  else                         st->obs = HET_OBS_SOMETIMES;
+  /* ---- 3. The observation class at the (instance,run) unit (R1).
+
+     THE SELF-CANARY SELECTION EFFECT.  A cell is usable if it FIRED or if its control
+     was hot -- and MP-{cg,gc}-sys-relaxed co-run NO control (they ARE the Layer-B
+     canary and a test cannot control itself, B6b).  For those two rows "usable" is
+     therefore DEFINED BY firing: every run in which they did not fire is COLD and is
+     discarded, so the survivors are, tautologically, exactly the ones that fired.
+     Classifying over usable cells would then report ALWAYS for a canary that fired in
+     3 runs out of 10 -- and that rate is the number the whole campaign is calibrated
+     against.  So for these rows the denominator is R, the runs actually executed. */
+  { int denom;
+    for (i = 0; i < n; i++)
+      if (recs[i].control_compiled_in || recs[i].canary_compiled_in) break;
+    if (i == n) st->flags |= HET_ST_SELF_CONTROL;
+    denom = (st->flags & HET_ST_SELF_CONTROL) ? st->R : st->R_usable;
+    if (st->R_usable == 0)    st->obs = HET_OBS_VOID;
+    else if (st->k == 0)      st->obs = HET_OBS_NEVER;
+    else if (st->k >= denom)  st->obs = HET_OBS_ALWAYS;
+    else                      st->obs = HET_OBS_SOMETIMES;
+  }
 
   /* ---- 4. Dispersion, on the two strata. */
   st->win_samples = nwin;
@@ -3897,17 +3913,34 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     return;
   }
 
-  /* ---- observed. */
-  if (_s->P_rep >= 0.0)
-    fprintf(_ch, "  OBSERVED in %d of %d usable cell(s).  P_rep = 1 - e^{-k_eff} = "
-                 "%.2f%% that a fresh run reproduces it (k_eff = %d NON-DEGENERATE "
-                 "cells -- Kirkham's n=3 => 95%% recipe, relocated to the "
-                 "(instance,run) unit).\n",
-            _s->k, _s->R_usable, 100.0 * _s->P_rep, _s->k_eff);
-  else
-    fprintf(_ch, "  OBSERVED in %d of %d usable cell(s).  P_rep is NOT reported "
-                 "(the process failed the stationarity gate, or no cell survived the "
-                 "decode guard).\n", _s->k, _s->R_usable);
+  /* ---- observed.  The denominator is R for a SELF-CONTROLLED row and R_usable for
+     everything else -- see the selection effect in het_stats_compute. */
+  { int denom = (_s->flags & HET_ST_SELF_CONTROL) ? _s->R : _s->R_usable;
+    const char *unit = (_s->flags & HET_ST_SELF_CONTROL) ? "run" : "usable cell";
+    if (_s->P_rep >= 0.0)
+      fprintf(_ch, "  OBSERVED in %d of %d %s(s).  P_rep = 1 - e^{-k_eff} = "
+                   "%.2f%% that a fresh run reproduces it (k_eff = %d NON-DEGENERATE "
+                   "cells -- Kirkham's n=3 => 95%% recipe, relocated to the "
+                   "(instance,run) unit).\n",
+              _s->k, denom, unit, 100.0 * _s->P_rep, _s->k_eff);
+    else
+      fprintf(_ch, "  OBSERVED in %d of %d %s(s).  P_rep is NOT reported "
+                   "(the process failed the stationarity gate, or no cell survived the "
+                   "decode guard).\n", _s->k, denom, unit);
+
+    if (_s->flags & HET_ST_SELF_CONTROL)
+      fprintf(_ch,
+        "  NOTE: this row CO-RUNS NO CONTROL -- it IS the Layer-B canary "
+        "(control-map.csv says `self'), and a test cannot control itself (B6b).  A run "
+        "in which it did not fire is therefore COLD and carries no information, so\n"
+        "  \"usable cells\" is DEFINED BY firing.  The denominator above is R -- the "
+        "runs executed -- not the usable count: otherwise a canary that fired in %d of "
+        "%d runs would report ALWAYS, and that rate is precisely what the rest of the\n"
+        "  campaign is calibrated against.  For the same reason this row has no "
+        "independent channel to measure dispersion or stationarity against, so it gets "
+        "NO BOUND -- by construction, not by omission.\n",
+        _s->k, _s->R);
+  }
 
   if (_s->flags & HET_ST_DEGEN_SIGHTING)
     fprintf(_ch,

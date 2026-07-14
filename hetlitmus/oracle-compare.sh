@@ -201,7 +201,13 @@ END {
       f_bursty = flag(fl, 16);  f_nochan  = flag(fl, 32)
       f_desync = flag(fl, 64);  f_kspow   = flag(fl, 128)
       f_trunc  = flag(fl, 256); f_canary  = flag(fl, 512)
-      f_vacuous = flag(fl, 1024)
+      f_vacuous = flag(fl, 1024); f_self   = flag(fl, 2048)
+      # A `self canary row co-runs no control, so a run in which it did not fire is COLD
+      # and gets discarded -- "usable" is DEFINED BY firing there.  Its denominator must
+      # be R, or a canary that fired in 3 runs of 10 reads as ALWAYS (3/3), and that rate
+      # is what the whole campaign is calibrated against.
+      den = f_self ? R : us
+      unit = f_self ? "run" : "cell"
 
       if (orc == "Disallowed") { ndis++; if (ob != "Never" && ob != "VOID") ndis_fired++ }
 
@@ -210,10 +216,12 @@ END {
 
       # ---- observation, at the CELL unit
       if (ob == "Sometimes" || ob == "Always")
-        printf "         observation = %s (%d/%d cells; %d after the decode guard, %d distinct run(s))\n", \
-               ob, k, us, ke, kr
+        printf "         observation = %s (%d/%d %ss; %d after the decode guard, %d distinct run(s))\n", \
+               ob, k, den, unit, ke, kr
       else
-        printf "         observation = %s (0/%d cells)\n", ob, us
+        printf "         observation = %s (0/%d %ss)\n", ob, den, unit
+      if (f_self)
+        printf "                       (co-runs NO control -- it IS the canary -- so a run in which it did\n                       not fire is COLD and discarded.  Denominator is R, not usable cells.)\n"
 
       # ---- the liveness gate.  A COLD harness is VOID, not a non-observation.
       if (ob == "VOID") {
