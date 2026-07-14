@@ -58,7 +58,14 @@ run.  That is exactly the drift the flag exists to catch, so both are checked.
   1
   $ grep -c 'recovery scan: MP-cg-sys-relaxed' S-cg-sys-fence/S-cg-sys-fence.cu
   1
-  $ grep -c 'if (_weak) _rec.canary_target_count++;' S-cg-sys-fence/S-cg-sys-fence.cu
+B7: the canary's count and its PER-WINDOW sub-tally are bumped on ONE line under ONE
+predicate.  That pairing is not cosmetic -- it is what makes `sum(canary_win[]) ==
+canary_target_count' an INVARIANT, and that invariant is the only run-time evidence
+that the sub-tallies are alive at all (het_stats_compute raises HET_ST_WIN_DESYNC when
+it breaks).  Pin the pair, not just the count: a window bump that drifted onto its own
+line under its own condition could silently stop tracking.
+
+  $ grep -c 'if (_weak) { _rec.canary_target_count++; _rec.canary_win\[het_win_of(_f, SIZE_OF_TEST)\]++; }' S-cg-sys-fence/S-cg-sys-fence.cu
   1
   $ grep -cE '^#define CAN_K_TAG 3' S-cg-sys-fence/S-cg-sys-fence.cu
   1
@@ -211,7 +218,7 @@ cycles, it cannot invent them), and control_exhaustive_valid says so.
   1
   $ grep -c '_rec.control_exhaustive_valid = _mu_exh;' SB-cg-sys-fence-2s/SB-cg-sys-fence-2s.cu
   1
-  $ grep -c 'if (_weak) _rec.control_target_count++;' SB-cg-sys-fence-2s/SB-cg-sys-fence-2s.cu
+  $ grep -c 'if (_weak) { _rec.control_target_count++; _rec.control_win\[het_win_of(_f, SIZE_OF_TEST)\]++; }' SB-cg-sys-fence-2s/SB-cg-sys-fence-2s.cu
   1
 
 THE REPORTING TIER IS NOT THE MECHANISM TIER.  R and S are both mechanically

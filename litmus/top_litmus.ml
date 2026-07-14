@@ -1671,10 +1671,24 @@ static void gd_free_noise(void* _p){
                 | RTest -> "frames_examined", "exhaustive_valid"
                 | RMu -> "control_frames_examined", "control_exhaustive_valid"
                 | RCanary -> "canary_frames_examined", "canary_exhaustive_valid" in
+              (* B7: the control's count and its PER-WINDOW sub-tally are bumped
+                 together, on one line, under one predicate -- which is what makes
+                 `sum(win[]) == total' an invariant het_stats_compute can check at
+                 run time (HET_ST_WIN_DESYNC).  A tally that is only ever checked
+                 structurally is a tally that can be dead-code-eliminated and stay
+                 green, which is precisely how B4 shipped an inert stress layer. *)
               let count_field = match role with
                 | RTest -> None                     (* two channels; see below *)
-                | RMu -> Some "control_target_count"
-                | RCanary -> Some "canary_target_count" in
+                | RMu -> Some ("control_target_count", "control_win")
+                | RCanary -> Some ("canary_target_count", "canary_win") in
+              (* The control channel is the ONLY one windowed: the target is far too
+                 rare to estimate a variance from (that is why it needs a bound at
+                 all), while the control is the high-rate proxy on the same fabric in
+                 the same run (Q3 3.3 job 3). *)
+              let bump_count f w =
+                Printf.sprintf
+                  "      if (_weak) { _rec.%s++; _rec.%s[het_win_of(_f, SIZE_OF_TEST)]++; }\n"
+                  f w in
               if pre <> "" then
                 s (Printf.sprintf "    /* ---- recovery scan: %s -- %s (K=%d) ---- */\n"
                      tname (role_note role) k_tag) ;
@@ -1728,9 +1742,16 @@ static void gd_free_noise(void* _p){
                         s "      }\n      if (_u < _obs_uniq) _obs_uniq = _u;\n    }\n")
                       [("c", obsC_of pre l); ("g", obsG_of pre l ^ "_h")])
                   obs_locs ;
-                if is_test then
-                  s "    _rec.observer_unique_count = (_obs_uniq == UINT64_MAX) ? 0 : _obs_uniq;\n"
-                else
+                if is_test then begin
+                  s "    _rec.observer_unique_count = (_obs_uniq == UINT64_MAX) ? 0 : _obs_uniq;\n" ;
+                  (* B7 TRAP 3: this test HAS an observer decode, so the degeneracy
+                     guard may read observer_unique_count.  For the 22 store-only
+                     (2+2W) shapes this is the ONLY channel there is -- they have no
+                     reader, so no synchrony decode, so distinct_decoded_iters and
+                     skew_stddev are structurally 0 and a guard that read those would
+                     call every one of their cells degenerate forever. *)
+                  s "    _rec.obs_valid = 1;\n"
+                end else
                   s "    (void)_obs_uniq;  /* the controls report only their target count */\n" ;
                 s (Printf.sprintf "    int %s = %s;\n" locv loc_expr)
               end ;
@@ -1813,8 +1834,7 @@ static void gd_free_noise(void* _p){
                   (match count_field with
                    | None ->
                       s "      if (_weak) { _rec.target_count_exhaustive++; _rec.target_count_heuristic++; }\n"
-                   | Some f ->
-                      s (Printf.sprintf "      if (_weak) _rec.%s++;\n" f))
+                   | Some (f,w) -> s (bump_count f w))
                | true ->
                   let emit_search m weakv exhaustive =
                     let ind = ref "      " in
@@ -1891,7 +1911,7 @@ static void gd_free_noise(void* _p){
                       s (Printf.sprintf "      int _weak_ex = %s;\n"
                            (if has_observers then mk_and ["_rex"; locv] else "_rex")) ;
                       s "      if (_weak_ex) _rec.target_count_exhaustive++;\n"
-                   | Some f ->
+                   | Some (f,w) ->
                       (* THE CONTROL'S COUNT MUST BE THE ONE THAT IS ACTUALLY
                          MEASURED AT PRODUCTION N.  mu(SB-*-sys-fence-2s) is
                          SB-*-sys-acqrel-2s -- itself a T_L>=2 shape -- so its
@@ -1909,7 +1929,7 @@ static void gd_free_noise(void* _p){
                          invent them).  Under-counting the control errs toward COLD --
                          the safe direction.  control_exhaustive_valid travels with it
                          so a reader can see which kind of count it is. *)
-                      s (Printf.sprintf "      if (_weak) _rec.%s++;\n" f))) ;
+                      s (bump_count f w))) ;
               (* guard 1 (4.4): the synchrony decode must actually VARY. *)
               (match sync_src with
                | Some (p,li,_,_) when is_test ->
@@ -1953,6 +1973,12 @@ static void gd_free_noise(void* _p){
               s "    }\n" ;                                (* end for (_f) *)
               (match sync_src with
                | Some _ when is_test ->
+                  (* B7 TRAP 3: this test HAS a synchrony decode, so the degeneracy
+                     guard may read distinct_decoded_iters / skew_stddev.  The flag
+                     says the fields are POPULATED -- it does not say they are
+                     healthy.  Without it a zero could not be told apart from "never
+                     measured", which is the exhaustive_valid bug in a new field. *)
+                  s "    _rec.sync_valid = 1;\n" ;
                   s "    if (_skew_n > 0) {\n" ;
                   s "      _rec.skew_min = _skew_lo; _rec.skew_max = _skew_hi;\n" ;
                   s "      _rec.skew_mean = (double)_skew_sum / (double)_skew_n;\n" ;
@@ -1966,7 +1992,21 @@ static void gd_free_noise(void* _p){
                  | None ->
                     s "    _rec.target_count_exhaustive = _rec.target_count_exhaustive ? 1 : 0;\n" ;
                     s "    _rec.target_count_heuristic  = _rec.target_count_heuristic  ? 1 : 0;\n"
-                 | Some f ->
+                 | Some (f,w) ->
+                    (* B7: the per-window stream must collapse WITH the count, or
+                       sum(win[]) != total would fire the WIN_DESYNC alarm on a
+                       harness that is behaving exactly as designed.  UNREACHABLE in
+                       the shipped corpus -- no control is a store-only shape (the
+                       canary is always an MP, and none of the 16 mu(T) is a 2+2W) --
+                       but an invariant that can misfire is an invariant nobody will
+                       trust, and this one is the only run-time evidence that the
+                       sub-tallies are alive at all. *)
+                    s (Printf.sprintf
+                         "    { int _cw, _cf = -1;   /* store-only: the weak result is per-RUN */\n\
+                          \      for (_cw = 0; _cw < HET_NWIN; ++_cw)\n\
+                          \        if (_rec.%s[_cw]) { _cf = _cw; break; }\n\
+                          \      memset(_rec.%s, 0, sizeof _rec.%s);\n\
+                          \      if (_cf >= 0) _rec.%s[_cf] = 1; }\n" w w w w) ;
                     s (Printf.sprintf "    _rec.%s = _rec.%s ? 1 : 0;\n" f f)) ;
                 if is_test then begin
                   s (Printf.sprintf "    { intmax_t _o[%d];\n" (max 1 nslots)) ;
@@ -2768,6 +2808,15 @@ static void gd_free_noise(void* _p){
                \          _noise_blocks, (int)HET_NOISE_CPU,\n\
                \          (unsigned long long)_noise_words, (int)HET_NOISE_MB, (int)HET_PLACE);\n" ;
             s "  outs_t* hist = NULL;\n" ;
+            (* B7: the statistics are computed over the (instance,run) CELLS, so the
+               records have to OUTLIVE the run loop.  R1 -- the load-bearing
+               correction -- is that the replication unit is the cell, never the
+               frame: the recovery scan validates N^{T_L} overlapping frames per N
+               iterations (PerpLE VI-B.1), so a frame count fed into Kirkham's
+               1-e^{-n} returns ~1 vacuously.  Y = 1[target_count >= 1] per cell is
+               the n that goes into the reproducibility and rule-of-three math. *)
+            s "  het_obs_record _recs[NUMBER_OF_RUN];\n" ;
+            s "  memset(_recs, 0, sizeof _recs);\n" ;
             s "  for (int _run=0; _run<NUMBER_OF_RUN; ++_run) {\n" ;
             List.iter
               (fun (i,g) -> s (Printf.sprintf "    *%s = 0;\n" (gsym i g)))
@@ -3051,6 +3100,19 @@ static void gd_free_noise(void* _p){
                output, so the interpretation travels with the number instead of
                living in a note in the thesis. *)
             s "    het_verdict_print(stdout, &_rec);\n" ;
+            s "    _recs[_run] = _rec;\n" ;
+            s "  }\n" ;
+            (* ======== B7: the statistics post-pass over the aggregated cells =====
+               het_verdict() is a PURE function of one record, so the aggregate reuses
+               it rather than re-deriving liveness -- inheriting every B4/B5
+               disqualifier and all of B6c's oracle-awareness for free.  This is what
+               turns "not observed" into "not observed, under quantified effort, with
+               the 95% bound on its run-level rate being p < X" -- and it is what
+               makes a Never carry a bound at all. *)
+            s "  {\n" ;
+            s "    het_stats_t _st;\n" ;
+            s "    het_stats_compute(_recs, NUMBER_OF_RUN, &_st);\n" ;
+            s "    het_stats_print(stdout, &_st);\n" ;
             s "  }\n" ;
             s (Printf.sprintf "  intmax_t _buff[%d];\n" (max 1 it.i_nslots)) ;
             s (Printf.sprintf "  printf(\"Test %s\\n\");\n" tname) ;

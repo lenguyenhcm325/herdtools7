@@ -2100,6 +2100,7 @@ let het_verdict_h = {ocaml|/* ==================================================
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>   /* qsort: the two-sample KS stationarity precheck (B7)      */
 #include <string.h>   /* strcmp: distinguishing the `self' canary from a missing one */
 #include <math.h>
 
@@ -2116,6 +2117,55 @@ let het_verdict_h = {ocaml|/* ==================================================
 #ifndef HET_TAU_HOT
 #define HET_TAU_HOT 30
 #endif
+
+/* ---------------------------------------------------------------------------
+ * B7 KNOBS -- the statistics layer (see "THE STATISTICS LAYER" at the foot).
+ *
+ * HET_NWIN.  The recovery scan buckets each run's frames into HET_NWIN windows
+ * and sub-tallies the CONTROL channel per window.  This is the enabling piece of
+ * machinery for the whole of B7 and it exists because the record could not
+ * otherwise support ANY dispersion estimate: the emitter produces ONE record per
+ * run, so the (instance,run) grid is R = NUMBER_OF_RUN cells with H = 1, and a
+ * Fano factor estimated from 10 points is not a variance estimate, it is noise.
+ * Worse, the WITHIN-run autocorrelation -- the thing that actually makes the
+ * counts bursty -- was unmeasurable, because nothing exposed the count stream
+ * INSIDE a run.  Q3 6.3 defers exactly this and says to spec it: "the
+ * dispersion/autocorrelation estimators need the scan to expose per-window
+ * control counts, not just the run total."  W windows x R runs is the sample
+ * that F_win, the lag-1 autocorrelation and the KS precheck all consume.
+ *
+ * 32 is a resolution choice, not a tuned one: enough windows that Kirkham's
+ * first-20%-vs-last-10% split has 6 and 3 window positions to work with, few
+ * enough that a window still collects a countable number of sightings at
+ * tau_hot=30.  B8 may calibrate it against the measured het hit-rate.
+ *
+ * HET_THETA_DISTINCT (theta_d).  The degeneracy guard's floor -- see
+ * het_cell_degenerate().  It is deliberately the LITERAL-degeneracy floor (2 =
+ * "the decode produced at least two distinct values"), not a statistical filter:
+ * the guard's job is to catch Srivastava's constant-read ARTEFACT, and rejecting
+ * more than that would start discarding genuine sightings, which falsification
+ * forbids ("the possibility, not probability of weak behaviours is what
+ * matters" -- Alglave ASPLOS'15 4.3).  Raising it is a hardware-calibration
+ * decision, not a free tightening. */
+#ifndef HET_NWIN
+#define HET_NWIN 32
+#endif
+#ifndef HET_THETA_DISTINCT
+#define HET_THETA_DISTINCT 2
+#endif
+/* Cells (instance,run) the aggregate can hold.  NUMBER_OF_RUN is 10 by default;
+   a campaign that exceeds this is TRUNCATED and says so (HET_ST_CELLS_TRUNCATED)
+   rather than silently scoring a subset. */
+#ifndef HET_STATS_MAX_CELLS
+#define HET_STATS_MAX_CELLS 128
+#endif
+/* Above this the NB fit is numerically Poisson (r -> inf; see het_mu_upper). */
+#define HET_R_POISSON 1e9
+/* c(0.05) for the asymptotic two-sample Kolmogorov-Smirnov critical value. */
+#define HET_KS_C05 1.358
+/* Report threshold only: at or above this F_win the bound has WIDENED enough
+   that the reader must be told the rule of three no longer applies. */
+#define HET_BURSTY_F 2.0
 
 typedef enum { CONF_ROBUST, CONF_ADVISORY, CONF_EXPLORATORY } het_confidence;
 
@@ -2221,6 +2271,21 @@ typedef struct het_obs_record {
   uint64_t ws_edges_via_observer;
   uint64_t observer_unique_count;
   int32_t skew_min, skew_max; double skew_mean, skew_stddev;
+  /* ---- B7: IS THE DEGENERACY GUARD APPLICABLE ON THIS TEST?  (TRAP 3.)
+     distinct_decoded_iters and skew_stddev are BOTH written from the same
+     synchrony-decode block, so a test with no synchrony read leaves BOTH at their
+     memset zero.  Measured on the emitted corpus: 22 of the 338 -- every 2+2W, the
+     store-only shape, which has no reader at all -- are in exactly that position
+     (266 have a synchrony decode only, 50 have both, 22 have only the observer,
+     0 have neither).  A guard that read `skew_stddev == 0' as "the decoder is
+     degenerate" would therefore condemn every cell of all 22 FOREVER, making
+     k_eff constant 0 and P_rep a constant 1 - e^0 = 0 on them: the fifth constant.
+     This is the exhaustive_valid lesson verbatim -- 0 means NOT MEASURED, never
+     "measured zero".  So the guard asks which decode channel this test HAS
+     (het_cell_degenerate) instead of firing blind, and these two flags are what
+     let it ask.  Set by the emitter from the instance it actually compiled. */
+  int sync_valid;   /* 1 => distinct_decoded_iters + skew_* are populated  (316) */
+  int obs_valid;    /* 1 => observer_unique_count is populated             ( 72) */
   /* ---- B6 POSITIVE CONTROL (Q4 3.2).  control_* = Layer A (the minimal mutant
      mu(T) of THIS test); canary_* = Layer B (the universal het MP floor).  Both
      are tallied by the SAME recovery scan as the test's own target_count, on
@@ -2243,10 +2308,42 @@ typedef struct het_obs_record {
      them, because a control that cannot fire is not a control (B6b). */
   int control_exhaustive_valid;
   int canary_exhaustive_valid;
-  /* 1 - e^{-control_target_count} (Kirkham's reproducibility score).  A HOTNESS
-     INDICATOR, not a guarantee: its Bernoulli/Poisson assumptions (stationary,
-     independent, non-bursty trials) are exactly what het CPU-GPU drift breaks,
-     and replacing them is Q3/B7's job. */
+  /* ---- B7 PER-WINDOW SUB-TALLIES OF THE CONTROL CHANNEL (Q3 6.3).
+     The run's frames are bucketed into HET_NWIN windows and each control sighting
+     is tallied into the window its frame fell in.  These are the ONLY within-run
+     time series the record carries, and every dispersion/stationarity estimate in
+     the statistics layer is computed from them:
+        F_win   Var/Mean over the (run,window) samples  -> the NB dispersion r_hat
+        acf1    lag-1 autocorrelation                   -> diagnostic
+        KS      first-20%-of-windows vs last-10%        -> stationarity
+     The CONTROL, never the target: the target is far too rare to estimate a
+     variance from (that is the entire reason it needs a bound at all), while the
+     control is the high-rate proxy riding the SAME fabric in the SAME run under
+     the SAME stress (Q3 3.3, job 3: "the positive control is not just a hot/cold
+     light -- it is the instrument that measures the exact statistical corrections
+     2 says are needed").
+     They are bumped on the same line, under the same predicate, as
+     control_target_count / canary_target_count -- so
+         sum(control_win[]) == control_target_count
+     is an INVARIANT, and the statistics layer checks it on every cell
+     (HET_ST_WIN_DESYNC).  That is what makes these tallies self-proving at run
+     time on real hardware: if the bump were dead-code-eliminated or mis-indexed
+     the sum would not match the total, and a mechanism that cannot be observed to
+     be alive must be assumed dead. */
+  uint32_t control_win[HET_NWIN];
+  uint32_t canary_win[HET_NWIN];
+  /* 1 - e^{-control_target_count} (Kirkham's reproducibility score).
+     *** DO NOT USE THIS AS A CONFIDENCE.  IT IS A HOTNESS INDICATOR ONLY. ***
+     control_target_count is a count of validated FRAMES, and the recovery scan
+     validates N^{T_L} overlapping frames per N iterations (PerpLE VI-B.1: "the
+     number of frames is polynomial in the number of iterations").  Frames are
+     therefore NOT independent Bernoulli trials, and feeding their count into
+     1 - e^{-n} drives it to 1 VACUOUSLY -- not because the behaviour reproduces,
+     but because the frame combinatorics inflate n.  PerpLE never makes that
+     mistake (it uses frames as a THROUGHPUT metric, never as confidence).
+     B7's het_stats_compute lifts the replication unit to the (instance,run) cell,
+     Y = 1[target_count >= 1], and reports P_rep from THAT.  This field survives
+     only as the hot/cold light het_print_liveness prints. */
   double control_Prep;
   /* 0 => NO Layer-A mutant was compiled into this harness, so
      control_target_count is structurally zero and means NOTHING.  1 => a real
@@ -2326,6 +2423,22 @@ typedef struct het_obs_record {
   uint32_t noise_ws_mb, place_mode;
   uint32_t stress_requested;    /* HET_REQ_* bitmask -- see above */
 } het_obs_record;
+
+/* B7 PRODUCER SIDE.  Frame index -> window bucket, called from the recovery scan on
+   the SAME line as the control's count bump.  It is a function of the frame index,
+   so -- unlike a -D knob threaded through an if-chain, which is how B4's stress layer
+   came to be silently deleted -- there is nothing here for the optimiser to fold: the
+   bucket cannot be known at compile time.  Clamped rather than asserted: an
+   out-of-range bucket must not corrupt the record, and the sum-vs-total invariant in
+   het_stats_compute would catch a mis-index anyway. */
+static int het_win_of(long f, long n) {
+  long w;
+  if (n <= 0) return 0;
+  w = (f * (long)HET_NWIN) / n;
+  if (w < 0) w = 0;
+  if (w >= HET_NWIN) w = HET_NWIN - 1;
+  return (int)w;
+}
 
 /* ---------------------------------------------------------------------------
  * The verdict.  THREE REPORTING FRAMES, ONE PER ORACLE CLASS (B6c) -- because
@@ -3014,6 +3127,739 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   }
 
   het_print_caveats(_ch, _r, cv);
+}
+
+/* =========================================================================
+ * THE STATISTICS LAYER (B7) -- what a "Never" is WORTH.
+ *
+ * B6 made a null INTERPRETABLE ("the harness was demonstrably hot, and we did
+ * not see it").  It still carried no BOUND.  This layer attaches one, plus a
+ * stopping rule and a stationarity gate, so the thesis can say
+ *
+ *     "not observed, under quantified effort, with the 95% bound on its
+ *      run-level rate being p < X"
+ *
+ * instead of "not observed".  Everything here is a PURE FUNCTION of an array of
+ * het_obs_records (Q3 6.6: the statistics are cheap -- host-side post-pass), so
+ * it is unit-testable from synthetic record streams: hetlitmus/verify/statscheck.py.
+ *
+ * ---------------------------------------------------------------------------
+ * R1, THE LOAD-BEARING CORRECTION: THE FRAME IS NOT THE TRIAL.
+ *
+ * The recovery scan validates FRAMES, and a run of N iterations contains N^{T_L}
+ * of them (PerpLE VI-B.1), each frame a tuple of iterations that heavily overlaps
+ * its neighbours.  So target_count is NOT n independent Bernoulli successes, and
+ * Kirkham's 1 - e^{-n} fed with it returns ~1 VACUOUSLY.  The replication unit is
+ * lifted to the (instance,run) CELL:
+ *
+ *     Y_{h,r} = 1[ target_count(h,r) >= 1 ]
+ *
+ * and THAT Y -- not the frame count -- is the n in every formula below.  The frame
+ * count survives as effort/throughput evidence and nothing else.
+ *
+ * ---------------------------------------------------------------------------
+ * THE REPLACEMENT ESTIMATOR: the rule of three does not survive burstiness.
+ *
+ * The rule of three (p < 3/N; Hanley & Lippman-Hand, JAMA 1983) is the n=0 dual of
+ * Kirkham's model and inherits all of its assumptions.  Observations here arrive in
+ * BURSTS -- a productive CPU/GPU alignment window emits many sightings, then a long
+ * dry spell (Q1; PerpLE Fig.12 shows the thread skew is wide and drifting, not
+ * fixed) -- and a bursty process parks MORE probability mass at zero, so a zero is
+ * LESS informative than the iid rule claims.  The negative-binomial (Gamma-Poisson)
+ * zero-event bound is the standard correction (Scholz 2008 unifies rule-of-three
+ * across binomial/NB/Poisson):
+ *
+ *     P(X = 0) = (1 + mu/r)^{-r} = 0.05   =>   mu_upper(r) = r * (0.05^{-1/r} - 1)
+ *
+ *        r -> inf (Poisson) : 2.996   <- the textbook "3"
+ *        r = 1  (geometric) : 19.0
+ *        r = 0.5            : 199.5
+ *
+ * So the "3" inflates to ~19, or ~200.  Reporting a bare p < 3/N on a channel whose
+ * measured Fano factor is ~20 is a ~6x OPTIMISTIC OVERCLAIM -- exactly the
+ * port-an-assumption-without-checking-it error the project's standing rule exists to
+ * prevent.  r_hat is therefore MEASURED, from the control channel, never assumed:
+ * a bound that always returns the same number is the same bug as the constant-true
+ * `_cond', the constant-false `_weak' and the inert stress layer.  If the dispersion
+ * cannot be measured, NO BOUND IS PRINTED -- we do not fall back to 3/N.
+ *
+ * ---------------------------------------------------------------------------
+ * TWO STRATA, TWO CORRECTIONS (a disclosed reading of Q3 4.2).
+ *
+ * Q3 3.2(b) writes the bound as mu_upper(r_hat)/R_eff with R_eff = R/F_hat, and 4.2
+ * lists TWO separate estimators feeding them -- the per-window stream (within-run
+ * autocorrelation -> N_eff) and the across-cell correlation (the H-discount).  They
+ * answer different questions, so they are measured on different strata here rather
+ * than applying ONE measured number twice:
+ *
+ *     F_win   Var/Mean of the PER-WINDOW control counts (within a run)
+ *             -> the burstiness of the count process   -> r_hat -> mu_upper(r_hat)
+ *     F_cell  Var/Mean of the PER-CELL control totals  (across the R cells)
+ *             -> the design effect DEFF = 1 + (m-1)rho -> R_eff = R / F_cell
+ *
+ * Both corrections WIDEN the bound, so either reading is conservative; this one is
+ * the faithful one.  Neither is ever allowed to make the bound TIGHTER than the
+ * rule of three: an under-dispersed estimate (F < 1, which at these sample sizes is
+ * usually noise) clamps to the Poisson floor and says so.
+ *
+ * ---------------------------------------------------------------------------
+ * DIVERGENCE FROM KIRKHAM, DISCLOSED (we cite them, so we say where we differ).
+ *
+ * Kirkham 4.3 tests stationarity by FITTING A POISSON to the first 20% and last 10%
+ * of a run and KS-testing the fit.  We run a TWO-SAMPLE KS between the early and
+ * late window counts DIRECTLY, with no Poisson fit -- because the whole finding
+ * above is that the Poisson is the wrong likelihood here, so testing a Poisson fit
+ * would be testing the wrong null.  The check is otherwise theirs, including the
+ * remedy: split at the change-point, and never report P_rep across it.
+ *
+ * Their precheck already fails 4 of 18 chip/test combinations in the GPU-only,
+ * single-device case (Vega R p=7.6e-38; the Vega-LB rate jump at ~7M iterations),
+ * which is why it is MANDATORY here and not optional: het adds occupancy warm-up,
+ * thermal/DVFS over longer perpetual runs, and alignment/skew drift on top of
+ * everything that was already breaking it.
+ * ========================================================================= */
+
+/* What the campaign SAW, at the (instance,run) unit. */
+typedef enum {
+  HET_OBS_VOID = 0,   /* not one usable cell: every run was COLD.  A bound computed
+                         over these would be a bound on nothing. */
+  HET_OBS_NEVER,      /* k = 0 usable cells observed it -> the false-negative bound */
+  HET_OBS_SOMETIMES,
+  HET_OBS_ALWAYS
+} het_obs_class;
+
+/* TRAP 3 -- CORROBORATION.  A false MISMATCH is a false REFUTATION of the compound
+   model, the most damaging error the campaign can make, and Srivastava observed the
+   mechanism that would forge one: a CONSTANT-READ artefact (a reader stuck on init or
+   on a single value) yields a spurious 100%/0%.  But the fix is NOT to suppress
+   sightings -- falsification is one-sided and a single genuine sighting refutes:
+
+       "we emphasise that for correct GPU programming the possibility, not
+        probability of weak behaviours is what matters."
+                                        -- Alglave et al., ASPLOS'15, 4.3.
+
+   These are two DIFFERENT questions -- "is the sighting REAL?" (decoder soundness)
+   and "is it REPRODUCIBLE?" (statistical confidence) -- so they get two answers.
+   het_verdict() still returns its immediate, loud, unconditional MISMATCH on the
+   very first sighting; this tier is layered ON TOP and suppresses nothing. */
+typedef enum {
+  HET_MT_NONE = 0,
+  HET_MT_UNCORROBORATED,  /* seen, but in <3 clean cells, or in a DEGENERATE one:
+                             believe it, report it, and go reproduce it before it
+                             is written up as a refutation of the CMCM. */
+  HET_MT_CONFIRMED        /* >=3 distinct non-degenerate RUNS (R2: P_rep = 95%) */
+} het_mismatch_tier;
+
+/* Why a statistic is missing or weakened.  Each one is a thing that can silently
+   turn this layer into a constant, so each one is PRINTED. */
+#define HET_ST_FANO_UNMEASURED   (1u << 0) /* control never fired: NO BOUND, and we
+                                              do NOT substitute the textbook 3/N   */
+#define HET_ST_NONSTATIONARY     (1u << 1) /* KS rejected: P_rep SUPPRESSED (R4)   */
+#define HET_ST_DEGEN_SIGHTING    (1u << 2) /* >=1 sighting failed the decode guard */
+#define HET_ST_UNDERDISPERSED    (1u << 3) /* F < 1 measured: clamped to Poisson   */
+#define HET_ST_BURSTY            (1u << 4) /* F >> 1: the bound WIDENED materially */
+#define HET_ST_NO_DECODE_CHANNEL (1u << 5) /* no sync AND no observer: fail closed */
+#define HET_ST_WIN_DESYNC        (1u << 6) /* sum(win[]) != total: the sub-tallies
+                                              are DEAD or mis-indexed -- the whole
+                                              dispersion estimate is void          */
+#define HET_ST_KS_UNDERPOWERED   (1u << 7) /* too few windows to test stationarity */
+#define HET_ST_CELLS_TRUNCATED   (1u << 8) /* more runs than HET_STATS_MAX_CELLS   */
+#define HET_ST_CTRL_IS_CANARY    (1u << 9) /* dispersion calibrated off the Layer-B
+                                              canary, not this test's own mu(T)    */
+#define HET_ST_BOUND_VACUOUS    (1u << 10) /* p_bound >= 1: it bounds NOTHING      */
+
+typedef struct het_stats {
+  const char *test_name;
+  het_oracle_t oracle;
+  het_obs_class obs;
+  het_mismatch_tier tier;
+
+  int R;              /* cells supplied  (= NUMBER_OF_RUN; H is 1 today)          */
+  int R_usable;       /* cells whose het_verdict() is not COLD-INVALID            */
+  int k;              /* cells with Y = 1[target_count >= 1]                      */
+  int k_eff;          /* ... of those, the ones that pass the decode guard        */
+  int k_runs;         /* distinct RUNS among them (the most independent draws)    */
+  int n_degen;        /* sightings REJECTED by the guard (reported, never hidden) */
+
+  int    win_samples;               /* (run,window) samples behind F_win          */
+  double ctrl_mean, ctrl_var;       /* of the per-window control counts           */
+  double F_win, F_cell;             /* the two strata                             */
+  double r_hat;                     /* NB dispersion from F_win (inf = Poisson)   */
+  double mu_upper;                  /* r(0.05^{-1/r} - 1)                         */
+  double R_eff;                     /* R_usable / max(1, F_cell)                  */
+  double p_bound;                   /* mu_upper / R_eff   (-1 = NOT COMPUTED)     */
+  double P_rep;                     /* 1 - e^{-k_eff}     (-1 = NOT APPLICABLE)   */
+  double acf1;                      /* lag-1 autocorrelation -- DIAGNOSTIC ONLY   */
+
+  int    ks_pass, ks_n_early, ks_n_late, ks_split_window;
+  double ks_D, ks_Dcrit;
+
+  uint64_t N, frames_examined;      /* the effort disclosure                      */
+  uint32_t flags;
+} het_stats_t;
+
+/* ---------------------------------------------------------------------------
+ * THE ESTIMATORS.  Small, pure, and separately testable -- statscheck.py pins
+ * het_mu_upper() against the closed form at r in {0.5, 1, 2, 5, 10, inf}. */
+
+/* mu_upper(r) = r * (0.05^{-1/r} - 1), the 95% upper bound on the expected count
+   of an NB(mu, r) process that was observed ZERO times.  Written with expm1 because
+   the naive form cancels catastrophically as r grows -- and the r -> inf limit IS
+   the textbook rule of three, so getting it wrong there would silently reproduce
+   the very constant this function exists to replace.  0.05^{-1/r} = exp(ln(20)/r). */
+static double het_mu_upper(double r) {
+  const double L = -log(0.05);        /* ln 20 = 2.99573227... */
+  if (!(r > 0.0))          return L;  /* no fit (incl. NaN)  -> the Poisson floor */
+  if (!(r < HET_R_POISSON)) return L; /* r -> inf            -> the Poisson limit */
+  return r * expm1(L / r);
+}
+
+/* Method of moments.  NB(mu, r) has Var = mu + mu^2/r, so Fano F = 1 + mu/r and
+   r = mu/(F-1).  F <= 1 is Poisson-or-tighter: there is NO NB fit, and we return
+   the Poisson limit rather than a small r -- letting an under-dispersed sample make
+   the bound TIGHTER than 3 would be an overclaim in the one direction that matters. */
+static double het_r_from_fano(double mean, double F) {
+  if (!(F > 1.0) || !(mean > 0.0)) return HUGE_VAL;
+  return mean / (F - 1.0);
+}
+
+/* Fano = Var/Mean of a sample.  Returns -1 when it CANNOT be measured (fewer than 2
+   samples, or an all-zero stream): the caller must then print NO BOUND, not a
+   default.  "A run where F_hat silently falls back to 1 is a run that reported the
+   textbook rule of three while claiming to be dispersion-aware." */
+static double het_fano(const double *x, int n, double *mean_out, double *var_out) {
+  double s = 0.0, m, v = 0.0;
+  int i;
+  if (mean_out) *mean_out = 0.0;
+  if (var_out)  *var_out  = 0.0;
+  if (n < 2) return -1.0;
+  for (i = 0; i < n; i++) s += x[i];
+  m = s / (double)n;
+  for (i = 0; i < n; i++) { double d = x[i] - m; v += d * d; }
+  v /= (double)(n - 1);                       /* sample variance */
+  if (mean_out) *mean_out = m;
+  if (var_out)  *var_out  = v;
+  if (!(m > 0.0)) return -1.0;                /* an all-zero stream measures nothing */
+  return v / m;
+}
+
+static int het_dcmp(const void *a, const void *b) {
+  double x = *(const double *)a, y = *(const double *)b;
+  return (x < y) ? -1 : ((x > y) ? 1 : 0);
+}
+
+/* Two-sample KS.  Returns 1 = stationary (failed to reject), 0 = REJECTED,
+   -1 = underpowered.  Sorts in place.  On discrete counts the test is conservative
+   (ties depress D), i.e. it UNDER-rejects -- so a KS_pass here is the weaker claim
+   and a KS_split is the strong one.  Stated because it matters which way the
+   conservatism cuts. */
+static int het_ks2(double *a, int na, double *b, int nb,
+                   double *D_out, double *Dcrit_out) {
+  int i = 0, j = 0;
+  double D = 0.0;
+  *D_out = 0.0; *Dcrit_out = 0.0;
+  if (na < 2 || nb < 2) return -1;
+  qsort(a, (size_t)na, sizeof(double), het_dcmp);
+  qsort(b, (size_t)nb, sizeof(double), het_dcmp);
+  while (i < na && j < nb) {
+    double x = (a[i] < b[j]) ? a[i] : b[j];
+    double d;
+    while (i < na && a[i] <= x) i++;
+    while (j < nb && b[j] <= x) j++;
+    d = fabs((double)i / (double)na - (double)j / (double)nb);
+    if (d > D) D = d;
+  }
+  *D_out = D;
+  *Dcrit_out = HET_KS_C05 * sqrt(((double)na + (double)nb)
+                                 / ((double)na * (double)nb));
+  return (D <= *Dcrit_out) ? 1 : 0;
+}
+
+/* Kirkham's remedy for a non-stationary run is to SPLIT IT AT THE CHANGE-POINT
+   ("non-stable runs can then be restarted from the point of instability", 5.1).
+   This locates it: the window index whose before/after means differ most. */
+static int het_changepoint(const double *prof, int n) {
+  int i, best = -1;
+  double bd = -1.0;
+  for (i = 1; i < n; i++) {
+    double s1 = 0.0, s2 = 0.0, d;
+    int j;
+    for (j = 0; j < i; j++) s1 += prof[j];
+    for (j = i; j < n; j++) s2 += prof[j];
+    d = fabs(s1 / (double)i - s2 / (double)(n - i));
+    if (d > bd) { bd = d; best = i; }
+  }
+  return best;
+}
+
+/* THE DECODE GUARD (TRAP 3).  Is this cell's decode trustworthy, or could the
+   "sighting" be Srivastava's constant-read artefact?
+
+   THE FIELD BEING ZERO IS NOT THE SAME AS THE DECODE BEING DEGENERATE.  Measured on
+   the emitted corpus: 316 of the 338 populate the synchrony fields, and the other
+   22 -- every 2+2W, the store-only shape, which has no reader and therefore cannot
+   HAVE a constant-read artefact -- leave them at their memset zero and decode
+   through the OBSERVER instead.  Every one of the 338 has exactly one of the two
+   channels or both (266 sync / 22 observer / 50 both / 0 neither), so the guard
+   switches channel rather than firing blind.  Reading `skew_stddev == 0' as
+   "degenerate" would have condemned all 22 forever.
+
+   The `no channel at all' arm is unreachable in the shipped corpus and FAILS CLOSED
+   anyway: reaching it means the emitter compiled a harness with no way to decode
+   what it saw, and a sighting nothing can vouch for must not be counted toward a
+   refutation of the model. */
+static int het_cell_degenerate(const het_obs_record *r) {
+  if (r->sync_valid)
+    return (r->distinct_decoded_iters < (uint64_t)HET_THETA_DISTINCT)
+        || (r->skew_stddev == 0.0);
+  if (r->obs_valid)
+    return (r->observer_unique_count < (uint64_t)HET_THETA_DISTINCT);
+  return 1;
+}
+
+static const uint32_t *het_ctrl_win(const het_obs_record *r, int use_canary) {
+  return use_canary ? r->canary_win : r->control_win;
+}
+static uint64_t het_ctrl_total(const het_obs_record *r, int use_canary) {
+  return use_canary ? r->canary_target_count : r->control_target_count;
+}
+
+/* ---------------------------------------------------------------------------
+ * THE AGGREGATE.  A pure function of the record stream (Q3 6.6). */
+static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st) {
+  double cell[HET_STATS_MAX_CELLS];
+  double win[HET_STATS_MAX_CELLS * HET_NWIN];
+  double early[HET_STATS_MAX_CELLS * HET_NWIN];
+  double late[HET_STATS_MAX_CELLS * HET_NWIN];
+  double prof[HET_NWIN];
+  int    runs[HET_STATS_MAX_CELLS];
+  int i, w, nwin = 0, ne = 0, nl = 0, ncell = 0, nruns = 0, use_canary;
+  int n_early, n_late, ks;
+  uint64_t mu_total = 0, can_total = 0;
+  int mu_present = 0;
+
+  memset(st, 0, sizeof *st);
+  st->p_bound = -1.0;                 /* -1 = NOT COMPUTED.  Never a silent 3/N. */
+  st->P_rep   = -1.0;                 /* -1 = NOT APPLICABLE                     */
+  st->F_win   = -1.0;
+  st->F_cell  = -1.0;
+  st->r_hat   = HUGE_VAL;
+  st->ks_split_window = -1;
+  if (n <= 0) { st->obs = HET_OBS_VOID; st->flags |= HET_ST_FANO_UNMEASURED; return; }
+  st->test_name = recs[0].test_name;
+  st->oracle    = recs[0].het_oracle;
+  st->N         = recs[0].N;
+  st->R         = n;
+  if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS;
+                                 st->flags |= HET_ST_CELLS_TRUNCATED; }
+
+  /* ---- 1. WHICH control channel calibrates the dispersion.
+     mu(T) is the shape-matched proxy (same shape, same scope, ONE ordering
+     primitive weaker) so it is preferred where it exists and fired; the canary is
+     the universal het-MP floor and is all the other 322 have.  A bound calibrated
+     off a different shape's burstiness is a weaker claim, so which one was used is
+     RECORDED and PRINTED rather than left for the reader to guess. */
+  for (i = 0; i < n; i++) {
+    if (recs[i].control_compiled_in) mu_present = 1;
+    mu_total  += recs[i].control_target_count;
+    can_total += recs[i].canary_target_count;
+  }
+  use_canary = (mu_present && mu_total > 0) ? 0 : 1;
+  if (use_canary) st->flags |= HET_ST_CTRL_IS_CANARY;
+  (void)can_total;
+
+  /* ---- 2. The cells.  het_verdict() is already a pure function of the record, so
+     the aggregate REUSES it rather than re-deriving liveness (and thereby inherits
+     every B4/B5 disqualifier and all of B6c's oracle-awareness for free). */
+  for (i = 0; i < n; i++) {
+    uint32_t dq = 0, cv = 0;
+    het_verdict_t v = het_verdict(&recs[i], &dq, &cv);
+    int y   = (het_reported_count(&recs[i]) >= 1);
+    int deg = het_cell_degenerate(&recs[i]);
+    uint64_t tot = het_ctrl_total(&recs[i], use_canary);
+    uint64_t sum = 0;
+
+    /* A SIGHTING is never COLD (het_verdict believes a positive unconditionally),
+       so a usable-cell count can never discard one. */
+    if (v != HET_COLD_INVALID) st->R_usable++;
+
+    if (!recs[i].sync_valid && !recs[i].obs_valid)
+      st->flags |= HET_ST_NO_DECODE_CHANNEL;
+
+    if (y) {
+      st->k++;
+      if (deg) { st->n_degen++; st->flags |= HET_ST_DEGEN_SIGHTING; }
+      else {
+        int j, seen = 0;
+        st->k_eff++;
+        for (j = 0; j < nruns; j++) if (runs[j] == recs[i].run_id) seen = 1;
+        if (!seen) runs[nruns++] = recs[i].run_id;
+      }
+    }
+
+    /* THE SELF-PROVING INVARIANT.  The window bump sits on the same line, under the
+       same predicate, as the total -- so these must agree.  If they do not, the
+       sub-tallies are dead or mis-indexed and EVERY dispersion number below is
+       fiction.  This is the one check that can catch a dead-code-eliminated tally on
+       real hardware, where the tally is supposed to be nonzero. */
+    for (w = 0; w < HET_NWIN; w++) sum += het_ctrl_win(&recs[i], use_canary)[w];
+    if (sum != tot) st->flags |= HET_ST_WIN_DESYNC;
+
+    st->frames_examined += recs[i].frames_examined;
+
+    /* Only a USABLE cell's control stream may calibrate anything: the dispersion of
+       a dead harness is the dispersion of nothing. */
+    if (v == HET_COLD_INVALID) continue;
+    cell[ncell++] = (double)tot;
+    for (w = 0; w < HET_NWIN; w++)
+      win[nwin++] = (double)het_ctrl_win(&recs[i], use_canary)[w];
+  }
+  st->k_runs = nruns;
+
+  /* ---- 3. The observation class at the (instance,run) unit (R1). */
+  if (st->R_usable == 0)       st->obs = HET_OBS_VOID;
+  else if (st->k == 0)         st->obs = HET_OBS_NEVER;
+  else if (st->k >= st->R_usable) st->obs = HET_OBS_ALWAYS;
+  else                         st->obs = HET_OBS_SOMETIMES;
+
+  /* ---- 4. Dispersion, on the two strata. */
+  st->win_samples = nwin;
+  st->F_win  = het_fano(win, nwin, &st->ctrl_mean, &st->ctrl_var);
+  st->F_cell = het_fano(cell, ncell, NULL, NULL);
+  if (st->F_win < 0.0 || (st->flags & HET_ST_WIN_DESYNC)) {
+    st->flags |= HET_ST_FANO_UNMEASURED;
+  } else {
+    if (st->F_win <  1.0)          st->flags |= HET_ST_UNDERDISPERSED;
+    if (st->F_win >= HET_BURSTY_F) st->flags |= HET_ST_BURSTY;
+    st->r_hat = het_r_from_fano(st->ctrl_mean, st->F_win);
+  }
+
+  /* lag-1 autocorrelation, WITHIN runs (never across a run boundary -- the runs are
+     re-seeded, so a lag across one is not a lag).  DIAGNOSTIC ONLY: it explains the
+     burstiness, it does not enter the bound (Q3 4.1-3 keeps MMPP/autocorrelation off
+     the headline; the reported bound uses F_win). */
+  if (nwin >= 2 && st->ctrl_var > 0.0) {
+    double num = 0.0, den = 0.0;
+    for (i = 0; i + HET_NWIN <= nwin; i += HET_NWIN)
+      for (w = 0; w < HET_NWIN; w++) {
+        double d = win[i + w] - st->ctrl_mean;
+        den += d * d;
+        if (w + 1 < HET_NWIN) num += d * (win[i + w + 1] - st->ctrl_mean);
+      }
+    st->acf1 = (den > 0.0) ? num / den : 0.0;
+  }
+
+  /* ---- 5. THE STATIONARITY GATE (R4-i; MANDATORY, not optional).
+     Kirkham's first-20%-vs-last-10% split, transplanted to the window axis: early
+     windows from every usable run against late windows from every usable run.  That
+     is the axis on which warm-up, thermal/DVFS drift and alignment drift all act. */
+  n_early = (HET_NWIN * 20) / 100; if (n_early < 1) n_early = 1;
+  n_late  = (HET_NWIN * 10) / 100; if (n_late  < 1) n_late  = 1;
+  for (i = 0; i + HET_NWIN <= nwin; i += HET_NWIN) {
+    for (w = 0; w < n_early; w++)          early[ne++] = win[i + w];
+    for (w = HET_NWIN - n_late; w < HET_NWIN; w++) late[nl++] = win[i + w];
+  }
+  st->ks_n_early = ne; st->ks_n_late = nl;
+  /* A KS ON AN ALL-ZERO STREAM PASSES FOR FREE, and a gate that passes for free is
+     the signature bug of this project.  The two `self' canary rows
+     (MP-{cg,gc}-sys-relaxed) co-run NO control by construction -- a test cannot be
+     its own control -- so their control stream is structurally empty; so is that of
+     any harness whose control never fired.  D would then be 0 against 0, the gate
+     would report `pass', and P_rep would be unlocked by a test that never ran.
+     Stationarity that CANNOT be tested must not be reported as tested. */
+  ks = (st->flags & HET_ST_FANO_UNMEASURED)
+       ? -1
+       : het_ks2(early, ne, late, nl, &st->ks_D, &st->ks_Dcrit);
+  if (ks < 0) {
+    /* Cannot test => cannot claim.  FAIL CLOSED: ks_pass stays 0, so P_rep is
+       suppressed below exactly as it would be on a rejection.  A stationarity gate
+       that passes when it could not run is not a gate. */
+    st->ks_pass = 0;
+    st->flags |= HET_ST_KS_UNDERPOWERED;
+  } else {
+    st->ks_pass = ks;
+    if (!ks) {
+      st->flags |= HET_ST_NONSTATIONARY;
+      for (w = 0; w < HET_NWIN; w++) {
+        double s = 0.0; int c = 0;
+        for (i = 0; i + HET_NWIN <= nwin; i += HET_NWIN) { s += win[i + w]; c++; }
+        prof[w] = c ? s / (double)c : 0.0;
+      }
+      st->ks_split_window = het_changepoint(prof, HET_NWIN);
+    }
+  }
+
+  /* ---- 6. R2 -- OBSERVED: P_rep at the (instance,run) unit, from k_eff, NOT from
+     the frame count.  Suppressed across a non-stationary boundary (R4).
+
+     k_eff > 0 IS LOAD-BEARING, not a guard against division by zero.  With k_eff = 0
+     -- every sighting rejected by the decode guard -- the formula returns
+     1 - e^0 = 0, and "P_rep = 0.00%" reads as "this behaviour NEVER reproduces" when
+     what actually happened is that we have NO CLEAN CELL TO ESTIMATE FROM.  That is a
+     constant 0 wearing a statistic's clothes, and it is the same silent falsification
+     as the constant-false `_weak': a number that looks like evidence and is the
+     absence of it.  There is no estimate here, so none is reported. */
+  if (st->obs == HET_OBS_SOMETIMES || st->obs == HET_OBS_ALWAYS)
+    if (st->ks_pass && st->k_eff > 0)
+      st->P_rep = 1.0 - exp(-(double)st->k_eff);
+
+  /* ---- 7. R3 -- UNOBSERVED: the dispersion-aware false-negative bound.
+     NOT COMPUTED (and emphatically NOT replaced by 3/N) when the dispersion could
+     not be measured. */
+  if (st->obs == HET_OBS_NEVER && !(st->flags & HET_ST_FANO_UNMEASURED)) {
+    double deff = (st->F_cell > 1.0) ? st->F_cell : 1.0;
+    st->R_eff    = (double)st->R_usable / deff;
+    st->mu_upper = het_mu_upper(st->r_hat);
+    if (st->R_eff > 0.0) st->p_bound = st->mu_upper / st->R_eff;
+    /* A BOUND ABOVE 1 IS NOT A BOUND.  p_run is a PROBABILITY, so "p < 6e10" is not a
+       weak claim, it is the ABSENCE of a claim -- and printing it as a number invites
+       it into a table as though it meant something.  This is what a heavily bursty
+       channel does to a null: the process parks so much mass at zero that seeing zero
+       tells you almost nothing (that IS the finding, and it is the honest one).  The
+       remedy is Q3's F4: grow R -- more independent cells -- NOT bigger N, which only
+       adds correlated frames to the same few alignment windows. */
+    if (st->p_bound >= 1.0) st->flags |= HET_ST_BOUND_VACUOUS;
+  }
+
+  /* ---- 8. TRAP 3 -- the corroboration tier.  Layered ON TOP of het_verdict()'s
+     immediate MISMATCH; it never suppresses one.  Distinct RUNS, not merely distinct
+     cells: runs are re-seeded and carry a fresh phase/thermal draw, so they are the
+     most independent replicates the harness produces (Q3 3.1, F4). */
+  if (st->oracle == ORACLE_DISALLOWED && st->k > 0)
+    st->tier = (st->k_runs >= 3) ? HET_MT_CONFIRMED : HET_MT_UNCORROBORATED;
+}
+
+static const char *het_obs_class_name(het_obs_class c) {
+  switch (c) {
+  case HET_OBS_NEVER:     return "Never";
+  case HET_OBS_SOMETIMES: return "Sometimes";
+  case HET_OBS_ALWAYS:    return "Always";
+  default:                return "VOID";
+  }
+}
+
+static const char *het_tier_name(het_mismatch_tier t) {
+  switch (t) {
+  case HET_MT_CONFIRMED:      return "MISMATCH-CONFIRMED";
+  case HET_MT_UNCORROBORATED: return "MISMATCH-UNCORROBORATED";
+  default:                    return "none";
+  }
+}
+
+/* The machine-readable line.  hetlitmus/oracle-compare.sh parses THIS and layers the
+   annotation onto its MATCH/MISMATCH/NO-ORACLE table (Q3 R6: augment, do not
+   replace).  oracle= is first-class: Y = 1[count >= 1] means the OPPOSITE thing for
+   an Allowed test and a Disallowed one, so a row that does not carry its oracle class
+   cannot be pooled with anything. */
+static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
+  fprintf(_ch,
+    "HetStats %s oracle=%s obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d degen=%d "
+    "ctrl=%s win_n=%d F_win=%.4f F_cell=%.4f r_hat=%.4f mu_upper=%.4f R_eff=%.4f "
+    "p_bound=%.6g P_rep=%.6g acf1=%.4f ks=%s ks_D=%.4f ks_Dcrit=%.4f ks_split=%d "
+    "tier=%s N=%llu frames=%llu flags=0x%x\n",
+    _s->test_name ? _s->test_name : "(none)", het_oracle_name(_s->oracle),
+    het_obs_class_name(_s->obs), _s->R, _s->R_usable, _s->k, _s->k_eff, _s->k_runs,
+    _s->n_degen,
+    (_s->flags & HET_ST_CTRL_IS_CANARY) ? "canary" : "mu(T)",
+    _s->win_samples, _s->F_win, _s->F_cell,
+    (_s->r_hat >= HET_R_POISSON) ? INFINITY : _s->r_hat,
+    _s->mu_upper, _s->R_eff, _s->p_bound, _s->P_rep, _s->acf1,
+    (_s->flags & HET_ST_KS_UNDERPOWERED) ? "underpowered"
+      : (_s->ks_pass ? "pass" : "SPLIT"),
+    _s->ks_D, _s->ks_Dcrit, _s->ks_split_window,
+    het_tier_name(_s->tier),
+    (unsigned long long)_s->N, (unsigned long long)_s->frames_examined,
+    _s->flags);
+}
+
+/* The human block.  Same contract as het_verdict_print: the interpretation travels
+   with the number, so a reader cannot pick the number up without it. */
+static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
+  het_stats_line(_ch, _s);
+
+  fprintf(_ch, "HetStats %s: %d cell(s) [(instance,run)], %d usable, observed in %d "
+               "(%d after the decode guard, across %d distinct run(s)).\n",
+          _s->test_name ? _s->test_name : "(none)",
+          _s->R, _s->R_usable, _s->k, _s->k_eff, _s->k_runs);
+
+  if (_s->flags & HET_ST_CELLS_TRUNCATED)
+    fprintf(_ch, "  *** MORE RUNS THAN HET_STATS_MAX_CELLS (%d): the tail was NOT "
+                 "scored.  Raise the cap; do not report this aggregate.\n",
+            (int)HET_STATS_MAX_CELLS);
+
+  if (_s->flags & HET_ST_NO_DECODE_CHANNEL)
+    fprintf(_ch, "  *** A CELL CARRIED NEITHER A SYNCHRONY NOR AN OBSERVER DECODE ***"
+                 "  Its sightings cannot be checked for the constant-read artefact, "
+                 "so they are treated as DEGENERATE.  This is a BUILD BUG (0 of the "
+                 "338 should reach it).\n");
+
+  if (_s->flags & HET_ST_WIN_DESYNC)
+    fprintf(_ch, "  *** THE PER-WINDOW SUB-TALLIES DO NOT SUM TO THE CONTROL TOTAL ***"
+                 "  The window bump is dead or mis-indexed, so every dispersion "
+                 "number here would be fiction.  NO BOUND IS REPORTED.  Rebuild; do "
+                 "not report.\n");
+
+  if (_s->obs == HET_OBS_VOID) {
+    fprintf(_ch, "  VOID -- not one of the %d runs was usable (every cell COLD).  "
+                 "There is nothing here to bound: an empty histogram from a dead "
+                 "harness is not a non-observation, it is an absence of data.  See "
+                 "the per-run HetVerdict lines for which mechanism was dead.\n", _s->R);
+    return;
+  }
+
+  /* ---- the dispersion, and what it did to the bound. */
+  if (_s->flags & HET_ST_FANO_UNMEASURED) {
+    fprintf(_ch, "  dispersion: NOT MEASURED (the control channel yielded no usable "
+                 "per-window stream).\n"
+                 "  *** NO FALSE-NEGATIVE BOUND IS REPORTED, and the textbook 3/N is "
+                 "NOT substituted for one. ***  A bound that silently defaults to "
+                 "Poisson is the textbook rule of three wearing a dispersion-aware "
+                 "hat, and on a bursty channel it is a ~6x optimistic overclaim.\n");
+  } else {
+    fprintf(_ch,
+      "  dispersion (from the %s channel, %d window samples): F_win = %.3f "
+      "(Var %.3f / Mean %.3f), r_hat = %s, lag-1 acf = %.3f; F_cell = %.3f.\n",
+      (_s->flags & HET_ST_CTRL_IS_CANARY) ? "Layer-B canary" : "mu(T) minimal mutant",
+      _s->win_samples, _s->F_win, _s->ctrl_var, _s->ctrl_mean,
+      (_s->r_hat >= HET_R_POISSON) ? "inf (Poisson)" : "finite (see HetStats line)",
+      _s->acf1, _s->F_cell);
+    if (_s->flags & HET_ST_CTRL_IS_CANARY)
+      fprintf(_ch, "  NOTE: calibrated off the Layer-B canary, not this test's own "
+                   "mu(T) -- a different SHAPE's burstiness.  Weaker than a "
+                   "shape-matched calibration; say so when reporting.\n");
+    if (_s->flags & HET_ST_UNDERDISPERSED)
+      fprintf(_ch, "  NOTE: F_win < 1 (under-dispersed).  Clamped to the Poisson "
+                   "floor: an under-dispersed sample is NOT allowed to make the "
+                   "bound TIGHTER than the rule of three.\n");
+    if (_s->flags & HET_ST_BURSTY)
+      fprintf(_ch, "  BURSTY (F_win = %.2f >> 1): the rule-of-three constant 3 has "
+                   "WIDENED to mu_upper = %.2f.  Reporting a bare p < 3/N here would "
+                   "be a %.1fx optimistic overclaim.\n",
+              _s->F_win, het_mu_upper(_s->r_hat),
+              het_mu_upper(_s->r_hat) / (-log(0.05)));
+  }
+
+  /* ---- stationarity. */
+  if (_s->flags & HET_ST_KS_UNDERPOWERED)
+    fprintf(_ch, "  stationarity: NOT TESTED -- %s.  Fails CLOSED: P_rep is "
+                 "suppressed exactly as it would be on a rejection, because a KS run "
+                 "against an empty stream would `pass' without testing anything.\n",
+            (_s->flags & HET_ST_FANO_UNMEASURED)
+              ? "this harness has no live control stream to test (the two `self' "
+                "canary rows co-run no control by construction, and a control that "
+                "never fired leaves nothing to test either)"
+              : "too few window samples");
+  else if (_s->ks_pass)
+    fprintf(_ch, "  stationarity: KS pass (D = %.4f <= D_crit = %.4f, %d early vs %d "
+                 "late window counts).  On discrete counts the two-sample KS is "
+                 "conservative, so this is the WEAKER of the two possible claims.\n",
+            _s->ks_D, _s->ks_Dcrit, _s->ks_n_early, _s->ks_n_late);
+  else
+    fprintf(_ch,
+      "  stationarity: *** KS REJECTED *** (D = %.4f > D_crit = %.4f).  The control "
+      "rate is NOT stationary across the run: the change-point is near window %d of "
+      "%d.  Kirkham's own precheck already fails 4/18 GPU-only chip/test "
+      "combinations, and het adds warm-up, thermal drift and alignment drift on top.\n"
+      "  P_rep is NOT reported across a non-stationary boundary (Q3 R4).  Re-run "
+      "split at the change-point and score the segments separately -- Kirkham 5.1: "
+      "\"non-stable runs can then be restarted from the point of instability\".\n",
+      _s->ks_D, _s->ks_Dcrit, _s->ks_split_window, (int)HET_NWIN);
+
+  /* ---- the headline, by observation class. */
+  if (_s->obs == HET_OBS_NEVER) {
+    if (_s->p_bound < 0.0) {
+      fprintf(_ch, "  NOT OBSERVED in any of the %d usable cell(s) -- and NO BOUND "
+                   "can be attached to it (see above).  Report the non-observation; "
+                   "do NOT report a rate.\n", _s->R_usable);
+    } else if (_s->flags & HET_ST_BOUND_VACUOUS) {
+      fprintf(_ch,
+        "  NOT OBSERVED in any of the %d usable cell(s) -- but THE BOUND IS VACUOUS:\n"
+        "      p_run < mu_upper(r_hat) / R_eff = %.4g / %.2f = %.4g   >= 1\n"
+        "  p_run is a PROBABILITY, so a bound above 1 bounds NOTHING.  This is not a "
+        "weak claim, it is the ABSENCE of one, and it must NOT be tabulated as a "
+        "number.\n"
+        "  WHY: the control channel is bursty (F_win = %.2f), so the process parks so "
+        "much probability mass at zero that observing zero is nearly free.  That IS "
+        "the finding -- and it is exactly the case in which a bare p < 3/N would have "
+        "claimed a strong result from no evidence at all.\n"
+        "  REMEDY (Q3 F4/R3): grow R -- more independent perpetual runs, each a fresh "
+        "phase/seed/thermal draw -- NOT bigger N, which only adds correlated frames "
+        "inside the same few alignment windows.\n",
+        _s->R_usable, _s->mu_upper, _s->R_eff, _s->p_bound, _s->F_win);
+    } else {
+      fprintf(_ch,
+        "  NOT OBSERVED in any of the %d usable cell(s).  95%% upper bound on its "
+        "RUN-LEVEL rate:\n"
+        "      p_run < mu_upper(r_hat) / R_eff = %.4f / %.2f = %.4g\n"
+        "  (R_eff = %d usable cells / DEFF %.2f.  The unit is the (instance,run) "
+        "CELL, NOT the frame: the scan validates N^{T_L} overlapping frames per N "
+        "iterations, so a frame count fed to 1-e^{-n} returns ~1 vacuously --\n"
+        "   PerpLE VI-B.1, and PerpLE never makes that mistake either.)\n",
+        _s->R_usable, _s->mu_upper, _s->R_eff, _s->p_bound,
+        _s->R_usable, (_s->F_cell > 1.0) ? _s->F_cell : 1.0);
+    }
+    switch (_s->oracle) {
+    case ORACLE_DISALLOWED:
+      fprintf(_ch, "  This is the CMCM validation claim: forbidden, and not observed "
+                   "under the effort above.  It is consistency evidence, NOT a "
+                   "proof.\n");
+      break;
+    case ORACLE_ALLOWED:
+      fprintf(_ch, "  OBSERVABILITY, NOT VALIDATION: the outcome is PERMITTED, so "
+                   "this bound describes OUR HARNESS's reach on this hardware, not "
+                   "the model.  It feeds B8's stress-tuning priority.\n");
+      break;
+    default:
+      fprintf(_ch, "  CHARACTERIZATION, NEVER VALIDATION: the model is SILENT here, "
+                   "so the bound describes the HARDWARE, and there is no prediction "
+                   "for it to confirm or refute (Q4 R5).\n");
+      break;
+    }
+    fprintf(_ch, "  effort: %d run(s) x N=%llu iterations, %llu frames examined.\n",
+            _s->R_usable, (unsigned long long)_s->N,
+            (unsigned long long)_s->frames_examined);
+    return;
+  }
+
+  /* ---- observed. */
+  if (_s->P_rep >= 0.0)
+    fprintf(_ch, "  OBSERVED in %d of %d usable cell(s).  P_rep = 1 - e^{-k_eff} = "
+                 "%.2f%% that a fresh run reproduces it (k_eff = %d NON-DEGENERATE "
+                 "cells -- Kirkham's n=3 => 95%% recipe, relocated to the "
+                 "(instance,run) unit).\n",
+            _s->k, _s->R_usable, 100.0 * _s->P_rep, _s->k_eff);
+  else
+    fprintf(_ch, "  OBSERVED in %d of %d usable cell(s).  P_rep is NOT reported "
+                 "(the process failed the stationarity gate, or no cell survived the "
+                 "decode guard).\n", _s->k, _s->R_usable);
+
+  if (_s->flags & HET_ST_DEGEN_SIGHTING)
+    fprintf(_ch,
+      "  *** %d SIGHTING(S) CAME FROM A DEGENERATE CELL *** (distinct_decoded_iters "
+      "< %d, or a decode that never varied).  Srivastava observed exactly this "
+      "artefact -- a reader stuck on init or on one value yields a spurious "
+      "100%%/0%%.\n"
+      "  They are REPORTED, not discarded: falsification is one-sided and a genuine "
+      "sighting refutes.  They just do not COUNT toward corroboration.\n",
+      _s->n_degen, (int)HET_THETA_DISTINCT);
+
+  if (_s->oracle == ORACLE_DISALLOWED) {
+    if (_s->tier == HET_MT_CONFIRMED)
+      fprintf(_ch,
+        "  ** %s ** -- the should-be-FORBIDDEN outcome was observed in %d distinct "
+        "non-degenerate RUN(S).  A decoder artefact does not reproduce across "
+        "re-seeded runs, so this is a REFUTATION OF THE CMCM's PREDICTION and not a "
+        "constant-read.  This is the campaign's most valuable output: report it.\n",
+        het_tier_name(_s->tier), _s->k_runs);
+    else
+      fprintf(_ch,
+        "  ** %s ** -- the should-be-FORBIDDEN outcome was observed, but in only %d "
+        "clean run(s) (<3).  BELIEVE IT AND REPORT IT -- one sighting refutes, and it "
+        "is NOT suppressed -- but a false MISMATCH is a false refutation of the "
+        "compound model, the most damaging error this campaign can make.  REPRODUCE "
+        "IT to >=3 clean runs before writing it up as a model violation.\n",
+        het_tier_name(_s->tier), _s->k_runs);
+  }
 }
 
 #endif /* HET_VERDICT_H */

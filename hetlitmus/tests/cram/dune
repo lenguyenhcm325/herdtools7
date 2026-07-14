@@ -33,9 +33,15 @@
 ; raise after the joins passes cpustresscheck and fails here.
 ; Scoped so the three Layer-1 tests above stay toolchain-free.  litmus7 het emission
 ; needs no -set-libdir, so only the binary + the .litmus inputs are required.
+; statistics.t guards B7 -- the EMITTER half of the statistics layer.  The estimator's
+; own behaviour is gated by hetlitmus/verify/statscheck.py (which compiles the real
+; het_verdict.h and drives it with synthetic record streams); what cram pins is that the
+; harness actually PRODUCES the inputs that layer consumes -- above all the per-window
+; sub-tallies, and the fact that the count and its window bump ride ONE line under ONE
+; predicate, which is what makes sum(win[]) == total an invariant the run can check.
 (cram
  (applies_to pfix-cond coop-launch shared-alloc tagged-recover stress cpu-stress
-   positive-control)
+   positive-control statistics)
  (package herdtools7)
  (deps
   %{bin:litmus7}
