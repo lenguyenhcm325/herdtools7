@@ -1,6 +1,7 @@
 /* =========================================================================
  * het_verdict.h -- HetLitmus observation record + null-credibility rule.
- * Emitted by litmus7 (HetArch.het_verdict_h).   DO NOT EDIT.
+ * Emitted verbatim by litmus7 from litmus/het-runtime/het_verdict.h -- edit
+ * the source, never a harness-dir copy.
  *
  * WHAT THIS FILE IS FOR.  A litmus campaign's Disallowed half is the half that
  * validates the compound memory model, and it validates it with NULLS -- with

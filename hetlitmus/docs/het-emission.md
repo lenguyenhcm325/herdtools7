@@ -40,8 +40,10 @@ live under `litmus/libdir`).
 ## Phase A — CPU ISA from the device tag (a functor, not a flag)
 
 The Tier-2 body used to be AArch64-specific. It is now a **functor over the CPU
-module chain**, `Top.HetEmit (Cfg) (Cpu) (CpuComp) (CpuLP) (CpuF)` in
-`litmus/top_litmus.ml`, instantiated by the `` `Het `` dispatch arm at the ISA
+module chain**, `HetEmit.Make` in `litmus/hetEmit.ml` (extracted from
+`top_litmus.ml`; the seam back to `Top`'s scope is the options slice, the
+splitter, and `Make`'s compiled-CPU-code extractor, closed at the dispatch
+site), instantiated by the `` `Het `` dispatch arm at the ISA
 the header asks for:
 
 1. the arm reads the program section and calls `HetArch.scan_cpu_isa` on its
@@ -127,7 +129,7 @@ The five required pieces, and where each is reused rather than reimplemented:
 ## Phase B — dual emit and `comp.sh [cuda|hip]`
 
 One LISA parse, two GPU files. The driver template is rendered twice from a
-`gpu_dialect` record (`litmus/top_litmus.ml`): `{ ext; runtime_include;
+`gpu_dialect` record (`litmus/hetEmit.ml`): `{ ext; runtime_include;
 dump_instr; malloc_managed; device_sync; free; bar }`. CUDA and HIP differ only
 in those fields; the kernel guards, the pthread wrappers, the outcome histogram,
 and the `<<<…>>>` launch (hipcc accepts triple-chevron) are shared verbatim.
@@ -165,12 +167,16 @@ succeeds. Whether a *real* asm object is also produced depends on `CpuF.cross`:
 All het logic is confined to:
 
 * `litmus/HetArch.ml` — `to_cpu_pseudo`/`to_gpu_pseudo` (project a compound
-  internal pseudo back onto a sub-arch), the verbatim `outs.{c,h}` strings, and
-  the top-level CPU-ISA tag classifier + header pre-scan (`cpu_isa_of_tag`,
-  `scan_cpu_isa`) the dispatch arm needs *before* it can choose CPU modules;
-* the `HetEmit` functor + the `` `Het `` dispatch arm in `litmus/top_litmus.ml`
-  — the per-ISA module instantiation and the (now dialect-parameterised) file
-  emitter.
+  internal pseudo back onto a sub-arch) and the top-level CPU-ISA tag
+  classifier + header pre-scan (`cpu_isa_of_tag`, `scan_cpu_isa`) the dispatch
+  arm needs *before* it can choose CPU modules;
+* the generated `HetPayloads` module — the verbatim runtime payloads
+  (`outs.{c,h}` cat'ed from `litmus/libdir/_outs.{h,c}`, plus the
+  `litmus/het-runtime/*` headers), wrapped by the rule in `litmus/dune`;
+* `litmus/hetEmit.ml` — the `gpu_dialect` record + the `HetEmit.Make` functor
+  (the dialect-parameterised file emitter);
+* the `` `Het `` dispatch arm in `litmus/top_litmus.ml` — the per-ISA module
+  instantiation, closing `HetEmit.Make`'s seam over `Top`'s scope.
 
 The only edits outside those two are the ones Phase A/B strictly require:
 `lib/X86_64Parser.mly` (the `instr_option_seq` start rule) and `gen/hetGen.ml`

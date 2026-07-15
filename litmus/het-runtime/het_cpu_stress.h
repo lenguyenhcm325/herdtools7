@@ -1,6 +1,7 @@
 /* =========================================================================
- * het_cpu_stress.h -- HetLitmus CPU-side + interconnect (C2C) stress.  DO NOT EDIT.
- * Emitted by litmus7 (HetArch.het_cpu_stress_h); #include'd by <test>_cpu.c (with
+ * het_cpu_stress.h -- HetLitmus CPU-side + interconnect (C2C) stress.
+ * Emitted verbatim by litmus7 from litmus/het-runtime/het_cpu_stress.h (edit
+ * the source, never a harness-dir copy); #include'd by <test>_cpu.c (with
  * HET_CPU_STRESS_IMPL, which compiles the bodies) and by <test>.cu / .hip (which
  * get only the knobs, the argument structs and the declarations).
  * =========================================================================

@@ -1,6 +1,7 @@
 /* =========================================================================
- * het_stress.cuh -- HetLitmus GPU memory-stress layer.   DO NOT EDIT.
- * Emitted by litmus7 (HetArch.het_stress_cuh); included by <test>.cu/.hip.
+ * het_stress.cuh -- HetLitmus GPU memory-stress layer.
+ * Emitted verbatim by litmus7 from litmus/het-runtime/het_stress.cuh (edit the
+ * source, never a harness-dir copy); included by <test>.cu/.hip.
  * =========================================================================
  * PORTED, WITH THE ADAPTATIONS NOTED BELOW, FROM cuda-litmus (Reese Levine),
  *   https://github.com/reeselevine/cuda-litmus
