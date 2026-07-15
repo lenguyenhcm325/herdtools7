@@ -388,6 +388,13 @@ uint32_t het_cpu_rng_init(uint32_t seed, uint32_t lane);
    and flush once -- an atomic bump per hint would put scaffolding contention in
    the middle of the tested loop, which is the one place it must not be. */
 uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t *rng, int pct);
+/* F10 (DR1-C): HET_CPU_PRELOAD_LIVE for the .cu driver.  The macro itself is host-only
+   (defined only under HET_CPU_STRESS_IMPL, which nvcc never compiles), so the driver
+   cannot read it directly; it calls this and sets
+   `_ct.preload_inert = !het_cpu_preload_live()' -- so a host with NO cache primitives
+   does NOT request a preload het_cpu_preload can only no-op, which would else make
+   het_dead() fire HET_DQ_CPU_PRELOAD_DEAD and COLD every null. */
+int      het_cpu_preload_live(void);
 void    *het_cpu_enemy(void *a);   /* pthread body; NOT a pthread dependency       */
 void    *het_cpu_noise(void *a);   /* pthread body; the Grace half of the C2C noise*/
 /* -------------------------------------------------------------------------
@@ -528,6 +535,10 @@ int het_cpu_affinity(int core, het_cpu_tally *t) {
  * tested body is an opaque call into another translation unit and every primitive
  * above is asm volatile with a "memory" clobber.
  * ------------------------------------------------------------------------- */
+/* F10 (DR1-C): exposes the host-only HET_CPU_PRELOAD_LIVE to the .cu driver (see the
+   declaration).  Compiled here in the _cpu.c TU, where the per-arch macro is defined. */
+int het_cpu_preload_live(void) { return HET_CPU_PRELOAD_LIVE; }
+
 uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t *rng, int pct) {
 #if HET_CPU_PRELOAD_LIVE == 0
   (void)vars; (void)nvars; (void)rng; (void)pct;

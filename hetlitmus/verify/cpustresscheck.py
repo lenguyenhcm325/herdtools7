@@ -294,6 +294,40 @@ int main(int argc, char** argv) {
 """
 
 
+# F10 (DR1-C): the CPU-preload liveness guard, exercised against the REAL het_dead()
+# and HET_REQ_CPU_PRELOAD from het_verdict.h.  It emulates the emitted driver's two
+# lines under test -- the preload_inert WRITE and the stress_requested TERM -- for both
+# HET_CPU_PRELOAD_LIVE values, and for BOTH the fix (preload_inert = !live) and the OLD
+# unwritten field (preload_inert = 0) so the contrast is never vacuous.  It runs the
+# preprocessor-independent LOGIC (a runtime `live'), while check() P1 separately pins
+# the emitted driver to the `!HET_CPU_PRELOAD_LIVE' write, so `live' tracks the macro.
+PRELOAD_INERT_TU = r"""
+#include <stdint.h>
+#include <stdio.h>
+#include "het_verdict.h"   /* HET_REQ_CPU_PRELOAD, het_dead(); self-includes its deps */
+
+/* the emitted stress_requested preload term (hetEmit.ml):
+     (HET_CPU_PRELOAD_PCT > 0 && !_ct.preload_inert) ? HET_REQ_CPU_PRELOAD : 0u */
+static uint32_t preload_req(int preload_inert, int pct) {
+  return (pct > 0 && !preload_inert) ? HET_REQ_CPU_PRELOAD : 0u;
+}
+
+int main(void) {
+  int pct = 50;   /* HET_CPU_PRELOAD_PCT > 0 */
+  for (int live = 0; live <= 1; live++) {
+    uint32_t fix_req = preload_req(!live, pct);   /* F10: preload_inert = !live      */
+    uint32_t old_req = preload_req(0, pct);       /* the bug: field never written    */
+    int fix_dead = het_dead(fix_req, HET_REQ_CPU_PRELOAD, 0);   /* preload_ops == 0  */
+    int old_dead = het_dead(old_req, HET_REQ_CPU_PRELOAD, 0);
+    printf("fix_req_live%d=%d fix_dead_live%d=%d old_req_live%d=%d old_dead_live%d=%d\n",
+           live, !!(fix_req & HET_REQ_CPU_PRELOAD), live, fix_dead,
+           live, !!(old_req & HET_REQ_CPU_PRELOAD), live, old_dead);
+  }
+  return 0;
+}
+"""
+
+
 def run(cmd, **kw):
     return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                           text=True, **kw)
@@ -655,6 +689,59 @@ def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True,
             else:
                 note("  G2 the noise block count is a RUNTIME argument: the PTX op "
                      "count is INVARIANT over -DHET_NOISE_GPU_BLOCKS=0/4/16")
+
+        # ---- P1/P2: the CPU-preload liveness guard is a LIVE field (F10, DR1-C) -----
+        # preload_inert was DECLARED and read by stress_requested (`!_ct.preload_inert')
+        # but NEVER WRITTEN, so it stayed memset-0 (=live) even where the host has NO
+        # cache primitives (HET_CPU_PRELOAD_LIVE==0): there het_cpu_preload issues ZERO
+        # hints, yet HET_REQ_CPU_PRELOAD was still raised -> het_dead() ->
+        # HET_DQ_CPU_PRELOAD_DEAD -> every null COLD-INVALID, the exact false-COLD the
+        # guard exists to prevent.  Latent+fail-safe on the real targets (GH200/MI300A
+        # both LIVE==1), but a dead check in this project's signature class.
+        # P1 (structural): the emitted driver now WRITES the field, read from the
+        # artifact.  It calls het_cpu_preload_live() rather than naming
+        # HET_CPU_PRELOAD_LIVE, which is host-only (#ifdef HET_CPU_STRESS_IMPL) and so
+        # undefined in the .cu that nvcc parses.
+        if "_ct.preload_inert = !het_cpu_preload_live();" not in cu_src:
+            fail("P1: the emitted driver does NOT write `_ct.preload_inert = "
+                 "!het_cpu_preload_live();' -- the F10 guard field is dead again; on a "
+                 "no-primitive host the preload request is raised for a mechanism that "
+                 "issues zero hints and every null goes COLD-INVALID.")
+        else:
+            note("  P1 the driver writes _ct.preload_inert = !het_cpu_preload_live()")
+        # P2 (behavioural): the request is DROPPED when LIVE=0 and no HET_DQ_CPU_PRELOAD_
+        # DEAD false-fires -- proved against the REAL het_dead()/HET_REQ_CPU_PRELOAD, for
+        # the fix (preload_inert=!live) AND, as the non-vacuous contrast, the OLD
+        # unwritten field (preload_inert=0) that still false-COLDs a dead host.
+        p2c = os.path.join(tmp, "preload_inert.c")
+        with open(p2c, "w") as fh:
+            fh.write(PRELOAD_INERT_TU)
+        rb = run(["gcc", "-std=gnu11", "-O2", "-I", d, os.path.basename(p2c),
+                  "-o", "preload_inert", "-lm"], cwd=tmp)
+        if rb.returncode != 0:
+            fail("P2: the preload-inert probe did not compile:\n" + rb.stdout)
+        else:
+            rr = run([os.path.join(tmp, "preload_inert")], cwd=tmp)
+            res = dict(kv.split("=") for kv in rr.stdout.split())
+            if res.get("fix_req_live1") != "1":
+                fail("P2: with HET_CPU_PRELOAD_LIVE=1 the preload request is NOT raised "
+                     "(fix_req_live1=%s) -- the live path regressed."
+                     % res.get("fix_req_live1"))
+            elif res.get("fix_req_live0") != "0" or res.get("fix_dead_live0") != "0":
+                fail("P2: with HET_CPU_PRELOAD_LIVE=0 the request is still raised "
+                     "(fix_req_live0=%s) or het_dead still fires (fix_dead_live0=%s) -- "
+                     "the F10 guard does not drop the dead mechanism, so a no-primitive "
+                     "host false-COLDs every null."
+                     % (res.get("fix_req_live0"), res.get("fix_dead_live0")))
+            elif res.get("old_dead_live0") != "1":
+                fail("P2: the OLD unwritten-preload_inert path does NOT false-fire "
+                     "HET_DQ_CPU_PRELOAD_DEAD at LIVE=0 (old_dead_live0=%s) -- the "
+                     "contrast is vacuous, so this check would pass even if the fix did "
+                     "nothing." % res.get("old_dead_live0"))
+            else:
+                note("  P2 LIVE=1 -> request raised; LIVE=0 -> request DROPPED, "
+                     "het_dead() silent (no false COLD); the OLD unwritten field would "
+                     "have false-COLDed a dead host (het_dead=1) -- the fix bites")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

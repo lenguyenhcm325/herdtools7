@@ -2536,6 +2536,17 @@ static void gd_free_noise(void* _p){
             s "    het_set_scratch_locations(_scratch_loc_h, _grid);\n" ;
             (* ---- B5: the CPU stress population, spawned BEFORE the test threads. *)
             s "    memset(&_ct, 0, sizeof _ct);\n" ;
+            (* F10 (DR1-C): the CPU-preload liveness guard.  On a host with NO cache
+               primitives (HET_CPU_PRELOAD_LIVE==0, the portable #else in
+               het_cpu_stress.h) het_cpu_preload issues ZERO hints, so raising
+               HET_REQ_CPU_PRELOAD there would make het_dead() fire
+               HET_DQ_CPU_PRELOAD_DEAD on every null -- the exact false-COLD the guard
+               exists to prevent.  preload_inert was declared and READ by
+               stress_requested (`!_ct.preload_inert') but NEVER WRITTEN, so it stayed
+               memset-0 (=live) even on a dead host.  het_cpu_preload_live() is the
+               accessor -- HET_CPU_PRELOAD_LIVE itself is host-only (#ifdef
+               HET_CPU_STRESS_IMPL), so this .cu, which nvcc parses, cannot name it. *)
+            s "    _ct.preload_inert = !het_cpu_preload_live();\n" ;
             s "    het_cpu_shuffle(_cpu_idx, _cpu_nregions);   /* M2: reshuffled per run, off the run seed */\n" ;
             s "    __atomic_store_n(&_stress_go, 1, __ATOMIC_RELAXED);\n" ;
             s "    int _ecore0 = HET_CPU_TEST_CORE0 + _nCpuTest + (HET_NOISE_CPU ? 1 : 0);\n" ;
