@@ -202,7 +202,11 @@ a mutation lattice**, so the control is essentially free:
   sampler), shape-priority (Kirkham: LB/S first, SB/IRIW last).
 - **Overdispersion transfer (Q3 core):** Kirkham data-peeking's Bernoulli CI is too narrow → swap for an
   **empirical-Bernstein** variance-aware early-stop at the `(instance,run)` unit; **randomized round-robin
-  (SER³)** config scheduling to avoid drift aliasing; KS gate in-loop.
+  (SER³)** config scheduling to avoid drift aliasing; KS gate in-loop. The early-stop spends a **fixed
+  per-comparison** δ (Mnih'08 §2's per-round radius), **not** the anytime (Mnih'08 §3.1, EBStop) or
+  family-wise racing (Mnih'08 §4) guarantee — implementing the §3.1 δ-spending schedule empirically broke
+  elimination (tunecheck 4/7). The tuner's pick is therefore a *heuristic* validated by §3.7's campaign
+  statistics, not by the racing rule's confidence; this residual is a **known-open** item (deep-review F9).
 - **Portability:** ship *structure + seed*; **re-tune every numeric on the actual hardware** (x86 → GH200 →
   MI300A can't share — the interconnect lever itself differs). No post-2023 memory-testing autotuner handles
   het/overdispersion → this tuner is at the frontier.

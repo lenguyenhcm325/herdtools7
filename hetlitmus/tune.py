@@ -365,7 +365,14 @@ class Arm(object):
         """Weighted empirical variance of the bout values about the weighted mean.  Under
         Q3 overdispersion (Fano>1) the between-bout spread is large, so this is large --
         that is how the empirical-Bernstein CI absorbs overdispersion WITHOUT a pre-
-        estimated F_hat (Q7 5.2 Fix 2)."""
+        estimated F_hat (Q7 5.2 Fix 2).
+
+        DISCLOSURE (deep-review F9): the divisor is Q = sum(w) -- the MLE/biased weighted
+        variance, no effective-degrees-of-freedom correction (the same biased 1/t form as
+        Mnih'08 Section 2's own sigma_t^2).  It slightly UNDER-estimates the variance and so
+        slightly UNDER-widens `eb_radius`.  Kept because the racing rule is a heuristic
+        best-arm search carrying no anytime/family-wise guarantee to protect (see
+        `eliminate`) -- NOT because this estimator is unbiased."""
         q = self.Q()
         if q <= 0.0 or len(self._vals) < 1:
             return 0.0
@@ -405,7 +412,39 @@ def _radius(arm, delta, use_bernoulli):
 
 def eliminate(arms, delta, use_bernoulli):
     """Kirkham Fig.10 lines 38-41, variance-aware: drop config c once its UPPER bound falls
-    below the current best's LOWER bound.  Returns the surviving arms (order preserved)."""
+    below the current best's LOWER bound.  Returns the surviving arms (order preserved).
+
+    CONFIDENCE SEMANTICS -- what `delta` does and does NOT buy (deep-review F9; read this
+    before citing Mnih'08 for a guarantee).  `delta` is a FIXED per-comparison level (0.05,
+    the `race()` default) applied UNCHANGED every round: no union bound over rounds, and no
+    `delta/K` split across the K competing arms.  So the confidence each `eliminate` call
+    spends is PER-COMPARISON only -- NOT anytime-valid and NOT family-wise.  Across the ~150
+    sequential elimination rounds a factored search peeks this bound again and again, and the
+    true probability of EVER wrongly dropping the best arm is not bounded by `delta`.
+      * PROVIDED (the only Mnih'08 claim that stays valid): the per-round empirical-Bernstein
+        radius of Mnih-Szepesvari-Audibert ICML'08 SECTION 2, Eq.(2) --
+        sqrt(2*sigma^2*ln(3/delta)/t) + 3*R*ln(3/delta)/t, R=1.  `eb_radius` matches it
+        exactly (deep-review slice-4 confirmed this numerically).
+      * NOT provided: (i) the ANYTIME, all-t guarantee of Mnih'08 SECTION 3.1 (EBStop), which
+        needs a spent sequence d_t with sum_t d_t <= delta (the paper uses
+        d_t = delta*(p-1)/(p*t^p)) so one 1-delta band holds for every round at once; and
+        (ii) the FAMILY-WISE racing guarantee of Mnih'08 SECTION 4 (the empirical Bernstein
+        race), which needs the delta/(M*N) split over M arms x N rounds.  This function does
+        neither, so neither guarantee holds.
+      * WHY it is deliberately absent (do NOT "fix" this back without re-deriving the rule):
+        the textbook anytime schedule -- d_t = delta*(p-1)/(p*t^p), p=2, with a delta/K
+        per-arm split -- WAS implemented (2026-07-15, DR1 Part E) and empirically BROKE
+        elimination: tunecheck went 4/7 (SER^3 drift recovery 0/20, EB-crowns-optimum 0/40,
+        factored-search-beats-seed FAIL).  Progressive elimination over ~150 rounds needs
+        usable confidence LATE, while any valid sum_t d_t <= delta schedule front-loads the
+        budget and blows up the late-round radii, so the field stops separating.  A correct
+        anytime/fixed-budget rule (LUCB, or a fixed-budget delta/(T_max*K) split reusing the
+        `budget_runs` mirror = Mnih'08 Section 4's delta/(M*N)) is FUTURE WORK, not a
+        comment-toggle.
+      * What MAY therefore be claimed: this is a HEURISTIC best-arm search.  Its output is a
+        stress CONFIGURATION whose worth is established by the downstream hardware campaign's
+        statistics (B7; `budget_runs` / het_verdict.h), NOT by this racing rule's confidence.
+        The tuner feeds no scientific verdict (separate path from het_verdict; Q7 TRAP 1)."""
     live = [a for a in arms if a.raceable()]
     if len(live) < 2:
         return live
