@@ -133,7 +133,7 @@ class ParkMiller(object):
 # on-die GPU caches (G), CPU-local caches/LPDDR (C), the C2C interconnect (I).
 #
 # Every knob name below was verified against the LIVE emitter this session
-# (litmus/HetArch.ml het_stress.cuh / het_cpu_stress.h).  DRIFT vs the brief:
+# (litmus/het-runtime/{het_stress.cuh,het_cpu_stress.h}).  DRIFT vs the brief:
 # the brief wrote HET_CPU_TEST_CORE; the live knob is HET_CPU_TEST_CORE0.
 # ===========================================================================
 SUBSEARCH = {

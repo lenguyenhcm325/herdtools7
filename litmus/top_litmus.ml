@@ -864,11 +864,11 @@ static void gd_free_noise(void* _p){
         end
       module AllocCpu = SymbReg.Make(AllocArchCpu)
 
-      let outs_h_content = HetArch.outs_h
-      let outs_c_content = HetArch.outs_c
+      let outs_h_content = HetPayloads.outs_h
+      let outs_c_content = HetPayloads.outs_c
       (* B4: the ported cuda-litmus GPU stress layer, emitted verbatim into every
          het harness dir and #include'd by both the .cu and the .hip render. *)
-      let het_stress_content = HetArch.het_stress_cuh
+      let het_stress_content = HetPayloads.het_stress_cuh
       (* B5: the CPU-side + interconnect stress layer.  A SEPARATE header from
          het_stress.cuh because it is the only place host-ISA asm may live: the
          .cu is nvcc's translation unit, and the M3 preload primitives are AArch64
@@ -877,10 +877,10 @@ static void gd_free_noise(void* _p){
          `clang --target=aarch64-linux-gnu' -- defines HET_CPU_STRESS_IMPL and so
          compiles the bodies; the .cu gets the knobs, the arg structs and the
          declarations, and NOT ONE LINE of host ISA. *)
-      let het_cpu_stress_content = HetArch.het_cpu_stress_h
+      let het_cpu_stress_content = HetPayloads.het_cpu_stress_h
       (* B6: het_obs_record + the null-credibility decision rule.  Shared with the
          verdictcheck unit test so the gate runs the rule that ships. *)
-      let het_verdict_content = HetArch.het_verdict_h
+      let het_verdict_content = HetPayloads.het_verdict_h
 
       (* ==================== B6b: THE CO-RUN EMITTER =========================
          Q4 2.4 calls the positive control "just another het instance ... No new
