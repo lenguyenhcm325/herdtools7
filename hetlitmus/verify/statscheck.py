@@ -451,6 +451,25 @@ NEGACF_CELLS = negacf_cells(_R)
 COX_SLOW_RHO, COX_FAST_RHO = 0.99, 0.90
 COX_SLOW_CELLS = cox_cells(_Rng(20260714), 10, COX_SLOW_RHO)
 COX_FAST_CELLS = cox_cells(_Rng(20260714), 10, COX_FAST_RHO)
+# B7c/F8 -- THE SELF-REFERENTIAL ESCAPE (deep-review F8; decisions/F8-decision.md, Path 1).
+# COX_SLOW/COX_FAST above pin the guard's two IN-BAND outcomes (fires / stays silent, both
+# correct).  This fixture pins the THIRD, KNOWN-OPEN outcome the guard's threshold CANNOT
+# see: a count-valued bursty stream whose tau the Geyer sum under-reads so hard that
+# 50*tau_est drops BELOW the pooled nwin, so the guard PASSES and credits N_eff off an
+# estimate that vouches for itself.  Lower mu/s than COX_SLOW make the counting noise heavier
+# relative to the drift, the spurious non-positive pair arrives even earlier, and tau_est
+# comes back ~16.8 against a closed-form tau_true = 85.9 -- and 50*16.8 = 839 < 1280, so the
+# guard is fooled and N_eff is credited 7.6 where the honest reading is 1.49 (~5.1x).  It is
+# SEED-SENSITIVE (seed 17 -> 5.1x; 20260714 -> 3.6x; 42 -> guard fires, no escape), so the
+# witness asserts its OWN escape-precondition -- the B7c AR(1) lesson: a fixture that has
+# drifted out of the regime it demonstrates must FAIL LOUDLY, not pass vacuously.
+COX_ESCAPE_SEED = 17
+COX_ESCAPE_RHO, COX_ESCAPE_MU, COX_ESCAPE_S = 0.99, 3.0, 1.5
+COX_ESCAPE_CELLS = cox_cells(_Rng(COX_ESCAPE_SEED), 10,
+                             COX_ESCAPE_RHO, COX_ESCAPE_MU, COX_ESCAPE_S)
+COX_ESCAPE_TAU_TRUE = cox_tau(COX_ESCAPE_RHO, COX_ESCAPE_MU, COX_ESCAPE_S)   # 85.857
+F8_ESCAPE_CASE = "f8-escape-guard-passes-over-credits"
+F8_NEFF_EXPECT = 7.63        # NWIN/tau_est at seed 17: the current ~5.1x over-credit, pinned
 # TAU AT THE CAP, RESOLVED.  The 50*tau criterion is on the POOLED count, so a tau at
 # the 128-window ceiling needs 50*128 = 6,400 samples = 50 usable runs before it may be
 # BELIEVED to be at the ceiling.  At R = 10 the honest reading of a ramp is "I cannot
@@ -598,6 +617,21 @@ case("never-tau-unresolved-falls-back-to-B7", stream(COX_SLOW_CELLS),
 case("never-tau-resolved-still-claims-Neff", stream(COX_FAST_CELLS),
      obs="Never", flags_none=["FANO_UNMEASURED", "TAU_UNMEASURED", "TAU_AT_CAP",
                               "TAU_UNRESOLVED"])
+
+# B7c/F8 -- THE KNOWN-OPEN ESCAPE WITNESS (deep-review F8; decisions/F8-decision.md, Path 1).
+# The guard PASSES here (tau_need = 7 <= R_usable = 10) and CREDITS N_eff off a tau it cannot
+# actually resolve -- the self-referential escape COX_SLOW/COX_FAST cannot reach.  This case
+# pins the two facts phase2 can see WITHOUT the closed form: the guard stays silent
+# (flags_none TAU_UNRESOLVED) and the under-read tau sits BELOW the cap (flags_none TAU_AT_CAP)
+# so neither reliability flag can catch it.  The QUANTITATIVE claims -- tau_est < tau_true/2,
+# the ~5.1x over-credit, and the run-level-bound invariance (the mitigation Path 1 leans on)
+# -- are asserted in phase2's F8 witness block (check_f8_escape_witness), which needs cox_tau.
+# NOTE BOUND_VACUOUS DOES fire here (p_bound = 1.85 >= 1: a heavy-F_cell null bounds nothing);
+# that is incidental to the escape and deliberately NOT constrained.  If a future guard fix
+# makes the guard FIRE here, this case's flags_none flips and the witness becomes that bite.
+case(F8_ESCAPE_CASE, stream(COX_ESCAPE_CELLS),
+     obs="Never",
+     flags_none=["TAU_UNRESOLVED", "TAU_AT_CAP", "TAU_UNMEASURED", "FANO_UNMEASURED"])
 
 # THE FLOOR / CEILING CLAMP -- an ANTI-correlated stream has raw tau < 1, which
 # would credit MORE independent samples than the stream has windows.  The clamp
@@ -1090,6 +1124,133 @@ FLAGS = ["FANO_UNMEASURED", "NONSTATIONARY", "DEGEN_SIGHTING", "UNDERDISPERSED",
 FLAG_BIT = {f: 1 << i for i, f in enumerate(FLAGS)}
 
 
+def _parse_case_fields(l):
+    """Parse one CASE| line from the C driver into (name, stats-dict).  Single source of
+    truth for phase2 AND the F8 witness bites, so the two can never drift apart."""
+    f = l.split("|")
+    (_, name, obs, k, k_eff, k_runs, n_degen, R_usable, F_win, F_cell,
+     r_hat, mu_up, tau_w, N_eff, R_eff, p_bound, P_rep, ks, ks_D, tier,
+     tau_need, flags) = f
+    return name, dict(
+        obs=obs, k=int(k), k_eff=int(k_eff), k_runs=int(k_runs),
+        n_degen=int(n_degen), R_usable=int(R_usable),
+        F_win=float(F_win), F_cell=float(F_cell), r_hat=float(r_hat),
+        mu_upper=float(mu_up), tau_w=float(tau_w), N_eff=float(N_eff),
+        R_eff=float(R_eff), p_bound=float(p_bound),
+        P_rep=float(P_rep), ks=ks, ks_D=float(ks_D), tier=tier,
+        tau_need=int(tau_need), flags=int(flags, 16))
+
+
+# ---------------------------------------------------------------------------
+# B7c/F8 -- THE KNOWN-OPEN ESCAPE WITNESS.  Deep-review F8, Path 1 (decisions/
+# F8-decision.md): the B7c guard scales its threshold by the ESTIMATED tau, so a
+# count-valued bursty stream whose tau the Geyer sum under-reads can slip past it -- the
+# estimate vouches for itself.  This is NOT fixed (Path 2, a non-self-referential 50*NWIN
+# floor, was rejected for its ~8-fixture cascade); it is DISCLOSED (het_verdict.h:195-206),
+# WITNESSED here, and operationally fenced (design doc S6: any early-stop below R = 50 usable
+# runs is provisional).  The witness pins the CURRENT over-crediting behavior against the C-
+# compiled het_verdict.h path; if a future guard fix makes it fail, REPURPOSE it as that
+# fix's bite.
+# ---------------------------------------------------------------------------
+def check_f8_escape_witness(got, quiet=False, neff_expect=F8_NEFF_EXPECT):
+    """Assert the four F8 facts on the escape case's REAL C stats (`got` = phase2's map,
+    computed through het_verdict.h and already differential-checked vs the Python mirror to
+    1e-9; the ONLY independent anchor used here is the closed form cox_tau, never the mirror).
+    Returns the number of failures.  Runs from phase2 (shipped header -> must PASS) and from
+    --bite (mutated header / mis-pinned expectation -> must FAIL)."""
+    g = got.get(F8_ESCAPE_CASE)
+    if g is None:
+        print("  *** F8-WITNESS: the escape case produced no CASE line")
+        return 1
+    fails = 0
+    tau_est = g["tau_w"]
+    tau_true = COX_ESCAPE_TAU_TRUE
+    nwin = g["R_usable"] * NWIN
+    guard_fired = bool(g["flags"] & FLAG_BIT["TAU_UNRESOLVED"])
+    neff_honest = min(max(NWIN / tau_true, 1.0), float(NWIN))          # 1.49
+    over = g["N_eff"] / neff_honest if neff_honest > 0.0 else 0.0
+
+    # (1) ESCAPE-PRECONDITION / ANTI-VACUITY.  The guard must PASS (nwin >= 50*tau_est AND
+    #     TAU_UNRESOLVED clear).  If numeric drift ever lifts the fixture out of the escape
+    #     regime, THIS assertion -- not silence -- fails (the B7c AR(1) lesson).
+    passes = (nwin >= TAU_MIN_SAMPLES * tau_est) and not guard_fired
+    if not passes:
+        fails += 1
+        print("  *** F8-WITNESS(precondition): guard does NOT pass at R=10 (nwin=%d, "
+              "50*tau_est=%.1f, TAU_UNRESOLVED=%s) -- the fixture is not in the escape "
+              "regime it exists to demonstrate"
+              % (nwin, TAU_MIN_SAMPLES * tau_est, guard_fired))
+
+    # (2) THE UNDER-READ: tau_est < tau_true/2 (measured 16.8 vs 85.9).
+    if not (tau_est < tau_true / 2.0):
+        fails += 1
+        print("  *** F8-WITNESS(under-read): tau_est=%.2f is NOT < tau_true/2=%.2f -- the "
+              "estimator has stopped under-reading, so there is nothing to fool the guard"
+              % (tau_est, tau_true / 2.0))
+
+    # (3) THE OVER-CREDIT (KNOWN-OPEN, PINNED).  N_eff credited ~7.6 (tol ~+-10%) against an
+    #     honest NWIN/tau_true ~1.49 -- the CURRENT behavior over-credits ~5x.  Deep-review
+    #     F8, Path 1: if you just made this fail by FIXING the guard, this witness IS that
+    #     fix's bite; corrupting the pin (`neff_expect`) must also fail here.
+    if abs(g["N_eff"] - neff_expect) > 0.10 * neff_expect:
+        fails += 1
+        print("  *** F8-WITNESS(over-credit): N_eff credited=%.3f, pinned %.2f +-10%% "
+              "(honest NWIN/tau_true=%.3f => ~%.1fx over-credit) -- either the guard was "
+              "fixed (repurpose this witness) or the pin is wrong"
+              % (g["N_eff"], neff_expect, neff_honest, over))
+
+    # (4) THE MITIGATION (why Path 1 is sound).  On these SAME records the RUN-LEVEL headline
+    #     bound equals the B7 reading (N_eff forced to 1): N_eff*p_bound == mu_upper*DEFF/
+    #     R_usable to 1e-9.  The over-credit refines the per-effective-sample unit; it NEVER
+    #     moves the headline claim (het_verdict.h S7, the R3 identity).
+    if g["p_bound"] >= 0.0:
+        deff = g["F_cell"] if g["F_cell"] > 1.0 else 1.0
+        run_level = g["N_eff"] * g["p_bound"]
+        b7_headline = g["mu_upper"] * deff / g["R_usable"]
+        if not close(run_level, b7_headline):
+            fails += 1
+            print("  *** F8-WITNESS(invariance): N_eff*p_bound=%.12g != mu_upper*DEFF/"
+                  "R_usable=%.12g -- the over-credit is moving the HEADLINE bound, so Path "
+                  "1's 'the escape touches only the secondary number' no longer holds"
+                  % (run_level, b7_headline))
+
+    if not fails and not quiet:
+        print("  the F8 escape witness   :  guard PASSES (nwin=%d >= 50*tau_est=%.0f), "
+              "tau_est=%.1f << tau_true=%.1f, N_eff credited=%.2f vs honest=%.2f (~%.1fx "
+              "over-credit, KNOWN-OPEN); run-level bound invariant to 1e-9"
+              % (nwin, TAU_MIN_SAMPLES * tau_est, tau_est, tau_true, g["N_eff"],
+                 neff_honest, over))
+    return fails
+
+
+def _escape_got(header_dir):
+    """Compile the case set against header_dir's het_verdict.h, run it, and return the
+    parsed C stats for the F8 escape case -- the same fields phase2 parses.  Lets --bite
+    drive check_f8_escape_witness against a MUTATED header (the escape must vanish)."""
+    tmp = tempfile.mkdtemp(prefix="statsf8.")
+    try:
+        shutil.copy(os.path.join(header_dir, "het_verdict.h"),
+                    os.path.join(tmp, "het_verdict.h"))
+        src = os.path.join(tmp, "st.c")
+        with open(src, "w") as fh:
+            fh.write(build_c())
+        exe = os.path.join(tmp, "st")
+        cc = subprocess.run(["gcc", "-std=c99", "-O2", "-Wall", "-Wno-unused-function",
+                             "-I", tmp, src, "-o", exe, "-lm"],
+                            capture_output=True, text=True)
+        if cc.returncode != 0:
+            raise SystemExit("statscheck F8: witness harness did not compile\n" + cc.stderr)
+        out = subprocess.run([exe], capture_output=True, text=True).stdout.splitlines()
+        for l in out:
+            if l.startswith("CASE|"):
+                name, rec = _parse_case_fields(l)
+                if name == F8_ESCAPE_CASE:
+                    return rec
+        raise SystemExit("statscheck F8: the escape case produced no CASE line")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def phase1(lines, quiet):
     print("===== PHASE 1: is mu_upper() the closed form, or a disguised 3? =====")
     bad = 0
@@ -1252,23 +1413,13 @@ def phase2(lines, quiet):
 
     for l in lines:
         if l.startswith("CASE|"):
-            f = l.split("|")
-            (_, name, obs, k, k_eff, k_runs, n_degen, R_usable, F_win, F_cell,
-             r_hat, mu_up, tau_w, N_eff, R_eff, p_bound, P_rep, ks, ks_D, tier,
-             tau_need, flags) = f
-            got[name] = dict(
-                obs=obs, k=int(k), k_eff=int(k_eff), k_runs=int(k_runs),
-                n_degen=int(n_degen), R_usable=int(R_usable),
-                F_win=float(F_win), F_cell=float(F_cell), r_hat=float(r_hat),
-                mu_upper=float(mu_up), tau_w=float(tau_w), N_eff=float(N_eff),
-                R_eff=float(R_eff), p_bound=float(p_bound),
-                P_rep=float(P_rep), ks=ks, ks_D=float(ks_D), tier=tier,
-                tau_need=int(tau_need), flags=int(flags, 16))
-            seen_obs.add(obs)
-            seen_tier.add(tier)
-            seen_ks.add(ks)
+            name, rec = _parse_case_fields(l)
+            got[name] = rec
+            seen_obs.add(rec["obs"])
+            seen_tier.add(rec["tier"])
+            seen_ks.add(rec["ks"])
             for fl, bit in FLAG_BIT.items():
-                if int(flags, 16) & bit:
+                if rec["flags"] & bit:
                     seen_flags.add(fl)
         elif l.startswith("PRINT-BEGIN|"):
             cur, buf = l.split("|", 1)[1], []
@@ -1515,6 +1666,13 @@ def phase2(lines, quiet):
             elif not quiet:
                 print("      containment: the unresolved fallback == B7's formula to "
                       "1e-9 (it can never be worse than the baseline)")
+
+    # ---- B7c/F8: THE KNOWN-OPEN ESCAPE WITNESS (deep-review F8, Path 1).  The guard's two
+    # in-band outcomes are pinned above; this pins the third, self-referential one it CANNOT
+    # see -- the guard passing on a tau it under-read and over-crediting N_eff ~5x.  It also
+    # runs from --bite against a mutated header (the escape must vanish) and a mis-pinned
+    # expectation, so it is live both ways.  See check_f8_escape_witness for the four facts.
+    bad += check_f8_escape_witness(got, quiet)
 
     # THE PRINTOUT IS THE DELIVERABLE, NOT THE ENUM (the B6c lesson).  A flag nobody
     # reads changes nothing: the human block must SAY that tau was not resolved, that
@@ -2329,6 +2487,52 @@ def bite():
                         "static int het_tau_runs_needed(double tau_w) {\n  double need;\n"
                         "  if (tau_w > 0.0) return 0;"))
 
+        # ---- B7c/F8: THE KNOWN-OPEN ESCAPE WITNESS, BOTH DIRECTIONS -------------
+        # check_f8_escape_witness pins the CURRENT over-crediting behavior on the seed-17
+        # Cox escape.  It must FAIL (15) when the escape DISAPPEARS -- someone makes the
+        # guard non-self-referential (the REJECTED Path 2, a 50*HET_NWIN floor), so it now
+        # FIRES here and N_eff falls to 1 -- and (16) when the over-credit is MIS-PINNED.
+        # Both drive the REAL C-compiled het_verdict.h path; (15) is cmp-verified.
+        print("\n-- F8 escape witness (the known-open self-referential escape) --")
+
+        # (15) THE ESCAPE REMOVED (Path 2 applied inline).  On the escape the guard now fires
+        #      (1280 < 50*128 = 6400) -> N_eff -> 1, so the witness's precondition AND its
+        #      over-credit assertion must both catch it.  This is the memo's "repurpose the
+        #      witness as the fix's bite", made executable.
+        f8dir = tempfile.mkdtemp(prefix="statsf8bite.")
+        try:
+            with open(os.path.join(hdir, "het_verdict.h")) as fh:
+                horig = fh.read()
+            hnew = horig.replace(
+                "if ((double)nwin < HET_TAU_MIN_SAMPLES * st->tau_w) {",
+                "if ((double)nwin < HET_TAU_MIN_SAMPLES * (double)HET_NWIN) {")
+            if hnew == horig:
+                print("  *** VACUOUS BITE: the guard-threshold injection matched NOTHING")
+                ok = False
+            else:
+                with open(os.path.join(f8dir, "het_verdict.h"), "w") as fh:
+                    fh.write(hnew)
+                if check_f8_escape_witness({F8_ESCAPE_CASE: _escape_got(f8dir)},
+                                           quiet=True) > 0:
+                    print("  BITES (gate failed, as it must)   [the guard made "
+                          "non-self-referential -> the escape vanishes -> witness fires]")
+                else:
+                    print("  *** DID NOT BITE   [the escape witness passed a fixed guard]")
+                    ok = False
+        finally:
+            shutil.rmtree(f8dir, ignore_errors=True)
+
+        # (16) THE OVER-CREDIT MIS-PINNED.  The SAME real header (escape intact), but the
+        #      pinned expectation corrupted (3x the true credit): proves the pin is COMPARED,
+        #      not decorative -- a wrong pin fails.
+        if check_f8_escape_witness({F8_ESCAPE_CASE: _escape_got(hdir)}, quiet=True,
+                                   neff_expect=F8_NEFF_EXPECT * 3.0) > 0:
+            print("  BITES (gate failed, as it must)   [the over-credit pin corrupted "
+                  "-> the witness rejects it]")
+        else:
+            print("  *** DID NOT BITE   [a corrupted over-credit pin passed]")
+            ok = False
+
         # (5) THE WINDOW BUMP DELETED FROM THE PRODUCER.  het_win_of still exists and
         # the aggregate still computes -- but the sub-tallies never move, so every
         # dispersion number is fiction.  Only PHASE 3 can see this.
@@ -2377,11 +2581,13 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 14 injections were caught -- 4 against the B7")
+        print("BITE OK: all 16 injections were caught -- 4 against the B7")
         print("         ESTIMATOR/RULE, 5 against the B7b tau/N_eff/stop machinery,")
         print("         3 against the B7c reliability guard (deleted / always-on /")
-        print("         price silenced -- both directions AND the signal), 1 against")
-        print("         the PRODUCER (the sub-tallies), 1 against the EMITTED CORPUS.")
+        print("         price silenced -- both directions AND the signal), 2 against")
+        print("         the B7c/F8 known-open escape witness (the escape removed AND")
+        print("         the over-credit mis-pinned), 1 against the PRODUCER (the")
+        print("         sub-tallies), 1 against the EMITTED CORPUS.")
         print("         The gate is live both ways: it passes on the shipped code and")
         print("         fails on every way of breaking it.")
         return 0

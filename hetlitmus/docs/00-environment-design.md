@@ -167,7 +167,8 @@ clamped to `[1, HET_NWIN]`), so `R_eff = R_usable · N_eff / DEFF`; the **run-le
 `N_eff · p_bound = μ_upper · DEFF / R_usable` is invariant to `N_eff` by construction — the discount adds
 resolution beneath B7's number, never weakens it. B7c refuses to *spend* a τ the pooled stream is too short
 to resolve (`nwin < HET_TAU_MIN_SAMPLES · τ_w` → `TAU_UNRESOLVED`, `N_eff = 1`, i.e. B7 exactly); its
-count-valued-stream over-credit residual is a **known-open** item (deep-review F8). `HET_P_MIN` stays
+count-valued-stream over-credit residual is a **known-open** item (deep-review F8 — disclosed, witnessed,
+and operationally fenced via Path 1: see `env-research/decisions/F8-decision.md` and §6). `HET_P_MIN` stays
 **UNSET** — `het_budget_runs` returns *NOT SIZED* rather than a fabricated rate — until GH200 measures it.
 The interleaving-liveness gate is **channel-aware** (DR1): reader shapes use `interleavings_detected`, the
 store-only (2+2W) shapes — which have no reader — use `observer_unique_count ≥ θ` instead, and a record with
@@ -284,6 +285,24 @@ their only detector is the uncalibrated `[c−8, c+8]` window (`HET_WINDOW = 8`)
 > 8 iterations would MISS the sighting and read as a null. At bring-up: measure `skew_*` first, run a
 small-`N` pass (`-s ≤ 4096`) so `exhaustive_valid = 1`, and calibrate `HET_WINDOW` from the measured skew
 before trusting any null on these two. (The other 14 Disallowed are `T_L ≤ 1`, exact-`O(N)`, skew-independent.)
+
+**A provisional early-stop below R = 50, and the F8 reopen trigger** (deep-review F8;
+`env-research/decisions/F8-decision.md`, Path 1). The B7c τ-guard scales its threshold by the *estimated* τ,
+and on a count-valued bursty control stream that estimate can be under-read enough to slip past `50·τ` —
+over-crediting `N_eff` up to ~5× at the shipped R = 10 (witness: `statscheck.py` COX_ESCAPE, seed 17). The
+**run-level** bound is invariant to this by construction (`N_eff · p_bound = μ_upper · DEFF / R_usable`), and
+the escape closes on its own at R ≥ 50 (the pooled stream is then ≥ 50× the maximum representable τ); the one
+live hazard is the adaptive scheduler consulting the credited bound *while* R climbs through the fooling zone.
+So:
+1. **Any `BOUND-MET` / `het_campaign_should_stop` "goal met" issued below R = 50 usable runs is
+   PROVISIONAL** — the credited `N_eff` it rests on is inside the F8 escape zone. Continue, or re-confirm the
+   bound once past R = 50, before acting on it. This is a **run-plan rule, deliberately not a coded floor**:
+   coding an `nwin ≥ 50·HET_NWIN` gate is exactly the rejected Path 2, whose ~8-fixture/scheduler cascade is
+   why Path 1 was chosen (§3.7's known-open; the memo's options table).
+2. **The reopen trigger.** The first canary `F̂`/τ measured at bring-up (item 1 above) decides F8's final
+   disposition: if the real control stream lands in the escape regime — count-valued and bursty, with
+   `50·τ_est` within ~2× of the pooled `nwin` — **reopen Path 2** (the non-self-referential `50·HET_NWIN`
+   floor) with data in hand before any small-R credited bound is trusted (memo, *"What would reopen"*).
 
 ---
 

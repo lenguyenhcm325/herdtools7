@@ -194,16 +194,43 @@
  *
  * WHAT THIS GUARD DOES *NOT* DO -- disclosed, because it bounds what may be claimed.
  * It bounds the UNRESOLVED regime; it does NOT make het_tau_ips unbiased INSIDE the
- * resolved band.  On the same AR(1)-rate/Poisson-count fixtures, tau estimates that
- * DO clear the threshold still over-credited N_eff by up to ~1.7x (true tau 17.4,
- * estimated 10.3).  That residual is (a) one-sided in the same optimistic direction,
- * (b) far smaller than the ~6x rule-of-three overclaim B7 exists to prevent and the
- * 2.4x this guard removes, and (c) bounded by the estimator's noise rather than
- * unbounded.  It is NOT corrected here: a bias correction is estimator-specific and
- * would have to be re-derived for the real GH200 control stream, whereas the
- * reliability threshold transfers.  B8 must treat an in-band N_eff as accurate to a
- * FACTOR, not to a digit, and must not build a confidence interval that assumes
- * otherwise. */
+ * resolved band, and the residual there has TWO distinct regimes that must NOT be
+ * conflated (deep-review F8; env-research/decisions/F8-decision.md, Path 1):
+ *
+ *   IN-BAND RESIDUAL (up to ~1.7x) -- estimates that clear the threshold HONESTLY but
+ *   noisily.  On the same AR(1)-rate/Poisson-count fixtures, tau estimates that DO clear
+ *   the threshold still over-credited N_eff by up to ~1.7x (true tau 17.4, estimated
+ *   10.3).  That residual is (a) one-sided in the same optimistic direction, (b) far
+ *   smaller than the ~6x rule-of-three overclaim B7 exists to prevent and the 2.4x this
+ *   guard removes, and (c) bounded by the estimator's noise rather than unbounded.
+ *
+ *   SELF-REFERENTIAL ESCAPE (up to ~5x at the shipped R=10) -- the threshold itself
+ *   scaled by an UNDER-READ estimate.  On a count-valued bursty stream the Geyer sum can
+ *   truncate so early that HET_TAU_MIN_SAMPLES*tau_est falls BELOW the pooled nwin, so
+ *   the guard PASSES and credits N_eff off an estimate that vouches for itself -- the
+ *   threshold cannot see this, because the number it compares against IS the number that
+ *   is wrong.  Witnessed and pinned: statscheck.py COX_ESCAPE (seed 17, tau_true 85.9 ->
+ *   est 16.8, N_eff credited 7.6 against an honest 1.49 -- ~5.1x).  This is WORSE than
+ *   the ~1.7x above, which was measured IN-BAND, a different regime.
+ *
+ *   CLOSURE.  The escape is a small-sample truncation artifact.  At R >= 50 usable runs
+ *   the pooled stream (>= 50*HET_NWIN = 6,400 windows) is >= 50x the MAXIMUM representable
+ *   tau (het_tau_ips clamps at [1, HET_NWIN]), the regime where Geyer IPS and the
+ *   TAU_AT_CAP saturation ARE reliable; the fooling zone is dev/pilot scale, R < 50, and
+ *   production campaigns are budgeted at ~1,500-30,000 runs.  And the RUN-LEVEL bound is
+ *   invariant regardless: the R3 identity N_eff*p_bound = mu_upper*DEFF/R_usable (see the
+ *   R3 bound below) holds whatever N_eff is credited, so ONLY the secondary
+ *   per-effective-sample number is exposed.
+ *
+ * NEITHER regime is corrected here: a bias correction is estimator-specific and would
+ * have to be re-derived for the real GH200 control stream, whereas the reliability
+ * threshold transfers.  B8 must treat an in-band N_eff as accurate to a FACTOR, not to a
+ * digit, and must not build a confidence interval that assumes otherwise.  The escape is
+ * DISCLOSED + WITNESSED + operationally fenced (Path 1): the environment design doc
+ * section 6 makes any early-stop below R = 50 usable runs PROVISIONAL, and the first
+ * canary F_hat/tau measured at GH200 bring-up reopens Path 2 (a non-self-referential
+ * 50*HET_NWIN floor) if the real control stream lands in the escape regime.  Full
+ * rationale in env-research/decisions/F8-decision.md. */
 #define HET_TAU_MIN_SAMPLES 50.0
 
 typedef enum { CONF_ROBUST, CONF_ADVISORY, CONF_EXPLORATORY } het_confidence;
