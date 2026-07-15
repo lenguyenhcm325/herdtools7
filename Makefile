@@ -748,6 +748,32 @@ hetlitmus-stats: | build
 	python3 hetlitmus/verify/statscheck.py --bite
 	@ echo "HetLitmus B7/B7b statistics layer: OK (and the gate bites)"
 
+### hetlitmus-tuner: the B8a autotuner SEARCH MACHINERY (tune.py) -- validated on the dev
+### box against SYNTHETIC objectives with a known optimum, because a real death rate is
+### hardware-only (Q7 4.2).  PURE PYTHON (no litmus7, no nvcc), so no `| build`.  Like
+### hetlitmus-stats, this exists because the recurring failure of this project is machinery
+### that compiles, passes every STRUCTURAL gate, and does NOTHING: a tuner that always
+### returns the seed is the same bug as B3's constant-false _weak.  So the gate does not
+### check that the search RUNS -- it checks that it FINDS a known optimum, REFUSES to crown
+### a phantom on a constant objective, and that removing each of Q7's three data-peeking
+### adaptations BREAKS it:
+###   optimum     the search returns the arg-max of distinct true means (100% of seeds)
+###   phantom     a constant objective yields NO confident winner (anti-7th-constant)
+###   drift       SER^3 randomized round-robin de-confounds a rising baseline where the
+###               SEQUENTIAL order (Kirkham Fig.10) picks the late config     [Q7 5.2 C2]
+###   overdisp    empirical-Bernstein RETAINS the true optimum where the Bernoulli CI
+###               ELIMINATES it under Fano>1                                  [Q7 5.2 A]
+###   structural  the sampler can never reach an INSTRUMENT/DETECTOR knob (TRAP 1/2);
+###               the config file carries zero tuned numerics on the dev box
+###   ks-in-loop  a non-stationary bout (het_ks2 verdict, reused) is EXCLUDED [Q7 5.2 C1]
+### --bite then PROVES each guard FAILS on a broken tuner, cmp-verified non-vacuous.
+hetlitmus-tuner:
+	@ echo
+	python3 hetlitmus/tune.py --self-test >/dev/null
+	python3 hetlitmus/verify/tunecheck.py
+	python3 hetlitmus/verify/tunecheck.py --bite
+	@ echo "HetLitmus B8a tuner search machinery: OK (and the gate bites)"
+
 ### Umbrellas (what you press).  `::` accumulation, order-only `| build`.
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
@@ -755,6 +781,7 @@ hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-stats
+hetlitmus-test:: hetlitmus-tuner
 
 hetlitmus-test-nvcc:: | build
 hetlitmus-test-nvcc:: hetlitmus-faithful
@@ -776,7 +803,7 @@ hetlitmus-promote: | build
 	@ echo "hetlitmus-promote: review 'git diff' then commit yourself."
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
-.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats
+.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64
