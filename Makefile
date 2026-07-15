@@ -788,6 +788,21 @@ hetlitmus-obs: | build
 	python3 hetlitmus/verify/obscheck.py --bite
 	@ echo "HetLitmus observer-liveness gate: OK (and the gate bites)"
 
+### hetlitmus-l0-selftest: the DISCRIMINATING-POWER proofs of the nvcc lane (DR1-B/F3).
+### l0_tokens.sh {selftest,guard} prove ptxcheck can DETECT a weakened scope/order and
+### that the stress/cpustress scaffolding bites a dead layer; smoke.sh bite proves the
+### co-run gate catches a missing control.  They were invoked by NO make target, so a
+### silently-neutered ptxcheck would still pass `make hetlitmus-test-all' -- the exact
+### "faithfulness gate went inert (0/338)" class.  Two invariance checks (stresscheck
+### check-5 pattern-invariance, cpustresscheck S4/G2) pass trivially on shipped runtime-
+### valued code and get their TEETH only here.
+hetlitmus-l0-selftest: | build
+	@ echo
+	bash hetlitmus/verify/l0_tokens.sh selftest
+	bash hetlitmus/verify/l0_tokens.sh guard
+	bash hetlitmus/verify/smoke.sh bite
+	@ echo "HetLitmus L0 discriminating power (selftest + guard + smoke bite): OK"
+
 ### Umbrellas (what you press).  `::` accumulation, order-only `| build`.
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
@@ -802,6 +817,7 @@ hetlitmus-test-nvcc:: hetlitmus-faithful
 hetlitmus-test-nvcc:: hetlitmus-stress
 hetlitmus-test-nvcc:: hetlitmus-cpustress
 hetlitmus-test-nvcc:: hetlitmus-obs
+hetlitmus-test-nvcc:: hetlitmus-l0-selftest
 hetlitmus-test-nvcc:: hetlitmus-smoke
 
 hetlitmus-test-all:: | build
@@ -819,6 +835,7 @@ hetlitmus-promote: | build
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
+.PHONY: hetlitmus-l0-selftest
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64

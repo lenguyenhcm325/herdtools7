@@ -25,8 +25,10 @@ cd "$ROOT"
 export PATH="/usr/local/cuda/bin:$ROOT/_build/install/default/bin:$PATH"
 
 CHECK="$ROOT/hetlitmus/verify/ptxcheck.py"
-GPU_DIR="$ROOT/hetlitmus/tests/gpu-only"
-HET_DIR="$ROOT/hetlitmus/tests/het"
+# Overridable so the F4 census guard can be BITTEN (point at an empty dir -> the
+# expected 137/338 fails).  Default is the real corpus, so normal runs are unchanged.
+GPU_DIR="${GPU_DIR:-$ROOT/hetlitmus/tests/gpu-only}"
+HET_DIR="${HET_DIR:-$ROOT/hetlitmus/tests/het}"
 JOBS="${JOBS:-4}"
 RESDIR="$(mktemp -d)"
 trap 'rm -rf "$RESDIR"' EXIT
@@ -48,7 +50,7 @@ export CHECK RESDIR
 
 # ---- loop a directory, print table + tally --------------------------------
 run_dir() {
-  local dir="$1" label="$2"
+  local dir="$1" label="$2" expect="${3:-0}"
   printf '\n===== L0 token check: %s =====\n' "$label"
   printf '%-34s | %s\n' "test" "verdict"
   printf -- '-----------------------------------+---------\n'
@@ -71,6 +73,17 @@ run_dir() {
     grep -vE '^PASS ' "$res" | while read -r v n; do
       printf '>>> %s %s\n' "$v" "$n"; cat "$RESDIR/diff.$n" 2>/dev/null
     done
+  fi
+  # F4 (DR1-B): `pass -eq total' is VACUOUSLY true on an empty/misnamed corpus
+  # (0 -eq 0) -- it would print "faithfulness (475): OK" for ZERO tests, the exact
+  # inert-gate class this project keeps shipping.  Assert the KNOWN census
+  # (het=338, gpu-only=137), the same exact-count discipline corpus-gate and
+  # verdictcheck use; a census change then has to be a deliberate edit to the
+  # CALL SITE, never an accident.
+  if [ "$expect" -gt 0 ] && [ "$total" -ne "$expect" ]; then
+    printf 'CENSUS FAIL %s: %d .litmus emitted, expected %d (empty/misnamed corpus?)\n' \
+           "$label" "$total" "$expect" >&2
+    return 1
   fi
   [ "$pass" -eq "$total" ]
 }
@@ -673,16 +686,16 @@ cpustress_report() {
 # ---------------------------------------------------------------------------
 cmd="${1:-all}"
 case "$cmd" in
-  gpu-only)  run_dir "$GPU_DIR" gpu-only ;;
-  het)       run_dir "$HET_DIR" het ;;
+  gpu-only)  run_dir "$GPU_DIR" gpu-only 137 ;;
+  het)       run_dir "$HET_DIR" het 338 ;;
   guard)     guard_report; exit $? ;;
   selftest)  selftest; exit $? ;;
   stress)    stress_report; exit $? ;;
   cpustress) cpustress_report; exit $? ;;
   all)
     rc=0
-    run_dir "$GPU_DIR" gpu-only || rc=1
-    run_dir "$HET_DIR" het || rc=1
+    run_dir "$GPU_DIR" gpu-only 137 || rc=1
+    run_dir "$HET_DIR" het 338 || rc=1
     exit $rc ;;
   *) echo "usage: $0 [all|gpu-only|het|guard|selftest|stress|cpustress]"; exit 64 ;;
 esac
