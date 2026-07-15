@@ -105,6 +105,11 @@ BASE = dict(
     target_count_exhaustive=0,
     target_count_heuristic=0,
     interleavings_detected=1000,
+    # DR1-A2/F2: the baseline is a READER (sync-channel) test -- 316 of the 338, and
+    # 14 of the 16 Disallowed.  The verdict is now CHANNEL-AWARE, so a record with
+    # neither channel flag set fails closed; the store-only cases below flip to the
+    # observer channel (sync_valid=0, obs_valid=1) explicitly.
+    sync_valid=1,
     control_compiled_in=1,
     canary_compiled_in=1,
     control_target_count=30,          # == HET_TAU_HOT
@@ -199,6 +204,35 @@ CASES = [
     # it is indistinguishable from a dead harness.
     case("allowed-unobserved-is-observability-not-model", "ALLOWED-UNOBSERVED",
          het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0),
+
+    # DR1-A2/F2: THE STORE-ONLY (2+2W) CHANNEL SWITCH.  A store-only shape has NO
+    # reader, so interleavings_detected is structurally 0 and its ONLY liveness
+    # channel is the OBSERVER (sync_valid=0, obs_valid=1).  Before F2 the verdict read
+    # interleavings_detected==0 blindly and forced all 22 of these to COLD-INVALID
+    # forever -- 18 ALLOWED + 4 NO-ORACLE that could never report a clean null.
+    #
+    # (a) LIVE observer (>= HET_THETA_DISTINCT distinct GPU store-values) + hot canary,
+    #     nothing seen  ->  a clean ALLOWED-UNOBSERVED (the bound-carrying null path).
+    case("store-only-observer-live-is-ALLOWED-UNOBSERVED", "ALLOWED-UNOBSERVED",
+         het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
+         sync_valid=0, obs_valid=1, observer_unique_count=500,
+         interleavings_detected=0),
+
+    # (b) COLD observer (< HET_THETA_DISTINCT -- EXACTLY what F1's hoist produced,
+    #     observer_unique_count<=1)  ->  COLD-INVALID, and the printout must name the
+    #     OBSERVER channel, not the meaningless "interleavings_detected==0".
+    case("store-only-observer-cold-is-COLD", "COLD-INVALID", dq=["OBSERVER_COLD"],
+         het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
+         sync_valid=0, obs_valid=1, observer_unique_count=1,
+         interleavings_detected=0),
+
+    # (c) A store-only SIGHTING is still a sighting: the observer channel must never
+    #     block a genuinely recovered outcome (falsification is one-sided).
+    case("store-only-observer-sighting-is-ALLOWED-OBSERVED", "ALLOWED-OBSERVED",
+         het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
+         sync_valid=0, obs_valid=1, observer_unique_count=500,
+         interleavings_detected=0,
+         target_count_exhaustive=7, target_count_heuristic=7),
 
     # ... and with a COLD canary it must fall back to COLD-INVALID, not quietly
     # report "we did not see it" as though that meant something.
@@ -386,6 +420,13 @@ CASES = [
 MUST_PRINT_SCAN_CAVEAT = {"allowed-windowed-zero-must-say-so",
                           "no-oracle-windowed-zero-must-say-so"}
 SCAN_CAVEAT_TEXT = "rests on the WINDOWED heuristic"
+
+# DR1-A2/F2: a store-only COLD null must NAME the observer channel that failed, not
+# print the generic "interleavings_detected==0" (meaningless for a shape with no
+# reader).  Setting the dq bit is not the deliverable; the sentence reaching the
+# reader is (the B6c lesson).
+MUST_NAME_OBSERVER_CHANNEL = {"store-only-observer-cold-is-COLD"}
+OBSERVER_CHANNEL_TEXT = "OBSERVER channel was COLD"
 
 # Cases that must NOT carry CV_CANARY_ONLY (checked negatively -- see above).
 NO_CANARY_ONLY_CV = {"canary-only-caveat-is-not-raised-without-a-mutant",
@@ -628,6 +669,18 @@ def scan_prints(blocks, cases_by_name, quiet):
             bad += 1
         elif not quiet:
             print("      %-46s discloses its windowed zero (correctly)" % name)
+
+    # DR1-A2/F2: a store-only COLD null must NAME the observer channel, not print the
+    # generic interleaving disqualifier that is meaningless for a shape with no reader.
+    for name in sorted(MUST_NAME_OBSERVER_CHANNEL):
+        text = blocks.get(name, ("", ""))[1]
+        if OBSERVER_CHANNEL_TEXT not in text:
+            print("  *** %s did NOT name the OBSERVER channel as the cold reason -- a "
+                  "store-only shape has no reader, so a generic interleaving "
+                  "disqualifier misreports why its null was discarded" % name)
+            bad += 1
+        elif not quiet:
+            print("      %-46s names the observer channel (correctly)" % name)
 
     if bad:
         print("\nPRINT FAILED: %d problem(s).  This is the B6c bug: 322 of the 338 "

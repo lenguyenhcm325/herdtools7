@@ -603,6 +603,12 @@ typedef enum {
    then does not know whether a sighting REFUTES the model or CONFIRMS it, so it
    must claim NOTHING.  Fail closed, loudly. */
 #define HET_DQ_ORACLE_UNSET     (1u << 10)
+/* DR1-A2/F2: the OBSERVER decode channel (the store-only 2+2W shapes, whose only
+   channel it is) resolved fewer than HET_THETA_DISTINCT distinct GPU store-values
+   across the window -- the observer's analogue of interleavings_detected==0.  A
+   SEPARATE code, not a reuse of NO_INTERLEAVING, so the printed sentence names the
+   channel that actually failed (B6c: the sentence is the deliverable). */
+#define HET_DQ_OBSERVER_COLD    (1u << 11)
 
 /* Why a null was CAVEATED (still reportable, but weaker than it looks). */
 #define HET_CV_NO_EXHAUSTIVE    (1u << 0)  /* ground-truth scan did not run       */
@@ -720,7 +726,21 @@ static het_verdict_t het_verdict(const het_obs_record *r,
      true of exactly two tests: MP-{cg,gc}-sys-relaxed, which ARE the canary.) */
   if (!r->control_compiled_in && !r->canary_compiled_in)
                                                   dq |= HET_DQ_NO_CONTROL_BUILT;
-  if (r->interleavings_detected == 0)             dq |= HET_DQ_NO_INTERLEAVING;
+  /* DR1-A2/F2: CHANNEL-AWARE interleaving-liveness, mirroring het_cell_degenerate.
+     The SYNC channel's liveness evidence is interleavings_detected (a reader saw
+     the two engines overlap); the OBSERVER channel's is observer_unique_count (the
+     CPU observer resolved distinct GPU store-values across the window).  Store-only
+     (2+2W) shapes have NO reader, so interleavings_detected is structurally 0 and
+     the observer is their ONLY channel -- reading interleavings_detected there
+     would condemn all 22 forever (the F2 constant).  0 means NOT MEASURED on the
+     absent channel, never "measured zero".  The no-channel arm is unreachable in
+     the shipped corpus (0 of 338) and FAILS CLOSED. */
+  if (r->sync_valid) {
+    if (r->interleavings_detected == 0)           dq |= HET_DQ_NO_INTERLEAVING;
+  } else if (r->obs_valid) {
+    if (r->observer_unique_count < (uint64_t)HET_THETA_DISTINCT)
+                                                  dq |= HET_DQ_OBSERVER_COLD;
+  } else                                          dq |= HET_DQ_NO_INTERLEAVING;
   if (r->stress_truncated > 0)                    dq |= HET_DQ_STRESS_TRUNCATED;
   /* The window-opener: requested via HET_BARRIER_PCT, evidenced by the spin
      tally.  Zero spins across an entire run means it never ran. */
@@ -1004,6 +1024,16 @@ static void het_print_liveness(FILE *_ch, const het_obs_record *_r) {
       "same C2C path.\n",
       _r->canary_name ? _r->canary_name : "(none)",
       (unsigned long long)_r->canary_target_count, (int)HET_TAU_HOT);
+  /* DR1-A2/F2: for a store-only (2+2W) shape the OBSERVER is the liveness channel
+     -- there is no reader, so interleavings_detected is structurally 0 and, printed
+     alone, would misread as "nothing raced".  Surface the observer's own "could we
+     have" evidence so a clean non-observation on these 22 shapes reads as one. */
+  if (_r->obs_valid && !_r->sync_valid)
+    fprintf(_ch,
+      "  the CPU observer resolved %llu distinct GPU store-value(s) across the "
+      "window (this store-only shape has no reader, so the observer -- not "
+      "interleavings_detected -- is its liveness channel).\n",
+      (unsigned long long)_r->observer_unique_count);
   if (!_r->control_compiled_in && !_r->canary_compiled_in) {
     /* Two tests are SUPPOSED to land here -- MP-{cg,gc}-sys-relaxed, which ARE the
        Layer-B canary and cannot co-run themselves.  Everything else landing here is
@@ -1156,6 +1186,14 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     if (dq & HET_DQ_NO_INTERLEAVING)
       fprintf(_ch, "    - interleavings_detected == 0: the two engines never "
                    "overlapped; nothing raced, so nothing could have been seen\n");
+    if (dq & HET_DQ_OBSERVER_COLD)
+      fprintf(_ch, "    - observer_unique_count=%llu < %d: the CPU observer "
+                   "resolved fewer than two distinct GPU store-values, so the "
+                   "store-only OBSERVER channel was COLD -- this shape has no "
+                   "reader, the observer is its only liveness channel, and this "
+                   "null is therefore not a datum\n",
+              (unsigned long long)_r->observer_unique_count,
+              (int)HET_THETA_DISTINCT);
     if (dq & HET_DQ_CONTROLS_COLD)
       fprintf(_ch, "    - neither mu(T) nor the canary reached tau_hot=%d: a "
                    "known-ALLOWED weak behaviour on this very machinery did not "

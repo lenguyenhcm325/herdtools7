@@ -1482,8 +1482,21 @@ static void gd_free_noise(void* _p){
                   decl_pins `Heur "      " lvl)
                 !win_order ;
               if is_test then begin
-                s (Printf.sprintf "      int _hot = %s;\n" hot_expr) ;
-                s "      if (_hot) _rec.interleavings_detected++;\n"
+                match read_buffers with
+                | [] ->
+                   (* DR1-A2/F2: a store-only (2+2W) shape has NO reader, so there
+                      is no interleaving to detect.  interleavings_detected stays
+                      memset-0 and the OBSERVER channel (obs_valid=1) carries this
+                      test's liveness instead -- het_verdict switches channel on
+                      sync_valid/obs_valid, so it never reads this field here.
+                      Emitting `int _hot = 0;' would ship a CONSTANT-FALSE detector,
+                      the very thing the _weak guard above (see is_true/is_false
+                      Warn.fatal) refuses; this extends that discipline to _hot
+                      (SHARED-CHARGE: never emit a constant detector). *)
+                   ()
+                | _ ->
+                   s (Printf.sprintf "      int _hot = %s;\n" hot_expr) ;
+                   s "      if (_hot) _rec.interleavings_detected++;\n"
               end ;
               (* ---- the weak-behaviour detector ---- *)
               (match windowed with
@@ -1600,9 +1613,12 @@ static void gd_free_noise(void* _p){
                   s "        if (!_have_prev || _ms != _prev_m) { _rec.distinct_decoded_iters++; _prev_m = _ms; _have_prev = 1; }\n" ;
                   s "      }\n"
                | _ -> ()) ;
-              (* Histogram: T only. *)
+              (* Histogram: T only.  DR1-A2/F2: a store-only shape emits no `_hot'
+                 (it has no reader), so gate the histogram on `_weak' alone -- exactly
+                 what `_hot || _weak' reduced to when `_hot' was the constant 0. *)
               if is_test then begin
-                s "      if (_hot || _weak) {\n" ;
+                s (Printf.sprintf "      if (%s) {\n"
+                     (match read_buffers with [] -> "_weak" | _ -> "_hot || _weak")) ;
                 s (Printf.sprintf "        intmax_t _o[%d];\n" (max 1 nslots)) ;
                 List.iteri
                   (fun i (p,r) ->
@@ -2264,7 +2280,22 @@ static void gd_free_noise(void* _p){
                 (* this instance's CPU observer pthread *)
                 if i.i_obs then begin
                   s (Printf.sprintf "struct %scpu_obs_args {\n" i.i_pre) ;
-                  List.iter (fun l -> s (Printf.sprintf "  uint64_t* %s;\n" l))
+                  (* DR1-A1/F1: the OBSERVED shared locations are `volatile const'
+                     so the observer's per-iteration reads (`*a->x' in the loop
+                     below) cannot be hoisted out of the perpetual loop at -O2 --
+                     the same treatment the noise buffers already get (2189, 2530)
+                     and the GPU-side atomic observer gets structurally.  A plain
+                     `uint64_t*' deref, never written on this thread, is hoisted to
+                     one broadcast load, so the observer records a single value N
+                     times, pins observer_unique_count<=1, and renders the
+                     store-only (2+2W) tests' ONLY recovery channel inert.  The
+                     non-observed globals are not dereferenced here and stay plain. *)
+                  List.iter
+                    (fun l ->
+                      let ty =
+                        if List.mem l i.i_obs_locs
+                        then "volatile const uint64_t*" else "uint64_t*" in
+                      s (Printf.sprintf "  %s %s;\n" ty l))
                     i.i_all_globals ;
                   s "  int* barrier;\n" ;
                   List.iter

@@ -493,14 +493,19 @@ def stream(cells_, chan="control", **kw):
     return [cell(w, chan=chan, run_id=i, **kw) for i, w in enumerate(cells_)]
 
 
-def observed(cells_, k, clean=True):
-    """Make the first k cells SEE the target (optionally in a degenerate decode)."""
+def observed(cells_, k, clean=True, obs_degen=False):
+    """Make the first k cells SEE the target (optionally in a degenerate decode).
+       obs_degen degrades the OBSERVER channel on the SIGHTING cells only (a real
+       ws-edge needs >=2 distinct GPU store-values, so observer_unique_count=1 on a
+       sighting IS the constant-read artefact), leaving the background nulls live."""
     for i in range(k):
         cells_[i]["target_count_exhaustive"] = 7
         cells_[i]["target_count_heuristic"] = 7
         if not clean:
             cells_[i]["distinct_decoded_iters"] = 1     # the constant-read artefact
             cells_[i]["skew_stddev"] = 0.0
+        if obs_degen:
+            cells_[i]["observer_unique_count"] = 1      # observer-channel constant-read
     return cells_
 
 
@@ -642,10 +647,16 @@ case("observer-channel-clean",
                      distinct_decoded_iters=0, skew_stddev=0.0), 3),
      obs="Sometimes", k=3, k_eff=3, flags_none=["DEGEN_SIGHTING"])
 
+# DR1-A2/F2: the background nulls are observer-LIVE (unique_count=900) and the 3
+# SIGHTINGS are the observer constant-read artefact (unique_count=1 -> degenerate).
+# A cold observer on a NON-sighting null now COLD-INVALIDs it (het_verdict, DR1-A2),
+# so putting the degeneracy on the sightings -- where it physically belongs -- keeps
+# the 7 nulls usable and the classification honestly "Sometimes" (3 of 10 fired), all
+# 3 degenerate (k_eff=0).
 case("observer-channel-degenerate",
      observed(stream(POISSON_CELLS, het_oracle="ORACLE_ALLOWED",
-                     sync_valid=0, obs_valid=1, observer_unique_count=1,
-                     distinct_decoded_iters=0, skew_stddev=0.0), 3),
+                     sync_valid=0, obs_valid=1, observer_unique_count=900,
+                     distinct_decoded_iters=0, skew_stddev=0.0), 3, obs_degen=True),
      obs="Sometimes", k=3, k_eff=0, flags_any=["DEGEN_SIGHTING"])
 
 # No decode channel at all: FAIL CLOSED (0 of 338 today -- reaching it is a build bug).
@@ -772,14 +783,28 @@ def py_reference(cells_):
             return c["observer_unique_count"] < THETA_D
         return True
 
+    def channel_live(c):
+        # DR1-A2/F2: mirror het_verdict()'s channel-aware interleaving-liveness
+        # disqualifier -- the sync channel's evidence is interleavings_detected>0, the
+        # observer channel's is observer_unique_count>=THETA_D, and a record with
+        # NEITHER channel fails closed (0 of 338 in the shipped corpus).  Before F2 the
+        # rule read interleavings_detected blindly, so a store-only null (no reader,
+        # field structurally 0) was always COLD; now a cold observer or no channel is
+        # what disqualifies it.
+        if c["sync_valid"]:
+            return c["interleavings_detected"] > 0
+        if c["obs_valid"]:
+            return c["observer_unique_count"] >= THETA_D
+        return False
+
     def usable(c):
         # Mirrors het_verdict()'s COLD-INVALID: a sighting is never cold; otherwise the
-        # harness must be hot (mu(T) or canary >= tau) with the liveness fields alive.
+        # harness must be hot (mu(T) or canary >= tau) AND its decode channel live.
         if c["target_count_exhaustive"] > 0 or c["target_count_heuristic"] > 0:
             return True
         hot_c = c["control_compiled_in"] and c["control_target_count"] >= TAU_HOT
         hot_k = c["canary_compiled_in"] and c["canary_target_count"] >= TAU_HOT
-        return bool(hot_c or hot_k)
+        return bool((hot_c or hot_k) and channel_live(c))
 
     k = k_eff = n_degen = R_usable = 0
     runs, win, cellv = [], [], []

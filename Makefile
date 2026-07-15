@@ -774,6 +774,20 @@ hetlitmus-tuner:
 	python3 hetlitmus/verify/tunecheck.py --bite
 	@ echo "HetLitmus B8a tuner search machinery: OK (and the gate bites)"
 
+### hetlitmus-obs: the OBSERVER-liveness gate (DR1-A3).  statscheck feeds a SYNTHETIC
+### observer_unique_count; NO gate ever compiled the REAL emitted observer loop, so F1
+### -- the -O2 hoist that pinned observer_unique_count<=1 and left the 22 store-only
+### tests' ONLY channel inert -- was invisible to CI (the 5th inert-mechanism-shipped-
+### green bug).  This EXTRACTS the real emitted observer + its args struct and compiles
+### them at clang -O2 for x86-64 AND aarch64, asserting a per-iteration reload survives
+### inside EVERY loop body.  --bite strips the `volatile' and PROVES a hoisted observer
+### FAILS (cmp-verified non-vacuous).
+hetlitmus-obs: | build
+	@ echo
+	python3 hetlitmus/verify/obscheck.py
+	python3 hetlitmus/verify/obscheck.py --bite
+	@ echo "HetLitmus observer-liveness gate: OK (and the gate bites)"
+
 ### Umbrellas (what you press).  `::` accumulation, order-only `| build`.
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
@@ -787,6 +801,7 @@ hetlitmus-test-nvcc:: | build
 hetlitmus-test-nvcc:: hetlitmus-faithful
 hetlitmus-test-nvcc:: hetlitmus-stress
 hetlitmus-test-nvcc:: hetlitmus-cpustress
+hetlitmus-test-nvcc:: hetlitmus-obs
 hetlitmus-test-nvcc:: hetlitmus-smoke
 
 hetlitmus-test-all:: | build
@@ -803,7 +818,7 @@ hetlitmus-promote: | build
 	@ echo "hetlitmus-promote: review 'git diff' then commit yourself."
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
-.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner
+.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64
