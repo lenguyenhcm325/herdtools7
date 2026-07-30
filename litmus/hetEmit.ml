@@ -2898,17 +2898,34 @@ static void gd_free_noise(void* _p){
             s "  gd_free_noise(_noise_hbm);\n" ;
             s "  return 0;\n}\n" in
           (* ---- comp.sh / Makefile / README ---- *)
+          (* PORT1: `uname -m' of the CPU ISA this harness was rendered for.  The
+             link/run targets below refuse on any other host, because there
+             <test>_cpu_host.o is the PORTABLE SHIM (see the #else arm of
+             dump_cpu_file) -- an executable built from it would run, print a
+             histogram, and be testing nothing at all.  An unknown host_macro maps
+             to itself, which no `uname -m' can equal: fail closed. *)
+          let host_uname = match CpuF.host_macro with
+            | "__aarch64__" -> "aarch64"
+            | "__x86_64__" -> "x86_64"
+            | m -> m in
           let dump_comp ch =
             let s = output_string ch in
             s "#!/bin/sh\n" ;
             s (Printf.sprintf
                  "# Compile-only check for HetLitmus Tier-2 harness '%s'.\n" tname) ;
-            s "# COMPILE-ONLY (-c, no link, no GPU run -- execution is Task 9).\n" ;
-            s "# Usage: sh comp.sh [cuda|hip]   (default cuda)\n" ;
+            s "# COMPILE-ONLY by default (-c, no link, no GPU run).\n" ;
+            s (Printf.sprintf
+                 "# `cuda-link' additionally LINKS ./%s -- the Task-9 sliver that makes\n" tname) ;
+            s "# the harness runnable on real hardware.  It is GUARDED by uname -m: on a\n" ;
+            s "# foreign host the CPU object carries the portable shim, not the tested asm.\n" ;
+            s "# Usage: sh comp.sh [cuda|hip|cuda-link]   (default cuda)\n" ;
             s "set -e\n" ;
             s "TARGET=\"${1:-cuda}\"\n" ;
             s "NVCC=\"${NVCC:-nvcc}\" ; CUDA_ARCH=\"${CUDA_ARCH:-sm_90}\"   # GH200=sm_90\n" ;
             s "HIPCC=\"${HIPCC:-hipcc}\" ; HIP_ARCH=\"${HIP_ARCH:-gfx942}\" # MI300A=gfx942\n" ;
+            s (Printf.sprintf
+                 "HET_HOST_ISA=\"%s\"   # uname -m of this test's CPU ISA (%s)\n"
+                 host_uname CpuF.isa_name) ;
             s "echo \"+ gcc -c outs.c\"\ngcc -c outs.c -o outs.o\n" ;
             s (Printf.sprintf
                  "echo \"+ gcc -c %s_cpu.c  (host build; %s asm under #if defined(%s))\"\n"
@@ -2931,22 +2948,50 @@ static void gd_free_noise(void* _p){
                      "# (%s host == build host: the gcc -c above already assembled the real %s asm)\n"
                      CpuF.isa_name CpuF.isa_name)) ;
             s "case \"$TARGET\" in\n" ;
-            s "  cuda)\n" ;
+            s "  cuda|cuda-link)\n" ;
+            s "    if [ \"$TARGET\" = cuda-link ] && [ \"$(uname -m)\" != \"$HET_HOST_ISA\" ]; then\n" ;
+            s (Printf.sprintf
+                 "      echo \"error: comp.sh cuda-link refuses on $(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $HET_HOST_ISA host\" >&2\n"
+                 CpuF.isa_name tname) ;
+            s "      exit 3\n" ;
+            s "    fi\n" ;
             s "    command -v \"$NVCC\" >/dev/null 2>&1 || { echo \"error: $NVCC not found (CUDA toolchain absent)\" >&2 ; exit 1 ; }\n" ;
             s (Printf.sprintf "    echo \"+ $NVCC -std=c++17 -arch=$CUDA_ARCH -c %s.cu\"\n" tname) ;
-            s (Printf.sprintf "    $NVCC -std=c++17 -arch=$CUDA_ARCH -c %s.cu -o %s.o ;;\n" tname tname) ;
+            s (Printf.sprintf "    $NVCC -std=c++17 -arch=$CUDA_ARCH -c %s.cu -o %s.o\n" tname tname) ;
+            s "    if [ \"$TARGET\" = cuda-link ]; then\n" ;
+            s (Printf.sprintf
+                 "      echo \"+ $NVCC -arch=$CUDA_ARCH %s.o outs.o %s_cpu_host.o -o %s -lpthread -lm\"\n"
+                 tname tname tname) ;
+            s (Printf.sprintf
+                 "      $NVCC -arch=$CUDA_ARCH %s.o outs.o %s_cpu_host.o -o %s -lpthread -lm\n"
+                 tname tname tname) ;
+            s "    fi ;;\n" ;
             s "  hip)\n" ;
             s "    command -v \"$HIPCC\" >/dev/null 2>&1 || { echo \"error: $HIPCC not found (HIP/ROCm toolchain absent)\" >&2 ; exit 1 ; }\n" ;
             s (Printf.sprintf "    echo \"+ $HIPCC --offload-arch=$HIP_ARCH -std=c++17 -c %s.hip\"\n" tname) ;
             s (Printf.sprintf "    $HIPCC --offload-arch=$HIP_ARCH -std=c++17 -c %s.hip -o %s_hip.o ;;\n" tname tname) ;
-            s "  *) echo \"usage: sh comp.sh [cuda|hip]\" >&2 ; exit 2 ;;\n" ;
+            s "  *) echo \"usage: sh comp.sh [cuda|hip|cuda-link]\" >&2 ; exit 2 ;;\n" ;
             s "esac\n" ;
-            s "echo 'HetLitmus: compile OK'\n" in
+            s "if [ \"$TARGET\" = cuda-link ]; then\n" ;
+            s (Printf.sprintf "  echo \"HetLitmus: link OK -> ./%s\"\n" tname) ;
+            s "else\n" ;
+            s "  echo 'HetLitmus: compile OK'\n" ;
+            s "fi\n" in
           let dump_makefile ch =
             let s = output_string ch in
             s (Printf.sprintf
-                 "# HetLitmus Tier-2 harness '%s' -- compile-only (objects; no link/run).\n" tname) ;
-            s "NVCC ?= nvcc\nCUDA_ARCH ?= sm_90\nHIPCC ?= hipcc\nHIP_ARCH ?= gfx942\nCC ?= gcc\n\n" ;
+                 "# HetLitmus Tier-2 harness '%s' -- objects by default (`make cuda');\n" tname) ;
+            s (Printf.sprintf
+                 "# `make cuda-bin' links ./%s, guarded by uname -m (PORT1).\n" tname) ;
+            s "NVCC ?= nvcc\nCUDA_ARCH ?= sm_90\nHIPCC ?= hipcc\nHIP_ARCH ?= gfx942\nCC ?= gcc\n" ;
+            (* The comment gets its OWN line: `VAR ?= val   # note' keeps the trailing
+               blanks in the make variable, so the uname -m test below would compare
+               "aarch64" against "aarch64   " and refuse on the very host it exists to
+               admit -- a guard that is inert in the other direction. *)
+            s (Printf.sprintf
+                 "# uname -m of this test's CPU ISA (%s); the cuda-bin guard compares it.\n"
+                 CpuF.isa_name) ;
+            s (Printf.sprintf "HET_HOST_ISA ?= %s\n\n" host_uname) ;
             s "all: cuda\n\n" ;
             s (Printf.sprintf "cuda: %s.o outs.o %s_cpu_host.o\n" tname tname) ;
             s (Printf.sprintf "hip: %s_hip.o outs.o %s_cpu_host.o\n\n" tname tname) ;
@@ -2954,7 +2999,16 @@ static void gd_free_noise(void* _p){
             s (Printf.sprintf "%s_hip.o: %s.hip\n\t$(HIPCC) --offload-arch=$(HIP_ARCH) -std=c++17 -c $< -o $@\n\n" tname tname) ;
             s "outs.o: outs.c\n\t$(CC) -c $< -o $@\n\n" ;
             s (Printf.sprintf "%s_cpu_host.o: %s_cpu.c\n\t$(CC) -c $< -o $@\n\n" tname tname) ;
-            s ".PHONY: all cuda hip clean\nclean:\n\trm -f *.o\n" in
+            (* PORT1: the link/run sliver.  Guarded, because $(TEST)_cpu_host.o on a
+               foreign host is the portable shim -- see comp.sh's cuda-link. *)
+            s (Printf.sprintf "cuda-bin: %s\n\n" tname) ;
+            s (Printf.sprintf "%s: %s.o outs.o %s_cpu_host.o\n" tname tname tname) ;
+            s (Printf.sprintf
+                 "\t@ test \"$$(uname -m)\" = \"$(HET_HOST_ISA)\" || { echo \"error: cuda-bin refuses on $$(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $(HET_HOST_ISA) host\" >&2 ; exit 3 ; }\n"
+                 CpuF.isa_name tname) ;
+            s "\t$(NVCC) -arch=$(CUDA_ARCH) $^ -o $@ -lpthread -lm\n\n" ;
+            s (Printf.sprintf
+                 ".PHONY: all cuda cuda-bin hip clean\nclean:\n\trm -f *.o %s\n" tname) in
           let dump_readme ch =
             let s = output_string ch in
             s (Printf.sprintf "# HetLitmus Tier-2 harness: %s\n\n" tname) ;
@@ -2981,9 +3035,23 @@ static void gd_free_noise(void* _p){
             s "             hipMallocManaged, __hip_atomic_*).\n" ;
             s (Printf.sprintf "- `%s_cpu.c`  CPU thread(s): real %s inline asm (litmus7 ASMLang).\n" tname CpuF.isa_name) ;
             s "- `outs.c/.h` litmus7's outcome histogram (verbatim from litmus/libdir).\n" ;
-            s "- `comp.sh` / `Makefile`  compile-only build.\n\n" ;
+            s "- `comp.sh` / `Makefile`  compile-only build, plus the guarded link target.\n\n" ;
             s "Build (compile-only; no GPU needed): `sh comp.sh [cuda|hip]` (default cuda),\n" ;
-            s "or `make cuda` / `make hip`.\n" ;
+            s "or `make cuda` / `make hip`.\n\n" ;
+            s "## Building the executable (PORT1)\n\n" ;
+            s (Printf.sprintf
+                 "`sh comp.sh cuda-link` or `make cuda-bin` links `./%s` (`$NVCC` pulls in\n" tname) ;
+            s "cudart; `-lpthread -lm` cover the CPU threads and the B7 statistics).  Both\n" ;
+            s (Printf.sprintf
+                 "REFUSE unless `uname -m` is `%s`: elsewhere `%s_cpu_host.o` is compiled\n"
+                 host_uname tname) ;
+            s (Printf.sprintf
+                 "from the `#else` shim, not the %s asm, so the binary would run happily and\n"
+                 CpuF.isa_name) ;
+            s "test nothing.  Override the GPU arch with `CUDA_ARCH=sm_75 make cuda-bin`\n" ;
+            s "(T4/T4G) or `sm_90` (GH200) -- always name it explicitly; `-arch=native`\n" ;
+            s "only exists from CUDA 11.5 update 1 onwards.  Compile-time knobs go through\n" ;
+            s "the compiler variable, e.g. `make cuda-bin NVCC=\"nvcc -DHET_MEM_STRESS_PCT=0\"`.\n" ;
             s "Targets: NVIDIA GH200 Grace-Hopper (CUDA) and AMD MI300A (HIP).\n" in
           write "outs.h" (fun ch -> output_string ch outs_h_content) ;
           write "outs.c" (fun ch -> output_string ch outs_c_content) ;
