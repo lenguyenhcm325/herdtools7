@@ -2103,6 +2103,43 @@ def phase6_campaign(quiet):
     tmp = tempfile.mkdtemp(prefix="statssched.")
     bad = 0
     try:
+        # --- 6.0: read_control_map reads the REAL grounded files.  The header
+        # skip used to test f[0] == "Litmus" only -- expected-nvidia.csv's first
+        # column -- so control-map.csv, THE FILE THE DOCSTRING NAMES, had its
+        # "Test,Expected,..." header ingested as a test named "Test" with class
+        # "Expected" and campaign.py died before scheduling anything.  The
+        # synthetic cmap below carried no header at all, which is why this gate
+        # never saw it.  Parse both real files; then prove the unknown-class
+        # guard was NOT weakened by the fix.
+        loader = ("import sys; sys.path.insert(0, %r); import campaign; "
+                  % os.path.join(ROOT, "hetlitmus"))
+        for base in ("control-map.csv", "expected-nvidia.csv"):
+            real = os.path.join(ROOT, "hetlitmus", "tests", "het", base)
+            r0 = subprocess.run(
+                [sys.executable, "-c", loader +
+                 "m = campaign.read_control_map(sys.argv[1]); "
+                 "assert len(m) == 338, len(m); "
+                 "assert 'Test' not in m and 'Litmus' not in m, "
+                 "'header ingested as a test'; "
+                 "print('ok')", real],
+                capture_output=True, text=True)
+            if r0.returncode != 0 or r0.stdout.strip() != "ok":
+                print("  *** read_control_map(%s): rc=%d out=%r err=%r"
+                      % (base, r0.returncode, r0.stdout.strip(),
+                         r0.stderr.strip()[-300:]))
+                bad += 1
+        badmap = os.path.join(tmp, "bad-class.csv")
+        with open(badmap, "w") as fh:
+            fh.write("Test,Expected,Mu,Canary\nSB-x,Allwoed,-,-\n")
+        rg = subprocess.run(
+            [sys.executable, "-c", loader +
+             "campaign.read_control_map(sys.argv[1])", badmap],
+            capture_output=True, text=True)
+        if rg.returncode != 2 or "unknown oracle class" not in rg.stderr:
+            print("  *** the unknown-class guard did not FATAL on a mistagged "
+                  "row (rc=%d stderr=%r)" % (rg.returncode, rg.stderr[-300:]))
+            bad += 1
+
         corpus = os.path.join(tmp, "corpus")
         tests = ["ALW-fires", "ALW-cold", "DIS-null", "DIS-unres", "DIS-fires",
                  "NOR-null"]
@@ -2110,7 +2147,10 @@ def phase6_campaign(quiet):
             os.makedirs(os.path.join(corpus, t))
         cmap = os.path.join(tmp, "control-map.csv")
         with open(cmap, "w") as fh:
-            fh.write("ALW-fires,Allowed,-,MP-cg-sys-relaxed\n"
+            # The header line is deliberate: the real control-map.csv carries
+            # one, and a fixture without it is how the 6.0 bug went unseen.
+            fh.write("Test,Expected,Mu,Canary\n"
+                     "ALW-fires,Allowed,-,MP-cg-sys-relaxed\n"
                      "ALW-cold,Allowed,-,MP-cg-sys-relaxed\n"
                      "DIS-null,Disallowed,mu,MP-cg-sys-relaxed\n"
                      "DIS-unres,Disallowed,mu,MP-cg-sys-relaxed\n"

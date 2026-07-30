@@ -103,7 +103,12 @@ def read_control_map(path):
             if not line or line.startswith("#"):
                 continue
             f = [x.strip() for x in line.split(",")]
-            if len(f) < 2 or f[0] == "Litmus":
+            # Header skip: control-map.csv's header starts "Test,...";
+            # expected-nvidia.csv's starts "Litmus,...".  Matching only the
+            # latter made the very file this docstring names unreadable -- its
+            # header row was ingested as a test named "Test" with oracle class
+            # "Expected" and the guard below (correctly) died on it (PORT1 §4.1).
+            if len(f) < 2 or f[0] in ("Litmus", "Test"):
                 continue
             classes[f[0]] = f[1]
     if not classes:

@@ -384,21 +384,17 @@ row 5 "stress off -> on ($T5)" "$([ $r5 -eq 0 ] && echo PASS || echo FAIL)" "kno
 # row CANNOT finish in one invocation.
 # =========================================================================
 echo; echo "== rung 6: campaign pooling =="
-# --control-map IS FED expected-nvidia.csv, NOT control-map.csv, and that is not
-# a slip.  campaign.py's read_control_map skips the header row by testing
-# f[0] == "Litmus" -- which is expected-nvidia.csv's first column name.
-# control-map.csv's header is `Test,Expected,...', so its header row is ingested
-# as a test called "Test" with oracle class "Expected" and campaign.py dies with
-# `control map carries unknown oracle class(es) ['Expected']'.  campaign.py only
-# ever reads (test, class) from columns 1-2, which both files carry identically
-# (hetlitmus-controlmap gates that they agree), so pointing it at the file it can
-# actually parse is correct today; the header-skip is a campaign.py bug and is
-# reported upstream of this ladder, not patched here.
+# --control-map gets control-map.csv -- the grounded source read_control_map's
+# docstring names (B6c).  Its `Test,...' header was once unparseable (campaign.py
+# skipped only expected-nvidia.csv's `Litmus' header) and this ladder carried
+# expected-nvidia.csv as a workaround; that is fixed and gated (statscheck 6.0
+# parses both REAL files), so the workaround is retired.  Columns 1-2 of the two
+# files agree by construction (make hetlitmus-controlmap).
 r6=0
 STATE="$RESULTS/campaign-state.csv"
 python3 "$HERE/campaign.py" \
   --corpus "$TESTS_DIR" \
-  --control-map "$HERE/expected-nvidia.csv" \
+  --control-map "$HERE/control-map.csv" \
   --runner "sh $HERE/run-one.sh {dir} {test}" \
   --tests "$(IFS=,; echo "${TESTS[*]}")" \
   --budget-runs "$LADDER_BUDGET" --allowed-budget-runs "$LADDER_BUDGET" \

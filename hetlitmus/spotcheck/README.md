@@ -94,15 +94,13 @@ floor — the likeliest thing to fire anywhere — rides along with all five.
 
 ## Known quirks, so nobody rediscovers them at $/hour
 
-* **`campaign.py --control-map` must be given `expected-nvidia.csv`, not
-  `control-map.csv`.** `read_control_map` skips its header row by testing
-  `f[0] == "Litmus"`, which is `expected-nvidia.csv`'s first column name;
-  `control-map.csv`'s header is `Test,Expected,…`, so its header is ingested as a
-  test named `Test` with oracle class `Expected` and the run dies with
-  *"control map carries unknown oracle class(es) `['Expected']`"*. Only columns
-  1–2 are read, and the two files agree there by construction
-  (`make hetlitmus-controlmap` gates it). `ladder.sh` already does the right
-  thing; the header-skip is a `campaign.py` bug, reported, not patched here.
+* **`campaign.py --control-map` accepts either CSV** (fixed post-PORT1): its
+  header-skip once matched only `expected-nvidia.csv`'s `Litmus` header, so
+  `control-map.csv` was unreadable and early ladders fed it `expected-nvidia.csv`
+  as a workaround. Both headers are skipped now, statscheck phase 6.0 parses both
+  *real* files as a gate, and `ladder.sh` passes `control-map.csv` — the file
+  `read_control_map`'s docstring names. Columns 1–2 of the two files agree by
+  construction (`make hetlitmus-controlmap` gates it).
 * **Rung 6 is the long one.** Five rows × up to `LADDER_BUDGET` runs ×
   `SIZE_OF_TEST=100000` iterations with full stress. Budget your instance time,
   or lower `LADDER_BUDGET` — but keep it **above 10** (`NUMBER_OF_RUN`), or a
