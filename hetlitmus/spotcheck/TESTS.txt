@@ -1,0 +1,28 @@
+# HetLitmus dev-tier spot-check subset.  MINIMAL TESTS, MAXIMAL MACHINERY TOUCH.
+#
+# This is not a campaign and not an evaluation.  Five harnesses chosen so that
+# between them they exercise every distinct piece of emitted machinery at least
+# once; the corpus is 338 tests but only ~5 SHAPES of harness.  Anything these
+# five do not touch is not touched by the other 333 either.
+#
+# READ THIS BEFORE ADDING A TEST.  Every selected harness CO-RUNS the canary
+# MP-{cg,gc}-sys-relaxed inside its own launch (B6b/B6c), so the fully-relaxed
+# het-MP floor -- the single likeliest thing to fire on any machine -- rides
+# along with all five for free.  Adding a relaxed test as a sixth would buy
+# nothing that is not already in the co-run.
+#
+# Format: <test> <TAB> <role> <TAB> <rationale>.  pack-bundle.sh reads field 1
+# and FAILS if any name is not an emitted harness dir.
+#
+# Oracle classes are from tests/het/expected-nvidia.csv; controls from
+# tests/het/control-map.csv.
+
+MP-cg-sys-fence-2s	1-disallowed-with-corun	Disallowed (16 of 338). Two-sided: CPU DMB.SY + GPU fence.sc.sys. Co-runs mu(T)=MP-cg-sys-fence (Allowed) AND the canary MP-cg-sys-relaxed in ONE launch on ONE padded arena, so this single dir exercises the whole positive-control stack: 3 instances, NPART=6, HET_CONTROL_COMPILED_IN=1, the mu-map, and the CREDIBLE/WEAK null split. It is also the only rung that can show a REFUTATION frame, so it is the one whose printout matters most.
+MP-cg-cta-acquire	2-allowed-gpu-side	Allowed for a GPU-SIDE reason: "cta scope: too narrow to encompass CPU thread; not morally strong". One-sided (only the GPU proc carries a sync op), and the residual weakness sits on the GPU reader whose acquire does not reach the CPU -- so this is the scope-degradation path, and on a real GPU the likeliest non-canary sighting.
+IRIW-gcgc-sys-fence	3-no-oracle	NO-ORACLE (36 of 338): IRIW needs multi-copy atomicity and ARM-MCA x PTX-non-MCA is unestablished. 4 procs, the largest barrier and scaffolding in the corpus, and the reporting frame that must NOT print a refutation whatever it sees. Exercises the B6c third frame plus the biggest NPART.
+R-cg-sys-relaxed	4-observer-lane	R family: carries OBSERVER lanes, so NPART is 4 rather than 2 and the co-run layout is NPART=SUM, not 6. R is the fragile half of the R/S observer asymmetry (B3), which makes it the honest choice over S for a liveness check of the windowed detector and the ws-snooping observer.
+2+2W-cg-sys-relaxed	5-store-only	STORE-ONLY (both procs write; no tested load). DR1 F1/F2 territory: this is the shape whose _hot signal and observer liveness were constant-valued until DR1, and where the exhaustive-scan degeneracy guard has the least to work with. If the detector is going to be cold anywhere, it is here.
+
+# Rung 5 (stress off -> on) reuses MP-cg-sys-fence-2s: it is the only entry with
+# a compiled-in control, so stress-off is visible as the control going COLD
+# (HET_DQ_CONTROLS_COLD) rather than as an unfalsifiable "still saw nothing".

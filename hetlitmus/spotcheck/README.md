@@ -1,0 +1,134 @@
+# HetLitmus dev-tier spot check
+
+A **machinery** validation of the emitted het harness on a rented NVIDIA box
+that is *not* a GH200 — first target AWS **g5g** (Graviton2 AArch64 + T4G,
+sm_75, PCIe). The same bundle serves **DGX Spark** (GB10, sm_121, real ATS) and
+**GH200** (sm_90) unchanged; nothing here is g5g-specific except the numbers the
+probe reads off the machine.
+
+## What this can and cannot establish
+
+It **can** establish that the code works: that a harness dir builds and links,
+that both devices launch and rendezvous, that `HET_ALLOC` selects a shared-memory
+mode and refuses the illegal ones, that the positive controls stay hot, that each
+oracle class prints its own reporting frame, that the stress knobs actually reach
+the build, and that `campaign.py` pools across invocations so the B7 statistics
+engage. Every one of those is a property of the code and is checkable anywhere.
+
+It **cannot** establish anything about the compound memory model. A non-GH200 box
+has no NVLink-C2C and (on g5g) no ATS, so the shared variables are not two
+devices contending for one cache line under a live hardware-coherence protocol —
+they migrate, or they cross PCIe. And `expected-nvidia.csv` was derived for
+GH200 specifically (ARMv9 Grace + Hopper PTX). So:
+
+* a **null** here says nothing — different machine, different window;
+* a **sighting on a Disallowed row** here is *not* a refutation of the CMCM
+  either, but it is a five-alarm machinery event; the ladder stops and says so.
+
+Results go to `results-devtier-<date>-<host>/` and **must never be merged with
+GH200 evaluation data**.
+
+## Order of operations
+
+```sh
+# --- dev box -------------------------------------------------------------
+make all                                   # litmus7 must be built
+hetlitmus/spotcheck/pack-bundle.sh         # -> bundle-out/hetlitmus-spotcheck-<rev>.tar.gz
+scp bundle-out/hetlitmus-spotcheck-*.tar.gz <instance>:
+
+# --- instance ------------------------------------------------------------
+tar xzf hetlitmus-spotcheck-*.tar.gz && cd hetlitmus-spotcheck-*
+sh probe.sh          # rung -1: what does this machine offer?  ALWAYS FIRST.
+sh ladder.sh         # rungs 0-6
+```
+
+`probe.sh` writes `results-devtier-.../probe.txt`; `ladder.sh` reads
+`suggested_cuda_arch` from it, so running the probe first is not a suggestion.
+
+## Read the probe before the ladder
+
+| key | why it decides the trip |
+| --- | --- |
+| `cooperativeLaunch` | `0` ⇒ the harness returns 2 immediately. Nothing will run. Stop. |
+| `pageableMemoryAccess` | `1` ⇒ `HET_ALLOC=auto` picks `malloc`. |
+| `usesHostPageTables` | **which machine this is**: `1` = hardware coherence (ATS: GH200, Spark), `0` = software (HMM). A box can report `pageableMemoryAccess=1` through HMM and take the same `malloc` branch as GH200 while being a different experiment. |
+| `concurrentManagedAccess` | `0` ⇒ `managed` is FATAL; use `HET_ALLOC=pinned`. |
+| `hostNativeAtomicSupported` | `0` ⇒ `pinned`'s barrier `fetch_add` is not system-atomic; the harness warns, and the run may hang. |
+| `sysatomic_*` | a **short** total is decisive: that mode's RMW is not atomic against the CPU. A matching total is weak evidence (the kernel may have finished before the host loop began). |
+
+These are the conditions the CUDA C++ Memory Model states for a
+`cuda::thread_scope_system` atomic to actually be atomic — one per mode. Every
+tested access here, and the rendezvous barrier, is such an atomic, so a mode
+whose condition fails is not a weaker experiment, it is undefined. That is why
+`HET_ALLOC` fails closed rather than falling back.
+
+## Knobs
+
+Exactly **five** runtime (`getenv`) knobs; everything else is compile-time and
+is set through the compiler variable, e.g.
+`make cuda-bin NVCC="nvcc -DHET_MEM_STRESS_PCT=0"`.
+
+| knob | meaning |
+| --- | --- |
+| `HET_ALLOC` | `auto`\|`malloc`\|`managed`\|`pinned` — shared-memory mode |
+| `HET_RUNS_MAX` | runs this invocation, clamped to the compiled `NUMBER_OF_RUN` (10) |
+| `HET_ADAPTIVE` | `1` ⇒ consult `het_campaign_should_stop()` after every run |
+| `HET_P_GOAL` | stop a bound-needing row once `p_bound <= this` |
+| `HET_SEED` | overrides the compiled seed base; **must** vary per invocation |
+
+Growing R is done by re-invoking with a fresh seed (`campaign.py`), never by
+replaying the same seeds — the harness says so itself if you try.
+
+`CUDA_ARCH` is passed to `make`/`comp.sh` (`sm_75` T4G, `sm_90` GH200, `sm_121`
+GB10). Always explicit: `-arch=native` only exists from CUDA 11.5 update 1, and
+the toolkit version on a fresh instance is one of the things being probed.
+
+## The subset
+
+Five harnesses; see `TESTS.txt` for the per-test rationale. Between them they
+cover the Disallowed-with-co-run-control shape, an Allowed one-sided test whose
+weakness is GPU-side, a NO-ORACLE 4-proc row, an observer-lane (R) row and a
+store-only (2+2W) row. Every one of them co-runs the canary
+`MP-{cg,gc}-sys-relaxed` inside its own launch, so the fully-relaxed het-MP
+floor — the likeliest thing to fire anywhere — rides along with all five.
+
+## Known quirks, so nobody rediscovers them at $/hour
+
+* **`campaign.py --control-map` must be given `expected-nvidia.csv`, not
+  `control-map.csv`.** `read_control_map` skips its header row by testing
+  `f[0] == "Litmus"`, which is `expected-nvidia.csv`'s first column name;
+  `control-map.csv`'s header is `Test,Expected,…`, so its header is ingested as a
+  test named `Test` with oracle class `Expected` and the run dies with
+  *"control map carries unknown oracle class(es) `['Expected']`"*. Only columns
+  1–2 are read, and the two files agree there by construction
+  (`make hetlitmus-controlmap` gates it). `ladder.sh` already does the right
+  thing; the header-skip is a `campaign.py` bug, reported, not patched here.
+* **Rung 6 is the long one.** Five rows × up to `LADDER_BUDGET` runs ×
+  `SIZE_OF_TEST=100000` iterations with full stress. Budget your instance time,
+  or lower `LADDER_BUDGET` — but keep it **above 10** (`NUMBER_OF_RUN`), or a
+  bound row finishes in one invocation and the cross-invocation pooling that the
+  rung exists to exercise never engages.
+* **`SIZE_OF_TEST` and `NUMBER_OF_RUN` are emitted as unguarded `#define`s**, so
+  unlike the other compile-time knobs they cannot be lowered with `-D`. The only
+  runtime lever on run count is `HET_RUNS_MAX` (clamped to `NUMBER_OF_RUN`).
+* **`pinned` really can lose barrier increments.** Measured on a WSL2 RTX 3060
+  (`hostNativeAtomicSupported=0`): a device/host system-scope `fetch_add` race
+  landed **201665 of 400000** increments. That is the documented behaviour, it is
+  what the harness warns about, and it is why `ladder.sh` wraps every invocation
+  in `timeout`.
+
+## Files
+
+| file | role |
+| --- | --- |
+| `probe.cu`, `probe.sh` | machine probe → `probe.txt` |
+| `TESTS.txt` | the subset and why each test is in it |
+| `pack-bundle.sh` | dev box: emit, prune, stamp, tar |
+| `ladder.sh` | instance: rungs 0–6, exit-code table |
+| `run-one.sh` | one invocation, for `campaign.py --runner` |
+| `STAMP` (in the bundle) | git revision, date, census, emitter SHA-256 |
+
+The emitted harness dirs are self-contained — `outs.c/h`, `het_stress.cuh`,
+`het_cpu_stress.h` and `het_verdict.h` are written into every dir at emission —
+so the instance needs no repo, no OCaml and no `litmus7`: just `nvcc`, `gcc`,
+`make` and `python3`.
