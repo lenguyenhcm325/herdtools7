@@ -54,15 +54,44 @@ which makes the same pageable-vs-managed dispatch for a different object class (
 C2C noise buffers), so a file-wide count would now read 2 -- and bumping it to 2
 would have made this check satisfiable by a SECOND allocator sneaking into
 gd_alloc_shared, which is the very confusion it exists to prevent.  Scope, don't bump.
-  $ grep -c 'cudaDevAttrPageableMemoryAccess' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+
+PORT1 makes the same point a second time, and harder.  The mode banner queries
+cudaDevAttrPageableMemoryAccessUsesHostPageTables -- a DIFFERENT attribute whose name
+CONTAINS the one below -- so the old file-wide count now reads 4.  Bumping it to 4
+would have made this check pass for a harness that had lost the dispatch query
+entirely and gained four mentions of the ATS/HMM discriminator.  Scope it to
+_shared_pageable's own body and require the comma that closes the argument, which the
+UsesHostPageTables spelling cannot produce.
+  $ sed -n '/^static int _shared_pageable/,/^}/p' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu | grep -c 'cudaDevAttrPageableMemoryAccess,'
   1
   $ ALLOC=$(sed -n '/^static void gd_alloc_shared/,/^}/p' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu)
   $ printf '%s\n' "$ALLOC" | grep -c '\*_pp = malloc'
   1
   $ printf '%s\n' "$ALLOC" | grep -c 'cudaMallocManaged(_pp'
   1
-  $ sed -n '/^static void gd_free_shared/,/^}/p' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu | grep -cE 'free\(_p\).*cudaFree\(_p\)'
+  $ printf '%s\n' "$ALLOC" | grep -c 'cudaHostAlloc(_pp'
   1
+
+THREE allocators now, so THREE matching frees -- and all three selected by the ONE
+cached mode, never by a second device query.  gd_free_shared used to RE-QUERY
+cudaDevAttrPageableMemoryAccess, so any drift between the alloc-time and the
+free-time answer (a forced HET_ALLOC, a second device) would free a malloc'd pointer
+with cudaFree: UB that need not fault on the managed dev-box path and would first
+surface on GH200.  The old one-line regex `free(_p).*cudaFree(_p)' only ever checked
+that two frees shared a source line, which the switch does not do; assert instead
+that each free is present, that the choice is _het_alloc_mode(), and that no
+attribute query survives in the free.
+  $ FREE=$(sed -n '/^static void gd_free_shared/,/^}/p' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu)
+  $ printf '%s\n' "$FREE" | grep -cE '(^|[^a-zA-Z_])free\(_p\)'
+  1
+  $ printf '%s\n' "$FREE" | grep -c 'cudaFree(_p)'
+  1
+  $ printf '%s\n' "$FREE" | grep -c 'cudaFreeHost(_p)'
+  1
+  $ printf '%s\n' "$FREE" | grep -c '_het_alloc_mode()'
+  1
+  $ printf '%s\n' "$FREE" | grep -c 'cudaDeviceGetAttribute' || true
+  0
 
 (d) B3: __out is gone; the per-load read buffers are OFF the concurrent-race path
 -- device memory (cudaMalloc) + a host mirror for the post-run scan -- NOT routed
@@ -153,3 +182,64 @@ The barrier gets its OWN line, past the last variable -- never sharing one with 
 tested location.
   $ grep -c 'int \*barrier = (int\*)(_sa + (size_t)HET_CACHE_LINE\*4);' $AC.cu
   1
+
+(h) PORT1 -- HET_ALLOC: THREE NAMED MODES, RESOLVED ONCE, EVERY ILLEGAL ONE FATAL.
+The CUDA C++ Memory Model states when a cuda::thread_scope_system atomic actually is
+atomic: on system-allocated memory iff pageableMemoryAccess is 1, on managed memory
+iff concurrentManagedAccess is 1, on mapped memory iff hostNativeAtomicSupported is 1
+(plain naturally-aligned loads/stores of <= 16 bytes on mapped memory are the one
+exception).  Every tested access here, and the rendezvous barrier, IS such an atomic.
+So a mode whose condition does not hold is not a weaker experiment -- it is
+undefined, and the histogram it produces means nothing.  exit(2), not a warning, and
+never a silent fallback to auto.
+
+  $ REL=MP-cg-sys-relaxed/MP-cg-sys-relaxed
+  $ grep -c 'getenv("HET_ALLOC")' $REL.cu
+  1
+  $ MODE=$(sed -n '/^static int _het_alloc_mode/,/^}/p' $REL.cu)
+
+Unset/auto is EXACTLY the B1 dispatch.  A bare run must stay byte-for-byte the old
+behaviour, or every null recorded before PORT1 sits on a different footing.
+  $ printf '%s\n' "$MODE" | grep -c '_mode = _pg ? HET_ALLOC_MALLOC : HET_ALLOC_MANAGED;'
+  1
+
+Resolved once and cached -- the early return is what makes (c)'s free rule sound.
+  $ printf '%s\n' "$MODE" | grep -c 'static int _mode = -1;'
+  1
+  $ printf '%s\n' "$MODE" | grep -c 'if (_mode >= 0) return _mode;'
+  1
+
+Three exit(2)s in the resolver: an unknown knob value, malloc without pageable
+access, managed without concurrent access.
+  $ printf '%s\n' "$MODE" | grep -c 'exit(2);'
+  3
+  $ printf '%s\n' "$MODE" | grep -c 'is not a shared-memory mode'
+  1
+  $ printf '%s\n' "$MODE" | grep -c 'cudaDevAttrPageableMemoryAccess=0'
+  1
+  $ printf '%s\n' "$MODE" | grep -c 'cudaDevAttrConcurrentManagedAccess=0'
+  1
+
+pinned is PERMITTED without native host atomics -- it is the escape hatch for a box
+that has neither of the other two -- but it says what it cannot promise: the plain
+tested accesses stand, the barrier's read-modify-write does not.
+  $ printf '%s\n' "$MODE" | grep -c 'cudaDevAttrHostNativeAtomicSupported'
+  2
+  $ printf '%s\n' "$MODE" | grep -c 'the run can hang at'
+  1
+
+The banner is the ATS-vs-HMM discriminator (usesHostPageTables: 1 = hardware
+coherence, 0 = software), printed BEFORE the guards so a FATAL is readable, and on
+stdout so the run log carries it.
+  $ printf '%s\n' "$MODE" | grep -c 'HetLitmus: shared-mem mode=%s (HET_ALLOC=%s'
+  1
+  $ printf '%s\n' "$MODE" | grep -c 'usesHostPageTables=%d concurrentManagedAccess=%d)'
+  1
+  $ printf '%s\n' "$MODE" | grep -c 'cudaDevAttrPageableMemoryAccessUsesHostPageTables'
+  1
+
+THE HIP RENDER IS NOT IN SCOPE.  MI300A's allocator is its own decision (Q8 R2,
+fine-grained hipMallocManaged) and PORT1 did not touch it; HET_ALLOC appearing in the
+.hip would mean the modes leaked across dialects.
+  $ grep -c 'HET_ALLOC' $REL.hip || true
+  0
