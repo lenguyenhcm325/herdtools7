@@ -173,6 +173,113 @@ is exactly what Bagchi §4.2 leaves for future work**. Neither `Allowed` nor
 `Disallowed` is grounded there in the three sources, so honesty demands
 `NO-ORACLE`.
 
+### Two-sided **fence pairs** (`-2s` with order `<cpu>.<gpu>`) — Q10
+
+The table above covers the two *matched* pairings the corpus started with. Q10
+widens the axis to the full 3 × 3 grid on the six 2-proc shapes:
+
+| axis | values | name token |
+|---|---|---|
+| CPU | `DMB SY`, `DMB ST`, `DMB LD` | `sy`, `st`, `ld` |
+| GPU | `fence.sc.sys`, `fence.release.sys`, `fence.acquire.sys` | `sc`, `rel`, `acq` |
+
+so `MP-cg-sys-st.acq-2s` is MP on the `cpu,gpu` cut with `DMB ST` between the
+CPU producer's two stores and `fence.acquire.sys` between the GPU consumer's two
+loads. The `(sy, sc)` cell **is** the pre-existing `<shape>-<cut>-sys-fence-2s`
+and is not re-emitted under the new name.
+
+These verdicts are **not hand-written**. `build-nvidia-oracle.sh` carries a
+compositional rule over two per-primitive facts, and
+`hetlitmus/verify/ordercheck.py` (`make hetlitmus-order`) proves the rule is the
+same function herd7 computes — 54 CPU-only cells under herd7's **native AArch64
+model**, 54 GPU-only cells under **`nvidia-ptx.cat`**, plus every fence-pair row
+of `expected-nvidia.csv` including the legacy `-fence-2s` rows.
+
+**ord(p)** — the program-order pairs the primitive orders *inside its own
+thread*:
+
+| | WW | RR | WR | RW |
+|---|---|---|---|---|
+| `DMB SY` / `fence.sc.sys` | ✓ | ✓ | ✓ | ✓ |
+| `DMB ST` | ✓ | | | |
+| `DMB LD` | | ✓ | | ✓ |
+| `fence.release.sys` | ✓ | | | ✓ |
+| `fence.acquire.sys` | | ✓ | | ✓ |
+
+The ARM row is herd7's own answer (Phase 1 of the gate *is* its derivation). The
+GPU row is [CMCM] §5 verbatim: *"a request that is marked with `sem ≥ rel`
+enforces R + pred → W and W → W. A request with `sem ≥ acq` enforces R → R and
+R → W, and an sc fence additionally enforces W → R."*
+
+**role(p)** — which half of a morally-strong pair it can supply: `DMB SY` /
+`fence.sc.sys` → {rel, acq, sc}; `DMB ST` / `fence.release.sys` → {rel};
+`DMB LD` / `fence.acquire.sys` → {acq}.
+
+**The rule.**
+
+| condition | verdict |
+|---|---|
+| some side's own model leaves that side's own program-order pair unordered | **Allowed** |
+| both sides order their own pair **and** the [PTX] pattern completes | **Disallowed** |
+| both sides order their own pair **but** the [PTX] pattern does not complete | **NO-ORACLE** |
+
+"the [PTX] pattern completes" = the rf-source proc supplies `rel` and the
+rf-target proc supplies `acq` (either direction, for LB which carries two `rf`
+edges); or — for a cycle with **no** `rf` at all (SB, R, 2+2W) — **both** procs
+supply `sc`, which is [PTX] Fig 6 ("preventing SB requires a `fence.sc` … in
+each thread … morally strong").
+
+**Why the third row is NO-ORACLE and not Disallowed — [CMCM] says so itself.**
+CMCM ships **two** compound models: the operational LOST-POP model of §4–5 and
+the axiomatic CMM of §6.2, the latter "designed to be a **sound abstraction** of
+the x86TSO/PTX operational model, *i.e.* permit all behavior observable in the
+operational model" (§6). CMM's PTX component is exactly [PTX] Fig 4/Fig 7 (CMCM
+Fig 12), so the axiomatic model permits **strictly more**. §5.1 states where,
+verbatim:
+
+> There are two ways in which our operational model is stronger than the
+> axiomatic PTX model:
+> (1) Write serialization is enforced within the causality constraints by our
+> operational model, but not by the axiomatic PTX model.
+> (2) Release and acquire fences are slightly stronger in cumulative chains of
+> events, downstream of a release fence (so-called B-cumulativity [Alglave
+> et al. 2014]). In our operational model, events can be transitively ordered
+> using **either release or acquire fences**, though the axiomatic PTX model
+> would only order if the fence is at least acqrel.
+
+and Fig 11's caption names the witnesses: *"In 2+2W, PTX allows r1 = 1, r2 = 1
+but this behavior is not allowed our operational model. Similarly, in ISA2 with
+an Acq (11b) or Rel (11c) fence, the outcome … is allowed in PTX but disallowed
+in our model. PTX requires the fence to be acqrel for the outcome to be
+disallowed, whereas our model disallows it with either of the three."*
+
+Every NO-ORACLE cell of this grid is an instance of (1) or (2) — the operational
+model forbids, the axiomatic one does not, and CMCM does not say which the
+hardware follows. Concretely, `LB-cg-sys-ld.acq-2s` (`DMB LD` on the CPU,
+`fence.acquire.sys` on the GPU, both ordering load→store) is **Forbidden** by
+herd7's AArch64 model for the all-ARM analogue and **Allowed** by
+`nvidia-ptx.cat` for the all-PTX analogue. Calling it Disallowed would
+manufacture a falsification claim out of a modelling disagreement the paper
+itself documents; calling it Allowed would assert a weak outcome the operational
+CMCM forbids. It is characterization — and, incidentally, the cheapest available
+experiment on precisely the §5.1 divergence.
+
+**What is *not* machine-checked.** That a CPU `DMB` and a sys-scope GPU fence
+are morally strong *at all*, i.e. that the two sides compose across the C2C
+boundary. That is [CMCM] §3.2.3 (*"We address compositionality by treating every
+non-scoped order constraint coming from a non-scoped memory model as system
+scoped (i.e., global scope)"*) and §4.4 (*"in an unscoped LOST-POP model, all
+requests should be system-scoped"*; *"to be disallowed, both fences need to be
+system-scoped"*), [Bagchi] §3.2 (*"CPU unscoped operations are treated as
+system-scoped when synchronizing with a GPU that employs a scoped model"*) and
+[PTX] Table 1, where `.sys` covers *"all threads constituting the host program
+itself"*.
+
+`2+2W` is deliberately **not** given fence-pair variants: its cycle is two `co`
+edges with no `rf`, so every verdict would turn on cross-device write-write
+multi-copy atomicity — the question [Bagchi] §2.1 explicitly defers — and it
+would land NO-ORACLE by shape, not by annotation.
+
 ### Honesty (unchanged)
 
 An **observed** weak outcome makes a verdict `Allowed` and is robust; a

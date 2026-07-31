@@ -718,6 +718,31 @@ hetlitmus-dup: | build
 	python3 hetlitmus/verify/dupcheck.py --bite
 	@ echo "HetLitmus Q10 isomorphism/dedup gate: OK (and the gate bites)"
 
+### hetlitmus-order: the ORDERING RULE behind the two-sided oracle, machine-checked
+### against BOTH constituent solvers.  The `-2s' rows are the only ones that can be
+### Disallowed -- the only ones that can refute the compound model -- and Q10 widens
+### them from one fence pairing (DMB.SY x fence.sc.sys) to the 3x3 grid
+### CPU{DMB.SY,DMB.ST,DMB.LD} x GPU{fence.sc,fence.release,fence.acquire}.sys.  Which
+### cells forbid is NOT "both sides have a fence": DMB.LD on a store;store producer
+### orders nothing and a release fence on a load;load consumer orders nothing.  Hand
+### verdicts are how an oracle acquires a silent error, and an oracle error here is a
+### FALSE REFUTATION of the model.  So build-nvidia-oracle.sh carries a COMPOSITIONAL
+### rule and this gate proves it is the same function herd7 computes:
+###   ARM     54 CPU-only AArch64 cells under herd7's NATIVE model
+###   PTX     54 GPU-only LISA/Bell cells under nvidia-ptx.cat (Lustig'19)
+###   ORACLE  every two-sided fence-pair row of expected-nvidia.csv, INCLUDING the
+###           pre-existing `-fence-2s' rows as the (DMB.SY, fence.sc.sys) cell -- so
+###           the bash oracle and the rule cannot drift apart
+### --bite corrupts the rule five ways (a store barrier that orders loads, an acquire
+### fence that leaves load;store free, the pattern clause dropped, an acquire fence
+### that also releases, the corpus token `sc' read as a release fence) and requires
+### each to redden the phase that NAMES it.  ~3 s; no nvcc, no GPU.
+hetlitmus-order: | build
+	@ echo
+	python3 hetlitmus/verify/ordercheck.py
+	python3 hetlitmus/verify/ordercheck.py --bite
+	@ echo "HetLitmus Q10 two-sided ordering rule: OK (and the gate bites)"
+
 ### hetlitmus-verdict: het_verdict() -- the rule that decides WHAT AN OBSERVATION
 ### MEANS -- compiled from the REAL emitted header and fed synthetic records.
 ###   Phase 1 (rule)     all SEVEN verdicts and all THREE oracle classes reachable (a
@@ -852,6 +877,7 @@ hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-dup
+hetlitmus-test:: hetlitmus-order
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-stats
@@ -881,7 +907,7 @@ hetlitmus-promote: | build
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
-.PHONY: hetlitmus-hist hetlitmus-dup
+.PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order
 .PHONY: hetlitmus-l0-selftest
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
