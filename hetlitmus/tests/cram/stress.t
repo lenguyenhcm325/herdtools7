@@ -1,24 +1,23 @@
-B4 regression guard: the emitted het harness must carry the GPU memory-stress
-layer (ported from cuda-litmus), and must carry it in the shape the design
-requires -- stress in DEVICE memory, disjoint from the test; the device-scope
-window-opener kept SEPARATE from the system-scope cross-device rendezvous; and
-the B2/B3 invariants (co-residency guard, observer slot, pinned trip counts)
-still standing underneath it.
+GPU memory-stress guard (B4; env-research/Q5-gpu-stress.md).  The emitted het
+harness carries the stress layer ported from cuda-litmus, in the shape the design
+requires: stress in DEVICE memory, disjoint from the test; the device-scope
+window-opener kept separate from the system-scope cross-device rendezvous; and
+the perpetual-loop invariants (co-residency guard, observer slot, pinned trip
+counts) still standing underneath it.
 
 Stress is not an optimisation: on NVIDIA silicon (our GH200 target) the harness
-observes nothing without it -- "we did not observe sb and lb on Titan without
-this incantation" (Alglave ASPLOS'15 4.3.1; Table 6: sb/lb are 0 in every column
-without memory stress), and S&D PLDI'16 went 0/1000 -> 102/1000 on a Tesla K20 by
-adding it.  On AMD the same paper saw weak behaviours WITHOUT stress (lb:
-10959/100k, no incantations), so for the .hip render this layer amplifies rates
-rather than enabling observation at all -- do not repeat the unqualified claim.
+observes nothing without it, whereas the same source saw weak behaviours on AMD
+with no incantation at all, so on the .hip render this layer amplifies rates
+rather than enabling observation.  The quotes, tables and vendor split live once,
+in the emitted het_stress.cuh (pinned in (e3)); do not repeat the claim
+unqualified.
 
   $ litmus7 -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ litmus7 -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
   $ MP=MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
   $ S=S-cg-sys-fence/S-cg-sys-fence
 
-(a) the ported stress layer is emitted ONCE per harness dir and included by BOTH
+(a) the ported stress layer is emitted ONCE per harness dir and included by both
 renders -- one shared header, so all reused cuda-litmus code and its mandatory
 citations sit in one auditable file.
   $ test -f MP-cg-sys-acqrel-2s/het_stress.cuh && echo present
@@ -29,10 +28,10 @@ citations sit in one auditable file.
   $ grep -c 'cuda-litmus' MP-cg-sys-acqrel-2s/het_stress.cuh > /dev/null && echo cited
   cited
 
-(b) TWO OBJECT CLASSES, TWO ALLOCATORS.  The scratchpad is GPU-only and disjoint
-from every test location, so it lives in DEVICE memory -- it must NOT go through
-gd_alloc_shared, which is the coherent allocator that selects the property under
-test (B1/Q8).  Confusing the two would put stress traffic on the tested cache
+(b) two object classes, two allocators.  The scratchpad is GPU-only and disjoint
+from every test location, so it lives in DEVICE memory: it must not go through
+gd_alloc_shared, the coherent allocator that selects the property under test
+(shared-alloc.t).  Confusing the two would put stress traffic on the tested cache
 lines.
   $ grep -c 'cudaMalloc(&_scratch, sizeof(uint32_t)\*HET_SCRATCH_SIZE)' $MP.cu
   1
@@ -49,9 +48,9 @@ lines.
 
 (c) the pure-stress workgroups: every block above the test/observer blocks
 hammers the scratchpad, and the grid is raised toward the co-resident cap while
-the B2 guard STAYS (an over-large cooperative launch must be rejected at launch,
-not silently deadlock -- a silent hang is indistinguishable from a genuine
-non-observation).
+the launch guard stays -- an over-large cooperative launch must be REJECTED at
+launch, not silently deadlock, because a silent hang is indistinguishable from a
+genuine non-observation (coop-launch.t (g)).
   $ grep -c 'blockIdx.x >= HET_TEST_BLOCKS' $MP.cu
   1
   $ grep -c '_grid > _maxGrid' $MP.cu
@@ -61,75 +60,72 @@ non-observation).
 
 (d) the device-scope window-opener is SEPARATE from the system-scope rendezvous.
 het_spin aligns the GPU test lanes; gd_bar is the CPU<->GPU start barrier and
-fires ONCE, outside the perpetual loop.  Merging them would put a per-iteration
-CROSS-DEVICE barrier in the loop, which masks the tested order and stalls
+fires once, outside the perpetual loop.  Merging them would put a per-iteration
+cross-device barrier in the loop, which masks the tested order and stalls
 (Srivastava 4.1).  One spin call per GPU test lane; one gd_bar fetch_add per
 barrier-joining participant.
 
-B6b: MP-cg-sys-acqrel-2s is now a CO-RUN harness -- T, mu(T) and the canary share
-this launch -- so there are THREE GPU test lanes and three CPU threads.  The
-per-lane invariant is unchanged and is what is asserted: exactly ONE spin per test
-lane, and (below) exactly one spin inside T's own lane, so a total of 3 cannot be
-satisfied by a lane that lost its spin while another gained two.
+MP-cg-sys-acqrel-2s is a co-run harness -- T, mu(T) and the canary share this
+launch -- so there are three GPU test lanes and three CPU threads.  The per-lane
+invariant is what is asserted: exactly one spin per test lane, and (below)
+exactly one inside T's own lane, so a total of 3 cannot be satisfied by a lane
+that lost its spin while another gained two.
   $ grep -c 'het_spin(_spin_bar' $MP.cu
   3
   $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' $MP.cu | grep -c 'het_spin(_spin_bar'
   1
 
-ALL THREE lanes spin on the SAME device-scope word, and HET_SPIN_LANES is their SUM.
-That is required, not incidental: the barrier's limit is _nb*HET_SPIN_LANES, so a
-lane that joined the spin without being counted in HET_SPIN_LANES would make the
-limit unreachable and every spin would burn the 1024-iteration deadlock cap -- the
-B4 regression, restaged.
+All three lanes spin on the SAME device-scope word, and HET_SPIN_LANES is their
+sum.  That is required, not incidental: the barrier's limit is
+_nb*HET_SPIN_LANES, so a lane that joined the spin without being counted in
+HET_SPIN_LANES would make the limit unreachable and every spin would burn the
+1024-iteration deadlock cap.
   $ grep -c '#define HET_SPIN_LANES 3' $MP.cu
   1
 
 (The arrival count matches `_bar.fetch_add', the barrier's OWN atomic, not a bare
-`fetch_add'.  B5 added the first non-barrier atomic RMW to this file -- the CPU
-stress tally -- and a bare count would have swept it up; bumping the expectation to
-3 would then have left the check satisfiable by a real THIRD BARRIER ARRIVAL, which
-is the regression it exists to catch.  Same reasoning in coop-launch.t.)
+`fetch_add': the CPU stress tally is an atomic RMW in this file too, and bumping
+the expectation to sweep it up would leave the check satisfiable by a real third
+barrier arrival, which is the regression it exists to catch.  Same reasoning in
+coop-launch.t.)
   $ grep -c '_bar.fetch_add' $MP.cu
   6
   $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' $MP.cu | grep -c '_bar.fetch_add'
   1
 
-and the barrier is ALL-OR-NONE, with its limit indexed by the barriers TAKEN --
+and the barrier is ALL-OR-NONE, with its limit indexed by the barriers taken --
 the adaptation the perpetual loop forces.  Upstream relaunches per iteration, so
 its counter is fresh each time and its toggle is one host-set boolean, uniform
 across the launch: all testing threads spin, or none do (litmus.cuh:340).  Our
-counter grows, so the limit must grow with it -- and it is only ATTAINABLE if
-every lane contributes exactly one increment to each barrier.  Hence: the roll is
-drawn from a LANE-INDEPENDENT stream (keyed by the iteration, not the lane), and
-the limit counts taken barriers (_nb), not iterations.
-(One per GPU test lane, and the draw is keyed by the ITERATION alone -- so all three
-co-running instances' lanes reach the same verdict for iteration _n and the barrier
-stays all-or-none across the whole harness.)
+counter grows, so the limit must grow with it, and it is only attainable if every
+lane contributes exactly one increment to each barrier.  Hence the roll is drawn
+from a lane-independent stream (keyed by the iteration, not the lane) and the
+limit counts taken barriers (_nb), not iterations -- so all three co-running
+instances reach the same verdict for iteration _n.
   $ grep -c 'het_rng_init(_seed ^ 0x9e3779b9u, (uint32_t)_n)' $MP.cu
   3
   $ grep -c 'het_spin(_spin_bar, _nb \* HET_SPIN_LANES, _stress_tally)' $MP.cu
   3
 
-A per-lane roll with an iteration-indexed limit ((_n+1)*lanes) is the B4 bug: a
-lane increments on only HET_BARRIER_PCT% of iterations while the limit rises every
-iteration, so the counter falls permanently behind and every spin burns the full
-1024-spin deadlock cap instead of rendezvousing (measured on device: 99.6% cap-
-released, counter deficit 627).  It must not come back.
+A per-lane roll with an iteration-indexed limit ((_n+1)*lanes) is the defect this
+pins: a lane increments on only HET_BARRIER_PCT% of iterations while the limit
+rises every iteration, so the counter falls permanently behind and every spin
+burns the full 1024-spin deadlock cap instead of rendezvousing (measured on
+device: 99.6% cap-released, counter deficit 627 --
+env-research/impl-briefs/B4-fix-impl-brief.md).
   $ grep -c '(uint32_t)(_n + 1) \* HET_SPIN_LANES' $MP.cu || true
   0
 
-(e) the ACCESS PATTERN reaches het_do_stress as a RUNTIME kernel argument, never
-as a compile-time constant.  Two bugs meet in this one line.  Upstream's: the 4th
-argument of do_stress is the PATTERN and MEM_STRESS() passes an ITERATION COUNT
-there (litmus.cuh:346), so mem-stress spun doing nothing.  Ours: a compile-time
-pattern lets nvcc fold the if-chain to the one live branch, and the tuned default
-(3 = ld;ld, whose loads only feed a `break') is then side-effect-free -- so nvcc
-DELETED the whole loop (0 scratchpad ops in the emitted PTX; -DHET_MEM_STRESS_
-PATTERN=3 emptied the entire kernel).  hetlitmus/verify/stresscheck.py is the gate.
-(B6b adds the runtime round tally: het_do_stress now takes _stress_tally and counts
-the rounds it completed, so a stress layer that is present in the PTX and never
-EXECUTES is finally visible to het_verdict().  The pre-stress runs in every test lane
--- all three instances -- so the control is stressed exactly as T is.)
+(e) the ACCESS PATTERN reaches het_do_stress as a runtime kernel argument, never
+as a compile-time constant.  Two defects meet in this one line: upstream passes
+an iteration count where do_stress expects the pattern (litmus.cuh:346), so
+mem-stress spins doing nothing; and a compile-time pattern lets nvcc fold the
+if-chain to the one live branch, which for the tuned default (3 = ld;ld, whose
+loads only feed a `break') is side-effect-free, taking the whole loop with it
+(env-research/impl-briefs/B4-fix-impl-brief.md).  hetlitmus/verify/stresscheck.py
+is the gate, and _stress_tally counts the rounds het_do_stress completed, so a
+layer that is present in the PTX and never executes is visible to het_verdict().
+The pre-stress runs in every test lane, so the control is stressed exactly as T.
   $ grep -c 'het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally)' $MP.cu
   3
   $ grep -c 'het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally)' $MP.cu
@@ -139,20 +135,20 @@ EXECUTES is finally visible to het_verdict().  The pre-stress runs in every test
   $ grep -c 'uint32_t _mem_pat = (uint32_t)HET_MEM_STRESS_PATTERN;' $MP.cu
   1
 
-and an out-of-range pattern is refused at COMPILE time -- het_do_stress's if-chain
-has no else, so pattern 57 (upstream's) silently stresses NOTHING.
+and an out-of-range pattern is refused at COMPILE time -- het_do_stress's
+if-chain has no else, so upstream's pattern 57 would silently stress nothing.
   $ grep -c '#error "HET_PRE_STRESS_PATTERN must be 0..3' MP-cg-sys-acqrel-2s/het_stress.cuh
   1
   $ grep -c '#error "HET_MEM_STRESS_PATTERN must be 0..3' MP-cg-sys-acqrel-2s/het_stress.cuh
   1
 
-(e2) LIVENESS TALLY: every mechanism in the stress layer is invisible to the L0
+(e2) liveness tally: every mechanism in the stress layer is invisible to the L0
 faithfulness gate (it is scaffolding, not a tested op), so its health is measured
-at run time or not at all -- both critical B4 defects shipped through five green
-gates.  het_spin tallies how each spin ended (rendezvous vs the 1024-spin deadlock
-cap); the stress lanes flag a HET_STRESS_MAX_ROUNDS cap-exit, which means stress
-STOPPED while the test was still running.  The host prints both and carries them
-into the HetObs record, so B7 can disqualify a run and B8 can tune against it.
+at RUN TIME or not at all.  het_spin tallies how each spin ended (rendezvous vs
+the 1024-spin deadlock cap); the stress lanes flag a HET_STRESS_MAX_ROUNDS
+cap-exit, which means stress stopped while the test was still running.  The host
+prints both and carries them into the HetObs record, so the statistics layer can
+disqualify a run and the tuner can tune against it.
   $ grep -c 'het_scratch_bump(&_stress_tally\[HET_TALLY_TRUNC\])' $MP.cu
   1
   $ grep -c 'HetLitmus stress: spins=%llu rendezvous=%llu cap=%llu' $MP.cu
@@ -162,13 +158,13 @@ into the HetObs record, so B7 can disqualify a run and B8 can tune against it.
   $ grep -c 'het_scratch_bump(&tally\[(val >= limit) ? HET_TALLY_RDV : HET_TALLY_CAP\])' MP-cg-sys-acqrel-2s/het_stress.cuh
   1
 
-(e3) the two UPSTREAM bugs are disclosed in the emitted header, not just in a
+(e3) the two UPSTREAM defects are disclosed in the emitted header, not just in a
 commit message: we cite Levine, so a reader must be able to tell which lines are
-theirs.  Bug 2 is the dead dedup -- setScratchLocations declares std::set
-usedRegions and queries it but never inserts, so it never dedups and its realised
-spread is <= m.  We dedup for real, which is a behavioural divergence.
-disclosed BOTH in the header (where a reader looks for the provenance) and at the
-code site (where a maintainer looks before "restoring" upstream's version):
+theirs.  The second is a dead dedup -- setScratchLocations declares a std::set of
+used regions and queries it but never inserts, so it never dedups and its
+realised spread is <= m.  We dedup for real, which is a behavioural divergence,
+disclosed both in the header (where a reader looks for provenance) and at the
+code site (where a maintainer looks before "restoring" upstream's version).
   $ grep -c 'NEVER INSERTS INTO IT' MP-cg-sys-acqrel-2s/het_stress.cuh
   1
   $ grep -c 'never inserts into the set' MP-cg-sys-acqrel-2s/het_stress.cuh
@@ -182,33 +178,29 @@ without any incantation.
 
 (f) the stress toggles are decided DEVICE-side off a seeded Park-Miller stream:
 the perpetual kernel has no per-iteration host round-trip to re-roll them, and a
-fixed seed keeps a run replayable (GPUHarbor).  The lane draws its own stream (for
-the pre-stress toggle, which feeds no shared counter); the barrier's stream is the
-LANE-INDEPENDENT one checked in (d).
+fixed seed keeps a run replayable (GPUHarbor).  The lane draws its own stream for
+the pre-stress toggle, which feeds no shared counter; the barrier's stream is the
+lane-independent one checked in (d).
   $ grep -c 'het_rng_t _rng = het_rng_init(_seed, blockIdx.x \* blockDim.x + threadIdx.x)' $MP.cu
   1
 
-(g) on an OBSERVER test (condition names a coherence-final location), the B3
-observer keeps its reserved grid slot and its pinned trip count, and it does NOT
-spin -- its job is to sample the shared locations densely, and gating it on the
-test lanes would couple two lanes that run at different rates.
+(g) on an OBSERVER test (condition names a coherence-final location) the observer
+keeps its reserved grid slot and its pinned trip count, and it does not spin --
+its job is to sample the shared locations densely, and gating it on the test
+lanes would couple two lanes that run at different rates.
 
-B6c: S-cg-sys-fence is oracle-ALLOWED, so it now CO-RUNS the Layer-B canary
-(MP-cg-sys-relaxed) and every one of these counts is a SUM over the two instances.
-The observer invariant is what is actually being guarded here, and it is unchanged
--- so the arithmetic is stated rather than just re-pinned:
-T (S) contributes 2 blocks (GPU proc + observer), 2 lanes and 1 spin -- the observer
-does NOT spin -- and the canary (an MP) contributes 1 block, 1 lane and 1 spin.
-Totals: 3 blocks, 3 lanes, 2 spins.
+S-cg-sys-fence is oracle-Allowed, so it co-runs the Layer-B canary
+(MP-cg-sys-relaxed) and every count here is a SUM over the two instances.  T (an
+S) contributes 2 blocks (GPU proc + observer), 2 lanes and 1 spin -- the observer
+does not spin -- and the canary (an MP) contributes 1 block, 1 lane and 1 spin:
+totals 3 blocks, 3 lanes, 2 spins.  SPIN_LANES (2) staying strictly below
+GPU_LANES (3) is the property that matters; hardcode any of these and the
+system-scope rendezvous releases before the observer arrives.
 
-SPIN_LANES (2) is still strictly less than GPU_LANES (3), which is the property that
-matters: an observer that spun would be gated on the test lanes and would stop
-sampling.  Hardcode any of these and the system-scope rendezvous releases before the
-observer arrives -- a barrier that looks alive and is not.
-
-BOTH `unroll 1' pragmas survive per instance (dropping either re-breaks faithfulness
--- nvcc unrolls the loop and the PTX then carries many times the declared ops), so
-the file-wide count is 3: T's two, and the canary's one perpetual loop.
+Both `unroll 1' pragmas survive per instance -- dropping either lets nvcc unroll
+the perpetual loop, and the PTX then carries many times the declared ops, which
+is the faithfulness gate's subject -- so the file-wide count is 3: T's two, and
+the canary's one perpetual loop.
   $ grep -E '^#define HET_(TEST_BLOCKS|GPU_LANES|SPIN_LANES)' $S.cu
   #define HET_TEST_BLOCKS 3
   #define HET_GPU_LANES 3
@@ -219,8 +211,8 @@ the file-wide count is 3: T's two, and the canary's one perpetual loop.
   3
 
 The observer lane is still the one that does NOT spin: its block body carries the
-perpetual loop but no het_spin.  (Checked positively -- a count alone would pass if
-the canary spun twice and the observer once.)
+perpetual loop but no het_spin.  Checked positively, because a count alone would
+pass if the canary spun twice and the observer once.
   $ sed -n '/the CPU observer/,$p' $S.cu | head -1 > /dev/null
   $ grep -c 'het_spin(_spin_bar, _nb \* HET_SPIN_LANES, _stress_tally)' $S.cu
   2

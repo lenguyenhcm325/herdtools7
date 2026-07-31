@@ -2,34 +2,34 @@
 # =========================================================================
 # HetLitmus dev-tier LADDER -- seven rungs, run on the rented instance.
 # =========================================================================
-# WHAT THIS IS.  A MACHINERY spot check: does the emitted harness build, link,
+# WHAT THIS IS.  A machinery spot check: does the emitted harness build, link,
 # launch, rendezvous across the two devices, drive its knobs, keep its controls
 # hot, print the right reporting frame for its oracle class, and pool across
-# invocations?  Every one of those is a property of the CODE, and every one of
-# them can be checked on a GPU that is not a GH200.
+# invocations?  Every one of those is a property of the CODE, and every one can
+# be checked on a GPU that is not a GH200.
 #
-# WHAT THIS IS NOT.  It is not an evaluation and its numbers are not results.
-# A non-GH200 box has no ATS and no NVLink-C2C, so the shared vars do not sit on
-# one cache line under a live hardware-coherence protocol; they migrate, or they
-# cross PCIe.  The compound-model oracle in expected-nvidia.csv was DERIVED for
-# GH200 (ARMv9 Grace + Hopper PTX).  So:
+# WHAT THIS IS NOT.  An evaluation; its numbers are not results.  A non-GH200 box
+# has no ATS and no NVLink-C2C, so the shared vars do not sit on one cache line
+# under a live hardware-coherence protocol -- they migrate, or they cross PCIe --
+# and the compound-model oracle in expected-nvidia.csv was derived for GH200
+# (ARMv9 Grace + Hopper PTX).  So:
 #
-#   * a NULL here says nothing about the CMCM.  Different machine, different
+#   * a NULL here says nothing about the CMCM: different machine, different
 #     window, different coherence mechanism.
-#   * a SIGHTING on a Disallowed row here is NOT a refutation of the compound
-#     model either -- but it IS a five-alarm machinery event (or a genuinely
-#     interesting hardware fact) and the ladder stops and says so.
+#   * a SIGHTING on a Disallowed row is not a refutation of the compound model
+#     either -- but it is a five-alarm machinery event (or a genuinely
+#     interesting hardware fact), and the ladder stops and says so.
 #
 # Results land in results-devtier-<date>-<host>/ and MUST NOT be merged with
 # GH200 evaluation data.  See README.md.
 #
-# ---- RUNTIME KNOBS -------------------------------------------------------
-# The harness has exactly FIVE runtime (getenv) knobs.  Everything else --
+# ---- runtime knobs -------------------------------------------------------
+# The harness has exactly five runtime (getenv) knobs.  Everything else --
 # HET_PLACE, the stress percentages, HET_NWIN, SIZE_OF_TEST, NUMBER_OF_RUN -- is
 # compile-time and is set through the compiler, e.g.
 #   make cuda-bin NVCC="nvcc -DHET_MEM_STRESS_PCT=0"
-# (het_verdict.h is explicit about why: a -D the device code can see is exactly
-# how B4's stress layer came to be silently folded away.)
+# (why: het_verdict.h, "RUNTIME knobs" -- a -D the device code can see is how a
+# stress layer gets silently folded away.)
 #
 #   HET_ALLOC      auto|malloc|managed|pinned   shared-memory mode      (PORT1)
 #   HET_RUNS_MAX   runs this invocation, clamped to the compiled NUMBER_OF_RUN
@@ -51,8 +51,8 @@ LADDER_TIMEOUT="${LADDER_TIMEOUT:-300}"       # seconds per harness invocation.
                                               # (the harness warns about it).
 # =========================================================================
 # This script needs bash (arrays, mapfile, pipefail).  `sh ladder.sh' would run
-# it under dash on Debian/Ubuntu and die on line 1 of the real work, so re-exec
-# rather than rely on the operator getting the invocation right.
+# it under dash on Debian/Ubuntu and die on the first line of real work, so
+# re-exec rather than rely on the operator getting the invocation right.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -uo pipefail        # NOT -e: a failed rung is DATA, to be tabled, not fatal
 
@@ -134,7 +134,7 @@ invoke() {
   return "$rc"
 }
 
-# Machinery assertions on a transcript.  These check the harness SAID the right
+# Machinery assertions on a transcript: these check the harness SAID the right
 # kind of thing, never what the hardware did.
 check_machinery() { # log test expected-oracle-class
   local log="$1" t="$2" oclass="$3" bad=0
@@ -167,8 +167,8 @@ row 0 "build subset (comp.sh + cuda-bin)" "$([ $r0 -eq 0 ] && echo PASS || echo 
 [ $r0 -eq 0 ] || { echo; echo "ladder: nothing to run without binaries -- stopping at rung 0."; printf '%s\n' "${ROWS[@]}"; exit 1; }
 
 # =========================================================================
-# RUNG 1 -- the negative-knob bites.  These are the PORT1 guards whose FATAL
-# paths need a GPU and so could not be bitten on the dev box.
+# RUNG 1 -- the negative-knob bites: the HET_ALLOC guards whose FATAL paths need
+# a GPU and so cannot be bitten on the dev box.
 # =========================================================================
 echo; echo "== rung 1: negative-knob bites =="
 BT="${TESTS[0]}"
@@ -279,9 +279,10 @@ fi
 row 3 "Disallowed triple ($T3)" "$([ $r3 -eq 0 ] && echo PASS || echo FAIL)" "$r3note"
 
 # =========================================================================
-# RUNG 4 -- the remaining Allowed rows and the NO-ORACLE row.  The point is
-# that each prints the frame for ITS OWN oracle class: a NO-ORACLE row must
-# never print a validation or a refutation sentence (B6c).
+# RUNG 4 -- the remaining Allowed rows and the NO-ORACLE row.  The point is that
+# each prints the frame for ITS OWN oracle class: a NO-ORACLE row must never
+# print a validation or a refutation sentence (hetlitmus/docs/positive-control.md
+# sec 4, the three reporting frames).
 # =========================================================================
 echo; echo "== rung 4: Allowed + NO-ORACLE =="
 r4=0
@@ -338,12 +339,11 @@ if [ -d "$TESTS_DIR/$T5" ]; then
   else
     echo "  ok    the two builds differ in their reported stress config"
   fi
-  # LIVENESS BOTH WAYS, off the HetObs record rather than off a prose caveat.
-  # A tally that cannot go to zero is not evidence, and neither is one that
-  # cannot go non-zero -- so assert BOTH directions on the mechanisms whose
-  # counters the record actually carries.  (The caveat strings were the wrong
-  # instrument: with the knobs at 0 the mechanisms are not REQUESTED, so the
-  # `dead' disqualifiers correctly do not fire and nothing says "unstressed".)
+  # Liveness BOTH WAYS, read off the HetObs record rather than a prose caveat: a
+  # tally that cannot go to zero is not evidence, and neither is one that cannot
+  # go non-zero.  The caveat strings are the wrong instrument here -- with the
+  # knobs at 0 the mechanisms are not requested, so the `dead' disqualifiers
+  # correctly do not fire and nothing says "unstressed".
   obsfield() { grep -m1 '^HetObs ' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p"; }
   for pair in "do_stress_rounds GPU scratchpad" "enemy_rounds CPU enemies" "preload M3 preload"; do
     f="${pair%% *}"; what="${pair#* }"
@@ -384,12 +384,10 @@ row 5 "stress off -> on ($T5)" "$([ $r5 -eq 0 ] && echo PASS || echo FAIL)" "kno
 # row CANNOT finish in one invocation.
 # =========================================================================
 echo; echo "== rung 6: campaign pooling =="
-# --control-map gets control-map.csv -- the grounded source read_control_map's
-# docstring names (B6c).  Its `Test,...' header was once unparseable (campaign.py
-# skipped only expected-nvidia.csv's `Litmus' header) and this ladder carried
-# expected-nvidia.csv as a workaround; that is fixed and gated (statscheck 6.0
-# parses both REAL files), so the workaround is retired.  Columns 1-2 of the two
-# files agree by construction (make hetlitmus-controlmap).
+# --control-map gets control-map.csv, the grounded source campaign.py's
+# read_control_map names.  Columns 1-2 of control-map.csv and expected-nvidia.csv
+# agree by construction (make hetlitmus-controlmap), and statscheck 6.0 gates
+# that campaign.py parses the header of each.
 r6=0
 STATE="$RESULTS/campaign-state.csv"
 python3 "$HERE/campaign.py" \

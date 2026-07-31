@@ -1,31 +1,27 @@
 #!/usr/bin/env python3
 """
-obscheck.py -- DR1-A3 -- the OBSERVER-LIVENESS gate (guards F1).
+obscheck.py -- the observer-liveness gate (DR1-A3).
 
-WHY THIS GATE EXISTS.  statscheck.py feeds the verdict a *synthetic*
-observer_unique_count; NO gate ever compiled the REAL emitted CPU observer loop.
-So F1 -- the -O2 hoist that lifted the observer's `*a->x' read out of the perpetual
-loop, broadcast one value N times, pinned observer_unique_count<=1, and rendered the
-22 store-only (2+2W) tests' ONLY recovery channel inert -- was INVISIBLE to CI.  A
-green gate is not evidence the mechanism runs; this is the FIFTH inert-mechanism bug
-this project shipped green (P-fix _cond, B3 _weak, B4 stress, B4 spin, now F1).
+The CPU observer is the ONLY recovery channel the 22 store-only (2+2W) shapes have,
+and statscheck.py feeds the verdict a synthetic observer_unique_count, so nothing else
+in CI compiles the real emitted observer loop.  This gate does.
 
-WHAT IT DOES.  It EMITS a store-only het test through the real litmus7, EXTRACTS the
-actual `*cpu_obs_args' struct and observer for-loop from the emitted `.cu' (extracted
-from the artifact, NOT hand-copied, so emission drift is visible), wraps them in a
-host translation unit, and compiles at `clang -O2' for BOTH x86-64 and the
-GH200's aarch64 (cross).  It asserts -- scoped to the LOOP BODY, per the B5 gate rule
-(do not count any load anywhere) -- that a per-iteration load survives inside EVERY
-loop the compiler emits.  The `volatile const' fix guarantees a single straight loop
-whose body reloads the observed pointer each iteration; the plain-`uint64_t*' hoist
-instead emits an alias-versioned fast loop that broadcasts one hoisted value and whose
-body has NO load (aarch64 `ld1r'; x86 `pshufd' splat).  "Every loop body has a load"
-is therefore TRUE clean and FALSE once hoisted.
+It emits a store-only het test through the real litmus7, extracts the actual
+`*cpu_obs_args' struct and observer for-loop from the emitted `.cu' -- from the
+artifact, never hand-copied, so emission drift is visible here -- wraps them in a host
+translation unit, and compiles at `clang -O2' for both x86-64 and the GH200's aarch64.
+Both halves of that are load-bearing: -O2 is where the hoist happens, and the two ISAs
+are the two hosts the campaign runs on.  The assertion is that a per-iteration load
+survives inside EVERY loop the compiler emits, scoped to the loop body rather than to
+loads anywhere in the function.  With the emitter's `volatile const' on the observed
+pointers the loop body reloads each iteration; a plain `uint64_t*' instead yields an
+alias-versioned fast loop that broadcasts one hoisted value and whose body has no load
+(aarch64 `ld1r', x86 `pshufd' splat), which pins observer_unique_count at <=1 and
+leaves those 22 tests inert.  So "every loop body has a load" is true clean and false
+once hoisted.
 
-IT BITES BOTH WAYS (`--bite').  It strips `volatile' from the extracted TU (cmp-
-verified to have actually changed it -- a sed that matches nothing "passes" for free,
-which has happened here), recompiles, and the very same assertion must now FAIL.  A
-gate never seen to fail is not evidence.
+`--bite' strips `volatile' from the extracted TU, confirms the strip really changed
+it, recompiles, and requires the same assertion to FAIL.
 """
 import argparse
 import os
@@ -38,12 +34,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 
-# A store-only (2+2W) shape: the observer is its ONLY channel, so it is exactly the
-# family F1 killed and the one this gate must keep alive.
+# A store-only (2+2W) shape: the observer is its only channel, so this is the family
+# the gate must keep alive.
 STORE_ONLY_TEST = "2+2W-cg-sys-fence.litmus"
 
-# clang -O2 for the host, for both target ISAs the campaign runs on.  aarch64 is the
-# GH200 CPU (where F1 was proven); x86-64 is the MI300A host and the dev box.
+# clang -O2 for both target ISAs the campaign runs on: aarch64 is the GH200 CPU,
+# x86-64 the MI300A host and the dev box.
 TARGETS = [
     ("x86-64",  ["clang", "-O2", "-S"]),
     ("aarch64", ["clang", "--target=aarch64-linux-gnu", "-O2", "-S"]),
@@ -74,10 +70,9 @@ def emit_store_only(tmp):
 
 
 def extract_probe(cu):
-    """Pull the REAL cpu_obs_args struct + observer loop from the emitted .cu and
-       wrap them in a host TU.  Only the wrapper (signature + stubs) is the gate's;
-       the struct and the loop are the artifact's, so a regression in either is
-       visible here."""
+    """Pull the REAL cpu_obs_args struct + observer loop from the emitted .cu and wrap
+       them in a host TU.  Only the wrapper (signature + stubs) belongs to the gate; the
+       struct and the loop are the artifact's, so a regression in either shows up."""
     src = open(cu).read()
     ms = re.search(r'struct (\w*cpu_obs_args) \{.*?\n\};', src, re.S)
     if not ms:
@@ -92,7 +87,8 @@ def extract_probe(cu):
         raise SystemExit("obscheck: could not find the observer loop in the artifact")
     loop = ml.group(1)
     if "volatile" not in struct:
-        # Not a compile problem -- a SCIENCE problem: the emitter regressed F1.
+        # Not a compile problem but a science one: the emitter dropped the
+        # qualifier, so the observer will hoist.
         raise SystemExit("obscheck: the emitted cpu_obs_args struct has NO `volatile' "
                          "-- the F1 fix has regressed; the observer will hoist.\n"
                          + struct)
@@ -143,8 +139,8 @@ def _is_load(line, isa):
 
 
 def _loops(fn):
-    """Return [(header_idx, backedge_idx)] for every loop: a branch to a label that
-       was defined at an EARLIER line is a loop back-edge."""
+    """[(header_idx, backedge_idx)] per loop: a branch to a label defined at an
+       EARLIER line is a loop back-edge."""
     label_idx = {}
     for i, l in enumerate(fn):
         m = re.match(r'^(\.[\w$.]+):', l.strip())
@@ -162,8 +158,8 @@ def _loops(fn):
 
 
 def every_loop_has_load(asm, isa):
-    """The gate's criterion: every loop body carries >=1 load (the observed-pointer
-       reload).  Returns (ok, details)."""
+    """The criterion: every loop body carries >=1 load, the observed-pointer reload.
+       Returns (ok, details)."""
     fn = _fn_lines(asm)
     loops = _loops(fn)
     if not loops:

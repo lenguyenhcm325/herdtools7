@@ -1,115 +1,60 @@
 #!/usr/bin/env bash
 # Regenerate the NVIDIA GH200 het oracle  tests/het/expected-nvidia.csv  from the
-# het corpus (the .litmus names produced by generate.sh).  Verdicts are DERIVED
-# (hardware-free; running on a GH200 is Task 9), grounded in three primary
-# sources -- see docs/het-oracle.md for the full provenance + per-shape proofs:
+# het corpus (the .litmus names produced by generate.sh).  Verdicts are derived,
+# not measured (running on a GH200 is Task 9), and grounded in three primary
+# sources -- docs/het-oracle.md carries the provenance, the per-shape proofs and
+# the quotations behind every row below:
 #   [CMCM]   Goens et al., Compound Memory Models, PLDI'23.
 #   [PTX]    Lustig et al., A Formal Analysis of the NVIDIA PTX MCM, ASPLOS'19.
 #   [Bagchi] Bagchi et al., Consistency & Coherence of the Grace-Hopper
 #            Superchip, ISMM'26 (empirical GH200).
 #
-# THE DECISION PROCEDURE (extends Task 2's "CPU is never ordered" to
-# "a CPU proc is ordered iff its column carries STLR/LDAPR/DMB.SY", i.e. the
-# two-sided `-2s' tests):
+# Decision table (read alongside classify() below).  A CPU proc is ordered iff
+# its column carries STLR/LDAPR/DMB, which only the two-sided `-2s' tests do.
 #
-#  One-sided tests (GPU annotated, CPU plain ARMv9 -- the baseline):
-#    relaxed (any scope)        -> Allowed  (no synchronizing op)
-#    cta scope (any order)      -> Allowed  (scope too narrow to reach the CPU)
-#    gpu scope (any order)      -> Allowed  (scope excludes the CPU thread)
-#    sys + acquire/release/fence-> Allowed  (one-sided: the paired CPU proc is
-#                                            plain ARMv9 -> pair never completes)
-#    EXCEPT IRIW-gcgc sys acquire/fence -> NO-ORACLE (both readers GPU so the
-#                                            reader-order half IS present, but
-#                                            IRIW needs MCA -- unestablished)
+#  one-sided (GPU annotated, CPU plain ARMv9):
+#    relaxed, any scope             Allowed     no synchronizing op
+#    cta or gpu scope, any order    Allowed     scope cannot reach the CPU
+#    sys + acquire/release/fence    Allowed     paired CPU proc is plain, so the
+#                                               morally-strong pair never closes
+#    IRIW-gcgc sys acquire|fence    NO-ORACLE   reader half present, but IRIW
+#                                               needs multi-copy atomicity
 #
-#  Two-sided ORDER-PAIR tests (`-2s' with order `<cpu>.<gpu>', Q10 steps 1-4 +
-#  Q10b): the OFF-DIAGONAL of the pairing grid, on the 2-proc shapes (minus 2+2W),
+#  two-sided `-2s', matched order (both devices annotated, always sys scope):
+#                                   acqrel      fence
+#    MP, LB, S                      Disallowed  Disallowed
+#    SB, R                          Allowed     Disallowed  (RCpc rel/acq never
+#                                               orders store->load; an SC fence
+#                                               does)
+#    RWC                            Allowed     NO-ORACLE
+#    2+2W, IRIW                     NO-ORACLE   NO-ORACLE   (multi-copy
+#                                               atomicity)
+#    WRC, ISA2, WRC3                NO-ORACLE   NO-ORACLE   (cross-device
+#                                               A-cumulativity)
+#
+#  two-sided order-pair `-2s' with order `<cpu>.<gpu>' (2-proc shapes minus
+#  2+2W; the two diagonal cells are the matched rows -- `ra.ra' is -acqrel-2s,
+#  `sy.sc' is -fence-2s):
 #      cpu in {ra = STLR/LDAPR , sy = DMB SY , st = DMB ST , ld = DMB LD}
 #      gpu in {ra = w[release]/r[acquire] , sc = fence.sc.sys ,
 #              rel = fence.release.sys , acq = fence.acquire.sys}
-#  minus the two DIAGONAL cells, which ARE the pre-existing rows: `ra.ra' is
-#  `-acqrel-2s' and `sy.sc' is `-fence-2s' (generate.sh byte-diffs both to prove
-#  it).  DMB.ST / DMB.LD were always DECIDED HERE and machine-checked by
-#  ordercheck.py; Q10b lifted the litmus/hetCpuBody.ml emission blocker, so the
-#  cells that decision covers are now real files.  Not one line of the rule
-#  below changed to accept them.
+#  Not tabulated by hand: two_sided_order_pair() below composes two
+#  per-primitive facts, ord(p) and role(p), defined at prim_ord/prim_role.  Its
+#  outcomes are Allowed (a side's own ISA leaves its own program-order pair
+#  unordered), Disallowed (both sides order their pair and the [PTX] pattern
+#  completes) and NO-ORACLE (both order their pair, pattern does not complete --
+#  the cells where CMCM's operational model forbids and its own axiomatic model
+#  permits, [CMCM] 5.1 + Fig 11).  hetlitmus/verify/ordercheck.py proves the
+#  rule is the function herd7 computes: 96 CPU-only cells under the native
+#  AArch64 model, 96 GPU-only cells under nvidia-ptx.cat.
 #
-#  These are NOT hand verdicts: two_sided_order_pair() below is a COMPOSITIONAL
-#  rule over two per-primitive facts, and hetlitmus/verify/ordercheck.py proves
-#  the rule is the same function herd7 computes -- 96 CPU-only cells under the
-#  native AArch64 model and 96 GPU-only cells under nvidia-ptx.cat -- and that
-#  it reproduces the pre-existing `-fence-2s' / `-acqrel-2s' rows as the
-#  (sy,sc) / (ra,ra) cells of the same grid.
+# The one step no solver decides: that a CPU DMB and a sys-scope GPU fence are
+# morally strong at all, i.e. that the two sides compose across the C2C boundary
+# ([CMCM] 3.2.3/4.4, [Bagchi] 3.2/4.2, [PTX] Table 1).
 #
-#    ord(p)  = the program-order pairs {WW,RR,WR,RW} p orders inside its thread
-#              DMB.SY / fence.sc.sys       {WW RR WR RW}
-#              STLR/LDAPR , w[rel]/r[acq]  {WW RR RW}   (never store->load: RCpc)
-#              fence.release.sys {WW RW}   fence.acquire.sys {RR RW}
-#              DMB.ST {WW}                 DMB.LD {RR RW}
-#              (ARM rows = herd7's own answer; GPU rows = [CMCM] 5 verbatim:
-#               "a request that is marked with sem >= rel enforces R + pred -> W
-#               and W -> W.  A request with sem >= acq enforces R -> R and
-#               R -> W and an sc fence additionally enforces W -> R.")
-#    role(p) = which half of a morally-strong pair p can supply
-#              DMB.SY / fence.sc.sys {rel acq sc}
-#              STLR/LDAPR , w[rel]/r[acq] {rel acq}
-#              DMB.ST / fence.release.sys {rel}
-#              DMB.LD / fence.acquire.sys {acq}
-#
-#    Disallowed  ord(cpu) covers the CPU proc's pair AND ord(gpu) covers the GPU
-#                proc's pair AND the [PTX] pattern completes (rf-source proc
-#                supplies `rel' and rf-target proc `acq'; or -- for a cycle with
-#                NO rf at all: SB R 2+2W -- BOTH supply `sc'  [PTX Fig 6])
-#    NO-ORACLE   both sides order their own pair but the PTX pattern does not
-#                complete.  [CMCM] ships TWO compound models and says which way
-#                they differ, verbatim (5.1): "There are two ways in which our
-#                operational model is stronger than the axiomatic PTX model:
-#                (1) Write serialization is enforced within the causality
-#                constraints by our operational model, but not by the axiomatic
-#                PTX model.  (2) Release and acquire fences are slightly
-#                stronger in cumulative chains of events ... events can be
-#                transitively ordered using either release or acquire fences,
-#                though the axiomatic PTX model would only order if the fence
-#                is at least acqrel." (Fig 11: 2+2W and ISA2 are the
-#                witnesses.)  Every cell here is an instance of (1) or (2): the
-#                operational model forbids, the axiomatic CMM (6.2, whose PTX
-#                component IS [PTX] Fig4/Fig7) permits, and CMCM does not say
-#                which the hardware follows.  Characterization only.
-#    Allowed     one side's own ISA leaves its own program-order pair unordered
-#
-#  The cross-device step (a CPU DMB and a sys-scope GPU fence ARE morally strong
-#  and therefore compose) is the part no solver decides: [CMCM] 3.2.3/4.4 treat
-#  every unscoped request as system-scoped; [Bagchi] 3.2/4.2 state the same rule
-#  for ARM+PTX on GH200; [PTX] Table 1 has `.sys' include "all threads
-#  constituting the host program itself".
-#
-#  Two-sided tests (`-2s': BOTH devices annotated -- a complete pair CAN form;
-#  always sys scope, order in {acqrel, fence}):
-#    MP, LB, S        -> Disallowed   (2-proc; a single sys release/acquire pair
-#                                      -- or DMB.SY/fence.sc.sys -- cuts the cycle;
-#                                      no cross-device MCA/cumulativity needed.
-#                                      MP is additionally EMPIRICALLY forbidden:
-#                                      Bagchi Tab4 "no correctly synchronized
-#                                      system-scope test exhibited weak behaviors")
-#    SB, R            -> fence: Disallowed (DMB.SY/fence.sc.sys order store->load)
-#                        acqrel: Allowed   (RCpc STLR->LDAPR and PTX rel/acq do
-#                                      NOT order store->load; need an SC fence --
-#                                      cf. the AMD oracle SB-sys Allowed/-F Disallowed)
-#    RWC              -> fence: NO-ORACLE (store->load fenced, but RWC is a 3-proc
-#                                      transitive shape -> cross-device cumulativity
-#                                      unestablished)
-#                        acqrel: Allowed   (its W->R proc is not fenced -> the weak
-#                                      outcome survives without invoking MCA)
-#    2+2W             -> NO-ORACLE   (needs a global write-write order = MCA)
-#    WRC, ISA2, WRC3  -> NO-ORACLE   (transitive: need cross-device A-cumulativity
-#                                      through a GPU intermediary -- unestablished)
-#    IRIW             -> NO-ORACLE   (needs multi-copy atomicity)
-#
-# HONESTY (unchanged from Task 2): an *observed* weak outcome makes a verdict
-# Allowed and is robust; a *non-observation* NEVER proves Disallowed.  Every
-# Disallowed row below is a model DERIVATION, not a measurement, and carries its
-# grounding in the Source column.  NO-ORACLE is a first-class verdict for the
-# ARM-MCA x PTX-non-MCA frontier that Bagchi 4.2 explicitly leaves open.
+# An observed weak outcome makes a verdict Allowed and is robust; a
+# non-observation NEVER proves Disallowed.  Every Disallowed row is a model
+# derivation, not a measurement, and carries its grounding in the Source column.
 set -euo pipefail
 cd "$(dirname "$0")"
 # shellcheck source=../_grid_lib.sh
@@ -117,8 +62,8 @@ source ../_grid_lib.sh          # for SHAPE_NPROCS (2-proc vs transitive split)
 
 MODEL="NVIDIA-PTX-AArch64"
 
-# Source strings (kept byte-identical to the Task-2 file for the one-sided rows
-# so that regeneration does not gratuitously churn the baseline verdicts).
+# Source strings.  The one-sided ones are held byte-stable: regenerating the CSV
+# must not churn the baseline verdict text.
 S_RELAXED="ARMv9/PTX relaxed: no synchronizing op; weak outcome permitted [Bagchi Fig2a; PTX-relaxed; CMCM]"
 S_CTA="cta scope: too narrow to encompass CPU thread; not morally strong [Bagchi r3-5; PTX 3.3; CMCM]"
 S_GPU="gpu scope: excludes CPU thread; not morally strong [Bagchi Fig4e/r21-22; PTX 3.3; CMCM]"
@@ -143,17 +88,19 @@ S_TRANS="two-sided complete pair, but this transitive shape needs cross-device A
 S_IRIW2="two-sided reader ordering present, but IRIW needs multi-copy atomicity; ARM-MCA x PTX-non-MCA unestablished [Bagchi 4.2 future-work; PTX non-MCA; CMCM Fig3]"
 
 # ---------------------------------------------------------------------------
-# Q10: the two-sided FENCE-PAIR grid  <cpu>.<gpu>.  Compositional -- see the
-# header block and hetlitmus/verify/ordercheck.py (which machine-checks every
-# clause below against herd7's AArch64 model and nvidia-ptx.cat).
-# NB: Source strings must contain NO comma (this file is a CSV), so the
-# primitives are named by their real mnemonics: `DMB SY' / `fence.acquire.sys'.
+# The two-sided order-pair grid  <cpu>.<gpu>  (header decision table).
+# The Source strings built here must contain NO comma -- this file is a CSV --
+# so primitives are named by their real mnemonics: `DMB SY', `fence.acquire.sys'.
 # ---------------------------------------------------------------------------
 
-# prim_ord <tok> -> sets PRIM_ORD (the program-order pairs it orders).
-# NB: these MUST NOT be called in a command substitution -- a `exit 1' inside
-# `$(...)' only kills the subshell, which is exactly how a fail-closed guard
-# silently fails open.  They set a global and are called as plain statements.
+# prim_ord <tok> -> sets PRIM_ORD, the program-order pairs of {WW RR WR RW} the
+# primitive orders inside its own thread.  ARM rows are herd7's own answer; GPU
+# rows are [CMCM] 5 (quoted in docs/het-oracle.md).  Note that release/acquire
+# lacks WR -- that is RCpc, and it is why SB/R stay Allowed under everything but
+# a pair of SC fences.
+# These functions MUST NOT be called in a command substitution: an `exit 1'
+# inside `$(...)' kills only the subshell, turning a fail-closed guard into a
+# silent fail-open.  They set a global and are called as plain statements.
 prim_ord() {
   case "$1" in
     ra)     PRIM_ORD="WW RR RW";;
@@ -164,7 +111,8 @@ prim_ord() {
     *) echo "build-nvidia-oracle: unknown order-pair primitive '$1'" >&2; exit 1;;
   esac
 }
-# prim_role <tok> -> sets PRIM_ROLE (which half of a morally-strong pair)
+# prim_role <tok> -> sets PRIM_ROLE, which half of a morally-strong pair the
+# primitive can supply.
 prim_role() {
   case "$1" in
     ra)     PRIM_ROLE="rel acq";;
@@ -202,7 +150,7 @@ two_sided_order_pair() {
   prim_ord "$c"; oc="$PRIM_ORD"
   prim_ord "$g"; og="$PRIM_ORD"
 
-  # (1) each thread's OWN model must order its OWN program-order pair
+  # (1) each thread's own model must order its own program-order pair
   if ! has_tok "$pc" $oc; then
     VERDICT=Allowed
     SOURCE="two-sided sys order pair ($nc | $ng): the CPU thread's own ISA leaves its $pc program-order pair unordered so no reading of the compound model cuts the cycle [machine-checked herd7 AArch64 via verify/ordercheck.py; CMCM 4.3 fence orderings]"
@@ -268,8 +216,8 @@ classify() {
     return
   fi
 
-  # two-sided.  First the Q10 fence-pair grid `<cpu>.<gpu>' (2-proc shapes
-  # only; anything else is a generation bug -> fail closed).
+  # two-sided.  First the order-pair grid `<cpu>.<gpu>' (2-proc shapes only;
+  # anything else is a generation bug -> fail closed).
   case "$order" in
     *.*)
       case "$shape" in
@@ -329,10 +277,10 @@ if [ -n "$badcols" ]; then
   echo "ERROR: malformed row(s) -- field 2 must be a verdict and field 3 the model:" >&2
   printf '%s\n' "$badcols" >&2; exit 1
 fi
-# ADVISORY: a comma inside a free-text Source string splits it across CSV fields
-# 4..n.  Harmless for fields 1-3 (hence not fatal) but it truncates the Source
-# for anything that reads a single column.  41 of the Task-2/3 baseline strings
-# already do this and are kept byte-stable on purpose; the Q10 fence-pair
-# strings are comma-free and this line makes any growth visible.
+# Advisory (not fatal): a comma inside a free-text Source string splits it
+# across CSV fields 4..n.  Fields 1-3 stay correct, but anything reading a
+# single column sees a truncated Source.  41 baseline strings do this and are
+# kept byte-stable on purpose; the order-pair strings are comma-free, and
+# printing the count makes any growth visible.
 ncomma=$(grep -vE '^#|^Litmus,' "$OUT" | awk -F, 'NF>4' | wc -l)
 echo "note: $ncomma row(s) have a comma inside the Source string (advisory)" >&2

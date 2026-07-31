@@ -1,57 +1,33 @@
 #!/usr/bin/env python3
-"""histcheck.py -- F-A -- the OUTCOME-HISTOGRAM gate.
+"""histcheck.py -- the outcome-histogram gate.  It pins two invariants (F-A; the
+diagnosis, the hardware log and the runtime experiment that settled it are in
+env-research/impl-briefs/FA-FB-REPORT.md):
 
-WHY THIS GATE EXISTS.  The first hardware run (GB10, 2026-07-31) printed, for
-`2+2W-cg-sys-relaxed' over 4 runs x N=100000 frames:
+  (1) THE HISTOGRAM IS FED ONCE PER OBSERVATION.  A shape with a reader has a
+      per-frame observable (`int _hot ='), so its add belongs inside the per-frame
+      loop; a reader-less store-only shape has only the run-level observer witness,
+      which is constant across the frame loop, so its add belongs at RUN level.
+      Adding a per-run fact once per frame multiplies one observation by N.
+  (2) A coherence-final `[ell]' column is never printed as a number, because no such
+      number is measured: an [ell]=v atom is decided by the per-run observer `ws'
+      witness and reported through HetObs / HetVerdict (env-research/decisions/
+      B3-decision.md 4), so the slot carries no bits to print.
 
-    Test 2+2W-cg-sys-relaxed
-    400004  *> [x]=0; [y]=0;
-
-Two impossibilities in one line.  (a) 400004 > 400000: a per-frame tally cannot
-exceed the frames examined.  (b) `[x]=0; [y]=0;' beside the `*' witness marker
-on a test whose condition is `exists ([x]=2 /\\ [y]=2)' -- the marked outcome
-contradicts the marked columns.
-
-THE MECHANISM (diagnosed from the emitted C, then reproduced at runtime).
-  (a) A store-only (2+2W) shape has NO reader, so its `_weak' is the bare
-      run-level observer witness `_t_loc' -- computed ONCE before the frame loop
-      and constant inside it.  The histogram add sat inside that loop, so ONE
-      per-run observation was stamped into the histogram N times.  The printed
-      total was  N x (#runs whose witness fired) + R,  which coincided with
-      "frames + k" on the GB10 log only because all 4 runs fired.  Forcing
-      `_t_loc = (_run == 0)' at R=2, N=100000 on the dev box printed 100002 --
-      not 200001 -- which distinguishes the two readings decisively.
-  (b) `_o[n_reg+j]' was the literal constant 0 at EVERY call site: this harness
-      never reads a coherence-final value back (B3-decision 4: an [ell]=v atom is
-      decided by the per-run observer ws witness, reported through HetObs /
-      HetVerdict).  The column carried zero bits and printed them as a number.
-
-WHAT THIS GATE CHECKS.
-
-  PHASE 1 -- SHAPE (all 450 emitted harnesses)
-    Exactly one histogram add per harness (only T feeds it -- a control whose
-    outcomes polluted T's histogram would be a different bug).  It is INSIDE the
-    per-frame loop IFF the harness has a per-frame observable (`int _hot =',
-    emitted iff the test has a reader), guarded by exactly `_hot || _weak'; and
-    for the 22 reader-less shapes it is the PER-RUN add, at run level, shown by
-    the `_loc' witness.  Census 428 / 22.  This is the invariant the shipped code
-    violated: an add inside the frame loop in a harness that has no per-frame
-    observable at all.
-
-  PHASE 2 -- DISPLAY (all 450)
-    A coherence-final `[ell]' column is never printed as a number, because no
-    such number is ever measured; the register columns still are.  Checked both
-    ways, and the loop bounds must partition the slots exactly.
-
-  PHASE 3 -- ARITHMETIC (the real emitted tally, compiled and RUN)
-    The store-only tally region is EXTRACTED VERBATIM from the emitted .cu
-    (nothing is hand-copied, so emission drift is visible here), linked against
-    the harness's own outs.c, and driven with a forced per-run witness pattern.
-    `sum_outs(hist)' must equal R -- one entry per run -- for every pattern, and
-    must NOT scale with SIZE_OF_TEST.  Phase 3 then re-runs itself on the PRE-FIX
-    tally (the per-frame add re-inserted) and requires that variant to be
-    REJECTED: an arithmetic check that has never rejected the bug it was written
-    for is not evidence.
+  PHASE 1 -- SHAPE (all 450 emitted harnesses).  Exactly one histogram add per
+    harness, since only T feeds it.  With a per-frame observable it sits inside the
+    frame loop guarded by exactly `_hot || _weak'; without one it is an
+    unconditional per-run add at run level, shown by an observer `_loc' witness.
+    Census 428 / 22.
+  PHASE 2 -- DISPLAY (all 450).  Register slots print numerically, location slots
+    print `?', checked both ways, and the loop bounds must partition the slots
+    exactly.
+  PHASE 3 -- ARITHMETIC (the real emitted tally, compiled and RUN).  The store-only
+    tally region is extracted VERBATIM from the emitted .cu, so emission drift shows
+    up here, then linked against the harness's own outs.c and driven with forced
+    per-run witness patterns: `sum_outs(hist)' must equal R for every pattern and
+    must not scale with SIZE_OF_TEST.  The phase then re-runs itself on the
+    per-frame variant and requires that to be REJECTED -- an arithmetic check never
+    seen to reject anything is not evidence.
 
 Usage:  histcheck.py [-q]      run the gate
         histcheck.py --bite    prove the gate FAILS when the mechanism breaks
@@ -69,9 +45,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 
-# Corpus censuses.  These are FACTS ABOUT THE CORPUS, re-derived below from the
-# emitted artifacts; a mismatch means either the corpus changed (update these,
-# deliberately) or the emitter did (that is what this gate is for).
+# Corpus censuses, re-derived below from the emitted artifacts.  A mismatch means
+# either the corpus changed (update these, deliberately) or the emitter did -- which
+# is what this gate is for.
 N_TESTS = 450
 N_STORE_ONLY = 22           # the 2+2W family: no reader, observer-only
 N_WITH_LOC_COLUMN = 128     # 2+2W 22 + R 53 + S 53 (Q10 +12 R +12 S; Q10b +16 R +16 S)
@@ -168,10 +144,9 @@ def frame_loops(lines, depths):
 
 def loop_extent(lines, depths, header):
     """Index of the line CLOSING the loop opened on line `header'.  depths[] is the
-       depth BEFORE a line, so the closing line is the first one after which the
-       depth is back to the header's -- getting this off by one would put every
-       statement after the loop `inside' it, which is the very confusion this gate
-       exists to detect."""
+       depth BEFORE a line, so the closing line is the first one after which the depth
+       is back to the header's.  Off by one here would put every statement after the
+       loop `inside' it -- the very confusion this gate exists to detect."""
     d0 = depths[header]
     for j in range(header + 1, len(lines)):
         s = _strip_literals(lines[j])
@@ -255,9 +230,9 @@ def phase1(srcs, quiet):
             hdr = loops[0][0]
             g = enclosing_guard(lines, depths, add)
             # The per-run add lives in a bare `{ intmax_t _o[n]; ... }' block at the
-            # frame loop's own level.  Requiring the block to be UNCONDITIONAL is the
-            # point: a per-run add hidden behind a condition would silently drop runs
-            # from the tally, which is the same class of error in the other direction.
+            # frame loop's own level.  The block must be UNCONDITIONAL: an add hidden
+            # behind a condition would silently drop runs from the tally -- the same
+            # class of error in the other direction.
             if not g.startswith("{ intmax_t _o["):
                 print("  *** %-26s per-run add is enclosed by %r, not an unconditional "
                       "outcome block" % (t, g))
@@ -407,7 +382,7 @@ int main(int argc, char** argv) {
 
 
 def extract_tally(src):
-    """Pull the store-only tally VERBATIM: the per-frame loop through the per-run
+    """Pull the store-only tally VERBATIM, from the per-frame loop through the per-run
        histogram add.  Nothing is hand-written, so emission drift shows up here."""
     lines = src.split("\n")
     adds = [i for i, ln in enumerate(lines) if "hist = add_outcome_outs(" in ln]
@@ -418,9 +393,9 @@ def extract_tally(src):
     hdrs = [i for i, ln in enumerate(lines) if FRAME_LOOP in ln and i < add]
     if not hdrs:
         return None, "no per-frame loop before the histogram add"
-    # The premise of this phase: a store-only tally is a PER-RUN add that follows
-    # the frame loop.  An add inside the loop is not a compilation problem to be
-    # reported as a toolchain error -- it is F-A, and it must be named as such.
+    # This phase's premise: a store-only tally is a PER-RUN add following the frame
+    # loop.  An add inside the loop is not a toolchain error to report as one; it is
+    # invariant (1) breaking, and must be named as such.
     if add < loop_extent(lines, depths, hdrs[0]):
         return None, ("the histogram add sits INSIDE the per-frame loop -- a "
                       "reader-less shape has no per-frame outcome to tally.  THIS IS F-A")
@@ -453,9 +428,8 @@ def run_probe(d, pattern):
     return tuple(int(x) for x in m.groups()) if m else None
 
 
-# The pre-fix tally, re-created from the CURRENT extraction: the per-frame add is
-# put back exactly where DR1 left it.  Phase 3 must REJECT this variant, or the
-# arithmetic assertion below has never been seen to reject anything.
+# The per-frame variant of the tally, re-created from the CURRENT extraction.  Phase 3
+# must reject it, or its arithmetic assertion has never been seen to reject anything.
 def refit_prefix_bug(body):
     lines = body.split("\n")
     out, done = [], False
@@ -519,7 +493,7 @@ def phase3(srcs, quiet):
                       "witness, both ways)" % (show, want_show))
                 bad += 1
 
-        # DISCRIMINATING POWER: the same assertion, on the pre-fix tally.
+        # Discriminating power: the same assertion, on the per-frame variant.
         buggy, hit = refit_prefix_bug(body)
         if not hit:
             print("  *** could not re-create the pre-fix tally (nothing matched) -- "
@@ -595,15 +569,13 @@ def main():
 
 
 # ---------------------------------------------------------------------------
-# --bite: THE GATE MUST BITE.
-#
-# Each injection rewrites the EMITTED corpus text (the same channel
-# verdictcheck.py Phase 3 uses), is cmp-verified to have really changed
-# something, and must drive the NAMED phase -- not just any phase -- to nonzero.
-# A gate that goes red for the wrong reason has not been shown to guard anything.
+# --bite: THE GATE MUST BITE.  Each injection rewrites the emitted corpus text (the
+# channel verdictcheck.py also mutates), is checked to have really changed something,
+# and must drive the NAMED phase red -- not just any phase.  A gate that goes red for
+# the wrong reason has not been shown to guard anything.
 # ---------------------------------------------------------------------------
 def _reinsert_per_frame_add(t, src):
-    """F-A itself, put back: the per-run witness tallied once per frame."""
+    """The per-run witness tallied once per frame."""
     if not t.startswith("2+2W-"):
         return src
     old = "      if (_weak) { _rec.target_count_exhaustive++; _rec.target_count_heuristic++; }\n"

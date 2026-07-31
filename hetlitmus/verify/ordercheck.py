@@ -1,90 +1,34 @@
 #!/usr/bin/env python3
-"""ordercheck.py -- Q10 -- the ORDERING RULE behind the two-sided het oracle,
-machine-checked against BOTH constituent solvers.
+"""ordercheck.py -- the ordering rule behind the two-sided het oracle, machine-
+checked against both constituent solvers.
 
-WHY THIS GATE EXISTS.  The two-sided (`-2s') het tests are the only rows that
-can be `Disallowed', i.e. the only rows that can refute the compound model.
-Q10 + Q10b widen that family from one fence pairing (DMB.SY x fence.sc.sys) to
-the full 4 x 4 grid
-  CPU {STLR/LDAPR, DMB.SY, DMB.ST, DMB.LD}
-  GPU {w[release]/r[acquire], f[sc,sys], f[release,sys], f[acquire,sys]} (.sys).
-Whether a given pairing forbids a given shape is NOT a matter
-of "both sides have a fence": DMB.LD on a store;store producer orders nothing,
-and a PTX release fence on a load;load consumer orders nothing.  Writing 8 x 16
-verdicts by hand is exactly how an oracle acquires a silent error, and an oracle
-error is a FALSE REFUTATION of the compound memory model.
+The two-sided (`-2s') tests are the only rows that can be Disallowed, i.e. the
+only rows that can refute the compound model, and they span a 4 x 4 grid of
+CPU {STLR/LDAPR, DMB.SY, DMB.ST, DMB.LD} x GPU {w[release]/r[acquire], f[sc,sys],
+f[release,sys], f[acquire,sys]}.  Which cells forbid is not "both sides have a
+fence": DMB.LD on a store;store producer orders nothing, and a PTX release fence
+on a load;load consumer orders nothing.  Hand-written verdicts are how an oracle
+acquires a silent error, and an oracle error here is a FALSE REFUTATION of the
+compound memory model.  So build-nvidia-oracle.sh implements a compositional rule
+over ord(p) / role(p) / sync(shape,roles), and this gate proves the rule is the
+same function herd7 computes:
 
-So build-nvidia-oracle.sh implements a COMPOSITIONAL rule, and this gate proves
-the rule is the same function that herd7 computes -- twice, from two independent
-models, over every cell:
+  PHASE 1  ARM     6 shapes x prim(P0) x prim(P1) = 96 CPU-only AArch64 tests
+                   from diyone7, decided by herd7's native AArch64 model.
+  PHASE 2  PTX     the same 96 cells as LISA/Bell sys-scope tests, decided by
+                   herd7 + bells/ptx.bell + cats/nvidia-ptx.cat (Lustig'19).
+  PHASE 3  ORACLE  every two-sided 2-proc row of tests/het/expected-nvidia.csv
+                   must equal the rule's het verdict, so the bash oracle and this
+                   rule cannot drift apart.
 
-  PHASE 1  ARM.  All six 2-proc shapes x prim(P0) x prim(P1) = 96 CPU-only
-           AArch64 tests, generated with diyone7 and decided by herd7's NATIVE
-           AArch64 model.  The rule's ARM half must reproduce all 96.
-  PHASE 2  PTX.  The same 96 cells as LISA/Bell sys-scope tests with
-           w[release]/r[acquire] resp. f[{sc,release,acquire},sys], decided by
-           herd7 + hetlitmus/bells/ptx.bell + hetlitmus/cats/nvidia-ptx.cat (the
-           repo's Lustig'19 encoding).  The rule's PTX half must reproduce all 96.
-  PHASE 3  ORACLE.  Every two-sided fence-pair row of tests/het/
-           expected-nvidia.csv must equal the rule's het verdict -- including
-           the pre-existing `-fence-2s' rows, which are the (DMB.SY, f[sc,sys])
-           cell of the same grid.  This is what stops the bash oracle and this
-           rule drifting apart.
-
-THE RULE (and where each piece comes from).
-
-  ord(p)  = the set of program-order pairs {WW,RR,WR,RW} the primitive orders
-            WITHIN its own thread.
-              DMB.SY {WW,RR,WR,RW}   DMB.ST {WW}       DMB.LD {RR,RW}
-              f[sc]  {WW,RR,WR,RW}   f[rel] {WW,RW}    f[acq] {RR,RW}
-            The ARM row is Phase 1's own output (it is exactly the isolation
-            column "this DMB, DMB.SY on the other proc").  The PTX row is CMCM
-            PLDI'23 sect 5 verbatim: "a request that is marked with sem >= rel
-            enforces R + pred -> W and W -> W.  A request with sem >= acq
-            enforces R -> R and R -> W, and an sc fence additionally enforces
-            W -> R."
-  role(p) = which half of a morally-strong synchronisation the primitive can
-            supply: DMB.SY/f[sc] {rel,acq,sc};  DMB.ST/f[rel] {rel};
-            DMB.LD/f[acq] {acq}.
-  sync(shape, roles) = the EXTRA requirement Lustig'19's axiomatic PTX imposes
-            on top of per-side ordering (Fig 4: sw = ms & (pattern_rel ; obs ;
-            pattern_acq), plus sc): if the cycle carries a cross-device rf edge
-            the rf SOURCE proc must supply `rel' and the rf TARGET proc `acq';
-            if it carries no rf at all (SB, R, 2+2W) both procs must supply
-            `sc' (Lustig Fig 6: preventing SB needs a fence.sc on EACH thread).
-
-  ARM verdict  = ord(D0) >= pair0  and  ord(D1) >= pair1        (no sync clause:
-                 ARM barriers are cumulative and need no partner -- Phase 1 is
-                 the proof, e.g. LB is Forbidden with DMB.LD on BOTH procs)
-  PTX verdict  = ord(F0) >= pair0  and  ord(F1) >= pair1  and  sync
-  HET verdict  = Disallowed  if  ord(cpu) >= cpuPair and ord(gpu) >= gpuPair
-                              and sync
-                 NO-ORACLE   if  ord(cpu) >= cpuPair and ord(gpu) >= gpuPair
-                              but NOT sync
-                 Allowed     otherwise
-
-  The het split is deliberate and is the honest reading of two primary sources
-  that DISAGREE on those cells.  CMCM's operational model composes by union of
-  per-thread stalling ("a compound LOST-POP model is simply a LOST-POP model
-  where different threads have different architectures", sect 4.6; "There is no
-  need to define synchronization between the two", sect 5) and so forbids
-  whenever both sides order their own pair.  Lustig'19's axiomatic PTX has no
-  intra-thread fence order at all -- ordering exists only through a completed
-  pattern_rel;obs;pattern_acq chain -- and so forbids strictly less.  Where they
-  agree the row is a real prediction; where only CMCM forbids, the row is
-  NO-ORACLE (characterisation), never a falsification claim.
-
-  The cross-device step -- that a CPU DMB and a sys-scope GPU fence are MORALLY
-  STRONG and therefore compose at all -- is the one part no solver here can
-  decide.  It is CMCM sect 3.2.3 / 4.4 ("every non-scoped order constraint
-  coming from a non-scoped memory model [is treated] as system scoped"),
-  Bagchi ISMM'26 sect 3.2/4.2 ("CPU unscoped operations are treated as
-  system-scoped when synchronizing with a GPU that employs a scoped model") and
-  PTX Table 1 (`.sys' includes "all threads constituting the host program
-  itself").  See hetlitmus/docs/het-oracle.md.
+The rule itself, the source of every table entry, and why a cell on which the two
+primary models disagree is NO-ORACLE rather than Disallowed: hetlitmus/docs/
+het-oracle.md, "Two-sided order pairs".  The one step no solver here can decide
+-- that a CPU DMB and a sys-scope GPU fence are morally strong at all -- is
+grounded there too.  (Q10/Q10b)
 
 Usage:  ordercheck.py [-q]     run the gate
-        ordercheck.py --bite   prove the gate FAILS when the rule is corrupted
+        ordercheck.py --bite   prove the gate fails when the rule is corrupted
 """
 
 import argparse
@@ -134,11 +78,11 @@ ROLE = {
     "Ra": RELACQ_ROLE, "Sc": frozenset(("rel", "acq", "sc")),
     "Release": frozenset(("rel",)), "Acquire": frozenset(("acq",)),
 }
-# corpus name token -> primitive.  All four CPU halves are real corpus cells since
-# Q10b: `st'/`ld' were always decided by the rule and machine-checked here, and
-# Q10b lifted the litmus/hetCpuBody.ml emission blocker that kept them off disk.
-# NOT ONE LINE of ORD / ROLE / CPU_FENCE changed to admit them -- which is the
-# point: the 64 new oracle rows are decided by a rule that predates the tests.
+# Corpus name token -> primitive.  All four CPU halves are real corpus cells; the
+# `st'/`ld' rows were decided by this rule and machine-checked here before any
+# such test could be emitted, and admitting them changed no line of ORD / ROLE /
+# CPU_FENCE -- the oracle rows they carry are decided by a rule that predates
+# them.  (Q10b)
 CPU_FENCE = {"ra": "RA", "sy": "SY", "st": "ST", "ld": "LD"}
 GPU_FENCE = {"ra": "Ra", "sc": "Sc", "rel": "Release", "acq": "Acquire"}
 
@@ -169,6 +113,9 @@ def sync_ok(shape, r0, r1):
 
 
 def arm_verdict(shape, d0, d1):
+    """Per-side ordering only, with NO sync clause: ARM barriers are cumulative
+    and need no partner.  Phase 1 is the proof -- e.g. LB comes out Forbidden
+    with DMB.LD on both procs."""
     p0, p1 = pairs(shape)
     return "Forbidden" if (p0 in ORD[d0] and p1 in ORD[d1]) else "Allowed"
 
@@ -212,7 +159,7 @@ def _edges(shape, q0, q1, po_edge, atom):
     """Render the 4 edge tokens of a 2-proc cycle whose P0 carries primitive q0
     and P1 carries q1.  `po_edge(q, XY)' names a program-order edge and
     `atom(q, dir)' the per-event annotation; every edge token is
-    <base><atom(src)><atom(dst)>, so a MIXED cell (atoms on one proc, a fence on
+    <base><atom(src)><atom(dst)>, so a mixed cell (atoms on one proc, a fence on
     the other) is expressed exactly as diy wants it."""
     c = CYCLE[shape]
     xy0, xy1 = c[0][3:], c[2][3:]
@@ -316,24 +263,21 @@ def phase_ptx(tmp, quiet):
 
 
 # `<shape>-<cut>-sys-<cpu>.<gpu>-2s'  and the (SY,sc) cell `<...>-sys-fence-2s'.
-# The shape alternation is EXPLICIT (not `.+?') so a 3/4-proc name can never be
+# The shape alternation is explicit (not `.+?') so a 3/4-proc name can never be
 # mis-split into a 2-proc one.
 TWOS = re.compile(r"^(?P<shape>MP|SB|LB|R|S)-(?P<cut>cg|gc)-sys-"
                   r"(?:(?P<c>ra|sy|st|ld)\.(?P<g>ra|sc|rel|acq)"
                   r"|(?P<f>fence)|(?P<a>acqrel))-2s$")
 
-# Q10b: the number of oracle rows Phase 3 must ACTUALLY read, asserted -- not
-# merely printed.  `n == 0' alone is too weak a guard: a regex that stopped
+# The number of oracle rows Phase 3 must ACTUALLY read, asserted rather than
+# merely printed: `n == 0' is too weak a guard, because a regex that stopped
 # matching the `st'/`ld' cells would silently drop 64 of the 132 rows and the
-# phase would still report OK on the remaining 68.  That is the same
-# gate-went-half-inert failure this project keeps finding, so pin the number.
+# phase would still report OK on the remaining 68.
 #
 #   112  order-pair cells  = 8 cut classes (MP-cg MP-gc SB-cg LB-cg R-cg R-gc
 #                            S-cg S-gc) x (4 cpu x 4 gpu - 2 diagonal)
 #    20  the (D) diagonal  = 5 shapes x {cg,gc} x {-fence-2s, -acqrel-2s},
 #                            read as the (sy,sc) and (ra,ra) cells
-#   ---
-#   132
 EXPECT_ORACLE_ROWS = 132
 
 
@@ -408,9 +352,9 @@ INJECTIONS = [
      "D.ROLE['Acquire'] = frozenset(('acq','rel'))", "PTX "),
     ("GPU_FENCE reads the corpus token `sc' as a release fence",
      "D.GPU_FENCE = dict(D.GPU_FENCE, sc='Release')", "ORACLE"),
-    # Q10b: the row-count pin.  Half-blinding the name regex (drop `st|ld') is
-    # exactly the failure the pin exists for -- every row it STILL reads agrees
-    # with the rule, so without the pin the phase would report OK on 68 of 132.
+    # The row-count pin.  Half-blinding the name regex (drop `st|ld') is the
+    # failure it exists for: every row still read agrees with the rule, so
+    # without the pin the phase would report OK on 68 of 132.
     ("the name regex stops matching the `st'/`ld' CPU cells (phase half-blind)",
      "D.TWOS = __import__('re').compile(D.TWOS.pattern.replace('ra|sy|st|ld', 'ra|sy'))",
      "ORACLE"),

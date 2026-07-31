@@ -1,33 +1,22 @@
 #!/usr/bin/env python3
-"""HetLitmus B6 -- the positive-control map (Layer A mutant + Layer B canary).
+"""The positive-control map: the Layer-A mutant and Layer-B canary each het test
+co-runs.  For a should-be-forbidden test T, mu(T) is its nearest Allowed grid
+neighbour, so a `target_count = 0' on T is a non-observation on a demonstrably
+hot harness rather than an uninterpretable empty histogram.  What the two layers
+buy, and what "minimal" honestly means, is hetlitmus/docs/positive-control.md.
 
-Q4-positive-control.md 2.3/2.4.  For each should-be-FORBIDDEN het test T we
-co-run its nearest ALLOWED grid neighbour mu(T) -- an MC-Mutants "Weakening sw"
-mutant that already exists in the corpus -- so that a `target_count = 0' on T is
-promoted from an uninterpretable empty histogram to a credible non-observation.
-
-    "When testing, it is impossible to tell if an unobserved illegal execution
-     is not allowed or if it is simply rare and was not exposed by the tests."
-        -- MC Mutants (Levine et al., ASPLOS'23) 1.1, p.474.
-
-WHY THIS FILE EXISTS AT ALL (read before "simplifying" it).
-mu(T) CANNOT be computed by rewriting T's name.  The one-sided grid variants are
-named for the op THE GPU PERFORMS, and the GPU's role flips with the device cut:
-`acquire' annotates only reads and `release' only writes (tests/_grid_lib.sh
-ord_for), so a variant whose GPU proc has no access of that kind is DEGENERATE
-(byte-identical to its `relaxed' sibling) and generate.sh content-dedups it away.
-Consequently
-
-    MP-gc-sys-acquire   DOES NOT EXIST        (MP-gc's GPU proc is write-only)
-    S-gc-sys-acquire    DOES NOT EXIST        (S-gc's  GPU proc is write-only)
-    R-gc-sys-acquire    DOES NOT EXIST        (R-gc's  GPU proc is write-only)
-
-and a naive `acqrel-2s -> acquire' rewrite silently names a NONEXISTENT test for
-2 of the 16.  A silently-missing control is the worst failure available here: the
-null still prints, still looks green, and is now unfalsifiably wrong.  So the map
-is DERIVED from the corpus sources + the oracle and GATED (--check), and the gate
-FAILS CLOSED: a missing or non-Allowed mutant breaks the build, it never skips
-the control.
+WHY THIS FILE EXISTS (read before "simplifying" it): mu(T) cannot be computed by
+rewriting T's name.  The one-sided grid variants are named for the op the GPU
+performs, `acquire' annotates only reads and `release' only writes
+(tests/_grid_lib.sh ord_for), and the GPU's role flips with the device cut -- so
+a variant whose GPU proc has no access of that kind is degenerate (byte-identical
+to its `relaxed' sibling) and generate.sh dedups it away.  MP-gc-sys-acquire,
+S-gc-sys-acquire and R-gc-sys-acquire therefore do not exist, and a naive
+`acqrel-2s -> acquire' rewrite names a nonexistent test.  So the map is derived
+from the corpus sources + the oracle and gated (--check), and the gate fails
+closed: a missing or non-Allowed mutant breaks the build rather than skipping the
+control, because a silently absent control does not weaken a null -- it makes it
+unfalsifiable, while the null still prints and still looks green.
 
 Usage:
     controlmap.py --emit  [--dir D] [--oracle F]   > control-map.csv
@@ -44,54 +33,41 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
 
-# The Disallowed census the gate ASSERTS (it is not merely reported).
-#   Q10 : 16 -> 38 = the 16 pre-existing `-{acqrel,fence}-2s' rows + 22 of the
-#         48 two-sided order-pair cells the off-diagonal sweep added.
-#   Q10b: 38 -> 53 = + 15 of the 64 cells the unblocked CPU fence axis
-#         (DMB.ST/DMB.LD) added -- MP-cg/S-cg st.{ra,sc,acq} and
-#         MP-gc/S-gc/LB-cg ld.{ra,sc,rel}, i.e. exactly the cells where a
-#         PARTIAL CPU barrier is the half its role needs.
-# Derivations in env-research/impl-briefs/Q10-REPORT.md and Q10b-REPORT.md.
+# The Disallowed census the gate asserts (it is not merely reported): the 16
+# `-{acqrel,fence}-2s' rows the corpus started with, + 22 of the 48 off-diagonal
+# order-pair cells, + 15 of the 64 cells the CPU DMB.ST/DMB.LD axis added --
+# those being exactly the cells where a PARTIAL CPU barrier is the half its role
+# needs.  Derivations: env-research/impl-briefs/Q10-REPORT.md, Q10b-REPORT.md.
 N_DISALLOWED = 53
 
 # ---------------------------------------------------------------------------
-# THE PER-SIDE ORDERING-STRENGTH LATTICE.  mu(T) must be strictly weaker
-# COMPONENTWISE (cpu,gpu) and structurally identical to T (same procs, same
-# devices, same ordered (kind,location) access list) -- a pure ordering
-# weakening, not a different program.
+# The per-side ordering-strength lattice.  mu(T) must be strictly WEAKER
+# componentwise (cpu,gpu) and structurally identical to T -- same procs, same
+# devices, same ordered (kind,location) access list: a pure ordering weakening,
+# not a different program.
 #
-# NOT a count of primitives -- `acqrel' carries MORE primitives than `fence'
-# (STLR+LDAPR / acquire+release vs one DMB.SY / one fence.sc.sys) yet is strictly
-# WEAKER, because RCpc release/acquire does not order store->load where an SC
-# fence does (that is exactly why SB/R-*-acqrel-2s are Allowed while their
-# fence-2s siblings are Disallowed).
+# Strength is not a count of primitives: `acqrel' carries more of them than
+# `fence' (STLR+LDAPR / acquire+release vs one DMB.SY / one fence.sc.sys) yet is
+# strictly weaker, because RCpc release/acquire does not order store->load where
+# an SC fence does -- which is why SB/R-*-acqrel-2s are Allowed while their
+# fence-2s siblings are Disallowed.  Nor is a bare "is it a fence?" tier enough:
+# f[release,sys] is a fence but is weaker than the w[release]/r[acquire] pair,
+# and DMB.ST / DMB.LD are incomparable with each other.  So a side's strength is
+# the pair (tier, ord):
 #
-# Q10 REFINEMENT.  A bare "is it a fence?" tier stopped working the moment the
-# two-sided family grew past one fence pairing: `f[release,sys]' is a fence but
-# is strictly WEAKER than the `w[release]/r[acquire]' annotation pair, and
-# DMB.ST / DMB.LD are incomparable with each other.  So a side's strength is the
-# PAIR (tier, ord):
+#   tier  2 SC-capable  DMB SY / DSB SY ; f[sc,..] ; an `sc'-tagged access
+#         1 partial     orders something but cannot stand in for an SC fence:
+#                       STLR / LDAPR / LDAR ; w[release] / r[acquire] ;
+#                       f[release,..] / f[acquire,..] ; DMB ST / DMB LD
+#         0 plain       STR / LDR ; [relaxed,..]
+#   ord   the program-order pairs {WW,RR,WR,RW} that side's ops order inside
+#         their own thread -- the ord(p) table of hetlitmus/docs/het-oracle.md,
+#         machine-checked against herd7 by verify/ordercheck.py.
 #
-#   tier  2 SC-capable   DMB SY / DSB SY ; f[sc,..] ; an `sc'-tagged access
-#         1 partial      anything that orders SOMETHING but cannot stand in for
-#                        an SC fence: STLR / LDAPR / LDAR ; w[release] /
-#                        r[acquire] ; f[release,..] / f[acquire,..] ; DMB ST/LD
-#         0 plain        STR / LDR ; [relaxed,..]
-#   ord   the union, over that device's ops, of the program-order pairs
-#         {WW,RR,WR,RW} they order INSIDE their own thread -- machine-checked in
-#         hetlitmus/verify/ordercheck.py against herd7's native AArch64 model
-#         and nvidia-ptx.cat (192 solver cells):
-#             DMB SY / f[sc]        {WW RR WR RW}
-#             STLR   / w[release]   {WW RW}        (orders * -> W)
-#             LDAPR  / r[acquire]   {RR RW}        (orders R -> *)
-#             f[release,sys]        {WW RW}        f[acquire,sys]  {RR RW}
-#             DMB ST {WW}           DMB LD {RR RW}
-#
-# `weaker-or-equal' is  (t1,o1) <= (t2,o2)  iff  t1 < t2, or t1 == t2 and
-# o1 subset-of o2.  This keeps DMB.ST and DMB.LD INCOMPARABLE, and it keeps
-# f[release] and r[acquire]-annotated reads incomparable -- neither is a
-# weakening of the other, and a control that is not a weakening vouches for
-# nothing.
+# `weaker-or-equal' is (t1,o1) <= (t2,o2) iff t1 < t2, or t1 == t2 and o1 is a
+# subset of o2.  That keeps DMB.ST/DMB.LD incomparable, and f[release] and
+# r[acquire]-annotated reads incomparable: neither is a weakening of the other,
+# and a control that is not a weakening vouches for nothing.  (Q10)
 SC_TIER, PART_TIER, PLAIN = 2, 1, 0
 
 ALL4 = frozenset(("WW", "RR", "WR", "RW"))
@@ -308,15 +284,14 @@ NAME_RE = re.compile(r"^(?P<shape>.+?)-(?P<cut>[cg]+)-(?P<scope>cta|gpu|sys)-"
                      r"|(?:ra|sy|st|ld)\.(?:ra|sc|rel|acq))"
                      r"(?P<two>-2s)?$")
 
-# Q10 two-sided ORDER-PAIR grid `<cpu>.<gpu>'.  Candidate weakenings, tried in
+# Candidate weakenings for a two-sided order-pair cell `<cpu>.<gpu>', tried in
 # this order: weaken the GPU axis, then the CPU axis, then fall back to the
-# ONE-SIDED grid cell named for the role the GPU half played (which drops the CPU
-# half of the pair AND demotes the GPU primitive to an annotated access).  Every
-# candidate is still put through the SAME structural + strictly-weaker check as
-# the final mu, so a candidate that is not actually a weakening ON THIS SHAPE is
-# skipped rather than crowned: e.g. on MP-cg the GPU proc is read;read, so
-# f[release,sys] orders {WW,RW} and the r[acquire] annotation orders {RR,RW} --
-# incomparable, not a weakening.
+# one-sided grid cell named for the role the GPU half played (which drops the CPU
+# half of the pair and demotes the GPU primitive to an annotated access).  Every
+# candidate goes through the same structural + strictly-weaker check as the final
+# mu, so one that is not actually a weakening ON THIS SHAPE is skipped rather
+# than crowned: on MP-cg the GPU proc is read;read, so f[release,sys] orders
+# {WW,RW} while the r[acquire] annotation orders {RR,RW} -- incomparable.
 FP_CPU_WEAKER = {"sy": ("ra", "st", "ld")}
 FP_GPU_WEAKER = {"sc": ("ra", "rel", "acq"), "ra": ("rel", "acq")}
 FP_ONESIDED = {"ra":  ("acquire", "release"),
@@ -339,7 +314,7 @@ def derive(tests, oracle):
         return n in tests and oracle.get(n) == "Allowed"
 
     def usable(tname, cand):
-        """The two properties the vouch rests on, applied at CANDIDATE-selection
+        """The two properties the vouch rests on, applied at candidate-selection
         time so a non-weakening is skipped instead of becoming a hard error."""
         T, M = tests[tname], tests[cand]
         if T.structure() != M.structure():
@@ -376,7 +351,7 @@ def derive(tests, oracle):
             relaxed = base + "-relaxed"
 
             if "." in parts["order"] and parts["two"]:
-                # Q10 fence-pair cell.  Weaken ONE axis and keep everything else,
+                # Order-pair cell.  Weaken ONE axis and keep everything else,
                 # preferring the GPU axis (the primitive whose scope reach is the
                 # thing under test); fall back to the one-sided cell named for
                 # the GPU fence's role.  Candidates that are themselves not
@@ -401,10 +376,10 @@ def derive(tests, oracle):
                                               mu.rsplit("-", 1)[-1]))
                     alt = have[1] if len(have) > 1 else "-"
             elif parts["order"] == "fence" and parts["two"]:
-                # Weaken the primitive UNDER TEST: SC fence -> RCpc release/acquire,
-                # keeping the two-sided cross-device pair intact.  Where that is
-                # itself still Disallowed (MP/S/LB), fall back to dropping the CPU
-                # half of the pair.
+                # Weaken the primitive under test: SC fence -> RCpc rel/acq, with
+                # the two-sided cross-device pair intact.  Where that is itself
+                # still Disallowed (MP/S/LB), fall back to dropping the CPU half
+                # of the pair.
                 cand = base + "-acqrel-2s"
                 if allowed(cand):
                     mu, rule = cand, "fence-2s->acqrel-2s (SC fence -> RCpc rel/acq; pair kept)"
@@ -413,11 +388,11 @@ def derive(tests, oracle):
             elif parts["order"] == "acqrel" and parts["two"]:
                 # Drop the CPU half of the morally-strong pair.  The surviving
                 # one-sided cell is named for the op the GPU still performs, and
-                # the grid has NO one-sided `acqrel' cell -- so where the GPU proc
+                # the grid has no one-sided `acqrel' cell -- so where the GPU proc
                 # performs both a read and a write (LB/SB, and the -cg cuts of
-                # R/S) BOTH -acquire and -release exist and are valid minimal
-                # mutants.  Q4 2.3 names -acquire for the cases it lists; we take
-                # -acquire when it exists and record the other as MuAlt.
+                # R/S) both -acquire and -release exist and are equally minimal.
+                # Q4 2.3 names -acquire for the cases it lists; take -acquire
+                # where it exists and record the other as MuAlt.
                 acq, rel = base + "-acquire", base + "-release"
                 have = [c for c in (acq, rel) if allowed(c)]
                 if acq in have:

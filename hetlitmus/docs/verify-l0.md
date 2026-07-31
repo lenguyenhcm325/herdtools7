@@ -243,3 +243,38 @@ whole corpus.
   that no autotune config can silently switch the stress off. Bite-tested in
   `l0_tokens.sh selftest` section [7]. **A mechanism no gate can observe must be
   assumed dead**: if you add scaffolding here, add the gate that watches it.
+
+## CPU-side stress liveness
+
+`hetlitmus/verify/cpustresscheck.py` is the CPU/interconnect sibling of
+`stresscheck.py`. The M3 preload, the CPU enemy threads and the C2C noise pair are
+invisible to *both* PTX checkers — the preload emits host cache hints (no order, no
+scope, not a model op), the enemies are host code that never reaches the PTX, and
+the noise streams a disjoint buffer — so that layer is unguarded without it. It
+asks two questions the structural gates cannot: did the mechanisms survive the
+optimiser (static, on the **compiled** `-O2` asm), and do they do anything at run
+time (dynamic, proved live *both* ways: nonzero when on, exactly zero when off)?
+
+**The grep must be scoped: count `ldr xzr` / `ldr wzr`, never every `ldr`.** The
+enemy's read half is `(void)*l`, a load whose value is discarded. `volatile` forces
+the compiler to perform it and it lowers to a load into the zero register; without
+`volatile` the load is provably useless and is deleted. Measured on the emitted
+code (`clang --target=aarch64-linux-gnu -O2`), inside `het_cpu_enemy` only:
+
+| | `volatile` (shipped) | `volatile` dropped |
+|---|---|---|
+| loads into `xzr` | 3 | **0** — all read traffic deleted |
+| stores | 5 | **2** — `st;st` collapsed to one store |
+
+So sigma 3 (`ld;ld`) becomes a complete no-op, sigma 1 and 2 lose their read half,
+and sigma 0's `*l = i; *l = i+1;` collapses into a single store — while the loop
+still exists, so a naive "is there a loop with a load and a store?" check waves it
+through, and a count of *all* `ldr` stays comfortably nonzero from the
+`a->scratch` / `a->idx` / `a->nidx` argument-struct loads alone. `MIN_ENEMY_STORES`
+= 4 for the same reason: the four sigma branches declare 2+1+1+0 scratchpad stores
+between them, and a non-volatile build lands well under that.
+
+Bite-tested in `l0_tokens.sh selftest` section [8], which is why the checker takes
+`--harness-dir`: it re-emits from source on every normal run, so a negative control
+has nothing to land on unless it can be pointed at an already-emitted (mutated)
+harness dir.

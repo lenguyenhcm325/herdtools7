@@ -2,55 +2,49 @@
 # ---------------------------------------------------------------------------
 # smoke.sh -- Layer-3 compile-smoke for the HetLitmus toolchain.
 #
-# "Does the emitted harness actually COMPILE end-to-end?"  The faithfulness
-# sweep (l0_tokens.sh) already `nvcc --ptx`-compiles every gpu-only .cu, but it
-# does NOT exercise the het harness's CPU side, the `nvcc -c`/ptxas object
-# stage, the AMD/HIP render, or the Hopper-cluster inline-PTX path.  smoke.sh closes
-# that gap by emitting a curated 8-rep sample and driving each test's OWN `comp.sh`
-# (compile-only: gcc host + `clang --target=aarch64-linux-gnu` real AArch64 asm
-# + `nvcc -std=c++17 -arch=sm_90 -c` + `hipcc --offload-arch=gfx942 -c`).  Needs
-# nvcc/hipcc/clang but NO GPU -- `-arch` is a compile target, not a device
-# requirement; only *launching* a kernel needs hardware (that is Layer 4).  Reuses
-# `comp.sh` verbatim (no new build code); see hetlitmus/docs/TEST-PLAN.md sec.5.
+# "Does the emitted harness actually COMPILE end-to-end?"  The faithfulness sweep
+# (l0_tokens.sh) `nvcc --ptx'-compiles every gpu-only .cu but exercises neither
+# the het harness's CPU side, the `nvcc -c'/ptxas object stage, the AMD/HIP
+# render, nor the Hopper-cluster inline-PTX path.  smoke.sh emits a curated
+# 12-rep sample and drives each test's OWN comp.sh (compile-only: gcc host +
+# `clang --target=aarch64-linux-gnu' real AArch64 asm + `nvcc -std=c++17
+# -arch=sm_90 -c' + `hipcc --offload-arch=gfx942 -c').  Needs nvcc/hipcc/clang
+# but NO GPU -- `-arch' is a compile target, not a device requirement; only
+# launching a kernel needs hardware (Layer 4).  Reuses comp.sh verbatim (no new
+# build code); see hetlitmus/docs/TEST-PLAN.md sec.5.
 #
 # The 12 reps -- each hits one distinct compile path once:
 #   1. MP-cg-cta-acquire       het one-sided; plain CPU STR/LDR + barrier
-#   2. 2+2W-cg-sys-acqrel-2s   het two-sided; CPU STLR (store-only shape: NO load)
-#   3. MP-gc-sys-acqrel-2s     het two-sided GPU->CPU; CPU LDAPR (RCpc) -- the only
-#                              rep that emits a load-acquire.  Added after the RCpc
-#                              /.arch_extension bug reached GH200 unseen: rep 2 was
-#                              LABELLED "STLR + LDAPR" but 2+2W is store-only, so NO
-#                              rep ever emitted an LDAPR.
+#   2. 2+2W-cg-sys-acqrel-2s   het two-sided; CPU STLR (store-only shape: no load)
+#   3. MP-gc-sys-acqrel-2s     het two-sided GPU->CPU; the only rep emitting a CPU
+#                              load-acquire (LDAPR, RCpc, .arch_extension rcpc)
 #   4. 2+2W-cg-sys-fence-2s    het two-sided; CPU DMB.SY fence
 #   5. IRIW-cgcc-cta-relaxed   het 4-proc; largest barrier / scaffolding
 #   6. WRC-ccg-cta-relaxed     het 3-proc; buys down the proc-scaling assumption
 #   7. tests/cluster/MP-cluster  gpu-only Hopper cluster inline-PTX fence path
-#   8. MP-cg-sys-acqrel-2s (HIP) the AMD/MI300A render, via hipcc.  Added in B5, after
-#                              a symbol declared in the CUDA dialect's allocator but
-#                              read by the SHARED driver template broke EVERY .hip --
-#                              silently, because nothing in the suite compiled one.
-#   9. MP-cg-sys-sy.acq-2s    Q10 order-pair; the ONLY rep emitting inline
+#   8. MP-cg-sys-acqrel-2s (HIP) the AMD/MI300A render -- the only place in the
+#                              whole suite that compiles a .hip at all
+#   9. MP-cg-sys-sy.acq-2s     order-pair; the only rep emitting inline
 #                              `fence.acquire.sys' (PTX ISA 8.6 / sm_90), with a
-#                              compiled-in co-run control (mu = MP-cg-sys-acquire).
-#                              Also the first rep whose test NAME contains a `.'.
-#  10. S-gc-sys-ra.rel-2s     Q10 order-pair; the ONLY rep emitting inline
-#                              `fence.release.sys', paired with CPU STLR/LDAPR, and
-#                              the largest co-run in the corpus (K=4, NPART=10).
-#  11. MP-cg-sys-st.sc-2s    Q10b: the CPU `dmb st' form, which litmus7 could not
-#                              emit at all before Q10b c1.  Its mu is st.rel, so the
-#                              harness carries TWO `dmb st' asm blocks.
-#  12. MP-gc-sys-ld.sc-2s    Q10b: the CPU `dmb ld' form, on the GPU->CPU cut (the
-#                              CPU proc reads), mu = ld.acq -> two `dmb ld' blocks.
-#                              A barrier that assembles is not a barrier that is the
-#                              RIGHT one: l0_tokens.sh selftest [5b] is what pins
-#                              sy/st/ld apart; this rep pins that they BUILD.
+#                              compiled-in co-run control (mu = MP-cg-sys-acquire);
+#                              also the first rep whose test name contains a `.'
+#  10. S-gc-sys-ra.rel-2s      order-pair; the only rep emitting inline
+#                              `fence.release.sys', paired with CPU STLR/LDAPR,
+#                              and the largest co-run in the corpus (K=4, NPART=10)
+#  11. MP-cg-sys-st.sc-2s      the CPU `dmb st' form; its mu is st.rel, so the
+#                              harness carries two `dmb st' asm blocks
+#  12. MP-gc-sys-ld.sc-2s      the CPU `dmb ld' form on the GPU->CPU cut (the CPU
+#                              proc reads), mu = ld.acq -> two `dmb ld' blocks.
+#                              These reps claim only that the three barrier forms
+#                              BUILD; which one is emitted is pinned by
+#                              l0_tokens.sh selftest [5b].
 #
 # Usage:
 #   bash hetlitmus/verify/smoke.sh          # run all 12 reps (pre-commit gate)
-#   bash hetlitmus/verify/smoke.sh bite      # prove the gate has TEETH (self-test)
+#   bash hetlitmus/verify/smoke.sh bite     # prove the gate has teeth (self-test)
 #
-# Exit 0 (prints `SMOKE OK`) iff all 12 reps compile; nonzero if any rep fails.  A
-# missing hipcc SKIPS rep 8 loudly -- it never counts as a pass.
+# Exit 0 (prints `SMOKE OK') iff all 12 reps compile.  A missing hipcc SKIPS rep 8
+# loudly -- it never counts as a pass.
 # ---------------------------------------------------------------------------
 set -u
 
@@ -69,9 +63,9 @@ skips=0
 n=0
 
 # ---- het rep: emit the Tier-2 harness dir, run its OWN comp.sh -------------
-# litmus7 -o <d> writes a NESTED <d>/<name>/ dir holding <name>.cu, <name>_cpu.c,
-# outs.c and comp.sh.  `sh comp.sh cuda` compiles-only (-c, no link, no GPU),
-# printing `HetLitmus: compile OK` and exiting 0 on success (set -e inside).
+# litmus7 -o <d> writes a nested <d>/<name>/ dir holding <name>.cu, <name>_cpu.c,
+# outs.c and comp.sh.  `sh comp.sh cuda' compiles only (-c, no link, no GPU),
+# printing `HetLitmus: compile OK' and exiting 0 on success (set -e inside).
 smoke_het() { # name blurb
   local name="$1" blurb="$2" d out rc
   n=$((n+1))
@@ -90,16 +84,14 @@ smoke_het() { # name blurb
 }
 
 # ---- het rep, HIP/MI300A render: the SAME harness through `comp.sh hip' -----
-# The .hip lane was UNGATED until B5, and that is precisely how it broke: B5's
-# placement-failure counter was declared inside the CUDA dialect's allocator string
-# but read by the SHARED driver template, so every .hip failed to compile with
-# `use of undeclared identifier _het_place_failures' -- while the CUDA lane, and
-# every gate in the suite, stayed green.  "One template, two renders" is only an
-# invariant if something actually renders the second one.
+# "One template, two renders" is only an invariant if something renders the
+# second one: while this lane was ungated, a symbol declared inside the CUDA
+# dialect's allocator but read by the shared driver template broke every .hip,
+# with the CUDA lane and every gate in the suite still green.
 #
-# If hipcc is absent the rep is SKIPPED, LOUDLY, and counted as a skip -- never as a
-# pass.  A gate that quietly reports success when it did not run is worse than no
-# gate (this repo has shipped that exact failure three times).
+# If hipcc is absent the rep is SKIPPED, loudly, and counted as a skip -- never
+# as a pass, because a gate that reports success when it did not run is worse
+# than no gate.
 smoke_het_hip() { # name blurb
   local name="$1" blurb="$2" d out rc
   n=$((n+1))
@@ -123,10 +115,10 @@ smoke_het_hip() { # name blurb
   fi
 }
 
-# ---- cluster rep: gpu-only, flat .cu, bare `nvcc -c` -----------------------
-# The cluster family is GPU-only (no CPU side, no comp.sh) AND sits OUTSIDE the
-# faithfulness sweep (l0_tokens covers only gpu-only + het), so smoke is its
-# ONLY compile check.  Emit the flat <name>.cu, then object-compile it.
+# ---- cluster rep: gpu-only, flat .cu, bare `nvcc -c' -----------------------
+# The cluster family is GPU-only (no CPU side, no comp.sh) and sits outside the
+# faithfulness sweep (l0_tokens covers only gpu-only + het), so smoke is its ONLY
+# compile check.  Emit the flat <name>.cu, then object-compile it.
 smoke_cluster() { # name blurb
   local name="$1" blurb="$2" d out rc
   n=$((n+1))
@@ -178,30 +170,21 @@ case "$cmd" in
     printf '===== HetLitmus Layer-3 compile-smoke (%d reps; nvcc+hipcc+clang, NO GPU) =====\n' "$NREPS"
     smoke_het     MP-cg-cta-acquire     "one-sided; plain CPU STR/LDR + barrier + nvcc -c"
     smoke_het     2+2W-cg-sys-acqrel-2s "two-sided; CPU STLR (2+2W is store-only: NO load)"
-    # A CPU *load*-acquire rep.  2+2W above is store-only, so despite its old
-    # "STLR + LDAPR" label NO rep ever emitted an LDAPR -- which is exactly why the
-    # RCpc/.arch_extension bug (every -2s CPU body failed to assemble) survived to
-    # B3c.  MP-gc puts the loads on the CPU, so -2s acqrel emits real LDAPR.
+    # MP-gc puts the loads on the CPU, so -2s acqrel emits a real LDAPR; 2+2W
+    # above is store-only and no other rep emits one (header, rep 3).
     smoke_het     MP-gc-sys-acqrel-2s   "two-sided GPU->CPU; CPU LDAPR (RCpc, needs .arch_extension rcpc)"
     smoke_het     2+2W-cg-sys-fence-2s  "two-sided; CPU DMB.SY fence"
     smoke_het     IRIW-cgcc-cta-relaxed "4-proc; largest barrier / scaffolding"
     smoke_het     WRC-ccg-cta-relaxed   "3-proc; buys down the proc-scaling assumption"
     smoke_cluster MP-cluster            "Hopper cluster inline-PTX fence path (nvcc -c)"
-    # The AMD render.  MP-cg-sys-acqrel-2s carries the most B5 surface (a -2s CPU
-    # body, the preload, the enemies, and both halves of the C2C noise), so it is the
-    # rep most likely to expose a dialect divergence -- which is exactly what it did.
+    # This rep carries the most CPU/interconnect-stress surface (a -2s CPU body,
+    # the preload, the enemies, both halves of the C2C noise), so it is the one
+    # most likely to expose a CUDA/HIP dialect divergence.
     smoke_het_hip MP-cg-sys-acqrel-2s   "the AMD/MI300A render (hipcc -c, gfx942)"
-    # Q10.  fence.acquire.sys / fence.release.sys are emitted by NO other test in
-    # either corpus, and no test name had ever contained a `.'.  Both reps are
-    # oracle-Disallowed, so they also exercise the B6b co-run control on the new
-    # order-pair family (HET_CONTROL_COMPILED_IN=1).
+    # The four order-pair reps below are all oracle-Disallowed, so each also
+    # exercises the co-run control (HET_CONTROL_COMPILED_IN=1) on that family.
     smoke_het     MP-cg-sys-sy.acq-2s   "Q10 order-pair; inline fence.acquire.sys + co-run mu"
     smoke_het     S-gc-sys-ra.rel-2s    "Q10 order-pair; inline fence.release.sys + CPU STLR/LDAPR"
-    # Q10b.  `dmb st' / `dmb ld' are a NEW emitted CPU form -- before Q10b c1
-    # hetCpuBody.ml Warn.fatal'd on them, so litmus7 could not produce these
-    # harnesses at all.  Both reps are oracle-Disallowed AND their mu(T) carries the
-    # same partial barrier, so each _cpu.c holds two of them (T + the mutant), which
-    # is also the co-run path on the widened family.
     smoke_het     MP-cg-sys-st.sc-2s    "Q10b order-pair; CPU dmb st (x2: T + mu) + fence.sc.sys"
     smoke_het     MP-gc-sys-ld.sc-2s    "Q10b order-pair; CPU dmb ld (x2: T + mu) on the gc cut"
     printf '\n=====================================================================\n'

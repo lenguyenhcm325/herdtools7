@@ -1,8 +1,9 @@
-B2 regression guard: the emitted het GPU driver must be a persistent, launch-once
-perpetual loop whose forward progress is guaranteed by cudaLaunchCooperativeKernel
-(HIP: hipLaunchCooperativeKernel), NOT the old per-iteration <<<>>> relaunch.  We
-emit the representative MP shape once (het emission needs no -set-libdir; one run
-emits both .cu and .hip) and assert the structural invariants with robust counts.
+Perpetual-loop guard (B2; env-research/decisions/B2-decision.md).  The emitted
+het GPU driver is a persistent, launch-once perpetual loop whose forward progress
+is guaranteed by cudaLaunchCooperativeKernel (HIP: hipLaunchCooperativeKernel),
+never a per-iteration <<<>>> relaunch.  The representative MP shape is emitted
+once -- het emission needs no -set-libdir, and one run emits both .cu and .hip --
+and the structural invariants are pinned with robust counts.
 
   $ litmus7 -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
 
@@ -12,23 +13,24 @@ emits both .cu and .hip) and assert the structural invariants with robust counts
   $ grep -c '<<<' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
   0
 
-(b,c) the inner free-running window: one for(_n<SIZE_OF_TEST) in the kernel AND one
-in the CPU wrapper (2 total), each with gd_bar fired ONCE before it (2 arrivals).
+(b,c) the inner free-running window: one for(_n<SIZE_OF_TEST) in the kernel and
+one in the CPU wrapper, each with gd_bar fired once before it -- 2 loops and 2
+arrivals per instance.
 
-The arrival count is matched on `_bar.fetch_add' -- the barrier's OWN atomic -- and
-NOT on a bare `fetch_add'.  B5 added the first non-barrier atomic RMW to this file
-(the CPU stress tally's __atomic_fetch_add), which a bare `fetch_add' count would
-have swept up: the check would then have read 3 and, once bumped to 3, would have
-been satisfied by a genuine THIRD BARRIER ARRIVAL -- exactly the regression it exists
-to catch.  Matching the barrier's own spelling keeps it discriminating.  (ptxcheck's
-barrier whitelist guards the same invariant independently, at the PTX level: one
-system-scope fetch_add per barrier-joining GPU lane.)
-B6b: MP-cg-sys-acqrel-2s is a should-be-FORBIDDEN test, so its harness CO-RUNS three
-het instances (T, mu(T), the canary).  The invariant is per-participant and unchanged
--- ONE free-running window per lane and per CPU wrapper, ONE barrier arrival before
-each -- so the totals are 3x2 = 6.  Scoped to T's own GPU lane as well, so a total of
-6 cannot be satisfied by a lane that lost its barrier while another gained a second
-loop: bumping a count without scoping it is how a guard stops guarding.
+The arrival count is matched on `_bar.fetch_add', the barrier's OWN atomic, and
+not on a bare `fetch_add': the CPU stress tally is an atomic RMW in this file
+too, which a bare count would sweep up, and bumping the expectation to absorb it
+would leave the check satisfiable by a genuine third barrier arrival -- exactly
+the regression it exists to catch.  (ptxcheck's barrier whitelist guards the same
+invariant independently, at the PTX level: one system-scope fetch_add per
+barrier-joining GPU lane.)
+
+MP-cg-sys-acqrel-2s is a should-be-forbidden test, so its harness CO-RUNS three
+het instances (T, mu(T), the canary).  The invariant is per-participant and
+unchanged -- one free-running window per lane and per CPU wrapper, one barrier
+arrival before each -- so the totals are 3x2 = 6.  The counts are also scoped to
+T's own GPU lane, so 6 cannot be satisfied by a lane that lost its barrier while
+another gained a second loop.
   $ grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   6
   $ grep -c '_bar.fetch_add' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
@@ -42,16 +44,15 @@ and NPART is the SUM over the instances, so the rendezvous waits for all six.
   $ grep -c '#define NPART 6' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 
-(d) a SINGLE terminal device sync per RUN.  This is B2's invariant: the kernel is
-persistent, so the run loop must sync exactly ONCE, at the end -- a sync inside the
-loop would serialise the free-running window and destroy the whole design.
+(d) a SINGLE terminal device sync per RUN.  The kernel is persistent, so the run
+loop syncs exactly once, at the end: a sync inside the loop would serialise the
+free-running window and destroy the whole design.
 
-Scoped to the run loop, not counted file-wide.  B5 added a second
-cudaDeviceSynchronize in gd_alloc_noise (waiting for the one-shot prefetch that moves
-the HBM noise buffer across the interconnect), which happens ONCE at start-up, before
-any run, and does not touch this invariant.  Bumping the count to 2 would have made
-this check satisfiable by a genuine SECOND SYNC IN THE RUN LOOP -- exactly the
-regression it exists to catch.  Scope, don't bump.
+Scoped to the run loop, not counted file-wide.  gd_alloc_noise holds a second
+cudaDeviceSynchronize -- waiting for the one-shot prefetch that moves the HBM
+noise buffer across the interconnect -- which happens once at start-up, before
+any run, and does not touch this invariant.  Bumping the count to 2 would make
+this check satisfiable by a genuine second sync in the run loop.
   $ sed -n '/for (int _run=0; _run<_runs_budget/,/^  }$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c 'cudaDeviceSynchronize'
   1
   $ sed -n '/^static int gd_alloc_noise/,/^}$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c 'cudaDeviceSynchronize'
@@ -68,7 +69,8 @@ grid.sync().
   $ grep -c 'const int iterations' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
   0
 
-(g) the grid <= co-resident cap guard is installed (B4 raises _grid but keeps it).
+(g) the grid <= co-resident cap guard is installed, and stays installed when the
+stress layer raises _grid toward the cap (stress.t (c)).
   $ grep -c '_grid > _maxGrid' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 

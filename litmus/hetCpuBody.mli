@@ -1,13 +1,12 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus (B3, decisions/B3-decision.md Decision 1): the bespoke tagged  *)
-(* CPU thread body.  AArch64-specific matcher over the fixed het vocabulary *)
-(* {MOV #imm + STR|STLR, LDR|LDAR|LDAPR, DMB SY}.  Never touches Skel.ml /   *)
-(* ASMLang.ml / the shared arch backends -- that isolation is the whole      *)
-(* reason Decision 1 chose option (b).  Consumed by top_litmus's HetEmit via *)
-(* the CpuF.het_analyze / CpuF.het_emit_body hooks (the x86_64 arm wires the  *)
-(* compile-only [emit_stub] instead).                                        *)
+(* HetLitmus: the tagged CPU thread body (env-research/decisions/            *)
+(* B3-decision.md, Decision 1).  AArch64-specific matcher over the fixed het *)
+(* vocabulary {MOV #imm + STR|STLR, LDR|LDAR|LDAPR, DMB SY|ST|LD}.  Never    *)
+(* touches Skel.ml / ASMLang.ml / the shared arch backends.  Consumed by     *)
+(* top_litmus's HetEmit via the CpuF.het_analyze / CpuF.het_emit_body hooks  *)
+(* (the x86_64 arm wires the compile-only [emit_stub] instead).              *)
 (****************************************************************************)
 
 (* One CPU proc's store/load structure in program order, addresses resolved
@@ -16,9 +15,9 @@
 type cpu_plan = {
     stores : (string * int option) list ;  (* (global, orig `mov #imm' value)  *)
     (* (global read, destination register as the CONDITION names it -- pp_reg,
-       e.g. "X0").  B3c: the register is what lets the recovery scan bind a
-       condition atom (`1:X0=0') to this load's read buffer, so a CPU-side read
-       is scanned exactly like a GPU-side one (B3-decision 4.1). *)
+       e.g. "X0").  The register is what lets the recovery scan bind a
+       condition atom (`1:X0=0') to this load's read buffer, so a CPU-side
+       read is scanned exactly like a GPU-side one (B3-decision.md 4.1). *)
     loads : (string * string) list ;
   }
 
@@ -35,18 +34,17 @@ val analyze :
 (* Emit the tagged het_run_<prefix>P<proc>.  Each store's value is rebound to the
    register operand (uint64_t)K*iter + store_mu(store-index) (the `mov #imm' is
    dropped); each load is recorded into load_buf(load-index)[_n]; the tested
-   mnemonic and DMB SY are reproduced verbatim as one asm block, widened to %x.
+   mnemonics and fences are reproduced verbatim as one asm block, widened to %x.
    [iter] is the C tag-index expression (the caller passes "(_n + 1)").
    [addr_params]/[buf_params] are (decl,name) pairs -- the SAME lists
    top_litmus uses for the extern decl, the arg struct and the driver call.
 
-   B6b -- [prefix] IS LOAD-BEARING, NOT COSMETIC.  A co-run harness carries THREE
-   het instances (T, its minimal mutant mu(T), and the Layer-B canary), and a
-   function named from the proc number ALONE gives all three a `het_run_P0': a
-   duplicate symbol at best, and at worst a driver silently calling the WRONG
-   TEST'S BODY -- which would tally one instance's cycles against another's name
-   and make the whole positive control a fiction.  The prefix is "" on the
-   single-instance path, so those harnesses are byte-for-byte unchanged. *)
+   [prefix] is load-bearing: a co-run harness carries three het instances (T,
+   its minimal mutant mu(T) and the canary), so naming the function from the
+   proc number alone would give all three a `het_run_P0' -- a duplicate symbol,
+   or a driver calling another instance's body and tallying its cycles under
+   the wrong name.  The prefix is "" on the single-instance path, which leaves
+   those harnesses byte-for-byte unchanged. *)
 val emit_body :
   out_channel -> prefix:string -> proc:int -> k:int -> store_mu:(int -> int) ->
   load_buf:(int -> string) -> reg_env:(string -> string) -> iter:string ->

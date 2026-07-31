@@ -1,51 +1,41 @@
 #!/usr/bin/env python3
-"""dupcheck.py -- Q10 step 0 -- the ISOMORPHISM (duplicate-test) gate.
+"""dupcheck.py -- the isomorphism (duplicate-test) gate.
 
-WHY THIS GATE EXISTS.  `hetlitmus/tests/het/generate.sh' loops
-shape x device-cut x scope x order and dedups only by BYTE-COMPARING a variant
-against one designated sibling (generate.sh:97-102 and :150-155).  That filter
-cannot see the duplicates that actually dominate the corpus: two DIFFERENT names
-whose programs are the same experiment up to (permutation of procs) x (renaming
-of locations), with the device tag travelling with the proc.
+`hetlitmus/tests/het/generate.sh' loops shape x device-cut x scope x order and
+dedups only by byte-comparing a variant against one designated sibling
+(generate.sh:87-92, :128-133).  That filter cannot see the duplicates that
+dominate the corpus: two different names whose programs are the same experiment
+up to (permutation of procs) x (renaming of locations), device tag travelling
+with the proc.  There are 39 such classes, unchanged across every widening of the
+variant vocabulary (currently 450 files, 411 distinct); all are the `cg'/`gc'
+mirror pair of a rotation-invariant shape (SB / LB / 2+2W), where swapping P0 and
+P1 gives back the same cycle with the labels exchanged.  Their verdicts agree, so
+nothing is wrong -- but they are not independent samples, and some of them sit
+inside the Disallowed rows that carry the falsification claim.  Measurement and
+analysis: env-research/Q10-corpus-coverage.md sect 2.1 and 2.3.
 
-Measured 2026-07-30 (env-research/Q10-corpus-coverage.md sect 2.1): the 338
-committed het tests were only **299 distinct** experiments (386 -> 347 after the
-Q10 order-pair widening, 450 -> 411 after Q10b unblocked the CPU fence axis --
-same 39 classes throughout).  All 39 redundant files are
-`SB' / `LB' / `2+2W' -- the three shapes whose cycle is invariant under
-rotation-by-two, which swaps P0 and P1, so the `cg' and `gc' device cuts emit the
-SAME experiment with the labels exchanged (e.g. SB-cg-sys-relaxed is
-SB-gc-sys-relaxed under P0<->P1, x<->y).  Their verdicts agree, so nothing is
-wrong -- but they are not independent samples, and 3 of them sit inside the
-`Disallowed' rows that carry the whole falsification claim.
+The 39 are kept, not deleted: the verdicts are correct, and the corpus census is
+pinned across corpus-gate.sh, emit-all.sh, verdictcheck.py, statscheck.py,
+histcheck.py, the cram goldens and expected-nvidia.csv.  They are allowlisted
+here BY EXACT CLASS, and the gate checks both directions, so the allowlist cannot
+rot:
+  1. every duplicate class found in the corpus is in ALLOWLIST  (new dup -> FAIL)
+  2. every ALLOWLIST class is still a real duplicate class      (stale -> FAIL)
+Half 2 is what stops the list becoming a rubber stamp: a listed partner that is
+edited, renamed or deleted until the pair is no longer isomorphic is dead weight,
+and the gate says so.  This is also what makes widening the variant vocabulary
+safe -- a new annotation axis multiplies across device cuts, so new duplicates
+are the expected failure mode and they break the build.
 
-WHY THE 39 ARE NOT DELETED.  The corpus census is pinned across corpus-gate.sh,
-emit-all.sh, verdictcheck.py, statscheck.py, histcheck.py, the cram goldens and
-expected-nvidia.csv; removing files is a wide-ripple change with no scientific
-payoff (the verdicts are correct).  So they are ALLOWLISTED here, by exact class,
-and this gate FAILS on any duplicate class that is not in the allowlist.  That
-makes the widening of the two-sided variant vocabulary (Q10 steps 1-3) safe: a
-new annotation axis multiplies across device cuts, so new duplicates are the
-expected failure mode, and they now break the build instead of inflating the
-census.
-
-THE CANONICAL FORM is taken from env-research/Q10-probe/canon.py (the measured
-basis of the Q10 analysis), adapted -- not rewritten: parse the Het test into
-(proc -> ordered event list, condition atoms), then minimise the representation
-over every permutation of procs x every renaming of locations.  Events carry
-their annotation (`plain' / `rel' / `acq' / `dmb sy' / `release,sys' / ...), so a
-weakening is NEVER canonically equal to the test it weakens; the device tag is
-part of the proc record, so a cpu/gpu swap is NOT a duplicate.
-
-WHAT IT CHECKS (both directions -- an allowlist that cannot rot):
-  1. every duplicate class found in the corpus is in ALLOWLIST   (new dup -> FAIL)
-  2. every ALLOWLIST class is still a real duplicate class       (stale -> FAIL)
-The second half is what stops the allowlist becoming a rubber stamp: if a listed
-partner is edited, renamed or deleted so the pair is no longer isomorphic, the
-entry is dead weight and the gate says so.
+The canonical form is adapted from env-research/Q10-probe/canon.py: parse the Het
+test into (proc -> ordered event list, condition atoms), then minimise over every
+permutation of procs x every renaming of locations.  Events carry their
+annotation (`plain' / `rel' / `acq' / `dmb sy' / `release,sys' / ...), so a
+weakening is never canonically equal to the test it weakens, and the device tag
+is part of the proc record, so a cpu/gpu swap is not a duplicate.
 
 Usage:  dupcheck.py [--dir D] [-q]   run the gate      (exit 0 = clean)
-        dupcheck.py --bite           prove the gate FAILS when it must
+        dupcheck.py --bite           prove the gate fails when it must
 """
 
 import argparse
@@ -63,10 +53,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
 
 # ---------------------------------------------------------------------------
-# THE ALLOWLIST: the 39 duplicate classes measured at Q10 time (2026-07-30) and
-# kept deliberately.  Every one is a `cg' cut and its `gc' mirror of a
-# rotation-invariant shape (SB / LB / 2+2W).  Regenerate ONLY with a documented
-# reason -- adding an entry here is how a real duplicate gets waved through.
+# The allowlist: the 39 duplicate classes kept deliberately, each a `cg' cut and
+# its `gc' mirror of a rotation-invariant shape (SB / LB / 2+2W).  Extend it only
+# with a documented reason -- adding an entry here is how a real duplicate gets
+# waved through.
 # ---------------------------------------------------------------------------
 ALLOWLIST = [
     ("2+2W-cg-cta-fence",      "2+2W-gc-cta-fence"),
@@ -271,7 +261,7 @@ def check(d, quiet=False):
 
 
 # ---------------------------------------------------------------------------
-# --bite: the gate must be SEEN to fail, for the RIGHT reason.
+# --bite: the gate must be seen to fail, for the RIGHT reason.
 # ---------------------------------------------------------------------------
 def _run_on(d):
     r = subprocess.run([sys.executable, os.path.abspath(__file__), "--dir", d],
@@ -289,8 +279,8 @@ def bite(d):
         shutil.copytree(d, work)
         src = os.path.join(work, "MP-cg-sys-relaxed.litmus")
         txt = open(src).read()
-        # x<->y renaming ONLY -- word-boundary so `exists' / `X1' are untouched.
-        # A pure location rename is BY DEFINITION the same experiment.
+        # x<->y renaming only -- word-boundary, so `exists' / `X1' are untouched.
+        # A pure location rename is by definition the same experiment.
         body = re.sub(r"\b([xy])\b", lambda m: "y" if m.group(1) == "x" else "x",
                       txt)
         body = body.replace("MP-cg-sys-relaxed", "MP-cg-sys-relaxed-CLONE")
@@ -309,8 +299,8 @@ def bite(d):
                 print("      | " + l.strip())
         rc |= 0 if ok else 1
 
-    # -- bite 2: a STALE allowlist entry (partner replaced by a non-duplicate).
-    # Injected by MUTATING THE IMPORTED LIST, not by patching text -- a text
+    # -- bite 2: a stale allowlist entry (partner replaced by a non-duplicate).
+    # Injected by mutating the IMPORTED LIST, not by patching text -- a text
     # patch would also rewrite this very injection string.
     with tempfile.TemporaryDirectory() as tmp:
         work = os.path.join(tmp, "het")

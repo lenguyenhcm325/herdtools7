@@ -2,20 +2,14 @@
 # HetLitmus corpus grid library -- shared by tests/gpu-only/generate.sh and
 # tests/het/generate.sh.  Pure bash (associative arrays => needs bash >= 4).
 #
-# Defines the standard litmus SHAPE catalogue (closed critical cycles, expressed
-# in diy's architecture-agnostic edge vocabulary), the canonical heterogeneous
-# device cuts per shape, and the renderer that turns a base cycle into the
-# scope x order annotated LISA/Bell edge cycle that diyone7/hetgen7 consume.
+# Defines the litmus shape catalogue (closed critical cycles in diy's
+# architecture-agnostic edge vocabulary), the canonical heterogeneous device
+# cuts per shape, and the renderers that turn a base cycle into the annotated
+# edge cycle diyone7/hetgen7 consume -- LISA/Bell for GPU procs, AArch64 for
+# CPU procs.  The GPU annotation grid is scope in {cta,gpu,sys} x order in
+# {relaxed,acquire,release,fence}.
 #
-# The annotation grid is  scope in {cta,gpu,sys}  x  order in
-# {relaxed,acquire,release,fence}.  The mapping (matching the GPU-only corpus
-# convention) is: reads carry acquire|relaxed, writes carry release|relaxed; the
-# `fence' column keeps every access relaxed and instead inserts a standalone
-# scoped fence (`f[sc,<scope>]') between the two accesses of each proc, by
-# swapping each intra-proc program-order edge `Pod<XY>' for the Bell fence edge
-# `FenceSc<Scope>d<XY>' (diy already supports this -- no generator code change).
-#
-# See hetlitmus/docs/corpus-grid.md.
+# The grid rule and its rationale: hetlitmus/docs/corpus-grid.md.
 
 # --- shape catalogue: cycle (base edges) + proc count -----------------------
 # Base-edge vocabulary used here:
@@ -45,15 +39,15 @@ declare -A SHAPE_NPROCS=(
 # Generation order (associative arrays are unordered in bash).
 SHAPE_ORDER="MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3"
 
-# --- heterogeneous device cuts (settled decision #1) ------------------------
-# ROLE-BASED, symmetry-reduced -- NOT 2^n.  2-proc shapes: both directions.
-# 3-proc shapes (distinct roles): each proc, in turn, is the single GPU
-# participant.  4-proc shapes: IRIW (2 symmetric writers + 2 symmetric readers)
-# uses FOUR cuts {one writer, one reader, both writers, both readers} on the GPU
-# -- these are four of IRIW's EIGHT symmetry classes (Q10 sect 2.2, measured
-# with Q10-probe/canon.py --cuts), not all of them: the mixed writer+reader cuts
-# are not generated; WRC3 (a 4-stage causal chain, all roles distinct) puts each
-# chain stage, in turn, on the GPU.
+# --- heterogeneous device cuts ----------------------------------------------
+# Role-based and symmetry-reduced, NOT 2^n.  2-proc shapes: both directions.
+# 3-proc shapes (distinct roles): each proc in turn is the single GPU
+# participant.  IRIW (2 symmetric writers + 2 symmetric readers): four cuts
+# {one writer, one reader, both writers, both readers} -- four of its eight
+# symmetry classes; the mixed writer+reader and 3-GPU classes are not
+# generated.  WRC3 (4-stage causal chain, all roles distinct): each chain stage
+# in turn on the GPU.  Coverage measured in
+# env-research/Q10-corpus-coverage.md sect 2.2 (Q10-probe/canon.py --cuts).
 declare -A SHAPE_HET_CUTS=(
   [MP]="cpu,gpu gpu,cpu"
   [SB]="cpu,gpu gpu,cpu"
@@ -71,11 +65,10 @@ declare -A SHAPE_HET_CUTS=(
 GRID_SCOPES="cta gpu sys"
 GRID_ORDERS="relaxed acquire release fence"
 
-# Two-sided het orders: the COMPLETE morally-strong pairings, applied to BOTH
-# devices at sys scope so the cross-device pair actually closes (see the het
-# generate.sh "(D) two-sided" section and docs/het-oracle.md).
-#   acqrel : reads -> acquire, writes -> release   (forbids MP-family + LB)
-#   fence  : DMB.SY (CPU) + fence.sc.sys (GPU)      (also forbids SB/R/RWC)
+# Two-sided het orders: the complete morally-strong pairings, applied to BOTH
+# devices at sys scope so the cross-device pair closes (docs/het-oracle.md).
+#   acqrel : reads -> acquire, writes -> release
+#   fence  : DMB.SY (CPU) + fence.sc.sys (GPU)
 TWO_SIDED_ORDERS="acqrel fence"
 
 # --- helpers ----------------------------------------------------------------
@@ -99,11 +92,9 @@ edge_src_dst() {
 #   relaxed/fence : everything relaxed (fence supplies ordering via a fence event)
 #   acquire       : reads -> Acquire, writes -> Relaxed
 #   release       : writes -> Release, reads -> Relaxed
-#   acqrel        : reads -> Acquire, writes -> Release  (the COMPLETE morally-
-#                   strong release/acquire pair -- used by the TWO-SIDED het
-#                   variants, where it is applied to BOTH devices so both halves
-#                   of the pair are present; see render_cpu_cycle and the het
-#                   generate.sh "(D) two-sided" section)
+#   acqrel        : reads -> Acquire, writes -> Release -- the complete
+#                   release/acquire pair, used only by the two-sided variants
+#                   (which apply it to both devices; cf. render_cpu_cycle)
 ord_for() {
   case "$2" in
     relaxed|fence) echo Relaxed;;
@@ -115,9 +106,9 @@ ord_for() {
 }
 
 # render_cycle <scope> <order> <base-edge>...  ->  annotated edge token list
-# Annotation of each shared event is identical from both adjacent edges (it is
-# fixed by the event's W/R direction + the scope + the order profile), so the
-# cycle is always atom-consistent for diy.
+# Each shared event's annotation is fixed by its W/R direction + scope + order
+# profile, so both adjacent edges spell it identically and the cycle is always
+# atom-consistent for diy.
 render_cycle() {
   local scope="$1" order="$2"; shift 2
   local SC; SC=$(scope_cc "$scope") || return 1
@@ -135,31 +126,19 @@ render_cycle() {
   echo "${out# }"
 }
 
-# --- CPU (AArch64) annotator: the OTHER half of the morally-strong pair --------
-# The het generator runs the cycle engine once per device; the CPU run gets its
-# edge cycle from hetgen7's `-cpu <edges>' (parsed VERBATIM by the AArch64
-# builder -- no OCaml change).  By default generate.sh passes the PLAIN base
-# cycle there, so every CPU proc is a plain ARMv9 ld/st and a GPU sys
-# release/acquire on the other proc can never CLOSE the morally-strong pair the
-# CMCM needs to cut a cycle (the GH200 CPU is ARMv9, not x86, so it supplies no
-# implicit acquire/release -- Bagchi ISMM'26 Fig 1, CMCM PLDI'23 Fig 2a).  The
-# TWO-SIDED variants instead pass an ANNOTATED CPU cycle here, so the CPU proc
-# carries its half of the pair and a complete cross-device pair can form.
+# --- CPU (AArch64) annotator: the other half of the morally-strong pair -------
+# hetgen7's `-cpu <edges>' is parsed verbatim by the AArch64 builder.  Passing
+# the plain base cycle (the one-sided default) leaves every CPU proc a plain
+# ARMv9 ld/st, so a GPU sys release/acquire can never close a morally-strong
+# pair: the GH200 CPU is ARMv9, not x86, and supplies no implicit
+# acquire/release.  The two-sided variants pass an annotated CPU cycle instead.
 #
-# INSTRUCTION MAPPING (grounded; see hetlitmus/docs/het-oracle.md "Mapping"):
-#   release  -> STLR    (ARM store-release; Bagchi Fig 1 shows the GH200
-#                        toolchain compiling C++ memory_order_release to STLR)
-#   acquire  -> LDAPR   (ARM RCpc load-acquire; GCC>=13.1/LLVM>=16 emit LDAPR for
-#                        std::atomic acquire on -mcpu=neoverse-v* (Grace = Armv9
-#                        Neoverse V2, FEAT_LRCPC); RCpc matches C++/PTX acquire,
-#                        whereas LDAR/RCsc would OVER-strengthen and wrongly
-#                        forbid SB/R/RWC -- see the doc)
-#   fence    -> DMB.SY  (full system barrier; Bagchi Fig 2c uses DMB to order
-#                        store->load)
-# ARM ops are scope-free: an unscoped ARM access is treated as SYSTEM scope
-# (Bagchi 3.2), so no scope token is appended (unlike the GPU/Bell side).
+# Instruction mapping (release -> STLR, acquire -> LDAPR i.e. RCpc not RCsc,
+# fence -> DMB.SY) and its grounding: docs/het-oracle.md "The CPU instruction
+# mapping".  ARM ops are scope-free -- unscoped is treated as system scope --
+# so no scope token is appended, unlike the GPU/Bell side.
 #
-# diy atom letters (probed via `diyone7 -arch AArch64 -show annotations'):
+# diy atom letters (`diyone7 -arch AArch64 -show annotations'):
 #   L = release (STLR) ; Q = LDAPR (RCpc acquire) ; A = LDAR (RCsc, unused).
 
 # arm_ord <dir W|R> <order>  ->  AArch64 diy atom letter for that access
@@ -173,18 +152,14 @@ arm_ord() {
 
 # render_cpu_cycle <order> <base-edge>...  ->  annotated AArch64 edge token list
 # (the CPU-side mirror of render_cycle, but with ARM atoms and NO scope).
-#   acqrel   : every read -> LDAPR (Q), every write -> STLR (L)  (atom on each end)
-#   fence    : every access plain; each intra-proc Pod<XY> becomes the full-barrier
-#              edge `DMB.SYd<XY>' (emits a DMB SY between the two accesses); the
-#              external edges (Rfe/Fre/Coe) stay bare (their plain ends agree with
-#              the adjacent atoms -- verified with diyone7).
-#   fence-st : the same, with the PARTIAL barrier `DMB.STd<XY>' (DMB ST orders
-#   fence-ld   store->store only) resp. `DMB.LDd<XY>' (DMB LD orders load->load
-#              and load->store only).  These are the CPU one-role halves that
-#              Q10b unblocked -- diy has always generated them (`diyone7 -arch
-#              AArch64 -show fences'); what was missing was litmus7 emission
-#              (litmus/hetCpuBody.ml, Q10b c1).  Only the (E) order-pair grid
-#              uses them; (D) still pairs `acqrel'/`fence' on both devices.
+#   acqrel   : every read -> LDAPR (Q), every write -> STLR (L)  (atom per end)
+#   fence    : every access plain; each intra-proc Pod<XY> becomes the
+#              full-barrier edge `DMB.SYd<XY>'.  External edges (Rfe/Fre/Coe)
+#              stay bare: their plain ends agree with the adjacent atoms.
+#   fence-st : the same with the partial barriers `DMB.STd<XY>' (orders
+#   fence-ld   store->store only) and `DMB.LDd<XY>' (load->load and load->store
+#              only) -- the CPU one-role halves.  Used only by the order-pair
+#              grid; the matched two-sided family stays on acqrel/fence.
 render_cpu_cycle() {
   local order="$1"; shift
   local out="" e as ad base fb=""
@@ -207,48 +182,37 @@ render_cpu_cycle() {
   echo "${out# }"
 }
 
-# --- Q10: the two-sided ORDER-PAIR grid (off-diagonal) ----------------------
-# TWO_SIDED_ORDERS above pairs each device with the SAME order name, so only the
-# two DIAGONAL cells of the pairing grid were ever generated.  Nothing in the
-# argument for restricting to sys scope and to complete pairings excludes the
-# off-diagonal, and the per-side ordering a primitive supplies depends on WHICH
-# program-order pair its proc has -- a release fence on a load;load consumer
-# orders nothing, RCpc STLR->LDAPR never orders store->load.  So sweep the grid
-# (Q10 sect 5 steps 1-3).  Name token `<cpu>.<gpu>':
+# --- the two-sided order-pair grid (off-diagonal) ---------------------------
+# TWO_SIDED_ORDERS above gives each device the same order name, i.e. only the
+# two diagonal cells of a pairing grid.  The ordering a primitive supplies
+# depends on which program-order pair its proc has -- a release fence on a
+# load;load consumer orders nothing, RCpc STLR->LDAPR never orders store->load
+# -- so the off-diagonal is swept too.  Name token `<cpu>.<gpu>':
 #
-#   cpu  ra -> STLR / LDAPR atoms (== the `acqrel' CPU half)
-#        sy -> DMB SY             (== the `fence'  CPU half)
-#        st -> DMB ST             ld -> DMB LD          [Q10b]
+#   cpu  ra -> STLR / LDAPR atoms      sy -> DMB SY
+#        st -> DMB ST                  ld -> DMB LD
 #   gpu  ra -> w[release,sys] / r[acquire,sys] atoms
-#        sc -> f[sc,sys]          rel -> f[release,sys]   acq -> f[acquire,sys]
+#        sc -> f[sc,sys]   rel -> f[release,sys]   acq -> f[acquire,sys]
 #
-# The two DIAGONAL cells are NOT re-emitted: `ra.ra' IS <shape>-<cut>-sys-acqrel-2s
-# and `sy.sc' IS <shape>-<cut>-sys-fence-2s.  generate.sh PROVES that (byte-diff
-# against the committed file) rather than assuming it.  `st'/`ld' have no
-# pre-existing sibling, so no diagonal cell is skipped for them: the grid is
-# 4 x 4 = 16 cells per cut class, of which 2 are the (D) diagonal -> 14 emitted.
+# 4 x 4 = 16 cells per cut class, of which 2 are the diagonal (`ra.ra' IS
+# <shape>-<cut>-sys-acqrel-2s, `sy.sc' is <shape>-<cut>-sys-fence-2s) -> 14
+# emitted; generate.sh byte-diffs the two rather than assuming the identity.
+# Verdicts: docs/het-oracle.md "Two-sided order pairs" (Q10;
+# env-research/Q10-corpus-coverage.md).
 #
-# Q10b LIFTED THE BLOCKED AXIS.  Until Q10b the CPU axis was `ra sy' only -- not
-# because diy could not generate DMB.ST/DMB.LD (it always could: `diyone7 -arch
-# AArch64 -show fences') nor because the oracle could not decide them (the rule
-# and ordercheck.py always did), but because litmus/hetCpuBody.ml accepted only
-# `DMB SY'/`DSB SY' and Warn.fatal'd on any other I_FENCE, so the tests could
-# not be EMITTED.  Two match arms lifted it; the axis is now 4 wide.
-#
-# `f[acq_rel,sys]' is still unavailable: `FenceAcq_relSys' does not lex as a
-# diy edge name (the underscore breaks the edge lexer) -- verified with diyone7.
+# `f[acq_rel,sys]' is unavailable: `FenceAcq_relSys' does not lex as a diy edge
+# name (the underscore breaks the edge lexer).
 TWO_SIDED_CPU_ORDERS="ra sy st ld"
 TWO_SIDED_GPU_ORDERS="ra sc rel acq"
 
 # Shapes + cuts for the off-diagonal sweep.  2-proc only: NO-ORACLE is a
-# property of the SHAPE (a 3/4-proc two-sided test needs cross-device MCA or
-# A-cumulativity, which Bagchi ISMM'26 sect 2.1 defers), so no annotation on a
-# transitive shape can produce a Disallowed row -- Q10 sect 3.  2+2W is excluded
-# for the same reason (its cycle is two `co' edges with no `rf' at all).
-# SB and LB emit ONE cut: their cycle is invariant under rotation-by-two, which
-# swaps P0/P1, and the annotation follows the DEVICE rather than the proc index,
-# so `gc' would be `cg' with the labels exchanged -- an exact duplicate.
-# verify/dupcheck.py is what holds that honest.
+# property of the SHAPE (transitive shapes need cross-device multi-copy
+# atomicity or A-cumulativity, which Bagchi ISMM'26 sect 2.1 defers), so no
+# annotation on one can produce a Disallowed row; 2+2W is excluded for the same
+# reason (two `co' edges, no `rf').  SB and LB emit one cut: their cycle is
+# invariant under rotation-by-two, which swaps P0/P1, and the annotation
+# follows the device rather than the proc index, so `gc' would be `cg' with the
+# labels exchanged.  verify/dupcheck.py holds that honest.
 TWO_SIDED_PAIR_SHAPES="MP SB LB R S"
 declare -A SHAPE_2S_PAIR_CUTS=(
   [MP]="cpu,gpu gpu,cpu"
@@ -272,7 +236,7 @@ render_2s_cpu() {
 
 # render_2s_gpu <gpu-tok> <base-edge>...  ->  Bell/LISA edge token list.
 # `sc|rel|acq' keep every access relaxed at sys scope and put the ordering in a
-# standalone fence event, exactly as the `fence' column does; `Sc' reproduces
+# standalone fence event, as the `fence' column does; `sc' reproduces
 # `render_cycle sys fence' token for token.
 render_2s_gpu() {
   local t="$1"; shift

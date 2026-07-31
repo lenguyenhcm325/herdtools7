@@ -1,40 +1,25 @@
 #!/usr/bin/env python3
 # ---------------------------------------------------------------------------
-# ptxcheck.py  --  HetLitmus L0 static faithfulness checker
-# ---------------------------------------------------------------------------
-# Proves that the GPU (and, for het tests, CPU) harness litmus7 emits carries
-# EXACTLY the memory order + scope its .litmus annotation specifies -- catching
-# any weakening, strengthening, miscount, misplacement, missing qualifier, or
-# wrong op-kind in the lowering chain.
+# ptxcheck.py -- L0 static faithfulness check.  See hetlitmus/docs/verify-l0.md
+# for the mapping table, its grounding, and what each phase asserts.
 #
-#   .litmus annotation  --(CudaLang)-->  .cu  --(nvcc --ptx)-->  PTX  --(this)-->
-#       expected (kind,order,scope) profile  ==  observed PTX instructions ?
+#   .litmus annotation --(CudaLang)--> .cu --(nvcc --ptx)--> PTX --(this)-->
+#       expected (kind,order,scope) profile == observed PTX instructions ?
 #
-# STATIC + HARDWARE-FREE: emits, compiles to PTX, and inspects the text.  It
-# NEVER launches a kernel.  This is *not* a herd re-check, a mutation, or a
-# differential test -- it is one thing: token-level lowering faithfulness.
+# Hardware-free: it emits, compiles to PTX and reads the text, never launching a
+# kernel.  The lowering bug it guards: libcu++'s cuda::atomic_thread_fence
+# collapses acquire/release to fence.acq_rel, losing the order, so CudaLang
+# emits faithful inline PTX instead (cuda-emitter.md, "Fence lowering").
 #
-# The bug this guards (see hetlitmus/docs/cuda-emitter.md "Fence lowering"):
-# libcu++'s cuda::atomic_thread_fence COLLAPSES acquire/release -> fence.acq_rel,
-# losing the order.  CudaLang therefore emits faithful inline PTX; this checker
-# proves it stays faithful, and would FAIL the day a collapse/weakening returns.
+# Reading nvcc --ptx is sound, not lucky.  libcu++ scoped atomics and CudaLang's
+# inline PTX are both asm volatile with a "memory" clobber -- a hard
+# compiler-ordering barrier -- so nvcc cannot reorder model ops relative to one
+# another even when they are relaxed, and the textual order of the ops between
+# the `// begin/end inline asm' markers is source program order.  Scaffolding
+# (ld.param / st.global / cvta) sits outside those markers.  Procs are emitted in
+# column order and cells in row order, so the flattened streams line up.
 #
-# Why inspecting nvcc --ptx is sound (not luck):
-#   * libcu++ scoped atomics ARE implemented as `asm volatile(... : : : "memory")`
-#     -- they appear in the PTX wrapped in `// begin/end inline asm` markers.  An
-#     asm-volatile with a memory clobber is a HARD compiler-ordering barrier, so
-#     nvcc cannot reorder model ops relative to one another even when relaxed.
-#     => the textual order of inline-asm ops == source program order (a theorem,
-#        not an empirical accident).  Scaffolding (ld.param / st.global / cvta)
-#        sits OUTSIDE the inline-asm markers and is ignored.
-#   * nvcc emits procs in column order, cells in row order (CudaLang dump loop).
-#     => the flattened PTX op stream == flattened expected stream.
-#
-# Grounding of the mapping table is in hetlitmus/docs/verify-l0.md.  The single
-# strongest primary source is nvcc itself: every token below was emitted AND
-# assembled (exit 0) by `nvcc -std=c++17 -arch=sm_86/90 --ptx`.
-#
-# Exit code 0 = PASS, nonzero = FAIL (with an exact diff on stderr/stdout).
+# Exit 0 = PASS, 1 = FAIL (exact diff), 2 = completeness hard-fail, 3 = error.
 # ---------------------------------------------------------------------------
 
 import argparse
@@ -56,10 +41,10 @@ LIBDIR = os.path.join(REPO, "litmus", "libdir")
 NVCC = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
 
 # ===========================================================================
-# 1. THE MAPPING TABLE  (annotation  ->  expected PTX / ARM profile)
-#    Grounded in hetlitmus/docs/verify-l0.md.  Used to build the expected
-#    profile AND as the COMPLETENESS GUARD: any annotation token NOT a key
-#    here is unrecognized and HARD-FAILS -- nothing is ever silently skipped.
+# 1. The mapping table  (annotation -> expected PTX / ARM profile), grounded in
+#    hetlitmus/docs/verify-l0.md.  It builds the expected profile and doubles as
+#    the completeness guard: an annotation token that is not a key here
+#    hard-fails, so nothing is ever silently skipped.
 # ===========================================================================
 
 # GPU memory orders: LISA/Bell tag  ->  PTX semantics token.
@@ -108,21 +93,14 @@ CPU_MNEMONIC = {
     "dmb":   ("fence",         True),   # SPLIT by option -- see below
 }
 
-# Q10b: DMB's BARRIER OPTION is a separate token and a separate mapping.  The
-# mnemonic alone does not identify the ordering a barrier supplies: `DMB SY'
-# orders {WW,RR,WR,RW}, `DMB ST' only {WW}, `DMB LD' only {RR,RW} (herd7's own
-# answer -- verify/ordercheck.py Phase 1), and they are three DIFFERENT
-# instructions (d5033fbf / d5033ebf / d5033dbf).  Before Q10b the corpus could
-# only carry `DMB SY', so the option was never modelled; now the two-sided
-# order-pair grid carries all three, and an emitter that silently lowered
-# `DMB SY' to `DMB ST' would weaken the very ordering under test.
-#
-# The op tuple compared on both sides is (mnemonic, option), so the three are
-# already distinguished by the comparison.  What this table adds is the
-# COMPLETENESS GUARD, which the mnemonic table alone did not extend to the
-# option: an option that is not modelled here (`DMB ISH', `DMB OSHST', or a
-# bare `DMB' with no option at all) HARD-FAILS instead of being compared as an
-# opaque string -- the same discipline every GPU order/scope token already gets.
+# A barrier's ordered-pair set lives in its OPTION, not its mnemonic: `DMB SY'
+# orders {WW,RR,WR,RW}, `DMB ST' only {WW}, `DMB LD' only {RR,RW} (het-oracle.md;
+# machine-checked by verify/ordercheck.py Phase 1), and they are three distinct
+# instructions -- d5033fbf / d5033ebf / d5033dbf.  The compared op tuple is
+# (mnemonic, option), so a `DMB SY' lowered to `DMB ST' already reads as a
+# mismatch; what this table adds is the completeness guard on the option, so an
+# unmodelled one (`DMB ISH', `DMB OSHST', a bare `DMB') hard-fails rather than
+# being compared as an opaque string.  (Q10b)
 CPU_BARRIER_OPTION = {
     "sy": "fence-full",     # DMB SY : orders {WW,RR,WR,RW}  (full system barrier)
     "st": "fence-store",    # DMB ST : orders {WW}           (the `rel' half only)
@@ -133,7 +111,7 @@ CPU_BARRIER_OPTION = {
 def barrier_option(mn, tokens, where):
     """The modelled option of a `dmb' (or '' for a non-barrier mnemonic).
 
-    COMPLETENESS GUARD: an unmodelled or missing option hard-fails."""
+    Completeness guard: an unmodelled or missing option hard-fails."""
     if mn != "dmb":
         return ""
     opt = tokens[0].lower() if tokens else ""
@@ -226,18 +204,17 @@ COND_LOC = re.compile(r'\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]\s*=')
 
 
 def condition_locations(text):
-    """Shared LOCATIONS named by coherence-final atoms (`[x]=v`) in the condition,
-    de-duplicated in source order.
+    """Shared locations named by coherence-final atoms (`[x]=v') in the
+    condition, de-duplicated in source order.
 
     Mirrors HetCond.condition_locations in the emitter (litmus/hetCond.ml).  A
-    ws/co edge has no read node, so the het emitter answers each such atom by
-    launching ONE extra OBSERVER lane that snoops EVERY one of these locations
-    (relaxed, system scope) once per iteration.  That lane joins the rendezvous
-    barrier, so it contributes one extra fetch_add AND exactly |locs| extra
-    `ld.relaxed.sys` to the kernel's op stream.  ptxcheck must MODEL that lane, or
-    the 72 observer tests (S/R/2+2W) look like they carry stray memory ops.
-    Register atoms (`1:r0=1`) are recovered from read buffers and need no
-    observer, so they are ignored here."""
+    ws/co edge has no read node, so the emitter answers each such atom with one
+    extra observer lane that snoops every one of these locations (relaxed,
+    system scope) per iteration.  That lane joins the rendezvous barrier, so it
+    contributes one extra fetch_add and exactly |locs| extra `ld.relaxed.sys' to
+    the kernel op stream; modelling it is what keeps the S/R/2+2W tests from
+    looking like they carry stray memory ops.  Register atoms (`1:r0=1') are
+    recovered from read buffers and need no observer."""
     locs = []
     for ln in text.splitlines():
         s = ln.strip()
@@ -259,26 +236,22 @@ def device_class(dev):
 
 
 # ---------------------------------------------------------------------------
-# B6b: the CO-RUN.  A should-be-FORBIDDEN het test is emitted as a harness with
-# THREE co-running instances -- T, its minimal mutant mu(T), and the Layer-B
-# canary -- in one kernel and one _cpu.c.  extract_ptx_ops is file-scoped and
-# flat, so the gate now sees three tests' worth of ops in one stream.
-#
-# THE EXPECTATION IS MADE COMPLETE; THE CHECK IS NOT WEAKENED.  Every lane of
-# every instance is modelled exactly as before -- same barrier whitelist, same
-# device-scope spin, same observer profile, same ordered + per-proc multiset
-# comparison -- and the CPU side compares all three instances' asm blocks.  A
-# weakening, strengthening, miscount or misplacement in ANY of the three still
-# fails, and so does a control whose lanes are missing entirely (which would be
-# a harness reporting a positive control that is not there).
+# The co-run.  A should-be-forbidden het test is emitted as one kernel and one
+# _cpu.c holding THREE instances -- T, its minimal mutant mu(T) and the canary
+# (hetlitmus/docs/positive-control.md).  extract_ptx_ops is file-scoped and
+# flat, so the gate sees three tests' worth of ops in one stream; every lane of
+# every instance is modelled, under the same barrier whitelist, device-scope
+# spin, observer profile and ordered + per-proc multiset comparison.  A control
+# whose lanes are missing entirely fails too -- that is a harness reporting a
+# positive control it is not running.  (B6b)
 # ---------------------------------------------------------------------------
 
 def load_control_map(litmus_path):
     """(mu, canary) for this test from tests/het/control-map.csv, or (None, None).
 
-    The map is DERIVED from the corpus + the oracle by controlmap.py and gated by
-    `make hetlitmus-controlmap'; it is never a name rewrite (MP-gc-sys-acquire and
-    friends do not exist).  Read the same file the emitter reads, so the gate
+    The map is derived from the corpus + the oracle by controlmap.py and gated by
+    `make hetlitmus-controlmap'; it is never a name rewrite (MP-gc-sys-acquire
+    and friends do not exist).  Read the same file the emitter reads, so the gate
     cannot disagree with the harness about what is co-running."""
     d = os.path.dirname(os.path.abspath(litmus_path))
     f = os.path.join(d, "control-map.csv")
@@ -317,24 +290,23 @@ def instance_of(litmus_path):
 
 
 def het_instances(litmus_path):
-    """The instances this harness co-runs, IN EMISSION ORDER (T, mu(T), canary).
+    """The instances this harness co-runs, in emission order (T, mu(T), canary).
 
-    Mirrors top_litmus.ml's instance population exactly:
+    Mirrors the instance population in litmus/hetEmit.ml:
 
-      mu and canary  ->  [T, mu(T), canary]   the 16 Disallowed tests (B6b)
-      canary only    ->  [T, canary]          the 320 that have a canary but no
-                                              mutant -- a mutant presupposes a
-                                              known-forbidden cycle to weaken, so
-                                              only a Disallowed test has one (B6c)
-      neither        ->  [T]                  MP-{cg,gc}-sys-relaxed, which ARE the
-                                              canary (control-map.csv: `self') and
-                                              cannot co-run themselves
+      mu and canary  ->  [T, mu(T), canary]   the Disallowed tests
+      canary only    ->  [T, canary]          every other test -- a mutant
+                                              presupposes a known-forbidden
+                                              cycle to weaken, so only a
+                                              Disallowed test has one
+      neither        ->  [T]                  MP-{cg,gc}-sys-relaxed, which ARE
+                                              the canary (control-map.csv:
+                                              `self') and cannot co-run
+                                              themselves
 
-    If these two ever disagree the lane count will not match and the gate fails --
-    which is the point, and is exactly what happened when B6c added the canary-only
-    population and this function still said "mu and can".  A missing lane on a
-    control instance means the harness REPORTS a positive control it is not running,
-    and no other check in the project would see it."""
+    A disagreement between the two shows up as a lane-count mismatch, which is
+    the point: a missing lane on a control instance means the harness reports a
+    positive control it is not running, and no other check would see it."""
     d = os.path.dirname(os.path.abspath(litmus_path))
     insts = [instance_of(litmus_path)]
     mu, can = load_control_map(litmus_path)
@@ -369,7 +341,7 @@ def het_lane_plan(insts):
 def gpu_ops_of_column(cells):
     """Parse a GPU column's non-empty cells into ordered (kind,order,scope).
 
-    COMPLETENESS GUARD: every w/r/f cell's order & scope must be in the mapping
+    Completeness guard: every w/r/f cell's order & scope must be in the mapping
     table; an unknown token raises CompletenessError (hard fail upstream)."""
     ops = []
     for c in cells:
@@ -395,8 +367,8 @@ def gpu_ops_of_column(cells):
 def cpu_ops_of_column(cells):
     """Parse a CPU column's cells into ordered memory-op descriptors.
 
-    Returns a list of (mnemonic, qualifier) for MEMORY/ordering ops only
-    (mov is folded by ASMLang and excluded).  COMPLETENESS GUARD: any
+    Returns a list of (mnemonic, qualifier) for memory/ordering ops only
+    (mov is folded by ASMLang and excluded).  Completeness guard: any
     mnemonic not in CPU_MNEMONIC hard-fails."""
     ops = []
     for c in cells:
@@ -524,15 +496,14 @@ def extract_cpu_ops(cpu_c_text):
     block = lines[start:end] if start is not None else lines
     ops = []
     for ln in block:
-        # finditer, NOT search.  C concatenates adjacent string literals, so
+        # finditer, not search: C concatenates adjacent string literals, so
         #     "str %x[_v1],[%[y]]\n"    "dmb sy\n"
-        # is ONE asm line carrying TWO instructions -- and re.search sees only the
-        # first, which made every instruction after the first on any line invisible
-        # to this gate.  Found by a B6b bite test that injected a `dmb sy' into the
-        # MUTANT's body and PASSED: a silently strengthened mutant is not a mutant,
-        # it may never fire, and a control that never fires discards every null it
-        # was supposed to vouch for.  The emitter happens to emit one per line, but
-        # a gate that only works because of how its input is formatted is not a gate.
+        # is ONE asm line carrying two instructions.  search would read only the
+        # first, hiding an instruction appended to a body -- i.e. a silently
+        # STRENGTHENED mutant, which may never fire, and a control that never
+        # fires discards every null it was meant to vouch for.  The emitter does
+        # emit one per line, but a gate that works only because of how its input
+        # happens to be formatted is not a gate.
         for m in ASM_STR.finditer(ln):
             mn = m.group(1).lower()
             rest = m.group(2).strip().lower()
@@ -587,12 +558,12 @@ class Result:
 
 def check_gpu(result, expected_per_proc, observed, label):
     """expected_per_proc: list of (proc_label, [ops]).  observed: flat PTX ops.
-    Runs the ORDERED check (placement+order) and the PER-PROC MULTISET check
+    Runs the ordered check (placement+order) and the per-proc multiset check
     (multiplicity, equality not subset).
 
-    B6b: proc_label is a plain string so a co-run harness can name the INSTANCE as
-    well as the proc ("MP-cg-sys-fence:P1") -- otherwise a mismatch in the mutant
-    would be reported against the test's proc number and read as a bug in T."""
+    proc_label is a plain string so a co-run harness can name the instance as
+    well as the proc ("MP-cg-sys-fence:P1"); otherwise a mismatch in the mutant
+    would be reported against a proc number and read as a bug in T."""
     expected_flat = [op for _, ops in expected_per_proc for op in ops]
 
     # ----- ORDERED check (subsumes placement; the multiset is order-blind) ---
@@ -623,26 +594,23 @@ def check_gpu(result, expected_per_proc, observed, label):
 def split_het_segments(observed, n_gpu_procs):
     """Separate barrier ops from GPU model ops in a het kernel.
 
-    Each GPU proc is emitted as its OWN guarded block `{ barrier; model... }`
-    (every GPU thread must rendezvous), so the barrier is NOT a single prologue
-    -- there is one barrier instance per GPU proc.  The barrier's fetch_add is
-    the anchor.  We segment the op stream at each fetch_add and strip the fixed
-    barrier template [leading fence.sc][atom.sys][spin fence.sc][spin ld.sys]
-    from each segment's front; what remains is that proc's model ops (plus, for a
-    test lane, the window-opener stripped by check_spin), in proc order.
+    One barrier instance per GPU proc, not a single prologue: each proc is
+    emitted as its own guarded block `{ barrier; model... }' (verify-l0.md, "Het
+    barrier/model separation").  Segment the stream at each barrier fetch_add and
+    strip the fixed template [fence.sc][atom.sys][spin fence.sc][spin ld.sys]
+    from the front of each segment; what remains is that proc's model ops (plus,
+    on a test lane, the window-opener check_spin strips).
 
-    ANCHOR = a SYSTEM-SCOPE atom/red.  The corpus model (ptx.bell declares R/W/F
-    only) has no RMW, so every atom/red in the kernel is scaffolding -- but there
-    are now two KINDS of it, and only one is a barrier: the rendezvous fetch_add
-    is system-scoped, while the B4 window-opener (het_stress.cuh het_spin) is
-    DEVICE-scoped.  Anchoring on scope keeps the two apart.  It is also the
-    check, not a bypass: a spin that ever became system-scoped would be counted
-    as a barrier fetch_add here and blow the per-lane count in
-    check_barrier_whitelist -- which is exactly the alarm we want, because a
-    system-scope spin IS a per-iteration cross-device barrier.
+    The anchor is a SYSTEM-SCOPE atom/red.  The corpus model (ptx.bell declares
+    R/W/F only) has no RMW, so every atom/red is scaffolding -- but of two kinds,
+    and only one is a barrier: the rendezvous fetch_add is system-scoped while
+    the window-opener (het_stress.cuh het_spin) is device-scoped.  Anchoring on
+    scope is the check, not a bypass -- a spin that became system-scoped would be
+    counted here as a barrier fetch_add and blow the per-lane count in
+    check_barrier_whitelist.
 
-    Returns (barrier_ops, model_per_segment).  model_per_segment is one list per
-    barrier-joining GPU lane, in emission order (test lanes, then the observer)."""
+    Returns (barrier_ops, model_per_segment), one list per barrier-joining GPU
+    lane in emission order (test lanes, then the observer)."""
     atom_idx = [i for i, op in enumerate(observed)
                 if op[0] in ('atom', 'red') and op[2] == 'sys']
     if not atom_idx:
@@ -673,12 +641,12 @@ def split_het_segments(observed, n_gpu_procs):
 
 
 def check_barrier_whitelist(result, barrier_ops, n_lanes):
-    """The het sys-scope rendezvous barrier(s) must stay STRONG: every barrier op
-    system-scoped (not narrowed), one fetch_add (atom/red) PER BARRIER-JOINING GPU
-    LANE, and a seq_cst fence present.
+    """The het sys-scope rendezvous barrier(s) must stay strong: every barrier op
+    system-scoped (not narrowed), one fetch_add (atom/red) per barrier-joining
+    GPU lane, and a seq_cst fence present.
 
     n_lanes = (#GPU procs) + (1 if the test has an observer lane).  The observer
-    lane rendezvouses too (it must not start snooping before the test threads run),
+    rendezvouses too -- it must not start snooping before the test threads run --
     so it contributes its own fetch_add."""
     if not barrier_ops:
         result.fail("het kernel has NO barrier (expected sys-scope rendezvous)")
@@ -701,31 +669,29 @@ def check_barrier_whitelist(result, barrier_ops, n_lanes):
 
 
 # The observer's snoop: `atomic_ref<uint64_t, thread_scope_system>(*l).load(relaxed)`
-# (litmus/top_litmus.ml gd_sys_load_u64) -> ld.relaxed.sys.
+# (litmus/hetEmit.ml gd_sys_load_u64) -> ld.relaxed.sys.
 OBS_OP = ('ld', 'relaxed', 'sys')
 
-# The B4 device-scope window-opener (het_stress.cuh het_spin, ported from
+# The device-scope window-opener (het_stress.cuh het_spin, ported from
 # cuda-litmus `spin'): a relaxed fetch_add on a device-only scratch word, then
-# the relaxed load of its bounded busy-wait.  Emitted once per GPU TEST lane, at
-# the top of the perpetual loop (the `#pragma unroll 1' pins it to exactly one
+# the relaxed load of its bounded busy-wait.  Emitted once per GPU test lane, at
+# the top of the perpetual loop (`#pragma unroll 1' pins it to exactly one
 # textual copy, as it does for the tested ops).
 SPIN_OPS = [('atom', 'relaxed', 'gpu'), ('ld', 'relaxed', 'gpu')]
 
 
 def check_spin(result, seg, pidx, iname=""):
-    """A GPU TEST lane must open its window with EXACTLY the device-scope spin,
-    and the spin must be DEVICE-scoped.  Returns the segment with the spin
-    stripped, so what remains is the lane's model ops.
+    """A GPU test lane must open its window with exactly the device-scope spin.
+    Returns the segment with the spin stripped, so what remains is the lane's
+    model ops.
 
-    This is a load-bearing scientific check, not bookkeeping.  The spin aligns
-    the GPU test lanes of an instance; the CPU-GPU rendezvous is the SEPARATE
-    system-scope gd_bar, which fires once, OUTSIDE the perpetual loop.  If the
-    spin were ever widened to system scope it would become a per-iteration
-    CROSS-DEVICE barrier -- which masks the very order under test and stalls the
-    run (Srivastava 4.1).  Pinning the scope to `gpu' here makes that regression
-    impossible to land silently.  It equally fails if the window-opener is
-    dropped, duplicated, strengthened (relaxed -> acquire), or moved after the
-    tested ops."""
+    The spin aligns the GPU test lanes of one instance; the CPU-GPU rendezvous is
+    the separate system-scope gd_bar, which fires once, outside the perpetual
+    loop.  A spin widened to system scope would become a per-iteration
+    CROSS-DEVICE barrier, which masks the order under test and stalls the run
+    (Srivastava §4.1; env-research/Q5-gpu-stress.md).  This also fails if the
+    window-opener is dropped, duplicated, strengthened (relaxed -> acquire), or
+    moved after the tested ops."""
     who = ("%s:P%d" % (iname, pidx)) if iname else ("P%d" % pidx)
     got = seg[:len(SPIN_OPS)]
     if got != SPIN_OPS:
@@ -740,22 +706,17 @@ def check_spin(result, seg, pidx, iname=""):
 
 
 def stray_sys_ops(ptx_text):
-    """SYSTEM-scope memory ops emitted OUTSIDE the inline-asm markers.
+    """System-scope memory ops emitted OUTSIDE the inline-asm markers.
 
-    extract_ptx_ops only sees inline-asm ops -- which is sound for the MODEL ops,
-    because libcu++'s scoped atomics and CudaLang's inline PTX both compile to
-    asm-volatile.  But it means a system-scope op emitted by a compiler BUILTIN
-    (__threadfence_system, atomicAdd_system, ...) would sit outside the markers
-    and never be compared against anything.
-
-    B4 is where such an op could hide: the stress layer deliberately uses
-    builtins and plain accesses so that its scaffolding stays OUT of the model-op
-    stream (correctly -- unordered, device-scope traffic on a disjoint scratchpad
-    is not a tested op).  So close the blind spot rather than widen it: no
-    SYSTEM-scope memory op may appear outside the inline-asm stream at all.
-    Scaffolding is allowed to be invisible precisely because it is device-scope
-    and unordered; a system-scope op is never scaffolding -- on this hardware it
-    is, by definition, traffic that crosses the CPU-GPU boundary."""
+    extract_ptx_ops sees only inline-asm ops, which is sound for the model ops
+    (file header) but leaves a blind spot: a system-scope op from a compiler
+    builtin (__threadfence_system, atomicAdd_system, ...) sits outside the
+    markers and would be compared against nothing.  The stress layer is where one
+    could hide, since it deliberately uses builtins and plain accesses to stay
+    out of the model-op stream.  Hence the rule: scaffolding may be invisible
+    only because it is device-scope and unordered, and a system-scope op is by
+    definition traffic crossing the CPU-GPU boundary, so none may appear outside
+    the inline-asm stream at all."""
     stray = []
     in_asm = False
     for line in ptx_text.splitlines():
@@ -787,16 +748,16 @@ def check_no_stray_sys(result, ptx_text):
 
 
 def check_observer(result, seg, obs_locs, iname=""):
-    """The observer lane must contribute EXACTLY one relaxed/system-scope load per
+    """The observer lane must contribute exactly one relaxed/system-scope load per
     observed location, and nothing else.
 
-    This is NOT a relaxation of the gate.  The observer's loads are real memory ops
-    on the tested locations -- a deliberate, documented perturbation, and the only
-    way a ws/co edge (which has no read node) is recoverable at all (B3-decision
-    5; Srivastava 3.3).  Modelling them makes the EXPECTATION complete; the check
-    itself stays exact.  It still fails if the observer is narrowed (sys -> cta),
-    strengthened (relaxed -> acquire), or gains/loses a load -- e.g. if someone
-    drops the `#pragma unroll 1` that pins its trip count."""
+    The observer's loads are real memory ops on the tested locations -- a
+    deliberate perturbation, and the only way a ws/co edge (which has no read
+    node) is recoverable at all (env-research/decisions/B3-decision.md §5;
+    Srivastava §3.3).  Modelling them completes the expectation without relaxing
+    the check: it still fails if the observer is narrowed (sys -> cta),
+    strengthened (relaxed -> acquire), or gains/loses a load -- e.g. if the
+    `#pragma unroll 1' that pins its trip count is dropped."""
     who = ("%s observer" % iname) if iname else "observer"
     expected = [OBS_OP] * len(obs_locs)
     if seg != expected:
@@ -814,11 +775,10 @@ def check_cpu(result, expected_per_proc, cpu_c_text):
     emitted _cpu.c real-asm block.  Catches STLR->STR, LDAPR->LDR, DMB SY drop/
     narrowing, etc.
 
-    B6b: in a co-run harness the ONE `#if defined(__aarch64__)' region holds all
-    three instances' bodies (het_run_t_P0 / het_run_mu_P0 / het_run_can_P0), in
-    instance order, so the flattened expectation is simply their concatenation.
-    A dropped STLR in the MUTANT is caught here exactly as one in T would be --
-    and a mutant whose ordering silently matched T's would not be a mutant."""
+    In a co-run harness the ONE `#if defined(__aarch64__)' region holds all three
+    instances' bodies (het_run_t_P0 / het_run_mu_P0 / het_run_can_P0) in instance
+    order, so the flattened expectation is their concatenation -- a dropped STLR
+    in the mutant is caught exactly as one in T would be."""
     expected_flat = [op for _, ops in expected_per_proc for op in ops]
     observed = extract_cpu_ops(cpu_c_text)
     if observed != expected_flat:
@@ -873,11 +833,11 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
             cpu_c_text = open(cpu_c_override).read() if cpu_c_override else None
         else:
             cu_path, cpu_c_path = emit_harness(litmus_path, tmp)
-            # Default to sm_90 to MATCH the run harness, whose emitted Makefile/
-            # run.sh compile the SAME .cu with `CUDA_ARCH ?= sm_90' (GH200) --
-            # see litmus/top_litmus.ml.  Checking a different arch than the one
-            # that runs would leave a soundness gap; sm_90 is also a superset
-            # (it covers cluster scope, Hopper-only).  --arch overrides.
+            # sm_90 matches the run harness: the emitted Makefile/comp.sh compile
+            # the same .cu with `CUDA_ARCH ?= sm_90' (GH200; litmus/hetEmit.ml).
+            # Checking a different arch than the one that runs would leave a
+            # soundness gap, and sm_90 is a superset (cluster scope is
+            # Hopper-only).  --arch overrides.
             use_arch = arch or "sm_90"
             ptx_path = os.path.join(tmp, name + ".ptx")
             compile_ptx(cu_path, ptx_path, use_arch)
@@ -890,8 +850,8 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
         observed = extract_ptx_ops(ptx_text)
 
         if kind == 'Het':
-            # B6b: the harness may co-run THREE instances (T, mu(T), the canary).
-            # Model every lane of every one of them; the check itself is unchanged.
+            # The harness may co-run up to three instances; model every lane of
+            # every one of them.
             insts = het_instances(litmus_path)
             if len(insts) > 1:
                 result.note("  CO-RUN harness: %s"
@@ -914,11 +874,10 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
                                          for l in lanes),
                                len(model_per_seg)))
             else:
-                # Walk lanes and PTX segments in lockstep.  The observer snoops; it
-                # does NOT spin (its job is to sample densely, and gating it on the
-                # test lanes would couple two lanes that run at different rates), so
-                # it is the one barrier-joining lane with no window-opener.  Every
-                # other lane must carry the device-scope spin, exactly.
+                # Walk lanes and PTX segments in lockstep.  The observer does not
+                # spin -- its job is to sample densely, and gating it on the test
+                # lanes would couple two lanes that run at different rates -- so
+                # it is the one barrier-joining lane with no window-opener.
                 gpu_expected = []
                 model_ops = []
                 for (kindl, pidx, payload, iname), seg in zip(lanes, model_per_seg):
@@ -940,7 +899,7 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
                 else:
                     check_cpu(result, cpu_expected, cpu_c_text)
         else:
-            # gpu-only: ALL inline-asm ops are model ops (no barrier, no stress).
+            # gpu-only: every inline-asm op is a model op (no barrier, no stress).
             check_gpu(result, gpu_expected, observed, "GPU")
             check_no_stray_sys(result, ptx_text)
     finally:

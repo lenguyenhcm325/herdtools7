@@ -1,68 +1,56 @@
 #!/usr/bin/env python3
-"""HetLitmus B7b -- the CAMPAIGN SCHEDULER: where the GH200 hours are actually saved.
+"""The campaign scheduler: where the GH200 hours are spent, or saved (B7b;
+env-research/impl-briefs/B7b-impl-brief.md, Q3-stats.md).
 
-B7's budget rule said a defensible "Never" needs ~1,500-30,000 runs per test.  Two of
-the three levers that shrink that are PURE SCHEDULING, and this driver is both:
+A defensible "Never" needs a bound, and a bound costs thousands of runs per test.  Two
+of the three levers that shrink that cost are pure scheduling, and this driver is both.
 
   LEVER 1 -- only 97 of the 450 tests need a bound at all.
-      53 Disallowed  = the CMCM validation claim   -> run to a bound (or refutation)
-      44 NO-ORACLE   = characterization            -> run to a bound
-     353 Allowed     = just need to FIRE ONCE      -> a positive is self-vouching
-                        (B6c ALLOWED-OBSERVED), so they stop at the first clean
-                        sighting.  Running them to bound-grade budgets would burn
-                        ~6.5x the campaign for nothing.
-     The Allowed sweep is scheduled FIRST, and not only because it is cheap: its
-     ALLOWED-OBSERVED rows ARE the observed-rate population from which the het
-     p_min -- the number that sizes every bound budget -- is derived (HET_P_MIN,
-     het_verdict.h).  The sweep's summary surfaces the candidate rate; it is NEVER
-     auto-fed into anything (p_min is a campaign decision, not a scheduler guess).
+      53 Disallowed  the CMCM validation claim  -> run to a bound (or a refutation)
+      44 NO-ORACLE   characterization           -> run to a bound
+     353 Allowed     need only to FIRE ONCE     -> a positive is self-vouching, so
+                     they stop at the first clean sighting
+     The Allowed sweep is scheduled first, and not only because it is cheap: its
+     observed rows are the rate population the het p_min is derived from, and p_min
+     sizes every bound budget (het_verdict.h HET_P_MIN).  The sweep surfaces the
+     candidate rate and nothing is ever auto-fed from it -- p_min is a campaign
+     decision, not a scheduler guess.  main() prints the cut the schedule buys for
+     the budgets actually passed.
 
-  LEVER 2 -- adaptive per-test stopping.
-     Run each test until its bound is met or its budget is spent.  Inside one
-     invocation the harness does this itself (HET_ADAPTIVE=1 consults
-     het_campaign_should_stop() after every run -- the header's rule and this
-     scheduler apply the SAME policy, one function).  ACROSS invocations this
-     driver pools the per-invocation HetStats lines and stops the test when the
-     pooled bound reaches --p-goal, the sighting is corroborated, or the budget is
-     gone.  Do not run 30,000 runs on a test that converged at 500.
+  LEVER 2 -- adaptive per-test stopping.  Run each test until its bound is met or its
+     budget is spent.  Within one invocation the harness does this itself
+     (HET_ADAPTIVE=1 consults het_campaign_should_stop() after every run), so
+     het_verdict.h and this scheduler apply one policy through one function.  Across
+     invocations this driver pools the HetStats lines and stops when the pooled bound
+     reaches --p-goal, a sighting is corroborated, or the budget is gone.
 
-  LEVER 3 -- H > 1 (parallel het pairs) is deliberately NOT here: it is real
-     emitter work, the pairs share the C2C fabric (DEFF eats part of the gain),
-     and it is the lever most likely to be redundant once N_eff is measured.
-     Build it in B8 only if the measured N_eff turns out small.
+  LEVER 3 -- H > 1 (parallel het pairs) is deliberately absent: it is real emitter
+     work, the pairs share the C2C fabric so DEFF eats part of the gain, and it is the
+     lever most likely to be redundant once N_eff is measured.  Build it only if the
+     measured N_eff turns out small.
 
-POOLING ACROSS INVOCATIONS (the arithmetic, stated so it can be audited):
-  each invocation i reports (HetStats line) k_i, k_eff_i, k_runs_i, R_usable_i,
-  R_eff_i, mu_upper_i.  Invocations use FRESH seed bases (HET_SEED env -- replaying
-  a seed adds no new phase draws and would double-count R_eff), so they are
-  independent replicates and:
-      k*      = sum k_i          (any sighting anywhere counts)
-      k_runs* = sum k_runs_i     (runs are distinct across invocations by seeding)
-      R_eff*  = sum over MEASURED invocations of R_eff_i
-      bound*  = max(mu_upper_i) / R_eff*        <- widest numerator over the summed
-                                                   denominator: conservative
-  an invocation whose dispersion was unmeasured contributes NO R_eff (it printed no
-  bound; pooling its effort would be inventing one).
+POOLING ACROSS INVOCATIONS (the arithmetic, stated so it can be audited; `absorb` and
+`pooled_bound` implement it).  Invocations use FRESH seed bases, since replaying a seed
+adds no new phase draws and pooling replays would double-count R_eff, so they are
+independent replicates:  k* and k_runs* are sums; R_eff* sums only over invocations
+that themselves reported a bound; and bound* = max(mu_upper_i) / R_eff* -- the widest
+numerator over the summed denominator, i.e. conservative.  An invocation whose
+dispersion went unmeasured printed no bound, so pooling its effort would invent one.
 
-STOP RULES (the header's policy, at campaign scope):
-  ALLOWED      k_eff* >= 1                        -> OBSERVED   (self-vouching)
-  DISALLOWED   k_runs* >= 3                       -> CONFIRMED  (corroborated
-               refutation -- the campaign's most valuable output, reported LOUDLY;
-               an uncorroborated sighting keeps the test running: escalate, never
-               bank a possible artefact as a refutation)
-  DISALLOWED / NO-ORACLE with k* == 0:
-               bound* <= --p-goal                 -> BOUND-MET
-  any          runs >= --budget-runs              -> BUDGET
-  --p-goal unset => bound rows run to budget (a stopping target is a campaign
-  decision; there is no default baked in, same rule as p_min).
+STOP RULES: `decide` below is the whole policy -- OBSERVED / CONFIRMED / BOUND-MET /
+BUDGET, plus the ERROR states set upstream of it.  Two carry judgement rather than
+arithmetic: a Disallowed sighting is CONFIRMED only once corroborated across distinct
+clean runs (an uncorroborated one keeps the test running instead of banking a possible
+artefact as a refutation), and an unset --p-goal leaves bound rows running to budget,
+because a stopping target is a campaign decision with no default baked in -- the p_min
+rule again.
 
-RUNNER CONTRACT: --runner is a command template; '{test}' and '{dir}' are
-substituted.  It must execute ONE invocation of the test's harness binary and
-forward the harness stdout (the HetStats line is the interface).  This driver sets,
-per invocation:  HET_SEED (fresh base), HET_ADAPTIVE=1, HET_P_GOAL, HET_RUNS_MAX.
-On the GH200 the runner is typically:  'cd {dir} && ./run.exe'  (after comp.sh).
-Nothing here needs a GPU: the scheduler is validated on the dev box against a stub
-runner by hetlitmus/verify/statscheck.py (phase 5).
+RUNNER CONTRACT: --runner is a command template with '{test}' and '{dir}' substituted.
+It must execute ONE invocation of the test's harness binary and forward the harness
+stdout -- the HetStats line is the whole interface.  Per invocation this driver sets
+HET_SEED (a fresh base), HET_ADAPTIVE=1, HET_P_GOAL and HET_RUNS_MAX.  On the GH200 the
+runner is typically 'cd {dir} && ./run.exe' (after comp.sh).  Nothing here needs a GPU:
+hetlitmus/verify/statscheck.py phase 6 drives it end to end against a stub runner.
 
 Usage:
   campaign.py --corpus <dir of emitted harness dirs> --control-map <csv>
@@ -94,8 +82,8 @@ def die(msg):
 
 
 def read_control_map(path):
-    """test -> oracle class.  Field 2 of tests/het/control-map.csv, the same
-    grounded source the emitter tags harnesses from (B6c).  FAIL CLOSED."""
+    """test -> oracle class.  Field 2 of tests/het/control-map.csv, the same grounded
+    source the emitter tags harnesses from.  FAIL CLOSED."""
     classes = {}
     with open(path) as fh:
         for line in fh:
@@ -103,11 +91,11 @@ def read_control_map(path):
             if not line or line.startswith("#"):
                 continue
             f = [x.strip() for x in line.split(",")]
-            # Header skip: control-map.csv's header starts "Test,...";
-            # expected-nvidia.csv's starts "Litmus,...".  Matching only the
-            # latter made the very file this docstring names unreadable -- its
-            # header row was ingested as a test named "Test" with oracle class
-            # "Expected" and the guard below (correctly) died on it (PORT1 §4.1).
+            # Header skip: both grounded sources must parse -- control-map.csv's
+            # header row starts "Test,...", expected-nvidia.csv's "Litmus,...".
+            # Matching only one of them ingests the other's header as a test whose
+            # oracle class is "Expected", which the guard below then kills the
+            # campaign on (env-research/impl-briefs/PORT1-REPORT.md 4.1).
             if len(f) < 2 or f[0] in ("Litmus", "Test"):
                 continue
             classes[f[0]] = f[1]
@@ -147,8 +135,8 @@ def fnum(kv, key, dflt=0.0):
         return dflt
 
 
-# het_verdict.h: HET_ST_TAU_UNRESOLVED (1u << 14) -- tau was not resolved by this
-# invocation's pooled stream, so N_eff fell back to 1 (B7's reading).
+# het_verdict.h HET_ST_TAU_UNRESOLVED: tau was not resolved by this invocation's
+# pooled stream, so N_eff fell back to 1 -- the conservative reading.
 HET_ST_TAU_UNRESOLVED = 1 << 14
 
 
@@ -171,10 +159,9 @@ class TestState(object):
         self.mu_upper_max = 0.0
         self.nwin = 0
         self.tau_w = self.N_eff = -1.0   # last measured (reporting only)
-        # B7c: an invocation whose tau was NOT RESOLVED scored N_eff = 1 (B7's
-        # reading).  That is not an error and not a dead end -- it is a PRICE, and
-        # tau_need is the price in runs.  Carried so the campaign can SAY which rows
-        # bought no dividend and what it would cost to buy one.
+        # An invocation whose tau was unresolved scored N_eff = 1: not an error and not
+        # a dead end, but a PRICE, with tau_need the price in runs.  Carried so the
+        # campaign can say which rows bought no dividend and what buying one costs.
         self.tau_unresolved = 0          # invocations whose tau was unresolved
         self.tau_need_max = 0            # ... and the largest run count they wanted
         self.stop = ""
@@ -194,8 +181,8 @@ class TestState(object):
         self.k_runs += int(fnum(kv, "k_runs"))
         nwin = int(fnum(kv, "nwin"))
         if self.nwin and nwin and nwin != self.nwin:
-            # tau_w/F_win/N_eff are resolution-dependent (het_verdict.h): records
-            # scored at different window resolutions must not be silently pooled.
+            # tau_w/F_win/N_eff are window-resolution dependent (het_verdict.h), so
+            # records scored at different resolutions must not be silently pooled.
             self.stop, self.note = "ERROR", (
                 "nwin changed mid-test (%d -> %d): a swept HET_NWIN needs a fresh "
                 "campaign state, not a silent pool" % (self.nwin, nwin))
@@ -204,20 +191,19 @@ class TestState(object):
         mu = fnum(kv, "mu_upper", -1.0)
         reff = fnum(kv, "R_eff", 0.0)
         p_bound = fnum(kv, "p_bound", -1.0)
-        # Only an invocation that itself reported a bound may contribute effort to
-        # the pooled one (p_bound >= 0 implies dispersion measured, obs Never).
+        # Only an invocation that reported a bound itself may contribute effort to the
+        # pooled one: p_bound >= 0 implies its dispersion was measured.
         if p_bound >= 0.0 and reff > 0.0:
             self.R_eff += reff
             self.mu_upper_max = max(self.mu_upper_max, mu)
         if fnum(kv, "tau_w", -1.0) > 0.0:
             self.tau_w = fnum(kv, "tau_w")
             self.N_eff = fnum(kv, "N_eff", -1.0)
-        # B7c.  KEEP GOING, do not give up: an unresolved tau scored N_eff = 1, so this
-        # invocation's R_eff is B7's conservative number, the pooled bound is WIDER, and
-        # the row therefore keeps running of its own accord.  It must never be treated
-        # as an ERROR (that would de-schedule a test for being honest), and a BOUND-MET
-        # it can still earn was earned on the conservative reading, so it stands.  All
-        # the campaign owes the operator is the PRICE, in runs.
+        # An unresolved tau needs no special case: N_eff = 1 makes this invocation's
+        # R_eff conservative and the pooled bound wider, so the row keeps running of its
+        # own accord.  Never an ERROR -- that would de-schedule a test for being honest
+        # -- and a BOUND-MET earned on the conservative reading stands.  What the
+        # campaign owes the operator is the price, in runs.
         if flags(kv) & HET_ST_TAU_UNRESOLVED:
             self.tau_unresolved += 1
             self.tau_need_max = max(self.tau_need_max, int(fnum(kv, "tau_need", 0)))
@@ -307,8 +293,8 @@ def main():
             die("no harness dir for %s under %s (emit the corpus first)" % (t, a.corpus))
         work.append(t)
 
-    # LEVER 1: the schedule.  Allowed sweep first (cheap + it feeds p_min), then the
-    # 16 Disallowed (the validation claim), then the 36 NO-ORACLE.
+    # LEVER 1: the schedule.  Allowed sweep first (cheap, and it feeds p_min), then the
+    # Disallowed rows (the validation claim), then NO-ORACLE.
     order = {"Allowed": 0, "Disallowed": 1, "NO-ORACLE": 2}
     work.sort(key=lambda t: (order[classes[t]], t))
     n_all = sum(1 for t in work if classes[t] == "Allowed")
@@ -364,7 +350,7 @@ def main():
             before = st.runs
             st.absorb(kv)
             if st.runs == before:
-                # An invocation that scored zero runs makes no progress; looping on
+                # An invocation that scored zero runs makes no progress, and looping on
                 # it would poll the same dead harness forever.
                 st.stop, st.note = "ERROR", "invocation reported R=0 runs"
                 break
@@ -383,18 +369,17 @@ def main():
             confirmed += 1
         save_state(a.state, states)   # after every test: the campaign is resumable
 
-    # The p_min candidate population (surfaced, NEVER auto-applied -- HET_P_MIN's
-    # rule).  Rate per effective sample: sightings over pooled effective cells.
+    # The p_min candidate population: surfaced, never auto-applied (lever 1 above).
     fired = [s for s in states if s.oclass == "Allowed" and s.stop == "OBSERVED"]
     print("\ncampaign: %d Allowed row(s) OBSERVED (the p_min candidate population "
           "-- derive HET_P_MIN from their per-effective-sample rates; it is NOT "
           "set automatically)." % len(fired))
 
-    # B7c: THE PRICE OF THE UNCLAIMED DIVIDEND.  These rows are not failures and
-    # their bounds are not wrong -- they are B7's (conservative) bounds, because the
-    # run count they were given could not resolve their tau.  Surfaced, never
-    # auto-applied: raising the run count is a campaign decision that spends GH200
-    # hours, exactly like --p-goal and HET_P_MIN.
+    # The price of the unclaimed dividend.  These rows are not failures and their
+    # bounds are not wrong; they are the conservative bounds, because the run count
+    # they were given could not resolve their tau.  Surfaced, never auto-applied:
+    # raising the run count spends GH200 hours, so it is a campaign decision like
+    # --p-goal and HET_P_MIN.
     unres = [s for s in states if s.tau_unresolved]
     if unres:
         need = max(s.tau_need_max for s in unres)

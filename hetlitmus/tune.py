@@ -1,75 +1,32 @@
 #!/usr/bin/env python3
-"""HetLitmus B8a -- the AUTOTUNER search machinery (the dev-box-testable half).
+"""The stress autotuner's search machinery.
 
-WHAT THIS IS.  A factored, seeded, variance-aware random search over the het harness's
-STRESS parameter space, scored on the observable positive-control death rate.  It is a
-search loop over a scalar objective; the scalar is hardware-only, so on the dev box the
-loop is validated against a SYNTHETIC objective with a KNOWN optimum (hetlitmus/verify/
-tunecheck.py).  This file PRODUCES NOT ONE TUNED NUMBER (Q7 4.2): every numeric it can
-emit is a warm-start SEED, explicitly labelled "not measured here".
+Spec: env-research/Q7-tuning.md; impl-briefs/B8a-impl-brief.md, which also lists what
+is deferred to the hardware campaign (B8).  A factored, seeded, variance-aware random
+search over the harness's stress knobs, scored on the positive control's mutant death
+rate -- a forced surrogate, since on correct hardware the forbidden outcome occurs zero
+times by construction and so carries no gradient (Q7 2.1).  The objective is a
+throughput, kills per wall-second, so a config that widens the window but slows the
+loop is penalised (Q7 2.3).
 
-WHY IT EXISTS.  On correct hardware the forbidden violation occurs ZERO times by
-construction, so it carries no gradient (Q7 2.1).  The field's surrogate, and ours, is
-the mutant DEATH RATE -- "legitimate MCS violations are too rare to use as an efficacy
-metric" (MC-Mutants ASPLOS'23, Abstract p.473).  The objective is a THROUGHPUT (yield x
-rate), Delta control_target_count / Delta t, which correctly penalises a config that
-widens the window but slows the loop (Q7 2.3; the Q6 3.3 remote-placement confound).
+IT SETTLES NO NUMERIC VALUE (Q7 4.2): a death rate needs CPU-GPU coherence and a C2C
+link, so away from that hardware the loop is validated against a synthetic objective
+with a known optimum (hetlitmus/verify/tunecheck.py) and every number written out is a
+warm-start seed stamped "not measured here".  campaign.py schedules the campaign (which
+tests, how many runs); this schedules the tuning (which config).  Both drive harness
+invocations through a --runner template and read the HetStats line.
 
-SOURCES REUSED (cited as a licence/attribution condition, per the SHARED CHARGE):
-  * seeded Park-Miller (Lehmer minimal-standard) config selection, so a campaign replays
-    from a seed -- Levine et al., GPUHarbor ISSTA'23 3.4.  Same generator as
-    het_stress.cuh het_rng (16807 / 2^31-1): the tuner and the device draw from one lineage.
-  * the data-peeking random-search + early-stop SHAPE -- Kirkham et al., "Foundations of
-    Empirical Memory Consistency Testing", OOPSLA'20 5.1 (Fig.10).  We REUSE the skeleton
-    and REPLACE the statistics (Q7 5.2): the Bernoulli-variance CI, the iteration-as-trial
-    unit, and the sequential config order each break under Q3's overdispersion/drift.
-  * the variance-aware racing rule -- Mnih, Szepesvari, Audibert, "Empirical Bernstein
-    Stopping", ICML'08.  The empirical variance absorbs overdispersion with no F_hat
-    pre-estimate.
-  * randomized round-robin best-arm identification under NON-STATIONARY rewards -- SER^3
-    (Allesiardo & Feraud).  De-confounds thermal/occupancy drift by interleaving arms.
-  * the reproducibility/time budget -- MC-Mutants ASPLOS'23 Alg.1, ceilingRate =
-    ceil(-log(1-r)/b).  Reused AS A LOWER BOUND, widened by F_hat (Q7 5.2 E); it is the
-    SAME formula as het_verdict.h het_budget_runs (F*log(0.05)/log(1-p_min)).
-  * the GPU stress knob space + the cuda-litmus warm-start seed -- Sorensen & Donaldson
-    PLDI'16, Kirkham OOPSLA'20 3.1, Reese Levine's cuda-litmus params/stress_params.txt.
-
-THE TWO KINDS OF KNOB (Q7 TRAP 1 -- tuning the second kind is FABRICATION).  The emitter
-exposes ~37 -D knobs.  EXPERIMENT knobs change the HARDWARE BEHAVIOUR UNDER TEST -- B8
-tunes these.  INSTRUMENT knobs change WHAT WE ARE ALLOWED TO CONCLUDE (HET_TAU_HOT,
-HET_P_GOAL, HET_NWIN, ...) -- lowering them would make more nulls "credible" or more
-tests "bounded"; that is tuning the VERDICT, not the experiment.  The split is enforced
-STRUCTURALLY: the sampler draws only from EXPERIMENT (a whitelist); an instrument knob is
-not a value the sampler can reach.  HET_WINDOW is a DETECTOR-resolution knob (TRAP 2):
-tuning a detector to maximise its own detections is circular, so it too is unreachable --
-it is CALIBRATED against the exhaustive ground truth (calibrate_window below), not tuned.
-
-RELATION TO campaign.py (B7b).  That driver schedules the CAMPAIGN (which tests, how many
-runs).  This driver schedules the TUNING (which config).  Both spawn harness invocations
-via a --runner template and read the machine-readable HetStats line; both are validated on
-the dev box against a STUB runner.  The tuner NEVER runs the emitted harness expecting weak
-behaviours -- the dev box has no CPU-GPU coherence (SHARED CHARGE); a real death rate is
-hardware-only.
-
-WHY RANDOM SEARCH, NOT BAYESIAN OPT (Q7 3.3, a settled decision -- do not re-open).
-Bayesian optimisation is REJECTED: its GP surrogate assumes a SMOOTH, STATIONARY,
-HOMOSCEDASTIC objective, and Q3 established the het objective is none of the three
-(non-smooth memory-stress functions -- Kirkham/Iorga'20 show random search ~ intelligent
-search here; drift; overdispersion).  Hyperband / successive-halving is the OPTIONAL
-multi-fidelity upgrade IF the hardware window bites (a strict generalisation of the racing
-loop here -- data-peeking is its 2-arm special case); the SAME three fixes (empirical-
-Bernstein, (instance,run) unit, randomized round-robin) apply to its promotion rule.  Not
-built here because the factored + early-stop search is expected to fit the window; it is a
-B8b decision, made on measured budget.
-
-WHAT IS DELIBERATELY DEFERRED TO B8b (the hardware campaign).  Every NUMERIC value; whether
-the interconnect sub-search actually raises the het death rate (Fusco measured bandwidth,
-never yield); the Fano factor F_hat (it sets both the CI width and the budget multiplier);
-the oracle-validity correlation (that a het mutant's C2C death rate tracks genuine CMCM-
-violation exposure is ASSUMED, unmeasured -- state it as an assumption, never a theorem);
-HET_WINDOW's calibrated value; and the harness-side RUNTIME re-parse of a stress config
-(the emitter's stress knobs are compile-time #defines today -- see HarnessObjective's
-BOUNDARY note).  This file builds and validates the MACHINERY; it settles no value.
+Sources reused, cited as an attribution condition (impl-briefs/SHARED-CHARGE.md):
+  * seeded Park-Miller config selection -- Levine et al., GPUHarbor ISSTA'23 3.4.
+  * the data-peeking random-search + early-stop shape -- Kirkham et al., "Foundations
+    of Empirical Memory Consistency Testing", OOPSLA'20 5.1 Fig.10.  The skeleton is
+    reused, the statistics replaced (Q7 5.2) -- see `eliminate` and `race`.
+  * the variance-aware racing radius -- Mnih, Szepesvari, Audibert, "Empirical
+    Bernstein Stopping", ICML'08 2.
+  * randomized round-robin under non-stationary rewards -- SER^3, Allesiardo & Feraud.
+  * the reproducibility/time budget -- MC-Mutants ASPLOS'23 Alg.1 (`budget_runs`).
+  * the GPU knob space + the warm-start seed -- Sorensen & Donaldson PLDI'16, Kirkham
+    OOPSLA'20 3.1, Reese Levine's cuda-litmus params/stress_params.txt.
 """
 
 import argparse
@@ -82,10 +39,9 @@ import time
 
 # ===========================================================================
 # Park-Miller (Lehmer minimal-standard) RNG.                 [GPUHarbor 3.4]
-# The SAME generator as het_stress.cuh het_rng (multiplier 16807, modulus
-# 2^31-1): a tuning campaign is replayable from its seed, on the host exactly
-# as on the device.  Reimplemented (not "a second het_ks2"): the device
-# function is CUDA, and a search over configs runs host-side.
+# Same multiplier and modulus as het_stress.cuh het_rng, so a tuning campaign
+# replays from its seed on the host exactly as on the device.  Reimplemented
+# rather than shared: het_rng is CUDA, the config search runs host-side.
 # ===========================================================================
 PM_MOD = 2147483647          # 2^31 - 1 (Mersenne prime)
 PM_MUL = 16807               # Park-Miller minimal-standard multiplier
@@ -116,8 +72,8 @@ class ParkMiller(object):
         return seq[self.randint(0, len(seq) - 1)]
 
     def shuffle(self, lst):
-        """Fisher-Yates in place, with THIS generator -- the SER^3 round order is
-        part of what a seed replays."""
+        """Fisher-Yates in place, with THIS generator -- the SER^3 round order is part
+        of what a seed replays."""
         for i in range(len(lst) - 1, 0, -1):
             j = self.randint(0, i)
             lst[i], lst[j] = lst[j], lst[i]
@@ -125,16 +81,16 @@ class ParkMiller(object):
 
 
 # ===========================================================================
-# THE KNOB WHITELIST (Q7 TRAP 1).  A domain is one of:
-#   ("int",  lo, hi)          -- uniform integer in [lo, hi]
-#   ("choice", [v, v, ...])   -- one of an explicit set
-# These are SEARCH SPACES (bounds the sampler explores), NOT tuned values.
-# The three sub-searches target three near-separable resources (Q7 3.2):
-# on-die GPU caches (G), CPU-local caches/LPDDR (C), the C2C interconnect (I).
-#
-# Every knob name below was verified against the LIVE emitter this session
-# (litmus/het-runtime/{het_stress.cuh,het_cpu_stress.h}).  DRIFT vs the brief:
-# the brief wrote HET_CPU_TEST_CORE; the live knob is HET_CPU_TEST_CORE0.
+# THE KNOB WHITELIST -- the only knobs the sampler can reach (Q7 trap 1).  The
+# emitter's -D surface holds two kinds of knob: experiment knobs change the
+# hardware behaviour under test and are tunable; instrument knobs change what a
+# result is allowed to conclude, so tuning one would be tuning the verdict.  The
+# split is structural, not documentary -- the sampler draws from these spaces
+# only, and `_assert_split_is_clean` holds them apart at import.
+# A domain is ("int", lo, hi) or ("choice", [v, ...]): search spaces, not values.
+# The three sub-searches target three near-separable resources (Q7 3.2): on-die
+# GPU caches (G), CPU caches/LPDDR (C), the C2C interconnect (I).  Every knob
+# below exists in litmus/het-runtime/{het_stress.cuh,het_cpu_stress.h}.
 # ===========================================================================
 SUBSEARCH = {
     # -- Sub-search G: GPU scratchpad stress (S&D patch/spread/sequence; Q5). ------
@@ -176,15 +132,14 @@ SUBSEARCH = {
     },
 }
 
-# INSTRUMENT knobs -- the sampler must NEVER reach these (Q7 TRAP 1).  Kept as an
-# explicit set so the gate can assert the whitelist and the denylist are DISJOINT and
-# the sampler's reachable set never intersects the denylist.  (HET_EXHAUSTIVE_MAX is
-# historical -- no live #define -- but stays here as defence in depth.)
+# The instrument knobs, named explicitly so the gate can assert this set and the
+# whitelist are DISJOINT and that no draw ever lands in it (tunecheck.py phase 5).
 INSTRUMENT_KNOBS = frozenset({
     "HET_TAU_HOT", "HET_THETA_DISTINCT", "HET_P_GOAL", "HET_P_MIN", "HET_NWIN",
     "HET_STATS_MAX_CELLS", "HET_TAU_MIN_SAMPLES", "HET_EXHAUSTIVE_MAX",
 })
-# HET_WINDOW is a DETECTOR-resolution knob (TRAP 2): calibrated, never tuned.
+# HET_WINDOW is a detector-resolution knob: calibrated against ground truth by
+# `calibrate_window`, never tuned (Q7 trap 2).
 DETECTOR_KNOBS = frozenset({"HET_WINDOW"})
 
 SUBSEARCH_ORDER = ["G", "C", "I"]   # I LAST: warm-started with G*,C* fixed (Q7 3.2/3.3)
@@ -199,10 +154,9 @@ def whitelisted_knobs():
 
 
 def _assert_split_is_clean():
-    """The structural guarantee TRAP 1 demands, checked at import: an instrument or
-    detector knob is UNREACHABLE because it is not in any sub-search space.  If a future
-    edit adds one to a whitelist, this fails LOUDLY at import rather than silently letting
-    the tuner tune the verdict."""
+    """Checked at import: no instrument or detector knob sits in a sub-search space, so
+    the sampler cannot reach one.  Adding one fails loudly here rather than silently
+    letting the tuner tune the verdict."""
     reach = whitelisted_knobs()
     leaked = reach & (INSTRUMENT_KNOBS | DETECTOR_KNOBS)
     if leaked:
@@ -215,12 +169,12 @@ def _assert_split_is_clean():
 _assert_split_is_clean()
 
 
-# The WARM-START seeds (Q7 3.2(3)).  NOT MEASURED VALUES -- a starting point to local-search
-# around.  G0 = cuda-litmus params/stress_params.txt, with the MEM_STRESS bug FIXED (B4): the
-# shipped config's mem-stress was read-only, so pattern 0 -- the only WRITER -- was inert;
-# here it is live, which is exactly why re-tuning on target hardware is MANDATORY, not
-# optional (Kirkham 6.4: "not optimal on another chip, even from the same vendor").  C0 =
-# het_cpu_stress.h defaults (= litmus7 defaults' spirit).  I0 = {no noise, first-touch}: no
+# The warm-start seeds (Q7 3.2(3)): a starting point to local-search around, NOT measured
+# values.  G = cuda-litmus params/stress_params.txt with its mem-stress pattern argument
+# fixed, so pattern 0 (the only writer) is live here where the shipped config left it
+# read-only -- which is why re-tuning on the target is mandatory, not optional (Kirkham
+# 6.4 p.226:25: "parameters for one chip may not be optimal on another chip, even from
+# the same vendor").  C = het_cpu_stress.h defaults.  I = {no noise, first-touch}: no
 # prior art exists for a C2C stress config, so I is the one true search.
 WARM_START = {
     "G": {
@@ -243,11 +197,11 @@ WARM_START = {
 
 
 def sample_config(space, seed_config, pm):
-    """Draw ONE config from a sub-search space, local to the warm-start seed: with
-    probability ~1/3 per knob keep the seed value, else draw fresh from the domain.  This
-    is Kirkham's "local search around a portable seed", not blind global random search
-    (Q7 3.2(3): a portable seed costs only ~12%, so warm-start is cheap).  Returns a dict
-    of {knob: value}; ONLY whitelisted knobs can appear."""
+    """Draw ONE config from a sub-search space, local to its warm-start seed: per knob,
+    keep the seed value with probability ~1/3, else draw fresh from the domain.  Local
+    search around a portable seed, not blind global search -- Kirkham's portability
+    result puts the seed's cost at ~12% (Q7 3.2(3)).  Returns {knob: value}, whitelisted
+    knobs only."""
     cfg = dict(seed_config)
     for knob, dom in space.items():
         if pm.unit() < 0.34 and knob in seed_config:
@@ -268,21 +222,18 @@ def sample_config(space, seed_config, pm):
 class Bout(object):
     """One measurement of a config: a run (or short group of runs) of the harness.
 
-      value   -- the observed mutant-kill RATE in [0,1] for this bout (real adapter:
-                 k_eff/usable from the HetStats line; the yield the death rate is built on).
-      weight  -- the EFFECTIVE sample count of the bout = R_eff = R_usable*N_eff/DEFF
-                 (Q3/B7b; deliverable #3's Q = R x N_eff).  Deflated under within-run
-                 correlation, which is exactly how the racing CI learns to widen.
-      raw_n   -- the RAW cell count (usable runs).  Used ONLY by the Bernoulli CI (the
-                 broken one, kept for the bite): Bernoulli trusts raw_n as iid trials.
-      secs    -- wall-clock seconds this bout cost (throughput denominator).
-      kills   -- raw control_target_count sum (throughput numerator); death rate =
-                 kills/secs.  Hardware-only channel; the synthetic objective supplies it.
-      ks_ok   -- het_ks2's stationarity verdict for this bout (reused, NOT recomputed:
-                 the harness runs het_ks2 and reports ks= in the HetStats line).  A
-                 non-stationary bout is dropped from the rate estimate in-loop (Q7 5.2 C1).
-      valid   -- interleavings_detected>0 AND the control was not cold.  An invalid bout
-                 is VACUOUS (window shut / engines never met), not evidence of a low rate.
+      value   observed mutant-kill RATE in [0,1] (real adapter: k_eff/usable).
+      weight  EFFECTIVE sample count = R_eff = R_usable*N_eff/DEFF (het_verdict.h;
+              Q3 R1 lifts the unit from frames to (instance,run) cells).  Deflated by
+              within-run correlation, which is how the racing radius learns to widen.
+      raw_n   RAW usable-run count -- used only by `bernoulli_radius`, which trusts it
+              as a count of iid trials.
+      secs    wall-clock seconds this bout cost (throughput denominator).
+      kills   control_target_count sum (throughput numerator); rate = kills/secs.
+      ks_ok   het_ks2's stationarity verdict, READ from the HetStats `ks=' field, never
+              recomputed; a non-stationary bout is dropped in-loop (Q7 5.2 C1).
+      valid   interleavings_detected>0 and the control was not cold.  An invalid bout is
+              VACUOUS (window shut / engines never met), not evidence of a low rate.
     """
     __slots__ = ("value", "weight", "raw_n", "secs", "kills", "ks_ok", "valid")
 
@@ -298,9 +249,9 @@ class Bout(object):
 
 
 # ===========================================================================
-# THE ARM: one config under race, accumulating bouts.  Holds BOTH the
-# empirical-Bernstein radius (the real rule) and the Bernoulli radius (kept
-# only so the gate can DEMONSTRATE the transfer failure -- Q7 5.2 A).
+# THE ARM: one config under race, accumulating bouts.  It carries two radii --
+# the empirical-Bernstein one that decides, and the Bernoulli one kept only so
+# tunecheck.py can demonstrate the transfer failure (Q7 5.2 A).
 # ===========================================================================
 LN3 = math.log(3.0)
 
@@ -323,8 +274,8 @@ class Arm(object):
             self.n_invalid += 1
             return                                    # vacuous: not a low rate, no rate
         if not bout.ks_ok:
-            # Kirkham 5.1 "restart from the point of instability": a non-stationary bout's
-            # rate is untrustworthy; exclude it rather than let drift alias into the mean.
+            # Kirkham 5.1, "non-stable runs can then be restarted from the point of
+            # instability": exclude it rather than let drift alias into the mean.
             self.n_nonstationary += 1
             return
         self.n_valid += 1
@@ -339,7 +290,7 @@ class Arm(object):
 
     def cold(self):
         """No valid bout ever -- the cold floor (Q7 2.3): the sub-search is VOID on this
-        config, not 'config bad'."""
+        config, not "config bad"."""
         return self.n_valid == 0 and (self.n_invalid + self.n_nonstationary) > 0
 
     def Q(self):
@@ -355,24 +306,20 @@ class Arm(object):
         return sum(w * v for w, v in zip(self._wts, self._vals)) / q
 
     def death_rate(self):
-        """The PRIMARY objective (Q7 2.3): kills per wall-second.  Throughput, not yield --
-        it penalises a config that widens the window but slows the loop."""
+        """The primary objective (Q7 2.3): kills per wall-second.  Throughput, not yield
+        -- it penalises a config that widens the window but slows the loop."""
         if self.secs <= 0.0:
             return 0.0
         return self.kills / self.secs
 
     def var_hat(self):
         """Weighted empirical variance of the bout values about the weighted mean.  Under
-        Q3 overdispersion (Fano>1) the between-bout spread is large, so this is large --
-        that is how the empirical-Bernstein CI absorbs overdispersion WITHOUT a pre-
-        estimated F_hat (Q7 5.2 Fix 2).
-
-        DISCLOSURE (deep-review F9): the divisor is Q = sum(w) -- the MLE/biased weighted
-        variance, no effective-degrees-of-freedom correction (the same biased 1/t form as
-        Mnih'08 Section 2's own sigma_t^2).  It slightly UNDER-estimates the variance and so
-        slightly UNDER-widens `eb_radius`.  Kept because the racing rule is a heuristic
-        best-arm search carrying no anytime/family-wise guarantee to protect (see
-        `eliminate`) -- NOT because this estimator is unbiased."""
+        overdispersion (Fano>1) the between-bout spread is large, so this is large -- that
+        is how `eb_radius` absorbs overdispersion with no pre-estimated F_hat (Q7 5.2 Fix
+        2).  The divisor is Q = sum(w): the biased/MLE weighted form, no effective-df
+        correction (the same 1/t form as Mnih'08 2's own sigma_t^2).  It under-estimates
+        the variance and so under-widens the radius slightly -- kept because the racing
+        rule is heuristic (see `eliminate`), not because the estimator is unbiased."""
         q = self.Q()
         if q <= 0.0 or len(self._vals) < 1:
             return 0.0
@@ -380,10 +327,9 @@ class Arm(object):
         return sum(w * (v - m) ** 2 for w, v in zip(self._wts, self._vals)) / q
 
     def eb_radius(self, delta):
-        """Empirical-Bernstein confidence radius (Mnih-Szepesvari-Audibert ICML'08;
-        Maurer-Pontil form): sqrt(2 V_hat ln(3/delta) / Q) + 3 b ln(3/delta) / Q, range
-        b=1.  Wide when few effective samples OR high empirical variance -- exactly the two
-        regimes Kirkham's Bernoulli CI gets WRONG under overdispersion."""
+        """Empirical-Bernstein radius, Mnih'08 2 Eq.(2): sqrt(2 V_hat ln(3/delta)/Q) +
+        3 b ln(3/delta)/Q with range b=1.  Wide when few effective samples OR high
+        empirical variance -- the two regimes the Bernoulli CI gets wrong."""
         q = self.Q()
         if q <= 0.0:
             return 1.0
@@ -391,11 +337,11 @@ class Arm(object):
         return math.sqrt(2.0 * self.var_hat() * t / q) + 3.0 * t / q
 
     def bernoulli_radius(self, z=1.96):
-        """Kirkham Fig.10's CI = Z*sqrt(W(1-W)/Q), with Q = RAW cells (1 trial = 1
-        iteration).  DOES NOT TRANSFER (Q7 5.2 A/B): W(1-W) understates the overdispersed
-        variance AND raw_n is combinatorially inflated, so this is TOO NARROW and the
-        early-stop fires too aggressively.  KEPT ONLY so tunecheck.py can demonstrate it
-        eliminating the true optimum where empirical-Bernstein retains it."""
+        """Kirkham Fig.10's CI = Z*sqrt(W(1-W)/Q) with Q = RAW cells (1 trial = 1
+        iteration).  It does not transfer (Q7 5.2 A/B): W(1-W) understates the
+        overdispersed variance and raw_n is combinatorially inflated, so the radius is too
+        narrow and the early-stop fires too aggressively.  Kept only so tunecheck.py can
+        show it eliminating the true optimum where empirical-Bernstein retains it."""
         qr = self.Q_raw()
         if qr <= 0.0:
             return 1.0
@@ -404,47 +350,28 @@ class Arm(object):
 
 
 # ===========================================================================
-# THE RACING RULE + THE SER^3 SCHEDULER (deliverables #3, #4).
+# THE RACING RULE + THE SER^3 SCHEDULER.
 # ===========================================================================
 def _radius(arm, delta, use_bernoulli):
     return arm.bernoulli_radius() if use_bernoulli else arm.eb_radius(delta)
 
 
 def eliminate(arms, delta, use_bernoulli):
-    """Kirkham Fig.10 lines 38-41, variance-aware: drop config c once its UPPER bound falls
-    below the current best's LOWER bound.  Returns the surviving arms (order preserved).
+    """Kirkham Fig.10 lines 38-41, variance-aware: drop a config once its UPPER bound
+    falls below the current best's LOWER bound.  Returns the survivors, order preserved.
 
-    CONFIDENCE SEMANTICS -- what `delta` does and does NOT buy (deep-review F9; read this
-    before citing Mnih'08 for a guarantee).  `delta` is a FIXED per-comparison level (0.05,
-    the `race()` default) applied UNCHANGED every round: no union bound over rounds, and no
-    `delta/K` split across the K competing arms.  So the confidence each `eliminate` call
-    spends is PER-COMPARISON only -- NOT anytime-valid and NOT family-wise.  Across the ~150
-    sequential elimination rounds a factored search peeks this bound again and again, and the
-    true probability of EVER wrongly dropping the best arm is not bounded by `delta`.
-      * PROVIDED (the only Mnih'08 claim that stays valid): the per-round empirical-Bernstein
-        radius of Mnih-Szepesvari-Audibert ICML'08 SECTION 2, Eq.(2) --
-        sqrt(2*sigma^2*ln(3/delta)/t) + 3*R*ln(3/delta)/t, R=1.  `eb_radius` matches it
-        exactly (deep-review slice-4 confirmed this numerically).
-      * NOT provided: (i) the ANYTIME, all-t guarantee of Mnih'08 SECTION 3.1 (EBStop), which
-        needs a spent sequence d_t with sum_t d_t <= delta (the paper uses
-        d_t = delta*(p-1)/(p*t^p)) so one 1-delta band holds for every round at once; and
-        (ii) the FAMILY-WISE racing guarantee of Mnih'08 SECTION 4 (the empirical Bernstein
-        race), which needs the delta/(M*N) split over M arms x N rounds.  This function does
-        neither, so neither guarantee holds.
-      * WHY it is deliberately absent (do NOT "fix" this back without re-deriving the rule):
-        the textbook anytime schedule -- d_t = delta*(p-1)/(p*t^p), p=2, with a delta/K
-        per-arm split -- WAS implemented (2026-07-15, DR1 Part E) and empirically BROKE
-        elimination: tunecheck went 4/7 (SER^3 drift recovery 0/20, EB-crowns-optimum 0/40,
-        factored-search-beats-seed FAIL).  Progressive elimination over ~150 rounds needs
-        usable confidence LATE, while any valid sum_t d_t <= delta schedule front-loads the
-        budget and blows up the late-round radii, so the field stops separating.  A correct
-        anytime/fixed-budget rule (LUCB, or a fixed-budget delta/(T_max*K) split reusing the
-        `budget_runs` mirror = Mnih'08 Section 4's delta/(M*N)) is FUTURE WORK, not a
-        comment-toggle.
-      * What MAY therefore be claimed: this is a HEURISTIC best-arm search.  Its output is a
-        stress CONFIGURATION whose worth is established by the downstream hardware campaign's
-        statistics (B7; `budget_runs` / het_verdict.h), NOT by this racing rule's confidence.
-        The tuner feeds no scientific verdict (separate path from het_verdict; Q7 TRAP 1)."""
+    CONFIDENCE, precisely.  `delta` is a FIXED PER-COMPARISON level applied unchanged
+    every round -- no union bound over rounds, no delta/K split over arms.  What holds is
+    the per-round empirical-Bernstein radius of Mnih'08 2 Eq.(2), which `eb_radius`
+    matches exactly; the anytime guarantee of Mnih'08 3.1 (EBStop) and the family-wise
+    race of Mnih'08 4 do NOT hold here and must not be cited as if they did.  Their
+    delta-spending schedule is absent deliberately: it was implemented and broke
+    elimination, because progressive elimination needs usable confidence late while any
+    valid schedule front-loads the budget (env-research/impl-briefs/DR2-impl-brief.md;
+    docs/00-environment-design.md 3.9, which tracks this as known-open).  So this is a
+    HEURISTIC best-arm search: the worth of its pick is established by the hardware
+    campaign's statistics (het_verdict.h), not by this rule's confidence, and it feeds no
+    scientific verdict."""
     live = [a for a in arms if a.raceable()]
     if len(live) < 2:
         return live
@@ -467,26 +394,26 @@ class RaceResult(object):
         self.winner = winner          # the winning Arm, or None (no confident winner)
         self.arms = arms
         self.rounds = rounds
-        self.reason = reason          # "separated" | "budget" | "tied" | "void"
+        self.reason = reason          # "separated"|"budget"|"void"|"sequential"
 
 
 def race(objective, configs, pm, delta=0.05, max_rounds=200, min_rounds=3,
          use_bernoulli=False, schedule="ser3"):
     """Race a set of configs on `objective` and return the winner (or None).
 
-    schedule="ser3"       -- SER^3 (Allesiardo-Feraud): each round, shuffle the SURVIVING
-                             arms with the seeded RNG and run ONE bout of each, then
-                             eliminate.  Randomized round-robin so any drift hits every
-                             arm equally (Q7 5.2 C2) -- the fix for the sequential confound.
-    schedule="sequential" -- Kirkham Fig.10's order: run arm A to max_rounds bouts, then B,
-                             ...  KEPT so tunecheck.py can demonstrate drift aliasing onto
-                             the config axis (the bite that justifies SER^3).  NOT the
-                             production path.
+    schedule="ser3"       SER^3 (Allesiardo-Feraud), the production path: each round,
+                          shuffle the SURVIVING arms with the seeded RNG, run one bout of
+                          each, then eliminate.  Randomized round-robin, so drift hits
+                          every arm equally instead of aliasing onto the config axis
+                          (Q7 5.2 C2).
+    schedule="sequential" Kirkham Fig.10's order: run arm A to max_rounds bouts, then B,
+                          ...  Kept so tunecheck.py can exhibit that aliasing -- the bite
+                          that justifies SER^3.
 
-    A winner is declared only when the field is reduced to ONE raceable arm AFTER
-    min_rounds (so a single lucky early bout cannot crown a constant objective -- the
-    anti-phantom guard).  If the budget is spent with >1 arm alive, returns the best mean
-    but flags reason="budget"/"tied": NO confident winner, never a phantom."""
+    A winner is declared only once the field is down to ONE raceable arm AFTER
+    min_rounds, so a lucky early bout cannot crown a constant objective.  Budget spent
+    with >1 arm alive returns no winner, reason="budget"; a field with no raceable arm
+    left returns reason="void"."""
     arms = [Arm(c, "cfg%d" % i) for i, c in enumerate(configs)]
     rounds = 0
     if schedule == "sequential":
@@ -521,18 +448,18 @@ def race(objective, configs, pm, delta=0.05, max_rounds=200, min_rounds=3,
 
 
 # ===========================================================================
-# THE BUDGET MODEL (deliverable #6).  MC-Mutants Alg.1 ceilingRate, = the
-# het_verdict.h het_budget_runs formula.  REUSE-AS-LOWER-BOUND: it inherits
-# 1-e^{-x}, so it is OPTIMISTIC under overdispersion -- widen by F_hat.
+# THE BUDGET MODEL.  MC-Mutants Alg.1 ceilingRate, reused AS A LOWER BOUND: it
+# inherits 1-e^{-x}, so it is optimistic under overdispersion and is widened by
+# the Fano factor F (Q7 5.2 E).
 # ===========================================================================
 def budget_runs(p_min, F=1.0):
-    """Runs needed to bound a should-be-forbidden 'Never' at reproducibility 0.95:
-    F * log(0.05) / log(1 - p_min).  Mirror of het_verdict.h het_budget_runs (identical
-    arithmetic) and MC-Mutants Alg.1 ceilingRate=ceil(-log(1-r)/b).
+    """Runs needed to bound a should-be-forbidden "Never" at reproducibility 0.95:
+    F * log(0.05) / log(1 - p_min).  Arithmetic mirror of het_verdict.h
+    het_budget_runs; MC-Mutants Alg.1 ceilingRate = ceil(-log(1-r)/b).
 
-    p_min is a SYMBOL, not a number (Q7 R2; het_verdict.h HET_P_MIN=0.0): there is NO
-    default -- the GPU-only 0.2% is NOT the het rate.  UNSET p_min => -1.0 ("NOT SIZED"),
-    never an invented budget."""
+    p_min is a SYMBOL, not a number (het_verdict.h HET_P_MIN = 0.0): no default, since
+    the published 0.2% is a GPU-only inter-CTA rate, not a het one.  Unset p_min gives
+    -1.0, "NOT SIZED", never an invented budget."""
     if not (0.0 < p_min < 1.0):
         return -1.0                                   # NOT SIZED (het_budget_runs contract)
     if not (F > 1.0):
@@ -541,14 +468,12 @@ def budget_runs(p_min, F=1.0):
 
 
 # ===========================================================================
-# HET_WINDOW CALIBRATION (Q7 TRAP 2).  A MEASUREMENT, not a tuning.  HET_WINDOW is a
-# detector-resolution knob; tuning it to maximise its own detections is circular.  It is
-# calibrated against the O(N^T_L) exhaustive scan (valid only where
-# control_exhaustive_valid==1): the smallest window at which the windowed control count
-# CONVERGES to the exhaustive count.  This needs REAL runs (exhaustive vs windowed counts
-# come off the device), so on the dev box it returns None -- the value stays the emitter's
-# placeholder (top_litmus.ml HET_WINDOW=8).  Provided so B8b can run it; NEVER feeds the
-# sampler.
+# HET_WINDOW CALIBRATION (Q7 trap 2) -- a measurement, not a tuning: maximising a
+# detector's own detections by loosening it is circular.  The window is calibrated
+# against the O(N^T_L) exhaustive scan (ground truth only where
+# control_exhaustive_valid==1) as the smallest window whose count converges to the
+# exhaustive one.  Both counts come off the device, so on the dev box this returns None
+# and the emitter's placeholder stands (hetEmit.ml: HET_WINDOW 8).
 # ===========================================================================
 def calibrate_window(samples, tol=0):
     """samples :: iterable of (window, windowed_count, exhaustive_count, exhaustive_valid).
@@ -570,9 +495,9 @@ def calibrate_window(samples, tol=0):
 
 
 # ===========================================================================
-# CONFIG FILE I/O (deliverable #8).  Runtime-reparseable key=value, à la cuda-litmus
-# parseStressParamsFile.  On the dev box the file carries ONLY the warm-start SEEDS,
-# each stamped "not measured here" (acceptance #4: zero tuned numerics committed).
+# CONFIG FILE I/O.  key=value, in cuda-litmus's parseStressParamsFile shape so a tuned
+# config can be applied without a rebuild.  Off the target hardware the file carries
+# only warm-start seeds, each stamped "not measured here".
 # ===========================================================================
 def write_config(path, config_by_sub, target, measured=False):
     lines = []
@@ -601,7 +526,7 @@ def write_config(path, config_by_sub, target, measured=False):
 
 def read_config(path):
     """Parse a key=value config file back into {knob: int}.  Rejects any non-whitelisted
-    knob (an instrument knob in a 'stress config' is a red flag, not a value to apply)."""
+    knob: an instrument knob in a "stress config" is a red flag, not a value to apply."""
     out = {}
     wl = whitelisted_knobs()
     with open(path) as fh:
@@ -624,19 +549,16 @@ def read_config(path):
 
 
 # ===========================================================================
-# THE REAL OBJECTIVE ADAPTER (for B8b).  Applies a config to a harness invocation and
-# reads the death rate back from the HetStats line.  On the dev box it is exercised ONLY
-# against a STUB runner (tunecheck.py), exactly as campaign.py's scheduler is: the dev box
-# cannot produce a real death rate (no coherence, no C2C), so this NEVER runs the emitted
-# harness expecting weak behaviours.
+# THE REAL OBJECTIVE ADAPTER.  Applies a config to a harness invocation and reads the
+# rate back off the HetStats line.  Off the target hardware it is exercised only against
+# a stub runner, never on the emitted harness expecting weak behaviours.
 #
-# BOUNDARY (stated honestly, per the SHARED CHARGE): the emitter's stress knobs are
-# compile-time #defines today; the harness does not yet RUNTIME-reparse a stress config
-# nor emit a control-count/wall-time death-rate channel.  Wiring those into the emitter is
-# the hardware campaign's job (B8b) and is unvalidatable on the dev box.  This adapter
-# therefore sets the config as env vars AND writes the file (forward-compatible), times
-# the subprocess wall-clock itself, and reads what the CURRENT HetStats line exposes
-# (k_eff/usable/R_eff/ks).  Its throughput reading is only as good as the channel B8b adds.
+# BOUNDARY, and it bounds what this adapter can read: the emitter's stress knobs are
+# compile-time #defines, and the harness neither re-parses a stress config at runtime nor
+# reports a control-count/wall-time death-rate channel.  Both are hardware-campaign work
+# (B8a-impl-brief.md).  So the adapter sets the config as env vars and writes the file
+# (forward-compatible), times the subprocess itself, and reads what the line does expose
+# (k_eff/usable/R_eff/ks) -- the throughput is only as good as the channel added later.
 # ===========================================================================
 def parse_hetstats(stdout):
     """The last machine-readable 'HetStats <test> key=value...' line (campaign.py contract)."""
@@ -675,9 +597,9 @@ class HarnessObjective(object):
 
     def bout(self, config, pm):
         env = dict(os.environ)
-        # Forward-compatible: set the config as env vars (B8b wires the harness to read
-        # them / the config file).  Also a fresh HET_SEED per bout (replaying a seed adds
-        # no fresh phase draws -- campaign.py's contract, MUST NOT REMOVE).
+        # A FRESH HET_SEED per bout, non-negotiable: replaying a seed adds no fresh phase
+        # draws, so pooling replays would double-count effort (het_verdict.h's runtime-knob
+        # contract).  The config goes in as env vars ahead of the harness reading them.
         for k, v in config.items():
             env[k] = str(v)
         env["HET_SEED"] = str(self.seed0 + self.n)
@@ -696,24 +618,26 @@ class HarnessObjective(object):
         usable = _fnum(kv, "usable")
         k_eff = _fnum(kv, "k_eff")
         r_eff = _fnum(kv, "R_eff")
-        # interleavings/cold: a VOID/COLD obs is not a low rate (Q7 2.3 cold floor).
+        # A VOID/cold observation is not a low rate (Q7 2.3 cold floor).
         obs = kv.get("obs", "")
         valid = usable > 0 and obs not in ("void", "VOID", "")
         ks_ok = kv.get("ks", "pass") == "pass"
         value = (k_eff / usable) if usable > 0 else 0.0
         weight = r_eff if r_eff > 0 else usable
-        # kills/secs: the true death-rate numerator needs a control-count channel the
-        # current HetStats line does not carry (see BOUNDARY above); k_eff is the best
-        # available proxy until B8b adds it.
+        # k_eff proxies the death-rate numerator until the control-count channel of the
+        # BOUNDARY note above exists.
         return Bout(value, weight, raw_n=usable, secs=secs, kills=k_eff,
                     ks_ok=ks_ok, valid=valid)
 
 
 # ===========================================================================
-# THE FACTORED SEARCH (deliverable #2/top-level).  G, then C, then I (I last,
-# warm-started with G*,C* fixed), then a short joint refinement (Q7 3.2/3.3).
-# `objective_for(sub, base)` returns the Objective to score sub-search `sub`
-# against, with the other sub-searches pinned at `base`.
+# THE FACTORED SEARCH.  G, then C, then I -- I last, warm-started with G*,C* fixed
+# (Q7 3.2).  Factoring turns a product |G|*|C|*|I| into a sum, licensed by Q5/Q6
+# finding the three classes widen different windows.  `objective_for(sub, base)`
+# returns the Objective for sub-search `sub` with the others pinned at `base`.
+# Random search, not Bayesian optimisation: a GP surrogate assumes a smooth,
+# stationary, homoscedastic objective and this one is none of the three; Hyperband
+# is the optional multi-fidelity upgrade if the hardware window bites (Q7 3.3).
 # ===========================================================================
 def factored_search(objective_for, pm, n_configs=8, delta=0.05, max_rounds=60,
                     min_rounds=3):
@@ -736,14 +660,13 @@ def factored_search(objective_for, pm, n_configs=8, delta=0.05, max_rounds=60,
 
 
 # ===========================================================================
-# CLI.  --self-test runs the machinery on a trivial synthetic objective and
-# prints a config file's worth of SEEDS (no tuned values) -- the plumbing smoke
-# the cram uses.  Real tuning (--runner) is a HARDWARE activity (B8b).
+# CLI.  --self-test runs the machinery on a trivial synthetic objective and prints
+# a config file's worth of seeds -- plumbing smoke only.  Real tuning (--runner) is
+# a hardware activity.
 # ===========================================================================
 class _TrivialObjective(object):
-    """A tiny synthetic objective whose optimum is a known knob setting: reward rises with
-    HET_BARRIER_PCT (a stand-in gradient).  For --self-test plumbing only; the real
-    validation is tunecheck.py."""
+    """A synthetic objective with a known optimum: reward rises with HET_BARRIER_PCT.
+    For --self-test plumbing; the real validation is tunecheck.py."""
     def __init__(self, knob="HET_BARRIER_PCT"):
         self.knob = knob
 

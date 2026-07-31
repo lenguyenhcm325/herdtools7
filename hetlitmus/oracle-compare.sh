@@ -1,64 +1,31 @@
 #!/usr/bin/env bash
-# HetLitmus Tier-4 -- oracle-comparison harness.
+# HetLitmus Tier-4 -- oracle-comparison harness.  Spec, comparison semantics and
+# a worked example: hetlitmus/docs/oracle-harness.md.
 #
-# Reads litmus7 "Observation <name> <Never|Sometimes|Always> ..." lines (the
-# verdict litmus7 prints after running a test) and compares each against a
-# reference oracle CSV passed EXPLICITLY as the second argument.  It emits one
-# of three results per test:
+# Reads litmus7 "Observation <name> <Never|Sometimes|Always> ..." lines and
+# compares each against the reference oracle CSV given as the second argument:
 #
-#   MATCH      observation is consistent with the oracle verdict
-#   MISMATCH   a FORBIDDEN outcome was observed (oracle says Disallowed but the
-#              relaxed outcome was seen) -- a genuine model violation / finding
-#   NO-ORACLE  the test is absent from the given oracle CSV, so no claim is made
+#   MATCH      the observation is consistent with the oracle verdict
+#   MISMATCH   a FORBIDDEN outcome was observed -- a genuine model violation
+#   NO-ORACLE  the test is absent from that CSV, so no claim is made
 #
-# Why NO-ORACLE is a first-class result (not a default to "pass"): the PLDI'23
-# expected.csv is the gem5 GCN3_X86 oracle = AMD GCN3 GPU + x86 CPU only.  It
-# covers the GPU-only AMD corpus, but the heterogeneous GH200 tests (AArch64 CPU
-# + PTX GPU, e.g. MP-het) have NO oracle yet -- a separate expected-nvidia.csv
-# must be derived from the NVIDIA PTX model.  The harness therefore refuses to
-# assume a verdict for tests it cannot ground, marking them NO-ORACLE.  See
-# hetlitmus/docs/oracle-harness.md and hetlitmus/docs/gpu-only-corpus.md.
+# NO-ORACLE is a first-class result, not a default to "pass".  An oracle grounds
+# only the platform it was derived for: the PLDI'23 expected.csv is the gem5
+# GCN3_X86 oracle (AMD GCN3 GPU + x86 CPU), which covers the GPU-only AMD corpus
+# and says nothing about heterogeneous AArch64+PTX GH200 tests -- those need
+# expected-nvidia.csv, derived from the NVIDIA PTX model.  Refusing to assume a
+# verdict for a test it cannot ground is what keeps the grounded rows honest and
+# makes a missing oracle visible per test rather than hidden.
 #
-# Comparison semantics (litmus methodology): the only hard contradiction is
-# observing a forbidden outcome.  An "Allowed" relaxation that is simply never
-# exhibited on a given run is consistent with the model (it MAY happen), so it
-# is a MATCH (annotated "allowed, not exhibited").
+# The quantifier matters: litmus reports Never/Sometimes/Always relative to the
+# test's validation, and `forall' inverts what "Never" means, so the harness
+# recovers it from the "Condition <quant> (...)" line preceding each Observation
+# (oracle-harness.md sec 1 and 3).  No Condition line => `exists'.
 #
-# QUANTIFIER (exists vs forall): litmus reports "Never|Sometimes|Always"
-# relative to the test's *validation*, and for a `forall' test it swaps the
-# p_true/p_false roles internally (litmus/skelUtil.ml).  So for `forall' the
-# meaning of "Never" is the MIRROR IMAGE of `exists': "Never" means the targeted
-# predicate held in EVERY execution (no counterexample), whereas for `exists'
-# "Never" means it was never witnessed.  The harness therefore recovers the
-# quantifier from the litmus "Condition <exists|forall|~exists> (...)" line that
-# precedes each Observation and INVERTS which observation counts as "the
-# targeted outcome was seen" for forall (`~exists' reads like `exists').  A log
-# with no Condition line (e.g. the synthesized sample) defaults to `exists', so
-# existing behaviour is unchanged.
-#
-# B7 -- THE STATISTICS ANNOTATION (Q3 R6: AUGMENT this harness, do not replace it).
-#
-# Everything above is unchanged: the Observation parse and the MATCH/MISMATCH/NO-ORACLE
-# table are byte-for-byte what they were.  What B7 ADDS is a second section, layered on
-# top, that reads the `HetStats' lines the harness itself prints (het_verdict.h,
-# het_stats_line) and turns each verdict into a QUANTIFIED one:
-#
-#   * a "Never" stops being a bare "Never".  It carries a 95% upper bound on the
-#     behaviour's run-level rate, computed at the (instance,run) CELL -- never at the
-#     frame, because the recovery scan validates N^{T_L} overlapping frames per N
-#     iterations (PerpLE VI-B.1) and a frame count fed to Kirkham's 1-e^{-n} returns ~1
-#     VACUOUSLY.  The bound is dispersion-aware: the rule-of-three constant 3 inflates
-#     to ~19 on a geometric channel and ~200 on an extreme one, so a bare p < 3/N would
-#     be a ~6x optimistic overclaim (Q3 2.4).
-#   * a "Sometimes" carries P_rep = 1 - e^{-k_eff} over NON-DEGENERATE cells.
-#   * a COLD run is VOID, not a non-observation.
-#   * a MISMATCH carries a CORROBORATION TIER, because a false MISMATCH is a false
-#     REFUTATION of the compound model -- the most damaging error this campaign can
-#     make -- and Srivastava's constant-read artefact is a real way to forge one.
-#     Nothing is ever suppressed: one sighting still refutes.
-#
-# The annotation only appears when the log actually carries HetStats lines, so a log
-# without them (the synthesized samples, the cram fixtures) is handled exactly as before.
+# A second section annotates each verdict with what it is statistically WORTH,
+# read from the `HetStats' lines the harness prints (het_verdict.h,
+# het_stats_line).  It appears only when the log carries them, so a log without
+# them (the synthesized samples, the cram fixtures) behaves exactly as before.
 #
 # Usage:   ./oracle-compare.sh <observations-file> <oracle-csv>
 #   observations-file : a litmus7 log, or any file containing Observation lines
@@ -113,13 +80,13 @@ BEGIN {
   pending_quant = ""
 }
 # The litmus "Condition <quant> (...) is [NOT ]validated" line precedes the
-# Observation line of its test (litmus/skelUtil.ml); stash the quantifier so the
-# next Observation can read it.  "~exists" reads like "exists" (only forall flips).
+# Observation line of its test (litmus/skelUtil.ml); stash the quantifier for the
+# next Observation.  "~exists" reads like "exists" -- only forall flips.
 /^Condition/ {
   pending_quant = ($0 ~ /forall/) ? "forall" : "exists"
   next
 }
-# B7: the harness prints its own aggregate as a machine-readable line.  Two shapes both
+# The harness prints its own aggregate as a machine-readable line.  Two shapes both
 # begin "HetStats " -- the key=value line, and the human block whose second field ends
 # in ":".  Only the former is data.
 /^HetStats / {
@@ -165,7 +132,7 @@ END {
   printf "\n%d test(s): %d MATCH, %d MISMATCH, %d NO-ORACLE\n", \
          nmatch+nmis+nno, nmatch, nmis, nno
 
-  # ================= B7: THE STATISTICS ANNOTATION =========================
+  # ================= the statistics annotation (B7) =========================
   # Layered on top of the table above; absent from a log that carries no HetStats.
   if (nstats > 0) {
     printf "\n"
@@ -203,9 +170,9 @@ END {
       f_trunc  = flag(fl, 256); f_canary  = flag(fl, 512)
       f_vacuous = flag(fl, 1024); f_self   = flag(fl, 2048)
       # A `self canary row co-runs no control, so a run in which it did not fire is COLD
-      # and gets discarded -- "usable" is DEFINED BY firing there.  Its denominator must
-      # be R, or a canary that fired in 3 runs of 10 reads as ALWAYS (3/3), and that rate
-      # is what the whole campaign is calibrated against.
+      # and gets discarded -- "usable" is defined by firing there.  Its denominator must
+      # be R, or a canary that fired in 3 runs of 10 reads as 3/3, and that rate is what
+      # the whole campaign is calibrated against.
       den = f_self ? R : us
       unit = f_self ? "run" : "cell"
 
@@ -270,7 +237,7 @@ END {
         }
       }
 
-      # ---- NEVER: the false-negative bound.  This is the thesis%s validation claim.
+      # ---- NEVER: the false-negative bound -- the validation claim of the thesis.
       if (ob == "Never") {
         if (f_unmeas) {
           printf "         *** NO BOUND *** -- the dispersion could not be measured, and the textbook\n"
@@ -313,10 +280,10 @@ END {
       printf "\n"
     }
 
-    # ---- THE CAMPAIGN-LEVEL NEGATIVE CONTROL (Q3 R4-iii; PerpLE VII-A). ------
-    # PerpLE co-runs FORBIDDEN tests and confirms they stay at zero.  We get the same
-    # assurance across the campaign from the 16 oracle-Disallowed rows: if the decoder
-    # invented cycles, they are where it would show.
+    # ---- the campaign-level NEGATIVE CONTROL (Q3 R4-iii; PerpLE VII-A). ------
+    # PerpLE co-runs forbidden tests and confirms they stay at zero.  The same
+    # assurance across this campaign comes from the oracle-Disallowed rows: if the
+    # decoder invented cycles, they are where it would show.
     printf "---------------------------------------------------------------------\n"
     printf "NEGATIVE CONTROL (campaign-level): %d of %d should-be-FORBIDDEN test(s) fired.\n", \
            ndis_fired, ndis

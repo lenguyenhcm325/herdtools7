@@ -1,37 +1,36 @@
 #!/usr/bin/env python3
 # ---------------------------------------------------------------------------
-# cpustresscheck.py  --  HetLitmus B5 CPU + interconnect stress LIVENESS gate
+# cpustresscheck.py  --  HetLitmus CPU + interconnect stress LIVENESS gate
 #                        (sibling of stresscheck.py, which does the same job for
-#                         the B4 GPU scratchpad layer)
+#                         the GPU scratchpad layer)
 # ---------------------------------------------------------------------------
 # WHY THIS EXISTS
 #
-# Every gate in this suite is STRUCTURAL: it asks "does the emitted code have the
-# right shape?".  None of them can see whether a mechanism actually does work at
-# run time.  That hole has now swallowed three mechanisms -- the constant-true
-# `_cond' (P-fix), the constant-false `_weak' (B3, 266/338 tests), and B4's entire
-# stress layer, which was dead-code-eliminated by nvcc AND whose window-opener
-# never rendezvoused, while passing all five gates.
+# Every other gate in this suite is STRUCTURAL: it asks "does the emitted code have
+# the right shape?".  None of them can see whether a mechanism does any work at run
+# time, and that hole has already swallowed mechanisms that compiled, passed every
+# gate, and did nothing.
 #
-# B5 adds two more mechanisms with exactly the same failure modes, and NOT ONE of
-# them is visible to ptxcheck or stresscheck:
+# The CPU + interconnect layer is invisible to ptxcheck and stresscheck alike:
 #
 #   * the M3 preload emits host cache hints -- no order, no scope, not a model op;
 #   * the CPU enemies hammer a private host scratchpad -- they never enter the PTX
 #     at all, because they are not GPU code;
 #   * the C2C noise streams a disjoint buffer with plain 64-bit loads.
 #
-# So B5's layer is UNGUARDED unless this file exists.  It asks the two questions
+# So that layer is UNGUARDED unless this file exists.  It asks the two questions
 # the structural gates cannot:
 #
 #     1. did the mechanisms survive the OPTIMISER?   (static, on the COMPILED asm)
 #     2. do they actually DO anything at run time?   (dynamic, both ways)
 #
+# Spec: env-research/Q6-cpu-interconnect-stress.md and impl-briefs/B5-impl-brief.md.
+#
 # ---------------------------------------------------------------------------
 # WHAT IT ASSERTS
 #
-# STATIC (reads the compiled -O2 assembly, never the source -- reading the source
-# proves nothing; B4's stress layer read beautifully and compiled to zero):
+# STATIC (reads the compiled -O2 assembly, never the source: source text survives
+# an optimisation that removes the mechanism it describes):
 #
 #   S1  AArch64 (the GH200 host ISA, via `clang --target=aarch64-linux-gnu -O2 -S'):
 #       the M3 primitives are PRESENT -- dc civac, prfm pldl1keep, prfm pstl1keep.
@@ -42,11 +41,11 @@
 #       ownership transfer and is the strong coherence stressor, S&D 3.3), and a
 #       backward branch (it is still a loop, not a straight line).
 #   S4  THE ACCESS SEQUENCE IS A RUNTIME VALUE.  het_cpu_enemy's memory-op count is
-#       INVARIANT under -DHET_CPU_ENEMY_SEQ=0..3.  This is the sharp one, and it is
-#       the direct descendant of B4's bug: a compile-time sigma lets the optimiser
-#       fold the switch to one branch and (if that branch has no stores) delete the
-#       loop.  Invariance IS the property "no autotuner config can silently switch
-#       the CPU stress off", which is what B8 needs.
+#       INVARIANT under -DHET_CPU_ENEMY_SEQ=0..3.  This is the sharp one: a
+#       compile-time sigma lets the optimiser fold the switch to one branch and, if
+#       that branch has no stores, delete the loop -- the same failure the GPU
+#       stresser had.  Invariance IS the property "no autotuner config can silently
+#       switch the CPU stress off".
 #
 # DYNAMIC (actually RUNS the layer on this host -- see the note on substrate below):
 #
@@ -54,15 +53,14 @@
 #   D2  OFF: with the enemies at 0, the preload at 0% and the noise off, ALL of the
 #       above are EXACTLY ZERO.
 #
-#   D1 without D2 is worthless.  "A tally that is always 0 and a tally that is
-#   always 1 are equally worthless" -- a counter that reads nonzero because it is
-#   wired to something unconditional proves nothing about the mechanism.  The pair
-#   is the proof.
+#   D1 without D2 is worthless: a counter that reads nonzero because it is wired to
+#   something unconditional proves nothing about the mechanism.  The pair is the
+#   proof.
 #
 # GPU NOISE (needs nvcc; skipped without it):
 #
 #   G1  the Hopper noise blocks SURVIVE nvcc: the emitted PTX carries volatile
-#       64-bit global loads (B4's stress loop, by contrast, compiled to zero ops).
+#       64-bit global loads.
 #   G2  that count is INVARIANT under -DHET_NOISE_GPU_BLOCKS, because the block
 #       count reaches the kernel as a RUNTIME argument.  A compile-time one would
 #       let nvcc delete the noise for a config the autotuner might well pick.
@@ -74,9 +72,8 @@
 # has no CPU-GPU coherence, no ATS and no C2C, so no memory-model result may ever
 # be read off it.  The dynamic checks here are NOT memory-model results.  They are
 # PLUMBING probes: they run the CPU stress layer's own code on the host CPU and ask
-# whether its counters move.  That is exactly the class of check the shared charge
-# permits ("compile and, where a probe applies, smoke-run for plumbing/ABI only"),
-# and it is the ONLY way to satisfy "prove a mechanism is live BOTH ways" before
+# whether its counters move -- which is what the shared charge permits for
+# plumbing/ABI, and the only way to prove a mechanism live both ways before
 # hardware.  The x86 path is genuinely exercised (clflush / prefetcht0 really run);
 # the AArch64 path is checked statically, in its compiled asm.
 #
@@ -116,31 +113,18 @@ X86_PRIMS = {
 # ---------------------------------------------------------------------------
 # AArch64 memory ops inside het_cpu_enemy.
 #
-# A LOAD INTO THE ZERO REGISTER (`ldr xzr, [...]') IS THE SHARP SIGNAL, and getting
-# this right took a bite test to discover.  The first version of this checker
-# counted EVERY ldr in het_cpu_enemy -- and passed a build with `volatile' stripped
-# off the scratchpad, because the loads of a->scratch / a->idx / a->nidx from the
-# argument struct kept the count comfortably nonzero.  The mechanism was destroyed
-# and the gate said PASS.  That is this project's signature failure, reproduced
-# inside the very checker written to prevent it.
-#
-# What `volatile' actually buys, measured on the emitted code (clang -O2, aarch64):
-#
-#            volatile (shipped)   volatile dropped
-#   loads into xzr        3               0        <- ALL read traffic deleted
-#   stores                5               2        <- st;st collapsed to one store
-#
-# The enemy's read patterns are `(void)*l' -- a load whose value is discarded.  With
-# `volatile' the compiler MUST perform it, and lowers it to a load into the zero
-# register; without it the load is provably useless and is deleted outright.  So
-# sigma 3 (ld;ld) becomes a complete no-op, sigma 1 and 2 lose their read half, and
-# sigma 0's `*l = i; *l = i+1;' collapses into a single store.  The loop still
-# exists -- which is why a naive "is there a loop with a load and a store?" check
-# waves it through -- but it no longer issues the traffic it claims to, and the
-# whole sigma tuning axis is silently corrupted.
-#
-# Counting discarded loads tests the property directly: zero of them means the read
-# side of every access pattern was optimised away.
+# SCOPE THE GREP: count LOADS INTO THE ZERO REGISTER (`ldr xzr, [...]'), never
+# every `ldr'.  The enemy's read patterns are `(void)*l' -- a load whose value is
+# discarded.  With `volatile' the compiler must perform it and lowers it to a load
+# into the zero register; without `volatile' the load is provably useless and is
+# deleted outright, so sigma 3 (ld;ld) becomes a complete no-op, sigma 1 and 2 lose
+# their read half, and sigma 0's `*l = i; *l = i+1;' collapses into a single store.
+# The loop still exists, so a naive "is there a loop with a load and a store?"
+# check waves it through; and a count of ALL `ldr' stays comfortably nonzero from
+# the a->scratch / a->idx / a->nidx argument-struct loads alone.  Counting
+# discarded loads tests the property directly: zero of them means the read side of
+# every access pattern was optimised away.  (Measured before/after in
+# hetlitmus/docs/verify-l0.md, "CPU-side stress liveness".)
 # ---------------------------------------------------------------------------
 A64_DISCARD_LOAD = re.compile(r"^\s+ldr\s+(xzr|wzr)\s*,")
 A64_STORE = re.compile(r"^\s+str\b")
@@ -294,13 +278,14 @@ int main(int argc, char** argv) {
 """
 
 
-# F10 (DR1-C): the CPU-preload liveness guard, exercised against the REAL het_dead()
-# and HET_REQ_CPU_PRELOAD from het_verdict.h.  It emulates the emitted driver's two
-# lines under test -- the preload_inert WRITE and the stress_requested TERM -- for both
-# HET_CPU_PRELOAD_LIVE values, and for BOTH the fix (preload_inert = !live) and the OLD
-# unwritten field (preload_inert = 0) so the contrast is never vacuous.  It runs the
-# preprocessor-independent LOGIC (a runtime `live'), while check() P1 separately pins
-# the emitted driver to the `!HET_CPU_PRELOAD_LIVE' write, so `live' tracks the macro.
+# The CPU-preload liveness guard, exercised against the REAL het_dead() and
+# HET_REQ_CPU_PRELOAD from het_verdict.h.  It emulates the emitted driver's two
+# lines under test -- the preload_inert WRITE and the stress_requested TERM -- for
+# both HET_CPU_PRELOAD_LIVE values, and for the guarded form (preload_inert = !live)
+# as well as the unguarded one (the field never written, so 0), so the contrast is
+# never vacuous.  It runs the preprocessor-independent LOGIC with a runtime `live';
+# check() P1 separately pins the emitted driver to the `het_cpu_preload_live()'
+# write, so `live' tracks the macro.
 PRELOAD_INERT_TU = r"""
 #include <stdint.h>
 #include <stdio.h>
@@ -347,12 +332,11 @@ def emit_harness(litmus_path, outdir, harness_dir=None):
     """Emit the harness -- or, when [harness_dir] is given, check the one already
     sitting there.
 
-    The second mode exists so this checker can be BITTEN.  Without it, a negative
+    The second mode exists so this checker can be BITTEN.  Without it a negative
     control cannot exist at all: the checker re-emits from source on every run, so
-    a mutation has nothing to land on and the whole gate would be untestable.  That
-    is not hypothetical -- B5 shipped this checker with NO negative control, which
-    is how the one gate able to catch a regression that preserves the source text
-    while killing the compiled mechanism ended up unguarded itself.
+    a mutation has nothing to land on and the gate itself would be untestable --
+    and this is the one gate able to catch a regression that preserves the source
+    text while killing the compiled mechanism.
     See l0_tokens.sh selftest section [8]. """
     name = os.path.splitext(os.path.basename(litmus_path))[0]
     if harness_dir:
@@ -528,20 +512,20 @@ def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True,
 
         # ---- S5/S6: the DRIVER's two stress invariants --------------------------
         # S1-S4 and D1-D3 all exercise het_cpu_stress.h -- the header -- because the
-        # dynamic probe compiles its OWN main() against it.  Nothing here has ever
-        # looked at the emitted <test>.cu DRIVER, and the driver is where the two
-        # remaining ways to silently destroy the CPU/interconnect layer live: give
-        # the noise a buffer that fits in cache, or point the enemies at the very
-        # locations under test.  Both leave every other check green.
+        # dynamic probe compiles its OWN main() against it.  These two look at the
+        # emitted <test>.cu DRIVER, where the remaining ways to silently destroy the
+        # CPU/interconnect layer live: give the noise a buffer that fits in cache, or
+        # point the enemies at the locations under test.  Both leave every other
+        # check green.
         cu_src = open(cu).read()
 
-        # S5: the noise WORKING SET is the knob that decides whether the C2C noise
-        # crosses anything at all.  Below the last-level cache (Grace L3 = 114 MB)
-        # the buffer is served from cache and generates NO interconnect traffic, so
-        # a run that "scored well" at 8 MB scored a stressor that was not running.
-        # The allocation must therefore DERIVE from HET_NOISE_MB (so the autotuner
-        # and the het_obs_record's noise_ws_mb describe the buffer that was really
-        # allocated), and the below-LLC guard must still be there.
+        # S5: the noise WORKING SET decides whether the C2C noise crosses anything
+        # at all.  Below the last-level cache (Grace L3 = 114 MB) the buffer is
+        # served from cache and generates NO interconnect traffic, so a config that
+        # "scored well" at 8 MB scored a stressor that was not running.  The
+        # allocation must therefore DERIVE from HET_NOISE_MB (so the autotuner and
+        # het_obs_record's noise_ws_mb describe the buffer really allocated), and
+        # the below-LLC guard must still be there.
         m = re.search(r"_noise_words\s*=\s*([^;]+);", cu_src)
         if not m:
             fail("S5: the driver does not compute _noise_words at all -- the C2C "
@@ -605,16 +589,13 @@ def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True,
         off = probe(False)
 
         # ---- D3: the noise buffer is REAL MEMORY, not the shared zero page -----
-        # The sharpest dead-mechanism trap in this layer, and the least obvious.  A
-        # malloc'd buffer that has never been WRITTEN is not backed by physical
-        # memory: Linux maps every untouched anonymous page to ONE shared, read-only
-        # zero page.  So a noise kernel READING an 8 GB buffer that was never
-        # first-touched touches a single cache line, is served entirely from L1, and
-        # generates no DRAM traffic and NO INTERCONNECT TRAFFIC AT ALL -- while
-        # reporting perfectly healthy round counts.  gd_alloc_noise therefore calls
-        # het_cpu_first_touch, and this asserts that it works, on BOTH sides of the
-        # question: reading alone must NOT back the pages (the hazard is real here),
-        # and first-touching must back essentially all of them (the fix works).
+        # An unwritten malloc'd buffer is backed by ONE shared zero page, so a noise
+        # thread reading it crosses nothing however large it is -- see the
+        # het_cpu_first_touch declaration in het_cpu_stress.h for why.  gd_alloc_noise
+        # therefore calls het_cpu_first_touch, and this asserts BOTH halves through
+        # RSS: reading alone must NOT back the pages (so the hazard is real on this
+        # host, and the check is not vacuous), and first-touching must back
+        # essentially all of them (so the fix works).
         ft_bytes = int(on["ft_bytes"])
         ft_read = int(on["ft_rss_after_read"])
         ft_touch = int(on["ft_rss_after_touch"])
@@ -690,18 +671,16 @@ def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True,
                 note("  G2 the noise block count is a RUNTIME argument: the PTX op "
                      "count is INVARIANT over -DHET_NOISE_GPU_BLOCKS=0/4/16")
 
-        # ---- P1/P2: the CPU-preload liveness guard is a LIVE field (F10, DR1-C) -----
-        # preload_inert was DECLARED and read by stress_requested (`!_ct.preload_inert')
-        # but NEVER WRITTEN, so it stayed memset-0 (=live) even where the host has NO
-        # cache primitives (HET_CPU_PRELOAD_LIVE==0): there het_cpu_preload issues ZERO
-        # hints, yet HET_REQ_CPU_PRELOAD was still raised -> het_dead() ->
-        # HET_DQ_CPU_PRELOAD_DEAD -> every null COLD-INVALID, the exact false-COLD the
-        # guard exists to prevent.  Latent+fail-safe on the real targets (GH200/MI300A
-        # both LIVE==1), but a dead check in this project's signature class.
-        # P1 (structural): the emitted driver now WRITES the field, read from the
+        # ---- P1/P2: the CPU-preload liveness guard is a LIVE field (DR1) --------
+        # preload_inert is read by stress_requested (`!_ct.preload_inert').  Left
+        # unwritten it stays memset-0 (= live) even on a host with NO cache
+        # primitives (HET_CPU_PRELOAD_LIVE==0), where het_cpu_preload issues zero
+        # hints: HET_REQ_CPU_PRELOAD would then be raised for a mechanism that
+        # cannot run, het_dead() would fire, and every null would go COLD-INVALID.
+        # P1 (structural): the emitted driver WRITES the field, read from the
         # artifact.  It calls het_cpu_preload_live() rather than naming
-        # HET_CPU_PRELOAD_LIVE, which is host-only (#ifdef HET_CPU_STRESS_IMPL) and so
-        # undefined in the .cu that nvcc parses.
+        # HET_CPU_PRELOAD_LIVE, which is host-only (#ifdef HET_CPU_STRESS_IMPL) and
+        # so undefined in the .cu that nvcc parses.
         if "_ct.preload_inert = !het_cpu_preload_live();" not in cu_src:
             fail("P1: the emitted driver does NOT write `_ct.preload_inert = "
                  "!het_cpu_preload_live();' -- the F10 guard field is dead again; on a "
@@ -709,10 +688,11 @@ def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True,
                  "issues zero hints and every null goes COLD-INVALID.")
         else:
             note("  P1 the driver writes _ct.preload_inert = !het_cpu_preload_live()")
-        # P2 (behavioural): the request is DROPPED when LIVE=0 and no HET_DQ_CPU_PRELOAD_
-        # DEAD false-fires -- proved against the REAL het_dead()/HET_REQ_CPU_PRELOAD, for
-        # the fix (preload_inert=!live) AND, as the non-vacuous contrast, the OLD
-        # unwritten field (preload_inert=0) that still false-COLDs a dead host.
+        # P2 (behavioural): the request is DROPPED when LIVE=0 and HET_DQ_CPU_PRELOAD_
+        # DEAD does not false-fire -- proved against the REAL het_dead() /
+        # HET_REQ_CPU_PRELOAD, for the guarded form (preload_inert = !live) AND, as
+        # the non-vacuous contrast, the unwritten field (0) that still false-COLDs a
+        # host with no cache primitives.
         p2c = os.path.join(tmp, "preload_inert.c")
         with open(p2c, "w") as fh:
             fh.write(PRELOAD_INERT_TU)

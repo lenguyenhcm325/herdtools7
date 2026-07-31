@@ -2,12 +2,12 @@
 # ---------------------------------------------------------------------------
 # l0_tokens.sh -- drive ptxcheck.py over the HetLitmus corpus.
 #
-# L0 = the static, hardware-free faithfulness check: for every emitted GPU (and
-# het CPU) harness, the order+scope+kind of every memory op must EXACTLY match
-# its .litmus annotation (no weakening, strengthening, miscount, misplacement,
-# or missing qualifier).  This script loops the corpus, prints a per-test
-# PASS/FAIL table + tally, and (sub-commands) demonstrates the completeness
-# guard and the weaken/strengthen self-test.  Mirrors hetlitmus/cats/run-gpu-only.sh.
+# L0 is the static, hardware-free faithfulness check: for every emitted GPU (and
+# het CPU) harness, the kind+order+scope of every memory op must match its
+# .litmus annotation exactly (hetlitmus/docs/verify-l0.md).  This script loops
+# the corpus and prints a per-test PASS/FAIL table + tally; the sub-commands
+# exercise the completeness guard and the negative controls that give the gate
+# its teeth.  Mirrors hetlitmus/cats/run-gpu-only.sh.
 #
 # Usage:
 #   bash hetlitmus/verify/l0_tokens.sh            # gpu-only + het table + tally
@@ -25,8 +25,8 @@ cd "$ROOT"
 export PATH="/usr/local/cuda/bin:$ROOT/_build/install/default/bin:$PATH"
 
 CHECK="$ROOT/hetlitmus/verify/ptxcheck.py"
-# Overridable so the F4 census guard can be BITTEN (point at an empty dir -> the
-# expected 137/450 fails).  Default is the real corpus, so normal runs are unchanged.
+# Overridable so the census guard below can be bitten (point at an empty dir ->
+# the expected 137/450 fails).  Default is the real corpus.
 GPU_DIR="${GPU_DIR:-$ROOT/hetlitmus/tests/gpu-only}"
 HET_DIR="${HET_DIR:-$ROOT/hetlitmus/tests/het}"
 JOBS="${JOBS:-4}"
@@ -74,12 +74,10 @@ run_dir() {
       printf '>>> %s %s\n' "$v" "$n"; cat "$RESDIR/diff.$n" 2>/dev/null
     done
   fi
-  # F4 (DR1-B): `pass -eq total' is VACUOUSLY true on an empty/misnamed corpus
-  # (0 -eq 0) -- it would print "faithfulness (587): OK" for ZERO tests, the exact
-  # inert-gate class this project keeps shipping.  Assert the KNOWN census
-  # (het=450, gpu-only=137), the same exact-count discipline corpus-gate and
-  # verdictcheck use; a census change then has to be a deliberate edit to the
-  # CALL SITE, never an accident.
+  # `pass -eq total' is VACUOUSLY true on an empty or misnamed corpus (0 -eq 0):
+  # it would report OK for zero tests.  So assert the known census (het=450,
+  # gpu-only=137), the same exact-count discipline corpus-gate and verdictcheck
+  # use; a census change then has to be a deliberate edit to the call site.
   if [ "$expect" -gt 0 ] && [ "$total" -ne "$expect" ]; then
     printf 'CENSUS FAIL %s: %d .litmus emitted, expected %d (empty/misnamed corpus?)\n' \
            "$label" "$total" "$expect" >&2
@@ -208,12 +206,14 @@ EOF
   return 1
 }
 
-# ---- negative/completeness self-test on COPIED artifacts (GATED) ----------
-# Six controls: [0] clean PASS, [1] weaken order, [2] strengthen order,
-# [3] weaken scope, [4] miscount (drop an op), [5] CPU STLR->STR on a het test.
-# Each injection is expected to FAIL(1); the two controls PASS(0).  Aggregates:
-# returns NONZERO if any actual rc != expected; prints SELFTEST OK only if all
-# match.  Operates ONLY on copies -- the corpus .litmus files are untouched.
+# ---- negative/completeness self-test on COPIED artifacts (gated) ----------
+# Sections [0]-[9] below: a clean control that must PASS(0), then one injection
+# per way the lowering or the scaffolding can silently die, each of which must
+# FAIL(1) (or hard-fail(2) for an unmodelled token).  Aggregates: returns nonzero
+# if any actual rc differs from its expectation.  Operates only on copies -- the
+# committed .litmus corpus is never touched.  Every injection is cmp-verified to
+# have actually changed its input, since a sed that matches nothing would turn a
+# whole section into a vacuous pass.
 selftest() {
   printf '\n===== SELF-TEST: negative controls on copied artifacts =====\n'
   local sc="$RESDIR/self" T=MP-sys-F fails=0 rc out
@@ -277,22 +277,16 @@ selftest() {
     _expect "het CPU STLR->STR injection" 1 "$rc" || fails=$((fails+1))
   fi
 
-  # ---- [5b] Q10b: the CPU BARRIER OPTION -------------------------------------
-  # `DMB SY' / `DMB ST' / `DMB LD' are THREE different instructions
-  # (d5033fbf / d5033ebf / d5033dbf) supplying three different orderings
-  # ({WW,RR,WR,RW} / {WW} / {RR,RW} -- ordercheck.py Phase 1), and since Q10b
-  # lifted the hetCpuBody.ml blocker all three are in the corpus.  Two SEPARATE
+  # ---- [5b] the CPU barrier option -------------------------------------------
+  # `DMB SY' / `DMB ST' / `DMB LD' supply three different orderings and the
+  # corpus carries all three (ptxcheck.py CPU_BARRIER_OPTION).  Two separate
   # properties, so two bites:
-  #   (i)  DISCRIMINATION -- an emitted `dmb sy' silently lowered to `dmb st'
-  #        must FAIL(1) naming the mismatch.  This already held before Q10b (the
-  #        compared op tuple has always carried the option); the bite PINS it,
-  #        because the corpus now actually varies the option.
-  #   (ii) COMPLETENESS -- an option that is NOT modelled must HARD-FAIL(2)
-  #        instead of being compared as an opaque string.  Before Q10b it was
-  #        not: rewriting the corpus's `DMB SY' to the inner-shareable `DMB ISH'
-  #        -- a strictly narrower shareability domain that cannot be assumed to
-  #        reach the GPU across C2C -- and matching the emitted asm to it passed
-  #        this gate with rc=0.  ptxcheck.CPU_BARRIER_OPTION closes that.
+  #   (i)  DISCRIMINATION -- an emitted `dmb sy' lowered to `dmb st' must FAIL(1)
+  #        naming the mismatch.
+  #   (ii) completeness -- an option that is not modelled must hard-fail(2)
+  #        instead of being compared as an opaque string.  `DMB ISH' is the case
+  #        that matters: a strictly narrower shareability domain that cannot be
+  #        assumed to reach the GPU across C2C.
   printf '\n[5b] Q10b CPU barrier option: weakened option FAIL(1), unmodelled option HARD-FAIL(2)\n'
   local DT=2+2W-cg-sys-fence-2s DL="$HET_DIR/2+2W-cg-sys-fence-2s.litmus"
   local dd="$sc/dmb" dcpu
@@ -321,7 +315,7 @@ selftest() {
       _expect "emitted dmb sy WEAKENED to dmb st" 1 "$rc" || fails=$((fails+1))
     fi
 
-    # (ii) unmodelled option, CONSISTENT on both sides -- the case a pure
+    # (ii) unmodelled option, consistent on BOTH sides -- the case a pure
     # expected-vs-observed comparison cannot see.  The whole corpus copy is
     # rewritten so the co-run mutant/canary columns agree too.
     rm -rf "$dd/ish"; cp -r "$HET_DIR" "$dd/ish"
@@ -340,12 +334,10 @@ selftest() {
     rm -rf "$dd/ish"
   fi
 
-  # (iii) the OTHER direction, on a test that carries the Q10b form: a partial
-  # barrier silently STRENGTHENED to the full one.  That is the dangerous
-  # direction for the widened corpus -- MP-cg-sys-st.sc-2s is oracle-Disallowed
-  # BECAUSE `DMB ST' happens to order its CPU proc's W;W pair, and a harness that
-  # quietly ran `dmb sy' instead would still print a null and the null would no
-  # longer be about the primitive the row claims to test.
+  # (iii) the other direction: a partial barrier silently STRENGTHENED to the
+  # full one.  MP-cg-sys-st.sc-2s is oracle-Disallowed because `DMB ST' orders
+  # its CPU proc's W;W pair, so a harness quietly running `dmb sy' instead would
+  # still print a null -- one no longer about the primitive the row tests.
   printf '\n[5c] Q10b: a PARTIAL CPU barrier strengthened dmb st -> dmb sy must FAIL(1)\n'
   local ST=MP-cg-sys-st.sc-2s SL2="$HET_DIR/MP-cg-sys-st.sc-2s.litmus"
   local sd="$sc/st" scpu
@@ -374,18 +366,15 @@ selftest() {
     fi
   fi
 
-  # ---- [6] B4: the GPU stress layer's ops are MODELLED, and the model bites ----
-  # The stress layer adds ops to the kernel, so ptxcheck had to grow an
-  # expectation for them.  An expectation that cannot fail is worse than none, so
-  # prove each one bites.  The load-bearing case is the FIRST: widening the
-  # device-scope window-opener to SYSTEM scope would silently turn it into a
-  # per-iteration CROSS-DEVICE barrier, which masks the very order under test
-  # (Srivastava 4.1).  The last case guards the blind spot the stress layer could
-  # otherwise hide in: a sys-scope op emitted by a compiler BUILTIN sits outside
-  # the PTX inline-asm markers, where the model-op check cannot see it.
-  #
-  # Each injection is verified to ACTUALLY change the file first -- a sed that
-  # silently matches nothing would make this whole section a vacuous pass.
+  # ---- [6] the GPU stress layer's ops are modelled, and the model bites -------
+  # The stress layer adds ops to the kernel, so ptxcheck carries an expectation
+  # for them; an expectation that cannot fail is worse than none.  The
+  # load-bearing case is the first: widening the device-scope window-opener to
+  # system scope turns it into a per-iteration CROSS-DEVICE barrier, which masks
+  # the order under test (ptxcheck.py check_spin).  The last case guards the
+  # blind spot the stress layer could hide in -- a sys-scope op from a compiler
+  # builtin sits outside the inline-asm markers, where the model-op check cannot
+  # see it.
   printf '\n[6] B4 stress layer: spin + stray-sys injections must FAIL(1)\n'
   local B4T=MP-cg-sys-acqrel-2s
   local B4L="$HET_DIR/$B4T.litmus" b4="$sc/b4" b4cpu b4rc
@@ -454,20 +443,15 @@ PY
     fi
   fi
 
-  # ---- [7] B4-fix: the stress layer is LIVE, and the liveness gate bites ------
-  # ptxcheck is blind to the stress layer BY DESIGN (scaffolding carries no
-  # order/scope qualifier, so it is not a model op).  That blind spot let B4 ship
-  # a pre-stress incantation that nvcc DELETED -- a compile-time access pattern
-  # folds do_stress's if-chain to `ld;ld', whose loads only feed a `break', which
-  # is provably side-effect-free.  Zero instructions, five green gates.
-  #
-  # stresscheck.py closes it: it counts scratchpad ops in the emitted PTX per
-  # lane class, and asserts the count is INVARIANT under -DHET_*_PATTERN (which
-  # is the property "the pattern is a runtime value" -- i.e. no autotuner config
-  # can silently switch the stress off).  Prove it BITES, or it is decoration.
-  #
-  # Each injection mutates a COPY of the emitted .cu and is verified to actually
-  # change the file first (cmp -s), so no bite can pass vacuously.
+  # ---- [7] the stress layer is live, and the liveness gate bites -------------
+  # ptxcheck is blind to the stress layer by design (scaffolding carries no
+  # order/scope qualifier, so it is not a model op), which is how a pre-stress
+  # incantation that nvcc had dead-code-eliminated to zero instructions once
+  # passed every gate (verify-l0.md, "Scope / limits").  stresscheck.py closes
+  # that: it counts scratchpad ops in the emitted PTX per lane class and asserts
+  # the count is INVARIANT under -DHET_*_PATTERN -- i.e. that the pattern is a
+  # runtime value, so no autotuner config can switch the stress off.  Prove it
+  # bites, or it is decoration.
   printf '\n[7] B4-fix stress liveness: the gate must FAIL(1) on a dead stress layer\n'
   local SL="$ROOT/hetlitmus/verify/stresscheck.py"
   local S4T=MP-cg-sys-acqrel-2s
@@ -479,8 +463,8 @@ PY
     echo "  *** could not emit the het harness for $S4T"
     fails=$((fails+1))
   else
-    # control: the shipped harness must PASS (this is also the gate's own
-    # regression test -- it failed here before the B4-fix, with 0 pre-stress ops)
+    # control: the shipped harness must PASS -- this doubles as stresscheck's own
+    # regression test, and is what reddens if the stress layer goes dead again
     python3 "$SL" --cu "$s4cu" -q >/dev/null 2>&1; s4rc=$?
     _expect "stress liveness control (unmodified harness)" 0 "$s4rc" || fails=$((fails+1))
 
@@ -495,8 +479,8 @@ PY
       python3 "$SL" --cu "$s4/mut/$S4T.cu" -q >/dev/null 2>&1; rc=$?
       _expect "$lbl" 1 "$rc"
     }
-    # THE historical B4 bug, both call sites: hand het_do_stress a compile-time
-    # pattern and the tuned default (3 = ld;ld) is dead-code-eliminated away.
+    # Both call sites: hand het_do_stress a compile-time pattern and the tuned
+    # default (3 = ld;ld) is dead-code-eliminated away.
     _s4bite "pre-stress pattern made compile-time (the B4 regression itself)" \
             's/HET_PRE_STRESS_ITER, _pre_pat/HET_PRE_STRESS_ITER, HET_PRE_STRESS_PATTERN/' \
             || fails=$((fails+1))
@@ -512,19 +496,14 @@ PY
     rm -rf "$s4/mut"
   fi
 
-  # ---- [8] B5: the CPU + interconnect stress layer's gate must BITE -----------
-  # B5 shipped cpustresscheck.py with NO negative control.  That is the sharpest
-  # possible omission: cpustresscheck is the ONE checker able to catch a regression
-  # that preserves the source text while killing the COMPILED mechanism (strip
-  # `volatile' and the enemy still reads beautifully and issues nothing), and it was
-  # itself unguarded.  A checker nobody has ever seen fail is not evidence.
-  #
-  # Six injections, one per way the layer can silently die.  Four mutate
-  # het_cpu_stress.h (the mechanisms); two mutate the emitted .cu DRIVER (the
-  # invariants S5/S6 -- a noise buffer that fits in cache, and enemies pointed at
-  # the very locations under test).  Every one is verified to ACTUALLY change the
-  # file (cmp -s) before its result is believed: a sed that silently matched nothing
-  # would make this whole section a vacuous pass, and that has happened here before.
+  # ---- [8] the CPU + interconnect stress layer's gate must bite --------------
+  # cpustresscheck.py is the one checker able to catch a regression that
+  # preserves the source text while killing the COMPILED mechanism -- strip
+  # `volatile' and the enemy still reads beautifully and issues nothing -- so it
+  # needs a negative control of its own.  Six injections, one per way the layer
+  # can silently die: four mutate het_cpu_stress.h (the mechanisms), two the
+  # emitted .cu driver (invariants S5/S6 -- a noise buffer that fits in cache,
+  # and enemies pointed at the locations under test).
   printf '\n[8] B5 CPU/interconnect stress: the liveness gate must FAIL(1) on a dead layer\n'
   local CS="$ROOT/hetlitmus/verify/cpustresscheck.py"
   local B5T=MP-cg-sys-acqrel-2s
@@ -535,8 +514,8 @@ PY
     echo "  *** could not emit the B5 het harness for $B5T"
     fails=$((fails+1))
   else
-    # control: the SHIPPED harness must PASS.  (This doubles as cpustresscheck's own
-    # regression test -- it is what fails if B5's fixes are ever reverted.)
+    # control: the shipped harness must PASS -- this doubles as cpustresscheck's
+    # own regression test
     python3 "$CS" "$B5L" --harness-dir "$b5/$B5T" >/dev/null 2>&1; b5rc=$?
     _expect "B5 control (shipped CPU/interconnect layer)" 0 "$b5rc" || fails=$((fails+1))
 
@@ -552,54 +531,52 @@ PY
       _expect "$lbl" 1 "$rc"
     }
 
-    # (1) THE one that a naive gate waves through.  Without `volatile' the enemy's
-    # discarded reads `(void)*l' are provably useless and clang deletes ALL of them,
-    # and sigma 0's double store collapses to one.  The loop survives, so it still
-    # LOOKS like a stressor; it just issues no read traffic and half the writes.
+    # (1) the one a naive gate waves through.  Without `volatile' the enemy's
+    # discarded reads `(void)*l' are provably useless and clang deletes all of
+    # them, and sigma 0's double store collapses to one.  The loop survives, so
+    # it still LOOKS like a stressor; it just issues no read traffic.
     _b5bite "enemy scratchpad volatile STRIPPED (all read traffic deleted)" \
             het_cpu_stress.h \
             's/volatile uint64_t \*scratch/uint64_t *scratch/; s/volatile uint64_t \*l =/uint64_t *l =/' \
             || fails=$((fails+1))
 
     # (2) sigma as a compile-time constant: the optimiser folds the switch to one
-    # branch and, for ld;ld, deletes the loop.  This is B4's bug on the CPU side.
+    # branch and, for ld;ld, deletes the loop -- section [7]'s bug, CPU side.
     _b5bite "sigma made COMPILE-TIME (an autotuner config can delete the stress)" \
             het_cpu_stress.h \
             's/switch (a->seq) {/switch (HET_CPU_ENEMY_SEQ) {/' \
             || fails=$((fails+1))
 
     # (3) the M3 preload made inert -- the incantation is still there and still
-    # called, it just issues no cache hints.  Only a RUN can see this.
+    # called, it just issues no cache hints.  Only a run can see this.
     _b5bite "preload hints DROPPED (M3 incantation inert)" \
             het_cpu_stress.h \
             's/^  uint32_t n = 0u;/  uint32_t n = 0u; return n;/' \
             || fails=$((fails+1))
 
-    # (4) first-touch dropped: an unwritten malloc'd buffer is ONE shared zero page,
-    # so the 8 GB "noise" streams a single cache line out of L1 and crosses nothing.
+    # (4) first-touch dropped: an unwritten malloc'd buffer is ONE shared zero
+    # page, so the "noise" streams a single cache line out of L1 and crosses
+    # nothing.
     _b5bite "noise first-touch DROPPED (8 GB buffer is one shared zero page)" \
             het_cpu_stress.h \
             's|^void het_cpu_first_touch(void \*p, size_t bytes) {|void het_cpu_first_touch(void *p, size_t bytes) { (void)p; (void)bytes; return;|' \
             || fails=$((fails+1))
 
-    # (5) DRIVER: the noise working set decoupled from HET_NOISE_MB and shrunk below
-    # the LLC -- served from cache, zero interconnect traffic, every counter still
-    # moving.  Caught by S5 (which is why S5 had to be written).
+    # (5) driver: the noise working set decoupled from HET_NOISE_MB and shrunk
+    # below the LLC -- served from cache, zero interconnect traffic, every
+    # counter still moving.  This is what invariant S5 is for.
     _b5bite "noise buffer UNDERSIZED (fits in cache => no C2C traffic)" \
             "$B5T.cu" \
             's|uint64_t _noise_words = (uint64_t)HET_NOISE_MB \* 1024ull \* 1024ull / sizeof(uint64_t);|uint64_t _noise_words = 4096ull;|' \
             || fails=$((fails+1))
 
-    # (6) DRIVER: the enemies pointed at a TEST VARIABLE.  Not a weaker experiment --
-    # a fabricated one: an enemy writing the location under test can manufacture the
-    # weak behaviour outright.  Caught by S6 (which is why S6 had to be written).
-    # B6b: the tested location is `t_x', not `x' -- MP-cg-sys-acqrel-2s is a
-    # should-be-FORBIDDEN test, so its harness CO-RUNS T + mu(T) + the canary and
-    # every instance's locations are prefixed.  Aliasing onto a name that does not
-    # exist would make the harness fail to COMPILE, and cpustresscheck would exit 2
-    # (toolchain error) instead of 1 (the S6 violation) -- a bite that "fails" for
-    # the wrong reason is not a bite.  Point it at a location that is genuinely
-    # under test, which is the corruption S6 exists to catch.
+    # (6) driver: the enemies pointed at a test variable.  Not a weaker
+    # experiment but a fabricated one -- an enemy writing the location under test
+    # can manufacture the weak behaviour outright.  This is what invariant S6 is
+    # for.  The target is `t_x', not `x': this test co-runs three instances, so
+    # every instance's locations are prefixed, and aliasing onto a name that does
+    # not exist would fail to COMPILE (cpustresscheck exit 2, a toolchain error)
+    # instead of tripping S6 -- a bite that fails for the wrong reason.
     _b5bite "enemy scratchpad ALIASED onto a test variable (fabricates outcomes)" \
             "$B5T.cu" \
             's/_ea\[_e\]\.scratch = _cpu_scratch;/_ea[_e].scratch = t_x;/' \
@@ -609,21 +586,18 @@ PY
   fi
 
   # =========================================================================
-  # [9] B6b -- THE CO-RUN.  Does the faithfulness gate actually SEE the control?
+  # [9] the co-run: does the faithfulness gate actually see the control?
   # =========================================================================
-  # The whole point of B6b is that mu(T) and the canary run INSIDE T's harness, so
-  # a null on T can be read against a known-ALLOWED weak behaviour that fired on the
-  # same C2C path.  That makes the CONTROL's lowering as load-bearing as T's:
-  #
-  #   * a control whose lanes are MISSING is a positive control that is not there --
-  #     but HET_CONTROL_COMPILED_IN still says 1, so every null it gates silently
-  #     becomes a *credible* null.  The most dangerous failure available here.
-  #   * a mutant whose ordering was silently WEAKENED is a different mutant: it no
-  #     longer isolates the primitive under test, so the vouch is for the wrong thing.
-  #   * a mutant whose ordering was silently STRENGTHENED may not fire at all,
-  #     leaving the control permanently cold -- which DISCARDS every null on T.
-  #
-  # ptxcheck now models every lane of every instance.  Prove it BITES on each.
+  # mu(T) and the canary run INSIDE T's harness, so a null on T is read against a
+  # known-Allowed weak behaviour that fired on the same C2C path -- which makes
+  # the control's lowering as load-bearing as T's:
+  #   lanes missing        HET_CONTROL_COMPILED_IN still says 1, so every null it
+  #                        gates silently reads as a credible null.
+  #   mutant weakened      a different mutant: it no longer isolates the
+  #                        primitive under test, so the vouch is misdirected.
+  #   mutant strengthened  may never fire, leaving the control cold, which
+  #                        discards every null on T.
+  # ptxcheck models every lane of every instance; prove it bites on each.
   printf '\n[9] B6b co-run: the gate must FAIL(1) when a CONTROL instance is corrupted\n'
   local B6T=MP-cg-sys-fence-2s
   local B6L="$HET_DIR/$B6T.litmus" b6="$sc/b6" b6rc
@@ -633,8 +607,8 @@ PY
     echo "  *** could not emit the B6b co-run harness for $B6T"
     fails=$((fails+1))
   elif ! grep -q '#define HET_CONTROL_COMPILED_IN 1' "$b6/$B6T/$B6T.cu"; then
-    # A co-run harness that is not co-running is the failure this whole task exists
-    # to prevent.  Never let the section pass vacuously on a single-instance emit.
+    # Never let the section pass vacuously on a single-instance emit: a co-run
+    # harness that is not co-running is the failure it exists to prevent.
     echo "  *** $B6T did not emit a CO-RUN harness (HET_CONTROL_COMPILED_IN != 1)"
     fails=$((fails+1))
   else
@@ -664,10 +638,10 @@ PY
       _expect "$lbl" 1 "$rc"
     }
 
-    # (1) the mutant's ordering primitive silently WEAKENED.  mu(MP-*-fence-2s) is
-    # MP-*-fence: its GPU fence.sc IS the primitive whose absence T's null is about.
-    # Weaken it and mu is no longer THE minimal mutant -- it vouches for a different
-    # interleaving than the one T's ordering is claimed to prevent.
+    # (1) the mutant's ordering primitive silently weakened.  mu(MP-*-fence-2s)
+    # is MP-*-fence, whose GPU fence.sc is the primitive T's null is about;
+    # weaken it and mu vouches for a different interleaving than the one T's
+    # ordering is claimed to prevent.
     _b6bite "mu(T)'s GPU fence.sc WEAKENED to acq_rel (no longer the minimal mutant)" \
             "$B6T.cu" '
 import os
@@ -678,8 +652,7 @@ b=s[i:j]; nb=b.replace("fence.sc.sys","fence.acq_rel.sys")
 assert nb!=b
 open(os.environ["OUT"],"w").write(s[:i]+nb+s[j:])' ptx || fails=$((fails+1))
 
-    # (2) the canary's lane DELETED.  HET_CONTROL_COMPILED_IN still says 1, so every
-    # null this harness prints would be gated on a control that is not running.
+    # (2) the canary's lane deleted, while HET_CONTROL_COMPILED_IN still says 1.
     _b6bite "the canary's entire GPU lane DELETED (a control that is not there)" \
             "$B6T.cu" '
 import os
@@ -689,12 +662,11 @@ j=s.index("if (blockIdx.x >= HET_TEST_BLOCKS) {")
 assert i<j
 open(os.environ["OUT"],"w").write(s[:i]+s[j:])' ptx || fails=$((fails+1))
 
-    # (3) the mutant's CPU body silently STRENGTHENED.  A mutant that is not strictly
-    # weaker than T may never fire -- and a control that never fires does not weaken
-    # a null, it DISCARDS it (COLD-INVALID), forever, on a test that looks healthy.
-    # (No backslashes in this program: it is passed through bash single quotes to
-    # python -c, and an escaped \n here would be mangled into a bite that corrupts
-    # nothing -- which passes for free.  chr(92) is the backslash the asm needs.)
+    # (3) the mutant's CPU body silently strengthened, so it may never fire and
+    # every null on T is discarded as COLD-INVALID on a test that looks healthy.
+    # No backslashes in this program: it reaches python -c through bash single
+    # quotes, where an escaped \n would be mangled into a bite that corrupts
+    # nothing and so passes for free.  chr(92) is the backslash the asm needs.
     _b6bite "mu(T)'s CPU body STRENGTHENED with a dmb sy (mutant no longer weaker)" \
             "${B6T}_cpu.c" '
 import os
@@ -721,11 +693,10 @@ open(os.environ["OUT"], "w").write(s[:i] + nb + s[j:])' cpu || fails=$((fails+1)
   return 1
 }
 
-# ---- stress liveness (the OTHER L0 gate; see stresscheck.py) ----------------
-# ptxcheck proves the harness carries exactly the TESTED ops.  It is blind to the
-# stress layer by design -- and B4 shipped a stress layer that compiled to zero
-# instructions and passed every gate.  stresscheck.py proves the scaffolding is
-# there at all.  Three reps, one per GPU-lane shape, because the pre-stress lives
+# ---- stress liveness (the other L0 gate; see stresscheck.py) ----------------
+# ptxcheck proves the harness carries exactly the tested ops and is blind to the
+# stress layer; stresscheck.py proves the scaffolding is there at all (see
+# section [7]).  Three reps, one per GPU-lane shape, because the pre-stress lives
 # in the test lanes and the mem-stress in the pure-stress blocks:
 #   MP-cg-sys-acqrel-2s   1 GPU test lane, no observer
 #   S-cg-sys-fence        1 GPU test lane + the observer lane (which must NOT spin)
@@ -748,17 +719,17 @@ stress_report() {
   return 1
 }
 
-# ---- CPU + interconnect stress liveness (B5; see cpustresscheck.py) ---------
-# stresscheck.py above covers the B4 GPU scratchpad layer.  B5 adds two more
-# mechanisms that NO structural gate can see -- the M3 preload (host cache hints:
-# no order, no scope, not a model op), the CPU enemies (host threads that never
+# ---- CPU + interconnect stress liveness (see cpustresscheck.py) -------------
+# stresscheck.py above covers the GPU scratchpad layer.  The CPU side adds three
+# mechanisms no structural gate can see: the M3 preload (host cache hints -- no
+# order, no scope, not a model op), the CPU enemies (host threads that never
 # enter the PTX at all) and the C2C noise pair.  cpustresscheck.py asks the two
-# questions the structural gates cannot: did they survive the OPTIMISER (read off
-# the COMPILED -O2 asm, on both host ISAs), and do they actually DO anything at run
-# time (a host-side probe, checked LIVE-when-on and ZERO-when-off -- a tally that
-# cannot go to zero is not evidence of liveness).
+# questions the structural gates cannot -- did they survive the OPTIMISER (read
+# off the compiled -O2 asm, on both host ISAs), and do they do anything at run
+# time (a host-side probe, checked live-when-on and zero-when-off, since a tally
+# that cannot go to zero is not evidence of liveness).
 #
-# Two reps are enough: the CPU stress layer is per-PROC, not per-GPU-lane shape.
+# Two reps are enough: the CPU stress layer is per-proc, not per-GPU-lane shape.
 #   MP-cg-sys-acqrel-2s   the -2s shape -- the CPU issues the tested STLRs, so this
 #                         is where injecting stress could corrupt the hypothesis
 #   S-cg-sys-fence        has the observer thread (pinned, but NOT preloaded)

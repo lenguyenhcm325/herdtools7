@@ -2,22 +2,19 @@
 # ---------------------------------------------------------------------------
 # stresscheck.py  --  HetLitmus L0 stress-LIVENESS checker  (sibling of ptxcheck.py)
 # ---------------------------------------------------------------------------
-# ptxcheck asks "does the harness carry EXACTLY the tested memory ops?".  It is
-# deliberately BLIND to the stress layer: stress is scaffolding, not a model op,
-# so it carries no order/scope qualifier and never enters the op stream.  That
-# design is right -- and it left a hole big enough to drive two dead mechanisms
-# through.  B4 shipped a stress layer in which the pre-stress incantation
-# compiled to ZERO instructions (nvcc constant-folded the access pattern to
-# `ld;ld', whose loads only feed a `break', and deleted the loop), and every gate
-# in the suite stayed green, because no gate could see the stress layer at all.
-#
-# This checker closes that hole.  It asks the one question ptxcheck cannot:
+# ptxcheck asks "does the harness carry EXACTLY the tested memory ops?", and is
+# deliberately BLIND to the stress layer: stress is scaffolding, not a model op, so
+# it carries no order/scope qualifier and never enters the op stream.  That leaves
+# no gate able to see whether the stress layer exists at all -- and a layer nvcc has
+# folded away still compiles, still passes every other gate, and turns each
+# non-observation into a clean-looking "Never" worth nothing.  This checker asks the
+# one question ptxcheck cannot:
 #
 #     does the emitted PTX still CONTAIN the stress traffic it claims to?
 #
-# It is the third instance of this project's recurring failure class (after the
-# constant-true `_cond' and the constant-false `_weak'), so it is a GATE, not a
-# report: a mechanism that cannot be observed to be alive must be assumed dead.
+# It is a GATE, not a report: a mechanism that cannot be observed to be alive must
+# be assumed dead.  Context: hetlitmus/docs/verify-l0.md; the forensics are in
+# env-research/impl-briefs/B4-fix-impl-brief.md.
 #
 # ---------------------------------------------------------------------------
 # HOW IT ATTRIBUTES OPS TO LANE CLASSES (without parsing PTX control flow)
@@ -53,14 +50,14 @@
 #   5. THE PATTERN IS A RUNTIME VALUE: counts are INVARIANT under
 #      -DHET_{PRE,MEM}_STRESS_PATTERN=0..3.
 #
-# (5) is the sharp one.  A compile-time pattern makes the count swing with the
-# -D (measured, sm_90, IRIW-gcgc-sys-fence: 228 / 4 / 28 / 0 ops for patterns
-# 0/1/2/3 -- and 0 is the tuned default); a runtime pattern emits all four
-# branches, so the count cannot move.  Invariance IS the property "no autotuner
-# config can silently switch the stress off", which is what B8 needs and what the
-# original port destroyed.  Requiring a store as well as a load in (2)/(3) pins
-# the strong coherence stressor: a pattern chain with no reachable store branch
-# hammers a region nothing ever writes.
+# (5) is the sharp one.  A compile-time pattern makes the count swing with the -D
+# and can fold the loop away entirely (per-pattern op counts measured on sm_90 are
+# in B4-fix-impl-brief.md, issue 1); a runtime pattern emits all four branches, so
+# the count cannot move.  Invariance IS the property "no autotuner config can
+# silently switch the stress off", which is what the stress tuner needs.  Requiring
+# a store as well as a load in (2)/(3) pins the strong coherence stressor: a
+# pattern chain with no reachable store branch hammers a region nothing ever
+# writes.
 #
 # Exit 0 = PASS, 1 = FAIL, 2 = usage/toolchain error.
 # ---------------------------------------------------------------------------
@@ -216,7 +213,7 @@ def check_cu(cu_path, arch="sm_90", verbose=True):
         else:
             note("  shipped default OK (%s = pre %s + mem %s)" % (both, pre, mem))
 
-        # ---- 6. B6b: the RUNTIME tally.  Everything above is STRUCTURAL --------
+        # ---- 6. the RUNTIME tally.  Everything above is STRUCTURAL -------------
         d1_probe(os.path.dirname(os.path.abspath(cu_path)), fail, note)
     except RuntimeError as e:
         fail(str(e))
@@ -233,17 +230,15 @@ def check_cu(cu_path, arch="sm_90", verbose=True):
 # D1 -- het_do_stress's RUNTIME tally, proved live BOTH WAYS on device
 # ===========================================================================
 # Checks 1-5 above are STRUCTURAL: they prove the scratchpad accesses are in the
-# emitted PTX and cannot be folded away.  They cannot prove the loop ever RUNS.
-# That gap is what B6a stated plainly and left open, and it is why het_verdict()
-# could not disqualify on HET_REQ_GPU_STRESS: "a check that cannot fail is worse
-# than no check".
+# emitted PTX and cannot be folded away.  They cannot prove the loop ever RUNS,
+# which is why het_verdict() would otherwise be unable to disqualify a run on
+# HET_REQ_GPU_STRESS.
 #
-# het_stress.cuh now counts het_do_stress rounds (HET_TALLY_STRESS_ROUNDS).  A
-# counter is only evidence if it can be shown to move AND to stay at zero, so this
-# probe drives het_do_stress on the real device and asserts BOTH:
+# het_stress.cuh counts het_do_stress rounds (HET_TALLY_STRESS_ROUNDS).  A counter
+# is only evidence if it can be shown to move AND to stay at zero, so this probe
+# drives het_do_stress on the real device and asserts BOTH:
 #     iterations > 0  =>  tally != 0     (the mechanism is live)
 #     iterations == 0 =>  tally == 0     (the counter is not stuck on)
-# A tally that is always 0 and a tally that is always 1 are equally worthless.
 #
 # This is a PLUMBING/ABI probe on a disjoint scratchpad -- no litmus test, no
 # shared memory, no memory-model claim.  It is sound on any CUDA device (the dev
@@ -310,8 +305,8 @@ def d1_probe(hdir, fail, note):
                            text=True, timeout=120)
         if r.returncode != 0:
             # No usable GPU is a REFUSAL, not a pass: the runtime tally is the only
-            # evidence the stress loop executes, and a gate that silently skips it
-            # is the gate B4 already had.
+            # evidence the stress loop executes, so a gate that silently skips it
+            # is no gate at all.
             fail("D1: the het_do_stress probe did not RUN (rc=%d).  The runtime tally "
                  "is the ONLY evidence the GPU stress loop executes -- structural "
                  "checks 1-5 above cannot see it.  Output:\n%s" % (r.returncode, r.stdout))

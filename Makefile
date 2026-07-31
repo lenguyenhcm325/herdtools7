@@ -664,171 +664,153 @@ hetlitmus-smoke: | build
 	bash hetlitmus/verify/smoke.sh
 	@ echo "HetLitmus Layer-3 compile-smoke: OK"
 
-### hetlitmus-faithful proves the harness carries exactly the TESTED ops; it is
-### blind to the stress layer by design (scaffolding is not a model op) -- and B4
-### shipped a stress layer that compiled to ZERO instructions and passed it.  This
-### gate is the other half: the scaffolding must be IN the PTX.
+### hetlitmus-faithful proves the harness carries exactly the tested ops and is
+### blind to the stress layer by design (scaffolding is not a model op) -- which
+### is how a stress layer that compiled to ZERO instructions once passed it.
+### This gate is the other half: the scaffolding must be in the PTX.
 hetlitmus-stress: | build
 	@ echo
 	bash hetlitmus/verify/l0_tokens.sh stress
 	@ echo "HetLitmus Layer-3 stress liveness: OK"
 
-### hetlitmus-stress covers the B4 GPU scratchpad layer.  B5 adds the CPU-side and
-### interconnect (C2C) levers, and NOT ONE of them is visible to ptxcheck or
-### stresscheck: the M3 preload emits host cache hints (no order, no scope, not a
-### model op), the enemies are host threads that never enter the PTX, and the noise
-### streams a disjoint buffer.  This gate reads the COMPILED -O2 asm (both host
-### ISAs) and RUNS the layer, requiring it to be live when on and zero when off.
+### hetlitmus-stress covers the GPU scratchpad layer.  The CPU-side and
+### interconnect (C2C) levers are invisible to both ptxcheck and stresscheck: the
+### M3 preload emits host cache hints (no order, no scope, not a model op), the
+### enemies are host threads that never enter the PTX, and the noise streams a
+### disjoint buffer.  This gate reads the COMPILED -O2 asm (both host ISAs) and
+### runs the layer, requiring it to be live when on and zero when off.
 hetlitmus-cpustress: | build
 	@ echo
 	bash hetlitmus/verify/l0_tokens.sh cpustress
 	@ echo "HetLitmus Layer-3 CPU+interconnect stress liveness: OK"
 
-### B6 THE POSITIVE CONTROL.  Two gates, both CUDA-free.
-###
-### hetlitmus-controlmap: every one of the 53 Disallowed tests must have a mu(T)
-### that EXISTS as a .litmus and is labelled Allowed -- re-derived from the corpus
-### sources + the oracle, never from the test's name (the one-sided grid variants
-### are named for the op the GPU performs, so MP-gc-sys-acquire / S-gc-sys-acquire /
-### R-gc-sys-acquire do not exist at all).  It FAILS CLOSED: a missing mutant breaks
-### the build rather than skipping the control, because a silently-absent control
-### does not weaken a null -- it makes it unfalsifiable.
+### hetlitmus-controlmap: the positive control (hetlitmus/docs/positive-control.md).
+### Every one of the 53 Disallowed tests must have a mutant mu(T) that EXISTS and is
+### labelled Allowed, re-derived from the corpus sources + the oracle and never
+### from the test's name (MP-gc-sys-acquire and two siblings do not exist at all).
+### It fails closed: a missing mutant breaks the build rather than skipping the
+### control, because a silently absent control does not weaken a null -- it makes
+### it unfalsifiable.  CUDA-free.
 hetlitmus-controlmap: | build
 	@ echo
 	python3 hetlitmus/verify/controlmap.py --check
 	@ echo "HetLitmus B6 control map: OK"
 
-### hetlitmus-dup: the ISOMORPHISM gate (Q10 step 0).  generate.sh dedups only by
+### hetlitmus-dup: the isomorphism gate.  generate.sh dedups only by
 ### byte-comparing a variant against ONE designated sibling, which cannot see the
-### duplicates that dominate the corpus: the 338 het tests of Q10 time were only
-### 299 distinct experiments up to (proc permutation x location renaming) -- 450
-### -> 411 after the Q10/Q10b widenings, the SAME 39 classes throughout, all 39
-### redundant files being the cg/gc mirror pairs of the rotation-invariant shapes
-### (SB/LB/2+2W) -- and 3 of them sit inside the Disallowed rows that carry the
-### falsification claim.  The 39 are kept (their verdicts agree; the census is
-### pinned everywhere) but ALLOWLISTED BY EXACT CLASS, and the gate fails on any
-### duplicate that is not in the list AND on any list entry that has stopped
-### being a duplicate -- an allowlist that cannot rot.  This is what makes the
-### two-sided fence-pair widening safe: a new annotation axis multiplies across
-### device cuts, so new duplicates are the expected failure mode.
-### --bite PROVES both halves fail: a synthetic clone (pure x<->y rename) and a
-### rotted allowlist entry, each checked for the RIGHT message.
+### duplicates that dominate the corpus -- 450 files are 411 distinct experiments
+### up to (proc permutation x location renaming), the same 39 classes across
+### every widening, all of them cg/gc mirror pairs of a rotation-invariant shape
+### (SB/LB/2+2W), some inside the Disallowed rows that carry the falsification
+### claim (env-research/Q10-corpus-coverage.md sect 2.1).  They are kept but
+### allowlisted by exact class, and the gate fails on any duplicate not in the
+### list AND on any list entry that has stopped being one -- an allowlist that
+### cannot rot.  --bite proves both halves fail, each for the right reason.
 hetlitmus-dup: | build
 	@ echo
 	python3 hetlitmus/verify/dupcheck.py
 	python3 hetlitmus/verify/dupcheck.py --bite
 	@ echo "HetLitmus Q10 isomorphism/dedup gate: OK (and the gate bites)"
 
-### hetlitmus-order: the ORDERING RULE behind the two-sided oracle, machine-checked
-### against BOTH constituent solvers.  The `-2s' rows are the only ones that can be
-### Disallowed -- the only ones that can refute the compound model -- and Q10+Q10b
-### widen them from one fence pairing (DMB.SY x fence.sc.sys) to the 4x4 grid
-### CPU{STLR/LDAPR,DMB.SY,DMB.ST,DMB.LD} x GPU{rel/acq atoms,fence.sc,fence.release,
-### fence.acquire}.sys.  Which
-### cells forbid is NOT "both sides have a fence": DMB.LD on a store;store producer
-### orders nothing and a release fence on a load;load consumer orders nothing.  Hand
-### verdicts are how an oracle acquires a silent error, and an oracle error here is a
-### FALSE REFUTATION of the model.  So build-nvidia-oracle.sh carries a COMPOSITIONAL
-### rule and this gate proves it is the same function herd7 computes:
-###   ARM     96 CPU-only AArch64 cells under herd7's NATIVE model
+### hetlitmus-order: the ordering rule behind the two-sided oracle, machine-
+### checked against both constituent solvers.  The `-2s' rows are the only ones
+### that can be Disallowed -- the only ones that can refute the compound model --
+### and they span a 4x4 grid of CPU{STLR/LDAPR,DMB.SY,DMB.ST,DMB.LD} x
+### GPU{rel/acq atoms,fence.sc,fence.release,fence.acquire}.sys.  Which cells
+### forbid is not "both sides have a fence", hand verdicts are how an oracle
+### acquires a silent error, and an oracle error here is a FALSE REFUTATION of
+### the model, so build-nvidia-oracle.sh carries a compositional rule and this
+### gate proves it is the same function herd7 computes (hetlitmus/docs/
+### het-oracle.md, "Two-sided order pairs"):
+###   ARM     96 CPU-only AArch64 cells under herd7's native model
 ###   PTX     96 GPU-only LISA/Bell cells under nvidia-ptx.cat (Lustig'19)
-###   ORACLE  all 132 two-sided 2-proc rows of expected-nvidia.csv -- an ASSERTED
-###           count, INCLUDING the pre-existing `-fence-2s'/`-acqrel-2s' rows as the
-###           (DMB.SY x fence.sc.sys) / (rel-acq atom) cells -- so the bash oracle and
-###           the rule cannot drift apart, and a half-blind phase cannot pass
-### --bite corrupts the rule six ways (a store barrier that orders loads, an acquire
-### fence that leaves load;store free, the pattern clause dropped, an acquire fence
-### that also releases, the corpus token `sc' read as a release fence, the name regex
-### blinded to the `st'/`ld' cells) and requires each to redden the phase that NAMES it.  ~3 s; no nvcc, no GPU.
+###   ORACLE  all 132 two-sided 2-proc rows of expected-nvidia.csv -- an asserted
+###           count, so neither can the bash oracle and the rule drift apart nor
+###           can a half-blind phase pass
+### --bite corrupts the rule six ways and requires each to redden the phase that
+### names it.  ~3 s; no nvcc, no GPU.
 hetlitmus-order: | build
 	@ echo
 	python3 hetlitmus/verify/ordercheck.py
 	python3 hetlitmus/verify/ordercheck.py --bite
 	@ echo "HetLitmus Q10 two-sided ordering rule: OK (and the gate bites)"
 
-### hetlitmus-verdict: het_verdict() -- the rule that decides WHAT AN OBSERVATION
-### MEANS -- compiled from the REAL emitted header and fed synthetic records.
-###   Phase 1 (rule)     all SEVEN verdicts and all THREE oracle classes reachable (a
-###                      rule that always returns the same verdict is not a decision,
-###                      and a three-way oracle branch keyed off a constant field is
-###                      the same bug); exhaustive_valid==0 can NEVER yield a credible
-###                      null; every liveness disqualifier bites; ORACLE_UNSET fails
-###                      closed.
-###   Phase 2 (printout) the REFUTATION CLAIMS ("should-be-FORBIDDEN", "REFUTES the
-###                      model's prediction", "Disallowed outcome") are reachable from
-###                      ORACLE_DISALLOWED and from NOTHING ELSE.  397 of the 450 het
-###                      tests are not should-be-forbidden, and a refutation printed on
-###                      one of them is a FALSE REFUTATION of the compound model.  The
-###                      verdict enum changing is not the deliverable; the SENTENCE is.
-###   Phase 3 (corpus)   all 450 emitted harnesses carry the oracle class control-map.csv
-###                      gives them (census 53 / 353 / 44, and ZERO untagged).  A rule
-###                      that branches on a class the emitter never sets is a rule
-###                      nobody runs.
-### --bite then PROVES THE GATE FAILS when the mechanism breaks: 5 injections (3 against
-### the rule, 2 against the emitted corpus), each verified to have actually changed the
-### code it corrupts.  A gate never seen to fail is not evidence.
+### hetlitmus-verdict: het_verdict() -- the rule that decides what an observation
+### MEANS -- compiled from the real emitted header and fed synthetic records.
+###   Phase 1 (rule)     all seven verdicts and all three oracle classes are
+###                      reachable (a rule that always returns the same verdict is
+###                      not a decision, and a three-way branch keyed off a
+###                      constant field is the same bug); exhaustive_valid==0 can
+###                      never yield a credible null; every liveness disqualifier
+###                      bites; ORACLE_UNSET fails closed.
+###   Phase 2 (printout) the refutation claims are reachable from ORACLE_DISALLOWED
+###                      and from nothing else.  397 of the 450 het tests are not
+###                      should-be-forbidden, and a refutation printed on one of
+###                      them is a false refutation of the compound model.  The
+###                      verdict enum changing is not the deliverable; the sentence
+###                      is.
+###   Phase 3 (corpus)   all 450 emitted harnesses carry the oracle class
+###                      control-map.csv gives them (census 53 / 353 / 44, zero
+###                      untagged).  A rule that branches on a class the emitter
+###                      never sets is a rule nobody runs.
+### --bite: 5 injections (3 against the rule, 2 against the emitted corpus), each
+### verified to have actually changed the code it corrupts.
 hetlitmus-verdict: | build
 	@ echo
 	python3 hetlitmus/verify/verdictcheck.py
 	python3 hetlitmus/verify/verdictcheck.py --bite
 	@ echo "HetLitmus B6/B6c decision rule: OK (and the gate bites)"
 
-### hetlitmus-stats: het_stats_compute() -- what a "Never" is WORTH -- compiled from
-### the REAL emitted header and driven with synthetic record streams (statscheck.py).
-### B7 SHIPPED THIS SCRIPT UNWIRED: no Makefile target invoked it, so a build with
-### ks_pass forced to a constant 1 (one of the three bugs B7 itself caught) returned
-### rc=0 from `make hetlitmus-test-all` -- fully green -- while statscheck.py returned
-### rc=1.  A gate that exists but is not in the build is not a gate; it is a script.
+### hetlitmus-stats: het_stats_compute() -- what a "Never" is WORTH -- compiled
+### from the real emitted header and driven with synthetic record streams
+### (statscheck.py).  A gate that exists but is not in the build is not a gate but
+### a script, which is why this target lands with the script it runs.
 ###   estimator   mu_upper pinned to the closed form (3 -> 19 -> 199.5); budget symbol
 ###   aggregate   every statistic differentially checked vs an independent Python
 ###               re-derivation; every class/flag/tier reachable (anti-constant)
-###   tau/N_eff   (B7b) Geyer initial-positive-sequence recovers known AR(1)
+###   tau/N_eff   Geyer initial-positive-sequence recovers known AR(1)
 ###               autocorrelation times; N_eff clamped to [1, HET_NWIN]; the
-###               tau-at-cap regime reproduces B7's run-level bound EXACTLY
+###               tau-at-cap regime reproduces the run-level bound exactly
 ###   producer    the per-window sub-tallies live BOTH ways on the real emitted scan
 ###   corpus      all 450 carry the post-pass + a decode channel
-###   scheduler   (B7b) campaign.py stopping policy on a stub runner: Allowed rows
-###               stop at first clean sighting, bound rows at p_goal or budget
-### --bite then PROVES THE GATE FAILS when the statistics break, cmp-verified.
+###   scheduler   campaign.py stopping policy on a stub runner: Allowed rows stop
+###               at first clean sighting, bound rows at p_goal or budget
+### --bite: cmp-verified injections into the statistics.  (B7/B7b)
 hetlitmus-stats: | build
 	@ echo
 	python3 hetlitmus/verify/statscheck.py
 	python3 hetlitmus/verify/statscheck.py --bite
 	@ echo "HetLitmus B7/B7b statistics layer: OK (and the gate bites)"
 
-### hetlitmus-hist: the OUTCOME-HISTOGRAM gate (F-A).  The GB10 run printed
-### `400004  *> [x]=0; [y]=0;' for 2+2W over 4 x N=100000 frames -- a total ABOVE
-### the frames examined, and a witness row whose columns contradict the witness.
-### Both were invisible to every existing gate: verdictcheck/statscheck read the
-### het_obs_record, and NOTHING ever looked at litmus7's inherited outs histogram.
-###   shape       the histogram add is inside the per-frame loop IFF the harness has
-###               a per-frame observable; the 22 reader-less shapes add ONCE PER RUN
-###               (their `_weak' IS the run-level observer witness, so an in-loop add
-###               multiplies one observation by N -- that is the bug)
-###   display     a coherence-final [ell] column is never printed as a number: no such
-###               number is ever measured (`_o[n_reg+j]' is the constant 0)
-###   arithmetic  the store-only tally is EXTRACTED VERBATIM from the emitted .cu,
-###               linked against the harness's own outs.c and RUN: sum_outs must be R
-###               for every forced witness pattern and must not scale with N.  It then
-###               re-runs on the PRE-FIX tally and requires that to be REJECTED.
-### CUDA-free (litmus7 + cc).  --bite: 5 injections, each cmp-verified non-vacuous and
-### each required to redden the phase that NAMES it -- an injection that only breaks
-### compilation (exit 2) is not a bite.
+### hetlitmus-hist: the outcome-histogram gate.  verdictcheck and statscheck read
+### the het_obs_record; nothing else looks at litmus7's inherited outs histogram,
+### where a hardware run once printed a witness total ABOVE the frames examined,
+### on a row whose columns contradicted the witness.
+###   shape       the histogram add is inside the per-frame loop iff the harness
+###               has a per-frame observable; the 22 reader-less shapes add once
+###               per run (their `_weak' is the run-level observer witness, so an
+###               in-loop add multiplies one observation by N)
+###   display     a coherence-final [ell] column is never printed as a number: no
+###               such number is measured (`_o[n_reg+j]' is the constant 0)
+###   arithmetic  the store-only tally is extracted verbatim from the emitted .cu,
+###               linked against the harness's own outs.c and RUN: sum_outs must
+###               be R for every forced witness pattern and must not scale with N
+### CUDA-free (litmus7 + cc).  --bite: 5 injections, each cmp-verified non-vacuous
+### and each required to redden the phase that names it -- an injection that only
+### breaks compilation (exit 2) is not a bite.  (F-A)
 hetlitmus-hist: | build
 	@ echo
 	python3 hetlitmus/verify/histcheck.py
 	python3 hetlitmus/verify/histcheck.py --bite
 	@ echo "HetLitmus F-A histogram tally + display: OK (and the gate bites)"
 
-### hetlitmus-tuner: the B8a autotuner SEARCH MACHINERY (tune.py) -- validated on the dev
-### box against SYNTHETIC objectives with a known optimum, because a real death rate is
-### hardware-only (Q7 4.2).  PURE PYTHON (no litmus7, no nvcc), so no `| build`.  Like
-### hetlitmus-stats, this exists because the recurring failure of this project is machinery
-### that compiles, passes every STRUCTURAL gate, and does NOTHING: a tuner that always
-### returns the seed is the same bug as B3's constant-false _weak.  So the gate does not
-### check that the search RUNS -- it checks that it FINDS a known optimum, REFUSES to crown
-### a phantom on a constant objective, and that removing each of Q7's three data-peeking
-### adaptations BREAKS it:
+### hetlitmus-tuner: the autotuner SEARCH MACHINERY (tune.py), validated on the
+### dev box against synthetic objectives with a known optimum, because a real
+### death rate is hardware-only (Q7 4.2).  Pure Python (no litmus7, no nvcc), so
+### no `| build`.  The gate does not check that the search runs -- a tuner that
+### always returns the seed would pass that -- but that it FINDS a known optimum,
+### refuses to crown a phantom on a constant objective, and breaks when any of
+### Q7's three data-peeking adaptations is removed:
 ###   optimum     the search returns the arg-max of distinct true means (100% of seeds)
 ###   phantom     a constant objective yields NO confident winner (anti-7th-constant)
 ###   drift       SER^3 randomized round-robin de-confounds a rising baseline where the
@@ -846,28 +828,28 @@ hetlitmus-tuner:
 	python3 hetlitmus/verify/tunecheck.py --bite
 	@ echo "HetLitmus B8a tuner search machinery: OK (and the gate bites)"
 
-### hetlitmus-obs: the OBSERVER-liveness gate (DR1-A3).  statscheck feeds a SYNTHETIC
-### observer_unique_count; NO gate ever compiled the REAL emitted observer loop, so F1
-### -- the -O2 hoist that pinned observer_unique_count<=1 and left the 22 store-only
-### tests' ONLY channel inert -- was invisible to CI (the 5th inert-mechanism-shipped-
-### green bug).  This EXTRACTS the real emitted observer + its args struct and compiles
-### them at clang -O2 for x86-64 AND aarch64, asserting a per-iteration reload survives
-### inside EVERY loop body.  --bite strips the `volatile' and PROVES a hoisted observer
-### FAILS (cmp-verified non-vacuous).
+### hetlitmus-obs: the observer-liveness gate.  statscheck feeds a synthetic
+### observer_unique_count, so no gate compiles the REAL emitted observer loop --
+### which is how an -O2 hoist that pinned observer_unique_count<=1, leaving the 22
+### store-only tests' only channel inert, stayed invisible to CI.  This extracts
+### the real emitted observer + its args struct and compiles them at clang -O2 for
+### x86-64 and aarch64, asserting a per-iteration reload survives inside every
+### loop body.  --bite strips the `volatile' and requires a hoisted observer to
+### fail (cmp-verified non-vacuous).  (DR1)
 hetlitmus-obs: | build
 	@ echo
 	python3 hetlitmus/verify/obscheck.py
 	python3 hetlitmus/verify/obscheck.py --bite
 	@ echo "HetLitmus observer-liveness gate: OK (and the gate bites)"
 
-### hetlitmus-l0-selftest: the DISCRIMINATING-POWER proofs of the nvcc lane (DR1-B/F3).
-### l0_tokens.sh {selftest,guard} prove ptxcheck can DETECT a weakened scope/order and
-### that the stress/cpustress scaffolding bites a dead layer; smoke.sh bite proves the
-### co-run gate catches a missing control.  They were invoked by NO make target, so a
-### silently-neutered ptxcheck would still pass `make hetlitmus-test-all' -- the exact
-### "faithfulness gate went inert (0/338)" class.  Two invariance checks (stresscheck
-### check-5 pattern-invariance, cpustresscheck S4/G2) pass trivially on shipped runtime-
-### valued code and get their TEETH only here.
+### hetlitmus-l0-selftest: the DISCRIMINATING-POWER proofs of the nvcc lane.
+### l0_tokens.sh {selftest,guard} prove ptxcheck can detect a weakened scope/order
+### and that the stress/cpustress scaffolding bites a dead layer; smoke.sh bite
+### proves the co-run gate catches a missing control.  Without this target a
+### silently neutered ptxcheck would still pass `make hetlitmus-test-all'.  Two
+### invariance checks (stresscheck check-5 pattern-invariance, cpustresscheck
+### S4/G2) pass trivially on shipped runtime-valued code and get their teeth only
+### here.  (DR1)
 hetlitmus-l0-selftest: | build
 	@ echo
 	bash hetlitmus/verify/l0_tokens.sh selftest

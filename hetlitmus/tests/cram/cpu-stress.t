@@ -1,35 +1,36 @@
-B5 regression guard: the emitted het harness must carry the CPU-side stress layer
-AND the interconnect (C2C) stress layer, in the shape the design requires -- host
-ISA asm kept out of the nvcc translation unit; the -2s invariants held by
-construction; four object classes in four allocators; and the stress orchestration
-in the one order that makes it run at all.
+CPU-side + interconnect stress guard (B5; env-research/Q6-cpu-interconnect-stress.md).
+The emitted het harness carries both stress layers in the shape the design
+requires: host ISA asm kept out of the nvcc translation unit, the -2s invariants
+held by construction, four object classes in four allocators, and the stress
+orchestration in the one order that makes it run at all.
 
-B4 gave the GPU its stress layer.  Q6's central transfer finding is that this is
-not enough: per-device stress widens the INTRA-device window, while the
-heterogeneous weak behaviour lives in the CROSS-device one -- a store in flight
-across C2C but not yet globally visible.  CPU cache stress never crosses the link;
-GPU scratchpad stress never leaves the die.  The two levers that do are here.
-
-Half 2 is also the thesis's methodological addition beyond Bagchi et al. (ISMM'26),
-who stressed each device independently -- "Each was executed millions of times with
-memory stressing [21] on both devices" -- with no link-directed component anywhere
-in the paper.  Its EFFICACY, however, is an inference, not a measurement: Fusco
-measured bandwidth, never weak-behaviour yield, and remote placement also slows the
-loop.  The claim is "additive, composable, most specific to the cross-device
-window" -- never "more effective than per-device stress".
+Per-device stress widens the INTRA-DEVICE window, while the heterogeneous weak
+behaviour lives in the cross-device one -- a store in flight across C2C but not
+yet globally visible.  CPU cache stress never crosses the link and GPU scratchpad
+stress never leaves the die, so Half 2 (placement in (g), the noise pair in (h))
+is the only lever that does (Q6 3.1/3.2).  It is also the methodological addition
+beyond Bagchi et al. ISMM'26 4.2, who stressed each device independently with no
+link-directed component; its efficacy is an inference, not a measurement, so the
+claim is "additive, composable, most specific to the cross-device window", never
+"more effective than per-device stress" (Q6 3.3/3.5).
 
   $ litmus7 -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ litmus7 -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
   $ MP=MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
   $ S=S-cg-sys-fence/S-cg-sys-fence
 
-(a) THE HOST ISA MUST NOT REACH NVCC.  cpu_thread_P<n> and main() both live in the
-.cu -- <test>_cpu.c holds only the opaque tested body -- so the M3 preload
+Counts that a wrong site could satisfy are SCOPED to one function body rather
+than raised to a file-wide total: three instances co-run in this harness, so a
+raised total can be met by a lane that lost its mechanism while another gained
+two.  That rule governs every count below.
+
+(a) the host ISA must not reach nvcc.  cpu_thread_P<n> and main() both live in
+the .cu -- <test>_cpu.c holds only the opaque tested body -- so the preload
 primitives (dc civac / prfm on AArch64, clflush / prefetcht0 on x86) cannot be
-emitted at either injection site: nvcc would have to swallow AArch64 asm on an x86
-build host.  They live in het_cpu_stress.h, whose BODIES are behind
-HET_CPU_STRESS_IMPL -- defined by <test>_cpu.c (gcc, and clang --target=aarch64)
-and by nothing else.  The .cu includes the same header and sees declarations only.
+emitted at either injection site without making nvcc swallow AArch64 asm on an
+x86 build host.  They live in het_cpu_stress.h behind HET_CPU_STRESS_IMPL, which
+only <test>_cpu.c defines (gcc, and clang --target=aarch64); the .cu includes the
+same header and sees declarations only.
   $ test -f MP-cg-sys-acqrel-2s/het_cpu_stress.h && echo present
   present
   $ grep -c '#define HET_CPU_STRESS_IMPL' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
@@ -45,37 +46,33 @@ and NO host ISA asm appears in the .cu at all:
   $ grep -cE 'dc civac|prfm |clflush|prefetcht0' $MP.cu || true
   0
 
-(a2) NO <pthread.h> IN het_cpu_stress.h.  Verified, not assumed: <sched.h>,
-<stdio.h>, <stdlib.h>, <string.h> and <unistd.h> all survive
-`clang --target=aarch64-linux-gnu -c', but <pthread.h> does NOT -- it reaches x86
-glibc's __cleanup_fct_attribute, which is __attribute__((__regparm__(1))), and
-regparm is invalid on AArch64.  comp.sh cross-assembles <test>_cpu.c and smoke.sh
-gates on it, so a stray include here fails the smoke gate on all 450 het tests.
-The thread bodies need only the pthread entry-point signature; pthread_create is
-called from the .cu, which is built for the native host.
+(a2) no <pthread.h> in het_cpu_stress.h.  It reaches x86 glibc's
+__cleanup_fct_attribute, which is __attribute__((__regparm__(1))), and regparm is
+invalid on AArch64; comp.sh cross-assembles <test>_cpu.c and verify/smoke.sh
+gates on it, so a stray include fails the smoke gate on all 450 het tests.  The
+thread bodies need only the pthread entry-point signature; pthread_create is
+called from the .cu, which is built for the native host.  The per-header
+verification (which includes do survive the cross-compile) is in
+litmus/het-runtime/README.md.
   $ grep -c '#include <pthread.h>' MP-cg-sys-acqrel-2s/het_cpu_stress.h || true
   0
   $ grep -c '#include <pthread.h>' $MP.cu
   1
 
-(b) -2s INVARIANT (ii): NOTHING IS INJECTED INSIDE THE TESTED BODY.  For a
+(b) -2s invariant (ii): nothing is injected inside the tested body.  For a
 two-sided test the CPU issues the ordering instructions under test (STLR/LDAPR/
 DMB.SY) -- they ARE the hypothesis, so a fence or atomic between the two tested
-accesses would change what is being tested.  het_run_P0 must therefore still be
-exactly its two tested stores, and the preload must sit OUTSIDE it, before the call.
-B6b: this file now carries THREE instances' bodies (T, mu(T), the canary), so a
-file-wide count would be 6 and could be satisfied by a bug that moved an
-instruction from one instance to another.  SCOPE to T's OWN body: it must still be
-exactly its two tested stores, and nothing may be injected between them.
+accesses would change what is being tested (Q6 2.4).  T's own body must stay
+exactly its two tested stores, with the preload outside it, before the call.
   $ sed -n '/^void het_run_t_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE '"(stlr|ldapr|dmb|str|ldr)'
   2
   $ sed -n '/^#if defined(__aarch64__)/,/^#else/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE 'het_cpu_preload|het_cpu_affinity|dc civac|prfm' || true
   0
 
-and the mutant's body is a DIFFERENT program from T's -- that is the whole point of a
-mutant.  T is two-sided (the CPU issues the release stores under test); mu(T) is the
-one-sided weakening, so its CPU side is plain.  If they were identical, mu(T) would
-not be a weakening and the control would vouch for nothing.
+The mutant's body is a different program from T's, which is what makes it a
+mutant: T is two-sided (the CPU issues the release stores under test), mu(T) is
+the one-sided weakening, so its CPU side is plain.  Identical bodies would leave
+mu(T) no weakening at all, and the control would vouch for nothing.
   $ sed -n '/^void het_run_mu_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"(stlr|str) '
   2
   $ sed -n '/^void het_run_t_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"stlr '
@@ -83,33 +80,31 @@ not be a weakening and the control would vouch for nothing.
   $ sed -n '/^void het_run_mu_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"stlr ' || true
   0
 
-The preload is called per iteration, before het_run_P0, on THIS proc's own test
-variables.  A cache hint changes RESIDENCY, not program order, so preloading the
-very variables under test is -2s-safe -- and it cannot drift into the tested
-sequence, because het_run_P0 is a call into another translation unit and every
+The preload is called per iteration, before the tested body, on this proc's own
+test variables.  A cache hint changes residency, not program order, so preloading
+the very variables under test is -2s-safe -- and it cannot drift into the tested
+sequence, because het_run_*_P0 is a call into another translation unit and every
 primitive is asm volatile with a "memory" clobber.
-(Scoped to T's OWN wrapper: the co-run harness has three, and a file-wide count of 3
-could be satisfied by a bug that gave one instance two preloads and another none.)
   $ sed -n '/^static void\* cpu_thread_t_P0/,/^}/p' $MP.cu | grep -c 'het_cpu_preload(_pl, 2, &_plrng, HET_CPU_PRELOAD_PCT)'
   1
   $ sed -n '/^static void\* cpu_thread_t_P0/,/^}/p' $MP.cu | grep -c 'void\* const _pl\[2\] = { (void\*)a->x, (void\*)a->y }'
   1
 
-and EVERY instance preloads its own vars -- the control must be stressed exactly as T
-is, or it is not certifying T's window (Q4 3.1: same run, same stress, same C2C path).
+and every instance preloads its own vars -- the control must be stressed exactly
+as T is, or it is not certifying T's window (Q4 3.1: same run, same stress, same
+C2C path).
   $ grep -c 'het_cpu_preload(_pl, 2, &_plrng, HET_CPU_PRELOAD_PCT)' $MP.cu
   3
 
-and affinity is applied BEFORE the rendezvous, so the thread is already on its core
-when the race starts:
+and affinity is applied BEFORE the rendezvous, so the thread is already on its
+core when the race starts:
   $ grep -A2 'static void\* cpu_thread_t_P0' $MP.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
   1
 
-(c) -2s INVARIANT (i): THE ENEMY AND NOISE TRAFFIC IS DISJOINT FROM THE TEST.  An
-enemy that WRITES a test variable injects co/rf edges and the run stops being a test
-of the CPU/GPU order.  S&D, verbatim: "Because the stressing threads and memory are
-disjoint from application threads and data, the set of possible behaviours a program
-can exhibit remains the same."  So no stress object may ever be x, y or barrier.
+(c) -2s invariant (i): the enemy and noise traffic is disjoint from the test.  An
+enemy that WRITES a test variable injects co/rf edges and the run stops being a
+test of the CPU/GPU order (Sorensen & Donaldson PLDI'16 1, quoted verbatim in
+het_cpu_stress.h).  So no stress object may ever be x, y or barrier.
   $ grep -cE '_ea\[_e\]\.(scratch|idx) *= *(_cpu_scratch|_cpu_idx)' $MP.cu
   2
   $ grep -cE '_ea\[_e\]\.(scratch|idx) *= *(x|y|barrier)' $MP.cu || true
@@ -117,20 +112,15 @@ can exhibit remains the same."  So no stress object may ever be x, y or barrier.
   $ grep -cE '_na\.buf *= *\(volatile const uint64_t\*\)_noise_hbm' $MP.cu
   1
 
-(d) FOUR OBJECT CLASSES, FOUR ALLOCATORS.  Each of the four existed as a bug once,
-and confusing any two puts stress traffic on a tested cache line.  The shared test
-vars and the barrier go through gd_alloc_shared (coherent -- the property under
-test); the GPU stress scratchpad through cudaMalloc (device-only, disjoint); the CPU
-enemy scratchpad through plain host malloc (CPU-only, disjoint -- new in B5); and the
-noise buffers through gd_alloc_noise (homed on the OTHER processing unit -- new in
-B5).
-B6b: in a CO-RUN harness the shared vars and the barrier are carved out of ONE
-gd_alloc_shared arena, ONE CACHE LINE APART.  Six separate 8-byte allocations would
-let the three instances' locations share cache lines, and two variables on one line
-are ONE coherence unit -- mu(T)'s traffic would drag T's line around and the control
-would perturb the very test it exists to vouch for (Q4 3.1 / 8.4).  What must NOT
-change is the allocator: it still SELECTS the property under test, so the arena goes
-through gd_alloc_shared (system malloc/ATS on GH200), never plain malloc.
+(d) four object classes, four allocators; confusing any two puts stress traffic
+on a tested cache line.  The shared test vars and the barrier go through
+gd_alloc_shared (coherent -- the property under test); the GPU stress scratchpad
+through cudaMalloc (device-only, disjoint); the CPU enemy scratchpad through
+plain host malloc (CPU-only, disjoint); and the noise buffers through
+gd_alloc_noise (homed on the OTHER processing unit).  In a co-run harness the
+shared vars and the barrier come from one cache-line-padded gd_alloc_shared
+arena -- see shared-alloc.t (f) for why the padding and the allocator both
+matter.
   $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $MP.cu
   1
   $ grep -c 'gd_alloc_shared((void\*\*)&' $MP.cu
@@ -152,18 +142,19 @@ through gd_alloc_shared (system malloc/ATS on GH200), never plain malloc.
   $ grep -c 'gd_alloc_shared((void\*\*)&_cpu_scratch' $MP.cu || true
   0
 
-(e) THE STRESS ORCHESTRATION ORDER.  This is the one property cpustresscheck.py
-CANNOT see -- its dynamic probe drives the header's mechanisms with its own flag and
-never exercises the emitted driver -- so it is gated here, structurally.  The order
-IS the mechanism: raise stress_go, THEN spawn the enemies and the noise, THEN the
+(e) the stress orchestration order.  cpustresscheck.py cannot see this property
+-- its dynamic probe drives the header's mechanisms with its own flag and never
+exercises the emitted driver -- so it is gated here, structurally.  The order IS
+the mechanism: raise stress_go, then spawn the enemies and the noise, then the
 test threads and the kernel.  A flag raised after the enemies were spawned races
-them; one raised after the test finished means they never ran at all, which is
-precisely the failure B4 shipped twice.
-(B6b: the test-thread spawn is matched on the WRAPPER (`, cpu_thread_'), not on a
-literal `&_th0' -- the three co-running instances name theirs _t_th0 / _mu_th0 /
-_can_th0, and a pattern that silently matched none would leave $TH empty and this
-guard vacuously true.  FIRST spawn after the enemies, LAST spawn before the launch,
-so the ordering is asserted for ALL THREE instances, not just T's.)
+them; one raised after the test finished means they never ran at all
+(env-research/impl-briefs/B4-fix-impl-brief.md).
+
+The test-thread spawn is matched on the wrapper (`, cpu_thread_'), not on a
+literal `&_th0': the three co-running instances name theirs _t_th0 / _mu_th0 /
+_can_th0, and a pattern that matched none would leave $TH empty and this guard
+vacuously true.  First spawn after the enemies, last spawn before the launch, so
+the ordering is asserted for all three instances.
   $ GO=$(grep -n '__atomic_store_n(&_stress_go, 1' $MP.cu | cut -d: -f1)
   $ EN=$(grep -n 'pthread_create(&_eth' $MP.cu | cut -d: -f1)
   $ TH=$(grep -n ', cpu_thread_' $MP.cu | head -1 | cut -d: -f1)
@@ -174,40 +165,41 @@ so the ordering is asserted for ALL THREE instances, not just T's.)
   $ [ "$GO" -lt "$EN" ] && [ "$EN" -lt "$TH" ] && [ "$TZ" -lt "$LA" ] && echo 'go < enemies < test threads (all) < launch'
   go < enemies < test threads (all) < launch
 
-and it comes DOWN only after the device has drained, so the stress covers the whole
-tested window and no more (S&D knob F: the enemy runs at least as long as the test).
-Lowering it before the sync would stop the stress while GPU lanes were still
-looping; never lowering it would hang the join.
-(The anchor is the TERMINAL sync -- `cudaError_t _s = cudaDeviceSynchronize()' -- not
-any cudaDeviceSynchronize: gd_alloc_noise has its own, one-shot at start-up, waiting
-for the prefetch that moves the HBM noise buffer across the interconnect.)
+and it comes down only after the device has drained, so the stress covers the
+whole tested window and no more (S&D knob F, per Q6 3.2: the enemy runs at least
+as long as the test).  Lowering it before the sync would stop the stress while
+GPU lanes were still looping; never lowering it would hang the join.  The anchor
+is the TERMINAL sync -- `cudaError_t _s = cudaDeviceSynchronize()' -- not any
+cudaDeviceSynchronize: gd_alloc_noise has its own, one-shot at start-up, waiting
+for the prefetch that moves the HBM noise buffer across the interconnect.
   $ SY=$(grep -n '_s = cudaDeviceSynchronize' $MP.cu | cut -d: -f1)
   $ OFF=$(grep -n '__atomic_store_n(&_stress_go, 0' $MP.cu | cut -d: -f1)
   $ JN=$(grep -n 'pthread_join(_eth' $MP.cu | cut -d: -f1)
   $ [ "$SY" -lt "$OFF" ] && [ "$OFF" -lt "$JN" ] && echo 'device sync < lower go < join enemies'
   device sync < lower go < join enemies
 
-(f) SIGMA IS A RUNTIME FIELD, NOT A -D THE COMPILER CAN FOLD.  This is B4's scar
-tissue: the GPU port passed the access pattern as a compile-time constant, nvcc
-folded do_stress's if-chain to the one live branch, that branch was side-effect-free,
-and the whole stress loop was DELETED while every gate stayed green.  The CPU enemy
-has the identical shape, so it gets the identical defence -- the -D knob is read
-host-side and handed over as a runtime value.  cpustresscheck.py S4 gates the
-compiled consequence (the op count must be invariant under -DHET_CPU_ENEMY_SEQ).
+(f) sigma is a RUNTIME FIELD, not a -D the compiler can fold.  A compile-time
+access pattern lets nvcc fold the stress if-chain to the one live branch, and a
+side-effect-free branch takes the whole stress loop with it; the CPU enemy has
+the identical shape, so the -D knob is read host-side and handed over as a
+runtime value (env-research/impl-briefs/B4-fix-impl-brief.md).  cpustresscheck.py
+S4 gates the compiled consequence: the op count must be invariant under
+-DHET_CPU_ENEMY_SEQ.
   $ grep -c '_ea\[_e\].seq     = (uint32_t)HET_CPU_ENEMY_SEQ;' $MP.cu
   1
   $ grep -c 'switch (a->seq)' MP-cg-sys-acqrel-2s/het_cpu_stress.h
   1
 
-and the enemy's accesses are `volatile' -- without it the compiler deletes the read
-side of every pattern (sigma 3 becomes a no-op) and collapses sigma 0's double store.
+and the enemy's accesses are `volatile' -- without it the compiler deletes the
+read side of every pattern (sigma 3 becomes a no-op) and collapses sigma 0's
+double store.
   $ grep -c 'volatile uint64_t \*l = a->scratch' MP-cg-sys-acqrel-2s/het_cpu_stress.h
   1
 
-(g) HALF 2a -- PLACEMENT, at the B5 seam inside gd_alloc_shared's GH200 malloc
-branch.  A cudaMemAdvise that is REFUSED must never be swallowed: a placement knob
-that says "remote" while the pages sat where first touch left them is an inert
-mechanism reporting itself as live.
+(g) Half 2a -- placement, at the seam inside gd_alloc_shared's GH200 malloc
+branch.  A cudaMemAdvise that is REFUSED must never be swallowed: a placement
+knob that says "remote" while the pages sat where first touch left them is an
+inert mechanism reporting itself as live.
   $ grep -c 'cudaMemAdviseSetPreferredLocation' $MP.cu
   1
   $ grep -c 'cudaMemAdviseSetAccessedBy' $MP.cu
@@ -217,18 +209,19 @@ mechanism reporting itself as live.
   $ grep -c '_het_place_failures++' $MP.cu
   2
 
-The default is 0 = first-touch, deliberately: that is Bagchi's baseline, and Q6 3.3
-finds the net effect of pinning confounded (it widens the window but slows the loop,
-so sightings = yield x rate could move either way, and nobody has measured it).
+The default is 0 = first-touch, deliberately: that is Bagchi's baseline, and Q6
+3.3 finds the net effect of pinning confounded (it widens the window but slows
+the loop, so sightings = yield x rate could move either way, and nobody has
+measured it).
   $ grep -A1 '#ifndef HET_PLACE' MP-cg-sys-acqrel-2s/het_cpu_stress.h | grep -c '#define HET_PLACE 0'
   1
 
-The HIP twin has NO placement, and that is a finding, not an omission: MI300A has one
-HBM pool shared by the CCD and XCD chiplets -- no LPDDR/HBM split, nothing to place.
-Its analogue is cross-chiplet CONTENTION, which the same noise pair provides.  (The
-grep matches the API CALL, not the string: the .hip explains at length why there is
-no cudaMemAdvise here, so a bare `MemAdvise' count would be satisfied by the prose
-that documents its absence.)
+The HIP twin has NO placement, and that is a finding rather than an omission:
+MI300A has one HBM pool shared by the CCD and XCD chiplets -- no LPDDR/HBM split,
+nothing to place.  Its analogue is cross-chiplet contention, which the same noise
+pair provides.  The grep matches the API call, not the word: the .hip explains at
+length why there is no cudaMemAdvise here, so a bare `MemAdvise' count would be
+satisfied by the prose that documents its absence.
   $ grep -cE '(cuda|hip)MemAdvise\(' $MP.hip || true
   0
   $ grep -cE '(cuda|hip)MemAdvise\(' $MP.cu
@@ -236,12 +229,12 @@ that documents its absence.)
   $ grep -c 'CONTENTION' $MP.hip
   2
 
-(h) HALF 2b -- THE FUSCO NOISE PAIR.  Each processing unit continuously stream-reads
-the OTHER one's memory: "the Grace noise kernel reads HBM system allocated memory and
-the Hopper noise kernel reads DDR allocated memory."  The Hopper half runs as EXTRA
-BLOCKS OF THE PERSISTENT GRID, never as a second __global__ -- ptxcheck scans the
-whole PTX file in flat order and slices that one op stream per lane, so a second
-kernel would drop its ops into the middle of the stream being sliced.
+(h) Half 2b -- the Fusco noise pair (arXiv:2408.11556, construction quoted
+verbatim in het_cpu_stress.h): each processing unit continuously stream-reads the
+OTHER one's memory.  The Hopper half runs as extra blocks of the persistent grid,
+never as a second __global__, because ptxcheck scans the whole PTX file in flat
+order and slices that one op stream per lane -- a second kernel would drop its
+ops into the middle of the stream being sliced.
   $ grep -c '__global__' $MP.cu
   1
   $ grep -c 'blockIdx.x < HET_TEST_BLOCKS + _noise_blocks' $MP.cu
@@ -251,41 +244,40 @@ kernel would drop its ops into the middle of the stream being sliced.
   $ grep -c 'pthread_create(&_nth, NULL, het_cpu_noise, &_na)' $MP.cu
   1
 
-The working set is the whole point: a buffer that fits in cache is served from cache
-and crosses nothing (Fusco: "Hopper L2 cache can cache data that is physically
-allocated on HBM, both local and peer").  Grace L3 = 114 MB, Hopper L2 = 51 MB, and
-Fusco's buffer is 8 GB.  A sub-LLC configuration is warned about at run time.
+The working set is the whole point: a buffer that fits in cache is served from
+cache and crosses nothing, and Hopper's L2 caches peer HBM too.  Grace L3 = 114
+MB and Hopper L2 = 51 MB (Bagchi Tab. 1, p.70), Fusco's buffer is 8 GB, and a
+sub-LLC configuration is warned about at run time.
   $ grep -A1 '#ifndef HET_NOISE_MB' MP-cg-sys-acqrel-2s/het_cpu_stress.h | grep -c '#define HET_NOISE_MB 8192'
   1
   $ grep -c 'HET_NOISE_MB < HET_LLC_MB' $MP.cu
   1
 
-(h2) AND THE NOISE BUFFER MUST BE REAL MEMORY.  The sharpest trap in this layer, and
-the least obvious: a malloc'd buffer that has never been WRITTEN is not backed by
-physical memory at all -- Linux maps every untouched anonymous page to ONE shared,
-read-only zero page.  A noise kernel READING an 8 GB buffer that was never
-first-touched therefore touches a SINGLE cache line, is served entirely from L1, and
-generates no DRAM traffic and NO INTERCONNECT TRAFFIC WHATSOEVER, while reporting
-perfectly healthy round counts.  (Measured on the dev box: reading 256 MB of
-untouched memory backs 64 KB; first-touching it backs 262144 KB.)  So both renders
-fault the pages in, and cpustresscheck.py D3 proves at run time that it works.
+(h2) and the noise buffer must be real memory.  A malloc'd buffer that has never
+been WRITTEN is not backed by physical memory at all -- Linux maps every
+untouched anonymous page to one shared, read-only zero page -- so a noise kernel
+reading an 8 GB buffer that was never first-touched touches a single cache line,
+is served entirely from L1, and generates no interconnect traffic while reporting
+healthy round counts (measured, in het_cpu_stress.h).  So both renders fault the
+pages in, and cpustresscheck.py D3 proves at run time that it works.
   $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MP.cu
   2
   $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MP.hip
   1
 
-and on GH200 the CPU's first touch homes the pages on DDR, so the buffer that must
-live on HBM -- the one the Grace thread streams, so each read CROSSES C2C -- is
-prefetched across; a refusal is reported, because an "HBM" buffer that is really on
-DDR generates local traffic, not interconnect traffic.
+and on GH200 the CPU's first touch homes the pages on DDR, so the buffer that
+must live on HBM -- the one the Grace thread streams, so each read crosses C2C --
+is prefetched across; a refusal is reported, because an "HBM" buffer that is
+really on DDR generates local traffic, not interconnect traffic.
   $ grep -c 'cudaMemPrefetchAsync(\*_pp, _bytes, 0, 0)' $MP.cu
   1
   $ grep -c 'cudaMemPrefetchAsync of the HBM noise buffer FAILED' $MP.cu
   1
 
-(i) LIVENESS IS REPORTED, because nothing in this layer is visible to a structural
-gate and a layer that has silently stopped working looks exactly like one that is
-working.  Every counter below exists because its mechanism has a way to die.
+(i) liveness is REPORTED, because nothing in this layer is visible to a
+structural gate and a layer that has silently stopped working looks exactly like
+one that is working.  Every counter below exists because its mechanism has a way
+to die.
   $ grep -c 'HetLitmus WARNING: %d CPU enemy thread(s) were spawned but completed ZERO rounds' $MP.cu
   1
   $ grep -c 'ZERO preload hints were issued' $MP.cu
@@ -297,19 +289,18 @@ working.  Every counter below exists because its mechanism has a way to die.
   $ sed -n '/^static void het_obs_record_print/,/^}/p' MP-cg-sys-acqrel-2s/het_verdict.h | grep -c 'enemies=%u enemy_rounds=%llu'
   1
 
-and the two knobs B8 tunes the interconnect lever against travel WITH the result.
-The working set is the one that decides whether the noise crosses anything at all --
-below the last-level cache the buffer is served from cache and generates no
-interconnect traffic -- so a tuning log that does not record it cannot tell a good
-config from a dead stressor.
+and the two knobs the tuner turns the interconnect lever with travel WITH the
+result.  The working set is what decides whether the noise crosses anything at
+all -- below the last-level cache the buffer is served from cache -- so a tuning
+log that does not record it cannot tell a good config from a dead stressor (B8).
   $ grep -c 'noise_ws=%uMB place=%u' MP-cg-sys-acqrel-2s/het_verdict.h
   1
   $ grep -c '_rec.noise_ws_mb = (uint32_t)HET_NOISE_MB' $MP.cu
   1
 
-(j) THE SOURCES ARE CITED IN THE EMITTED HEADER, not merely in a commit message: we
-reuse this work, and for cuda-litmus (no licence file) citation is the condition of
-reuse.  A reader must be able to tell which ideas are ours.
+(j) the sources are cited in the emitted header, not merely in a commit message:
+we reuse this work, and for cuda-litmus (no licence file) citation is the
+condition of reuse.  A reader must be able to tell which ideas are ours.
   $ grep -c 'TACAS' MP-cg-sys-acqrel-2s/het_cpu_stress.h
   3
   $ grep -c 'Sorensen & Donaldson' MP-cg-sys-acqrel-2s/het_cpu_stress.h
@@ -321,19 +312,17 @@ reuse.  A reader must be able to tell which ideas are ours.
   $ grep -c 'INFERENCE, not a measurement' MP-cg-sys-acqrel-2s/het_cpu_stress.h
   1
 
-(k) the observer test renders the same shape: the observer is PINNED but NOT
-preloaded (its job is to sample the shared locations densely, and a cache hint per
-iteration would only thin the sampling -- the same reason B4 gave the GPU observer
-lane no pre-stress).
+(k) the observer test renders the same shape: the observer is PINNED but not
+preloaded, because its job is to sample the shared locations densely and a cache
+hint per iteration would only thin the sampling (same reason the GPU observer
+lane gets no pre-stress; stress.t (g)).
 
-B6c: S-cg-sys-fence is oracle-ALLOWED, so it co-runs the canary and its observer
-thread is now `t_cpu_obs_thread'.  THE OLD PATTERN WOULD HAVE KEPT PASSING: the
-preload check is a NEGATIVE (expects 0), and `grep -A4 "static void\* cpu_obs_thread"'
-matches nothing after the rename, so it reports 0 and "passes" while checking
-absolutely nothing.  A guard that silently stops guarding is worse than no guard,
-so the negative below is now paired with a POSITIVE on the worker thread: the
-asymmetry (worker preloads, observer does not) is the actual invariant, and pinning
-one side of it alone can go vacuous without anyone noticing.
+S-cg-sys-fence is oracle-Allowed, so it co-runs the canary and its observer
+thread is `t_cpu_obs_thread'.  The preload check is a negative (expects 0), and a
+negative whose anchor matches nothing reports 0 and "passes" while checking
+nothing, so it is paired with a positive on the worker thread: the asymmetry
+(worker preloads, observer does not) is the invariant, and pinning one side of it
+alone can go vacuous unnoticed.
   $ grep -A2 'static void\* t_cpu_obs_thread' $S.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
   1
   $ grep -A4 'static void\* t_cpu_obs_thread' $S.cu | grep -c 'het_cpu_preload' || true
@@ -343,7 +332,7 @@ The worker DOES preload -- so the 0 above is a real absence, not a failed match.
   $ awk '/^static void\* cpu_thread_t_P0\(void\* _a\)/,/^}$/' $S.cu | grep -c 'het_cpu_preload'
   1
 
-...and so does the co-running canary's worker: the control is stressed exactly like
-the test it vouches for, or it vouches for a different machine.
+...and so does the co-running canary's worker: the control is stressed exactly
+like the test it vouches for, or it vouches for a different machine.
   $ awk '/^static void\* cpu_thread_can_P0\(void\* _a\)/,/^}$/' $S.cu | grep -c 'het_cpu_preload'
   1

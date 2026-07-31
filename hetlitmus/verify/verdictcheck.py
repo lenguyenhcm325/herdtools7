@@ -1,57 +1,24 @@
 #!/usr/bin/env python3
-"""HetLitmus B6/B6c -- the decision-rule gate.
+"""HetLitmus -- the decision-rule gate for het_verdict() (het_verdict.h).
 
-het_verdict() (het_verdict.h) is what converts a raw target count into a CLAIM
-about the compound memory model.  It is THE deliverable of B6, and it has exactly
-the shape of a mechanism that can compile, pass every structural gate, and do
-nothing -- or worse, do the wrong thing loudly:
+het_verdict() turns a raw target count into a CLAIM about the compound memory
+model; three oracle frames x seven verdicts is a shape a constant can
+impersonate.  So this gate compiles the REAL emitted header -- not a copy,
+which would be free to drift -- feeds it synthetic het_obs_records, and proves:
 
-  * a rule that always returns COLD discards every null forever;
-  * a rule that always returns CREDIBLE-NULL reports every cold run as
-    confirmation of the memory model -- the same silent falsification as the
-    constant-false `_weak' detector B3 shipped on 266 of 338 tests;
-  * a rule that does not know WHAT THE MODEL PREDICTS frames every test as
-    should-be-forbidden, and prints "the should-be-FORBIDDEN outcome was OBSERVED
-    ... a single sighting REFUTES the model" on the 397 of 450 tests where the
-    weak outcome is EXPECTED (353 Allowed) or where the model is SILENT (44
-    NO-ORACLE).  That is a LOUD FALSE REFUTATION of the thesis's central claim,
-    and it is what B6c fixed.
+  1 THE RULE      it decides.  Every verdict, oracle class and liveness
+                  disqualifier is reachable; ORACLE_UNSET fails closed.
+  2 THE PRINTOUT  the three refutation claims are reachable from
+                  ORACLE_DISALLOWED and nowhere else, checked BOTH ways.  The
+                  enum changing is not the deliverable; the sentence is.
+  3 THE CORPUS    every emitted harness carries the oracle class
+                  control-map.csv gives it, with a census.
 
-Structural gates cannot see any of these.  So this gate COMPILES THE REAL HEADER
-(the one litmus7 emits into every harness -- not a copy, which would be free to
-drift), feeds it synthetic het_obs_records, and asserts, in three phases:
+The rule and its three reporting frames: hetlitmus/docs/positive-control.md
+S4/S11; env-research/Q4-positive-control.md S3.3 and R5.
 
-  PHASE 1 -- THE RULE
-    1. all SEVEN verdicts are reachable       => the rule is provably not constant
-    2. all THREE oracle classes are reachable => the oracle branch is not constant
-    3. exhaustive_valid == 0  =>  NEVER CREDIBLE (a count that was not measured is
-       not a measured zero, and reading it as one manufactures a false "Never")
-    4. every disqualifying liveness field  =>  COLD  (B4/B5: a null from a run
-       whose stress was inert is not the same datum as one from a stressed run)
-    5. a mechanism that was NOT requested and did no work does NOT disqualify
-       (otherwise an intentional no-stress baseline is COLD forever -- which is
-       just another way of building a rule that always says the same thing)
-    6. the tau_hot boundary actually bites at tau_hot, not near it
-    7. ORACLE_UNSET (the memset default) FAILS CLOSED and claims nothing.
-
-  PHASE 2 -- THE PRINTOUT (this is the phase that bites B6c's bug)
-    het_verdict_print() is captured for every case and scanned.  The three
-    REFUTATION CLAIMS may appear if and only if the record is ORACLE_DISALLOWED:
-        "should-be-FORBIDDEN"  "REFUTES the model's prediction"  "Disallowed outcome"
-    Checked BOTH WAYS -- they must be ABSENT from every Allowed/NO-ORACLE block AND
-    PRESENT in the Disallowed sighting.  A ban that never fires because the text is
-    simply gone is not a check.
-
-  PHASE 3 -- THE EMITTED CORPUS
-    All 450 het harnesses are emitted and their `_rec.het_oracle = ORACLE_*' is
-    cross-checked, PER TEST, against field 2 of tests/het/control-map.csv, with a
-    census (53 Disallowed / 353 Allowed / 44 NO-ORACLE / 0 UNSET).  A rule that
-    branches correctly on an oracle class the emitter never sets is worthless: the
-    unit test would pass and all 450 harnesses would still fail closed.
-
-Usage:  verdictcheck.py [--header PATH] [-q]        run the gate
-        verdictcheck.py --bite                      prove the gate FAILS when the
-                                                    mechanism it guards is broken
+Usage:  verdictcheck.py [--header PATH] [-q]   run the gate
+        verdictcheck.py --bite                 prove it FAILS on a broken rule
 """
 
 import argparse
@@ -81,15 +48,13 @@ CSV_TO_C = {"Disallowed": "ORACLE_DISALLOWED",
             "NO-ORACLE": "ORACLE_NONE"}
 
 # ---------------------------------------------------------------------------
-# THE THREE REFUTATION CLAIMS.  Each is a sentence that only a should-be-FORBIDDEN
-# test is entitled to print.  On an oracle-ALLOWED test the very same observation is
-# the model working as specified, so printing any of these is a false refutation of
-# the compound model -- on 397 of the 450 harnesses, including the canary itself.
-#
-# These are matched as EXACT SUBSTRINGS, and they are deliberately the *claims*, not
-# the word "forbidden": the NO-ORACLE text legitimately contains "neither allowed nor
-# forbidden by the model", and the ALLOWED text legitimately contains "refutes
-# NOTHING".  Banning a keyword would have banned the honest sentences too.
+# THE THREE REFUTATION CLAIMS -- sentences only a should-be-FORBIDDEN test is
+# entitled to print.  On an oracle-Allowed test the same observation is the model
+# working as specified, so printing one there refutes nothing (positive-control.md
+# S11).  Matched as exact substrings, and deliberately the *claims* rather than the
+# word "forbidden": the NO-ORACLE text legitimately says "neither allowed nor
+# forbidden by the model" and the Allowed text says "refutes NOTHING", so banning
+# the keyword would ban the honest sentences too.
 REFUTATION_CLAIMS = [
     "should-be-FORBIDDEN",
     "REFUTES the model's prediction",
@@ -105,10 +70,12 @@ BASE = dict(
     target_count_exhaustive=0,
     target_count_heuristic=0,
     interleavings_detected=1000,
-    # DR1-A2/F2: the baseline is a READER (sync-channel) test -- 428 of the 450, and
-    # 51 of the 53 Disallowed (the 2 exceptions are the store-only 2+2W rows).  The verdict is now CHANNEL-AWARE, so a record with
-    # neither channel flag set fails closed; the store-only cases below flip to the
-    # observer channel (sync_valid=0, obs_valid=1) explicitly.
+    # THE DECODE CHANNEL, stated once (DR1).  The verdict is channel-aware: the sync
+    # channel's liveness evidence is interleavings_detected, the observer channel's is
+    # observer_unique_count, and a record with neither flag fails closed.  The baseline
+    # is a reader -- 428 of the 450, including all 53 Disallowed; only the 22 store-only
+    # 2+2W rows have no reader, and those cases flip to sync_valid=0, obs_valid=1 below.
+    # (Census derivation: statscheck.py CENSUS_SYNC / CENSUS_OBS.)
     sync_valid=1,
     control_compiled_in=1,
     canary_compiled_in=1,
@@ -118,7 +85,7 @@ BASE = dict(
     canary_exhaustive_valid=1,
     stress_truncated=0,
     spin_rendezvous=900, spin_cap=100,
-    gpu_stress_rounds=64,             # B6b: het_do_stress actually ran
+    gpu_stress_rounds=64,             # het_do_stress actually ran
     cpu_enemy_rounds=1000,
     cpu_preload_ops=1000,
     noise_cpu_rounds=1000,
@@ -138,26 +105,25 @@ def case(name, verdict, dq=(), cv=(), **kw):
 
 CASES = [
     # =======================================================================
-    # 1. THE DISALLOWED FRAME (53 tests).  Unchanged by B6c: the null IS the
-    #    evidence, so it has to be earned.
+    # 1. THE DISALLOWED FRAME (53 tests): the model forbids the outcome, so the
+    #    NULL is the evidence and has to be earned.
     # =======================================================================
     case("credible-null", "CREDIBLE-NULL"),
 
     case("mismatch-exhaustive", "MISMATCH", target_count_exhaustive=1),
 
-    # A sighting refutes even on a run we would otherwise DISCARD: an inert-stress
-    # run that nevertheless SAW the forbidden outcome still saw it.  No control is
-    # needed to believe a positive (falsification is one-sided).
+    # A sighting refutes even on a run we would otherwise DISCARD: falsification is
+    # one-sided, so no control is needed to believe a positive (Q4 S3.3).
     case("mismatch-beats-every-disqualifier", "MISMATCH",
          target_count_exhaustive=1, control_compiled_in=0, canary_compiled_in=0,
          interleavings_detected=0, stress_truncated=99,
          cpu_enemy_rounds=0, noise_cpu_rounds=0, noise_gpu_blocks=0),
 
-    # The heuristic count is a SUBSET of the exhaustive scan's (same predicate,
-    # narrower search range), so a heuristic hit is a real recovered cycle.  For a
-    # T_L>=2 shape at production N the exhaustive scan never runs, so keying
-    # MISMATCH off it alone -- as Q4 3.3 literally says -- would silently drop a
-    # genuine falsification.  We count it, and flag it.
+    # A windowed hit is a strict subset of the exhaustive scan's under the same
+    # predicate, so it is a genuine recovered cycle; at production N a T_L>=2 shape
+    # never runs the exhaustive scan, so keying MISMATCH off that field alone -- Q4
+    # S3.3's literal text -- would drop real falsifications.  Counted, and flagged.
+    # (Disclosed deviation: hetlitmus/docs/positive-control.md S4.)
     case("mismatch-heuristic-only", "MISMATCH", cv=["HEURISTIC_SIGHT"],
          target_count_heuristic=1, target_count_exhaustive=0, exhaustive_valid=0),
 
@@ -169,108 +135,96 @@ CASES = [
          control_target_count=0, canary_target_count=0),
 
     # ---- exhaustive_valid == 0  =>  NEVER credible ------------------------
-    # The harness is hot (mu(T) fired 500x) and everything is live -- but the
-    # ground-truth scan did not run, so the zero is NOT a measured zero.
+    # Hot harness, everything live -- but the ground-truth scan did not run, so the
+    # zero is not a measured zero and may never be read as one.
     case("no-exhaustive-cannot-be-credible", "WEAK-NULL", cv=["NO_EXHAUSTIVE"],
          exhaustive_valid=0, control_target_count=500),
 
     # =======================================================================
-    # 2. B6c -- THE ALLOWED FRAME (353 tests).  Here the SIGHTING is the
-    #    evidence, and it is evidence FOR the model, not against it.
+    # 2. THE ALLOWED FRAME (353 tests): the model permits the outcome, so the
+    #    SIGHTING is the evidence -- and it is evidence FOR the model.
     # =======================================================================
-    # THE BUG B6c EXISTS TO KILL.  Before B6c this record -- an oracle-ALLOWED test
-    # that saw its permitted weak outcome -- returned MISMATCH and printed "the
-    # should-be-FORBIDDEN outcome was OBSERVED ... A single sighting REFUTES the
-    # model's prediction".  It is the EXPECTED result.  Phase 2 proves the text is
-    # gone, not merely that the enum changed.
+    # An oracle-Allowed test that saw its permitted weak outcome is the EXPECTED
+    # result, never a refutation.
     case("allowed-observed-is-NOT-a-refutation", "ALLOWED-OBSERVED",
          het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
          target_count_exhaustive=412, target_count_heuristic=412),
 
-    # THE SHARPEST INSTANCE.  MP-cg-sys-relaxed is oracle-Allowed AND is the Layer-B
-    # canary for 265 rows of control-map.csv.  It co-runs no canary (it IS one:
-    # control-map.csv says `self'), so BOTH compiled-in flags are 0.  The one test
-    # whose entire job is to FIRE would, run standalone, have printed a refutation of
-    # the compound memory model.  A firing Allowed test is its own control.
+    # The sharpest instance: MP-cg-sys-relaxed is oracle-Allowed AND is the Layer-B
+    # canary for most of the corpus, so it co-runs nothing (control-map.csv says
+    # `self') and BOTH compiled-in flags are 0.  The one test whose entire job is to
+    # FIRE must not refute the model by doing it; a firing Allowed test is its own
+    # control.
     case("the-canary-itself-firing-is-not-a-refutation", "ALLOWED-OBSERVED",
          het_oracle="ORACLE_ALLOWED",
          control_compiled_in=0, canary_compiled_in=0,
          control_target_count=0, canary_target_count=0,
          target_count_exhaustive=412, target_count_heuristic=412),
 
-    # Permitted, harness demonstrably hot (the canary fired), still not seen.  An
-    # OBSERVABILITY result -- Iorga's taxonomy, Alglave's GTX-280 honesty -- NOT a
-    # model result.  This verdict is why the 353 needed a canary at all: without one
-    # it is indistinguishable from a dead harness.
+    # Permitted, canary hot, still not seen: an OBSERVABILITY result, NOT a model
+    # result (Alglave ASPLOS'15 fn.7 p.577 on the GTX 280; Iorga's taxonomy).  Without
+    # a co-running canary it is indistinguishable from a dead harness.
     case("allowed-unobserved-is-observability-not-model", "ALLOWED-UNOBSERVED",
          het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0),
 
-    # DR1-A2/F2: THE STORE-ONLY (2+2W) CHANNEL SWITCH.  A store-only shape has NO
-    # reader, so interleavings_detected is structurally 0 and its ONLY liveness
-    # channel is the OBSERVER (sync_valid=0, obs_valid=1).  Before F2 the verdict read
-    # interleavings_detected==0 blindly and forced all 22 of these to COLD-INVALID
-    # forever -- 18 ALLOWED + 4 NO-ORACLE that could never report a clean null.
-    #
-    # (a) LIVE observer (>= HET_THETA_DISTINCT distinct GPU store-values) + hot canary,
-    #     nothing seen  ->  a clean ALLOWED-UNOBSERVED (the bound-carrying null path).
+    # THE STORE-ONLY (2+2W) ARM: 22 tests -- 18 Allowed + 4 NO-ORACLE, none Disallowed
+    # -- with no reader, so interleavings_detected is structurally 0 and the OBSERVER is
+    # their only liveness channel.  All three outcomes stay reachable, or the channel
+    # goes constant on those 22 (DR1).
+    # (a) live observer (>= HET_THETA_DISTINCT distinct GPU store-values) + hot canary,
+    #     nothing seen -> a clean ALLOWED-UNOBSERVED, the bound-carrying null path.
     case("store-only-observer-live-is-ALLOWED-UNOBSERVED", "ALLOWED-UNOBSERVED",
          het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
          sync_valid=0, obs_valid=1, observer_unique_count=500,
          interleavings_detected=0),
 
-    # (b) COLD observer (< HET_THETA_DISTINCT -- EXACTLY what F1's hoist produced,
-    #     observer_unique_count<=1)  ->  COLD-INVALID, and the printout must name the
-    #     OBSERVER channel, not the meaningless "interleavings_detected==0".
+    # (b) cold observer (< HET_THETA_DISTINCT) -> COLD-INVALID, and the printout must
+    #     name the OBSERVER channel: "interleavings_detected==0" is meaningless here.
     case("store-only-observer-cold-is-COLD", "COLD-INVALID", dq=["OBSERVER_COLD"],
          het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
          sync_valid=0, obs_valid=1, observer_unique_count=1,
          interleavings_detected=0),
 
-    # (c) A store-only SIGHTING is still a sighting: the observer channel must never
-    #     block a genuinely recovered outcome (falsification is one-sided).
+    # (c) a store-only SIGHTING is still a sighting: the observer channel must never
+    #     block a recovered outcome.
     case("store-only-observer-sighting-is-ALLOWED-OBSERVED", "ALLOWED-OBSERVED",
          het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
          sync_valid=0, obs_valid=1, observer_unique_count=500,
          interleavings_detected=0,
          target_count_exhaustive=7, target_count_heuristic=7),
 
-    # ... and with a COLD canary it must fall back to COLD-INVALID, not quietly
-    # report "we did not see it" as though that meant something.
+    # ... and with a COLD canary it falls back to COLD-INVALID: "we did not see it"
+    # from a dead harness is not a result.
     case("allowed-cold-canary-is-still-COLD", "COLD-INVALID", dq=["CONTROLS_COLD"],
          het_oracle="ORACLE_ALLOWED", control_compiled_in=0,
          control_target_count=0, canary_target_count=0),
 
     # =======================================================================
-    # 3. B6c -- THE NO-ORACLE FRAME (44 tests).  Q4 R5: characterization, NEVER
-    #    validation.  There is no prediction here to confirm or refute.
+    # 3. THE NO-ORACLE FRAME (44 tests).  Q4 R5: characterization, NEVER
+    #    validation -- there is no prediction here to confirm or refute.
     # =======================================================================
     case("no-oracle-fired-is-characterized", "CHARACTERIZED",
          het_oracle="ORACLE_NONE", control_compiled_in=0, control_target_count=0,
          target_count_exhaustive=3, target_count_heuristic=3),
 
-    # Not fired, but the canary was hot: "GH200 exhibited it in 0 of N frames on a
-    # demonstrably hot harness" IS the characterization.  Z may be 0.
+    # Not fired, but the canary was hot: "exhibited in 0 of N frames on a demonstrably
+    # hot harness" IS the characterization.  The rate may be 0.
     case("no-oracle-unfired-hot-is-still-characterized", "CHARACTERIZED",
          het_oracle="ORACLE_NONE", control_compiled_in=0, control_target_count=0),
 
-    # THE ANTI-CONSTANT CASE FOR NO-ORACLE.  Q4 R5 says these rows are
-    # "characterization, always" -- but a verdict that is ALWAYS the same value is a
-    # constant detector wearing a third hat, and characterizing a DEAD harness is a
-    # fabrication, not a finding ("under a harness where the canary fired 0 times,
-    # GH200 exhibited the outcome 0 times" is not a datum).  So COLD-INVALID stays
-    # reachable here.  What the 44 can never produce is a MODEL claim -- Phase 2
-    # enforces that.
+    # Q4 R5 says these rows are "characterization, always" -- but characterizing a DEAD
+    # harness is a fabrication, not a finding, so COLD-INVALID stays reachable here and
+    # the class does not collapse to a constant.  What the 44 can never produce is a
+    # MODEL claim; phase 2 enforces that (positive-control.md S4).
     case("no-oracle-cold-harness-is-COLD-not-characterized", "COLD-INVALID",
          dq=["CONTROLS_COLD"], het_oracle="ORACLE_NONE",
          control_compiled_in=0, control_target_count=0, canary_target_count=0),
 
     # =======================================================================
-    # 4. B6c -- ORACLE_UNSET FAILS CLOSED.
+    # 4. ORACLE_UNSET FAILS CLOSED.  het_obs_record is memset(0), so UNSET == 0 is
+    #    what an emitter that forgot the tag produces; the rule must claim NOTHING,
+    #    not even on a sighting, because it cannot know what the sighting MEANS.
     # =======================================================================
-    # het_obs_record is memset(0) before it is filled, so ORACLE_UNSET == 0 is what an
-    # emitter that FORGOT the tag produces.  Had DISALLOWED been 0, that omission would
-    # silently restore the false-refutation bug.  The rule must claim NOTHING -- not
-    # even on a sighting, because it does not know what the sighting MEANS.
     case("oracle-unset-fails-closed", "COLD-INVALID", dq=["ORACLE_UNSET"],
          het_oracle="ORACLE_UNSET"),
     case("oracle-unset-fails-closed-even-on-a-sighting", "COLD-INVALID",
@@ -278,7 +232,9 @@ CASES = [
          target_count_exhaustive=99),
 
     # =======================================================================
-    # 5. Every disqualifier drives the verdict to COLD (B4/B5 liveness).
+    # 5. Every liveness disqualifier drives the verdict to COLD: a null from a run
+    #    whose stress was inert is not the same datum as one from a stressed run
+    #    (positive-control.md S4).
     # =======================================================================
     case("cold-no-interleaving", "COLD-INVALID", dq=["NO_INTERLEAVING"],
          interleavings_detected=0),
@@ -297,11 +253,10 @@ CASES = [
     case("cold-noise-gpu-dead", "COLD-INVALID", dq=["NOISE_GPU_DEAD"],
          noise_gpu_blocks=0),
 
-    # B6b: the gap B6a stated plainly and left open.  het_do_stress now has a
-    # runtime tally (HET_TALLY_STRESS_ROUNDS), so "the GPU scratchpad stress was
-    # requested and completed ZERO rounds" is finally a check that can FAIL.  It has
-    # to be, because a co-run harness reserves 3x-5x the test blocks and the stress
-    # population is the first thing the co-residency cap squeezes to zero.
+    # het_do_stress carries a runtime tally, so "requested and completed ZERO rounds"
+    # is a check that can fail -- and must be: HET_TEST_BLOCKS is a sum over the
+    # co-run instances, and stressing blocks fill only what the co-residency cap
+    # leaves over (Q5-gpu-stress.md S3.2).
     case("cold-gpu-stress-dead", "COLD-INVALID", dq=["GPU_STRESS_DEAD"],
          gpu_stress_rounds=0),
 
@@ -312,13 +267,12 @@ CASES = [
          gpu_stress_rounds=0),
 
     # =======================================================================
-    # 6. NOT-requested mechanisms must NOT disqualify.
+    # 6. NOT-requested mechanisms must NOT disqualify.  A deliberately unstressed
+    #    baseline has every stress counter at zero, so disqualifying on
+    #    "counter == 0" alone would make every no-stress config COLD forever.  It
+    #    stays reportable and carries the unstressed caveat instead
+    #    (positive-control.md S4: requested-but-dead, not merely zero).
     # =======================================================================
-    # THE ANTI-CONSTANT-COLD CASE.  A deliberately unstressed baseline run has
-    # every stress counter at zero.  If "counter == 0" alone disqualified, this
-    # run -- and every run of a no-stress config -- would be COLD forever, and the
-    # rule would be constant in practice while looking perfectly reasonable in
-    # source.  It must stay reportable, and carry the Kirkham caveat instead.
     case("unstressed-baseline-still-reportable", "CREDIBLE-NULL", cv=["UNSTRESSED"],
          stress_requested=0,
          spin_rendezvous=0, spin_cap=0, cpu_enemy_rounds=0, cpu_preload_ops=0,
@@ -332,8 +286,8 @@ CASES = [
     case("tau-boundary-exactly-at", "CREDIBLE-NULL",
          control_target_count=30, canary_target_count=0),
 
-    # B6c: the canary's OWN tau boundary, on a canary-only (Allowed) harness -- the
-    # 320 tests where the canary is the ONLY liveness evidence there is.
+    # The canary's OWN tau boundary, on a canary-only (Allowed) harness: for every
+    # non-Disallowed test the canary is the only liveness evidence there is.
     case("allowed-canary-tau-just-below", "COLD-INVALID", dq=["CONTROLS_COLD"],
          het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
          canary_target_count=29),
@@ -352,14 +306,11 @@ CASES = [
          spin_rendezvous=100, spin_cap=900),
 
     # =======================================================================
-    # 9. B6b: A MISMATCH MUST CARRY ITS STRESS PROVENANCE.
+    # 9. A MISMATCH MUST CARRY ITS STRESS PROVENANCE.  Observation frequency is
+    #    strongly sensitive to the stress/affinity parameters, the machine and the
+    #    OS (Alglave TACAS'11 S4, p.44), so a refutation reported without the config
+    #    it was seen under is not reproducible.
     # =======================================================================
-    # The caveats used to be computed BELOW the MISMATCH return, so the single most
-    # valuable outcome the campaign can produce -- an observed weak behaviour that
-    # REFUTES the CMCM -- was reported with no record of the config it was seen
-    # under.  Alglave (ASPLOS'15 4.3) requires the incantations to travel with the
-    # sighting or it is not reproducible, and an unreproducible refutation is a much
-    # weaker result than a reproducible one.
     case("mismatch-carries-its-caveats", "MISMATCH",
          cv=["AFF_FAILED", "PLACE_REFUSED", "SPIN_CAP"],
          target_count_exhaustive=1,
@@ -372,40 +323,33 @@ CASES = [
          noise_cpu_rounds=0, noise_gpu_blocks=0),
 
     # =======================================================================
-    # 10. B6b: THE CONTROL'S OWN exhaustive_valid MUST NOT GATE THE NULL.
+    # 10. THE CONTROL'S OWN exhaustive_valid MUST NOT GATE THE NULL.  A mutant can
+    #     itself be a T_L>=2 shape (mu(SB-*-sys-fence-2s) IS SB-*-sys-acqrel-2s), so
+    #     its exhaustive scan does not run at production N and its count comes from
+    #     the windowed detector -- which under-counts but cannot invent a cycle.
+    #     Gating on it would leave those controls structurally cold, and a positive
+    #     control that cannot fire is not a control (positive-control.md S5).  T's
+    #     OWN exhaustive_valid still gates the null; the control's does not.
     # =======================================================================
-    # mu(SB-*-sys-fence-2s) IS SB-*-sys-acqrel-2s -- itself a T_L>=2 shape -- so at
-    # production N its exhaustive scan does not run and control_exhaustive_valid is
-    # 0.  Its count then comes from the WINDOWED scan, whose hits are a strict
-    # subset of the exhaustive scan's under the same predicate: a windowed hit is a
-    # genuine recovered cycle.  If the rule refused to trust it, the control would
-    # be structurally cold on 2 of the 16 control harnesses and their nulls would be
-    # COLD-INVALID forever -- a positive control that cannot fire is not a control.
-    # T's OWN exhaustive_valid still gates the null; the control's does not.
     case("control-count-from-the-window-still-vouches", "CREDIBLE-NULL",
          control_exhaustive_valid=0, control_target_count=500),
 
     # =======================================================================
-    # 11. B6c: CANARY_ONLY is a DIAGNOSTIC, not boilerplate.
+    # 11. CANARY_ONLY is a DIAGNOSTIC, not boilerplate.  "Layer B fired, Layer A did
+    #     not" is only meaningful where a Layer A exists to have not fired; on the
+    #     397 tests that have no mutant by construction it would say nothing.
     # =======================================================================
-    # "Layer B fired, Layer A did not" is only meaningful where a Layer A EXISTS to
-    # have not fired.  Raised on the 397 tests that have no mutant by construction, it
-    # would fire on 95% of the corpus and tell a reader nothing.  It must NOT be set
-    # on a canary-only harness.
     case("canary-only-caveat-is-not-raised-without-a-mutant", "ALLOWED-UNOBSERVED",
          het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
          canary_target_count=500),
 
     # =======================================================================
-    # 12. B6c: A WINDOWED ZERO IS NOT A MEASURED ZERO -- IN EVERY CLASS.
+    # 12. A WINDOWED ZERO IS NOT A MEASURED ZERO -- IN EVERY CLASS.  When the
+    #     exhaustive scan does not run the zero comes from the windowed search over
+    #     [c-W, c+W], and HET_WINDOW is an uncalibrated placeholder, so an
+    #     ALLOWED-UNOBSERVED or a CHARACTERIZED rate must disclose it too or it
+    #     overstates the effort behind a non-observation.
     # =======================================================================
-    # On a T_L>=2 shape at production N the O(N^T_L) scan does not run, so the zero
-    # comes from the WINDOWED search over [c-W, c+W] and HET_WINDOW is an uncalibrated
-    # placeholder.  HET_CV_NO_EXHAUSTIVE was computed for all three classes but PRINTED
-    # only on the Disallowed path -- so an ALLOWED-UNOBSERVED ("we could not expose it")
-    # or a CHARACTERIZED rate would have been stated without disclosing that the effort
-    # behind it was a window, not the full range.  Overstating the effort is a quieter
-    # error than the false refutation, but it is the same kind.
     case("allowed-windowed-zero-must-say-so", "ALLOWED-UNOBSERVED",
          cv=["NO_EXHAUSTIVE"], het_oracle="ORACLE_ALLOWED",
          exhaustive_valid=0, control_compiled_in=0, control_target_count=0),
@@ -415,16 +359,13 @@ CASES = [
 ]
 
 # Cases whose PRINTOUT must disclose that the count came from the window, not the
-# ground-truth scan (Phase 2).  The cv flag being set is not the deliverable -- the
-# sentence reaching the reader is.
+# ground-truth scan (phase 2).
 MUST_PRINT_SCAN_CAVEAT = {"allowed-windowed-zero-must-say-so",
                           "no-oracle-windowed-zero-must-say-so"}
 SCAN_CAVEAT_TEXT = "rests on the WINDOWED heuristic"
 
-# DR1-A2/F2: a store-only COLD null must NAME the observer channel that failed, not
-# print the generic "interleavings_detected==0" (meaningless for a shape with no
-# reader).  Setting the dq bit is not the deliverable; the sentence reaching the
-# reader is (the B6c lesson).
+# A store-only COLD null must NAME the observer channel that failed; the generic
+# "interleavings_detected==0" is meaningless for a shape with no reader (DR1).
 MUST_NAME_OBSERVER_CHANNEL = {"store-only-observer-cold-is-COLD"}
 OBSERVER_CHANNEL_TEXT = "OBSERVER channel was COLD"
 
@@ -452,8 +393,7 @@ static void run_case(const char *name, het_obs_record r,
         && ((cv & forbid_cv) == 0);
   printf("CASE|%s|%s|%s|0x%x|0x%x|%d|%s\n", name, want, got, dq, cv, ok,
          het_oracle_name(r.het_oracle));
-  /* PHASE 2: capture what the harness would ACTUALLY PRINT.  The verdict enum
-     changing is not the deliverable -- the SENTENCE changing is. */
+  /* PHASE 2 reads this: what the harness would ACTUALLY PRINT. */
   printf("PRINT-BEGIN|%s\n", name);
   het_verdict_print(stdout, &r);
   printf("PRINT-END|%s\n", name);
@@ -535,8 +475,7 @@ ORACLE_RE = re.compile(r"_rec\.het_oracle\s*=\s*(ORACLE_[A-Z]+)\s*;")
 
 def check_corpus(quiet, tamper=None):
     """tamper: (test, src) -> src.  Used ONLY by --bite, to prove this phase FAILS
-    when an emitted harness carries the wrong oracle class.  A census that has never
-    been seen to reject anything is not a census."""
+    when an emitted harness carries the wrong oracle class."""
     print("\n===== PHASE 3: does the EMITTED CORPUS carry its oracle class? =====")
     want = read_control_map()
     tests = sorted(t[:-len(".litmus")] for t in os.listdir(HET_DIR)
@@ -587,7 +526,7 @@ def check_corpus(quiet, tamper=None):
         shutil.rmtree(tmp, ignore_errors=True)
 
     if tamper is not None and tampered == 0:
-        # A bite that changed nothing "passes" for free.  That has happened here.
+        # An injection that matched nothing would "pass" for free.
         print("  *** VACUOUS BITE: the corpus injection matched NOTHING")
         return 2
 
@@ -635,8 +574,7 @@ def scan_prints(blocks, cases_by_name, quiet):
         print("  *** FALSE REFUTATION: %s (oracle=%s) printed %s"
               % (name, oracle, ", ".join(repr(h) for h in hits)))
 
-    # BOTH WAYS.  A ban that passes because the text vanished entirely is not a
-    # check -- it is the constant-false detector again, in the gate this time.
+    # The other way round: a ban that passes because the text vanished is not a check.
     if not asserted:
         print("  *** THE REFUTATION TEXT IS UNREACHABLE FROM EVERY CASE.  The ban "
               "above is passing for free: a Disallowed sighting must STILL print "
@@ -648,7 +586,7 @@ def scan_prints(blocks, cases_by_name, quiet):
             print("      %-46s prints the refutation (correctly): %s"
                   % (name, ", ".join(repr(h) for h in hits)))
 
-    # The 44 NO-ORACLE rows must never make a MODEL claim in either direction.
+    # The NO-ORACLE rows must never make a MODEL claim in either direction.
     for name, (oracle, text) in sorted(blocks.items()):
         if oracle != "NO-ORACLE":
             continue
@@ -658,8 +596,7 @@ def scan_prints(blocks, cases_by_name, quiet):
                   "disclaimer nor a DISCARD -- it is making a model claim" % name)
             bad += 1
 
-    # A windowed zero must SAY it is a windowed zero, in every class.  Setting the cv
-    # flag is not the deliverable; the sentence reaching the reader is.
+    # A windowed zero must SAY it is a windowed zero, in every class.
     for name in sorted(MUST_PRINT_SCAN_CAVEAT):
         text = blocks.get(name, ("", ""))[1]
         if SCAN_CAVEAT_TEXT not in text:
@@ -670,8 +607,8 @@ def scan_prints(blocks, cases_by_name, quiet):
         elif not quiet:
             print("      %-46s discloses its windowed zero (correctly)" % name)
 
-    # DR1-A2/F2: a store-only COLD null must NAME the observer channel, not print the
-    # generic interleaving disqualifier that is meaningless for a shape with no reader.
+    # A store-only COLD null must NAME the observer channel (see
+    # MUST_NAME_OBSERVER_CHANNEL).
     for name in sorted(MUST_NAME_OBSERVER_CHANNEL):
         text = blocks.get(name, ("", ""))[1]
         if OBSERVER_CHANNEL_TEXT not in text:
@@ -740,9 +677,9 @@ def run_rule(header, tmp, quiet):
             buf.append(l)
 
     print()
-    # THE not-constant assertions.  A rule that only ever returns one verdict is not
-    # a decision, however plausible its source reads -- and a three-way oracle branch
-    # keyed off a field that is always the same value is the same bug in a new place.
+    # The not-constant assertions: a rule that only ever returns one verdict is not a
+    # decision, and a three-way oracle branch keyed off an always-equal field is the
+    # same thing one field over.
     missing_v = [v for v in VERDICTS if v not in seen_v]
     print("  verdicts reached      : %d/%d  (%s)"
           % (len(seen_v), len(VERDICTS), ", ".join(sorted(seen_v))))
@@ -800,12 +737,9 @@ def main():
 
 
 # ---------------------------------------------------------------------------
-# --bite: THE GATE MUST BITE.
-#
-# A gate never seen to FAIL is not evidence.  Each injection below breaks exactly
-# one thing this gate claims to guard; each is `cmp'-verified to have actually
-# CHANGED the file (an injection that silently matched nothing "passes" for free --
-# that has happened in this project); and each must drive the gate to a NONZERO exit.
+# --bite: a gate never seen to FAIL is not evidence.  Each injection breaks exactly
+# one thing this gate claims to guard, is verified to have actually CHANGED the file
+# (one that matched nothing would pass for free), and must drive the gate nonzero.
 # ---------------------------------------------------------------------------
 def _bite_one(label, tmp, header, mutate, quiet):
     """mutate: str -> str.  Returns True if the gate correctly FAILED."""
@@ -840,10 +774,9 @@ def bite():
     try:
         header = emit_header(tmp)
 
-        # (1) THE ORACLE BRANCH MADE CONSTANT.  Force every record to be read as
-        # Disallowed -- exactly the pre-B6c behaviour, and exactly what a memset'd
-        # record would do if ORACLE_UNSET were not 0.  The Allowed and NO-ORACLE cases
-        # must then take the forbidden frame and the gate must catch it.
+        # (1) THE ORACLE BRANCH MADE CONSTANT: every record read as Disallowed, which
+        # is also what a memset'd record would do if ORACLE_UNSET were not 0.  The
+        # Allowed and NO-ORACLE cases then take the forbidden frame.
         ok &= _bite_one(
             "het_oracle forced CONSTANT (every test read as Disallowed)",
             tmp, header,
@@ -851,9 +784,8 @@ def bite():
                                 "switch (ORACLE_DISALLOWED) {"),
             quiet=True)
 
-        # (2) THE REFUTATION TEXT LEAKED INTO THE ALLOWED FRAME.  The verdict enum is
-        # still right; only the SENTENCE is wrong.  Phase 1 cannot see this -- it is
-        # precisely why Phase 2 reads the printout.
+        # (2) THE REFUTATION SENTENCE LEAKED INTO THE ALLOWED FRAME: the verdict enum
+        # is still right, so only phase 2 can see it.
         ok &= _bite_one(
             "the refutation SENTENCE leaked into the ALLOWED branch",
             tmp, header,
@@ -863,8 +795,8 @@ def bite():
                 '      "  This is the EXPECTED result.  The oracle PERMITS this outcome'),
             quiet=True)
 
-        # (3) ORACLE_UNSET NO LONGER FAILS CLOSED.  An untagged harness would silently
-        # pick the forbidden frame again -- the B6c bug restored through the back door.
+        # (3) ORACLE_UNSET NO LONGER FAILS CLOSED: an untagged harness silently picks
+        # the forbidden frame.
         ok &= _bite_one(
             "ORACLE_UNSET no longer fails closed (untagged => treated as Disallowed)",
             tmp, header,
@@ -872,19 +804,16 @@ def bite():
                                 "if (0) {"),
             quiet=True)
 
-        # (4) THE WINDOWED-ZERO DISCLOSURE IS DROPPED FROM THE NON-DISALLOWED PATHS.
-        # The cv flag is still set and Phase 1 still passes -- only the SENTENCE is
-        # gone, so "we could not expose it" would be printed with no hint that the
-        # effort behind it was a window and not the full range.
+        # (4) THE WINDOWED-ZERO DISCLOSURE DROPPED FROM THE NON-DISALLOWED PATHS: the
+        # cv flag is still set, so only phase 2 can see that the sentence is gone.
         ok &= _bite_one(
             "the windowed-zero caveat dropped from the ALLOWED/NO-ORACLE printouts",
             tmp, header,
             lambda s: s.replace("  het_print_scan_caveat(_ch, _r, cv);\n", ""),
             quiet=True)
 
-        # (5) THE EMITTER MIS-TAGS AN ALLOWED TEST AS DISALLOWED.  The rule is
-        # perfect; the harness lies to it.  This is the drift Phase 3 exists to catch,
-        # and it is invisible to Phases 1 and 2 (which never look at a real harness).
+        # (5) THE EMITTER MIS-TAGS AN ALLOWED TEST AS DISALLOWED: the rule is right and
+        # the harness lies to it, which only phase 3 looks at a real harness to catch.
         print("\n-- corpus injections --")
         rc = check_corpus(quiet=True, tamper=lambda t, s: (
             s.replace("_rec.het_oracle = ORACLE_ALLOWED;",
@@ -898,9 +827,8 @@ def bite():
                   "[an ALLOWED harness emitted as ORACLE_DISALLOWED]" % rc)
             ok = False
 
-        # (6) A HARNESS SHIPS UNTAGGED.  het_verdict() would fail closed -- but only
-        # if it is ever RUN.  The census is what stops 1 of 450 quietly claiming
-        # nothing while the other 449 look fine.
+        # (6) A HARNESS SHIPS UNTAGGED: het_verdict() fails closed, but only if it is
+        # ever RUN, so the census is what stops one harness quietly claiming nothing.
         rc = check_corpus(quiet=True, tamper=lambda t, s: (
             s.replace("_rec.het_oracle = ORACLE_NONE;",
                       "_rec.het_oracle = ORACLE_UNSET;")
