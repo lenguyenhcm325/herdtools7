@@ -76,7 +76,7 @@ was dropped: old L0,L3→**1**; L1,L2-golden→**2**; L2-faithful,L4→**3**; L5
 |---|---|---|---|---|
 | **1 Static** | rule-fns as spec (unit); checker discriminating-power (negatives) | dune **cram** | bash/python | anywhere, ms |
 | **2 Generate** | corpus + emission regression golden; parse-smoke; census | **git-diff** + make | `make build` | local/CI, ~10 s |
-| **3 Compile** | PTX faithfulness (all 587); compile-smoke (10 reps) | shell drivers | nvcc+clang, **no GPU** | local / CI-with-CUDA, ~min |
+| **3 Compile** | PTX faithfulness (all 587); compile-smoke (12 reps) | shell drivers | nvcc+clang, **no GPU** | local / CI-with-CUDA, ~min |
 | **4 Hardware** | behavioral falsification; positive controls | `oracle-compare.sh` | **GH200** | manual, off-CI |
 
 Goal mapping: **regression = Layer 2** (goldens); **works-as-expected = Layers 1,
@@ -169,7 +169,7 @@ already does "run herd over a dir, compare outcomes to expected", so we would
 ### Layer 3 — Compile (shell drivers; nvcc+clang, no GPU)
 - ✓ faithfulness: `verify/l0_tokens.sh all` (already gated).
 - ✓ `comp.sh` per test (verified compiles no-GPU).
-- ✓ `smoke.sh` (built, `fa2adc9db`): emit + compile the 6 reps (§5), fail on any
+- ✓ `smoke.sh` (built, `fa2adc9db`): emit + compile the 12 reps (§5), fail on any
   nonzero. `nvcc --ptx` from faithfulness already covers gpu-only/het `.cu`, so smoke
   adds the het CPU side (clang AArch64) + `nvcc -c`/ptxas, plus the cluster test
   (gpu-only, *outside* faithfulness — smoke is its only compile check).
@@ -185,22 +185,36 @@ already does "run herd over a dir, compare outcomes to expected", so we would
 ## 5. Compile-smoke spec (settled)
 
 Single "before every commit" run — **no tiers, no nightly**. **Not all 587**
-(gpu-only `.cu` already gets `nvcc --ptx` from faithfulness). Emit + compile **6
-representatives** — 5 het via their `comp.sh`, 1 gpu-only cluster via bare `nvcc -c`
-— chosen to hit each distinct compile path once:
+(gpu-only `.cu` already gets `nvcc --ptx` from faithfulness). Emit + compile **12
+representatives** — 10 het via their `comp.sh cuda`, 1 het via `comp.sh hip`, 1
+gpu-only cluster via bare `nvcc -c` — chosen to hit each distinct compile path
+once. `verify/smoke.sh` is the authority: `NREPS` and the rep list in its header
+are the spec, and this table mirrors them.
 
-| Rep | Covers |
-|---|---|
-| one het one-sided (`MP-cg-cta-acquire`) | plain CPU STR/LDR + barrier + `nvcc -c` |
-| one `*-acqrel-2s` (`2+2W-cg-sys-acqrel-2s`) | CPU STLR + LDAPR |
-| one `*-fence-2s` (`2+2W-cg-sys-fence-2s`) | CPU DMB.SY |
-| one 4-proc het (`IRIW-cgcc-cta-relaxed`) | largest barrier / proc count |
-| one 3-proc het (`WRC-ccg-cta-relaxed`) | 3-proc scaffolding — buys down the proc-scaling assumption |
-| one cluster (`tests/cluster/MP-cluster`, gpu-only, `nvcc -c`) | Hopper inline-PTX cluster fence; **outside faithfulness**, so this is its only compile check |
+| # | Rep | Covers |
+|---|---|---|
+| 1 | het one-sided (`MP-cg-cta-acquire`) | plain CPU STR/LDR + barrier + `nvcc -c` |
+| 2 | `*-acqrel-2s` (`2+2W-cg-sys-acqrel-2s`) | two-sided; CPU STLR (store-only shape: **no** load) |
+| 3 | `*-acqrel-2s`, gc cut (`MP-gc-sys-acqrel-2s`) | the only rep emitting a CPU load-acquire (LDAPR, RCpc, `.arch_extension rcpc`) |
+| 4 | `*-fence-2s` (`2+2W-cg-sys-fence-2s`) | CPU `DMB.SY` |
+| 5 | 4-proc het (`IRIW-cgcc-cta-relaxed`) | largest barrier / proc count |
+| 6 | 3-proc het (`WRC-ccg-cta-relaxed`) | 3-proc scaffolding — buys down the proc-scaling assumption |
+| 7 | cluster (`tests/cluster/MP-cluster`, gpu-only, `nvcc -c`) | Hopper inline-PTX cluster fence; **outside faithfulness**, so this is its only compile check |
+| 8 | **HIP** render of `MP-cg-sys-acqrel-2s` (`comp.sh hip`) | the AMD/MI300A lane — the only place in the suite that compiles a `.hip` at all. Missing `hipcc` ⇒ **SKIP, loudly**; never a pass |
+| 9 | order pair (`MP-cg-sys-sy.acq-2s`) | the only rep emitting inline `fence.acquire.sys`; carries a compiled-in co-run control (μ = `MP-cg-sys-ld.acq-2s`; `MP-cg-sys-acquire` is its `MuAlt`); first rep whose name contains a `.` |
+| 10 | order pair (`S-gc-sys-ra.rel-2s`) | the only rep emitting inline `fence.release.sys`, paired with CPU STLR/LDAPR; the largest co-run in the corpus (K=4, NPART=10) |
+| 11 | order pair (`MP-cg-sys-st.sc-2s`) | the CPU `dmb st` form; its μ is `st.rel`, so the harness carries **two** `dmb st` asm blocks |
+| 12 | order pair (`MP-gc-sys-ld.sc-2s`) | the CPU `dmb ld` form on the `gc` cut (the CPU proc reads); μ = `ld.acq` ⇒ two `dmb ld` blocks |
 
-~30 s total. Residual risk (10 reps ≠ proof all 587 build) is accepted once: the
-same gate `nvcc --ptx`-compiles every one of the 587 via faithfulness, and the
-stages smoke adds (ptxas / CPU clang / link) are near-constant across tests.
+Reps 9–12 are all oracle-Disallowed, so each also exercises the co-run control
+(`HET_CONTROL_COMPILED_IN = 1`) on that family. Reps 11–12 claim only that the
+three barrier forms **build**; *which* one is emitted is pinned by
+`l0_tokens.sh selftest [5b]`.
+
+Tens of seconds total (last timed at the original 6 reps; not re-measured at 12).
+Residual risk (12 reps ≠ proof all 587 build) is accepted once: the same gate
+`nvcc --ptx`-compiles every one of the 587 via faithfulness, and the stages smoke
+adds (ptxas / CPU clang / link) are near-constant across tests.
 
 ---
 
@@ -267,7 +281,7 @@ either** (promote blindly enshrines current output, bugs and all):
 
 1. ✓ **Layer 1 cram** (`0d5940b5e`) — `basics.t`, `oracle-negatives.t`, `ptx-negatives.t` + fixtures + `dune`.
 2. ✓ **`hetlitmus-corpus`** (`6e92f2657`) — corpus + emission golden gate.
-3. ✓ **`smoke.sh`** (6 reps, `fa2adc9db`) — reuses `comp.sh`.
+3. ✓ **`smoke.sh`** (landed at 6 reps, `fa2adc9db`; **12 today** — see §5) — reuses `comp.sh`.
 4. ✓ **Makefile targets wired** (`68d102ef5`).
 5. ○ **Layer 4** — later, on the GH200.
 

@@ -17,11 +17,22 @@ Before: ~10 hand-listed tests (8 GPU-only + MP-het/SB-het). After:
 | corpus    | tests | manifest |
 |-----------|-------|----------|
 | gpu-only  | 137   | `tests/gpu-only/@all` |
-| het       | 281   | `tests/het/@all`      |
+| het       | 450   | `tests/het/@all`      |
 
 Both corpora are now driven from committed, reproducible scripts that also write
 an `@all` list-file (herd7/litmus7 read `@all` as "one test path per line",
 `lib/misc.ml:is_list`). Re-running either `generate.sh` reproduces its corpus.
+
+**Scope of *this* note.** What follows describes the **one-sided** scope × order
+grid — the 281 het tests whose GPU procs are annotated and whose CPU procs are
+plain ARMv9. The het corpus has since grown two further families that the same
+`generate.sh` emits but that are specified elsewhere: the **matched two-sided**
+tests (`-2s`, Task 3) and the **two-sided order pairs** (`-2s` with an
+`<cpu>.<gpu>` order, Q10 / Q10b). For the current split of the 450 by family, and
+for the labelling rule each family uses, see `het-oracle.md` §"The corpus:
+one-sided baseline + two-sided pairs". The counts here are re-derivable at any
+time from `hetlitmus/tests/het/*.litmus` (and `verify/dupcheck.py` reports how
+many of them are distinct experiments).
 
 ## The shape catalogue
 
@@ -69,7 +80,10 @@ scope strength is *read* from the tree, not assumed (same convention as
 byte-identical to its relaxed sibling is not a new test, so it is skipped: e.g.
 `acquire` on the all-write shape 2+2W (no read to upgrade), and, in the het
 corpus, any column whose changed annotation landed on a CPU proc or on a GPU
-proc with no matching access. GPU-only drops 3 such columns; het drops 69.
+proc with no matching access. GPU-only drops 3 such columns; the one-sided het
+grid drops 69 (11 shapes × 3 scopes × 4 orders = 132, +8 fixed-name originals
+= 140, −3 ⇒ 137 gpu-only; 29 het cut-classes × 3 × 4 = 348, +`MP-het`/`SB-het`
+= 350, −69 ⇒ 281 one-sided het).
 
 ### Naming
 
@@ -132,9 +146,10 @@ defaults to `aarch64`).
 ## End-state checks (reproduce)
 
 ```sh
-# 1. counts
-ls hetlitmus/tests/gpu-only/*.litmus | wc -l        # 137
-ls hetlitmus/tests/het/*.litmus      | wc -l        # 281
+# 1. counts  (the het total includes the two-sided families; see het-oracle.md)
+ls hetlitmus/tests/gpu-only/*.litmus | wc -l                     # 137
+ls hetlitmus/tests/het/*.litmus      | wc -l                     # 450
+ls hetlitmus/tests/het/*.litmus | grep -vc -- '-2s\.litmus'      # 281 one-sided
 
 # 2. herd7 prints one (advisory) Observation per GPU-only test
 cd hetlitmus/tests/gpu-only

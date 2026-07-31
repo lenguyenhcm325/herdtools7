@@ -2,16 +2,23 @@
 
 **Spec:** `env-research/Q4-positive-control.md`. **Design doc:** §3.8.
 **Status:** COMPLETE. B6a landed the map, the record, the rule, the report and the
-gates; **B6b landed the co-run emitter** — for each of the 16 Disallowed tests the
+gates; **B6b landed the co-run emitter** — for each **oracle-Disallowed** test the
 harness genuinely co-runs `mu(T)` and the canary, in the same launch, under the same
 stress, on the same C2C path, on disjoint cache-line-padded locations.
-**B6c made the verdict ORACLE-AWARE and gave the other 322 tests a canary** (§11).
+**B6c made the verdict ORACLE-AWARE and gave every non-Disallowed test a canary** (§11).
 
-`HET_CONTROL_COMPILED_IN` (Layer A, `mu(T)`) is **1** on exactly those 16 and **0**
-everywhere else — B6c did **not** widen it. `HET_CANARY_COMPILED_IN` (Layer B) is the
-separate flag that says a canary is co-running: **1** on 320, and **0** on the two
-tests that *are* the canary (`MP-{cg,gc}-sys-relaxed`, which cannot co-run themselves).
-See §5 and §11.
+`HET_CONTROL_COMPILED_IN` (Layer A, `mu(T)`) is **1** on exactly the Disallowed rows
+and **0** everywhere else — B6c did **not** widen it. `HET_CANARY_COMPILED_IN`
+(Layer B) is the separate flag that says a canary is co-running: **1** wherever
+`control-map.csv` names a real canary, and **0** on the two tests that *are* the
+canary (`MP-{cg,gc}-sys-relaxed`, whose `Canary` field reads `self` — they cannot
+co-run themselves). See §5 and §11.
+
+**Counts move with the corpus; `control-map.csv` is the authority.** At the time of
+writing the corpus is 450 het tests, oracle census **53 Disallowed / 353 Allowed /
+44 NO-ORACLE**, so Layer A is compiled in on 53 and Layer B on 448. Re-measure
+rather than quote: `verify/controlmap.py --check` gates the map, and
+`verify/verdictcheck.py` phase 3 gates that the emitted corpus reproduces the census.
 
 ## 1. The problem
 
@@ -40,7 +47,7 @@ it is what disqualifies the cheap controls: *a GPU-only observability result doe
 not vouch for the C2C path* (it fires with no CPU participation and without
 crossing the interconnect). This is Q5/Q6's stress finding applied to controls.
 
-- **Layer A — the minimal mutant `μ(T)`.** For each of the 16 Disallowed tests,
+- **Layer A — the minimal mutant `μ(T)`.** For each Disallowed test,
   co-run its nearest **Allowed** grid neighbour: same shape, same direction, same
   `sys` scope, same accesses, one ordering primitive weaker. If μ(T) fires, the
   harness demonstrably produced *the precise cross-device interleaving T's ordering
@@ -75,7 +82,8 @@ R-gc-sys-acquire    DOES NOT EXIST   (R-gc's  GPU proc is write-only)
 ```
 
 A naive `acqrel-2s → acquire` rewrite therefore names a **nonexistent test** for 2
-of the 16. The gate **fails closed**: a missing or non-Allowed mutant breaks the
+of the 53 (`MP-gc-sys-acqrel-2s` and `S-gc-sys-acqrel-2s`, whose real μ is the
+`-release` sibling). The gate **fails closed**: a missing or non-Allowed mutant breaks the
 build. It never skips the control — because a silently-absent control does not
 *weaken* a null, it makes it **unfalsifiable**, and the null still prints and still
 looks green.
@@ -98,18 +106,18 @@ which one fires more is hardware-only (Q4 §8.3).
 
 **Three reporting frames, one per oracle class (B6c).** "We saw the weak outcome"
 means three completely different things depending on what the model predicted, and
-until B6c the rule knew only the first one — so it framed all 338 tests as
+until B6c the rule knew only the first one — so it framed *every* test as
 should-be-forbidden. See §11.
 
 ```
 if het_oracle == UNSET                          -> COLD-INVALID   (BUILD BUG; claim nothing)
 
-ORACLE_DISALLOWED (16)   -- the model FORBIDS it; the NULL is the evidence
+ORACLE_DISALLOWED (53)   -- the model FORBIDS it; the NULL is the evidence
   if   a sighting (exhaustive OR heuristic > 0) -> MISMATCH       (refutes; report loudly)
   elif control >= tau_hot AND exhaustive_valid  -> CREDIBLE NULL  (evidence FOR the model)
   else                                          -> WEAK NULL      (escalate stress tuning)
 
-ORACLE_ALLOWED (286)     -- the model PERMITS it; the SIGHTING is the evidence
+ORACLE_ALLOWED (353)     -- the model PERMITS it; the SIGHTING is the evidence
   if   a sighting                               -> ALLOWED-OBSERVED
                                                    (the EXPECTED result; evidence the
                                                     model is not OVER-STRONG.  No control
@@ -119,7 +127,7 @@ ORACLE_ALLOWED (286)     -- the model PERMITS it; the SIGHTING is the evidence
                                                     result -- Iorga's taxonomy, Alglave's
                                                     GTX-280 honesty.  Feeds B8's tuning)
 
-ORACLE_NONE (36)         -- the model is SILENT; there is nothing to validate
+ORACLE_NONE (44)         -- the model is SILENT; there is nothing to validate
   always                                        -> CHARACTERIZED  (against the canary rate;
                                                    never "refutes", never "confirms")
 
@@ -131,8 +139,8 @@ ALL CLASSES
 NO-ORACLE rows are "characterization, always" — but a verdict that is *always* the
 same value is a constant detector wearing a third hat, and characterizing a **dead**
 harness is a fabrication, not a finding ("under a harness where the canary fired 0
-times, GH200 exhibited the outcome 0 times" is not a datum). What the 36 can never
-produce is a **model claim** — that is what the gate enforces.
+times, GH200 exhibited the outcome 0 times" is not a datum). What the NO-ORACLE rows
+can never produce is a **model claim** — that is what the gate enforces.
 
 `tau_hot = 30` (Kirkham's 95 % floor is 3; 30 makes "hot" comfortable rather than
 marginal — cheap in a perpetual harness). Its calibration is hardware-only.
@@ -186,8 +194,11 @@ worth recording because each one would have failed *silently*:
 
 **The control's count is the one that is actually measured.** μ(`SB-*-sys-fence-2s`)
 *is* `SB-*-sys-acqrel-2s` — itself a T_L≥2 shape — so its exhaustive scan does not run
-at production N and its exhaustive count is 0 *by construction*. Keying the control
-off it would leave `control_target_count` structurally zero on 2 of the 16 harnesses,
+at production N and its exhaustive count is 0 *by construction*. `SB-{cg,gc}-sys-fence-2s`
+are the **only** Disallowed rows whose μ is `T_L ≥ 2` (re-measured on the 450-test
+corpus: every other Disallowed shape — MP, LB, R, S — binds all its condition reads
+and is `T_L ≤ 1`). Keying the control off the exhaustive count
+would therefore leave `control_target_count` structurally zero on those 2 harnesses,
 and their nulls `COLD-INVALID` forever: **a positive control that cannot fire is not a
 control.** The control therefore counts the *windowed* detector, whose hits are a
 strict subset of the exhaustive scan's under the same predicate — it can miss cycles,
@@ -202,7 +213,8 @@ line around and the control would perturb the very test it exists to vouch for
 `gd_alloc_shared` arena, one cache line apart** — still the coherent allocator, which
 is what selects the property under test.
 
-**The 322 non-Disallowed tests keep `HET_CONTROL_COMPILED_IN 0`**, and that is right:
+**The non-Disallowed tests keep `HET_CONTROL_COMPILED_IN 0`** (397 of the 450 today),
+and that is right:
 they have no known-forbidden cycle, so no mutant exists (Q4 §4.2), and `het_verdict()`
 still refuses to call any of their nulls credible. **B6c gives them a Layer-B canary
 under a separate flag** (`HET_CANARY_COMPILED_IN`) — see §11.
@@ -224,7 +236,7 @@ Where a shape's control cannot be made hot, say so plainly — the GTX-280 hones
 > using our method on the Nvidia GTX 280 chip they used."
 > — Alglave et al., ASPLOS'15, footnote 7, p.577.
 
-The **36 NO-ORACLE rows** get Layer-B liveness only and are reported as
+The **NO-ORACLE rows** (44 today) get Layer-B liveness only and are reported as
 **characterization, never validation** — they have no known-forbidden cycle, so no
 mutant exists.
 
@@ -255,8 +267,8 @@ crossing C2C**. There is **no published numeric het hit-rate anywhere in the pap
 
 | gate | what it proves |
 |---|---|
-| `make hetlitmus-controlmap` | 16/16 Disallowed tests have a μ(T) that **exists** and is **Allowed**, structurally identical to T and strictly weaker. Fails closed. |
-| `make hetlitmus-verdict` | **(B6c: three phases + `--bite`)** `het_verdict()` compiled from the **real emitted header**, fed synthetic records: all **seven** verdicts and all **three** oracle classes reachable (**provably not constant**), `exhaustive_valid == 0` ⇒ never credible, `ORACLE_UNSET` fails closed, every disqualifier bites, `tau_hot` bites exactly at `tau_hot`; the **refutation text** is reachable only from `ORACLE_DISALLOWED`; all **338** emitted harnesses carry the right oracle class (census 16/286/36/0). `--bite` proves the gate FAILS on 5 injections. See §11. |
+| `make hetlitmus-controlmap` | every Disallowed test (53/53 today; `controlmap.py:N_DISALLOWED`) has a μ(T) that **exists** and is **Allowed**, structurally identical to T and strictly weaker. Fails closed. |
+| `make hetlitmus-verdict` | **(B6c: three phases + `--bite`)** `het_verdict()` compiled from the **real emitted header**, fed synthetic records: all **seven** verdicts and all **three** oracle classes reachable (**provably not constant**), `exhaustive_valid == 0` ⇒ never credible, `ORACLE_UNSET` fails closed, every disqualifier bites, `tau_hot` bites exactly at `tau_hot`; the **refutation text** is reachable only from `ORACLE_DISALLOWED`; **every** emitted harness carries the right oracle class (450 today, census 53/353/44/0 — pinned in `verdictcheck.py:CENSUS`). `--bite` proves the gate FAILS on 5 injections. See §11. |
 | `l0_tokens.sh selftest [8]` | B5's CPU/interconnect liveness gate **bites** — six injections, each `cmp -s`-verified to have actually changed the file. |
 | `hetlitmus-faithful` (`ptxcheck`) | every lane of **every co-running instance** is modelled — a missing control lane means the harness *reports* a positive control it is not running. `het_instances()` mirrors the emitter's population exactly (T / T+canary / T+μ+canary), and disagreeing is a hard failure. |
 | `hetlitmus-cram positive-control.t` | the emitted wiring: control names, the loud sentinel, `exhaustive_valid` per T_L class, the R→EXPLORATORY reporting demotion, **the oracle tag per class, the two compiled-in flags, and the canary's real co-run (name ≠ co-run)**. |
@@ -290,8 +302,9 @@ explicitly, *before* the run.
 
 ## 10. Still open
 
-- **CLOSED by B6c:** the 36 NO-ORACLE rows now co-run the Layer-B canary and report as
-  `CHARACTERIZED` against its rate (Q4 R5). So do the 286 Allowed rows. See §11.
+- **CLOSED by B6c:** the NO-ORACLE rows now co-run the Layer-B canary and report as
+  `CHARACTERIZED` against its rate (Q4 R5). So do the Allowed rows (all but the two
+  that *are* the canary). See §11.
 - Everything in §7 remains hardware-only, and the co-run makes one of them sharper:
   whether the co-running control **perturbs** T through C2C contention is now a live
   question about a harness that actually exists (Q4 §8.4). Disjoint padded locations
@@ -302,24 +315,27 @@ explicitly, *before* the run.
 
 ---
 
-## 11. B6c — the verdict is oracle-aware, and the other 322 get a canary
+## 11. B6c — the verdict is oracle-aware, and every non-Disallowed test gets a canary
 
-### The bug: 322 harnesses stood ready to falsely refute the model
+### The bug: every non-Disallowed harness stood ready to falsely refute the model
 
-`het_verdict_print` was called unconditionally in **all 338** harnesses, and
+`het_verdict_print` was called unconditionally in **every** harness, and
 `het_obs_record` carried **no oracle verdict** — so *any* test that observed its weak
 outcome printed:
 
 > `** the should-be-FORBIDDEN outcome was OBSERVED …`
 > `** A single sighting REFUTES the model's prediction for this test.`
 
-But only **16** of the 338 are Disallowed. **286 are oracle-Allowed** — for them the
+But the Disallowed rows are a small minority — **53 of the 450** today (it was 16 of
+338 when B6c found this). The **353 oracle-Allowed** rows are ones for which the
 weak outcome is *expected*, and observing it **confirms the CMCM is not over-strong**
-(Iorga's from-below half) — and **36 are NO-ORACLE**, where allowed-vs-forbidden is
-itself unestablished. Calling either a refutation is exactly backwards.
+(Iorga's from-below half); the **44 NO-ORACLE** rows are ones where allowed-vs-forbidden
+is itself unestablished. Calling either a refutation is exactly backwards.
+`verdictcheck.py`'s phase-2 message still counts them: "397 of the 450".
 
 **The sharpest instance:** `MP-cg-sys-relaxed` is oracle-**Allowed** *and* is the
-Layer-B canary for **265** rows of `control-map.csv`. The one test whose entire job is
+Layer-B canary named by the largest block of `control-map.csv` (335 rows today; its
+`gc` twin covers 113, and 2 rows are `self`). The one test whose entire job is
 to **fire** would, run standalone, have printed a refutation of the compound memory
 model *by doing its job*.
 
@@ -337,8 +353,8 @@ parser bound it as `_exp` and threw it away.
    closed** on it and prints "this is a BUILD BUG, not a result."
 2. **Three reporting frames** (§4) — and the refutation sentences are reachable from
    `ORACLE_DISALLOWED` and from nowhere else.
-3. **The canary co-runs on all 322** (Q4 R5), closing B6b's self-reported
-   incompleteness. Without it a non-firing test is *exactly as uninterpretable as a bare
+3. **The canary co-runs on every non-Disallowed test too** (Q4 R5) — all but the two
+   that *are* the canary — closing B6b's self-reported incompleteness. Without it a non-firing test is *exactly as uninterpretable as a bare
    "Never"*: `ALLOWED-UNOBSERVED` ("permitted, harness demonstrably hot, still not seen"
    — an observability result) is indistinguishable from `COLD-INVALID` ("the harness was
    dead") unless something known-observable fired on the same run.
@@ -350,9 +366,12 @@ co-running" and "the minimal mutant **of this test** is co-running" are differen
 claims, and only the second licenses a `CREDIBLE-NULL`. Collapsed into one bit, a null
 on a test that has **no mutant at all** would start reading as vouched-for — the same
 class of unfalsifiable-null bug the flag exists to prevent. So Layer A keeps its flag
-(exactly the 16) and Layer B got its own (`HET_CANARY_COMPILED_IN`, 320).
+(exactly the Disallowed rows — 53 today) and Layer B got its own
+(`HET_CANARY_COMPILED_IN` — 1 on every row whose `Canary` field is neither `-` nor
+`self`, i.e. 448 of 450, **including** the 53 that also co-run a μ).
 
-Beware `canary_name`: the map **names** a canary for all 338, but only 320 **run** one.
+Beware `canary_name`: the map **names** a canary for **every** row (450), including
+the two that name *themselves*; only 448 **run** one.
 **A name is not a co-run.** Only the flag says the instance is there.
 
 ### The two tests that are their own canary
@@ -364,7 +383,7 @@ does **not**, nothing in the harness can vouch for it and the verdict is
 `COLD-INVALID`. That is not a gap in the instrumentation: **it is what "the harness was
 cold" means** — the most observable het shape we have did not fire.
 
-They also still take the **per-variable** allocation path (the other 336 now carve a
+They also still take the **per-variable** allocation path (the other 448 now carve a
 padded arena), which is why `shared-alloc.t`'s per-variable guard moved to
 `MP-cg-sys-relaxed` rather than being deleted.
 
@@ -376,5 +395,5 @@ padded arena), which is why `shared-alloc.t`'s per-variable guard moved to
 |---|---|
 | 1 — the rule | all **7** verdicts and all **3** oracle classes reachable (a rule that always returns one value is not a decision; an oracle branch keyed off a constant field is that bug in a new place); `ORACLE_UNSET` fails closed; every disqualifier still bites |
 | 2 — the printout | the three refutation claims (`should-be-FORBIDDEN`, `REFUTES the model's prediction`, `Disallowed outcome`) appear **iff** `ORACLE_DISALLOWED`. Checked **both ways** — absent from every Allowed/NO-ORACLE block *and* still present in the Disallowed sighting. **Phase 1 cannot see this**: the verdict enum changing is not the deliverable, the *sentence* is. |
-| 3 — the corpus | all **338** emitted harnesses carry the class `control-map.csv` gives them; census **16 / 286 / 36**, and **zero** untagged. A rule that branches on a class the emitter never sets is a rule nobody runs. |
+| 3 — the corpus | **every** emitted harness carries the class `control-map.csv` gives it (450 today; census **53 / 353 / 44**, pinned as `verdictcheck.py:CENSUS`), and **zero** untagged. A rule that branches on a class the emitter never sets is a rule nobody runs. |
 | `--bite` | **5 injections** (3 against the rule, 2 against the emitted corpus), each verified to have actually changed the code it corrupts. A gate never seen to fail is not evidence. |

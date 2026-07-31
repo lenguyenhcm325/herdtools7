@@ -26,7 +26,8 @@
 #                              whole suite that compiles a .hip at all
 #   9. MP-cg-sys-sy.acq-2s     order-pair; the only rep emitting inline
 #                              `fence.acquire.sys' (PTX ISA 8.6 / sm_90), with a
-#                              compiled-in co-run control (mu = MP-cg-sys-acquire);
+#                              compiled-in co-run control (mu = MP-cg-sys-ld.acq-2s;
+#                              MP-cg-sys-acquire is that row's MuAlt);
 #                              also the first rep whose test name contains a `.'
 #  10. S-gc-sys-ra.rel-2s      order-pair; the only rep emitting inline
 #                              `fence.release.sys', paired with CPU STLR/LDAPR,
