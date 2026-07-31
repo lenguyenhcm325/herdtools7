@@ -13,7 +13,7 @@
 # requirement; only *launching* a kernel needs hardware (that is Layer 4).  Reuses
 # `comp.sh` verbatim (no new build code); see hetlitmus/docs/TEST-PLAN.md sec.5.
 #
-# The 10 reps -- each hits one distinct compile path once:
+# The 12 reps -- each hits one distinct compile path once:
 #   1. MP-cg-cta-acquire       het one-sided; plain CPU STR/LDR + barrier
 #   2. 2+2W-cg-sys-acqrel-2s   het two-sided; CPU STLR (store-only shape: NO load)
 #   3. MP-gc-sys-acqrel-2s     het two-sided GPU->CPU; CPU LDAPR (RCpc) -- the only
@@ -36,12 +36,20 @@
 #  10. S-gc-sys-ra.rel-2s     Q10 order-pair; the ONLY rep emitting inline
 #                              `fence.release.sys', paired with CPU STLR/LDAPR, and
 #                              the largest co-run in the corpus (K=4, NPART=10).
+#  11. MP-cg-sys-st.sc-2s    Q10b: the CPU `dmb st' form, which litmus7 could not
+#                              emit at all before Q10b c1.  Its mu is st.rel, so the
+#                              harness carries TWO `dmb st' asm blocks.
+#  12. MP-gc-sys-ld.sc-2s    Q10b: the CPU `dmb ld' form, on the GPU->CPU cut (the
+#                              CPU proc reads), mu = ld.acq -> two `dmb ld' blocks.
+#                              A barrier that assembles is not a barrier that is the
+#                              RIGHT one: l0_tokens.sh selftest [5b] is what pins
+#                              sy/st/ld apart; this rep pins that they BUILD.
 #
 # Usage:
-#   bash hetlitmus/verify/smoke.sh          # run all 10 reps (pre-commit gate)
+#   bash hetlitmus/verify/smoke.sh          # run all 12 reps (pre-commit gate)
 #   bash hetlitmus/verify/smoke.sh bite      # prove the gate has TEETH (self-test)
 #
-# Exit 0 (prints `SMOKE OK`) iff all 10 reps compile; nonzero if any rep fails.  A
+# Exit 0 (prints `SMOKE OK`) iff all 12 reps compile; nonzero if any rep fails.  A
 # missing hipcc SKIPS rep 8 loudly -- it never counts as a pass.
 # ---------------------------------------------------------------------------
 set -u
@@ -55,7 +63,7 @@ CLU_DIR="$ROOT/hetlitmus/tests/cluster"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-NREPS=10          # keep in sync with the rep list in the header and below
+NREPS=12          # keep in sync with the rep list in the header and below
 fails=0
 skips=0
 n=0
@@ -189,6 +197,13 @@ case "$cmd" in
     # order-pair family (HET_CONTROL_COMPILED_IN=1).
     smoke_het     MP-cg-sys-sy.acq-2s   "Q10 order-pair; inline fence.acquire.sys + co-run mu"
     smoke_het     S-gc-sys-ra.rel-2s    "Q10 order-pair; inline fence.release.sys + CPU STLR/LDAPR"
+    # Q10b.  `dmb st' / `dmb ld' are a NEW emitted CPU form -- before Q10b c1
+    # hetCpuBody.ml Warn.fatal'd on them, so litmus7 could not produce these
+    # harnesses at all.  Both reps are oracle-Disallowed AND their mu(T) carries the
+    # same partial barrier, so each _cpu.c holds two of them (T + the mutant), which
+    # is also the co-run path on the widened family.
+    smoke_het     MP-cg-sys-st.sc-2s    "Q10b order-pair; CPU dmb st (x2: T + mu) + fence.sc.sys"
+    smoke_het     MP-gc-sys-ld.sc-2s    "Q10b order-pair; CPU dmb ld (x2: T + mu) on the gc cut"
     printf '\n=====================================================================\n'
     if [ "$fails" -eq 0 ] && [ "$skips" -eq 0 ]; then
       printf 'SMOKE OK  (%d/%d reps compiled)\n' "$NREPS" "$NREPS"; exit 0

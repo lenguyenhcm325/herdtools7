@@ -340,6 +340,40 @@ selftest() {
     rm -rf "$dd/ish"
   fi
 
+  # (iii) the OTHER direction, on a test that carries the Q10b form: a partial
+  # barrier silently STRENGTHENED to the full one.  That is the dangerous
+  # direction for the widened corpus -- MP-cg-sys-st.sc-2s is oracle-Disallowed
+  # BECAUSE `DMB ST' happens to order its CPU proc's W;W pair, and a harness that
+  # quietly ran `dmb sy' instead would still print a null and the null would no
+  # longer be about the primitive the row claims to test.
+  printf '\n[5c] Q10b: a PARTIAL CPU barrier strengthened dmb st -> dmb sy must FAIL(1)\n'
+  local ST=MP-cg-sys-st.sc-2s SL2="$HET_DIR/MP-cg-sys-st.sc-2s.litmus"
+  local sd="$sc/st" scpu
+  mkdir -p "$sd"
+  litmus7 -set-libdir litmus/libdir -o "$sd" "$SL2" >/dev/null 2>&1
+  scpu="$sd/$ST/${ST}_cpu.c"
+  nvcc -std=c++17 -arch=sm_90 --ptx -o "$sd/st.ptx" "$sd/$ST/$ST.cu" >/dev/null 2>&1
+  if [ ! -s "$scpu" ] || [ ! -s "$sd/st.ptx" ]; then
+    echo "  *** could not emit het harness/_cpu.c for $ST"
+    fails=$((fails+1))
+  elif ! grep -qiE '"[[:space:]]*dmb[[:space:]]+st' "$scpu"; then
+    echo "  *** $ST _cpu.c has no 'dmb st' -- the Q10b emitter arm is not firing"
+    fails=$((fails+1))
+  else
+    echo "  confirmed: $ST _cpu.c contains 'dmb st' ($(grep -ci 'dmb st' "$scpu") block(s): T + mu)"
+    python3 "$CHECK" "$SL2" --ptx "$sd/st.ptx" --cpu-c "$scpu" -q >/dev/null 2>&1; rc=$?
+    _expect "dmb st control (unmodified)" 0 "$rc" || fails=$((fails+1))
+    sed 's/\bdmb st\b/dmb sy/g' "$scpu" > "$sd/sy_cpu.c"
+    if cmp -s "$scpu" "$sd/sy_cpu.c"; then
+      printf '  *** VACUOUS BITE: injection changed nothing    [dmb st -> dmb sy]\n'
+      fails=$((fails+1))
+    else
+      out="$(python3 "$CHECK" "$SL2" --ptx "$sd/st.ptx" --cpu-c "$sd/sy_cpu.c" 2>&1)"; rc=$?
+      echo "$out" | grep -E 'MISMATCH' | head -2
+      _expect "emitted dmb st STRENGTHENED to dmb sy" 1 "$rc" || fails=$((fails+1))
+    fi
+  fi
+
   # ---- [6] B4: the GPU stress layer's ops are MODELLED, and the model bites ----
   # The stress layer adds ops to the kernel, so ptxcheck had to grow an
   # expectation for them.  An expectation that cannot fail is worse than none, so
