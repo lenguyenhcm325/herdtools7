@@ -28,17 +28,17 @@ THE MECHANISM (diagnosed from the emitted C, then reproduced at runtime).
 
 WHAT THIS GATE CHECKS.
 
-  PHASE 1 -- SHAPE (all 386 emitted harnesses)
+  PHASE 1 -- SHAPE (all 450 emitted harnesses)
     Exactly one histogram add per harness (only T feeds it -- a control whose
     outcomes polluted T's histogram would be a different bug).  It is INSIDE the
     per-frame loop IFF the harness has a per-frame observable (`int _hot =',
     emitted iff the test has a reader), guarded by exactly `_hot || _weak'; and
     for the 22 reader-less shapes it is the PER-RUN add, at run level, shown by
-    the `_loc' witness.  Census 364 / 22.  This is the invariant the shipped code
+    the `_loc' witness.  Census 428 / 22.  This is the invariant the shipped code
     violated: an add inside the frame loop in a harness that has no per-frame
     observable at all.
 
-  PHASE 2 -- DISPLAY (all 386)
+  PHASE 2 -- DISPLAY (all 450)
     A coherence-final `[ell]' column is never printed as a number, because no
     such number is ever measured; the register columns still are.  Checked both
     ways, and the loop bounds must partition the slots exactly.
@@ -72,9 +72,9 @@ HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 # Corpus censuses.  These are FACTS ABOUT THE CORPUS, re-derived below from the
 # emitted artifacts; a mismatch means either the corpus changed (update these,
 # deliberately) or the emitter did (that is what this gate is for).
-N_TESTS = 386
+N_TESTS = 450
 N_STORE_ONLY = 22           # the 2+2W family: no reader, observer-only
-N_WITH_LOC_COLUMN = 96      # 2+2W 22 + R 37 + S 37 (Q10 added 12 R + 12 S)
+N_WITH_LOC_COLUMN = 128     # 2+2W 22 + R 53 + S 53 (Q10 +12 R +12 S; Q10b +16 R +16 S)
 
 # The store-only shape whose tally Phase 3 extracts and runs.
 TALLY_TEST = "2+2W-cg-sys-fence"

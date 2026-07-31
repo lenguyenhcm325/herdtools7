@@ -173,18 +173,30 @@ arm_ord() {
 
 # render_cpu_cycle <order> <base-edge>...  ->  annotated AArch64 edge token list
 # (the CPU-side mirror of render_cycle, but with ARM atoms and NO scope).
-#   acqrel : every read -> LDAPR (Q), every write -> STLR (L)   (atom on each end)
-#   fence  : every access plain; each intra-proc Pod<XY> becomes the full-barrier
-#            edge `DMB.SYd<XY>' (emits a DMB SY between the two accesses); the
-#            external edges (Rfe/Fre/Coe) stay bare (their plain ends agree with
-#            the adjacent atoms -- verified with diyone7).
+#   acqrel   : every read -> LDAPR (Q), every write -> STLR (L)  (atom on each end)
+#   fence    : every access plain; each intra-proc Pod<XY> becomes the full-barrier
+#              edge `DMB.SYd<XY>' (emits a DMB SY between the two accesses); the
+#              external edges (Rfe/Fre/Coe) stay bare (their plain ends agree with
+#              the adjacent atoms -- verified with diyone7).
+#   fence-st : the same, with the PARTIAL barrier `DMB.STd<XY>' (DMB ST orders
+#   fence-ld   store->store only) resp. `DMB.LDd<XY>' (DMB LD orders load->load
+#              and load->store only).  These are the CPU one-role halves that
+#              Q10b unblocked -- diy has always generated them (`diyone7 -arch
+#              AArch64 -show fences'); what was missing was litmus7 emission
+#              (litmus/hetCpuBody.ml, Q10b c1).  Only the (E) order-pair grid
+#              uses them; (D) still pairs `acqrel'/`fence' on both devices.
 render_cpu_cycle() {
   local order="$1"; shift
-  local out="" e as ad base
+  local out="" e as ad base fb=""
+  case "$order" in
+    fence)    fb=DMB.SY;;
+    fence-st) fb=DMB.ST;;
+    fence-ld) fb=DMB.LD;;
+  esac
   for e in "$@"; do
     edge_src_dst "$e" || return 1
-    if [ "$order" = fence ]; then
-      if [ "$IS_PO" = 1 ]; then base="DMB.SYd${e#Pod}"; else base="$e"; fi
+    if [ -n "$fb" ]; then
+      if [ "$IS_PO" = 1 ]; then base="${fb}d${e#Pod}"; else base="$e"; fi
       out="$out $base"
     else
       as=$(arm_ord "$SRC" "$order") || return 1
@@ -206,22 +218,26 @@ render_cpu_cycle() {
 #
 #   cpu  ra -> STLR / LDAPR atoms (== the `acqrel' CPU half)
 #        sy -> DMB SY             (== the `fence'  CPU half)
+#        st -> DMB ST             ld -> DMB LD          [Q10b]
 #   gpu  ra -> w[release,sys] / r[acquire,sys] atoms
 #        sc -> f[sc,sys]          rel -> f[release,sys]   acq -> f[acquire,sys]
 #
 # The two DIAGONAL cells are NOT re-emitted: `ra.ra' IS <shape>-<cut>-sys-acqrel-2s
 # and `sy.sc' IS <shape>-<cut>-sys-fence-2s.  generate.sh PROVES that (byte-diff
-# against the committed file) rather than assuming it.
+# against the committed file) rather than assuming it.  `st'/`ld' have no
+# pre-existing sibling, so no diagonal cell is skipped for them: the grid is
+# 4 x 4 = 16 cells per cut class, of which 2 are the (D) diagonal -> 14 emitted.
 #
-# BLOCKED AXIS.  Q10 also asks for DMB.ST / DMB.LD on the CPU.  diy generates
-# them (diyone7 -arch AArch64 -show fences) and the oracle rule + ordercheck.py
-# decide them, but litmus/hetCpuBody.ml:186 accepts only `DMB SY' / `DSB SY' and
-# fatals on any other I_FENCE, so such a test CANNOT BE EMITTED.  Lifting that
-# is an OCaml change; see docs/het-oracle.md "blocked axis" and the Q10 report.
+# Q10b LIFTED THE BLOCKED AXIS.  Until Q10b the CPU axis was `ra sy' only -- not
+# because diy could not generate DMB.ST/DMB.LD (it always could: `diyone7 -arch
+# AArch64 -show fences') nor because the oracle could not decide them (the rule
+# and ordercheck.py always did), but because litmus/hetCpuBody.ml accepted only
+# `DMB SY'/`DSB SY' and Warn.fatal'd on any other I_FENCE, so the tests could
+# not be EMITTED.  Two match arms lifted it; the axis is now 4 wide.
 #
-# `f[acq_rel,sys]' is likewise unavailable: `FenceAcq_relSys' does not lex as a
+# `f[acq_rel,sys]' is still unavailable: `FenceAcq_relSys' does not lex as a
 # diy edge name (the underscore breaks the edge lexer) -- verified with diyone7.
-TWO_SIDED_CPU_ORDERS="ra sy"
+TWO_SIDED_CPU_ORDERS="ra sy st ld"
 TWO_SIDED_GPU_ORDERS="ra sc rel acq"
 
 # Shapes + cuts for the off-diagonal sweep.  2-proc only: NO-ORACLE is a
@@ -246,8 +262,10 @@ declare -A SHAPE_2S_PAIR_CUTS=(
 render_2s_cpu() {
   local t="$1"; shift
   case "$t" in
-    ra) render_cpu_cycle acqrel "$@";;
-    sy) render_cpu_cycle fence  "$@";;
+    ra) render_cpu_cycle acqrel   "$@";;
+    sy) render_cpu_cycle fence    "$@";;
+    st) render_cpu_cycle fence-st "$@";;
+    ld) render_cpu_cycle fence-ld "$@";;
     *) echo "bad two-sided cpu order: $t" >&2; return 1;;
   esac
 }

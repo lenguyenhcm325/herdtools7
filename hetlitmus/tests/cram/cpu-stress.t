@@ -50,7 +50,7 @@ and NO host ISA asm appears in the .cu at all:
 `clang --target=aarch64-linux-gnu -c', but <pthread.h> does NOT -- it reaches x86
 glibc's __cleanup_fct_attribute, which is __attribute__((__regparm__(1))), and
 regparm is invalid on AArch64.  comp.sh cross-assembles <test>_cpu.c and smoke.sh
-gates on it, so a stray include here fails the smoke gate on all 386 het tests.
+gates on it, so a stray include here fails the smoke gate on all 450 het tests.
 The thread bodies need only the pthread entry-point signature; pthread_create is
 called from the .cu, which is built for the native host.
   $ grep -c '#include <pthread.h>' MP-cg-sys-acqrel-2s/het_cpu_stress.h || true

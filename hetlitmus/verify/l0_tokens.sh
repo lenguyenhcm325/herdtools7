@@ -12,7 +12,7 @@
 # Usage:
 #   bash hetlitmus/verify/l0_tokens.sh            # gpu-only + het table + tally
 #   bash hetlitmus/verify/l0_tokens.sh gpu-only   # just the 137 gpu-only
-#   bash hetlitmus/verify/l0_tokens.sh het        # just the 386 het
+#   bash hetlitmus/verify/l0_tokens.sh het        # just the 450 het
 #   bash hetlitmus/verify/l0_tokens.sh guard      # completeness-guard report
 #   bash hetlitmus/verify/l0_tokens.sh selftest   # inject weaken+strengthen
 #   JOBS=8 bash hetlitmus/verify/l0_tokens.sh     # parallelism (default 4)
@@ -26,7 +26,7 @@ export PATH="/usr/local/cuda/bin:$ROOT/_build/install/default/bin:$PATH"
 
 CHECK="$ROOT/hetlitmus/verify/ptxcheck.py"
 # Overridable so the F4 census guard can be BITTEN (point at an empty dir -> the
-# expected 137/386 fails).  Default is the real corpus, so normal runs are unchanged.
+# expected 137/450 fails).  Default is the real corpus, so normal runs are unchanged.
 GPU_DIR="${GPU_DIR:-$ROOT/hetlitmus/tests/gpu-only}"
 HET_DIR="${HET_DIR:-$ROOT/hetlitmus/tests/het}"
 JOBS="${JOBS:-4}"
@@ -75,9 +75,9 @@ run_dir() {
     done
   fi
   # F4 (DR1-B): `pass -eq total' is VACUOUSLY true on an empty/misnamed corpus
-  # (0 -eq 0) -- it would print "faithfulness (523): OK" for ZERO tests, the exact
+  # (0 -eq 0) -- it would print "faithfulness (587): OK" for ZERO tests, the exact
   # inert-gate class this project keeps shipping.  Assert the KNOWN census
-  # (het=386, gpu-only=137), the same exact-count discipline corpus-gate and
+  # (het=450, gpu-only=137), the same exact-count discipline corpus-gate and
   # verdictcheck use; a census change then has to be a deliberate edit to the
   # CALL SITE, never an accident.
   if [ "$expect" -gt 0 ] && [ "$total" -ne "$expect" ]; then
@@ -750,7 +750,7 @@ cpustress_report() {
 cmd="${1:-all}"
 case "$cmd" in
   gpu-only)  run_dir "$GPU_DIR" gpu-only 137 ;;
-  het)       run_dir "$HET_DIR" het 386 ;;
+  het)       run_dir "$HET_DIR" het 450 ;;
   guard)     guard_report; exit $? ;;
   selftest)  selftest; exit $? ;;
   stress)    stress_report; exit $? ;;
@@ -758,7 +758,7 @@ case "$cmd" in
   all)
     rc=0
     run_dir "$GPU_DIR" gpu-only 137 || rc=1
-    run_dir "$HET_DIR" het 386 || rc=1
+    run_dir "$HET_DIR" het 450 || rc=1
     exit $rc ;;
   *) echo "usage: $0 [all|gpu-only|het|guard|selftest|stress|cpustress]"; exit 64 ;;
 esac

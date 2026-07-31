@@ -1,0 +1,14 @@
+Het S-cg-sys-ld.acq-2s
+"Heterogeneous S-cg-sys-ld.acq-2s: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X1=x;
+0:X3=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#2   | r[relaxed,sys] r0 y ;
+ STR W0,[X1] | f[acquire,sys]      ;
+ DMB LD      | w[relaxed,sys] x 1  ;
+ MOV W2,#1   |                     ;
+ STR W2,[X3] |                     ;
+scopes: (sys (gpu (cta P1)))
+exists (1:r0=1 /\ [x]=2)

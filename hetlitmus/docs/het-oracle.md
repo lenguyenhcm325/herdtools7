@@ -97,7 +97,7 @@ where it should be.
 
 ## The corpus: one-sided baseline + two-sided pairs
 
-`generate.sh` emits **386** het tests:
+`generate.sh` emits **450** het tests:
 
 - **281 one-sided** (the Task-2 baseline, unchanged): GPU procs annotated, CPU
   procs plain ARMv9. Grid `<shape>-<cuttag>-<scope>-<order>` over scope ∈
@@ -116,9 +116,11 @@ where it should be.
   close a pair). A two-sided test whose CPU procs have no instruction to attach
   to (e.g. `IRIW-gcgc` fence: both CPU procs are single writers) is dropped as
   *not actually two-sided*.
-- **48 two-sided, order-pair** (`-2s` with order `<cpu>.<gpu>`, Q10): the
-  **off-diagonal** of the same pairing grid, on the 2-proc shapes minus `2+2W`.
-  See "Two-sided order pairs" below.
+- **112 two-sided, order-pair** (`-2s` with order `<cpu>.<gpu>`, Q10 + Q10b):
+  the **off-diagonal** of the same pairing grid, on the 2-proc shapes minus
+  `2+2W` — 8 cut classes × (4 CPU × 4 GPU − 2 diagonal). Q10 shipped 48 of
+  them with the CPU axis stuck at `{ra,sy}`; Q10b lifted the emitter blocker
+  and added the other 64. See "Two-sided order pairs" below.
 
 ## The labelling rule
 
@@ -185,7 +187,7 @@ Q10 sweeps the off-diagonal on the six 2-proc shapes (minus `2+2W`):
 
 | axis | values | name token |
 |---|---|---|
-| CPU | `STLR`/`LDAPR` atoms, `DMB SY` | `ra`, `sy` |
+| CPU | `STLR`/`LDAPR` atoms, `DMB SY`, `DMB ST`, `DMB LD` | `ra`, `sy`, `st`, `ld` |
 | GPU | `w[release,sys]`/`r[acquire,sys]` atoms, `f[sc,sys]`, `f[release,sys]`, `f[acquire,sys]` | `ra`, `sc`, `rel`, `acq` |
 
 so `MP-cg-sys-sy.acq-2s` is MP on the `cpu,gpu` cut with `DMB SY` between the
@@ -197,13 +199,15 @@ committed file rather than assuming it. `SB` and `LB` emit the `cg` cut only
 (their cycle is rotation-invariant, so `gc` would be the same experiment with
 the labels exchanged — `make hetlitmus-dup` is what holds that honest).
 
-> **BLOCKED AXIS.** Q10 also asks for `DMB ST` / `DMB LD` on the CPU. diy
-> generates them, the rule below decides them and `ordercheck.py` machine-checks
-> them — but **no such test can be emitted**: `litmus/hetCpuBody.ml:186` accepts
-> only `DMB SY` / `DSB SY` and calls `Warn.fatal` on any other `I_FENCE`, so
-> `litmus7` refuses the harness. Lifting it is an OCaml change (two extra match
-> arms) and was out of scope for Q10. Until then the CPU axis has two values,
-> not four, and the grid is 2 × 4 rather than 4 × 4.
+> **THE BLOCKED AXIS, LIFTED (Q10b).** Q10 asked for `DMB ST` / `DMB LD` on the
+> CPU and could not ship them: diy generated them, the rule below decided them
+> and `ordercheck.py` machine-checked them, but **no such test could be
+> emitted** — `litmus/hetCpuBody.ml` accepted only `DMB SY` / `DSB SY` and
+> called `Warn.fatal` on any other `I_FENCE`. Q10b added the two match arms
+> (`DMB (SY, ST)` → `dmb st`, `DMB (SY, LD)` → `dmb ld`; both assemble under
+> `clang --target=aarch64-linux-gnu` with no architectural extension), so the
+> CPU axis is now four values wide and the grid is 4 × 4. **Not one line of the
+> verdict rule changed** to accept the 64 new cells — they were already decided.
 
 These verdicts are **not hand-written**. `build-nvidia-oracle.sh` carries a
 compositional rule over two per-primitive facts, and
@@ -250,18 +254,25 @@ supply `sc`, which is [PTX] Fig 6 (*"requires a `fence.sc` to be placed between
 the memory operations in each thread. PTX also requires the two fences to be
 morally strong."*).
 
-The 48 emitted cells come out **22 Disallowed / 21 Allowed / 5 NO-ORACLE**:
+The 112 emitted cells come out **37 Disallowed / 67 Allowed / 8 NO-ORACLE**
+(Q10's 48 gave 22/21/5; Q10b's 64 add 15/46/3):
 
 | cut class | D | A | NO | |
 |---|---|---|---|---|
-| MP-cg | 4 | 2 | 0 | producer=CPU: needs `rel` + WW; consumer=GPU: needs `acq` + RR |
-| MP-gc | 4 | 2 | 0 | mirrored |
-| SB-cg | 0 | 6 | 0 | W→R on both procs: only `sy.sc` (already existing) reaches it |
-| LB-cg | 6 | 0 | 0 | both procs R;W and LB has `rf` **both** ways, so every cell pairs |
-| R-cg | 0 | 5 | 1 | no `rf`: needs `sc` on both, which only `sy.sc` has |
-| R-gc | 0 | 4 | 2 | ditto |
-| S-cg | 4 | 0 | 2 | producer=CPU (WW, `rel`); consumer=GPU (RW, `acq`) |
-| S-gc | 4 | 2 | 0 | mirrored |
+| MP-cg | 7 | 7 | 0 | producer=CPU: needs `rel` + WW; consumer=GPU: needs `acq` + RR |
+| MP-gc | 7 | 7 | 0 | mirrored |
+| SB-cg | 0 | 14 | 0 | W→R on both procs: only `sy.sc` (already existing) reaches it |
+| LB-cg | 9 | 4 | 1 | both procs R;W and LB has `rf` **both** ways, so most cells pair |
+| R-cg | 0 | 12 | 2 | no `rf`: needs `sc` on both, which only `sy.sc` has |
+| R-gc | 0 | 12 | 2 | ditto |
+| S-cg | 7 | 4 | 3 | producer=CPU (WW, `rel`); consumer=GPU (RW, `acq`) |
+| S-gc | 7 | 7 | 0 | mirrored |
+
+The 15 cells Q10b added on the `st`/`ld` CPU rows are exactly those where a
+**partial** CPU barrier is the half its role needs: `MP-cg` and `S-cg`
+`st.{ra,sc,acq}` (CPU producer `W;W`, so `DMB ST` suffices and supplies `rel`),
+and `MP-gc`, `S-gc`, `LB-cg` `ld.{ra,sc,rel}` (CPU consumer reads first, so
+`DMB LD` suffices and supplies `acq`).
 
 **Why the third row is NO-ORACLE and not Disallowed — [CMCM] says so itself.**
 CMCM ships **two** compound models: the operational LOST-POP model of §4–5 and
@@ -325,20 +336,25 @@ outcome is a hard contradiction (`MISMATCH`).
 
 ## Verdict tally
 
-**386 rows** (one per `.litmus`): **307 Allowed, 38 Disallowed, 41 NO-ORACLE.**
+**450 rows** (one per `.litmus`): **353 Allowed, 53 Disallowed, 44 NO-ORACLE.**
 
-- **38 Disallowed** = 16 matched + 22 order-pair.
+- **53 Disallowed** = 16 matched + 37 order-pair.
   - 16 matched = MP·LB·S × {cg,gc} × {acqrel,fence} (12) + SB·R × {cg,gc} ×
     {fence} (4).
-  - 22 order-pair = MP-cg 4 + MP-gc 4 + LB-cg 6 + S-cg 4 + S-gc 4 (SB-cg, R-cg,
+  - 37 order-pair = MP-cg 7 + MP-gc 7 + LB-cg 9 + S-cg 7 + S-gc 7 (SB-cg, R-cg,
     R-gc contribute none).
-- **41 NO-ORACLE** = 36 + 5.
+- **44 NO-ORACLE** = 36 + 8.
   - 36 = the 2 one-sided `IRIW-gcgc` + 34 two-sided (2+2W, WRC, RWC-fence,
     ISA2, IRIW, WRC3).
-  - 5 order-pair = R-cg 1 + R-gc 2 + S-cg 2, the cells where CMCM's operational
-    and axiomatic models disagree (see below).
-- **307 Allowed** = 279 one-sided baseline + 7 matched two-sided (SB·R `acqrel`,
-  RWC `acqrel`) + 21 order-pair.
+  - 8 order-pair = R-cg 2 + R-gc 2 + S-cg 3 + LB-cg 1, the cells where CMCM's
+    operational and axiomatic models disagree (see below).
+- **353 Allowed** = 279 one-sided baseline + 7 matched two-sided (SB·R `acqrel`,
+  RWC `acqrel`) + 67 order-pair.
+
+Up to (proc permutation × location renaming) the 53 `Disallowed` files are
+**50 distinct experiments** — the corpus's falsification surface (`make
+hetlitmus-dup`; the 3 collapses are the pre-existing `LB-cg/gc-sys-acqrel-2s`,
+`LB-cg/gc-sys-fence-2s` and `SB-cg/gc-sys-fence-2s` mirror pairs).
 
 ## The two one-sided NO-ORACLE tests
 
@@ -371,18 +387,18 @@ is needed and the AMD CSV must not be reused.
 
 ```sh
 cd hetlitmus/tests/het
-./generate.sh                                                # 386 tests, @all
+./generate.sh                                                # 450 tests, @all
 ./build-nvidia-oracle.sh                                     # regen the CSV (+ tally to stderr)
 
 # 1. exactly one row per .litmus, no file missing, no extra/dup
-ls *.litmus | wc -l                                          # 386
-grep -vE '^#|^Litmus,' expected-nvidia.csv | wc -l           # 386
+ls *.litmus | wc -l                                          # 450
+grep -vE '^#|^Litmus,' expected-nvidia.csv | wc -l           # 450
 diff <(ls *.litmus | sed 's/\.litmus$//' | sort -u) \
      <(grep -vE '^#|^Litmus,' expected-nvidia.csv | cut -d, -f1 | sort -u)   # empty
 
 # 2. verdict tally + a two-sided test carries STLR/LDAPR/DMB on its CPU proc
 grep -vE '^#|^Litmus,' expected-nvidia.csv | cut -d, -f2 | sort | uniq -c
-#   307 Allowed   38 Disallowed   41 NO-ORACLE
+#   353 Allowed   53 Disallowed   44 NO-ORACLE
 grep -E 'STLR|LDAPR|DMB SY' MP-cg-sys-acqrel-2s.litmus MP-gc-sys-fence-2s.litmus
 
 # 3. drive the harness (synthesized; the sample includes a real MISMATCH)

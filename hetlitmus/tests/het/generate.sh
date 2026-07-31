@@ -27,8 +27,9 @@
 #      x86_64 files are NOT committed by default.
 #  (E) The two-sided ORDER-PAIR grid: <shape>-<cuttag>-sys-<cpu>.<gpu>-2s, the
 #      OFF-DIAGONAL of (D).  (D) applies the same order name to both devices, so
-#      only the diagonal was ever generated; (E) sweeps cpu in {ra,sy} x gpu in
-#      {ra,sc,rel,acq} on the 2-proc shapes (minus 2+2W).  See ../_grid_lib.sh.
+#      only the diagonal was ever generated; (E) sweeps cpu in {ra,sy,st,ld} x
+#      gpu in {ra,sc,rel,acq} on the 2-proc shapes (minus 2+2W) -- 8 cut classes
+#      x (16 - 2 diagonal) = 112 files.  See ../_grid_lib.sh.
 #  (D) The TWO-SIDED family: <shape>-<cuttag>-sys-{acqrel,fence}-2s.  Unlike (A)-
 #      (C) (GPU annotated, CPU plain), these annotate BOTH devices so a complete
 #      morally-strong cross-device pair forms (CPU: STLR/LDAPR/DMB.SY via
@@ -168,10 +169,10 @@ done
 # (D) applies the SAME order name to both devices, so only the two diagonal
 # cells were generated.  The per-side ordering a primitive supplies depends on
 # which program-order pair its proc has -- so sweep
-#   cpu in {ra, sy} x gpu in {ra, sc, rel, acq}
+#   cpu in {ra, sy, st, ld} x gpu in {ra, sc, rel, acq}
 # named <shape>-<cuttag>-sys-<cpu>.<gpu>-2s.  See ../_grid_lib.sh for the token
-# table, the blocked DMB.ST/DMB.LD axis, and why only 2-proc shapes (minus
-# 2+2W) and one cut for SB/LB.  Verdicts are COMPOSITIONAL and machine-checked:
+# table, how Q10b unblocked the DMB.ST/DMB.LD axis, and why only 2-proc shapes
+# (minus 2+2W) and one cut for SB/LB.  Verdicts are COMPOSITIONAL and machine-checked:
 # build-nvidia-oracle.sh + verify/ordercheck.py (make hetlitmus-order).
 pair_count=0 diag_count=0
 for shape in $TWO_SIDED_PAIR_SHAPES; do

@@ -66,7 +66,7 @@ stores (the observer lane's uint64 loads are counted separately below).
   $ grep -c 'ref.store(((uint64_t)5 \* (_n + 1) + 3)' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   1
 
-Observers (Decision 4/5): the 72 add ONE GPU observer lane + ONE CPU observer
+Observers (Decision 4/5): the 128 add ONE GPU observer lane + ONE CPU observer
 pthread (NPART grows by 2); each snoops every observed location, and a per-run
 ws scan (Eq 3.12) fills _loc with the same-observer-thread cycle.
 

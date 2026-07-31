@@ -26,7 +26,7 @@ All verified on the dev box (has `dune`/`ocaml`, `herd7`/`litmus7`/`hetgen7`/
 `diyone7` built in `_build`, `nvcc`, and an RTX 3060 = sm_86).
 
 - **Generation is byte-reproducible.** Re-running `tests/gpu-only/generate.sh`
-  (137) and `tests/het/generate.sh` (338) reproduces the committed `.litmus`
+  (137) and `tests/het/generate.sh` (450) reproduces the committed `.litmus`
   corpus with **zero diff** (`git status --short` empty). Het ~6.8 s.
   → golden-master via `git diff` is viable and nearly free.
 - **Emitters are byte-reproducible.** Re-emitting the 10 committed `cuda-out/*.cu`
@@ -53,7 +53,7 @@ All verified on the dev box (has `dune`/`ocaml`, `herd7`/`litmus7`/`hetgen7`/
   acquire, fence→standalone scoped fence / DMB.SY).
 
 ### Current state of `hetlitmus/verify/` against this plan
-- **Layer 3 faithfulness: ✓ and gated.** `l0_tokens.sh all` sweeps all 523 via
+- **Layer 3 faithfulness: ✓ and gated.** `l0_tokens.sh all` sweeps all 587 via
   `nvcc --ptx` + `ptxcheck`, returning nonzero on any FAIL.
 - **Layer 1 negatives: now gated (`c2e4df4c5`).** `l0_tokens.sh selftest` (weaken
   order/scope, miscount, CPU STLR→STR) and `guard` (unknown-token → exit 2) are real
@@ -76,7 +76,7 @@ was dropped: old L0,L3→**1**; L1,L2-golden→**2**; L2-faithful,L4→**3**; L5
 |---|---|---|---|---|
 | **1 Static** | rule-fns as spec (unit); checker discriminating-power (negatives) | dune **cram** | bash/python | anywhere, ms |
 | **2 Generate** | corpus + emission regression golden; parse-smoke; census | **git-diff** + make | `make build` | local/CI, ~10 s |
-| **3 Compile** | PTX faithfulness (all 523); compile-smoke (10 reps) | shell drivers | nvcc+clang, **no GPU** | local / CI-with-CUDA, ~min |
+| **3 Compile** | PTX faithfulness (all 587); compile-smoke (10 reps) | shell drivers | nvcc+clang, **no GPU** | local / CI-with-CUDA, ~min |
 | **4 Hardware** | behavioral falsification; positive controls | `oracle-compare.sh` | **GH200** | manual, off-CI |
 
 Goal mapping: **regression = Layer 2** (goldens); **works-as-expected = Layers 1,
@@ -89,15 +89,15 @@ Pre-commit gate = Layers 1–3 (all local, none need a GPU). Layer 4 is GH200-on
 Exhaustive good-case coverage is the **goldens' job, not the cram's.** The good-case
 enumeration is *defined* by the grid knobs in `_grid_lib.sh` (`SHAPE_ORDER` ×
 `GRID_SCOPES` × `GRID_ORDERS`, plus het `SHAPE_HET_CUTS` × `TWO_SIDED_ORDERS`) and
-*materialized* as the committed corpus (**137 gpu-only + 338 het**). It is asserted
-exhaustively over **all 523** by:
+*materialized* as the committed corpus (**137 gpu-only + 450 het**). It is asserted
+exhaustively over **all 587** by:
 
-| What is checked over ALL 523 | Layer |
+| What is checked over ALL 587 | Layer |
 |---|---|
 | byte-pinned (regression) | 2 golden (`git status --porcelain`) |
 | PTX/asm matches its annotation (faithfulness) | 3 (`l0_tokens.sh all`) |
 | compiles | 3 (faithful `nvcc --ptx` + smoke) |
-| enumeration didn't silently shrink | 2 census (counts 137/338, `@all`) |
+| enumeration didn't silently shrink | 2 census (counts 137/450, `@all`) |
 
 The rule functions (`render_cycle`, …) get exhaustive coverage *transitively* — the
 corpus **is** their output across the full grid, so the Layer-2 golden pins every
@@ -115,7 +115,7 @@ Three golden mechanisms, each matched to a layer by shape of the check:
 | Mechanism | Used for | "Promote" (update golden) = | Why it fits |
 |---|---|---|---|
 | **dune cram `.t`** | Layer 1 units + negatives | `dune promote` | each is one command → exact stdout/exit |
-| **git-diff** | Layer 2 corpus/emission golden | `git commit` | 523 byte-stable files; git already is the store + promote |
+| **git-diff** | Layer 2 corpus/emission golden | `git commit` | 587 byte-stable files; git already is the store + promote |
 | **shell drivers** (`l0_tokens.sh`, new `smoke.sh`) | Layer 3 sweeps | n/a (pass/fail) | directory sweeps / multi-step |
 | (none) | Layer 4 | n/a | nondeterministic, hardware |
 
@@ -163,7 +163,7 @@ already does "run herd over a dir, compare outcomes to expected", so we would
   re-emitted in place: that would litter 127 untracked `.cu` in `cuda-out/`.)
 - ~ parse-smoke (every `.litmus` emits without error) already comes free from the
   Layer-3 faithfulness sweep, which emits every test.
-- ✓ census (in `corpus-gate.sh`): asserts counts 137/338. The extra per-test
+- ✓ census (in `corpus-gate.sh`): asserts counts 137/450. The extra per-test
   column-count / `@all` contracts remain optional (not implemented).
 
 ### Layer 3 — Compile (shell drivers; nvcc+clang, no GPU)
@@ -184,7 +184,7 @@ already does "run herd over a dir, compare outcomes to expected", so we would
 
 ## 5. Compile-smoke spec (settled)
 
-Single "before every commit" run — **no tiers, no nightly**. **Not all 523**
+Single "before every commit" run — **no tiers, no nightly**. **Not all 587**
 (gpu-only `.cu` already gets `nvcc --ptx` from faithfulness). Emit + compile **6
 representatives** — 5 het via their `comp.sh`, 1 gpu-only cluster via bare `nvcc -c`
 — chosen to hit each distinct compile path once:
@@ -198,8 +198,8 @@ representatives** — 5 het via their `comp.sh`, 1 gpu-only cluster via bare `nv
 | one 3-proc het (`WRC-ccg-cta-relaxed`) | 3-proc scaffolding — buys down the proc-scaling assumption |
 | one cluster (`tests/cluster/MP-cluster`, gpu-only, `nvcc -c`) | Hopper inline-PTX cluster fence; **outside faithfulness**, so this is its only compile check |
 
-~30 s total. Residual risk (10 reps ≠ proof all 523 build) is accepted once: the
-same gate `nvcc --ptx`-compiles every one of the 523 via faithfulness, and the
+~30 s total. Residual risk (10 reps ≠ proof all 587 build) is accepted once: the
+same gate `nvcc --ptx`-compiles every one of the 587 via faithfulness, and the
 stages smoke adds (ptxas / CPU clang / link) are near-constant across tests.
 
 ---

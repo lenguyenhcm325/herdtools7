@@ -3,12 +3,14 @@
 machine-checked against BOTH constituent solvers.
 
 WHY THIS GATE EXISTS.  The two-sided (`-2s') het tests are the only rows that
-can be `Disallowed', i.e. the only rows that can refute the compound model.  Q10
-widens that family from one fence pairing (DMB.SY x fence.sc.sys) to the full
-3 x 3 grid  CPU {DMB.SY, DMB.ST, DMB.LD}  x  GPU {f[sc,sys], f[release,sys],
-f[acquire,sys]}.  Whether a given pairing forbids a given shape is NOT a matter
+can be `Disallowed', i.e. the only rows that can refute the compound model.
+Q10 + Q10b widen that family from one fence pairing (DMB.SY x fence.sc.sys) to
+the full 4 x 4 grid
+  CPU {STLR/LDAPR, DMB.SY, DMB.ST, DMB.LD}
+  GPU {w[release]/r[acquire], f[sc,sys], f[release,sys], f[acquire,sys]} (.sys).
+Whether a given pairing forbids a given shape is NOT a matter
 of "both sides have a fence": DMB.LD on a store;store producer orders nothing,
-and a PTX release fence on a load;load consumer orders nothing.  Writing 8 x 9
+and a PTX release fence on a load;load consumer orders nothing.  Writing 8 x 16
 verdicts by hand is exactly how an oracle acquires a silent error, and an oracle
 error is a FALSE REFUTATION of the compound memory model.
 
@@ -16,13 +18,13 @@ So build-nvidia-oracle.sh implements a COMPOSITIONAL rule, and this gate proves
 the rule is the same function that herd7 computes -- twice, from two independent
 models, over every cell:
 
-  PHASE 1  ARM.  All six 2-proc shapes x DMB(P0) x DMB(P1) = 54 CPU-only AArch64
-           tests, generated with diyone7 and decided by herd7's NATIVE AArch64
-           model.  The rule's ARM half must reproduce all 54.
-  PHASE 2  PTX.  The same 54 cells as LISA/Bell sys-scope tests with
-           f[{sc,release,acquire},sys], decided by herd7 + hetlitmus/bells/
-           ptx.bell + hetlitmus/cats/nvidia-ptx.cat (the repo's Lustig'19
-           encoding).  The rule's PTX half must reproduce all 54.
+  PHASE 1  ARM.  All six 2-proc shapes x prim(P0) x prim(P1) = 96 CPU-only
+           AArch64 tests, generated with diyone7 and decided by herd7's NATIVE
+           AArch64 model.  The rule's ARM half must reproduce all 96.
+  PHASE 2  PTX.  The same 96 cells as LISA/Bell sys-scope tests with
+           w[release]/r[acquire] resp. f[{sc,release,acquire},sys], decided by
+           herd7 + hetlitmus/bells/ptx.bell + hetlitmus/cats/nvidia-ptx.cat (the
+           repo's Lustig'19 encoding).  The rule's PTX half must reproduce all 96.
   PHASE 3  ORACLE.  Every two-sided fence-pair row of tests/het/
            expected-nvidia.csv must equal the rule's het verdict -- including
            the pre-existing `-fence-2s' rows, which are the (DMB.SY, f[sc,sys])
@@ -132,10 +134,11 @@ ROLE = {
     "Ra": RELACQ_ROLE, "Sc": frozenset(("rel", "acq", "sc")),
     "Release": frozenset(("rel",)), "Acquire": frozenset(("acq",)),
 }
-# corpus name token -> primitive.  `ra'/`sy' are the two CPU halves the emitter
-# can actually build (hetCpuBody.ml accepts STR/STLR/LDR/LDAR/LDAPR and DMB SY
-# ONLY); `st'/`ld' are decided by the rule and machine-checked here, but no test
-# carrying them can be emitted today -- see docs/het-oracle.md "blocked axis".
+# corpus name token -> primitive.  All four CPU halves are real corpus cells since
+# Q10b: `st'/`ld' were always decided by the rule and machine-checked here, and
+# Q10b lifted the litmus/hetCpuBody.ml emission blocker that kept them off disk.
+# NOT ONE LINE of ORD / ROLE / CPU_FENCE changed to admit them -- which is the
+# point: the 64 new oracle rows are decided by a rule that predates the tests.
 CPU_FENCE = {"ra": "RA", "sy": "SY", "st": "ST", "ld": "LD"}
 GPU_FENCE = {"ra": "Ra", "sc": "Sc", "rel": "Release", "acq": "Acquire"}
 
@@ -319,6 +322,20 @@ TWOS = re.compile(r"^(?P<shape>MP|SB|LB|R|S)-(?P<cut>cg|gc)-sys-"
                   r"(?:(?P<c>ra|sy|st|ld)\.(?P<g>ra|sc|rel|acq)"
                   r"|(?P<f>fence)|(?P<a>acqrel))-2s$")
 
+# Q10b: the number of oracle rows Phase 3 must ACTUALLY read, asserted -- not
+# merely printed.  `n == 0' alone is too weak a guard: a regex that stopped
+# matching the `st'/`ld' cells would silently drop 64 of the 132 rows and the
+# phase would still report OK on the remaining 68.  That is the same
+# gate-went-half-inert failure this project keeps finding, so pin the number.
+#
+#   112  order-pair cells  = 8 cut classes (MP-cg MP-gc SB-cg LB-cg R-cg R-gc
+#                            S-cg S-gc) x (4 cpu x 4 gpu - 2 diagonal)
+#    20  the (D) diagonal  = 5 shapes x {cg,gc} x {-fence-2s, -acqrel-2s},
+#                            read as the (sy,sc) and (ra,ra) cells
+#   ---
+#   132
+EXPECT_ORACLE_ROWS = 132
+
 
 def phase_oracle(quiet):
     bad = []
@@ -345,9 +362,11 @@ def phase_oracle(quiet):
         print("  %d rows checked on MP/SB/LB/R/S -- the emitted fence-pair cells"
               "\n  PLUS the pre-existing `-fence-2s' and `-acqrel-2s' rows read "
               "as the (sy,sc) and (ra,ra) cells" % n)
-    if n == 0:
-        bad.append("ORACLE: no two-sided 2-proc rows found -- the gate is "
-                   "checking nothing")
+    if n != EXPECT_ORACLE_ROWS:
+        bad.append("ORACLE: read %d two-sided 2-proc rows, expected %d -- the "
+                   "phase is checking a DIFFERENT set of rows than it claims "
+                   "(a name-regex that stopped matching, or a corpus change "
+                   "that was not recounted)" % (n, EXPECT_ORACLE_ROWS))
     return bad
 
 
@@ -389,6 +408,12 @@ INJECTIONS = [
      "D.ROLE['Acquire'] = frozenset(('acq','rel'))", "PTX "),
     ("GPU_FENCE reads the corpus token `sc' as a release fence",
      "D.GPU_FENCE = dict(D.GPU_FENCE, sc='Release')", "ORACLE"),
+    # Q10b: the row-count pin.  Half-blinding the name regex (drop `st|ld') is
+    # exactly the failure the pin exists for -- every row it STILL reads agrees
+    # with the rule, so without the pin the phase would report OK on 68 of 132.
+    ("the name regex stops matching the `st'/`ld' CPU cells (phase half-blind)",
+     "D.TWOS = __import__('re').compile(D.TWOS.pattern.replace('ra|sy|st|ld', 'ra|sy'))",
+     "ORACLE"),
 ]
 
 
@@ -400,7 +425,8 @@ def bite():
         drv.write("import sys\nsys.path.insert(0, %r)\nimport ordercheck as D\n"
                   "def snap():\n"
                   "    return (frozenset(D.ORD['ST']), frozenset(D.ORD['Acquire']),"
-                  " frozenset(D.ROLE['Acquire']), D.sync_ok, dict(D.GPU_FENCE))\n"
+                  " frozenset(D.ROLE['Acquire']), D.sync_ok, dict(D.GPU_FENCE),"
+                  " D.TWOS.pattern)\n"
                   "before = snap()\n"
                   "%s\n"
                   "assert before != snap(), 'injection was vacuous'\n"

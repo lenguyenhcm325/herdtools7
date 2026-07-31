@@ -22,17 +22,17 @@
 #                                            reader-order half IS present, but
 #                                            IRIW needs MCA -- unestablished)
 #
-#  Two-sided ORDER-PAIR tests (`-2s' with order `<cpu>.<gpu>', Q10 steps 1-4):
-#  the OFF-DIAGONAL of the pairing grid, on the 2-proc shapes (minus 2+2W),
-#      cpu in {ra = STLR/LDAPR , sy = DMB SY}
+#  Two-sided ORDER-PAIR tests (`-2s' with order `<cpu>.<gpu>', Q10 steps 1-4 +
+#  Q10b): the OFF-DIAGONAL of the pairing grid, on the 2-proc shapes (minus 2+2W),
+#      cpu in {ra = STLR/LDAPR , sy = DMB SY , st = DMB ST , ld = DMB LD}
 #      gpu in {ra = w[release]/r[acquire] , sc = fence.sc.sys ,
 #              rel = fence.release.sys , acq = fence.acquire.sys}
 #  minus the two DIAGONAL cells, which ARE the pre-existing rows: `ra.ra' is
 #  `-acqrel-2s' and `sy.sc' is `-fence-2s' (generate.sh byte-diffs both to prove
-#  it).  DMB.ST / DMB.LD are DECIDED HERE and machine-checked by ordercheck.py,
-#  but no test carrying them can be EMITTED: litmus/hetCpuBody.ml:186 accepts
-#  only `DMB SY'/`DSB SY' and fatals on any other I_FENCE.  That axis is blocked
-#  pending an OCaml change -- see docs/het-oracle.md "blocked axis".
+#  it).  DMB.ST / DMB.LD were always DECIDED HERE and machine-checked by
+#  ordercheck.py; Q10b lifted the litmus/hetCpuBody.ml emission blocker, so the
+#  cells that decision covers are now real files.  Not one line of the rule
+#  below changed to accept them.
 #
 #  These are NOT hand verdicts: two_sided_order_pair() below is a COMPOSITIONAL
 #  rule over two per-primitive facts, and hetlitmus/verify/ordercheck.py proves

@@ -657,7 +657,7 @@ hetlitmus-corpus: | build
 hetlitmus-faithful: | build
 	@ echo
 	bash hetlitmus/verify/l0_tokens.sh all
-	@ echo "HetLitmus Layer-3 PTX faithfulness (523): OK"
+	@ echo "HetLitmus Layer-3 PTX faithfulness (587): OK"
 
 hetlitmus-smoke: | build
 	@ echo
@@ -686,7 +686,7 @@ hetlitmus-cpustress: | build
 
 ### B6 THE POSITIVE CONTROL.  Two gates, both CUDA-free.
 ###
-### hetlitmus-controlmap: every one of the 16 Disallowed tests must have a mu(T)
+### hetlitmus-controlmap: every one of the 53 Disallowed tests must have a mu(T)
 ### that EXISTS as a .litmus and is labelled Allowed -- re-derived from the corpus
 ### sources + the oracle, never from the test's name (the one-sided grid variants
 ### are named for the op the GPU performs, so MP-gc-sys-acquire / S-gc-sys-acquire /
@@ -700,8 +700,9 @@ hetlitmus-controlmap: | build
 
 ### hetlitmus-dup: the ISOMORPHISM gate (Q10 step 0).  generate.sh dedups only by
 ### byte-comparing a variant against ONE designated sibling, which cannot see the
-### duplicates that dominate the corpus: 338 committed het tests are only 299
-### distinct experiments up to (proc permutation x location renaming), all 39
+### duplicates that dominate the corpus: the 338 het tests of Q10 time were only
+### 299 distinct experiments up to (proc permutation x location renaming) -- 450
+### -> 411 after the Q10/Q10b widenings, the SAME 39 classes throughout, all 39
 ### redundant files being the cg/gc mirror pairs of the rotation-invariant shapes
 ### (SB/LB/2+2W) -- and 3 of them sit inside the Disallowed rows that carry the
 ### falsification claim.  The 39 are kept (their verdicts agree; the census is
@@ -720,23 +721,25 @@ hetlitmus-dup: | build
 
 ### hetlitmus-order: the ORDERING RULE behind the two-sided oracle, machine-checked
 ### against BOTH constituent solvers.  The `-2s' rows are the only ones that can be
-### Disallowed -- the only ones that can refute the compound model -- and Q10 widens
-### them from one fence pairing (DMB.SY x fence.sc.sys) to the 3x3 grid
-### CPU{DMB.SY,DMB.ST,DMB.LD} x GPU{fence.sc,fence.release,fence.acquire}.sys.  Which
+### Disallowed -- the only ones that can refute the compound model -- and Q10+Q10b
+### widen them from one fence pairing (DMB.SY x fence.sc.sys) to the 4x4 grid
+### CPU{STLR/LDAPR,DMB.SY,DMB.ST,DMB.LD} x GPU{rel/acq atoms,fence.sc,fence.release,
+### fence.acquire}.sys.  Which
 ### cells forbid is NOT "both sides have a fence": DMB.LD on a store;store producer
 ### orders nothing and a release fence on a load;load consumer orders nothing.  Hand
 ### verdicts are how an oracle acquires a silent error, and an oracle error here is a
 ### FALSE REFUTATION of the model.  So build-nvidia-oracle.sh carries a COMPOSITIONAL
 ### rule and this gate proves it is the same function herd7 computes:
-###   ARM     54 CPU-only AArch64 cells under herd7's NATIVE model
-###   PTX     54 GPU-only LISA/Bell cells under nvidia-ptx.cat (Lustig'19)
-###   ORACLE  every two-sided fence-pair row of expected-nvidia.csv, INCLUDING the
-###           pre-existing `-fence-2s' rows as the (DMB.SY, fence.sc.sys) cell -- so
-###           the bash oracle and the rule cannot drift apart
-### --bite corrupts the rule five ways (a store barrier that orders loads, an acquire
+###   ARM     96 CPU-only AArch64 cells under herd7's NATIVE model
+###   PTX     96 GPU-only LISA/Bell cells under nvidia-ptx.cat (Lustig'19)
+###   ORACLE  all 132 two-sided 2-proc rows of expected-nvidia.csv -- an ASSERTED
+###           count, INCLUDING the pre-existing `-fence-2s'/`-acqrel-2s' rows as the
+###           (DMB.SY x fence.sc.sys) / (rel-acq atom) cells -- so the bash oracle and
+###           the rule cannot drift apart, and a half-blind phase cannot pass
+### --bite corrupts the rule six ways (a store barrier that orders loads, an acquire
 ### fence that leaves load;store free, the pattern clause dropped, an acquire fence
-### that also releases, the corpus token `sc' read as a release fence) and requires
-### each to redden the phase that NAMES it.  ~3 s; no nvcc, no GPU.
+### that also releases, the corpus token `sc' read as a release fence, the name regex
+### blinded to the `st'/`ld' cells) and requires each to redden the phase that NAMES it.  ~3 s; no nvcc, no GPU.
 hetlitmus-order: | build
 	@ echo
 	python3 hetlitmus/verify/ordercheck.py
@@ -753,12 +756,12 @@ hetlitmus-order: | build
 ###                      closed.
 ###   Phase 2 (printout) the REFUTATION CLAIMS ("should-be-FORBIDDEN", "REFUTES the
 ###                      model's prediction", "Disallowed outcome") are reachable from
-###                      ORACLE_DISALLOWED and from NOTHING ELSE.  322 of the 338 het
+###                      ORACLE_DISALLOWED and from NOTHING ELSE.  397 of the 450 het
 ###                      tests are not should-be-forbidden, and a refutation printed on
 ###                      one of them is a FALSE REFUTATION of the compound model.  The
 ###                      verdict enum changing is not the deliverable; the SENTENCE is.
-###   Phase 3 (corpus)   all 338 emitted harnesses carry the oracle class control-map.csv
-###                      gives them (census 16 / 286 / 36, and ZERO untagged).  A rule
+###   Phase 3 (corpus)   all 450 emitted harnesses carry the oracle class control-map.csv
+###                      gives them (census 53 / 353 / 44, and ZERO untagged).  A rule
 ###                      that branches on a class the emitter never sets is a rule
 ###                      nobody runs.
 ### --bite then PROVES THE GATE FAILS when the mechanism breaks: 5 injections (3 against
@@ -783,7 +786,7 @@ hetlitmus-verdict: | build
 ###               autocorrelation times; N_eff clamped to [1, HET_NWIN]; the
 ###               tau-at-cap regime reproduces B7's run-level bound EXACTLY
 ###   producer    the per-window sub-tallies live BOTH ways on the real emitted scan
-###   corpus      all 338 carry the post-pass + a decode channel
+###   corpus      all 450 carry the post-pass + a decode channel
 ###   scheduler   (B7b) campaign.py stopping policy on a stub runner: Allowed rows
 ###               stop at first clean sighting, bound rows at p_goal or budget
 ### --bite then PROVES THE GATE FAILS when the statistics break, cmp-verified.

@@ -10,7 +10,8 @@ of locations), with the device tag travelling with the proc.
 
 Measured 2026-07-30 (env-research/Q10-corpus-coverage.md sect 2.1): the 338
 committed het tests were only **299 distinct** experiments (386 -> 347 after the
-Q10 order-pair widening, same 39 classes).  All 39 redundant files are
+Q10 order-pair widening, 450 -> 411 after Q10b unblocked the CPU fence axis --
+same 39 classes throughout).  All 39 redundant files are
 `SB' / `LB' / `2+2W' -- the three shapes whose cycle is invariant under
 rotation-by-two, which swaps P0 and P1, so the `cg' and `gc' device cuts emit the
 SAME experiment with the labels exchanged (e.g. SB-cg-sys-relaxed is

@@ -44,10 +44,15 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
 
-# The Disallowed census the gate ASSERTS (it is not merely reported).  Q10:
-# 16 -> 38 = the 16 pre-existing `-{acqrel,fence}-2s' rows + 22 of the 48 new
-# two-sided order-pair cells; derivation in env-research/impl-briefs/Q10-REPORT.md.
-N_DISALLOWED = 38
+# The Disallowed census the gate ASSERTS (it is not merely reported).
+#   Q10 : 16 -> 38 = the 16 pre-existing `-{acqrel,fence}-2s' rows + 22 of the
+#         48 two-sided order-pair cells the off-diagonal sweep added.
+#   Q10b: 38 -> 53 = + 15 of the 64 cells the unblocked CPU fence axis
+#         (DMB.ST/DMB.LD) added -- MP-cg/S-cg st.{ra,sc,acq} and
+#         MP-gc/S-gc/LB-cg ld.{ra,sc,rel}, i.e. exactly the cells where a
+#         PARTIAL CPU barrier is the half its role needs.
+# Derivations in env-research/impl-briefs/Q10-REPORT.md and Q10b-REPORT.md.
+N_DISALLOWED = 53
 
 # ---------------------------------------------------------------------------
 # THE PER-SIDE ORDERING-STRENGTH LATTICE.  mu(T) must be strictly weaker

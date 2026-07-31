@@ -4,10 +4,10 @@
 B7's budget rule said a defensible "Never" needs ~1,500-30,000 runs per test.  Two of
 the three levers that shrink that are PURE SCHEDULING, and this driver is both:
 
-  LEVER 1 -- only 79 of the 386 tests need a bound at all.
-      38 Disallowed  = the CMCM validation claim   -> run to a bound (or refutation)
-      41 NO-ORACLE   = characterization            -> run to a bound
-     307 Allowed     = just need to FIRE ONCE      -> a positive is self-vouching
+  LEVER 1 -- only 97 of the 450 tests need a bound at all.
+      53 Disallowed  = the CMCM validation claim   -> run to a bound (or refutation)
+      44 NO-ORACLE   = characterization            -> run to a bound
+     353 Allowed     = just need to FIRE ONCE      -> a positive is self-vouching
                         (B6c ALLOWED-OBSERVED), so they stop at the first clean
                         sighting.  Running them to bound-grade budgets would burn
                         ~6.5x the campaign for nothing.

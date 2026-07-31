@@ -12,8 +12,8 @@ nothing -- or worse, do the wrong thing loudly:
     constant-false `_weak' detector B3 shipped on 266 of 338 tests;
   * a rule that does not know WHAT THE MODEL PREDICTS frames every test as
     should-be-forbidden, and prints "the should-be-FORBIDDEN outcome was OBSERVED
-    ... a single sighting REFUTES the model" on the 348 of 386 tests where the
-    weak outcome is EXPECTED (307 Allowed) or where the model is SILENT (41
+    ... a single sighting REFUTES the model" on the 397 of 450 tests where the
+    weak outcome is EXPECTED (353 Allowed) or where the model is SILENT (44
     NO-ORACLE).  That is a LOUD FALSE REFUTATION of the thesis's central claim,
     and it is what B6c fixed.
 
@@ -43,11 +43,11 @@ drift), feeds it synthetic het_obs_records, and asserts, in three phases:
     simply gone is not a check.
 
   PHASE 3 -- THE EMITTED CORPUS
-    All 386 het harnesses are emitted and their `_rec.het_oracle = ORACLE_*' is
+    All 450 het harnesses are emitted and their `_rec.het_oracle = ORACLE_*' is
     cross-checked, PER TEST, against field 2 of tests/het/control-map.csv, with a
-    census (38 Disallowed / 307 Allowed / 41 NO-ORACLE / 0 UNSET).  A rule that
+    census (53 Disallowed / 353 Allowed / 44 NO-ORACLE / 0 UNSET).  A rule that
     branches correctly on an oracle class the emitter never sets is worthless: the
-    unit test would pass and all 386 harnesses would still fail closed.
+    unit test would pass and all 450 harnesses would still fail closed.
 
 Usage:  verdictcheck.py [--header PATH] [-q]        run the gate
         verdictcheck.py --bite                      prove the gate FAILS when the
@@ -74,7 +74,7 @@ ORACLES = ["ORACLE_DISALLOWED", "ORACLE_ALLOWED", "ORACLE_NONE"]
 
 # The oracle census the emitted corpus MUST reproduce (expected-nvidia.csv, via
 # control-map.csv field 2).  ORACLE_UNSET is not listed because it must never occur.
-CENSUS = {"Disallowed": 38, "Allowed": 307, "NO-ORACLE": 41}
+CENSUS = {"Disallowed": 53, "Allowed": 353, "NO-ORACLE": 44}
 
 CSV_TO_C = {"Disallowed": "ORACLE_DISALLOWED",
             "Allowed": "ORACLE_ALLOWED",
@@ -84,7 +84,7 @@ CSV_TO_C = {"Disallowed": "ORACLE_DISALLOWED",
 # THE THREE REFUTATION CLAIMS.  Each is a sentence that only a should-be-FORBIDDEN
 # test is entitled to print.  On an oracle-ALLOWED test the very same observation is
 # the model working as specified, so printing any of these is a false refutation of
-# the compound model -- on 348 of the 386 harnesses, including the canary itself.
+# the compound model -- on 397 of the 450 harnesses, including the canary itself.
 #
 # These are matched as EXACT SUBSTRINGS, and they are deliberately the *claims*, not
 # the word "forbidden": the NO-ORACLE text legitimately contains "neither allowed nor
@@ -105,8 +105,8 @@ BASE = dict(
     target_count_exhaustive=0,
     target_count_heuristic=0,
     interleavings_detected=1000,
-    # DR1-A2/F2: the baseline is a READER (sync-channel) test -- 364 of the 386, and
-    # 36 of the 38 Disallowed (the 2 exceptions are the store-only 2+2W rows).  The verdict is now CHANNEL-AWARE, so a record with
+    # DR1-A2/F2: the baseline is a READER (sync-channel) test -- 428 of the 450, and
+    # 51 of the 53 Disallowed (the 2 exceptions are the store-only 2+2W rows).  The verdict is now CHANNEL-AWARE, so a record with
     # neither channel flag set fails closed; the store-only cases below flip to the
     # observer channel (sync_valid=0, obs_valid=1) explicitly.
     sync_valid=1,
@@ -138,7 +138,7 @@ def case(name, verdict, dq=(), cv=(), **kw):
 
 CASES = [
     # =======================================================================
-    # 1. THE DISALLOWED FRAME (38 tests).  Unchanged by B6c: the null IS the
+    # 1. THE DISALLOWED FRAME (53 tests).  Unchanged by B6c: the null IS the
     #    evidence, so it has to be earned.
     # =======================================================================
     case("credible-null", "CREDIBLE-NULL"),
@@ -175,7 +175,7 @@ CASES = [
          exhaustive_valid=0, control_target_count=500),
 
     # =======================================================================
-    # 2. B6c -- THE ALLOWED FRAME (307 tests).  Here the SIGHTING is the
+    # 2. B6c -- THE ALLOWED FRAME (353 tests).  Here the SIGHTING is the
     #    evidence, and it is evidence FOR the model, not against it.
     # =======================================================================
     # THE BUG B6c EXISTS TO KILL.  Before B6c this record -- an oracle-ALLOWED test
@@ -200,7 +200,7 @@ CASES = [
 
     # Permitted, harness demonstrably hot (the canary fired), still not seen.  An
     # OBSERVABILITY result -- Iorga's taxonomy, Alglave's GTX-280 honesty -- NOT a
-    # model result.  This verdict is why the 307 needed a canary at all: without one
+    # model result.  This verdict is why the 353 needed a canary at all: without one
     # it is indistinguishable from a dead harness.
     case("allowed-unobserved-is-observability-not-model", "ALLOWED-UNOBSERVED",
          het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0),
@@ -241,7 +241,7 @@ CASES = [
          control_target_count=0, canary_target_count=0),
 
     # =======================================================================
-    # 3. B6c -- THE NO-ORACLE FRAME (41 tests).  Q4 R5: characterization, NEVER
+    # 3. B6c -- THE NO-ORACLE FRAME (44 tests).  Q4 R5: characterization, NEVER
     #    validation.  There is no prediction here to confirm or refute.
     # =======================================================================
     case("no-oracle-fired-is-characterized", "CHARACTERIZED",
@@ -258,7 +258,7 @@ CASES = [
     # constant detector wearing a third hat, and characterizing a DEAD harness is a
     # fabrication, not a finding ("under a harness where the canary fired 0 times,
     # GH200 exhibited the outcome 0 times" is not a datum).  So COLD-INVALID stays
-    # reachable here.  What the 41 can never produce is a MODEL claim -- Phase 2
+    # reachable here.  What the 44 can never produce is a MODEL claim -- Phase 2
     # enforces that.
     case("no-oracle-cold-harness-is-COLD-not-characterized", "COLD-INVALID",
          dq=["CONTROLS_COLD"], het_oracle="ORACLE_NONE",
@@ -389,7 +389,7 @@ CASES = [
     # 11. B6c: CANARY_ONLY is a DIAGNOSTIC, not boilerplate.
     # =======================================================================
     # "Layer B fired, Layer A did not" is only meaningful where a Layer A EXISTS to
-    # have not fired.  Raised on the 348 tests that have no mutant by construction, it
+    # have not fired.  Raised on the 397 tests that have no mutant by construction, it
     # would fire on 95% of the corpus and tell a reader nothing.  It must NOT be set
     # on a canary-only harness.
     case("canary-only-caveat-is-not-raised-without-a-mutant", "ALLOWED-UNOBSERVED",
@@ -648,7 +648,7 @@ def scan_prints(blocks, cases_by_name, quiet):
             print("      %-46s prints the refutation (correctly): %s"
                   % (name, ", ".join(repr(h) for h in hits)))
 
-    # The 41 NO-ORACLE rows must never make a MODEL claim in either direction.
+    # The 44 NO-ORACLE rows must never make a MODEL claim in either direction.
     for name, (oracle, text) in sorted(blocks.items()):
         if oracle != "NO-ORACLE":
             continue
@@ -683,7 +683,7 @@ def scan_prints(blocks, cases_by_name, quiet):
             print("      %-46s names the observer channel (correctly)" % name)
 
     if bad:
-        print("\nPRINT FAILED: %d problem(s).  This is the B6c bug: 348 of the 386 "
+        print("\nPRINT FAILED: %d problem(s).  This is the B6c bug: 397 of the 450 "
               "harnesses are not should-be-forbidden tests, and a refutation printed "
               "on one of them is a false refutation of the compound model." % bad)
         return 1
@@ -899,8 +899,8 @@ def bite():
             ok = False
 
         # (6) A HARNESS SHIPS UNTAGGED.  het_verdict() would fail closed -- but only
-        # if it is ever RUN.  The census is what stops 1 of 386 quietly claiming
-        # nothing while the other 337 look fine.
+        # if it is ever RUN.  The census is what stops 1 of 450 quietly claiming
+        # nothing while the other 449 look fine.
         rc = check_corpus(quiet=True, tamper=lambda t, s: (
             s.replace("_rec.het_oracle = ORACLE_NONE;",
                       "_rec.het_oracle = ORACLE_UNSET;")

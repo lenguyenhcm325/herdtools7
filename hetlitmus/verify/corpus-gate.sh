@@ -14,7 +14,7 @@
 #      A pre-existing working-tree edit is snapshotted BEFORE regen, because
 #      regen overwrites (and would silently clobber) a hand-edit to a
 #      grid-generated .litmus.
-#   2. Census tripwire -- exactly 137 gpu-only + 386 het .litmus (the grid did
+#   2. Census tripwire -- exactly 137 gpu-only + 450 het .litmus (the grid did
 #      not silently shrink or grow).
 #   3. Emission golden -- emit every gpu-only .cu to a TEMP dir and byte-diff the
 #      10 committed cuda-out/*.cu samples against it.  emit-cuda.sh drops all 137
@@ -47,7 +47,7 @@ GPU_DIR="hetlitmus/tests/gpu-only"
 HET_DIR="hetlitmus/tests/het"
 CUDA_OUT="hetlitmus/cuda-out"
 EXPECT_GPU=137
-EXPECT_HET=386
+EXPECT_HET=450
 
 fail=0
 
