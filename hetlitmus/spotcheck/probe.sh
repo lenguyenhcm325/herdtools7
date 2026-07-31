@@ -6,12 +6,16 @@
 #   sh probe.sh                 # results-devtier-<date>-<host>/probe.txt
 #   RESULTS=... sh probe.sh     # somewhere else
 #
-# PTX-ONLY BUILD.  probe.cu is compiled to compute_60 PTX and JIT-ed at load, so
+# PTX-ONLY BUILD.  probe.cu is compiled to compute_75 PTX and JIT-ed at load, so
 # one command works on sm_75 (T4G), sm_90 (GH200) and sm_121 (GB10) without
 # knowing the arch first -- which is the point, since the arch is one of the
 # things being probed.  It is deliberately NOT `-arch=native': that flag only
 # exists from CUDA 11.5 update 1, and the whole job here is to work on a box
 # whose toolkit version has not been established yet.
+# compute_75, not compute_60: CUDA 13 REMOVED pre-Turing targets, so compute_60
+# is `nvcc fatal: Unsupported gpu architecture' there (hit on the first real
+# box, GB10 + CUDA 13.2, 2026-07-31).  compute_75 needs only CUDA 10, and every
+# device CUDA 13 can still target is sm_75+ -- so it excludes nothing anywhere.
 #
 # Everything is key=value, one per line.  Nothing here is a litmus result.
 # =========================================================================
@@ -19,7 +23,7 @@ set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NVCC="${NVCC:-nvcc}"
-PROBE_GENCODE="${PROBE_GENCODE:--gencode arch=compute_60,code=compute_60}"
+PROBE_GENCODE="${PROBE_GENCODE:--gencode arch=compute_75,code=compute_75}"
 RESULTS="${RESULTS:-$HERE/results-devtier-$(date +%Y%m%d)-$( (hostname -s 2>/dev/null || hostname 2>/dev/null || echo host) | tr -c 'A-Za-z0-9_.-' '_' )}"
 
 mkdir -p "$RESULTS"
