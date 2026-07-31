@@ -1641,8 +1641,8 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
   if (_s->flags & HET_ST_NO_DECODE_CHANNEL)
     fprintf(_ch, "  *** A CELL CARRIED NEITHER A SYNCHRONY NOR AN OBSERVER DECODE ***"
                  "  Its sightings cannot be checked for the constant-read artefact, "
-                 "so they are treated as DEGENERATE.  This is a BUILD BUG (0 of the "
-                 "338 should reach it).\n");
+                 "so they are treated as DEGENERATE.  This is a BUILD BUG (no emitted "
+                 "harness should reach it).\n");
 
   if (_s->flags & HET_ST_WIN_DESYNC)
     fprintf(_ch, "  *** THE PER-WINDOW SUB-TALLIES DO NOT SUM TO THE CONTROL TOTAL ***"

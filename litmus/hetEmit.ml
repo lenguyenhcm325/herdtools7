@@ -1978,7 +1978,7 @@ static void gd_free_noise(void* _p){
           let dump_cpu_file ch =
             let s = output_string ch in
             s (Printf.sprintf
-                 "/* HetLitmus Tier-2: TAGGED CPU threads for %s (%s).\n   \
+                 "/* HetLitmus: TAGGED CPU threads for %s (%s).\n   \
                   Bodies emitted by HetLitmus hetCpuBody: the tested mnemonics\n   \
                   verbatim, store values rebound to the per-iteration tag\n   \
                   K*(_n+1)+mu, loads recorded into buffers.\n   \
@@ -2053,7 +2053,7 @@ static void gd_free_noise(void* _p){
             let gpu_bufs i =
               List.filter (fun (_,_,_,dev,_) -> dev = `Gpu) i.i_bufs in
             s (Printf.sprintf
-                 "// HetLitmus Tier-2 GPU kernel + driver for %s (%s dialect).\n"
+                 "// HetLitmus GPU kernel + driver for %s (%s dialect).\n"
                  tname dialect.gd_name) ;
             s "// P(gpu) run as a GPU kernel; P(cpu) as a pthread (see _cpu.c).\n" ;
             s "// Stores carry the tag K*(_n+1)+mu; loads are recorded into\n" ;
@@ -2988,7 +2988,7 @@ static void gd_free_noise(void* _p){
             let s = output_string ch in
             s "#!/bin/sh\n" ;
             s (Printf.sprintf
-                 "# Compile-only check for HetLitmus Tier-2 harness '%s'.\n" tname) ;
+                 "# Compile-only check for HetLitmus harness '%s'.\n" tname) ;
             s "# COMPILE-ONLY by default (-c, no link, no GPU run).\n" ;
             s (Printf.sprintf
                  "# `cuda-link' additionally LINKS ./%s, making the harness runnable\n" tname) ;
@@ -3056,7 +3056,7 @@ static void gd_free_noise(void* _p){
           let dump_makefile ch =
             let s = output_string ch in
             s (Printf.sprintf
-                 "# HetLitmus Tier-2 harness '%s' -- objects by default (`make cuda');\n" tname) ;
+                 "# HetLitmus harness '%s' -- objects by default (`make cuda');\n" tname) ;
             s (Printf.sprintf
                  "# `make cuda-bin' links ./%s, guarded by uname -m.\n" tname) ;
             s "NVCC ?= nvcc\nCUDA_ARCH ?= sm_90\nHIPCC ?= hipcc\nHIP_ARCH ?= gfx942\nCC ?= gcc\n" ;
@@ -3087,15 +3087,15 @@ static void gd_free_noise(void* _p){
                  ".PHONY: all cuda cuda-bin hip clean\nclean:\n\trm -f *.o %s\n" tname) in
           let dump_readme ch =
             let s = output_string ch in
-            s (Printf.sprintf "# HetLitmus Tier-2 harness: %s\n\n" tname) ;
+            s (Printf.sprintf "# HetLitmus heterogeneous harness: %s\n\n" tname) ;
             s "Heterogeneous CPU+GPU litmus harness emitted by litmus7 (`Het` arch).\n\n" ;
             s (Printf.sprintf "CPU ISA: %s.  GPU dialects: CUDA (`.cu`) + HIP (`.hip`).\n\n" CpuF.isa_name) ;
             if co_run then begin
               s "## The positive control is CO-RUNNING in this harness\n\n" ;
-              s "This is a should-be-FORBIDDEN test, so its result is a NULL -- and a null\n" ;
-              s "is evidence only if the harness would have seen a weak behaviour had one\n" ;
-              s "been permitted.  Three het instances therefore share this launch, this\n" ;
-              s "stress config and this C2C path, on disjoint cache-line-padded locations:\n\n" ;
+              s "A test's null result is evidence only if the harness would have seen a\n" ;
+              s "weak behaviour had one been permitted.  Every het instance below therefore\n" ;
+              s "shares this launch, this stress config and this C2C path, on disjoint\n" ;
+              s "cache-line-padded locations:\n\n" ;
               List.iter
                 (fun i ->
                   s (Printf.sprintf "- `%s` (%s) -- prefix `%s`, K=%d\n"
@@ -3114,10 +3114,10 @@ static void gd_free_noise(void* _p){
             s "- `comp.sh` / `Makefile`  compile-only build, plus the guarded link target.\n\n" ;
             s "Build (compile-only; no GPU needed): `sh comp.sh [cuda|hip]` (default cuda),\n" ;
             s "or `make cuda` / `make hip`.\n\n" ;
-            s "## Building the executable (PORT1)\n\n" ;
+            s "## Building the executable\n\n" ;
             s (Printf.sprintf
                  "`sh comp.sh cuda-link` or `make cuda-bin` links `./%s` (`$NVCC` pulls in\n" tname) ;
-            s "cudart; `-lpthread -lm` cover the CPU threads and the B7 statistics).  Both\n" ;
+            s "cudart; `-lpthread -lm` cover the CPU threads and the statistics layer).  Both\n" ;
             s (Printf.sprintf
                  "REFUSE unless `uname -m` is `%s`: elsewhere `%s_cpu_host.o` is compiled\n"
                  host_uname tname) ;
