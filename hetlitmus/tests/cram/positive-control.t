@@ -237,6 +237,31 @@ observer, exactly like 2+2W, and is demoted for REPORTING only.
       _rec.confidence = CONF_ADVISORY;
       _rec.reporting = CONF_ADVISORY;
 
+F-B: the OTHER two tiers, and WHICH of the two fields the printed [...] label is.
+The pair above only pins the tier where the two fields DIFFER; the floor (2+2W,
+both EXPLORATORY) and the ceiling (a pure-register shape, both ROBUST) were
+untested, so a rule collapsed to a constant would still have passed.  taskP-decision
+`REPORTING-TIER UPDATE' fixes the effective reporting tiers at ROBUST 266 /
+ADVISORY 25 (S) / EXPLORATORY 47 (2+2W 22 + R 25).
+  $ litmus7 -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
+  $ grep -E '_rec\.(confidence|reporting) =' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+      _rec.confidence = CONF_EXPLORATORY;
+      _rec.reporting = CONF_EXPLORATORY;
+
+  $ grep -E '_rec\.(confidence|reporting) =' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+      _rec.confidence = CONF_ROBUST;
+      _rec.reporting = CONF_ROBUST;
+
+And the label the human reads is the REPORTING tier.  Printing `confidence' there
+instead would relabel all 25 R rows [ADVISORY] -- claiming a null from a shape that
+borrows BOTH its synchrony point and its ws edge from the observer is as good as
+one recovered from read buffers.  Pinned on the emitted header, not the source copy.
+  $ grep -c 'het_conf_name(_r->reporting)' MP-cg-sys-acqrel-2s/het_verdict.h
+  1
+  $ grep -c 'het_conf_name(_r->confidence)' MP-cg-sys-acqrel-2s/het_verdict.h
+  0
+  [1]
+
 The GPU-only path never sees any of this (the whole B6 layer is het-only).
   $ litmus7 -o . ../gpu-only/MP-sys-acquire.litmus >/dev/null 2>&1
   $ grep -cE 'HET_CONTROL_COMPILED_IN|het_verdict|control_target_count' MP-sys-acquire.cu || true
