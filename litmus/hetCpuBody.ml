@@ -12,7 +12,7 @@
 (* there is no runtime seam for an `_n'-dependent tag short of rewriting the  *)
 (* shared AArch64 lowering (a rabbit hole that would touch Skel.ml/ASMLang). *)
 (* Option (b) reproduces litmus7's *exact tested mnemonics*                  *)
-(* (str/stlr/ldr/ldapr/dmb sy -- litmus7 still fixes instruction SELECTION)  *)
+(* (str/stlr/ldr/ldapr/dmb sy|st|ld -- litmus7 still fixes SELECTION)        *)
 (* and only (a) rebinds the store value to a K*(_n+1)+mu REGISTER operand    *)
 (* (dropping the mov #imm) and (b) redirects loads into per-iteration        *)
 (* buffers.  The whole proc is emitted as ONE asm __volatile__ block so the  *)
@@ -155,7 +155,7 @@ let emit_body chan ~prefix ~proc ~k ~store_mu ~load_buf ~reg_env ~iter
   (* The single asm block: tested mnemonics verbatim, 64-bit operands. *)
   s "  asm __volatile__(\n" ;
   (* LDAPR is RCpc (ARMv8.3); every other mnemonic in the het vocabulary
-     (str/stlr/ldr/ldar/dmb sy) is base ARMv8.0.  Neither gcc's native default on
+     (str/stlr/ldr/ldar/dmb sy|st|ld) is base ARMv8.0.  Neither gcc's native default on
      Grace nor `clang --target=aarch64-linux-gnu' enables RCpc, so an LDAPR in
      inline asm fails to ASSEMBLE ("instruction requires: rcpc") -- which would
      make every two-sided (-2s) test unbuildable, on the dev box and on GH200
@@ -182,8 +182,19 @@ let emit_body chan ~prefix ~proc ~k ~store_mu ~load_buf ~reg_env ~iter
               (load_mnemonic i) li g)
       | I_FENCE (DMB (SY, FULL)) | I_FENCE (DSB (SY, FULL)) ->
          s "    \"dmb sy\\n\"\n"
+      (* Q10b: the PARTIAL system barriers.  `DMB ST' orders store->store only
+         and `DMB LD' load->{load,store} only, so they are the CPU half of a
+         one-role morally-strong pair -- the ARM analogue of PTX's
+         fence.release.sys / fence.acquire.sys.  Same spelling litmus7's own
+         AArch64 lowering uses (AArch64Compile_litmus: `Misc.lowercase
+         (A.pp_barrier f)', and AArch64Base.pp_option maps (SY,ST)->"ST",
+         (SY,LD)->"LD"), and base ARMv8.0 like the rest of the vocabulary. *)
+      | I_FENCE (DMB (SY, ST)) ->
+         s "    \"dmb st\\n\"\n"
+      | I_FENCE (DMB (SY, LD)) ->
+         s "    \"dmb ld\\n\"\n"
       | I_FENCE _ as i ->
-         Warn.fatal "hetCpuBody: unsupported CPU fence %s (het vocabulary is DMB SY)"
+         Warn.fatal "hetCpuBody: unsupported CPU fence %s (het vocabulary is DMB SY|ST|LD)"
            (dump_instruction i)
       | I_MOV _ | I_MOVZ _ -> ()   (* dropped: value now comes from the tag operand *)
       | _ ->

@@ -95,7 +95,7 @@ GPU_KIND = {
 
 # CPU (AArch64) ordering mnemonics.  ARM ARM + Bagchi ISMM'26 Fig 1:
 #   STLR  = store-release        LDAR  = load-acquire (RCsc)
-#   LDAPR = load-acquire (RCpc)  DMB SY = full system barrier
+#   LDAPR = load-acquire (RCpc)  DMB <option> = data memory barrier
 # `mov` is folded into an asm input operand by ASMLang and is therefore NOT a
 # memory op; it is recognized (so the guard does not fail) but not compared.
 CPU_MNEMONIC = {
@@ -105,8 +105,43 @@ CPU_MNEMONIC = {
     "stlr":  ("release-store", True),
     "ldar":  ("acquire-load-rcsc", True),
     "ldapr": ("acquire-load-rcpc", True),
-    "dmb":   ("fence",         True),
+    "dmb":   ("fence",         True),   # SPLIT by option -- see below
 }
+
+# Q10b: DMB's BARRIER OPTION is a separate token and a separate mapping.  The
+# mnemonic alone does not identify the ordering a barrier supplies: `DMB SY'
+# orders {WW,RR,WR,RW}, `DMB ST' only {WW}, `DMB LD' only {RR,RW} (herd7's own
+# answer -- verify/ordercheck.py Phase 1), and they are three DIFFERENT
+# instructions (d5033fbf / d5033ebf / d5033dbf).  Before Q10b the corpus could
+# only carry `DMB SY', so the option was never modelled; now the two-sided
+# order-pair grid carries all three, and an emitter that silently lowered
+# `DMB SY' to `DMB ST' would weaken the very ordering under test.
+#
+# The op tuple compared on both sides is (mnemonic, option), so the three are
+# already distinguished by the comparison.  What this table adds is the
+# COMPLETENESS GUARD, which the mnemonic table alone did not extend to the
+# option: an option that is not modelled here (`DMB ISH', `DMB OSHST', or a
+# bare `DMB' with no option at all) HARD-FAILS instead of being compared as an
+# opaque string -- the same discipline every GPU order/scope token already gets.
+CPU_BARRIER_OPTION = {
+    "sy": "fence-full",     # DMB SY : orders {WW,RR,WR,RW}  (full system barrier)
+    "st": "fence-store",    # DMB ST : orders {WW}           (the `rel' half only)
+    "ld": "fence-load",     # DMB LD : orders {RR,RW}        (the `acq' half only)
+}
+
+
+def barrier_option(mn, tokens, where):
+    """The modelled option of a `dmb' (or '' for a non-barrier mnemonic).
+
+    COMPLETENESS GUARD: an unmodelled or missing option hard-fails."""
+    if mn != "dmb":
+        return ""
+    opt = tokens[0].lower() if tokens else ""
+    if opt not in CPU_BARRIER_OPTION:
+        raise CompletenessError(
+            "unmodelled AArch64 barrier option %r on %r in %s -- its ordered-pair "
+            "set is not in CPU_BARRIER_OPTION" % (opt, mn, where))
+    return opt
 
 PTX_ORDERS = set(GPU_ORDER.values())          # {relaxed,acquire,release,acq_rel,sc}
 PTX_SCOPES = set(GPU_SCOPE.values())          # {cta,gpu,sys,cluster}
@@ -375,9 +410,7 @@ def cpu_ops_of_column(cells):
         _sem, is_mem = CPU_MNEMONIC[mn]
         if not is_mem:
             continue  # mov: folded, not emitted as an asm memory op
-        qual = ''
-        if mn == 'dmb':
-            qual = toks[1].lower() if len(toks) > 1 else ''
+        qual = barrier_option(mn, toks[1:], "the .litmus CPU column (%r)" % c)
         ops.append((mn, qual))
     return ops
 
@@ -509,9 +542,9 @@ def extract_cpu_ops(cpu_c_text):
             _sem, is_mem = CPU_MNEMONIC[mn]
             if not is_mem:
                 continue
-            qual = ''
-            if mn == 'dmb':
-                qual = rest.replace(',', ' ').split()[0] if rest else ''
+            qual = barrier_option(mn, rest.replace(',', ' ').split(),
+                                  "the emitted _cpu.c asm block (%r)"
+                                  % (mn + " " + rest).strip())
             ops.append((mn, qual))
     return ops
 

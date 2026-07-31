@@ -277,6 +277,69 @@ selftest() {
     _expect "het CPU STLR->STR injection" 1 "$rc" || fails=$((fails+1))
   fi
 
+  # ---- [5b] Q10b: the CPU BARRIER OPTION -------------------------------------
+  # `DMB SY' / `DMB ST' / `DMB LD' are THREE different instructions
+  # (d5033fbf / d5033ebf / d5033dbf) supplying three different orderings
+  # ({WW,RR,WR,RW} / {WW} / {RR,RW} -- ordercheck.py Phase 1), and since Q10b
+  # lifted the hetCpuBody.ml blocker all three are in the corpus.  Two SEPARATE
+  # properties, so two bites:
+  #   (i)  DISCRIMINATION -- an emitted `dmb sy' silently lowered to `dmb st'
+  #        must FAIL(1) naming the mismatch.  This already held before Q10b (the
+  #        compared op tuple has always carried the option); the bite PINS it,
+  #        because the corpus now actually varies the option.
+  #   (ii) COMPLETENESS -- an option that is NOT modelled must HARD-FAIL(2)
+  #        instead of being compared as an opaque string.  Before Q10b it was
+  #        not: rewriting the corpus's `DMB SY' to the inner-shareable `DMB ISH'
+  #        -- a strictly narrower shareability domain that cannot be assumed to
+  #        reach the GPU across C2C -- and matching the emitted asm to it passed
+  #        this gate with rc=0.  ptxcheck.CPU_BARRIER_OPTION closes that.
+  printf '\n[5b] Q10b CPU barrier option: weakened option FAIL(1), unmodelled option HARD-FAIL(2)\n'
+  local DT=2+2W-cg-sys-fence-2s DL="$HET_DIR/2+2W-cg-sys-fence-2s.litmus"
+  local dd="$sc/dmb" dcpu
+  mkdir -p "$dd"
+  litmus7 -set-libdir litmus/libdir -o "$dd" "$DL" >/dev/null 2>&1
+  dcpu="$dd/$DT/${DT}_cpu.c"
+  nvcc -std=c++17 -arch=sm_90 --ptx -o "$dd/dmb.ptx" "$dd/$DT/$DT.cu" >/dev/null 2>&1
+  if [ ! -s "$dcpu" ] || [ ! -s "$dd/dmb.ptx" ]; then
+    echo "  *** could not emit het harness/_cpu.c for $DT"
+    fails=$((fails+1))
+  elif ! grep -qiE '"[[:space:]]*dmb[[:space:]]+sy' "$dcpu"; then
+    echo "  *** $DT _cpu.c has no 'dmb sy' -- wrong test picked"
+    fails=$((fails+1))
+  else
+    echo "  confirmed: $DT _cpu.c contains 'dmb sy' (full system barrier)"
+    python3 "$CHECK" "$DL" --ptx "$dd/dmb.ptx" --cpu-c "$dcpu" -q >/dev/null 2>&1; rc=$?
+    _expect "CPU barrier control (unmodified)" 0 "$rc" || fails=$((fails+1))
+
+    sed 's/\bdmb sy\b/dmb st/g' "$dcpu" > "$dd/st_cpu.c"
+    if cmp -s "$dcpu" "$dd/st_cpu.c"; then
+      printf '  *** VACUOUS BITE: injection changed nothing    [dmb sy -> dmb st]\n'
+      fails=$((fails+1))
+    else
+      out="$(python3 "$CHECK" "$DL" --ptx "$dd/dmb.ptx" --cpu-c "$dd/st_cpu.c" 2>&1)"; rc=$?
+      echo "$out" | grep -E 'MISMATCH' | head -2
+      _expect "emitted dmb sy WEAKENED to dmb st" 1 "$rc" || fails=$((fails+1))
+    fi
+
+    # (ii) unmodelled option, CONSISTENT on both sides -- the case a pure
+    # expected-vs-observed comparison cannot see.  The whole corpus copy is
+    # rewritten so the co-run mutant/canary columns agree too.
+    rm -rf "$dd/ish"; cp -r "$HET_DIR" "$dd/ish"
+    sed -i 's/DMB SY/DMB ISH/' "$dd"/ish/*.litmus
+    sed 's/\bdmb sy\b/dmb ish/g' "$dcpu" > "$dd/ish_cpu.c"
+    if cmp -s "$dcpu" "$dd/ish_cpu.c" || ! grep -q 'DMB ISH' "$dd/ish/$DT.litmus"; then
+      printf '  *** VACUOUS BITE: injection changed nothing    [DMB SY -> DMB ISH]\n'
+      fails=$((fails+1))
+    else
+      out="$(python3 "$CHECK" "$dd/ish/$DT.litmus" --ptx "$dd/dmb.ptx" \
+             --cpu-c "$dd/ish_cpu.c" 2>&1)"; rc=$?
+      echo "$out" | grep -E 'COMPLETENESS' | head -1
+      _expect "unmodelled barrier option DMB ISH (both sides agree)" 2 "$rc" \
+        || fails=$((fails+1))
+    fi
+    rm -rf "$dd/ish"
+  fi
+
   # ---- [6] B4: the GPU stress layer's ops are MODELLED, and the model bites ----
   # The stress layer adds ops to the kernel, so ptxcheck had to grow an
   # expectation for them.  An expectation that cannot fail is worse than none, so
