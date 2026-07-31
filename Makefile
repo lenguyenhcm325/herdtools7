@@ -657,7 +657,7 @@ hetlitmus-corpus: | build
 hetlitmus-faithful: | build
 	@ echo
 	bash hetlitmus/verify/l0_tokens.sh all
-	@ echo "HetLitmus Layer-3 PTX faithfulness (475): OK"
+	@ echo "HetLitmus Layer-3 PTX faithfulness (523): OK"
 
 hetlitmus-smoke: | build
 	@ echo

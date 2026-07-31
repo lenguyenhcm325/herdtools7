@@ -75,7 +75,7 @@ run_dir() {
     done
   fi
   # F4 (DR1-B): `pass -eq total' is VACUOUSLY true on an empty/misnamed corpus
-  # (0 -eq 0) -- it would print "faithfulness (475): OK" for ZERO tests, the exact
+  # (0 -eq 0) -- it would print "faithfulness (523): OK" for ZERO tests, the exact
   # inert-gate class this project keeps shipping.  Assert the KNOWN census
   # (het=386, gpu-only=137), the same exact-count discipline corpus-gate and
   # verdictcheck use; a census change then has to be a deliberate edit to the
