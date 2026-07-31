@@ -13,7 +13,7 @@
 # requirement; only *launching* a kernel needs hardware (that is Layer 4).  Reuses
 # `comp.sh` verbatim (no new build code); see hetlitmus/docs/TEST-PLAN.md sec.5.
 #
-# The 8 reps -- each hits one distinct compile path once:
+# The 10 reps -- each hits one distinct compile path once:
 #   1. MP-cg-cta-acquire       het one-sided; plain CPU STR/LDR + barrier
 #   2. 2+2W-cg-sys-acqrel-2s   het two-sided; CPU STLR (store-only shape: NO load)
 #   3. MP-gc-sys-acqrel-2s     het two-sided GPU->CPU; CPU LDAPR (RCpc) -- the only
@@ -29,12 +29,19 @@
 #                              a symbol declared in the CUDA dialect's allocator but
 #                              read by the SHARED driver template broke EVERY .hip --
 #                              silently, because nothing in the suite compiled one.
+#   9. MP-cg-sys-sy.acq-2s    Q10 order-pair; the ONLY rep emitting inline
+#                              `fence.acquire.sys' (PTX ISA 8.6 / sm_90), with a
+#                              compiled-in co-run control (mu = MP-cg-sys-acquire).
+#                              Also the first rep whose test NAME contains a `.'.
+#  10. S-gc-sys-ra.rel-2s     Q10 order-pair; the ONLY rep emitting inline
+#                              `fence.release.sys', paired with CPU STLR/LDAPR, and
+#                              the largest co-run in the corpus (K=4, NPART=10).
 #
 # Usage:
-#   bash hetlitmus/verify/smoke.sh          # run all 8 reps (pre-commit gate)
+#   bash hetlitmus/verify/smoke.sh          # run all 10 reps (pre-commit gate)
 #   bash hetlitmus/verify/smoke.sh bite      # prove the gate has TEETH (self-test)
 #
-# Exit 0 (prints `SMOKE OK`) iff all 8 reps compile; nonzero if any rep fails.  A
+# Exit 0 (prints `SMOKE OK`) iff all 10 reps compile; nonzero if any rep fails.  A
 # missing hipcc SKIPS rep 8 loudly -- it never counts as a pass.
 # ---------------------------------------------------------------------------
 set -u
@@ -48,6 +55,7 @@ CLU_DIR="$ROOT/hetlitmus/tests/cluster"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+NREPS=10          # keep in sync with the rep list in the header and below
 fails=0
 skips=0
 n=0
@@ -59,7 +67,7 @@ n=0
 smoke_het() { # name blurb
   local name="$1" blurb="$2" d out rc
   n=$((n+1))
-  printf '\n[%d/8] het      %-22s -- %s\n' "$n" "$name" "$blurb"
+  printf '\n[%d/%d] het      %-22s -- %s\n' "$n" "$NREPS" "$name" "$blurb"
   d="$WORK/e_$name"; mkdir -p "$d"
   if ! out="$(litmus7 -set-libdir litmus/libdir -o "$d" "$HET_DIR/$name.litmus" 2>&1)"; then
     printf '%s\n' "$out"; printf '  FAIL %s (emission)\n' "$name"; fails=$((fails+1)); return
@@ -87,7 +95,7 @@ smoke_het() { # name blurb
 smoke_het_hip() { # name blurb
   local name="$1" blurb="$2" d out rc
   n=$((n+1))
-  printf '\n[%d/8] het/HIP  %-22s -- %s\n' "$n" "$name" "$blurb"
+  printf '\n[%d/%d] het/HIP  %-22s -- %s\n' "$n" "$NREPS" "$name" "$blurb"
   if ! command -v hipcc >/dev/null 2>&1; then
     printf '  SKIP %s -- hipcc NOT FOUND: the AMD/MI300A render is UNVERIFIED by this\n' "$name"
     printf '       run.  It is a real compile target, not a formality; install ROCm or\n'
@@ -114,7 +122,7 @@ smoke_het_hip() { # name blurb
 smoke_cluster() { # name blurb
   local name="$1" blurb="$2" d out rc
   n=$((n+1))
-  printf '\n[%d/8] cluster  %-22s -- %s\n' "$n" "$name" "$blurb"
+  printf '\n[%d/%d] cluster  %-22s -- %s\n' "$n" "$NREPS" "$name" "$blurb"
   d="$WORK/e_$name"; mkdir -p "$d"
   if ! out="$(litmus7 -set-libdir litmus/libdir -o "$d" "$CLU_DIR/$name.litmus" 2>&1)"; then
     printf '%s\n' "$out"; printf '  FAIL %s (emission)\n' "$name"; fails=$((fails+1)); return
@@ -159,7 +167,7 @@ cmd="${1:-all}"
 case "$cmd" in
   bite) bite; exit $? ;;
   all)
-    printf '===== HetLitmus Layer-3 compile-smoke (8 reps; nvcc+hipcc+clang, NO GPU) =====\n'
+    printf '===== HetLitmus Layer-3 compile-smoke (%d reps; nvcc+hipcc+clang, NO GPU) =====\n' "$NREPS"
     smoke_het     MP-cg-cta-acquire     "one-sided; plain CPU STR/LDR + barrier + nvcc -c"
     smoke_het     2+2W-cg-sys-acqrel-2s "two-sided; CPU STLR (2+2W is store-only: NO load)"
     # A CPU *load*-acquire rep.  2+2W above is store-only, so despite its old
@@ -175,14 +183,20 @@ case "$cmd" in
     # body, the preload, the enemies, and both halves of the C2C noise), so it is the
     # rep most likely to expose a dialect divergence -- which is exactly what it did.
     smoke_het_hip MP-cg-sys-acqrel-2s   "the AMD/MI300A render (hipcc -c, gfx942)"
+    # Q10.  fence.acquire.sys / fence.release.sys are emitted by NO other test in
+    # either corpus, and no test name had ever contained a `.'.  Both reps are
+    # oracle-Disallowed, so they also exercise the B6b co-run control on the new
+    # order-pair family (HET_CONTROL_COMPILED_IN=1).
+    smoke_het     MP-cg-sys-sy.acq-2s   "Q10 order-pair; inline fence.acquire.sys + co-run mu"
+    smoke_het     S-gc-sys-ra.rel-2s    "Q10 order-pair; inline fence.release.sys + CPU STLR/LDAPR"
     printf '\n=====================================================================\n'
     if [ "$fails" -eq 0 ] && [ "$skips" -eq 0 ]; then
-      printf 'SMOKE OK  (8/8 reps compiled)\n'; exit 0
+      printf 'SMOKE OK  (%d/%d reps compiled)\n' "$NREPS" "$NREPS"; exit 0
     fi
     if [ "$fails" -eq 0 ]; then
-      printf 'SMOKE OK  (%d/8 compiled, %d SKIPPED -- see above; the skipped lane is UNVERIFIED)\n' \
-        "$((8-skips))" "$skips"; exit 0
+      printf 'SMOKE OK  (%d/%d compiled, %d SKIPPED -- see above; the skipped lane is UNVERIFIED)\n' \
+        "$((NREPS-skips))" "$NREPS" "$skips"; exit 0
     fi
-    printf 'SMOKE FAILED: %d/8 rep(s) did not compile\n' "$fails"; exit 1 ;;
+    printf 'SMOKE FAILED: %d/%d rep(s) did not compile\n' "$fails" "$NREPS"; exit 1 ;;
   *) printf 'usage: %s [all|bite]\n' "$0"; exit 64 ;;
 esac
