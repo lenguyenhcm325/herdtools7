@@ -748,6 +748,30 @@ hetlitmus-stats: | build
 	python3 hetlitmus/verify/statscheck.py --bite
 	@ echo "HetLitmus B7/B7b statistics layer: OK (and the gate bites)"
 
+### hetlitmus-hist: the OUTCOME-HISTOGRAM gate (F-A).  The GB10 run printed
+### `400004  *> [x]=0; [y]=0;' for 2+2W over 4 x N=100000 frames -- a total ABOVE
+### the frames examined, and a witness row whose columns contradict the witness.
+### Both were invisible to every existing gate: verdictcheck/statscheck read the
+### het_obs_record, and NOTHING ever looked at litmus7's inherited outs histogram.
+###   shape       the histogram add is inside the per-frame loop IFF the harness has
+###               a per-frame observable; the 22 reader-less shapes add ONCE PER RUN
+###               (their `_weak' IS the run-level observer witness, so an in-loop add
+###               multiplies one observation by N -- that is the bug)
+###   display     a coherence-final [ell] column is never printed as a number: no such
+###               number is ever measured (`_o[n_reg+j]' is the constant 0)
+###   arithmetic  the store-only tally is EXTRACTED VERBATIM from the emitted .cu,
+###               linked against the harness's own outs.c and RUN: sum_outs must be R
+###               for every forced witness pattern and must not scale with N.  It then
+###               re-runs on the PRE-FIX tally and requires that to be REJECTED.
+### CUDA-free (litmus7 + cc).  --bite: 5 injections, each cmp-verified non-vacuous and
+### each required to redden the phase that NAMES it -- an injection that only breaks
+### compilation (exit 2) is not a bite.
+hetlitmus-hist: | build
+	@ echo
+	python3 hetlitmus/verify/histcheck.py
+	python3 hetlitmus/verify/histcheck.py --bite
+	@ echo "HetLitmus F-A histogram tally + display: OK (and the gate bites)"
+
 ### hetlitmus-tuner: the B8a autotuner SEARCH MACHINERY (tune.py) -- validated on the dev
 ### box against SYNTHETIC objectives with a known optimum, because a real death rate is
 ### hardware-only (Q7 4.2).  PURE PYTHON (no litmus7, no nvcc), so no `| build`.  Like
@@ -810,6 +834,7 @@ hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-stats
+hetlitmus-test:: hetlitmus-hist
 hetlitmus-test:: hetlitmus-tuner
 
 hetlitmus-test-nvcc:: | build
@@ -835,6 +860,7 @@ hetlitmus-promote: | build
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
+.PHONY: hetlitmus-hist
 .PHONY: hetlitmus-l0-selftest
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 

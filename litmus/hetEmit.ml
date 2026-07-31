@@ -1455,12 +1455,36 @@ static void gd_free_noise(void* _p){
                      @ List.map (Printf.sprintf "\"[%s]\"") loc_slots) in
                 s (Printf.sprintf "static const char* _labels[%d] = { %s };\n"
                      (max 1 nslots) labelstr) ;
+                (* F-A (GB10 2026-07-31): a coherence-final [ell] column is NEVER
+                   MEASURED by this harness.  `_o[n_reg+j]' is the literal constant
+                   0 at every call site -- the het perpetual loop never reads a
+                   location's final value (B3-decision 4: an [ell]=v atom is decided
+                   by the per-run observer ws witness, reported in HetObs /
+                   HetVerdict, not by a value read back from x).  Printing that 0 as
+                   if it were a number claimed `[x]=0; [y]=0;' beside the `*'
+                   witness marker on 2+2W -- a state the test cannot end in -- so the
+                   location columns print `?'.  No information is lost (the constant
+                   carried none) and the false claim is gone.  The `_labels' array is
+                   untouched: the [ ] label is Task-P's own invariant (cram
+                   pfix-cond.t) and still names the atom. *)
                 s {ocaml|static void _dump_one(FILE* _ch, intmax_t* o, count_t c, int show){
   fprintf(_ch, "%-8" PRIu64 "%c> ", c, show ? '*' : ' ');
 |ocaml} ;
-                s (Printf.sprintf "  for (int i=0;i<%d;i++)" nslots) ;
-                s {ocaml| fprintf(_ch, "%s=%" PRIdMAX "; ", _labels[i], o[i]);
-  fprintf(_ch, "\n");
+                if loc_slots = [] then begin
+                  s (Printf.sprintf "  for (int i=0;i<%d;i++)" nslots) ;
+                  s {ocaml| fprintf(_ch, "%s=%" PRIdMAX "; ", _labels[i], o[i]);
+|ocaml}
+                end else begin
+                  if n_reg > 0 then begin
+                    s (Printf.sprintf "  for (int i=0;i<%d;i++)" n_reg) ;
+                    s {ocaml| fprintf(_ch, "%s=%" PRIdMAX "; ", _labels[i], o[i]);
+|ocaml}
+                  end else s "  (void)o;   /* every column is an unmeasured location */\n" ;
+                  s (Printf.sprintf
+                       "  for (int i=%d;i<%d;i++) fprintf(_ch, \"%%s=?; \", _labels[i]);\n"
+                       n_reg nslots)
+                end ;
+                s {ocaml|  fprintf(_ch, "\n");
 }
 
 |ocaml} ;
@@ -1769,12 +1793,22 @@ static void gd_free_noise(void* _p){
                   s "        if (!_have_prev || _ms != _prev_m) { _rec.distinct_decoded_iters++; _prev_m = _ms; _have_prev = 1; }\n" ;
                   s "      }\n"
                | _ -> ()) ;
-              (* Histogram: T only.  DR1-A2/F2: a store-only shape emits no `_hot'
-                 (it has no reader), so gate the histogram on `_weak' alone -- exactly
-                 what `_hot || _weak' reduced to when `_hot' was the constant 0. *)
-              if is_test then begin
-                s (Printf.sprintf "      if (%s) {\n"
-                     (match read_buffers with [] -> "_weak" | _ -> "_hot || _weak")) ;
+              (* Histogram: T only, and ONLY where an outcome is a per-FRAME fact.
+                 F-A (GB10 2026-07-31, `400004 *> [x]=0; [y]=0;' on 4 x N=100000):
+                 a store-only (read_buffers = []) shape has no reader, so its
+                 `_weak' is the bare run-level `_loc' -- the observer's ws witness
+                 over the WHOLE run, hoisted out of this loop and constant inside
+                 it.  Adding it here therefore stamped ONE per-run observation into
+                 the histogram N times: the printed total was
+                 N x (#runs whose ws witness fired) + R, which EXCEEDS the frames
+                 examined and cannot be a per-frame tally of anything.  (Verified
+                 by forcing `_t_loc = (_run == 0)' at R=2, N=100000: the pre-fix
+                 harness printed 100002, not 200001.)  The per-RUN entry below --
+                 which this loop was duplicating -- is the correct and only tally
+                 for these 22 shapes; DR1-A2/F2 preserved the bug verbatim when it
+                 replaced the then-equivalent `_hot || _weak' by `_weak'. *)
+              if is_test && read_buffers <> [] then begin
+                s "      if (_hot || _weak) {\n" ;
                 s (Printf.sprintf "        intmax_t _o[%d];\n" (max 1 nslots)) ;
                 List.iteri
                   (fun i (p,r) ->
