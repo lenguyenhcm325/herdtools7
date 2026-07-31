@@ -8,16 +8,17 @@ cannot see the duplicates that actually dominate the corpus: two DIFFERENT names
 whose programs are the same experiment up to (permutation of procs) x (renaming
 of locations), with the device tag travelling with the proc.
 
-Measured 2026-07-30 (env-research/Q10-corpus-coverage.md sect 2.1): 338 committed
-het tests are only **299 distinct** experiments.  All 39 redundant files are
+Measured 2026-07-30 (env-research/Q10-corpus-coverage.md sect 2.1): the 338
+committed het tests were only **299 distinct** experiments (386 -> 347 after the
+Q10 order-pair widening, same 39 classes).  All 39 redundant files are
 `SB' / `LB' / `2+2W' -- the three shapes whose cycle is invariant under
 rotation-by-two, which swaps P0 and P1, so the `cg' and `gc' device cuts emit the
 SAME experiment with the labels exchanged (e.g. SB-cg-sys-relaxed is
 SB-gc-sys-relaxed under P0<->P1, x<->y).  Their verdicts agree, so nothing is
-wrong -- but they are not independent samples, and 3 of them sit inside the 16
+wrong -- but they are not independent samples, and 3 of them sit inside the
 `Disallowed' rows that carry the whole falsification claim.
 
-WHY THE 39 ARE NOT DELETED.  The number 338 is pinned across corpus-gate.sh,
+WHY THE 39 ARE NOT DELETED.  The corpus census is pinned across corpus-gate.sh,
 emit-all.sh, verdictcheck.py, statscheck.py, histcheck.py, the cram goldens and
 expected-nvidia.csv; removing files is a wide-ripple change with no scientific
 payoff (the verdicts are correct).  So they are ALLOWLISTED here, by exact class,

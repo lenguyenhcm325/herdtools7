@@ -1,0 +1,13 @@
+Het R-cg-sys-ra.sc-2s
+"Heterogeneous R-cg-sys-ra.sc-2s: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X1=x;
+0:X3=y;
+}
+ P0:cpu       | P1:gpu              ;
+ MOV W0,#1    | w[relaxed,sys] y 2  ;
+ STLR W0,[X1] | f[sc,sys]           ;
+ MOV W2,#1    | r[relaxed,sys] r0 x ;
+ STLR W2,[X3] |                     ;
+scopes: (sys (gpu (cta P1)))
+exists (1:r0=0 /\ [y]=2)

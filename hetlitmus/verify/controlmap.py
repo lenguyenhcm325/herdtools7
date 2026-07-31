@@ -44,46 +44,63 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
 
+# The Disallowed census the gate ASSERTS (it is not merely reported).  Q10:
+# 16 -> 38 = the 16 pre-existing `-{acqrel,fence}-2s' rows + 22 of the 48 new
+# two-sided order-pair cells; derivation in env-research/impl-briefs/Q10-REPORT.md.
+N_DISALLOWED = 38
+
 # ---------------------------------------------------------------------------
-# The ordering-strength lattice.
+# THE PER-SIDE ORDERING-STRENGTH LATTICE.  mu(T) must be strictly weaker
+# COMPONENTWISE (cpu,gpu) and structurally identical to T (same procs, same
+# devices, same ordered (kind,location) access list) -- a pure ordering
+# weakening, not a different program.
 #
 # NOT a count of primitives -- `acqrel' carries MORE primitives than `fence'
 # (STLR+LDAPR / acquire+release vs one DMB.SY / one fence.sc.sys) yet is strictly
 # WEAKER, because RCpc release/acquire does not order store->load where an SC
 # fence does (that is exactly why SB/R-*-acqrel-2s are Allowed while their
-# fence-2s siblings are Disallowed).  Strength is per SIDE:
+# fence-2s siblings are Disallowed).
 #
-#   3  SC fence      CPU: DMB SY        GPU: f[sc,...]
-#   2  RCpc rel/acq  CPU: STLR / LDAPR  GPU: w[release,..] / r[acquire,..]
-#   0  plain         CPU: STR / LDR     GPU: [relaxed,..]
+# Q10 REFINEMENT.  A bare "is it a fence?" tier stopped working the moment the
+# two-sided family grew past one fence pairing: `f[release,sys]' is a fence but
+# is strictly WEAKER than the `w[release]/r[acquire]' annotation pair, and
+# DMB.ST / DMB.LD are incomparable with each other.  So a side's strength is the
+# PAIR (tier, ord):
 #
-# mu(T) must be strictly weaker COMPONENTWISE (cpu,gpu) and structurally
-# identical to T (same procs, same devices, same ordered (kind,location) access
-# list) -- i.e. a pure ordering weakening, not a different program.
-FENCE, RELACQ, PLAIN = 3, 2, 0
+#   tier  2 SC-capable   DMB SY / DSB SY ; f[sc,..] ; an `sc'-tagged access
+#         1 partial      anything that orders SOMETHING but cannot stand in for
+#                        an SC fence: STLR / LDAPR / LDAR ; w[release] /
+#                        r[acquire] ; f[release,..] / f[acquire,..] ; DMB ST/LD
+#         0 plain        STR / LDR ; [relaxed,..]
+#   ord   the union, over that device's ops, of the program-order pairs
+#         {WW,RR,WR,RW} they order INSIDE their own thread -- machine-checked in
+#         hetlitmus/verify/ordercheck.py against herd7's native AArch64 model
+#         and nvidia-ptx.cat (192 solver cells):
+#             DMB SY / f[sc]        {WW RR WR RW}
+#             STLR   / w[release]   {WW RW}        (orders * -> W)
+#             LDAPR  / r[acquire]   {RR RW}        (orders R -> *)
+#             f[release,sys]        {WW RW}        f[acquire,sys]  {RR RW}
+#             DMB ST {WW}           DMB LD {RR RW}
+#
+# `weaker-or-equal' is  (t1,o1) <= (t2,o2)  iff  t1 < t2, or t1 == t2 and
+# o1 subset-of o2.  This keeps DMB.ST and DMB.LD INCOMPARABLE, and it keeps
+# f[release] and r[acquire]-annotated reads incomparable -- neither is a
+# weakening of the other, and a control that is not a weakening vouches for
+# nothing.
+SC_TIER, PART_TIER, PLAIN = 2, 1, 0
 
-# Q10 REFINEMENT.  The tier alone stopped separating the fence column once the
-# two-sided family grew from one fence pairing (DMB.SY x fence.sc.sys) to the
-# 3 x 3 grid: DMB.ST, DMB.LD and fence.sc.sys are all "tier 3", yet DMB.ST is
-# strictly weaker than DMB.SY and incomparable with DMB.LD.  So a side's
-# strength is the PAIR (tier, ord) where `ord' is the set of program-order pairs
-# the barrier/fence actually orders inside its own thread -- machine-checked in
-# hetlitmus/verify/ordercheck.py (herd7's native AArch64 model for the DMBs,
-# nvidia-ptx.cat + CMCM PLDI'23 sect 5 for the PTX fences):
-#
-#     DMB SY  {WW RR WR RW}   DMB ST  {WW}       DMB LD  {RR RW}
-#     f[sc]   {WW RR WR RW}   f[rel]  {WW RW}    f[acq]  {RR RW}
-#
-# Below tier FENCE the ord component is ALL4 so the tier alone decides (that is
-# the pre-Q10 behaviour, bit for bit).  `weaker-or-equal' is therefore
-#     (t1,o1) <= (t2,o2)  iff  t1 < t2,  or  t1 == t2 and o1 subset-of o2
-# which keeps DMB.ST and DMB.LD INCOMPARABLE -- neither is a weakening of the
-# other, and a control that is not a weakening vouches for nothing.
 ALL4 = frozenset(("WW", "RR", "WR", "RW"))
-DMB_ORD = {"SY": ALL4, "ST": frozenset(("WW",)), "LD": frozenset(("RR", "RW"))}
-GPU_FENCE_ORD = {"sc": ALL4, "acq_rel": ALL4,
-                 "release": frozenset(("WW", "RW")),
-                 "acquire": frozenset(("RR", "RW"))}
+NONE4 = frozenset()
+REL_ORD = frozenset(("WW", "RW"))       # release: orders anything -> a write
+ACQ_ORD = frozenset(("RR", "RW"))       # acquire: orders a read -> anything
+
+DMB_STRENGTH = {"SY": (SC_TIER, ALL4),
+                "ST": (PART_TIER, frozenset(("WW",))),
+                "LD": (PART_TIER, ACQ_ORD)}
+GPU_FENCE_STRENGTH = {"sc": (SC_TIER, ALL4),
+                      "acq_rel": (PART_TIER, REL_ORD | ACQ_ORD),
+                      "release": (PART_TIER, REL_ORD),
+                      "acquire": (PART_TIER, ACQ_ORD)}
 
 
 def side_le(a, b):
@@ -93,14 +110,20 @@ def side_le(a, b):
     return a[1] <= b[1]
 
 
-def raise_side(cur, tier, ordset=ALL4):
-    """Strengthen one side to at least (tier, ordset); union the ord sets when
-    the tier is unchanged (a proc with two fences orders the union)."""
+def raise_side(cur, tier, ordset):
+    """Fold one more op into a side's strength: the tier is the max and the ord
+    set the union of everything that op contributes at or above the top tier."""
     if tier > cur[0]:
         return (tier, ordset)
     if tier == cur[0]:
         return (tier, cur[1] | ordset)
     return cur
+
+
+def _pp(s):
+    """Readable (tier, ord) strength pair for an error message."""
+    return "(%d %s, %d %s)" % (s[0][0], "".join(sorted(s[0][1])) or "-",
+                               s[1][0], "".join(sorted(s[1][1])) or "-")
 
 
 class Test:
@@ -111,8 +134,8 @@ class Test:
         self.path = path
         self.dev = {}                # proc -> "cpu" | "gpu"
         self.accesses = {}           # proc -> [("R"|"W", location), ...]
-        self.cpu_strength = (PLAIN, ALL4)   # (tier, ordered-pair set)
-        self.gpu_strength = (PLAIN, ALL4)
+        self.cpu_strength = (PLAIN, NONE4)   # (tier, ordered-pair set)
+        self.gpu_strength = (PLAIN, NONE4)
 
     # -- the structural fingerprint mu(T) must match exactly ----------------
     def structure(self):
@@ -126,12 +149,6 @@ class Test:
 
     def two_sided(self):
         return self.cpu_strength[0] > PLAIN
-
-
-def _pp(s):
-    """Readable (tier, ord) strength pair for an error message."""
-    return "(%d %s, %d %s)" % (s[0][0], "".join(sorted(s[0][1])),
-                               s[1][0], "".join(sorted(s[1][1])))
 
 
 def _strip_comment(line):
@@ -216,23 +233,27 @@ def _parse_instr(t, p, cell, regmap, path):
             raise ValueError("%s: P%d unparsed GPU op %r" % (path, p, cell))
         kind, order, _scope, rest = m.groups()
         if kind == "f":
-            if order not in GPU_FENCE_ORD:
+            if order not in GPU_FENCE_STRENGTH:
                 raise ValueError("%s: P%d unknown GPU fence order %r"
                                  % (path, p, order))
-            t.gpu_strength = raise_side(t.gpu_strength, FENCE,
-                                        GPU_FENCE_ORD[order])
+            t.gpu_strength = raise_side(t.gpu_strength,
+                                        *GPU_FENCE_STRENGTH[order])
             return
         rest = rest.split()
         if kind == "r":
             loc = rest[1]                       # r[..] <reg> <loc>
             t.accesses[p].append(("R", loc))
             if order == "acquire":
-                t.gpu_strength = raise_side(t.gpu_strength, RELACQ)
+                t.gpu_strength = raise_side(t.gpu_strength, PART_TIER, ACQ_ORD)
+            elif order == "sc":
+                t.gpu_strength = raise_side(t.gpu_strength, SC_TIER, ALL4)
         else:
             loc = rest[0]                       # w[..] <loc> <val>
             t.accesses[p].append(("W", loc))
             if order == "release":
-                t.gpu_strength = raise_side(t.gpu_strength, RELACQ)
+                t.gpu_strength = raise_side(t.gpu_strength, PART_TIER, REL_ORD)
+            elif order == "sc":
+                t.gpu_strength = raise_side(t.gpu_strength, SC_TIER, ALL4)
         if order not in ("relaxed", "acquire", "release", "sc"):
             raise ValueError("%s: P%d unknown GPU order %r" % (path, p, order))
         return
@@ -241,13 +262,13 @@ def _parse_instr(t, p, cell, regmap, path):
     up = cell.upper()
     if up.startswith("MOV"):
         return                                   # immediate setup, not an access
-    m = re.match(r"^DMB[\s.]+(SY|ST|LD)$", up)
+    m = re.match(r"^(?:DMB|DSB)[\s.]+(SY|ST|LD)$", up)
     if m:
-        t.cpu_strength = raise_side(t.cpu_strength, FENCE, DMB_ORD[m.group(1)])
+        t.cpu_strength = raise_side(t.cpu_strength, *DMB_STRENGTH[m.group(1)])
         return
-    if re.match(r"^DMB(\s|\.)", up):
-        raise ValueError("%s: P%d unsupported DMB variant %r -- its ordered-pair "
-                         "set is not in DMB_ORD" % (path, p, cell))
+    if re.match(r"^(DMB|DSB|ISB)(\s|\.|$)", up):
+        raise ValueError("%s: P%d unsupported barrier %r -- its ordered-pair "
+                         "set is not in DMB_STRENGTH" % (path, p, cell))
     m = re.match(r"^(STLR|STR|LDAPR|LDAR|LDR)\s+\w+\s*,\s*\[\s*(\w+)\s*\]", up)
     if not m:
         raise ValueError("%s: P%d unparsed CPU op %r" % (path, p, cell))
@@ -259,11 +280,11 @@ def _parse_instr(t, p, cell, regmap, path):
     if mnem in ("STLR", "STR"):
         t.accesses[p].append(("W", loc))
         if mnem == "STLR":
-            t.cpu_strength = raise_side(t.cpu_strength, RELACQ)
+            t.cpu_strength = raise_side(t.cpu_strength, PART_TIER, REL_ORD)
     else:
         t.accesses[p].append(("R", loc))
         if mnem in ("LDAPR", "LDAR"):
-            t.cpu_strength = raise_side(t.cpu_strength, RELACQ)
+            t.cpu_strength = raise_side(t.cpu_strength, PART_TIER, ACQ_ORD)
 
 
 # ---------------------------------------------------------------------------
@@ -279,20 +300,24 @@ def load_oracle(path):
 
 NAME_RE = re.compile(r"^(?P<shape>.+?)-(?P<cut>[cg]+)-(?P<scope>cta|gpu|sys)-"
                      r"(?P<order>relaxed|acquire|release|fence|acqrel"
-                     r"|(?:sy|st|ld)\.(?:sc|rel|acq))"
+                     r"|(?:ra|sy|st|ld)\.(?:ra|sc|rel|acq))"
                      r"(?P<two>-2s)?$")
 
-# Q10 fence-pair grid.  The strictly-weaker neighbours on each axis (ord subset,
-# same lattice as side_le): DMB.SY -> {DMB.ST, DMB.LD} and f[sc] -> {f[release],
-# f[acquire]}.  DMB.ST/DMB.LD and f[release]/f[acquire] have no weaker fence
-# sibling -- there the mutant is the ONE-SIDED grid cell named for the role the
-# GPU fence played, which drops the CPU half of the pair AND demotes the GPU
-# fence to an annotated access (both sides strictly weaker).
-FP_CPU_WEAKER = {"sy": ("st", "ld")}
-FP_GPU_WEAKER = {"sc": ("rel", "acq")}
-FP_ONESIDED = {"rel": ("release", "acquire"),
-               "acq": ("acquire", "release"),
-               "sc":  ("acquire", "release")}
+# Q10 two-sided ORDER-PAIR grid `<cpu>.<gpu>'.  Candidate weakenings, tried in
+# this order: weaken the GPU axis, then the CPU axis, then fall back to the
+# ONE-SIDED grid cell named for the role the GPU half played (which drops the CPU
+# half of the pair AND demotes the GPU primitive to an annotated access).  Every
+# candidate is still put through the SAME structural + strictly-weaker check as
+# the final mu, so a candidate that is not actually a weakening ON THIS SHAPE is
+# skipped rather than crowned: e.g. on MP-cg the GPU proc is read;read, so
+# f[release,sys] orders {WW,RW} and the r[acquire] annotation orders {RR,RW} --
+# incomparable, not a weakening.
+FP_CPU_WEAKER = {"sy": ("ra", "st", "ld")}
+FP_GPU_WEAKER = {"sc": ("ra", "rel", "acq"), "ra": ("rel", "acq")}
+FP_ONESIDED = {"ra":  ("acquire", "release"),
+               "sc":  ("acquire", "release"),
+               "rel": ("release", "acquire"),
+               "acq": ("acquire", "release")}
 
 
 def split_name(name):
@@ -307,6 +332,15 @@ def derive(tests, oracle):
 
     def allowed(n):
         return n in tests and oracle.get(n) == "Allowed"
+
+    def usable(tname, cand):
+        """The two properties the vouch rests on, applied at CANDIDATE-selection
+        time so a non-weakening is skipped instead of becoming a hard error."""
+        T, M = tests[tname], tests[cand]
+        if T.structure() != M.structure():
+            return False
+        ts, ms = T.strength(), M.strength()
+        return side_le(ms[0], ts[0]) and side_le(ms[1], ts[1]) and ms != ts
 
     for name in sorted(tests):
         exp = oracle.get(name, "?")
@@ -350,15 +384,16 @@ def derive(tests, oracle):
                 cands += ["%s-%s.%s-2s" % (base, c2, g)
                           for c2 in FP_CPU_WEAKER.get(c, ())]
                 cands += ["%s-%s" % (base, o) for o in FP_ONESIDED[g]]
-                have = [x for x in cands if allowed(x)]
+                have = [x for x in cands if allowed(x) and usable(name, x)]
                 if have:
                     mu = have[0]
                     if mu.endswith("-2s"):
-                        rule = ("%s.%s-2s->%s (weaken one fence axis; pair kept)"
+                        rule = ("%s.%s-2s->%s (weaken ONE axis; pair kept)"
                                 % (c, g, mu.rsplit("-", 2)[-2]))
                     else:
-                        rule = ("%s.%s-2s->%s (drop CPU DMB; GPU fence -> "
-                                "annotated access)" % (c, g, mu.rsplit("-", 1)[-1]))
+                        rule = ("%s.%s-2s->%s (drop the CPU half; keep the GPU "
+                                "%s half)" % (c, g, mu.rsplit("-", 1)[-1],
+                                              mu.rsplit("-", 1)[-1]))
                     alt = have[1] if len(have) > 1 else "-"
             elif parts["order"] == "fence" and parts["two"]:
                 # Weaken the primitive UNDER TEST: SC fence -> RCpc release/acquire,
@@ -517,8 +552,9 @@ def main():
                               "`controlmap.py --emit > %s'" % (map_f, map_f))
 
         # fail closed: the count is asserted, not merely reported
-        if len(dis) != 16:
-            errors.append("expected 16 Disallowed rows, found %d" % len(dis))
+        if len(dis) != N_DISALLOWED:
+            errors.append("expected %d Disallowed rows, found %d"
+                          % (N_DISALLOWED, len(dis)))
         ok = sum(1 for r in dis if r[2] != "-" and r[3] == "Allowed")
         print("  MU MAP: %d/%d Disallowed tests have an existing, Allowed mu(T)"
               % (ok, len(dis)))

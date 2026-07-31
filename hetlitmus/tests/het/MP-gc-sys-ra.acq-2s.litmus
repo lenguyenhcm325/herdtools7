@@ -1,0 +1,12 @@
+Het MP-gc-sys-ra.acq-2s
+"Heterogeneous MP-gc-sys-ra.acq-2s: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X1=x;
+1:X3=y;
+}
+ P0:gpu             | P1:cpu        ;
+ w[relaxed,sys] x 1 | LDAPR W0,[X3] ;
+ f[acquire,sys]     | LDAPR W2,[X1] ;
+ w[relaxed,sys] y 1 |               ;
+scopes: (sys (gpu (cta P0)))
+exists (1:X0=1 /\ 1:X2=0)

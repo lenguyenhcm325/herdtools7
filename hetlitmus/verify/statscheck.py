@@ -51,8 +51,8 @@ every harness, not a copy free to drift -- and drives it, in four phases:
     not catch.
 
   PHASE 4 -- THE EMITTED CORPUS
-    All 338 harnesses carry the post-pass and a decode channel, with a census
-    (316 sync / 72 observer / 0 NEITHER; 336 window bumps -- the 2 `self' canary rows
+    All 386 harnesses carry the post-pass and a decode channel, with a census
+    (364 sync / 96 observer / 0 NEITHER; 384 window bumps -- the 2 `self' canary rows
     co-run no control by construction).  A guard that branches on a field the emitter
     never sets is worthless.
 
@@ -127,12 +127,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 
-# The emitted-corpus census (measured; see the B7 hand-off).  316 tests carry a
-# synchrony decode, 72 an observer decode (50 carry both), and NONE carries neither --
-# which is what lets the degeneracy guard switch channel instead of firing blind.
-CENSUS_SYNC, CENSUS_OBS, CENSUS_NEITHER = 316, 72, 0
-CENSUS_WINBUMP = 336        # 338 - the 2 `self' canaries (a test cannot control itself)
-CENSUS_TESTS = 338
+# The emitted-corpus census.  DERIVED, not observed-and-pasted:
+#   sync  = every test with a register (reader) observable = 386 - the 22
+#           store-only 2+2W harnesses                              = 364
+#   obs   = every test with a coherence-final [loc] condition atom = the same
+#           2+2W 22 + R 37 + S 37                                  = 96
+#           (74 carry both; NONE carries neither, which is what lets the
+#           degeneracy guard switch channel instead of firing blind)
+# Q10 moved these from 316/72: +48 sync (every new order-pair test has a reader)
+# and +24 obs (12 new R + 12 new S cells).
+CENSUS_SYNC, CENSUS_OBS, CENSUS_NEITHER = 364, 96, 0
+CENSUS_WINBUMP = 384        # 386 - the 2 `self' canaries (a test cannot control itself)
+CENSUS_TESTS = 386
 
 LN20 = -math.log(0.05)      # 2.99573227355399...
 R_POISSON = 1e9
@@ -693,7 +699,7 @@ case("observer-channel-degenerate",
                      distinct_decoded_iters=0, skew_stddev=0.0), 3, obs_degen=True),
      obs="Sometimes", k=3, k_eff=0, flags_any=["DEGEN_SIGHTING"])
 
-# No decode channel at all: FAIL CLOSED (0 of 338 today -- reaching it is a build bug).
+# No decode channel at all: FAIL CLOSED (0 of 386 today -- reaching it is a build bug).
 case("no-decode-channel-fails-closed",
      observed(stream(POISSON_CELLS, sync_valid=0, obs_valid=0,
                      distinct_decoded_iters=0, skew_stddev=0.0), 3),
@@ -715,7 +721,7 @@ case("window-desync-voids-the-bound",
      obs="Never", p_bound=-1.0, flags_any=["WIN_DESYNC", "FANO_UNMEASURED"])
 
 # --- CALIBRATION PROVENANCE ------------------------------------------------
-# 322 of 338 have no mu(T) by construction; their dispersion comes from the Layer-B
+# 348 of 386 have no mu(T) by construction; their dispersion comes from the Layer-B
 # canary -- a DIFFERENT shape's burstiness.  A weaker claim, so it must be flagged.
 case("canary-calibrated-when-no-mutant",
      stream(POISSON_CELLS, chan="canary", het_oracle="ORACLE_ALLOWED",
@@ -821,7 +827,7 @@ def py_reference(cells_):
         # DR1-A2/F2: mirror het_verdict()'s channel-aware interleaving-liveness
         # disqualifier -- the sync channel's evidence is interleavings_detected>0, the
         # observer channel's is observer_unique_count>=THETA_D, and a record with
-        # NEITHER channel fails closed (0 of 338 in the shipped corpus).  Before F2 the
+        # NEITHER channel fails closed (0 of 386 in the shipped corpus).  Before F2 the
         # rule read interleavings_detected blindly, so a store-only null (no reader,
         # field structurally 0) was always COLD; now a cold observer or no channel is
         # what disqualifies it.
@@ -2118,7 +2124,7 @@ def phase6_campaign(quiet):
             r0 = subprocess.run(
                 [sys.executable, "-c", loader +
                  "m = campaign.read_control_map(sys.argv[1]); "
-                 "assert len(m) == 338, len(m); "
+                 "assert len(m) == 386, len(m); "
                  "assert 'Test' not in m and 'Litmus' not in m, "
                  "'header ingested as a test'; "
                  "print('ok')", real],

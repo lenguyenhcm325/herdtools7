@@ -131,8 +131,14 @@ LB-cg-sys-acqrel-2s,Disallowed,LB-cg-sys-acquire,Allowed,acqrel-2s->acquire (dro
 LB-cg-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 LB-cg-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 LB-cg-sys-fence-2s,Disallowed,LB-cg-sys-fence,Allowed,fence-2s->fence (drop CPU DMB.SY; GPU fence kept),-,LB-cg-sys-relaxed,MP-cg-sys-relaxed
+LB-cg-sys-ra.acq-2s,Disallowed,LB-cg-sys-acquire,Allowed,ra.acq-2s->acquire (drop the CPU half; keep the GPU acquire half),-,LB-cg-sys-relaxed,MP-cg-sys-relaxed
+LB-cg-sys-ra.rel-2s,Disallowed,LB-cg-sys-release,Allowed,ra.rel-2s->release (drop the CPU half; keep the GPU release half),-,LB-cg-sys-relaxed,MP-cg-sys-relaxed
+LB-cg-sys-ra.sc-2s,Disallowed,LB-cg-sys-acquire,Allowed,ra.sc-2s->acquire (drop the CPU half; keep the GPU acquire half),LB-cg-sys-release,LB-cg-sys-relaxed,MP-cg-sys-relaxed
 LB-cg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 LB-cg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+LB-cg-sys-sy.acq-2s,Disallowed,LB-cg-sys-acquire,Allowed,sy.acq-2s->acquire (drop the CPU half; keep the GPU acquire half),-,LB-cg-sys-relaxed,MP-cg-sys-relaxed
+LB-cg-sys-sy.ra-2s,Disallowed,LB-cg-sys-acquire,Allowed,sy.ra-2s->acquire (drop the CPU half; keep the GPU acquire half),LB-cg-sys-release,LB-cg-sys-relaxed,MP-cg-sys-relaxed
+LB-cg-sys-sy.rel-2s,Disallowed,LB-cg-sys-release,Allowed,sy.rel-2s->release (drop the CPU half; keep the GPU release half),-,LB-cg-sys-relaxed,MP-cg-sys-relaxed
 LB-gc-cta-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 LB-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 LB-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
@@ -157,7 +163,13 @@ MP-cg-sys-acqrel-2s,Disallowed,MP-cg-sys-acquire,Allowed,acqrel-2s->acquire (dro
 MP-cg-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 MP-cg-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 MP-cg-sys-fence-2s,Disallowed,MP-cg-sys-fence,Allowed,fence-2s->fence (drop CPU DMB.SY; GPU fence kept),-,MP-cg-sys-relaxed,MP-cg-sys-relaxed
+MP-cg-sys-ra.acq-2s,Disallowed,MP-cg-sys-acquire,Allowed,ra.acq-2s->acquire (drop the CPU half; keep the GPU acquire half),-,MP-cg-sys-relaxed,MP-cg-sys-relaxed
+MP-cg-sys-ra.rel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+MP-cg-sys-ra.sc-2s,Disallowed,MP-cg-sys-ra.rel-2s,Allowed,ra.sc-2s->ra.rel (weaken ONE axis; pair kept),MP-cg-sys-acquire,MP-cg-sys-relaxed,MP-cg-sys-relaxed
 MP-cg-sys-relaxed,Allowed,-,-,-,-,-,self
+MP-cg-sys-sy.acq-2s,Disallowed,MP-cg-sys-acquire,Allowed,sy.acq-2s->acquire (drop the CPU half; keep the GPU acquire half),-,MP-cg-sys-relaxed,MP-cg-sys-relaxed
+MP-cg-sys-sy.ra-2s,Disallowed,MP-cg-sys-acquire,Allowed,sy.ra-2s->acquire (drop the CPU half; keep the GPU acquire half),-,MP-cg-sys-relaxed,MP-cg-sys-relaxed
+MP-cg-sys-sy.rel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 MP-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 MP-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 MP-gc-cta-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
@@ -167,8 +179,14 @@ MP-gc-gpu-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 MP-gc-sys-acqrel-2s,Disallowed,MP-gc-sys-release,Allowed,acqrel-2s->release (drop CPU half; GPU release kept),-,MP-gc-sys-relaxed,MP-gc-sys-relaxed
 MP-gc-sys-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 MP-gc-sys-fence-2s,Disallowed,MP-gc-sys-fence,Allowed,fence-2s->fence (drop CPU DMB.SY; GPU fence kept),-,MP-gc-sys-relaxed,MP-gc-sys-relaxed
+MP-gc-sys-ra.acq-2s,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+MP-gc-sys-ra.rel-2s,Disallowed,MP-gc-sys-release,Allowed,ra.rel-2s->release (drop the CPU half; keep the GPU release half),-,MP-gc-sys-relaxed,MP-gc-sys-relaxed
+MP-gc-sys-ra.sc-2s,Disallowed,MP-gc-sys-ra.acq-2s,Allowed,ra.sc-2s->ra.acq (weaken ONE axis; pair kept),MP-gc-sys-release,MP-gc-sys-relaxed,MP-gc-sys-relaxed
 MP-gc-sys-relaxed,Allowed,-,-,-,-,-,self
 MP-gc-sys-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+MP-gc-sys-sy.acq-2s,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+MP-gc-sys-sy.ra-2s,Disallowed,MP-gc-sys-release,Allowed,sy.ra-2s->release (drop the CPU half; keep the GPU release half),-,MP-gc-sys-relaxed,MP-gc-sys-relaxed
+MP-gc-sys-sy.rel-2s,Disallowed,MP-gc-sys-release,Allowed,sy.rel-2s->release (drop the CPU half; keep the GPU release half),-,MP-gc-sys-relaxed,MP-gc-sys-relaxed
 MP-het,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 R-cg-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 R-cg-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
@@ -182,8 +200,14 @@ R-cg-sys-acqrel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 R-cg-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 R-cg-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 R-cg-sys-fence-2s,Disallowed,R-cg-sys-acqrel-2s,Allowed,fence-2s->acqrel-2s (SC fence -> RCpc rel/acq; pair kept),-,R-cg-sys-relaxed,MP-cg-sys-relaxed
+R-cg-sys-ra.acq-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-sys-ra.rel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-sys-ra.sc-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
 R-cg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 R-cg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-sys-sy.acq-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-sys-sy.ra-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+R-cg-sys-sy.rel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 R-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 R-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 R-gc-cta-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
@@ -193,8 +217,14 @@ R-gc-gpu-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 R-gc-sys-acqrel-2s,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 R-gc-sys-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 R-gc-sys-fence-2s,Disallowed,R-gc-sys-acqrel-2s,Allowed,fence-2s->acqrel-2s (SC fence -> RCpc rel/acq; pair kept),-,R-gc-sys-relaxed,MP-gc-sys-relaxed
+R-gc-sys-ra.acq-2s,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-sys-ra.rel-2s,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-sys-ra.sc-2s,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 R-gc-sys-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 R-gc-sys-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-sys-sy.acq-2s,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-sys-sy.ra-2s,NO-ORACLE,-,-,-,-,-,MP-gc-sys-relaxed
+R-gc-sys-sy.rel-2s,NO-ORACLE,-,-,-,-,-,MP-gc-sys-relaxed
 RWC-ccg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 RWC-ccg-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 RWC-ccg-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
@@ -240,8 +270,14 @@ S-cg-sys-acqrel-2s,Disallowed,S-cg-sys-acquire,Allowed,acqrel-2s->acquire (drop 
 S-cg-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 S-cg-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 S-cg-sys-fence-2s,Disallowed,S-cg-sys-fence,Allowed,fence-2s->fence (drop CPU DMB.SY; GPU fence kept),-,S-cg-sys-relaxed,MP-cg-sys-relaxed
+S-cg-sys-ra.acq-2s,Disallowed,S-cg-sys-acquire,Allowed,ra.acq-2s->acquire (drop the CPU half; keep the GPU acquire half),-,S-cg-sys-relaxed,MP-cg-sys-relaxed
+S-cg-sys-ra.rel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-sys-ra.sc-2s,Disallowed,S-cg-sys-acquire,Allowed,ra.sc-2s->acquire (drop the CPU half; keep the GPU acquire half),S-cg-sys-release,S-cg-sys-relaxed,MP-cg-sys-relaxed
 S-cg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 S-cg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+S-cg-sys-sy.acq-2s,Disallowed,S-cg-sys-acquire,Allowed,sy.acq-2s->acquire (drop the CPU half; keep the GPU acquire half),-,S-cg-sys-relaxed,MP-cg-sys-relaxed
+S-cg-sys-sy.ra-2s,Disallowed,S-cg-sys-acquire,Allowed,sy.ra-2s->acquire (drop the CPU half; keep the GPU acquire half),S-cg-sys-release,S-cg-sys-relaxed,MP-cg-sys-relaxed
+S-cg-sys-sy.rel-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
 S-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 S-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 S-gc-cta-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
@@ -251,8 +287,14 @@ S-gc-gpu-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 S-gc-sys-acqrel-2s,Disallowed,S-gc-sys-release,Allowed,acqrel-2s->release (drop CPU half; GPU release kept),-,S-gc-sys-relaxed,MP-gc-sys-relaxed
 S-gc-sys-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 S-gc-sys-fence-2s,Disallowed,S-gc-sys-fence,Allowed,fence-2s->fence (drop CPU DMB.SY; GPU fence kept),-,S-gc-sys-relaxed,MP-gc-sys-relaxed
+S-gc-sys-ra.acq-2s,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+S-gc-sys-ra.rel-2s,Disallowed,S-gc-sys-release,Allowed,ra.rel-2s->release (drop the CPU half; keep the GPU release half),-,S-gc-sys-relaxed,MP-gc-sys-relaxed
+S-gc-sys-ra.sc-2s,Disallowed,S-gc-sys-ra.acq-2s,Allowed,ra.sc-2s->ra.acq (weaken ONE axis; pair kept),S-gc-sys-release,S-gc-sys-relaxed,MP-gc-sys-relaxed
 S-gc-sys-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 S-gc-sys-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+S-gc-sys-sy.acq-2s,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
+S-gc-sys-sy.ra-2s,Disallowed,S-gc-sys-release,Allowed,sy.ra-2s->release (drop the CPU half; keep the GPU release half),-,S-gc-sys-relaxed,MP-gc-sys-relaxed
+S-gc-sys-sy.rel-2s,Disallowed,S-gc-sys-release,Allowed,sy.rel-2s->release (drop the CPU half; keep the GPU release half),-,S-gc-sys-relaxed,MP-gc-sys-relaxed
 SB-cg-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 SB-cg-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 SB-cg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
@@ -265,8 +307,14 @@ SB-cg-sys-acqrel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 SB-cg-sys-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 SB-cg-sys-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 SB-cg-sys-fence-2s,Disallowed,SB-cg-sys-acqrel-2s,Allowed,fence-2s->acqrel-2s (SC fence -> RCpc rel/acq; pair kept),-,SB-cg-sys-relaxed,MP-cg-sys-relaxed
+SB-cg-sys-ra.acq-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-sys-ra.rel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-sys-ra.sc-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 SB-cg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 SB-cg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-sys-sy.acq-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-sys-sy.ra-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
+SB-cg-sys-sy.rel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 SB-gc-cta-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 SB-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 SB-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed

@@ -25,6 +25,10 @@
 #         CPU_ARCHS="aarch64 x86_64" ./generate.sh
 #      to also emit x86_64 het variants (suffix -x86_64) with no code edit; the
 #      x86_64 files are NOT committed by default.
+#  (E) The two-sided ORDER-PAIR grid: <shape>-<cuttag>-sys-<cpu>.<gpu>-2s, the
+#      OFF-DIAGONAL of (D).  (D) applies the same order name to both devices, so
+#      only the diagonal was ever generated; (E) sweeps cpu in {ra,sy} x gpu in
+#      {ra,sc,rel,acq} on the 2-proc shapes (minus 2+2W).  See ../_grid_lib.sh.
 #  (D) The TWO-SIDED family: <shape>-<cuttag>-sys-{acqrel,fence}-2s.  Unlike (A)-
 #      (C) (GPU annotated, CPU plain), these annotate BOTH devices so a complete
 #      morally-strong cross-device pair forms (CPU: STLR/LDAPR/DMB.SY via
@@ -159,7 +163,54 @@ for shape in $SHAPE_ORDER; do
 done
 
 # ---------------------------------------------------------------------------
+# (E) The two-sided ORDER-PAIR grid: the OFF-DIAGONAL of (D).  [Q10 steps 1-3]
+# ---------------------------------------------------------------------------
+# (D) applies the SAME order name to both devices, so only the two diagonal
+# cells were generated.  The per-side ordering a primitive supplies depends on
+# which program-order pair its proc has -- so sweep
+#   cpu in {ra, sy} x gpu in {ra, sc, rel, acq}
+# named <shape>-<cuttag>-sys-<cpu>.<gpu>-2s.  See ../_grid_lib.sh for the token
+# table, the blocked DMB.ST/DMB.LD axis, and why only 2-proc shapes (minus
+# 2+2W) and one cut for SB/LB.  Verdicts are COMPOSITIONAL and machine-checked:
+# build-nvidia-oracle.sh + verify/ordercheck.py (make hetlitmus-order).
+pair_count=0 diag_count=0
+for shape in $TWO_SIDED_PAIR_SHAPES; do
+  cyc="${SHAPE_CYCLE[$shape]}"
+  for cut in ${SHAPE_2S_PAIR_CUTS[$shape]}; do
+    tag=$(cut_tag "$cut")
+    for c in $TWO_SIDED_CPU_ORDERS; do
+      for g in $TWO_SIDED_GPU_ORDERS; do
+        cpu_toks=$(render_2s_cpu "$c" $cyc)
+        gpu_toks=$(render_2s_gpu "$g" $cyc)
+        # The two DIAGONAL cells already exist under their (D) names.  PROVE
+        # that -- regenerate under the (D) name and byte-diff the committed
+        # file -- instead of assuming it, then skip (emitting them would be an
+        # exact duplicate, which verify/dupcheck.py would reject anyway).
+        diag=""
+        [ "$c.$g" = "ra.ra" ] && diag="$shape-$tag-sys-acqrel-2s"
+        [ "$c.$g" = "sy.sc" ] && diag="$shape-$tag-sys-fence-2s"
+        if [ -n "$diag" ]; then
+          "$BIN/hetgen7" $COMMON -cpu-arch aarch64 -devices "$cut" -name "$diag" \
+            -cpu "$cpu_toks" -gpu "$gpu_toks" > "/tmp/hetgen-diag.$$.litmus"
+          if ! diff -q "/tmp/hetgen-diag.$$.litmus" "$diag.litmus" >/dev/null; then
+            echo "generate.sh: FATAL $c.$g does NOT reproduce $diag" >&2
+            diff "/tmp/hetgen-diag.$$.litmus" "$diag.litmus" >&2 || true
+            rm -f "/tmp/hetgen-diag.$$.litmus"; exit 1
+          fi
+          rm -f "/tmp/hetgen-diag.$$.litmus"
+          diag_count=$((diag_count+1)); continue
+        fi
+        name="$shape-$tag-sys-$c.$g-2s"
+        "$BIN/hetgen7" $COMMON -cpu-arch aarch64 -devices "$cut" -name "$name" \
+          -cpu "$cpu_toks" -gpu "$gpu_toks" > "$name.litmus"
+        pair_count=$((pair_count+1))
+      done
+    done
+  done
+done
+
+# ---------------------------------------------------------------------------
 # @all manifest (only the committed, default-arch tests if CPU_ARCHS=aarch64).
 # ---------------------------------------------------------------------------
 ls *.litmus | LC_ALL=C sort > @all
-echo "Done. $(wc -l < @all) tests in $(pwd) (grid: $grid_count generated, $skip_count degenerate skipped; two-sided: $twosided_count); manifest @all written."
+echo "Done. $(wc -l < @all) tests in $(pwd) (grid: $grid_count generated, $skip_count degenerate skipped; two-sided: $twosided_count; order-pair: $pair_count generated, $diag_count diagonal cells verified == their (D) sibling and skipped); manifest @all written."

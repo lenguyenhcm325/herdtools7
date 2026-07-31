@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HetLitmus emission snapshot: emit the FULL corpus (338 het harness dirs +
+# HetLitmus emission snapshot: emit the FULL corpus (386 het harness dirs +
 # 137 gpu-only .cu + 137 gpu-only .hip) into OUTDIR.
 #
 # Purpose: the refactor golden.  The Layer-2 gate (corpus-gate.sh) byte-pins
@@ -21,7 +21,7 @@
 # source dir).  gpu-only reuses emit-cuda.sh / emit-hip.sh unchanged.
 #
 # Usage:  hetlitmus/verify/emit-all.sh OUTDIR
-# Exit:   0 = all 475 emitted; non-zero otherwise (fail-fast).
+# Exit:   0 = all 660 emitted; non-zero otherwise (fail-fast).
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -59,7 +59,7 @@ nhet="$(find "$OUTDIR/het" -mindepth 1 -maxdepth 1 -type d | wc -l)"
 ncu="$(ls "$OUTDIR/gpu-cuda"/*.cu 2>/dev/null | wc -l)"
 nhip="$(ls "$OUTDIR/gpu-hip"/*.hip 2>/dev/null | wc -l)"
 echo "emitted: $nhet het harness dirs, $ncu gpu-only .cu, $nhip gpu-only .hip"
-if [ "$nhet" -ne 338 ] || [ "$ncu" -ne 137 ] || [ "$nhip" -ne 137 ]; then
-  echo "FAIL: census mismatch (want 338/137/137)" >&2
+if [ "$nhet" -ne 386 ] || [ "$ncu" -ne 137 ] || [ "$nhip" -ne 137 ]; then
+  echo "FAIL: census mismatch (want 386/137/137)" >&2
   exit 1
 fi

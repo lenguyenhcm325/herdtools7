@@ -52,7 +52,7 @@ still exactly the 16 Disallowed tests.  A canary-only harness says so in its own
 
 ...and the canary really is IN there, not merely named: its own instance, its own K,
 its own recovery scan feeding its own channel.  A NAME IS NOT A CO-RUN -- the map
-names a canary for all 338 rows, and before B6c 320 of them named one they did not
+names a canary for all 386 rows, and before B6c 320 of the then-338 named one they did not
 run.  That is exactly the drift the flag exists to catch, so both are checked.
   $ grep -c 'HET_CANARY_NAME "MP-cg-sys-relaxed"' S-cg-sys-fence/S-cg-sys-fence.cu
   1
@@ -70,12 +70,12 @@ line under its own condition could silently stop tracking.
   $ grep -cE '^#define CAN_K_TAG 3' S-cg-sys-fence/S-cg-sys-fence.cu
   1
 
-THE ORACLE CLASS (B6c).  Without it het_verdict() framed all 338 tests as
+THE ORACLE CLASS (B6c).  Without it het_verdict() framed all 386 tests as
 should-be-forbidden, so any test that observed its weak outcome printed "the
 should-be-FORBIDDEN outcome was OBSERVED ... A single sighting REFUTES the model's
-prediction".  Only 16 of the 338 are Disallowed.  286 are oracle-ALLOWED -- there the
+prediction".  Only 38 of the 386 are Disallowed.  307 are oracle-ALLOWED -- there the
 weak outcome is EXPECTED, and seeing it CONFIRMS the model is not over-strong -- and
-36 are NO-ORACLE.  322 harnesses stood ready to print a LOUD FALSE REFUTATION of the
+41 are NO-ORACLE.  348 harnesses stand ready to print a LOUD FALSE REFUTATION of the
 compound memory model.  Each class must carry its own tag, read from control-map.csv
 field 2, and the emitter must never fall back to a default.
   $ litmus7 -o . ../het/IRIW-cgcg-sys-fence-2s.litmus >/dev/null 2>&1
@@ -196,7 +196,7 @@ control was compiled in, a silent lie the moment one was.
 
 EXHAUSTIVE_VALID IS A VALIDITY FLAG, NOT A FORMALITY, AND EACH INSTANCE HAS ITS OWN.
 It was set to (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX) for every test -- which at the
-default N=100000 is 0 for ALL 338, while a T_L<=1 test decodes every frame exactly and
+default N=100000 is 0 for ALL 386, while a T_L<=1 test decodes every frame exactly and
 counts unconditionally.  Left that way, B6's rule (which refuses a credible null
 unless the flag is 1) would have called every run COLD forever: a decision rule that
 always says the same thing.

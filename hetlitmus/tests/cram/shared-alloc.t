@@ -11,11 +11,11 @@ THE REPRESENTATIVE FOR THE PER-VARIABLE PATH IS NOW MP-cg-sys-RELAXED.
 B6b co-ran mu(T) + canary on the 16 Disallowed tests, which carve their shared vars
 out of ONE cache-line-padded arena (guarded in (f) below).  This file then picked
 MP-cg-sys-ACQUIRE to keep guarding the per-variable path, on the reasoning that it was
-"still what 322 of the 338 het harnesses use".
+"still what 348 of the 386 het harnesses use".
 
 B6c MAKES THAT REASONING FALSE, and the honest move is to say so rather than to leave
 the guard pointing at a harness that no longer takes the path.  Every test that has a
-canary to co-run now co-runs one (Q4 R5), so 336 of the 338 take the ARENA.  The only
+canary to co-run now co-runs one (Q4 R5), so 384 of the 386 take the ARENA.  The only
 harnesses still on the per-variable path are the two that ARE the Layer-B canary and so
 cannot co-run themselves -- MP-{cg,gc}-sys-relaxed (control-map.csv: `self').  The
 guard therefore MOVES to one of them, at full strength, rather than being deleted or

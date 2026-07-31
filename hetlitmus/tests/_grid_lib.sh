@@ -49,9 +49,11 @@ SHAPE_ORDER="MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3"
 # ROLE-BASED, symmetry-reduced -- NOT 2^n.  2-proc shapes: both directions.
 # 3-proc shapes (distinct roles): each proc, in turn, is the single GPU
 # participant.  4-proc shapes: IRIW (2 symmetric writers + 2 symmetric readers)
-# uses the four symmetry-class cuts {one writer, one reader, both writers, both
-# readers} on the GPU; WRC3 (a 4-stage causal chain, all roles distinct) puts
-# each chain stage, in turn, on the GPU.
+# uses FOUR cuts {one writer, one reader, both writers, both readers} on the GPU
+# -- these are four of IRIW's EIGHT symmetry classes (Q10 sect 2.2, measured
+# with Q10-probe/canon.py --cuts), not all of them: the mixed writer+reader cuts
+# are not generated; WRC3 (a 4-stage causal chain, all roles distinct) puts each
+# chain stage, in turn, on the GPU.
 declare -A SHAPE_HET_CUTS=(
   [MP]="cpu,gpu gpu,cpu"
   [SB]="cpu,gpu gpu,cpu"
@@ -189,6 +191,87 @@ render_cpu_cycle() {
       ad=$(arm_ord "$DST" "$order") || return 1
       out="$out ${e}${as}${ad}"
     fi
+  done
+  echo "${out# }"
+}
+
+# --- Q10: the two-sided ORDER-PAIR grid (off-diagonal) ----------------------
+# TWO_SIDED_ORDERS above pairs each device with the SAME order name, so only the
+# two DIAGONAL cells of the pairing grid were ever generated.  Nothing in the
+# argument for restricting to sys scope and to complete pairings excludes the
+# off-diagonal, and the per-side ordering a primitive supplies depends on WHICH
+# program-order pair its proc has -- a release fence on a load;load consumer
+# orders nothing, RCpc STLR->LDAPR never orders store->load.  So sweep the grid
+# (Q10 sect 5 steps 1-3).  Name token `<cpu>.<gpu>':
+#
+#   cpu  ra -> STLR / LDAPR atoms (== the `acqrel' CPU half)
+#        sy -> DMB SY             (== the `fence'  CPU half)
+#   gpu  ra -> w[release,sys] / r[acquire,sys] atoms
+#        sc -> f[sc,sys]          rel -> f[release,sys]   acq -> f[acquire,sys]
+#
+# The two DIAGONAL cells are NOT re-emitted: `ra.ra' IS <shape>-<cut>-sys-acqrel-2s
+# and `sy.sc' IS <shape>-<cut>-sys-fence-2s.  generate.sh PROVES that (byte-diff
+# against the committed file) rather than assuming it.
+#
+# BLOCKED AXIS.  Q10 also asks for DMB.ST / DMB.LD on the CPU.  diy generates
+# them (diyone7 -arch AArch64 -show fences) and the oracle rule + ordercheck.py
+# decide them, but litmus/hetCpuBody.ml:186 accepts only `DMB SY' / `DSB SY' and
+# fatals on any other I_FENCE, so such a test CANNOT BE EMITTED.  Lifting that
+# is an OCaml change; see docs/het-oracle.md "blocked axis" and the Q10 report.
+#
+# `f[acq_rel,sys]' is likewise unavailable: `FenceAcq_relSys' does not lex as a
+# diy edge name (the underscore breaks the edge lexer) -- verified with diyone7.
+TWO_SIDED_CPU_ORDERS="ra sy"
+TWO_SIDED_GPU_ORDERS="ra sc rel acq"
+
+# Shapes + cuts for the off-diagonal sweep.  2-proc only: NO-ORACLE is a
+# property of the SHAPE (a 3/4-proc two-sided test needs cross-device MCA or
+# A-cumulativity, which Bagchi ISMM'26 sect 2.1 defers), so no annotation on a
+# transitive shape can produce a Disallowed row -- Q10 sect 3.  2+2W is excluded
+# for the same reason (its cycle is two `co' edges with no `rf' at all).
+# SB and LB emit ONE cut: their cycle is invariant under rotation-by-two, which
+# swaps P0/P1, and the annotation follows the DEVICE rather than the proc index,
+# so `gc' would be `cg' with the labels exchanged -- an exact duplicate.
+# verify/dupcheck.py is what holds that honest.
+TWO_SIDED_PAIR_SHAPES="MP SB LB R S"
+declare -A SHAPE_2S_PAIR_CUTS=(
+  [MP]="cpu,gpu gpu,cpu"
+  [SB]="cpu,gpu"
+  [LB]="cpu,gpu"
+  [R]="cpu,gpu gpu,cpu"
+  [S]="cpu,gpu gpu,cpu"
+)
+
+# render_2s_cpu <cpu-tok> <base-edge>...  ->  AArch64 edge token list
+render_2s_cpu() {
+  local t="$1"; shift
+  case "$t" in
+    ra) render_cpu_cycle acqrel "$@";;
+    sy) render_cpu_cycle fence  "$@";;
+    *) echo "bad two-sided cpu order: $t" >&2; return 1;;
+  esac
+}
+
+# render_2s_gpu <gpu-tok> <base-edge>...  ->  Bell/LISA edge token list.
+# `sc|rel|acq' keep every access relaxed at sys scope and put the ordering in a
+# standalone fence event, exactly as the `fence' column does; `Sc' reproduces
+# `render_cycle sys fence' token for token.
+render_2s_gpu() {
+  local t="$1"; shift
+  local o
+  case "$t" in
+    ra)  render_cycle sys acqrel "$@"; return;;
+    sc)  o=Sc;;
+    rel) o=Release;;
+    acq) o=Acquire;;
+    *) echo "bad two-sided gpu order: $t" >&2; return 1;;
+  esac
+  local out="" e base
+  for e in "$@"; do
+    edge_src_dst "$e" || return 1
+    base="$e"
+    [ "$IS_PO" = 1 ] && base="Fence${o}Sysd${e#Pod}"
+    out="$out ${base}RelaxedSysRelaxedSys"
   done
   echo "${out# }"
 }

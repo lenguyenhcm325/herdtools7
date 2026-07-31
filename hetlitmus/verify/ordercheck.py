@@ -115,20 +115,29 @@ SHAPES = ["MP", "SB", "LB", "2+2W", "R", "S"]
 
 # --- the rule ---------------------------------------------------------------
 ALL4 = frozenset(("WW", "RR", "WR", "RW"))
+RELACQ_ORD = frozenset(("WW", "RR", "RW"))   # rel/acq atoms: everything but W->R
 ORD = {
-    "SY": ALL4,               "ST": frozenset(("WW",)),
-    "LD": frozenset(("RR", "RW")),
-    "Sc": ALL4,               "Release": frozenset(("WW", "RW")),
+    # CPU (AArch64)
+    "RA": RELACQ_ORD,         "SY": ALL4,
+    "ST": frozenset(("WW",)), "LD": frozenset(("RR", "RW")),
+    # GPU (LISA/Bell -> PTX)
+    "Ra": RELACQ_ORD,         "Sc": ALL4,
+    "Release": frozenset(("WW", "RW")),
     "Acquire": frozenset(("RR", "RW")),
 }
+RELACQ_ROLE = frozenset(("rel", "acq"))
 ROLE = {
-    "SY": frozenset(("rel", "acq", "sc")), "ST": frozenset(("rel",)),
-    "LD": frozenset(("acq",)),
-    "Sc": frozenset(("rel", "acq", "sc")), "Release": frozenset(("rel",)),
-    "Acquire": frozenset(("acq",)),
+    "RA": RELACQ_ROLE, "SY": frozenset(("rel", "acq", "sc")),
+    "ST": frozenset(("rel",)), "LD": frozenset(("acq",)),
+    "Ra": RELACQ_ROLE, "Sc": frozenset(("rel", "acq", "sc")),
+    "Release": frozenset(("rel",)), "Acquire": frozenset(("acq",)),
 }
-CPU_FENCE = {"sy": "SY", "st": "ST", "ld": "LD"}        # name token -> DMB
-GPU_FENCE = {"sc": "Sc", "rel": "Release", "acq": "Acquire"}
+# corpus name token -> primitive.  `ra'/`sy' are the two CPU halves the emitter
+# can actually build (hetCpuBody.ml accepts STR/STLR/LDR/LDAR/LDAPR and DMB SY
+# ONLY); `st'/`ld' are decided by the rule and machine-checked here, but no test
+# carrying them can be emitted today -- see docs/het-oracle.md "blocked axis".
+CPU_FENCE = {"ra": "RA", "sy": "SY", "st": "ST", "ld": "LD"}
+GPU_FENCE = {"ra": "Ra", "sc": "Sc", "rel": "Release", "acq": "Acquire"}
 
 
 def pairs(shape):
@@ -196,40 +205,69 @@ def herd(path, extra):
     return "Forbidden" if m.group(1) == "Never" else "Allowed"
 
 
-def gen_arm(tmp, shape, d0, d1):
+def _edges(shape, q0, q1, po_edge, atom):
+    """Render the 4 edge tokens of a 2-proc cycle whose P0 carries primitive q0
+    and P1 carries q1.  `po_edge(q, XY)' names a program-order edge and
+    `atom(q, dir)' the per-event annotation; every edge token is
+    <base><atom(src)><atom(dst)>, so a MIXED cell (atoms on one proc, a fence on
+    the other) is expressed exactly as diy wants it."""
     c = CYCLE[shape]
-    e0 = "DMB.%sd%s" % (d0, c[0][3:])
-    e1 = "DMB.%sd%s" % (d1, c[2][3:])
+    xy0, xy1 = c[0][3:], c[2][3:]
+    # events, in cycle order: (proc primitive, direction)
+    ev = [(q0, xy0[0]), (q0, xy0[1]), (q1, xy1[0]), (q1, xy1[1])]
+    a = [atom(q, d) for (q, d) in ev]
+    return [po_edge(q0, xy0) + a[0] + a[1],
+            c[1] + a[1] + a[2],
+            po_edge(q1, xy1) + a[2] + a[3],
+            c[3] + a[3] + a[0]]
+
+
+def _arm_po(q, xy):
+    return "Pod" + xy if q == "RA" else "DMB.%sd%s" % (q, xy)
+
+
+def _arm_atom(q, d):
+    if q != "RA":
+        return "P"                       # plain STR / LDR
+    return "L" if d == "W" else "Q"      # STLR / LDAPR (RCpc)
+
+
+def _ptx_po(q, xy):
+    return "Pod" + xy if q == "Ra" else "Fence%sSysd%s" % (q, xy)
+
+
+def _ptx_atom(q, d):
+    if q != "Ra":
+        return "RelaxedSys"
+    return "ReleaseSys" if d == "W" else "AcquireSys"
+
+
+def gen_arm(tmp, shape, d0, d1):
     name = "arm-%s-%s-%s" % (shape, d0, d1)
-    r = _run([os.path.join(BIN, "diyone7"), "-arch", "AArch64", "-name", name,
-              e0, c[1], e1, c[3]], cwd=tmp)
+    e = _edges(shape, d0, d1, _arm_po, _arm_atom)
+    r = _run([os.path.join(BIN, "diyone7"), "-arch", "AArch64", "-name", name]
+             + e, cwd=tmp)
     return os.path.join(tmp, name + ".litmus") if r.returncode == 0 else None
 
 
-R_ANN = "RelaxedSysRelaxedSys"
-
-
 def gen_ptx(tmp, shape, f0, f1):
-    c = CYCLE[shape]
-    e0 = "Fence%sSysd%s%s" % (f0, c[0][3:], R_ANN)
-    e1 = "Fence%sSysd%s%s" % (f1, c[2][3:], R_ANN)
     name = "ptx-%s-%s-%s" % (shape, f0, f1)
+    e = _edges(shape, f0, f1, _ptx_po, _ptx_atom)
     r = _run([os.path.join(BIN, "diyone7"), "-set-libdir", LIBDIR, "-bell", BELL,
               "-arch", "LISA", "-name", name,
-              "-scopes", "(sys (gpu (cta P0) (cta P1)))",
-              e0, c[1] + R_ANN, e1, c[3] + R_ANN], cwd=tmp)
+              "-scopes", "(sys (gpu (cta P0) (cta P1)))"] + e, cwd=tmp)
     return os.path.join(tmp, name + ".litmus") if r.returncode == 0 else None
 
 
 # --- phases -----------------------------------------------------------------
-DMBS = ["SY", "ST", "LD"]
-FENCES = ["Sc", "Release", "Acquire"]
+DMBS = ["RA", "SY", "ST", "LD"]
+FENCES = ["Ra", "Sc", "Release", "Acquire"]
 
 
 def phase_arm(tmp, quiet):
     bad = []
     if not quiet:
-        print("===== PHASE 1: ARM -- herd7 native AArch64 vs the rule (54 cells) =====")
+        print("===== PHASE 1: ARM -- herd7 native AArch64 vs the rule (%d cells) =====" % (len(SHAPES)*len(DMBS)**2))
     for sh in SHAPES:
         row = []
         for d0 in DMBS:
@@ -240,17 +278,20 @@ def phase_arm(tmp, quiet):
                 row.append("F" if got == "Forbidden" else
                            ("A" if got == "Allowed" else "?"))
                 if got != want:
-                    bad.append("ARM %s DMB.%s x DMB.%s: herd7=%s rule=%s"
+                    bad.append("ARM %s P0=%s P1=%s: herd7=%s rule=%s"
                                % (sh, d0, d1, got, want))
         if not quiet:
-            print("  %-5s %s   (SY|ST|LD x SY|ST|LD)" % (sh, " ".join(row)))
+            print("  %-5s %s" % (sh, " ".join(row)))
+    if not quiet:
+        print("        rows = P0 in %s ; within a row P1 in the same order"
+              % "/".join(DMBS))
     return bad
 
 
 def phase_ptx(tmp, quiet):
     bad = []
     if not quiet:
-        print("\n===== PHASE 2: PTX -- herd7 + nvidia-ptx.cat vs the rule (54 cells) =====")
+        print("\n===== PHASE 2: PTX -- herd7 + nvidia-ptx.cat vs the rule (%d cells) =====" % (len(SHAPES)*len(FENCES)**2))
     for sh in SHAPES:
         row = []
         for f0 in FENCES:
@@ -261,10 +302,13 @@ def phase_ptx(tmp, quiet):
                 row.append("F" if got == "Forbidden" else
                            ("A" if got == "Allowed" else "?"))
                 if got != want:
-                    bad.append("PTX %s f[%s] x f[%s]: herd7=%s rule=%s"
+                    bad.append("PTX %s P0=%s P1=%s: herd7=%s rule=%s"
                                % (sh, f0, f1, got, want))
         if not quiet:
-            print("  %-5s %s   (sc|rel|acq x sc|rel|acq)" % (sh, " ".join(row)))
+            print("  %-5s %s" % (sh, " ".join(row)))
+    if not quiet:
+        print("        rows = P0 in %s ; within a row P1 in the same order"
+              % "/".join(FENCES))
     return bad
 
 
@@ -272,7 +316,8 @@ def phase_ptx(tmp, quiet):
 # The shape alternation is EXPLICIT (not `.+?') so a 3/4-proc name can never be
 # mis-split into a 2-proc one.
 TWOS = re.compile(r"^(?P<shape>MP|SB|LB|R|S)-(?P<cut>cg|gc)-sys-"
-                  r"(?:(?P<c>sy|st|ld)\.(?P<g>sc|rel|acq)|(?P<f>fence))-2s$")
+                  r"(?:(?P<c>ra|sy|st|ld)\.(?P<g>ra|sc|rel|acq)"
+                  r"|(?P<f>fence)|(?P<a>acqrel))-2s$")
 
 
 def phase_oracle(quiet):
@@ -288,20 +333,20 @@ def phase_oracle(quiet):
             if not m:
                 continue    # 2+2W and the 3/4-proc shapes are decided by the
                             # cross-device MCA question, not by this rule
-            c = m.group("c") or "sy"
-            g = m.group("g") or "sc"
+            c = m.group("c") or ("ra" if m.group("a") else "sy")
+            g = m.group("g") or ("ra" if m.group("a") else "sc")
             want = het_verdict(m.group("shape"), m.group("cut"), c, g)
             n += 1
             if verdict != want:
                 bad.append("ORACLE %s: csv=%s rule=%s" % (name, verdict, want))
     if not quiet:
-        print("\n===== PHASE 3: expected-nvidia.csv two-sided fence-pair rows "
+        print("\n===== PHASE 3: expected-nvidia.csv two-sided 2-proc rows "
               "vs the rule =====")
-        print("  %d rows checked (the 3x3 grid on MP/SB/LB/R/S, including the "
-              "pre-existing\n  `-fence-2s' rows as the (DMB.SY, f[sc,sys]) cell)"
-              % n)
+        print("  %d rows checked on MP/SB/LB/R/S -- the emitted fence-pair cells"
+              "\n  PLUS the pre-existing `-fence-2s' and `-acqrel-2s' rows read "
+              "as the (sy,sc) and (ra,ra) cells" % n)
     if n == 0:
-        bad.append("ORACLE: no two-sided fence-pair rows found -- the gate is "
+        bad.append("ORACLE: no two-sided 2-proc rows found -- the gate is "
                    "checking nothing")
     return bad
 
@@ -324,8 +369,9 @@ def run(quiet=False):
               "is not what the model solvers compute." % len(bad))
         return 1
     if not quiet:
-        print("\nORDERCHECK OK  (108 solver cells + the oracle's two-sided "
-              "fence-pair rows all agree with the rule)")
+        print("\nORDERCHECK OK  (%d solver cells + the oracle's two-sided "
+              "2-proc rows all agree with the rule)"
+              % (len(SHAPES) * (len(DMBS) ** 2 + len(FENCES) ** 2)))
     return 0
 
 
@@ -342,7 +388,7 @@ INJECTIONS = [
     ("ROLE[f[acquire]] gains rel -- an acquire fence that also releases",
      "D.ROLE['Acquire'] = frozenset(('acq','rel'))", "PTX "),
     ("GPU_FENCE reads the corpus token `sc' as a release fence",
-     "D.GPU_FENCE = {'sc':'Release','rel':'Release','acq':'Acquire'}", "ORACLE"),
+     "D.GPU_FENCE = dict(D.GPU_FENCE, sc='Release')", "ORACLE"),
 ]
 
 

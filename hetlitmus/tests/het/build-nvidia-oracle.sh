@@ -22,25 +22,39 @@
 #                                            reader-order half IS present, but
 #                                            IRIW needs MCA -- unestablished)
 #
-#  Two-sided FENCE-PAIR tests (`-2s' with order `<cpu>.<gpu>', Q10 steps 1-4):
-#  the 3 x 3 grid  CPU {DMB.SY, DMB.ST, DMB.LD} x GPU {fence.sc.sys,
-#  fence.release.sys, fence.acquire.sys} on the six 2-proc shapes, minus the
-#  (DMB.SY, fence.sc.sys) cell which IS the pre-existing `-fence-2s' row.
-#  These are NOT hand verdicts: two_sided_fence_pair() below is a COMPOSITIONAL
+#  Two-sided ORDER-PAIR tests (`-2s' with order `<cpu>.<gpu>', Q10 steps 1-4):
+#  the OFF-DIAGONAL of the pairing grid, on the 2-proc shapes (minus 2+2W),
+#      cpu in {ra = STLR/LDAPR , sy = DMB SY}
+#      gpu in {ra = w[release]/r[acquire] , sc = fence.sc.sys ,
+#              rel = fence.release.sys , acq = fence.acquire.sys}
+#  minus the two DIAGONAL cells, which ARE the pre-existing rows: `ra.ra' is
+#  `-acqrel-2s' and `sy.sc' is `-fence-2s' (generate.sh byte-diffs both to prove
+#  it).  DMB.ST / DMB.LD are DECIDED HERE and machine-checked by ordercheck.py,
+#  but no test carrying them can be EMITTED: litmus/hetCpuBody.ml:186 accepts
+#  only `DMB SY'/`DSB SY' and fatals on any other I_FENCE.  That axis is blocked
+#  pending an OCaml change -- see docs/het-oracle.md "blocked axis".
+#
+#  These are NOT hand verdicts: two_sided_order_pair() below is a COMPOSITIONAL
 #  rule over two per-primitive facts, and hetlitmus/verify/ordercheck.py proves
-#  the rule is the same function herd7 computes -- 54 CPU-only cells under the
-#  native AArch64 model and 54 GPU-only cells under nvidia-ptx.cat -- and that
-#  it reproduces the pre-existing `-fence-2s' rows as the (DMB.SY, sc) cell.
+#  the rule is the same function herd7 computes -- 96 CPU-only cells under the
+#  native AArch64 model and 96 GPU-only cells under nvidia-ptx.cat -- and that
+#  it reproduces the pre-existing `-fence-2s' / `-acqrel-2s' rows as the
+#  (sy,sc) / (ra,ra) cells of the same grid.
 #
 #    ord(p)  = the program-order pairs {WW,RR,WR,RW} p orders inside its thread
-#              DMB.SY {WW RR WR RW}  DMB.ST {WW}      DMB.LD {RR RW}
-#              sc     {WW RR WR RW}  release {WW RW}  acquire {RR RW}
-#              (ARM row = herd7's own answer; GPU row = [CMCM] 5 verbatim:
+#              DMB.SY / fence.sc.sys       {WW RR WR RW}
+#              STLR/LDAPR , w[rel]/r[acq]  {WW RR RW}   (never store->load: RCpc)
+#              fence.release.sys {WW RW}   fence.acquire.sys {RR RW}
+#              DMB.ST {WW}                 DMB.LD {RR RW}
+#              (ARM rows = herd7's own answer; GPU rows = [CMCM] 5 verbatim:
 #               "a request that is marked with sem >= rel enforces R + pred -> W
 #               and W -> W.  A request with sem >= acq enforces R -> R and
 #               R -> W and an sc fence additionally enforces W -> R.")
 #    role(p) = which half of a morally-strong pair p can supply
-#              DMB.SY/sc {rel acq sc}   DMB.ST/release {rel}   DMB.LD/acquire {acq}
+#              DMB.SY / fence.sc.sys {rel acq sc}
+#              STLR/LDAPR , w[rel]/r[acq] {rel acq}
+#              DMB.ST / fence.release.sys {rel}
+#              DMB.LD / fence.acquire.sys {acq}
 #
 #    Disallowed  ord(cpu) covers the CPU proc's pair AND ord(gpu) covers the GPU
 #                proc's pair AND the [PTX] pattern completes (rf-source proc
@@ -136,58 +150,73 @@ S_IRIW2="two-sided reader ordering present, but IRIW needs multi-copy atomicity;
 # primitives are named by their real mnemonics: `DMB SY' / `fence.acquire.sys'.
 # ---------------------------------------------------------------------------
 
-# prim_ord <tok> -> the program-order pairs the primitive orders (fail closed)
+# prim_ord <tok> -> sets PRIM_ORD (the program-order pairs it orders).
+# NB: these MUST NOT be called in a command substitution -- a `exit 1' inside
+# `$(...)' only kills the subshell, which is exactly how a fail-closed guard
+# silently fails open.  They set a global and are called as plain statements.
 prim_ord() {
   case "$1" in
-    sy|sc)  echo "WW RR WR RW";;
-    st)     echo "WW";;
-    ld|acq) echo "RR RW";;
-    rel)    echo "WW RW";;
-    *) echo "build-nvidia-oracle: unknown fence-pair primitive '$1'" >&2; exit 1;;
+    ra)     PRIM_ORD="WW RR RW";;
+    sy|sc)  PRIM_ORD="WW RR WR RW";;
+    st)     PRIM_ORD="WW";;
+    ld|acq) PRIM_ORD="RR RW";;
+    rel)    PRIM_ORD="WW RW";;
+    *) echo "build-nvidia-oracle: unknown order-pair primitive '$1'" >&2; exit 1;;
   esac
 }
-# prim_role <tok> -> which half of a morally-strong pair it can supply
+# prim_role <tok> -> sets PRIM_ROLE (which half of a morally-strong pair)
 prim_role() {
   case "$1" in
-    sy|sc)  echo "rel acq sc";;
-    st|rel) echo "rel";;
-    ld|acq) echo "acq";;
-    *) echo "build-nvidia-oracle: unknown fence-pair primitive '$1'" >&2; exit 1;;
+    ra)     PRIM_ROLE="rel acq";;
+    sy|sc)  PRIM_ROLE="rel acq sc";;
+    st|rel) PRIM_ROLE="rel";;
+    ld|acq) PRIM_ROLE="acq";;
+    *) echo "build-nvidia-oracle: unknown order-pair primitive '$1'" >&2; exit 1;;
   esac
 }
-prim_name() {   # human name for the Source string (no commas)
-  case "$1" in
-    sy) echo "DMB SY";; st) echo "DMB ST";; ld) echo "DMB LD";;
-    sc) echo "fence.sc.sys";; rel) echo "fence.release.sys";;
-    acq) echo "fence.acquire.sys";;
+# prim_name <cpu|gpu> <tok> -> sets PRIM_NAME (no commas: this file is a CSV)
+prim_name() {
+  case "$1:$2" in
+    cpu:ra)  PRIM_NAME="STLR/LDAPR";;
+    cpu:sy)  PRIM_NAME="DMB SY";;
+    cpu:st)  PRIM_NAME="DMB ST";;
+    cpu:ld)  PRIM_NAME="DMB LD";;
+    gpu:ra)  PRIM_NAME="w[release.sys]/r[acquire.sys]";;
+    gpu:sc)  PRIM_NAME="fence.sc.sys";;
+    gpu:rel) PRIM_NAME="fence.release.sys";;
+    gpu:acq) PRIM_NAME="fence.acquire.sys";;
+    *) echo "build-nvidia-oracle: unknown order-pair primitive '$2'" >&2; exit 1;;
   esac
 }
 has_tok() { local n="$1"; shift; case " $* " in (*" $n "*) return 0;; (*) return 1;; esac; }
 
-# two_sided_fence_pair <shape> <cuttag> <cpu-tok> <gpu-tok> -> VERDICT, SOURCE
-two_sided_fence_pair() {
+# two_sided_order_pair <shape> <cuttag> <cpu-tok> <gpu-tok> -> VERDICT, SOURCE
+two_sided_order_pair() {
   local shape="$1" tag="$2" c="$3" g="$4"
   local -a CY; read -ra CY <<< "${SHAPE_CYCLE[$shape]}"
   local p0="${CY[0]#Pod}" p1="${CY[2]#Pod}"
-  local d0="${tag:0:1}" pc pg r0 r1 pair_c pair_g
+  local d0="${tag:0:1}" pc pg r0 r1 oc og nc ng
   if [ "$d0" = c ]; then pc="$p0"; pg="$p1"; else pc="$p1"; pg="$p0"; fi
-  local nc ng; nc=$(prim_name "$c"); ng=$(prim_name "$g")
+  prim_name cpu "$c"; nc="$PRIM_NAME"
+  prim_name gpu "$g"; ng="$PRIM_NAME"
+  prim_ord "$c"; oc="$PRIM_ORD"
+  prim_ord "$g"; og="$PRIM_ORD"
 
   # (1) each thread's OWN model must order its OWN program-order pair
-  if ! has_tok "$pc" $(prim_ord "$c"); then
+  if ! has_tok "$pc" $oc; then
     VERDICT=Allowed
-    SOURCE="two-sided sys fence pair ($nc | $ng): the CPU thread's own ISA leaves its $pc program-order pair unordered so no reading of the compound model cuts the cycle [machine-checked herd7 AArch64 via verify/ordercheck.py; CMCM 4.3 fence orderings]"
+    SOURCE="two-sided sys order pair ($nc | $ng): the CPU thread's own ISA leaves its $pc program-order pair unordered so no reading of the compound model cuts the cycle [machine-checked herd7 AArch64 via verify/ordercheck.py; CMCM 4.3 fence orderings]"
     return
   fi
-  if ! has_tok "$pg" $(prim_ord "$g"); then
+  if ! has_tok "$pg" $og; then
     VERDICT=Allowed
-    SOURCE="two-sided sys fence pair ($nc | $ng): the GPU thread's own model leaves its $pg program-order pair unordered so no reading of the compound model cuts the cycle [machine-checked nvidia-ptx.cat via verify/ordercheck.py; CMCM 5 PTX sem>=rel/acq]"
+    SOURCE="two-sided sys order pair ($nc | $ng): the GPU thread's own model leaves its $pg program-order pair unordered so no reading of the compound model cuts the cycle [machine-checked nvidia-ptx.cat via verify/ordercheck.py; CMCM 5 PTX sem>=rel/acq]"
     return
   fi
 
   # (2) the [PTX] Fig4/Fig6 pattern requirement on top of per-side ordering
-  if [ "$d0" = c ]; then r0=$(prim_role "$c"); r1=$(prim_role "$g")
-  else                  r0=$(prim_role "$g"); r1=$(prim_role "$c"); fi
+  if [ "$d0" = c ]; then prim_role "$c"; r0="$PRIM_ROLE"; prim_role "$g"; r1="$PRIM_ROLE"
+  else                   prim_role "$g"; r0="$PRIM_ROLE"; prim_role "$c"; r1="$PRIM_ROLE"; fi
   local sync=0 why=""
   if [ "${CY[1]}" = Rfe ] && has_tok rel $r0 && has_tok acq $r1; then
     sync=1; why="P0 releases and P1 acquires across the rf"
@@ -203,10 +232,10 @@ two_sided_fence_pair() {
 
   if [ "$sync" = 1 ]; then
     VERDICT=Disallowed
-    SOURCE="two-sided sys fence pair ($nc | $ng): CPU orders its $pc pair and GPU orders its $pg pair and $why; unscoped ARM ops are system-scoped so the pair is morally strong; 2-proc cycle cut with no MCA needed [CMCM 3.2.3+4.4+4.6; Bagchi 3.2+4.2; PTX 3.3+Fig4+Fig6; machine-checked verify/ordercheck.py]"
+    SOURCE="two-sided sys order pair ($nc | $ng): CPU orders its $pc pair and GPU orders its $pg pair and $why; unscoped ARM ops are system-scoped so the pair is morally strong; 2-proc cycle cut with no MCA needed [CMCM 3.2.3+4.4+4.6; Bagchi 3.2+4.2; PTX 3.3+Fig4+Fig6; machine-checked verify/ordercheck.py]"
   else
     VERDICT=NO-ORACLE
-    SOURCE="two-sided sys fence pair ($nc | $ng): both threads order their own pair so CMCM's OPERATIONAL model forbids -- but its own AXIOMATIC compound model CMM (a sound abstraction; PTX component = Lustig Fig4/Fig7) permits it. CMCM 5.1 names exactly this gap: 'There are two ways in which our operational model is stronger than the axiomatic PTX model: (1) Write serialization ... (2) Release and acquire fences are slightly stronger in cumulative chains ... events can be transitively ordered using either release or acquire fences though the axiomatic PTX model would only order if the fence is at least acqrel' (Fig 11 witnesses: 2+2W and ISA2). Characterization not a falsification claim [CMCM 5.1+Fig11+6.2; PTX Fig4/Fig7; machine-checked nvidia-ptx.cat via verify/ordercheck.py]"
+    SOURCE="two-sided sys order pair ($nc | $ng): both threads order their own pair so CMCM's OPERATIONAL model forbids -- but its own AXIOMATIC compound model CMM (a sound abstraction; PTX component = Lustig Fig4/Fig7) permits it. CMCM 5.1 names exactly this gap: 'There are two ways in which our operational model is stronger than the axiomatic PTX model: (1) Write serialization ... (2) Release and acquire fences are slightly stronger in cumulative chains ... events can be transitively ordered using either release or acquire fences though the axiomatic PTX model would only order if the fence is at least acqrel' (Fig 11 witnesses: 2+2W and ISA2). Characterization not a falsification claim [CMCM 5.1+Fig11+6.2; PTX Fig4/Fig7; machine-checked nvidia-ptx.cat via verify/ordercheck.py]"
   fi
 }
 
@@ -245,9 +274,9 @@ classify() {
     *.*)
       case "$shape" in
         MP|SB|LB|R|S)
-          two_sided_fence_pair "$shape" "$cuttag" "${order%%.*}" "${order##*.}"
+          two_sided_order_pair "$shape" "$cuttag" "${order%%.*}" "${order##*.}"
           return;;
-        *) echo "build-nvidia-oracle: fence-pair order '$order' on unsupported shape '$shape' ($name)" >&2; exit 1;;
+        *) echo "build-nvidia-oracle: order-pair '$order' on unsupported shape '$shape' ($name)" >&2; exit 1;;
       esac;;
   esac
 
