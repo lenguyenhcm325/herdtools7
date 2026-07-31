@@ -698,6 +698,26 @@ hetlitmus-controlmap: | build
 	python3 hetlitmus/verify/controlmap.py --check
 	@ echo "HetLitmus B6 control map: OK"
 
+### hetlitmus-dup: the ISOMORPHISM gate (Q10 step 0).  generate.sh dedups only by
+### byte-comparing a variant against ONE designated sibling, which cannot see the
+### duplicates that dominate the corpus: 338 committed het tests are only 299
+### distinct experiments up to (proc permutation x location renaming), all 39
+### redundant files being the cg/gc mirror pairs of the rotation-invariant shapes
+### (SB/LB/2+2W) -- and 3 of them sit inside the Disallowed rows that carry the
+### falsification claim.  The 39 are kept (their verdicts agree; the census is
+### pinned everywhere) but ALLOWLISTED BY EXACT CLASS, and the gate fails on any
+### duplicate that is not in the list AND on any list entry that has stopped
+### being a duplicate -- an allowlist that cannot rot.  This is what makes the
+### two-sided fence-pair widening safe: a new annotation axis multiplies across
+### device cuts, so new duplicates are the expected failure mode.
+### --bite PROVES both halves fail: a synthetic clone (pure x<->y rename) and a
+### rotted allowlist entry, each checked for the RIGHT message.
+hetlitmus-dup: | build
+	@ echo
+	python3 hetlitmus/verify/dupcheck.py
+	python3 hetlitmus/verify/dupcheck.py --bite
+	@ echo "HetLitmus Q10 isomorphism/dedup gate: OK (and the gate bites)"
+
 ### hetlitmus-verdict: het_verdict() -- the rule that decides WHAT AN OBSERVATION
 ### MEANS -- compiled from the REAL emitted header and fed synthetic records.
 ###   Phase 1 (rule)     all SEVEN verdicts and all THREE oracle classes reachable (a
@@ -831,6 +851,7 @@ hetlitmus-l0-selftest: | build
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-corpus
+hetlitmus-test:: hetlitmus-dup
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-stats
@@ -860,7 +881,7 @@ hetlitmus-promote: | build
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
-.PHONY: hetlitmus-hist
+.PHONY: hetlitmus-hist hetlitmus-dup
 .PHONY: hetlitmus-l0-selftest
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
