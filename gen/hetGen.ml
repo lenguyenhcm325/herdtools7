@@ -32,7 +32,7 @@
 
    This is the gen-side analogue of litmus/HetArch.ml: heterogeneity is added
    as a per-proc {device,scope} assignment over otherwise standard single-arch
-   generation, with strings as the cross-arch erasure boundary (Code.het_cells).
+   generation, with strings as the cross-arch erasure boundary (HetCells.t).
 *)
 
 open Printf
@@ -160,13 +160,20 @@ let () =
 
   let name = match !Config.name with Some n -> n | None -> "HET" in
 
-  let parse_gpu () =
-    match
-      Mgpu.R.parse_sequence_ast Parser.main (split_tokens !gpu_edges)
-      |> Mgpu.R.parse_expand_relaxs ~ppo:Mgpu.ppo
-    with
-    | [x] -> x
-    | _ -> Warn.fatal "-gpu must specify exactly one cycle" in
+  (* One device's run: parse its -cpu / -gpu edge list into the single cycle
+     the merge assumes, build the test, erase it to cells.  [opt] names the
+     flag the edges came from, so the arity error points at the right one. *)
+  let module HetRun (M:Builder.S) = struct
+    let cells opt edges =
+      let cy =
+        match
+          M.R.parse_sequence_ast Parser.main (split_tokens edges)
+          |> M.R.parse_expand_relaxs ~ppo:M.ppo
+        with
+        | [x] -> x
+        | _ -> Warn.fatal "%s must specify exactly one cycle" opt in
+      M.het_cells (M.make_test name cy)
+  end in
 
   if !cpu_edges = "" then Warn.fatal "missing -cpu <edges>" ;
   if !gpu_edges = "" then Warn.fatal "missing -gpu <edges>" ;
@@ -179,26 +186,12 @@ let () =
   let ccpu =
     match !cpu_arch with
     | `AArch64 ->
-       let module Mcpu = Top_gen.Make(Co)(AArch64Compile_gen.Make(C)) in
-       let cy =
-         match
-           Mcpu.R.parse_sequence_ast Parser.main (split_tokens !cpu_edges)
-           |> Mcpu.R.parse_expand_relaxs ~ppo:Mcpu.ppo
-         with
-         | [x] -> x
-         | _ -> Warn.fatal "-cpu must specify exactly one cycle" in
-       Mcpu.het_cells (Mcpu.make_test name cy)
+       let module R = HetRun(Top_gen.Make(Co)(AArch64Compile_gen.Make(C))) in
+       R.cells "-cpu" !cpu_edges
     | `X86_64 ->
-       let module Mcpu = Top_gen.Make(Co)(X86_64Compile_gen.Make(C)) in
-       let cy =
-         match
-           Mcpu.R.parse_sequence_ast Parser.main (split_tokens !cpu_edges)
-           |> Mcpu.R.parse_expand_relaxs ~ppo:Mcpu.ppo
-         with
-         | [x] -> x
-         | _ -> Warn.fatal "-cpu must specify exactly one cycle" in
-       Mcpu.het_cells (Mcpu.make_test name cy) in
-  let cgpu = Mgpu.het_cells (Mgpu.make_test name (parse_gpu ())) in
+       let module R = HetRun(Top_gen.Make(Co)(X86_64Compile_gen.Make(C))) in
+       R.cells "-cpu" !cpu_edges in
+  let cgpu = let module R = HetRun(Mgpu) in R.cells "-gpu" !gpu_edges in
 
   let devs = split_comma !devices in
   let nprocs = List.length devs in
@@ -210,10 +203,10 @@ let () =
      shape and the column merge would be unsound. *)
   List.iter
     (fun (who,hc) ->
-      if List.length hc.Code.hc_cols <> nprocs then
+      if List.length hc.HetCells.hc_cols <> nprocs then
         Warn.fatal
           "device assignment has %d procs but the %s cycle has %d"
-          nprocs who (List.length hc.Code.hc_cols))
+          nprocs who (List.length hc.HetCells.hc_cols))
     ["cpu",ccpu; "gpu",cgpu] ;
 
   (* The emitted header tag for a cpu proc NAMES its ISA (Phase A): default
@@ -228,7 +221,7 @@ let () =
       (fun i dev ->
         let hc = run_of dev in
         let cells =
-          try List.assoc i hc.Code.hc_cols
+          try List.assoc i hc.HetCells.hc_cols
           with Not_found -> Warn.fatal "%s run has no proc P%d" dev i in
         sprintf "P%d:%s" i (header_tag dev) :: cells)
       devs in
@@ -241,11 +234,11 @@ let () =
         (fun i dev ->
           Misc.filter_map
             (fun (po,s) -> if po = Some i then Some s else None)
-            (run_of dev).Code.hc_init)
+            (run_of dev).HetCells.hc_init)
         devs) in
   let globals_of hc =
     Misc.filter_map (fun (po,s) -> if po = None then Some s else None)
-      hc.Code.hc_init in
+      hc.HetCells.hc_init in
   let global_init =
     List.fold_left
       (fun acc s -> if List.mem s acc then acc else acc @ [s])
@@ -258,16 +251,16 @@ let () =
      atom that only the gpu run carries (e.g. a location condition [x]=N on the
      GPU column), silently weakening the merged test's condition. *)
   let merged_cond =
-    let quant,_ = parse_cond ccpu.Code.hc_cond in
+    let quant,_ = parse_cond ccpu.HetCells.hc_cond in
     let per_proc =
       List.concat
         (List.mapi
           (fun i dev ->
-            let _,atoms = parse_cond (run_of dev).Code.hc_cond in
+            let _,atoms = parse_cond (run_of dev).HetCells.hc_cond in
             List.filter (fun a -> proc_of_atom a = Some i) atoms)
           devs) in
     let cond_globals_of hc =
-      let _,atoms = parse_cond hc.Code.hc_cond in
+      let _,atoms = parse_cond hc.HetCells.hc_cond in
       List.filter (fun a -> proc_of_atom a = None) atoms in
     let globals =
       List.fold_left

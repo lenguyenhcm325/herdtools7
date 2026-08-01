@@ -2,7 +2,7 @@
 """
 obscheck.py -- the observer-liveness gate (DR1-A3).
 
-The CPU observer is the ONLY recovery channel the 22 store-only (2+2W) shapes have,
+The CPU observer is the ONLY recovery channel the 11 store-only (2+2W) shapes have,
 and statscheck.py feeds the verdict a synthetic observer_unique_count, so nothing else
 in CI compiles the real emitted observer loop.  This gate does.
 
@@ -17,7 +17,7 @@ loads anywhere in the function.  With the emitter's `volatile const' on the obse
 pointers the loop body reloads each iteration; a plain `uint64_t*' instead yields an
 alias-versioned fast loop that broadcasts one hoisted value and whose body has no load
 (aarch64 `ld1r', x86 `pshufd' splat), which pins observer_unique_count at <=1 and
-leaves those 22 tests inert.  So "every loop body has a load" is true clean and false
+leaves those 11 tests inert.  So "every loop body has a load" is true clean and false
 once hoisted.
 
 `--bite' strips `volatile' from the extracted TU, confirms the strip really changed

@@ -49,7 +49,6 @@ let com = rf | co | fr
 (* ------------------------------------------------------------------ *)
 let REL = tag2events('release)
 let ACQ = tag2events('acquire)
-let RLX = tag2events('relaxed)
 
 let CTA = tag2events('cta)
 let GPU = tag2events('gpu)

@@ -29,15 +29,16 @@
 
    so the pipeline stays single-arch-typed (one [`Het] value of Archs.t, one
    ['pseudo]).  This functor takes the two real backend architectures as
-   arguments and delegates every Arch_litmus.S operation per constructor.  The
-   GH200 pairing is AArch64 (CPU) + LISA/PTX (GPU); other pairings are just
-   different applications of this functor at a litmus7 dispatch arm.
+   arguments and delegates every operation per constructor.  The GH200 pairing
+   is AArch64 (CPU) + LISA/PTX (GPU); other pairings are just different
+   applications of this functor at a litmus7 dispatch arm.
 
-   SCOPE (Tier 0): representation + parse + the type-level (a) implementation.
-   Cross-device code EMISSION (asymmetric launch, coherent allocation,
-   rendezvous barrier, result readback) is Tier 2 and out of scope here; the
-   members that only feed emission (register init/class, macros, ...) are
-   deliberately inert and flagged below.  See hetlitmus/docs/het-litmus-format.md. *)
+   SCOPE (Tier 0): representation + parse.  The result is an ArchBase.S, which
+   is what the het GenParser instance needs, plus the parser helpers at the
+   bottom of this file that the emitter drives; cross-device code EMISSION
+   (asymmetric launch, coherent allocation, rendezvous barrier, result
+   readback) lives in litmus/hetEmit.ml.  See
+   hetlitmus/docs/het-litmus-format.md. *)
 
 (* HetLitmus Phase A: the per-column device tag NAMES the CPU ISA.  `cpu' stays
    a back-compat alias for AArch64 (so pre-Phase-A tests and hetgen7 output are
@@ -78,6 +79,19 @@ let scan_cpu_isa prog_text =
            | Some isa -> isa
            | None -> first rest) in
      first cells
+
+(* The program section's raw text, the input of the pre-scan above.  The
+   splitter reports only its byte span, so re-read that span from the source
+   file: the scan must happen BEFORE any parser exists to hand it over. *)
+let prog_section_text splitted name =
+  let (_,prog_loc,_,_) = splitted.Splitter.locs in
+  let (p1,p2) = prog_loc in
+  let a = p1.Lexing.pos_cnum and b = p2.Lexing.pos_cnum in
+  let ic = open_in_bin name in
+  let len = max 0 (b - a) in
+  seek_in ic a ;
+  let txt = really_input_string ic len in
+  close_in ic ; txt
 
 module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
 
@@ -124,10 +138,6 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
   let type_reg = function
     | CPUreg r -> Cpu.type_reg r
     | GPUreg r -> Gpu.type_reg r
-
-  let reg_to_string = function
-    | CPUreg r -> Cpu.reg_to_string r
-    | GPUreg r -> Gpu.reg_to_string r
 
   let allowed_for_symb =
     List.map (fun r -> CPUreg r) Cpu.allowed_for_symb
@@ -261,45 +271,6 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
     fun _ _ -> Warn.fatal "HetArch: macro %s is unsupported in heterogeneous tests" name
 
   let hash_pteval p = Cpu.hash_pteval p
-
-  (* ---------------- Values, errors, ArchExtra ---------------- *)
-
-  (* One value module over the compound instruction.  Both realistic backends
-     (AArch64 and LISA) already agree on Int64Constant, so a shared litmus
-     variable needs no width reconciliation. *)
-  module V = Int64Constant.Make (Instr.No (struct type instr = instruction end))
-
-  module FaultType = FaultType.No
-
-  let error t1 t2 = Cpu.error t1 t2 || Gpu.error t1 t2
-  let warn t1 t2 = Cpu.warn t1 t2 || Gpu.warn t1 t2
-
-  include
-    ArchExtra_litmus.Make
-      (struct
-        include Template.DefaultConfig
-        let asmcomment = None
-      end)
-      (struct
-        module V = V
-        type arch_reg = reg
-        let arch = `Het
-        let forbidden_regs = []
-        let pp_reg = pp_reg
-        let reg_compare = reg_compare
-        let reg_to_string = reg_to_string
-        (* register init / classification feed ASM emission only (Tier 2) *)
-        let internal_init _ _ = None
-        let reg_class _ = ""
-        let reg_class_stable _ _ = ""
-        let comment = "//"
-      end)
-
-  let features = []
-
-  include HardwareExtra.No
-
-  module GetInstr = GetInstr.No (struct type instr = instruction end)
 
   (* ---------------- Parser support (Tier-0) ----------------
 
@@ -461,13 +432,6 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
            procs_dev in
        (procs,prog_rows,MiscParser.empty_extra)
 end
-
-(* Compile-time proof that the functor's result satisfies Arch_litmus.S for any
-   pair of backend architectures (this functor is never applied; type-checking
-   it is the assertion).  Make itself stays unsealed so the litmus7 dispatch
-   arm can reach the parser helpers above. *)
-module Check (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) : Arch_litmus.S =
-  Make (Cpu) (Gpu)
 
 (* The embedded C/CUDA runtime payloads (litmus7's outs.{h,c} histogram +
    het_stress.cuh + het_cpu_stress.h + het_verdict.h) used to live here as

@@ -5,17 +5,17 @@ env-research/impl-briefs/B7b-impl-brief.md, Q3-stats.md).
 A defensible "Never" needs a bound, and a bound costs thousands of runs per test.  Two
 of the three levers that shrink that cost are pure scheduling, and this driver is both.
 
-  LEVER 1 -- only 97 of the 450 tests need a bound at all.
-      53 Disallowed  the CMCM validation claim  -> run to a bound (or a refutation)
-      44 NO-ORACLE   characterization           -> run to a bound
-     353 Allowed     need only to FIRE ONCE     -> a positive is self-vouching, so
+  LEVER 1 -- only 92 of the 411 tests need a bound at all.
+      50 Disallowed  the CMCM validation claim  -> run to a bound (or a refutation)
+      42 NO-ORACLE   characterization           -> run to a bound
+     319 Allowed     need only to FIRE ONCE     -> a positive is self-vouching, so
                      they stop at the first clean sighting
      The Allowed sweep is scheduled first, and not only because it is cheap: its
      observed rows are the rate population the het p_min is derived from, and p_min
      sizes every bound budget (het_verdict.h HET_P_MIN).  The sweep surfaces the
      candidate rate and nothing is ever auto-fed from it -- p_min is a campaign
-     decision, not a scheduler guess.  main() prints the cut the schedule buys for
-     the budgets actually passed.
+     decision, not a scheduler guess.  `plan_schedule` prints the cut the schedule
+     buys for the budgets actually passed.
 
   LEVER 2 -- adaptive per-test stopping.  Run each test until its bound is met or its
      budget is spent.  Within one invocation the harness does this itself
@@ -64,6 +64,7 @@ Exit: 0 = campaign completed; 2 = configuration/corpus error (fail closed);
 import argparse
 import csv
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -138,6 +139,38 @@ def fnum(kv, key, dflt=0.0):
 # het_verdict.h HET_ST_TAU_UNRESOLVED: tau was not resolved by this invocation's
 # pooled stream, so N_eff fell back to 1 -- the conservative reading.
 HET_ST_TAU_UNRESOLVED = 1 << 14
+
+# The bit above is a hand-mirror of a C define, and reading a live flag word by a stale
+# bit would mis-report which rows bought no N_eff dividend, silently.  This file is also
+# deliberately standalone -- it is copied on its own onto a rented GPU box -- so the
+# cross-check is conditional on the header being reachable at its in-repo path: present
+# means it must agree, out of reach means the mirror stands.
+_VERDICT_H = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                          "litmus", "het-runtime", "het_verdict.h")
+
+
+def check_flag_mirror(path=_VERDICT_H, name="HET_ST_TAU_UNRESOLVED",
+                      mirrored=HET_ST_TAU_UNRESOLVED):
+    """The bit `name` is defined at in `path`, or None when the header is out of reach.
+    Any disagreement is fatal, and so is a header that no longer defines the flag."""
+    try:
+        with open(path) as fh:
+            text = fh.read()
+    except (IOError, OSError):
+        return None
+    m = re.search(r"^#define[ \t]+%s[ \t]+\([ \t]*1u?[ \t]*<<[ \t]*(\d+)[ \t]*\)"
+                  % re.escape(name), text, re.M)
+    if m is None:
+        die("%s no longer defines %s -- the mirrored bit cannot be verified, and an "
+            "unverifiable mirror of a flag word is not one" % (path, name))
+    bit = 1 << int(m.group(1))
+    if bit != mirrored:
+        die("%s drifted: %s is 1<<%s there, 0x%x here" % (path, name, m.group(1),
+                                                          mirrored))
+    return bit
+
+
+check_flag_mirror()
 
 
 def flags(kv):
@@ -258,7 +291,7 @@ def save_state(path, states):
                         s.tau_unresolved, s.tau_need_max, s.note])
 
 
-def main():
+def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True,
                     help="directory holding one emitted harness dir per test")
@@ -278,9 +311,12 @@ def main():
                     help="comma-separated subset (default: every test in the map "
                          "that has a harness dir)")
     ap.add_argument("--dry-run", action="store_true")
-    a = ap.parse_args()
+    return ap.parse_args()
 
-    classes = read_control_map(a.control_map)
+
+def select_work(a, classes):
+    """The tests to schedule: those named by --tests, else the whole map.  A test with
+    no oracle class or no harness dir is FAIL CLOSED, not a skip."""
     subset = [t for t in a.tests.split(",") if t] or sorted(classes)
     missing_class = [t for t in subset if t not in classes]
     if missing_class:
@@ -292,11 +328,16 @@ def main():
         if not os.path.isdir(d):
             die("no harness dir for %s under %s (emit the corpus first)" % (t, a.corpus))
         work.append(t)
+    return work
 
-    # LEVER 1: the schedule.  Allowed sweep first (cheap, and it feeds p_min), then the
-    # Disallowed rows (the validation claim), then NO-ORACLE.
+
+# LEVER 1: the schedule.  Allowed sweep first (cheap, and it feeds p_min), then the
+# Disallowed rows (the validation claim), then NO-ORACLE.
+def plan_schedule(a, classes, work):
+    """`work` in run order, plus the printout of what the schedule buys at the budgets
+    actually passed."""
     order = {"Allowed": 0, "Disallowed": 1, "NO-ORACLE": 2}
-    work.sort(key=lambda t: (order[classes[t]], t))
+    work = sorted(work, key=lambda t: (order[classes[t]], t))
     n_all = sum(1 for t in work if classes[t] == "Allowed")
     n_dis = sum(1 for t in work if classes[t] == "Disallowed")
     n_no = sum(1 for t in work if classes[t] == "NO-ORACLE")
@@ -311,11 +352,57 @@ def main():
     if a.p_goal <= 0.0:
         print("campaign: NOTE --p-goal unset: bound rows will run to budget "
               "(a stopping target is a campaign decision; none is baked in).")
-    if a.dry_run:
-        for t in work:
-            print("  plan %-11s %s" % (classes[t], t))
-        return 0
+    return work
 
+
+def drive_test(a, st, budget):
+    """Invoke one test's runner until its stop rule fires, pooling each HetStats line.
+    Every failure mode ends the test as ERROR rather than looping on it."""
+    while not st.decide(a.p_goal, budget):
+        env = dict(os.environ)
+        env["HET_SEED"] = str(a.seed0 + st.invocations * SEED_STRIDE)
+        env["HET_ADAPTIVE"] = "1"
+        env["HET_RUNS_MAX"] = str(budget - st.runs)
+        if a.p_goal > 0.0:
+            env["HET_P_GOAL"] = repr(a.p_goal)
+        cmd = a.runner.replace("{test}", st.name).replace(
+            "{dir}", os.path.join(a.corpus, st.name))
+        r = subprocess.run(cmd if os.name == "nt" else shlex.split(cmd),
+                           env=env, capture_output=True, text=True)
+        if r.returncode != 0:
+            st.stop, st.note = "ERROR", ("runner rc=%d: %s" % (
+                r.returncode, r.stderr.strip()[-200:]))
+            return
+        got = parse_hetstats(r.stdout)
+        if got is None:
+            st.stop, st.note = "ERROR", "no HetStats machine line in runner output"
+            return
+        _, kv = got
+        before = st.runs
+        st.absorb(kv)
+        if st.runs == before:
+            # An invocation that scored zero runs makes no progress, and looping on
+            # it would poll the same dead harness forever.
+            st.stop, st.note = "ERROR", "invocation reported R=0 runs"
+            return
+
+
+def report_test(st):
+    b = st.pooled_bound()
+    print("done  %-11s %-28s %-9s inv=%d runs=%d k=%d k_eff=%d k_runs=%d "
+          "R_eff=%.4g bound=%s%s%s"
+          % (st.oclass, st.name, st.stop, st.invocations, st.runs, st.k, st.k_eff,
+             st.k_runs, st.R_eff, ("%.4g" % b) if b >= 0 else "-",
+             ("  tau-UNRESOLVED in %d/%d inv (needs >=%d runs/inv)"
+              % (st.tau_unresolved, st.invocations, st.tau_need_max))
+             if st.tau_unresolved else "",
+             ("  ** " + st.note + " **") if st.stop == "CONFIRMED" else ""))
+
+
+def run_campaign(a, classes, work):
+    """Drive every test in order and return (states, errors, confirmed).  A row already
+    terminal in --state is resumed, not re-run, and the state is written after every
+    test so the campaign survives losing the box."""
     prior = load_state(a.state)
     states, errors, confirmed = [], 0, 0
     for t in work:
@@ -327,48 +414,17 @@ def main():
             print("skip  %-11s %-28s %s (from state)" % (st.oclass, t, st.stop))
             continue
         budget = a.allowed_budget_runs if st.oclass == "Allowed" else a.budget_runs
-        while not st.decide(a.p_goal, budget):
-            env = dict(os.environ)
-            env["HET_SEED"] = str(a.seed0 + st.invocations * SEED_STRIDE)
-            env["HET_ADAPTIVE"] = "1"
-            env["HET_RUNS_MAX"] = str(budget - st.runs)
-            if a.p_goal > 0.0:
-                env["HET_P_GOAL"] = repr(a.p_goal)
-            cmd = a.runner.replace("{test}", t).replace(
-                "{dir}", os.path.join(a.corpus, t))
-            r = subprocess.run(cmd if os.name == "nt" else shlex.split(cmd),
-                               env=env, capture_output=True, text=True)
-            if r.returncode != 0:
-                st.stop, st.note = "ERROR", ("runner rc=%d: %s" % (
-                    r.returncode, r.stderr.strip()[-200:]))
-                break
-            got = parse_hetstats(r.stdout)
-            if got is None:
-                st.stop, st.note = "ERROR", "no HetStats machine line in runner output"
-                break
-            _, kv = got
-            before = st.runs
-            st.absorb(kv)
-            if st.runs == before:
-                # An invocation that scored zero runs makes no progress, and looping on
-                # it would poll the same dead harness forever.
-                st.stop, st.note = "ERROR", "invocation reported R=0 runs"
-                break
-        b = st.pooled_bound()
-        print("done  %-11s %-28s %-9s inv=%d runs=%d k=%d k_eff=%d k_runs=%d "
-              "R_eff=%.4g bound=%s%s%s"
-              % (st.oclass, t, st.stop, st.invocations, st.runs, st.k, st.k_eff,
-                 st.k_runs, st.R_eff, ("%.4g" % b) if b >= 0 else "-",
-                 ("  tau-UNRESOLVED in %d/%d inv (needs >=%d runs/inv)"
-                  % (st.tau_unresolved, st.invocations, st.tau_need_max))
-                 if st.tau_unresolved else "",
-                 ("  ** " + st.note + " **") if st.stop == "CONFIRMED" else ""))
+        drive_test(a, st, budget)
+        report_test(st)
         if st.stop == "ERROR":
             errors += 1
         if st.stop == "CONFIRMED":
             confirmed += 1
         save_state(a.state, states)   # after every test: the campaign is resumable
+    return states, errors, confirmed
 
+
+def report_campaign(states, errors, confirmed):
     # The p_min candidate population: surfaced, never auto-applied (lever 1 above).
     fired = [s for s in states if s.oclass == "Allowed" and s.stop == "OBSERVED"]
     print("\ncampaign: %d Allowed row(s) OBSERVED (the p_min candidate population "
@@ -401,6 +457,18 @@ def main():
     if confirmed:
         print("campaign: ** %d CONFIRMED refutation(s) recorded -- stop and get a "
               "human before anything else is claimed. **" % confirmed)
+
+
+def main():
+    a = parse_args()
+    classes = read_control_map(a.control_map)
+    work = plan_schedule(a, classes, select_work(a, classes))
+    if a.dry_run:
+        for t in work:
+            print("  plan %-11s %s" % (classes[t], t))
+        return 0
+    states, errors, confirmed = run_campaign(a, classes, work)
+    report_campaign(states, errors, confirmed)
     return 1 if (errors or confirmed) else 0
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HetLitmus emission snapshot: emit the FULL corpus (450 het harness dirs +
+# HetLitmus emission snapshot: emit the FULL corpus (411 het harness dirs +
 # 137 gpu-only .cu + 137 gpu-only .hip) into OUTDIR.
 #
 # Purpose: the refactor golden.  The Layer-2 gate (corpus-gate.sh) byte-pins
@@ -18,35 +18,29 @@
 # The het corpus is emitted from INSIDE hetlitmus/tests/het so emission finds
 # control-map.csv + the co-run sibling .litmus (B6b: a Disallowed test's
 # harness embeds its mu(T) mutant and the canary, resolved relative to the
-# source dir).  gpu-only reuses emit-cuda.sh / emit-hip.sh unchanged.
+# source dir).  gpu-only reuses emit-gpu.sh, which renders both dialects from
+# one parse.
 #
 # Usage:  hetlitmus/verify/emit-all.sh OUTDIR
-# Exit:   0 = all 724 emitted; non-zero otherwise (fail-fast).
+# Exit:   0 = all 685 emitted; non-zero otherwise (fail-fast).
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HETL="$(cd "$HERE/.." && pwd)"
-REPO="$(cd "$HETL/.." && pwd)"
-
-LITMUS7="$REPO/_build/install/default/bin/litmus7"
+. "$(dirname "${BASH_SOURCE[0]}")/../paths.sh"
 [ -x "$LITMUS7" ] || { echo "error: $LITMUS7 not built (run 'make all')" >&2; exit 2; }
 
 OUTDIR="${1:?usage: emit-all.sh OUTDIR}"
 mkdir -p "$OUTDIR"
 OUTDIR="$(cd "$OUTDIR" && pwd)"
 
-echo "[1/3] het corpus -> $OUTDIR/het"
+echo "[1/2] het corpus -> $OUTDIR/het"
 mkdir -p "$OUTDIR/het"
 ( cd "$HETL/tests/het"
   for t in *.litmus; do
     "$LITMUS7" -o "$OUTDIR/het" "$t" >/dev/null
   done )
 
-echo "[2/3] gpu-only CUDA -> $OUTDIR/gpu-cuda"
-"$HETL/emit-cuda.sh" "$OUTDIR/gpu-cuda" >/dev/null
-
-echo "[3/3] gpu-only HIP -> $OUTDIR/gpu-hip"
-"$HETL/emit-hip.sh" "$OUTDIR/gpu-hip" >/dev/null
+echo "[2/2] gpu-only CUDA+HIP -> $OUTDIR/gpu-cuda + $OUTDIR/gpu-hip"
+"$HETL/emit-gpu.sh" "$OUTDIR/gpu-cuda" "$OUTDIR/gpu-hip" >/dev/null
 
 # The per-outdir run.sh embeds the ABSOLUTE OUTDIR path + the git revision
 # (upstream litmus7 boilerplate, overwritten by every emission so it names only
@@ -59,7 +53,7 @@ nhet="$(find "$OUTDIR/het" -mindepth 1 -maxdepth 1 -type d | wc -l)"
 ncu="$(ls "$OUTDIR/gpu-cuda"/*.cu 2>/dev/null | wc -l)"
 nhip="$(ls "$OUTDIR/gpu-hip"/*.hip 2>/dev/null | wc -l)"
 echo "emitted: $nhet het harness dirs, $ncu gpu-only .cu, $nhip gpu-only .hip"
-if [ "$nhet" -ne 450 ] || [ "$ncu" -ne 137 ] || [ "$nhip" -ne 137 ]; then
-  echo "FAIL: census mismatch (want 450/137/137)" >&2
+if [ "$nhet" -ne 411 ] || [ "$ncu" -ne 137 ] || [ "$nhip" -ne 137 ]; then
+  echo "FAIL: census mismatch (want 411/137/137)" >&2
   exit 1
 fi

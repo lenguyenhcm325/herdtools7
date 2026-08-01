@@ -84,7 +84,7 @@ test's own scan must not be windowed.
 THE DEGENERACY GUARD MUST NOT GO CONSTANT ON THE STORE-ONLY SHAPES.
 distinct_decoded_iters and skew_stddev are both written from the same
 synchrony-decode block, so a test with no synchrony read leaves both at their
-memset zero.  22 of the 450 -- every 2+2W, which is store-only and has no reader
+memset zero.  11 of the 411 -- every 2+2W, which is store-only and has no reader
 at all -- sit in exactly that position, and a guard reading `skew_stddev == 0' as
 "the decoder is degenerate" would condemn every cell of all 22 forever, making
 k_eff constant 0 and P_rep a constant 1 - e^0 = 0 on them.  0 means NOT MEASURED,

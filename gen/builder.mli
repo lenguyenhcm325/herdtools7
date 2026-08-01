@@ -58,7 +58,7 @@ module type S = sig
 
 (* HetLitmus Tier-4: render a test as device-neutral string fragments so a
    heterogeneous driver can merge per-proc columns from two single-arch runs
-   (one per device) into one `Het` test. See Code.het_cells. *)
-  val het_cells : test -> Code.het_cells
+   (one per device) into one `Het` test. See HetCells. *)
+  val het_cells : test -> HetCells.t
 
 end

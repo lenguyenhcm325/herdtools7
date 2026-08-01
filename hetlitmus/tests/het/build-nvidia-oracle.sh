@@ -39,7 +39,7 @@
 #      gpu in {ra = w[release]/r[acquire] , sc = fence.sc.sys ,
 #              rel = fence.release.sys , acq = fence.acquire.sys}
 #  Not tabulated by hand: two_sided_order_pair() below composes two
-#  per-primitive facts, ord(p) and role(p), defined at prim_ord/prim_role.  Its
+#  per-primitive facts, ord(p) and role(p), tabulated in PRIM.  Its
 #  outcomes are Allowed (a side's own ISA leaves its own program-order pair
 #  unordered), Disallowed (both sides order their pair and the [PTX] pattern
 #  completes) and NO-ORACLE (both order their pair, pattern does not complete --
@@ -87,54 +87,50 @@ S_2P2W="two-sided complete pair, but 2+2W needs a global write-write order (mult
 S_TRANS="two-sided complete pair, but this transitive shape needs cross-device A-cumulativity through a GPU intermediary; ARM-oMCA x PTX-non-MCA unestablished [Bagchi 4.2 future-work; PTX non-MCA; CMCM Fig3]"
 S_IRIW2="two-sided reader ordering present, but IRIW needs multi-copy atomicity; ARM-MCA x PTX-non-MCA unestablished [Bagchi 4.2 future-work; PTX non-MCA; CMCM Fig3]"
 
+# Grounding text for the matched 2-proc rows, keyed <shape>:<order>.  Their
+# verdicts are not tabulated here -- they come from the order-pair grid below.
+declare -A TWOSIDED_SRC=(
+  [MP:acqrel]="$S_MP_RA"  [MP:fence]="$S_MP_F"
+  [LB:acqrel]="$S_LB_RA"  [LB:fence]="$S_LB_F"
+  [S:acqrel]="$S_S_RA"    [S:fence]="$S_S_F"
+  [SB:acqrel]="$S_SBR_RA" [SB:fence]="$S_SBR_F"
+  [R:acqrel]="$S_SBR_RA"  [R:fence]="$S_SBR_F"
+)
+
 # ---------------------------------------------------------------------------
 # The two-sided order-pair grid  <cpu>.<gpu>  (header decision table).
 # The Source strings built here must contain NO comma -- this file is a CSV --
 # so primitives are named by their real mnemonics: `DMB SY', `fence.acquire.sys'.
 # ---------------------------------------------------------------------------
 
-# prim_ord <tok> -> sets PRIM_ORD, the program-order pairs of {WW RR WR RW} the
-# primitive orders inside its own thread.  ARM rows are herd7's own answer; GPU
-# rows are [CMCM] 5 (quoted in docs/het-oracle.md).  Note that release/acquire
-# lacks WR -- that is RCpc, and it is why SB/R stay Allowed under everything but
-# a pair of SC fences.
-# These functions MUST NOT be called in a command substitution: an `exit 1'
-# inside `$(...)' kills only the subshell, turning a fail-closed guard into a
-# silent fail-open.  They set a global and are called as plain statements.
-prim_ord() {
-  case "$1" in
-    ra)     PRIM_ORD="WW RR RW";;
-    sy|sc)  PRIM_ORD="WW RR WR RW";;
-    st)     PRIM_ORD="WW";;
-    ld|acq) PRIM_ORD="RR RW";;
-    rel)    PRIM_ORD="WW RW";;
-    *) echo "build-nvidia-oracle: unknown order-pair primitive '$1'" >&2; exit 1;;
-  esac
-}
-# prim_role <tok> -> sets PRIM_ROLE, which half of a morally-strong pair the
-# primitive can supply.
-prim_role() {
-  case "$1" in
-    ra)     PRIM_ROLE="rel acq";;
-    sy|sc)  PRIM_ROLE="rel acq sc";;
-    st|rel) PRIM_ROLE="rel";;
-    ld|acq) PRIM_ROLE="acq";;
-    *) echo "build-nvidia-oracle: unknown order-pair primitive '$1'" >&2; exit 1;;
-  esac
-}
-# prim_name <cpu|gpu> <tok> -> sets PRIM_NAME (no commas: this file is a CSV)
-prim_name() {
-  case "$1:$2" in
-    cpu:ra)  PRIM_NAME="STLR/LDAPR";;
-    cpu:sy)  PRIM_NAME="DMB SY";;
-    cpu:st)  PRIM_NAME="DMB ST";;
-    cpu:ld)  PRIM_NAME="DMB LD";;
-    gpu:ra)  PRIM_NAME="w[release.sys]/r[acquire.sys]";;
-    gpu:sc)  PRIM_NAME="fence.sc.sys";;
-    gpu:rel) PRIM_NAME="fence.release.sys";;
-    gpu:acq) PRIM_NAME="fence.acquire.sys";;
-    *) echo "build-nvidia-oracle: unknown order-pair primitive '$2'" >&2; exit 1;;
-  esac
+# The order-pair alphabet: <side>:<tok> -> "<ord>|<role>|<name>".
+#   ord   the program-order pairs of {WW RR WR RW} the primitive orders inside
+#         its own thread.  ARM rows are herd7's own answer; GPU rows are [CMCM] 5
+#         (quoted in docs/het-oracle.md).  Note that release/acquire lacks WR --
+#         that is RCpc, and it is why SB/R stay Allowed under everything but a
+#         pair of SC fences.
+#   role  which half of a morally-strong pair the primitive can supply.
+#   name  the mnemonic printed in the Source column; no commas (this is a CSV).
+declare -A PRIM=(
+  [cpu:ra]="WW RR RW|rel acq|STLR/LDAPR"
+  [cpu:sy]="WW RR WR RW|rel acq sc|DMB SY"
+  [cpu:st]="WW|rel|DMB ST"
+  [cpu:ld]="RR RW|acq|DMB LD"
+  [gpu:ra]="WW RR RW|rel acq|w[release.sys]/r[acquire.sys]"
+  [gpu:sc]="WW RR WR RW|rel acq sc|fence.sc.sys"
+  [gpu:rel]="WW RW|rel|fence.release.sys"
+  [gpu:acq]="RR RW|acq|fence.acquire.sys"
+)
+# prim <cpu|gpu> <tok> -> sets PRIM_ORD, PRIM_ROLE, PRIM_NAME; fails closed on a
+# token that side does not have.  MUST NOT be called in a command substitution:
+# an `exit 1' inside `$(...)' kills only the subshell, turning a fail-closed
+# guard into a silent fail-open.  It sets globals, called as a plain statement.
+prim() {
+  local e="${PRIM[$1:$2]:-}"
+  if [ -z "$e" ]; then
+    echo "build-nvidia-oracle: unknown order-pair primitive '$1:$2'" >&2; exit 1
+  fi
+  PRIM_ORD="${e%%|*}"; PRIM_NAME="${e##*|}"; e="${e#*|}"; PRIM_ROLE="${e%%|*}"
 }
 has_tok() { local n="$1"; shift; case " $* " in (*" $n "*) return 0;; (*) return 1;; esac; }
 
@@ -143,12 +139,10 @@ two_sided_order_pair() {
   local shape="$1" tag="$2" c="$3" g="$4"
   local -a CY; read -ra CY <<< "${SHAPE_CYCLE[$shape]}"
   local p0="${CY[0]#Pod}" p1="${CY[2]#Pod}"
-  local d0="${tag:0:1}" pc pg r0 r1 oc og nc ng
+  local d0="${tag:0:1}" pc pg r0 r1 oc og nc ng rolec roleg
   if [ "$d0" = c ]; then pc="$p0"; pg="$p1"; else pc="$p1"; pg="$p0"; fi
-  prim_name cpu "$c"; nc="$PRIM_NAME"
-  prim_name gpu "$g"; ng="$PRIM_NAME"
-  prim_ord "$c"; oc="$PRIM_ORD"
-  prim_ord "$g"; og="$PRIM_ORD"
+  prim cpu "$c"; nc="$PRIM_NAME"; oc="$PRIM_ORD"; rolec="$PRIM_ROLE"
+  prim gpu "$g"; ng="$PRIM_NAME"; og="$PRIM_ORD"; roleg="$PRIM_ROLE"
 
   # (1) each thread's own model must order its own program-order pair
   if ! has_tok "$pc" $oc; then
@@ -163,8 +157,8 @@ two_sided_order_pair() {
   fi
 
   # (2) the [PTX] Fig4/Fig6 pattern requirement on top of per-side ordering
-  if [ "$d0" = c ]; then prim_role "$c"; r0="$PRIM_ROLE"; prim_role "$g"; r1="$PRIM_ROLE"
-  else                   prim_role "$g"; r0="$PRIM_ROLE"; prim_role "$c"; r1="$PRIM_ROLE"; fi
+  if [ "$d0" = c ]; then r0="$rolec"; r1="$roleg"
+  else                   r0="$roleg"; r1="$rolec"; fi
   local sync=0 why=""
   if [ "${CY[1]}" = Rfe ] && has_tok rel $r0 && has_tok acq $r1; then
     sync=1; why="P0 releases and P1 acquires across the rf"
@@ -228,16 +222,19 @@ classify() {
       esac;;
   esac
 
-  # then the original {acqrel,fence} pairings (scope is always sys)
+  # then the matched {acqrel,fence} pairings (scope is always sys)
   case "$shape" in
-    MP)  if [ "$order" = fence ]; then VERDICT=Disallowed; SOURCE="$S_MP_F"
-         else VERDICT=Disallowed; SOURCE="$S_MP_RA"; fi;;
-    LB)  if [ "$order" = fence ]; then VERDICT=Disallowed; SOURCE="$S_LB_F"
-         else VERDICT=Disallowed; SOURCE="$S_LB_RA"; fi;;
-    S)   if [ "$order" = fence ]; then VERDICT=Disallowed; SOURCE="$S_S_F"
-         else VERDICT=Disallowed; SOURCE="$S_S_RA"; fi;;
-    SB|R) if [ "$order" = fence ]; then VERDICT=Disallowed; SOURCE="$S_SBR_F"
-         else VERDICT=Allowed; SOURCE="$S_SBR_RA"; fi;;
+    # On the 2-proc shapes these are the diagonal of the order-pair grid --
+    # acqrel is its (ra,ra) cell and fence its (sy,sc) one -- so the verdict is
+    # the grid's and only the grounding text is the older per-shape one.
+    # verify/ordercheck.py reads these 20 rows as exactly those cells.
+    MP|LB|S|SB|R)
+      case "$order" in
+        acqrel) two_sided_order_pair "$shape" "$cuttag" ra ra;;
+        fence)  two_sided_order_pair "$shape" "$cuttag" sy sc;;
+        *) echo "build-nvidia-oracle: unhandled two-sided order '$order' ($name)" >&2; exit 1;;
+      esac
+      SOURCE="${TWOSIDED_SRC[$shape:$order]}";;
     RWC) if [ "$order" = fence ]; then VERDICT=NO-ORACLE; SOURCE="$S_TRANS"
          else VERDICT=Allowed; SOURCE="$S_RWC_RA"; fi;;
     2+2W) VERDICT=NO-ORACLE; SOURCE="$S_2P2W";;
@@ -279,7 +276,7 @@ if [ -n "$badcols" ]; then
 fi
 # Advisory (not fatal): a comma inside a free-text Source string splits it
 # across CSV fields 4..n.  Fields 1-3 stay correct, but anything reading a
-# single column sees a truncated Source.  41 baseline strings do this and are
+# single column sees a truncated Source.  38 baseline strings do this and are
 # kept byte-stable on purpose; the order-pair strings are comma-free, and
 # printing the count makes any growth visible.
 ncomma=$(grep -vE '^#|^Litmus,' "$OUT" | awk -F, 'NF>4' | wc -l)

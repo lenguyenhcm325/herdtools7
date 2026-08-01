@@ -123,10 +123,31 @@ litmus7 log (caveat: MI300A is CDNA3, several generations past GCN3 — confirm,
 don't assume); to ground the GH200 het tests, supply an `expected-nvidia.csv` as
 the oracle once one exists.
 
-## 5. Files
+## 5. The statistics section
+
+A log from a real het harness also carries `HetStats` lines (`het_verdict.h`,
+`het_stats_line` + `het_stats_print`). When it does, a second section follows the
+table: for each test, its `RESULT` from the table, then **`het_stats_print`'s own
+block reprinted verbatim** — what the null is worth, its dispersion, its
+within-run correlation reading, its bound and its budget. The interpretation is
+written once, in C, beside the numbers it belongs to; the harness does not
+re-derive it, because a second implementation of the same decode is what silently
+drifts from the first.
+
+What the section adds on top of the reprint is the campaign-level roll-up: the
+negative control over the oracle-`Disallowed` rows (PerpLE VII-A — if the decoder
+invented cycles, that is where it would show), plus counts of the `VOID` rows and
+of the nulls whose bound came out ≥ 1 and so bounds nothing.
+
+A log without `HetStats` lines prints the table alone. Both paths are pinned by
+`hetlitmus/tests/cram/oracle-negatives.t`.
+
+## 6. Files
 
 | File | Purpose |
 |------|---------|
 | `hetlitmus/oracle-compare.sh` | the harness (awk: load CSV, classify each Observation) |
 | `hetlitmus/tests/het/sample-observations.txt` | synthesized sample driving MATCH/MISMATCH/NO-ORACLE |
 | `hetlitmus/tests/gpu-only/expected-amd-gcn3.csv` | the AMD-GCN3 reference oracle (existing) |
+| `hetlitmus/tests/cram/obs-stats.txt` | frozen log carrying real `HetStats` lines, one per reporting path |
+| `hetlitmus/tests/cram/oracle-stats.csv` | the oracle that fixture is compared against |

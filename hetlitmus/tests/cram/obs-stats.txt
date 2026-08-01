@@ -1,0 +1,275 @@
+# Synthetic log fixture for oracle-compare.sh's STATISTICS section (Layer-1 cram).
+# Five tests, one per reporting path: an Allowed relaxation exhibited; a Disallowed
+# outcome FIRED (MISMATCH-CONFIRMED); a Disallowed null carrying the bound its
+# effort earned; a Disallowed null whose bound is VACUOUS (tau unresolved on two
+# runs, control drifting); and a row whose every cell was COLD (VOID) and which no
+# oracle covers.
+# The HetObs / HetVerdict / HetStats lines were PRINTED BY het_verdict.h's own
+# printers over synthetic het_obs_record streams, the way
+# hetlitmus/verify/statscheck.py drives them.  They have to be the real thing:
+# oracle-compare.sh reprints het_stats_print's block instead of re-deriving it.
+HetObs SB-sys oracle=Allowed inst=0 run=0 conf=0 report=0 N=100000 frames=100000 target=1/1 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=NA:0/100000 canary=58/100000 Prep=0.000000 built=0/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys [ROBUST] oracle=Allowed run=0: ALLOWED-OBSERVED
+  SB-sys: the ALLOWED weak outcome was OBSERVED 1 time(s) in N=100000 frames (0.0010%).
+  This is the EXPECTED result.  The oracle PERMITS this outcome, so seeing it refutes NOTHING -- it is evidence the model is not OVER-STRONG (Iorga 4.4, the
+  from-below half of the verdict; the other half is the Disallowed tests' nulls).
+  No control is needed and none was used: a firing Allowed test IS ITS OWN CONTROL.
+  config: stress_requested=0x3f spins=4096/4096 do_stress_rounds=64 enemies=4 enemy_rounds=5000 preload=250 noise=120/8 (512 MB) place=0
+HetObs SB-sys oracle=Allowed inst=0 run=1 conf=0 report=0 N=100000 frames=100000 target=1/1 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=NA:0/100000 canary=50/100000 Prep=0.000000 built=0/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys [ROBUST] oracle=Allowed run=1: ALLOWED-OBSERVED
+  SB-sys: the ALLOWED weak outcome was OBSERVED 1 time(s) in N=100000 frames (0.0010%).
+  This is the EXPECTED result.  The oracle PERMITS this outcome, so seeing it refutes NOTHING -- it is evidence the model is not OVER-STRONG (Iorga 4.4, the
+  from-below half of the verdict; the other half is the Disallowed tests' nulls).
+  No control is needed and none was used: a firing Allowed test IS ITS OWN CONTROL.
+  config: stress_requested=0x3f spins=4096/4096 do_stress_rounds=64 enemies=4 enemy_rounds=5000 preload=250 noise=120/8 (512 MB) place=0
+HetObs SB-sys oracle=Allowed inst=0 run=2 conf=0 report=0 N=100000 frames=100000 target=1/1 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=NA:0/100000 canary=55/100000 Prep=0.000000 built=0/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys [ROBUST] oracle=Allowed run=2: ALLOWED-OBSERVED
+  SB-sys: the ALLOWED weak outcome was OBSERVED 1 time(s) in N=100000 frames (0.0010%).
+  This is the EXPECTED result.  The oracle PERMITS this outcome, so seeing it refutes NOTHING -- it is evidence the model is not OVER-STRONG (Iorga 4.4, the
+  from-below half of the verdict; the other half is the Disallowed tests' nulls).
+  No control is needed and none was used: a firing Allowed test IS ITS OWN CONTROL.
+  config: stress_requested=0x3f spins=4096/4096 do_stress_rounds=64 enemies=4 enemy_rounds=5000 preload=250 noise=120/8 (512 MB) place=0
+HetObs SB-sys oracle=Allowed inst=0 run=3 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=NA:0/100000 canary=55/100000 Prep=0.000000 built=0/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys [ROBUST] oracle=Allowed run=3: ALLOWED-UNOBSERVED
+  SB-sys: ALLOWED weak outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  canary MP-cg-sys-relaxed fired 55 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  ALLOWED-UNOBSERVED -- an OBSERVABILITY result, NOT a model result.  The outcome is PERMITTED and
+  the harness was demonstrably hot, and we still could not expose it on this hardware under this
+  stress.  That says NOTHING about the CMCM in either direction; it says this shape's window is
+  narrow here.  It feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
+    "In fairness to the authors of [19], we were unable to observe weak behaviours using our
+     method on the Nvidia GTX 280 chip they used."
+                                     -- Alglave et al., ASPLOS'15, fn.7, p.577.
+HetObs SB-sys oracle=Allowed inst=0 run=4 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=NA:0/100000 canary=48/100000 Prep=0.000000 built=0/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys [ROBUST] oracle=Allowed run=4: ALLOWED-UNOBSERVED
+  SB-sys: ALLOWED weak outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  canary MP-cg-sys-relaxed fired 48 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  ALLOWED-UNOBSERVED -- an OBSERVABILITY result, NOT a model result.  The outcome is PERMITTED and
+  the harness was demonstrably hot, and we still could not expose it on this hardware under this
+  stress.  That says NOTHING about the CMCM in either direction; it says this shape's window is
+  narrow here.  It feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
+    "In fairness to the authors of [19], we were unable to observe weak behaviours using our
+     method on the Nvidia GTX 280 chip they used."
+                                     -- Alglave et al., ASPLOS'15, fn.7, p.577.
+HetObs SB-sys oracle=Allowed inst=0 run=5 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=NA:0/100000 canary=46/100000 Prep=0.000000 built=0/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys [ROBUST] oracle=Allowed run=5: ALLOWED-UNOBSERVED
+  SB-sys: ALLOWED weak outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  canary MP-cg-sys-relaxed fired 46 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  ALLOWED-UNOBSERVED -- an OBSERVABILITY result, NOT a model result.  The outcome is PERMITTED and
+  the harness was demonstrably hot, and we still could not expose it on this hardware under this
+  stress.  That says NOTHING about the CMCM in either direction; it says this shape's window is
+  narrow here.  It feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
+    "In fairness to the authors of [19], we were unable to observe weak behaviours using our
+     method on the Nvidia GTX 280 chip they used."
+                                     -- Alglave et al., ASPLOS'15, fn.7, p.577.
+HetStats SB-sys oracle=Allowed obs=Sometimes R=6 usable=6 k=3 k_eff=3 k_runs=3 degen=0 ctrl=canary win_n=768 nwin=128 F_win=0.5945 F_cell=0.4231 r_hat=inf mu_upper=0.0000 tau_w=1.1003 N_eff=116.3311 tau_need=1 R_eff=0.0000 p_bound=-1 P_rep=0.950213 acf1=0.0502 ks=pass ks_D=0.0222 ks_Dcrit=0.1947 ks_split=-1 tier=none N=100000 frames=600000 flags=0x208
+HetStats SB-sys: 6 cell(s) [(instance,run)], 6 usable, observed in 3 (3 after the decode guard, across 3 distinct run(s)).
+  dispersion (from the Layer-B canary channel, 768 window samples): F_win = 0.595 (Var 0.242 / Mean 0.406), r_hat = inf (Poisson), lag-1 acf = 0.050; F_cell = 0.423.
+  within-run correlation: tau_w = 1.10 window(s) (Geyer initial-positive-sequence over the 128-window control stream) -> N_eff = 116.3 effective independent samples per run, clamped to [1, 128] -- a stream of 128 windows cannot witness more.  A correlated sequence is DISCOUNTED, not discarded: B7 scored each run as ONE Bernoulli bit, the tau = run-length worst case.
+  NOTE: calibrated off the Layer-B canary, not this test's own mu(T) -- a different SHAPE's burstiness.  Weaker than a shape-matched calibration; say so when reporting.
+  NOTE: F_win < 1 (under-dispersed).  Clamped to the Poisson floor: an under-dispersed sample is NOT allowed to make the bound TIGHTER than the rule of three.
+  stationarity: KS pass (D = 0.0222 <= D_crit = 0.1947, 150 early vs 72 late window counts).  On discrete counts the two-sample KS is conservative, so this is the WEAKER of the two possible claims.
+  OBSERVED in 3 of 6 usable cell(s).  P_rep = 1 - e^{-k_eff} = 95.02% that a fresh run reproduces it (k_eff = 3 NON-DEGENERATE cells -- Kirkham's n=3 => 95% recipe, relocated to the (instance,run) unit).
+Test SB-sys
+Histogram (1 states)
+Condition exists (1:r0=1 /\ 1:r1=0) is validated
+Observation SB-sys Sometimes 3 5997
+
+HetObs MP-sys-F oracle=Disallowed inst=0 run=0 conf=0 report=0 N=100000 frames=100000 target=1/1 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=54/100000 canary=44/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict MP-sys-F [ROBUST] oracle=Disallowed run=0: MISMATCH
+  ** MP-sys-F: the should-be-FORBIDDEN outcome was OBSERVED 1 time(s) (exhaustive) / 1 (heuristic) in N=100000 frames.
+  ** A single sighting REFUTES the model's prediction for this test.  This is a result, not a bug -- report it.
+  config: stress_requested=0x3f spins=4096/4096 do_stress_rounds=64 enemies=4 enemy_rounds=5000 preload=250 noise=120/8 (512 MB) place=0
+HetObs MP-sys-F oracle=Disallowed inst=0 run=1 conf=0 report=0 N=100000 frames=100000 target=1/1 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=47/100000 canary=48/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict MP-sys-F [ROBUST] oracle=Disallowed run=1: MISMATCH
+  ** MP-sys-F: the should-be-FORBIDDEN outcome was OBSERVED 1 time(s) (exhaustive) / 1 (heuristic) in N=100000 frames.
+  ** A single sighting REFUTES the model's prediction for this test.  This is a result, not a bug -- report it.
+  config: stress_requested=0x3f spins=4096/4096 do_stress_rounds=64 enemies=4 enemy_rounds=5000 preload=250 noise=120/8 (512 MB) place=0
+HetObs MP-sys-F oracle=Disallowed inst=0 run=2 conf=0 report=0 N=100000 frames=100000 target=1/1 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=59/100000 canary=48/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict MP-sys-F [ROBUST] oracle=Disallowed run=2: MISMATCH
+  ** MP-sys-F: the should-be-FORBIDDEN outcome was OBSERVED 1 time(s) (exhaustive) / 1 (heuristic) in N=100000 frames.
+  ** A single sighting REFUTES the model's prediction for this test.  This is a result, not a bug -- report it.
+  config: stress_requested=0x3f spins=4096/4096 do_stress_rounds=64 enemies=4 enemy_rounds=5000 preload=250 noise=120/8 (512 MB) place=0
+HetObs MP-sys-F oracle=Disallowed inst=0 run=3 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=53/100000 canary=57/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict MP-sys-F [ROBUST] oracle=Disallowed run=3: CREDIBLE-NULL
+  MP-sys-F: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion MP-sys-acquire (minimal mutant) fired 53 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 57 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetObs MP-sys-F oracle=Disallowed inst=0 run=4 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=61/100000 canary=67/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict MP-sys-F [ROBUST] oracle=Disallowed run=4: CREDIBLE-NULL
+  MP-sys-F: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion MP-sys-acquire (minimal mutant) fired 61 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 67 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetObs MP-sys-F oracle=Disallowed inst=0 run=5 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=62/100000 canary=56/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict MP-sys-F [ROBUST] oracle=Disallowed run=5: CREDIBLE-NULL
+  MP-sys-F: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion MP-sys-acquire (minimal mutant) fired 62 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 56 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetStats MP-sys-F oracle=Disallowed obs=Sometimes R=6 usable=6 k=3 k_eff=3 k_runs=3 degen=0 ctrl=mu(T) win_n=768 nwin=128 F_win=0.5632 F_cell=0.5857 r_hat=inf mu_upper=0.0000 tau_w=1.0402 N_eff=123.0558 tau_need=1 R_eff=0.0000 p_bound=-1 P_rep=0.950213 acf1=-0.0233 ks=pass ks_D=0.0233 ks_Dcrit=0.1947 ks_split=-1 tier=MISMATCH-CONFIRMED N=100000 frames=600000 flags=0x8
+HetStats MP-sys-F: 6 cell(s) [(instance,run)], 6 usable, observed in 3 (3 after the decode guard, across 3 distinct run(s)).
+  dispersion (from the mu(T) minimal mutant channel, 768 window samples): F_win = 0.563 (Var 0.246 / Mean 0.438), r_hat = inf (Poisson), lag-1 acf = -0.023; F_cell = 0.586.
+  within-run correlation: tau_w = 1.04 window(s) (Geyer initial-positive-sequence over the 128-window control stream) -> N_eff = 123.1 effective independent samples per run, clamped to [1, 128] -- a stream of 128 windows cannot witness more.  A correlated sequence is DISCOUNTED, not discarded: B7 scored each run as ONE Bernoulli bit, the tau = run-length worst case.
+  NOTE: F_win < 1 (under-dispersed).  Clamped to the Poisson floor: an under-dispersed sample is NOT allowed to make the bound TIGHTER than the rule of three.
+  stationarity: KS pass (D = 0.0233 <= D_crit = 0.1947, 150 early vs 72 late window counts).  On discrete counts the two-sample KS is conservative, so this is the WEAKER of the two possible claims.
+  OBSERVED in 3 of 6 usable cell(s).  P_rep = 1 - e^{-k_eff} = 95.02% that a fresh run reproduces it (k_eff = 3 NON-DEGENERATE cells -- Kirkham's n=3 => 95% recipe, relocated to the (instance,run) unit).
+  ** MISMATCH-CONFIRMED ** -- the should-be-FORBIDDEN outcome was observed in 3 distinct non-degenerate RUN(S).  A decoder artefact does not reproduce across re-seeded runs, so this is a REFUTATION OF THE CMCM's PREDICTION and not a constant-read.  This is the campaign's most valuable output: report it.
+Test MP-sys-F
+Histogram (1 states)
+Condition exists (1:r0=1 /\ 1:r1=0) is validated
+Observation MP-sys-F Sometimes 3 5997
+
+HetObs SB-sys-2s oracle=Disallowed inst=0 run=0 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=50/100000 canary=50/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys-2s [ROBUST] oracle=Disallowed run=0: CREDIBLE-NULL
+  SB-sys-2s: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion SB-sys-acquire (minimal mutant) fired 50 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 50 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetObs SB-sys-2s oracle=Disallowed inst=0 run=1 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=62/100000 canary=48/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys-2s [ROBUST] oracle=Disallowed run=1: CREDIBLE-NULL
+  SB-sys-2s: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion SB-sys-acquire (minimal mutant) fired 62 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 48 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetObs SB-sys-2s oracle=Disallowed inst=0 run=2 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=53/100000 canary=54/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys-2s [ROBUST] oracle=Disallowed run=2: CREDIBLE-NULL
+  SB-sys-2s: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion SB-sys-acquire (minimal mutant) fired 53 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 54 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetObs SB-sys-2s oracle=Disallowed inst=0 run=3 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=49/100000 canary=54/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys-2s [ROBUST] oracle=Disallowed run=3: CREDIBLE-NULL
+  SB-sys-2s: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion SB-sys-acquire (minimal mutant) fired 49 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 54 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetObs SB-sys-2s oracle=Disallowed inst=0 run=4 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=61/100000 canary=42/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys-2s [ROBUST] oracle=Disallowed run=4: CREDIBLE-NULL
+  SB-sys-2s: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion SB-sys-acquire (minimal mutant) fired 61 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 42 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetObs SB-sys-2s oracle=Disallowed inst=0 run=5 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=50/100000 canary=57/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys-2s [ROBUST] oracle=Disallowed run=5: CREDIBLE-NULL
+  SB-sys-2s: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion SB-sys-acquire (minimal mutant) fired 50 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 57 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetObs SB-sys-2s oracle=Disallowed inst=0 run=6 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=53/100000 canary=51/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys-2s [ROBUST] oracle=Disallowed run=6: CREDIBLE-NULL
+  SB-sys-2s: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion SB-sys-acquire (minimal mutant) fired 53 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 51 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetObs SB-sys-2s oracle=Disallowed inst=0 run=7 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=46/100000 canary=53/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict SB-sys-2s [ROBUST] oracle=Disallowed run=7: CREDIBLE-NULL
+  SB-sys-2s: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion SB-sys-acquire (minimal mutant) fired 46 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 53 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetStats SB-sys-2s oracle=Disallowed obs=Never R=8 usable=8 k=0 k_eff=0 k_runs=0 degen=0 ctrl=mu(T) win_n=1024 nwin=128 F_win=0.5865 F_cell=0.6146 r_hat=inf mu_upper=2.9957 tau_w=1.0000 N_eff=128.0000 tau_need=1 R_eff=1024.0000 p_bound=0.00292552 P_rep=-1 acf1=-0.0051 ks=pass ks_D=0.1038 ks_Dcrit=0.1686 ks_split=-1 tier=none N=100000 frames=800000 flags=0x8
+HetStats SB-sys-2s: 8 cell(s) [(instance,run)], 8 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
+  dispersion (from the mu(T) minimal mutant channel, 1024 window samples): F_win = 0.587 (Var 0.243 / Mean 0.414), r_hat = inf (Poisson), lag-1 acf = -0.005; F_cell = 0.615.
+  within-run correlation: tau_w = 1.00 window(s) (Geyer initial-positive-sequence over the 128-window control stream) -> N_eff = 128.0 effective independent samples per run, clamped to [1, 128] -- a stream of 128 windows cannot witness more.  A correlated sequence is DISCOUNTED, not discarded: B7 scored each run as ONE Bernoulli bit, the tau = run-length worst case.
+  NOTE: F_win < 1 (under-dispersed).  Clamped to the Poisson floor: an under-dispersed sample is NOT allowed to make the bound TIGHTER than the rule of three.
+  stationarity: KS pass (D = 0.1038 <= D_crit = 0.1686, 200 early vs 96 late window counts).  On discrete counts the two-sample KS is conservative, so this is the WEAKER of the two possible claims.
+  NOT OBSERVED in any of the 8 usable cell(s).  95% upper bound on its rate PER EFFECTIVE SAMPLE (one tau_w-window alignment epoch):
+      p < mu_upper(r_hat) / R_eff = 2.9957 / 1024.00 = 0.002926
+  (R_eff = 8 usable runs x N_eff 128.0 / DEFF 1.00.  The base unit is the (instance,run) CELL, NOT the frame -- the scan validates N^{T_L} overlapping frames per N iterations, so a frame count fed to 1-e^{-n} returns ~1 vacuously (PerpLE VI-B.1) -- and B7b DISCOUNTS the within-run stream by its measured autocorrelation instead of discarding it to one bit.)
+  implied RUN-level bound: p_run < N_eff x p = 0.3745 -- identical to B7's, BY CONSTRUCTION: the discount adds resolution beneath the run-level claim, it never tightens it for free.  The dividend is paid where the hours are: the budget below is met with N_eff-fold fewer runs.
+  This is the CMCM validation claim: forbidden, and not observed under the effort above.  It is consistency evidence, NOT a proof.
+  effort: 8 run(s) x N=100000 iterations, 800000 frames examined.
+  budget: NOT SIZED.  p_min -- the per-effective-sample rate of the hardest het behaviour we can actually observe -- is HARDWARE-ONLY and unset (HET_P_MIN).
+          It is NOT Bagchi's ~0.2%: that is the GPU-only INTER-CTA rate (their 5.1/4.1), which fires with no CPU participation and never crosses C2C.  There is no published numeric het hit-rate.
+          Derive it on GH200 from the ALLOWED-OBSERVED rows (they ARE the observed-rate population, at THIS HET_NWIN) and re-run with -DHET_P_MIN=<rate>.
+Test SB-sys-2s
+Histogram (1 states)
+Condition exists (1:r0=1 /\ 1:r1=0) is validated
+Observation SB-sys-2s Never 0 6000
+
+HetObs MP-sys-2s oracle=Disallowed inst=0 run=0 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=448/100000 canary=448/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict MP-sys-2s [ROBUST] oracle=Disallowed run=0: CREDIBLE-NULL
+  MP-sys-2s: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion MP-sys-acquire (minimal mutant) fired 448 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 448 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetObs MP-sys-2s oracle=Disallowed inst=0 run=1 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=576/100000 canary=576/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict MP-sys-2s [ROBUST] oracle=Disallowed run=1: CREDIBLE-NULL
+  MP-sys-2s: Disallowed outcome NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion MP-sys-acquire (minimal mutant) fired 576 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 576 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on the same run, so the harness demonstrably produced the cross-device interleaving this test's ordering is claimed to prevent.
+  Consistency evidence FOR the model -- NOT a proof.  Report as "not observed under this effort", never as "forbidden".
+HetStats MP-sys-2s oracle=Disallowed obs=Never R=2 usable=2 k=0 k_eff=0 k_runs=0 degen=0 ctrl=mu(T) win_n=256 nwin=128 F_win=1.3804 F_cell=16.0000 r_hat=10.5155 mu_upper=3.4660 tau_w=45.8182 N_eff=1.0000 tau_need=18 R_eff=0.1250 p_bound=27.7283 P_rep=-1 acf1=0.9773 ks=SPLIT ks_D=1.0000 ks_Dcrit=0.3372 ks_split=16 tier=none N=100000 frames=200000 flags=0x4402
+HetStats MP-sys-2s: 2 cell(s) [(instance,run)], 2 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
+  dispersion (from the mu(T) minimal mutant channel, 256 window samples): F_win = 1.380 (Var 5.522 / Mean 4.000), r_hat = finite (see HetStats line), lag-1 acf = 0.977; F_cell = 16.000.
+  within-run correlation: tau_w = 45.82 window(s), but tau IS NOT RESOLVED -- the pooled control stream is only 256 sample(s) long and an estimate of tau needs about 50x tau (= 2291) behind it before it can be trusted.  N_eff FALLS BACK TO 1 (B7's one-bit-per-run reading): a tau we could not measure must never buy a tighter bound, exactly as a KS test that could not run must never unlock P_rep.
+  NOTE the direction: this estimator (Geyer initial-positive-sequence) UNDER-reads tau on a stream too short for it -- a spurious non-positive pair truncates the sum early -- so the number above is a FLOOR, it is NOT at the 128-window ceiling, and believing it would have OVER-credited N_eff and reported a bound TIGHTER THAN THE TRUTH.
+  THIS IS NOT A FAILURE AND NOT A VETO -- it is a PRICE, and the price is RUNS: the criterion is on the POOLED count (usable runs x 128 windows), so it relaxes on its own.  Re-run this test with >= 18 usable run(s) (it has 2) and N_eff becomes claimable.  Grow R, NOT N: extra iterations only add correlated frames inside the same alignment windows, while a fresh run adds a fresh phase/seed/thermal draw (Q3 F4).
+  stationarity: *** KS REJECTED *** (D = 1.0000 > D_crit = 0.3372).  The control rate is NOT stationary across the run: the change-point is near window 16 of 128.  Kirkham's own precheck already fails 4/18 GPU-only chip/test combinations, and het adds warm-up, thermal drift and alignment drift on top.
+  P_rep is NOT reported across a non-stationary boundary (Q3 R4).  Re-run split at the change-point and score the segments separately -- Kirkham 5.1: "non-stable runs can then be restarted from the point of instability".
+  NOT OBSERVED in any of the 2 usable cell(s) -- but THE BOUND IS VACUOUS:
+      p < mu_upper(r_hat) / R_eff = 3.466 / 0.12 = 27.73   >= 1
+  the bounded rate is a PROBABILITY, so a bound above 1 bounds NOTHING.  This is not a weak claim, it is the ABSENCE of one, and it must NOT be tabulated as a number.
+  WHY: the control channel is bursty (F_win = 1.38), so the process parks so much probability mass at zero that observing zero is nearly free.  That IS the finding -- and it is exactly the case in which a bare p < 3/N would have claimed a strong result from no evidence at all.
+  REMEDY (Q3 F4/R3): grow R -- more independent perpetual runs, each a fresh phase/seed/thermal draw -- NOT bigger N, which only adds correlated frames inside the same few alignment windows.
+  This is the CMCM validation claim: forbidden, and not observed under the effort above.  It is consistency evidence, NOT a proof.
+  effort: 2 run(s) x N=100000 iterations, 200000 frames examined.
+  budget: NOT SIZED.  p_min -- the per-effective-sample rate of the hardest het behaviour we can actually observe -- is HARDWARE-ONLY and unset (HET_P_MIN).
+          It is NOT Bagchi's ~0.2%: that is the GPU-only INTER-CTA rate (their 5.1/4.1), which fires with no CPU participation and never crosses C2C.  There is no published numeric het hit-rate.
+          Derive it on GH200 from the ALLOWED-OBSERVED rows (they ARE the observed-rate population, at THIS HET_NWIN) and re-run with -DHET_P_MIN=<rate>.
+Test MP-sys-2s
+Histogram (1 states)
+Condition exists (1:r0=1 /\ 1:r1=0) is validated
+Observation MP-sys-2s Never 0 6000
+
+HetObs LB-sys oracle=NO-ORACLE inst=0 run=0 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=0/100000 canary=0/100000 Prep=0.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict LB-sys [ROBUST] oracle=NO-ORACLE run=0: COLD-INVALID
+  LB-sys: outcome (NO ORACLE: neither allowed nor forbidden by the model) NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion LB-sys-acquire (minimal mutant) fired 0 time(s), P_rep=0.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 0 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  DISCARD this null -- the harness was not demonstrably hot:
+    - neither mu(T) nor the canary reached tau_hot=30: a known-ALLOWED weak behaviour on this very machinery did not fire, so this harness is not shown to expose anything
+HetObs LB-sys oracle=NO-ORACLE inst=0 run=1 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=0/100000 canary=0/100000 Prep=0.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict LB-sys [ROBUST] oracle=NO-ORACLE run=1: COLD-INVALID
+  LB-sys: outcome (NO ORACLE: neither allowed nor forbidden by the model) NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion LB-sys-acquire (minimal mutant) fired 0 time(s), P_rep=0.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 0 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  DISCARD this null -- the harness was not demonstrably hot:
+    - neither mu(T) nor the canary reached tau_hot=30: a known-ALLOWED weak behaviour on this very machinery did not fire, so this harness is not shown to expose anything
+HetObs LB-sys oracle=NO-ORACLE inst=0 run=2 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=0/100000 canary=0/100000 Prep=0.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict LB-sys [ROBUST] oracle=NO-ORACLE run=2: COLD-INVALID
+  LB-sys: outcome (NO ORACLE: neither allowed nor forbidden by the model) NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion LB-sys-acquire (minimal mutant) fired 0 time(s), P_rep=0.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 0 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  DISCARD this null -- the harness was not demonstrably hot:
+    - neither mu(T) nor the canary reached tau_hot=30: a known-ALLOWED weak behaviour on this very machinery did not fire, so this harness is not shown to expose anything
+HetObs LB-sys oracle=NO-ORACLE inst=0 run=3 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=0/100000 canary=0/100000 Prep=0.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
+HetVerdict LB-sys [ROBUST] oracle=NO-ORACLE run=3: COLD-INVALID
+  LB-sys: outcome (NO ORACLE: neither allowed nor forbidden by the model) NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
+  companion LB-sys-acquire (minimal mutant) fired 0 time(s), P_rep=0.0000%, on the same runs under the same stress config (tau_hot=30).
+  canary MP-cg-sys-relaxed fired 0 time(s) (tau_hot=30) -- same launch, same stress, same C2C path.
+  DISCARD this null -- the harness was not demonstrably hot:
+    - neither mu(T) nor the canary reached tau_hot=30: a known-ALLOWED weak behaviour on this very machinery did not fire, so this harness is not shown to expose anything
+HetStats LB-sys oracle=NO-ORACLE obs=VOID R=4 usable=0 k=0 k_eff=0 k_runs=0 degen=0 ctrl=canary win_n=0 nwin=128 F_win=-1.0000 F_cell=-1.0000 r_hat=inf mu_upper=0.0000 tau_w=-1.0000 N_eff=1.0000 tau_need=0 R_eff=0.0000 p_bound=-1 P_rep=-1 acf1=0.0000 ks=underpowered ks_D=0.0000 ks_Dcrit=0.0000 ks_split=-1 tier=none N=100000 frames=400000 flags=0x1281
+HetStats LB-sys: 4 cell(s) [(instance,run)], 0 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
+  VOID -- not one of the 4 runs was usable (every cell COLD).  There is nothing here to bound: an empty histogram from a dead harness is not a non-observation, it is an absence of data.  See the per-run HetVerdict lines for which mechanism was dead.
+Test LB-sys
+Histogram (1 states)
+Condition exists (1:r0=1 /\ 1:r1=0) is validated
+Observation LB-sys Never 0 6000
+

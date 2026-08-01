@@ -17,18 +17,18 @@ Before: ~10 hand-listed tests (8 GPU-only + MP-het/SB-het). After:
 | corpus    | tests | manifest |
 |-----------|-------|----------|
 | gpu-only  | 137   | `tests/gpu-only/@all` |
-| het       | 450   | `tests/het/@all`      |
+| het       | 411   | `tests/het/@all`      |
 
 Both corpora are now driven from committed, reproducible scripts that also write
 an `@all` list-file (herd7/litmus7 read `@all` as "one test path per line",
 `lib/misc.ml:is_list`). Re-running either `generate.sh` reproduces its corpus.
 
 **Scope of *this* note.** What follows describes the **one-sided** scope × order
-grid — the 281 het tests whose GPU procs are annotated and whose CPU procs are
+grid — the 248 het tests whose GPU procs are annotated and whose CPU procs are
 plain ARMv9. The het corpus has since grown two further families that the same
 `generate.sh` emits but that are specified elsewhere: the **matched two-sided**
 tests (`-2s`, Task 3) and the **two-sided order pairs** (`-2s` with an
-`<cpu>.<gpu>` order, Q10 / Q10b). For the current split of the 450 by family, and
+`<cpu>.<gpu>` order, Q10 / Q10b). For the current split of the 411 by family, and
 for the labelling rule each family uses, see `het-oracle.md` §"The corpus:
 one-sided baseline + two-sided pairs". The counts here are re-derivable at any
 time from `hetlitmus/tests/het/*.litmus` (and `verify/dupcheck.py` reports how
@@ -81,9 +81,9 @@ byte-identical to its relaxed sibling is not a new test, so it is skipped: e.g.
 `acquire` on the all-write shape 2+2W (no read to upgrade), and, in the het
 corpus, any column whose changed annotation landed on a CPU proc or on a GPU
 proc with no matching access. GPU-only drops 3 such columns; the one-sided het
-grid drops 69 (11 shapes × 3 scopes × 4 orders = 132, +8 fixed-name originals
-= 140, −3 ⇒ 137 gpu-only; 29 het cut-classes × 3 × 4 = 348, +`MP-het`/`SB-het`
-= 350, −69 ⇒ 281 one-sided het).
+grid drops 66 (11 shapes × 3 scopes × 4 orders = 132, +8 fixed-name originals
+= 140, −3 ⇒ 137 gpu-only; 26 het cut-classes × 3 × 4 = 312, +`MP-het`/`SB-het`
+= 314, −66 ⇒ 248 one-sided het).
 
 ### Naming
 
@@ -101,7 +101,11 @@ The scope/order grid lives on the **GPU** procs (the only place scopes exist);
 CPU procs are plain AArch64. Device direction follows the settled role-based,
 symmetry-reduced rule (NOT 2ⁿ subsets):
 
-- **2-proc** shapes: both directions — `cpu,gpu` and `gpu,cpu`.
+- **2-proc** shapes: both directions — `cpu,gpu` and `gpu,cpu` — except `SB`, `LB`
+  and `2+2W`, which emit `cpu,gpu` only: their cycle is invariant under
+  rotation-by-two, which swaps P0/P1, and the annotation follows the device rather
+  than the proc index, so `gpu,cpu` would be `cpu,gpu` with the labels exchanged
+  (`verify/dupcheck.py` holds that honest).
 - **3-proc** shapes (each proc a distinct role): each proc, in turn, is the sole
   GPU participant — `gpu,cpu,cpu`, `cpu,gpu,cpu`, `cpu,cpu,gpu`.
 - **IRIW** (2 symmetric writers + 2 symmetric readers): the four symmetry-class
@@ -148,8 +152,8 @@ defaults to `aarch64`).
 ```sh
 # 1. counts  (the het total includes the two-sided families; see het-oracle.md)
 ls hetlitmus/tests/gpu-only/*.litmus | wc -l                     # 137
-ls hetlitmus/tests/het/*.litmus      | wc -l                     # 450
-ls hetlitmus/tests/het/*.litmus | grep -vc -- '-2s\.litmus'      # 281 one-sided
+ls hetlitmus/tests/het/*.litmus      | wc -l                     # 411
+ls hetlitmus/tests/het/*.litmus | grep -vc -- '-2s\.litmus'      # 248 one-sided
 
 # 2. herd7 prints one (advisory) Observation per GPU-only test
 cd hetlitmus/tests/gpu-only

@@ -343,23 +343,6 @@ __device__ static void het_spin(uint32_t* barrier, uint32_t limit,
 }
 
 /* -------------------------------------------------------------------------
- * The co-prime Parallel-Test-Environment primitives -- MC Mutants ASPLOS'23 4.1,
- * cuda-litmus functions.cu:2-8.  (v*P) mod N with P co-prime to N is a bijection,
- * so it assigns each thread a partner or a location slot without collisions while
- * avoiding the ineffective n -> n+1 pattern.
- *
- * Ported but not wired: they belong to the GPU-only replica population (many
- * independent instances of a gpu-only test per launch).  The het instance count is
- * capped by CPU cores, not GPU threads, so the het pair does not use them.
- * ------------------------------------------------------------------------- */
-[[maybe_unused]] __device__ static uint32_t het_permute_id(uint32_t id, uint32_t factor, uint32_t mask) {
-  return (id * factor) % mask;
-}
-[[maybe_unused]] __device__ static uint32_t het_stripe_workgroup(uint32_t workgroup_id, uint32_t testing_workgroups) {
-  return (workgroup_id + 1) % testing_workgroups;
-}
-
-/* -------------------------------------------------------------------------
  * het_set_scratch_locations -- cuda-litmus runner.cu:130 (`setScratchLocations'),
  * host side.  Picks HET_STRESS_TARGETS distinct stress lines at random out of
  * (HET_SCRATCH_SIZE / HET_STRESS_LINE_SIZE) regions, one random word within each,

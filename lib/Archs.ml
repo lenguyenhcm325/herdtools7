@@ -129,7 +129,6 @@ let lisa = `LISA
 let x86_64 = `X86_64
 let java = `JAVA
 let asl = `ASL
-let het = `Het
 
 let compare = compare
 

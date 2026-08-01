@@ -40,7 +40,11 @@ declare -A SHAPE_NPROCS=(
 SHAPE_ORDER="MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3"
 
 # --- heterogeneous device cuts ----------------------------------------------
-# Role-based and symmetry-reduced, NOT 2^n.  2-proc shapes: both directions.
+# Role-based and symmetry-reduced, NOT 2^n.  2-proc shapes: both directions,
+# except SB / LB / 2+2W, which emit one cut: their cycle is invariant under
+# rotation-by-two, which swaps P0/P1, and the annotation follows the device
+# rather than the proc index, so `gc' would be `cg' with the labels exchanged.
+# verify/dupcheck.py holds that honest.
 # 3-proc shapes (distinct roles): each proc in turn is the single GPU
 # participant.  IRIW (2 symmetric writers + 2 symmetric readers): four cuts
 # {one writer, one reader, both writers, both readers} -- four of its eight
@@ -50,9 +54,9 @@ SHAPE_ORDER="MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3"
 # env-research/Q10-corpus-coverage.md sect 2.2 (Q10-probe/canon.py --cuts).
 declare -A SHAPE_HET_CUTS=(
   [MP]="cpu,gpu gpu,cpu"
-  [SB]="cpu,gpu gpu,cpu"
-  [LB]="cpu,gpu gpu,cpu"
-  [2+2W]="cpu,gpu gpu,cpu"
+  [SB]="cpu,gpu"
+  [LB]="cpu,gpu"
+  [2+2W]="cpu,gpu"
   [R]="cpu,gpu gpu,cpu"
   [S]="cpu,gpu gpu,cpu"
   [WRC]="gpu,cpu,cpu cpu,gpu,cpu cpu,cpu,gpu"

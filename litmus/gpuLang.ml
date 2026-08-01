@@ -1,0 +1,299 @@
+(****************************************************************************)
+(*                           the diy toolsuite                              *)
+(*                                                                          *)
+(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(*                                                                          *)
+(* gpuLang: everything the CUDA (.cu) and HIP (.hip) litmus renders share.  *)
+(* Both consume the *parsed* Bell program (BellBase.pseudo, ints), not the  *)
+(* litmus7 Out template: the template flattens a scoped load/store into an  *)
+(* opaque `memo' string, losing the structured order+scope annotation.      *)
+(* Working on BellBase.Pld/Pst directly keeps the scope/order mapping       *)
+(* exact.  The annotation vocabulary, the BellBase accessors, the launch    *)
+(* layout and the whole-test driver live here once; a [t] dialect record    *)
+(* carries the per-instruction lowering and the differing emitted tokens,   *)
+(* so CudaLang and HipLang are thin instantiations (Route B of the          *)
+(* HetLitmus frontend, memory hetlitmus-route-b-frontend).                  *)
+(*                                                                          *)
+(* This software is governed by the CeCILL-B license under French law and   *)
+(* abiding by the rules of distribution of free software.                   *)
+(****************************************************************************)
+
+open Printf
+
+(* ------------------------------------------------------------------ *)
+(* Order / scope vocabulary: which Bell annotations name what          *)
+(* ------------------------------------------------------------------ *)
+
+let is_order = function
+  | "relaxed" | "acquire" | "release" | "acq_rel" | "sc" -> true
+  | _ -> false
+
+let is_scope = function
+  | "cta" | "gpu" | "sys" | "cluster" -> true
+  | _ -> false
+
+(* Split a Bell annotation list (e.g. ["release";"sys"]) into the
+   (order, scope) pair.  Defaults are the strongest-context-neutral
+   choices and only kick in for malformed input. *)
+let order_scope_of annots =
+  let ord =
+    try List.find is_order annots with Not_found -> "relaxed"
+  and scp =
+    try List.find is_scope annots with Not_found -> "sys" in
+  ord, scp
+
+(* ------------------------------------------------------------------ *)
+(* BellBase accessors                                                 *)
+(* ------------------------------------------------------------------ *)
+
+(* Turn a test name such as "MP-sys-F" into a valid C identifier. *)
+let c_ident s =
+  String.map (fun c ->
+    if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+       || (c >= '0' && c <= '9') then c else '_') s
+
+let reg_name = function
+  | BellBase.GPRreg i -> sprintf "r%i" i
+  | BellBase.Symbolic_reg s -> s (* should not survive register allocation *)
+
+(* Bare variable name, for human-readable comments. *)
+let var_of_reg_or_addr = function
+  | BellBase.Abs s -> s
+  | BellBase.Rega r -> reg_name r (* address held in register *)
+
+let var_of_addr_op = function
+  | BellBase.Addr_op_atom roa -> var_of_reg_or_addr roa
+  | BellBase.Addr_op_add (roa, _) -> var_of_reg_or_addr roa
+
+let value_of_roi = function
+  | BellBase.Regi r -> reg_name r
+  | BellBase.Imm i -> sprintf "%i" i
+
+(* Flatten a pseudo (peel labels) into its straight-line instructions.  Not
+   Pseudo.fold_pseudo_code: that one asserts on a Macro rather than skipping
+   it. *)
+let rec instrs_of_pseudo = function
+  | BellBase.Instruction i -> [i]
+  | BellBase.Label (_, p) -> instrs_of_pseudo p
+  | BellBase.Nop | BellBase.Symbolic _ | BellBase.Macro _
+  | BellBase.Pagealign | BellBase.Skip _ -> []
+
+let instrs_of_code code = List.concat_map instrs_of_pseudo code
+
+(* ------------------------------------------------------------------ *)
+(* Globals and per-proc result registers                              *)
+(* ------------------------------------------------------------------ *)
+
+let abs_of_addr_op = function
+  | BellBase.Addr_op_atom (BellBase.Abs s)
+  | BellBase.Addr_op_add (BellBase.Abs s, _) -> Some s
+  | _ -> None
+
+(* Memory locations touched anywhere in the test, in first-seen order. *)
+let collect_globals prog =
+  let seen = Hashtbl.create 8 and order = ref [] in
+  let add s =
+    if not (Hashtbl.mem seen s) then begin
+      Hashtbl.add seen s () ; order := s :: !order
+    end in
+  List.iter
+    (fun (_, code) ->
+      List.iter
+        (fun i -> match i with
+          | BellBase.Pld (_, ao, _) | BellBase.Pst (ao, _, _)
+          | BellBase.Prmw (_, _, ao, _) ->
+              begin match abs_of_addr_op ao with Some s -> add s | None -> () end
+          | _ -> ())
+        (instrs_of_code code))
+    prog ;
+  List.rev !order
+
+(* Destination registers of loads on a proc = its observable results. *)
+let result_regs code =
+  let seen = Hashtbl.create 4 and order = ref [] in
+  List.iter
+    (fun i -> match i with
+      | BellBase.Pld (BellBase.GPRreg n, _, _) ->
+          if not (Hashtbl.mem seen n) then begin
+            Hashtbl.add seen n () ; order := n :: !order
+          end
+      | _ -> ())
+    (instrs_of_code code) ;
+  List.rev !order
+
+(* ------------------------------------------------------------------ *)
+(* Scope tree  ->  (proc -> (block,lane)) launch layout               *)
+(*   A "block" is a maximal subtree rooted at a `cta' node; CTAs are   *)
+(*   numbered in DFS order, lanes by proc order within the CTA.        *)
+(*   MP-cta-F => P0 in cta0, P1 in cta1 => DISTINCT blocks: the        *)
+(*   moral-strength (scope-mismatch) demonstration.                    *)
+(* ------------------------------------------------------------------ *)
+
+let rec subtree_procs (BellInfo.Tree (_, ps, ch)) =
+  ps @ List.concat_map subtree_procs ch
+
+let rec collect_ctas (BellInfo.Tree (name, _, ch) as t) =
+  if name = "cta" then [t]
+  else List.concat_map collect_ctas ch
+
+(* returns (layout : (proc -> block*lane), n_blocks, block_dim) *)
+let layout_of_scopes scopes procs =
+  let blocks =
+    match scopes with
+    | Some tree ->
+        let ctas = collect_ctas tree in
+        List.map subtree_procs ctas
+    | None -> [] in
+  let tbl = Hashtbl.create 8 in
+  List.iteri
+    (fun bi plist ->
+      List.iteri (fun li p -> Hashtbl.replace tbl p (bi, li)) (List.sort compare plist))
+    blocks ;
+  (* Any proc not placed by the tree: give it its own fresh block. *)
+  let nb = ref (List.length blocks) in
+  List.iter
+    (fun p -> if not (Hashtbl.mem tbl p) then begin
+        Hashtbl.replace tbl p (!nb, 0) ; incr nb
+      end)
+    procs ;
+  let n_blocks = max 1 !nb in
+  let block_dim =
+    List.fold_left (fun m plist -> max m (List.length plist)) 1 blocks in
+  (fun p -> try Hashtbl.find tbl p with Not_found -> (p, 0)), n_blocks, block_dim
+
+(* ------------------------------------------------------------------ *)
+(* exists / condition, as a human-readable comment                    *)
+(* ------------------------------------------------------------------ *)
+
+let cond_to_string cond =
+  let pp_atom =
+    ConstrGen.dump_atom
+      MiscParser.dump_location MiscParser.dump_location
+      (fun v -> ParsedConstant.pp_v v) (fun _ -> "") in
+  ConstrGen.constraints_to_string pp_atom cond
+
+(* ------------------------------------------------------------------ *)
+(* HetLitmus B3: store-tagging context (K*_n + mu).                    *)
+(* ------------------------------------------------------------------ *)
+
+(* [~tag:(Some (iter,k,mu))] selects the HetLitmus tagged/uint64 path: a
+   store's value becomes the per-iteration tag (uint64_t)(K*iter + mu), mu
+   resolved per store node by the caller.  [~tag:None] is the standalone
+   GPU-only path (int).  A plain tuple rather than a record, so hetEmit's one
+   gd_dump_instr field unifies across both dialects.  See
+   env-research/decisions/B3-decision.md. *)
+type tag_ctx = (string * int * int) option
+
+(* The tagged store value, computed in C: (uint64_t)K*iter + mu.  K is cast
+   first so iter is promoted to 64-bit before the multiply (no int overflow at
+   large N -- B3-decision Decision 2). *)
+let tagged_value iter k mu = sprintf "((uint64_t)%d * %s + %d)" k iter mu
+
+(* ------------------------------------------------------------------ *)
+(* The dialect: what the two renders do NOT share                     *)
+(* ------------------------------------------------------------------ *)
+
+(* Everything below the vocabulary differs in eleven emitted tokens and in the
+   per-instruction lowering, and in nothing else.  Per-target behaviour is
+   added as a FIELD here, never as a branch in [dump_test]. *)
+type t = {
+    gl_kind : string ;          (* banner word: "CUDA" | "HIP" *)
+    gl_lang : string ;          (* emitting module: "CudaLang" | "HipLang" *)
+    gl_emit_script : string ;   (* the regeneration script named in the banner *)
+    gl_group : string ;         (* thread-block word: "CTA" | "workgroup" *)
+    gl_include : string ;       (* the differing GPU runtime header *)
+    gl_harness_note : string ;  (* the host-harness banner line *)
+    gl_alloc : string -> string -> string ;  (* &var, bytes -> alloc statement *)
+    gl_launch : string -> int -> int -> string -> string ;
+                                (* c-ident, blocks, block dim, args -> launch *)
+    gl_sync : string ;          (* host-side device-sync statement *)
+    gl_dump_instr :
+      out_channel -> tag:tag_ctx -> string -> BellBase.instruction -> unit ;
+  }
+
+(* ------------------------------------------------------------------ *)
+(* Whole-test emission                                                *)
+(* ------------------------------------------------------------------ *)
+
+let nregs_layout = 4 (* result slots reserved per proc in the out buffer *)
+
+let dump_test d chan tname parsed =
+  let prog = parsed.MiscParser.prog in
+  let procs = List.map (fun ((p, _, _), _) -> p) prog in
+  let nprocs = List.length procs in
+  let globals = collect_globals prog in
+  let scopes =
+    let rec find = function
+      | MiscParser.BellExtra bi :: _ -> bi.BellInfo.scopes
+      | _ :: rest -> find rest
+      | [] -> None in
+    find parsed.MiscParser.extra_data in
+  let layout, n_blocks, block_dim = layout_of_scopes scopes procs in
+  let p fmt = fprintf chan fmt in
+  (* ---- banner ---- *)
+  p "// ======================================================================\n" ;
+  p "// %s litmus test: %s\n" d.gl_kind tname ;
+  p "// Generated by HetLitmus %s from a LISA/Bell scoped test.\n" d.gl_lang ;
+  p "// DO NOT EDIT -- regenerate via %s\n" d.gl_emit_script ;
+  p "//\n" ;
+  p "// LISA source program:\n" ;
+  List.iter
+    (fun ((proc, _, _), code) ->
+      List.iter
+        (fun i -> p "//   P%i: %s\n" proc (BellBase.dump_instruction i))
+        (instrs_of_code code))
+    prog ;
+  (match scopes with
+   | Some t -> p "// scopes: %s\n" (BellInfo.pp_scopes t)
+   | None -> p "// scopes: (none given)\n") ;
+  p "// condition: %s\n" (cond_to_string parsed.MiscParser.condition) ;
+  p "// launch: <<<%d, %d>>>  (%d %s(s), %d thread(s)/%s)\n"
+    n_blocks block_dim n_blocks d.gl_group block_dim d.gl_group ;
+  p "// ======================================================================\n\n" ;
+  p "%s\n" d.gl_include ;
+  p "#include <cstdio>\n\n" ;
+  (* ---- kernel ---- *)
+  let params =
+    String.concat ", "
+      (List.map (fun g -> sprintf "int* %s" g) globals @ ["int* __out"]) in
+  p "__global__ void litmus_%s(%s) {\n" (c_ident tname) params ;
+  List.iteri
+    (fun idx ((proc, _, _), code) ->
+      let blk, lane = layout proc in
+      let instrs = instrs_of_code code in
+      let regs = result_regs code in
+      if idx > 0 then p "\n" ;
+      p "  // ---- P%i  (%s %d, lane %d) ----\n" proc d.gl_group blk lane ;
+      p "  if (blockIdx.x == %d && threadIdx.x == %d) {\n" blk lane ;
+      List.iter (fun n -> p "    int r%i = 0;\n" n) regs ;
+      List.iter (fun i -> d.gl_dump_instr chan ~tag:None "    " i) instrs ;
+      List.iter
+        (fun n -> p "    __out[%d * %d + %d] = r%i;\n" proc nregs_layout n n)
+        regs ;
+      p "  }\n")
+    prog ;
+  p "}\n\n" ;
+  (* ---- minimal illustrative host harness; how far it is checked is a
+         per-dialect fact, so the banner line is [gl_harness_note] ---- *)
+  p "%s\n" d.gl_harness_note ;
+  p "// Result buffer layout: __out[proc * %d + regIndex].\n" nregs_layout ;
+  p "// Reset all globals to 0 before each launch; the weak outcome under\n" ;
+  p "// test is exactly the `condition' line above.\n" ;
+  p "int main(void) {\n" ;
+  List.iter
+    (fun g -> p "  int *%s;   %s\n" g (d.gl_alloc ("&" ^ g) "sizeof(int)"))
+    globals ;
+  p "  int *__out; %s\n"
+    (d.gl_alloc "&__out" (sprintf "sizeof(int) * %d * %d"
+                            (max 1 nprocs) nregs_layout)) ;
+  p "  for (int it = 0; it < 100000; ++it) {\n" ;
+  List.iter (fun g -> p "    *%s = 0;\n" g) globals ;
+  p "    %s\n"
+    (d.gl_launch (c_ident tname) n_blocks block_dim
+       (String.concat ", " (globals @ ["__out"]))) ;
+  p "    %s\n" d.gl_sync ;
+  p "    // TODO(hardware, Task 9): tally __out against the condition.\n" ;
+  p "  }\n" ;
+  p "  return 0;\n" ;
+  p "}\n" ;
+  ()

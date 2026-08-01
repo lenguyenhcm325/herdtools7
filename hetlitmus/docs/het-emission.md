@@ -174,14 +174,19 @@ All het logic is confined to:
   (`outs.{c,h}` cat'ed from `litmus/libdir/_outs.{h,c}`, plus the
   `litmus/het-runtime/*` headers), wrapped by the rule in `litmus/dune`;
 * `litmus/hetEmit.ml` — the `gpu_dialect` record + the `HetEmit.Make` functor
-  (the dialect-parameterised file emitter);
+  (the dialect-parameterised file emitter), with two of its phases as their own
+  modules: `litmus/hetControlMap.ml` (the positive-control map) and
+  `litmus/hetCpuBody.ml` (the tagged CPU body);
+* `litmus/hetCpuFront.ml` — the per-CPU-ISA column frontend (`CpuF`), one
+  module per supported CPU ISA;
 * the `` `Het `` dispatch arm in `litmus/top_litmus.ml` — the per-ISA module
   instantiation, closing `HetEmit.Make`'s seam over `Top`'s scope.
 
-The only edits outside those two are the ones Phase A/B strictly require:
+The only edits outside those are the ones Phase A/B strictly require:
 `lib/X86_64Parser.mly` (the `instr_option_seq` start rule) and `gen/hetGen.ml`
-(the `-cpu-arch` flag, below). `ASMLang`, `CudaLang`, and `HipLang` are
-**reused, not modified**. One general (non-het) robustness fix lives in
+(the `-cpu-arch` flag, below). `ASMLang` is **reused, not modified**;
+`CudaLang`/`HipLang` are reused for the GPU lowering (their shared half is
+`litmus/gpuLang.ml`). One general (non-het) robustness fix lives in
 `litmus/dumpRun.ml`: when no test compiled to a C run harness (e.g. an
 all-`Het` invocation), litmus7 no longer copies the run-harness runtime from the
 libdir (nothing to run), so the command exits cleanly.

@@ -28,9 +28,9 @@
 
 set -e
 cd "$(dirname "$0")"
-REPO=$(cd ../../.. && pwd)
-BIN="$REPO/_build/install/default/bin"
-COMMON="-set-libdir $REPO/herd/libdir -bell $REPO/hetlitmus/bells/ptx.bell -arch LISA"
+# shellcheck source=../../paths.sh
+source ../../paths.sh
+COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell -arch LISA"
 # shellcheck source=../_grid_lib.sh
 source ../_grid_lib.sh
 

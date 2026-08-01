@@ -97,13 +97,13 @@ where it should be.
 
 ## The corpus: one-sided baseline + two-sided pairs
 
-`generate.sh` emits **450** het tests:
+`generate.sh` emits **411** het tests:
 
-- **281 one-sided** (the Task-2 baseline, unchanged): GPU procs annotated, CPU
+- **248 one-sided** (the Task-2 baseline, unchanged): GPU procs annotated, CPU
   procs plain ARMv9. Grid `<shape>-<cuttag>-<scope>-<order>` over scope ∈
   {cta,gpu,sys} × order ∈ {relaxed,acquire,release,fence}, plus the `MP-het`/
   `SB-het` references.
-- **57 two-sided, matched** (`-2s`, Task 3): **both** devices annotated, at
+- **51 two-sided, matched** (`-2s`, Task 3): **both** devices annotated, at
   **sys scope**, for the two **complete** pairings only:
   - **`acqrel`** — reads → acquire (`LDAPR`/`ld.acquire.sys`), writes → release
     (`STLR`/`st.release.sys`);
@@ -336,25 +336,25 @@ outcome is a hard contradiction (`MISMATCH`).
 
 ## Verdict tally
 
-**450 rows** (one per `.litmus`): **353 Allowed, 53 Disallowed, 44 NO-ORACLE.**
+**411 rows** (one per `.litmus`): **319 Allowed, 50 Disallowed, 42 NO-ORACLE.**
 
-- **53 Disallowed** = 16 matched + 37 order-pair.
-  - 16 matched = MP·LB·S × {cg,gc} × {acqrel,fence} (12) + SB·R × {cg,gc} ×
-    {fence} (4).
+- **50 Disallowed** = 13 matched + 37 order-pair.
+  - 13 matched = MP·S × {cg,gc} × {acqrel,fence} (8) + LB-cg × {acqrel,fence}
+    (2) + R × {cg,gc} × {fence} (2) + SB-cg × {fence} (1).
   - 37 order-pair = MP-cg 7 + MP-gc 7 + LB-cg 9 + S-cg 7 + S-gc 7 (SB-cg, R-cg,
     R-gc contribute none).
-- **44 NO-ORACLE** = 36 + 8.
-  - 36 = the 2 one-sided `IRIW-gcgc` + 34 two-sided (2+2W, WRC, RWC-fence,
-    ISA2, IRIW, WRC3).
+- **42 NO-ORACLE** = 34 + 8.
+  - 34 = the 2 one-sided `IRIW-gcgc` + 32 matched two-sided (2+2W, WRC,
+    RWC-fence, ISA2, IRIW, WRC3).
   - 8 order-pair = R-cg 2 + R-gc 2 + S-cg 3 + LB-cg 1, the cells where CMCM's
     operational and axiomatic models disagree (see below).
-- **353 Allowed** = 279 one-sided baseline + 7 matched two-sided (SB·R `acqrel`,
-  RWC `acqrel`) + 67 order-pair.
+- **319 Allowed** = 246 one-sided baseline + 6 matched two-sided (SB-cg·R
+  `acqrel`, RWC `acqrel`) + 67 order-pair.
 
-Up to (proc permutation × location renaming) the 53 `Disallowed` files are
+Up to (proc permutation × location renaming) the 50 `Disallowed` files are
 **50 distinct experiments** — the corpus's falsification surface (`make
-hetlitmus-dup`; the 3 collapses are the pre-existing `LB-cg/gc-sys-acqrel-2s`,
-`LB-cg/gc-sys-fence-2s` and `SB-cg/gc-sys-fence-2s` mirror pairs).
+hetlitmus-dup`; the `cg`/`gc` mirror pairs that used to collapse three of them
+were removed from the corpus on 2026-08-01).
 
 ## The two one-sided NO-ORACLE tests
 
@@ -387,18 +387,18 @@ is needed and the AMD CSV must not be reused.
 
 ```sh
 cd hetlitmus/tests/het
-./generate.sh                                                # 450 tests, @all
+./generate.sh                                                # 411 tests, @all
 ./build-nvidia-oracle.sh                                     # regen the CSV (+ tally to stderr)
 
 # 1. exactly one row per .litmus, no file missing, no extra/dup
-ls *.litmus | wc -l                                          # 450
-grep -vE '^#|^Litmus,' expected-nvidia.csv | wc -l           # 450
+ls *.litmus | wc -l                                          # 411
+grep -vE '^#|^Litmus,' expected-nvidia.csv | wc -l           # 411
 diff <(ls *.litmus | sed 's/\.litmus$//' | sort -u) \
      <(grep -vE '^#|^Litmus,' expected-nvidia.csv | cut -d, -f1 | sort -u)   # empty
 
 # 2. verdict tally + a two-sided test carries STLR/LDAPR/DMB on its CPU proc
 grep -vE '^#|^Litmus,' expected-nvidia.csv | cut -d, -f2 | sort | uniq -c
-#   353 Allowed   53 Disallowed   44 NO-ORACLE
+#   319 Allowed   50 Disallowed   42 NO-ORACLE
 grep -E 'STLR|LDAPR|DMB SY' MP-cg-sys-acqrel-2s.litmus MP-gc-sys-fence-2s.litmus
 
 # 3. drive the harness (synthesized; the sample includes a real MISMATCH)

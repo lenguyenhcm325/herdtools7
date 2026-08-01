@@ -7,7 +7,7 @@ cudaMallocManaged only as the dev-box/CI fallback -- so it is correctness, not
 tuning.  One representative MP shape is emitted in both dialects and checked
 with scoped counts.
 
-Two allocation paths exist, so two harnesses are emitted.  448 of the 450 het
+Two allocation paths exist, so two harnesses are emitted.  409 of the 411 het
 tests co-run at least a canary and carve their shared vars out of one
 cache-line-padded arena ((f), (g)).  The per-variable path is left to the two
 tests that are themselves the Layer-B canary and so cannot co-run themselves,

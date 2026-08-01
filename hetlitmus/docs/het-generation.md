@@ -80,18 +80,18 @@ The driver **validates** this precondition: it aborts unless both runs report
 the same processor count as the `-devices` list (`gen/hetGen.ml`,
 "Both runs must agree on the proc count").
 
-## 3. The cross-architecture boundary: `Code.het_cells` (strings)
+## 3. The cross-architecture boundary: `HetCells.t` (strings)
 
 The AArch64 and LISA builders are **different `Arch` modules**, so their `test`
 records have **different OCaml types** and cannot be held side by side. The
 boundary that lets them be combined is a small **string** record,
-`Code.het_cells` (`gen/common/code.ml{,i}`), exposed by every builder via a new
+`HetCells.t` (`gen/hetCells.ml`), exposed by every builder via a new
 `Builder.S.het_cells` method (`gen/builder.mli`, implemented in `gen/top_gen.ml`;
 the C/C++ backend, which is never a het column, stubs it in
 `gen/CCompile_gen.ml`):
 
 ```
-type het_cells = {
+type t = {
   hc_init : (int option * string) list ;  (* (owning proc, atom); None = global *)
   hc_cols : (int * string list) list ;    (* per proc: instruction-cell strings *)
   hc_cond : string ;                       (* full condition, e.g. "exists (..)" *)
@@ -162,7 +162,7 @@ without error.
 | File | Change |
 |------|--------|
 | `gen/hetGen.ml` | new `hetgen7` driver: per-device runs + column/init/condition merge |
-| `gen/common/code.ml`, `code.mli` | new string record `Code.het_cells` (cross-arch boundary) |
+| `gen/hetCells.ml` | new string record `HetCells.t` (cross-arch boundary) |
 | `gen/builder.mli`, `gen/top_gen.ml` | new `Builder.S.het_cells` accessor (real impl) |
 | `gen/CCompile_gen.ml` | `het_cells` stub (C/C++ is never a het column) |
 | `gen/dune` | build `hetGen` / install `hetgen7` |

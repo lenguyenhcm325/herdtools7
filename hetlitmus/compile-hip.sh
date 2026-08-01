@@ -11,14 +11,14 @@
 # HIP-over-CUDA).  See litmus/HipLang.ml + hetlitmus/docs/hip-emitter.md.
 #
 # Usage:  ./compile-hip.sh [INDIR] [OUTDIR]
-#   INDIR   dir of emitted .hip   (default ./hip-out; auto-emitted if empty)
+#   INDIR   dir of emitted .hip   (default ./hip-out)
 #   OUTDIR  dir for binaries+logs (default $INDIR/bin)
 #   ARCH=<gfxNNN>  offload-arch override (default gfx942 = MI300A / CDNA3)
 set -euo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/paths.sh"
 ARCH="${ARCH:-gfx942}"
-INDIR="${1:-$HERE/hip-out}"
+INDIR="${1:-$HETL/hip-out}"
 OUTDIR="${2:-$INDIR/bin}"
 
 # Locate hipcc (PATH, else the default ROCm prefix).
@@ -29,15 +29,9 @@ if [ -z "$HIPCC" ]; then
   exit 1
 fi
 
-# Auto-emit if the default input dir has no .hip yet.
 if ! ls "$INDIR"/*.hip >/dev/null 2>&1; then
-  if [ "$INDIR" = "$HERE/hip-out" ] && [ -x "$HERE/emit-hip.sh" ]; then
-    echo "No .hip in $INDIR -- running emit-hip.sh first."
-    "$HERE/emit-hip.sh" "$INDIR" >/dev/null
-  else
-    echo "error: no .hip files in $INDIR (run emit-hip.sh first)" >&2
-    exit 1
-  fi
+  echo "error: no .hip files in $INDIR (run emit-hip.sh first)" >&2
+  exit 1
 fi
 
 mkdir -p "$OUTDIR"

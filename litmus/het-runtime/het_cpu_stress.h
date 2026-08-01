@@ -328,7 +328,6 @@ void     het_cpu_shuffle(uint32_t *idx, uint32_t n);
  * Do not claim it in the thesis without measuring it.
  * ------------------------------------------------------------------------- */
 #if defined(__aarch64__)
-#define HET_CPU_ISA "aarch64"
 #define HET_CPU_PRELOAD_LIVE 1
 static inline void het_cache_flush(void *p) {
   asm __volatile__ ("dc civac,%[p]" :: [p] "r" (p) : "memory");
@@ -340,7 +339,6 @@ static inline void het_cache_touch_store(void *p) {
   asm __volatile__ ("prfm pstl1keep,[%[p]]" :: [p] "r" (p) : "memory");
 }
 #elif defined(__x86_64__)
-#define HET_CPU_ISA "x86_64"
 #define HET_CPU_PRELOAD_LIVE 1
 static inline void het_cache_flush(void *p) {
   asm __volatile__ ("clflush 0(%[p])" :: [p] "r" (p) : "memory");
@@ -354,7 +352,6 @@ static inline void het_cache_touch_store(void *p) {
   asm __volatile__ ("prefetcht0 0(%[p])" :: [p] "r" (p) : "memory");
 }
 #else
-#define HET_CPU_ISA "portable"
 #define HET_CPU_PRELOAD_LIVE 0
 /* No cache primitives on this host, so the preload is inert here and
    het_cpu_preload says so rather than returning a healthy-looking count of hints

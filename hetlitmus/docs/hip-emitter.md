@@ -12,14 +12,16 @@ same corpus feeds both vendors; the vendor difference lives only in the emitter
 - **`litmus/HipLang.ml`** — the emitter. Consumes the *parsed* `BellBase`
   scoped program (not the litmus7 `Out` template, which would flatten the
   order+scope annotation into an opaque `memo`), exactly as CudaLang does. The
-  `BellBase` accessors are mirrored from CudaLang so the two emitters stay
-  independent.
-- **`litmus/top_litmus.ml`** — the `` `LISA `` arm now emits a `.hip` (HipLang)
+  `BellBase` accessors, the launch layout and the whole-test driver come from
+  `litmus/gpuLang.ml`, which both emitters instantiate; this file holds the HIP
+  lowering and the emitted HIP tokens.
+- **`litmus/hetGpuOnly.ml`** — the `` `LISA `` arm emits a `.hip` (HipLang)
   right after the `.cu` (CudaLang) from the same parsed test, then returns
   `Absent` (DumpRun does not try to compile/tar it).
 - **`hetlitmus/emit-hip.sh`** — regenerates all `.hip` from the corpus into
   `hetlitmus/hip-out/` (the same litmus7 run also drops a sibling `.cu`;
-  `hip-out/.gitignore` keeps only `*.hip`).
+  `hip-out/.gitignore` keeps only `*.hip`). It is the HIP-side entry point of
+  `hetlitmus/emit-gpu.sh`, the single pass that fills both output trees.
 
 Build: `make all` (branch `hetlitmus-work`). Emit: `./hetlitmus/emit-hip.sh`.
 

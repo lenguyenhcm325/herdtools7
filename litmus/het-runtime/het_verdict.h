@@ -1331,7 +1331,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   int    runs[HET_STATS_MAX_CELLS];
   int i, w, nwin = 0, ne = 0, nl = 0, ncell = 0, nruns = 0, use_canary;
   int n_early, n_late, ks;
-  uint64_t mu_total = 0, can_total = 0;
+  uint64_t mu_total = 0;
   int mu_present = 0;
 
   memset(st, 0, sizeof *st);
@@ -1362,11 +1362,9 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   for (i = 0; i < n; i++) {
     if (recs[i].control_compiled_in) mu_present = 1;
     mu_total  += recs[i].control_target_count;
-    can_total += recs[i].canary_target_count;
   }
   use_canary = (mu_present && mu_total > 0) ? 0 : 1;
   if (use_canary) st->flags |= HET_ST_CTRL_IS_CANARY;
-  (void)can_total;
 
   /* ---- 2. The cells.  het_verdict() is already a pure function of the record, so
      the aggregate reuses it rather than re-deriving liveness -- inheriting every

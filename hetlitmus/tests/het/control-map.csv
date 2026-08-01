@@ -35,17 +35,6 @@ Test,Expected,Mu,MuExpected,MuRule,MuAlt,MuRelaxed,Canary
 2+2W-cg-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed
 2+2W-cg-sys-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 2+2W-cg-sys-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
-2+2W-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-2+2W-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-2+2W-gc-cta-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-2+2W-gc-gpu-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-2+2W-gc-gpu-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-2+2W-gc-gpu-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-2+2W-gc-sys-acqrel-2s,NO-ORACLE,-,-,-,-,-,MP-gc-sys-relaxed
-2+2W-gc-sys-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-2+2W-gc-sys-fence-2s,NO-ORACLE,-,-,-,-,-,MP-gc-sys-relaxed
-2+2W-gc-sys-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-2+2W-gc-sys-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 IRIW-cgcc-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 IRIW-cgcc-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 IRIW-cgcc-gpu-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
@@ -147,20 +136,6 @@ LB-cg-sys-st.sc-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 LB-cg-sys-sy.acq-2s,Disallowed,LB-cg-sys-st.acq-2s,Allowed,sy.acq-2s->st.acq (weaken ONE axis; pair kept),LB-cg-sys-acquire,LB-cg-sys-relaxed,MP-cg-sys-relaxed
 LB-cg-sys-sy.ra-2s,Disallowed,LB-cg-sys-st.ra-2s,Allowed,sy.ra-2s->st.ra (weaken ONE axis; pair kept),LB-cg-sys-acquire,LB-cg-sys-relaxed,MP-cg-sys-relaxed
 LB-cg-sys-sy.rel-2s,Disallowed,LB-cg-sys-st.rel-2s,Allowed,sy.rel-2s->st.rel (weaken ONE axis; pair kept),LB-cg-sys-release,LB-cg-sys-relaxed,MP-cg-sys-relaxed
-LB-gc-cta-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-LB-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-LB-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-LB-gc-cta-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-LB-gc-gpu-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-LB-gc-gpu-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-LB-gc-gpu-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-LB-gc-gpu-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-LB-gc-sys-acqrel-2s,Disallowed,LB-gc-sys-acquire,Allowed,acqrel-2s->acquire (drop CPU half; GPU acquire kept),LB-gc-sys-release,LB-gc-sys-relaxed,MP-gc-sys-relaxed
-LB-gc-sys-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-LB-gc-sys-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-LB-gc-sys-fence-2s,Disallowed,LB-gc-sys-fence,Allowed,fence-2s->fence (drop CPU DMB.SY; GPU fence kept),-,LB-gc-sys-relaxed,MP-gc-sys-relaxed
-LB-gc-sys-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-LB-gc-sys-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 MP-cg-cta-acquire,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 MP-cg-cta-fence,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 MP-cg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
@@ -379,20 +354,6 @@ SB-cg-sys-st.sc-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 SB-cg-sys-sy.acq-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 SB-cg-sys-sy.ra-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 SB-cg-sys-sy.rel-2s,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
-SB-gc-cta-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-SB-gc-cta-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-SB-gc-cta-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-SB-gc-cta-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-SB-gc-gpu-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-SB-gc-gpu-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-SB-gc-gpu-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-SB-gc-gpu-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-SB-gc-sys-acqrel-2s,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-SB-gc-sys-acquire,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-SB-gc-sys-fence,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-SB-gc-sys-fence-2s,Disallowed,SB-gc-sys-acqrel-2s,Allowed,fence-2s->acqrel-2s (SC fence -> RCpc rel/acq; pair kept),-,SB-gc-sys-relaxed,MP-gc-sys-relaxed
-SB-gc-sys-relaxed,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
-SB-gc-sys-release,Allowed,-,-,-,-,-,MP-gc-sys-relaxed
 SB-het,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 WRC-ccg-cta-relaxed,Allowed,-,-,-,-,-,MP-cg-sys-relaxed
 WRC-ccg-cta-release,Allowed,-,-,-,-,-,MP-cg-sys-relaxed

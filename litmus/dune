@@ -16,7 +16,11 @@
  (deps libdir/_outs.h libdir/_outs.c
        het-runtime/het_stress.cuh
        het-runtime/het_cpu_stress.h
-       het-runtime/het_verdict.h)
+       het-runtime/het_verdict.h
+       het-runtime/het_alloc_cuda.inc
+       het-runtime/het_noise_cuda.inc
+       het-runtime/het_alloc_hip.inc
+       het-runtime/het_noise_hip.inc)
  (action
   (with-stdout-to hetPayloads.ml
    (progn
@@ -37,6 +41,18 @@
     (echo "|het_payload}\n\n")
     (echo "let het_verdict_h = {het_payload|")
     (cat het-runtime/het_verdict.h)
+    (echo "|het_payload}\n\n")
+    (echo "let het_alloc_cuda_inc = {het_payload|")
+    (cat het-runtime/het_alloc_cuda.inc)
+    (echo "|het_payload}\n\n")
+    (echo "let het_noise_cuda_inc = {het_payload|")
+    (cat het-runtime/het_noise_cuda.inc)
+    (echo "|het_payload}\n\n")
+    (echo "let het_alloc_hip_inc = {het_payload|")
+    (cat het-runtime/het_alloc_hip.inc)
+    (echo "|het_payload}\n\n")
+    (echo "let het_noise_hip_inc = {het_payload|")
+    (cat het-runtime/het_noise_hip.inc)
     (echo "|het_payload}\n")))))
 
 (ocamllex

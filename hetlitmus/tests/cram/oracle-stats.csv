@@ -1,0 +1,5 @@
+Litmus,Expected,Model,Source
+SB-sys,Allowed,PTX,nvidia-ptx.cat
+MP-sys-F,Disallowed,PTX,nvidia-ptx.cat
+SB-sys-2s,Disallowed,CMCM,expected-nvidia.csv
+MP-sys-2s,Disallowed,CMCM,expected-nvidia.csv

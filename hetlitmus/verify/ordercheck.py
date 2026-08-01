@@ -271,14 +271,14 @@ TWOS = re.compile(r"^(?P<shape>MP|SB|LB|R|S)-(?P<cut>cg|gc)-sys-"
 
 # The number of oracle rows Phase 3 must ACTUALLY read, asserted rather than
 # merely printed: `n == 0' is too weak a guard, because a regex that stopped
-# matching the `st'/`ld' cells would silently drop 64 of the 132 rows and the
-# phase would still report OK on the remaining 68.
+# matching the `st'/`ld' cells would silently drop 64 of the 128 rows and the
+# phase would still report OK on the remaining 64.
 #
 #   112  order-pair cells  = 8 cut classes (MP-cg MP-gc SB-cg LB-cg R-cg R-gc
 #                            S-cg S-gc) x (4 cpu x 4 gpu - 2 diagonal)
-#    20  the (D) diagonal  = 5 shapes x {cg,gc} x {-fence-2s, -acqrel-2s},
+#    16  the (D) diagonal  = the same 8 cut classes x {-fence-2s, -acqrel-2s},
 #                            read as the (sy,sc) and (ra,ra) cells
-EXPECT_ORACLE_ROWS = 132
+EXPECT_ORACLE_ROWS = 128
 
 
 def phase_oracle(quiet):
@@ -354,7 +354,7 @@ INJECTIONS = [
      "D.GPU_FENCE = dict(D.GPU_FENCE, sc='Release')", "ORACLE"),
     # The row-count pin.  Half-blinding the name regex (drop `st|ld') is the
     # failure it exists for: every row still read agrees with the rule, so
-    # without the pin the phase would report OK on 68 of 132.
+    # without the pin the phase would report OK on 64 of 128.
     ("the name regex stops matching the `st'/`ld' CPU cells (phase half-blind)",
      "D.TWOS = __import__('re').compile(D.TWOS.pattern.replace('ra|sy|st|ld', 'ra|sy'))",
      "ORACLE"),

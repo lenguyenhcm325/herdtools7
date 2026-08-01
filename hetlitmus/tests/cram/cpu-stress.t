@@ -49,7 +49,7 @@ and NO host ISA asm appears in the .cu at all:
 (a2) no <pthread.h> in het_cpu_stress.h.  It reaches x86 glibc's
 __cleanup_fct_attribute, which is __attribute__((__regparm__(1))), and regparm is
 invalid on AArch64; comp.sh cross-assembles <test>_cpu.c and verify/smoke.sh
-gates on it, so a stray include fails the smoke gate on all 450 het tests.  The
+gates on it, so a stray include fails the smoke gate on all 411 het tests.  The
 thread bodies need only the pthread entry-point signature; pthread_create is
 called from the .cu, which is built for the native host.  The per-header
 verification (which includes do survive the cross-compile) is in

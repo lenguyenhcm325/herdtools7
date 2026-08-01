@@ -14,7 +14,7 @@
 #      A pre-existing working-tree edit is snapshotted BEFORE regen, because
 #      regen overwrites (and would silently clobber) a hand-edit to a
 #      grid-generated .litmus.
-#   2. Census tripwire -- exactly 137 gpu-only + 450 het .litmus (the grid did
+#   2. Census tripwire -- exactly 137 gpu-only + 411 het .litmus (the grid did
 #      not silently shrink or grow).
 #   3. Emission golden -- emit every gpu-only .cu to a TEMP dir and byte-diff the
 #      10 committed cuda-out/*.cu samples against it.  emit-cuda.sh drops all 137
@@ -34,12 +34,9 @@
 set -uo pipefail   # NOT -e: we run every check and aggregate, not fail-fast.
 
 # --- locate repo (hetlitmus/verify/ -> hetlitmus/ -> repo root) --------------
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HETL="$(cd "$HERE/.." && pwd)"
-REPO="$(cd "$HETL/.." && pwd)"
+. "$(dirname "${BASH_SOURCE[0]}")/../paths.sh"
 cd "$REPO"
 
-BIN="$REPO/_build/install/default/bin"
 export PATH="$BIN:$PATH"          # generate.sh resolves tools via $REPO/_build,
                                   # but keep PATH set for any bare-name callers.
 
@@ -47,7 +44,7 @@ GPU_DIR="hetlitmus/tests/gpu-only"
 HET_DIR="hetlitmus/tests/het"
 CUDA_OUT="hetlitmus/cuda-out"
 EXPECT_GPU=137
-EXPECT_HET=450
+EXPECT_HET=411
 
 fail=0
 

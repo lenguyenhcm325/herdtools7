@@ -50,9 +50,10 @@ type cpu_plan = {
 
 let empty_plan = { stores = [] ; loads = [] }
 
-(* Peel labels / nops etc. off a pseudo into its straight-line instrs.
-   (Mirrors CudaLang.instrs_of_pseudo; kept local so this module is
-   self-contained and never depends on the GPU emitters.) *)
+(* Peel labels / nops etc. off a pseudo into its straight-line instrs.  Not
+   Pseudo.fold_pseudo_code: that one asserts on a Macro rather than skipping
+   it.  (GpuLang.instrs_of_pseudo is the Bell twin; kept local so this module
+   is self-contained and never depends on the GPU emitters.) *)
 let rec instrs_of_pseudo = function
   | Nop | Symbolic _ | Macro _ | Pagealign | Skip _ -> []
   | Instruction i -> [i]

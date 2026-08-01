@@ -35,7 +35,7 @@ The Layer-B canary rides a SEPARATE flag rather than widening this one.  "A
 canary is co-running" and "the minimal mutant of this test is co-running" are
 different claims, and only the second licenses a credible null; collapsed into
 one bit, a null on a test that has no mutant at all would start reading as
-vouched-for.  So the Layer-A guard is exactly the 53 Disallowed tests, and a
+vouched-for.  So the Layer-A guard is exactly the 50 Disallowed tests, and a
 canary-only harness says so in its own flag.
   $ litmus7 -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -c 'HET_MU_NAME NULL' S-cg-sys-fence/S-cg-sys-fence.cu
@@ -47,7 +47,7 @@ canary-only harness says so in its own flag.
 
 ...and the canary really is IN there, not merely named: its own instance, its own
 K, its own recovery scan feeding its own channel.  A name is not a co-run -- the
-map names a canary for all 450 rows -- so both are checked.
+map names a canary for all 411 rows -- so both are checked.
   $ grep -c 'HET_CANARY_NAME "MP-cg-sys-relaxed"' S-cg-sys-fence/S-cg-sys-fence.cu
   1
   $ grep -c 'recovery scan: MP-cg-sys-relaxed' S-cg-sys-fence/S-cg-sys-fence.cu
@@ -69,9 +69,9 @@ THE ORACLE CLASS.  het_verdict() must know which of the three classes a harness
 is in, because the sentence it prints differs: on a Disallowed test a sighting
 refutes the model's prediction; on an oracle-Allowed test the weak outcome is
 expected, and seeing it confirms the model is not over-strong; a NO-ORACLE row
-claims neither.  Only 53 of the 450 rows are Disallowed -- 353 are Allowed and 44
+claims neither.  Only 50 of the 411 rows are Disallowed -- 319 are Allowed and 42
 are NO-ORACLE -- so a harness that framed every test as should-be-forbidden would
-put 397 loud false refutations on the table.  Each class carries its own tag,
+put 361 loud false refutations on the table.  Each class carries its own tag,
 read from control-map.csv field 2, and the emitter never falls back to a default.
   $ litmus7 -o . ../het/IRIW-cgcg-sys-fence-2s.litmus >/dev/null 2>&1
   $ grep -h '_rec.het_oracle' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu S-cg-sys-fence/S-cg-sys-fence.cu IRIW-cgcg-sys-fence-2s/IRIW-cgcg-sys-fence-2s.cu
@@ -192,7 +192,7 @@ control is compiled in, a silent lie the moment one is.
 
 EXHAUSTIVE_VALID IS A VALIDITY FLAG, NOT A FORMALITY, AND EACH INSTANCE HAS ITS
 OWN.  Set to (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX) for every test it would be 0 on
-all 450 at the default N=100000 (the cap is 4096), including a T_L<=1 test that
+all 411 at the default N=100000 (the cap is 4096), including a T_L<=1 test that
 decodes every frame exactly and counts unconditionally -- and the rule, which
 refuses a credible null unless the flag is 1, would then call every run COLD
 forever: a decision rule that always says the same thing.
@@ -205,7 +205,7 @@ SB's second reader has no rf anchor (T_L>=2), so its count only exists if the
 O(N^T_L) search actually ran -- and mu(SB-*-sys-fence-2s) IS SB-*-sys-acqrel-2s,
 a T_L>=2 shape too.  Its exhaustive count is therefore 0 by construction at
 production N.  Keying the control off it would leave control_target_count
-structurally zero on the 2 SB rows among the 53 control harnesses, so those nulls
+structurally zero on the SB row among the 50 control harnesses, so that null
 would be cold-invalid forever, and a positive control that CANNOT FIRE is not a
 control.  The control counts the windowed detector instead -- a strict subset of
 the exhaustive scan under the same predicate, so it can miss cycles but cannot
@@ -239,8 +239,8 @@ pair above pins only the tier where the two fields DIFFER; the floor (2+2W, both
 EXPLORATORY) and the ceiling (a pure-register shape, both ROBUST) would otherwise
 be untested, so a rule collapsed to a constant would still pass.
 env-research/decisions/taskP-decision.md `REPORTING-TIER UPDATE' puts R at
-EXPLORATORY, which on the 450-test corpus gives ROBUST 322 / ADVISORY 53 (S) /
-EXPLORATORY 75 (2+2W 22 + R 53).
+EXPLORATORY, which on the 411-test corpus gives ROBUST 294 / ADVISORY 53 (S) /
+EXPLORATORY 64 (2+2W 11 + R 53).
   $ litmus7 -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -E '_rec\.(confidence|reporting) =' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
       _rec.confidence = CONF_EXPLORATORY;

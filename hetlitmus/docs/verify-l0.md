@@ -171,10 +171,10 @@ CPU: MOV STR LDR STLR LDAPR DMB
 ## How to run
 
 ```
-# full corpus: per-test PASS/FAIL table + tally (137 gpu-only, 450 het)
+# full corpus: per-test PASS/FAIL table + tally (137 gpu-only, 411 het)
 JOBS=8 bash hetlitmus/verify/l0_tokens.sh            # both
 JOBS=8 bash hetlitmus/verify/l0_tokens.sh gpu-only   # 137
-JOBS=8 bash hetlitmus/verify/l0_tokens.sh het        # 450
+JOBS=8 bash hetlitmus/verify/l0_tokens.sh het        # 411
 
 # completeness-guard report (distinct annotations + unknown hard-fail)
 bash hetlitmus/verify/l0_tokens.sh guard
@@ -196,7 +196,7 @@ uses `cluster` scope.
 
 ```
 TALLY gpu-only: 137/137 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
-TALLY het:      450/450 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
+TALLY het:      411/411 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
 ```
 
 * **Self-test:** a copied `MP-sys-F.ptx` mutated `st.release.sys`→`st.relaxed.sys`
@@ -215,7 +215,7 @@ emitter mismatch: the het barrier/model separator assumed a single barrier
 proc guard block** (`[barrier][model]` × 2). The fix (segment on the fetch_add
 anchor, strip the barrier template per segment) was applied **in the checker
 only**; the emitter, `.litmus` corpus, and `ptx.bell` were not touched. After the
-fix: 450/450. No emitter mismatch was found — the lowering is faithful across the
+fix: 411/411. No emitter mismatch was found — the lowering is faithful across the
 whole corpus.
 
 ## Scope / limits
@@ -226,7 +226,7 @@ whole corpus.
 * It is hardware-free: `nvcc --ptx`/`-c` and reading text only; no kernel runs.
 * `MOV` is folded into asm operands by ASMLang and is intentionally excluded from
   the CPU comparison; only memory/ordering mnemonics are compared.
-* No `cluster`/`acq_rel`/RMW/`sc`-on-access appears in the 137+450 corpus; the
+* No `cluster`/`acq_rel`/RMW/`sc`-on-access appears in the 137+411 corpus; the
   mapping covers them so the guard recognizes (never skips) them if added.
 * **ptxcheck is BLIND to the stress layer, by design — and that blind spot has
   already cost us.** Stress is scaffolding, not a tested op: it carries no

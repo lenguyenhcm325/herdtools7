@@ -175,7 +175,7 @@ store-only (2+2W) shapes — which have no reader — use `observer_unique_count
 neither channel fails closed. And the verdict is **oracle-aware**: a sighting REFUTES only on an
 `ORACLE_DISALLOWED` test, CONFIRMS on the Allowed rows, CHARACTERIZES the NO-ORACLE rows. The
 class split moves with the corpus — read it from `hetlitmus/tests/het/control-map.csv` (today:
-**53 Disallowed / 353 Allowed / 44 NO-ORACLE** over 450 tests; the same census is pinned in
+**50 Disallowed / 319 Allowed / 42 NO-ORACLE** over 411 tests; the same census is pinned in
 `verify/verdictcheck.py:CENSUS` and gated by `make hetlitmus-verdict`).
 
 ### 3.8 Positive control / liveness  [→ `Q4-positive-control.md`]
@@ -252,7 +252,7 @@ GH200/MI300A** (§6). A prerequisite audit (P) should run early.
 
 | # | Task | Depends on | Notes |
 |---|------|-----------|-------|
-| **P** | Corpus audit: classify which het tests carry **un-convertible `[x]=N`** final-value conditions (they don't fit the recovery scheme). Audited at 281 tests; the rule is per *shape*, so it still holds on the 450-test corpus — 128 tests (R, S, 2+2W) carry an observer channel. | — | Q2; informs B3/B6. |
+| **P** | Corpus audit: classify which het tests carry **un-convertible `[x]=N`** final-value conditions (they don't fit the recovery scheme). Audited at 281 tests; the rule is per *shape*, so it still holds on the 411-test corpus — 117 tests (R, S, 2+2W) carry an observer channel. | — | Q2; informs B3/B6. |
 | **B0** | Parameterise `100000` → `Cfg.size` (free-running window) + `Cfg.runs` outer loop; surface as `SIZE_OF_TEST`/`NUMBER_OF_RUN` + argv. | — | Cheap; both already in scope. **Do as part of B2**, not standalone (semantics change to a window). |
 | **B1** | Per-target **allocator knob**: `malloc`/GH200, fine-grained/MI300A, managed = CI fallback; `cudaMemAdvise` placement hooks. | — | Q8; replaces `gd_malloc_managed`. |
 | **B2** | **Perpetual-instance rewrite** of the run-loop: launch once, loop inside, sync-once start barrier, occupancy-bounded/cooperative launch; drop per-iteration relaunch + `cudaDeviceSynchronize`. | B0,B1 | Q1/Q9; the biggest single change. |
@@ -281,18 +281,18 @@ Everything below is unmeasurable on the dev box (wrong substrate, §3.2). **Firs
    disable mechanism.
 8. Per-target **stress tuning** (all numeric knob values).
 
-**Two Disallowed tests need calibration before their nulls count** (deep-review F5): `SB-{cg,gc}-sys-fence-2s`
-are the only `T_L ≥ 2` shapes among the Disallowed rows, so at production `N` the exhaustive `O(N^T_L)` scan is
-capped (`HET_EXHAUSTIVE_MAX = 4096`) → `exhaustive_valid = 0`, and they can **never reach CREDIBLE-NULL**;
-their only detector is the uncalibrated `[c−8, c+8]` window (`HET_WINDOW = 8`), so a real cross-device skew
+**One Disallowed test needs calibration before its null counts** (deep-review F5): `SB-cg-sys-fence-2s`
+is the only `T_L ≥ 2` shape among the Disallowed rows, so at production `N` the exhaustive `O(N^T_L)` scan is
+capped (`HET_EXHAUSTIVE_MAX = 4096`) → `exhaustive_valid = 0`, and it can **never reach CREDIBLE-NULL**;
+its only detector is the uncalibrated `[c−8, c+8]` window (`HET_WINDOW = 8`), so a real cross-device skew
 > 8 iterations would MISS the sighting and read as a null. At bring-up: measure `skew_*` first, run a
 small-`N` pass (`-s ≤ 4096`) so `exhaustive_valid = 1`, and calibrate `HET_WINDOW` from the measured skew
-before trusting any null on these two. (Every other Disallowed row is `T_L ≤ 1`, exact-`O(N)`,
-skew-independent — re-measured on the 450-test corpus: of the 53 Disallowed, exactly the 2 `SB` rows
-are `T_L ≥ 2`, and they are also the only 2 whose μ(T) is. Only `SB` among the shapes that carry a
+before trusting any null on it. (Every other Disallowed row is `T_L ≤ 1`, exact-`O(N)`,
+skew-independent — re-measured on the 411-test corpus: of the 50 Disallowed, exactly the 1 `SB` row
+is `T_L ≥ 2`, and it is also the only one whose μ(T) is. Only `SB` among the shapes that carry a
 Disallowed verdict leaves a condition-read unbound; MP/LB/R/S all bind theirs. Note this is a
-property of the *Disallowed* subset, not of the corpus: 229 of the 450 tests are `T_L ≥ 2`
-(`SB` 43, `WRC3` 47, `IRIW` 37, `ISA2` 36, `RWC` 33, `WRC` 33) — but of those shapes only `SB`
+property of the *Disallowed* subset, not of the corpus: 215 of the 411 tests are `T_L ≥ 2`
+(`SB` 29, `WRC3` 47, `IRIW` 37, `ISA2` 36, `RWC` 33, `WRC` 33) — but of those shapes only `SB`
 carries a Disallowed verdict at all. Re-derive from the `exists` conditions if the corpus ever
 grows a Disallowed row in `IRIW`/`ISA2`/`RWC`/`WRC`/`WRC3`.)
 

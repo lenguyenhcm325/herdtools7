@@ -41,7 +41,7 @@ ORACLES = ["ORACLE_DISALLOWED", "ORACLE_ALLOWED", "ORACLE_NONE"]
 
 # The oracle census the emitted corpus MUST reproduce (expected-nvidia.csv, via
 # control-map.csv field 2).  ORACLE_UNSET is not listed because it must never occur.
-CENSUS = {"Disallowed": 53, "Allowed": 353, "NO-ORACLE": 44}
+CENSUS = {"Disallowed": 50, "Allowed": 319, "NO-ORACLE": 42}
 
 CSV_TO_C = {"Disallowed": "ORACLE_DISALLOWED",
             "Allowed": "ORACLE_ALLOWED",
@@ -73,7 +73,7 @@ BASE = dict(
     # THE DECODE CHANNEL, stated once (DR1).  The verdict is channel-aware: the sync
     # channel's liveness evidence is interleavings_detected, the observer channel's is
     # observer_unique_count, and a record with neither flag fails closed.  The baseline
-    # is a reader -- 428 of the 450, including all 53 Disallowed; only the 22 store-only
+    # is a reader -- 400 of the 411, including all 50 Disallowed; only the 11 store-only
     # 2+2W rows have no reader, and those cases flip to sync_valid=0, obs_valid=1 below.
     # (Census derivation: statscheck.py CENSUS_SYNC / CENSUS_OBS.)
     sync_valid=1,
@@ -105,7 +105,7 @@ def case(name, verdict, dq=(), cv=(), **kw):
 
 CASES = [
     # =======================================================================
-    # 1. THE DISALLOWED FRAME (53 tests): the model forbids the outcome, so the
+    # 1. THE DISALLOWED FRAME (50 tests): the model forbids the outcome, so the
     #    NULL is the evidence and has to be earned.
     # =======================================================================
     case("credible-null", "CREDIBLE-NULL"),
@@ -141,7 +141,7 @@ CASES = [
          exhaustive_valid=0, control_target_count=500),
 
     # =======================================================================
-    # 2. THE ALLOWED FRAME (353 tests): the model permits the outcome, so the
+    # 2. THE ALLOWED FRAME (319 tests): the model permits the outcome, so the
     #    SIGHTING is the evidence -- and it is evidence FOR the model.
     # =======================================================================
     # An oracle-Allowed test that saw its permitted weak outcome is the EXPECTED
@@ -167,7 +167,7 @@ CASES = [
     case("allowed-unobserved-is-observability-not-model", "ALLOWED-UNOBSERVED",
          het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0),
 
-    # THE STORE-ONLY (2+2W) ARM: 22 tests -- 18 Allowed + 4 NO-ORACLE, none Disallowed
+    # THE STORE-ONLY (2+2W) ARM: 11 tests -- 9 Allowed + 2 NO-ORACLE, none Disallowed
     # -- with no reader, so interleavings_detected is structurally 0 and the OBSERVER is
     # their only liveness channel.  All three outcomes stay reachable, or the channel
     # goes constant on those 22 (DR1).
@@ -200,7 +200,7 @@ CASES = [
          control_target_count=0, canary_target_count=0),
 
     # =======================================================================
-    # 3. THE NO-ORACLE FRAME (44 tests).  Q4 R5: characterization, NEVER
+    # 3. THE NO-ORACLE FRAME (42 tests).  Q4 R5: characterization, NEVER
     #    validation -- there is no prediction here to confirm or refute.
     # =======================================================================
     case("no-oracle-fired-is-characterized", "CHARACTERIZED",
@@ -214,7 +214,7 @@ CASES = [
 
     # Q4 R5 says these rows are "characterization, always" -- but characterizing a DEAD
     # harness is a fabrication, not a finding, so COLD-INVALID stays reachable here and
-    # the class does not collapse to a constant.  What the 44 can never produce is a
+    # the class does not collapse to a constant.  What the 42 can never produce is a
     # MODEL claim; phase 2 enforces that (positive-control.md S4).
     case("no-oracle-cold-harness-is-COLD-not-characterized", "COLD-INVALID",
          dq=["CONTROLS_COLD"], het_oracle="ORACLE_NONE",
@@ -337,7 +337,7 @@ CASES = [
     # =======================================================================
     # 11. CANARY_ONLY is a DIAGNOSTIC, not boilerplate.  "Layer B fired, Layer A did
     #     not" is only meaningful where a Layer A exists to have not fired; on the
-    #     397 tests that have no mutant by construction it would say nothing.
+    #     361 tests that have no mutant by construction it would say nothing.
     # =======================================================================
     case("canary-only-caveat-is-not-raised-without-a-mutant", "ALLOWED-UNOBSERVED",
          het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
@@ -620,7 +620,7 @@ def scan_prints(blocks, cases_by_name, quiet):
             print("      %-46s names the observer channel (correctly)" % name)
 
     if bad:
-        print("\nPRINT FAILED: %d problem(s).  This is the B6c bug: 397 of the 450 "
+        print("\nPRINT FAILED: %d problem(s).  This is the B6c bug: 361 of the 411 "
               "harnesses are not should-be-forbidden tests, and a refutation printed "
               "on one of them is a false refutation of the compound model." % bad)
         return 1

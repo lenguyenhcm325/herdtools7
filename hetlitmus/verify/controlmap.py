@@ -33,12 +33,13 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
 
-# The Disallowed census the gate asserts (it is not merely reported): the 16
-# `-{acqrel,fence}-2s' rows the corpus started with, + 22 of the 48 off-diagonal
-# order-pair cells, + 15 of the 64 cells the CPU DMB.ST/DMB.LD axis added --
-# those being exactly the cells where a PARTIAL CPU barrier is the half its role
-# needs.  Derivations: env-research/impl-briefs/Q10-REPORT.md, Q10b-REPORT.md.
-N_DISALLOWED = 53
+# The Disallowed census the gate asserts (it is not merely reported): the 13
+# `-{acqrel,fence}-2s' rows of the matched two-sided family, + 22 of the 48
+# off-diagonal order-pair cells, + 15 of the 64 cells the CPU DMB.ST/DMB.LD axis
+# added -- those being exactly the cells where a PARTIAL CPU barrier is the half
+# its role needs.  Derivations: env-research/impl-briefs/Q10-REPORT.md,
+# Q10b-REPORT.md.
+N_DISALLOWED = 50
 
 # ---------------------------------------------------------------------------
 # The per-side ordering-strength lattice.  mu(T) must be strictly WEAKER

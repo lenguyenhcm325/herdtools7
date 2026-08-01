@@ -3,29 +3,32 @@
 
 `hetlitmus/tests/het/generate.sh' loops shape x device-cut x scope x order and
 dedups only by byte-comparing a variant against one designated sibling
-(generate.sh:87-92, :128-133).  That filter cannot see the duplicates that
-dominate the corpus: two different names whose programs are the same experiment
-up to (permutation of procs) x (renaming of locations), device tag travelling
-with the proc.  There are 39 such classes, unchanged across every widening of the
-variant vocabulary (currently 450 files, 411 distinct); all are the `cg'/`gc'
-mirror pair of a rotation-invariant shape (SB / LB / 2+2W), where swapping P0 and
-P1 gives back the same cycle with the labels exchanged.  Their verdicts agree, so
-nothing is wrong -- but they are not independent samples, and some of them sit
-inside the Disallowed rows that carry the falsification claim.  Measurement and
-analysis: env-research/Q10-corpus-coverage.md sect 2.1 and 2.3.
+(generate.sh:87-92, :128-133).  That filter cannot see duplicates of the second
+kind: two different names whose programs are the same experiment up to
+(permutation of procs) x (renaming of locations), device tag travelling with the
+proc.  The corpus carried 39 such classes -- every one the `cg'/`gc' mirror pair
+of a rotation-invariant shape (SB / LB / 2+2W), where swapping P0 and P1 gives
+back the same cycle with the labels exchanged.  Measurement and analysis:
+env-research/Q10-corpus-coverage.md sect 2.1 and 2.3.
 
-The 39 are kept, not deleted: the verdicts are correct, and the corpus census is
-pinned across corpus-gate.sh, emit-all.sh, verdictcheck.py, statscheck.py,
-histcheck.py, the cram goldens and expected-nvidia.csv.  They are allowlisted
-here BY EXACT CLASS, and the gate checks both directions, so the allowlist cannot
+Those 39 were REMOVED on 2026-08-01 (450 files -> 411, all distinct), reversing
+the earlier decision to keep and allowlist them.  Their verdicts agreed with
+their mirrors, so nothing was wrong -- but they were not independent samples, and
+some sat inside the Disallowed rows that carry the falsification claim.  The fix
+is at the root: `tests/_grid_lib.sh' SHAPE_HET_CUTS now emits the `cpu,gpu' cut
+alone for those three shapes, the rotation rule SHAPE_2S_PAIR_CUTS already
+applied.  ALLOWLIST is therefore EMPTY.
+
+The gate still checks both directions, so neither the corpus nor the list can
 rot:
   1. every duplicate class found in the corpus is in ALLOWLIST  (new dup -> FAIL)
   2. every ALLOWLIST class is still a real duplicate class      (stale -> FAIL)
-Half 2 is what stops the list becoming a rubber stamp: a listed partner that is
-edited, renamed or deleted until the pair is no longer isomorphic is dead weight,
-and the gate says so.  This is also what makes widening the variant vocabulary
-safe -- a new annotation axis multiplies across device cuts, so new duplicates
-are the expected failure mode and they break the build.
+Half 1 now rejects every duplicate outright.  Half 2 is what stops the list
+becoming a rubber stamp: an entry that is not a real duplicate class -- listed
+speculatively, or listed once and since edited, renamed or deleted -- is dead
+weight, and the gate says so.  Together they are what makes widening the variant
+vocabulary safe: a new annotation axis multiplies across device cuts, so new
+duplicates are the expected failure mode and they break the build.
 
 The canonical form is adapted from env-research/Q10-probe/canon.py: parse the Het
 test into (proc -> ordered event list, condition atoms), then minimise over every
@@ -53,51 +56,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
 
 # ---------------------------------------------------------------------------
-# The allowlist: the 39 duplicate classes kept deliberately, each a `cg' cut and
-# its `gc' mirror of a rotation-invariant shape (SB / LB / 2+2W).  Extend it only
-# with a documented reason -- adding an entry here is how a real duplicate gets
-# waved through.
+# The allowlist: duplicate classes waved through on purpose.  EMPTY since the 39
+# `cg'/`gc' mirrors were removed at the source (2026-08-01) -- nothing in the
+# corpus is a duplicate any more.  Extend it only with a documented reason:
+# adding an entry here is how a real duplicate gets waved through, and half 2 of
+# the gate rejects an entry that is not one.
 # ---------------------------------------------------------------------------
 ALLOWLIST = [
-    ("2+2W-cg-cta-fence",      "2+2W-gc-cta-fence"),
-    ("2+2W-cg-cta-relaxed",    "2+2W-gc-cta-relaxed"),
-    ("2+2W-cg-cta-release",    "2+2W-gc-cta-release"),
-    ("2+2W-cg-gpu-fence",      "2+2W-gc-gpu-fence"),
-    ("2+2W-cg-gpu-relaxed",    "2+2W-gc-gpu-relaxed"),
-    ("2+2W-cg-gpu-release",    "2+2W-gc-gpu-release"),
-    ("2+2W-cg-sys-acqrel-2s",  "2+2W-gc-sys-acqrel-2s"),
-    ("2+2W-cg-sys-fence",      "2+2W-gc-sys-fence"),
-    ("2+2W-cg-sys-fence-2s",   "2+2W-gc-sys-fence-2s"),
-    ("2+2W-cg-sys-relaxed",    "2+2W-gc-sys-relaxed"),
-    ("2+2W-cg-sys-release",    "2+2W-gc-sys-release"),
-    ("LB-cg-cta-acquire",      "LB-gc-cta-acquire"),
-    ("LB-cg-cta-fence",        "LB-gc-cta-fence"),
-    ("LB-cg-cta-relaxed",      "LB-gc-cta-relaxed"),
-    ("LB-cg-cta-release",      "LB-gc-cta-release"),
-    ("LB-cg-gpu-acquire",      "LB-gc-gpu-acquire"),
-    ("LB-cg-gpu-fence",        "LB-gc-gpu-fence"),
-    ("LB-cg-gpu-relaxed",      "LB-gc-gpu-relaxed"),
-    ("LB-cg-gpu-release",      "LB-gc-gpu-release"),
-    ("LB-cg-sys-acqrel-2s",    "LB-gc-sys-acqrel-2s"),
-    ("LB-cg-sys-acquire",      "LB-gc-sys-acquire"),
-    ("LB-cg-sys-fence",        "LB-gc-sys-fence"),
-    ("LB-cg-sys-fence-2s",     "LB-gc-sys-fence-2s"),
-    ("LB-cg-sys-relaxed",      "LB-gc-sys-relaxed"),
-    ("LB-cg-sys-release",      "LB-gc-sys-release"),
-    ("SB-cg-cta-acquire",      "SB-gc-cta-acquire"),
-    ("SB-cg-cta-fence",        "SB-gc-cta-fence"),
-    ("SB-cg-cta-relaxed",      "SB-gc-cta-relaxed"),
-    ("SB-cg-cta-release",      "SB-gc-cta-release"),
-    ("SB-cg-gpu-acquire",      "SB-gc-gpu-acquire"),
-    ("SB-cg-gpu-fence",        "SB-gc-gpu-fence"),
-    ("SB-cg-gpu-relaxed",      "SB-gc-gpu-relaxed"),
-    ("SB-cg-gpu-release",      "SB-gc-gpu-release"),
-    ("SB-cg-sys-acqrel-2s",    "SB-gc-sys-acqrel-2s"),
-    ("SB-cg-sys-acquire",      "SB-gc-sys-acquire"),
-    ("SB-cg-sys-fence",        "SB-gc-sys-fence"),
-    ("SB-cg-sys-fence-2s",     "SB-gc-sys-fence-2s"),
-    ("SB-cg-sys-relaxed",      "SB-gc-sys-relaxed"),
-    ("SB-cg-sys-release",      "SB-gc-sys-release"),
 ]
 
 
@@ -245,8 +210,8 @@ def check(d, quiet=False):
               % len(groups))
         print("  duplicates   : %d class(es), %d redundant file(s)"
               % (len(found), redundant))
-        print("  allowlisted  : %d class(es) (Q10 sect 2.1: SB/LB/2+2W cg==gc, "
-              "rotation-invariant shapes)" % len(allow))
+        print("  allowlisted  : %d class(es) (the Q10 sect 2.1 SB/LB/2+2W cg==gc "
+              "mirrors were removed at the source 2026-08-01)" % len(allow))
         print()
     if errors:
         for e in errors:
@@ -254,9 +219,9 @@ def check(d, quiet=False):
         print("\nDUPCHECK FAILED: %d problem(s)." % len(errors))
         return 1
     if not quiet:
-        print("DUPCHECK OK  (%d distinct experiments; the %d known duplicate "
-              "classes are exactly the allowlisted ones)"
-              % (len(groups), len(allow)))
+        print("DUPCHECK OK  (%d file(s), %d distinct experiment(s), %d duplicate "
+              "class(es))"
+              % (n_files, len(groups), len(found)))
     return 0
 
 
@@ -299,9 +264,13 @@ def bite(d):
                 print("      | " + l.strip())
         rc |= 0 if ok else 1
 
-    # -- bite 2: a stale allowlist entry (partner replaced by a non-duplicate).
-    # Injected by mutating the IMPORTED LIST, not by patching text -- a text
-    # patch would also rewrite this very injection string.
+    # -- bite 2: a stale allowlist entry.  The list is empty, so the injection
+    # ADDS one naming two real tests that are not isomorphic -- exactly the shape
+    # of an entry written speculatively, or left behind by a partner that has
+    # since been edited or deleted.  Injected by mutating the IMPORTED LIST, not
+    # by patching text -- a text patch would also rewrite this very injection
+    # string.  The reason string is asserted too: `no longer isomorphic' is the
+    # arm under test, `file(s) missing' would be a different one.
     with tempfile.TemporaryDirectory() as tmp:
         work = os.path.join(tmp, "het")
         shutil.copytree(d, work)
@@ -310,17 +279,16 @@ def bite(d):
             "import sys\n"
             "sys.path.insert(0, %r)\n"
             "import dupcheck as D\n"
-            "GOOD = ('SB-cg-sys-relaxed', 'SB-gc-sys-relaxed')\n"
-            "BAD  = ('SB-cg-sys-relaxed', 'MP-cg-sys-relaxed')\n"
-            "assert GOOD in D.ALLOWLIST, 'injection target vanished'\n"
-            "D.ALLOWLIST = [BAD if c == GOOD else c for c in D.ALLOWLIST]\n"
-            "assert BAD in D.ALLOWLIST and GOOD not in D.ALLOWLIST\n"
+            "BAD = ('SB-cg-sys-relaxed', 'MP-cg-sys-relaxed')\n"
+            "assert BAD not in D.ALLOWLIST, 'injection is already listed'\n"
+            "D.ALLOWLIST = D.ALLOWLIST + [BAD]\n"
             "sys.exit(D.check(%r))\n" % (HERE, work))
         r = subprocess.run([sys.executable, drv], capture_output=True, text=True)
         out = r.stdout + r.stderr
         ok = r.returncode != 0 and "STALE allowlist entry" in out \
-            and "UNALLOWLISTED duplicate class" in out
-        print("  [2] allowlist rot (partner SB-gc-sys-relaxed -> MP-cg-sys-relaxed)")
+            and "they are no longer isomorphic" in out
+        print("  [2] allowlist rot (SB-cg-sys-relaxed == MP-cg-sys-relaxed listed "
+              "as a duplicate pair)")
         print("      rc=%d  %s" % (r.returncode,
                                    "BITES" if ok else "*** DID NOT BITE"))
         for l in out.splitlines():

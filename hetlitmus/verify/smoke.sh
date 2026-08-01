@@ -49,12 +49,12 @@
 # ---------------------------------------------------------------------------
 set -u
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "$ROOT"
-export PATH="/usr/local/cuda/bin:$ROOT/_build/install/default/bin:$PATH"
+. "$(dirname "$0")/../paths.sh"
+cd "$REPO"
+export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 
-HET_DIR="$ROOT/hetlitmus/tests/het"
-CLU_DIR="$ROOT/hetlitmus/tests/cluster"
+HET_DIR="$REPO/hetlitmus/tests/het"
+CLU_DIR="$REPO/hetlitmus/tests/cluster"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

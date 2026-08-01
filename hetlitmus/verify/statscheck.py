@@ -35,16 +35,16 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 
 # The emitted-corpus census.  DERIVED, not observed-and-pasted:
-#   sync = every test with a register (reader) observable   = 450 - the 22
-#          store-only 2+2W harnesses                        = 428
-#   obs  = every test with a coherence-final [loc] atom     = those 22 + R 53
-#          + S 53                                           = 128
+#   sync = every test with a register (reader) observable   = 411 - the 11
+#          store-only 2+2W harnesses                        = 400
+#   obs  = every test with a coherence-final [loc] atom     = those 11 + R 53
+#          + S 53                                           = 117
 # 106 carry both and NONE carries neither, which is what lets the degeneracy guard
 # switch channel instead of firing blind, and phase 4 measures all three from the
 # emitted corpus.  (Per-sweep derivation: env-research/impl-briefs/Q10b-REPORT.md.)
-CENSUS_SYNC, CENSUS_OBS, CENSUS_NEITHER = 428, 128, 0
-CENSUS_WINBUMP = 448        # 450 - the 2 `self' canaries (a test cannot control itself)
-CENSUS_TESTS = 450
+CENSUS_SYNC, CENSUS_OBS, CENSUS_NEITHER = 400, 117, 0
+CENSUS_WINBUMP = 409        # 411 - the 2 `self' canaries (a test cannot control itself)
+CENSUS_TESTS = 411
 
 LN20 = -math.log(0.05)      # 2.99573227355399...
 R_POISSON = 1e9
@@ -545,7 +545,7 @@ case("degenerate-sightings-rejected-but-reported",
      obs="Sometimes", k=3, k_eff=0, n_degen=3, P_rep=-1.0,
      flags_any=["DEGEN_SIGHTING"], tier="MISMATCH-UNCORROBORATED")
 
-# The 22 store-only (2+2W) tests decode through the OBSERVER, not a synchrony read, so
+# The 11 store-only (2+2W) tests decode through the OBSERVER, not a synchrony read, so
 # reading skew_stddev on them would call every cell degenerate forever.  Both arms of
 # the channel switch must be live:
 case("observer-channel-clean",
@@ -564,7 +564,7 @@ case("observer-channel-degenerate",
                      distinct_decoded_iters=0, skew_stddev=0.0), 3, obs_degen=True),
      obs="Sometimes", k=3, k_eff=0, flags_any=["DEGEN_SIGHTING"])
 
-# No decode channel at all: FAIL CLOSED (0 of 450 today -- reaching it is a build bug).
+# No decode channel at all: FAIL CLOSED (0 of 411 today -- reaching it is a build bug).
 case("no-decode-channel-fails-closed",
      observed(stream(POISSON_CELLS, sync_valid=0, obs_valid=0,
                      distinct_decoded_iters=0, skew_stddev=0.0), 3),
@@ -586,7 +586,7 @@ case("window-desync-voids-the-bound",
      obs="Never", p_bound=-1.0, flags_any=["WIN_DESYNC", "FANO_UNMEASURED"])
 
 # --- CALIBRATION PROVENANCE ------------------------------------------------
-# 397 of 450 have no mu(T) by construction, so their dispersion is calibrated from the
+# 361 of 411 have no mu(T) by construction, so their dispersion is calibrated from the
 # Layer-B canary -- a DIFFERENT shape's burstiness, hence a weaker claim, hence a flag.
 case("canary-calibrated-when-no-mutant",
      stream(POISSON_CELLS, chan="canary", het_oracle="ORACLE_ALLOWED",
@@ -690,7 +690,7 @@ def py_reference(cells_):
         # Mirrors het_verdict()'s channel-aware liveness disqualifier: the sync
         # channel's evidence is interleavings_detected>0, the observer channel's is
         # observer_unique_count>=THETA_D, and a record with NEITHER fails closed
-        # (0 of 450 in the shipped corpus).
+        # (0 of 411 in the shipped corpus).
         if c["sync_valid"]:
             return c["interleavings_detected"] > 0
         if c["obs_valid"]:
@@ -1945,7 +1945,7 @@ def phase6_campaign(quiet):
             r0 = subprocess.run(
                 [sys.executable, "-c", loader +
                  "m = campaign.read_control_map(sys.argv[1]); "
-                 "assert len(m) == 450, len(m); "
+                 "assert len(m) == 411, len(m); "
                  "assert 'Test' not in m and 'Litmus' not in m, "
                  "'header ingested as a test'; "
                  "print('ok')", real],
@@ -2402,7 +2402,7 @@ def bite():
             shutil.rmtree(sub, ignore_errors=True)
 
         # (6) THE EMITTER STOPS TAGGING THE DECODE CHANNEL: the guard would read a
-        # structurally-zero skew_stddev as "degenerate" on the 22 store-only tests and
+        # structurally-zero skew_stddev as "degenerate" on the 11 store-only tests and
         # pin their P_rep at a constant 0.  Only phase 4 can see this.
         print("\n-- corpus injection --")
         rc = phase4(quiet=True,

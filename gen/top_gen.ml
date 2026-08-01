@@ -1009,7 +1009,7 @@ let max_set = IntSet.max_elt
             | _ -> None in
           (p,State.dump_state_atom atom))
         (State.init_type_env_to_states t.init t.env) in
-    { Code.hc_init ; hc_cols ; hc_cond = F.dump_constr t.final ; }
+    { HetCells.hc_init ; hc_cols ; hc_cond = F.dump_constr t.final ; }
 
   let num_labels =
 

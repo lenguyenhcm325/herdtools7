@@ -5,16 +5,16 @@ Spec: env-research/Q7-tuning.md; impl-briefs/B8a-impl-brief.md, which also lists
 is deferred to the hardware campaign (B8).  A factored, seeded, variance-aware random
 search over the harness's stress knobs, scored on the positive control's mutant death
 rate -- a forced surrogate, since on correct hardware the forbidden outcome occurs zero
-times by construction and so carries no gradient (Q7 2.1).  The objective is a
-throughput, kills per wall-second, so a config that widens the window but slows the
-loop is penalised (Q7 2.3).
+times by construction and so carries no gradient (Q7 2.1).  This is the SEARCH half: it
+races configs on a caller-supplied objective.  The objective that reads a death rate off
+a running harness is campaign work -- the stress knobs are compile-time defines, so
+nothing here can apply a config to one (B8a-impl-brief.md).
 
-IT SETTLES NO NUMERIC VALUE (Q7 4.2): a death rate needs CPU-GPU coherence and a C2C
+It settles no numeric value (Q7 4.2): a death rate needs CPU-GPU coherence and a C2C
 link, so away from that hardware the loop is validated against a synthetic objective
 with a known optimum (hetlitmus/verify/tunecheck.py) and every number written out is a
 warm-start seed stamped "not measured here".  campaign.py schedules the campaign (which
-tests, how many runs); this schedules the tuning (which config).  Both drive harness
-invocations through a --runner template and read the HetStats line.
+tests, how many runs); this schedules the tuning (which config).
 
 Sources reused, cited as an attribution condition (impl-briefs/SHARED-CHARGE.md):
   * seeded Park-Miller config selection -- Levine et al., GPUHarbor ISSTA'23 3.4.
@@ -24,18 +24,13 @@ Sources reused, cited as an attribution condition (impl-briefs/SHARED-CHARGE.md)
   * the variance-aware racing radius -- Mnih, Szepesvari, Audibert, "Empirical
     Bernstein Stopping", ICML'08 2.
   * randomized round-robin under non-stationary rewards -- SER^3, Allesiardo & Feraud.
-  * the reproducibility/time budget -- MC-Mutants ASPLOS'23 Alg.1 (`budget_runs`).
   * the GPU knob space + the warm-start seed -- Sorensen & Donaldson PLDI'16, Kirkham
     OOPSLA'20 3.1, Reese Levine's cuda-litmus params/stress_params.txt.
 """
 
 import argparse
 import math
-import os
-import shlex
-import subprocess
 import sys
-import time
 
 # ===========================================================================
 # Park-Miller (Lehmer minimal-standard) RNG.                 [GPUHarbor 3.4]
@@ -138,8 +133,8 @@ INSTRUMENT_KNOBS = frozenset({
     "HET_TAU_HOT", "HET_THETA_DISTINCT", "HET_P_GOAL", "HET_P_MIN", "HET_NWIN",
     "HET_STATS_MAX_CELLS", "HET_TAU_MIN_SAMPLES", "HET_EXHAUSTIVE_MAX",
 })
-# HET_WINDOW is a detector-resolution knob: calibrated against ground truth by
-# `calibrate_window`, never tuned (Q7 trap 2).
+# HET_WINDOW is a detector-resolution knob: calibrated against the exhaustive scan's
+# ground truth at bring-up (docs/00-environment-design.md 6), never tuned (Q7 trap 2).
 DETECTOR_KNOBS = frozenset({"HET_WINDOW"})
 
 SUBSEARCH_ORDER = ["G", "C", "I"]   # I LAST: warm-started with G*,C* fixed (Q7 3.2/3.3)
@@ -228,8 +223,9 @@ class Bout(object):
               within-run correlation, which is how the racing radius learns to widen.
       raw_n   RAW usable-run count -- used only by `bernoulli_radius`, which trusts it
               as a count of iid trials.
-      secs    wall-clock seconds this bout cost (throughput denominator).
-      kills   control_target_count sum (throughput numerator); rate = kills/secs.
+      secs    wall-clock seconds this bout cost.
+      kills   control_target_count sum.  Carried per bout for the hardware objective's
+              throughput score (Q7 2.3); the search itself races on `value`.
       ks_ok   het_ks2's stationarity verdict, READ from the HetStats `ks=' field, never
               recomputed; a non-stationary bout is dropped in-loop (Q7 5.2 C1).
       valid   interleavings_detected>0 and the control was not cold.  An invalid bout is
@@ -263,8 +259,6 @@ class Arm(object):
         self._vals = []      # per-bout value
         self._wts = []       # per-bout effective weight (Q contribution)
         self._raw = []       # per-bout raw cell count (Bernoulli's Q)
-        self.kills = 0.0     # sum control_target_count (throughput numerator)
-        self.secs = 0.0      # sum wall-seconds   (throughput denominator)
         self.n_valid = 0
         self.n_invalid = 0
         self.n_nonstationary = 0
@@ -282,8 +276,6 @@ class Arm(object):
         self._vals.append(bout.value)
         self._wts.append(max(bout.weight, 1e-9))
         self._raw.append(max(bout.raw_n, 1.0))
-        self.kills += bout.kills
-        self.secs += bout.secs
 
     def raceable(self):
         return self.n_valid >= 1
@@ -304,13 +296,6 @@ class Arm(object):
         if q <= 0.0:
             return 0.0
         return sum(w * v for w, v in zip(self._wts, self._vals)) / q
-
-    def death_rate(self):
-        """The primary objective (Q7 2.3): kills per wall-second.  Throughput, not yield
-        -- it penalises a config that widens the window but slows the loop."""
-        if self.secs <= 0.0:
-            return 0.0
-        return self.kills / self.secs
 
     def var_hat(self):
         """Weighted empirical variance of the bout values about the weighted mean.  Under
@@ -448,53 +433,6 @@ def race(objective, configs, pm, delta=0.05, max_rounds=200, min_rounds=3,
 
 
 # ===========================================================================
-# THE BUDGET MODEL.  MC-Mutants Alg.1 ceilingRate, reused AS A LOWER BOUND: it
-# inherits 1-e^{-x}, so it is optimistic under overdispersion and is widened by
-# the Fano factor F (Q7 5.2 E).
-# ===========================================================================
-def budget_runs(p_min, F=1.0):
-    """Runs needed to bound a should-be-forbidden "Never" at reproducibility 0.95:
-    F * log(0.05) / log(1 - p_min).  Arithmetic mirror of het_verdict.h
-    het_budget_runs; MC-Mutants Alg.1 ceilingRate = ceil(-log(1-r)/b).
-
-    p_min is a SYMBOL, not a number (het_verdict.h HET_P_MIN = 0.0): no default, since
-    the published 0.2% is a GPU-only inter-CTA rate, not a het one.  Unset p_min gives
-    -1.0, "NOT SIZED", never an invented budget."""
-    if not (0.0 < p_min < 1.0):
-        return -1.0                                   # NOT SIZED (het_budget_runs contract)
-    if not (F > 1.0):
-        F = 1.0
-    return F * math.log(0.05) / math.log(1.0 - p_min)
-
-
-# ===========================================================================
-# HET_WINDOW CALIBRATION (Q7 trap 2) -- a measurement, not a tuning: maximising a
-# detector's own detections by loosening it is circular.  The window is calibrated
-# against the O(N^T_L) exhaustive scan (ground truth only where
-# control_exhaustive_valid==1) as the smallest window whose count converges to the
-# exhaustive one.  Both counts come off the device, so on the dev box this returns None
-# and the emitter's placeholder stands (hetEmit.ml: HET_WINDOW 8).
-# ===========================================================================
-def calibrate_window(samples, tol=0):
-    """samples :: iterable of (window, windowed_count, exhaustive_count, exhaustive_valid).
-    Returns the smallest window whose windowed_count == exhaustive_count (within tol) on
-    every valid sample, or None if no window converges / no valid ground truth exists."""
-    by_w = {}
-    saw_valid = False
-    for w, wc, ec, valid in samples:
-        if not valid:
-            continue
-        saw_valid = True
-        by_w.setdefault(w, []).append(abs(wc - ec) <= tol)
-    if not saw_valid:
-        return None
-    for w in sorted(by_w):
-        if by_w[w] and all(by_w[w]):
-            return w
-    return None
-
-
-# ===========================================================================
 # CONFIG FILE I/O.  key=value, in cuda-litmus's parseStressParamsFile shape so a tuned
 # config can be applied without a rebuild.  Off the target hardware the file carries
 # only warm-start seeds, each stamped "not measured here".
@@ -549,88 +487,6 @@ def read_config(path):
 
 
 # ===========================================================================
-# THE REAL OBJECTIVE ADAPTER.  Applies a config to a harness invocation and reads the
-# rate back off the HetStats line.  Off the target hardware it is exercised only against
-# a stub runner, never on the emitted harness expecting weak behaviours.
-#
-# BOUNDARY, and it bounds what this adapter can read: the emitter's stress knobs are
-# compile-time #defines, and the harness neither re-parses a stress config at runtime nor
-# reports a control-count/wall-time death-rate channel.  Both are hardware-campaign work
-# (B8a-impl-brief.md).  So the adapter sets the config as env vars and writes the file
-# (forward-compatible), times the subprocess itself, and reads what the line does expose
-# (k_eff/usable/R_eff/ks) -- the throughput is only as good as the channel added later.
-# ===========================================================================
-def parse_hetstats(stdout):
-    """The last machine-readable 'HetStats <test> key=value...' line (campaign.py contract)."""
-    got = None
-    for line in stdout.splitlines():
-        if not line.startswith("HetStats "):
-            continue
-        f = line.split()
-        if len(f) < 3 or f[1].endswith(":"):
-            continue
-        kv = {}
-        for tok in f[2:]:
-            p = tok.find("=")
-            if p > 0:
-                kv[tok[:p]] = tok[p + 1:]
-        got = kv
-    return got
-
-
-def _fnum(kv, key, dflt=0.0):
-    try:
-        return float(kv.get(key, dflt))
-    except (TypeError, ValueError):
-        return dflt
-
-
-class HarnessObjective(object):
-    """Runs one bout = one harness invocation with a given stress config applied."""
-
-    def __init__(self, runner, test, cfgdir, seed0=1):
-        self.runner = runner
-        self.test = test
-        self.cfgdir = cfgdir
-        self.seed0 = seed0
-        self.n = 0
-
-    def bout(self, config, pm):
-        env = dict(os.environ)
-        # A FRESH HET_SEED per bout, non-negotiable: replaying a seed adds no fresh phase
-        # draws, so pooling replays would double-count effort (het_verdict.h's runtime-knob
-        # contract).  The config goes in as env vars ahead of the harness reading them.
-        for k, v in config.items():
-            env[k] = str(v)
-        env["HET_SEED"] = str(self.seed0 + self.n)
-        env["HET_ADAPTIVE"] = "1"
-        self.n += 1
-        cmd = self.runner.replace("{test}", self.test).replace("{dir}", self.cfgdir)
-        t0 = time.time()
-        r = subprocess.run(shlex.split(cmd) if os.name != "nt" else cmd,
-                           env=env, capture_output=True, text=True)
-        secs = max(time.time() - t0, 1e-6)
-        if r.returncode != 0:
-            return Bout(0.0, 1.0, secs=secs, valid=False)
-        kv = parse_hetstats(r.stdout)
-        if kv is None:
-            return Bout(0.0, 1.0, secs=secs, valid=False)
-        usable = _fnum(kv, "usable")
-        k_eff = _fnum(kv, "k_eff")
-        r_eff = _fnum(kv, "R_eff")
-        # A VOID/cold observation is not a low rate (Q7 2.3 cold floor).
-        obs = kv.get("obs", "")
-        valid = usable > 0 and obs not in ("void", "VOID", "")
-        ks_ok = kv.get("ks", "pass") == "pass"
-        value = (k_eff / usable) if usable > 0 else 0.0
-        weight = r_eff if r_eff > 0 else usable
-        # k_eff proxies the death-rate numerator until the control-count channel of the
-        # BOUNDARY note above exists.
-        return Bout(value, weight, raw_n=usable, secs=secs, kills=k_eff,
-                    ks_ok=ks_ok, valid=valid)
-
-
-# ===========================================================================
 # THE FACTORED SEARCH.  G, then C, then I -- I last, warm-started with G*,C* fixed
 # (Q7 3.2).  Factoring turns a product |G|*|C|*|I| into a sum, licensed by Q5/Q6
 # finding the three classes widen different windows.  `objective_for(sub, base)`
@@ -661,8 +517,8 @@ def factored_search(objective_for, pm, n_configs=8, delta=0.05, max_rounds=60,
 
 # ===========================================================================
 # CLI.  --self-test runs the machinery on a trivial synthetic objective and prints
-# a config file's worth of seeds -- plumbing smoke only.  Real tuning (--runner) is
-# a hardware activity.
+# a config file's worth of seeds -- plumbing smoke only.  Tuning against a real harness
+# is a hardware activity and lives with the campaign, not here.
 # ===========================================================================
 class _TrivialObjective(object):
     """A synthetic objective with a known optimum: reward rises with HET_BARRIER_PCT.
@@ -684,19 +540,7 @@ def main():
                     help="target label for the output file name")
     ap.add_argument("--out", default=None, help="output config file (default stdout)")
     ap.add_argument("--seed", type=int, default=1)
-    ap.add_argument("--runner", default=None,
-                    help="HARDWARE ONLY (B8b): command template, {test}/{dir} substituted")
-    ap.add_argument("--test", default=None)
-    ap.add_argument("--corpus", default=None)
     a = ap.parse_args()
-
-    if a.runner and not a.self_test:
-        sys.stderr.write(
-            "tune: --runner is a HARDWARE activity (B8b): the dev box has no CPU-GPU "
-            "coherence and no C2C, so a real death rate cannot be measured here.  Run the "
-            "MACHINERY validation with hetlitmus/verify/tunecheck.py; run --self-test for "
-            "plumbing.\n")
-        return 2
 
     pm = ParkMiller(a.seed)
     obj = _TrivialObjective()

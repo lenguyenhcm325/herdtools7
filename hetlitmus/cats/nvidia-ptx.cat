@@ -69,12 +69,10 @@
 
 (* ================================================================== *)
 (* Communication. cos.cat generates co (off by default for bell       *)
-(* models) and derives fr; add the external projections.              *)
+(* models) and derives fr.  The axioms below relate rf, co and fr     *)
+(* through morally_strong, never through an external projection.      *)
 (* ================================================================== *)
 include "cos.cat"
-let rfe = rf & ext
-let coe = co & ext
-let fre = fr & ext
 
 (* ================================================================== *)
 (* Annotation event sets, from ptx.bell tags via tag2events.          *)
@@ -85,7 +83,6 @@ let fre = fr & ext
 let REL = tag2events('release)
 let ACQ = tag2events('acquire)
 let SCo = tag2events('sc)
-let RLX = tag2events('relaxed)
 
 let CTA = tag2events('cta)
 let GPUscope = tag2events('gpu)

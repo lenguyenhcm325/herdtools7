@@ -29,7 +29,7 @@ Concretely, **one** new `Archs.t` value `` `Het `` is added, implemented by a
 **functor**
 
 ```
-HetArch.Make (Cpu : Arch_litmus.S) (Gpu : Arch_litmus.S) : Arch_litmus.S
+HetArch.Make (Cpu : Arch_litmus.S) (Gpu : Arch_litmus.S)   (* unsealed; an ArchBase.S *)
 ```
 
 whose instruction type is a sum that delegates per constructor:
@@ -48,15 +48,11 @@ arch tag is runtime, so supported pairings are enumerated as match arms — the
 same as every existing single arch). The GH200 pairing is **AArch64 (CPU) +
 LISA/PTX (GPU)**; MI300A (`+ HIP`) would be a second arm.
 
-`litmus/HetArch.ml` ends with a compile-time proof that the result genuinely
-satisfies the full interface:
-
-```
-module Check (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) : Arch_litmus.S = Make (Cpu) (Gpu)
-```
-
-`Make` itself stays *unsealed* so the dispatch arm can reach the parser helpers
-(`of_cpu_parsed`, `of_gpu_parsed`, `het_parser`).
+`HetArch.Make` is *unsealed*. Its result is used at two interfaces: `ArchBase.S`,
+which is what the het `GenParser` instance requires (and what the build checks
+at that application), and the parser helpers past it that the emitter drives
+(`of_cpu_parsed`, `of_gpu_parsed`, `het_parser`, `to_cpu_pseudo`,
+`to_gpu_pseudo`).
 
 ## 3. The file format
 
@@ -132,7 +128,7 @@ Because each column is genuinely fed to its sub-arch parser, a malformed cell on
 either side is rejected (verified: a bogus AArch64 mnemonic and a bogus LISA
 cell each produce a parse error), so a successful parse is not vacuous.
 
-The `Arch_litmus.S` obligations needed by the parse path are all delegated
+The `ArchBase.S` obligations needed by the parse path are all delegated
 **faithfully** to the sub-architectures' exposed `Pseudo.S` output — there are
 no placeholders on the parse path:
 - `parsed_tr` round-trips a singleton `Instruction` pseudo through the
@@ -145,7 +141,7 @@ no placeholders on the parse path:
 ## 5. Scope boundary and Tier-0 simplifications
 
 **In Tier 0 (done):** the `Het` format, the `` `Het `` `Archs` variant, the
-`HetArch` functor satisfying `Arch_litmus.S`, the per-column parser, the
+`HetArch` functor satisfying `ArchBase.S`, the per-column parser, the
 AArch64+LISA dispatch arm, and a clean `make all`. End-to-end:
 `litmus7 hetlitmus/tests/het/MP-het.litmus` parses the test and reports
 
@@ -159,11 +155,9 @@ HetLitmus: parsed heterogeneous test MP-het (2 procs)
 - The dispatch arm stops after parse + per-proc routing report; it does not
   emit a harness.
 - `nop` / `mk_imm_branch` are `None` (no device-agnostic compound form);
-  `internal_init` / `reg_class` / `reg_class_stable` / `forbidden_regs` are
-  inert (they feed ASM register emission); `get_macro` errors (the corpus uses
-  no macros); `symb_reg` and the cross-device arms of `map_regs` default
-  harmlessly (registers never cross devices). None of these are on the parse
-  path.
+  `get_macro` errors (the corpus uses no macros); `symb_reg` and the
+  cross-device arms of `map_regs` default harmlessly (registers never cross
+  devices). None of these are on the parse path.
 
 **Tier-0 lexical limitations of the per-column splitter** (documented, safe for
 the hand-written corpus): the program body must not contain `;` or `|` *inside*
@@ -182,7 +176,7 @@ currently unexercised in practice.
 |------|--------|
 | `lib/Archs.ml`, `lib/Archs.mli` | new `` `Het `` arch variant + `parse`/`pp`/`tags` |
 | `lib/splitter.mli`, `lib/splitter.mll` | documentation of why the single `arch` field is unchanged under fork (a) |
-| `litmus/HetArch.ml` | the `HetArch` functor (sum-type `Arch_litmus.S`) + per-column parser helpers + `Check` proof |
+| `litmus/HetArch.ml` | the `HetArch` functor (sum-type `ArchBase.S`) + per-column parser helpers |
 | `litmus/hetSlurp.mll` | section-slurp lexer used by the het parser |
 | `litmus/top_litmus.ml` | the `` `Het `` dispatch arm (AArch64+LISA pairing, per-proc sub-parser routing) |
 | `litmus/option.ml`, `gen/autoOpt.ml` | `` `Het `` arms for exhaustiveness |

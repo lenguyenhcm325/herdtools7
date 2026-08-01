@@ -122,297 +122,8 @@ end
          // cache-line CHI coherence over NVLink-C2C, the real inter-device protocol);\n\
          // cudaMallocManaged only as the dev-box/CI fallback (managed = 2 MB page\n\
          // migration on GH200, which masks the race).\n" ;
-      gd_shared_mem_defs =
-        {ocaml|/* Shared litmus vars + rendezvous barrier.  THE ALLOCATOR SELECTS THE
-   PROPERTY UNDER TEST: it decides whether the two sides touch one physical
-   line over the machine's real coherence protocol, so it is correctness, not
-   tuning.  Grounding: env-research/Q8-allocation.md; the modes:
-   env-research/impl-briefs/PORT1-impl-brief.md.
-
-   HET_ALLOC picks the mode, resolved once per process; the free must match it:
-
-     auto     pageableMemoryAccess ? malloc : managed  (default; unset = auto)
-     malloc   system malloc()       -- GH200/Spark: ATS gives CPU and GPU one
-                                      page table, so both touch the same cache
-                                      line in place over NVLink-C2C via
-                                      hardware CHI coherence.  This is the mode
-                                      Bagchi et al. (ISMM'26) used.
-     managed  cudaMallocManaged     -- dev-box/CI fallback only; on GH200 it
-                                      2 MB-page-migrates under the concurrent
-                                      race and masks the weak behaviour.
-     pinned   cudaHostAlloc(Mapped) -- for a device that can do neither.
-
-   The guards below are fatal, with deliberately no fallback to auto: each mode
-   is a system-scope atomic only under a condition the CUDA C++ memory model
-   states outright (system memory needs pageableMemoryAccess, managed needs
-   concurrentManagedAccess, mapped needs hostNativeAtomicSupported, plus a
-   separate allowance for plain naturally-aligned 1/2/4/8/16-byte loads and
-   stores on mapped memory).  Every tested access here, and the barrier, is
-   such an atomic, so an unsupported mode is not slower or less faithful but
-   undefined, and the histogram it produces means nothing.  The banner also
-   reports usesHostPageTables, which separates GH200 ATS (hardware coherence,
-   1) from an x86 box on HMM (software, 0): both take the malloc branch, and
-   they are not the same experiment.
-
-   This knob moves this object class only.  gd_alloc_noise keeps its own
-   dispatch and its own matching free, so forcing a mode here stays a contrast
-   experiment about the tested memory instead of also disarming the
-   interconnect stressor.  The read buffers are not routed here -- device
-   memory, off the race path. */
-static int _shared_pageable(void){
-  int _p = 0;
-  (void)cudaDeviceGetAttribute(&_p, cudaDevAttrPageableMemoryAccess, 0);
-  return _p;
-}
-/* The three shared-memory modes, resolved ONCE.  The cache is not an
-   optimisation: it is what guarantees gd_free_shared frees with the allocator
-   that actually ran.  Re-querying the device could answer differently (a forced
-   mode, a second device) and free a malloc'd pointer with cudaFree -- undefined
-   behaviour that need not fault on the managed dev-box path and would first
-   surface on GH200.  One resolution, one banner, one free rule.  Resolved on the
-   first gd_alloc_shared, which main calls before creating any thread, so the
-   lazy static needs no lock. */
-#define HET_ALLOC_MALLOC  0
-#define HET_ALLOC_MANAGED 1
-#define HET_ALLOC_PINNED  2
-static int _het_dev_attr(cudaDeviceAttr _a){
-  int _v = 0;
-  (void)cudaDeviceGetAttribute(&_v, _a, 0);
-  return _v;
-}
-static const char* _het_alloc_name(int _m){
-  return (_m == HET_ALLOC_MALLOC) ? "malloc"
-       : (_m == HET_ALLOC_MANAGED) ? "managed" : "pinned";
-}
-static int _het_alloc_mode(void){
-  static int _mode = -1;
-  const char *_v;
-  int _pg, _ht, _cma;
-  if (_mode >= 0) return _mode;
-  _v = getenv("HET_ALLOC");
-  _pg  = _shared_pageable();
-  _ht  = _het_dev_attr(cudaDevAttrPageableMemoryAccessUsesHostPageTables);
-  _cma = _het_dev_attr(cudaDevAttrConcurrentManagedAccess);
-  if (_v == NULL || *_v == '\0' || strcmp(_v, "auto") == 0) {
-    _mode = _pg ? HET_ALLOC_MALLOC : HET_ALLOC_MANAGED;
-  } else if (strcmp(_v, "malloc") == 0) {
-    _mode = HET_ALLOC_MALLOC;
-  } else if (strcmp(_v, "managed") == 0) {
-    _mode = HET_ALLOC_MANAGED;
-  } else if (strcmp(_v, "pinned") == 0) {
-    _mode = HET_ALLOC_PINNED;
-  } else {
-    fprintf(stderr,
-            "HetLitmus FATAL: HET_ALLOC=\"%s\" is not a shared-memory mode.  Use "
-            "auto (or unset), malloc, managed or pinned.  There is deliberately NO "
-            "fallback to auto: a typo that silently selected a different allocator "
-            "would silently select a different experiment.\n", _v);
-    exit(2);
-  }
-  /* The banner precedes the guards ON PURPOSE -- a FATAL below is only actionable
-     if the attributes that caused it are already in the log. */
-  printf("HetLitmus: shared-mem mode=%s (HET_ALLOC=%s pageableMemoryAccess=%d "
-         "usesHostPageTables=%d concurrentManagedAccess=%d)\n",
-         _het_alloc_name(_mode), (_v != NULL && *_v != '\0') ? _v : "unset",
-         _pg, _ht, _cma);
-  fflush(stdout);
-  if (_mode == HET_ALLOC_MALLOC && !_pg) {
-    fprintf(stderr,
-            "HetLitmus FATAL: HET_ALLOC=malloc but this device reports "
-            "cudaDevAttrPageableMemoryAccess=0, so it cannot address a system "
-            "malloc() pointer at all, and a system-scope atomic on one is not "
-            "atomic.  Use HET_ALLOC=managed (needs concurrentManagedAccess=1) or "
-            "HET_ALLOC=pinned.\n");
-    exit(2);
-  }
-  if (_mode == HET_ALLOC_MANAGED && !_cma) {
-    fprintf(stderr,
-            "HetLitmus FATAL: this run would use managed memory, but the device "
-            "reports cudaDevAttrConcurrentManagedAccess=0: the CPU may not touch a "
-            "managed allocation while the kernel is live (the access faults), and a "
-            "system-scope atomic on it is not atomic.  EVERY heterogeneous test here "
-            "does exactly that, so there is nothing to salvage -- rerun with "
-            "HET_ALLOC=pinned, or on a device that supports concurrent managed "
-            "access.\n");
-    exit(2);
-  }
-  if (_mode == HET_ALLOC_PINNED &&
-      !_het_dev_attr(cudaDevAttrHostNativeAtomicSupported)) {
-    fprintf(stderr,
-            "HetLitmus WARNING: HET_ALLOC=pinned on a device with "
-            "cudaDevAttrHostNativeAtomicSupported=0.  On mapped memory only plain "
-            "naturally-aligned loads/stores of 1/2/4/8/16 bytes are system-scope "
-            "atomic; a read-modify-write is NOT.  The tested accesses are plain "
-            "loads and stores and stand, but the rendezvous BARRIER is a fetch_add "
-            "shared with the CPU, so increments can be lost and the run can hang at "
-            "the barrier.  Use a timeout, and do not read this mode as evidence "
-            "about hardware atomicity.\n");
-  }
-  return _mode;
-}
-/* A placement request the selected mode cannot honour is announced, never
-   swallowed -- same rule as the refused cudaMemAdvise below. */
-static void _het_place_inert(int _m){
-  static int _said = 0;
-  if (HET_PLACE == 0 || _said) return;
-  _said = 1;
-  fprintf(stderr,
-          "HetLitmus WARNING: HET_PLACE=%d but the shared allocator is in %s mode, "
-          "where cudaMemAdvise has no page to advise -- the placement lever is INERT "
-          "for this run and the shared pages are wherever the runtime put them.\n",
-          (int)HET_PLACE, _het_alloc_name(_m));
-}
-/* PLACEMENT -- the first of the two interconnect-stress levers.  Pin the shared
-   pages away from the participant that will read them, so the tested accesses
-   cross NVLink-C2C instead of hitting a local copy.
-   (env-research/Q6-cpu-interconnect-stress.md sec 3.2 steps 1-2.)
-
-   Placement alone does NOT stress the interconnect, and shipping it alone would
-   misreport a run as C2C-stressed: Hopper's L2 caches peer HBM as well as local
-   HBM, so a remote-pinned line that stays L2-resident crosses nothing (Fusco et
-   al., arXiv:2408.11556).  Sustained C2C traffic comes from the noise pair below
-   and from the test's own coherence race; placement tunes the home and the
-   first-touch latency.  Ship both.
-
-   SetPreferredLocation on its own can be undone by the driver's access counters
-   (threshold 256), which migrate a hot page local and silence exactly the traffic
-   this creates, so SetAccessedBy is set on both participants to hold the mapping.
-   Whether that suffices on a given driver is a hardware question
-   (Q6-cpu-interconnect-stress.md; Q8-allocation.md open item 5), so the pin is
-   never assumed to have held -- hence the failure counter below.
-
-   HET_PLACE defaults to 0 (first-touch): that is Bagchi's baseline, and the net
-   effect of pinning is confounded -- it widens the window but slows the loop, and
-   sightings = yield x rate is unmeasured.  Do not promote a non-zero default
-   without hardware evidence.
-
-   A refused cudaMemAdvise is counted, never swallowed: a placement knob that
-   reports "remote" while the pages sat where first touch left them is an inert
-   mechanism claiming to be live.  The counter is declared by the SHARED driver
-   template rather than here, because both renders report it and only the
-   mechanism that bumps it is CUDA-specific. */
-static void _het_place(void* _p, size_t _bytes, int _where){
-  if (_where == 0) return;                  /* first-touch: nothing to advise */
-  int _dev = 0;
-  int _home = (_where == 1) ? _dev : cudaCpuDeviceId;   /* 1 = HBM, 2 = DDR */
-  cudaError_t _e1 = cudaMemAdvise(_p, _bytes, cudaMemAdviseSetPreferredLocation, _home);
-  cudaError_t _e2 = cudaMemAdvise(_p, _bytes, cudaMemAdviseSetAccessedBy, _dev);
-  cudaError_t _e3 = cudaMemAdvise(_p, _bytes, cudaMemAdviseSetAccessedBy, cudaCpuDeviceId);
-  if (_e1 != cudaSuccess || _e2 != cudaSuccess || _e3 != cudaSuccess) {
-    _het_place_failures++;
-    fprintf(stderr,
-            "HetLitmus WARNING: cudaMemAdvise REFUSED (%s / %s / %s) -- HET_PLACE=%d "
-            "did NOT place these pages; they are wherever first touch put them, so "
-            "the tested accesses may never cross C2C.  This run is NOT "
-            "placement-stressed.\n",
-            cudaGetErrorString(_e1), cudaGetErrorString(_e2), cudaGetErrorString(_e3),
-            _where);
-  }
-}
-static void gd_alloc_shared(void** _pp, size_t _bytes){
-  int _m = _het_alloc_mode();
-  if (_m == HET_ALLOC_MALLOC) {
-    *_pp = malloc(_bytes);   /* GH200: ATS, in-place cache-line CHI coherence */
-    _het_place(*_pp, _bytes, HET_PLACE);   /* the placement lever -- see above */
-  } else if (_m == HET_ALLOC_MANAGED) {
-    cudaMallocManaged(_pp, _bytes);   /* dev-box / CI fallback only */
-    /* No placement here BY DESIGN: without pageable-memory access there is no ATS,
-       no C2C and no placement lever at all -- managed memory just page-migrates over
-       PCIe.  Advising it would be a no-op that looked like a knob. */
-    _het_place_inert(_m);
-  } else {
-    /* Mapped page-locked host memory.  cudaHostAllocMapped puts it in the CUDA
-       address space and, under unified addressing, the pointer the kernel uses IS
-       the host pointer -- the guide's stated exception, so no cudaHostGetDevicePointer
-       and no second pointer for the driver to thread through.  Portable so the
-       mapping survives a second context.  Freed with cudaFreeHost, never free(). */
-    cudaError_t _e = cudaHostAlloc(_pp, _bytes,
-                                   cudaHostAllocMapped | cudaHostAllocPortable);
-    if (_e != cudaSuccess || *_pp == NULL) {
-      fprintf(stderr,
-              "HetLitmus FATAL: cudaHostAlloc of %llu bytes failed (%s) -- "
-              "HET_ALLOC=pinned has no shared memory to test on.\n",
-              (unsigned long long)_bytes, cudaGetErrorString(_e));
-      exit(2);
-    }
-    _het_place_inert(_m);
-  }
-}
-static void gd_free_shared(void* _p){
-  /* Cached mode, NOT a re-query: the free must match the allocator that ran. */
-  int _m = _het_alloc_mode();
-  if (_m == HET_ALLOC_MALLOC) { free(_p); }
-  else if (_m == HET_ALLOC_MANAGED) { cudaFree(_p); }
-  else { cudaFreeHost(_p); }
-}
-|ocaml} ;
-      gd_noise_mem_defs =
-        {ocaml|/* THE NOISE BUFFERS -- a FOURTH object class; the four must not be
-   confused:
-
-     shared test vars + barrier -> gd_alloc_shared  (coherent; the property under test)
-     GPU stress scratchpad      -> cudaMalloc       (device-only, disjoint)
-     CPU enemy scratchpad       -> host malloc      (CPU-only, disjoint)
-     noise buffers              -> HERE             (system memory homed on the OTHER
-                                                     PU, so streaming it crosses C2C)
-
-   Fusco et al. (arXiv:2408.11556): a Grace and a Hopper noise kernel each
-   continuously stream-read a large buffer homed on the other unit -- Grace reads
-   HBM, Hopper reads DDR.  BOTH buffers are system-allocated and differ only in
-   where their pages are homed, which is what `_where' selects.
-
-   Returns 0 = placed, 1 = allocated but NOT interconnect-capable (degraded), -1 =
-   failed.  The caller must say which -- a noise buffer that could not be homed
-   remotely generates no cross-device traffic, and a run whose interconnect stressor
-   is inert must never be reported as an interconnect-stressed run. */
-static int gd_alloc_noise(void** _pp, size_t _bytes, int _where){
-  if (!_shared_pageable()) {
-    /* No pageable-memory access: no ATS, no C2C, no placement lever.  Allocate so
-       the plumbing is exercised, but this is NOT interconnect stress, and the
-       degraded return code is what makes the driver say so. */
-    *_pp = NULL;
-    if (cudaMallocManaged(_pp, _bytes) != cudaSuccess || *_pp == NULL) return -1;
-    het_cpu_first_touch(*_pp, _bytes);   /* managed memory is lazily populated too */
-    return 1;
-  }
-  *_pp = malloc(_bytes);
-  if (*_pp == NULL) return -1;
-  int _before = _het_place_failures;
-  /* ADVISE FIRST, then FAULT THE PAGES IN.  Both halves of the order matter: on
-     GH200 first touch is what PLACES the page, so advice afterwards would be
-     advising pages that already have a home; and the touch is not optional,
-     because Linux backs every untouched anonymous page with ONE shared zero page,
-     so streaming an untouched buffer hits a single cache line out of L1 and
-     generates no memory and no C2C traffic while the round counts still look
-     healthy (see het_cpu_first_touch in het_cpu_stress.h). */
-  _het_place(*_pp, _bytes, _where);
-  het_cpu_first_touch(*_pp, _bytes);
-  /* The CPU did the touching, so the pages are now homed on DDR.  For the buffer
-     that is supposed to live on HBM (the one the Grace noise thread streams, so that
-     each of its reads CROSSES C2C) the advice alone will not move them -- it is a
-     hint, and the pages are already resident.  Prefetch them across, and say so if
-     the driver refuses: a "HBM" noise buffer that is really on DDR generates local
-     traffic, not interconnect traffic, and the run is not C2C-stressed. */
-  if (_where == 1) {
-    cudaError_t _e = cudaMemPrefetchAsync(*_pp, _bytes, 0, 0);
-    if (_e == cudaSuccess) _e = cudaDeviceSynchronize();
-    if (_e != cudaSuccess) {
-      _het_place_failures++;
-      fprintf(stderr,
-              "HetLitmus WARNING: cudaMemPrefetchAsync of the HBM noise buffer FAILED "
-              "(%s) -- its pages are still homed where the CPU first touched them "
-              "(DDR), so the Grace noise thread is streaming LOCAL memory and crosses "
-              "no interconnect.  This run is not C2C-stressed on the Grace side.\n",
-              cudaGetErrorString(_e));
-    }
-  }
-  return (_het_place_failures > _before) ? 1 : 0;
-}
-static void gd_free_noise(void* _p){
-  if (_p == NULL) return;
-  if (_shared_pageable()) { free(_p); } else { cudaFree(_p); }
-}
-|ocaml} ;
+      gd_shared_mem_defs = HetPayloads.het_alloc_cuda_inc ;
+      gd_noise_mem_defs = HetPayloads.het_noise_cuda_inc ;
       gd_err_t = "cudaError_t" ;
       gd_success = "cudaSuccess" ;
       gd_errstr = "cudaGetErrorString" ;
@@ -457,68 +168,8 @@ static void gd_free_noise(void* _p){
         "// Shared vars + barrier use gd_alloc_shared: fine-grained hipMallocManaged on\n\
          // MI300A -- the only mode coherent for system-scope CPU<->GPU sync during a\n\
          // live kernel (coarse-grained is visible only at kernel boundary).\n" ;
-      gd_shared_mem_defs =
-        {ocaml|/* Shared litmus vars + barrier use fine-grained coherent memory.
-   hipMallocManaged is fine-grained BY DEFAULT on MI300A -- the only coherence mode
-   usable for system-scope CPU<->GPU synchronisation *while the kernel is live*
-   (coarse-grained memory becomes visible only at a kernel-boundary sync, which
-   would void every heterogeneous test).  Which allocator runs decides what
-   property the harness tests, so this is correctness rather than tuning; see
-   env-research/Q8-allocation.md.  MI300A's unified HBM pool needs no page
-   migration, so no dispatch is required for correctness, and the free matches
-   (hipFree).  A malloc plus HSA_XNACK=1 variant is a runtime-env choice, not a
-   codegen one.  The read buffers are not routed here -- device memory
-   (hipMalloc), off the coherent race path. */
-static void gd_alloc_shared(void** _pp, size_t _bytes){
-  (void)hipMallocManaged(_pp, _bytes);   /* fine-grained by default */
-  /* There is no placement lever on MI300A: one HBM pool shared by the CCD (CPU)
-     and XCD (GPU) chiplets means no LPDDR/HBM split, no first-touch home to
-     choose and nothing to pin.  Its analogue of the interconnect lever is
-     CONTENTION, which the noise pair below supplies when both sides stream the
-     same coherent pool (env-research/Q6-cpu-interconnect-stress.md sec 3.4). */
-}
-static void gd_free_shared(void* _p){
-  (void)hipFree(_p);
-}
-|ocaml} ;
-      gd_noise_mem_defs =
-        {ocaml|/* THE NOISE BUFFERS on MI300A.  Same threads, same streaming, same
-   disjointness; a different mechanism, because the hardware differs.
-
-   On GH200 the noise crosses the interconnect because each buffer is homed on the
-   other processing unit.  MI300A has a single HBM pool, so there is no other
-   memory to home it in and placement does not transfer.  What transfers is
-   CROSS-CHIPLET COHERENCE CONTENTION: both sides hammering the same fine-grained
-   coherent region, over a working set that defeats L2 / Infinity-Cache residency,
-   keeps the coherence protocol bouncing lines between the CCDs and the XCDs.
-
-   Contention is necessary here precisely because caching is allowed here.  On
-   the predecessor MI250X, GPU-side caching of coherent memory is disabled and every
-   remote-coherent access generates fabric traffic for free; on MI300A that
-   no-caching restriction can be lifted, so per-access traffic is not automatic and
-   the lines must be kept moving (Schieffer et al., arXiv:2410.00801).  Corroborated
-   by arXiv:2508.12743, where co-running CPU and GPU atomics on a contended shared
-   array collapse CPU throughput.
-
-   hipMallocManaged is fine-grained by default on MI300A, which is the coherence mode
-   this needs.  `_where' is accepted and ignored: there is no home to select.
-   Returns 0 (there is no placement step that could fail) or -1. */
-static int gd_alloc_noise(void** _pp, size_t _bytes, int _where){
-  (void)_where;
-  *_pp = NULL;
-  if (hipMallocManaged(_pp, _bytes) != hipSuccess || *_pp == NULL) return -1;
-  /* FAULT THE PAGES IN.  Managed memory is lazily populated and an untouched buffer
-     is backed by a single shared zero page, so streaming it would hit one cache
-     line out of L1 and generate no coherence traffic; the contention this render
-     relies on needs those lines to exist before the chiplets can bounce them
-     (see het_cpu_first_touch in het_cpu_stress.h). */
-  het_cpu_first_touch(*_pp, _bytes);
-  return 0;
-}
-static void gd_free_noise(void* _p){
-  if (_p != NULL) (void)hipFree(_p);
-}
-|ocaml} ;
+      gd_shared_mem_defs = HetPayloads.het_alloc_hip_inc ;
+      gd_noise_mem_defs = HetPayloads.het_noise_hip_inc ;
       gd_err_t = "hipError_t" ;
       gd_success = "hipSuccess" ;
       gd_errstr = "hipGetErrorString" ;
@@ -771,89 +422,15 @@ static void gd_free_noise(void* _p){
           let tname = splitted.Splitter.name.Name.name in
           let doc = splitted.Splitter.name in
           let nprocs_total = List.length parsed.MiscParser.prog in
-          (* ==================== the positive-control map ======================
-             For a should-be-FORBIDDEN test T the harness co-runs mu(T), its
-             nearest Allowed grid neighbour, so that `target_count = 0' means "not
-             observed on a demonstrably hot harness" rather than nothing at all
-             (hetlitmus/docs/positive-control.md).
-
-             mu(T) is looked up in tests/het/control-map.csv, which sits next to
-             the input .litmus and is derived from the corpus sources + the oracle
-             by hetlitmus/verify/controlmap.py (gated by `make
-             hetlitmus-controlmap').  It is NOT recomputed here by rewriting T's
-             name: the one-sided grid variants are named for the op THE GPU
-             performs and the GPU's role flips with the device cut, so several
-             `-sys-acquire' cells simply do not exist and a name rewrite would
-             point at a nonexistent test (positive-control.md sec 3).
-
-             With no map no control is named, control_compiled_in stays 0, and
-             het_verdict() returns COLD and says so; it never quietly proceeds. *)
+          (* The positive-control map: mu(T) and the canary to co-run, and
+             the oracle class that decides what a null is worth
+             (litmus/hetControlMap.ml). *)
           let src_dir = Filename.dirname src_name in
-          let control_of, canary_of, oracle_of, canary_self_of =
-            let tbl = Hashtbl.create 512 in
-            let f = Filename.concat src_dir "control-map.csv" in
-            (try
-               let ch = open_in f in
-               (try
-                  while true do
-                    let line = input_line ch in
-                    if String.length line > 0 && line.[0] <> '#' then
-                      match String.split_on_char ',' line with
-                      (* Field 2, [exp], is the ORACLE VERDICT, and it must be
-                         bound: it is what lets het_verdict() tell a
-                         should-be-forbidden test from an oracle-Allowed one, so
-                         that a sighting is only ever framed as a refutation where
-                         the model actually forbids the outcome. *)
-                      | t :: exp :: mu :: _muexp :: _rule :: _alt :: _rlx :: can :: _
-                           when t <> "Test" ->
-                         Hashtbl.replace tbl t (exp, mu, can)
-                      | _ -> ()
-                  done
-                with End_of_file -> ()) ;
-               close_in ch
-             with Sys_error _ ->
-               (* Say it out loud: the harness does fail closed without the map
-                  (control_compiled_in stays 0, so het_verdict returns COLD), but
-                  a control nobody can name is a control nobody notices is
-                  missing. *)
-               if O.verbose >= 0 then
-                 Printf.eprintf
-                   "HetLitmus WARNING: no control-map.csv next to %s -- this \
-                    harness names NO positive control, so every null it produces \
-                    is uninterpretable (het_verdict will return COLD-INVALID).  \
-                    Regenerate with hetlitmus/verify/controlmap.py --emit.\n%!"
-                   src_name) ;
-            (fun t -> match Hashtbl.find_opt tbl t with
-                      | Some (_,mu,_) when mu <> "-" -> Some mu
-                      | _ -> None),
-            (* A `self' row is NOT a canary to co-run: those tests ARE the Layer-B
-               canary and cannot co-run themselves.  They are still NAMED below,
-               but no canary instance is built, so HET_CANARY_COMPILED_IN is 0 and
-               het_verdict() calls their nulls COLD -- which is what "the most
-               observable het shape did not fire" means. *)
-            (fun t -> match Hashtbl.find_opt tbl t with
-                      | Some (_,_,can) when can <> "-" && can <> "self" -> Some can
-                      | _ -> None),
-            (* The oracle class -> the C enum in het_verdict.h.  A test absent from
-               the map (or a map that would not open) yields ORACLE_UNSET, which
-               het_verdict() fails closed on and claims nothing for.  It must never
-               default to a class: whichever it picked would be a lie about the
-               other two. *)
-            (fun t -> match Hashtbl.find_opt tbl t with
-                      | Some ("Disallowed",_,_) -> "ORACLE_DISALLOWED"
-                      | Some ("Allowed",_,_)    -> "ORACLE_ALLOWED"
-                      | Some ("NO-ORACLE",_,_)  -> "ORACLE_NONE"
-                      | _                       -> "ORACLE_UNSET"),
-            (* The `self' rows name themselves.  het_verdict.h separates the
-               designed case (this test IS the canary) from the bug case (the
-               canary went missing) by comparing canary_name with test_name, so the
-               name must be honest even where no canary instance is built. *)
-            (fun t -> match Hashtbl.find_opt tbl t with
-                      | Some (_,_,"self") -> true
-                      | _ -> false) in
-          let mu_name = control_of tname
-          and canary_name = canary_of tname
-          and oracle = oracle_of tname in
+          let cmap =
+            HetControlMap.load ~verbose:O.verbose ~dir:src_dir ~src_name in
+          let mu_name = HetControlMap.control_of cmap tname
+          and canary_name = HetControlMap.canary_of cmap tname
+          and oracle = HetControlMap.oracle_of cmap tname in
           (* What goes in HET_CANARY_NAME / _rec.canary_name.  A name is NOT a
              co-run signal -- the map names a canary for every test, including the
              ones that are the canary.  HET_CANARY_COMPILED_IN, set from the
@@ -861,7 +438,9 @@ static void gd_free_noise(void* _p){
           let canary_named =
             match canary_name with
             | Some _ as c -> c
-            | None -> if canary_self_of tname then Some tname else None in
+            | None ->
+               if HetControlMap.is_self_canary cmap tname then Some tname
+               else None in
 
           (* ============ derive ONE instance from a parsed het test =============
              A function of (role, prefix, K-macro, name, parse), so one derivation
@@ -2046,372 +1625,13 @@ static void gd_free_noise(void* _p){
                   i.i_cpus)
               insts ;
             s "#endif\n" in
-          (* ---- <tname>.{cu,hip} : GPU kernel + driver (per dialect) ---- *)
-          let dump_gpu_file dialect ch =
-            let s = output_string ch in
-            let buf_bytes = "sizeof(uint64_t)*SIZE_OF_TEST" in
-            let gpu_bufs i =
-              List.filter (fun (_,_,_,dev,_) -> dev = `Gpu) i.i_bufs in
-            s (Printf.sprintf
-                 "// HetLitmus GPU kernel + driver for %s (%s dialect).\n"
-                 tname dialect.gd_name) ;
-            s "// P(gpu) run as a GPU kernel; P(cpu) as a pthread (see _cpu.c).\n" ;
-            s "// Stores carry the tag K*(_n+1)+mu; loads are recorded into\n" ;
-            s "// per-iteration read buffers; a post-run scan decodes rf/init edges,\n" ;
-            s "// and observer ws-edges, into a het_obs_record.\n" ;
-            if co_run then begin
-              s "//\n// THE POSITIVE CONTROL IS CO-RUNNING IN THIS HARNESS.\n" ;
-              s (Printf.sprintf
-                   "// %d het instances share this launch, this stress config and this\n"
-                   (List.length insts)) ;
-              s "// C2C path, on disjoint cache-line-padded locations:\n" ;
-              List.iter
-                (fun i ->
-                  s (Printf.sprintf "//   %-6s %-22s prefix %-5s K=%d  %s\n"
-                       (match i.i_role with
-                        | RTest -> "T" | RMu -> "mu(T)" | RCanary -> "canary")
-                       i.i_name i.i_pre i.i_k (role_note i.i_role)))
-                insts ;
-              if has_mu then begin
-                s "// A null on T means \"not observed on a harness that demonstrably\n" ;
-                s "// produced the very interleaving T's ordering is claimed to prevent\"\n" ;
-                s "// -- and NOTHING AT ALL if the control did not fire (het_verdict.h).\n"
-              end else begin
-                (* No forbidden cycle means no mutant, so this harness carries the
-                   canary only. *)
-                s "// This test is NOT should-be-forbidden, so it has no minimal mutant\n" ;
-                s "// (Layer A) -- a mutant presupposes a forbidden cycle to weaken.  It\n" ;
-                s "// co-runs the Layer-B canary ONLY, which is what makes a\n" ;
-                s "// non-observation here mean \"permitted, but we could not expose it\n" ;
-                s "// on a demonstrably HOT harness\" instead of nothing at all.\n"
-              end
-            end ;
-            s dialect.gd_shared_mem_note ;
-            s "// a system-scope atomic barrier rendezvouses both sides.\n" ;
-            s (Printf.sprintf
-                 "// Compile-only by default (%s -c); comp.sh cuda-link / make cuda-bin\n"
-                 (if dialect.gd_ext = "cu" then "nvcc" else "hipcc")) ;
-            s "// link the runnable binary, guarded by uname -m.  DO NOT EDIT.\n" ;
-            s (dialect.gd_runtime_include ^ "\n") ;
-            s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
-            s "#include <cstring>\n#include <cmath>\n" ;
-            s "#include <pthread.h>\n#include <inttypes.h>\n" ;
-            s "#include \"het_stress.cuh\"\n" ;
-            s "#include \"het_cpu_stress.h\"\n" ;
-            s "#include \"het_verdict.h\"\n" ;
-            s "extern \"C\" {\n" ;
-            s "#include \"outs.h\"\n" ;
-            List.iter
-              (fun i ->
-                List.iter
-                  (fun cp ->
-                    s (Printf.sprintf "  void het_run_%sP%d(%s);\n"
-                         i.i_pre cp.cp_proc (cpu_sig i cp)))
-                  i.i_cpus)
-              insts ;
-            s "}\n" ;
-            s {ocaml|extern "C" void *malloc_check(size_t sz){
-  void *p = malloc(sz);
-  if (p == NULL) { fprintf(stderr,"out of memory\n"); exit(2); }
-  return p;
-}
-|ocaml} ;
-            s (Printf.sprintf "\n#define NPART %d\n" npart) ;
-            (* ---- THE POSITIVE CONTROL: TWO LAYERS, TWO FLAGS.
-               0 means the corresponding *_target_count is structurally zero and
-               carries no information; 1 means that layer is genuinely co-running in
-               this launch, under this stress, on this C2C path, so a count may be
-               read against it.  Neither may ever be 1 without the co-run behind it,
-               or a "Never" silently becomes a CREDIBLE "Never" -- an unfalsifiable
-               null reading as confirmation of the model.  Both come from the
-               instance population, so they cannot drift.
+          let buf_bytes = "sizeof(uint64_t)*SIZE_OF_TEST" in
+          let gpu_bufs i =
+            List.filter (fun (_,_,_,dev,_) -> dev = `Gpu) i.i_bufs in
 
-               They stay separate because "a canary is co-running" is a weaker claim
-               than "the mutant OF THIS TEST is co-running", and only the second
-               licenses a credible null; one bit cannot carry both without lying
-               about one (hetlitmus/docs/positive-control.md sec 11). *)
-            s (Printf.sprintf "#define HET_CONTROL_COMPILED_IN %d\n"
-                 (if has_mu then 1 else 0)) ;
-            s (Printf.sprintf "#define HET_CANARY_COMPILED_IN %d\n"
-                 (if has_canary then 1 else 0)) ;
-            (match mu_name with
-             | Some m ->
-                s (Printf.sprintf "#define HET_MU_NAME \"%s\"      /* Layer A: the minimal mutant */\n" m)
-             | None -> s "#define HET_MU_NAME NULL\n") ;
-            (* A test that IS the canary names itself, which is how het_verdict.h
-               separates that designed case from a canary that went missing. *)
-            (match canary_named with
-             | Some c ->
-                s (Printf.sprintf "#define HET_CANARY_NAME \"%s\"  /* Layer B: the universal het-MP floor */\n" c)
-             | None -> s "#define HET_CANARY_NAME NULL\n") ;
-            s (Printf.sprintf "#define SIZE_OF_TEST %d\n" Cfg.size) ;
-            s (Printf.sprintf "#define NUMBER_OF_RUN %d\n" Cfg.runs) ;
-            (* One K macro per instance, never one per translation unit; the co-run
-               banner above says what a shared K would decode wrongly. *)
-            List.iter
-              (fun i ->
-                if co_run then
-                  s (Printf.sprintf "#define %-9s %d   /* %s (%s) */\n"
-                       i.i_kmac i.i_k i.i_name
-                       (match i.i_role with
-                        | RTest -> "T" | RMu -> "mu(T)" | RCanary -> "canary"))
-                else s (Printf.sprintf "#define %s %d\n" i.i_kmac i.i_k))
-              insts ;
-            s "#ifndef HET_WINDOW\n#define HET_WINDOW 8\n#endif\n" ;
-            s "#ifndef HET_EXHAUSTIVE_MAX\n#define HET_EXHAUSTIVE_MAX 4096\n#endif\n" ;
-            if co_run then begin
-              s "\n/* One cache line per shared location, so the co-running instances\n\
-                 \   never share a coherence unit.  Disjoint ADDRESSES are not enough:\n\
-                 \   two variables on one line are one coherence unit, and the control's\n\
-                 \   traffic would then drag the tested line around -- perturbing the\n\
-                 \   very test it exists to vouch for.  128 B covers both targets\n\
-                 \   (64 B CPU-side, 128 B GPU-side cache lines). */\n" ;
-              s "#ifndef HET_CACHE_LINE\n#define HET_CACHE_LINE 128\n#endif\n"
-            end ;
-            s "\n" ;
-            s (Printf.sprintf "#ifndef HET_BLOCK_DIM\n#define HET_BLOCK_DIM %d\n#endif\n"
-                 block_dim) ;
-            (* Sums over the instances, because each one's count is shape-dependent
-               (S and R carry an observer lane, MP/SB/LB do not). *)
-            s (Printf.sprintf "#define HET_TEST_BLOCKS %d\n" test_blocks) ;
-            s (Printf.sprintf "#define HET_GPU_LANES %d\n" gpu_lanes) ;
-            s (Printf.sprintf "#define HET_SPIN_LANES %d\n\n" spin_lanes) ;
-            (* _decode_value (T only): a store tag -> the ORIGINAL value that write
-               carried.  Keyed on T's OWN K. *)
-            List.iter (fun i -> s i.i_decode) insts ;
-            (* ---------------------------- the kernel ------------------------- *)
-            let kparams =
-              String.concat ", "
-                (List.concat_map
-                   (fun i ->
-                     List.map (fun g -> Printf.sprintf "uint64_t* %s" (gsym i g))
-                       i.i_gpu_globals
-                     @ List.map (fun (_,_,name,_,_) -> Printf.sprintf "uint64_t* %s" name)
-                         (gpu_bufs i)
-                     @ List.map
-                         (fun l -> Printf.sprintf "uint64_t* %s" (obsG_of i.i_pre l))
-                         i.i_obs_locs)
-                   insts
-                 @ ["int* barrier"]
-                 @ ["uint32_t* _scratch" ; "uint32_t* _scratch_loc" ;
-                    "uint32_t* _spin_bar" ; "uint32_t* _gpu_done" ;
-                    "uint32_t* _stress_tally" ;
-                    "uint32_t _seed" ; "uint32_t _pre_pat" ; "uint32_t _mem_pat" ;
-                    "uint64_t* _noise_ddr" ; "uint64_t _noise_words" ;
-                    "uint32_t _noise_blocks" ; "uint32_t _noise_chunk" ;
-                    "uint32_t _noise_stride"]) in
-            s (Printf.sprintf "__global__ void litmus_%s(%s) {\n" id kparams) ;
-            s "  het_rng_t _rng = het_rng_init(_seed, blockIdx.x * blockDim.x + threadIdx.x);\n" ;
-            List.iter
-              (fun i ->
-                let bb = base_of i in
-                (* the GPU TEST lanes of this instance *)
-                List.iter
-                  (fun gp ->
-                    s (Printf.sprintf "  if (blockIdx.x == %d && threadIdx.x == %d) {\n"
-                         (bb + gp.gp_blk) gp.gp_lane) ;
-                    (* Bind this instance's object to the LISA name the shared GPU
-                       lowering emits; see the co-run banner.  A single-instance
-                       harness has prefix "" and emits no alias. *)
-                    if co_run then
-                      List.iter
-                        (fun g ->
-                          s (Printf.sprintf
-                               "    uint64_t* %s = %s;  /* this instance's %s */\n"
-                               g (gsym i g) g))
-                        i.i_gpu_globals ;
-                    s (dialect.gd_bar "    " "barrier") ;
-                    List.iter (fun n -> s (Printf.sprintf "    uint64_t r%d = 0;\n" n))
-                      gp.gp_regs ;
-                    s "    uint32_t _nb = 0;\n" ;
-                    (* FAITHFULNESS, do not remove: SIZE_OF_TEST is a compile-time
-                       constant, so without this pragma nvcc unrolls the loop and the
-                       emitted PTX carries many copies of the tested instructions --
-                       a different program microarchitecturally, and one the L0
-                       faithfulness gate rejects.  The observer loop below needs the
-                       same pragma for the same reason. *)
-                    s "    #pragma unroll 1\n" ;
-                    s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
-                    s "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n" ;
-                    s "        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally);\n" ;
-                    (* The barrier roll is drawn from a LANE-INDEPENDENT stream, keyed
-                       by the iteration rather than the lane, so every test lane in
-                       every co-running instance decides the same way for iteration
-                       _n.  The barrier is then taken by all the spin lanes or none,
-                       each contributing one increment, and the counter reaches
-                       _nb*HET_SPIN_LANES exactly when the last lane arrives.  A
-                       per-lane roll makes that limit unreachable after the first
-                       skipped roll, and the spin degrades into a delay loop that
-                       releases on its deadlock cap. *)
-                    s "      het_rng_t _brng = het_rng_init(_seed ^ 0x9e3779b9u, (uint32_t)_n);\n" ;
-                    s "      if (het_rng_pct(&_brng, HET_BARRIER_PCT)) {\n" ;
-                    s "        _nb++;\n" ;
-                    s "        het_spin(_spin_bar, _nb * HET_SPIN_LANES, _stress_tally);\n" ;
-                    s "      }\n" ;
-                    let st_ctr = ref 0 in
-                    List.iter
-                      (fun instr ->
-                        let tag = match instr with
-                          | BellBase.Pst _ ->
-                             let si = !st_ctr in incr st_ctr ;
-                             Some (het_iter, i.i_k, i.i_store_mu gp.gp_proc si)
-                          | _ -> Some (het_iter, i.i_k, 0) in
-                        dialect.gd_dump_instr ch ~tag "      " instr)
-                      gp.gp_instrs ;
-                    List.iteri
-                      (fun li n ->
-                        s (Printf.sprintf "      %s[_n] = (uint64_t)r%d;\n"
-                             (buf_name_of i.i_pre gp.gp_proc li) n))
-                      gp.gp_regs ;
-                    s "    }\n" ;
-                    s "    het_scratch_bump(_gpu_done);\n" ;
-                    s "  }\n")
-                  i.i_gpus ;
-                (* this instance's observer lane (block bb + i_nblocks) *)
-                if i.i_obs then begin
-                  s (Printf.sprintf
-                       "  if (blockIdx.x == %d && threadIdx.x == 0) {\n"
-                       (bb + i.i_nblocks)) ;
-                  s (dialect.gd_bar "    " "barrier") ;
-                  s "    #pragma unroll 1\n" ;
-                  s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
-                  List.iter
-                    (fun l ->
-                      s (Printf.sprintf "      %s[_n] = %s;\n"
-                           (obsG_of i.i_pre l) (dialect.gd_sys_load_u64 (gsym i l))))
-                    i.i_obs_locs ;
-                  s "    }\n" ;
-                  s "    het_scratch_bump(_gpu_done);\n" ;
-                  s "  }\n"
-                end)
-              insts ;
-            (* =============== the pure stressing workgroups =================== *)
-            s "  if (blockIdx.x >= HET_TEST_BLOCKS) {\n" ;
-            s "    if (_noise_ddr != NULL && blockIdx.x < HET_TEST_BLOCKS + _noise_blocks) {\n" ;
-            s "      volatile const uint64_t* _nb = (volatile const uint64_t*)_noise_ddr;\n" ;
-            s "      uint64_t _t = (uint64_t)(blockIdx.x - HET_TEST_BLOCKS) * blockDim.x + threadIdx.x;\n" ;
-            s "      uint64_t _step = (uint64_t)_noise_blocks * blockDim.x * _noise_stride;\n" ;
-            s "      uint64_t _i = (_noise_words > 0) ? (_t % _noise_words) : 0;\n" ;
-            s "      uint64_t _acc = 0;\n" ;
-            s "      uint32_t _r = 0;\n" ;
-            s "      for (;\n\
-               \           _r < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;\n\
-               \           ++_r) {\n" ;
-            s "        for (uint32_t _c = 0; _c < _noise_chunk; ++_c) {\n" ;
-            s "          _acc += _nb[_i];\n" ;
-            s "          _i += _step;\n" ;
-            s "          if (_i >= _noise_words) _i = (_noise_words > 0) ? (_i % _noise_words) : 0;\n" ;
-            s "        }\n" ;
-            s "      }\n" ;
-            s "      if (_r > 0) het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);\n" ;
-            s "      het_scratch_max(&_stress_tally[HET_TALLY_NOISE_ROUNDS], _r);\n" ;
-            s "      if (_acc == 0xFFFFFFFFFFFFFFFFull)\n" ;
-            s "        het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);  /* sink: force _acc to escape */\n" ;
-            s "    } else {\n" ;
-            s "    uint32_t _s = 0;\n" ;
-            s "    for (;\n\
-               \         _s < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;\n\
-               \         ++_s) {\n" ;
-            s "      if (het_rng_pct(&_rng, HET_MEM_STRESS_PCT))\n" ;
-            s "        het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally);\n" ;
-            s "    }\n" ;
-            s "    if (_s >= HET_STRESS_MAX_ROUNDS)\n" ;
-            s "      het_scratch_bump(&_stress_tally[HET_TALLY_TRUNC]);\n" ;
-            s "    }\n" ;
-            s "  }\n" ;
-            s "}\n\n" ;
-            (* ---------------- CPU pthread wrappers, per instance -------------- *)
-            List.iter
-              (fun i ->
-                List.iter
-                  (fun cp ->
-                    let proc = cp.cp_proc in
-                    let addr = cpu_addr_u64 cp and bufs = cpu_bufs i cp in
-                    s (Printf.sprintf "struct cpu_args_%sP%d {\n" i.i_pre proc) ;
-                    List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) addr ;
-                    s "  int* barrier;\n" ;
-                    List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) bufs ;
-                    s "  int _core; uint32_t _seed; het_cpu_tally* _tally;\n" ;
-                    s "};\n" ;
-                    s (Printf.sprintf "static void* cpu_thread_%sP%d(void* _a) {\n"
-                         i.i_pre proc) ;
-                    s (Printf.sprintf "  cpu_args_%sP%d* a = (cpu_args_%sP%d*)_a;\n"
-                         i.i_pre proc i.i_pre proc) ;
-                    s "  het_cpu_affinity(a->_core, a->_tally);\n" ;
-                    let npl = List.length addr in
-                    if npl > 0 then begin
-                      s (Printf.sprintf "  void* const _pl[%d] = { %s };\n" npl
-                           (String.concat ", "
-                              (List.map (fun (_,n) -> Printf.sprintf "(void*)a->%s" n)
-                                 addr))) ;
-                      s (Printf.sprintf
-                           "  uint32_t _plrng = het_cpu_rng_init(a->_seed, %du);\n" proc) ;
-                      s "  uint64_t _plops = 0;\n"
-                    end ;
-                    s (dialect.gd_bar "  " "a->barrier") ;
-                    let call_args =
-                      String.concat ","
-                        (List.map (fun (_,a) -> "a->"^a) (addr @ bufs) @ ["_n"]) in
-                    s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
-                    if npl > 0 then
-                      s (Printf.sprintf
-                           "    _plops += het_cpu_preload(_pl, %d, &_plrng, HET_CPU_PRELOAD_PCT);\n"
-                           npl) ;
-                    s (Printf.sprintf "    het_run_%sP%d(%s);\n" i.i_pre proc call_args) ;
-                    s "  }\n" ;
-                    if npl > 0 then
-                      s "  __atomic_fetch_add(&a->_tally->preload_ops, _plops, __ATOMIC_RELAXED);\n" ;
-                    s "  return NULL;\n}\n\n")
-                  i.i_cpus ;
-                (* this instance's CPU observer pthread *)
-                if i.i_obs then begin
-                  s (Printf.sprintf "struct %scpu_obs_args {\n" i.i_pre) ;
-                  (* The OBSERVED shared locations are `volatile const' so that the
-                     observer's per-iteration reads cannot be hoisted out of the
-                     perpetual loop at -O2 -- the same treatment the noise buffers
-                     get, and what the GPU-side atomic observer gets structurally.
-                     A plain deref, never written on this thread, is hoisted to one
-                     broadcast load: the observer would then record a single value N
-                     times, pinning observer_unique_count at 1 and leaving a
-                     store-only test's only recovery channel inert.  The
-                     non-observed globals are not dereferenced here and stay plain. *)
-                  List.iter
-                    (fun l ->
-                      let ty =
-                        if List.mem l i.i_obs_locs
-                        then "volatile const uint64_t*" else "uint64_t*" in
-                      s (Printf.sprintf "  %s %s;\n" ty l))
-                    i.i_all_globals ;
-                  s "  int* barrier;\n" ;
-                  List.iter
-                    (fun l -> s (Printf.sprintf "  uint64_t* %s;\n" (obsC_of "" l)))
-                    i.i_obs_locs ;
-                  s "  int _core; het_cpu_tally* _tally;\n" ;
-                  s "};\n" ;
-                  s (Printf.sprintf "static void* %scpu_obs_thread(void* _a) {\n" i.i_pre) ;
-                  s (Printf.sprintf "  %scpu_obs_args* a = (%scpu_obs_args*)_a;\n"
-                       i.i_pre i.i_pre) ;
-                  s "  het_cpu_affinity(a->_core, a->_tally);\n" ;
-                  s (dialect.gd_bar "  " "a->barrier") ;
-                  s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
-                  List.iter
-                    (fun l ->
-                      s (Printf.sprintf "    a->%s[_n] = *a->%s;\n" (obsC_of "" l) l))
-                    i.i_obs_locs ;
-                  s "  }\n  return NULL;\n}\n\n"
-                end)
-              insts ;
-            (* outcome labels + decoded-outcome dump callback (T only) *)
-            List.iter (fun i -> s i.i_labels) insts ;
-            s "/* Placement refusals.  Incremented only where placement EXISTS (the\n\
-               \   CUDA/GH200 render); stays 0 on the HIP/MI300A render, which has a\n\
-               \   single HBM pool and therefore nothing to place. */\n" ;
-            s "static int _het_place_failures = 0;\n\n" ;
-            s dialect.gd_shared_mem_defs ;
-            s "\n" ;
-            s dialect.gd_noise_mem_defs ;
-            s "\n" ;
-            (* ------------------------------ driver --------------------------- *)
+          (* ---- the emitted main(): allocation, launch, the run loop,
+                 the recovery scan and teardown ---- *)
+          let dump_gpu_main dialect s =
             s "int main(void){\n" ;
             (* Shared litmus vars + barrier, always through gd_alloc_shared.  A
                co-run harness carves them out of ONE arena, one cache line apart:
@@ -2785,21 +2005,6 @@ static void gd_free_noise(void* _p){
             s "      fprintf(stderr, \"HetLitmus stress: spins=%llu rendezvous=%llu cap=%llu (%.1f%% rendezvous) do_stress_rounds=%u\\n\",\n\
                \              _spins, _rdv, _cap, _spins ? 100.0*(double)_rdv/(double)_spins : 0.0,\n\
                \              _stress_tally_h[HET_TALLY_STRESS_ROUNDS]);\n" ;
-            s "      if (_spins && _rdv * 2 < _spins)\n" ;
-            s "        fprintf(stderr, \"HetLitmus WARNING: the device-scope window-opener released on the 1024-spin DEADLOCK CAP in %.1f%% of spins -- it is aligning the GPU test lanes weakly or not at all (expect ~0%% cap on a healthy run; see het_stress.cuh het_spin)\\n\",\n\
-               \                100.0*(double)_cap/(double)_spins);\n" ;
-            s "      if (_stress_tally_h[HET_TALLY_TRUNC])\n" ;
-            s "        fprintf(stderr, \"HetLitmus WARNING: %u stress lane(s) hit HET_STRESS_MAX_ROUNDS -- stress STOPPED while tested lanes were still running.  This run is NOT a stressed run and its non-observations are not comparable with one.\\n\",\n\
-               \                _stress_tally_h[HET_TALLY_TRUNC]);\n" ;
-            (* het_do_stress carries a runtime tally, so a GPU scratchpad layer that
-               never EXECUTED is visible here.  stresscheck.py proves structurally
-               that its accesses survive into the PTX; this proves they ran.  Neither
-               alone suffices -- a stress layer can be present in the source, absent
-               from the PTX, and green on every structural gate. *)
-            s "      if ((HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0)\n\
-               \          && _stress_tally_h[HET_TALLY_STRESS_ROUNDS] == 0)\n" ;
-            s "        fprintf(stderr, \"HetLitmus WARNING: the GPU scratchpad stress was REQUESTED (pre=%d%% mem=%d%%) but het_do_stress completed ZERO rounds -- the layer did NOT run.  Its non-observations are not those of a stressed run.\\n\",\n\
-               \                (int)HET_PRE_STRESS_PCT, (int)HET_MEM_STRESS_PCT);\n" ;
             s "    }\n" ;
             s "    {\n" ;
             s "      unsigned long long _er = _ct.enemy_rounds;\n" ;
@@ -2814,8 +2019,6 @@ static void gd_free_noise(void* _p){
             s "        fprintf(stderr, \"HetLitmus WARNING: %d CPU enemy thread(s) were spawned but completed ZERO rounds -- the CPU-side stress did NOT run.  Its non-observations are not those of a CPU-stressed run.\\n\", _nEnemy);\n" ;
             s "      if (HET_CPU_PRELOAD_PCT > 0 && _pl == 0)\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: HET_CPU_PRELOAD_PCT=%d but ZERO preload hints were issued -- the M3 incantation is INERT (this host may have no cache primitives; see het_cpu_stress.h HET_CPU_PRELOAD_LIVE).\\n\", (int)HET_CPU_PRELOAD_PCT);\n" ;
-            s "      if (HET_NOISE_CPU && _noise_cpu_on && _nc == 0)\n" ;
-            s "        fprintf(stderr, \"HetLitmus WARNING: the Grace noise thread completed ZERO rounds -- the CPU half of the C2C noise did NOT run.\\n\");\n" ;
             s "      if (_noise_blocks > 0 && _ng == 0)\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: %u Hopper noise block(s) were launched but NONE completed a round -- the GPU half of the C2C noise did NOT run.  This run is not interconnect-stressed.\\n\", _noise_blocks);\n" ;
             s "      if (_ct.aff_failures)\n" ;
@@ -2973,6 +2176,370 @@ static void gd_free_noise(void* _p){
             s "  gd_free_noise(_noise_ddr);\n" ;
             s "  gd_free_noise(_noise_hbm);\n" ;
             s "  return 0;\n}\n" in
+
+          (* ---- <tname>.{cu,hip} : GPU kernel + driver (per dialect) ---- *)
+          let dump_gpu_file dialect ch =
+            let s = output_string ch in
+            s (Printf.sprintf
+                 "// HetLitmus GPU kernel + driver for %s (%s dialect).\n"
+                 tname dialect.gd_name) ;
+            s "// P(gpu) run as a GPU kernel; P(cpu) as a pthread (see _cpu.c).\n" ;
+            s "// Stores carry the tag K*(_n+1)+mu; loads are recorded into\n" ;
+            s "// per-iteration read buffers; a post-run scan decodes rf/init edges,\n" ;
+            s "// and observer ws-edges, into a het_obs_record.\n" ;
+            if co_run then begin
+              s "//\n// THE POSITIVE CONTROL IS CO-RUNNING IN THIS HARNESS.\n" ;
+              s (Printf.sprintf
+                   "// %d het instances share this launch, this stress config and this\n"
+                   (List.length insts)) ;
+              s "// C2C path, on disjoint cache-line-padded locations:\n" ;
+              List.iter
+                (fun i ->
+                  s (Printf.sprintf "//   %-6s %-22s prefix %-5s K=%d  %s\n"
+                       (match i.i_role with
+                        | RTest -> "T" | RMu -> "mu(T)" | RCanary -> "canary")
+                       i.i_name i.i_pre i.i_k (role_note i.i_role)))
+                insts ;
+              if has_mu then begin
+                s "// A null on T means \"not observed on a harness that demonstrably\n" ;
+                s "// produced the very interleaving T's ordering is claimed to prevent\"\n" ;
+                s "// -- and NOTHING AT ALL if the control did not fire (het_verdict.h).\n"
+              end else begin
+                (* No forbidden cycle means no mutant, so this harness carries the
+                   canary only. *)
+                s "// This test is NOT should-be-forbidden, so it has no minimal mutant\n" ;
+                s "// (Layer A) -- a mutant presupposes a forbidden cycle to weaken.  It\n" ;
+                s "// co-runs the Layer-B canary ONLY, which is what makes a\n" ;
+                s "// non-observation here mean \"permitted, but we could not expose it\n" ;
+                s "// on a demonstrably HOT harness\" instead of nothing at all.\n"
+              end
+            end ;
+            s dialect.gd_shared_mem_note ;
+            s "// a system-scope atomic barrier rendezvouses both sides.\n" ;
+            s (Printf.sprintf
+                 "// Compile-only by default (%s -c); comp.sh cuda-link / make cuda-bin\n"
+                 (if dialect.gd_ext = "cu" then "nvcc" else "hipcc")) ;
+            s "// link the runnable binary, guarded by uname -m.  DO NOT EDIT.\n" ;
+            s (dialect.gd_runtime_include ^ "\n") ;
+            s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
+            s "#include <cstring>\n#include <cmath>\n" ;
+            s "#include <pthread.h>\n#include <inttypes.h>\n" ;
+            s "#include \"het_stress.cuh\"\n" ;
+            s "#include \"het_cpu_stress.h\"\n" ;
+            s "#include \"het_verdict.h\"\n" ;
+            s "extern \"C\" {\n" ;
+            s "#include \"outs.h\"\n" ;
+            List.iter
+              (fun i ->
+                List.iter
+                  (fun cp ->
+                    s (Printf.sprintf "  void het_run_%sP%d(%s);\n"
+                         i.i_pre cp.cp_proc (cpu_sig i cp)))
+                  i.i_cpus)
+              insts ;
+            s "}\n" ;
+            s {ocaml|extern "C" void *malloc_check(size_t sz){
+  void *p = malloc(sz);
+  if (p == NULL) { fprintf(stderr,"out of memory\n"); exit(2); }
+  return p;
+}
+|ocaml} ;
+            s (Printf.sprintf "\n#define NPART %d\n" npart) ;
+            (* ---- THE POSITIVE CONTROL: TWO LAYERS, TWO FLAGS.
+               0 means the corresponding *_target_count is structurally zero and
+               carries no information; 1 means that layer is genuinely co-running in
+               this launch, under this stress, on this C2C path, so a count may be
+               read against it.  Neither may ever be 1 without the co-run behind it,
+               or a "Never" silently becomes a CREDIBLE "Never" -- an unfalsifiable
+               null reading as confirmation of the model.  Both come from the
+               instance population, so they cannot drift.
+
+               They stay separate because "a canary is co-running" is a weaker claim
+               than "the mutant OF THIS TEST is co-running", and only the second
+               licenses a credible null; one bit cannot carry both without lying
+               about one (hetlitmus/docs/positive-control.md sec 11). *)
+            s (Printf.sprintf "#define HET_CONTROL_COMPILED_IN %d\n"
+                 (if has_mu then 1 else 0)) ;
+            s (Printf.sprintf "#define HET_CANARY_COMPILED_IN %d\n"
+                 (if has_canary then 1 else 0)) ;
+            (match mu_name with
+             | Some m ->
+                s (Printf.sprintf "#define HET_MU_NAME \"%s\"      /* Layer A: the minimal mutant */\n" m)
+             | None -> s "#define HET_MU_NAME NULL\n") ;
+            (* A test that IS the canary names itself, which is how het_verdict.h
+               separates that designed case from a canary that went missing. *)
+            (match canary_named with
+             | Some c ->
+                s (Printf.sprintf "#define HET_CANARY_NAME \"%s\"  /* Layer B: the universal het-MP floor */\n" c)
+             | None -> s "#define HET_CANARY_NAME NULL\n") ;
+            s (Printf.sprintf "#define SIZE_OF_TEST %d\n" Cfg.size) ;
+            s (Printf.sprintf "#define NUMBER_OF_RUN %d\n" Cfg.runs) ;
+            (* One K macro per instance, never one per translation unit; the co-run
+               banner above says what a shared K would decode wrongly. *)
+            List.iter
+              (fun i ->
+                if co_run then
+                  s (Printf.sprintf "#define %-9s %d   /* %s (%s) */\n"
+                       i.i_kmac i.i_k i.i_name
+                       (match i.i_role with
+                        | RTest -> "T" | RMu -> "mu(T)" | RCanary -> "canary"))
+                else s (Printf.sprintf "#define %s %d\n" i.i_kmac i.i_k))
+              insts ;
+            s "#ifndef HET_WINDOW\n#define HET_WINDOW 8\n#endif\n" ;
+            s "#ifndef HET_EXHAUSTIVE_MAX\n#define HET_EXHAUSTIVE_MAX 4096\n#endif\n" ;
+            if co_run then begin
+              s "\n/* One cache line per shared location, so the co-running instances\n\
+                 \   never share a coherence unit.  Disjoint ADDRESSES are not enough:\n\
+                 \   two variables on one line are one coherence unit, and the control's\n\
+                 \   traffic would then drag the tested line around -- perturbing the\n\
+                 \   very test it exists to vouch for.  128 B covers both targets\n\
+                 \   (64 B CPU-side, 128 B GPU-side cache lines). */\n" ;
+              s "#ifndef HET_CACHE_LINE\n#define HET_CACHE_LINE 128\n#endif\n"
+            end ;
+            s "\n" ;
+            s (Printf.sprintf "#ifndef HET_BLOCK_DIM\n#define HET_BLOCK_DIM %d\n#endif\n"
+                 block_dim) ;
+            (* Sums over the instances, because each one's count is shape-dependent
+               (S and R carry an observer lane, MP/SB/LB do not). *)
+            s (Printf.sprintf "#define HET_TEST_BLOCKS %d\n" test_blocks) ;
+            s (Printf.sprintf "#define HET_GPU_LANES %d\n" gpu_lanes) ;
+            s (Printf.sprintf "#define HET_SPIN_LANES %d\n\n" spin_lanes) ;
+            (* _decode_value (T only): a store tag -> the ORIGINAL value that write
+               carried.  Keyed on T's OWN K. *)
+            List.iter (fun i -> s i.i_decode) insts ;
+            (* ---------------------------- the kernel ------------------------- *)
+            let kparams =
+              String.concat ", "
+                (List.concat_map
+                   (fun i ->
+                     List.map (fun g -> Printf.sprintf "uint64_t* %s" (gsym i g))
+                       i.i_gpu_globals
+                     @ List.map (fun (_,_,name,_,_) -> Printf.sprintf "uint64_t* %s" name)
+                         (gpu_bufs i)
+                     @ List.map
+                         (fun l -> Printf.sprintf "uint64_t* %s" (obsG_of i.i_pre l))
+                         i.i_obs_locs)
+                   insts
+                 @ ["int* barrier"]
+                 @ ["uint32_t* _scratch" ; "uint32_t* _scratch_loc" ;
+                    "uint32_t* _spin_bar" ; "uint32_t* _gpu_done" ;
+                    "uint32_t* _stress_tally" ;
+                    "uint32_t _seed" ; "uint32_t _pre_pat" ; "uint32_t _mem_pat" ;
+                    "uint64_t* _noise_ddr" ; "uint64_t _noise_words" ;
+                    "uint32_t _noise_blocks" ; "uint32_t _noise_chunk" ;
+                    "uint32_t _noise_stride"]) in
+            s (Printf.sprintf "__global__ void litmus_%s(%s) {\n" id kparams) ;
+            s "  het_rng_t _rng = het_rng_init(_seed, blockIdx.x * blockDim.x + threadIdx.x);\n" ;
+            List.iter
+              (fun i ->
+                let bb = base_of i in
+                (* the GPU TEST lanes of this instance *)
+                List.iter
+                  (fun gp ->
+                    s (Printf.sprintf "  if (blockIdx.x == %d && threadIdx.x == %d) {\n"
+                         (bb + gp.gp_blk) gp.gp_lane) ;
+                    (* Bind this instance's object to the LISA name the shared GPU
+                       lowering emits; see the co-run banner.  A single-instance
+                       harness has prefix "" and emits no alias. *)
+                    if co_run then
+                      List.iter
+                        (fun g ->
+                          s (Printf.sprintf
+                               "    uint64_t* %s = %s;  /* this instance's %s */\n"
+                               g (gsym i g) g))
+                        i.i_gpu_globals ;
+                    s (dialect.gd_bar "    " "barrier") ;
+                    List.iter (fun n -> s (Printf.sprintf "    uint64_t r%d = 0;\n" n))
+                      gp.gp_regs ;
+                    s "    uint32_t _nb = 0;\n" ;
+                    (* FAITHFULNESS, do not remove: SIZE_OF_TEST is a compile-time
+                       constant, so without this pragma nvcc unrolls the loop and the
+                       emitted PTX carries many copies of the tested instructions --
+                       a different program microarchitecturally, and one the L0
+                       faithfulness gate rejects.  The observer loop below needs the
+                       same pragma for the same reason. *)
+                    s "    #pragma unroll 1\n" ;
+                    s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+                    s "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n" ;
+                    s "        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally);\n" ;
+                    (* The barrier roll is drawn from a LANE-INDEPENDENT stream, keyed
+                       by the iteration rather than the lane, so every test lane in
+                       every co-running instance decides the same way for iteration
+                       _n.  The barrier is then taken by all the spin lanes or none,
+                       each contributing one increment, and the counter reaches
+                       _nb*HET_SPIN_LANES exactly when the last lane arrives.  A
+                       per-lane roll makes that limit unreachable after the first
+                       skipped roll, and the spin degrades into a delay loop that
+                       releases on its deadlock cap. *)
+                    s "      het_rng_t _brng = het_rng_init(_seed ^ 0x9e3779b9u, (uint32_t)_n);\n" ;
+                    s "      if (het_rng_pct(&_brng, HET_BARRIER_PCT)) {\n" ;
+                    s "        _nb++;\n" ;
+                    s "        het_spin(_spin_bar, _nb * HET_SPIN_LANES, _stress_tally);\n" ;
+                    s "      }\n" ;
+                    let st_ctr = ref 0 in
+                    List.iter
+                      (fun instr ->
+                        let tag = match instr with
+                          | BellBase.Pst _ ->
+                             let si = !st_ctr in incr st_ctr ;
+                             Some (het_iter, i.i_k, i.i_store_mu gp.gp_proc si)
+                          | _ -> Some (het_iter, i.i_k, 0) in
+                        dialect.gd_dump_instr ch ~tag "      " instr)
+                      gp.gp_instrs ;
+                    List.iteri
+                      (fun li n ->
+                        s (Printf.sprintf "      %s[_n] = (uint64_t)r%d;\n"
+                             (buf_name_of i.i_pre gp.gp_proc li) n))
+                      gp.gp_regs ;
+                    s "    }\n" ;
+                    s "    het_scratch_bump(_gpu_done);\n" ;
+                    s "  }\n")
+                  i.i_gpus ;
+                (* this instance's observer lane (block bb + i_nblocks) *)
+                if i.i_obs then begin
+                  s (Printf.sprintf
+                       "  if (blockIdx.x == %d && threadIdx.x == 0) {\n"
+                       (bb + i.i_nblocks)) ;
+                  s (dialect.gd_bar "    " "barrier") ;
+                  s "    #pragma unroll 1\n" ;
+                  s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+                  List.iter
+                    (fun l ->
+                      s (Printf.sprintf "      %s[_n] = %s;\n"
+                           (obsG_of i.i_pre l) (dialect.gd_sys_load_u64 (gsym i l))))
+                    i.i_obs_locs ;
+                  s "    }\n" ;
+                  s "    het_scratch_bump(_gpu_done);\n" ;
+                  s "  }\n"
+                end)
+              insts ;
+            (* =============== the pure stressing workgroups =================== *)
+            s "  if (blockIdx.x >= HET_TEST_BLOCKS) {\n" ;
+            s "    if (_noise_ddr != NULL && blockIdx.x < HET_TEST_BLOCKS + _noise_blocks) {\n" ;
+            s "      volatile const uint64_t* _nb = (volatile const uint64_t*)_noise_ddr;\n" ;
+            s "      uint64_t _t = (uint64_t)(blockIdx.x - HET_TEST_BLOCKS) * blockDim.x + threadIdx.x;\n" ;
+            s "      uint64_t _step = (uint64_t)_noise_blocks * blockDim.x * _noise_stride;\n" ;
+            s "      uint64_t _i = (_noise_words > 0) ? (_t % _noise_words) : 0;\n" ;
+            s "      uint64_t _acc = 0;\n" ;
+            s "      uint32_t _r = 0;\n" ;
+            s "      for (;\n\
+               \           _r < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;\n\
+               \           ++_r) {\n" ;
+            s "        for (uint32_t _c = 0; _c < _noise_chunk; ++_c) {\n" ;
+            s "          _acc += _nb[_i];\n" ;
+            s "          _i += _step;\n" ;
+            s "          if (_i >= _noise_words) _i = (_noise_words > 0) ? (_i % _noise_words) : 0;\n" ;
+            s "        }\n" ;
+            s "      }\n" ;
+            s "      if (_r > 0) het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);\n" ;
+            s "      het_scratch_max(&_stress_tally[HET_TALLY_NOISE_ROUNDS], _r);\n" ;
+            s "      if (_acc == 0xFFFFFFFFFFFFFFFFull)\n" ;
+            s "        het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);  /* sink: force _acc to escape */\n" ;
+            s "    } else {\n" ;
+            s "    uint32_t _s = 0;\n" ;
+            s "    for (;\n\
+               \         _s < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;\n\
+               \         ++_s) {\n" ;
+            s "      if (het_rng_pct(&_rng, HET_MEM_STRESS_PCT))\n" ;
+            s "        het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally);\n" ;
+            s "    }\n" ;
+            s "    if (_s >= HET_STRESS_MAX_ROUNDS)\n" ;
+            s "      het_scratch_bump(&_stress_tally[HET_TALLY_TRUNC]);\n" ;
+            s "    }\n" ;
+            s "  }\n" ;
+            s "}\n\n" ;
+            (* ---------------- CPU pthread wrappers, per instance -------------- *)
+            List.iter
+              (fun i ->
+                List.iter
+                  (fun cp ->
+                    let proc = cp.cp_proc in
+                    let addr = cpu_addr_u64 cp and bufs = cpu_bufs i cp in
+                    s (Printf.sprintf "struct cpu_args_%sP%d {\n" i.i_pre proc) ;
+                    List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) addr ;
+                    s "  int* barrier;\n" ;
+                    List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) bufs ;
+                    s "  int _core; uint32_t _seed; het_cpu_tally* _tally;\n" ;
+                    s "};\n" ;
+                    s (Printf.sprintf "static void* cpu_thread_%sP%d(void* _a) {\n"
+                         i.i_pre proc) ;
+                    s (Printf.sprintf "  cpu_args_%sP%d* a = (cpu_args_%sP%d*)_a;\n"
+                         i.i_pre proc i.i_pre proc) ;
+                    s "  het_cpu_affinity(a->_core, a->_tally);\n" ;
+                    let npl = List.length addr in
+                    if npl > 0 then begin
+                      s (Printf.sprintf "  void* const _pl[%d] = { %s };\n" npl
+                           (String.concat ", "
+                              (List.map (fun (_,n) -> Printf.sprintf "(void*)a->%s" n)
+                                 addr))) ;
+                      s (Printf.sprintf
+                           "  uint32_t _plrng = het_cpu_rng_init(a->_seed, %du);\n" proc) ;
+                      s "  uint64_t _plops = 0;\n"
+                    end ;
+                    s (dialect.gd_bar "  " "a->barrier") ;
+                    let call_args =
+                      String.concat ","
+                        (List.map (fun (_,a) -> "a->"^a) (addr @ bufs) @ ["_n"]) in
+                    s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+                    if npl > 0 then
+                      s (Printf.sprintf
+                           "    _plops += het_cpu_preload(_pl, %d, &_plrng, HET_CPU_PRELOAD_PCT);\n"
+                           npl) ;
+                    s (Printf.sprintf "    het_run_%sP%d(%s);\n" i.i_pre proc call_args) ;
+                    s "  }\n" ;
+                    if npl > 0 then
+                      s "  __atomic_fetch_add(&a->_tally->preload_ops, _plops, __ATOMIC_RELAXED);\n" ;
+                    s "  return NULL;\n}\n\n")
+                  i.i_cpus ;
+                (* this instance's CPU observer pthread *)
+                if i.i_obs then begin
+                  s (Printf.sprintf "struct %scpu_obs_args {\n" i.i_pre) ;
+                  (* The OBSERVED shared locations are `volatile const' so that the
+                     observer's per-iteration reads cannot be hoisted out of the
+                     perpetual loop at -O2 -- the same treatment the noise buffers
+                     get, and what the GPU-side atomic observer gets structurally.
+                     A plain deref, never written on this thread, is hoisted to one
+                     broadcast load: the observer would then record a single value N
+                     times, pinning observer_unique_count at 1 and leaving a
+                     store-only test's only recovery channel inert.  The
+                     non-observed globals are not dereferenced here and stay plain. *)
+                  List.iter
+                    (fun l ->
+                      let ty =
+                        if List.mem l i.i_obs_locs
+                        then "volatile const uint64_t*" else "uint64_t*" in
+                      s (Printf.sprintf "  %s %s;\n" ty l))
+                    i.i_all_globals ;
+                  s "  int* barrier;\n" ;
+                  List.iter
+                    (fun l -> s (Printf.sprintf "  uint64_t* %s;\n" (obsC_of "" l)))
+                    i.i_obs_locs ;
+                  s "  int _core; het_cpu_tally* _tally;\n" ;
+                  s "};\n" ;
+                  s (Printf.sprintf "static void* %scpu_obs_thread(void* _a) {\n" i.i_pre) ;
+                  s (Printf.sprintf "  %scpu_obs_args* a = (%scpu_obs_args*)_a;\n"
+                       i.i_pre i.i_pre) ;
+                  s "  het_cpu_affinity(a->_core, a->_tally);\n" ;
+                  s (dialect.gd_bar "  " "a->barrier") ;
+                  s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+                  List.iter
+                    (fun l ->
+                      s (Printf.sprintf "    a->%s[_n] = *a->%s;\n" (obsC_of "" l) l))
+                    i.i_obs_locs ;
+                  s "  }\n  return NULL;\n}\n\n"
+                end)
+              insts ;
+            (* outcome labels + decoded-outcome dump callback (T only) *)
+            List.iter (fun i -> s i.i_labels) insts ;
+            s "/* Placement refusals.  Incremented only where placement EXISTS (the\n\
+               \   CUDA/GH200 render); stays 0 on the HIP/MI300A render, which has a\n\
+               \   single HBM pool and therefore nothing to place. */\n" ;
+            s "static int _het_place_failures = 0;\n\n" ;
+            s dialect.gd_shared_mem_defs ;
+            s "\n" ;
+            s dialect.gd_noise_mem_defs ;
+            s "\n" ;
+            dump_gpu_main dialect s in
           (* ---- comp.sh / Makefile / README ---- *)
           (* `uname -m' of the CPU ISA this harness was rendered for.  The link
              targets below refuse on any other host, where <test>_cpu_host.o is the

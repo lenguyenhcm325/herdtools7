@@ -12,23 +12,22 @@
 # Usage:
 #   bash hetlitmus/verify/l0_tokens.sh            # gpu-only + het table + tally
 #   bash hetlitmus/verify/l0_tokens.sh gpu-only   # just the 137 gpu-only
-#   bash hetlitmus/verify/l0_tokens.sh het        # just the 450 het
+#   bash hetlitmus/verify/l0_tokens.sh het        # just the 411 het
 #   bash hetlitmus/verify/l0_tokens.sh guard      # completeness-guard report
 #   bash hetlitmus/verify/l0_tokens.sh selftest   # inject weaken+strengthen
 #   JOBS=8 bash hetlitmus/verify/l0_tokens.sh     # parallelism (default 4)
 # ---------------------------------------------------------------------------
 set -u
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-export ROOT
-cd "$ROOT"
-export PATH="/usr/local/cuda/bin:$ROOT/_build/install/default/bin:$PATH"
+. "$(dirname "$0")/../paths.sh"
+cd "$REPO"
+export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 
-CHECK="$ROOT/hetlitmus/verify/ptxcheck.py"
+CHECK="$REPO/hetlitmus/verify/ptxcheck.py"
 # Overridable so the census guard below can be bitten (point at an empty dir ->
-# the expected 137/450 fails).  Default is the real corpus.
-GPU_DIR="${GPU_DIR:-$ROOT/hetlitmus/tests/gpu-only}"
-HET_DIR="${HET_DIR:-$ROOT/hetlitmus/tests/het}"
+# the expected 137/411 fails).  Default is the real corpus.
+GPU_DIR="${GPU_DIR:-$REPO/hetlitmus/tests/gpu-only}"
+HET_DIR="${HET_DIR:-$REPO/hetlitmus/tests/het}"
 JOBS="${JOBS:-4}"
 RESDIR="$(mktemp -d)"
 trap 'rm -rf "$RESDIR"' EXIT
@@ -75,7 +74,7 @@ run_dir() {
     done
   fi
   # `pass -eq total' is VACUOUSLY true on an empty or misnamed corpus (0 -eq 0):
-  # it would report OK for zero tests.  So assert the known census (het=450,
+  # it would report OK for zero tests.  So assert the known census (het=411,
   # gpu-only=137), the same exact-count discipline corpus-gate and verdictcheck
   # use; a census change then has to be a deliberate edit to the call site.
   if [ "$expect" -gt 0 ] && [ "$total" -ne "$expect" ]; then
@@ -114,7 +113,7 @@ guard_report() {
   local annof="$RESDIR/gpu_annos.txt"
   grep -rhoE '[wrf]\[[a-z_]+,[a-z]+\]' "$GPU_DIR"/*.litmus "$HET_DIR"/*.litmus \
     | sort -u > "$annof"
-  python3 - "$ROOT" "$annof" <<'PY'
+  python3 - "$REPO" "$annof" <<'PY'
 import sys, re, importlib.util, os
 spec = importlib.util.spec_from_file_location(
     "ptxcheck", os.path.join(sys.argv[1], "hetlitmus/verify/ptxcheck.py"))
@@ -139,7 +138,7 @@ PY
   # No allow-list: pull the leading opcode token of EVERY cell in EVERY het CPU
   # column, so a NEW/unmapped mnemonic surfaces instead of being silently
   # dropped, then check each against ptxcheck.CPU_MNEMONIC.
-  python3 - "$ROOT" "$HET_DIR" <<'PY'
+  python3 - "$REPO" "$HET_DIR" <<'PY'
 import sys, re, os, glob, importlib.util
 root, het_dir = sys.argv[1], sys.argv[2]
 spec = importlib.util.spec_from_file_location(
@@ -453,7 +452,7 @@ PY
   # runtime value, so no autotuner config can switch the stress off.  Prove it
   # bites, or it is decoration.
   printf '\n[7] B4-fix stress liveness: the gate must FAIL(1) on a dead stress layer\n'
-  local SL="$ROOT/hetlitmus/verify/stresscheck.py"
+  local SL="$REPO/hetlitmus/verify/stresscheck.py"
   local S4T=MP-cg-sys-acqrel-2s
   local S4L="$HET_DIR/$S4T.litmus" s4="$sc/s4" s4cu s4rc
   mkdir -p "$s4"
@@ -505,7 +504,7 @@ PY
   # emitted .cu driver (invariants S5/S6 -- a noise buffer that fits in cache,
   # and enemies pointed at the locations under test).
   printf '\n[8] B5 CPU/interconnect stress: the liveness gate must FAIL(1) on a dead layer\n'
-  local CS="$ROOT/hetlitmus/verify/cpustresscheck.py"
+  local CS="$REPO/hetlitmus/verify/cpustresscheck.py"
   local B5T=MP-cg-sys-acqrel-2s
   local B5L="$HET_DIR/$B5T.litmus" b5="$sc/b5" b5rc
   mkdir -p "$b5"
@@ -707,7 +706,7 @@ stress_report() {
   printf '\n===== STRESS LIVENESS: is the B4 layer actually in the PTX? =====\n'
   for t in $reps; do
     printf '\n-- %s --\n' "$t"
-    python3 "$ROOT/hetlitmus/verify/stresscheck.py" "$HET_DIR/$t.litmus"; rc=$?
+    python3 "$REPO/hetlitmus/verify/stresscheck.py" "$HET_DIR/$t.litmus"; rc=$?
     [ "$rc" -ne 0 ] && fails=$((fails+1))
   done
   printf '\n'
@@ -739,7 +738,7 @@ cpustress_report() {
   printf '\n===== CPU + INTERCONNECT STRESS LIVENESS: does the B5 layer run? =====\n'
   for t in $reps; do
     printf '\n-- %s --\n' "$t"
-    python3 "$ROOT/hetlitmus/verify/cpustresscheck.py" "$HET_DIR/$t.litmus"; rc=$?
+    python3 "$REPO/hetlitmus/verify/cpustresscheck.py" "$HET_DIR/$t.litmus"; rc=$?
     [ "$rc" -ne 0 ] && fails=$((fails+1))
   done
   printf '\n'
@@ -755,7 +754,7 @@ cpustress_report() {
 cmd="${1:-all}"
 case "$cmd" in
   gpu-only)  run_dir "$GPU_DIR" gpu-only 137 ;;
-  het)       run_dir "$HET_DIR" het 450 ;;
+  het)       run_dir "$HET_DIR" het 411 ;;
   guard)     guard_report; exit $? ;;
   selftest)  selftest; exit $? ;;
   stress)    stress_report; exit $? ;;
@@ -763,7 +762,7 @@ case "$cmd" in
   all)
     rc=0
     run_dir "$GPU_DIR" gpu-only 137 || rc=1
-    run_dir "$HET_DIR" het 450 || rc=1
+    run_dir "$HET_DIR" het 411 || rc=1
     exit $rc ;;
   *) echo "usage: $0 [all|gpu-only|het|guard|selftest|stress|cpustress]"; exit 64 ;;
 esac

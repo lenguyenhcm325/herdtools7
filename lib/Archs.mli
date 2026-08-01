@@ -73,7 +73,6 @@ val  java : t
 val  lisa : t
 val  x86_64 : t
 val  asl : t
-val  het : t
 
 val has_mixed_mode : t -> bool
 

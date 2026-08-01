@@ -13,12 +13,12 @@ env-research/impl-briefs/FA-FB-REPORT.md):
       witness and reported through HetObs / HetVerdict (env-research/decisions/
       B3-decision.md 4), so the slot carries no bits to print.
 
-  PHASE 1 -- SHAPE (all 450 emitted harnesses).  Exactly one histogram add per
+  PHASE 1 -- SHAPE (all 411 emitted harnesses).  Exactly one histogram add per
     harness, since only T feeds it.  With a per-frame observable it sits inside the
     frame loop guarded by exactly `_hot || _weak'; without one it is an
     unconditional per-run add at run level, shown by an observer `_loc' witness.
-    Census 428 / 22.
-  PHASE 2 -- DISPLAY (all 450).  Register slots print numerically, location slots
+    Census 400 / 11.
+  PHASE 2 -- DISPLAY (all 411).  Register slots print numerically, location slots
     print `?', checked both ways, and the loop bounds must partition the slots
     exactly.
   PHASE 3 -- ARITHMETIC (the real emitted tally, compiled and RUN).  The store-only
@@ -48,9 +48,9 @@ HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 # Corpus censuses, re-derived below from the emitted artifacts.  A mismatch means
 # either the corpus changed (update these, deliberately) or the emitter did -- which
 # is what this gate is for.
-N_TESTS = 450
-N_STORE_ONLY = 22           # the 2+2W family: no reader, observer-only
-N_WITH_LOC_COLUMN = 128     # 2+2W 22 + R 53 + S 53 (Q10 +12 R +12 S; Q10b +16 R +16 S)
+N_TESTS = 411
+N_STORE_ONLY = 11           # the 2+2W family: no reader, observer-only
+N_WITH_LOC_COLUMN = 117     # 2+2W 11 + R 53 + S 53 (Q10 +12 R +12 S; Q10b +16 R +16 S)
 
 # The store-only shape whose tally Phase 3 extracts and runs.
 TALLY_TEST = "2+2W-cg-sys-fence"
@@ -590,7 +590,7 @@ def _reinsert_per_frame_add(t, src):
 
 
 def _drop_per_run_add(t, src):
-    """The opposite failure: the 22 store-only shapes tally NOTHING at all."""
+    """The opposite failure: the 11 store-only shapes tally NOTHING at all."""
     if t != TALLY_TEST:
         return src
     return re.sub(r"\n *hist = add_outcome_outs\(hist, _o, \d+, 1, \w*_loc\); \}",

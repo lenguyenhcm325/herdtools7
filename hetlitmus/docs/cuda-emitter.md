@@ -9,13 +9,19 @@ scoped IR; no native PTX architecture) — see memory `hetlitmus-route-b-fronten
 - **`litmus/CudaLang.ml`** — the emitter. Translates parsed `BellBase` scoped
   loads/stores + the Bell scope tree into libcu++ scoped atomics and a CTA/thread
   launch geometry.
-- **`litmus/top_litmus.ml`** — the wiring. The `\`LISA` arm of the arch dispatch
-  in `from_chan`'s `aux` (previously `assert false`) now parses the scoped LISA
-  test (`BellLexer`/`LISAParser` → `LISAArch_litmus`) and calls `CudaLang.dump`,
-  writing `<name>.cu` via `Tar.outname`.
+- **`litmus/gpuLang.ml`** — the half CudaLang shares with HipLang: the
+  annotation vocabulary, the `BellBase` accessors, the launch layout and the
+  whole-test driver, parameterised by a `GpuLang.t` dialect record.
+- **`litmus/hetGpuOnly.ml`** — the wiring. The `\`LISA` arm of the arch dispatch
+  in `top_litmus.ml`'s `aux` (previously `assert false`) closes this functor,
+  which parses the scoped LISA test (`BellLexer`/`LISAParser` →
+  `LISAArch_litmus`) and calls `CudaLang.dump`, writing `<name>.cu` via
+  `Tar.outname`.
 - **`litmus/option.ml`** — `Option.get_default \`LISA` returned `assert false`
   (a dead path); now returns `copt` so the LISA test can reach the dispatch.
-- **`hetlitmus/emit-cuda.sh`** — regenerates all `.cu` from the corpus.
+- **`hetlitmus/emit-cuda.sh`** — regenerates all `.cu` from the corpus; the
+  CUDA-side entry point of `hetlitmus/emit-gpu.sh`, the single pass that renders
+  both dialects from one parse.
 
 Build: `make all` in the repo root (branch `hetlitmus-work`). Emit:
 `./hetlitmus/emit-cuda.sh [OUTDIR]` (default `hetlitmus/cuda-out/`).

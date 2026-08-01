@@ -38,7 +38,7 @@ Observation ISA2-cgc-sys-acquire   Never     0   1000000
 # The healthy outcome: the morally-strong pair held, the weak outcome was absent.
 # It does NOT "prove" the verdict -- non-observation is never proof.
 Observation MP-cg-sys-acqrel-2s    Never     0   1000000
-Observation LB-gc-sys-fence-2s     Never     0   1000000
+Observation LB-cg-sys-fence-2s     Never     0   1000000
 Observation S-cg-sys-acqrel-2s     Never     0   1000000
 
 # --- Disallowed (two-sided) test FORBIDDEN OUTCOME observed -> MISMATCH ---

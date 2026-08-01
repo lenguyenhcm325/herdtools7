@@ -657,7 +657,7 @@ hetlitmus-corpus: | build
 hetlitmus-faithful: | build
 	@ echo
 	bash hetlitmus/verify/l0_tokens.sh all
-	@ echo "HetLitmus Layer-3 PTX faithfulness (587): OK"
+	@ echo "HetLitmus Layer-3 PTX faithfulness (548): OK"
 
 hetlitmus-smoke: | build
 	@ echo
@@ -685,7 +685,7 @@ hetlitmus-cpustress: | build
 	@ echo "HetLitmus Layer-3 CPU+interconnect stress liveness: OK"
 
 ### hetlitmus-controlmap: the positive control (hetlitmus/docs/positive-control.md).
-### Every one of the 53 Disallowed tests must have a mutant mu(T) that EXISTS and is
+### Every one of the 50 Disallowed tests must have a mutant mu(T) that EXISTS and is
 ### labelled Allowed, re-derived from the corpus sources + the oracle and never
 ### from the test's name (MP-gc-sys-acquire and two siblings do not exist at all).
 ### It fails closed: a missing mutant breaks the build rather than skipping the
@@ -697,15 +697,15 @@ hetlitmus-controlmap: | build
 	@ echo "HetLitmus B6 control map: OK"
 
 ### hetlitmus-dup: the isomorphism gate.  generate.sh dedups only by
-### byte-comparing a variant against ONE designated sibling, which cannot see the
-### duplicates that dominate the corpus -- 450 files are 411 distinct experiments
-### up to (proc permutation x location renaming), the same 39 classes across
-### every widening, all of them cg/gc mirror pairs of a rotation-invariant shape
-### (SB/LB/2+2W), some inside the Disallowed rows that carry the falsification
-### claim (env-research/Q10-corpus-coverage.md sect 2.1).  They are kept but
-### allowlisted by exact class, and the gate fails on any duplicate not in the
-### list AND on any list entry that has stopped being one -- an allowlist that
-### cannot rot.  --bite proves both halves fail, each for the right reason.
+### byte-comparing a variant against ONE designated sibling, which cannot see a
+### duplicate up to (proc permutation x location renaming).  The corpus carried 39
+### such classes, all cg/gc mirror pairs of a rotation-invariant shape (SB/LB/2+2W)
+### and some inside the Disallowed rows that carry the falsification claim
+### (env-research/Q10-corpus-coverage.md sect 2.1); they were removed at the source
+### on 2026-08-01, so the 411 files are 411 distinct experiments and the allowlist is
+### empty.  The gate fails on any duplicate not in the list AND on any list entry
+### that has stopped being one -- an allowlist that cannot rot.  --bite proves both
+### halves fail, each for the right reason.
 hetlitmus-dup: | build
 	@ echo
 	python3 hetlitmus/verify/dupcheck.py
@@ -724,7 +724,7 @@ hetlitmus-dup: | build
 ### het-oracle.md, "Two-sided order pairs"):
 ###   ARM     96 CPU-only AArch64 cells under herd7's native model
 ###   PTX     96 GPU-only LISA/Bell cells under nvidia-ptx.cat (Lustig'19)
-###   ORACLE  all 132 two-sided 2-proc rows of expected-nvidia.csv -- an asserted
+###   ORACLE  all 128 two-sided 2-proc rows of expected-nvidia.csv -- an asserted
 ###           count, so neither can the bash oracle and the rule drift apart nor
 ###           can a half-blind phase pass
 ### --bite corrupts the rule six ways and requires each to redden the phase that
@@ -744,13 +744,13 @@ hetlitmus-order: | build
 ###                      never yield a credible null; every liveness disqualifier
 ###                      bites; ORACLE_UNSET fails closed.
 ###   Phase 2 (printout) the refutation claims are reachable from ORACLE_DISALLOWED
-###                      and from nothing else.  397 of the 450 het tests are not
+###                      and from nothing else.  361 of the 411 het tests are not
 ###                      should-be-forbidden, and a refutation printed on one of
 ###                      them is a false refutation of the compound model.  The
 ###                      verdict enum changing is not the deliverable; the sentence
 ###                      is.
-###   Phase 3 (corpus)   all 450 emitted harnesses carry the oracle class
-###                      control-map.csv gives them (census 53 / 353 / 44, zero
+###   Phase 3 (corpus)   all 411 emitted harnesses carry the oracle class
+###                      control-map.csv gives them (census 50 / 319 / 42, zero
 ###                      untagged).  A rule that branches on a class the emitter
 ###                      never sets is a rule nobody runs.
 ### --bite: 5 injections (3 against the rule, 2 against the emitted corpus), each
@@ -772,7 +772,7 @@ hetlitmus-verdict: | build
 ###               autocorrelation times; N_eff clamped to [1, HET_NWIN]; the
 ###               tau-at-cap regime reproduces the run-level bound exactly
 ###   producer    the per-window sub-tallies live BOTH ways on the real emitted scan
-###   corpus      all 450 carry the post-pass + a decode channel
+###   corpus      all 411 carry the post-pass + a decode channel
 ###   scheduler   campaign.py stopping policy on a stub runner: Allowed rows stop
 ###               at first clean sighting, bound rows at p_goal or budget
 ### --bite: cmp-verified injections into the statistics.  (B7/B7b)
@@ -787,7 +787,7 @@ hetlitmus-stats: | build
 ### where a hardware run once printed a witness total ABOVE the frames examined,
 ### on a row whose columns contradicted the witness.
 ###   shape       the histogram add is inside the per-frame loop iff the harness
-###               has a per-frame observable; the 22 reader-less shapes add once
+###               has a per-frame observable; the 11 reader-less shapes add once
 ###               per run (their `_weak' is the run-level observer witness, so an
 ###               in-loop add multiplies one observation by N)
 ###   display     a coherence-final [ell] column is never printed as a number: no
@@ -830,7 +830,7 @@ hetlitmus-tuner:
 
 ### hetlitmus-obs: the observer-liveness gate.  statscheck feeds a synthetic
 ### observer_unique_count, so no gate compiles the REAL emitted observer loop --
-### which is how an -O2 hoist that pinned observer_unique_count<=1, leaving the 22
+### which is how an -O2 hoist that pinned observer_unique_count<=1, leaving the 11
 ### store-only tests' only channel inert, stayed invisible to CI.  This extracts
 ### the real emitted observer + its args struct and compiles them at clang -O2 for
 ### x86-64 and aarch64, asserting a per-iteration reload survives inside every

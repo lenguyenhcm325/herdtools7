@@ -399,12 +399,13 @@ end = struct
   module SP = Splitter.Make(LexConfig)
 
   (* ===================== HetLitmus ==========================================
-     The GPU back-end dialect record and the compound (CPU+GPU) emitter --
-     ~2,900 lines of het-only code -- live in litmus/hetEmit.ml.  What remains
-     here is the seam: HetOpts is the slice of Top's scope the emitter needs,
-     and the `Het dispatch arm below closes hetEmit.ml's functor over it, the
-     splitter and Make's compiled-CPU-code extractor, so hetEmit.ml never
-     depends on this file. *)
+     The het-only code lives in its own modules: hetEmit.ml (the GPU back-end
+     dialect record and the compound CPU+GPU emitter), hetGpuOnly.ml (the
+     `LISA arm), hetCpuFront.ml (the per-CPU-ISA column frontend).  What
+     remains here is the seam: HetOpts is the slice of Top's scope they need,
+     and the `LISA / `Het dispatch arms below close their functors over it,
+     the splitter and Make's compiled-CPU-code extractor, so none of those
+     files depends on this one. *)
   module HetOpts = struct
     let verbose = OT.verbose
     let nocatch = OT.nocatch
@@ -622,65 +623,20 @@ end = struct
              let module X = Make'(Cfg)(Arch') in
              X.compile
           | `LISA ->
-             (* HetLitmus Route B: parse the scoped LISA/Bell test and emit a
-                CUDA (.cu) litmus kernel via CudaLang.  litmus7 had no LISA
-                path (this branch was `assert false'); GPU codegen reuses the
-                Bell scoped IR rather than a native PTX arch.  See memory
-                hetlitmus-route-b-frontend. *)
-             let module LISAInstr =
-               Instr.No(struct type instr = BellBase.instruction end) in
-             let module V = Int64Constant.Make(LISAInstr) in
-             let module Arch' = LISAArch_litmus.Make(V) in
-             let module LexParse = struct
-                 type instruction = Arch'.parsedPseudo
-                 type token = LISAParser.token
-                 module Lexer = BellLexer.Make(LexConfig)
-                 let lexer = Lexer.token
-                 let parser = LISAParser.main
-               end in
-             let module P = GenParser.Make(Cfg)(Arch')(LexParse) in
-             (fun _hash_env name in_chan _out_chan splitted ->
-               try
-                 let parsed = P.parse in_chan splitted in
-                 close_in in_chan ;
-                 let tname = splitted.Splitter.name.Name.name in
-                 let outname = Tar.outname (MyName.outname name ".cu") in
-                 Misc.output_protect
-                   (fun chan -> CudaLang.dump chan tname parsed)
-                   outname ;
-                 if OT.verbose >= 0 then
-                   Printf.eprintf "HetLitmus: emitted CUDA %s\n%!" outname ;
-                 (* AMD sibling: emit a HIP (.hip) kernel from the same parsed
-                    scoped test (HipLang).  Emit-only -- the hipcc compile is
-                    the HIP analog of Task 8, deferred (no ROCm here). *)
-                 let hipname = Tar.outname (MyName.outname name ".hip") in
-                 Misc.output_protect
-                   (fun chan -> HipLang.dump chan tname parsed)
-                   hipname ;
-                 if OT.verbose >= 0 then
-                   Printf.eprintf "HetLitmus: emitted HIP %s\n%!" hipname ;
-                 Absent
-               with e -> if OT.nocatch then raise e ; Interrupted e)
+             let module G = HetGpuOnly.Make(Cfg)(HetOpts)(Tar) in
+             G.compile
           | `Het ->
              (* HetLitmus Phase A: the per-column device tag NAMES the CPU ISA.
                 Pre-scan the program-section header to pick the ONE CPU ISA the
                 test's CPU columns share, instantiate the matching CPU module
-                chain (lexer + parser + Arch_litmus + Compile_litmus), and drive
-                the shared HetEmit functor.  The GPU side stays LISA/Bell ->
-                CudaLang/HipLang; HetEmit dual-emits <t>.cu and <t>.hip from the
-                one parse.  All het logic lives here + in litmus/HetArch.ml; see
+                chain (Arch_litmus + Compile_litmus + a HetCpuFront column
+                frontend), and drive the shared HetEmit functor.  The GPU side
+                stays LISA/Bell -> CudaLang/HipLang; HetEmit dual-emits <t>.cu
+                and <t>.hip from the one parse.  See
                 hetlitmus/docs/het-emission.md. *)
              (fun hash_env name in_chan out_chan splitted ->
                try
-                 let (_,prog_loc,_,_) = splitted.Splitter.locs in
-                 let prog_text =
-                   let (p1,p2) = prog_loc in
-                   let a = p1.Lexing.pos_cnum and b = p2.Lexing.pos_cnum in
-                   let ic = open_in_bin name in
-                   let len = max 0 (b - a) in
-                   seek_in ic a ;
-                   let txt = really_input_string ic len in
-                   close_in ic ; txt in
+                 let prog_text = HetArch.prog_section_text splitted name in
                  let run =
                    match HetArch.scan_cpu_isa prog_text with
                    | HetArch.IsaAArch64 ->
@@ -690,43 +646,12 @@ end = struct
                           (AArch64Instr.Std) in
                       let module Cpu = AArch64Arch_litmus.Make(OC)(CpuV) in
                       let module CpuComp = AArch64Compile_litmus.Make(CpuV)(OC) in
-                      let module CpuLexer =
-                        AArch64Lexer.Make
-                          (struct include LexConfig let is_morello = false end) in
+                      let module CpuF = HetCpuFront.AArch64(LexConfig) in
                       let module CpuLP = struct
                           type instruction = Cpu.parsedPseudo
                           type token = AArch64Parser.token
-                          let lexer = CpuLexer.token
+                          let lexer = CpuF.Lexer.token
                           let parser = AArch64Parser.main
-                        end in
-                      let module CpuF = struct
-                          let isa_name = "AArch64"
-                          let host_macro = "__aarch64__"
-                          let cross = Some ("aarch64-linux-gnu","gnu11")
-                          let parse_column p txt =
-                            let lexbuf = Lexing.from_string txt in
-                            (try AArch64Parser.instr_option_seq CpuLexer.token lexbuf
-                             with
-                             | Parsing.Parse_error ->
-                                Warn.user_error
-                                  "HetLitmus: P%d (cpu, AArch64) parse error near offset %d \
-                                   of its instruction column %S"
-                                  p lexbuf.Lexing.lex_curr_p.Lexing.pos_cnum txt
-                             | LexMisc.Error (msg,_) ->
-                                Warn.user_error
-                                  "HetLitmus: P%d (cpu, AArch64) lexing error: %s (in column %S)"
-                                  p msg txt)
-                          (* B3: real tagged AArch64 body.  Cpu.pseudo =
-                             AArch64Base.pseudo here, so HetCpuBody matches
-                             directly after peeling. *)
-                          let het_analyze ~reg_env pseudos =
-                            HetCpuBody.analyze ~reg_env
-                              (HetCpuBody.instrs_of_code pseudos)
-                          let het_emit_body ch ~prefix ~proc ~k ~store_mu ~load_buf
-                                ~reg_env ~iter ~addr_params ~buf_params pseudos =
-                            HetCpuBody.emit_body ch ~prefix ~proc ~k ~store_mu
-                              ~load_buf ~reg_env ~iter ~addr_params ~buf_params
-                              (HetCpuBody.instrs_of_code pseudos)
                         end in
                       let module CpuX = Make(Cfg)(Cpu)(CpuLP)(CpuComp) in
                       let module H =
@@ -748,40 +673,12 @@ end = struct
                         end in
                       let module CpuComp =
                         X86_64Compile_litmus.Make(X86_64Config)(CpuV)(OC) in
-                      let module CpuLexer = X86_64Lexer.Make(LexConfig) in
+                      let module CpuF = HetCpuFront.X86_64(LexConfig) in
                       let module CpuLP = struct
                           type instruction = Cpu.parsedPseudo
                           type token = X86_64Parser.token
-                          let lexer = CpuLexer.token
+                          let lexer = CpuF.Lexer.token
                           let parser = MiscParser.mach2generic X86_64Parser.main
-                        end in
-                      let module CpuF = struct
-                          let isa_name = "X86_64"
-                          let host_macro = "__x86_64__"
-                          let cross = None
-                          let parse_column p txt =
-                            let lexbuf = Lexing.from_string txt in
-                            (try X86_64Parser.instr_option_seq CpuLexer.token lexbuf
-                             with
-                             | Parsing.Parse_error ->
-                                Warn.user_error
-                                  "HetLitmus: P%d (cpu, X86_64) parse error near offset %d \
-                                   of its instruction column %S"
-                                  p lexbuf.Lexing.lex_curr_p.Lexing.pos_cnum txt
-                             | LexMisc.Error (msg,_) ->
-                                Warn.user_error
-                                  "HetLitmus: P%d (cpu, X86_64) lexing error: %s (in column %S)"
-                                  p msg txt)
-                          (* B3: x86_64 het body is a compile-only stub (MI300A
-                             de-prioritised).  het_analyze reports no tagged
-                             stores/loads; het_emit_body emits a no-op body with
-                             the matching signature. *)
-                          let het_analyze ~reg_env:_ _pseudos = HetCpuBody.empty_plan
-                          let het_emit_body ch ~prefix ~proc ~k:_ ~store_mu:_
-                                ~load_buf:_ ~reg_env:_ ~iter:_ ~addr_params
-                                ~buf_params _pseudos =
-                            HetCpuBody.emit_stub ch ~prefix ~proc ~addr_params
-                              ~buf_params
                         end in
                       let module CpuX = Make(Cfg)(Cpu)(CpuLP)(CpuComp) in
                       let module H =

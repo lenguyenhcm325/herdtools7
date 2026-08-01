@@ -1,13 +1,14 @@
 # het-runtime — the embedded runtime sources of the het harness
 
-These files are the C/CUDA runtime that litmus7's het emitter writes **verbatim**
-into every emitted harness directory (`top_litmus.ml`, the `write "..."` calls in
-the `Het` arm).  They used to live as `{ocaml|...|ocaml}` string literals inside
-`litmus/HetArch.ml` (87% of that file); they are real source files now so they can
-be edited with C tooling.  A rule in `litmus/dune` wraps them into the generated
-module `HetPayloads` at build time — the OCaml string can never drift from the
-file, and an accidental `|het_payload}` in the content fails the OCaml build
-loudly rather than corrupting the payload silently.
+These files are the C/CUDA runtime that litmus7's het emitter emits **verbatim**.
+The `.h`/`.cuh` payloads become their own file in every emitted harness directory
+(`hetEmit.ml`, the `write "..."` calls); the `.inc` payloads are pasted into the
+body of the per-dialect `.cu` / `.hip` render, which is why they carry no include
+guard.  They are real source files so they can be edited with C tooling.  A rule
+in `litmus/dune` wraps them into the generated module `HetPayloads` at build time
+— the OCaml string can never drift from the file, and an accidental
+`|het_payload}` in the content fails the OCaml build loudly rather than
+corrupting the payload silently.
 
 Two payloads are **not** stored here: `outs.h`/`outs.c` (litmus7's own outcome
 histogram, reused to tally the merged CPU+GPU register readback) are cat'ed
@@ -112,3 +113,22 @@ nobody executes.
 See `env-research/Q4-positive-control.md` (2.3 the mutation lattice, 2.4 the
 two-layer design, 3.2 the record fields, 3.3 the decision rule, 5 the
 reporting stance) and `hetlitmus/docs/positive-control.md`.
+
+## het_alloc_{cuda,hip}.inc, het_noise_{cuda,hip}.inc — B1/B5: the two allocators
+
+The `gd_shared_mem_defs` and `gd_noise_mem_defs` fields of `gpu_dialect`
+(`litmus/hetEmit.ml`).  Each pair is one object class in one dialect:
+
+* `het_alloc_*` — the shared litmus vars + the rendezvous barrier
+  (`gd_alloc_shared` / `gd_free_shared`).  The allocator selects the property
+  under test, so the banner inside the CUDA file states the modes and the
+  fail-closed guards; `env-research/Q8-allocation.md` is the spec.
+* `het_noise_*` — the interconnect-stress buffers (`gd_alloc_noise` /
+  `gd_free_noise`), a fourth object class disjoint from the test locations;
+  `env-research/Q6-cpu-interconnect-stress.md` sections 3.2/3.4 is the spec.
+
+They are per-dialect because the two targets differ in kind, not in spelling:
+GH200 places pages across an LPDDR/HBM split, MI300A has one HBM pool and gets
+its interconnect pressure from cross-chiplet contention instead.  A fragment
+pasted into the render, not a header: the surrounding `.cu`/`.hip` supplies
+`HET_PLACE`, `_het_place_failures` and `het_cpu_first_touch`.
