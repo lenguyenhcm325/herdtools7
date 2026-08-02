@@ -176,7 +176,8 @@ All het logic is confined to:
 * `litmus/hetEmit.ml` — the `gpu_dialect` record + the `HetEmit.Make` functor
   (the dialect-parameterised file emitter), with two of its phases as their own
   modules: `litmus/hetControlMap.ml` (the positive-control map) and
-  `litmus/hetCpuBody.ml` (the tagged CPU body);
+  `litmus/hetCpuBody.ml` + `litmus/hetCpuBodyX86.ml` (the tagged CPU body, one
+  matcher per CPU ISA, sharing `cpu_plan` and emitting the same C shape);
 * `litmus/hetCpuFront.ml` — the per-CPU-ISA column frontend (`CpuF`), one
   module per supported CPU ISA;
 * the `` `Het `` dispatch arm in `litmus/top_litmus.ml` — the per-ISA module
@@ -209,6 +210,18 @@ byte-identical to before (the cpu column keeps its `cpu` back-compat tag).
 * CPU ISAs wired: **AArch64** and **x86_64** (selected by tag). GPU dialects
   emitted: **both** CUDA and HIP. Targets: GH200 (AArch64+CUDA) and MI300A
   (x86_64+HIP), plus any cross pairing the tag asks for.
+* Both CPU ISAs emit a **real B3-tagged body** since P2b (2026-08-03): store
+  values rebound to `K*(_n+1)+mu`, loads recorded into per-iteration buffers,
+  the tested mnemonics reproduced verbatim (`str`/`stlr`/`ldr`/`ldar`/`ldapr`/
+  `dmb` on AArch64, `movq`/`mfence` on x86-64), widened to 64-bit operands.
+  Before P2b the x86_64 arm emitted a `(void)_n` no-op: the CPU thread tested
+  nothing, and litmus7 could emit a harness for only 39 of the 412 x86
+  renderings (the condition could bind neither a read buffer nor a `mu`).
+* A het emission that **cannot** be completed is fail-closed: litmus7 prints
+  `HetLitmus REFUSED (het|gpu-only|isa-scan) <test>: <why>` on stderr and exits
+  **3** (`HetArch.refused`).  litmus7's own batch driver would have reported the
+  refusal and still exited 0, which made a missing harness look like success to
+  any caller that redirects stdout.
 * The CPU projection supports plain straight-line procs (the het corpus); a proc
   using labels/PTEs/macros would need the corresponding ASMLang machinery and is
   rejected rather than mis-emitted.

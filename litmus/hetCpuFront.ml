@@ -25,6 +25,7 @@ module AArch64 (O:Config) = struct
     AArch64Lexer.Make (struct include O let is_morello = false end)
 
   let isa_name = "AArch64"
+  let body_module = "hetCpuBody"
   let host_macro = "__aarch64__"
   let cross = Some ("aarch64-linux-gnu","gnu11")
 
@@ -57,6 +58,7 @@ module X86_64 (O:Config) = struct
   module Lexer = X86_64Lexer.Make (O)
 
   let isa_name = "X86_64"
+  let body_module = "hetCpuBodyX86"
   let host_macro = "__x86_64__"
   let cross = None
 
@@ -74,12 +76,16 @@ module X86_64 (O:Config) = struct
           "HetLitmus: P%d (cpu, X86_64) lexing error: %s (in column %S)"
           p msg txt)
 
-  (* B3: x86_64 het body is a compile-only stub (MI300A de-prioritised).
-     het_analyze reports no tagged stores/loads; het_emit_body emits a no-op
-     body with the matching signature. *)
-  let het_analyze ~reg_env:_ _pseudos = HetCpuBody.empty_plan
-  let het_emit_body ch ~prefix ~proc ~k:_ ~store_mu:_
-        ~load_buf:_ ~reg_env:_ ~iter:_ ~addr_params
-        ~buf_params _pseudos =
-    HetCpuBody.emit_stub ch ~prefix ~proc ~addr_params ~buf_params
+  (* B3: real tagged x86-64 body (P2b).  Cpu.pseudo = X86_64Base.pseudo here,
+     so HetCpuBodyX86 matches directly after peeling.  Was a compile-only stub
+     until 2026-08-03: an x86 CPU proc emitted a no-op, which both untested the
+     CPU thread and left 372 of the 411 x86 renderings unemittable (the
+     condition could bind neither a read buffer nor a mu). *)
+  let het_analyze ~reg_env pseudos =
+    HetCpuBodyX86.analyze ~reg_env (HetCpuBodyX86.instrs_of_code pseudos)
+  let het_emit_body ch ~prefix ~proc ~k ~store_mu ~load_buf
+        ~reg_env ~iter ~addr_params ~buf_params pseudos =
+    HetCpuBodyX86.emit_body ch ~prefix ~proc ~k ~store_mu
+      ~load_buf ~reg_env ~iter ~addr_params ~buf_params
+      (HetCpuBodyX86.instrs_of_code pseudos)
 end

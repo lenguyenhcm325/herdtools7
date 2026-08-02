@@ -219,13 +219,17 @@ end
             matching ISA sub-parser (errors name the proc + ISA + column) *)
          val parse_column : int -> string -> Cpu.parsedPseudo list
          val isa_name : string         (* human label, e.g. "AArch64" *)
+         (* the module that emits this ISA's tagged body, named in the emitted
+            <t>_cpu.c banner so the artifact says which emitter produced it *)
+         val body_module : string
          val host_macro : string       (* CPP macro true on the CPU host ISA *)
          (* (clang triple, -std) to cross-assemble the real CPU asm on a foreign
             dev host; None when the build host already IS this ISA (native gcc) *)
          val cross : (string * string) option
          (* The tagged-CPU-body hooks -- the ONLY CPU-ISA-specific pieces of the
-            het emitter (the AArch64 arm wires the real HetCpuBody matcher, the
-            x86_64 arm a compile-only stub).  [het_analyze] resolves one CPU
+            het emitter (the AArch64 arm wires HetCpuBody, the x86_64 arm its
+            twin HetCpuBodyX86; both produce the same C shape and share
+            [cpu_plan]).  [het_analyze] resolves one CPU
             proc's store/load structure (addresses via [reg_env]: addr-reg-name
             -> global C name), feeding the mu map, the read-buffer plan and the
             recovery map.  [het_emit_body] emits the tagged
@@ -1558,11 +1562,11 @@ end
             let s = output_string ch in
             s (Printf.sprintf
                  "/* HetLitmus: TAGGED CPU threads for %s (%s).\n   \
-                  Bodies emitted by HetLitmus hetCpuBody: the tested mnemonics\n   \
+                  Bodies emitted by HetLitmus %s: the tested mnemonics\n   \
                   verbatim, store values rebound to the per-iteration tag\n   \
                   K*(_n+1)+mu, loads recorded into buffers.\n   \
                   DO NOT EDIT. */\n"
-                 tname CpuF.isa_name) ;
+                 tname CpuF.isa_name CpuF.body_module) ;
             if co_run then
               s (Printf.sprintf
                    "/* CO-RUN: this file carries the CPU threads of every co-running\n   \
@@ -2714,5 +2718,10 @@ end
               "HetLitmus: emitted harness directory %s (%s.cu + %s.hip)\n%!"
               dir tname tname ;
           Absent
-        with e -> if O.nocatch then raise e ; Interrupted e
+        (* FAIL-CLOSED: the emitted harness directory is this function's ONLY
+           deliverable, so a refusal must not be reported as success.  See
+           HetArch.refused. *)
+        with e ->
+          if O.nocatch then raise e ;
+          HetArch.refused "het" src_name e
     end

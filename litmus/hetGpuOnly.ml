@@ -55,5 +55,10 @@ module Make
         if O.verbose >= 0 then
           Printf.eprintf "HetLitmus: emitted HIP %s\n%!" hipname ;
         Answer.Absent
-      with e -> if O.nocatch then raise e ; Answer.Interrupted e
+      (* FAIL-CLOSED: the emitted .cu/.hip pair is this function's ONLY
+         deliverable, so a refusal must not be reported as success.  See
+         HetArch.refused. *)
+      with e ->
+        if O.nocatch then raise e ;
+        HetArch.refused "gpu-only" name e
   end

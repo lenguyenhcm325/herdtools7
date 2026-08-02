@@ -6,7 +6,8 @@
 (* vocabulary {MOV #imm + STR|STLR, LDR|LDAR|LDAPR, DMB SY|ST|LD}.  Never    *)
 (* touches Skel.ml / ASMLang.ml / the shared arch backends.  Consumed by     *)
 (* top_litmus's HetEmit via the CpuF.het_analyze / CpuF.het_emit_body hooks  *)
-(* (the x86_64 arm wires the compile-only [emit_stub] instead).              *)
+(* (the x86_64 arm wires the twin module hetCpuBodyX86, which shares         *)
+(* [cpu_plan] and emits the same C shape from X86_64Base instructions).      *)
 (****************************************************************************)
 
 (* One CPU proc's store/load structure in program order, addresses resolved
@@ -20,8 +21,6 @@ type cpu_plan = {
        read is scanned exactly like a GPU-side one (B3-decision.md 4.1). *)
     loads : (string * string) list ;
   }
-
-val empty_plan : cpu_plan
 
 (* Peel labels/nops off a pseudo list into its straight-line instructions. *)
 val instrs_of_code : AArch64Base.pseudo list -> AArch64Base.instruction list
@@ -50,10 +49,3 @@ val emit_body :
   load_buf:(int -> string) -> reg_env:(string -> string) -> iter:string ->
   addr_params:(string * string) list -> buf_params:(string * string) list ->
   AArch64Base.instruction list -> unit
-
-(* x86_64 twin: a compile-only no-op body with the matching signature (MI300A
-   de-prioritised; never executed as a result). *)
-val emit_stub :
-  out_channel -> prefix:string -> proc:int ->
-  addr_params:(string * string) list ->
-  buf_params:(string * string) list -> unit

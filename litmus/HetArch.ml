@@ -93,6 +93,34 @@ let prog_section_text splitted name =
   let txt = really_input_string ic len in
   close_in ic ; txt
 
+(* ---------------------------------------------------------------------- *)
+(* FAIL-CLOSED refusal (P2b).                                             *)
+(*                                                                        *)
+(* litmus7's batch driver turns an emission exception into                *)
+(* [Answer.Interrupted], prints it on stderr, records a failure stub in    *)
+(* the run harness and STILL EXITS 0 (dumpRun.ml:266-281 ->               *)
+(* litmus.ml:383-385 `exit 0').  That is deliberate for a multi-test      *)
+(* batch whose deliverable is the tarball -- one unsupported test must not *)
+(* stop the run -- but it is wrong for a het test, whose ONLY deliverable  *)
+(* is the emitted harness directory.  A caller that redirects stdout       *)
+(* (hetlitmus/verify/emit-all.sh, under `set -euo pipefail') then saw a    *)
+(* clean exit and no harness: success reported for nothing produced.       *)
+(*                                                                        *)
+(* So a het refusal names itself on stderr with a greppable marker and     *)
+(* exits 3 -- distinct from litmus7's own 2 (usage / lex-rename errors),   *)
+(* so a wrapper can tell the two apart.  Every het emission boundary       *)
+(* routes here: hetEmit.run, hetGpuOnly.compile and the `Het' dispatch arm *)
+(* in top_litmus (which owns the pre-parse ISA scan).  Nothing outside the *)
+(* het lane changes behaviour.                                            *)
+(* ---------------------------------------------------------------------- *)
+let refused what name e =
+  let msg = match e with
+    | Misc.Fatal msg | Misc.UserError msg -> msg
+    | Misc.Exit -> "aborted without emitting anything"
+    | e -> Printf.sprintf "exception %s" (Printexc.to_string e) in
+  Printf.eprintf "HetLitmus REFUSED (%s) %s: %s\n%!" what name msg ;
+  exit 3
+
 module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
 
   (* Who am I *)

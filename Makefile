@@ -945,6 +945,25 @@ hetlitmus-obs: | build
 	python3 hetlitmus/verify/obscheck.py --bite
 	@ echo "HetLitmus observer-liveness gate: OK (and the gate bites)"
 
+### hetlitmus-x86body: the P2b gate -- is the x86-64 CPU thread of a het
+### harness REAL?  Until 2026-08-03 hetCpuFront.ml wired HetCpuBody.empty_plan +
+### emit_stub for X86_64, so an x86 CPU proc emitted a `(void)_n' no-op: the CPU
+### thread tested nothing AND, measured over the 412 x86 renderings, litmus7
+### emitted a harness for 39 and REFUSED 373 (308 could bind no read buffer, 65
+### no mu) -- while EXITING 0.  Six phases: emission coverage, body-vs-column
+### fidelity, tag liveness (the B4 lesson -- emitting is not testing), the
+### instructions surviving gcc to the .o, the aarch64 lane unchanged, and the
+### fail-closed refusal (exit 3 + marker + no harness, plus emit-all.sh's two
+### detectors).  --bite injects into every phase on corruption AND on omission.
+### The x86 renderings are generated on demand by tests/het/generate-x86.sh;
+### they are deliberately NOT committed (the oracle is keyed on the AArch64
+### names, corpus-gate.sh pins 411 and 90 of them would be dupcheck duplicates).
+hetlitmus-x86body: | build
+	@ echo
+	python3 hetlitmus/verify/x86bodycheck.py
+	python3 hetlitmus/verify/x86bodycheck.py --bite
+	@ echo "HetLitmus x86-64 tagged CPU body gate: OK (and the gate bites)"
+
 ### hetlitmus-l0-selftest: the DISCRIMINATING-POWER proofs of the nvcc lane.
 ### l0_tokens.sh {selftest,guard} prove ptxcheck can detect a weakened scope/order
 ### and that the stress/cpustress scaffolding bites a dead layer; smoke.sh bite
@@ -975,6 +994,7 @@ hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-stats
 hetlitmus-test:: hetlitmus-hist
 hetlitmus-test:: hetlitmus-tuner
+hetlitmus-test:: hetlitmus-x86body
 
 hetlitmus-test-nvcc:: | build
 hetlitmus-test-nvcc:: hetlitmus-faithful
@@ -1007,6 +1027,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order hetlitmus-oracle
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
+.PHONY: hetlitmus-x86body
 ### Neither AMD target was phony until P2a (2026-08-02).  They worked only
 ### because no file of those names happened to exist -- one `touch' away from a
 ### gate that silently stops running.

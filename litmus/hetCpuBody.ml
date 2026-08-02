@@ -15,9 +15,10 @@
 (* AArch64 lowering (env-research/decisions/B3-decision.md, Decision 1).     *)
 (*                                                                          *)
 (* AArch64-specific: it pattern-matches AArch64Base.instruction directly     *)
-(* (Cpu.instruction = int AArch64Base.kinstruction).  The x86_64 twin is a   *)
-(* compile-only stub (MI300A, de-prioritised).  Never touches Skel.ml /      *)
-(* ASMLang.ml / the shared arch backends.                                    *)
+(* (Cpu.instruction = int AArch64Base.kinstruction).  The x86_64 twin is     *)
+(* hetCpuBodyX86, which shares [cpu_plan] and emits the same C shape from    *)
+(* X86_64Base instructions.  Never touches Skel.ml / ASMLang.ml / the shared *)
+(* arch backends.                                                            *)
 (*                                                                          *)
 (* This software is governed by the CeCILL-B license under French law.       *)
 (****************************************************************************)
@@ -47,8 +48,6 @@ type cpu_plan = {
        "X0", exactly how the condition names it. *)
     loads : (string * string) list ;
   }
-
-let empty_plan = { stores = [] ; loads = [] }
 
 (* Peel labels / nops etc. off a pseudo into its straight-line instrs.  Not
    Pseudo.fold_pseudo_code: that one asserts on a Macro rather than skipping
@@ -213,23 +212,4 @@ let emit_body chan ~prefix ~proc ~k ~store_mu ~load_buf ~reg_env ~iter
   for li = 0 to !n_loads - 1 do
     s (Printf.sprintf "  %s[_n] = _t%d;\n" (load_buf li) li)
   done ;
-  s "}\n"
-
-(* ------------------------------------------------------------------ *)
-(* x86_64 stub (MI300A, de-prioritised: compile-only, need not run).  *)
-(* A portable no-op body with the same signature, so the harness      *)
-(* links; it does not tag, and is never executed as a result.         *)
-(* ------------------------------------------------------------------ *)
-
-let emit_stub chan ~prefix ~proc ~addr_params ~buf_params =
-  let s = output_string chan in
-  let params =
-    String.concat ", "
-      (List.map fst addr_params @ List.map fst buf_params @ ["int _n"]) in
-  s (Printf.sprintf "void het_run_%sP%d(%s) {\n" prefix proc params) ;
-  s "  /* x86_64 het CPU body: compile-only stub (MI300A de-prioritised, B3\n" ;
-  s "     Decision 1 -- the AArch64 tagged body is the real path). */\n" ;
-  s "  (void)_n;\n" ;
-  List.iter (fun (_,n) -> s (Printf.sprintf "  (void)%s;\n" n)) addr_params ;
-  List.iter (fun (_,n) -> s (Printf.sprintf "  (void)%s;\n" n)) buf_params ;
   s "}\n"

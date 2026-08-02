@@ -689,7 +689,13 @@ end = struct
                           end) in
                       H.run in
                  run hash_env name in_chan out_chan splitted
-               with e -> if OT.nocatch then raise e ; Interrupted e)
+               (* FAIL-CLOSED: this arm owns the pre-parse ISA scan, so a het
+                  test that dies before HetEmit.run is entered must refuse
+                  loudly here too (HetArch.refused explains why exit 0 is
+                  wrong for a het test). *)
+               with e ->
+                 if OT.nocatch then raise e ;
+                 HetArch.refused "isa-scan" name e)
           | `CPP | `JAVA | `ASL | `BPF -> assert false
         in
         aux arch hash_env name in_chan out_chan splitted
