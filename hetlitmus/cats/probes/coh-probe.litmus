@@ -1,0 +1,11 @@
+LISA coh-probe
+Scopes=(sys (gpu (cta 0) (cta 1)))
+"D14(iii): SC per location, annotated form. W1 -rf-> R -po-> W2 -co-> W1."
+{
+}
+ P0                 | P1                  ;
+ w[release,sys] x 1 | r[acquire,sys] r0 x ;
+                    | w[relaxed,sys] x 2  ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists ([x]=1 /\ 1:r0=1)

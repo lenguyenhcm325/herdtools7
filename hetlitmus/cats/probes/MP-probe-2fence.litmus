@@ -1,0 +1,13 @@
+LISA MP-probe-2fence
+Scopes=(sys (gpu (cta 0) (cta 1)))
+"D14(c)+(i): the LIVE two-fence probe. TWO system-scope fences per proc, MP shape, every access relaxed. Ordered only by the axiom-(2) fence clauses, which exist only because tag2events('release) contains fence events."
+{
+}
+ P0                 | P1                  ;
+ w[relaxed,sys] x 1 | r[relaxed,sys] r0 y ;
+ f[release,sys]     | f[acquire,sys]      ;
+ f[acquire,sys]     | f[release,sys]      ;
+ w[relaxed,sys] y 1 | r[relaxed,sys] r1 x ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists (1:r0=1 /\ 1:r1=0)

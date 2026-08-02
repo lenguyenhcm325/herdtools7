@@ -703,6 +703,19 @@ hetlitmus-controlmap: | build
 	python3 hetlitmus/verify/controlmap.py --bite
 	@ echo "HetLitmus B6 control map: OK (and the gate bites)"
 
+### hetlitmus-amd-controlmap: the SAME gate on the AMD / MI300A map.  It is a
+### separate artifact and a separate lattice, not a translation (memo 7.D11): on
+### x86 the CPU strength lattice loses its middle rung, so a candidate that only
+### moves within {ra,st,ld} is NOT a weakening there.  The oracle it is derived
+### against is expected-amd.csv and its census is 146 Disallowed, not 50.
+### Regenerate with:
+###   python3 hetlitmus/verify/controlmap.py --lattice x86 --emit \
+###     > hetlitmus/tests/het/control-map-amd.csv
+hetlitmus-amd-controlmap: | build
+	@ echo
+	python3 hetlitmus/verify/controlmap.py --lattice x86 --check
+	@ echo "HetLitmus AMD control map: OK"
+
 ### hetlitmus-oracle: the het oracle's GENERATOR vs its committed artifact.
 ### tests/het/expected-nvidia.csv is the 411-row table every het verdict is
 ### scored against, and no target and no gate ever re-ran the script that builds
@@ -725,6 +738,66 @@ hetlitmus-oracle:
 	  && diff -u $(HET_ORACLE) $$tmp/het/expected-nvidia.csv ); \
 	rc=$$?; rm -rf $$tmp; exit $$rc
 	@ echo "HetLitmus het oracle: OK ($(HET_ORACLE) matches its generator)"
+
+### hetlitmus-amd-oracle: the SAME check for the AMD MI300A oracle.  Separate
+### target because expected-amd.csv is a separate file with its own Model string
+### -- there is no merge path and no per-row model dispatch (memo 9.2).  The AMD
+### generator carries far more inside it than the NVIDIA one: the 34-row anchor
+### gate G1 (which must pass 34/34 BEFORE the CSV is written), G15's !SWMR hook
+### split, G13/G14's structural assertions and G0's program-synthesis check
+### against all 411 .litmus files, so it takes ~14 s rather than 0.1 s.  Its 146
+### Disallowed rows are 146 candidate FALSE REFUTATIONS of the compound memory
+### model if any of them is wrong, which is why the regeneration is gated at all.
+### Bite it the same way:  make hetlitmus-amd-oracle HET_AMD_ORACLE=/tmp/bad.csv
+HET_AMD_ORACLE ?= hetlitmus/tests/het/expected-amd.csv
+hetlitmus-amd-oracle:
+	@ echo
+	tmp=$$(mktemp -d); \
+	( mkdir -p $$tmp/het \
+	  && cp hetlitmus/tests/_grid_lib.sh $$tmp/ \
+	  && cp hetlitmus/tests/het/build-amd-oracle.sh hetlitmus/tests/het/*.litmus $$tmp/het/ \
+	  && bash $$tmp/het/build-amd-oracle.sh \
+	  && diff -u $(HET_AMD_ORACLE) $$tmp/het/expected-amd.csv ); \
+	rc=$$?; rm -rf $$tmp; exit $$rc
+	@ echo "HetLitmus AMD het oracle: OK ($(HET_AMD_ORACLE) matches its generator)"
+
+### hetlitmus-amdorder: the machine-check behind expected-amd.csv, i.e. the
+### gates of PORT2-R2-amd-oracle.md sect 9.4 that need an instrument the
+### generator does not have.
+###   Phase 1 G3   35 CPU-projection cells (11 shapes x {plain, MFENCE-per-proc})
+###                under herd7 -cat x86tso.cat vs ord_x86, plus the header pin:
+###                an X86_64 header is REFUSED by x86tso.cat and would otherwise
+###                silently default to x86tso-mixed.cat
+###   Phase 2 G4   the 12 GPU primitive cells with the INSTRUMENT NAMED PER CELL
+###                (probe + kernel + recorded asm); amd-gcn3.cat is cited for
+###                exactly two of them and both are DECIDED by running it
+###   Phase 3 G5   the CSV read back: 411 rows, 258/146/7, the ten-class census
+###                and the provenance census 15/41/46/309 -- asserted not printed
+###   Phase 4 G6   x86-image collapse: 45 classes, 321 distinct programs, 0
+###                inconsistent (the harness runs the identical x86 program)
+###   Phase 5 G7   the T_x86 rendering under herd7: a NECESSARY condition on the
+###           G8   17 K-CPU rows, and the one-directional guard `Sometimes =>
+###                Allowed', with the strengthening property itself asserted
+###   Phase 6 G12  S_CUT_MCA == 8 by memo 5.2's structural predicate re-derived
+###           G13  here; 1092 external edges and 0 GPU->GPU; the unreachable
+###           G14  primitives really absent
+###   Phase 7 G15  the !SWMR hook split: narrow 48 / wide 65 / delta 17 == K-CPU
+###   Phase 8 G10  the downstream census pins, as a fail-closed ledger
+###   Phase 9 G11  the mu-map on the x86 strength lattice (memo 7.D11), derived
+###                by controlmap.py --lattice x86: 130 of the 146 Disallowed rows
+###                carry a Layer-A mutant and the other 16 provably cannot, which
+###                is PINNED so it can never silently grow
+### --bite corrupts the rule, the corpus, the instrument index, the CSV and the
+### downstream pins and requires each injection to redden the phase it names, for
+### the right reason, on CORRUPTION and on OMISSION both.  The injection COUNT is
+### printed by the run itself -- an earlier version of this comment said 33 and
+### the measured value was 35, which is exactly the kind of number nobody
+### re-measures.  Budget roughly 15 s for the check and ~2 min for the bite.
+hetlitmus-amdorder: | build
+	@ echo
+	python3 hetlitmus/verify/amdordercheck.py
+	python3 hetlitmus/verify/amdordercheck.py --bite
+	@ echo "HetLitmus AMD oracle machine-check: OK (and the gate bites)"
 
 ### hetlitmus-dup: the isomorphism gate.  generate.sh dedups only by
 ### byte-comparing a variant against ONE designated sibling, which cannot see a
@@ -894,6 +967,9 @@ hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-dup
 hetlitmus-test:: hetlitmus-order
 hetlitmus-test:: hetlitmus-oracle
+hetlitmus-test:: hetlitmus-amd-oracle
+hetlitmus-test:: hetlitmus-amdorder
+hetlitmus-test:: hetlitmus-amd-controlmap
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-stats
@@ -918,6 +994,8 @@ hetlitmus-promote: | build
 	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/gpu-only/generate.sh
 	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/het/generate.sh
 	bash hetlitmus/tests/het/build-nvidia-oracle.sh
+	bash hetlitmus/tests/het/build-amd-oracle.sh
+	python3 hetlitmus/verify/controlmap.py --lattice x86 --emit > hetlitmus/tests/het/control-map-amd.csv
 	dune test hetlitmus/tests/cram --auto-promote
 	@ echo "hetlitmus-promote: corpora regenerated + cram goldens promoted (NOT committed)."
 	@ echo "hetlitmus-promote: review 'git diff' then commit yourself."
@@ -926,6 +1004,10 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order hetlitmus-oracle
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
+### Neither AMD target was phony until P2a (2026-08-02).  They worked only
+### because no file of those names happened to exist -- one `touch' away from a
+### gate that silently stops running.
+.PHONY: hetlitmus-amd-oracle hetlitmus-amdorder hetlitmus-amd-controlmap
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64

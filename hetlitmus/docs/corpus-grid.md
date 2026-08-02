@@ -125,13 +125,28 @@ rel/acq columns: the accesses stay relaxed and diy inserts a Bell fence event
 this directly, no generator code change). PTX renders this as
 `fence.sc.<scope>`.
 
-**Caveat:** the AMD oracle `hetlitmus/cats/amd-gcn3.cat` deliberately does *not*
-model fences — its header explains that the HRF fence model computes AMD
-SB/IRIW wrong. herd7 therefore leaves the fence event unconstrained, the
-accesses read like relaxed, and the printed `Observation` is **advisory** — it
-must not be read as a fence verdict. (`amd-gcn3.cat` is unchanged.) This is
-consistent anyway: every grid test is NO-ORACLE in the oracle-compare sense —
-`expected-amd-gcn3.csv` covers only the original 8.
+**Caveat — SUPERSEDED for the AMD side, and what replaced it.** This section used
+to say that `hetlitmus/cats/amd-gcn3.cat` deliberately does not model fences, so
+herd7 leaves the fence event unconstrained and the printed `Observation` is
+advisory. That was accurate and is no longer: PORT2-R2 register item **D14**
+required the file to be repaired before it could be cited as an instrument, and
+the repair landed **two** fence-ordering mechanisms — `[HSA]` Fig. 3-15's fence
+clauses in the synchronisation relation, and `[SCATOM]` Def. 27's SC order over
+`'sc` events. Measured over the 6 two-proc shapes × 5 primitives × 5 primitives at
+`sys` scope: **30/150 Forbidden before the repair, 49/150 after**, and 25 of the
+pre-repair 30 were the `LB` block, which `no-load-buffering` decides whatever the
+fence column says. The fence column is therefore **no longer advisory for AMD**.
+
+Two things did *not* change and still bound what the column is worth:
+
+* **The extension is unanchored.** There is no fence and no `sc` operation
+  anywhere in the PLDI'23 artifact, so the "8/8 reproduces the artifact" contract
+  cannot test one line of it — measured in `tests/cram/amd-cat.t`: every one of
+  the eight single-axiom ablations still scores 8/8.
+* **Oracle status is unchanged.** Every part-(B) grid test is still NO-ORACLE in
+  the oracle-compare sense; `expected-amd-gcn3.csv` covers only the original 8.
+
+The NVIDIA side is untouched by this: `nvidia-ptx.cat` modelled fences all along.
 
 ### 2. The `CPU_ARCHS` knob (het corpus)
 

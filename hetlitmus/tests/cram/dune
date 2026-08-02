@@ -14,6 +14,8 @@
   ../../verify/ptxcheck.py
   obs.txt
   oracle.csv
+  obs-amd.txt
+  oracle-amd.csv
   obs-stats.txt
   oracle-stats.csv
   corrupt-strengthen.ptx
@@ -60,3 +62,37 @@
   ; rewritten from the test's name.
   ../het/control-map.csv
   ../gpu-only/MP-sys-acquire.litmus))
+
+; amd-cat.t is the third stanza because it is the only cram test that runs herd7.
+; It guards hetlitmus/cats/amd-gcn3.cat after the PORT2-R2 D14 repair
+; (SC-per-location, the 'sc set, the two fence-ordering mechanisms, and the
+; tag2events fence seam).  That file's own validation -- "8/8 against the PLDI'23
+; artifact" -- is provably blind to every one of those: the test measures that all
+; eight of its ablations still score 8/8.  The 137-test GPU-only corpus is blind to
+; the coherence half as well -- three of the eight ablations (A0, A1, A01) move 0 of
+; its 137 rows.  For those the probes are the ONLY instrument in the tree that sees
+; the repair, which is why D14 asked for a cram test and not a corpus count.
+;
+; herd7's libdir is NOT and CANNOT BE a declared dep: herd/dune line 1 reads
+; `(dirs :standard \ tests/instructions libdir)`, so herd/libdir is outside dune's
+; source scan altogether and both (source_tree ...) and (glob_files ...) on it
+; resolve to NOTHING -- silently, which is worse than an error.  (Measured: with
+; either form declared, every herd7 invocation below still died with "Cannot find
+; file stdlib.cat".)  litmus7 does not have this problem because het emission needs
+; no libdir at all.  amd-cat.t therefore locates the SOURCE libdir at run time by
+; walking up from cwd until it finds herd/libdir/stdlib.cat, which works from the
+; build dir and from a dune sandbox alike.  Consequence, stated so nobody assumes
+; otherwise: editing a file under herd/libdir does NOT invalidate this test's dune
+; cache.  Run `make hetlitmus-cram` after touching herd/libdir, or `dune build
+; @hetlitmus/tests/cram/amd-cat --force`.  If the walk-up ever fails the test does
+; not go quiet -- herd7 prints its libdir error, every verdict line comes out empty
+; and the golden mismatches on the first probe.
+(cram
+ (applies_to amd-cat)
+ (package herdtools7)
+ (deps
+  %{bin:herd7}
+  ../../bells/ptx.bell
+  ../../cats/amd-gcn3.cat
+  (glob_files ../../cats/probes/*)
+  (glob_files ../gpu-only/*.litmus)))

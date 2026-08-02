@@ -45,6 +45,39 @@ DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
 N_DISALLOWED = 50
 
 # ---------------------------------------------------------------------------
+# THE LATTICE PARAMETER (memo PORT2-R2 7.D11, landed by P2a 2026-08-02).
+#
+# The AMD map is REGENERATED, never translated.  Two things change together and
+# neither is cosmetic:
+#
+#   * the CPU strength lattice LOSES ITS MIDDLE RUNG.  On AArch64 STLR / LDAPR /
+#     DMB.ST / DMB.LD are `partial' (tier 1); their x86 images are all a plain
+#     MOV (memo 3.1's collapse table), so on x86 the only CPU op that orders
+#     anything across a pair is MFENCE.  A candidate that merely moves within
+#     {ra, st, ld} is therefore NOT a weakening on MI300A -- the harness would
+#     run the IDENTICAL program and the "control" would vouch for nothing.
+#     `weakening_of' rejects it as "identical ordering strength", which is the
+#     fail-closed behaviour D11 asks for.
+#   * the Disallowed census goes 50 -> 146, and the AMD census is NOT all
+#     two-sided: 42 of its Disallowed rows are one-sided grid cells and 4 are
+#     FULLY RELAXED, which is why the x86 derivation is a generic search over
+#     the corpus rather than the NVIDIA name cascade.
+#
+# LATTICE is module state read by _parse_instr and audit_map.  The default is
+# `aarch64', so the NVIDIA path is byte-for-byte what it was.
+LATTICE = "aarch64"
+N_DISALLOWED_BY_LATTICE = {"aarch64": 50, "x86": 146}
+
+
+def set_lattice(name):
+    global LATTICE, N_DISALLOWED
+    if name not in N_DISALLOWED_BY_LATTICE:
+        raise SystemExit("controlmap: unknown lattice %r (expected %s)"
+                         % (name, " | ".join(sorted(N_DISALLOWED_BY_LATTICE))))
+    LATTICE = name
+    N_DISALLOWED = N_DISALLOWED_BY_LATTICE[name]
+
+# ---------------------------------------------------------------------------
 # The per-side ordering-strength lattice.  mu(T) must be strictly WEAKER
 # componentwise (cpu,gpu) and structurally identical to T -- same procs, same
 # devices, same ordered (kind,location) access list: a pure ordering weakening,
@@ -135,6 +168,12 @@ class Test:
         self.accesses = {}           # proc -> [("R"|"W", location), ...]
         self.cpu_strength = (PLAIN, NONE4)   # (tier, ordered-pair set)
         self.gpu_strength = (PLAIN, NONE4)
+        # the SCOPES the GPU ops are annotated with.  Not part of the strength
+        # lattice -- a scope change is not an ordering weakening, it is a
+        # different experiment (memo PORT2-R2 3.2.3 makes every non-sys het row
+        # Allowed for a SCOPE reason) -- but the x86 derivation holds it fixed so
+        # a cta-scoped sibling cannot be crowned mu of a sys-scoped test.
+        self.scopes = set()
 
     # -- the structural fingerprint mu(T) must match exactly ----------------
     def structure(self):
@@ -231,6 +270,7 @@ def _parse_instr(t, p, cell, regmap, path):
         if not m:
             raise ValueError("%s: P%d unparsed GPU op %r" % (path, p, cell))
         kind, order, _scope, rest = m.groups()
+        t.scopes.add(_scope)
         if kind == "f":
             if order not in GPU_FENCE_STRENGTH:
                 raise ValueError("%s: P%d unknown GPU fence order %r"
@@ -263,6 +303,10 @@ def _parse_instr(t, p, cell, regmap, path):
         return                                   # immediate setup, not an access
     m = re.match(r"^(?:DMB|DSB)[\s.]+(SY|ST|LD)$", up)
     if m:
+        # x86 lattice: DMB.ST and DMB.LD have NO x86 image at all (memo 3.1
+        # drops them), so they raise nothing; only DMB.SY -> MFENCE survives.
+        if LATTICE == "x86" and m.group(1) != "SY":
+            return
         t.cpu_strength = raise_side(t.cpu_strength, *DMB_STRENGTH[m.group(1)])
         return
     if re.match(r"^(DMB|DSB|ISB)(\s|\.|$)", up):
@@ -276,13 +320,16 @@ def _parse_instr(t, p, cell, regmap, path):
     if loc is None:
         raise ValueError("%s: P%d addr reg %s is not bound in the init block"
                          % (path, p, reg))
+    # x86 lattice: STLR and LDAPR/LDAR both collapse to a plain MOV (memo 3.1),
+    # so neither raises the CPU side.  This is the middle rung D11 removes.
+    x86 = (LATTICE == "x86")
     if mnem in ("STLR", "STR"):
         t.accesses[p].append(("W", loc))
-        if mnem == "STLR":
+        if mnem == "STLR" and not x86:
             t.cpu_strength = raise_side(t.cpu_strength, PART_TIER, REL_ORD)
     else:
         t.accesses[p].append(("R", loc))
-        if mnem in ("LDAPR", "LDAR"):
+        if mnem in ("LDAPR", "LDAR") and not x86:
             t.cpu_strength = raise_side(t.cpu_strength, PART_TIER, ACQ_ORD)
 
 
@@ -323,9 +370,97 @@ def split_name(name):
     return m.groupdict() if m else None
 
 
+def canary_for(name):
+    """Layer B, shared by both lattices: a het MP-*-sys-relaxed instance,
+    matching T's cross-device direction where T has one."""
+    parts = split_name(name)
+    cut = parts["cut"] if parts else None
+    return "MP-%s-sys-relaxed" % cut if cut in ("cg", "gc") else "MP-cg-sys-relaxed"
+
+
+def derive_x86(tests, oracle):
+    """The AMD / MI300A map (memo 7.D11), REGENERATED not translated.
+
+    The NVIDIA cascade below is keyed on the grid's NAME vocabulary and assumes
+    every Disallowed row is a `-2s' cell.  Neither assumption survives the AMD
+    census: 42 of its 146 Disallowed rows are one-sided grid cells, 4 are FULLY
+    RELAXED, and one (`MP-het') is a reference test whose name is not a grid
+    name at all.  So mu is chosen by SEARCH over the corpus instead:
+
+      mu(T) = a MAXIMAL element of { M : M is a corpus test, oracle-Allowed,
+              structurally identical to T, and STRICTLY WEAKER componentwise on
+              the x86 (cpu,gpu) lattice }
+
+    Maximal = nearest: no other usable candidate is stronger than it.  Ties are
+    broken by name so the map is deterministic, and the other maximal elements
+    are recorded in MuAlt.  Everything goes through `weakening_of', which is the
+    same property audit_map re-asserts against the committed file.
+
+    A row with NO usable candidate is NOT quietly given `-'.  It is admitted
+    only when nothing weaker CAN exist -- the program is already at the lattice
+    minimum on both sides -- and it is then marked `none' with that reason, so
+    the run lane knows it has a Layer-B canary and no Layer-A mutant.  Any other
+    empty result is a hard error."""
+    rows, errors = [], []
+    bottom = ((PLAIN, NONE4), (PLAIN, NONE4))
+    for name in sorted(tests):
+        exp = oracle.get(name, "?")
+        canary = canary_for(name)
+        if oracle.get(canary) != "Allowed" or canary not in tests:
+            errors.append("canary %s for %s does not exist or is not Allowed"
+                          % (canary, name))
+        if canary == name:
+            canary = "self"
+        mu = mu_exp = rule = alt = relaxed = "-"
+        if exp == "Disallowed":
+            cands = [m for m in sorted(tests)
+                     if m != name and oracle.get(m) == "Allowed"
+                     and tests[m].scopes == tests[name].scopes
+                     and weakening_of(tests[name], tests[m]) is None]
+            # maximal = nothing else usable is strictly stronger than it
+            top = [c for c in cands
+                   if not any(c2 != c and weakening_of(tests[c2], tests[c]) is None
+                              for c2 in cands)]
+            # the fully-relaxed companion, if the corpus has one
+            floor = [c for c in cands if tests[c].strength() == bottom]
+            relaxed = sorted(floor)[0] if floor else "none"
+            if top:
+                mu = sorted(top)[0]
+                mu_exp = oracle.get(mu)
+                rule = "maximal weakening on the x86 lattice (%d usable candidate(s))" % len(cands)
+                others = sorted(c for c in top if c != mu)
+                alt = others[0] if others else "-"
+            else:
+                # NOTHING usable.  That is admitted only with a reason RE-DERIVED
+                # from the corpus, never as a bare `-': a silently missing
+                # control does not weaken a null, it makes it unfalsifiable
+                # while the null still prints and still looks green (Q4 2.3).
+                mu, mu_exp = "none", "-"
+                blocked = sorted(
+                    m for m in tests
+                    if m != name and tests[m].scopes == tests[name].scopes
+                    and weakening_of(tests[name], tests[m]) is None)
+                if tests[name].strength() == bottom:
+                    rule = ("NO Layer-A mutant CAN exist: already at the lattice "
+                            "minimum on both sides -- Layer-B canary only")
+                elif blocked:
+                    rule = ("NO Layer-A mutant EXISTS: every weaker structural "
+                            "sibling is itself non-Allowed [%s] -- Layer-B canary "
+                            "only" % "; ".join(blocked))
+                else:
+                    errors.append("%s: NO mu(T) and no reason the corpus supports "
+                                  "-- the control would be silently MISSING "
+                                  "(Q4 2.3)" % name)
+                    mu = "-"
+        rows.append((name, exp, mu, mu_exp, rule, alt, relaxed, canary))
+    return rows, errors
+
+
 def derive(tests, oracle):
     """The map.  Returns rows [(test, expected, mu, mu_expected, rule, alt,
     relaxed, canary)] and a list of hard errors (which make the gate fail)."""
+    if LATTICE == "x86":
+        return derive_x86(tests, oracle)
     rows, errors = [], []
 
     def allowed(n):
@@ -468,11 +603,41 @@ def audit_map(text, tests, oracle):
         if name not in tests:
             errors.append("%s: Disallowed row names no .litmus" % name)
             continue
-        if not tests[name].two_sided():
+        # "Disallowed => two-sided" is a property of the NVIDIA census only (all
+        # 50 of its Disallowed rows are `-2s' cells -- Q10).  The AMD census has
+        # 42 one-sided Disallowed rows and 4 fully relaxed ones, so asserting it
+        # there would be asserting a fact about the wrong oracle.
+        if LATTICE == "aarch64" and not tests[name].two_sided():
             errors.append("%s: Disallowed row is not two-sided" % name)
-        if oracle.get(relaxed) != "Allowed":
+        if relaxed == "none":
+            # admitted only when the corpus provably HAS no fully-relaxed
+            # structural sibling for this row (checked against the corpus, not
+            # taken from the column).
+            sib = [m for m in tests
+                   if m != name and tests[m].structure() == tests[name].structure()
+                   and tests[m].scopes == tests[name].scopes
+                   and oracle.get(m) == "Allowed"
+                   and tests[m].strength() == ((PLAIN, NONE4), (PLAIN, NONE4))]
+            if sib:
+                errors.append("%s: relaxed companion is `none' but %s exists"
+                              % (name, sorted(sib)[0]))
+        elif oracle.get(relaxed) != "Allowed":
             errors.append("%s: relaxed companion %s missing/not Allowed"
                           % (name, relaxed))
+        if mu == "none":
+            # Admitted only when the CORPUS supports it, re-derived here so a
+            # hand-edited `none' on a row that DOES have a mutant is caught:
+            # either nothing weaker can exist, or every weaker structural
+            # sibling is itself non-Allowed.
+            usable_now = [m for m in tests
+                          if m != name and oracle.get(m) == "Allowed"
+                          and tests[m].scopes == tests[name].scopes
+                          and weakening_of(tests[name], tests[m]) is None]
+            if usable_now:
+                errors.append("%s: mu(T)=none but %s is an existing Allowed "
+                              "weakening -- a missing control is not a skipped one"
+                              % (name, sorted(usable_now)[0]))
+            continue
         if mu not in tests:
             errors.append("%s: mu(T)=%s does not exist as a .litmus" % (name, mu))
             continue
@@ -486,6 +651,11 @@ def audit_map(text, tests, oracle):
         why = weakening_of(tests[name], tests[mu])
         if why:
             errors.append("%s: mu(T)=%s is %s" % (name, mu, why))
+        if LATTICE == "x86" and tests[mu].scopes != tests[name].scopes:
+            errors.append("%s: mu(T)=%s changes the GPU scope %s -> %s, which is "
+                          "a different experiment and not an ordering weakening"
+                          % (name, mu, sorted(tests[name].scopes),
+                             sorted(tests[mu].scopes)))
     if n_dis != N_DISALLOWED:
         errors.append("committed map holds %d Disallowed rows, expected %d"
                       % (n_dis, N_DISALLOWED))
@@ -521,6 +691,31 @@ HEADER = [
 ]
 
 
+def header_for_lattice():
+    """The AMD map is a DIFFERENT artifact from the NVIDIA one and says so in
+    its first line, so the two can never be confused by a reader or a gate."""
+    if LATTICE != "x86":
+        return HEADER
+    return ([
+        "# HetLitmus AMD / MI300A positive-control map (x86 strength lattice).",
+        "#   GENERATED -- do not hand-edit;  regenerate with",
+        "#     hetlitmus/verify/controlmap.py --lattice x86 --emit > control-map-amd.csv",
+        "#   gate with  hetlitmus/verify/amdordercheck.py  (Phase 9, memo 9.4 G11).",
+        "#",
+        "# REGENERATED not translated (memo PORT2-R2 7.D11): on x86 the CPU lattice",
+        "# loses its middle rung -- STLR / LDAPR / DMB.ST / DMB.LD all have a plain",
+        "# MOV as their x86 image -- so a candidate that only moves within",
+        "# {ra, st, ld} is NOT a weakening on MI300A and is refused here.",
+        "# Mu = a MAXIMAL usable weakening.  `none' = the corpus has NO Layer-A",
+        "# mutant for that row and the MuRule column says which of the two admitted",
+        "# reasons applies: the row is already at the lattice minimum, or every",
+        "# weaker structural sibling is itself non-Allowed (the K-CPU rows, whose",
+        "# verdict is carried by their CPU procs).  Those rows have the Layer-B",
+        "# canary and nothing else, and the gate PINS the set so it cannot grow.",
+        "#",
+    ] + HEADER[4:])
+
+
 def load(d, oracle_f):
     tests = {}
     for f in sorted(os.listdir(d)):
@@ -532,7 +727,7 @@ def load(d, oracle_f):
 
 def render(rows):
     buf = io.StringIO()
-    for l in HEADER:
+    for l in header_for_lattice():
         buf.write(l + "\n")
     w = csv.writer(buf, lineterminator="\n")
     w.writerow(["Test", "Expected", "Mu", "MuExpected", "MuRule",
@@ -737,11 +932,17 @@ def main():
     ap.add_argument("--emit", action="store_true")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--bite", action="store_true")
+    ap.add_argument("--lattice", default="aarch64",
+                    choices=sorted(N_DISALLOWED_BY_LATTICE),
+                    help="aarch64 = GH200 (default); x86 = MI300A, memo 7.D11")
     a = ap.parse_args()
 
+    set_lattice(a.lattice)
     d = os.path.abspath(a.dir)
-    oracle_f = a.oracle or os.path.join(d, "expected-nvidia.csv")
-    map_f = a.map or os.path.join(d, "control-map.csv")
+    dflt_oracle = ("expected-amd.csv" if a.lattice == "x86" else "expected-nvidia.csv")
+    dflt_map = ("control-map-amd.csv" if a.lattice == "x86" else "control-map.csv")
+    oracle_f = a.oracle or os.path.join(d, dflt_oracle)
+    map_f = a.map or os.path.join(d, dflt_map)
 
     if a.emit:
         tests, oracle = load(d, oracle_f)

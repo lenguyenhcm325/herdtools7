@@ -1,0 +1,16 @@
+# Synthetic litmus7 log fixture pairing with oracle-amd.csv: the same weak
+# outcome observed on a full-strength row, on a capped `derived' row and on a
+# capped `decision' row, plus the two rows that must NOT read as a refutation --
+# an EARNED NO-ORACLE and an Allowed row.
+Condition exists (1:r0=1 /\ 1:r1=0) is validated
+Observation MP-cg-sys-acquire Sometimes 4 5996
+Condition exists (1:r0=1 /\ 1:r1=0) is validated
+Observation WRC-ccg-sys-relaxed Sometimes 2 5998
+Condition exists (1:r0=1 /\ 1:r1=0) is validated
+Observation IRIW-gccc-sys-acquire Sometimes 1 5999
+Condition exists (1:r0=1 /\ 1:r1=0) is validated
+Observation 2+2W-cg-sys-fence Sometimes 9 5991
+Condition exists (1:r0=1 /\ 1:r1=0) is validated
+Observation MP-cg-sys-relaxed Sometimes 31 5969
+Condition exists (1:r0=1 /\ 1:r1=0) is NOT validated
+Observation NOT-IN-THE-AMD-ORACLE Never 0 6000

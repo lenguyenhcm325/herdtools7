@@ -44,6 +44,39 @@ The three discriminating tests all pass: **MP-cta-F** Allowed (scope too narrow)
    initial value, so the rel→acq pairing of axiom 2 never fires (per
    hetlitmus/docs/gpu-only-corpus.md, "Why the synchronised verdicts hold").
 
+## The D14 repair (2026-08-02) — three axioms became five, and 8/8 still holds
+
+PORT2-R2 register item **D14** (`env-research/PORT2-R2-amd-oracle.md` §7) measured
+three defects that had to be closed before this file could be cited as an
+instrument by `amdordercheck.py` Phase 2, and none of them is visible to the
+8-anchor contract above:
+
+| defect | symptom, measured | repair |
+|---|---|---|
+| no SC-per-location axiom | `coh-probe` (`W1 -rf-> R -po-> W2 -co-> W1`) → **Sometimes** | axiom **(0)** `acyclic po-loc \| com` ([HSA] Fig. 2-8 p.24), plus `irreflexive (hb;co)` beside the existing `irreflexive (hb;fr)` |
+| fence blindness | deleting every `f[…]` from the 33 GPU-only fence tests changed **0/33** verdicts | axiom **(2)** gained [HSA] Fig. 3-15's two fence clauses; new axiom **(4)** is [SCATOM] Def. 27's `acy(SC² ∩ (Fsb?;(hb∪fr∪co);sbF?) ∩ incl)` |
+| no `'sc` set | `2+2W-sys-release` **Never** vs `2+2W-sys-fence` **Sometimes** — a system `sc` fence read as strictly *weaker* than a system release store | `SCT = tag2events('sc)` folded into `REL`/`ACQ` ([SCATOM] Def. 10 p.637) |
+
+**The contract still holds: 8/8.** It is also demonstrably blind — `tests/cram/amd-cat.t`
+measures that **all eight** single-axiom ablations of this file still score 8/8 on the
+anchor set. The artifact contains no fence and no `sc` operation at all, so the anchors
+cannot test one line of axioms (0), (2)-fence or (4). What pins those is
+`hetlitmus/cats/probes/` + the cram test, not the anchor run.
+
+**What moved.** Over the 137-test GPU-only corpus, Forbidden went 18 → 30; against the
+R2 generative rule, agreement went **107/137 → 117/137** at `M = GCN3-VIPER` and
+**104/137 → 112/137** at `M = CDNA3`. Over a 6-shape × 5-primitive × 5-primitive
+order-pair sweep at `sys` scope, Forbidden went **30/150 → 49/150** (25 of the
+pre-repair 30 were the `LB` block, decided by axiom (1) whatever the primitives are).
+
+**Two knowingly weaker readings were kept**, because "doubt resolves toward Allowed":
+synchronisation is still built on `rfe` where [HSA] uses `coh`, and scope pairing is
+still exact-match where [HSA] uses inclusion. A third: axiom (4) uses `(hb | fr | co)`
+exactly as [SCATOM] Def. 27 prints it, not the transitive communication closure `coh`
+that `env-research/g3-artifacts/amd-cdna3-candidate.cat` uses — `coh` would
+additionally forbid the 8 cumulative rows `IRIW/RWC/WRC/WRC3-{gpu,sys}-fence`, which
+need A-cumulativity of an `sc` fence that Def. 27 as printed does not supply.
+
 ## Two findings worth recording
 
 - **`tag2set` is not a herd cat/Bell primitive.** The cat primitive to turn an

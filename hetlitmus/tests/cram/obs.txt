@@ -1,7 +1,11 @@
 # Synthetic litmus7 log fixture for oracle-compare.sh (Layer-1 cram).
-# Six tests exercise the full {MATCH,MISMATCH,NO-ORACLE} x {exists,forall}
-# decision matrix.  Each `Observation' is preceded by the `Condition' line that
-# fixes its quantifier (litmus/skelUtil.ml), so the forall inversion is driven.
+# Eight tests exercise the full {MATCH,MISMATCH,NO-ORACLE,UNINTERPRETED} x
+# {exists,forall} decision matrix.  Each `Observation' is preceded by the
+# `Condition' line that fixes its quantifier (litmus/skelUtil.ml), so the forall
+# inversion is driven.  The last two are the 2026-08-02 (P2a) split: a row the
+# oracle HAS and declines to decide (NO-ORACLE, earned silence) must not read the
+# same as a row the oracle does not have (UNINTERPRETED), and a verdict string
+# the harness does not know is a CORRUPT oracle -- never a pass.
 Condition exists (1:r0=1 /\ 1:r1=0) is validated
 Observation SB-sys Sometimes 24 5976
 Condition exists (1:r0=1 /\ 1:r1=0) is NOT validated
@@ -14,3 +18,7 @@ Condition forall (1:r0=0 \/ 1:r1=1) is NOT validated
 Observation MP-sys-fa Never 0 6000
 Condition forall (1:r0=0 \/ 1:r1=1) is validated
 Observation LB-sys-fa Sometimes 7 5993
+Condition exists (1:r0=1 /\ 1:r1=0) is validated
+Observation WS-sys Sometimes 5 5995
+Condition exists (1:r0=1 /\ 1:r1=0) is NOT validated
+Observation BOGUS-sys Never 0 6000

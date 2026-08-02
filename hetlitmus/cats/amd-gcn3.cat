@@ -33,6 +33,41 @@
  *   the same two threads in ONE CTA and tag2scope('cta) relates them, so the
  *   cta-scope sync fires and the weak outcome becomes Forbidden -- with no change
  *   to this .cat. Scope strength is read, not assumed.
+ *
+ * ------------------------------------------------------------------------
+ * REPAIR LOG -- PORT2-R2 register item D14 (env-research/PORT2-R2-amd-oracle.md
+ * section 7.D14).  D14 measured three defects that had to be closed before this
+ * file could be cited as an instrument by `amdordercheck.py` Phase 2:
+ *
+ *   (i)   no SC-per-location axiom -- `coh-probe` (W -rf-> R -po-> W -co-> W)
+ *         was Sometimes.                                  --> axiom (0) below.
+ *   (ii)  fence blindness -- deleting every `f[...]` from the GPU-only fence
+ *         tests changed 0/33 verdicts.        --> axiom (2) fence clauses + (4).
+ *   (iii) no `'sc` set -- `strong` never mentioned the `sc` tag, so a system
+ *         `sc` fence read as strictly WEAKER than a system release store.
+ *                                             --> `SCT` below, axioms (2)-(4).
+ *
+ * The extensions are grounded, not invented, and their sources are NOT the
+ * PLDI'23 artifact: there is no fence and no `sc` operation anywhere in the
+ * artifact (R2 memo section 5.4.1, measured), so the "8/8 reproduces the
+ * artifact" contract below CANNOT validate any of them.  It is re-established
+ * after the repair (still 8/8) but it is silent about (i)-(iii); the probes in
+ * hetlitmus/cats/probes/ and the cram test tests/cram/amd-cat.t are what pin
+ * them.  Sources, per axiom, are cited at each axiom.
+ *
+ * Deliberately NOT changed by the repair (each is a knowingly weaker reading;
+ * "doubt resolves toward Allowed"):
+ *   - synchronises-with is built on `rfe`, where HSA-in-cat Fig. 3-15 uses
+ *     `coh`  (R2/G3 disagreement A-D2);
+ *   - scope pairing is EXACT-match, where HSA Fig. 3-9 uses scope INCLUSION
+ *     via `active-events`  (R2/G3 disagreement A-D1);
+ *   - the SC-order axiom (4) uses `(hb | fr | co)` exactly as printed in
+ *     [SCATOM] Def. 27, NOT the transitive communication closure `coh` that
+ *     env-research/g3-artifacts/amd-cdna3-candidate.cat uses.  Measured
+ *     difference: `coh` would additionally forbid the 8 cumulative rows
+ *     IRIW/RWC/WRC/WRC3-{gpu,sys}-fence.  Those need A-cumulativity of an sc
+ *     fence, which Def. 27 as printed does not give, so they stay Allowed.
+ *   - axiom (1) `no-load-buffering` stays as-is (R2 memo section 7.D4).
  *)
 
 (* ------------------------------------------------------------------ *)
@@ -46,13 +81,46 @@ let com = rf | co | fr
 (* ------------------------------------------------------------------ *)
 (* Annotation event sets (from ptx.bell tags, via the cat primitive    *)
 (* tag2events -- NB tag2set is interpreter-internal and not exposed).   *)
+(*                                                                      *)
+(* `tag2events` returns EVERY event bearing the tag, ACCESSES AND       *)
+(* FENCES alike: ptx.bell declares `instructions F[{'acquire,'release,  *)
+(* 'acq_rel,'sc}, scopes]`, so `f[release,sys]` is in REL and           *)
+(* `f[sc,sys]` is in SCT.  That is load-bearing here (axiom (2)'s fence *)
+(* clauses and axiom (4) both read it) and it is pinned by              *)
+(* hetlitmus/cats/probes/seam-probe.cat + tests/cram/amd-cat.t.         *)
+(*                                                                      *)
+(* `sc` is BOTH a release and an acquire: [SCATOM] (Batty, Donaldson,   *)
+(* Wickerson, "Overhauling SC Atomics in C11 and OpenCL", POPL'16)      *)
+(* Def. 10 p.637 -- "acq = ACQ u AR u (SC n (R u F))" and               *)
+(* "rel = REL u AR u (SC n (W u F))".  This is also the direction       *)
+(* [HSA] (HSA PRM 1.2 section 6.2.1) takes for HSAIL `scar`, and the    *)
+(* AMD-side mapping HIP seq_cst <-> HSAIL scar is R2/G3 A-D5.           *)
 (* ------------------------------------------------------------------ *)
-let REL = tag2events('release)
-let ACQ = tag2events('acquire)
+let SCT    = tag2events('sc)
+let ACQREL = tag2events('acq_rel)
+
+let REL = tag2events('release) | ACQREL | SCT
+let ACQ = tag2events('acquire) | ACQREL | SCT
 
 let CTA = tag2events('cta)
 let GPU = tag2events('gpu)
 let SYS = tag2events('sys)
+
+(* ================================================================== *)
+(* (0) SC per location.  D14 defect (iii).                             *)
+(*     [HSA] Alglave & Maranget, "Towards a Formalization of the HSA    *)
+(*     Memory Model in the cat Language", v1.2, section 2.2.2 p.22-24:  *)
+(*     "SC per location is a property in most models studied ... and it *)
+(*     appears in the HSA models described in 3 A cat specification of  *)
+(*     the HSA memory model".  Figure 2-8 p.24 gives exactly this form: *)
+(*         procedure sc-per-loc() = acyclic po-loc | com end            *)
+(*     (Figure 2-7 p.23 gives the equivalent `consistent(complus,po)`.) *)
+(*     Without it, `coh-probe` -- W1 -rf-> R -po-> W2 -co-> W1, which   *)
+(*     every published model forbids -- was Sometimes.                  *)
+(*     `po-loc` and `com` are the herd stdlib names (herd/libdir/       *)
+(*     stdlib.cat: `let po-loc = po & loc`).                            *)
+(* ================================================================== *)
+acyclic po-loc | com as SCperLoc
 
 (* ================================================================== *)
 (* (1) Load->store program order: forbids load buffering (LB-sys).     *)
@@ -60,26 +128,60 @@ let SYS = tag2events('sys)
 (*     (R->W po ; rfe ; R->W po ; rfe) is broken. This does NOT touch   *)
 (*     MP (W->W,R->R po), SB (W->R po) or IRIW (R->R po): none use a     *)
 (*     read-before-write program-order edge.                            *)
+(*     KEPT UNCHANGED by the D14 repair: R2 memo section 7.D4 rules     *)
+(*     that this file's contract is "reproduce the artifact 8/8", which *)
+(*     needs LB-sys Disallowed, even though the SHIPPING CDNA3 oracle   *)
+(*     departs from it.                                                 *)
 (* ================================================================== *)
 let load-store = (po & (R * W)) | rfe
 acyclic load-store as no-load-buffering
 
 (* ================================================================== *)
-(* (2) Scoped release->acquire synchronisation (HRF so / hhb).          *)
-(*     so(S): a release and an acquire, BOTH annotated at scope S, that  *)
-(*     share an S-instance (tag2scope S) and where the acquire reads the  *)
-(*     release. Reading the real scope tree is what discriminates         *)
-(*     MP-sys-F (sys-instance shared -> sync fires -> Forbidden) from     *)
-(*     MP-cta-F (threads in distinct CTAs -> tag2scope('cta) empty across  *)
-(*     them -> no sync -> Allowed); two threads in one CTA would sync.    *)
+(* (2) Scoped release->acquire synchronisation (HRF so / hhb),          *)
+(*     INCLUDING FENCES.  D14 defect (i).                               *)
+(*                                                                      *)
+(*     `rel-acq` is [HSA] Figure 3-15 p.46 (= Appendix B.2.4 hhb.cat),   *)
+(*     verbatim in shape:                                               *)
+(*        let rel-acq =                                                 *)
+(*          ((W & Release) * (R & Acquire)) & coh                       *)
+(*        | ((F & Release) * Acquire) &                                 *)
+(*          ((po & (_ * W)); coh; (po? & (R * _)))                      *)
+(*        | (Release * (F & Acquire)) &                                 *)
+(*          ((po? & (_ * W)); coh; (po & (R * _)))                      *)
+(*     with ONE deliberate weakening: `coh` -> `rfe` (disagreement A-D2 *)
+(*     of the G3 memo, kept so the repair changes only what D14 asks).  *)
+(*     Clause 2's target set is plain `ACQ`, which contains `F & ACQ`,   *)
+(*     so the fence-to-fence case is covered without a fourth clause --  *)
+(*     again exactly as printed in Figure 3-15.                         *)
+(*                                                                      *)
+(*     `inst(s)` is [HSA] Figure 3-9 p.42 `active-instance`, with        *)
+(*     `active-events` replaced by plain `tag2events` -- i.e. EXACT      *)
+(*     scope match rather than scope inclusion (disagreement A-D1,       *)
+(*     unchanged by this repair; exact match is the weaker relation).    *)
+(*                                                                      *)
+(*     Reading the real scope tree is what discriminates MP-sys-F        *)
+(*     (sys-instance shared -> sync fires -> Forbidden) from MP-cta-F    *)
+(*     (threads in distinct CTAs -> tag2scope('cta) empty across them    *)
+(*     -> no sync -> Allowed); two threads in one CTA would sync.        *)
 (* ================================================================== *)
-let so_cta = ([REL & CTA] ; rfe ; [ACQ & CTA]) & tag2scope('cta)
-let so_gpu = ([REL & GPU] ; rfe ; [ACQ & GPU]) & tag2scope('gpu)
-let so_sys = ([REL & SYS] ; rfe ; [ACQ & SYS]) & tag2scope('sys)
-let sw = so_cta | so_gpu | so_sys
+let inst(s) = let E = tag2events(s) in tag2scope(s) & (E * E)
+
+let rel-acq =
+    ([W & REL] ; rfe ; [R & ACQ])
+  | (((F & REL) * ACQ) & ((po & (_ * W)) ; rfe ; (po? & (R * _))))
+  | ((REL * (F & ACQ)) & ((po? & (_ * W)) ; rfe ; (po & (R * _))))
+
+let sw = (rel-acq & inst('cta)) | (rel-acq & inst('gpu)) | (rel-acq & inst('sys))
 let hb = (po | sw)+
 acyclic hb as happens-before
 irreflexive (hb ; fr) as coherence
+(* D14 (iii) asks for `irreflexive (hb;co)` beside `irreflexive (hb;fr)`.
+   It is NOT subsumed by axiom (0): probe S-probe-relacq is a cycle
+   W -po-> W[rel] -sw-> R[acq] -po-> W -co-> W whose po edges cross
+   locations, so po-loc never sees it.  [HSA] Figure 3-15 p.46 states the
+   stronger `call consistent(hhb,coh) as HhbCohCons`; we take only the
+   `co` half of it, which is what D14 names. *)
+irreflexive (hb ; co) as coherence-co
 
 (* ================================================================== *)
 (* (3) System-scope release/acquire is STRONG.                          *)
@@ -89,7 +191,52 @@ irreflexive (hb ; fr) as coherence
 (*     This is what forbids SB-sys-F and IRIW-sys-F (plain release/       *)
 (*     acquire alone would leave them Allowed -- their acquire loads      *)
 (*     read the initial value, so the so-pairing of (2) never fires).    *)
+(*     [CMCM] section 7.2 p.153:21 is the source, for the SIMULATED      *)
+(*     GCN3 machine this file models: "with any system-scoped fence      *)
+(*     (release, acquire or full fence), each of the litmus tests is     *)
+(*     disallowed ... We refer to this memory model as Scoped XC."       *)
+(*     NB the R2 memo section 7.D1 REVOKES this axiom for CDNA3; the     *)
+(*     file is not a CDNA3 model and must not be read as one.            *)
+(*                                                                      *)
+(*     `strong` now contains the `sc` tag too (D14 defect (ii)):         *)
+(*     seq_cst is at least as strong as release/acquire ([SCATOM]        *)
+(*     Def. 10 p.637), so leaving `'sc` out made a system sc fence read  *)
+(*     as strictly weaker than a system release store.                   *)
+(*                                                                      *)
+(*     Fences that land in `strong` are INERT here and that is by        *)
+(*     construction, not by census: `strong-po` is transitively closed,  *)
+(*     so a fence between two strong accesses adds no reachability, and  *)
+(*     a fence carries no `com` edge so no cycle can route through it.   *)
+(*     Fence ordering therefore comes from axiom (2)'s fence clauses and *)
+(*     from axiom (4), never from here.  Probe SB-probe-2fence pins it.  *)
 (* ================================================================== *)
 let strong    = (REL | ACQ) & SYS
 let strong-po = [strong] ; po ; [strong]
 acyclic strong-po | com as sys-strong
+
+(* ================================================================== *)
+(* (4) The `sc` order -- the fence-ordering axiom.  D14 defects (i)+(ii).*)
+(*                                                                      *)
+(*     [SCATOM] Def. 27 p.644, "Proposed SC axiom for OpenCL", verbatim: *)
+(*        acy(SC^2 n (Fsb? ; (ghb u lhb u fr u mo) ; sbF?) n incl)       *)
+(*     with Def. 10 p.637 `Fsb = [F];sb` and `sbF = sb;[F]`.  Below,     *)
+(*     `mo` = `co`, `sb` = `po`, `ghb u lhb` = this model's `hb`, and    *)
+(*     `incl` is replaced by the file's exact-scope `inst(s)` (weaker,   *)
+(*     see (2)).  Def. 27's point is exactly the scoped degradation this *)
+(*     corpus exercises: "we do not need to restrict the programmer's    *)
+(*     usage of SC atomics to certain scopes; instead, the guarantees    *)
+(*     provided by those SC atomics degrade gracefully as their scopes   *)
+(*     narrow."  Hence f[sc,cta] between threads in DISTINCT CTAs still  *)
+(*     orders nothing, with no special-casing.                           *)
+(*                                                                      *)
+(*     This is the axiom that decides `2+2W-sys-fence` (pure `co` cycle, *)
+(*     no rf edge anywhere, so axiom (2) structurally cannot see it).    *)
+(*                                                                      *)
+(*     UNANCHORED, and it must be reported as such: the artifact         *)
+(*     contains no fence and no sc operation at all, so the 8-anchor     *)
+(*     contract does not test one line of this axiom.                    *)
+(* ================================================================== *)
+let Fsb = [SCT & F] ; po
+let sbF = po ; [SCT & F]
+let scpairs = (SCT * SCT) & (inst('cta) | inst('gpu) | inst('sys))
+acyclic (scpairs & (Fsb? ; (hb | fr | co) ; sbF?)) as sc-order

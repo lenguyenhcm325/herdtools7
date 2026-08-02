@@ -1,0 +1,37 @@
+"tag2events seam probe -- NOT a memory model"
+
+(*
+ * D14(c).  Pins the ONE structural fact hetlitmus/cats/amd-gcn3.cat's fence
+ * handling rests on: herd's `tag2events(<tag>)` returns every event bearing the
+ * tag, FENCES INCLUDED, because ptx.bell declares
+ *     instructions F[{'acquire,'release,'acq_rel,'sc}, scopes]
+ * beside the R/W declarations.  If that ever stopped holding, amd-gcn3.cat's
+ * REL/ACQ/SCT sets would silently become access-only and its axiom (2) fence
+ * clauses and axiom (4) would go inert WITHOUT any corpus row moving (measured:
+ * 0 of 137 GPU-only rows separate the two readings -- see tests/cram/amd-cat.t).
+ *
+ * This file deliberately DUPLICATES amd-gcn3.cat's three set definitions rather
+ * than including it, so that it observes the sets alone with no axiom filtering
+ * the executions the flags are computed over.  tests/cram/amd-cat.t pins the
+ * duplicated lines against the real file byte-for-byte, so the copy cannot drift.
+ *
+ * It states no axiom: every execution survives, and the flags below are the
+ * whole output of interest.  On a fence-free test NO flag fires -- that
+ * two-way liveness is asserted in the cram test, so a flag that became
+ * unconditional would be caught.
+ *)
+
+let SCT    = tag2events('sc)
+let ACQREL = tag2events('acq_rel)
+
+let REL = tag2events('release) | ACQREL | SCT
+let ACQ = tag2events('acquire) | ACQREL | SCT
+
+let SYS = tag2events('sys)
+
+let strong = (REL | ACQ) & SYS
+
+flag ~empty (REL & F) as RELEASE-TAG-INCLUDES-FENCES
+flag ~empty (ACQ & F) as ACQUIRE-TAG-INCLUDES-FENCES
+flag ~empty (SCT & F) as SC-TAG-INCLUDES-FENCES
+flag ~empty (strong & F) as STRONG-INCLUDES-FENCES

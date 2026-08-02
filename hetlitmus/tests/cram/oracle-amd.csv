@@ -1,0 +1,14 @@
+# HAND-AUTHORED Layer-1 cram fixture, not generated: the 5-column AMD form of the
+# oracle CSV (Litmus,Expected,Model,Provenance,Source).  Paired with obs-amd.txt
+# to drive oracle-compare.sh's PROVENANCE-AWARE mismatch sentence
+# (PORT2-R2-amd-oracle.md sect 9.2): only `artifact' is full strength, so only it
+# may be reported as a candidate refutation of the compound model; a `derived' or
+# `decision' row indicts THAT ORACLE ROW first.  The two MISMATCH lines below are
+# the SAME observation on rows that differ ONLY in column 4, which is what makes
+# the switch visible.  Edit with oracle-negatives.t, never alone.
+Litmus,Expected,Model,Provenance,Source
+MP-cg-sys-acquire,Disallowed,AMD-CDNA3-x86,artifact,S_CUT (full strength: a surviving artifact anchor covers the load-bearing cell)
+WRC-ccg-sys-relaxed,Disallowed,AMD-CDNA3-x86,derived,S_CUT (declared single chain)
+IRIW-gccc-sys-acquire,Disallowed,AMD-CDNA3-x86,decision,S_CUT_MCA (decision D2)
+2+2W-cg-sys-fence,NO-ORACLE,AMD-CDNA3-x86,decision,S_WS_FENCE (write serialisation unresolved)
+MP-cg-sys-relaxed,Allowed,AMD-CDNA3-x86,derived,S_PPO_G

@@ -5,9 +5,24 @@
 # Reads litmus7 "Observation <name> <Never|Sometimes|Always> ..." lines and
 # compares each against the reference oracle CSV given as the second argument:
 #
-#   MATCH      the observation is consistent with the oracle verdict
-#   MISMATCH   a FORBIDDEN outcome was observed -- a genuine model violation
-#   NO-ORACLE  the test is absent from that CSV, so no claim is made
+#   MATCH          the observation is consistent with the oracle verdict
+#   MISMATCH       a FORBIDDEN outcome was observed -- a genuine model violation
+#   NO-ORACLE      the CSV HAS this row and it says NO-ORACLE: EARNED model
+#                  silence -- the model does not decide this test (the 7 rows of
+#                  PORT2-R2-amd-oracle.md sect 6, the 42 of expected-nvidia.csv)
+#   UNINTERPRETED  the test is ABSENT from this CSV, so there is no frame for it
+#                  at all -- or the CSV carries a verdict this harness does not
+#                  know, which is a corrupt oracle and never a pass
+#
+# THOSE LAST TWO USED TO BE THE SAME WORD, and PORT2-R2-amd-oracle.md sect 1.3
+# calls that hazard out by name: "P2a must give the MI300X frame its own label
+# ... not let it alias the seven earned NO-ORACLE rows of sect 6".  An MI300X run
+# has NO oracle by design, so every one of its rows is absent and would have read
+# as model silence.  Worse, a row whose CSV verdict IS "NO-ORACLE" fell into the
+# unknown-verdict arm and printed `unknown oracle verdict "NO-ORACLE"' with a "?"
+# -- measured on expected-nvidia.csv, which carries 42 such rows, so the harness
+# misreported BOTH oracles.  Fixed 2026-08-02 (P2a); pinned by
+# tests/cram/oracle-negatives.t, whose fixtures now drive all four RESULTs.
 #
 # NO-ORACLE is a first-class result, not a default to "pass".  An oracle grounds
 # only the platform it was derived for: the PLDI'23 expected.csv is the gem5
@@ -32,8 +47,17 @@
 #
 # Usage:   ./oracle-compare.sh <observations-file> <oracle-csv>
 #   observations-file : a litmus7 log, or any file containing Observation lines
-#   oracle-csv        : reference CSV, columns "Litmus,Expected,Model,Source"
+#   oracle-csv        : reference CSV, columns "Litmus,Expected,Model,Source" or
+#                       "Litmus,Expected,Model,Provenance,Source" (the AMD form).
 #                       ('#' comment lines and the header row are skipped)
+#
+# PROVENANCE-AWARE MISMATCH SENTENCE (PORT2-R2-amd-oracle.md sect 9.2).  Where the
+# CSV carries the 5-column AMD header, field 4 is the provenance GRADE and it CAPS
+# what a mismatch licenses a reader to say: only `artifact' is full strength, i.e.
+# a candidate refutation of the compound model.  A mismatch on a `derived' or
+# `decision' row indicts THAT ORACLE ROW first, never the CMCM.  The grade is read
+# from the header, not guessed: a 4-column CSV has no grade and prints the
+# unqualified sentence, exactly as before.
 #
 # Exit status: 0 if no MISMATCH, 1 if any MISMATCH (so it is CI-usable).  The
 # table is printed regardless of exit status.
@@ -60,15 +84,23 @@ BEGIN {
     if (line ~ /^[ \t]*#/ || trim(line) == "") continue
     n = split(line, f, ",")
     name = trim(f[1])
-    if (name == "Litmus") continue            # header row
+    if (name == "Litmus") {                   # header row
+      # A 5-column header whose 4th field is Provenance means the grade is
+      # present.  Detected, never assumed: the NVIDIA CSV is 4-column and its
+      # field 4 is free text.  (No apostrophes below this line: the whole awk
+      # program is a single-quoted shell word.)
+      if (n >= 5 && trim(f[4]) == "Provenance") has_prov = 1
+      continue
+    }
     orac[name]   = trim(f[2])
     model[name] = (n >= 3) ? trim(f[3]) : "?"
+    prov[name]  = (has_prov && n >= 5) ? trim(f[4]) : ""
   }
   close(oracle_csv)
-  fmt = "%-14s %-7s %-10s %-12s %-14s %-10s %s\n"
+  fmt = "%-14s %-7s %-10s %-12s %-14s %-14s %s\n"
   printf fmt, "TEST", "QUANT", "OBSERVED", "ORACLE", "MODEL", "RESULT", "NOTE"
   printf fmt, "----", "-----", "--------", "------", "-----", "------", "----"
-  nmatch = 0; nmis = 0; nno = 0
+  nmatch = 0; nmis = 0; nno = 0; nun = 0
   pending_quant = ""
 }
 # The litmus "Condition <quant> (...) is [NOT ]validated" line precedes the
@@ -116,26 +148,42 @@ blk != "" {
   if (test in orac) {
     verdict = orac[test]; mdl = model[test]
     if (verdict == "Disallowed") {
-      if (seen) { result="MISMATCH"; note="FORBIDDEN OUTCOME SEEN" }
+      if (seen) {
+        result="MISMATCH"
+        # sect 9.2: the grade CAPS the claim.  Say which one this is.
+        if (prov[test] == "artifact")
+          note="FORBIDDEN OUTCOME SEEN -- full strength: CANDIDATE CMCM REFUTATION"
+        else if (prov[test] != "")
+          note="FORBIDDEN OUTCOME SEEN -- capped (" prov[test] "): indicts THIS ORACLE ROW first not the CMCM"
+        else
+          note="FORBIDDEN OUTCOME SEEN"
+      }
       else      { result="MATCH";    note="forbidden, not seen" }
     } else if (verdict == "Allowed") {
       result="MATCH"; note = seen ? "relaxation seen" : "allowed, not exhibited"
+    } else if (verdict == "NO-ORACLE") {
+      # EARNED model silence: the oracle has the row and declines to decide it.
+      result="NO-ORACLE"; note="model silence: this oracle makes no claim here"
     } else {
-      result="NO-ORACLE"; note="unknown oracle verdict \"" verdict "\""
+      # A verdict string this harness does not know is a CORRUPT oracle, not a
+      # pass and not silence.  Fail closed and name the value.
+      result="UNINTERPRETED"; note="unknown oracle verdict \"" verdict "\""
       verdict="?"; mdl="-"
     }
   } else {
-    verdict="-"; mdl="-"; result="NO-ORACLE"; note="not in this oracle (GH200/PTX?)"
+    verdict="-"; mdl="-"; result="UNINTERPRETED"
+    note="ABSENT from this oracle -- no frame for this test (never model silence)"
   }
   if (result=="MATCH") nmatch++
   else if (result=="MISMATCH") nmis++
-  else nno++
+  else if (result=="NO-ORACLE") nno++
+  else nun++
   resmap[test] = result          # the statistics section reprints it per test
   printf fmt, test, quant, obs, verdict, mdl, result, note
 }
 END {
-  printf "\n%d test(s): %d MATCH, %d MISMATCH, %d NO-ORACLE\n", \
-         nmatch+nmis+nno, nmatch, nmis, nno
+  printf "\n%d test(s): %d MATCH, %d MISMATCH, %d NO-ORACLE, %d UNINTERPRETED\n", \
+         nmatch+nmis+nno+nun, nmatch, nmis, nno, nun
 
   # ================= the statistics roll-up ================================
   # Layered on top of the table above; absent from a log that carries no HetStats.
