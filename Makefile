@@ -691,10 +691,40 @@ hetlitmus-cpustress: | build
 ### It fails closed: a missing mutant breaks the build rather than skipping the
 ### control, because a silently absent control does not weaken a null -- it makes
 ### it unfalsifiable.  CUDA-free.
+### --bite is that fail-closed claim's evidence: four injections into a scratch
+### copy of the corpus + oracle + map (mu's .litmus deleted, mu relabelled
+### Disallowed, the Mu column rewritten from the test's NAME, mu swapped for
+### another shape), each of which must redden --check by the NAME of the property
+### it broke.  Until 2026-08-02 this was the one gate in the suite that had never
+### been seen to fail.
 hetlitmus-controlmap: | build
 	@ echo
 	python3 hetlitmus/verify/controlmap.py --check
-	@ echo "HetLitmus B6 control map: OK"
+	python3 hetlitmus/verify/controlmap.py --bite
+	@ echo "HetLitmus B6 control map: OK (and the gate bites)"
+
+### hetlitmus-oracle: the het oracle's GENERATOR vs its committed artifact.
+### tests/het/expected-nvidia.csv is the 411-row table every het verdict is
+### scored against, and no target and no gate ever re-ran the script that builds
+### it: generator-vs-artifact drift was detectable only on the 128 two-sided rows
+### ordercheck.py independently re-derives, leaving ~283 rows unpinned.  This
+### regenerates it from the corpus into a TEMP dir (the committed file is never
+### touched) and diffs.  build-nvidia-oracle.sh is pure bash -- measured 0.11 s
+### -- so it belongs in the fast CUDA-free `hetlitmus-test' umbrella rather than
+### `-test-all'; no `| build' for the same reason (it invokes no herdtools7 tool).
+### Bite it by pointing HET_ORACLE at a corrupted scratch copy:
+###   make hetlitmus-oracle HET_ORACLE=/tmp/one-row-flipped.csv
+HET_ORACLE ?= hetlitmus/tests/het/expected-nvidia.csv
+hetlitmus-oracle:
+	@ echo
+	tmp=$$(mktemp -d); \
+	( mkdir -p $$tmp/het \
+	  && cp hetlitmus/tests/_grid_lib.sh $$tmp/ \
+	  && cp hetlitmus/tests/het/build-nvidia-oracle.sh hetlitmus/tests/het/*.litmus $$tmp/het/ \
+	  && bash $$tmp/het/build-nvidia-oracle.sh \
+	  && diff -u $(HET_ORACLE) $$tmp/het/expected-nvidia.csv ); \
+	rc=$$?; rm -rf $$tmp; exit $$rc
+	@ echo "HetLitmus het oracle: OK ($(HET_ORACLE) matches its generator)"
 
 ### hetlitmus-dup: the isomorphism gate.  generate.sh dedups only by
 ### byte-comparing a variant against ONE designated sibling, which cannot see a
@@ -863,6 +893,7 @@ hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-dup
 hetlitmus-test:: hetlitmus-order
+hetlitmus-test:: hetlitmus-oracle
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-stats
@@ -886,14 +917,15 @@ hetlitmus-promote: | build
 	@ echo
 	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/gpu-only/generate.sh
 	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/het/generate.sh
+	bash hetlitmus/tests/het/build-nvidia-oracle.sh
 	dune test hetlitmus/tests/cram --auto-promote
 	@ echo "hetlitmus-promote: corpora regenerated + cram goldens promoted (NOT committed)."
 	@ echo "hetlitmus-promote: review 'git diff' then commit yourself."
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
-.PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order
-.PHONY: hetlitmus-l0-selftest
+.PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order hetlitmus-oracle
+.PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64

@@ -195,13 +195,15 @@ def check(d, quiet=False):
                           % "  ==  ".join(c))
     for c in allow:
         if c not in found:
-            missing = [n for n in c if not os.path.exists(
-                os.path.join(d, n + ".litmus"))]
-            why = ("file(s) missing: %s" % " ".join(missing)) if missing \
-                else "they are no longer isomorphic"
-            errors.append("STALE allowlist entry: %s -- %s.  A rotting "
-                          "allowlist silently stops guarding." % (
-                              "  ==  ".join(c), why))
+            # ONE arm.  An entry stops being a duplicate class whether its tests
+            # were edited apart or one of them was deleted -- a deleted test is
+            # absent from `found' either way -- so the second `file(s) missing'
+            # arm this replaced could not be reached: ALLOWLIST is empty in
+            # production, and its only exerciser (--bite [2]) names two tests
+            # that both exist.
+            errors.append("STALE allowlist entry: %s -- they are no longer "
+                          "isomorphic.  A rotting allowlist silently stops "
+                          "guarding." % "  ==  ".join(c))
 
     if not quiet:
         print("===== DUPCHECK: is any het test a duplicate of another? =====")

@@ -1,6 +1,9 @@
 Layer-1 unit spec of the corpus rule functions in tests/_grid_lib.sh.  This is a
-curated sample -- ONE line per rule branch, NOT the 132-cell grid (that is the
-Layer-2 corpus golden's job; see TEST-PLAN.md sec 2 "Coverage map").  dune cram
+curated sample -- ONE line per rule branch (and one per dispatch token of the
+two-sided pair grid), NOT the 132-cell grid (that is the Layer-2 corpus golden's
+job; see TEST-PLAN.md sec 2 "Coverage map").  The corpus golden byte-diffs what
+these functions PRODUCE, which catches drift but cannot say the current rendering
+is right; that is this file's job, so a branch missing here has no spec.  dune cram
 runs each `$' line under /bin/sh (dash), which cannot `source' a bash script with
 `declare -A', so each call is wrapped in `bash -c' (re-sourcing the pure lib is
 free).
@@ -18,12 +21,41 @@ release: writes -> Release, reads -> Relaxed.
 fence: accesses stay Relaxed; each intra-proc Pod<XY> becomes a scoped fence edge.
   $ bash -c 'source ../_grid_lib.sh; render_cycle cta fence PodWW Rfe PodRR Fre'
   FenceScCtadWWRelaxedCtaRelaxedCta RfeRelaxedCtaRelaxedCta FenceScCtadRRRelaxedCtaRelaxedCta FreRelaxedCtaRelaxedCta
+acqrel: the complete pair in one cycle -- reads -> Acquire AND writes -> Release.
+Reachable only through the two-sided family, so nothing else specifies it.
+  $ bash -c 'source ../_grid_lib.sh; render_cycle sys acqrel PodWW Rfe PodRR Fre'
+  PodWWReleaseSysReleaseSys RfeReleaseSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysReleaseSys
 render_cpu_cycle -- the AArch64 mirror.  acqrel: read -> LDAPR (Q), write -> STLR (L).
   $ bash -c 'source ../_grid_lib.sh; render_cpu_cycle acqrel PodWR Fre PodWR Fre'
   PodWRLQ FreQL PodWRLQ FreQL
 fence: each intra-proc Pod<XY> becomes the full-barrier edge DMB.SYd<XY>.
   $ bash -c 'source ../_grid_lib.sh; render_cpu_cycle fence PodWW Rfe PodRR Fre'
   DMB.SYdWW Rfe DMB.SYdRR Fre
+render_2s_cpu -- the two-sided order-pair dispatcher (Q10), one line per dispatch
+token, on the SB cycle the pair grid sweeps.  It is the ONLY caller of
+render_cpu_cycle's partial-barrier branches, so st/ld here are also the unit spec
+of DMB.ST / DMB.LD.  `ra' reproduces the acqrel line above token for token; that
+identity is exactly what the branch asserts.
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu ra PodWR Fre PodWR Fre'
+  PodWRLQ FreQL PodWRLQ FreQL
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu sy PodWR Fre PodWR Fre'
+  DMB.SYdWR Fre DMB.SYdWR Fre
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu st PodWR Fre PodWR Fre'
+  DMB.STdWR Fre DMB.STdWR Fre
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu ld PodWR Fre PodWR Fre'
+  DMB.LDdWR Fre DMB.LDdWR Fre
+render_2s_gpu -- the GPU half of the same grid.  `ra' delegates to render_cycle
+sys acqrel (atoms on the accesses); sc/rel/acq keep every access Relaxed at sys
+scope and put the ordering in a standalone Fence<o>Sysd<XY> edge, through their
+own rendering loop rather than a parameter -- which is why each is pinned.
+  $ bash -c 'source ../_grid_lib.sh; render_2s_gpu ra PodWR Fre PodWR Fre'
+  PodWRReleaseSysAcquireSys FreAcquireSysReleaseSys PodWRReleaseSysAcquireSys FreAcquireSysReleaseSys
+  $ bash -c 'source ../_grid_lib.sh; render_2s_gpu sc PodWR Fre PodWR Fre'
+  FenceScSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys FenceScSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
+  $ bash -c 'source ../_grid_lib.sh; render_2s_gpu rel PodWR Fre PodWR Fre'
+  FenceReleaseSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys FenceReleaseSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
+  $ bash -c 'source ../_grid_lib.sh; render_2s_gpu acq PodWR Fre PodWR Fre'
+  FenceAcquireSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys FenceAcquireSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
 cut_tag -- device-cut abbreviation, 2-proc and 3-proc.
   $ bash -c 'source ../_grid_lib.sh; cut_tag cpu,gpu'
   cg

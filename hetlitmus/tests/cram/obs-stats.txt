@@ -5,9 +5,33 @@
 # runs, control drifting); and a row whose every cell was COLD (VOID) and which no
 # oracle covers.
 # The HetObs / HetVerdict / HetStats lines were PRINTED BY het_verdict.h's own
-# printers over synthetic het_obs_record streams, the way
-# hetlitmus/verify/statscheck.py drives them.  They have to be the real thing:
-# oracle-compare.sh reprints het_stats_print's block instead of re-deriving it.
+# printers -- het_obs_record_print, het_verdict_print, het_stats_print -- over
+# synthetic het_obs_record streams, the way hetlitmus/verify/statscheck.py drives
+# them.  They have to be the real thing: oracle-compare.sh reprints
+# het_stats_print's block instead of re-deriving it.  NEVER HAND-EDIT A DATA LINE
+# BELOW; regenerate and restore this header.
+#
+# REGENERATION.  There is no committed generator: the driver is written ad hoc,
+# the way statscheck.py writes its own C_MAIN.  From the repo root --
+#   d=$(mktemp -d)
+#   litmus7 -set-libdir litmus/libdir -o "$d" hetlitmus/tests/het/MP-cg-sys-fence-2s.litmus
+#   h="$d/MP-cg-sys-fence-2s"          # any het emission ships het_verdict.h
+#   cat > "$d/drv.c" <<'EOF'
+#   #include "het_verdict.h"
+#   /* one memset-zeroed het_obs_record per (test,run) below, fields set from that
+#      row's own HetObs line; then het_obs_record_print + het_verdict_print per
+#      record, and het_stats_compute + het_stats_print once per test. */
+#   EOF
+#   gcc -std=c99 -O2 -Wall -Wno-unused-function -I "$h" "$d/drv.c" -o "$d/drv" -lm
+#   "$d/drv" > obs-stats.txt
+# The HetObs line dumps every field of its record except sync_valid, obs_valid and
+# the per-window sub-tallies, so the driver is reconstructible from this fixture.
+# Checked: rebuilding the SB-sys inst=0 run=0 record that way reproduces its HetObs
+# + HetVerdict block below byte for byte.
+#
+# KNOWN GAP: no gate binds this text to the live printers.  If het_verdict.h's
+# wording changes, this fixture goes stale and oracle-negatives.t stays green --
+# those pins exercise oracle-compare.sh's reprint logic, not the printer itself.
 HetObs SB-sys oracle=Allowed inst=0 run=0 conf=0 report=0 N=100000 frames=100000 target=1/1 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=NA:0/100000 canary=58/100000 Prep=0.000000 built=0/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict SB-sys [ROBUST] oracle=Allowed run=0: ALLOWED-OBSERVED
   SB-sys: the ALLOWED weak outcome was OBSERVED 1 time(s) in N=100000 frames (0.0010%).

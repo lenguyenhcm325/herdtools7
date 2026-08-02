@@ -49,9 +49,16 @@ CENSUS_TESTS = 411
 LN20 = -math.log(0.05)      # 2.99573227355399...
 R_POISSON = 1e9
 KS_C05 = 1.358
+# THE PYTHON MIRRORS OF THE HEADER'S KNOBS.  "Must match" is not a check: no fixture
+# straddles the THETA_D or TAU_HOT boundary (the decode counts are 0/1/900/5000, the
+# control totals 0/500/~1280), so a header change would keep every comparison's truth
+# value and desynchronise the mirror in silence.  All four are therefore EMITTED by the
+# C driver and compared in phase 1 -- NWIN on the WIN| line, TAU_MIN_SAMPLES on
+# MINSAMP|, the rest on MIRROR|.
 NWIN = 128                  # must match HET_NWIN (a swept knob, not a constant)
-THETA_D = 2                 # must match HET_THETA_DISTINCT
-TAU_HOT = 30                # must match HET_TAU_HOT
+THETA_D = 2                 # must match HET_THETA_DISTINCT   (pinned via MIRROR|)
+TAU_HOT = 30                # must match HET_TAU_HOT          (pinned via MIRROR|)
+MAX_CELLS = 128             # must match HET_STATS_MAX_CELLS  (pinned via MIRROR|)
 TAU_MIN_SAMPLES = 50.0      # must match HET_TAU_MIN_SAMPLES (emcee/Stan's 50*tau)
 
 TOL = 1e-9
@@ -377,6 +384,14 @@ RAMP_CELLS_RESOLVED = ramp_cells(64)
 # 100 runs of the same Poisson channel.  The bound MUST tighten with R -- if it does
 # not, R_eff is not in the formula and the "bound" is a constant wearing a fraction.
 POISSON_CELLS_100 = [poisson_stream(_R) for _ in range(100)]
+# ONE RECORD MORE THAN THE AGGREGATE CAN HOLD.  het_stats_compute clamps its record
+# array at HET_STATS_MAX_CELLS and the tail is dropped from every statistic; the field
+# is producible (hetEmit sizes _recs[NUMBER_OF_RUN] from Cfg.runs, so litmus7 -r above
+# 128 hands it more than it can hold), and the ONLY thing that says the bound was
+# computed from fewer runs than were executed is HET_ST_CELLS_TRUNCATED.  Its own RNG,
+# so adding it cannot shift the draws every earlier fixture is pinned on.
+_R_TRUNC = _Rng(20260801)
+POISSON_CELLS_TRUNC = [poisson_stream(_R_TRUNC) for _ in range(MAX_CELLS + 1)]
 
 
 def _spread(total):
@@ -406,6 +421,20 @@ def cell(win, chan="control", **kw):
 def stream(cells_, chan="control", **kw):
     """One record per run, each with its OWN window stream."""
     return [cell(w, chan=chan, run_id=i, **kw) for i, w in enumerate(cells_)]
+
+
+def stream_runs(cells_, run_ids, chan="control", **kw):
+    """stream() with EXPLICIT run ids, so a fixture can put SEVERAL cells in ONE run.
+    stream() numbers its cells 0, 1, 2, ..., which makes k_runs identically k_eff and
+    leaves het_stats_compute's run-dedup loop -- and with it the corroboration tier's
+    "distinct RUNS, not merely distinct cells" rule -- unexercised.  Today's emitter
+    does write one record per run, so this is the multi-record-per-run layout the tier
+    rule is WRITTEN for, driven before the emitter grows one."""
+    if len(run_ids) != len(cells_):
+        raise SystemExit("statscheck: stream_runs got %d run ids for %d cells"
+                         % (len(run_ids), len(cells_)))
+    return [cell(w, chan=chan, run_id=r, **kw)
+            for w, r in zip(cells_, run_ids)]
 
 
 def observed(cells_, k, clean=True, obs_degen=False):
@@ -577,6 +606,15 @@ case("mismatch-confirmed-3-clean-runs", observed(stream(POISSON_CELLS), 3),
 case("mismatch-uncorroborated-1-run", observed(stream(POISSON_CELLS), 1),
      obs="Sometimes", tier="MISMATCH-UNCORROBORATED", k_runs=1)
 
+# ... AND THE RULE IS ABOUT RUNS, NOT CELLS.  Three clean sightings that all landed in
+# the SAME run: runs are re-seeded and carry a fresh phase/thermal draw, three cells of
+# one run do not, so this must stay UNCORROBORATED where the case above it is
+# CONFIRMED.  The only fixture where k_runs < k_eff, and therefore the only one that
+# runs het_stats_compute's run-dedup loop at all.
+case("mismatch-uncorroborated-3-cells-of-ONE-run",
+     observed(stream_runs(POISSON_CELLS, [0, 0, 0] + list(range(1, 8))), 3),
+     obs="Sometimes", k=3, k_eff=3, k_runs=1, tier="MISMATCH-UNCORROBORATED")
+
 # --- THE SELF-PROVING INVARIANT --------------------------------------------
 # The window bump sits on the same line as the count, so sum(win) == total.  A total
 # that is nonzero with all windows zero means the bump did not run, and that must VOID
@@ -615,6 +653,16 @@ case("allowed-unobserved-gets-an-observability-bound",
 case("no-oracle-unobserved-gets-a-characterization-bound",
      stream(POISSON_CELLS, het_oracle="ORACLE_NONE"),
      obs="Never", flags_none=["FANO_UNMEASURED"])
+
+# --- MORE RUNS THAN THE AGGREGATE CAN HOLD ----------------------------------
+# The tail beyond HET_STATS_MAX_CELLS is DROPPED from every statistic (R_usable = 128
+# of the 129 supplied), which would quietly bound a campaign on less effort than it
+# spent -- so st->R keeps the PRE-clamp count and the flag says the discard happened.
+# Production runs at R = 10 per invocation, but campaign.py pools invocations and
+# litmus7 -r is an operator knob, so this is reachable in the field and reached here.
+case("cells-truncated-above-HET_STATS_MAX_CELLS", stream(POISSON_CELLS_TRUNC),
+     obs="Never", R=MAX_CELLS + 1, R_usable=MAX_CELLS,
+     flags_any=["CELLS_TRUNCATED"])
 
 
 # ===================== PHASE 5a: THE STOPPING RULE ==========================
@@ -668,6 +716,10 @@ stop("unset-oracle-fails-closed-to-budget",
 # The Python reference for a whole case (mirrors het_stats_compute's structure).
 # ---------------------------------------------------------------------------
 def py_reference(cells_):
+    # The record array is CLAMPED at HET_STATS_MAX_CELLS and the tail is dropped from
+    # every statistic below; st->R keeps the pre-clamp count so the discard is visible.
+    R = len(cells_)
+    cells_ = cells_[:MAX_CELLS]
     n = len(cells_)
     mu_present = any(c["control_compiled_in"] for c in cells_)
     mu_total = sum(c["control_target_count"] for c in cells_)
@@ -732,7 +784,7 @@ def py_reference(cells_):
     # firing, so their denominator is R, not R_usable (see the case of the same name).
     self_control = not any(c["control_compiled_in"] or c["canary_compiled_in"]
                            for c in cells_)
-    denom = n if self_control else R_usable
+    denom = R if self_control else R_usable      # st->R, i.e. PRE-clamp, as in the C
     if R_usable == 0:
         obs = "VOID"
     elif k == 0:
@@ -794,7 +846,7 @@ def py_reference(cells_):
         tier = "MISMATCH-CONFIRMED" if len(runs) >= 3 else "MISMATCH-UNCORROBORATED"
 
     return dict(obs=obs, k=k, k_eff=k_eff, k_runs=len(runs), n_degen=n_degen,
-                R_usable=R_usable, F_win=F_win, F_cell=F_cell, r_hat=r_hat,
+                R=R, R_usable=R_usable, F_win=F_win, F_cell=F_cell, r_hat=r_hat,
                 mu_upper=mu_up, tau_w=tau_w, N_eff=N_eff, R_eff=R_eff,
                 tau_need=tau_need, unresolved=unresolved,
                 p_bound=p_bound, P_rep=P_rep,
@@ -812,14 +864,17 @@ C_MAIN = r"""
 static void run_case(const char *name, const het_obs_record *recs, int n) {
   het_stats_t st;
   het_stats_compute(recs, n, &st);
-  printf("CASE|%s|%s|%d|%d|%d|%d|%d|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%s|%.12g|%s|%d|0x%x\n",
+  printf("CASE|%s|%s|%d|%d|%d|%d|%d|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%s|%.12g|%s|%d|0x%x|%d\n",
          name, het_obs_class_name(st.obs), st.k, st.k_eff, st.k_runs, st.n_degen,
          st.R_usable, st.F_win, st.F_cell,
          (st.r_hat >= HET_R_POISSON) ? INFINITY : st.r_hat,
          st.mu_upper, st.tau_w, st.N_eff, st.R_eff, st.p_bound, st.P_rep,
          (st.flags & HET_ST_KS_UNDERPOWERED) ? "underpowered"
            : (st.ks_pass ? "pass" : "SPLIT"),
-         st.ks_D, het_tier_name(st.tier), st.tau_runs_needed, st.flags);
+         st.ks_D, het_tier_name(st.tier), st.tau_runs_needed, st.flags,
+         /* st.R is the PRE-clamp record count: R > R_usable can mean cold cells,
+            R > HET_STATS_MAX_CELLS means the tail was discarded. */
+         st.R);
   printf("PRINT-BEGIN|%s\n", name);
   het_stats_print(stdout, &st);
   printf("PRINT-END|%s\n", name);
@@ -841,6 +896,12 @@ static void anchors(void) {
   /* het_win_of must MAP, not return a constant. */
   printf("WIN|%d|%d|%d|%d\n", het_win_of(0, 100000), het_win_of(50000, 100000),
          het_win_of(99999, 100000), (int)HET_NWIN);
+  /* THE PYTHON MIRRORS, emitted so they can be COMPARED.  Every fixture below sits
+     far from the THETA_D and TAU_HOT boundaries -- deliberately, since a fixture at
+     the boundary tests the boundary and not the statistic -- so nothing else in this
+     gate can notice one of these macros moving under the mirror. */
+  printf("MIRROR|%d|%d|%d\n", (int)HET_THETA_DISTINCT, (int)HET_TAU_HOT,
+         (int)HET_STATS_MAX_CELLS);
   /* The campaign budget (Q3-stats.md R3).  p_min MUST stay unset in the shipped
      header: the het hit-rate is unpublished, and Bagchi's ~0.2% is the GPU-only
      inter-CTA rate.  An unset p_min must return NOT SIZED, never a budget. */
@@ -954,8 +1015,9 @@ def _env():
     return env
 
 
-def emit_harness(tmp, test="MP-cg-sys-fence-2s"):
+def emit_harness(tmp):
     """Emit a REAL harness and return its directory (header + scan both come from it)."""
+    test = "MP-cg-sys-fence-2s"
     out = os.path.join(tmp, "emit")
     os.makedirs(out, exist_ok=True)
     subprocess.run(["litmus7", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
@@ -990,10 +1052,10 @@ def _parse_case_fields(l):
     f = l.split("|")
     (_, name, obs, k, k_eff, k_runs, n_degen, R_usable, F_win, F_cell,
      r_hat, mu_up, tau_w, N_eff, R_eff, p_bound, P_rep, ks, ks_D, tier,
-     tau_need, flags) = f
+     tau_need, flags, R) = f
     return name, dict(
         obs=obs, k=int(k), k_eff=int(k_eff), k_runs=int(k_runs),
-        n_degen=int(n_degen), R_usable=int(R_usable),
+        n_degen=int(n_degen), R=int(R), R_usable=int(R_usable),
         F_win=float(F_win), F_cell=float(F_cell), r_hat=float(r_hat),
         mu_upper=float(mu_up), tau_w=float(tau_w), N_eff=float(N_eff),
         R_eff=float(R_eff), p_bound=float(p_bound),
@@ -1080,24 +1142,46 @@ def check_f8_escape_witness(got, quiet=False, neff_expect=F8_NEFF_EXPECT):
     return fails
 
 
+class _CompileFailed(Exception):
+    """The C case set did not compile against a given het_verdict.h.  Carries the
+    compiler's output so each caller can report it its own way."""
+
+    def __init__(self, out, err):
+        super().__init__(err)
+        self.out, self.err = out, err
+
+
+def _compile_and_run(header_dir, workdir):
+    """Build the C case set in workdir against header_dir's het_verdict.h, run it and
+    return its stdout lines.  Raises _CompileFailed if gcc rejects it.
+
+    ONE definition of the copy/emit/compile/run sequence: run() and _escape_got()
+    differ only in how they REPORT a compile failure, and a second copy of the flag
+    list is a flag list that can drift."""
+    shutil.copy(os.path.join(header_dir, "het_verdict.h"),
+                os.path.join(workdir, "het_verdict.h"))
+    src = os.path.join(workdir, "st.c")
+    with open(src, "w") as fh:
+        fh.write(build_c())
+    exe = os.path.join(workdir, "st")
+    cc = subprocess.run(["gcc", "-std=c99", "-O2", "-Wall", "-Wno-unused-function",
+                         "-I", workdir, src, "-o", exe, "-lm"],
+                        capture_output=True, text=True)
+    if cc.returncode != 0:
+        raise _CompileFailed(cc.stdout, cc.stderr)
+    return subprocess.run([exe], capture_output=True, text=True).stdout.splitlines()
+
+
 def _escape_got(header_dir):
     """Compile the case set against header_dir's het_verdict.h, run it, and return the
     parsed C stats for the escape case -- the same fields phase2 parses.  Lets --bite
     drive check_f8_escape_witness against a MUTATED header."""
     tmp = tempfile.mkdtemp(prefix="statsf8.")
     try:
-        shutil.copy(os.path.join(header_dir, "het_verdict.h"),
-                    os.path.join(tmp, "het_verdict.h"))
-        src = os.path.join(tmp, "st.c")
-        with open(src, "w") as fh:
-            fh.write(build_c())
-        exe = os.path.join(tmp, "st")
-        cc = subprocess.run(["gcc", "-std=c99", "-O2", "-Wall", "-Wno-unused-function",
-                             "-I", tmp, src, "-o", exe, "-lm"],
-                            capture_output=True, text=True)
-        if cc.returncode != 0:
-            raise SystemExit("statscheck F8: witness harness did not compile\n" + cc.stderr)
-        out = subprocess.run([exe], capture_output=True, text=True).stdout.splitlines()
+        try:
+            out = _compile_and_run(header_dir, tmp)
+        except _CompileFailed as e:
+            raise SystemExit("statscheck F8: witness harness did not compile\n" + e.err)
         for l in out:
             if l.startswith("CASE|"):
                 name, rec = _parse_case_fields(l)
@@ -1131,6 +1215,41 @@ def phase1(lines, quiet):
             elif not quiet:
                 print("      het_win_of maps 0->0, N/2->%d, N-1->%d (it is not a "
                       "constant)" % (NWIN // 2, NWIN - 1))
+
+    # --- THE MIRROR PINS.  statscheck re-derives every statistic in Python, and three
+    # of the header's knobs are hard-coded there rather than read from it.  No fixture
+    # straddles their boundaries, so a differential CANNOT notice the drift: with
+    # HET_THETA_DISTINCT moved 2 -> 3 every decode count in this file (0, 1, 900, 5000)
+    # keeps its truth value on both sides and the gate stays green on a stale mirror.
+    # Compared here, exactly as HET_NWIN is compared on the WIN| line.
+    seen_mirror = False
+    for l in lines:
+        if not l.startswith("MIRROR|"):
+            continue
+        seen_mirror = True
+        _, td, th, mc = l.split("|")
+        for have, want, macro, what in (
+                (int(td), THETA_D, "HET_THETA_DISTINCT",
+                 "the degeneracy guard's floor: the mirror would call cells "
+                 "degenerate that the C does not, or the reverse"),
+                (int(th), TAU_HOT, "HET_TAU_HOT",
+                 "the COLD-INVALID threshold: the mirror would count a different "
+                 "set of cells as usable, so R_usable and every bound built on it"),
+                (int(mc), MAX_CELLS, "HET_STATS_MAX_CELLS",
+                 "the record-array clamp: the truncation fixture is sized from the "
+                 "mirror, so it would stop reaching the truncation path")):
+            if have != want:
+                print("  *** MIRROR DRIFT: %s is %d in the header, statscheck's "
+                      "Python mirror says %d -- %s is now derived from a different "
+                      "constant than the C." % (macro, have, want, what))
+                bad += 1
+        if not quiet and not bad:
+            print("      the Python mirrors match the header: THETA_D=%d, "
+                  "TAU_HOT=%d, MAX_CELLS=%d" % (int(td), int(th), int(mc)))
+    if not seen_mirror:
+        print("  *** no MIRROR| line: the header's THETA_D / TAU_HOT / MAX_CELLS are "
+              "not being compared to statscheck's Python mirrors at all")
+        bad += 1
 
     # --- The campaign budget: p_min stays a SYMBOL, not a number, until hardware. ---
     for l in lines:
@@ -1259,6 +1378,33 @@ def phase1(lines, quiet):
     return 0
 
 
+def check_neff1_containment(g, what, quiet):
+    """THE CONSERVATIVE SPECIAL CASE IS CONTAINED -- stated as the identity it is.
+
+    At N_eff = 1 the bound mu_upper / (R_usable * N_eff / DEFF) IS B7's run-level
+    mu_upper / (R_usable / DEFF): `x * 1.0' is exact in IEEE754, and phase2's (a')
+    already pins the first form for every case, so re-deriving the second and
+    comparing the two could not fail on any input -- it restates an identity, and a
+    check that cannot fail is not evidence.  What the two conservative regimes (tau at
+    the cap, tau unresolved) actually CLAIM, and what is therefore asserted here, is
+    that N_eff came back EXACTLY 1.0; the bound's equality with B7 then follows.
+    (A genuinely independent containment test would have to re-run het_stats_compute
+    on a header with N_eff forced to 1 and compare THAT number -- a second compile per
+    regime, for an identity.  Deliberately not done.)"""
+    if not g:
+        return 0
+    if g["N_eff"] != 1.0:
+        print("  *** CONTAINMENT BROKEN: %s must score N_eff = 1 EXACTLY (got %.6g), "
+              "so its bound is no longer B7's run-level number -- the N_eff refinement "
+              "has changed a claim it had no licence to change." % (what, g["N_eff"]))
+        return 1
+    if not quiet:
+        print("      containment: %s scores N_eff = 1, so its bound (%.4g) IS B7's "
+              "mu_upper/(R_usable/DEFF) -- identically, not approximately"
+              % (what, g["p_bound"]))
+    return 0
+
+
 def phase2(lines, quiet):
     print("\n===== PHASE 2: is het_stats_compute() a statistic, or a constant? =====")
     bad = 0
@@ -1310,8 +1456,8 @@ def phase2(lines, quiet):
             if not close(g["p_bound"], want_b):
                 errs.append("p_bound %.12g != mu_upper/(R*N_eff/DEFF) %.12g"
                             % (g["p_bound"], want_b))
-        for fld in ("obs", "k", "k_eff", "k_runs", "n_degen", "R_usable", "ks", "tier",
-                    "tau_need"):
+        for fld in ("obs", "k", "k_eff", "k_runs", "n_degen", "R", "R_usable", "ks",
+                    "tier", "tau_need"):
             if g[fld] != ref[fld]:
                 errs.append("%s: C %s != py %s" % (fld, g[fld], ref[fld]))
 
@@ -1388,8 +1534,9 @@ def phase2(lines, quiet):
 
     need_flags = {"FANO_UNMEASURED", "NONSTATIONARY", "DEGEN_SIGHTING",
                   "UNDERDISPERSED", "BURSTY", "NO_DECODE_CHANNEL", "WIN_DESYNC",
-                  "KS_UNDERPOWERED", "CTRL_IS_CANARY", "BOUND_VACUOUS",
-                  "SELF_CONTROL", "TAU_UNMEASURED", "TAU_AT_CAP", "TAU_UNRESOLVED"}
+                  "KS_UNDERPOWERED", "CELLS_TRUNCATED", "CTRL_IS_CANARY",
+                  "BOUND_VACUOUS", "SELF_CONTROL", "TAU_UNMEASURED", "TAU_AT_CAP",
+                  "TAU_UNRESOLVED"}
     print("  diagnostic flags    : %d/%d  (%s)"
           % (len(seen_flags & need_flags), len(need_flags),
              ", ".join(sorted(seen_flags))))
@@ -1443,25 +1590,8 @@ def phase2(lines, quiet):
               "as ONE bit, so B7's 1,500-30,000-run budgets stand unshrunk -- the "
               "mechanism is dead weight." % (ne_w, NWIN // 2))
         bad += 1
-    if ne_c != 1.0:
-        print("  *** CONTAINMENT BROKEN: the tau-at-cap regime must score N_eff = 1 "
-              "exactly (got %.4g)." % ne_c)
-        bad += 1
-
-    # ---- CONTAINMENT: in the at-cap regime the bound must equal the run-level formula
-    # EXACTLY, or the N_eff refinement has changed claims it had no licence to change.
-    gc = got.get("never-tau-at-cap-is-B7-exactly", {})
-    if gc:
-        deff = gc["F_cell"] if gc["F_cell"] > 1.0 else 1.0
-        b7 = gc["mu_upper"] / (gc["R_usable"] / deff)
-        if not close(gc["p_bound"], b7):
-            print("  *** at-cap p_bound %.12g != B7's mu_upper/(R_usable/DEFF) "
-                  "%.12g -- the conservative special case is NOT contained"
-                  % (gc["p_bound"], b7))
-            bad += 1
-        elif not quiet:
-            print("      containment: at-cap bound == B7's formula to 1e-9 "
-                  "(the conservative special case is contained)")
+    bad += check_neff1_containment(got.get("never-tau-at-cap-is-B7-exactly", {}),
+                                   "the tau-at-cap regime", quiet)
 
     # ---- THE RELIABILITY GUARD, BOTH DIRECTIONS, AND ITS CONTAINMENT.  A guard that
     # never fires leaves the overclaim in place; one that always fires throws the N_eff
@@ -1498,19 +1628,9 @@ def phase2(lines, quiet):
                   "is thrown away on every channel."
                   % (gr["tau_w"], gr["tau_need"], gr["R_usable"]))
             bad += 1
-        # CONTAINMENT: when the guard fires the bound must be the run-level number
-        # EXACTLY, so the guard can never be worse than the baseline it falls back to.
-        if gu.get("p_bound", -1.0) >= 0.0:
-            deff = gu["F_cell"] if gu["F_cell"] > 1.0 else 1.0
-            b7 = gu["mu_upper"] / (gu["R_usable"] / deff)
-            if not close(gu["p_bound"], b7):
-                print("  *** unresolved p_bound %.12g != B7's mu_upper/(R_usable/DEFF) "
-                      "%.12g -- the fallback is NOT B7, so the guard is a trade-off "
-                      "rather than a strict improvement" % (gu["p_bound"], b7))
-                bad += 1
-            elif not quiet:
-                print("      containment: the unresolved fallback == B7's formula to "
-                      "1e-9 (it can never be worse than the baseline)")
+        # CONTAINMENT: when the guard fires the fallback must be the run-level number,
+        # so the guard can never be worse than the baseline it falls back to.
+        bad += check_neff1_containment(gu, "the unresolved-tau fallback", quiet)
 
     # ---- The guard's two in-band outcomes are pinned above; this pins the third,
     # self-referential one it cannot see (check_f8_escape_witness).
@@ -1750,7 +1870,7 @@ def phase3(hdir, tmp, quiet):
 
 
 # ---------------------------------------------------------------------------
-def phase4(quiet, tamper=None):
+def phase4(tamper=None):
     print("\n===== PHASE 4: does the EMITTED CORPUS carry the B7 machinery? =====")
     tests = sorted(t[:-len(".litmus")] for t in os.listdir(HET_DIR)
                    if t.endswith(".litmus"))
@@ -1926,6 +2046,10 @@ else:
 
 CAMPAIGN = os.path.join(ROOT, "hetlitmus", "campaign.py")
 SEED_STRIDE = 100003     # must match campaign.py
+# The budgets phase 6 drives the campaign with, and the R every STUB_RUNNER line
+# reports.  Named because the HET_RUNS_MAX assertion re-derives the remaining budget
+# from them: budget - STUB_R * (invocations already spent).
+BOUND_BUDGET, ALLOWED_BUDGET, STUB_R = 100, 30, 10
 
 
 def phase6_campaign(quiet):
@@ -1990,8 +2114,9 @@ def phase6_campaign(quiet):
         r = subprocess.run(
             [sys.executable, CAMPAIGN, "--corpus", corpus, "--control-map", cmap,
              "--runner", "%s %s {dir}" % (sys.executable, stub),
-             "--p-goal", "0.01", "--budget-runs", "100",
-             "--allowed-budget-runs", "30", "--seed0", "777", "--state", state],
+             "--p-goal", "0.01", "--budget-runs", str(BOUND_BUDGET),
+             "--allowed-budget-runs", str(ALLOWED_BUDGET),
+             "--seed0", "777", "--state", state],
             capture_output=True, text=True)
         out = r.stdout
 
@@ -2090,9 +2215,16 @@ def phase6_campaign(quiet):
                   "stolen); price surfaced as >=22 runs/inv")
 
         # Every invocation must carry a FRESH seed base (seed0 + i*stride) and the
-        # adaptive knobs -- replayed seeds would double-count R_eff.
+        # adaptive knobs -- replayed seeds would double-count R_eff -- and it must
+        # carry the REMAINING budget.  HET_RUNS_MAX is how a budget of 100 becomes ten
+        # invocations of 10 rather than ten of 100: unchecked, the last invocation of a
+        # nearly-spent row could overshoot its budget by a whole invocation, and the
+        # per-class cut (Allowed rows get ALLOWED_BUDGET, not BOUND_BUDGET) would be
+        # arithmetic nobody ever ran.  Each STUB_RUNNER line reports R = STUB_R.
         for t in tests:
             log = os.path.join(corpus, t, "seeds.log")
+            budget = (ALLOWED_BUDGET if done.get(t, {}).get("cls") == "Allowed"
+                      else BOUND_BUDGET)
             with open(log) as fh:
                 for line in fh:
                     inv, seed, adaptive, runs_max = line.split()
@@ -2101,6 +2233,22 @@ def phase6_campaign(quiet):
                         print("  *** %s invocation %s: HET_SEED=%s (want %d), "
                               "HET_ADAPTIVE=%s" % (t, inv, seed, want_seed, adaptive))
                         bad += 1
+                    want_max = budget - STUB_R * (int(inv) - 1)
+                    if int(runs_max) != want_max:
+                        print("  *** %s invocation %s: HET_RUNS_MAX=%s, want %d "
+                              "(%s budget %d minus the %d runs already spent).  The "
+                              "harness is being told to run past the budget the "
+                              "campaign is accounting for."
+                              % (t, inv, runs_max, want_max,
+                                 done.get(t, {}).get("cls", "?"), budget,
+                                 STUB_R * (int(inv) - 1)))
+                        bad += 1
+        if not quiet:
+            print("      HET_RUNS_MAX curtails each invocation to the REMAINING "
+                  "budget (Allowed rows %d, %d, %d; bound rows %d, %d, ...)"
+                  % (ALLOWED_BUDGET, ALLOWED_BUDGET - STUB_R,
+                     ALLOWED_BUDGET - 2 * STUB_R, BOUND_BUDGET,
+                     BOUND_BUDGET - STUB_R))
         if not os.path.exists(state):
             print("  *** no campaign state written")
             bad += 1
@@ -2130,20 +2278,12 @@ def phase6_campaign(quiet):
 
 # ---------------------------------------------------------------------------
 def run(header_dir, tmp, quiet):
-    shutil.copy(os.path.join(header_dir, "het_verdict.h"),
-                os.path.join(tmp, "het_verdict.h"))
-    src = os.path.join(tmp, "st.c")
-    with open(src, "w") as fh:
-        fh.write(build_c())
-    exe = os.path.join(tmp, "st")
-    cc = subprocess.run(["gcc", "-std=c99", "-O2", "-Wall", "-Wno-unused-function",
-                         "-I", tmp, src, "-o", exe, "-lm"],
-                        capture_output=True, text=True)
-    if cc.returncode != 0:
-        print(cc.stdout + cc.stderr)
+    try:
+        out = _compile_and_run(header_dir, tmp)
+    except _CompileFailed as e:
+        print(e.out + e.err)
         print("\nSTATSCHECK FAILED: the statistics layer does not compile")
         return 1
-    out = subprocess.run([exe], capture_output=True, text=True).stdout.splitlines()
     rc = phase1(out, quiet)
     rc |= phase2(out, quiet)
     rc |= phase5_stops(out, quiet)
@@ -2167,7 +2307,7 @@ def main():
         rc |= phase3(hdir, tmp, a.quiet)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    rc |= phase4(a.quiet)
+    rc |= phase4()
     rc |= phase6_campaign(a.quiet)
 
     print("\n" + "=" * 70)
@@ -2185,7 +2325,21 @@ def main():
 # actually CHANGED the file (one that matched nothing would pass for free) and each
 # must drive the gate to a NONZERO exit.
 # ---------------------------------------------------------------------------
-def _bite(label, hdir, mutate, quiet=True):
+def _subst(s, pairs):
+    """Apply (find, replace) pairs, FAILING LOUDLY if any `find' matched nothing.
+    _bite only checks that the header changed OVERALL, which a two-fragment injection
+    satisfies with one fragment matched and the other silently dropped -- half an
+    injection that still reports "BITES"."""
+    for a, b in pairs:
+        if a not in s:
+            raise SystemExit("statscheck bite: injection fragment not found in the "
+                             "emitted header -- the header moved under the bite: %r"
+                             % a[:70])
+        s = s.replace(a, b)
+    return s
+
+
+def _bite(label, hdir, mutate):
     hp = os.path.join(hdir, "het_verdict.h")
     with open(hp) as fh:
         orig = fh.read()
@@ -2326,6 +2480,81 @@ def bite():
                         "static int het_tau_runs_needed(double tau_w) {\n  double need;\n"
                         "  if (tau_w > 0.0) return 0;"))
 
+        # ---- THE STRUCTURAL INVARIANTS ------------------------------------------
+        # This family of assertions guards structure the shipped header enforces
+        # unconditionally -- a clamp, a conjunct, a dedup, a flag -- so no injection
+        # above can redden one of them, and an assertion never seen to fail is not
+        # evidence that it is compared.  Each injection below deletes the ONE line
+        # that makes one of them true.
+
+        # (17) THE RUN DEDUP DELETED: several cells of ONE run then count as several
+        # runs, so three sightings from a single thermal/phase draw bank a
+        # MISMATCH-CONFIRMED -- a refutation "corroborated" by itself.
+        ok &= _bite("the run dedup deleted (cells of ONE run corroborate each other)",
+                    hdir,
+                    lambda s: _subst(s, [(
+                        "        for (j = 0; j < nruns; j++) "
+                        "if (runs[j] == recs[i].run_id) seen = 1;",
+                        "        for (j = 0; j < nruns; j++) if (0) seen = 1;")]))
+
+        # (18) THE P_rep DECODE GUARD DELETED: where every sighting was rejected by
+        # the degeneracy guard, 1 - e^{-0} = 0 is then reported as "P_rep = 0.00%",
+        # which reads as "never reproduces" when it means "no clean cell to estimate
+        # from" -- a number that walks into a table as evidence of the opposite.
+        ok &= _bite("the P_rep k_eff>0 conjunct deleted (an ABSENCE printed as 0.00%)",
+                    hdir,
+                    lambda s: _subst(s, [("    if (st->ks_pass && st->k_eff > 0)",
+                                          "    if (st->ks_pass)")]))
+
+        # (19) THE tau FLOOR AND THE N_eff CEILING DELETED TOGETHER.  Either alone is
+        # invisible -- the tau floor keeps N_eff <= HET_NWIN, and the N_eff ceiling
+        # re-clamps whatever the tau floor lets past -- so only removing both can show
+        # the [1, HET_NWIN] assertion is live.  An anti-correlated stream then claims
+        # 512 independent samples from 128 windows.
+        ok &= _bite("the tau floor AND the N_eff ceiling deleted (N_eff exceeds the "
+                    "stream's own resolution)", hdir,
+                    lambda s: _subst(s, [
+                        ("  if (tau < 1.0) tau = 1.0;\n", ""),
+                        ("        if (st->N_eff > (double)HET_NWIN)  "
+                         "st->N_eff = (double)HET_NWIN;\n", "")]))
+
+        # (20) THE "NO BOUND WITHOUT A MEASURED DISPERSION" CONJUNCT DELETED: a null
+        # whose control stream desynced then still gets a bound -- computed from the
+        # DEFAULT r -> inf, i.e. the textbook 3/N, reported as though it had been
+        # measured.  That is the exact substitution this whole layer exists to refuse.
+        ok &= _bite("the FANO_UNMEASURED conjunct deleted (a bound from a dispersion "
+                    "that was never measured)", hdir,
+                    lambda s: _subst(s, [(
+                        "  if (st->obs == HET_OBS_NEVER && "
+                        "!(st->flags & HET_ST_FANO_UNMEASURED)) {",
+                        "  if (st->obs == HET_OBS_NEVER) {")]))
+
+        # (21) THE TRUNCATION STOPS SAYING IT TRUNCATED: the tail is still discarded
+        # (the clamp stays, so nothing overruns), but nothing records that the bound
+        # was computed from fewer runs than the campaign paid for.
+        ok &= _bite("the CELLS_TRUNCATED flag dropped (a silently shortened campaign)",
+                    hdir,
+                    lambda s: _subst(s, [(
+                        "  if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS;\n"
+                        "                                 st->flags |= "
+                        "HET_ST_CELLS_TRUNCATED; }",
+                        "  if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS; }")]))
+
+        # ---- THE PYTHON MIRRORS -------------------------------------------------
+        # (22)-(24) Move a mirrored macro in the header and leave statscheck's Python
+        # copy behind.  Every fixture here sits far from these boundaries, so NOTHING
+        # ELSE in the gate changes: without the MIRROR| comparison each of these is a
+        # green run on a mirror that no longer describes the header.
+        ok &= _bite("HET_THETA_DISTINCT moved under the Python mirror", hdir,
+                    lambda s: _subst(s, [("#define HET_THETA_DISTINCT 2",
+                                          "#define HET_THETA_DISTINCT 3")]))
+        ok &= _bite("HET_TAU_HOT moved under the Python mirror", hdir,
+                    lambda s: _subst(s, [("#define HET_TAU_HOT 30",
+                                          "#define HET_TAU_HOT 31")]))
+        ok &= _bite("HET_STATS_MAX_CELLS moved under the Python mirror", hdir,
+                    lambda s: _subst(s, [("#define HET_STATS_MAX_CELLS 128",
+                                          "#define HET_STATS_MAX_CELLS 129")]))
+
         # ---- THE KNOWN-OPEN ESCAPE WITNESS, BOTH DIRECTIONS ---------------------
         # check_f8_escape_witness pins the current over-crediting behaviour, so it must
         # FAIL both (15) when the escape DISAPPEARS -- the guard made
@@ -2405,8 +2634,7 @@ def bite():
         # structurally-zero skew_stddev as "degenerate" on the 11 store-only tests and
         # pin their P_rep at a constant 0.  Only phase 4 can see this.
         print("\n-- corpus injection --")
-        rc = phase4(quiet=True,
-                    tamper=lambda t, s: s.replace("_rec.obs_valid = 1;\n", ""))
+        rc = phase4(tamper=lambda t, s: s.replace("_rec.obs_valid = 1;\n", ""))
         if rc == 1:
             print("  BITES (gate failed, as it must)   "
                   "[the emitter stopped tagging the observer decode channel]")
@@ -2418,13 +2646,18 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 16 injections were caught -- 4 against the B7")
+        print("BITE OK: all 24 injections were caught -- 4 against the B7")
         print("         ESTIMATOR/RULE, 5 against the B7b tau/N_eff/stop machinery,")
         print("         3 against the B7c reliability guard (deleted / always-on /")
-        print("         price silenced -- both directions AND the signal), 2 against")
-        print("         the B7c/F8 known-open escape witness (the escape removed AND")
-        print("         the over-credit mis-pinned), 1 against the PRODUCER (the")
-        print("         sub-tallies), 1 against the EMITTED CORPUS.")
+        print("         price silenced -- both directions AND the signal), 5 against")
+        print("         the STRUCTURAL INVARIANTS (run dedup, the P_rep decode")
+        print("         conjunct, the tau/N_eff clamps, the unmeasured-dispersion")
+        print("         conjunct, the truncation flag),")
+        print("         3 against the PYTHON MIRRORS (THETA_D / TAU_HOT / MAX_CELLS")
+        print("         moved under them), 2 against the B7c/F8 known-open escape")
+        print("         witness (the escape removed AND the over-credit mis-pinned),")
+        print("         1 against the PRODUCER (the sub-tallies), 1 against the")
+        print("         EMITTED CORPUS.")
         print("         The gate is live both ways: it passes on the shipped code and")
         print("         fails on every way of breaking it.")
         return 0

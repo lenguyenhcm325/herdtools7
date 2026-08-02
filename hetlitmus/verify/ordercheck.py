@@ -43,7 +43,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 HETL = os.path.dirname(HERE)
 REPO = os.path.dirname(HETL)
 BIN = os.path.join(REPO, "_build", "install", "default", "bin")
-LIBDIR = os.path.join(REPO, "herd", "libdir")
+# HERD_LIBDIR, not LIBDIR: every other gate's LIBDIR is litmus7's (litmus/libdir).
+HERD_LIBDIR = os.path.join(REPO, "herd", "libdir")
 BELL = os.path.join(HETL, "bells", "ptx.bell")
 CAT = os.path.join(HETL, "cats", "nvidia-ptx.cat")
 HETDIR = os.path.join(HETL, "tests", "het")
@@ -148,7 +149,7 @@ OBS = re.compile(r"^Observation \S+ (Never|Sometimes|Always)", re.M)
 
 
 def herd(path, extra):
-    r = _run([os.path.join(BIN, "herd7"), "-set-libdir", LIBDIR] + extra + [path])
+    r = _run([os.path.join(BIN, "herd7"), "-set-libdir", HERD_LIBDIR] + extra + [path])
     m = OBS.search(r.stdout)
     if not m:
         return "ERROR"
@@ -203,7 +204,7 @@ def gen_arm(tmp, shape, d0, d1):
 def gen_ptx(tmp, shape, f0, f1):
     name = "ptx-%s-%s-%s" % (shape, f0, f1)
     e = _edges(shape, f0, f1, _ptx_po, _ptx_atom)
-    r = _run([os.path.join(BIN, "diyone7"), "-set-libdir", LIBDIR, "-bell", BELL,
+    r = _run([os.path.join(BIN, "diyone7"), "-set-libdir", HERD_LIBDIR, "-bell", BELL,
               "-arch", "LISA", "-name", name,
               "-scopes", "(sys (gpu (cta P0) (cta P1)))"] + e, cwd=tmp)
     return os.path.join(tmp, name + ".litmus") if r.returncode == 0 else None

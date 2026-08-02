@@ -139,10 +139,13 @@ nothing, because a control that cannot fire is not a control.
 
 GATE 4: LB's two rf edges decode each other exactly (no window): P1's frame is
 pinned by P0's read, and P1's read must decode back to P0's own frame _f.
+2 is the PREAMBLE BASELINE, not a bumped pin: the `#ifndef HET_WINDOW / #define'
+pair is emitted unconditionally, and each windowed read adds one further line, so
+2 means "no windowed read here" exactly as the 3 above means "one".
   $ litmus7 -o . ../het/LB-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ grep -c 't_bufP1_0_h\[(_m1 - 1)\] / T_K_TAG == (uint64_t)(_f + 1)' LB-cg-sys-acqrel-2s/LB-cg-sys-acqrel-2s.cu
   1
-  $ grep -c 'HET_WINDOW' LB-cg-sys-acqrel-2s/LB-cg-sys-acqrel-2s.cu || true
+  $ grep -c 'HET_WINDOW' LB-cg-sys-acqrel-2s/LB-cg-sys-acqrel-2s.cu
   2
 
 GATE 5: an fr-against-init cycle (R) is weak precisely when its read is COLD, so

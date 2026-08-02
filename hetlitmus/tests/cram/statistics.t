@@ -73,13 +73,16 @@ green.
 
 THE CONTROL CHANNEL, NEVER THE TARGET.  The target is far too rare to estimate a
 variance from -- that is the entire reason it needs a bound at all -- so the
-test's own scan must not be windowed.
+test's own scan must not be windowed.  Pinned by counting the WINDOWING CALL, not
+by forbidding a field name: het_obs_record has exactly two per-window arrays
+(control_win, canary_win) and no third, so a target scan that started windowing
+would have to reuse one of them or add one -- either way it is a third het_win_of
+call site, and this count is 2 for the two bumps pinned just above.
 
   $ grep -c 'target_count_exhaustive++; _rec.target_count_heuristic++' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
-  $ grep -c 't_win\[' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
-  0
-  [1]
+  $ grep -c 'het_win_of' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  2
 
 THE DEGENERACY GUARD MUST NOT GO CONSTANT ON THE STORE-ONLY SHAPES.
 distinct_decoded_iters and skew_stddev are both written from the same

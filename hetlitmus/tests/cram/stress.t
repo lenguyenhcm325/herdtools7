@@ -211,9 +211,15 @@ the canary's one perpetual loop.
   3
 
 The observer lane is still the one that does NOT spin: its block body carries the
-perpetual loop but no het_spin.  Checked positively, because a count alone would
-pass if the canary spun twice and the observer once.
-  $ sed -n '/the CPU observer/,$p' $S.cu | head -1 > /dev/null
+perpetual loop but no het_spin.  Checked PER LANE by extracting the block body,
+because the file-wide sum of 2 below is equally satisfied by the canary spinning
+twice and the observer once -- which is the exact regression this guards.  T's
+GPU proc is block 0, T's observer is block 1, the canary is block 2.
+  $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' $S.cu | grep -c 'het_spin(_spin_bar'
+  1
+  $ sed -n '/if (blockIdx.x == 1 && threadIdx.x == 0) {/,/^  }$/p' $S.cu | grep -c 'het_spin(_spin_bar'
+  0
+  [1]
   $ grep -c 'het_spin(_spin_bar, _nb \* HET_SPIN_LANES, _stress_tally)' $S.cu
   2
 

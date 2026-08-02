@@ -132,15 +132,14 @@ assembles **exit 0**.
   (Ampere), so the non-cluster corpus can also smoke *run* here.
 
 - **Cluster (inline-PTX path), Hopper** — the hand-written
-  `tests/cluster/*.litmus` (`MP-cluster-F` = rel/acq cluster atomics;
-  `MP-cluster` = explicit cluster fences) emit to `cluster-out/` and assemble
+  `tests/cluster/*.litmus` (`MP-cluster` = explicit cluster fences) assemble
   with:
 
   ```
   nvcc -std=c++17 -arch=sm_90 <test>.cu -o /tmp/<test>
   ```
 
-  Both exit 0, proving the inline-PTX cluster ops assemble. `sm_90` (Hopper) is
+  It exits 0, proving the inline-PTX cluster ops assemble. `sm_90` (Hopper) is
   required for `.cluster`; these won't *run* here (no Hopper), only assemble.
 
 **Fence lowering (revised — faithful inline PTX).** During Task 8 (on CUDA 12.2)
@@ -172,9 +171,8 @@ unchanged: rel/acq on ops already map exactly (`st.release.<scope>` /
 - Oracle: `expected-amd-gcn3.csv` is AMD‑only; GH200 needs its own oracle (memory
   `hetlitmus-amd-oracle-task7`).
 - Cluster scope is supported in the *emitter* (inline PTX, see Mappings) and now
-  exercised by the **hand-written** `tests/cluster/*.litmus` (emitted to
-  `cluster-out/`, sm_90-assembled in Task 8). The diy-generated **gpu-only**
-  corpus still does not cover cluster: that needs `'cluster` added to
+  exercised by the **hand-written** `tests/cluster/*.litmus`. The diy-generated
+  **gpu-only** corpus still does not cover cluster: that needs `'cluster` added to
   `bells/ptx.bell`'s `enum scopes` + scope order (`cta < cluster < gpu < sys`) —
   deliberately deferred (the ptx.bell cluster extension). *Running* cluster tests
   also needs the Task-9 cluster launch (`cudaLaunchKernelEx` / `__cluster_dims__`).

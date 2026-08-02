@@ -22,6 +22,8 @@ Usage:  verdictcheck.py [--header PATH] [-q]   run the gate
 """
 
 import argparse
+import contextlib
+import io
 import os
 import re
 import shutil
@@ -473,7 +475,7 @@ def read_control_map():
 ORACLE_RE = re.compile(r"_rec\.het_oracle\s*=\s*(ORACLE_[A-Z]+)\s*;")
 
 
-def check_corpus(quiet, tamper=None):
+def check_corpus(tamper=None):
     """tamper: (test, src) -> src.  Used ONLY by --bite, to prove this phase FAILS
     when an emitted harness carries the wrong oracle class."""
     print("\n===== PHASE 3: does the EMITTED CORPUS carry its oracle class? =====")
@@ -555,7 +557,7 @@ def check_corpus(quiet, tamper=None):
 
 
 # ---------------------------------------------------------------------------
-def scan_prints(blocks, cases_by_name, quiet):
+def scan_prints(blocks, quiet):
     """PHASE 2 -- the refutation claims appear IFF the test is ORACLE_DISALLOWED."""
     print("\n===== PHASE 2: can a non-Disallowed test print a REFUTATION? =====")
     bad = 0
@@ -641,18 +643,31 @@ def run_rule(header, tmp, quiet):
         ["gcc", "-std=c99", "-O2", "-Wall", "-Wno-unused-function",
          "-I", tmp, src, "-o", exe, "-lm"],
         capture_output=True, text=True)
+    # Every exit from here returns the (rc, blocks) pair both call sites unpack.
+    # Returning a bare int instead made a non-compiling header raise TypeError:
+    # the process still exited nonzero, but with a traceback in place of the
+    # diagnostic, and under --bite it aborted the remaining injections.
     if cc.returncode != 0:
         print(cc.stdout + cc.stderr)
         print("\nVERDICT FAILED: the rule does not compile")
-        return 1
+        return 1, {}
 
     run = subprocess.run([exe], capture_output=True, text=True)
     lines = run.stdout.splitlines()
 
-    tau = int(re.match(r"TAU_HOT=(\d+)", lines[0]).group(1))
+    # The driver prints TAU_HOT before the first case, so a missing first line
+    # means the binary died before it ran anything.  Report that; do not index
+    # into an empty list and turn it into an AttributeError/IndexError.
+    m = re.match(r"TAU_HOT=(\d+)", lines[0]) if lines else None
+    if m is None:
+        print(run.stdout + run.stderr)
+        print("\nVERDICT FAILED: the compiled rule produced no TAU_HOT line "
+              "(exit %d, %d line(s) of stdout) -- it did not reach the first case"
+              % (run.returncode, len(lines)))
+        return 1, {}
+    tau = int(m.group(1))
     print("  tau_hot: %d\n" % tau)
 
-    cases_by_name = {c["name"]: c for c in CASES}
     seen_v, seen_o, bad = set(), set(), 0
     blocks, cur, buf = {}, None, []
 
@@ -677,17 +692,18 @@ def run_rule(header, tmp, quiet):
             buf.append(l)
 
     print()
-    # The not-constant assertions: a rule that only ever returns one verdict is not a
-    # decision, and a three-way oracle branch keyed off an always-equal field is the
-    # same thing one field over.
-    missing_v = [v for v in VERDICTS if v not in seen_v]
+    # Verdict coverage is a REPORT, not an assertion.  CASES wants all seven
+    # members of VERDICTS, so a verdict missing from seen_v means the case that
+    # wanted it returned something else -- which the per-case `ok' comparison
+    # above has already counted.  Asserting it again could never be the sole
+    # reason this gate fails.
     print("  verdicts reached      : %d/%d  (%s)"
           % (len(seen_v), len(VERDICTS), ", ".join(sorted(seen_v))))
-    if missing_v:
-        print("  *** UNREACHABLE VERDICT: %s -- the rule is not a decision, it is a "
-              "constant on this input space" % ", ".join(missing_v))
-        bad += 1
 
+    # The oracle-class assertion below is a different matter and IS live: seen_o
+    # is fed from het_oracle_name(r.het_oracle), an ECHO of the input field
+    # through het_verdict.h, which no per-case assertion looks at.  A renamed or
+    # collapsed oracle class is caught here and nowhere else.
     want_o = {"Disallowed", "Allowed", "NO-ORACLE", "UNSET"}
     print("  oracle classes reached: %d/%d  (%s)"
           % (len(seen_o), len(want_o), ", ".join(sorted(seen_o))))
@@ -723,10 +739,10 @@ def main():
     try:
         header = a.header or emit_header(tmp)
         rc, blocks = run_rule(header, tmp, a.quiet)
-        rc |= scan_prints(blocks, {c["name"]: c for c in CASES}, a.quiet)
+        rc |= scan_prints(blocks, a.quiet)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    rc |= check_corpus(a.quiet)
+    rc |= check_corpus()
 
     print("\n" + "=" * 70)
     if rc:
@@ -756,7 +772,7 @@ def _bite_one(label, tmp, header, mutate, quiet):
     sub = tempfile.mkdtemp(prefix="verdictbite.")
     try:
         rc, blocks = run_rule(mut, sub, quiet=True)
-        rc |= scan_prints(blocks, {c["name"]: c for c in CASES}, quiet=True)
+        rc |= scan_prints(blocks, quiet=True)
     finally:
         shutil.rmtree(sub, ignore_errors=True)
 
@@ -765,6 +781,51 @@ def _bite_one(label, tmp, header, mutate, quiet):
         return True
     print("  *** DID NOT BITE: the gate PASSED on a broken rule   [%s]" % label)
     return False
+
+
+def _bite_report(label, header, mutate, want):
+    """A bite on a REPORTING path: the gate must SAY what went wrong.
+
+    Distinct from _bite_one, which reads the exit status alone.  Neither path
+    bitten through this helper can be checked that way, because on both of them
+    the process was ALREADY going to exit nonzero -- it exited by raising.
+    run_rule returned a bare int on a compile failure while both call sites
+    unpack (rc, blocks), so the diagnostic it had just printed was followed by a
+    TypeError traceback (and under --bite the traceback abandoned every injection
+    after it); and lines[0] was indexed unguarded, so a binary that printed
+    nothing raised IndexError with no diagnostic at all.  The deliverable is the
+    sentence, so the sentence is what is asserted: no exception, rc == 1, and
+    `want' in what the gate printed.  Each bite gets a fresh scratch dir, so a
+    write that failed cannot hand run_rule a previous bite's header."""
+    with open(header) as fh:
+        orig = fh.read()
+    new = mutate(orig)
+    if new == orig:
+        print("  *** VACUOUS BITE: the injection changed nothing   [%s]" % label)
+        return False
+
+    sub = tempfile.mkdtemp(prefix="verdictbite.")
+    mut = os.path.join(sub, "bitten.h")
+    with open(mut, "w") as fh:
+        fh.write(new)
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            rc, _ = run_rule(mut, sub, quiet=True)
+    except Exception as e:
+        print("  *** DID NOT REPORT: run_rule RAISED %s (%s) instead of returning a "
+              "diagnostic   [%s]" % (type(e).__name__, e, label))
+        return False
+    finally:
+        shutil.rmtree(sub, ignore_errors=True)
+
+    said = [l for l in buf.getvalue().splitlines() if want in l]
+    if rc != 1 or not said:
+        print("  *** DID NOT BITE: rc=%r and the gate never printed %r   [%s]"
+              % (rc, want, label))
+        return False
+    print("  BITES (reported, as it must): %s   [%s]" % (said[0].strip(), label))
+    return True
 
 
 def bite():
@@ -812,10 +873,35 @@ def bite():
             lambda s: s.replace("  het_print_scan_caveat(_ch, _r, cv);\n", ""),
             quiet=True)
 
-        # (5) THE EMITTER MIS-TAGS AN ALLOWED TEST AS DISALLOWED: the rule is right and
+        # (5) THE HEADER DOES NOT COMPILE.  Not a broken rule -- a broken REPORT of
+        # one.  A gate that answers a non-compiling header with a traceback has
+        # stopped saying which of the three things it guards is wrong, and under
+        # --bite it stops running at all.  The flavour of the syntax error carries
+        # no meaning; `@' is simply not a C token.
+        print("\n-- reporting-path injections --")
+        ok &= _bite_report(
+            "a header that DOES NOT COMPILE must be REPORTED, not raised",
+            header,
+            lambda s: s + "\nstatic int _het_bite_does_not_compile(void) "
+                          "{ return @; }\n",
+            "VERDICT FAILED: the rule does not compile")
+
+        # (6) THE COMPILED RULE PRINTS NOTHING.  The driver prints TAU_HOT before the
+        # first case, so an empty stdout means the binary died before it ran one --
+        # which the gate must say, not index into.  A constructor that _Exit()s is
+        # the shortest way to produce that: it is what a header carrying a broken
+        # static initialiser does in the wild, one step earlier.
+        ok &= _bite_report(
+            "a compiled rule that produces NO TAU_HOT line must be REPORTED",
+            header,
+            lambda s: s + "\n__attribute__((constructor)) static void "
+                          "_het_bite_die_before_main(void) { _Exit(97); }\n",
+            "produced no TAU_HOT line")
+
+        # (7) THE EMITTER MIS-TAGS AN ALLOWED TEST AS DISALLOWED: the rule is right and
         # the harness lies to it, which only phase 3 looks at a real harness to catch.
         print("\n-- corpus injections --")
-        rc = check_corpus(quiet=True, tamper=lambda t, s: (
+        rc = check_corpus(tamper=lambda t, s: (
             s.replace("_rec.het_oracle = ORACLE_ALLOWED;",
                       "_rec.het_oracle = ORACLE_DISALLOWED;")
             if t == "S-cg-sys-fence" else s))
@@ -827,9 +913,9 @@ def bite():
                   "[an ALLOWED harness emitted as ORACLE_DISALLOWED]" % rc)
             ok = False
 
-        # (6) A HARNESS SHIPS UNTAGGED: het_verdict() fails closed, but only if it is
+        # (8) A HARNESS SHIPS UNTAGGED: het_verdict() fails closed, but only if it is
         # ever RUN, so the census is what stops one harness quietly claiming nothing.
-        rc = check_corpus(quiet=True, tamper=lambda t, s: (
+        rc = check_corpus(tamper=lambda t, s: (
             s.replace("_rec.het_oracle = ORACLE_NONE;",
                       "_rec.het_oracle = ORACLE_UNSET;")
             if t == "IRIW-cgcg-sys-fence-2s" else s))
@@ -845,9 +931,10 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 6 injections were caught -- 4 against the RULE (het_verdict.h)")
-        print("         and 2 against the EMITTED CORPUS.  The gate is live, both ways:")
-        print("         it passes on the shipped code and fails on every way of breaking it.")
+        print("BITE OK: all 8 injections were caught -- 4 against the RULE (het_verdict.h),")
+        print("         2 against its REPORTING PATHS and 2 against the EMITTED CORPUS.")
+        print("         The gate is live, both ways: it passes on the shipped code and")
+        print("         fails on every way of breaking it.")
         return 0
     print("BITE FAILED: an injection slipped through -- this gate is decorative")
     return 1

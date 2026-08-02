@@ -128,7 +128,17 @@ X86_PRIMS = {
 # ---------------------------------------------------------------------------
 A64_DISCARD_LOAD = re.compile(r"^\s+ldr\s+(xzr|wzr)\s*,")
 A64_STORE = re.compile(r"^\s+str\b")
-A64_BACKBRANCH = re.compile(r"^\s+(b|b\.\w+|cbn?z|tbn?z)\s+.*\.?LBB")
+
+# A BACK edge, not any branch.  Counting every `b*' to any `.LBB' label counted
+# forward branches too -- the `switch (a->seq)' arms alone supply several -- so
+# the "still a loop" test could not fail on a straight-line body, which is
+# precisely the shape it exists to reject.  Direction is decided the way
+# obscheck._loops decides it: the branch target must be a label DEFINED EARLIER
+# in the same function body.
+A64_LABEL_DEF = re.compile(r"^(\.[\w$.]+):")
+# `b .L', `b.ne .L', `cbz w8, .L', `tbnz w8, #0, .L' -- the target is the LAST
+# operand, so everything before the final comma is skipped.
+A64_BRANCH = re.compile(r"^\s+(b|b\.[a-z]+|cbn?z|tbn?z)\s+(?:.*,\s*)?(\.[\w$.]+)$")
 
 # The four sigma branches declare 4 scratchpad stores between them (st;st = 2,
 # st;ld = 1, ld;st = 1, ld;ld = 0).  A non-volatile build collapses the double store
@@ -381,16 +391,55 @@ def enemy_body(asm_text):
     return lines[start:]
 
 
-def count_enemy_ops(asm_text):
-    """(discarded loads, stores, branches) in het_cpu_enemy's compiled body.
+def count_traffic_loops(body):
+    """Back edges in `body' that ENCLOSE scratchpad traffic.
 
-    `discarded loads' -- not "loads" -- is deliberate: see A64_DISCARD_LOAD."""
+    Two refinements over "is there a branch", each one measured on a straight-line
+    enemy built for the purpose:
+
+      DIRECTION  the target label must be defined EARLIER in the body.  Counting
+                 every `b*' to any `.LBB' also counted forward branches, and the
+                 four `switch (a->seq)' arms supply plenty: 16 of them survive in
+                 a body with both loops removed, so the old test could not fail.
+      CONTENT    an __atomic_fetch_add lowers to an ldxr/stxr RETRY loop, which is
+                 a genuine back edge and is still there when the stress loops are
+                 gone (4 of them, from the affinity and tally bumps).  So a back
+                 edge counts only if the traffic it is supposed to be repeating --
+                 a discarded load or a scratchpad store -- lies inside it.
+
+    Together: >=1 means the enemy's read/write traffic is inside a loop, which is
+    the property S3 claims and the only one that distinguishes a stressor from a
+    function that touches the scratchpad once."""
+    label_idx = {}
+    for i, ln in enumerate(body):
+        m = A64_LABEL_DEF.match(ln.strip())
+        if m:
+            label_idx[m.group(1)] = i
+    n = 0
+    for j, ln in enumerate(body):
+        m = A64_BRANCH.match(ln.split("//")[0].rstrip())
+        if not m:
+            continue
+        i = label_idx.get(m.group(2))
+        if i is None or i >= j:
+            continue
+        if any(A64_DISCARD_LOAD.match(body[k]) or A64_STORE.match(body[k])
+               for k in range(i + 1, j + 1)):
+            n += 1
+    return n
+
+
+def count_enemy_ops(asm_text):
+    """(discarded loads, stores, traffic loops) in het_cpu_enemy's compiled body.
+
+    `discarded loads' -- not "loads" -- is deliberate: see A64_DISCARD_LOAD; and
+    `traffic loops' -- not "branches" -- likewise, see count_traffic_loops."""
     body = enemy_body(asm_text)
     if body is None:
         return None
     ld = sum(1 for ln in body if A64_DISCARD_LOAD.match(ln))
     st = sum(1 for ln in body if A64_STORE.match(ln))
-    br = sum(1 for ln in body if A64_BACKBRANCH.match(ln))
+    br = count_traffic_loops(body)
     return ld, st, br
 
 
@@ -412,8 +461,7 @@ def count_noise_ops(ptx_text):
     return sum(1 for ln in ptx_text.splitlines() if NOISE_OP.match(ln))
 
 
-def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True,
-          harness_dir=None):
+def check(litmus_path, arch="sm_90", harness_dir=None):
     lines, ok = [], [True]
 
     def fail(msg):
@@ -485,11 +533,13 @@ def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True,
                  "transfer, which is the strong coherence stressor (S&D 3.3)."
                  % (st, MIN_ENEMY_STORES))
         if br < 1:
-            fail("het_cpu_enemy's -O2 body has no backward branch: it is no longer a "
-                 "LOOP.  An enemy that runs its body once is not a stressor.")
+            fail("het_cpu_enemy's -O2 body has NO back edge around its scratchpad "
+                 "traffic: the loads and stores are there, but nothing repeats them, "
+                 "so the body runs once.  An enemy that touches the scratchpad once "
+                 "is not a stressor.")
         if ok[0]:
             note("  S3 het_cpu_enemy survives -O2 (%d discarded load(s) + %d store(s), "
-                 "%d branch(es): still a loop, and still issuing BOTH the read and the "
+                 "%d traffic loop(s): still a loop, and still issuing BOTH the read and the "
                  "write traffic every sigma branch declares)" % (ld, st, br))
 
         # ---- S4: sigma is a RUNTIME value (the B4 bug, on the CPU side) ---------
@@ -516,8 +566,7 @@ def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True,
         # emitted <test>.cu DRIVER, where the remaining ways to silently destroy the
         # CPU/interconnect layer live: give the noise a buffer that fits in cache, or
         # point the enemies at the locations under test.  Both leave every other
-        # check green.
-        cu_src = open(cu).read()
+        # check green.  (cu_src was read above, and nothing rewrites the .cu.)
 
         # S5: the noise WORKING SET decides whether the C2C noise crosses anything
         # at all.  Below the last-level cache (Grace L3 = 114 MB) the buffer is
@@ -646,7 +695,7 @@ def check(litmus_path, arch="sm_90", skip_gpu=False, verbose=True,
                     off["noise_rounds"]))
 
         # ---- G1/G2: the Hopper noise blocks survive nvcc ------------------------
-        if skip_gpu or not os.path.exists(NVCC):
+        if not os.path.exists(NVCC):
             note("  G1/G2 SKIPPED (no nvcc): the GPU noise is unchecked here")
         else:
             n_on = count_noise_ops(ptx_of(cu, [], arch, tmp))
@@ -732,7 +781,6 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("litmus", nargs="+")
     ap.add_argument("--arch", default="sm_90")
-    ap.add_argument("--skip-gpu", action="store_true")
     ap.add_argument("--harness-dir", default=None,
                     help="check an ALREADY-emitted (possibly mutated) harness "
                          "dir instead of emitting a fresh one -- this is what "
@@ -746,8 +794,7 @@ def main():
     allok = True
     for p in a.litmus:
         try:
-            ok, lines = check(p, arch=a.arch, skip_gpu=a.skip_gpu,
-                              harness_dir=a.harness_dir)
+            ok, lines = check(p, arch=a.arch, harness_dir=a.harness_dir)
         except Exception as e:                                 # toolchain problems
             print("ERROR on %s: %s" % (p, e), file=sys.stderr)
             return 2

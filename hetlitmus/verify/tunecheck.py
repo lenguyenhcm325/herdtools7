@@ -31,16 +31,59 @@ on every machine and Python version.
 """
 
 import argparse
-import math
+import importlib.util
 import os
+import shutil
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import tune  # noqa: E402
-from tune import (ParkMiller, Bout, Arm, race, eliminate, sample_config,  # noqa: E402
-                  SUBSEARCH, SUBSEARCH_ORDER, WARM_START, whitelisted_knobs,
+from tune import (ParkMiller, Bout, Arm, race,  # noqa: E402
+                  SUBSEARCH, SUBSEARCH_ORDER, WARM_START,
                   INSTRUMENT_KNOBS, DETECTOR_KNOBS, write_config, read_config)
+
+TUNE_PY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tune.py")
+
+
+# ===========================================================================
+# The bite tool: a SCRATCH COPY of tune.py with a fragment replaced, imported under its
+# own name.  Every phase below is written as a property parameterized on the tune module
+# (or on a race callable), so a bite re-runs the phase's own check against a broken
+# tuner instead of re-deriving it.  tune.py itself is never written -- the shell gates
+# corrupt copies the same way (l0_tokens.sh).
+# ===========================================================================
+_SCRATCH = []
+_NBITE = [0]
+
+
+def _patched_tune(label, *subs):
+    """Import tune.py with each (old, new) applied.  A fragment that does not occur
+    EXACTLY once, or a copy that comes out byte-identical, raises: a doctoring that
+    changed nothing proves nothing."""
+    with open(TUNE_PY) as fh:
+        src = fh.read()
+    out = src
+    for old, new in subs:
+        n = out.count(old)
+        if n != 1:
+            raise AssertionError("BITE %s: fragment occurs %d times in tune.py (want 1): %r"
+                                 % (label, n, old[:70]))
+        out = out.replace(old, new)
+    if out == src:
+        raise AssertionError("VACUOUS BITE %s: the scratch tune.py is byte-identical to "
+                             "the original" % label)
+    if not _SCRATCH:
+        _SCRATCH.append(tempfile.mkdtemp(prefix="tunecheck_bite."))
+    _NBITE[0] += 1
+    name = "tune_bite%d" % _NBITE[0]
+    path = os.path.join(_SCRATCH[0], name + ".py")
+    with open(path, "w") as fh:
+        fh.write(out)
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 # ===========================================================================
@@ -93,12 +136,24 @@ def _cfgs(*ids):
     return [{"_id": i} for i in ids]
 
 
+def _say(msg):
+    print("  " + msg)
+
+
 def _run(objective, configs, seed, schedule="ser3", use_bernoulli=False,
-         max_rounds=150, min_rounds=3, delta=0.05):
+         max_rounds=150, min_rounds=3, delta=0.05, race_fn=None):
     pm = ParkMiller(seed)
-    return race(objective, [dict(c) for c in configs], pm, delta=delta,
-                max_rounds=max_rounds, min_rounds=min_rounds,
-                use_bernoulli=use_bernoulli, schedule=schedule)
+    return (race_fn or race)(objective, [dict(c) for c in configs], pm, delta=delta,
+                             max_rounds=max_rounds, min_rounds=min_rounds,
+                             use_bernoulli=use_bernoulli, schedule=schedule)
+
+
+def _runner(race_fn=None, **fixed):
+    """An (objective, configs, seed) -> RaceResult callable.  `race_fn` swaps in a broken
+    race, so a phase's property runs unchanged against it."""
+    def run(objective, configs, seed):
+        return _run(objective, configs, seed, race_fn=race_fn, **fixed)
+    return run
 
 
 def _winner_id(res):
@@ -106,22 +161,23 @@ def _winner_id(res):
 
 
 def _simulate_elim(means, seed, rounds, cells, od_amp, deflate, use_bernoulli,
-                   min_rounds=3, delta=0.05):
+                   min_rounds=3, delta=0.05, mod=tune):
     """Drive a race by hand in a fixed round-robin order, so the ONLY variable is the CI
     rule, and track cumulative elimination: once a config's upper bound falls below the
     best's lower bound it is dropped for good (Kirkham Fig.10's early-stop is permanent).
-    Both rules see the identical bout stream (same seed => same Synth draws).  Returns
-    (eliminated_ids, crowned_id_or_None)."""
+    Both rules see the identical bout stream (same seed => same Synth draws).  `mod`
+    selects the tune module, so a bite can re-run this against a patched CI rule.
+    Returns (eliminated_ids, crowned_id_or_None)."""
     pm = ParkMiller(seed)
     obj = Synth(means, cells=cells, od_amp=od_amp, weight_deflate=deflate)
-    arms = {c: Arm({"_id": c}, "c%d" % c) for c in means}
+    arms = {c: mod.Arm({"_id": c}, "c%d" % c) for c in means}
     elim = set()
     for r in range(rounds):
         for c in means:
             arms[c].add(obj.bout({"_id": c}, pm))
         if r + 1 >= min_rounds:
             live = [arms[c] for c in means if c not in elim and arms[c].raceable()]
-            surv = {a.config["_id"] for a in eliminate(live, delta, use_bernoulli)}
+            surv = {a.config["_id"] for a in mod.eliminate(live, delta, use_bernoulli)}
             for c in means:
                 if c not in elim and arms[c].raceable() and c not in surv:
                     elim.add(c)
@@ -130,41 +186,55 @@ def _simulate_elim(means, seed, rounds, cells, od_amp, deflate, use_bernoulli,
 
 
 # --------------------------------------------------------------------------- PHASE 1
-def phase1(quiet):
-    print("===== PHASE 1: does the search FIND a known optimum? =====")
-    means = {0: 0.30, 1: 0.50, 2: 0.72, 3: 0.40}     # id 2 is the true best
-    ok = True
+P1_MEANS = {0: 0.30, 1: 0.50, 2: 0.72, 3: 0.40}      # id 2 is the true best
+P1_IDS, P1_BEST, P1_SEEDS = (0, 1, 2, 3), 2, 20
+
+
+def _finds_optimum(run, seeds=P1_SEEDS):
+    """PHASE 1's property: how often the arg-max wins, and whether the seed-0 race ends by
+    separation rather than by exhausting the budget."""
     hits = 0
-    seeds = list(range(20))
-    for s in seeds:
-        res = _run(Synth(means, od_amp=0.0), _cfgs(0, 1, 2, 3), s)
-        if _winner_id(res) == 2:
+    for s in range(seeds):
+        if _winner_id(run(Synth(P1_MEANS, od_amp=0.0), _cfgs(*P1_IDS), s)) == P1_BEST:
             hits += 1
-    frac = hits / float(len(seeds))
-    print("  true optimum (id 2, mean 0.72) won %d/%d seeds (%.0f%%)"
-          % (hits, len(seeds), 100 * frac))
+    return hits, hits / float(seeds), run(Synth(P1_MEANS), _cfgs(*P1_IDS), 0).reason
+
+
+def phase1():
+    print("===== PHASE 1: does the search FIND a known optimum? =====")
+    ok = True
+    hits, frac, reason = _finds_optimum(_runner())
+    print("  true optimum (id %d, mean %.2f) won %d/%d seeds (%.0f%%)"
+          % (P1_BEST, P1_MEANS[P1_BEST], hits, P1_SEEDS, 100 * frac))
     if frac < 0.9:
         print("  *** the search does NOT reliably find the optimum")
         ok = False
     # And it converges to a single winner by separation, not by exhausting the budget.
-    res = _run(Synth(means), _cfgs(0, 1, 2, 3), 0)
-    if res.reason != "separated":
-        print("  *** winner declared without separation (reason=%s)" % res.reason)
+    if reason != "separated":
+        print("  *** winner declared without separation (reason=%s)" % reason)
         ok = False
     print("  => PASS" if ok else "  => FAIL")
     return ok
 
 
 # --------------------------------------------------------------------------- PHASE 2
-def phase2(quiet):
+P2_MEANS = {0: 0.50, 1: 0.50, 2: 0.50}
+P2_SEEDS = 20
+
+
+def _phantoms(run, seeds=P2_SEEDS):
+    """PHASE 2's property: how many races crown a winner when no config is better."""
+    n = 0
+    for s in range(seeds):
+        if run(Synth(P2_MEANS, od_amp=0.02), _cfgs(0, 1, 2), s).winner is not None:
+            n += 1
+    return n
+
+
+def phase2():
     print("\n===== PHASE 2: does it REFUSE to crown a phantom on a constant objective? =====")
-    means = {0: 0.50, 1: 0.50, 2: 0.50}
     ok = True
-    phantom = 0
-    for s in range(20):
-        res = _run(Synth(means, od_amp=0.02), _cfgs(0, 1, 2), s, max_rounds=60)
-        if res.winner is not None:
-            phantom += 1
+    phantom = _phantoms(_runner(max_rounds=60))
     print("  phantom winners on the constant objective: %d/20 (must be 0)" % phantom)
     if phantom != 0:
         print("  *** the tuner crowned a winner with no separating signal (a 7th constant)")
@@ -174,7 +244,7 @@ def phase2(quiet):
 
 
 # --------------------------------------------------------------------------- PHASE 3
-def phase3(quiet):
+def phase3():
     print("\n===== PHASE 3: THE DRIFT BITE -- SER^3 de-confounds a rising baseline =====")
     # id 0 = true best (mean 0.60), id 1 = decoy (0.40), and the drift rises with the
     # global bout counter.  Sequential runs id 0 early/cold and id 1 late/hot, so the
@@ -209,84 +279,118 @@ def phase3(quiet):
 
 
 # --------------------------------------------------------------------------- PHASE 4
-def phase4(quiet):
+# id 0 = true best (mean 0.55), id 1 = decoy (0.45), under strong between-bout
+# overdispersion.  Bernoulli's W(1-W)/Q_raw CI is far too narrow, so the decoy's transient
+# early lead eliminates the true best FOR GOOD (the early-stop is permanent);
+# empirical-Bernstein's empirical variance and deflated effective Q keep the radius
+# honest.  The fixture point was picked by sweeping (OD, DEFL, CELLS, R) for a contrast
+# that holds across seeds, not from one lucky seed.
+P4_MEANS = {0: 0.55, 1: 0.45}
+P4_OD, P4_DEFL, P4_CELLS, P4_R, P4_SEEDS = 0.40, 4.0, 24, 120, 40
+
+
+def _od_contrast(mod=tune, seeds=P4_SEEDS):
+    """PHASE 4's sweep: over identical bout streams, how often each CI rule eliminates the
+    true optimum (id 0), and how often empirical-Bernstein still crowns it.  `mod` selects
+    the tune module, so a bite re-runs the sweep against a patched CI rule."""
+    eb_elim = be_elim = eb_crown = 0
+    for s in range(seeds):
+        e_eb, w_eb = _simulate_elim(P4_MEANS, s, P4_R, P4_CELLS, P4_OD, P4_DEFL,
+                                    use_bernoulli=False, mod=mod)
+        e_be, _ = _simulate_elim(P4_MEANS, s, P4_R, P4_CELLS, P4_OD, P4_DEFL,
+                                 use_bernoulli=True, mod=mod)
+        if 0 in e_eb:
+            eb_elim += 1
+        if 0 in e_be:
+            be_elim += 1
+        if w_eb == 0:
+            eb_crown += 1
+    return eb_elim, be_elim, eb_crown
+
+
+def _od_verdict(counts, emit):
+    """PHASE 4's three assertions over an `_od_contrast` result; returns the tags that
+    failed.  Bernoulli must eliminate the true optimum materially more often than EB --
+    equal counts would leave Q7 5.2 A's central claim unproven in our own code."""
+    eb_elim, be_elim, eb_crown = counts
+    bad = []
+    if be_elim - eb_elim < 8:
+        emit("*** Bernoulli does not eliminate the true optimum more than EB -- the "
+             "overdispersion fixture is too weak to prove the adaptation matters (VACUOUS)")
+        bad.append("no-contrast")
+    if eb_elim > 2:
+        emit("*** empirical-Bernstein ALSO eliminates the true optimum -- it is not "
+             "retaining it as claimed")
+        bad.append("eb-eliminates")
+    if eb_crown < 15:
+        emit("*** empirical-Bernstein rarely crowns the true optimum -- it is merely "
+             "conservative, not USEFUL (it must still decide when the ranking is reliable)")
+        bad.append("eb-undecided")
+    return bad
+
+
+def _od_report(counts, emit):
+    eb_elim, be_elim, eb_crown = counts
+    emit("Bernoulli CI ELIMINATED the true optimum (id 0): %d/%d  <- the transfer failure"
+         % (be_elim, P4_SEEDS))
+    emit("empirical-Bernstein eliminated the true optimum: %d/%d  <- retains it"
+         % (eb_elim, P4_SEEDS))
+    emit("empirical-Bernstein CROWNED the true optimum:    %d/%d  <- and it still decides"
+         % (eb_crown, P4_SEEDS))
+
+
+def phase4():
     print("\n===== PHASE 4: THE OVERDISPERSION BITE -- empirical-Bernstein retains the "
           "true optimum where Bernoulli eliminates it =====")
-    # id 0 = true best (mean 0.55), id 1 = decoy (0.45), under strong between-bout
-    # overdispersion.  Bernoulli's W(1-W)/Q_raw CI is far too narrow, so the decoy's
-    # transient early lead eliminates the true best FOR GOOD (the early-stop is
-    # permanent); empirical-Bernstein's empirical variance and deflated effective Q keep
-    # the radius honest.  The fixture point was picked by sweeping (OD, DEFL, CELLS, R)
-    # for a contrast that holds across seeds, not from one lucky seed.
-    means = {0: 0.55, 1: 0.45}
-    OD, DEFL, CELLS, R = 0.40, 4.0, 24, 120
-    ok = True
-    eb_elim_true = be_elim_true = 0    # eliminated the TRUE optimum (id 0)
-    eb_crown_true = 0                  # EB correctly crowned the true optimum
-    for s in range(40):
-        e_eb, w_eb = _simulate_elim(means, s, R, CELLS, OD, DEFL, use_bernoulli=False)
-        e_be, w_be = _simulate_elim(means, s, R, CELLS, OD, DEFL, use_bernoulli=True)
-        if 0 in e_eb:
-            eb_elim_true += 1
-        if 0 in e_be:
-            be_elim_true += 1
-        if w_eb == 0:
-            eb_crown_true += 1
-    print("  Bernoulli CI ELIMINATED the true optimum (id 0): %d/40  <- the transfer failure"
-          % be_elim_true)
-    print("  empirical-Bernstein eliminated the true optimum: %d/40  <- retains it" % eb_elim_true)
-    print("  empirical-Bernstein CROWNED the true optimum:    %d/40  <- and it still decides"
-          % eb_crown_true)
-    # The bite: Bernoulli must eliminate the true optimum materially more often than EB.
-    # Equal counts would leave Q7 5.2 A's central claim unproven in our own code.
-    if be_elim_true - eb_elim_true < 8:
-        print("  *** Bernoulli does not eliminate the true optimum more than EB -- the "
-              "overdispersion fixture is too weak to prove the adaptation matters (VACUOUS)")
-        ok = False
-    if eb_elim_true > 2:
-        print("  *** empirical-Bernstein ALSO eliminates the true optimum -- it is not "
-              "retaining it as claimed")
-        ok = False
-    if eb_crown_true < 15:
-        print("  *** empirical-Bernstein rarely crowns the true optimum -- it is merely "
-              "conservative, not USEFUL (it must still decide when the ranking is reliable)")
-        ok = False
+    counts = _od_contrast()
+    _od_report(counts, _say)
+    ok = not _od_verdict(counts, _say)
     print("  => PASS (Bernoulli eliminates the true optimum; EB retains AND crowns it)" if ok
           else "  => FAIL")
     return ok
 
 
 # --------------------------------------------------------------------------- PHASE 5
-def phase5(quiet):
-    print("\n===== PHASE 5: THE STRUCTURAL SPLIT -- the sampler cannot reach a verdict knob "
-          "=====")
-    ok = True
-    wl = whitelisted_knobs()
+def _split_property(mod, emit):
+    """PHASE 5(a)+(b): the whitelist is disjoint from the never-tune sets, and thousands of
+    draws from the REAL sampler emit whitelisted knobs only.  Parameterized on the tune
+    module, so a bite runs the identical property against a corrupted sampler or a leaking
+    whitelist.  Returns (failing tags, distinct knobs drawn)."""
+    bad = []
+    wl = mod.whitelisted_knobs()
+    never = mod.INSTRUMENT_KNOBS | mod.DETECTOR_KNOBS
     # (a) the whitelist and the never-tune sets are disjoint (tune's import guard again).
-    leak = wl & (INSTRUMENT_KNOBS | DETECTOR_KNOBS)
+    leak = wl & never
     if leak:
-        print("  *** whitelist intersects instrument/detector knobs: %s" % sorted(leak))
-        ok = False
+        emit("*** whitelist intersects instrument/detector knobs: %s" % sorted(leak))
+        bad.append("leak")
     # (b) thousands of draws across all three sub-searches: only experiment knobs appear.
-    pm = ParkMiller(12345)
+    pm = mod.ParkMiller(12345)
     seen = set()
     for _ in range(4000):
-        sub = pm.choice(SUBSEARCH_ORDER)
-        cfg = sample_config(SUBSEARCH[sub], WARM_START[sub], pm)
-        seen.update(cfg.keys())
-    bad = seen & (INSTRUMENT_KNOBS | DETECTOR_KNOBS)
-    if bad:
-        print("  *** the sampler EMITTED a non-experiment knob: %s" % sorted(bad))
-        ok = False
+        sub = pm.choice(mod.SUBSEARCH_ORDER)
+        seen.update(mod.sample_config(mod.SUBSEARCH[sub], mod.WARM_START[sub], pm))
+    hit = seen & never
+    if hit:
+        emit("*** the sampler EMITTED a non-experiment knob: %s" % sorted(hit))
+        bad.append("emitted")
     if "HET_WINDOW" in seen:
-        print("  *** HET_WINDOW (a detector knob) was sampled -- TRAP 2 violated")
-        ok = False
+        emit("*** HET_WINDOW (a detector knob) was sampled -- TRAP 2 violated")
+        bad.append("window")
     outside = seen - wl
     if outside:
-        print("  *** the sampler emitted a knob outside the whitelist: %s" % sorted(outside))
-        ok = False
+        emit("*** the sampler emitted a knob outside the whitelist: %s" % sorted(outside))
+        bad.append("outside")
+    return bad, len(seen)
+
+
+def phase5():
+    print("\n===== PHASE 5: THE STRUCTURAL SPLIT -- the sampler cannot reach a verdict knob "
+          "=====")
+    bad, nseen = _split_property(tune, _say)
+    ok = not bad
     print("  %d distinct knobs sampled, all in the whitelist, none instrument/detector"
-          % len(seen))
+          % nseen)
     # (c) the writer refuses a non-experiment knob; the reader rejects one in a file.
     tmp = tempfile.mkdtemp(prefix="tunecheck.")
     fpath = os.path.join(tmp, "sp.txt")
@@ -317,7 +421,7 @@ def phase5(quiet):
 
 
 # --------------------------------------------------------------------------- PHASE 6
-def phase6(quiet):
+def phase6():
     print("\n===== PHASE 6: THE IN-LOOP KS GATE -- a non-stationary bout is EXCLUDED =====")
     ok = True
     # An arm fed 8 stationary bouts at ~0.30 and 8 non-stationary ones at 0.99: the
@@ -349,18 +453,28 @@ def phase6(quiet):
 
 
 # --------------------------------------------------------------------------- PHASE 7
-def phase7(quiet):
-    print("\n===== PHASE 7: THE FACTORED SEARCH -- G then C then I, over the REAL knob "
-          "spaces =====")
-    # A per-sub-search gradient: each sub-search gets one rewarded knob whose domain-max
-    # is optimal (near-separable, Q7 3.2).  Two invariants -- the seed floor, since the
-    # warm-start seed is always a candidate and the search must NEVER land below it; and
-    # strict improvement over the seed in a majority of trials, without which the search
-    # may simply be returning the seed.  Every chosen config is whitelisted-knobs-only.
-    reward = {"G": ("HET_BARRIER_PCT", 100.0),
-              "C": ("HET_CPU_PRELOAD_PCT", 100.0),
-              "I": ("HET_NOISE_GPU_BLOCKS", 32.0)}
+# A per-sub-search gradient: each sub-search gets one rewarded knob whose domain-max is
+# optimal (near-separable, Q7 3.2).  Two invariants -- the seed floor, since the warm-start
+# seed is always a candidate and the search must NEVER land below it; and strict
+# improvement over the seed in a majority of trials, without which the search may simply be
+# returning the seed.  Every rewarded knob must be seeded INTERIOR to its domain, or the
+# floor half of that pair holds by arithmetic rather than by search (`_seed_is_interior`).
+P7_REWARD = {"G": ("HET_BARRIER_PCT", 100.0),
+             "C": ("HET_CPU_PRELOAD_PCT", 100.0),
+             "I": ("HET_NOISE_CHUNK", 8192.0)}
 
+
+def _seed_is_interior(mod, sub, knob):
+    """Does the knob's domain hold a value strictly BELOW its warm-start seed?"""
+    dom = mod.SUBSEARCH[sub][knob]
+    lo = dom[1] if dom[0] == "int" else min(dom[1])
+    return lo < mod.WARM_START[sub][knob]
+
+
+def _seed_floor(mod, reward, nseed=15, n_configs=14, max_rounds=90):
+    """PHASE 7's two invariants, counted per sub-search: {sub: [regressed, improved,
+    trials]} plus every non-whitelisted knob the search chose.  Parameterized on the tune
+    module and on the field size, so a bite can drop the seed from the field."""
     def obj_for(sub, base):
         knob, hi = reward[sub]
 
@@ -368,122 +482,219 @@ def phase7(quiet):
             def bout(self, cfg, pm):
                 v = cfg.get(knob, 0) / hi
                 v = min(max(v + (pm.unit() - 0.5) * 0.05, 0.0), 1.0)
-                return Bout(v, weight=16.0, raw_n=16.0, kills=v * 16.0)
+                return mod.Bout(v, weight=16.0, raw_n=16.0, kills=v * 16.0)
         return _O()
 
-    ok = True
-    wl = whitelisted_knobs()
-    regressed = 0
-    improved = 0
-    trials = 0
-    nseed = 15
+    wl = mod.whitelisted_knobs()
+    tally = {sub: [0, 0, 0] for sub in mod.SUBSEARCH_ORDER}
+    stray = set()
     for seed in range(nseed):
-        pm = ParkMiller(1 + seed)
-        best, _log = tune.factored_search(obj_for, pm, n_configs=14, max_rounds=90)
-        for sub in SUBSEARCH_ORDER:
+        pm = mod.ParkMiller(1 + seed)
+        best, _log = mod.factored_search(obj_for, pm, n_configs=n_configs,
+                                         max_rounds=max_rounds)
+        for sub in mod.SUBSEARCH_ORDER:
             knob, _ = reward[sub]
-            chosen = best[sub][knob]
-            seedv = WARM_START[sub][knob]
-            trials += 1
+            chosen, seedv = best[sub][knob], mod.WARM_START[sub][knob]
+            t = tally[sub]
+            t[2] += 1
             if chosen < seedv:
-                regressed += 1
+                t[0] += 1
             elif chosen > seedv:
-                improved += 1
-            for k in best[sub]:
-                if k not in wl:
-                    print("  *** factored_search chose a NON-whitelisted knob %r" % k)
-                    ok = False
-    print("  seed-floor regressions (must be 0): %d/%d" % (regressed, trials))
-    print("  strict improvements over the seed:  %d/%d (%.0f%%) -- proves it SEARCHES"
-          % (improved, trials, 100.0 * improved / trials))
+                t[1] += 1
+            stray.update(k for k in best[sub] if k not in wl)
+    return tally, stray
+
+
+def phase7():
+    print("\n===== PHASE 7: THE FACTORED SEARCH -- G then C then I, over the REAL knob "
+          "spaces =====")
+    ok = True
+    for sub in SUBSEARCH_ORDER:
+        knob, _ = P7_REWARD[sub]
+        if not _seed_is_interior(tune, sub, knob):
+            _say("*** sub-search %s is rewarded on %s, whose warm start is its domain "
+                 "MINIMUM: the seed floor cannot be regressed below and this sub-search "
+                 "contributes no evidence (VACUOUS)" % (sub, knob))
+            ok = False
+    tally, stray = _seed_floor(tune, P7_REWARD)
+    for k in sorted(stray):
+        _say("*** factored_search chose a NON-whitelisted knob %r" % k)
+        ok = False
+    regressed = sum(t[0] for t in tally.values())
+    improved = sum(t[1] for t in tally.values())
+    trials = sum(t[2] for t in tally.values())
+    _say("seed-floor regressions (must be 0): %d/%d   [%s]"
+         % (regressed, trials, "  ".join("%s %d/%d" % (s, tally[s][0], tally[s][2])
+                                         for s in SUBSEARCH_ORDER)))
+    _say("strict improvements over the seed:  %d/%d (%.0f%%) -- proves it SEARCHES   [%s]"
+         % (improved, trials, 100.0 * improved / trials,
+            "  ".join("%s %d/%d" % (s, tally[s][1], tally[s][2]) for s in SUBSEARCH_ORDER)))
     if regressed != 0:
-        print("  *** the search regressed BELOW the warm-start seed -- the seed must be a "
-              "floor (it is always a candidate)")
+        _say("*** the search regressed BELOW the warm-start seed -- the seed must be a "
+             "floor (it is always a candidate)")
         ok = False
     if improved < 0.5 * trials:
-        print("  *** the search rarely beats the seed -- it may just be RETURNING the seed "
-              "(a 7th constant)")
+        _say("*** the search rarely beats the seed -- it may just be RETURNING the seed "
+             "(a 7th constant)")
         ok = False
     print("  => PASS" if ok else "  => FAIL")
     return ok
 
 
 # ===========================================================================
-# --bite : corrupt the machinery and prove each guard BITES, non-vacuously.
+# --bite : corrupt the machinery and prove each guard BITES, non-vacuously.  Each bite
+# runs the PHASE's own property -- once against tune.py, once against a scratch copy with
+# one fragment replaced -- so what goes red is the shipped check, not a restatement of it.
 # ===========================================================================
-def bite(quiet):
+def _quiet(_msg):
+    pass
+
+
+def bite():
     print("===== --bite: does each check actually FAIL on a broken tuner? =====")
     ok = True
-
-    # BITE 1 -- a tuner that always returns the seed/first config must fail phase 1.
-    # Emulated by racing honestly, then asking whether phase 1's property (winner == the
-    # true best) would reject the seed-returning answer.
-    means = {0: 0.30, 1: 0.50, 2: 0.72, 3: 0.40}
-    res = _run(Synth(means), _cfgs(0, 1, 2, 3), 0)
-    true_best = 2
-    seed_config_id = 0
-    if _winner_id(res) != true_best:
-        print("  *** control: the honest tuner did not find the optimum -- fixture broken")
-        ok = False
-    # The two answers must differ, or the bite is vacuous.
-    if seed_config_id == true_best:
-        print("  *** VACUOUS BITE: seed already IS the optimum -- change the fixture"); ok = False
-    else:
-        print("  BITE 1: a seed-returning tuner answers id %d; the optimum is id %d -- "
-              "PHASE 1 rejects it (non-vacuous)." % (seed_config_id, true_best))
-
-    # BITE 2 -- without the anti-phantom guard, crowning the leader at budget produces a
-    # winner on the constant objective.  Dropping the guard must flip phase 2 from 0
-    # phantoms to many.
-    cmeans = {0: 0.50, 1: 0.50, 2: 0.50}
-    phantom_guarded = phantom_unguarded = 0
-    for s in range(20):
-        g = _run(Synth(cmeans, od_amp=0.02), _cfgs(0, 1, 2), s, max_rounds=60)
-        if g.winner is not None:
-            phantom_guarded += 1
-        # unguarded: force a winner = current leader regardless of separation.
-        u = _run(Synth(cmeans, od_amp=0.02), _cfgs(0, 1, 2), s, max_rounds=60)
-        leader = max([a for a in u.arms if a.raceable()], key=lambda a: a.mean(), default=None)
-        if leader is not None:
-            phantom_unguarded += 1
-    print("  BITE 2: phantoms WITH the guard=%d, WITHOUT (crown-the-leader)=%d"
-          % (phantom_guarded, phantom_unguarded))
-    if phantom_guarded != 0 or phantom_unguarded < 15:
-        print("  *** the anti-phantom guard is not what stops the phantom (VACUOUS)"); ok = False
-
-    # BITE 3 -- phase 4's contrast asserted as a bite: swapping empirical-Bernstein for
-    # Bernoulli must change which arm survives, and change it for the worse.
-    means2 = {0: 0.55, 1: 0.45}
-    eb_elim = be_elim = 0
-    for s in range(40):
-        e_eb, _ = _simulate_elim(means2, s, 120, 24, 0.40, 4.0, use_bernoulli=False)
-        e_be, _ = _simulate_elim(means2, s, 120, 24, 0.40, 4.0, use_bernoulli=True)
-        if 0 in e_eb:
-            eb_elim += 1
-        if 0 in e_be:
-            be_elim += 1
-    print("  BITE 3: true-optimum ELIMINATED  EB=%d/40  Bernoulli=%d/40 (swap must worsen it)"
-          % (eb_elim, be_elim))
-    if be_elim - eb_elim < 8:
-        print("  *** replacing EB with Bernoulli does not worsen the outcome (VACUOUS)"); ok = False
-
-    # BITE 4 -- plant an instrument knob in a whitelist: the import-time guard must fire,
-    # and removing it again must restore a clean split.
-    saved = dict(SUBSEARCH["G"])
-    SUBSEARCH["G"]["HET_TAU_HOT"] = ("choice", [1, 5, 30])
-    fired = False
     try:
-        tune._assert_split_is_clean()
-    except AssertionError:
-        fired = True
-    SUBSEARCH["G"].clear()
-    SUBSEARCH["G"].update(saved)
-    tune._assert_split_is_clean()   # must be clean again
-    if not fired:
-        print("  *** planting HET_TAU_HOT in a whitelist did NOT trip the split guard"); ok = False
-    else:
-        print("  BITE 4: planting an instrument knob in a whitelist trips the split guard; "
-              "removing it restores clean (non-vacuous).")
+        # BITE 1 -- the tuner this file exists to reject: one that never races and hands
+        # back the config it was seeded with, reporting it as separated.
+        b1 = _patched_tune("seed-returning race", (
+            '    arms = [Arm(c, "cfg%d" % i) for i, c in enumerate(configs)]\n',
+            '    arms = [Arm(c, "cfg%d" % i) for i, c in enumerate(configs)]\n'
+            '    return RaceResult(arms[0], arms, 1, "separated")\n'))
+        h_ok, f_ok, r_ok = _finds_optimum(_runner())
+        h_bad, f_bad, r_bad = _finds_optimum(_runner(race_fn=b1.race))
+        print("  BITE 1: PHASE 1's property -- shipped race found id %d in %d/%d seeds "
+              "(reason %s); seed-returning race %d/%d (reason %s)"
+              % (P1_BEST, h_ok, P1_SEEDS, r_ok, h_bad, P1_SEEDS, r_bad))
+        if f_ok < 0.9 or r_ok != "separated":
+            print("  *** control: the shipped tuner does not pass PHASE 1 -- fixture broken")
+            ok = False
+        if f_bad >= 0.9:
+            print("  *** a tuner that only ever returns its seed PASSES PHASE 1 (VACUOUS)")
+            ok = False
+
+        # BITE 2 -- the anti-phantom guard itself: at budget `race` crowns the leader
+        # instead of refusing.  Nothing else moves, so the phantoms are attributable to
+        # the guard and to nothing else.
+        b2 = _patched_tune("anti-phantom guard removed", (
+            '    return RaceResult(best if len(raceable) == 1 else None, arms, rounds,\n',
+            '    return RaceResult(best, arms, rounds,\n'))
+        guarded = _phantoms(_runner(max_rounds=60))
+        unguarded = _phantoms(_runner(race_fn=b2.race, max_rounds=60))
+        print("  BITE 2: phantoms on the constant objective -- guard in place %d/%d, "
+              "guard removed %d/%d" % (guarded, P2_SEEDS, unguarded, P2_SEEDS))
+        if guarded != 0 or unguarded < 15:
+            print("  *** the anti-phantom guard is not what stops the phantom (VACUOUS)")
+            ok = False
+
+        # BITE 3 -- PHASE 4's verdict re-run against a `_radius` that ignores
+        # use_bernoulli: both arms then race on the Bernoulli CI and the contrast collapses.
+        b3 = _patched_tune("_radius always Bernoulli", (
+            '    return arm.bernoulli_radius() if use_bernoulli else arm.eb_radius(delta)\n',
+            '    return arm.bernoulli_radius()\n'))
+        c_ok, c_bad = _od_contrast(), _od_contrast(mod=b3)
+        fired_ok, fired_bad = _od_verdict(c_ok, _quiet), _od_verdict(c_bad, _quiet)
+        print("  BITE 3: PHASE 4 (EB-elim, Bern-elim, EB-crown) shipped=%s -> %s ; "
+              "_radius forced to Bernoulli=%s -> %s"
+              % (c_ok, fired_ok or "PASS", c_bad, fired_bad or "PASS"))
+        if fired_ok:
+            print("  *** control: PHASE 4 does not pass against the shipped CI rule")
+            ok = False
+        if "no-contrast" not in fired_bad:
+            print("  *** collapsing both arms onto the Bernoulli CI leaves PHASE 4 green "
+                  "(VACUOUS)")
+            ok = False
+
+        # BITE 4 -- plant an instrument knob in a whitelist: the import-time guard must
+        # fire, and removing it again must restore a clean split.
+        saved = dict(SUBSEARCH["G"])
+        SUBSEARCH["G"]["HET_TAU_HOT"] = ("choice", [1, 5, 30])
+        fired = False
+        try:
+            tune._assert_split_is_clean()
+        except AssertionError:
+            fired = True
+        SUBSEARCH["G"].clear()
+        SUBSEARCH["G"].update(saved)
+        tune._assert_split_is_clean()   # must be clean again
+        if not fired:
+            print("  *** planting HET_TAU_HOT in a whitelist did NOT trip the split guard")
+            ok = False
+        else:
+            print("  BITE 4: planting an instrument knob in a whitelist trips the split "
+                  "guard; removing it restores clean (non-vacuous).")
+
+        # BITE 5 -- the SAMPLER, which BITE 4 does not reach: sample_config plants a
+        # detector knob in every draw while the sub-search spaces stay clean, so the
+        # import guard sees nothing and only PHASE 5's 4000-draw loop can catch it.
+        b5 = _patched_tune("sampler plants HET_WINDOW", (
+            '    cfg = dict(seed_config)\n',
+            '    cfg = dict(seed_config)\n    cfg["HET_WINDOW"] = 4\n'))
+        clean5, _ = _split_property(tune, _quiet)
+        fired5, _ = _split_property(b5, _quiet)
+        print("  BITE 5: PHASE 5 -- shipped sampler -> %s ; sampler planting HET_WINDOW "
+              "-> %s" % (clean5 or "PASS", fired5))
+        if clean5:
+            print("  *** control: PHASE 5 does not pass against the shipped sampler")
+            ok = False
+        for tag in ("emitted", "window", "outside"):
+            if tag not in fired5:
+                print("  *** PHASE 5's %r check stayed green on a sampler that emits a "
+                      "detector knob" % tag)
+                ok = False
+
+        # BITE 6 -- the whitelist half of PHASE 5: an instrument knob inside a sub-search
+        # space, with tune's import guard defused so the leak survives to the sampler.
+        b6 = _patched_tune(
+            "leaking whitelist, import guard defused",
+            ('\n_assert_split_is_clean()\n',
+             '\n# _assert_split_is_clean()  -- defused, so the leak reaches the sampler\n'),
+            ('        "HET_BARRIER_PCT":      ("int", 0, 100),\n',
+             '        "HET_BARRIER_PCT":      ("int", 0, 100),\n'
+             '        "HET_TAU_HOT":          ("choice", [1, 5, 30]),\n'))
+        fired6, _ = _split_property(b6, _quiet)
+        print("  BITE 6: PHASE 5 -- a whitelist holding HET_TAU_HOT -> %s" % (fired6,))
+        if "leak" not in fired6:
+            print("  *** PHASE 5's whitelist-disjointness check stayed green on a leaking "
+                  "whitelist")
+            ok = False
+
+        # BITE 7a -- the seed floor is evidence only where the reward knob is seeded
+        # INTERIOR to its domain; rewarding I on a knob seeded at its domain minimum must
+        # be rejected outright.
+        stale = dict(P7_REWARD, I=("HET_NOISE_GPU_BLOCKS", 32.0))
+        vac = [s for s in SUBSEARCH_ORDER if not _seed_is_interior(tune, s, stale[s][0])]
+        live = [s for s in SUBSEARCH_ORDER
+                if not _seed_is_interior(tune, s, P7_REWARD[s][0])]
+        print("  BITE 7a: sub-searches whose seed floor is unfalsifiable -- shipped reward "
+              "map %s ; I rewarded on HET_NOISE_GPU_BLOCKS %s" % (live or "none", vac))
+        if live or vac != ["I"]:
+            print("  *** the interior-seed guard does not separate the two reward maps "
+                  "(VACUOUS)")
+            ok = False
+
+        # BITE 7b -- the floor itself: with the warm-start seed no longer in the field the
+        # search does land below it, in every sub-search including I.
+        b7 = _patched_tune("warm-start seed dropped from the field", (
+            '        configs = [dict(WARM_START[sub])]             '
+            '# the seed is always in the field\n',
+            '        configs = []\n'))
+        t_ok, _ = _seed_floor(tune, P7_REWARD, n_configs=2)
+        t_bad, _ = _seed_floor(b7, P7_REWARD, n_configs=2)
+        print("  BITE 7b: seed-floor regressions -- seed in the field %s ; seed dropped %s"
+              % ({s: "%d/%d" % (t_ok[s][0], t_ok[s][2]) for s in SUBSEARCH_ORDER},
+                 {s: "%d/%d" % (t_bad[s][0], t_bad[s][2]) for s in SUBSEARCH_ORDER}))
+        if any(t_ok[s][0] for s in SUBSEARCH_ORDER):
+            print("  *** control: the shipped search regressed below the seed")
+            ok = False
+        for s in SUBSEARCH_ORDER:
+            if t_bad[s][0] == 0:
+                print("  *** dropping the seed from sub-search %s's field produced NO "
+                      "regression -- PHASE 7's floor is not falsifiable there" % s)
+                ok = False
+    finally:
+        for d in _SCRATCH:
+            shutil.rmtree(d, ignore_errors=True)
+        del _SCRATCH[:]
 
     print("\n" + ("  => BITE PASS (every guard bites, non-vacuously)" if ok
                   else "  => BITE FAIL"))
@@ -493,12 +704,11 @@ def bite(quiet):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bite", action="store_true")
-    ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
     if a.bite:
-        return 0 if bite(a.quiet) else 1
-    results = [phase1(a.quiet), phase2(a.quiet), phase3(a.quiet), phase4(a.quiet),
-               phase5(a.quiet), phase6(a.quiet), phase7(a.quiet)]
+        return 0 if bite() else 1
+    results = [phase1(), phase2(), phase3(), phase4(),
+               phase5(), phase6(), phase7()]
     print("\n%s  tunecheck: %d/%d phases passed."
           % ("OK" if all(results) else "FAIL", sum(results), len(results)))
     return 0 if all(results) else 1

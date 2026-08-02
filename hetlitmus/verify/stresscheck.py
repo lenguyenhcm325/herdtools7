@@ -89,9 +89,6 @@ class Counts:
     def total(self):
         return self.ld + self.st
 
-    def __eq__(self, o):
-        return self.ld == o.ld and self.st == o.st
-
     def __str__(self):
         return "%d ld + %d st = %d" % (self.ld, self.st, self.total)
 
@@ -138,6 +135,10 @@ def counts_of(cu_path, flags, arch, tmp):
 
 
 def check_cu(cu_path, arch="sm_90", verbose=True):
+    """Run the checks, then report.  The checks live in a nested function so that the two
+    that STOP the run -- no stress layer at all, and an unsound isolation anchor -- reach
+    the reporting block like every other failure: a refusal nobody can read is a bare
+    exit code, and the anchor's is the one that says this checker must be re-grounded."""
     lines, ok = [], [True]
 
     def fail(msg):
@@ -150,76 +151,78 @@ def check_cu(cu_path, arch="sm_90", verbose=True):
     name = os.path.basename(cu_path)
     note("=== stress liveness: %s [%s] ===" % (name, arch))
 
-    with open(cu_path) as f:
-        src = f.read()
-    # Never pass vacuously on a harness that has no stress layer at all.
-    if "het_do_stress" not in src:
-        fail("%s carries NO stress layer (no het_do_stress call): the harness "
-             "would observe nothing (Alglave 4.3.1 on Nvidia silicon)" % name)
-        return ok[0], lines
+    def checks():
+        with open(cu_path) as f:
+            src = f.read()
+        # Never pass vacuously on a harness that has no stress layer at all.
+        if "het_do_stress" not in src:
+            fail("%s carries NO stress layer (no het_do_stress call): the harness "
+                 "would observe nothing (Alglave 4.3.1 on Nvidia silicon)" % name)
+            return
 
-    tmp = tempfile.mkdtemp(prefix="stresscheck_")
-    try:
-        # ---- 1. isolation anchor: with both toggles folded off, NO stress op --
-        none = counts_of(cu_path, ["-DHET_PRE_STRESS_PCT=0", "-DHET_MEM_STRESS_PCT=0"],
-                         arch, tmp)
-        if none.total != 0:
-            fail("isolation anchor is NOT clean: %s plain scratchpad op(s) survive "
-                 "with both stress toggles compiled off.  Either -DHET_*_PCT=0 no "
-                 "longer folds, or a NON-stress object is being accessed as u32 -- "
-                 "in both cases the per-lane-class attribution below is unsound and "
-                 "this checker must be re-grounded before it is trusted." % none)
-            return ok[0], lines
-        note("  isolation anchor OK (both toggles off -> 0 scratchpad ops: the u32 "
-             "signature is pure and -DHET_*_PCT=0 folds)")
+        tmp = tempfile.mkdtemp(prefix="stresscheck_")
+        try:
+            # ---- 1. isolation anchor: with both toggles folded off, NO stress op --
+            none = counts_of(cu_path, ["-DHET_PRE_STRESS_PCT=0", "-DHET_MEM_STRESS_PCT=0"],
+                             arch, tmp)
+            if none.total != 0:
+                fail("isolation anchor is NOT clean: %s plain scratchpad op(s) survive "
+                     "with both stress toggles compiled off.  Either -DHET_*_PCT=0 no "
+                     "longer folds, or a NON-stress object is being accessed as u32 -- "
+                     "in both cases the per-lane-class attribution below is unsound and "
+                     "this checker must be re-grounded before it is trusted." % none)
+                return
+            note("  isolation anchor OK (both toggles off -> 0 scratchpad ops: the u32 "
+                 "signature is pure and -DHET_*_PCT=0 folds)")
 
-        # ---- 2/3/5. per lane class, swept over every access pattern ------------
-        for cls, pct_off, pat_knob in (
-                ("test lanes  (pre-stress)", "-DHET_MEM_STRESS_PCT=0",
-                 "-DHET_PRE_STRESS_PATTERN="),
-                ("stress blks (mem-stress)", "-DHET_PRE_STRESS_PCT=0",
-                 "-DHET_MEM_STRESS_PATTERN=")):
-            per_pat = {}
-            for p in PATTERNS:
-                per_pat[p] = counts_of(cu_path, [pct_off, pat_knob + str(p)], arch, tmp)
-            for p in PATTERNS:
-                c = per_pat[p]
-                if c.ld < 1 or c.st < 1:
-                    fail("%s carry NO stress traffic at pattern %d (%s).  The "
-                         "scratchpad must be both READ and WRITTEN: store traffic "
-                         "forces ownership transfer and is the strong coherence "
-                         "stressor (S&D 3.3)." % (cls, p, c))
-            distinct = {str(per_pat[p]) for p in PATTERNS}
-            if len(distinct) != 1:
-                fail("%s: the scratchpad-op count MOVES with -D%s* (%s).  The access "
-                     "pattern is reaching het_do_stress as a COMPILE-TIME constant, "
-                     "so nvcc folds its if-chain to one branch and can delete the "
-                     "loop entirely (pattern 3 = ld;ld is side-effect-free -- that "
-                     "is exactly the B4 regression).  Pass the pattern as a kernel "
-                     "ARGUMENT."
-                     % (cls, pat_knob.split('=')[0][2:],
-                        ", ".join("p%d: %s" % (p, per_pat[p]) for p in PATTERNS)))
+            # ---- 2/3/5. per lane class, swept over every access pattern ------------
+            for cls, pct_off, pat_knob in (
+                    ("test lanes  (pre-stress)", "-DHET_MEM_STRESS_PCT=0",
+                     "-DHET_PRE_STRESS_PATTERN="),
+                    ("stress blks (mem-stress)", "-DHET_PRE_STRESS_PCT=0",
+                     "-DHET_MEM_STRESS_PATTERN=")):
+                per_pat = {}
+                for p in PATTERNS:
+                    per_pat[p] = counts_of(cu_path, [pct_off, pat_knob + str(p)], arch, tmp)
+                for p in PATTERNS:
+                    c = per_pat[p]
+                    if c.ld < 1 or c.st < 1:
+                        fail("%s carry NO stress traffic at pattern %d (%s).  The "
+                             "scratchpad must be both READ and WRITTEN: store traffic "
+                             "forces ownership transfer and is the strong coherence "
+                             "stressor (S&D 3.3)." % (cls, p, c))
+                distinct = {(per_pat[p].ld, per_pat[p].st) for p in PATTERNS}
+                if len(distinct) != 1:
+                    fail("%s: the scratchpad-op count MOVES with -D%s* (%s).  The access "
+                         "pattern is reaching het_do_stress as a COMPILE-TIME constant, "
+                         "so nvcc folds its if-chain to one branch and can delete the "
+                         "loop entirely (pattern 3 = ld;ld is side-effect-free -- that "
+                         "is exactly the B4 regression).  Pass the pattern as a kernel "
+                         "ARGUMENT."
+                         % (cls, pat_knob.split('=')[0][2:],
+                            ", ".join("p%d: %s" % (p, per_pat[p]) for p in PATTERNS)))
+                else:
+                    note("  %s live and pattern-INVARIANT over p=0..3 (%s)"
+                         % (cls, per_pat[0]))
+
+            # ---- 4. the shipped default carries both -------------------------------
+            both = counts_of(cu_path, [], arch, tmp)
+            pre = counts_of(cu_path, ["-DHET_MEM_STRESS_PCT=0"], arch, tmp)
+            mem = counts_of(cu_path, ["-DHET_PRE_STRESS_PCT=0"], arch, tmp)
+            if both.total < max(pre.total, mem.total) or both.total == 0:
+                fail("the SHIPPED default config carries %s, less than one of its parts "
+                     "(pre %s / mem %s)" % (both, pre, mem))
             else:
-                note("  %s live and pattern-INVARIANT over p=0..3 (%s)"
-                     % (cls, per_pat[0]))
+                note("  shipped default OK (%s = pre %s + mem %s)" % (both, pre, mem))
 
-        # ---- 4. the shipped default carries both -------------------------------
-        both = counts_of(cu_path, [], arch, tmp)
-        pre = counts_of(cu_path, ["-DHET_MEM_STRESS_PCT=0"], arch, tmp)
-        mem = counts_of(cu_path, ["-DHET_PRE_STRESS_PCT=0"], arch, tmp)
-        if both.total < max(pre.total, mem.total) or both.total == 0:
-            fail("the SHIPPED default config carries %s, less than one of its parts "
-                 "(pre %s / mem %s)" % (both, pre, mem))
-        else:
-            note("  shipped default OK (%s = pre %s + mem %s)" % (both, pre, mem))
+            # ---- 6. the RUNTIME tally.  Everything above is STRUCTURAL -------------
+            d1_probe(os.path.dirname(os.path.abspath(cu_path)), fail, note)
+        except RuntimeError as e:
+            fail(str(e))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
 
-        # ---- 6. the RUNTIME tally.  Everything above is STRUCTURAL -------------
-        d1_probe(os.path.dirname(os.path.abspath(cu_path)), fail, note)
-    except RuntimeError as e:
-        fail(str(e))
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
+    checks()
     if verbose:
         for ln in lines:
             print(ln)

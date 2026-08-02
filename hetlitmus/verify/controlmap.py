@@ -21,6 +21,7 @@ unfalsifiable, while the null still prints and still looks green.
 Usage:
     controlmap.py --emit  [--dir D] [--oracle F]   > control-map.csv
     controlmap.py --check [--dir D] [--oracle F] [--map F]     (the gate)
+    controlmap.py --bite                           (the gate's negative control)
 """
 
 import argparse
@@ -28,7 +29,9 @@ import csv
 import io
 import os
 import re
+import shutil
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
@@ -106,6 +109,20 @@ def _pp(s):
     """Readable (tier, ord) strength pair for an error message."""
     return "(%d %s, %d %s)" % (s[0][0], "".join(sorted(s[0][1])) or "-",
                                s[1][0], "".join(sorted(s[1][1])) or "-")
+
+
+def weakening_of(T, M):
+    """Why M cannot serve as mu(T), or None if it can.  The two properties the
+    vouch rests on, in one place: candidate selection asks for None, and the
+    audit of the committed map reports the reason."""
+    if T.structure() != M.structure():
+        return "not a pure ORDERING weakening (access structure differs)"
+    ts, ms = T.strength(), M.strength()
+    if not (side_le(ms[0], ts[0]) and side_le(ms[1], ts[1])):
+        return ("not weaker (cpu,gpu strength %s vs %s)" % (_pp(ms), _pp(ts)))
+    if ms == ts:
+        return "identical ordering strength -- not a weakening at all"
+    return None
 
 
 class Test:
@@ -315,13 +332,10 @@ def derive(tests, oracle):
         return n in tests and oracle.get(n) == "Allowed"
 
     def usable(tname, cand):
-        """The two properties the vouch rests on, applied at candidate-selection
-        time so a non-weakening is skipped instead of becoming a hard error."""
-        T, M = tests[tname], tests[cand]
-        if T.structure() != M.structure():
-            return False
-        ts, ms = T.strength(), M.strength()
-        return side_le(ms[0], ts[0]) and side_le(ms[1], ts[1]) and ms != ts
+        """The vouch's properties, applied at candidate-selection time so a
+        non-weakening is skipped instead of becoming a hard error.  EVERY branch
+        below selects through this, so no branch crowns an unchecked mu."""
+        return allowed(cand) and weakening_of(tests[tname], tests[cand]) is None
 
     for name in sorted(tests):
         exp = oracle.get(name, "?")
@@ -365,7 +379,7 @@ def derive(tests, oracle):
                 cands += ["%s-%s.%s-2s" % (base, c2, g)
                           for c2 in FP_CPU_WEAKER.get(c, ())]
                 cands += ["%s-%s" % (base, o) for o in FP_ONESIDED[g]]
-                have = [x for x in cands if allowed(x) and usable(name, x)]
+                have = [x for x in cands if usable(name, x)]
                 if have:
                     mu = have[0]
                     if mu.endswith("-2s"):
@@ -382,9 +396,9 @@ def derive(tests, oracle):
                 # still Disallowed (MP/S/LB), fall back to dropping the CPU half
                 # of the pair.
                 cand = base + "-acqrel-2s"
-                if allowed(cand):
+                if usable(name, cand):
                     mu, rule = cand, "fence-2s->acqrel-2s (SC fence -> RCpc rel/acq; pair kept)"
-                else:
+                elif usable(name, base + "-fence"):
                     mu, rule = base + "-fence", "fence-2s->fence (drop CPU DMB.SY; GPU fence kept)"
             elif parts["order"] == "acqrel" and parts["two"]:
                 # Drop the CPU half of the morally-strong pair.  The surviving
@@ -395,7 +409,7 @@ def derive(tests, oracle):
                 # Q4 2.3 names -acquire for the cases it lists; take -acquire
                 # where it exists and record the other as MuAlt.
                 acq, rel = base + "-acquire", base + "-release"
-                have = [c for c in (acq, rel) if allowed(c)]
+                have = [c for c in (acq, rel) if usable(name, c)]
                 if acq in have:
                     mu, rule = acq, "acqrel-2s->acquire (drop CPU half; GPU acquire kept)"
                 elif rel in have:
@@ -407,38 +421,75 @@ def derive(tests, oracle):
                               % name)
 
             # ---- the fail-closed gate proper ------------------------------
+            # Every branch above crowns mu only through usable(), so re-testing
+            # existence / Allowed / structure / strictly-weaker on what was just
+            # selected is constant-False -- an assertion that cannot fire is not
+            # a gate.  The one thing selection can still leave broken is that
+            # NOTHING survived it, which is what this asserts.  The properties
+            # themselves are re-asserted by audit_map() against the COMMITTED
+            # map, independently of this derivation, where a hand-edit or a
+            # name-rewritten mu row can and does trip them.
             if mu == "-":
                 errors.append("%s: NO mu(T) -- the control would be silently "
                               "MISSING (Q4 2.3)" % name)
-            elif mu not in tests:
-                errors.append("%s: mu(T)=%s does not exist as a .litmus"
-                              % (name, mu))
-            elif oracle.get(mu) != "Allowed":
-                errors.append("%s: mu(T)=%s is %r, not Allowed -- a control whose "
-                              "weak outcome is itself forbidden vouches for nothing"
-                              % (name, mu, oracle.get(mu)))
             else:
-                T, M = tests[name], tests[mu]
-                if T.structure() != M.structure():
-                    errors.append("%s: mu(T)=%s is not a pure ORDERING weakening "
-                                  "(access structure differs)" % (name, mu))
-                ts, ms = T.strength(), M.strength()
-                if not (side_le(ms[0], ts[0]) and side_le(ms[1], ts[1])
-                        and ms != ts):
-                    errors.append("%s: mu(T)=%s is not strictly weaker "
-                                  "(cpu,gpu strength %s vs %s)"
-                                  % (name, mu, _pp(ms), _pp(ts)))
-                if not T.two_sided():
-                    errors.append("%s: Disallowed row is not two-sided" % name)
                 mu_exp = oracle.get(mu)
 
-            if relaxed != "-" and not allowed(relaxed):
+            if not allowed(relaxed):
                 errors.append("%s: relaxed companion %s missing/not Allowed"
                               % (name, relaxed))
 
         rows.append((name, exp, mu, mu_exp, rule, alt, relaxed, canary))
 
     return rows, errors
+
+
+def audit_map(text, tests, oracle):
+    """Re-audit the map AS A COMMITTED ARTIFACT, not as something just derived.
+
+    derive() enforces the vouch's properties when it SELECTS mu, so asserting
+    them again on its own choice proves nothing.  This reads the CSV back and
+    asserts them on the rows it actually holds -- the check that survives a
+    hand-edit, a half-applied regeneration, or the exact mistake the module
+    docstring warns about (a Mu column rewritten from the test's NAME, naming a
+    grid cell that does not exist).  Those trip it by NAME of the broken
+    property; the byte-comparison against a fresh derivation can only say
+    'STALE'."""
+    errors, n_dis = [], 0
+    for row in csv.reader(l for l in text.splitlines() if not l.startswith("#")):
+        if not row or row[0] == "Test":
+            continue
+        name, exp, mu, mu_exp, _rule, _alt, relaxed, canary = row[:8]
+        if canary != "self" and oracle.get(canary) != "Allowed":
+            errors.append("%s: canary %s is not an Allowed test" % (name, canary))
+        if exp != "Disallowed":
+            continue
+        n_dis += 1
+        if name not in tests:
+            errors.append("%s: Disallowed row names no .litmus" % name)
+            continue
+        if not tests[name].two_sided():
+            errors.append("%s: Disallowed row is not two-sided" % name)
+        if oracle.get(relaxed) != "Allowed":
+            errors.append("%s: relaxed companion %s missing/not Allowed"
+                          % (name, relaxed))
+        if mu not in tests:
+            errors.append("%s: mu(T)=%s does not exist as a .litmus" % (name, mu))
+            continue
+        if oracle.get(mu) != "Allowed":
+            errors.append("%s: mu(T)=%s is %r, not Allowed -- a control whose weak "
+                          "outcome is itself forbidden vouches for nothing"
+                          % (name, mu, oracle.get(mu)))
+        if mu_exp != oracle.get(mu):
+            errors.append("%s: MuExpected column says %r, the oracle says %r"
+                          % (name, mu_exp, oracle.get(mu)))
+        why = weakening_of(tests[name], tests[mu])
+        if why:
+            errors.append("%s: mu(T)=%s is %s" % (name, mu, why))
+    if n_dis != N_DISALLOWED:
+        errors.append("committed map holds %d Disallowed rows, expected %d"
+                      % (n_dis, N_DISALLOWED))
+    return errors
 
 
 HEADER = [
@@ -470,28 +521,16 @@ HEADER = [
 ]
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--dir", default=DEFAULT_DIR)
-    ap.add_argument("--oracle", default=None)
-    ap.add_argument("--map", default=None)
-    ap.add_argument("--emit", action="store_true")
-    ap.add_argument("--check", action="store_true")
-    a = ap.parse_args()
-
-    d = os.path.abspath(a.dir)
-    oracle_f = a.oracle or os.path.join(d, "expected-nvidia.csv")
-    map_f = a.map or os.path.join(d, "control-map.csv")
-
+def load(d, oracle_f):
     tests = {}
     for f in sorted(os.listdir(d)):
         if f.endswith(".litmus"):
             t = parse_litmus(os.path.join(d, f))
             tests[t.name] = t
-    oracle = load_oracle(oracle_f)
+    return tests, load_oracle(oracle_f)
 
-    rows, errors = derive(tests, oracle)
 
+def render(rows):
     buf = io.StringIO()
     for l in HEADER:
         buf.write(l + "\n")
@@ -500,15 +539,18 @@ def main():
                 "MuAlt", "MuRelaxed", "Canary"])
     for r in rows:
         w.writerow(r)
-    text = buf.getvalue()
+    return buf.getvalue()
 
-    if a.emit:
-        sys.stdout.write(text)
-        return 0 if not errors else 1
 
-    if a.check:
+def check(d, oracle_f, map_f, quiet=False):
+    """The gate.  Returns the list of errors (empty = the map is sound)."""
+    tests, oracle = load(d, oracle_f)
+    rows, errors = derive(tests, oracle)
+    text = render(rows)
+    dis = [r for r in rows if r[1] == "Disallowed"]
+
+    if not quiet:
         print("===== B6 CONTROL MAP: does every Disallowed test have a real control? =====")
-        dis = [r for r in rows if r[1] == "Disallowed"]
         print("  corpus         : %d tests in %s" % (len(tests), d))
         print("  oracle         : %d Allowed / %d Disallowed / %d NO-ORACLE"
               % (sum(1 for r in rows if r[1] == "Allowed"),
@@ -518,31 +560,197 @@ def main():
               % sum(1 for r in rows if r[7] != "-"))
         print()
         for r in sorted(dis):
-            print("  %-22s mu = %-22s [%s]  %s"
-                  % (r[0], r[2], r[3], r[4]))
+            print("  %-22s mu = %-22s [%s]  %s" % (r[0], r[2], r[3], r[4]))
         print()
 
-        # the committed table must match what we just re-derived from source
-        if not os.path.exists(map_f):
-            errors.append("committed map %s is MISSING" % map_f)
-        else:
-            with open(map_f) as fh:
-                on_disk = fh.read()
-            if on_disk != text:
-                errors.append("committed map %s is STALE -- re-run "
-                              "`controlmap.py --emit > %s'" % (map_f, map_f))
+    # the committed table must match what we just re-derived from source, AND
+    # stand on its own under audit_map (which is not a function of `rows')
+    if not os.path.exists(map_f):
+        errors.append("committed map %s is MISSING" % map_f)
+    else:
+        with open(map_f) as fh:
+            on_disk = fh.read()
+        if on_disk != text:
+            errors.append("committed map %s is STALE -- re-run "
+                          "`controlmap.py --emit > %s'" % (map_f, map_f))
+        errors += audit_map(on_disk, tests, oracle)
 
-        # fail closed: the count is asserted, not merely reported
-        if len(dis) != N_DISALLOWED:
-            errors.append("expected %d Disallowed rows, found %d"
-                          % (N_DISALLOWED, len(dis)))
+    # fail closed: the count is asserted, not merely reported
+    if len(dis) != N_DISALLOWED:
+        errors.append("expected %d Disallowed rows, found %d"
+                      % (N_DISALLOWED, len(dis)))
+    if not quiet:
+        # summary only: every row that could lower it has already filed its own
+        # error above, so this line reports, it does not decide
         ok = sum(1 for r in dis if r[2] != "-" and r[3] == "Allowed")
         print("  MU MAP: %d/%d Disallowed tests have an existing, Allowed mu(T)"
               % (ok, len(dis)))
-        if ok != len(dis):
-            errors.append("only %d/%d Disallowed tests have a usable mu(T)"
-                          % (ok, len(dis)))
+    return errors
 
+
+# --- the negative control ---------------------------------------------------
+# Until 2026-08-02 this gate had none: no --bite, no selftest section, no cram
+# negative.  A fail-closed gate nobody has seen fail is a claim, not a check.
+# Each injection gets a FRESH scratch corpus (a stale one turns the next bite
+# into a pass for the previous bite's reason), is cmp-verified to have changed
+# the artifact it targets, and must produce the NAMED error -- reddening for
+# some other reason is not this bite passing.
+def _scratch(d, tmp, tag):
+    """A private copy of corpus + oracle + map to corrupt."""
+    dst = os.path.join(tmp, tag)
+    os.mkdir(dst)
+    for f in os.listdir(d):
+        if f.endswith(".litmus") or f in ("expected-nvidia.csv", "control-map.csv"):
+            shutil.copy(os.path.join(d, f), dst)
+    return dst
+
+
+def _sub(path, old, new):
+    """Rewrite `path', returning False if the edit was a no-op (vacuous bite)."""
+    with open(path) as fh:
+        s = fh.read()
+    if old not in s or old == new:
+        return False
+    with open(path, "w") as fh:
+        fh.write(s.replace(old, new, 1))
+    return True
+
+
+def bite(d):
+    print("===== --bite: the control map's OWN negative control =====")
+    tmp = tempfile.mkdtemp(prefix="controlmap-bite.")
+    fails = 0
+    try:
+        base = _scratch(d, tmp, "clean")
+        errs = check(base, os.path.join(base, "expected-nvidia.csv"),
+                     os.path.join(base, "control-map.csv"), quiet=True)
+        print("  [0] control: an untouched scratch copy -> %d error(s) (expect 0)"
+              % len(errs))
+        if errs:
+            for e in errs:
+                print("      *** %s" % e)
+            fails += 1
+
+        # real Disallowed rows and their derived mutants, read from the map
+        with open(os.path.join(base, "control-map.csv")) as fh:
+            maptext = fh.read()
+        dis_rows = [r for r in csv.reader(l for l in maptext.splitlines()
+                                          if not l.startswith("#"))
+                    if r and r[1] == "Disallowed"]
+        victim, mu = dis_rows[0][0], dis_rows[0][2]
+        # For bite 3, pick a row whose NAIVE name-rewrite names a test that does
+        # not exist -- the failure mode this module was written to prevent, and
+        # the only one where rewriting the Mu column is a lie rather than a
+        # coincidence.  Rewriting it on a row where the naive name happens to be
+        # the right answer would be a vacuous bite.
+        have = {f[:-len(".litmus")] for f in os.listdir(d) if f.endswith(".litmus")}
+        naive_row = None
+        for r in dis_rows:
+            p = split_name(r[0])
+            if not p:
+                continue
+            naive = "%s-%s-%s-acquire" % (p["shape"], p["cut"], p["scope"])
+            if naive not in have:
+                naive_row = (r[0], r[2], naive)
+                break
+
+        def run(tag, why, edit, want):
+            nonlocal fails
+            sd = _scratch(d, tmp, tag)
+            if not edit(sd):
+                print("  [%s] *** VACUOUS BITE: the injection changed nothing" % tag)
+                fails += 1
+                return
+            got = check(sd, os.path.join(sd, "expected-nvidia.csv"),
+                        os.path.join(sd, "control-map.csv"), quiet=True)
+            hit = [e for e in got if want in e]
+            print("  [%s] %s\n        -> %d error(s); named error %s"
+                  % (tag, why, len(got), "FOUND: " + hit[0] if hit else
+                     "*** MISSING (wanted %r)" % want))
+            if not hit:
+                for e in got:
+                    print("      *** %s" % e)
+                fails += 1
+
+        # 1. the mutant's own .litmus is gone: the control would be compiled out
+        #    of the harness and the null on T would still print, green.
+        def del_mu(sd):
+            p = os.path.join(sd, mu + ".litmus")
+            if not os.path.exists(p):
+                return False
+            os.remove(p)
+            return True
+        run("1", "mu(T)'s .litmus DELETED",
+            del_mu, "mu(T)=%s does not exist as a .litmus" % mu)
+
+        # 2. the mutant relabelled Disallowed: a control whose own weak outcome
+        #    is forbidden vouches for nothing.
+        run("2", "mu(T) relabelled Disallowed in the oracle",
+            lambda sd: _sub(os.path.join(sd, "expected-nvidia.csv"),
+                            "%s,Allowed," % mu, "%s,Disallowed," % mu),
+            "not Allowed -- a control whose weak")
+
+        # 3. the map row rewritten from the test's NAME instead of derived --
+        #    the exact mistake this module exists to prevent (the naive
+        #    `acqrel-2s -> acquire' rewrite names a test that does not exist).
+        if naive_row is None:
+            print("  [3] *** no Disallowed row has a nonexistent naive rewrite: "
+                  "the name-rewrite path cannot be bitten on this corpus")
+            fails += 1
+        else:
+            t3, m3, naive3 = naive_row
+            run("3", "the Mu column rewritten from the test's NAME (%s -> %s)"
+                     % (m3, naive3),
+                lambda sd: _sub(os.path.join(sd, "control-map.csv"),
+                                "%s,Disallowed,%s," % (t3, m3),
+                                "%s,Disallowed,%s," % (t3, naive3)),
+                "%s does not exist as a .litmus" % naive3)
+
+        # 4. mu swapped for an Allowed test of another SHAPE: still a real,
+        #    Allowed, hot test -- just not a weakening of THIS program.
+        def swap_shape(sd):
+            other = "MP-cg-sys-relaxed" if not victim.startswith("MP-") \
+                    else "SB-cg-sys-relaxed"
+            if not os.path.exists(os.path.join(sd, other + ".litmus")):
+                return False
+            return _sub(os.path.join(sd, "control-map.csv"),
+                        "%s,Disallowed,%s," % (victim, mu),
+                        "%s,Disallowed,%s," % (victim, other))
+        run("4", "mu(T) swapped for an Allowed test of a DIFFERENT shape",
+            swap_shape, "access structure differs")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    if fails:
+        print("\nCONTROLMAP BITE FAILED: %d injection(s) did not redden the gate "
+              "for the right reason" % fails)
+        return 1
+    print("\nCONTROLMAP BITE OK: every injection reddens --check, by name")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dir", default=DEFAULT_DIR)
+    ap.add_argument("--oracle", default=None)
+    ap.add_argument("--map", default=None)
+    ap.add_argument("--emit", action="store_true")
+    ap.add_argument("--check", action="store_true")
+    ap.add_argument("--bite", action="store_true")
+    a = ap.parse_args()
+
+    d = os.path.abspath(a.dir)
+    oracle_f = a.oracle or os.path.join(d, "expected-nvidia.csv")
+    map_f = a.map or os.path.join(d, "control-map.csv")
+
+    if a.emit:
+        tests, oracle = load(d, oracle_f)
+        rows, errors = derive(tests, oracle)
+        sys.stdout.write(render(rows))
+        return 0 if not errors else 1
+
+    if a.check:
+        errors = check(d, oracle_f, map_f)
         if errors:
             print()
             for e in errors:
@@ -553,7 +761,10 @@ def main():
         print("\nCONTROLMAP OK")
         return 0
 
-    ap.error("one of --emit / --check is required")
+    if a.bite:
+        return bite(d)
+
+    ap.error("one of --emit / --check / --bite is required")
 
 
 if __name__ == "__main__":

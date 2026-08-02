@@ -29,7 +29,7 @@ env-research/impl-briefs/FA-FB-REPORT.md):
     per-frame variant and requires that to be REJECTED -- an arithmetic check never
     seen to reject anything is not evidence.
 
-Usage:  histcheck.py [-q]      run the gate
+Usage:  histcheck.py           run the gate
         histcheck.py --bite    prove the gate FAILS when the mechanism breaks
 """
 
@@ -167,7 +167,7 @@ def enclosing_guard(lines, depths, idx):
 # ---------------------------------------------------------------------------
 # PHASE 1 -- shape
 # ---------------------------------------------------------------------------
-def phase1(srcs, quiet):
+def phase1(srcs):
     print("\n===== PHASE 1: is the histogram fed once per OBSERVATION? =====")
     bad, n_store, n_read = 0, 0, 0
     for t in sorted(srcs):
@@ -264,7 +264,7 @@ def phase1(srcs, quiet):
 # ---------------------------------------------------------------------------
 # PHASE 2 -- display
 # ---------------------------------------------------------------------------
-def phase2(srcs, quiet):
+def phase2(srcs):
     print("\n===== PHASE 2: does a column ever print a value that was never measured? =====")
     bad, n_loc = 0, 0
     for t in sorted(srcs):
@@ -447,7 +447,7 @@ def refit_prefix_bug(body):
     return ("\n".join(out), done)
 
 
-def phase3(srcs, quiet):
+def phase3(srcs):
     print("\n===== PHASE 3: the REAL emitted tally, compiled and RUN =====")
     if TALLY_TEST not in srcs:
         print("  *** %s not in the corpus" % TALLY_TEST)
@@ -483,10 +483,11 @@ def phase3(srcs, quiet):
                      rows, show))
             if not ok:
                 bad += 1
-            if total > frames:
-                print("     *** the histogram total EXCEEDS the frames examined -- "
-                      "this is exactly the GB10 line")
-                bad += 1
+            # No `total > frames' assertion here: extract_tally admits only a body
+            # with exactly ONE add, executed at most once per frame iteration, so
+            # total <= R*SIZE_OF_TEST = frames holds by construction and the test
+            # could never fire.  The GB10 symptom is reproduced -- and required --
+            # on the PRE-FIX arm below, where it is a real observation.
             want_show = 1 if any(pattern) else 0
             if show != want_show:
                 print("     *** show=%d, want %d (the `*' marker must track the "
@@ -505,12 +506,21 @@ def phase3(srcs, quiet):
                 print("  *** the pre-fix variant does not compile:\n" + err)
                 bad += 1
             else:
-                pattern = [1, 0, 1]
-                got = run_probe(pd2, pattern)
-                if got is None:
-                    print("  *** pre-fix probe failed")
-                    bad += 1
-                else:
+                # Two patterns, because they prove different things.  [1,0,1] pins
+                # the closed form against a partial witness run; the ALL-ONES one
+                # is the only pattern that puts the tally ABOVE the frames
+                # examined (3*1000+3 > 3*1000), i.e. reproduces the GB10 line
+                # itself -- the impossible row that started F-A.  Neither is
+                # allowed to coincide with the fixed tally: an arm whose output is
+                # what the fixed variant already prints rejects nothing.
+                distinguishing = 0
+                gb10 = 0
+                for pattern in ([1, 0, 1], [1, 1, 1]):
+                    got = run_probe(pd2, pattern)
+                    if got is None:
+                        print("  *** pre-fix probe failed on pattern %r" % (pattern,))
+                        bad += 1
+                        continue
                     R, frames, total, rows, show = got
                     expect = sum(pattern) * N + R      # N x (#weak runs) + R
                     ok = (total == expect)
@@ -521,10 +531,26 @@ def phase3(srcs, quiet):
                         print("     *** the pre-fix variant did NOT reproduce the bug's "
                               "closed form; this phase cannot claim to detect it")
                         bad += 1
-                    elif total == R:
-                        print("     *** the pre-fix variant is indistinguishable from "
-                              "the fixed one -- VACUOUS")
-                        bad += 1
+                    if total != R:
+                        distinguishing += 1
+                    if total > frames:
+                        gb10 += 1
+                        print("          the histogram total EXCEEDS the frames "
+                              "examined (%d > %d) -- this is exactly the GB10 line"
+                              % (total, frames))
+                # Vacuity, derived from the patterns actually run rather than
+                # assumed of a hard-coded one: a pattern with no witness run gives
+                # sum(pattern)*N+R == R, which is what the FIXED tally prints, so
+                # an arm made only of such patterns would reject nothing.
+                if distinguishing == 0:
+                    print("     *** no pre-fix pattern produced a tally different from "
+                          "the fixed one (all == R) -- this self-test is VACUOUS")
+                    bad += 1
+                if gb10 == 0:
+                    print("     *** no pre-fix pattern drove sum_outs ABOVE the frames "
+                          "examined -- the GB10 symptom is not reproduced, so this "
+                          "phase cannot claim to detect it")
+                    bad += 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -537,16 +563,15 @@ def phase3(srcs, quiet):
 
 
 # ---------------------------------------------------------------------------
-def run_gate(srcs, quiet):
-    rcs = {"P1": phase1(srcs, quiet),
-           "P2": phase2(srcs, quiet),
-           "P3": phase3(srcs, quiet)}
+def run_gate(srcs):
+    rcs = {"P1": phase1(srcs),
+           "P2": phase2(srcs),
+           "P3": phase3(srcs)}
     return rcs
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("-q", "--quiet", action="store_true")
     ap.add_argument("--bite", action="store_true",
                     help="prove this gate FAILS when the mechanism it guards breaks")
     a = ap.parse_args()
@@ -556,7 +581,7 @@ def main():
     tmp = tempfile.mkdtemp(prefix="histcorpus.")
     try:
         srcs = emit_corpus(tmp)
-        rcs = run_gate(srcs, a.quiet)
+        rcs = run_gate(srcs)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("\n" + "=" * 70)
@@ -658,7 +683,7 @@ def bite():
             import contextlib
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
-                rcs = run_gate(srcs, quiet=True)
+                rcs = run_gate(srcs)
             red = [p for p, rc in rcs.items() if rc]
             for p in want_phases:
                 if rcs[p] == 0:

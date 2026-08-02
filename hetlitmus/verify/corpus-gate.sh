@@ -16,17 +16,21 @@
 #      grid-generated .litmus.
 #   2. Census tripwire -- exactly 137 gpu-only + 411 het .litmus (the grid did
 #      not silently shrink or grow).
-#   3. Emission golden -- emit every gpu-only .cu to a TEMP dir and byte-diff the
-#      10 committed cuda-out/*.cu samples against it.  emit-cuda.sh drops all 137
-#      .cu (plus C-runtime boilerplate); emitting to a temp dir keeps cuda-out/
-#      pristine (in-place would litter 127 untracked .cu).
+#   3. Emission golden -- emit the gpu-only corpus to a TEMP dir and byte-diff
+#      the committed samples of BOTH dialects against it: 10 cuda-out/*.cu and
+#      10 hip-out/*.hip.  One litmus7 pass renders both (emit-gpu.sh), so the
+#      .hip cost nothing extra -- and until 2026-08-02 nothing pinned them at
+#      all, on the lane that has already shipped one silent .hip breakage with
+#      every gate green.  emit-cuda.sh drops all 137 of each (plus C-runtime
+#      boilerplate); emitting to a temp dir keeps the golden dirs pristine
+#      (in-place would litter 127 untracked files each).
 #
 # Non-destructive: regen is in place but byte-stable, emission uses a temp dir
 # (auto-cleaned).  After a clean run the working tree is unchanged.
 #
 # Promote (when a change to the tools is intended): review `git diff`, then
 #   - corpus:   regenerate + `git commit` the new .litmus (TEST-PLAN.md sect 7).
-#   - emission: re-emit the 10 samples into cuda-out/ + `git commit`.
+#   - emission: re-emit the samples into cuda-out/ + hip-out/ + `git commit`.
 #
 # Usage:  hetlitmus/verify/corpus-gate.sh        (no args)
 # Exit:   0 = PASS, 1 = drift (offending paths/diffs printed), 2 = infra error.
@@ -43,6 +47,7 @@ export PATH="$BIN:$PATH"          # generate.sh resolves tools via $REPO/_build,
 GPU_DIR="hetlitmus/tests/gpu-only"
 HET_DIR="hetlitmus/tests/het"
 CUDA_OUT="hetlitmus/cuda-out"
+HIP_OUT="hetlitmus/hip-out"
 EXPECT_GPU=137
 EXPECT_HET=411
 
@@ -112,35 +117,39 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. EMISSION GOLDEN  (committed cuda-out/*.cu re-emit byte-identical)
+# 3. EMISSION GOLDEN  (committed cuda-out/*.cu + hip-out/*.hip re-emit
+#    byte-identical -- one emission, both dialects)
 # ---------------------------------------------------------------------------
-echo "[3/3] Emission golden (committed cuda-out/*.cu)"
+echo "[3/3] Emission golden (committed cuda-out/*.cu + hip-out/*.hip)"
 elog="$EMITTMP/emit.log"
 if ! bash "$HETL/emit-cuda.sh" "$EMITTMP" >"$elog" 2>&1; then
   echo "FATAL: emit-cuda.sh failed:" >&2; cat "$elog" >&2; exit 2
 fi
 
-committed_cu="$(git ls-files "$CUDA_OUT/*.cu")"
+committed="$(git ls-files "$CUDA_OUT/*.cu" "$HIP_OUT/*.hip")"
 total=0; match=0; emit_fail=0
-for cu in $committed_cu; do
+for f in $committed; do
   total=$((total + 1))
-  base="$(basename "$cu")"
+  base="$(basename "$f")"
   if [ ! -f "$EMITTMP/$base" ]; then
     echo "  DRIFT: $base is committed but emit-cuda.sh did not produce it"
     emit_fail=1
     continue
   fi
-  if diff -u "$cu" "$EMITTMP/$base" >"$EMITTMP/diff.out" 2>&1; then
+  if diff -u "$f" "$EMITTMP/$base" >"$EMITTMP/diff.out" 2>&1; then
     match=$((match + 1))
   else
-    echo "  DRIFT: $cu differs from re-emission:"
+    echo "  DRIFT: $f differs from re-emission:"
     sed 's/^/        /' "$EMITTMP/diff.out"
     emit_fail=1
   fi
 done
-echo "        $match/$total .cu match"
-if [ "$total" -eq 0 ]; then
-  echo "  FAIL: no committed cuda-out/*.cu samples found"
+n_cu=$(git ls-files "$CUDA_OUT/*.cu" | wc -l | tr -d ' ')
+n_hip=$(git ls-files "$HIP_OUT/*.hip" | wc -l | tr -d ' ')
+echo "        $match/$total samples match ($n_cu .cu + $n_hip .hip)"
+if [ "$total" -eq 0 ] || [ "$n_cu" -eq 0 ] || [ "$n_hip" -eq 0 ]; then
+  # a dialect with zero committed samples would make the loop above vacuous
+  echo "  FAIL: a dialect has no committed samples ($n_cu .cu, $n_hip .hip)"
   fail=1
 elif [ "$emit_fail" -ne 0 ]; then
   echo "  FAIL: emission drift ($match/$total match)"

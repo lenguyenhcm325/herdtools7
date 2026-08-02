@@ -68,14 +68,16 @@ GPU_SCOPE = {
 
 # Op kind: LISA mnemonic  ->  expected PTX opcode class.
 #   load  -> ld         store -> st         fence -> fence
-#   RMW   -> atom (returns old value) or red (no-return reduction)
-# The corpus (ptx.bell declares only R/W/F) contains NO RMW; the mapping is
-# kept so the completeness guard *recognizes* one rather than skipping it.
+# The corpus (ptx.bell declares only R/W/F) contains NO RMW, and the RMW guard is
+# the GPU_CELL regex below, not this table: a cell whose mnemonic is outside
+# {w,r,f} never reaches a lookup here, it fails to match and is hard-failed as an
+# "unrecognized GPU cell".  Adding an `rmw' row would therefore buy nothing --
+# supporting RMW means extending GPU_CELL first (and `atom'/`red' are two opcodes,
+# so the compared tuple would need a shape this table cannot express).
 GPU_KIND = {
     "w": "st",
     "r": "ld",
     "f": "fence",
-    "rmw": ("atom", "red"),
 }
 
 # CPU (AArch64) ordering mnemonics.  ARM ARM + Bagchi ISMM'26 Fig 1:
@@ -159,8 +161,15 @@ def parse_body(text):
 
     The body is the grid between the `{...}` init block header row `P0:.. | ..;`
     and the `scopes:`/`exists` lines.
+
+    A MISSING device tag is legal only on a gpu-only LISA test, which has one
+    device by construction.  On a `Het' test it is fatal: silently defaulting an
+    untagged column to "gpu" would send a CPU column through gpu_ops_of_column
+    and compare AArch64 mnemonics against PTX -- a wrong answer rather than a
+    refusal.  So the kind decides, and an untagged het column hard-fails.
     """
     lines = text.splitlines()
+    kind = litmus_kind(text)
     # find the header row: starts (after strip) with 'P<digit>'
     hdr_i = None
     for i, ln in enumerate(lines):
@@ -183,7 +192,15 @@ def parse_body(text):
         if not m:
             raise ValueError("bad proc header column: %r" % tok)
         idx = int(m.group(1))
-        dev = (m.group(2) or "gpu")   # gpu-only LISA tests omit the tag => gpu
+        dev = m.group(2)
+        if dev is None:
+            if kind == 'Het':
+                raise CompletenessError(
+                    "het proc header column %r carries NO device tag (want `P%d:cpu' "
+                    "or `P%d:gpu') -- an untagged column cannot be defaulted, the "
+                    "device is what decides which ISA it is compared against"
+                    % (tok.strip(), idx, idx))
+            dev = "gpu"               # gpu-only LISA tests omit the tag => gpu
         procs.append((idx, dev))
 
     rows = []
@@ -306,11 +323,18 @@ def het_instances(litmus_path):
 
     A disagreement between the two shows up as a lane-count mismatch, which is
     the point: a missing lane on a control instance means the harness reports a
-    positive control it is not running, and no other check would see it."""
+    positive control it is not running, and no other check would see it.
+
+    Each instance carries its ROLE.  Zipping the list against a positional
+    ("T", "mu(T)", "canary") tuple instead labelled the canary "mu(T)" on the 361
+    tests that co-run a canary and have no mutant, since a None is skipped rather
+    than held as a slot."""
     d = os.path.dirname(os.path.abspath(litmus_path))
-    insts = [instance_of(litmus_path)]
+    t = instance_of(litmus_path)
+    t['role'] = 'T'
+    insts = [t]
     mu, can = load_control_map(litmus_path)
-    for n in (mu, can):
+    for n, role in ((mu, "mu(T)"), (can, "canary")):
         if not n:
             continue
         p = os.path.join(d, n + ".litmus")
@@ -318,7 +342,9 @@ def het_instances(litmus_path):
             raise CompletenessError(
                 "control-map.csv names %r as a control of %s but %s does not "
                 "exist -- the harness cannot be co-running it" % (n, insts[0]['name'], p))
-        insts.append(instance_of(p))
+        i = instance_of(p)
+        i['role'] = role
+        insts.append(i)
     return insts
 
 
@@ -353,9 +379,9 @@ def gpu_ops_of_column(cells):
             # A GPU column cell that is neither w[..]/r[..]/f[..] nor empty:
             # could be an RMW or an unknown form -> do not silently skip.
             raise CompletenessError("unrecognized GPU cell %r" % c)
+        # op is drawn from GPU_CELL's [wrf], so it is a GPU_KIND key by
+        # construction; order and scope are free tokens and must be checked.
         op, order, scope = m.group(1), m.group(2), m.group(3)
-        if op not in GPU_KIND:
-            raise CompletenessError("unknown GPU op kind %r in %r" % (op, c))
         if order not in GPU_ORDER:
             raise CompletenessError("unknown memory order %r in %r" % (order, c))
         if scope not in GPU_SCOPE:
@@ -574,20 +600,23 @@ def check_gpu(result, expected_per_proc, observed, label):
     else:
         result.note("  %s ordered stream OK (%d ops)" % (label, len(expected_flat)))
 
-    # ----- GLOBAL multiset equality (cheap independent corroboration) --------
-    if Counter(observed) != Counter(expected_flat):
-        result.fail("%s global multiset differs: expected %s observed %s"
-                    % (label, dict(Counter(expected_flat)), dict(Counter(observed))))
-
-    # ----- PER-PROC multiset equality (slice observed by expected counts) ----
-    pos = 0
-    for plabel, ops in expected_per_proc:
-        seg = observed[pos:pos + len(ops)]
-        pos += len(ops)
-        ce, ca = Counter(ops), Counter(seg)
-        if ce != ca:
-            result.fail("%s %s per-proc multiset differs: expected %s observed %s"
-                        % (label, plabel, dict(ce), dict(ca)))
+    # ----- PER-PROC LOCALIZER (diagnostic, NOT a detector) -------------------
+    # An order-blind multiset test is strictly weaker than the order-sensitive
+    # one above: if the ordered check passed, the two lists are identical, so
+    # every slice matches element-wise and no multiset comparison can differ.
+    # (The global multiset that used to sit here was that and nothing else, so it
+    # is gone.)  What the per-proc slicing DOES add is localization -- it names
+    # the instance and proc a mismatch is in, which the flat index diff cannot --
+    # so it runs only once something has already failed, and only reports.
+    if not result.ok:
+        pos = 0
+        for plabel, ops in expected_per_proc:
+            seg = observed[pos:pos + len(ops)]
+            pos += len(ops)
+            ce, ca = Counter(ops), Counter(seg)
+            if ce != ca:
+                result.note("  localized: %s %s multiset expected %s observed %s"
+                            % (label, plabel, dict(ce), dict(ca)))
     return expected_flat
 
 
@@ -609,12 +638,13 @@ def split_het_segments(observed, n_gpu_procs):
     counted here as a barrier fetch_add and blow the per-lane count in
     check_barrier_whitelist.
 
-    Returns (barrier_ops, model_per_segment), one list per barrier-joining GPU
-    lane in emission order (test lanes, then the observer)."""
+    Returns (pre_ops, barrier_ops, model_per_segment): the model ops emitted
+    BEFORE the first rendezvous (see check_no_pre_barrier_ops), then one list per
+    barrier-joining GPU lane in emission order (test lanes, then the observer)."""
     atom_idx = [i for i, op in enumerate(observed)
                 if op[0] in ('atom', 'red') and op[2] == 'sys']
     if not atom_idx:
-        return [], [observed]   # no fetch_add -> barrier check fails separately
+        return [], [], [observed]   # no fetch_add -> barrier check fails separately
     # segment start = the atom's leading seq_cst fence if present, else the atom.
     starts = []
     for i in atom_idx:
@@ -637,7 +667,33 @@ def split_het_segments(observed, n_gpu_procs):
         if bi < len(seg) and seg[bi][0] == 'ld':                 # spin seq_cst load
             barrier_ops.append(seg[bi]); bi += 1
         model_per_segment.append(seg[bi:])
-    return barrier_ops, model_per_segment
+    return observed[:starts[0]], barrier_ops, model_per_segment
+
+
+def check_no_pre_barrier_ops(result, pre_ops):
+    """Nothing may be emitted before the FIRST rendezvous.
+
+    The segmentation above is anchored on the barrier fetch_adds, so everything
+    ahead of the first one falls outside every segment: it reaches neither
+    barrier_ops nor model_per_segment, and so is compared against nothing.  The
+    hole is one-sided -- an op BETWEEN two rendezvous lands in the previous
+    segment and breaks the ordered check, and a MISSING op breaks it too -- but an
+    EXTRA model op at the top of the kernel would be invisible, and
+    check_no_stray_sys cannot see it either (it inspects only text OUTSIDE the
+    inline-asm markers, and this op is inside them).
+
+    The shipped emitter puts each proc in its own guarded `{ barrier; model... }'
+    block, and the stress/noise layers use builtins or plain volatile accesses
+    that carry no order qualifier, so nothing enters `observed' ahead of lane 0's
+    fetch_add: the assertion costs nothing and closes the hole."""
+    if pre_ops:
+        result.fail("%d model op(s) emitted BEFORE the first rendezvous barrier -- "
+                    "they sit outside every lane segment and are compared against "
+                    "nothing" % len(pre_ops))
+        for o in pre_ops[:8]:
+            result.note("  pre-barrier: %s" % fmt(o))
+    else:
+        result.note("  no model ops before the first rendezvous barrier")
 
 
 def check_barrier_whitelist(result, barrier_ops, n_lanes):
@@ -658,12 +714,14 @@ def check_barrier_whitelist(result, barrier_ops, n_lanes):
     atoms = [o for o in barrier_ops if o[0] in ('atom', 'red')]
     if not any(o[1] == 'sc' for o in fences):
         result.fail("barrier has no seq_cst fence (fence.sc.sys) -- weakened")
+    # The fetch_adds' own scope needs no assertion here: split_het_segments
+    # anchors segments on a SYSTEM-SCOPE atom/red, so a fetch_add narrowed to
+    # device scope never enters barrier_ops at all -- its segment disappears and
+    # the lane count above is what fires.  That is the check; re-testing
+    # a[2]=='sys' on the survivors is constant-false by construction.
     if len(atoms) != n_lanes:
         result.fail("expected one barrier fetch_add per barrier-joining GPU lane (%d); found %d"
                     % (n_lanes, len(atoms)))
-    for a in atoms:
-        if a[2] != 'sys':
-            result.fail("barrier fetch_add %s not system scope" % fmt(a))
     result.note("  barrier whitelist OK (%d ops, %d fetch_add for %d lane(s), all sys, seq_cst fence)"
                 % (len(barrier_ops), len(atoms), n_lanes))
 
@@ -798,28 +856,16 @@ def check_cpu(result, expected_per_proc, cpu_c_text):
 # ===========================================================================
 
 def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
-               keep=False, arch=None, verbose=True):
-    text = read_litmus(litmus_path)
-    kind = litmus_kind(text)
-    name = litmus_name(text)
-    procs, rows = parse_body(text)
-
-    # transpose rows -> per-column cell lists
-    ncol = len(procs)
-    cols = [[] for _ in range(ncol)]
-    for row in rows:
-        for c in range(ncol):
-            cols[c].append(row[c] if c < len(row) else '')
-
-    # classify columns; build expected GPU/CPU profiles (completeness guard fires here)
-    gpu_expected = []   # list of (proc_idx, [ (kind,order,scope) ])
-    cpu_expected = []   # list of (proc_idx, [ (mnemonic,qual) ])
-    for col, (pidx, dev) in enumerate(procs):
-        dc = device_class(dev)
-        if dc == 'gpu':
-            gpu_expected.append((pidx, gpu_ops_of_column(cols[col])))
-        else:
-            cpu_expected.append((pidx, cpu_ops_of_column(cols[col])))
+               arch=None, verbose=True):
+    # instance_of parses, transposes and classifies the columns -- the same six
+    # statements this driver used to inline -- so the completeness guard still
+    # fires here, on the same two column parsers.  The Het branch below rebuilds
+    # both profiles from het_instances (T + its co-run controls); only the
+    # gpu-only branch consumes gpu_expected as computed here, and no path reads a
+    # CPU profile from it.
+    inst = instance_of(litmus_path)
+    kind, name = inst['kind'], inst['name']
+    gpu_expected = inst['gpu']   # list of (proc_idx, [ (kind,order,scope) ])
 
     result = Result()
     result.note("=== %s [%s] ===" % (name, kind))
@@ -844,8 +890,6 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
             with open(ptx_path) as f:
                 ptx_text = f.read()
             cpu_c_text = open(cpu_c_path).read() if cpu_c_path else None
-            if keep:
-                result.note("  artifacts kept in %s" % tmp)
 
         observed = extract_ptx_ops(ptx_text)
 
@@ -855,14 +899,15 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
             insts = het_instances(litmus_path)
             if len(insts) > 1:
                 result.note("  CO-RUN harness: %s"
-                            % " + ".join("%s (%s)" % (i['name'], r)
-                                         for i, r in zip(insts, ("T", "mu(T)", "canary"))))
+                            % " + ".join("%s (%s)" % (i['name'], i['role'])
+                                         for i in insts))
             lanes = het_lane_plan(insts)
             n_lanes = len(lanes)
             # One barrier instance per barrier-joining GPU lane; segment on the
             # fetch_add anchor and strip the barrier template, leaving each lane's
             # model ops.
-            barrier_ops, model_per_seg = split_het_segments(observed, n_lanes)
+            pre_ops, barrier_ops, model_per_seg = split_het_segments(observed, n_lanes)
+            check_no_pre_barrier_ops(result, pre_ops)
             check_barrier_whitelist(result, barrier_ops, n_lanes)
             if len(model_per_seg) != n_lanes:
                 result.fail("expected %d barrier-joining GPU lane(s) (%s); found %d.  "
@@ -903,8 +948,7 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
             check_gpu(result, gpu_expected, observed, "GPU")
             check_no_stray_sys(result, ptx_text)
     finally:
-        if not keep:
-            shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)
 
     if verbose:
         for ln in result.lines:
@@ -918,12 +962,11 @@ def main():
     ap.add_argument("--ptx", help="use this PTX file instead of emitting+nvcc (self-test)")
     ap.add_argument("--cpu-c", help="use this _cpu.c instead of emitting (self-test)")
     ap.add_argument("--arch", help="override nvcc -arch (default sm_90, matching the litmus7 run harness CUDA_ARCH)")
-    ap.add_argument("--keep", action="store_true", help="keep emitted artifacts")
     ap.add_argument("-q", "--quiet", action="store_true")
     args = ap.parse_args()
     try:
         ok = check_test(args.litmus, ptx_override=args.ptx, cpu_c_override=args.cpu_c,
-                        keep=args.keep, arch=args.arch, verbose=not args.quiet)
+                        arch=args.arch, verbose=not args.quiet)
     except CompletenessError as e:
         print("COMPLETENESS HARD-FAIL: %s" % e)
         sys.exit(2)

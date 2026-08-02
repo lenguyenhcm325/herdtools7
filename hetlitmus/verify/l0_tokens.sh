@@ -20,6 +20,7 @@
 set -u
 
 . "$(dirname "$0")/../paths.sh"
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"   # absolute; selftest [10] re-runs it
 cd "$REPO"
 export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 
@@ -106,12 +107,20 @@ guard_report() {
   printf '\n===== COMPLETENESS GUARD: distinct corpus annotations =====\n'
   local fails=0 rc
 
-  printf '\n-- distinct GPU annotations (w/r/f[order,scope]) and their mapping --\n'
+  printf '\n-- distinct GPU annotations (<kind>[order,scope]) and their mapping --\n'
   # heredoc supplies python's PROGRAM via `-`, so the annotation DATA must arrive
   # by a file path in argv (piping into `python3 - <<PY` would be swallowed by
   # the heredoc); the empty-list case is itself a hard fail (no vacuous pass).
+  #
+  # The KIND token is matched as `[a-z_]+', not as the allow-list `[wrf]': every
+  # kind ptxcheck maps is one of w/r/f, so a `[wrf]' extractor made the kind
+  # lookup below constant-true AND -- the real cost -- silently dropped any
+  # annotation carrying a NEW kind (an `rmw[..]'), so the one thing this section
+  # exists to catch could never reach it.  Same no-allow-list discipline as the
+  # CPU half below.  Widening the extractor adds no hits on today's corpus: 17
+  # distinct annotations before and after.
   local annof="$RESDIR/gpu_annos.txt"
-  grep -rhoE '[wrf]\[[a-z_]+,[a-z]+\]' "$GPU_DIR"/*.litmus "$HET_DIR"/*.litmus \
+  grep -rhoE '[a-z_]+\[[a-z_]+,[a-z_]+\]' "$GPU_DIR"/*.litmus "$HET_DIR"/*.litmus \
     | sort -u > "$annof"
   python3 - "$REPO" "$annof" <<'PY'
 import sys, re, importlib.util, os
@@ -122,7 +131,7 @@ with open(sys.argv[2]) as fh:
     annos = [l.strip() for l in fh if l.strip()]
 bad = 0
 for a in annos:
-    k, o, s = re.match(r'([wrf])\[([a-z_]+),([a-z]+)\]', a).groups()
+    k, o, s = re.match(r'([a-z_]+)\[([a-z_]+),([a-z_]+)\]', a).groups()
     ok = (k in m.GPU_KIND) and (o in m.GPU_ORDER) and (s in m.GPU_SCOPE)
     if not ok:
         bad += 1
@@ -206,7 +215,7 @@ EOF
 }
 
 # ---- negative/completeness self-test on COPIED artifacts (gated) ----------
-# Sections [0]-[9] below: a clean control that must PASS(0), then one injection
+# Sections [0]-[12] below: a clean control that must PASS(0), then one injection
 # per way the lowering or the scaffolding can silently die, each of which must
 # FAIL(1) (or hard-fail(2) for an unmodelled token).  Aggregates: returns nonzero
 # if any actual rc differs from its expectation.  Operates only on copies -- the
@@ -392,14 +401,24 @@ selftest() {
     python3 "$CHECK" "$B4L" --ptx "$b4/clean.ptx" --cpu-c "$b4cpu" -q >/dev/null 2>&1; b4rc=$?
     _expect "B4 control (stress layer present)" 0 "$b4rc" || fails=$((fails+1))
 
+    # Every bite writes a FRESH artifact path.  A helper that reuses one fixed
+    # path hands the checker the PREVIOUS bite's corrupt artifact whenever its
+    # own injector fails to produce one, and the section then reports a pass for
+    # the wrong reason instead of the vacuous-bite failure it owes.
+    local b4n=0
     _b4bite() { # label sed-expr
-      local lbl="$1" expr="$2" rc
-      sed "$expr" "$b4/clean.ptx" > "$b4/bite.ptx"
-      if cmp -s "$b4/clean.ptx" "$b4/bite.ptx"; then
+      local lbl="$1" expr="$2" rc out
+      b4n=$((b4n+1)); out="$b4/bite$b4n.ptx"
+      sed "$expr" "$b4/clean.ptx" > "$out"
+      if [ ! -s "$out" ]; then
+        printf '  *** BITE PRODUCED NO ARTIFACT    [%s]\n' "$lbl"
+        return 1
+      fi
+      if cmp -s "$b4/clean.ptx" "$out"; then
         printf '  *** VACUOUS BITE: injection changed nothing    [%s]\n' "$lbl"
         return 1
       fi
-      python3 "$CHECK" "$B4L" --ptx "$b4/bite.ptx" --cpu-c "$b4cpu" -q >/dev/null 2>&1; rc=$?
+      python3 "$CHECK" "$B4L" --ptx "$out" --cpu-c "$b4cpu" -q >/dev/null 2>&1; rc=$?
       _expect "$lbl" 1 "$rc"
     }
     _b4bite "spin WIDENED to sys scope (= a per-iteration cross-device barrier)" \
@@ -415,8 +434,11 @@ selftest() {
 
     # a builtin sys-scope op (e.g. __threadfence_system() sneaking into stress
     # code) lands OUTSIDE the inline-asm markers -- invisible to the op-stream
-    # check, which is exactly why check_no_stray_sys exists.
-    python3 - "$b4/clean.ptx" "$b4/bite.ptx" <<'PY'
+    # check, which is exactly why check_no_stray_sys exists.  Its own path (not
+    # the _b4bite series') and its exit status is read: the injector reports
+    # `done' and a silent failure must surface as a vacuous bite, not inherit a
+    # neighbouring bite's still-corrupt PTX.
+    python3 - "$b4/clean.ptx" "$b4/stray.ptx" <<'PY'
 import sys
 src, dst = sys.argv[1], sys.argv[2]
 out, in_asm, done = [], False, False
@@ -433,11 +455,13 @@ for l in open(src).read().splitlines():
 open(dst, 'w').write("\n".join(out) + "\n")
 sys.exit(0 if done else 1)
 PY
-    if cmp -s "$b4/clean.ptx" "$b4/bite.ptx"; then
+    b4rc=$?
+    if [ "$b4rc" -ne 0 ] || [ ! -s "$b4/stray.ptx" ] \
+       || cmp -s "$b4/clean.ptx" "$b4/stray.ptx"; then
       printf '  *** VACUOUS BITE: injection changed nothing    [stray builtin sys-scope op]\n'
       fails=$((fails+1))
     else
-      python3 "$CHECK" "$B4L" --ptx "$b4/bite.ptx" --cpu-c "$b4cpu" -q >/dev/null 2>&1; b4rc=$?
+      python3 "$CHECK" "$B4L" --ptx "$b4/stray.ptx" --cpu-c "$b4cpu" -q >/dev/null 2>&1; b4rc=$?
       _expect "stray builtin sys-scope op (outside inline asm)" 1 "$b4rc" || fails=$((fails+1))
     fi
   fi
@@ -499,8 +523,8 @@ PY
   # cpustresscheck.py is the one checker able to catch a regression that
   # preserves the source text while killing the COMPILED mechanism -- strip
   # `volatile' and the enemy still reads beautifully and issues nothing -- so it
-  # needs a negative control of its own.  Six injections, one per way the layer
-  # can silently die: four mutate het_cpu_stress.h (the mechanisms), two the
+  # needs a negative control of its own.  Seven injections, one per way the layer
+  # can silently die: five mutate het_cpu_stress.h (the mechanisms), two the
   # emitted .cu driver (invariants S5/S6 -- a noise buffer that fits in cache,
   # and enemies pointed at the locations under test).
   printf '\n[8] B5 CPU/interconnect stress: the liveness gate must FAIL(1) on a dead layer\n'
@@ -518,16 +542,32 @@ PY
     python3 "$CS" "$B5L" --harness-dir "$b5/$B5T" >/dev/null 2>&1; b5rc=$?
     _expect "B5 control (shipped CPU/interconnect layer)" 0 "$b5rc" || fails=$((fails+1))
 
-    _b5bite() { # label  file  sed-expr
-      local lbl="$1" file="$2" expr="$3" rc
+    # The optional 4th argument is a phrase the FAIL output must contain.  Six of
+    # the seven injections below break a mechanism no other assertion looks at, so
+    # a nonzero exit can only have come from the one they broke; injection (5)
+    # does not have that luxury -- it lands inside S3, next to the load and store
+    # counts, and a bite that tripped THOSE instead would report OK for a check it
+    # never exercised.  So it names the sentence it is owed.
+    _b5bite() { # label  file  sed-expr  [phrase the failure must print]
+      local lbl="$1" file="$2" expr="$3" want="${4:-}" rc out
       rm -rf "$b5/mut"; cp -r "$b5/$B5T" "$b5/mut"
       sed -i "$expr" "$b5/mut/$file"
       if cmp -s "$b5/$B5T/$file" "$b5/mut/$file"; then
         printf '  *** VACUOUS BITE: injection changed nothing    [%s]\n' "$lbl"
         return 1
       fi
-      python3 "$CS" "$B5L" --harness-dir "$b5/mut" >/dev/null 2>&1; rc=$?
-      _expect "$lbl" 1 "$rc"
+      out="$(python3 "$CS" "$B5L" --harness-dir "$b5/mut" 2>&1)"; rc=$?
+      # Both assertions always run: reporting only the first would hide an exit
+      # code that is right for a reason that is not.
+      local bad=0
+      _expect "$lbl" 1 "$rc" || bad=1
+      if [ -n "$want" ] && ! printf '%s\n' "$out" | grep -qF "$want"; then
+        printf '  *** WRONG REASON: the failure never printed %s    [%s]\n' \
+               "$want" "$lbl"
+        printf '%s\n' "$out" | grep -F 'FAIL:' | head -2
+        bad=1
+      fi
+      return "$bad"
     }
 
     # (1) the one a naive gate waves through.  Without `volatile' the enemy's
@@ -561,7 +601,24 @@ PY
             's|^void het_cpu_first_touch(void \*p, size_t bytes) {|void het_cpu_first_touch(void *p, size_t bytes) { (void)p; (void)bytes; return;|' \
             || fails=$((fails+1))
 
-    # (5) driver: the noise working set decoupled from HET_NOISE_MB and shrunk
+    # (5) the STRAIGHT-LINE enemy: both loops removed, everything else left alone.
+    # This is the shape the pre-repair "still a loop" test could not reject.  It
+    # counted every branch to a `.LBB' label, forward ones included, and a body
+    # with both loops gone still shows 16 of them -- the `switch (a->seq)' arms,
+    # plus the ldxr/stxr RETRY loops an inlined __atomic_fetch_add lowers to, which
+    # are genuine back edges that outlive the stress.  So the check now asks for a
+    # back edge that ENCLOSES the traffic it is supposed to be repeating (a
+    # discarded load or a scratchpad store), the way obscheck._loops decides
+    # direction.  The sed is scoped to het_cpu_enemy's body and brace-balanced --
+    # `while (go)' -> `if (go)', the index loop -> a plain block -- so the enemy
+    # still compiles and still issues its loads and stores; it issues them once.
+    _b5bite "enemy LOOPS REMOVED (traffic still there, nothing repeats it)" \
+            het_cpu_stress.h \
+            '/^void \*het_cpu_enemy/,/^}/{s/while (__atomic_load_n(a->go, __ATOMIC_RELAXED)) {/if (__atomic_load_n(a->go, __ATOMIC_RELAXED)) {/; s/for (uint32_t r = 0; r < a->nidx; r++) {/{ uint32_t r = 0;/}' \
+            'NO back edge around its scratchpad traffic' \
+            || fails=$((fails+1))
+
+    # (6) driver: the noise working set decoupled from HET_NOISE_MB and shrunk
     # below the LLC -- served from cache, zero interconnect traffic, every
     # counter still moving.  This is what invariant S5 is for.
     _b5bite "noise buffer UNDERSIZED (fits in cache => no C2C traffic)" \
@@ -569,7 +626,7 @@ PY
             's|uint64_t _noise_words = (uint64_t)HET_NOISE_MB \* 1024ull \* 1024ull / sizeof(uint64_t);|uint64_t _noise_words = 4096ull;|' \
             || fails=$((fails+1))
 
-    # (6) driver: the enemies pointed at a test variable.  Not a weaker
+    # (7) driver: the enemies pointed at a test variable.  Not a weaker
     # experiment but a fabricated one -- an enemy writing the location under test
     # can manufacture the weak behaviour outright.  This is what invariant S6 is
     # for.  The target is `t_x', not `x': this test co-runs three instances, so
@@ -617,8 +674,14 @@ PY
     _expect "B6b control (shipped co-run harness: T + mu(T) + canary)" 0 "$b6rc" \
       || fails=$((fails+1))
 
+    # As in section [6]: a FRESH .ptx per bite.  Deleting the canary's lane by
+    # raw string slicing can leave source nvcc rejects, and with one shared
+    # mut.ptx that compile failure silently re-checked the PREVIOUS bite's
+    # artifact -- still corrupt, so ptxcheck still returned 1 and the section
+    # reported OK for a corruption it had never seen.
+    local b6n=0
     _b6bite() { # label  file  python-corruption-of-$IN-to-$OUT  ptx|cpu
-      local lbl="$1" src="$2" prog="$3" kind="$4" rc
+      local lbl="$1" src="$2" prog="$3" kind="$4" rc mptx
       rm -rf "$b6/mut"; cp -r "$b6/$B6T" "$b6/mut"
       IN="$b6/$B6T/$src" OUT="$b6/mut/$src" python3 -c "$prog" 2>/dev/null || {
         printf '  *** BITE SCRIPT FAILED (nothing to corrupt)    [%s]\n' "$lbl"; return 1; }
@@ -627,8 +690,13 @@ PY
         return 1
       fi
       if [ "$kind" = ptx ]; then
-        nvcc -std=c++17 -arch=sm_90 --ptx -o "$b6/mut.ptx" "$b6/mut/$B6T.cu" 2>/dev/null
-        python3 "$CHECK" "$B6L" --ptx "$b6/mut.ptx" \
+        b6n=$((b6n+1)); mptx="$b6/mut$b6n.ptx"
+        nvcc -std=c++17 -arch=sm_90 --ptx -o "$mptx" "$b6/mut/$B6T.cu" 2>/dev/null
+        if [ ! -s "$mptx" ]; then
+          printf '  *** BITE COMPILE FAILED (no PTX to check)    [%s]\n' "$lbl"
+          return 1
+        fi
+        python3 "$CHECK" "$B6L" --ptx "$mptx" \
           --cpu-c "$b6/$B6T/${B6T}_cpu.c" >/dev/null 2>&1; rc=$?
       else
         python3 "$CHECK" "$B6L" --ptx "$b6/clean.ptx" \
@@ -683,12 +751,210 @@ open(os.environ["OUT"], "w").write(s[:i] + nb + s[j:])' cpu || fails=$((fails+1)
     rm -rf "$b6/mut"
   fi
 
+  # =========================================================================
+  # [10] the CORPUS-LEVEL guards: do they fail on a corpus that is not there,
+  # and on an op kind nothing models?
+  # =========================================================================
+  # Sections [0]-[9] all bite the checker.  These two bite the SWEEP: the census
+  # tripwire in run_dir (`pass -eq total' is vacuously true on 0 tests) and the
+  # completeness extractor in guard_report are the whole defence against a green
+  # run over a corpus that silently vanished or grew a token nothing maps.
+  # GPU_DIR/HET_DIR are overridable precisely so both can be bitten; until this
+  # section nothing ever did, so neither had been seen to fail.
+  printf '\n[10] corpus guards: an EMPTY corpus and an UNMODELLED op kind must FAIL(1)\n'
+  local g10="$sc/g10" out10 rc10
+  rm -rf "$g10"; mkdir -p "$g10/empty" "$g10/gpu"
+  out10="$(GPU_DIR="$g10/empty" bash "$SELF" gpu-only 2>&1)"; rc10=$?
+  printf '%s\n' "$out10" | grep -E 'CENSUS FAIL' | head -1
+  _expect "census guard on an EMPTY gpu-only dir (0 tests, 0 failures)" 1 "$rc10" \
+    || fails=$((fails+1))
+
+  cp "$GPU_DIR"/*.litmus "$g10/gpu/"
+  # `q' is a kind ptxcheck's GPU_KIND has no entry for.  A `[wrf]'-shaped
+  # extractor never handed such a token to the mapping check at all -- it
+  # dropped it, which is the failure mode the widened extractor exists to close.
+  printf ' q[relaxed,sys] x 1 ;\n' >> "$g10/gpu/MP-sys-F.litmus"
+  if cmp -s "$GPU_DIR/MP-sys-F.litmus" "$g10/gpu/MP-sys-F.litmus"; then
+    printf '  *** VACUOUS BITE: the unknown-kind injection changed nothing\n'
+    fails=$((fails+1))
+  else
+    out10="$(GPU_DIR="$g10/gpu" bash "$SELF" guard 2>&1)"; rc10=$?
+    printf '%s\n' "$out10" | grep -E 'UNMAPPED' | head -1
+    _expect "completeness guard on an unmodelled kind q[relaxed,sys]" 1 "$rc10" \
+      || fails=$((fails+1))
+  fi
+  rm -rf "$g10"
+
+  # =========================================================================
+  # [11] the ops emitted BEFORE the first rendezvous barrier
+  # =========================================================================
+  # split_het_segments anchors every segment on a barrier fetch_add, so anything
+  # ahead of the FIRST one falls outside every segment: it reaches neither
+  # barrier_ops nor model_per_segment, and the het branch feeds check_gpu the
+  # segments, not the raw stream.  check_no_stray_sys cannot see it either -- that
+  # one reads only the text OUTSIDE the inline-asm markers, and this op is inside
+  # them.  So the hole was one-sided and had exactly one shape: an EXTRA model op
+  # at the top of a het kernel, compared against nothing.
+  printf '\n[11] a model op emitted BEFORE the first rendezvous barrier must FAIL(1)\n'
+  local A12T=MP-cg-sys-acqrel-2s
+  local A12L="$HET_DIR/$A12T.litmus" a12="$sc/a12" a12cpu
+  mkdir -p "$a12"
+  litmus7 -set-libdir litmus/libdir -o "$a12" "$A12L" >/dev/null 2>&1
+  a12cpu="$a12/$A12T/${A12T}_cpu.c"
+  nvcc -std=c++17 -arch=sm_90 --ptx -o "$a12/clean.ptx" "$a12/$A12T/$A12T.cu" >/dev/null 2>&1
+  if [ ! -s "$a12/clean.ptx" ] || [ ! -s "$a12cpu" ]; then
+    echo "  *** could not emit/compile the het harness for $A12T"
+    fails=$((fails+1))
+  else
+    python3 "$CHECK" "$A12L" --ptx "$a12/clean.ptx" --cpu-c "$a12cpu" -q >/dev/null 2>&1; rc=$?
+    _expect "pre-barrier control (clean het PTX)" 0 "$rc" || fails=$((fails+1))
+
+    # A rogue `st.relaxed.sys' in its own inline-asm block spliced ahead of the
+    # first `// begin inline asm' -- i.e. in front of lane 0's fetch_add anchor.
+    # A store is deliberate: it is not an atom/red at system scope, so it cannot
+    # become an anchor itself and move the segmentation, it can only land outside
+    # it.  Its own path and its own exit status, as in section [6].
+    python3 - "$a12/clean.ptx" "$a12/pre.ptx" <<'PY'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+out, done = [], False
+for l in open(src).read().splitlines():
+    if not done and l.strip().startswith('// begin inline asm'):
+        out += ['\t// begin inline asm',
+                '\tst.relaxed.sys.b32 [%rd116],%r193;',
+                '\t// end inline asm']
+        done = True
+    out.append(l)
+open(dst, 'w').write("\n".join(out) + "\n")
+sys.exit(0 if done else 1)
+PY
+    rc=$?
+    if [ "$rc" -ne 0 ] || [ ! -s "$a12/pre.ptx" ] \
+       || cmp -s "$a12/clean.ptx" "$a12/pre.ptx"; then
+      printf '  *** VACUOUS BITE: injection changed nothing    [pre-barrier model op]\n'
+      fails=$((fails+1))
+    else
+      out="$(python3 "$CHECK" "$A12L" --ptx "$a12/pre.ptx" --cpu-c "$a12cpu" 2>&1)"; rc=$?
+      _expect "a model op ahead of lane 0's rendezvous" 1 "$rc" || fails=$((fails+1))
+      # And the REASON, aggregated separately: an injected op that broke the
+      # ordered comparison instead would be a different check firing, and this
+      # section would report OK for a hole still open.
+      if printf '%s\n' "$out" | grep -qF 'BEFORE the first rendezvous barrier'; then
+        printf '%s\n' "$out" | grep -F 'BEFORE the first rendezvous barrier' | head -1
+      else
+        printf '  *** WRONG REASON: not the pre-barrier failure    [pre-barrier model op]\n'
+        printf '%s\n' "$out" | grep -E 'FAIL|RESULT' | head -2
+        fails=$((fails+1))
+      fi
+    fi
+  fi
+
+  # =========================================================================
+  # [12] the device tag on a het proc header is not guessable
+  # =========================================================================
+  # An untagged column used to default to "gpu".  On a gpu-only LISA test that is
+  # right by construction -- one device -- but on a Het test it is a guess, and
+  # the dangerous case is the guess that happens to be CORRECT: an untagged GPU
+  # column parsed, compared and PASSED, so the tag that decides which ISA a column
+  # is checked against was not being read at all.  It now hard-fails (exit 2).
+  # Both arms read the message, because exit 2 alone does not separate the fix
+  # from the bug: stripping the CPU tag hard-failed before it too, but as
+  # `unrecognized GPU cell 'MOV W0,#1'' -- the right exit for the wrong reason.
+  printf '\n[12] a het proc header with NO device tag must HARD-FAIL(2)\n'
+  local DVT=MP-cg-sys-acqrel-2s
+  local dt="$sc/dt" dtcpu
+  rm -rf "$dt"; mkdir -p "$dt"
+  litmus7 -set-libdir litmus/libdir -o "$dt" "$HET_DIR/$DVT.litmus" >/dev/null 2>&1
+  dtcpu="$dt/$DVT/${DVT}_cpu.c"
+  nvcc -std=c++17 -arch=sm_90 --ptx -o "$dt/clean.ptx" "$dt/$DVT/$DVT.cu" >/dev/null 2>&1
+  # The corpus is copied whole, as in [5b](ii): load_control_map reads
+  # control-map.csv beside the .litmus and het_instances then opens the mutant and
+  # the canary beside it, so a lone file would fail on a missing co-run instance
+  # rather than on the tag -- a bite that never reaches the parser it is aimed at.
+  cp -r "$HET_DIR" "$dt/corpus"
+  if [ ! -s "$dt/clean.ptx" ] || [ ! -s "$dtcpu" ] || [ ! -s "$dt/corpus/$DVT.litmus" ]; then
+    echo "  *** could not emit/compile the het harness (or copy the corpus) for $DVT"
+    fails=$((fails+1))
+  else
+    python3 "$CHECK" "$dt/corpus/$DVT.litmus" --ptx "$dt/clean.ptx" --cpu-c "$dtcpu" \
+      -q >/dev/null 2>&1; rc=$?
+    _expect "device-tag control (corpus copy, tags intact)" 0 "$rc" || fails=$((fails+1))
+
+    _dtbite() { # label  sed-expr
+      local lbl="$1" expr="$2" rc out
+      cp "$HET_DIR/$DVT.litmus" "$dt/corpus/$DVT.litmus"
+      sed -i "$expr" "$dt/corpus/$DVT.litmus"
+      if cmp -s "$HET_DIR/$DVT.litmus" "$dt/corpus/$DVT.litmus"; then
+        printf '  *** VACUOUS BITE: injection changed nothing    [%s]\n' "$lbl"
+        return 1
+      fi
+      out="$(python3 "$CHECK" "$dt/corpus/$DVT.litmus" --ptx "$dt/clean.ptx" \
+             --cpu-c "$dtcpu" 2>&1)"; rc=$?
+      local bad=0
+      _expect "$lbl" 2 "$rc" || bad=1
+      if printf '%s\n' "$out" | grep -qF 'carries NO device tag'; then
+        printf '%s\n' "$out" | grep -F 'carries NO device tag' | head -1
+      else
+        printf '  *** WRONG REASON: not the untagged-column hard-fail    [%s]\n' "$lbl"
+        printf '%s\n' "$out" | tail -1
+        bad=1
+      fi
+      return "$bad"
+    }
+    _dtbite "P1's :gpu tag STRIPPED (the old default guessed this one RIGHT)" \
+            's/P1:gpu/P1    /' || fails=$((fails+1))
+    _dtbite "P0's :cpu tag STRIPPED (a CPU column read as a GPU one)" \
+            's/P0:cpu/P0    /' || fails=$((fails+1))
+
+    # ...and the rule is HET-scoped, not a blanket ban: the gpu-only corpus is
+    # untagged by construction and must still parse.  Asserted against the same
+    # clean control section [0] built, after confirming $T really is untagged --
+    # on a tagged test this arm would pass for free.
+    if grep -qE '^[[:space:]]*P[0-9]+:' "$L"; then
+      echo "  *** $T's proc header IS tagged -- the untagged-gpu-only arm is vacuous"
+      fails=$((fails+1))
+    else
+      python3 "$CHECK" "$L" --ptx "$sc/clean.ptx" -q >/dev/null 2>&1; rc=$?
+      _expect "an UNTAGGED gpu-only header still parses (the rule is het-scoped)" \
+              0 "$rc" || fails=$((fails+1))
+    fi
+    rm -rf "$dt/corpus"
+  fi
+
   printf '\n'
   if [ "$fails" -eq 0 ]; then
     echo "SELFTEST OK"
     return 0
   fi
   echo "SELFTEST FAILED: $fails control(s) did not behave as expected"
+  return 1
+}
+
+# ---- one liveness sweep: run a checker over its reps and tally --------------
+# Shared by the two reports below, which are the same loop: run CHECKER once per
+# rep, count nonzero exits, and print an OK line naming the reps that ran (so a
+# shrunken rep list is visible) or a failure line counting them.  Only the reps,
+# the checker and the two label strings differ -- and the rep-selection rationale
+# stays at each call site, where it is the thing worth reading.
+#   $1 banner (printed between `===== '), $2 tag, $3 what-failed, $4 checker,
+#   $5.. the reps.
+_liveness_report() {
+  local banner="$1" tag="$2" what="$3" checker="$4"
+  shift 4
+  local reps="$*"
+  local fails=0 rc t
+  printf '\n===== %s =====\n' "$banner"
+  for t in $reps; do
+    printf '\n-- %s --\n' "$t"
+    python3 "$REPO/hetlitmus/verify/$checker" "$HET_DIR/$t.litmus"; rc=$?
+    [ "$rc" -ne 0 ] && fails=$((fails+1))
+  done
+  printf '\n'
+  if [ "$fails" -eq 0 ]; then
+    echo "$tag OK (${reps// /, })"
+    return 0
+  fi
+  echo "$tag FAILED: $fails rep(s) $what"
   return 1
 }
 
@@ -701,21 +967,9 @@ open(os.environ["OUT"], "w").write(s[:i] + nb + s[j:])' cpu || fails=$((fails+1)
 #   S-cg-sys-fence        1 GPU test lane + the observer lane (which must NOT spin)
 #   IRIW-gcgc-sys-fence   2 GPU test lanes (the shape where the spin has partners)
 stress_report() {
-  local reps="MP-cg-sys-acqrel-2s S-cg-sys-fence IRIW-gcgc-sys-fence"
-  local fails=0 rc t
-  printf '\n===== STRESS LIVENESS: is the B4 layer actually in the PTX? =====\n'
-  for t in $reps; do
-    printf '\n-- %s --\n' "$t"
-    python3 "$REPO/hetlitmus/verify/stresscheck.py" "$HET_DIR/$t.litmus"; rc=$?
-    [ "$rc" -ne 0 ] && fails=$((fails+1))
-  done
-  printf '\n'
-  if [ "$fails" -eq 0 ]; then
-    echo "STRESS OK (${reps// /, })"
-    return 0
-  fi
-  echo "STRESS FAILED: $fails rep(s) carry a dead stress layer"
-  return 1
+  _liveness_report "STRESS LIVENESS: is the B4 layer actually in the PTX?" \
+    STRESS "carry a dead stress layer" stresscheck.py \
+    MP-cg-sys-acqrel-2s S-cg-sys-fence IRIW-gcgc-sys-fence
 }
 
 # ---- CPU + interconnect stress liveness (see cpustresscheck.py) -------------
@@ -733,21 +987,9 @@ stress_report() {
 #                         is where injecting stress could corrupt the hypothesis
 #   S-cg-sys-fence        has the observer thread (pinned, but NOT preloaded)
 cpustress_report() {
-  local reps="MP-cg-sys-acqrel-2s S-cg-sys-fence"
-  local fails=0 rc t
-  printf '\n===== CPU + INTERCONNECT STRESS LIVENESS: does the B5 layer run? =====\n'
-  for t in $reps; do
-    printf '\n-- %s --\n' "$t"
-    python3 "$REPO/hetlitmus/verify/cpustresscheck.py" "$HET_DIR/$t.litmus"; rc=$?
-    [ "$rc" -ne 0 ] && fails=$((fails+1))
-  done
-  printf '\n'
-  if [ "$fails" -eq 0 ]; then
-    echo "CPUSTRESS OK (${reps// /, })"
-    return 0
-  fi
-  echo "CPUSTRESS FAILED: $fails rep(s) carry a dead CPU/interconnect stress layer"
-  return 1
+  _liveness_report "CPU + INTERCONNECT STRESS LIVENESS: does the B5 layer run?" \
+    CPUSTRESS "carry a dead CPU/interconnect stress layer" cpustresscheck.py \
+    MP-cg-sys-acqrel-2s S-cg-sys-fence
 }
 
 # ---------------------------------------------------------------------------
