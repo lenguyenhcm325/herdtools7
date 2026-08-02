@@ -995,7 +995,10 @@ hetlitmus-promote: | build
 	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/het/generate.sh
 	bash hetlitmus/tests/het/build-nvidia-oracle.sh
 	bash hetlitmus/tests/het/build-amd-oracle.sh
-	python3 hetlitmus/verify/controlmap.py --lattice x86 --emit > hetlitmus/tests/het/control-map-amd.csv
+	# atomic: a failed --emit must not truncate the committed map (same reason
+	# build-amd-oracle.sh writes to a temp file and renames -- P2a 2026-08-02)
+	python3 hetlitmus/verify/controlmap.py --lattice x86 --emit > hetlitmus/tests/het/.control-map-amd.csv.new \
+	  && mv -f hetlitmus/tests/het/.control-map-amd.csv.new hetlitmus/tests/het/control-map-amd.csv
 	dune test hetlitmus/tests/cram --auto-promote
 	@ echo "hetlitmus-promote: corpora regenerated + cram goldens promoted (NOT committed)."
 	@ echo "hetlitmus-promote: review 'git diff' then commit yourself."
