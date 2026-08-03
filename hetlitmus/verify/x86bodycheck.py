@@ -47,7 +47,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 GEN_X86 = os.path.join(HET_DIR, "generate-x86.sh")
-CONTROL_MAP = os.path.join(HET_DIR, "control-map.csv")
+# P2d (2026-08-03) wired the x86 lane to its OWN lattice: hetCpuFront.X86_64 names
+# control-map-amd.csv, and generate-x86.sh re-keys it (and expected-amd.csv) onto
+# the -x86_64 names inside the generated corpus.  So this gate reads the map the
+# emitter reads.  Until then it built a THROWAWAY x86-keyed map out of
+# control-map.csv (the AArch64 lattice) so that the co-run path was exercised at
+# all; that stand-in is gone, and with it the risk of a gate checking a
+# configuration nothing ships.
+CONTROL_MAP = os.path.join(HET_DIR, "control-map-amd.csv")
 EMIT_ALL = os.path.join(HERE, "emit-all.sh")
 LITMUS7 = os.path.join(ROOT, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(ROOT, "litmus", "libdir")
@@ -83,15 +90,23 @@ N_X86_STORES = 608
 N_X86_LOADS = 579
 
 # P7's probe set: the control-map rows that name a mu(T), hence the harnesses
-# that co-run three instances.  50 rows x 3 bodies (T, mu, canary), all three at
-# the SAME proc index -- which is exactly why keying bodies by proc alone lost
-# two of every three.
-N_CORUN_TESTS = 50
-N_CORUN_BODIES = 150
+# that co-run three instances (T, mu, canary), all three at the SAME proc index
+# -- which is exactly why keying bodies by proc alone lost two of every three.
+# MEASURED on control-map-amd.csv: 130 of the 146 Disallowed rows name a mu; the
+# other 16 carry the `none' sentinel (no Layer-A mutant EXISTS for them) and are
+# canary-only BY DERIVATION, so they are not part of this probe set.  It was 50 x
+# 3 = 150 while the gate read the AArch64 map.
+N_CORUN_TESTS = 130
+N_CORUN_BODIES = 508
 
 # Representative harness for the machine-code phase: its x86 CPU proc carries a
 # store, a fence AND a load, so one objdump covers the whole vocabulary.
+# On the AMD lattice it is Disallowed with mu(T) = SB-cg-sys-fence, so it emits
+# THREE instances and its bodies are prefixed (het_run_t_P0, not het_run_P0).
+# That is not a downgrade of the phase -- co-run is the majority case -- but the
+# symbol has to be looked up, not assumed; see MC_SYMS.
 MC_TEST = "SB-cg-sys-fence-2s-x86_64"
+MC_SYMS = ["het_run_t_P0", "het_run_P0"]
 
 # AArch64 tests P5 re-emits (a store proc, a load proc, a two-sided proc).
 AARCH64_TESTS = ["2+2W-cg-sys-relaxed", "MP-gc-sys-relaxed", "MP-cg-sys-fence-2s"]
@@ -495,7 +510,8 @@ def phase4(tmp, good):
     cpu_c = os.path.join(good[MC_TEST], MC_TEST + "_cpu.c")
     ok, why = objdump_ok(tmp, cpu_c, "P4")
     if ok:
-        print("  %s: het_run_P0 contains store + mfence + load in program order" % MC_TEST)
+        print("  %s: the test's own body contains store + mfence + load in program "
+              "order" % MC_TEST)
     else:
         fail("P4", "%s: %s" % (MC_TEST, why))
 
@@ -513,9 +529,10 @@ def objdump_ok(tmp, cpu_c, phase):
     # follows it -- which is how this extraction first went (wrongly) red.
     parts = re.split(r"^[0-9a-f]+ <[^>]+>:$", r.stdout, flags=re.M)
     names = re.findall(r"^[0-9a-f]+ <([^>]+)>:$", r.stdout, flags=re.M)
-    if "het_run_P0" not in names:
-        return False, "no het_run_P0 in the object (symbols: %r)" % names
-    txt = parts[names.index("het_run_P0") + 1]
+    sym = next((x for x in MC_SYMS if x in names), None)
+    if sym is None:
+        return False, ("none of %r in the object (symbols: %r)" % (MC_SYMS, names))
+    txt = parts[names.index(sym) + 1]
     seq = []
     for l in txt.splitlines():
         ins = l.split("\t")[-1].strip()
@@ -655,31 +672,40 @@ def phase6(tmp, corpus, prov_text=None, live_text=None, litmus7=LITMUS7):
 
 # -------------------------------------------------------------------- P7 co-run
 
-def corun_probe(tmp, corpus):
-    """A scratch corpus + an x86-keyed control map; emit every mu(T) row.
+def n_x86_procs(path):
+    """How many x86_64 CPU columns this .litmus declares (its proc header line)."""
+    for l in open(path):
+        if ":x86_64" in l or ":gpu" in l:
+            return l.count(":x86_64")
+    return 0
 
-    P2d owns the real x86 control map; this builds a THROWAWAY one so the co-run
-    emission path -- three bodies at one proc index -- is exercised today rather
-    than left dormant until P2d turns it on.  Nothing is written into the repo.
+
+def corun_probe(tmp, corpus):
+    """A scratch copy of the generated corpus, and the rows that co-run a mu(T).
+
+    The corpus generate-x86.sh produces ALREADY carries the re-keyed
+    control-map-amd.csv the emitter reads (P2d), so nothing is rewritten here --
+    the probe set is read out of that same file.  Reading the committed map and
+    re-keying it a second way would be a gate checking its own arithmetic.
+    `-', `self' and `none' are sentinels, not names.
     """
     scratch = os.path.join(tmp, "corun-src")
     shutil.rmtree(scratch, ignore_errors=True)
     shutil.copytree(corpus, scratch)
-    rows, out = [], []
-    for l in open(CONTROL_MAP):
+    m = os.path.join(scratch, "control-map-amd.csv")
+    if not os.path.exists(m):
+        fail("P7", "the generated corpus carries no control-map-amd.csv -- the "
+                   "emitter would tag every harness ORACLE_UNSET")
+        return scratch, []
+    rows = []
+    for l in open(m):
         if l.startswith("#") or not l.strip():
-            out.append(l)
             continue
         f = l.rstrip("\n").split(",")
-        if f[0] == "Test":
-            out.append(l)
+        if len(f) < 8 or f[0] == "Test":
             continue
-        rk = lambda x: x if x in ("-", "self") else x + "-x86_64"
-        f[0], f[2], f[5], f[6], f[7] = rk(f[0]), rk(f[2]), rk(f[5]), rk(f[6]), rk(f[7])
-        out.append(",".join(f) + "\n")
-        if f[2] != "-":
+        if f[2] not in ("-", "none", ""):
             rows.append(f[0])
-    open(os.path.join(scratch, "control-map.csv"), "w").writelines(out)
     return scratch, rows
 
 
@@ -687,7 +713,7 @@ def phase7(tmp, corpus, splitter=split_bodies, probe=corun_probe):
     print("== P7  co-run: T, mu(T) and the canary are EACH checked, none dropped ==")
     scratch, rows = probe(tmp, corpus)
     if len(rows) != N_CORUN_TESTS:
-        fail("P7", "control-map.csv names %d mu(T) rows, pinned at %d"
+        fail("P7", "control-map-amd.csv names %d mu(T) rows, pinned at %d"
              % (len(rows), N_CORUN_TESTS))
     out = os.path.join(tmp, "corun-out")
     os.makedirs(out, exist_ok=True)
@@ -708,7 +734,13 @@ def phase7(tmp, corpus, splitter=split_bodies, probe=corun_probe):
             fail("P7", "%s: CO-RUN banner names %r, expected T + mu(T) + canary"
                  % (t, sorted(cm)))
             continue
-        got_prefixes = sorted(r[2] for r in recs)
+        # The three INSTANCES must all be present.  Not one body each: a test with
+        # two x86 CPU procs contributes two bodies per instance, and pinning the
+        # multiset to exactly ["can_","mu_","t_"] reddened every WRC / WRC3 / IRIW
+        # row the moment this gate started reading the AMD lattice (where those
+        # multi-CPU-proc shapes are Disallowed and so co-run at all).  What has to
+        # hold is that no INSTANCE went missing.
+        got_prefixes = sorted(set(r[2] for r in recs))
         if got_prefixes != ["can_", "mu_", "t_"]:
             fail("P7", "%s: the host arm carries bodies %r, but the banner names "
                        "three instances -- a body was dropped"
@@ -718,6 +750,29 @@ def phase7(tmp, corpus, splitter=split_bodies, probe=corun_probe):
         c, _own = check_fidelity("P7", scratch, t, recs, cm)
         compared += c
         check_liveness("P7", t, recs)
+    # DERIVED as well as pinned: the number of co-run bodies is the sum, over the
+    # probe set, of the x86 CPU procs of T, of mu(T) and of the canary.  A pin on
+    # its own goes stale silently the next time the lattice moves; a derivation on
+    # its own cannot catch a corpus and a map that moved together.
+    want = 0
+    for t in sorted(rows):
+        f = os.path.join(scratch, t + ".litmus")
+        if not os.path.exists(f):
+            continue
+        mu = can = None
+        for l in open(os.path.join(scratch, "control-map-amd.csv")):
+            g = l.rstrip("\n").split(",")
+            if len(g) >= 8 and g[0] == t:
+                mu, can = g[2], g[7]
+                break
+        for nm in (t, mu, can):
+            if nm and nm not in ("-", "none", "self"):
+                q = os.path.join(scratch, nm + ".litmus")
+                if os.path.exists(q):
+                    want += n_x86_procs(q)
+    if bodies != want:
+        fail("P7", "found %d co-run bodies, the corpus' own columns say %d"
+             % (bodies, want))
     if bodies != N_CORUN_BODIES:
         fail("P7", "found %d co-run bodies, pinned at %d" % (bodies, N_CORUN_BODIES))
     if compared != bodies:
