@@ -3,18 +3,23 @@
 #
 #   usage:  ./generate-d10.sh OUTDIR
 #
-# WHAT THIS IS FOR (env-research/PORT2-R2-amd-oracle.md sect 7.D10, and
-# PORT2-PHASE2-plan.md:71, which calls it "a first-class campaign item"):
+# WHAT THIS IS FOR: env-research/PORT2-R2-amd-oracle.md sect 7, row D10, and
+# PORT2-PHASE2-plan.md:71, which calls it "a first-class campaign item".
 #
-#   "Run the four artifact CPU-Only shapes as pure x86 tests on the MI300A host,
-#    ON THE ACTUAL SHARED ALLOCATION. ... SB/R must be observed (the store buffer
-#    is live -- this doubles as the WB probe of sect 8 P1, since an SB
-#    observation rules out UC); MP/LB/2+2W/IRIW must never be observed.  Wire the
-#    disambiguation into verdict reporting BEFORE the first run: if a CPU-only
-#    Disallowed shape is ever observed, the finding is 'x86-TSO does not describe
-#    this implementation' -- [CACM] sect 7's own invited counterexample -- NOT a
-#    refutation of the CMCM.  Without this, a Zen-4 conformance failure is
-#    mis-reported as a compound-model refutation."
+# D10 is a TABLE ROW, so what follows is a summary of it and NOT a quotation --
+# its sentences live in two different cells and stitching them into one block
+# quote would misattribute a splice.  Read the row itself for the wording.
+#   * run the four artifact CPU-Only shapes as pure x86 tests on the MI300A host,
+#     on the ACTUAL SHARED ALLOCATION  (cell 2);
+#   * SB and R must be observed -- the store buffer is live -- which doubles as
+#     the WB probe of sect 8 P1, since an SB observation rules out UC; MP, LB,
+#     2+2W and IRIW must never be observed  (cell 4);
+#   * wire the disambiguation into verdict reporting BEFORE the first run: an
+#     observed CPU-only Disallowed shape is a finding about x86-TSO not
+#     describing this implementation -- [CACM] sect 7's own invited
+#     counterexample -- and NOT a refutation of the CMCM.  Without it, a Zen-4
+#     conformance failure is mis-reported as a compound-model refutation
+#     (cell 4).
 #
 # It is generated as a HET test with every proc tagged `cpu' -- NOT as an
 # upstream X86_64 litmus test -- and that is the whole point.  A plain litmus7
@@ -36,6 +41,33 @@
 # the four shapes it covers, the PLDI'23 artifact's own expected.csv:
 #     CPU-Only,MP-sys,Disallowed   CPU-Only,LB-sys,Disallowed
 #     CPU-Only,SB-sys,Allowed      CPU-Only,IRIW-sys,Disallowed
+# OPEN, AND IT AFFECTS EXACTLY ONE ROW OF THIS SET -- read before using 2+2W.
+# MEASURED 2026-08-03 on the dev box (12th Gen Intel i5-12500H + RTX 3060,
+# HET_ALLOC=pinned): SB and R fired (the WB probe passed, so the allocation is
+# not UC), MP / LB / IRIW were not observed in 10 runs each -- exactly what
+# x86-TSO predicts -- and 2+2W-cpuonly reported MISMATCH-CONFIRMED, 10 runs of
+# 10, with the co edge recovered by the x86-side observer (obs_ws_via_cpu=1).
+#
+# That is NOT reported here as an x86-TSO violation, and it must not be, because
+# 2+2W is the only STORE-ONLY shape in this set: it has no reader, so its cycle
+# is reconstructed from an observer rather than from a load, and the emitted
+# reconstruction has a known blind spot.  In the emitted scan the per-store tag
+# is K*(_n+1)+mu, and the ws test reads `_t % T_K_TAG' -- the store id -- and
+# NEVER `_t / T_K_TAG', the iteration (verified over the emitted .cu: four
+# occurrences of `% T_K_TAG' inside the four t__ws_* scans, zero of
+# `/ T_K_TAG'; the quotient is used only by the observer-uniqueness blocks).
+# Under the perpetual loop the observer therefore matches "mu_a seen before
+# mu_b" ACROSS iterations, where the coherence order it is meant to witness is
+# only defined WITHIN one.  D10 is the first time this detector has been aimed
+# at a cycle whose oracle FORBIDS it -- in the het corpus every 2+2W row is
+# Allowed, so over-reporting there looks like success -- so the sighting is
+# equally consistent with the detector over-reporting and with a real property
+# of the pinned allocation.
+#
+# It does not touch the four ARTIFACT shapes (MP, LB, SB, IRIW): each has a real
+# x86 reader, so its cycle closes through a load and none of this applies.  Use
+# those four; treat the 2+2W row as UNRESOLVED until the store-only detector is
+# re-examined (B3 / DR1 territory, not this script's).
 set -e
 cd "$(dirname "$0")"
 HETDIR="$(pwd)"

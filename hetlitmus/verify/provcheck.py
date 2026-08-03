@@ -23,7 +23,9 @@ TWO DEFECTS, both MEASURED on 2026-08-03 before this landed.
        grade -- a mismatch on a full-strength (artifact) Disallowed row is
        reported as a candidate CMCM refutation, while a mismatch on a declared
        single-chain row (derived, or decision per 5.4.1) must be reported as
-       indicting THIS ORACLE ROW first, never the CMCM."
+       indicting this oracle row first, never the CMCM."
+      (verbatim from memo 9.2, markdown emphasis and section marks stripped,
+       nothing else changed.)
 
 THE DELIVERABLE IS THE SENTENCE, NOT THE ENUM (the B6c lesson, and this gate is
 fixing that very class of defect, so phases 4 and 5 read the PRINTOUT of the real

@@ -162,7 +162,9 @@ typedef enum {
  *    grade -- a mismatch on a full-strength (artifact) Disallowed row is
  *    reported as a candidate CMCM refutation, while a mismatch on a declared
  *    single-chain row (derived, or decision per 5.4.1) must be reported as
- *    indicting THIS ORACLE ROW first, never the CMCM."
+ *    indicting this oracle row first, never the CMCM."
+ *   (verbatim from memo 9.2, with its markdown emphasis and section marks
+ *    stripped and nothing else changed.)
  *
  * PROV_UNSET is 0 for the same reason ORACLE_UNSET is: het_obs_record is
  * memset(0), so the value an emitter that never learned the grade produces must
@@ -2109,16 +2111,33 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
          number), and each usable run supplies N_eff of them, so the RUN budget is
          need/N_eff -- N_eff-fold fewer runs for the same claim. */
       if (need < 0.0)
+        /* TARGET-AGNOSTIC BY CONSTRUCTION, and it has to be SAID so.  Everything
+           this layer computes -- mu_upper, F_win, tau_w, N_eff, F_cell, the KS
+           precheck -- is a function of the record counts and of HET_NWIN /
+           HET_TAU_HOT / HET_R_POISSON / HET_TAU_MIN_SAMPLES, and not one of those
+           is a vendor constant, so the ARITHMETIC transfers to the AMD lane
+           unchanged (MEASURED: no vendor name occurs in any formula of this
+           layer).  This SENTENCE did not: it named GH200 and Bagchi's rate, so an
+           MI300A run was told to go and derive its p_min on somebody else's
+           machine.  It now names the target it was tagged for, and the Bagchi
+           disclaimer stays because on the AMD lane it is STRONGER, not weaker --
+           PORT2-reading-list.md establishes that no AMD heterogeneous
+           litmus-testing prior work exists at all, so there is not even a
+           GPU-only number to be tempted by. */
         fprintf(_ch,
           "  budget: NOT SIZED.  p_min -- the per-effective-sample rate of the "
           "hardest het behaviour we can actually observe -- is HARDWARE-ONLY and "
           "unset (HET_P_MIN).\n"
           "          It is NOT Bagchi's ~0.2%%: that is the GPU-only INTER-CTA rate "
           "(their 5.1/4.1), which fires with no CPU participation and never crosses "
-          "C2C.  There is no published numeric het hit-rate.\n"
-          "          Derive it on GH200 from the ALLOWED-OBSERVED rows (they ARE the "
-          "observed-rate population, at THIS HET_NWIN) and re-run with "
-          "-DHET_P_MIN=<rate>.\n");
+          "the interconnect.  There is no published numeric het hit-rate for ANY "
+          "target, and none whatsoever for AMD.\n"
+          "          Derive it ON THE TARGET THIS HARNESS WAS TAGGED FOR (%s) from "
+          "the ALLOWED-OBSERVED rows (they ARE the observed-rate population, at THIS "
+          "HET_NWIN) and re-run with -DHET_P_MIN=<rate>.  A p_min carried over from "
+          "another target is not a conservative default, it is a different "
+          "machine's number.\n",
+          _s->oracle_source ? _s->oracle_source : "(oracle source unrecorded)");
       else if ((double)_s->R_usable * _s->N_eff < need)
         fprintf(_ch,
           "  budget: UNDER-RUN.  %d usable run(s) x N_eff %.1f = %.0f effective "
