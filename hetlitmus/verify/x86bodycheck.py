@@ -604,51 +604,46 @@ exists (1:r0=%s)
 """
 
 
-def litmus_on(tmp, label, text):
-    """Run litmus7 on [text]; return (exit, stderr, n harness dirs)."""
+def litmus_on(tmp, label, text, litmus7=LITMUS7):
+    """Run litmus7 on [text]; return (exit, output, harness dirs left behind)."""
     src = os.path.join(tmp, label + ".litmus")
     open(src, "w").write(text)
     out = os.path.join(tmp, "out-" + label)
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(out)
-    r = run([LITMUS7, "-set-libdir", LIBDIR, "-o", out, src])
+    r = run([litmus7, "-set-libdir", LIBDIR, "-o", out, src])
     left = [d for d in os.listdir(out) if os.path.isdir(os.path.join(out, d))]
     return r.returncode, (r.stdout + r.stderr), left
 
 
-def phase6(tmp, corpus, prov_text=None, live_text=None):
+def phase6(tmp, corpus, prov_text=None, live_text=None, litmus7=LITMUS7):
     print("== P6  fail-closed: a refusal exits 3 and emits nothing ==")
     src = os.path.join(corpus, "MP-gc-sys-relaxed-x86_64.litmus")
-    bad = os.path.join(tmp, "REFUSEME.litmus")
     txt = open(src).read()
     # name a register no proc loads into: the condition can bind no read buffer
     bent = txt.replace("1:rax=", "1:rcx=")
     if bent == txt:
         fail("P6", "could not build a refusable test from %s" % src)
         return
-    open(bad, "w").write(bent)
-    out = os.path.join(tmp, "refuse")
-    os.makedirs(out, exist_ok=True)
-    r = run([LITMUS7, "-set-libdir", LIBDIR, "-o", out, bad])
-    if r.returncode != 3:
-        fail("P6", "litmus7 exited %d on a test it cannot emit, expected 3" % r.returncode)
-    if "HetLitmus REFUSED" not in r.stderr:
-        fail("P6", "no `HetLitmus REFUSED' marker on stderr; got %r" % r.stderr.strip()[-200:])
-    left = [d for d in os.listdir(out) if os.path.isdir(os.path.join(out, d))]
+    st, blob, left = litmus_on(tmp, "REFUSEME", bent, litmus7)
+    if st != 3:
+        fail("P6", "litmus7 exited %d on a test it cannot emit, expected 3" % st)
+    if "HetLitmus REFUSED" not in blob:
+        fail("P6", "no `HetLitmus REFUSED' marker on stderr; got %r" % blob.strip()[-200:])
     if left:
         fail("P6", "a refused test left harness directories behind: %r" % left)
     print("  litmus7 exit=%d, marker printed, %d directories left behind"
-          % (r.returncode, len(left)))
+          % (st, len(left)))
 
     # --- value provenance, BOTH ways -----------------------------------------
-    st, blob, dirs = litmus_on(tmp, "PROV", prov_text or (PROBE_PROV % 5))
+    st, blob, dirs = litmus_on(tmp, "PROV", prov_text or (PROBE_PROV % 5), litmus7)
     if st != 3 or "no store writes 5 to y" not in blob:
         fail("P6", "a store whose value a load killed still bound `1:r0=5': "
                    "exit=%d dirs=%r, litmus7 said %r"
              % (st, dirs, blob.strip().splitlines()[-1:]))
     else:
         print("  value provenance: the killed-immediate store refuses (exit 3)")
-    st, blob, dirs = litmus_on(tmp, "PROVLIVE", live_text or (PROBE_PROV_LIVE % 5))
+    st, blob, dirs = litmus_on(tmp, "PROVLIVE", live_text or (PROBE_PROV_LIVE % 5), litmus7)
     if st != 0 or len(dirs) != 1:
         fail("P6", "the immediate-store twin did NOT emit, so the refusal above "
                    "proves nothing about provenance: exit=%d dirs=%r said %r"
@@ -747,6 +742,29 @@ VICTIM=%s
 outdir=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && outdir="$a"; prev="$a"; done
 [ -n "$outdir" ] && rm -f "$outdir/$VICTIM/${VICTIM}_cpu.c"
+exit $st
+"""
+
+# Two stand-in litmus7 binaries for P6's OWN three assertions (exit 3 / marker /
+# nothing left behind).  Neither can be reached by doctoring a file: they are the
+# regression "HetArch.refused stopped refusing" and "a refusal left a partial
+# harness", so the bite has to substitute the tool.
+STUB_SWALLOW = r"""#!/usr/bin/env bash
+# The PRE-P2b behaviour, reproduced: emit what you can, swallow the failure,
+# print nothing on stderr, exit 0.  P6's exit-code AND marker checks must fire.
+REAL=%s
+"$REAL" "$@" >/dev/null 2>&1
+exit 0
+"""
+
+STUB_LITTER = r"""#!/usr/bin/env bash
+# Refuses correctly (exit 3 + marker) but leaves a half-built harness behind.
+# ONLY P6's "directories left behind" check can see this.
+REAL=%s
+out=""; prev=""
+for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
+"$REAL" "$@" ; st=$?
+if [ "$st" -ne 0 ] && [ -n "$out" ]; then mkdir -p "$out/LEFTOVER"; fi
 exit $st
 """
 
@@ -926,6 +944,29 @@ def bite(tmp, corpus, good):
         else:
             print("  bite P4/nofence    -> %s" % why)
 
+    # --- P4: CORRUPTION -- the fence moved BEFORE the store -------------------
+    # Nothing is missing; only the order is wrong.  A phase that merely counted
+    # mnemonics would still pass, which is why P4 compares a SEQUENCE.
+    reord = os.path.join(tmp, "reorder")
+    shutil.rmtree(reord, ignore_errors=True)
+    shutil.copytree(good[MC_TEST], os.path.join(reord, MC_TEST))
+    f = os.path.join(reord, MC_TEST, MC_TEST + "_cpu.c")
+    t = open(f).read()
+    mst = re.search(r'^    "movq %\[_v0\],\(%\[\w+\]\)\\n"\n', t, flags=re.M)
+    if mst is None or '    "mfence\\n"\n' not in t:
+        print("  *** VACUOUS BITE [P4/reorder]: no store+mfence pair to swap")
+        ok = False
+    else:
+        t2 = t.replace('    "mfence\\n"\n', "", 1)
+        t2 = t2.replace(mst.group(0), '    "mfence\\n"\n' + mst.group(0), 1)
+        open(f, "w").write(t2)
+        good2, why = objdump_ok(tmp, f, "P4")
+        if good2:
+            print("  *** DID NOT BITE [P4/reorder]: a reordered object passed P4")
+            ok = False
+        else:
+            print("  bite P4/reorder    -> %s" % why)
+
     # --- P5: CORRUPTION -- an x86 mnemonic inside an aarch64 harness ----------
     a64 = emit_aarch64(os.path.join(tmp, "a64bite"))
     t0 = AARCH64_TESTS[0]
@@ -944,6 +985,22 @@ def bite(tmp, corpus, good):
     os.remove(os.path.join(a64b, t0, t0 + "_cpu.c"))
     ok &= expect_red("P5/omit", lambda: phase5(tmp, out=a64b),
                      "did not emit an aarch64 CPU file")
+
+    # --- P6: its OWN three assertions, via a stand-in litmus7 ----------------
+    def stub(label, script):
+        p = os.path.join(tmp, "l7-" + label)
+        open(p, "w").write(script)
+        os.chmod(p, 0o755)
+        return p
+
+    ok &= expect_red("P6/swallow",
+                     lambda: phase6(tmp, corpus,
+                                    litmus7=stub("swallow", STUB_SWALLOW % LITMUS7)),
+                     "expected 3")
+    ok &= expect_red("P6/litter",
+                     lambda: phase6(tmp, corpus,
+                                    litmus7=stub("litter", STUB_LITTER % LITMUS7)),
+                     "left harness directories behind")
 
     # --- P6: value provenance, both directions -------------------------------
     # Feed each probe the OTHER's expectation: the refusal check must redden on
