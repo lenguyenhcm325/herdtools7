@@ -772,7 +772,11 @@ hetlitmus-amd-oracle:
 ###                (probe + kernel + recorded asm); amd-gcn3.cat is cited for
 ###                exactly two of them and both are DECIDED by running it
 ###   Phase 3 G5   the CSV read back: 411 rows, 258/146/7, the ten-class census
-###                and the provenance census 15/41/46/309 -- asserted not printed
+###                and the provenance census 15/32/46/318 -- asserted not printed
+###                (decision/artifact/herd7-checked/derived; the pin lives at
+###                amdordercheck.py:86.  This comment said 15/41/46/309 until
+###                2026-08-03 -- the pre-D24 numbers, i.e. exactly the kind of
+###                number nobody re-measures, cf. the --bite note below.)
 ###   Phase 4 G6   x86-image collapse: 45 classes, 321 distinct programs, 0
 ###                inconsistent (the harness runs the identical x86 program)
 ###   Phase 5 G7   the T_x86 rendering under herd7: a NECESSARY condition on the
@@ -1005,7 +1009,8 @@ HETD10OUT := $(CURDIR)/hetlitmus/tests/het/d10-out
 ### REFUTATION" to "UNGRADED".  Phase 6 machine-checks the D10 CPU-only oracle
 ### against herd7 + herd/libdir/x86tso.cat and against the PLDI'23 artifact's own
 ### four CPU-Only rows.  Every phase counts its assertions and fails if it made
-### none; --bite injects 18 times, on corruption AND on omission.
+### none; --bite injects 31 times, on corruption AND on omission (MEASURED
+### 2026-08-03: the count grew 18 -> 31 with M1-M6 and this comment did not).
 ### Needs no GPU (gcc + the built litmus7/herd7/diyone7 only).
 hetlitmus-prov: | build
 	@ echo
