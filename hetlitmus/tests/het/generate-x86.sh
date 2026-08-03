@@ -93,7 +93,17 @@ for shape in $SHAPE_ORDER; do
 done
 
 # --- (D) matched two-sided ----------------------------------------------------
-d=0
+# Same loop as generate.sh section (D), INCLUDING its degenerate two-sided drop
+# (generate.sh:127-133).  Without that drop this loop emitted one rendering more
+# than the corpus has tests: IRIW-gcgc-sys-fence-2s-x86_64, byte-identical below
+# the 2-line header to IRIW-gcgc-sys-fence-x86_64 -- both CPU procs of the
+# gcgc cut are single writers, so the two-sided annotation has nothing to attach
+# to.  generate.sh drops exactly that one on the aarch64 lattice, which is why
+# tests/het has an IRIW-gcgc-sys-fence.litmus and no -2s sibling.  Dropping it
+# here too makes the x86 renderings 1:1 with the 411-test corpus (measured:
+# `comm' over the two name sets is empty in both directions), which is what
+# lets the oracle / control map be keyed on the unsuffixed names.
+d=0 dskip=0
 for shape in $SHAPE_ORDER; do
   cyc="${SHAPE_CYCLE[$shape]}"
   for cut in ${SHAPE_HET_CUTS[$shape]}; do
@@ -105,6 +115,13 @@ for shape in $SHAPE_ORDER; do
       gpu_toks=$(render_cycle sys "$order" $cyc)
       "$BIN/hetgen7" $COMMON -cpu-arch x86_64 -devices "$cut" -name "$name" \
         -cpu "$cpu_toks" -gpu "$gpu_toks" > "$OUT/$name.litmus"
+      onesided="$OUT/$shape-$tag-sys-$order-x86_64.litmus"
+      if [ -f "$onesided" ] \
+         && diff -q <(tail -n +3 "$onesided") <(tail -n +3 "$OUT/$name.litmus") >/dev/null; then
+        rm -f "$OUT/$name.litmus"
+        echo "  skip $name (not two-sided: == $shape-$tag-sys-$order-x86_64)"
+        dskip=$((dskip+1)); continue
+      fi
       d=$((d+1))
     done
   done
@@ -132,5 +149,5 @@ for shape in $TWO_SIDED_PAIR_SHAPES; do
 done
 
 n="$(ls "$OUT"/*.litmus | wc -l)"
-echo "generate-x86: (A) $a + (B) $b (skipped $bskip degenerate) + (D) $d + (E) $e = $n files in $OUT"
+echo "generate-x86: (A) $a + (B) $b (skipped $bskip degenerate) + (D) $d (skipped $dskip degenerate) + (E) $e = $n files in $OUT"
 [ "$n" -eq $((a+b+d+e)) ] || { echo "FAIL: $n files on disk but $((a+b+d+e)) counted" >&2; exit 1; }

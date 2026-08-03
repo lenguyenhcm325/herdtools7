@@ -103,9 +103,21 @@ type node =
   | SetImm                        (* mov $imm,%reg: consumed, not emitted *)
 
 let nodes_of ~reg_env instrs =
-  (* last immediate MOV'd into each register, keyed by its 64-bit name *)
+  (* Last immediate MOV'd into each register, keyed by its 64-bit name.  This
+     is a *value* memo, so it must be INVALIDATED by anything that redefines
+     the register -- otherwise `movl $5,%eax ; movl (x),%eax ; movl %eax,(y)'
+     would record the store's value as 5 rather than "unknown", and the
+     (loc,value)->mu recovery map HetEmit builds from [analyze] would decode
+     that store to the wrong mu.  A load's destination is therefore CLEARED,
+     which yields [None] = "value not statically known", the honest answer.
+     (Unreachable from today's corpus -- measured over all 411 x86 renderings
+     the whole instruction vocabulary is {movl $imm,(g), movl (g),%eax,
+     movl (g),%ebx, mfence}, with zero `movl %reg,(g)' -- but the .mli
+     advertises `MOV %r,(g)' as supported, so the arm must be correct, not
+     merely unexercised.) *)
   let imm = Hashtbl.create 8 in
   let set_imm r v = Hashtbl.replace imm (reg_name r) v in
+  let clr_imm r = Hashtbl.remove imm (reg_name r) in
   let get_imm r = Hashtbl.find_opt imm (reg_name r) in
   let node i = match i with
     (* X86_64Parser.mly:147 `I_MOV operand COMMA effaddr' -> I_EFF_OP (I_MOV,
@@ -116,6 +128,7 @@ let nodes_of ~reg_env instrs =
        set_imm r k ; SetImm
     | I_EFF_OP (I_MOV,_,Effaddr_rm64 (Rm64_reg rt),
                 Operand_effaddr (Effaddr_rm64 src)) when is_mem src ->
+       clr_imm rt ;
        Load (global_of_rm ~reg_env src, reg_name rt)
     | I_EFF_OP (I_MOV,_,Effaddr_rm64 dst,Operand_immediate k) when is_mem dst ->
        Store (global_of_rm ~reg_env dst, Some k)

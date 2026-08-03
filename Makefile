@@ -948,16 +948,26 @@ hetlitmus-obs: | build
 ### hetlitmus-x86body: the P2b gate -- is the x86-64 CPU thread of a het
 ### harness REAL?  Until 2026-08-03 hetCpuFront.ml wired HetCpuBody.empty_plan +
 ### emit_stub for X86_64, so an x86 CPU proc emitted a `(void)_n' no-op: the CPU
-### thread tested nothing AND, measured over the 412 x86 renderings, litmus7
-### emitted a harness for 39 and REFUSED 373 (308 could bind no read buffer, 65
-### no mu) -- while EXITING 0.  Six phases: emission coverage, body-vs-column
+### thread tested nothing AND, measured over the 411 x86 renderings, litmus7
+### emitted a harness for 39 and REFUSED 372 (308 could bind no read buffer, 64
+### no mu) -- while EXITING 0.  Seven phases: emission coverage, body-vs-column
 ### fidelity, tag liveness (the B4 lesson -- emitting is not testing), the
-### instructions surviving gcc to the .o, the aarch64 lane unchanged, and the
-### fail-closed refusal (exit 3 + marker + no harness, plus emit-all.sh's two
-### detectors).  --bite injects into every phase on corruption AND on omission.
-### The x86 renderings are generated on demand by tests/het/generate-x86.sh;
-### they are deliberately NOT committed (the oracle is keyed on the AArch64
-### names, corpus-gate.sh pins 411 and 90 of them would be dupcheck duplicates).
+### instructions surviving gcc to the .o, an aarch64 SMOKE, the fail-closed
+### refusal (exit 3 + marker + no harness, plus emit-all.sh's two detectors),
+### and the B6b co-run harnesses (T + mu(T) + canary share a proc index, so
+### each body must be checked against its OWN test).  P2/P3/P7 pin their counts
+### against a total derived from the corpus' own columns, so a phase that
+### compared nothing FAILS instead of passing.  --bite injects into every phase
+### on corruption AND on omission.
+### The x86 renderings are generated on demand by tests/het/generate-x86.sh
+### (411, 1:1 with the corpus); they are deliberately NOT committed (the oracle
+### is keyed on the AArch64 names, corpus-gate.sh pins 411 and ~90 of them would
+### be dupcheck duplicates).
+### NOT covered here: the emitter byte-diff.  What protects the validated NVIDIA
+### lane against an emitter regression is `hetlitmus/verify/emit-all.sh SNAP_x'
+### run at two revisions followed by `diff -r' (~4938 files).  That is a
+### two-revision instrument and cannot be a single-shot target, so it is run by
+### hand for every emitter change; P5 below is only a smoke.
 hetlitmus-x86body: | build
 	@ echo
 	python3 hetlitmus/verify/x86bodycheck.py

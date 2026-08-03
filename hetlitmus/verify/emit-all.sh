@@ -23,11 +23,20 @@
 #
 # FAIL-CLOSED (P2b).  This loop used to be
 #     "$LITMUS7" -o "$OUTDIR/het" "$t" >/dev/null
-# which reported SUCCESS for a test litmus7 REFUSED to emit: litmus7's batch
-# driver caught the emission exception, printed it on the discarded stream and
-# exited 0 (dumpRun.ml:266-281 -> litmus.ml:383-385).  Inert while every
-# committed test emitted; live the moment the x86 CPU lane was wired.  Two
-# INDEPENDENT detectors now stand between a refusal and a green run:
+# and litmus7 itself EXITED 0 on a refusal: its batch driver caught the emission
+# exception, printed it on the discarded stream and returned success
+# (dumpRun.ml:266-281 -> litmus.ml:383-385).  Measured, by replaying the
+# pre-P2b script against stand-in litmus7 binaries:
+#   * a wholly MISSING harness directory WAS caught, but only by the aggregate
+#     census at the bottom -- `emitted: 410 ...' / `FAIL: census mismatch',
+#     exit 1, naming no test and no reason (and the count is not even
+#     proportionate: one broken test also breaks every harness that co-runs it
+#     as mu(T)/canary);
+#   * an INCOMPLETE harness -- directory present, <t>_cpu.c gone -- was NOT
+#     caught: `emitted: 411 het harness dirs', exit 0.  A snapshot with a whole
+#     CPU thread missing reported success.
+# Inert while every committed test emitted; live the moment the x86 CPU lane was
+# wired.  Two INDEPENDENT detectors now stand between a refusal and a green run:
 #   (a) CORRUPTION -- litmus7 exits 3 and prints "HetLitmus REFUSED" (see
 #       HetArch.refused); this script checks the status AND greps the marker,
 #       so neither one alone is load-bearing;
