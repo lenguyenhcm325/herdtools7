@@ -226,6 +226,13 @@ end
          (* (clang triple, -std) to cross-assemble the real CPU asm on a foreign
             dev host; None when the build host already IS this ISA (native gcc) *)
          val cross : (string * string) option
+         (* WHICH ORACLE THIS LANE IS TAGGED FROM (P2d).  The positive-control
+            map (mu(T), the canary and the oracle CLASS) and the oracle CSV (the
+            claim-strength GRADE) are both per-CPU-lattice; see hetCpuFront.ml
+            for why the CPU ISA is the axis that names them. *)
+         val control_map_csv : string  (* control-map.csv | control-map-amd.csv *)
+         val oracle_csv : string       (* expected-nvidia.csv | expected-amd.csv *)
+         val oracle_model : string     (* the Model string every row must carry *)
          (* The tagged-CPU-body hooks -- the ONLY CPU-ISA-specific pieces of the
             het emitter (the AArch64 arm wires HetCpuBody, the x86_64 arm its
             twin HetCpuBodyX86; both produce the same C shape and share
@@ -426,15 +433,39 @@ end
           let tname = splitted.Splitter.name.Name.name in
           let doc = splitted.Splitter.name in
           let nprocs_total = List.length parsed.MiscParser.prog in
+          (* D10 (memo 7.D10): is the CYCLE of the test under study CPU-ONLY?
+             MEASURED from the per-column device tags, never from the name --
+             a name-based rule would silently mis-classify anything renamed.
+             A CPU-only test on the shared allocation is not a compound-model
+             experiment at all: it tests x86-TSO on this silicon, so a sighting
+             of a forbidden outcome indicts x86-TSO (or the memory type of the
+             allocation, memo 8 P1) and NEVER the CMCM.  het_verdict.h owns that
+             sentence; this flag is what lets it be written. *)
+          let cpu_only =
+            parsed.MiscParser.prog <> [] &&
+            List.for_all
+              (fun ((_,annot,_),_) ->
+                match annot with Some ("cpu"::_) -> true | _ -> false)
+              parsed.MiscParser.prog in
           (* The positive-control map: mu(T) and the canary to co-run, and
              the oracle class that decides what a null is worth
              (litmus/hetControlMap.ml). *)
           let src_dir = Filename.dirname src_name in
           let cmap =
-            HetControlMap.load ~verbose:O.verbose ~dir:src_dir ~src_name in
+            HetControlMap.load ~verbose:O.verbose ~dir:src_dir
+              ~csv:CpuF.control_map_csv ~src_name in
           let mu_name = HetControlMap.control_of cmap tname
           and canary_name = HetControlMap.canary_of cmap tname
           and oracle = HetControlMap.oracle_of cmap tname in
+          (* The CLAIM-STRENGTH grade, which is a different claim from the
+             oracle class and lives in a different file (hetOracle.ml says why).
+             The class picks WHICH sentence het_verdict_print writes; the grade
+             caps HOW STRONG it is allowed to be. *)
+          let omap =
+            HetOracle.load ~verbose:O.verbose ~dir:src_dir
+              ~csv:CpuF.oracle_csv ~model:CpuF.oracle_model ~src_name in
+          let prov = HetOracle.prov_enum omap tname
+          and prov_name = HetOracle.prov_name omap tname in
           (* What goes in HET_CANARY_NAME / _rec.canary_name.  A name is NOT a
              co-run signal -- the map names a canary for every test, including the
              ones that are the canary.  HET_CANARY_COMPILED_IN, set from the
@@ -1117,7 +1148,26 @@ end
                   s "    _rec.obs_valid = 1;\n"
                 end else
                   s "    (void)_obs_uniq;  /* the controls report only their target count */\n" ;
-                s (Printf.sprintf "    int %s = %s;\n" locv loc_expr)
+                s (Printf.sprintf "    int %s = %s;\n" locv loc_expr) ;
+                (* WHICH OBSERVER RECOVERED THE `co' EDGE.  loc_expr is the
+                   disjunction of the CPU-observer decode and the GPU-observer
+                   decode, and on a CPU-ONLY test (D10) the difference decides
+                   what the sighting is EVIDENCE OF: x86-TSO constrains the order
+                   in which x86 agents see two x86 stores, and the GPU is not an
+                   x86 agent, so a co edge seen only through the GPU observer is
+                   NOT an x86-TSO statement at all.
+                   MEASURED 2026-08-03 (i5-12500H + RTX 3060, HET_ALLOC=pinned):
+                   2+2W-cpuonly-x86_64 reported MISMATCH-CONFIRMED, 10 of 10 runs,
+                   with ws_via_obs=1 -- and its detector is exactly this
+                   disjunction.  Without recording the two arms separately, the
+                   run log could not tell an Intel TSO violation from a GPU
+                   observing two CPU stores out of order.  Recorded for the test
+                   under study only; the controls report only their target count. *)
+                if is_test then begin
+                  let cprop = prop_of parsed.MiscParser.condition in
+                  s (Printf.sprintf "    _rec.obs_ws_via_cpu = %s;\n" (c_loc "c" cprop)) ;
+                  s (Printf.sprintf "    _rec.obs_ws_via_gpu = %s;\n" (c_loc "g" cprop))
+                end
               end ;
               (* exhaustive_valid, PER INSTANCE and per shape.  T_L<=1: every frame
                  decodes exactly, so the O(N) scan is ground truth at any N.  T_L>=2:
@@ -1530,7 +1580,22 @@ end
                  HET_CONTROL_COMPILED_IN=%d HET_CANARY_COMPILED_IN=%d (oracle: %s)\n%!"
                 npart test_blocks gpu_lanes spin_lanes
                 (if has_mu then 1 else 0) (if has_canary then 1 else 0) oracle
-            end
+            end ;
+            Printf.eprintf
+              "  oracle: %s provenance=%s (%s) from %s%s\n%!"
+              oracle prov prov_name (HetOracle.source omap)
+              (if cpu_only then "  [D10 CPU-ONLY cycle]" else "") ;
+            (* The `none' sentinel is a DERIVED absence, not a missing row, and
+               the two must not read alike in a build log: this test co-runs the
+               Layer-B canary alone because the corpus contains no weakening of
+               it, so its null is a WEAK-NULL by construction, forever. *)
+            if HetControlMap.no_mutant_exists cmap tname then
+              Printf.eprintf
+                "  NOTE: %s is Disallowed and the map's Mu column is `none' -- no \
+                 Layer-A mutant EXISTS for it (control-map MuRule says why).  \
+                 HET_CONTROL_COMPILED_IN=0 by derivation: canary only, so every \
+                 null from this test is a WEAK-NULL.\n%!"
+                tname
           end ;
           let het_iter = "(_n + 1)" in
           let id = CudaLang.c_ident tname in
@@ -1557,6 +1622,24 @@ end
             String.concat ","
               (List.map fst (cpu_addr_u64 cp @ cpu_bufs i cp) @ ["int _n"]) in
           let gsym i g = i.i_pre ^ g in     (* this instance's copy of global [g] *)
+          (* WHICH TEST GLOBALS THE KERNEL NEEDS AS PARAMETERS.  Not
+             [i_gpu_globals]: the GPU OBSERVER lane dereferences every location
+             in [i_obs_locs], and on a test where no GPU proc happens to touch
+             one of them that pointer would be undeclared.
+             MEASURED 2026-08-03 on the D10 CPU-only set, where no GPU proc
+             touches anything at all:
+               2+2W-cpuonly-x86_64.cu(100): error: identifier "t_x" is undefined
+               2+2W-cpuonly-x86_64.cu(101): error: identifier "t_y" is undefined
+             -- 2 of the 6 D10 tests would not compile.  The committed het
+             corpus never hit it (its 2+2W GPU proc writes BOTH locations, so
+             both were already parameters), which is why it surfaced only when
+             an all-CPU cycle was first emitted.  Order-preserving and
+             append-only, so a test with no observer is byte-identical to
+             before. *)
+          let kernel_globals i =
+            i.i_gpu_globals
+            @ List.filter (fun l -> not (List.mem l i.i_gpu_globals))
+                i.i_obs_locs in
           (* ---- <tname>_cpu.c : the CPU threads (real ISA asm) ---- *)
           let dump_cpu_file ch =
             let s = output_string ch in
@@ -1965,7 +2048,7 @@ end
               String.concat ", "
                 (List.concat_map
                    (fun i ->
-                     List.map (fun g -> "&" ^ gsym i g) i.i_gpu_globals
+                     List.map (fun g -> "&" ^ gsym i g) (kernel_globals i)
                      @ List.map (fun (_,_,name,_,_) -> "&"^name) (gpu_bufs i)
                      @ List.map (fun l -> "&" ^ obsG_of i.i_pre l) i.i_obs_locs)
                    insts
@@ -2059,6 +2142,20 @@ end
                which it is silent.  ORACLE_UNSET (a test missing from the map) fails
                closed and the harness reports a build bug rather than a result. *)
             s (Printf.sprintf "    _rec.het_oracle = %s;\n" oracle) ;
+            (* HOW STRONG A CLAIM THAT PREDICTION LICENSES (P2d, memo 9.2).  Read
+               from field 4 of the lane's oracle CSV.  PROV_UNSET is the memset
+               default and the weakest of the three, so a harness the grader did
+               not reach cannot print a refutation.  [het_prov_name] carries the
+               RAW grade so the printout names it instead of only its enum, and
+               [oracle_source] names the file the tag came from -- an x86 harness
+               built against the NVIDIA oracle would otherwise be invisible. *)
+            s (Printf.sprintf "    _rec.het_prov = %s;\n" prov) ;
+            s (Printf.sprintf "    _rec.het_prov_name = \"%s\";\n" prov_name) ;
+            s (Printf.sprintf "    _rec.oracle_source = \"%s\";\n"
+                 (HetOracle.source omap)) ;
+            s (Printf.sprintf
+                 "    _rec.cpu_only = %d;  /* D10: 1 iff EVERY proc is a CPU proc */\n"
+                 (if cpu_only then 1 else 0)) ;
             (match mu_name with
              | Some m -> s (Printf.sprintf "    _rec.control_name = \"%s\";\n" m)
              | None -> s "    _rec.control_name = NULL;  /* no mu(T): not a Disallowed test */\n") ;
@@ -2067,9 +2164,21 @@ end
              | None -> s "    _rec.canary_name = NULL;\n") ;
             s "    _rec.control_compiled_in = HET_CONTROL_COMPILED_IN;\n" ;
             s "    _rec.canary_compiled_in = HET_CANARY_COMPILED_IN;\n" ;
+            (* THE TWO GPU MECHANISMS ARE ONLY REQUESTED WHERE THEY CAN RUN.
+               het_do_stress's loop guard is `_gpu_done < HET_GPU_LANES' and the
+               window-opener spins over HET_SPIN_LANES; on a CPU-only harness both
+               constants are 0, so both loops exit before their body runs once.
+               MEASURED 2026-08-03 on MP-cpuonly-x86_64 (RTX 3060, HET_ALLOC=pinned):
+               spin=0/0 do_stress_rounds=0 with req=0xf, so het_dead() fired on both
+               and ALL TEN runs came back COLD-INVALID -- a Disallowed row whose null
+               can never be a datum.  These are structurally absent mechanisms, not
+               dead ones, which is exactly the distinction stress_requested exists to
+               draw.  het_verdict() still raises HET_CV_NO_GPU_LANES so the null says
+               out loud that only CPU-side stress opened its window.
+               A het harness has HET_GPU_LANES >= 1, so the mask is unchanged there. *)
             s "    _rec.stress_requested =\n\
-               \        ((HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0) ? HET_REQ_GPU_STRESS : 0u)\n\
-               \      | ((HET_BARRIER_PCT > 0) ? HET_REQ_SPIN : 0u)\n\
+               \        ((HET_GPU_LANES > 0 && (HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0)) ? HET_REQ_GPU_STRESS : 0u)\n\
+               \      | ((HET_SPIN_LANES > 0 && HET_BARRIER_PCT > 0) ? HET_REQ_SPIN : 0u)\n\
                \      | ((_nEnemy > 0) ? HET_REQ_CPU_ENEMY : 0u)\n\
                \      | ((HET_CPU_PRELOAD_PCT > 0 && !_ct.preload_inert) ? HET_REQ_CPU_PRELOAD : 0u)\n\
                \      | ((HET_NOISE_CPU && _noise_cpu_on) ? HET_REQ_NOISE_CPU : 0u)\n\
@@ -2317,7 +2426,7 @@ end
                 (List.concat_map
                    (fun i ->
                      List.map (fun g -> Printf.sprintf "uint64_t* %s" (gsym i g))
-                       i.i_gpu_globals
+                       (kernel_globals i)
                      @ List.map (fun (_,_,name,_,_) -> Printf.sprintf "uint64_t* %s" name)
                          (gpu_bufs i)
                      @ List.map

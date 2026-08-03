@@ -145,6 +145,49 @@ typedef enum {
                          cross-device A-cumulativity).  Characterization only. */
 } het_oracle_t;
 
+/* ---------------------------------------------------------------------------
+ * THE CLAIM-STRENGTH GRADE -- a SECOND, INDEPENDENT axis (P2d).
+ *
+ * het_oracle_t says WHAT the model predicts, so it picks which sentence gets
+ * printed.  It says nothing about HOW WELL THAT PREDICTION IS SOURCED, and on
+ * the AMD oracle most Disallowed rows are not sourced well enough to license a
+ * refutation.  MEASURED on hetlitmus/tests/het/expected-amd.csv (2026-08-03):
+ * of its 146 Disallowed rows, 32 carry `artifact' and 114 do not.  A printer
+ * keyed on the class alone therefore prints "a single sighting REFUTES the
+ * model" on 114 rows whose oracle entry rests on one declared chain of
+ * reasoning -- which is the B6c defect wearing new clothes, and it is exactly
+ * what PORT2-R2-amd-oracle.md 9.2 forbids:
+ *
+ *   "the verdict printer must switch its mismatch sentence on the Provenance
+ *    grade -- a mismatch on a full-strength (artifact) Disallowed row is
+ *    reported as a candidate CMCM refutation, while a mismatch on a declared
+ *    single-chain row (derived, or decision per 5.4.1) must be reported as
+ *    indicting THIS ORACLE ROW first, never the CMCM."
+ *
+ * PROV_UNSET is 0 for the same reason ORACLE_UNSET is: het_obs_record is
+ * memset(0), so the value an emitter that never learned the grade produces must
+ * be the one that claims LEAST.  It is not an error path -- expected-nvidia.csv
+ * has no Provenance column at all today (NV-PROV is a later task), so the whole
+ * NVIDIA lane lands here by design and prints the ungraded sentence.  Never
+ * reorder these: the order is the strength order, and nothing may sort above
+ * PROV_ARTIFACT.
+ *
+ * The grade the harness was tagged with is ALSO carried as a string
+ * (het_prov_name) so the printout names it -- "provenance derived" -- rather
+ * than making a reader map an enum back to a CSV column.
+ * --------------------------------------------------------------------------- */
+typedef enum {
+  PROV_UNSET = 0,   /* no grade reached this harness -- claim NOTHING about the
+                       model from a mismatch here; het_prov_name says which of
+                       ABSENT / NO-COLUMN / UNKNOWN:<raw> it was */
+  PROV_CAPPED,      /* graded, and the grade is NOT full strength: derived,
+                       decision, herd7-checked, artifact-csv-corrected.  A
+                       mismatch indicts THE ORACLE ROW, never the CMCM */
+  PROV_ARTIFACT     /* the load-bearing cell of the derivation is exercised by a
+                       surviving artifact anchor (memo 2.3 grade 3).  THE ONLY
+                       grade that licenses "candidate CMCM refutation" */
+} het_prov_t;
+
 /* Which stress mechanisms this BUILD asked for.  A mechanism that produced zero
    work is dead only if it was requested: a deliberately disabled one is not a
    bug, and without the distinction a no-stress baseline run would be COLD
@@ -164,6 +207,29 @@ typedef struct het_obs_record {
      the difference between "this refutes the model" and "this is what the model
      said would happen".  ORACLE_UNSET (the memset default) fails closed. */
   het_oracle_t het_oracle;
+  /* How well that prediction is SOURCED, and so how strong a claim a mismatch
+     licenses.  Orthogonal to het_oracle: the class picks the sentence, the
+     grade caps it.  PROV_UNSET (the memset default) claims least. */
+  het_prov_t het_prov;
+  /* The raw grade string from the oracle CSV, PRINTED so the reader sees which
+     grade capped the sentence.  NULL is tolerated and reads as "(none)". */
+  const char *het_prov_name;
+  /* "<csv>:<model>", e.g. "expected-amd.csv:AMD-CDNA3-x86".  Printed on every
+     verdict: a harness tagged from the wrong vendor's oracle is otherwise
+     indistinguishable from a correct one in the run log. */
+  const char *oracle_source;
+  /* D10 (memo 7.D10): 1 when EVERY proc of this test is a CPU proc.  Such a
+     test is not a compound-model experiment -- it is an x86-TSO conformance
+     probe on the shared allocation, and its mismatch sentence says so. */
+  int cpu_only;
+  /* WHICH observer channel recovered the `co' edge, on the shapes decoded by an
+     observer.  Both 0 on a shape with a reader (there is no observer decode) and
+     on a run where nothing fired.  They matter under cpu_only: x86-TSO
+     constrains how x86 AGENTS observe two x86 stores, and the GPU observer is
+     not one, so a sighting carried by obs_ws_via_gpu alone says nothing about
+     x86-TSO.  Written by the emitted recovery scan, for the test under study. */
+  int obs_ws_via_cpu;
+  int obs_ws_via_gpu;
   /* MECHANISM tier: how well this test's cycle can be recovered from the read
      and observer buffers (hetCond.perpetual_class). */
   het_confidence confidence;
@@ -425,6 +491,13 @@ typedef enum {
 #define HET_CV_PLACE_REFUSED    (1u << 4)  /* cudaMemAdvise placed nothing        */
 #define HET_CV_SPIN_CAP         (1u << 5)  /* a delay loop, not a rendezvous      */
 #define HET_CV_UNSTRESSED       (1u << 6)  /* no stress requested at all          */
+#define HET_CV_NO_GPU_LANES     (1u << 7)  /* D10: a CPU-only harness has no GPU
+                                              test lane, so the GPU scratchpad
+                                              stress and the device-scope
+                                              window-opener are STRUCTURALLY
+                                              absent -- not dead, absent.  The
+                                              null rests on CPU-side stress
+                                              alone and must say so.            */
 
 static int het_dead(uint32_t req, uint32_t bit, uint64_t rounds) {
   return (req & bit) && rounds == 0;
@@ -471,6 +544,14 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
   if (r->place_failures > 0)        cv |= HET_CV_PLACE_REFUSED;
   if (req == 0)                     cv |= HET_CV_UNSTRESSED;
+  /* D10.  The emitter withholds HET_REQ_GPU_STRESS / HET_REQ_SPIN on a harness
+     with no GPU test lane, because there both mechanisms are structurally
+     unreachable rather than dead.  Withholding a request silently would be the
+     "bump the threshold to get green" move, so it is CAVEATED here instead:
+     the reader is told the null rests on CPU-side stress alone.  Keyed on the
+     structural fact (cpu_only) and not on the mask, so a future harness that
+     merely forgot to request them cannot borrow this excuse. */
+  if (r->cpu_only)                  cv |= HET_CV_NO_GPU_LANES;
   { uint64_t spins = r->spin_rendezvous + r->spin_cap;
     if (spins && r->spin_rendezvous * 2 < spins) cv |= HET_CV_SPIN_CAP; }
 
@@ -605,6 +686,27 @@ static const char *het_oracle_name(het_oracle_t o) {
   }
 }
 
+/* The grade as the harness was tagged with it.  Two accessors, because the two
+   answer different questions: het_prov_class() is the enum this printer
+   switches on, het_prov_grade() is the CSV string a reader has to look up in
+   memo 2.3.  A NULL string is reported, never hidden -- it means the emitter
+   set the enum and not the name, which is a build bug. */
+static const char *het_prov_class(het_prov_t p) {
+  switch (p) {
+  case PROV_ARTIFACT: return "FULL";
+  case PROV_CAPPED:   return "CAPPED";
+  default:            return "UNSET";
+  }
+}
+
+static const char *het_prov_grade(const het_obs_record *_r) {
+  return _r->het_prov_name ? _r->het_prov_name : "(none)";
+}
+
+static const char *het_oracle_src(const het_obs_record *_r) {
+  return _r->oracle_source ? _r->oracle_source : "(unrecorded)";
+}
+
 static const char *het_conf_name(het_confidence c) {
   switch (c) {
   case CONF_ROBUST:    return "ROBUST";
@@ -615,7 +717,8 @@ static const char *het_conf_name(het_confidence c) {
 
 static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
-    "HetObs %s oracle=%s inst=%d run=%d conf=%d report=%d N=%llu frames=%llu target=%s%llu/%llu "
+    "HetObs %s oracle=%s prov=%s/%s src=%s cpu_only=%d "
+    "inst=%d run=%d conf=%d report=%d N=%llu frames=%llu target=%s%llu/%llu "
     "interleavings=%llu distinct_iters=%llu ws_via_obs=%llu obs_unique=%llu "
     "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%s%llu/%llu canary=%s%llu/%llu Prep=%.6f built=%d/%d "
     "spin=%llu/%llu stress_trunc=%llu do_stress_rounds=%llu req=0x%x "
@@ -626,6 +729,11 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
        means the opposite thing for an Allowed test (expected to fire) and a
        Disallowed one, so a row without its class cannot be pooled with anything. */
     _r->test_name, het_oracle_name(_r->het_oracle),
+    /* prov= is machine-readable for the same reason oracle= is: a Disallowed
+       cell pooled across grades would let 114 capped rows lend their count to
+       the 32 that can carry a refutation. */
+    het_prov_class(_r->het_prov), het_prov_grade(_r), het_oracle_src(_r),
+    _r->cpu_only,
     _r->instance_id, _r->run_id,
     (int)_r->confidence, (int)_r->reporting,
     (unsigned long long)_r->N, (unsigned long long)_r->frames_examined,
@@ -686,6 +794,15 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
             _r->cpu_aff_failures);
   if (cv & HET_CV_PLACE_REFUSED)
     fprintf(_ch, "  CAVEAT: cudaMemAdvise was REFUSED -- HET_PLACE placed nothing.\n");
+  if (cv & HET_CV_NO_GPU_LANES)
+    fprintf(_ch,
+      "  CAVEAT (D10): this is a CPU-ONLY harness -- HET_GPU_LANES is 0, so the "
+      "GPU scratchpad stress and the device-scope window-opener are STRUCTURALLY "
+      "ABSENT, not dead (het_do_stress's loop guard is `_gpu_done < HET_GPU_LANES', "
+      "which is false at 0 before the body runs once).  The window here is opened "
+      "by the CPU enemies and the preload alone.  Neither mechanism is counted as "
+      "requested, so its zero tally is not a disqualifier -- see stress_requested "
+      "in the config line.\n");
 }
 
 /* The stress incantations, travelling with every sighting of every class -- a
@@ -799,10 +916,15 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   unsigned long long _hits = (unsigned long long)het_reported_count(_r);
   double _pct = _r->N ? (100.0 * (double)_hits / (double)_r->N) : 0.0;
 
-  fprintf(_ch, "HetVerdict %s [%s] oracle=%s run=%d: %s\n",
+  /* The header line carries BOTH axes and the file they came from.  prov= is
+     not decoration: a reader scanning a campaign log for refutations must be
+     able to see, on the summary line, that a Disallowed row is capped. */
+  fprintf(_ch, "HetVerdict %s [%s] oracle=%s prov=%s/%s src=%s%s run=%d: %s\n",
           _r->test_name, het_conf_name(_r->reporting),
-          het_oracle_name(_r->het_oracle), _r->run_id,
-          het_verdict_name(v));
+          het_oracle_name(_r->het_oracle),
+          het_prov_class(_r->het_prov), het_prov_grade(_r),
+          het_oracle_src(_r), _r->cpu_only ? " CPU-ONLY" : "",
+          _r->run_id, het_verdict_name(v));
 
   /* ---- 0. Untagged harness: we do not know what the model predicts, so we do
      not know what we just measured.  Say only that. */
@@ -823,12 +945,94 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   if (v == HET_MISMATCH) {
     fprintf(_ch,
       "  ** %s: the should-be-FORBIDDEN outcome was OBSERVED %llu time(s) "
-      "(exhaustive) / %llu (heuristic) in N=%llu frames.\n"
-      "  ** A single sighting REFUTES the model's prediction for this test.  "
-      "This is a result, not a bug -- report it.\n",
+      "(exhaustive) / %llu (heuristic) in N=%llu frames.\n",
       _r->test_name,
       (unsigned long long)_r->target_count_exhaustive,
       (unsigned long long)_r->target_count_heuristic, _n);
+    /* ---------- WHAT THAT SIGHTING LICENSES.  Four sentences, and the choice
+       between them is the deliverable of P2d.  The observation is the same in
+       all four; what differs is whose fault it is, and printing the strongest
+       reading on a row that cannot carry it is precisely the false refutation
+       this whole apparatus exists to prevent (B6c). */
+    if (_r->cpu_only) {
+      /* D10 first, because it outranks the grade: on a CPU-only cycle the CMCM
+         is not under test at all.  Both procs are x86, the compound coupling
+         never engages, and the only models that could have been wrong are
+         x86-TSO on this silicon or the MEMORY TYPE of the shared allocation.
+         Memo 7.D10 and [CACM] sect 7's own invited-counterexample framing. */
+      fprintf(_ch,
+        "  ** CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc, so the "
+        "COMPOUND MODEL IS NOT UNDER TEST HERE and this is NOT a CMCM refutation.\n"
+        "  ** What it indicts, in this order: (1) x86-TSO as a description of THIS "
+        "implementation -- the invited counterexample of Sewell et al., CACM 53(7) "
+        "sect 7; or (2) the MEMORY TYPE of the shared allocation, since the x86 "
+        "ordering rules are scoped to WB (write-back cacheable) memory ([APM] 7.2, "
+        "[CACM] p.90) and a WC mapping legalises store-store and load-load "
+        "reordering outright (memo sect 8 P1).\n"
+        "  ** Until P1 is resolved, treat this as the WB probe FAILING, not as a "
+        "model result.  A Zen-4 conformance failure reported as a compound-model "
+        "refutation is the exact mis-attribution D10 exists to prevent.\n");
+      /* ...and the third possibility, which outranks both of the above when it
+         applies: the cycle was never closed by an x86 agent at all.  A store-only
+         shape has no reader, so its `co' edge is recovered from an OBSERVER, and
+         this harness carries two -- a CPU thread and a GPU lane.  x86-TSO
+         constrains the order in which x86 agents observe two x86 stores; it says
+         nothing about a GPU's view of them.  So a sighting carried by the GPU
+         observer alone is not evidence against x86-TSO, and the sentences above
+         must not be read as if it were. */
+      if (_r->obs_ws_via_gpu && !_r->obs_ws_via_cpu)
+        fprintf(_ch,
+          "  ** ...BUT THE co EDGE CAME ONLY FROM THE GPU OBSERVER "
+          "(obs_ws_via_gpu=1, obs_ws_via_cpu=0), AND THE GPU IS NOT AN x86 AGENT.\n"
+          "  ** x86-TSO constrains the order in which x86 AGENTS observe two x86 "
+          "stores.  A GPU observing them out of order violates nothing it says, so "
+          "this run is NOT evidence against x86-TSO either -- it is a "
+          "cross-device-visibility observation about this platform.  Neither "
+          "reading above applies.  To test x86-TSO itself, re-run a shape with an "
+          "x86 READER (MP / LB / SB / IRIW), whose cycle closes inside the CPU.\n");
+      else if (_r->obs_ws_via_cpu)
+        fprintf(_ch,
+          "  ** The co edge WAS recovered by the x86-side observer "
+          "(obs_ws_via_cpu=1), so the cycle closed inside the CPU domain and the "
+          "two readings above are the live ones.\n");
+    } else switch (_r->het_prov) {
+    case PROV_ARTIFACT:
+      fprintf(_ch,
+        "  ** FULL STRENGTH (provenance %s): the load-bearing cell of this oracle "
+        "row's derivation is exercised by a surviving artifact anchor, so the row "
+        "carries two independent keys (memo sect 2.0 / 2.3 grade 3).\n"
+        "  ** A single sighting is a CANDIDATE CMCM REFUTATION.  This is a result, "
+        "not a bug -- report it.  (Candidate, not proven: confirm the recovered "
+        "cycle and re-run before publishing.)\n",
+        het_prov_grade(_r));
+      break;
+    case PROV_CAPPED:
+      fprintf(_ch,
+        "  ** CAPPED (provenance %s): this run DISAGREES WITH THE ARGUED ORACLE "
+        "ROW.  It is NOT a CMCM refutation and must not be reported as one.\n"
+        "  ** The row is a DECLARED SINGLE-CHAIN derivation (memo sect 2.0 as "
+        "amended 2026-08-02, sect 5.4.1): one chain of reasoning, no second "
+        "instrument.  A disagreement therefore indicts THIS ORACLE ROW FIRST -- "
+        "re-derive it, and only if it survives does the compound model come into "
+        "question.\n"
+        "  ** Oracle row source: %s.  Look the test up there and read the Source "
+        "column before writing anything down.\n",
+        het_prov_grade(_r), het_oracle_src(_r));
+      break;
+    default:
+      /* Fail closed.  Reached today by the ENTIRE NVIDIA lane, whose oracle CSV
+         has no Provenance column (NV-PROV is a later task) -- so this sentence
+         is the normal one there, not an error path.  It is deliberately weaker
+         than CAPPED: a capped row at least knows which chain to re-derive. */
+      fprintf(_ch,
+        "  ** UNGRADED (provenance %s): this harness carries NO claim-strength "
+        "grade, so it cannot license ANY statement about the model -- neither a "
+        "refutation nor an indictment of a particular oracle row.\n"
+        "  ** Report the observation and the effort; grade the row BY HAND against "
+        "the oracle memo before drawing a conclusion.  Oracle row source: %s.\n",
+        het_prov_grade(_r), het_oracle_src(_r));
+      break;
+    }
     if (cv & HET_CV_HEURISTIC_SIGHT)
       fprintf(_ch,
         "  NOTE: the sighting came from the WINDOWED heuristic (the O(N^T_L) "
@@ -851,6 +1055,19 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       "  No control is needed and none was used: a firing Allowed test IS ITS OWN "
       "CONTROL.\n",
       _r->test_name, _hits, _n, _pct);
+    if (_r->cpu_only)
+      /* D10's other half.  An Allowed CPU-only shape that FIRES is the memo's
+         sect 8 P1 probe passing: the store buffer is live on the shared
+         allocation, which rules the allocation out of being UC.  That is a
+         precondition of the whole AMD Disallowed column, so it is stated here
+         rather than left to be inferred from a percentage. */
+      fprintf(_ch,
+        "  D10 / WB PROBE PASSED: this is a CPU-ONLY shape, so what fired is the "
+        "x86 store buffer on the SHARED ALLOCATION itself -- not a compound-model "
+        "behaviour.  An uncacheable (UC) mapping reorders nothing ([APM] Table 7-2), "
+        "so this sighting RULES OUT UC for this allocator and discharges that "
+        "branch of memo sect 8 P1.  It does NOT by itself establish WB over WC: only "
+        "the forbidden CPU-only shapes staying silent does that.\n");
     het_print_config(_ch, _r);
     het_print_scan_caveat(_ch, _r, cv);
     het_print_caveats(_ch, _r, cv);
@@ -900,6 +1117,22 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       "behaviours using our\n"
       "     method on the Nvidia GTX 280 chip they used.\"\n"
       "                                     -- Alglave et al., ASPLOS'15, fn.7, p.577.\n");
+    if (_r->cpu_only)
+      /* The D10 branch where "an observability result" is the WRONG reading.
+         SB/R on x86 is the store buffer, not a narrow window: it is the single
+         most reproducible relaxation on the ISA.  Not seeing it on the shared
+         allocation is evidence ABOUT THE ALLOCATION -- a UC or otherwise
+         non-WB mapping -- and memo sect 8 P1 is then UNRESOLVED, which voids
+         the entire AMD Disallowed column rather than costing one row. */
+      fprintf(_ch,
+        "  *** D10 / WB PROBE FAILED -- READ THIS BEFORE THE STRESS-TUNING "
+        "ADVICE ABOVE ***\n"
+        "  This is a CPU-ONLY shape.  Its weak outcome is the x86 STORE BUFFER, the "
+        "most reproducible relaxation the ISA has; a null here is not a narrow "
+        "window, it is evidence about the SHARED ALLOCATION.  If the mapping is not "
+        "WB (write-back cacheable), memo sect 8 P1 is UNRESOLVED and EVERY Disallowed "
+        "row of this oracle is void -- not this row, all of them.  Check PAT/MTRR "
+        "and /proc/self/smaps for this allocator before running anything else.\n");
     het_print_scan_caveat(_ch, _r, cv);
     het_print_caveats(_ch, _r, cv);
     return;
@@ -1073,10 +1306,30 @@ typedef enum {
                                               the criterion is on the POOLED count
                                               R x HET_NWIN, so it relaxes on its
                                               own; tau_runs_needed prices it.   */
+#define HET_ST_PROV_SPLIT       (1u << 15) /* the cells pooled here do NOT all
+                                              carry the same claim-strength grade.
+                                              Cannot happen from one harness -- one
+                                              binary, one CSV row -- so it means
+                                              records from different builds were
+                                              pooled.  Resolved DOWNWARD, to
+                                              PROV_UNSET: pooling a capped row into
+                                              a full-strength one would launder the
+                                              cap that P2d exists to enforce.    */
 
 typedef struct het_stats {
   const char *test_name;
   het_oracle_t oracle;
+  /* The claim-strength axis, carried through to the CAMPAIGN-LEVEL output as
+     well.  het_verdict_print speaks about ONE run; het_stats_print speaks about
+     the whole campaign for this test and is the line a human actually reads
+     before writing a result down, so a grade that stopped at the per-run
+     printout would leave the louder sentence ungraded.  Copied from recs[0]:
+     every cell of a stats block is the same test built from the same CSV row,
+     and het_stats_compute asserts that below rather than assuming it. */
+  het_prov_t prov;
+  const char *prov_name;
+  const char *oracle_source;
+  int cpu_only;
   het_obs_class obs;
   het_mismatch_tier tier;
 
@@ -1351,6 +1604,27 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   st->oracle    = recs[0].het_oracle;
   st->N         = recs[0].N;
   st->R         = n;
+  /* The claim-strength axis, and a CHECK rather than an assumption: if the cells
+     handed here do not agree on the grade they are not one campaign, and the
+     block resolves DOWNWARD to PROV_UNSET.  A max() would have been the
+     laundering bug -- one full-strength cell pooled in would license the
+     refutation sentence for a block of capped ones. */
+  st->prov          = recs[0].het_prov;
+  st->prov_name     = recs[0].het_prov_name;
+  st->oracle_source = recs[0].oracle_source;
+  st->cpu_only      = recs[0].cpu_only;
+  { int _i;
+    for (_i = 1; _i < n; _i++)
+      if (recs[_i].het_prov != recs[0].het_prov
+          || recs[_i].cpu_only != recs[0].cpu_only) {
+        st->flags |= HET_ST_PROV_SPLIT;
+        st->prov = PROV_UNSET;
+        st->prov_name = "SPLIT";
+        /* cpu_only resolves upward, because the CPU-only sentence is the WEAKER
+           claim about the compound model: it says the CMCM was not under test. */
+        if (recs[_i].cpu_only) st->cpu_only = 1;
+      }
+  }
   if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS;
                                  st->flags |= HET_ST_CELLS_TRUNCATED; }
 
@@ -1600,12 +1874,15 @@ static const char *het_tier_name(het_mismatch_tier t) {
    replace). */
 static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
-    "HetStats %s oracle=%s obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d degen=%d "
+    "HetStats %s oracle=%s prov=%s/%s cpu_only=%d obs=%s "
+    "R=%d usable=%d k=%d k_eff=%d k_runs=%d degen=%d "
     "ctrl=%s win_n=%d nwin=%d F_win=%.4f F_cell=%.4f r_hat=%.4f mu_upper=%.4f "
     "tau_w=%.4f N_eff=%.4f tau_need=%d R_eff=%.4f "
     "p_bound=%.6g P_rep=%.6g acf1=%.4f ks=%s ks_D=%.4f ks_Dcrit=%.4f ks_split=%d "
     "tier=%s N=%llu frames=%llu flags=0x%x\n",
     _s->test_name ? _s->test_name : "(none)", het_oracle_name(_s->oracle),
+    het_prov_class(_s->prov), _s->prov_name ? _s->prov_name : "(none)",
+    _s->cpu_only,
     het_obs_class_name(_s->obs), _s->R, _s->R_usable, _s->k, _s->k_eff, _s->k_runs,
     _s->n_degen,
     (_s->flags & HET_ST_CTRL_IS_CANARY) ? "canary" : "mu(T)",
@@ -1903,21 +2180,54 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
       _s->n_degen, (int)HET_THETA_DISTINCT);
 
   if (_s->oracle == ORACLE_DISALLOWED) {
+    /* REPRODUCIBILITY first (how many clean runs), then STRENGTH (what those
+       runs license).  The two are independent and were fused before P2d: the
+       CONFIRMED arm asserted "this is a REFUTATION OF THE CMCM's PREDICTION"
+       for every Disallowed row, which on expected-amd.csv is true of 32 rows
+       and false of 114.  Reproducing a sighting makes it real; it does not
+       make the oracle row it disagrees with any better sourced. */
     if (_s->tier == HET_MT_CONFIRMED)
       fprintf(_ch,
         "  ** %s ** -- the should-be-FORBIDDEN outcome was observed in %d distinct "
         "non-degenerate RUN(S).  A decoder artefact does not reproduce across "
-        "re-seeded runs, so this is a REFUTATION OF THE CMCM's PREDICTION and not a "
-        "constant-read.  This is the campaign's most valuable output: report it.\n",
+        "re-seeded runs, so the SIGHTING IS REAL and not a constant-read.\n",
         het_tier_name(_s->tier), _s->k_runs);
     else
       fprintf(_ch,
         "  ** %s ** -- the should-be-FORBIDDEN outcome was observed, but in only %d "
         "clean run(s) (<3).  BELIEVE IT AND REPORT IT -- one sighting refutes, and it "
-        "is NOT suppressed -- but a false MISMATCH is a false refutation of the "
-        "compound model, the most damaging error this campaign can make.  REPRODUCE "
-        "IT to >=3 clean runs before writing it up as a model violation.\n",
+        "is NOT suppressed -- but a false MISMATCH is the most damaging error this "
+        "campaign can make.  REPRODUCE IT to >=3 clean runs before writing it up.\n",
         het_tier_name(_s->tier), _s->k_runs);
+    /* ...and what it is a sighting AGAINST.  Same four-way split as
+       het_verdict_print, stated again here because this block is what gets
+       pasted into a report. */
+    if (_s->cpu_only)
+      fprintf(_ch,
+        "  ** CPU-ONLY CYCLE (D10): NOT a CMCM refutation -- the compound model is "
+        "not under test on an all-CPU cycle.  It indicts x86-TSO on this silicon, or "
+        "the memory type of the shared allocation (memo sect 8 P1).\n");
+    else if (_s->prov == PROV_ARTIFACT)
+      fprintf(_ch,
+        "  ** FULL STRENGTH (provenance %s): this oracle row is anchored, so the "
+        "campaign's finding is a CANDIDATE CMCM REFUTATION.  This is the campaign's "
+        "most valuable output: report it.\n",
+        _s->prov_name ? _s->prov_name : "(none)");
+    else if (_s->prov == PROV_CAPPED)
+      fprintf(_ch,
+        "  ** CAPPED (provenance %s): the finding is that this campaign DISAGREES "
+        "WITH THE ARGUED ORACLE ROW -- a declared single-chain derivation (memo "
+        "sect 2.0 / 5.4.1).  It indicts THIS ORACLE ROW FIRST, never the CMCM.  "
+        "Re-derive the row from %s before writing anything down.\n",
+        _s->prov_name ? _s->prov_name : "(none)",
+        _s->oracle_source ? _s->oracle_source : "(unrecorded)");
+    else
+      fprintf(_ch,
+        "  ** UNGRADED (provenance %s): no claim-strength grade reached this "
+        "campaign, so it licenses NO statement about the model.  Report the "
+        "observation and the effort; grade the row by hand (source: %s).\n",
+        _s->prov_name ? _s->prov_name : "(none)",
+        _s->oracle_source ? _s->oracle_source : "(unrecorded)");
   }
 }
 

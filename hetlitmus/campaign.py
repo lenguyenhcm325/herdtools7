@@ -210,6 +210,13 @@ class TestState(object):
         self.tau_need_max = 0            # ... and the largest run count they wanted
         self.stop = ""
         self.note = ""
+        # P2d.  The HetStats line now carries `prov=<class>/<grade>' and
+        # `cpu_only=<0|1>', and BOTH cap what a CONFIRMED row licenses.  Read
+        # rather than assumed, and PROV_UNSET-equivalent until a line says
+        # otherwise: a campaign that never saw a grade must claim least.
+        self.prov = "UNSET"
+        self.grade = "(none)"
+        self.cpu_only = 0
 
     def pooled_bound(self):
         if self.k > 0 or self.R_eff <= 0.0 or self.mu_upper_max <= 0.0:
@@ -218,6 +225,18 @@ class TestState(object):
 
     def absorb(self, kv):
         self.invocations += 1
+        # prov=<CLASS>/<grade>.  Resolved DOWNWARD across invocations, like
+        # het_stats_compute's HET_ST_PROV_SPLIT: pooling a full-strength
+        # invocation into capped ones would launder the cap.
+        pv = kv.get("prov", "")
+        if "/" in pv:
+            cls, grade = pv.split("/", 1)
+            if self.invocations == 1:
+                self.prov, self.grade = cls, grade
+            elif cls != self.prov:
+                self.prov, self.grade = "UNSET", "SPLIT"
+        if int(fnum(kv, "cpu_only")):
+            self.cpu_only = 1
         self.runs += int(fnum(kv, "R"))
         self.usable += int(fnum(kv, "usable"))
         self.k += int(fnum(kv, "k"))
@@ -260,10 +279,30 @@ class TestState(object):
                 self.stop = "OBSERVED"
         elif self.oclass == "Disallowed":
             if self.k_runs >= 3:
+                # WHAT a corroborated sighting licenses is the grade's call, not
+                # the run count's.  Before P2d this note said "a REFUTATION of the
+                # CMCM prediction" on every Disallowed row; on expected-amd.csv
+                # that is true of 32 rows and false of 114 (memo sect 2.3 / 9.2),
+                # and it is the sentence an operator pastes into a report.
+                if self.cpu_only:
+                    what = ("a CPU-ONLY cycle (D10), so NOT a CMCM refutation -- it "
+                            "indicts x86-TSO on this silicon or the memory type of "
+                            "the shared allocation (memo sect 8 P1)")
+                elif self.prov == "FULL":
+                    what = ("a CANDIDATE CMCM REFUTATION (provenance %s: the oracle "
+                            "row is anchored)" % self.grade)
+                elif self.prov == "CAPPED":
+                    what = ("a DISAGREEMENT WITH THE ARGUED ORACLE ROW (provenance "
+                            "%s): it indicts THAT ROW first, never the CMCM"
+                            % self.grade)
+                else:
+                    what = ("UNGRADED (provenance %s): this campaign carries no "
+                            "claim-strength grade and licenses no statement about "
+                            "the model" % self.grade)
                 self.stop, self.note = "CONFIRMED", (
                     "should-be-FORBIDDEN outcome corroborated in %d distinct clean "
-                    "runs -- a REFUTATION of the CMCM prediction; stop and escalate "
-                    "to a human before running anything else" % self.k_runs)
+                    "runs -- %s; stop and escalate to a human before running "
+                    "anything else" % (self.k_runs, what))
             elif self.k == 0 and p_goal > 0.0:
                 b = self.pooled_bound()
                 if 0.0 <= b <= p_goal:
@@ -466,8 +505,47 @@ def report_campaign(states, errors, confirmed):
     if errors:
         print("campaign: %d test(s) ERRORED -- their rows are not results." % errors)
     if confirmed:
-        print("campaign: ** %d CONFIRMED refutation(s) recorded -- stop and get a "
-              "human before anything else is claimed. **" % confirmed)
+        rows = [s for s in states if s.stop == "CONFIRMED"]
+        full = [s for s in rows if s.prov == "FULL" and not s.cpu_only]
+        print("campaign: ** %d CONFIRMED sighting(s) on Disallowed row(s) -- stop and "
+              "get a human before anything else is claimed. **" % confirmed)
+        print("campaign:    of those, %d are CANDIDATE CMCM REFUTATIONS (provenance "
+              "artifact); the remaining %d are capped, CPU-only or ungraded and "
+              "indict their own oracle row, NOT the compound model."
+              % (len(full), confirmed - len(full)))
+        for s in rows:
+            print("            %-28s prov=%s/%s cpu_only=%d" %
+                  (s.name, s.prov, s.grade, s.cpu_only))
+
+    # D10 -- the CPU-only positive control, and it is a PRECONDITION, not a row.
+    # memo sect 7.D10: SB and R must be OBSERVED (the store buffer is live, which
+    # rules a UC mapping out for this allocator).  If they are not, memo sect 8 P1
+    # is unresolved and EVERY Disallowed row of the AMD oracle is void -- so this
+    # is checked before, not after, anyone reads the bounds above.
+    d10 = [s for s in states if s.cpu_only]
+    if d10:
+        probes = [s for s in d10 if s.oclass == "Allowed"]
+        fired = [s for s in probes if s.stop == "OBSERVED"]
+        print("\ncampaign D10 (CPU-only positive control / memo sect 8 P1 WB probe): "
+              "%d CPU-only row(s), %d of %d Allowed probe(s) fired."
+              % (len(d10), len(fired), len(probes)))
+        if not probes:
+            print("campaign D10: *** NO Allowed CPU-only shape was run.  The WB probe "
+                  "did NOT run, so it did not pass: generate the D10 set with "
+                  "tests/het/generate-d10.sh and include SB and R. ***")
+        elif not fired:
+            print("campaign D10: *** WB PROBE FAILED -- not one Allowed CPU-only "
+                  "shape fired.  The x86 store buffer is the most reproducible "
+                  "relaxation the ISA has, so this is evidence about the SHARED "
+                  "ALLOCATION, not about the window.  memo sect 8 P1 is UNRESOLVED "
+                  "and EVERY Disallowed row of this oracle is VOID -- not one row, "
+                  "all of them.  Check PAT/MTRR and /proc/self/smaps for this "
+                  "allocator before reporting anything. ***")
+        else:
+            print("campaign D10: WB probe PASSED (%s) -- a UC mapping is ruled out "
+                  "for this allocator.  It does NOT establish WB over WC; only the "
+                  "forbidden CPU-only shapes staying silent does that."
+                  % ", ".join(s.name for s in fired))
 
 
 def main():

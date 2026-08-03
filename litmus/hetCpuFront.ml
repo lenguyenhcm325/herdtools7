@@ -29,6 +29,20 @@ module AArch64 (O:Config) = struct
   let host_macro = "__aarch64__"
   let cross = Some ("aarch64-linux-gnu","gnu11")
 
+  (* WHICH ORACLE THIS LANE IS TAGGED FROM (P2d).  The CPU ISA is the only part
+     of the compound target that is fixed when the harness is EMITTED -- both
+     GPU dialects are dual-emitted from one parse and the vendor is chosen later
+     by which of comp.sh's link arms is run -- and it is also the axis the two
+     oracles were derived on: expected-nvidia.csv is Grace(AArch64)+Hopper,
+     expected-amd.csv is Zen-4(x86-64)+CDNA3.  So the ISA names the files, the
+     files carry their own Model string, and hetOracle.load refuses a file whose
+     Model is not this one rather than tagging the harness from the wrong
+     vendor.  het_verdict.h prints [oracle_source] on every run so the log says
+     which file the tag came from. *)
+  let control_map_csv = "control-map.csv"
+  let oracle_csv = "expected-nvidia.csv"
+  let oracle_model = "NVIDIA-PTX-AArch64"
+
   let parse_column p txt =
     let lexbuf = Lexing.from_string txt in
     (try AArch64Parser.instr_option_seq Lexer.token lexbuf
@@ -61,6 +75,17 @@ module X86_64 (O:Config) = struct
   let body_module = "hetCpuBodyX86"
   let host_macro = "__x86_64__"
   let cross = None
+
+  (* The AMD lane (P2d).  control-map-amd.csv is the x86 STRENGTH LATTICE's own
+     map -- on x86 the CPU lattice loses its middle rung, so a mu(T) taken from
+     the AArch64 map is not a weakening here (memo 7.D11) -- and
+     expected-amd.csv is the only one of the two oracles that carries a
+     Provenance column at all.  Until 2026-08-03 this lane read neither:
+     MEASURED, every one of the 411 x86 renderings emitted
+     `_rec.het_oracle = ORACLE_UNSET'. *)
+  let control_map_csv = "control-map-amd.csv"
+  let oracle_csv = "expected-amd.csv"
+  let oracle_model = "AMD-CDNA3-x86"
 
   let parse_column p txt =
     let lexbuf = Lexing.from_string txt in

@@ -2180,8 +2180,24 @@ def phase6_campaign(quiet):
             elif not quiet:
                 print("      %-10s %-10s stop=%-9s after %d invocation(s)"
                       % (t, g["cls"], g["stop"], g["inv"]))
-        if "CONFIRMED refutation" not in out:
-            print("  *** the CONFIRMED refutation is not called out in the summary")
+        # The corroborated sighting must be called out AND graded.  This pin was
+        # "CONFIRMED refutation" until P2d (2026-08-03); that phrase was itself the
+        # overclaim, because on expected-amd.csv only 32 of the 146 Disallowed rows
+        # carry the artifact grade that licenses the word "refutation" (memo sect
+        # 2.3 / 9.2).  The pin is now STRICTER, not looser: the summary must be
+        # loud AND it must say how many of the confirmations are candidate CMCM
+        # refutations, and this stub runner emits no `prov=' field, so the honest
+        # answer here is zero of them.
+        if "CONFIRMED sighting" not in out:
+            print("  *** the CONFIRMED sighting is not called out in the summary")
+            bad += 1
+        if "CANDIDATE CMCM REFUTATIONS" not in out:
+            print("  *** the summary does not GRADE its confirmations -- a capped "
+                  "row's corroborated sighting would read as a CMCM refutation")
+            bad += 1
+        if "are 1 CANDIDATE" in out or "of those, 1 are CANDIDATE" in out:
+            print("  *** an UNGRADED confirmation (this stub emits no prov= field) "
+                  "was counted as a candidate CMCM refutation")
             bad += 1
 
         # THE SCHEDULER MUST TREAT AN UNRESOLVED TAU AS A PRICE, NOT A FAILURE: not an

@@ -974,6 +974,60 @@ hetlitmus-x86body: | build
 	python3 hetlitmus/verify/x86bodycheck.py --bite
 	@ echo "HetLitmus x86-64 tagged CPU body gate: OK (and the gate bites)"
 
+### Scratch output dir for hetlitmus-d10.  Never committed: the D10 tests are
+### generated on demand, exactly like the x86 renderings (generate-x86.sh), so
+### that corpus-gate.sh's 411-file pin and dupcheck.py stay meaningful.
+HETD10OUT := hetlitmus/tests/het/d10-out
+
+### hetlitmus-prov: the P2d gate -- is the PRINTED CLAIM capped by the oracle
+### row's PROVENANCE, and is the AMD lane wired to an oracle at all?
+### Two measured defects, both closed here.  (1) Until 2026-08-03 the x86 lane
+### named no control map and no oracle CSV, so ALL 411 x86 renderings emitted
+### `_rec.het_oracle = ORACLE_UNSET' and every one of their harnesses printed
+### "THIS HARNESS CARRIES NO ORACLE CLASS ... a BUILD BUG, not a result."
+### (2) het_verdict.h keyed its reporting frames on het_oracle_t alone, so a row
+### resting on ONE declared chain of reasoning printed the same sentence -- "A
+### single sighting REFUTES the model's prediction" -- as a two-key
+### artifact-anchored row.  On expected-amd.csv that is licensed by 32 of the
+### 146 Disallowed rows and overstates the other 114 (memo sect 2.3 / 9.2).
+### THE DELIVERABLE IS THE SENTENCE, NOT THE ENUM: phases 4 and 5 COMPILE the
+### real emitted het_verdict.h, feed it synthetic records and read its PRINTOUT;
+### phase 5 blanks the Provenance cell of a real `artifact' row, re-emits,
+### recompiles, and requires the printed text to change from "CANDIDATE CMCM
+### REFUTATION" to "UNGRADED".  Phase 6 machine-checks the D10 CPU-only oracle
+### against herd7 + herd/libdir/x86tso.cat and against the PLDI'23 artifact's own
+### four CPU-Only rows.  Every phase counts its assertions and fails if it made
+### none; --bite injects 18 times, on corruption AND on omission.
+### Needs no GPU (gcc + the built litmus7/herd7/diyone7 only).
+hetlitmus-prov: | build
+	@ echo
+	python3 hetlitmus/verify/provcheck.py
+	python3 hetlitmus/verify/provcheck.py --bite
+	@ echo "HetLitmus provenance/verdict gate: OK (and the gate bites)"
+
+### hetlitmus-d10: the CPU-ONLY POSITIVE CONTROL as a first-class campaign item
+### (memo sect 7.D10, PHASE2-plan:71).  Generates the six CPU-only shapes, emits
+### their harnesses and prints the campaign command for a machine that has a GPU.
+### It does NOT run them: the D10 reading is about the SHARED ALLOCATION of the
+### target box, so a result from any other machine is not a D10 result.
+hetlitmus-d10: | build
+	@ echo
+	rm -rf $(HETD10OUT)
+	hetlitmus/tests/het/generate-d10.sh $(HETD10OUT)
+	@ set -e ; cd $(HETD10OUT) ; for t in *.litmus ; do \
+	    ../../_build/install/default/bin/litmus7 -set-libdir ../../litmus/libdir \
+	      -o . "$$t" 2>&1 | grep -E 'oracle:|REFUSED' ; done
+	@ echo
+	@ echo "D10 harnesses in $(HETD10OUT).  On the TARGET box:"
+	@ echo "    cd <test> && sh comp.sh cuda-link   # or hip-link on AMD"
+	@ echo "    ./<test>                            # SB and R must FIRE"
+	@ echo "  then, for the campaign:"
+	@ echo "    python3 hetlitmus/campaign.py --corpus $(HETD10OUT) \\"
+	@ echo "        --control-map $(HETD10OUT)/control-map-amd.csv \\"
+	@ echo "        --runner 'sh hetlitmus/spotcheck/run-one.sh {dir} {test}'"
+	@ echo "  (no --d10 flag: campaign.py reads cpu_only= off the HetStats line,"
+	@ echo "   so the WB-probe verdict cannot be forgotten at the command line.)"
+
 ### hetlitmus-hipbuild: the P2c gate -- can an AMD harness be BUILT AND RUN?
 ### Until 2026-08-03 hetEmit.ml contained ZERO occurrences of hip-link/hip-bin:
 ### comp.sh's `hip' arm was compile-only (`hipcc -c') and the Makefile had no HIP
@@ -1040,6 +1094,7 @@ hetlitmus-test:: hetlitmus-stats
 hetlitmus-test:: hetlitmus-hist
 hetlitmus-test:: hetlitmus-tuner
 hetlitmus-test:: hetlitmus-x86body
+hetlitmus-test:: hetlitmus-prov
 
 hetlitmus-test-nvcc:: | build
 hetlitmus-test-nvcc:: hetlitmus-faithful
@@ -1073,7 +1128,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order hetlitmus-oracle
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
-.PHONY: hetlitmus-x86body hetlitmus-hipbuild
+.PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-prov hetlitmus-d10
 ### Neither AMD target was phony until P2a (2026-08-02).  They worked only
 ### because no file of those names happened to exist -- one `touch' away from a
 ### gate that silently stops running.

@@ -22,9 +22,9 @@
 
 type t = (string, string * string * string) Hashtbl.t
 
-let load ~verbose ~dir ~src_name =
+let load ~verbose ~dir ~csv ~src_name =
   let tbl = Hashtbl.create 512 in
-  let f = Filename.concat dir "control-map.csv" in
+  let f = Filename.concat dir csv in
   (try
      let ch = open_in f in
      (try
@@ -49,16 +49,37 @@ let load ~verbose ~dir ~src_name =
         control nobody can name is a control nobody notices is missing. *)
      if verbose >= 0 then
        Printf.eprintf
-         "HetLitmus WARNING: no control-map.csv next to %s -- this \
+         "HetLitmus WARNING: no %s next to %s -- this \
           harness names NO positive control, so every null it produces \
           is uninterpretable (het_verdict will return COLD-INVALID).  \
           Regenerate with hetlitmus/verify/controlmap.py --emit.\n%!"
-         src_name) ;
+         csv src_name) ;
   tbl
 
+(* TWO sentinels, and they are NOT the same statement.
+
+   "-"    the row calls for no mu at all -- it is not a Disallowed row, so
+          there is no forbidden cycle to weaken.
+   "none" the row IS Disallowed and NO Layer-A mutant EXISTS: either the test
+          is already at the lattice minimum on both sides, or every weaker
+          structural sibling is itself non-Allowed.  The MuRule column says
+          which.  Such a test co-runs the Layer-B canary alone, and its null is
+          correspondingly weaker.
+
+   MEASURED 2026-08-03: control-map.csv (AArch64 lattice) uses only "-";
+   control-map-amd.csv uses "none" on 16 rows, ALL of them Disallowed
+   (IRIW-cgcc / IRIW-cgcg / WRC-ccg / WRC3-cccg at sys scope).  Before this
+   function knew the second sentinel, wiring the AMD map into the emitter made
+   those 16 tests refuse to emit -- "names the control none, but ./none.litmus
+   does not exist" -- because anything other than "-" was read as a test name.
+   Fail-closed, and caught by P2b's refusal, but a refusal all the same. *)
 let control_of tbl t = match Hashtbl.find_opt tbl t with
-  | Some (_,mu,_) when mu <> "-" -> Some mu
+  | Some (_,mu,_) when mu <> "-" && mu <> "none" -> Some mu
   | _ -> None
+
+let no_mutant_exists tbl t = match Hashtbl.find_opt tbl t with
+  | Some (_,"none",_) -> true
+  | _ -> false
 
 (* A `self' row is NOT a canary to co-run: those tests ARE the Layer-B canary
    and cannot co-run themselves.  They are still NAMED by the emitter, but no
