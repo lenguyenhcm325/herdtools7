@@ -974,6 +974,41 @@ hetlitmus-x86body: | build
 	python3 hetlitmus/verify/x86bodycheck.py --bite
 	@ echo "HetLitmus x86-64 tagged CPU body gate: OK (and the gate bites)"
 
+### hetlitmus-hipbuild: the P2c gate -- can an AMD harness be BUILT AND RUN?
+### Until 2026-08-03 hetEmit.ml contained ZERO occurrences of hip-link/hip-bin:
+### comp.sh's `hip' arm was compile-only (`hipcc -c') and the Makefile had no HIP
+### link target at all, so nothing this suite emits could become an AMD
+### executable.  Emitting a .hip that no target links is the same defect class as
+### the .hip that, until B5, no gate compiled.  Seven phases: the build-script
+### arms, `hipcc --offload-arch=gfx942 -c', the two link arms each producing an
+### ELF that CARRIES the gfx942 code object (the ELF is read -- a gfx90a build
+### links and exits 0 too), the uname -m refusal on an AArch64 render, the
+### no-silent-stale-link rounds, the allocator's fail-closed HET_ALLOC handling,
+### and CUDA non-regression.  Every phase counts its assertions and fails if it
+### made none.  --bite injects into all seven on corruption AND on omission.
+### P5 EXISTS BECAUSE OF A MEASURED REGRESSION.  Both vendors link ./<test> on
+### purpose (run-one.sh and campaign.py exec ./<test> and stay vendor-agnostic).
+### With cuda-bin as a phony carrying a FILE prerequisite, `make cuda-bin' after
+### `make hip-bin' printed "Nothing to be done for 'cuda-bin'", exited 0 and left
+### the gfx942 binary in place -- a CUDA build handing back the AMD harness.
+### Both link targets are unconditional .PHONY recipes now, and P5 alternates
+### four builds because the trap needs the other vendor's object to exist and be
+### OLDER than the binary: a two-round A-then-B check passes against a broken
+### Makefile.
+### NEEDS hipcc AND nvcc, hence the -nvcc umbrella (which is really the
+### toolchain umbrella: smoke.sh already needs nvcc+hipcc+clang).
+### DEFERRED, and the gate says so on success: there is NO AMD GPU on this box
+### (`rocminfo' reports 0 gfx agents), so no phase EXECUTES the linked harness on
+### a device.  P6 lifts the allocator resolver verbatim out of the emitted .hip
+### and drives it against a stub hipDeviceGetAttribute, so every refusal path is
+### really executed and its message observed; the real hipMallocManaged
+### coherence behaviour stays unverified until Phase 3a (MI300X).
+hetlitmus-hipbuild: | build
+	@ echo
+	python3 hetlitmus/verify/hipbuildcheck.py
+	python3 hetlitmus/verify/hipbuildcheck.py --bite
+	@ echo "HetLitmus AMD build/link gate: OK (and the gate bites)"
+
 ### hetlitmus-l0-selftest: the DISCRIMINATING-POWER proofs of the nvcc lane.
 ### l0_tokens.sh {selftest,guard} prove ptxcheck can detect a weakened scope/order
 ### and that the stress/cpustress scaffolding bites a dead layer; smoke.sh bite
@@ -1011,6 +1046,7 @@ hetlitmus-test-nvcc:: hetlitmus-faithful
 hetlitmus-test-nvcc:: hetlitmus-stress
 hetlitmus-test-nvcc:: hetlitmus-cpustress
 hetlitmus-test-nvcc:: hetlitmus-obs
+hetlitmus-test-nvcc:: hetlitmus-hipbuild
 hetlitmus-test-nvcc:: hetlitmus-l0-selftest
 hetlitmus-test-nvcc:: hetlitmus-smoke
 
@@ -1037,7 +1073,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order hetlitmus-oracle
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
-.PHONY: hetlitmus-x86body
+.PHONY: hetlitmus-x86body hetlitmus-hipbuild
 ### Neither AMD target was phony until P2a (2026-08-02).  They worked only
 ### because no file of those names happened to exist -- one `touch' away from a
 ### gate that silently stops running.

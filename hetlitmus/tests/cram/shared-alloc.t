@@ -218,8 +218,120 @@ on stdout so the run log carries it.
   $ printf '%s\n' "$MODE" | grep -c 'cudaDevAttrPageableMemoryAccessUsesHostPageTables'
   1
 
-The HIP render is deliberately out of scope: MI300A's allocator is its own
-decision (Q8-allocation.md R2, fine-grained hipMallocManaged), and HET_ALLOC
-appearing in the .hip would mean the modes leaked across dialects.
-  $ grep -c 'HET_ALLOC' $REL.hip || true
+(i) HET_ALLOC on the HIP render: ONE mode, and every other spelling REFUSED.
+MI300A's allocator is its own decision (Q8-allocation.md R2, fine-grained
+hipMallocManaged), so the CUDA modes must not LEAK across dialects -- but until
+2026-08-03 the .hip did not mention HET_ALLOC at all, which meant
+`HET_ALLOC=malloc' on an AMD box was silently IGNORED and the run allocated
+managed memory under the name of an experiment it was not running.  Not
+mentioning a knob is not the same as refusing it.  The .hip now names HET_ALLOC
+only to refuse: no malloc branch, no pinned branch, no second allocator.
+
+  $ HREL=MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
+  $ grep -c 'getenv("HET_ALLOC")' $HREL
+  1
+  $ HMODE=$(sed -n '/^static int _het_alloc_mode/,/^}/p' $HREL)
+
+One accepted branch -- unset, auto and managed all resolve to the same
+fine-grained hipMallocManaged -- and nothing else does.
+  $ printf '%s\n' "$HMODE" | grep -c '_mode = HET_HIP_ALLOC_MANAGED;'
+  1
+  $ printf '%s\n' "$HMODE" | grep -c 'strcmp(_v, "managed") == 0'
+  1
+
+The CUDA-only modes are named in the refusal message and NOWHERE ELSE: no
+dispatch, no allocator, no matching free.  A grep for the bare words would pass
+on a .hip that had grown a malloc branch, so these are scoped to the calls.
+  $ grep -cE '\*_pp = malloc|hipHostMalloc|HET_ALLOC_PINNED|_shared_pageable' $HREL || true
   0
+
+Two exit(2)s guard the device, one guards the knob.  hipMallocManaged DEGRADES
+SILENTLY to hipMallocHost when HMM is absent -- hip_runtime_api.h says so, and
+asks for the capability check by name -- and pinned host memory is not the
+coherent path this harness exists to test.  concurrentManagedAccess is the same
+precondition the CUDA render enforces: every het test has the CPU touching the
+shared allocation while the kernel is live.
+  $ printf '%s\n' "$HMODE" | grep -c 'exit(2);'
+  3
+  $ printf '%s\n' "$HMODE" | grep -c 'is not a shared-memory mode of the'
+  1
+  $ printf '%s\n' "$HMODE" | grep -c 'hipDeviceAttributeManagedMemory=0'
+  1
+  $ printf '%s\n' "$HMODE" | grep -c 'hipDeviceAttributeConcurrentManagedAccess=0'
+  1
+
+MI300A vs MI300X.  Both parts report gfx942, so gcnArchName cannot tell them
+apart; hipDeviceAttributeIntegrated ("Device is integrated GPU") can.  An APU
+whose CCD and XCD chiplets share one HBM pool is not the same experiment as a
+discrete accelerator over a host interconnect, so the class is stamped into the
+stdout banner -- the run log carries it whether or not anyone reads the source --
+and a discrete part is warned about rather than silently accepted.  It is NOT
+fatal: MI300X is the Phase-3a bring-up target and must be able to run.
+The attribute is QUERIED once and NAMED once, and the two are counted separately:
+a bare count of the word passes for a harness that kept the warning text and lost
+the query, which is a classification that always answers "APU".
+  $ printf '%s\n' "$HMODE" | grep -c '_het_hip_attr(hipDeviceAttributeIntegrated)'
+  1
+  $ printf '%s\n' "$HMODE" | grep -c 'hipDeviceAttributeIntegrated=0 -- this is a DISCRETE'
+  1
+  $ printf '%s\n' "$HMODE" | grep -c 'amd_part_class=%s'
+  1
+  $ printf '%s\n' "$HMODE" | grep -c 'NOT be reported as an MI300A result'
+  1
+  $ grep -c 'DISCRETE(MI300X-class)' $HREL
+  1
+
+The banner is on stdout and precedes the guards, so a FATAL is readable next to
+the attributes that caused it -- the same rule as (h).
+  $ printf '%s\n' "$HMODE" | grep -c 'HetLitmus: shared-mem mode=managed (HET_ALLOC=%s'
+  1
+
+(j) AND THE HARNESS CALLS IT.  Everything in (i) reads the resolver's own body,
+which proves it is right and proves nothing about whether it ever runs.  On this
+render the resolver's ONLY effect is the guard -- gd_alloc_shared just calls it
+for the side effect and throws the value away -- so, unlike the CUDA render whose
+gd_alloc_shared DISPATCHES on the returned mode and would not compile without it,
+nothing structural holds the call in place.  MEASURED 2026-08-03: deleting that
+one statement from het_alloc_hip.inc left this file green, hipbuildcheck at 69/69
+PASS and `make hetlitmus-test' green, while the built harness ignored HET_ALLOC
+and both device preconditions at allocation time -- the guard would then have
+fired in gd_free_shared, after the experiment and after the histogram.  So the
+CALL SITE is pinned here too, scoped to the function body.
+  $ HALLOC=$(sed -n '/^static void gd_alloc_shared/,/^}/p' $HREL)
+  $ printf '%s\n' "$HALLOC" | grep -c '_het_alloc_mode()'
+  1
+
+Order is part of the contract -- "resolve + guard once, BEFORE the first alloc".
+A call below the allocation still exits(2), but only after the memory it exists
+to vet has been handed out.  Compared rather than pinned to line numbers, so a
+new comment in the body cannot turn this into a number someone bumps.
+  $ R=$(printf '%s\n' "$HALLOC" | grep -n '_het_alloc_mode()' | head -1 | cut -d: -f1)
+  $ A=$(printf '%s\n' "$HALLOC" | grep -n 'hipMallocManaged' | head -1 | cut -d: -f1)
+  $ if [ -z "$R" ]; then echo 'NO GUARD IN gd_alloc_shared'
+  >   elif [ -z "$A" ]; then echo 'NO hipMallocManaged IN gd_alloc_shared'
+  >   elif [ "$R" -lt "$A" ]; then echo 'guard-before-alloc'
+  >   else echo 'ALLOCATES BEFORE GUARDING' ; fi
+  guard-before-alloc
+
+The free stays keyed on the resolver as well, so a second mode could not leave a
+mismatched free behind.
+  $ sed -n '/^static void gd_free_shared/,/^}/p' $HREL | grep -c '_het_alloc_mode()'
+  1
+
+(k) HET_PLACE is a CUDA-only lever and is REFUSED here at compile time.
+Placement is cudaMemAdvise/cudaMemPrefetchAsync and lives in het_alloc_cuda.inc;
+this render has none.  But HET_PLACE is an #ifndef knob, it is swept by the
+tuner, and BOTH dialects print it -- `place=%d' in the cpu-stress banner and
+`place_mode' in the statistics record -- because those lines are emitted once for
+both.  _het_place_failures has two READERS and no writer on this lane, so
+`make hip-bin HIPCC="hipcc -DHET_PLACE=1"' would have logged `place=1 ...
+place_fail=0': placement requested, no refusals, nothing placed and nothing
+placeable.  A knob read into the log and never applied, with a constant-0
+companion so no reader can tell.  Refused at compile time rather than warned
+about at run time (the CUDA render's _het_place_inert) because there the mode is
+a run-time HET_ALLOC choice and placement genuinely exists in one of the three
+modes, whereas here the answer is known when the .hip is compiled.
+  $ grep -c '#if (HET_PLACE) != 0' $HREL
+  1
+  $ grep -c 'HET_PLACE is a CUDA-only lever' $HREL
+  1

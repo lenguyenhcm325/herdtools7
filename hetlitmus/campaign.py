@@ -48,9 +48,20 @@ rule again.
 RUNNER CONTRACT: --runner is a command template with '{test}' and '{dir}' substituted.
 It must execute ONE invocation of the test's harness binary and forward the harness
 stdout -- the HetStats line is the whole interface.  Per invocation this driver sets
-HET_SEED (a fresh base), HET_ADAPTIVE=1, HET_P_GOAL and HET_RUNS_MAX.  On the GH200 the
-runner is typically 'cd {dir} && ./run.exe' (after comp.sh).  Nothing here needs a GPU:
-hetlitmus/verify/statscheck.py phase 6 drives it end to end against a stub runner.
+HET_SEED (a fresh base), HET_ADAPTIVE=1, HET_P_GOAL and HET_RUNS_MAX.  Nothing here
+needs a GPU: hetlitmus/verify/statscheck.py phase 6 drives it end to end against a
+stub runner.
+
+The runner is 'sh spotcheck/run-one.sh {dir} {test}', which is `cd {dir}; exec
+./{test}'.  NOT ./run.exe -- that is upstream litmus7's binary name and no het
+harness emits one; the het link targets write ./<test>.
+
+VENDOR-AGNOSTIC ON PURPOSE, AND MEASURED (P2c, 2026-08-03): this file contains
+zero occurrences of `cuda' or `hip', and it needs none.  Both vendors' link
+targets -- `comp.sh cuda-link' / `make cuda-bin' and `comp.sh hip-link' / `make
+hip-bin' -- write the SAME ./<test>, so an AMD campaign differs from an NVIDIA one
+only in which target built the binary, which happens before this driver is
+invoked.  Adding a --target axis here would be a knob with nothing behind it.
 
 Usage:
   campaign.py --corpus <dir of emitted harness dirs> --control-map <csv>

@@ -2562,10 +2562,17 @@ end
                  "# Compile-only check for HetLitmus harness '%s'.\n" tname) ;
             s "# COMPILE-ONLY by default (-c, no link, no GPU run).\n" ;
             s (Printf.sprintf
-                 "# `cuda-link' additionally LINKS ./%s, making the harness runnable\n" tname) ;
-            s "# on real hardware.  It is GUARDED by uname -m: on a foreign host the CPU\n" ;
-            s "# object carries the portable shim, not the tested asm.\n" ;
-            s "# Usage: sh comp.sh [cuda|hip|cuda-link]   (default cuda)\n" ;
+                 "# `cuda-link' / `hip-link' additionally LINK ./%s, making the harness\n" tname) ;
+            s "# runnable on real hardware.  Both are GUARDED by uname -m: on a foreign host\n" ;
+            s "# the CPU object carries the portable shim, not the tested asm.\n" ;
+            s "# Usage: sh comp.sh [cuda|hip|cuda-link|hip-link]   (default cuda)\n" ;
+            s (Printf.sprintf
+                 "# Both link targets write the SAME path ./%s, so run-one.sh / campaign.py\n" tname) ;
+            s "# stay vendor-agnostic (they exec ./<test> and read the HetStats line).  A\n" ;
+            s "# real target host carries one vendor's toolchain; on a dev box that has both,\n" ;
+            s "# the second link OVERWRITES the first -- which is why the link is\n" ;
+            s "# unconditional here and `make hip-bin' is .PHONY: a stale binary left by the\n" ;
+            s "# other vendor must never be mistaken for a fresh one.\n" ;
             s "set -e\n" ;
             s "TARGET=\"${1:-cuda}\"\n" ;
             s "NVCC=\"${NVCC:-nvcc}\" ; CUDA_ARCH=\"${CUDA_ARCH:-sm_90}\"   # GH200=sm_90\n" ;
@@ -2613,13 +2620,27 @@ end
                  "      $NVCC -arch=$CUDA_ARCH %s.o outs.o %s_cpu_host.o -o %s -lpthread -lm\n"
                  tname tname tname) ;
             s "    fi ;;\n" ;
-            s "  hip)\n" ;
+            s "  hip|hip-link)\n" ;
+            s "    if [ \"$TARGET\" = hip-link ] && [ \"$(uname -m)\" != \"$HET_HOST_ISA\" ]; then\n" ;
+            s (Printf.sprintf
+                 "      echo \"error: comp.sh hip-link refuses on $(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $HET_HOST_ISA host\" >&2\n"
+                 CpuF.isa_name tname) ;
+            s "      exit 3\n" ;
+            s "    fi\n" ;
             s "    command -v \"$HIPCC\" >/dev/null 2>&1 || { echo \"error: $HIPCC not found (HIP/ROCm toolchain absent)\" >&2 ; exit 1 ; }\n" ;
             s (Printf.sprintf "    echo \"+ $HIPCC --offload-arch=$HIP_ARCH -std=c++17 -c %s.hip\"\n" tname) ;
-            s (Printf.sprintf "    $HIPCC --offload-arch=$HIP_ARCH -std=c++17 -c %s.hip -o %s_hip.o ;;\n" tname tname) ;
-            s "  *) echo \"usage: sh comp.sh [cuda|hip|cuda-link]\" >&2 ; exit 2 ;;\n" ;
+            s (Printf.sprintf "    $HIPCC --offload-arch=$HIP_ARCH -std=c++17 -c %s.hip -o %s_hip.o\n" tname tname) ;
+            s "    if [ \"$TARGET\" = hip-link ]; then\n" ;
+            s (Printf.sprintf
+                 "      echo \"+ $HIPCC --offload-arch=$HIP_ARCH %s_hip.o outs.o %s_cpu_host.o -o %s -lpthread -lm\"\n"
+                 tname tname tname) ;
+            s (Printf.sprintf
+                 "      $HIPCC --offload-arch=$HIP_ARCH %s_hip.o outs.o %s_cpu_host.o -o %s -lpthread -lm\n"
+                 tname tname tname) ;
+            s "    fi ;;\n" ;
+            s "  *) echo \"usage: sh comp.sh [cuda|hip|cuda-link|hip-link]\" >&2 ; exit 2 ;;\n" ;
             s "esac\n" ;
-            s "if [ \"$TARGET\" = cuda-link ]; then\n" ;
+            s "if [ \"$TARGET\" = cuda-link ] || [ \"$TARGET\" = hip-link ]; then\n" ;
             s (Printf.sprintf "  echo \"HetLitmus: link OK -> ./%s\"\n" tname) ;
             s "else\n" ;
             s "  echo 'HetLitmus: compile OK'\n" ;
@@ -2629,7 +2650,7 @@ end
             s (Printf.sprintf
                  "# HetLitmus harness '%s' -- objects by default (`make cuda');\n" tname) ;
             s (Printf.sprintf
-                 "# `make cuda-bin' links ./%s, guarded by uname -m.\n" tname) ;
+                 "# `make cuda-bin' / `make hip-bin' link ./%s, guarded by uname -m.\n" tname) ;
             s "NVCC ?= nvcc\nCUDA_ARCH ?= sm_90\nHIPCC ?= hipcc\nHIP_ARCH ?= gfx942\nCC ?= gcc\n" ;
             (* The comment gets its OWN line: `VAR ?= val   # note' keeps the trailing
                blanks in the make variable, so the uname -m test below would compare
@@ -2646,16 +2667,64 @@ end
             s (Printf.sprintf "%s_hip.o: %s.hip\n\t$(HIPCC) --offload-arch=$(HIP_ARCH) -std=c++17 -c $< -o $@\n\n" tname tname) ;
             s "outs.o: outs.c\n\t$(CC) -c $< -o $@\n\n" ;
             s (Printf.sprintf "%s_cpu_host.o: %s_cpu.c\n\t$(CC) -c $< -o $@\n\n" tname tname) ;
-            (* the link target, guarded for the same reason as comp.sh's cuda-link:
-               on a foreign host $(TEST)_cpu_host.o is the portable shim. *)
-            s (Printf.sprintf "cuda-bin: %s\n\n" tname) ;
-            s (Printf.sprintf "%s: %s.o outs.o %s_cpu_host.o\n" tname tname tname) ;
+            (* THE TWO LINK TARGETS ARE .PHONY RECIPES, NOT FILE RULES.  Both
+               vendors write the same ./<test> -- deliberate, so run-one.sh and
+               campaign.py stay vendor-agnostic (they exec ./<test>) -- and make
+               cannot carry two file rules for one target.
+
+               A file rule would also be SKIPPED whenever ./<test> is newer than
+               its objects, which is exactly the state the other vendor's link
+               leaves behind.  MEASURED on this tree before the fix, with
+               `cuda-bin: <test>' + a `<test>: <test>.o ...' file rule: after
+               `make hip-bin', `make cuda-bin' printed "Nothing to be done for
+               'cuda-bin'", EXITED 0, and left the gfx942 binary in place -- a
+               CUDA build that reports success and hands back the AMD harness.
+               Inert while only one vendor could link; live from the moment
+               hip-bin existed.  Both link unconditionally now: a link target
+               that silently links nothing is this project's recurring failure
+               mode.  Guarded for the same reason as comp.sh's *-link arms: on a
+               foreign host $(TEST)_cpu_host.o is the portable shim. *)
+            s (Printf.sprintf "cuda-bin: %s.o outs.o %s_cpu_host.o\n" tname tname) ;
             s (Printf.sprintf
                  "\t@ test \"$$(uname -m)\" = \"$(HET_HOST_ISA)\" || { echo \"error: cuda-bin refuses on $$(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $(HET_HOST_ISA) host\" >&2 ; exit 3 ; }\n"
                  CpuF.isa_name tname) ;
-            s "\t$(NVCC) -arch=$(CUDA_ARCH) $^ -o $@ -lpthread -lm\n\n" ;
             s (Printf.sprintf
-                 ".PHONY: all cuda cuda-bin hip clean\nclean:\n\trm -f *.o %s\n" tname) in
+                 "\t$(NVCC) -arch=$(CUDA_ARCH) $^ -o %s -lpthread -lm\n\n" tname) ;
+            s (Printf.sprintf "hip-bin: %s_hip.o outs.o %s_cpu_host.o\n" tname tname) ;
+            s (Printf.sprintf
+                 "\t@ test \"$$(uname -m)\" = \"$(HET_HOST_ISA)\" || { echo \"error: hip-bin refuses on $$(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $(HET_HOST_ISA) host\" >&2 ; exit 3 ; }\n"
+                 CpuF.isa_name tname) ;
+            s (Printf.sprintf
+                 "\t$(HIPCC) --offload-arch=$(HIP_ARCH) $^ -o %s -lpthread -lm\n\n" tname) ;
+            (* ...AND `make <test>' MUST NOT BUILD ANYTHING EITHER.  Making the two
+               link targets phony removed the only rule that named ./<test>, so
+               GNU make fell through to its BUILT-IN link rule `%: %.o' -- which
+               links <test>.o with $(CC) and never consults the uname -m guard.
+               MEASURED 2026-08-03 on an emitted x86 harness:
+
+                 $ make MP-cg-sys-acqrel-2s-x86_64
+                 cc   MP-cg-sys-acqrel-2s-x86_64.o   -o MP-cg-sys-acqrel-2s-x86_64
+                 ... undefined reference to `cudaLaunchKernel'
+                 make: *** [<builtin>: MP-cg-sys-acqrel-2s-x86_64] Error 1
+
+               It failed only because these objects carry CUDA/C++ symbols the
+               plain $(CC) link cannot resolve -- the ISA guard is NOT what
+               stopped it, and `[<builtin>]' says so.  Before the link targets
+               became phony the same command went through the guarded file rule.
+               So: `.SUFFIXES:' kills the built-in fall-through for every target
+               here (all four object rules are explicit, so nothing needs it),
+               and ./<test> additionally gets a rule that SAYS which target to
+               use.  It is .PHONY as well as explicit because a plain rule whose
+               target already exists is "up to date": make would exit 0 printing
+               nothing and hand back whichever vendor's binary was lying there --
+               the same silent-success shape as the stale-link trap above. *)
+            s ".SUFFIXES:\n\n" ;
+            s (Printf.sprintf "%s:\n" tname) ;
+            s (Printf.sprintf
+                 "\t@ echo \"error: \\`make %s' is not a build target: it would bypass the uname -m guard (and, without this rule, make's built-in \\`%%: %%.o' rule links it with \\$$(CC) and no device code at all).  Link it with \\`make cuda-bin' (NVIDIA) or \\`make hip-bin' (AMD); both check uname -m first.\" >&2 ; exit 3\n\n"
+                 tname) ;
+            s (Printf.sprintf
+                 ".PHONY: all cuda cuda-bin hip hip-bin clean %s\nclean:\n\trm -f *.o %s\n" tname tname) in
           let dump_readme ch =
             let s = output_string ch in
             s (Printf.sprintf "# HetLitmus heterogeneous harness: %s\n\n" tname) ;
@@ -2682,13 +2751,23 @@ end
             s "             hipMallocManaged, __hip_atomic_*).\n" ;
             s (Printf.sprintf "- `%s_cpu.c`  CPU thread(s): real %s inline asm (litmus7 ASMLang).\n" tname CpuF.isa_name) ;
             s "- `outs.c/.h` litmus7's outcome histogram (verbatim from litmus/libdir).\n" ;
-            s "- `comp.sh` / `Makefile`  compile-only build, plus the guarded link target.\n\n" ;
+            s "- `comp.sh` / `Makefile`  compile-only build, plus the two guarded link targets.\n\n" ;
             s "Build (compile-only; no GPU needed): `sh comp.sh [cuda|hip]` (default cuda),\n" ;
             s "or `make cuda` / `make hip`.\n\n" ;
             s "## Building the executable\n\n" ;
             s (Printf.sprintf
-                 "`sh comp.sh cuda-link` or `make cuda-bin` links `./%s` (`$NVCC` pulls in\n" tname) ;
-            s "cudart; `-lpthread -lm` cover the CPU threads and the statistics layer).  Both\n" ;
+                 "NVIDIA: `sh comp.sh cuda-link` or `make cuda-bin` links `./%s` (`$NVCC`\n" tname) ;
+            s "pulls in cudart; `-lpthread -lm` cover the CPU threads and the statistics\n" ;
+            s (Printf.sprintf
+                 "layer).  AMD: `sh comp.sh hip-link` or `make hip-bin` links the same\n") ;
+            s (Printf.sprintf
+                 "`./%s` from `%s_hip.o` (`$HIPCC --offload-arch=$HIP_ARCH`, gfx942 =\n"
+                 tname tname) ;
+            s "MI300A/MI300X).  ONE binary path for both vendors is deliberate: `run-one.sh`\n" ;
+            s "and `campaign.py` exec `./<test>` and stay vendor-agnostic.  A real target host\n" ;
+            s "carries one vendor's toolchain; on a dev box with both, `make hip-bin` is\n" ;
+            s "`.PHONY` and always relinks, so it can never report success while leaving the\n" ;
+            s "other vendor's binary in place.  All four\n" ;
             s (Printf.sprintf
                  "REFUSE unless `uname -m` is `%s`: elsewhere `%s_cpu_host.o` is compiled\n"
                  host_uname tname) ;
@@ -2697,8 +2776,19 @@ end
                  CpuF.isa_name) ;
             s "test nothing.  Override the GPU arch with `CUDA_ARCH=sm_75 make cuda-bin`\n" ;
             s "(T4/T4G) or `sm_90` (GH200) -- always name it explicitly; `-arch=native`\n" ;
-            s "only exists from CUDA 11.5 update 1 onwards.  Compile-time knobs go through\n" ;
-            s "the compiler variable, e.g. `make cuda-bin NVCC=\"nvcc -DHET_MEM_STRESS_PCT=0\"`.\n" ;
+            s "only exists from CUDA 11.5 update 1 onwards.  The AMD equivalent is\n" ;
+            s "`HIP_ARCH=gfx942 make hip-bin`; name it explicitly too, because a build for\n" ;
+            s "the wrong `gfx` links and exits 0 just as happily.  Compile-time knobs go\n" ;
+            s "through the compiler variable, e.g.\n" ;
+            s "`make cuda-bin NVCC=\"nvcc -DHET_MEM_STRESS_PCT=0\"` or\n" ;
+            s "`make hip-bin HIPCC=\"hipcc -DHET_MEM_STRESS_PCT=0\"`.  `HET_PLACE` is the\n" ;
+            s "exception: it is CUDA-only, and a non-zero value REFUSES to compile on the\n" ;
+            s "HIP side rather than be reported in the banner without placing anything.\n\n" ;
+            s (Printf.sprintf
+                 "`make %s` is NOT one of these targets and refuses: it would bypass\n" tname) ;
+            s "the `uname -m` guard, and without that refusal make silently falls back to its\n" ;
+            s "built-in `%: %.o` rule and links the harness with `$(CC)` and no device code.\n" ;
+            s "Use `make cuda-bin` or `make hip-bin`.\n\n" ;
             s "Targets: NVIDIA GH200 Grace-Hopper (CUDA) and AMD MI300A (HIP).\n" in
           write "outs.h" (fun ch -> output_string ch outs_h_content) ;
           write "outs.c" (fun ch -> output_string ch outs_c_content) ;

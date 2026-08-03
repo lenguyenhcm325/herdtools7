@@ -28,6 +28,51 @@ GH200 specifically (ARMv9 Grace + Hopper PTX). So:
 Results go to `results-devtier-<date>-<host>/` and **must never be merged with
 GH200 evaluation data**.
 
+## This ladder is NVIDIA-only. The AMD one is Phase 3a.
+
+P2c made AMD harnesses *linkable and runnable* — `sh comp.sh hip-link` and `make
+hip-bin` produce `./<test>` from `<test>_hip.o` at `--offload-arch=gfx942`, under
+the same `uname -m` refusal as the CUDA arms. What P2c deliberately did **not**
+do is port this ladder, and the reason is that porting it half-way would be
+worse than not porting it:
+
+* `probe.cu` is CUDA (`cudaDeviceGetAttribute`, `cudaMallocManaged`,
+  `cudaHostAlloc`); its HIP twin has to ask different questions
+  (`hipDeviceAttributeManagedMemory`, `hipDeviceAttributeIntegrated`), so it is a
+  new probe, not a `sed`.
+* `ladder.sh` reads `suggested_cuda_arch` from that probe, and rung 1 greps
+  `cudaDevAttrConcurrentManagedAccess` / `cudaDevAttrPageableMemoryAccess` out of
+  harness logs. Every rung from 2 up is a **runtime** rung.
+* There is no AMD GPU on the dev box (`rocminfo`: 0 gfx agents), so not one of
+  those rungs could be observed to pass or fail here. A ladder written blind and
+  never run is the "mechanism that reports success while doing nothing" this
+  project has already shipped four times.
+
+`ladder.sh` already fails closed on an AMD box: it `die`s on `nvcc not on PATH`
+before rung 0. Leave it that way until the AMD ladder is written *against real
+MI300X hardware* in Phase 3a.
+
+### What did NOT need porting, and why (measured 2026-08-03)
+
+`campaign.py` and `run-one.sh` are **vendor-agnostic** and were left untouched:
+
+* `campaign.py` contains zero occurrences of `cuda` or `hip`. It drives a
+  `--runner` command template and parses the `HetStats` line; the toolchain that
+  produced the binary is settled before it is invoked.
+* `run-one.sh` is `cd {dir}; exec ./{test}`.
+* Both vendors' link targets write the **same** `./<test>`, which is what makes
+  that possible. `make hip-bin` is `.PHONY` and relinks unconditionally, so it
+  can never report success while leaving the other vendor's binary in place —
+  the failure `make cuda-bin` had before P2c, and which
+  `hetlitmus/verify/hipbuildcheck.py` phase 5 now pins in both directions.
+
+`pack-bundle.sh` ships whole harness dirs, so the `.hip`, the HIP arms of
+`comp.sh` and the `hip-bin` target travel with every bundle already. It also
+ships `control-map.csv` and `expected-nvidia.csv` — **the NVIDIA oracle**. An AMD
+bundle needs `control-map-amd.csv` + `expected-amd.csv` *and* x86-rendered
+harnesses; that pairing is oracle-provenance work (P2d), and until it lands
+`pack-bundle.sh` must not be pointed at an AMD run.
+
 ## Order of operations
 
 ```sh
