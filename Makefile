@@ -772,11 +772,9 @@ hetlitmus-amd-oracle:
 ###                (probe + kernel + recorded asm); amd-gcn3.cat is cited for
 ###                exactly two of them and both are DECIDED by running it
 ###   Phase 3 G5   the CSV read back: 411 rows, 258/146/7, the ten-class census
-###                and the provenance census 15/32/46/318 -- asserted not printed
-###                (decision/artifact/herd7-checked/derived; the pin lives at
-###                amdordercheck.py:86.  This comment said 15/41/46/309 until
-###                2026-08-03 -- the pre-D24 numbers, i.e. exactly the kind of
-###                number nobody re-measures, cf. the --bite note below.)
+###                and the class -> verdict function ROW BY ROW -- asserted, not
+###                printed.  (It also carried a provenance-grade census until
+###                P2e removed the column, 2026-08-03.)
 ###   Phase 4 G6   x86-image collapse: 45 classes, 321 distinct programs, 0
 ###                inconsistent (the harness runs the identical x86 program)
 ###   Phase 5 G7   the T_x86 rendering under herd7: a NECESSARY condition on the
@@ -991,33 +989,6 @@ hetlitmus-x86body: | build
 ### braces, and because the recipe below cd's into it.
 HETD10OUT := $(CURDIR)/hetlitmus/tests/het/d10-out
 
-### hetlitmus-prov: the P2d gate -- is the PRINTED CLAIM capped by the oracle
-### row's PROVENANCE, and is the AMD lane wired to an oracle at all?
-### Two measured defects, both closed here.  (1) Until 2026-08-03 the x86 lane
-### named no control map and no oracle CSV, so ALL 411 x86 renderings emitted
-### `_rec.het_oracle = ORACLE_UNSET' and every one of their harnesses printed
-### "THIS HARNESS CARRIES NO ORACLE CLASS ... a BUILD BUG, not a result."
-### (2) het_verdict.h keyed its reporting frames on het_oracle_t alone, so a row
-### resting on ONE declared chain of reasoning printed the same sentence -- "A
-### single sighting REFUTES the model's prediction" -- as a two-key
-### artifact-anchored row.  On expected-amd.csv that is licensed by 32 of the
-### 146 Disallowed rows and overstates the other 114 (memo sect 2.3 / 9.2).
-### THE DELIVERABLE IS THE SENTENCE, NOT THE ENUM: phases 4 and 5 COMPILE the
-### real emitted het_verdict.h, feed it synthetic records and read its PRINTOUT;
-### phase 5 blanks the Provenance cell of a real `artifact' row, re-emits,
-### recompiles, and requires the printed text to change from "CANDIDATE CMCM
-### REFUTATION" to "UNGRADED".  Phase 6 machine-checks the D10 CPU-only oracle
-### against herd7 + herd/libdir/x86tso.cat and against the PLDI'23 artifact's own
-### four CPU-Only rows.  Every phase counts its assertions and fails if it made
-### none; --bite injects 31 times, on corruption AND on omission (MEASURED
-### 2026-08-03: the count grew 18 -> 31 with M1-M6 and this comment did not).
-### Needs no GPU (gcc + the built litmus7/herd7/diyone7 only).
-hetlitmus-prov: | build
-	@ echo
-	python3 hetlitmus/verify/provcheck.py
-	python3 hetlitmus/verify/provcheck.py --bite
-	@ echo "HetLitmus provenance/verdict gate: OK (and the gate bites)"
-
 ### hetlitmus-d10: the CPU-ONLY POSITIVE CONTROL as a first-class campaign item
 ### (memo sect 7.D10, PHASE2-plan:71).  Generates the six CPU-only shapes, emits
 ### their harnesses and prints the campaign command for a machine that has a GPU.
@@ -1025,7 +996,7 @@ hetlitmus-prov: | build
 ### target box, so a result from any other machine is not a D10 result.
 ### IT IS IN THE `hetlitmus-test' UMBRELLA (generate + emit need no GPU).  It was
 ### not, and that is exactly why a target that had never worked once shipped
-### green: provcheck P6/P7 gate the SCIENCE this target carries, but nothing
+### green: the SCIENCE this target carries was gated elsewhere, but nothing
 ### gated the COMMAND a human is told to run.
 hetlitmus-d10: | build
 	@ echo
@@ -1114,7 +1085,6 @@ hetlitmus-test:: hetlitmus-stats
 hetlitmus-test:: hetlitmus-hist
 hetlitmus-test:: hetlitmus-tuner
 hetlitmus-test:: hetlitmus-x86body
-hetlitmus-test:: hetlitmus-prov
 hetlitmus-test:: hetlitmus-d10
 
 hetlitmus-test-nvcc:: | build
@@ -1149,7 +1119,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order hetlitmus-oracle
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
-.PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-prov hetlitmus-d10
+.PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10
 ### Neither AMD target was phony until P2a (2026-08-02).  They worked only
 ### because no file of those names happened to exist -- one `touch' away from a
 ### gate that silently stops running.

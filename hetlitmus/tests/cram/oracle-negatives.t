@@ -23,10 +23,10 @@ such rows, so the harness misreported both shipped oracles.
   TEST           QUANT   OBSERVED   ORACLE       MODEL          RESULT         NOTE
   ----           -----   --------   ------       -----          ------         ----
   SB-sys         exists  Sometimes  Allowed      PTX            MATCH          relaxation seen
-  MP-sys-F       exists  Sometimes  Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN
+  MP-sys-F       exists  Sometimes  Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
   LB-sys         exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
   SB-sys-fa      forall  Sometimes  Disallowed   PTX            MATCH          forbidden, not seen
-  MP-sys-fa      forall  Never      Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN
+  MP-sys-fa      forall  Never      Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
   LB-sys-fa      forall  Sometimes  -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
   WS-sys         exists  Sometimes  NO-ORACLE    PTX            NO-ORACLE      model silence: this oracle makes no claim here
   BOGUS-sys      exists  Never      ?            -              UNINTERPRETED  unknown oracle verdict "Perhaps"
@@ -45,7 +45,7 @@ reporting path -- and drives the section end to end.
   TEST           QUANT   OBSERVED   ORACLE       MODEL          RESULT         NOTE
   ----           -----   --------   ------       -----          ------         ----
   SB-sys         exists  Sometimes  Allowed      PTX            MATCH          relaxation seen
-  MP-sys-F       exists  Sometimes  Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN
+  MP-sys-F       exists  Sometimes  Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
   SB-sys-2s      exists  Never      Disallowed   CMCM           MATCH          forbidden, not seen
   MP-sys-2s      exists  Never      Disallowed   CMCM           MATCH          forbidden, not seen
   LB-sys         exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
@@ -91,14 +91,14 @@ over the Disallowed rows, and the two counts that say a row must not be tabulate
   $ grep '^VACUOUS:' stats.out
   VACUOUS: 1 null(s) bound their rate at >= 1, i.e. at nothing.  Grow R (Q3 F4).
 
-The 5-column AMD form of the oracle CSV carries the provenance GRADE in field 4,
-and PORT2-R2-amd-oracle.md sect 9.2 makes the verdict printer switch its mismatch
-sentence on it: only `artifact' is full strength, i.e. reportable as a candidate
-refutation of the compound memory model.  The three MISMATCH rows below are the
-SAME observation and differ ONLY in column 4, so the SENTENCE is the deliverable
--- reading the enum would not catch a printer that ignores the grade.  The
-4-column NVIDIA form has no grade and prints the unqualified sentence, which is
-the block at the top of this file.
+The AMD oracle drives the SAME decision logic on a different Model string, and
+the mismatch sentence is UNCONDITIONAL (PORT2-R2-amd-oracle.md sect 9.2 as
+amended by P2e): no row of either oracle is a hardware measurement, so a
+forbidden outcome seen indicts THE ORACLE ROW first, never the compound model.
+The three MISMATCH rows below carry three different Source strings and must all
+print that one sentence -- a printer that graded them would be visible here,
+because the SENTENCE is the deliverable and not the enum.  Nothing in the file
+distinguishes them, and nothing may.
 
   $ bash ../../oracle-compare.sh obs-amd.txt oracle-amd.csv
   Oracle:       oracle-amd.csv
@@ -106,9 +106,9 @@ the block at the top of this file.
   
   TEST           QUANT   OBSERVED   ORACLE       MODEL          RESULT         NOTE
   ----           -----   --------   ------       -----          ------         ----
-  MP-cg-sys-acquire exists  Sometimes  Disallowed   AMD-CDNA3-x86  MISMATCH       FORBIDDEN OUTCOME SEEN -- full strength: CANDIDATE CMCM REFUTATION
-  WRC-ccg-sys-relaxed exists  Sometimes  Disallowed   AMD-CDNA3-x86  MISMATCH       FORBIDDEN OUTCOME SEEN -- capped (derived): indicts THIS ORACLE ROW first not the CMCM
-  IRIW-gccc-sys-acquire exists  Sometimes  Disallowed   AMD-CDNA3-x86  MISMATCH       FORBIDDEN OUTCOME SEEN -- capped (decision): indicts THIS ORACLE ROW first not the CMCM
+  MP-cg-sys-acquire exists  Sometimes  Disallowed   AMD-CDNA3-x86  MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+  WRC-ccg-sys-relaxed exists  Sometimes  Disallowed   AMD-CDNA3-x86  MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+  IRIW-gccc-sys-acquire exists  Sometimes  Disallowed   AMD-CDNA3-x86  MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
   2+2W-cg-sys-fence exists  Sometimes  NO-ORACLE    AMD-CDNA3-x86  NO-ORACLE      model silence: this oracle makes no claim here
   MP-cg-sys-relaxed exists  Sometimes  Allowed      AMD-CDNA3-x86  MATCH          relaxation seen
   NOT-IN-THE-AMD-ORACLE exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)

@@ -184,46 +184,6 @@ def check_flag_mirror(path=_VERDICT_H, name="HET_ST_TAU_UNRESOLVED",
 check_flag_mirror()
 
 
-# THE GRADES THAT LICENSE PROV_ARTIFACT, i.e. the class "FULL".  A hand-mirror of
-# hetOracle.ml's enum_of_grade, and mirrored for the same reason the flag bit
-# above is: this file is copied on its own onto a rented box, so it cannot call
-# into the OCaml.  Cross-checked against the source when the source is reachable,
-# because a stale copy here would silently re-authorise the one class that
-# licenses the words "CMCM REFUTATION".
-FULL_GRADES = frozenset(["artifact"])
-
-_ORACLE_ML = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
-                          "litmus", "hetOracle.ml")
-
-
-def check_grade_mirror(path=_ORACLE_ML, mirrored=FULL_GRADES):
-    """The grades mapping to PROV_ARTIFACT in `path`, or None when out of reach."""
-    try:
-        with open(path) as fh:
-            text = fh.read()
-    except (IOError, OSError):
-        return None
-    m = re.search(r"^let enum_of_grade = function\n(.*?)^\n", text, re.M | re.S)
-    if m is None:
-        die("%s no longer defines enum_of_grade -- the mirrored grade set cannot be "
-            "verified, and an unverifiable mirror is not one" % path)
-    full = set()
-    for line in m.group(1).splitlines():
-        mm = re.match(r"\s*\|\s*(.*?)\s*->\s*\"PROV_ARTIFACT\"\s*$", line)
-        if mm:
-            full.update(re.findall(r'"([^"]+)"', mm.group(1)))
-    if not full:
-        die("%s: enum_of_grade maps NO grade to PROV_ARTIFACT -- either the parse "
-            "broke or nothing can be full strength; both need a human" % path)
-    if full != set(mirrored):
-        die("%s drifted: enum_of_grade maps %s to PROV_ARTIFACT, campaign.py mirrors %s"
-            % (path, sorted(full), sorted(mirrored)))
-    return full
-
-
-check_grade_mirror()
-
-
 def flags(kv):
     """The HetStats line carries flags=0x<hex>."""
     try:
@@ -250,12 +210,10 @@ class TestState(object):
         self.tau_need_max = 0            # ... and the largest run count they wanted
         self.stop = ""
         self.note = ""
-        # P2d.  The HetStats line now carries `prov=<class>/<grade>' and
-        # `cpu_only=<0|1>', and BOTH cap what a CONFIRMED row licenses.  Read
-        # rather than assumed, and PROV_UNSET-equivalent until a line says
-        # otherwise: a campaign that never saw a grade must claim least.
-        self.prov = "UNSET"
-        self.grade = "(none)"
+        # The HetStats line carries `cpu_only=<0|1>', and it caps what a
+        # CONFIRMED row licenses: on an all-CPU cycle the compound model was not
+        # under test.  Read rather than assumed, and 0 until a line says
+        # otherwise (P2e dropped the `prov=' field this used to read too).
         self.cpu_only = 0
 
     def pooled_bound(self):
@@ -265,40 +223,10 @@ class TestState(object):
 
     def absorb(self, kv):
         self.invocations += 1
-        # prov=<CLASS>/<grade>.  Resolved DOWNWARD across invocations, like
-        # het_stats_compute's HET_ST_PROV_SPLIT: pooling a full-strength
-        # invocation into capped ones would launder the cap.
-        pv = kv.get("prov", "")
-        if "/" in pv:
-            cls, grade = pv.split("/", 1)
-            # THE CLASS IS A FUNCTION OF THE GRADE, AND THAT IS CHECKED HERE.
-            # het_verdict.h computes the class from the enum the emitter wrote
-            # and prints both, so a line whose two halves disagree did not come
-            # from a consistent build -- MEASURED 2026-08-03: making
-            # het_prov_class() return "FULL" for PROV_CAPPED produced
-            # `prov=FULL/decision', and campaign.py then printed "a CANDIDATE
-            # CMCM REFUTATION (provenance decision: the oracle row is anchored)"
-            # off a capped row with every gate green.  Believing the CLASS alone
-            # is what made that possible, so it is no longer believed alone.
-            if (cls == "FULL") != (grade in FULL_GRADES):
-                self.stop, self.note = "ERROR", (
-                    "prov=%s is self-contradictory: class %r with grade %r "
-                    "(FULL is licensed by %s and by nothing else, "
-                    "hetOracle.ml enum_of_grade).  A binary printing this is not "
-                    "one this campaign may grade -- rebuild and re-run."
-                    % (pv, cls, grade, "/".join(sorted(FULL_GRADES))))
-                return
-            if self.invocations == 1:
-                self.prov, self.grade = cls, grade
-            elif cls != self.prov:
-                self.prov, self.grade = "UNSET", "SPLIT"
-        elif self.prov != "UNSET":
-            # AN INVOCATION THAT CARRIED NO GRADE AT ALL, pooled after one that
-            # did.  Downward resolution has to cover this direction too: leaving
-            # the earlier grade standing would let one graded invocation license
-            # a whole campaign whose other invocations were built from an
-            # ungraded binary.  Same rule as the disagreement branch.
-            self.prov, self.grade = "UNSET", "SPLIT"
+        # cpu_only resolves UPWARD across invocations, the same direction
+        # het_stats_compute resolves it in: the CPU-only sentence is the WEAKER
+        # claim about the compound model, so one D10 invocation in the pool is
+        # enough to withhold the compound reading from the whole row.
         if int(fnum(kv, "cpu_only")):
             self.cpu_only = 1
         self.runs += int(fnum(kv, "R"))
@@ -343,26 +271,20 @@ class TestState(object):
                 self.stop = "OBSERVED"
         elif self.oclass == "Disallowed":
             if self.k_runs >= 3:
-                # WHAT a corroborated sighting licenses is the grade's call, not
-                # the run count's.  Before P2d this note said "a REFUTATION of the
-                # CMCM prediction" on every Disallowed row; on expected-amd.csv
-                # that is true of 32 rows and false of 114 (memo sect 2.3 / 9.2),
-                # and it is the sentence an operator pastes into a report.
+                # WHAT a corroborated sighting is a sighting AGAINST is about
+                # what was under test, not about the run count.  Before P2d this
+                # note said "a REFUTATION of the CMCM prediction" on every
+                # Disallowed row; it is the sentence an operator pastes into a
+                # report, and every oracle row is a DERIVATION, so the row is
+                # what it indicts first (P2e).
                 if self.cpu_only:
                     what = ("a CPU-ONLY cycle (D10), so NOT a CMCM refutation -- it "
                             "indicts x86-TSO on this silicon or the memory type of "
                             "the shared allocation (memo sect 8 P1)")
-                elif self.prov == "FULL":
-                    what = ("a CANDIDATE CMCM REFUTATION (provenance %s: the oracle "
-                            "row is anchored)" % self.grade)
-                elif self.prov == "CAPPED":
-                    what = ("a DISAGREEMENT WITH THE ARGUED ORACLE ROW (provenance "
-                            "%s): it indicts THAT ROW first, never the CMCM"
-                            % self.grade)
                 else:
-                    what = ("UNGRADED (provenance %s): this campaign carries no "
-                            "claim-strength grade and licenses no statement about "
-                            "the model" % self.grade)
+                    what = ("a DISAGREEMENT WITH THE ARGUED ORACLE ROW: it indicts "
+                            "THAT ROW first, never the CMCM -- re-derive the row "
+                            "from its Source citations before writing anything down")
                 self.stop, self.note = "CONFIRMED", (
                     "should-be-FORBIDDEN outcome corroborated in %d distinct clean "
                     "runs -- %s; stop and escalate to a human before running "
@@ -570,22 +492,21 @@ def report_campaign(states, errors, confirmed):
         print("campaign: %d test(s) ERRORED -- their rows are not results." % errors)
     if confirmed:
         rows = [s for s in states if s.stop == "CONFIRMED"]
-        full = [s for s in rows if s.prov == "FULL" and not s.cpu_only]
+        d10rows = [s for s in rows if s.cpu_only]
         print("campaign: ** %d CONFIRMED sighting(s) on Disallowed row(s) -- stop and "
               "get a human before anything else is claimed. **" % confirmed)
-        # The grade is REPORTED FROM THE ROWS, never asserted: this sentence used
-        # to print the literal "(provenance artifact)" whatever the rows said, so
-        # it named a grade no row had to be carrying.  absorb() already refuses a
-        # line whose class and grade disagree, so the set below is what the rows
-        # actually said and printing it adds nothing that is not checked.
-        grades = sorted(set(s.grade for s in full)) or ["(none)"]
-        print("campaign:    of those, %d are CANDIDATE CMCM REFUTATIONS (provenance "
-              "%s); the remaining %d are capped, CPU-only or ungraded and "
-              "indict their own oracle row, NOT the compound model."
-              % (len(full), ", ".join(grades), confirmed - len(full)))
+        # WHAT THEY INDICT is stated once and unconditionally: every oracle row
+        # is a derivation over cited sources, so a campaign that disagrees with
+        # one indicts that row before it indicts the compound model.  D10 rows
+        # are called out separately because on an all-CPU cycle the compound
+        # model was not under test at all.
+        print("campaign:    NONE of them is a CMCM refutation as it stands: %d "
+              "DISAGREE WITH THEIR ARGUED ORACLE ROW and indict THAT ROW first "
+              "(re-derive it from its Source citations), and %d are CPU-only (D10) "
+              "cycles on which the compound model was not under test."
+              % (confirmed - len(d10rows), len(d10rows)))
         for s in rows:
-            print("            %-28s prov=%s/%s cpu_only=%d" %
-                  (s.name, s.prov, s.grade, s.cpu_only))
+            print("            %-28s cpu_only=%d" % (s.name, s.cpu_only))
 
     # D10 -- the CPU-only positive control, and it is a PRECONDITION, not a row.
     # memo sect 7.D10: SB and R must be OBSERVED (the store buffer is live, which

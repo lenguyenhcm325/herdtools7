@@ -47,17 +47,16 @@
 #
 # Usage:   ./oracle-compare.sh <observations-file> <oracle-csv>
 #   observations-file : a litmus7 log, or any file containing Observation lines
-#   oracle-csv        : reference CSV, columns "Litmus,Expected,Model,Source" or
-#                       "Litmus,Expected,Model,Provenance,Source" (the AMD form).
+#   oracle-csv        : reference CSV, columns "Litmus,Expected,Model,Source"
+#                       (both shipped oracles use this form).
 #                       ('#' comment lines and the header row are skipped)
 #
-# PROVENANCE-AWARE MISMATCH SENTENCE (PORT2-R2-amd-oracle.md sect 9.2).  Where the
-# CSV carries the 5-column AMD header, field 4 is the provenance GRADE and it CAPS
-# what a mismatch licenses a reader to say: only `artifact' is full strength, i.e.
-# a candidate refutation of the compound model.  A mismatch on a `derived' or
-# `decision' row indicts THAT ORACLE ROW first, never the CMCM.  The grade is read
-# from the header, not guessed: a 4-column CSV has no grade and prints the
-# unqualified sentence, exactly as before.
+# THE MISMATCH SENTENCE (PORT2-R2-amd-oracle.md sect 9.2 as amended by P2e).  A
+# forbidden outcome seen is a disagreement between a RUN and a DERIVATION, and
+# the derivation is the nearer of the two candidate culprits: no row of either
+# oracle is a hardware measurement.  So the note says so unconditionally and
+# points the reader at the row's own Source column.  There is no grade: P2e
+# removed the provenance column and the two-key rule that produced it.
 #
 # Exit status: 0 if no MISMATCH, 1 if any MISMATCH (so it is CI-usable).  The
 # table is printed regardless of exit status.
@@ -84,17 +83,9 @@ BEGIN {
     if (line ~ /^[ \t]*#/ || trim(line) == "") continue
     n = split(line, f, ",")
     name = trim(f[1])
-    if (name == "Litmus") {                   # header row
-      # A 5-column header whose 4th field is Provenance means the grade is
-      # present.  Detected, never assumed: the NVIDIA CSV is 4-column and its
-      # field 4 is free text.  (No apostrophes below this line: the whole awk
-      # program is a single-quoted shell word.)
-      if (n >= 5 && trim(f[4]) == "Provenance") has_prov = 1
-      continue
-    }
+    if (name == "Litmus") continue            # header row
     orac[name]   = trim(f[2])
     model[name] = (n >= 3) ? trim(f[3]) : "?"
-    prov[name]  = (has_prov && n >= 5) ? trim(f[4]) : ""
   }
   close(oracle_csv)
   fmt = "%-14s %-7s %-10s %-12s %-14s %-14s %s\n"
@@ -150,13 +141,9 @@ blk != "" {
     if (verdict == "Disallowed") {
       if (seen) {
         result="MISMATCH"
-        # sect 9.2: the grade CAPS the claim.  Say which one this is.
-        if (prov[test] == "artifact")
-          note="FORBIDDEN OUTCOME SEEN -- full strength: CANDIDATE CMCM REFUTATION"
-        else if (prov[test] != "")
-          note="FORBIDDEN OUTCOME SEEN -- capped (" prov[test] "): indicts THIS ORACLE ROW first not the CMCM"
-        else
-          note="FORBIDDEN OUTCOME SEEN"
+        # sect 9.2 as amended by P2e: one sentence, and it names the nearer
+        # candidate culprit.  The oracle row is a derivation, not a measurement.
+        note="FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM"
       }
       else      { result="MATCH";    note="forbidden, not seen" }
     } else if (verdict == "Allowed") {

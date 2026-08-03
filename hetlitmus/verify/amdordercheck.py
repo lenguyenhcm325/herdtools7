@@ -22,7 +22,8 @@ gate names, NOT the phase order, because the memo names gates.
                 2.1, addendum sect 3); the other ten cells are decided by the
                 recorded gfx942 assembly indexed in g3-cell-instruments.json.
   Phase 3  G5   Read the CSV back: row count, verdict census, per-class census,
-                provenance census.  ASSERTED, never merely printed.
+                and the class -> verdict function ROW BY ROW.  ASSERTED, never
+                merely printed.
   Phase 4  G6   x86-image collapse consistency (memo 5.3): 45 classes, 321
                 distinct x86 programs, 0 inconsistent.
   Phase 5  G7   K-CPU necessary condition -- NOT a decision.  The 17 rows must
@@ -77,13 +78,12 @@ MEMO = Path(os.environ.get("HET_R2_MEMO",
                            ROOT.parent / "env-research" / "PORT2-R2-amd-oracle.md"))
 
 # --- the memo's pins.  Every one of these is a target, not a measurement: if the
-# --- tree disagrees the TREE is wrong until proven otherwise (memo 5.1/5.2/2.3).
+# --- tree disagrees the TREE is wrong until proven otherwise (memo 5.1/5.2).
 EXPECT_ORACLE_ROWS = 411
 CENSUS_VERDICT = {"Allowed": 258, "Disallowed": 146, "NO-ORACLE": 7}
 CENSUS_CLASS = {"S_RELAXED": 60, "S_SCOPE": 104, "S_ROLE": 44, "S_PPO_C": 46,
                 "S_RF_NOCUM": 4, "S_NTA": 19, "S_CUT": 119, "S_CUT_MCA": 8,
                 "S_WS_FENCE": 4, "S_WS_REL": 3}
-CENSUS_PROV = {"decision": 15, "artifact": 32, "herd7-checked": 46, "derived": 318}
 # The class DETERMINES the verdict, and both are in the CSV.  Checking them row
 # by row is what catches a CENSUS-PRESERVING corruption -- MEASURED 2026-08-02:
 # swapping the verdicts of one Allowed row and one NO-ORACLE row leaves every
@@ -93,21 +93,6 @@ CLASS_VERDICT = {"S_RELAXED": "Allowed", "S_SCOPE": "Allowed", "S_ROLE": "Allowe
                  "S_NTA": "Disallowed", "S_CUT": "Disallowed",
                  "S_CUT_MCA": "Disallowed",
                  "S_WS_FENCE": "NO-ORACLE", "S_WS_REL": "NO-ORACLE"}
-EXPECT_FULL_STRENGTH = 32         # memo 5.4.1 as amended by decision D24
-# D24 (P2a 2026-08-02).  Grade 3 is measured by an ablation that is VACUOUS
-# for a row with no GPU ordering at all: it survives every ablation because
-# there is nothing to ablate.  Exactly the 17 K-CPU rows do, and all 17 used
-# to ship `artifact' = FULL STRENGTH.  8 of them have the exact-twin anchor
-# Compound IRIW1-sys and keep it; the 9 WRC/WRC3/RWC rows have NO artifact
-# anchor for their shape (memo 5.4 says so in terms) and their claimed Key-2
-# is X2a -- which Key-1 already cites -- so they are CAPPED as `derived'.
-D24_CAPPED = sorted("""
-WRC-ccg-sys-relaxed   WRC-ccg-sys-release   WRC-ccg-sys-acqrel-2s   WRC-ccg-sys-fence-2s
-WRC3-cccg-sys-relaxed WRC3-cccg-sys-release WRC3-cccg-sys-acqrel-2s WRC3-cccg-sys-fence-2s
-RWC-ccg-sys-fence-2s
-""".split())
-# the shapes for which [ART] supplies a Disallowed anchor (memo 4.2)
-ANCHOR_DIS_SHAPES = {"MP", "LB", "SB", "IRIW"}
 MODEL = "AMD-CDNA3-x86"
 EXPECT_EXT_EDGES = 1092            # memo sect 6, "1092 external edges, 0 GPU->GPU"
 EXPECT_COLLAPSE_CLASSES = 45       # memo 5.3
@@ -353,11 +338,11 @@ def read_csv():
         if not line or line.startswith("#") or line.startswith("Litmus,"):
             continue
         f = line.split(",")
-        if len(f) != 5:
-            sys.exit("amdordercheck: row %r has %d fields not 5 -- a comma leaked "
+        if len(f) != 4:
+            sys.exit("amdordercheck: row %r has %d fields not 4 -- a comma leaked "
                      "into the Source string (memo 9.2 makes that FATAL)"
                      % (f[0], len(f)))
-        rows[f[0]] = dict(verdict=f[1], model=f[2], prov=f[3], src=f[4])
+        rows[f[0]] = dict(verdict=f[1], model=f[2], src=f[3])
     return rows
 
 
@@ -649,19 +634,6 @@ def phase3(C, rows, srcmap):
     cc = collections.Counter(srcmap.get(rows[n]["src"], "??") for n in rows)
     need(dict(cc) == CENSUS_CLASS, "G5",
          "class census %s != %s" % (dict(cc), CENSUS_CLASS))
-    cp = collections.Counter(rows[n]["prov"] for n in rows)
-    need(dict(cp) == CENSUS_PROV, "G5",
-         "provenance census %s != %s" % (dict(cp), CENSUS_PROV))
-    badgrade = [n for n in rows
-                if rows[n]["verdict"] == "Disallowed" and rows[n]["prov"] == "herd7-checked"]
-    need(not badgrade, "G5",
-         "%d Disallowed row(s) carry herd7-checked -- memo 2.3 forbids it (%s)"
-         % (len(badgrade), badgrade[:3]))
-    full = [n for n in rows
-            if rows[n]["verdict"] == "Disallowed" and rows[n]["prov"] == "artifact"]
-    need(len(full) == EXPECT_FULL_STRENGTH, "G5",
-         "full-strength Disallowed = %d but memo 5.4.1 (as amended by D24) pins %d"
-         % (len(full), EXPECT_FULL_STRENGTH))
     need(len(rows) and all("," not in rows[n]["src"] for n in rows), "G5",
          "a Source string contains a comma")
     mism = sorted((n, rows[n]["verdict"], srcmap[rows[n]["src"]]) for n in rows
@@ -680,33 +652,8 @@ def phase3(C, rows, srcmap):
     # so the two texts are byte-compared here and neither is allowed to move
     # alone.  Fails CLOSED if the memo is not on this box.
     _memo_sources_agree(srcmap)
-    # --- D24: no row may hold FULL-STRENGTH `artifact' on a VACUOUS ablation --
-    # Re-derived HERE from the corpus, independently of the generator: a row
-    # with no GPU proc carrying more than one shared access has no GPU cell to
-    # ablate, so grade 3's ablation measured nothing for it and the [ART] link
-    # must be a SHAPE anchor or nothing.
-    vac = sorted(n for n in rows
-                 if rows[n]["verdict"] == "Disallowed" and n in C.tests
-                 and all(len(C.shared(n, i)) <= 1
-                         for i, p in enumerate(C.tests[n]) if p["dev"] == "gpu"))
-    need(vac == KCPU_ROWS, "D24",
-         "the vacuous-ablation set re-derived from the corpus is not memo 5.4's "
-         "17 K-CPU rows: only-derived %s only-memo %s"
-         % (sorted(set(vac) - set(KCPU_ROWS)), sorted(set(KCPU_ROWS) - set(vac))))
-    badvac = sorted(n for n in vac if rows[n]["prov"] == "artifact"
-                    and C.shape(n) not in ANCHOR_DIS_SHAPES)
-    need(not badvac, "D24",
-         "%d row(s) carry FULL-STRENGTH `artifact' on a VACUOUS ablation pass "
-         "with no Disallowed artifact anchor for their shape -- memo 9.2 lets a "
-         "reader report those as a candidate CMCM refutation: %s"
-         % (len(badvac), badvac))
-    capped = sorted(n for n in vac if C.shape(n) not in ANCHOR_DIS_SHAPES)
-    need(capped == D24_CAPPED, "D24",
-         "the D24-capped set is %s not the 9 WRC/WRC3/RWC rows" % capped)
-    badcap = sorted(n for n in capped if rows[n]["prov"] != "derived")
-    need(not badcap, "D24", "D24-capped row(s) %s do not carry `derived'" % badcap)
-    print("   %d rows; verdicts %s; classes OK; grades %s; claim strength %d full / %d capped"
-          % (len(rows), dict(cv), dict(cp), len(full), CENSUS_VERDICT["Disallowed"] - len(full)))
+    print("   %d rows; verdicts %s; classes OK; class -> verdict holds row by row"
+          % (len(rows), dict(cv)))
 
 
 # ===========================================================================
@@ -918,8 +865,6 @@ def phase6(C, rows, srcmap):
          "only-memo %s" % (sorted(set(mca) - set(MCA_ROWS)), sorted(set(MCA_ROWS) - set(mca))))
     need(csvmca == MCA_ROWS, "G12",
          "the CSV labels %s as S_CUT_MCA, not memo 5.2's 8 rows" % csvmca)
-    badp = [n for n in csvmca if rows[n]["prov"] != "decision"]
-    need(not badp, "G12", "S_CUT_MCA row(s) %s do not carry provenance `decision'" % badp)
     # both clauses of the predicate must be load-bearing, and this MEASURES it
     n_norr = len(mca_derived(C, rows, use_rr=False))
     n_noshape = len(mca_derived(C, rows, use_shape=False))
@@ -1268,15 +1213,6 @@ BUILD_INJECTIONS = [
                "way -- but memo 9.4 G0's stated bite does NOT exercise G0 and "
                "G0/blank below is the one that does",
      "  [MP]=0 [SB]=0", "  [MP]=1 [SB]=0"),
-    ("D24/inert", "the grade-3 vacuity guard is made INERT (gpu_supplies_ordering "
-                  "always true) -- the 9 WRC/WRC3/RWC rows go back to FULL-STRENGTH "
-                  "`artifact' and the grade census must redden",
-     'gpu_supplies_ordering() {          # 0 (true) iff a GPU proc has >1 shared access\n  local i',
-     'gpu_supplies_ordering() {          # 0 (true) iff a GPU proc has >1 shared access\n  return 0\n  local i'),
-    ("D24/widen", "the shape-anchor test is WIDENED to accept every shape -- the "
-                  "same 9 rows regain full strength through the other clause",
-     'shape_has_dis_anchor() {           # shape_has_dis_anchor <shape>\n  case',
-     'shape_has_dis_anchor() {           # shape_has_dis_anchor <shape>\n  return 0\n  case'),
     ("A_PROV/relabel", "an anchor row is relabelled artifact-csv-corrected -> "
                        "artifact; memo 9.4 G1 requires the gate to CARRY the two "
                        "corrected values and it used to parse them into a dead "
@@ -1494,9 +1430,11 @@ def bite():
     print("  %s G6/corrupt  %s" % ("ok " if got else "***",
                                    got[0][:120] if got else "DID NOT BITE"))
     rc |= 0 if got else 1
-    # G12 corruption: relabel one S_CUT_MCA row's provenance
+    # G12 corruption: relabel one S_CUT_MCA row's CLASS (its Source string) to
+    # the ordinary S_CUT one.  The structural predicate still finds the 8 rows;
+    # the CSV then labels only 7, which is the disagreement G12 exists to catch.
     r5 = {k: dict(v) for k, v in rows.items()}
-    r5[MCA_ROWS[0]]["prov"] = "derived"
+    r5[MCA_ROWS[0]]["src"] = next(s for s, c in srcmap.items() if c == "S_CUT")
     got = run_isolated(phase6, C, r5, srcmap)
     print("  %s G12/corrupt %s" % ("ok " if got else "***",
                                    got[0][:120] if got else "DID NOT BITE"))
@@ -1614,23 +1552,6 @@ def bite():
     print("  %s G5/swap     %s" % ("ok " if (got and named) else "***",
                                    (got or ["DID NOT BITE"])[0][:150]))
     rc |= 0 if (got and named) else 1
-    # --- D24 (checker side): the vacuity guard must not be re-openable -------
-    global D24_CAPPED
-    r7 = {k: dict(v) for k, v in rows.items()}
-    r7[D24_CAPPED[0]]["prov"] = "artifact"
-    got = run_isolated(phase3, C, r7, srcmap)
-    named = any(D24_CAPPED[0] in x for x in got)
-    print("  %s D24/csv     %s" % ("ok " if (got and named) else "***",
-                                   ([x for x in got if D24_CAPPED[0] in x] or got or
-                                    ["DID NOT BITE"])[0][:150]))
-    rc |= 0 if (got and named) else 1
-    keepd = list(D24_CAPPED)
-    D24_CAPPED = sorted(set(D24_CAPPED) - {keepd[0]})       # OMISSION from the pin
-    got = run_isolated(phase3, C, rows, srcmap)
-    D24_CAPPED = keepd
-    print("  %s D24/pin     %s" % ("ok " if got else "***",
-                                   got[0][:150] if got else "DID NOT BITE"))
-    rc |= 0 if got else 1
     # --- G5: memo 5.2 vs the shipped strings, corruption AND omission --------
     global MEMO
     keepm = MEMO

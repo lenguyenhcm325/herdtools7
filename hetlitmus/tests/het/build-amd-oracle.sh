@@ -34,18 +34,23 @@
 #           `co' edge out of a proc with a po-earlier write, global write
 #           serialisation (`ws').  `ws' is FALSE on the GPU side -> NO-ORACLE.
 #
-# THE TWO-KEY RULE, as amended 2026-08-02 and confirmed by Nguyen (memo 2.0):
-#   two independent keys -> FULL-STRENGTH Disallowed; a single-key derivation MAY
-#   be Disallowed but MUST carry declared single-chain provenance (`derived' or
-#   `decision'), and that declaration CAPS the reported claim strength -- a
-#   mismatch on such a row indicts THIS ORACLE ROW first, never the CMCM.  Doubt
-#   about the derivation itself still resolves to Allowed.  32 of the 146
-#   Disallowed rows report at full strength; 114 report capped (memo 5.4.1 as
-#   amended by decision D24 -- see the grade-3 vacuity guard below; the memo's
-#   own 41/105 counted 9 rows full-strength on a VACUOUS anchor test).
-#   The rejected alternative (demote the 110 declared single-chain rows, census
-#   258/146/7 -> 359/45/7) is NOT implemented and must not be: there is no
-#   D23_CONFIRMED switch here, by instruction (memo 7.D23).
+# DOUBT RESOLVES TOWARD Allowed (memo 2.0's surviving rule, and the one that
+#   matters).  A wrongly-Disallowed row manufactures a FALSE REFUTATION of the
+#   compound model -- the worst error this project can make -- while a
+#   wrongly-Allowed row costs only a missed result.  So where the derivation
+#   itself is in doubt the row ships Allowed, and where the sources do not
+#   settle it at all the row ships NO-ORACLE.  Every row carries its derivation
+#   in the Source column, with citations, and a mismatch is re-derived from
+#   THERE before anything is said about the model.
+#
+# P2e (2026-08-03) REMOVED the provenance GRADE this file used to emit as column
+#   4, and the two-key rule that produced it.  The grade never moved a verdict
+#   -- the census below is what the rule + "doubt => Allowed" produce -- and its
+#   one full-strength grade privileged the PLDI'23 artifact by identity, which
+#   decisions D1 and D4 (which OVERRULE artifact anchors) contradict.  Some S_*
+#   strings below still narrate their key structure; that text is NORMATIVE and
+#   byte-compared against memo 5.2, so it is left exactly as it was.
+#   See env-research/PORT2-P2e-provenance-removal-brief.md.
 #
 # An observed weak outcome makes a verdict Allowed and is robust; a
 # NON-OBSERVATION NEVER PROVES Disallowed.  oracle-compare.sh:118-120's honesty
@@ -791,92 +796,18 @@ is_mca() {
   return 1
 }
 
-# ---------------------------------------------------------------------------
-# PROVENANCE (memo 2.3), single-valued, assigned by PRECEDENCE, highest first.
-# The first rule that matches wins and this is exactly that order.
-#   1 decision            the verdict depends on an unconfirmed sect 7 entry
-#   2 artifact-csv-corrected   appears only in the ANCHOR table (0 corpus rows)
-#   3 artifact            a surviving [ART] anchor covers the load-bearing cell
-#   4 herd7-checked       a herd7 run decides the row in the SOUND direction
-#   5 derived             composition of admitted sources
-# Grade -> claim strength on a Disallowed row: `artifact' (32 rows after D24)
-# is the only FULL-STRENGTH grade.  `derived' (106) is the declared single-chain
-# grade; `decision' (8) means the verdict rests on an unconfirmed sect 7 entry.
-# 114 of the 146 report CAPPED.  `herd7-checked' never lands on a Disallowed row.
-# ---------------------------------------------------------------------------
-# Grade 3 is MEASURED, not asserted: re-classify with every GPU primitive outside
-# the two surviving artifact-anchored cells (acc-release@WW from MP1-sys-F and
-# GPU-Only MP-sys-F; acc-acquire@RR from MP2-sys-F IRIW2-sys-F and GPU-Only
-# IRIW-sys-F) downgraded to relaxed and every GPU fence deleted.  A row that is
-# still Disallowed has its load-bearing cell anchor-covered.
-ablate_to_anchored() {
-  local i tok d a s pair out
-  for ((i=0; i<PROG_N; i++)); do
-    if [ "${PROG_DEV[i]}" != gpu ]; then continue; fi
-    load_proc "$i"
-    pair="-"; [ "$LP_NS" -ge 2 ] && pair="${LP_DIRS:0:2}"
-    out=""
-    for tok in ${PROG_EV[i]}; do
-      d="${tok%%:*}"; a="${tok#*:}"; s="${a#*:}"; a="${a%%:*}"
-      if [ "$d" = F ]; then continue; fi            # no fence cell is anchored
-      case "$a" in
-        release) [ "$pair" = WW ] || a=relaxed;;
-        acquire) [ "$pair" = RR ] || a=relaxed;;
-        sc|acq_rel) a=relaxed;;
-      esac
-      out="$out $d:$a:$s"
-    done
-    PROG_EV[i]="${out# }"
-  done
-}
-
-# ---------------------------------------------------------------------------
-# THE GRADE-3 VACUITY GUARD (decision D24, landed by P2a 2026-08-02).
-#
-# `ablate_to_anchored' MEASURES grade 3 by keeping only the two anchor-covered
-# GPU cells and asking whether the row is still Disallowed.  For a row that has
-# NO GPU ordering at all -- memo 5.4's K-CPU population, where every GPU proc in
-# the cycle carries exactly one shared access -- that test is VACUOUS: there is
-# nothing to ablate, so the row survives EVERY ablation including a total one
-# and it passes for the wrong reason.  MEASURED: exactly the 17 K-CPU rows of
-# memo 5.4 survive a TOTAL GPU-primitive ablation, and all 17 shipped `artifact'
-# i.e. FULL STRENGTH -- the only grade memo 9.2's mismatch protocol lets a
-# reader report as a candidate CMCM refutation.
-#
-# For such a row the [ART] link is not cell coverage but a SHAPE transfer, so
-# the guard asks for one directly: the row's own shape must itself carry a
-# Disallowed artifact anchor.
-#   * IRIW does -- Compound IRIW1-sys (memo 5.4's exact twin; 5.5).  The 8 IRIW
-#     K-CPU rows are that twin (cgcg-relaxed) or a STRENGTHENING of it (cgcc
-#     replaces a GPU writer with an x86 one; -release / -acqrel-2s add
-#     annotations), so Disallowed transfers in the sound direction.
-#   * WRC WRC3 and RWC do NOT.  Memo 5.4 says so in terms -- "there is no
-#     artifact shape anchor for WRC/WRC3/RWC" -- and their Key-2 is "X2a alone
-#     applied as a mechanism transfer", i.e. 7.D21, which is still OPEN and
-#     which Key-1 (the S_CUT string) ALREADY cites.  Key-1 and that Key-2 are
-#     the same chain counted twice: exactly the device 7.D23 rejects.
-# So those 9 rows take grade 5 `derived' -- CAPPED, the fail-safe direction.
-# NO VERDICT MOVES; 146 Disallowed is unchanged.  Grade census 41/309 -> 32/318.
-# ---------------------------------------------------------------------------
-gpu_supplies_ordering() {          # 0 (true) iff a GPU proc has >1 shared access
-  local i
-  for ((i=0; i<PROG_N; i++)); do
-    if [ "${PROG_DEV[i]}" = gpu ]; then
-      load_proc "$i"
-      if [ "$LP_NS" -gt 1 ]; then return 0; fi
-    fi
-  done
-  return 1
-}
-
 # ===========================================================================
-# MEMO 5.4.1 -- THE SINGLE-CHAIN DECLARATION, TRANSCRIBED AND MEASURED.
+# MEMO 5.4.1 -- WHICH CELLS THE DISALLOWED ROWS ACTUALLY REST ON, MEASURED.
 # The addendum (sect 7 item 1) makes that sub-section NORMATIVE and says this
 # script transcribes it, so it is transcribed as NUMBERS THE SCRIPT RE-DERIVES,
 # not as a comment: each cell's "rows for which it is load-bearing" is recomputed
 # by ablating that one cell and re-classifying, and the aggregate coverage rows
 # are recomputed the same way.  A cell here is (prim, pair) where pair is the
 # HOST PROC's program-order direction pair.
+#
+# This is a measurement of the DERIVATION's structure -- which primitive cell a
+# Disallowed verdict would lose if the cell were wrong -- and it survives P2e
+# unchanged.  What P2e removed is the GRADE that used to be read off it.
 #
 #   cell                rows   artifact anchor?   recorded gfx942 emission
 #   acc-acquire@RR       16    YES                g3probe:mp_acq_sys
@@ -897,13 +828,10 @@ gpu_supplies_ordering() {          # 0 (true) iff a GPU proc has >1 shared acces
 #   acc-acquire@RW        2    no                 g3probe2:lb_acq_sys
 #
 # Coverage, MEASURED below: anchors alone 45/146; anchors + the recorded
-# emissions 146/146, uninstrumented 0.  A recorded emission is part of KEY-1
-# (the S_* derivation over [LLVM]'s GFX942 code sequences), NOT an independent
-# Key-2, so no grade changes ON THIS ACCOUNT and the declared single-chain rows
-# stay single-chain (addendum sect 2 and sect 4).  The single-chain population is
-# 110 after D24 (106 `derived' + the 4 `S_CUT_MCA' sc-fence `decision' rows); it
-# was 101 before, and the 9 added are the WRC/WRC3/RWC K-CPU rows whose claimed
-# Key-2 turned out to be Key-1's own X2a.
+# emissions 146/146, uninstrumented 0.  A recorded emission is part of the S_*
+# derivation over [LLVM]'s GFX942 code sequences (addendum sect 2 and sect 4);
+# what the 146/146 says is that no Disallowed row rests on a cell for which this
+# project has no recorded instrument at all.
 # ===========================================================================
 CELL_TABLE="acc-acquire@RR:16 acc-release@WW:12 fence-sc@RW:18 fence-sc@RR:15
 fence-sc@WW:12 acc-release@RW:10 fence-release@RW:8 fence-release@WW:8
@@ -1010,27 +938,11 @@ gate_cells() {
   done
   echo "   anchors alone: $cnt / 146 covered" >&2
   [ "$cnt" = 45 ] || die "5.4.1 FAILED: anchors alone cover $cnt rows but the memo measured 45"
-  # Of those 45, the K-CPU rows pass VACUOUSLY -- they have no GPU ordering to
-  # ablate.  Memo 5.4.1 said "17 are K-CPU rows that carry no GPU primitive at
-  # all"; MEASURED, 8 of the 17 DO carry a sys-scope w[release] on their
-  # single-access GPU proc (IRIW-cgcc/cgcg and WRC-ccg and WRC3-cccg at
-  # -release and -acqrel-2s).  It is structurally INERT -- a one-access proc has
-  # no pair to order and cum() is true because the access is the cycle's first
-  # event -- which is why the ablation still does not move them; but the memo's
-  # sentence was false of those 8 and it is that sentence which justified the
-  # grade.  D24 replaces the vacuous pass with an explicit shape-anchor test.
-  local nvacc=0 nvacc_noanchor=0
-  for n in $DIS_ROWS; do
-    program "$n"; ablate_keep "$ANCHORED_CELLS"; classify_amd CDNA3 1
-    [ "$VERDICT" = Disallowed ] || continue
-    program "$n"
-    gpu_supplies_ordering && continue
-    nvacc=$((nvacc+1))
-    shape_has_dis_anchor "$PROG_SHAPE" || nvacc_noanchor=$((nvacc_noanchor+1))
-  done
-  echo "   of which VACUOUS (no GPU ordering to ablate): $nvacc ; of those with no Disallowed artifact anchor for their SHAPE: $nvacc_noanchor -> graded derived by D24" >&2
-  [ "$nvacc" = 17 ] || die "5.4.1 FAILED: $nvacc rows pass the anchor ablation vacuously but memo 5.4's K-CPU population is 17"
-  [ "$nvacc_noanchor" = 9 ] || die "D24 FAILED: $nvacc_noanchor vacuous rows lack a shape anchor but P2a measured 9 (WRC WRC3 RWC)"
+  # NOTE, and it is why the anchor-alone number is REPORTED rather than acted on:
+  # some of those 45 survive VACUOUSLY.  A row whose every GPU proc carries one
+  # shared access (memo 5.4's K-CPU population) has nothing to ablate, so it
+  # survives every ablation including a total one.  The number below therefore
+  # measures cell coverage, not the strength of any row's case.
   local twelve; twelve=$(echo "$CELL_TABLE" | tr ' \n' '  ' | sed 's/:[0-9]*//g')
   cnt=0
   for n in $DIS_ROWS; do
@@ -1097,24 +1009,6 @@ ANCHORS=(
 [ "${#ANCHORS[@]}" = "$EXPECT_ANCHORS" ] ||
   die "anchor table has ${#ANCHORS[@]} rows but memo 4.2 has $EXPECT_ANCHORS"
 
-# The shapes for which [ART] supplies a DISALLOWED anchor, DERIVED from the table
-# above rather than listed -- a shape that ever leaves the anchor set must lose
-# the grade-3 shape transfer with it.  Read by the grade-3 vacuity guard (D24).
-ANCHOR_DIS_SHAPES=""
-for _arow in "${ANCHORS[@]}"; do
-  IFS='|' read -r _at _an _ae _as _arest <<< "$_arow"
-  [ "$_ae" = Disallowed ] || continue
-  case " $ANCHOR_DIS_SHAPES " in (*" $_as "*) :;;
-    (*) ANCHOR_DIS_SHAPES="$ANCHOR_DIS_SHAPES $_as";; esac
-done
-ANCHOR_DIS_SHAPES="${ANCHOR_DIS_SHAPES# }"
-unset _arow _at _an _ae _as _arest
-[ -n "$ANCHOR_DIS_SHAPES" ] || die "no Disallowed artifact anchor at all -- the grade-3 shape transfer has no basis"
-shape_has_dis_anchor() {           # shape_has_dis_anchor <shape>
-  case " $ANCHOR_DIS_SHAPES " in (*" $1 "*) return 0;; esac
-  return 1
-}
-
 load_anchor() {                    # load_anchor <row-string>
   local row="$1" i rest
   IFS='|' read -r A_TYPE A_NAME A_EXP PROG_SHAPE PROG_CUT rest A_SWMR A_PROV <<< "$row"
@@ -1138,17 +1032,21 @@ anchor_gate() {                    # anchor_gate [hook-override]
     n=$((n+1))
     local ok=OK
     if [ "$VERDICT" != "$A_EXP" ]; then ok="**MISMATCH**"; bad=$((bad+1)); fi
-    # A_PROV IS LOAD-BEARING (P2a 2026-08-02).  It used to be parsed and never
-    # read, which made memo 9.4 G1's requirement that the gate carry "the two
-    # artifact-csv-corrected values" a COMMENT rather than an assertion.  The
-    # three grades are counted here and the two special ones are named, so a
-    # relabelled or renamed row reddens the gate that exists to reproduce
-    # memo 4.2 -- not a later reader's eye.
+    # A_PROV IS LOAD-BEARING (P2a 2026-08-02).  It says WHICH ARTIFACT FILE this
+    # anchor's reference verdict was read out of -- the shipped expected.csv, a
+    # cell memo 4.3 overturns, or a per-test ReadMe -- and it is a property of
+    # the ANCHOR TABLE's transcription, not a grade on any corpus row (P2e
+    # removed those).  It used to be parsed and never read, which made memo 9.4
+    # G1's requirement that the gate carry "the two artifact-csv-corrected
+    # values" a COMMENT rather than an assertion.  The three kinds are counted
+    # here and the two special ones are named, so a relabelled or renamed row
+    # reddens the gate that exists to reproduce memo 4.2 -- not a later
+    # reader's eye.
     case "$A_PROV" in
       artifact)               nplain=$((nplain+1));;
       artifact-csv-corrected) ncorr=$((ncorr+1));  who_corr="$who_corr $A_TYPE/$A_NAME";;
       artifact-readme)        nread=$((nread+1));  who_read="$who_read $A_TYPE/$A_NAME";;
-      *) die "anchor '$A_TYPE $A_NAME' carries provenance '$A_PROV'; memo 4.2 knows only artifact | artifact-csv-corrected | artifact-readme";;
+      *) die "anchor '$A_TYPE $A_NAME' names artifact source '$A_PROV'; memo 4.2 knows only artifact | artifact-csv-corrected | artifact-readme";;
     esac
     printf '%-16s %-12s %-11s %-11s %-6s %s\n' \
       "$A_TYPE" "$A_NAME" "$A_EXP" "$VERDICT" "$ok" "$CLASS" >&2
@@ -1163,7 +1061,7 @@ anchor_gate() {                    # anchor_gate [hook-override]
     die "the artifact-csv-corrected rows are '${who_corr# }' but memo 4.3 adjudicates Compound/MP1-cta-F and no-SWMR/MP1-sys-F"
   [ "${who_read# }" = "Compound-orphan/SB-sys-HF" ] ||
     die "the artifact-readme row is '${who_read# }' but memo 4.2 footnote names Compound-orphan/SB-sys-HF"
-  echo "anchor provenance: $nplain artifact / $ncorr artifact-csv-corrected (${who_corr# }) / $nread artifact-readme (${who_read# })" >&2
+  echo "anchor sources: $nplain artifact / $ncorr artifact-csv-corrected (${who_corr# }) / $nread artifact-readme (${who_read# })" >&2
   # OMISSION guard, and it belongs HERE not at the call site.  Measured 2026-08-02:
   # the size assert used to live only on the generate path (just before the CSV is
   # written) so `--anchors' and `--g15' both reported a SILENTLY TRUNCATED table
@@ -1515,21 +1413,24 @@ TMPOUT="$(mktemp "$PWD/.expected-amd.csv.XXXXXX")"
 # shellcheck disable=SC2064
 trap "rm -f '$TMPOUT'" EXIT
 banner
-declare -A NCLASS=() NPROV=() NVERD=()
+declare -A NCLASS=() NVERD=()
 {
-  echo "Litmus,Expected,Model,Provenance,Source"
+  echo "Litmus,Expected,Model,Source"
   echo "# AMD MI300A het oracle (Zen 4 x86-64 CCDs + CDNA3 XCDs = $MODEL)."
   echo "# Verdicts are DERIVED not measured; no line of this file is a hardware"
   echo "# observation.  Spec: env-research/PORT2-R2-amd-oracle.md (sect 9 is the"
   echo "# contract) as amended by env-research/PORT2-P2-0-addendum.md sect 7."
-  echo "# Provenance is single-valued (memo 2.3) and CAPS the claim strength of a"
-  echo "# Disallowed row: only 'artifact' is full strength.  A mismatch on a"
-  echo "# 'derived' or 'decision' row indicts THIS ORACLE ROW first never the CMCM."
+  echo "# EVERY ROW IS A DERIVATION over the sources cited in column 4 so a run"
+  echo "# that disagrees with one indicts THAT ROW first never the CMCM: re-derive"
+  echo "# it from its Source column before writing anything down.  Doubt about a"
+  echo "# derivation resolves toward Allowed -- a wrongly-Disallowed row would"
+  echo "# manufacture a false refutation of the compound model.  (P2e 2026-08-03"
+  echo "# removed the provenance GRADE this file used to carry as column 4; it"
+  echo "# moved no verdict.  env-research/PORT2-P2e-provenance-removal-brief.md.)"
   echo "# A non-observation never proves Disallowed.  MI300X has NO oracle: it must"
   echo "# use its own Model string and an UNINTERPRETED frame -- never these rows."
   echo "# oracle-compare.sh prints UNINTERPRETED for a test absent from this file and"
-  echo "# keeps NO-ORACLE for the 7 rows that EARN it (memo 6); it also switches its"
-  echo "# mismatch sentence on column 4 -- full strength only for 'artifact'."
+  echo "# keeps NO-ORACLE for the 7 rows that EARN it (memo 6)."
   echo "# QUOTATION CONVENTION: commas are STRIPPED from quoted source text below"
   echo "# because the comma guard is fatal; quotes are otherwise verbatim."
   echo "# Preconditions P1 P2 P3 (memo sect 8) are UNRESOLVED; the banner and the"
@@ -1539,36 +1440,10 @@ declare -A NCLASS=() NPROV=() NVERD=()
     program "$name"
     classify_amd CDNA3 1
     if is_mca; then CLASS=S_CUT_MCA; fi
-    # provenance, by the precedence of memo 2.3
-    local_prov=derived
-    case "$CLASS" in
-      S_CUT_MCA|S_WS_FENCE|S_WS_REL) local_prov=decision;;
-      *)
-        if [ "$VERDICT" = Disallowed ]; then
-          v0="$VERDICT"
-          ablate_to_anchored
-          classify_amd CDNA3 1
-          [ "$VERDICT" = Disallowed ] && local_prov=artifact
-          VERDICT="$v0"
-          program "$name"; classify_amd CDNA3 1
-          if is_mca; then CLASS=S_CUT_MCA; fi
-          # D24, the grade-3 vacuity guard: the ablation above measured NOTHING
-          # for a row with no GPU ordering at all, so ask for the shape transfer
-          # explicitly instead of accepting a vacuous pass.  Fail-safe: the only
-          # move is artifact -> derived, i.e. full strength -> capped.
-          if [ "$local_prov" = artifact ] && ! gpu_supplies_ordering; then
-            shape_has_dis_anchor "$PROG_SHAPE" || local_prov=derived
-          fi
-        fi
-        if [ "$local_prov" = derived ] && [ "$CLASS" = S_PPO_C ]; then
-          local_prov=herd7-checked
-        fi;;
-    esac
     src_of "$CLASS"
     NCLASS[$CLASS]=$(( ${NCLASS[$CLASS]:-0} + 1 ))
-    NPROV[$local_prov]=$(( ${NPROV[$local_prov]:-0} + 1 ))
     NVERD[$VERDICT]=$(( ${NVERD[$VERDICT]:-0} + 1 ))
-    echo "$name,$VERDICT,$MODEL,$local_prov,$SOURCE"
+    echo "$name,$VERDICT,$MODEL,$SOURCE"
   done
 } > "$TMPOUT"
 
@@ -1586,7 +1461,7 @@ printf '    %s\n' "${P2_ROWS[@]}" >&2
 # written -- BEFORE it is renamed over $OUT.
 #
 # EVERY CENSUS NUMBER BELOW IS RE-MEASURED FROM THAT FILE.  It used to be read
-# out of the NCLASS/NPROV/NVERD arrays the emit loop accumulated, while the
+# out of the NCLASS/NVERD arrays the emit loop accumulated, while the
 # comment above claimed the opposite.  DEMONSTRATED 2026-08-02: patch only the
 # `echo' that emits a row so one verdict prints NO-ORACLE while the counters stay
 # correct, and the generator wrote a 257/146/8 CSV and exited 0 printing
@@ -1603,48 +1478,42 @@ ndata=$(csvrows | wc -l)
 nlit=$(ls ./*.litmus | wc -l)
 echo "wrote $OUT: $ndata rows for $nlit .litmus files" >&2
 csvrows | cut -d, -f2 | LC_ALL=C sort | uniq -c >&2
-csvrows | cut -d, -f4 | LC_ALL=C sort | uniq -c >&2
 [ "$ndata" = "$nlit" ] || die "row count $ndata != .litmus count $nlit"
 [ "$ndata" = 411 ] || die "expected 411 corpus rows got $ndata"
 
 # Column guard, FATAL (the NVIDIA precedent, build-nvidia-oracle.sh:271-276).
 badcols=$(csvrows | awk -F, -v m="$MODEL" '
-  NF<5 || ($2!="Allowed" && $2!="Disallowed" && $2!="NO-ORACLE") || $3!=m ||
-  ($4!="decision" && $4!="artifact-csv-corrected" && $4!="artifact" &&
-   $4!="herd7-checked" && $4!="derived") {print NR": "$0}')
+  NF<4 || ($2!="Allowed" && $2!="Disallowed" && $2!="NO-ORACLE") || $3!=m {
+    print NR": "$0}')
 if [ -n "$badcols" ]; then
-  echo "ERROR: malformed row(s) -- f2 verdict f3 model f4 provenance:" >&2
+  echo "ERROR: malformed row(s) -- f2 verdict f3 model:" >&2
   printf '%s\n' "$badcols" >&2; exit 1
 fi
 
 # THE COMMA GUARD IS FATAL (memo 9.2).  A comma inside a Source string splits it
-# across CSV fields 5..n.  The NVIDIA generator degrades this to advisory only
+# across CSV fields 4..n.  The NVIDIA generator degrades this to advisory only
 # because 38 legacy strings already contain one and are pinned byte-stable
 # (MEASURED: `build-nvidia-oracle.sh' itself prints "38 row(s) have a comma
 # inside the Source string (advisory)"; memo 9.2 says 41, which is the
 # full-strength artifact Disallowed count -- a number collision, not a count of
 # strings).  A new file has no legacy and every S_* string above is comma-free
 # BY CONSTRUCTION.
-ncomma=$(csvrows | awk -F, 'NF>5' | wc -l)
+ncomma=$(csvrows | awk -F, 'NF>4' | wc -l)
 [ "$ncomma" = 0 ] || {
   echo "ERROR: $ncomma row(s) have a comma inside the Source string:" >&2
-  csvrows | awk -F, 'NF>5 {print NR": "$1}' >&2
+  csvrows | awk -F, 'NF>4 {print NR": "$1}' >&2
   exit 1; }
 
 # Census pins.  If your build disagrees with these the BUILD is wrong until
-# proven otherwise -- do not adjust the target (memo 5.1, 5.2, 2.3).
+# proven otherwise -- do not adjust the target (memo 5.1, 5.2).
 # Argument 2 of every chk is a COUNT READ BACK OUT OF $TMPOUT.
 chk() { [ "$2" = "$3" ] || die "census FAILED: $1 = $2 but the memo pins $3"; }
 chk "Allowed"       "$(csvcount 2 Allowed)"       258
 chk "Disallowed"    "$(csvcount 2 Disallowed)"    146
 chk "NO-ORACLE"     "$(csvcount 2 NO-ORACLE)"     7
-chk "decision"      "$(csvcount 4 decision)"      15
-chk "artifact"      "$(csvcount 4 artifact)"      32
-chk "herd7-checked" "$(csvcount 4 herd7-checked)" 46
-chk "derived"       "$(csvcount 4 derived)"       318
 # The per-class census is measured by counting each S_* string IN THE FILE.  The
-# comma guard above has already established that no row has more than 5 fields,
-# so field 5 IS the whole Source string and an EXACT match is the honest test;
+# comma guard above has already established that no row has more than 4 fields,
+# so field 4 IS the whole Source string and an EXACT match is the honest test;
 # a substring grep would survive a truncated string.
 # Each entry is class:rows:verdict.  The VERDICT is checked PER ROW, not just in
 # aggregate: MEASURED 2026-08-02, a census-preserving corruption -- swap the
@@ -1658,8 +1527,8 @@ for _cl in S_RELAXED:60:Allowed S_SCOPE:104:Allowed S_ROLE:44:Allowed \
            S_WS_FENCE:4:NO-ORACLE S_WS_REL:3:NO-ORACLE; do
   _k="${_cl%%:*}"; _rest="${_cl#*:}"; _w="${_rest%%:*}"; _v="${_rest##*:}"
   src_of "$_k"
-  chk "$_k" "$(csvrows | awk -F, -v s="$SOURCE" '$5==s' | wc -l)" "$_w"
-  _bad=$(csvrows | awk -F, -v s="$SOURCE" -v v="$_v" '$5==s && $2!=v {print $1" carries "$2}')
+  chk "$_k" "$(csvrows | awk -F, -v s="$SOURCE" '$4==s' | wc -l)" "$_w"
+  _bad=$(csvrows | awk -F, -v s="$SOURCE" -v v="$_v" '$4==s && $2!=v {print $1" carries "$2}')
   [ -z "$_bad" ] || {
     echo "CLASS/VERDICT DISAGREEMENT -- $_k must always be $_v:" >&2
     printf '  %s\n' "$_bad" >&2
@@ -1673,41 +1542,14 @@ for _v in Allowed Disallowed NO-ORACLE; do
   [ "${NVERD[$_v]:-0}" = "$(csvcount 2 "$_v")" ] ||
     die "EMIT DIVERGENCE: the loop counted ${NVERD[$_v]:-0} $_v row(s) but the file carries $(csvcount 2 "$_v") -- the emitted line is not what was classified"
 done
-for _v in decision artifact herd7-checked derived; do
-  [ "${NPROV[$_v]:-0}" = "$(csvcount 4 "$_v")" ] ||
-    die "EMIT DIVERGENCE: the loop counted ${NPROV[$_v]:-0} '$_v' row(s) but the file carries $(csvcount 4 "$_v")"
-done
 unset _v
 # G12 here as well as in amdordercheck.py: S_CUT_MCA is the whole exposure of
 # D2, the only decision in the memo that moves toward Disallowed.
 # `|| true' on the trailing grep -c: with `set -o pipefail' a count of 0 would
 # make the substitution fail and kill the script BEFORE the die below, i.e. the
 # gate would exit 1 without ever saying which invariant broke.
-nmca=$(csvrows | awk -F, '$4=="decision"' | grep -c 'cycle cut through a GPU observer' || true)
+nmca=$(csvrows | grep -c 'cycle cut through a GPU observer' || true)
 [ "$nmca" = 8 ] || die "G12 FAILED: S_CUT_MCA is $nmca rows in the CSV but must be exactly 8"
-# no Disallowed row may ever carry herd7-checked (memo 2.3)
-nbadgrade=$(csvrows | awk -F, '$2=="Disallowed" && $4=="herd7-checked"' | wc -l)
-[ "$nbadgrade" = 0 ] || die "$nbadgrade Disallowed row(s) carry herd7-checked -- forbidden by memo 2.3"
-# D24: no vacuously-graded row may carry `artifact'.  A K-CPU row (no GPU proc
-# with more than one shared access) passes ablate_to_anchored for FREE, so the
-# grade must come from a shape anchor or not at all.  Re-derived from the file +
-# the corpus so the guard cannot drift away from the emitted grades.
-nvac=0
-for _n in $(csvrows | awk -F, '$2=="Disallowed" && $4=="artifact" {print $1}'); do
-  program "$_n"
-  if ! gpu_supplies_ordering && ! shape_has_dis_anchor "$PROG_SHAPE"; then
-    echo "  D24 VIOLATION: $_n has no GPU ordering and shape $PROG_SHAPE has no Disallowed artifact anchor" >&2
-    nvac=$((nvac+1))
-  fi
-done
-unset _n
-[ "$nvac" = 0 ] || die "D24 FAILED: $nvac row(s) carry full-strength 'artifact' on a VACUOUS ablation pass"
-# claim-strength split, printed because it is what a reader must be told
-nfull=$(csvrows | awk -F, '$2=="Disallowed" && $4=="artifact"' | wc -l)
-ncap=$(csvrows | awk -F, '$2=="Disallowed" && $4!="artifact"' | wc -l)
-echo "Disallowed claim strength: $nfull FULL (artifact) / $ncap CAPPED (declared single chain)" >&2
-[ "$nfull" = 32 ] || die "full-strength Disallowed is $nfull but the memo pins 32 (D24)"
-[ "$ncap" = 114 ] || die "capped Disallowed is $ncap but the memo pins 114 (D24)"
 # Every guard has passed against $TMPOUT.  Only now does it become $OUT.
 mv -f "$TMPOUT" "$OUT"
 trap - EXIT

@@ -70,8 +70,8 @@ MI300X hardware* in Phase 3a.
 `comp.sh` and the `hip-bin` target travel with every bundle already. It also
 ships `control-map.csv` and `expected-nvidia.csv` — **the NVIDIA oracle**. An AMD
 bundle needs `control-map-amd.csv` + `expected-amd.csv` *and* x86-rendered
-harnesses; that pairing is oracle-provenance work (P2d), and until it lands
-`pack-bundle.sh` must not be pointed at an AMD run.
+harnesses (`generate-x86.sh`); `pack-bundle.sh` does not assemble that pairing
+yet, so it must not be pointed at an AMD run.
 
 ## Order of operations
 

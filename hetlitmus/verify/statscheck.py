@@ -2180,24 +2180,32 @@ def phase6_campaign(quiet):
             elif not quiet:
                 print("      %-10s %-10s stop=%-9s after %d invocation(s)"
                       % (t, g["cls"], g["stop"], g["inv"]))
-        # The corroborated sighting must be called out AND graded.  This pin was
-        # "CONFIRMED refutation" until P2d (2026-08-03); that phrase was itself the
-        # overclaim, because on expected-amd.csv only 32 of the 146 Disallowed rows
-        # carry the artifact grade that licenses the word "refutation" (memo sect
-        # 2.3 / 9.2).  The pin is now STRICTER, not looser: the summary must be
-        # loud AND it must say how many of the confirmations are candidate CMCM
-        # refutations, and this stub runner emits no `prov=' field, so the honest
-        # answer here is zero of them.
+        # The corroborated sighting must be called out AND its target named.
+        # This pin was "CONFIRMED refutation" until P2d (2026-08-03); that phrase
+        # was itself the overclaim, because every oracle row is a DERIVATION over
+        # cited sources rather than a measurement, so what a corroborated
+        # sighting disagrees with FIRST is the row.  P2e made that the one
+        # unconditional sentence; the pin is that the summary is loud AND says
+        # so, never that it reads as a refutation of the compound model.
         if "CONFIRMED sighting" not in out:
             print("  *** the CONFIRMED sighting is not called out in the summary")
             bad += 1
-        if "CANDIDATE CMCM REFUTATIONS" not in out:
-            print("  *** the summary does not GRADE its confirmations -- a capped "
-                  "row's corroborated sighting would read as a CMCM refutation")
+        # TWO pins, because there are TWO places the sentence has to appear and
+        # one substring covering both is not a check on either.  MEASURED
+        # 2026-08-03: a single `indict THAT ROW first' pin stayed green when the
+        # PER-ROW note was replaced by "a corroborated sighting", because the
+        # roll-up line below still carried the words.
+        if "it indicts THAT ROW first" not in out:      # the per-row CONFIRMED note
+            print("  *** the per-row CONFIRMED note does not say WHAT the sighting "
+                  "indicts -- it would read as a CMCM refutation")
             bad += 1
-        if "are 1 CANDIDATE" in out or "of those, 1 are CANDIDATE" in out:
-            print("  *** an UNGRADED confirmation (this stub emits no prov= field) "
-                  "was counted as a candidate CMCM refutation")
+        if "NONE of them is a CMCM refutation" not in out:   # the roll-up line
+            print("  *** the confirmation roll-up does not state that no confirmed "
+                  "sighting is a CMCM refutation as it stands")
+            bad += 1
+        if "CANDIDATE CMCM REFUTATION" in out:
+            print("  *** the summary called a corroborated sighting a candidate "
+                  "CMCM refutation; the oracle row is indicted first (P2e)")
             bad += 1
 
         # THE SCHEDULER MUST TREAT AN UNRESOLVED TAU AS A PRICE, NOT A FAILURE: not an

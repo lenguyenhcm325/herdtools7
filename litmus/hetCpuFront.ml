@@ -34,11 +34,10 @@ module AArch64 (O:Config) = struct
      GPU dialects are dual-emitted from one parse and the vendor is chosen later
      by which of comp.sh's link arms is run -- and it is also the axis the two
      oracles were derived on: expected-nvidia.csv is Grace(AArch64)+Hopper,
-     expected-amd.csv is Zen-4(x86-64)+CDNA3.  So the ISA names the files, the
-     files carry their own Model string, and hetOracle.load refuses a file whose
-     Model is not this one rather than tagging the harness from the wrong
-     vendor.  het_verdict.h prints [oracle_source] on every run so the log says
-     which file the tag came from. *)
+     expected-amd.csv is Zen-4(x86-64)+CDNA3.  So the ISA names the files and
+     the pair (file, Model) is what the harness records as [oracle_source],
+     which het_verdict.h prints on every run so the log says which oracle the
+     tag came from -- and which target's prose the run is entitled to. *)
   let control_map_csv = "control-map.csv"
   let oracle_csv = "expected-nvidia.csv"
   let oracle_model = "NVIDIA-PTX-AArch64"
@@ -78,11 +77,10 @@ module X86_64 (O:Config) = struct
 
   (* The AMD lane (P2d).  control-map-amd.csv is the x86 STRENGTH LATTICE's own
      map -- on x86 the CPU lattice loses its middle rung, so a mu(T) taken from
-     the AArch64 map is not a weakening here (memo 7.D11) -- and
-     expected-amd.csv is the only one of the two oracles that carries a
-     Provenance column at all.  Until 2026-08-03 this lane read neither:
-     MEASURED, every one of the 411 x86 renderings emitted
-     `_rec.het_oracle = ORACLE_UNSET'. *)
+     the AArch64 map is not a weakening here (memo 7.D11) -- and expected-amd.csv
+     is the AMD oracle a mismatch on this lane must be re-derived from.  Until
+     2026-08-03 this lane named neither: MEASURED, every one of the 411 x86
+     renderings emitted `_rec.het_oracle = ORACLE_UNSET'. *)
   let control_map_csv = "control-map-amd.csv"
   let oracle_csv = "expected-amd.csv"
   let oracle_model = "AMD-CDNA3-x86"

@@ -227,12 +227,15 @@ end
             dev host; None when the build host already IS this ISA (native gcc) *)
          val cross : (string * string) option
          (* WHICH ORACLE THIS LANE IS TAGGED FROM (P2d).  The positive-control
-            map (mu(T), the canary and the oracle CLASS) and the oracle CSV (the
-            claim-strength GRADE) are both per-CPU-lattice; see hetCpuFront.ml
-            for why the CPU ISA is the axis that names them. *)
+            map carries mu(T), the canary and the oracle CLASS; the oracle CSV
+            is not parsed here at all -- its NAME and Model string are what the
+            harness records as [oracle_source], which names the file a reader
+            re-derives a mismatch from and tells het_verdict.h which target's
+            prose to print.  Both are per-CPU-lattice; see hetCpuFront.ml for
+            why the CPU ISA is the axis that names them. *)
          val control_map_csv : string  (* control-map.csv | control-map-amd.csv *)
          val oracle_csv : string       (* expected-nvidia.csv | expected-amd.csv *)
-         val oracle_model : string     (* the Model string every row must carry *)
+         val oracle_model : string     (* the Model string its rows carry *)
          (* The tagged-CPU-body hooks -- the ONLY CPU-ISA-specific pieces of the
             het emitter (the AArch64 arm wires HetCpuBody, the x86_64 arm its
             twin HetCpuBodyX86; both produce the same C shape and share
@@ -457,15 +460,17 @@ end
           let mu_name = HetControlMap.control_of cmap tname
           and canary_name = HetControlMap.canary_of cmap tname
           and oracle = HetControlMap.oracle_of cmap tname in
-          (* The CLAIM-STRENGTH grade, which is a different claim from the
-             oracle class and lives in a different file (hetOracle.ml says why).
-             The class picks WHICH sentence het_verdict_print writes; the grade
-             caps HOW STRONG it is allowed to be. *)
-          let omap =
-            HetOracle.load ~verbose:O.verbose ~dir:src_dir
-              ~csv:CpuF.oracle_csv ~model:CpuF.oracle_model ~src_name in
-          let prov = HetOracle.prov_enum omap tname
-          and prov_name = HetOracle.prov_name omap tname in
+          (* WHICH ORACLE FILE this lane is tagged from, as the string every
+             harness prints and het_verdict.h keys its target wording on.  It is
+             a NAME, not a claim about the row: nothing is read out of the file
+             here -- the verdict comes from the control map above and the
+             derivation from the CSV's own Source column, which a reader looks
+             up.  The existence test keeps "(no oracle CSV)" meaning what it has
+             always meant: this lane's oracle is not next to the test. *)
+          let oracle_src =
+            if Sys.file_exists (Filename.concat src_dir CpuF.oracle_csv) then
+              Printf.sprintf "%s:%s" CpuF.oracle_csv CpuF.oracle_model
+            else "(no oracle CSV)" in
           (* WHICH TARGET IS THIS, for the emitted stderr WARNINGs.  They name
              the two halves of the interconnect noise, and calling them "Grace"
              and "Hopper" on an AMD-tagged harness is a false statement about the
@@ -1605,8 +1610,8 @@ end
                 (if has_mu then 1 else 0) (if has_canary then 1 else 0) oracle
             end ;
             Printf.eprintf
-              "  oracle: %s provenance=%s (%s) from %s%s\n%!"
-              oracle prov prov_name (HetOracle.source omap)
+              "  oracle: %s from %s%s\n%!"
+              oracle oracle_src
               (if cpu_only then "  [D10 CPU-ONLY cycle]" else "") ;
             (* The `none' sentinel is a DERIVED absence, not a missing row, and
                the two must not read alike in a build log: this test co-runs the
@@ -2186,17 +2191,13 @@ end
                which it is silent.  ORACLE_UNSET (a test missing from the map) fails
                closed and the harness reports a build bug rather than a result. *)
             s (Printf.sprintf "    _rec.het_oracle = %s;\n" oracle) ;
-            (* HOW STRONG A CLAIM THAT PREDICTION LICENSES (P2d, memo 9.2).  Read
-               from field 4 of the lane's oracle CSV.  PROV_UNSET is the memset
-               default and the weakest of the three, so a harness the grader did
-               not reach cannot print a refutation.  [het_prov_name] carries the
-               RAW grade so the printout names it instead of only its enum, and
-               [oracle_source] names the file the tag came from -- an x86 harness
-               built against the NVIDIA oracle would otherwise be invisible. *)
-            s (Printf.sprintf "    _rec.het_prov = %s;\n" prov) ;
-            s (Printf.sprintf "    _rec.het_prov_name = \"%s\";\n" prov_name) ;
-            s (Printf.sprintf "    _rec.oracle_source = \"%s\";\n"
-                 (HetOracle.source omap)) ;
+            (* WHERE THAT PREDICTION IS WRITTEN DOWN.  [oracle_source] names the
+               file the harness was tagged from -- an x86 harness built against
+               the NVIDIA oracle would otherwise be invisible -- and it is also
+               how het_verdict.h decides which target's prose to print.  A
+               mismatch sentence sends the reader to this file's Source column,
+               so the file has to be named in the run log. *)
+            s (Printf.sprintf "    _rec.oracle_source = \"%s\";\n" oracle_src) ;
             s (Printf.sprintf
                  "    _rec.cpu_only = %d;  /* D10: 1 iff EVERY proc is a CPU proc */\n"
                  (if cpu_only then 1 else 0)) ;

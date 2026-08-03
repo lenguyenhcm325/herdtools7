@@ -32,9 +32,9 @@
 # when every one of them is a CPU proc; het_verdict.h keys the D10 sentences off
 # that flag, so nothing here depends on the FILE NAME saying "cpuonly".
 #
-# THE ORACLE.  Every verdict below is machine-checked against herd7 + x86tso.cat
-# by hetlitmus/verify/provcheck.py phase 6, on the SAME cycle rendered with
-# `diyone7 -arch X86'.  Measured 2026-08-03:
+# THE ORACLE.  Every verdict below was machine-checked against herd7 +
+# herd/libdir/x86tso.cat on the SAME cycle rendered with `diyone7 -arch X86'.
+# Measured 2026-08-03:
 #     MP    Never 0 3      LB    Never 0 3      2+2W  Never 0 3
 #     IRIW  Never 0 15     SB    Sometimes 1 3  R     Sometimes 1 3
 # which reproduces D10's prose (SB/R observable, MP/LB/2+2W/IRIW not) and, on
@@ -89,28 +89,28 @@ COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell"
 
 [ "$OUT" != "$HETDIR" ] || { echo "refusing to write into the committed corpus" >&2; exit 2; }
 
-# shape | nprocs | cycle | oracle verdict | provenance grade
+# shape | nprocs | cycle | oracle verdict
 #
-# GRADES, under memo sect 2.3's precedence:
-#  * MP/LB/SB/IRIW take `artifact': the row is not merely SUPPORTED by an
-#    artifact anchor, it IS one -- the same shape, CPU-only, in the artifact's
-#    expected.csv -- and herd7 on x86tso.cat decides it independently.  Two keys.
-#  * 2+2W takes `derived': no artifact CPU-Only row exists for it, so its
-#    Disallowed verdict rests on the single x86-TSO chain.  Capped by design.
-#  * R takes `herd7-checked', which is memo grade 4 exactly: a herd7 run
-#    deciding an ALLOWED row is the sound direction (sect 9.4 G8).
+# WHERE EACH VERDICT COMES FROM (recorded in the Source column of the CSV this
+# script writes, and in the notes above):
+#  * MP/LB/SB/IRIW are the artifact's own CPU-Only rows -- the same shape,
+#    CPU-only, in PLDI23_Compound_Simulation's expected.csv -- AND herd7 on
+#    x86tso.cat decides each of them independently.
+#  * 2+2W has no artifact CPU-Only row, so its Disallowed verdict rests on
+#    x86-TSO alone (and see the store-only-detector caveat above).
+#  * R is decided by herd7 on x86tso.cat in the sound direction: Sometimes =>
+#    Allowed (memo sect 9.4 G8).
 #
-# Note the grade is INFORMATIONAL on this set and cannot be load-bearing: the
-# CPU-only branch of het_verdict.h outranks the grade, so no D10 row can print a
-# CMCM refutation whatever its grade says.  It is recorded because the campaign
-# pools these rows with the rest and a blank column would read as UNSET.
+# None of this can turn a D10 mismatch into a CMCM refutation whatever the row
+# rests on: the CPU-only branch of het_verdict.h outranks the ordinary sentence,
+# because on an all-CPU cycle the compound model is not under test.
 D10_ROWS="
-MP:2:PodWW Rfe PodRR Fre:Disallowed:artifact
-LB:2:PodRW Rfe PodRW Rfe:Disallowed:artifact
-SB:2:PodWR Fre PodWR Fre:Allowed:artifact
-2+2W:2:PodWW Coe PodWW Coe:Disallowed:derived
-R:2:PodWW Coe PodWR Fre:Allowed:herd7-checked
-IRIW:4:Rfe PodRR Fre Rfe PodRR Fre:Disallowed:artifact
+MP:2:PodWW Rfe PodRR Fre:Disallowed
+LB:2:PodRW Rfe PodRW Rfe:Disallowed
+SB:2:PodWR Fre PodWR Fre:Allowed
+2+2W:2:PodWW Coe PodWW Coe:Disallowed
+R:2:PodWW Coe PodWR Fre:Allowed
+IRIW:4:Rfe PodRR Fre Rfe PodRR Fre:Disallowed
 "
 
 # The Layer-B canary for this set is SB-cpuonly, and it is the RIGHT one rather
@@ -137,19 +137,19 @@ cat > "$EX" <<'EOF'
 # generate-d10.sh; do not hand-edit.
 #
 # Model is AMD-CDNA3-x86 because that names the MACHINE these tests run on and
-# the allocator they run against, which is what hetOracle.load's Model guard
-# checks.  It does NOT claim the CDNA3 half is exercised -- it is not: every
-# proc is a CPU proc, `_rec.cpu_only' is 1, and het_verdict.h says in so many
-# words that the compound model is not under test here.
+# the allocator they run against, and it is the lane whose oracle file name the
+# emitter records.  It does NOT claim the CDNA3 half is exercised -- it is not:
+# every proc is a CPU proc, `_rec.cpu_only' is 1, and het_verdict.h says in so
+# many words that the compound model is not under test here.
 #
 # Verdicts are x86-TSO, machine-checked against herd7 + herd/libdir/x86tso.cat
-# (provcheck.py phase 6) and, on four of the six shapes, against the PLDI'23
-# artifact's own CPU-Only rows.  No line of this file is a hardware observation.
-Litmus,Expected,Model,Provenance,Source
+# and, on four of the six shapes, against the PLDI'23 artifact's own CPU-Only
+# rows.  No line of this file is a hardware observation.
+Litmus,Expected,Model,Source
 EOF
 
 n=0
-printf '%s\n' "$D10_ROWS" | while IFS=: read -r shape nprocs cycle verdict grade; do
+printf '%s\n' "$D10_ROWS" | while IFS=: read -r shape nprocs cycle verdict; do
   [ -n "$shape" ] || continue
   name="$shape-cpuonly-x86_64"
   devs="cpu"; i=1
@@ -166,7 +166,7 @@ printf '%s\n' "$D10_ROWS" | while IFS=: read -r shape nprocs cycle verdict grade
   fi
   if [ "$name" = "$CANARY" ]; then can="self"; else can="$CANARY"; fi
   echo "$name,$verdict,none,-,NO Layer-A mutant CAN exist: an x86 rendering of this cycle is already at the lattice minimum (plain MOV; no fence to drop),-,none,$can" >> "$CM"
-  echo "$name,$verdict,AMD-CDNA3-x86,$grade,D10 CPU-only positive control: x86-TSO on the shared allocation. Machine-checked against herd7 + x86tso.cat on the same cycle. Doubles as the memo sect 8 P1 WB probe -- an observed SB/R rules out a UC mapping." >> "$EX"
+  echo "$name,$verdict,AMD-CDNA3-x86,D10 CPU-only positive control: x86-TSO on the shared allocation. Machine-checked against herd7 + x86tso.cat on the same cycle. Doubles as the memo sect 8 P1 WB probe -- an observed SB/R rules out a UC mapping." >> "$EX"
 done
 
 n="$(ls "$OUT"/*.litmus | wc -l)"

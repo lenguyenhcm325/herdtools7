@@ -588,13 +588,18 @@ def phase5(tmp, out=None):
 
 # ------------------------------------------------------------------ P6 probes
 
+# NB these two probes are about VALUE provenance -- where a stored VALUE came
+# from inside the CPU column.  That has nothing to do with the oracle-row
+# provenance GRADE P2d added and P2e removed, so they are named for the value
+# and not for the word, and a grep for the grade does not land here.
+#
 # A CPU column whose store value is NOT statically known: the `$5' is killed by
 # the load into the same register, so `movl %eax,(y)' writes whatever x held.
 # hetCpuBodyX86.nodes_of must therefore report the value as UNKNOWN and the
 # emitter must refuse to bind `1:r0=5' to it.  (Before the 2026-08-03 fix the
 # imm memo was never invalidated, the store was recorded as writing 5, and this
 # probe EMITTED -- with `case 1: return 5;' in its _decode_value.)
-PROBE_PROV = """Het PROV-x86_64
+PROBE_KILLED_VALUE = """Het PROV-x86_64
 "probe: the store value is killed by a load into the same register"
 {
 }
@@ -609,7 +614,7 @@ exists (1:r0=%s)
 # The same shape with the value written directly: the emitter MUST emit this,
 # which is what proves the refusal above is about value PROVENANCE and not
 # simply about the literal 5 or about `movl %reg,(g)' being unsupported.
-PROBE_PROV_LIVE = """Het PROVLIVE-x86_64
+PROBE_LIVE_VALUE = """Het PROVLIVE-x86_64
 "probe: same condition, but the store value is an immediate"
 {
 }
@@ -653,14 +658,14 @@ def phase6(tmp, corpus, prov_text=None, live_text=None, litmus7=LITMUS7):
           % (st, len(left)))
 
     # --- value provenance, BOTH ways -----------------------------------------
-    st, blob, dirs = litmus_on(tmp, "PROV", prov_text or (PROBE_PROV % 5), litmus7)
+    st, blob, dirs = litmus_on(tmp, "PROV", prov_text or (PROBE_KILLED_VALUE % 5), litmus7)
     if st != 3 or "no store writes 5 to y" not in blob:
         fail("P6", "a store whose value a load killed still bound `1:r0=5': "
                    "exit=%d dirs=%r, litmus7 said %r"
              % (st, dirs, blob.strip().splitlines()[-1:]))
     else:
         print("  value provenance: the killed-immediate store refuses (exit 3)")
-    st, blob, dirs = litmus_on(tmp, "PROVLIVE", live_text or (PROBE_PROV_LIVE % 5), litmus7)
+    st, blob, dirs = litmus_on(tmp, "PROVLIVE", live_text or (PROBE_LIVE_VALUE % 5), litmus7)
     if st != 0 or len(dirs) != 1:
         fail("P6", "the immediate-store twin did NOT emit, so the refusal above "
                    "proves nothing about provenance: exit=%d dirs=%r said %r"
@@ -1061,10 +1066,10 @@ def bite(tmp, corpus, good):
     # Feed each probe the OTHER's expectation: the refusal check must redden on
     # a test that emits, and the emission check on a test that refuses.
     ok &= expect_red("P6/prov-live",
-                     lambda: phase6(tmp, corpus, prov_text=PROBE_PROV_LIVE % 5),
+                     lambda: phase6(tmp, corpus, prov_text=PROBE_LIVE_VALUE % 5),
                      "still bound `1:r0=5'")
     ok &= expect_red("P6/prov-dead",
-                     lambda: phase6(tmp, corpus, live_text=PROBE_PROV % 5),
+                     lambda: phase6(tmp, corpus, live_text=PROBE_KILLED_VALUE % 5),
                      "did NOT emit")
 
     # --- P7: restore the proc-keyed splitter -- the must-fix, replayed -------

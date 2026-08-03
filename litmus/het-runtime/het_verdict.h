@@ -146,49 +146,28 @@ typedef enum {
 } het_oracle_t;
 
 /* ---------------------------------------------------------------------------
- * THE CLAIM-STRENGTH GRADE -- a SECOND, INDEPENDENT axis (P2d).
+ * WHAT A MISMATCH ON A DISALLOWED ROW LICENSES (P2e, 2026-08-03).
  *
- * het_oracle_t says WHAT the model predicts, so it picks which sentence gets
- * printed.  It says nothing about HOW WELL THAT PREDICTION IS SOURCED, and on
- * the AMD oracle most Disallowed rows are not sourced well enough to license a
- * refutation.  MEASURED on hetlitmus/tests/het/expected-amd.csv (2026-08-03):
- * of its 146 Disallowed rows, 32 carry `artifact' and 114 do not.  A printer
- * keyed on the class alone therefore prints "a single sighting REFUTES the
- * model" on 114 rows whose oracle entry rests on one declared chain of
- * reasoning -- which is the B6c defect wearing new clothes, and it is exactly
- * what PORT2-R2-amd-oracle.md 9.2 forbids:
+ * het_oracle_t says WHAT the model predicts, and that is the only axis this
+ * printer switches on.  It does NOT say that the row's derivation is beyond
+ * question, and the printer must not pretend otherwise: every oracle row of
+ * both CSVs is a DERIVATION over cited sources, not a measurement, so a run
+ * that disagrees with one has two candidate culprits and the oracle row is the
+ * nearer of the two.  The mismatch sentence therefore says so unconditionally
+ * and sends the reader to the row's own Source column before anything is
+ * claimed about the compound model.
  *
- *   "the verdict printer must switch its mismatch sentence on the Provenance
- *    grade -- a mismatch on a full-strength (artifact) Disallowed row is
- *    reported as a candidate CMCM refutation, while a mismatch on a declared
- *    single-chain row (derived, or decision per 5.4.1) must be reported as
- *    indicting this oracle row first, never the CMCM."
- *   (verbatim from memo 9.2, with its markdown emphasis and section marks
- *    stripped and nothing else changed.)
+ * This replaces the provenance GRADE the printer used to switch on (P2d, memo
+ * 2.0's two-key rule).  The grade never moved a verdict, and its one-grade
+ * full-strength arm privileged the PLDI'23 artifact by identity -- which this
+ * project's own anchor-overrule policy (memo 2.0a, decisions D1 and D4)
+ * contradicts.  Rigour lives where it always did: in the per-row S_* string and
+ * its citations.  See env-research/PORT2-P2e-provenance-removal-brief.md.
  *
- * PROV_UNSET is 0 for the same reason ORACLE_UNSET is: het_obs_record is
- * memset(0), so the value an emitter that never learned the grade produces must
- * be the one that claims LEAST.  It is not an error path -- expected-nvidia.csv
- * has no Provenance column at all today (NV-PROV is a later task), so the whole
- * NVIDIA lane lands here by design and prints the ungraded sentence.  Never
- * reorder these: the order is the strength order, and nothing may sort above
- * PROV_ARTIFACT.
- *
- * The grade the harness was tagged with is ALSO carried as a string
- * (het_prov_name) so the printout names it -- "provenance derived" -- rather
- * than making a reader map an enum back to a CSV column.
+ * The ONE case that outranks this sentence is D10 (cpu_only), and it is not
+ * about evidence strength at all: on an all-CPU cycle the compound model is not
+ * under test, so a mismatch cannot indict it whatever the row is worth.
  * --------------------------------------------------------------------------- */
-typedef enum {
-  PROV_UNSET = 0,   /* no grade reached this harness -- claim NOTHING about the
-                       model from a mismatch here; het_prov_name says which of
-                       ABSENT / NO-COLUMN / UNKNOWN:<raw> it was */
-  PROV_CAPPED,      /* graded, and the grade is NOT full strength: derived,
-                       decision, herd7-checked, artifact-csv-corrected.  A
-                       mismatch indicts THE ORACLE ROW, never the CMCM */
-  PROV_ARTIFACT     /* the load-bearing cell of the derivation is exercised by a
-                       surviving artifact anchor (memo 2.3 grade 3).  THE ONLY
-                       grade that licenses "candidate CMCM refutation" */
-} het_prov_t;
 
 /* Which stress mechanisms this BUILD asked for.  A mechanism that produced zero
    work is dead only if it was requested: a deliberately disabled one is not a
@@ -209,16 +188,10 @@ typedef struct het_obs_record {
      the difference between "this refutes the model" and "this is what the model
      said would happen".  ORACLE_UNSET (the memset default) fails closed. */
   het_oracle_t het_oracle;
-  /* How well that prediction is SOURCED, and so how strong a claim a mismatch
-     licenses.  Orthogonal to het_oracle: the class picks the sentence, the
-     grade caps it.  PROV_UNSET (the memset default) claims least. */
-  het_prov_t het_prov;
-  /* The raw grade string from the oracle CSV, PRINTED so the reader sees which
-     grade capped the sentence.  NULL is tolerated and reads as "(none)". */
-  const char *het_prov_name;
   /* "<csv>:<model>", e.g. "expected-amd.csv:AMD-CDNA3-x86".  Printed on every
-     verdict: a harness tagged from the wrong vendor's oracle is otherwise
-     indistinguishable from a correct one in the run log. */
+     verdict: it is the file a mismatch must be re-derived from, and a harness
+     tagged from the wrong vendor's oracle is otherwise indistinguishable from a
+     correct one in the run log. */
   const char *oracle_source;
   /* D10 (memo 7.D10): 1 when EVERY proc of this test is a CPU proc.  Such a
      test is not a compound-model experiment -- it is an x86-TSO conformance
@@ -710,23 +683,6 @@ static const char *het_oracle_name(het_oracle_t o) {
   }
 }
 
-/* The grade as the harness was tagged with it.  Two accessors, because the two
-   answer different questions: het_prov_class() is the enum this printer
-   switches on, het_prov_grade() is the CSV string a reader has to look up in
-   memo 2.3.  A NULL string is reported, never hidden -- it means the emitter
-   set the enum and not the name, which is a build bug. */
-static const char *het_prov_class(het_prov_t p) {
-  switch (p) {
-  case PROV_ARTIFACT: return "FULL";
-  case PROV_CAPPED:   return "CAPPED";
-  default:            return "UNSET";
-  }
-}
-
-static const char *het_prov_grade(const het_obs_record *_r) {
-  return _r->het_prov_name ? _r->het_prov_name : "(none)";
-}
-
 static const char *het_oracle_src(const het_obs_record *_r) {
   return _r->oracle_source ? _r->oracle_source : "(unrecorded)";
 }
@@ -777,7 +733,7 @@ static const char *het_conf_name(het_confidence c) {
 
 static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
-    "HetObs %s oracle=%s prov=%s/%s src=%s cpu_only=%d "
+    "HetObs %s oracle=%s src=%s cpu_only=%d "
     "inst=%d run=%d conf=%d report=%d N=%llu frames=%llu target=%s%llu/%llu "
     "interleavings=%llu distinct_iters=%llu ws_via_obs=%llu obs_unique=%llu "
     "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%s%llu/%llu canary=%s%llu/%llu Prep=%.6f built=%d/%d "
@@ -789,10 +745,10 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
        means the opposite thing for an Allowed test (expected to fire) and a
        Disallowed one, so a row without its class cannot be pooled with anything. */
     _r->test_name, het_oracle_name(_r->het_oracle),
-    /* prov= is machine-readable for the same reason oracle= is: a Disallowed
-       cell pooled across grades would let 114 capped rows lend their count to
-       the 32 that can carry a refutation. */
-    het_prov_class(_r->het_prov), het_prov_grade(_r), het_oracle_src(_r),
+    /* src= is machine-readable so a roll-up can tell which oracle FILE a cell
+       was tagged from: pooling an AMD-tagged cell with a NVIDIA-tagged one is
+       pooling two different targets' predictions. */
+    het_oracle_src(_r),
     _r->cpu_only,
     _r->instance_id, _r->run_id,
     (int)_r->confidence, (int)_r->reporting,
@@ -995,13 +951,12 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   unsigned long long _hits = (unsigned long long)het_reported_count(_r);
   double _pct = _r->N ? (100.0 * (double)_hits / (double)_r->N) : 0.0;
 
-  /* The header line carries BOTH axes and the file they came from.  prov= is
-     not decoration: a reader scanning a campaign log for refutations must be
-     able to see, on the summary line, that a Disallowed row is capped. */
-  fprintf(_ch, "HetVerdict %s [%s] oracle=%s prov=%s/%s src=%s%s run=%d: %s\n",
+  /* The header line carries the oracle class and the file it came from.  src=
+     is not decoration: a reader scanning a campaign log for mismatches must be
+     able to see, on the summary line, which oracle file to re-derive from. */
+  fprintf(_ch, "HetVerdict %s [%s] oracle=%s src=%s%s run=%d: %s\n",
           _r->test_name, het_conf_name(_r->reporting),
           het_oracle_name(_r->het_oracle),
-          het_prov_class(_r->het_prov), het_prov_grade(_r),
           het_oracle_src(_r), _r->cpu_only ? " CPU-ONLY" : "",
           _r->run_id, het_verdict_name(v));
 
@@ -1028,17 +983,19 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       _r->test_name,
       (unsigned long long)_r->target_count_exhaustive,
       (unsigned long long)_r->target_count_heuristic, _n);
-    /* ---------- WHAT THAT SIGHTING LICENSES.  Four sentences, and the choice
-       between them is the deliverable of P2d.  The observation is the same in
-       all four; what differs is whose fault it is, and printing the strongest
-       reading on a row that cannot carry it is precisely the false refutation
-       this whole apparatus exists to prevent (B6c). */
+    /* ---------- WHAT THAT SIGHTING LICENSES.  Two sentences (P2e), and the
+       choice between them is about WHAT IS UNDER TEST, not about how well the
+       row is sourced.  The observation is the same in both; printing a
+       refutation of the compound model where the model was not under test, or
+       where the nearer explanation is the oracle row itself, is the false
+       refutation this whole apparatus exists to prevent (B6c). */
     if (_r->cpu_only) {
-      /* D10 first, because it outranks the grade: on a CPU-only cycle the CMCM
-         is not under test at all.  Both procs are x86, the compound coupling
-         never engages, and the only models that could have been wrong are
-         x86-TSO on this silicon or the MEMORY TYPE of the shared allocation.
-         Memo 7.D10 and [CACM] sect 7's own invited-counterexample framing. */
+      /* D10 first, because it outranks the ordinary sentence: on a CPU-only
+         cycle the CMCM is not under test at all.  Both procs are x86, the
+         compound coupling never engages, and the only models that could have
+         been wrong are x86-TSO on this silicon or the MEMORY TYPE of the shared
+         allocation.  Memo 7.D10 and [CACM] sect 7's own invited-counterexample
+         framing. */
       fprintf(_ch,
         "  ** CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc, so the "
         "COMPOUND MODEL IS NOT UNDER TEST HERE and this is NOT a CMCM refutation.\n"
@@ -1074,43 +1031,20 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
           "  ** The co edge WAS recovered by the x86-side observer "
           "(obs_ws_via_cpu=1), so the cycle closed inside the CPU domain and the "
           "two readings above are the live ones.\n");
-    } else switch (_r->het_prov) {
-    case PROV_ARTIFACT:
+    } else {
+      /* The one mismatch sentence for a compound cycle.  Both explanations are
+         live -- the oracle row is a derivation and this silicon is a machine --
+         and the row is the NEARER one, so it is re-derived first.  Naming the
+         file is the actionable half: the Source column of that row carries the
+         citations the verdict was argued from. */
       fprintf(_ch,
-        "  ** FULL STRENGTH (provenance %s): the load-bearing cell of this oracle "
-        "row's derivation is exercised by a surviving artifact anchor, so the row "
-        "carries two independent keys (memo sect 2.0 / 2.3 grade 3).\n"
-        "  ** A single sighting is a CANDIDATE CMCM REFUTATION.  This is a result, "
-        "not a bug -- report it.  (Candidate, not proven: confirm the recovered "
-        "cycle and re-run before publishing.)\n",
-        het_prov_grade(_r));
-      break;
-    case PROV_CAPPED:
-      fprintf(_ch,
-        "  ** CAPPED (provenance %s): this run DISAGREES WITH THE ARGUED ORACLE "
-        "ROW.  It is NOT a CMCM refutation and must not be reported as one.\n"
-        "  ** The row is a DECLARED SINGLE-CHAIN derivation (memo sect 2.0 as "
-        "amended 2026-08-02, sect 5.4.1): one chain of reasoning, no second "
-        "instrument.  A disagreement therefore indicts THIS ORACLE ROW FIRST -- "
-        "re-derive it, and only if it survives does the compound model come into "
-        "question.\n"
+        "  ** THIS RUN DISAGREES WITH THE ARGUED ORACLE ROW.  That disagreement "
+        "INDICTS THIS ORACLE ROW FIRST, never the CMCM: the row is a DERIVATION "
+        "over cited sources, not a measurement, so re-derive it -- and only if it "
+        "survives does the compound model come into question.\n"
         "  ** Oracle row source: %s.  Look the test up there and read the Source "
         "column before writing anything down.\n",
-        het_prov_grade(_r), het_oracle_src(_r));
-      break;
-    default:
-      /* Fail closed.  Reached today by the ENTIRE NVIDIA lane, whose oracle CSV
-         has no Provenance column (NV-PROV is a later task) -- so this sentence
-         is the normal one there, not an error path.  It is deliberately weaker
-         than CAPPED: a capped row at least knows which chain to re-derive. */
-      fprintf(_ch,
-        "  ** UNGRADED (provenance %s): this harness carries NO claim-strength "
-        "grade, so it cannot license ANY statement about the model -- neither a "
-        "refutation nor an indictment of a particular oracle row.\n"
-        "  ** Report the observation and the effort; grade the row BY HAND against "
-        "the oracle memo before drawing a conclusion.  Oracle row source: %s.\n",
-        het_prov_grade(_r), het_oracle_src(_r));
-      break;
+        het_oracle_src(_r));
     }
     if (cv & HET_CV_HEURISTIC_SIGHT)
       fprintf(_ch,
@@ -1409,28 +1343,23 @@ typedef enum {
                                               the criterion is on the POOLED count
                                               R x HET_NWIN, so it relaxes on its
                                               own; tau_runs_needed prices it.   */
-#define HET_ST_PROV_SPLIT       (1u << 15) /* the cells pooled here do NOT all
-                                              carry the same claim-strength grade.
-                                              Cannot happen from one harness -- one
-                                              binary, one CSV row -- so it means
-                                              records from different builds were
-                                              pooled.  Resolved DOWNWARD, to
-                                              PROV_UNSET: pooling a capped row into
-                                              a full-strength one would launder the
-                                              cap that P2d exists to enforce.    */
+#define HET_ST_MIXED_POOL       (1u << 15) /* the cells pooled here do NOT all
+                                              agree on cpu_only.  Cannot happen
+                                              from one harness -- one binary, one
+                                              test -- so it means records from
+                                              different builds were pooled.
+                                              Resolved toward the WEAKER claim
+                                              about the compound model (cpu_only
+                                              wins), never away from it.       */
 
 typedef struct het_stats {
   const char *test_name;
   het_oracle_t oracle;
-  /* The claim-strength axis, carried through to the CAMPAIGN-LEVEL output as
-     well.  het_verdict_print speaks about ONE run; het_stats_print speaks about
-     the whole campaign for this test and is the line a human actually reads
-     before writing a result down, so a grade that stopped at the per-run
-     printout would leave the louder sentence ungraded.  Copied from recs[0]:
-     every cell of a stats block is the same test built from the same CSV row,
-     and het_stats_compute asserts that below rather than assuming it. */
-  het_prov_t prov;
-  const char *prov_name;
+  /* The oracle FILE this block's cells were tagged from, carried through to the
+     CAMPAIGN-LEVEL output as well.  het_verdict_print speaks about ONE run;
+     het_stats_print speaks about the whole campaign for this test and is the
+     line a human actually reads before writing a result down, so it has to name
+     the file a mismatch must be re-derived from.  Copied from recs[0]. */
   const char *oracle_source;
   int cpu_only;
   het_obs_class obs;
@@ -1707,22 +1636,15 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   st->oracle    = recs[0].het_oracle;
   st->N         = recs[0].N;
   st->R         = n;
-  /* The claim-strength axis, and a CHECK rather than an assumption: if the cells
-     handed here do not agree on the grade they are not one campaign, and the
-     block resolves DOWNWARD to PROV_UNSET.  A max() would have been the
-     laundering bug -- one full-strength cell pooled in would license the
-     refutation sentence for a block of capped ones. */
-  st->prov          = recs[0].het_prov;
-  st->prov_name     = recs[0].het_prov_name;
+  /* Which oracle FILE, and whether this is a D10 cycle -- a CHECK rather than an
+     assumption: if the cells handed here do not agree on cpu_only they are not
+     one campaign, and the block resolves toward the WEAKER claim. */
   st->oracle_source = recs[0].oracle_source;
   st->cpu_only      = recs[0].cpu_only;
   { int _i;
     for (_i = 1; _i < n; _i++)
-      if (recs[_i].het_prov != recs[0].het_prov
-          || recs[_i].cpu_only != recs[0].cpu_only) {
-        st->flags |= HET_ST_PROV_SPLIT;
-        st->prov = PROV_UNSET;
-        st->prov_name = "SPLIT";
+      if (recs[_i].cpu_only != recs[0].cpu_only) {
+        st->flags |= HET_ST_MIXED_POOL;
         /* cpu_only resolves upward, because the CPU-only sentence is the WEAKER
            claim about the compound model: it says the CMCM was not under test. */
         if (recs[_i].cpu_only) st->cpu_only = 1;
@@ -1977,14 +1899,13 @@ static const char *het_tier_name(het_mismatch_tier t) {
    replace). */
 static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
-    "HetStats %s oracle=%s prov=%s/%s cpu_only=%d obs=%s "
+    "HetStats %s oracle=%s cpu_only=%d obs=%s "
     "R=%d usable=%d k=%d k_eff=%d k_runs=%d degen=%d "
     "ctrl=%s win_n=%d nwin=%d F_win=%.4f F_cell=%.4f r_hat=%.4f mu_upper=%.4f "
     "tau_w=%.4f N_eff=%.4f tau_need=%d R_eff=%.4f "
     "p_bound=%.6g P_rep=%.6g acf1=%.4f ks=%s ks_D=%.4f ks_Dcrit=%.4f ks_split=%d "
     "tier=%s N=%llu frames=%llu flags=0x%x\n",
     _s->test_name ? _s->test_name : "(none)", het_oracle_name(_s->oracle),
-    het_prov_class(_s->prov), _s->prov_name ? _s->prov_name : "(none)",
     _s->cpu_only,
     het_obs_class_name(_s->obs), _s->R, _s->R_usable, _s->k, _s->k_eff, _s->k_runs,
     _s->n_degen,
@@ -2300,12 +2221,11 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
       _s->n_degen, (int)HET_THETA_DISTINCT);
 
   if (_s->oracle == ORACLE_DISALLOWED) {
-    /* REPRODUCIBILITY first (how many clean runs), then STRENGTH (what those
-       runs license).  The two are independent and were fused before P2d: the
+    /* REPRODUCIBILITY first (how many clean runs), then WHAT THOSE RUNS ARE A
+       SIGHTING AGAINST.  The two are independent and were fused once: the
        CONFIRMED arm asserted "this is a REFUTATION OF THE CMCM's PREDICTION"
-       for every Disallowed row, which on expected-amd.csv is true of 32 rows
-       and false of 114.  Reproducing a sighting makes it real; it does not
-       make the oracle row it disagrees with any better sourced. */
+       for every Disallowed row.  Reproducing a sighting makes it REAL; it does
+       not make the oracle row it disagrees with any less of a derivation. */
     if (_s->tier == HET_MT_CONFIRMED)
       fprintf(_ch,
         "  ** %s ** -- the should-be-FORBIDDEN outcome was observed in %d distinct "
@@ -2326,7 +2246,7 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
         ">=3 clean runs before writing it up.  WHAT it is a sighting against is the "
         "next line, and it is not always the model.\n",
         het_tier_name(_s->tier), _s->k_runs);
-    /* ...and what it is a sighting AGAINST.  Same four-way split as
+    /* ...and what it is a sighting AGAINST.  Same two-way split as
        het_verdict_print, stated again here because this block is what gets
        pasted into a report. */
     if (_s->cpu_only)
@@ -2334,26 +2254,12 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
         "  ** CPU-ONLY CYCLE (D10): NOT a CMCM refutation -- the compound model is "
         "not under test on an all-CPU cycle.  It indicts x86-TSO on this silicon, or "
         "the memory type of the shared allocation (memo sect 8 P1).\n");
-    else if (_s->prov == PROV_ARTIFACT)
-      fprintf(_ch,
-        "  ** FULL STRENGTH (provenance %s): this oracle row is anchored, so the "
-        "campaign's finding is a CANDIDATE CMCM REFUTATION.  This is the campaign's "
-        "most valuable output: report it.\n",
-        _s->prov_name ? _s->prov_name : "(none)");
-    else if (_s->prov == PROV_CAPPED)
-      fprintf(_ch,
-        "  ** CAPPED (provenance %s): the finding is that this campaign DISAGREES "
-        "WITH THE ARGUED ORACLE ROW -- a declared single-chain derivation (memo "
-        "sect 2.0 / 5.4.1).  It indicts THIS ORACLE ROW FIRST, never the CMCM.  "
-        "Re-derive the row from %s before writing anything down.\n",
-        _s->prov_name ? _s->prov_name : "(none)",
-        _s->oracle_source ? _s->oracle_source : "(unrecorded)");
     else
       fprintf(_ch,
-        "  ** UNGRADED (provenance %s): no claim-strength grade reached this "
-        "campaign, so it licenses NO statement about the model.  Report the "
-        "observation and the effort; grade the row by hand (source: %s).\n",
-        _s->prov_name ? _s->prov_name : "(none)",
+        "  ** THE FINDING IS THAT THIS CAMPAIGN DISAGREES WITH THE ARGUED ORACLE "
+        "ROW.  It INDICTS THAT ROW FIRST, never the CMCM: the row is a DERIVATION "
+        "over cited sources, not a measurement.  Re-derive it from %s -- read that "
+        "row's Source column -- before writing anything down.\n",
         _s->oracle_source ? _s->oracle_source : "(unrecorded)");
   }
 }

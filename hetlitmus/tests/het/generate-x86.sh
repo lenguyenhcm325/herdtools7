@@ -163,11 +163,12 @@ echo "generate-x86: (A) $a + (B) $b (skipped $bskip degenerate) + (D) $d (skippe
 [ "$n" -eq $((a+b+d+e)) ] || { echo "FAIL: $n files on disk but $((a+b+d+e)) counted" >&2; exit 1; }
 
 # --- the AMD lane's two maps, RE-KEYED onto the x86 file names (P2d) ----------
-# The emitter resolves both of these RELATIVE TO THE .litmus it is given
-# (hetEmit.ml: HetControlMap.load / HetOracle.load, both ~dir:src_dir), so
-# without them every x86 rendering emits `_rec.het_oracle = ORACLE_UNSET' and
-# its harness reports a BUILD BUG instead of a result.  MEASURED before this
-# block existed, 2026-08-03: 411 of 411.
+# The emitter resolves the control map RELATIVE TO THE .litmus it is given
+# (hetEmit.ml: HetControlMap.load ~dir:src_dir), so without it every x86
+# rendering emits `_rec.het_oracle = ORACLE_UNSET' and its harness reports a
+# BUILD BUG instead of a result.  MEASURED before this block existed,
+# 2026-08-03: 411 of 411.  The oracle CSV is re-keyed beside it because that is
+# the file a mismatch is re-derived from and the emitter records its name.
 #
 # RE-KEYED, not copied.  The committed maps are keyed on the AArch64 test NAMES
 # -- one row per shape x cut x scope x order, whatever ISA the CPU column is
@@ -180,7 +181,8 @@ echo "generate-x86: (A) $a + (B) $b (skipped $bskip degenerate) + (D) $d (skippe
 # The file NAMES are kept (control-map-amd.csv / expected-amd.csv), not
 # flattened to control-map.csv: hetCpuFront.X86_64 asks for those names, so a
 # directory carrying the NVIDIA maps under their own names cannot be mistaken
-# for an AMD lane, and hetOracle.load's Model guard refuses the swap outright.
+# for an AMD lane -- and the harness records which of the two it was tagged
+# from, so a run log says so too.
 #
 # `-`, `self` and `none` are SENTINELS, not names, and must NOT be suffixed.
 # MEASURED 2026-08-03: control-map-amd.csv carries `none' in 16 rows of column 3
@@ -206,7 +208,7 @@ rekey_names() {                 # rekey_names FILE COL... -- suffix those column
 # control-map-amd.csv: Test,Expected,Mu,MuExpected,MuRule,MuAlt,MuRelaxed,Canary
 #   name-valued columns are 1 (Test), 3 (Mu), 6 (MuAlt), 7 (MuRelaxed), 8 (Canary)
 rekey_names "$HETDIR/control-map-amd.csv" 1 3 6 7 8 > "$OUT/control-map-amd.csv"
-# expected-amd.csv: Litmus,Expected,Model,Provenance,Source -- only column 1 is a name.
+# expected-amd.csv: Litmus,Expected,Model,Source -- only column 1 is a name.
 rekey_names "$HETDIR/expected-amd.csv" 1 > "$OUT/expected-amd.csv"
 
 # Both maps must cover the corpus EXACTLY, in both directions.  A map row with
