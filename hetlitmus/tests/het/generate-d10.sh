@@ -69,15 +69,24 @@
 # those four; treat the 2+2W row as UNRESOLVED until the store-only detector is
 # re-examined (B3 / DR1 territory, not this script's).
 set -e
+# OUTDIR IS RESOLVED FIRST, AGAINST THE CALLER'S CWD, BECAUSE THE `cd' BELOW
+# MOVES US.  MEASURED 2026-08-03: with the resolution after the cd, `make
+# hetlitmus-d10' -- whose $(HETD10OUT) is the RELATIVE `hetlitmus/tests/het/
+# d10-out' -- created hetlitmus/tests/het/hetlitmus/tests/het/d10-out/ inside
+# the committed corpus and then died with "cd: can't cd to
+# hetlitmus/tests/het/d10-out", RC=2, leaving the tree dirty.  A relative
+# OUTDIR is the normal case for a Makefile caller, so it is the one that has
+# to work.
+OUT="${1:?usage: generate-d10.sh OUTDIR}"
+mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd)"
+
 cd "$(dirname "$0")"
 HETDIR="$(pwd)"
 # shellcheck source=../../paths.sh
 source ../../paths.sh
 COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell"
 
-OUT="${1:?usage: generate-d10.sh OUTDIR}"
-mkdir -p "$OUT"
-OUT="$(cd "$OUT" && pwd)"
 [ "$OUT" != "$HETDIR" ] || { echo "refusing to write into the committed corpus" >&2; exit 2; }
 
 # shape | nprocs | cycle | oracle verdict | provenance grade

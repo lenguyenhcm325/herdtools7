@@ -974,10 +974,18 @@ hetlitmus-x86body: | build
 	python3 hetlitmus/verify/x86bodycheck.py --bite
 	@ echo "HetLitmus x86-64 tagged CPU body gate: OK (and the gate bites)"
 
-### Scratch output dir for hetlitmus-d10.  Never committed: the D10 tests are
-### generated on demand, exactly like the x86 renderings (generate-x86.sh), so
-### that corpus-gate.sh's 411-file pin and dupcheck.py stay meaningful.
-HETD10OUT := hetlitmus/tests/het/d10-out
+### Scratch output dir for hetlitmus-d10.  Never committed (.gitignore'd): the
+### D10 tests are generated on demand, exactly like the x86 renderings
+### (generate-x86.sh), so that corpus-gate.sh's 411-file pin and dupcheck.py stay
+### meaningful -- both scan hetlitmus/tests/het NON-recursively (`find -maxdepth
+### 1' / `glob("*.litmus")'), so a subdirectory is invisible to them.
+### ABSOLUTE, and that is not cosmetic: generate-d10.sh cd's to its own directory
+### before it resolved OUTDIR, so the relative form of this variable used to be
+### re-rooted at hetlitmus/tests/het/ and the target had NEVER worked (MEASURED
+### 2026-08-03: RC=2 plus a stray hetlitmus/tests/het/hetlitmus/ tree).  The
+### generator now resolves OUTDIR first; this stays absolute as the belt to that
+### braces, and because the recipe below cd's into it.
+HETD10OUT := $(CURDIR)/hetlitmus/tests/het/d10-out
 
 ### hetlitmus-prov: the P2d gate -- is the PRINTED CLAIM capped by the oracle
 ### row's PROVENANCE, and is the AMD lane wired to an oracle at all?
@@ -1010,13 +1018,20 @@ hetlitmus-prov: | build
 ### their harnesses and prints the campaign command for a machine that has a GPU.
 ### It does NOT run them: the D10 reading is about the SHARED ALLOCATION of the
 ### target box, so a result from any other machine is not a D10 result.
+### IT IS IN THE `hetlitmus-test' UMBRELLA (generate + emit need no GPU).  It was
+### not, and that is exactly why a target that had never worked once shipped
+### green: provcheck P6/P7 gate the SCIENCE this target carries, but nothing
+### gated the COMMAND a human is told to run.
 hetlitmus-d10: | build
 	@ echo
 	rm -rf $(HETD10OUT)
 	hetlitmus/tests/het/generate-d10.sh $(HETD10OUT)
 	@ set -e ; cd $(HETD10OUT) ; for t in *.litmus ; do \
-	    ../../_build/install/default/bin/litmus7 -set-libdir ../../litmus/libdir \
+	    $(CURDIR)/_build/install/default/bin/litmus7 \
+	      -set-libdir $(CURDIR)/litmus/libdir \
 	      -o . "$$t" 2>&1 | grep -E 'oracle:|REFUSED' ; done
+	@ set -e ; n=$$(ls -d $(HETD10OUT)/*/ 2>/dev/null | wc -l) ; \
+	  test "$$n" -eq 6 || { echo "hetlitmus-d10: emitted $$n harness dir(s), expected 6" ; exit 1 ; }
 	@ echo
 	@ echo "D10 harnesses in $(HETD10OUT).  On the TARGET box:"
 	@ echo "    cd <test> && sh comp.sh cuda-link   # or hip-link on AMD"
@@ -1095,6 +1110,7 @@ hetlitmus-test:: hetlitmus-hist
 hetlitmus-test:: hetlitmus-tuner
 hetlitmus-test:: hetlitmus-x86body
 hetlitmus-test:: hetlitmus-prov
+hetlitmus-test:: hetlitmus-d10
 
 hetlitmus-test-nvcc:: | build
 hetlitmus-test-nvcc:: hetlitmus-faithful

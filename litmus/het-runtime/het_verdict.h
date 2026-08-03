@@ -232,6 +232,20 @@ typedef struct het_obs_record {
      x86-TSO.  Written by the emitted recovery scan, for the test under study. */
   int obs_ws_via_cpu;
   int obs_ws_via_gpu;
+  /* THE BUILD FACTS the "structurally absent stress" caveat asserts, carried
+     rather than inferred.  HET_GPU_LANES guards het_do_stress's round loop
+     (`_gpu_done < HET_GPU_LANES') and HET_SPIN_LANES the device-scope window
+     opener; at 0 the loop exits before its body runs once, which is why the
+     emitter withholds the corresponding stress REQUEST there.
+     They are NOT a synonym for cpu_only, and keying the caveat on cpu_only was
+     a FALSE claim about the build: MEASURED 2026-08-03 over the emitted D10
+     corpus, 2+2W-cpuonly-x86_64 and R-cpuonly-x86_64 have HET_GPU_LANES=1 (a
+     GPU observer lane) while the other four have 0; all six have
+     HET_SPIN_LANES=0.  The old caveat told the reader "HET_GPU_LANES is 0 ...
+     neither mechanism is counted as requested" on a run whose own config line
+     said stress_requested carried HET_REQ_GPU_STRESS. */
+  int gpu_lanes;
+  int spin_lanes;
   /* MECHANISM tier: how well this test's cycle can be recovered from the read
      and observer buffers (hetCond.perpetual_class). */
   het_confidence confidence;
@@ -547,13 +561,21 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   if (r->place_failures > 0)        cv |= HET_CV_PLACE_REFUSED;
   if (req == 0)                     cv |= HET_CV_UNSTRESSED;
   /* D10.  The emitter withholds HET_REQ_GPU_STRESS / HET_REQ_SPIN on a harness
-     with no GPU test lane, because there both mechanisms are structurally
-     unreachable rather than dead.  Withholding a request silently would be the
-     "bump the threshold to get green" move, so it is CAVEATED here instead:
-     the reader is told the null rests on CPU-side stress alone.  Keyed on the
-     structural fact (cpu_only) and not on the mask, so a future harness that
-     merely forgot to request them cannot borrow this excuse. */
-  if (r->cpu_only)                  cv |= HET_CV_NO_GPU_LANES;
+     whose corresponding lane count is 0, because there the mechanism is
+     structurally unreachable rather than dead.  Withholding a request silently
+     would be the "bump the threshold to get green" move, so it is CAVEATED here
+     instead: the reader is told which window-openers could not have run.
+     KEYED ON THE LANE COUNTS THE EMITTER ACTUALLY WROTE, not on cpu_only.
+     cpu_only is a property of the CYCLE (every proc is a CPU proc); the lane
+     counts are a property of the BUILD, and they differ -- a CPU-only cycle
+     still gets a GPU observer lane on a store-only shape.  Keying the build
+     claim on the cycle property made the caveat assert "HET_GPU_LANES is 0" on
+     two harnesses where it is 1 (MEASURED: 2+2W-cpuonly-x86_64,
+     R-cpuonly-x86_64).  A harness that merely FORGOT to request a reachable
+     mechanism still cannot borrow this excuse: a nonzero lane count no longer
+     raises the flag for that mechanism, and het_dead() disqualifies it. */
+  if (r->gpu_lanes == 0 || r->spin_lanes == 0)
+                                    cv |= HET_CV_NO_GPU_LANES;
   { uint64_t spins = r->spin_rendezvous + r->spin_cap;
     if (spins && r->spin_rendezvous * 2 < spins) cv |= HET_CV_SPIN_CAP; }
 
@@ -709,6 +731,42 @@ static const char *het_oracle_src(const het_obs_record *_r) {
   return _r->oracle_source ? _r->oracle_source : "(unrecorded)";
 }
 
+/* ---------------------------------------------------------------------------
+ * WHICH TARGET IS THIS.  The only target identity a harness carries is the
+ * oracle Model string the emitter recorded ("expected-amd.csv:AMD-CDNA3-x86" /
+ * "expected-nvidia.csv:NVIDIA-PTX-AArch64"), so that is what the prose keys on.
+ *
+ * MEASURED DEFECT this closes: on AMD-tagged harnesses the printer told the
+ * reader to report a NO-ORACLE row as "what GH200 does", called the two halves
+ * of the interconnect noise "the Grace half" and "the Hopper half", said "same
+ * C2C path", and cited "On NVIDIA silicon an unstressed run observes nothing"
+ * as if it applied.  None of those is true of an MI300A run.
+ *
+ * The NON-NVIDIA wording is deliberately GENERIC rather than AMD-specific:
+ * naming AMD's fabric or its packaging would be an unverified hardware claim
+ * (nothing in this tree measures an MI300A), and the honest fallback is the
+ * mechanism, not a brand.  So a target this function does not recognise -- and
+ * an unrecorded source -- gets the generic text, which claims least.
+ * ------------------------------------------------------------------------- */
+static int het_src_is_nvidia(const char *src) {
+  return src != NULL && strstr(src, "NVIDIA") != NULL;
+}
+
+static int het_is_nvidia(const het_obs_record *_r) {
+  return het_src_is_nvidia(_r->oracle_source);
+}
+
+/* The interconnect and its two endpoints, as the stress code drives them. */
+static const char *het_link_name(const char *src) {
+  return het_src_is_nvidia(src) ? "NVLink-C2C" : "host-device interconnect";
+}
+static const char *het_host_half(const char *src) {
+  return het_src_is_nvidia(src) ? "the Grace half" : "the host half";
+}
+static const char *het_dev_half(const char *src) {
+  return het_src_is_nvidia(src) ? "the Hopper half" : "the device half";
+}
+
 static const char *het_conf_name(het_confidence c) {
   switch (c) {
   case CONF_ROBUST:    return "ROBUST";
@@ -796,15 +854,33 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
             _r->cpu_aff_failures);
   if (cv & HET_CV_PLACE_REFUSED)
     fprintf(_ch, "  CAVEAT: cudaMemAdvise was REFUSED -- HET_PLACE placed nothing.\n");
-  if (cv & HET_CV_NO_GPU_LANES)
+  if (cv & HET_CV_NO_GPU_LANES) {
+    /* The two mechanisms are named SEPARATELY and only where the lane count says
+       so, because they are withheld separately (hetEmit.ml's stress_requested
+       expression guards HET_REQ_GPU_STRESS on HET_GPU_LANES and HET_REQ_SPIN on
+       HET_SPIN_LANES).  The counts are printed so the claim is checkable against
+       the harness's own #defines instead of being asserted. */
     fprintf(_ch,
-      "  CAVEAT (D10): this is a CPU-ONLY harness -- HET_GPU_LANES is 0, so the "
-      "GPU scratchpad stress and the device-scope window-opener are STRUCTURALLY "
-      "ABSENT, not dead (het_do_stress's loop guard is `_gpu_done < HET_GPU_LANES', "
-      "which is false at 0 before the body runs once).  The window here is opened "
-      "by the CPU enemies and the preload alone.  Neither mechanism is counted as "
-      "requested, so its zero tally is not a disqualifier -- see stress_requested "
-      "in the config line.\n");
+      "  CAVEAT (D10): HET_GPU_LANES=%d HET_SPIN_LANES=%d on this harness.  A "
+      "mechanism whose lane count is 0 is STRUCTURALLY ABSENT, not dead "
+      "(het_do_stress's round loop is guarded by `_gpu_done < HET_GPU_LANES', "
+      "which is false at 0 before the body runs once), so it is NOT counted as "
+      "requested and its zero tally is not a disqualifier -- see stress_requested "
+      "in the config line.  Absent here:%s%s.\n",
+      _r->gpu_lanes, _r->spin_lanes,
+      _r->gpu_lanes == 0 ? " the GPU scratchpad stress" : "",
+      _r->spin_lanes == 0 ? (_r->gpu_lanes == 0
+                             ? " and the device-scope window-opener"
+                             : " the device-scope window-opener") : "");
+    /* ...and, symmetrically, what IS present must not be excused by this caveat.
+       A nonzero lane count means the mechanism CAN run, so it was requested and a
+       zero tally there is a disqualifier like anywhere else. */
+    if (_r->gpu_lanes > 0 || _r->spin_lanes > 0)
+      fprintf(_ch,
+        "  CAVEAT (D10, cont.): the OTHER mechanism is present (%s lane(s)) and IS "
+        "counted as requested -- this caveat does not excuse a zero tally there.\n",
+        _r->gpu_lanes > 0 ? "GPU stress" : "window-opener");
+  }
 }
 
 /* The stress incantations, travelling with every sighting of every class -- a
@@ -881,9 +957,10 @@ static void het_print_liveness(FILE *_ch, const het_obs_record *_r) {
   if (_r->canary_compiled_in)
     fprintf(_ch,
       "  canary %s fired %llu time(s) (tau_hot=%d) -- same launch, same stress, "
-      "same C2C path.\n",
+      "same %s path.\n",
       _r->canary_name ? _r->canary_name : "(none)",
-      (unsigned long long)_r->canary_target_count, (int)HET_TAU_HOT);
+      (unsigned long long)_r->canary_target_count, (int)HET_TAU_HOT,
+      het_link_name(_r->oracle_source));
   /* On a store-only shape the observer IS the liveness channel: with no reader,
      interleavings_detected is structurally 0 and, printed alone, would misread as
      "nothing raced". */
@@ -1093,9 +1170,15 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     fprintf(_ch,
       "  CHARACTERIZED: under that harness, this hardware exhibited the outcome %llu "
       "time(s) in N=%llu frames (%.4f%%); interleavings_detected=%llu.\n"
-      "  Report it as \"what GH200 does where the CMCM is silent\".  It is NOT "
-      "evidence for or against the model.\n",
-      _hits, _n, _pct, (unsigned long long)_r->interleavings_detected);
+      /* The target is NAMED FROM THE RECORD, not from the source file: this
+         sentence used to say "what GH200 does" on every lane, so an MI300A
+         characterization row was pre-labelled with somebody else's part.  The
+         oracle tag is the only target identity the harness carries. */
+      "  Report it as \"what the target this harness was tagged for (%s) does "
+      "where the CMCM is silent\".  It is NOT evidence for or against the "
+      "model.\n",
+      _hits, _n, _pct, (unsigned long long)_r->interleavings_detected,
+      het_oracle_src(_r));
     het_print_config(_ch, _r);
     het_print_scan_caveat(_ch, _r, cv);
     het_print_caveats(_ch, _r, cv);
@@ -1182,16 +1265,33 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     if (dq & HET_DQ_CPU_PRELOAD_DEAD)
       fprintf(_ch, "    - the M3 preload was requested but issued ZERO hints\n");
     if (dq & HET_DQ_NOISE_CPU_DEAD)
-      fprintf(_ch, "    - the Grace half of the C2C noise did NOT run: this run "
-                   "is not interconnect-stressed\n");
+      fprintf(_ch, "    - %s of the %s noise did NOT run: this run "
+                   "is not interconnect-stressed\n",
+              het_host_half(_r->oracle_source),
+              het_link_name(_r->oracle_source));
     if (dq & HET_DQ_NOISE_GPU_DEAD)
-      fprintf(_ch, "    - the Hopper half of the C2C noise did NOT run: this run "
-                   "is not interconnect-stressed\n");
-    if (dq & HET_DQ_GPU_STRESS_DEAD)
+      fprintf(_ch, "    - %s of the %s noise did NOT run: this run "
+                   "is not interconnect-stressed\n",
+              het_dev_half(_r->oracle_source),
+              het_link_name(_r->oracle_source));
+    if (dq & HET_DQ_GPU_STRESS_DEAD) {
       fprintf(_ch, "    - the GPU scratchpad stress was requested "
                    "(HET_PRE_STRESS_PCT/HET_MEM_STRESS_PCT) but het_do_stress "
-                   "completed ZERO rounds: it never ran.  On NVIDIA silicon an "
-                   "unstressed run observes nothing (Alglave 4.3.1)\n");
+                   "completed ZERO rounds: it never ran\n");
+      /* Alglave's "zero without stress" is an NVIDIA measurement and this
+         project has already recorded it as NVIDIA-only (B4).  Printing it as a
+         general fact on an AMD-tagged run would be borrowing somebody else's
+         number; saying that no equivalent number exists is the honest form, and
+         PORT2-reading-list.md is where that gap was established. */
+      if (het_is_nvidia(_r))
+        fprintf(_ch, "      On NVIDIA silicon an unstressed run observes nothing "
+                     "(Alglave 4.3.1)\n");
+      else
+        fprintf(_ch, "      (Alglave 4.3.1's \"zero without stress\" was measured "
+                     "on NVIDIA parts and is NOT claimed for this target; no "
+                     "equivalent figure is published for it, so the dead "
+                     "mechanism disqualifies this run on its own terms)\n");
+    }
     het_print_caveats(_ch, _r, cv);
     return;
   }
@@ -1207,9 +1307,10 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   if (v == HET_WEAK_NULL) {
     fprintf(_ch, "  WEAK NULL -- reportable, but weaker than it looks:\n");
     if (cv & HET_CV_CANARY_ONLY)
-      fprintf(_ch, "    - only the Layer-B canary fired: the C2C path is alive, "
+      fprintf(_ch, "    - only the Layer-B canary fired: the %s path is alive, "
                    "but this SHAPE's window was not demonstrably hit.  Escalate "
-                   "stress tuning for it (B8).\n");
+                   "stress tuning for it (B8).\n",
+              het_link_name(_r->oracle_source));
     if (cv & HET_CV_NO_EXHAUSTIVE)
       fprintf(_ch, "    - the O(N^T_L) ground-truth scan did not run at N=%llu "
                    "(HET_EXHAUSTIVE_MAX): the zero rests on the WINDOWED "
@@ -2213,10 +2314,17 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
         het_tier_name(_s->tier), _s->k_runs);
     else
       fprintf(_ch,
+        /* "one sighting refutes" had NO OBJECT here, and it printed ABOVE the
+           grade-dependent sentence below -- on a capped row the only thing a
+           skimmer could attach it to was the compound model.  What a single
+           sighting settles is one-sidedness (it cannot be explained away by more
+           runs); WHAT it settles a claim about is the next paragraph's call. */
         "  ** %s ** -- the should-be-FORBIDDEN outcome was observed, but in only %d "
-        "clean run(s) (<3).  BELIEVE IT AND REPORT IT -- one sighting refutes, and it "
-        "is NOT suppressed -- but a false MISMATCH is the most damaging error this "
-        "campaign can make.  REPRODUCE IT to >=3 clean runs before writing it up.\n",
+        "clean run(s) (<3).  BELIEVE IT AND REPORT IT -- falsification is one-sided, "
+        "so one sighting stands on its own and is NOT suppressed -- but a false "
+        "MISMATCH is the most damaging error this campaign can make.  REPRODUCE IT to "
+        ">=3 clean runs before writing it up.  WHAT it is a sighting against is the "
+        "next line, and it is not always the model.\n",
         het_tier_name(_s->tier), _s->k_runs);
     /* ...and what it is a sighting AGAINST.  Same four-way split as
        het_verdict_print, stated again here because this block is what gets

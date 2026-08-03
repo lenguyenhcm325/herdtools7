@@ -466,6 +466,29 @@ end
               ~csv:CpuF.oracle_csv ~model:CpuF.oracle_model ~src_name in
           let prov = HetOracle.prov_enum omap tname
           and prov_name = HetOracle.prov_name omap tname in
+          (* WHICH TARGET IS THIS, for the emitted stderr WARNINGs.  They name
+             the two halves of the interconnect noise, and calling them "Grace"
+             and "Hopper" on an AMD-tagged harness is a false statement about the
+             machine -- MEASURED 2026-08-03 on a real run of
+             2+2W-cpuonly-x86_64 (src=expected-amd.csv:AMD-CDNA3-x86), whose very
+             first two lines were "the Hopper half of the C2C noise is DISABLED"
+             and "the Grace half ... is DISABLED".  Decided HERE because the
+             target is fixed at emission; het_verdict.h makes the same test at
+             run time off _rec.oracle_source, and the two must agree.
+             The non-NVIDIA wording is generic on purpose: naming AMD's fabric
+             would be an unverified hardware claim, so the fallback names the
+             MECHANISM.  An unrecognised model therefore also gets the generic
+             text, which claims least. *)
+          let is_nv_target =
+            let m = CpuF.oracle_model in
+            let n = String.length m in
+            let rec go i = i + 6 <= n && (String.sub m i 6 = "NVIDIA" || go (i+1)) in
+            go 0 in
+          let host_half = if is_nv_target then "the Grace half" else "the host half"
+          and dev_half = if is_nv_target then "the Hopper half" else "the device half"
+          and link_name =
+            (* No leading article: every use site supplies its own. *)
+            if is_nv_target then "NVLink-C2C" else "host-device interconnect" in
           (* What goes in HET_CANARY_NAME / _rec.canary_name.  A name is NOT a
              co-run signal -- the map names a canary for every test, including the
              ones that are the canary.  HET_CANARY_COMPILED_IN, set from the
@@ -1813,8 +1836,14 @@ end
                ASPLOS'15 sec 4.3.1).  The tally would catch it afterwards; warn
                BEFORE the run. *)
             s "  if (HET_MEM_STRESS_PCT > 0 && _stressBlocks == 0)\n" ;
-            s "    fprintf(stderr, \"HetLitmus WARNING: the mem-stress population is EMPTY (test=%d + noise=%d fills the co-resident cap %d).  HET_MEM_STRESS_PCT=%d asks for scratchpad stress and NO block will do any.  On NVIDIA silicon an unstressed run observes nothing (Alglave ASPLOS'15 4.3.1).\\n\",\n\
-               \            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_MEM_STRESS_PCT);\n" ;
+            (* Alglave's "zero without stress" is an NVIDIA measurement (B4), so
+               it is cited only where it applies; elsewhere the gap is stated. *)
+            s (Printf.sprintf
+                 "    fprintf(stderr, \"HetLitmus WARNING: the mem-stress population is EMPTY (test=%%d + noise=%%d fills the co-resident cap %%d).  HET_MEM_STRESS_PCT=%%d asks for scratchpad stress and NO block will do any.  %s\\n\",\n\
+               \            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_MEM_STRESS_PCT);\n"
+                 (if is_nv_target
+                  then "On NVIDIA silicon an unstressed run observes nothing (Alglave ASPLOS'15 4.3.1)."
+                  else "(Alglave ASPLOS'15 4.3.1's \\\"zero without stress\\\" was measured on NVIDIA parts and is not claimed for this target; no equivalent figure is published for it.)")) ;
             s "  uint32_t _pre_pat = (uint32_t)HET_PRE_STRESS_PATTERN;\n" ;
             s "  uint32_t _mem_pat = (uint32_t)HET_MEM_STRESS_PATTERN;\n" ;
             s "  fprintf(stderr, \"HetLitmus: blockDim=%d grid=%d (test=%d stress=%d, co-resident cap=%d) pre_pat=%u mem_pat=%u\\n\",\n\
@@ -1870,17 +1899,30 @@ end
             s "  uint64_t *_noise_hbm = NULL;   /* GPU-homed: the CPU streams it */\n" ;
             s "  het_cpu_noise_args _na; pthread_t _nth; int _noise_cpu_on = 0;\n" ;
             s "  if (HET_NOISE_MB < HET_LLC_MB)\n" ;
-            s "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%d is BELOW the last-level cache (%d MB) -- the noise buffers fit in cache, so the reads are served locally and generate NO interconnect traffic.  This run is NOT C2C-stressed (Fusco: Hopper L2 caches HBM, local and peer).\\n\",\n\
-               \            (int)HET_NOISE_MB, (int)HET_LLC_MB);\n" ;
+            s (Printf.sprintf
+                 "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%%d is BELOW the last-level cache (%%d MB) -- the noise buffers fit in cache, so the reads are served locally and generate NO interconnect traffic.  This run is NOT %s-stressed%s.\\n\",\n\
+               \            (int)HET_NOISE_MB, (int)HET_LLC_MB);\n"
+                 link_name
+                 (if is_nv_target then " (Fusco: Hopper L2 caches HBM, local and peer)"
+                  else " (the local-cache argument is target-independent; no measured \
+                        last-level-cache behaviour is claimed for this target)")) ;
             s "  if (_noiseBlocks > 0) {\n" ;
             s "    int _rc = gd_alloc_noise((void**)&_noise_ddr, (size_t)_noise_words*sizeof(uint64_t), 2);\n" ;
-            s "    if (_rc < 0) { fprintf(stderr, \"HetLitmus WARNING: could not allocate the %d MB DDR noise buffer -- the Hopper half of the C2C noise is DISABLED for this run.\\n\", (int)HET_NOISE_MB); _noise_ddr = NULL; _noise_blocks = 0; }\n" ;
-            s "    else if (_rc > 0) fprintf(stderr, \"HetLitmus WARNING: the DDR noise buffer could not be homed on the CPU -- this device has no interconnect-stress lever (no ATS/C2C), so the Hopper noise is exercising plumbing, not C2C.\\n\");\n" ;
+            s (Printf.sprintf
+                 "    if (_rc < 0) { fprintf(stderr, \"HetLitmus WARNING: could not allocate the %%d MB DDR noise buffer -- %s of the %s noise is DISABLED for this run.\\n\", (int)HET_NOISE_MB); _noise_ddr = NULL; _noise_blocks = 0; }\n"
+                 dev_half link_name) ;
+            s (Printf.sprintf
+                 "    else if (_rc > 0) fprintf(stderr, \"HetLitmus WARNING: the DDR noise buffer could not be homed on the CPU -- this device has no interconnect-stress lever (no ATS/coherent host-device link), so %s of the noise is exercising plumbing, not the %s.\\n\");\n"
+                 dev_half link_name) ;
             s "  }\n" ;
             s "  if (HET_NOISE_CPU) {\n" ;
             s "    int _rc = gd_alloc_noise((void**)&_noise_hbm, (size_t)_noise_words*sizeof(uint64_t), 1);\n" ;
-            s "    if (_rc < 0) { fprintf(stderr, \"HetLitmus WARNING: could not allocate the %d MB HBM noise buffer -- the Grace half of the C2C noise is DISABLED for this run.\\n\", (int)HET_NOISE_MB); _noise_hbm = NULL; }\n" ;
-            s "    else if (_rc > 0) fprintf(stderr, \"HetLitmus WARNING: the HBM noise buffer could not be homed on the GPU -- the Grace noise is exercising plumbing, not C2C.\\n\");\n" ;
+            s (Printf.sprintf
+                 "    if (_rc < 0) { fprintf(stderr, \"HetLitmus WARNING: could not allocate the %%d MB HBM noise buffer -- %s of the %s noise is DISABLED for this run.\\n\", (int)HET_NOISE_MB); _noise_hbm = NULL; }\n"
+                 host_half link_name) ;
+            s (Printf.sprintf
+                 "    else if (_rc > 0) fprintf(stderr, \"HetLitmus WARNING: the HBM noise buffer could not be homed on the GPU -- %s of the noise is exercising plumbing, not the %s.\\n\");\n"
+                 host_half link_name) ;
             s "  }\n" ;
             s "  fprintf(stderr, \"HetLitmus cpu-stress: cores=%d test=%d enemies=%d spread=%u stride=%d seq=%d preload=%d%% aff=%d | noise: gpu_blocks=%u cpu=%d words=%llu (%d MB) place=%d\\n\",\n\
                \          _ncores, _nCpuTest, _nEnemy, _cpu_spread, (int)HET_CPU_STRIDE,\n\
@@ -2107,7 +2149,9 @@ end
             s "      if (HET_CPU_PRELOAD_PCT > 0 && _pl == 0)\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: HET_CPU_PRELOAD_PCT=%d but ZERO preload hints were issued -- the M3 incantation is INERT (this host may have no cache primitives; see het_cpu_stress.h HET_CPU_PRELOAD_LIVE).\\n\", (int)HET_CPU_PRELOAD_PCT);\n" ;
             s "      if (_noise_blocks > 0 && _ng == 0)\n" ;
-            s "        fprintf(stderr, \"HetLitmus WARNING: %u Hopper noise block(s) were launched but NONE completed a round -- the GPU half of the C2C noise did NOT run.  This run is not interconnect-stressed.\\n\", _noise_blocks);\n" ;
+            s (Printf.sprintf
+                 "        fprintf(stderr, \"HetLitmus WARNING: %%u device-side noise block(s) were launched but NONE completed a round -- %s of the %s noise did NOT run.  This run is not interconnect-stressed.\\n\", _noise_blocks);\n"
+                 dev_half link_name) ;
             s "      if (_ct.aff_failures)\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: %u sched_setaffinity call(s) FAILED -- those threads are wherever the scheduler put them.  The pinning is fiction and the stress topology is not the one being tuned.\\n\", _ct.aff_failures);\n" ;
             s "    }\n" ;
@@ -2156,6 +2200,14 @@ end
             s (Printf.sprintf
                  "    _rec.cpu_only = %d;  /* D10: 1 iff EVERY proc is a CPU proc */\n"
                  (if cpu_only then 1 else 0)) ;
+            (* THE BUILD FACTS behind the "structurally absent stress" caveat,
+               taken from the constants that actually guard the two loops rather
+               than re-derived in het_verdict.h.  cpu_only is NOT a proxy for
+               them: a CPU-only store-only shape still carries a GPU observer
+               lane, so 2+2W-cpuonly-x86_64 and R-cpuonly-x86_64 emit
+               HET_GPU_LANES=1 while the caveat used to assert 0 for all six. *)
+            s "    _rec.gpu_lanes = HET_GPU_LANES;\n" ;
+            s "    _rec.spin_lanes = HET_SPIN_LANES;\n" ;
             (match mu_name with
              | Some m -> s (Printf.sprintf "    _rec.control_name = \"%s\";\n" m)
              | None -> s "    _rec.control_name = NULL;  /* no mu(T): not a Disallowed test */\n") ;

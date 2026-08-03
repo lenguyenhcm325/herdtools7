@@ -184,6 +184,46 @@ def check_flag_mirror(path=_VERDICT_H, name="HET_ST_TAU_UNRESOLVED",
 check_flag_mirror()
 
 
+# THE GRADES THAT LICENSE PROV_ARTIFACT, i.e. the class "FULL".  A hand-mirror of
+# hetOracle.ml's enum_of_grade, and mirrored for the same reason the flag bit
+# above is: this file is copied on its own onto a rented box, so it cannot call
+# into the OCaml.  Cross-checked against the source when the source is reachable,
+# because a stale copy here would silently re-authorise the one class that
+# licenses the words "CMCM REFUTATION".
+FULL_GRADES = frozenset(["artifact"])
+
+_ORACLE_ML = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
+                          "litmus", "hetOracle.ml")
+
+
+def check_grade_mirror(path=_ORACLE_ML, mirrored=FULL_GRADES):
+    """The grades mapping to PROV_ARTIFACT in `path`, or None when out of reach."""
+    try:
+        with open(path) as fh:
+            text = fh.read()
+    except (IOError, OSError):
+        return None
+    m = re.search(r"^let enum_of_grade = function\n(.*?)^\n", text, re.M | re.S)
+    if m is None:
+        die("%s no longer defines enum_of_grade -- the mirrored grade set cannot be "
+            "verified, and an unverifiable mirror is not one" % path)
+    full = set()
+    for line in m.group(1).splitlines():
+        mm = re.match(r"\s*\|\s*(.*?)\s*->\s*\"PROV_ARTIFACT\"\s*$", line)
+        if mm:
+            full.update(re.findall(r'"([^"]+)"', mm.group(1)))
+    if not full:
+        die("%s: enum_of_grade maps NO grade to PROV_ARTIFACT -- either the parse "
+            "broke or nothing can be full strength; both need a human" % path)
+    if full != set(mirrored):
+        die("%s drifted: enum_of_grade maps %s to PROV_ARTIFACT, campaign.py mirrors %s"
+            % (path, sorted(full), sorted(mirrored)))
+    return full
+
+
+check_grade_mirror()
+
+
 def flags(kv):
     """The HetStats line carries flags=0x<hex>."""
     try:
@@ -231,10 +271,34 @@ class TestState(object):
         pv = kv.get("prov", "")
         if "/" in pv:
             cls, grade = pv.split("/", 1)
+            # THE CLASS IS A FUNCTION OF THE GRADE, AND THAT IS CHECKED HERE.
+            # het_verdict.h computes the class from the enum the emitter wrote
+            # and prints both, so a line whose two halves disagree did not come
+            # from a consistent build -- MEASURED 2026-08-03: making
+            # het_prov_class() return "FULL" for PROV_CAPPED produced
+            # `prov=FULL/decision', and campaign.py then printed "a CANDIDATE
+            # CMCM REFUTATION (provenance decision: the oracle row is anchored)"
+            # off a capped row with every gate green.  Believing the CLASS alone
+            # is what made that possible, so it is no longer believed alone.
+            if (cls == "FULL") != (grade in FULL_GRADES):
+                self.stop, self.note = "ERROR", (
+                    "prov=%s is self-contradictory: class %r with grade %r "
+                    "(FULL is licensed by %s and by nothing else, "
+                    "hetOracle.ml enum_of_grade).  A binary printing this is not "
+                    "one this campaign may grade -- rebuild and re-run."
+                    % (pv, cls, grade, "/".join(sorted(FULL_GRADES))))
+                return
             if self.invocations == 1:
                 self.prov, self.grade = cls, grade
             elif cls != self.prov:
                 self.prov, self.grade = "UNSET", "SPLIT"
+        elif self.prov != "UNSET":
+            # AN INVOCATION THAT CARRIED NO GRADE AT ALL, pooled after one that
+            # did.  Downward resolution has to cover this direction too: leaving
+            # the earlier grade standing would let one graded invocation license
+            # a whole campaign whose other invocations were built from an
+            # ungraded binary.  Same rule as the disagreement branch.
+            self.prov, self.grade = "UNSET", "SPLIT"
         if int(fnum(kv, "cpu_only")):
             self.cpu_only = 1
         self.runs += int(fnum(kv, "R"))
@@ -509,10 +573,16 @@ def report_campaign(states, errors, confirmed):
         full = [s for s in rows if s.prov == "FULL" and not s.cpu_only]
         print("campaign: ** %d CONFIRMED sighting(s) on Disallowed row(s) -- stop and "
               "get a human before anything else is claimed. **" % confirmed)
+        # The grade is REPORTED FROM THE ROWS, never asserted: this sentence used
+        # to print the literal "(provenance artifact)" whatever the rows said, so
+        # it named a grade no row had to be carrying.  absorb() already refuses a
+        # line whose class and grade disagree, so the set below is what the rows
+        # actually said and printing it adds nothing that is not checked.
+        grades = sorted(set(s.grade for s in full)) or ["(none)"]
         print("campaign:    of those, %d are CANDIDATE CMCM REFUTATIONS (provenance "
-              "artifact); the remaining %d are capped, CPU-only or ungraded and "
+              "%s); the remaining %d are capped, CPU-only or ungraded and "
               "indict their own oracle row, NOT the compound model."
-              % (len(full), confirmed - len(full)))
+              % (len(full), ", ".join(grades), confirmed - len(full)))
         for s in rows:
             print("            %-28s prov=%s/%s cpu_only=%d" %
                   (s.name, s.prov, s.grade, s.cpu_only))
@@ -523,7 +593,22 @@ def report_campaign(states, errors, confirmed):
     # is unresolved and EVERY Disallowed row of the AMD oracle is void -- so this
     # is checked before, not after, anyone reads the bounds above.
     d10 = [s for s in states if s.cpu_only]
-    if d10:
+    if not d10:
+        # A SILENTLY ABSENT PRECONDITION IS THE FAILURE MODE THIS BLOCK EXISTS TO
+        # PREVENT.  It used to run under a bare `if d10:' with no else, so a
+        # campaign over the het corpus alone -- the normal case -- printed no D10
+        # line at all and read as if the probe had been satisfied.  memo sect 7.D10
+        # makes it a precondition of EVERY Disallowed row, so its absence is
+        # louder than its failure, not quieter.
+        print("\ncampaign D10 (CPU-only positive control / memo sect 8 P1 WB probe): "
+              "*** NOT RUN.  No CPU-only row was in this campaign, so the WB probe "
+              "did not run and therefore did NOT pass.  Until it does, memo sect 8 P1 "
+              "is UNRESOLVED and every Disallowed verdict below rests on an "
+              "unchecked assumption about the shared allocation's memory type.  "
+              "Generate the set with hetlitmus/tests/het/generate-d10.sh (or `make "
+              "hetlitmus-d10') and run it ON THIS BOX -- a D10 reading from another "
+              "machine is not a D10 reading. ***")
+    else:
         probes = [s for s in d10 if s.oclass == "Allowed"]
         fired = [s for s in probes if s.stop == "OBSERVED"]
         print("\ncampaign D10 (CPU-only positive control / memo sect 8 P1 WB probe): "

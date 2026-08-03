@@ -27,6 +27,15 @@
 # generate.sh emits (D) and (E) for aarch64 only, so this script carries its
 # own (D)/(E) loops; (B) it drives through generate.sh's own CPU_ARCHS knob.
 set -e
+# OUTDIR IS RESOLVED FIRST, AGAINST THE CALLER'S CWD, BECAUSE THE `cd' BELOW
+# MOVES US.  Every caller in the tree happens to pass an absolute path today, so
+# this was latent here and LIVE in generate-d10.sh (Makefile:1016 passed a
+# relative one and the target had never worked).  Same class of bug, same fix,
+# so that a relative OUTDIR is correct in both.
+OUT="${1:?usage: generate-x86.sh OUTDIR}"
+mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd)"
+
 cd "$(dirname "$0")"
 # Captured AFTER the cd, so it is absolute and independent of how we were
 # invoked -- `dirname "$0"' is relative to the ORIGINAL cwd and is already stale
@@ -38,10 +47,7 @@ COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell"
 # shellcheck source=../_grid_lib.sh
 source ../_grid_lib.sh
 
-OUT="${1:?usage: generate-x86.sh OUTDIR}"
-mkdir -p "$OUT"
-OUT="$(cd "$OUT" && pwd)"
-[ "$OUT" != "$(pwd)" ] || { echo "refusing to write into the committed corpus" >&2; exit 2; }
+[ "$OUT" != "$HETDIR" ] || { echo "refusing to write into the committed corpus" >&2; exit 2; }
 
 # render_x86_cpu <cpu-tok> <base-edge>...  -> x86-64 diy edge token list.
 #   plain image  : the bare base cycle (an x86 MOV is already rel/acq under TSO)

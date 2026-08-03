@@ -282,7 +282,7 @@ to die.
   1
   $ grep -c 'ZERO preload hints were issued' $MP.cu
   1
-  $ grep -c 'the GPU half of the C2C noise did NOT run' $MP.cu
+  $ grep -c 'the Hopper half of the NVLink-C2C noise did NOT run' $MP.cu
   1
   $ grep -c 'sched_setaffinity call(s) FAILED' $MP.cu
   1
