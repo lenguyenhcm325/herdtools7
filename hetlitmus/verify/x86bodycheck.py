@@ -345,10 +345,13 @@ def emit_corpus(tmp, corpus, sub="emit"):
         if not f.endswith(".litmus"):
             continue
         n = f[:-len(".litmus")]
-        r = run([LITMUS7, "-set-libdir", LIBDIR, "-o", out, os.path.join(corpus, f)])
+        r = run([LITMUS7, "-gpu-target", "cuda", "-set-libdir", LIBDIR, "-o", out, os.path.join(corpus, f)])
         blob = r.stdout + r.stderr
         d = os.path.join(out, n)
-        parts = [os.path.join(d, n + s) for s in ("_cpu.c", ".cu", ".hip")]
+        # The files THIS emission owes: one vendor per harness dir (-gpu-target
+        # cuda above), so the .hip is the other lane's deliverable, not a
+        # missing file.
+        parts = [os.path.join(d, n + s) for s in ("_cpu.c", ".cu")]
         if r.returncode != 0:
             bad.append((n, "litmus7 exited %d: %s" % (r.returncode, blob.strip().splitlines()[-1:])))
         elif "HetLitmus REFUSED" in blob:
@@ -558,7 +561,7 @@ def objdump_ok(tmp, cpu_c, phase):
 def emit_aarch64(out):
     os.makedirs(out, exist_ok=True)
     for t in AARCH64_TESTS:
-        run([LITMUS7, "-set-libdir", LIBDIR, "-o", out, t + ".litmus"], cwd=HET_DIR)
+        run([LITMUS7, "-gpu-target", "cuda", "-set-libdir", LIBDIR, "-o", out, t + ".litmus"], cwd=HET_DIR)
     return out
 
 
@@ -640,7 +643,7 @@ def litmus_on(tmp, label, text, litmus7=LITMUS7):
     out = os.path.join(tmp, "out-" + label)
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(out)
-    r = run([litmus7, "-set-libdir", LIBDIR, "-o", out, src])
+    r = run([litmus7, "-gpu-target", "cuda", "-set-libdir", LIBDIR, "-o", out, src])
     left = [d for d in os.listdir(out) if os.path.isdir(os.path.join(out, d))]
     return r.returncode, (r.stdout + r.stderr), left
 
@@ -735,7 +738,7 @@ def phase7(tmp, corpus, splitter=split_bodies, probe=corun_probe):
         if not os.path.exists(src):
             fail("P7", "%s has no x86 rendering" % t)
             continue
-        r = run([LITMUS7, "-set-libdir", LIBDIR, "-o", out, src], cwd=scratch)
+        r = run([LITMUS7, "-gpu-target", "cuda", "-set-libdir", LIBDIR, "-o", out, src], cwd=scratch)
         cpu_c = os.path.join(out, t, t + "_cpu.c")
         if r.returncode != 0 or not (os.path.exists(cpu_c) and os.path.getsize(cpu_c)):
             fail("P7", "%s emitted no co-run harness (exit %d): %s"
@@ -1098,7 +1101,7 @@ def bite(tmp, corpus, good):
     tvic = sorted(rows)[0]
     o7 = os.path.join(tmp, "p7fid", "out")
     os.makedirs(o7, exist_ok=True)
-    run([LITMUS7, "-set-libdir", LIBDIR, "-o", o7, os.path.join(scr, tvic + ".litmus")],
+    run([LITMUS7, "-gpu-target", "cuda", "-set-libdir", LIBDIR, "-o", o7, os.path.join(scr, tvic + ".litmus")],
         cwd=scr)
     fv = os.path.join(o7, tvic, tvic + "_cpu.c")
     tx = open(fv).read()
@@ -1127,8 +1130,10 @@ def bite(tmp, corpus, good):
     # --- P6: the two emit-all.sh detectors, each alone ------------------------
     ok &= emit_all_bite(tmp, "omit", STUB_OMIT % (LITMUS7, "MP-gc-cta-fence"),
                         "emitted no MP-gc-cta-fence/MP-gc-cta-fence_cpu.c")
+    # emit-all.sh names the LANE it was refused in (`-gpu-target cuda'), because
+    # a refusal that reached only one vendor is the interesting half of the news.
     ok &= emit_all_bite(tmp, "refuse", STUB_REFUSE % (LITMUS7, "MP-cg-cta-acquire"),
-                        "litmus7 REFUSED MP-cg-cta-acquire.litmus")
+                        "REFUSED MP-cg-cta-acquire.litmus")
 
     fails.clear()
     print()

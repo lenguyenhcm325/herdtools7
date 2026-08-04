@@ -147,7 +147,7 @@ single-arch break.
 
 ```
 $ hetgen7 ... -name MP-het -cpu "PodWW Rfe PodRR Fre" -gpu "PodWW…ReleaseSys …" > MP-het.litmus
-$ litmus7 MP-het.litmus
+$ litmus7 -gpu-target cuda MP-het.litmus
 HetLitmus: parsed heterogeneous test MP-het (2 procs)
   P0 device=cpu -> ASMLang (AArch64)
   P1 device=gpu -> CudaLang (LISA/PTX)

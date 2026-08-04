@@ -6,7 +6,7 @@ UNTAGGED, because the tag context is gated on het emission.
 CPU side (Decision 1): the tagged body sources each store value from a
 K*(_n+1)+mu REGISTER operand (no `mov #imm'), preserves the tested mnemonic
 verbatim, and widens to 64-bit %x.
-  $ litmus7 -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ grep -c 'mov %w' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c || true
   0
   $ grep -c 'stlr %x\[_v0\],\[%\[x\]\]' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
@@ -63,7 +63,7 @@ on T is.
 
 GPU side (Decision 2): the two GPU stores carry the tag as uint64 atomic_ref
 stores (the observer lane's uint64 loads are counted separately below).
-  $ litmus7 -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -c 'ref.store(' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   2
   $ grep -c 'ref.store(((uint64_t)5 \* (_n + 1) + 3)' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
@@ -105,7 +105,7 @@ only regress by removing that refusal.
 GATE 2: a CPU-side read is bound to its buffer by LOAD NODE, not by device, so
 MP-gc (GPU writes, CPU reads) is the same exact O(N) scan as MP-cg, just over the
 host buffer.
-  $ litmus7 -o . ../het/MP-gc-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-gc-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ grep -c 'int _weak = ((t_bufP1_0\[_f\] != 0 && t_bufP1_0\[_f\] % T_K_TAG == 2) && (t_bufP1_1\[_f\] < (uint64_t)T_K_TAG\*_m0 + 1));' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
   1
 
@@ -115,7 +115,7 @@ from read-buffer 1, guarded by that tag being real -- a cold frame has no
 synchrony point, and counting it would report 100% weak (Srivastava 4.4).
 SB-cg-sys-acqrel-2s is oracle-Allowed, so it co-runs the canary and the test
 under study carries the `t_' prefix: same scan, same counts, same window.
-  $ litmus7 -o . ../het/SB-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/SB-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ grep -c 'if (t_bufP0_0\[_f\] != 0) {' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
   3
   $ grep -c 'for (_t1 = _c1_lo; _t1 <= _c1_hi && !_rwin; ++_t1)' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
@@ -142,7 +142,7 @@ pinned by P0's read, and P1's read must decode back to P0's own frame _f.
 2 is the PREAMBLE BASELINE, not a bumped pin: the `#ifndef HET_WINDOW / #define'
 pair is emitted unconditionally, and each windowed read adds one further line, so
 2 means "no windowed read here" exactly as the 3 above means "one".
-  $ litmus7 -o . ../het/LB-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/LB-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ grep -c 't_bufP1_0_h\[(_m1 - 1)\] / T_K_TAG == (uint64_t)(_f + 1)' LB-cg-sys-acqrel-2s/LB-cg-sys-acqrel-2s.cu
   1
   $ grep -c 'HET_WINDOW' LB-cg-sys-acqrel-2s/LB-cg-sys-acqrel-2s.cu
@@ -162,13 +162,13 @@ carry the extension itself or every two-sided (-2s) test fails to ASSEMBLE.
   $ grep -c '.arch_extension rcpc' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s_cpu.c
   1
 A plain-LDR body must NOT carry it.
-  $ litmus7 -o . ../het/WRC-ccg-cta-relaxed.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/WRC-ccg-cta-relaxed.litmus >/dev/null 2>&1
   $ grep -c 'arch_extension' WRC-ccg-cta-relaxed/WRC-ccg-cta-relaxed_cpu.c || true
   0
 
 GATE: the standalone GPU-only path (CudaLang.dump) is UNTAGGED -- plain int
 atomic_ref, no K_TAG, no het_obs_record, no uint64 widening.
-  $ litmus7 -o . ../gpu-only/MP-sys-acquire.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../gpu-only/MP-sys-acquire.litmus >/dev/null 2>&1
   $ grep -q 'atomic_ref<int' MP-sys-acquire.cu && echo "gpu-only uses plain int"
   gpu-only uses plain int
   $ grep -cE 'K_TAG|het_obs_record|atomic_ref<uint64_t' MP-sys-acquire.cu || true

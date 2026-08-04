@@ -25,7 +25,7 @@ Seven phases, each of which must be seen to fail:
                          x86_64 host with exit 3, naming the ISA; the CPU object
                          here is the portable shim and the binary would test
                          nothing
-  P5 no silent stale     both vendors write ./<test> on purpose (run-one.sh and
+  P5 no silent stale     every vendor writes ./<test> on purpose (run-one.sh and
                          campaign.py exec ./<test> and are vendor-agnostic), so
                          each link target must ALWAYS relink.  MEASURED before
                          the fix: `make cuda-bin' after `make hip-bin' printed
@@ -64,6 +64,15 @@ inert stress, B6a's constant-0 `exhaustive_valid', the faithfulness gate reading
 
 `--bite' injects into each phase, on CORRUPTION and on OMISSION, and requires the
 phase that owns the injected object to redden naming it.
+
+ONE VENDOR PER HARNESS DIRECTORY.  litmus7 renders the dialect `-gpu-target'
+names and no other (litmus/hetTarget.ml), so the AMD arms and the CUDA arms no
+longer live in one directory: this gate emits the same x86 test twice, and P7
+reads the cuda render while P1-P3/P5/P6 read the hip one.  P5's cross-vendor
+stale-link trap needs both, so it plants one vendor's linked binary in the other
+vendor's directory -- the state the trap needs (a ./<test> NEWER than the
+objects, carrying the wrong device image), reached the way a reused results tree
+reaches it.
 """
 import argparse
 import os
@@ -124,15 +133,15 @@ def have(tool):
 
 # --------------------------------------------------------------- emission
 
-def emit(tmp, src, outroot, label):
-    """litmus7 -o outroot src; return the harness dir it wrote."""
+def emit(tmp, src, outroot, label, target):
+    """litmus7 -gpu-target target -o outroot src; return the harness dir it wrote."""
     os.makedirs(outroot, exist_ok=True)
-    r = run([LITMUS7, "-set-libdir", LIBDIR, "-o", outroot, src])
+    r = run([LITMUS7, "-gpu-target", target, "-set-libdir", LIBDIR, "-o", outroot, src])
     name = os.path.basename(src)[: -len(".litmus")]
     d = os.path.join(outroot, name)
     if not os.path.isdir(d):
-        raise SystemExit("hipbuildcheck: litmus7 emitted no harness for %s (%s)\n%s%s"
-                         % (label, name, r.stdout, r.stderr))
+        raise SystemExit("hipbuildcheck: litmus7 emitted no %s harness for %s (%s)\n%s%s"
+                         % (target, label, name, r.stdout, r.stderr))
     return d
 
 
@@ -184,12 +193,11 @@ def phase1(tmp, d):
     # comp.sh: the arm, the usage line, and the success line must all know it.
     for what, pat, blob, where in [
         ("hip-link case arm", r"^\s*hip\|hip-link\)", comp, "comp.sh"),
-        ("hip-link usage banner", r"Usage: sh comp\.sh \[cuda\|hip\|cuda-link\|hip-link\]", comp, "comp.sh"),
-        ("hip-link usage error", r'usage: sh comp\.sh \[cuda\|hip\|cuda-link\|hip-link\]', comp, "comp.sh"),
-        ("hip-link success line", r'TARGET" = cuda-link \] \|\| \[ "\$TARGET" = hip-link \]', comp, "comp.sh"),
+        ("hip-link usage banner", r"Usage: sh comp\.sh \[hip\|hip-link\]", comp, "comp.sh"),
+        ("hip-link usage error", r'usage: sh comp\.sh \[hip\|hip-link\]', comp, "comp.sh"),
+        ("hip-link success line", r'^if \[ "\$TARGET" = hip-link \]; then$', comp, "comp.sh"),
         ("hip-bin rule", r"^hip-bin: %s_hip\.o outs\.o %s_cpu_host\.o$" % (re.escape(t), re.escape(t)), mk, "Makefile"),
         ("hip-bin .PHONY", r"^\.PHONY:.*\bhip-bin\b", mk, "Makefile"),
-        ("cuda-bin .PHONY", r"^\.PHONY:.*\bcuda-bin\b", mk, "Makefile"),
         # Making both link targets phony removed the only rule naming ./<test>,
         # so make fell through to its BUILT-IN `%: %.o' -- see the behavioural
         # check below, which is the one that actually matters.
@@ -209,19 +217,36 @@ def phase1(tmp, d):
     tick("P1")
     if not re.search(r"HIP_ARCH \?= %s" % HIP_ARCH, mk):
         fail("P1", "Makefile does not default HIP_ARCH to %s (MI300A)" % HIP_ARCH)
+    # This directory is the HIP render (-gpu-target hip), so the CUDA arms must
+    # be ABSENT -- P7 reads them in the cuda render's own directory.  A dir that
+    # still carried both would mean the target filter stopped filtering.
+    for where, blob in [("comp.sh", comp), ("Makefile", mk)]:
+        tick("P1")
+        if re.search(r"\bcuda\b|\bCUDA\b|\bNVCC\b", blob):
+            fail("P1", "the HIP render's %s still carries CUDA arms -- `-gpu-target "
+                       "hip' must emit one vendor's build targets only" % where)
 
-    # `make <test>' MUST REFUSE -- and this is checked by RUNNING it, because the
-    # defect it guards was invisible to every grep.  MEASURED 2026-08-03: with
-    # cuda-bin/hip-bin phony and no rule naming ./<test>, `make <test>' on an
-    # emitted x86 harness ran `cc <test>.o -o <test>' under `[<builtin>]' -- GNU
-    # make's built-in `%: %.o' link rule, which never consults the uname -m
-    # guard.  It failed here only because these objects carry CUDA/C++ symbols;
-    # the guard is not what stopped it.  Before the link targets became phony the
-    # same command went through the guarded file rule, so this was a silent
-    # REGRESSION, and no grep of the Makefile would have shown it: the hole was
-    # the ABSENCE of a rule.
+    make_test_refuses(tmp, d, "P1", "hip-bin")
+    print("      %d assertions" % counts.get("P1", 0))
+    if not counts.get("P1"):
+        fail("P1", "phase made no assertions")
+
+
+def make_test_refuses(tmp, d, phase, link_target):
+    """`make <test>' MUST REFUSE -- checked by RUNNING it, because the defect it
+       guards was invisible to every grep.  MEASURED 2026-08-03: with the link
+       targets phony and no rule naming ./<test>, `make <test>' on an emitted x86
+       harness ran `cc <test>.o -o <test>' under `[<builtin>]' -- GNU make's
+       built-in `%: %.o' link rule, which never consults the uname -m guard.  It
+       failed there only because those objects carry CUDA/C++ symbols; the guard
+       is not what stopped it.  The hole was the ABSENCE of a rule, so no grep of
+       the Makefile would have shown it.
+       Run on EVERY render: the built-in rule can only fire where the GPU object
+       is <test>.o, i.e. on the CUDA render, so checking the HIP one alone would
+       leave the reachable case unchecked."""
+    t = test_of(d)
     for label, pre_touch in [("./%s absent" % t, False), ("./%s already present" % t, True)]:
-        w = fresh(tmp, d, "p1make-%d" % int(pre_touch))
+        w = fresh(tmp, d, "%smake-%d" % (phase.lower(), int(pre_touch)))
         b = os.path.join(w, t)
         if pre_touch:
             # A plain (non-phony) rule whose target exists is "up to date": make
@@ -231,33 +256,30 @@ def phase1(tmp, d):
             open(b, "w").write("stale")
         r = run(["make", t], cwd=w)
         blob = r.stdout + r.stderr
-        tick("P1")
+        tick(phase)
         if r.returncode == 0:
-            fail("P1", "`make %s' (%s) EXITED 0 -- it must refuse: linking ./%s "
-                       "directly bypasses the uname -m guard that both real link "
-                       "targets apply (make said: %r)" % (t, label, t, blob.strip()[-300:]))
+            fail(phase, "`make %s' (%s) EXITED 0 -- it must refuse: linking ./%s "
+                        "directly bypasses the uname -m guard the real link "
+                        "target applies (make said: %r)" % (t, label, t, blob.strip()[-300:]))
             continue
-        tick("P1")
+        tick(phase)
         if "is not a build target" not in blob:
-            fail("P1", "`make %s' (%s) failed without refusing by name -- if this is "
-                       "make's built-in `%%: %%.o' rule firing, the guard is bypassed "
-                       "and the failure is incidental:\n%s" % (t, label, blob[-800:]))
-        tick("P1")
-        if "cuda-bin" not in blob or "hip-bin" not in blob:
-            fail("P1", "`make %s' (%s) refused without naming the two link targets to "
-                       "use instead:\n%s" % (t, label, blob[-800:]))
-        tick("P1")
+            fail(phase, "`make %s' (%s) failed without refusing by name -- if this is "
+                        "make's built-in `%%: %%.o' rule firing, the guard is bypassed "
+                        "and the failure is incidental:\n%s" % (t, label, blob[-800:]))
+        tick(phase)
+        if link_target not in blob:
+            fail(phase, "`make %s' (%s) refused without naming this render's link target "
+                        "(%s) to use instead:\n%s" % (t, label, link_target, blob[-800:]))
+        tick(phase)
         if "<builtin>" in blob:
-            fail("P1", "`make %s' (%s) reached make's BUILT-IN rule (`[<builtin>]' in "
-                       "the output) -- the refusal rule is not being consulted:\n%s"
+            fail(phase, "`make %s' (%s) reached make's BUILT-IN rule (`[<builtin>]' in "
+                        "the output) -- the refusal rule is not being consulted:\n%s"
                  % (t, label, blob[-800:]))
         if not pre_touch:
-            tick("P1")
+            tick(phase)
             if os.path.exists(b):
-                fail("P1", "`make %s' refused but produced ./%s anyway" % (t, t))
-    print("      %d assertions" % counts.get("P1", 0))
-    if not counts.get("P1"):
-        fail("P1", "phase made no assertions")
+                fail(phase, "`make %s' refused but produced ./%s anyway" % (t, t))
 
 
 def phase2(d):
@@ -344,30 +366,52 @@ def phase4(d_aarch64):
         fail("P4", "phase made no assertions")
 
 
-def phase5(tmp, d):
+def plant(src_bin, dst_bin):
+    """Put one vendor's linked binary where the other vendor's target writes, and
+       make it NEWER than everything around it.  That is the state the stale-link
+       trap needs, and a results tree reused across boxes reaches it for real."""
+    shutil.copyfile(src_bin, dst_bin)
+    os.chmod(dst_bin, 0o755)
+    os.utime(dst_bin, None)
+
+
+def phase5(tmp, d_cuda, d_hip):
     print("[P5] no silent stale link: each vendor's target always relinks ./<test>")
     if not (have("hipcc") and have("nvcc")):
         fail("P5", "P5 needs BOTH hipcc and nvcc to prove the cross-vendor relink "
                    "(have hipcc=%s nvcc=%s)" % (have("hipcc"), have("nvcc")))
         return
-    t = test_of(d)
-    w = fresh(tmp, d, "p5")
-    b = os.path.join(w, t)
+    t = test_of(d_cuda)
+    wc = fresh(tmp, d_cuda, "p5-cuda")
+    wh = fresh(tmp, d_hip, "p5-hip")
+    bc = os.path.join(wc, t)
+    bh = os.path.join(wh, t)
     # sm_86 so this phase builds on the dev box's RTX 3060 as well as on GH200.
     cuda = ["make", "cuda-bin", "CUDA_ARCH=sm_86"]
     hip = ["make", "hip-bin"]
-    # FOUR builds, alternating, and the order is the whole point.  A stale-link
-    # trap needs the OTHER vendor's object to already exist and to be OLDER than
-    # ./<test>; that state does not exist until each vendor has linked once.
-    # Rounds 1-2 create it, rounds 3-4 are the ones that actually discriminate --
-    # a two-round A-then-B sequence rebuilds B's object from scratch, so make
-    # runs the recipe for a reason that has nothing to do with .PHONY, and the
-    # check passes against a broken Makefile.
-    for rnd, (label, cmd, want_gfx, discriminating) in enumerate(
-            [("cuda-bin (round 1: creates %s.o and ./%s)" % (t, t), cuda, False, False),
-             ("hip-bin (round 2: creates %s_hip.o)" % t, hip, True, False),
-             ("cuda-bin (round 3: %s.o now OLDER than ./%s)" % (t, t), cuda, False, True),
-             ("hip-bin (round 4: %s_hip.o now OLDER than ./%s)" % (t, t), hip, True, True)], 1):
+    # FOUR builds, and the order is the whole point.  A stale-link trap needs a
+    # ./<test> that already exists and is NEWER than the objects the target
+    # links; rounds 1-2 create each vendor's binary, rounds 3-4 PLANT the other
+    # vendor's binary and are the ones that discriminate -- a round that had to
+    # rebuild its object anyway runs the recipe for a reason that has nothing to
+    # do with .PHONY, and passes against a broken Makefile.
+    for label, cmd, w, b, plant_from, want_gfx in [
+            ("cuda-bin (round 1: creates %s.o and ./%s)" % (t, t), cuda, wc, bc, None, False),
+            ("hip-bin (round 2: creates %s_hip.o and ./%s)" % (t, t), hip, wh, bh, None, True),
+            ("cuda-bin (round 3: the AMD binary planted as ./%s, newer than %s.o)"
+             % (t, t), cuda, wc, bc, bh, False),
+            ("hip-bin (round 4: the CUDA binary planted as ./%s, newer than %s_hip.o)"
+             % (t, t), hip, wh, bh, bc, True)]:
+        discriminating = plant_from is not None
+        if discriminating:
+            if not os.path.isfile(plant_from):
+                # An earlier round linked nothing, so the trap cannot be set at
+                # all -- say so instead of dying on the missing file.
+                tick("P5")
+                fail("P5", "%s cannot run: the earlier round left no ./%s to plant"
+                     % (label, t))
+                break
+            plant(plant_from, b)
         r = run(cmd, cwd=w)
         tick("P5")
         if r.returncode != 0:
@@ -641,10 +685,21 @@ def phase7(tmp, d):
         ("cuda-bin rule", r"^cuda-bin: %s\.o outs\.o %s_cpu_host\.o$" % (re.escape(t), re.escape(t)), mk),
         ("cuda-bin uname guard", r"cuda-bin refuses on \$\$\(uname -m\)", mk),
         ("cuda-bin links with NVCC", r"\$\(NVCC\) -arch=\$\(CUDA_ARCH\) \$\^ -o %s " % re.escape(t), mk),
+        ("cuda-bin .PHONY", r"^\.PHONY:.*\bcuda-bin\b", mk),
     ]:
         tick("P7")
         if not re.search(pat, blob, re.M):
             fail("P7", "%s missing or altered in the emitted build scripts (/%s/)" % (what, pat))
+    # ...and this render is CUDA-only, the mirror of P1's check on the HIP one.
+    for where, blob in [("comp.sh", comp), ("Makefile", mk)]:
+        tick("P7")
+        if re.search(r"\bhip\b|\bHIP\b|\bHIPCC\b", blob):
+            fail("P7", "the CUDA render's %s still carries HIP arms -- `-gpu-target "
+                       "cuda' must emit one vendor's build targets only" % where)
+    # The CUDA render is where make's built-in `%: %.o' rule is REACHABLE (its
+    # GPU object is <test>.o), so the behavioural refusal check has to run here
+    # as well as on the HIP render.
+    make_test_refuses(tmp, d, "P7", "cuda-bin")
     if not have("nvcc"):
         fail("P7", "nvcc not on PATH -- the CUDA lane cannot be re-verified here")
     else:
@@ -671,7 +726,13 @@ def sub(path, old, new, count=0):
 
 
 def phony_line(d):
-    return ".PHONY: all cuda cuda-bin hip hip-bin clean %s" % test_of(d)
+    """This render's .PHONY line, READ rather than reconstructed: a single-vendor
+       harness lists its own vendor's targets and no others."""
+    for l in open(os.path.join(d, "Makefile")):
+        if l.startswith(".PHONY:"):
+            return l.rstrip("\n")
+    raise SystemExit("hipbuildcheck --bite: no .PHONY line in %s/Makefile -- the "
+                     "injections below would have been no-ops" % d)
 
 
 def strip_refusal_rule(d):
@@ -719,7 +780,7 @@ def bite_one(label, phase, runner, expect):
     return True
 
 
-def bite(tmp, d_x86, d_aa):
+def bite(tmp, d_x86, d_x86_cuda, d_aa):
     print("===== HIPBUILDCHECK BITE: every phase, on corruption AND on omission =====")
     ok = True
     n = [0]
@@ -749,21 +810,25 @@ def bite(tmp, d_x86, d_aa):
     # and links it with $(CC), guard and device code both gone.  Deleting the
     # refusal rule restores exactly that state -- P1 must catch it by RUNNING
     # make, not by grepping, because the defect is an absent rule.
-    w = W("p1b")
+    # ...on the CUDA render, the only one where the fall-through is REACHABLE:
+    # the built-in rule is `%: %.o', and the HIP render's GPU object is
+    # <test>_hip.o, so there make simply reports no rule at all.  P7 owns the
+    # behavioural check on that render.
+    w = W("p7b", d_x86_cuda)
     strip_refusal_rule(w)
     # The expected object is the BEHAVIOURAL assertion, not the grep for the rule:
     # the grep also reddens here, and a bite satisfied by the grep would not show
-    # that P1 can still detect this if someone leaves a rule in place that does
-    # not actually refuse.
+    # that the check can still detect this if someone leaves a rule in place that
+    # does not actually refuse.
     ok &= bite_one("./<test> refusal rule + .SUFFIXES DELETED (make falls back to "
-                   "its built-in link rule)", "P1", lambda: phase1(tmp, w),
+                   "its built-in link rule)", "P7", lambda: phase7(tmp, w),
                    "reached make's BUILT-IN rule")
     # CORRUPTION: the rule survives but ./<test> is no longer .PHONY, so a run
     # that already has a binary gets "up to date", exit 0, and whatever the other
     # vendor left behind.
     w = W("p1q")
     sub(os.path.join(w, "Makefile"), phony_line(w),
-        ".PHONY: all cuda cuda-bin hip hip-bin clean")
+        phony_line(w)[: -(len(test_of(w)) + 1)])
     ok &= bite_one("./<test> dropped from .PHONY (a present binary is 'up to date')",
                    "P1", lambda: phase1(tmp, w), "EXITED 0")
     # CORRUPTION with EVERY GREP STILL GREEN: the rule is there, .SUFFIXES is
@@ -821,7 +886,9 @@ def bite(tmp, d_x86, d_aa):
                    lambda: phase4(w), "expected 3")
 
     # --- P5 -----------------------------------------------------------------
-    w = W("p5c")
+    # P5 drives two directories, so each injection goes into ONE of them and the
+    # other stays pristine -- otherwise a bite could redden for the wrong render.
+    w = W("p5c", d_x86_cuda)
     # Restore the pre-fix shape: cuda-bin as a phony with a FILE prerequisite.
     # This is the measured regression, replayed.  The refusal rule has to come
     # out FIRST: it makes ./<test> phony, and a phony target is never "up to
@@ -835,8 +902,9 @@ def bite(tmp, d_x86, d_aa):
     s = s.replace("$(NVCC) -arch=$(CUDA_ARCH) $^ -o %s -lpthread -lm" % t,
                   "$(NVCC) -arch=$(CUDA_ARCH) $^ -o $@ -lpthread -lm")
     open(os.path.join(w, "Makefile"), "w").write(s)
+    wh = W("p5c-hip")
     ok &= bite_one("cuda-bin reverted to a FILE rule (the measured stale trap)", "P5",
-                   lambda: phase5(tmp, w), "left the amdgcn")
+                   lambda: phase5(tmp, w, wh), "left the amdgcn")
     w = W("p5o")
     # OMISSION: the target and its guard survive, only the LINK COMMAND is gone.
     # `make hip-bin' then builds the objects, passes the uname guard and exits 0
@@ -845,8 +913,9 @@ def bite(tmp, d_x86, d_aa):
     s = open(os.path.join(w, "Makefile")).read()
     s = s.replace("\t$(HIPCC) --offload-arch=$(HIP_ARCH) $^ -o %s -lpthread -lm\n" % test_of(w), "")
     open(os.path.join(w, "Makefile"), "w").write(s)
+    wc = W("p5o-cuda", d_x86_cuda)
     ok &= bite_one("hip-bin LINK COMMAND deleted (target still exits 0)", "P5",
-                   lambda: phase5(tmp, w), "without a amdgcn")
+                   lambda: phase5(tmp, wc, w), "without a amdgcn")
 
     # --- P6 -----------------------------------------------------------------
     w = W("p6c")
@@ -910,12 +979,12 @@ def bite(tmp, d_x86, d_aa):
                    lambda: phase6(tmp, w), "does not REFUSE a non-zero HET_PLACE")
 
     # --- P7 -----------------------------------------------------------------
-    w = W("p7c")
+    w = W("p7c", d_x86_cuda)
     sub(os.path.join(w, "Makefile"), "$(NVCC) -arch=$(CUDA_ARCH) $^ -o",
         "$(HIPCC) --offload-arch=$(HIP_ARCH) $^ -o")
     ok &= bite_one("cuda-bin links with HIPCC", "P7", lambda: phase7(tmp, w),
                    "cuda-bin links with NVCC")
-    w = W("p7o")
+    w = W("p7o", d_x86_cuda)
     s = open(os.path.join(w, "comp.sh")).read()
     s = s.replace("  cuda|cuda-link)", "  cuda)")
     open(os.path.join(w, "comp.sh"), "w").write(s)
@@ -951,12 +1020,17 @@ def main():
         src = os.path.join(corpus, X86_TEST + ".litmus")
         if not os.path.isfile(src):
             raise SystemExit("hipbuildcheck: generate-x86.sh emitted no %s" % X86_TEST)
-        d_x86 = emit(tmp, src, os.path.join(tmp, "out-x86"), "x86 render")
+        # The same x86 test, rendered once per vendor: one directory carries one
+        # vendor's arms, so the AMD phases and the CUDA non-regression phase read
+        # different directories now.
+        d_x86 = emit(tmp, src, os.path.join(tmp, "out-x86-hip"), "x86 render", "hip")
+        d_x86_cuda = emit(tmp, src, os.path.join(tmp, "out-x86-cuda"),
+                          "x86 render", "cuda")
         d_aa = emit(tmp, os.path.join(HET_DIR, AARCH64_TEST + ".litmus"),
-                    os.path.join(tmp, "out-aa"), "AArch64 render")
+                    os.path.join(tmp, "out-aa"), "AArch64 render", "hip")
 
         if a.bite:
-            return bite(tmp, d_x86, d_aa)
+            return bite(tmp, d_x86, d_x86_cuda, d_aa)
 
         print("===== HIPBUILDCHECK: can an AMD harness be built and run? =====")
         print("  host %s, hipcc=%s nvcc=%s"
@@ -965,9 +1039,9 @@ def main():
         phase2(fresh(tmp, d_x86, "p2"))
         phase3(tmp, d_x86)
         phase4(d_aa)
-        phase5(tmp, d_x86)
+        phase5(tmp, d_x86_cuda, d_x86)
         phase6(tmp, d_x86)
-        phase7(tmp, d_x86)
+        phase7(tmp, d_x86_cuda)
         print("=" * 70)
         if fails:
             print("HIPBUILDCHECK FAILED: %d assertion(s)" % len(fails))

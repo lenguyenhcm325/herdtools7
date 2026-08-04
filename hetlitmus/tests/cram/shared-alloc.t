@@ -4,8 +4,8 @@ gd_alloc_shared / gd_free_shared allocator, never a hard-coded *MallocManaged.
 That allocator SELECTS THE PROPERTY UNDER TEST -- system malloc/ATS cache-line
 CHI coherence on GH200, fine-grained hipMallocManaged on MI300A,
 cudaMallocManaged only as the dev-box/CI fallback -- so it is correctness, not
-tuning.  One representative MP shape is emitted in both dialects and checked
-with scoped counts.
+tuning.  One representative MP shape is emitted once per dialect (litmus7
+renders the one -gpu-target names) and checked with scoped counts.
 
 Two allocation paths exist, so two harnesses are emitted.  409 of the 411 het
 tests co-run at least a canary and carve their shared vars out of one
@@ -13,8 +13,11 @@ cache-line-padded arena ((f), (g)).  The per-variable path is left to the two
 tests that are themselves the Layer-B canary and so cannot co-run themselves,
 MP-{cg,gc}-sys-relaxed (control-map.csv: `self'); MP-cg-sys-relaxed guards it.
 
-  $ litmus7 -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
-  $ litmus7 -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ mkdir hip
+  $ litmus7 -gpu-target hip -o hip ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target hip -o hip ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
 
 Single-instance means no arena, so the per-variable calls below are the ones
 this harness actually makes.
@@ -97,15 +100,15 @@ The HIP twin renders from the same template: gd_alloc_shared is fine-grained
 hipMallocManaged (no malloc/ATS dispatch -- MI300A's unified HBM pool needs
 none), and the read buffers are device hipMalloc, no __out.  Scoped to
 gd_alloc_shared's body for the same reason as (c).
-  $ sed -n '/^static void gd_alloc_shared/,/^}/p' MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip | grep -c 'hipMallocManaged(_pp'
+  $ sed -n '/^static void gd_alloc_shared/,/^}/p' hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip | grep -c 'hipMallocManaged(_pp'
   1
-  $ grep -cE '_shared_pageable|\*_pp = malloc' MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip || true
+  $ grep -cE '_shared_pageable|\*_pp = malloc' hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip || true
   0
-  $ grep -c 'gd_alloc_shared((void\*\*)&' MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
+  $ grep -c 'gd_alloc_shared((void\*\*)&' hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
   3
-  $ grep -c '__out' MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip || true
+  $ grep -c '__out' hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip || true
   0
-  $ grep -c '(void)hipMalloc(&bufP' MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
+  $ grep -c '(void)hipMalloc(&bufP' hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
   2
 
 (f) the co-run arena.  A should-be-forbidden test co-runs mu(T) and the canary,
@@ -115,6 +118,7 @@ would perturb the very test it exists to vouch for (Q4-positive-control.md 3.1 /
 8.4).  Six separate 8-byte mallocs cannot prevent that; one padded arena can, and
 it still goes through gd_alloc_shared with a matching gd_free_shared (B6b).
   $ CO=MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
+  $ COH=hip/MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
   $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $CO.cu
   1
   $ grep -c 'gd_alloc_shared((void\*\*)&' $CO.cu
@@ -134,9 +138,9 @@ coherent path entirely, leaving the harness testing nothing.
 
 The HIP twin carves the same arena from its own gd_alloc_shared (fine-grained
 hipMallocManaged): one template, two renders.
-  $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $CO.hip
+  $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $COH.hip
   1
-  $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $CO.hip
+  $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $COH.hip
   6
 
 (g) the arena is sized from the instance population, not from a fixed 3.  The 395
@@ -148,7 +152,7 @@ last slot past the end of the allocation.  Count the slots and pin the size.
 MP-cg-sys-acquire is Allowed -> T + canary, 2 instances, 2 vars each: 4 shared
 slots + barrier = 5, allocated 6 lines (one line of alignment slack, because _sa
 rounds the base up).
-  $ litmus7 -o . ../het/MP-cg-sys-acquire.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acquire.litmus >/dev/null 2>&1
   $ AC=MP-cg-sys-acquire/MP-cg-sys-acquire
   $ grep -c 'cache-line-padded shared slots: t_x t_y can_x can_y + barrier' $AC.cu
   1
@@ -227,7 +231,7 @@ managed memory under the name of an experiment it was not running.  Not
 mentioning a knob is not the same as refusing it.  The .hip now names HET_ALLOC
 only to refuse: no malloc branch, no pinned branch, no second allocator.
 
-  $ HREL=MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
+  $ HREL=hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
   $ grep -c 'getenv("HET_ALLOC")' $HREL
   1
   $ HMODE=$(sed -n '/^static int _het_alloc_mode/,/^}/p' $HREL)

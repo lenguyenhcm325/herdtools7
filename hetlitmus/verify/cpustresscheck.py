@@ -351,7 +351,7 @@ def emit_harness(litmus_path, outdir, harness_dir=None):
     name = os.path.splitext(os.path.basename(litmus_path))[0]
     if harness_dir:
         return harness_paths(harness_dir, name)
-    r = run([LITMUS7, "-set-libdir", LIBDIR, "-o", outdir,
+    r = run([LITMUS7, "-gpu-target", "cuda", "-set-libdir", LIBDIR, "-o", outdir,
              os.path.abspath(litmus_path)])
     if r.returncode != 0:
         raise RuntimeError("litmus7 failed:\n" + r.stdout)

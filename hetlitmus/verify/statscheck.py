@@ -1020,7 +1020,7 @@ def emit_harness(tmp):
     test = "MP-cg-sys-fence-2s"
     out = os.path.join(tmp, "emit")
     os.makedirs(out, exist_ok=True)
-    subprocess.run(["litmus7", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
+    subprocess.run(["litmus7", "-gpu-target", "cuda", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
                     "-o", out, os.path.join(HET_DIR, test + ".litmus")],
                    cwd=ROOT, env=_env(), check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -1880,7 +1880,7 @@ def phase4(tamper=None):
     bad = 0
     try:
         r = subprocess.run(
-            ["litmus7", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
+            ["litmus7", "-gpu-target", "cuda", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
              "-o", tmp] + [os.path.join(HET_DIR, t + ".litmus") for t in tests],
             cwd=ROOT, env=_env(), capture_output=True, text=True)
         if r.returncode != 0:

@@ -230,14 +230,17 @@ end
             "__hip_atomic_load(%s, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM)" ptr) ;
     }
 
-  (* THE DIALECT REGISTRY.  The renders themselves and every ARM of the
-     emitted comp.sh / Makefile / README fold over this list; the README's
-     "## Building the executable" narrative, comp.sh's header sentences and
-     the .cu/.hip banner are NOT folded (prose hard-wrapped across the vendor
-     boundary, kept verbatim for byte-identity) and still name two vendors --
-     Phase B rewrites them off the filtered registry.  List order is emission
-     order; the head is what the build files default to. *)
+  (* THE DIALECT REGISTRY.  Every per-vendor site -- the renders themselves and
+     every arm, header sentence and narrative of the emitted comp.sh / Makefile
+     / README -- folds over this list, so a vendor is added by adding an entry.
+     `-gpu-target' (hetTarget.ml) filters it: an emission sees ONE entry, and
+     the folds below then name only that vendor.  List order is emission order;
+     the head is what the build files default to. *)
   let dialects = [ cuda_dialect ; hip_dialect ]
+
+  (* The `-gpu-target' vocabulary IS this list's target column; litmus7's option
+     help reads it here rather than repeating the words. *)
+  let target_doc = String.concat "|" (List.map (fun d -> d.gd_target) dialects)
 
   (* The GPU object this render compiles to, and the compile-line flags, given
      the arch reference as each build file spells it ("$CUDA_ARCH" in sh,
@@ -482,6 +485,11 @@ end
 
       let run _hash_env src_name in_chan _out_chan splitted =
         try
+          (* THE dialect list for this emission: `-gpu-target' filtered, so every
+             per-vendor fold below renders and names one vendor.  Resolved before
+             the parse -- an unregistered target must refuse having written
+             nothing. *)
+          let dialects = HetTarget.select ~key:(fun d -> d.gd_target) dialects in
           let parsed = P.parse in_chan splitted in
           close_in in_chan ;
           let tname = splitted.Splitter.name.Name.name in
@@ -2434,8 +2442,8 @@ end
             s dialect.gd_shared_mem_note ;
             s "// a system-scope atomic barrier rendezvouses both sides.\n" ;
             s (Printf.sprintf
-                 "// Compile-only by default (%s -c); comp.sh cuda-link / make cuda-bin\n"
-                 dialect.gd_compiler) ;
+                 "// Compile-only by default (%s -c); comp.sh %s-link / make %s-bin\n"
+                 dialect.gd_compiler dialect.gd_target dialect.gd_target) ;
             s "// link the runnable binary, guarded by uname -m.  DO NOT EDIT.\n" ;
             s (dialect.gd_runtime_include ^ "\n") ;
             s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
@@ -2768,36 +2776,57 @@ end
             | "__aarch64__" -> "aarch64"
             | "__x86_64__" -> "x86_64"
             | m -> m in
-          (* The build files' per-vendor vocabulary folds over [dialects]
-             below -- except the header/narrative prose noted at the registry
-             definition; [d0] is the head, which they default to. *)
+          (* The build files' per-vendor vocabulary, all of it folded over the
+             (filtered) [dialects]; [d0] is the head, which they default to. *)
           let d0 = List.hd dialects in
           let targets = List.map (fun d -> d.gd_target) dialects in
           let comp_args =
             String.concat "|"
               (targets @ List.map (fun t -> t ^ "-link") targets) in
+          (* Count-sensitive words for the prose below.  A harness carries ONE
+             dialect (`-gpu-target'), so the sentences must read in the singular
+             -- and still read at any registry size, which is why no count word
+             is written out by hand. *)
+          let n_d = List.length dialects in
+          let plural sing plur = if n_d = 1 then sing else plur in
+          let enum l = match List.rev l with
+            | [] -> ""
+            | [x] -> x
+            | x :: rest -> String.concat ", " (List.rev rest) ^ " and " ^ x in
+          let count_word = function
+            | 1 -> "The one" | 2 -> "Both" | 3 -> "All three" | 4 -> "All four"
+            | k -> Printf.sprintf "All %d" k in
+          let vendors = enum (List.map (fun d -> d.gd_vendor) dialects) in
+          let bin_targets =
+            List.map (fun t -> Printf.sprintf "`make %s-bin'" t) targets in
           let dump_comp ch =
             let s = output_string ch in
             s "#!/bin/sh\n" ;
             s (Printf.sprintf
-                 "# Compile-only check for HetLitmus harness '%s'.\n" tname) ;
+                 "# Compile-only check for HetLitmus harness '%s' (%s render).\n"
+                 tname (enum (List.map (fun d -> d.gd_name) dialects))) ;
             s "# COMPILE-ONLY by default (-c, no link, no GPU run).\n" ;
             s (Printf.sprintf
-                 "# %s additionally LINK ./%s, making the harness\n"
+                 "# Adding `-link' to a target (%s) LINKS ./%s as well, making\n"
                  (String.concat " / "
                     (List.map (fun t -> Printf.sprintf "`%s-link'" t) targets))
                  tname) ;
-            s "# runnable on real hardware.  Both are GUARDED by uname -m: on a foreign host\n" ;
-            s "# the CPU object carries the portable shim, not the tested asm.\n" ;
+            s "# the harness runnable on real hardware.  Every link target is GUARDED by\n" ;
+            s "# uname -m: on a foreign host the CPU object carries the portable shim, not\n" ;
+            s "# the tested asm.\n" ;
             s (Printf.sprintf "# Usage: sh comp.sh [%s]   (default %s)\n"
                  comp_args d0.gd_target) ;
             s (Printf.sprintf
-                 "# Both link targets write the SAME path ./%s, so run-one.sh / campaign.py\n" tname) ;
-            s "# stay vendor-agnostic (they exec ./<test> and read the HetStats line).  A\n" ;
-            s "# real target host carries one vendor's toolchain; on a dev box that has both,\n" ;
-            s "# the second link OVERWRITES the first -- which is why the link is\n" ;
-            s "# unconditional here and `make hip-bin' is .PHONY: a stale binary left by the\n" ;
-            s "# other vendor must never be mistaken for a fresh one.\n" ;
+                 "# The link writes ./%s -- the path EVERY vendor's render links to, so\n"
+                 tname) ;
+            s "# run-one.sh / campaign.py stay vendor-agnostic (they exec ./<test> and read\n" ;
+            s (Printf.sprintf
+                 "# the HetStats line).  This harness carries the %s build arms only; the\n"
+                 vendors) ;
+            s (Printf.sprintf
+                 "# link is unconditional and %s %s .PHONY, so a stale binary left by an\n"
+                 (enum bin_targets) (plural "is" "are")) ;
+            s "# earlier build is never mistaken for a fresh one.\n" ;
             s "set -e\n" ;
             s (Printf.sprintf "TARGET=\"${1:-%s}\"\n" d0.gd_target) ;
             (* one `compiler ; arch' line per dialect, their arch notes aligned *)
@@ -2890,11 +2919,11 @@ end
                  "# HetLitmus harness '%s' -- objects by default (`make %s');\n"
                  tname d0.gd_target) ;
             s (Printf.sprintf
-                 "# %s link ./%s, guarded by uname -m.\n"
+                 "# %s %s ./%s, guarded by uname -m.\n"
                  (String.concat " / "
                     (List.map (fun t -> Printf.sprintf "`make %s-bin'" t)
                        targets))
-                 tname) ;
+                 (plural "links" "link") tname) ;
             List.iter
               (fun d ->
                 s (Printf.sprintf "%s ?= %s\n%s ?= %s\n"
@@ -2977,13 +3006,14 @@ end
             s ".SUFFIXES:\n\n" ;
             s (Printf.sprintf "%s:\n" tname) ;
             s (Printf.sprintf
-                 "\t@ echo \"error: \\`make %s' is not a build target: it would bypass the uname -m guard (and, without this rule, make's built-in \\`%%: %%.o' rule links it with \\$$(CC) and no device code at all).  Link it with %s; both check uname -m first.\" >&2 ; exit 3\n\n"
+                 "\t@ echo \"error: \\`make %s' is not a build target: it would bypass the uname -m guard (and, without this rule, make's built-in \\`%%: %%.o' rule links it with \\$$(CC) and no device code at all).  Link it with %s, %s uname -m first.\" >&2 ; exit 3\n\n"
                  tname
                  (String.concat " or "
                     (List.map
                        (fun d -> Printf.sprintf "\\`make %s-bin' (%s)"
                                    d.gd_target d.gd_vendor)
-                       dialects))) ;
+                       dialects))
+                 (plural "which checks" "which all check")) ;
             s (Printf.sprintf
                  ".PHONY: all %s clean %s\nclean:\n\trm -f *.o %s\n"
                  (String.concat " "
@@ -2994,8 +3024,8 @@ end
             let s = output_string ch in
             s (Printf.sprintf "# HetLitmus heterogeneous harness: %s\n\n" tname) ;
             s "Heterogeneous CPU+GPU litmus harness emitted by litmus7 (`Het` arch).\n\n" ;
-            s (Printf.sprintf "CPU ISA: %s.  GPU dialects: %s.\n\n"
-                 CpuF.isa_name
+            s (Printf.sprintf "CPU ISA: %s.  GPU dialect%s: %s.\n\n"
+                 CpuF.isa_name (plural "" "s")
                  (String.concat " + "
                     (List.map
                        (fun d -> Printf.sprintf "%s (`.%s`)" d.gd_name d.gd_ext)
@@ -3026,7 +3056,9 @@ end
               dialects ;
             s (Printf.sprintf "- `%s_cpu.c`  CPU thread(s): real %s inline asm (litmus7 ASMLang).\n" tname CpuF.isa_name) ;
             s "- `outs.c/.h` litmus7's outcome histogram (verbatim from litmus/libdir).\n" ;
-            s "- `comp.sh` / `Makefile`  compile-only build, plus the two guarded link targets.\n\n" ;
+            s (Printf.sprintf
+                 "- `comp.sh` / `Makefile`  compile-only build, plus %s guarded link target%s.\n\n"
+                 (plural "the" "the two") (plural "" "s")) ;
             s (Printf.sprintf
                  "Build (compile-only; no GPU needed): `sh comp.sh [%s]` (default %s),\n"
                  (String.concat "|" targets) d0.gd_target) ;
@@ -3035,41 +3067,72 @@ end
                     (List.map (fun t -> Printf.sprintf "`make %s`" t)
                        targets))) ;
             s "## Building the executable\n\n" ;
+            List.iter
+              (fun d ->
+                s (Printf.sprintf
+                     "%s: `sh comp.sh %s-link` or `make %s-bin` links `./%s` from `%s`\n"
+                     d.gd_vendor d.gd_target d.gd_target tname (gpu_obj d tname)) ;
+                s (Printf.sprintf "(`$%s %s$%s`, %s = %s).\n"
+                     d.gd_compiler_var d.gd_arch_flag d.gd_arch_var
+                     d.gd_arch_default d.gd_arch_device))
+              dialects ;
+            s "\n" ;
+            s "The GPU compiler driver pulls in its own device runtime; `-lpthread -lm`\n" ;
+            s "cover the CPU threads and the statistics layer.  ONE binary path per vendor\n" ;
+            s "is deliberate: `run-one.sh` and `campaign.py` exec `./<test>` and stay\n" ;
+            s "vendor-agnostic.  litmus7 renders ONE dialect per harness (`-gpu-target`),\n" ;
             s (Printf.sprintf
-                 "NVIDIA: `sh comp.sh cuda-link` or `make cuda-bin` links `./%s` (`$NVCC`\n" tname) ;
-            s "pulls in cudart; `-lpthread -lm` cover the CPU threads and the statistics\n" ;
+                 "so this directory carries the %s build arms and nothing else; %s\n"
+                 vendors
+                 (enum (List.map (fun t -> Printf.sprintf "`make %s-bin`" t) targets))) ;
             s (Printf.sprintf
-                 "layer).  AMD: `sh comp.sh hip-link` or `make hip-bin` links the same\n") ;
-            s (Printf.sprintf
-                 "`./%s` from `%s_hip.o` (`$HIPCC --offload-arch=$HIP_ARCH`, gfx942 =\n"
-                 tname tname) ;
-            s "MI300A/MI300X).  ONE binary path for both vendors is deliberate: `run-one.sh`\n" ;
-            s "and `campaign.py` exec `./<test>` and stay vendor-agnostic.  A real target host\n" ;
-            s "carries one vendor's toolchain; on a dev box with both, `make hip-bin` is\n" ;
-            s "`.PHONY` and always relinks, so it can never report success while leaving the\n" ;
-            s "other vendor's binary in place.  All four\n" ;
+                 "%s `.PHONY` and always relink%s, so a build can never report success\n"
+                 (plural "is" "are") (plural "s" "")) ;
+            s "while leaving a stale binary in place.\n\n" ;
+            s (Printf.sprintf "%s %s\n"
+                 (count_word (2 * n_d))
+                 (enum
+                    (List.concat
+                       (List.map
+                          (fun d ->
+                            [ Printf.sprintf "`sh comp.sh %s-link`" d.gd_target ;
+                              Printf.sprintf "`make %s-bin`" d.gd_target ])
+                          dialects)))) ;
             s (Printf.sprintf
                  "REFUSE unless `uname -m` is `%s`: elsewhere `%s_cpu_host.o` is compiled\n"
                  host_uname tname) ;
             s (Printf.sprintf
                  "from the `#else` shim, not the %s asm, so the binary would run happily and\n"
                  CpuF.isa_name) ;
-            s "test nothing.  Override the GPU arch with `CUDA_ARCH=sm_75 make cuda-bin`\n" ;
-            s "(T4/T4G) or `sm_90` (GH200) -- always name it explicitly; `-arch=native`\n" ;
-            s "only exists from CUDA 11.5 update 1 onwards.  The AMD equivalent is\n" ;
-            s "`HIP_ARCH=gfx942 make hip-bin`; name it explicitly too, because a build for\n" ;
-            s "the wrong `gfx` links and exits 0 just as happily.  Compile-time knobs go\n" ;
-            s "through the compiler variable, e.g.\n" ;
-            s "`make cuda-bin NVCC=\"nvcc -DHET_MEM_STRESS_PCT=0\"` or\n" ;
-            s "`make hip-bin HIPCC=\"hipcc -DHET_MEM_STRESS_PCT=0\"`.  `HET_PLACE` is the\n" ;
-            s "exception: it is CUDA-only, and a non-zero value REFUSES to compile on the\n" ;
-            s "HIP side rather than be reported in the banner without placing anything.\n\n" ;
+            s "test nothing.\n\n" ;
+            List.iter
+              (fun d ->
+                s (Printf.sprintf
+                     "Name the GPU arch explicitly, e.g. `%s=%s make %s-bin` (%s): a build\n"
+                     d.gd_arch_var d.gd_arch_default d.gd_target d.gd_arch_device) ;
+                s "for the wrong arch links and exits 0 just as happily.  Compile-time knobs\n" ;
+                s (Printf.sprintf
+                     "go through the compiler variable, e.g. `make %s-bin %s=\"%s -DHET_MEM_STRESS_PCT=0\"`.\n"
+                     d.gd_target d.gd_compiler_var d.gd_compiler))
+              dialects ;
+            s "\n" ;
+            s "`HET_PLACE` is the exception: page placement exists only on a render whose\n" ;
+            s "runtime has a placement API, and a non-zero value REFUSES to compile on a\n" ;
+            s "render that has none rather than be reported in the banner without placing\n" ;
+            s "anything.\n\n" ;
             s (Printf.sprintf
                  "`make %s` is NOT one of these targets and refuses: it would bypass\n" tname) ;
             s "the `uname -m` guard, and without that refusal make silently falls back to its\n" ;
             s "built-in `%: %.o` rule and links the harness with `$(CC)` and no device code.\n" ;
-            s "Use `make cuda-bin` or `make hip-bin`.\n\n" ;
-            s "Targets: NVIDIA GH200 Grace-Hopper (CUDA) and AMD MI300A (HIP).\n" in
+            s (Printf.sprintf "Use %s.\n\n"
+                 (enum (List.map (fun t -> Printf.sprintf "`make %s-bin`" t) targets))) ;
+            s (Printf.sprintf "Target%s: %s.\n" (plural "" "s")
+                 (enum
+                    (List.map
+                       (fun d ->
+                         Printf.sprintf "%s %s (%s)"
+                           d.gd_vendor d.gd_arch_device d.gd_name)
+                       dialects))) in
           write "outs.h" (fun ch -> output_string ch outs_h_content) ;
           write "outs.c" (fun ch -> output_string ch outs_c_content) ;
           write "het_stress.cuh" (fun ch -> output_string ch het_stress_content) ;

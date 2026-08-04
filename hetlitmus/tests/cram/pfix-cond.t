@@ -17,7 +17,7 @@ pass on any observer cycle at all -- including one for the wrong instance.)
 
 2+2W -- pure-location [x]=2 /\ [y]=2: both halves are labelled [x]/[y] and both
 are tracked by the same-observer-thread _loc cycle over _ws_x/_ws_y.
-  $ litmus7 -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -hE 'static const char\* _labels' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   static const char* _labels[2] = { "[x]", "[y]" };
   $ grep -c 'int _t_loc = ((t__ws_x_c && t__ws_y_c) || (t__ws_x_g && t__ws_y_g))' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
@@ -25,7 +25,7 @@ are tracked by the same-observer-thread _loc cycle over _ws_x/_ws_y.
 
 R -- mixed 1:r0=0 /\ [y]=2: register half decodes through its buffer, the [y]
 half is tracked by the _loc observer cycle (was silently dropped pre-fix).
-  $ litmus7 -o . ../het/R-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/R-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -hE 'static const char\* _labels' R-cg-sys-fence/R-cg-sys-fence.cu
   static const char* _labels[2] = { "1:r0", "[y]" };
   $ grep -c 'int _t_loc = (t__ws_y_c || t__ws_y_g)' R-cg-sys-fence/R-cg-sys-fence.cu
@@ -33,7 +33,7 @@ half is tracked by the _loc observer cycle (was silently dropped pre-fix).
 
 S -- mixed 1:r0=1 /\ [x]=2: mirror of R, [x] tracked by _loc, register half
 decodes rf through its tag buffer.
-  $ litmus7 -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -hE 'static const char\* _labels' S-cg-sys-fence/S-cg-sys-fence.cu
   static const char* _labels[2] = { "1:r0", "[x]" };
   $ grep -c 'int _t_loc = (t__ws_x_c || t__ws_x_g)' S-cg-sys-fence/S-cg-sys-fence.cu
@@ -43,7 +43,7 @@ MP -- pure-register control: no Location_global atom, so no [ ] label, no
 observer _loc cycle; the recovery decodes both reads (rf + fr).  The negative
 matches BOTH spellings: pinned to the old bare `_loc' alone it would report 0 for
 free now that the emitted name is `_t_loc', which is a guard that stopped guarding.
-  $ litmus7 -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ grep -hE 'static const char\* _labels' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   static const char* _labels[2] = { "1:r0", "1:r1" };
   $ grep -cE 'int _(t_|mu_|can_)?loc =' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true

@@ -425,7 +425,7 @@ def run(cmd, **kw):
 def emit_harness(litmus_path, outdir):
     """Run litmus7 to emit the harness. Returns (cu_path, cpu_c_path_or_None)."""
     name = litmus_name(read_litmus(litmus_path))
-    r = run([LITMUS7, "-set-libdir", LIBDIR, "-o", outdir, litmus_path])
+    r = run([LITMUS7, "-gpu-target", "cuda", "-set-libdir", LIBDIR, "-o", outdir, litmus_path])
     # gpu-only: <outdir>/<name>.cu ; het: <outdir>/<name>/<name>.cu
     flat_cu = os.path.join(outdir, name + ".cu")
     het_cu = os.path.join(outdir, name, name + ".cu")

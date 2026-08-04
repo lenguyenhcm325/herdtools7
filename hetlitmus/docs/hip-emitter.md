@@ -15,13 +15,13 @@ same corpus feeds both vendors; the vendor difference lives only in the emitter
   `BellBase` accessors, the launch layout and the whole-test driver come from
   `litmus/gpuLang.ml`, which both emitters instantiate; this file holds the HIP
   lowering and the emitted HIP tokens.
-- **`litmus/hetGpuOnly.ml`** — the `` `LISA `` arm emits a `.hip` (HipLang)
-  right after the `.cu` (CudaLang) from the same parsed test, then returns
-  `Absent` (DumpRun does not try to compile/tar it).
+- **`litmus/hetGpuOnly.ml`** — the `` `LISA `` arm emits the render
+  `-gpu-target` names, `.hip` (HipLang) or `.cu` (CudaLang), from the parsed
+  test, then returns `Absent` (DumpRun does not try to compile/tar it).
 - **`hetlitmus/emit-hip.sh`** — regenerates all `.hip` from the corpus into
-  `hetlitmus/hip-out/` (the same litmus7 run also drops a sibling `.cu`;
-  `hip-out/.gitignore` keeps only `*.hip`). It is the HIP-side entry point of
-  `hetlitmus/emit-gpu.sh`, the single pass that fills both output trees.
+  `hetlitmus/hip-out/` (`hip-out/.gitignore` keeps only `*.hip`). It is the
+  HIP-side entry point of `hetlitmus/emit-gpu.sh`, which it calls with
+  `-gpu-target hip`: one vendor per pass, so filling both trees is two passes.
 
 Build: `make all` (branch `hetlitmus-work`). Emit: `./hetlitmus/emit-hip.sh`.
 

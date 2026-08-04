@@ -143,7 +143,8 @@ no placeholders on the parse path:
 **In Tier 0 (done):** the `Het` format, the `` `Het `` `Archs` variant, the
 `HetArch` functor satisfying `ArchBase.S`, the per-column parser, the
 AArch64+LISA dispatch arm, and a clean `make all`. End-to-end:
-`litmus7 hetlitmus/tests/het/MP-het.litmus` parses the test and reports
+`litmus7 -gpu-target cuda hetlitmus/tests/het/MP-het.litmus` parses the test
+and reports
 
 ```
 HetLitmus: parsed heterogeneous test MP-het (2 procs)

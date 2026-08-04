@@ -14,9 +14,12 @@ link-directed component; its efficacy is an inference, not a measurement, so the
 claim is "additive, composable, most specific to the cross-device window", never
 "more effective than per-device stress" (Q6 3.3/3.5).
 
-  $ litmus7 -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ litmus7 -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
+  $ mkdir hip
+  $ litmus7 -gpu-target hip -o hip ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ MP=MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
+  $ MPH=hip/MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
   $ S=S-cg-sys-fence/S-cg-sys-fence
 
 Counts that a wrong site could satisfy are SCOPED to one function body rather
@@ -37,9 +40,9 @@ same header and sees declarations only.
   1
   $ grep -c '#define HET_CPU_STRESS_IMPL' $MP.cu || true
   0
-  $ grep -c '#include "het_cpu_stress.h"' $MP.cu $MP.hip MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
+  $ grep -c '#include "het_cpu_stress.h"' $MP.cu $MPH.hip MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
   MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu:1
-  MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip:1
+  hip/MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip:1
   MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c:1
 
 and NO host ISA asm appears in the .cu at all:
@@ -222,11 +225,11 @@ nothing to place.  Its analogue is cross-chiplet contention, which the same nois
 pair provides.  The grep matches the API call, not the word: the .hip explains at
 length why there is no cudaMemAdvise here, so a bare `MemAdvise' count would be
 satisfied by the prose that documents its absence.
-  $ grep -cE '(cuda|hip)MemAdvise\(' $MP.hip || true
+  $ grep -cE '(cuda|hip)MemAdvise\(' $MPH.hip || true
   0
   $ grep -cE '(cuda|hip)MemAdvise\(' $MP.cu
   3
-  $ grep -c 'CONTENTION' $MP.hip
+  $ grep -c 'CONTENTION' $MPH.hip
   2
 
 (h) Half 2b -- the Fusco noise pair (arXiv:2408.11556, construction quoted
@@ -262,7 +265,7 @@ healthy round counts (measured, in het_cpu_stress.h).  So both renders fault the
 pages in, and cpustresscheck.py D3 proves at run time that it works.
   $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MP.cu
   2
-  $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MP.hip
+  $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MPH.hip
   1
 
 and on GH200 the CPU's first touch homes the pages on DDR, so the buffer that

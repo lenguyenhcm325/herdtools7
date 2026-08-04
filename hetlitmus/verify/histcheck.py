@@ -81,7 +81,7 @@ def emit_corpus(tmp):
     tests = sorted(t[:-len(".litmus")] for t in os.listdir(HET_DIR)
                    if t.endswith(".litmus"))
     r = subprocess.run(
-        ["litmus7", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
+        ["litmus7", "-gpu-target", "cuda", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
          "-o", tmp] + [os.path.join(HET_DIR, t + ".litmus") for t in tests],
         cwd=ROOT, env=_env(), capture_output=True, text=True)
     if r.returncode != 0:

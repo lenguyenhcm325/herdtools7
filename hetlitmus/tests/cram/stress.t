@@ -12,19 +12,24 @@ rather than enabling observation.  The quotes, tables and vendor split live once
 in the emitted het_stress.cuh (pinned in (e3)); do not repeat the claim
 unqualified.
 
-  $ litmus7 -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ litmus7 -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
+  $ mkdir hip
+  $ litmus7 -gpu-target hip -o hip ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target hip -o hip ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
   $ MP=MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
   $ S=S-cg-sys-fence/S-cg-sys-fence
+  $ MPH=hip/MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
+  $ SH=hip/S-cg-sys-fence/S-cg-sys-fence
 
-(a) the ported stress layer is emitted ONCE per harness dir and included by both
-renders -- one shared header, so all reused cuda-litmus code and its mandatory
-citations sit in one auditable file.
+(a) the ported stress layer is emitted ONCE per harness dir and included by that
+dir's render -- one shared header, so all reused cuda-litmus code and its
+mandatory citations sit in one auditable file.
   $ test -f MP-cg-sys-acqrel-2s/het_stress.cuh && echo present
   present
-  $ grep -c '#include "het_stress.cuh"' $MP.cu $MP.hip
+  $ grep -c '#include "het_stress.cuh"' $MP.cu $MPH.hip
   MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu:1
-  MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip:1
+  hip/MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip:1
   $ grep -c 'cuda-litmus' MP-cg-sys-acqrel-2s/het_stress.cuh > /dev/null && echo cited
   cited
 
@@ -43,7 +48,7 @@ lines.
   0
   $ grep -c 'gd_alloc_shared((void\*\*)&_spin_bar' $MP.cu || true
   0
-  $ grep -c 'hipMalloc(&_scratch, sizeof(uint32_t)\*HET_SCRATCH_SIZE)' $MP.hip
+  $ grep -c 'hipMalloc(&_scratch, sizeof(uint32_t)\*HET_SCRATCH_SIZE)' $MPH.hip
   1
 
 (c) the pure-stress workgroups: every block above the test/observer blocks
@@ -227,7 +232,7 @@ GPU proc is block 0, T's observer is block 1, the canary is block 2.
 fields, not per-dialect branches), and the header's one divergence -- device-scope
 atomics, which CUDA and HIP genuinely spell differently -- resolves to the HIP
 spelling.
-  $ grep -c 'het_spin(_spin_bar' $S.hip
+  $ grep -c 'het_spin(_spin_bar' $SH.hip
   2
-  $ grep -c '__HIP_MEMORY_SCOPE_AGENT' S-cg-sys-fence/het_stress.cuh
+  $ grep -c '__HIP_MEMORY_SCOPE_AGENT' hip/S-cg-sys-fence/het_stress.cuh
   2

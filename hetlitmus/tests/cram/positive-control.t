@@ -11,14 +11,14 @@ mu(MP-cg-*) is an -acquire variant because MP-cg's GPU proc reads; mu(MP-gc-*) i
 a -release variant because MP-gc's GPU proc writes -- and MP-gc-sys-acquire does
 not exist at all, so a name-rewriting map would point rows at a nonexistent test.
 
-  $ litmus7 -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ grep -c 'HET_MU_NAME "MP-cg-sys-acquire"' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
   $ grep -c 'HET_CANARY_NAME "MP-cg-sys-relaxed"' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 
 The gc mirror: the GPU produces, so the mutant keeps the GPU's RELEASE.
-  $ litmus7 -o . ../het/MP-gc-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-gc-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ grep -c 'HET_MU_NAME "MP-gc-sys-release"' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
   1
 
@@ -37,7 +37,7 @@ different claims, and only the second licenses a credible null; collapsed into
 one bit, a null on a test that has no mutant at all would start reading as
 vouched-for.  So the Layer-A guard is exactly the 50 Disallowed tests, and a
 canary-only harness says so in its own flag.
-  $ litmus7 -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -c 'HET_MU_NAME NULL' S-cg-sys-fence/S-cg-sys-fence.cu
   1
   $ grep -c '#define HET_CONTROL_COMPILED_IN 0' S-cg-sys-fence/S-cg-sys-fence.cu
@@ -73,7 +73,7 @@ claims neither.  Only 50 of the 411 rows are Disallowed -- 319 are Allowed and 4
 are NO-ORACLE -- so a harness that framed every test as should-be-forbidden would
 put 361 loud false refutations on the table.  Each class carries its own tag,
 read from control-map.csv field 2, and the emitter never falls back to a default.
-  $ litmus7 -o . ../het/IRIW-cgcg-sys-fence-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/IRIW-cgcg-sys-fence-2s.litmus >/dev/null 2>&1
   $ grep -h '_rec.het_oracle' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu S-cg-sys-fence/S-cg-sys-fence.cu IRIW-cgcg-sys-fence-2s/IRIW-cgcg-sys-fence-2s.cu
       _rec.het_oracle = ORACLE_DISALLOWED;
       _rec.het_oracle = ORACLE_ALLOWED;
@@ -95,7 +95,7 @@ itself (the map says `self'), so both flags are 0 and it stays single-instance -
 while being the one test whose entire job is to fire.  It names itself as its
 canary, which is how het_verdict.h tells "this test IS the canary" (designed)
 from "the canary went missing" (a bug).
-  $ litmus7 -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
   $ grep -E '^#define HET_(CONTROL|CANARY)_COMPILED_IN' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   #define HET_CONTROL_COMPILED_IN 0
   #define HET_CANARY_COMPILED_IN 0
@@ -116,7 +116,7 @@ iteration (tag / K), fictional cycles, and no structural gate could see it.
   #define CAN_K_TAG 3   /* MP-cg-sys-relaxed (canary) */
 
 The S/R class is where the K's actually differ:
-  $ litmus7 -o . ../het/S-cg-sys-fence-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence-2s.litmus >/dev/null 2>&1
   $ grep -E '^#define (T|MU|CAN)_K_TAG' S-cg-sys-fence-2s/S-cg-sys-fence-2s.cu
   #define T_K_TAG   4   /* S-cg-sys-fence-2s (T) */
   #define MU_K_TAG  4   /* S-cg-sys-fence (mu(T)) */
@@ -210,7 +210,7 @@ would be cold-invalid forever, and a positive control that CANNOT FIRE is not a
 control.  The control counts the windowed detector instead -- a strict subset of
 the exhaustive scan under the same predicate, so it can miss cycles but cannot
 invent them -- and control_exhaustive_valid says so.
-  $ litmus7 -o . ../het/SB-cg-sys-fence-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/SB-cg-sys-fence-2s.litmus >/dev/null 2>&1
   $ grep -c '_rec.exhaustive_valid = _t_exh;' SB-cg-sys-fence-2s/SB-cg-sys-fence-2s.cu
   1
   $ grep -c '_rec.control_exhaustive_valid = _mu_exh;' SB-cg-sys-fence-2s/SB-cg-sys-fence-2s.cu
@@ -225,7 +225,7 @@ fr-against-init, which in the weak case returns init, tag 0, so it decodes no
 writer and no synchrony.  R borrows both its synchrony point and its ws edge from
 the fragile observer, exactly like 2+2W, and is demoted for REPORTING only.
 
-  $ litmus7 -o . ../het/R-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/R-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -E '_rec\.(confidence|reporting) =' R-cg-sys-fence/R-cg-sys-fence.cu
       _rec.confidence = CONF_ADVISORY;
       _rec.reporting = CONF_EXPLORATORY;
@@ -241,7 +241,7 @@ be untested, so a rule collapsed to a constant would still pass.
 env-research/decisions/taskP-decision.md `REPORTING-TIER UPDATE' puts R at
 EXPLORATORY, which on the 411-test corpus gives ROBUST 294 / ADVISORY 53 (S) /
 EXPLORATORY 64 (2+2W 11 + R 53).
-  $ litmus7 -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -E '_rec\.(confidence|reporting) =' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
       _rec.confidence = CONF_EXPLORATORY;
       _rec.reporting = CONF_EXPLORATORY;
@@ -263,6 +263,6 @@ source copy.
 
 The GPU-only path never sees any of this: the whole positive-control layer is
 het-only.
-  $ litmus7 -o . ../gpu-only/MP-sys-acquire.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../gpu-only/MP-sys-acquire.litmus >/dev/null 2>&1
   $ grep -cE 'HET_CONTROL_COMPILED_IN|het_verdict|control_target_count' MP-sys-acquire.cu || true
   0

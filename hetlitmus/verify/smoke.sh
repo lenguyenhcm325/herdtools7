@@ -106,7 +106,9 @@ _smoke_het_rep() { # name dialect tool blurb
     skips=$((skips+1)); return
   fi
   d="$WORK/${pfx}_$name"; mkdir -p "$d"
-  if ! out="$(litmus7 -set-libdir litmus/libdir -o "$d" "$HET_DIR/$name.litmus" 2>&1)"; then
+  # THE RENDER THIS REP COMPILES: one vendor per emission, so the .hip reps
+  # must be emitted with -gpu-target hip or comp.sh would have no hip arm.
+  if ! out="$(litmus7 -gpu-target "$dialect" -set-libdir litmus/libdir -o "$d" "$HET_DIR/$name.litmus" 2>&1)"; then
     printf '%s\n' "$out"; printf '  FAIL %s (emission)\n' "$name"; fails=$((fails+1)); return
   fi
   out="$(cd "$d/$name" && sh comp.sh "$dialect" 2>&1)"; rc=$?
@@ -131,7 +133,7 @@ smoke_cluster() { # name blurb
   n=$((n+1))
   printf '\n[%d/%d] cluster  %-22s -- %s\n' "$n" "$NREPS" "$name" "$blurb"
   d="$WORK/e_$name"; mkdir -p "$d"
-  if ! out="$(litmus7 -set-libdir litmus/libdir -o "$d" "$CLU_DIR/$name.litmus" 2>&1)"; then
+  if ! out="$(litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$d" "$CLU_DIR/$name.litmus" 2>&1)"; then
     printf '%s\n' "$out"; printf '  FAIL %s (emission)\n' "$name"; fails=$((fails+1)); return
   fi
   printf '+ nvcc -std=c++17 -arch=sm_90 -c %s.cu\n' "$name"
@@ -151,7 +153,7 @@ bite_compile() {
   local name=MP-cg-cta-acquire d cpu out rc
   printf '===== SMOKE BITE: syntax error in a scratch _cpu.c must FAIL the gate =====\n'
   d="$WORK/bite"; mkdir -p "$d"
-  litmus7 -set-libdir litmus/libdir -o "$d" "$HET_DIR/$name.litmus" >/dev/null 2>&1
+  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$d" "$HET_DIR/$name.litmus" >/dev/null 2>&1
   cpu="$d/$name/${name}_cpu.c"
   if [ ! -s "$cpu" ]; then
     printf 'BITE ERROR: could not emit %s harness\n' "$name"; return 1

@@ -58,7 +58,7 @@ def emit_store_only(tmp):
     out = os.path.join(tmp, "emit")
     os.makedirs(out, exist_ok=True)
     test = os.path.join(HET_DIR, STORE_ONLY_TEST)
-    subprocess.run(["litmus7", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
+    subprocess.run(["litmus7", "-gpu-target", "cuda", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
                     "-o", out, test],
                    cwd=ROOT, env=_env(), check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

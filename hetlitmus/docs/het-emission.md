@@ -13,20 +13,26 @@ Two axes are chosen per test rather than hard-wired (the **Phase A/B** work):
   *names* the CPU ISA — `P0:aarch64` or `P0:x86_64` — and `P0:cpu` is a
   back-compat alias for AArch64. litmus7 pre-scans the header, then instantiates
   the matching CPU sub-parser + compile pipeline. The GPU side stays LISA/Bell.
-* **Both GPU dialects are emitted** (Phase B). One LISA parse yields **both**
-  `<t>.cu` (CUDA) and `<t>.hip` (HIP) from a shared driver template; only the
-  per-instruction lowering and a few host tokens differ.
+* **The GPU dialect is selected by `-gpu-target`** (Phase B). One LISA parse
+  yields the ONE render that flag names — `<t>.cu` (CUDA) or `<t>.hip` (HIP) —
+  from a shared driver template; only the per-instruction lowering and a few
+  host tokens differ. The flag is mandatory on the `Het` and `LISA` arms and has
+  no default: a harness directory carries one vendor's render and one vendor's
+  build arms (`litmus/hetTarget.ml`).
 
 ## Reproduce
 
 ```
-# AArch64 CPU + GPU (the GH200 pairing). Emits ./MP-het/ with BOTH .cu and .hip:
-litmus7 -set-libdir herd/libdir hetlitmus/tests/het/MP-het.litmus
+# AArch64 CPU + GPU (the GH200 pairing). Emits ./MP-het/ with the .cu:
+litmus7 -gpu-target cuda -set-libdir herd/libdir hetlitmus/tests/het/MP-het.litmus
 ( cd MP-het && sh comp.sh )        # CUDA: nvcc -c + gcc -c (+clang aarch64), exit 0
-( cd MP-het && sh comp.sh hip )    # HIP:  hipcc --offload-arch=gfx942 -c, exit 0
+
+# the HIP render of the same test, into its own directory:
+litmus7 -gpu-target hip -o hip-out -set-libdir herd/libdir hetlitmus/tests/het/MP-het.litmus
+( cd hip-out/MP-het && sh comp.sh )  # HIP: hipcc --offload-arch=gfx942 -c, exit 0
 
 # x86_64 CPU + GPU (a P0:x86_64 test, e.g. from `hetgen7 -cpu-arch x86_64`):
-litmus7 -set-libdir herd/libdir MP-het-x86.litmus
+litmus7 -gpu-target cuda -set-libdir herd/libdir MP-het-x86.litmus
 ( cd MP-het-x86 && sh comp.sh )    # <t>_cpu.c holds x86 asm, native gcc -c, exit 0
 ```
 
@@ -126,15 +132,19 @@ The five required pieces, and where each is reused rather than reimplemented:
    the histogram, marking outcomes that satisfy the test's `exists` condition
    (compiled to a C predicate `_cond` over `_o[]`).
 
-## Phase B — dual emit and `comp.sh [cuda|hip]`
+## Phase B — one render per `-gpu-target`, and `comp.sh [<target>|<target>-link]`
 
-One LISA parse, two GPU files. The driver template is rendered twice from a
-`gpu_dialect` record (`litmus/hetEmit.ml`): `{ ext; runtime_include;
-dump_instr; malloc_managed; device_sync; free; bar }`. CUDA and HIP differ only
-in those fields; the kernel guards, the pthread wrappers, the outcome histogram,
-and the `<<<…>>>` launch (hipcc accepts triple-chevron) are shared verbatim.
+One LISA parse, one GPU file per emission. The driver template is rendered from
+a `gpu_dialect` record; the registry `dialects = [cuda_dialect; hip_dialect]`
+(`litmus/hetEmit.ml`) holds one record per vendor and `-gpu-target` filters it,
+so every per-vendor site — the render, the comp.sh arms, the Makefile rules, the
+README — folds over the selected list and a third vendor is an entry rather than
+an edit at each site. CUDA and HIP differ only in those record fields; the kernel
+guards, the pthread wrappers, the outcome histogram, and the `<<<…>>>` launch
+(hipcc accepts triple-chevron) are shared verbatim.
 
-`comp.sh` takes one argument, `cuda` (default) or `hip`:
+`comp.sh` takes one argument, this render's target (the default) or
+`<target>-link`:
 
 * the **shared CPU steps** run first — `gcc -c outs.c`, `gcc -c <t>_cpu.c`, and
   (for a foreign-ISA host) the clang cross-assembly below;
@@ -143,7 +153,11 @@ and the `<<<…>>>` launch (hipcc accepts triple-chevron) are shared verbatim.
   `nvcc -std=c++17 -arch=$CUDA_ARCH -c <t>.cu`; `hip` →
   `hipcc --offload-arch=$HIP_ARCH -std=c++17 -c <t>.hip`.
 
-The `Makefile` mirrors this with `cuda:` / `hip:` targets (`all: cuda`).
+The `Makefile` mirrors this with the render's own object target (`all: <target>`)
+plus `<target>-bin`, which links. Name the GPU arch explicitly
+(`CUDA_ARCH=sm_90 make cuda-bin`): `-arch=native` only exists from CUDA 11.5
+update 1 onwards, and a build for the wrong arch links and exits 0 just as
+happily.
 
 ## The CPU object: native vs. cross-assembly
 

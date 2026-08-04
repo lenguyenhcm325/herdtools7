@@ -177,7 +177,7 @@ herd7 -set-libdir ../../../herd/libdir -bell ../../bells/ptx.bell \
 
 # 3. every het test parses + routes through litmus7
 cd ../het
-while read f; do litmus7 -set-libdir ../../../litmus/libdir -o /tmp/r "$f"; done < @all
+while read f; do litmus7 -gpu-target cuda -set-libdir ../../../litmus/libdir -o /tmp/r "$f"; done < @all
 
 # 4. no regression
 bash hetlitmus/cats/run-gpu-only.sh                  # 8/8 match

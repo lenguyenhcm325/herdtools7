@@ -437,7 +437,7 @@ def emit_header(tmp):
     out = os.path.join(tmp, "emit")
     os.makedirs(out, exist_ok=True)
     test = os.path.join(HET_DIR, "MP-cg-sys-fence-2s.litmus")
-    subprocess.run(["litmus7", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
+    subprocess.run(["litmus7", "-gpu-target", "cuda", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
                     "-o", out, test],
                    cwd=ROOT, env=_env(), check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -491,7 +491,7 @@ def check_corpus(tamper=None):
     try:
         # One litmus7 invocation for the whole corpus (~20 ms each).
         r = subprocess.run(
-            ["litmus7", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
+            ["litmus7", "-gpu-target", "cuda", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
              "-o", tmp] + [os.path.join(HET_DIR, t + ".litmus") for t in tests],
             cwd=ROOT, env=_env(), capture_output=True, text=True)
         if r.returncode != 0:

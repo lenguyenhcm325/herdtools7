@@ -2,10 +2,13 @@ Perpetual-loop guard (B2; env-research/decisions/B2-decision.md).  The emitted
 het GPU driver is a persistent, launch-once perpetual loop whose forward progress
 is guaranteed by cudaLaunchCooperativeKernel (HIP: hipLaunchCooperativeKernel),
 never a per-iteration <<<>>> relaunch.  The representative MP shape is emitted
-once -- het emission needs no -set-libdir, and one run emits both .cu and .hip --
-and the structural invariants are pinned with robust counts.
+once per GPU dialect -- het emission needs no -set-libdir, and litmus7 renders
+the ONE dialect -gpu-target names -- and the structural invariants are pinned
+with robust counts.
 
-  $ litmus7 -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ mkdir hip
+  $ litmus7 -gpu-target hip -o hip ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
 
 (a) exactly ONE cooperative launch, and ZERO chevron launches, per run.
   $ grep -c cudaLaunchCooperativeKernel MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
@@ -75,5 +78,5 @@ stress layer raises _grid toward the cap (stress.t (c)).
   1
 
 The HIP twin renders the same shape from the same template: one hipLaunchCooperativeKernel.
-  $ grep -c hipLaunchCooperativeKernel MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip
+  $ grep -c hipLaunchCooperativeKernel hip/MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip
   1

@@ -346,7 +346,7 @@ def d1_probe(hdir, fail, note):
 def emit_cu(litmus_path):
     """litmus7-emit a het test; return (cu_path, tmpdir_to_clean)."""
     tmp = tempfile.mkdtemp(prefix="stressemit_")
-    r = subprocess.run([LITMUS7, "-set-libdir", LIBDIR, "-o", tmp, litmus_path],
+    r = subprocess.run([LITMUS7, "-gpu-target", "cuda", "-set-libdir", LIBDIR, "-o", tmp, litmus_path],
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     name = os.path.basename(litmus_path)[:-len(".litmus")]
     cu = os.path.join(tmp, name, name + ".cu")

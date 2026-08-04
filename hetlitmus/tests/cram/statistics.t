@@ -11,9 +11,9 @@ What this file pins is the EMITTER's half: that the harness produces the inputs
 the layer consumes, since a perfect estimator fed by a tally that never moves is
 indistinguishable from one that works.
 
-  $ litmus7 -o . ../het/MP-cg-sys-fence-2s.litmus >/dev/null 2>&1
-  $ litmus7 -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
-  $ litmus7 -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-fence-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
 
 THE RECORDS MUST OUTLIVE THE RUN LOOP.  The statistics are computed over the
 (instance,run) cells, so a single reused _rec would leave nothing to aggregate.

@@ -1013,6 +1013,11 @@ hetlitmus-x86body: | build
 ### braces, and because the recipe below cd's into it.
 HETD10OUT := $(CURDIR)/hetlitmus/tests/het/d10-out
 
+### The GPU dialect these harnesses are rendered for.  litmus7 emits ONE vendor
+### per harness dir (-gpu-target), so an AMD box wants `make hetlitmus-d10
+### HETD10TARGET=hip' rather than a second link argument in the same directory.
+HETD10TARGET ?= cuda
+
 ### hetlitmus-d10: the CPU-ONLY POSITIVE CONTROL as a first-class campaign item
 ### (memo sect 7.D10, PHASE2-plan:71).  Generates the six CPU-only shapes, emits
 ### their harnesses and prints the campaign command for a machine that has a GPU.
@@ -1028,13 +1033,14 @@ hetlitmus-d10: | build
 	hetlitmus/tests/het/generate-d10.sh $(HETD10OUT)
 	@ set -e ; cd $(HETD10OUT) ; for t in *.litmus ; do \
 	    $(CURDIR)/_build/install/default/bin/litmus7 \
+	      -gpu-target $(HETD10TARGET) \
 	      -set-libdir $(CURDIR)/litmus/libdir \
 	      -o . "$$t" 2>&1 | grep -E 'oracle:|REFUSED' ; done
 	@ set -e ; n=$$(ls -d $(HETD10OUT)/*/ 2>/dev/null | wc -l) ; \
 	  test "$$n" -eq 6 || { echo "hetlitmus-d10: emitted $$n harness dir(s), expected 6" ; exit 1 ; }
 	@ echo
-	@ echo "D10 harnesses in $(HETD10OUT).  On the TARGET box:"
-	@ echo "    cd <test> && sh comp.sh cuda-link   # or hip-link on AMD"
+	@ echo "D10 harnesses in $(HETD10OUT), rendered for $(HETD10TARGET).  On the TARGET box:"
+	@ echo "    cd <test> && sh comp.sh $(HETD10TARGET)-link"
 	@ echo "    ./<test>                            # SB and R must FIRE"
 	@ echo "  then, for the campaign:"
 	@ echo "    python3 hetlitmus/campaign.py --corpus $(HETD10OUT) \\"

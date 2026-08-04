@@ -26,6 +26,11 @@
 # FAIL-LOUD.  Every name in TESTS.txt must resolve to an emitted dir.  A typo
 # there would otherwise ship a bundle that is quietly one test short, and the
 # instance session would run the ladder against a subset nobody chose.
+#
+# CUDA BUNDLE.  probe.cu, ladder.sh's `comp.sh cuda && make cuda-bin' and
+# expected-nvidia.csv make this the NVIDIA dev-tier bundle, so it ships the
+# emission lane to match (GPU_TARGET below); an AMD bundle is that variable plus
+# an AMD probe and oracle, not a change here.
 # =========================================================================
 # Needs bash (arrays, mapfile); re-exec rather than fail obscurely under dash.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
@@ -42,6 +47,9 @@ OUTDIR="${1:-$HERE/bundle-out}"
 mkdir -p "$OUTDIR"
 OUTDIR="$(cd "$OUTDIR" && pwd)"
 
+# The emission lane this bundle ships (litmus7 -gpu-target): one vendor per
+# harness dir, and the ladder in here builds the CUDA one.
+GPU_TARGET="${GPU_TARGET:-cuda}"
 TESTS_FILE="${TESTS_FILE:-$HERE/TESTS.txt}"
 [ -r "$TESTS_FILE" ] || { echo "error: no $TESTS_FILE" >&2; exit 2; }
 
@@ -67,8 +75,8 @@ mkdir -p "$BUNDLE/tests"
 echo "[3/5] pruning to the subset (a name that does not resolve is fatal)"
 missing=()
 for t in "${WANT[@]}"; do
-  if [ -d "$SCRATCH/emit/het/$t" ]; then
-    cp -r "$SCRATCH/emit/het/$t" "$BUNDLE/tests/$t"
+  if [ -d "$SCRATCH/emit/het-$GPU_TARGET/$t" ]; then
+    cp -r "$SCRATCH/emit/het-$GPU_TARGET/$t" "$BUNDLE/tests/$t"
   else
     missing+=("$t")
   fi
@@ -77,7 +85,7 @@ if [ "${#missing[@]}" -gt 0 ]; then
   echo "" >&2
   echo "FAIL: $TESTS_FILE names ${#missing[@]} test(s) with no emitted harness dir:" >&2
   for m in "${missing[@]}"; do echo "        $m" >&2; done
-  echo "      The corpus emitted $(find "$SCRATCH/emit/het" -mindepth 1 -maxdepth 1 -type d | wc -l) dirs." >&2
+  echo "      The corpus emitted $(find "$SCRATCH/emit/het-$GPU_TARGET" -mindepth 1 -maxdepth 1 -type d | wc -l) dirs." >&2
   echo "      Refusing to ship a bundle that is silently short of the chosen subset." >&2
   exit 1
 fi
@@ -101,7 +109,7 @@ chmod +x "$BUNDLE/probe.sh" "$BUNDLE/ladder.sh" "$BUNDLE/run-one.sh"
   echo "git_dirty=$( [ -z "$(cd "$REPO" && git status --porcelain -- litmus hetlitmus 2>/dev/null)" ] && echo no || echo YES )"
   echo "packed_date=$(date -Is 2>/dev/null || date)"
   echo "packed_host=$(uname -sm)"
-  echo "corpus_emitted=$(find "$SCRATCH/emit/het" -mindepth 1 -maxdepth 1 -type d | wc -l)"
+  echo "corpus_emitted=$(find "$SCRATCH/emit/het-$GPU_TARGET" -mindepth 1 -maxdepth 1 -type d | wc -l)"
   echo "subset_count=${#WANT[@]}"
   for t in "${WANT[@]}"; do
     echo "subset_test=$t class=$(awk -F, -v t="$t" '$1==t{print $2}' "$HETL/tests/het/expected-nvidia.csv" | head -1)"

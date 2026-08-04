@@ -227,7 +227,7 @@ selftest() {
   local sc="$RESDIR/self" T=MP-sys-F fails=0 rc out
   local L="$GPU_DIR/$T.litmus"
   mkdir -p "$sc"
-  litmus7 -set-libdir litmus/libdir -o "$sc" "$L" >/dev/null 2>&1
+  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$sc" "$L" >/dev/null 2>&1
   nvcc -std=c++17 -arch=sm_90 --ptx -o "$sc/clean.ptx" "$sc/$T.cu" >/dev/null 2>&1
   if [ ! -s "$sc/clean.ptx" ]; then
     echo "SELF-TEST ERROR: could not emit/compile $T PTX"
@@ -266,7 +266,7 @@ selftest() {
   local HT=2+2W-cg-sys-acqrel-2s HL="$HET_DIR/2+2W-cg-sys-acqrel-2s.litmus"
   local hd="$sc/het" cpu_c
   mkdir -p "$hd"
-  litmus7 -set-libdir litmus/libdir -o "$hd" "$HL" >/dev/null 2>&1
+  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$hd" "$HL" >/dev/null 2>&1
   cpu_c="$hd/$HT/${HT}_cpu.c"
   nvcc -std=c++17 -arch=sm_90 --ptx -o "$hd/het.ptx" "$hd/$HT/$HT.cu" >/dev/null 2>&1
   if [ ! -s "$cpu_c" ] || [ ! -s "$hd/het.ptx" ]; then
@@ -299,7 +299,7 @@ selftest() {
   local DT=2+2W-cg-sys-fence-2s DL="$HET_DIR/2+2W-cg-sys-fence-2s.litmus"
   local dd="$sc/dmb" dcpu
   mkdir -p "$dd"
-  litmus7 -set-libdir litmus/libdir -o "$dd" "$DL" >/dev/null 2>&1
+  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$dd" "$DL" >/dev/null 2>&1
   dcpu="$dd/$DT/${DT}_cpu.c"
   nvcc -std=c++17 -arch=sm_90 --ptx -o "$dd/dmb.ptx" "$dd/$DT/$DT.cu" >/dev/null 2>&1
   if [ ! -s "$dcpu" ] || [ ! -s "$dd/dmb.ptx" ]; then
@@ -350,7 +350,7 @@ selftest() {
   local ST=MP-cg-sys-st.sc-2s SL2="$HET_DIR/MP-cg-sys-st.sc-2s.litmus"
   local sd="$sc/st" scpu
   mkdir -p "$sd"
-  litmus7 -set-libdir litmus/libdir -o "$sd" "$SL2" >/dev/null 2>&1
+  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$sd" "$SL2" >/dev/null 2>&1
   scpu="$sd/$ST/${ST}_cpu.c"
   nvcc -std=c++17 -arch=sm_90 --ptx -o "$sd/st.ptx" "$sd/$ST/$ST.cu" >/dev/null 2>&1
   if [ ! -s "$scpu" ] || [ ! -s "$sd/st.ptx" ]; then
@@ -387,7 +387,7 @@ selftest() {
   local B4T=MP-cg-sys-acqrel-2s
   local B4L="$HET_DIR/$B4T.litmus" b4="$sc/b4" b4cpu b4rc
   mkdir -p "$b4"
-  litmus7 -set-libdir litmus/libdir -o "$b4" "$B4L" >/dev/null 2>&1
+  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$b4" "$B4L" >/dev/null 2>&1
   b4cpu="$b4/$B4T/${B4T}_cpu.c"
   nvcc -std=c++17 -arch=sm_90 --ptx -o "$b4/clean.ptx" "$b4/$B4T/$B4T.cu" >/dev/null 2>&1
   if [ ! -s "$b4/clean.ptx" ] || [ ! -s "$b4cpu" ]; then
@@ -480,7 +480,7 @@ PY
   local S4T=MP-cg-sys-acqrel-2s
   local S4L="$HET_DIR/$S4T.litmus" s4="$sc/s4" s4cu s4rc
   mkdir -p "$s4"
-  litmus7 -set-libdir litmus/libdir -o "$s4" "$S4L" >/dev/null 2>&1
+  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$s4" "$S4L" >/dev/null 2>&1
   s4cu="$s4/$S4T/$S4T.cu"
   if [ ! -s "$s4cu" ]; then
     echo "  *** could not emit the het harness for $S4T"
@@ -532,7 +532,7 @@ PY
   local B5T=MP-cg-sys-acqrel-2s
   local B5L="$HET_DIR/$B5T.litmus" b5="$sc/b5" b5rc
   mkdir -p "$b5"
-  litmus7 -set-libdir litmus/libdir -o "$b5" "$B5L" >/dev/null 2>&1
+  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$b5" "$B5L" >/dev/null 2>&1
   if [ ! -s "$b5/$B5T/het_cpu_stress.h" ] || [ ! -s "$b5/$B5T/$B5T.cu" ]; then
     echo "  *** could not emit the B5 het harness for $B5T"
     fails=$((fails+1))
@@ -658,7 +658,7 @@ PY
   local B6T=MP-cg-sys-fence-2s
   local B6L="$HET_DIR/$B6T.litmus" b6="$sc/b6" b6rc
   mkdir -p "$b6"
-  litmus7 -set-libdir litmus/libdir -o "$b6" "$B6L" >/dev/null 2>&1
+  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$b6" "$B6L" >/dev/null 2>&1
   if [ ! -s "$b6/$B6T/$B6T.cu" ]; then
     echo "  *** could not emit the B6b co-run harness for $B6T"
     fails=$((fails+1))
@@ -799,7 +799,7 @@ open(os.environ["OUT"], "w").write(s[:i] + nb + s[j:])' cpu || fails=$((fails+1)
   local A12T=MP-cg-sys-acqrel-2s
   local A12L="$HET_DIR/$A12T.litmus" a12="$sc/a12" a12cpu
   mkdir -p "$a12"
-  litmus7 -set-libdir litmus/libdir -o "$a12" "$A12L" >/dev/null 2>&1
+  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$a12" "$A12L" >/dev/null 2>&1
   a12cpu="$a12/$A12T/${A12T}_cpu.c"
   nvcc -std=c++17 -arch=sm_90 --ptx -o "$a12/clean.ptx" "$a12/$A12T/$A12T.cu" >/dev/null 2>&1
   if [ ! -s "$a12/clean.ptx" ] || [ ! -s "$a12cpu" ]; then
@@ -864,7 +864,7 @@ PY
   local DVT=MP-cg-sys-acqrel-2s
   local dt="$sc/dt" dtcpu
   rm -rf "$dt"; mkdir -p "$dt"
-  litmus7 -set-libdir litmus/libdir -o "$dt" "$HET_DIR/$DVT.litmus" >/dev/null 2>&1
+  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$dt" "$HET_DIR/$DVT.litmus" >/dev/null 2>&1
   dtcpu="$dt/$DVT/${DVT}_cpu.c"
   nvcc -std=c++17 -arch=sm_90 --ptx -o "$dt/clean.ptx" "$dt/$DVT/$DVT.cu" >/dev/null 2>&1
   # The corpus is copied whole, as in [5b](ii): load_control_map reads

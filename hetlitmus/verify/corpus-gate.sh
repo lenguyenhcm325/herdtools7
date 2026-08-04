@@ -16,12 +16,14 @@
 #      grid-generated .litmus.
 #   2. Census tripwire -- exactly 137 gpu-only + 411 het .litmus (the grid did
 #      not silently shrink or grow).
-#   3. Emission golden -- emit the gpu-only corpus to a TEMP dir and byte-diff
-#      the committed samples of BOTH dialects against it: 10 cuda-out/*.cu and
-#      10 hip-out/*.hip.  One litmus7 pass renders both (emit-gpu.sh), so the
-#      .hip cost nothing extra -- and until 2026-08-02 nothing pinned them at
-#      all, on the lane that has already shipped one silent .hip breakage with
-#      every gate green.  emit-cuda.sh drops all 137 of each (plus C-runtime
+#   3. Emission golden -- emit the gpu-only corpus ONCE PER GPU TARGET into a
+#      TEMP dir and byte-diff the committed samples of BOTH dialects against
+#      their own lane: 10 cuda-out/*.cu against the `-gpu-target cuda' lane, 10
+#      hip-out/*.hip against the `-gpu-target hip' lane.  One emission renders
+#      one vendor (litmus/hetTarget.ml), so the .hip lane is a second pass --
+#      and it is not optional: until 2026-08-02 nothing pinned the .hip at all,
+#      on the lane that has already shipped one silent .hip breakage with every
+#      gate green.  A lane drops all 137 of its kernels (plus C-runtime
 #      boilerplate); emitting to a temp dir keeps the golden dirs pristine
 #      (in-place would litter 127 untracked files each).
 #
@@ -122,21 +124,31 @@ fi
 # ---------------------------------------------------------------------------
 echo "[3/3] Emission golden (committed cuda-out/*.cu + hip-out/*.hip)"
 elog="$EMITTMP/emit.log"
-if ! bash "$HETL/emit-cuda.sh" "$EMITTMP" >"$elog" 2>&1; then
+if ! bash "$HETL/emit-cuda.sh" "$EMITTMP/cuda" >"$elog" 2>&1; then
   echo "FATAL: emit-cuda.sh failed:" >&2; cat "$elog" >&2; exit 2
 fi
+if ! bash "$HETL/emit-hip.sh" "$EMITTMP/hip" >"$elog" 2>&1; then
+  echo "FATAL: emit-hip.sh failed:" >&2; cat "$elog" >&2; exit 2
+fi
 
+# Each committed sample is compared against the lane that renders it: a .cu is
+# only produced by the cuda lane, a .hip only by the hip lane.
 committed="$(git ls-files "$CUDA_OUT/*.cu" "$HIP_OUT/*.hip")"
 total=0; match=0; emit_fail=0
 for f in $committed; do
   total=$((total + 1))
   base="$(basename "$f")"
-  if [ ! -f "$EMITTMP/$base" ]; then
-    echo "  DRIFT: $base is committed but emit-cuda.sh did not produce it"
+  case "$base" in
+    *.cu)  lane="$EMITTMP/cuda" ; who="emit-cuda.sh" ;;
+    *.hip) lane="$EMITTMP/hip"  ; who="emit-hip.sh"  ;;
+    *)     echo "  DRIFT: committed sample $f has no known lane" ; emit_fail=1 ; continue ;;
+  esac
+  if [ ! -f "$lane/$base" ]; then
+    echo "  DRIFT: $base is committed but $who did not produce it"
     emit_fail=1
     continue
   fi
-  if diff -u "$f" "$EMITTMP/$base" >"$EMITTMP/diff.out" 2>&1; then
+  if diff -u "$f" "$lane/$base" >"$EMITTMP/diff.out" 2>&1; then
     match=$((match + 1))
   else
     echo "  DRIFT: $f differs from re-emission:"
