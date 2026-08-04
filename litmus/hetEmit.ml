@@ -230,9 +230,12 @@ end
             "__hip_atomic_load(%s, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM)" ptr) ;
     }
 
-  (* THE DIALECT REGISTRY.  Every per-vendor site -- the renders themselves and
-     every arm of the emitted comp.sh / Makefile / README -- folds over this
-     list, so a vendor is added by adding an entry.  List order is emission
+  (* THE DIALECT REGISTRY.  The renders themselves and every ARM of the
+     emitted comp.sh / Makefile / README fold over this list; the README's
+     "## Building the executable" narrative, comp.sh's header sentences and
+     the .cu/.hip banner are NOT folded (prose hard-wrapped across the vendor
+     boundary, kept verbatim for byte-identity) and still name two vendors --
+     Phase B rewrites them off the filtered registry.  List order is emission
      order; the head is what the build files default to. *)
   let dialects = [ cuda_dialect ; hip_dialect ]
 
@@ -2765,8 +2768,9 @@ end
             | "__aarch64__" -> "aarch64"
             | "__x86_64__" -> "x86_64"
             | m -> m in
-          (* The build files' per-vendor vocabulary, all of it folded over
-             [dialects] below; [d0] is the head, which they default to. *)
+          (* The build files' per-vendor vocabulary folds over [dialects]
+             below -- except the header/narrative prose noted at the registry
+             definition; [d0] is the head, which they default to. *)
           let d0 = List.hd dialects in
           let targets = List.map (fun d -> d.gd_target) dialects in
           let comp_args =
