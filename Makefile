@@ -750,7 +750,7 @@ hetlitmus-oracle:
 ### Disallowed rows are 19 candidate FALSE REFUTATIONS of the compound memory
 ### model if any of them is wrong, which is why the regeneration is gated at all
 ### (D26 2026-08-04: 127 of the former 146 are now NO-ORACLE -- the strike is
-### reversible via X2A_TRANSFERS=1, which gate G16 pins byte-for-byte).
+### reversible via X2A_TRANSFERS=1, which gate G16 pins the verdict round trip).
 ### Bite it the same way:  make hetlitmus-amd-oracle HET_AMD_ORACLE=/tmp/bad.csv
 HET_AMD_ORACLE ?= hetlitmus/tests/het/expected-amd.csv
 hetlitmus-amd-oracle:

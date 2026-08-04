@@ -19,8 +19,10 @@ Litmus,Expected,Model,Source
 # D26 (Nguyen 2026-08-04): [CMCM] sect 5-6 is EXCLUDED for this oracle, so the
 # 127 rows it carried (119 S_CUT_UNKEYED + 8 S_CUT_MCA_UNKEYED) are NO-ORACLE
 # not Disallowed.  Observing them on hardware is DATA, never a refutation.
-# X2A_TRANSFERS=1 regenerates the pre-strike 258/146/7 file (gate G16 pins the
-# round trip); the per-row unfilled-slot list is build-amd-oracle.sh --x2a-list.
+# X2A_TRANSFERS=1 regenerates the pre-strike VERDICTS (258/146/7) into a SEPARATE
+# file expected-amd-x2a.csv -- verdicts row-for-row not bytes since the re-keyed
+# strings and the S_WS split travel to both branches; gate G16 pins the round
+# trip.  The per-row unfilled-slot list is build-amd-oracle.sh --x2a-list.
 # ANCHOR NOTE (DR F6): two anchor reference values are artifact-csv-CORRECTED,
 # not artifact-csv-read: Compound MP1-cta-F and no-SWMR MP1-sys-F.  The shipped
 # artifact expected.csv says Disallowed on both; [CMCM] Table 2 p153:22 and the

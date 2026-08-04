@@ -70,7 +70,12 @@ cd "$(dirname "$0")"
 source ../_grid_lib.sh          # SHAPE_CYCLE, SHAPE_NPROCS
 
 MODEL="AMD-CDNA3-x86"
-OUT=expected-amd.csv
+# The ablation branch writes a DIFFERENT file.  X2A_TRANSFERS=1 is a
+# counterfactual ("suppose the PTX coupling did transfer"), not the oracle, and
+# a run of it in-tree must never be able to overwrite the shipping oracle --
+# which is exactly what a single $OUT would have allowed.
+if [ "${X2A_TRANSFERS:-0}" = 0 ]; then OUT=expected-amd.csv
+else                                   OUT=expected-amd-x2a.csv; fi
 
 # The instantiation guard on clause (ii) of the !SWMR hook (memo 7.D20 as
 # resolved by P2-0 item R-7; addendum sect 7 item 4).  `M = GCN3-VIPER' keeps the
@@ -1602,8 +1607,10 @@ declare -A NCLASS=() NVERD=()
   echo "# D26 (Nguyen 2026-08-04): [CMCM] sect 5-6 is EXCLUDED for this oracle, so the"
   echo "# 127 rows it carried (119 S_CUT_UNKEYED + 8 S_CUT_MCA_UNKEYED) are NO-ORACLE"
   echo "# not Disallowed.  Observing them on hardware is DATA, never a refutation."
-  echo "# X2A_TRANSFERS=1 regenerates the pre-strike 258/146/7 file (gate G16 pins the"
-  echo "# round trip); the per-row unfilled-slot list is build-amd-oracle.sh --x2a-list."
+  echo "# X2A_TRANSFERS=1 regenerates the pre-strike VERDICTS (258/146/7) into a SEPARATE"
+  echo "# file expected-amd-x2a.csv -- verdicts row-for-row not bytes since the re-keyed"
+  echo "# strings and the S_WS split travel to both branches; gate G16 pins the round"
+  echo "# trip.  The per-row unfilled-slot list is build-amd-oracle.sh --x2a-list."
   echo "# ANCHOR NOTE (DR F6): two anchor reference values are artifact-csv-CORRECTED,"
   echo "# not artifact-csv-read: Compound MP1-cta-F and no-SWMR MP1-sys-F.  The shipped"
   echo "# artifact expected.csv says Disallowed on both; [CMCM] Table 2 p153:22 and the"
@@ -1646,8 +1653,13 @@ for f in $(ls ./*.litmus | LC_ALL=C sort); do
   program "$name"; classify_amd CDNA3 0
   [ "$VERDICT" = "$v1" ] || { ship_rel=$((ship_rel+1)); echo "  SHIPPING P2 release: $name" >&2; }
 done
-[ "$ship_rel" = 0 ] || die "the SHIPPING P2 contingency has $ship_rel row(s); D26 requires it empty"
-echo "  shipping P2 contingency: EMPTY (measured -- all 68 above are already NO-ORACLE under D26)" >&2
+if [ "$X2A_TRANSFERS" = 0 ]; then
+  [ "$ship_rel" = 0 ] || die "the SHIPPING P2 contingency has $ship_rel row(s); D26 requires it empty"
+  echo "  shipping P2 contingency: EMPTY (measured -- all 68 above are already NO-ORACLE under D26)" >&2
+else
+  [ "$ship_rel" = 68 ] || die "the ablation branch's P2 contingency is $ship_rel row(s) not 68"
+  echo "  ablation-branch P2 contingency: $ship_rel rows (this branch DOES cost verdicts)" >&2
+fi
 unset ship_rel v1
 
 # ===========================================================================
@@ -1702,9 +1714,14 @@ ncomma=$(csvrows | awk -F, 'NF>4' | wc -l)
 # proven otherwise -- do not adjust the target (memo 5.1, 5.2).
 # Argument 2 of every chk is a COUNT READ BACK OUT OF $TMPOUT.
 chk() { [ "$2" = "$3" ] || die "census FAILED: $1 = $2 but the memo pins $3"; }
-chk "Allowed"       "$(csvcount 2 Allowed)"       258
-chk "Disallowed"    "$(csvcount 2 Disallowed)"    19
-chk "NO-ORACLE"     "$(csvcount 2 NO-ORACLE)"     134
+# Both branches are pinned.  The ablation branch is NOT unpinned scratch: if it
+# stops reproducing the pre-strike verdicts, G16's round trip is meaningless and
+# the strike stops being reversible.
+if [ "$X2A_TRANSFERS" = 0 ]; then EXP_A=258 EXP_D=19  EXP_N=134
+else                             EXP_A=258 EXP_D=146 EXP_N=7; fi
+chk "Allowed"       "$(csvcount 2 Allowed)"       "$EXP_A"
+chk "Disallowed"    "$(csvcount 2 Disallowed)"    "$EXP_D"
+chk "NO-ORACLE"     "$(csvcount 2 NO-ORACLE)"     "$EXP_N"
 # The per-class census is measured by counting each S_* string IN THE FILE.  The
 # comma guard above has already established that no row has more than 4 fields,
 # so field 4 IS the whole Source string and an EXACT match is the honest test;
@@ -1715,9 +1732,14 @@ chk "NO-ORACLE"     "$(csvcount 2 NO-ORACLE)"     134
 # this file and in amdordercheck.py Phase 3/4 unchanged and would ship.  The
 # class determines the verdict, both are in the CSV, so the honest check is that
 # they agree row by row.
+if [ "$X2A_TRANSFERS" = 0 ]; then
+  _CUTCLS="S_CUT_UNKEYED:119:NO-ORACLE S_CUT_MCA_UNKEYED:8:NO-ORACLE"
+else
+  _CUTCLS="S_CUT:119:Disallowed S_CUT_MCA:8:Disallowed"
+fi
 for _cl in S_RELAXED:60:Allowed S_SCOPE:104:Allowed S_ROLE:44:Allowed \
            S_PPO_C:46:Allowed S_RF_NOCUM:4:Allowed S_NTA:19:Disallowed \
-           S_CUT_UNKEYED:119:NO-ORACLE S_CUT_MCA_UNKEYED:8:NO-ORACLE \
+           $_CUTCLS \
            S_WS_FENCE:3:NO-ORACLE S_WS_FREL:1:NO-ORACLE S_WS_REL:3:NO-ORACLE; do
   _k="${_cl%%:*}"; _rest="${_cl#*:}"; _w="${_rest%%:*}"; _v="${_rest##*:}"
   src_of "$_k"
@@ -1748,10 +1770,16 @@ nmca=$(csvrows | grep -c 'cycle cut through a GPU observer' || true)
 # --- G16: the X2A_TRANSFERS round trip (D26; brief sect 5) ------------------
 # Re-classify every row at X2A_TRANSFERS=1 and assert the flip touches EXACTLY
 # the 127 toggle rows (119 S_CUT_UNKEYED + 8 S_CUT_MCA_UNKEYED -> Disallowed
-# S_CUT/S_CUT_MCA) and NOTHING else: same census as the pre-strike CSV
-# (258/146/7), every non-toggle row's verdict and class unchanged.  This is the
+# S_CUT/S_CUT_MCA) and NOTHING else: same VERDICT census as the pre-strike CSV
+# (258/146/7), every non-toggle row's verdict and class unchanged.  It is a
+# verdict/class round trip, NOT a byte comparison -- the re-keyed citation
+# strings and the S_WS split are independent of the strike and are present on
+# both branches by design.  This is the
 # hook's own bite and it runs on every generation -- a slot gated wrongly (too
 # wide, too narrow, or rewriting verdicts post-hoc) cannot ship.
+if [ "$X2A_TRANSFERS" != 0 ]; then
+  echo "== G16 skipped: already on the X2A_TRANSFERS=1 branch (nothing to toggle) ==" >&2
+else
 echo "== G16 X2A_TRANSFERS=1 round trip ==" >&2
 g16_toggled=0 g16_bad=0
 declare -A G16_A=() G16_D=() G16_N=()
@@ -1781,6 +1809,7 @@ echo "   toggled: $g16_toggled rows; census at X2A_TRANSFERS=1: Allowed ${G16_N[
 [ "${G16_N[Allowed]:-0}" = 258 ] && [ "${G16_N[Disallowed]:-0}" = 146 ] && [ "${G16_N[NO-ORACLE]:-0}" = 7 ] ||
   die "G16 FAILED: X2A_TRANSFERS=1 census is ${G16_N[Allowed]:-0}/${G16_N[Disallowed]:-0}/${G16_N[NO-ORACLE]:-0} not the pre-strike 258/146/7"
 unset g16_toggled g16_bad v0 c0
+fi
 
 # Every guard has passed against $TMPOUT.  Only now does it become $OUT.
 mv -f "$TMPOUT" "$OUT"
