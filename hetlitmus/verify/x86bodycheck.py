@@ -92,12 +92,19 @@ N_X86_LOADS = 579
 # P7's probe set: the control-map rows that name a mu(T), hence the harnesses
 # that co-run three instances (T, mu, canary), all three at the SAME proc index
 # -- which is exactly why keying bodies by proc alone lost two of every three.
-# MEASURED on control-map-amd.csv: 130 of the 146 Disallowed rows name a mu; the
-# other 16 carry the `none' sentinel (no Layer-A mutant EXISTS for them) and are
-# canary-only BY DERIVATION, so they are not part of this probe set.  It was 50 x
-# 3 = 150 while the gate read the AArch64 map.
-N_CORUN_TESTS = 130
-N_CORUN_BODIES = 508
+# MEASURED on control-map-amd.csv: ALL 19 Disallowed rows name a mu, so the
+# `none' sentinel no longer occurs and the probe set is the whole Disallowed
+# census.  (Pre-D26 it was 130 of 146, with 16 carrying `none' -- no Layer-A
+# mutant EXISTS for them -- hence canary-only BY DERIVATION; and 50 x 3 = 150
+# before that, while the gate read the AArch64 map.)  D26 2026-08-04 demoted the
+# 127 X2A-carried rows, which took all 16 no-mutant rows with them: they were
+# K-CPU rows, whose verdict its CPU procs carry.
+# The body count is NOT 19 x 3: a co-run harness emits one body per (instance,
+# x86 proc) pair and the surviving LB shape has one x86 proc, so the ratio is
+# shape-dependent and both numbers are re-measured, never derived from each
+# other.
+N_CORUN_TESTS = 19
+N_CORUN_BODIES = 57
 
 # Representative harness for the machine-code phase: its x86 CPU proc carries a
 # store, a fence AND a load, so one objdump covers the whole vocabulary.
