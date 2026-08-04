@@ -34,26 +34,26 @@ module Make
       end
     module P = GenParser.Make(Cfg)(Arch')(LexParse)
 
+    (* The GPU-only registry, the counterpart of hetEmit's [dialects]: one
+       (extension, banner word, renderer) per dialect, all rendered from the one
+       parse.  Emission folds over it, so a vendor is an entry. *)
+    let dialects = [
+        ".cu",  CudaLang.dialect.GpuLang.gl_kind, CudaLang.dump ;
+        ".hip", HipLang.dialect.GpuLang.gl_kind,  HipLang.dump ;
+      ]
+
     let compile _hash_env name in_chan _out_chan splitted =
       try
         let parsed = P.parse in_chan splitted in
         close_in in_chan ;
         let tname = splitted.Splitter.name.Name.name in
-        let outname = Tar.outname (MyName.outname name ".cu") in
-        Misc.output_protect
-          (fun chan -> CudaLang.dump chan tname parsed)
-          outname ;
-        if O.verbose >= 0 then
-          Printf.eprintf "HetLitmus: emitted CUDA %s\n%!" outname ;
-        (* AMD sibling: emit a HIP (.hip) kernel from the same parsed
-           scoped test (HipLang).  Emit-only -- the hipcc compile is
-           the HIP analog of Task 8, deferred (no ROCm here). *)
-        let hipname = Tar.outname (MyName.outname name ".hip") in
-        Misc.output_protect
-          (fun chan -> HipLang.dump chan tname parsed)
-          hipname ;
-        if O.verbose >= 0 then
-          Printf.eprintf "HetLitmus: emitted HIP %s\n%!" hipname ;
+        List.iter
+          (fun (ext,kind,dump) ->
+            let outname = Tar.outname (MyName.outname name ext) in
+            Misc.output_protect (fun chan -> dump chan tname parsed) outname ;
+            if O.verbose >= 0 then
+              Printf.eprintf "HetLitmus: emitted %s %s\n%!" kind outname)
+          dialects ;
         Answer.Absent
       (* FAIL-CLOSED: the emitted .cu/.hip pair is this function's ONLY
          deliverable, so a refusal must not be reported as success.  See

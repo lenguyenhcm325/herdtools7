@@ -47,6 +47,21 @@ end
   type gpu_dialect = {
       gd_ext : string ;             (* output extension: "cu" | "hip" *)
       gd_name : string ;            (* "CUDA" | "HIP" *)
+      (* Toolchain facts, read by the emitted comp.sh / Makefile / README.  A
+         vendor supplies values here instead of a hand-written arm in each of
+         those files. *)
+      gd_target : string ;        (* comp.sh/make target word: "cuda" | "hip" *)
+      gd_vendor : string ;        (* "NVIDIA" | "AMD" *)
+      gd_toolchain : string ;     (* named when its compiler is absent *)
+      gd_compiler : string ;      (* "nvcc" | "hipcc" *)
+      gd_compiler_var : string ;  (* build variable holding it: "NVCC" | "HIPCC" *)
+      gd_arch_var : string ;      (* "CUDA_ARCH" | "HIP_ARCH" *)
+      gd_arch_default : string ;  (* "sm_90" | "gfx942" *)
+      gd_arch_device : string ;   (* the device that default names: "GH200" *)
+      gd_arch_flag : string ;     (* "-arch=" | "--offload-arch=" *)
+      gd_arch_flag_first : bool ; (* compile line: arch flag before -std=c++17 *)
+      gd_obj_suffix : string ;    (* GPU object stem suffix: "" | "_hip" *)
+      gd_readme_files : string ;  (* this render's entry in README's file list *)
       gd_runtime_include : string ; (* the differing GPU atomics/runtime header *)
       (* [~tag] selects the tagged/uint64 store path (Some (iter,k,mu)) over the
          standalone GPU-only path (None); a structural tuple, so this one field
@@ -106,6 +121,16 @@ end
 
   let cuda_dialect = {
       gd_ext = "cu" ; gd_name = "CUDA" ;
+      gd_target = "cuda" ; gd_vendor = "NVIDIA" ; gd_toolchain = "CUDA" ;
+      gd_compiler = "nvcc" ; gd_compiler_var = "NVCC" ;
+      gd_arch_var = "CUDA_ARCH" ; gd_arch_default = "sm_90" ;
+      gd_arch_device = "GH200" ;
+      gd_arch_flag = "-arch=" ; gd_arch_flag_first = false ;
+      gd_obj_suffix = "" ;
+      gd_readme_files =
+        "GPU kernel + host driver, CUDA dialect (gd_alloc_shared:\n\
+         \             system malloc on GH200 / cudaMallocManaged fallback for the shared vars +\n\
+         \             barrier, cuda::atomic_ref system-scope barrier, pthread + kernel launch).\n" ;
       gd_runtime_include = "#include <cuda/atomic>" ;
       gd_dump_instr = CudaLang.dump_instr ;
       gd_device_sync = "cudaDeviceSynchronize();" ;
@@ -153,6 +178,15 @@ end
 
   let hip_dialect = {
       gd_ext = "hip" ; gd_name = "HIP" ;
+      gd_target = "hip" ; gd_vendor = "AMD" ; gd_toolchain = "HIP/ROCm" ;
+      gd_compiler = "hipcc" ; gd_compiler_var = "HIPCC" ;
+      gd_arch_var = "HIP_ARCH" ; gd_arch_default = "gfx942" ;
+      gd_arch_device = "MI300A" ;
+      gd_arch_flag = "--offload-arch=" ; gd_arch_flag_first = true ;
+      gd_obj_suffix = "_hip" ;
+      gd_readme_files =
+        "same harness, HIP dialect (gd_alloc_shared: fine-grained\n\
+         \             hipMallocManaged, __hip_atomic_*).\n" ;
       gd_runtime_include = "#include <hip/hip_runtime.h>" ;
       gd_dump_instr = HipLang.dump_instr ;
       (* no (void) cast: the driver binds this and checks its status *)
@@ -195,6 +229,20 @@ end
           Printf.sprintf
             "__hip_atomic_load(%s, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM)" ptr) ;
     }
+
+  (* THE DIALECT REGISTRY.  Every per-vendor site -- the renders themselves and
+     every arm of the emitted comp.sh / Makefile / README -- folds over this
+     list, so a vendor is added by adding an entry.  List order is emission
+     order; the head is what the build files default to. *)
+  let dialects = [ cuda_dialect ; hip_dialect ]
+
+  (* The GPU object this render compiles to, and the compile-line flags, given
+     the arch reference as each build file spells it ("$CUDA_ARCH" in sh,
+     "$(CUDA_ARCH)" in make). *)
+  let gpu_obj d tname = Printf.sprintf "%s%s.o" tname d.gd_obj_suffix
+  let gpu_cflags d aref =
+    let a = d.gd_arch_flag ^ aref in
+    if d.gd_arch_flag_first then a ^ " -std=c++17" else "-std=c++17 " ^ a
 
   (* ===================== HetLitmus: the compound emitter ===================
      A functor over the CPU module chain (Arch_litmus + Compile_litmus + a small
@@ -2384,7 +2432,7 @@ end
             s "// a system-scope atomic barrier rendezvouses both sides.\n" ;
             s (Printf.sprintf
                  "// Compile-only by default (%s -c); comp.sh cuda-link / make cuda-bin\n"
-                 (if dialect.gd_ext = "cu" then "nvcc" else "hipcc")) ;
+                 dialect.gd_compiler) ;
             s "// link the runnable binary, guarded by uname -m.  DO NOT EDIT.\n" ;
             s (dialect.gd_runtime_include ^ "\n") ;
             s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
@@ -2717,6 +2765,13 @@ end
             | "__aarch64__" -> "aarch64"
             | "__x86_64__" -> "x86_64"
             | m -> m in
+          (* The build files' per-vendor vocabulary, all of it folded over
+             [dialects] below; [d0] is the head, which they default to. *)
+          let d0 = List.hd dialects in
+          let targets = List.map (fun d -> d.gd_target) dialects in
+          let comp_args =
+            String.concat "|"
+              (targets @ List.map (fun t -> t ^ "-link") targets) in
           let dump_comp ch =
             let s = output_string ch in
             s "#!/bin/sh\n" ;
@@ -2724,10 +2779,14 @@ end
                  "# Compile-only check for HetLitmus harness '%s'.\n" tname) ;
             s "# COMPILE-ONLY by default (-c, no link, no GPU run).\n" ;
             s (Printf.sprintf
-                 "# `cuda-link' / `hip-link' additionally LINK ./%s, making the harness\n" tname) ;
+                 "# %s additionally LINK ./%s, making the harness\n"
+                 (String.concat " / "
+                    (List.map (fun t -> Printf.sprintf "`%s-link'" t) targets))
+                 tname) ;
             s "# runnable on real hardware.  Both are GUARDED by uname -m: on a foreign host\n" ;
             s "# the CPU object carries the portable shim, not the tested asm.\n" ;
-            s "# Usage: sh comp.sh [cuda|hip|cuda-link|hip-link]   (default cuda)\n" ;
+            s (Printf.sprintf "# Usage: sh comp.sh [%s]   (default %s)\n"
+                 comp_args d0.gd_target) ;
             s (Printf.sprintf
                  "# Both link targets write the SAME path ./%s, so run-one.sh / campaign.py\n" tname) ;
             s "# stay vendor-agnostic (they exec ./<test> and read the HetStats line).  A\n" ;
@@ -2736,9 +2795,22 @@ end
             s "# unconditional here and `make hip-bin' is .PHONY: a stale binary left by the\n" ;
             s "# other vendor must never be mistaken for a fresh one.\n" ;
             s "set -e\n" ;
-            s "TARGET=\"${1:-cuda}\"\n" ;
-            s "NVCC=\"${NVCC:-nvcc}\" ; CUDA_ARCH=\"${CUDA_ARCH:-sm_90}\"   # GH200=sm_90\n" ;
-            s "HIPCC=\"${HIPCC:-hipcc}\" ; HIP_ARCH=\"${HIP_ARCH:-gfx942}\" # MI300A=gfx942\n" ;
+            s (Printf.sprintf "TARGET=\"${1:-%s}\"\n" d0.gd_target) ;
+            (* one `compiler ; arch' line per dialect, their arch notes aligned *)
+            let var_line d =
+              Printf.sprintf "%s=\"${%s:-%s}\" ; %s=\"${%s:-%s}\""
+                d.gd_compiler_var d.gd_compiler_var d.gd_compiler
+                d.gd_arch_var d.gd_arch_var d.gd_arch_default in
+            let var_w =
+              List.fold_left
+                (fun w d -> max w (String.length (var_line d))) 0 dialects in
+            List.iter
+              (fun d ->
+                let v = var_line d in
+                s (Printf.sprintf "%s%s # %s=%s\n"
+                     v (String.make (var_w - String.length v) ' ')
+                     d.gd_arch_device d.gd_arch_default))
+              dialects ;
             s (Printf.sprintf
                  "HET_HOST_ISA=\"%s\"   # uname -m of this test's CPU ISA (%s)\n"
                  host_uname CpuF.isa_name) ;
@@ -2764,45 +2836,46 @@ end
                      "# (%s host == build host: the gcc -c above already assembled the real %s asm)\n"
                      CpuF.isa_name CpuF.isa_name)) ;
             s "case \"$TARGET\" in\n" ;
-            s "  cuda|cuda-link)\n" ;
-            s "    if [ \"$TARGET\" = cuda-link ] && [ \"$(uname -m)\" != \"$HET_HOST_ISA\" ]; then\n" ;
+            List.iter
+              (fun d ->
+                let cc = "$" ^ d.gd_compiler_var
+                and arch = "$" ^ d.gd_arch_var
+                and obj = gpu_obj d tname in
+                s (Printf.sprintf "  %s|%s-link)\n" d.gd_target d.gd_target) ;
+                s (Printf.sprintf
+                     "    if [ \"$TARGET\" = %s-link ] && [ \"$(uname -m)\" != \"$HET_HOST_ISA\" ]; then\n"
+                     d.gd_target) ;
+                s (Printf.sprintf
+                     "      echo \"error: comp.sh %s-link refuses on $(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $HET_HOST_ISA host\" >&2\n"
+                     d.gd_target CpuF.isa_name tname) ;
+                s "      exit 3\n" ;
+                s "    fi\n" ;
+                s (Printf.sprintf
+                     "    command -v \"%s\" >/dev/null 2>&1 || { echo \"error: %s not found (%s toolchain absent)\" >&2 ; exit 1 ; }\n"
+                     cc cc d.gd_toolchain) ;
+                s (Printf.sprintf "    echo \"+ %s %s -c %s.%s\"\n"
+                     cc (gpu_cflags d arch) tname d.gd_ext) ;
+                s (Printf.sprintf "    %s %s -c %s.%s -o %s\n"
+                     cc (gpu_cflags d arch) tname d.gd_ext obj) ;
+                s (Printf.sprintf "    if [ \"$TARGET\" = %s-link ]; then\n"
+                     d.gd_target) ;
+                s (Printf.sprintf
+                     "      echo \"+ %s %s%s %s outs.o %s_cpu_host.o -o %s -lpthread -lm\"\n"
+                     cc d.gd_arch_flag arch obj tname tname) ;
+                s (Printf.sprintf
+                     "      %s %s%s %s outs.o %s_cpu_host.o -o %s -lpthread -lm\n"
+                     cc d.gd_arch_flag arch obj tname tname) ;
+                s "    fi ;;\n")
+              dialects ;
             s (Printf.sprintf
-                 "      echo \"error: comp.sh cuda-link refuses on $(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $HET_HOST_ISA host\" >&2\n"
-                 CpuF.isa_name tname) ;
-            s "      exit 3\n" ;
-            s "    fi\n" ;
-            s "    command -v \"$NVCC\" >/dev/null 2>&1 || { echo \"error: $NVCC not found (CUDA toolchain absent)\" >&2 ; exit 1 ; }\n" ;
-            s (Printf.sprintf "    echo \"+ $NVCC -std=c++17 -arch=$CUDA_ARCH -c %s.cu\"\n" tname) ;
-            s (Printf.sprintf "    $NVCC -std=c++17 -arch=$CUDA_ARCH -c %s.cu -o %s.o\n" tname tname) ;
-            s "    if [ \"$TARGET\" = cuda-link ]; then\n" ;
-            s (Printf.sprintf
-                 "      echo \"+ $NVCC -arch=$CUDA_ARCH %s.o outs.o %s_cpu_host.o -o %s -lpthread -lm\"\n"
-                 tname tname tname) ;
-            s (Printf.sprintf
-                 "      $NVCC -arch=$CUDA_ARCH %s.o outs.o %s_cpu_host.o -o %s -lpthread -lm\n"
-                 tname tname tname) ;
-            s "    fi ;;\n" ;
-            s "  hip|hip-link)\n" ;
-            s "    if [ \"$TARGET\" = hip-link ] && [ \"$(uname -m)\" != \"$HET_HOST_ISA\" ]; then\n" ;
-            s (Printf.sprintf
-                 "      echo \"error: comp.sh hip-link refuses on $(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $HET_HOST_ISA host\" >&2\n"
-                 CpuF.isa_name tname) ;
-            s "      exit 3\n" ;
-            s "    fi\n" ;
-            s "    command -v \"$HIPCC\" >/dev/null 2>&1 || { echo \"error: $HIPCC not found (HIP/ROCm toolchain absent)\" >&2 ; exit 1 ; }\n" ;
-            s (Printf.sprintf "    echo \"+ $HIPCC --offload-arch=$HIP_ARCH -std=c++17 -c %s.hip\"\n" tname) ;
-            s (Printf.sprintf "    $HIPCC --offload-arch=$HIP_ARCH -std=c++17 -c %s.hip -o %s_hip.o\n" tname tname) ;
-            s "    if [ \"$TARGET\" = hip-link ]; then\n" ;
-            s (Printf.sprintf
-                 "      echo \"+ $HIPCC --offload-arch=$HIP_ARCH %s_hip.o outs.o %s_cpu_host.o -o %s -lpthread -lm\"\n"
-                 tname tname tname) ;
-            s (Printf.sprintf
-                 "      $HIPCC --offload-arch=$HIP_ARCH %s_hip.o outs.o %s_cpu_host.o -o %s -lpthread -lm\n"
-                 tname tname tname) ;
-            s "    fi ;;\n" ;
-            s "  *) echo \"usage: sh comp.sh [cuda|hip|cuda-link|hip-link]\" >&2 ; exit 2 ;;\n" ;
+                 "  *) echo \"usage: sh comp.sh [%s]\" >&2 ; exit 2 ;;\n"
+                 comp_args) ;
             s "esac\n" ;
-            s "if [ \"$TARGET\" = cuda-link ] || [ \"$TARGET\" = hip-link ]; then\n" ;
+            s (Printf.sprintf "if %s; then\n"
+                 (String.concat " || "
+                    (List.map
+                       (fun t -> Printf.sprintf "[ \"$TARGET\" = %s-link ]" t)
+                       targets))) ;
             s (Printf.sprintf "  echo \"HetLitmus: link OK -> ./%s\"\n" tname) ;
             s "else\n" ;
             s "  echo 'HetLitmus: compile OK'\n" ;
@@ -2810,23 +2883,42 @@ end
           let dump_makefile ch =
             let s = output_string ch in
             s (Printf.sprintf
-                 "# HetLitmus harness '%s' -- objects by default (`make cuda');\n" tname) ;
+                 "# HetLitmus harness '%s' -- objects by default (`make %s');\n"
+                 tname d0.gd_target) ;
             s (Printf.sprintf
-                 "# `make cuda-bin' / `make hip-bin' link ./%s, guarded by uname -m.\n" tname) ;
-            s "NVCC ?= nvcc\nCUDA_ARCH ?= sm_90\nHIPCC ?= hipcc\nHIP_ARCH ?= gfx942\nCC ?= gcc\n" ;
+                 "# %s link ./%s, guarded by uname -m.\n"
+                 (String.concat " / "
+                    (List.map (fun t -> Printf.sprintf "`make %s-bin'" t)
+                       targets))
+                 tname) ;
+            List.iter
+              (fun d ->
+                s (Printf.sprintf "%s ?= %s\n%s ?= %s\n"
+                     d.gd_compiler_var d.gd_compiler
+                     d.gd_arch_var d.gd_arch_default))
+              dialects ;
+            s "CC ?= gcc\n" ;
             (* The comment gets its OWN line: `VAR ?= val   # note' keeps the trailing
                blanks in the make variable, so the uname -m test below would compare
                "aarch64" against "aarch64   " and refuse on the very host it exists to
                admit -- a guard that is inert in the other direction. *)
             s (Printf.sprintf
-                 "# uname -m of this test's CPU ISA (%s); the cuda-bin guard compares it.\n"
-                 CpuF.isa_name) ;
+                 "# uname -m of this test's CPU ISA (%s); the %s-bin guard compares it.\n"
+                 CpuF.isa_name d0.gd_target) ;
             s (Printf.sprintf "HET_HOST_ISA ?= %s\n\n" host_uname) ;
-            s "all: cuda\n\n" ;
-            s (Printf.sprintf "cuda: %s.o outs.o %s_cpu_host.o\n" tname tname) ;
-            s (Printf.sprintf "hip: %s_hip.o outs.o %s_cpu_host.o\n\n" tname tname) ;
-            s (Printf.sprintf "%s.o: %s.cu\n\t$(NVCC) -std=c++17 -arch=$(CUDA_ARCH) -c $< -o $@\n\n" tname tname) ;
-            s (Printf.sprintf "%s_hip.o: %s.hip\n\t$(HIPCC) --offload-arch=$(HIP_ARCH) -std=c++17 -c $< -o $@\n\n" tname tname) ;
+            s (Printf.sprintf "all: %s\n\n" d0.gd_target) ;
+            List.iter
+              (fun d ->
+                s (Printf.sprintf "%s: %s outs.o %s_cpu_host.o\n"
+                     d.gd_target (gpu_obj d tname) tname))
+              dialects ;
+            s "\n" ;
+            List.iter
+              (fun d ->
+                s (Printf.sprintf "%s: %s.%s\n\t$(%s) %s -c $< -o $@\n\n"
+                     (gpu_obj d tname) tname d.gd_ext d.gd_compiler_var
+                     (gpu_cflags d (Printf.sprintf "$(%s)" d.gd_arch_var))))
+              dialects ;
             s "outs.o: outs.c\n\t$(CC) -c $< -o $@\n\n" ;
             s (Printf.sprintf "%s_cpu_host.o: %s_cpu.c\n\t$(CC) -c $< -o $@\n\n" tname tname) ;
             (* THE TWO LINK TARGETS ARE .PHONY RECIPES, NOT FILE RULES.  Both
@@ -2846,18 +2938,16 @@ end
                that silently links nothing is this project's recurring failure
                mode.  Guarded for the same reason as comp.sh's *-link arms: on a
                foreign host $(TEST)_cpu_host.o is the portable shim. *)
-            s (Printf.sprintf "cuda-bin: %s.o outs.o %s_cpu_host.o\n" tname tname) ;
-            s (Printf.sprintf
-                 "\t@ test \"$$(uname -m)\" = \"$(HET_HOST_ISA)\" || { echo \"error: cuda-bin refuses on $$(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $(HET_HOST_ISA) host\" >&2 ; exit 3 ; }\n"
-                 CpuF.isa_name tname) ;
-            s (Printf.sprintf
-                 "\t$(NVCC) -arch=$(CUDA_ARCH) $^ -o %s -lpthread -lm\n\n" tname) ;
-            s (Printf.sprintf "hip-bin: %s_hip.o outs.o %s_cpu_host.o\n" tname tname) ;
-            s (Printf.sprintf
-                 "\t@ test \"$$(uname -m)\" = \"$(HET_HOST_ISA)\" || { echo \"error: hip-bin refuses on $$(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $(HET_HOST_ISA) host\" >&2 ; exit 3 ; }\n"
-                 CpuF.isa_name tname) ;
-            s (Printf.sprintf
-                 "\t$(HIPCC) --offload-arch=$(HIP_ARCH) $^ -o %s -lpthread -lm\n\n" tname) ;
+            List.iter
+              (fun d ->
+                s (Printf.sprintf "%s-bin: %s outs.o %s_cpu_host.o\n"
+                     d.gd_target (gpu_obj d tname) tname) ;
+                s (Printf.sprintf
+                     "\t@ test \"$$(uname -m)\" = \"$(HET_HOST_ISA)\" || { echo \"error: %s-bin refuses on $$(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $(HET_HOST_ISA) host\" >&2 ; exit 3 ; }\n"
+                     d.gd_target CpuF.isa_name tname) ;
+                s (Printf.sprintf "\t$(%s) %s$(%s) $^ -o %s -lpthread -lm\n\n"
+                     d.gd_compiler_var d.gd_arch_flag d.gd_arch_var tname))
+              dialects ;
             (* ...AND `make <test>' MUST NOT BUILD ANYTHING EITHER.  Making the two
                link targets phony removed the only rule that named ./<test>, so
                GNU make fell through to its BUILT-IN link rule `%: %.o' -- which
@@ -2883,15 +2973,29 @@ end
             s ".SUFFIXES:\n\n" ;
             s (Printf.sprintf "%s:\n" tname) ;
             s (Printf.sprintf
-                 "\t@ echo \"error: \\`make %s' is not a build target: it would bypass the uname -m guard (and, without this rule, make's built-in \\`%%: %%.o' rule links it with \\$$(CC) and no device code at all).  Link it with \\`make cuda-bin' (NVIDIA) or \\`make hip-bin' (AMD); both check uname -m first.\" >&2 ; exit 3\n\n"
-                 tname) ;
+                 "\t@ echo \"error: \\`make %s' is not a build target: it would bypass the uname -m guard (and, without this rule, make's built-in \\`%%: %%.o' rule links it with \\$$(CC) and no device code at all).  Link it with %s; both check uname -m first.\" >&2 ; exit 3\n\n"
+                 tname
+                 (String.concat " or "
+                    (List.map
+                       (fun d -> Printf.sprintf "\\`make %s-bin' (%s)"
+                                   d.gd_target d.gd_vendor)
+                       dialects))) ;
             s (Printf.sprintf
-                 ".PHONY: all cuda cuda-bin hip hip-bin clean %s\nclean:\n\trm -f *.o %s\n" tname tname) in
+                 ".PHONY: all %s clean %s\nclean:\n\trm -f *.o %s\n"
+                 (String.concat " "
+                    (List.map (fun t -> Printf.sprintf "%s %s-bin" t t)
+                       targets))
+                 tname tname) in
           let dump_readme ch =
             let s = output_string ch in
             s (Printf.sprintf "# HetLitmus heterogeneous harness: %s\n\n" tname) ;
             s "Heterogeneous CPU+GPU litmus harness emitted by litmus7 (`Het` arch).\n\n" ;
-            s (Printf.sprintf "CPU ISA: %s.  GPU dialects: CUDA (`.cu`) + HIP (`.hip`).\n\n" CpuF.isa_name) ;
+            s (Printf.sprintf "CPU ISA: %s.  GPU dialects: %s.\n\n"
+                 CpuF.isa_name
+                 (String.concat " + "
+                    (List.map
+                       (fun d -> Printf.sprintf "%s (`.%s`)" d.gd_name d.gd_ext)
+                       dialects))) ;
             if co_run then begin
               s "## The positive control is CO-RUNNING in this harness\n\n" ;
               s "A test's null result is evidence only if the harness would have seen a\n" ;
@@ -2906,16 +3010,26 @@ end
               s "\nSee `het_verdict.h` for the rule that turns their counts into a verdict.\n\n"
             end ;
             s "Files:\n" ;
-            s (Printf.sprintf "- `%s.cu`     GPU kernel + host driver, CUDA dialect (gd_alloc_shared:\n" tname) ;
-            s "             system malloc on GH200 / cudaMallocManaged fallback for the shared vars +\n" ;
-            s "             barrier, cuda::atomic_ref system-scope barrier, pthread + kernel launch).\n" ;
-            s (Printf.sprintf "- `%s.hip`    same harness, HIP dialect (gd_alloc_shared: fine-grained\n" tname) ;
-            s "             hipMallocManaged, __hip_atomic_*).\n" ;
+            (* the renders first, their descriptions started at a common column *)
+            let ext_w =
+              List.fold_left
+                (fun w d -> max w (String.length d.gd_ext)) 0 dialects + 4 in
+            List.iter
+              (fun d ->
+                s (Printf.sprintf "- `%s.%s`%s%s" tname d.gd_ext
+                     (String.make (ext_w - String.length d.gd_ext) ' ')
+                     d.gd_readme_files))
+              dialects ;
             s (Printf.sprintf "- `%s_cpu.c`  CPU thread(s): real %s inline asm (litmus7 ASMLang).\n" tname CpuF.isa_name) ;
             s "- `outs.c/.h` litmus7's outcome histogram (verbatim from litmus/libdir).\n" ;
             s "- `comp.sh` / `Makefile`  compile-only build, plus the two guarded link targets.\n\n" ;
-            s "Build (compile-only; no GPU needed): `sh comp.sh [cuda|hip]` (default cuda),\n" ;
-            s "or `make cuda` / `make hip`.\n\n" ;
+            s (Printf.sprintf
+                 "Build (compile-only; no GPU needed): `sh comp.sh [%s]` (default %s),\n"
+                 (String.concat "|" targets) d0.gd_target) ;
+            s (Printf.sprintf "or %s.\n\n"
+                 (String.concat " / "
+                    (List.map (fun t -> Printf.sprintf "`make %s`" t)
+                       targets))) ;
             s "## Building the executable\n\n" ;
             s (Printf.sprintf
                  "NVIDIA: `sh comp.sh cuda-link` or `make cuda-bin` links `./%s` (`$NVCC`\n" tname) ;
@@ -2960,15 +3074,19 @@ end
           write "het_verdict.h"
             (fun ch -> output_string ch het_verdict_content) ;
           write (tname ^ "_cpu.c") dump_cpu_file ;
-          write (tname ^ ".cu") (dump_gpu_file cuda_dialect) ;
-          write (tname ^ ".hip") (dump_gpu_file hip_dialect) ;
+          let renders =
+            List.map (fun d -> Printf.sprintf "%s.%s" tname d.gd_ext) dialects in
+          List.iter
+            (fun d -> write (Printf.sprintf "%s.%s" tname d.gd_ext)
+                        (dump_gpu_file d))
+            dialects ;
           write "comp.sh" dump_comp ;
           write "Makefile" dump_makefile ;
           write "README.md" dump_readme ;
           if O.verbose >= 0 then
             Printf.eprintf
-              "HetLitmus: emitted harness directory %s (%s.cu + %s.hip)\n%!"
-              dir tname tname ;
+              "HetLitmus: emitted harness directory %s (%s)\n%!"
+              dir (String.concat " + " renders) ;
           Absent
         (* FAIL-CLOSED: the emitted harness directory is this function's ONLY
            deliverable, so a refusal must not be reported as success.  See
