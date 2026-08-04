@@ -707,7 +707,8 @@ hetlitmus-controlmap: | build
 ### separate artifact and a separate lattice, not a translation (memo 7.D11): on
 ### x86 the CPU strength lattice loses its middle rung, so a candidate that only
 ### moves within {ra,st,ld} is NOT a weakening there.  The oracle it is derived
-### against is expected-amd.csv and its census is 146 Disallowed, not 50.
+### against is expected-amd.csv and its census is 19 Disallowed, not 50
+### (D26 2026-08-04 demoted 127; pre-strike it was 146).
 ### Regenerate with:
 ###   python3 hetlitmus/verify/controlmap.py --lattice x86 --emit \
 ###     > hetlitmus/tests/het/control-map-amd.csv
@@ -746,8 +747,10 @@ hetlitmus-oracle:
 ### gate G1 (which must pass 34/34 BEFORE the CSV is written), G15's !SWMR hook
 ### split, G13/G14's structural assertions and G0's program-synthesis check
 ### against all 411 .litmus files, so it takes ~14 s rather than 0.1 s.  Its 146
-### Disallowed rows are 146 candidate FALSE REFUTATIONS of the compound memory
-### model if any of them is wrong, which is why the regeneration is gated at all.
+### Disallowed rows are 19 candidate FALSE REFUTATIONS of the compound memory
+### model if any of them is wrong, which is why the regeneration is gated at all
+### (D26 2026-08-04: 127 of the former 146 are now NO-ORACLE -- the strike is
+### reversible via X2A_TRANSFERS=1, which gate G16 pins byte-for-byte).
 ### Bite it the same way:  make hetlitmus-amd-oracle HET_AMD_ORACLE=/tmp/bad.csv
 HET_AMD_ORACLE ?= hetlitmus/tests/het/expected-amd.csv
 hetlitmus-amd-oracle:
@@ -786,9 +789,10 @@ hetlitmus-amd-oracle:
 ###   Phase 7 G15  the !SWMR hook split: narrow 48 / wide 65 / delta 17 == K-CPU
 ###   Phase 8 G10  the downstream census pins, as a fail-closed ledger
 ###   Phase 9 G11  the mu-map on the x86 strength lattice (memo 7.D11), derived
-###                by controlmap.py --lattice x86: 130 of the 146 Disallowed rows
-###                carry a Layer-A mutant and the other 16 provably cannot, which
-###                is PINNED so it can never silently grow
+###                by controlmap.py --lattice x86: all 19 Disallowed rows carry a
+###                Layer-A mutant and the no-mutant set is PINNED EMPTY (pre-D26:
+###                130 of 146 with 16 that provably could not) so it can never
+###                silently grow
 ### --bite corrupts the rule, the corpus, the instrument index, the CSV and the
 ### downstream pins and requires each injection to redden the phase it names, for
 ### the right reason, on CORRUPTION and on OMISSION both.  The injection COUNT is
@@ -800,6 +804,26 @@ hetlitmus-amdorder: | build
 	python3 hetlitmus/verify/amdordercheck.py
 	python3 hetlitmus/verify/amdordercheck.py --bite
 	@ echo "HetLitmus AMD oracle machine-check: OK (and the gate bites)"
+
+### hetlitmus-amdprov: citation PROVENANCE of expected-amd.csv (register D21's
+### fault class, made mechanical).  The whitelist admitted [CMCM] at PAPER
+### granularity; transferability is a property of SECTIONS, and sect 5-6 (the
+### x86TSO+PTX instantiation) is EXCLUDED for the AMD oracle (Nguyen
+### 2026-08-04).  amdprovcheck.py classifies every Source-string citation
+### fragment into GEN (sect 3-4) / PTX (sect 5-6) / AMD (sect 7) / NONCMCM
+### (per-tag disposition), fail-closed: an unknown fragment anywhere is an
+### error, and a PTX-class fragment in a DISALLOWED row is the fault (a
+### candidate false refutation; Allowed/NO-ORACLE are fail-safe directions).
+### Until the regeneration lands, the known pre-regen fault set is PINNED
+### byte-exactly (E2 = 138 rows, E3 = 8 rows, at-risk = 127) so the suite
+### stays green while any drift -- growth OR silent shrink -- reddens the
+### gate; the pin is then flipped to empty-findings.  No `| build' (invokes
+### no herdtools7 tool); ~0.1 s + bite.
+hetlitmus-amdprov:
+	@ echo
+	python3 hetlitmus/verify/amdprovcheck.py
+	python3 hetlitmus/verify/amdprovcheck.py --bite
+	@ echo "HetLitmus AMD oracle provenance: OK (and the gate bites)"
 
 ### hetlitmus-dup: the isomorphism gate.  generate.sh dedups only by
 ### byte-comparing a variant against ONE designated sibling, which cannot see a
@@ -1078,6 +1102,7 @@ hetlitmus-test:: hetlitmus-order
 hetlitmus-test:: hetlitmus-oracle
 hetlitmus-test:: hetlitmus-amd-oracle
 hetlitmus-test:: hetlitmus-amdorder
+hetlitmus-test:: hetlitmus-amdprov
 hetlitmus-test:: hetlitmus-amd-controlmap
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-verdict
@@ -1123,7 +1148,7 @@ hetlitmus-promote: | build
 ### Neither AMD target was phony until P2a (2026-08-02).  They worked only
 ### because no file of those names happened to exist -- one `touch' away from a
 ### gate that silently stops running.
-.PHONY: hetlitmus-amd-oracle hetlitmus-amdorder hetlitmus-amd-controlmap
+.PHONY: hetlitmus-amd-oracle hetlitmus-amdorder hetlitmus-amdprov hetlitmus-amd-controlmap
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64

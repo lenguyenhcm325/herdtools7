@@ -58,15 +58,16 @@ N_DISALLOWED = 50
 #     run the IDENTICAL program and the "control" would vouch for nothing.
 #     `weakening_of' rejects it as "identical ordering strength", which is the
 #     fail-closed behaviour D11 asks for.
-#   * the Disallowed census goes 50 -> 146, and the AMD census is NOT all
-#     two-sided: 42 of its Disallowed rows are one-sided grid cells and 4 are
-#     FULLY RELAXED, which is why the x86 derivation is a generic search over
-#     the corpus rather than the NVIDIA name cascade.
+#   * the Disallowed census goes 50 -> 19 (D26 2026-08-04 demoted the 127
+#     X2A-carried rows to NO-ORACLE; pre-strike it was 146).  The AMD census is
+#     still NOT all two-sided -- the 19 LB survivors include one-sided cells --
+#     which is why the x86 derivation is a generic search over the corpus
+#     rather than the NVIDIA name cascade.
 #
 # LATTICE is module state read by _parse_instr and audit_map.  The default is
 # `aarch64', so the NVIDIA path is byte-for-byte what it was.
 LATTICE = "aarch64"
-N_DISALLOWED_BY_LATTICE = {"aarch64": 50, "x86": 146}
+N_DISALLOWED_BY_LATTICE = {"aarch64": 50, "x86": 19}
 
 
 def set_lattice(name):
@@ -383,9 +384,10 @@ def derive_x86(tests, oracle):
 
     The NVIDIA cascade below is keyed on the grid's NAME vocabulary and assumes
     every Disallowed row is a `-2s' cell.  Neither assumption survives the AMD
-    census: 42 of its 146 Disallowed rows are one-sided grid cells, 4 are FULLY
-    RELAXED, and one (`MP-het') is a reference test whose name is not a grid
-    name at all.  So mu is chosen by SEARCH over the corpus instead:
+    census (pre-D26: 42 of 146 Disallowed rows were one-sided grid cells, 4
+    FULLY RELAXED, one -- `MP-het' -- a non-grid reference test; post-D26 the
+    19 LB survivors still include one-sided cells).  So mu is chosen by SEARCH
+    over the corpus instead:
 
       mu(T) = a MAXIMAL element of { M : M is a corpus test, oracle-Allowed,
               structurally identical to T, and STRICTLY WEAKER componentwise on

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """amdordercheck.py -- the machine-check behind tests/het/expected-amd.csv.
 
-`build-amd-oracle.sh' DERIVES 146 Disallowed rows for the AMD MI300A.  A wrong
+`build-amd-oracle.sh' DERIVES the AMD MI300A oracle: 19 Disallowed rows plus
+the 127-row D26 toggle set (NO-ORACLE at the shipping default).  A wrong
 Disallowed row manufactures a FALSE REFUTATION of the compound memory model, so
 the generator ships its own structural gates (G0 G1 G2 G12 G13 G14 G15) and this
 file carries the ones that need an external instrument -- herd7, the recorded
@@ -80,19 +81,21 @@ MEMO = Path(os.environ.get("HET_R2_MEMO",
 # --- the memo's pins.  Every one of these is a target, not a measurement: if the
 # --- tree disagrees the TREE is wrong until proven otherwise (memo 5.1/5.2).
 EXPECT_ORACLE_ROWS = 411
-CENSUS_VERDICT = {"Allowed": 258, "Disallowed": 146, "NO-ORACLE": 7}
+CENSUS_VERDICT = {"Allowed": 258, "Disallowed": 19, "NO-ORACLE": 134}
 CENSUS_CLASS = {"S_RELAXED": 60, "S_SCOPE": 104, "S_ROLE": 44, "S_PPO_C": 46,
-                "S_RF_NOCUM": 4, "S_NTA": 19, "S_CUT": 119, "S_CUT_MCA": 8,
-                "S_WS_FENCE": 4, "S_WS_REL": 3}
+                "S_RF_NOCUM": 4, "S_NTA": 19, "S_CUT_UNKEYED": 119,
+                "S_CUT_MCA_UNKEYED": 8,
+                "S_WS_FENCE": 3, "S_WS_FREL": 1, "S_WS_REL": 3}
 # The class DETERMINES the verdict, and both are in the CSV.  Checking them row
 # by row is what catches a CENSUS-PRESERVING corruption -- MEASURED 2026-08-02:
 # swapping the verdicts of one Allowed row and one NO-ORACLE row leaves every
 # aggregate in Phase 3 AND Phase 4 unchanged, and shipped.
 CLASS_VERDICT = {"S_RELAXED": "Allowed", "S_SCOPE": "Allowed", "S_ROLE": "Allowed",
                  "S_PPO_C": "Allowed", "S_RF_NOCUM": "Allowed",
-                 "S_NTA": "Disallowed", "S_CUT": "Disallowed",
-                 "S_CUT_MCA": "Disallowed",
-                 "S_WS_FENCE": "NO-ORACLE", "S_WS_REL": "NO-ORACLE"}
+                 "S_NTA": "Disallowed", "S_CUT_UNKEYED": "NO-ORACLE",
+                 "S_CUT_MCA_UNKEYED": "NO-ORACLE",
+                 "S_WS_FENCE": "NO-ORACLE", "S_WS_FREL": "NO-ORACLE",
+                 "S_WS_REL": "NO-ORACLE"}
 MODEL = "AMD-CDNA3-x86"
 EXPECT_EXT_EDGES = 1092            # memo sect 6, "1092 external edges, 0 GPU->GPU"
 EXPECT_COLLAPSE_CLASSES = 45       # memo 5.3
@@ -576,7 +579,7 @@ def phase2(C):
 # PHASE 3 -- G5.  Read the CSV back and ASSERT (never merely print) the censuses.
 # ===========================================================================
 def read_memo_sources():
-    """the ten normative S_* strings as the memo's 5.2 table holds them"""
+    """the eleven normative S_* strings as the memo's 5.2 table holds them"""
     if not MEMO.exists():
         return None
     out = {}
@@ -594,9 +597,13 @@ def _memo_sources_agree(srcmap):
                    "run and the normative strings are UNGATED (set HET_R2_MEMO)"
              % MEMO)
         return
-    shipped = {cls: txt for txt, cls in srcmap.items()}
-    if not need(len(memo) == 10, "G5",
-                "the memo's 5.2 table yields %d S_* strings not 10 -- the parse "
+    shipped = {cls: txt for txt, cls in srcmap.items()
+               # the two ablation-branch strings (X2A_TRANSFERS=1) are normative
+               # in the builder but deliberately absent from memo 5.2's table,
+               # which documents the SHIPPING file
+               if cls not in ("S_CUT", "S_CUT_MCA")}
+    if not need(len(memo) == 11, "G5",
+                "the memo's 5.2 table yields %d S_* strings not 11 -- the parse "
                 "has gone half-blind or the table was reshaped" % len(memo)):
         return
     if not need(set(memo) == set(shipped), "G5",
@@ -818,11 +825,14 @@ def phase5(C, rows):
 
 
 def kcpu_derived(C, rows):
-    """memo 5.4's K-CPU, re-derived: a Disallowed row where every GPU proc has
-    exactly one shared access, so no GPU proc supplies ordering."""
+    """memo 5.4's K-CPU, re-derived: a row of the pre-strike Disallowed set --
+    since D26 that is Disallowed OR the UNKEYED toggle set (all 17 K-CPU rows
+    are S_CUT_UNKEYED / NO-ORACLE on the shipping branch) -- where every GPU
+    proc has exactly one shared access, so no GPU proc supplies ordering."""
     out = []
     for n in sorted(C.tests):
-        if rows.get(n, {}).get("verdict") != "Disallowed":
+        r = rows.get(n, {})
+        if r.get("verdict") != "Disallowed" and "UNKEYED" not in r.get("src", ""):
             continue
         if all(len(C.shared(n, i)) <= 1
                for i, p in enumerate(C.tests[n]) if p["dev"] == "gpu"):
@@ -838,7 +848,8 @@ def mca_derived(C, rows, use_rr=True, use_shape=True):
     optional clauses exist so the gate can MEASURE that each is load-bearing."""
     out = []
     for n in sorted(C.tests):
-        if rows.get(n, {}).get("verdict") != "Disallowed":
+        r = rows.get(n, {})
+        if r.get("verdict") != "Disallowed" and "UNKEYED" not in r.get("src", ""):
             continue
         if use_shape and C.shape(n) not in ("IRIW", "RWC"):
             continue
@@ -857,14 +868,14 @@ def phase6(C, rows, srcmap):
     print("== Phase 6 -- G12 + G13 + G14: structural assertions over the corpus ==")
     # --- G12 ---------------------------------------------------------------
     mca = mca_derived(C, rows)
-    csvmca = sorted(n for n in rows if srcmap.get(rows[n]["src"]) == "S_CUT_MCA")
+    csvmca = sorted(n for n in rows if srcmap.get(rows[n]["src"]) == "S_CUT_MCA_UNKEYED")
     need(len(mca) == 8, "G12",
          "the structural predicate finds %d S_CUT_MCA rows not 8: %s" % (len(mca), mca))
     need(sorted(mca) == MCA_ROWS, "G12",
          "the derived S_CUT_MCA set is not memo 5.2's list; only-derived %s "
          "only-memo %s" % (sorted(set(mca) - set(MCA_ROWS)), sorted(set(MCA_ROWS) - set(mca))))
     need(csvmca == MCA_ROWS, "G12",
-         "the CSV labels %s as S_CUT_MCA, not memo 5.2's 8 rows" % csvmca)
+         "the CSV labels %s as S_CUT_MCA_UNKEYED, not memo 5.2's 8 rows" % csvmca)
     # both clauses of the predicate must be load-bearing, and this MEASURES it
     n_norr = len(mca_derived(C, rows, use_rr=False))
     n_noshape = len(mca_derived(C, rows, use_shape=False))
@@ -924,6 +935,10 @@ def phase7(C, rows):
          "the transfer refusal of D3 has been lost")
     need(re.search(r'^HOOK_II_GUARD_MODEL="\$\{HOOK_II_GUARD_MODEL:-CDNA3\}"', src, re.M),
          "G15", "HOOK_II_GUARD_MODEL does not default to CDNA3")
+    need(re.search(r'^HOOK_III_GUARD_MODEL="\$\{HOOK_III_GUARD_MODEL:-CDNA3\}"', src, re.M),
+         "G15", "HOOK_III_GUARD_MODEL (clause iii, R2 A-9) does not default to CDNA3")
+    need(re.search(r'\[ "\$model" = "\$HOOK_III_GUARD_MODEL" \]', src),
+         "G15", "clause (iii) is not guarded by its own model parameter")
     # (ii)/(iii)/(iv): run the generator's own G15 and READ ITS PRINTOUT.  The
     # deliverable is the sentence, not the exit code (B6c's lesson).
     p = subprocess.run(["bash", str(BUILDER), "--g15"], cwd=str(HET),
@@ -935,8 +950,10 @@ def phase7(C, rows):
             (r"\(iv\) anchor gate under the NARROW hook: 34/34", "narrow-hook 34/34"),
             (r"\(i\)  guard dropped -> anchor gate 33/34 breaking exactly "
              r"'no-SWMR IRIW1-sys'", "guard-dropped 33/34 on no-SWMR IRIW1-sys"),
-            (r"\(ii\) !SWMR rows moved: narrow 48  wide 65  delta 17", "48/65/17"),
-            (r"\(iii\) wide \\ narrow == the 17 K-CPU rows", "delta == K-CPU")):
+            (r"\(ii\) !SWMR rows moved \(X2A_TRANSFERS=1 branch\): narrow 48  wide 68  "
+             r"delta 20", "48/68/20"),
+            (r"\(iii\) wide \\ narrow == 17 K-CPU rows \(memo 5\.4\) \+ 3 fr-only rows",
+             "delta == K-CPU + FR3")):
         need(re.search(pat, out), "G15",
              "build-amd-oracle.sh --g15 did not print %s; it printed:\n%s"
              % (what, out[-800:]))
@@ -968,8 +985,8 @@ DOWNSTREAM = [
      "shared by both oracles -- the corpus is one corpus"),
     ("hetlitmus/verify/verdictcheck.py",
      r'^CENSUS = \{"Disallowed": (\d+), "Allowed": (\d+), "NO-ORACLE": (\d+)\}',
-     "50/319/42", "146/258/7", "verdictcheck.CENSUS"),
-    ("hetlitmus/verify/controlmap.py", r"^N_DISALLOWED = (\d+)", "50", "146",
+     "50/319/42", "19/258/134", "verdictcheck.CENSUS"),
+    ("hetlitmus/verify/controlmap.py", r"^N_DISALLOWED = (\d+)", "50", "19",
      "controlmap.N_DISALLOWED -- and its lattice is AArch64 (memo 7.D11)"),
 ]
 
@@ -996,7 +1013,7 @@ def phase8(rows, root=None):
         print("   %-38s now %-9s AMD needs %-9s (%s)" % (rel, got, amd, note))
     a = "%d/%d/%d" % (CENSUS_VERDICT["Disallowed"], CENSUS_VERDICT["Allowed"],
                       CENSUS_VERDICT["NO-ORACLE"])
-    need(a == "146/258/7", "G10", "the AMD census this ledger promises is %s" % a)
+    need(a == "19/258/134", "G10", "the AMD census this ledger promises is %s" % a)
     print("   G11 is Phase 9 (landed by P2a 2026-08-02); the mu-map it gates is "
           "hetlitmus/tests/het/control-map-amd.csv")
 
@@ -1020,22 +1037,23 @@ def phase8(rows, root=None):
 # control would hide (B6a's lesson: a mu-map that cannot fire is worse than no
 # control).
 # ===========================================================================
-# The 16 Disallowed rows with NO Layer-A mutant, MEASURED and pinned.  They are
-# 16 of memo 5.4's 17 K-CPU rows: a K-CPU verdict is carried by the row's CPU
-# procs, so no weakening on the GPU axis reaches an Allowed neighbour and every
-# structurally-identical same-scope sibling is itself Disallowed.  (The 17th,
-# RWC-ccg-sys-fence-2s, DOES have one -- RWC-ccg-sys-relaxed is Allowed --
-# because its CPU procs carry the DMB.SY that its verdict turns on.)
-NO_MU_ROWS = sorted("""
-IRIW-cgcc-sys-relaxed IRIW-cgcc-sys-release IRIW-cgcc-sys-acqrel-2s IRIW-cgcc-sys-fence-2s
-IRIW-cgcg-sys-relaxed IRIW-cgcg-sys-release IRIW-cgcg-sys-acqrel-2s IRIW-cgcg-sys-fence-2s
-WRC-ccg-sys-relaxed   WRC-ccg-sys-release   WRC-ccg-sys-acqrel-2s   WRC-ccg-sys-fence-2s
-WRC3-cccg-sys-relaxed WRC3-cccg-sys-release WRC3-cccg-sys-acqrel-2s WRC3-cccg-sys-fence-2s
-""".split())
+# The Disallowed rows with NO Layer-A mutant, MEASURED and pinned: EMPTY since
+# D26.  Pre-strike it was 16 of memo 5.4's 17 K-CPU rows (a K-CPU verdict is
+# carried by the CPU procs, so no GPU-axis weakening reaches an Allowed
+# neighbour); those 16 left the Disallowed set with the D26 demotion, and every
+# surviving S_NTA row has LB-cg-sys-relaxed-style Allowed siblings.  The pin is
+# what notices if a future re-key returns a row whose positive control cannot
+# fire (B6a's lesson).
+NO_MU_ROWS = []
 AMD_MAP = HET / "control-map-amd.csv"
 # MEASURED 2026-08-02: candidate (T, mu) pairs the x86 lattice admits and the
 # AArch64 one refuses.  See the two-directional assertion in phase9.
-EXPECT_D11_GAINED = 47
+# Pre-strike this was 47.  D26 emptied the discriminating population: every
+# {ra,st,ld}-internal candidate pair had its T in the demoted 127, and the 19
+# surviving LB rows admit the same pairs on both lattices.  The lost==0 half
+# still bites (it is population-independent); this pin returns to a positive
+# value if the toggle set is ever re-armed.
+EXPECT_D11_GAINED = 0
 
 
 def phase9(rows, root=None):
@@ -1092,8 +1110,8 @@ def phase9(rows, root=None):
         tests_a, _ = cm.load(str(HET), str(CSVPATH))
         aapairs = _mu_pairs(cm, tests_a, oracle)
         lost, gained = aapairs - x86pairs, x86pairs - aapairs
-        print("   146 Disallowed: %d carry a mutant / %d have none (pinned; K-CPU)"
-              % (len(withmu), len(nomu)))
+        print("   %d Disallowed: %d carry a mutant / %d have none (pinned EMPTY since D26)"
+              % (len(dis), len(withmu), len(nomu)))
         print("   D11 measured over the AMD oracle: %d admissible (T mu) pairs on "
               "the x86 lattice vs %d on AArch64 -- gained %d lost %d"
               % (len(x86pairs), len(aapairs), len(gained), len(lost)))
@@ -1410,9 +1428,13 @@ def bite():
     print("  %s G5/omit     %s" % ("ok " if got else "***",
                                    got[0][:120] if got else "DID NOT BITE"))
     rc |= 0 if got else 1
-    # G5 half-blind regex: the classic "phase stopped reading half its rows"
+    # G5 half-blind regex: the classic "phase stopped reading half its rows".
+    # Targets S_CUT_UNKEYED -- the largest class IN THE SHIPPING FILE.  It used
+    # to name S_CUT, and after D26 demoted those 119 rows that injection blinded
+    # the phase on a class no shipping row carries and SILENTLY STOPPED BITING:
+    # exactly the failure this suite exists to catch, caught by its own bite.
     keep = dict(srcmap)
-    sm2 = {k: v for k, v in srcmap.items() if v != "S_CUT"}
+    sm2 = {k: v for k, v in srcmap.items() if v != "S_CUT_UNKEYED"}
     got = run_isolated(phase3, C, rows, sm2)
     print("  %s G5/blind    %s" % ("ok " if got else "***",
                                    got[0][:120] if got else "DID NOT BITE"))
@@ -1566,7 +1588,7 @@ def bite():
                      "DRIFTED"),
                     ("G5/memodrop", "\n".join(l for l in base.splitlines()
                                               if not l.startswith("| `S_NTA` |")),
-                     "not 10"),
+                     "not 11"),
                     ("G5/memogone", None, "UNGATED")):
                 f = Path(tmp) / "memo.md"
                 if mutated is None:
@@ -1650,8 +1672,9 @@ def main():
         fail("G0", "SHAPE_ROT drift: the corpus fits %s but build-amd-oracle.sh "
                    "has %s" % (drift, {s: C.rot_builder.get(s) for s in drift}))
     srcmap = read_builder_sources()
-    if len(srcmap) != 10:
-        fail("G5", "build-amd-oracle.sh defines %d S_* strings not 10" % len(srcmap))
+    if len(srcmap) != 13:
+        fail("G5", "build-amd-oracle.sh defines %d S_* strings not 13 (11 shipping "
+                   "+ S_CUT/S_CUT_MCA for the X2A_TRANSFERS=1 branch)" % len(srcmap))
     rows = read_csv()
     for i, fn in ((1, lambda: phase1(C)), (2, lambda: phase2(C)),
                   (3, lambda: phase3(C, rows, srcmap)), (4, lambda: phase4(C, rows)),

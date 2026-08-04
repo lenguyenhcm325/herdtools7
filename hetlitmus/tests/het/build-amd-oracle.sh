@@ -57,9 +57,10 @@
 # clause -- a Disallowed test seen as Never is MATCH with note "forbidden not
 # seen", never a confirmation -- is carried unchanged.
 #
-# Usage:  build-amd-oracle.sh              gates G1 G15 G13 G14 G0 then write the CSV
+# Usage:  build-amd-oracle.sh              gates G1 G15 G13 G14 G0 G16 then write the CSV
 #         build-amd-oracle.sh --anchors    the anchor gate alone (memo 9.4 G1)
-#         build-amd-oracle.sh --swmr-list  the 65-row sect 8 P2 contingency list
+#         build-amd-oracle.sh --swmr-list  the sect 8 P2 contingency (X2A_TRANSFERS=1 branch)
+#         build-amd-oracle.sh --x2a-list   the 127-row D26 contingency + unfilled slots
 #         build-amd-oracle.sh --g15        the !SWMR hook split alone (G15)
 #         build-amd-oracle.sh --cells      memo 5.4.1 re-derived by ablation
 # Any other argument is REFUSED (fail-closed on an unrecognised mode).
@@ -78,6 +79,29 @@ OUT=expected-amd.csv
 # inlined so gate G15 can drop it and MEASURE the cost (33/34 on no-SWMR
 # IRIW1-sys).  Never set this anywhere but in G15's own bite.
 HOOK_II_GUARD_MODEL="${HOOK_II_GUARD_MODEL:-CDNA3}"
+
+# The D26 strike (Nguyen 2026-08-04, PORT2-phaseC-rekey-brief.md).  [CMCM]
+# sect 5-6 -- the x86TSO+PTX instantiation, the memo's X1/X2a labels included --
+# is EXCLUDED for the AMD oracle, so the cross-device couplings it supplied are
+# UNFILLED SLOTS, not axioms.  With X2A_TRANSFERS=0 (the shipping default) every
+# STEP-3 discharge that crossed the device boundary on struck or undecided
+# material marks the row UNKEYED and classify falls through to NO-ORACLE.  The
+# verdict is never rewritten post-hoc: the SLOT is gated, so a future AMD-native
+# key removes rows from the toggle set by construction.  X2A_TRANSFERS=1
+# restores the pre-strike verdicts (258/146/7; gate G16 asserts the round trip
+# touches exactly the pinned 127 rows and only fields 2 and 4) and may be set
+# only with a recorded proof of the transfer.  Guarded on the model exactly like
+# HOOK_II: the anchor gate runs at M = GCN3 and must stay 34/34.
+# D26/Q4 (Nguyen 2026-08-04): "an AMD GPU-side quote + precondition P2 completes
+# it across the boundary" is NOT an accepted re-key pattern -- P2 is asserted and
+# unmeasured on MI300A -- so the 14 S-gc rows demote with the other 113.
+X2A_TRANSFERS="${X2A_TRANSFERS:-0}"
+X2A_GUARD_MODEL="${X2A_GUARD_MODEL:-CDNA3}"
+
+# Clause (iii)'s own guard (R2 A-9).  SEPARATE from HOOK_II_GUARD_MODEL so that
+# G15(i)'s isolation -- drop clause (ii)'s guard alone, expect exactly 33/34 --
+# still isolates: one variable per clause, or no clause can be measured alone.
+HOOK_III_GUARD_MODEL="${HOOK_III_GUARD_MODEL:-CDNA3}"
 
 # ===========================================================================
 # TABLES.  Four of them carry data and nothing else does (memo 9.3).
@@ -172,15 +196,18 @@ declare -A REF_PROG=(  # per proc, `;'-separated; events `DIR:annot:scope'
 # already contain commas; a new file has no such legacy.
 declare -A SRC=(
 [S_RELAXED]="relaxed: the GPU proc carries no synchronising op so CDNA3 leaves its own program-order pair unordered [LLVM AMDGPUUsage single-thread optimization constraints monotonic=none L7462; GFX942 load/store atomic monotonic system L11324/L11332; g3probe2-gfx942.s lb_relaxed; cf artifact Compound MP1-sys + MP2-sys Allowed]"
-[S_SCOPE]="scope too narrow: the GPU annotation is cta- or gpu-scoped so it neither orders the proc toward its cycle neighbour nor is morally strong with the unscoped x86 thread [CMCM 6.2 p153:18 morally-strong; CMCM Fig10 p153:15 worked compound WRC -- a genuine scope-ANNOTATION example; CMCM 7.2 p153:21 'when the scopes of the operations are not morally strong then the litmus tests are allowed -- for example when the MP litmus test is run with a CTA-scoped fence on two different CTAs'; the artifact cta rows are protocol-configured not annotated so they are NOT cited here -- see decision D15]"
+[S_SCOPE]="scope too narrow: the GPU annotation is cta- or gpu-scoped so it neither orders the proc toward its cycle neighbour nor joins any cross-device ordering with the unscoped x86 thread [LLVM AMDGPUUsage L1428-1439 agent-scope row -- an agent-scope operation joins modification and seq_cst total orderings only with operations whose scope is system or agent AND executed by a thread on the same agent -- and L1386-1388 'Concurrent atomic operations only operate atomically with respect to each other if they are included in each other's sync scope' so a Zen-4 core is not a thread on the same agent as the CDNA3 XCDs; GFX942 fence acq_rel agent lowers to buffer_wbl2 sc1=1 / buffer_inv sc1=1 with sc0=0 throughout L13038-13049 L13126-13140 -- strictly narrower than the sc0=1 sc1=1 system-scope sequence so the Allowed is a statement about code AMD actually generates; CMCM 7.2 p153:21 'when the scopes of the operations are not morally strong then the litmus tests are allowed -- for example when the MP litmus test is run with a CTA-scoped fence on two different CTAs'; the artifact cta rows are protocol-configured not annotated so they are NOT cited here -- see decision D15]"
 [S_ROLE]="wrong role for this pair: a GPU synchronising primitive is present but a release orders only {WW RW} and an acquire only {RR RW} so this proc's own pair stays unordered at EVERY scope -- which is why the row is classed by ROLE and not by SCOPE even where the annotation is cta- or gpu-scoped [LLVM AMDGPUUsage optimization-constraints acquire L7463-7467 / release L7468-7473; GFX942 rows L11454 L12058 L11880 L12386]"
-[S_PPO_C]="x86 store buffer: the CPU proc's W->R pair is the one reordering x86-TSO permits and no MFENCE separates it [CMCM 5 p153:14 'unless r is a write and r-prime a read'; APM 7.2 'Non-overlapping Loads may pass stores'; DECIDED IN THE SOUND DIRECTION by herd7 -cat x86tso.cat: the all-x86 rendering of every one of these 46 rows is Sometimes; artifact Compound SB-sys Allowed and SB-sys-HF Allowed]"
+[S_PPO_C]="x86 store buffer: the CPU proc's W->R pair is the one reordering x86-TSO permits and no MFENCE separates it [APM 7.2 'Non-overlapping Loads may pass stores'; DECIDED IN THE SOUND DIRECTION by herd7 -cat x86tso.cat: the all-x86 rendering of every one of these 46 rows is Sometimes; artifact Compound SB-sys Allowed and SB-sys-HF Allowed]. DISCLOSED (DR F7): classify returns at the FIRST unordered proc so 19 of these 46 rows also carry an independent GPU-side Allowed reason this string does not narrate; the verdict is identical either way"
 [S_RF_NOCUM]="no A-cumulativity: the rf source is a relaxed GPU store so what its thread previously read or wrote is not pushed with it [LLVM AMDGPUUsage optimization-constraints monotonic=none L7462; GFX942 store atomic monotonic emits no buffer_wbl2 L11332]"
-[S_NTA]="thin air: every external edge of this cycle is rf and both threads preserve R->W so the cycle is cut with no synchronisation no scope and no coherence assumption [CMCM p153:19 CMM-No-Thin-Air acyclic(rf u dep u ppo) -- and that ppo is x86TSO's: Fig12 p153:17 defines ppo = (WW u RW u RR) n po in the x86TSO column ONLY and p153:19 states 'we augment the PTX (No-Thin-Air) axiom with ppo ordering in x86TSO' so the axiom carries the CPU half of the cut and NOT the GPU half; LLVM AMDGPUUsage optimization-constraints acquire L7463-7467; GFX942 rows L11454 L11880 carry the GPU-side R->W]. The GPU half rests on the recorded gfx942 emission and on the ISSUE-TIME contradiction an LB cycle is -- the load returned a value its own thread had not yet stored -- which needs neither cumulativity nor multi-copy atomicity. KEY-2 for the GPU-side R->W is per-row: 9 rows by the recorded gfx942 emission (g3probe2 lb_acq_sys for acc-acquire@RW; g3probe4 f_acq_rw for fence-acquire@RW) and 10 rows have NO second key and ship as DECLARED SINGLE-CHAIN rows under the amended two-key rule of 2.0 (see 5.4.1). The artifact LB-sys anchor is NOT a key here -- decision D4 shows it is a different program. The herd7 x86tso LB Never result decides the CPU half ONLY and does not discriminate these rows from LB-cg-sys-relaxed which is Allowed"
+[S_NTA]="thin air: every external edge of this cycle is rf and both threads preserve R->W so the cycle is cut with no synchronisation no scope and no coherence assumption [CMCM 4.1 p153:10-11 LOST-POP operational core (sect 3-4 framework -- architecture-agnostic): a request is ACCEPTED into its own thread before it can PROPAGATE ('the request is just added to the system state and propagated to the thread t that accepted it') and cannot propagate past a previous order constraint ('no previous according to the order constraints request r-prime can be stalling it') and a read is satisfied only by a write that has already propagated to the reader ('In order to respond to a read request r with write w they both have to have propagated to the exact same set of threads ... We also want w to happen before r') so an all-rf external cycle in which every thread orders its own R before its own W is a cycle in the model's OWN accept/propagate order -- NO pred term and NO read-removal step of 4.2 is consulted so the argument needs neither cumulativity nor multi-copy atomicity; APM Rev 3.45 7.2 p190 'A store by a processor cannot be committed to memory before a read appearing earlier in the program has captured its targeted data from memory' and 'Stores do not pass loads' -- a COMMIT-TIME statement about whether the store exists in memory at all NOT about what a class of observer sees so it is not exposed to the 7.2/7.3 device-widening question the demoted cross-location classes turn on; LLVM AMDGPUUsage optimization-constraints acquire L7463-7467; GFX942 rows L11454 L11880 carry the GPU-side R->W]. The GPU half rests on the recorded gfx942 emission and on the ISSUE-TIME contradiction an LB cycle is -- the load returned a value its own thread had not yet stored -- which needs neither cumulativity nor multi-copy atomicity. KEY-2 for the GPU-side R->W is per-row: 9 rows by the recorded gfx942 emission (g3probe2 lb_acq_sys for acc-acquire@RW; g3probe4 f_acq_rw for fence-acquire@RW) and 10 rows have NO second key and ship as DECLARED SINGLE-CHAIN rows under the amended two-key rule of 2.0 (see 5.4.1). The artifact LB-sys anchor is NOT a key here -- decision D4 shows it is a different program. The herd7 x86tso LB Never result decides the CPU half ONLY and does not discriminate these rows from LB-cg-sys-relaxed which is Allowed"
 [S_CUT]="cycle cut: every thread preserves its own program-order pair and every communication edge is global -- morally-strong sys-scope endpoints an A-cumulative source and a non-stale sink [CMCM 6.2 p153:18 x86 write/read are at least a sys-scoped release/acquire + rfe-g-x as strong as x86TSO rfe; LLVM AMDGPUUsage optimization-constraints acquire L7463-7467 / release L7468-7473; GFX942 buffer_wbl2/buffer_inv rows L11454 L12058 L11880 L12386]. DISCLOSED for the co-edge sub-case (19 S-cg-sys-* rows close through a co edge from a GPU write to an x86 write on the SAME location): 'global' there means a SHARED PER-LOCATION coherence order exists between the CDNA3 XCDs and the Zen-4 CCDs and respects hb. That is precondition P2 of memo 8 (SWMR on the race path) and it is strictly WEAKER than the cross-location propagation order memo 6 declines to assume for 2+2W -- which is why those rows are Disallowed and the 2+2W rows are NO-ORACLE. Surviving artifact anchors are MP1-sys-F and MP2-sys-F and IRIW1-sys and IRIW2-sys-F and they cover exactly two GPU mechanism cells (sys release on a W;W proc and sys acquire on an R;R proc); SB-sys-F is REVOKED by decision D1 and LB-sys by D4 so neither is cited; sc-fence and standalone-fence and every @RW cell have NO artifact anchor and NO second key and ship as DECLARED SINGLE-CHAIN rows under the amended two-key rule of 2.0 -- see 5.4.1"
 [S_CUT_MCA]="cycle cut through a GPU observer that must agree with a second observer on the order of two x86 writes: this is decision D2 and the MCA step is a DECISION not a derivation. Key-1 is CMCM 6.2 p153:18 X2a plus LLVM AMDGPUUsage: a system-scope acquire emits s_waitcnt vmcnt(0); buffer_inv sc0 sc1 which invalidates the reader private copy. Key-2 is the artifact anchor IRIW2-sys-F for the 4 acquire-ANNOTATION rows (its cell acc-acquire@RR is anchored and survives removal of GCN3-a/GCN3-b) while the 4 sc-FENCE rows have no artifact anchor of any kind and no second key and ship as DECLARED SINGLE-CHAIN decision rows under the amended two-key rule of 2.0 (see 5.4.1). Departs from G3 recommendation Allowed-unless-probed; confirm before first campaign"
-[S_WS_FENCE]="write serialisation unresolved (fence sub-shape): this cycle is closed only by a co edge out of a GPU proc whose two writes are RELAXED and separated by a standalone fence so it needs the GPU W;W program order to be global propagation order. CMCM 5.1(1) names exactly this as where its operational and its axiomatic model part company -- 'Write serialization is enforced within the causality constraints by our operational model but not by the axiomatic PTX model' -- with 2+2W as its own Fig11a witness; and no admitted AMD VENDOR source (HSA PRM 6.2.1 LLVM AMDGPUUsage CDNA3 ISA) states it for relaxed accesses separated by a fence. The recorded gfx942 emission for this exact body (g3probe3.hip kernels ws_2p2w_fsc/ws_rgc_fsc: two global_store separated by buffer_wbl2 sc0 sc1 then s_waitcnt vmcnt(0)) settles ord-visibility and NOT co-placement -- turning visible-at-system-scope into a shared per-location coherence order needs system-scope multi-copy atomicity of the compound machine which no admitted source states for CDNA3. DISCLOSED: the non-vendor axiom SCATOM Def 27 p644 as transcribed into amd-gcn3.cat axiom (4) DOES forbid 2+2W-sys-fence; it is not cited as a key because gcn3 is never a Key-2 (2.1) and Def 27 is a proposed SC axiom for OpenCL C11 rather than a CDNA3 model [CMCM 5.1+Fig11 p153:15-16; HSA PRM 6.2.1; LLVM seq_cst total orderings; decision D7 and D21]"
-[S_WS_REL]="write serialisation unresolved (release sub-shape): both GPU writes are w[release;sys] (comma-free event notation for CSV) and no fence is present. The admitted instrument amd-gcn3.cat DOES decide this sub-shape -- measured Never for 2+2W-sys-release -- but it decides it through axiom (3) sys-strong which is precisely the axiom decision D1 revokes for CDNA3. So the silence here is a CONSEQUENCE OF D1 not an absence of sources; ord-visibility and co-placement are distinct axioms (the axiomatic PTX model is the existence proof) so a local writeback-and-wait does not by itself constrain a per-location coherence order [CMCM 5.1+Fig11 p153:15-16; amd-gcn3.cat axiom 3; decision D1 and D21]"
+[S_WS_FENCE]="write serialisation unresolved (sc-fence sub-shape): this cycle is closed only by a co edge out of a GPU proc whose two writes are RELAXED and separated by a standalone f[sc;sys] fence so it needs the GPU W;W program order to be a global per-location co placement. The recorded gfx942 emission for this exact body (g3probe3.hip kernels ws_2p2w_fsc/ws_rgc_fsc: two global_store separated by buffer_wbl2 sc0 sc1 then s_waitcnt vmcnt(0)) settles ord-VISIBILITY at system scope and NOT co-placement -- ord-visibility and co-placement are distinct axioms (the axiomatic PTX model is the existence proof) -- and LLVM AMDGPUUsage grants relaxed writes only per-location modification order plus a seq_cst total order these monotonic stores never join so no admitted AMD source states the placement. This is the same unfilled slot decision D26 demotes 127 rows on (predecessorConstraints for a W;W pair) and D7's silence is its PRECEDENT not an anomaly; the re-open trigger for both is an AMD-native statement of system-scope multi-copy atomicity for the compound machine. DISCLOSED: the non-vendor axiom SCATOM Def 27 p644 as transcribed into amd-gcn3.cat axiom (4) DOES forbid 2+2W-sys-fence; it is not cited as a key because gcn3 is never a Key-2 (2.1) and Def 27's own implementability argument (SCATOM 5.2 pp644-645 fn41) disclaims BOTH multi-device and fences so it does not apply here [LLVM seq_cst total orderings; HSA PRM 6.2.1; decision D7 D21 and D26]"
+[S_WS_FREL]="write serialisation unresolved (release-fence sub-shape): the two GPU writes are RELAXED and separated by a standalone f[release;sys] fence. Split from the sc-fence sub-shape by FENCE SEMANTICS not by the mere presence of a fence -- the previous class keyed on LP_FBET presence and conflated f[release;sys] with f[sc;sys] although the paper's own axiomatic model gives the two different treatments (fork D research 2026-08-04). The recorded gfx942 emission for this body is g3probe3.hip kernel ws_rgc_frel (buffer_wbl2 sc0 sc1 then s_waitcnt vmcnt(0) -- the release half alone with no trailing buffer_inv) and it settles ord-visibility NOT co-placement exactly as the sc-fence sub-shape. Same unfilled slot as D26/D7; same re-open trigger [LLVM seq_cst total orderings; HSA PRM 6.2.1; decision D7 D21 and D26]"
+[S_WS_REL]="write serialisation unresolved (release sub-shape): both GPU writes are w[release;sys] (comma-free event notation for CSV) and no fence is present. The admitted instrument amd-gcn3.cat DOES decide this sub-shape -- measured Never for 2+2W-sys-release -- but it decides it through axiom (3) sys-strong which is precisely the axiom decision D1 revokes for CDNA3. So the silence here is a CONSEQUENCE OF D1 not an absence of sources; ord-visibility and co-placement are distinct axioms (the axiomatic PTX model is the existence proof) so a local writeback-and-wait does not by itself constrain a per-location coherence order. Same unfilled slot as D26/D7 (predecessorConstraints for a W;W pair); same re-open trigger [amd-gcn3.cat axiom 3; decision D1 D7 and D26]"
+[S_CUT_UNKEYED]="cycle cut UNKEYED -- decision D26 (2026-08-04): every thread preserves its own program-order pair but the step that made this cycle's cross-device communication edges global was carried by CMCM 6.2 p153:18 (the memo's X1/X2a register labels) which is the x86TSO+PTX instantiation of sections 5-6 and is EXCLUDED for the AMD oracle. The framework slot it filled (predecessorConstraints in the authors' own Arch typeclass -- the per-architecture parameter CMCM 4.6 leaves open) is UNFILLED for Zen4+CDNA3: the Phase C sweep measured NO admitted AMD source stating cross-device cumulativity freshness or multi-copy atomicity at system scope and SWMR/P2 covers only a per-location co order whose strong write-atomicity form no source states either. NO-ORACLE not Allowed -- silence is not permission. Observing this outcome on hardware is DATA never a refutation of the compound model. X2A_TRANSFERS=1 restores the pre-strike Disallowed (contingency: build-amd-oracle.sh --x2a-list) and may be set only with a recorded proof of the transfer [decision D26; CMCM 4.6 p153:14 -- admissible sect 3-4 framework naming the open slot; PORT2-phaseC-rekey-brief.md]"
+[S_CUT_MCA_UNKEYED]="cycle cut through a GPU observer UNKEYED -- decisions D26 and D2: the cut needs two observers (one a CDNA3 agent) to agree on the order of two x86 writes. That MCA step was decision D2 resting on the memo's X2a label (CMCM 6.2 p153:18 -- sections 5-6 EXCLUDED) and D2 is SUPERSEDED at its own confirmation point: the Phase C sweep measured NO admitted AMD source stating system-scope multi-copy atomicity for the compound machine and the artifact anchor IRIW2-sys-F is a gem5 Table 2 NON-OBSERVATION under the struck compound model which cannot key a Disallowed under this project's own doctrine. NO-ORACLE not Allowed; observing this outcome on hardware is DATA never a refutation. X2A_TRANSFERS=1 restores the pre-strike Disallowed [decision D26 and D2; PORT2-phaseC-rekey-brief.md]"
 )
 
 # ===========================================================================
@@ -558,7 +585,12 @@ cum() {                            # cum <proc-idx> <shared-idx> <model> <need>
   # buffer is thread-local: [APM] 7.2 "a LOCAL load can read the result of a
   # local store in a store buffer before the store becomes globally visible")
   # and x86 stores reach it in program order ([APM] 7.2 "Stores do not pass
-  # previous stores").  [CMCM] 6.2 p153:18 X1.
+  # previous stores").  The step from there to "AS SEEN BY A CDNA3 XCD" was the
+  # memo's X1 ([CMCM] 6.2, struck) -- [APM] 7.2's ordering bullets carry no
+  # device widening (7.3's "processor encompasses bus-mastering devices" is
+  # self-scoped to the coherency section; Q2 declined).  On a cross-device edge
+  # with li > 0 this clause's success is therefore tagged X86-WIDE and the row
+  # demotes (D26); same-device and li = 0 uses stand on [APM] alone.
   [ "$LP_DEV" = cpu ] && return 0
   [ "$li" = 0 ] && return 0                       # nothing po-earlier to push
   rank_of "$need"; local nrank=$RANK
@@ -602,8 +634,15 @@ ws() {                             # ws <proc-idx> <model>
 
 # ---------------------------------------------------------------------------
 # ms(a,b) -- morally strong.  [CMCM] 6.2 p153:18 "both events have a scope that
-# includes the other access and neither of them is weak".  x86 events are
-# unconditionally system-scope [CMCM 5 p153:14].  The "neither is weak" clause is
+# includes the other access and neither of them is weak" -- sect 6 vocabulary,
+# retained as the X2A_TRANSFERS=1 branch's definition; on the shipping branch
+# ms() only ever moves a row TOWARD Allowed (fail-safe), so it needs no key.
+# The x86-events-are-system-scope clause is FRAMEWORK material, re-pointed by
+# D26 research (brief 7.1): [CMCM] 3.2.3 p153:8-9 "every non-scoped order
+# constraint coming from a non-scoped memory model [is treated] as system
+# scoped" + 4.4 p153:13 "in an unscoped LOST-POP model all requests should be
+# system-scoped" -- NOT sect 5 p153:14 (struck) and NOT the memo's X1 label.
+# The "neither is weak" clause is
 # DISCHARGED not ignored: every GPU access in this corpus is an emitted scoped
 # ATOMIC, never PTX-`weak', so only scope binds; for the artifact anchors the
 # plain non-atomic GPU accesses are modelled (relaxed sys) under decision D17.
@@ -719,6 +758,18 @@ classify_amd() {
   if [ "$allrf" = 1 ]; then VERDICT=Disallowed; CLASS=S_NTA; return; fi
 
   # ---- STEP 3.  every external edge must be global -------------------------
+  # The D26 strike, slot-gated (see the X2A_TRANSFERS block at the top).  A
+  # discharge that SUCCEEDS via struck or undecided material on a CROSS-DEVICE
+  # edge records the row UNKEYED and the loop CONTINUES -- it never returns
+  # early -- so a FAILING discharge still wins (the row stays Allowed exactly as
+  # at X2A_TRANSFERS=1) and a GPU-side ws() failure still wins (the 7 S_WS rows
+  # keep their class and stay OUT of the toggle set).  Slot tags accumulate in
+  # UNKEYED_TAGS for the --x2a-list contingency printout.
+  local unkeyed=0 x2a_live=0
+  UNKEYED_TAGS=""
+  if [ "$X2A_TRANSFERS" = 0 ] && [ "$model" = "$X2A_GUARD_MODEL" ]; then x2a_live=1; fi
+  tag_unkeyed() { unkeyed=1; case " $UNKEYED_TAGS " in (*" $1 "*) :;; (*) UNKEYED_TAGS="$UNKEYED_TAGS $1";; esac; }
+  xdev() { [ "${PROG_DEV[$1]}" != "${PROG_DEV[$2]}" ]; }
   for e in "${CY_EDGES[@]}"; do
     read -r k sp si dp di <<< "$e"
     if ! ms "$sp" "$si" "$dp" "$di"; then VERDICT=Allowed; CLASS=S_SCOPE; return; fi
@@ -749,29 +800,72 @@ classify_amd() {
         fi
         need_of "$sp"
         if ! cum "$sp" "$si" "$model" "$NEED"; then
-          VERDICT=Allowed; CLASS=S_RF_NOCUM; return; fi;;
+          VERDICT=Allowed; CLASS=S_RF_NOCUM; return; fi
+        # cum succeeded.  With li = 0 it is VACUOUS (nothing po-earlier to push
+        # -- no slot consulted, R2 D-1's address-aware reading); with li > 0 the
+        # discharge was the struck coupling: X86-WIDE for a cpu source (the
+        # [APM] 7.2 -> XCD widening, open question Q2 declined) or X2A-GPU for a
+        # gpu source read by an x86 thread (X2a itself).
+        if [ "$x2a_live" = 1 ] && xdev "$sp" "$dp" && [ "$si" -gt 0 ]; then
+          if [ "${PROG_DEV[sp]}" = cpu ]; then tag_unkeyed X86-WIDE
+          else tag_unkeyed X2A-GPU; fi
+        fi;;
       fr)
+        # PRECONDITION HOOK clause (iii) (R2 A-9 2026-08-04, fix filed with
+        # D20/D20b): an x86 read of a GPU-WRITTEN location is stale under !SWMR
+        # -- [CMCM] 7.2's modelled failure is "an early acknowledgement is sent
+        # to that SM before any sharers in the CPU are invalidated" -- and
+        # clauses (i)/(ii) fire only on rf edges so they cannot reach the three
+        # fr-only rows (SB-cg-sys-fence-2s RWC-cgc-sys-fence{,-2s}).  Guarded on
+        # the model exactly like clause (ii); dead code in the shipped CSV
+        # (SWMR = 1 there).
+        if [ "$swmr" = 0 ] && [ "${PROG_DEV[sp]}" = cpu ] && [ "${PROG_DEV[dp]}" = gpu ] \
+           && [ "$model" = "$HOOK_III_GUARD_MODEL" ]; then
+          VERDICT=Allowed; CLASS=S_NOSWMR; return
+        fi
         need_of "$sp"
         if ! fresh "$sp" "$si" "$model" "$NEED"; then
-          VERDICT=Allowed; CLASS=S_FR_STALE; return; fi;;
+          VERDICT=Allowed; CLASS=S_FR_STALE; return; fi
+        # fresh succeeded and it is never vacuous: for a cpu reader it is the
+        # x86-MCA claim ported across the device boundary (Q3 declined); for a
+        # gpu reader it is the acquire-freshness-toward-x86 claim (GPU-READ,
+        # Q4 declined -- the quote is GPU-local and P2 was to complete it).
+        if [ "$x2a_live" = 1 ] && xdev "$sp" "$dp"; then
+          if [ "${PROG_DEV[sp]}" = cpu ]; then tag_unkeyed X86-MCA
+          else tag_unkeyed GPU-READ; fi
+        fi;;
       co)
         if [ "$si" -gt 0 ]; then
           load_proc "$sp"
           if [ "${LP_DIRS:si-1:1}" = W ]; then
             if ! ws "$sp" "$model"; then
               VERDICT=NO-ORACLE
-              # the two sub-shapes are one emitted cell but TWO provenance
-              # chains and must not be merged (addendum sect 1 R-1)
+              # the sub-shapes are one emitted cell but THREE provenance
+              # chains and must not be merged (addendum sect 1 R-1; the
+              # FENCE/FREL split is by fence SEMANTICS -- fork D 2026-08-04)
               load_proc "$sp"
-              if [ -n "$LP_FBET" ]; then CLASS=S_WS_FENCE; else CLASS=S_WS_REL; fi
+              if [ -n "$LP_FBET" ]; then
+                case " $LP_FBET " in
+                  (*" sc:"*)      CLASS=S_WS_FENCE;;
+                  (*" release:"*) CLASS=S_WS_FREL;;
+                  (*) die "S_WS fence sub-shape carries an unclassified fence '$LP_FBET'";;
+                esac
+              else CLASS=S_WS_REL; fi
               return
+            fi
+            # ws succeeded.  On a cross-device co edge the cpu-side discharge
+            # is [APM] FIFO *plus x86 MCA* -- the MCA half is the same Q3-
+            # declined port (the 5 R-cg rows; brief sect 1.2 X86-MCA(ws)).
+            if [ "$x2a_live" = 1 ] && xdev "$sp" "$dp" && [ "${PROG_DEV[sp]}" = cpu ]; then
+              tag_unkeyed X86-MCA-WS
             fi
           fi
         fi;;
       *) die "unknown edge kind '$k'";;
     esac
   done
-  VERDICT=Disallowed; CLASS=S_CUT
+  if [ "$unkeyed" = 1 ]; then VERDICT=NO-ORACLE; CLASS=S_CUT_UNKEYED
+  else VERDICT=Disallowed; CLASS=S_CUT; fi
 }
 
 # ---------------------------------------------------------------------------
@@ -783,7 +877,11 @@ classify_amd() {
 # clause every MP-cg acquire row is (35).  G12 asserts the count is exactly 8.
 # ---------------------------------------------------------------------------
 is_mca() {
-  [ "$VERDICT" = Disallowed ] && [ "$CLASS" = S_CUT ] || return 1
+  # Two host classes, one structural predicate: S_CUT at X2A_TRANSFERS=1 (->
+  # S_CUT_MCA) and S_CUT_UNKEYED at the shipping default (-> S_CUT_MCA_UNKEYED).
+  # The predicate itself is flag-independent -- what changes is only which side
+  # of the D26 strike the 8 rows sit on.
+  case "$CLASS" in S_CUT|S_CUT_UNKEYED) :;; *) return 1;; esac
   case "$PROG_SHAPE" in IRIW|RWC) :;; *) return 1;; esac
   local e k sp si dp di
   for e in "${CY_EDGES[@]}"; do
@@ -889,7 +987,25 @@ cells_occurring() {
 
 gate_cells() {
   echo "== memo 5.4.1 per-cell load-bearing ablation over the Disallowed rows ==" >&2
+  # Runs ON THE X2A_TRANSFERS=1 BRANCH: memo 5.4.1 documents the derivation
+  # structure of the pre-strike rule (which cell each of the then-146 Disallowed
+  # verdicts rests on) and stays normative for the ablation branch.  The
+  # SHIPPING Disallowed census (19, all S_NTA LB rows) is asserted first.
+  local _x2a_saved="$X2A_TRANSFERS"
   local f n c keep cnt bad=0 e w
+  local ship=0 shipbad=0
+  for f in $(ls ./*.litmus | LC_ALL=C sort); do
+    n="$(basename "$f" .litmus)"
+    program "$n"; classify_amd CDNA3 1
+    if [ "$VERDICT" = Disallowed ]; then
+      ship=$((ship+1))
+      case "$n" in LB-cg-sys-*) :;; *) shipbad=$((shipbad+1)); echo "   shipping Disallowed outside LB-cg-sys: $n" >&2;; esac
+    fi
+  done
+  [ "$ship" = 19 ] || die "5.4.1: shipping Disallowed census is $ship not 19 (D26)"
+  [ "$shipbad" = 0 ] || die "5.4.1: a shipping Disallowed row is outside the LB-cg-sys survivor family"
+  echo "   shipping branch: 19 Disallowed, all LB-cg-sys (D26)" >&2
+  X2A_TRANSFERS=1
   DIS_ROWS=""
   for f in $(ls ./*.litmus | LC_ALL=C sort); do
     n="$(basename "$f" .litmus)"
@@ -897,7 +1013,7 @@ gate_cells() {
     [ "$VERDICT" = Disallowed ] && DIS_ROWS="$DIS_ROWS $n"
   done
   local ndis=0; for n in $DIS_ROWS; do ndis=$((ndis+1)); done
-  [ "$ndis" = 146 ] || die "5.4.1: $ndis Disallowed rows not 146"
+  [ "$ndis" = 146 ] || die "5.4.1: $ndis Disallowed rows not 146 (X2A_TRANSFERS=1 branch)"
   cells_occurring
   printf '   %-20s %6s %6s\n' cell measured memo >&2
   for e in $CELL_TABLE; do
@@ -951,6 +1067,7 @@ gate_cells() {
   done
   echo "   anchors + the recorded gfx942 emissions: $cnt / 146 covered ; uninstrumented $((146-cnt))" >&2
   [ "$cnt" = 146 ] || die "5.4.1 FAILED: the twelve instrumented cells cover $cnt rows but the addendum measured 146 (gap 0)"
+  X2A_TRANSFERS="$_x2a_saved"
 }
 
 # ===========================================================================
@@ -1220,9 +1337,14 @@ banner() {
       SHARED ALLOCATION per candidate allocator.
   P2  The race-path allocator must give hardware CPU-GPU coherence WITH SWMR --
       not driver zero-copy emulation.  This is the SWMR parameter of the rule.
-      IF P2 FAILS 65 OF THE 146 Disallowed ROWS LOSE THEIR VERDICT (was 48
-      before the P2-0 hook widening); 81 survive (19 S_NTA + 62 S_CUT).  The
-      65-row list is printed below and by `build-amd-oracle.sh --swmr-list'.
+      SINCE D26 (2026-08-04) A P2 FAILURE COSTS ZERO SHIPPING VERDICTS: every
+      row the !SWMR hook releases is already NO-ORACLE under the X2A_TRANSFERS
+      strike, and the 19 surviving Disallowed (S_NTA) return at STEP 2 before
+      any cross-device slot is consulted -- measured at generation time below.
+      The hook and its liveness gate are KEPT: they are what proves the slot is
+      gated rather than hard-coded, and on the X2A_TRANSFERS=1 ablation branch
+      a P2 failure still costs 68 verdicts (48 narrow + 17 K-CPU + 3 fr-only;
+      `build-amd-oracle.sh --swmr-list').
   P3  The GPU-side allocation must be FINE-GRAINED.  ROCm: coarse-grained
       memory downgrades system-scope atomics to device scope -- every sys-scope
       row is void and all 146 Disallowed collapse to Allowed.
@@ -1263,7 +1385,21 @@ WRC3-cccg-sys-relaxed WRC3-cccg-sys-release WRC3-cccg-sys-acqrel-2s WRC3-cccg-sy
 RWC-ccg-sys-fence-2s
 "
 
+# The 3 fr-only rows clause (iii) adds to the wide hook (R2 A-9 2026-08-04):
+# no cross-device rf at all, released through the cpu-sourced fr edge instead.
+# PINNED and asserted element-for-element like K-CPU.
+FR3_ROWS="
+SB-cg-sys-fence-2s RWC-cgc-sys-fence RWC-cgc-sys-fence-2s
+"
+
 swmr_sets() {                      # -> P2_ROWS (wide) NARROW_ROWS KCPU_DERIVED
+  # Measured ON THE X2A_TRANSFERS=1 BRANCH: at the shipping default the 127
+  # toggle rows are already NO-ORACLE, so the hook releases nothing and every
+  # pin below would trivially read 0.  What these sets fix is the structure of
+  # the P2 contingency for the ablation branch (X2A_TRANSFERS=1 ∧ !SWMR), which
+  # is where the hook can still cost verdicts.  The SHIPPING P2 contingency is
+  # asserted EMPTY separately at generation time.
+  local _x2a_saved="$X2A_TRANSFERS"; X2A_TRANSFERS=1
   local f name base i gpuord
   P2_ROWS=(); NARROW_ROWS=(); KCPU_DERIVED=()
   for f in $(ls ./*.litmus | LC_ALL=C sort); do
@@ -1287,9 +1423,10 @@ swmr_sets() {                      # -> P2_ROWS (wide) NARROW_ROWS KCPU_DERIVED
     # instantiation's model -- but that also removes (GCN3-a)/(GCN3-b), so it is
     # NOT a clean isolation.  Isolate instead by disabling the guard's match.
     program "$name"
-    HOOK_II_GUARD_MODEL=__none__ classify_amd CDNA3 0
+    HOOK_II_GUARD_MODEL=__none__ HOOK_III_GUARD_MODEL=__none__ classify_amd CDNA3 0
     [ "$VERDICT" = "$base" ] || NARROW_ROWS+=("$name")
   done
+  X2A_TRANSFERS="$_x2a_saved"
 }
 
 # set difference: WIDE \ NARROW, sorted
@@ -1335,10 +1472,10 @@ gate_G15() {
   anchor_gate GCN3 >/dev/null 2>&1     # restore the reported state
   # (ii)/(iii) |wide \ narrow| == 17 and the delta EQUALS the K-CPU list --------
   swmr_sets; swmr_delta
-  echo "   (ii) !SWMR rows moved: narrow ${#NARROW_ROWS[@]}  wide ${#P2_ROWS[@]}  delta ${#DELTA[@]}" >&2
+  echo "   (ii) !SWMR rows moved (X2A_TRANSFERS=1 branch): narrow ${#NARROW_ROWS[@]}  wide ${#P2_ROWS[@]}  delta ${#DELTA[@]}" >&2
   [ "${#NARROW_ROWS[@]}" = 48 ] || die "G15(ii) FAILED: the narrow hook moves ${#NARROW_ROWS[@]} rows but R-7 measured 48"
-  [ "${#P2_ROWS[@]}" = 65 ]     || die "G15(ii) FAILED: the wide hook moves ${#P2_ROWS[@]} rows but R-7 measured 65"
-  [ "${#DELTA[@]}" = 17 ]       || die "G15(ii) FAILED: |wide \\ narrow| = ${#DELTA[@]} but the addendum pins 17"
+  [ "${#P2_ROWS[@]}" = 68 ]     || die "G15(ii) FAILED: the wide hook moves ${#P2_ROWS[@]} rows but R-7's 65 + clause (iii)'s 3 = 68"
+  [ "${#DELTA[@]}" = 20 ]       || die "G15(ii) FAILED: |wide \\ narrow| = ${#DELTA[@]} but the pin is 20 (17 K-CPU + 3 fr-only)"
   local pinned derived delta
   pinned=$(printf '%s\n' $KCPU_ROWS | LC_ALL=C sort)
   derived=$(printf '%s\n' "${KCPU_DERIVED[@]}" | LC_ALL=C sort)
@@ -1348,12 +1485,14 @@ gate_G15() {
     diff <(echo "$pinned") <(echo "$derived") >&2 || true
     die "G15(iii) FAILED: memo 5.4's pinned K-CPU list is not the set the rule derives"
   fi
-  if [ "$delta" != "$pinned" ]; then
-    echo "G15(iii) wide-minus-narrow vs K-CPU differences (< delta only  > K-CPU only):" >&2
-    diff <(echo "$delta") <(echo "$pinned") >&2 || true
-    die "G15(iii) FAILED: wide \\ narrow is not element-for-element the K-CPU list of memo 5.4"
+  local expected_delta
+  expected_delta=$(printf '%s\n' $KCPU_ROWS $FR3_ROWS | LC_ALL=C sort)
+  if [ "$delta" != "$expected_delta" ]; then
+    echo "G15(iii) wide-minus-narrow vs K-CPU+FR3 differences (< delta only  > pinned only):" >&2
+    diff <(echo "$delta") <(echo "$expected_delta") >&2 || true
+    die "G15(iii) FAILED: wide \\ narrow is not element-for-element K-CPU (memo 5.4) + the 3 pinned fr-only rows"
   fi
-  echo "   (iii) wide \\ narrow == the 17 K-CPU rows of memo 5.4 == the rule's own derived set" >&2
+  echo "   (iii) wide \\ narrow == 17 K-CPU rows (memo 5.4) + 3 fr-only rows (R2 A-9), element for element" >&2
 }
 
 # ===========================================================================
@@ -1368,7 +1507,34 @@ case "$MODE" in
   --swmr-list)
     swmr_sets
     printf '%s\n' "${P2_ROWS[@]}"
-    echo "sect 8 P2 contingency: ${#P2_ROWS[@]} rows (narrow hook would move ${#NARROW_ROWS[@]})" >&2
+    echo "sect 8 P2 contingency ON THE X2A_TRANSFERS=1 BRANCH: ${#P2_ROWS[@]} rows (narrow hook would move ${#NARROW_ROWS[@]})." >&2
+    echo "At the shipping default the P2 contingency is EMPTY: every row above is already NO-ORACLE under D26." >&2
+    exit 0;;
+  --x2a-list)
+    # The D26 contingency printout (brief sect 5): per row, the unfilled slots.
+    echo "X2A_TRANSFERS = 0 (default).  The 127 rows below are NO-ORACLE, not Disallowed.  The"
+    echo "compound-model prediction for them was carried by CMCM 6.2 p153:18, which is the"
+    echo "x86TSO+PTX instantiation and is EXCLUDED for the AMD oracle (Nguyen 2026-08-04, D26)."
+    echo "Observing the listed outcome on any of these rows is DATA, not a refutation of the"
+    echo "compound memory model.  Setting X2A_TRANSFERS=1 restores the pre-strike verdicts"
+    echo "(258/146/7) and re-arms them as Disallowed; do that only if the transfer is positively"
+    echo "proven, and record the proof.  Slot key: X86-WIDE = APM 7.2 ordering toward a CDNA3"
+    echo "XCD (Q2 declined); X2A-GPU = CDNA3 cross-location transport to an x86 reader (Q4"
+    echo "declined); X86-MCA / X86-MCA-WS = x86 MCA with a CDNA3 second observer (Q3 declined);"
+    echo "GPU-READ = CDNA3 acquire freshness toward the x86 side (Q4 declined); MCA-HET = two"
+    echo "observers agree on two x86 writes (D2, superseded)."
+    x2a_n=0
+    for f in $(ls ./*.litmus | LC_ALL=C sort); do
+      name="$(basename "$f" .litmus)"
+      program "$name"; classify_amd CDNA3 1
+      mca=""
+      if is_mca; then mca=" MCA-HET"; fi
+      case "$CLASS" in S_CUT_UNKEYED|S_CUT_MCA_UNKEYED) :;; *) continue;; esac
+      x2a_n=$((x2a_n+1))
+      printf '%s\t%s\n' "$name" "${UNKEYED_TAGS# }$mca"
+    done
+    [ "$x2a_n" = 127 ] || die "--x2a-list: $x2a_n toggle rows not 127"
+    echo "total: $x2a_n rows (119 S_CUT_UNKEYED + 8 S_CUT_MCA_UNKEYED)" >&2
     exit 0;;
   --g15)
     anchor_gate GCN3 >/dev/null 2>&1
@@ -1380,7 +1546,7 @@ case "$MODE" in
     echo "memo 5.4.1 OK" >&2
     exit 0;;
   --generate) ;;
-  *) die "unknown mode '$MODE' (expected --generate | --anchors | --swmr-list | --g15 | --cells)";;
+  *) die "unknown mode '$MODE' (expected --generate | --anchors | --swmr-list | --x2a-list | --g15 | --cells)";;
 esac
 
 # --- G1: the anchor gate runs and passes BEFORE the CSV is written ----------
@@ -1433,13 +1599,27 @@ declare -A NCLASS=() NVERD=()
   echo "# keeps NO-ORACLE for the 7 rows that EARN it (memo 6)."
   echo "# QUOTATION CONVENTION: commas are STRIPPED from quoted source text below"
   echo "# because the comma guard is fatal; quotes are otherwise verbatim."
-  echo "# Preconditions P1 P2 P3 (memo sect 8) are UNRESOLVED; the banner and the"
-  echo "# 65-row P2 contingency list are printed to stderr at generation time."
+  echo "# D26 (Nguyen 2026-08-04): [CMCM] sect 5-6 is EXCLUDED for this oracle, so the"
+  echo "# 127 rows it carried (119 S_CUT_UNKEYED + 8 S_CUT_MCA_UNKEYED) are NO-ORACLE"
+  echo "# not Disallowed.  Observing them on hardware is DATA, never a refutation."
+  echo "# X2A_TRANSFERS=1 regenerates the pre-strike 258/146/7 file (gate G16 pins the"
+  echo "# round trip); the per-row unfilled-slot list is build-amd-oracle.sh --x2a-list."
+  echo "# ANCHOR NOTE (DR F6): two anchor reference values are artifact-csv-CORRECTED,"
+  echo "# not artifact-csv-read: Compound MP1-cta-F and no-SWMR MP1-sys-F.  The shipped"
+  echo "# artifact expected.csv says Disallowed on both; [CMCM] Table 2 p153:22 and the"
+  echo "# artifact's own per-test ReadMes say Allowed (memo 4.3).  A reader diffing the"
+  echo "# anchors against the artifact CSV must expect exactly those two departures."
+  echo "# Preconditions P1 P2 P3 (memo sect 8) are UNRESOLVED; the banner and the P2"
+  echo "# contingency (empty at the shipping default -- measured; 68 rows on the"
+  echo "# X2A_TRANSFERS=1 branch) are printed to stderr at generation time."
   for f in $(ls ./*.litmus | LC_ALL=C sort); do
     name="$(basename "$f" .litmus)"
     program "$name"
     classify_amd CDNA3 1
-    if is_mca; then CLASS=S_CUT_MCA; fi
+    if is_mca; then
+      if [ "$CLASS" = S_CUT_UNKEYED ]; then CLASS=S_CUT_MCA_UNKEYED
+      else CLASS=S_CUT_MCA; fi
+    fi
     src_of "$CLASS"
     NCLASS[$CLASS]=$(( ${NCLASS[$CLASS]:-0} + 1 ))
     NVERD[$VERDICT]=$(( ${NVERD[$VERDICT]:-0} + 1 ))
@@ -1451,10 +1631,24 @@ declare -A NCLASS=() NVERD=()
 # (gate_G15 already populated P2_ROWS; recomputed here so the printed list can
 # never be a stale variable from a different code path.)
 swmr_sets
-echo "  sect 8 P2 CONTINGENCY -- the ${#P2_ROWS[@]} Disallowed rows that lose their verdict" >&2
-echo "  if the race-path allocator does not give hardware SWMR coherence:" >&2
+echo "  sect 8 P2 CONTINGENCY (X2A_TRANSFERS=1 branch) -- the ${#P2_ROWS[@]} rows that lose their" >&2
+echo "  verdict there if the race-path allocator does not give hardware SWMR coherence:" >&2
 printf '    %s\n' "${P2_ROWS[@]}" >&2
-[ "${#P2_ROWS[@]}" = 65 ] || die "sect 8 P2 contingency is ${#P2_ROWS[@]} rows but the addendum (item 5) measured 65"
+[ "${#P2_ROWS[@]}" = 68 ] || die "sect 8 P2 contingency is ${#P2_ROWS[@]} rows but R-7's 65 + clause (iii)'s 3 = 68"
+# The SHIPPING P2 contingency must be EMPTY (D26): re-run the release test at
+# the shipping default and require zero rows to move.  This is the measured
+# statement behind the banner's "a P2 failure costs zero shipping verdicts".
+ship_rel=0
+for f in $(ls ./*.litmus | LC_ALL=C sort); do
+  name="$(basename "$f" .litmus)"
+  program "$name"; classify_amd CDNA3 1; v1="$VERDICT"
+  [ "$v1" = Disallowed ] || continue
+  program "$name"; classify_amd CDNA3 0
+  [ "$VERDICT" = "$v1" ] || { ship_rel=$((ship_rel+1)); echo "  SHIPPING P2 release: $name" >&2; }
+done
+[ "$ship_rel" = 0 ] || die "the SHIPPING P2 contingency has $ship_rel row(s); D26 requires it empty"
+echo "  shipping P2 contingency: EMPTY (measured -- all 68 above are already NO-ORACLE under D26)" >&2
+unset ship_rel v1
 
 # ===========================================================================
 # INVARIANTS.  All fatal, all run against $TMPOUT -- the file that was just
@@ -1509,8 +1703,8 @@ ncomma=$(csvrows | awk -F, 'NF>4' | wc -l)
 # Argument 2 of every chk is a COUNT READ BACK OUT OF $TMPOUT.
 chk() { [ "$2" = "$3" ] || die "census FAILED: $1 = $2 but the memo pins $3"; }
 chk "Allowed"       "$(csvcount 2 Allowed)"       258
-chk "Disallowed"    "$(csvcount 2 Disallowed)"    146
-chk "NO-ORACLE"     "$(csvcount 2 NO-ORACLE)"     7
+chk "Disallowed"    "$(csvcount 2 Disallowed)"    19
+chk "NO-ORACLE"     "$(csvcount 2 NO-ORACLE)"     134
 # The per-class census is measured by counting each S_* string IN THE FILE.  The
 # comma guard above has already established that no row has more than 4 fields,
 # so field 4 IS the whole Source string and an EXACT match is the honest test;
@@ -1523,8 +1717,8 @@ chk "NO-ORACLE"     "$(csvcount 2 NO-ORACLE)"     7
 # they agree row by row.
 for _cl in S_RELAXED:60:Allowed S_SCOPE:104:Allowed S_ROLE:44:Allowed \
            S_PPO_C:46:Allowed S_RF_NOCUM:4:Allowed S_NTA:19:Disallowed \
-           S_CUT:119:Disallowed S_CUT_MCA:8:Disallowed \
-           S_WS_FENCE:4:NO-ORACLE S_WS_REL:3:NO-ORACLE; do
+           S_CUT_UNKEYED:119:NO-ORACLE S_CUT_MCA_UNKEYED:8:NO-ORACLE \
+           S_WS_FENCE:3:NO-ORACLE S_WS_FREL:1:NO-ORACLE S_WS_REL:3:NO-ORACLE; do
   _k="${_cl%%:*}"; _rest="${_cl#*:}"; _w="${_rest%%:*}"; _v="${_rest##*:}"
   src_of "$_k"
   chk "$_k" "$(csvrows | awk -F, -v s="$SOURCE" '$4==s' | wc -l)" "$_w"
@@ -1549,7 +1743,45 @@ unset _v
 # make the substitution fail and kill the script BEFORE the die below, i.e. the
 # gate would exit 1 without ever saying which invariant broke.
 nmca=$(csvrows | grep -c 'cycle cut through a GPU observer' || true)
-[ "$nmca" = 8 ] || die "G12 FAILED: S_CUT_MCA is $nmca rows in the CSV but must be exactly 8"
+[ "$nmca" = 8 ] || die "G12 FAILED: S_CUT_MCA_UNKEYED is $nmca rows in the CSV but must be exactly 8"
+
+# --- G16: the X2A_TRANSFERS round trip (D26; brief sect 5) ------------------
+# Re-classify every row at X2A_TRANSFERS=1 and assert the flip touches EXACTLY
+# the 127 toggle rows (119 S_CUT_UNKEYED + 8 S_CUT_MCA_UNKEYED -> Disallowed
+# S_CUT/S_CUT_MCA) and NOTHING else: same census as the pre-strike CSV
+# (258/146/7), every non-toggle row's verdict and class unchanged.  This is the
+# hook's own bite and it runs on every generation -- a slot gated wrongly (too
+# wide, too narrow, or rewriting verdicts post-hoc) cannot ship.
+echo "== G16 X2A_TRANSFERS=1 round trip ==" >&2
+g16_toggled=0 g16_bad=0
+declare -A G16_A=() G16_D=() G16_N=()
+for f in $(ls ./*.litmus | LC_ALL=C sort); do
+  name="$(basename "$f" .litmus)"
+  program "$name"; classify_amd CDNA3 1
+  if is_mca; then
+    if [ "$CLASS" = S_CUT_UNKEYED ]; then CLASS=S_CUT_MCA_UNKEYED; else CLASS=S_CUT_MCA; fi
+  fi
+  v0="$VERDICT" c0="$CLASS"
+  program "$name"; X2A_TRANSFERS=1 classify_amd CDNA3 1
+  if is_mca; then
+    if [ "$CLASS" = S_CUT_UNKEYED ]; then CLASS=S_CUT_MCA_UNKEYED; else CLASS=S_CUT_MCA; fi
+  fi
+  G16_N[$VERDICT]=$(( ${G16_N[$VERDICT]:-0} + 1 ))
+  if [ "$v0" = "$VERDICT" ] && [ "$c0" = "$CLASS" ]; then continue; fi
+  g16_toggled=$((g16_toggled+1))
+  case "$c0=>$CLASS" in
+    "S_CUT_UNKEYED=>S_CUT"|"S_CUT_MCA_UNKEYED=>S_CUT_MCA")
+      [ "$v0" = NO-ORACLE ] && [ "$VERDICT" = Disallowed ] || { echo "G16 FAIL: $name flips $v0->$VERDICT" >&2; g16_bad=$((g16_bad+1)); };;
+    *) echo "G16 FAIL: $name moves $c0 -> $CLASS (outside the toggle set)" >&2; g16_bad=$((g16_bad+1));;
+  esac
+done
+echo "   toggled: $g16_toggled rows; census at X2A_TRANSFERS=1: Allowed ${G16_N[Allowed]:-0} / Disallowed ${G16_N[Disallowed]:-0} / NO-ORACLE ${G16_N[NO-ORACLE]:-0}" >&2
+[ "$g16_bad" = 0 ] || die "G16 FAILED: $g16_bad row(s) move outside the D26 toggle set"
+[ "$g16_toggled" = 127 ] || die "G16 FAILED: the flag toggles $g16_toggled rows but D26 demotes exactly 127"
+[ "${G16_N[Allowed]:-0}" = 258 ] && [ "${G16_N[Disallowed]:-0}" = 146 ] && [ "${G16_N[NO-ORACLE]:-0}" = 7 ] ||
+  die "G16 FAILED: X2A_TRANSFERS=1 census is ${G16_N[Allowed]:-0}/${G16_N[Disallowed]:-0}/${G16_N[NO-ORACLE]:-0} not the pre-strike 258/146/7"
+unset g16_toggled g16_bad v0 c0
+
 # Every guard has passed against $TMPOUT.  Only now does it become $OUT.
 mv -f "$TMPOUT" "$OUT"
 trap - EXIT
