@@ -455,6 +455,161 @@ def _env():
 
 
 # ---------------------------------------------------------------------------
+# PHASE 4 -- WHICH MACHINE THE PRINTOUT NAMES.
+#
+# het_verdict.h used to SNIFF the recorded oracle-source string for "NVIDIA" and
+# pick its interconnect prose from that.  It now prints from defines the emitter
+# stamps out of the ORACLE PAIR TABLE row (litmus/hetOracle.ml), with generic
+# defaults when none are stamped.  Three properties, and all three are read off
+# the PRINTOUT rather than off the defines (the B6c lesson: the enum changing is
+# not the deliverable, the sentence is):
+#
+#   * with NO defines the frame is the GENERIC one -- an unset stamp must fail
+#     SAFE, naming the mechanism and never a vendor;
+#   * with the (AArch64, cuda) defines the NVIDIA frame is byte-for-byte what it
+#     was before the refactor;
+#   * with the (x86_64, hip) defines the frame is that pair's OWN machine, and
+#     carries no Grace/Hopper/NVLink and none of the NVIDIA-only measurements.
+#
+# The defines are SCRAPED from real emissions, never typed here, so this phase
+# tests what the emitter actually stamps.
+# ---------------------------------------------------------------------------
+MACHINE_DEFINE_RE = re.compile(
+    r"^#define HET_(?:LINK_NAME|HOST_HALF|DEV_HALF|ALGLAVE_ZERO_MEASURED"
+    r"|PLACE_LEVER)\b.*$", re.M)
+
+# (label, corpus dir, test, -gpu-target, render extension)
+MACHINE_PAIRS = [
+    ("(AArch64, cuda)", HET_DIR, "MP-cg-sys-fence-2s", "cuda", "cu"),
+    ("(x86_64, hip)", os.path.join(ROOT, "hetlitmus", "tests", "het-x86"),
+     "MP-cg-sys-relaxed-x86_64", "hip", "hip"),
+]
+
+# What each frame MUST print, and what it must NEVER print.  The `must' strings
+# are the sentences themselves, spliced back together across the C string
+# concatenations they are written in.
+GENERIC_MUST = [
+    "- the host half of the host-device interconnect noise did NOT run",
+    "- the device half of the host-device interconnect noise did NOT run",
+    "same host-device interconnect path.",
+    "the host-device interconnect path is alive",
+    "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
+    '(Alglave 4.3.1\'s "zero without stress" was measured on NVIDIA parts and is '
+    'NOT claimed for this target',
+]
+NVIDIA_MUST = [
+    "- the Grace half of the NVLink-C2C noise did NOT run",
+    "- the Hopper half of the NVLink-C2C noise did NOT run",
+    "same NVLink-C2C path.",
+    "the NVLink-C2C path is alive",
+    "CAVEAT: cudaMemAdvise was REFUSED -- HET_PLACE placed nothing.",
+    "On NVIDIA silicon an unstressed run observes nothing (Alglave 4.3.1)",
+]
+AMD_MUST = [
+    "- the x86 half of the Infinity Fabric noise did NOT run",
+    "- the MI300A device half of the Infinity Fabric noise did NOT run",
+    "same Infinity Fabric path.",
+    "the Infinity Fabric path is alive",
+    # No placement lever on this render, and no Alglave number for this part.
+    "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
+    '(Alglave 4.3.1\'s "zero without stress" was measured on NVIDIA parts and is '
+    'NOT claimed for this target',
+]
+NVIDIA_WORDS = ["Grace", "Hopper", "NVLink", "cudaMemAdvise",
+                "On NVIDIA silicon an unstressed run observes nothing"]
+AMD_WORDS = ["Infinity Fabric", "MI300A", "the x86 half"]
+
+MACHINE_FRAMES = [
+    ("no defines (a pair registered without an oracle)", None,
+     GENERIC_MUST, NVIDIA_WORDS + AMD_WORDS),
+    ("(AArch64, cuda)", "(AArch64, cuda)", NVIDIA_MUST, AMD_WORDS),
+    ("(x86_64, hip)", "(x86_64, hip)", AMD_MUST, NVIDIA_WORDS),
+]
+
+
+def scrape_machine_defines(tmp, label, corpus, test, target, ext):
+    """The HET_* machine defines the emitter really stamps for one pair."""
+    out = os.path.join(tmp, "pair-" + target + "-" + os.path.basename(corpus))
+    os.makedirs(out, exist_ok=True)
+    subprocess.run(["litmus7", "-gpu-target", target,
+                    "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
+                    "-o", out, os.path.join(corpus, test + ".litmus")],
+                   cwd=ROOT, env=_env(), check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    render = os.path.join(out, test, test + "." + ext)
+    if not os.path.exists(render):
+        raise SystemExit("verdictcheck: no %s emitted for the %s pair"
+                         % (os.path.basename(render), label))
+    with open(render) as fh:
+        return MACHINE_DEFINE_RE.findall(fh.read())
+
+
+def printout_with(header, tmp, defines, tag):
+    """Compile the rule with [defines] prepended; return its whole printout."""
+    sub = tempfile.mkdtemp(prefix="verdictmachine.", dir=tmp)
+    shutil.copy(header, os.path.join(sub, "het_verdict.h"))
+    pre = os.path.join(sub, "machine.h")
+    with open(pre, "w") as fh:
+        fh.write("/* scraped from the %s emission */\n" % tag)
+        fh.write("\n".join(defines) + "\n")
+    src = os.path.join(sub, "vt.c")
+    with open(src, "w") as fh:
+        fh.write(build_c())
+    exe = os.path.join(sub, "vt")
+    cc = subprocess.run(
+        ["gcc", "-std=c99", "-O2", "-Wall", "-Wno-unused-function",
+         "-include", pre, "-I", sub, src, "-o", exe, "-lm"],
+        capture_output=True, text=True)
+    if cc.returncode != 0:
+        return None, cc.stdout + cc.stderr
+    run = subprocess.run([exe], capture_output=True, text=True)
+    return run.stdout, ""
+
+
+def check_machine_prose(header, tmp, quiet, defines_by_pair=None):
+    """defines_by_pair: {label: [define lines]}.  --bite passes a tampered map."""
+    print("\n===== PHASE 4: which MACHINE does the printout name? =====")
+    if defines_by_pair is None:
+        defines_by_pair = {}
+        for label, corpus, test, target, ext in MACHINE_PAIRS:
+            defines_by_pair[label] = \
+                scrape_machine_defines(tmp, label, corpus, test, target, ext)
+    for label, defs in sorted(defines_by_pair.items()):
+        print("  %-16s stamps %d machine define(s)" % (label, len(defs)))
+        if not quiet:
+            for d in defs:
+                print("      %s" % d)
+
+    bad = 0
+    for label, pair, must, forbid in MACHINE_FRAMES:
+        defs = [] if pair is None else defines_by_pair[pair]
+        text, err = printout_with(header, tmp, defs, label)
+        if text is None:
+            print("  *** %-46s did not compile:\n%s" % (label, err[-800:]))
+            bad += 1
+            continue
+        for want in must:
+            if want not in text:
+                print("  *** %-46s never printed %r" % (label, want))
+                bad += 1
+            elif not quiet:
+                print("      %-16s prints %r" % (label, want))
+        for banned in forbid:
+            if banned in text:
+                print("  *** %-46s printed %r -- a claim about a machine this "
+                      "harness is not" % (label, banned))
+                bad += 1
+
+    if bad:
+        print("\nMACHINE PROSE FAILED: %d problem(s).  A run that names the wrong "
+              "silicon reports a measurement of a machine that never ran." % bad)
+        return 1
+    print("\nMACHINE PROSE OK (generic without defines; each pair's own machine "
+          "with them; no frame names another pair's)")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # PHASE 3 -- the emitted corpus really does carry its oracle class.
 # ---------------------------------------------------------------------------
 def read_control_map():
@@ -740,6 +895,7 @@ def main():
         header = a.header or emit_header(tmp)
         rc, blocks = run_rule(header, tmp, a.quiet)
         rc |= scan_prints(blocks, a.quiet)
+        rc |= check_machine_prose(header, tmp, a.quiet)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     rc |= check_corpus()
@@ -748,7 +904,7 @@ def main():
     if rc:
         print("VERDICTCHECK: FAIL")
     else:
-        print("VERDICTCHECK: PASS  (rule + printout + emitted corpus)")
+        print("VERDICTCHECK: PASS  (rule + printout + machine prose + emitted corpus)")
     return 1 if rc else 0
 
 
@@ -826,6 +982,40 @@ def _bite_report(label, header, mutate, want):
         return False
     print("  BITES (reported, as it must): %s   [%s]" % (said[0].strip(), label))
     return True
+
+
+def _bite_machine(label, tmp, header, mutate=None, defines=None):
+    """Break the MACHINE PROSE path; check_machine_prose must FAIL.
+
+    Two injection sites, because the prose has two: the header's #ifndef
+    defaults (what an unstamped harness prints) and the defines the EMITTER
+    stamps (what a stamped one prints).  [defines] injects at the second."""
+    hdr = header
+    if mutate is not None:
+        with open(header) as fh:
+            orig = fh.read()
+        new = mutate(orig)
+        if new == orig:
+            print("  *** VACUOUS BITE: the injection changed nothing   [%s]" % label)
+            return False
+        hdr = os.path.join(tmp, "machine-bitten.h")
+        with open(hdr, "w") as fh:
+            fh.write(new)
+
+    sub = tempfile.mkdtemp(prefix="verdictmachinebite.")
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            rc = check_machine_prose(hdr, sub, quiet=True, defines_by_pair=defines)
+    finally:
+        shutil.rmtree(sub, ignore_errors=True)
+    if rc:
+        said = [l for l in buf.getvalue().splitlines() if l.startswith("  ***")]
+        print("  BITES (gate failed, as it must): %s   [%s]"
+              % (said[0].strip() if said else "(no diagnostic)", label))
+        return True
+    print("  *** DID NOT BITE: the gate PASSED on wrong machine prose   [%s]" % label)
+    return False
 
 
 def bite():
@@ -926,13 +1116,46 @@ def bite():
             print("  *** DID NOT BITE (rc=%d)   [a harness shipped with ORACLE_UNSET]"
                   % rc)
             ok = False
+
+        # (9) THE FAIL-SAFE DEFAULT MADE A VENDOR CLAIM: an unstamped harness --
+        # the pair registered without an oracle, and every future pair before
+        # its row exists -- would then print a machine it is not.  The direction
+        # matters: a missing define must only ever WEAKEN a claim.
+        print("\n-- machine-prose injections --")
+        ok &= _bite_machine(
+            "the #ifndef DEFAULT names a vendor (unstamped => \"NVLink-C2C\")",
+            tmp, header,
+            mutate=lambda s: s.replace('#define HET_LINK_NAME "host-device interconnect"',
+                                       '#define HET_LINK_NAME "NVLink-C2C"'))
+
+        # (10) THE PROSE WENT BACK TO A LITERAL: this is the pre-refactor bug
+        # itself, in its simplest form -- one sentence naming Grace whatever the
+        # harness was built for.  Only the AMD frame's forbidden list sees it.
+        ok &= _bite_machine(
+            "one sentence hardcodes \"the Grace half\" again",
+            tmp, header,
+            mutate=lambda s: s.replace("              HET_HOST_HALF, HET_LINK_NAME);",
+                                       "              \"the Grace half\", HET_LINK_NAME);"))
+
+        # (11) THE EMITTER STAMPS THE WRONG PAIR'S MACHINE.  The header is
+        # correct here and the harness lies to it, which is the landmine the
+        # pair table exists to stop; nothing in phases 1-3 looks at a define.
+        real = {}
+        for lbl, corpus, test, target, ext in MACHINE_PAIRS:
+            real[lbl] = scrape_machine_defines(tmp, lbl, corpus, test, target, ext)
+        crossed = dict(real)
+        crossed["(x86_64, hip)"] = list(real["(AArch64, cuda)"])
+        ok &= _bite_machine(
+            "the (x86_64, hip) emission stamps the GH200 machine",
+            tmp, header, defines=crossed)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 8 injections were caught -- 4 against the RULE (het_verdict.h),")
-        print("         2 against its REPORTING PATHS and 2 against the EMITTED CORPUS.")
+        print("BITE OK: all 11 injections were caught -- 4 against the RULE (het_verdict.h),")
+        print("         2 against its REPORTING PATHS, 2 against the EMITTED CORPUS and")
+        print("         3 against the MACHINE PROSE (two in the header, one in the stamp).")
         print("         The gate is live, both ways: it passes on the shipped code and")
         print("         fails on every way of breaking it.")
         return 0

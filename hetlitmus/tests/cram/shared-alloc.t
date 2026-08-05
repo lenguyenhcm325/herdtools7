@@ -13,11 +13,17 @@ cache-line-padded arena ((f), (g)).  The per-variable path is left to the two
 tests that are themselves the Layer-B canary and so cannot co-run themselves,
 MP-{cg,gc}-sys-relaxed (control-map.csv: `self'); MP-cg-sys-relaxed guards it.
 
+The `.hip' renders come from ../het-x86, not from ../het: a harness is a
+(CPU ISA x GPU dialect) ORACLE PAIR (litmus/hetOracle.ml), (x86_64, hip) is the
+populated AMD pair, and the AArch64 corpus paired with hip is a machine no oracle
+covers -- litmus7 refuses it.  The CPU column differs; everything these sections
+read is the GPU render and the shared runtime headers.
+
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ mkdir hip
-  $ litmus7 -gpu-target hip -o hip ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
-  $ litmus7 -gpu-target hip -o hip ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target hip -o hip ../het-x86/MP-cg-sys-relaxed-x86_64.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target hip -o hip ../het-x86/MP-cg-sys-acqrel-2s-x86_64.litmus >/dev/null 2>&1
 
 Single-instance means no arena, so the per-variable calls below are the ones
 this harness actually makes.
@@ -100,15 +106,15 @@ The HIP twin renders from the same template: gd_alloc_shared is fine-grained
 hipMallocManaged (no malloc/ATS dispatch -- MI300A's unified HBM pool needs
 none), and the read buffers are device hipMalloc, no __out.  Scoped to
 gd_alloc_shared's body for the same reason as (c).
-  $ sed -n '/^static void gd_alloc_shared/,/^}/p' hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip | grep -c 'hipMallocManaged(_pp'
+  $ sed -n '/^static void gd_alloc_shared/,/^}/p' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip | grep -c 'hipMallocManaged(_pp'
   1
-  $ grep -cE '_shared_pageable|\*_pp = malloc' hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip || true
+  $ grep -cE '_shared_pageable|\*_pp = malloc' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip || true
   0
-  $ grep -c 'gd_alloc_shared((void\*\*)&' hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
+  $ grep -c 'gd_alloc_shared((void\*\*)&' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   3
-  $ grep -c '__out' hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip || true
+  $ grep -c '__out' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip || true
   0
-  $ grep -c '(void)hipMalloc(&bufP' hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
+  $ grep -c '(void)hipMalloc(&bufP' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   2
 
 (f) the co-run arena.  A should-be-forbidden test co-runs mu(T) and the canary,
@@ -118,7 +124,7 @@ would perturb the very test it exists to vouch for (Q4-positive-control.md 3.1 /
 8.4).  Six separate 8-byte mallocs cannot prevent that; one padded arena can, and
 it still goes through gd_alloc_shared with a matching gd_free_shared (B6b).
   $ CO=MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
-  $ COH=hip/MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
+  $ COH=hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64
   $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $CO.cu
   1
   $ grep -c 'gd_alloc_shared((void\*\*)&' $CO.cu
@@ -137,11 +143,14 @@ coherent path entirely, leaving the harness testing nothing.
   0
 
 The HIP twin carves the same arena from its own gd_alloc_shared (fine-grained
-hipMallocManaged): one template, two renders.
+hipMallocManaged): one template, two renders.  Its slot count is 4, not the 6
+above, and that is the arena sizing of (g) working: on the AMD lattice this row
+is NO-ORACLE and names no mu(T), so the harness is T + canary, 2 instances x 2
+vars.  The CUDA twin is Disallowed on the NVIDIA lattice and co-runs three.
   $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $COH.hip
   1
   $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $COH.hip
-  6
+  4
 
 (g) the arena is sized from the instance population, not from a fixed 3.  The 395
 canary-only harnesses carve a TWO-INSTANCE arena, so a slot count computed for
@@ -231,7 +240,7 @@ managed memory under the name of an experiment it was not running.  Not
 mentioning a knob is not the same as refusing it.  The .hip now names HET_ALLOC
 only to refuse: no malloc branch, no pinned branch, no second allocator.
 
-  $ HREL=hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
+  $ HREL=hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   $ grep -c 'getenv("HET_ALLOC")' $HREL
   1
   $ HMODE=$(sed -n '/^static int _het_alloc_mode/,/^}/p' $HREL)

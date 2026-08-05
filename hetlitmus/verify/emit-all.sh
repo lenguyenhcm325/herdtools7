@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# HetLitmus emission snapshot: emit the FULL corpus, for EVERY vendor, into
-# OUTDIR -- 411 het harness dirs and 137 gpu-only kernels per GPU target.
+# HetLitmus emission snapshot: emit the FULL corpus over every REGISTERED
+# (CPU ISA x GPU dialect) pair into OUTDIR -- 411 het harness dirs per het lane
+# and 137 gpu-only kernels per gpu-only lane.
 #
 # Purpose: the refactor golden.  The Layer-2 gate (corpus-gate.sh) byte-pins
 # only the committed gpu-only samples; every other emitted artifact is covered
@@ -15,16 +16,37 @@
 #   ./emit-all.sh SNAP_AFTER
 #   diff -r SNAP_BEFORE SNAP_AFTER && echo BYTE-IDENTICAL
 #
-# ONE VENDOR PER EMISSION (litmus7 -gpu-target, litmus/hetTarget.ml): a harness
-# directory carries one render and one vendor's build arms, so covering the
-# emission surface takes one lane per (corpus, target) pair.  The lanes are
-# listed in HET_LANES / GPU_LANES below and nowhere else, so a pair that stops
-# emitting -- or a vendor that is added -- is a line here, not a rewrite.
+# THE LANES ARE PAIRS, not vendors.  A compound harness is a CPU ISA and a GPU
+# dialect, and litmus/hetOracle.ml's table says which of those pairs carry an
+# oracle, which are registered without one, and which are refused outright.  The
+# emission surface is therefore one lane per REGISTERED pair, listed in
+# HET_LANES / GPU_LANES below and nowhere else:
 #
-# The het corpus is emitted from INSIDE hetlitmus/tests/het so emission finds
-# control-map.csv + the co-run sibling .litmus (B6b: a Disallowed test's
-# harness embeds its mu(T) mutant and the canary, resolved relative to the
-# source dir).  gpu-only reuses emit-gpu.sh.
+#   het-cuda      aarch64 corpus x cuda   POPULATED    expected-nvidia.csv
+#   het-x86-hip   x86     corpus x hip    POPULATED    expected-amd.csv
+#   het-x86-cuda  x86     corpus x cuda   NO-ORACLE    dev-tier machinery
+#   gpu-cuda / gpu-hip                    the GPU-only (scoped LISA) arm, which
+#                                         has no CPU column and so no pair
+#
+# The x86 lanes are what keeps the HIP RENDER under byte-level snapshot cover:
+# (aarch64, hip) is ABSENT from the table and now refuses at emission, so the
+# hip render of a het harness exists only on the x86 side.  They also put the
+# LANDMINE SURFACE in every snapshot -- het-x86-cuda is the pair whose harnesses
+# must carry no trace of the AMD oracle -- which is asserted per lane below.
+#
+# The x86 corpus is NOT committed (tests/het/generate-x86.sh says why); it is
+# generated into a scratch dir OUTSIDE OUTDIR, so `diff -r' of two snapshots
+# still compares emitted bytes only.  The het corpora are emitted from INSIDE
+# their own directory so emission finds the pair's control map + the co-run
+# sibling .litmus (B6b: a Disallowed test's harness embeds its mu(T) mutant and
+# the canary, resolved relative to the source dir).  gpu-only reuses emit-gpu.sh.
+#
+# REFUSAL LANES.  An ABSENT pair is part of the emission surface too -- the
+# refusal is the behaviour -- so REFUSE_LANES asserts it here rather than
+# leaving it to a gate that could quietly stop running.  Nothing is written, so
+# a refusal lane contributes no bytes to the snapshot.  No committed script,
+# this one included, may pass `-allow-no-oracle'
+# (hetlitmus/verify/allow-no-oracle-gate.sh enforces that over the whole tree).
 #
 # FAIL-CLOSED (P2b).  This loop used to be
 #     "$LITMUS7" -o "$OUTDIR/het" "$t" >/dev/null
@@ -41,7 +63,7 @@
 #     caught: `emitted: 411 het harness dirs', exit 0.  A snapshot with a whole
 #     CPU thread missing reported success.
 # Inert while every committed test emitted; live the moment the x86 CPU lane was
-# wired.  Two INDEPENDENT detectors now stand between a refusal and a green run:
+# wired.  Three INDEPENDENT detectors now stand between a refusal and a green run:
 #   (a) CORRUPTION -- litmus7 exits 3 and prints "HetLitmus REFUSED" (see
 #       HetArch.refused); this script checks the status AND greps the marker,
 #       so neither one alone is load-bearing;
@@ -50,6 +72,10 @@
 #       if litmus7 were to exit 0 with nothing written.  The lane's render is
 #       also required to be the ONLY one: a dir carrying the other vendor's
 #       file too would mean -gpu-target stopped filtering.
+#   (c) MIS-TAGGING -- every harness of a lane must carry that PAIR's oracle
+#       stamp and no other pair's oracle NAME anywhere in the directory.  A
+#       harness tagged from the wrong pair compiles, runs and reports; only the
+#       stamp says which model it was claiming to test.
 # Each names the test it failed on and pastes litmus7's own output.
 #
 # Usage:  hetlitmus/verify/emit-all.sh OUTDIR
@@ -63,8 +89,28 @@ set -euo pipefail
 LITMUS7="${HET_LITMUS7:-$LITMUS7}"
 [ -x "$LITMUS7" ] || { echo "error: $LITMUS7 not built (run 'make all')" >&2; exit 2; }
 
-# THE EMISSION LANES, "<gpu-target>:<render extension>:<OUTDIR subdir>".
-HET_LANES="cuda:cu:het-cuda hip:hip:het-hip"
+# THE EMISSION LANES, "<corpus>:<gpu-target>:<render extension>:<OUTDIR subdir>",
+# followed by the oracle stamp every harness of that lane must carry.  The stamp
+# is the science pin: it is what a run log prints to say which model it tested.
+HET_LANES="aarch64:cuda:cu:het-cuda x86:hip:hip:het-x86-hip x86:cuda:cu:het-x86-cuda"
+stamp_of_lane() {               # <corpus>:<target> -> the exact stamp string
+  case "$1" in
+    aarch64:cuda) echo 'expected-nvidia.csv:NVIDIA-PTX-AArch64' ;;
+    x86:hip)      echo 'expected-amd.csv:AMD-CDNA3-x86' ;;
+    x86:cuda)     echo '(NO-ORACLE: (X86_64, cuda) is registered without one' ;;
+    *) echo "emit-all.sh: no stamp registered for lane $1" >&2 ; return 1 ;;
+  esac
+}
+# The oracle NAME a lane must NOT contain anywhere in its harness dirs -- the
+# landmine: an x86 host with an NVIDIA GPU carries no AMD prediction.
+forbidden_of_lane() {           # <corpus>:<target> -> egrep pattern, or ""
+  case "$1" in
+    x86:cuda) echo 'expected-amd|AMD-CDNA3-x86' ;;
+    *)        echo '' ;;
+  esac
+}
+# ABSENT pairs: emission must REFUSE, exit 3, and write nothing.
+REFUSE_LANES="aarch64:hip"
 GPU_LANES="cuda:cu:gpu-cuda hip:hip:gpu-hip"
 EXPECT_HET=411          # harness dirs per het lane
 EXPECT_GPU=137          # kernels per gpu-only lane
@@ -74,17 +120,41 @@ mkdir -p "$OUTDIR"
 OUTDIR="$(cd "$OUTDIR" && pwd)"
 # OUTSIDE OUTDIR: a snapshot is byte-diffed with `diff -r', which compares
 # dotfiles too, so no scratch file may land in it.
-LOG="$(mktemp)"; trap 'rm -f "$LOG"' EXIT
+LOG="$(mktemp)"
+SCRATCH="$(mktemp -d)"
+trap 'rm -f "$LOG"; rm -rf "$SCRATCH"' EXIT
+
+# The x86 corpus, generated on demand (it is deliberately not committed).
+X86_CORPUS="$SCRATCH/x86"
+gen_x86_once() {
+  [ -d "$X86_CORPUS" ] && return 0
+  echo "        generating the x86 corpus (not committed; tests/het/generate-x86.sh)"
+  PATH="$BIN:$PATH" bash "$HETL/tests/het/generate-x86.sh" "$X86_CORPUS" >"$LOG" 2>&1 || {
+    echo "FAIL: generate-x86.sh failed; its output:" >&2 ; cat "$LOG" >&2 ; exit 1 ; }
+}
+corpus_dir() {                  # <corpus> -> the directory to emit from
+  case "$1" in
+    aarch64) echo "$HETL/tests/het" ;;
+    x86)     gen_x86_once >&2 ; echo "$X86_CORPUS" ;;
+    *) echo "emit-all.sh: unknown corpus $1" >&2 ; return 1 ;;
+  esac
+}
 
 i=0
-nlanes=$(( $(echo $HET_LANES | wc -w) + $(echo $GPU_LANES | wc -w) ))
+nlanes=$(( $(echo $HET_LANES | wc -w) + $(echo $REFUSE_LANES | wc -w) \
+           + $(echo $GPU_LANES | wc -w) ))
 
 for lane in $HET_LANES; do
-  target="${lane%%:*}"; rest="${lane#*:}"; ext="${rest%%:*}"; sub="${rest#*:}"
+  corpus="${lane%%:*}"; rest="${lane#*:}"
+  target="${rest%%:*}"; rest="${rest#*:}"
+  ext="${rest%%:*}"; sub="${rest#*:}"
+  stamp="$(stamp_of_lane "$corpus:$target")"
+  forbidden="$(forbidden_of_lane "$corpus:$target")"
   i=$((i+1))
-  echo "[$i/$nlanes] het corpus, -gpu-target $target -> $OUTDIR/$sub"
+  echo "[$i/$nlanes] $corpus corpus, -gpu-target $target -> $OUTDIR/$sub"
+  cdir="$(corpus_dir "$corpus")"
   mkdir -p "$OUTDIR/$sub"
-  ( cd "$HETL/tests/het"
+  ( cd "$cdir"
     for t in *.litmus; do
       n="${t%.litmus}"
       st=0
@@ -101,25 +171,69 @@ for lane in $HET_LANES; do
       fi
       for f in "$n/${n}_cpu.c" "$n/$n.$ext"; do
         if [ ! -s "$OUTDIR/$sub/$f" ]; then
-          echo "FAIL: $t emitted no $f in the $target lane (harness missing or empty); litmus7 said:" >&2
+          echo "FAIL: $t emitted no $f in the $corpus/$target lane (harness missing or empty); litmus7 said:" >&2
           cat "$LOG" >&2
           exit 1
         fi
       done
       for other in $HET_LANES; do
-        oext="${other#*:}"; oext="${oext%%:*}"
+        oext="${other#*:}"; oext="${oext#*:}"; oext="${oext%%:*}"
         if [ "$oext" != "$ext" ] && [ -e "$OUTDIR/$sub/$n/$n.$oext" ]; then
-          echo "FAIL: the $target lane emitted $n/$n.$oext as well -- -gpu-target is not filtering" >&2
+          echo "FAIL: the $corpus/$target lane emitted $n/$n.$oext as well -- -gpu-target is not filtering" >&2
           exit 1
         fi
       done
+      # (c) THE PAIR STAMP.  Read out of the render the lane just wrote.
+      if ! grep -qF "_rec.oracle_source = \"$stamp" "$OUTDIR/$sub/$n/$n.$ext"; then
+        echo "FAIL: $t in the $corpus/$target lane does not stamp \"$stamp\" -- it carries:" >&2
+        grep -F '_rec.oracle_source' "$OUTDIR/$sub/$n/$n.$ext" >&2 || echo "  (no oracle_source at all)" >&2
+        exit 1
+      fi
+      if [ -n "$forbidden" ] \
+         && grep -rqE "$forbidden" "$OUTDIR/$sub/$n"; then
+        echo "FAIL: $t in the $corpus/$target lane names another pair's oracle ($forbidden):" >&2
+        grep -rlE "$forbidden" "$OUTDIR/$sub/$n" >&2
+        exit 1
+      fi
     done )
   nhet="$(find "$OUTDIR/$sub" -mindepth 1 -maxdepth 1 -type d | wc -l)"
-  echo "        $nhet het harness dirs (expect $EXPECT_HET)"
+  echo "        $nhet het harness dirs (expect $EXPECT_HET), all stamped $stamp..."
   if [ "$nhet" -ne "$EXPECT_HET" ]; then
     echo "FAIL: census mismatch in $sub (want $EXPECT_HET)" >&2
     exit 1
   fi
+done
+
+for lane in $REFUSE_LANES; do
+  corpus="${lane%%:*}"; target="${lane#*:}"
+  i=$((i+1))
+  echo "[$i/$nlanes] $corpus corpus, -gpu-target $target -> MUST REFUSE (absent pair)"
+  cdir="$(corpus_dir "$corpus")"
+  probe="$SCRATCH/refuse-$corpus-$target"
+  mkdir -p "$probe"
+  # No `ls | head': under `pipefail' the SIGPIPE that head's early exit sends to
+  # ls makes the pipeline status 141, and set -e then kills this script with no
+  # message at all.  Measured here, on a 411-file corpus.
+  t="$(cd "$cdir" && for f in *.litmus; do echo "$f"; break; done)"
+  st=0
+  ( cd "$cdir" && "$LITMUS7" -gpu-target "$target" -o "$probe" "$t" ) >"$LOG" 2>&1 || st=$?
+  if [ "$st" -ne 3 ]; then
+    echo "FAIL: an ABSENT pair emitted instead of refusing: exit $st on $t; its output:" >&2
+    cat "$LOG" >&2
+    exit 1
+  fi
+  if ! grep -q 'HetLitmus REFUSED' "$LOG" \
+     || ! grep -q 'no oracle is registered for the CPU-ISA x GPU-dialect pair' "$LOG"; then
+    echo "FAIL: the refusal on $t does not name the pair; it said:" >&2
+    cat "$LOG" >&2
+    exit 1
+  fi
+  left="$(find "$probe" -mindepth 1 | wc -l)"
+  if [ "$left" -ne 0 ]; then
+    echo "FAIL: the refused $corpus/$target emission left $left path(s) behind" >&2
+    exit 1
+  fi
+  echo "        exit 3, pair named, nothing written"
 done
 
 for lane in $GPU_LANES; do
@@ -157,4 +271,6 @@ for lane in $HET_LANES $GPU_LANES; do
   rm -f "$OUTDIR/${lane##*:}/run.sh"
 done
 
-echo "emitted: $(echo $HET_LANES | wc -w) x $EXPECT_HET het harness dirs, $(echo $GPU_LANES | wc -w) x $EXPECT_GPU gpu-only kernels"
+echo "emitted: $(echo $HET_LANES | wc -w) x $EXPECT_HET het harness dirs, \
+$(echo $GPU_LANES | wc -w) x $EXPECT_GPU gpu-only kernels, \
+$(echo $REFUSE_LANES | wc -w) absent pair(s) refused"

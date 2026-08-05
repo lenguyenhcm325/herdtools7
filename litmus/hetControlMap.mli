@@ -15,6 +15,14 @@ type t
    there (memo PORT2-R2 7.D11).  The lane's CPU frontend names the file. *)
 val load : verbose:int -> dir:string -> csv:string -> src_name:string -> t
 
+(* No map at all, and no file was looked for.  A pair with no oracle names no
+   map (litmus/hetOracle.ml): mu(T) is the nearest ALLOWED neighbour, so a map
+   is an oracle-derived object and reading another pair's would tag the harness
+   from a model that never addressed its machine.  Distinct from a load that
+   failed -- that one warns, because a map that was meant to be there and is
+   not is a build bug. *)
+val empty : t
+
 (* mu(T), the Allowed grid neighbour to co-run as the positive control; None
    for BOTH sentinels -- "-" (no mu called for) and "none" (a Disallowed row
    for which no Layer-A mutant exists at all).  See the .ml for why the two are

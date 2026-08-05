@@ -27,13 +27,15 @@ Two axes are chosen per test rather than hard-wired (the **Phase A/B** work):
 litmus7 -gpu-target cuda -set-libdir herd/libdir hetlitmus/tests/het/MP-het.litmus
 ( cd MP-het && sh comp.sh )        # CUDA: nvcc -c + gcc -c (+clang aarch64), exit 0
 
-# the HIP render of the same test, into its own directory:
-litmus7 -gpu-target hip -o hip-out -set-libdir herd/libdir hetlitmus/tests/het/MP-het.litmus
-( cd hip-out/MP-het && sh comp.sh )  # HIP: hipcc --offload-arch=gfx942 -c, exit 0
+# x86_64 CPU + HIP (the MI300A pairing), from the committed one-test fixture:
+litmus7 -gpu-target hip -o hip-out -set-libdir herd/libdir \
+  hetlitmus/tests/het-x86/MP-cg-sys-relaxed-x86_64.litmus
+( cd hip-out/MP-cg-sys-relaxed-x86_64 && sh comp.sh )  # hipcc --offload-arch=gfx942 -c
 
-# x86_64 CPU + GPU (a P0:x86_64 test, e.g. from `hetgen7 -cpu-arch x86_64`):
-litmus7 -gpu-target cuda -set-libdir herd/libdir MP-het-x86.litmus
-( cd MP-het-x86 && sh comp.sh )    # <t>_cpu.c holds x86 asm, native gcc -c, exit 0
+# the AArch64 corpus paired with HIP is a machine no oracle covers, so it REFUSES:
+litmus7 -gpu-target hip -set-libdir herd/libdir hetlitmus/tests/het/MP-het.litmus
+# HetLitmus REFUSED (het) ...: no oracle is registered for the CPU-ISA x
+# GPU-dialect pair (AArch64, hip). ...                                  exit 3
 ```
 
 The harness directory is written next to the current directory (or into the
@@ -73,14 +75,16 @@ parser consumes. The GPU side is fixed (LISA/Bell) inside the functor.
 
 Each `Het` test yields a directory containing (CPU ISA = whatever the tag named):
 
+ONE GPU dialect per directory (Phase B): the render and the build arms are the
+ones `-gpu-target` named, and no other vendor's. `<v>` below is that target word.
+
 | file            | role                                                         | compiled by |
 |-----------------|--------------------------------------------------------------|-------------|
-| `<t>.cu`        | GPU kernel + host driver, **CUDA** dialect (alloc, barrier, launch, readback) | `nvcc -c`   |
-| `<t>.hip`       | the **same** harness, **HIP** dialect (`hipMallocManaged`, `__hip_atomic_*`)  | `hipcc -c`  |
+| `<t>.cu` **or** `<t>.hip` | GPU kernel + host driver in the selected dialect (alloc, barrier, launch, readback) — one of the two, never both | `nvcc -c` / `hipcc -c` |
 | `<t>_cpu.c`     | CPU thread(s): real `<ISA>` inline asm (ASMLang)             | `gcc -c` (native or `#else` shim) **and**, for a foreign-ISA host, `clang --target=<triple> -c` (real asm) |
 | `outs.c`/`.h`   | litmus7's own outcome histogram, embedded verbatim           | `gcc -c`    |
-| `comp.sh`       | compile-only driver, `sh comp.sh [cuda\|hip]` (default cuda) | —           |
-| `Makefile`      | same; `make cuda` / `make hip` targets                       | —           |
+| `comp.sh`       | compile-only driver, `sh comp.sh [<v>\|<v>-link]` (default `<v>`); the absent vendor's word is refused by name | —           |
+| `Makefile`      | same; `make <v>` / `make <v>-bin` targets                    | —           |
 | `README.md`     | one-paragraph description                                     | —           |
 
 The five required pieces, and where each is reused rather than reimplemented:
@@ -159,6 +163,54 @@ plus `<target>-bin`, which links. Name the GPU arch explicitly
 update 1 onwards, and a build for the wrong arch links and exits 0 just as
 happily.
 
+## Phase C/D — the oracle pair table, and the machine a harness may name
+
+A harness is not "an AArch64 test" or "a HIP test": it is a **(CPU ISA x GPU
+dialect) PAIR**, and everything the run *claims* belongs to that pair.
+`litmus/hetOracle.ml` is the table, with three states:
+
+| pair              | state               | oracle CSV / Model             | control map           |
+|-------------------|---------------------|--------------------------------|-----------------------|
+| (AArch64, cuda)   | POPULATED           | `expected-nvidia.csv` / `NVIDIA-PTX-AArch64` | `control-map.csv`     |
+| (x86_64, hip)     | POPULATED           | `expected-amd.csv` / `AMD-CDNA3-x86`         | `control-map-amd.csv` |
+| (x86_64, cuda)    | REGISTERED NO-ORACLE — dev-tier machinery only | — (every test stamped `ORACLE_NONE`) | none read |
+| (AArch64, hip)    | ABSENT              | — refuses at emission, exit 3, naming the pair | — |
+
+Three rules make it worth having:
+
+* **An empty cell is never filled from a neighbour.** Keying the oracle on the
+  CPU ISA alone — what this replaced — tagged an x86+CUDA emission with the
+  MI300A verdicts, so a sighting there would have been reported as a refutation
+  of a model that never addressed that machine. That is the class D26 purged
+  from the AMD oracle itself.
+* **A registered NO-ORACLE pair reads no CSV at all.** `mu(T)` is the nearest
+  *Allowed* neighbour, so a control map is an oracle-derived object; borrowing
+  one is the same borrowing. Such harnesses are single-instance, stamp
+  `ORACLE_NONE` directly, and `het_verdict()` calls their nulls COLD-INVALID
+  because no positive control was built — which is the honest state until the
+  bootstrap map generator for a new pair exists.
+* **The machine prose keys on the pair, not on the dialect.** The emitter stamps
+  `HET_LINK_NAME` / `HET_HOST_HALF` / `HET_DEV_HALF` (and
+  `HET_ALGLAVE_ZERO_MEASURED`, for the one measurement that is NVIDIA-only) from
+  the pair row; `het_verdict.h` prints from those defines and sniffs nothing. A
+  pair with no oracle stamps none of them and gets the header's generic
+  defaults, which name the *mechanism* — so a missing stamp can only ever weaken
+  a claim. `HET_PLACE_LEVER` is separate: the placement API is a *dialect* fact
+  (`cudaMemAdvise` on the CUDA render; the HIP render has no placement code and
+  `#error`s on a non-zero `HET_PLACE`).
+
+`-allow-no-oracle` emits an **absent** pair anyway, stamping `ORACLE_NONE` and
+disclosing the override in the stamp string itself. It is for a human bringing
+up hardware nobody has an oracle for; no committed script may pass it, and
+`hetlitmus/verify/allow-no-oracle-gate.sh` (`make hetlitmus-noracle`) enforces
+that over the tree.
+
+Scoring a corpus against an **ablation** oracle is a different need and has its
+own path: the table fixes which file name a pair *stamps*, so point the
+Makefile's `HET_ORACLE` / `HET_AMD_ORACLE` at the variant instead of editing the
+table. The stamp then still names the pair's own file, which is correct — the
+deviation is the reviewer's, not the harness's.
+
 ## The CPU object: native vs. cross-assembly
 
 `<t>_cpu.c` holds the real `<ISA>` inline asm under `#if defined(<host_macro>)`,
@@ -221,9 +273,12 @@ byte-identical to before (the cpu column keeps its `cpu` back-compat tag).
 
 ## Scope / limits
 
-* CPU ISAs wired: **AArch64** and **x86_64** (selected by tag). GPU dialects
-  emitted: **both** CUDA and HIP. Targets: GH200 (AArch64+CUDA) and MI300A
-  (x86_64+HIP), plus any cross pairing the tag asks for.
+* CPU ISAs wired: **AArch64** and **x86_64** (selected by tag); GPU dialects
+  wired: **CUDA** and **HIP** (selected by `-gpu-target`). Which of the four
+  pairings may be emitted is the oracle pair table's call, not the tag's:
+  GH200 (AArch64+CUDA) and MI300A (x86_64+HIP) are the two science targets,
+  x86_64+CUDA is the dev box and emits without an oracle, AArch64+HIP is
+  refused.
 * Both CPU ISAs emit a **real B3-tagged body** since P2b (2026-08-03): store
   values rebound to `K*(_n+1)+mu`, loads recorded into per-iteration buffers,
   the tested mnemonics reproduced verbatim (`str`/`stlr`/`ldr`/`ldar`/`ldapr`/

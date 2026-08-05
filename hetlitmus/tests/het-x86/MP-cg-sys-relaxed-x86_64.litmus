@@ -1,0 +1,9 @@
+Het MP-cg-sys-relaxed-x86_64
+"Heterogeneous MP-cg-sys-relaxed-x86_64: per-proc device assignment cpu,gpu (cpu=x86_64, gpu=LISA/PTX)"
+{
+}
+ P0:x86_64   | P1:gpu              ;
+ movl $1,(x) | r[relaxed,sys] r0 y ;
+ movl $1,(y) | r[relaxed,sys] r1 x ;
+scopes: (sys (gpu (cta P1)))
+exists (1:r0=1 /\ 1:r1=0)

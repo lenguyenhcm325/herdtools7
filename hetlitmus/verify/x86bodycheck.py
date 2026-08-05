@@ -118,6 +118,17 @@ MC_SYMS = ["het_run_t_P0", "het_run_P0"]
 # AArch64 tests P5 re-emits (a store proc, a load proc, a two-sided proc).
 AARCH64_TESTS = ["2+2W-cg-sys-relaxed", "MP-gc-sys-relaxed", "MP-cg-sys-fence-2s"]
 
+# WHICH GPU DIALECT THE x86 RENDERINGS ARE EMITTED FOR.  A harness is a
+# (CPU ISA x GPU dialect) PAIR (litmus/hetOracle.ml), and (x86_64, hip) is the
+# populated one: it is the pair control-map-amd.csv and expected-amd.csv were
+# derived for, so it is the pair whose emission reads them.  (x86_64, cuda) is
+# registered WITHOUT an oracle -- dev-tier machinery -- and reads no map at all,
+# so every harness there is single-instance and P7 would have nothing to check.
+# The CPU body itself is dialect-independent (one <t>_cpu.c per harness), which
+# is what makes this phase's subject the same either way.
+X86_TARGET = "hip"
+X86_EXT = "hip"
+
 fails = []
 
 
@@ -345,13 +356,13 @@ def emit_corpus(tmp, corpus, sub="emit"):
         if not f.endswith(".litmus"):
             continue
         n = f[:-len(".litmus")]
-        r = run([LITMUS7, "-gpu-target", "cuda", "-set-libdir", LIBDIR, "-o", out, os.path.join(corpus, f)])
+        r = run([LITMUS7, "-gpu-target", X86_TARGET, "-set-libdir", LIBDIR, "-o", out, os.path.join(corpus, f)])
         blob = r.stdout + r.stderr
         d = os.path.join(out, n)
         # The files THIS emission owes: one vendor per harness dir (-gpu-target
-        # cuda above), so the .hip is the other lane's deliverable, not a
-        # missing file.
-        parts = [os.path.join(d, n + s) for s in ("_cpu.c", ".cu")]
+        # above), so the other dialect's render is that lane's deliverable, not
+        # a missing file.
+        parts = [os.path.join(d, n + s) for s in ("_cpu.c", "." + X86_EXT)]
         if r.returncode != 0:
             bad.append((n, "litmus7 exited %d: %s" % (r.returncode, blob.strip().splitlines()[-1:])))
         elif "HetLitmus REFUSED" in blob:
@@ -738,7 +749,7 @@ def phase7(tmp, corpus, splitter=split_bodies, probe=corun_probe):
         if not os.path.exists(src):
             fail("P7", "%s has no x86 rendering" % t)
             continue
-        r = run([LITMUS7, "-gpu-target", "cuda", "-set-libdir", LIBDIR, "-o", out, src], cwd=scratch)
+        r = run([LITMUS7, "-gpu-target", X86_TARGET, "-set-libdir", LIBDIR, "-o", out, src], cwd=scratch)
         cpu_c = os.path.join(out, t, t + "_cpu.c")
         if r.returncode != 0 or not (os.path.exists(cpu_c) and os.path.getsize(cpu_c)):
             fail("P7", "%s emitted no co-run harness (exit %d): %s"
@@ -1101,7 +1112,7 @@ def bite(tmp, corpus, good):
     tvic = sorted(rows)[0]
     o7 = os.path.join(tmp, "p7fid", "out")
     os.makedirs(o7, exist_ok=True)
-    run([LITMUS7, "-gpu-target", "cuda", "-set-libdir", LIBDIR, "-o", o7, os.path.join(scr, tvic + ".litmus")],
+    run([LITMUS7, "-gpu-target", X86_TARGET, "-set-libdir", LIBDIR, "-o", o7, os.path.join(scr, tvic + ".litmus")],
         cwd=scr)
     fv = os.path.join(o7, tvic, tvic + "_cpu.c")
     tx = open(fv).read()

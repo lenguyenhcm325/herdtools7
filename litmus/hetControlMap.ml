@@ -22,6 +22,10 @@
 
 type t = (string, string * string * string) Hashtbl.t
 
+(* Deliberately empty, and silent: see the .mli.  Every accessor below already
+   answers "no row" the way a missing test does, so no caller special-cases it. *)
+let empty : t = Hashtbl.create 1
+
 let load ~verbose ~dir ~csv ~src_name =
   let tbl = Hashtbl.create 512 in
   let f = Filename.concat dir csv in

@@ -21,10 +21,13 @@ Seven phases, each of which must be seen to fail:
   P3 link                comp.sh hip-link AND make hip-bin each produce an ELF
                          that carries a real amdgcn gfx942 code object -- not
                          merely an exit status
-  P4 uname fail-closed   on an AArch64 rendering, both HIP link arms REFUSE on an
-                         x86_64 host with exit 3, naming the ISA; the CPU object
-                         here is the portable shim and the binary would test
-                         nothing
+  P4 fail-closed on the wrong host, at BOTH stages: the ABSENT (AArch64, hip)
+                         pair refuses at EMISSION naming the pair and writing
+                         nothing; a REGISTERED pair's link arms still refuse an
+                         AArch64 rendering on an x86_64 host, naming the ISA
+                         (the CPU object here is the portable shim and the binary
+                         would test nothing); and the HIP render carries that
+                         same guard, keyed to its own host ISA
   P5 no silent stale     every vendor writes ./<test> on purpose (run-one.sh and
                          campaign.py exec ./<test> and are vendor-agnostic), so
                          each link target must ALWAYS relink.  MEASURED before
@@ -73,6 +76,12 @@ stale-link trap needs both, so it plants one vendor's linked binary in the other
 vendor's directory -- the state the trap needs (a ./<test> NEWER than the
 objects, carrying the wrong device image), reached the way a reused results tree
 reaches it.
+
+AND ONE ORACLE PAIR PER HARNESS.  A harness is a (CPU ISA x GPU dialect) pair,
+and litmus/hetOracle.ml refuses the pairs it has no oracle for.  The AMD phases
+therefore run on the x86 rendering -- (x86_64, hip) is the populated AMD pair --
+and the AArch64 half of P4 runs on (AArch64, cuda), because (AArch64, hip) is
+absent and its emission is now itself one of P4's assertions.
 """
 import argparse
 import os
@@ -143,6 +152,14 @@ def emit(tmp, src, outroot, label, target):
         raise SystemExit("hipbuildcheck: litmus7 emitted no %s harness for %s (%s)\n%s%s"
                          % (target, label, name, r.stdout, r.stderr))
     return d
+
+
+def emit_refused(src, outroot, target):
+    """An ABSENT (CPU ISA x GPU dialect) pair.  Returns (exit, output, leftovers)."""
+    os.makedirs(outroot, exist_ok=True)
+    r = run([LITMUS7, "-gpu-target", target, "-set-libdir", LIBDIR, "-o", outroot, src])
+    left = sorted(os.listdir(outroot))
+    return r.returncode, r.stdout + r.stderr, left
 
 
 def fresh(tmp, d, tag):
@@ -337,16 +354,53 @@ def phase3(tmp, d):
         fail("P3", "phase made no assertions")
 
 
-def phase4(d_aarch64):
-    print("[P4] uname fail-closed: both HIP link arms refuse an AArch64 render on %s"
+def phase4(tmp, d_aarch64_cuda, d_x86_hip):
+    """Fail-closed on the WRONG HOST, at both stages that can catch it.
+
+    Until the oracle pair table existed this phase asked litmus7 for an AArch64
+    HIP render and drove its link arms.  That render can no longer be produced:
+    (AArch64, hip) is ABSENT from the table (litmus/hetOracle.ml) and emission
+    refuses -- one stage EARLIER than the link-arm refusal this phase tested.
+    Both stages are asserted here, because they fail closed for different
+    reasons and either could regress alone:
+      (a) EMISSION refuses the absent pair, names it, and writes nothing;
+      (b) a REGISTERED pair's link arms still refuse a foreign host -- driven on
+          the (AArch64, cuda) render, whose guard is emitted by the same fold as
+          the HIP one;
+      (c) the HIP render that DOES exist carries that guard too, keyed to its
+          own host ISA (it cannot be RUN into refusal here: this host is x86_64,
+          which is exactly the ISA that render is for).
+    """
+    print("[P4] fail-closed on the wrong host, at emission and at link, on %s"
           % os.uname().machine)
     if os.uname().machine == "aarch64":
         fail("P4", "this host IS aarch64, so the AArch64 refusal cannot be observed here; "
                    "run this gate on a foreign host too")
         return
-    for arm, cmd, want in [("comp.sh hip-link", ["sh", "comp.sh", "hip-link"], 3),
-                           ("make hip-bin", ["make", "hip-bin"], 2)]:
-        r = run(cmd, cwd=d_aarch64)
+
+    # --- (a) the ABSENT pair refuses AT EMISSION -----------------------------
+    outroot = os.path.join(tmp, "p4-absent")
+    st, blob, left = emit_refused(
+        os.path.join(HET_DIR, AARCH64_TEST + ".litmus"), outroot, "hip")
+    tick("P4")
+    if st != 3:
+        fail("P4", "litmus7 -gpu-target hip on an AArch64 test exited %d, expected 3 "
+                   "-- (AArch64, hip) is in no oracle row and must refuse" % st)
+    tick("P4")
+    if "HetLitmus REFUSED" not in blob:
+        fail("P4", "the absent-pair emission printed no REFUSED marker:\n%s" % blob[-800:])
+    tick("P4")
+    if "(AArch64, hip)" not in blob:
+        fail("P4", "the absent-pair refusal does not name the pair:\n%s" % blob[-800:])
+    tick("P4")
+    if left:
+        fail("P4", "the refused emission wrote %r -- a refusal must leave nothing "
+                   "a globbing script can pick up" % left)
+
+    # --- (b) a REGISTERED pair's link arms refuse a foreign host --------------
+    for arm, cmd, want in [("comp.sh cuda-link", ["sh", "comp.sh", "cuda-link"], 3),
+                           ("make cuda-bin", ["make", "cuda-bin"], 2)]:
+        r = run(cmd, cwd=d_aarch64_cuda)
         blob = r.stdout + r.stderr
         tick("P4")
         if r.returncode != want:
@@ -362,8 +416,22 @@ def phase4(d_aarch64):
             fail("P4", "%s refusal does not name the CPU ISA it was rendered for:\n%s"
                  % (arm, blob[-800:]))
         tick("P4")
-        if os.path.isfile(os.path.join(d_aarch64, test_of(d_aarch64))):
+        if os.path.isfile(os.path.join(d_aarch64_cuda, test_of(d_aarch64_cuda))):
             fail("P4", "%s refused but a binary exists anyway" % arm)
+
+    # --- (c) the HIP render carries the same guard ---------------------------
+    comp = open(os.path.join(d_x86_hip, "comp.sh")).read()
+    mk = open(os.path.join(d_x86_hip, "Makefile")).read()
+    for what, txt in [("comp.sh", comp), ("Makefile", mk)]:
+        tick("P4")
+        if 'HET_HOST_ISA="x86_64"' not in txt and "HET_HOST_ISA ?= x86_64" not in txt:
+            fail("P4", "the HIP render's %s does not record its host ISA, so its link "
+                       "arm has nothing to guard on:\n%s" % (what, txt[:400]))
+        tick("P4")
+        if "PORTABLE SHIM" not in txt:
+            fail("P4", "the HIP render's %s carries no uname guard on its link arm "
+                       "-- linking it on a foreign host would test nothing" % what)
+
     print("      %d assertions" % counts.get("P4", 0))
     if not counts.get("P4"):
         fail("P4", "phase made no assertions")
@@ -783,7 +851,7 @@ def bite_one(label, phase, runner, expect):
     return True
 
 
-def bite(tmp, d_x86, d_x86_cuda, d_aa):
+def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda):
     print("===== HIPBUILDCHECK BITE: every phase, on corruption AND on omission =====")
     ok = True
     n = [0]
@@ -882,20 +950,30 @@ def bite(tmp, d_x86, d_x86_cuda, d_aa):
                    lambda: phase3(tmp, w), "left no executable")
 
     # --- P4 -----------------------------------------------------------------
-    w = W("p4c", d_aa)
+    # (b), the link-arm half, driven on the REGISTERED (AArch64, cuda) render:
+    # the absent-pair half (a) is a property of litmus7 and has no file to
+    # corrupt, so it is bitten from the emitter side by oracle-pairs.t (d).
+    w = W("p4c", d_aa_cuda)
     sub(os.path.join(w, "comp.sh"), '"$(uname -m)" != "$HET_HOST_ISA"',
         '"$(uname -m)" = "$HET_HOST_ISA"')
     sub(os.path.join(w, "Makefile"), 'test "$$(uname -m)" = "$(HET_HOST_ISA)"',
         'test "$$(uname -m)" != "$(HET_HOST_ISA)"')
     ok &= bite_one("uname guard INVERTED on an AArch64 render", "P4",
-                   lambda: phase4(w), "expected 3")
-    w = W("p4o", d_aa)
+                   lambda: phase4(tmp, w, d_x86), "expected 3")
+    w = W("p4o", d_aa_cuda)
     s = open(os.path.join(w, "comp.sh")).read()
-    s = re.sub(r'    if \[ "\$TARGET" = hip-link \] && \[ "\$\(uname -m\)".*?\n    fi\n',
+    s = re.sub(r'    if \[ "\$TARGET" = cuda-link \] && \[ "\$\(uname -m\)".*?\n    fi\n',
                "", s, flags=re.S)
     open(os.path.join(w, "comp.sh"), "w").write(s)
-    ok &= bite_one("comp.sh hip-link uname guard DELETED", "P4",
-                   lambda: phase4(w), "expected 3")
+    ok &= bite_one("comp.sh cuda-link uname guard DELETED", "P4",
+                   lambda: phase4(tmp, w, d_x86), "expected 3")
+    # (c): the HIP render loses its guard, which no RUN on this x86_64 host can
+    # observe -- the guard is keyed to the ISA this host already is.
+    w = W("p4h", d_x86)
+    sub(os.path.join(w, "comp.sh"), "PORTABLE SHIM", "portable stand-in")
+    sub(os.path.join(w, "Makefile"), "PORTABLE SHIM", "portable stand-in")
+    ok &= bite_one("the HIP render\'s uname guard TEXT gone", "P4",
+                   lambda: phase4(tmp, d_aa_cuda, w), "carries no uname guard")
 
     # --- P5 -----------------------------------------------------------------
     # P5 drives two directories, so each injection goes into ONE of them and the
@@ -1038,11 +1116,16 @@ def main():
         d_x86 = emit(tmp, src, os.path.join(tmp, "out-x86-hip"), "x86 render", "hip")
         d_x86_cuda = emit(tmp, src, os.path.join(tmp, "out-x86-cuda"),
                           "x86 render", "cuda")
-        d_aa = emit(tmp, os.path.join(HET_DIR, AARCH64_TEST + ".litmus"),
-                    os.path.join(tmp, "out-aa"), "AArch64 render", "hip")
+        # The AArch64 render P4 drives is the CUDA one: (AArch64, hip) is ABSENT
+        # from the oracle pair table and refuses at emission (P4(a) asserts the
+        # refusal itself), so the AArch64 half of this gate now runs on the pair
+        # that IS registered.  The uname guard is emitted by the same per-dialect
+        # fold on both, which is what makes the substitution sound.
+        d_aa_cuda = emit(tmp, os.path.join(HET_DIR, AARCH64_TEST + ".litmus"),
+                         os.path.join(tmp, "out-aa"), "AArch64 render", "cuda")
 
         if a.bite:
-            return bite(tmp, d_x86, d_x86_cuda, d_aa)
+            return bite(tmp, d_x86, d_x86_cuda, d_aa_cuda)
 
         print("===== HIPBUILDCHECK: can an AMD harness be built and run? =====")
         print("  host %s, hipcc=%s nvcc=%s"
@@ -1050,7 +1133,7 @@ def main():
         phase1(tmp, d_x86)
         phase2(fresh(tmp, d_x86, "p2"))
         phase3(tmp, d_x86)
-        phase4(d_aa)
+        phase4(tmp, d_aa_cuda, d_x86)
         phase5(tmp, d_x86_cuda, d_x86)
         phase6(tmp, d_x86)
         phase7(tmp, d_x86_cuda)

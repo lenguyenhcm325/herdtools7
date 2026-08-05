@@ -22,8 +22,12 @@
 #   5. IRIW-cgcc-cta-relaxed   het 4-proc; largest barrier / scaffolding
 #   6. WRC-ccg-cta-relaxed     het 3-proc; buys down the proc-scaling assumption
 #   7. tests/cluster/MP-cluster  gpu-only Hopper cluster inline-PTX fence path
-#   8. MP-cg-sys-acqrel-2s (HIP) the AMD/MI300A render -- the only place in the
-#                              whole suite that compiles a .hip at all
+#   8. MP-cg-sys-relaxed-x86_64 (HIP)  the AMD/MI300A render -- the only place in
+#                              the whole suite that compiles a .hip at all.  It
+#                              comes from tests/het-x86 because a .hip harness is
+#                              the (x86_64, hip) ORACLE PAIR: the AArch64 corpus
+#                              paired with hip is a machine no oracle covers, and
+#                              litmus7 refuses it (litmus/hetOracle.ml).
 #   9. MP-cg-sys-sy.acq-2s     order-pair; the only rep emitting inline
 #                              `fence.acquire.sys' (PTX ISA 8.6 / sm_90), with a
 #                              compiled-in co-run control (mu = MP-cg-sys-ld.acq-2s;
@@ -60,6 +64,12 @@ cd "$REPO"
 export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 
 HET_DIR="$REPO/hetlitmus/tests/het"
+# The committed one-test fixture for the (x86_64, hip) ORACLE PAIR.  The HIP
+# rep cannot come from $HET_DIR: those tests have an AArch64 CPU column, and
+# (AArch64, hip) is absent from the pair table (litmus/hetOracle.ml) -- litmus7
+# refuses it at emission rather than tag a harness from an oracle derived for
+# another machine.
+HETX86_DIR="$REPO/hetlitmus/tests/het-x86"
 CLU_DIR="$REPO/hetlitmus/tests/cluster"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -88,8 +98,8 @@ n=0               # reps that actually RAN; asserted == NREPS before any OK
 # ungated, a symbol declared inside the CUDA dialect's allocator but read by the
 # shared driver template broke every .hip, with the CUDA lane and every gate in
 # the suite still green.
-_smoke_het_rep() { # name dialect tool blurb
-  local name="$1" dialect="$2" tool="$3" blurb="$4"
+_smoke_het_rep() { # name dialect tool blurb srcdir
+  local name="$1" dialect="$2" tool="$3" blurb="$4" srcdir="$5"
   local tag pfx filter faillabel d out rc
   case "$dialect" in
     cuda) tag='het'     pfx=e filter='^\+ '      faillabel='comp.sh' ;;
@@ -108,7 +118,7 @@ _smoke_het_rep() { # name dialect tool blurb
   d="$WORK/${pfx}_$name"; mkdir -p "$d"
   # THE RENDER THIS REP COMPILES: one vendor per emission, so the .hip reps
   # must be emitted with -gpu-target hip or comp.sh would have no hip arm.
-  if ! out="$(litmus7 -gpu-target "$dialect" -set-libdir litmus/libdir -o "$d" "$HET_DIR/$name.litmus" 2>&1)"; then
+  if ! out="$(litmus7 -gpu-target "$dialect" -set-libdir litmus/libdir -o "$d" "$srcdir/$name.litmus" 2>&1)"; then
     printf '%s\n' "$out"; printf '  FAIL %s (emission)\n' "$name"; fails=$((fails+1)); return
   fi
   out="$(cd "$d/$name" && sh comp.sh "$dialect" 2>&1)"; rc=$?
@@ -121,8 +131,8 @@ _smoke_het_rep() { # name dialect tool blurb
 }
 
 # The two names the rep list calls (and that bite_census counts by `^    smoke_').
-smoke_het() { _smoke_het_rep "$1" cuda '' "$2"; }             # name blurb
-smoke_het_hip() { _smoke_het_rep "$1" hip hipcc "$2"; }       # name blurb
+smoke_het() { _smoke_het_rep "$1" cuda '' "$2" "$HET_DIR"; }        # name blurb
+smoke_het_hip() { _smoke_het_rep "$1" hip hipcc "$2" "$HETX86_DIR"; }  # name blurb
 
 # ---- cluster rep: gpu-only, flat .cu, bare `nvcc -c' -----------------------
 # The cluster family is GPU-only (no CPU side, no comp.sh) and sits outside the
@@ -232,7 +242,7 @@ case "$cmd" in
     # This rep carries the most CPU/interconnect-stress surface (a -2s CPU body,
     # the preload, the enemies, both halves of the C2C noise), so it is the one
     # most likely to expose a CUDA/HIP dialect divergence.
-    smoke_het_hip MP-cg-sys-acqrel-2s   "the AMD/MI300A render (hipcc -c, gfx942)"
+    smoke_het_hip MP-cg-sys-relaxed-x86_64 "the AMD/MI300A render, (x86_64, hip) pair (hipcc -c, gfx942)"
     # The four order-pair reps below are all oracle-Disallowed, so each also
     # exercises the co-run control (HET_CONTROL_COMPILED_IN=1) on that family.
     smoke_het     MP-cg-sys-sy.acq-2s   "Q10 order-pair; inline fence.acquire.sys + co-run mu"

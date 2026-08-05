@@ -728,6 +728,12 @@ hetlitmus-amd-controlmap: | build
 ### `-test-all'; no `| build' for the same reason (it invokes no herdtools7 tool).
 ### Bite it by pointing HET_ORACLE at a corrupted scratch copy:
 ###   make hetlitmus-oracle HET_ORACLE=/tmp/one-row-flipped.csv
+### HET_ORACLE / HET_AMD_ORACLE are also THE DEVIATION PATH for an ablation
+### oracle: the pair table (litmus/hetOracle.ml) fixes which FILE NAME a pair
+### stamps, so scoring a corpus against a variant oracle (expected-amd-x2a.csv,
+### say) means pointing these at it here rather than editing the table.  The
+### stamp then still names the pair's own file, which is correct: the deviation
+### is the reviewer's, not the harness's.
 HET_ORACLE ?= hetlitmus/tests/het/expected-nvidia.csv
 hetlitmus-oracle:
 	@ echo
@@ -882,8 +888,14 @@ hetlitmus-order: | build
 ###                      control-map.csv gives them (census 50 / 319 / 42, zero
 ###                      untagged).  A rule that branches on a class the emitter
 ###                      never sets is a rule nobody runs.
-### --bite: 5 injections (3 against the rule, 2 against the emitted corpus), each
-### verified to have actually changed the code it corrupts.
+###   Phase 4 (machine)  which MACHINE the printout names.  The interconnect prose
+###                      comes from defines the emitter stamps out of the oracle
+###                      PAIR table, scraped here from real emissions: unstamped
+###                      is the generic frame, each pair prints its own machine,
+###                      and no frame prints another pair's.
+### --bite: 11 injections (4 against the rule, 2 against its reporting paths, 2
+### against the emitted corpus, 3 against the machine prose), each verified to
+### have actually changed the code it corrupts.
 hetlitmus-verdict: | build
 	@ echo
 	python3 hetlitmus/verify/verdictcheck.py
@@ -1014,9 +1026,13 @@ hetlitmus-x86body: | build
 HETD10OUT := $(CURDIR)/hetlitmus/tests/het/d10-out
 
 ### The GPU dialect these harnesses are rendered for.  litmus7 emits ONE vendor
-### per harness dir (-gpu-target), so an AMD box wants `make hetlitmus-d10
-### HETD10TARGET=hip' rather than a second link argument in the same directory.
-HETD10TARGET ?= cuda
+### per harness dir (-gpu-target), and the ORACLE lives on the PAIR: this corpus
+### has an x86_64 CPU column and ships control-map-amd.csv, so `hip' is the
+### populated pair (x86_64, hip) and the one that reads those maps.  Rendering it
+### for `cuda' is legal -- (x86_64, cuda) is REGISTERED WITHOUT AN ORACLE, the
+### dev box -- but every harness then stamps ORACLE_NONE and co-runs nothing,
+### which is a machinery smoke and not a D10 reading.
+HETD10TARGET ?= hip
 
 ### hetlitmus-d10: the CPU-ONLY POSITIVE CONTROL as a first-class campaign item
 ### (memo sect 7.D10, PHASE2-plan:71).  Generates the six CPU-only shapes, emits
@@ -1084,6 +1100,19 @@ hetlitmus-hipbuild: | build
 	python3 hetlitmus/verify/hipbuildcheck.py --bite
 	@ echo "HetLitmus AMD build/link gate: OK (and the gate bites)"
 
+### hetlitmus-noracle: no committed script passes `-allow-no-oracle' (D-MV4).
+### The flag emits a harness for a (CPU ISA x GPU dialect) pair the oracle table
+### does not carry -- every test stamped ORACLE_NONE, the override disclosed in
+### the stamp -- which is right for a human bringing up a new machine and wrong
+### for a script, because in a script it turns a refusal a human reads into a
+### line a campaign scrolls past.  The gate reads the tree; --bite plants the
+### flag in a copy of a committed script and requires the gate to redden.
+hetlitmus-noracle:
+	@ echo
+	bash hetlitmus/verify/allow-no-oracle-gate.sh
+	bash hetlitmus/verify/allow-no-oracle-gate.sh --bite
+	@ echo "HetLitmus no-oracle override containment: OK (and the gate bites)"
+
 ### hetlitmus-l0-selftest: the DISCRIMINATING-POWER proofs of the nvcc lane.
 ### l0_tokens.sh {selftest,guard} prove ptxcheck can detect a weakened scope/order
 ### and that the stress/cpustress scaffolding bites a dead layer; smoke.sh bite
@@ -1111,6 +1140,7 @@ hetlitmus-test:: hetlitmus-amdorder
 hetlitmus-test:: hetlitmus-amdprov
 hetlitmus-test:: hetlitmus-amd-controlmap
 hetlitmus-test:: hetlitmus-controlmap
+hetlitmus-test:: hetlitmus-noracle
 hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-stats
 hetlitmus-test:: hetlitmus-hist
@@ -1150,7 +1180,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order hetlitmus-oracle
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
-.PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10
+.PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10 hetlitmus-noracle
 ### Neither AMD target was phony until P2a (2026-08-02).  They worked only
 ### because no file of those names happened to exist -- one `touch' away from a
 ### gate that silently stops running.

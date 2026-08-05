@@ -27,6 +27,47 @@
 #include <string.h>   /* strcmp: distinguishing the `self' canary from a missing one */
 #include <math.h>
 
+/* ---------------------------------------------------------------------------
+ * WHICH MACHINE THIS HARNESS MAY NAME.  Every word below is a claim about
+ * silicon, so none of it is derived here: the emitter stamps these defines from
+ * the ORACLE PAIR TABLE row (litmus/hetOracle.ml), which is the only place that
+ * knows what (CPU ISA x GPU dialect) this harness was built for.
+ *
+ * A pair with no oracle stamps NOTHING, and these defaults stand.  They name the
+ * MECHANISM rather than a brand, which is what makes an unset define fail SAFE:
+ * a missing stamp can only weaken a claim, never invent one.
+ *
+ * MEASURED DEFECT this closes: the prose used to SNIFF the recorded oracle
+ * source string for "NVIDIA".  On AMD-tagged harnesses it therefore called the
+ * two halves of the interconnect noise "the Grace half" and "the Hopper half"
+ * and cited "On NVIDIA silicon an unstressed run observes nothing" as if it
+ * applied -- and it would have said the same on an x86 host with an NVIDIA GPU,
+ * whose oracle string still carries the word.  None of those is a statement
+ * about the machine that ran.
+ * ------------------------------------------------------------------------- */
+#ifndef HET_LINK_NAME       /* no leading article: use sites supply their own */
+#define HET_LINK_NAME "host-device interconnect"
+#endif
+#ifndef HET_HOST_HALF
+#define HET_HOST_HALF "the host half"
+#endif
+#ifndef HET_DEV_HALF
+#define HET_DEV_HALF "the device half"
+#endif
+/* Alglave ASPLOS'15 4.3.1's "zero without stress" is an NVIDIA measurement (B4).
+   1 only on a machine it was measured on; everywhere else the run is told that
+   no equivalent figure exists rather than being handed somebody else's. */
+#ifndef HET_ALGLAVE_ZERO_MEASURED
+#define HET_ALGLAVE_ZERO_MEASURED 0
+#endif
+/* The page-placement lever HET_PLACE drives, by its API name.  A DIALECT fact:
+   the CUDA render calls cudaMemAdvise, the HIP render carries no placement code
+   at all (and #errors on a non-zero HET_PLACE), so there the mechanism is
+   named and no API is claimed. */
+#ifndef HET_PLACE_LEVER
+#define HET_PLACE_LEVER "the page-placement lever"
+#endif
+
 /* tau_hot -- how many control sightings make the harness "demonstrably hot".
    3 is Kirkham's 95% floor (P_rep = 1 - e^-3 = 95.02%; OOPSLA'20 1.1); 30 makes
    "hot" comfortable rather than marginal, which is cheap in a perpetual harness.
@@ -131,9 +172,11 @@ typedef enum { CONF_ROBUST, CONF_ADVISORY, CONF_EXPLORATORY } het_confidence;
  * an emitter that forgot the field would produce, so it must be the sentinel
  * het_verdict() fails closed on, never a real class.  Never reorder these.
  *
- * The tag is read from field 2 of tests/het/control-map.csv (grounded in
- * expected-nvidia.csv), which the emitter already parses for mu(T).  Frames and
- * census: hetlitmus/docs/positive-control.md 4/11; Q4 3.3/R5. */
+ * The tag is read from field 2 of the positive-control map of THIS harness's
+ * (CPU ISA x GPU dialect) pair -- litmus/hetOracle.ml names the file, and the
+ * emitter already parses it for mu(T).  A pair registered without an oracle is
+ * stamped ORACLE_NONE directly and reads no map at all.  Frames and census:
+ * hetlitmus/docs/positive-control.md 4/11; Q4 3.3/R5. */
 typedef enum {
   ORACLE_UNSET = 0,   /* the emitter did not tag this harness -- fail closed */
   ORACLE_DISALLOWED,  /* the model FORBIDS the weak outcome.  A sighting refutes. */
@@ -188,10 +231,12 @@ typedef struct het_obs_record {
      the difference between "this refutes the model" and "this is what the model
      said would happen".  ORACLE_UNSET (the memset default) fails closed. */
   het_oracle_t het_oracle;
-  /* "<csv>:<model>", e.g. "expected-amd.csv:AMD-CDNA3-x86".  Printed on every
-     verdict: it is the file a mismatch must be re-derived from, and a harness
-     tagged from the wrong vendor's oracle is otherwise indistinguishable from a
-     correct one in the run log. */
+  /* WHERE THE PREDICTION IS WRITTEN DOWN, as "<oracle csv>:<Model>" on a pair
+     that has one and as a parenthesised "(NO-ORACLE: ...)" on a pair that does
+     not.  Printed on every verdict: it is the file a mismatch must be
+     re-derived from, and a harness tagged from the wrong pair's oracle is
+     otherwise indistinguishable from a correct one in the run log.  A LABEL
+     only -- nothing reads it back for a decision. */
   const char *oracle_source;
   /* D10 (memo 7.D10): 1 when EVERY proc of this test is a CPU proc.  Such a
      test is not a compound-model experiment -- it is an x86-TSO conformance
@@ -334,12 +379,14 @@ typedef struct het_obs_record {
                          loop the optimiser deleted).
        cpu_preload_ops   0 => the M3 incantation is inert (a host with no cache
                          primitives, or a 0% roll).
-       noise_cpu_rounds  0 => the Grace half of the C2C noise never ran;
-       noise_gpu_blocks  0 => the Hopper half never ran.  Either way the run is NOT
+       noise_cpu_rounds  0 => the host half of the interconnect noise never ran;
+       noise_gpu_blocks  0 => the device half never ran.  Either way the run is NOT
                          interconnect-stressed, whatever HET_NOISE_* claimed.
+                         (Both halves are NAMED by HET_HOST_HALF/HET_DEV_HALF,
+                         stamped from the oracle pair row.)
        cpu_aff_failures >0 => sched_setaffinity FAILED: the threads are wherever the
                          scheduler put them and the pinning is fiction.
-       place_failures   >0 => cudaMemAdvise was REFUSED: HET_PLACE placed nothing.
+       place_failures   >0 => HET_PLACE_LEVER was REFUSED: HET_PLACE placed nothing.
      A target count from a run whose stress was inert is not the same datum as one
      from a stressed run, and nothing else in this record would say so. */
   uint64_t cpu_enemy_rounds, cpu_enemy_accesses, cpu_preload_ops;
@@ -349,9 +396,11 @@ typedef struct het_obs_record {
   /* The two knobs the tuner drives the interconnect lever with, carried per run so
      it reads what the run REALISED, not what it asked for.  noise_ws_mb is the
      noise working set, and it decides whether the noise crosses anything at all:
-     below the last-level cache (Grace L3 = 114 MB, Bagchi Table 1) the buffer is
-     served from cache and generates no interconnect traffic, so a config that
-     scores well at 8 MB scored a stressor that was not running (Q6 3). */
+     below the last-level cache the buffer is served from cache and generates no
+     interconnect traffic, so a config that scores well at 8 MB scored a stressor
+     that was not running (Q6 3).  The argument is target-independent; the only
+     measured figure this project has for the threshold is the GH200 one behind
+     HET_LLC_MB (Grace L3 114 MB, Bagchi Table 1). */
   uint32_t noise_ws_mb, place_mode;
   /* The window resolution this run realised (= HET_NWIN of the binary that
      produced it).  HET_NWIN is swept and tau_w/F_win are resolution-dependent
@@ -477,7 +526,7 @@ typedef enum {
 #define HET_CV_CANARY_ONLY      (1u << 1)  /* Layer B fired, Layer A did not      */
 #define HET_CV_HEURISTIC_SIGHT  (1u << 2)  /* sighting via the windowed heuristic */
 #define HET_CV_AFF_FAILED       (1u << 3)  /* pinning is fiction                  */
-#define HET_CV_PLACE_REFUSED    (1u << 4)  /* cudaMemAdvise placed nothing        */
+#define HET_CV_PLACE_REFUSED    (1u << 4)  /* HET_PLACE_LEVER placed nothing      */
 #define HET_CV_SPIN_CAP         (1u << 5)  /* a delay loop, not a rendezvous      */
 #define HET_CV_UNSTRESSED       (1u << 6)  /* no stress requested at all          */
 #define HET_CV_NO_GPU_LANES     (1u << 7)  /* D10: a CPU-only harness has no GPU
@@ -687,42 +736,6 @@ static const char *het_oracle_src(const het_obs_record *_r) {
   return _r->oracle_source ? _r->oracle_source : "(unrecorded)";
 }
 
-/* ---------------------------------------------------------------------------
- * WHICH TARGET IS THIS.  The only target identity a harness carries is the
- * oracle Model string the emitter recorded ("expected-amd.csv:AMD-CDNA3-x86" /
- * "expected-nvidia.csv:NVIDIA-PTX-AArch64"), so that is what the prose keys on.
- *
- * MEASURED DEFECT this closes: on AMD-tagged harnesses the printer told the
- * reader to report a NO-ORACLE row as "what GH200 does", called the two halves
- * of the interconnect noise "the Grace half" and "the Hopper half", said "same
- * C2C path", and cited "On NVIDIA silicon an unstressed run observes nothing"
- * as if it applied.  None of those is true of an MI300A run.
- *
- * The NON-NVIDIA wording is deliberately GENERIC rather than AMD-specific:
- * naming AMD's fabric or its packaging would be an unverified hardware claim
- * (nothing in this tree measures an MI300A), and the honest fallback is the
- * mechanism, not a brand.  So a target this function does not recognise -- and
- * an unrecorded source -- gets the generic text, which claims least.
- * ------------------------------------------------------------------------- */
-static int het_src_is_nvidia(const char *src) {
-  return src != NULL && strstr(src, "NVIDIA") != NULL;
-}
-
-static int het_is_nvidia(const het_obs_record *_r) {
-  return het_src_is_nvidia(_r->oracle_source);
-}
-
-/* The interconnect and its two endpoints, as the stress code drives them. */
-static const char *het_link_name(const char *src) {
-  return het_src_is_nvidia(src) ? "NVLink-C2C" : "host-device interconnect";
-}
-static const char *het_host_half(const char *src) {
-  return het_src_is_nvidia(src) ? "the Grace half" : "the host half";
-}
-static const char *het_dev_half(const char *src) {
-  return het_src_is_nvidia(src) ? "the Hopper half" : "the device half";
-}
-
 static const char *het_conf_name(het_confidence c) {
   switch (c) {
   case CONF_ROBUST:    return "ROBUST";
@@ -809,7 +822,8 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
                  "fiction and the stress topology is not the one being tuned.\n",
             _r->cpu_aff_failures);
   if (cv & HET_CV_PLACE_REFUSED)
-    fprintf(_ch, "  CAVEAT: cudaMemAdvise was REFUSED -- HET_PLACE placed nothing.\n");
+    fprintf(_ch, "  CAVEAT: %s was REFUSED -- HET_PLACE placed nothing.\n",
+            HET_PLACE_LEVER);
   if (cv & HET_CV_NO_GPU_LANES) {
     /* The two mechanisms are named SEPARATELY and only where the lane count says
        so, because they are withheld separately (hetEmit.ml's stress_requested
@@ -916,7 +930,7 @@ static void het_print_liveness(FILE *_ch, const het_obs_record *_r) {
       "same %s path.\n",
       _r->canary_name ? _r->canary_name : "(none)",
       (unsigned long long)_r->canary_target_count, (int)HET_TAU_HOT,
-      het_link_name(_r->oracle_source));
+      HET_LINK_NAME);
   /* On a store-only shape the observer IS the liveness channel: with no reader,
      interleavings_detected is structurally 0 and, printed alone, would misread as
      "nothing raced". */
@@ -1201,13 +1215,11 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     if (dq & HET_DQ_NOISE_CPU_DEAD)
       fprintf(_ch, "    - %s of the %s noise did NOT run: this run "
                    "is not interconnect-stressed\n",
-              het_host_half(_r->oracle_source),
-              het_link_name(_r->oracle_source));
+              HET_HOST_HALF, HET_LINK_NAME);
     if (dq & HET_DQ_NOISE_GPU_DEAD)
       fprintf(_ch, "    - %s of the %s noise did NOT run: this run "
                    "is not interconnect-stressed\n",
-              het_dev_half(_r->oracle_source),
-              het_link_name(_r->oracle_source));
+              HET_DEV_HALF, HET_LINK_NAME);
     if (dq & HET_DQ_GPU_STRESS_DEAD) {
       fprintf(_ch, "    - the GPU scratchpad stress was requested "
                    "(HET_PRE_STRESS_PCT/HET_MEM_STRESS_PCT) but het_do_stress "
@@ -1216,8 +1228,11 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
          project has already recorded it as NVIDIA-only (B4).  Printing it as a
          general fact on an AMD-tagged run would be borrowing somebody else's
          number; saying that no equivalent number exists is the honest form, and
-         PORT2-reading-list.md is where that gap was established. */
-      if (het_is_nvidia(_r))
+         PORT2-reading-list.md is where that gap was established.  Keyed on an
+         explicit stamp, never on the shape of a string: the emitter sets
+         HET_ALGLAVE_ZERO_MEASURED for the machines the figure was measured on
+         and for no others. */
+      if (HET_ALGLAVE_ZERO_MEASURED)
         fprintf(_ch, "      On NVIDIA silicon an unstressed run observes nothing "
                      "(Alglave 4.3.1)\n");
       else
@@ -1244,7 +1259,7 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       fprintf(_ch, "    - only the Layer-B canary fired: the %s path is alive, "
                    "but this SHAPE's window was not demonstrably hit.  Escalate "
                    "stress tuning for it (B8).\n",
-              het_link_name(_r->oracle_source));
+              HET_LINK_NAME);
     if (cv & HET_CV_NO_EXHAUSTIVE)
       fprintf(_ch, "    - the O(N^T_L) ground-truth scan did not run at N=%llu "
                    "(HET_EXHAUSTIVE_MAX): the zero rests on the WINDOWED "

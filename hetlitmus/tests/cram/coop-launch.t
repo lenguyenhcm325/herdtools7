@@ -6,9 +6,15 @@ once per GPU dialect -- het emission needs no -set-libdir, and litmus7 renders
 the ONE dialect -gpu-target names -- and the structural invariants are pinned
 with robust counts.
 
+The `.hip' renders come from ../het-x86, not from ../het: a harness is a
+(CPU ISA x GPU dialect) ORACLE PAIR (litmus/hetOracle.ml), (x86_64, hip) is the
+populated AMD pair, and the AArch64 corpus paired with hip is a machine no oracle
+covers -- litmus7 refuses it.  The CPU column differs; everything these sections
+read is the GPU render and the shared runtime headers.
+
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ mkdir hip
-  $ litmus7 -gpu-target hip -o hip ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target hip -o hip ../het-x86/MP-cg-sys-acqrel-2s-x86_64.litmus >/dev/null 2>&1
 
 (a) exactly ONE cooperative launch, and ZERO chevron launches, per run.
   $ grep -c cudaLaunchCooperativeKernel MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
@@ -78,5 +84,5 @@ stress layer raises _grid toward the cap (stress.t (c)).
   1
 
 The HIP twin renders the same shape from the same template: one hipLaunchCooperativeKernel.
-  $ grep -c hipLaunchCooperativeKernel hip/MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip
+  $ grep -c hipLaunchCooperativeKernel hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64.hip
   1

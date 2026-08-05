@@ -12,15 +12,21 @@ rather than enabling observation.  The quotes, tables and vendor split live once
 in the emitted het_stress.cuh (pinned in (e3)); do not repeat the claim
 unqualified.
 
+The `.hip' renders come from ../het-x86, not from ../het: a harness is a
+(CPU ISA x GPU dialect) ORACLE PAIR (litmus/hetOracle.ml), (x86_64, hip) is the
+populated AMD pair, and the AArch64 corpus paired with hip is a machine no oracle
+covers -- litmus7 refuses it.  The CPU column differs; everything these sections
+read is the GPU render and the shared runtime headers.
+
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
   $ mkdir hip
-  $ litmus7 -gpu-target hip -o hip ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ litmus7 -gpu-target hip -o hip ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target hip -o hip ../het-x86/MP-cg-sys-acqrel-2s-x86_64.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target hip -o hip ../het-x86/S-cg-sys-fence-x86_64.litmus >/dev/null 2>&1
   $ MP=MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
   $ S=S-cg-sys-fence/S-cg-sys-fence
-  $ MPH=hip/MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
-  $ SH=hip/S-cg-sys-fence/S-cg-sys-fence
+  $ MPH=hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64
+  $ SH=hip/S-cg-sys-fence-x86_64/S-cg-sys-fence-x86_64
 
 (a) the ported stress layer is emitted ONCE per harness dir and included by that
 dir's render -- one shared header, so all reused cuda-litmus code and its
@@ -29,7 +35,7 @@ mandatory citations sit in one auditable file.
   present
   $ grep -c '#include "het_stress.cuh"' $MP.cu $MPH.hip
   MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu:1
-  hip/MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip:1
+  hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64.hip:1
   $ grep -c 'cuda-litmus' MP-cg-sys-acqrel-2s/het_stress.cuh > /dev/null && echo cited
   cited
 
@@ -234,5 +240,5 @@ atomics, which CUDA and HIP genuinely spell differently -- resolves to the HIP
 spelling.
   $ grep -c 'het_spin(_spin_bar' $SH.hip
   2
-  $ grep -c '__HIP_MEMORY_SCOPE_AGENT' hip/S-cg-sys-fence/het_stress.cuh
+  $ grep -c '__HIP_MEMORY_SCOPE_AGENT' hip/S-cg-sys-fence-x86_64/het_stress.cuh
   2

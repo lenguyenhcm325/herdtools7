@@ -14,12 +14,18 @@ link-directed component; its efficacy is an inference, not a measurement, so the
 claim is "additive, composable, most specific to the cross-device window", never
 "more effective than per-device stress" (Q6 3.3/3.5).
 
+The `.hip' renders come from ../het-x86, not from ../het: a harness is a
+(CPU ISA x GPU dialect) ORACLE PAIR (litmus/hetOracle.ml), (x86_64, hip) is the
+populated AMD pair, and the AArch64 corpus paired with hip is a machine no oracle
+covers -- litmus7 refuses it.  The CPU column differs; everything these sections
+read is the GPU render and the shared runtime headers.
+
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
   $ mkdir hip
-  $ litmus7 -gpu-target hip -o hip ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target hip -o hip ../het-x86/MP-cg-sys-acqrel-2s-x86_64.litmus >/dev/null 2>&1
   $ MP=MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
-  $ MPH=hip/MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
+  $ MPH=hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64
   $ S=S-cg-sys-fence/S-cg-sys-fence
 
 Counts that a wrong site could satisfy are SCOPED to one function body rather
@@ -42,7 +48,7 @@ same header and sees declarations only.
   0
   $ grep -c '#include "het_cpu_stress.h"' $MP.cu $MPH.hip MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
   MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu:1
-  hip/MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.hip:1
+  hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64.hip:1
   MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c:1
 
 and NO host ISA asm appears in the .cu at all:

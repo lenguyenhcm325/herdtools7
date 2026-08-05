@@ -23,21 +23,25 @@ second vendor's targets to its reader either.
   $ grep -c 'Usage: sh comp.sh \[cuda|cuda-link\]' MP-cg-sys-relaxed/comp.sh
   1
 
-(c) the HIP emission is the mirror image, into its own directory.
+(c) the HIP emission is the mirror image, into its own directory.  It comes from
+an x86-64 rendering, not from the AArch64 corpus above: `-gpu-target' names a GPU
+dialect but a harness is a (CPU ISA x GPU dialect) PAIR, and (AArch64, hip) is
+absent from the oracle table (section (j) below).  ../het-x86 is the committed
+one-test fixture for the populated (x86_64, hip) pair.
   $ mkdir hip
-  $ litmus7 -gpu-target hip -o hip ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
-  $ ls hip/MP-cg-sys-relaxed | grep -E '\.(cu|hip)$'
-  MP-cg-sys-relaxed.hip
-  $ grep -ciE 'cuda|nvidia|nvcc' hip/MP-cg-sys-relaxed/comp.sh || true
+  $ litmus7 -gpu-target hip -o hip ../het-x86/MP-cg-sys-relaxed-x86_64.litmus >/dev/null 2>&1
+  $ ls hip/MP-cg-sys-relaxed-x86_64 | grep -E '\.(cu|hip)$'
+  MP-cg-sys-relaxed-x86_64.hip
+  $ grep -ciE 'cuda|nvidia|nvcc' hip/MP-cg-sys-relaxed-x86_64/comp.sh || true
   0
-  $ grep -ciE 'cuda|nvidia|nvcc' hip/MP-cg-sys-relaxed/Makefile || true
+  $ grep -ciE 'cuda|nvidia|nvcc' hip/MP-cg-sys-relaxed-x86_64/Makefile || true
   0
-  $ grep -ciE 'cuda|nvidia|nvcc' hip/MP-cg-sys-relaxed/README.md || true
+  $ grep -ciE 'cuda|nvidia|nvcc' hip/MP-cg-sys-relaxed-x86_64/README.md || true
   0
 
 (d) the .hip banner names the HIP build commands.  It said `comp.sh cuda-link /
 make cuda-bin' until this directory stopped carrying both.
-  $ grep -c 'comp.sh hip-link / make hip-bin' hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
+  $ grep -c 'comp.sh hip-link / make hip-bin' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   1
 
 (e) BITE, both ways: the absent vendor's build entry points refuse by name.  Not
@@ -61,7 +65,7 @@ and no linked binary behind.
   1
   $ ls MP-cg-sys-relaxed_hip.o MP-cg-sys-relaxed 2>/dev/null | wc -l
   0
-  $ cd ../hip/MP-cg-sys-relaxed
+  $ cd ../hip/MP-cg-sys-relaxed-x86_64
   $ make cuda-bin >/dev/null 2>../cuda-bin.err; echo "exit $?"
   exit 2
   $ grep -cE "No rule to make target .cuda-bin." ../cuda-bin.err
@@ -70,7 +74,7 @@ and no linked binary behind.
   exit 2
   $ grep -c 'comp.sh: unknown target "cuda" -- this directory is hip-only (accepted: hip|hip-link)' ../comp-cuda.err
   1
-  $ ls MP-cg-sys-relaxed.o MP-cg-sys-relaxed 2>/dev/null | wc -l
+  $ ls MP-cg-sys-relaxed-x86_64.o MP-cg-sys-relaxed-x86_64 2>/dev/null | wc -l
   0
   $ cd ../..
 

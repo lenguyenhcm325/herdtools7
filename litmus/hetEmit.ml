@@ -79,6 +79,12 @@ end
          gd_free_shared, so call sites stay dialect-agnostic C;
          [gd_shared_mem_note] is the harness-header banner comment.  __out is
          NOT routed through these. *)
+      (* The page-placement lever HET_PLACE drives, by its API name -- a DIALECT
+         fact, not a machine one: it is the vendor runtime call the render
+         contains.  None where the render carries no placement code at all (the
+         HIP lane refuses a non-zero HET_PLACE at compile time), and then
+         het_verdict.h names the mechanism instead. *)
+      gd_place_lever : string option ;
       gd_shared_mem_note : string ;  (* "shared vars" banner comment *)
       gd_shared_mem_defs : string ;  (* file-scope gd_alloc_shared / gd_free_shared defs *)
       (* The interconnect-stress allocator: a FOURTH object class -- large system
@@ -142,6 +148,7 @@ end
              %s_bar.fetch_add(1, cuda::memory_order_seq_cst);\n\
              %swhile (_bar.load(cuda::memory_order_seq_cst) < NPART) { }\n"
             ind ptr ind ind) ;
+      gd_place_lever = Some "cudaMemAdvise" ;
       gd_shared_mem_note =
         "// Shared vars + barrier use gd_alloc_shared: system malloc() on GH200 (ATS =>\n\
          // cache-line CHI coherence over NVLink-C2C, the real inter-device protocol);\n\
@@ -198,6 +205,9 @@ end
             "%s(void)__hip_atomic_fetch_add((%s), 1, __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_SYSTEM);\n\
              %swhile (__hip_atomic_load((%s), __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_SYSTEM) < NPART) { }\n"
             ind ptr ind ptr) ;
+      (* No placement lever on this lane: MI300A has one HBM pool and nothing to
+         place, and het_alloc_hip.inc turns a non-zero HET_PLACE into an #error. *)
+      gd_place_lever = None ;
       gd_shared_mem_note =
         "// Shared vars + barrier use gd_alloc_shared: fine-grained hipMallocManaged on\n\
          // MI300A -- the only mode coherent for system-scope CPU<->GPU sync during a\n\
@@ -280,16 +290,10 @@ end
          (* (clang triple, -std) to cross-assemble the real CPU asm on a foreign
             dev host; None when the build host already IS this ISA (native gcc) *)
          val cross : (string * string) option
-         (* WHICH ORACLE THIS LANE IS TAGGED FROM (P2d).  The positive-control
-            map carries mu(T), the canary and the oracle CLASS; the oracle CSV
-            is not parsed here at all -- its NAME and Model string are what the
-            harness records as [oracle_source], which names the file a reader
-            re-derives a mismatch from and tells het_verdict.h which target's
-            prose to print.  Both are per-CPU-lattice; see hetCpuFront.ml for
-            why the CPU ISA is the axis that names them. *)
-         val control_map_csv : string  (* control-map.csv | control-map-amd.csv *)
-         val oracle_csv : string       (* expected-nvidia.csv | expected-amd.csv *)
-         val oracle_model : string     (* the Model string its rows carry *)
+         (* NO ORACLE FIELDS HERE.  [isa_name] is this module's whole
+            contribution to the oracle question: it is one coordinate of the
+            (CPU ISA x GPU dialect) pair litmus/hetOracle.ml keys the oracle
+            file, the control map and the machine prose on. *)
          (* The tagged-CPU-body hooks -- the ONLY CPU-ISA-specific pieces of the
             het emitter (the AArch64 arm wires HetCpuBody, the x86_64 arm its
             twin HetCpuBodyX86; both produce the same C shape and share
@@ -490,6 +494,13 @@ end
              the parse -- an unregistered target must refuse having written
              nothing. *)
           let dialects = HetTarget.select ~key:(fun d -> d.gd_target) dialects in
+          (* THE ORACLE PAIR ROW for this emission, resolved in the same breath
+             and for the same reason: an ABSENT (CPU ISA x GPU dialect) pair must
+             refuse having written nothing.  One dialect survives the filter, so
+             the pair is fixed here. *)
+          let pair =
+            HetOracle.resolve ~cpu_isa:CpuF.isa_name
+              ~target:(List.hd dialects).gd_target in
           let parsed = P.parse in_chan splitted in
           close_in in_chan ;
           let tname = splitted.Splitter.name.Name.name in
@@ -511,48 +522,71 @@ end
               parsed.MiscParser.prog in
           (* The positive-control map: mu(T) and the canary to co-run, and
              the oracle class that decides what a null is worth
-             (litmus/hetControlMap.ml). *)
+             (litmus/hetControlMap.ml).  A pair with no oracle reads NO map
+             (D-MV5): mu(T) is "the nearest ALLOWED grid neighbour", so a map is
+             an oracle-derived object and borrowing one from another pair is the
+             borrowing this table exists to stop.  Such a harness is
+             single-instance, stamps ORACLE_NONE and -- with no control built --
+             het_verdict() calls its nulls COLD-INVALID and says why.  The
+             bootstrap map generator for a new pair is deliberately future work;
+             until it exists, characterizing without one is the honest state. *)
           let src_dir = Filename.dirname src_name in
           let cmap =
-            HetControlMap.load ~verbose:O.verbose ~dir:src_dir
-              ~csv:CpuF.control_map_csv ~src_name in
+            match pair with
+            | HetOracle.Oracle p ->
+               HetControlMap.load ~verbose:O.verbose ~dir:src_dir
+                 ~csv:p.HetOracle.op_control_map_csv ~src_name
+            | HetOracle.Characterize _ | HetOracle.Override ->
+               HetControlMap.empty in
           let mu_name = HetControlMap.control_of cmap tname
           and canary_name = HetControlMap.canary_of cmap tname
-          and oracle = HetControlMap.oracle_of cmap tname in
-          (* WHICH ORACLE FILE this lane is tagged from, as the string every
-             harness prints and het_verdict.h keys its target wording on.  It is
-             a NAME, not a claim about the row: nothing is read out of the file
-             here -- the verdict comes from the control map above and the
-             derivation from the CSV's own Source column, which a reader looks
-             up.  The existence test keeps "(no oracle CSV)" meaning what it has
-             always meant: this lane's oracle is not next to the test. *)
+          and oracle =
+            match pair with
+            | HetOracle.Oracle _ -> HetControlMap.oracle_of cmap tname
+            (* Stamped DIRECTLY from the table row, not looked up: a uniform
+               class read out of a file nobody wrote would be indistinguishable
+               from a lookup that silently missed. *)
+            | HetOracle.Characterize _ | HetOracle.Override -> "ORACLE_NONE" in
+          (* WHERE THE PREDICTION IS WRITTEN DOWN, as the string every harness
+             prints.  On a populated pair it is a NAME, not a claim about the
+             row: nothing is read out of the CSV here -- the verdict comes from
+             the control map above and the derivation from the CSV's own Source
+             column, which a reader looks up.  The existence test keeps "(no
+             oracle CSV)" meaning what it has always meant: this pair's oracle is
+             not next to the test.  The other two states say which of them they
+             are, and the flag-overridden one DISCLOSES the override, because a
+             harness emitted past a refusal must not read like a registered one. *)
           let oracle_src =
-            if Sys.file_exists (Filename.concat src_dir CpuF.oracle_csv) then
-              Printf.sprintf "%s:%s" CpuF.oracle_csv CpuF.oracle_model
-            else "(no oracle CSV)" in
-          (* WHICH TARGET IS THIS, for the emitted stderr WARNINGs.  They name
-             the two halves of the interconnect noise, and calling them "Grace"
-             and "Hopper" on an AMD-tagged harness is a false statement about the
-             machine -- MEASURED 2026-08-03 on a real run of
-             2+2W-cpuonly-x86_64 (src=expected-amd.csv:AMD-CDNA3-x86), whose very
-             first two lines were "the Hopper half of the C2C noise is DISABLED"
-             and "the Grace half ... is DISABLED".  Decided HERE because the
-             target is fixed at emission; het_verdict.h makes the same test at
-             run time off _rec.oracle_source, and the two must agree.
-             The non-NVIDIA wording is generic on purpose: naming AMD's fabric
-             would be an unverified hardware claim, so the fallback names the
-             MECHANISM.  An unrecognised model therefore also gets the generic
-             text, which claims least. *)
-          let is_nv_target =
-            let m = CpuF.oracle_model in
-            let n = String.length m in
-            let rec go i = i + 6 <= n && (String.sub m i 6 = "NVIDIA" || go (i+1)) in
-            go 0 in
-          let host_half = if is_nv_target then "the Grace half" else "the host half"
-          and dev_half = if is_nv_target then "the Hopper half" else "the device half"
-          and link_name =
-            (* No leading article: every use site supplies its own. *)
-            if is_nv_target then "NVLink-C2C" else "host-device interconnect" in
+            let pname =
+              HetOracle.pair_name ~cpu_isa:CpuF.isa_name
+                ~target:(List.hd dialects).gd_target in
+            match pair with
+            | HetOracle.Oracle p ->
+               if Sys.file_exists
+                    (Filename.concat src_dir p.HetOracle.op_oracle_csv) then
+                 Printf.sprintf "%s:%s"
+                   p.HetOracle.op_oracle_csv p.HetOracle.op_oracle_model
+               else "(no oracle CSV)"
+            | HetOracle.Characterize why ->
+               Printf.sprintf "(NO-ORACLE: %s is registered without one -- %s)"
+                 pname why
+            | HetOracle.Override ->
+               Printf.sprintf
+                 "(NO-ORACLE: %s is UNREGISTERED, emitted under -allow-no-oracle)"
+                 pname in
+          (* WHICH MACHINE THIS HARNESS MAY NAME, for the emitted stderr WARNINGs
+             -- the two halves of the interconnect noise and the link between
+             them.  It comes from the PAIR ROW (litmus/hetOracle.ml), which is
+             also what stamps the HET_LINK_NAME / HET_HOST_HALF / HET_DEV_HALF
+             defines het_verdict.h prints from, so the driver's wording and the
+             verdict's wording cannot disagree: one record feeds both. *)
+          let mc =
+            match HetOracle.machine_of pair with
+            | Some m -> m
+            | None -> HetOracle.generic_machine in
+          let host_half = mc.HetOracle.mc_host_half
+          and dev_half = mc.HetOracle.mc_dev_half
+          and link_name = mc.HetOracle.mc_link_name in
           (* What goes in HET_CANARY_NAME / _rec.canary_name.  A name is NOT a
              co-run signal -- the map names a canary for every test, including the
              ones that are the canary.  HET_CANARY_COMPILED_IN, set from the
@@ -1905,7 +1939,7 @@ end
             s (Printf.sprintf
                  "    fprintf(stderr, \"HetLitmus WARNING: the mem-stress population is EMPTY (test=%%d + noise=%%d fills the co-resident cap %%d).  HET_MEM_STRESS_PCT=%%d asks for scratchpad stress and NO block will do any.  %s\\n\",\n\
                \            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_MEM_STRESS_PCT);\n"
-                 (if is_nv_target
+                 (if mc.HetOracle.mc_alglave_zero
                   then "On NVIDIA silicon an unstressed run observes nothing (Alglave ASPLOS'15 4.3.1)."
                   else "(Alglave ASPLOS'15 4.3.1's \\\"zero without stress\\\" was measured on NVIDIA parts and is not claimed for this target; no equivalent figure is published for it.)")) ;
             s "  uint32_t _pre_pat = (uint32_t)HET_PRE_STRESS_PATTERN;\n" ;
@@ -1966,10 +2000,7 @@ end
             s (Printf.sprintf
                  "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%%d is BELOW the last-level cache (%%d MB) -- the noise buffers fit in cache, so the reads are served locally and generate NO interconnect traffic.  This run is NOT %s-stressed%s.\\n\",\n\
                \            (int)HET_NOISE_MB, (int)HET_LLC_MB);\n"
-                 link_name
-                 (if is_nv_target then " (Fusco: Hopper L2 caches HBM, local and peer)"
-                  else " (the local-cache argument is target-independent; no measured \
-                        last-level-cache behaviour is claimed for this target)")) ;
+                 link_name mc.HetOracle.mc_llc_note) ;
             s "  if (_noiseBlocks > 0) {\n" ;
             s "    int _rc = gd_alloc_noise((void**)&_noise_ddr, (size_t)_noise_words*sizeof(uint64_t), 2);\n" ;
             s (Printf.sprintf
@@ -2252,10 +2283,11 @@ end
             s (Printf.sprintf "    _rec.het_oracle = %s;\n" oracle) ;
             (* WHERE THAT PREDICTION IS WRITTEN DOWN.  [oracle_source] names the
                file the harness was tagged from -- an x86 harness built against
-               the NVIDIA oracle would otherwise be invisible -- and it is also
-               how het_verdict.h decides which target's prose to print.  A
-               mismatch sentence sends the reader to this file's Source column,
-               so the file has to be named in the run log. *)
+               the NVIDIA oracle would otherwise be invisible.  A mismatch
+               sentence sends the reader to this file's Source column, so the
+               file has to be named in the run log.  It is a LABEL only: nothing
+               reads it back for a decision, and the machine prose comes from the
+               HET_*_HALF / HET_LINK_NAME defines above. *)
             s (Printf.sprintf "    _rec.oracle_source = \"%s\";\n" oracle_src) ;
             s (Printf.sprintf
                  "    _rec.cpu_only = %d;  /* D10: 1 iff EVERY proc is a CPU proc */\n"
@@ -2451,6 +2483,33 @@ end
             s "#include <pthread.h>\n#include <inttypes.h>\n" ;
             s "#include \"het_stress.cuh\"\n" ;
             s "#include \"het_cpu_stress.h\"\n" ;
+            (* THE MACHINE PROSE, stamped BEFORE het_verdict.h reads it.  The
+               header prints the two halves of the interconnect noise and the
+               link between them, and every one of those words is a claim about
+               silicon; it may not derive them from the harness itself.  So they
+               are stamped here, from the oracle PAIR ROW, and a pair with no
+               oracle stamps NONE of them -- het_verdict.h's #ifndef defaults
+               then name the MECHANISM, which claims least.  Fail-safe by
+               construction: a missing define can only weaken a claim.
+               HET_PLACE_LEVER is separate because it is a DIALECT fact -- the
+               vendor API call this render actually contains. *)
+            (match HetOracle.machine_of pair with
+             | Some m ->
+                s (Printf.sprintf "#define HET_LINK_NAME %S\n"
+                     m.HetOracle.mc_link_name) ;
+                s (Printf.sprintf "#define HET_HOST_HALF %S\n"
+                     m.HetOracle.mc_host_half) ;
+                s (Printf.sprintf "#define HET_DEV_HALF %S\n"
+                     m.HetOracle.mc_dev_half) ;
+                if m.HetOracle.mc_alglave_zero then
+                  s "#define HET_ALGLAVE_ZERO_MEASURED 1\n"
+             | None ->
+                s "/* No machine defines: this harness's (CPU ISA x GPU dialect) pair\n" ;
+                s "   carries no oracle, so it names no silicon and het_verdict.h's\n" ;
+                s "   generic host/device wording stands. */\n") ;
+            (match dialect.gd_place_lever with
+             | Some lever -> s (Printf.sprintf "#define HET_PLACE_LEVER %S\n" lever)
+             | None -> ()) ;
             s "#include \"het_verdict.h\"\n" ;
             s "extern \"C\" {\n" ;
             s "#include \"outs.h\"\n" ;

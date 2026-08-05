@@ -11,6 +11,14 @@
 (* dispatch arm pairs one of these with the matching module chain after     *)
 (* HetArch.scan_cpu_isa has named the ISA.                                  *)
 (*                                                                          *)
+(* NO ORACLE LIVES HERE.  What a harness predicts belongs to the            *)
+(* (CPU ISA x GPU dialect) PAIR, and litmus/hetOracle.ml is the table that  *)
+(* keys it: expected-nvidia.csv is Grace(AArch64)+Hopper, expected-amd.csv  *)
+(* is Zen-4(x86-64)+CDNA3, and the cells those two rows leave empty are     *)
+(* refused or registered as NO-ORACLE rather than filled in from a          *)
+(* neighbour.  These modules contribute [isa_name], one coordinate of that  *)
+(* key, and nothing else about the model.                                   *)
+(*                                                                          *)
 (* This software is governed by the CeCILL-B license under French law.       *)
 (****************************************************************************)
 
@@ -28,19 +36,6 @@ module AArch64 (O:Config) = struct
   let body_module = "hetCpuBody"
   let host_macro = "__aarch64__"
   let cross = Some ("aarch64-linux-gnu","gnu11")
-
-  (* WHICH ORACLE THIS LANE IS TAGGED FROM (P2d).  The CPU ISA is the only part
-     of the compound target that is fixed when the harness is EMITTED -- both
-     GPU dialects are dual-emitted from one parse and the vendor is chosen later
-     by which of comp.sh's link arms is run -- and it is also the axis the two
-     oracles were derived on: expected-nvidia.csv is Grace(AArch64)+Hopper,
-     expected-amd.csv is Zen-4(x86-64)+CDNA3.  So the ISA names the files and
-     the pair (file, Model) is what the harness records as [oracle_source],
-     which het_verdict.h prints on every run so the log says which oracle the
-     tag came from -- and which target's prose the run is entitled to. *)
-  let control_map_csv = "control-map.csv"
-  let oracle_csv = "expected-nvidia.csv"
-  let oracle_model = "NVIDIA-PTX-AArch64"
 
   let parse_column p txt =
     let lexbuf = Lexing.from_string txt in
@@ -74,16 +69,6 @@ module X86_64 (O:Config) = struct
   let body_module = "hetCpuBodyX86"
   let host_macro = "__x86_64__"
   let cross = None
-
-  (* The AMD lane (P2d).  control-map-amd.csv is the x86 STRENGTH LATTICE's own
-     map -- on x86 the CPU lattice loses its middle rung, so a mu(T) taken from
-     the AArch64 map is not a weakening here (memo 7.D11) -- and expected-amd.csv
-     is the AMD oracle a mismatch on this lane must be re-derived from.  Until
-     2026-08-03 this lane named neither: MEASURED, every one of the 411 x86
-     renderings emitted `_rec.het_oracle = ORACLE_UNSET'. *)
-  let control_map_csv = "control-map-amd.csv"
-  let oracle_csv = "expected-amd.csv"
-  let oracle_model = "AMD-CDNA3-x86"
 
   let parse_column p txt =
     let lexbuf = Lexing.from_string txt in
