@@ -120,7 +120,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # 3. EMISSION GOLDEN  (committed cuda-out/*.cu + hip-out/*.hip re-emit
-#    byte-identical -- one emission, both dialects)
+#    byte-identical -- one lane per dialect, since one emission renders one)
 # ---------------------------------------------------------------------------
 echo "[3/3] Emission golden (committed cuda-out/*.cu + hip-out/*.hip)"
 elog="$EMITTMP/emit.log"

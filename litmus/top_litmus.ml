@@ -631,8 +631,9 @@ end = struct
                 test's CPU columns share, instantiate the matching CPU module
                 chain (Arch_litmus + Compile_litmus + a HetCpuFront column
                 frontend), and drive the shared HetEmit functor.  The GPU side
-                stays LISA/Bell -> CudaLang/HipLang; HetEmit dual-emits <t>.cu
-                and <t>.hip from the one parse.  See
+                stays LISA/Bell -> CudaLang/HipLang; HetEmit renders the single
+                dialect `-gpu-target' names, so the harness directory carries
+                <t>.cu or <t>.hip, never both.  See
                 hetlitmus/docs/het-emission.md. *)
              (fun hash_env name in_chan out_chan splitted ->
                try

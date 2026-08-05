@@ -29,8 +29,9 @@
 #
 # CUDA BUNDLE.  probe.cu, ladder.sh's `comp.sh cuda && make cuda-bin' and
 # expected-nvidia.csv make this the NVIDIA dev-tier bundle, so it ships the
-# emission lane to match (GPU_TARGET below); an AMD bundle is that variable plus
-# an AMD probe and oracle, not a change here.
+# emission lane to match and GPU_TARGET below REFUSES any other vendor: an AMD
+# bundle wants an AMD probe, ladder and oracle too, and a bundle whose harness
+# dirs alone were AMD would die at rung 0 on the remote box, hours after packing.
 # =========================================================================
 # Needs bash (arrays, mapfile); re-exec rather than fail obscurely under dash.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
@@ -43,13 +44,22 @@ REPO="$(cd "$HETL/.." && pwd)"
 LITMUS7="$REPO/_build/install/default/bin/litmus7"
 [ -x "$LITMUS7" ] || { echo "error: $LITMUS7 not built (run 'make all')" >&2; exit 2; }
 
+# The emission lane this bundle ships (litmus7 -gpu-target): one vendor per
+# harness dir, and the ladder in here builds the CUDA one.  Checked before
+# anything is created, so a refusal leaves no half-made output directory.
+GPU_TARGET="${GPU_TARGET:-cuda}"
+[ "$GPU_TARGET" = cuda ] || {
+  echo "error: GPU_TARGET=$GPU_TARGET -- only cuda is packable: this bundle's" >&2
+  echo "       ladder.sh (comp.sh cuda / make cuda-bin), probe.cu and" >&2
+  echo "       expected-nvidia.csv are CUDA-only, so a $GPU_TARGET bundle would" >&2
+  echo "       ship harness dirs its own driver cannot build.  Parameterising" >&2
+  echo "       the ladder, probe and oracle is future work." >&2
+  exit 2 ; }
+
 OUTDIR="${1:-$HERE/bundle-out}"
 mkdir -p "$OUTDIR"
 OUTDIR="$(cd "$OUTDIR" && pwd)"
 
-# The emission lane this bundle ships (litmus7 -gpu-target): one vendor per
-# harness dir, and the ladder in here builds the CUDA one.
-GPU_TARGET="${GPU_TARGET:-cuda}"
 TESTS_FILE="${TESTS_FILE:-$HERE/TESTS.txt}"
 [ -r "$TESTS_FILE" ] || { echo "error: no $TESTS_FILE" >&2; exit 2; }
 

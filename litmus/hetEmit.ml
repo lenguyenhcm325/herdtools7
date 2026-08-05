@@ -2900,9 +2900,14 @@ end
                      cc d.gd_arch_flag arch obj tname tname) ;
                 s "    fi ;;\n")
               dialects ;
+            (* An unmatched $TARGET means an argument was GIVEN (no argument
+               takes d0 above), so the refusal quotes it back: one vendor per
+               harness means the other vendor's target name is the likely
+               mistake, and a bare usage line leaves the reader to spot that
+               their own word is missing from it. *)
             s (Printf.sprintf
-                 "  *) echo \"usage: sh comp.sh [%s]\" >&2 ; exit 2 ;;\n"
-                 comp_args) ;
+                 "  *) echo \"comp.sh: unknown target \\\"$TARGET\\\" -- this directory is %s-only (accepted: %s)\" >&2 ; exit 2 ;;\n"
+                 (String.concat "/" targets) comp_args) ;
             s "esac\n" ;
             s (Printf.sprintf "if %s; then\n"
                  (String.concat " || "

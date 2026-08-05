@@ -190,11 +190,14 @@ def phase1(tmp, d):
     t = test_of(d)
     comp = open(os.path.join(d, "comp.sh")).read()
     mk = open(os.path.join(d, "Makefile")).read()
-    # comp.sh: the arm, the usage line, and the success line must all know it.
+    # comp.sh: the arm, the usage banner, the unknown-target refusal and the
+    # success line must all know it.  The refusal quotes the rejected argument
+    # back and names the accepted set, so it is pinned as one string.
     for what, pat, blob, where in [
         ("hip-link case arm", r"^\s*hip\|hip-link\)", comp, "comp.sh"),
         ("hip-link usage banner", r"Usage: sh comp\.sh \[hip\|hip-link\]", comp, "comp.sh"),
-        ("hip-link usage error", r'usage: sh comp\.sh \[hip\|hip-link\]', comp, "comp.sh"),
+        ("unknown-target refusal", r'comp\.sh: unknown target .*this directory is '
+                                   r'hip-only \(accepted: hip\|hip-link\)', comp, "comp.sh"),
         ("hip-link success line", r'^if \[ "\$TARGET" = hip-link \]; then$', comp, "comp.sh"),
         ("hip-bin rule", r"^hip-bin: %s_hip\.o outs\.o %s_cpu_host\.o$" % (re.escape(t), re.escape(t)), mk, "Makefile"),
         ("hip-bin .PHONY", r"^\.PHONY:.*\bhip-bin\b", mk, "Makefile"),
@@ -791,8 +794,17 @@ def bite(tmp, d_x86, d_x86_cuda, d_aa):
 
     # --- P1 -----------------------------------------------------------------
     w = W("p1c")
-    sub(os.path.join(w, "comp.sh"), "hip|hip-link)", "hip|hip-lonk)")
+    # Anchored on the whole case-arm LINE: the unknown-target refusal quotes
+    # `(accepted: hip|hip-link)' too, and a bare substring would corrupt both.
+    sub(os.path.join(w, "comp.sh"), "\n  hip|hip-link)\n", "\n  hip|hip-lonk)\n")
     ok &= bite_one("comp.sh hip-link arm misspelt", "P1", lambda: phase1(tmp, w), "hip-link case arm")
+    w = W("p1r")
+    sub(os.path.join(w, "comp.sh"),
+        r'comp.sh: unknown target \"$TARGET\" -- this directory is hip-only ',
+        "usage: sh comp.sh ")
+    ok &= bite_one("comp.sh unknown-target refusal cut back to a bare usage line "
+                   "(it no longer quotes the rejected argument)", "P1",
+                   lambda: phase1(tmp, w), "unknown-target refusal")
     w = W("p1o")
     mk = os.path.join(w, "Makefile")
     s = open(mk).read()

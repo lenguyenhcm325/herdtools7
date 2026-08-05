@@ -40,17 +40,38 @@ make cuda-bin' until this directory stopped carrying both.
   $ grep -c 'comp.sh hip-link / make hip-bin' hip/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
   1
 
-(e) BITE, both ways: the absent vendor's build target REFUSES by name.  Not a
-silent no-op, and above all not a fall-through to the vendor that IS here -- a
+(e) BITE, both ways: the absent vendor's build entry points refuse by name.  Not
+a silent no-op, and above all not a fall-through to the vendor that IS here -- a
 `make hip-bin' that quietly linked the CUDA harness would hand back a binary for
-the wrong device under the right name.  (make refuses before running any recipe,
-so this needs no toolchain.)
-  $ cd MP-cg-sys-relaxed && make hip-bin 2>&1 >/dev/null; echo "exit $?"
-  make: *** No rule to make target 'hip-bin'.  Stop.
+the wrong device under the right name.  Each entry point is pinned by the exit
+status and the payload of a single run; GNU make prefixes its diagnostics
+`make:' or `make[1]:' according to MAKELEVEL, which is a property of how this
+test was invoked and not of the harness, so the prefix is not read.  Neither
+refusal needs a GPU toolchain: make refuses before running any recipe, and
+comp.sh refuses in its target dispatch, leaving no object of the absent vendor
+and no linked binary behind.
+  $ cd MP-cg-sys-relaxed
+  $ make hip-bin >/dev/null 2>../hip-bin.err; echo "exit $?"
   exit 2
-  $ cd ../hip/MP-cg-sys-relaxed && make cuda-bin 2>&1 >/dev/null; echo "exit $?"
-  make: *** No rule to make target 'cuda-bin'.  Stop.
+  $ grep -cE "No rule to make target .hip-bin." ../hip-bin.err
+  1
+  $ sh comp.sh hip >/dev/null 2>../comp-hip.err; echo "exit $?"
   exit 2
+  $ grep -c 'comp.sh: unknown target "hip" -- this directory is cuda-only (accepted: cuda|cuda-link)' ../comp-hip.err
+  1
+  $ ls MP-cg-sys-relaxed_hip.o MP-cg-sys-relaxed 2>/dev/null | wc -l
+  0
+  $ cd ../hip/MP-cg-sys-relaxed
+  $ make cuda-bin >/dev/null 2>../cuda-bin.err; echo "exit $?"
+  exit 2
+  $ grep -cE "No rule to make target .cuda-bin." ../cuda-bin.err
+  1
+  $ sh comp.sh cuda >/dev/null 2>../comp-cuda.err; echo "exit $?"
+  exit 2
+  $ grep -c 'comp.sh: unknown target "cuda" -- this directory is hip-only (accepted: hip|hip-link)' ../comp-cuda.err
+  1
+  $ ls MP-cg-sys-relaxed.o MP-cg-sys-relaxed 2>/dev/null | wc -l
+  0
   $ cd ../..
 
 (f) an unregistered target REFUSES, naming the accepted set, and writes nothing.
