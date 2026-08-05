@@ -476,7 +476,7 @@ def _env():
 # ---------------------------------------------------------------------------
 MACHINE_DEFINE_RE = re.compile(
     r"^#define HET_(?:LINK_NAME|HOST_HALF|DEV_HALF|ALGLAVE_ZERO_MEASURED"
-    r"|PLACE_LEVER)\b.*$", re.M)
+    r"|PLACE_LEVER|PAIR_NAME)\b.*$", re.M)
 
 # (label, corpus dir, test, -gpu-target, render extension)
 MACHINE_PAIRS = [
@@ -496,6 +496,11 @@ GENERIC_MUST = [
     "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
     '(Alglave 4.3.1\'s "zero without stress" was measured on NVIDIA parts and is '
     'NOT claimed for this target',
+    # The sentence that has to NAME the target.  It used to substitute the recorded
+    # oracle-SOURCE string, which on a pair with no oracle is the whole NO-ORACLE
+    # disclosure blob; each frame asserts its own name, so a constant fails here.
+    'Report it as "what (unstamped CPU ISA x GPU dialect pair) does where the '
+    'CMCM is silent"',
 ]
 NVIDIA_MUST = [
     "- the Grace half of the NVLink-C2C noise did NOT run",
@@ -504,6 +509,7 @@ NVIDIA_MUST = [
     "the NVLink-C2C path is alive",
     "CAVEAT: cudaMemAdvise was REFUSED -- HET_PLACE placed nothing.",
     "On NVIDIA silicon an unstressed run observes nothing (Alglave 4.3.1)",
+    'Report it as "what (AArch64, cuda) does where the CMCM is silent"',
 ]
 AMD_MUST = [
     "- the x86 half of the Infinity Fabric noise did NOT run",
@@ -514,16 +520,21 @@ AMD_MUST = [
     "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
     '(Alglave 4.3.1\'s "zero without stress" was measured on NVIDIA parts and is '
     'NOT claimed for this target',
+    'Report it as "what (X86_64, hip) does where the CMCM is silent"',
 ]
 NVIDIA_WORDS = ["Grace", "Hopper", "NVLink", "cudaMemAdvise",
-                "On NVIDIA silicon an unstressed run observes nothing"]
-AMD_WORDS = ["Infinity Fabric", "MI300A", "the x86 half"]
+                "On NVIDIA silicon an unstressed run observes nothing",
+                "(AArch64, cuda)"]
+AMD_WORDS = ["Infinity Fabric", "MI300A", "the x86 half", "(X86_64, hip)"]
+# Forbidden in EVERY frame: the wording that handed the reader the oracle-source
+# string.  There is no stamp for which it is right.
+BLOB_WORDS = ["the target this harness was tagged for"]
 
 MACHINE_FRAMES = [
     ("no defines (a pair registered without an oracle)", None,
-     GENERIC_MUST, NVIDIA_WORDS + AMD_WORDS),
-    ("(AArch64, cuda)", "(AArch64, cuda)", NVIDIA_MUST, AMD_WORDS),
-    ("(x86_64, hip)", "(x86_64, hip)", AMD_MUST, NVIDIA_WORDS),
+     GENERIC_MUST, NVIDIA_WORDS + AMD_WORDS + BLOB_WORDS),
+    ("(AArch64, cuda)", "(AArch64, cuda)", NVIDIA_MUST, AMD_WORDS + BLOB_WORDS),
+    ("(x86_64, hip)", "(x86_64, hip)", AMD_MUST, NVIDIA_WORDS + BLOB_WORDS),
 ]
 
 
@@ -1148,14 +1159,33 @@ def bite():
         ok &= _bite_machine(
             "the (x86_64, hip) emission stamps the GH200 machine",
             tmp, header, defines=crossed)
+
+        # (12) THE TARGET NAME GOES BACK TO THE ORACLE-SOURCE STRING.  The
+        # sentence still names SOMETHING, and on a populated pair that
+        # something even reads plausibly ("expected-nvidia.csv:..."), so only
+        # a frame that knows its own pair name can see it is the wrong object
+        # -- on the pair with no oracle it is the whole disclosure blob.
+        ok &= _bite_machine(
+            "the CHARACTERIZED sentence names the oracle SOURCE again",
+            tmp, header,
+            mutate=lambda s: s.replace(
+                '"  Report it as \\"what %s does where the CMCM is silent\\".  '
+                'It is NOT evidence "',
+                '"  Report it as \\"what the target this harness was tagged for '
+                '(%s) does where the CMCM is silent\\".  It is NOT evidence "')
+            # newline-anchored: an unanchored "      HET_PAIR_NAME);" is also a
+            # substring of the DEEPER-indented call in het_stats_print, where
+            # _r does not exist -- the injection would then merely fail to
+            # compile, which proves nothing about the sentence.
+            .replace("\n      HET_PAIR_NAME);", "\n      het_oracle_src(_r));"))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 11 injections were caught -- 4 against the RULE (het_verdict.h),")
+        print("BITE OK: all 12 injections were caught -- 4 against the RULE (het_verdict.h),")
         print("         2 against its REPORTING PATHS, 2 against the EMITTED CORPUS and")
-        print("         3 against the MACHINE PROSE (two in the header, one in the stamp).")
+        print("         4 against the MACHINE PROSE (three in the header, one in the stamp).")
         print("         The gate is live, both ways: it passes on the shipped code and")
         print("         fails on every way of breaking it.")
         return 0

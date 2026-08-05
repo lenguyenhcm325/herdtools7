@@ -1012,6 +1012,25 @@ hetlitmus-x86body: | build
 	python3 hetlitmus/verify/x86bodycheck.py --bite
 	@ echo "HetLitmus x86-64 tagged CPU body gate: OK (and the gate bites)"
 
+### hetlitmus-x86fixture: is tests/het-x86 still what its generators emit?
+### Those five committed files -- three .litmus renderings plus one-row-per-test
+### extracts of the two AMD maps -- are the ONLY route to the populated
+### (x86_64, hip) pair for cram, smoke.sh and verdictcheck, because the real x86
+### corpus is generated on demand and never committed and a cram sandbox has no
+### hetgen7 on $$PATH.  Nothing else compared them against generate-x86.sh /
+### tests/het/control-map-amd.csv / expected-amd.csv, so they could go stale in
+### silence -- and a D26-class oracle re-derivation rewrites whole columns of the
+### last two.  A stale fixture breaks no gate; it makes every gate that reads it
+### test a configuration nothing ships.  Two verbatim comparisons (the .litmus
+### bytes, then the map rows), each of which must be seen to fail.
+### CUDA-FREE: generation and comparison need no GPU, so it belongs here and not
+### in the -nvcc umbrella.  Seconds -- generate-x86.sh writes all 411 in ~8 s.
+hetlitmus-x86fixture: | build
+	@ echo
+	python3 hetlitmus/verify/x86fixturecheck.py
+	python3 hetlitmus/verify/x86fixturecheck.py --bite
+	@ echo "HetLitmus het-x86 fixture sync gate: OK (and the gate bites)"
+
 ### Scratch output dir for hetlitmus-d10.  Never committed (.gitignore'd): the
 ### D10 tests are generated on demand, exactly like the x86 renderings
 ### (generate-x86.sh), so that corpus-gate.sh's 411-file pin and dupcheck.py stay
@@ -1113,6 +1132,30 @@ hetlitmus-noracle:
 	bash hetlitmus/verify/allow-no-oracle-gate.sh --bite
 	@ echo "HetLitmus no-oracle override containment: OK (and the gate bites)"
 
+### hetlitmus-noracle-hw: what a REGISTERED NO-ORACLE harness PRINTS, on a GPU.
+### (x86_64, cuda) is registered without an oracle AND is the pair this dev box
+### is, so it is what every runtime bite in the tree actually executes.  Such a
+### harness reads NO positive-control map, so nothing co-runs and nothing marks
+### any row a canary -- and the statistics layer used to infer the opposite from
+### "no record has a control", printing "it IS the Layer-B canary (control-map.csv
+### says `self')" and "NO BOUND -- by construction, not by omission" on a real run
+### where no map had been read, nothing had marked that row a canary, and the
+### bound was missing because the bootstrap map generator does not exist yet.
+### Every other gate on that stack drives it from synthetic records or emitted
+### TEXT; this one builds the harness, RUNS it, and reads the printout.  Seven
+### assertions (stamp, no self-canary sentence, the no-map sentence,
+### CHARACTERIZED against the pair NAME, no MATCH/MISMATCH, no Grace/Hopper/
+### NVLink/C2C/GH200, and the observation class on k < R).
+### NEEDS A DEVICE, hence the -nvcc umbrella; with none visible it FAILS rather
+### than skipping, because a gate that quietly stops checking is the failure mode
+### this suite has already shipped twice.  Three of its assertions need one
+### sighting, so it re-seeds up to 12 times (~3 s per run) before giving up.
+hetlitmus-noracle-hw: | build
+	@ echo
+	python3 hetlitmus/verify/noraclerun.py
+	python3 hetlitmus/verify/noraclerun.py --bite
+	@ echo "HetLitmus registered-NO-ORACLE runtime gate: OK (and the gate bites)"
+
 ### hetlitmus-l0-selftest: the DISCRIMINATING-POWER proofs of the nvcc lane.
 ### l0_tokens.sh {selftest,guard} prove ptxcheck can detect a weakened scope/order
 ### and that the stress/cpustress scaffolding bites a dead layer; smoke.sh bite
@@ -1146,6 +1189,7 @@ hetlitmus-test:: hetlitmus-stats
 hetlitmus-test:: hetlitmus-hist
 hetlitmus-test:: hetlitmus-tuner
 hetlitmus-test:: hetlitmus-x86body
+hetlitmus-test:: hetlitmus-x86fixture
 hetlitmus-test:: hetlitmus-d10
 
 hetlitmus-test-nvcc:: | build
@@ -1154,6 +1198,7 @@ hetlitmus-test-nvcc:: hetlitmus-stress
 hetlitmus-test-nvcc:: hetlitmus-cpustress
 hetlitmus-test-nvcc:: hetlitmus-obs
 hetlitmus-test-nvcc:: hetlitmus-hipbuild
+hetlitmus-test-nvcc:: hetlitmus-noracle-hw
 hetlitmus-test-nvcc:: hetlitmus-l0-selftest
 hetlitmus-test-nvcc:: hetlitmus-smoke
 
@@ -1181,6 +1226,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order hetlitmus-oracle
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
 .PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10 hetlitmus-noracle
+.PHONY: hetlitmus-x86fixture hetlitmus-noracle-hw
 ### Neither AMD target was phony until P2a (2026-08-02).  They worked only
 ### because no file of those names happened to exist -- one `touch' away from a
 ### gate that silently stops running.

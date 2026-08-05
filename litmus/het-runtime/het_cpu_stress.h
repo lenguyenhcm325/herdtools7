@@ -177,11 +177,15 @@ extern "C" {
 #endif
 
 /* The last-level cache the noise buffer must EXCEED to generate any interconnect
-   traffic at all: max(Grace L3 114 MB, Hopper L2 51 MB) -- Bagchi ISMM'26 Table 1.
-   Hopper's L2 caches HBM "both local and peer" (Fusco), so a small buffer is
-   served entirely from cache and the noise crosses nothing.  The driver warns at
-   run time rather than let a green compile imply a live mechanism. */
+   traffic at all: a buffer that fits in it is served from cache and the noise
+   crosses nothing, so the driver warns at run time rather than let a green
+   compile imply a live mechanism.  The figure is per target and the emitter
+   stamps the pair's own (litmus/hetOracle.ml); this default is the GH200 row's
+   max(Grace L3 114 MB, Hopper L2 51 MB) -- Bagchi ISMM'26 Table 1 -- and the
+   warning that fires against it says so wherever it is not the target's own. */
+#ifndef HET_LLC_MB
 #define HET_LLC_MB 114
+#endif
 
 #if (HET_CPU_ENEMY_SEQ) < 0 || (HET_CPU_ENEMY_SEQ) > 3
 #error "HET_CPU_ENEMY_SEQ must be 0..3 (0=st;st 1=st;ld 2=ld;st 3=ld;ld)"

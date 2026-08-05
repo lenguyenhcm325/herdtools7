@@ -31,19 +31,10 @@
  * WHICH MACHINE THIS HARNESS MAY NAME.  Every word below is a claim about
  * silicon, so none of it is derived here: the emitter stamps these defines from
  * the ORACLE PAIR TABLE row (litmus/hetOracle.ml), which is the only place that
- * knows what (CPU ISA x GPU dialect) this harness was built for.
- *
- * A pair with no oracle stamps NOTHING, and these defaults stand.  They name the
- * MECHANISM rather than a brand, which is what makes an unset define fail SAFE:
- * a missing stamp can only weaken a claim, never invent one.
- *
- * MEASURED DEFECT this closes: the prose used to SNIFF the recorded oracle
- * source string for "NVIDIA".  On AMD-tagged harnesses it therefore called the
- * two halves of the interconnect noise "the Grace half" and "the Hopper half"
- * and cited "On NVIDIA silicon an unstressed run observes nothing" as if it
- * applied -- and it would have said the same on an x86 host with an NVIDIA GPU,
- * whose oracle string still carries the word.  None of those is a statement
- * about the machine that ran.
+ * knows what (CPU ISA x GPU dialect) this harness was built for.  A pair with no
+ * oracle stamps nothing and these defaults stand; they name the MECHANISM rather
+ * than a brand, so a missing stamp can only weaken a claim, never invent one.
+ * Rationale and the defect it closes: hetlitmus/docs/het-emission.md.
  * ------------------------------------------------------------------------- */
 #ifndef HET_LINK_NAME       /* no leading article: use sites supply their own */
 #define HET_LINK_NAME "host-device interconnect"
@@ -66,6 +57,21 @@
    named and no API is claimed. */
 #ifndef HET_PLACE_LEVER
 #define HET_PLACE_LEVER "the page-placement lever"
+#endif
+
+/* ---------------------------------------------------------------------------
+ * TWO BUILD FACTS, also stamped by the emitter but from EVERY pair, oracle or
+ * not: what this binary was built for, and whether a positive-control map was
+ * read for it.  A pair registered without an oracle reads no map (a map names
+ * mu(T), which is oracle-derived), so nothing in such a harness marks any row
+ * the Layer-B canary and its missing bound is DEFERRED, not structural.  The
+ * defaults below are for the checkers, which compile this header standalone.
+ * ------------------------------------------------------------------------- */
+#ifndef HET_PAIR_NAME
+#define HET_PAIR_NAME "(unstamped CPU ISA x GPU dialect pair)"
+#endif
+#ifndef HET_NO_CONTROL_MAP
+#define HET_NO_CONTROL_MAP 0
 #endif
 
 /* tau_hot -- how many control sightings make the harness "demonstrably hot".
@@ -117,11 +123,12 @@
  * near-independent cells that, had the target's rate equalled that hardest behaviour,
  * we would have had a 95% chance to catch it.
  *
- * It is 0 = unset, and stays so until GH200 measures it.  DO NOT seed it with Bagchi's
- * ~0.2%: that is the GPU-only inter-CTA rate (ISMM'26 5.1 p.74, from their 4.1
- * results -- producer and consumer both GPU threads on different CTAs), so it fires
- * with no CPU participation and never crosses C2C, and the paper publishes no numeric
- * het rate at all (Table 4 is qualitative).  Full reading: Q4-positive-control.md 2.1.
+ * It is 0 = unset, and stays so until the target this binary was built for measures
+ * it.  DO NOT seed it with Bagchi's ~0.2%: that is the GPU-only inter-CTA rate
+ * (ISMM'26 5.1 p.74, from their 4.1 results -- producer and consumer both GPU threads
+ * on different CTAs), so it fires with no CPU participation and never crosses the
+ * interconnect, and the paper publishes no numeric het rate at all (Table 4 is
+ * qualitative).  Full reading: Q4-positive-control.md 2.1.
  * Derive it here instead from the ALLOWED-OBSERVED rows, which are the observed-rate
  * sample; until then p_min is a symbol and het_budget_runs() answers "NOT SIZED". */
 #ifndef HET_P_MIN
@@ -398,9 +405,8 @@ typedef struct het_obs_record {
      noise working set, and it decides whether the noise crosses anything at all:
      below the last-level cache the buffer is served from cache and generates no
      interconnect traffic, so a config that scores well at 8 MB scored a stressor
-     that was not running (Q6 3).  The argument is target-independent; the only
-     measured figure this project has for the threshold is the GH200 one behind
-     HET_LLC_MB (Grace L3 114 MB, Bagchi Table 1). */
+     that was not running (Q6 3).  The argument is target-independent; the FIGURE is
+     not, and the emitter stamps the pair's own into HET_LLC_MB. */
   uint32_t noise_ws_mb, place_mode;
   /* The window resolution this run realised (= HET_NWIN of the binary that
      produced it).  HET_NWIN is swept and tau_w/F_win are resolution-dependent
@@ -1118,15 +1124,13 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     fprintf(_ch,
       "  CHARACTERIZED: under that harness, this hardware exhibited the outcome %llu "
       "time(s) in N=%llu frames (%.4f%%); interleavings_detected=%llu.\n"
-      /* The target is NAMED FROM THE RECORD, not from the source file: this
-         sentence used to say "what GH200 does" on every lane, so an MI300A
-         characterization row was pre-labelled with somebody else's part.  The
-         oracle tag is the only target identity the harness carries. */
-      "  Report it as \"what the target this harness was tagged for (%s) does "
-      "where the CMCM is silent\".  It is NOT evidence for or against the "
-      "model.\n",
+      /* NAMED FROM THE PAIR THIS BINARY WAS BUILT FOR (HET_PAIR_NAME).  Not from
+         the oracle-source string: on a pair with no oracle that string is the
+         whole disclosure blob, which is not a target name. */
+      "  Report it as \"what %s does where the CMCM is silent\".  It is NOT evidence "
+      "for or against the model.\n",
       _hits, _n, _pct, (unsigned long long)_r->interleavings_detected,
-      het_oracle_src(_r));
+      HET_PAIR_NAME);
     het_print_config(_ch, _r);
     het_print_scan_caveat(_ch, _r, cv);
     het_print_caveats(_ch, _r, cv);
@@ -1342,7 +1346,8 @@ typedef enum {
 #define HET_ST_CTRL_IS_CANARY    (1u << 9) /* dispersion calibrated off the Layer-B
                                               canary, not this test's own mu(T)    */
 #define HET_ST_BOUND_VACUOUS    (1u << 10) /* p_bound >= 1: it bounds NOTHING      */
-#define HET_ST_SELF_CONTROL     (1u << 11) /* co-runs no control: usable == fired  */
+#define HET_ST_SELF_CONTROL     (1u << 11) /* co-runs no control AND names ITSELF
+                                              the canary: usable == fired       */
 #define HET_ST_TAU_UNMEASURED   (1u << 12) /* no usable stream for the IPS: N_eff
                                               stays 1, one trial per run -- the
                                               maximally conservative reading    */
@@ -1366,6 +1371,14 @@ typedef enum {
                                               Resolved toward the WEAKER claim
                                               about the compound model (cpu_only
                                               wins), never away from it.       */
+#define HET_ST_NO_CONTROL_CORUN (1u << 16) /* co-runs no control and does NOT name
+                                              itself the canary.  Same selection
+                                              effect (usable == fired), a
+                                              different reason: no control map
+                                              was read (HET_NO_CONTROL_MAP), or
+                                              -- if one was -- the emitter built
+                                              a harness that vouches for nothing.
+                                              Which of the two is PRINTED.    */
 
 typedef struct het_stats {
   const char *test_name;
@@ -1729,17 +1742,27 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   st->k_runs = nruns;
 
   /* ---- 3. The observation class at the (instance,run) unit (Q3 R1).
-     The self-canary selection effect: a cell is usable if it fired or if its
-     control was hot, and a test that IS the canary co-runs no control, so "usable"
-     is defined by firing there -- the survivors are tautologically the runs that
-     fired, and classifying over them would report ALWAYS for a canary that fired in
-     3 runs of 10.  That rate is what the rest of the campaign is calibrated
-     against, so for those rows the denominator is R, the runs executed. */
+     THE SELECTION EFFECT: a cell is usable if it fired or if its control was hot,
+     so where nothing co-runs "usable" is defined by firing -- the survivors are
+     tautologically the runs that fired, and classifying over them reports ALWAYS
+     for a row that fired in 3 runs of 10.  The denominator is therefore R, the
+     runs executed, for BOTH rows that co-run nothing; only the reason differs,
+     and the two must not be conflated because only one of them is a canary.
+     A row is the Layer-B canary when it NAMES ITSELF one, which is the same test
+     the per-run liveness block makes; a row that co-runs nothing without naming
+     itself has no control map behind it (or an emitter that built it wrong). */
   { int denom;
     for (i = 0; i < n; i++)
       if (recs[i].control_compiled_in || recs[i].canary_compiled_in) break;
-    if (i == n) st->flags |= HET_ST_SELF_CONTROL;
-    denom = (st->flags & HET_ST_SELF_CONTROL) ? st->R : st->R_usable;
+    if (i == n) {
+      if (recs[0].canary_name && recs[0].test_name
+          && strcmp(recs[0].canary_name, recs[0].test_name) == 0)
+        st->flags |= HET_ST_SELF_CONTROL;
+      else
+        st->flags |= HET_ST_NO_CONTROL_CORUN;
+    }
+    denom = (st->flags & (HET_ST_SELF_CONTROL | HET_ST_NO_CONTROL_CORUN))
+            ? st->R : st->R_usable;
     if (st->R_usable == 0)    st->obs = HET_OBS_VOID;
     else if (st->k == 0)      st->obs = HET_OBS_NEVER;
     else if (st->k >= denom)  st->obs = HET_OBS_ALWAYS;
@@ -2057,9 +2080,8 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
                  "suppressed exactly as it would be on a rejection, because a KS run "
                  "against an empty stream would `pass' without testing anything.\n",
             (_s->flags & HET_ST_FANO_UNMEASURED)
-              ? "this harness has no live control stream to test (the two `self' "
-                "canary rows co-run no control by construction, and a control that "
-                "never fired leaves nothing to test either)"
+              ? "this harness has no live control stream to test (either nothing "
+                "co-runs at all, or what does co-run never fired)"
               : "too few window samples");
   else if (_s->ks_pass)
     fprintf(_ch, "  stationarity: KS pass (D = %.4f <= D_crit = %.4f, %d early vs %d "
@@ -2148,19 +2170,15 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
          number), and each usable run supplies N_eff of them, so the RUN budget is
          need/N_eff -- N_eff-fold fewer runs for the same claim. */
       if (need < 0.0)
-        /* TARGET-AGNOSTIC BY CONSTRUCTION, and it has to be SAID so.  Everything
-           this layer computes -- mu_upper, F_win, tau_w, N_eff, F_cell, the KS
-           precheck -- is a function of the record counts and of HET_NWIN /
-           HET_TAU_HOT / HET_R_POISSON / HET_TAU_MIN_SAMPLES, and not one of those
-           is a vendor constant, so the ARITHMETIC transfers to the AMD lane
-           unchanged (MEASURED: no vendor name occurs in any formula of this
-           layer).  This SENTENCE did not: it named GH200 and Bagchi's rate, so an
-           MI300A run was told to go and derive its p_min on somebody else's
-           machine.  It now names the target it was tagged for, and the Bagchi
-           disclaimer stays because on the AMD lane it is STRONGER, not weaker --
-           PORT2-reading-list.md establishes that no AMD heterogeneous
-           litmus-testing prior work exists at all, so there is not even a
-           GPU-only number to be tempted by. */
+        /* TARGET-AGNOSTIC BY CONSTRUCTION, and it has to be SAID so: every number
+           this layer computes is a function of the record counts and of HET_NWIN /
+           HET_TAU_HOT / HET_R_POISSON / HET_TAU_MIN_SAMPLES, none of them a vendor
+           constant, so the arithmetic transfers unchanged and only the SENTENCE
+           has to name a machine.  It names the pair the binary was built for.  The
+           Bagchi disclaimer stays because on the AMD lane it is stronger, not
+           weaker: no AMD heterogeneous litmus-testing prior work exists at all
+           (PORT2-reading-list.md), so there is not even a GPU-only number to
+           be tempted by. */
         fprintf(_ch,
           "  budget: NOT SIZED.  p_min -- the per-effective-sample rate of the "
           "hardest het behaviour we can actually observe -- is HARDWARE-ONLY and "
@@ -2169,12 +2187,12 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
           "(their 5.1/4.1), which fires with no CPU participation and never crosses "
           "the interconnect.  There is no published numeric het hit-rate for ANY "
           "target, and none whatsoever for AMD.\n"
-          "          Derive it ON THE TARGET THIS HARNESS WAS TAGGED FOR (%s) from "
-          "the ALLOWED-OBSERVED rows (they ARE the observed-rate population, at THIS "
-          "HET_NWIN) and re-run with -DHET_P_MIN=<rate>.  A p_min carried over from "
-          "another target is not a conservative default, it is a different "
+          "          Derive it ON THE MACHINE THIS BINARY WAS BUILT FOR -- the pair "
+          "%s -- from the ALLOWED-OBSERVED rows (they ARE the observed-rate population, "
+          "at THIS HET_NWIN) and re-run with -DHET_P_MIN=<rate>.  A p_min carried over "
+          "from another target is not a conservative default, it is a different "
           "machine's number.\n",
-          _s->oracle_source ? _s->oracle_source : "(oracle source unrecorded)");
+          HET_PAIR_NAME);
       else if ((double)_s->R_usable * _s->N_eff < need)
         fprintf(_ch,
           "  budget: UNDER-RUN.  %d usable run(s) x N_eff %.1f = %.0f effective "
@@ -2196,10 +2214,11 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     return;
   }
 
-  /* ---- observed.  The denominator is R for a SELF-CONTROLLED row and R_usable for
+  /* ---- observed.  The denominator is R wherever nothing co-runs and R_usable for
      everything else -- see the selection effect in het_stats_compute. */
-  { int denom = (_s->flags & HET_ST_SELF_CONTROL) ? _s->R : _s->R_usable;
-    const char *unit = (_s->flags & HET_ST_SELF_CONTROL) ? "run" : "usable cell";
+  { unsigned nocorun = _s->flags & (HET_ST_SELF_CONTROL | HET_ST_NO_CONTROL_CORUN);
+    int denom = nocorun ? _s->R : _s->R_usable;
+    const char *unit = nocorun ? "run" : "usable cell";
     if (_s->P_rep >= 0.0)
       fprintf(_ch, "  OBSERVED in %d of %d %s(s).  P_rep = 1 - e^{-k_eff} = "
                    "%.2f%% that a fresh run reproduces it (k_eff = %d NON-DEGENERATE "
@@ -2213,9 +2232,9 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
 
     if (_s->flags & HET_ST_SELF_CONTROL)
       fprintf(_ch,
-        "  NOTE: this row CO-RUNS NO CONTROL -- it IS the Layer-B canary "
-        "(control-map.csv says `self'), and a test cannot control itself (B6b).  A run "
-        "in which it did not fire is therefore COLD and carries no information, so\n"
+        "  NOTE: this row CO-RUNS NO CONTROL -- it IS the Layer-B canary (the control "
+        "map names it as its own canary), and a test cannot control itself (B6b).  A "
+        "run in which it did not fire is therefore COLD and carries no information, so\n"
         "  \"usable cells\" is DEFINED BY firing.  The denominator above is R -- the "
         "runs executed -- not the usable count: otherwise a canary that fired in %d of "
         "%d runs would report ALWAYS, and that rate is precisely what the rest of the\n"
@@ -2223,6 +2242,31 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
         "independent channel to measure dispersion or stationarity against, so it gets "
         "NO BOUND -- by construction, not by omission.\n",
         _s->k, _s->R);
+    else if (_s->flags & HET_ST_NO_CONTROL_CORUN) {
+      /* The same arithmetic, and it must NOT borrow the sentence above: this row
+         is not a canary, nothing here says it is one, and its missing bound is an
+         omission we have not closed yet.  Saying otherwise would report a gap in
+         the instrumentation as a property of the experiment. */
+      if (HET_NO_CONTROL_MAP)
+        fprintf(_ch,
+          "  NOTE: this row CO-RUNS NO CONTROL because NO POSITIVE-CONTROL MAP WAS "
+          "READ for %s -- that pair is registered without an oracle, and a control map "
+          "is an oracle-derived object (mu(T) is the nearest ALLOWED neighbour), so\n"
+          "  there is none to borrow.  Nothing marks this row a canary.  A run in which "
+          "it did not fire is COLD and carries no information, so \"usable cells\" is "
+          "defined by firing and the denominator above is R -- the runs executed --\n"
+          "  not the usable count, which would report ALWAYS for a row that fired in %d "
+          "of %d runs.  It gets NO BOUND, and that is an OMISSION, not a construction: "
+          "the bootstrap control map for a pair with no oracle does not exist yet.\n",
+          HET_PAIR_NAME, _s->k, _s->R);
+      else
+        fprintf(_ch,
+          "  *** NOTE: this row CO-RUNS NO CONTROL, names no canary, and a control map "
+          "WAS read for %s.  Nothing in this harness vouches for it and nothing says "
+          "why -- that is a BUILD BUG, not a result.  The denominator above is R (%d "
+          "of %d runs fired); no bound is reported.\n",
+          HET_PAIR_NAME, _s->k, _s->R);
+    }
   }
 
   if (_s->flags & HET_ST_DEGEN_SIGHTING)

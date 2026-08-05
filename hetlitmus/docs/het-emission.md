@@ -190,7 +190,7 @@ Three rules make it worth having:
   because no positive control was built — which is the honest state until the
   bootstrap map generator for a new pair exists.
 * **The machine prose keys on the pair, not on the dialect.** The emitter stamps
-  `HET_LINK_NAME` / `HET_HOST_HALF` / `HET_DEV_HALF` (and
+  `HET_LINK_NAME` / `HET_HOST_HALF` / `HET_DEV_HALF` / `HET_LLC_MB` (and
   `HET_ALGLAVE_ZERO_MEASURED`, for the one measurement that is NVIDIA-only) from
   the pair row; `het_verdict.h` prints from those defines and sniffs nothing. A
   pair with no oracle stamps none of them and gets the header's generic
@@ -198,6 +198,54 @@ Three rules make it worth having:
   a claim. `HET_PLACE_LEVER` is separate: the placement API is a *dialect* fact
   (`cudaMemAdvise` on the CUDA render; the HIP render has no placement code and
   `#error`s on a non-zero `HET_PLACE`).
+
+### What the defines close, measured
+
+The prose used to **sniff** the recorded oracle-source string for `NVIDIA`. On
+an AMD-tagged harness it therefore called the two halves of the interconnect
+noise *"the Grace half"* and *"the Hopper half"* and cited *"On NVIDIA silicon
+an unstressed run observes nothing"* as if it applied — and it would have said
+the same on an x86 host with an NVIDIA GPU, whose oracle string still carries
+the word. Measured 2026-08-03 on a real run of `2+2W-cpuonly-x86_64`, whose
+first two stderr lines were *"the Hopper half of the C2C noise is DISABLED"* and
+*"the Grace half … is DISABLED"*. None of those is a statement about the machine
+that ran. Keying on the dialect instead of the pair would have reproduced the
+same defect one table over: the host half is a property of the **pair**, so a
+dialect-keyed `HET_HOST_HALF` stamps *"the Grace half"* on the (x86_64, cuda)
+emission.
+
+`HET_LLC_MB` is the same rule applied to a *number*. The threshold a noise
+buffer must exceed to cross anything is per target: 114 MB is
+`max(Grace L3, Hopper L2)` (Bagchi ISMM'26 Table 1) and **under-fires** on
+MI300A, whose last level is the 256 MB MALL / AMD Infinity Cache on the IOD
+(Tee et al., *The MALL is Open*, SC Workshops '25, Table 1 p. 1111 — MI300A:
+sL1 16 KB, L2 4 MB/XCD, MALL 256 MB). Each populated pair stamps its own; 114
+stays as `het_cpu_stress.h`'s `#ifndef` default, and where it is *not* the
+target's own figure the emitted warning says so instead of naming it as this
+machine's cache.
+
+### Two build facts every pair stamps
+
+`HET_PAIR_NAME` and `HET_NO_CONTROL_MAP` are stamped from **every** row,
+oracle or not, because they are true of the binary whatever the oracle says.
+
+* `HET_PAIR_NAME` is the short `(ISA, dialect)` label the verdict and statistics
+  layers print where they must identify the target. They previously substituted
+  the *oracle-source string*, which on a registered-NO-ORACLE pair is the whole
+  disclosure blob — so a real run printed `the target this harness was tagged
+  for ((NO-ORACLE: (X86_64, cuda) is registered without one — dev-tier machinery
+  only: …))`.
+* `HET_NO_CONTROL_MAP` says no positive-control map was read. Since Phase C that
+  is true of **every** harness of a registered-NO-ORACLE pair, which is what
+  made the statistics layer's "co-runs no control ⇒ it IS the Layer-B canary"
+  inference false there: no map was read, nothing marked the row a canary, and
+  its missing bound is an omission (the bootstrap map generator is future work),
+  not a construction. `het_stats_compute` now flags the two states apart —
+  `HET_ST_SELF_CONTROL` requires the record to **name itself** its canary, the
+  same test the per-run liveness block makes — and prints a different sentence
+  for each. The denominator is `R` in both: the selection effect ("usable" is
+  defined by firing where nothing co-runs) is identical, and classifying over
+  the survivors would report ALWAYS for a row that fired in 3 runs of 10.
 
 `-allow-no-oracle` emits an **absent** pair anyway, stamping `ORACLE_NONE` and
 disclosing the override in the stamp string itself. It is for a human bringing

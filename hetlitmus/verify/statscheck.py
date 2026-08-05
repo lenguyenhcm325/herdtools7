@@ -640,10 +640,29 @@ case("canary-calibrated-when-no-mutant",
 # also get NO BOUND: there is nothing independent to calibrate dispersion against.
 case("self-canary-fired-3-of-10-is-SOMETIMES-not-ALWAYS",
      observed(stream(ZERO_CELLS, het_oracle="ORACLE_ALLOWED",
+                     canary_name='"synthetic"',
                      control_compiled_in=0, canary_compiled_in=0,
                      control_target_count=0, canary_target_count=0), 3),
      obs="Sometimes", k=3, k_eff=3, R_usable=3,
      flags_any=["SELF_CONTROL", "FANO_UNMEASURED", "KS_UNDERPOWERED"],
+     flags_none=["NO_CONTROL_CORUN"],
+     P_rep=-1.0, p_bound=-1.0)
+
+# --- ... AND THE ROW THAT CO-RUNS NOTHING WITHOUT BEING THE CANARY -------------
+# Every harness of a pair REGISTERED WITHOUT AN ORACLE looks like this: no control
+# map was read, so nothing co-runs AND nothing names this row the canary
+# (canary_name is NULL, not the test's own name).  The arithmetic is the self-canary
+# one -- "usable" is still defined by firing, so the denominator is still R -- but
+# the CLAIM is not: this row is no canary, and its missing bound is an omission we
+# have not closed rather than a property of the design.  Two flags, so the printout
+# can say which.
+case("no-control-map-fired-3-of-10-is-SOMETIMES-and-is-NOT-the-canary",
+     observed(stream(ZERO_CELLS, het_oracle="ORACLE_NONE",
+                     control_compiled_in=0, canary_compiled_in=0,
+                     control_target_count=0, canary_target_count=0), 3),
+     obs="Sometimes", k=3, k_eff=3, R_usable=3,
+     flags_any=["NO_CONTROL_CORUN", "FANO_UNMEASURED", "KS_UNDERPOWERED"],
+     flags_none=["SELF_CONTROL"],
      P_rep=-1.0, p_bound=-1.0)
 
 # --- ALLOWED / NO-ORACLE nulls still get a bound (a different CLAIM, same maths) ---
@@ -780,11 +799,14 @@ def py_reference(cells_):
             cellv.append(float(ctrl_total(c)))
             win.extend(float(x) for x in ctrl_win(c))
 
-    # THE SELF-CANARY SELECTION EFFECT: for the 2 `self' rows "usable" is defined by
-    # firing, so their denominator is R, not R_usable (see the case of the same name).
-    self_control = not any(c["control_compiled_in"] or c["canary_compiled_in"]
-                           for c in cells_)
-    denom = R if self_control else R_usable      # st->R, i.e. PRE-clamp, as in the C
+    # THE SELECTION EFFECT: wherever nothing co-runs, "usable" is defined by firing,
+    # so the denominator is R and not R_usable.  That holds for the `self' canary rows
+    # and for every harness of a pair with no control map alike -- the C splits them
+    # into two FLAGS, because only one of them is a canary, but not into two
+    # denominators (see the two cases of those names).
+    nothing_coruns = not any(c["control_compiled_in"] or c["canary_compiled_in"]
+                             for c in cells_)
+    denom = R if nothing_coruns else R_usable    # st->R, i.e. PRE-clamp, as in the C
     if R_usable == 0:
         obs = "VOID"
     elif k == 0:
@@ -1039,10 +1061,14 @@ def close(a, b, tol=TOL):
     return abs(a - b) <= tol * max(1.0, abs(a), abs(b))
 
 
+# ORDER IS THE BIT NUMBER (FLAG_BIT below is index-derived), so this list must
+# stay a verbatim transcript of het_verdict.h's HET_ST_* block -- a name skipped
+# here silently mis-decodes every flag above it.
 FLAGS = ["FANO_UNMEASURED", "NONSTATIONARY", "DEGEN_SIGHTING", "UNDERDISPERSED",
          "BURSTY", "NO_DECODE_CHANNEL", "WIN_DESYNC", "KS_UNDERPOWERED",
          "CELLS_TRUNCATED", "CTRL_IS_CANARY", "BOUND_VACUOUS", "SELF_CONTROL",
-         "TAU_UNMEASURED", "TAU_AT_CAP", "TAU_UNRESOLVED"]
+         "TAU_UNMEASURED", "TAU_AT_CAP", "TAU_UNRESOLVED", "MIXED_POOL",
+         "NO_CONTROL_CORUN"]
 FLAG_BIT = {f: 1 << i for i, f in enumerate(FLAGS)}
 
 
@@ -1151,7 +1177,7 @@ class _CompileFailed(Exception):
         self.out, self.err = out, err
 
 
-def _compile_and_run(header_dir, workdir):
+def _compile_and_run(header_dir, workdir, defines=()):
     """Build the C case set in workdir against header_dir's het_verdict.h, run it and
     return its stdout lines.  Raises _CompileFailed if gcc rejects it.
 
@@ -1164,8 +1190,9 @@ def _compile_and_run(header_dir, workdir):
     with open(src, "w") as fh:
         fh.write(build_c())
     exe = os.path.join(workdir, "st")
-    cc = subprocess.run(["gcc", "-std=c99", "-O2", "-Wall", "-Wno-unused-function",
-                         "-I", workdir, src, "-o", exe, "-lm"],
+    cc = subprocess.run(["gcc", "-std=c99", "-O2", "-Wall", "-Wno-unused-function"]
+                        + ["-D" + d for d in defines]
+                        + ["-I", workdir, src, "-o", exe, "-lm"],
                         capture_output=True, text=True)
     if cc.returncode != 0:
         raise _CompileFailed(cc.stdout, cc.stderr)
@@ -1536,7 +1563,7 @@ def phase2(lines, quiet):
                   "UNDERDISPERSED", "BURSTY", "NO_DECODE_CHANNEL", "WIN_DESYNC",
                   "KS_UNDERPOWERED", "CELLS_TRUNCATED", "CTRL_IS_CANARY",
                   "BOUND_VACUOUS", "SELF_CONTROL", "TAU_UNMEASURED", "TAU_AT_CAP",
-                  "TAU_UNRESOLVED"}
+                  "TAU_UNRESOLVED", "NO_CONTROL_CORUN"}
     print("  diagnostic flags    : %d/%d  (%s)"
           % (len(seen_flags & need_flags), len(need_flags),
              ", ".join(sorted(seen_flags))))
@@ -1657,6 +1684,37 @@ def phase2(lines, quiet):
                       "-- the operator cannot act on a price that is not quoted"
                       % (name, g["tau_need"]))
                 bad += 1
+
+    # A ROW THAT CO-RUNS NOTHING MUST NOT CLAIM TO BE THE CANARY.  Both states set
+    # the same denominator, so the numbers alone cannot tell them apart; only the
+    # sentence can, and it is the sentence a reader files the result under.
+    for name, g in sorted(got.items()):
+        txt = blocks.get(name, "")
+        if g["flags"] & FLAG_BIT["SELF_CONTROL"]:
+            if "it IS the Layer-B canary" not in txt:
+                print("  *** %s is the self-canary row but does not SAY so" % name)
+                bad += 1
+            if "NO POSITIVE-CONTROL MAP WAS READ" in txt:
+                print("  *** %s claims BOTH that it is the canary and that no map "
+                      "was read" % name)
+                bad += 1
+        if g["flags"] & FLAG_BIT["NO_CONTROL_CORUN"]:
+            if "IS the Layer-B canary" in txt:
+                print("  *** %s co-runs nothing and names no canary, yet the "
+                      "printout calls it the Layer-B canary -- that is the "
+                      "inference, not the record" % name)
+                bad += 1
+            # HET_NO_CONTROL_MAP is 0 in this standalone build, so this is the
+            # can't-happen arm: a map WAS read and still nothing vouches for the row.
+            if "that is a BUILD BUG, not a result" not in txt:
+                print("  *** %s co-runs nothing with a control map present and the "
+                      "printout does not call that a build bug" % name)
+                bad += 1
+        if (g["flags"] & (FLAG_BIT["SELF_CONTROL"] | FLAG_BIT["NO_CONTROL_CORUN"])) \
+           and g["k"] > 0 and g["obs"] == "Always":
+            print("  *** %s reports ALWAYS while nothing co-runs: the denominator "
+                  "collapsed onto the runs that fired" % name)
+            bad += 1
 
     # No bound may EVER be printed when the dispersion was not measured.
     for name, g in sorted(got.items()):
@@ -2301,6 +2359,69 @@ def phase6_campaign(quiet):
 
 
 # ---------------------------------------------------------------------------
+# PHASE 2b -- THE ARM A REGISTERED-NO-ORACLE BUILD ACTUALLY TAKES.  The sentence a
+# row that co-runs nothing prints depends on HET_NO_CONTROL_MAP, which the emitter
+# stamps only for a pair with no oracle, so the default build above can never reach
+# it.  Compiled a second time with the stamp to read it -- and with a HET_PAIR_NAME
+# of its own, because the same build is what proves the two sentences name the PAIR
+# and not the oracle-source string.
+NCM_PAIR = "(TESTISA, testdialect)"
+
+
+def phase2b(header_dir, tmp, quiet):
+    print("\n===== PHASE 2b: what a pair with NO CONTROL MAP prints =====")
+    sub = tempfile.mkdtemp(prefix="statsncm.", dir=tmp)
+    try:
+        out = _compile_and_run(header_dir, sub,
+                               defines=["HET_NO_CONTROL_MAP=1",
+                                        'HET_PAIR_NAME="%s"' % NCM_PAIR])
+    except _CompileFailed as e:
+        print(e.out + e.err)
+        print("  *** the header does not compile with HET_NO_CONTROL_MAP=1")
+        return 1
+    blocks, cur, buf = {}, None, []
+    for l in out:
+        if l.startswith("PRINT-BEGIN|"):
+            cur, buf = l.split("|", 1)[1], []
+        elif l.startswith("PRINT-END|"):
+            blocks[cur] = "\n".join(buf)
+            cur = None
+        elif cur is not None:
+            buf.append(l)
+    txt = blocks.get("no-control-map-fired-3-of-10-is-SOMETIMES-and-is-NOT-the-canary", "")
+    bad = 0
+    for frag, why in (
+            ("NO POSITIVE-CONTROL MAP WAS READ for " + NCM_PAIR,
+             "it does not say a map was never read, or does not name the pair"),
+            ("Nothing marks this row a canary",
+             "it does not say the row is unmarked"),
+            ("It gets NO BOUND, and that is an OMISSION, not a construction",
+             "it calls a gap we have not closed a property of the design")):
+        if frag not in txt:
+            print("  *** the no-control-map note %s" % why)
+            bad += 1
+        elif not quiet:
+            print("      %s" % frag[:96])
+    for frag in ("IS the Layer-B canary", "by construction, not by omission"):
+        if frag in txt:
+            print("  *** the no-control-map note still says %r" % frag)
+            bad += 1
+    # ... and the SELF-canary row keeps its own sentence in this same build: the
+    # define is a property of the pair, not a switch that rewrites every row.
+    self_txt = blocks.get("self-canary-fired-3-of-10-is-SOMETIMES-not-ALWAYS", "")
+    if "it IS the Layer-B canary" not in self_txt:
+        print("  *** HET_NO_CONTROL_MAP=1 also silenced the genuine self-canary "
+              "note -- the two states are keyed on the same thing again")
+        bad += 1
+    if bad:
+        print("\nNO-CONTROL-MAP PROSE FAILED: %d problem(s)." % bad)
+        return 1
+    print("\nNO-CONTROL-MAP PROSE OK (its own sentence, naming the pair, calling "
+          "the missing bound an omission; the self-canary note untouched)")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 def run(header_dir, tmp, quiet):
     try:
         out = _compile_and_run(header_dir, tmp)
@@ -2310,6 +2431,7 @@ def run(header_dir, tmp, quiet):
         return 1
     rc = phase1(out, quiet)
     rc |= phase2(out, quiet)
+    rc |= phase2b(header_dir, tmp, quiet)
     rc |= phase5_stops(out, quiet)
     return rc
 
@@ -2623,6 +2745,27 @@ def bite():
             print("  *** DID NOT BITE   [a corrupted over-credit pin passed]")
             ok = False
 
+        # THE TWO NO-CONTROL STATES CONFLATED AGAIN.  This is the shipped defect in
+        # its simplest form: infer "this row IS the Layer-B canary" from "no record
+        # has a control", which is true of EVERY harness of a pair with no control
+        # map.  The numbers do not move -- both states take the same denominator --
+        # so nothing but the flag and the sentence can see it.
+        print("\n-- the self-canary inference --")
+        ok &= _bite("the self-canary test dropped (anything that co-runs nothing is "
+                    "called the canary)", hdir,
+                    lambda s: _subst(s, [
+                        ('      if (recs[0].canary_name && recs[0].test_name\n'
+                         '          && strcmp(recs[0].canary_name, recs[0].test_name) == 0)\n',
+                         '      if (1)\n')]))
+        # ... and the reverse: a genuine self-canary row demoted to the no-map state,
+        # which would report a gap in the instrumentation where the design has none.
+        ok &= _bite("the self-canary test made unsatisfiable (a real canary row "
+                    "reported as having no control map)", hdir,
+                    lambda s: _subst(s, [
+                        ('      if (recs[0].canary_name && recs[0].test_name\n'
+                         '          && strcmp(recs[0].canary_name, recs[0].test_name) == 0)\n',
+                         '      if (0)\n')]))
+
         # (5) THE WINDOW BUMP DELETED FROM THE PRODUCER: het_win_of still exists and
         # the aggregate still computes, but the sub-tallies never move, so every
         # dispersion number is fiction.  Only phase 3 can see this.
@@ -2670,7 +2813,7 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 24 injections were caught -- 4 against the B7")
+        print("BITE OK: all 26 injections were caught -- 4 against the B7")
         print("         ESTIMATOR/RULE, 5 against the B7b tau/N_eff/stop machinery,")
         print("         3 against the B7c reliability guard (deleted / always-on /")
         print("         price silenced -- both directions AND the signal), 5 against")
@@ -2680,8 +2823,10 @@ def bite():
         print("         3 against the PYTHON MIRRORS (THETA_D / TAU_HOT / MAX_CELLS")
         print("         moved under them), 2 against the B7c/F8 known-open escape")
         print("         witness (the escape removed AND the over-credit mis-pinned),")
-        print("         1 against the PRODUCER (the sub-tallies), 1 against the")
-        print("         EMITTED CORPUS.")
+        print("         2 against the SELF-CANARY INFERENCE (both directions: a row")
+        print("         that co-runs nothing called the canary, and a real canary")
+        print("         demoted), 1 against the PRODUCER (the sub-tallies), 1 against")
+        print("         the EMITTED CORPUS.")
         print("         The gate is live both ways: it passes on the shipped code and")
         print("         fails on every way of breaking it.")
         return 0

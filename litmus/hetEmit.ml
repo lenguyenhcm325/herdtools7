@@ -587,6 +587,21 @@ end
           let host_half = mc.HetOracle.mc_host_half
           and dev_half = mc.HetOracle.mc_dev_half
           and link_name = mc.HetOracle.mc_link_name in
+          (* The (CPU ISA x GPU dialect) this harness was BUILT for, as the short
+             name the verdict layer prints where it has to identify the target.
+             A build fact, not an oracle claim, so every pair stamps it -- unlike
+             [mc], which a pair with no oracle leaves unstamped. *)
+          let pair_label =
+            HetOracle.pair_name ~cpu_isa:CpuF.isa_name
+              ~target:(List.hd dialects).gd_target in
+          (* WHETHER A POSITIVE-CONTROL MAP WAS READ AT ALL.  A pair with no
+             oracle reads none, so nothing in such a harness marks any row the
+             canary and its missing bound is deferred rather than structural --
+             het_verdict.h has to be able to tell those two apart. *)
+          let no_control_map =
+            match pair with
+            | HetOracle.Oracle _ -> false
+            | HetOracle.Characterize _ | HetOracle.Override -> true in
           (* What goes in HET_CANARY_NAME / _rec.canary_name.  A name is NOT a
              co-run signal -- the map names a canary for every test, including the
              ones that are the canary.  HET_CANARY_COMPILED_IN, set from the
@@ -1996,11 +2011,21 @@ end
             s "  uint64_t *_noise_ddr = NULL;   /* CPU-homed: the GPU streams it */\n" ;
             s "  uint64_t *_noise_hbm = NULL;   /* GPU-homed: the CPU streams it */\n" ;
             s "  het_cpu_noise_args _na; pthread_t _nth; int _noise_cpu_on = 0;\n" ;
+            (* The threshold is this PAIR's last level where a figure exists for
+               it, and a disclosed fallback where none does -- naming another
+               part's capacity as this one's is the claim this arm refuses. *)
             s "  if (HET_NOISE_MB < HET_LLC_MB)\n" ;
-            s (Printf.sprintf
-                 "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%%d is BELOW the last-level cache (%%d MB) -- the noise buffers fit in cache, so the reads are served locally and generate NO interconnect traffic.  This run is NOT %s-stressed%s.\\n\",\n\
-               \            (int)HET_NOISE_MB, (int)HET_LLC_MB);\n"
-                 link_name mc.HetOracle.mc_llc_note) ;
+            s (match mc.HetOracle.mc_llc_mb with
+               | Some _ ->
+                  Printf.sprintf
+                    "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%%d is BELOW the last-level cache (%%d MB) -- the noise buffers fit in cache, so the reads are served locally and generate NO interconnect traffic.  This run is NOT %s-stressed%s.\\n\",\n\
+                   \            (int)HET_NOISE_MB, (int)HET_LLC_MB);\n"
+                    link_name mc.HetOracle.mc_llc_note
+               | None ->
+                  Printf.sprintf
+                    "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%%d is below the %%d MB threshold -- a FALLBACK figure, measured on another part, not a last-level-cache capacity for this target.  A noise buffer that fits in the last-level cache is served locally and crosses no %s, so this run may not be stressed at all%s.\\n\",\n\
+                   \            (int)HET_NOISE_MB, (int)HET_LLC_MB);\n"
+                    link_name mc.HetOracle.mc_llc_note) ;
             s "  if (_noiseBlocks > 0) {\n" ;
             s "    int _rc = gd_alloc_noise((void**)&_noise_ddr, (size_t)_noise_words*sizeof(uint64_t), 2);\n" ;
             s (Printf.sprintf
@@ -2481,18 +2506,15 @@ end
             s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
             s "#include <cstring>\n#include <cmath>\n" ;
             s "#include <pthread.h>\n#include <inttypes.h>\n" ;
-            s "#include \"het_stress.cuh\"\n" ;
-            s "#include \"het_cpu_stress.h\"\n" ;
-            (* THE MACHINE PROSE, stamped BEFORE het_verdict.h reads it.  The
-               header prints the two halves of the interconnect noise and the
-               link between them, and every one of those words is a claim about
-               silicon; it may not derive them from the harness itself.  So they
-               are stamped here, from the oracle PAIR ROW, and a pair with no
-               oracle stamps NONE of them -- het_verdict.h's #ifndef defaults
-               then name the MECHANISM, which claims least.  Fail-safe by
-               construction: a missing define can only weaken a claim.
-               HET_PLACE_LEVER is separate because it is a DIALECT fact -- the
-               vendor API call this render actually contains. *)
+            (* WHAT THE PAIR ROW STAMPS, ahead of the runtime headers that read
+               it.  The machine words -- the two halves of the interconnect
+               noise, the link between them, this part's last level -- are claims
+               about silicon, so a pair with no oracle stamps none of them and
+               the headers' #ifndef defaults name the mechanism instead: a
+               missing define can only weaken a claim.  The two build facts below
+               are stamped by every pair, because they are true of the binary
+               whatever the oracle says.  HET_PLACE_LEVER is separate again: the
+               vendor API call this render actually contains is a dialect fact. *)
             (match HetOracle.machine_of pair with
              | Some m ->
                 s (Printf.sprintf "#define HET_LINK_NAME %S\n"
@@ -2501,15 +2523,22 @@ end
                      m.HetOracle.mc_host_half) ;
                 s (Printf.sprintf "#define HET_DEV_HALF %S\n"
                      m.HetOracle.mc_dev_half) ;
+                (match m.HetOracle.mc_llc_mb with
+                 | Some mb -> s (Printf.sprintf "#define HET_LLC_MB %d\n" mb)
+                 | None -> ()) ;
                 if m.HetOracle.mc_alglave_zero then
                   s "#define HET_ALGLAVE_ZERO_MEASURED 1\n"
              | None ->
                 s "/* No machine defines: this harness's (CPU ISA x GPU dialect) pair\n" ;
                 s "   carries no oracle, so it names no silicon and het_verdict.h's\n" ;
                 s "   generic host/device wording stands. */\n") ;
+            s (Printf.sprintf "#define HET_PAIR_NAME %S\n" pair_label) ;
+            if no_control_map then s "#define HET_NO_CONTROL_MAP 1\n" ;
             (match dialect.gd_place_lever with
              | Some lever -> s (Printf.sprintf "#define HET_PLACE_LEVER %S\n" lever)
              | None -> ()) ;
+            s "#include \"het_stress.cuh\"\n" ;
+            s "#include \"het_cpu_stress.h\"\n" ;
             s "#include \"het_verdict.h\"\n" ;
             s "extern \"C\" {\n" ;
             s "#include \"outs.h\"\n" ;

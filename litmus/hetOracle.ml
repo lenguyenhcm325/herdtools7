@@ -3,44 +3,23 @@
 (*                                                                          *)
 (* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
 (*                                                                          *)
-(* hetOracle: the ORACLE PAIR TABLE.  A compound harness is a CPU ISA and   *)
-(* a GPU dialect running one test, and the model prediction it carries      *)
-(* belongs to THE PAIR, not to either half: expected-nvidia.csv is derived  *)
-(* for Grace(AArch64)+Hopper and expected-amd.csv for Zen-4(x86-64)+CDNA3,  *)
-(* so an AArch64 CPU column rendered against HIP is a machine neither file  *)
-(* speaks for.  Keying the oracle on the CPU ISA alone -- what this table   *)
-(* replaces -- tagged such a harness with the nearer file's prediction and  *)
-(* stood ready to report a sighting as a refutation of a model that never   *)
-(* addressed that machine.                                                  *)
-(*                                                                          *)
-(* Three states, and the third is the point (D-MV3):                        *)
-(*   POPULATED           the pair has an oracle; its name and Model string  *)
-(*                       are stamped into the harness, and its positive-    *)
-(*                       control map names mu(T) and the canary.            *)
-(*   REGISTERED NO-ORACLE  a committed row saying WHY this pair carries no  *)
-(*                       prediction.  Every test is stamped ORACLE_NONE     *)
-(*                       directly (D-MV5): no CSV is read and no blank file *)
-(*                       exists anywhere, so the class cannot be mistaken   *)
-(*                       for a lookup that silently missed.                 *)
-(*   ABSENT              refuse at emission, naming the pair.  An empty     *)
-(*                       cell is NEVER defaulted to a neighbouring row: a   *)
-(*                       wrong-CPU oracle is the false-refutation class     *)
-(*                       D26 purged from the AMD oracle.                    *)
+(* hetOracle: the ORACLE PAIR TABLE.  A compound harness is a CPU ISA and a *)
+(* GPU dialect running one test, and the model prediction it carries        *)
+(* belongs to THE PAIR: expected-nvidia.csv is derived for Grace(AArch64)+  *)
+(* Hopper and expected-amd.csv for Zen-4(x86-64)+CDNA3, so an AArch64 CPU   *)
+(* column rendered against HIP is a machine neither file speaks for.  Three *)
+(* states -- populated, registered without an oracle, absent (refuse) --    *)
+(* and an empty cell is never defaulted to a neighbouring row (D-MV3;       *)
+(* hetlitmus/docs/het-emission.md).                                         *)
 (*                                                                          *)
 (* This software is governed by the CeCILL-B license under French law.      *)
 (****************************************************************************)
 
-(* THE MACHINE A HARNESS IS ENTITLED TO NAME.  These words are printed by the
-   emitted driver and by het_verdict.h, and each one is a claim about silicon:
-   calling the two halves of the interconnect noise "Grace" and "Hopper" on an
-   AMD-tagged run is a false statement about the machine (MEASURED 2026-08-03 on
-   a real run of 2+2W-cpuonly-x86_64, whose first two lines were "the Hopper half
-   of the C2C noise is DISABLED" and "the Grace half ... is DISABLED").
-
-   They hang off the PAIR ROW rather than off the GPU dialect, because the host
-   half is a property of the pair: keyed on the dialect alone, the dev-tier
-   (x86_64, cuda) emission would stamp "the Grace half" on a machine that has no
-   Grace in it, which is the same defect one table over. *)
+(* THE MACHINE A HARNESS IS ENTITLED TO NAME.  Every word here is printed by the
+   emitted driver and by het_verdict.h as a claim about silicon, so it hangs off
+   the pair row and never off the GPU dialect alone: the host half is a property
+   of the pair, so a dialect-keyed "Grace half" would land on the (x86_64, cuda)
+   emission, which has no Grace in it (hetlitmus/docs/het-emission.md). *)
 type machine = {
     mc_link_name : string ;   (* no leading article: use sites supply their own *)
     mc_host_half : string ;
@@ -49,9 +28,12 @@ type machine = {
        (B4).  True only where it was measured; everywhere else the gap is stated
        instead of the number being borrowed. *)
     mc_alglave_zero : bool ;
-    (* The parenthetical after the "noise buffer fits in cache" warning.  Same
-       rule: a measured last-level-cache behaviour is cited only for the part it
-       was measured on. *)
+    (* The last-level cache a noise buffer must EXCEED to cross anything on this
+       part, in MB, and the parenthetical printed after that warning.  [None]
+       means no figure is published for the target: the warning then names the
+       mechanism and discloses that its threshold is a fallback measured
+       elsewhere, rather than passing another part's capacity off as this one's. *)
+    mc_llc_mb : int option ;
     mc_llc_note : string ;
   }
 
@@ -63,6 +45,7 @@ let generic_machine = {
     mc_host_half = "the host half" ;
     mc_dev_half = "the device half" ;
     mc_alglave_zero = false ;
+    mc_llc_mb = None ;
     mc_llc_note =
       " (the local-cache argument is target-independent; no measured \
        last-level-cache behaviour is claimed for this target)" ;
@@ -75,21 +58,32 @@ let gh200_machine = {
     mc_host_half = "the Grace half" ;
     mc_dev_half = "the Hopper half" ;
     mc_alglave_zero = true ;
+    (* max(Grace L3 114 MB, Hopper L2 51 MB) -- Bagchi ISMM'26 Table 1. *)
+    mc_llc_mb = Some 114 ;
     mc_llc_note = " (Fusco: Hopper L2 caches HBM, local and peer)" ;
   }
 
 (* MI300A: Zen-4 x86-64 CCDs + CDNA3 XCDs on one package over Infinity Fabric.
    That is the machine expected-amd.csv is derived FOR, verbatim from the memo
    that derives it (env-research/PORT2-R2-amd-oracle.md sec 1), so naming it here
-   claims exactly what the oracle already claims and nothing more.  The two
-   measured NVIDIA notes above stay withheld: no equivalent figure is published
-   for this part, and the honest form says so rather than borrowing one. *)
+   claims exactly what the oracle already claims and nothing more.  Alglave's
+   "zero without stress" stays withheld: no equivalent figure is published for
+   this part.  The LLC figure is not withheld, because one IS published for it --
+   256 MB, and the Grace 114 MB it replaces UNDER-fires here, so the target's own
+   figure is both the grounded and the conservative reading. *)
 let mi300a_machine = {
     mc_link_name = "Infinity Fabric" ;
     mc_host_half = "the x86 half" ;
     mc_dev_half = "the MI300A device half" ;
     mc_alglave_zero = false ;
-    mc_llc_note = generic_machine.mc_llc_note ;
+    (* The MALL / AMD Infinity Cache on the IOD is this part's last level, above
+       both the per-XCD 4 MB L2 and the per-CCD Zen-4 L3, and all HBM traffic
+       passes through it: Tee et al., "The MALL is Open", SC Workshops '25,
+       Table 1 p.1111 (MI300A: sL1 16 KB, L2 4 MB/XCD, MALL 256 MB). *)
+    mc_llc_mb = Some 256 ;
+    mc_llc_note =
+      " (the MALL / AMD Infinity Cache, 256 MB -- Tee et al., The MALL is \
+       Open, SC-W'25 Table 1)" ;
   }
 
 type populated = {

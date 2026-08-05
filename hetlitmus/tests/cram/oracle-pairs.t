@@ -22,10 +22,11 @@ reports identically, and only this line says which model it was claiming to test
 het_verdict.h prints its interconnect prose from.  Keyed on the PAIR, never on the
 dialect: keyed on the dialect the dev-tier x86+CUDA emission in (c) would stamp
 "the Grace half" on a machine with no Grace in it.
-  $ grep -E '^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|ALGLAVE_ZERO_MEASURED|PLACE_LEVER)' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  $ grep -E '^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|ALGLAVE_ZERO_MEASURED|PLACE_LEVER)' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   #define HET_LINK_NAME "NVLink-C2C"
   #define HET_HOST_HALF "the Grace half"
   #define HET_DEV_HALF "the Hopper half"
+  #define HET_LLC_MB 114
   #define HET_ALGLAVE_ZERO_MEASURED 1
   #define HET_PLACE_LEVER "cudaMemAdvise"
 
@@ -33,10 +34,14 @@ HET_ALGLAVE_ZERO_MEASURED is absent on the AMD pair (the "zero without stress"
 figure was measured on NVIDIA parts and no equivalent is published for MI300A),
 and so is HET_PLACE_LEVER (the HIP render carries no placement code at all).  An
 absent define is the SAFE direction: het_verdict.h's default names the mechanism.
-  $ grep -E '^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|ALGLAVE_ZERO_MEASURED|PLACE_LEVER)' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
+HET_LLC_MB is not absent, because a figure IS published for this part -- 256 MB
+of MALL against Grace's 114, so the ported constant UNDER-fires the noise-buffer
+guard here and the target's own figure is the conservative reading too.
+  $ grep -E '^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|ALGLAVE_ZERO_MEASURED|PLACE_LEVER)' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   #define HET_LINK_NAME "Infinity Fabric"
   #define HET_HOST_HALF "the x86 half"
   #define HET_DEV_HALF "the MI300A device half"
+  #define HET_LLC_MB 256
 
 (c) THE LANDMINE.  (x86_64, cuda) is REGISTERED WITHOUT AN ORACLE -- it is the
 dev box, and no compound model has been instantiated for an x86-64 host with an
@@ -55,18 +60,41 @@ AMD oracle's NAME appears nowhere in the harness directory.
 
 It names no MACHINE either: with no defines stamped, het_verdict.h's generic
 wording stands, so no verdict this harness prints claims to be a Grace or a
-Hopper.
-  $ grep -cE '^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|ALGLAVE_ZERO_MEASURED)' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu || true
+Hopper, and no number it prints claims to be this part's last-level cache.
+  $ grep -cE '^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|ALGLAVE_ZERO_MEASURED)' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu || true
   0
+
+What it DOES stamp is the two build facts, true of the binary whatever the oracle
+says: which pair it was built for -- the short name the verdict and statistics
+layers print, where they used to substitute the whole NO-ORACLE disclosure blob --
+and that no positive-control map was read for it, which is what stops the
+statistics layer from reading "nothing co-runs" as "this row IS the canary".
+  $ grep -E '^#define HET_(PAIR_NAME|NO_CONTROL_MAP)' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu
+  #define HET_PAIR_NAME "(X86_64, cuda)"
+  #define HET_NO_CONTROL_MAP 1
+
+Both populated pairs name themselves and stamp NO such flag: they read a map.
+  $ grep -E '^#define HET_(PAIR_NAME|NO_CONTROL_MAP)' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  #define HET_PAIR_NAME "(AArch64, cuda)"
+  $ grep -E '^#define HET_(PAIR_NAME|NO_CONTROL_MAP)' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
+  #define HET_PAIR_NAME "(X86_64, hip)"
 
 What the CUDA render still carries is its own DIALECT payload's design notes:
 het_alloc_cuda.inc, het_noise_cuda.inc and het_stress.cuh describe mechanisms
 derived for GH200 and name it, and one stress warning in het_noise_cuda.inc is
-worded for that part.  Tracked by count so it cannot grow unnoticed; the verdict
-layer, which is what a result is read off, is define-driven and carries none of
-it.
-  $ grep -ciE 'nvlink|grace|hopper' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu
-  10
+worded for that part.  Whitelisted PER WORD, in section (f)'s style, so the
+residue is tracked rather than remembered: a bumpable single total is satisfiable
+by swapping one mention for another, and the earlier `nvlink|grace|hopper' pattern
+missed `c2c' and `gh200' outright, which are most of what is actually there.  The
+pin is on the RENDER: the payload .inc files are pasted into it, and it is the
+file a reader opens.  What a result is read off -- the verdict layer's printed
+prose -- is define-driven and named none of this even when this pin was blind.
+  $ grep -oiE 'nvlink|grace|hopper|c2c|gh200' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu | sort | uniq -c | sed 's/^ *//'
+  13 C2C
+  9 GH200
+  5 Grace
+  3 Hopper
+  3 NVLink
 
 (d) ABSENT: (AArch64, hip) is in no row, so emission REFUSES.  It names the pair
 -- the reader's next question is which one -- and it writes nothing, because a
@@ -92,8 +120,11 @@ this flag; hetlitmus/verify/allow-no-oracle-gate.sh enforces that over the tree.
   1
   $ grep -c '_rec.oracle_source = "(NO-ORACLE: (AArch64, hip) is UNREGISTERED, emitted under -allow-no-oracle)";' override/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
   1
-  $ grep -cE '^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF)' override/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip || true
+  $ grep -cE '^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB)' override/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip || true
   0
+  $ grep -E '^#define HET_(PAIR_NAME|NO_CONTROL_MAP)' override/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
+  #define HET_PAIR_NAME "(AArch64, hip)"
+  #define HET_NO_CONTROL_MAP 1
 
 (f) CROSS-VENDOR RESIDUE IN THE RENDER.  A single-vendor harness still carries
 comparative comments -- het_alloc_hip.inc explains the HIP lane by contrast with
