@@ -12,20 +12,25 @@
 #
 # HET_RUN_LOG_DIR (optional) also APPENDS each invocation's transcript to
 # <dir>/<test>.log, so a session keeps the HetStats lines campaign.py only
-# parses.  It is a copy, never a filter: stdout is forwarded verbatim and the
-# harness's own exit status is what this script exits with -- campaign.py reads
-# a non-zero status as an errored row, so a pipeline that swallowed it would
-# turn a dead harness into a silent one.
+# parses.  It is a copy, never a filter: both streams are forwarded on the
+# stream they arrived on and the harness's own exit status is what this script
+# exits with.  THE TWO STREAMS STAY SEPARATE -- campaign.py builds an errored
+# row's note from the runner's stderr, so merging them leaves that note blank on
+# exactly the invocations that failed, and a non-zero status a pipeline swallowed
+# would turn a dead harness into a silent one.
 set -eu
 cd "$1" || exit 2
 [ -n "${HET_RUN_LOG_DIR:-}" ] || exec "./$2"
 
 mkdir -p "$HET_RUN_LOG_DIR"
-tmp="$(mktemp)"
+o="$(mktemp)" ; e="$(mktemp)"
 rc=0
-"./$2" > "$tmp" 2>&1 || rc=$?
+"./$2" > "$o" 2> "$e" || rc=$?
 { echo "### $2 rc=$rc seed=${HET_SEED:-<unset>} runs_max=${HET_RUNS_MAX:-<unset>}"
-  cat "$tmp" ; } >> "$HET_RUN_LOG_DIR/$2.log"
-cat "$tmp"
-rm -f "$tmp"
+  cat "$o"
+  if [ -s "$e" ]; then echo "### stderr" ; cat "$e" ; fi ; } \
+  >> "$HET_RUN_LOG_DIR/$2.log"
+cat "$o"
+cat "$e" >&2
+rm -f "$o" "$e"
 exit "$rc"

@@ -44,23 +44,54 @@ usage: hetlitmus-run.sh --gpu-target cuda|hip --corpus DIR [options]
   --p-goal P                 stop a bound row once its pooled bound <= P
   --out DIR                  results dir (default hetlitmus/run-out/<stamp>)
   --reuse-emitted            reuse <out>/emit instead of emitting again
+  --resume                   continue the campaign state already in <out>
   --dry-run                  print the plan and do nothing else
 EOF
 }
 
-die() { echo "hetlitmus-run: REFUSING -- $*" >&2; exit 2; }
+# THE SESSION STATUS, written into the results dir and kept true at every exit:
+# RUNNING while the chain is in flight, COMPLETE at step 7, REFUSED@step<N> when a
+# step fails closed, ABORTED@step<N> if the shell died some other way.  Without it
+# a refused session and a finished one leave results dirs that read alike.
+STEP=1 ; RECORD="" ; SUMMARY=""
+mark_status() {                 # <status>
+  [ -n "$RECORD" ] && [ -f "$RECORD" ] || return 0
+  sed "s/^session_status=.*/session_status=$1/" "$RECORD" > "$RECORD.tmp" \
+    && mv -f "$RECORD.tmp" "$RECORD"
+}
+finish() {                      # the EXIT trap, armed once the record exists
+  [ -z "${TESTLOG:-}" ] || rm -f "$TESTLOG"
+  if [ -n "$RECORD" ] && [ -f "$RECORD" ] \
+     && grep -q '^session_status=RUNNING$' "$RECORD"; then
+    mark_status "ABORTED@step$STEP"
+  fi
+}
+
+die() {
+  mark_status "REFUSED@step$STEP"
+  echo "hetlitmus-run: REFUSING -- $*" >&2
+  exit 2
+}
+
+# A valued flag given no value would `shift 2' off the end of the argument list,
+# which under set -e exits 1 -- the code that means the campaign errored a row --
+# with nothing printed at all.
+need_val() {                    # <flag> <remaining argc>
+  [ "$2" -ge 2 ] || { usage >&2 ; die "$1 needs a value"; }
+}
 
 GPU_TARGET="" ; CORPUS="" ; ARCH="auto" ; BUDGET_RUNS=100 ; P_GOAL=""
-OUT="" ; REUSE=0 ; DRYRUN=0
+OUT="" ; REUSE=0 ; DRYRUN=0 ; RESUME=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --gpu-target)    GPU_TARGET="${2:-}" ; shift 2 ;;
-    --corpus)        CORPUS="${2:-}" ; shift 2 ;;
-    --arch)          ARCH="${2:-}" ; shift 2 ;;
-    --budget-runs)   BUDGET_RUNS="${2:-}" ; shift 2 ;;
-    --p-goal)        P_GOAL="${2:-}" ; shift 2 ;;
-    --out)           OUT="${2:-}" ; shift 2 ;;
+    --gpu-target)    need_val "$1" $# ; GPU_TARGET="$2" ; shift 2 ;;
+    --corpus)        need_val "$1" $# ; CORPUS="$2" ; shift 2 ;;
+    --arch)          need_val "$1" $# ; ARCH="$2" ; shift 2 ;;
+    --budget-runs)   need_val "$1" $# ; BUDGET_RUNS="$2" ; shift 2 ;;
+    --p-goal)        need_val "$1" $# ; P_GOAL="$2" ; shift 2 ;;
+    --out)           need_val "$1" $# ; OUT="$2" ; shift 2 ;;
     --reuse-emitted) REUSE=1 ; shift ;;
+    --resume)        RESUME=1 ; shift ;;
     --dry-run)       DRYRUN=1 ; shift ;;
     -h|--help)       usage ; exit 0 ;;
     *) usage >&2 ; die "unknown argument \"$1\"" ;;
@@ -105,26 +136,31 @@ PROBE_SH="${HET_PROBE_SH:-$PROBE_DEFAULT}"
 # the toolchain and the corpus agree with each other.
 # =========================================================================
 
-# The CPU lane of a corpus, read off a test the way litmus7 reads it: the first
-# device tag of the program header that names a CPU ISA (HetArch.scan_cpu_isa,
+# The CPU lane of a corpus, read off EVERY test the way litmus7 reads it: the
+# first device tag of the program header that names a CPU ISA (HetArch.scan_cpu_isa,
 # whose tag vocabulary this mirrors).  A test with no CPU column is refused here
 # though the emitter would default it to AArch64 -- defaulting the host ISA of a
-# device session is how a run gets built for the wrong machine.  The mirror is
-# checked against the emitter's own answer after step 3.
-corpus_cpu_isa() {              # <file.litmus> -> aarch64 | x86_64 | (empty)
+# device session is how a run gets built for the wrong machine.  Sampling one test
+# would let a mixed-ISA corpus pass this step and die at emission instead, blaming
+# the oracle table.  The mirror is checked against the emitter's answer after step 3.
+corpus_cpu_lanes() {            # <file.litmus>... -> "<file> aarch64|x86_64|NONE"
   awk '
+    function flush() { if (cur != "") print cur, (isa == "" ? "NONE" : isa) }
+    FNR == 1 { flush(); cur = FILENAME; isa = ""; seen = 0 }
+    seen { next }
     /^[ \t]*P[0-9]+[ \t]*:/ && /\|/ {
+      seen = 1
       n = split($0, cells, "|")
       for (i = 1; i <= n; i++) {
         c = cells[i]; sub(/^[ \t]+/, "", c); sub(/[ \t;]+$/, "", c)
         p = index(c, ":"); if (p == 0) continue
         tag = tolower(substr(c, p + 1)); gsub(/[ \t]/, "", tag)
-        if (tag == "cpu" || tag == "aarch64" || tag == "arm") { print "aarch64"; exit }
+        if (tag == "cpu" || tag == "aarch64" || tag == "arm") { isa = "aarch64"; break }
         if (tag == "x86_64" || tag == "x86-64" || tag == "amd64" || tag == "x64") \
-          { print "x86_64"; exit }
+          { isa = "x86_64"; break }
       }
-      exit
-    }' "$1"
+    }
+    END { flush() }' "$@"
 }
 
 # THE PAIR TABLE IS litmus/hetOracle.ml AND THIS READS THAT FILE.  A second copy
@@ -132,12 +168,21 @@ corpus_cpu_isa() {              # <file.litmus> -> aarch64 | x86_64 | (empty)
 # would show up as a campaign scheduled against another pair's classes.  What the
 # emitter decided is checked against this in step 3, off the oracle stamp it
 # writes into every render.
+# Bounded to the `let table = [' ... `]' literal: `Populated' and
+# `Registered_none' are constructor names in the match arms below the table too,
+# so a parse running past the bracket reads the last row's state off unrelated
+# code.  A file with no such literal fails closed as NO-TABLE.
 oracle_pair() {                 # <ISA key> <target> -> "POPULATED <oracle> <map>" | NO-ORACLE | ABSENT
   awk -v want="(\"$1\", \"$2\")," '
     function qval(s) {
       if (match(s, /= "[^"]*"/)) return substr(s, RSTART + 3, RLENGTH - 4)
       return ""
     }
+    !intab {
+      if ($0 ~ /^let table = \[[ \t]*$/) { intab = 1 ; sawtab = 1 }
+      next
+    }
+    /^[ \t]*\][ \t]*$/ { intab = 0 ; inb = 0 ; next }
     /^[ \t]*\("[A-Za-z0-9_]+", "[a-z]+"\),[ \t]*$/ {
       k = $0; gsub(/^[ \t]+|[ \t]+$/, "", k)
       inb = (k == want); if (inb) found = 1; next
@@ -149,6 +194,7 @@ oracle_pair() {                 # <ISA key> <target> -> "POPULATED <oracle> <map
       if ($0 ~ /op_control_map_csv/) map    = qval($0)
     }
     END {
+      if (!sawtab)              { print "NO-TABLE" ; exit }
       if (!found)               { print "ABSENT" ; exit }
       if (state == "NO-ORACLE") { print "NO-ORACLE" ; exit }
       if (state == "POPULATED" && oracle != "" && map != "") {
@@ -160,8 +206,10 @@ oracle_pair() {                 # <ISA key> <target> -> "POPULATED <oracle> <map
 
 [ -x "$LITMUS7" ] || die "litmus7 is not built at $LITMUS7 (run 'make all')"
 shopt -s nullglob
-CORPUS_TESTS=()
-for f in "$CORPUS"/*.litmus; do CORPUS_TESTS+=("$(basename "$f" .litmus)"); done
+CORPUS_TESTS=() ; CORPUS_PATHS=()
+for f in "$CORPUS"/*.litmus; do
+  CORPUS_TESTS+=("$(basename "$f" .litmus)") ; CORPUS_PATHS+=("$f")
+done
 shopt -u nullglob
 [ "${#CORPUS_TESTS[@]}" -gt 0 ] || die "--corpus $CORPUS holds no .litmus test"
 
@@ -171,9 +219,18 @@ for tool in "$COMPILER" make gcc python3 timeout; do
 gcc through the emitted comp.sh, and the campaign runs each harness under timeout."
 done
 
-CPU_ISA="$(corpus_cpu_isa "$CORPUS/${CORPUS_TESTS[0]}.litmus")"
-[ -n "$CPU_ISA" ] || die "no CPU column in $CORPUS/${CORPUS_TESTS[0]}.litmus -- the \
-corpus CPU lane cannot be read, and it is half of the oracle pair"
+CPU_ISA="" ; CPU_ISA_FILE=""
+while read -r lane_file lane_isa; do
+  [ "$lane_isa" != NONE ] || die "no CPU column in $lane_file -- the corpus CPU \
+lane cannot be read, and it is half of the oracle pair"
+  if [ -z "$CPU_ISA" ]; then
+    CPU_ISA="$lane_isa" ; CPU_ISA_FILE="$lane_file"
+  elif [ "$lane_isa" != "$CPU_ISA" ]; then
+    die "this corpus mixes CPU lanes: $lane_file is $lane_isa and $CPU_ISA_FILE is \
+$CPU_ISA.  One session builds one pair, so a corpus with two CPU halves names no \
+pair at all; split it and run one session per lane."
+  fi
+done < <(corpus_cpu_lanes "${CORPUS_PATHS[@]}")
 
 # The pair, keyed as litmus/hetOracle.ml keys it (HetCpuFront's isa_name
 # spelling).  Resolved BEFORE the host-ISA check because it is a property of the
@@ -266,6 +323,23 @@ fi
 RUNONE="$HETL/spotcheck/run-one.sh"
 RUNNER="timeout $HET_RUN_TIMEOUT sh $RUNONE {dir} {test}"
 
+# WHAT A SECOND SESSION INTO THIS DIR WOULD INHERIT.  campaign.py resumes every
+# terminal row it finds in --state rather than re-running it, so without an
+# explicit --resume a repeat session invokes no harness at all and still reports a
+# complete one.  The short list is the subset that would also silently swallow a
+# raised --budget-runs: bound rows stopped BY budget, which a resume can only
+# leave at the budget they were measured with.  An Allowed row's budget is
+# campaign.py's own --allowed-budget-runs, which this wrapper does not set.
+STATE="$OUT/campaign-state.csv"
+RESUMABLE=0 ; RESUMABLE_SHORT=""
+if [ -r "$STATE" ]; then
+  RESUMABLE="$(awk -F, 'NR > 1 && ($3 == "OBSERVED" || $3 == "CONFIRMED" ||
+      $3 == "BOUND-MET" || $3 == "BUDGET" || $3 == "ERROR")' "$STATE" | wc -l)"
+  RESUMABLE_SHORT="$(awk -F, -v b="$BUDGET_RUNS" \
+    'NR > 1 && $3 == "BUDGET" && $2 != "Allowed" && $5 + 0 < b + 0 \
+     { printf "%s(%s runs) ", $1, $5 }' "$STATE")"
+fi
+
 echo "=========================================================================="
 echo "HetLitmus device session"
 echo "  host          $(uname -srm)   $( (hostname 2>/dev/null || echo '?') )"
@@ -293,6 +367,22 @@ else
   echo "  step 6  campaign    campaign.py --characterization ($PAIR has no oracle)"
 fi
 echo "  step 7  collect     probe, build logs, harness transcripts, campaign state, summary -> $OUT"
+if [ "$RESUMABLE" -gt 0 ]; then
+  echo "  resume      $RESUMABLE terminal row(s) already in $STATE"
+fi
+if [ "$RESUMABLE" -gt 0 ] && [ "$RESUME" -eq 0 ]; then
+  die "$STATE already carries $RESUMABLE terminal row(s), and campaign.py resumes \
+each of them instead of re-running it: this session would invoke no harness and \
+still report a complete one.  Pass --resume to continue that campaign (the inherited \
+rows are then disclosed as not measured here), or move $STATE aside to measure \
+again into this dir."
+fi
+if [ "$RESUME" -eq 1 ] && [ -n "$RESUMABLE_SHORT" ]; then
+  die "--resume, but --budget-runs $BUDGET_RUNS is above what these bound row(s) \
+spent, and a resumed row is never re-run: $RESUMABLE_SHORT.  Their bounds were \
+measured at their own budget, so banking them under this one would label a bound \
+with runs nobody spent; re-run at their budget, or move $STATE aside."
+fi
 if [ "$DRYRUN" -eq 1 ]; then
   echo
   echo "hetlitmus-run: --dry-run -- nothing was emitted, built, run or written."
@@ -301,8 +391,13 @@ fi
 
 mkdir -p "$OUT" "$OUT/build"
 OUT="$(cd "$OUT" && pwd)"
-EMIT="$OUT/emit"
+EMIT="$OUT/emit" ; STATE="$OUT/campaign-state.csv"
+RECORD="$OUT/run-record.txt" ; SUMMARY="$OUT/summary.txt"
+# A summary from an earlier session into this dir would otherwise sit beside this
+# session's record and describe a different run.
+[ ! -e "$SUMMARY" ] || mv -f "$SUMMARY" "$OUT/summary-superseded-$STAMP.txt"
 {
+  echo "session_status=RUNNING"
   echo "session_date=$(date -Is 2>/dev/null || date)"
   echo "session_host=$( (hostname 2>/dev/null || echo unknown) )"
   echo "host_uname=$(uname -srm)"
@@ -326,6 +421,11 @@ EMIT="$OUT/emit"
   echo "runner=$RUNNER"
   echo "probe_cmd=$PROBE_SH"
   echo "reuse_emitted=$REUSE"
+  echo "resume=$RESUME"
+  echo "resumed_rows=$RESUMABLE"
+  if [ "$RESUME" -eq 1 ] && [ "$RESUMABLE" -gt 0 ]; then
+    echo "resumed_note=resumed $RESUMABLE row(s) (not measured in this session)"
+  fi
   echo "het_alloc=${HET_ALLOC:-<unset: the harness resolves it>}"
   echo "litmus7=$LITMUS7"
   echo "git_rev=$(cd "$REPO" && git rev-parse HEAD 2>/dev/null || echo nogit)"
@@ -337,7 +437,8 @@ EMIT="$OUT/emit"
   if [ "$COMPILER" != nvcc ] && [ "$COMPILER" != hipcc ]; then
     echo "seam_compiler=OVERRIDDEN($COMPILER)"
   fi
-} > "$OUT/run-record.txt"
+} > "$RECORD"
+trap finish EXIT
 
 # =========================================================================
 # STEP 2 -- PROBE.  What this machine offers, recorded before anything is
@@ -345,6 +446,7 @@ EMIT="$OUT/emit"
 # =========================================================================
 echo
 echo "== step 2/7: probe =="
+STEP=2
 probe_rc=0
 RESULTS="$OUT" sh "$PROBE_SH" > "$OUT/probe.log" 2>&1 || probe_rc=$?
 if [ "$probe_rc" -ne 0 ]; then
@@ -362,8 +464,8 @@ head -20 "$OUT/probe.log" | sed 's/^/    /'
 # =========================================================================
 echo
 echo "== step 3/7: emit =="
+STEP=3
 TESTLOG="$(mktemp)"
-trap 'rm -f "$TESTLOG"' EXIT
 emit_one() {                    # <test> -- emits into $EMIT, fails closed
   local t="$1" st=0
   ( cd "$CORPUS" && "$LITMUS7" -gpu-target "$GPU_TARGET" -set-libdir "$LIBDIR" \
@@ -411,11 +513,14 @@ else
   echo "    emitted ${#CORPUS_TESTS[@]} harness dir(s) into $EMIT"
 fi
 # The mirror check: the emitted build files carry the EMITTER's reading of the
-# CPU lane, and the host-ISA refusal above rests on this wrapper's.
-EMITTED_ISA="$(sed -n 's/^HET_HOST_ISA *?*= *//p' "$EMIT/${CORPUS_TESTS[0]}/Makefile" | head -1)"
-[ "$EMITTED_ISA" = "$CPU_ISA" ] || die "the emitted harness carries CPU ISA \
+# CPU lane, and the host-ISA refusal above rests on this wrapper's.  Every test,
+# for the reason the preflight reads every test.
+for t in "${CORPUS_TESTS[@]}"; do
+  EMITTED_ISA="$(sed -n 's/^HET_HOST_ISA *?*= *//p' "$EMIT/$t/Makefile" | head -1)"
+  [ "$EMITTED_ISA" = "$CPU_ISA" ] || die "the emitted harness of $t carries CPU ISA \
 '$EMITTED_ISA' but this wrapper read '$CPU_ISA' off the corpus -- the host-ISA \
 check was made against the wrong lane"
+done
 
 # =========================================================================
 # STEP 4 -- COMPILE.  Objects then binary, with the resolved arch passed
@@ -423,6 +528,7 @@ check was made against the wrong lane"
 # =========================================================================
 echo
 echo "== step 4/7: compile ($ARCH_VAR=$ARCH) =="
+STEP=4
 FAILTAB="$OUT/build-failures.txt"
 : > "$FAILTAB"
 nfail=0
@@ -451,12 +557,13 @@ echo "    built ${#CORPUS_TESTS[@]} harness binaries (the failure table $FAILTAB
 # =========================================================================
 echo
 echo "== step 6/7: campaign ($MODE) =="
+STEP=6
 # campaign.py parses the HetStats line and keeps none of it; run-one.sh copies
 # each transcript here so the session keeps the lines its rows were scored from.
 export HET_RUN_LOG_DIR="$OUT/hetstats"
 TESTS_CSV="$(IFS=, ; echo "${CORPUS_TESTS[*]}")"
 CAMPAIGN_ARGS=(--corpus "$EMIT" --runner "$RUNNER" --tests "$TESTS_CSV"
-               --budget-runs "$BUDGET_RUNS" --state "$OUT/campaign-state.csv")
+               --budget-runs "$BUDGET_RUNS" --state "$STATE")
 if [ -n "$P_GOAL" ]; then CAMPAIGN_ARGS+=(--p-goal "$P_GOAL"); fi
 # The mode is READ OFF THE EMISSION, never guessed: a pair with no oracle stamps
 # every render as such (checked above), and characterizing is the only thing its
@@ -474,11 +581,11 @@ tail -40 "$OUT/campaign.log" | sed 's/^/    /'
 # =========================================================================
 # STEP 7 -- COLLECT.  One screen, and the results dir holds the rest.
 # =========================================================================
+STEP=7
 count_stop() {                  # <STOP> -> rows of the campaign state carrying it
-  if [ ! -r "$OUT/campaign-state.csv" ]; then echo 0 ; return ; fi
-  awk -F, -v s="$1" 'NR > 1 && $3 == s' "$OUT/campaign-state.csv" | wc -l
+  if [ ! -r "$STATE" ]; then echo 0 ; return ; fi
+  awk -F, -v s="$1" 'NR > 1 && $3 == s' "$STATE" | wc -l
 }
-SUMMARY="$OUT/summary.txt"
 {
   echo "=========================================================================="
   echo "HetLitmus session summary"
@@ -490,7 +597,10 @@ SUMMARY="$OUT/summary.txt"
   echo "  corpus      $CORPUS   (${#CORPUS_TESTS[@]} test(s), $CPU_ISA CPU lane)"
   echo "  probe       $OUT/probe.txt   ($(grep -m1 '^probe_status=' "$OUT/probe.txt" 2>/dev/null | sed 's/^probe_status=//'))"
   echo "  build       ${#CORPUS_TESTS[@]} built, $nfail failed   (logs in $OUT/build/)"
-  echo "  campaign    exit $camp_rc   (log $OUT/campaign.log, state $OUT/campaign-state.csv)"
+  echo "  campaign    exit $camp_rc   (log $OUT/campaign.log, state $STATE)"
+  if [ "$RESUME" -eq 1 ] && [ "$RESUMABLE" -gt 0 ]; then
+    echo "  resumed     $RESUMABLE row(s) (not measured in this session)"
+  fi
   echo "  transcripts $OUT/hetstats/   ($(find "$OUT/hetstats" -name '*.log' 2>/dev/null | wc -l) harness log(s))"
   for s in OBSERVED CONFIRMED BOUND-MET BUDGET ERROR; do
     n="$(count_stop "$s")"
@@ -509,6 +619,7 @@ SUMMARY="$OUT/summary.txt"
   esac
   echo "=========================================================================="
 } > "$SUMMARY"
+mark_status COMPLETE
 echo
 cat "$SUMMARY"
 exit "$camp_rc"

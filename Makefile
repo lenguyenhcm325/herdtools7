@@ -1168,16 +1168,20 @@ hetlitmus-noracle-hw: | build
 ### emitted comp.sh + Makefile build, campaign.py schedules -- and the wrapper
 ### RECORDS that stand-ins were used, so a stubbed results dir can never be read
 ### as a reading of a machine.
-### Four phases: --dry-run writes nothing at all; the chain end to end on both
-### pairs the committed x86 fixture reaches ((x86_64, cuda) NO-ORACLE, which must
-### characterize by itself, and (x86_64, hip) populated, which must take the
-### control map the table names) plus --reuse-emitted; the six refusals, each by
-### its own reason; and campaign.py --characterization, where the same runner
+### Eight phases: --dry-run writes nothing at all; the chain end to end on each
+### dialect this host's pair table reaches, plus --reuse-emitted; the refusals,
+### each by its own reason; campaign.py --characterization, where the same runner
 ### that stops an Allowed row OBSERVED and a Disallowed row CONFIRMED under a
-### control map must reach neither.  --bite plants one defect per phase in a COPY
-### of the script under test.
-### The two chain phases need an x86_64 host (the fixture's CPU column) and say
-### so rather than passing quietly on another.
+### control map must reach neither, and the states no campaign may resume; the
+### pair-table reader, bounded to the table literal; every fail-closed handler,
+### under the condition it exists for (a failing compiler, a failing probe, two
+### devices, an errored campaign, a doctored emission); a second session into a
+### results dir that already holds one; and probe-hip.sh's exit paths.  --bite
+### plants one defect per assertion in a COPY of the script under test and
+### requires the phase to redden FOR THAT REASON.
+### HOST-ADAPTIVE, not x86-only: the chain phases pick the committed x86 fixture
+### on an x86_64 box and a cut of the committed AArch64 corpus on an aarch64 one,
+### so the GH200 runs this same gate over its own (AArch64, cuda) pair.
 hetlitmus-run-gate: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py
@@ -1185,11 +1189,12 @@ hetlitmus-run-gate: | build
 	@ echo "HetLitmus device-session wrapper gate: OK (and the gate bites)"
 
 ### hetlitmus-run-hw: the same wrapper, on the device, with NO stand-in -- the
-### real probe, the real nvcc, the real harness.  The pair it reaches here
-### ((x86_64, cuda)) is registered without an oracle, which is exactly the
-### new-hardware session the wrapper exists for: what is asserted is that the
-### chain completes, that the campaign took the characterization path unprompted,
-### and that the results dir names the arch it resolved and no stand-in.
+### real probe, the real nvcc, the real harness.  The pair it reaches is the
+### (<this host's CPU lane>, cuda) row, which on the dev box is registered without
+### an oracle -- exactly the new-hardware session the wrapper exists for: what is
+### asserted is that the chain completes, that the campaign took the mode that
+### row entitles it to unprompted, and that the results dir names the arch it
+### resolved and no stand-in.
 ### A harness whose pinned read-modify-write is not system-atomic against the
 ### host can lose a barrier increment and stall (the probe measures it on this
 ### box); a stalled session is retried up to 3 times and only an all-stall is

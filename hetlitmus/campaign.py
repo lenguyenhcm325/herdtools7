@@ -489,16 +489,31 @@ def run_campaign(a, classes, work):
         # are per class, so inheriting a terminal stop across classes would let a
         # characterization run report the OBSERVED or CONFIRMED some earlier
         # oracle run banked -- the one path by which a pair with no prediction
-        # could still print an adjudication.
-        if t in prior and prior[t].get("class") not in (None, "", st.oclass):
-            die("%s is %s in this campaign and %s in %s: a state file cannot be "
-                "resumed by a campaign that classes its rows differently, because "
-                "the stop rule that wrote those rows is not this one"
-                % (t, st.oclass, prior[t]["class"], a.state))
+        # could still print an adjudication.  A row whose class cannot be read is
+        # not resumable by ANY campaign: the class is what identifies the stop
+        # rule that wrote the row, so a blank one is an unidentified rule, not a
+        # matching one.
+        if t in prior:
+            pclass = (prior[t].get("class") or "").strip()
+            if not pclass:
+                die("%s carries no readable oracle class in %s: a row whose class "
+                    "cannot be read is not resumable, because the stop rule that "
+                    "wrote it cannot be identified" % (t, a.state))
+            if pclass != st.oclass:
+                die("%s is %s in this campaign and %s in %s: a state file cannot "
+                    "be resumed by a campaign that classes its rows differently, "
+                    "because the stop rule that wrote those rows is not this one"
+                    % (t, st.oclass, pclass, a.state))
         if t in prior and prior[t].get("stop") in TERMINAL:
             st.stop = prior[t]["stop"]
             st.note = "resumed: terminal in %s" % a.state
             print("skip  %-11s %-28s %s (from state)" % (st.oclass, t, st.stop))
+            # A resumed row still counts: a banked CONFIRMED that nobody counted
+            # would let a resuming campaign exit 0 over a recorded sighting.
+            if st.stop == "ERROR":
+                errors += 1
+            if st.stop == "CONFIRMED":
+                confirmed += 1
             continue
         budget = a.allowed_budget_runs if st.oclass == "Allowed" else a.budget_runs
         drive_test(a, st, budget)
