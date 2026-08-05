@@ -63,8 +63,18 @@ hip-bin' -- write the SAME ./<test>, so an AMD campaign differs from an NVIDIA o
 only in which target built the binary, which happens before this driver is
 invoked.  Adding a --target axis here would be a knob with nothing behind it.
 
+CHARACTERIZATION (--characterization, exclusive with --control-map).  A pair with no
+oracle (litmus/hetOracle.ml) predicts nothing, so its rows have no class to read: the
+switch assigns every test NO-ORACLE from the emitted corpus itself.  That removes the
+Allowed sweep (nothing here fires against a prediction) and leaves `decide' with only
+its bound arm, so OBSERVED and CONFIRMED -- the two stop reasons that state agreement
+or disagreement with a prediction -- are unreachable rather than merely unused.  The
+alternative, a control map with every row blanked, is banned: a blank cell in a map
+reads as a class nobody wrote down, and this campaign would schedule it.
+
 Usage:
-  campaign.py --corpus <dir of emitted harness dirs> --control-map <csv>
+  campaign.py --corpus <dir of emitted harness dirs>
+              (--control-map <csv> | --characterization)
               --runner CMD [--p-goal F] [--budget-runs N] [--allowed-budget-runs N]
               [--state campaign.csv] [--seed0 N] [--dry-run] [--tests A,B,...]
 Exit: 0 = campaign completed; 2 = configuration/corpus error (fail closed);
@@ -119,6 +129,20 @@ def read_control_map(path):
             "mistagged test cannot be scheduled (what would its stop rule MEAN?)"
             % bad)
     return classes
+
+
+def characterization_classes(corpus):
+    """test -> NO-ORACLE, one row per emitted harness dir.  The corpus IS the source:
+    a pair with no oracle has no map to read, and writing one whose cells are all
+    blank would put a class in the campaign that nobody derived."""
+    if not os.path.isdir(corpus):
+        die("--corpus %s is not a directory" % corpus)
+    tests = sorted(d for d in os.listdir(corpus)
+                   if os.path.isdir(os.path.join(corpus, d)))
+    if not tests:
+        die("--characterization found no harness dir under %s -- emit the corpus "
+            "first (there is nothing to characterize)" % corpus)
+    return dict.fromkeys(tests, "NO-ORACLE")
 
 
 def parse_hetstats(stdout):
@@ -331,7 +355,14 @@ def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True,
                     help="directory holding one emitted harness dir per test")
-    ap.add_argument("--control-map", required=True)
+    # EXACTLY ONE of the two, and argparse is what enforces it: the oracle class of
+    # every row comes either from the pair's grounded map or from the pair having no
+    # oracle at all, and a run that supplied both would leave which one unstated.
+    klass = ap.add_mutually_exclusive_group(required=True)
+    klass.add_argument("--control-map",
+                       help="the pair's positive-control map; field 2 is the class")
+    klass.add_argument("--characterization", action="store_true",
+                       help="the pair carries no oracle: every row is NO-ORACLE")
     ap.add_argument("--runner", required=True,
                     help="command template; {test} and {dir} are substituted")
     ap.add_argument("--p-goal", type=float, default=-1.0,
@@ -350,14 +381,14 @@ def parse_args():
     return ap.parse_args()
 
 
-def select_work(a, classes):
+def select_work(a, classes, source):
     """The tests to schedule: those named by --tests, else the whole map.  A test with
     no oracle class or no harness dir is FAIL CLOSED, not a skip."""
     subset = [t for t in a.tests.split(",") if t] or sorted(classes)
     missing_class = [t for t in subset if t not in classes]
     if missing_class:
         die("test(s) with NO oracle class in %s: %s -- fail closed, nothing to "
-            "schedule" % (a.control_map, ", ".join(missing_class[:5])))
+            "schedule" % (source, ", ".join(missing_class[:5])))
     work = []
     for t in subset:
         d = os.path.join(a.corpus, t)
@@ -374,6 +405,16 @@ def plan_schedule(a, classes, work):
     actually passed."""
     order = {"Allowed": 0, "Disallowed": 1, "NO-ORACLE": 2}
     work = sorted(work, key=lambda t: (order[classes[t]], t))
+    if a.characterization:
+        print("campaign: CHARACTERIZATION, %d test(s), every row NO-ORACLE: no "
+              "Allowed sweep (nothing here fires against a prediction) and no row "
+              "can agree or disagree with one.  Each runs to its bound or to <=%d "
+              "runs; worst case %d runs." % (len(work), a.budget_runs,
+                                             len(work) * a.budget_runs))
+        if a.p_goal <= 0.0:
+            print("campaign: NOTE --p-goal unset: every row will run to budget "
+                  "(a stopping target is a campaign decision; none is baked in).")
+        return work
     n_all = sum(1 for t in work if classes[t] == "Allowed")
     n_dis = sum(1 for t in work if classes[t] == "Disallowed")
     n_no = sum(1 for t in work if classes[t] == "NO-ORACLE")
@@ -444,6 +485,16 @@ def run_campaign(a, classes, work):
     for t in work:
         st = TestState(t, classes[t])
         states.append(st)
+        # A ROW MAY ONLY BE RESUMED BY A CAMPAIGN OF ITS OWN KIND.  The stop rules
+        # are per class, so inheriting a terminal stop across classes would let a
+        # characterization run report the OBSERVED or CONFIRMED some earlier
+        # oracle run banked -- the one path by which a pair with no prediction
+        # could still print an adjudication.
+        if t in prior and prior[t].get("class") not in (None, "", st.oclass):
+            die("%s is %s in this campaign and %s in %s: a state file cannot be "
+                "resumed by a campaign that classes its rows differently, because "
+                "the stop rule that wrote those rows is not this one"
+                % (t, st.oclass, prior[t]["class"], a.state))
         if t in prior and prior[t].get("stop") in TERMINAL:
             st.stop = prior[t]["stop"]
             st.note = "resumed: terminal in %s" % a.state
@@ -460,12 +511,18 @@ def run_campaign(a, classes, work):
     return states, errors, confirmed
 
 
-def report_campaign(states, errors, confirmed):
+def report_campaign(states, errors, confirmed, characterization=False):
     # The p_min candidate population: surfaced, never auto-applied (lever 1 above).
-    fired = [s for s in states if s.oclass == "Allowed" and s.stop == "OBSERVED"]
-    print("\ncampaign: %d Allowed row(s) OBSERVED (the p_min candidate population "
-          "-- derive HET_P_MIN from their per-effective-sample rates; it is NOT "
-          "set automatically)." % len(fired))
+    if characterization:
+        print("\ncampaign: CHARACTERIZATION -- no Allowed row was scheduled, so this "
+              "campaign contributes no p_min candidate population.  What it produces "
+              "is one bound (or one spent budget) per row of a pair that predicts "
+              "nothing; not one row of it agrees or disagrees with a model.")
+    else:
+        fired = [s for s in states if s.oclass == "Allowed" and s.stop == "OBSERVED"]
+        print("\ncampaign: %d Allowed row(s) OBSERVED (the p_min candidate population "
+              "-- derive HET_P_MIN from their per-effective-sample rates; it is NOT "
+              "set automatically)." % len(fired))
 
     # The price of the unclaimed dividend.  These rows are not failures and their
     # bounds are not wrong; they are the conservative bounds, because the run count
@@ -514,7 +571,18 @@ def report_campaign(states, errors, confirmed):
     # is unresolved and EVERY Disallowed row of the AMD oracle is void -- so this
     # is checked before, not after, anyone reads the bounds above.
     d10 = [s for s in states if s.cpu_only]
-    if not d10:
+    if not d10 and characterization:
+        # No Disallowed row exists here, so nothing in this campaign rests on the
+        # probe -- but the probe still did not run, and the reading it would have
+        # given about the shared allocation's memory type is still missing.
+        print("\ncampaign D10 (CPU-only positive control / memo sect 8 P1 WB probe): "
+              "NOT RUN.  No CPU-only row was in this campaign.  No verdict here "
+              "depends on it -- a characterization campaign has no Disallowed row -- "
+              "so nothing above is void; what is missing is the reading of the "
+              "shared allocation's memory type, which stays unestablished on this "
+              "box until the D10 set (hetlitmus/tests/het/generate-d10.sh) is run "
+              "ON IT.")
+    elif not d10:
         # A SILENTLY ABSENT PRECONDITION IS THE FAILURE MODE THIS BLOCK EXISTS TO
         # PREVENT.  It used to run under a bare `if d10:' with no else, so a
         # campaign over the het corpus alone -- the normal case -- printed no D10
@@ -556,14 +624,17 @@ def report_campaign(states, errors, confirmed):
 
 def main():
     a = parse_args()
-    classes = read_control_map(a.control_map)
-    work = plan_schedule(a, classes, select_work(a, classes))
+    if a.characterization:
+        classes, source = characterization_classes(a.corpus), a.corpus
+    else:
+        classes, source = read_control_map(a.control_map), a.control_map
+    work = plan_schedule(a, classes, select_work(a, classes, source))
     if a.dry_run:
         for t in work:
             print("  plan %-11s %s" % (classes[t], t))
         return 0
     states, errors, confirmed = run_campaign(a, classes, work)
-    report_campaign(states, errors, confirmed)
+    report_campaign(states, errors, confirmed, a.characterization)
     return 1 if (errors or confirmed) else 0
 
 

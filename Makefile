@@ -1156,6 +1156,51 @@ hetlitmus-noracle-hw: | build
 	python3 hetlitmus/verify/noraclerun.py --bite
 	@ echo "HetLitmus registered-NO-ORACLE runtime gate: OK (and the gate bites)"
 
+### hetlitmus-run-gate: the DEVICE-SESSION WRAPPER (hetlitmus/hetlitmus-run.sh),
+### driven end to end with no device.  The wrapper is the one command a hardware
+### session runs, and what it decides -- which oracle pair the corpus and the
+### -gpu-target flag select, which architecture the binaries are built for,
+### whether the campaign adjudicates or characterizes -- is decided on a machine
+### nobody is watching and survives only in what it wrote down.
+### CUDA-FREE because the wrapper's seams take stand-ins: NVCC/HIPCC point at a
+### stub compiler that writes a harness printing one HetStats line, and
+### HET_PROBE_SH at a stub probe.  The chain itself is real -- litmus7 emits, the
+### emitted comp.sh + Makefile build, campaign.py schedules -- and the wrapper
+### RECORDS that stand-ins were used, so a stubbed results dir can never be read
+### as a reading of a machine.
+### Four phases: --dry-run writes nothing at all; the chain end to end on both
+### pairs the committed x86 fixture reaches ((x86_64, cuda) NO-ORACLE, which must
+### characterize by itself, and (x86_64, hip) populated, which must take the
+### control map the table names) plus --reuse-emitted; the six refusals, each by
+### its own reason; and campaign.py --characterization, where the same runner
+### that stops an Allowed row OBSERVED and a Disallowed row CONFIRMED under a
+### control map must reach neither.  --bite plants one defect per phase in a COPY
+### of the script under test.
+### The two chain phases need an x86_64 host (the fixture's CPU column) and say
+### so rather than passing quietly on another.
+hetlitmus-run-gate: | build
+	@ echo
+	python3 hetlitmus/verify/runcheck.py
+	python3 hetlitmus/verify/runcheck.py --bite
+	@ echo "HetLitmus device-session wrapper gate: OK (and the gate bites)"
+
+### hetlitmus-run-hw: the same wrapper, on the device, with NO stand-in -- the
+### real probe, the real nvcc, the real harness.  The pair it reaches here
+### ((x86_64, cuda)) is registered without an oracle, which is exactly the
+### new-hardware session the wrapper exists for: what is asserted is that the
+### chain completes, that the campaign took the characterization path unprompted,
+### and that the results dir names the arch it resolved and no stand-in.
+### A harness whose pinned read-modify-write is not system-atomic against the
+### host can lose a barrier increment and stall (the probe measures it on this
+### box); a stalled session is retried up to 3 times and only an all-stall is
+### reported, the same rule noraclerun.py uses.
+### NEEDS A DEVICE, hence the -nvcc umbrella.
+hetlitmus-run-hw: | build
+	@ echo
+	python3 hetlitmus/verify/runcheck.py --hw
+	python3 hetlitmus/verify/runcheck.py --hw --bite
+	@ echo "HetLitmus device-session wrapper runtime gate: OK (and the gate bites)"
+
 ### hetlitmus-l0-selftest: the DISCRIMINATING-POWER proofs of the nvcc lane.
 ### l0_tokens.sh {selftest,guard} prove ptxcheck can detect a weakened scope/order
 ### and that the stress/cpustress scaffolding bites a dead layer; smoke.sh bite
@@ -1191,6 +1236,7 @@ hetlitmus-test:: hetlitmus-tuner
 hetlitmus-test:: hetlitmus-x86body
 hetlitmus-test:: hetlitmus-x86fixture
 hetlitmus-test:: hetlitmus-d10
+hetlitmus-test:: hetlitmus-run-gate
 
 hetlitmus-test-nvcc:: | build
 hetlitmus-test-nvcc:: hetlitmus-faithful
@@ -1199,6 +1245,7 @@ hetlitmus-test-nvcc:: hetlitmus-cpustress
 hetlitmus-test-nvcc:: hetlitmus-obs
 hetlitmus-test-nvcc:: hetlitmus-hipbuild
 hetlitmus-test-nvcc:: hetlitmus-noracle-hw
+hetlitmus-test-nvcc:: hetlitmus-run-hw
 hetlitmus-test-nvcc:: hetlitmus-l0-selftest
 hetlitmus-test-nvcc:: hetlitmus-smoke
 
@@ -1226,7 +1273,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order hetlitmus-oracle
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
 .PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10 hetlitmus-noracle
-.PHONY: hetlitmus-x86fixture hetlitmus-noracle-hw
+.PHONY: hetlitmus-x86fixture hetlitmus-noracle-hw hetlitmus-run-gate hetlitmus-run-hw
 ### Neither AMD target was phony until P2a (2026-08-02).  They worked only
 ### because no file of those names happened to exist -- one `touch' away from a
 ### gate that silently stops running.

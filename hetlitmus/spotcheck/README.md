@@ -90,6 +90,22 @@ sh ladder.sh         # rungs 0-6
 `probe.sh` writes `results-devtier-.../probe.txt`; `ladder.sh` reads
 `suggested_cuda_arch` from it, so running the probe first is not a suggestion.
 
+## This ladder vs. `hetlitmus/hetlitmus-run.sh`
+
+Two different jobs, deliberately not merged. **This ladder** is the *machinery*
+spot check: seven rungs that ask whether the knobs, the controls and the pooling
+still work on a rented box, driven from an unpacked bundle. **The wrapper** is
+the *session*: preflight → probe → emit → compile → campaign → collect, driven
+from a checkout on the machine under test, and it records the pair, the resolved
+arch and the mode so the results dir can be read afterwards. The wrapper does
+not run the ladder, and the ladder does not emit or select an oracle.
+
+`probe-hip.sh` is the AMD side of `probe.sh` for the wrapper's `--gpu-target hip`
+lane. It records what `hipcc`, `amdgpu-arch` and `rocminfo` report and stamps
+`probe_status=HOST_ONLY`: there is **no** device-attribute kernel for HIP, for
+the reason this file gives above — it cannot be written blind, and there is no
+AMD GPU here to write it against.
+
 ## Read the probe before the ladder
 
 | key | why it decides the trip |

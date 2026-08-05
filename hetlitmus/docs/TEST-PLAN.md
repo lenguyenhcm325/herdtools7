@@ -257,7 +257,10 @@ Notes:
 - `hetlitmus-corpus` uses `git status --porcelain` (catches add/remove; non-invasive).
 - GPU/nvcc targets are never wired into upstream `test::`. **Decided: hetlitmus targets
   stay standalone (not folded into `test::`) to keep the main suite fast + CUDA-free.**
-- Layer 4 is a separate `hetlitmus-run` on the GH200, in no umbrella.
+- Layer 4 is `hetlitmus/hetlitmus-run.sh`, the device-session wrapper: run by hand on the
+  machine under test and in no umbrella. Its gates are: `hetlitmus-run-gate` (CUDA-free,
+  drives the whole chain against a stub compiler and a stub probe) and `hetlitmus-run-hw`
+  (the same wrapper on a device).
 
 Cram `dune` stanza (in `hetlitmus/tests/cram/dune`):
 ```
