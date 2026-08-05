@@ -831,6 +831,36 @@ hetlitmus-amdprov:
 	python3 hetlitmus/verify/amdprovcheck.py --bite
 	@ echo "HetLitmus AMD oracle provenance: OK (and the gate bites)"
 
+### hetlitmus-nvprov: citation PROVENANCE of expected-nvidia.csv -- the NVIDIA
+### lane of the same fault (NVOR Phase A).  The AMD regeneration's handover
+### pointed D21 at this oracle and it was dropped from that pass's scope, not
+### resolved; post-D26 these 411 rows (319/50/42) are the project's LARGEST
+### falsification surface and were built before the rigor apparatus existed.
+### GH200 is ARMv9 Grace + Hopper/PTX, so it inherits the PTX half of CMCM
+### sect 5-6 and NOT its x86TSO half -- a finer partition than the AMD lane's
+### wholesale strike.  nvprovcheck.py classifies every Source-string fragment
+### into GEN / PTX5 / X86C / CMCM-BARE / BAGCHI / ARM / PTX-L19 / PTX-ISA-8.6 /
+### NONCMCM, fail-closed (an unknown fragment anywhere is an error), rejoining
+### CSV fields 4+ because 38 Source strings carry a comma on purpose.  The
+### PTX-L19 vs PTX-ISA-8.6 split is ROW-AWARE -- `fence.{acquire,release}'
+### postdates Lustig'19, so a PTX cite on a `.rel-2s'/`.acq-2s' row is spec
+### prose, not formalization -- which turns the version-drift exposure into a
+### pinned 17-of-50 number instead of prose in a plan file.
+### Phase A is REPORT-ONLY (P2e verdict-neutrality): no verdict moves before
+### adjudication, so the measured faults are PINNED rather than fatal --
+### E2 = 2 (CMCM Fig 2a on Disallowed) / E3 = 0 / E5 = 11 (bare [CMCM] on
+### Disallowed) / E6 = 21 (Allowed keyed only to nvidia-ptx.cat), sha
+### 57298d22a8c3a260 over the 34 offender rows.  Drift in EITHER direction
+### reddens the gate, and PHASE D MUST FLIP THIS PIN to zeros in the same
+### commit as the regeneration -- green here means "the fault is exactly this
+### big", not "there is no fault".  No `| build' (invokes no herdtools7 tool);
+### ~0.1 s + bite.
+hetlitmus-nvprov:
+	@ echo
+	python3 hetlitmus/verify/nvprovcheck.py
+	python3 hetlitmus/verify/nvprovcheck.py --bite
+	@ echo "HetLitmus NVIDIA oracle provenance: OK (and the gate bites)"
+
 ### hetlitmus-dup: the isomorphism gate.  generate.sh dedups only by
 ### byte-comparing a variant against ONE designated sibling, which cannot see a
 ### duplicate up to (proc permutation x location renaming).  The corpus carried 39
@@ -1231,6 +1261,7 @@ hetlitmus-test:: hetlitmus-oracle
 hetlitmus-test:: hetlitmus-amd-oracle
 hetlitmus-test:: hetlitmus-amdorder
 hetlitmus-test:: hetlitmus-amdprov
+hetlitmus-test:: hetlitmus-nvprov
 hetlitmus-test:: hetlitmus-amd-controlmap
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-noracle
@@ -1283,6 +1314,7 @@ hetlitmus-promote: | build
 ### because no file of those names happened to exist -- one `touch' away from a
 ### gate that silently stops running.
 .PHONY: hetlitmus-amd-oracle hetlitmus-amdorder hetlitmus-amdprov hetlitmus-amd-controlmap
+.PHONY: hetlitmus-nvprov
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64
