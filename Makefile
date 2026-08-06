@@ -857,40 +857,46 @@ hetlitmus-amdprov:
 	@ echo "HetLitmus AMD oracle provenance: OK (and the gate bites)"
 
 ### hetlitmus-nvprov: citation PROVENANCE of expected-nvidia.csv -- the NVIDIA
-### lane of the same fault (NVOR Phase A).  The AMD regeneration's handover
-### pointed D21 at this oracle and it was dropped from that pass's scope, not
-### resolved; post-D26 these 411 rows (319/50/42) are the project's LARGEST
-### falsification surface and were built before the rigor apparatus existed.
-### GH200 is ARMv9 Grace + Hopper/PTX, so it inherits the PTX half of CMCM
-### sect 5-6 and NOT its x86TSO half -- a finer partition than the AMD lane's
-### wholesale strike.  nvprovcheck.py classifies every Source-string fragment
-### into GEN / PTX5 / X86C / CMCM-BARE / BAGCHI / ARM / PTX-L19 / PTX-ISA-8.6 /
-### NONCMCM, fail-closed (an unknown fragment anywhere is an error), rejoining
-### CSV fields 4+ because 38 Source strings carry a comma on purpose.  The
-### PTX-L19 vs PTX-ISA-8.6 split is ROW-AWARE -- `fence.{acquire,release}'
+### lane of the same fault (NVOR Phases A and D2).  The AMD regeneration's
+### handover pointed D21 at this oracle and it was dropped from that pass's
+### scope, not resolved; these 411 rows are the project's LARGEST falsification
+### surface and were built before the rigor apparatus existed.  GH200 is ARMv9
+### Grace + Hopper/PTX, so it inherits the PTX half of CMCM sect 5-6 and NOT
+### its x86TSO half -- a finer partition than the AMD lane's wholesale strike.
+### nvprovcheck.py classifies every Source-string fragment into GEN / PTX5 /
+### X86C / CMCM-BARE / BAGCHI / ARM / PTX-L19 / PTX-ISA-9.3 / PTX-ISA-8.6 /
+### REGISTRATION / NONCMCM, fail-closed (an unknown fragment anywhere is an
+### error), rejoining CSV fields 4+ because 32 Source strings carry a comma on
+### purpose.  The PTX-ISA-8.6 split is ROW-AWARE -- `fence.{acquire,release}'
 ### postdates Lustig'19, so a PTX cite on a `.rel-2s'/`.acq-2s' row is spec
-### prose, not formalization -- which turns the version-drift exposure into a
-### pinned 17-of-50 number instead of prose in a plan file.
-### Phase A is REPORT-ONLY (P2e verdict-neutrality): no verdict moves before
-### adjudication, so the measured faults are PINNED rather than fatal --
-### E2 = 2 (CMCM Fig 2a on Disallowed) / E3 = 0 / E5 = 11 (bare [CMCM] on
-### Disallowed) / E6 = 21 (Allowed keyed only to nvidia-ptx.cat), sha
-### 57298d22a8c3a260 over the 34 offender rows.  Drift in EITHER direction
-### reddens the gate, and PHASE D MUST FLIP THIS PIN to zeros in the same
-### commit as the regeneration -- green here means "the fault is exactly this
-### big", not "there is no fault".  No `| build' (invokes no herdtools7 tool);
-### ~0.1 s + bite.
-### *** RED SINCE THE NVOR REGENERATION (2026-08-06), BY DESIGN. *** Every number
-### in this block and every pin in nvprovcheck.py -- the census (319/50/42), the
-### fault pin, the 8.6-row sha, the FRAGMENTS table, the 38 comma rows --
-### describes the PRE-regeneration CSV.  It is not re-pinned here on purpose:
-### R2's B5 rule measured that flipping the fault pin to zeros over the CURRENT
-### parser lets a re-introduced fault pass GATE GREEN in all four simulated
-### scenarios, so the parser blind-spot fixes (B1: EVENT_NOTATION is fullmatched
-### and `continue'd with NO error; B2/B3: fragments outside brackets; B4: E6 on
-### KEYLESS Allowed; B6: E2/E5 on non-Disallowed rows) and the pin flip must land
-### TOGETHER, in the companion NVOR Phase-D2 commit.  Until then this gate fails
-### on fragment/pin drift and that failure is the handover.
+### prose, not formalization.  REGISTRATION can never be a KEY: a registered
+### decision is not evidence for itself, and if it counted, E3 would be
+### satisfiable by naming the decision that needs support.
+### POST-REGENERATION (D1 landed 2026-08-06; this is the D2 companion).  Phase
+### A pinned the fault numerically (E2 = 2 / E3 = 0 / E5 = 11 / E6 = 21, sha
+### 57298d22a8c3a260 over 34 offender rows); the regeneration removed it, so
+### every rule now pins at ZERO and drift in either direction reddens -- the
+### amdprovcheck post-strike posture, where the file documents the ABSENCE of
+### the fault.  That flip is only honest over a parser that can SEE a
+### re-introduced fault, and R2's counter-probe measured that the Phase-A
+### parser could not (bare CMCM as `[cmcm.paper]', Fig 2a as inline prose or as
+### `[cmcm.figtwoa]', the gxhb axiom as `[gxhb.cmm]' -- all four passed GATE
+### GREEN against a zeroed pin).  So the pin flip lands WITH the repairs, each
+### bitten: B1 an exact event whitelist instead of a fullmatched regex that was
+### `continue'd with no error; B2/B3 a scan for known citations OUTSIDE the
+### brackets (E4/E2 for struck and inadmissible ones, E7 for the rest);
+### B4 E6 on a KEYLESS Allowed row, not merely an instrument-carrying one;
+### B6 E2 corpus-wide and E8 requiring every NVOR-demoted row to name its own
+### registration ID in a citation block.  Also pinned: census 319/18/74; the
+### 32-row demotion set by count, per-registration histogram and sha
+### 71ebe7baba4fbb83 (the builder's own number, a third implementation beside
+### ordercheck.py); the unidirectional-fence exposure as a SPEC-LAG measure
+### (64-row namespace 42 A / 22 N, 40 rows where the promotion fires, and the
+### 17 that NEEDED the 8.6 semantics keeping their Phase-A name-set sha even
+### though all 17 are now NO-ORACLE); and register item O1, the 252 Allowed
+### rows still citing bare [CMCM], pinned as a disclosure count so the debt can
+### neither grow nor be silently repaid.  No `| build' (invokes no herdtools7
+### tool); ~0.4 s + bite.
 hetlitmus-nvprov:
 	@ echo
 	python3 hetlitmus/verify/nvprovcheck.py
