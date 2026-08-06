@@ -903,6 +903,36 @@ hetlitmus-nvprov:
 	python3 hetlitmus/verify/nvprovcheck.py --bite
 	@ echo "HetLitmus NVIDIA oracle provenance: OK (and the gate bites)"
 
+### hetlitmus-nvanchor: the Bagchi ANCHOR gate (NVOR Phase D2, register O4).
+### nvprovcheck asks whether a citation MAY stand behind a verdict; this asks
+### whether the one published GH200-native source actually SAYS what the row
+### needs, and in which direction.  Bagchi et al. ISMM'26 is the main and sole
+### published compound anchor for this lane -- the PLDI'23 artifact has no
+### x86+PTX or ARM+PTX compound rows -- so the AMD lane's artifact-anchor gate
+### has no NVIDIA equivalent and this table was built from the paper in Phase C.
+### THE DIRECTION RULE: an OBSERVATION binds HARD (Bagchi saw the weak
+### behaviour on GH200 silicon, so the corpus row of that shape and direction
+### MUST be Allowed -- a Disallowed there is a false refutation in waiting, our
+### harness reporting a model violation the paper recorded as normal hardware).
+### A NON-OBSERVATION never proves Disallowed and may never be a row's sole key.
+### A GAP is an asserted absence, pinned, so a later citation edit cannot invent
+### a Bagchi anchor for a shape the paper never ran.  It has to be a SEPARATE
+### gate: R2 measured that demoting EVERY Bagchi fragment to NOTE moves
+### nvprovcheck's rules by zero rows, so wiring anchors in there would be inert.
+### 22 entries (4 HARD binding 6 rows / 8 CORR / 1 NOTE / 9 GAP), the coverage
+### statement printed on every run (Bagchi's suite is 100% MP-shaped, 2-thread,
+### X at cta or gpu and NEVER at system; no unidirectional fence anywhere), and
+### two pinned DISCLOSURES for the class-level strings that carry an observation
+### onto shapes and directions it does not cover.  Imports nvprovcheck's
+### FRAGMENTS rather than restating it, so the two gates cannot disagree about
+### what a fragment IS while disagreeing about what it may DO.  No `| build';
+### ~0.6 s + bite.
+hetlitmus-nvanchor:
+	@ echo
+	python3 hetlitmus/verify/nvanchorcheck.py
+	python3 hetlitmus/verify/nvanchorcheck.py --bite
+	@ echo "HetLitmus NVIDIA oracle anchors: OK (and the gate bites)"
+
 ### hetlitmus-dup: the isomorphism gate.  generate.sh dedups only by
 ### byte-comparing a variant against ONE designated sibling, which cannot see a
 ### duplicate up to (proc permutation x location renaming).  The corpus carried 39
@@ -1305,6 +1335,7 @@ hetlitmus-test:: hetlitmus-amd-oracle
 hetlitmus-test:: hetlitmus-amdorder
 hetlitmus-test:: hetlitmus-amdprov
 hetlitmus-test:: hetlitmus-nvprov
+hetlitmus-test:: hetlitmus-nvanchor
 hetlitmus-test:: hetlitmus-amd-controlmap
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-noracle
@@ -1358,7 +1389,7 @@ hetlitmus-promote: | build
 ### because no file of those names happened to exist -- one `touch' away from a
 ### gate that silently stops running.
 .PHONY: hetlitmus-amd-oracle hetlitmus-amdorder hetlitmus-amdprov hetlitmus-amd-controlmap
-.PHONY: hetlitmus-nvprov
+.PHONY: hetlitmus-nvprov hetlitmus-nvanchor
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64
