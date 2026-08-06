@@ -906,10 +906,19 @@ hetlitmus-amdprov:
 ### ordercheck.py); the unidirectional-fence exposure as a SPEC-LAG measure
 ### (64-row namespace 42 A / 22 N, 40 rows where the promotion fires, and the
 ### 17 that NEEDED the 8.6 semantics keeping their Phase-A name-set sha even
-### though all 17 are now NO-ORACLE); and register item O1, the 252 Allowed
-### rows still citing bare [CMCM], pinned as a disclosure count so the debt can
-### neither grow nor be silently repaid.  No `| build' (invokes no herdtools7
-### tool); ~0.4 s + bite.
+### though all 17 are now NO-ORACLE); and register item O1, CLOSED 2026-08-06 --
+### the 252 Allowed rows that cited bare [CMCM] were re-pointed class by class
+### at the CMCM sect 3-4 paragraph that states each class's rule (read at source
+### and quoted with page locators in env-research/nvor/O1-sweep.md; zero verdict
+### movement, only the Source field of those 252 rows changed).  The bare tag is
+### now STRUCK, its disclosure count pins at ZERO, and a reappearance reddens
+### twice over -- as that pin on an Allowed row, as E5 on a Disallowed one and
+### as E4 anywhere.  The one narrowing is stated and pinned: the bare tag is
+### exempt from the OUTSIDE-bracket scan, because 52 rows argue about the paper
+### in prose ("CMCM's operational LOST-POP has no Fence-SC object") and a key is
+### always inside a bracket; INLINE_EXEMPT_STRUCK may hold that one short string
+### and nothing else, bitten in both directions.  No `| build' (invokes no
+### herdtools7 tool); ~0.4 s + bite.
 hetlitmus-nvprov:
 	@ echo
 	python3 hetlitmus/verify/nvprovcheck.py

@@ -45,8 +45,9 @@ Admissibility partition.  GH200 is ARMv9 Grace + Hopper/PTX.  It inherits the
 PTX half of CMCM sect 5-6 and NOT its x86TSO half -- a finer partition than the
 AMD lane's wholesale strike:
 
-  GEN          CMCM sect 3-4 incl 4.2/4.3/4.6 and footnote 7 (the generalized
-               LOST-POP framework, architecture-agnostic).  Admissible.
+  GEN          CMCM sect 3-4 incl 3.2.3/4.1/4.2/4.3/4.4/4.6 and footnote 7
+               (the generalized LOST-POP framework, architecture-agnostic).
+               Admissible.
   PTX5         CMCM sect 5-6 PURE-PTX content.  Admissible in substance for
                GPU-side claims only -- but a NATIVE source exists (Lustig'19 /
                PTX ISA), so disposition is REPOINT, never KEY.
@@ -61,12 +62,20 @@ AMD lane's wholesale strike:
                instead of merely reporting it unknown.
   CMCM-BARE    `[CMCM]' with no section or figure number.  Unclassifiable at
                section granularity, therefore admissible for NOTHING.  E5 names
-               it on Disallowed rows.  It survives on 252 ALLOWED rows (register
-               open item O1) -- a class-level sweep deferred out of D1's scope,
-               fail-safe because every one of those rows is a NEGATIVE class
-               rule that already carries a real key beside the bare fragment.
-               The count is PINNED as a disclosure so the debt cannot grow, or
-               shrink, unnoticed.
+               it on Disallowed rows.  REGISTER O1 IS CLOSED (2026-08-06): the
+               252 Allowed rows that carried it were re-pointed class by class
+               at the sect 3-4 paragraph that states each class's rule, read at
+               source and quoted in env-research/nvor/O1-sweep.md, with zero
+               verdict movement.  So the bare tag is now STRUCK: its
+               disclosure count pins at ZERO and a reappearance is E4 as well
+               as E5, instead of being tolerated on the Allowed side.
+               ONE narrowing, stated rather than left implicit: the bare tag is
+               EXEMPT from the outside-bracket scan (INLINE_EXEMPT_STRUCK).
+               52 rows argue ABOUT the paper in prose -- "CMCM's operational
+               LOST-POP has no Fence-SC object", "the meet CMCM 4.6 leaves
+               open" -- and naming the paper in a sentence is not the fault.
+               The fault is a bare tag standing AS A KEY, which is always
+               inside a bracket, where the exact-match E4 lookup sees it.
   BAGCHI       Bagchi et al. ISMM'26, GH200-native.  Direction-aware by
                construction: a fragment that reports an OBSERVATION is KEY;
                a GAP, a QUALIFIER, a disclosure or a future-work pointer is a
@@ -193,12 +202,31 @@ INADMISSIBLE = {X86C}
 # strings `release.sys'/`acquire.sys', whitelisted below).
 # --------------------------------------------------------------------------
 FRAGMENTS = {
-    # -- CMCM at paper granularity: the D26 disease itself.  Register O1.
-    "CMCM": (CMCMBARE, "CMCM-bare", NOTE),
     # -- CMCM sect 3-4: the architecture-agnostic framework.  Admissible.
+    #    (bare `CMCM' used to head this table; register O1 struck it -- see
+    #    FRAGMENTS_STRUCK below.)  The seven page-located entries are the O1
+    #    sweep: each names the paragraph that STATES the rule its class uses,
+    #    verified against papers/CompoundMemoryModels.pdf.  Sect 3-4 only: CMCM
+    #    defines `morally strong' in sect 6.2, which is INADMISSIBLE on an
+    #    ARMv9+PTX machine, so the scope classes are keyed to the sect
+    #    3.2.3/4.4 scope statements and keep PTX 3.3 as the moral-strength key.
+    "CMCM 3.2.3 p153:8 the GPU scope is the set of threads within the GPU and only the system scope also contains the CPU threads":
+        (GEN, "CMCM-3.2.3-gpuscope", KEY),
+    "CMCM 3.2.3 p153:9 a CTA-scoped acquire gives no guarantee that the stores reach a thread outside that scope in order so the weak outcome is allowed":
+        (GEN, "CMCM-3.2.3-cta", KEY),
     "CMCM 3.2.3+4.4+4.6": (GEN, "CMCM-3.2.3/4.4/4.6", KEY),
+    "CMCM 4.1 p153:10-11 order rules are architecture-specific and a constraint is added only where the accepting thread's own order rule holds":
+        (GEN, "CMCM-4.1-orderrules", KEY),
     "CMCM 4.2 non-MCA p153:11": (GEN, "CMCM-4.2-nonMCA", KEY),
     "CMCM 4.3 fence orderings": (GEN, "CMCM-4.3", KEY),
+    "CMCM 4.3 p153:11 fence semantics compose six INDEPENDENT ordering kinds and W->R is a separate kind from W->W and R->R":
+        (GEN, "CMCM-4.3-sixkinds", KEY),
+    "CMCM 4.3 p153:12 remove one of the two fences and the weak outcome is allowed":
+        (GEN, "CMCM-4.3-onefence", KEY),
+    "CMCM 4.4 p153:13 an edge enforces its ordering only within its scope and to be disallowed both fences need to be system-scoped":
+        (GEN, "CMCM-4.4-scope", KEY),
+    "CMCM 4.6 p153:13 the behavior of a thread does not depend on the architecture of other threads":
+        (GEN, "CMCM-4.6-threadlocal", KEY),
     "CMCM 4.6 p153:13-14 -- admissible sect 3-4 framework naming the open slot":
         (GEN, "CMCM-4.6-slot", KEY),
     # footnote 7 says the meet CAN BE ASYMMETRICAL.  It is the ground of a
@@ -313,6 +341,11 @@ FRAGMENTS = {
 # simply GONE from both tables: a reappearance is E1 (reclassify), not E4
 # (rot).  Striking them would misreport a citation upgrade as a fault.
 FRAGMENTS_STRUCK = {
+    # paper-granularity CMCM: the D26 disease itself.  Struck by the O1 sweep
+    # (2026-08-06), which re-pointed all 252 Allowed rows that carried it at
+    # the sect 3-4 paragraph stating their rule.  Nothing may cite the paper as
+    # a whole again: transferability is a property of SECTIONS.
+    "CMCM": (CMCMBARE, "CMCM-bare", NOTE),
     # the x86TSO half -- inadmissible on an ARMv9+PTX machine (register NVOR-Q6)
     "CMCM Fig2a": (X86C, "CMCM-Fig2a", KEY),
     "CMCM Fig3": (X86C, "CMCM-Fig3", KEY),
@@ -365,10 +398,23 @@ SPEC86_ROW = re.compile(r"\.(rel|acq)-2s")
 # are the ones an edit must never re-introduce.
 INLINE_MIN = 12
 
+# The ONE struck string the outside-bracket scan does not look for, named here
+# rather than folded into INLINE_MIN so it cannot spread.  `CMCM' is struck as
+# a CITATION by the O1 sweep, but it is also an ordinary prose token: 52 rows
+# argue ABOUT the paper ("CMCM's operational LOST-POP has no Fence-SC object",
+# "the meet CMCM 4.6 leaves open is architecture-specific"), and reddening
+# those for naming the paper in a sentence is not the fault.  The fault is a
+# bare tag standing AS A KEY, and a key is always inside a bracket, where the
+# exact-match E4 lookup sees it -- bitten below, both directions: adding the
+# bare tag to a bracket reddens E4, and emptying this set reddens E4 on the
+# legitimate prose, which is what makes the exemption load-bearing rather than
+# dead.  Pinned to exactly this one short string in check().
+INLINE_EXEMPT_STRUCK = frozenset({"CMCM"})
+
 
 def inline_scan_set(table, struck):
     """The strings the outside-bracket scan looks for.  Pinned by size."""
-    out = dict(struck)
+    out = {f: v for f, v in struck.items() if f not in INLINE_EXEMPT_STRUCK}
     for f, v in table.items():
         if v[0] != REGN and len(f) >= INLINE_MIN and f not in out:
             out[f] = v
@@ -383,7 +429,8 @@ EXPECT_COMMA_ROWS = 32              # Source strings split across CSV fields 4+
 # THE CLEAN INVARIANT.  Phase A pinned the fault; this pins its ABSENCE.
 EXPECT_FAULTS = {"E2": 0, "E3": 0, "E4": 0, "E5": 0,
                  "E6": 0, "E7": 0, "E8": 0}
-EXPECT_STRUCK = 12                  # armed; Phase A pinned this list EMPTY
+EXPECT_STRUCK = 13                  # armed; Phase A pinned this list EMPTY
+                                    # (12 -> 13 when O1 struck the bare tag)
 
 # The NVOR demotion set (build-nvidia-oracle.sh EXPECT_DEMOTED/_SHA, and
 # ordercheck.py EXPECT_NVOR_DEMOTED -- three implementations, one number).
@@ -415,11 +462,14 @@ EXPECT_86_SHA = "7214d368f5078129"  # sha256[:16] of the sorted 17 names
 EXPECT_86_HIST = {"LB-cg": 5, "MP-cg": 3, "MP-gc": 3, "S-cg": 3, "S-gc": 3}
 NVOR_Q4 = "decision NVOR-Q4 unidirectional-fence DECLINED"
 
-# Register open item O1: bare `[CMCM]' survives on this many ALLOWED rows.  Not
-# a fault the gate can close (the fix is a class-level sweep), so it is pinned
-# as a DISCLOSURE COUNT -- the debt is visible and cannot drift in either
-# direction without a deliberate re-measure.
-EXPECT_BARE_CMCM_ALLOWED = 252
+# Register open item O1, CLOSED 2026-08-06.  Bare `[CMCM]' survived on 252
+# ALLOWED rows because the class-level sweep was out of D1's scope; the sweep
+# has now run (env-research/nvor/O1-sweep.md) and every one of those rows names
+# the sect 3-4 paragraph that states its rule.  The count therefore pins at
+# ZERO, and the bare tag is in FRAGMENTS_STRUCK, so a reappearance reddens
+# TWICE over: here, and as E4.  Kept as its own pin rather than folded into the
+# fault set because it is the one that fires FIRST and names the debt by name.
+EXPECT_BARE_CMCM_ALLOWED = 0
 
 # The gpu-only corpus is a CONFIRMATION invariant only: Lustig'19-native,
 # machine-checked 137/137, never regenerated.  The row-count pin is what makes
@@ -599,8 +649,10 @@ def check(rows, table=None, struck=None, gpu_only_text=None, ncomma=None):
                    "is not evidence for itself"
                    % (bad, REGN in ADMISSIBLE))
 
-    # the bare-CMCM classification rule, both directions
-    for f, (cls, _tag, _disp) in sorted(tbl.items()):
+    # the bare-CMCM classification rule, both directions and BOTH TABLES: the
+    # O1 sweep moved the bare tag into the strike list, so a rule that looked
+    # only at FRAGMENTS would have stopped watching the very string it is for.
+    for f, (cls, _tag, _disp) in sorted({**strk, **tbl}.items()):
         if not f.startswith("CMCM"):
             continue
         precise = bool(CMCM_PRECISE.match(f))
@@ -620,6 +672,25 @@ def check(rows, table=None, struck=None, gpu_only_text=None, ncomma=None):
                    "fragments; found %d -- a fragment struck FOR CAUSE cannot "
                    "leave the list without a registered decision"
                    % (EXPECT_STRUCK, len(strk)))
+    # ... and the exemption that narrows the inline scan, pinned to exactly the
+    # one short prose token it was written for.  A longer string in here would
+    # be a citation-shaped one, i.e. a laundering channel: `CMCM Fig2a' slipped
+    # into this set would restore the exact R2 counter-probe scenario the B2
+    # repair closed.  Both conditions are structural, not stylistic.
+    if set(INLINE_EXEMPT_STRUCK) != {"CMCM"}:
+        raise Fail("PIN inline-exempt: the outside-bracket scan exempts %r; it "
+                   "may exempt the bare `CMCM' prose token and NOTHING else -- "
+                   "any other struck string exempted from the inline scan is a "
+                   "B2/B3 laundering channel reopened"
+                   % sorted(INLINE_EXEMPT_STRUCK))
+    bad = sorted(f for f in INLINE_EXEMPT_STRUCK
+                 if f not in strk or len(f) >= INLINE_MIN)
+    if bad:
+        raise Fail("PIN inline-exempt: %r is exempted from the inline scan but "
+                   "is not a short (< %d char) STRUCK string -- the exemption "
+                   "exists for prose tokens of struck tags only"
+                   % (bad, INLINE_MIN))
+
     nscan = len(inline_scan_set(tbl, strk))
     if nscan <= len(strk):
         raise Fail("PIN inline-scan: the outside-bracket scan covers only %d "
@@ -702,14 +773,18 @@ def check(rows, table=None, struck=None, gpu_only_text=None, ncomma=None):
                    % (len(q4), sha16(q4), hist,
                       EXPECT_86_ROWS, EXPECT_86_SHA, EXPECT_86_HIST))
 
-    # register O1: the bare-CMCM debt on Allowed rows, pinned as a disclosure
+    # register O1 (CLOSED): the bare-CMCM debt on Allowed rows, repaid and
+    # pinned at zero.  It fires BEFORE the fault set so the message names the
+    # debt rather than reporting an anonymous E4 drift.
     bare = [n for n, v, _m, s in rows
             if v == "Allowed" and "CMCM" in fragments_of(n, s)]
     if len(bare) != EXPECT_BARE_CMCM_ALLOWED:
         raise Fail("PIN bare-CMCM disclosure: %d Allowed rows cite bare "
-                   "paper-granularity [CMCM], pinned %d (register open item "
-                   "O1) -- the debt moved without being re-measured"
-                   % (len(bare), EXPECT_BARE_CMCM_ALLOWED))
+                   "paper-granularity [CMCM], pinned %d -- register item O1 "
+                   "re-pointed all 252 of them at the CMCM sect 3-4 paragraph "
+                   "that states their rule (env-research/nvor/O1-sweep.md), so "
+                   "the debt is repaid and any reappearance is a regression: "
+                   "%r" % (len(bare), EXPECT_BARE_CMCM_ALLOWED, bare[:3]))
 
     # THE CLEAN INVARIANT: every rule at zero, drift in either direction red
     counts = {k: len(v) for k, v in findings.items()}
@@ -752,8 +827,15 @@ def report(rows):
     print("NVOR demotion set: %d rows, all NO-ORACLE, each naming its own "
           "registration ID (sha %s)"
           % (len(demoted), sha16(sorted(n for n, _v in demoted) + [""])))
-    print("disclosure (register O1): %d Allowed rows still cite bare [CMCM]"
-          % EXPECT_BARE_CMCM_ALLOWED)
+    # MEASURED, not the pinned constant read back at the reader: a printout
+    # that echoes its own enum cannot report that the enum went stale.
+    print("register O1 (CLOSED): %d Allowed rows still cite bare [CMCM]; %d "
+          "cite a page-located CMCM sect 3-4 paragraph instead"
+          % (sum(1 for n, v, _m, s in rows
+                 if v == "Allowed" and "CMCM" in fragments_of(n, s)),
+             sum(1 for n, v, _m, s in rows
+                 if v == "Allowed" and any(f.startswith("CMCM ") and "p153:" in f
+                                           for f in fragments_of(n, s)))))
     print("clean invariant: %r"
           % {k: len(v) for k, v in sorted(findings.items())})
     print("gpu-only corpus: %d rows CMCM-free" % ngpu)
@@ -984,44 +1066,72 @@ def bite(rows):
                  lambda: check(_clone(rows), table={}, struck=FRAGMENTS_STRUCK))
     n += 1
 
-    # ---- E5: bare paper-granularity CMCM --------------------------------
-    # 21 E5 up: bare [CMCM] added to a Disallowed row that cites sections
+    # ---- E5 / E4 / O1: bare paper-granularity CMCM ----------------------
+    # 21 E5 up: bare [CMCM] added to a Disallowed row that cites sections.
+    #    Since the O1 sweep struck the bare tag this also trips E4, so the
+    #    drift message names BOTH rules -- E5 is asserted by marker.
     bad = _clone(rows)
     i = _find(bad, lambda r: r[1] == "Disallowed" and ORD_D in r[3])
     bad[i][3] = _append_frag(bad[i][3], "CMCM")
     _expect_fail("e5-bare-cmcm-added", "[E5]", lambda: check(bad))
     n += 1
 
-    # 22 E5 OVERFIRE GUARD: bare [CMCM] on an Allowed row is register item O1,
-    #    not E5 -- 252 rows already do it and the sweep is deferred, not denied.
-    #    The injection SWAPS which Allowed row carries it, so the O1 count is
-    #    held constant and E5 is the only rule that could speak.
+    # 22 O1 (2026-08-06): the sweep repaid the 252-row debt, so bare [CMCM] on
+    #    an ALLOWED row is no longer tolerated-and-counted.  It is the pin that
+    #    speaks first, by name, and the reintroduction it catches is exactly
+    #    what open item O1 was about.  (Phase D2's overfire guard for this axis
+    #    -- "an Allowed row may carry the bare tag" -- is gone with the debt.)
     bad = _clone(rows)
     i = _find(bad, lambda r: r[1] == "Allowed" and ARMKEY in r[3])
     bad[i][3] = _append_frag(bad[i][3], "CMCM")
-    j = _find(bad, lambda r: r[1] == "Allowed" and "; CMCM]" in r[3])
-    bad[j][3] = bad[j][3].replace("; CMCM]", "]", 1)
-    _expect_pass("e5-overfire-allowed",
-                 "paper-granularity cites on Allowed rows are O1, fail-safe, "
-                 "and separately pinned", rows, bad, lambda: check(bad))
+    _expect_fail("o1-bare-cmcm-reintroduced", "PIN bare-CMCM disclosure",
+                 lambda: check(bad))
     n += 1
 
-    # 23 ... but the O1 DEBT itself is pinned, so the same edit UNPAIRED moves
-    #    the disclosure count -- growth and silent repayment both redden
+    # 23 ... and on the one verdict the O1 pin does NOT count, so the STRIKE
+    #    itself is what has to speak: a NO-ORACLE row is neither Allowed (the
+    #    disclosure pin) nor Disallowed (E5), and E4 must still fire.
+    bad = _clone(rows)
+    i = _find(bad, lambda r: r[1] == "NO-ORACLE")
+    bad[i][3] = _append_frag(bad[i][3], "CMCM")
+    _expect_fail("e4-bare-cmcm-nooracle", "[E4]", lambda: check(bad))
+    n += 1
+
+    # 24 O1 OVERFIRE GUARD: the sweep's own product must be green.  A
+    #    section-precise, page-located CMCM cite on an Allowed row is what all
+    #    252 rows now carry, and it may trip neither E4 nor E5 nor the pin.
     bad = _clone(rows)
     i = _find(bad, lambda r: r[1] == "Allowed" and ARMKEY in r[3])
-    bad[i][3] = _append_frag(bad[i][3], "CMCM")
-    _expect_fail("o1-debt-grows", "PIN bare-CMCM disclosure",
-                 lambda: check(bad))
+    bad[i][3] = _append_frag(bad[i][3], "CMCM 4.2 non-MCA p153:11")
+    _expect_pass("o1-precise-cmcm-overfire",
+                 "a section-precise CMCM sect 3-4 cite is the O1 sweep's own "
+                 "product and is admissible GEN", rows, bad, lambda: check(bad))
     n += 1
 
-    # 24 ... and the other direction: a row quietly re-keyed off bare [CMCM]
-    bad = _clone(rows)
-    i = _find(bad, lambda r: r[1] == "Allowed" and "; CMCM]" in r[3])
-    bad[i][3] = bad[i][3].replace("; CMCM]", "; CMCM 3.2.3+4.4+4.6]", 1)
-    _expect_fail("o1-debt-shrinks", "PIN bare-CMCM disclosure",
-                 lambda: check(bad))
-    n += 1
+    # 25 the inline-scan exemption, widened: a citation-shaped struck string
+    #    hidden in it restores the R2 counter-probe scenario B2 closed
+    _saved = globals()["INLINE_EXEMPT_STRUCK"]
+    try:
+        globals()["INLINE_EXEMPT_STRUCK"] = frozenset({"CMCM", "CMCM Fig2a"})
+        _expect_fail("inline-exempt-widened", "PIN inline-exempt",
+                     lambda: check(_clone(rows)))
+        n += 1
+        # 26 ... and emptied, which proves the exemption is LOAD-BEARING and
+        #    not dead code: shipping rows name the paper in prose, and without
+        #    the exemption the struck tag reddens every one of them.  Measured
+        #    through audit(), because the pin above would otherwise speak
+        #    first and the probe would prove nothing about the scan.
+        globals()["INLINE_EXEMPT_STRUCK"] = frozenset()
+        e4 = audit(_clone(rows))[0]["E4"]
+        if not e4:
+            raise Fail("BITE inline-exempt-emptied: VACUOUS -- dropping the "
+                       "exemption reddened nothing, so it is dead code and "
+                       "the inline scan never looked at the bare tag at all")
+        print("  bite %-28s FAILS   ([E4] on %d rows e.g. %s)"
+              % ("inline-exempt-emptied", len(e4), e4[0]))
+        n += 1
+    finally:
+        globals()["INLINE_EXEMPT_STRUCK"] = _saved
 
     # ---- E8: every demoted row names its own registration ---------------
     # 25 B6: a demoted row whose registration ID sits in PROSE instead of in a

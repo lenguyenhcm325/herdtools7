@@ -207,24 +207,49 @@ declare -A CUTWHY=(
 # Anchor strings corrected 2026-08-06 (NVOR mechanical fixes 5 and 8): the
 # `Bagchi Fig2a' cite pointed at Bagchi's DATA-FREE background MP diagram, and
 # `Bagchi r3-5' at three Table-4 rows of which two are off-class (r4 and r5 both
-# have Y=gpu).  Bare `[CMCM]' on the Allowed rows is a KNOWN OPEN ITEM, out of
-# scope for this commit and recorded in NVOR-register.md.
+# have Y=gpu).
+#
+# NVOR OPEN ITEM O1 CLOSED (2026-08-06).  These seven strings carried a bare
+# `[CMCM]' -- a citation at PAPER granularity, which is literally the D26
+# disease -- on 252 Allowed rows.  Each is now re-pointed at the SECTION that
+# actually states the rule the class uses, read at source (papers/
+# CompoundMemoryModels.pdf) and quoted with its page locator in
+# env-research/nvor/O1-sweep.md.  Admissibility is unchanged and it is what
+# fixed the wording: CMCM sect 3-4 (the generalized LOST-POP framework) is the
+# ONLY admissible half on an ARMv9+PTX machine, and CMCM's own definition of
+# `morally strong' lives in sect 6.2 -- INADMISSIBLE here -- so the classes
+# whose prose says "not morally strong" are keyed to the sect 3.2.3/4.4 SCOPE
+# statements instead and keep PTX 3.3 (Lustig'19) as the moral-strength key.
+# Verdicts do not move: all 252 rows are Allowed before and after.
+#   4.1  p153:10-11  order rules are architecture-specific; a constraint is
+#                    added on accept only where the thread's OWN rule holds
+#   3.2.3 p153:8     GPU scope = the threads within the GPU; only Sys also
+#                    contains the CPU threads
+#   3.2.3 p153:9     a CTA-scoped acquire gives no guarantee the stores reach
+#                    an out-of-scope thread in order -> the outcome is allowed
+#   4.3  p153:11     fence semantics COMPOSE six independent ordering kinds
+#                    (W->R is separate from W->W and R->R)
+#   4.3  p153:12     remove one of the two fences and the behavior is allowed
+#   4.4  p153:13     an edge enforces its ordering only within its scope; to be
+#                    disallowed both fences need to be system-scoped
+#   4.6  p153:13     the behavior of a thread does not depend on the
+#                    architecture of other threads
 # ---------------------------------------------------------------------------
-S_RELAXED="ARMv9/PTX relaxed: no synchronizing op; weak outcome permitted [Bagchi 4.1 Tab3 r1 rlx/rlx weak OBSERVED 225M runs; Bagchi 4.2 Tab4 r5+r6+r14 relaxed weak OBSERVED; PTX-relaxed; CMCM]"
-S_CTA="cta scope: too narrow to encompass CPU thread; not morally strong [Bagchi 4.2 Tab4 r3 cta/cta weak OBSERVED; Bagchi Fig4c cta-scope RC weak OBSERVED; PTX 3.3; CMCM]"
-S_GPU="gpu scope: excludes CPU thread; not morally strong [Bagchi Fig4b gpu-scope RC weak OBSERVED cg; Bagchi Fig4e/r21-22; PTX 3.3; CMCM]"
+S_RELAXED="ARMv9/PTX relaxed: no synchronizing op; weak outcome permitted [Bagchi 4.1 Tab3 r1 rlx/rlx weak OBSERVED 225M runs; Bagchi 4.2 Tab4 r5+r6+r14 relaxed weak OBSERVED; PTX-relaxed; CMCM 4.1 p153:10-11 order rules are architecture-specific and a constraint is added only where the accepting thread's own order rule holds; CMCM 4.6 p153:13 the behavior of a thread does not depend on the architecture of other threads]"
+S_CTA="cta scope: too narrow to encompass CPU thread; not morally strong [Bagchi 4.2 Tab4 r3 cta/cta weak OBSERVED; Bagchi Fig4c cta-scope RC weak OBSERVED; PTX 3.3; CMCM 3.2.3 p153:9 a CTA-scoped acquire gives no guarantee that the stores reach a thread outside that scope in order so the weak outcome is allowed; CMCM 4.4 p153:13 an edge enforces its ordering only within its scope and to be disallowed both fences need to be system-scoped]"
+S_GPU="gpu scope: excludes CPU thread; not morally strong [Bagchi Fig4b gpu-scope RC weak OBSERVED cg; Bagchi Fig4e/r21-22; PTX 3.3; CMCM 3.2.3 p153:8 the GPU scope is the set of threads within the GPU and only the system scope also contains the CPU threads; CMCM 4.4 p153:13 an edge enforces its ordering only within its scope and to be disallowed both fences need to be system-scoped]"
 # 2-proc one-sided sys (the one ordering-critical CPU proc of the cut is plain).
 # CMCM Fig2a struck here too (Q6): it is the x86TSO+PTX example and its forbidden
 # verdict is attributed by CMCM 3.1 to the x86TSO consumer's acquire semantics --
 # a property no ARMv9 load has.  Verified non-load-bearing at class level.
-S_SYS1="sys sync one-sided: paired CPU proc is plain ARMv9 (RC); morally-strong pair incomplete [Bagchi Tab4 GAP -- no sys-scope GPU-acquire consumer row exists in the paper; ARMv9 RC; CMCM]"
+S_SYS1="sys sync one-sided: paired CPU proc is plain ARMv9 (RC); morally-strong pair incomplete [Bagchi Tab4 GAP -- no sys-scope GPU-acquire consumer row exists in the paper; ARMv9 RC; CMCM 4.3 p153:12 remove one of the two fences and the weak outcome is allowed; CMCM 4.6 p153:13 the behavior of a thread does not depend on the architecture of other threads]"
 # 3/4-proc one-sided sys (>=1 ordering-critical proc on a plain ARMv9 CPU):
-S_SYSN="sys sync incomplete: ordering-critical proc(s) on plain ARMv9 CPU; sync chain not closed [Bagchi Tab4 GAP -- no sys-scope GPU-acquire consumer row exists in the paper; ARMv9 RC; CMCM]"
+S_SYSN="sys sync incomplete: ordering-critical proc(s) on plain ARMv9 CPU; sync chain not closed [Bagchi Tab4 GAP -- no sys-scope GPU-acquire consumer row exists in the paper; ARMv9 RC; CMCM 4.3 p153:12 remove one of the two fences and the weak outcome is allowed; CMCM 4.6 p153:13 the behavior of a thread does not depend on the architecture of other threads]"
 S_IRIW1="IRIW forbid needs system MCA; PTX non-MCA & ARM-MCA x PTX-non-MCA interaction unestablished [Bagchi 2.1 MCA-future-work p68; CMCM 4.2 non-MCA p153:11; PTX non-MCA; PTX Lustig'19 3.4 non-MCA]"
 
 # Two-sided Source strings that are NOT produced by the order-pair rule.
-S_SBR_RA="two-sided sys release/acquire: RCpc STLR->LDAPR (and PTX rel/acq) do NOT order store->load on the proc whose pair is W->R -> the pair is present but insufficient (an SC fence is needed) [PTX 3.3; ARM RCpc; CMCM; cf AMD gpu-only AMD-GCN3 SB-sys is Disallowed while NVIDIA-PTX Allows it -- NOTE never a key]"
-S_RWC_RA="two-sided sys release/acquire: the W->R (store->load) proc is unfenced so the weak outcome survives without invoking MCA [PTX 3.3; ARM RCpc; CMCM; cf AMD gpu-only AMD-GCN3 SB-sys is Disallowed while NVIDIA-PTX Allows it -- NOTE never a key]"
+S_SBR_RA="two-sided sys release/acquire: RCpc STLR->LDAPR (and PTX rel/acq) do NOT order store->load on the proc whose pair is W->R -> the pair is present but insufficient (an SC fence is needed) [PTX 3.3; ARM RCpc; CMCM 4.3 p153:11 fence semantics compose six INDEPENDENT ordering kinds and W->R is a separate kind from W->W and R->R; cf AMD gpu-only AMD-GCN3 SB-sys is Disallowed while NVIDIA-PTX Allows it -- NOTE never a key]"
+S_RWC_RA="two-sided sys release/acquire: the W->R (store->load) proc is unfenced so the weak outcome survives without invoking MCA [PTX 3.3; ARM RCpc; CMCM 4.3 p153:11 fence semantics compose six INDEPENDENT ordering kinds and W->R is a separate kind from W->W and R->R; cf AMD gpu-only AMD-GCN3 SB-sys is Disallowed while NVIDIA-PTX Allows it -- NOTE never a key]"
 S_2P2W="two-sided complete pair, but 2+2W needs a global write-write order (multi-copy atomicity); ARM-MCA x PTX-non-MCA unestablished [Bagchi 2.1 MCA-future-work p68; PTX non-MCA; PTX Lustig'19 3.4 non-MCA; CMCM 4.2 non-MCA p153:11]"
 S_TRANS="two-sided complete pair, but this transitive shape needs cross-device A-cumulativity through a GPU intermediary; ARM-oMCA x PTX-non-MCA unestablished [Bagchi 2.1 MCA-future-work p68; PTX non-MCA; PTX Lustig'19 3.4 non-MCA; CMCM 4.2 non-MCA p153:11]"
 S_IRIW2="two-sided reader ordering present, but IRIW needs multi-copy atomicity; ARM-MCA x PTX-non-MCA unestablished [Bagchi 2.1 MCA-future-work p68; PTX non-MCA; PTX Lustig'19 3.4 non-MCA; CMCM 4.2 non-MCA p153:11]"
