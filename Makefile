@@ -685,7 +685,7 @@ hetlitmus-cpustress: | build
 	@ echo "HetLitmus Layer-3 CPU+interconnect stress liveness: OK"
 
 ### hetlitmus-controlmap: the positive control (hetlitmus/docs/positive-control.md).
-### Every one of the 50 Disallowed tests must have a mutant mu(T) that EXISTS and is
+### Every one of the 18 Disallowed tests must have a mutant mu(T) that EXISTS and is
 ### labelled Allowed, re-derived from the corpus sources + the oracle and never
 ### from the test's name (MP-gc-sys-acquire and two siblings do not exist at all).
 ### It fails closed: a missing mutant breaks the build rather than skipping the
@@ -707,8 +707,9 @@ hetlitmus-controlmap: | build
 ### separate artifact and a separate lattice, not a translation (memo 7.D11): on
 ### x86 the CPU strength lattice loses its middle rung, so a candidate that only
 ### moves within {ra,st,ld} is NOT a weakening there.  The oracle it is derived
-### against is expected-amd.csv and its census is 19 Disallowed, not 50
-### (D26 2026-08-04 demoted 127; pre-strike it was 146).
+### against is expected-amd.csv and its census is 19 Disallowed, not the NVIDIA
+### lane's 18 (AMD: D26 2026-08-04 demoted 127 of 146; NVIDIA: NVOR 2026-08-06
+### demoted 32 of 50 -- two unrelated strikes that happen to land one apart).
 ### Regenerate with:
 ###   python3 hetlitmus/verify/controlmap.py --lattice x86 --emit \
 ###     > hetlitmus/tests/het/control-map-amd.csv
@@ -745,6 +746,30 @@ hetlitmus-oracle:
 	  && diff -u $(HET_ORACLE) $$tmp/het/expected-nvidia.csv ); \
 	rc=$$?; rm -rf $$tmp; exit $$rc
 	@ echo "HetLitmus het oracle: OK ($(HET_ORACLE) matches its generator)"
+
+### hetlitmus-nvroundtrip: the NVOR slot toggle's round trip + contingency list
+### (the AMD G16 analog; NVOR, Nguyen 2026-08-06, env-research/NVOR-register.md).
+### The adjudication DECLINED three registrations the Disallowed surface rested
+### on -- the gc-direction meet (Q2, 19 rows), ARM-DMB-SY-is-a-PTX-fence.sc (Q3,
+### 2) and the unidirectional-fence semantics (Q4, 11) -- so 32 rows are
+### NO-ORACLE and the census is 319/18/74, not 319/50/42.  The demotion gates the
+### SLOT, never the verdict: NVOR_ACCEPT_DECLINED=1 re-derives the pre-
+### regeneration verdicts into a SEPARATE file (expected-nvidia-declined.csv --
+### a counterfactual can never clobber the oracle), and this asserts the round
+### trip touches EXACTLY those 32 rows, that each of them goes NO-ORACLE ->
+### Disallowed out of a named UNKEYED class, and that nothing else moves.  It
+### also re-prints the per-row contingency ("observing one of these outcomes on
+### GH200 is DATA, not a refutation") and asserts the printed set is the pinned
+### 32.  Both run INSIDE build-nvidia-oracle.sh on every generation, before the
+### mv; this target is the same guards named and runnable on their own.
+### Bite it by widening or narrowing the gate in a scratch copy -- the census
+### pin, the demoted-set sha pin and the round trip each redden by name.
+### Pure bash, ~0.5 s, no nvcc, no GPU.
+hetlitmus-nvroundtrip:
+	@ echo
+	bash hetlitmus/tests/het/build-nvidia-oracle.sh --roundtrip
+	bash hetlitmus/tests/het/build-nvidia-oracle.sh --declined-list
+	@ echo "HetLitmus NVOR slot toggle: OK (round trip exact on the 32 demoted rows)"
 
 ### hetlitmus-amd-oracle: the SAME check for the AMD MI300A oracle.  Separate
 ### target because expected-amd.csv is a separate file with its own Model string
@@ -855,6 +880,17 @@ hetlitmus-amdprov:
 ### commit as the regeneration -- green here means "the fault is exactly this
 ### big", not "there is no fault".  No `| build' (invokes no herdtools7 tool);
 ### ~0.1 s + bite.
+### *** RED SINCE THE NVOR REGENERATION (2026-08-06), BY DESIGN. *** Every number
+### in this block and every pin in nvprovcheck.py -- the census (319/50/42), the
+### fault pin, the 8.6-row sha, the FRAGMENTS table, the 38 comma rows --
+### describes the PRE-regeneration CSV.  It is not re-pinned here on purpose:
+### R2's B5 rule measured that flipping the fault pin to zeros over the CURRENT
+### parser lets a re-introduced fault pass GATE GREEN in all four simulated
+### scenarios, so the parser blind-spot fixes (B1: EVENT_NOTATION is fullmatched
+### and `continue'd with NO error; B2/B3: fragments outside brackets; B4: E6 on
+### KEYLESS Allowed; B6: E2/E5 on non-Disallowed rows) and the pin flip must land
+### TOGETHER, in the companion NVOR Phase-D2 commit.  Until then this gate fails
+### on fragment/pin drift and that failure is the handover.
 hetlitmus-nvprov:
 	@ echo
 	python3 hetlitmus/verify/nvprovcheck.py
@@ -915,7 +951,7 @@ hetlitmus-order: | build
 ###                      verdict enum changing is not the deliverable; the sentence
 ###                      is.
 ###   Phase 3 (corpus)   all 411 emitted harnesses carry the oracle class
-###                      control-map.csv gives them (census 50 / 319 / 42, zero
+###                      control-map.csv gives them (census 18 / 319 / 74, zero
 ###                      untagged).  A rule that branches on a class the emitter
 ###                      never sets is a rule nobody runs.
 ###   Phase 4 (machine)  which MACHINE the printout names.  The interconnect prose
@@ -1258,6 +1294,7 @@ hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-dup
 hetlitmus-test:: hetlitmus-order
 hetlitmus-test:: hetlitmus-oracle
+hetlitmus-test:: hetlitmus-nvroundtrip
 hetlitmus-test:: hetlitmus-amd-oracle
 hetlitmus-test:: hetlitmus-amdorder
 hetlitmus-test:: hetlitmus-amdprov
@@ -1307,6 +1344,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order hetlitmus-oracle
+.PHONY: hetlitmus-nvroundtrip
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
 .PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10 hetlitmus-noracle
 .PHONY: hetlitmus-x86fixture hetlitmus-noracle-hw hetlitmus-run-gate hetlitmus-run-hw

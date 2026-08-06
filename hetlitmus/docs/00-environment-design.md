@@ -175,7 +175,8 @@ store-only (2+2W) shapes — which have no reader — use `observer_unique_count
 neither channel fails closed. And the verdict is **oracle-aware**: a sighting REFUTES only on an
 `ORACLE_DISALLOWED` test, CONFIRMS on the Allowed rows, CHARACTERIZES the NO-ORACLE rows. The
 class split moves with the corpus — read it from `hetlitmus/tests/het/control-map.csv` (today:
-**50 Disallowed / 319 Allowed / 42 NO-ORACLE** over 411 tests; the same census is pinned in
+**18 Disallowed / 319 Allowed / 74 NO-ORACLE** over 411 tests — 50/319/42 until NVOR
+(2026-08-06) demoted 32 rows; the same census is pinned in
 `verify/verdictcheck.py:CENSUS` and gated by `make hetlitmus-verdict`).
 
 ### 3.8 Positive control / liveness  [→ `Q4-positive-control.md`]
@@ -281,20 +282,22 @@ Everything below is unmeasurable on the dev box (wrong substrate, §3.2). **Firs
    disable mechanism.
 8. Per-target **stress tuning** (all numeric knob values).
 
-**One Disallowed test needs calibration before its null counts** (deep-review F5): `SB-cg-sys-fence-2s`
-is the only `T_L ≥ 2` shape among the Disallowed rows, so at production `N` the exhaustive `O(N^T_L)` scan is
-capped (`HET_EXHAUSTIVE_MAX = 4096`) → `exhaustive_valid = 0`, and it can **never reach CREDIBLE-NULL**;
-its only detector is the uncalibrated `[c−8, c+8]` window (`HET_WINDOW = 8`), so a real cross-device skew
-> 8 iterations would MISS the sighting and read as a null. At bring-up: measure `skew_*` first, run a
-small-`N` pass (`-s ≤ 4096`) so `exhaustive_valid = 1`, and calibrate `HET_WINDOW` from the measured skew
-before trusting any null on it. (Every other Disallowed row is `T_L ≤ 1`, exact-`O(N)`,
-skew-independent — re-measured on the 411-test corpus: of the 50 Disallowed, exactly the 1 `SB` row
-is `T_L ≥ 2`, and it is also the only one whose μ(T) is. Only `SB` among the shapes that carry a
-Disallowed verdict leaves a condition-read unbound; MP/LB/R/S all bind theirs. Note this is a
-property of the *Disallowed* subset, not of the corpus: 215 of the 411 tests are `T_L ≥ 2`
-(`SB` 29, `WRC3` 47, `IRIW` 37, `ISA2` 36, `RWC` 33, `WRC` 33) — but of those shapes only `SB`
-carries a Disallowed verdict at all. Re-derive from the `exists` conditions if the corpus ever
-grows a Disallowed row in `IRIW`/`ISA2`/`RWC`/`WRC`/`WRC3`.)
+**The one Disallowed test that needed calibration is no longer Disallowed** (deep-review F5, closed by
+NVOR 2026-08-06). `SB-cg-sys-fence-2s` was the only `T_L ≥ 2` shape among the Disallowed rows: at
+production `N` its exhaustive `O(N^T_L)` scan is capped (`HET_EXHAUSTIVE_MAX = 4096`) →
+`exhaustive_valid = 0`, so it could **never reach CREDIBLE-NULL**, and its only detector was the
+uncalibrated `[c−8, c+8]` window (`HET_WINDOW = 8`). The NVOR regeneration demoted every rf-free row
+(`SB` and `R` at `sys`+`fence` need an ARM `DMB SY` to **be** a PTX `fence.sc`, which is not
+registered), so **all 18 surviving Disallowed rows are `T_L ≤ 1`, exact-`O(N)` and skew-independent**,
+and F5's calibration is no longer a precondition for any Disallowed null. Two consequences to carry:
+(i) it becomes a precondition again the moment `NVOR_ACCEPT_DECLINED=1` or a future registration
+re-arms the `SB`/`R` rows, so measure `skew_*` and calibrate `HET_WINDOW` at bring-up anyway;
+(ii) **no surviving Disallowed row has a windowed μ(T)**, so the
+`control_exhaustive_valid = _mu_exh` emission path is instantiated by zero shipping harnesses today
+(pinned as an absence in `tests/cram/positive-control.t`). Note this was always a property of the
+*Disallowed* subset, not of the corpus: 215 of the 411 tests are `T_L ≥ 2` (`SB` 29, `WRC3` 47,
+`IRIW` 37, `ISA2` 36, `RWC` 33, `WRC` 33). Re-derive from the `exists` conditions if the corpus ever
+grows a Disallowed row in `SB`/`IRIW`/`ISA2`/`RWC`/`WRC`/`WRC3`.
 
 **A provisional early-stop below R = 50, and the F8 reopen trigger** (deep-review F8;
 `env-research/decisions/F8-decision.md`, Path 1). The B7c τ-guard scales its threshold by the *estimated* τ,

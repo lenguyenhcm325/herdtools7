@@ -17,9 +17,20 @@ not exist at all, so a name-rewriting map would point rows at a nonexistent test
   $ grep -c 'HET_CANARY_NAME "MP-cg-sys-relaxed"' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 
-The gc mirror: the GPU produces, so the mutant keeps the GPU's RELEASE.
+The gc mirror -- the GPU produces, so the mutant keeps the GPU's RELEASE -- used
+to be pinned here on MP-gc-sys-acqrel-2s.  The NVOR regeneration (Nguyen
+2026-08-06; env-research/NVOR-register.md) DECLINED to register the symmetric
+meet, so every gc-cut Disallowed row is NO-ORACLE and no gc row carries a
+Layer-A control any more.  What is pinned instead is that the demotion reached
+the EMITTED harness: no mutant, control not compiled in, class ORACLE_NONE.  A
+demotion that stopped at the CSV would leave the harness still claiming a
+refutable prediction.
   $ litmus7 -gpu-target cuda -o . ../het/MP-gc-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ grep -c 'HET_MU_NAME "MP-gc-sys-release"' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
+  $ grep -c 'HET_MU_NAME NULL' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
+  1
+  $ grep -c '#define HET_CONTROL_COMPILED_IN 0' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
+  1
+  $ grep -c '_rec.het_oracle = ORACLE_NONE;' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
   1
 
 HET_CONTROL_COMPILED_IN=1 is the highest-stakes value in the codebase: it says a
@@ -35,7 +46,7 @@ The Layer-B canary rides a SEPARATE flag rather than widening this one.  "A
 canary is co-running" and "the minimal mutant of this test is co-running" are
 different claims, and only the second licenses a credible null; collapsed into
 one bit, a null on a test that has no mutant at all would start reading as
-vouched-for.  So the Layer-A guard is exactly the 50 Disallowed tests, and a
+vouched-for.  So the Layer-A guard is exactly the 18 Disallowed tests, and a
 canary-only harness says so in its own flag.
   $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -c 'HET_MU_NAME NULL' S-cg-sys-fence/S-cg-sys-fence.cu
@@ -69,9 +80,9 @@ THE ORACLE CLASS.  het_verdict() must know which of the three classes a harness
 is in, because the sentence it prints differs: on a Disallowed test a sighting
 refutes the model's prediction; on an oracle-Allowed test the weak outcome is
 expected, and seeing it confirms the model is not over-strong; a NO-ORACLE row
-claims neither.  Only 50 of the 411 rows are Disallowed -- 319 are Allowed and 42
+claims neither.  Only 18 of the 411 rows are Disallowed -- 319 are Allowed and 74
 are NO-ORACLE -- so a harness that framed every test as should-be-forbidden would
-put 361 loud false refutations on the table.  Each class carries its own tag,
+put 393 loud false refutations on the table.  Each class carries its own tag,
 read from control-map.csv field 2, and the emitter never falls back to a default.
   $ litmus7 -gpu-target cuda -o . ../het/IRIW-cgcg-sys-fence-2s.litmus >/dev/null 2>&1
   $ grep -h '_rec.het_oracle' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu S-cg-sys-fence/S-cg-sys-fence.cu IRIW-cgcg-sys-fence-2s/IRIW-cgcg-sys-fence-2s.cu
@@ -205,18 +216,37 @@ SB's second reader has no rf anchor (T_L>=2), so its count only exists if the
 O(N^T_L) search actually ran -- and mu(SB-*-sys-fence-2s) IS SB-*-sys-acqrel-2s,
 a T_L>=2 shape too.  Its exhaustive count is therefore 0 by construction at
 production N.  Keying the control off it would leave control_target_count
-structurally zero on the SB row among the 50 control harnesses, so that null
-would be cold-invalid forever, and a positive control that CANNOT FIRE is not a
-control.  The control counts the windowed detector instead -- a strict subset of
-the exhaustive scan under the same predicate, so it can miss cycles but cannot
-invent them -- and control_exhaustive_valid says so.
+structurally zero on that row, so the null would be cold-invalid forever, and a
+positive control that CANNOT FIRE is not a control.  The control counts the
+windowed detector instead -- a strict subset of the exhaustive scan under the
+same predicate, so it can miss cycles but cannot invent them.
+
+The T_L>=2 emission is unchanged and still pinned on SB.  Its CONTROL half is
+not: NVOR demoted every rf-free row (SB and R at sys+fence need an ARM DMB SY to
+BE a PTX fence.sc, which is not registered), so SB-cg-sys-fence-2s is NO-ORACLE
+and carries no mutant at all.
   $ litmus7 -gpu-target cuda -o . ../het/SB-cg-sys-fence-2s.litmus >/dev/null 2>&1
   $ grep -c '_rec.exhaustive_valid = _t_exh;' SB-cg-sys-fence-2s/SB-cg-sys-fence-2s.cu
   1
-  $ grep -c '_rec.control_exhaustive_valid = _mu_exh;' SB-cg-sys-fence-2s/SB-cg-sys-fence-2s.cu
+  $ grep -c 'HET_MU_NAME NULL' SB-cg-sys-fence-2s/SB-cg-sys-fence-2s.cu
   1
-  $ grep -c 'if (_weak) { _rec.control_target_count++; _rec.control_win\[het_win_of(_f, SIZE_OF_TEST)\]++; }' SB-cg-sys-fence-2s/SB-cg-sys-fence-2s.cu
+
+The windowed control detector itself is pinned on a SURVIVING Disallowed row --
+it is emitted on all 18 of them.
+  $ litmus7 -gpu-target cuda -o . ../het/LB-cg-sys-fence-2s.litmus >/dev/null 2>&1
+  $ grep -c 'if (_weak) { _rec.control_target_count++; _rec.control_win\[het_win_of(_f, SIZE_OF_TEST)\]++; }' LB-cg-sys-fence-2s/LB-cg-sys-fence-2s.cu
   1
+
+A MEASURED COVERAGE LOSS, pinned as an absence so its return is visible.
+control_exhaustive_valid = _mu_exh is emitted only when the MUTANT is windowed,
+and after NVOR no surviving Disallowed row has a windowed mutant (all 18 are
+LB-cg / MP-cg / S-cg, whose mutants are one-sided T_L<=1 variants).  That code
+path is therefore instantiated by ZERO shipping harnesses today.  It is not dead
+code -- NVOR_ACCEPT_DECLINED=1 or a future registration re-arms the SB and R rows
+-- but nothing in the shipped corpus exercises it, and this line is the record.
+  $ grep -c '_rec.control_exhaustive_valid = _mu_exh;' LB-cg-sys-fence-2s/LB-cg-sys-fence-2s.cu
+  0
+  [1]
 
 THE REPORTING TIER IS NOT THE MECHANISM TIER.  R and S are both mechanically
 ADVISORY (one ws-location + a register), but S's read is an rf read -- a real

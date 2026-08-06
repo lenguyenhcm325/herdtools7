@@ -43,7 +43,7 @@ ORACLES = ["ORACLE_DISALLOWED", "ORACLE_ALLOWED", "ORACLE_NONE"]
 
 # The oracle census the emitted corpus MUST reproduce (expected-nvidia.csv, via
 # control-map.csv field 2).  ORACLE_UNSET is not listed because it must never occur.
-CENSUS = {"Disallowed": 50, "Allowed": 319, "NO-ORACLE": 42}
+CENSUS = {"Disallowed": 18, "Allowed": 319, "NO-ORACLE": 74}
 
 CSV_TO_C = {"Disallowed": "ORACLE_DISALLOWED",
             "Allowed": "ORACLE_ALLOWED",
@@ -75,7 +75,7 @@ BASE = dict(
     # THE DECODE CHANNEL, stated once (DR1).  The verdict is channel-aware: the sync
     # channel's liveness evidence is interleavings_detected, the observer channel's is
     # observer_unique_count, and a record with neither flag fails closed.  The baseline
-    # is a reader -- 400 of the 411, including all 50 Disallowed; only the 11 store-only
+    # is a reader -- 400 of the 411, including all 18 Disallowed; only the 11 store-only
     # 2+2W rows have no reader, and those cases flip to sync_valid=0, obs_valid=1 below.
     # (Census derivation: statscheck.py CENSUS_SYNC / CENSUS_OBS.)
     sync_valid=1,
@@ -107,7 +107,7 @@ def case(name, verdict, dq=(), cv=(), **kw):
 
 CASES = [
     # =======================================================================
-    # 1. THE DISALLOWED FRAME (50 tests): the model forbids the outcome, so the
+    # 1. THE DISALLOWED FRAME (18 tests): the model forbids the outcome, so the
     #    NULL is the evidence and has to be earned.
     # =======================================================================
     case("credible-null", "CREDIBLE-NULL"),
@@ -202,7 +202,7 @@ CASES = [
          control_target_count=0, canary_target_count=0),
 
     # =======================================================================
-    # 3. THE NO-ORACLE FRAME (42 tests).  Q4 R5: characterization, NEVER
+    # 3. THE NO-ORACLE FRAME (74 tests).  Q4 R5: characterization, NEVER
     #    validation -- there is no prediction here to confirm or refute.
     # =======================================================================
     case("no-oracle-fired-is-characterized", "CHARACTERIZED",

@@ -36,13 +36,17 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
 
-# The Disallowed census the gate asserts (it is not merely reported): the 13
-# `-{acqrel,fence}-2s' rows of the matched two-sided family, + 22 of the 48
-# off-diagonal order-pair cells, + 15 of the 64 cells the CPU DMB.ST/DMB.LD axis
-# added -- those being exactly the cells where a PARTIAL CPU barrier is the half
-# its role needs.  Derivations: env-research/impl-briefs/Q10-REPORT.md,
-# Q10b-REPORT.md.
-N_DISALLOWED = 50
+# The Disallowed census the gate asserts (it is not merely reported).  It was 50
+# until the NVOR regeneration (Nguyen 2026-08-06; env-research/NVOR-register.md)
+# demoted 32 of them to NO-ORACLE -- the 19 gc-cut rows whose derivation needs
+# the SYMMETRIC MEET (Q2 declined), the 2 rf-free cg rows that need an ARM DMB SY
+# to BE a PTX fence.sc (Q3 declined) and the 11 cg rows that need the
+# unidirectional-fence semantics (Q4 declined).  What survives is 18 rows, all
+# CPU-producer: LB-cg 6 + MP-cg 6 + S-cg 6, each of them {acqrel, fence} on the
+# diagonal plus four order-pair cells whose GPU half is a rel/acq atom pair or a
+# fence.sc.  Derivations: env-research/impl-briefs/Q10-REPORT.md, Q10b-REPORT.md,
+# NVOR-phaseC-brief.md sect 3.1.
+N_DISALLOWED = 18
 
 # ---------------------------------------------------------------------------
 # THE LATTICE PARAMETER (memo PORT2-R2 7.D11, landed by P2a 2026-08-02).
@@ -58,16 +62,17 @@ N_DISALLOWED = 50
 #     run the IDENTICAL program and the "control" would vouch for nothing.
 #     `weakening_of' rejects it as "identical ordering strength", which is the
 #     fail-closed behaviour D11 asks for.
-#   * the Disallowed census goes 50 -> 19 (D26 2026-08-04 demoted the 127
-#     X2A-carried rows to NO-ORACLE; pre-strike it was 146).  The AMD census is
-#     still NOT all two-sided -- the 19 LB survivors include one-sided cells --
-#     which is why the x86 derivation is a generic search over the corpus
-#     rather than the NVIDIA name cascade.
+#   * the Disallowed census goes 18 -> 19 (AMD: D26 2026-08-04 demoted the 127
+#     X2A-carried rows to NO-ORACLE, pre-strike 146; NVIDIA: NVOR 2026-08-06
+#     demoted 32 of 50).  The two numbers are now nearly equal and entirely
+#     unrelated.  The AMD census is still NOT all two-sided -- the 19 LB
+#     survivors include one-sided cells -- which is why the x86 derivation is a
+#     generic search over the corpus rather than the NVIDIA name cascade.
 #
 # LATTICE is module state read by _parse_instr and audit_map.  The default is
 # `aarch64', so the NVIDIA path is byte-for-byte what it was.
 LATTICE = "aarch64"
-N_DISALLOWED_BY_LATTICE = {"aarch64": 50, "x86": 19}
+N_DISALLOWED_BY_LATTICE = {"aarch64": 18, "x86": 19}
 
 
 def set_lattice(name):
@@ -606,7 +611,7 @@ def audit_map(text, tests, oracle):
             errors.append("%s: Disallowed row names no .litmus" % name)
             continue
         # "Disallowed => two-sided" is a property of the NVIDIA census only (all
-        # 50 of its Disallowed rows are `-2s' cells -- Q10).  The AMD census has
+        # 18 of its Disallowed rows are `-2s' cells -- Q10).  The AMD census has
         # 42 one-sided Disallowed rows and 4 fully relaxed ones, so asserting it
         # there would be asserting a fact about the wrong oracle.
         if LATTICE == "aarch64" and not tests[name].two_sided():
@@ -840,15 +845,26 @@ def bite(d):
         # the only one where rewriting the Mu column is a lie rather than a
         # coincidence.  Rewriting it on a row where the naive name happens to be
         # the right answer would be a vacuous bite.
+        # BOTH naive rewrites are tried, not just `acquire'.  Until the NVOR
+        # regeneration (2026-08-06) the `acquire' one alone found material --
+        # MP-gc-sys-acquire and its two siblings are the degenerate variants
+        # generate.sh dedups away -- but every gc-cut Disallowed row demoted to
+        # NO-ORACLE that day and the search went empty, i.e. THE INJECTION
+        # SILENTLY STOPPED BITING while the gate stayed green.  On the surviving
+        # cg-cut rows the degenerate direction is the other one (MP-cg-sys-
+        # release does not exist: on that cut the GPU proc is a reader).
         have = {f[:-len(".litmus")] for f in os.listdir(d) if f.endswith(".litmus")}
         naive_row = None
         for r in dis_rows:
             p = split_name(r[0])
             if not p:
                 continue
-            naive = "%s-%s-%s-acquire" % (p["shape"], p["cut"], p["scope"])
-            if naive not in have:
-                naive_row = (r[0], r[2], naive)
+            for ord_tok in ("acquire", "release"):
+                naive = "%s-%s-%s-%s" % (p["shape"], p["cut"], p["scope"], ord_tok)
+                if naive not in have:
+                    naive_row = (r[0], r[2], naive)
+                    break
+            if naive_row:
                 break
 
         def run(tag, why, edit, want):

@@ -55,7 +55,9 @@ reproducibly** by `tests/het/build-nvidia-oracle.sh` from the `.litmus` names.
   exhibited weak behaviors**" (§4.2 Tab 4). §5 establishes **global CPU-GPU cache
   coherence** (one coherence order per location, directory/CHI over NVLink-C2C).
   The **ARM-MCA × PTX-non-MCA interaction (IRIW, transitive cumulativity) is
-  explicitly left for future work** (§4.2). (RMWs over-synchronise vs spec —
+  explicitly left for future work** (**§2.1, p. 68** — the deferral is stated in
+  the background section, not in §4.2 where this doc used to point it; corrected
+  by NVOR 2026-08-06). (RMWs over-synchronise vs spec —
   irrelevant here: the corpus has no RMW.)
 
 ## The CPU instruction mapping (decision + grounding)
@@ -174,7 +176,7 @@ each proc's store→load. None of these requires propagating a write *atomically
 through a GPU intermediary*. The transitive shapes (WRC, RWC-fence, ISA2, WRC3) do
 — they need **A-cumulativity** through a GPU forwarder to a third party — and
 IRIW/2+2W need **multi-copy atomicity**; that **ARM-MCA × PTX-non-MCA interaction
-is exactly what Bagchi §4.2 leaves for future work**. Neither `Allowed` nor
+is exactly what Bagchi §2.1 (p. 68) leaves for future work**. Neither `Allowed` nor
 `Disallowed` is grounded there in the three sources, so honesty demands
 `NO-ORACLE`.
 
@@ -253,6 +255,12 @@ edges); or — for a cycle with **no** `rf` at all (SB, R, 2+2W) — **both** pr
 supply `sc`, which is [PTX] Fig 6 (*"requires a `fence.sc` to be placed between
 the memory operations in each thread. PTX also requires the two fences to be
 morally strong."*).
+
+**The rule above is the ORDERING layer only.** Since the NVOR regeneration
+(2026-08-06, below) a cell the rule forbids is shipped `Disallowed` only if every
+*registration* its derivation needs was accepted; three were declined, so a
+further 32 rows are `NO-ORACLE`. The counts in this section are the ordering
+rule's own, i.e. what `NVOR_ACCEPT_DECLINED=1` reproduces.
 
 The 112 emitted cells come out **37 Disallowed / 67 Allowed / 8 NO-ORACLE**
 (Q10's 48 gave 22/21/5; Q10b's 64 add 15/46/3):
@@ -336,25 +344,64 @@ outcome is a hard contradiction (`MISMATCH`).
 
 ## Verdict tally
 
-**411 rows** (one per `.litmus`): **319 Allowed, 50 Disallowed, 42 NO-ORACLE.**
+**411 rows** (one per `.litmus`): **319 Allowed, 18 Disallowed, 74 NO-ORACLE.**
 
-- **50 Disallowed** = 13 matched + 37 order-pair.
-  - 13 matched = MP·S × {cg,gc} × {acqrel,fence} (8) + LB-cg × {acqrel,fence}
-    (2) + R × {cg,gc} × {fence} (2) + SB-cg × {fence} (1).
-  - 37 order-pair = MP-cg 7 + MP-gc 7 + LB-cg 9 + S-cg 7 + S-gc 7 (SB-cg, R-cg,
-    R-gc contribute none).
-- **42 NO-ORACLE** = 34 + 8.
+- **18 Disallowed**, all of them **CPU-producer (`cg`)** cuts: LB-cg 6 + MP-cg 6
+  + S-cg 6. Each shape contributes its two diagonal cells (`-acqrel-2s`,
+  `-fence-2s`) plus four order-pair cells whose GPU half is a rel/acq atom pair
+  or a `fence.sc`.
+- **74 NO-ORACLE** = 34 + 8 + **32 NVOR-demoted**.
   - 34 = the 2 one-sided `IRIW-gcgc` + 32 matched two-sided (2+2W, WRC,
-    RWC-fence, ISA2, IRIW, WRC3).
+    RWC-fence, ISA2, IRIW, WRC3) — cross-device MCA / A-cumulativity.
   - 8 order-pair = R-cg 2 + R-gc 2 + S-cg 3 + LB-cg 1, the cells where CMCM's
     operational and axiomatic models disagree (see below).
+  - 32 = the NVOR demotions: **19 `gc`** (Q2), **2 rf-free `cg`** (Q3), **11
+    unidirectional-fence `cg`** (Q4). Per-row list:
+    `build-nvidia-oracle.sh --declined-list`.
 - **319 Allowed** = 246 one-sided baseline + 6 matched two-sided (SB-cg·R
-  `acqrel`, RWC `acqrel`) + 67 order-pair.
+  `acqrel`, RWC `acqrel`) + 67 order-pair. **Unchanged by NVOR** — the
+  adjudication took the lenient reading of Q4b, so no Allowed row moved.
 
-Up to (proc permutation × location renaming) the 50 `Disallowed` files are
-**50 distinct experiments** — the corpus's falsification surface (`make
+Up to (proc permutation × location renaming) the 18 `Disallowed` files are
+**18 distinct experiments** — the corpus's falsification surface (`make
 hetlitmus-dup`; the `cg`/`gc` mirror pairs that used to collapse three of them
-were removed from the corpus on 2026-08-01).
+were removed from the corpus on 2026-08-01). It was 50 before NVOR.
+
+## NVOR — the registrations behind the Disallowed surface (2026-08-06)
+
+The NVIDIA-lane provenance audit (`env-research/NVOR-phaseC-brief.md`, adjudicated
+by Nguyen; decisions in `env-research/NVOR-register.md`) found that the entire
+Disallowed surface rested on premises that were correct-looking, **uncited, and
+never registered as decisions**. Seven were put up; the ones that move rows:
+
+| id | the registration | verdict | rows |
+|---|---|---|---|
+| **Q1** | ARMv9 plain accesses are PTX **strong** ops on the generic proxy, the builder's `ROLE` table is the ARM→PTX request-type map, and an unscoped ARM op meets a `.sys` PTX op at **system** scope — **in the CPU-producer direction** | **ACCEPT** | keeps 18 |
+| **Q2** | the meet is **symmetric**, i.e. the same holds with the GPU as producer | **DECLINE** | 19 → NO-ORACLE |
+| **Q3** | a CPU `DMB SY` **is** a PTX `fence.sc` for the Fence-SC total order | **DECLINE** | 2 → NO-ORACLE |
+| **Q4** | `fence.acquire` / `fence.release` semantics (PTX ISA 8.6 / SM_90, postdating Lustig'19) | **DECLINE** | 11 → NO-ORACLE |
+| **Q4b** | the 18 *Allowed* rows making a **negative** `ord` claim about the same instructions keep `Allowed` on the a-fortiori transfer, disclosed | **LENIENT** | 0 moved |
+| **Q5** | a `fence.sc` still heads a release pattern and completes an acquire pattern (the semantic-lattice reading of PTX ISA §8.8), keyed to **Lustig'19**, with the ≥ 8.8 clause-narrowing as a **disclosure** | **ACCEPT** | keeps 9 |
+| **Q6** | `CMCM Fig2a` struck as a key (it is the x86TSO+PTX example and CMCM §3.1 attributes its forbidden verdict to *the x86TSO consumer's* acquire semantics — no ARMv9 load has that) | **ACCEPT** | re-key only |
+
+Why Q2 is the interesting one: **every scrap of GH200 system-scope heterogeneous
+evidence is CPU-producer.** Bagchi Table 4 has `GPU_rlx` in the Consumer column of
+all 13 CPU-producer rows, `GPU_acq` nowhere, and its only `GPU_rel` rows (21–22)
+are at `gpu` scope, never `system`; Fig 4a is CPU-producer; the §3.2 doctrinal
+derivation is CPU-producer. CMCM's own footnote 7 warns the meet "*can be
+asymmetrical*". So the 19 `gc` rows became a **pre-registered, hardware-falsifiable
+prediction** rather than a silent assumption — which is what Q10's two-sided
+`cg`/`gc` sweep was built to expose in the first place.
+
+**Nothing was demoted to `Allowed`.** Silence is not permission, and a wrongly-
+Allowed row can absorb a real violation as an `ALLOWED-OBSERVED` "confirmation".
+
+**The demoted rows are still run.** `NVOR_ACCEPT_DECLINED=1` re-derives the
+pre-regeneration verdicts (319/50/42) into a **separate** file
+`expected-nvidia-declined.csv` — a counterfactual can never clobber the oracle —
+and `make hetlitmus-nvroundtrip` asserts the round trip touches exactly those 32
+rows and nothing else. **Observing one of the listed outcomes on GH200 is DATA,
+never a refutation of the compound model.**
 
 ## The two one-sided NO-ORACLE tests
 
@@ -398,7 +445,11 @@ diff <(ls *.litmus | sed 's/\.litmus$//' | sort -u) \
 
 # 2. verdict tally + a two-sided test carries STLR/LDAPR/DMB on its CPU proc
 grep -vE '^#|^Litmus,' expected-nvidia.csv | cut -d, -f2 | sort | uniq -c
-#   319 Allowed   50 Disallowed   42 NO-ORACLE
+#   319 Allowed   18 Disallowed   74 NO-ORACLE
+
+# 2b. the NVOR slot toggle: the 32 demoted rows + the round trip to 319/50/42
+./build-nvidia-oracle.sh --declined-list                     # 32 rows + their slots
+./build-nvidia-oracle.sh --roundtrip                         # the G16-analog gate
 grep -E 'STLR|LDAPR|DMB SY' MP-cg-sys-acqrel-2s.litmus MP-gc-sys-fence-2s.litmus
 
 # 3. drive the harness (synthesized; the sample includes a real MISMATCH)

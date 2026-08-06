@@ -18,8 +18,18 @@ same function herd7 computes:
   PHASE 2  PTX     the same 96 cells as LISA/Bell sys-scope tests, decided by
                    herd7 + bells/ptx.bell + cats/nvidia-ptx.cat (Lustig'19).
   PHASE 3  ORACLE  every two-sided 2-proc row of tests/het/expected-nvidia.csv
-                   must equal the rule's het verdict, so the bash oracle and this
-                   rule cannot drift apart.
+                   must equal the rule's het verdict AS GATED BY THE NVOR SLOT
+                   RULE, so the bash oracle and this rule cannot drift apart.
+
+The slot rule (NVOR, Nguyen 2026-08-06; env-research/NVOR-register.md) is the
+provenance layer above the ordering rule: a cell the ordering rule forbids is
+Disallowed only if every registration its derivation needs was REGISTERED.  Three
+were declined -- the gc-direction meet (Q2), the ARM-DMB-SY-is-a-PTX-fence.sc
+identification (Q3) and the unidirectional-fence semantics (Q4) -- so 32 cells
+are NO-ORACLE naming their own open slot.  `nvor_slots' here is a SECOND,
+independent implementation of build-nvidia-oracle.sh's gate, and the count is
+asserted: two implementations agreeing on a gate that is wrong in the same
+direction is the one thing neither can catch alone.
 
 The rule itself, the source of every table entry, and why a cell on which the two
 primary models disagree is NO-ORACLE rather than Disallowed: hetlitmus/docs/
@@ -128,7 +138,14 @@ def ptx_verdict(shape, f0, f1):
 
 
 def het_verdict(shape, cut, cpu_tok, gpu_tok):
-    """cut = 'cg' or 'gc' (device of P0, P1).  -> Disallowed/NO-ORACLE/Allowed"""
+    """cut = 'cg' or 'gc' (device of P0, P1).  -> Disallowed/NO-ORACLE/Allowed
+
+    THE PURE ORDERING RULE.  It knows nothing about the NVOR registrations; the
+    slot gate is applied on top, in phase_oracle, so that this function stays
+    the thing Phases 1 and 2 machine-check against the two solvers.  Mixing the
+    provenance decision in here would contaminate the only statement those
+    phases can make.
+    """
     p = pairs(shape)
     C, G = CPU_FENCE[cpu_tok], GPU_FENCE[gpu_tok]
     icpu = cut.index("c")
@@ -138,6 +155,39 @@ def het_verdict(shape, cut, cpu_tok, gpu_tok):
     role = [None, None]
     role[icpu], role[igpu] = ROLE[C], ROLE[G]
     return "Disallowed" if sync_ok(shape, role[0], role[1]) else "NO-ORACLE"
+
+
+# --- the NVOR slot gate (Nguyen 2026-08-06; env-research/NVOR-register.md) ----
+# An INDEPENDENT re-implementation of build-nvidia-oracle.sh's slot gate, in a
+# different language over a differently-derived cycle table.  A row whose
+# Disallowed derivation needs a DECLINED registration is NO-ORACLE in the CSV,
+# and this is the second measurement of which rows those are:
+#
+#   GC      Q2 -- the symmetric meet (GPU-producer direction).  DECLINED.
+#   SC      Q3 -- an ARM DMB SY IS a PTX fence.sc for the Fence-SC order, the
+#                 only route that cuts an rf-free cycle.  DECLINED.
+#   UNIDIR  Q4 -- fence.acquire / fence.release semantics (PTX ISA 8.6/SM_90,
+#                 postdating Lustig'19).  DECLINED.
+#
+# Counted, not merely applied: EXPECT_NVOR_DEMOTED below is asserted, so a gate
+# that silently widened or narrowed reddens this phase instead of agreeing with
+# a CSV that widened or narrowed the same way.
+EXPECT_NVOR_DEMOTED = 32
+# The registration ID each slot names.  A demoted row's Source must carry its
+# own ID -- naming the SPECIFIC declined question, never a blanket punt.
+NVOR_SLOT_ID = {"GC": "NVOR-Q2", "SC": "NVOR-Q3", "UNIDIR": "NVOR-Q4"}
+
+
+def nvor_slots(shape, cut, gpu_tok):
+    """The declined registrations a Disallowed derivation of this cell needs."""
+    slots = []
+    if cut[0] == "g":
+        slots.append("GC")
+    if not rf_dirs(shape):
+        slots.append("SC")
+    if gpu_tok in ("rel", "acq"):
+        slots.append("UNIDIR")
+    return slots
 
 
 # --- solvers ----------------------------------------------------------------
@@ -286,6 +336,7 @@ def phase_oracle(quiet):
     bad = []
     csv = os.path.join(HETDIR, "expected-nvidia.csv")
     n = 0
+    demoted = []
     with open(csv) as fh:
         for line in fh:
             if line.startswith("#") or line.startswith("Litmus,"):
@@ -298,6 +349,21 @@ def phase_oracle(quiet):
             c = m.group("c") or ("ra" if m.group("a") else "sy")
             g = m.group("g") or ("ra" if m.group("a") else "sc")
             want = het_verdict(m.group("shape"), m.group("cut"), c, g)
+            slots = nvor_slots(m.group("shape"), m.group("cut"), g)
+            if want == "Disallowed" and slots:
+                # The ordering rule forbids, but the derivation needs a
+                # registration Nguyen declined -> NO-ORACLE, and the CSV row
+                # must SAY SO: naming the slot is the Q0 no-blanket-punting
+                # guard, and a row that merely went NO-ORACLE without one would
+                # be indistinguishable from a pattern that failed to complete.
+                want = "NO-ORACLE"
+                demoted.append(name)
+                if verdict == want:
+                    for s in slots:
+                        if NVOR_SLOT_ID[s] not in line:
+                            bad.append(
+                                "ORACLE %s: demoted for slot %s but its Source "
+                                "never names %s" % (name, s, NVOR_SLOT_ID[s]))
             n += 1
             if verdict != want:
                 bad.append("ORACLE %s: csv=%s rule=%s" % (name, verdict, want))
@@ -307,11 +373,19 @@ def phase_oracle(quiet):
         print("  %d rows checked on MP/SB/LB/R/S -- the emitted fence-pair cells"
               "\n  PLUS the pre-existing `-fence-2s' and `-acqrel-2s' rows read "
               "as the (sy,sc) and (ra,ra) cells" % n)
+        print("  %d of them are NVOR-demoted (Q2/Q3/Q4 declined) and each names "
+              "its own open slot" % len(demoted))
     if n != EXPECT_ORACLE_ROWS:
         bad.append("ORACLE: read %d two-sided 2-proc rows, expected %d -- the "
                    "phase is checking a DIFFERENT set of rows than it claims "
                    "(a name-regex that stopped matching, or a corpus change "
                    "that was not recounted)" % (n, EXPECT_ORACLE_ROWS))
+    if len(demoted) != EXPECT_NVOR_DEMOTED:
+        bad.append("ORACLE: the NVOR slot gate demotes %d rows here but the "
+                   "adjudication demotes exactly %d -- this gate and the "
+                   "generator agreeing on a WIDER or NARROWER gate is the one "
+                   "failure two independent implementations cannot catch on "
+                   "their own" % (len(demoted), EXPECT_NVOR_DEMOTED))
     return bad
 
 
@@ -359,6 +433,13 @@ INJECTIONS = [
     ("the name regex stops matching the `st'/`ld' CPU cells (phase half-blind)",
      "D.TWOS = __import__('re').compile(D.TWOS.pattern.replace('ra|sy|st|ld', 'ra|sy'))",
      "ORACLE"),
+    # The NVOR slot gate, both directions.  NARROW is the dangerous one: it
+    # re-arms 32 Disallowed verdicts that rest on declined registrations, i.e.
+    # it manufactures a falsification surface out of unregistered premises.
+    ("the NVOR slot gate goes NARROW -- no row needs a declined registration",
+     "D.nvor_slots = lambda *a: []", "ORACLE"),
+    ("the NVOR slot gate goes WIDE -- every cell claims an open slot",
+     "D.nvor_slots = lambda *a: ['GC']", "ORACLE"),
 ]
 
 
@@ -371,7 +452,7 @@ def bite():
                   "def snap():\n"
                   "    return (frozenset(D.ORD['ST']), frozenset(D.ORD['Acquire']),"
                   " frozenset(D.ROLE['Acquire']), D.sync_ok, dict(D.GPU_FENCE),"
-                  " D.TWOS.pattern)\n"
+                  " D.TWOS.pattern, D.nvor_slots)\n"
                   "before = snap()\n"
                   "%s\n"
                   "assert before != snap(), 'injection was vacuous'\n"
