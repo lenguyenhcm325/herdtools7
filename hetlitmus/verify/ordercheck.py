@@ -25,11 +25,19 @@ The slot rule (NVOR, Nguyen 2026-08-06; env-research/NVOR-register.md) is the
 provenance layer above the ordering rule: a cell the ordering rule forbids is
 Disallowed only if every registration its derivation needs was REGISTERED.  Three
 were declined -- the gc-direction meet (Q2), the ARM-DMB-SY-is-a-PTX-fence.sc
-identification (Q3) and the unidirectional-fence semantics (Q4) -- so 32 cells
+identification (Q3) and the unidirectional-fence semantics (Q4) -- so 34 cells
 are NO-ORACLE naming their own open slot.  `nvor_slots' here is a SECOND,
 independent implementation of build-nvidia-oracle.sh's gate, and the count is
 asserted: two implementations agreeing on a gate that is wrong in the same
 direction is the one thing neither can catch alone.
+
+That failure then HAPPENED, and neither the second implementation nor the count
+pin caught it: both keyed the gc slot to the test's NAME TAG rather than to the
+DIRECTION of the rf that carries the sw, so both were wrong by the same 2 rows
+and the count and sha were stable at the wrong value.  Phase E's BLIND
+re-derivation found it; NVOR Phase D3 (2026-08-06) repaired both predicates
+independently and the count moved 32 -> 34.  See `sw_devdir' below and
+env-research/NVOR-DR-nvidia-oracle.md.
 
 The rule itself, the source of every table entry, and why a cell on which the two
 primary models disagree is NO-ORACLE rather than Disallowed: hetlitmus/docs/
@@ -137,6 +145,15 @@ def ptx_verdict(shape, f0, f1):
     return "Forbidden" if ok else "Allowed"
 
 
+def cell_roles(cut, cpu_tok, gpu_tok):
+    """Role sets of a het cell, indexed by PROC.  cut = 'cg' or 'gc', i.e.
+    cut[i] is the device letter of proc i."""
+    role = [None, None]
+    role[cut.index("c")] = ROLE[CPU_FENCE[cpu_tok]]
+    role[cut.index("g")] = ROLE[GPU_FENCE[gpu_tok]]
+    return role
+
+
 def het_verdict(shape, cut, cpu_tok, gpu_tok):
     """cut = 'cg' or 'gc' (device of P0, P1).  -> Disallowed/NO-ORACLE/Allowed
 
@@ -148,12 +165,9 @@ def het_verdict(shape, cut, cpu_tok, gpu_tok):
     """
     p = pairs(shape)
     C, G = CPU_FENCE[cpu_tok], GPU_FENCE[gpu_tok]
-    icpu = cut.index("c")
-    igpu = cut.index("g")
-    if p[icpu] not in ORD[C] or p[igpu] not in ORD[G]:
+    if p[cut.index("c")] not in ORD[C] or p[cut.index("g")] not in ORD[G]:
         return "Allowed"
-    role = [None, None]
-    role[icpu], role[igpu] = ROLE[C], ROLE[G]
+    role = cell_roles(cut, cpu_tok, gpu_tok)
     return "Disallowed" if sync_ok(shape, role[0], role[1]) else "NO-ORACLE"
 
 
@@ -171,17 +185,49 @@ def het_verdict(shape, cut, cpu_tok, gpu_tok):
 #
 # Counted, not merely applied: EXPECT_NVOR_DEMOTED below is asserted, so a gate
 # that silently widened or narrowed reddens this phase instead of agreeing with
-# a CSV that widened or narrowed the same way.
-EXPECT_NVOR_DEMOTED = 32
+# a CSV that widened or narrowed the same way.  It was 32 until NVOR Phase D3
+# (2026-08-06) -- see sw_devdir.
+EXPECT_NVOR_DEMOTED = 34
 # The registration ID each slot names.  A demoted row's Source must carry its
 # own ID -- naming the SPECIFIC declined question, never a blanket punt.
 NVOR_SLOT_ID = {"GC": "NVOR-Q2", "SC": "NVOR-Q3", "UNIDIR": "NVOR-Q4"}
 
 
-def nvor_slots(shape, cut, gpu_tok):
+def sw_devdir(shape, cut, role):
+    """Which DEVICE PRODUCES the value the synchronization rides on: 'cg', 'gc'
+    or None when no rf carries a completing pattern.
+
+    NVOR Phase D3 (2026-08-06).  Until then both this gate and the shell
+    generator asked `is this test NAMED gc-?' (`cut[0] == "g"'), which answers
+    "which device sits on P0", not "does the derivation need a GPU-producer
+    observation to be morally strong".  They coincide when the cycle has a
+    single Rfe edge -- MP and S -- and both are vacuous when it has none (R,
+    SB).  LB has TWO, so a cg-NAMED LB test synchronizes gc-wards whenever its
+    CPU primitive carries only the acquire role.  Phase E's blind re-derivation
+    found two rows shipping Disallowed on the DECLINED Q2 meet because of it,
+    and neither implementation nor the count pin could see it (both were wrong
+    by the same rows).  env-research/NVOR-DR-nvidia-oracle.md.
+
+    Written over `rf_dirs' and the per-proc role sets rather than over the
+    generator's branch flags ON PURPOSE: this is the second, independent
+    measurement of the same property, and a transliteration of the shell would
+    reproduce the shell's mistakes.
+
+    When BOTH edges carry a completing pattern the cell is keyed to `cg': that
+    is the direction NVOR-Q1 REGISTERS, and a row must be keyed to the route its
+    verdict actually rests on.
+    """
+    fires = {cut[s] + cut[d] for (s, d) in sorted(rf_dirs(shape))
+             if "rel" in role[s] and "acq" in role[d]}
+    if not fires:
+        return None
+    return "cg" if "cg" in fires else "gc"
+
+
+def nvor_slots(shape, cut, gpu_tok, role):
     """The declined registrations a Disallowed derivation of this cell needs."""
     slots = []
-    if cut[0] == "g":
+    if sw_devdir(shape, cut, role) == "gc":
         slots.append("GC")
     if not rf_dirs(shape):
         slots.append("SC")
@@ -349,7 +395,8 @@ def phase_oracle(quiet):
             c = m.group("c") or ("ra" if m.group("a") else "sy")
             g = m.group("g") or ("ra" if m.group("a") else "sc")
             want = het_verdict(m.group("shape"), m.group("cut"), c, g)
-            slots = nvor_slots(m.group("shape"), m.group("cut"), g)
+            slots = nvor_slots(m.group("shape"), m.group("cut"), g,
+                               cell_roles(m.group("cut"), c, g))
             if want == "Disallowed" and slots:
                 # The ordering rule forbids, but the derivation needs a
                 # registration Nguyen declined -> NO-ORACLE, and the CSV row
@@ -434,12 +481,25 @@ INJECTIONS = [
      "D.TWOS = __import__('re').compile(D.TWOS.pattern.replace('ra|sy|st|ld', 'ra|sy'))",
      "ORACLE"),
     # The NVOR slot gate, both directions.  NARROW is the dangerous one: it
-    # re-arms 32 Disallowed verdicts that rest on declined registrations, i.e.
+    # re-arms 34 Disallowed verdicts that rest on declined registrations, i.e.
     # it manufactures a falsification surface out of unregistered premises.
     ("the NVOR slot gate goes NARROW -- no row needs a declined registration",
      "D.nvor_slots = lambda *a: []", "ORACLE"),
     ("the NVOR slot gate goes WIDE -- every cell claims an open slot",
      "D.nvor_slots = lambda *a: ['GC']", "ORACLE"),
+    # THE D3 INJECTION.  The exact pre-D3 predicate, restored: the GC slot keyed
+    # to the test's NAME TAG instead of to the direction of the rf that carries
+    # the sw.  It is the corruption that shipped -- both implementations had it,
+    # so the count and sha pins were stable at the wrong value and only a blind
+    # re-derivation could find it.  It must now redden ORACLE by name, which is
+    # what makes the name-tag shortcut provably dead in THIS implementation
+    # (the generator's own half is bitten separately in tests/cram).
+    ("the GC slot reverts to the NAME TAG (`is the test named gc-?') instead of"
+     " the sw-carrying rf's direction",
+     "D.nvor_slots = lambda shape, cut, gpu_tok, role: "
+     "(['GC'] if cut[0] == 'g' else []) "
+     "+ ([] if D.rf_dirs(shape) else ['SC']) "
+     "+ (['UNIDIR'] if gpu_tok in ('rel', 'acq') else [])", "ORACLE"),
 ]
 
 

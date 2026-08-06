@@ -38,15 +38,20 @@ DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
 
 # The Disallowed census the gate asserts (it is not merely reported).  It was 50
 # until the NVOR regeneration (Nguyen 2026-08-06; env-research/NVOR-register.md)
-# demoted 32 of them to NO-ORACLE -- the 19 gc-cut rows whose derivation needs
-# the SYMMETRIC MEET (Q2 declined), the 2 rf-free cg rows that need an ARM DMB SY
-# to BE a PTX fence.sc (Q3 declined) and the 11 cg rows that need the
-# unidirectional-fence semantics (Q4 declined).  What survives is 18 rows, all
-# CPU-producer: LB-cg 6 + MP-cg 6 + S-cg 6, each of them {acqrel, fence} on the
-# diagonal plus four order-pair cells whose GPU half is a rel/acq atom pair or a
-# fence.sc.  Derivations: env-research/impl-briefs/Q10-REPORT.md, Q10b-REPORT.md,
+# demoted 34 of them to NO-ORACLE -- the 23 rows whose derivation needs the
+# SYMMETRIC MEET in the GPU-PRODUCER direction (Q2 declined), the 3 rf-free rows
+# that need an ARM DMB SY to BE a PTX fence.sc (Q3 declined) and the 8 cg rows
+# that need the unidirectional-fence semantics (Q4 declined).  What survives is
+# 16 rows, all CPU-producer: LB-cg 4 + MP-cg 6 + S-cg 6.  MP-cg and S-cg carry
+# {acqrel, fence} on the diagonal plus four order-pair cells; LB-cg carries the
+# same six MINUS `ld.ra' and `ld.sc', which NVOR Phase D3 (2026-08-06) demoted
+# because DMB LD supplies only the acquire role, so their only synchronizing
+# route runs GPU-producer -> CPU-consumer -- the DECLINED Q2 meet, mis-scored as
+# cg by a slot gate that keyed on the test's NAME TAG instead of on the
+# direction of the rf that carries the sw (env-research/NVOR-DR-nvidia-oracle.md).
+# Derivations: env-research/impl-briefs/Q10-REPORT.md, Q10b-REPORT.md,
 # NVOR-phaseC-brief.md sect 3.1.
-N_DISALLOWED = 18
+N_DISALLOWED = 16
 
 # ---------------------------------------------------------------------------
 # THE LATTICE PARAMETER (memo PORT2-R2 7.D11, landed by P2a 2026-08-02).
@@ -62,9 +67,9 @@ N_DISALLOWED = 18
 #     run the IDENTICAL program and the "control" would vouch for nothing.
 #     `weakening_of' rejects it as "identical ordering strength", which is the
 #     fail-closed behaviour D11 asks for.
-#   * the Disallowed census goes 18 -> 19 (AMD: D26 2026-08-04 demoted the 127
+#   * the Disallowed census goes 16 -> 19 (AMD: D26 2026-08-04 demoted the 127
 #     X2A-carried rows to NO-ORACLE, pre-strike 146; NVIDIA: NVOR 2026-08-06
-#     demoted 32 of 50).  The two numbers are now nearly equal and entirely
+#     demoted 34 of 50).  The two numbers are close and entirely
 #     unrelated.  The AMD census is still NOT all two-sided -- the 19 LB
 #     survivors include one-sided cells -- which is why the x86 derivation is a
 #     generic search over the corpus rather than the NVIDIA name cascade.
@@ -72,7 +77,7 @@ N_DISALLOWED = 18
 # LATTICE is module state read by _parse_instr and audit_map.  The default is
 # `aarch64', so the NVIDIA path is byte-for-byte what it was.
 LATTICE = "aarch64"
-N_DISALLOWED_BY_LATTICE = {"aarch64": 18, "x86": 19}
+N_DISALLOWED_BY_LATTICE = {"aarch64": 16, "x86": 19}
 
 
 def set_lattice(name):
@@ -611,7 +616,7 @@ def audit_map(text, tests, oracle):
             errors.append("%s: Disallowed row names no .litmus" % name)
             continue
         # "Disallowed => two-sided" is a property of the NVIDIA census only (all
-        # 18 of its Disallowed rows are `-2s' cells -- Q10).  The AMD census has
+        # 16 of its Disallowed rows are `-2s' cells -- Q10).  The AMD census has
         # 42 one-sided Disallowed rows and 4 fully relaxed ones, so asserting it
         # there would be asserting a fact about the wrong oracle.
         if LATTICE == "aarch64" and not tests[name].two_sided():

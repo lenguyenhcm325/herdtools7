@@ -685,7 +685,7 @@ hetlitmus-cpustress: | build
 	@ echo "HetLitmus Layer-3 CPU+interconnect stress liveness: OK"
 
 ### hetlitmus-controlmap: the positive control (hetlitmus/docs/positive-control.md).
-### Every one of the 18 Disallowed tests must have a mutant mu(T) that EXISTS and is
+### Every one of the 16 Disallowed tests must have a mutant mu(T) that EXISTS and is
 ### labelled Allowed, re-derived from the corpus sources + the oracle and never
 ### from the test's name (MP-gc-sys-acquire and two siblings do not exist at all).
 ### It fails closed: a missing mutant breaks the build rather than skipping the
@@ -708,8 +708,8 @@ hetlitmus-controlmap: | build
 ### x86 the CPU strength lattice loses its middle rung, so a candidate that only
 ### moves within {ra,st,ld} is NOT a weakening there.  The oracle it is derived
 ### against is expected-amd.csv and its census is 19 Disallowed, not the NVIDIA
-### lane's 18 (AMD: D26 2026-08-04 demoted 127 of 146; NVIDIA: NVOR 2026-08-06
-### demoted 32 of 50 -- two unrelated strikes that happen to land one apart).
+### lane's 16 (AMD: D26 2026-08-04 demoted 127 of 146; NVIDIA: NVOR 2026-08-06
+### demoted 32 of 50, and its Phase-D3 repair 2 more -- unrelated strikes).
 ### Regenerate with:
 ###   python3 hetlitmus/verify/controlmap.py --lattice x86 --emit \
 ###     > hetlitmus/tests/het/control-map-amd.csv
@@ -750,26 +750,39 @@ hetlitmus-oracle:
 ### hetlitmus-nvroundtrip: the NVOR slot toggle's round trip + contingency list
 ### (the AMD G16 analog; NVOR, Nguyen 2026-08-06, env-research/NVOR-register.md).
 ### The adjudication DECLINED three registrations the Disallowed surface rested
-### on -- the gc-direction meet (Q2, 19 rows), ARM-DMB-SY-is-a-PTX-fence.sc (Q3,
-### 2) and the unidirectional-fence semantics (Q4, 11) -- so 32 rows are
-### NO-ORACLE and the census is 319/18/74, not 319/50/42.  The demotion gates the
+### on -- the gc-direction meet (Q2, 23 rows), ARM-DMB-SY-is-a-PTX-fence.sc (Q3,
+### 3) and the unidirectional-fence semantics (Q4, 8) -- so 34 rows are
+### NO-ORACLE and the census is 319/16/76, not 319/50/42.  The demotion gates the
 ### SLOT, never the verdict: NVOR_ACCEPT_DECLINED=1 re-derives the pre-
 ### regeneration verdicts into a SEPARATE file (expected-nvidia-declined.csv --
 ### a counterfactual can never clobber the oracle), and this asserts the round
-### trip touches EXACTLY those 32 rows, that each of them goes NO-ORACLE ->
+### trip touches EXACTLY those 34 rows, that each of them goes NO-ORACLE ->
 ### Disallowed out of a named UNKEYED class, and that nothing else moves.  It
 ### also re-prints the per-row contingency ("observing one of these outcomes on
 ### GH200 is DATA, not a refutation") and asserts the printed set is the pinned
-### 32.  Both run INSIDE build-nvidia-oracle.sh on every generation, before the
+### 34.  Both run INSIDE build-nvidia-oracle.sh on every generation, before the
 ### mv; this target is the same guards named and runnable on their own.
-### Bite it by widening or narrowing the gate in a scratch copy -- the census
-### pin, the demoted-set sha pin and the round trip each redden by name.
-### Pure bash, ~0.5 s, no nvcc, no GPU.
+### THE SLOT KEYS ON THE rf DIRECTION, NOT THE TEST NAME (NVOR Phase D3,
+### 2026-08-06).  Phase E's BLIND re-derivation found that both of this gate's
+### implementations asked "is this test NAMED gc-?", which is a different
+### question from "does the derivation need a GPU-producer observation to be
+### morally strong"; they diverge on LB, whose cycle has two Rfe edges, and two
+### rows shipped Disallowed on the DECLINED Q2 meet as a result.  Because BOTH
+### implementations were wrong by the SAME rows, the count and sha pins were
+### stable at the wrong value -- the one failure the register's sect 4 names as
+### uncatchable by either alone.  `--bite' is that predicate's own evidence: it
+### rewrites the generator three ways (the exact pre-D3 name-tag shortcut; the
+### same shortcut restricted to rf-carrying cycles, which re-arms the two rows;
+### the cg/gc tie-break inverted, which strips four sound LB rows of their
+### registered route) and requires each to redden one of the generator's own
+### pins BY NAME, after proving the injection non-vacuous with cmp.
+### Pure bash, ~1 s, no nvcc, no GPU.
 hetlitmus-nvroundtrip:
 	@ echo
 	bash hetlitmus/tests/het/build-nvidia-oracle.sh --roundtrip
 	bash hetlitmus/tests/het/build-nvidia-oracle.sh --declined-list
-	@ echo "HetLitmus NVOR slot toggle: OK (round trip exact on the 32 demoted rows)"
+	bash hetlitmus/tests/het/build-nvidia-oracle.sh --bite
+	@ echo "HetLitmus NVOR slot toggle: OK (round trip exact on the 34 demoted rows; and the direction predicate bites)"
 
 ### hetlitmus-amd-oracle: the SAME check for the AMD MI300A oracle.  Separate
 ### target because expected-amd.csv is a separate file with its own Model string
@@ -887,9 +900,9 @@ hetlitmus-amdprov:
 ### brackets (E4/E2 for struck and inadmissible ones, E7 for the rest);
 ### B4 E6 on a KEYLESS Allowed row, not merely an instrument-carrying one;
 ### B6 E2 corpus-wide and E8 requiring every NVOR-demoted row to name its own
-### registration ID in a citation block.  Also pinned: census 319/18/74; the
-### 32-row demotion set by count, per-registration histogram and sha
-### 71ebe7baba4fbb83 (the builder's own number, a third implementation beside
+### registration ID in a citation block.  Also pinned: census 319/16/76; the
+### 34-row demotion set by count, per-registration histogram and sha
+### 31df21956128093d (the builder's own number, a third implementation beside
 ### ordercheck.py); the unidirectional-fence exposure as a SPEC-LAG measure
 ### (64-row namespace 42 A / 22 N, 40 rows where the promotion fires, and the
 ### 17 that NEEDED the 8.6 semantics keeping their Phase-A name-set sha even
@@ -964,8 +977,10 @@ hetlitmus-dup: | build
 ###   ORACLE  all 128 two-sided 2-proc rows of expected-nvidia.csv -- an asserted
 ###           count, so neither can the bash oracle and the rule drift apart nor
 ###           can a half-blind phase pass
-### --bite corrupts the rule six ways and requires each to redden the phase that
-### names it.  ~3 s; no nvcc, no GPU.
+### --bite corrupts the rule nine ways and requires each to redden the phase that
+### names it -- including a revert of the NVOR slot gate to the pre-D3 NAME-TAG
+### shortcut, which must redden ORACLE on the two LB-cg rows Phase E's blind
+### re-derivation found.  ~3 s; no nvcc, no GPU.
 hetlitmus-order: | build
 	@ echo
 	python3 hetlitmus/verify/ordercheck.py
@@ -981,13 +996,13 @@ hetlitmus-order: | build
 ###                      never yield a credible null; every liveness disqualifier
 ###                      bites; ORACLE_UNSET fails closed.
 ###   Phase 2 (printout) the refutation claims are reachable from ORACLE_DISALLOWED
-###                      and from nothing else.  361 of the 411 het tests are not
+###                      and from nothing else.  395 of the 411 het tests are not
 ###                      should-be-forbidden, and a refutation printed on one of
 ###                      them is a false refutation of the compound model.  The
 ###                      verdict enum changing is not the deliverable; the sentence
 ###                      is.
 ###   Phase 3 (corpus)   all 411 emitted harnesses carry the oracle class
-###                      control-map.csv gives them (census 18 / 319 / 74, zero
+###                      control-map.csv gives them (census 16 / 319 / 76, zero
 ###                      untagged).  A rule that branches on a class the emitter
 ###                      never sets is a rule nobody runs.
 ###   Phase 4 (machine)  which MACHINE the printout names.  The interconnect prose

@@ -55,8 +55,9 @@ against the register and the committed CSV.  Two adjustments, both stated:
     observation, which is exactly the over-reach the direction rule exists to
     prevent.
   * The brief predates Nguyen's adjudication, so its entries 17-20 speak of 50
-    `Disallowed' rows.  The regeneration left 18.  Entry 20 is restated over
-    the surviving surface, and entry 19's datum was STRUCK from the corpus
+    `Disallowed' rows.  The regeneration left 18, and NVOR Phase D3 left 16.
+    Entry 20 is restated over the surviving surface, and entry 19's datum was
+    STRUCK from the corpus
     entirely by the regeneration (R2's disposition flip: Table 3 r5.1/5.2 is a
     CPU-only absence and Table 4 "lists only the scenarios where weak
     behaviors were detected", so neither half contains a het both-sided-fence
@@ -214,7 +215,7 @@ ANCHORS = (
       "Bagchi 5.4 QUALIFIER -- the paper's invalidations do not appear to directly propagate to the GPU L1 caches which is measured at cta scope and this row carries none"),
      (),
      "restated over the post-adjudication census: Bagchi anchors NONE of the "
-     "18 surviving Disallowed rows at row level, and the two explicit "
+     "16 surviving Disallowed rows at row level, and the two explicit "
      "absence/qualifier notes are how that is said in the CSV"),
     (21, "NO-ORACLE MCA frontier (34 rows)", "NO-ORACLE",
      "sect 2.1 p68 deferral", SCOPE, CORR, (),

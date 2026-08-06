@@ -973,8 +973,9 @@ def phase7(C, rows):
 # PHASE 8 -- G10.  The downstream census pins, as a LEDGER.
 #
 # memo 9.4 G10 wants every downstream census recomputed from first principles.
-# Today those pins are the NVIDIA oracle's (18 / 319 / 74 since the NVOR
-# regeneration of 2026-08-06 demoted 32 rows; it was 50 / 319 / 42) and the AMD run lane
+# Today those pins are the NVIDIA oracle's (16 / 319 / 76 since the NVOR
+# regeneration of 2026-08-06 demoted 32 rows and its Phase-D3 repair 2 more; it
+# was 50 / 319 / 42) and the AMD run lane
 # does not exist yet, so flipping them here would break a live gate for a lane
 # nothing runs.  What this phase does instead is FAIL CLOSED on drift in either
 # direction: each pin is read from its file, asserted to still be the NVIDIA
@@ -986,8 +987,8 @@ DOWNSTREAM = [
      "shared by both oracles -- the corpus is one corpus"),
     ("hetlitmus/verify/verdictcheck.py",
      r'^CENSUS = \{"Disallowed": (\d+), "Allowed": (\d+), "NO-ORACLE": (\d+)\}',
-     "18/319/74", "19/258/134", "verdictcheck.CENSUS"),
-    ("hetlitmus/verify/controlmap.py", r"^N_DISALLOWED = (\d+)", "18", "19",
+     "16/319/76", "19/258/134", "verdictcheck.CENSUS"),
+    ("hetlitmus/verify/controlmap.py", r"^N_DISALLOWED = (\d+)", "16", "19",
      "controlmap.N_DISALLOWED -- and its lattice is AArch64 (memo 7.D11)"),
 ]
 
@@ -1512,9 +1513,9 @@ def bite():
     # G10 corruption + omission: move a downstream pin / delete it
     for label, rel, old, new in (
             ("G10/corrupt", "hetlitmus/verify/verdictcheck.py",
-             'CENSUS = {"Disallowed": 18', 'CENSUS = {"Disallowed": 146'),
+             'CENSUS = {"Disallowed": 16', 'CENSUS = {"Disallowed": 146'),
             ("G10/omit   ", "hetlitmus/verify/controlmap.py",
-             "N_DISALLOWED = 18", "# N_DISALLOWED removed")):
+             "N_DISALLOWED = 16", "# N_DISALLOWED removed")):
         tmp = tempfile.mkdtemp(prefix="amdorder-g10-")
         try:
             (Path(tmp) / "hetlitmus" / "verify").mkdir(parents=True)

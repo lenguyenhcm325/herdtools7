@@ -33,6 +33,30 @@ refutable prediction.
   $ grep -c '_rec.het_oracle = ORACLE_NONE;' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
   1
 
+The same emitted-harness evidence for the NVOR Phase-D3 repair (2026-08-06).
+LB-cg-sys-ld.ra-2s is a cg-NAMED test whose ONLY synchronizing route runs
+GPU-producer -> CPU-consumer: DMB LD carries the acquire role alone, so it
+cannot head a release pattern, and LB's second communication edge is an rf.  It
+shipped Disallowed against the DECLINED gc meet until the slot gate was re-keyed
+from the test's name tag to the DIRECTION of the rf that carries the sw.  A
+demotion that stopped at the CSV would leave this harness still printing a
+refutation claim, so the harness itself is pinned: no mutant, no Layer-A control,
+class ORACLE_NONE.  Its cg-routed sibling LB-cg-sys-sy.ra-2s (DMB SY supplies
+the release role) is unaffected and still carries its control -- which is what
+makes this a DIRECTION pin and not a shape pin.
+  $ litmus7 -gpu-target cuda -o . ../het/LB-cg-sys-ld.ra-2s.litmus >/dev/null 2>&1
+  $ grep -c 'HET_MU_NAME NULL' LB-cg-sys-ld.ra-2s/LB-cg-sys-ld.ra-2s.cu
+  1
+  $ grep -c '#define HET_CONTROL_COMPILED_IN 0' LB-cg-sys-ld.ra-2s/LB-cg-sys-ld.ra-2s.cu
+  1
+  $ grep -c '_rec.het_oracle = ORACLE_NONE;' LB-cg-sys-ld.ra-2s/LB-cg-sys-ld.ra-2s.cu
+  1
+  $ litmus7 -gpu-target cuda -o . ../het/LB-cg-sys-sy.ra-2s.litmus >/dev/null 2>&1
+  $ grep -c '#define HET_CONTROL_COMPILED_IN 1' LB-cg-sys-sy.ra-2s/LB-cg-sys-sy.ra-2s.cu
+  1
+  $ grep -c '_rec.het_oracle = ORACLE_DISALLOWED;' LB-cg-sys-sy.ra-2s/LB-cg-sys-sy.ra-2s.cu
+  1
+
 HET_CONTROL_COMPILED_IN=1 is the highest-stakes value in the codebase: it says a
 real mu(T) (Layer A) is CO-RUNNING in this launch, so a null may be read against
 it.  Flip it without the co-run behind it and every "Never" silently becomes a
@@ -46,7 +70,7 @@ The Layer-B canary rides a SEPARATE flag rather than widening this one.  "A
 canary is co-running" and "the minimal mutant of this test is co-running" are
 different claims, and only the second licenses a credible null; collapsed into
 one bit, a null on a test that has no mutant at all would start reading as
-vouched-for.  So the Layer-A guard is exactly the 18 Disallowed tests, and a
+vouched-for.  So the Layer-A guard is exactly the 16 Disallowed tests, and a
 canary-only harness says so in its own flag.
   $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -c 'HET_MU_NAME NULL' S-cg-sys-fence/S-cg-sys-fence.cu
@@ -80,9 +104,9 @@ THE ORACLE CLASS.  het_verdict() must know which of the three classes a harness
 is in, because the sentence it prints differs: on a Disallowed test a sighting
 refutes the model's prediction; on an oracle-Allowed test the weak outcome is
 expected, and seeing it confirms the model is not over-strong; a NO-ORACLE row
-claims neither.  Only 18 of the 411 rows are Disallowed -- 319 are Allowed and 74
+claims neither.  Only 16 of the 411 rows are Disallowed -- 319 are Allowed and 76
 are NO-ORACLE -- so a harness that framed every test as should-be-forbidden would
-put 393 loud false refutations on the table.  Each class carries its own tag,
+put 395 loud false refutations on the table.  Each class carries its own tag,
 read from control-map.csv field 2, and the emitter never falls back to a default.
   $ litmus7 -gpu-target cuda -o . ../het/IRIW-cgcg-sys-fence-2s.litmus >/dev/null 2>&1
   $ grep -h '_rec.het_oracle' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu S-cg-sys-fence/S-cg-sys-fence.cu IRIW-cgcg-sys-fence-2s/IRIW-cgcg-sys-fence-2s.cu
@@ -232,14 +256,14 @@ and carries no mutant at all.
   1
 
 The windowed control detector itself is pinned on a SURVIVING Disallowed row --
-it is emitted on all 18 of them.
+it is emitted on all 16 of them.
   $ litmus7 -gpu-target cuda -o . ../het/LB-cg-sys-fence-2s.litmus >/dev/null 2>&1
   $ grep -c 'if (_weak) { _rec.control_target_count++; _rec.control_win\[het_win_of(_f, SIZE_OF_TEST)\]++; }' LB-cg-sys-fence-2s/LB-cg-sys-fence-2s.cu
   1
 
 A MEASURED COVERAGE LOSS, pinned as an absence so its return is visible.
 control_exhaustive_valid = _mu_exh is emitted only when the MUTANT is windowed,
-and after NVOR no surviving Disallowed row has a windowed mutant (all 18 are
+and after NVOR no surviving Disallowed row has a windowed mutant (all 16 are
 LB-cg / MP-cg / S-cg, whose mutants are one-sided T_L<=1 variants).  That code
 path is therefore instantiated by ZERO shipping harnesses today.  It is not dead
 code -- NVOR_ACCEPT_DECLINED=1 or a future registration re-arms the SB and R rows

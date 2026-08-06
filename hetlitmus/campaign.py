@@ -6,14 +6,14 @@ A defensible "Never" needs a bound, and a bound costs thousands of runs per test
 of the three levers that shrink that cost are pure scheduling, and this driver is both.
 
   LEVER 1 -- only 92 of the 411 tests need a bound at all.
-      18 Disallowed  the CMCM validation claim  -> run to a bound (or a refutation)
-      74 NO-ORACLE   characterization           -> run to a bound
+      16 Disallowed  the CMCM validation claim  -> run to a bound (or a refutation)
+      76 NO-ORACLE   characterization           -> run to a bound
      319 Allowed     need only to FIRE ONCE     -> a positive is self-vouching, so
                      they stop at the first clean sighting
      The Disallowed/NO-ORACLE split moved 50/42 -> 18/74 with the NVOR regeneration
-     (2026-08-06).  The 92 that need a bound did NOT move, so no budget arithmetic
-     changes; what changed is how many of them can refute rather than only
-     characterize.
+     and 18/74 -> 16/76 with its Phase-D3 repair (both 2026-08-06).  The 92 that
+     need a bound did NOT move, so no budget arithmetic changes; what changed is
+     how many of them can refute rather than only characterize.
      The Allowed sweep is scheduled first, and not only because it is cheap: its
      observed rows are the rate population the het p_min is derived from, and p_min
      sizes every bound budget (het_verdict.h HET_P_MIN).  The sweep surfaces the

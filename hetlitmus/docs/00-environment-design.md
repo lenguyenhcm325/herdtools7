@@ -175,8 +175,10 @@ store-only (2+2W) shapes — which have no reader — use `observer_unique_count
 neither channel fails closed. And the verdict is **oracle-aware**: a sighting REFUTES only on an
 `ORACLE_DISALLOWED` test, CONFIRMS on the Allowed rows, CHARACTERIZES the NO-ORACLE rows. The
 class split moves with the corpus — read it from `hetlitmus/tests/het/control-map.csv` (today:
-**18 Disallowed / 319 Allowed / 74 NO-ORACLE** over 411 tests — 50/319/42 until NVOR
-(2026-08-06) demoted 32 rows; the same census is pinned in
+**16 Disallowed / 319 Allowed / 76 NO-ORACLE** over 411 tests — 50/319/42 until NVOR
+(2026-08-06) demoted 32 rows, and 18/319/74 until that day's Phase-D3 repair demoted 2
+more when a blind re-derivation found the slot gate keying on the test NAME instead of
+on the direction of the synchronizing `rf`; the same census is pinned in
 `verify/verdictcheck.py:CENSUS` and gated by `make hetlitmus-verdict`).
 
 ### 3.8 Positive control / liveness  [→ `Q4-positive-control.md`]

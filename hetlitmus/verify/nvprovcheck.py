@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """nvprovcheck.py -- the citation-PROVENANCE gate behind tests/het/expected-nvidia.csv.
 
-NVOR Phases A (mechanize) and D2 (repair + flip).  The NVIDIA-lane mirror of
-amdprovcheck.py, which mechanized the same fault for expected-amd.csv: the
-source whitelist admitted `[CMCM]' at PAPER granularity, but transferability is
-a property of SECTIONS.  The AMD regeneration (D26) demoted the 127 rows CMCM
-sect 5-6 carried; the NVOR regeneration (Phase D1, 2026-08-06) demoted 32 more
-here.  This file is the mechanism that keeps the fault out.
+NVOR Phases A (mechanize), D2 (repair + flip) and D3 (the blind-pass repair).
+The NVIDIA-lane mirror of amdprovcheck.py, which mechanized the same fault for
+expected-amd.csv: the source whitelist admitted `[CMCM]' at PAPER granularity,
+but transferability is a property of SECTIONS.  The AMD regeneration (D26)
+demoted the 127 rows CMCM sect 5-6 carried; the NVOR regeneration (Phase D1,
+2026-08-06) demoted 32 more here, and Phase D3 (same day) 2 more, when Phase E's
+BLIND re-derivation found the slot gate keying on the test's NAME TAG rather
+than on the DIRECTION of the rf that carries the synchronization.  This file is
+the mechanism that keeps the fault out.
 
 POST-REGENERATION POSTURE -- READ THIS FIRST.
 Phase A pinned the fault NUMERICALLY (E2 = 2 / E3 = 0 / E5 = 11 / E6 = 21, sha
@@ -130,10 +133,10 @@ claim too, which is what E6 is for.
       per-row property; the SET pins below are what catch two implementations
       agreeing in the same wrong direction.
 
-Also pinned: the post-regeneration census 319/18/74 and the row count; the
-32-row demotion set by count, by per-registration histogram and by sha
-71ebe7baba4fbb83 (the builder's own pin -- a count alone survives demoting the
-WRONG 32 rows); the unidirectional-fence namespace as a SPEC-LAG measure rather
+Also pinned: the post-regeneration census 319/16/76 and the row count; the
+34-row demotion set by count, by per-registration histogram and by sha
+31df21956128093d (the builder's own pin -- a count alone survives demoting the
+WRONG 34 rows); the unidirectional-fence namespace as a SPEC-LAG measure rather
 than a verdict measure (64 rows partitioned 42 Allowed / 22 NO-ORACLE, of which
 the 17 whose derivation NEEDED the 8.6 semantics keep their Phase-A name-set sha
 7214d368f5078129 and shape histogram even though every one of them is now
@@ -374,7 +377,7 @@ def inline_scan_set(table, struck):
 
 # ---- pins: the shape of the committed CSV (post-NVOR-D1) ------------------
 EXPECT_ROWS = 411
-EXPECT_CENSUS = {"Allowed": 319, "Disallowed": 18, "NO-ORACLE": 74}
+EXPECT_CENSUS = {"Allowed": 319, "Disallowed": 16, "NO-ORACLE": 76}
 EXPECT_COMMA_ROWS = 32              # Source strings split across CSV fields 4+
 
 # THE CLEAN INVARIANT.  Phase A pinned the fault; this pins its ABSENCE.
@@ -386,9 +389,18 @@ EXPECT_STRUCK = 12                  # armed; Phase A pinned this list EMPTY
 # ordercheck.py EXPECT_NVOR_DEMOTED -- three implementations, one number).
 DEMOTED_MARK = "cycle cut UNKEYED"
 REG_ID = "decision NVOR-"
-EXPECT_DEMOTED = 32
-EXPECT_DEMOTED_SHA = "71ebe7baba4fbb83"     # sha256[:16], builder convention
-EXPECT_DEMOTED_IDS = {"NVOR-Q2": 19, "NVOR-Q3": 3, "NVOR-Q4": 17}
+EXPECT_DEMOTED = 34
+EXPECT_DEMOTED_SHA = "31df21956128093d"     # sha256[:16], builder convention
+EXPECT_DEMOTED_IDS = {"NVOR-Q2": 23, "NVOR-Q3": 3, "NVOR-Q4": 17}
+# NVOR Phase D3 (2026-08-06) moved 32 -> 34 and Q2 19 -> 23.  The GC slot had
+# been keyed to the test's NAME TAG rather than to the DIRECTION of the rf that
+# carries the sw; on LB (two Rfe edges) those differ.  +2 rows that had shipped
+# Disallowed on the DECLINED Q2 meet, +3 LB-cg rows that gain (gc) beside the
+# (unifence) they already carried, and R-gc-sys-fence-2s losing a (gc) that an
+# rf-free cycle cannot need.  EXPECT_86_* below is deliberately UNMOVED: none of
+# those six rows leaves or joins the `.rel-2s'/`.acq-2s' namespace and none
+# changes verdict inside it, so the Q4 name-set sha is the same 17 names.
+# env-research/NVOR-DR-nvidia-oracle.md.
 
 # The unidirectional-fence (PTX ISA 8.6 / SM_90) exposure, made arithmetic.
 # EXPECT_86_ROWS and its sha are Phase A's, UNCHANGED: the same 17 row names,

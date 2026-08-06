@@ -15,9 +15,10 @@ canary (`MP-{cg,gc}-sys-relaxed`, whose `Canary` field reads `self` — they can
 co-run themselves). See §5 and §11.
 
 **Counts move with the corpus; `control-map.csv` is the authority.** At the time of
-writing the corpus is 411 het tests, oracle census **18 Disallowed / 319 Allowed /
-74 NO-ORACLE** (it was 50/319/42 until the NVOR regeneration of 2026-08-06 demoted
-32 rows), so Layer A is compiled in on 18 and Layer B on 409. Re-measure
+writing the corpus is 411 het tests, oracle census **16 Disallowed / 319 Allowed /
+76 NO-ORACLE** (it was 50/319/42 until the NVOR regeneration of 2026-08-06 demoted
+32 rows, and 18/319/74 until that day's Phase-D3 repair demoted 2 more), so Layer A
+is compiled in on 16 and Layer B on 409. Re-measure
 rather than quote: `verify/controlmap.py --check` gates the map, and
 `verify/verdictcheck.py` phase 3 gates that the emitted corpus reproduces the census.
 
@@ -214,7 +215,7 @@ line around and the control would perturb the very test it exists to vouch for
 `gd_alloc_shared` arena, one cache line apart** — still the coherent allocator, which
 is what selects the property under test.
 
-**The non-Disallowed tests keep `HET_CONTROL_COMPILED_IN 0`** (361 of the 411 today),
+**The non-Disallowed tests keep `HET_CONTROL_COMPILED_IN 0`** (395 of the 411 today),
 and that is right:
 they have no known-forbidden cycle, so no mutant exists (Q4 §4.2), and `het_verdict()`
 still refuses to call any of their nulls credible. **B6c gives them a Layer-B canary
@@ -268,8 +269,8 @@ crossing C2C**. There is **no published numeric het hit-rate anywhere in the pap
 
 | gate | what it proves |
 |---|---|
-| `make hetlitmus-controlmap` | every Disallowed test (18/18 today; `controlmap.py:N_DISALLOWED`) has a μ(T) that **exists** and is **Allowed**, structurally identical to T and strictly weaker. Fails closed. |
-| `make hetlitmus-verdict` | **(B6c: three phases + `--bite`)** `het_verdict()` compiled from the **real emitted header**, fed synthetic records: all **seven** verdicts and all **three** oracle classes reachable (**provably not constant**), `exhaustive_valid == 0` ⇒ never credible, `ORACLE_UNSET` fails closed, every disqualifier bites, `tau_hot` bites exactly at `tau_hot`; the **refutation text** is reachable only from `ORACLE_DISALLOWED`; **every** emitted harness carries the right oracle class (411 today, census 18/319/74/0 — pinned in `verdictcheck.py:CENSUS`). `--bite` proves the gate FAILS on 5 injections. See §11. |
+| `make hetlitmus-controlmap` | every Disallowed test (16/16 today; `controlmap.py:N_DISALLOWED`) has a μ(T) that **exists** and is **Allowed**, structurally identical to T and strictly weaker. Fails closed. |
+| `make hetlitmus-verdict` | **(B6c: three phases + `--bite`)** `het_verdict()` compiled from the **real emitted header**, fed synthetic records: all **seven** verdicts and all **three** oracle classes reachable (**provably not constant**), `exhaustive_valid == 0` ⇒ never credible, `ORACLE_UNSET` fails closed, every disqualifier bites, `tau_hot` bites exactly at `tau_hot`; the **refutation text** is reachable only from `ORACLE_DISALLOWED`; **every** emitted harness carries the right oracle class (411 today, census 16/319/76/0 — pinned in `verdictcheck.py:CENSUS`). `--bite` proves the gate FAILS on 5 injections. See §11. |
 | `l0_tokens.sh selftest [8]` | B5's CPU/interconnect liveness gate **bites** — six injections, each `cmp -s`-verified to have actually changed the file. |
 | `hetlitmus-faithful` (`ptxcheck`) | every lane of **every co-running instance** is modelled — a missing control lane means the harness *reports* a positive control it is not running. `het_instances()` mirrors the emitter's population exactly (T / T+canary / T+μ+canary), and disagreeing is a hard failure. |
 | `hetlitmus-cram positive-control.t` | the emitted wiring: control names, the loud sentinel, `exhaustive_valid` per T_L class, the R→EXPLORATORY reporting demotion, **the oracle tag per class, the two compiled-in flags, and the canary's real co-run (name ≠ co-run)**. |
@@ -327,12 +328,13 @@ outcome printed:
 > `** the should-be-FORBIDDEN outcome was OBSERVED …`
 > `** A single sighting REFUTES the model's prediction for this test.`
 
-But the Disallowed rows are a small minority — **18 of the 411** today (it was 16 of
-338 when B6c found this, and 50 of 411 before NVOR). The **319 oracle-Allowed** rows are ones for which the
+But the Disallowed rows are a small minority — **16 of the 411** today (it was 16 of
+338 when B6c found this, 50 of 411 before NVOR and 18 before NVOR Phase D3). The
+**319 oracle-Allowed** rows are ones for which the
 weak outcome is *expected*, and observing it **confirms the CMCM is not over-strong**
-(Iorga's from-below half); the **74 NO-ORACLE** rows are ones where allowed-vs-forbidden
+(Iorga's from-below half); the **76 NO-ORACLE** rows are ones where allowed-vs-forbidden
 is itself unestablished. Calling either a refutation is exactly backwards.
-`verdictcheck.py`'s phase-2 message still counts them: "361 of the 411".
+`verdictcheck.py`'s phase-2 message counts them: "395 of the 411".
 
 **The sharpest instance:** `MP-cg-sys-relaxed` is oracle-**Allowed** *and* is the
 Layer-B canary named by the largest block of `control-map.csv` (335 rows today; its
@@ -367,9 +369,9 @@ co-running" and "the minimal mutant **of this test** is co-running" are differen
 claims, and only the second licenses a `CREDIBLE-NULL`. Collapsed into one bit, a null
 on a test that has **no mutant at all** would start reading as vouched-for — the same
 class of unfalsifiable-null bug the flag exists to prevent. So Layer A keeps its flag
-(exactly the Disallowed rows — 18 today) and Layer B got its own
+(exactly the Disallowed rows — 16 today) and Layer B got its own
 (`HET_CANARY_COMPILED_IN` — 1 on every row whose `Canary` field is neither `-` nor
-`self`, i.e. 409 of 411, **including** the 18 that also co-run a μ).
+`self`, i.e. 409 of 411, **including** the 16 that also co-run a μ).
 
 Beware `canary_name`: the map **names** a canary for **every** row (411), including
 the two that name *themselves*; only 409 **run** one.
@@ -396,5 +398,5 @@ padded arena), which is why `shared-alloc.t`'s per-variable guard moved to
 |---|---|
 | 1 — the rule | all **7** verdicts and all **3** oracle classes reachable (a rule that always returns one value is not a decision; an oracle branch keyed off a constant field is that bug in a new place); `ORACLE_UNSET` fails closed; every disqualifier still bites |
 | 2 — the printout | the three refutation claims (`should-be-FORBIDDEN`, `REFUTES the model's prediction`, `Disallowed outcome`) appear **iff** `ORACLE_DISALLOWED`. Checked **both ways** — absent from every Allowed/NO-ORACLE block *and* still present in the Disallowed sighting. **Phase 1 cannot see this**: the verdict enum changing is not the deliverable, the *sentence* is. |
-| 3 — the corpus | **every** emitted harness carries the class `control-map.csv` gives it (411 today; census **18 / 319 / 74**, pinned as `verdictcheck.py:CENSUS`), and **zero** untagged. A rule that branches on a class the emitter never sets is a rule nobody runs. |
+| 3 — the corpus | **every** emitted harness carries the class `control-map.csv` gives it (411 today; census **16 / 319 / 76**, pinned as `verdictcheck.py:CENSUS`), and **zero** untagged. A rule that branches on a class the emitter never sets is a rule nobody runs. |
 | `--bite` | **5 injections** (3 against the rule, 2 against the emitted corpus), each verified to have actually changed the code it corrupts. A gate never seen to fail is not evidence. |
