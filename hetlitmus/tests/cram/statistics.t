@@ -42,18 +42,26 @@ double-count R_eff.
   1
   $ grep -c 'het_env_long("HET_SEED", (long)HET_SEED)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
+  $ grep -c 'het_env_long("HET_RATE", 0)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -c 'het_env_long("HET_CONFIRM_RUNS", 30)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
   $ grep -c 'uint32_t _seed = _seed0 + (uint32_t)_run;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
 
 THE ADAPTIVE STOP IS THE HEADER'S RULE, consulted after every run -- the same
 pure function the campaign scheduler applies across invocations, so there is
-exactly one stopping policy.  The record also reports the window resolution the
-run realised: HET_NWIN is swept, and a record scored at one nwin must never be
-pooled with another (B7b).
+exactly one stopping policy.  The rule stays PURE, so the driver reads its two
+policy knobs and PASSES them; a rule that read its own environment could not be
+unit-tested from synthetic records.  The record also reports the window
+resolution the run realised: HET_NWIN is swept, and a record scored at one nwin
+must never be pooled with another (B7b).
 
-  $ grep -c 'het_campaign_should_stop(_recs, _nrec, _runs_budget, _p_goal)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  $ grep -c 'het_campaign_should_stop(_recs, _nrec, _runs_budget, _p_goal, _rate_mode, _confirm_runs)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
   $ grep -c 'HetCampaign MP-cg-sys-fence-2s stop=%s' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -c 'het_campaign_stop_why(_stop)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
   $ grep -c '_rec.nwin = (uint32_t)HET_NWIN;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1

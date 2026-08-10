@@ -35,6 +35,8 @@
 #   HET_RUNS_MAX   runs this invocation, clamped to the compiled NUMBER_OF_RUN
 #   HET_ADAPTIVE   1 => consult het_campaign_should_stop() after every run
 #   HET_P_GOAL     stop a bound-needing row once p_bound <= this
+#   HET_RATE       1 => a sighting stops nothing; the row runs to budget
+#   HET_CONFIRM_RUNS  runs a LONE clean sighting may hold a row open for
 #   HET_SEED       overrides the compiled seed base; MUST vary per invocation
 #
 # Ladder defaults, deliberately tiny -- this is a smoke ladder, not a campaign:
@@ -389,30 +391,27 @@ row 5 "stress off -> on ($T5)" "$([ $r5 -eq 0 ] && echo PASS || echo FAIL)" "kno
 # row CANNOT finish in one invocation.
 # =========================================================================
 echo; echo "== rung 6: campaign pooling =="
-# --control-map gets control-map.csv, the grounded source campaign.py's
-# read_control_map names.  Columns 1-2 of control-map.csv and expected-nvidia.csv
-# agree by construction (make hetlitmus-controlmap), and statscheck 6.0 gates
-# that campaign.py parses the header of each.
+# One stop rule per row, so the only knobs are the budget and the confirmation
+# window: the corpus is the whole schedule (campaign.py reads no map).
 r6=0
 STATE="$RESULTS/campaign-state.csv"
 python3 "$HERE/campaign.py" \
   --corpus "$TESTS_DIR" \
-  --control-map "$HERE/control-map.csv" \
   --runner "sh $HERE/run-one.sh {dir} {test}" \
   --tests "$(IFS=,; echo "${TESTS[*]}")" \
-  --budget-runs "$LADDER_BUDGET" --allowed-budget-runs "$LADDER_BUDGET" \
+  --budget-runs "$LADDER_BUDGET" \
   --seed0 "$LADDER_SEED0" --state "$STATE" \
   > "$RESULTS/campaign.log" 2>&1
 rc=$?
 [ "$rc" -eq 0 ] || { echo "  FAIL  campaign.py rc=$rc (see $RESULTS/campaign.log)"; r6=1; }
 if [ -r "$STATE" ]; then
-  minv="$(awk -F, 'NR>1 && $4!="" {if (m=="" || $4<m) m=$4} END{print m+0}' "$STATE")"
+  minv="$(awk -F, 'NR>1 && $3!="" {if (m=="" || $3<m) m=$3} END{print m+0}' "$STATE")"
   echo "    state: $STATE"
   column -s, -t < "$STATE" 2>/dev/null | cut -c1-160 | head -8 || head -8 "$STATE"
   if [ "${minv:-0}" -lt 2 ]; then
     echo "  note  a row took only ${minv:-0} invocation(s): pooling engaged for the"
-    echo "        others, but check WHY (an Allowed row that fired stops at OBSERVED,"
-    echo "        which is a legitimate early stop, not a fault)."
+    echo "        others, but check WHY (a row whose sighting corroborated stops"
+    echo "        there, which is a legitimate early stop, not a fault)."
   else
     echo "  ok    every row took >= 2 invocations -- pooling and B7 stats engaged"
   fi

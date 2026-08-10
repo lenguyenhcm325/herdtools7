@@ -336,17 +336,17 @@ RUNNER="timeout $HET_RUN_TIMEOUT sh $RUNONE {dir} {test}"
 # terminal row it finds in --state rather than re-running it, so without an
 # explicit --resume a repeat session invokes no harness at all and still reports a
 # complete one.  The short list is the subset that would also silently swallow a
-# raised --budget-runs: bound rows stopped BY budget, which a resume can only
-# leave at the budget they were measured with.  An Allowed row's budget is
-# campaign.py's own --allowed-budget-runs, which this wrapper does not set.
+# raised --budget-runs: rows stopped BY budget, which a resume can only leave at
+# the budget they were measured with.  Column 2 is the stop, column 4 the runs.
 STATE="$OUT/campaign-state.csv"
 RESUMABLE=0 ; RESUMABLE_SHORT=""
 if [ -r "$STATE" ]; then
-  RESUMABLE="$(awk -F, 'NR > 1 && ($3 == "OBSERVED" || $3 == "CONFIRMED" ||
-      $3 == "BOUND-MET" || $3 == "BUDGET" || $3 == "ERROR")' "$STATE" | wc -l)"
+  RESUMABLE="$(awk -F, 'NR > 1 && ($2 == "CORROBORATED" ||
+      $2 == "UNCONFIRMED-SIGHTING" || $2 == "BOUND-MET" || $2 == "BUDGET" ||
+      $2 == "ERROR")' "$STATE" | wc -l)"
   RESUMABLE_SHORT="$(awk -F, -v b="$BUDGET_RUNS" \
-    'NR > 1 && $3 == "BUDGET" && $2 != "Allowed" && $5 + 0 < b + 0 \
-     { printf "%s(%s runs) ", $1, $5 }' "$STATE")"
+    'NR > 1 && $2 == "BUDGET" && $4 + 0 < b + 0 \
+     { printf "%s(%s runs) ", $1, $4 }' "$STATE")"
 fi
 
 echo "=========================================================================="
@@ -370,7 +370,7 @@ else
 fi
 echo "  step 4  compile     comp.sh $GPU_TARGET + make $GPU_TARGET-bin, $ARCH_VAR=$ARCH"
 echo "  step 5  smoke rungs NOT IN THIS CHAIN (spotcheck/ladder.sh is driven separately)"
-echo "  step 6  campaign    campaign.py --characterization"
+echo "  step 6  campaign    campaign.py (characterization: one stop rule per row)"
 echo "  step 7  collect     probe, build logs, harness transcripts, campaign state, summary -> $OUT"
 if [ "$RESUMABLE" -gt 0 ]; then
   echo "  resume      $RESUMABLE terminal row(s) already in $STATE"
@@ -561,10 +561,7 @@ STEP=6
 export HET_RUN_LOG_DIR="$OUT/hetstats"
 TESTS_CSV="$(IFS=, ; echo "${CORPUS_TESTS[*]}")"
 CAMPAIGN_ARGS=(--corpus "$EMIT" --runner "$RUNNER" --tests "$TESTS_CSV"
-               --budget-runs "$BUDGET_RUNS" --state "$STATE"
-               # No harness carries a prediction, so no row of this campaign can
-               # agree or disagree with one, whatever the pair.
-               --characterization)
+               --budget-runs "$BUDGET_RUNS" --state "$STATE")
 if [ -n "$P_GOAL" ]; then CAMPAIGN_ARGS+=(--p-goal "$P_GOAL"); fi
 camp_rc=0
 python3 "$HETL/campaign.py" "${CAMPAIGN_ARGS[@]}" > "$OUT/campaign.log" 2>&1 || camp_rc=$?
@@ -576,7 +573,7 @@ tail -40 "$OUT/campaign.log" | sed 's/^/    /'
 STEP=7
 count_stop() {                  # <STOP> -> rows of the campaign state carrying it
   if [ ! -r "$STATE" ]; then echo 0 ; return ; fi
-  awk -F, -v s="$1" 'NR > 1 && $3 == s' "$STATE" | wc -l
+  awk -F, -v s="$1" 'NR > 1 && $2 == s' "$STATE" | wc -l
 }
 {
   echo "=========================================================================="
@@ -593,17 +590,18 @@ count_stop() {                  # <STOP> -> rows of the campaign state carrying 
     echo "  resumed     $RESUMABLE row(s) (not measured in this session)"
   fi
   echo "  transcripts $OUT/hetstats/   ($(find "$OUT/hetstats" -name '*.log' 2>/dev/null | wc -l) harness log(s))"
-  for s in OBSERVED CONFIRMED BOUND-MET BUDGET ERROR; do
+  for s in CORROBORATED UNCONFIRMED-SIGHTING BOUND-MET BUDGET ERROR; do
     n="$(count_stop "$s")"
-    if [ "$n" -gt 0 ]; then printf '              %-10s %d row(s)\n' "$s" "$n" ; fi
+    if [ "$n" -gt 0 ]; then printf '              %-21s %d row(s)\n' "$s" "$n" ; fi
   done
   echo "  reading     CHARACTERIZATION: no harness here carries a prediction, so no"
   echo "              row agrees or disagrees with one.  These rows say what the"
   echo "              machine does, and nothing about any model."
   case "$camp_rc" in
     0) echo "  verdict     session complete" ;;
-    1) echo "  verdict     *** the campaign reported an errored row or a corroborated"
-       echo "              sighting -- read $OUT/campaign.log before anything is claimed ***" ;;
+    1) echo "  verdict     *** the campaign reported an errored row or a lone sighting"
+       echo "              the confirmation window closed on -- read $OUT/campaign.log"
+       echo "              before anything is claimed ***" ;;
     *) echo "  verdict     *** the campaign refused (exit $camp_rc): see $OUT/campaign.log ***" ;;
   esac
   echo "=========================================================================="

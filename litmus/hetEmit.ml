@@ -2063,6 +2063,8 @@ end
             s "  if (_runs_budget < 1) _runs_budget = 1;\n" ;
             s "  int _adaptive = (int)het_env_long(\"HET_ADAPTIVE\", 0);\n" ;
             s "  double _p_goal = het_env_double(\"HET_P_GOAL\", -1.0);\n" ;
+            s "  int _rate_mode = (int)het_env_long(\"HET_RATE\", 0);\n" ;
+            s "  int _confirm_runs = (int)het_env_long(\"HET_CONFIRM_RUNS\", 30);\n" ;
             s "  uint32_t _seed0 = (uint32_t)het_env_long(\"HET_SEED\", (long)HET_SEED);\n" ;
             s "  int _nrec = 0;\n" ;
             s "  for (int _run=0; _run<_runs_budget; ++_run) {\n" ;
@@ -2374,14 +2376,17 @@ end
                statistic already computed, so consulting it after each run gives the
                campaign scheduler its per-test early stop with no new decision
                machinery.  With HET_ADAPTIVE unset the loop simply runs to
-               _runs_budget. *)
+               _runs_budget.  The rule stays PURE, so the two policy knobs it takes
+               (HET_RATE, HET_CONFIRM_RUNS) are read HERE and passed in. *)
             s "    if (_adaptive) {\n" ;
-            s "      het_campaign_stop_t _stop = het_campaign_should_stop(_recs, _nrec, _runs_budget, _p_goal);\n" ;
+            s "      het_campaign_stop_t _stop = het_campaign_should_stop(_recs, _nrec, _runs_budget, _p_goal, _rate_mode, _confirm_runs);\n" ;
             s "      if (_stop != HET_CAMPAIGN_CONTINUE) {\n" ;
             s (Printf.sprintf
                  "        printf(\"HetCampaign %s stop=%%s runs=%%d budget=%%d p_goal=%%g\\n\",\n\
                   \               het_campaign_stop_name(_stop), _nrec, _runs_budget, _p_goal);\n"
                  tname) ;
+            s "        { const char *_why = het_campaign_stop_why(_stop);\n" ;
+            s "          if (*_why) printf(\"  %s.\\n\", _why); }\n" ;
             s "        break;\n" ;
             s "      }\n" ;
             s "    }\n" ;

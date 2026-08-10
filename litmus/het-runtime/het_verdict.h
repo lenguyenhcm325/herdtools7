@@ -395,6 +395,13 @@ static int het_win_of(long f, long n) {
  *   HET_ADAPTIVE   1 => consult het_campaign_should_stop() after every run
  *   HET_P_GOAL     stop a bound-needing test once p_bound <= this (unset/<=0
  *                  => never bound-stop; run to budget)
+ *   HET_RATE       1 => run to budget even once the outcome has been seen, so a
+ *                  row that fires yields a RATE instead of a first sighting.
+ *                  Sightings then stop nothing; the bound and the budget still do
+ *   HET_CONFIRM_RUNS  how many runs a LONE clean sighting may hold the row open
+ *                  for while it fails to reproduce (default 30, floor 1).  This
+ *                  is the wait the corroboration bar costs, and it outranks the
+ *                  budget stop -- see the stopping rule at the foot of this file
  *   HET_SEED       overrides the compiled HET_SEED base.  THE SCHEDULER MUST
  *                  VARY THIS PER INVOCATION: re-running the same seeds adds no
  *                  fresh phase/seed draws, and pooling two such invocations as
@@ -1468,6 +1475,11 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
      calibrated off another shape's burstiness is a weaker claim, so which one was
      used is recorded and printed rather than left to the reader to guess. */
   for (i = 0; i < n; i++) {
+    /* An UNSTAMPED cell is unreadable here too (the stamp test is section 2's), and
+       its residue would do two things: put a number in the printed mu report that
+       came from nothing, and SELECT the channel below -- a residue mu_total picks
+       mu(T) over a canary that actually fired. */
+    if (recs[i].rec_magic != HET_REC_MAGIC) continue;
     if (recs[i].control_compiled_in) mu_present = 1;
     mu_total     += recs[i].control_target_count;
     st->can_total += recs[i].canary_target_count;
@@ -2120,10 +2132,25 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
  * is met or its budget is spent.  Most nulls converge early and only the stubborn
  * shapes need the long tail (Kirkham 4.2 ranks SB hardest on every chip).
  *
- * A LONE sighting does NOT stop the row: one clean run cannot rule out a per-run
- * artefact, so the row keeps running to corroborate -- to budget, today.  The
- * confirmation window that bounds that wait, and the rate mode that disables the
- * sighting stop, are not here yet.
+ * A lone clean sighting does not stop the row: one clean run cannot rule out a
+ * per-run artefact, so the row keeps running to corroborate -- for up to
+ * confirm_runs runs (HET_CONFIRM_RUNS), then stops UNCONFIRMED-SIGHTING, which is
+ * neither a null nor a corroboration: it says the confirmation window closed on a
+ * sighting that did not reproduce, and nothing more.  A degenerate-only sighting is
+ * not a clean one, so it takes the null arm and spends its budget.
+ *
+ * THE WINDOW OUTRANKS THE BUDGET STOP, because a budget caps the cost of a row that
+ * is producing nothing and a lone sighting is not nothing -- ending one at BUDGET
+ * banks "seen once, stopped looking".  So while a clean sighting is uncorroborated
+ * and the window is open, this rule answers CONTINUE, never STOP_BUDGET.  It does
+ * not outrank the caller's run capacity: budget is also how many runs the caller can
+ * hold (the emitted driver's record array is NUMBER_OF_RUN long).  With budget below
+ * the window the in-binary loop ends at its own bound with this rule still saying
+ * CONTINUE, so the row prints no stop line and is left for the cross-invocation
+ * scheduler to grow with a fresh seed rather than recorded as budget-stopped.
+ *
+ * rate_mode (HET_RATE=1) measures a rate instead of finding a first sighting:
+ * sightings stop nothing and the row runs to its bound or its budget like any other.
  *
  * A pure function of the record stream, like het_verdict() and
  * het_stats_compute(), so the in-binary adaptive loop (HET_ADAPTIVE=1) and
@@ -2146,30 +2173,55 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
  * default p_goal here -- a stopping target is a campaign decision, like p_min. */
 typedef enum {
   HET_CAMPAIGN_CONTINUE = 0,
-  HET_CAMPAIGN_STOP_CONFIRMED,   /* sighting corroborated to HET_CORROB_RUNS runs */
-  HET_CAMPAIGN_STOP_BOUND_MET,   /* null row: p_bound <= p_goal                   */
-  HET_CAMPAIGN_STOP_BUDGET       /* budget exhausted (the only stop with nothing
-                                    to show; the outcome says what it means)      */
+  HET_CAMPAIGN_STOP_CORROBORATED, /* sighting reproduced in HET_CORROB_RUNS runs  */
+  HET_CAMPAIGN_STOP_UNCONFIRMED,  /* a LONE clean sighting the confirmation window
+                                     closed on without corroborating it           */
+  HET_CAMPAIGN_STOP_BOUND_MET,    /* null row: p_bound <= p_goal                  */
+  HET_CAMPAIGN_STOP_BUDGET        /* budget exhausted (the only stop with nothing
+                                     to show; the outcome says what it means)     */
 } het_campaign_stop_t;
 
+/* hetlitmus/campaign.py mirrors these strings (its check_flag_mirror pins them
+   against this switch), so they are an interface and not a printout. */
 static const char *het_campaign_stop_name(het_campaign_stop_t s) {
   switch (s) {
-  case HET_CAMPAIGN_STOP_CONFIRMED: return "CONFIRMED";
-  case HET_CAMPAIGN_STOP_BOUND_MET: return "BOUND-MET";
-  case HET_CAMPAIGN_STOP_BUDGET:    return "BUDGET";
-  default:                          return "CONTINUE";
+  case HET_CAMPAIGN_STOP_CORROBORATED: return "CORROBORATED";
+  case HET_CAMPAIGN_STOP_UNCONFIRMED:  return "UNCONFIRMED-SIGHTING";
+  case HET_CAMPAIGN_STOP_BOUND_MET:    return "BOUND-MET";
+  case HET_CAMPAIGN_STOP_BUDGET:       return "BUDGET";
+  default:                             return "CONTINUE";
   }
+}
+
+/* UNCONFIRMED-SIGHTING is the one stop whose name is not its meaning, so it is the
+   one that carries a sentence -- and the sentence says what happened and stops
+   there.  Whether the outcome should have been seen is not a question this harness
+   answers (the comparison is offline, hetlitmus/oracle-compare.sh). */
+static const char *het_campaign_stop_why(het_campaign_stop_t s) {
+  return (s == HET_CAMPAIGN_STOP_UNCONFIRMED)
+    ? "the confirmation window closed on a lone clean sighting that did not reproduce"
+    : "";
 }
 
 static het_campaign_stop_t het_campaign_should_stop(const het_obs_record *recs,
                                                     int n, int budget,
-                                                    double p_goal) {
+                                                    double p_goal,
+                                                    int rate_mode,
+                                                    int confirm_runs) {
   het_stats_t st;
   if (n <= 0) return HET_CAMPAIGN_CONTINUE;
   het_stats_compute(recs, n, &st);
-  /* The tier is computed from k_eff's runs, so a sighting the decode guard
-     rejected can never de-schedule a test: an artefact must not buy a stop. */
-  if (st.tier == HET_SIGHT_CORROBORATED) return HET_CAMPAIGN_STOP_CONFIRMED;
+  /* A window shorter than one run is not a window, and a caller that asks for one
+     gets the shortest real one rather than an unbounded wait. */
+  if (confirm_runs < 1) confirm_runs = 1;
+  /* k_eff counts sightings that PASSED the decode guard, so an artefact can neither
+     stop a row here nor hold one open: a degenerate-only sighting leaves k_eff at 0
+     and takes the null arm below (st.tier alone would not -- it is set by k). */
+  if (st.k_eff > 0 && !rate_mode) {
+    if (st.tier == HET_SIGHT_CORROBORATED) return HET_CAMPAIGN_STOP_CORROBORATED;
+    if (n >= confirm_runs) return HET_CAMPAIGN_STOP_UNCONFIRMED;
+    return HET_CAMPAIGN_CONTINUE;               /* outranks the budget stop below */
+  }
   /* p_bound >= 0 already implies obs == NEVER (it is computed nowhere else); the
      k == 0 guard restates it so the policy reads as it is meant. */
   if (st.k == 0 && p_goal > 0.0 && st.p_bound >= 0.0

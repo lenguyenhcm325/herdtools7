@@ -125,7 +125,7 @@ whose condition fails is not a weaker experiment, it is undefined. That is why
 
 ## Knobs
 
-Exactly **five** runtime (`getenv`) knobs; everything else is compile-time and
+Exactly **seven** runtime (`getenv`) knobs; everything else is compile-time and
 is set through the compiler variable, e.g.
 `make cuda-bin NVCC="nvcc -DHET_MEM_STRESS_PCT=0"`.
 
@@ -135,6 +135,8 @@ is set through the compiler variable, e.g.
 | `HET_RUNS_MAX` | runs this invocation, clamped to the compiled `NUMBER_OF_RUN` (10) |
 | `HET_ADAPTIVE` | `1` ⇒ consult `het_campaign_should_stop()` after every run |
 | `HET_P_GOAL` | stop a bound-needing row once `p_bound <= this` |
+| `HET_RATE` | `1` ⇒ a sighting stops nothing; the row runs to budget |
+| `HET_CONFIRM_RUNS` | runs a lone clean sighting may hold a row open for (default 30) |
 | `HET_SEED` | overrides the compiled seed base; **must** vary per invocation |
 
 Growing R is done by re-invoking with a fresh seed (`campaign.py`), never by
@@ -155,13 +157,12 @@ floor — the likeliest thing to fire anywhere — rides along with all five.
 
 ## Known quirks, so nobody rediscovers them at $/hour
 
-* **`campaign.py --control-map` accepts either CSV** (fixed post-PORT1): its
-  header-skip once matched only `expected-nvidia.csv`'s `Litmus` header, so
-  `control-map.csv` was unreadable and early ladders fed it `expected-nvidia.csv`
-  as a workaround. Both headers are skipped now, statscheck phase 6.0 parses both
-  *real* files as a gate, and `ladder.sh` passes `control-map.csv` — the file
-  `read_control_map`'s docstring names. Columns 1–2 of the two files agree by
-  construction (`make hetlitmus-controlmap` gates it).
+* **`campaign.py` reads no map at all.** The corpus is the whole schedule and
+  every row takes one stop rule; the only knobs are `--budget-runs`, `--p-goal`,
+  `--confirm-runs` and `--rate`. A row that fires once and will not repeat runs
+  to the confirmation window (30 runs by default) **past** `--budget-runs`, and
+  ends `UNCONFIRMED-SIGHTING`; budget your instance time for that, not for the
+  budget alone.
 * **Rung 6 is the long one.** Five rows × up to `LADDER_BUDGET` runs ×
   `SIZE_OF_TEST=100000` iterations with full stress. Budget your instance time,
   or lower `LADDER_BUDGET` — but keep it **above 10** (`NUMBER_OF_RUN`), or a

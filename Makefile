@@ -798,10 +798,13 @@ hetlitmus-verdict: | build
 ###   producer    the per-window sub-tallies live BOTH ways on the real emitted scan
 ###   corpus      all 411 carry the post-pass + a decode channel
 ###   stop rule   het_verdict.h's own policy, which branches on no class: a
-###               corroborated sighting stops a row, an unstamped record buys no
-###               stop at all, a null stops at its bound or its budget
-###   scheduler   campaign.py on a stub runner -- still the class-keyed policy it
-###               reads out of a control map, recorded here, not endorsed
+###               corroborated sighting stops a row, a LONE one holds it open to
+###               the confirmation window and then ends it UNCONFIRMED-SIGHTING,
+###               HET_RATE turns the sighting stop off alone, an unstamped record
+###               buys no stop at all, a null stops at its bound or its budget
+###   scheduler   campaign.py on a stub runner: the SAME policy at the pooled
+###               scale, plus the mirror that rejects a header which moved the
+###               corroboration bar or renamed a stop
 ### --bite: cmp-verified injections into the statistics.  (B7/B7b)
 hetlitmus-stats: | build
 	@ echo
@@ -989,7 +992,6 @@ hetlitmus-d10: | build
 	@ echo "    ./<test>                            # SB and R must FIRE"
 	@ echo "  then, for the campaign:"
 	@ echo "    python3 hetlitmus/campaign.py --corpus $(HETD10OUT) \\"
-	@ echo "        --control-map $(HETD10OUT)/control-map-amd.csv \\"
 	@ echo "        --runner 'sh hetlitmus/spotcheck/run-one.sh {dir} {test}'"
 	@ echo "  (no --d10 flag: campaign.py reads cpu_only= off the HetStats line,"
 	@ echo "   so the WB-probe verdict cannot be forgotten at the command line.)"
@@ -1067,10 +1069,11 @@ hetlitmus-characterize-hw: | build
 ### Eight phases: --dry-run writes nothing at all; the chain end to end on each
 ### dialect, plus --reuse-emitted; the refusals, each by its own reason, and the
 ### unregistered pair, which is NOT one -- it warns once and emits a harness that
-### names no machine; campaign.py --characterization, where the same runner that
-### stops an Allowed row OBSERVED and a Disallowed row CONFIRMED under a control
-### map must reach neither, and the states no campaign may resume; the
-### machine-table reader, bounded to the table literal; every fail-closed handler,
+### names no machine; campaign.py's stop rule, where a reproduced sighting ends a
+### row CORROBORATED, a lone one outruns the budget to end UNCONFIRMED-SIGHTING at
+### the confirmation window, --rate runs both to budget, and a row banked by
+### another stop rule is not resumable; the machine-table reader, bounded to the
+### table literal; every fail-closed handler,
 ### under the condition it exists for (a failing compiler, a failing probe, two
 ### devices, an errored campaign, a doctored emission); a second session into a
 ### results dir that already holds one; and probe-hip.sh's exit paths.  --bite

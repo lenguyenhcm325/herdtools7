@@ -18,7 +18,7 @@ follow that choice.  Nothing here is x86-only, so the GH200 runs the same gate.
   PHASE 2  the chain end to end on each dialect this host reaches.
   PHASE 3  the refusals, each by its own reason -- and the unregistered pair,
            which is a WARNING and emits.
-  PHASE 4  campaign.py --characterization, and the states it may not resume.
+  PHASE 4  campaign.py's stop rule, and the states it may not resume.
   PHASE 5  the machine-table reader, bounded to the table literal.
   PHASE 6  the fail-closed handlers, each under its own induced condition.
   PHASE 7  a second session into a results dir that already holds one.
@@ -133,13 +133,11 @@ echo "stub-probe: wrote $RESULTS/probe.txt"
 
 BAD_PROBE = "#!/bin/sh\necho 'stub-probe: the device vanished' >&2\nexit 9\n"
 
-# A runner whose one line WOULD be an adjudication under a control map: k_eff>=1
-# stops an Allowed row OBSERVED and k_runs>=3 corroborates a Disallowed row into
-# CONFIRMED -- campaign.py's class-keyed scheduling, which it reads off the map and
-# which het_verdict.h's own stop rule no longer has.  Under --characterization
-# neither stop may be reachable.  The line is the shape het_stats_line prints: it
-# carries no class of its own, and campaign.py's parser keeps every key=value it
-# does not read, so a drifted field here would go unnoticed.
+# A runner that CORROBORATES on its first invocation: k_eff>=1 in k_runs >=
+# HET_CORROB_RUNS distinct clean runs is the one stop that means "nothing further is
+# bought by running this row".  The line is the shape het_stats_line prints, and
+# campaign.py's parser keeps every key=value it does not read, so a drifted field
+# here would go unnoticed.
 MATCHY_RUNNER = r'''#!/usr/bin/env python3
 import os, sys
 d = sys.argv[1]
@@ -149,6 +147,25 @@ print("HetStats %s cpu_only=0 obs=Sometimes R=10 usable=10 k=1 k_eff=1 k_runs=3 
       "tau_need=1 R_eff=0 p_bound=-1 P_rep=0.632 acf1=0.01 ks=pass ks_D=0.1 "
       "ks_Dcrit=0.2 ks_split=-1 sighting=CORROBORATED N=100000 frames=100000 "
       "flags=0x0" % os.path.basename(d))
+'''
+
+# ... and one that fires ONCE and then goes quiet: the row it drives is held open by
+# the confirmation window alone and ends UNCONFIRMED-SIGHTING when the window closes.
+LONE_RUNNER = r'''#!/usr/bin/env python3
+import os, sys
+d = sys.argv[1]
+cf = os.path.join(d, "inv.count")
+inv = (int(open(cf).read()) + 1) if os.path.exists(cf) else 1
+open(cf, "w").write(str(inv))
+fired = (inv == 1)
+print("HetStats %s cpu_only=0 obs=%s R=10 usable=10 k=%d k_eff=%d k_runs=%d "
+      "degen=0 first_sight=%d ctrl=canary mu_total=0 can_total=5000 win_n=1280 "
+      "nwin=128 F_win=1.05 F_cell=1.02 r_hat=inf mu_upper=0 tau_w=1.28 N_eff=100 "
+      "tau_need=1 R_eff=0 p_bound=-1 P_rep=-1 acf1=0.01 ks=pass ks_D=0.1 "
+      "ks_Dcrit=0.2 ks_split=-1 sighting=%s N=100000 frames=100000 flags=0x0"
+      % (os.path.basename(d), "Sometimes" if fired else "Never",
+         fired, fired, fired, 1 if fired else 0,
+         "UNCONFIRMED" if fired else "none"))
 '''
 
 PATHS_SHIM = ('HETL="%s"\nREPO="%s"\nBIN="%s"\nLITMUS7="%s"\nLIBDIR="%s"\n'
@@ -190,15 +207,34 @@ def run_wrapper(wrapper, args, env=None):
 
 
 def state_rows(path):
-    """(test, class, stop, runs) per row of a campaign state file."""
+    """(test, stop, runs) per row of a campaign state file: columns test, stop,
+    invocations, runs, ..."""
     rows = []
     with open(path) as fh:
         for i, line in enumerate(fh):
             f = line.rstrip("\n").split(",")
-            if i == 0 or len(f) < 5:
+            if i == 0 or len(f) < 4:
                 continue
-            rows.append((f[0], f[1], f[2], int(f[4])))
+            rows.append((f[0], f[1], int(f[3])))
     return rows
+
+
+# campaign.py's terminal stops, mirrored here so a session's own state file can be
+# read: a row that ended on anything else was written by another stop rule.
+TERMINAL = ("CORROBORATED", "UNCONFIRMED-SIGHTING", "BOUND-MET", "BUDGET", "ERROR")
+
+
+def state_is_terminal(pfx, rows, tests):
+    """Every test ran and every row ended on a stop this policy can write."""
+    bad = []
+    if sorted(t for t, _, _ in rows) != sorted(tests):
+        bad.append("%scampaign state covers %s, want %s"
+                   % (pfx, sorted(t for t, _, _ in rows), sorted(tests)))
+    for t, stop, _ in rows:
+        if stop not in TERMINAL:
+            bad.append("%s%s ended %r, which is not one of this stop rule's outcomes "
+                       "%s" % (pfx, t, stop, list(TERMINAL)))
+    return bad
 
 
 def state_notes(path):
@@ -211,8 +247,9 @@ def state_notes(path):
 # THE FIXTURE THIS HOST CAN DRIVE, and what litmus/hetMachine.ml says about its
 # two dialects.  The emitted link targets refuse a foreign host, so a corpus
 # whose CPU column is not this box's has no chain to drive here.  Every row of
-# every campaign is NO-ORACLE whatever the pair: no harness carries a prediction,
-# so the pair changes what a render may CLAIM and nothing about what it does.
+# every campaign takes the same stop rule whatever the pair: no harness carries a
+# prediction, so the pair changes what a render may CLAIM and nothing about what
+# it does.
 # ---------------------------------------------------------------------------
 _CUT = None
 
@@ -250,8 +287,6 @@ def fixture():
         }
     else:
         return None
-    for t in ("cuda", "hip"):
-        fx[t]["classes"] = dict.fromkeys(fx["tests"], "NO-ORACLE")
     return fx
 
 
@@ -367,10 +402,7 @@ def _e2e(wrapper, tmp, fx, target, arm, quiet):
             bad.append("%s: run-record.txt does not carry %r -- the value the "
                        "session turned on is not a recorded fact" % (target, frag))
     rows = state_rows(os.path.join(out, "campaign-state.csv"))
-    got = sorted((t, c) for t, c, _, _ in rows)
-    if got != sorted(arm["classes"].items()):
-        bad.append("%s: campaign state classes %s, want %s"
-                   % (target, got, sorted(arm["classes"].items())))
+    bad += state_is_terminal("%s: " % target, rows, fx["tests"])
     # An unregistered pair is WARNED about, not refused: the session runs, and
     # the one thing it loses is the machine its renders may name.
     if arm["state"] == "ABSENT" and "is in no row of litmus/hetMachine.ml" \
@@ -609,21 +641,36 @@ def phase3_refusals(wrapper, quiet=False):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 4 -- campaign.py --characterization.
+# PHASE 4 -- campaign.py's stop rule, and the states it may not resume.
 # ---------------------------------------------------------------------------
 CHAR_TESTS = ["CH-one", "CH-two"]
-STATE_COLS = ["test", "class", "stop", "invocations", "runs", "usable", "k",
-              "k_eff", "k_runs", "R_eff", "mu_upper_max", "pooled_bound", "nwin",
-              "tau_w", "N_eff", "tau_unresolved", "tau_need", "note"]
+STATE_COLS = ["test", "stop", "invocations", "runs", "usable", "k", "k_eff",
+              "k_runs", "first_sight", "R_eff", "mu_upper_max", "pooled_bound",
+              "nwin", "tau_w", "N_eff", "tau_unresolved", "tau_need", "cpu_only",
+              "note"]
+# The window is set BELOW the budget so the two are told apart by the run count
+# alone: a row ending at 30 runs was ended by the window, one ending at 60 by the
+# budget.
+CHAR_BUDGET, CHAR_CONFIRM = 60, 30
 
 
-def _campaign(campaign, corpus, runner, state, extra):
+def _campaign(campaign, corpus, runner, state, extra, budget=CHAR_BUDGET):
     return sh([sys.executable, campaign, "--corpus", corpus, "--runner",
                "%s %s {dir}" % (sys.executable, runner), "--state", state,
-               "--budget-runs", "30", "--allowed-budget-runs", "10"] + extra)
+               "--budget-runs", str(budget),
+               "--confirm-runs", str(CHAR_CONFIRM)] + extra)
 
 
-def phase4_characterization(campaign, quiet=False):
+def _fresh_corpus(tmp, name):
+    """A corpus of its own: LONE_RUNNER counts its invocations inside the harness
+    dir, so a second lone run over the same dirs would start already quiet."""
+    corpus = os.path.join(tmp, name)
+    for t in CHAR_TESTS:
+        os.makedirs(os.path.join(corpus, t))
+    return corpus
+
+
+def phase4_stoprule(campaign, quiet=False):
     bad = []
     tmp = tempfile.mkdtemp(prefix="runcheck4.")
     try:
@@ -631,102 +678,118 @@ def phase4_characterization(campaign, quiet=False):
         for t in CHAR_TESTS:
             os.makedirs(os.path.join(corpus, t))
         runner = write_exec(os.path.join(tmp, "matchy.py"), MATCHY_RUNNER)
-        cmap = os.path.join(tmp, "control-map.csv")
-        with open(cmap, "w") as fh:
-            fh.write("Test,Expected,Mu,Canary\n"
-                     "CH-one,Allowed,-,CH-two\nCH-two,Disallowed,mu,CH-two\n")
+        lone = write_exec(os.path.join(tmp, "lone.py"), LONE_RUNNER)
 
-        # EXACTLY ONE of the two switches, both ways.
-        for name, extra, frag in (
-                ("neither switch", [], "one of the arguments"),
-                ("both switches", ["--control-map", cmap, "--characterization"],
-                 "not allowed with argument")):
-            r = _campaign(campaign, corpus, runner,
-                          os.path.join(tmp, "s0.csv"), extra)
-            if r.returncode != 2 or frag not in r.stderr:
-                bad.append("[%s] exited %d without %r: %s"
-                           % (name, r.returncode, frag, r.stderr.strip()[-200:]))
-            elif not quiet:
-                print("      %-16s refused (rc=2)" % name)
-
-        # THE RUNNER IS ADJUDICATING-CAPABLE: under a control map its one line
-        # stops an Allowed row OBSERVED and corroborates a Disallowed row into
-        # CONFIRMED.  Without this the phase below would prove nothing -- a runner
-        # that can produce neither would "pass" it for free.
-        st_map = os.path.join(tmp, "mapped.csv")
-        r = _campaign(campaign, corpus, runner, st_map, ["--control-map", cmap])
-        stops = {t: s for t, _, s, _ in state_rows(st_map)}
-        if stops != {"CH-one": "OBSERVED", "CH-two": "CONFIRMED"}:
-            bad.append("the control-map run gave %s, want CH-one OBSERVED and "
-                       "CH-two CONFIRMED -- the runner is not adjudicating-capable "
-                       "and the characterization run below proves nothing" % stops)
+        # THE STOP THAT ENDS A ROW EARLY: a sighting reproduced across distinct clean
+        # runs.  Without it the phase below would prove nothing -- a runner whose
+        # rows can only run to budget would "pass" every assertion for free.
+        st_c = os.path.join(tmp, "corrob.csv")
+        r = _campaign(campaign, corpus, runner, st_c, [])
+        rows = {t: (stop, runs) for t, stop, runs in state_rows(st_c)}
+        if {t: rows.get(t, ("?", 0))[0] for t in CHAR_TESTS} != \
+                dict.fromkeys(CHAR_TESTS, "CORROBORATED"):
+            bad.append("the corroborating runner gave %s, want every row "
+                       "CORROBORATED -- this runner cannot stop a row early and the "
+                       "assertions below prove nothing" % rows)
+        elif r.returncode != 0:
+            bad.append("a campaign whose rows all CORROBORATED exited %d, want 0: a "
+                       "reproduced observation is the result, not an alarm"
+                       % r.returncode)
         elif not quiet:
-            print("      the same runner adjudicates under a map: OBSERVED + "
-                  "CONFIRMED (rc=%d)" % r.returncode)
+            print("      a reproduced sighting stops the row CORROBORATED (rc=0)")
 
-        # ... AND UNDER --characterization IT CANNOT.
-        st_ch = os.path.join(tmp, "char.csv")
-        r = _campaign(campaign, corpus, runner, st_ch, ["--characterization"])
-        if r.returncode != 0:
-            bad.append("--characterization exited %d: %s"
-                       % (r.returncode, (r.stdout + r.stderr)[-400:]))
-        rows = state_rows(st_ch)
-        for t, cls, stop, runs in rows:
-            if cls != "NO-ORACLE":
-                bad.append("%s is classed %s under --characterization" % (t, cls))
-            if stop not in ("BOUND-MET", "BUDGET"):
-                bad.append("%s stopped %s under --characterization -- only a bound "
-                           "or a spent budget is reachable here" % (t, stop))
-            # The bound-row budget (30), not the Allowed sweep's (10): a row
-            # scheduled as Allowed would have stopped three invocations earlier.
-            if stop == "BUDGET" and runs != 30:
-                bad.append("%s ran %d runs, want the bound-row budget 30 -- an "
-                           "Allowed sweep was scheduled after all" % (t, runs))
-        if len(rows) != len(CHAR_TESTS):
-            bad.append("--characterization scheduled %d row(s) of %d: every test "
-                       "must run" % (len(rows), len(CHAR_TESTS)))
-        for word in ("OBSERVED", "CONFIRMED", "MISMATCH", "MATCH"):
-            if word in open(st_ch).read():
-                bad.append("the characterization state carries %r -- a pair with no "
-                           "oracle has no prediction to agree or disagree with"
-                           % word)
-            if word in r.stdout:
-                bad.append("the characterization summary carries %r" % word)
-        # THE ONE PATH BY WHICH AN ADJUDICATION COULD STILL REACH A
-        # CHARACTERIZATION RUN: a state file carries terminal stops, and a resumed
-        # row inherits them.  Handing the run above's OWN state (CH-one OBSERVED,
-        # CH-two CONFIRMED) to --characterization must fail closed -- and so must a
-        # state whose class cell is blank, which names no stop rule at all and
-        # would otherwise be resumable by every campaign.
-        blank = os.path.join(tmp, "blank.csv")
-        with open(blank, "w", newline="") as fh:
+        # THE FLAGGED STOP, and the precedence that produces it: one sighting, then
+        # nulls.  The row is held open by the confirmation window and ended by it at
+        # 30 runs -- not carried to the 60-run budget, and not banked at the first
+        # sighting either.  It exits 1: a sighting that did not reproduce is not a
+        # row to be read unattended.
+        st_l = os.path.join(tmp, "lone.csv")
+        r = _campaign(campaign, _fresh_corpus(tmp, "lone"), lone, st_l, [])
+        for t, stop, runs in state_rows(st_l):
+            if (stop, runs) != ("UNCONFIRMED-SIGHTING", CHAR_CONFIRM):
+                bad.append("%s ended %s after %d run(s), want UNCONFIRMED-SIGHTING "
+                           "after %d: the confirmation window ends a lone sighting, "
+                           "not the budget and not the sighting itself"
+                           % (t, stop, runs, CHAR_CONFIRM))
+        if r.returncode != 1:
+            bad.append("a campaign with an UNCONFIRMED-SIGHTING row exited %d, want "
+                       "1: a sighting that would not reproduce demands a human"
+                       % r.returncode)
+        elif not quiet:
+            print("      a lone sighting ends UNCONFIRMED-SIGHTING at the window "
+                  "(%d runs, budget %d), rc=1" % (CHAR_CONFIRM, CHAR_BUDGET))
+
+        # THE PRECEDENCE, IN HARDWARE HOURS: the same row under a budget SMALLER than
+        # the window.  It must OVERSHOOT the budget and end at the window -- a row
+        # ended at BUDGET here would have banked "seen once, stopped looking".
+        st_p = os.path.join(tmp, "prec.csv")
+        _campaign(campaign, _fresh_corpus(tmp, "prec"), lone, st_p, [], budget=10)
+        for t, stop, runs in state_rows(st_p):
+            if (stop, runs) != ("UNCONFIRMED-SIGHTING", CHAR_CONFIRM):
+                bad.append("%s ended %s after %d run(s) under a 10-run budget, want "
+                           "UNCONFIRMED-SIGHTING after %d: an open sighting outranks "
+                           "the budget stop" % (t, stop, runs, CHAR_CONFIRM))
+        if not quiet and not bad:
+            print("      ... and outruns a 10-run budget to get there (the window "
+                  "outranks the budget stop)")
+
+        # --rate: the SAME corroborating runner must now reach the budget instead.
+        st_r = os.path.join(tmp, "rate.csv")
+        r = _campaign(campaign, corpus, runner, st_r, ["--rate"])
+        for t, stop, runs in state_rows(st_r):
+            if (stop, runs) != ("BUDGET", CHAR_BUDGET):
+                bad.append("%s ended %s after %d run(s) under --rate, want BUDGET "
+                           "after %d: rate mode turns the sighting stop off"
+                           % (t, stop, runs, CHAR_BUDGET))
+        if not quiet and not bad:
+            print("      --rate: the same rows run to BUDGET (%d runs)" % CHAR_BUDGET)
+
+        # No row of any of these campaigns may carry the retired vocabulary: no
+        # harness carries a prediction, so nothing here agrees or disagrees with one.
+        for st in (st_c, st_l, st_r):
+            body = open(st).read()
+            for word in ("Disallowed", "NO-ORACLE", "Allowed", "MISMATCH", "MATCH",
+                         "OBSERVED"):
+                if word in body:
+                    bad.append("%s carries %r -- a campaign that predicts nothing "
+                               "cannot record agreement with a prediction"
+                               % (os.path.basename(st), word))
+
+        # THE ONE PATH BY WHICH AN ADJUDICATION COULD STILL REACH A RUN: a state file
+        # carries terminal stops and a resumed row inherits them.  A row banked by
+        # the oracle-era rule (OBSERVED / CONFIRMED) names a stop this rule cannot
+        # write, so resuming it must fail closed rather than inherit it.
+        legacy = os.path.join(tmp, "legacy.csv")
+        with open(legacy, "w", newline="") as fh:
             w = csv.writer(fh)
             w.writerow(STATE_COLS)
             for t, stop in (("CH-one", "OBSERVED"), ("CH-two", "CONFIRMED")):
-                w.writerow([t, "", stop, 1, 10, 10, 1, 1, 3, "0", "0", "-1", 128,
-                            "1.28", "100", 0, 1, "banked by something"])
-        for name, state, frag in (
-                ("an oracle state", st_map, "classes its rows differently"),
-                ("a state with no class", blank, "no readable oracle class")):
-            r = _campaign(campaign, corpus, runner, state, ["--characterization"])
-            if r.returncode != 2:
-                bad.append("resuming %s under --characterization exited %d, want 2: "
-                           "the row would have inherited the OBSERVED or CONFIRMED "
-                           "an oracle campaign banked" % (name, r.returncode))
-            elif frag not in r.stderr:
-                bad.append("[%s] was refused for another reason: %s"
-                           % (name, r.stderr.strip()[-200:]))
-            elif not quiet:
-                print("      %-22s cannot be resumed by a characterization run "
-                      "(rc=2)" % name)
-        # D-MV5's banned artefact: nothing may have written a map to stand in for
-        # the one this pair does not have.
-        made = [f for f in os.listdir(tmp) if "control-map" in f and f != "control-map.csv"]
+                w.writerow([t, stop, 1, 10, 10, 1, 1, 3, 1, "0", "0", "-1", 128,
+                            "1.28", "100", 0, 1, 0, "banked by another rule"])
+        r = _campaign(campaign, corpus, runner, legacy, [])
+        if r.returncode != 2:
+            bad.append("resuming a state banked by another stop rule exited %d, want "
+                       "2: the row would have inherited an OBSERVED or CONFIRMED no "
+                       "harness here can produce" % r.returncode)
+        elif "cannot write" not in r.stderr:
+            bad.append("the legacy state was refused for another reason: %s"
+                       % r.stderr.strip()[-200:])
+        elif not quiet:
+            print("      a state banked by another stop rule is not resumable (rc=2)")
+
+        # ... and a row this rule DID write is resumed rather than re-run.
+        r = _campaign(campaign, corpus, runner, st_c, [])
+        if "skip  " not in r.stdout:
+            bad.append("a terminal row of this rule's own state was not resumed: %s"
+                       % r.stdout[-300:])
+        elif not quiet:
+            print("      a terminal row of its own state is resumed, not re-run")
+
+        # D-MV5's banned artefact: nothing may have written a control map to stand in
+        # for one this scheduler no longer reads at all.
+        made = [f for f in os.listdir(tmp) if "control-map" in f]
         if made:
             bad.append("a stand-in control map was created: %s" % made)
-        if not quiet and not bad:
-            print("      --characterization: %d NO-ORACLE row(s), each to its bound "
-                  "or its full budget, none adjudicating" % len(rows))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return bad
@@ -1194,23 +1257,22 @@ INJECTIONS = [
      lambda s: s.replace('    echo "hetlitmus-run: WARNING -- the pair $PAIR is in no row of \\',
                          '    echo "hetlitmus-run: (nothing to report) \\', 1),
      phase3_refusals, "says nothing about the unregistered pair"),
-    ("4", "campaign", "--characterization classes its rows Disallowed",
-     lambda s: s.replace('return dict.fromkeys(tests, "NO-ORACLE")',
-                         'return dict.fromkeys(tests, "Disallowed")', 1),
-     phase4_characterization, "classed Disallowed"),
-    ("4", "campaign", "the two switches stop being mutually exclusive",
-     lambda s: s.replace("klass = ap.add_mutually_exclusive_group(required=True)",
-                         "klass = ap.add_argument_group('oracle class')", 1),
-     phase4_characterization, "neither switch"),
-    ("4", "campaign", "a row is resumed across oracle classes",
-     lambda s: s.replace("            if pclass != st.oclass:",
+    ("4", "campaign", "a LONE sighting is banked as if it had reproduced",
+     lambda s: s.replace("            if self.k_runs >= CORROB_RUNS:",
+                         "            if self.k_eff >= 1:", 1),
+     phase4_stoprule, "UNCONFIRMED-SIGHTING"),
+    ("4", "campaign", "the budget ends a lone sighting before the window does",
+     lambda s: s.replace("            return self.stop            # outranks the "
+                         "budget stop below", "            pass", 1),
+     phase4_stoprule, "outranks the budget stop"),
+    ("4", "campaign", "--rate is read but never applied",
+     lambda s: s.replace("        if self.k_eff > 0 and not rate_mode:",
+                         "        if self.k_eff > 0:", 1),
+     phase4_stoprule, "rate mode turns the sighting stop off"),
+    ("4", "campaign", "a row banked by another stop rule is resumed anyway",
+     lambda s: s.replace("            if pstop and pstop not in TERMINAL:",
                          "            if False:", 1),
-     phase4_characterization, "an oracle state"),
-    ("4", "campaign", "a blank class cell counts as a matching class",
-     lambda s: s.replace("            if not pclass:", "            if False:", 1)
-                .replace("            if pclass != st.oclass:",
-                         '            if pclass not in ("", st.oclass):', 1),
-     phase4_characterization, "a state with no class"),
+     phase4_stoprule, "banked by another stop rule"),
     ("5", "wrapper", "the machine-table reader runs past the table literal",
      lambda s: s.replace("/^[ \\t]*\\][ \\t]*$/ { intab = 0 ; next }",
                          "/^[ \\t]*\\][ \\t]*$/ { next }", 1),
@@ -1414,10 +1476,7 @@ def hardware(wrapper=WRAPPER, quiet=False):
             if "arch_source=auto" not in record:
                 bad.append("the arch was not resolved on this box")
             rows = state_rows(os.path.join(out, "campaign-state.csv"))
-            got = sorted((t, c) for t, c, _, _ in rows)
-            if got != sorted(arm["classes"].items()):
-                bad.append("campaign state classes %s, want %s"
-                           % (got, sorted(arm["classes"].items())))
+            bad += state_is_terminal("", rows, fx["tests"])
             if "probe_status=OK" not in open(os.path.join(out, "probe.txt")).read():
                 bad.append("the device probe did not report OK")
             for t in fx["tests"]:
@@ -1817,8 +1876,8 @@ PHASES = [
      lambda q: phase2_e2e(WRAPPER, q)),
     ("3: the refusals by their own reasons; the unregistered pair by its warning",
      lambda q: phase3_refusals(WRAPPER, q)),
-    ("4: campaign.py --characterization",
-     lambda q: phase4_characterization(CAMPAIGN, q)),
+    ("4: campaign.py's stop rule and the states it may not resume",
+     lambda q: phase4_stoprule(CAMPAIGN, q)),
     ("5: the machine-table reader is bounded to the table",
      lambda q: phase5_reader(WRAPPER, q)),
     ("6: the fail-closed handlers, under their own conditions",

@@ -14,7 +14,7 @@
 #
 # WHAT IS IN IT
 #   tests/<name>/        the emitted harness dirs named in TESTS.txt
-#   control-map.csv      oracle class + mu(T) + canary per test  (campaign.py)
+#   control-map.csv      mu(T) + canary per test, for ladder.sh's rungs
 #   expected-nvidia.csv  the GH200 oracle -- carried for provenance, NOT to be
 #                        read as the oracle for a non-GH200 box
 #   campaign.py          the cross-invocation pooling driver
