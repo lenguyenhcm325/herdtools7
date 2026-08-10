@@ -3,9 +3,10 @@
 # HetLitmus device session: ONE entry point, one chain, on a real machine.
 # preflight -> probe -> emit -> compile -> campaign -> collect.  Every step
 # fails CLOSED with a named reason, and every value the session turned on --
-# the resolved device arch, the (CPU ISA x GPU dialect) pair, the control map
-# or the absence of one -- is written into the results dir as a fact, because
-# a run whose arch or oracle was decided invisibly cannot be read afterwards.
+# the resolved device arch, the (CPU ISA x GPU dialect) pair, the machine that
+# pair may name, the control map -- is written into the results dir as a fact,
+# because a run whose arch or target was decided invisibly cannot be read
+# afterwards.
 #
 # Composition only: probe.sh / probe-hip.sh probe, litmus7 emits, the emitted
 # comp.sh + Makefile build, campaign.py schedules, run-one.sh invokes.  What is
@@ -99,16 +100,16 @@ while [ $# -gt 0 ]; do
 done
 
 # --gpu-target is mandatory and is never inferred from what happens to be
-# installed: it names the GPU half of the oracle pair, so a default would pick
-# which model the session claims to test.
+# installed: it names the GPU half of the pair, so a default would pick which
+# machine the renders claim to be running on.
 [ -n "$GPU_TARGET" ] || die "--gpu-target is mandatory (cuda|hip).  It names the \
-GPU dialect AND half of the oracle pair, so there is no defaulting it."
+GPU dialect AND half of the (CPU ISA x GPU dialect) pair, so there is no defaulting it."
 case "$GPU_TARGET" in
   cuda|hip) ;;
   *) die "--gpu-target \"$GPU_TARGET\" is not a GPU dialect (accepted: cuda, hip)" ;;
 esac
 [ -n "$CORPUS" ] || die "--corpus is mandatory: the corpus carries the CPU column, \
-which is the other half of the oracle pair"
+which is the other half of the pair"
 [ -d "$CORPUS" ] || die "--corpus $CORPUS is not a directory"
 CORPUS="$(cd "$CORPUS" && pwd)"
 # The budgets are checked HERE and not by campaign.py's argparse: that runs after
@@ -142,7 +143,7 @@ PROBE_SH="${HET_PROBE_SH:-$PROBE_DEFAULT}"
 # though the emitter would default it to AArch64 -- defaulting the host ISA of a
 # device session is how a run gets built for the wrong machine.  Sampling one test
 # would let a mixed-ISA corpus pass this step and die at emission instead, blaming
-# the oracle table.  The mirror is checked against the emitter's answer after step 3.
+# the machine table.  The mirror is checked against the emitter's answer after step 3.
 corpus_cpu_lanes() {            # <file.litmus>... -> "<file> aarch64|x86_64|NONE"
   awk '
     function flush() { if (cur != "") print cur, (isa == "" ? "NONE" : isa) }
@@ -163,45 +164,48 @@ corpus_cpu_lanes() {            # <file.litmus>... -> "<file> aarch64|x86_64|NON
     END { flush() }' "$@"
 }
 
-# THE PAIR TABLE IS litmus/hetOracle.ml AND THIS READS THAT FILE.  A second copy
-# of the table here could drift from the one the emitter obeys, and the drift
-# would show up as a campaign scheduled against another pair's classes.  What the
-# emitter decided is checked against this in step 3, off the oracle stamp it
-# writes into every render.
-# Bounded to the `let table = [' ... `]' literal: `Populated' and
-# `Registered_none' are constructor names in the match arms below the table too,
-# so a parse running past the bracket reads the last row's state off unrelated
-# code.  A file with no such literal fails closed as NO-TABLE.
-oracle_pair() {                 # <ISA key> <target> -> "POPULATED <oracle> <map>" | NO-ORACLE | ABSENT
+# THE MACHINE TABLE IS litmus/hetMachine.ml AND THIS READS THAT FILE.  A second
+# copy of the table here could drift from the one the emitter obeys, and the
+# drift would show up as a results dir naming a machine the renders do not.  What
+# the emitter decided is checked against this in step 3, off the pair name it
+# stamps into every render.
+# Bounded to the `let table = [' ... `]' literal: a row is a row only inside it,
+# so a parse running past the bracket can read a row-shaped line out of a comment
+# or a doc example.  A file with no such literal fails closed as NO-TABLE.
+machine_pair() {                # <ISA key> <target> -> "MACHINE <row>" | NO-MACHINE | ABSENT
   awk -v want="(\"$1\", \"$2\")," '
-    function qval(s) {
-      if (match(s, /= "[^"]*"/)) return substr(s, RSTART + 3, RLENGTH - 4)
-      return ""
-    }
     !intab {
       if ($0 ~ /^let table = \[[ \t]*$/) { intab = 1 ; sawtab = 1 }
       next
     }
-    /^[ \t]*\][ \t]*$/ { intab = 0 ; inb = 0 ; next }
-    /^[ \t]*\("[A-Za-z0-9_]+", "[a-z]+"\),[ \t]*$/ {
-      k = $0; gsub(/^[ \t]+|[ \t]+$/, "", k)
-      inb = (k == want); if (inb) found = 1; next
-    }
-    inb {
-      if ($0 ~ /Registered_none/)    state  = "NO-ORACLE"
-      if ($0 ~ /Populated/)          state  = "POPULATED"
-      if ($0 ~ /op_oracle_csv/)      oracle = qval($0)
-      if ($0 ~ /op_control_map_csv/) map    = qval($0)
+    /^[ \t]*\][ \t]*$/ { intab = 0 ; next }
+    {
+      line = $0; gsub(/^[ \t]+|[ \t]+$/, "", line)
+      if (index(line, want) != 1) next
+      found = 1
+      rest = substr(line, length(want) + 1)
+      gsub(/^[ \t]+|[ \t;]+$/, "", rest)
+      if (rest == "None") { state = "NO-MACHINE" ; next }
+      if (rest ~ /^Some [A-Za-z0-9_]+$/) { state = "MACHINE" ; mach = substr(rest, 6) }
     }
     END {
-      if (!sawtab)              { print "NO-TABLE" ; exit }
-      if (!found)               { print "ABSENT" ; exit }
-      if (state == "NO-ORACLE") { print "NO-ORACLE" ; exit }
-      if (state == "POPULATED" && oracle != "" && map != "") {
-        print "POPULATED " oracle " " map ; exit
-      }
+      if (!sawtab)               { print "NO-TABLE" ; exit }
+      if (!found)                { print "ABSENT" ; exit }
+      if (state == "NO-MACHINE") { print "NO-MACHINE" ; exit }
+      if (state == "MACHINE" && mach != "") { print "MACHINE " mach ; exit }
       print "UNPARSED"
-    }' "$REPO/litmus/hetOracle.ml"
+    }' "$REPO/litmus/hetMachine.ml"
+}
+
+# THE CONTROL MAP THIS LANE READS, mirroring litmus/hetCpuFront.ml: mu(T) is a
+# weakening on a strength lattice and the lattice is the CPU column's, so the map
+# is keyed on the CPU ISA and never on the dialect.
+control_map_of_isa() {          # <ISA key> -> the CSV file name
+  case "$1" in
+    AArch64) echo "control-map.csv" ;;
+    X86_64)  echo "control-map-amd.csv" ;;
+    *) return 1 ;;
+  esac
 }
 
 [ -x "$LITMUS7" ] || die "litmus7 is not built at $LITMUS7 (run 'make all')"
@@ -222,7 +226,7 @@ done
 CPU_ISA="" ; CPU_ISA_FILE=""
 while read -r lane_file lane_isa; do
   [ "$lane_isa" != NONE ] || die "no CPU column in $lane_file -- the corpus CPU \
-lane cannot be read, and it is half of the oracle pair"
+lane cannot be read, and it is half of the pair"
   if [ -z "$CPU_ISA" ]; then
     CPU_ISA="$lane_isa" ; CPU_ISA_FILE="$lane_file"
   elif [ "$lane_isa" != "$CPU_ISA" ]; then
@@ -232,32 +236,40 @@ pair at all; split it and run one session per lane."
   fi
 done < <(corpus_cpu_lanes "${CORPUS_PATHS[@]}")
 
-# The pair, keyed as litmus/hetOracle.ml keys it (HetCpuFront's isa_name
+# The pair, keyed as litmus/hetMachine.ml keys it (HetCpuFront's isa_name
 # spelling).  Resolved BEFORE the host-ISA check because it is a property of the
 # corpus and the flag alone: an unregistered pair is worth naming on any box,
 # including the ones that could not have run it anyway.
 case "$CPU_ISA" in
   aarch64) ISA_KEY=AArch64 ;;
   x86_64)  ISA_KEY=X86_64 ;;
-  *) die "no oracle-table key for CPU ISA $CPU_ISA" ;;
+  *) die "no machine-table key for CPU ISA $CPU_ISA" ;;
 esac
 PAIR="($ISA_KEY, $GPU_TARGET)"
-read -r PAIR_STATE PAIR_ORACLE PAIR_MAP <<<"$(oracle_pair "$ISA_KEY" "$GPU_TARGET")"
+PAIR_MAP="$(control_map_of_isa "$ISA_KEY")"
+read -r PAIR_STATE PAIR_MACHINE <<<"$(machine_pair "$ISA_KEY" "$GPU_TARGET")"
 case "$PAIR_STATE" in
-  POPULATED)
-    [ -r "$CORPUS/$PAIR_MAP" ] || die "the pair $PAIR is populated and its control \
-map is $PAIR_MAP, which is not readable beside the corpus ($CORPUS).  Emission reads \
-it from there, so the session has no classes to schedule without it." ;;
-  NO-ORACLE)
-    PAIR_ORACLE="" ; PAIR_MAP="" ;;
+  MACHINE) ;;
+  NO-MACHINE)
+    PAIR_MACHINE="" ;;
+  # WARNED, NOT REFUSED.  The pair decides which silicon the renders may name,
+  # not whether this box can be measured: an unregistered one emits generic
+  # harnesses that characterize exactly as well and claim less.
   ABSENT)
-    die "the pair $PAIR is not in litmus/hetOracle.ml, so emission refuses it and \
-this session has nothing to run.  Register the pair there first." ;;
+    PAIR_MACHINE=""
+    echo "hetlitmus-run: WARNING -- the pair $PAIR is in no row of \
+litmus/hetMachine.ml, so every harness in this session NAMES NO MACHINE (no \
+machine define is stamped and the runtime's mechanism-naming defaults stand).  \
+The session runs; nothing it produces claims to be a named part." >&2 ;;
   *)
-    die "litmus/hetOracle.ml did not yield a state for $PAIR (got \"$PAIR_STATE\") -- \
+    die "litmus/hetMachine.ml did not yield a state for $PAIR (got \"$PAIR_STATE\") -- \
 the table's shape changed and this wrapper reads it; fix the reader rather than \
 hardcoding the pair here." ;;
 esac
+[ -r "$CORPUS/$PAIR_MAP" ] || die "the $ISA_KEY CPU lane reads its positive-control \
+map from $PAIR_MAP, which is not readable beside the corpus ($CORPUS).  Emission \
+reads it from there, so without it no harness co-runs a control and every null this \
+session produces is uninterpretable."
 
 HOST_ISA="$(uname -m)"
 [ "$CPU_ISA" = "$HOST_ISA" ] || die "this corpus carries a $CPU_ISA CPU column and \
@@ -313,13 +325,10 @@ fi
 # =========================================================================
 STAMP="$(date +%Y%m%d-%H%M%S)-$( (hostname -s 2>/dev/null || hostname 2>/dev/null || echo host) | tr -c 'A-Za-z0-9_.-' '_' )"
 [ -n "$OUT" ] || OUT="$HETL/run-out/hetlitmus-run-$STAMP"
-if [ "$PAIR_STATE" = POPULATED ]; then
-  MODE="oracle"
-  MODE_LONG="oracle ($PAIR_ORACLE; classes from $PAIR_MAP)"
-else
-  MODE="characterization"
-  MODE_LONG="characterization (the pair carries no oracle: nothing here adjudicates)"
-fi
+# The machine a session is entitled to name is the ONE thing the pair decides.
+# What it does is fixed: this tool characterizes, so no row of any campaign it
+# schedules agrees or disagrees with a prediction.
+PAIR_LONG="$PAIR -> ${PAIR_MACHINE:-no machine row: the renders name none}"
 RUNONE="$HETL/spotcheck/run-one.sh"
 RUNNER="timeout $HET_RUN_TIMEOUT sh $RUNONE {dir} {test}"
 
@@ -345,7 +354,7 @@ echo "HetLitmus device session"
 echo "  host          $(uname -srm)   $( (hostname 2>/dev/null || echo '?') )"
 echo "  corpus        $CORPUS   (${#CORPUS_TESTS[@]} test(s), $CPU_ISA CPU lane)"
 echo "  gpu-target    $GPU_TARGET   (compiler $COMPILER)"
-echo "  pair          $PAIR  ->  $MODE_LONG"
+echo "  pair          $PAIR_LONG"
 echo "  arch          $ARCH   [$ARCH_SOURCE]   passed to the build as $ARCH_VAR"
 echo "  budget        --budget-runs $BUDGET_RUNS   --p-goal ${P_GOAL:-<unset: bound rows run to budget>}"
 echo "  results       $OUT"
@@ -361,11 +370,7 @@ else
 fi
 echo "  step 4  compile     comp.sh $GPU_TARGET + make $GPU_TARGET-bin, $ARCH_VAR=$ARCH"
 echo "  step 5  smoke rungs NOT IN THIS CHAIN (spotcheck/ladder.sh is driven separately)"
-if [ "$MODE" = oracle ]; then
-  echo "  step 6  campaign    campaign.py --control-map $CORPUS/$PAIR_MAP"
-else
-  echo "  step 6  campaign    campaign.py --characterization ($PAIR has no oracle)"
-fi
+echo "  step 6  campaign    campaign.py --characterization"
 echo "  step 7  collect     probe, build logs, harness transcripts, campaign state, summary -> $OUT"
 if [ "$RESUMABLE" -gt 0 ]; then
   echo "  resume      $RESUMABLE terminal row(s) already in $STATE"
@@ -408,9 +413,8 @@ RECORD="$OUT/run-record.txt" ; SUMMARY="$OUT/summary.txt"
   echo "gpu_target=$GPU_TARGET"
   echo "pair=$PAIR"
   echo "pair_state=$PAIR_STATE"
-  echo "oracle_csv=${PAIR_ORACLE:-NONE}"
-  echo "control_map=${PAIR_MAP:-NONE}"
-  echo "mode=$MODE"
+  echo "pair_machine=${PAIR_MACHINE:-NONE}"
+  echo "control_map=$PAIR_MAP"
   echo "arch=$ARCH"
   echo "arch_var=$ARCH_VAR"
   echo "arch_source=$ARCH_SOURCE"
@@ -491,7 +495,7 @@ check_stamp() {                 # <test>
     echo "hetlitmus-run: $t stamps" >&2
     grep -F '#define HET_PAIR_NAME' "$f" >&2 || echo "  (no HET_PAIR_NAME at all)" >&2
     die "the emitted pair name of $t disagrees with the pair this wrapper resolved \
-($PAIR, $PAIR_STATE) -- one of the two read litmus/hetOracle.ml wrongly"
+($PAIR, $PAIR_STATE) -- one of the two read litmus/hetMachine.ml wrongly"
   }
 }
 if [ "$REUSE" -eq 1 ]; then
@@ -550,24 +554,18 @@ echo "    built ${#CORPUS_TESTS[@]} harness binaries (the failure table $FAILTAB
 # part of this chain (see the header).
 # =========================================================================
 echo
-echo "== step 6/7: campaign ($MODE) =="
+echo "== step 6/7: campaign (characterization) =="
 STEP=6
 # campaign.py parses the HetStats line and keeps none of it; run-one.sh copies
 # each transcript here so the session keeps the lines its rows were scored from.
 export HET_RUN_LOG_DIR="$OUT/hetstats"
 TESTS_CSV="$(IFS=, ; echo "${CORPUS_TESTS[*]}")"
 CAMPAIGN_ARGS=(--corpus "$EMIT" --runner "$RUNNER" --tests "$TESTS_CSV"
-               --budget-runs "$BUDGET_RUNS" --state "$STATE")
+               --budget-runs "$BUDGET_RUNS" --state "$STATE"
+               # No harness carries a prediction, so no row of this campaign can
+               # agree or disagree with one, whatever the pair.
+               --characterization)
 if [ -n "$P_GOAL" ]; then CAMPAIGN_ARGS+=(--p-goal "$P_GOAL"); fi
-# The mode is READ OFF THE EMISSION, never guessed: a pair with no oracle stamps
-# every render as such (checked above), and characterizing is the only thing its
-# harnesses can do.  The alternative -- a control map whose cells are blank --
-# would put a class in the campaign that nobody derived.
-if [ "$MODE" = oracle ]; then
-  CAMPAIGN_ARGS+=(--control-map "$CORPUS/$PAIR_MAP")
-else
-  CAMPAIGN_ARGS+=(--characterization)
-fi
 camp_rc=0
 python3 "$HETL/campaign.py" "${CAMPAIGN_ARGS[@]}" > "$OUT/campaign.log" 2>&1 || camp_rc=$?
 tail -40 "$OUT/campaign.log" | sed 's/^/    /'
@@ -585,8 +583,7 @@ count_stop() {                  # <STOP> -> rows of the campaign state carrying 
   echo "HetLitmus session summary"
   echo "  results     $OUT"
   echo "  host        $(uname -srm)   $( (hostname 2>/dev/null || echo '?') )"
-  echo "  pair        $PAIR"
-  echo "  mode        $MODE_LONG"
+  echo "  pair        $PAIR_LONG"
   echo "  arch        $ARCH   [$ARCH_SOURCE]"
   echo "  corpus      $CORPUS   (${#CORPUS_TESTS[@]} test(s), $CPU_ISA CPU lane)"
   echo "  probe       $OUT/probe.txt   ($(grep -m1 '^probe_status=' "$OUT/probe.txt" 2>/dev/null | sed 's/^probe_status=//'))"
@@ -600,11 +597,9 @@ count_stop() {                  # <STOP> -> rows of the campaign state carrying 
     n="$(count_stop "$s")"
     if [ "$n" -gt 0 ]; then printf '              %-10s %d row(s)\n' "$s" "$n" ; fi
   done
-  if [ "$MODE" = characterization ]; then
-    echo "  reading     CHARACTERIZATION: $PAIR carries no compound-model prediction,"
-    echo "              so no row here agrees or disagrees with one.  These rows say"
-    echo "              what the machine does, and nothing about the model."
-  fi
+  echo "  reading     CHARACTERIZATION: no harness here carries a prediction, so no"
+  echo "              row agrees or disagrees with one.  These rows say what the"
+  echo "              machine does, and nothing about any model."
   case "$camp_rc" in
     0) echo "  verdict     session complete" ;;
     1) echo "  verdict     *** the campaign reported an errored row or a corroborated"

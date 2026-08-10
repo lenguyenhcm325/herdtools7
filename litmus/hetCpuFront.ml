@@ -11,13 +11,11 @@
 (* dispatch arm pairs one of these with the matching module chain after     *)
 (* HetArch.scan_cpu_isa has named the ISA.                                  *)
 (*                                                                          *)
-(* NO ORACLE LIVES HERE.  What a harness predicts belongs to the            *)
-(* (CPU ISA x GPU dialect) PAIR, and litmus/hetOracle.ml is the table that  *)
-(* keys it: expected-nvidia.csv is Grace(AArch64)+Hopper, expected-amd.csv  *)
-(* is Zen-4(x86-64)+CDNA3, and the cells those two rows leave empty are     *)
-(* refused or registered as NO-ORACLE rather than filled in from a          *)
-(* neighbour.  These modules contribute [isa_name], one coordinate of that  *)
-(* key, and nothing else about the model.                                   *)
+(* NO MACHINE LIVES HERE.  Which silicon a harness may name belongs to the  *)
+(* (CPU ISA x GPU dialect) PAIR (litmus/hetMachine.ml); these modules       *)
+(* contribute [isa_name], one coordinate of that key.  The positive-control *)
+(* map IS theirs: mu(T) is a weakening on a STRENGTH LATTICE, and the       *)
+(* lattice is the CPU column's.                                            *)
 (*                                                                          *)
 (* This software is governed by the CeCILL-B license under French law.       *)
 (****************************************************************************)
@@ -36,6 +34,8 @@ module AArch64 (O:Config) = struct
   let body_module = "hetCpuBody"
   let host_macro = "__aarch64__"
   let cross = Some ("aarch64-linux-gnu","gnu11")
+  (* The AArch64 strength lattice's own map (positive-control.md). *)
+  let control_map_csv = "control-map.csv"
 
   let parse_column p txt =
     let lexbuf = Lexing.from_string txt in
@@ -69,6 +69,10 @@ module X86_64 (O:Config) = struct
   let body_module = "hetCpuBodyX86"
   let host_macro = "__x86_64__"
   let cross = None
+  (* The x86 lattice loses the AArch64 lattice's middle rung, so a mu(T) chosen
+     on that one is not a weakening here: this lane needs its own map (memo
+     PORT2-R2 7.D11).  The file keeps its AMD-era name. *)
+  let control_map_csv = "control-map-amd.csv"
 
   let parse_column p txt =
     let lexbuf = Lexing.from_string txt in

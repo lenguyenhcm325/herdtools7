@@ -62,8 +62,8 @@
   ; rewritten from the test's name.
   ../het/control-map.csv
   ; Every .hip render in these tests comes from ../het-x86: a HIP harness is the
-  ; (x86_64, hip) ORACLE PAIR, and the AArch64 corpus paired with hip is a
-  ; machine no oracle covers, which litmus7 refuses (litmus/hetOracle.ml).
+  ; (x86_64, hip) pair, the one this project has an MI300A row for
+  ; (litmus/hetMachine.ml).
   (glob_files ../het-x86/*)
   ../gpu-only/MP-sys-acquire.litmus))
 
@@ -83,33 +83,27 @@
   %{bin:litmus7}
   (glob_files ../het/*.litmus)
   ../het/control-map.csv
-  ; The HIP half of this test emits from the (x86_64, hip) pair, because
-  ; (AArch64, hip) is absent from the oracle table and now refuses
-  ; (litmus/hetOracle.ml; oracle-pairs.t (d)).  ../het-x86 is the committed
-  ; one-test fixture for that pair -- see its README for why the 411-test x86
-  ; corpus is not usable here (generate-x86.sh needs hetgen7 on $PATH).
+  ; The HIP half of this test emits from the (x86_64, hip) pair, the one with an
+  ; MI300A row (litmus/hetMachine.ml; machine-pairs.t (b)).  ../het-x86 is the
+  ; committed one-test fixture for that pair -- see its README for why the
+  ; 411-test x86 corpus is not usable here (generate-x86.sh needs hetgen7 on
+  ; $PATH).
   (glob_files ../het-x86/*)
   ../gpu-only/MP-sys-acquire.litmus))
 
-; oracle-pairs.t guards the (CPU ISA x GPU dialect) ORACLE PAIR TABLE: which
-; pairs carry an oracle, which are registered without one, which are refused,
-; and -- the point of the table -- that a pair NEVER inherits a neighbour's
-; oracle or a neighbour's machine name.  It reads emitted bytes only, so it
-; needs no toolchain; both corpora are staged because a populated pair's
-; emission co-runs mu(T) and the canary out of its own corpus.
+; machine-pairs.t guards the (CPU ISA x GPU dialect) MACHINE TABLE: which pairs
+; may name a machine, which are registered without one, which are in no row at
+; all -- and, the point of the table, that a pair NEVER inherits a neighbour's
+; machine name.  It reads emitted bytes only, so it needs no toolchain; both
+; corpora are staged because every lane's emission co-runs mu(T) and the canary
+; out of its own corpus.
 (cram
- (applies_to oracle-pairs)
+ (applies_to machine-pairs)
  (package herdtools7)
  (deps
   %{bin:litmus7}
   (glob_files ../het/*.litmus)
   ../het/control-map.csv
-  ; The oracle CSV is not parsed by the emitter -- but its EXISTENCE beside the
-  ; test is what makes the harness stamp the pair's oracle name instead of
-  ; `(no oracle CSV)', and that stamp is this test's subject.  Unstaged, every
-  ; stamp assertion here would fail for a reason that has nothing to do with the
-  ; table.  (../het-x86 ships its own, inside the glob below.)
-  ../het/expected-nvidia.csv
   (glob_files ../het-x86/*)))
 
 ; amd-cat.t is the third stanza because it is the only cram test that runs herd7.

@@ -119,11 +119,10 @@ MC_SYMS = ["het_run_t_P0", "het_run_P0"]
 AARCH64_TESTS = ["2+2W-cg-sys-relaxed", "MP-gc-sys-relaxed", "MP-cg-sys-fence-2s"]
 
 # WHICH GPU DIALECT THE x86 RENDERINGS ARE EMITTED FOR.  A harness is a
-# (CPU ISA x GPU dialect) PAIR (litmus/hetOracle.ml), and (x86_64, hip) is the
-# populated one: it is the pair control-map-amd.csv and expected-amd.csv were
-# derived for, so it is the pair whose emission reads them.  (x86_64, cuda) is
-# registered WITHOUT an oracle -- dev-tier machinery -- and reads no map at all,
-# so every harness there is single-instance and P7 would have nothing to check.
+# (CPU ISA x GPU dialect) PAIR, and (x86_64, hip) is the one this project has an
+# MI300A row for (litmus/hetMachine.ml).  Either x86 dialect would do for what P7
+# reads -- both read control-map-amd.csv, which is keyed on the CPU frontend --
+# and hip is the render the rest of this gate builds.
 # The CPU body itself is dialect-independent (one <t>_cpu.c per harness), which
 # is what makes this phase's subject the same either way.
 X86_TARGET = "hip"

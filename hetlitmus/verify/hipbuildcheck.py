@@ -77,11 +77,12 @@ vendor's directory -- the state the trap needs (a ./<test> NEWER than the
 objects, carrying the wrong device image), reached the way a reused results tree
 reaches it.
 
-AND ONE ORACLE PAIR PER HARNESS.  A harness is a (CPU ISA x GPU dialect) pair,
-and litmus/hetOracle.ml refuses the pairs it has no oracle for.  The AMD phases
-therefore run on the x86 rendering -- (x86_64, hip) is the populated AMD pair --
-and the AArch64 half of P4 runs on (AArch64, cuda), because (AArch64, hip) is
-absent and its emission is now itself one of P4's assertions.
+AND ONE PAIR PER HARNESS.  A harness is a (CPU ISA x GPU dialect) pair, and
+litmus/hetMachine.ml says which of them may name a machine.  The AMD phases
+therefore run on the x86 rendering -- (x86_64, hip) is the pair with the MI300A
+row -- and the AArch64 half of P4 runs on (AArch64, cuda), which is the AArch64
+pair that names a machine; that (AArch64, hip) emits and names none is itself one
+of P4's assertions.
 """
 import argparse
 import os
@@ -154,12 +155,12 @@ def emit(tmp, src, outroot, label, target):
     return d
 
 
-def emit_refused(src, outroot, target):
-    """An ABSENT (CPU ISA x GPU dialect) pair.  Returns (exit, output, leftovers)."""
+def emit_unregistered(src, outroot, target):
+    """A pair in no row of the machine table.  Returns (exit, output, harness dir)."""
     os.makedirs(outroot, exist_ok=True)
     r = run([LITMUS7, "-gpu-target", target, "-set-libdir", LIBDIR, "-o", outroot, src])
-    left = sorted(os.listdir(outroot))
-    return r.returncode, r.stdout + r.stderr, left
+    name = os.path.basename(src)[: -len(".litmus")]
+    return r.returncode, r.stdout + r.stderr, os.path.join(outroot, name)
 
 
 def fresh(tmp, d, tag):
@@ -357,19 +358,16 @@ def phase3(tmp, d):
 def phase4(tmp, d_aarch64_cuda, d_x86_hip):
     """Fail-closed on the WRONG HOST, at both stages that can catch it.
 
-    Until the oracle pair table existed this phase asked litmus7 for an AArch64
-    HIP render and drove its link arms.  That render can no longer be produced:
-    (AArch64, hip) is ABSENT from the table (litmus/hetOracle.ml) and emission
-    refuses -- one stage EARLIER than the link-arm refusal this phase tested.
-    Both stages are asserted here, because they fail closed for different
-    reasons and either could regress alone:
-      (a) EMISSION refuses the absent pair, names it, and writes nothing;
-      (b) a REGISTERED pair's link arms still refuse a foreign host -- driven on
-          the (AArch64, cuda) render, whose guard is emitted by the same fold as
-          the HIP one;
-      (c) the HIP render that DOES exist carries that guard too, keyed to its
-          own host ISA (it cannot be RUN into refusal here: this host is x86_64,
-          which is exactly the ISA that render is for).
+    Three assertions, which fail closed for different reasons and could regress
+    alone:
+      (a) an UNREGISTERED pair emits, warns, and stamps not one machine define --
+          (AArch64, hip) is in no row of litmus/hetMachine.ml, and what it loses
+          is the right to name a machine, not the right to be built;
+      (b) a link arm refuses a foreign host -- driven on the (AArch64, cuda)
+          render, whose guard is emitted by the same fold as the HIP one;
+      (c) the x86 HIP render carries that guard too, keyed to its own host ISA
+          (it cannot be RUN into refusal here: this host is x86_64, which is
+          exactly the ISA that render is for).
     """
     print("[P4] fail-closed on the wrong host, at emission and at link, on %s"
           % os.uname().machine)
@@ -378,26 +376,35 @@ def phase4(tmp, d_aarch64_cuda, d_x86_hip):
                    "run this gate on a foreign host too")
         return
 
-    # --- (a) the ABSENT pair refuses AT EMISSION -----------------------------
-    outroot = os.path.join(tmp, "p4-absent")
-    st, blob, left = emit_refused(
+    # --- (a) the UNREGISTERED pair emits, and names no machine ----------------
+    outroot = os.path.join(tmp, "p4-unregistered")
+    st, blob, d_unreg = emit_unregistered(
         os.path.join(HET_DIR, AARCH64_TEST + ".litmus"), outroot, "hip")
     tick("P4")
-    if st != 3:
-        fail("P4", "litmus7 -gpu-target hip on an AArch64 test exited %d, expected 3 "
-                   "-- (AArch64, hip) is in no oracle row and must refuse" % st)
+    if st != 0:
+        fail("P4", "litmus7 -gpu-target hip on an AArch64 test exited %d, expected 0 "
+                   "-- an unregistered pair is warned about, never refused:\n%s"
+             % (st, blob[-800:]))
     tick("P4")
-    if "HetLitmus REFUSED" not in blob:
-        fail("P4", "the absent-pair emission printed no REFUSED marker:\n%s" % blob[-800:])
+    if "is in no row of litmus/hetMachine.ml" not in blob or "(AArch64, hip)" not in blob:
+        fail("P4", "the unregistered-pair emission does not warn and name the pair:"
+                   "\n%s" % blob[-800:])
+    render = os.path.join(d_unreg, AARCH64_TEST + ".hip")
     tick("P4")
-    if "(AArch64, hip)" not in blob:
-        fail("P4", "the absent-pair refusal does not name the pair:\n%s" % blob[-800:])
-    tick("P4")
-    if left:
-        fail("P4", "the refused emission wrote %r -- a refusal must leave nothing "
-                   "a globbing script can pick up" % left)
+    if not os.path.isfile(render):
+        fail("P4", "the unregistered pair wrote no .hip render under %r" % d_unreg)
+    else:
+        stamped = re.findall(
+            r"^#define HET_(?:LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|"
+            r"ALGLAVE_ZERO_MEASURED)\b", open(render).read(), re.M)
+        tick("P4")
+        if stamped:
+            fail("P4", "the unregistered pair's render stamps %d machine define(s) "
+                       "-- it is entitled to none, and a harness that names the "
+                       "wrong machine runs and reports like one that names the "
+                       "right one" % len(stamped))
 
-    # --- (b) a REGISTERED pair's link arms refuse a foreign host --------------
+    # --- (b) a link arm refuses a foreign host --------------------------------
     for arm, cmd, want in [("comp.sh cuda-link", ["sh", "comp.sh", "cuda-link"], 3),
                            ("make cuda-bin", ["make", "cuda-bin"], 2)]:
         r = run(cmd, cwd=d_aarch64_cuda)
@@ -950,9 +957,9 @@ def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda):
                    lambda: phase3(tmp, w), "left no executable")
 
     # --- P4 -----------------------------------------------------------------
-    # (b), the link-arm half, driven on the REGISTERED (AArch64, cuda) render:
-    # the absent-pair half (a) is a property of litmus7 and has no file to
-    # corrupt, so it is bitten from the emitter side by oracle-pairs.t (d).
+    # (b), the link-arm half, driven on the (AArch64, cuda) render: the
+    # unregistered-pair half (a) is a property of litmus7 and has no file to
+    # corrupt, so it is bitten from the emitter side by machine-pairs.t (d).
     w = W("p4c", d_aa_cuda)
     sub(os.path.join(w, "comp.sh"), '"$(uname -m)" != "$HET_HOST_ISA"',
         '"$(uname -m)" = "$HET_HOST_ISA"')
@@ -1116,11 +1123,10 @@ def main():
         d_x86 = emit(tmp, src, os.path.join(tmp, "out-x86-hip"), "x86 render", "hip")
         d_x86_cuda = emit(tmp, src, os.path.join(tmp, "out-x86-cuda"),
                           "x86 render", "cuda")
-        # The AArch64 render P4 drives is the CUDA one: (AArch64, hip) is ABSENT
-        # from the oracle pair table and refuses at emission (P4(a) asserts the
-        # refusal itself), so the AArch64 half of this gate now runs on the pair
-        # that IS registered.  The uname guard is emitted by the same per-dialect
-        # fold on both, which is what makes the substitution sound.
+        # The AArch64 render P4 drives is the CUDA one: it is the AArch64 pair
+        # that names a machine, and P4(a) covers the hip one on its own terms.
+        # The uname guard is emitted by the same per-dialect fold on both, which
+        # is what makes the substitution sound.
         d_aa_cuda = emit(tmp, os.path.join(HET_DIR, AARCH64_TEST + ".litmus"),
                          os.path.join(tmp, "out-aa"), "AArch64 render", "cuda")
 

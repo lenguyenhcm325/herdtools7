@@ -180,7 +180,7 @@ extern "C" {
    traffic at all: a buffer that fits in it is served from cache and the noise
    crosses nothing, so the driver warns at run time rather than let a green
    compile imply a live mechanism.  The figure is per target and the emitter
-   stamps the pair's own (litmus/hetOracle.ml); this default is the GH200 row's
+   stamps the pair's own (litmus/hetMachine.ml); this default is the GH200 row's
    max(Grace L3 114 MB, Hopper L2 51 MB) -- Bagchi ISMM'26 Table 1 -- and the
    warning that fires against it says so wherever it is not the target's own. */
 #ifndef HET_LLC_MB

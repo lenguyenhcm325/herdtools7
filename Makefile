@@ -1027,49 +1027,35 @@ hetlitmus-hipbuild: | build
 	python3 hetlitmus/verify/hipbuildcheck.py --bite
 	@ echo "HetLitmus AMD build/link gate: OK (and the gate bites)"
 
-### hetlitmus-noracle: no committed script passes `-allow-no-oracle' (D-MV4).
-### The flag emits a harness for a (CPU ISA x GPU dialect) pair the oracle table
-### does not carry -- every test reading no control map, the override disclosed by
-### a line in the render -- which is right for a human bringing up a new machine
-### and wrong for a script, because in a script it turns a refusal a human reads
-### into a line a campaign scrolls past.  The gate reads the tree; --bite plants
-### the flag in a copy of a committed script and requires the gate to redden.
-hetlitmus-noracle:
-	@ echo
-	bash hetlitmus/verify/allow-no-oracle-gate.sh
-	bash hetlitmus/verify/allow-no-oracle-gate.sh --bite
-	@ echo "HetLitmus no-oracle override containment: OK (and the gate bites)"
-
-### hetlitmus-noracle-hw: what a REGISTERED NO-ORACLE harness PRINTS, on a GPU.
-### (x86_64, cuda) is registered without an oracle AND is the pair this dev box
-### is, so it is what every runtime bite in the tree actually executes.  Such a
-### harness reads NO positive-control map, so nothing co-runs and nothing marks
-### any row a canary -- and the statistics layer used to infer the opposite from
-### "no record has a control", printing "it IS the Layer-B canary (control-map.csv
-### says `self')" and "NO BOUND -- by construction, not by omission" on a real run
-### where no map had been read, nothing had marked that row a canary, and the
-### bound was missing because the bootstrap map generator does not exist yet.
-### Every other gate on that stack drives it from synthetic records or emitted
-### TEXT; this one builds the harness, RUNS it, and reads the printout.  Seven
-### assertions (stamp, no self-canary sentence, the no-map sentence,
-### CHARACTERIZED against the pair NAME, no MATCH/MISMATCH, no Grace/Hopper/
-### NVLink/C2C/GH200, and the observation class on k < R).
+### hetlitmus-characterize-hw: what a het harness PRINTS, on a GPU.  The pair is
+### (x86_64, cuda) -- the dev box, and what every runtime bite in this tree
+### actually executes.  Every other gate on the verdict/statistics stack drives it
+### from synthetic records or from emitted TEXT; this one builds a harness, RUNS
+### it and reads the printout, which is the only artefact a result is read off.
+### TWO ARMS, because the sentence a reader must never see swapped is chosen by
+### whether a positive-control map was read: the committed x86 fixture, whose map
+### names that row its OWN canary (bound missing BY CONSTRUCTION), and the same
+### test copied away from the map (bound missing by OMISSION).  The statistics
+### layer once printed the first on a run that was the second.  Seven assertions
+### per arm (stamp, the arm's own control sentence and NOT the other's, OBSERVED
+### against the pair NAME, no MATCH/MISMATCH, no Grace/Hopper/NVLink/C2C/GH200
+### -- this pair has no machine row -- and the observation class on k < R).
 ### NEEDS A DEVICE, hence the -nvcc umbrella; with none visible it FAILS rather
 ### than skipping, because a gate that quietly stops checking is the failure mode
-### this suite has already shipped twice.  Three of its assertions need one
+### this suite has already shipped twice.  Three assertions per arm need one
 ### sighting, so it re-seeds up to 12 times (~3 s per run) before giving up.
-hetlitmus-noracle-hw: | build
+hetlitmus-characterize-hw: | build
 	@ echo
-	python3 hetlitmus/verify/noraclerun.py
-	python3 hetlitmus/verify/noraclerun.py --bite
-	@ echo "HetLitmus registered-NO-ORACLE runtime gate: OK (and the gate bites)"
+	python3 hetlitmus/verify/runcheck.py --characterize-hw
+	python3 hetlitmus/verify/runcheck.py --characterize-hw --bite
+	@ echo "HetLitmus harness-printout runtime gate: OK (and the gate bites)"
 
 ### hetlitmus-run-gate: the DEVICE-SESSION WRAPPER (hetlitmus/hetlitmus-run.sh),
 ### driven end to end with no device.  The wrapper is the one command a hardware
-### session runs, and what it decides -- which oracle pair the corpus and the
-### -gpu-target flag select, which architecture the binaries are built for,
-### whether the campaign adjudicates or characterizes -- is decided on a machine
-### nobody is watching and survives only in what it wrote down.
+### session runs, and what it decides -- which pair the corpus and the -gpu-target
+### flag select, which machine that pair may name, which architecture the binaries
+### are built for -- is decided on a machine nobody is watching and survives only
+### in what it wrote down.
 ### CUDA-FREE because the wrapper's seams take stand-ins: NVCC/HIPCC point at a
 ### stub compiler that writes a harness printing one HetStats line, and
 ### HET_PROBE_SH at a stub probe.  The chain itself is real -- litmus7 emits, the
@@ -1077,11 +1063,12 @@ hetlitmus-noracle-hw: | build
 ### RECORDS that stand-ins were used, so a stubbed results dir can never be read
 ### as a reading of a machine.
 ### Eight phases: --dry-run writes nothing at all; the chain end to end on each
-### dialect this host's pair table reaches, plus --reuse-emitted; the refusals,
-### each by its own reason; campaign.py --characterization, where the same runner
-### that stops an Allowed row OBSERVED and a Disallowed row CONFIRMED under a
-### control map must reach neither, and the states no campaign may resume; the
-### pair-table reader, bounded to the table literal; every fail-closed handler,
+### dialect, plus --reuse-emitted; the refusals, each by its own reason, and the
+### unregistered pair, which is NOT one -- it warns once and emits a harness that
+### names no machine; campaign.py --characterization, where the same runner that
+### stops an Allowed row OBSERVED and a Disallowed row CONFIRMED under a control
+### map must reach neither, and the states no campaign may resume; the
+### machine-table reader, bounded to the table literal; every fail-closed handler,
 ### under the condition it exists for (a failing compiler, a failing probe, two
 ### devices, an errored campaign, a doctored emission); a second session into a
 ### results dir that already holds one; and probe-hip.sh's exit paths.  --bite
@@ -1098,15 +1085,14 @@ hetlitmus-run-gate: | build
 
 ### hetlitmus-run-hw: the same wrapper, on the device, with NO stand-in -- the
 ### real probe, the real nvcc, the real harness.  The pair it reaches is the
-### (<this host's CPU lane>, cuda) row, which on the dev box is registered without
-### an oracle -- exactly the new-hardware session the wrapper exists for: what is
-### asserted is that the chain completes, that the campaign took the mode that
-### row entitles it to unprompted, and that the results dir names the arch it
-### resolved and no stand-in.
+### (<this host's CPU lane>, cuda) row, which on the dev box carries no machine:
+### what is asserted is that the chain completes, that the results dir records
+### the machine that row entitles the session to name and no other, and that it
+### names the arch it resolved and no stand-in.
 ### A harness whose pinned read-modify-write is not system-atomic against the
 ### host can lose a barrier increment and stall (the probe measures it on this
 ### box); a stalled session is retried up to 3 times and only an all-stall is
-### reported, the same rule noraclerun.py uses.
+### reported, the same rule --characterize-hw uses.
 ### NEEDS A DEVICE, hence the -nvcc umbrella.
 hetlitmus-run-hw: | build
 	@ echo
@@ -1137,7 +1123,6 @@ hetlitmus-test:: hetlitmus-dup
 hetlitmus-test:: hetlitmus-lattice
 hetlitmus-test:: hetlitmus-amd-controlmap
 hetlitmus-test:: hetlitmus-controlmap
-hetlitmus-test:: hetlitmus-noracle
 hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-recfields
 hetlitmus-test:: hetlitmus-stats
@@ -1154,7 +1139,7 @@ hetlitmus-test-nvcc:: hetlitmus-stress
 hetlitmus-test-nvcc:: hetlitmus-cpustress
 hetlitmus-test-nvcc:: hetlitmus-obs
 hetlitmus-test-nvcc:: hetlitmus-hipbuild
-hetlitmus-test-nvcc:: hetlitmus-noracle-hw
+hetlitmus-test-nvcc:: hetlitmus-characterize-hw
 hetlitmus-test-nvcc:: hetlitmus-run-hw
 hetlitmus-test-nvcc:: hetlitmus-l0-selftest
 hetlitmus-test-nvcc:: hetlitmus-smoke
@@ -1180,8 +1165,8 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-lattice
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
 .PHONY: hetlitmus-recfields
-.PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10 hetlitmus-noracle
-.PHONY: hetlitmus-x86fixture hetlitmus-noracle-hw hetlitmus-run-gate hetlitmus-run-hw
+.PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10
+.PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate hetlitmus-run-hw
 .PHONY: hetlitmus-amd-controlmap
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 

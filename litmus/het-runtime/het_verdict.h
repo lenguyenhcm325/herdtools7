@@ -31,7 +31,7 @@
 /* ---------------------------------------------------------------------------
  * WHICH MACHINE THIS HARNESS MAY NAME.  Every word below is a claim about
  * silicon, so none of it is derived here: the emitter stamps these defines from
- * the PAIR TABLE row (litmus/hetOracle.ml), which is the only place that knows
+ * the MACHINE TABLE row (litmus/hetMachine.ml), the only place that knows
  * what (CPU ISA x GPU dialect) this harness was built for.  An unregistered pair
  * stamps nothing and these defaults stand; they name the MECHANISM rather than a
  * brand, so a missing stamp can only weaken a claim, never invent one.
@@ -62,10 +62,11 @@
 
 /* ---------------------------------------------------------------------------
  * TWO BUILD FACTS, also stamped by the emitter and from EVERY pair: what this
- * binary was built for, and whether a positive-control map was read for it.  A
- * pair with no registered map reads none, so nothing in such a harness marks any
- * row the Layer-B canary and its missing bound is DEFERRED, not structural.  The
- * defaults below are for the checkers, which compile this header standalone.
+ * binary was built for, and whether a positive-control map was read for it.  The
+ * map is looked for beside every test, so HET_NO_CONTROL_MAP means it was not
+ * there: nothing in such a harness marks any row the Layer-B canary, and its
+ * missing bound is a BUILD FAULT rather than a construction.  The defaults below
+ * are for the checkers, which compile this header standalone.
  * ------------------------------------------------------------------------- */
 #ifndef HET_PAIR_NAME
 #define HET_PAIR_NAME "(unstamped CPU ISA x GPU dialect pair)"

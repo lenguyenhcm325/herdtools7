@@ -9,19 +9,15 @@ type t
 
 (* Read [csv] from [dir]; a missing or unreadable file yields an empty map,
    warned about at [verbose] >= 0 and named by [src_name].  [csv] is NOT
-   hardwired to "control-map.csv": the x86 lattice has its own map
-   (control-map-amd.csv), because on x86 the CPU strength lattice loses its
-   middle rung and a mu(T) derived on the AArch64 lattice is not a weakening
-   there (memo PORT2-R2 7.D11).  The lane's CPU frontend names the file. *)
+   hardwired to "control-map.csv": mu(T) is a weakening on a STRENGTH LATTICE
+   and the lattice is the CPU column's, so the lane's CPU frontend names the
+   file (litmus/hetCpuFront.ml). *)
 val load : verbose:int -> dir:string -> csv:string -> src_name:string -> t
 
-(* No map at all, and no file was looked for.  An unregistered pair names no
-   map (litmus/hetOracle.ml): mu(T) is a weakening, so a map
-   is derived on ONE strength lattice, and reading another pair's would name
-   siblings that are not weakenings here.  Distinct from a load that
-   failed -- that one warns, because a map that was meant to be there and is
-   not is a build bug. *)
-val empty : t
+(* No row was read: the file was missing, unreadable or empty.  The render
+   stamps HET_NO_CONTROL_MAP from this, which is what stops het_verdict.h from
+   reading "nothing co-runs" as "this row IS the canary". *)
+val is_empty : t -> bool
 
 (* mu(T), the strictly weaker structural sibling to co-run as the positive
    control; None for BOTH sentinels -- "-" (no mu called for) and "none" (no

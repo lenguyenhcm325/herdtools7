@@ -290,10 +290,9 @@ end
          (* (clang triple, -std) to cross-assemble the real CPU asm on a foreign
             dev host; None when the build host already IS this ISA (native gcc) *)
          val cross : (string * string) option
-         (* NO PAIR FIELDS HERE.  [isa_name] is this module's whole contribution
-            to the pair question: it is one coordinate of the (CPU ISA x GPU
-            dialect) pair litmus/hetOracle.ml keys the control map and the machine
-            prose on. *)
+         (* the positive-control map this lane reads: mu(T) is a weakening on a
+            STRENGTH LATTICE, and the lattice is the CPU column's *)
+         val control_map_csv : string
          (* The tagged-CPU-body hooks -- the ONLY CPU-ISA-specific pieces of the
             het emitter (the AArch64 arm wires HetCpuBody, the x86_64 arm its
             twin HetCpuBodyX86; both produce the same C shape and share
@@ -494,12 +493,12 @@ end
              the parse -- an unregistered target must refuse having written
              nothing. *)
           let dialects = HetTarget.select ~key:(fun d -> d.gd_target) dialects in
-          (* THE PAIR ROW for this emission, resolved in the same breath and for
-             the same reason: an ABSENT (CPU ISA x GPU dialect) pair must refuse
-             having written nothing.  One dialect survives the filter, so the pair
-             is fixed here. *)
-          let pair =
-            HetOracle.resolve ~cpu_isa:CpuF.isa_name
+          (* THE MACHINE ROW for this emission, resolved in the same breath: one
+             dialect survives the filter, so the (CPU ISA x GPU dialect) pair is
+             fixed here, and an unregistered pair is worth its one warning before
+             anything is written.  It never refuses -- see litmus/hetMachine.ml. *)
+          let machine, pair_registered =
+            HetMachine.resolve ~verbose:O.verbose ~cpu_isa:CpuF.isa_name
               ~target:(List.hd dialects).gd_target in
           let parsed = P.parse in_chan splitted in
           close_in in_chan ;
@@ -521,60 +520,52 @@ end
                 match annot with Some ("cpu"::_) -> true | _ -> false)
               parsed.MiscParser.prog in
           (* The positive-control map: mu(T) and the canary to co-run
-             (litmus/hetControlMap.ml).  A pair with no registered map reads NONE
-             (D-MV5): mu(T) is a weakening on a PARTICULAR strength lattice, so a
-             map borrowed from another pair names siblings that are not weakenings
-             here.  Such a harness is single-instance and -- with no control built
-             -- het_verdict() calls its nulls COLD-INVALID and says why.  The
-             bootstrap map generator for a new pair is deliberately future work;
-             until it exists, characterizing without one is the honest state. *)
+             (litmus/hetControlMap.ml), read for EVERY lane and named by the CPU
+             frontend, because mu(T) is a weakening on a strength lattice and the
+             lattice is the CPU column's.  A lane whose map is not beside the test
+             builds no control at all, and het_verdict() then calls its nulls
+             COLD-INVALID and says why. *)
           let src_dir = Filename.dirname src_name in
           let cmap =
-            match pair with
-            | HetOracle.Oracle p ->
-               HetControlMap.load ~verbose:O.verbose ~dir:src_dir
-                 ~csv:p.HetOracle.op_control_map_csv ~src_name
-            | HetOracle.Characterize _ | HetOracle.Override ->
-               HetControlMap.empty in
+            HetControlMap.load ~verbose:O.verbose ~dir:src_dir
+              ~csv:CpuF.control_map_csv ~src_name in
           let mu_name = HetControlMap.control_of cmap tname
           and canary_name = HetControlMap.canary_of cmap tname in
           (* WHICH MACHINE THIS HARNESS MAY NAME, for the emitted stderr WARNINGs
              -- the two halves of the interconnect noise and the link between
-             them.  It comes from the PAIR ROW (litmus/hetOracle.ml), which is
+             them.  It comes from the MACHINE ROW (litmus/hetMachine.ml), which is
              also what stamps the HET_LINK_NAME / HET_HOST_HALF / HET_DEV_HALF
              defines het_verdict.h prints from, so the driver's wording and the
              verdict's wording cannot disagree: one record feeds both. *)
           let mc =
-            match HetOracle.machine_of pair with
+            match machine with
             | Some m -> m
-            | None -> HetOracle.generic_machine in
-          let host_half = mc.HetOracle.mc_host_half
-          and dev_half = mc.HetOracle.mc_dev_half
-          and link_name = mc.HetOracle.mc_link_name in
+            | None -> HetMachine.generic_machine in
+          let host_half = mc.HetMachine.mc_host_half
+          and dev_half = mc.HetMachine.mc_dev_half
+          and link_name = mc.HetMachine.mc_link_name in
           (* The (CPU ISA x GPU dialect) this harness was BUILT for, as the short
              name the verdict layer prints where it has to identify the target.
-             A build fact, so every pair stamps it -- unlike [mc], which an
-             unregistered pair leaves unstamped. *)
+             A build fact, so every pair stamps it -- unlike [mc], which a pair
+             with no machine row leaves unstamped. *)
           let pair_label =
-            HetOracle.pair_name ~cpu_isa:CpuF.isa_name
+            HetMachine.pair_name ~cpu_isa:CpuF.isa_name
               ~target:(List.hd dialects).gd_target in
-          (* WHETHER A POSITIVE-CONTROL MAP WAS READ AT ALL.  A pair with no
-             registered map reads none, so nothing in such a harness marks any row
-             the canary and its missing bound is deferred rather than structural --
-             het_verdict.h has to be able to tell those two apart. *)
-          let no_control_map =
-            match pair with
-            | HetOracle.Oracle _ -> false
-            | HetOracle.Characterize _ | HetOracle.Override -> true in
+          (* WHETHER A POSITIVE-CONTROL MAP WAS READ AT ALL.  The load above is
+             unconditional, so this says the file was missing beside the test:
+             nothing then marks any row the canary, and its missing bound is a
+             build fault rather than a construction -- het_verdict.h has to be
+             able to tell those two apart. *)
+          let no_control_map = HetControlMap.is_empty cmap in
           (* WHY this harness names no mu(T).  Three different facts, and only one
-             of them is a claim about the strength lattice: no map was read for
-             this pair at all; a map was read and its Mu column names none for this
+             of them is a claim about the strength lattice: no map was read beside
+             this test at all; a map was read and its Mu column names none for this
              row; or no weaker structural sibling EXISTS (the map's `none'
              sentinel, whose MuRule column says why).  Emitted verbatim, so a
              harness sitting in a results tree says which one it is. *)
           let mu_absent_why =
             if no_control_map then
-              "no positive-control map was read for this pair"
+              "no positive-control map was read beside this test"
             else if HetControlMap.no_mutant_exists cmap tname then
               "no strictly weaker structural sibling exists for this test"
             else
@@ -1930,7 +1921,7 @@ end
             s (Printf.sprintf
                  "    fprintf(stderr, \"HetLitmus WARNING: the mem-stress population is EMPTY (test=%%d + noise=%%d fills the co-resident cap %%d).  HET_MEM_STRESS_PCT=%%d asks for scratchpad stress and NO block will do any.  %s\\n\",\n\
                \            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_MEM_STRESS_PCT);\n"
-                 (if mc.HetOracle.mc_alglave_zero
+                 (if mc.HetMachine.mc_alglave_zero
                   then "On NVIDIA silicon an unstressed run observes nothing (Alglave ASPLOS'15 4.3.1)."
                   else "(Alglave ASPLOS'15 4.3.1's \\\"zero without stress\\\" was measured on NVIDIA parts and is not claimed for this target; no equivalent figure is published for it.)")) ;
             s "  uint32_t _pre_pat = (uint32_t)HET_PRE_STRESS_PATTERN;\n" ;
@@ -1991,17 +1982,17 @@ end
                it, and a disclosed fallback where none does -- naming another
                part's capacity as this one's is the claim this arm refuses. *)
             s "  if (HET_NOISE_MB < HET_LLC_MB)\n" ;
-            s (match mc.HetOracle.mc_llc_mb with
+            s (match mc.HetMachine.mc_llc_mb with
                | Some _ ->
                   Printf.sprintf
                     "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%%d is BELOW the last-level cache (%%d MB) -- the noise buffers fit in cache, so the reads are served locally and generate NO interconnect traffic.  This run is NOT %s-stressed%s.\\n\",\n\
                    \            (int)HET_NOISE_MB, (int)HET_LLC_MB);\n"
-                    link_name mc.HetOracle.mc_llc_note
+                    link_name mc.HetMachine.mc_llc_note
                | None ->
                   Printf.sprintf
                     "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%%d is below the %%d MB threshold -- a FALLBACK figure, measured on another part, not a last-level-cache capacity for this target.  A noise buffer that fits in the last-level cache is served locally and crosses no %s, so this run may not be stressed at all%s.\\n\",\n\
                    \            (int)HET_NOISE_MB, (int)HET_LLC_MB);\n"
-                    link_name mc.HetOracle.mc_llc_note) ;
+                    link_name mc.HetMachine.mc_llc_note) ;
             s "  if (_noiseBlocks > 0) {\n" ;
             s "    int _rc = gd_alloc_noise((void**)&_noise_ddr, (size_t)_noise_words*sizeof(uint64_t), 2);\n" ;
             s (Printf.sprintf
@@ -2477,44 +2468,43 @@ end
             s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
             s "#include <cstring>\n#include <cmath>\n" ;
             s "#include <pthread.h>\n#include <inttypes.h>\n" ;
-            (* WHAT THE PAIR ROW STAMPS, ahead of the runtime headers that read
-               it.  The machine words -- the two halves of the interconnect
+            (* WHAT THE MACHINE ROW STAMPS, ahead of the runtime headers that
+               read it.  The machine words -- the two halves of the interconnect
                noise, the link between them, this part's last level -- are claims
                about silicon, so a pair with no machine row stamps none of them
                and the headers' #ifndef defaults name the mechanism instead: a
                missing define can only weaken a claim.  The two build facts below
                are stamped by every pair, because they are true of the binary
-               whatever the pair row says.  HET_PLACE_LEVER is separate again: the
-               vendor API call this render actually contains is a dialect fact. *)
-            (match HetOracle.machine_of pair with
+               whatever the machine row says.  HET_PLACE_LEVER is separate again:
+               the vendor API call this render contains is a dialect fact. *)
+            (match machine with
              | Some m ->
                 s (Printf.sprintf "#define HET_LINK_NAME %S\n"
-                     m.HetOracle.mc_link_name) ;
+                     m.HetMachine.mc_link_name) ;
                 s (Printf.sprintf "#define HET_HOST_HALF %S\n"
-                     m.HetOracle.mc_host_half) ;
+                     m.HetMachine.mc_host_half) ;
                 s (Printf.sprintf "#define HET_DEV_HALF %S\n"
-                     m.HetOracle.mc_dev_half) ;
-                (match m.HetOracle.mc_llc_mb with
+                     m.HetMachine.mc_dev_half) ;
+                (match m.HetMachine.mc_llc_mb with
                  | Some mb -> s (Printf.sprintf "#define HET_LLC_MB %d\n" mb)
                  | None -> ()) ;
-                if m.HetOracle.mc_alglave_zero then
+                if m.HetMachine.mc_alglave_zero then
                   s "#define HET_ALGLAVE_ZERO_MEASURED 1\n"
              | None ->
-                s "/* No machine defines: no machine row backs this (CPU ISA x GPU\n" ;
-                s "   dialect) pair, so this harness names no silicon and\n" ;
-                s "   het_verdict.h's generic host/device wording stands. */\n") ;
+                (* Two ways to have no machine, and a results tree six months on
+                   is where they have to be told apart: a REGISTERED pair is
+                   deliberately nameless, an unregistered one was never
+                   considered. *)
+                if pair_registered then begin
+                  s "/* No machine defines: no machine row backs this (CPU ISA x GPU\n" ;
+                  s "   dialect) pair, so this harness names no silicon and\n" ;
+                  s "   het_verdict.h's generic host/device wording stands. */\n"
+                end else begin
+                  s "/* No machine defines: this (CPU ISA x GPU dialect) pair is in no\n" ;
+                  s "   row of litmus/hetMachine.ml, so this harness names no silicon\n" ;
+                  s "   and het_verdict.h's generic host/device wording stands. */\n"
+                end) ;
             s (Printf.sprintf "#define HET_PAIR_NAME %S\n" pair_label) ;
-            (* THE OVERRIDE, DISCLOSED IN BAND.  `-allow-no-oracle' emits for a
-               pair the table does not carry at all; months later this render is
-               all a reader of a results tree has to tell that emission from a
-               registered one. *)
-            (match pair with
-             | HetOracle.Override ->
-                s "/* EMITTED UNDER -allow-no-oracle: no row of litmus/hetOracle.ml\n" ;
-                s "   carries this (CPU ISA x GPU dialect) pair, so this harness was\n" ;
-                s "   emitted past the refusal by hand.  It read no positive-control\n" ;
-                s "   map and names no machine. */\n"
-             | HetOracle.Oracle _ | HetOracle.Characterize _ -> ()) ;
             if no_control_map then s "#define HET_NO_CONTROL_MAP 1\n" ;
             (match dialect.gd_place_lever with
              | Some lever -> s (Printf.sprintf "#define HET_PLACE_LEVER %S\n" lever)

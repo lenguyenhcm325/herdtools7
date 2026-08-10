@@ -67,8 +67,8 @@ hip-bin' -- write the SAME ./<test>, so an AMD campaign differs from an NVIDIA o
 only in which target built the binary, which happens before this driver is
 invoked.  Adding a --target axis here would be a knob with nothing behind it.
 
-CHARACTERIZATION (--characterization, exclusive with --control-map).  A pair with no
-oracle (litmus/hetOracle.ml) predicts nothing, so its rows have no class to read: the
+CHARACTERIZATION (--characterization, exclusive with --control-map).  A harness carries
+no prediction, so its row has no class to read: the
 switch assigns every test NO-ORACLE from the emitted corpus itself.  That removes the
 Allowed sweep (nothing here fires against a prediction) and leaves `decide' with only
 its bound arm, so OBSERVED and CONFIRMED -- the two stop reasons that state agreement

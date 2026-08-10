@@ -24,10 +24,9 @@
 #   7. tests/cluster/MP-cluster  gpu-only Hopper cluster inline-PTX fence path
 #   8. MP-cg-sys-relaxed-x86_64 (HIP)  the AMD/MI300A render -- the only place in
 #                              the whole suite that compiles a .hip at all.  It
-#                              comes from tests/het-x86 because a .hip harness is
-#                              the (x86_64, hip) ORACLE PAIR: the AArch64 corpus
-#                              paired with hip is a machine no oracle covers, and
-#                              litmus7 refuses it (litmus/hetOracle.ml).
+#                              comes from tests/het-x86 because (x86_64, hip) is
+#                              the pair with the MI300A row, so it is the .hip
+#                              that names the part (litmus/hetMachine.ml).
 #   9. MP-cg-sys-sy.acq-2s     order-pair; the only rep emitting inline
 #                              `fence.acquire.sys' (PTX ISA 8.6 / sm_90), with a
 #                              compiled-in co-run control (mu = MP-cg-sys-ld.acq-2s;
@@ -64,11 +63,10 @@ cd "$REPO"
 export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 
 HET_DIR="$REPO/hetlitmus/tests/het"
-# The committed one-test fixture for the (x86_64, hip) ORACLE PAIR.  The HIP
-# rep cannot come from $HET_DIR: those tests have an AArch64 CPU column, and
-# (AArch64, hip) is absent from the pair table (litmus/hetOracle.ml) -- litmus7
-# refuses it at emission rather than tag a harness from an oracle derived for
-# another machine.
+# The committed one-test fixture for the (x86_64, hip) pair.  The HIP rep does
+# not come from $HET_DIR: those tests have an AArch64 CPU column, and
+# (AArch64, hip) is in no row of litmus/hetMachine.ml, so it renders a harness
+# that names no machine -- which is not the .hip this rep is here to compile.
 HETX86_DIR="$REPO/hetlitmus/tests/het-x86"
 CLU_DIR="$REPO/hetlitmus/tests/cluster"
 WORK="$(mktemp -d)"

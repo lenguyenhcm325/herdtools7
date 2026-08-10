@@ -4,7 +4,7 @@ x86fixturecheck.py -- is `hetlitmus/tests/het-x86' still what its generators emi
 
 That directory is five hand-cut committed files -- three `.litmus' renderings plus
 one-row-per-test extracts of `control-map-amd.csv' and `expected-amd.csv' -- and it
-is the ONLY route to the populated (x86_64, hip) oracle pair for the cram suite,
+is the ONLY route to the (x86_64, hip) pair for the cram suite,
 smoke.sh and verdictcheck: the real x86 corpus is generated on demand and never
 committed, and a cram sandbox has no `hetgen7' on $PATH.  Nothing else in the tree
 compares it against its generators, so it can go stale in silence -- and the

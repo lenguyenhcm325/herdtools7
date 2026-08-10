@@ -1,0 +1,112 @@
+(****************************************************************************)
+(*                           the diy toolsuite                              *)
+(*                                                                          *)
+(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(*                                                                          *)
+(* hetMachine: the MACHINE TABLE.  Contract and rationale in the .mli.      *)
+(*                                                                          *)
+(* This software is governed by the CeCILL-B license under French law.      *)
+(****************************************************************************)
+
+type machine = {
+    mc_link_name : string ;   (* no leading article: use sites supply their own *)
+    mc_host_half : string ;
+    mc_dev_half : string ;
+    (* Alglave ASPLOS'15 4.3.1's "zero without stress" is an NVIDIA measurement
+       (B4).  True only where it was measured; everywhere else the gap is stated
+       instead of the number being borrowed. *)
+    mc_alglave_zero : bool ;
+    (* The last-level cache a noise buffer must EXCEED to cross anything on this
+       part, in MB, and the parenthetical printed after that warning.  [None]
+       means no figure is published for the target: the warning then names the
+       mechanism and discloses that its threshold is a fallback measured
+       elsewhere, rather than passing another part's capacity off as this one's. *)
+    mc_llc_mb : int option ;
+    mc_llc_note : string ;
+  }
+
+type t = machine option
+
+(* THE FALLBACK, and it claims least: it names the MECHANISM, never a brand.  A
+   pair with no machine row gets this and stamps no machine defines at all, so
+   het_verdict.h's #ifndef defaults -- which are these same words -- stand. *)
+let generic_machine = {
+    mc_link_name = "host-device interconnect" ;
+    mc_host_half = "the host half" ;
+    mc_dev_half = "the device half" ;
+    mc_alglave_zero = false ;
+    mc_llc_mb = None ;
+    mc_llc_note =
+      " (the local-cache argument is target-independent; no measured \
+       last-level-cache behaviour is claimed for this target)" ;
+  }
+
+(* GH200: Grace (AArch64) + Hopper over NVLink-C2C.  The Fusco note is that
+   Hopper's L2 caches HBM whether the line is local or peer. *)
+let gh200_machine = {
+    mc_link_name = "NVLink-C2C" ;
+    mc_host_half = "the Grace half" ;
+    mc_dev_half = "the Hopper half" ;
+    mc_alglave_zero = true ;
+    (* max(Grace L3 114 MB, Hopper L2 51 MB) -- Bagchi ISMM'26 Table 1. *)
+    mc_llc_mb = Some 114 ;
+    mc_llc_note = " (Fusco: Hopper L2 caches HBM, local and peer)" ;
+  }
+
+(* MI300A: Zen-4 x86-64 CCDs + CDNA3 XCDs on one package over Infinity Fabric,
+   named verbatim from the memo that characterises the part
+   (env-research/PORT2-R2-amd-oracle.md sec 1).  Alglave's "zero without stress"
+   stays withheld: no equivalent figure is published for this part.  The LLC
+   figure is not withheld, because one IS published for it -- 256 MB, and the
+   Grace 114 MB it replaces UNDER-fires here, so the target's own figure is both
+   the grounded and the conservative reading. *)
+let mi300a_machine = {
+    mc_link_name = "Infinity Fabric" ;
+    mc_host_half = "the x86 half" ;
+    mc_dev_half = "the MI300A device half" ;
+    mc_alglave_zero = false ;
+    (* The MALL / AMD Infinity Cache on the IOD is this part's last level, above
+       both the per-XCD 4 MB L2 and the per-CCD Zen-4 L3, and all HBM traffic
+       passes through it: Tee et al., "The MALL is Open", SC Workshops '25,
+       Table 1 p.1111 (MI300A: sL1 16 KB, L2 4 MB/XCD, MALL 256 MB). *)
+    mc_llc_mb = Some 256 ;
+    mc_llc_note =
+      " (the MALL / AMD Infinity Cache, 256 MB -- Tee et al., The MALL is \
+       Open, SC-W'25 Table 1)" ;
+  }
+
+(* THE TABLE.  Adding a machine is adding a row here; nothing else in the
+   emitter knows a pair exists.  A row with no machine is REGISTERED all the
+   same -- it says the pair is expected and deliberately nameless, which an
+   absent row cannot say. *)
+let table = [
+    ("AArch64", "cuda"), Some gh200_machine ;
+    ("X86_64", "hip"), Some mi300a_machine ;
+    (* The dev box is an x86-64 host with an NVIDIA GPU, so this pair is what the
+       runtime gates in this tree actually execute.  It is neither part above,
+       and there is no third machine to name it after. *)
+    ("X86_64", "cuda"), None ;
+  ]
+
+let pair_name ~cpu_isa ~target = Printf.sprintf "(%s, %s)" cpu_isa target
+
+let registered_doc () =
+  String.concat ", "
+    (List.map (fun ((c,t),_) -> pair_name ~cpu_isa:c ~target:t) table)
+
+(* WARN, NEVER REFUSE.  The pair decides which silicon may be named, not whether
+   the machine can be measured: a harness that names none characterizes exactly
+   as well, so the only thing an unregistered pair loses is the machine prose.
+   One line, because a per-test refusal is what this replaced. *)
+let resolve ~verbose ~cpu_isa ~target =
+  match List.assoc_opt (cpu_isa,target) table with
+  | Some m -> m, true
+  | None ->
+     if verbose >= 0 then
+       Printf.eprintf
+         "HetLitmus WARNING: the (CPU ISA x GPU dialect) pair %s is in no row of \
+          litmus/hetMachine.ml, so this harness NAMES NO MACHINE: it stamps no \
+          machine define, and het_verdict.h's mechanism-naming defaults stand \
+          wherever it would have printed one.  Registered pairs: %s.\n%!"
+         (pair_name ~cpu_isa ~target) (registered_doc ()) ;
+     None, false

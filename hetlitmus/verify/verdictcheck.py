@@ -442,7 +442,7 @@ def _env():
 # PHASE 4 -- WHICH MACHINE THE PRINTOUT NAMES.
 #
 # Every machine word het_verdict.h prints comes from a define the emitter stamps
-# out of the PAIR TABLE row (litmus/hetOracle.ml), with generic defaults when none
+# out of the MACHINE TABLE row (litmus/hetMachine.ml), with generic defaults when none
 # are stamped.  Three properties, all three read off the PRINTOUT rather than off
 # the defines (the enum changing is not the deliverable, the sentence is):
 #

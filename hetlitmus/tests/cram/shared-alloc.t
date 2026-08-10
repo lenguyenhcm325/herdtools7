@@ -14,10 +14,9 @@ tests that are themselves the Layer-B canary and so cannot co-run themselves,
 MP-{cg,gc}-sys-relaxed (control-map.csv: `self'); MP-cg-sys-relaxed guards it.
 
 The `.hip' renders come from ../het-x86, not from ../het: a harness is a
-(CPU ISA x GPU dialect) ORACLE PAIR (litmus/hetOracle.ml), (x86_64, hip) is the
-populated AMD pair, and the AArch64 corpus paired with hip is a machine no oracle
-covers -- litmus7 refuses it.  The CPU column differs; everything these sections
-read is the GPU render and the shared runtime headers.
+(CPU ISA x GPU dialect) PAIR, and (x86_64, hip) is the one this project has an
+MI300A row for (litmus/hetMachine.ml).  The CPU column differs; everything these
+sections read is the GPU render and the shared runtime headers.
 
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1

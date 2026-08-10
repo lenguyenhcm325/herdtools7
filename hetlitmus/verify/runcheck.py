@@ -3,11 +3,11 @@
 end to end on a box with no device.
 
 The wrapper is the one command a hardware session runs, so what it decides -- the
-oracle pair, the architecture the binaries are built for, whether the campaign
-adjudicates or characterizes -- is decided on a machine nobody is watching and is
-visible afterwards only in what it wrote down.  Every phase below drives it with
-the compiler and the probe replaced by the wrapper's documented stand-ins, so
-those decisions are checked here rather than on rented hardware.
+pair, the machine that pair may name, the architecture the binaries are built for
+-- is decided on a machine nobody is watching and is visible afterwards only in
+what it wrote down.  Every phase below drives it with the compiler and the probe
+replaced by the wrapper's documented stand-ins, so those decisions are checked
+here rather than on rented hardware.
 
 HOST-ADAPTIVE.  The chain phases need a corpus whose CPU column is this host's:
 `fixture()' picks the committed x86 fixture on an x86_64 box and a cut of the
@@ -15,17 +15,20 @@ committed AArch64 corpus on an aarch64 one, and the pairs each phase expects
 follow that choice.  Nothing here is x86-only, so the GH200 runs the same gate.
 
   PHASE 1  --dry-run prints the plan and does NOT act: no results dir at all.
-  PHASE 2  the chain end to end on each dialect this host's pair table reaches.
-  PHASE 3  the refusals, each by its own reason.
+  PHASE 2  the chain end to end on each dialect this host reaches.
+  PHASE 3  the refusals, each by its own reason -- and the unregistered pair,
+           which is a WARNING and emits.
   PHASE 4  campaign.py --characterization, and the states it may not resume.
-  PHASE 5  the pair-table reader, bounded to the table literal.
+  PHASE 5  the machine-table reader, bounded to the table literal.
   PHASE 6  the fail-closed handlers, each under its own induced condition.
   PHASE 7  a second session into a results dir that already holds one.
   PHASE 8  probe-hip.sh's exit paths.
 
 `--bite' plants one defect per assertion in a COPY of the script under test (never
-in the tree) and requires the phase to redden for the right reason.  `--hw' is the
-same wrapper on the real device, which is the -nvcc lane's half of this gate.
+in the tree) and requires the phase to redden for the right reason.  Two device
+modes need a GPU and are the -nvcc lane's half of this gate: `--hw' runs the same
+wrapper on the real device, and `--characterize-hw' builds two harnesses and reads
+what they PRINT (the only artefact a result is ever read off).
 """
 import argparse
 import atexit
@@ -45,7 +48,7 @@ WRAPPER = os.path.join(HETL, "hetlitmus-run.sh")
 CAMPAIGN = os.path.join(HETL, "campaign.py")
 RUNONE = os.path.join(HETL, "spotcheck", "run-one.sh")
 PROBE_HIP = os.path.join(HETL, "spotcheck", "probe-hip.sh")
-ORACLE_ML = os.path.join(ROOT, "litmus", "hetOracle.ml")
+MACHINE_ML = os.path.join(ROOT, "litmus", "hetMachine.ml")
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
 # The committed (x86_64, *) fixture: three tests, cut verbatim from a
@@ -62,7 +65,7 @@ X86_TESTS = ["MP-cg-sys-acqrel-2s-x86_64", "MP-cg-sys-relaxed-x86_64",
 AARCH64_DIR = os.path.join(HETL, "tests", "het")
 AARCH64_TESTS = ["MP-cg-sys-acqrel-2s", "MP-cg-sys-acquire", "MP-cg-sys-relaxed",
                  "S-cg-sys-fence"]
-AARCH64_SIDE = ["control-map.csv", "expected-nvidia.csv"]
+AARCH64_SIDE = ["control-map.csv"]
 
 # One HetStats machine line, the whole interface between a harness and
 # campaign.py, in the field order and field set het_stats_line prints -- a stub
@@ -202,9 +205,11 @@ def state_notes(path):
 
 
 # ---------------------------------------------------------------------------
-# THE FIXTURE THIS HOST CAN DRIVE, and what litmus/hetOracle.ml says about its
+# THE FIXTURE THIS HOST CAN DRIVE, and what litmus/hetMachine.ml says about its
 # two dialects.  The emitted link targets refuse a foreign host, so a corpus
-# whose CPU column is not this box's has no chain to drive here.
+# whose CPU column is not this box's has no chain to drive here.  Every row of
+# every campaign is NO-ORACLE whatever the pair: no harness carries a prediction,
+# so the pair changes what a render may CLAIM and nothing about what it does.
 # ---------------------------------------------------------------------------
 _CUT = None
 
@@ -222,31 +227,29 @@ def aarch64_corpus():
 
 
 def fixture():
-    """{isa, key, dir, tests, cuda: arm, hip: arm} for this host, or None."""
+    """{isa, key, dir, tests, map, cuda: arm, hip: arm} for this host, or None."""
     m = platform.machine()
     if m == "x86_64":
-        return {
+        fx = {
             "isa": "x86_64", "key": "X86_64", "dir": X86_DIR, "tests": X86_TESTS,
-            "cuda": {"state": "NO-ORACLE", "mode": "characterization",
-                     "arch": "sm_86",
-                     "classes": dict.fromkeys(X86_TESTS, "NO-ORACLE")},
-            "hip": {"state": "POPULATED", "mode": "oracle", "arch": "gfx942",
-                    "classes": {"MP-cg-sys-relaxed-x86_64": "Allowed",
-                                "MP-cg-sys-acqrel-2s-x86_64": "NO-ORACLE",
-                                "S-cg-sys-fence-x86_64": "NO-ORACLE"}},
+            "map": "control-map-amd.csv",
+            "cuda": {"state": "NO-MACHINE", "machine": "NONE", "arch": "sm_86"},
+            "hip": {"state": "MACHINE", "machine": "mi300a_machine",
+                    "arch": "gfx942"},
         }
-    if m in ("aarch64", "arm64"):
-        return {
+    elif m in ("aarch64", "arm64"):
+        fx = {
             "isa": "aarch64", "key": "AArch64", "dir": aarch64_corpus(),
-            "tests": AARCH64_TESTS,
-            "cuda": {"state": "POPULATED", "mode": "oracle", "arch": "sm_90",
-                     "classes": {"MP-cg-sys-relaxed": "Allowed",
-                                 "MP-cg-sys-acquire": "Allowed",
-                                 "MP-cg-sys-acqrel-2s": "Disallowed",
-                                 "S-cg-sys-fence": "Allowed"}},
-            "hip": {"state": "ABSENT", "arch": "gfx942"},
+            "tests": AARCH64_TESTS, "map": "control-map.csv",
+            "cuda": {"state": "MACHINE", "machine": "gh200_machine",
+                     "arch": "sm_90"},
+            "hip": {"state": "ABSENT", "machine": "NONE", "arch": "gfx942"},
         }
-    return None
+    else:
+        return None
+    for t in ("cuda", "hip"):
+        fx[t]["classes"] = dict.fromkeys(fx["tests"], "NO-ORACLE")
+    return fx
 
 
 def no_fixture(phase, quiet):
@@ -288,8 +291,8 @@ def phase1_dryrun(wrapper, quiet=False):
         if r.returncode != 0:
             bad.append("--dry-run exited %d: %s" % (r.returncode,
                                                     r.stderr.strip()[-200:]))
-        for frag in PLAN_STEPS + ["(%s, cuda)" % fx["key"], arm["mode"],
-                                  arm["arch"]]:
+        for frag in PLAN_STEPS + ["(%s, cuda)" % fx["key"], arm["arch"],
+                                  "characterization"]:
             if frag not in r.stdout:
                 bad.append("the plan never mentions %r -- a plan that omits a step "
                            "or a resolved value is not the plan that would run"
@@ -300,8 +303,8 @@ def phase1_dryrun(wrapper, quiet=False):
             if os.path.exists(os.path.join(out, junk)):
                 bad.append("--dry-run produced %s" % junk)
         if not quiet and not bad:
-            print("      the plan names all 7 steps, the pair, the mode and the "
-                  "arch; nothing was written")
+            print("      the plan names all 7 steps, the pair, the arch and what "
+                  "the campaign does; nothing was written")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return bad
@@ -349,11 +352,13 @@ def _e2e(wrapper, tmp, fx, target, arm, quiet):
             bad.append("%s: the transcript of %s carries no HetStats line"
                        % (target, t))
     summary = open(os.path.join(out, "summary.txt")).read()
-    if arm["mode"] not in summary:
-        bad.append("%s: the summary does not say %r -- it says:\n%s"
-                   % (target, arm["mode"], summary))
+    if "CHARACTERIZATION" not in summary:
+        bad.append("%s: the summary does not say what the rows are -- it says:\n%s"
+                   % (target, summary))
     record = open(os.path.join(out, "run-record.txt")).read()
-    for frag in ("arch=" + arm["arch"], "mode=" + arm["mode"], "seam_probe=STUB",
+    for frag in ("arch=" + arm["arch"], "pair_state=" + arm["state"],
+                 "pair_machine=" + arm["machine"], "control_map=" + fx["map"],
+                 "seam_probe=STUB",
                  "seam_compiler=OVERRIDDEN", "session_status=COMPLETE"):
         if frag not in record:
             bad.append("%s: run-record.txt does not carry %r -- the value the "
@@ -363,10 +368,15 @@ def _e2e(wrapper, tmp, fx, target, arm, quiet):
     if got != sorted(arm["classes"].items()):
         bad.append("%s: campaign state classes %s, want %s"
                    % (target, got, sorted(arm["classes"].items())))
+    # An unregistered pair is WARNED about, not refused: the session runs, and
+    # the one thing it loses is the machine its renders may name.
+    if arm["state"] == "ABSENT" and "is in no row of litmus/hetMachine.ml" \
+            not in r.stderr:
+        bad.append("%s: the pair is in no row of the machine table and the session "
+                   "never said so -- it said: %s" % (target, r.stderr[-300:]))
     if not quiet and not bad:
-        print("      %-4s -> %-16s %d row(s) %s"
-              % (target, arm["mode"], len(rows),
-                 ", ".join("%s=%s" % (t, c) for t, c, _, _ in rows)))
+        print("      %-4s -> %-14s %-16s %d row(s)"
+              % (target, arm["state"], arm["machine"], len(rows)))
     return bad, out
 
 
@@ -380,23 +390,6 @@ def phase2_e2e(wrapper, quiet=False):
         chained = None
         for target in ("cuda", "hip"):
             arm = fx[target]
-            # A dialect the pair table does not register has no chain to drive:
-            # what it must do is refuse, and name the table it is missing from.
-            if arm["state"] == "ABSENT":
-                r = run_wrapper(wrapper, ["--gpu-target", target, "--corpus",
-                                          fx["dir"], "--arch", arm["arch"],
-                                          "--dry-run"])
-                if r.returncode != 2:
-                    bad.append("(%s, %s) is absent from the pair table but the "
-                               "session exited %d, want 2"
-                               % (fx["key"], target, r.returncode))
-                elif "is not in litmus/hetOracle.ml" not in r.stderr:
-                    bad.append("(%s, %s) was refused for another reason: %s"
-                               % (fx["key"], target, r.stderr.strip()[-200:]))
-                elif not quiet:
-                    print("      %-4s -> ABSENT from the pair table, refused (rc=2)"
-                          % target)
-                continue
             b, out = _e2e(wrapper, tmp, fx, target, arm, quiet)
             bad += b
             if chained is None and not b:
@@ -447,6 +440,104 @@ def mixed_corpus(tmp):
     return d
 
 
+# The (AArch64, hip) pair is in no row of the machine table, and a corpus with an
+# AArch64 CPU column is committed, so this is the unregistered case every host can
+# drive THROUGH LITMUS7 -- emission does not care which box it runs on.
+UNREG_PAIR = "(AArch64, hip)"
+UNREG_TEST = "MP-cg-sys-relaxed"
+UNREG_WARN = "is in no row of litmus/hetMachine.ml"
+MACHINE_DEFINE_RE = re.compile(
+    r"^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|ALGLAVE_ZERO_MEASURED)\b",
+    re.M)
+# The words BOTH machine rows own.  A render entitled to neither may carry none
+# of them: this is the one defect a reader of a results tree could not catch.
+MACHINE_WORDS = re.compile(r"NVLink-C2C|Infinity Fabric|the Grace half|"
+                           r"the Hopper half|the x86 half|the MI300A device half")
+
+
+def unregistered_emits(quiet=False):
+    """An unregistered pair EMITS: exit 0, one warning, and a render that names
+    no machine.  Driven straight through litmus7, so it runs on every host."""
+    bad = []
+    tmp = tempfile.mkdtemp(prefix="runcheck3-unreg.")
+    try:
+        r = sh([os.path.join(BIN, "litmus7"), "-gpu-target", "hip", "-o", tmp,
+                UNREG_TEST + ".litmus"], cwd=AARCH64_DIR)
+        if r.returncode != 0:
+            bad.append("litmus7 exited %d on the unregistered pair %s -- warn, "
+                       "never refuse: %s"
+                       % (r.returncode, UNREG_PAIR, r.stderr.strip()[-300:]))
+            return bad
+        warns = set(l for l in r.stderr.splitlines() if UNREG_WARN in l)
+        if len(warns) != 1:
+            bad.append("emitting %s printed %d distinct warning(s) about the pair, "
+                       "want exactly 1: %s" % (UNREG_PAIR, len(warns), sorted(warns)))
+        elif UNREG_PAIR not in warns.pop():
+            bad.append("the warning does not name %s" % UNREG_PAIR)
+        render = os.path.join(tmp, UNREG_TEST, UNREG_TEST + ".hip")
+        if not os.path.exists(render):
+            bad.append("no .hip render for the unregistered pair")
+            return bad
+        text = open(render).read()
+        if '#define HET_PAIR_NAME "%s"' % UNREG_PAIR not in text:
+            bad.append("the render does not stamp HET_PAIR_NAME %r" % UNREG_PAIR)
+        stamped = MACHINE_DEFINE_RE.findall(text)
+        if stamped:
+            bad.append("the render of an unregistered pair stamps machine "
+                       "define(s) %s -- it is entitled to none" % stamped)
+        named = sorted(set(MACHINE_WORDS.findall(text)))
+        if named:
+            bad.append("the render of an unregistered pair names %s" % named)
+        if not quiet and not bad:
+            print("      %-34s emits (rc=0), 1 warning, 0 machine defines"
+                  % UNREG_PAIR)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return bad
+
+
+def unregistered_session(wrapper, fx, quiet=False):
+    """...and the WRAPPER does not refuse one either.  On a host whose own CPU
+    lane makes the unregistered pair the session runs; elsewhere the aarch64
+    corpus reaches the warning and then dies of the FOREIGN HOST, not of the
+    pair."""
+    bad = []
+    if fx["hip"]["state"] == "ABSENT":
+        args = ["--gpu-target", "hip", "--corpus", fx["dir"], "--arch",
+                fx["hip"]["arch"], "--dry-run"]
+        want_rc, want_frag = 0, UNREG_WARN
+    else:
+        args = ["--gpu-target", "hip", "--corpus", aarch64_corpus(), "--arch",
+                "gfx942", "--dry-run"]
+        want_rc, want_frag = 2, "uname -m is"
+    r = run_wrapper(wrapper, args)
+    if r.returncode != want_rc:
+        bad.append("the wrapper exited %d on the unregistered pair, want %d -- an "
+                   "unregistered pair is warned about, not refused: %s"
+                   % (r.returncode, want_rc, (r.stdout + r.stderr).strip()[-300:]))
+    elif UNREG_WARN not in r.stderr:
+        bad.append("the wrapper says nothing about the unregistered pair; its "
+                   "stderr was: %s" % (r.stderr.strip()[-300:] or "(empty)"))
+    elif want_frag not in r.stderr + r.stdout:
+        bad.append("the session did not reach %r; it said: %s"
+                   % (want_frag, (r.stdout + r.stderr).strip()[-300:]))
+    elif not quiet:
+        print("      %-34s warned about, session rc=%d" % ("the wrapper on " +
+                                                          UNREG_PAIR, want_rc))
+    return bad
+
+
+def mapless_corpus(tmp):
+    """This host's fixture, minus the control map the lane reads.  Emission would
+    build no control at all, so the session's nulls would be uninterpretable."""
+    d = os.path.join(tmp, "mapless")
+    os.makedirs(d, exist_ok=True)
+    fx = fixture()
+    for t in fx["tests"]:
+        shutil.copy(os.path.join(fx["dir"], t + ".litmus"), d)
+    return d
+
+
 def phase3_refusals(wrapper, quiet=False):
     fx = fixture()
     if fx is None:
@@ -481,9 +572,9 @@ def phase3_refusals(wrapper, quiet=False):
              ["--gpu-target", "cuda", "--corpus", home, "--arch",
               fx["cuda"]["arch"]],
              {"NVCC": os.path.join(tmp, "no-such-nvcc")}, "is not on PATH"),
-            ("unregistered pair",
-             ["--gpu-target", "hip", "--corpus", aarch64_corpus(), "--arch",
-              "gfx942"], {}, "is not in litmus/hetOracle.ml"),
+            ("corpus with no control map",
+             ["--gpu-target", "cuda", "--corpus", mapless_corpus(tmp), "--arch",
+              fx["cuda"]["arch"]], {}, "not readable beside the corpus"),
             ("mixed-ISA corpus",
              ["--gpu-target", "cuda", "--corpus", mixed_corpus(tmp), "--arch",
               fx["cuda"]["arch"]], {}, "mixes CPU lanes"),
@@ -502,6 +593,9 @@ def phase3_refusals(wrapper, quiet=False):
                            % (name, frag, r.stderr.strip()[-300:]))
             elif not quiet:
                 print("      %-34s rc=2, names it" % name)
+        # ...AND THE ONE THING THAT IS NO LONGER A REFUSAL.
+        bad += unregistered_emits(quiet)
+        bad += unregistered_session(wrapper, fx, quiet)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return bad
@@ -632,31 +726,26 @@ def phase4_characterization(campaign, quiet=False):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 5 -- the pair-table reader.  `Populated' and `Registered_none' are also
-# constructor names in litmus/hetOracle.ml's match arms, so a reader that ran past
-# the table literal reads the LAST row's state off unrelated code.  The doctored
-# copies below are what make that visible: the committed table happens to survive
-# an unbounded parse, and a table with one more row does not.
+# PHASE 5 -- the machine-table reader.  A row is a row only INSIDE the table
+# literal: a reader that ran past the closing bracket reads a row-shaped line out
+# of a comment or a doc example as if it were a registered pair.  The doctored
+# copies below are what make that visible -- the committed file happens to survive
+# an unbounded parse, and a file with a row-shaped line after the table does not.
 # ---------------------------------------------------------------------------
-READER_WANT = {("AArch64", "cuda"): "POPULATED expected-nvidia.csv control-map.csv",
-               ("X86_64", "hip"): "POPULATED expected-amd.csv control-map-amd.csv",
-               ("X86_64", "cuda"): "NO-ORACLE",
+READER_WANT = {("AArch64", "cuda"): "MACHINE gh200_machine",
+               ("X86_64", "hip"): "MACHINE mi300a_machine",
+               ("X86_64", "cuda"): "NO-MACHINE",
                ("AArch64", "hip"): "ABSENT"}
-LAST_ROW = ('\n    ("X86_64", "sycl"),\n'
-            '    Populated { op_oracle_csv = "expected-zz.csv" ;\n'
-            '                op_oracle_model = "ZZ" ;\n'
-            '                op_control_map_csv = "control-map-zz.csv" ;\n'
-            '                op_machine = generic_machine } ;\n')
-ARMS_OLD = ("  | Some (Populated p) -> Oracle p\n"
-            "  | Some (Registered_none why) -> Characterize why\n")
-ARMS_NEW = ("  | Some (Registered_none why) -> Characterize why\n"
-            "  | Some (Populated p) -> Oracle p\n")
+LAST_ROW = '\n    ("X86_64", "sycl"), Some generic_machine ;\n'
+TRAILING_DOC = ('\n(* Adding a machine is adding a row:\n'
+                '    ("AArch64", "hip"), Some gh200_machine ;\n'
+                '   and nothing else in the emitter changes. *)\n')
 
 
 def _mkrepo(tmp, name, text):
     d = os.path.join(tmp, name)
     os.makedirs(os.path.join(d, "litmus"), exist_ok=True)
-    with open(os.path.join(d, "litmus", "hetOracle.ml"), "w") as fh:
+    with open(os.path.join(d, "litmus", "hetMachine.ml"), "w") as fh:
         fh.write(text)
     return d
 
@@ -665,26 +754,26 @@ def phase5_reader(wrapper, quiet=False):
     bad = []
     tmp = tempfile.mkdtemp(prefix="runcheck5.")
     try:
-        m = re.search(r"^oracle_pair\(\) \{.*?^\}", open(wrapper).read(),
+        m = re.search(r"^machine_pair\(\) \{.*?^\}", open(wrapper).read(),
                       re.S | re.M)
         if m is None:
-            return ["the wrapper has no oracle_pair(): the pair table is read by "
-                    "something this phase cannot find, so it checks nothing"]
+            return ["the wrapper has no machine_pair(): the machine table is read "
+                    "by something this phase cannot find, so it checks nothing"]
         drv = write_exec(os.path.join(tmp, "reader.sh"),
                          '#!/usr/bin/env bash\nset -euo pipefail\nREPO="$3"\n'
-                         + m.group(0) + '\noracle_pair "$1" "$2"\n')
-        real = open(ORACLE_ML).read()
+                         + m.group(0) + '\nmachine_pair "$1" "$2"\n')
+        real = open(MACHINE_ML).read()
         i = real.find("let table = [")
         j = real.find("\n  ]\n", i if i >= 0 else 0)
         if i < 0 or j < 0:
-            return ["litmus/hetOracle.ml has no `let table = [' ... `]' literal: "
+            return ["litmus/hetMachine.ml has no `let table = [' ... `]' literal: "
                     "this phase, and the reader it checks, are written for that shape"]
         want_last = dict(READER_WANT)
-        want_last[("X86_64", "sycl")] = "POPULATED expected-zz.csv control-map-zz.csv"
+        want_last[("X86_64", "sycl")] = "MACHINE generic_machine"
         variants = [("the committed table", real, READER_WANT),
-                    ("a populated pair placed LAST", real[:j] + LAST_ROW + real[j:],
+                    ("a machine row placed LAST", real[:j] + LAST_ROW + real[j:],
                      want_last),
-                    ("the match arms reordered", real.replace(ARMS_OLD, ARMS_NEW, 1),
+                    ("a row-shaped line AFTER the table", real + TRAILING_DOC,
                      READER_WANT)]
         for n, (what, text, want) in enumerate(variants):
             if n and text == real:
@@ -709,7 +798,7 @@ def phase5_reader(wrapper, quiet=False):
                        real.replace("let table = [", "let t = [", 1))
         got = sh(["bash", drv, "AArch64", "cuda", repo]).stdout.strip()
         if got != "NO-TABLE":
-            bad.append("a hetOracle.ml with no `let table = [' reads %r, want "
+            bad.append("a hetMachine.ml with no `let table = [' reads %r, want "
                        "NO-TABLE" % got)
         elif not quiet:
             print("      a table literal that moved reads NO-TABLE, not ABSENT")
@@ -1064,12 +1153,11 @@ INJECTIONS = [
      lambda s: s.replace('if [ "$DRYRUN" -eq 1 ]; then\n  echo\n',
                          'mkdir -p "$OUT"\nif [ "$DRYRUN" -eq 1 ]; then\n  echo\n', 1),
      phase1_dryrun, "must write nothing"),
-    ("2", "wrapper", "the mode is assumed to be `oracle' instead of read off the pair",
+    ("2", "wrapper", "the machine table is not read: every pair is the GH200 row",
      lambda s: s.replace(
-         'if [ "$PAIR_STATE" = POPULATED ]; then\n  MODE="oracle"',
-         'if true; then\n  MODE="oracle" ; PAIR_ORACLE="expected-amd.csv" ; '
-         'PAIR_MAP="control-map-amd.csv"', 1),
-     phase2_e2e, None),
+         'read -r PAIR_STATE PAIR_MACHINE <<<"$(machine_pair "$ISA_KEY" "$GPU_TARGET")"',
+         'PAIR_STATE=MACHINE ; PAIR_MACHINE=gh200_machine', 1),
+     phase2_e2e, "pair_machine"),
     ("2", "wrapper", "the harness transcripts are not kept",
      lambda s: s.replace('export HET_RUN_LOG_DIR="$OUT/hetstats"',
                          'HET_RUN_LOG_DIR=""', 1),
@@ -1091,6 +1179,14 @@ INJECTIONS = [
      lambda s: s.replace('done < <(corpus_cpu_lanes "${CORPUS_PATHS[@]}")',
                          'done < <(corpus_cpu_lanes "${CORPUS_PATHS[0]}")', 1),
      phase3_refusals, "mixed-ISA corpus"),
+    ("3", "wrapper", "the lane's control map is not required beside the corpus",
+     lambda s: s.replace('[ -r "$CORPUS/$PAIR_MAP" ] || die',
+                         '[ 1 = 1 ] || die', 1),
+     phase3_refusals, "corpus with no control map"),
+    ("3", "wrapper", "an unregistered pair passes without a word",
+     lambda s: s.replace('    echo "hetlitmus-run: WARNING -- the pair $PAIR is in no row of \\',
+                         '    echo "hetlitmus-run: (nothing to report) \\', 1),
+     phase3_refusals, "says nothing about the unregistered pair"),
     ("4", "campaign", "--characterization classes its rows Disallowed",
      lambda s: s.replace('return dict.fromkeys(tests, "NO-ORACLE")',
                          'return dict.fromkeys(tests, "Disallowed")', 1),
@@ -1108,8 +1204,9 @@ INJECTIONS = [
                 .replace("            if pclass != st.oclass:",
                          '            if pclass not in ("", st.oclass):', 1),
      phase4_characterization, "a state with no class"),
-    ("5", "wrapper", "the pair-table reader runs past the table literal",
-     lambda s: s.replace("{ intab = 0 ; inb = 0 ; next }", "{ next }", 1),
+    ("5", "wrapper", "the machine-table reader runs past the table literal",
+     lambda s: s.replace("/^[ \\t]*\\][ \\t]*$/ { intab = 0 ; next }",
+                         "/^[ \\t]*\\][ \\t]*$/ { next }", 1),
      phase5_reader, "not bounded to the table literal"),
     ("6", "wrapper", "a harness that did not build does not stop the session",
      lambda s: s.replace('if [ "$nfail" -ne 0 ]; then', 'if false; then', 1),
@@ -1223,8 +1320,8 @@ def bite():
 # ---------------------------------------------------------------------------
 # --hw -- the same wrapper, on the device.  No stand-ins: the real probe, the
 # real compiler, the real harness.  The pair it reaches is whichever one this
-# host's fixture names, and what is asserted is that the session took the mode
-# that pair's table row entitles it to and said so.
+# host's fixture names, and what is asserted is that the session recorded the
+# machine that pair's table row entitles it to and nothing more.
 # ---------------------------------------------------------------------------
 # A harness that loses a barrier increment stalls until the runner's timeout
 # kills it (campaign.py then records `runner rc=124').  On a device whose pinned
@@ -1292,11 +1389,15 @@ def hardware(wrapper=WRAPPER, quiet=False):
                 print(r.stdout[-2500:])
             summary = open(os.path.join(out, "summary.txt")).read()
             record = open(os.path.join(out, "run-record.txt")).read()
-            if arm["mode"] not in summary:
-                bad.append("the summary does not say %s:\n%s"
-                           % (arm["mode"], summary))
-            if "mode=" + arm["mode"] not in record:
-                bad.append("run-record.txt does not record the %s mode" % arm["mode"])
+            if "CHARACTERIZATION" not in summary:
+                bad.append("the summary does not say what the rows are:\n%s"
+                           % summary)
+            for frag in ("pair_state=" + arm["state"],
+                         "pair_machine=" + arm["machine"]):
+                if frag not in record:
+                    bad.append("run-record.txt does not carry %r -- the machine this "
+                               "session was entitled to name is not a recorded fact"
+                               % frag)
             if "session_status=COMPLETE" not in record:
                 bad.append("run-record.txt does not record a completed session")
             for frag in ("seam_probe", "seam_compiler", "seam_litmus7"):
@@ -1324,9 +1425,9 @@ def hardware(wrapper=WRAPPER, quiet=False):
                     print("  %s" % m)
             return 1, bad
         if not quiet:
-            print("\nRUNCHECK --hw: PASS (the chain ran on the device, the pair "
-                  "took the mode its table row names, and the session recorded "
-                  "what it did)")
+            print("\nRUNCHECK --hw: PASS (the chain ran on the device, the "
+                  "session named the machine its table row entitles it to, and "
+                  "recorded what it did)")
         return 0, []
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1349,8 +1450,8 @@ def hardware_bite():
         rc, why = hardware(target, quiet=True)
         # RED FOR THE RIGHT REASON: a stalled session is red too, and would make
         # this bite pass without the assertion having read anything.  The injection
-        # substitutes both the mode and the map, so either name settles it.
-        named = [fx["cuda"]["mode"], "control-map-amd.csv"]
+        # substitutes the pair's whole machine row, so its name settles it.
+        named = ["pair_machine", "pair_state"]
         if rc == 0:
             print("  *** the device lane stayed GREEN on: %s" % what)
             bad += 1
@@ -1375,15 +1476,321 @@ def hardware_bite():
     return 0
 
 
+# ---------------------------------------------------------------------------
+# --characterize-hw -- what a harness actually PRINTS, on the device.  Every
+# other gate on the verdict/statistics stack drives it from synthetic records or
+# from emitted text; this one builds a harness, runs it on the GPU and reads the
+# printout, which is the only artefact a result is ever read off.
+#
+# TWO ARMS, because the two sentences a reader must never see swapped are chosen
+# by whether a positive-control map was read at all, and the emitter looks for one
+# beside every test:
+#   map    the committed x86 fixture, whose map names this row its OWN canary --
+#          "it IS the Layer-B canary", and its missing bound IS a construction;
+#   nomap  the same test copied away from the map -- no map was read, nothing
+#          marks this row a canary, and its missing bound is an OMISSION.
+# The pair is (X86_64, cuda), which has no machine row, so neither arm may print
+# a Grace, a Hopper or an NVLink either.
+#
+# The outcome is stochastic, so each arm is re-seeded until it fires; a pair that
+# cannot fire the most observable het shape in that many runs is itself the
+# finding, and this says so rather than passing vacuously.
+# ---------------------------------------------------------------------------
+CH_TEST = "MP-cg-sys-relaxed-x86_64"
+CH_PAIR = "(X86_64, cuda)"
+CH_SEED_TRIES = 12
+CH_RUN_TIMEOUT = 90          # a healthy run is ~3 s; past this it is stalled
+CH_VENDOR_RE = re.compile(r"nvlink|grace|hopper|c2c|gh200", re.I)
+CH_ARMS = ("map", "nomap")
+
+
+def _ch_env():
+    env = dict(os.environ)
+    env["PATH"] = BIN + os.pathsep + env["PATH"]
+    return env
+
+
+def ch_arch():
+    """sm_XY of the device this will actually run on -- never a hardcoded GH200
+    sm_90, which does not load here."""
+    if os.environ.get("CUDA_ARCH"):
+        return os.environ["CUDA_ARCH"]
+    r = sh(["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"])
+    caps = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+    if r.returncode != 0 or not caps:
+        return None
+    return "sm_" + caps[0].replace(".", "")
+
+
+def ch_emit(tmp, arm):
+    """Emit CH_TEST for one arm and return its harness dir.  The `nomap' arm is
+    emitted from a copy of the test WITHOUT the lane's map beside it."""
+    src = X86_DIR
+    if arm == "nomap":
+        src = tempfile.mkdtemp(dir=tmp)
+        shutil.copy(os.path.join(X86_DIR, CH_TEST + ".litmus"), src)
+    out = tempfile.mkdtemp(dir=tmp)
+    r = sh(["litmus7", "-gpu-target", "cuda", "-set-libdir",
+            os.path.join(ROOT, "litmus", "libdir"), "-o", out,
+            os.path.join(src, CH_TEST + ".litmus")], cwd=ROOT, env=_ch_env())
+    d = os.path.join(out, CH_TEST)
+    if r.returncode != 0 or not os.path.exists(os.path.join(d, CH_TEST + ".cu")):
+        raise SystemExit("runcheck --characterize-hw: litmus7 emitted no %s "
+                         "harness:\n%s" % (arm, r.stderr))
+    stamped = "#define HET_NO_CONTROL_MAP 1" in open(
+        os.path.join(d, CH_TEST + ".cu")).read()
+    if stamped != (arm == "nomap"):
+        raise SystemExit("runcheck --characterize-hw: the %s arm stamps "
+                         "HET_NO_CONTROL_MAP=%d -- the arm does not set up the "
+                         "state it exists to read" % (arm, stamped))
+    return d
+
+
+def ch_build(d, arch):
+    env = dict(os.environ)
+    env["CUDA_ARCH"] = arch
+    r = sh(["sh", "comp.sh", "cuda-link"], cwd=d, env=env)
+    if r.returncode != 0:
+        raise SystemExit("runcheck --characterize-hw: comp.sh cuda-link failed:\n"
+                         + (r.stdout + r.stderr)[-2000:])
+
+
+def ch_run_until_sighting(d, quiet=False):
+    """Run with fresh seeds until the outcome fires once.  Returns (text, k, R,
+    obs, tries); text is stdout+stderr, the whole printout a reader sees."""
+    env = dict(os.environ)
+    env["HET_ALLOC"] = env.get("HET_ALLOC", "pinned")
+    last = None
+    hangs = 0
+    for i in range(1, CH_SEED_TRIES + 1):
+        env["HET_SEED"] = str(1000 + i)
+        try:
+            r = subprocess.run([os.path.join(d, CH_TEST)], cwd=d, env=env,
+                               capture_output=True, text=True,
+                               timeout=CH_RUN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            # HET_ALLOC=pinned on a device without host-native atomics can lose
+            # barrier increments and stall -- the harness's own banner says so.
+            # A stalled run is a property of THIS box, not of the printout, so it
+            # is retried; only an all-stall is reported, and never as a pass.
+            hangs += 1
+            if not quiet:
+                print("      seed %d: STALLED at the rendezvous after %ds, retrying"
+                      % (1000 + i, CH_RUN_TIMEOUT))
+            if hangs >= CH_SEED_TRIES:
+                raise SystemExit(
+                    "runcheck --characterize-hw: every one of %d runs stalled at "
+                    "the rendezvous.  HET_ALLOC=%s cannot make a system-scope "
+                    "atomic barrier on this device; re-run with an allocator that "
+                    "can." % (hangs, env["HET_ALLOC"]))
+            continue
+        text = r.stdout + "\n" + r.stderr
+        m = re.search(r"^HetStats \S+ cpu_only=\d+ obs=(\S+) R=(\d+) usable=\d+ "
+                      r"k=(\d+) ", r.stdout, re.M)
+        if not m:
+            raise SystemExit("runcheck --characterize-hw: the run printed no "
+                             "HetStats line (rc=%d)\n%s" % (r.returncode,
+                                                            text[-2000:]))
+        obs, R, k = m.group(1), int(m.group(2)), int(m.group(3))
+        last = (text, k, R, obs, i)
+        if k > 0:
+            return last
+        if not quiet:
+            print("      seed %d: k=0, retrying (the control sentence, the "
+                  "observation and the denominator all need one sighting)"
+                  % (1000 + i))
+    return last
+
+
+# The two control sentences, and the arm each belongs to.  Neither may appear in
+# the other arm's printout: a bound that is missing BY CONSTRUCTION and one that
+# is missing because nobody built the instrumentation read alike to everyone
+# except the person who emitted it.
+CH_SELF = ["IS the Layer-B canary", "NO BOUND -- by construction, not by omission"]
+CH_NOMAP = ["NO POSITIVE-CONTROL MAP WAS READ for %s" % CH_PAIR,
+            "It gets NO BOUND, and that is an OMISSION, not a construction"]
+
+
+def ch_check(arm, text, k, R, obs, quiet=False):
+    """Every assertion is on the PRINTOUT.  Returns a list of failures."""
+    bad = []
+    say = (lambda *_: None) if quiet else print
+
+    def must(tag, frag):
+        if frag not in text:
+            bad.append("[%s/%s] the printout never says %r" % (arm, tag, frag))
+        else:
+            say("      [%s/%s] %s" % (arm, tag, frag[:88]))
+
+    def never(tag, frag, why):
+        if frag in text:
+            bad.append("[%s/%s] the printout says %r -- %s" % (arm, tag, frag, why))
+
+    must("A", "HetVerdict %s [" % CH_TEST)
+    must("A", "Report it as what %s exhibited" % CH_PAIR)
+
+    mine, theirs = (CH_SELF, CH_NOMAP) if arm == "map" else (CH_NOMAP, CH_SELF)
+    for frag in mine:
+        must("B/C", frag)
+    for frag in theirs:
+        never("B/C", frag, "that is the OTHER arm's control state")
+
+    must("D", ": OBSERVED")
+    never("D", "the target this harness was tagged for",
+          "that sentence once substituted a disclosure blob for the pair name")
+
+    for w in ("MISMATCH", "MATCH", "ORACLE_", "Disallowed", "REFUT"):
+        if w in text:
+            bad.append("[%s/E] the printout contains %r -- this harness carries no "
+                       "prediction to agree or disagree with" % (arm, w))
+    say("      [%s/E] no MATCH / MISMATCH / retired verdict word anywhere" % arm)
+
+    hits = sorted(set(m.group(0) for m in CH_VENDOR_RE.finditer(text)))
+    if hits:
+        bad.append("[%s/F] the printout names %s -- this pair has no machine row "
+                   "and this run was on neither part" % (arm, ", ".join(hits)))
+    else:
+        say("      [%s/F] no Grace / Hopper / NVLink / C2C / GH200 in stdout or "
+            "stderr" % arm)
+
+    if 0 < k < R and obs == "Always":
+        bad.append("[%s/G] obs=Always on k=%d of R=%d: the denominator collapsed "
+                   "onto the runs that fired, which is every usable cell here"
+                   % (arm, k, R))
+    elif 0 < k < R:
+        say("      [%s/G] obs=%s on k=%d of R=%d (denominator is R, not the usable "
+            "count)" % (arm, obs, k, R))
+    else:
+        bad.append("[%s/G] k=%d of R=%d -- no sighting, so the class carries no "
+                   "information about the denominator" % (arm, k, R))
+    return bad
+
+
+def ch_run_once(arm, d, quiet=False):
+    got = ch_run_until_sighting(d, quiet=quiet)
+    if got is None:
+        return 1, ["the %s harness produced no run at all" % arm]
+    text, k, R, obs, tries = got
+    if k == 0:
+        return 1, ["the %s outcome never fired in %d x %d runs -- the sighting "
+                   "assertions cannot be read, and a pair that cannot fire the "
+                   "most observable het shape is itself the finding"
+                   % (arm, tries, R)]
+    bad = ch_check(arm, text, k, R, obs, quiet=quiet)
+    return (1 if bad else 0), bad
+
+
+def ch_arm(arm, tmp, arch, quiet=False):
+    d = ch_emit(tmp, arm)
+    ch_build(d, arch)
+    return ch_run_once(arm, d, quiet=quiet)
+
+
+# Each injection rewrites ONE file of the emitted harness (never the source tree)
+# and names the file, because the two halves of the printout come from two places:
+# the verdict/statistics prose from het_verdict.h, and the driver's own WARNINGS
+# from the render itself.
+CH_INJECTIONS = [
+    ("B/C", "nomap", "het_verdict.h",
+     "the no-control-map note reverted to the self-canary sentence",
+     lambda s: s.replace(
+         "  NOTE: this row CO-RUNS NO CONTROL because NO POSITIVE-CONTROL MAP WAS ",
+         "  NOTE: this row CO-RUNS NO CONTROL -- it IS the Layer-B canary.  WAS ", 1)),
+    ("C", "nomap", "het_verdict.h", "the bound called structural again",
+     lambda s: s.replace("It gets NO BOUND, and that is an OMISSION, not a "
+                         "construction",
+                         "It gets NO BOUND -- by construction, not by omission", 1)),
+    ("A/D", "map", "het_verdict.h",
+     "the report sentence names a constant instead of the pair",
+     lambda s: s.replace(
+         "      HET_PAIR_NAME, HET_LINK_NAME);",
+         '      "the target this harness was tagged for", HET_LINK_NAME);', 1)),
+    ("F", "map", CH_TEST + ".cu",
+     "the driver's noise warning names the GH200 halves again",
+     lambda s: s.replace("the host half of the host-device interconnect noise",
+                         "the Grace half of the NVLink-C2C noise")),
+]
+
+
+def characterize_hw_bite(tmp, arch):
+    print("===== BITE: does this gate read the PRINTOUT? =====")
+    bad = 0
+    for tag, arm, fname, what, mutate in CH_INJECTIONS:
+        d = ch_emit(tmp, arm)
+        hdr = os.path.join(d, fname)
+        src = open(hdr).read()
+        new = mutate(src)
+        if new == src:
+            print("  *** [%s] %s: the injection changed NOTHING -- this bite "
+                  "proves nothing" % (tag, what))
+            bad += 1
+            continue
+        open(hdr, "w").write(new)
+        ch_build(d, arch)
+        rc, why = ch_run_once(arm, d, quiet=True)
+        if rc == 0:
+            print("  *** [%s] %s: the gate stayed GREEN" % (tag, what))
+            bad += 1
+        else:
+            print("      [%s] RED on %s" % (tag, what))
+            print("          %s" % why[0][:150])
+    # ... and the untouched arms must be green, or "red" meant nothing.
+    for arm in CH_ARMS:
+        rc, why = ch_arm(arm, tmp, arch, quiet=True)
+        if rc != 0:
+            print("  *** the UNTOUCHED %s arm is RED (%s) -- the injections above "
+                  "prove nothing" % (arm, why[0][:150] if why else "?"))
+            bad += 1
+        else:
+            print("      the untouched %s arm: GREEN" % arm)
+    if bad:
+        print("\nBITE FAILED: %d injection(s) went unnoticed." % bad)
+        return 1
+    print("\nBITE OK (%d injections, each RED; restored GREEN)" % len(CH_INJECTIONS))
+    return 0
+
+
+def characterize_hw(want_bite=False):
+    arch = ch_arch()
+    if arch is None:
+        # NOT a skip.  This mode BUILDS AND RUNS a harness on the device;
+        # skipping it quietly is how a check stops checking.
+        raise SystemExit(
+            "runcheck --characterize-hw: no CUDA device is visible (nvidia-smi "
+            "reported none).\n  There is nothing it can assert without one, so it "
+            "fails rather than passing vacuously.")
+    print("runcheck --characterize-hw: %s, %s, HET_ALLOC=%s"
+          % (CH_PAIR, arch, os.environ.get("HET_ALLOC", "pinned")))
+    tmp = tempfile.mkdtemp(prefix="runcheck-chhw.")
+    try:
+        if want_bite:
+            return characterize_hw_bite(tmp, arch)
+        bad = []
+        for arm in CH_ARMS:
+            print("===== the printout of a %s run =====" % arm)
+            bad += ch_arm(arm, tmp, arch)[1]
+        if bad:
+            print("\nCHARACTERIZE-HW FAILED: %d problem(s)." % len(bad))
+            for m in bad:
+                print("  %s" % m)
+            return 1
+        print("\nCHARACTERIZE-HW: PASS (both arms name themselves, say which "
+              "control state they are in, claim no machine, and adjudicate "
+              "nothing)")
+        return 0
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 PHASES = [
     ("1: --dry-run acts on nothing", lambda q: phase1_dryrun(WRAPPER, q)),
     ("2: the chain end to end (stub compiler + stub probe)",
      lambda q: phase2_e2e(WRAPPER, q)),
-    ("3: the refusals, each by its own reason",
+    ("3: the refusals by their own reasons; the unregistered pair by its warning",
      lambda q: phase3_refusals(WRAPPER, q)),
     ("4: campaign.py --characterization",
      lambda q: phase4_characterization(CAMPAIGN, q)),
-    ("5: the pair-table reader is bounded to the table",
+    ("5: the machine-table reader is bounded to the table",
      lambda q: phase5_reader(WRAPPER, q)),
     ("6: the fail-closed handlers, under their own conditions",
      lambda q: phase6_failclosed(WRAPPER, q)),
@@ -1399,11 +1806,15 @@ def main():
                     help="prove each phase reddens on a planted defect")
     ap.add_argument("--hw", action="store_true",
                     help="run the wrapper on the real device (-nvcc lane)")
+    ap.add_argument("--characterize-hw", action="store_true",
+                    help="build two harnesses and read what they PRINT (-nvcc lane)")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 
     if not os.access(os.path.join(BIN, "litmus7"), os.X_OK):
         raise SystemExit("runcheck: litmus7 not built (run 'make all')")
+    if a.characterize_hw:
+        return characterize_hw(want_bite=a.bite)
     if a.hw:
         return hardware_bite() if a.bite else hardware()[0]
     if a.bite:
@@ -1420,8 +1831,9 @@ def main():
         print("\nRUNCHECK FAILED.")
         return 1
     print("\nRUNCHECK OK (the plan is a plan; the chain records what it did; the "
-          "pair decides the mode; a pair with no oracle adjudicates nothing; every "
-          "fail-closed handler was seen to fire)")
+          "pair decides which machine may be named and nothing else; an "
+          "unregistered pair is warned about and emits; every fail-closed handler "
+          "was seen to fire)")
     return 0
 
 

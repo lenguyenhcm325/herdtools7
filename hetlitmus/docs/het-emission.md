@@ -163,37 +163,35 @@ plus `<target>-bin`, which links. Name the GPU arch explicitly
 update 1 onwards, and a build for the wrong arch links and exits 0 just as
 happily.
 
-## Phase C/D — the oracle pair table, and the machine a harness may name
+## Phase C/D — the machine table, and the machine a harness may name
 
 A harness is not "an AArch64 test" or "a HIP test": it is a **(CPU ISA x GPU
-dialect) PAIR**, and everything the run *claims* belongs to that pair.
-`litmus/hetOracle.ml` is the table, with three states:
+dialect) PAIR**, and the silicon the run *names* belongs to that pair.
+`litmus/hetMachine.ml` is the table:
 
-| pair              | state               | oracle CSV / Model             | control map           |
-|-------------------|---------------------|--------------------------------|-----------------------|
-| (AArch64, cuda)   | POPULATED           | `expected-nvidia.csv` / `NVIDIA-PTX-AArch64` | `control-map.csv`     |
-| (x86_64, hip)     | POPULATED           | `expected-amd.csv` / `AMD-CDNA3-x86`         | `control-map-amd.csv` |
-| (x86_64, cuda)    | REGISTERED NO-ORACLE — dev-tier machinery only | — (every test stamped `ORACLE_NONE`) | none read |
-| (AArch64, hip)    | ABSENT              | — refuses at emission, exit 3, naming the pair | — |
+| pair              | row                    | machine defines stamped        |
+|-------------------|------------------------|--------------------------------|
+| (AArch64, cuda)   | GH200                  | link `NVLink-C2C`, Grace / Hopper halves, LLC 114 MB, Alglave-zero |
+| (x86_64, hip)     | MI300A                 | link `Infinity Fabric`, x86 / MI300A halves, LLC 256 MB |
+| (x86_64, cuda)    | registered, no machine — the dev box | none |
+| (AArch64, hip)    | in no row              | none, plus one stderr warning  |
 
 Three rules make it worth having:
 
-* **An empty cell is never filled from a neighbour.** Keying the oracle on the
-  CPU ISA alone — what this replaced — tagged an x86+CUDA emission with the
-  MI300A verdicts, so a sighting there would have been reported as a refutation
-  of a model that never addressed that machine. That is the class D26 purged
-  from the AMD oracle itself.
-* **A registered NO-ORACLE pair reads no CSV at all.** `mu(T)` is the nearest
-  *Allowed* neighbour, so a control map is an oracle-derived object; borrowing
-  one is the same borrowing. Such harnesses are single-instance, stamp
-  `ORACLE_NONE` directly, and `het_verdict()` calls their nulls COLD-INVALID
-  because no positive control was built — which is the honest state until the
-  bootstrap map generator for a new pair exists.
+* **An empty cell is never filled from a neighbour.** Keying the machine on the
+  CPU ISA alone — what this replaced — described an x86+CUDA emission as an
+  MI300A, so its stderr told the reader which Infinity Fabric half had been
+  disabled on a box that has none.
+* **A pair with no row emits anyway, and claims less.** The tool
+  characterizes: an unregistered pair still has a machine somebody can run, and
+  what it loses is the right to name it. Emission warns once, stamps no machine
+  define, and the render says in band which of the two nameless states it is in
+  (registered-without-a-row, or in no row at all).
 * **The machine prose keys on the pair, not on the dialect.** The emitter stamps
   `HET_LINK_NAME` / `HET_HOST_HALF` / `HET_DEV_HALF` / `HET_LLC_MB` (and
   `HET_ALGLAVE_ZERO_MEASURED`, for the one measurement that is NVIDIA-only) from
   the pair row; `het_verdict.h` prints from those defines and sniffs nothing. A
-  pair with no oracle stamps none of them and gets the header's generic
+  pair with no machine row stamps none of them and gets the header's generic
   defaults, which name the *mechanism* — so a missing stamp can only ever weaken
   a claim. `HET_PLACE_LEVER` is separate: the placement API is a *dialect* fact
   (`cudaMemAdvise` on the CUDA render; the HIP render has no placement code and
@@ -219,45 +217,33 @@ buffer must exceed to cross anything is per target: 114 MB is
 `max(Grace L3, Hopper L2)` (Bagchi ISMM'26 Table 1) and **under-fires** on
 MI300A, whose last level is the 256 MB MALL / AMD Infinity Cache on the IOD
 (Tee et al., *The MALL is Open*, SC Workshops '25, Table 1 p. 1111 — MI300A:
-sL1 16 KB, L2 4 MB/XCD, MALL 256 MB). Each populated pair stamps its own; 114
+sL1 16 KB, L2 4 MB/XCD, MALL 256 MB). Each pair with a row stamps its own; 114
 stays as `het_cpu_stress.h`'s `#ifndef` default, and where it is *not* the
 target's own figure the emitted warning says so instead of naming it as this
 machine's cache.
 
 ### Two build facts every pair stamps
 
-`HET_PAIR_NAME` and `HET_NO_CONTROL_MAP` are stamped from **every** row,
-oracle or not, because they are true of the binary whatever the oracle says.
+`HET_PAIR_NAME` and `HET_NO_CONTROL_MAP` are stamped from **every** pair,
+machine row or not, because they are true of the binary whatever the table says.
 
 * `HET_PAIR_NAME` is the short `(ISA, dialect)` label the verdict and statistics
-  layers print where they must identify the target. They previously substituted
-  the *oracle-source string*, which on a registered-NO-ORACLE pair is the whole
-  disclosure blob — so a real run printed `the target this harness was tagged
-  for ((NO-ORACLE: (X86_64, cuda) is registered without one — dev-tier machinery
-  only: …))`.
-* `HET_NO_CONTROL_MAP` says no positive-control map was read. Since Phase C that
-  is true of **every** harness of a registered-NO-ORACLE pair, which is what
-  made the statistics layer's "co-runs no control ⇒ it IS the Layer-B canary"
-  inference false there: no map was read, nothing marked the row a canary, and
-  its missing bound is an omission (the bootstrap map generator is future work),
-  not a construction. `het_stats_compute` now flags the two states apart —
+  layers print where they must identify the target. A harness built for the
+  wrong pair compiles, runs and reports identically; this define is the only
+  thing that says which machine it was measuring.
+* `HET_NO_CONTROL_MAP` says the positive-control map was **not beside the
+  test**. The map is keyed on the CPU frontend
+  (`HetCpuFront.control_map_csv`: AArch64 → `control-map.csv`, x86_64 →
+  `control-map-amd.csv`) and looked for on every lane, because `mu(T)` is a
+  weakening on a strength lattice and the lattice is the CPU column's. Where it
+  is missing nothing marks any row the canary, and the statistics layer must not
+  read "co-runs no control" as "it IS the Layer-B canary":
   `HET_ST_SELF_CONTROL` requires the record to **name itself** its canary, the
-  same test the per-run liveness block makes — and prints a different sentence
-  for each. The denominator is `R` in both: the selection effect ("usable" is
-  defined by firing where nothing co-runs) is identical, and classifying over
-  the survivors would report ALWAYS for a row that fired in 3 runs of 10.
-
-`-allow-no-oracle` emits an **absent** pair anyway, stamping `ORACLE_NONE` and
-disclosing the override in the stamp string itself. It is for a human bringing
-up hardware nobody has an oracle for; no committed script may pass it, and
-`hetlitmus/verify/allow-no-oracle-gate.sh` (`make hetlitmus-noracle`) enforces
-that over the tree.
-
-Scoring a corpus against an **ablation** oracle is a different need and has its
-own path: the table fixes which file name a pair *stamps*, so point the
-Makefile's `HET_ORACLE` / `HET_AMD_ORACLE` at the variant instead of editing the
-table. The stamp then still names the pair's own file, which is correct — the
-deviation is the reviewer's, not the harness's.
+  same test the per-run liveness block makes, and a different sentence is
+  printed for each. The denominator is `R` in both: the selection effect
+  ("usable" is defined by firing where nothing co-runs) is identical, and
+  classifying over the survivors would report ALWAYS for a row that fired in 3
+  runs of 10.
 
 ## The CPU object: native vs. cross-assembly
 
@@ -322,11 +308,10 @@ byte-identical to before (the cpu column keeps its `cpu` back-compat tag).
 ## Scope / limits
 
 * CPU ISAs wired: **AArch64** and **x86_64** (selected by tag); GPU dialects
-  wired: **CUDA** and **HIP** (selected by `-gpu-target`). Which of the four
-  pairings may be emitted is the oracle pair table's call, not the tag's:
+  wired: **CUDA** and **HIP** (selected by `-gpu-target`). All four pairings
+  emit; what the machine table decides is which of them may name a machine.
   GH200 (AArch64+CUDA) and MI300A (x86_64+HIP) are the two science targets,
-  x86_64+CUDA is the dev box and emits without an oracle, AArch64+HIP is
-  refused.
+  x86_64+CUDA is the dev box, and AArch64+HIP is in no row and names none.
 * Both CPU ISAs emit a **real B3-tagged body** since P2b (2026-08-03): store
   values rebound to `K*(_n+1)+mu`, loads recorded into per-iteration buffers,
   the tested mnemonics reproduced verbatim (`str`/`stlr`/`ldr`/`ldar`/`ldapr`/
