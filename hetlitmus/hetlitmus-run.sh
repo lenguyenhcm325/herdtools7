@@ -477,26 +477,20 @@ emit_one() {                    # <test> -- emits into $EMIT, fails closed
     die "emission failed on $t"
   fi
 }
-# The oracle stamp every render carries names the pair's oracle, or discloses that
-# the pair has none.  It is the EMITTER's answer to the question the pair table
-# was read for above, so the two are compared here: a disagreement means the
-# wrapper and litmus7 resolved different pairs, and the campaign would be
-# scheduled against classes the harnesses do not carry.
+# HET_PAIR_NAME is the EMITTER's answer to the question the pair table was read
+# for above, so the two are compared here: a disagreement means the wrapper and
+# litmus7 resolved different pairs, and the campaign would be run against
+# harnesses built for another machine.
 check_stamp() {                 # <test>
-  local t="$1" f="$EMIT/$t/$t.$RENDER_EXT" want
+  local t="$1" f="$EMIT/$t/$t.$RENDER_EXT"
   [ -s "$f" ] || die "no .$RENDER_EXT render for $t under $EMIT"
   [ -s "$EMIT/$t/${t}_cpu.c" ] || die "no CPU thread emitted for $t under $EMIT"
   [ ! -e "$EMIT/$t/$t.$OTHER_EXT" ] \
     || die "$t carries a .$OTHER_EXT render too -- -gpu-target is not filtering"
-  if [ "$PAIR_STATE" = POPULATED ]; then
-    want="\"$PAIR_ORACLE:"
-  else
-    want="\"(NO-ORACLE: $PAIR is registered without one"
-  fi
-  grep -qF "_rec.oracle_source = $want" "$f" || {
+  grep -qF "#define HET_PAIR_NAME \"$PAIR\"" "$f" || {
     echo "hetlitmus-run: $t stamps" >&2
-    grep -F '_rec.oracle_source' "$f" >&2 || echo "  (no oracle_source at all)" >&2
-    die "the emitted stamp of $t disagrees with the pair this wrapper resolved \
+    grep -F '#define HET_PAIR_NAME' "$f" >&2 || echo "  (no HET_PAIR_NAME at all)" >&2
+    die "the emitted pair name of $t disagrees with the pair this wrapper resolved \
 ($PAIR, $PAIR_STATE) -- one of the two read litmus/hetOracle.ml wrongly"
   }
 }
@@ -505,7 +499,7 @@ if [ "$REUSE" -eq 1 ]; then
 --out at the results dir of the run that emitted it)"
   for t in "${CORPUS_TESTS[@]}"; do check_stamp "$t"; done
   echo "    reused ${#CORPUS_TESTS[@]} harness dir(s) in $EMIT, each carrying the \
-$GPU_TARGET render and this pair's stamp"
+$GPU_TARGET render and this pair's name"
 else
   mkdir -p "$EMIT"
   : > "$OUT/emit.log"

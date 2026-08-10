@@ -89,23 +89,22 @@ set -euo pipefail
 LITMUS7="${HET_LITMUS7:-$LITMUS7}"
 [ -x "$LITMUS7" ] || { echo "error: $LITMUS7 not built (run 'make all')" >&2; exit 2; }
 
-# THE EMISSION LANES, "<corpus>:<gpu-target>:<render extension>:<OUTDIR subdir>",
-# followed by the oracle stamp every harness of that lane must carry.  The stamp
-# is the science pin: it is what a run log prints to say which model it tested.
+# THE EMISSION LANES, "<corpus>:<gpu-target>:<render extension>:<OUTDIR subdir>".
 HET_LANES="aarch64:cuda:cu:het-cuda x86:hip:hip:het-x86-hip x86:cuda:cu:het-x86-cuda"
-stamp_of_lane() {               # <corpus>:<target> -> the exact stamp string
-  case "$1" in
-    aarch64:cuda) echo 'expected-nvidia.csv:NVIDIA-PTX-AArch64' ;;
-    x86:hip)      echo 'expected-amd.csv:AMD-CDNA3-x86' ;;
-    x86:cuda)     echo '(NO-ORACLE: (X86_64, cuda) is registered without one' ;;
-    *) echo "emit-all.sh: no stamp registered for lane $1" >&2 ; return 1 ;;
-  esac
-}
-# The oracle NAME a lane must NOT contain anywhere in its harness dirs -- the
-# landmine: an x86 host with an NVIDIA GPU carries no AMD prediction.
+# THE RETIRED VERDICT VOCABULARY, banned in EVERY lane.  The tool characterizes:
+# it reports observations and carries no prediction, so an emitted harness that
+# named a class, a verdict or a verdicts CSV would be claiming something nothing
+# in it derived.  Checked over the whole harness dir, header and payloads
+# included.
+RETIRED_TOKENS='ORACLE_[A-Z]+|_rec\.het_oracle|oracle_source|expected-(nvidia|amd)\.csv'
+# The MACHINE words a lane must NOT contain anywhere in its harness dirs -- the
+# landmine: an x86 host with an NVIDIA GPU is neither part, so it may name
+# neither, and "Infinity Fabric" is what the (X86_64, hip) lane stamps one line
+# away from here.  (`MI300A' alone is not a landmine: the CPU stress payload's
+# comments compare the two hosts by name -- see cram oracle-pairs.t (f).)
 forbidden_of_lane() {           # <corpus>:<target> -> egrep pattern, or ""
   case "$1" in
-    x86:cuda) echo 'expected-amd|AMD-CDNA3-x86' ;;
+    x86:cuda) echo 'expected-amd|AMD-CDNA3-x86|Infinity Fabric' ;;
     *)        echo '' ;;
   esac
 }
@@ -148,7 +147,6 @@ for lane in $HET_LANES; do
   corpus="${lane%%:*}"; rest="${lane#*:}"
   target="${rest%%:*}"; rest="${rest#*:}"
   ext="${rest%%:*}"; sub="${rest#*:}"
-  stamp="$(stamp_of_lane "$corpus:$target")"
   forbidden="$(forbidden_of_lane "$corpus:$target")"
   i=$((i+1))
   echo "[$i/$nlanes] $corpus corpus, -gpu-target $target -> $OUTDIR/$sub"
@@ -183,10 +181,16 @@ for lane in $HET_LANES; do
           exit 1
         fi
       done
-      # (c) THE PAIR STAMP.  Read out of the render the lane just wrote.
-      if ! grep -qF "_rec.oracle_source = \"$stamp" "$OUTDIR/$sub/$n/$n.$ext"; then
-        echo "FAIL: $t in the $corpus/$target lane does not stamp \"$stamp\" -- it carries:" >&2
-        grep -F '_rec.oracle_source' "$OUTDIR/$sub/$n/$n.$ext" >&2 || echo "  (no oracle_source at all)" >&2
+      # (c) THE RECORD STAMP, and the ABSENCE of the retired verdict vocabulary.
+      # het_verdict() reads no field of a record without HET_REC_MAGIC, so a
+      # render that lost the stamp discards every run it will ever make.
+      if [ "$(grep -c '_rec.rec_magic = HET_REC_MAGIC;' "$OUTDIR/$sub/$n/$n.$ext")" != 1 ]; then
+        echo "FAIL: $t in the $corpus/$target lane does not stamp _rec.rec_magic exactly once" >&2
+        exit 1
+      fi
+      if grep -rqE "$RETIRED_TOKENS" "$OUTDIR/$sub/$n"; then
+        echo "FAIL: $t in the $corpus/$target lane carries the retired verdict vocabulary:" >&2
+        grep -rlE "$RETIRED_TOKENS" "$OUTDIR/$sub/$n" >&2
         exit 1
       fi
       if [ -n "$forbidden" ] \
@@ -197,7 +201,7 @@ for lane in $HET_LANES; do
       fi
     done )
   nhet="$(find "$OUTDIR/$sub" -mindepth 1 -maxdepth 1 -type d | wc -l)"
-  echo "        $nhet het harness dirs (expect $EXPECT_HET), all stamped $stamp..."
+  echo "        $nhet het harness dirs (expect $EXPECT_HET), each stamping its record once, none naming a verdict"
   if [ "$nhet" -ne "$EXPECT_HET" ]; then
     echo "FAIL: census mismatch in $sub (want $EXPECT_HET)" >&2
     exit 1

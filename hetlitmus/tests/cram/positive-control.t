@@ -22,39 +22,31 @@ to be pinned here on MP-gc-sys-acqrel-2s.  The NVOR regeneration (Nguyen
 2026-08-06; env-research/NVOR-register.md) DECLINED to register the symmetric
 meet, so every gc-cut Disallowed row is NO-ORACLE and no gc row carries a
 Layer-A control any more.  What is pinned instead is that the demotion reached
-the EMITTED harness: no mutant, control not compiled in, class ORACLE_NONE.  A
-demotion that stopped at the CSV would leave the harness still claiming a
-refutable prediction.
+the EMITTED harness: no mutant, and no Layer-A control compiled in.
   $ litmus7 -gpu-target cuda -o . ../het/MP-gc-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ grep -c 'HET_MU_NAME NULL' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
   1
   $ grep -c '#define HET_CONTROL_COMPILED_IN 0' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
-  1
-  $ grep -c '_rec.het_oracle = ORACLE_NONE;' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
   1
 
 The same emitted-harness evidence for the NVOR Phase-D3 repair (2026-08-06).
 LB-cg-sys-ld.ra-2s is a cg-NAMED test whose ONLY synchronizing route runs
 GPU-producer -> CPU-consumer: DMB LD carries the acquire role alone, so it
 cannot head a release pattern, and LB's second communication edge is an rf.  It
-shipped Disallowed against the DECLINED gc meet until the slot gate was re-keyed
-from the test's name tag to the DIRECTION of the rf that carries the sw.  A
-demotion that stopped at the CSV would leave this harness still printing a
-refutation claim, so the harness itself is pinned: no mutant, no Layer-A control,
-class ORACLE_NONE.  Its cg-routed sibling LB-cg-sys-sy.ra-2s (DMB SY supplies
-the release role) is unaffected and still carries its control -- which is what
-makes this a DIRECTION pin and not a shape pin.
+shipped with a Layer-A control against the DECLINED gc meet until the slot gate
+was re-keyed from the test's name tag to the DIRECTION of the rf that carries the
+sw.  A demotion that stopped at the CSV would leave this harness still co-running
+a mutant nothing licensed, so the harness itself is pinned: no mutant, no Layer-A
+control.  Its cg-routed sibling LB-cg-sys-sy.ra-2s (DMB SY supplies the release
+role) is unaffected and still carries its control -- which is what makes this a
+DIRECTION pin and not a shape pin.
   $ litmus7 -gpu-target cuda -o . ../het/LB-cg-sys-ld.ra-2s.litmus >/dev/null 2>&1
   $ grep -c 'HET_MU_NAME NULL' LB-cg-sys-ld.ra-2s/LB-cg-sys-ld.ra-2s.cu
   1
   $ grep -c '#define HET_CONTROL_COMPILED_IN 0' LB-cg-sys-ld.ra-2s/LB-cg-sys-ld.ra-2s.cu
   1
-  $ grep -c '_rec.het_oracle = ORACLE_NONE;' LB-cg-sys-ld.ra-2s/LB-cg-sys-ld.ra-2s.cu
-  1
   $ litmus7 -gpu-target cuda -o . ../het/LB-cg-sys-sy.ra-2s.litmus >/dev/null 2>&1
   $ grep -c '#define HET_CONTROL_COMPILED_IN 1' LB-cg-sys-sy.ra-2s/LB-cg-sys-sy.ra-2s.cu
-  1
-  $ grep -c '_rec.het_oracle = ORACLE_DISALLOWED;' LB-cg-sys-sy.ra-2s/LB-cg-sys-sy.ra-2s.cu
   1
 
 HET_CONTROL_COMPILED_IN=1 is the highest-stakes value in the codebase: it says a
@@ -100,32 +92,32 @@ statistics.t.)
   $ grep -cE '^#define CAN_K_TAG 3' S-cg-sys-fence/S-cg-sys-fence.cu
   1
 
-THE ORACLE CLASS.  het_verdict() must know which of the three classes a harness
-is in, because the sentence it prints differs: on a Disallowed test a sighting
-refutes the model's prediction; on an oracle-Allowed test the weak outcome is
-expected, and seeing it confirms the model is not over-strong; a NO-ORACLE row
-claims neither.  Only 16 of the 411 rows are Disallowed -- 319 are Allowed and 76
-are NO-ORACLE -- so a harness that framed every test as should-be-forbidden would
-put 395 loud false refutations on the table.  Each class carries its own tag,
-read from control-map.csv field 2, and the emitter never falls back to a default.
+NO HARNESS CARRIES A MODEL PREDICTION.  The tool characterizes: it reports what it
+observed and leaves the comparison against a verdicts file to an offline step
+(hetlitmus/oracle-compare.sh), so no emitted file names a class, a verdict or a
+verdicts CSV.  Three tests that spanned all three retired classes, checked over
+their whole harness directories.
   $ litmus7 -gpu-target cuda -o . ../het/IRIW-cgcg-sys-fence-2s.litmus >/dev/null 2>&1
-  $ grep -h '_rec.het_oracle' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu S-cg-sys-fence/S-cg-sys-fence.cu IRIW-cgcg-sys-fence-2s/IRIW-cgcg-sys-fence-2s.cu
-      _rec.het_oracle = ORACLE_DISALLOWED;
-      _rec.het_oracle = ORACLE_ALLOWED;
-      _rec.het_oracle = ORACLE_NONE;
+  $ grep -rlE 'ORACLE_[A-Z]+|_rec\.het_oracle|oracle_source|expected-(nvidia|amd)\.csv' MP-cg-sys-acqrel-2s S-cg-sys-fence IRIW-cgcg-sys-fence-2s | wc -l
+  0
 
-ORACLE_UNSET IS 0 SO THAT A FORGOTTEN TAG FAILS LOUD.  het_obs_record is
-memset(0) before it is filled, so the zero value is what an emitter that skipped
-the field would produce.  Had DISALLOWED been 0, that omission would silently
-restore the false refutation.  It is the first enumerator, and het_verdict()
-fails closed on it.
-  $ grep -c 'ORACLE_UNSET = 0,' MP-cg-sys-acqrel-2s/het_verdict.h
+A ZEROED RECORD CAN NEVER SPEAK.  het_obs_record is memset(0) before it is
+filled, so a record an emitter forgot to fill is indistinguishable from one whose
+run saw nothing -- unless one field cannot be forged by zero.  rec_magic is that
+field: het_verdict() returns COLD-INVALID before reading anything else unless it
+matches, and the emitter writes the SYMBOL, so a rename is a compile error rather
+than a silent mis-read.
+  $ grep -c '#define HET_REC_MAGIC 0x48455431u' MP-cg-sys-acqrel-2s/het_verdict.h
   1
-  $ grep -c 'if (r->het_oracle == ORACLE_UNSET) {' MP-cg-sys-acqrel-2s/het_verdict.h
+  $ grep -c 'if (r->rec_magic != HET_REC_MAGIC) {' MP-cg-sys-acqrel-2s/het_verdict.h
+  1
+  $ grep -hc '_rec.rec_magic = HET_REC_MAGIC;' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu S-cg-sys-fence/S-cg-sys-fence.cu IRIW-cgcg-sys-fence-2s/IRIW-cgcg-sys-fence-2s.cu
+  1
+  1
   1
 
-THE SHARPEST INSTANCE: THE CANARY ITSELF.  MP-cg-sys-relaxed is oracle-Allowed
-and is the Layer-B canary for 335 rows of control-map.csv.  It cannot co-run
+THE SHARPEST INSTANCE: THE CANARY ITSELF.  MP-cg-sys-relaxed is the Layer-B
+canary for 335 rows of control-map.csv.  It cannot co-run
 itself (the map says `self'), so both flags are 0 and it stays single-instance --
 while being the one test whose entire job is to fire.  It names itself as its
 canary, which is how het_verdict.h tells "this test IS the canary" (designed)
@@ -135,8 +127,6 @@ from "the canary went missing" (a bug).
   #define HET_CONTROL_COMPILED_IN 0
   #define HET_CANARY_COMPILED_IN 0
   $ grep -c 'HET_CANARY_NAME "MP-cg-sys-relaxed"' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
-  1
-  $ grep -c '_rec.het_oracle = ORACLE_ALLOWED;' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
 THREE INSTANCES, THREE K's.  K is 3 for MP/SB/LB but 4 for R/S (three stores, not

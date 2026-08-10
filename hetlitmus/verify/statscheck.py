@@ -56,6 +56,7 @@ KS_C05 = 1.358
 # C driver and compared in phase 1 -- NWIN on the WIN| line, TAU_MIN_SAMPLES on
 # MINSAMP|, the rest on MIRROR|.
 NWIN = 128                  # must match HET_NWIN (a swept knob, not a constant)
+CORROB_RUNS = 2             # must match HET_CORROB_RUNS      (pinned via MIRROR|)
 THETA_D = 2                 # must match HET_THETA_DISTINCT   (pinned via MIRROR|)
 TAU_HOT = 30                # must match HET_TAU_HOT          (pinned via MIRROR|)
 MAX_CELLS = 128             # must match HET_STATS_MAX_CELLS  (pinned via MIRROR|)
@@ -178,12 +179,14 @@ def py_ks2(a, b):
 
 # ---------------------------------------------------------------------------
 # SYNTHETIC CELLS.  A cell is one (instance, run).  BASE is a live, hot, credible
-# Disallowed run whose mu(T) fired; each case perturbs a few fields, so each isolates
+# run whose mu(T) fired; each case perturbs a few fields, so each isolates
 # exactly one reason.  (Same construction as verdictcheck.py, on purpose.)
 # ---------------------------------------------------------------------------
 BASE = dict(
     test_name='"synthetic"',
-    het_oracle="ORACLE_DISALLOWED",
+    # The stamp, by SYMBOL: het_verdict() reads no field of a record that does not
+    # carry it, so every fixture here has to be a stamped one.
+    rec_magic="HET_REC_MAGIC",
     exhaustive_valid=1,
     target_count_exhaustive=0,
     target_count_heuristic=0,
@@ -547,16 +550,15 @@ case("never-neg-acf-clamps-Neff-to-NWIN", stream(NEGACF_CELLS),
 # already fails it 4/18 GPU-only).  The stream rides the CANARY channel, because an
 # oracle-Allowed test has no mu(T) by construction.
 case("ks-split-rejects-and-suppresses-Prep",
-     observed(stream(DRIFT_CELLS, chan="canary", het_oracle="ORACLE_ALLOWED",
-                     control_compiled_in=0, control_target_count=0), 4),
+     observed(stream(DRIFT_CELLS, chan="canary",                      control_compiled_in=0, control_target_count=0), 4),
      obs="Sometimes", ks="SPLIT", flags_any=["NONSTATIONARY"], P_rep=-1.0)
 
 # --- OBSERVED: P_rep at the (instance,run) unit, from k_eff -----------------
 case("sometimes-Prep-from-cells-not-frames",
-     observed(stream(POISSON_CELLS, het_oracle="ORACLE_ALLOWED"), 3),
+     observed(stream(POISSON_CELLS), 3),
      obs="Sometimes", ks="pass", P_rep=1.0 - math.exp(-3.0), k=3, k_eff=3)
 
-case("always", observed(stream(POISSON_CELLS, het_oracle="ORACLE_ALLOWED"), 10),
+case("always", observed(stream(POISSON_CELLS), 10),
      obs="Always", k=10)
 
 # --- VOID: a dead harness bounds nothing -----------------------------------
@@ -572,14 +574,13 @@ case("void-when-every-cell-is-cold",
 case("degenerate-sightings-rejected-but-reported",
      observed(stream(POISSON_CELLS), 3, clean=False),
      obs="Sometimes", k=3, k_eff=0, n_degen=3, P_rep=-1.0,
-     flags_any=["DEGEN_SIGHTING"], tier="MISMATCH-UNCORROBORATED")
+     flags_any=["DEGEN_SIGHTING"], tier="UNCONFIRMED")
 
 # The 11 store-only (2+2W) tests decode through the OBSERVER, not a synchrony read, so
 # reading skew_stddev on them would call every cell degenerate forever.  Both arms of
 # the channel switch must be live:
 case("observer-channel-clean",
-     observed(stream(POISSON_CELLS, het_oracle="ORACLE_ALLOWED",
-                     sync_valid=0, obs_valid=1, observer_unique_count=900,
+     observed(stream(POISSON_CELLS,                      sync_valid=0, obs_valid=1, observer_unique_count=900,
                      distinct_decoded_iters=0, skew_stddev=0.0), 3),
      obs="Sometimes", k=3, k_eff=3, flags_none=["DEGEN_SIGHTING"])
 
@@ -588,8 +589,7 @@ case("observer-channel-clean",
 # that cell instead, so the 7 background nulls stay usable and the classification
 # stays honestly "Sometimes" with all 3 sightings degenerate.
 case("observer-channel-degenerate",
-     observed(stream(POISSON_CELLS, het_oracle="ORACLE_ALLOWED",
-                     sync_valid=0, obs_valid=1, observer_unique_count=900,
+     observed(stream(POISSON_CELLS,                      sync_valid=0, obs_valid=1, observer_unique_count=900,
                      distinct_decoded_iters=0, skew_stddev=0.0), 3, obs_degen=True),
      obs="Sometimes", k=3, k_eff=0, flags_any=["DEGEN_SIGHTING"])
 
@@ -599,21 +599,33 @@ case("no-decode-channel-fails-closed",
                      distinct_decoded_iters=0, skew_stddev=0.0), 3),
      k=3, k_eff=0, flags_any=["NO_DECODE_CHANNEL", "DEGEN_SIGHTING"])
 
-# --- THE CORROBORATION TIER (Q3-stats.md R2: 3 distinct cells) --------------
-case("mismatch-confirmed-3-clean-runs", observed(stream(POISSON_CELLS), 3),
-     obs="Sometimes", tier="MISMATCH-CONFIRMED", k_runs=3)
+# --- THE CORROBORATION TIER (HET_CORROB_RUNS distinct clean RUNS) -----------
+# The bar is on RUNS and the boundary is at HET_CORROB_RUNS exactly, so both sides
+# of it are driven: one run short is UNCONFIRMED, one run over is CORROBORATED.
+case("sighting-corroborated-at-the-bar",
+     observed(stream(POISSON_CELLS), CORROB_RUNS),
+     obs="Sometimes", tier="CORROBORATED", k_runs=CORROB_RUNS)
 
-case("mismatch-uncorroborated-1-run", observed(stream(POISSON_CELLS), 1),
-     obs="Sometimes", tier="MISMATCH-UNCORROBORATED", k_runs=1)
+case("sighting-unconfirmed-one-run-short",
+     observed(stream(POISSON_CELLS), CORROB_RUNS - 1),
+     obs="Sometimes", tier="UNCONFIRMED", k_runs=CORROB_RUNS - 1)
 
 # ... AND THE RULE IS ABOUT RUNS, NOT CELLS.  Three clean sightings that all landed in
 # the SAME run: runs are re-seeded and carry a fresh phase/thermal draw, three cells of
-# one run do not, so this must stay UNCORROBORATED where the case above it is
-# CONFIRMED.  The only fixture where k_runs < k_eff, and therefore the only one that
+# one run do not, so this must stay UNCONFIRMED where the case above it is
+# CORROBORATED.  The only fixture where k_runs < k_eff, and therefore the only one that
 # runs het_stats_compute's run-dedup loop at all.
-case("mismatch-uncorroborated-3-cells-of-ONE-run",
+case("sighting-unconfirmed-3-cells-of-ONE-run",
      observed(stream_runs(POISSON_CELLS, [0, 0, 0] + list(range(1, 8))), 3),
-     obs="Sometimes", k=3, k_eff=3, k_runs=1, tier="MISMATCH-UNCORROBORATED")
+     obs="Sometimes", k=3, k_eff=3, k_runs=1, tier="UNCONFIRMED")
+
+# ... and n_at_first_sight is the PRICE in runs, so it must be the run the first
+# clean sighting landed in and not the count of sightings.  Here the first three
+# runs are null and run 3 (the fourth) fires.
+case("first-sight-is-priced-in-runs",
+     observed(stream_runs(POISSON_CELLS, [3, 4, 0, 1, 2, 5, 6, 7, 8, 9]), 1),
+     obs="Sometimes", k=1, k_eff=1, k_runs=1, tier="UNCONFIRMED",
+     first_sight=1)
 
 # --- THE SELF-PROVING INVARIANT --------------------------------------------
 # The window bump sits on the same line as the count, so sum(win) == total.  A total
@@ -627,8 +639,7 @@ case("window-desync-voids-the-bound",
 # 361 of 411 have no mu(T) by construction, so their dispersion is calibrated from the
 # Layer-B canary -- a DIFFERENT shape's burstiness, hence a weaker claim, hence a flag.
 case("canary-calibrated-when-no-mutant",
-     stream(POISSON_CELLS, chan="canary", het_oracle="ORACLE_ALLOWED",
-            control_compiled_in=0, control_target_count=0),
+     stream(POISSON_CELLS, chan="canary",             control_compiled_in=0, control_target_count=0),
      obs="Never", flags_any=["CTRL_IS_CANARY"], flags_none=["FANO_UNMEASURED"])
 
 # --- THE SELF-CANARY SELECTION EFFECT ---------------------------------------
@@ -639,8 +650,7 @@ case("canary-calibrated-when-no-mutant",
 # the rest of the campaign is calibrated against -- so the denominator must be R.  They
 # also get NO BOUND: there is nothing independent to calibrate dispersion against.
 case("self-canary-fired-3-of-10-is-SOMETIMES-not-ALWAYS",
-     observed(stream(ZERO_CELLS, het_oracle="ORACLE_ALLOWED",
-                     canary_name='"synthetic"',
+     observed(stream(ZERO_CELLS,                      canary_name='"synthetic"',
                      control_compiled_in=0, canary_compiled_in=0,
                      control_target_count=0, canary_target_count=0), 3),
      obs="Sometimes", k=3, k_eff=3, R_usable=3,
@@ -657,8 +667,7 @@ case("self-canary-fired-3-of-10-is-SOMETIMES-not-ALWAYS",
 # have not closed rather than a property of the design.  Two flags, so the printout
 # can say which.
 case("no-control-map-fired-3-of-10-is-SOMETIMES-and-is-NOT-the-canary",
-     observed(stream(ZERO_CELLS, het_oracle="ORACLE_NONE",
-                     control_compiled_in=0, canary_compiled_in=0,
+     observed(stream(ZERO_CELLS,                      control_compiled_in=0, canary_compiled_in=0,
                      control_target_count=0, canary_target_count=0), 3),
      obs="Sometimes", k=3, k_eff=3, R_usable=3,
      flags_any=["NO_CONTROL_CORUN", "FANO_UNMEASURED", "KS_UNDERPOWERED"],
@@ -667,10 +676,10 @@ case("no-control-map-fired-3-of-10-is-SOMETIMES-and-is-NOT-the-canary",
 
 # --- ALLOWED / NO-ORACLE nulls still get a bound (a different CLAIM, same maths) ---
 case("allowed-unobserved-gets-an-observability-bound",
-     stream(POISSON_CELLS, het_oracle="ORACLE_ALLOWED"),
+     stream(POISSON_CELLS),
      obs="Never", flags_none=["FANO_UNMEASURED"])
 case("no-oracle-unobserved-gets-a-characterization-bound",
-     stream(POISSON_CELLS, het_oracle="ORACLE_NONE"),
+     stream(POISSON_CELLS),
      obs="Never", flags_none=["FANO_UNMEASURED"])
 
 # --- MORE RUNS THAN THE AGGREGATE CAN HOLD ----------------------------------
@@ -685,10 +694,12 @@ case("cells-truncated-above-HET_STATS_MAX_CELLS", stream(POISSON_CELLS_TRUNC),
 
 
 # ===================== PHASE 5a: THE STOPPING RULE ==========================
-# het_campaign_should_stop() decides where the GH200 hours go, so every reason it can
-# give must be REACHABLE, and two guards must hold: a single Disallowed sighting
-# ESCALATES rather than stopping (an uncorroborated refutation is not banked), and a
-# degenerate-only sighting never de-schedules an Allowed row.
+# het_campaign_should_stop() decides where the hardware hours go, so every reason it
+# can give must be REACHABLE, and two guards must hold: a LONE clean sighting
+# escalates rather than stopping (an uncorroborated sighting is not banked), and a
+# degenerate-only sighting never de-schedules a row at all.
+# The confirmation window and the rate mode are NOT here yet (A4 owns them), so the
+# matrix below is the interim one: corroborate, meet the bound, or spend the budget.
 STOPS = []
 
 
@@ -697,37 +708,37 @@ def stop(name, cells_, budget, p_goal, want):
                       want=want))
 
 
-stop("allowed-clean-sighting-stops",
-     observed(stream(POISSON_CELLS, het_oracle="ORACLE_ALLOWED"), 1),
-     20, -1.0, "OBSERVED")
-stop("allowed-degenerate-sighting-does-not-stop",
-     observed(stream(POISSON_CELLS, het_oracle="ORACLE_ALLOWED"), 1, clean=False),
-     20, -1.0, "CONTINUE")
-stop("allowed-cold-runs-to-budget",
-     stream(POISSON_CELLS, het_oracle="ORACLE_ALLOWED"),
-     10, -1.0, "BUDGET")
-stop("disallowed-one-sighting-escalates-not-stops",
+# A LONE clean sighting does NOT stop: one run cannot rule out a per-run artefact,
+# so the row keeps running to corroborate.
+stop("one-clean-sighting-does-not-stop",
      observed(stream(POISSON_CELLS), 1),
-     20, 0.05, "CONTINUE")
-stop("disallowed-corroborated-stops",
-     observed(stream(POISSON_CELLS), 3),
+     20, -1.0, "CONTINUE")
+# ... and neither does a degenerate one, at any count: an artefact must never
+# de-schedule a test (the tier is computed from k_eff's runs, not from k).
+stop("degenerate-sightings-never-stop",
+     observed(stream(POISSON_CELLS), 3, clean=False),
+     20, -1.0, "CONTINUE")
+# The bar is HET_CORROB_RUNS distinct clean RUNS, and it is reached exactly there.
+stop("sighting-corroborated-stops",
+     observed(stream(POISSON_CELLS), CORROB_RUNS),
      20, -1.0, "CONFIRMED")
-stop("disallowed-null-stops-at-p-goal",
+stop("cold-row-runs-to-budget",
+     stream(POISSON_CELLS),
+     10, -1.0, "BUDGET")
+stop("null-stops-at-p-goal",
      stream(POISSON_CELLS),
      20, 0.05, "BOUND-MET")
-stop("disallowed-null-without-goal-runs-to-budget",
+stop("null-without-a-goal-runs-to-budget",
      stream(POISSON_CELLS),
      10, -1.0, "BUDGET")
 # A VACUOUS bound must not satisfy ANY goal -- even an absurdly generous one.
 stop("vacuous-bound-never-meets-a-goal",
      stream(RAMP_CELLS),
      20, 1e6, "CONTINUE")
-stop("no-oracle-null-stops-at-p-goal",
-     stream(POISSON_CELLS, het_oracle="ORACLE_NONE"),
-     20, 0.05, "BOUND-MET")
-# ORACLE_UNSET fails closed: no early stop can be earned by an untagged harness.
-stop("unset-oracle-fails-closed-to-budget",
-     stream(POISSON_CELLS, het_oracle="ORACLE_UNSET"),
+# An UNSTAMPED record earns no early stop: every cell is COLD-INVALID, so there is
+# no bound to meet and nothing to corroborate, and the row spends its budget.
+stop("unstamped-records-fail-closed-to-budget",
+     stream(POISSON_CELLS, rec_magic=0),
      10, 0.05, "BUDGET")
 
 
@@ -777,14 +788,17 @@ def py_reference(cells_):
         hot_k = c["canary_compiled_in"] and c["canary_target_count"] >= TAU_HOT
         return bool((hot_c or hot_k) and channel_live(c))
 
-    k = k_eff = n_degen = R_usable = 0
-    runs, win, cellv = [], [], []
+    k = k_eff = n_degen = R_usable = first_sight = 0
+    runs, allruns, win, cellv = [], [], [], []
     desync = False
     for c in cells_:
         u = usable(c)
         if u:
             R_usable += 1
         y = c["target_count_exhaustive"] > 0 or c["target_count_heuristic"] > 0
+        # Runs consumed so far, over EVERY cell: first_sight is a price in runs.
+        if c["run_id"] not in allruns:
+            allruns.append(c["run_id"])
         if y:
             k += 1
             if degenerate(c):
@@ -793,6 +807,8 @@ def py_reference(cells_):
                 k_eff += 1
                 if c["run_id"] not in runs:
                     runs.append(c["run_id"])
+                if first_sight == 0:
+                    first_sight = len(allruns)
         if sum(ctrl_win(c)) != ctrl_total(c):
             desync = True
         if u:
@@ -864,10 +880,13 @@ def py_reference(cells_):
             p_bound = mu_up / R_eff
 
     tier = "none"
-    if cells_[0]["het_oracle"] == "ORACLE_DISALLOWED" and k > 0:
-        tier = "MISMATCH-CONFIRMED" if len(runs) >= 3 else "MISMATCH-UNCORROBORATED"
+    if k > 0:
+        tier = ("CORROBORATED" if len(runs) >= CORROB_RUNS else "UNCONFIRMED")
 
     return dict(obs=obs, k=k, k_eff=k_eff, k_runs=len(runs), n_degen=n_degen,
+                first_sight=first_sight,
+                mu_total=sum(c["control_target_count"] for c in cells_),
+                can_total=sum(c["canary_target_count"] for c in cells_),
                 R=R, R_usable=R_usable, F_win=F_win, F_cell=F_cell, r_hat=r_hat,
                 mu_upper=mu_up, tau_w=tau_w, N_eff=N_eff, R_eff=R_eff,
                 tau_need=tau_need, unresolved=unresolved,
@@ -886,17 +905,18 @@ C_MAIN = r"""
 static void run_case(const char *name, const het_obs_record *recs, int n) {
   het_stats_t st;
   het_stats_compute(recs, n, &st);
-  printf("CASE|%s|%s|%d|%d|%d|%d|%d|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%s|%.12g|%s|%d|0x%x|%d\n",
+  printf("CASE|%s|%s|%d|%d|%d|%d|%d|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%s|%.12g|%s|%d|0x%x|%d|%d|%llu|%llu\n",
          name, het_obs_class_name(st.obs), st.k, st.k_eff, st.k_runs, st.n_degen,
          st.R_usable, st.F_win, st.F_cell,
          (st.r_hat >= HET_R_POISSON) ? INFINITY : st.r_hat,
          st.mu_upper, st.tau_w, st.N_eff, st.R_eff, st.p_bound, st.P_rep,
          (st.flags & HET_ST_KS_UNDERPOWERED) ? "underpowered"
            : (st.ks_pass ? "pass" : "SPLIT"),
-         st.ks_D, het_tier_name(st.tier), st.tau_runs_needed, st.flags,
+         st.ks_D, het_sighting_name(st.tier), st.tau_runs_needed, st.flags,
          /* st.R is the PRE-clamp record count: R > R_usable can mean cold cells,
             R > HET_STATS_MAX_CELLS means the tail was discarded. */
-         st.R);
+         st.R, st.n_at_first_sight,
+         (unsigned long long)st.mu_total, (unsigned long long)st.can_total);
   printf("PRINT-BEGIN|%s\n", name);
   het_stats_print(stdout, &st);
   printf("PRINT-END|%s\n", name);
@@ -922,8 +942,8 @@ static void anchors(void) {
      far from the THETA_D and TAU_HOT boundaries -- deliberately, since a fixture at
      the boundary tests the boundary and not the statistic -- so nothing else in this
      gate can notice one of these macros moving under the mirror. */
-  printf("MIRROR|%d|%d|%d\n", (int)HET_THETA_DISTINCT, (int)HET_TAU_HOT,
-         (int)HET_STATS_MAX_CELLS);
+  printf("MIRROR|%d|%d|%d|%d\n", (int)HET_THETA_DISTINCT, (int)HET_TAU_HOT,
+         (int)HET_STATS_MAX_CELLS, (int)HET_CORROB_RUNS);
   /* The campaign budget (Q3-stats.md R3).  p_min MUST stay unset in the shipped
      header: the het hit-rate is unpublished, and Bagchi's ~0.2% is the GPU-only
      inter-CTA rate.  An unset p_min must return NOT SIZED, never a budget. */
@@ -1078,10 +1098,12 @@ def _parse_case_fields(l):
     f = l.split("|")
     (_, name, obs, k, k_eff, k_runs, n_degen, R_usable, F_win, F_cell,
      r_hat, mu_up, tau_w, N_eff, R_eff, p_bound, P_rep, ks, ks_D, tier,
-     tau_need, flags, R) = f
+     tau_need, flags, R, first_sight, mu_total, can_total) = f
     return name, dict(
         obs=obs, k=int(k), k_eff=int(k_eff), k_runs=int(k_runs),
         n_degen=int(n_degen), R=int(R), R_usable=int(R_usable),
+        first_sight=int(first_sight), mu_total=int(mu_total),
+        can_total=int(can_total),
         F_win=float(F_win), F_cell=float(F_cell), r_hat=float(r_hat),
         mu_upper=float(mu_up), tau_w=float(tau_w), N_eff=float(N_eff),
         R_eff=float(R_eff), p_bound=float(p_bound),
@@ -1254,7 +1276,7 @@ def phase1(lines, quiet):
         if not l.startswith("MIRROR|"):
             continue
         seen_mirror = True
-        _, td, th, mc = l.split("|")
+        _, td, th, mc, cr = l.split("|")
         for have, want, macro, what in (
                 (int(td), THETA_D, "HET_THETA_DISTINCT",
                  "the degeneracy guard's floor: the mirror would call cells "
@@ -1264,7 +1286,10 @@ def phase1(lines, quiet):
                  "set of cells as usable, so R_usable and every bound built on it"),
                 (int(mc), MAX_CELLS, "HET_STATS_MAX_CELLS",
                  "the record-array clamp: the truncation fixture is sized from the "
-                 "mirror, so it would stop reaching the truncation path")):
+                 "mirror, so it would stop reaching the truncation path"),
+                (int(cr), CORROB_RUNS, "HET_CORROB_RUNS",
+                 "the corroboration bar: the tier fixtures are sized from the "
+                 "mirror, so both sides of the bar would move with it")):
             if have != want:
                 print("  *** MIRROR DRIFT: %s is %d in the header, statscheck's "
                       "Python mirror says %d -- %s is now derived from a different "
@@ -1272,10 +1297,12 @@ def phase1(lines, quiet):
                 bad += 1
         if not quiet and not bad:
             print("      the Python mirrors match the header: THETA_D=%d, "
-                  "TAU_HOT=%d, MAX_CELLS=%d" % (int(td), int(th), int(mc)))
+                  "TAU_HOT=%d, MAX_CELLS=%d, CORROB_RUNS=%d"
+                  % (int(td), int(th), int(mc), int(cr)))
     if not seen_mirror:
-        print("  *** no MIRROR| line: the header's THETA_D / TAU_HOT / MAX_CELLS are "
-              "not being compared to statscheck's Python mirrors at all")
+        print("  *** no MIRROR| line: the header's THETA_D / TAU_HOT / MAX_CELLS / "
+              "CORROB_RUNS are not being compared to statscheck's Python mirrors "
+              "at all")
         bad += 1
 
     # --- The campaign budget: p_min stays a SYMBOL, not a number, until hardware. ---
@@ -1484,7 +1511,7 @@ def phase2(lines, quiet):
                 errs.append("p_bound %.12g != mu_upper/(R*N_eff/DEFF) %.12g"
                             % (g["p_bound"], want_b))
         for fld in ("obs", "k", "k_eff", "k_runs", "n_degen", "R", "R_usable", "ks",
-                    "tier", "tau_need"):
+                    "tier", "tau_need", "first_sight", "mu_total", "can_total"):
             if g[fld] != ref[fld]:
                 errs.append("%s: C %s != py %s" % (fld, g[fld], ref[fld]))
 
@@ -1552,7 +1579,7 @@ def phase2(lines, quiet):
               "says one thing is not a gate" % ", ".join(sorted(want_ks - seen_ks)))
         bad += 1
 
-    want_tier = {"none", "MISMATCH-UNCORROBORATED", "MISMATCH-CONFIRMED"}
+    want_tier = {"none", "UNCONFIRMED", "CORROBORATED"}
     print("  corroboration tiers : %d/%d  (%s)"
           % (len(seen_tier), len(want_tier), ", ".join(sorted(seen_tier))))
     if want_tier - seen_tier:
@@ -2027,7 +2054,7 @@ def phase5_stops(lines, quiet):
             bad += 1
         elif not quiet:
             print("      %-44s -> %s" % (s["name"], have))
-    want_all = {"CONTINUE", "OBSERVED", "CONFIRMED", "BOUND-MET", "BUDGET"}
+    want_all = {"CONTINUE", "CONFIRMED", "BOUND-MET", "BUDGET"}
     miss = want_all - seen
     print("  stop reasons reachable: %d/%d  (%s)"
           % (len(seen & want_all), len(want_all), ", ".join(sorted(seen))))
@@ -2038,9 +2065,9 @@ def phase5_stops(lines, quiet):
     if bad:
         print("\nSTOPPING RULE FAILED: %d problem(s)." % bad)
         return 1
-    print("\nSTOPPING RULE OK (every reason reachable; one Disallowed sighting "
-          "escalates instead of stopping; a vacuous bound satisfies no goal; "
-          "ORACLE_UNSET earns no early stop)")
+    print("\nSTOPPING RULE OK (every reason reachable; a lone clean sighting "
+          "escalates instead of stopping; a degenerate one never stops; a vacuous "
+          "bound satisfies no goal; an unstamped record earns no early stop)")
     return 0
 
 
@@ -2069,15 +2096,15 @@ NULL = ("mu_upper=2.9957 tau_w=1.28 N_eff=100 tau_need=1 R_eff=100 "
         "p_bound=0.029957 P_rep=-1")
 if test == "ALW-fires":
     k = 1 if inv >= 2 else 0
-    print("HetStats %s oracle=Allowed obs=%s k=%d k_eff=%d k_runs=%d tier=none "
+    print("HetStats %s obs=%s k=%d k_eff=%d k_runs=%d sighting=none "
           "mu_upper=0 tau_w=1.28 N_eff=100 tau_need=1 R_eff=0 p_bound=-1 P_rep=-1 %s"
           % (test, "Sometimes" if k else "Never", k, k, k, base))
 elif test == "ALW-cold":
-    print("HetStats %s oracle=Allowed obs=Never k=0 k_eff=0 k_runs=0 tier=none "
+    print("HetStats %s obs=Never k=0 k_eff=0 k_runs=0 sighting=none "
           "%s %s" % (test, NULL, base))
 elif test == "DIS-null":
-    print("HetStats %s oracle=Disallowed obs=Never k=0 k_eff=0 k_runs=0 "
-          "tier=none %s %s" % (test, NULL, base))
+    print("HetStats %s obs=Never k=0 k_eff=0 k_runs=0 "
+          "sighting=none %s %s" % (test, NULL, base))
 elif test == "DIS-unres":
     # THE SAME NULL AND THE SAME EFFORT as DIS-null, but this channel's tau (53.8)
     # needs 22 usable runs and the invocation has 10, so it is UNRESOLVED: N_eff falls
@@ -2086,18 +2113,18 @@ elif test == "DIS-unres":
     # invocation 3, and the campaign would bank a bound it never earned.  Guarded, the
     # pooled bound 2.9957/(10*i) never reaches 0.01 inside the budget and the row keeps
     # running: "run more runs", not "give up" and not "stop early".
-    print("HetStats %s oracle=Disallowed obs=Never k=0 k_eff=0 k_runs=0 tier=none "
+    print("HetStats %s obs=Never k=0 k_eff=0 k_runs=0 sighting=none "
           "mu_upper=2.9957 tau_w=53.8 N_eff=1 tau_need=22 R_eff=10 p_bound=0.29957 "
           "P_rep=-1 R=10 usable=10 degen=0 ctrl=canary win_n=1280 nwin=128 F_win=1.05 "
           "F_cell=1.02 r_hat=inf acf1=0.01 ks=pass ks_D=0.1 ks_Dcrit=0.2 ks_split=-1 "
           "N=100000 frames=100000 flags=0x4000" % test)
 elif test == "DIS-fires":
-    print("HetStats %s oracle=Disallowed obs=Sometimes k=1 k_eff=1 k_runs=1 "
-          "tier=MISMATCH-UNCORROBORATED mu_upper=0 tau_w=1.28 N_eff=100 tau_need=1 "
+    print("HetStats %s obs=Sometimes k=1 k_eff=1 k_runs=1 "
+          "sighting=UNCONFIRMED mu_upper=0 tau_w=1.28 N_eff=100 tau_need=1 "
           "R_eff=0 p_bound=-1 P_rep=0.632 %s" % (test, base))
 elif test == "NOR-null":
-    print("HetStats %s oracle=NO-ORACLE obs=Never k=0 k_eff=0 k_runs=0 "
-          "tier=none %s %s" % (test, NULL, base))
+    print("HetStats %s obs=Never k=0 k_eff=0 k_runs=0 "
+          "sighting=none %s %s" % (test, NULL, base))
 else:
     sys.exit(3)
 '''
@@ -2122,7 +2149,7 @@ def phase6_campaign(quiet):
         # prove the unknown-class guard still fatals on a mistagged row.
         loader = ("import sys; sys.path.insert(0, %r); import campaign; "
                   % os.path.join(ROOT, "hetlitmus"))
-        for base in ("control-map.csv", "expected-nvidia.csv"):
+        for base in ("control-map.csv",):
             real = os.path.join(ROOT, "hetlitmus", "tests", "het", base)
             r0 = subprocess.run(
                 [sys.executable, "-c", loader +
@@ -2528,9 +2555,9 @@ def bite():
                     lambda s: s.replace("  return v / m;\n", "  return 1.0;\n"))
 
         # (2) THE DEGENERACY GUARD DISABLED: a constant-read decoder artefact could
-        # then forge a MISMATCH-CONFIRMED, i.e. a false refutation of the model.
+        # then forge a CORROBORATED sighting out of an artefact that never varied.
         ok &= _bite("the degeneracy guard disabled (a constant read can forge a "
-                    "refutation)", hdir,
+                    "corroborated sighting)", hdir,
                     lambda s: s.replace(
                         "static int het_cell_degenerate(const het_obs_record *r) {",
                         "static int het_cell_degenerate(const het_obs_record *r) {\n"
@@ -2588,14 +2615,28 @@ def bite():
                         "    st->R_eff    = (double)st->R_usable * st->N_eff / deff;",
                         "    st->R_eff    = (double)st->R_usable / deff;"))
 
-        # (11) THE CORROBORATION GUARD GUTTED: one un-reproduced sighting would stop a
-        # Disallowed test and bank an uncorroborated refutation of the model.
-        ok &= _bite("the stop rule confirms on ONE sighting (false-refutation "
-                    "banked)", hdir,
+        # (11) THE CORROBORATION GUARD GUTTED: one un-reproduced sighting would stop
+        # the row and bank a sighting nothing reproduced.
+        ok &= _bite("the stop rule confirms on ONE sighting (an unreproduced "
+                    "sighting banked)", hdir,
                     lambda s: s.replace(
-                        "    if (st.tier == HET_MT_CONFIRMED) "
+                        "  if (st.tier == HET_SIGHT_CORROBORATED) "
                         "return HET_CAMPAIGN_STOP_CONFIRMED;",
-                        "    if (st.k > 0) return HET_CAMPAIGN_STOP_CONFIRMED;"))
+                        "  if (st.k > 0) return HET_CAMPAIGN_STOP_CONFIRMED;"))
+
+        # (11b) THE CORROBORATION BAR MOVED: HET_CORROB_RUNS is what both sides of
+        # the tier fixtures are sized from and what the MIRROR| line pins, so a
+        # header that quietly raises it must redden by NAME.
+        ok &= _bite("the corroboration bar raised (HET_CORROB_RUNS 2 -> 3)", hdir,
+                    lambda s: s.replace("#define HET_CORROB_RUNS 2",
+                                        "#define HET_CORROB_RUNS 3"))
+
+        # (11c) THE RECORD STAMP STOPS BEING CHECKED: het_stats_compute reuses
+        # het_verdict() per cell, so an unstamped stream would score as a live one
+        # and the aggregate would report a bound over memset zeros.
+        ok &= _bite("rec_magic no longer fails closed inside the aggregate", hdir,
+                    lambda s: s.replace("  if (r->rec_magic != HET_REC_MAGIC) {",
+                                        "  if (0) {"))
 
         # ---- the tau RELIABILITY guard -----------------------------------------
         # (12) THE GUARD DELETED: an unresolvable tau is believed anyway.  Geyer IPS
@@ -2634,8 +2675,8 @@ def bite():
         # that makes one of them true.
 
         # (17) THE RUN DEDUP DELETED: several cells of ONE run then count as several
-        # runs, so three sightings from a single thermal/phase draw bank a
-        # MISMATCH-CONFIRMED -- a refutation "corroborated" by itself.
+        # runs, so sightings from a single thermal/phase draw corroborate each
+        # other -- a sighting "corroborated" by itself.
         ok &= _bite("the run dedup deleted (cells of ONE run corroborate each other)",
                     hdir,
                     lambda s: _subst(s, [(
@@ -2813,8 +2854,9 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 26 injections were caught -- 4 against the B7")
-        print("         ESTIMATOR/RULE, 5 against the B7b tau/N_eff/stop machinery,")
+        print("BITE OK: all 29 injections were caught -- 4 against the B7")
+        print("         ESTIMATOR/RULE, 7 against the B7b tau/N_eff/stop machinery")
+        print("         (including the corroboration bar and the record stamp),")
         print("         3 against the B7c reliability guard (deleted / always-on /")
         print("         price silenced -- both directions AND the signal), 5 against")
         print("         the STRUCTURAL INVARIANTS (run dedup, the P_rep decode")

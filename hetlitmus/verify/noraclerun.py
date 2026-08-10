@@ -1,36 +1,35 @@
 #!/usr/bin/env python3
 """
-noraclerun.py -- what a REGISTERED NO-ORACLE harness actually PRINTS, on a device.
+noraclerun.py -- what a harness with NO CONTROL MAP actually PRINTS, on a device.
 
-The (x86_64, cuda) pair is registered without an oracle and is the pair the dev
-box is: every runtime bite in this tree executes one of its harnesses.  Such a
-harness reads no positive-control map, so nothing in it co-runs and nothing marks
-any row a canary -- and that is a state the whole verdict/statistics stack has to
-describe correctly without ever having a control to lean on.  Every other gate on
+The (x86_64, cuda) pair is registered without a control map and is the pair the
+dev box is: every runtime bite in this tree executes one of its harnesses.  Such
+a harness reads no positive-control map, so nothing in it co-runs and nothing
+marks any row a canary -- and that is a state the whole verdict/statistics stack
+has to describe correctly without ever having a control to lean on.  Every other gate on
 that stack drives it from SYNTHETIC records or from emitted text; this one builds
 a harness, runs it on the GPU, and reads the printout, which is the only artefact
 a result is ever read off.
 
 What it asserts, all on the printout of a real run:
 
-  A the stamp says NO-ORACLE and names the pair
+  A the record is stamped and the printout names the PAIR it was built for
   B no self-canary sentence anywhere -- nothing here is the Layer-B canary, and
     the map that would have said so was never read
   C the no-control-map sentence IS there, and calls the missing bound an
     omission rather than a construction
-  D the run reaches CHARACTERIZED, and reports itself against the PAIR NAME --
-    not against the NO-ORACLE disclosure blob, which is not a target name
-  E MATCH / MISMATCH are unreachable: there is no prediction to agree with
+  D the run reaches OBSERVED and reports itself against the PAIR NAME
+  E MATCH / MISMATCH / any retired verdict word is unreachable: this harness
+    carries no prediction to agree or disagree with
   F no Grace / Hopper / NVLink / C2C / GH200 anywhere in stdout or stderr
   G the observation class is not ALWAYS on a run that fired in k < R runs (where
     nothing co-runs, "usable" is defined by firing, so R is the denominator)
 
 MEASURED DEFECT this closes: on this exact pair the statistics layer printed "it
 IS the Layer-B canary (control-map.csv says `self')" and "NO BOUND -- by
-construction, not by omission", and the CHARACTERIZED line reported the run as
-"what the target this harness was tagged for ((NO-ORACLE: (X86_64, cuda) is
-registered without one -- dev-tier machinery only: ...)) does".  Every clause was
-false, and the verdict layer on the SAME run printed UNINTERPRETABLE.
+construction, not by omission", and the report line named a string that was not a
+target name at all.  Every clause was false, and the verdict layer on the SAME
+run printed UNINTERPRETABLE.
 
 The outcome is stochastic (C, D and G need one sighting), so the run is repeated
 with fresh seeds until one fires, up to SEED_TRIES.  A pair that cannot fire the
@@ -59,9 +58,8 @@ PAIR = "(X86_64, cuda)"
 SEED_TRIES = 12
 RUN_TIMEOUT = 90     # a healthy run is ~3 s; past this it is stalled
 
-# The pair is registered NO-ORACLE, so the harness needs no oracle CSV beside it;
-# it is emitted from the x86 fixture because that is where an x86-64 CPU column
-# lives in the committed tree.
+# The harness is emitted from the x86 fixture because that is where an x86-64 CPU
+# column lives in the committed tree.
 VENDOR_RE = re.compile(r"nvlink|grace|hopper|c2c|gh200", re.I)
 
 
@@ -137,7 +135,7 @@ def run_until_sighting(d, quiet=False):
                     % (hangs, env["HET_ALLOC"]))
             continue
         text = r.stdout + "\n" + r.stderr
-        m = re.search(r"^HetStats \S+ oracle=\S+ .*? obs=(\S+) R=(\d+) usable=\d+ "
+        m = re.search(r"^HetStats \S+ cpu_only=\d+ obs=(\S+) R=(\d+) usable=\d+ "
                       r"k=(\d+) ", r.stdout, re.M)
         if not m:
             raise SystemExit("noraclerun: the run printed no HetStats line "
@@ -167,8 +165,8 @@ def check(text, k, R, obs, quiet=False):
         if frag in text:
             bad.append("[%s] the printout says %r -- %s" % (tag, frag, why))
 
-    must("A", "oracle=NO-ORACLE")
-    must("A", "src=(NO-ORACLE: %s is registered without one" % PAIR)
+    must("A", "HetVerdict %s [" % TEST)
+    must("A", 'Report it as what %s exhibited' % PAIR)
 
     never("B", "IS the Layer-B canary",
           "no control map was read for this pair, so nothing here marks any row "
@@ -182,16 +180,15 @@ def check(text, k, R, obs, quiet=False):
           "the bound is missing because the bootstrap map does not exist yet, "
           "which is an omission")
 
-    must("D", ": CHARACTERIZED")
-    must("D", 'Report it as "what %s does where the CMCM is silent"' % PAIR)
+    must("D", ": OBSERVED")
     never("D", "the target this harness was tagged for",
-          "that sentence substituted the whole NO-ORACLE disclosure blob")
+          "that sentence once substituted a disclosure blob for the pair name")
 
-    for w in ("MISMATCH", "MATCH"):
+    for w in ("MISMATCH", "MATCH", "ORACLE_", "Disallowed", "REFUT"):
         if w in text:
-            bad.append("[E] the printout contains %r -- a pair with no oracle has "
-                       "no prediction to agree or disagree with" % w)
-    say("      [E] no MATCH / MISMATCH anywhere")
+            bad.append("[E] the printout contains %r -- this harness carries no "
+                       "prediction to agree or disagree with" % w)
+    say("      [E] no MATCH / MISMATCH / retired verdict word anywhere")
 
     hits = sorted(set(m.group(0) for m in VENDOR_RE.finditer(text)))
     if hits:
@@ -239,11 +236,10 @@ INJECTIONS = [
      lambda s: s.replace("It gets NO BOUND, and that is an OMISSION, not a "
                          "construction",
                          "It gets NO BOUND -- by construction, not by omission", 1)),
-    ("D", "het_verdict.h", "the report sentence handed the oracle-source blob again",
+    ("A/D", "het_verdict.h", "the report sentence names a constant instead of the pair",
      lambda s: s.replace(
-         r'"  Report it as \"what %s does where the CMCM is silent\".  It is NOT evidence "',
-         r'"  Report it as \"what the target this harness was tagged for (%s) does where the CMCM is silent\".  It is NOT evidence "',
-         1).replace("\n      HET_PAIR_NAME);", "\n      het_oracle_src(_r));", 1)),
+         "      HET_PAIR_NAME, HET_LINK_NAME);",
+         '      "the target this harness was tagged for", HET_LINK_NAME);', 1)),
     ("F", TEST + ".cu", "the driver's noise warning names the GH200 halves again",
      lambda s: s.replace("the host half of the host-device interconnect noise",
                          "the Grace half of the NVLink-C2C noise")),
@@ -324,8 +320,9 @@ def main():
             for m in bad:
                 print("  %s" % m)
             return 1
-        print("\nNORACLERUN: PASS (a pair with no oracle characterizes, names "
-              "itself, claims no canary and no machine, and adjudicates nothing)")
+        print("\nNORACLERUN: PASS (a pair with no control map characterizes, "
+              "names itself, claims no canary and no machine, and adjudicates "
+              "nothing)")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

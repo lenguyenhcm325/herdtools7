@@ -212,11 +212,11 @@ let opts =
      HetEmit.target_doc ;
 (* HetLitmus: emit a compound harness for a (CPU ISA x GPU dialect) pair the
    oracle table does not carry (litmus/hetOracle.ml).  For new hardware only --
-   every test is stamped ORACLE_NONE and the stamp discloses the override, so a
+   every test reads no control map and the emitted pair name discloses it, so a
    run characterizes and never adjudicates. *)
    "-allow-no-oracle", Arg.Unit (fun () -> HetOracle.set_allow_no_oracle true),
    " HetLitmus: emit an UNREGISTERED CPU-ISA x GPU-dialect pair as \
-     characterization-only (ORACLE_NONE, override disclosed in the stamp)" ;
+     characterization-only (no control map is read for it)" ;
 (* Change input *)
    CheckName.parse_names names ;
    CheckName.parse_excl excl ;]

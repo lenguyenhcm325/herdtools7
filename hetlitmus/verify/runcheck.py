@@ -783,8 +783,8 @@ def phase6_failclosed(wrapper, quiet=False, only=None):
             p = os.path.join(e, t, t + ".cu")
             s = open(p).read()
             with open(p, "w") as fh:
-                fh.write(s.replace('_rec.oracle_source = "',
-                                   '_rec.oracle_source = "zz', 1))
+                fh.write(s.replace('#define HET_PAIR_NAME "',
+                                   '#define HET_PAIR_NAME "zz', 1))
 
         def drop_render(e):
             t = fx["tests"][0]
@@ -836,7 +836,7 @@ def phase6_failclosed(wrapper, quiet=False, only=None):
                 expect("stamp",
                        base + ["--out", doctored_out("stamp", break_stamp),
                                "--reuse-emitted"],
-                       wrapper_env(cc, probe), 2, "the emitted stamp of")
+                       wrapper_env(cc, probe), 2, "the emitted pair name of")
             elif case == "reuse-missing":
                 expect("reuse-missing",
                        base + ["--out", os.path.join(tmp, "o-noemit"),
@@ -1124,8 +1124,8 @@ INJECTIONS = [
      lambda s: s.replace('[ "$EMITTED_ISA" = "$CPU_ISA" ] || die',
                          '[ 1 = 1 ] || die', 1),
      _p6("emitted-isa"), "emitted-isa"),
-    ("6", "wrapper", "the emitted oracle stamp is not cross-checked",
-     lambda s: s.replace('grep -qF "_rec.oracle_source = $want" "$f" || {',
+    ("6", "wrapper", "the emitted pair name is not cross-checked",
+     lambda s: s.replace('grep -qF "#define HET_PAIR_NAME \\"$PAIR\\"" "$f" || {',
                          'true || {', 1),
      _p6("stamp"), "stamp"),
     ("6", "wrapper", "--reuse-emitted accepts a missing emission",

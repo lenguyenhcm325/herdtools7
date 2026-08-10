@@ -290,10 +290,10 @@ end
          (* (clang triple, -std) to cross-assemble the real CPU asm on a foreign
             dev host; None when the build host already IS this ISA (native gcc) *)
          val cross : (string * string) option
-         (* NO ORACLE FIELDS HERE.  [isa_name] is this module's whole
-            contribution to the oracle question: it is one coordinate of the
-            (CPU ISA x GPU dialect) pair litmus/hetOracle.ml keys the oracle
-            file, the control map and the machine prose on. *)
+         (* NO PAIR FIELDS HERE.  [isa_name] is this module's whole contribution
+            to the pair question: it is one coordinate of the (CPU ISA x GPU
+            dialect) pair litmus/hetOracle.ml keys the control map and the machine
+            prose on. *)
          (* The tagged-CPU-body hooks -- the ONLY CPU-ISA-specific pieces of the
             het emitter (the AArch64 arm wires HetCpuBody, the x86_64 arm its
             twin HetCpuBodyX86; both produce the same C shape and share
@@ -494,10 +494,10 @@ end
              the parse -- an unregistered target must refuse having written
              nothing. *)
           let dialects = HetTarget.select ~key:(fun d -> d.gd_target) dialects in
-          (* THE ORACLE PAIR ROW for this emission, resolved in the same breath
-             and for the same reason: an ABSENT (CPU ISA x GPU dialect) pair must
-             refuse having written nothing.  One dialect survives the filter, so
-             the pair is fixed here. *)
+          (* THE PAIR ROW for this emission, resolved in the same breath and for
+             the same reason: an ABSENT (CPU ISA x GPU dialect) pair must refuse
+             having written nothing.  One dialect survives the filter, so the pair
+             is fixed here. *)
           let pair =
             HetOracle.resolve ~cpu_isa:CpuF.isa_name
               ~target:(List.hd dialects).gd_target in
@@ -520,14 +520,12 @@ end
               (fun ((_,annot,_),_) ->
                 match annot with Some ("cpu"::_) -> true | _ -> false)
               parsed.MiscParser.prog in
-          (* The positive-control map: mu(T) and the canary to co-run, and
-             the oracle class that decides what a null is worth
-             (litmus/hetControlMap.ml).  A pair with no oracle reads NO map
-             (D-MV5): mu(T) is "the nearest ALLOWED grid neighbour", so a map is
-             an oracle-derived object and borrowing one from another pair is the
-             borrowing this table exists to stop.  Such a harness is
-             single-instance, stamps ORACLE_NONE and -- with no control built --
-             het_verdict() calls its nulls COLD-INVALID and says why.  The
+          (* The positive-control map: mu(T) and the canary to co-run
+             (litmus/hetControlMap.ml).  A pair with no registered map reads NONE
+             (D-MV5): mu(T) is a weakening on a PARTICULAR strength lattice, so a
+             map borrowed from another pair names siblings that are not weakenings
+             here.  Such a harness is single-instance and -- with no control built
+             -- het_verdict() calls its nulls COLD-INVALID and says why.  The
              bootstrap map generator for a new pair is deliberately future work;
              until it exists, characterizing without one is the honest state. *)
           let src_dir = Filename.dirname src_name in
@@ -539,41 +537,7 @@ end
             | HetOracle.Characterize _ | HetOracle.Override ->
                HetControlMap.empty in
           let mu_name = HetControlMap.control_of cmap tname
-          and canary_name = HetControlMap.canary_of cmap tname
-          and oracle =
-            match pair with
-            | HetOracle.Oracle _ -> HetControlMap.oracle_of cmap tname
-            (* Stamped DIRECTLY from the table row, not looked up: a uniform
-               class read out of a file nobody wrote would be indistinguishable
-               from a lookup that silently missed. *)
-            | HetOracle.Characterize _ | HetOracle.Override -> "ORACLE_NONE" in
-          (* WHERE THE PREDICTION IS WRITTEN DOWN, as the string every harness
-             prints.  On a populated pair it is a NAME, not a claim about the
-             row: nothing is read out of the CSV here -- the verdict comes from
-             the control map above and the derivation from the CSV's own Source
-             column, which a reader looks up.  The existence test keeps "(no
-             oracle CSV)" meaning what it has always meant: this pair's oracle is
-             not next to the test.  The other two states say which of them they
-             are, and the flag-overridden one DISCLOSES the override, because a
-             harness emitted past a refusal must not read like a registered one. *)
-          let oracle_src =
-            let pname =
-              HetOracle.pair_name ~cpu_isa:CpuF.isa_name
-                ~target:(List.hd dialects).gd_target in
-            match pair with
-            | HetOracle.Oracle p ->
-               if Sys.file_exists
-                    (Filename.concat src_dir p.HetOracle.op_oracle_csv) then
-                 Printf.sprintf "%s:%s"
-                   p.HetOracle.op_oracle_csv p.HetOracle.op_oracle_model
-               else "(no oracle CSV)"
-            | HetOracle.Characterize why ->
-               Printf.sprintf "(NO-ORACLE: %s is registered without one -- %s)"
-                 pname why
-            | HetOracle.Override ->
-               Printf.sprintf
-                 "(NO-ORACLE: %s is UNREGISTERED, emitted under -allow-no-oracle)"
-                 pname in
+          and canary_name = HetControlMap.canary_of cmap tname in
           (* WHICH MACHINE THIS HARNESS MAY NAME, for the emitted stderr WARNINGs
              -- the two halves of the interconnect noise and the link between
              them.  It comes from the PAIR ROW (litmus/hetOracle.ml), which is
@@ -589,14 +553,14 @@ end
           and link_name = mc.HetOracle.mc_link_name in
           (* The (CPU ISA x GPU dialect) this harness was BUILT for, as the short
              name the verdict layer prints where it has to identify the target.
-             A build fact, not an oracle claim, so every pair stamps it -- unlike
-             [mc], which a pair with no oracle leaves unstamped. *)
+             A build fact, so every pair stamps it -- unlike [mc], which an
+             unregistered pair leaves unstamped. *)
           let pair_label =
             HetOracle.pair_name ~cpu_isa:CpuF.isa_name
               ~target:(List.hd dialects).gd_target in
           (* WHETHER A POSITIVE-CONTROL MAP WAS READ AT ALL.  A pair with no
-             oracle reads none, so nothing in such a harness marks any row the
-             canary and its missing bound is deferred rather than structural --
+             registered map reads none, so nothing in such a harness marks any row
+             the canary and its missing bound is deferred rather than structural --
              het_verdict.h has to be able to tell those two apart. *)
           let no_control_map =
             match pair with
@@ -1293,8 +1257,8 @@ end
                    x86 agent, so a co edge seen only through the GPU observer is
                    NOT an x86-TSO statement at all.
                    MEASURED 2026-08-03 (i5-12500H + RTX 3060, HET_ALLOC=pinned):
-                   2+2W-cpuonly-x86_64 reported MISMATCH-CONFIRMED, 10 of 10 runs,
-                   with ws_via_obs=1 -- and its detector is exactly this
+                   2+2W-cpuonly-x86_64 reported a corroborated sighting, 10 of 10
+                   runs, with ws_via_obs=1 -- and its detector is exactly this
                    disjunction.  Without recording the two arms separately, the
                    run log could not tell an Intel TSO violation from a GPU
                    observing two CPU stores out of order.  Recorded for the test
@@ -1713,24 +1677,23 @@ end
                 insts ;
               Printf.eprintf
                 "  => NPART=%d HET_TEST_BLOCKS=%d HET_GPU_LANES=%d HET_SPIN_LANES=%d, \
-                 HET_CONTROL_COMPILED_IN=%d HET_CANARY_COMPILED_IN=%d (oracle: %s)\n%!"
+                 HET_CONTROL_COMPILED_IN=%d HET_CANARY_COMPILED_IN=%d\n%!"
                 npart test_blocks gpu_lanes spin_lanes
-                (if has_mu then 1 else 0) (if has_canary then 1 else 0) oracle
+                (if has_mu then 1 else 0) (if has_canary then 1 else 0)
             end ;
             Printf.eprintf
-              "  oracle: %s from %s%s\n%!"
-              oracle oracle_src
+              "  pair: %s%s\n%!" pair_label
               (if cpu_only then "  [D10 CPU-ONLY cycle]" else "") ;
             (* The `none' sentinel is a DERIVED absence, not a missing row, and
                the two must not read alike in a build log: this test co-runs the
                Layer-B canary alone because the corpus contains no weakening of
-               it, so its null is a WEAK-NULL by construction, forever. *)
+               it, so its null is canary-only by construction, forever. *)
             if HetControlMap.no_mutant_exists cmap tname then
               Printf.eprintf
-                "  NOTE: %s is Disallowed and the map's Mu column is `none' -- no \
-                 Layer-A mutant EXISTS for it (control-map MuRule says why).  \
+                "  NOTE: the map's Mu column for %s is `none' -- no strictly weaker \
+                 structural sibling EXISTS for it (control-map MuRule says why).  \
                  HET_CONTROL_COMPILED_IN=0 by derivation: canary only, so every \
-                 null from this test is a WEAK-NULL.\n%!"
+                 null from this test is NOT-OBSERVED-CANARY-ONLY.\n%!"
                 tname
           end ;
           let het_iter = "(_n + 1)" in
@@ -2300,20 +2263,13 @@ end
             s (Printf.sprintf "    _rec.reporting = %s;\n"
                  (HetCond.confidence_c_name it.i_report)) ;
             s "    _rec.N = SIZE_OF_TEST;\n" ;
-            (* WHAT THE MODEL PREDICTS FOR THIS TEST, read from field 2 of
-               control-map.csv.  It is what stops a sighting being framed as a
-               refutation on the tests whose weak outcome the model EXPECTS, or on
-               which it is silent.  ORACLE_UNSET (a test missing from the map) fails
-               closed and the harness reports a build bug rather than a result. *)
-            s (Printf.sprintf "    _rec.het_oracle = %s;\n" oracle) ;
-            (* WHERE THAT PREDICTION IS WRITTEN DOWN.  [oracle_source] names the
-               file the harness was tagged from -- an x86 harness built against
-               the NVIDIA oracle would otherwise be invisible.  A mismatch
-               sentence sends the reader to this file's Source column, so the
-               file has to be named in the run log.  It is a LABEL only: nothing
-               reads it back for a decision, and the machine prose comes from the
-               HET_*_HALF / HET_LINK_NAME defines above. *)
-            s (Printf.sprintf "    _rec.oracle_source = \"%s\";\n" oracle_src) ;
+            (* THE RECORD STAMP, written as the SYMBOL so a rename in
+               het_verdict.h is a compile error here rather than a silent
+               mis-read.  het_verdict() reads no field of an unstamped record:
+               the record is memset(0) just above, so without this line every
+               count and liveness tally it reports would be a memset zero
+               indistinguishable from a run that saw nothing. *)
+            s "    _rec.rec_magic = HET_REC_MAGIC;\n" ;
             s (Printf.sprintf
                  "    _rec.cpu_only = %d;  /* D10: 1 iff EVERY proc is a CPU proc */\n"
                  (if cpu_only then 1 else 0)) ;
@@ -2327,7 +2283,7 @@ end
             s "    _rec.spin_lanes = HET_SPIN_LANES;\n" ;
             (match mu_name with
              | Some m -> s (Printf.sprintf "    _rec.control_name = \"%s\";\n" m)
-             | None -> s "    _rec.control_name = NULL;  /* no mu(T): not a Disallowed test */\n") ;
+             | None -> s "    _rec.control_name = NULL;  /* no mu(T): at the lattice floor */\n") ;
             (match canary_named with
              | Some c -> s (Printf.sprintf "    _rec.canary_name = \"%s\";\n" c)
              | None -> s "    _rec.canary_name = NULL;\n") ;
@@ -2339,8 +2295,8 @@ end
                constants are 0, so both loops exit before their body runs once.
                MEASURED 2026-08-03 on MP-cpuonly-x86_64 (RTX 3060, HET_ALLOC=pinned):
                spin=0/0 do_stress_rounds=0 with req=0xf, so het_dead() fired on both
-               and ALL TEN runs came back COLD-INVALID -- a Disallowed row whose null
-               can never be a datum.  These are structurally absent mechanisms, not
+               and ALL TEN runs came back COLD-INVALID -- a row whose null can
+               never be a datum.  These are structurally absent mechanisms, not
                dead ones, which is exactly the distinction stress_requested exists to
                draw.  het_verdict() still raises HET_CV_NO_GPU_LANES so the null says
                out loud that only CPU-side stress opened its window.
@@ -2387,10 +2343,10 @@ end
             s "    het_verdict_print(stdout, &_rec);\n" ;
             s "    _recs[_nrec++] = _rec;\n" ;
             (* The in-binary adaptive loop.  het_campaign_should_stop() is a pure
-               function of the records accumulated so far, inheriting every oracle
-               frame and statistic already computed, so consulting it after each run
-               gives the campaign scheduler its per-test early stop with no new
-               decision machinery.  With HET_ADAPTIVE unset the loop simply runs to
+               function of the records accumulated so far, inheriting every
+               statistic already computed, so consulting it after each run gives the
+               campaign scheduler its per-test early stop with no new decision
+               machinery.  With HET_ADAPTIVE unset the loop simply runs to
                _runs_budget. *)
             s "    if (_adaptive) {\n" ;
             s "      het_campaign_stop_t _stop = het_campaign_should_stop(_recs, _nrec, _runs_budget, _p_goal);\n" ;
@@ -2406,10 +2362,9 @@ end
             (* ========= the statistics post-pass over the aggregated cells ========
                het_verdict() is a PURE function of one record, so the aggregate reuses
                it instead of re-deriving liveness, inheriting every stress
-               disqualifier and the oracle frame.  This is what turns "not observed"
-               into "not observed, under quantified effort, with a 95% bound on the
-               run-level rate" -- what makes a Never carry a bound at all
-               (env-research/Q3-stats.md). *)
+               disqualifier.  This is what turns "not observed" into "not observed,
+               under quantified effort, with a 95% bound on the run-level rate" --
+               what makes a Never carry a bound at all (env-research/Q3-stats.md). *)
             s "  {\n" ;
             s "    het_stats_t _st;\n" ;
             s "    het_stats_compute(_recs, _nrec, &_st);\n" ;
@@ -2483,17 +2438,18 @@ end
                        i.i_name i.i_pre i.i_k (role_note i.i_role)))
                 insts ;
               if has_mu then begin
-                s "// A null on T means \"not observed on a harness that demonstrably\n" ;
-                s "// produced the very interleaving T's ordering is claimed to prevent\"\n" ;
-                s "// -- and NOTHING AT ALL if the control did not fire (het_verdict.h).\n"
+                s "// mu(T) is a strictly weaker, structurally identical sibling of T,\n" ;
+                s "// co-running on the same launch, stress and C2C path.  A null on T\n" ;
+                s "// means \"not observed on a harness that demonstrably produced an\n" ;
+                s "// interleaving of T's own shape\" -- and NOTHING AT ALL if the\n" ;
+                s "// control did not fire (het_verdict.h).\n"
               end else begin
-                (* No forbidden cycle means no mutant, so this harness carries the
-                   canary only. *)
-                s "// This test is NOT should-be-forbidden, so it has no minimal mutant\n" ;
-                s "// (Layer A) -- a mutant presupposes a forbidden cycle to weaken.  It\n" ;
-                s "// co-runs the Layer-B canary ONLY, which is what makes a\n" ;
-                s "// non-observation here mean \"permitted, but we could not expose it\n" ;
-                s "// on a demonstrably HOT harness\" instead of nothing at all.\n"
+                (* At the lattice floor there is nothing left to weaken, so this
+                   harness carries the canary only. *)
+                s "// This test is at the lattice floor, so it has no strictly weaker\n" ;
+                s "// structural sibling (Layer A) to co-run.  It carries the Layer-B\n" ;
+                s "// canary ONLY, which is what makes a non-observation here mean \"not\n" ;
+                s "// exposed on a demonstrably HOT harness\" instead of nothing at all.\n"
               end
             end ;
             s dialect.gd_shared_mem_note ;
@@ -2509,11 +2465,11 @@ end
             (* WHAT THE PAIR ROW STAMPS, ahead of the runtime headers that read
                it.  The machine words -- the two halves of the interconnect
                noise, the link between them, this part's last level -- are claims
-               about silicon, so a pair with no oracle stamps none of them and
+               about silicon, so an unregistered pair stamps none of them and
                the headers' #ifndef defaults name the mechanism instead: a
                missing define can only weaken a claim.  The two build facts below
                are stamped by every pair, because they are true of the binary
-               whatever the oracle says.  HET_PLACE_LEVER is separate again: the
+               whatever the pair row says.  HET_PLACE_LEVER is separate again: the
                vendor API call this render actually contains is a dialect fact. *)
             (match HetOracle.machine_of pair with
              | Some m ->
@@ -2530,7 +2486,7 @@ end
                   s "#define HET_ALGLAVE_ZERO_MEASURED 1\n"
              | None ->
                 s "/* No machine defines: this harness's (CPU ISA x GPU dialect) pair\n" ;
-                s "   carries no oracle, so it names no silicon and het_verdict.h's\n" ;
+                s "   is unregistered, so it names no silicon and het_verdict.h's\n" ;
                 s "   generic host/device wording stands. */\n") ;
             s (Printf.sprintf "#define HET_PAIR_NAME %S\n" pair_label) ;
             if no_control_map then s "#define HET_NO_CONTROL_MAP 1\n" ;
@@ -3126,7 +3082,7 @@ end
             if co_run then begin
               s "## The positive control is CO-RUNNING in this harness\n\n" ;
               s "A test's null result is evidence only if the harness would have seen a\n" ;
-              s "weak behaviour had one been permitted.  Every het instance below therefore\n" ;
+              s "weak behaviour had one occurred.  Every het instance below therefore\n" ;
               s "shares this launch, this stress config and this C2C path, on disjoint\n" ;
               s "cache-line-padded locations:\n\n" ;
               List.iter
@@ -3134,7 +3090,10 @@ end
                   s (Printf.sprintf "- `%s` (%s) -- prefix `%s`, K=%d\n"
                        i.i_name (role_note i.i_role) i.i_pre i.i_k))
                 insts ;
-              s "\nSee `het_verdict.h` for the rule that turns their counts into a verdict.\n\n"
+              s "\nLayer A is a strictly weaker, structurally identical sibling of the test\n" ;
+              s "under study; Layer B is the fixed het canary.  Neither carries a prediction:\n" ;
+              s "their counts say how hot the harness was, and nothing about what the test\n" ;
+              s "ought to have done.  See `het_verdict.h` for the rule that reads them.\n\n"
             end ;
             s "Files:\n" ;
             (* the renders first, their descriptions started at a common column *)

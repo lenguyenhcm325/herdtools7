@@ -165,10 +165,10 @@ echo "generate-x86: (A) $a + (B) $b (skipped $bskip degenerate) + (D) $d (skippe
 # --- the AMD lane's two maps, RE-KEYED onto the x86 file names (P2d) ----------
 # The emitter resolves the control map RELATIVE TO THE .litmus it is given
 # (hetEmit.ml: HetControlMap.load ~dir:src_dir), so without it every x86
-# rendering emits `_rec.het_oracle = ORACLE_UNSET' and its harness reports a
-# BUILD BUG instead of a result.  MEASURED before this block existed,
-# 2026-08-03: 411 of 411.  The oracle CSV is re-keyed beside it because that is
-# the file a mismatch is re-derived from and the emitter records its name.
+# rendering names no mu(T) and no canary, so nothing co-runs and every null it
+# produces is COLD-INVALID.  MEASURED before this block existed, 2026-08-03: 411
+# of 411.  The verdicts CSV is re-keyed beside it because that is the file an
+# OFFLINE cross-check is run against (hetlitmus/oracle-compare.sh).
 #
 # RE-KEYED, not copied.  The committed maps are keyed on the AArch64 test NAMES
 # -- one row per shape x cut x scope x order, whatever ISA the CPU column is
@@ -212,9 +212,9 @@ rekey_names "$HETDIR/control-map-amd.csv" 1 3 6 7 8 > "$OUT/control-map-amd.csv"
 rekey_names "$HETDIR/expected-amd.csv" 1 > "$OUT/expected-amd.csv"
 
 # Both maps must cover the corpus EXACTLY, in both directions.  A map row with
-# no test is a stale name; a test with no map row emits ORACLE_UNSET, which is
-# the failure this block exists to prevent -- and which is silent in the
-# emitted C, so it has to be caught here.
+# no test is a stale name; a test with no map row co-runs no control at all,
+# which is the failure this block exists to prevent -- and which is silent in
+# the emitted C, so it has to be caught here.
 for m in control-map-amd.csv expected-amd.csv; do
   awk -F, '!/^#/ && NF>1 && $1 != "Test" && $1 != "Litmus" { print $1 }' \
     "$OUT/$m" | sort > "$OUT/.keys.$m"

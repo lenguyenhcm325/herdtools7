@@ -136,13 +136,13 @@ invoke() {
 
 # Machinery assertions on a transcript: these check the harness SAID the right
 # kind of thing, never what the hardware did.
-check_machinery() { # log test expected-oracle-class
-  local log="$1" t="$2" oclass="$3" bad=0
+check_machinery() { # log test -- the LINE SHAPES a rung reads its result off
+  local log="$1" t="$2" bad=0
   grep -q '^HetLitmus: shared-mem mode=' "$log" || { echo "    MISSING: shared-mem banner"; bad=1; }
-  grep -q "^HetVerdict $t \[" "$log"            || { echo "    MISSING: HetVerdict frame line"; bad=1; }
-  grep -q "^HetStats $t oracle=" "$log"         || { echo "    MISSING: HetStats machine line"; bad=1; }
-  grep -q "^HetStats $t oracle=$oclass " "$log" || { echo "    MISSING: machine line does not carry oracle=$oclass"; bad=1; }
-  grep -q "^HetVerdict $t \[.*\] oracle=$oclass " "$log" || { echo "    MISSING: verdict frame does not carry oracle=$oclass"; bad=1; }
+  grep -qE "^HetVerdict $t \[[A-Z]+\]( CPU-ONLY)? run=[0-9]+: [A-Z-]+$" "$log" \
+    || { echo "    MISSING: HetVerdict frame line"; bad=1; }
+  grep -q "^HetStats $t cpu_only=" "$log" || { echo "    MISSING: HetStats machine line"; bad=1; }
+  grep -q "^HetStats $t: " "$log"         || { echo "    MISSING: HetStats human block"; bad=1; }
   return $bad
 }
 
@@ -241,7 +241,7 @@ if [ -d "$TESTS_DIR/$T2" ]; then
   invoke "$T2" rung2 HET_RUNS_MAX="$LADDER_RUNS_TINY" HET_SEED="$LADDER_SEED0"; rc=$?
   log="$RESULTS/$T2-rung2.log"
   [ "$rc" -eq 0 ] || { echo "  FAIL  rc=$rc"; r2=1; }
-  check_machinery "$log" "$T2" "$(oclass_of "$T2")" || r2=1
+  check_machinery "$log" "$T2" || r2=1
   grep -q 'HET_CANARY_COMPILED_IN' "$TESTS_DIR/$T2/$T2.cu" || { echo "    MISSING: no canary compiled in"; r2=1; }
   echo "    frame:  $(grep -m1 "^HetVerdict $T2 " "$log" | cut -c1-140)"
   echo "    caveats:$(grep -c '  CAVEAT:' "$log") line(s)"
@@ -261,7 +261,7 @@ if [ -d "$TESTS_DIR/$T3" ]; then
   invoke "$T3" rung3 HET_RUNS_MAX="$LADDER_RUNS_TINY" HET_SEED="$((LADDER_SEED0+1))"; rc=$?
   log="$RESULTS/$T3-rung3.log"
   [ "$rc" -eq 0 ] || { echo "  FAIL  rc=$rc"; r3=1; }
-  check_machinery "$log" "$T3" Disallowed || r3=1
+  check_machinery "$log" "$T3" || r3=1
   grep -q '#define HET_CONTROL_COMPILED_IN 1' "$TESTS_DIR/$T3/$T3.cu" || { echo "    MISSING: no mu(T) compiled in"; r3=1; }
   k="$(grep -m1 "^HetStats $T3 oracle=" "$log" | tr ' ' '\n' | sed -n 's/^k=//p')"
   echo "    frame:  $(grep -m1 "^HetVerdict $T3 " "$log" | cut -c1-140)"
@@ -292,7 +292,7 @@ for t in R-cg-sys-relaxed 2+2W-cg-sys-relaxed IRIW-gcgc-sys-fence; do
   invoke "$t" rung4 HET_RUNS_MAX="$LADDER_RUNS_MAIN" HET_SEED="$((LADDER_SEED0+2))"; rc=$?
   log="$RESULTS/$t-rung4.log"
   [ "$rc" -eq 0 ] || { echo "  FAIL  $t rc=$rc"; r4=1; }
-  check_machinery "$log" "$t" "$oc" || r4=1
+  check_machinery "$log" "$t" || r4=1
   echo "  $t [$oc]"
   echo "    $(grep -m1 "^HetVerdict $t " "$log" | cut -c1-140)"
   if [ "$oc" = "NO-ORACLE" ]; then

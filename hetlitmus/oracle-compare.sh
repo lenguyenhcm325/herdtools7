@@ -45,6 +45,11 @@
 # section appears only when the log carries those lines, so a log without them (the
 # synthesized samples, the cram fixtures) prints the table alone.
 #
+# THIS FILE IS THE ONLY PLACE THE VERDICT VOCABULARY SURVIVES.  The harness
+# characterizes: it reports observations and carries no prediction, so every
+# Allowed/Disallowed word below comes from the user-supplied CSV and from nowhere
+# in the run log.
+#
 # Usage:   ./oracle-compare.sh <observations-file> <oracle-csv>
 #   observations-file : a litmus7 log, or any file containing Observation lines
 #   oracle-csv        : reference CSV, columns "Litmus,Expected,Model,Source"
@@ -188,7 +193,12 @@ END {
     ndis = 0; ndis_fired = 0; nvoid = 0; nvac = 0
     for (si = 0; si < nstats; si++) {
       t = sorder[si]
-      orc = S[t, "oracle"]; ob = S[t, "obs"]; pb = S[t, "p_bound"] + 0
+      # THE CLASS COMES FROM THE CSV, never from the log: the harness carries no
+      # prediction and prints none, so a roll-up that read one off a run line
+      # would be reading a field that no longer exists (and, before A2, one the
+      # emitter put there).  A test the CSV does not cover has no class here.
+      orc = (t in orac) ? orac[t] : "-"
+      ob = S[t, "obs"]; pb = S[t, "p_bound"] + 0
 
       if (orc == "Disallowed") { ndis++; if (ob != "Never" && ob != "VOID") ndis_fired++ }
       if (ob == "VOID") nvoid++
@@ -214,7 +224,7 @@ END {
     else if (ndis_fired == 0)
       printf "  The decoder does not generate false positives on this run:\n    \"PerpLE%s failure to observe these forbidden outcomes can be viewed as a\n     reassurance that PerpLE does not generate false positives.\"  -- PerpLE VII-A.\n", "'\''s"
     else
-      printf "  *** A FORBIDDEN OUTCOME FIRED.  Either the CMCM is REFUTED (a result -- see the\n      corroboration tier above) or the DECODER is unsound, in which case every null in\n      this campaign is void.  The tier is what tells them apart: an artefact does not\n      reproduce across re-seeded runs.  Do not report either way until it is settled.\n"
+      printf "  *** A FORBIDDEN OUTCOME FIRED.  Either this oracle row is wrong (it is a\n      DERIVATION over cited sources, not a measurement) or the DECODER is unsound, in\n      which case every null in this campaign is void.  The SIGHTING TIER above is what\n      tells an artefact from a real observation: an artefact does not reproduce across\n      re-seeded runs.  Do not report either way until it is settled.\n"
     if (nvoid > 0)
       printf "VOID: %d row(s) came from a harness that was never demonstrably hot -- DISCARDED.\n", nvoid
     if (nvac > 0)

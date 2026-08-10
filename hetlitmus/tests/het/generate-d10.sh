@@ -174,7 +174,7 @@ echo "generate-d10: $n CPU-only tests + control-map-amd.csv + expected-amd.csv i
 [ "$n" -eq 6 ] || { echo "FAIL: expected 6 D10 tests, found $n" >&2; exit 1; }
 # Both maps must key the set exactly, in both directions -- the same check
 # generate-x86.sh makes, and for the same reason: a test with no row emits
-# ORACLE_UNSET, silently, in C.
+# no control at all, silently, in C.
 ls "$OUT"/*.litmus | sed 's|.*/||; s|\.litmus$||' | sort > "$OUT/.keys.tests"
 for m in control-map-amd.csv expected-amd.csv; do
   awk -F, '!/^#/ && NF>1 && $1 != "Test" && $1 != "Litmus" { print $1 }' \

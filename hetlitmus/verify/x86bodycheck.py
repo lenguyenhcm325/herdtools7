@@ -721,7 +721,7 @@ def corun_probe(tmp, corpus):
     m = os.path.join(scratch, "control-map-amd.csv")
     if not os.path.exists(m):
         fail("P7", "the generated corpus carries no control-map-amd.csv -- the "
-                   "emitter would tag every harness ORACLE_UNSET")
+                   "emitter would co-run no control at all")
         return scratch, []
     rows = []
     for l in open(m):

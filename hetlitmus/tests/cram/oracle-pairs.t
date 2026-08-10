@@ -1,21 +1,27 @@
-THE ORACLE PAIR TABLE (litmus/hetOracle.ml).  A compound harness is a CPU ISA and
-a GPU dialect running one test, and the model prediction it carries belongs to the
-PAIR: expected-nvidia.csv is derived for Grace(AArch64)+Hopper and expected-amd.csv
-for Zen-4(x86-64)+CDNA3, so a cell neither file speaks for must not be filled in
-from a neighbour.  Three states, and each is pinned here: POPULATED stamps its
-oracle and its machine, REGISTERED NO-ORACLE stamps ORACLE_NONE and names no
-machine at all, ABSENT refuses.
+THE PAIR TABLE (litmus/hetOracle.ml).  A compound harness is a CPU ISA and a GPU
+dialect running one test, and the machine it may NAME belongs to the PAIR: an
+AArch64 CPU column rendered against HIP is a part neither GH200 nor MI300A.
+Three states, and each is pinned here: POPULATED reads a control map and stamps
+its machine, REGISTERED-WITHOUT-A-MAP stamps neither, ABSENT refuses.
 
-(a) POPULATED: the stamp every run prints, byte for byte.  This string is what a
-result is filed under -- a harness tagged from the wrong pair compiles, runs and
-reports identically, and only this line says which model it was claiming to test.
+The harness carries no model prediction at all, so what a result is filed under
+is the PAIR NAME -- a harness built for the wrong pair compiles, runs and reports
+identically, and only this define says which machine it was measuring.
   $ mkdir aa
   $ litmus7 -gpu-target cuda -o aa ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
-  $ grep -c '_rec.oracle_source = "expected-nvidia.csv:NVIDIA-PTX-AArch64";' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  $ grep -c '#define HET_PAIR_NAME "(AArch64, cuda)"' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
   $ mkdir xh
   $ litmus7 -gpu-target hip -o xh ../het-x86/MP-cg-sys-relaxed-x86_64.litmus >/dev/null 2>&1
-  $ grep -c '_rec.oracle_source = "expected-amd.csv:AMD-CDNA3-x86";' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
+  $ grep -c '#define HET_PAIR_NAME "(X86_64, hip)"' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
+  1
+
+(a) POPULATED: every render stamps the record, exactly once and by the SYMBOL.
+het_verdict() reads no field of a record that does not carry HET_REC_MAGIC, so a
+render that lost this line would discard every run it ever made.
+  $ grep -c '_rec.rec_magic = HET_REC_MAGIC;' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  1
+  $ grep -c '_rec.rec_magic = HET_REC_MAGIC;' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   1
 
 (b) ...and the MACHINE each populated pair is entitled to name, stamped as defines
@@ -43,32 +49,33 @@ guard here and the target's own figure is the conservative reading too.
   #define HET_DEV_HALF "the MI300A device half"
   #define HET_LLC_MB 256
 
-(c) THE LANDMINE.  (x86_64, cuda) is REGISTERED WITHOUT AN ORACLE -- it is the
-dev box, and no compound model has been instantiated for an x86-64 host with an
-NVIDIA device.  Keyed on the CPU ISA alone, as the emitter was until this table
-existed, that emission read the AMD control map and tagged all 411 harnesses with
-MI300A verdicts.  Now it stamps ORACLE_NONE directly, from the table row, and the
-AMD oracle's NAME appears nowhere in the harness directory.
+(c) THE LANDMINE.  (x86_64, cuda) is REGISTERED WITHOUT A CONTROL MAP -- it is
+the dev box, and the AArch64 and x86 strength lattices differ, so a map derived
+on one names siblings that are not weakenings on the other.  Keyed on the CPU ISA
+alone, as the emitter was until this table existed, that emission read the AMD
+control map for all 411 harnesses.  Now it reads none, and neither the AMD map's
+own artefacts nor the MI300A machine words this lane must never claim appear
+anywhere in the harness directory.  (`MI300A' alone is not the pin: the CPU
+stress payload's comments compare the two hosts by name, and section (f) tracks
+that residue by count.)
   $ mkdir xc
   $ litmus7 -gpu-target cuda -o xc ../het-x86/MP-cg-sys-relaxed-x86_64.litmus >/dev/null 2>&1
-  $ grep -c '_rec.het_oracle = ORACLE_NONE;' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu
+  $ grep -c '_rec.rec_magic = HET_REC_MAGIC;' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu
   1
-  $ grep -c 'X86_64, cuda) is registered without one' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu
-  1
-  $ grep -rlE 'expected-amd|AMD-CDNA3-x86' xc | wc -l
+  $ grep -rlE 'expected-amd|AMD-CDNA3-x86|Infinity Fabric' xc | wc -l
   0
 
 It names no MACHINE either: with no defines stamped, het_verdict.h's generic
-wording stands, so no verdict this harness prints claims to be a Grace or a
-Hopper, and no number it prints claims to be this part's last-level cache.
+wording stands, so nothing this harness prints claims to be a Grace or a Hopper,
+and no number it prints claims to be this part's last-level cache.
   $ grep -cE '^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|ALGLAVE_ZERO_MEASURED)' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu || true
   0
 
-What it DOES stamp is the two build facts, true of the binary whatever the oracle
-says: which pair it was built for -- the short name the verdict and statistics
-layers print, where they used to substitute the whole NO-ORACLE disclosure blob --
-and that no positive-control map was read for it, which is what stops the
-statistics layer from reading "nothing co-runs" as "this row IS the canary".
+What it DOES stamp is the two build facts, true of the binary whatever the table
+row says: which pair it was built for -- the short name the verdict and statistics
+layers print where they have to identify the target -- and that no
+positive-control map was read for it, which is what stops the statistics layer
+from reading "nothing co-runs" as "this row IS the canary".
   $ grep -E '^#define HET_(PAIR_NAME|NO_CONTROL_MAP)' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu
   #define HET_PAIR_NAME "(X86_64, cuda)"
   #define HET_NO_CONTROL_MAP 1
@@ -106,19 +113,17 @@ script that globs for them.
   exit 3
   $ ls absent
 
-(e) ...and `-allow-no-oracle' is the disclosed way past it, for a machine nobody
-has an oracle for yet.  It emits, it stamps ORACLE_NONE, and the stamp SAYS the
-override was used -- a harness emitted past a refusal must not read like a
-registered one in a results tree six months later.  No committed script passes
-this flag; hetlitmus/verify/allow-no-oracle-gate.sh enforces that over the tree.
+(e) ...and `-allow-no-oracle' is the disclosed way past it, for a machine that is
+in no row yet.  It emits, and what it emits names its own pair and admits it read
+no control map -- a harness emitted past a refusal must not read like a registered
+one in a results tree six months later.  No committed script passes this flag;
+hetlitmus/verify/allow-no-oracle-gate.sh enforces that over the tree.
   $ mkdir override
   $ litmus7 -allow-no-oracle -gpu-target hip -o override ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1; echo "exit $?"
   exit 0
   $ ls override/MP-cg-sys-relaxed | grep -E '\.(cu|hip)$'
   MP-cg-sys-relaxed.hip
-  $ grep -c '_rec.het_oracle = ORACLE_NONE;' override/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
-  1
-  $ grep -c '_rec.oracle_source = "(NO-ORACLE: (AArch64, hip) is UNREGISTERED, emitted under -allow-no-oracle)";' override/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
+  $ grep -c '_rec.rec_magic = HET_REC_MAGIC;' override/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
   1
   $ grep -cE '^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB)' override/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip || true
   0
@@ -139,8 +144,9 @@ than remembered: a new mention moves this number and has to be argued for.
   1 HIP
   1 MI300
 
-What is NOT whitelisted at any count: a claim about the machine.  A render may
-compare itself to the other vendor's; it may not say it IS one.
+What is NOT whitelisted at any count: a claim about the machine, or the name of
+a retired verdicts file.  A render may compare itself to the other vendor's; it
+may not say it IS one, and it carries no verdict at all.
   $ grep -ciE 'nvlink|grace|hopper|expected-nvidia|NVIDIA-PTX' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip || true
   0
   $ grep -ciE 'infinity fabric|expected-amd|AMD-CDNA3' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu || true

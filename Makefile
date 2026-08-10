@@ -757,30 +757,28 @@ hetlitmus-lattice: | build
 
 ### hetlitmus-verdict: het_verdict() -- the rule that decides what an observation
 ### MEANS -- compiled from the real emitted header and fed synthetic records.
-###   Phase 1 (rule)     all seven verdicts and all three oracle classes are
-###                      reachable (a rule that always returns the same verdict is
-###                      not a decision, and a three-way branch keyed off a
-###                      constant field is the same bug); exhaustive_valid==0 can
-###                      never yield a credible null; every liveness disqualifier
-###                      bites; ORACLE_UNSET fails closed.
-###   Phase 2 (printout) the refutation claims are reachable from ORACLE_DISALLOWED
-###                      and from nothing else.  395 of the 411 het tests are not
-###                      should-be-forbidden, and a refutation printed on one of
-###                      them is a false refutation of the compound model.  The
-###                      verdict enum changing is not the deliverable; the sentence
-###                      is.
-###   Phase 3 (corpus)   all 411 emitted harnesses carry the oracle class
-###                      control-map.csv gives them (census 16 / 319 / 76, zero
-###                      untagged).  A rule that branches on a class the emitter
-###                      never sets is a rule nobody runs.
+###   Phase 1 (rule)     all four outcomes are reachable (a rule that always
+###                      returns the same one is not a decision); an UNSTAMPED
+###                      record fails closed; exhaustive_valid==0 can never yield
+###                      the strong null; every liveness disqualifier bites.
+###   Phase 2 (printout) each outcome's sentences are reachable from THAT outcome
+###                      and from no other, checked both ways, and the retired
+###                      verdict vocabulary is reachable from none of them.  The
+###                      tool holds no prediction, so a printout that says a
+###                      result was expected, forbidden or refuted is claiming
+###                      something nothing in it derived.  The enum changing is
+###                      not the deliverable; the sentence is.
+###   Phase 3 (corpus)   all 411 emitted harnesses stamp rec_magic exactly once,
+###                      co-run the mu(T)/canary population control-map.csv gives
+###                      them (16 / 409), and carry no retired vocabulary at all.
 ###   Phase 4 (machine)  which MACHINE the printout names.  The interconnect prose
-###                      comes from defines the emitter stamps out of the oracle
-###                      PAIR table, scraped here from real emissions: unstamped
-###                      is the generic frame, each pair prints its own machine,
-###                      and no frame prints another pair's.
-### --bite: 11 injections (4 against the rule, 2 against its reporting paths, 2
-### against the emitted corpus, 3 against the machine prose), each verified to
-### have actually changed the code it corrupts.
+###                      comes from defines the emitter stamps out of the PAIR
+###                      table, scraped here from real emissions: unstamped is the
+###                      generic frame, each pair prints its own machine, and no
+###                      frame prints another pair's.
+### --bite: 14 injections (5 against the rule and its printouts, 2 against its
+### reporting paths, 3 against the emitted corpus, 4 against the machine prose),
+### each verified to have actually changed the code it corrupts.
 hetlitmus-verdict: | build
 	@ echo
 	python3 hetlitmus/verify/verdictcheck.py
@@ -868,6 +866,27 @@ hetlitmus-obs: | build
 	python3 hetlitmus/verify/obscheck.py --bite
 	@ echo "HetLitmus observer-liveness gate: OK (and the gate bites)"
 
+### hetlitmus-recfields: the EMITTER/RUNTIME SKEW tripwire.  het_obs_record and
+### the HET_* knob defaults live in litmus/het-runtime/*.h, the lines that fill
+### them in litmus/hetEmit.ml, and NOTHING but a compiler binds the two -- so on
+### every CPU-only lane a renamed field, a dropped record stamp or a define
+### stamped under a drifted name is invisible until an nvcc/hipcc build runs.
+### Four properties over real emissions of both pairs (6 shapes, ~5 s, no GPU):
+###   fields    every `_rec.<name>' a render writes is a het_obs_record member
+###   stamp     every render writes `_rec.rec_magic = HET_REC_MAGIC;' ONCE, by the
+###             SYMBOL -- het_verdict() reads no field of a record without it
+###   live      every stamped `#define HET_*' is read by some lane's code or by a
+###             staged runtime header (judged over the UNION: HET_WINDOW is read
+###             by the windowed scan alone)
+###   default   every stamped define het_verdict.h reads has an `#ifndef' default
+###             there, so a lane that stamps nothing still compiles
+### --bite: 5 injections, each required to redden BY NAME.
+hetlitmus-recfields: | build
+	@ echo
+	python3 hetlitmus/verify/recfields.py
+	python3 hetlitmus/verify/recfields.py --bite
+	@ echo "HetLitmus emitter/runtime field + define binding: OK (and the gate bites)"
+
 ### hetlitmus-x86body: the P2b gate -- is the x86-64 CPU thread of a het
 ### harness REAL?  Until 2026-08-03 hetCpuFront.ml wired HetCpuBody.empty_plan +
 ### emit_stub for X86_64, so an x86 CPU proc emitted a `(void)_n' no-op: the CPU
@@ -933,9 +952,9 @@ HETD10OUT := $(CURDIR)/hetlitmus/tests/het/d10-out
 ### per harness dir (-gpu-target), and the ORACLE lives on the PAIR: this corpus
 ### has an x86_64 CPU column and ships control-map-amd.csv, so `hip' is the
 ### populated pair (x86_64, hip) and the one that reads those maps.  Rendering it
-### for `cuda' is legal -- (x86_64, cuda) is REGISTERED WITHOUT AN ORACLE, the
-### dev box -- but every harness then stamps ORACLE_NONE and co-runs nothing,
-### which is a machinery smoke and not a D10 reading.
+### for `cuda' is legal -- (x86_64, cuda) is registered WITHOUT a control map, the
+### dev box -- but every harness then reads none and co-runs nothing, which is a
+### machinery smoke and not a D10 reading.
 HETD10TARGET ?= hip
 
 ### hetlitmus-d10: the CPU-ONLY POSITIVE CONTROL as a first-class campaign item
@@ -955,7 +974,7 @@ hetlitmus-d10: | build
 	    $(CURDIR)/_build/install/default/bin/litmus7 \
 	      -gpu-target $(HETD10TARGET) \
 	      -set-libdir $(CURDIR)/litmus/libdir \
-	      -o . "$$t" 2>&1 | grep -E 'oracle:|REFUSED' ; done
+	      -o . "$$t" 2>&1 | grep -E 'pair:|REFUSED' ; done
 	@ set -e ; n=$$(ls -d $(HETD10OUT)/*/ 2>/dev/null | wc -l) ; \
 	  test "$$n" -eq 6 || { echo "hetlitmus-d10: emitted $$n harness dir(s), expected 6" ; exit 1 ; }
 	@ echo
@@ -1006,7 +1025,7 @@ hetlitmus-hipbuild: | build
 
 ### hetlitmus-noracle: no committed script passes `-allow-no-oracle' (D-MV4).
 ### The flag emits a harness for a (CPU ISA x GPU dialect) pair the oracle table
-### does not carry -- every test stamped ORACLE_NONE, the override disclosed in
+### does not carry -- every test reading no control map, the override disclosed in
 ### the stamp -- which is right for a human bringing up a new machine and wrong
 ### for a script, because in a script it turns a refusal a human reads into a
 ### line a campaign scrolls past.  The gate reads the tree; --bite plants the
@@ -1116,6 +1135,7 @@ hetlitmus-test:: hetlitmus-amd-controlmap
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-noracle
 hetlitmus-test:: hetlitmus-verdict
+hetlitmus-test:: hetlitmus-recfields
 hetlitmus-test:: hetlitmus-stats
 hetlitmus-test:: hetlitmus-hist
 hetlitmus-test:: hetlitmus-tuner
@@ -1155,6 +1175,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-lattice
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
+.PHONY: hetlitmus-recfields
 .PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10 hetlitmus-noracle
 .PHONY: hetlitmus-x86fixture hetlitmus-noracle-hw hetlitmus-run-gate hetlitmus-run-hw
 .PHONY: hetlitmus-amd-controlmap

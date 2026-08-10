@@ -15,32 +15,28 @@ type t
    there (memo PORT2-R2 7.D11).  The lane's CPU frontend names the file. *)
 val load : verbose:int -> dir:string -> csv:string -> src_name:string -> t
 
-(* No map at all, and no file was looked for.  A pair with no oracle names no
-   map (litmus/hetOracle.ml): mu(T) is the nearest ALLOWED neighbour, so a map
-   is an oracle-derived object and reading another pair's would tag the harness
-   from a model that never addressed its machine.  Distinct from a load that
+(* No map at all, and no file was looked for.  An unregistered pair names no
+   map (litmus/hetOracle.ml): mu(T) is a weakening, so a map
+   is derived on ONE strength lattice, and reading another pair's would name
+   siblings that are not weakenings here.  Distinct from a load that
    failed -- that one warns, because a map that was meant to be there and is
    not is a build bug. *)
 val empty : t
 
-(* mu(T), the Allowed grid neighbour to co-run as the positive control; None
-   for BOTH sentinels -- "-" (no mu called for) and "none" (a Disallowed row
-   for which no Layer-A mutant exists at all).  See the .ml for why the two are
-   distinguished by [no_mutant_exists] rather than collapsed. *)
+(* mu(T), the strictly weaker structural sibling to co-run as the positive
+   control; None for BOTH sentinels -- "-" (no mu called for) and "none" (no
+   Layer-A mutant exists at all).  See the .ml for why the two are distinguished
+   by [no_mutant_exists] rather than collapsed. *)
 val control_of : t -> string -> string option
 
-(* True on the "none" sentinel: this row IS Disallowed and the corpus contains
-   no usable weakening of it, so the harness is canary-only BY DERIVATION and
-   not because the map was missing.  The emitter says so out loud; a null from
-   such a test is a WEAK-NULL by construction. *)
+(* True on the "none" sentinel: the corpus contains no usable weakening of this
+   row, so the harness is canary-only BY DERIVATION and not because the map was
+   missing.  The emitter says so out loud; a null from such a test is
+   NOT-OBSERVED-CANARY-ONLY by construction. *)
 val no_mutant_exists : t -> string -> bool
 
 (* The canary to co-run; None for a `self' row, whose test IS the canary. *)
 val canary_of : t -> string -> string option
-
-(* The oracle class as the C enum name of het_verdict.h; a test with no row
-   yields "ORACLE_UNSET", which het_verdict() fails closed on. *)
-val oracle_of : t -> string -> string
 
 (* Whether this test is itself the canary. *)
 val is_self_canary : t -> string -> bool

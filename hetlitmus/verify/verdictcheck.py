@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """HetLitmus -- the decision-rule gate for het_verdict() (het_verdict.h).
 
-het_verdict() turns a raw target count into a CLAIM about the compound memory
-model; three oracle frames x seven verdicts is a shape a constant can
-impersonate.  So this gate compiles the REAL emitted header -- not a copy,
-which would be free to drift -- feeds it synthetic het_obs_records, and proves:
+het_verdict() turns a raw target count into one of four outcomes, and every one
+of them is a shape a constant can impersonate.  So this gate compiles the REAL
+emitted header -- not a copy, which would be free to drift -- feeds it synthetic
+het_obs_records, and proves:
 
-  1 THE RULE      it decides.  Every verdict, oracle class and liveness
-                  disqualifier is reachable; ORACLE_UNSET fails closed.
-  2 THE PRINTOUT  the three refutation claims are reachable from
-                  ORACLE_DISALLOWED and nowhere else, checked BOTH ways.  The
-                  enum changing is not the deliverable; the sentence is.
-  3 THE CORPUS    every emitted harness carries the oracle class
-                  control-map.csv gives it, with a census.
+  1 THE RULE      it decides.  Every outcome and every liveness disqualifier is
+                  reachable; an unstamped record fails closed.
+  2 THE PRINTOUT  each outcome's sentences are reachable from THAT outcome and
+                  from no other, checked BOTH ways, and the retired verdict
+                  vocabulary is reachable from none of them.  The enum changing
+                  is not the deliverable; the sentence is.
+  3 THE CORPUS    every emitted harness stamps rec_magic exactly once and carries
+                  the mu(T) / canary population control-map.csv gives it.
 
-The rule and its three reporting frames: hetlitmus/docs/positive-control.md
-S4/S11; env-research/Q4-positive-control.md S3.3 and R5.
+The rule and its reporting frames: hetlitmus/docs/positive-control.md S4/S11;
+env-research/Q4-positive-control.md S3.3 and R5.
 
 Usage:  verdictcheck.py [--header PATH] [-q]   run the gate
         verdictcheck.py --bite                 prove it FAILS on a broken rule
@@ -36,38 +37,62 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 CONTROL_MAP = os.path.join(HET_DIR, "control-map.csv")
 
-VERDICTS = ["MISMATCH", "CREDIBLE-NULL", "WEAK-NULL", "COLD-INVALID",
-            "ALLOWED-OBSERVED", "ALLOWED-UNOBSERVED", "CHARACTERIZED"]
+VERDICTS = ["OBSERVED", "NOT-OBSERVED-MU-HOT", "NOT-OBSERVED-CANARY-ONLY",
+            "COLD-INVALID"]
 
-ORACLES = ["ORACLE_DISALLOWED", "ORACLE_ALLOWED", "ORACLE_NONE"]
-
-# The oracle census the emitted corpus MUST reproduce (expected-nvidia.csv, via
-# control-map.csv field 2).  ORACLE_UNSET is not listed because it must never occur.
-CENSUS = {"Disallowed": 16, "Allowed": 319, "NO-ORACLE": 76}
-
-CSV_TO_C = {"Disallowed": "ORACLE_DISALLOWED",
-            "Allowed": "ORACLE_ALLOWED",
-            "NO-ORACLE": "ORACLE_NONE"}
+# The co-run census the emitted corpus MUST reproduce, re-derived from
+# control-map.csv rather than typed: a mu(T) instance is built for every row whose
+# Mu column names a test, a canary instance for every row whose Canary column names
+# one ("self" rows ARE the canary and cannot co-run themselves).
+CENSUS = {"mu": 16, "canary": 409, "tests": 411}
 
 # ---------------------------------------------------------------------------
-# THE THREE REFUTATION CLAIMS -- sentences only a should-be-FORBIDDEN test is
-# entitled to print.  On an oracle-Allowed test the same observation is the model
-# working as specified, so printing one there refutes nothing (positive-control.md
-# S11).  Matched as exact substrings, and deliberately the *claims* rather than the
-# word "forbidden": the NO-ORACLE text legitimately says "neither allowed nor
-# forbidden by the model" and the Allowed text says "refutes NOTHING", so banning
-# the keyword would ban the honest sentences too.
-REFUTATION_CLAIMS = [
+# THE RETIRED VERDICT VOCABULARY.  This harness holds no prediction, so no
+# printout of it may say a result was expected, forbidden, or contradicted a
+# model; comparing observations against a verdicts file is an offline step
+# (hetlitmus/oracle-compare.sh).  Matched as exact substrings, phase 2, in EVERY
+# outcome's block.
+RETIRED_CLAIMS = [
     "should-be-FORBIDDEN",
-    "REFUTES the model's prediction",
-    "Disallowed outcome",
+    "REFUTES",
+    "Disallowed",
+    "ALLOWED weak outcome",
+    "EXPECTED result",
+    "ORACLE",
+    "MISMATCH",
 ]
 
 # ---------------------------------------------------------------------------
-# A "live, hot, credible" baseline: a DISALLOWED test whose mutant fired.  Every
-# case below is this record with a few fields perturbed, so each isolates ONE reason.
+# FRAME EXCLUSIVITY.  Each outcome's own sentences, checked BOTH ways: reachable
+# from that outcome (a ban that passes because the text vanished is not a check),
+# and printed by no other.  The strings are spliced back together across the C
+# string concatenations they are written in.
+FRAME_CLAIMS = {
+    "OBSERVED": ["the weak outcome was OBSERVED",
+                 "Report it as what "],
+    "NOT-OBSERVED-MU-HOT": ["NOT OBSERVED, MU HOT"],
+    "NOT-OBSERVED-CANARY-ONLY": ["NOT OBSERVED, CANARY ONLY"],
+    "COLD-INVALID": ["DISCARD this null"],
+}
+# Printed by every NON-sighting outcome, the cold one included: a discarded null
+# still says what was not seen.
+NON_SIGHTING_CLAIMS = ["the weak outcome was NOT observed"]
+# Printed by BOTH null tiers and by neither the sighting nor the cold one: a
+# discarded run is not an observability result, and saying so on one would report
+# a dead harness as reach.
+NULL_TIER_CLAIMS = [
+    "OBSERVABILITY result about this harness",
+    "we were unable to observe weak behaviours using our",
+]
+
+# ---------------------------------------------------------------------------
+# A "live, hot, credible" baseline: a record whose mu(T) fired.  Every case below
+# is this record with a few fields perturbed, so each isolates ONE reason.
 BASE = dict(
-    het_oracle="ORACLE_DISALLOWED",
+    # The stamp, written as the SYMBOL so a rename in the header is a compile
+    # error here too.  A zeroed record is what an emitter that skipped a field
+    # produces, and it must never read as a live one.
+    rec_magic="HET_REC_MAGIC",
     exhaustive_valid=1,
     target_count_exhaustive=0,
     target_count_heuristic=0,
@@ -75,8 +100,8 @@ BASE = dict(
     # THE DECODE CHANNEL, stated once (DR1).  The verdict is channel-aware: the sync
     # channel's liveness evidence is interleavings_detected, the observer channel's is
     # observer_unique_count, and a record with neither flag fails closed.  The baseline
-    # is a reader -- 400 of the 411, including all 16 Disallowed; only the 11 store-only
-    # 2+2W rows have no reader, and those cases flip to sync_valid=0, obs_valid=1 below.
+    # is a reader -- 400 of the 411; only the 11 store-only 2+2W rows have no reader,
+    # and those cases flip to sync_valid=0, obs_valid=1 below.
     # (Census derivation: statscheck.py CENSUS_SYNC / CENSUS_OBS.)
     sync_valid=1,
     control_compiled_in=1,
@@ -107,134 +132,109 @@ def case(name, verdict, dq=(), cv=(), **kw):
 
 CASES = [
     # =======================================================================
-    # 1. THE DISALLOWED FRAME (16 tests): the model forbids the outcome, so the
-    #    NULL is the evidence and has to be earned.
+    # 1. THE STRONG NULL: mu(T) -- a strictly weaker structural sibling -- fired
+    #    on the same launch, and the ground-truth scan ran.
     # =======================================================================
-    case("credible-null", "CREDIBLE-NULL"),
+    case("mu-hot-null", "NOT-OBSERVED-MU-HOT"),
 
-    case("mismatch-exhaustive", "MISMATCH", target_count_exhaustive=1),
+    case("observed-exhaustive", "OBSERVED", target_count_exhaustive=1),
 
-    # A sighting refutes even on a run we would otherwise DISCARD: falsification is
-    # one-sided, so no control is needed to believe a positive (Q4 S3.3).
-    case("mismatch-beats-every-disqualifier", "MISMATCH",
+    # A sighting is believed even on a run we would otherwise DISCARD:
+    # falsification is one-sided, so no control is needed to believe a positive.
+    case("observed-beats-every-disqualifier", "OBSERVED",
          target_count_exhaustive=1, control_compiled_in=0, canary_compiled_in=0,
          interleavings_detected=0, stress_truncated=99,
          cpu_enemy_rounds=0, noise_cpu_rounds=0, noise_gpu_blocks=0),
 
     # A windowed hit is a strict subset of the exhaustive scan's under the same
     # predicate, so it is a genuine recovered cycle; at production N a T_L>=2 shape
-    # never runs the exhaustive scan, so keying MISMATCH off that field alone -- Q4
-    # S3.3's literal text -- would drop real falsifications.  Counted, and flagged.
+    # never runs the exhaustive scan, so keying the sighting off that field alone --
+    # Q4 S3.3's literal text -- would drop real observations.  Counted, and flagged.
     # (Disclosed deviation: hetlitmus/docs/positive-control.md S4.)
-    case("mismatch-heuristic-only", "MISMATCH", cv=["HEURISTIC_SIGHT"],
+    case("observed-heuristic-only", "OBSERVED", cv=["HEURISTIC_SIGHT"],
          target_count_heuristic=1, target_count_exhaustive=0, exhaustive_valid=0),
 
-    case("weak-null-canary-only", "WEAK-NULL", cv=["CANARY_ONLY"],
-         control_target_count=0, canary_target_count=500),
+    # =======================================================================
+    # 2. THE WEAKER NULL: the harness is alive, but not through THIS shape.
+    # =======================================================================
+    case("canary-only-when-mu-is-cold", "NOT-OBSERVED-CANARY-ONLY",
+         cv=["CANARY_ONLY"], control_target_count=0, canary_target_count=500),
+
+    # 395 of the 411 rows are at the lattice floor and co-run no mu at all.  Their
+    # null is the weaker tier for a DIFFERENT reason, and CV_CANARY_ONLY -- "Layer B
+    # fired, Layer A did not" -- must NOT be raised where no Layer A exists to have
+    # not fired, or a real diagnostic becomes boilerplate on most of the corpus.
+    case("canary-only-when-no-mu-is-compiled-in", "NOT-OBSERVED-CANARY-ONLY",
+         control_compiled_in=0, control_target_count=0, canary_target_count=500),
 
     case("cold-no-control-built", "COLD-INVALID", dq=["NO_CONTROL_BUILT"],
          control_compiled_in=0, canary_compiled_in=0,
          control_target_count=0, canary_target_count=0),
 
-    # ---- exhaustive_valid == 0  =>  NEVER credible ------------------------
+    # ---- exhaustive_valid == 0  =>  NEVER the strong null --------------------
     # Hot harness, everything live -- but the ground-truth scan did not run, so the
     # zero is not a measured zero and may never be read as one.
-    case("no-exhaustive-cannot-be-credible", "WEAK-NULL", cv=["NO_EXHAUSTIVE"],
-         exhaustive_valid=0, control_target_count=500),
+    case("no-exhaustive-is-never-mu-hot", "NOT-OBSERVED-CANARY-ONLY",
+         cv=["NO_EXHAUSTIVE"], exhaustive_valid=0, control_target_count=500),
 
     # =======================================================================
-    # 2. THE ALLOWED FRAME (319 tests): the model permits the outcome, so the
-    #    SIGHTING is the evidence -- and it is evidence FOR the model.
+    # 3. THE SHARPEST INSTANCE: MP-cg-sys-relaxed IS the Layer-B canary for most of
+    #    the corpus, so it co-runs nothing (control-map.csv says `self') and BOTH
+    #    compiled-in flags are 0.  The one test whose whole job is to FIRE must
+    #    still be readable when it does.
     # =======================================================================
-    # An oracle-Allowed test that saw its permitted weak outcome is the EXPECTED
-    # result, never a refutation.
-    case("allowed-observed-is-NOT-a-refutation", "ALLOWED-OBSERVED",
-         het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
-         target_count_exhaustive=412, target_count_heuristic=412),
-
-    # The sharpest instance: MP-cg-sys-relaxed is oracle-Allowed AND is the Layer-B
-    # canary for most of the corpus, so it co-runs nothing (control-map.csv says
-    # `self') and BOTH compiled-in flags are 0.  The one test whose entire job is to
-    # FIRE must not refute the model by doing it; a firing Allowed test is its own
-    # control.
-    case("the-canary-itself-firing-is-not-a-refutation", "ALLOWED-OBSERVED",
-         het_oracle="ORACLE_ALLOWED",
+    case("the-canary-itself-firing-is-a-plain-sighting", "OBSERVED",
          control_compiled_in=0, canary_compiled_in=0,
          control_target_count=0, canary_target_count=0,
          target_count_exhaustive=412, target_count_heuristic=412),
 
-    # Permitted, canary hot, still not seen: an OBSERVABILITY result, NOT a model
-    # result (Alglave ASPLOS'15 fn.7 p.577 on the GTX 280; Iorga's taxonomy).  Without
-    # a co-running canary it is indistinguishable from a dead harness.
-    case("allowed-unobserved-is-observability-not-model", "ALLOWED-UNOBSERVED",
-         het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0),
-
-    # THE STORE-ONLY (2+2W) ARM: 11 tests -- 9 Allowed + 2 NO-ORACLE, none Disallowed
-    # -- with no reader, so interleavings_detected is structurally 0 and the OBSERVER is
-    # their only liveness channel.  All three outcomes stay reachable, or the channel
-    # goes constant on those 22 (DR1).
-    # (a) live observer (>= HET_THETA_DISTINCT distinct GPU store-values) + hot canary,
-    #     nothing seen -> a clean ALLOWED-UNOBSERVED, the bound-carrying null path.
-    case("store-only-observer-live-is-ALLOWED-UNOBSERVED", "ALLOWED-UNOBSERVED",
-         het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
+    # THE STORE-ONLY (2+2W) ARM: 11 tests with no reader, so interleavings_detected
+    # is structurally 0 and the OBSERVER is their only liveness channel.  All three
+    # outcomes stay reachable, or the channel goes constant on those (DR1).
+    # (a) live observer (>= HET_THETA_DISTINCT distinct GPU store-values) + hot
+    #     canary, nothing seen -> the bound-carrying null path.
+    case("store-only-observer-live-is-a-null", "NOT-OBSERVED-CANARY-ONLY",
+         control_compiled_in=0, control_target_count=0,
          sync_valid=0, obs_valid=1, observer_unique_count=500,
          interleavings_detected=0),
 
     # (b) cold observer (< HET_THETA_DISTINCT) -> COLD-INVALID, and the printout must
     #     name the OBSERVER channel: "interleavings_detected==0" is meaningless here.
     case("store-only-observer-cold-is-COLD", "COLD-INVALID", dq=["OBSERVER_COLD"],
-         het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
+         control_compiled_in=0, control_target_count=0,
          sync_valid=0, obs_valid=1, observer_unique_count=1,
          interleavings_detected=0),
 
     # (c) a store-only SIGHTING is still a sighting: the observer channel must never
     #     block a recovered outcome.
-    case("store-only-observer-sighting-is-ALLOWED-OBSERVED", "ALLOWED-OBSERVED",
-         het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
+    case("store-only-observer-sighting-is-OBSERVED", "OBSERVED",
+         control_compiled_in=0, control_target_count=0,
          sync_valid=0, obs_valid=1, observer_unique_count=500,
          interleavings_detected=0,
          target_count_exhaustive=7, target_count_heuristic=7),
 
     # ... and with a COLD canary it falls back to COLD-INVALID: "we did not see it"
     # from a dead harness is not a result.
-    case("allowed-cold-canary-is-still-COLD", "COLD-INVALID", dq=["CONTROLS_COLD"],
-         het_oracle="ORACLE_ALLOWED", control_compiled_in=0,
-         control_target_count=0, canary_target_count=0),
-
-    # =======================================================================
-    # 3. THE NO-ORACLE FRAME (74 tests).  Q4 R5: characterization, NEVER
-    #    validation -- there is no prediction here to confirm or refute.
-    # =======================================================================
-    case("no-oracle-fired-is-characterized", "CHARACTERIZED",
-         het_oracle="ORACLE_NONE", control_compiled_in=0, control_target_count=0,
-         target_count_exhaustive=3, target_count_heuristic=3),
-
-    # Not fired, but the canary was hot: "exhibited in 0 of N frames on a demonstrably
-    # hot harness" IS the characterization.  The rate may be 0.
-    case("no-oracle-unfired-hot-is-still-characterized", "CHARACTERIZED",
-         het_oracle="ORACLE_NONE", control_compiled_in=0, control_target_count=0),
-
-    # Q4 R5 says these rows are "characterization, always" -- but characterizing a DEAD
-    # harness is a fabrication, not a finding, so COLD-INVALID stays reachable here and
-    # the class does not collapse to a constant.  What the 42 can never produce is a
-    # MODEL claim; phase 2 enforces that (positive-control.md S4).
-    case("no-oracle-cold-harness-is-COLD-not-characterized", "COLD-INVALID",
-         dq=["CONTROLS_COLD"], het_oracle="ORACLE_NONE",
+    case("cold-canary-with-no-mu-is-COLD", "COLD-INVALID", dq=["CONTROLS_COLD"],
          control_compiled_in=0, control_target_count=0, canary_target_count=0),
 
     # =======================================================================
-    # 4. ORACLE_UNSET FAILS CLOSED.  het_obs_record is memset(0), so UNSET == 0 is
-    #    what an emitter that forgot the tag produces; the rule must claim NOTHING,
-    #    not even on a sighting, because it cannot know what the sighting MEANS.
+    # 4. AN UNSTAMPED RECORD FAILS CLOSED.  het_obs_record is memset(0), so a
+    #    zeroed rec_magic is what an emitter that skipped the stamp produces; the
+    #    rule must claim NOTHING then, not even on a sighting, because every field
+    #    it would read is a memset zero.
     # =======================================================================
-    case("oracle-unset-fails-closed", "COLD-INVALID", dq=["ORACLE_UNSET"],
-         het_oracle="ORACLE_UNSET"),
-    case("oracle-unset-fails-closed-even-on-a-sighting", "COLD-INVALID",
-         dq=["ORACLE_UNSET"], het_oracle="ORACLE_UNSET",
-         target_count_exhaustive=99),
+    case("unstamped-record-fails-closed", "COLD-INVALID", dq=["REC_UNSTAMPED"],
+         rec_magic=0),
+    case("unstamped-record-fails-closed-even-on-a-sighting", "COLD-INVALID",
+         dq=["REC_UNSTAMPED"], rec_magic=0, target_count_exhaustive=99),
+    # ... and the test is EQUALITY, not "nonzero": a record carrying some other
+    # stamp is a record written by something that is not this header.
+    case("wrong-stamp-fails-closed", "COLD-INVALID", dq=["REC_UNSTAMPED"],
+         rec_magic=0x48455432),
 
     # =======================================================================
-    # 5. Every liveness disqualifier drives the verdict to COLD: a null from a run
+    # 5. Every liveness disqualifier drives the outcome to COLD: a null from a run
     #    whose stress was inert is not the same datum as one from a stressed run
     #    (positive-control.md S4).
     # =======================================================================
@@ -262,10 +262,10 @@ CASES = [
     case("cold-gpu-stress-dead", "COLD-INVALID", dq=["GPU_STRESS_DEAD"],
          gpu_stress_rounds=0),
 
-    # The liveness disqualifiers are CLASS-BLIND: an Allowed test whose stress was
-    # inert is not a usable observability datum either.
-    case("allowed-cold-when-stress-is-dead", "COLD-INVALID", dq=["GPU_STRESS_DEAD"],
-         het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
+    # The liveness disqualifiers do not care which tier the null would have been:
+    # a canary-only harness whose stress was inert is not a usable datum either.
+    case("canary-only-goes-cold-when-stress-is-dead", "COLD-INVALID",
+         dq=["GPU_STRESS_DEAD"], control_compiled_in=0, control_target_count=0,
          gpu_stress_rounds=0),
 
     # =======================================================================
@@ -275,8 +275,8 @@ CASES = [
     #    stays reportable and carries the unstressed caveat instead
     #    (positive-control.md S4: requested-but-dead, not merely zero).
     # =======================================================================
-    case("unstressed-baseline-still-reportable", "CREDIBLE-NULL", cv=["UNSTRESSED"],
-         stress_requested=0,
+    case("unstressed-baseline-still-reportable", "NOT-OBSERVED-MU-HOT",
+         cv=["UNSTRESSED"], stress_requested=0,
          spin_rendezvous=0, spin_cap=0, cpu_enemy_rounds=0, cpu_preload_ops=0,
          noise_cpu_rounds=0, noise_gpu_blocks=0),
 
@@ -285,40 +285,38 @@ CASES = [
     # =======================================================================
     case("tau-boundary-just-below", "COLD-INVALID", dq=["CONTROLS_COLD"],
          control_target_count=29, canary_target_count=29),
-    case("tau-boundary-exactly-at", "CREDIBLE-NULL",
+    case("tau-boundary-exactly-at", "NOT-OBSERVED-MU-HOT",
          control_target_count=30, canary_target_count=0),
 
-    # The canary's OWN tau boundary, on a canary-only (Allowed) harness: for every
-    # non-Disallowed test the canary is the only liveness evidence there is.
-    case("allowed-canary-tau-just-below", "COLD-INVALID", dq=["CONTROLS_COLD"],
-         het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
-         canary_target_count=29),
-    case("allowed-canary-tau-exactly-at", "ALLOWED-UNOBSERVED",
-         het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
-         canary_target_count=30),
+    # The canary's OWN tau boundary, on a canary-only harness: for every test at the
+    # lattice floor the canary is the only liveness evidence there is.
+    case("canary-tau-just-below", "COLD-INVALID", dq=["CONTROLS_COLD"],
+         control_compiled_in=0, control_target_count=0, canary_target_count=29),
+    case("canary-tau-exactly-at", "NOT-OBSERVED-CANARY-ONLY",
+         control_compiled_in=0, control_target_count=0, canary_target_count=30),
 
     # =======================================================================
     # 8. Caveats travel with the number, but do not invalidate.
     # =======================================================================
-    case("credible-but-pinning-is-fiction", "CREDIBLE-NULL", cv=["AFF_FAILED"],
+    case("mu-hot-but-pinning-is-fiction", "NOT-OBSERVED-MU-HOT", cv=["AFF_FAILED"],
          cpu_aff_failures=3),
-    case("credible-but-placement-refused", "CREDIBLE-NULL", cv=["PLACE_REFUSED"],
-         place_failures=1),
-    case("credible-but-spin-is-a-delay-loop", "CREDIBLE-NULL", cv=["SPIN_CAP"],
+    case("mu-hot-but-placement-refused", "NOT-OBSERVED-MU-HOT",
+         cv=["PLACE_REFUSED"], place_failures=1),
+    case("mu-hot-but-spin-is-a-delay-loop", "NOT-OBSERVED-MU-HOT", cv=["SPIN_CAP"],
          spin_rendezvous=100, spin_cap=900),
 
     # =======================================================================
-    # 9. A MISMATCH MUST CARRY ITS STRESS PROVENANCE.  Observation frequency is
+    # 9. A SIGHTING MUST CARRY ITS STRESS PROVENANCE.  Observation frequency is
     #    strongly sensitive to the stress/affinity parameters, the machine and the
-    #    OS (Alglave TACAS'11 S4, p.44), so a refutation reported without the config
-    #    it was seen under is not reproducible.
+    #    OS (Alglave TACAS'11 S4, p.44), so a result reported without the config it
+    #    was seen under is not reproducible.
     # =======================================================================
-    case("mismatch-carries-its-caveats", "MISMATCH",
+    case("sighting-carries-its-caveats", "OBSERVED",
          cv=["AFF_FAILED", "PLACE_REFUSED", "SPIN_CAP"],
          target_count_exhaustive=1,
          cpu_aff_failures=3, place_failures=1,
          spin_rendezvous=100, spin_cap=900),
-    case("mismatch-on-an-unstressed-run-says-so", "MISMATCH", cv=["UNSTRESSED"],
+    case("sighting-on-an-unstressed-run-says-so", "OBSERVED", cv=["UNSTRESSED"],
          target_count_exhaustive=1, stress_requested=0,
          spin_rendezvous=0, spin_cap=0, gpu_stress_rounds=0,
          cpu_enemy_rounds=0, cpu_preload_ops=0,
@@ -333,37 +331,22 @@ CASES = [
     #     control that cannot fire is not a control (positive-control.md S5).  T's
     #     OWN exhaustive_valid still gates the null; the control's does not.
     # =======================================================================
-    case("control-count-from-the-window-still-vouches", "CREDIBLE-NULL",
+    case("control-count-from-the-window-still-vouches", "NOT-OBSERVED-MU-HOT",
          control_exhaustive_valid=0, control_target_count=500),
 
     # =======================================================================
-    # 11. CANARY_ONLY is a DIAGNOSTIC, not boilerplate.  "Layer B fired, Layer A did
-    #     not" is only meaningful where a Layer A exists to have not fired; on the
-    #     361 tests that have no mutant by construction it would say nothing.
+    # 11. A WINDOWED ZERO IS NOT A MEASURED ZERO, and the printout must say so or
+    #     it overstates the effort behind a non-observation.
     # =======================================================================
-    case("canary-only-caveat-is-not-raised-without-a-mutant", "ALLOWED-UNOBSERVED",
-         het_oracle="ORACLE_ALLOWED", control_compiled_in=0, control_target_count=0,
-         canary_target_count=500),
-
-    # =======================================================================
-    # 12. A WINDOWED ZERO IS NOT A MEASURED ZERO -- IN EVERY CLASS.  When the
-    #     exhaustive scan does not run the zero comes from the windowed search over
-    #     [c-W, c+W], and HET_WINDOW is an uncalibrated placeholder, so an
-    #     ALLOWED-UNOBSERVED or a CHARACTERIZED rate must disclose it too or it
-    #     overstates the effort behind a non-observation.
-    # =======================================================================
-    case("allowed-windowed-zero-must-say-so", "ALLOWED-UNOBSERVED",
-         cv=["NO_EXHAUSTIVE"], het_oracle="ORACLE_ALLOWED",
-         exhaustive_valid=0, control_compiled_in=0, control_target_count=0),
-    case("no-oracle-windowed-zero-must-say-so", "CHARACTERIZED",
-         cv=["NO_EXHAUSTIVE"], het_oracle="ORACLE_NONE",
-         exhaustive_valid=0, control_compiled_in=0, control_target_count=0),
+    case("windowed-zero-must-say-so", "NOT-OBSERVED-CANARY-ONLY",
+         cv=["NO_EXHAUSTIVE"], exhaustive_valid=0,
+         control_compiled_in=0, control_target_count=0),
 ]
 
 # Cases whose PRINTOUT must disclose that the count came from the window, not the
 # ground-truth scan (phase 2).
-MUST_PRINT_SCAN_CAVEAT = {"allowed-windowed-zero-must-say-so",
-                          "no-oracle-windowed-zero-must-say-so"}
+MUST_PRINT_SCAN_CAVEAT = {"windowed-zero-must-say-so",
+                          "no-exhaustive-is-never-mu-hot"}
 SCAN_CAVEAT_TEXT = "rests on the WINDOWED heuristic"
 
 # A store-only COLD null must NAME the observer channel that failed; the generic
@@ -372,9 +355,9 @@ MUST_NAME_OBSERVER_CHANNEL = {"store-only-observer-cold-is-COLD"}
 OBSERVER_CHANNEL_TEXT = "OBSERVER channel was COLD"
 
 # Cases that must NOT carry CV_CANARY_ONLY (checked negatively -- see above).
-NO_CANARY_ONLY_CV = {"canary-only-caveat-is-not-raised-without-a-mutant",
-                     "allowed-unobserved-is-observability-not-model",
-                     "no-oracle-unfired-hot-is-still-characterized"}
+NO_CANARY_ONLY_CV = {"canary-only-when-no-mu-is-compiled-in",
+                     "store-only-observer-live-is-a-null",
+                     "canary-tau-exactly-at"}
 
 C_MAIN = r"""
 /* GENERATED by hetlitmus/verify/verdictcheck.py -- do not edit. */
@@ -393,8 +376,7 @@ static void run_case(const char *name, het_obs_record r,
         && ((dq & want_dq) == want_dq)
         && ((cv & want_cv) == want_cv)
         && ((cv & forbid_cv) == 0);
-  printf("CASE|%s|%s|%s|0x%x|0x%x|%d|%s\n", name, want, got, dq, cv, ok,
-         het_oracle_name(r.het_oracle));
+  printf("CASE|%s|%s|%s|0x%x|0x%x|%d\n", name, want, got, dq, cv, ok);
   /* PHASE 2 reads this: what the harness would ACTUALLY PRINT. */
   printf("PRINT-BEGIN|%s\n", name);
   het_verdict_print(stdout, &r);
@@ -413,8 +395,9 @@ __CASES__
 
 def c_record(r):
     def val(k, v):
-        # het_oracle is an ENUM: emit the symbol, not an int.  Spelling it as a
-        # number here would let the gate keep passing if the enum were renumbered.
+        # rec_magic is emitted as the SYMBOL, not as its numeric value: spelling
+        # the constant here would let the gate keep passing if the header changed
+        # it, which is the one thing the stamp exists to prevent.
         return v if isinstance(v, str) else str(v)
     return ("(het_obs_record){ .test_name=\"synthetic\", "
             + ", ".join(".%s=%s" % (k, val(k, v)) for k, v in sorted(r.items()))
@@ -457,17 +440,14 @@ def _env():
 # ---------------------------------------------------------------------------
 # PHASE 4 -- WHICH MACHINE THE PRINTOUT NAMES.
 #
-# het_verdict.h used to SNIFF the recorded oracle-source string for "NVIDIA" and
-# pick its interconnect prose from that.  It now prints from defines the emitter
-# stamps out of the ORACLE PAIR TABLE row (litmus/hetOracle.ml), with generic
-# defaults when none are stamped.  Three properties, and all three are read off
-# the PRINTOUT rather than off the defines (the B6c lesson: the enum changing is
-# not the deliverable, the sentence is):
+# Every machine word het_verdict.h prints comes from a define the emitter stamps
+# out of the PAIR TABLE row (litmus/hetOracle.ml), with generic defaults when none
+# are stamped.  Three properties, all three read off the PRINTOUT rather than off
+# the defines (the enum changing is not the deliverable, the sentence is):
 #
 #   * with NO defines the frame is the GENERIC one -- an unset stamp must fail
 #     SAFE, naming the mechanism and never a vendor;
-#   * with the (AArch64, cuda) defines the NVIDIA frame is byte-for-byte what it
-#     was before the refactor;
+#   * with the (AArch64, cuda) defines the frame is the GH200 machine;
 #   * with the (x86_64, hip) defines the frame is that pair's OWN machine, and
 #     carries no Grace/Hopper/NVLink and none of the NVIDIA-only measurements.
 #
@@ -496,11 +476,10 @@ GENERIC_MUST = [
     "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
     '(Alglave 4.3.1\'s "zero without stress" was measured on NVIDIA parts and is '
     'NOT claimed for this target',
-    # The sentence that has to NAME the target.  It used to substitute the recorded
-    # oracle-SOURCE string, which on a pair with no oracle is the whole NO-ORACLE
-    # disclosure blob; each frame asserts its own name, so a constant fails here.
-    'Report it as "what (unstamped CPU ISA x GPU dialect pair) does where the '
-    'CMCM is silent"',
+    # The sentence that has to NAME the target, and the only one carrying BOTH
+    # stamped strings.  Each frame asserts its own name, so a constant fails here.
+    "Report it as what (unstamped CPU ISA x GPU dialect pair) exhibited under "
+    "this harness, this stress and this host-device interconnect path.",
 ]
 NVIDIA_MUST = [
     "- the Grace half of the NVLink-C2C noise did NOT run",
@@ -509,7 +488,8 @@ NVIDIA_MUST = [
     "the NVLink-C2C path is alive",
     "CAVEAT: cudaMemAdvise was REFUSED -- HET_PLACE placed nothing.",
     "On NVIDIA silicon an unstressed run observes nothing (Alglave 4.3.1)",
-    'Report it as "what (AArch64, cuda) does where the CMCM is silent"',
+    "Report it as what (AArch64, cuda) exhibited under this harness, this stress "
+    "and this NVLink-C2C path.",
 ]
 AMD_MUST = [
     "- the x86 half of the Infinity Fabric noise did NOT run",
@@ -520,18 +500,19 @@ AMD_MUST = [
     "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
     '(Alglave 4.3.1\'s "zero without stress" was measured on NVIDIA parts and is '
     'NOT claimed for this target',
-    'Report it as "what (X86_64, hip) does where the CMCM is silent"',
+    "Report it as what (X86_64, hip) exhibited under this harness, this stress "
+    "and this Infinity Fabric path.",
 ]
 NVIDIA_WORDS = ["Grace", "Hopper", "NVLink", "cudaMemAdvise",
                 "On NVIDIA silicon an unstressed run observes nothing",
                 "(AArch64, cuda)"]
 AMD_WORDS = ["Infinity Fabric", "MI300A", "the x86 half", "(X86_64, hip)"]
-# Forbidden in EVERY frame: the wording that handed the reader the oracle-source
-# string.  There is no stamp for which it is right.
+# Forbidden in EVERY frame: a constant standing in for the pair the binary was
+# built for.  There is no stamp for which it is right.
 BLOB_WORDS = ["the target this harness was tagged for"]
 
 MACHINE_FRAMES = [
-    ("no defines (a pair registered without an oracle)", None,
+    ("no defines (an unregistered pair)", None,
      GENERIC_MUST, NVIDIA_WORDS + AMD_WORDS + BLOB_WORDS),
     ("(AArch64, cuda)", "(AArch64, cuda)", NVIDIA_MUST, AMD_WORDS + BLOB_WORDS),
     ("(x86_64, hip)", "(x86_64, hip)", AMD_MUST, NVIDIA_WORDS + BLOB_WORDS),
@@ -621,10 +602,10 @@ def check_machine_prose(header, tmp, quiet, defines_by_pair=None):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 3 -- the emitted corpus really does carry its oracle class.
+# PHASE 3 -- the emitted corpus stamps its record and co-runs what the map says.
 # ---------------------------------------------------------------------------
 def read_control_map():
-    """test -> oracle verdict (field 2), from the committed map."""
+    """test -> (mu, canary), from the committed map (fields 3 and 8)."""
     want = {}
     with open(CONTROL_MAP) as fh:
         for line in fh:
@@ -634,17 +615,24 @@ def read_control_map():
             f = line.split(",")
             if len(f) < 8 or f[0] == "Test":
                 continue
-            want[f[0]] = f[1]
+            want[f[0]] = (f[2], f[7])
     return want
 
 
-ORACLE_RE = re.compile(r"_rec\.het_oracle\s*=\s*(ORACLE_[A-Z]+)\s*;")
+MAGIC_RE = re.compile(r"_rec\.rec_magic\s*=\s*HET_REC_MAGIC\s*;")
+CTRL_RE = re.compile(r"^#define HET_CONTROL_COMPILED_IN (\d)$", re.M)
+CAN_RE = re.compile(r"^#define HET_CANARY_COMPILED_IN (\d)$", re.M)
+# The retired vocabulary: no emitted harness may carry a verdict, a class, or the
+# name of a verdicts file.  Compared against the WHOLE render, header included.
+RETIRED_RE = re.compile(r"ORACLE_[A-Z]+|_rec\.het_oracle|oracle_source"
+                        r"|expected-(?:nvidia|amd)\.csv")
 
 
 def check_corpus(tamper=None):
     """tamper: (test, src) -> src.  Used ONLY by --bite, to prove this phase FAILS
-    when an emitted harness carries the wrong oracle class."""
-    print("\n===== PHASE 3: does the EMITTED CORPUS carry its oracle class? =====")
+    when an emitted harness loses its stamp or its co-run population."""
+    print("\n===== PHASE 3: does the EMITTED CORPUS stamp and co-run what it "
+          "must? =====")
     want = read_control_map()
     tests = sorted(t[:-len(".litmus")] for t in os.listdir(HET_DIR)
                    if t.endswith(".litmus"))
@@ -652,7 +640,7 @@ def check_corpus(tamper=None):
     print("  control-map : %d rows" % len(want))
 
     tmp = tempfile.mkdtemp(prefix="verdictcorpus.")
-    bad, got_census = 0, {}
+    bad, n_mu, n_can, n_retired = 0, 0, 0, 0
     tampered = 0
     try:
         # One litmus7 invocation for the whole corpus (~20 ms each).
@@ -677,19 +665,42 @@ def check_corpus(tamper=None):
                 if new != src:            # cmp: the injection must really have hit
                     tampered += 1
                 src = new
-            found = ORACLE_RE.findall(src)
-            if len(found) != 1:
-                print("  *** %-26s emits %d het_oracle assignments (want exactly 1)"
-                      % (t, len(found)))
+            # (a) THE STAMP, exactly once and by its symbol.  het_verdict() reads no
+            # field of an unstamped record, so a harness that lost this line reports
+            # a build bug for every run it will ever make.
+            n_magic = len(MAGIC_RE.findall(src))
+            if n_magic != 1:
+                print("  *** %-26s stamps rec_magic %d time(s) (want exactly 1)"
+                      % (t, n_magic))
                 bad += 1
-                continue
-            got = found[0]
-            got_census[got] = got_census.get(got, 0) + 1
-            exp = CSV_TO_C.get(want.get(t, "?"), "ORACLE_UNSET")
-            if got != exp:
-                print("  *** %-26s emits %s, control-map.csv says %s (%s)"
-                      % (t, got, exp, want.get(t, "MISSING")))
+            # (b) THE CO-RUN POPULATION, against the map that named it.  A flag set
+            # without the instance behind it turns a structural zero into a control.
+            mu, can = want.get(t, ("?", "?"))
+            exp_mu = 1 if mu not in ("-", "none", "?") else 0
+            exp_can = 1 if can not in ("-", "self", "?") else 0
+            got_mu = CTRL_RE.search(src)
+            got_can = CAN_RE.search(src)
+            got_mu = int(got_mu.group(1)) if got_mu else -1
+            got_can = int(got_can.group(1)) if got_can else -1
+            n_mu += 1 if got_mu == 1 else 0
+            n_can += 1 if got_can == 1 else 0
+            if got_mu != exp_mu or got_can != exp_can:
+                print("  *** %-26s co-runs mu=%d canary=%d, control-map.csv says "
+                      "mu=%d canary=%d (Mu=%s Canary=%s)"
+                      % (t, got_mu, got_can, exp_mu, exp_can, mu, can))
                 bad += 1
+            # (c) THE RETIRED VOCABULARY, over the whole harness dir: this tool
+            # holds no prediction, so nothing it writes may carry one.
+            for f in sorted(os.listdir(os.path.join(tmp, t))):
+                path = os.path.join(tmp, t, f)
+                with open(path, errors="replace") as fh:
+                    text = src if f == t + ".cu" else fh.read()
+                hits = sorted(set(RETIRED_RE.findall(text)))
+                if hits:
+                    print("  *** %-26s %s carries retired oracle token(s): %s"
+                          % (t, f, ", ".join(hits)))
+                    n_retired += 1
+                    bad += 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -699,72 +710,91 @@ def check_corpus(tamper=None):
         return 2
 
     print()
-    for csv_name, n in sorted(CENSUS.items()):
-        c = CSV_TO_C[csv_name]
-        seen = got_census.get(c, 0)
-        mark = "    " if seen == n else " ***"
-        print("%s  %-18s %3d emitted  (expect %3d)" % (mark, c, seen, n))
-        if seen != n:
+    for label, seen, expect in (("mu(T) co-run", n_mu, CENSUS["mu"]),
+                                ("canary co-run", n_can, CENSUS["canary"]),
+                                ("harnesses", len(tests), CENSUS["tests"])):
+        mark = "    " if seen == expect else " ***"
+        print("%s  %-16s %3d  (expect %3d)" % (mark, label, seen, expect))
+        if seen != expect:
             bad += 1
-    unset = got_census.get("ORACLE_UNSET", 0)
-    mark = "    " if unset == 0 else " ***"
-    print("%s  %-18s %3d emitted  (expect   0 -- an untagged harness claims nothing)"
-          % (mark, "ORACLE_UNSET", unset))
-    if unset:
-        bad += 1
+    mark = "    " if n_retired == 0 else " ***"
+    print("%s  %-16s %3d  (expect   0 -- an emitted harness carries no verdict)"
+          % (mark, "retired tokens", n_retired))
 
     if bad:
-        print("\nCORPUS FAILED: %d problem(s).  A rule that branches on an oracle "
-              "class the emitter never sets is a rule nobody runs." % bad)
+        print("\nCORPUS FAILED: %d problem(s).  A rule that fails closed on an "
+              "unstamped record only helps if the emitter stamps; a co-run flag "
+              "without its instance makes a structural zero read as a control."
+              % bad)
         return 1
-    print("\nCORPUS OK (%d harnesses, every one tagged, census matches "
-          "control-map.csv)" % len(tests))
+    print("\nCORPUS OK (%d harnesses, every one stamped once, co-run population "
+          "matches control-map.csv, no retired vocabulary)" % len(tests))
     return 0
 
 
 # ---------------------------------------------------------------------------
 def scan_prints(blocks, quiet):
-    """PHASE 2 -- the refutation claims appear IFF the test is ORACLE_DISALLOWED."""
-    print("\n===== PHASE 2: can a non-Disallowed test print a REFUTATION? =====")
+    """PHASE 2 -- each outcome's sentences, both ways, and no retired claim."""
+    print("\n===== PHASE 2: does each outcome print ITS OWN sentences, and only "
+          "those? =====")
     bad = 0
-    leaked, asserted = [], []
-    for name, (oracle, text) in sorted(blocks.items()):
-        hits = [c for c in REFUTATION_CLAIMS if c in text]
-        if oracle == "Disallowed":
-            if hits:
-                asserted.append((name, hits))
-            continue
+
+    # (a) THE RETIRED VOCABULARY, banned in every block.  This is the B6c bug's
+    # successor: the tool holds no prediction, so a printout that says a result was
+    # forbidden, expected or refuted is claiming something nothing here derived.
+    for name, (verdict, text) in sorted(blocks.items()):
+        hits = [c for c in RETIRED_CLAIMS if c in text]
         if hits:
-            leaked.append((name, oracle, hits))
+            print("  *** RETIRED CLAIM: %s (%s) printed %s"
+                  % (name, verdict, ", ".join(repr(h) for h in hits)))
             bad += 1
+    if not bad and not quiet:
+        print("      no block prints any of: %s"
+              % ", ".join(repr(c) for c in RETIRED_CLAIMS))
 
-    for name, oracle, hits in leaked:
-        print("  *** FALSE REFUTATION: %s (oracle=%s) printed %s"
-              % (name, oracle, ", ".join(repr(h) for h in hits)))
+    # (b) FRAME EXCLUSIVITY, both ways.  A ban that passes because the sentence
+    # vanished is not a check, so each claim must ALSO be reachable.
+    for verdict, claims in sorted(FRAME_CLAIMS.items()):
+        for claim in claims:
+            here = sorted(n for n, (v, t) in blocks.items()
+                          if v == verdict and claim in t)
+            elsewhere = sorted(n for n, (v, t) in blocks.items()
+                               if v != verdict and claim in t)
+            if not here:
+                print("  *** UNREACHABLE: no %s case prints %r -- the ban below it "
+                      "is passing for free" % (verdict, claim))
+                bad += 1
+            elif not quiet:
+                print("      %-26s prints %r (%d case(s))"
+                      % (verdict, claim, len(here)))
+            if elsewhere:
+                print("  *** LEAKED: %r is the %s frame's sentence but %s printed "
+                      "it" % (claim, verdict, ", ".join(elsewhere)))
+                bad += 1
 
-    # The other way round: a ban that passes because the text vanished is not a check.
-    if not asserted:
-        print("  *** THE REFUTATION TEXT IS UNREACHABLE FROM EVERY CASE.  The ban "
-              "above is passing for free: a Disallowed sighting must STILL print "
-              "\"REFUTES the model's prediction\", or the campaign has lost its "
-              "single most valuable output.")
-        bad += 1
-    elif not quiet:
-        for name, hits in asserted:
-            print("      %-46s prints the refutation (correctly): %s"
-                  % (name, ", ".join(repr(h) for h in hits)))
+    # (c) The sentences shared by a GROUP of outcomes, same discipline.
+    for claims, want_in, label in (
+            (NON_SIGHTING_CLAIMS,
+             {"NOT-OBSERVED-MU-HOT", "NOT-OBSERVED-CANARY-ONLY", "COLD-INVALID"},
+             "every non-sighting outcome"),
+            (NULL_TIER_CLAIMS,
+             {"NOT-OBSERVED-MU-HOT", "NOT-OBSERVED-CANARY-ONLY"},
+             "both null tiers")):
+        for claim in claims:
+            saw = set(v for _, (v, t) in blocks.items() if claim in t)
+            missing = want_in - saw
+            extra = saw - want_in
+            if missing:
+                print("  *** %r is meant to be printed by %s but %s never does"
+                      % (claim, label, ", ".join(sorted(missing))))
+                bad += 1
+            if extra:
+                print("  *** %r leaked into %s" % (claim, ", ".join(sorted(extra))))
+                bad += 1
+            if not missing and not extra and not quiet:
+                print("      %-26s prints %r" % (label, claim))
 
-    # The NO-ORACLE rows must never make a MODEL claim in either direction.
-    for name, (oracle, text) in sorted(blocks.items()):
-        if oracle != "NO-ORACLE":
-            continue
-        if "CHARACTERIZATION, NEVER VALIDATION" not in text \
-           and "DISCARD this null" not in text:
-            print("  *** %s (NO-ORACLE) printed neither the characterization "
-                  "disclaimer nor a DISCARD -- it is making a model claim" % name)
-            bad += 1
-
-    # A windowed zero must SAY it is a windowed zero, in every class.
+    # A windowed zero must SAY it is a windowed zero.
     for name in sorted(MUST_PRINT_SCAN_CAVEAT):
         text = blocks.get(name, ("", ""))[1]
         if SCAN_CAVEAT_TEXT not in text:
@@ -788,12 +818,12 @@ def scan_prints(blocks, quiet):
             print("      %-46s names the observer channel (correctly)" % name)
 
     if bad:
-        print("\nPRINT FAILED: %d problem(s).  This is the B6c bug: 395 of the 411 "
-              "harnesses are not should-be-forbidden tests, and a refutation printed "
-              "on one of them is a false refutation of the compound model." % bad)
+        print("\nPRINT FAILED: %d problem(s).  The enum changing is not the "
+              "deliverable; the sentence is, and a sentence in the wrong frame "
+              "reports something this harness never measured." % bad)
         return 1
-    print("\nPRINT OK (the refutation claims are reachable ONLY from "
-          "ORACLE_DISALLOWED, and they ARE reachable from it)")
+    print("\nPRINT OK (every outcome prints its own sentences and no other's; no "
+          "block carries a retired claim)")
     return 0
 
 
@@ -834,21 +864,22 @@ def run_rule(header, tmp, quiet):
     tau = int(m.group(1))
     print("  tau_hot: %d\n" % tau)
 
-    seen_v, seen_o, bad = set(), set(), 0
+    seen_v, seen_dq, bad = set(), set(), 0
     blocks, cur, buf = {}, None, []
 
     for l in lines[1:]:
         if l.startswith("CASE|"):
-            _, name, want, got, dq, cv, ok, oracle = l.split("|")
+            _, name, want, got, dq, cv, ok = l.split("|")
             seen_v.add(got)
-            seen_o.add(oracle)
-            blocks[name] = [oracle, ""]
+            if int(dq, 16):
+                seen_dq.add(int(dq, 16))
+            blocks[name] = [got, ""]
             if ok != "1":
                 bad += 1
-                print("  *** %-46s want %-19s got %-19s (dq=%s cv=%s)"
+                print("  *** %-46s want %-24s got %-24s (dq=%s cv=%s)"
                       % (name, want, got, dq, cv))
             elif not quiet:
-                print("      %-46s %-19s dq=%-6s cv=%s" % (name, got, dq, cv))
+                print("      %-46s %-24s dq=%-6s cv=%s" % (name, got, dq, cv))
         elif l.startswith("PRINT-BEGIN|"):
             cur, buf = l.split("|", 1)[1], []
         elif l.startswith("PRINT-END|"):
@@ -858,34 +889,24 @@ def run_rule(header, tmp, quiet):
             buf.append(l)
 
     print()
-    # Verdict coverage is a REPORT, not an assertion.  CASES wants all seven
-    # members of VERDICTS, so a verdict missing from seen_v means the case that
-    # wanted it returned something else -- which the per-case `ok' comparison
-    # above has already counted.  Asserting it again could never be the sole
-    # reason this gate fails.
-    print("  verdicts reached      : %d/%d  (%s)"
+    # Outcome coverage is ASSERTED, not merely reported: a rule whose fourth
+    # outcome no case can reach is a rule with three, and the per-case comparisons
+    # cannot see that on their own if a case was deleted with it.
+    print("  outcomes reached      : %d/%d  (%s)"
           % (len(seen_v), len(VERDICTS), ", ".join(sorted(seen_v))))
-
-    # The oracle-class assertion below is a different matter and IS live: seen_o
-    # is fed from het_oracle_name(r.het_oracle), an ECHO of the input field
-    # through het_verdict.h, which no per-case assertion looks at.  A renamed or
-    # collapsed oracle class is caught here and nowhere else.
-    want_o = {"Disallowed", "Allowed", "NO-ORACLE", "UNSET"}
-    print("  oracle classes reached: %d/%d  (%s)"
-          % (len(seen_o), len(want_o), ", ".join(sorted(seen_o))))
-    missing_o = [o for o in want_o if o not in seen_o]
-    if missing_o:
-        print("  *** UNEXERCISED ORACLE CLASS: %s -- the oracle branch is untested "
-              "and may be constant" % ", ".join(missing_o))
+    missing_v = [v for v in VERDICTS if v not in seen_v]
+    if missing_v:
+        print("  *** UNREACHABLE OUTCOME: %s -- an outcome no case reaches is an "
+              "outcome the rule may never return" % ", ".join(missing_v))
         bad += 1
 
     blocks = {k: (v[0], v[1]) for k, v in blocks.items()}
     if bad:
         print("\nVERDICT FAILED: %d case(s) wrong." % bad)
         return 1, blocks
-    print("\nVERDICT OK (%d cases; all %d verdicts and all oracle classes reachable; "
-          "exhaustive_valid==0 never credible; every disqualifier bites)"
-          % (len(CASES), len(VERDICTS)))
+    print("\nVERDICT OK (%d cases; all %d outcomes reachable; an unstamped record "
+          "fails closed; exhaustive_valid==0 is never the strong null; every "
+          "disqualifier bites)" % (len(CASES), len(VERDICTS)))
     return 0, blocks
 
 
@@ -1030,51 +1051,61 @@ def _bite_machine(label, tmp, header, mutate=None, defines=None):
 
 
 def bite():
-    print("===== B6c BITE TEST: does this gate actually FAIL when the rule breaks? ====")
+    print("===== BITE TEST: does this gate actually FAIL when the rule breaks? ====")
     tmp = tempfile.mkdtemp(prefix="verdictbite.")
     ok = True
     try:
         header = emit_header(tmp)
 
-        # (1) THE ORACLE BRANCH MADE CONSTANT: every record read as Disallowed, which
-        # is also what a memset'd record would do if ORACLE_UNSET were not 0.  The
-        # Allowed and NO-ORACLE cases then take the forbidden frame.
+        # (1) THE SIGHTING BRANCH MADE CONSTANT: every record reads as OBSERVED, so
+        # every null case takes the sighting frame.
         ok &= _bite_one(
-            "het_oracle forced CONSTANT (every test read as Disallowed)",
-            tmp, header,
-            lambda s: s.replace("switch (r->het_oracle) {",
-                                "switch (ORACLE_DISALLOWED) {"),
-            quiet=True)
-
-        # (2) THE REFUTATION SENTENCE LEAKED INTO THE ALLOWED FRAME: the verdict enum
-        # is still right, so only phase 2 can see it.
-        ok &= _bite_one(
-            "the refutation SENTENCE leaked into the ALLOWED branch",
+            "the sighting test forced CONSTANT (every record read as OBSERVED)",
             tmp, header,
             lambda s: s.replace(
-                '"  This is the EXPECTED result.  The oracle PERMITS this outcome',
-                '"  ** A single sighting REFUTES the model\'s prediction for this test.\\n"\n'
-                '      "  This is the EXPECTED result.  The oracle PERMITS this outcome'),
+                "if (r->target_count_exhaustive > 0 || r->target_count_heuristic > 0) {",
+                "if (1) {"),
             quiet=True)
 
-        # (3) ORACLE_UNSET NO LONGER FAILS CLOSED: an untagged harness silently picks
-        # the forbidden frame.
+        # (2) THE TWO NULL TIERS COLLAPSED: mu(T)'s own liveness stops selecting the
+        # strong null, so a canary-only harness reports a mu-hot null.  The record
+        # fields are untouched, so only the outcome comparison sees it.
         ok &= _bite_one(
-            "ORACLE_UNSET no longer fails closed (untagged => treated as Disallowed)",
+            "the two null tiers collapsed (canary-only reads as MU HOT)",
             tmp, header,
-            lambda s: s.replace("if (r->het_oracle == ORACLE_UNSET) {",
+            lambda s: s.replace("} else if (hot_control && r->exhaustive_valid) {",
+                                "} else if (1) {"),
+            quiet=True)
+
+        # (3) rec_magic NO LONGER FAILS CLOSED: a memset-zeroed record is read as a
+        # live one, which is the whole property the stamp exists for.
+        ok &= _bite_one(
+            "rec_magic no longer fails closed (an unstamped record is read)",
+            tmp, header,
+            lambda s: s.replace("if (r->rec_magic != HET_REC_MAGIC) {",
                                 "if (0) {"),
             quiet=True)
 
-        # (4) THE WINDOWED-ZERO DISCLOSURE DROPPED FROM THE NON-DISALLOWED PATHS: the
-        # cv flag is still set, so only phase 2 can see that the sentence is gone.
+        # (4) THE RETIRED VOCABULARY BACK IN A PRINTOUT: the outcome enum is still
+        # right, so only phase 2 can see the sentence.
         ok &= _bite_one(
-            "the windowed-zero caveat dropped from the ALLOWED/NO-ORACLE printouts",
+            "a refutation sentence leaked back into the sighting frame",
+            tmp, header,
+            lambda s: s.replace(
+                '      "  ** %s: the weak outcome was OBSERVED %llu time(s)',
+                '      "  ** A single sighting REFUTES the model\'s prediction.\\n"\n'
+                '      "  ** %s: the weak outcome was OBSERVED %llu time(s)'),
+            quiet=True)
+
+        # (5) THE WINDOWED-ZERO DISCLOSURE DROPPED: the cv flag is still set, so only
+        # phase 2 can see that the sentence is gone.
+        ok &= _bite_one(
+            "the windowed-zero caveat dropped from every printout",
             tmp, header,
             lambda s: s.replace("  het_print_scan_caveat(_ch, _r, cv);\n", ""),
             quiet=True)
 
-        # (5) THE HEADER DOES NOT COMPILE.  Not a broken rule -- a broken REPORT of
+        # (6) THE HEADER DOES NOT COMPILE.  Not a broken rule -- a broken REPORT of
         # one.  A gate that answers a non-compiling header with a traceback has
         # stopped saying which of the three things it guards is wrong, and under
         # --bite it stops running at all.  The flavour of the syntax error carries
@@ -1087,7 +1118,7 @@ def bite():
                           "{ return @; }\n",
             "VERDICT FAILED: the rule does not compile")
 
-        # (6) THE COMPILED RULE PRINTS NOTHING.  The driver prints TAU_HOT before the
+        # (7) THE COMPILED RULE PRINTS NOTHING.  The driver prints TAU_HOT before the
         # first case, so an empty stdout means the binary died before it ran one --
         # which the gate must say, not index into.  A constructor that _Exit()s is
         # the shortest way to produce that: it is what a header carrying a broken
@@ -1099,39 +1130,54 @@ def bite():
                           "_het_bite_die_before_main(void) { _Exit(97); }\n",
             "produced no TAU_HOT line")
 
-        # (7) THE EMITTER MIS-TAGS AN ALLOWED TEST AS DISALLOWED: the rule is right and
-        # the harness lies to it, which only phase 3 looks at a real harness to catch.
+        # (8) A HARNESS SHIPS UNSTAMPED: het_verdict() fails closed, but only if it
+        # is ever RUN, so the corpus census is what stops one harness quietly
+        # discarding every run it will ever make.
         print("\n-- corpus injections --")
         rc = check_corpus(tamper=lambda t, s: (
-            s.replace("_rec.het_oracle = ORACLE_ALLOWED;",
-                      "_rec.het_oracle = ORACLE_DISALLOWED;")
+            s.replace("_rec.rec_magic = HET_REC_MAGIC;", "_rec.rec_magic = 0;")
             if t == "S-cg-sys-fence" else s))
         if rc == 1:
             print("  BITES (gate failed, as it must)   "
-                  "[an ALLOWED harness emitted as ORACLE_DISALLOWED]")
+                  "[a harness shipped with an unstamped record]")
         else:
             print("  *** DID NOT BITE (rc=%d)   "
-                  "[an ALLOWED harness emitted as ORACLE_DISALLOWED]" % rc)
+                  "[a harness shipped with an unstamped record]" % rc)
             ok = False
 
-        # (8) A HARNESS SHIPS UNTAGGED: het_verdict() fails closed, but only if it is
-        # ever RUN, so the census is what stops one harness quietly claiming nothing.
+        # (9) A CO-RUN FLAG WITHOUT ITS INSTANCE: the harness claims a canary is
+        # running, so a structural zero would be read as a cold control.
         rc = check_corpus(tamper=lambda t, s: (
-            s.replace("_rec.het_oracle = ORACLE_NONE;",
-                      "_rec.het_oracle = ORACLE_UNSET;")
+            s.replace("#define HET_CANARY_COMPILED_IN 1",
+                      "#define HET_CANARY_COMPILED_IN 0")
             if t == "IRIW-cgcg-sys-fence-2s" else s))
         if rc == 1:
             print("  BITES (gate failed, as it must)   "
-                  "[a harness shipped with ORACLE_UNSET]")
+                  "[a harness dropped the canary the map names for it]")
         else:
-            print("  *** DID NOT BITE (rc=%d)   [a harness shipped with ORACLE_UNSET]"
-                  % rc)
+            print("  *** DID NOT BITE (rc=%d)   "
+                  "[a harness dropped the canary the map names for it]" % rc)
             ok = False
 
-        # (9) THE FAIL-SAFE DEFAULT MADE A VENDOR CLAIM: an unstamped harness --
-        # the pair registered without an oracle, and every future pair before
-        # its row exists -- would then print a machine it is not.  The direction
-        # matters: a missing define must only ever WEAKEN a claim.
+        # (10) THE RETIRED VOCABULARY BACK IN AN EMITTED HARNESS: this is what the
+        # A2 ectomy removed, in the form a partial revert would take.
+        rc = check_corpus(tamper=lambda t, s: (
+            s.replace("_rec.rec_magic = HET_REC_MAGIC;",
+                      "_rec.rec_magic = HET_REC_MAGIC;\n"
+                      "    _rec.oracle_source = \"expected-nvidia.csv:X\";")
+            if t == "MP-cg-sys-relaxed" else s))
+        if rc == 1:
+            print("  BITES (gate failed, as it must)   "
+                  "[an emitted harness carries an oracle stamp again]")
+        else:
+            print("  *** DID NOT BITE (rc=%d)   "
+                  "[an emitted harness carries an oracle stamp again]" % rc)
+            ok = False
+
+        # (11) THE FAIL-SAFE DEFAULT MADE A VENDOR CLAIM: an unstamped harness --
+        # an unregistered pair, and every future pair before its row exists --
+        # would then print a machine it is not.  The direction matters: a missing
+        # define must only ever WEAKEN a claim.
         print("\n-- machine-prose injections --")
         ok &= _bite_machine(
             "the #ifndef DEFAULT names a vendor (unstamped => \"NVLink-C2C\")",
@@ -1139,18 +1185,18 @@ def bite():
             mutate=lambda s: s.replace('#define HET_LINK_NAME "host-device interconnect"',
                                        '#define HET_LINK_NAME "NVLink-C2C"'))
 
-        # (10) THE PROSE WENT BACK TO A LITERAL: this is the pre-refactor bug
-        # itself, in its simplest form -- one sentence naming Grace whatever the
-        # harness was built for.  Only the AMD frame's forbidden list sees it.
+        # (12) THE PROSE WENT BACK TO A LITERAL: the pre-refactor bug itself, in its
+        # simplest form -- one sentence naming Grace whatever the harness was built
+        # for.  Only the AMD frame's forbidden list sees it.
         ok &= _bite_machine(
             "one sentence hardcodes \"the Grace half\" again",
             tmp, header,
             mutate=lambda s: s.replace("              HET_HOST_HALF, HET_LINK_NAME);",
                                        "              \"the Grace half\", HET_LINK_NAME);"))
 
-        # (11) THE EMITTER STAMPS THE WRONG PAIR'S MACHINE.  The header is
-        # correct here and the harness lies to it, which is the landmine the
-        # pair table exists to stop; nothing in phases 1-3 looks at a define.
+        # (13) THE EMITTER STAMPS THE WRONG PAIR'S MACHINE.  The header is correct
+        # here and the harness lies to it, which is the landmine the pair table
+        # exists to stop; nothing in phases 1-3 looks at a define.
         real = {}
         for lbl, corpus, test, target, ext in MACHINE_PAIRS:
             real[lbl] = scrape_machine_defines(tmp, lbl, corpus, test, target, ext)
@@ -1160,32 +1206,24 @@ def bite():
             "the (x86_64, hip) emission stamps the GH200 machine",
             tmp, header, defines=crossed)
 
-        # (12) THE TARGET NAME GOES BACK TO THE ORACLE-SOURCE STRING.  The
-        # sentence still names SOMETHING, and on a populated pair that
-        # something even reads plausibly ("expected-nvidia.csv:..."), so only
-        # a frame that knows its own pair name can see it is the wrong object
-        # -- on the pair with no oracle it is the whole disclosure blob.
+        # (14) THE TARGET NAME GOES BACK TO A CONSTANT.  The sentence still names
+        # SOMETHING, so only a frame that knows its own pair name can see that it is
+        # naming the wrong object -- and BLOB_WORDS pins the exact wording the
+        # oracle-source string used to supply.
         ok &= _bite_machine(
-            "the CHARACTERIZED sentence names the oracle SOURCE again",
+            "the report sentence names a constant instead of the pair",
             tmp, header,
             mutate=lambda s: s.replace(
-                '"  Report it as \\"what %s does where the CMCM is silent\\".  '
-                'It is NOT evidence "',
-                '"  Report it as \\"what the target this harness was tagged for '
-                '(%s) does where the CMCM is silent\\".  It is NOT evidence "')
-            # newline-anchored: an unanchored "      HET_PAIR_NAME);" is also a
-            # substring of the DEEPER-indented call in het_stats_print, where
-            # _r does not exist -- the injection would then merely fail to
-            # compile, which proves nothing about the sentence.
-            .replace("\n      HET_PAIR_NAME);", "\n      het_oracle_src(_r));"))
+                "      HET_PAIR_NAME, HET_LINK_NAME);",
+                '      "the target this harness was tagged for", HET_LINK_NAME);'))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 12 injections were caught -- 4 against the RULE (het_verdict.h),")
-        print("         2 against its REPORTING PATHS, 2 against the EMITTED CORPUS and")
-        print("         4 against the MACHINE PROSE (three in the header, one in the stamp).")
+        print("BITE OK: all 14 injections were caught -- 5 against the RULE and its")
+        print("         printouts (het_verdict.h), 2 against its REPORTING PATHS, 3")
+        print("         against the EMITTED CORPUS and 4 against the MACHINE PROSE.")
         print("         The gate is live, both ways: it passes on the shipped code and")
         print("         fails on every way of breaking it.")
         return 0

@@ -87,10 +87,9 @@ let mi300a_machine = {
   }
 
 type populated = {
-    (* NAMES, not contents: nothing is read out of the oracle CSV at emission.
-       The pair (file, Model) is what the harness records as [oracle_source], so
-       a run log says which oracle the tag came from and a reader knows which
-       file to re-derive a mismatch from. *)
+    (* NAMES, not contents: nothing is read out of the CSV at emission, and no
+       emitted harness carries a verdict.  The pair (file, Model) is what an
+       OFFLINE cross-check is run against (hetlitmus/oracle-compare.sh). *)
     op_oracle_csv : string ;
     op_oracle_model : string ;
     (* The positive-control map IS read: it carries mu(T), the canary and the

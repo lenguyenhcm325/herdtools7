@@ -38,7 +38,8 @@ more the same day), so the harness misreported both shipped oracles.
 The STATISTICS section, which the matrix above never reaches: obs.txt carries no
 HetStats lines, so it prints the table alone.  obs-stats.txt does carry them --
 printed by het_verdict.h itself over five synthetic record streams, one per
-reporting path -- and drives the section end to end.
+reporting path -- and drives the section end to end.  The harness prints no
+verdict class of its own, so every ORACLE column below is read from the CSV.
 
   $ bash ../../oracle-compare.sh obs-stats.txt oracle-stats.csv > stats.out
   [1]
@@ -52,13 +53,15 @@ reporting path -- and drives the section end to end.
   LB-sys         exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
 
 Each test is headed by its result from that table, and the block underneath is
-het_stats_print's own output, reprinted verbatim.
+het_stats_print's own output, reprinted verbatim.  LB-sys reads `oracle=-'
+because it is ABSENT from the CSV and the run log no longer carries a class of
+its own -- the two states the P2a split exists to keep apart.
   $ grep -E '^(SB|MP|LB)-sys[^ ]* : ' stats.out
   SB-sys : MATCH   oracle=Allowed
   MP-sys-F : MISMATCH   oracle=Disallowed
   SB-sys-2s : MATCH   oracle=Disallowed
   MP-sys-2s : MATCH   oracle=Disallowed
-  LB-sys : UNINTERPRETED   oracle=NO-ORACLE
+  LB-sys : UNINTERPRETED   oracle=-
   $ grep -c '^HetStats [A-Za-z0-9.-]*: ' stats.out
   5
 

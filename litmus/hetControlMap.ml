@@ -5,12 +5,12 @@
 (* contract and hetlitmus/docs/positive-control.md for the design.          *)
 (****************************************************************************)
 
-(* For a should-be-FORBIDDEN test T the harness co-runs mu(T), its nearest
-   Allowed grid neighbour, so that `target_count = 0' means "not observed on a
-   demonstrably hot harness" rather than nothing at all.
+(* The harness co-runs mu(T), a strictly weaker structurally identical sibling
+   of T, so that `target_count = 0' means "not observed on a demonstrably hot
+   harness" rather than nothing at all.
 
    mu(T) is looked up in tests/het/control-map.csv, which sits next to the
-   input .litmus and is derived from the corpus sources + the oracle by
+   input .litmus and is derived from the corpus sources by
    hetlitmus/verify/controlmap.py (gated by `make hetlitmus-controlmap').  It
    is NOT recomputed by rewriting T's name: the one-sided grid variants are
    named for the op THE GPU performs and the GPU's role flips with the device
@@ -36,10 +36,10 @@ let load ~verbose ~dir ~csv ~src_name =
           let line = input_line ch in
           if String.length line > 0 && line.[0] <> '#' then
             match String.split_on_char ',' line with
-            (* Field 2, [exp], is the ORACLE VERDICT, and it must be bound: it
-               is what lets het_verdict() tell a should-be-forbidden test from
-               an oracle-Allowed one, so that a sighting is only ever framed as
-               a refutation where the model actually forbids the outcome. *)
+            (* Field 2 is bound but unread: nothing in an emitted harness
+               carries a verdict any more.  The column stays in the schema until
+               the map is regenerated, so the arity of this pattern is what
+               keeps the later fields on their own meanings. *)
             | t :: exp :: mu :: _muexp :: _rule :: _alt :: _rlx :: can :: _
                  when t <> "Test" ->
                Hashtbl.replace tbl t (exp, mu, can)
@@ -62,17 +62,15 @@ let load ~verbose ~dir ~csv ~src_name =
 
 (* TWO sentinels, and they are NOT the same statement.
 
-   "-"    the row calls for no mu at all -- it is not a Disallowed row, so
-          there is no forbidden cycle to weaken.
-   "none" the row IS Disallowed and NO Layer-A mutant EXISTS: either the test
-          is already at the lattice minimum on both sides, or every weaker
-          structural sibling is itself non-Allowed.  The MuRule column says
-          which.  Such a test co-runs the Layer-B canary alone, and its null is
-          correspondingly weaker.
+   "-"    the row calls for no mu at all.
+   "none" NO Layer-A mutant EXISTS for this row: the test is already at the
+          lattice minimum on both sides, or every weaker structural sibling is
+          itself unusable.  The MuRule column says which.  Such a test co-runs
+          the Layer-B canary alone, and its null is correspondingly weaker.
 
    MEASURED 2026-08-03: control-map.csv (AArch64 lattice) uses only "-";
-   control-map-amd.csv uses "none" on 16 rows, ALL of them Disallowed
-   (IRIW-cgcc / IRIW-cgcg / WRC-ccg / WRC3-cccg at sys scope).  Before this
+   control-map-amd.csv uses "none" on 16 rows (IRIW-cgcc / IRIW-cgcg / WRC-ccg
+   / WRC3-cccg at sys scope).  Before this
    function knew the second sentinel, wiring the AMD map into the emitter made
    those 16 tests refuse to emit -- "names the control none, but ./none.litmus
    does not exist" -- because anything other than "-" was read as a test name.
@@ -93,16 +91,6 @@ let no_mutant_exists tbl t = match Hashtbl.find_opt tbl t with
 let canary_of tbl t = match Hashtbl.find_opt tbl t with
   | Some (_,_,can) when can <> "-" && can <> "self" -> Some can
   | _ -> None
-
-(* The oracle class -> the C enum in het_verdict.h.  A test absent from the map
-   (or a map that would not open) yields ORACLE_UNSET, which het_verdict()
-   fails closed on and claims nothing for.  It must never default to a class:
-   whichever it picked would be a lie about the other two. *)
-let oracle_of tbl t = match Hashtbl.find_opt tbl t with
-  | Some ("Disallowed",_,_) -> "ORACLE_DISALLOWED"
-  | Some ("Allowed",_,_)    -> "ORACLE_ALLOWED"
-  | Some ("NO-ORACLE",_,_)  -> "ORACLE_NONE"
-  | _                       -> "ORACLE_UNSET"
 
 (* The `self' rows name themselves.  het_verdict.h separates the designed case
    (this test IS the canary) from the bug case (the canary went missing) by

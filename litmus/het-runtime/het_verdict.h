@@ -3,14 +3,15 @@
  * litmus7 copies this file verbatim into every emitted harness dir: edit
  * litmus/het-runtime/het_verdict.h, never a harness-dir copy.
  *
- * The Disallowed half of a campaign validates the compound model with nulls,
- * and a null is evidence only if the harness would have shown a weak behaviour
- * had one been permitted.  So every null is gated on a positive control that
- * fired in the same launch, on the same C2C path, under the same stress -- and
- * both layers are heterogeneous themselves, since a GPU-only (or CPU-only)
- * known-weak behaviour vouches for the on-die window, not the interconnect one.
- *   Layer A  mu(T)   the nearest Allowed grid neighbour of a forbidden test T
- *                    -- one ordering primitive weaker, from control-map.csv.
+ * This harness REPORTS what it observed.  It carries no prediction and never
+ * says a result contradicts a model.  A non-observation is evidence only if the
+ * harness would have shown a weak behaviour had one occurred, so every null is
+ * gated on a positive control that fired in the same launch, on the same C2C
+ * path, under the same stress -- and both layers are heterogeneous themselves,
+ * since a GPU-only (or CPU-only) known-weak behaviour vouches for the on-die
+ * window, not the interconnect one.
+ *   Layer A  mu(T)   a strictly weaker, structurally identical sibling of T,
+ *                    co-running on the same launch -- from control-map.csv.
  *   Layer B  canary  a fixed het MP-{cg,gc}-sys-relaxed instance.
  * A control does not make a null a proof; it makes it credible-not-observed
  * instead of UNINTERPRETABLE.  Falsification is one-sided (Alglave et al.,
@@ -30,10 +31,10 @@
 /* ---------------------------------------------------------------------------
  * WHICH MACHINE THIS HARNESS MAY NAME.  Every word below is a claim about
  * silicon, so none of it is derived here: the emitter stamps these defines from
- * the ORACLE PAIR TABLE row (litmus/hetOracle.ml), which is the only place that
- * knows what (CPU ISA x GPU dialect) this harness was built for.  A pair with no
- * oracle stamps nothing and these defaults stand; they name the MECHANISM rather
- * than a brand, so a missing stamp can only weaken a claim, never invent one.
+ * the PAIR TABLE row (litmus/hetOracle.ml), which is the only place that knows
+ * what (CPU ISA x GPU dialect) this harness was built for.  An unregistered pair
+ * stamps nothing and these defaults stand; they name the MECHANISM rather than a
+ * brand, so a missing stamp can only weaken a claim, never invent one.
  * Rationale and the defect it closes: hetlitmus/docs/het-emission.md.
  * ------------------------------------------------------------------------- */
 #ifndef HET_LINK_NAME       /* no leading article: use sites supply their own */
@@ -60,11 +61,10 @@
 #endif
 
 /* ---------------------------------------------------------------------------
- * TWO BUILD FACTS, also stamped by the emitter but from EVERY pair, oracle or
- * not: what this binary was built for, and whether a positive-control map was
- * read for it.  A pair registered without an oracle reads no map (a map names
- * mu(T), which is oracle-derived), so nothing in such a harness marks any row
- * the Layer-B canary and its missing bound is DEFERRED, not structural.  The
+ * TWO BUILD FACTS, also stamped by the emitter and from EVERY pair: what this
+ * binary was built for, and whether a positive-control map was read for it.  A
+ * pair with no registered map reads none, so nothing in such a harness marks any
+ * row the Layer-B canary and its missing bound is DEFERRED, not structural.  The
  * defaults below are for the checkers, which compile this header standalone.
  * ------------------------------------------------------------------------- */
 #ifndef HET_PAIR_NAME
@@ -129,8 +129,9 @@
  * on different CTAs), so it fires with no CPU participation and never crosses the
  * interconnect, and the paper publishes no numeric het rate at all (Table 4 is
  * qualitative).  Full reading: Q4-positive-control.md 2.1.
- * Derive it here instead from the ALLOWED-OBSERVED rows, which are the observed-rate
- * sample; until then p_min is a symbol and het_budget_runs() answers "NOT SIZED". */
+ * Derive it here instead from the rows this target DID exhibit, which are the
+ * observed-rate sample; until then p_min is a symbol and het_budget_runs() answers
+ * "NOT SIZED". */
 #ifndef HET_P_MIN
 #define HET_P_MIN 0.0
 #endif
@@ -168,56 +169,14 @@
 typedef enum { CONF_ROBUST, CONF_ADVISORY, CONF_EXPLORATORY } het_confidence;
 
 /* ---------------------------------------------------------------------------
- * The oracle class -- what the compound model predicts for THIS test.  It picks
- * which of the three reporting frames the rule and the printout use, and the
- * refutation sentences are reachable from ORACLE_DISALLOWED and nowhere else.
- * Most of the corpus is not forbidden, so a class-blind rule would print a loud
- * false refutation on the majority of harnesses -- including the canary, whose
- * whole job is to fire.
- *
- * ORACLE_UNSET is 0 because het_obs_record is memset(0): the zero value is what
- * an emitter that forgot the field would produce, so it must be the sentinel
- * het_verdict() fails closed on, never a real class.  Never reorder these.
- *
- * The tag is read from field 2 of the positive-control map of THIS harness's
- * (CPU ISA x GPU dialect) pair -- litmus/hetOracle.ml names the file, and the
- * emitter already parses it for mu(T).  A pair registered without an oracle is
- * stamped ORACLE_NONE directly and reads no map at all.  Frames and census:
- * hetlitmus/docs/positive-control.md 4/11; Q4 3.3/R5. */
-typedef enum {
-  ORACLE_UNSET = 0,   /* the emitter did not tag this harness -- fail closed */
-  ORACLE_DISALLOWED,  /* the model FORBIDS the weak outcome.  A sighting refutes. */
-  ORACLE_ALLOWED,     /* the model permits it: a sighting is the expected result and
-                         is evidence the model is not over-strong; absence is an
-                         observability result, not a model result. */
-  ORACLE_NONE         /* NO-ORACLE -- the model does not settle it (het-oracle.md:
-                         IRIW/2+2W need multi-copy atomicity, WRC/ISA2/RWC need
-                         cross-device A-cumulativity).  Characterization only. */
-} het_oracle_t;
-
-/* ---------------------------------------------------------------------------
- * WHAT A MISMATCH ON A DISALLOWED ROW LICENSES (P2e, 2026-08-03).
- *
- * het_oracle_t says WHAT the model predicts, and that is the only axis this
- * printer switches on.  It does NOT say that the row's derivation is beyond
- * question, and the printer must not pretend otherwise: every oracle row of
- * both CSVs is a DERIVATION over cited sources, not a measurement, so a run
- * that disagrees with one has two candidate culprits and the oracle row is the
- * nearer of the two.  The mismatch sentence therefore says so unconditionally
- * and sends the reader to the row's own Source column before anything is
- * claimed about the compound model.
- *
- * This replaces the provenance GRADE the printer used to switch on (P2d, memo
- * 2.0's two-key rule).  The grade never moved a verdict, and its one-grade
- * full-strength arm privileged the PLDI'23 artifact by identity -- which this
- * project's own anchor-overrule policy (memo 2.0a, decisions D1 and D4)
- * contradicts.  Rigour lives where it always did: in the per-row S_* string and
- * its citations.  See env-research/PORT2-P2e-provenance-removal-brief.md.
- *
- * The ONE case that outranks this sentence is D10 (cpu_only), and it is not
- * about evidence strength at all: on an all-CPU cycle the compound model is not
- * under test, so a mismatch cannot indict it whatever the row is worth.
- * --------------------------------------------------------------------------- */
+ * THE RECORD STAMP.  het_obs_record is memset(0) before the emitted driver fills
+ * it, so a zeroed record is exactly what an emitter that skipped a field would
+ * produce.  rec_magic is the one field a zeroed record cannot forge: het_verdict()
+ * refuses to read a record that does not carry it, and a harness whose stamp went
+ * missing reports a build bug instead of a result.  The emitter writes the SYMBOL,
+ * so a divergence between it and this header is a compile error, not a silent
+ * mis-read (hetlitmus/verify/recfields.py checks the field names too). */
+#define HET_REC_MAGIC 0x48455431u
 
 /* Which stress mechanisms this BUILD asked for.  A mechanism that produced zero
    work is dead only if it was requested: a deliberately disabled one is not a
@@ -233,21 +192,13 @@ typedef enum {
 #define HET_REQ_NOISE_GPU   (1u << 5)   /* HET_NOISE_GPU_BLOCKS                    */
 
 typedef struct het_obs_record {
+  /* HET_REC_MAGIC, or this record is not read at all -- see the stamp above. */
+  uint32_t rec_magic;
   const char *test_name; int instance_id; int run_id;
-  /* What the model predicts for this test: it selects the reporting frame, i.e.
-     the difference between "this refutes the model" and "this is what the model
-     said would happen".  ORACLE_UNSET (the memset default) fails closed. */
-  het_oracle_t het_oracle;
-  /* WHERE THE PREDICTION IS WRITTEN DOWN, as "<oracle csv>:<Model>" on a pair
-     that has one and as a parenthesised "(NO-ORACLE: ...)" on a pair that does
-     not.  Printed on every verdict: it is the file a mismatch must be
-     re-derived from, and a harness tagged from the wrong pair's oracle is
-     otherwise indistinguishable from a correct one in the run log.  A LABEL
-     only -- nothing reads it back for a decision. */
-  const char *oracle_source;
-  /* D10 (memo 7.D10): 1 when EVERY proc of this test is a CPU proc.  Such a
-     test is not a compound-model experiment -- it is an x86-TSO conformance
-     probe on the shared allocation, and its mismatch sentence says so. */
+  /* D10 (memo 7.D10): 1 when EVERY proc of this test is a CPU proc.  Such a test
+     exercises no cross-device path at all -- it is an x86-TSO probe on the shared
+     allocation -- so what its sighting is about is not what a het cycle's is, and
+     the printout says so. */
   int cpu_only;
   /* WHICH observer channel recovered the `co' edge, on the shapes decoded by an
      observer.  Both 0 on a shape with a reader (there is no observer decode) and
@@ -284,7 +235,7 @@ typedef struct het_obs_record {
   /* 0 = the O(N^T_L) ground-truth scan did NOT run at this N (capped by
      HET_EXHAUSTIVE_MAX), so target_count_exhaustive is "not measured", NOT a
      measured zero; reading it as data would manufacture a false "Never".
-     het_verdict() refuses HET_CREDIBLE_NULL when this is 0.  On a T_L<=1 shape
+     het_verdict() refuses HET_NOT_OBSERVED_MU_HOT when this is 0.  On a T_L<=1 shape
      (no windowed proc) every frame is decoded exactly, the O(N) scan is the
      ground truth, and the flag is 1 whatever N is. */
   int exhaustive_valid;
@@ -347,12 +298,12 @@ typedef struct het_obs_record {
   double control_Prep;
   /* 0 => no Layer-A mutant was compiled in, so control_target_count is
      structurally zero and means nothing.  1 => a real mu(T) is co-running here,
-     same launch, same stress, same C2C path.  It is 1 on exactly the Disallowed
-     tests: only a should-be-forbidden test has a minimal mutant, a mutant
-     presupposing a known-forbidden cycle to weaken (MC-Mutants 1.2, Q4 4.2).
-     Kept separate from the canary flag below on purpose -- "a canary is
-     co-running" and "the mutant OF THIS TEST is co-running" are different claims,
-     and only the second licenses a credible null. */
+     same launch, same stress, same C2C path.  It is 1 on exactly the tests the
+     control map names a strictly weaker structural sibling for; a test already at
+     the lattice floor has none (MC-Mutants 1.2, Q4 4.2).  Kept separate from the
+     canary flag below on purpose -- "a canary is co-running" and "the mutant OF
+     THIS TEST is co-running" are different claims, and only the second says this
+     shape's own window was demonstrably hit. */
   int control_compiled_in;
   /* 0 => no Layer-B canary is co-running, so canary_target_count is structurally
      zero and means nothing.  1 => a real canary instance is in this launch.  Set
@@ -390,7 +341,7 @@ typedef struct het_obs_record {
        noise_gpu_blocks  0 => the device half never ran.  Either way the run is NOT
                          interconnect-stressed, whatever HET_NOISE_* claimed.
                          (Both halves are NAMED by HET_HOST_HALF/HET_DEV_HALF,
-                         stamped from the oracle pair row.)
+                         stamped from the pair row.)
        cpu_aff_failures >0 => sched_setaffinity FAILED: the threads are wherever the
                          scheduler put them and the pinning is fiction.
        place_failures   >0 => HET_PLACE_LEVER was REFUSED: HET_PLACE placed nothing.
@@ -468,42 +419,31 @@ static double het_env_double(const char *name, double dflt) {
 }
 
 /* ---------------------------------------------------------------------------
- * The verdict: three reporting frames, one per oracle class, because "we saw the
- * weak outcome" means three different things depending on what the model said.
+ * THE OUTCOME.  One axis -- was the weak outcome seen, and if not, what vouches
+ * for the harness that did not see it.  No prediction enters here and none is
+ * printed: "observed" and "not observed" are the whole vocabulary, and what they
+ * are worth against any model is settled offline (hetlitmus/oracle-compare.sh).
  *
- * Disallowed -- the model forbids it, so the NULL is the evidence:
- *   HET_MISMATCH        observed.  One sighting refutes the prediction, and is
- *                       believed unconditionally: falsification is one-sided.
- *   HET_CREDIBLE_NULL   not observed, and mu(T) fired >= tau_hot on the same run
- *                       with T's own two engines provably overlapping.
- *   HET_WEAK_NULL       not observed; the C2C path is alive (the canary fired, or
- *                       the ground-truth scan did not run) but this shape's window
- *                       is not confirmed hit -- escalate stress tuning.
- * Allowed -- the model permits it, so the SIGHTING is the evidence:
- *   HET_ALLOWED_OBSERVED    the expected result, and Iorga's from-below half
- *                       (4.4): evidence the model is not over-strong.  A firing
- *                       Allowed test is its own control.
- *   HET_ALLOWED_UNOBSERVED  permitted, harness hot, still not exposed: an
- *                       observability result, not a model result (Iorga's
- *                       taxonomy 4.4; Alglave's GTX-280 honesty, fn.7 p.577).
- * NO-ORACLE -- there is no prediction, so nothing to validate:
- *   HET_CHARACTERIZED   the behaviour reported against the canary rate; never
- *                       "refutes", "confirms" or "forbidden" (Q4 R5).
- * Any class:
- *   HET_COLD_INVALID    not demonstrably hot.  The empty histogram carries no
- *                       information: discard the null, never report it as "not
- *                       observed".  Reachable from all three classes on purpose --
- *                       characterizing a dead harness is not a finding, and a
- *                       class whose verdict is a constant is not a decision.
+ *   HET_OBSERVED    seen.  Believed unconditionally -- falsification is one-sided,
+ *                   so no control is needed to believe a positive.
+ *   HET_NOT_OBSERVED_MU_HOT       not seen, and mu(T) -- a strictly weaker,
+ *                   structurally identical sibling on the same launch, stress and
+ *                   C2C path -- fired >= tau_hot while T's own two engines
+ *                   provably overlapped, with the ground-truth scan running.
+ *   HET_NOT_OBSERVED_CANARY_ONLY  not seen on a harness that is alive but whose
+ *                   OWN shape is not confirmed hit: only the Layer-B canary
+ *                   vouches, or no mu co-runs, or the zero came from the windowed
+ *                   scan.  Weaker; the printout names which (Alglave's GTX-280
+ *                   honesty, fn.7 p.577, is the precedent for saying so plainly).
+ *   HET_COLD_INVALID  not demonstrably hot, or the record is unstamped.  The empty
+ *                   histogram carries no information: discard it, never report it
+ *                   as "not observed".
  * ------------------------------------------------------------------------- */
 typedef enum {
-  HET_MISMATCH = 0,
-  HET_CREDIBLE_NULL,
-  HET_WEAK_NULL,
-  HET_COLD_INVALID,
-  HET_ALLOWED_OBSERVED,
-  HET_ALLOWED_UNOBSERVED,
-  HET_CHARACTERIZED
+  HET_OBSERVED = 0,
+  HET_NOT_OBSERVED_MU_HOT,
+  HET_NOT_OBSERVED_CANARY_ONLY,
+  HET_COLD_INVALID
 } het_verdict_t;
 
 /* Why a run was DISQUALIFIED (its null is discarded).  Each names a mechanism
@@ -518,9 +458,9 @@ typedef enum {
 #define HET_DQ_NOISE_CPU_DEAD   (1u << 7)  /* NOT interconnect-stressed           */
 #define HET_DQ_NOISE_GPU_DEAD   (1u << 8)
 #define HET_DQ_GPU_STRESS_DEAD  (1u << 9)  /* het_do_stress requested, never ran  */
-/* Untagged harness: the rule cannot know whether a sighting refutes the model or
-   confirms it, so it claims nothing.  Fail closed, loudly. */
-#define HET_DQ_ORACLE_UNSET     (1u << 10)
+/* Unstamped record: rec_magic is missing, so the fields below it are whatever the
+   emitter left there -- a zeroed record reads as a live one.  Fail closed, loudly. */
+#define HET_DQ_REC_UNSTAMPED    (1u << 10)
 /* The observer channel (a store-only shape's only one) resolved fewer than
    HET_THETA_DISTINCT distinct GPU store-values -- its analogue of
    interleavings_detected == 0.  A separate code, not a reuse of NO_INTERLEAVING,
@@ -562,27 +502,27 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   hot_control = (r->control_compiled_in && r->control_target_count >= HET_TAU_HOT);
   hot_canary  = (r->canary_compiled_in  && r->canary_target_count  >= HET_TAU_HOT);
 
-  /* ---- 0. FAIL CLOSED on an untagged harness, before anything else: not knowing
-     what the model predicts means not knowing what an observation would mean, so
-     every sentence we could print would be a guess.  Reachable only through an
-     emitter bug, which is why it is a visible stop and not a default frame. */
-  if (r->het_oracle == ORACLE_UNSET) {
-    if (dq_out) *dq_out = HET_DQ_ORACLE_UNSET;
+  /* ---- 0. FAIL CLOSED on an unstamped record, before anything else: every field
+     below is then whatever memset left, so every sentence we could print would be
+     read off zeros.  Reachable only through an emitter bug, which is why it is a
+     visible stop and not a default frame. */
+  if (r->rec_magic != HET_REC_MAGIC) {
+    if (dq_out) *dq_out = HET_DQ_REC_UNSTAMPED;
     if (cv_out) *cv_out = 0;
     return HET_COLD_INVALID;
   }
 
-  /* ---- 1. The caveats are computed FIRST, because a MISMATCH needs them too: a
+  /* ---- 1. The caveats are computed FIRST, because a SIGHTING needs them too: a
      weak behaviour observed under a stress config nobody recorded is not
-     reproducible, and an unreproducible refutation is a far weaker result.  (The
-     stress incantations travel with the sighting for the same reason Alglave et
-     al. report absolute counts per incantation combination -- ASPLOS'15 4.3
-     p.585, Tab.6.)  The verdict is unchanged; only its provenance travels. */
+     reproducible.  (The stress incantations travel with the sighting for the same
+     reason Alglave et al. report absolute counts per incantation combination --
+     ASPLOS'15 4.3 p.585, Tab.6.)  The outcome is unchanged; only its provenance
+     travels. */
   if (!r->exhaustive_valid)         cv |= HET_CV_NO_EXHAUSTIVE;
   /* "Layer B fired, Layer A did not" is a caveat only where a Layer A exists to
      have not fired.  Without the control_compiled_in guard it would be raised on
-     every non-Disallowed test -- which has no mutant by construction -- turning a
-     real diagnostic into boilerplate on most of the corpus. */
+     every test at the lattice floor -- which has no mutant by construction --
+     turning a real diagnostic into boilerplate on most of the corpus. */
   if (r->control_compiled_in && !hot_control && hot_canary)
                                     cv |= HET_CV_CANARY_ONLY;
   if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
@@ -608,26 +548,20 @@ static het_verdict_t het_verdict(const het_obs_record *r,
     if (spins && r->spin_rendezvous * 2 < spins) cv |= HET_CV_SPIN_CAP; }
 
   /* ---- 2. A SIGHTING, believed unconditionally: no control is needed to believe
-     a positive, and an inert-stress run that saw the outcome still saw it.  What
-     the sighting MEANS is the oracle's call -- on an Allowed test the very same
-     observation is the model working as specified.
+     a positive, and an inert-stress run that saw the outcome still saw it.
 
-     Counting the heuristic tally as well diverges from Q4 3.3, which keys MISMATCH
-     off target_count_exhaustive alone: on a T_L>=2 shape at production N it is
-     0 by construction (HET_EXHAUSTIVE_MAX), so a real sighting would be silently
-     dropped.  The windowed heuristic searches [c-W, c+W] against the ground-truth
-     scan's [0, N-1] under the same predicate, so its hits are a subset -- it can
-     miss cycles, it cannot invent them.  Flagged HET_CV_HEURISTIC_SIGHT so the
-     report never passes it off as ground truth. */
+     Counting the heuristic tally as well diverges from Q4 3.3, which keys the
+     sighting off target_count_exhaustive alone: on a T_L>=2 shape at production N
+     it is 0 by construction (HET_EXHAUSTIVE_MAX), so a real sighting would be
+     silently dropped.  The windowed heuristic searches [c-W, c+W] against the
+     ground-truth scan's [0, N-1] under the same predicate, so its hits are a
+     subset -- it can miss cycles, it cannot invent them.  Flagged
+     HET_CV_HEURISTIC_SIGHT so the report never passes it off as ground truth. */
   if (r->target_count_exhaustive > 0 || r->target_count_heuristic > 0) {
     if (r->target_count_exhaustive == 0) cv |= HET_CV_HEURISTIC_SIGHT;
     if (dq_out) *dq_out = 0;
     if (cv_out) *cv_out = cv;
-    switch (r->het_oracle) {
-    case ORACLE_DISALLOWED: return HET_MISMATCH;         /* REFUTES the model    */
-    case ORACLE_ALLOWED:    return HET_ALLOWED_OBSERVED; /* the EXPECTED result  */
-    default:                return HET_CHARACTERIZED;    /* the model is SILENT  */
-    }
+    return HET_OBSERVED;
   }
 
   /* ---- 3. Liveness: is this run's null even a datum?  A null from an
@@ -674,42 +608,21 @@ static het_verdict_t het_verdict(const het_obs_record *r,
      top, because the caveat block above needs them.) */
   if (!hot_control && !hot_canary)                dq |= HET_DQ_CONTROLS_COLD;
 
-  /* ---- 5. The verdict.  NOT OBSERVED -- and what that is worth depends entirely
-     on what the model predicted. */
+  /* ---- 5. The outcome.  NOT OBSERVED -- and what vouches for the harness that
+     did not see it is the whole difference between the two null tiers. */
   if (dq) {
     v = HET_COLD_INVALID;
-  } else switch (r->het_oracle) {
-
-  case ORACLE_DISALLOWED:
-    /* The null IS the evidence, so it has to be earned. */
-    if (hot_control && r->exhaustive_valid) {
-      /* mu(T) fired on the same run, stress and C2C path, and T's own two engines
-         provably overlapped: the harness produced the cross-device interleaving
-         T's ordering is claimed to prevent. */
-      v = HET_CREDIBLE_NULL;
-    } else {
-      /* Either only the canary fired (the C2C path is alive but this shape's window
-         is unconfirmed -- escalate stress tuning) or the ground-truth scan never
-         ran, so the zero is not a measured zero. */
-      v = HET_WEAK_NULL;
-    }
-    break;
-
-  case ORACLE_ALLOWED:
-    /* Permitted and not seen, on a harness the canary shows was hot: a statement
-       about this hardware and our stress, not about the model.  Reporting it as a
-       "null" for the model would be the false refutation wearing the other hat. */
-    v = HET_ALLOWED_UNOBSERVED;
-    break;
-
-  default:
-    /* NO-ORACLE: no prediction, so nothing to confirm, refute or call a null --
-       report against the canary rate (Q4 R5).  Reached whether or not the outcome
-       fired; "exhibited in 0 of N frames on a demonstrably hot harness" IS the
-       characterization.  Not reachable from a cold harness (dq catches that
-       first), because characterizing a dead harness is a fabrication. */
-    v = HET_CHARACTERIZED;
-    break;
+  } else if (hot_control && r->exhaustive_valid) {
+    /* mu(T) fired on the same run, stress and C2C path, and T's own two engines
+       provably overlapped: the harness produced a cross-device interleaving of
+       T's own shape, and the zero is a ground-truth zero. */
+    v = HET_NOT_OBSERVED_MU_HOT;
+  } else {
+    /* Either no mu co-runs or it did not reach tau_hot -- so only the canary
+       vouches, and this SHAPE's window is unconfirmed -- or the ground-truth scan
+       never ran, so the zero is not a measured zero.  het_verdict_print names
+       which; both are reasons to escalate stress tuning rather than to report. */
+    v = HET_NOT_OBSERVED_CANARY_ONLY;
   }
 
   if (dq_out) *dq_out = dq;
@@ -719,27 +632,11 @@ static het_verdict_t het_verdict(const het_obs_record *r,
 
 static const char *het_verdict_name(het_verdict_t v) {
   switch (v) {
-  case HET_MISMATCH:           return "MISMATCH";
-  case HET_CREDIBLE_NULL:      return "CREDIBLE-NULL";
-  case HET_WEAK_NULL:          return "WEAK-NULL";
-  case HET_ALLOWED_OBSERVED:   return "ALLOWED-OBSERVED";
-  case HET_ALLOWED_UNOBSERVED: return "ALLOWED-UNOBSERVED";
-  case HET_CHARACTERIZED:      return "CHARACTERIZED";
-  default:                     return "COLD-INVALID";
+  case HET_OBSERVED:                  return "OBSERVED";
+  case HET_NOT_OBSERVED_MU_HOT:       return "NOT-OBSERVED-MU-HOT";
+  case HET_NOT_OBSERVED_CANARY_ONLY:  return "NOT-OBSERVED-CANARY-ONLY";
+  default:                            return "COLD-INVALID";
   }
-}
-
-static const char *het_oracle_name(het_oracle_t o) {
-  switch (o) {
-  case ORACLE_DISALLOWED: return "Disallowed";
-  case ORACLE_ALLOWED:    return "Allowed";
-  case ORACLE_NONE:       return "NO-ORACLE";
-  default:                return "UNSET";
-  }
-}
-
-static const char *het_oracle_src(const het_obs_record *_r) {
-  return _r->oracle_source ? _r->oracle_source : "(unrecorded)";
 }
 
 static const char *het_conf_name(het_confidence c) {
@@ -752,7 +649,7 @@ static const char *het_conf_name(het_confidence c) {
 
 static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
-    "HetObs %s oracle=%s src=%s cpu_only=%d "
+    "HetObs %s cpu_only=%d "
     "inst=%d run=%d conf=%d report=%d N=%llu frames=%llu target=%s%llu/%llu "
     "interleavings=%llu distinct_iters=%llu ws_via_obs=%llu obs_unique=%llu "
     "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%s%llu/%llu canary=%s%llu/%llu Prep=%.6f built=%d/%d "
@@ -760,14 +657,7 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
     "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u nwin=%u "
     "aff_fail=%u place_fail=%u\n",
-    /* oracle= is first-class in the machine-readable line: Y = 1[target_count >= 1]
-       means the opposite thing for an Allowed test (expected to fire) and a
-       Disallowed one, so a row without its class cannot be pooled with anything. */
-    _r->test_name, het_oracle_name(_r->het_oracle),
-    /* src= is machine-readable so a roll-up can tell which oracle FILE a cell
-       was tagged from: pooling an AMD-tagged cell with a NVIDIA-tagged one is
-       pooling two different targets' predictions. */
-    het_oracle_src(_r),
+    _r->test_name,
     _r->cpu_only,
     _r->instance_id, _r->run_id,
     (int)_r->confidence, (int)_r->reporting,
@@ -808,13 +698,11 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
 /* ---------------------------------------------------------------------------
  * The reporting contract (Q4 5): NEVER print a bare "Never".  Every null prints
  * paired with the control that vouches for it, in absolute numbers, so a reader
- * can recalibrate the bar instead of taking our word for it; and both halves of
- * the model verdict come from the same run, Iorga-style (4.4) --
- * Disallowed-never-observed = not over-permissive, Allowed-sometimes-observed =
- * not over-strong.  Where a shape's control cannot be made hot we say so plainly
- * (the printouts below carry Alglave's GTX-280 precedent verbatim).
+ * can recalibrate the bar instead of taking our word for it.  Where a shape's
+ * control cannot be made hot we say so plainly (the printouts below carry
+ * Alglave's GTX-280 precedent verbatim).
  * ------------------------------------------------------------------------- */
-/* The stress-provenance caveats, printed for a MISMATCH as well as for a null. */
+/* The stress-provenance caveats, printed for a sighting as well as for a null. */
 static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) {
   if (cv & HET_CV_UNSTRESSED)
     fprintf(_ch, "  CAVEAT: no stress was requested.  Kirkham (6.2) exposed only "
@@ -859,9 +747,8 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
   }
 }
 
-/* The stress incantations, travelling with every sighting of every class -- a
-   result obtained under a config nobody recorded is not reproducible, whether it
-   is a refutation or a confirmation. */
+/* The stress incantations, travelling with every reported outcome -- a result
+   obtained under a config nobody recorded is not reproducible. */
 static void het_print_config(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
     "  config: stress_requested=0x%x spins=%llu/%llu do_stress_rounds=%llu "
@@ -885,8 +772,8 @@ static uint64_t het_reported_count(const het_obs_record *_r) {
 }
 
 /* Where the number came from: a MEASUREMENT caveat, which is why it is separate
-   from het_print_caveats()'s stress-provenance lines.  Every class needs it -- on
-   a T_L>=2 shape at production N both a zero and a count come from the windowed
+   from het_print_caveats()'s stress-provenance lines.  Every outcome needs it --
+   on a T_L>=2 shape at production N both a zero and a count come from the windowed
    search, and "we could not expose it" without "in the window we searched"
    overstates the effort. */
 static void het_print_scan_caveat(FILE *_ch, const het_obs_record *_r, uint32_t cv) {
@@ -900,22 +787,13 @@ static void het_print_scan_caveat(FILE *_ch, const het_obs_record *_r, uint32_t 
     (unsigned long long)_r->N);
 }
 
-/* "We did not see it" -- phrased by ORACLE CLASS, because there is no
-   class-neutral way to say it: "Disallowed outcome 0" is a false statement about
-   an Allowed test and about a NO-ORACLE one.  A cold run of an Allowed test must
-   not describe itself in the language of a forbidden one. */
+/* "We did not see it", in the only vocabulary this harness has: the outcome the
+   test's condition names, and the effort behind the zero. */
 static void het_print_notobserved(FILE *_ch, const het_obs_record *_r) {
-  const char *what;
-  switch (_r->het_oracle) {
-  case ORACLE_DISALLOWED: what = "Disallowed outcome"; break;
-  case ORACLE_ALLOWED:    what = "ALLOWED weak outcome"; break;
-  default:                what = "outcome (NO ORACLE: neither allowed nor forbidden "
-                                 "by the model)"; break;
-  }
   fprintf(_ch,
-    "  %s: %s NOT observed -- 0 / N=%llu frames (%llu examined); "
+    "  %s: the weak outcome was NOT observed -- 0 / N=%llu frames (%llu examined); "
     "interleavings_detected=%llu.\n",
-    _r->test_name, what, (unsigned long long)_r->N,
+    _r->test_name, (unsigned long long)_r->N,
     (unsigned long long)_r->frames_examined,
     (unsigned long long)_r->interleavings_detected);
 }
@@ -971,166 +849,73 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   unsigned long long _hits = (unsigned long long)het_reported_count(_r);
   double _pct = _r->N ? (100.0 * (double)_hits / (double)_r->N) : 0.0;
 
-  /* The header line carries the oracle class and the file it came from.  src=
-     is not decoration: a reader scanning a campaign log for mismatches must be
-     able to see, on the summary line, which oracle file to re-derive from. */
-  fprintf(_ch, "HetVerdict %s [%s] oracle=%s src=%s%s run=%d: %s\n",
+  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s\n",
           _r->test_name, het_conf_name(_r->reporting),
-          het_oracle_name(_r->het_oracle),
-          het_oracle_src(_r), _r->cpu_only ? " CPU-ONLY" : "",
+          _r->cpu_only ? " CPU-ONLY" : "",
           _r->run_id, het_verdict_name(v));
 
-  /* ---- 0. Untagged harness: we do not know what the model predicts, so we do
-     not know what we just measured.  Say only that. */
-  if (dq & HET_DQ_ORACLE_UNSET) {
+  /* ---- 0. Unstamped record: every field below rec_magic is whatever memset
+     left, so nothing here was measured.  Say only that. */
+  if (dq & HET_DQ_REC_UNSTAMPED) {
     fprintf(_ch,
-      "  *** THIS HARNESS CARRIES NO ORACLE CLASS (het_oracle == ORACLE_UNSET) ***\n"
-      "  The emitter failed to tag it from tests/het/control-map.csv, so nothing can "
-      "be concluded from this run in EITHER direction: the same observation refutes "
-      "the model if the outcome is Disallowed and CONFIRMS it if the outcome is "
-      "Allowed.  This is a BUILD BUG, not a result.  Rebuild; do not report.\n");
+      "  *** THIS RECORD CARRIES NO STAMP (rec_magic != HET_REC_MAGIC) ***\n"
+      "  The emitted driver did not stamp it, so every count, flag and liveness "
+      "tally read here is a memset zero rather than a measurement, and a zeroed "
+      "record is indistinguishable from a harness that ran and saw nothing.  This "
+      "is a BUILD BUG, not a result.  Rebuild; do not report.\n");
     return;
   }
 
-  /* ================== THE SIGHTING (believed unconditionally) ==================
-     Three classes, three meanings.  The refutation text below is reachable from
-     HET_MISMATCH alone, and HET_MISMATCH only from ORACLE_DISALLOWED -- which is
-     what verdictcheck.py phase 2 checks, both ways. */
-  if (v == HET_MISMATCH) {
+  /* ================== THE SIGHTING (believed unconditionally) ================= */
+  if (v == HET_OBSERVED) {
     fprintf(_ch,
-      "  ** %s: the should-be-FORBIDDEN outcome was OBSERVED %llu time(s) "
-      "(exhaustive) / %llu (heuristic) in N=%llu frames.\n",
+      "  ** %s: the weak outcome was OBSERVED %llu time(s) (exhaustive) / %llu "
+      "(heuristic) in N=%llu frames (%.4f%%).\n"
+      "  Report it as what %s exhibited under this harness, this stress and this "
+      "%s path.  It is an OBSERVATION: this harness carries no prediction, so "
+      "nothing here confirms or contradicts any model.  Comparing it against a "
+      "verdicts file is an offline step (hetlitmus/oracle-compare.sh).\n",
       _r->test_name,
       (unsigned long long)_r->target_count_exhaustive,
-      (unsigned long long)_r->target_count_heuristic, _n);
-    /* ---------- WHAT THAT SIGHTING LICENSES.  Two sentences (P2e), and the
-       choice between them is about WHAT IS UNDER TEST, not about how well the
-       row is sourced.  The observation is the same in both; printing a
-       refutation of the compound model where the model was not under test, or
-       where the nearer explanation is the oracle row itself, is the false
-       refutation this whole apparatus exists to prevent (B6c). */
+      (unsigned long long)_r->target_count_heuristic, _n, _pct,
+      HET_PAIR_NAME, HET_LINK_NAME);
     if (_r->cpu_only) {
-      /* D10 first, because it outranks the ordinary sentence: on a CPU-only
-         cycle the CMCM is not under test at all.  Both procs are x86, the
-         compound coupling never engages, and the only models that could have
-         been wrong are x86-TSO on this silicon or the MEMORY TYPE of the shared
-         allocation.  Memo 7.D10 and [CACM] sect 7's own invited-counterexample
-         framing. */
+      /* D10 (memo 7.D10) says WHAT WAS UNDER TEST, which is not a model call:
+         every proc is a CPU proc, so no cross-device path carried this cycle and
+         what fired is the host ISA on the shared allocation.  The x86 ordering
+         rules are scoped to WB (write-back cacheable) memory ([APM] 7.2, [CACM]
+         p.90) and a WC mapping legalises store-store and load-load reordering
+         outright (memo sect 8 P1), so the MAPPING is part of what this row
+         measures -- and a UC mapping reorders nothing at all ([APM] Table 7-2),
+         which is why a sighting rules that one out. */
       fprintf(_ch,
-        "  ** CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc, so the "
-        "COMPOUND MODEL IS NOT UNDER TEST HERE and this is NOT a CMCM refutation.\n"
-        "  ** What it indicts, in this order: (1) x86-TSO as a description of THIS "
-        "implementation -- the invited counterexample of Sewell et al., CACM 53(7) "
-        "sect 7; or (2) the MEMORY TYPE of the shared allocation, since the x86 "
-        "ordering rules are scoped to WB (write-back cacheable) memory ([APM] 7.2, "
-        "[CACM] p.90) and a WC mapping legalises store-store and load-load "
-        "reordering outright (memo sect 8 P1).\n"
-        "  ** Until P1 is resolved, treat this as the WB probe FAILING, not as a "
-        "model result.  A Zen-4 conformance failure reported as a compound-model "
-        "refutation is the exact mis-attribution D10 exists to prevent.\n");
-      /* ...and the third possibility, which outranks both of the above when it
-         applies: the cycle was never closed by an x86 agent at all.  A store-only
-         shape has no reader, so its `co' edge is recovered from an OBSERVER, and
-         this harness carries two -- a CPU thread and a GPU lane.  x86-TSO
-         constrains the order in which x86 agents observe two x86 stores; it says
-         nothing about a GPU's view of them.  So a sighting carried by the GPU
-         observer alone is not evidence against x86-TSO, and the sentences above
-         must not be read as if it were. */
+        "  ** CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc, so NO "
+        "CROSS-DEVICE PATH CARRIED THIS CYCLE -- what fired is the host ISA on the "
+        "SHARED ALLOCATION.  The memory TYPE of that allocation is part of what "
+        "this row measures (WB vs WC, memo sect 8 P1); the sighting does rule out "
+        "an uncacheable (UC) mapping, which reorders nothing ([APM] Table 7-2), "
+        "but it does not by itself establish WB over WC.\n");
+      /* The `co' edge of a store-only shape comes from an OBSERVER, and this
+         harness carries two -- a CPU thread and a GPU lane.  Which one closed the
+         cycle decides whether a host-ISA agent observed anything at all, so it is
+         printed rather than assumed. */
       if (_r->obs_ws_via_gpu && !_r->obs_ws_via_cpu)
         fprintf(_ch,
-          "  ** ...BUT THE co EDGE CAME ONLY FROM THE GPU OBSERVER "
-          "(obs_ws_via_gpu=1, obs_ws_via_cpu=0), AND THE GPU IS NOT AN x86 AGENT.\n"
-          "  ** x86-TSO constrains the order in which x86 AGENTS observe two x86 "
-          "stores.  A GPU observing them out of order violates nothing it says, so "
-          "this run is NOT evidence against x86-TSO either -- it is a "
-          "cross-device-visibility observation about this platform.  Neither "
-          "reading above applies.  To test x86-TSO itself, re-run a shape with an "
-          "x86 READER (MP / LB / SB / IRIW), whose cycle closes inside the CPU.\n");
+          "  ** THE co EDGE CAME ONLY FROM THE GPU OBSERVER (obs_ws_via_gpu=1, "
+          "obs_ws_via_cpu=0), AND THE GPU IS NOT AN x86 AGENT.  No x86 agent "
+          "observed these two x86 stores out of order, so this is a "
+          "cross-device-visibility observation about this platform and not a datum "
+          "about the host ISA.  For the host ISA itself, run a shape with an x86 "
+          "READER (MP / LB / SB / IRIW), whose cycle closes inside the CPU.\n");
       else if (_r->obs_ws_via_cpu)
         fprintf(_ch,
           "  ** The co edge WAS recovered by the x86-side observer "
-          "(obs_ws_via_cpu=1), so the cycle closed inside the CPU domain and the "
-          "two readings above are the live ones.\n");
-    } else {
-      /* The one mismatch sentence for a compound cycle.  Both explanations are
-         live -- the oracle row is a derivation and this silicon is a machine --
-         and the row is the NEARER one, so it is re-derived first.  Naming the
-         file is the actionable half: the Source column of that row carries the
-         citations the verdict was argued from. */
-      fprintf(_ch,
-        "  ** THIS RUN DISAGREES WITH THE ARGUED ORACLE ROW.  That disagreement "
-        "INDICTS THIS ORACLE ROW FIRST, never the CMCM: the row is a DERIVATION "
-        "over cited sources, not a measurement, so re-derive it -- and only if it "
-        "survives does the compound model come into question.\n"
-        "  ** Oracle row source: %s.  Look the test up there and read the Source "
-        "column before writing anything down.\n",
-        het_oracle_src(_r));
+          "(obs_ws_via_cpu=1), so the cycle closed inside the CPU domain.\n");
     }
     if (cv & HET_CV_HEURISTIC_SIGHT)
       fprintf(_ch,
-        "  NOTE: the sighting came from the WINDOWED heuristic (the O(N^T_L) "
-        "ground-truth scan did not run at this N).  The window is a subset of "
-        "the full range, so the recovered cycle is real -- but confirm it by "
+        "  NOTE: this sighting came from the WINDOWED heuristic, so confirm it by "
         "re-running with -DHET_EXHAUSTIVE_MAX above N.\n");
-    het_print_config(_ch, _r);
-    het_print_caveats(_ch, _r, cv);
-    return;
-  }
-
-  if (v == HET_ALLOWED_OBSERVED) {
-    fprintf(_ch,
-      "  %s: the ALLOWED weak outcome was OBSERVED %llu time(s) in N=%llu frames "
-      "(%.4f%%).\n"
-      "  This is the EXPECTED result.  The oracle PERMITS this outcome, so seeing it "
-      "refutes NOTHING -- it is evidence the model is not OVER-STRONG (Iorga 4.4, the\n"
-      "  from-below half of the verdict; the other half is the Disallowed tests' "
-      "nulls).\n"
-      "  No control is needed and none was used: a firing Allowed test IS ITS OWN "
-      "CONTROL.\n",
-      _r->test_name, _hits, _n, _pct);
-    if (_r->cpu_only)
-      /* D10's other half.  An Allowed CPU-only shape that FIRES is the memo's
-         sect 8 P1 probe passing: the store buffer is live on the shared
-         allocation, which rules the allocation out of being UC.  That is a
-         precondition of the whole AMD Disallowed column, so it is stated here
-         rather than left to be inferred from a percentage. */
-      fprintf(_ch,
-        "  D10 / WB PROBE PASSED: this is a CPU-ONLY shape, so what fired is the "
-        "x86 store buffer on the SHARED ALLOCATION itself -- not a compound-model "
-        "behaviour.  An uncacheable (UC) mapping reorders nothing ([APM] Table 7-2), "
-        "so this sighting RULES OUT UC for this allocator and discharges that "
-        "branch of memo sect 8 P1.  It does NOT by itself establish WB over WC: only "
-        "the forbidden CPU-only shapes staying silent does that.\n");
-    het_print_config(_ch, _r);
-    het_print_scan_caveat(_ch, _r, cv);
-    het_print_caveats(_ch, _r, cv);
-    return;
-  }
-
-  if (v == HET_CHARACTERIZED) {
-    /* Q4 R5.  Reached whether or not the outcome fired: the characterization is
-       "outcome Y in Z% of frames on a harness the canary shows was hot", and Z may
-       be 0.  Never reached from a cold harness (dq catches that first). */
-    fprintf(_ch,
-      "  %s: NO ORACLE.  The compound model does not settle whether this outcome is "
-      "allowed or forbidden\n"
-      "  (IRIW/2+2W need multi-copy atomicity; WRC/ISA2/RWC need cross-device "
-      "A-cumulativity -- the\n"
-      "  ARM-MCA x PTX-non-MCA frontier Bagchi 4.2 explicitly defers).  So there is "
-      "no prediction here\n"
-      "  to confirm or refute, and this run is CHARACTERIZATION, NEVER VALIDATION.\n",
-      _r->test_name);
-    het_print_liveness(_ch, _r);
-    fprintf(_ch,
-      "  CHARACTERIZED: under that harness, this hardware exhibited the outcome %llu "
-      "time(s) in N=%llu frames (%.4f%%); interleavings_detected=%llu.\n"
-      /* NAMED FROM THE PAIR THIS BINARY WAS BUILT FOR (HET_PAIR_NAME).  Not from
-         the oracle-source string: on a pair with no oracle that string is the
-         whole disclosure blob, which is not a target name. */
-      "  Report it as \"what %s does where the CMCM is silent\".  It is NOT evidence "
-      "for or against the model.\n",
-      _hits, _n, _pct, (unsigned long long)_r->interleavings_detected,
-      HET_PAIR_NAME);
     het_print_config(_ch, _r);
     het_print_scan_caveat(_ch, _r, cv);
     het_print_caveats(_ch, _r, cv);
@@ -1138,47 +923,6 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   }
 
   /* ===================== NOT OBSERVED.  It NEVER prints alone. ================= */
-  if (v == HET_ALLOWED_UNOBSERVED) {
-    het_print_notobserved(_ch, _r);
-    het_print_liveness(_ch, _r);
-    fprintf(_ch,
-      "  ALLOWED-UNOBSERVED -- an OBSERVABILITY result, NOT a model result.  The "
-      "outcome is PERMITTED and\n"
-      "  the harness was demonstrably hot, and we still could not expose it on this "
-      "hardware under this\n"
-      "  stress.  That says NOTHING about the CMCM in either direction; it says this "
-      "shape's window is\n"
-      "  narrow here.  It feeds the stress-tuning priority (B8).  The precedent for "
-      "saying so plainly:\n"
-      "    \"In fairness to the authors of [19], we were unable to observe weak "
-      "behaviours using our\n"
-      "     method on the Nvidia GTX 280 chip they used.\"\n"
-      "                                     -- Alglave et al., ASPLOS'15, fn.7, p.577.\n");
-    if (_r->cpu_only)
-      /* The D10 branch where "an observability result" is the WRONG reading.
-         SB/R on x86 is the store buffer, not a narrow window: it is the single
-         most reproducible relaxation on the ISA.  Not seeing it on the shared
-         allocation is evidence ABOUT THE ALLOCATION -- a UC or otherwise
-         non-WB mapping -- and memo sect 8 P1 is then UNRESOLVED, which voids
-         the entire AMD Disallowed column rather than costing one row. */
-      fprintf(_ch,
-        "  *** D10 / WB PROBE FAILED -- READ THIS BEFORE THE STRESS-TUNING "
-        "ADVICE ABOVE ***\n"
-        "  This is a CPU-ONLY shape.  Its weak outcome is the x86 STORE BUFFER, the "
-        "most reproducible relaxation the ISA has; a null here is not a narrow "
-        "window, it is evidence about the SHARED ALLOCATION.  If the mapping is not "
-        "WB (write-back cacheable), memo sect 8 P1 is UNRESOLVED and EVERY Disallowed "
-        "row of this oracle is void -- not this row, all of them.  Check PAT/MTRR "
-        "and /proc/self/smaps for this allocator before running anything else.\n");
-    het_print_scan_caveat(_ch, _r, cv);
-    het_print_caveats(_ch, _r, cv);
-    return;
-  }
-
-  /* ---- What is left: the Disallowed null the positive control exists for, and
-     COLD-INVALID, which is reachable from all three classes -- hence the
-     phrased-by-class line.  "Disallowed outcome 0" on a cold Allowed test would be
-     a false claim about the model in the very output meant to prevent one. */
   het_print_notobserved(_ch, _r);
   /* Covers all three sub-cases: mutant co-running, canary co-running, and neither
      -- where it further separates the tests that ARE the canary (designed) from a
@@ -1202,8 +946,8 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
               (int)HET_THETA_DISTINCT);
     if (dq & HET_DQ_CONTROLS_COLD)
       fprintf(_ch, "    - neither mu(T) nor the canary reached tau_hot=%d: a "
-                   "known-ALLOWED weak behaviour on this very machinery did not "
-                   "fire, so this harness is not shown to expose anything\n",
+                   "known-weak behaviour on this very machinery did not fire, so "
+                   "this harness is not shown to expose anything\n",
               (int)HET_TAU_HOT);
     if (dq & HET_DQ_STRESS_TRUNCATED)
       fprintf(_ch, "    - stress_truncated=%llu: stress STOPPED while tested "
@@ -1249,29 +993,58 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     return;
   }
 
-  if (v == HET_CREDIBLE_NULL)
+  if (v == HET_NOT_OBSERVED_MU_HOT)
     fprintf(_ch,
-      "  CREDIBLE NULL: the minimal mutant of THIS test fired reproducibly on "
-      "the same run, so the harness demonstrably produced the cross-device "
-      "interleaving this test's ordering is claimed to prevent.\n"
-      "  Consistency evidence FOR the model -- NOT a proof.  Report as \"not "
-      "observed under this effort\", never as \"forbidden\".\n");
+      "  NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical "
+      "sibling of this test -- fired reproducibly on the same launch, stress and "
+      "%s path, so the harness demonstrably produced a cross-device interleaving "
+      "of THIS shape and the zero is a ground-truth zero.  Report it as \"not "
+      "observed under this effort\", never as \"cannot happen\".\n",
+      HET_LINK_NAME);
 
-  if (v == HET_WEAK_NULL) {
-    fprintf(_ch, "  WEAK NULL -- reportable, but weaker than it looks:\n");
-    if (cv & HET_CV_CANARY_ONLY)
+  if (v == HET_NOT_OBSERVED_CANARY_ONLY) {
+    fprintf(_ch, "  NOT OBSERVED, CANARY ONLY -- reportable, but weaker than it "
+                 "looks:\n");
+    if (!_r->control_compiled_in)
+      fprintf(_ch, "    - no mu(T) co-runs: the control map found no strictly "
+                   "weaker sibling of this test, so nothing of its OWN shape "
+                   "vouches for it and only the %s path is shown alive.\n",
+              HET_LINK_NAME);
+    else if (cv & HET_CV_CANARY_ONLY)
       fprintf(_ch, "    - only the Layer-B canary fired: the %s path is alive, "
                    "but this SHAPE's window was not demonstrably hit.  Escalate "
                    "stress tuning for it (B8).\n",
               HET_LINK_NAME);
     if (cv & HET_CV_NO_EXHAUSTIVE)
-      fprintf(_ch, "    - the O(N^T_L) ground-truth scan did not run at N=%llu "
-                   "(HET_EXHAUSTIVE_MAX): the zero rests on the WINDOWED "
-                   "heuristic, whose radius HET_WINDOW is an uncalibrated "
-                   "placeholder (owned by B8).  It is not a measured zero.\n",
+      fprintf(_ch, "    - the O(N^T_L) ground-truth scan did not run at N=%llu, so "
+                   "this is NOT a measured zero (the CAVEAT below says why).\n",
               (unsigned long long)_r->N);
   }
 
+  /* One sentence for both tiers, because it is the same statement: a null is a
+     fact about this harness's reach, not about a model.  Alglave et al. said it
+     first about their own null on the chip [19] reported weak behaviours on. */
+  fprintf(_ch,
+    "  Either way this is an OBSERVABILITY result about this harness on this "
+    "hardware and under this stress -- never a model result -- and it feeds the "
+    "stress-tuning priority (B8).  The precedent for saying so plainly:\n"
+    "    \"In fairness to the authors of [19], we were unable to observe weak "
+    "behaviours using our\n"
+    "     method on the Nvidia GTX 280 chip they used.\"\n"
+    "                                     -- Alglave et al., ASPLOS'15, fn.7, p.577.\n");
+  if (_r->cpu_only)
+    /* D10's null half: on a CPU-only shape the weak outcome is the host store
+       buffer, among the most reproducible relaxations the ISA has, so a null is
+       evidence about the ALLOCATION rather than about a narrow window. */
+    fprintf(_ch,
+      "  *** D10 / SHARED-ALLOCATION PROBE: this is a CPU-ONLY shape, and its weak "
+      "outcome is the host STORE BUFFER -- among the most reproducible relaxations "
+      "the ISA has.  A null here is evidence about the SHARED ALLOCATION, not a "
+      "narrow window: if the mapping is not WB (write-back cacheable), memo sect 8 "
+      "P1 is UNRESOLVED.  Check PAT/MTRR and /proc/self/smaps for this allocator "
+      "before running anything else.\n");
+
+  het_print_scan_caveat(_ch, _r, cv);
   het_print_caveats(_ch, _r, cv);
 }
 
@@ -1313,21 +1086,27 @@ typedef enum {
   HET_OBS_ALWAYS
 } het_obs_class;
 
-/* Corroboration.  A false MISMATCH is a false refutation of the compound model,
-   the most damaging error the campaign can make, and Srivastava observed the
-   mechanism that would forge one: a constant-read artefact (a reader stuck on init
-   or on one value) yields a spurious 100%/0%.  The fix is not to suppress
-   sightings -- falsification is one-sided.  "Is the sighting real?" (decoder
-   soundness) and "is it reproducible?" (statistical confidence) are two questions,
-   so they get two answers: het_verdict() still returns its immediate MISMATCH on
-   the first sighting, and this tier layers on top and suppresses nothing. */
+/* Corroboration.  A sighting that does not reproduce is the most damaging thing
+   this campaign can write down, and Srivastava observed the mechanism that would
+   forge one: a constant-read artefact (a reader stuck on init or on one value)
+   yields a spurious 100%/0%.  The fix is not to suppress sightings --
+   falsification is one-sided.  "Is the sighting real?" (decoder soundness) and
+   "is it reproducible?" (statistical confidence) are two questions, so they get
+   two answers: het_verdict() still returns HET_OBSERVED on the first sighting,
+   and this tier layers on top and suppresses nothing.
+
+   HET_CORROB_RUNS is the campaign's corroboration bar, and it is NOT Kirkham's
+   n = 3: three clean runs are the 95% P_rep recipe (Q3 R2), while two are what
+   rules out a per-run artefact at all.  The measured P_rep is printed beside the
+   tier, so the bar and the confidence it bought are never conflated. */
+#define HET_CORROB_RUNS 2
 typedef enum {
-  HET_MT_NONE = 0,
-  HET_MT_UNCORROBORATED,  /* seen, but in <3 clean cells or in a degenerate one:
-                             believe it, report it, and reproduce it before it is
-                             written up as a model violation. */
-  HET_MT_CONFIRMED        /* >=3 distinct non-degenerate RUNS (Q3 R2: P_rep = 95%) */
-} het_mismatch_tier;
+  HET_SIGHT_NONE = 0,
+  HET_SIGHT_UNCONFIRMED,   /* seen, but in fewer than HET_CORROB_RUNS clean RUNS,
+                              or only in degenerate cells: believe it, report it,
+                              and reproduce it before writing it up. */
+  HET_SIGHT_CORROBORATED   /* >= HET_CORROB_RUNS distinct non-degenerate RUNS */
+} het_sighting_tier;
 
 /* Why a statistic is missing or weakened.  Each one is a way this layer could
    silently go constant, so each one is PRINTED. */
@@ -1382,16 +1161,9 @@ typedef enum {
 
 typedef struct het_stats {
   const char *test_name;
-  het_oracle_t oracle;
-  /* The oracle FILE this block's cells were tagged from, carried through to the
-     CAMPAIGN-LEVEL output as well.  het_verdict_print speaks about ONE run;
-     het_stats_print speaks about the whole campaign for this test and is the
-     line a human actually reads before writing a result down, so it has to name
-     the file a mismatch must be re-derived from.  Copied from recs[0]. */
-  const char *oracle_source;
   int cpu_only;
   het_obs_class obs;
-  het_mismatch_tier tier;
+  het_sighting_tier tier;
 
   int R;              /* cells supplied  (= NUMBER_OF_RUN; H is 1 today)          */
   int R_usable;       /* cells whose het_verdict() is not COLD-INVALID            */
@@ -1399,6 +1171,15 @@ typedef struct het_stats {
   int k_eff;          /* ... of those, the ones that pass the decode guard        */
   int k_runs;         /* distinct RUNS among them (the most independent draws)    */
   int n_degen;        /* sightings REJECTED by the guard (reported, never hidden) */
+  /* Distinct runs consumed when the FIRST clean sighting landed; 0 = none did.
+     The price of the sighting, in the unit the campaign spends (Q3 F4), and the
+     one number a stop rule that watches for a lone sighting needs. */
+  int n_at_first_sight;
+  /* What the two control channels totalled over the cells pooled here, reported
+     rather than left to be inferred from ctrl= and the per-run lines: which
+     channel calibrated the dispersion is a flag, but HOW HOT each layer was is a
+     number, and a campaign roll-up needs it machine-readably. */
+  uint64_t mu_total, can_total;
 
   int    win_samples;               /* (run,window) samples behind F_win          */
   double ctrl_mean, ctrl_var;       /* of the per-window control counts           */
@@ -1616,7 +1397,7 @@ static int het_changepoint(const double *prof, int n) {
    observer instead.  Every test has one channel or both, so the guard switches
    channel instead of firing blind.  The no-channel arm is unreachable in the
    shipped corpus and fails closed anyway: a sighting nothing can vouch for must not
-   count toward a refutation. */
+   count toward corroboration. */
 static int het_cell_degenerate(const het_obs_record *r) {
   if (r->sync_valid)
     return (r->distinct_decoded_iters < (uint64_t)HET_THETA_DISTINCT)
@@ -1642,7 +1423,8 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   double late[HET_STATS_MAX_CELLS * HET_NWIN];
   double prof[HET_NWIN];
   int    runs[HET_STATS_MAX_CELLS];
-  int i, w, nwin = 0, ne = 0, nl = 0, ncell = 0, nruns = 0, use_canary;
+  int    allruns[HET_STATS_MAX_CELLS];
+  int i, w, nwin = 0, ne = 0, nl = 0, ncell = 0, nruns = 0, nall = 0, use_canary;
   int n_early, n_late, ks;
   uint64_t mu_total = 0;
   int mu_present = 0;
@@ -1661,20 +1443,18 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   st->ks_split_window = -1;
   if (n <= 0) { st->obs = HET_OBS_VOID; st->flags |= HET_ST_FANO_UNMEASURED; return; }
   st->test_name = recs[0].test_name;
-  st->oracle    = recs[0].het_oracle;
   st->N         = recs[0].N;
   st->R         = n;
-  /* Which oracle FILE, and whether this is a D10 cycle -- a CHECK rather than an
-     assumption: if the cells handed here do not agree on cpu_only they are not
-     one campaign, and the block resolves toward the WEAKER claim. */
-  st->oracle_source = recs[0].oracle_source;
+  /* Whether this is a D10 cycle -- a CHECK rather than an assumption: if the cells
+     handed here do not agree on cpu_only they are not one campaign. */
   st->cpu_only      = recs[0].cpu_only;
   { int _i;
     for (_i = 1; _i < n; _i++)
       if (recs[_i].cpu_only != recs[0].cpu_only) {
         st->flags |= HET_ST_MIXED_POOL;
-        /* cpu_only resolves upward, because the CPU-only sentence is the WEAKER
-           claim about the compound model: it says the CMCM was not under test. */
+        /* cpu_only resolves upward, because it names the NARROWER experiment: a
+           CPU-only cycle crossed no device boundary, so pooling it with het cells
+           must not let the het reading absorb it silently. */
         if (recs[_i].cpu_only) st->cpu_only = 1;
       }
   }
@@ -1683,19 +1463,21 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
 
   /* ---- 1. Which control channel calibrates the dispersion.  mu(T) is the
      shape-matched proxy, so it is preferred where it exists and fired; the canary
-     is the universal floor and is all a non-Disallowed test has.  A bound
+     is the universal floor and is all a test at the lattice floor has.  A bound
      calibrated off another shape's burstiness is a weaker claim, so which one was
      used is recorded and printed rather than left to the reader to guess. */
   for (i = 0; i < n; i++) {
     if (recs[i].control_compiled_in) mu_present = 1;
-    mu_total  += recs[i].control_target_count;
+    mu_total     += recs[i].control_target_count;
+    st->can_total += recs[i].canary_target_count;
   }
+  st->mu_total = mu_total;
   use_canary = (mu_present && mu_total > 0) ? 0 : 1;
   if (use_canary) st->flags |= HET_ST_CTRL_IS_CANARY;
 
   /* ---- 2. The cells.  het_verdict() is already a pure function of the record, so
      the aggregate reuses it rather than re-deriving liveness -- inheriting every
-     stress disqualifier and the oracle-awareness for free. */
+     stress disqualifier for free. */
   for (i = 0; i < n; i++) {
     uint32_t dq = 0, cv = 0;
     het_verdict_t v = het_verdict(&recs[i], &dq, &cv);
@@ -1711,6 +1493,13 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     if (!recs[i].sync_valid && !recs[i].obs_valid)
       st->flags |= HET_ST_NO_DECODE_CHANNEL;
 
+    /* Runs consumed so far, counted over EVERY cell and not only the sighting
+       ones: n_at_first_sight is a price in runs, so the denominator is the runs
+       that were actually spent. */
+    { int j, seen = 0;
+      for (j = 0; j < nall; j++) if (allruns[j] == recs[i].run_id) seen = 1;
+      if (!seen) allruns[nall++] = recs[i].run_id; }
+
     if (y) {
       st->k++;
       if (deg) { st->n_degen++; st->flags |= HET_ST_DEGEN_SIGHTING; }
@@ -1719,6 +1508,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
         st->k_eff++;
         for (j = 0; j < nruns; j++) if (runs[j] == recs[i].run_id) seen = 1;
         if (!seen) runs[nruns++] = recs[i].run_id;
+        if (st->n_at_first_sight == 0) st->n_at_first_sight = nall;
       }
     }
 
@@ -1908,11 +1698,12 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   }
 
   /* ---- 8. The corroboration tier, layered ON TOP of het_verdict()'s immediate
-     MISMATCH and never suppressing one.  Distinct RUNS, not merely distinct cells:
-     runs are re-seeded and carry a fresh phase/thermal draw, so they are the most
-     independent replicates the harness produces (Q3 3.1, F4). */
-  if (st->oracle == ORACLE_DISALLOWED && st->k > 0)
-    st->tier = (st->k_runs >= 3) ? HET_MT_CONFIRMED : HET_MT_UNCORROBORATED;
+     HET_OBSERVED and never suppressing one.  Distinct RUNS, not merely distinct
+     cells: runs are re-seeded and carry a fresh phase/thermal draw, so they are
+     the most independent replicates the harness produces (Q3 3.1, F4). */
+  if (st->k > 0)
+    st->tier = (st->k_runs >= HET_CORROB_RUNS) ? HET_SIGHT_CORROBORATED
+                                               : HET_SIGHT_UNCONFIRMED;
 }
 
 static const char *het_obs_class_name(het_obs_class c) {
@@ -1924,30 +1715,34 @@ static const char *het_obs_class_name(het_obs_class c) {
   }
 }
 
-static const char *het_tier_name(het_mismatch_tier t) {
+static const char *het_sighting_name(het_sighting_tier t) {
   switch (t) {
-  case HET_MT_CONFIRMED:      return "MISMATCH-CONFIRMED";
-  case HET_MT_UNCORROBORATED: return "MISMATCH-UNCORROBORATED";
-  default:                    return "none";
+  case HET_SIGHT_CORROBORATED: return "CORROBORATED";
+  case HET_SIGHT_UNCONFIRMED:  return "UNCONFIRMED";
+  default:                     return "none";
   }
 }
 
 /* The machine-readable line.  hetlitmus/oracle-compare.sh parses THIS and layers
-   the annotation onto its MATCH/MISMATCH/NO-ORACLE table (Q3 R6: augment, do not
-   replace). */
+   the annotation onto its offline comparison table (Q3 R6: augment, do not
+   replace); hetlitmus/campaign.py schedules from it.  mu_total/can_total are here
+   because a roll-up must be able to see HOW HOT each control layer was without
+   re-reading the per-run lines. */
 static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
-    "HetStats %s oracle=%s cpu_only=%d obs=%s "
-    "R=%d usable=%d k=%d k_eff=%d k_runs=%d degen=%d "
-    "ctrl=%s win_n=%d nwin=%d F_win=%.4f F_cell=%.4f r_hat=%.4f mu_upper=%.4f "
+    "HetStats %s cpu_only=%d obs=%s "
+    "R=%d usable=%d k=%d k_eff=%d k_runs=%d degen=%d first_sight=%d "
+    "ctrl=%s mu_total=%llu can_total=%llu "
+    "win_n=%d nwin=%d F_win=%.4f F_cell=%.4f r_hat=%.4f mu_upper=%.4f "
     "tau_w=%.4f N_eff=%.4f tau_need=%d R_eff=%.4f "
     "p_bound=%.6g P_rep=%.6g acf1=%.4f ks=%s ks_D=%.4f ks_Dcrit=%.4f ks_split=%d "
-    "tier=%s N=%llu frames=%llu flags=0x%x\n",
-    _s->test_name ? _s->test_name : "(none)", het_oracle_name(_s->oracle),
+    "sighting=%s N=%llu frames=%llu flags=0x%x\n",
+    _s->test_name ? _s->test_name : "(none)",
     _s->cpu_only,
     het_obs_class_name(_s->obs), _s->R, _s->R_usable, _s->k, _s->k_eff, _s->k_runs,
-    _s->n_degen,
+    _s->n_degen, _s->n_at_first_sight,
     (_s->flags & HET_ST_CTRL_IS_CANARY) ? "canary" : "mu(T)",
+    (unsigned long long)_s->mu_total, (unsigned long long)_s->can_total,
     _s->win_samples, (int)HET_NWIN, _s->F_win, _s->F_cell,
     (_s->r_hat >= HET_R_POISSON) ? INFINITY : _s->r_hat,
     _s->mu_upper, _s->tau_w, _s->N_eff, _s->tau_runs_needed,
@@ -1955,7 +1750,7 @@ static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
     (_s->flags & HET_ST_KS_UNDERPOWERED) ? "underpowered"
       : (_s->ks_pass ? "pass" : "SPLIT"),
     _s->ks_D, _s->ks_Dcrit, _s->ks_split_window,
-    het_tier_name(_s->tier),
+    het_sighting_name(_s->tier),
     (unsigned long long)_s->N, (unsigned long long)_s->frames_examined,
     _s->flags);
 }
@@ -2141,23 +1936,10 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
         _s->R_usable, _s->N_eff, deff,
         _s->N_eff * _s->p_bound);
     }
-    switch (_s->oracle) {
-    case ORACLE_DISALLOWED:
-      fprintf(_ch, "  This is the CMCM validation claim: forbidden, and not observed "
-                   "under the effort above.  It is consistency evidence, NOT a "
-                   "proof.\n");
-      break;
-    case ORACLE_ALLOWED:
-      fprintf(_ch, "  OBSERVABILITY, NOT VALIDATION: the outcome is PERMITTED, so "
-                   "this bound describes OUR HARNESS's reach on this hardware, not "
-                   "the model.  It feeds B8's stress-tuning priority.\n");
-      break;
-    default:
-      fprintf(_ch, "  CHARACTERIZATION, NEVER VALIDATION: the model is SILENT here, "
-                   "so the bound describes the HARDWARE, and there is no prediction "
-                   "for it to confirm or refute (Q4 R5).\n");
-      break;
-    }
+    fprintf(_ch, "  CHARACTERIZATION, NEVER VALIDATION: the bound describes THIS "
+                 "HARNESS's reach on this hardware under this stress.  This "
+                 "harness carries no prediction, so the bound bears on no model "
+                 "claim (Q4 R5); it feeds B8's stress-tuning priority.\n");
     fprintf(_ch, "  effort: %d run(s) x N=%llu iterations, %llu frames examined.\n",
             _s->R_usable, (unsigned long long)_s->N,
             (unsigned long long)_s->frames_examined);
@@ -2178,7 +1960,8 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
            Bagchi disclaimer stays because on the AMD lane it is stronger, not
            weaker: no AMD heterogeneous litmus-testing prior work exists at all
            (PORT2-reading-list.md), so there is not even a GPU-only number to
-           be tempted by. */
+           be tempted by.  hetlitmus/verify/verdictcheck.py phase 4 reads this
+           sentence to check the harness names its OWN pair. */
         fprintf(_ch,
           "  budget: NOT SIZED.  p_min -- the per-effective-sample rate of the "
           "hardest het behaviour we can actually observe -- is HARDWARE-ONLY and "
@@ -2188,10 +1971,10 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
           "the interconnect.  There is no published numeric het hit-rate for ANY "
           "target, and none whatsoever for AMD.\n"
           "          Derive it ON THE MACHINE THIS BINARY WAS BUILT FOR -- the pair "
-          "%s -- from the ALLOWED-OBSERVED rows (they ARE the observed-rate population, "
-          "at THIS HET_NWIN) and re-run with -DHET_P_MIN=<rate>.  A p_min carried over "
-          "from another target is not a conservative default, it is a different "
-          "machine's number.\n",
+          "%s -- from the rows that DID exhibit their outcome (they ARE the "
+          "observed-rate population, at THIS HET_NWIN) and re-run with "
+          "-DHET_P_MIN=<rate>.  A p_min carried over from another target is not a "
+          "conservative default, it is a different machine's number.\n",
           HET_PAIR_NAME);
       else if ((double)_s->R_usable * _s->N_eff < need)
         fprintf(_ch,
@@ -2250,14 +2033,15 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
       if (HET_NO_CONTROL_MAP)
         fprintf(_ch,
           "  NOTE: this row CO-RUNS NO CONTROL because NO POSITIVE-CONTROL MAP WAS "
-          "READ for %s -- that pair is registered without an oracle, and a control map "
-          "is an oracle-derived object (mu(T) is the nearest ALLOWED neighbour), so\n"
-          "  there is none to borrow.  Nothing marks this row a canary.  A run in which "
+          "READ for %s -- no map is registered for that pair, and a map derived on "
+          "another pair's strength lattice names siblings that are not weakenings\n"
+          "  here, so there is none to borrow.  Nothing marks this row a canary.  A "
+          "run in which "
           "it did not fire is COLD and carries no information, so \"usable cells\" is "
           "defined by firing and the denominator above is R -- the runs executed --\n"
           "  not the usable count, which would report ALWAYS for a row that fired in %d "
           "of %d runs.  It gets NO BOUND, and that is an OMISSION, not a construction: "
-          "the bootstrap control map for a pair with no oracle does not exist yet.\n",
+          "the bootstrap control map for an unregistered pair does not exist yet.\n",
           HET_PAIR_NAME, _s->k, _s->R);
       else
         fprintf(_ch,
@@ -2276,76 +2060,60 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
       "artefact -- a reader stuck on init or on one value yields a spurious "
       "100%%/0%%.\n"
       "  They are REPORTED, not discarded: falsification is one-sided and a genuine "
-      "sighting refutes.  They just do not COUNT toward corroboration.\n",
+      "sighting stands.  They just do not COUNT toward corroboration.\n",
       _s->n_degen, (int)HET_THETA_DISTINCT);
 
-  if (_s->oracle == ORACLE_DISALLOWED) {
-    /* REPRODUCIBILITY first (how many clean runs), then WHAT THOSE RUNS ARE A
-       SIGHTING AGAINST.  The two are independent and were fused once: the
-       CONFIRMED arm asserted "this is a REFUTATION OF THE CMCM's PREDICTION"
-       for every Disallowed row.  Reproducing a sighting makes it REAL; it does
-       not make the oracle row it disagrees with any less of a derivation. */
-    if (_s->tier == HET_MT_CONFIRMED)
+  /* THE SIGHTING TIER: how many independent runs reproduced it, and nothing else.
+     Whether the outcome should have been seen is not a question this harness
+     answers -- the comparison is offline (hetlitmus/oracle-compare.sh). */
+  if (_s->tier != HET_SIGHT_NONE) {
+    if (_s->tier == HET_SIGHT_CORROBORATED)
       fprintf(_ch,
-        "  ** %s ** -- the should-be-FORBIDDEN outcome was observed in %d distinct "
-        "non-degenerate RUN(S).  A decoder artefact does not reproduce across "
-        "re-seeded runs, so the SIGHTING IS REAL and not a constant-read.\n",
-        het_tier_name(_s->tier), _s->k_runs);
+        "  ** SIGHTING %s ** -- the weak outcome was observed in %d distinct "
+        "non-degenerate RUN(S) (>= HET_CORROB_RUNS = %d).  A decoder artefact does "
+        "not reproduce across re-seeded runs, so the SIGHTING IS REAL and not a "
+        "constant-read.  Its reproducibility is the P_rep above, MEASURED -- "
+        "Kirkham's n = 3 => 95%% recipe is the bar for that number, not this one.\n",
+        het_sighting_name(_s->tier), _s->k_runs, (int)HET_CORROB_RUNS);
     else
       fprintf(_ch,
-        /* "one sighting refutes" had NO OBJECT here, and it printed ABOVE the
-           grade-dependent sentence below -- on a capped row the only thing a
-           skimmer could attach it to was the compound model.  What a single
-           sighting settles is one-sidedness (it cannot be explained away by more
-           runs); WHAT it settles a claim about is the next paragraph's call. */
-        "  ** %s ** -- the should-be-FORBIDDEN outcome was observed, but in only %d "
-        "clean run(s) (<3).  BELIEVE IT AND REPORT IT -- falsification is one-sided, "
-        "so one sighting stands on its own and is NOT suppressed -- but a false "
-        "MISMATCH is the most damaging error this campaign can make.  REPRODUCE IT to "
-        ">=3 clean runs before writing it up.  WHAT it is a sighting against is the "
-        "next line, and it is not always the model.\n",
-        het_tier_name(_s->tier), _s->k_runs);
-    /* ...and what it is a sighting AGAINST.  Same two-way split as
-       het_verdict_print, stated again here because this block is what gets
-       pasted into a report. */
+        "  ** SIGHTING %s ** -- the weak outcome was observed, but in only %d clean "
+        "run(s) (< HET_CORROB_RUNS = %d).  BELIEVE IT AND REPORT IT: falsification "
+        "is one-sided, so one sighting stands on its own and is NOT suppressed.  But "
+        "a sighting that does not reproduce is the most damaging thing this campaign "
+        "can write down, so REPRODUCE IT before it is written up.\n",
+        het_sighting_name(_s->tier), _s->k_runs, (int)HET_CORROB_RUNS);
+    if (_s->n_at_first_sight > 0)
+      fprintf(_ch,
+        "  It first fired after %d run(s) of the %d supplied, which is what a fresh "
+        "campaign should budget for it (Q3 F4: grow R, not N).\n",
+        _s->n_at_first_sight, _s->R);
     if (_s->cpu_only)
       fprintf(_ch,
-        "  ** CPU-ONLY CYCLE (D10): NOT a CMCM refutation -- the compound model is "
-        "not under test on an all-CPU cycle.  It indicts x86-TSO on this silicon, or "
-        "the memory type of the shared allocation (memo sect 8 P1).\n");
-    else
-      fprintf(_ch,
-        "  ** THE FINDING IS THAT THIS CAMPAIGN DISAGREES WITH THE ARGUED ORACLE "
-        "ROW.  It INDICTS THAT ROW FIRST, never the CMCM: the row is a DERIVATION "
-        "over cited sources, not a measurement.  Re-derive it from %s -- read that "
-        "row's Source column -- before writing anything down.\n",
-        _s->oracle_source ? _s->oracle_source : "(unrecorded)");
+        "  ** CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc, so no "
+        "cross-device path carried this cycle -- what fired is the host ISA on the "
+        "shared allocation, and the memory type of that allocation is part of what "
+        "it measures (memo sect 8 P1).\n");
   }
 }
 
 /* =========================================================================
- * THE CAMPAIGN STOPPING RULE -- where the hardware hours are saved.  Only the
- * Disallowed rows (the validation claim) and the NO-ORACLE rows
- * (characterization) need a bound at all; the Allowed majority just needs to FIRE
- * ONCE, a positive being self-vouching, so running them to a bound-grade budget
- * buys nothing.  A bound-needing test then stops the moment its bound is met:
- * most converge early and only the stubborn shapes need the long tail (Kirkham
- * 4.2 ranks SB hardest on every chip).
+ * THE CAMPAIGN STOPPING RULE -- where the hardware hours are saved.  ONE rule for
+ * every test, because no test carries a prediction to schedule against: a row
+ * stops once its sighting is CORROBORATED (nothing more is bought by running a
+ * reproduced sighting further), and a row that never fires stops once its bound
+ * is met or its budget is spent.  Most nulls converge early and only the stubborn
+ * shapes need the long tail (Kirkham 4.2 ranks SB hardest on every chip).
+ *
+ * A LONE sighting does NOT stop the row: one clean run cannot rule out a per-run
+ * artefact, so the row keeps running to corroborate -- to budget, today.  The
+ * confirmation window that bounds that wait, and the rate mode that disables the
+ * sighting stop, are not here yet.
  *
  * A pure function of the record stream, like het_verdict() and
  * het_stats_compute(), so the in-binary adaptive loop (HET_ADAPTIVE=1) and
  * hetlitmus/campaign.py's cross-invocation loop apply the SAME policy and
- * statscheck.py can unit-test it from synthetic records.  Per oracle class:
- *   ALLOWED     stop at the first CLEAN sighting (k_eff >= 1, not k >= 1: a
- *               sighting the decode guard rejected may be a constant-read
- *               artefact, and an artefact must not de-schedule a test).
- *   DISALLOWED  a sighting does NOT stop it at 1 -- a MISMATCH is escalated until
- *               corroborated to >=3 distinct clean runs, because an
- *               uncorroborated refutation is the worst thing we could write up.
- *               With no sighting, stop once the bound is met.
- *   NO-ORACLE   same bound-met rule; a sighting is characterization and wants the
- *               full budget (a rate needs more data than an existence).
- *   UNSET       fail closed: no early stop on an untagged harness.
+ * statscheck.py can unit-test it from synthetic records.
  *
  * Stopping on a bound is not data-peeking in the Kirkham 5.1 sense: p_bound is
  * computed only over all-zero records and only shrinks as zero-runs accumulate,
@@ -2363,16 +2131,14 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
  * default p_goal here -- a stopping target is a campaign decision, like p_min. */
 typedef enum {
   HET_CAMPAIGN_CONTINUE = 0,
-  HET_CAMPAIGN_STOP_OBSERVED,    /* Allowed row fired cleanly: self-vouching     */
-  HET_CAMPAIGN_STOP_CONFIRMED,   /* Disallowed row corroborated to >=3 runs      */
-  HET_CAMPAIGN_STOP_BOUND_MET,   /* null row: p_bound <= p_goal                  */
+  HET_CAMPAIGN_STOP_CONFIRMED,   /* sighting corroborated to HET_CORROB_RUNS runs */
+  HET_CAMPAIGN_STOP_BOUND_MET,   /* null row: p_bound <= p_goal                   */
   HET_CAMPAIGN_STOP_BUDGET       /* budget exhausted (the only stop with nothing
-                                    to show; the verdict says what it means)     */
+                                    to show; the outcome says what it means)      */
 } het_campaign_stop_t;
 
 static const char *het_campaign_stop_name(het_campaign_stop_t s) {
   switch (s) {
-  case HET_CAMPAIGN_STOP_OBSERVED:  return "OBSERVED";
   case HET_CAMPAIGN_STOP_CONFIRMED: return "CONFIRMED";
   case HET_CAMPAIGN_STOP_BOUND_MET: return "BOUND-MET";
   case HET_CAMPAIGN_STOP_BUDGET:    return "BUDGET";
@@ -2386,26 +2152,14 @@ static het_campaign_stop_t het_campaign_should_stop(const het_obs_record *recs,
   het_stats_t st;
   if (n <= 0) return HET_CAMPAIGN_CONTINUE;
   het_stats_compute(recs, n, &st);
-  switch (st.oracle) {
-  case ORACLE_ALLOWED:
-    if (st.k_eff >= 1) return HET_CAMPAIGN_STOP_OBSERVED;
-    break;
-  case ORACLE_DISALLOWED:
-    if (st.tier == HET_MT_CONFIRMED) return HET_CAMPAIGN_STOP_CONFIRMED;
-    /* p_bound >= 0 already implies obs == NEVER (it is computed nowhere else);
-       the k == 0 guard restates it so the policy reads as it is meant. */
-    if (st.k == 0 && p_goal > 0.0 && st.p_bound >= 0.0
-        && !(st.flags & HET_ST_BOUND_VACUOUS) && st.p_bound <= p_goal)
-      return HET_CAMPAIGN_STOP_BOUND_MET;
-    break;
-  case ORACLE_NONE:
-    if (st.k == 0 && p_goal > 0.0 && st.p_bound >= 0.0
-        && !(st.flags & HET_ST_BOUND_VACUOUS) && st.p_bound <= p_goal)
-      return HET_CAMPAIGN_STOP_BOUND_MET;
-    break;
-  default:
-    break;
-  }
+  /* The tier is computed from k_eff's runs, so a sighting the decode guard
+     rejected can never de-schedule a test: an artefact must not buy a stop. */
+  if (st.tier == HET_SIGHT_CORROBORATED) return HET_CAMPAIGN_STOP_CONFIRMED;
+  /* p_bound >= 0 already implies obs == NEVER (it is computed nowhere else); the
+     k == 0 guard restates it so the policy reads as it is meant. */
+  if (st.k == 0 && p_goal > 0.0 && st.p_bound >= 0.0
+      && !(st.flags & HET_ST_BOUND_VACUOUS) && st.p_bound <= p_goal)
+    return HET_CAMPAIGN_STOP_BOUND_MET;
   if (budget > 0 && n >= budget) return HET_CAMPAIGN_STOP_BUDGET;
   return HET_CAMPAIGN_CONTINUE;
 }
