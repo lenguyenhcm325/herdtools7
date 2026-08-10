@@ -3,7 +3,7 @@
 #
 # The flag emits a harness for a (CPU ISA x GPU dialect) pair the oracle table
 # does not carry (litmus/hetOracle.ml): every test reads no control map and the
-# stamp discloses the override, so such a run characterizes and never adjudicates.
+# render discloses the override, so such a run characterizes and never adjudicates.
 # That is the right answer for a machine nobody has an oracle for yet -- and the
 # wrong answer for everything else, because it turns "this pair is not registered"
 # from a refusal a human reads into a line of output a campaign scrolls past.

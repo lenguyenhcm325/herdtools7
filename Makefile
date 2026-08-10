@@ -797,8 +797,11 @@ hetlitmus-verdict: | build
 ###               tau-at-cap regime reproduces the run-level bound exactly
 ###   producer    the per-window sub-tallies live BOTH ways on the real emitted scan
 ###   corpus      all 411 carry the post-pass + a decode channel
-###   scheduler   campaign.py stopping policy on a stub runner: Allowed rows stop
-###               at first clean sighting, bound rows at p_goal or budget
+###   stop rule   het_verdict.h's own policy, which branches on no class: a
+###               corroborated sighting stops a row, an unstamped record buys no
+###               stop at all, a null stops at its bound or its budget
+###   scheduler   campaign.py on a stub runner -- still the class-keyed policy it
+###               reads out of a control map, recorded here, not endorsed
 ### --bite: cmp-verified injections into the statistics.  (B7/B7b)
 hetlitmus-stats: | build
 	@ echo
@@ -880,7 +883,8 @@ hetlitmus-obs: | build
 ###             by the windowed scan alone)
 ###   default   every stamped define het_verdict.h reads has an `#ifndef' default
 ###             there, so a lane that stamps nothing still compiles
-### --bite: 5 injections, each required to redden BY NAME.
+### --bite: 7 injections, each required to redden BY NAME -- five into the
+### emitted render and two into the header, since either side can drift.
 hetlitmus-recfields: | build
 	@ echo
 	python3 hetlitmus/verify/recfields.py
@@ -1025,11 +1029,11 @@ hetlitmus-hipbuild: | build
 
 ### hetlitmus-noracle: no committed script passes `-allow-no-oracle' (D-MV4).
 ### The flag emits a harness for a (CPU ISA x GPU dialect) pair the oracle table
-### does not carry -- every test reading no control map, the override disclosed in
-### the stamp -- which is right for a human bringing up a new machine and wrong
-### for a script, because in a script it turns a refusal a human reads into a
-### line a campaign scrolls past.  The gate reads the tree; --bite plants the
-### flag in a copy of a committed script and requires the gate to redden.
+### does not carry -- every test reading no control map, the override disclosed by
+### a line in the render -- which is right for a human bringing up a new machine
+### and wrong for a script, because in a script it turns a refusal a human reads
+### into a line a campaign scrolls past.  The gate reads the tree; --bite plants
+### the flag in a copy of a committed script and requires the gate to redden.
 hetlitmus-noracle:
 	@ echo
 	bash hetlitmus/verify/allow-no-oracle-gate.sh

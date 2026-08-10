@@ -566,6 +566,19 @@ end
             match pair with
             | HetOracle.Oracle _ -> false
             | HetOracle.Characterize _ | HetOracle.Override -> true in
+          (* WHY this harness names no mu(T).  Three different facts, and only one
+             of them is a claim about the strength lattice: no map was read for
+             this pair at all; a map was read and its Mu column names none for this
+             row; or no weaker structural sibling EXISTS (the map's `none'
+             sentinel, whose MuRule column says why).  Emitted verbatim, so a
+             harness sitting in a results tree says which one it is. *)
+          let mu_absent_why =
+            if no_control_map then
+              "no positive-control map was read for this pair"
+            else if HetControlMap.no_mutant_exists cmap tname then
+              "no strictly weaker structural sibling exists for this test"
+            else
+              "the positive-control map names no mu(T) for this test" in
           (* What goes in HET_CANARY_NAME / _rec.canary_name.  A name is NOT a
              co-run signal -- the map names a canary for every test, including the
              ones that are the canary.  HET_CANARY_COMPILED_IN, set from the
@@ -2283,7 +2296,10 @@ end
             s "    _rec.spin_lanes = HET_SPIN_LANES;\n" ;
             (match mu_name with
              | Some m -> s (Printf.sprintf "    _rec.control_name = \"%s\";\n" m)
-             | None -> s "    _rec.control_name = NULL;  /* no mu(T): at the lattice floor */\n") ;
+             | None ->
+                s (Printf.sprintf
+                     "    _rec.control_name = NULL;  /* no mu(T): %s */\n"
+                     mu_absent_why)) ;
             (match canary_named with
              | Some c -> s (Printf.sprintf "    _rec.canary_name = \"%s\";\n" c)
              | None -> s "    _rec.canary_name = NULL;\n") ;
@@ -2444,12 +2460,11 @@ end
                 s "// interleaving of T's own shape\" -- and NOTHING AT ALL if the\n" ;
                 s "// control did not fire (het_verdict.h).\n"
               end else begin
-                (* At the lattice floor there is nothing left to weaken, so this
-                   harness carries the canary only. *)
-                s "// This test is at the lattice floor, so it has no strictly weaker\n" ;
-                s "// structural sibling (Layer A) to co-run.  It carries the Layer-B\n" ;
-                s "// canary ONLY, which is what makes a non-observation here mean \"not\n" ;
-                s "// exposed on a demonstrably HOT harness\" instead of nothing at all.\n"
+                s (Printf.sprintf
+                     "// No Layer-A mu(T) co-runs here: %s.\n" mu_absent_why) ;
+                s "// This harness carries the Layer-B canary ONLY, which is what makes\n" ;
+                s "// a non-observation here mean \"not exposed on a demonstrably HOT\n" ;
+                s "// harness\" instead of nothing at all.\n"
               end
             end ;
             s dialect.gd_shared_mem_note ;
@@ -2465,8 +2480,8 @@ end
             (* WHAT THE PAIR ROW STAMPS, ahead of the runtime headers that read
                it.  The machine words -- the two halves of the interconnect
                noise, the link between them, this part's last level -- are claims
-               about silicon, so an unregistered pair stamps none of them and
-               the headers' #ifndef defaults name the mechanism instead: a
+               about silicon, so a pair with no machine row stamps none of them
+               and the headers' #ifndef defaults name the mechanism instead: a
                missing define can only weaken a claim.  The two build facts below
                are stamped by every pair, because they are true of the binary
                whatever the pair row says.  HET_PLACE_LEVER is separate again: the
@@ -2485,10 +2500,21 @@ end
                 if m.HetOracle.mc_alglave_zero then
                   s "#define HET_ALGLAVE_ZERO_MEASURED 1\n"
              | None ->
-                s "/* No machine defines: this harness's (CPU ISA x GPU dialect) pair\n" ;
-                s "   is unregistered, so it names no silicon and het_verdict.h's\n" ;
-                s "   generic host/device wording stands. */\n") ;
+                s "/* No machine defines: no machine row backs this (CPU ISA x GPU\n" ;
+                s "   dialect) pair, so this harness names no silicon and\n" ;
+                s "   het_verdict.h's generic host/device wording stands. */\n") ;
             s (Printf.sprintf "#define HET_PAIR_NAME %S\n" pair_label) ;
+            (* THE OVERRIDE, DISCLOSED IN BAND.  `-allow-no-oracle' emits for a
+               pair the table does not carry at all; months later this render is
+               all a reader of a results tree has to tell that emission from a
+               registered one. *)
+            (match pair with
+             | HetOracle.Override ->
+                s "/* EMITTED UNDER -allow-no-oracle: no row of litmus/hetOracle.ml\n" ;
+                s "   carries this (CPU ISA x GPU dialect) pair, so this harness was\n" ;
+                s "   emitted past the refusal by hand.  It read no positive-control\n" ;
+                s "   map and names no machine. */\n"
+             | HetOracle.Oracle _ | HetOracle.Characterize _ -> ()) ;
             if no_control_map then s "#define HET_NO_CONTROL_MAP 1\n" ;
             (match dialect.gd_place_lever with
              | Some lever -> s (Printf.sprintf "#define HET_PLACE_LEVER %S\n" lever)

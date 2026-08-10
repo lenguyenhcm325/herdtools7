@@ -65,14 +65,17 @@ AARCH64_TESTS = ["MP-cg-sys-acqrel-2s", "MP-cg-sys-acquire", "MP-cg-sys-relaxed"
 AARCH64_SIDE = ["control-map.csv", "expected-nvidia.csv"]
 
 # One HetStats machine line, the whole interface between a harness and
-# campaign.py.  A null with a measured dispersion, so a bound is reachable and
+# campaign.py, in the field order and field set het_stats_line prints -- a stub
+# that speaks a shape the runtime cannot produce is testing a protocol nobody
+# implements.  A null with a measured dispersion, so a bound is reachable and
 # nothing fires: what the scheduler does with it is the phase's subject.
-STUB_STATS = ("HetStats %s oracle=NO-ORACLE obs=Never k=0 k_eff=0 k_runs=0 "
-              "tier=none mu_upper=2.9957 tau_w=1.28 N_eff=100 tau_need=1 "
-              "R_eff=100 p_bound=0.029957 P_rep=-1 R=10 usable=10 degen=0 "
-              "ctrl=none win_n=1280 nwin=128 F_win=1.05 F_cell=1.02 r_hat=inf "
-              "acf1=0.01 ks=pass ks_D=0.1 ks_Dcrit=0.2 ks_split=-1 N=100000 "
-              "frames=100000 flags=0x0")
+STUB_STATS = ("HetStats %s cpu_only=0 obs=Never R=10 usable=10 k=0 k_eff=0 "
+              "k_runs=0 degen=0 first_sight=0 ctrl=canary mu_total=0 "
+              "can_total=5000 win_n=1280 nwin=128 F_win=1.05 F_cell=1.02 "
+              "r_hat=inf mu_upper=2.9957 tau_w=1.28 N_eff=100 tau_need=1 "
+              "R_eff=100 p_bound=0.029957 P_rep=-1 acf1=0.01 ks=pass ks_D=0.1 "
+              "ks_Dcrit=0.2 ks_split=-1 sighting=none N=100000 frames=100000 "
+              "flags=0x0")
 
 # The stand-in compiler: `-c' writes the object, a link writes an executable whose
 # body is @@BODY@@.  It is what lets the chain reach the campaign on a box with no
@@ -125,17 +128,21 @@ echo "stub-probe: wrote $RESULTS/probe.txt"
 BAD_PROBE = "#!/bin/sh\necho 'stub-probe: the device vanished' >&2\nexit 9\n"
 
 # A runner whose one line WOULD be an adjudication under a control map: k_eff>=1
-# stops an Allowed row OBSERVED, and k_runs>=3 corroborates a Disallowed row into
-# CONFIRMED.  Under --characterization neither stop may be reachable.
+# stops an Allowed row OBSERVED and k_runs>=3 corroborates a Disallowed row into
+# CONFIRMED -- campaign.py's class-keyed scheduling, which it reads off the map and
+# which het_verdict.h's own stop rule no longer has.  Under --characterization
+# neither stop may be reachable.  The line is the shape het_stats_line prints: it
+# carries no class of its own, and campaign.py's parser keeps every key=value it
+# does not read, so a drifted field here would go unnoticed.
 MATCHY_RUNNER = r'''#!/usr/bin/env python3
 import os, sys
 d = sys.argv[1]
-print("HetStats %s oracle=Disallowed obs=Sometimes k=1 k_eff=1 k_runs=3 "
-      "tier=MATCH-would-be mu_upper=0 tau_w=1.28 N_eff=100 tau_need=1 R_eff=0 "
-      "p_bound=-1 P_rep=0.632 R=10 usable=10 degen=0 ctrl=canary win_n=1280 "
-      "nwin=128 F_win=1.05 F_cell=1.02 r_hat=inf acf1=0.01 ks=pass ks_D=0.1 "
-      "ks_Dcrit=0.2 ks_split=-1 N=100000 frames=100000 flags=0x0"
-      % os.path.basename(d))
+print("HetStats %s cpu_only=0 obs=Sometimes R=10 usable=10 k=1 k_eff=1 k_runs=3 "
+      "degen=0 first_sight=1 ctrl=canary mu_total=0 can_total=5000 win_n=1280 "
+      "nwin=128 F_win=1.05 F_cell=1.02 r_hat=inf mu_upper=0 tau_w=1.28 N_eff=100 "
+      "tau_need=1 R_eff=0 p_bound=-1 P_rep=0.632 acf1=0.01 ks=pass ks_D=0.1 "
+      "ks_Dcrit=0.2 ks_split=-1 sighting=CORROBORATED N=100000 frames=100000 "
+      "flags=0x0" % os.path.basename(d))
 '''
 
 PATHS_SHIM = ('HETL="%s"\nREPO="%s"\nBIN="%s"\nLITMUS7="%s"\nLIBDIR="%s"\n'

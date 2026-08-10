@@ -1481,7 +1481,12 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   for (i = 0; i < n; i++) {
     uint32_t dq = 0, cv = 0;
     het_verdict_t v = het_verdict(&recs[i], &dq, &cv);
-    int y   = (het_reported_count(&recs[i]) >= 1);
+    /* An UNSTAMPED cell is read by nothing here either: het_verdict() stops at
+       rec_magic, so every count below it -- the target tallies a sighting would be
+       scored from included -- is whatever memset left.  Without this the aggregate
+       would let a harness the emitter built wrong corroborate itself and stop. */
+    int stamped = !(dq & HET_DQ_REC_UNSTAMPED);
+    int y   = stamped && (het_reported_count(&recs[i]) >= 1);
     int deg = het_cell_degenerate(&recs[i]);
     uint64_t tot = het_ctrl_total(&recs[i], use_canary);
     uint64_t sum = 0;
@@ -2068,13 +2073,21 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
      answers -- the comparison is offline (hetlitmus/oracle-compare.sh). */
   if (_s->tier != HET_SIGHT_NONE) {
     if (_s->tier == HET_SIGHT_CORROBORATED)
+      /* The reproducibility clause follows the number: P_rep is suppressed
+         whenever the stationarity gate did not pass or no cell survived the
+         decode guard, and a tier that quotes a number the block above refused to
+         report is quoting a -1. */
       fprintf(_ch,
         "  ** SIGHTING %s ** -- the weak outcome was observed in %d distinct "
         "non-degenerate RUN(S) (>= HET_CORROB_RUNS = %d).  A decoder artefact does "
         "not reproduce across re-seeded runs, so the SIGHTING IS REAL and not a "
-        "constant-read.  Its reproducibility is the P_rep above, MEASURED -- "
-        "Kirkham's n = 3 => 95%% recipe is the bar for that number, not this one.\n",
-        het_sighting_name(_s->tier), _s->k_runs, (int)HET_CORROB_RUNS);
+        "constant-read.  %s\n",
+        het_sighting_name(_s->tier), _s->k_runs, (int)HET_CORROB_RUNS,
+        (_s->P_rep >= 0.0)
+          ? "Its reproducibility is the P_rep above, MEASURED -- Kirkham's n = 3 "
+            "=> 95% recipe is the bar for that number, not this one."
+          : "HOW OFTEN it reproduces is NOT reported: P_rep is suppressed above, "
+            "so this tier is a count of clean runs and nothing more.");
     else
       fprintf(_ch,
         "  ** SIGHTING %s ** -- the weak outcome was observed, but in only %d clean "

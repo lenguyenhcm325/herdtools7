@@ -207,6 +207,14 @@ BITES = [
      lambda s: s.replace("#define HET_LINK_NAME", "#define HET_LINK_NAM")),
     ("a knob loses its #ifndef default in het_verdict.h", "no #ifndef default",
      None, lambda s: s.replace("#ifndef HET_PAIR_NAME", "#if 0")),
+    # THE OTHER DIRECTION.  The two sides drift when EITHER moves, so the header
+    # half is injected too: a member renamed or deleted in het_obs_record leaves
+    # every render writing a field the record no longer has, and property A must
+    # name the field rather than the file.
+    ("the record stamp field renamed in the header", "_rec.rec_magic,",
+     None, lambda s: s.replace("  uint32_t rec_magic;", "  uint32_t rec_stamp;")),
+    ("a record member deleted from the header", "_rec.spin_lanes,",
+     None, lambda s: s.replace("  int spin_lanes;", "")),
 ]
 
 

@@ -740,6 +740,13 @@ stop("vacuous-bound-never-meets-a-goal",
 stop("unstamped-records-fail-closed-to-budget",
      stream(POISSON_CELLS, rec_magic=0),
      10, 0.05, "BUDGET")
+# ... and the same holds when the unstamped stream is FULL OF SIGHTINGS in distinct
+# runs.  Every count below rec_magic is then memset residue, so scoring it would let
+# a harness the emitter built wrong corroborate itself into CONFIRMED -- the one
+# stop that means "nothing further is bought by running this row".
+stop("unstamped-sightings-earn-no-corroboration",
+     observed(stream(POISSON_CELLS, rec_magic=0), CORROB_RUNS),
+     10, 0.05, "BUDGET")
 
 
 # ---------------------------------------------------------------------------
@@ -2077,6 +2084,15 @@ def phase5_stops(lines, quiet):
 # is its whole interface.  The stub emits deterministic lines per (test, invocation),
 # so the pooling arithmetic and the stop decisions are pinned exactly -- e.g. the
 # pooled bound 2.9957/(100*i) crosses p_goal=0.01 at exactly the third invocation.
+#
+# WHAT IS PINNED HERE IS campaign.py AS IT STANDS, not a target design.  Its policy
+# is still class-keyed -- it reads Allowed/Disallowed/NO-ORACLE out of a control map,
+# sweeps the Allowed rows first, stops one at its first clean sighting, and calls a
+# corroborated sighting on a Disallowed row a stop-everything event.  het_verdict.h's
+# own rule branches on no class at all (it stops on corroboration, on the bound, or
+# on the budget), so these two policies have already diverged; the redesign that
+# closes the gap owns this phase's rewrite.  Until then the assertions below record
+# the behaviour rather than endorse it.
 # ---------------------------------------------------------------------------
 STUB_RUNNER = r'''#!/usr/bin/env python3
 import os, sys
@@ -2379,9 +2395,11 @@ def phase6_campaign(quiet):
     if bad:
         print("\nSCHEDULER FAILED: %d problem(s)." % bad)
         return 1
-    print("\nSCHEDULER OK (Allowed sweep first; fire-once stops at the sighting; "
-          "the pooled bound crosses p_goal at exactly the predicted invocation; "
-          "a refutation stops the campaign loudly; seeds are fresh per invocation)")
+    print("\nSCHEDULER OK -- campaign.py behaves as it is written, which is still "
+          "class-keyed (Allowed sweep first; fire-once stops at the sighting; a "
+          "corroborated sighting stops the campaign loudly) and no longer mirrors "
+          "het_verdict.h's classless rule.  The pooled bound crosses p_goal at "
+          "exactly the predicted invocation; seeds are fresh per invocation.")
     return 0
 
 

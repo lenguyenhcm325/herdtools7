@@ -109,14 +109,15 @@ half-written harness directory is indistinguishable from a complete one to every
 script that globs for them.
   $ mkdir absent
   $ litmus7 -gpu-target hip -o absent ../het/MP-cg-sys-relaxed.litmus 2>&1 >/dev/null; echo "exit $?"
-  HetLitmus REFUSED (het) ../het/MP-cg-sys-relaxed.litmus: no oracle is registered for the CPU-ISA x GPU-dialect pair (AArch64, hip).  The model prediction a harness carries belongs to the PAIR, so tagging this one from a neighbouring row would stamp it with a prediction derived for another machine.  Registered pairs: (AArch64, cuda), (X86_64, hip), (X86_64, cuda).  Add the pair to litmus/hetOracle.ml, or pass -allow-no-oracle to emit it as a characterization-only harness (new hardware only; the stamp discloses the override).
+  HetLitmus REFUSED (het) ../het/MP-cg-sys-relaxed.litmus: no oracle is registered for the CPU-ISA x GPU-dialect pair (AArch64, hip).  The model prediction a harness carries belongs to the PAIR, so tagging this one from a neighbouring row would stamp it with a prediction derived for another machine.  Registered pairs: (AArch64, cuda), (X86_64, hip), (X86_64, cuda).  Add the pair to litmus/hetOracle.ml, or pass -allow-no-oracle to emit it as a characterization-only harness (new hardware only; the render discloses the override).
   exit 3
   $ ls absent
 
 (e) ...and `-allow-no-oracle' is the disclosed way past it, for a machine that is
-in no row yet.  It emits, and what it emits names its own pair and admits it read
-no control map -- a harness emitted past a refusal must not read like a registered
-one in a results tree six months later.  No committed script passes this flag;
+in no row yet.  It emits, and what it emits names its own pair, admits it read no
+control map, and says in the render that it was emitted under the flag -- a harness
+emitted past a refusal must not read like a registered one in a results tree six
+months later.  No committed script passes this flag;
 hetlitmus/verify/allow-no-oracle-gate.sh enforces that over the tree.
   $ mkdir override
   $ litmus7 -allow-no-oracle -gpu-target hip -o override ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1; echo "exit $?"
@@ -130,6 +131,15 @@ hetlitmus/verify/allow-no-oracle-gate.sh enforces that over the tree.
   $ grep -E '^#define HET_(PAIR_NAME|NO_CONTROL_MAP)' override/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
   #define HET_PAIR_NAME "(AArch64, hip)"
   #define HET_NO_CONTROL_MAP 1
+
+Those two defines are exactly what a REGISTERED pair with no map stamps as well
+(section (c)), so neither of them says a refusal was overridden.  One line does,
+and it is the whole in-band trace: the flag is a human's, typed once, and the
+person reading the results tree afterwards is not that human.
+  $ grep -c 'EMITTED UNDER -allow-no-oracle' override/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
+  1
+  $ grep -c 'EMITTED UNDER -allow-no-oracle' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu || true
+  0
 
 (f) CROSS-VENDOR RESIDUE IN THE RENDER.  A single-vendor harness still carries
 comparative comments -- het_alloc_hip.inc explains the HIP lane by contrast with

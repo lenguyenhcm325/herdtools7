@@ -139,7 +139,12 @@ invoke() {
 check_machinery() { # log test -- the LINE SHAPES a rung reads its result off
   local log="$1" t="$2" bad=0
   grep -q '^HetLitmus: shared-mem mode=' "$log" || { echo "    MISSING: shared-mem banner"; bad=1; }
-  grep -qE "^HetVerdict $t \[[A-Z]+\]( CPU-ONLY)? run=[0-9]+: [A-Z-]+$" "$log" \
+  # The test NAME is data, not a pattern: `2+2W-cg-sys-relaxed' interpolated into
+  # an ERE is a quantifier and matches nothing a harness prints, so the name is
+  # compared as a STRING and only the shape is a regex.
+  awk -v t="$t" '$1 == "HetVerdict" && $2 == t &&
+                 $0 ~ /^HetVerdict [^ ]+ \[[A-Z]+\]( CPU-ONLY)? run=[0-9]+: [A-Z-]+$/ \
+                 { found = 1 } END { exit !found }' "$log" \
     || { echo "    MISSING: HetVerdict frame line"; bad=1; }
   grep -q "^HetStats $t cpu_only=" "$log" || { echo "    MISSING: HetStats machine line"; bad=1; }
   grep -q "^HetStats $t: " "$log"         || { echo "    MISSING: HetStats human block"; bad=1; }
@@ -263,7 +268,7 @@ if [ -d "$TESTS_DIR/$T3" ]; then
   [ "$rc" -eq 0 ] || { echo "  FAIL  rc=$rc"; r3=1; }
   check_machinery "$log" "$T3" || r3=1
   grep -q '#define HET_CONTROL_COMPILED_IN 1' "$TESTS_DIR/$T3/$T3.cu" || { echo "    MISSING: no mu(T) compiled in"; r3=1; }
-  k="$(grep -m1 "^HetStats $T3 oracle=" "$log" | tr ' ' '\n' | sed -n 's/^k=//p')"
+  k="$(grep -m1 -F "HetStats $T3 cpu_only=" "$log" | tr ' ' '\n' | sed -n 's/^k=//p')"
   echo "    frame:  $(grep -m1 "^HetVerdict $T3 " "$log" | cut -c1-140)"
   echo "    k=${k:-?}"
   if [ -n "${k:-}" ] && [ "$k" != "0" ]; then

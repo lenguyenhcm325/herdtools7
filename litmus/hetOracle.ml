@@ -132,7 +132,7 @@ let table = [
 
 (* `-allow-no-oracle' (D-MV4).  Legitimate only for an UNREGISTERED pair on new
    hardware, where refusing would mean the machine cannot be measured at all.
-   The use is disclosed in the stamp every run prints, and no committed script
+   The use is disclosed by a line the render carries, and no committed script
    passes it (hetlitmus/verify/allow-no-oracle-gate.sh enforces that over the
    tree, and is bitten). *)
 let allow_no_oracle = ref false
@@ -166,7 +166,7 @@ let resolve ~cpu_isa ~target =
           this one from a neighbouring row would stamp it with a prediction \
           derived for another machine.  Registered pairs: %s.  Add the pair to \
           litmus/hetOracle.ml, or pass -allow-no-oracle to emit it as a \
-          characterization-only harness (new hardware only; the stamp discloses \
+          characterization-only harness (new hardware only; the render discloses \
           the override)."
          (pair_name ~cpu_isa ~target) (registered_doc ())
 
