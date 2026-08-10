@@ -686,19 +686,22 @@ hetlitmus-cpustress: | build
 
 ### hetlitmus-controlmap: the positive control (hetlitmus/docs/positive-control.md).
 ### Every test off the lattice floor -- 333 of the 411 -- must name a mu(T) that
-### EXISTS, is structurally identical, is at the floor of the strength lattice and
-### carries the same scopes; the other 78 ARE the floor and name `none'.  It is
+### EXISTS, is structurally identical, is at the floor of the strength lattice,
+### carries the same scopes, and holds the rest of the experiment fixed (same init
+### block, `scopes:' tree and condition, so it counts T's outcome and not another
+### one); the other 78 ARE the floor and name `none'.  It is
 ### re-derived from the corpus sources and never from the test's name
 ### (MP-gc-sys-acquire and two siblings do not exist at all).  It fails closed: a
 ### missing mutant breaks the build rather than skipping the control, because a
 ### silently absent control does not weaken a null -- it makes it unfalsifiable.
 ### CUDA-free.
-### --bite is that fail-closed claim's evidence: five injections into a scratch
+### --bite is that fail-closed claim's evidence: six injections into a scratch
 ### copy of the corpus + map (mu's .litmus deleted, the Mu column rewritten from
 ### the test's NAME, mu swapped for another shape, mu swapped for a STRICTLY
-### STRONGER sibling, and the retired 8-column schema fed to both this gate and
-### the emitter's own reader), each of which must redden by the NAME of the
-### property it broke.
+### STRONGER sibling, the retired 8-column schema fed to both this gate and the
+### emitter's own reader, and a mu whose accesses and annotations all still match
+### while its `exists' counts a different outcome), each of which must redden by
+### the NAME of the property it broke.
 hetlitmus-controlmap: | build
 	@ echo
 	python3 hetlitmus/verify/controlmap.py --check
@@ -772,7 +775,7 @@ hetlitmus-lattice: | build
 ###                      not the deliverable; the sentence is.
 ###   Phase 3 (corpus)   all 411 emitted harnesses stamp rec_magic exactly once,
 ###                      co-run the mu(T)/canary population control-map.csv gives
-###                      them (16 / 409), and carry no retired vocabulary at all.
+###                      them (333 / 409), and carry no retired vocabulary at all.
 ###   Phase 4 (machine)  which MACHINE the printout names.  The interconnect prose
 ###                      comes from defines the emitter stamps out of the PAIR
 ###                      table, scraped here from real emissions: unstamped is the

@@ -1083,12 +1083,12 @@ end
             (* HARD INVARIANT, checked here for EVERY instance: the emitted
                weak-behaviour detector may never be a CONSTANT.  A constant-true
                one reports the weak behaviour on every run; a constant-false one
-               reports "Never" on every run, and a spurious "Never" on a
-               should-be-forbidden test reads as confirmation of the memory model.
-               On a control the same two failures read as "permanently cold" and
-               "every null credible for free", and both look like a working
-               control from outside.  Refusing to emit is structural, so it cannot
-               regress (env-research/impl-briefs/SHARED-CHARGE.md). *)
+               reports "Never" on every run, and a spurious "Never" is an
+               observation nothing produced.  On a control the same two failures
+               read as "permanently cold" and "every null credible for free", and
+               both look like a working control from outside.  Refusing to emit
+               is structural, so it cannot regress
+               (env-research/impl-briefs/SHARED-CHARGE.md). *)
             let weak_expr =
               if has_observers then mk_and [cond_expr ; locv] else cond_expr in
             if is_true weak_expr || is_false weak_expr then

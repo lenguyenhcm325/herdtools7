@@ -160,11 +160,12 @@ CASES = [
     case("canary-only-when-mu-is-cold", "NOT-OBSERVED-CANARY-ONLY",
          cv=["CANARY_ONLY"], control_target_count=0, canary_target_count=500),
 
-    # 395 of the 411 rows co-run no mu at all -- the map names one only where its
-    # derivation calls for one.  Their null is the weaker tier for a DIFFERENT
-    # reason, and CV_CANARY_ONLY -- "Layer B fired, Layer A did not" -- must NOT be
-    # raised where no Layer A was compiled in, or a real diagnostic becomes
-    # boilerplate on most of the corpus.
+    # 78 of the 411 rows co-run no mu at all: they ARE the lattice floor, so no
+    # strictly weaker structural sibling of them exists.  Their null is the weaker
+    # tier for a DIFFERENT reason, and CV_CANARY_ONLY -- "Layer B fired, Layer A
+    # did not" -- must NOT be raised where no Layer A was compiled in, or a real
+    # diagnostic becomes boilerplate on the 78 corpus rows of 411 that ARE the
+    # floor.
     case("canary-only-when-no-mu-is-compiled-in", "NOT-OBSERVED-CANARY-ONLY",
          control_compiled_in=0, control_target_count=0, canary_target_count=500),
 

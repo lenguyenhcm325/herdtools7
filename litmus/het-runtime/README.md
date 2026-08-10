@@ -111,8 +111,8 @@ exact rule the harness runs.  A re-declared copy in the test would be free to
 drift away from the one that ships — which is how you end up gating a rule
 nobody executes.
 
-See `env-research/Q4-positive-control.md` (2.3 the mutation lattice, 2.4 the
-two-layer design, 3.2 the record fields, 3.3 the decision rule, 5 the
+See `env-research/Q4-positive-control.md` (2.3 the corpus grid as a lattice,
+2.4 the two-layer design, 3.2 the record fields, 3.3 the decision rule, 5 the
 reporting stance) and `hetlitmus/docs/positive-control.md`.
 
 ## het_alloc_{cuda,hip}.inc, het_noise_{cuda,hip}.inc — B1/B5: the two allocators

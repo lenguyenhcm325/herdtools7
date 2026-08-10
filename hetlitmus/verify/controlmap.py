@@ -183,6 +183,15 @@ class Test:
         # different experiment -- but the derivation holds it fixed so a
         # cta-scoped sibling cannot be crowned mu of a sys-scoped test.
         self.scopes = set()
+        # The rest of the experiment, kept VERBATIM.  Ordering strength and the
+        # access structure do not pin the outcome being counted, the initial
+        # state it is counted from, or the scope tree the harness is placed in:
+        # a sibling that weakens the ordering and also moves any of those counts
+        # a different window, so its firing would vouch for something T is not
+        # being watched for.  audit_map holds all three fixed between T and mu(T).
+        self.init_block = ""
+        self.scopes_line = ""
+        self.cond_line = ""
 
     # -- the structural fingerprint mu(T) must match exactly ----------------
     def structure(self):
@@ -190,6 +199,12 @@ class Test:
             (p, self.dev[p], tuple(self.accesses[p]))
             for p in sorted(self.accesses)
         )
+
+    # -- what must be IDENTICAL, not merely weaker, keyed by what it is -----
+    def context(self):
+        return (("init block", self.init_block),
+                ("`scopes:' tree", self.scopes_line),
+                ("condition", self.cond_line))
 
     def strength(self):
         return (self.cpu_strength, self.gpu_strength)
@@ -212,22 +227,42 @@ def parse_litmus(path):
     with open(path) as fh:
         raw = [_strip_comment(l).rstrip("\n") for l in fh]
 
-    # ---- init block: "0:X1=x;"  ->  regmap[(0,"X1")] = "x"
+    # ---- init block: "0:X1=x;"  ->  regmap[(0,"X1")] = "x", plus the block
+    # itself, verbatim-modulo-indentation (audit_map holds it fixed).
     regmap = {}
+    init_lines = []
     in_init = False
     for l in raw:
         s = l.strip()
         if s.startswith("{"):
             in_init = True
             s = s[1:]
+            init_lines.append("{")
         if in_init:
             if "}" in s:
                 s = s[: s.index("}")]
                 in_init = False
+                tail = "}"
+            else:
+                tail = None
+            if s.strip():
+                init_lines.append(s.strip())
+            if tail:
+                init_lines.append(tail)
             for decl in s.split(";"):
                 m = re.match(r"^\s*(\d+):(\w+)\s*=\s*(\w+)\s*$", decl)
                 if m:
                     regmap[(int(m.group(1)), m.group(2))] = m.group(3)
+    t.init_block = "\n".join(init_lines)
+
+    # ---- the outcome being counted and the scope tree it is counted in.  Both
+    # sit BELOW the instruction columns, so the body loop below stops at them and
+    # nothing else in this file reads them.
+    t.scopes_line = "\n".join(l.strip() for l in raw
+                              if re.match(r"^\s*scopes\s*:", l))
+    t.cond_line = "\n".join(
+        l.strip() for l in raw
+        if re.match(r"^\s*(exists|forall|~\s*exists|locations)\b", l))
 
     # ---- the proc header row: " P0:cpu | P1:gpu ;"
     hdr_i = None
@@ -544,6 +579,21 @@ def audit_map(text, tests):
             errors.append("%s: mu(T)=%s changes the GPU scope %s -> %s, which is "
                           "a different experiment and not an ordering weakening"
                           % (name, mu, sorted(T.scopes), sorted(tests[mu].scopes)))
+        # The rest of the experiment, held IDENTICAL.  `weakening_of' compares the
+        # access structure and the strength, which leaves the outcome counted, the
+        # state it is counted from and the scope tree free to move -- and a mu that
+        # moved one of them fires in a window T is not being watched in, so its
+        # count would vouch for the wrong thing while every check above stayed
+        # green.
+        for what, mine in T.context():
+            theirs = dict(tests[mu].context())[what]
+            if not mine:
+                errors.append("%s: has no %s to hold mu(T) to" % (name, what))
+            elif mine != theirs:
+                errors.append("%s: mu(T)=%s has a different %s (%r vs %r) -- a "
+                              "weakening may not move the experiment"
+                              % (name, mu, what,
+                                 theirs.replace("\n", " "), mine.replace("\n", " ")))
         if alt != "-":
             if alt not in tests:
                 errors.append("%s: MuAlt=%s does not exist as a .litmus"
@@ -587,7 +637,9 @@ HEADER = [
     "# What --check machine-checks is the property the vouch rests on: mu(T) is",
     "# STRUCTURALLY IDENTICAL to T (same procs, devices and ordered accesses -- a pure",
     "# ordering weakening, not another program), STRICTLY WEAKER componentwise on the",
-    "# (cpu,gpu) strength lattice, at the floor of it, and annotated with the same scopes.",
+    "# (cpu,gpu) strength lattice, at the floor of it, annotated with the same scopes,",
+    "# and identical to T in the rest of the experiment: same init block, same",
+    "# `scopes:' tree and same condition, so it counts T's outcome and not another.",
     "#",
     "# " + HEADER_LINE,
 ]
@@ -903,6 +955,27 @@ def bite(d):
                   else "*** ACCEPTED (it must refuse the legacy header)"))
             if not ok:
                 fails += 1
+
+        # 7. mu(T) keeps every access and every annotation and counts a DIFFERENT
+        #    OUTCOME.  Nothing else here sees it: the structure matches, the
+        #    strength is still the floor and the scopes are still T's -- and the
+        #    control now fires in a window T is not being watched in.
+        def move_cond(sd):
+            p = os.path.join(sd, mu + ".litmus")
+            src = open(p).read()
+            m = re.search(r"^(\s*exists\b.*)$", src, re.M)
+            if not m:
+                return False
+            new = re.sub(r"=(\d+)", lambda g: "=%d" % (int(g.group(1)) + 7),
+                         m.group(1), count=1)
+            if new == m.group(1):
+                return False
+            with open(p, "w") as fh:
+                fh.write(src[:m.start(1)] + new + src[m.end(1):])
+            return True
+        run("7", "%s: mu(T)=%s counts a DIFFERENT outcome (its `exists' moved)"
+                 % (victim, mu),
+            move_cond, "%s: mu(T)=%s has a different condition" % (victim, mu))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

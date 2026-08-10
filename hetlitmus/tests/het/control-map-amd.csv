@@ -30,7 +30,9 @@
 # What --check machine-checks is the property the vouch rests on: mu(T) is
 # STRUCTURALLY IDENTICAL to T (same procs, devices and ordered accesses -- a pure
 # ordering weakening, not another program), STRICTLY WEAKER componentwise on the
-# (cpu,gpu) strength lattice, at the floor of it, and annotated with the same scopes.
+# (cpu,gpu) strength lattice, at the floor of it, annotated with the same scopes,
+# and identical to T in the rest of the experiment: same init block, same
+# `scopes:' tree and same condition, so it counts T's outcome and not another.
 #
 # Test,Mu,MuRule,MuAlt,MuRelaxed,Canary
 Test,Mu,MuRule,MuAlt,MuRelaxed,Canary

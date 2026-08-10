@@ -89,7 +89,7 @@ HetStats SB-sys cpu_only=0 obs=Sometimes R=6 usable=6 k=3 k_eff=3 k_runs=3 degen
 HetStats SB-sys: 6 cell(s) [(instance,run)], 6 usable, observed in 3 (3 after the decode guard, across 3 distinct run(s)).
   dispersion (from the Layer-B canary channel, 768 window samples): F_win = 0.990 (Var 0.397 / Mean 0.401), r_hat = inf (Poisson), lag-1 acf = 0.012; F_cell = 0.052.
   within-run correlation: tau_w = 1.07 window(s) (Geyer initial-positive-sequence over the 128-window control stream) -> N_eff = 120.0 effective independent samples per run, clamped to [1, 128] -- a stream of 128 windows cannot witness more.  A correlated sequence is DISCOUNTED, not discarded: B7 scored each run as ONE Bernoulli bit, the tau = run-length worst case.
-  NOTE: calibrated off the Layer-B canary, not this test's own mu(T) -- a different SHAPE's burstiness.  Weaker than a shape-matched calibration; say so when reporting.
+  NOTE: calibrated off the Layer-B canary, not this test's own mu(T).  The canary is the het MP floor, so on any shape but MP that is another shape's burstiness -- weaker than a shape-matched calibration; say so when reporting.
   NOTE: F_win < 1 (under-dispersed).  Clamped to the Poisson floor: an under-dispersed sample is NOT allowed to make the bound TIGHTER than the rule of three.
   stationarity: KS pass (D = 0.1444 <= D_crit = 0.1947, 150 early vs 72 late window counts).  On discrete counts the two-sample KS is conservative, so this is the WEAKER of the two possible claims.
   OBSERVED in 3 of 6 usable cell(s).  P_rep = 1 - e^{-k_eff} = 95.02% that a fresh run reproduces it (k_eff = 3 NON-DEGENERATE cells -- Kirkham's n=3 => 95% recipe, relocated to the (instance,run) unit).
@@ -118,7 +118,7 @@ HetVerdict MP-sys-F [ROBUST] run=2: OBSERVED
 HetObs MP-sys-F cpu_only=0 inst=0 run=3 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=58/100000 canary=43/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict MP-sys-F [ROBUST] run=3: NOT-OBSERVED-MU-HOT
   MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion MP-sys (minimal mutant) fired 58 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion MP-sys (mu(T), the lattice-floor twin of this test) fired 58 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 43 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -128,7 +128,7 @@ HetVerdict MP-sys-F [ROBUST] run=3: NOT-OBSERVED-MU-HOT
 HetObs MP-sys-F cpu_only=0 inst=0 run=4 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=65/100000 canary=41/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict MP-sys-F [ROBUST] run=4: NOT-OBSERVED-MU-HOT
   MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion MP-sys (minimal mutant) fired 65 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion MP-sys (mu(T), the lattice-floor twin of this test) fired 65 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 41 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -138,7 +138,7 @@ HetVerdict MP-sys-F [ROBUST] run=4: NOT-OBSERVED-MU-HOT
 HetObs MP-sys-F cpu_only=0 inst=0 run=5 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=69/100000 canary=56/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict MP-sys-F [ROBUST] run=5: NOT-OBSERVED-MU-HOT
   MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion MP-sys (minimal mutant) fired 69 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion MP-sys (mu(T), the lattice-floor twin of this test) fired 69 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 56 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -147,7 +147,7 @@ HetVerdict MP-sys-F [ROBUST] run=5: NOT-OBSERVED-MU-HOT
                                      -- Alglave et al., ASPLOS'15, fn.7, p.577.
 HetStats MP-sys-F cpu_only=0 obs=Sometimes R=6 usable=6 k=3 k_eff=3 k_runs=3 degen=0 first_sight=1 ctrl=mu(T) mu_total=368 can_total=288 win_n=768 nwin=128 F_win=0.9242 F_cell=1.5565 r_hat=inf mu_upper=0.0000 tau_w=1.0000 N_eff=128.0000 tau_need=1 R_eff=0.0000 p_bound=-1 P_rep=0.950213 acf1=-0.0466 ks=pass ks_D=0.0311 ks_Dcrit=0.1947 ks_split=-1 sighting=CORROBORATED N=100000 frames=600000 flags=0x8
 HetStats MP-sys-F: 6 cell(s) [(instance,run)], 6 usable, observed in 3 (3 after the decode guard, across 3 distinct run(s)).
-  dispersion (from the mu(T) minimal mutant channel, 768 window samples): F_win = 0.924 (Var 0.443 / Mean 0.479), r_hat = inf (Poisson), lag-1 acf = -0.047; F_cell = 1.557.
+  dispersion (from the mu(T) lattice-floor twin channel, 768 window samples): F_win = 0.924 (Var 0.443 / Mean 0.479), r_hat = inf (Poisson), lag-1 acf = -0.047; F_cell = 1.557.
   within-run correlation: tau_w = 1.00 window(s) (Geyer initial-positive-sequence over the 128-window control stream) -> N_eff = 128.0 effective independent samples per run, clamped to [1, 128] -- a stream of 128 windows cannot witness more.  A correlated sequence is DISCOUNTED, not discarded: B7 scored each run as ONE Bernoulli bit, the tau = run-length worst case.
   NOTE: F_win < 1 (under-dispersed).  Clamped to the Poisson floor: an under-dispersed sample is NOT allowed to make the bound TIGHTER than the rule of three.
   stationarity: KS pass (D = 0.0311 <= D_crit = 0.1947, 150 early vs 72 late window counts).  On discrete counts the two-sample KS is conservative, so this is the WEAKER of the two possible claims.
@@ -162,7 +162,7 @@ Observation MP-sys-F Sometimes 3 6000
 HetObs SB-sys-2s cpu_only=0 inst=0 run=0 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=52/100000 canary=58/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s [ROBUST] run=0: NOT-OBSERVED-MU-HOT
   SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion SB-sys-acqrel-2s (minimal mutant) fired 52 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion SB-sys-acqrel-2s (mu(T), the lattice-floor twin of this test) fired 52 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 58 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -172,7 +172,7 @@ HetVerdict SB-sys-2s [ROBUST] run=0: NOT-OBSERVED-MU-HOT
 HetObs SB-sys-2s cpu_only=0 inst=0 run=1 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=49/100000 canary=53/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s [ROBUST] run=1: NOT-OBSERVED-MU-HOT
   SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion SB-sys-acqrel-2s (minimal mutant) fired 49 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion SB-sys-acqrel-2s (mu(T), the lattice-floor twin of this test) fired 49 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 53 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -182,7 +182,7 @@ HetVerdict SB-sys-2s [ROBUST] run=1: NOT-OBSERVED-MU-HOT
 HetObs SB-sys-2s cpu_only=0 inst=0 run=2 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=55/100000 canary=49/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s [ROBUST] run=2: NOT-OBSERVED-MU-HOT
   SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion SB-sys-acqrel-2s (minimal mutant) fired 55 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion SB-sys-acqrel-2s (mu(T), the lattice-floor twin of this test) fired 55 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 49 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -192,7 +192,7 @@ HetVerdict SB-sys-2s [ROBUST] run=2: NOT-OBSERVED-MU-HOT
 HetObs SB-sys-2s cpu_only=0 inst=0 run=3 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=44/100000 canary=52/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s [ROBUST] run=3: NOT-OBSERVED-MU-HOT
   SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion SB-sys-acqrel-2s (minimal mutant) fired 44 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion SB-sys-acqrel-2s (mu(T), the lattice-floor twin of this test) fired 44 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 52 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -202,7 +202,7 @@ HetVerdict SB-sys-2s [ROBUST] run=3: NOT-OBSERVED-MU-HOT
 HetObs SB-sys-2s cpu_only=0 inst=0 run=4 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=44/100000 canary=50/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s [ROBUST] run=4: NOT-OBSERVED-MU-HOT
   SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion SB-sys-acqrel-2s (minimal mutant) fired 44 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion SB-sys-acqrel-2s (mu(T), the lattice-floor twin of this test) fired 44 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 50 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -212,7 +212,7 @@ HetVerdict SB-sys-2s [ROBUST] run=4: NOT-OBSERVED-MU-HOT
 HetObs SB-sys-2s cpu_only=0 inst=0 run=5 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=42/100000 canary=59/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s [ROBUST] run=5: NOT-OBSERVED-MU-HOT
   SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion SB-sys-acqrel-2s (minimal mutant) fired 42 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion SB-sys-acqrel-2s (mu(T), the lattice-floor twin of this test) fired 42 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 59 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -222,7 +222,7 @@ HetVerdict SB-sys-2s [ROBUST] run=5: NOT-OBSERVED-MU-HOT
 HetObs SB-sys-2s cpu_only=0 inst=0 run=6 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=44/100000 canary=48/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s [ROBUST] run=6: NOT-OBSERVED-MU-HOT
   SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion SB-sys-acqrel-2s (minimal mutant) fired 44 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion SB-sys-acqrel-2s (mu(T), the lattice-floor twin of this test) fired 44 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 48 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -232,7 +232,7 @@ HetVerdict SB-sys-2s [ROBUST] run=6: NOT-OBSERVED-MU-HOT
 HetObs SB-sys-2s cpu_only=0 inst=0 run=7 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=56/100000 canary=43/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s [ROBUST] run=7: NOT-OBSERVED-MU-HOT
   SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion SB-sys-acqrel-2s (minimal mutant) fired 56 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion SB-sys-acqrel-2s (mu(T), the lattice-floor twin of this test) fired 56 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 43 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -241,7 +241,7 @@ HetVerdict SB-sys-2s [ROBUST] run=7: NOT-OBSERVED-MU-HOT
                                      -- Alglave et al., ASPLOS'15, fn.7, p.577.
 HetStats SB-sys-2s cpu_only=0 obs=Never R=8 usable=8 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 ctrl=mu(T) mu_total=386 can_total=412 win_n=1024 nwin=128 F_win=1.0386 F_cell=0.6321 r_hat=9.7735 mu_upper=3.5056 tau_w=1.0730 N_eff=119.2934 tau_need=1 R_eff=954.3472 p_bound=0.00367328 P_rep=-1 acf1=0.0065 ks=pass ks_D=0.0592 ks_Dcrit=0.1686 ks_split=-1 sighting=none N=100000 frames=800000 flags=0x0
 HetStats SB-sys-2s: 8 cell(s) [(instance,run)], 8 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
-  dispersion (from the mu(T) minimal mutant channel, 1024 window samples): F_win = 1.039 (Var 0.391 / Mean 0.377), r_hat = finite (see HetStats line), lag-1 acf = 0.007; F_cell = 0.632.
+  dispersion (from the mu(T) lattice-floor twin channel, 1024 window samples): F_win = 1.039 (Var 0.391 / Mean 0.377), r_hat = finite (see HetStats line), lag-1 acf = 0.007; F_cell = 0.632.
   within-run correlation: tau_w = 1.07 window(s) (Geyer initial-positive-sequence over the 128-window control stream) -> N_eff = 119.3 effective independent samples per run, clamped to [1, 128] -- a stream of 128 windows cannot witness more.  A correlated sequence is DISCOUNTED, not discarded: B7 scored each run as ONE Bernoulli bit, the tau = run-length worst case.
   stationarity: KS pass (D = 0.0592 <= D_crit = 0.1686, 200 early vs 96 late window counts).  On discrete counts the two-sample KS is conservative, so this is the WEAKER of the two possible claims.
   NOT OBSERVED in any of the 8 usable cell(s).  95% upper bound on its rate PER EFFECTIVE SAMPLE (one tau_w-window alignment epoch):
@@ -261,7 +261,7 @@ Observation SB-sys-2s Never 0 6000
 HetObs MP-sys-2s cpu_only=0 inst=0 run=0 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=173/100000 canary=173/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict MP-sys-2s [ROBUST] run=0: NOT-OBSERVED-MU-HOT
   MP-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion MP-sys-acqrel-2s (minimal mutant) fired 173 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion MP-sys-acqrel-2s (mu(T), the lattice-floor twin of this test) fired 173 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 173 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -271,7 +271,7 @@ HetVerdict MP-sys-2s [ROBUST] run=0: NOT-OBSERVED-MU-HOT
 HetObs MP-sys-2s cpu_only=0 inst=0 run=1 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=234/100000 canary=234/100000 Prep=1.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict MP-sys-2s [ROBUST] run=1: NOT-OBSERVED-MU-HOT
   MP-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion MP-sys-acqrel-2s (minimal mutant) fired 234 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion MP-sys-acqrel-2s (mu(T), the lattice-floor twin of this test) fired 234 time(s), P_rep=100.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 234 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical sibling of this test -- fired reproducibly on the same launch, stress and host-device interconnect path, so the harness demonstrably produced a cross-device interleaving of THIS shape and the zero is a ground-truth zero.  Report it as "not observed under this effort", never as "cannot happen".
   Either way this is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority (B8).  The precedent for saying so plainly:
@@ -280,7 +280,7 @@ HetVerdict MP-sys-2s [ROBUST] run=1: NOT-OBSERVED-MU-HOT
                                      -- Alglave et al., ASPLOS'15, fn.7, p.577.
 HetStats MP-sys-2s cpu_only=0 obs=Never R=2 usable=2 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 ctrl=mu(T) mu_total=407 can_total=407 win_n=256 nwin=128 F_win=1.2480 F_cell=9.1425 r_hat=6.4118 mu_upper=3.8186 tau_w=29.7464 N_eff=1.0000 tau_need=12 R_eff=0.2188 p_bound=17.4557 P_rep=-1 acf1=0.9708 ks=pass ks_D=0.2200 ks_Dcrit=0.3372 ks_split=-1 sighting=none N=100000 frames=200000 flags=0x4400
 HetStats MP-sys-2s: 2 cell(s) [(instance,run)], 2 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
-  dispersion (from the mu(T) minimal mutant channel, 256 window samples): F_win = 1.248 (Var 1.984 / Mean 1.590), r_hat = finite (see HetStats line), lag-1 acf = 0.971; F_cell = 9.143.
+  dispersion (from the mu(T) lattice-floor twin channel, 256 window samples): F_win = 1.248 (Var 1.984 / Mean 1.590), r_hat = finite (see HetStats line), lag-1 acf = 0.971; F_cell = 9.143.
   within-run correlation: tau_w = 29.75 window(s), but tau IS NOT RESOLVED -- the pooled control stream is only 256 sample(s) long and an estimate of tau needs about 50x tau (= 1487) behind it before it can be trusted.  N_eff FALLS BACK TO 1 (B7's one-bit-per-run reading): a tau we could not measure must never buy a tighter bound, exactly as a KS test that could not run must never unlock P_rep.
   NOTE the direction: this estimator (Geyer initial-positive-sequence) UNDER-reads tau on a stream too short for it -- a spurious non-positive pair truncates the sum early -- so the number above is a FLOOR, it is NOT at the 128-window ceiling, and believing it would have OVER-credited N_eff and reported a bound TIGHTER THAN THE TRUTH.
   THIS IS NOT A FAILURE AND NOT A VETO -- it is a PRICE, and the price is RUNS: the criterion is on the POOLED count (usable runs x 128 windows), so it relaxes on its own.  Re-run this test with >= 12 usable run(s) (it has 2) and N_eff becomes claimable.  Grow R, NOT N: extra iterations only add correlated frames inside the same alignment windows, while a fresh run adds a fresh phase/seed/thermal draw (Q3 F4).
@@ -303,28 +303,28 @@ Observation MP-sys-2s Never 0 6000
 HetObs LB-sys cpu_only=0 inst=0 run=0 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=0/100000 canary=0/100000 Prep=0.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict LB-sys [ROBUST] run=0: COLD-INVALID
   LB-sys: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion LB-sys-acquire (minimal mutant) fired 0 time(s), P_rep=0.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion LB-sys-acquire (mu(T), the lattice-floor twin of this test) fired 0 time(s), P_rep=0.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 0 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   DISCARD this null -- the harness was not demonstrably hot:
     - neither mu(T) nor the canary reached tau_hot=30: a known-weak behaviour on this very machinery did not fire, so this harness is not shown to expose anything
 HetObs LB-sys cpu_only=0 inst=0 run=1 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=0/100000 canary=0/100000 Prep=0.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict LB-sys [ROBUST] run=1: COLD-INVALID
   LB-sys: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion LB-sys-acquire (minimal mutant) fired 0 time(s), P_rep=0.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion LB-sys-acquire (mu(T), the lattice-floor twin of this test) fired 0 time(s), P_rep=0.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 0 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   DISCARD this null -- the harness was not demonstrably hot:
     - neither mu(T) nor the canary reached tau_hot=30: a known-weak behaviour on this very machinery did not fire, so this harness is not shown to expose anything
 HetObs LB-sys cpu_only=0 inst=0 run=2 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=0/100000 canary=0/100000 Prep=0.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict LB-sys [ROBUST] run=2: COLD-INVALID
   LB-sys: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion LB-sys-acquire (minimal mutant) fired 0 time(s), P_rep=0.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion LB-sys-acquire (mu(T), the lattice-floor twin of this test) fired 0 time(s), P_rep=0.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 0 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   DISCARD this null -- the harness was not demonstrably hot:
     - neither mu(T) nor the canary reached tau_hot=30: a known-weak behaviour on this very machinery did not fire, so this harness is not shown to expose anything
 HetObs LB-sys cpu_only=0 inst=0 run=3 conf=0 report=0 N=100000 frames=100000 target=0/0 interleavings=4096 distinct_iters=64 ws_via_obs=0 obs_unique=0 skew=[-3,3] mean=0.200 sd=1.500 ctrl=0/100000 canary=0/100000 Prep=0.000000 built=1/1 spin=4096/0 stress_trunc=0 do_stress_rounds=64 req=0x3f enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 nwin=128 aff_fail=0 place_fail=0
 HetVerdict LB-sys [ROBUST] run=3: COLD-INVALID
   LB-sys: the weak outcome was NOT observed -- 0 / N=100000 frames (100000 examined); interleavings_detected=4096.
-  companion LB-sys-acquire (minimal mutant) fired 0 time(s), P_rep=0.0000%, on the same runs under the same stress config (tau_hot=30).
+  companion LB-sys-acquire (mu(T), the lattice-floor twin of this test) fired 0 time(s), P_rep=0.0000%, on the same runs under the same stress config (tau_hot=30).
   canary MP-cg-sys-relaxed fired 0 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   DISCARD this null -- the harness was not demonstrably hot:
     - neither mu(T) nor the canary reached tau_hot=30: a known-weak behaviour on this very machinery did not fire, so this harness is not shown to expose anything

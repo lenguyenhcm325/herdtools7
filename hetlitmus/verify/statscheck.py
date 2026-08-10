@@ -654,8 +654,10 @@ case("window-desync-voids-the-bound",
      obs="Never", p_bound=-1.0, flags_any=["WIN_DESYNC", "FANO_UNMEASURED"])
 
 # --- CALIBRATION PROVENANCE ------------------------------------------------
-# 361 of 411 have no mu(T) by construction, so their dispersion is calibrated from the
-# Layer-B canary -- a DIFFERENT shape's burstiness, hence a weaker claim, hence a flag.
+# 78 of 411 have no mu(T) by construction -- they ARE the lattice floor -- so their
+# dispersion is calibrated from the Layer-B canary instead.  That canary is the het MP
+# floor, so on every shape but MP it is another shape's burstiness: a weaker claim,
+# hence a flag.
 case("canary-calibrated-when-no-mutant",
      stream(POISSON_CELLS, chan="canary",             control_compiled_in=0, control_target_count=0),
      obs="Never", flags_any=["CTRL_IS_CANARY"], flags_none=["FANO_UNMEASURED"])

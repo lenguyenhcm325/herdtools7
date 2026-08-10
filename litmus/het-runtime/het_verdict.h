@@ -255,8 +255,9 @@ typedef struct het_obs_record {
      with neither fails closed. */
   int sync_valid;   /* 1 => distinct_decoded_iters + skew_* are populated */
   int obs_valid;    /* 1 => observer_unique_count is populated            */
-  /* The positive control (Q4 3.2): control_* = Layer A, the minimal mutant mu(T)
-     of THIS test; canary_* = Layer B, the universal het MP floor.  Both are
+  /* The positive control (Q4 3.2): control_* = Layer A, mu(T) -- THIS test's
+     structural twin at the lattice floor, every ordering annotation dropped;
+     canary_* = Layer B, the universal het MP floor.  Both are
      tallied by the same recovery scan as target_count, on disjoint
      cache-line-padded locations, in the same launch under the same stress -- a
      control that ran at another time under another stress roll certifies nothing
@@ -267,7 +268,7 @@ typedef struct het_obs_record {
   uint64_t canary_target_count;
   uint64_t canary_frames_examined;
   /* Which kind of count you are reading, per co-running instance: each has its own
-     T_L class, and a T_L>=2 mutant (mu(SB-*-sys-fence-2s) is SB-*-sys-acqrel-2s)
+     T_L class, and a T_L>=2 mutant (mu(SB-*-sys-fence-2s) is SB-*-sys-relaxed)
      is counted by the WINDOWED scan at production N.  Windowed hits are a strict
      subset of the ground-truth scan's under the same predicate -- it can miss
      cycles, it cannot invent them -- so the control under-counts, which errs
@@ -303,8 +304,8 @@ typedef struct het_obs_record {
      control map names a strictly weaker structural sibling for; a test already at
      the lattice floor has none (MC-Mutants 1.2, Q4 4.2).  Kept separate from the
      canary flag below on purpose -- "a canary is co-running" and "the mutant OF
-     THIS TEST is co-running" are different claims, and only the second says this
-     shape's own window was demonstrably hit. */
+     THIS TEST is co-running" are different claims, and collapsing them would let
+     a canary vouch for a shape it does not share. */
   int control_compiled_in;
   /* 0 => no Layer-B canary is co-running, so canary_target_count is structurally
      zero and means nothing.  1 => a real canary instance is in this launch.  Set
@@ -440,7 +441,7 @@ static double het_env_double(const char *name, double dflt) {
  *                   C2C path -- fired >= tau_hot while T's own two engines
  *                   provably overlapped, with the ground-truth scan running.
  *   HET_NOT_OBSERVED_CANARY_ONLY  not seen on a harness that is alive but whose
- *                   OWN shape is not confirmed hit: only the Layer-B canary
+ *                   OWN mu(T) did not confirm it: only the Layer-B canary
  *                   vouches, or no mu co-runs, or the zero came from the windowed
  *                   scan.  Weaker; the printout names which (Alglave's GTX-280
  *                   honesty, fn.7 p.577, is the precedent for saying so plainly).
@@ -505,9 +506,9 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   het_verdict_t v;
   int hot_control, hot_canary;
 
-  /* Each layer is gated on ITS OWN compiled-in flag: most harnesses co-run a
-     canary and no mutant, and gating the canary on the mutant's flag would make
-     their liveness evidence invisible. */
+  /* Each layer is gated on ITS OWN compiled-in flag: the harnesses at the lattice
+     floor co-run a canary and no mutant, and gating the canary on the mutant's
+     flag would make their liveness evidence invisible. */
   hot_control = (r->control_compiled_in && r->control_target_count >= HET_TAU_HOT);
   hot_canary  = (r->canary_compiled_in  && r->canary_target_count  >= HET_TAU_HOT);
 
@@ -531,7 +532,8 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   /* "Layer B fired, Layer A did not" is a caveat only where a Layer A exists to
      have not fired.  Without the control_compiled_in guard it would be raised on
      every test at the lattice floor -- which has no mutant by construction --
-     turning a real diagnostic into boilerplate on most of the corpus. */
+     turning a real diagnostic into boilerplate on the 78 corpus rows of 411
+     that ARE the floor. */
   if (r->control_compiled_in && !hot_control && hot_canary)
                                     cv |= HET_CV_CANARY_ONLY;
   if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
@@ -627,10 +629,10 @@ static het_verdict_t het_verdict(const het_obs_record *r,
        T's own shape, and the zero is a ground-truth zero. */
     v = HET_NOT_OBSERVED_MU_HOT;
   } else {
-    /* Either no mu co-runs or it did not reach tau_hot -- so only the canary
-       vouches, and this SHAPE's window is unconfirmed -- or the ground-truth scan
-       never ran, so the zero is not a measured zero.  het_verdict_print names
-       which; both are reasons to escalate stress tuning rather than to report. */
+    /* Either no mu co-runs or it did not reach tau_hot, so only the canary
+       vouches -- or the ground-truth scan never ran, so the zero is not a
+       measured zero.  het_verdict_print names which; both are reasons to
+       escalate stress tuning rather than to report. */
     v = HET_NOT_OBSERVED_CANARY_ONLY;
   }
 
@@ -812,8 +814,9 @@ static void het_print_notobserved(FILE *_ch, const het_obs_record *_r) {
 static void het_print_liveness(FILE *_ch, const het_obs_record *_r) {
   if (_r->control_compiled_in)
     fprintf(_ch,
-      "  companion %s (minimal mutant) fired %llu time(s), P_rep=%.4f%%, on the "
-      "same runs under the same stress config (tau_hot=%d).\n",
+      "  companion %s (mu(T), the lattice-floor twin of this test) fired %llu "
+      "time(s), P_rep=%.4f%%, on the same runs under the same stress config "
+      "(tau_hot=%d).\n",
       _r->control_name ? _r->control_name : "(none)",
       (unsigned long long)_r->control_target_count,
       100.0 * _r->control_Prep, (int)HET_TAU_HOT);
@@ -1020,8 +1023,13 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
                    "vouches for it and only the %s path is shown alive.\n",
               HET_LINK_NAME);
     else if (cv & HET_CV_CANARY_ONLY)
+      /* Stated of the mu(T) INSTANCE, not of the shape: where T's floor twin is
+         the canary shape the two co-running instances run the same program, so
+         "this shape was never hit" would be contradicted by the canary that just
+         fired. */
       fprintf(_ch, "    - only the Layer-B canary fired: the %s path is alive, "
-                   "but this SHAPE's window was not demonstrably hit.  Escalate "
+                   "but the co-running mu(T) instance -- this test's own "
+                   "lattice-floor twin -- did not reach tau_hot.  Escalate "
                    "stress tuning for it (B8).\n",
               HET_LINK_NAME);
     if (cv & HET_CV_NO_EXHAUSTIVE)
@@ -1483,7 +1491,11 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
      shape-matched proxy, so it is preferred where it exists and fired; the canary
      is the universal floor and is all a test at the lattice floor has.  A bound
      calibrated off another shape's burstiness is a weaker claim, so which one was
-     used is recorded and printed rather than left to the reader to guess. */
+     used is recorded and printed rather than left to the reader to guess.
+     Where T's floor twin IS the canary -- 37 corpus rows on either lattice, all
+     of them MP shapes -- mu(T) and the canary are the same program in two
+     instances: preferring mu buys a second draw of one channel there rather than
+     a shape-match, and nothing below reads the two as different shapes. */
   for (i = 0; i < n; i++) {
     /* Residue here would do two things: put a number in the printed mu report that
        came from nothing, and SELECT the channel below -- a residue mu_total picks
@@ -1833,7 +1845,8 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     fprintf(_ch,
       "  dispersion (from the %s channel, %d window samples): F_win = %.3f "
       "(Var %.3f / Mean %.3f), r_hat = %s, lag-1 acf = %.3f; F_cell = %.3f.\n",
-      (_s->flags & HET_ST_CTRL_IS_CANARY) ? "Layer-B canary" : "mu(T) minimal mutant",
+      (_s->flags & HET_ST_CTRL_IS_CANARY) ? "Layer-B canary"
+                                          : "mu(T) lattice-floor twin",
       _s->win_samples, _s->F_win, _s->ctrl_var, _s->ctrl_mean,
       (_s->r_hat >= HET_R_POISSON) ? "inf (Poisson)" : "finite (see HetStats line)",
       _s->acf1, _s->F_cell);
@@ -1886,7 +1899,8 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
         _s->tau_w, (int)HET_NWIN, _s->N_eff, (int)HET_NWIN, (int)HET_NWIN);
     if (_s->flags & HET_ST_CTRL_IS_CANARY)
       fprintf(_ch, "  NOTE: calibrated off the Layer-B canary, not this test's own "
-                   "mu(T) -- a different SHAPE's burstiness.  Weaker than a "
+                   "mu(T).  The canary is the het MP floor, so on any shape but "
+                   "MP that is another shape's burstiness -- weaker than a "
                    "shape-matched calibration; say so when reporting.\n");
     if (_s->flags & HET_ST_UNDERDISPERSED)
       fprintf(_ch, "  NOTE: F_win < 1 (under-dispersed).  Clamped to the Poisson "
