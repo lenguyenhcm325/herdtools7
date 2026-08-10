@@ -178,7 +178,7 @@ static void _het_place(void* _p, size_t _bytes, int _where){
     fprintf(stderr,
             "HetLitmus WARNING: cudaMemAdvise REFUSED (%s / %s / %s) -- HET_PLACE=%d "
             "did NOT place these pages; they are wherever first touch put them, so "
-            "the tested accesses may never cross C2C.  This run is NOT "
+            "the tested accesses may never cross @LINK_OBJ@.  This run is NOT "
             "placement-stressed.\n",
             cudaGetErrorString(_e1), cudaGetErrorString(_e2), cudaGetErrorString(_e3),
             _where);

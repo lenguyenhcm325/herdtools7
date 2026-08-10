@@ -857,6 +857,36 @@ case "$*" in *%s*) echo "HetLitmus REFUSED (het) injected: bite" >&2 ;; esac
 exit $st
 """
 
+# THE PER-LANE STAMP AND WORD DETECTORS (emit-all.sh's (c)).  Those assertions
+# are about a harness that is COMPLETE and CORRECT except for what it says it was
+# built for, so no defect in litmus7 reaches them: the stand-in emits for real and
+# then edits one file of one lane's victim, which is the only way to hold the
+# emitter still and move the artefact.  LANE is the OUTDIR subdir the lane writes
+# to, so a stub fires on ONE lane and the other three stay clean; the loop runs
+# the edit once per render the victim actually has (exactly one, `-gpu-target'
+# filters), and `$d' is there for the edits that are not on the render.
+STUB_LANE = r"""#!/usr/bin/env bash
+# BITE stand-in: real litmus7, then %s in the %s lane's %s.
+REAL=%s
+LANE=%s
+VICTIM=%s
+"$REAL" "$@" ; st=$?
+out=""; prev=""
+for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
+[ -n "$out" ] && [ "$(basename "$out")" = "$LANE" ] || exit $st
+d="$out/$VICTIM"
+[ -d "$d" ] || exit $st
+for r in "$d/$VICTIM.cu" "$d/$VICTIM.hip"; do
+  [ -f "$r" ] || continue
+  %s
+done
+exit $st
+"""
+
+
+def lane_stub(what, lane, where, victim, body):
+    return STUB_LANE % (what, lane, where, LITMUS7, lane, victim, body)
+
 
 def emit_all_bite(tmp, label, script, want):
     path = os.path.join(tmp, "litmus7-" + label)
@@ -1144,6 +1174,47 @@ def bite(tmp, corpus, good):
     # a refusal that reached only one vendor is the interesting half of the news.
     ok &= emit_all_bite(tmp, "refuse", STUB_REFUSE % (LITMUS7, "MP-cg-cta-acquire"),
                         "REFUSED MP-cg-cta-acquire.litmus")
+    # ...and its per-lane MIS-TAGGING assertions, one victim each.  This gate owns
+    # the emit-all stand-in rig, which is why they live here and not beside the
+    # table they protect (litmus/hetMachine.ml, cram machine-pairs.t).
+    for label, stub, want in [
+        # (1) the PAIR NAME, exactly once.  Twice is the interesting direction: a
+        # count of "at least one" passes a render carrying two pairs' names.
+        ("pair-twice",
+         lane_stub("stamp HET_PAIR_NAME twice", "het-cuda", "render",
+                   "MP-cg-cta-acquire", r"""sed -i '/^#define HET_PAIR_NAME/p' "$r" """),
+         "does not stamp HET_PAIR_NAME \"(AArch64, cuda)\" exactly once"),
+        # (2) the MACHINE DEFINE BLOCK, compared whole: one line short of the row
+        # this lane is entitled to, which no per-line grep for "a machine define"
+        # would notice.
+        ("machine-short",
+         lane_stub("drop HET_LLC_MB", "het-cuda", "render", "MP-cg-cta-fence",
+                   r"""sed -i '/^#define HET_LLC_MB /d' "$r" """),
+         "stamps the wrong machine"),
+        # (3) the NO-MACHINE NOTE: without it a registered pair that is
+        # deliberately nameless and a pair in no row at all read identically.
+        ("no-note",
+         lane_stub("delete the no-machine note", "het-x86-cuda", "render",
+                   "MP-cg-cta-acquire-x86_64",
+                   r"""sed -i '/No machine defines: no machine row backs/d' "$r" """),
+         "names no machine and does not say WHY"),
+        # (4) a machine word in a nameless lane's README -- prose, which no check
+        # over #defines or over the render can see.
+        ("brand-readme",
+         lane_stub("brand the README target line", "het-x86-cuda", "README.md",
+                   "MP-cg-cta-fence-x86_64",
+                   r"""sed -i 's/^Target: NVIDIA CUDA\.$/Target: NVIDIA GH200 (CUDA)./' \
+       "$d/README.md" """),
+         "names 'GH200' (the gh200 row's word; this lane is entitled to none)"),
+        # (5) ...and one SPLIT ACROSS TWO ADJACENT LITERALS on two lines, which is
+        # the shape a grep of `fprintf(' lines cannot see.
+        ("brand-split",
+         lane_stub("plant a two-line printed literal", "het-hip", "render",
+                   "MP-cg-cta-acquire",
+                   r"""grep -q _planted "$r" || printf 'static void _planted(void){ fprintf(stderr, "the MI300A "\n"APU is idle\\n"); }\n' >> "$r" """),
+         "names 'MI300A' (the mi300a row's word; this lane is entitled to none)"),
+    ]:
+        ok &= emit_all_bite(tmp, label, stub, want)
 
     fails.clear()
     print()

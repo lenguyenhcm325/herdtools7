@@ -51,6 +51,9 @@ PROBE_HIP = os.path.join(HETL, "spotcheck", "probe-hip.sh")
 MACHINE_ML = os.path.join(ROOT, "litmus", "hetMachine.ml")
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
+sys.path.insert(0, HERE)
+import brandscan          # noqa: E402  (the tree's own module, next to this one)
+
 # The committed (x86_64, *) fixture: three tests, cut verbatim from a
 # generate-x86.sh run and kept that way by hetlitmus-x86fixture.
 X86_DIR = os.path.join(HETL, "tests", "het-x86")
@@ -449,10 +452,6 @@ UNREG_WARN = "is in no row of litmus/hetMachine.ml"
 MACHINE_DEFINE_RE = re.compile(
     r"^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|ALGLAVE_ZERO_MEASURED)\b",
     re.M)
-# The words BOTH machine rows own.  A render entitled to neither may carry none
-# of them: this is the one defect a reader of a results tree could not catch.
-MACHINE_WORDS = re.compile(r"NVLink-C2C|Infinity Fabric|the Grace half|"
-                           r"the Hopper half|the x86 half|the MI300A device half")
 
 
 def unregistered_emits(quiet=False):
@@ -485,12 +484,20 @@ def unregistered_emits(quiet=False):
         if stamped:
             bad.append("the render of an unregistered pair stamps machine "
                        "define(s) %s -- it is entitled to none" % stamped)
-        named = sorted(set(MACHINE_WORDS.findall(text)))
-        if named:
-            bad.append("the render of an unregistered pair names %s" % named)
+        # ...and it must not SAY one either, which is the half no define can
+        # decide: the whole harness dir, over the literals its driver prints and
+        # the README and build files a reader opens (brandscan.py).
+        named = brandscan.scan([os.path.join(tmp, UNREG_TEST)], "none")
+        for path, ln, row, w, excerpt in named[:6]:
+            bad.append("the harness of an unregistered pair names %r (the %s row) "
+                       "in %s:%d -- %s"
+                       % (w, row, os.path.basename(path), ln, excerpt[:100]))
+        if len(named) > 6:
+            bad.append("...and %d more machine word(s) in that harness"
+                       % (len(named) - 6))
         if not quiet and not bad:
-            print("      %-34s emits (rc=0), 1 warning, 0 machine defines"
-                  % UNREG_PAIR)
+            print("      %-34s emits (rc=0), 1 warning, 0 machine defines, "
+                  "0 machine words" % UNREG_PAIR)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return bad
@@ -1488,9 +1495,10 @@ def hardware_bite():
 #   map    the committed x86 fixture, whose map names this row its OWN canary --
 #          "it IS the Layer-B canary", and its missing bound IS a construction;
 #   nomap  the same test copied away from the map -- no map was read, nothing
-#          marks this row a canary, and its missing bound is an OMISSION.
+#          marks this row a canary, and its missing bound is an OMISSION, of the
+#          map FILE beside the test and of nothing else.
 # The pair is (X86_64, cuda), which has no machine row, so neither arm may print
-# a Grace, a Hopper or an NVLink either.
+# a word of either row's machine vocabulary either.
 #
 # The outcome is stochastic, so each arm is re-seeded until it fires; a pair that
 # cannot fire the most observable het shape in that many runs is itself the
@@ -1500,7 +1508,9 @@ CH_TEST = "MP-cg-sys-relaxed-x86_64"
 CH_PAIR = "(X86_64, cuda)"
 CH_SEED_TRIES = 12
 CH_RUN_TIMEOUT = 90          # a healthy run is ~3 s; past this it is stalled
-CH_VENDOR_RE = re.compile(r"nvlink|grace|hopper|c2c|gh200", re.I)
+# Both rows' vocabularies, from the one place that spells them (brandscan.py).
+# The pair here is entitled to neither, so any of them in a PRINTOUT is a finding.
+CH_VENDOR_RE = re.compile("|".join(brandscan.ROWS.values()), re.I)
 CH_ARMS = ("map", "nomap")
 
 
@@ -1608,7 +1618,18 @@ def ch_run_until_sighting(d, quiet=False):
 # except the person who emitted it.
 CH_SELF = ["IS the Layer-B canary", "NO BOUND -- by construction, not by omission"]
 CH_NOMAP = ["NO POSITIVE-CONTROL MAP WAS READ for %s" % CH_PAIR,
-            "It gets NO BOUND, and that is an OMISSION, not a construction"]
+            "the map is looked for BESIDE THE TEST",
+            "control-map-amd.csv for x86_64), and it was not there",
+            "It gets NO BOUND, and that is an OMISSION, not a construction",
+            "what was omitted is the map FILE beside this test"]
+# The map is loaded for EVERY lane, so HET_NO_CONTROL_MAP says the FILE was not
+# beside the test.  These are the sentences that said something else -- that no
+# map was registered for the pair and none could be borrowed -- and a printout
+# that still explains the flag that way is explaining a mechanism this tool no
+# longer has, in EITHER arm.
+CH_RETIRED = ["no map is registered for that pair",
+              "there is none to borrow",
+              "the bootstrap control map for an unregistered pair does not exist yet"]
 
 
 def ch_check(arm, text, k, R, obs, quiet=False):
@@ -1634,6 +1655,9 @@ def ch_check(arm, text, k, R, obs, quiet=False):
         must("B/C", frag)
     for frag in theirs:
         never("B/C", frag, "that is the OTHER arm's control state")
+    for frag in CH_RETIRED:
+        never("B/C", frag, "the flag means the map FILE was not beside the test, "
+                           "not that a registry has no row for the pair")
 
     must("D", ": OBSERVED")
     never("D", "the target this harness was tagged for",
@@ -1700,6 +1724,11 @@ CH_INJECTIONS = [
      lambda s: s.replace("It gets NO BOUND, and that is an OMISSION, not a "
                          "construction",
                          "It gets NO BOUND -- by construction, not by omission", 1)),
+    ("B/C", "nomap", "het_verdict.h",
+     "the flag explained as a pair no registry has a map for",
+     lambda s: s.replace("the map is looked for BESIDE THE TEST, under the name this ",
+                         "no map is registered for that pair, and there is none to "
+                         "borrow, so this ", 1)),
     ("A/D", "map", "het_verdict.h",
      "the report sentence names a constant instead of the pair",
      lambda s: s.replace(

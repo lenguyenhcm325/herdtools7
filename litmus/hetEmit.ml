@@ -57,7 +57,6 @@ end
       gd_compiler_var : string ;  (* build variable holding it: "NVCC" | "HIPCC" *)
       gd_arch_var : string ;      (* "CUDA_ARCH" | "HIP_ARCH" *)
       gd_arch_default : string ;  (* "sm_90" | "gfx942" *)
-      gd_arch_device : string ;   (* the device that default names: "GH200" *)
       gd_arch_flag : string ;     (* "-arch=" | "--offload-arch=" *)
       gd_arch_flag_first : bool ; (* compile line: arch flag before -std=c++17 *)
       gd_obj_suffix : string ;    (* GPU object stem suffix: "" | "_hip" *)
@@ -130,12 +129,11 @@ end
       gd_target = "cuda" ; gd_vendor = "NVIDIA" ; gd_toolchain = "CUDA" ;
       gd_compiler = "nvcc" ; gd_compiler_var = "NVCC" ;
       gd_arch_var = "CUDA_ARCH" ; gd_arch_default = "sm_90" ;
-      gd_arch_device = "GH200" ;
       gd_arch_flag = "-arch=" ; gd_arch_flag_first = false ;
       gd_obj_suffix = "" ;
       gd_readme_files =
         "GPU kernel + host driver, CUDA dialect (gd_alloc_shared:\n\
-         \             system malloc on GH200 / cudaMallocManaged fallback for the shared vars +\n\
+         \             @MALLOC_SITE@ / cudaMallocManaged fallback for the shared vars +\n\
          \             barrier, cuda::atomic_ref system-scope barrier, pthread + kernel launch).\n" ;
       gd_runtime_include = "#include <cuda/atomic>" ;
       gd_dump_instr = CudaLang.dump_instr ;
@@ -188,7 +186,6 @@ end
       gd_target = "hip" ; gd_vendor = "AMD" ; gd_toolchain = "HIP/ROCm" ;
       gd_compiler = "hipcc" ; gd_compiler_var = "HIPCC" ;
       gd_arch_var = "HIP_ARCH" ; gd_arch_default = "gfx942" ;
-      gd_arch_device = "MI300A" ;
       gd_arch_flag = "--offload-arch=" ; gd_arch_flag_first = true ;
       gd_obj_suffix = "_hip" ;
       gd_readme_files =
@@ -544,6 +541,29 @@ end
           let host_half = mc.HetMachine.mc_host_half
           and dev_half = mc.HetMachine.mc_dev_half
           and link_name = mc.HetMachine.mc_link_name in
+          (* EVERY OTHER PLACE THIS HARNESS NAMES ITS MACHINE.  The dialect
+             payloads pasted below, this render's README and its comp.sh are
+             written with `@NAME@' holes and filled from the row that resolved,
+             so a sentence written for one part cannot be pasted into a render
+             the pair entitles to none.  [mc_part] is the exception the fill
+             cannot express: a nameless render names no part AT ALL, so the sites
+             that would print one print nothing there. *)
+          let fill = HetMachine.fill mc in
+          let mc_part = HetMachine.word mc "PART" in
+          (* WHY this harness names no machine, and [None] where it names one.
+             Two ways to have no machine row and a results tree six months on is
+             where they have to be told apart: a REGISTERED pair is deliberately
+             nameless, a pair in no row was never considered.  Written once, read
+             by the render and by the README. *)
+          let no_machine_why =
+            match machine with
+            | Some _ -> None
+            | None ->
+               Some (if pair_registered then
+                       "no machine row backs this (CPU ISA x GPU dialect) pair"
+                     else
+                       "this (CPU ISA x GPU dialect) pair is in no row of \
+                        litmus/hetMachine.ml") in
           (* The (CPU ISA x GPU dialect) this harness was BUILT for, as the short
              name the verdict layer prints where it has to identify the target.
              A build fact, so every pair stamps it -- unlike [mc], which a pair
@@ -2491,19 +2511,10 @@ end
                 if m.HetMachine.mc_alglave_zero then
                   s "#define HET_ALGLAVE_ZERO_MEASURED 1\n"
              | None ->
-                (* Two ways to have no machine, and a results tree six months on
-                   is where they have to be told apart: a REGISTERED pair is
-                   deliberately nameless, an unregistered one was never
-                   considered. *)
-                if pair_registered then begin
-                  s "/* No machine defines: no machine row backs this (CPU ISA x GPU\n" ;
-                  s "   dialect) pair, so this harness names no silicon and\n" ;
-                  s "   het_verdict.h's generic host/device wording stands. */\n"
-                end else begin
-                  s "/* No machine defines: this (CPU ISA x GPU dialect) pair is in no\n" ;
-                  s "   row of litmus/hetMachine.ml, so this harness names no silicon\n" ;
-                  s "   and het_verdict.h's generic host/device wording stands. */\n"
-                end) ;
+                s (Printf.sprintf "/* No machine defines: %s,\n"
+                     (match no_machine_why with Some w -> w | None -> "")) ;
+                s "   so this harness names no silicon and het_verdict.h's generic\n" ;
+                s "   host/device wording stands. */\n") ;
             s (Printf.sprintf "#define HET_PAIR_NAME %S\n" pair_label) ;
             if no_control_map then s "#define HET_NO_CONTROL_MAP 1\n" ;
             (match dialect.gd_place_lever with
@@ -2820,9 +2831,9 @@ end
                \   CUDA/GH200 render); stays 0 on the HIP/MI300A render, which has a\n\
                \   single HBM pool and therefore nothing to place. */\n" ;
             s "static int _het_place_failures = 0;\n\n" ;
-            s dialect.gd_shared_mem_defs ;
+            s (fill dialect.gd_shared_mem_defs) ;
             s "\n" ;
-            s dialect.gd_noise_mem_defs ;
+            s (fill dialect.gd_noise_mem_defs) ;
             s "\n" ;
             dump_gpu_main dialect s in
           (* ---- comp.sh / Makefile / README ---- *)
@@ -2900,9 +2911,11 @@ end
             List.iter
               (fun d ->
                 let v = var_line d in
-                s (Printf.sprintf "%s%s # %s=%s\n"
+                s (Printf.sprintf "%s%s # %s\n"
                      v (String.make (var_w - String.length v) ' ')
-                     d.gd_arch_device d.gd_arch_default))
+                     (match mc_part with
+                      | Some p -> Printf.sprintf "%s=%s" p d.gd_arch_default
+                      | None -> "default arch " ^ d.gd_arch_default)))
               dialects ;
             s (Printf.sprintf
                  "HET_HOST_ISA=\"%s\"   # uname -m of this test's CPU ISA (%s)\n"
@@ -3099,7 +3112,7 @@ end
               s "## The positive control is CO-RUNNING in this harness\n\n" ;
               s "A test's null result is evidence only if the harness would have seen a\n" ;
               s "weak behaviour had one occurred.  Every het instance below therefore\n" ;
-              s "shares this launch, this stress config and this C2C path, on disjoint\n" ;
+              s (fill "shares this launch, this stress config and this @LINK@ path, on disjoint\n") ;
               s "cache-line-padded locations:\n\n" ;
               List.iter
                 (fun i ->
@@ -3120,7 +3133,7 @@ end
               (fun d ->
                 s (Printf.sprintf "- `%s.%s`%s%s" tname d.gd_ext
                      (String.make (ext_w - String.length d.gd_ext) ' ')
-                     d.gd_readme_files))
+                     (fill d.gd_readme_files)))
               dialects ;
             s (Printf.sprintf "- `%s_cpu.c`  CPU thread(s): real %s inline asm (litmus7 ASMLang).\n" tname CpuF.isa_name) ;
             s "- `outs.c/.h` litmus7's outcome histogram (verbatim from litmus/libdir).\n" ;
@@ -3140,9 +3153,11 @@ end
                 s (Printf.sprintf
                      "%s: `sh comp.sh %s-link` or `make %s-bin` links `./%s` from `%s`\n"
                      d.gd_vendor d.gd_target d.gd_target tname (gpu_obj d tname)) ;
-                s (Printf.sprintf "(`$%s %s$%s`, %s = %s).\n"
+                s (Printf.sprintf "(`$%s %s$%s`, %s).\n"
                      d.gd_compiler_var d.gd_arch_flag d.gd_arch_var
-                     d.gd_arch_default d.gd_arch_device))
+                     (match mc_part with
+                      | Some p -> Printf.sprintf "%s = %s" d.gd_arch_default p
+                      | None -> "default " ^ d.gd_arch_default)))
               dialects ;
             s "\n" ;
             s "The GPU compiler driver pulls in its own device runtime; `-lpthread -lm`\n" ;
@@ -3176,8 +3191,11 @@ end
             List.iter
               (fun d ->
                 s (Printf.sprintf
-                     "Name the GPU arch explicitly, e.g. `%s=%s make %s-bin` (%s): a build\n"
-                     d.gd_arch_var d.gd_arch_default d.gd_target d.gd_arch_device) ;
+                     "Name the GPU arch explicitly, e.g. `%s=%s make %s-bin`%s: a build\n"
+                     d.gd_arch_var d.gd_arch_default d.gd_target
+                     (match mc_part with
+                      | Some p -> Printf.sprintf " (%s)" p
+                      | None -> "")) ;
                 s "for the wrong arch links and exits 0 just as happily.  Compile-time knobs\n" ;
                 s (Printf.sprintf
                      "go through the compiler variable, e.g. `make %s-bin %s=\"%s -DHET_MEM_STRESS_PCT=0\"`.\n"
@@ -3194,13 +3212,28 @@ end
             s "built-in `%: %.o` rule and links the harness with `$(CC)` and no device code.\n" ;
             s (Printf.sprintf "Use %s.\n\n"
                  (enum (List.map (fun t -> Printf.sprintf "`make %s-bin`" t) targets))) ;
+            (* WHAT THIS HARNESS WAS BUILT FOR, and the last line a reader of a
+               results tree meets.  A part is named only where the pair's machine
+               row names one; where none does, the pair and the reason stand in
+               its place, because "no target stated" and "the target nobody
+               registered" read alike once the directory is all there is. *)
             s (Printf.sprintf "Target%s: %s.\n" (plural "" "s")
                  (enum
                     (List.map
                        (fun d ->
-                         Printf.sprintf "%s %s (%s)"
-                           d.gd_vendor d.gd_arch_device d.gd_name)
-                       dialects))) in
+                         match mc_part with
+                         | Some p ->
+                            Printf.sprintf "%s %s (%s)" d.gd_vendor p d.gd_name
+                         | None ->
+                            Printf.sprintf "%s %s" d.gd_vendor d.gd_name)
+                       dialects))) ;
+            (match no_machine_why with
+             | None -> ()
+             | Some why ->
+                s (Printf.sprintf
+                     "This harness names no silicon: %s.\nA result from it is filed \
+                      under `%s` and nothing more.\n"
+                     why pair_label)) in
           write "outs.h" (fun ch -> output_string ch outs_h_content) ;
           write "outs.c" (fun ch -> output_string ch outs_c_content) ;
           write "het_stress.cuh" (fun ch -> output_string ch het_stress_content) ;

@@ -102,6 +102,10 @@
  (package herdtools7)
  (deps
   %{bin:litmus7}
+  ; What a lane SAYS is a second surface from what it stamps, and one scanner
+  ; owns both rows' vocabularies (verify/brandscan.py); this test drives it on
+  ; all four lanes rather than restating the words.
+  ../../verify/brandscan.py
   (glob_files ../het/*.litmus)
   ../het/control-map.csv
   (glob_files ../het-x86/*)))

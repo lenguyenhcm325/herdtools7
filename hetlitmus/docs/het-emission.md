@@ -196,6 +196,18 @@ Three rules make it worth having:
   a claim. `HET_PLACE_LEVER` is separate: the placement API is a *dialect* fact
   (`cudaMemAdvise` on the CUDA render; the HIP render has no placement code and
   `#error`s on a non-zero `HET_PLACE`).
+* **The defines are not the only place a harness names a machine.** The dialect
+  payloads (`litmus/het-runtime/*.inc`) are pasted into the render as *text*, and
+  the emitted `README.md` / `comp.sh` are prose — neither goes through a define,
+  and both once carried the part their sentences were written for onto lanes
+  entitled to none. They are now written with `@NAME@` holes filled from the row
+  that resolved (`HetMachine.mc_words` / `fill`), so an entitled lane prints the
+  words its row owns and a nameless one prints the mechanism; a hole no row has a
+  word for **refuses** the emission. `hetlitmus/verify/brandscan.py` is the
+  independent detector: printed string literals (comments stripped, adjacent
+  literals joined) plus `README.md`/`comp.sh`/`Makefile`, keyed on entitlement
+  because the two lanes with a row legitimately print their own machine's words.
+  `emit-all.sh` runs it once per lane, cram `machine-pairs.t` (e) on all four.
 
 ### What the defines close, measured
 

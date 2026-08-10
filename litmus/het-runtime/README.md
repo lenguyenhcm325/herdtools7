@@ -1,6 +1,7 @@
 # het-runtime — the embedded runtime sources of the het harness
 
-These files are the C/CUDA runtime that litmus7's het emitter emits **verbatim**.
+These files are the C/CUDA runtime that litmus7's het emitter emits **verbatim**
+— with one exception, the machine-word holes described below.
 The `.h`/`.cuh` payloads become their own file in every emitted harness directory
 (`hetEmit.ml`, the `write "..."` calls); the `.inc` payloads are pasted into the
 body of the per-dialect `.cu` / `.hip` render, which is why they carry no include
@@ -132,3 +133,25 @@ GH200 places pages across an LPDDR/HBM split, MI300A has one HBM pool and gets
 its interconnect pressure from cross-chiplet contention instead.  A fragment
 pasted into the render, not a header: the surrounding `.cu`/`.hip` supplies
 `HET_PLACE`, `_het_place_failures` and `het_cpu_first_touch`.
+
+### `@NAME@` — the machine-word holes
+
+A payload is written once and pasted into every lane that renders its dialect,
+and the lanes do **not** all name the same machine: the `(X86_64, cuda)` dev
+box and any pair in no row of `litmus/hetMachine.ml` name none at all.  So a
+printed sentence that needs a machine noun spells it `@NAME@`, and the emitter
+fills it from the row that resolved (`HetMachine.fill`, `mc_words`).  Filling is
+textual and happens at paste time, so an entitled lane gets exactly the words
+its row owns and a nameless lane gets the mechanism instead — the same rule the
+`#ifndef` defaults in `het_verdict.h` follow, applied to text that is pasted
+rather than compiled.
+
+Two consequences worth knowing before editing one of these files:
+
+* a hole no machine row has a word for **refuses the emission** (exit 3), so a
+  new hole must be given a word in `generic_machine` too — that is the row a
+  nameless render prints from;
+* holes belong in **printed** text, not in comments.  A comparative comment or
+  a citation names the part it is about and must keep doing so: de-branding
+  “Fusco et al.: a Grace and a Hopper noise kernel…” would falsify the
+  citation.  `hetlitmus/verify/brandscan.py` enforces exactly that split.

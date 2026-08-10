@@ -48,11 +48,21 @@ guard here and the target's own figure is the conservative reading too.
   #define HET_DEV_HALF "the MI300A device half"
   #define HET_LLC_MB 256
 
+Both these pairs READ A MAP, so neither stamps HET_NO_CONTROL_MAP: the flag says
+the map file was not beside the test, and it is what stops the statistics layer
+from reading "nothing co-runs" as "this row IS the canary".  Grepped for both
+defines at once, so an absent flag is read off the same output as a present pair
+name rather than from a count that a missing line and a renamed one share.
+  $ grep -E '^#define HET_(PAIR_NAME|NO_CONTROL_MAP)' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  #define HET_PAIR_NAME "(AArch64, cuda)"
+  $ grep -E '^#define HET_(PAIR_NAME|NO_CONTROL_MAP)' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
+  #define HET_PAIR_NAME "(X86_64, hip)"
+
 (c) THE LANDMINE.  (x86_64, cuda) is REGISTERED WITHOUT A MACHINE ROW -- it is
 the dev box, and it is neither published part -- so its harnesses may name
 neither.  Neither the retired AMD verdicts file nor the MI300A machine words
 appear anywhere in the harness directory.  (`MI300A' alone is not the pin: the
-CPU stress payload's comments compare the two hosts by name, and section (e)
+CPU stress payload's comments compare the two hosts by name, and section (f)
 tracks that residue by count.)
   $ mkdir xc
   $ litmus7 -gpu-target cuda -o xc ../het-x86/MP-cg-sys-relaxed-x86_64.litmus >/dev/null 2>&1
@@ -103,17 +113,41 @@ so in band, and stamps not one machine define.
   $ grep -c 'is in no' ah/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip
   1
 
-Not one machine word either, from either row: this is the only defect in the
-table nothing downstream could catch, because a harness that names the wrong
-machine compiles, runs and reports exactly like one that names the right one.
-  $ grep -cE 'NVLink-C2C|Infinity Fabric|the Grace half|the Hopper half|the x86 half|the MI300A device half' ah/MP-cg-sys-relaxed/MP-cg-sys-relaxed.hip || true
-  0
+(e) WHAT A LANE SAYS, which is a different surface from what it stamps: a
+sentence can name a part without any define producing the word, and that is the
+only defect in the table nothing downstream could catch -- a harness naming the
+wrong machine compiles, runs and reports exactly like one naming the right one.
+brandscan.py reads the string literals a driver PRINTS (comments stripped, so the
+payloads' comparative notes and their citations survive) plus the README and the
+build files, and it is keyed on ENTITLEMENT: the two lanes with a row print their
+own machine's words all over, and only the other row's are a finding.
+  $ python3 ../../verify/brandscan.py --entitled none ah xc
+  brandscan: 2 path(s), no machine word outside the none row
+  $ python3 ../../verify/brandscan.py --entitled gh200 aa
+  brandscan: 1 path(s), no machine word outside the gh200 row
+  $ python3 ../../verify/brandscan.py --entitled mi300a xh
+  brandscan: 1 path(s), no machine word outside the mi300a row
 
-(e) CROSS-VENDOR RESIDUE IN THE RENDER.  A single-vendor harness still carries
+...and it is not vacuous.  Two plants in a COPY of the nameless lane, one in the
+README's target line and one split across two adjacent literals of a printed
+warning -- the shape a per-line grep of `fprintf(' lines cannot see:
+  $ cp -r xc xc-planted
+  $ P=xc-planted/MP-cg-sys-relaxed-x86_64
+  $ sed -i 's/^Target: NVIDIA CUDA\.$/Target: NVIDIA GH200 (CUDA)./' $P/README.md
+  $ printf 'static void _planted(void){ fprintf(stderr, "the Grace "\n  "half is idle\\n"); }\n' >> $P/MP-cg-sys-relaxed-x86_64.cu
+  $ python3 ../../verify/brandscan.py --entitled none xc-planted; echo "exit $?"
+  xc-planted/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu:759: names 'Grace' (the gh200 row's word; this lane is entitled to none): the Grace half is idle
+  xc-planted/MP-cg-sys-relaxed-x86_64/README.md:50: names 'GH200' (the gh200 row's word; this lane is entitled to none): Target: NVIDIA GH200 (CUDA).
+  FAIL: 2 machine word(s) in a lane entitled to none -- a harness that names the wrong machine runs and reports like one that names the right one
+  exit 1
+
+(f) CROSS-VENDOR RESIDUE IN THE RENDER.  A single-vendor harness still carries
 comparative comments -- het_alloc_hip.inc explains the HIP lane by contrast with
 the CUDA one, and its `#error' names the CUDA-only lever it refuses.  Those are
 deliberate and are whitelisted BY COUNT here, so the residue is tracked rather
-than remembered: a new mention moves this number and has to be argued for.
+than remembered: a new mention moves this number and has to be argued for.  The
+vendor words below are not machine words -- a dialect is not a part -- which is
+why they are counted here and not left to (e).
   $ grep -oiE 'cuda|nvcc|nvidia' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip | sort | uniq -c | sed 's/^ *//'
   7 CUDA
   1 NVIDIA
@@ -124,16 +158,17 @@ than remembered: a new mention moves this number and has to be argued for.
 
 The CUDA render also carries its own DIALECT payload's design notes:
 het_alloc_cuda.inc, het_noise_cuda.inc and het_stress.cuh describe mechanisms
-derived for GH200 and name it, and one stress warning in het_noise_cuda.inc is
-worded for that part.  Whitelisted PER WORD, in the same style, so the residue is
+derived for GH200 and name it in COMMENTS, which is where all of the residue
+below now is -- the two stress warnings those payloads print take their machine
+nouns from the row that resolved (litmus/hetMachine.ml mc_words), so on this lane
+they print none.  Whitelisted PER WORD, in the same style, so the residue is
 tracked rather than remembered: a bumpable single total is satisfiable by
 swapping one mention for another.  The pin is on the RENDER, the file a reader
-opens; what a result is read off -- the verdict layer's printed prose -- is
-define-driven and named none of this even when this pin was blind.
+opens; (e) is the pin on what it says.
   $ grep -oiE 'nvlink|grace|hopper|c2c|gh200' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu | sort | uniq -c | sed 's/^ *//'
-  13 C2C
+  11 C2C
   9 GH200
-  5 Grace
+  3 Grace
   3 Hopper
   3 NVLink
 

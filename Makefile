@@ -899,7 +899,9 @@ hetlitmus-recfields: | build
 ### no mu) -- while EXITING 0.  Seven phases: emission coverage, body-vs-column
 ### fidelity, tag liveness (the B4 lesson -- emitting is not testing), the
 ### instructions surviving gcc to the .o, an aarch64 SMOKE, the fail-closed
-### refusal (exit 3 + marker + no harness, plus emit-all.sh's two detectors),
+### refusal (exit 3 + marker + no harness, plus emit-all.sh's detectors -- the
+### refusal pair and the five per-lane stamp/machine-word ones, which live here
+### because this gate owns the emit-all stand-in rig),
 ### and the B6b co-run harnesses (T + mu(T) + canary share a proc index, so
 ### each body must be checked against its OWN test).  P2/P3/P7 pin their counts
 ### against a total derived from the corpus' own columns, so a phase that

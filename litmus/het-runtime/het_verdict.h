@@ -2033,21 +2033,22 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
         _s->k, _s->R);
     else if (_s->flags & HET_ST_NO_CONTROL_CORUN) {
       /* The same arithmetic, and it must NOT borrow the sentence above: this row
-         is not a canary, nothing here says it is one, and its missing bound is an
-         omission we have not closed yet.  Saying otherwise would report a gap in
-         the instrumentation as a property of the experiment. */
+         is not a canary, nothing here says it is one, and its missing bound is
+         what a build without the map file leaves behind.  Saying otherwise would
+         report a gap in the instrumentation as a property of the experiment. */
       if (HET_NO_CONTROL_MAP)
         fprintf(_ch,
           "  NOTE: this row CO-RUNS NO CONTROL because NO POSITIVE-CONTROL MAP WAS "
-          "READ for %s -- no map is registered for that pair, and a map derived on "
-          "another pair's strength lattice names siblings that are not weakenings\n"
-          "  here, so there is none to borrow.  Nothing marks this row a canary.  A "
-          "run in which "
-          "it did not fire is COLD and carries no information, so \"usable cells\" is "
-          "defined by firing and the denominator above is R -- the runs executed --\n"
-          "  not the usable count, which would report ALWAYS for a row that fired in %d "
-          "of %d runs.  It gets NO BOUND, and that is an OMISSION, not a construction: "
-          "the bootstrap control map for an unregistered pair does not exist yet.\n",
+          "READ for %s -- the map is looked for BESIDE THE TEST, under the name this "
+          "CPU frontend gives it (control-map.csv for AArch64,\n"
+          "  control-map-amd.csv for x86_64), and it was not there.  Put it beside the "
+          "test and re-emit.  Nothing marks this row a canary.  A run in which it did "
+          "not fire is COLD and carries no information, so \"usable cells\" is\n"
+          "  defined by firing and the denominator above is R -- the runs executed -- "
+          "not the usable count, which would report ALWAYS for a row that fired in %d "
+          "of %d runs.\n"
+          "  It gets NO BOUND, and that is an OMISSION, not a construction: what was "
+          "omitted is the map FILE beside this test, not any entry in any registry.\n",
           HET_PAIR_NAME, _s->k, _s->R);
       else
         fprintf(_ch,

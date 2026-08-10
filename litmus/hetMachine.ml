@@ -23,13 +23,20 @@ type machine = {
        elsewhere, rather than passing another part's capacity off as this one's. *)
     mc_llc_mb : int option ;
     mc_llc_note : string ;
+    (* This machine's words, by the name of the hole each one fills.  Contract
+       in the .mli; [generic_machine] below is the row a nameless render fills
+       them from. *)
+    mc_words : (string * string) list ;
   }
 
 type t = machine option
 
 (* THE FALLBACK, and it claims least: it names the MECHANISM, never a brand.  A
    pair with no machine row gets this and stamps no machine defines at all, so
-   het_verdict.h's #ifndef defaults -- which are these same words -- stand. *)
+   het_verdict.h's #ifndef defaults -- which are these same words -- stand.  It
+   carries a word for every hole any dialect payload spells, and deliberately no
+   PART: a render with no machine row names no silicon, so the sites that would
+   have printed a part print nothing there instead. *)
 let generic_machine = {
     mc_link_name = "host-device interconnect" ;
     mc_host_half = "the host half" ;
@@ -39,6 +46,19 @@ let generic_machine = {
     mc_llc_note =
       " (the local-cache argument is target-independent; no measured \
        last-level-cache behaviour is claimed for this target)" ;
+    mc_words = [
+        "HOST", "host" ;
+        "LINK", "interconnect" ;
+        "LINK_OBJ", "the interconnect" ;
+        "MALLOC_SITE", "system malloc where the GPU reaches pageable memory" ;
+        "HIP_RENDER", "HIP" ;
+        "NO_PLACE_WHY", "This render has no page-placement API to call" ;
+        "APU_CLASS", "integrated" ;
+        "DGPU_CLASS", "not-integrated" ;
+        "DGPU_NAME", "not integrated" ;
+        "APU_NAME", "an integrated APU" ;
+        "APU_RESULT", "an integrated-APU result" ;
+      ] ;
   }
 
 (* GH200: Grace (AArch64) + Hopper over NVLink-C2C.  The Fusco note is that
@@ -51,6 +71,13 @@ let gh200_machine = {
     (* max(Grace L3 114 MB, Hopper L2 51 MB) -- Bagchi ISMM'26 Table 1. *)
     mc_llc_mb = Some 114 ;
     mc_llc_note = " (Fusco: Hopper L2 caches HBM, local and peer)" ;
+    mc_words = [
+        "PART", "GH200" ;
+        "HOST", "Grace" ;
+        "LINK", "C2C" ;
+        "LINK_OBJ", "C2C" ;
+        "MALLOC_SITE", "system malloc on GH200" ;
+      ] ;
   }
 
 (* MI300A: Zen-4 x86-64 CCDs + CDNA3 XCDs on one package over Infinity Fabric,
@@ -73,6 +100,19 @@ let mi300a_machine = {
     mc_llc_note =
       " (the MALL / AMD Infinity Cache, 256 MB -- Tee et al., The MALL is \
        Open, SC-W'25 Table 1)" ;
+    mc_words = [
+        "PART", "MI300A" ;
+        "HOST", "x86" ;
+        "LINK", "Infinity Fabric" ;
+        "LINK_OBJ", "Infinity Fabric" ;
+        "HIP_RENDER", "HIP/MI300A" ;
+        "NO_PLACE_WHY", "MI300A has one HBM pool and nothing to place" ;
+        "APU_CLASS", "MI300A-class" ;
+        "DGPU_CLASS", "MI300X-class" ;
+        "DGPU_NAME", "MI300X class" ;
+        "APU_NAME", "the MI300A APU" ;
+        "APU_RESULT", "an MI300A result" ;
+      ] ;
   }
 
 (* THE TABLE.  Adding a machine is adding a row here; nothing else in the
@@ -90,6 +130,39 @@ let table = [
 
 let pair_name ~cpu_isa ~target = Printf.sprintf "(%s, %s)" cpu_isa target
 
+let word m name = List.assoc_opt name m.mc_words
+
+(* FILL, AND REFUSE ON A HOLE NOBODY OWNS.  A hole is `@NAME@' with NAME over
+   [A-Z0-9_]; anything else beginning with `@' is copied through, because C text
+   is free to contain the character. *)
+let fill m s =
+  let n = String.length s in
+  let b = Buffer.create n in
+  let is_name c =
+    (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c = '_' in
+  let rec go i =
+    if i >= n then Buffer.contents b
+    else if s.[i] <> '@' then (Buffer.add_char b s.[i] ; go (i+1))
+    else begin
+      let j = ref (i+1) in
+      while !j < n && is_name s.[!j] do incr j done ;
+      if !j > i+1 && !j < n && s.[!j] = '@' then begin
+        let name = String.sub s (i+1) (!j-i-1) in
+        (match word m name with
+         | Some w -> Buffer.add_string b w
+         | None ->
+            Warn.user_error
+              "an emitted payload spells the machine-word hole @%s@ and the row \
+               that resolved has no word for it, so the render would reach a \
+               reader with the hole still in it.  Give %s a word in mc_words \
+               (litmus/hetMachine.ml) -- in generic_machine too, which is what a \
+               pair with no machine row prints from"
+              name name) ;
+        go (!j+1)
+      end else (Buffer.add_char b '@' ; go (i+1))
+    end in
+  go 0
+
 let registered_doc () =
   String.concat ", "
     (List.map (fun ((c,t),_) -> pair_name ~cpu_isa:c ~target:t) table)
@@ -106,7 +179,10 @@ let resolve ~verbose ~cpu_isa ~target =
        Printf.eprintf
          "HetLitmus WARNING: the (CPU ISA x GPU dialect) pair %s is in no row of \
           litmus/hetMachine.ml, so this harness NAMES NO MACHINE: it stamps no \
-          machine define, and het_verdict.h's mechanism-naming defaults stand \
-          wherever it would have printed one.  Registered pairs: %s.\n%!"
+          machine define, and wherever it would have printed one the runtime \
+          headers' own #ifndef fallbacks stand -- het_verdict.h's wording for \
+          the interconnect and its two halves, and het_cpu_stress.h's HET_LLC_MB, \
+          which is a cache size measured on another part rather than a name.  \
+          Registered pairs: %s.\n%!"
          (pair_name ~cpu_isa ~target) (registered_doc ()) ;
      None, false

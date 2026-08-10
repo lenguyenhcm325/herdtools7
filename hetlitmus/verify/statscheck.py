@@ -2441,13 +2441,21 @@ def phase2b(header_dir, tmp, quiet):
             ("Nothing marks this row a canary",
              "it does not say the row is unmarked"),
             ("It gets NO BOUND, and that is an OMISSION, not a construction",
-             "it calls a gap we have not closed a property of the design")):
+             "it calls a gap we have not closed a property of the design"),
+            # ...and WHICH omission.  The map is loaded for every lane, so the
+            # flag says the FILE was not beside the test; a note that blamed a
+            # registry would send a reader looking for a row to add.
+            ("the map is looked for BESIDE THE TEST",
+             "it does not say where the map was looked for"),
+            ("what was omitted is the map FILE beside this test",
+             "it does not say WHICH omission the missing bound came from")):
         if frag not in txt:
             print("  *** the no-control-map note %s" % why)
             bad += 1
         elif not quiet:
             print("      %s" % frag[:96])
-    for frag in ("IS the Layer-B canary", "by construction, not by omission"):
+    for frag in ("IS the Layer-B canary", "by construction, not by omission",
+                 "no map is registered for that pair", "there is none to borrow"):
         if frag in txt:
             print("  *** the no-control-map note still says %r" % frag)
             bad += 1
