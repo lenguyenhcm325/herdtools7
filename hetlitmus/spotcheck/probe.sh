@@ -40,8 +40,8 @@ emit "host_nproc=$( (nproc 2>/dev/null || echo -1) )"
 
 # AArch64 feature flags that decide whether the CPU side can carry the tested
 # ops at all: `lrcpc' is LDAPR (the RCpc acquire the -2s CPU cycles use) and
-# `atomics' is LSE.  Absent lrcpc, a -2s test's CPU acquire is not the
-# instruction the oracle was derived for.  x86 hosts have no such line; the
+# `atomics' is LSE.  Absent lrcpc, the CPU half of a -2s test cannot issue the
+# acquire its .litmus names.  x86 hosts have no such line; the
 # key is emitted as `n/a' rather than omitted, so a diff across boxes lines up.
 if [ -r /proc/cpuinfo ]; then
   feats="$(grep -m1 -E '^(Features|flags)' /proc/cpuinfo 2>/dev/null | cut -d: -f2- || true)"

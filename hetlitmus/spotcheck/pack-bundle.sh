@@ -14,24 +14,28 @@
 #
 # WHAT IS IN IT
 #   tests/<name>/        the emitted harness dirs named in TESTS.txt
-#   control-map.csv      mu(T) + canary per test, for ladder.sh's rungs
-#   expected-nvidia.csv  the GH200 oracle -- carried for provenance, NOT to be
-#                        read as the oracle for a non-GH200 box
+#   control-map.csv      which mu(T) and canary each test co-runs, and WHY that
+#                        pick -- the reason is nowhere in the harness itself
 #   campaign.py          the cross-invocation pooling driver
 #   probe.cu probe.sh    what does this machine offer (run FIRST)
 #   ladder.sh run-one.sh the seven rungs, and campaign.py's --runner template
 #   TESTS.txt README.md  the subset + its rationale, and how to drive it
-#   STAMP                revision, date, census, emitter fingerprint
+#   STAMP                revision, date, census, per-test geometry, emitter
+#                        fingerprint
+#
+# NO VERDICTS TRAVEL.  The harnesses carry no prediction and neither does the
+# bundle: nothing in here says what an outcome ought to have been, so a session
+# on the instance can report what it saw and nothing else.
 #
 # FAIL-LOUD.  Every name in TESTS.txt must resolve to an emitted dir.  A typo
 # there would otherwise ship a bundle that is quietly one test short, and the
 # instance session would run the ladder against a subset nobody chose.
 #
-# CUDA BUNDLE.  probe.cu, ladder.sh's `comp.sh cuda && make cuda-bin' and
-# expected-nvidia.csv make this the NVIDIA dev-tier bundle, so it ships the
-# emission lane to match and GPU_TARGET below REFUSES any other vendor: an AMD
-# bundle wants an AMD probe, ladder and oracle too, and a bundle whose harness
-# dirs alone were AMD would die at rung 0 on the remote box, hours after packing.
+# CUDA BUNDLE.  probe.cu and ladder.sh's `comp.sh cuda && make cuda-bin' make
+# this the NVIDIA dev-tier bundle, so it ships the emission lane to match and
+# GPU_TARGET below REFUSES any other vendor: an AMD bundle wants an AMD probe and
+# an AMD ladder too, and a bundle whose harness dirs alone were AMD would die at
+# rung 0 on the remote box, hours after packing.
 # =========================================================================
 # Needs bash (arrays, mapfile); re-exec rather than fail obscurely under dash.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
@@ -50,10 +54,10 @@ LITMUS7="$REPO/_build/install/default/bin/litmus7"
 GPU_TARGET="${GPU_TARGET:-cuda}"
 [ "$GPU_TARGET" = cuda ] || {
   echo "error: GPU_TARGET=$GPU_TARGET -- only cuda is packable: this bundle's" >&2
-  echo "       ladder.sh (comp.sh cuda / make cuda-bin), probe.cu and" >&2
-  echo "       expected-nvidia.csv are CUDA-only, so a $GPU_TARGET bundle would" >&2
-  echo "       ship harness dirs its own driver cannot build.  Parameterising" >&2
-  echo "       the ladder, probe and oracle is future work." >&2
+  echo "       ladder.sh (comp.sh cuda / make cuda-bin) and probe.cu are" >&2
+  echo "       CUDA-only, so a $GPU_TARGET bundle would ship harness dirs its" >&2
+  echo "       own driver cannot build.  Parameterising the ladder and the" >&2
+  echo "       probe is future work." >&2
   exit 2 ; }
 
 OUTDIR="${1:-$HERE/bundle-out}"
@@ -100,10 +104,9 @@ if [ "${#missing[@]}" -gt 0 ]; then
   exit 1
 fi
 
-echo "[4/5] adding driver, probe, ladder, oracles, stamp"
+echo "[4/5] adding driver, probe, ladder, control map, stamp"
 cp "$HETL/campaign.py"                 "$BUNDLE/"
 cp "$HETL/tests/het/control-map.csv"   "$BUNDLE/"
-cp "$HETL/tests/het/expected-nvidia.csv" "$BUNDLE/"
 cp "$HERE/probe.cu" "$HERE/probe.sh" "$HERE/ladder.sh" "$HERE/run-one.sh" \
    "$HERE/TESTS.txt" "$HERE/README.md" "$BUNDLE/"
 chmod +x "$BUNDLE/probe.sh" "$BUNDLE/ladder.sh" "$BUNDLE/run-one.sh"
@@ -121,8 +124,14 @@ chmod +x "$BUNDLE/probe.sh" "$BUNDLE/ladder.sh" "$BUNDLE/run-one.sh"
   echo "packed_host=$(uname -sm)"
   echo "corpus_emitted=$(find "$SCRATCH/emit/het-$GPU_TARGET" -mindepth 1 -maxdepth 1 -type d | wc -l)"
   echo "subset_count=${#WANT[@]}"
+  # The GEOMETRY each pick was made for, read off the harness that actually
+  # shipped -- the launch size the ladder's rungs are keyed to, legible before the
+  # instance is even rented.  ladder.sh re-checks the control column per rung.
   for t in "${WANT[@]}"; do
-    echo "subset_test=$t class=$(awk -F, -v t="$t" '$1==t{print $2}' "$HETL/tests/het/expected-nvidia.csv" | head -1)"
+    cu="$BUNDLE/tests/$t/$t.cu"
+    echo "subset_test=$t npart=$(sed -n 's/^#define NPART //p' "$cu" | head -1)" \
+         "blocks=$(sed -n 's/^#define HET_TEST_BLOCKS //p' "$cu" | head -1)" \
+         "control=$(sed -n 's/^#define HET_CONTROL_COMPILED_IN //p' "$cu" | head -1)"
   done
   echo "emitter_sha256=$(sha256sum "$REPO/litmus/hetEmit.ml" | cut -d' ' -f1)"
   echo "verdict_h_sha256=$(sha256sum "$REPO/litmus/het-runtime/het_verdict.h" | cut -d' ' -f1)"

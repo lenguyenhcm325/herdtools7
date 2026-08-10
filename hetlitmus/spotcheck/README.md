@@ -10,20 +10,24 @@ probe reads off the machine.
 
 It **can** establish that the code works: that a harness dir builds and links,
 that both devices launch and rendezvous, that `HET_ALLOC` selects a shared-memory
-mode and refuses the illegal ones, that the positive controls stay hot, that each
-oracle class prints its own reporting frame, that the stress knobs actually reach
-the build, and that `campaign.py` pools across invocations so the B7 statistics
-engage. Every one of those is a property of the code and is checkable anywhere.
+mode and refuses the illegal ones, that the co-running controls stay hot and the
+machine line names the channel it calibrated off, that every reporting frame is
+printed and parseable, that the stress knobs actually reach the build, and that
+`campaign.py` pools across invocations so the B7 statistics engage. Every one of
+those is a property of the code and is checkable anywhere.
 
-It **cannot** establish anything about the compound memory model. A non-GH200 box
+It **cannot** establish anything about a memory model — and neither can the
+bundle, which ships no prediction to compare a row against. A non-GH200 box also
 has no NVLink-C2C and (on g5g) no ATS, so the shared variables are not two
 devices contending for one cache line under a live hardware-coherence protocol —
-they migrate, or they cross PCIe. And `expected-nvidia.csv` was derived for
-GH200 specifically (ARMv9 Grace + Hopper PTX). So:
+they migrate, or they cross PCIe. So:
 
-* a **null** here says nothing — different machine, different window;
-* a **sighting on a Disallowed row** here is *not* a refutation of the CMCM
-  either, but it is a five-alarm machinery event; the ladder stops and says so.
+* a **null** here describes the window *this* box gave us — different machine,
+  different window;
+* a **sighting** here is an observation about *this* box under *this* stress
+  config, and the ladder reports it as one. Comparing any row against a verdicts
+  file is a separate offline step (`hetlitmus/oracle-compare.sh`), never part of
+  a run.
 
 Results go to `results-devtier-<date>-<host>/` and **must never be merged with
 GH200 evaluation data**.
@@ -68,10 +72,10 @@ MI300X hardware* in Phase 3a.
 
 `pack-bundle.sh` ships whole harness dirs, so the `.hip`, the HIP arms of
 `comp.sh` and the `hip-bin` target travel with every bundle already. It also
-ships `control-map.csv` and `expected-nvidia.csv` — **the NVIDIA oracle**. An AMD
-bundle needs `control-map-amd.csv` + `expected-amd.csv` *and* x86-rendered
-harnesses (`generate-x86.sh`); `pack-bundle.sh` does not assemble that pairing
-yet, so it must not be pointed at an AMD run.
+ships `control-map.csv` — the NVIDIA pair's map, which is what says why each
+harness co-runs the companion it does. An AMD bundle needs `control-map-amd.csv`
+*and* x86-rendered harnesses (`generate-x86.sh`); `pack-bundle.sh` does not
+assemble that pairing yet, so it must not be pointed at an AMD run.
 
 ## Order of operations
 
@@ -98,7 +102,7 @@ still work on a rented box, driven from an unpacked bundle. **The wrapper** is
 the *session*: preflight → probe → emit → compile → campaign → collect, driven
 from a checkout on the machine under test, and it records the pair, the resolved
 arch and the mode so the results dir can be read afterwards. The wrapper does
-not run the ladder, and the ladder does not emit or select an oracle.
+not run the ladder, and the ladder does not emit.
 
 `probe-hip.sh` is the AMD side of `probe.sh` for the wrapper's `--gpu-target hip`
 lane. It records what `hipcc`, `amdgpu-arch` and `rocminfo` report and stamps
@@ -148,12 +152,17 @@ the toolkit version on a fresh instance is one of the things being probed.
 
 ## The subset
 
-Five harnesses; see `TESTS.txt` for the per-test rationale. Between them they
-cover the Disallowed-with-co-run-control shape, an Allowed one-sided test whose
-weakness is GPU-side, a NO-ORACLE 4-proc row, an observer-lane (R) row and a
-store-only (2+2W) row. Every one of them co-runs the canary
-`MP-{cg,gc}-sys-relaxed` inside its own launch, so the fully-relaxed het-MP
-floor — the likeliest thing to fire anywhere — rides along with all five.
+Five harnesses; see `TESTS.txt` for the per-test rationale. They are keyed to
+what the emitted machinery *is*, not to what any model says about them: a
+two-sided row with `mu(T)` co-running, a one-sided row whose only annotation is
+a cta-scope GPU acquire, the corpus's widest launch (`IRIW-gcgc-*`: 4 procs,
+NPART=10, 5 blocks), and the two lattice-floor rows that have no `mu(T)` to
+co-run — one needing both decode channels at once (R), one store-only (2+2W).
+`ladder.sh` pins each pick's `HET_CONTROL_COMPILED_IN`, so a corpus whose control
+rule moved reddens the rung instead of silently changing what it covers. Every
+one of them co-runs the canary `MP-{cg,gc}-sys-relaxed` inside its own launch, so
+the fully-relaxed het-MP floor — the likeliest thing to fire anywhere — rides
+along with all five.
 
 ## Known quirks, so nobody rediscovers them at $/hour
 
@@ -188,7 +197,7 @@ floor — the likeliest thing to fire anywhere — rides along with all five.
 | `pack-bundle.sh` | dev box: emit, prune, stamp, tar |
 | `ladder.sh` | instance: rungs 0–6, exit-code table |
 | `run-one.sh` | one invocation, for `campaign.py --runner` |
-| `STAMP` (in the bundle) | git revision, date, census, emitter SHA-256 |
+| `STAMP` (in the bundle) | git revision, date, census, per-test geometry, emitter SHA-256 |
 
 The emitted harness dirs are self-contained — `outs.c/h`, `het_stress.cuh`,
 `het_cpu_stress.h` and `het_verdict.h` are written into every dir at emission —

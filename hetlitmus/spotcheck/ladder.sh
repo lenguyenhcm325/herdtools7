@@ -3,28 +3,25 @@
 # HetLitmus dev-tier LADDER -- seven rungs, run on the rented instance.
 # =========================================================================
 # WHAT THIS IS.  A machinery spot check: does the emitted harness build, link,
-# launch, rendezvous across the two devices, drive its knobs, keep its controls
-# hot, print the right reporting frame for its oracle class, and pool across
-# invocations?  Every one of those is a property of the CODE, and every one can
-# be checked on a GPU that is not a GH200.
+# launch, rendezvous across the two devices, drive its knobs, keep its co-running
+# controls hot, print a parseable reporting frame, and pool across invocations?
+# Every one of those is a property of the CODE, and every one can be checked on a
+# GPU that is not a GH200.
 #
 # WHAT THIS IS NOT.  An evaluation; its numbers are not results.  A non-GH200 box
 # has no ATS and no NVLink-C2C, so the shared vars do not sit on one cache line
-# under a live hardware-coherence protocol -- they migrate, or they cross PCIe --
-# and the compound-model oracle in expected-nvidia.csv was derived for GH200
-# (ARMv9 Grace + Hopper PTX).  So:
-#
-#   * a NULL here says nothing about the CMCM: different machine, different
-#     window, different coherence mechanism.
-#   * a SIGHTING on a Disallowed row is not a refutation of the compound model
-#     either -- but it is a five-alarm machinery event (or a genuinely
-#     interesting hardware fact), and the ladder stops and says so.
+# under a live hardware-coherence protocol -- they migrate, or they cross PCIe.
+# The harness carries no prediction and this ladder holds none either: every
+# count below describes this box under this stress config and is compared against
+# nothing.  A sighting is an observation about this machine; a null is an
+# observation about the window this machine gave us.  Comparing a row against a
+# verdicts file is a separate offline step (hetlitmus/oracle-compare.sh).
 #
 # Results land in results-devtier-<date>-<host>/ and MUST NOT be merged with
 # GH200 evaluation data.  See README.md.
 #
 # ---- runtime knobs -------------------------------------------------------
-# The harness has exactly five runtime (getenv) knobs.  Everything else --
+# The harness has exactly seven runtime (getenv) knobs.  Everything else --
 # HET_PLACE, the stress percentages, HET_NWIN, SIZE_OF_TEST, NUMBER_OF_RUN -- is
 # compile-time and is set through the compiler, e.g.
 #   make cuda-bin NVCC="nvcc -DHET_MEM_STRESS_PCT=0"
@@ -154,7 +151,60 @@ check_machinery() { # log test -- the LINE SHAPES a rung reads its result off
   return $bad
 }
 
-oclass_of() { awk -F, -v t="$1" '$1==t{print $2; exit}' "$HERE/expected-nvidia.csv"; }
+# One field of the HetStats machine line, by name.  Same string-not-pattern rule
+# as above: the test name is compared with grep -F.
+statfield() { # log test field
+  grep -m1 -F "HetStats $2 cpu_only=" "$1" | tr ' ' '\n' | sed -n "s/^$3=//p"
+}
+
+# The verdict vocabulary an emitted harness no longer has: it carries no
+# prediction, so a transcript naming a class, a mismatch, a refutation or a
+# verdicts CSV was printed by something that is not this build -- a stale binary
+# left in the bundle being the likely one.  (The source-side twin of this list is
+# hetlitmus/verify/emit-all.sh's RETIRED_TOKENS.)  `oracle-compare.sh' is
+# deliberately absent: the harness prints that pointer on every sighting, as the
+# name of the offline step where a comparison would happen.
+RETIRED_ANYCASE='mismatch|disallowed|refut|forbidden|cmcm|no-oracle|oracle_|expected-(nvidia|amd)\.csv'
+RETIRED_EXACT='oracle=|ALLOWED|EXPECTED result|validation claim|compound model'
+check_retired() { # log
+  local hits
+  hits="$( { grep -niE "$RETIRED_ANYCASE" "$1"; grep -nE "$RETIRED_EXACT" "$1"; } | sort -n -u)"
+  [ -z "$hits" ] && return 0
+  echo "    RETIRED VERDICT VOCABULARY in $(basename "$1"):"
+  printf '%s\n' "$hits" | cut -c1-118 | sed 's/^/      /'
+  return 1
+}
+
+# The geometry the rung PICKED this test for, pinned against the harness that
+# arrived: a subset re-emitted from a corpus whose control rule moved would
+# otherwise still run, and quietly stop covering what it was chosen to cover.
+check_geometry() { # test want_control
+  local cu="$TESTS_DIR/$1/$1.cu" bad=0
+  grep -q "^#define HET_CONTROL_COMPILED_IN $2" "$cu" || {
+    echo "    WRONG PICK: $1 was chosen as a HET_CONTROL_COMPILED_IN=$2 row"
+    echo "      but its harness says $(sed -n 's/^#define HET_CONTROL_COMPILED_IN //p' "$cu" | head -1)"; bad=1; }
+  grep -q '^#define HET_CANARY_COMPILED_IN 1' "$cu" || {
+    echo "    MISSING: no canary compiled in"; bad=1; }
+  return $bad
+}
+
+# The calibration channel, both directions.  The harness calibrates off mu(T)
+# when it co-runs one AND that one fired, and off the canary otherwise, so the
+# channel it names is a function of mu_total that holds on any machine -- and a
+# row with no mu(T) can only ever say canary.
+check_control_channel() { # log test has_control
+  local ctrl mu want
+  ctrl="$(statfield "$1" "$2" ctrl)"; mu="$(statfield "$1" "$2" mu_total)"
+  if [ "$3" = 0 ] && [ "${mu:-0}" != 0 ]; then
+    echo "    IMPOSSIBLE: mu_total=$mu on a harness that co-runs no mu(T)"; return 1
+  fi
+  want=canary; [ "${mu:-0}" != 0 ] && want='mu(T)'
+  [ "$ctrl" = "$want" ] || {
+    echo "    CHANNEL: ctrl=${ctrl:-<missing>} with mu_total=${mu:-<missing>} -- want $want"
+    return 1; }
+  echo "    channel: ctrl=$ctrl (mu_total=${mu:-?} can_total=$(statfield "$1" "$2" can_total))"
+  return 0
+}
 
 # =========================================================================
 # RUNG 0 -- build the subset, objects then executable.
@@ -240,78 +290,82 @@ fi
 row 1 "HET_ALLOC bites" "$([ $r1 -eq 0 ] && echo PASS || echo FAIL)" "fail-closed + liveness;${r1note:- all applicable}"
 
 # =========================================================================
-# RUNG 2 -- an Allowed harness that co-runs ONLY the canary (2 instances), at
-# tiny N.  Checks the frames and the caveat machinery, not the physics.
+# RUNG 2 -- the ONE-SIDED row, at tiny N: the ordering annotation sits on the
+# GPU proc alone (an acquire at cta scope, the narrowest the corpus emits) and
+# the CPU proc is plain stores.  Its harness still co-runs mu(T) and the canary,
+# so what this rung reads is a three-instance launch's frames and its caveat
+# machinery, not the physics.
 # =========================================================================
-echo; echo "== rung 2: canary pair, tiny N =="
+echo; echo "== rung 2: one-sided row, tiny N =="
 T2="MP-cg-cta-acquire"; r2=0
 if [ -d "$TESTS_DIR/$T2" ]; then
   invoke "$T2" rung2 HET_RUNS_MAX="$LADDER_RUNS_TINY" HET_SEED="$LADDER_SEED0"; rc=$?
   log="$RESULTS/$T2-rung2.log"
   [ "$rc" -eq 0 ] || { echo "  FAIL  rc=$rc"; r2=1; }
   check_machinery "$log" "$T2" || r2=1
-  grep -q 'HET_CANARY_COMPILED_IN' "$TESTS_DIR/$T2/$T2.cu" || { echo "    MISSING: no canary compiled in"; r2=1; }
+  check_retired "$log" || r2=1
+  check_geometry "$T2" 1 || r2=1
+  check_control_channel "$log" "$T2" 1 || r2=1
   echo "    frame:  $(grep -m1 "^HetVerdict $T2 " "$log" | cut -c1-140)"
   echo "    caveats:$(grep -c '  CAVEAT:' "$log") line(s)"
   grep -m3 '  CAVEAT:' "$log" | sed 's/^/      /'
 else
   echo "  FAIL  $T2 not in the bundle"; r2=1
 fi
-row 2 "canary pair, tiny N ($T2)" "$([ $r2 -eq 0 ] && echo PASS || echo FAIL)" "frames + caveats printed"
+row 2 "one-sided row, tiny N ($T2)" "$([ $r2 -eq 0 ] && echo PASS || echo FAIL)" "frames + caveats printed"
 
 # =========================================================================
-# RUNG 3 -- the Disallowed harness: T + mu(T) + canary in one launch.
-# Expect 0 weak.  A SIGHTING is not a ladder failure -- it is an alarm.
+# RUNG 3 -- the TWO-SIDED row: both halves carry an ordering annotation (CPU
+# DMB SY, GPU fence.sc.sys), and its mu(T) is the fully relaxed sibling, so this
+# one dir holds T + mu(T) + canary in one launch on one padded arena -- 3
+# instances, NPART=6, and the whole co-run stack.  The sighting count k and the
+# two control totals are reported, never adjudicated: no prediction ships with
+# this bundle, so no count here can disagree with one.
 # =========================================================================
-echo; echo "== rung 3: Disallowed triple =="
-T3="MP-cg-sys-fence-2s"; r3=0; r3note="0 weak"
+echo; echo "== rung 3: two-sided row, mu(T) co-running =="
+T3="MP-cg-sys-fence-2s"; r3=0; r3note=""
 if [ -d "$TESTS_DIR/$T3" ]; then
   invoke "$T3" rung3 HET_RUNS_MAX="$LADDER_RUNS_TINY" HET_SEED="$((LADDER_SEED0+1))"; rc=$?
   log="$RESULTS/$T3-rung3.log"
   [ "$rc" -eq 0 ] || { echo "  FAIL  rc=$rc"; r3=1; }
   check_machinery "$log" "$T3" || r3=1
-  grep -q '#define HET_CONTROL_COMPILED_IN 1' "$TESTS_DIR/$T3/$T3.cu" || { echo "    MISSING: no mu(T) compiled in"; r3=1; }
-  k="$(grep -m1 -F "HetStats $T3 cpu_only=" "$log" | tr ' ' '\n' | sed -n 's/^k=//p')"
+  check_retired "$log" || r3=1
+  check_geometry "$T3" 1 || r3=1
+  check_control_channel "$log" "$T3" 1 || r3=1
+  k="$(statfield "$log" "$T3" k)"
   echo "    frame:  $(grep -m1 "^HetVerdict $T3 " "$log" | cut -c1-140)"
-  echo "    k=${k:-?}"
-  if [ -n "${k:-}" ] && [ "$k" != "0" ]; then
-    r3note="*** k=$k WEAK SIGHTINGS ON A DISALLOWED ROW ***"
-    echo "  !!    $r3note"
-    echo "        On a non-GH200 box this is NOT a refutation of the compound model"
-    echo "        (wrong machine, wrong oracle).  Stop the ladder and hand it to a"
-    echo "        human: it is either a machinery fault or a real hardware fact."
-  fi
+  echo "    k=${k:-?} (this test's own count, on ${LADDER_RUNS_TINY} run(s))"
+  r3note="k=${k:-?} mu_total=$(statfield "$log" "$T3" mu_total)"
 else
   echo "  FAIL  $T3 not in the bundle"; r3=1
 fi
-row 3 "Disallowed triple ($T3)" "$([ $r3 -eq 0 ] && echo PASS || echo FAIL)" "$r3note"
+row 3 "two-sided + mu(T) ($T3)" "$([ $r3 -eq 0 ] && echo PASS || echo FAIL)" "${r3note:-not run}"
 
 # =========================================================================
-# RUNG 4 -- the remaining Allowed rows and the NO-ORACLE row.  The point is that
-# each prints the frame for ITS OWN oracle class: a NO-ORACLE row must never
-# print a validation or a refutation sentence (hetlitmus/docs/positive-control.md
-# sec 4, the three reporting frames).
+# RUNG 4 -- the widest launch in the corpus, and the two rows that co-run no
+# mu(T).  IRIW-gcgc-* is 4 procs of which 2 are GPU procs, so with mu(T) and the
+# canary beside it the launch is NPART=10 across 5 blocks: the corpus maximum on
+# both axes, and so the closest any pick comes to a cooperative-launch limit.
+# R and 2+2W sit at the lattice floor, where no strictly weaker sibling exists to
+# co-run, so their calibration falls to the canary and the harness has to say so
+# on its own machine line.
 # =========================================================================
-echo; echo "== rung 4: Allowed + NO-ORACLE =="
+echo; echo "== rung 4: widest launch + the mu(T)-less rows =="
 r4=0
-for t in R-cg-sys-relaxed 2+2W-cg-sys-relaxed IRIW-gcgc-sys-fence; do
+for pick in IRIW-gcgc-sys-fence:1 R-cg-sys-relaxed:0 2+2W-cg-sys-relaxed:0; do
+  t="${pick%:*}"; want_ctl="${pick#*:}"
   [ -d "$TESTS_DIR/$t" ] || { echo "  FAIL  $t not in the bundle"; r4=1; continue; }
-  oc="$(oclass_of "$t")"
   invoke "$t" rung4 HET_RUNS_MAX="$LADDER_RUNS_MAIN" HET_SEED="$((LADDER_SEED0+2))"; rc=$?
   log="$RESULTS/$t-rung4.log"
+  echo "  $t (mu(T) co-running: $want_ctl)"
   [ "$rc" -eq 0 ] || { echo "  FAIL  $t rc=$rc"; r4=1; }
   check_machinery "$log" "$t" || r4=1
-  echo "  $t [$oc]"
+  check_retired "$log" || r4=1
+  check_geometry "$t" "$want_ctl" || r4=1
+  check_control_channel "$log" "$t" "$want_ctl" || r4=1
   echo "    $(grep -m1 "^HetVerdict $t " "$log" | cut -c1-140)"
-  if [ "$oc" = "NO-ORACLE" ]; then
-    if grep -qE 'REFUT|This is the CMCM validation claim' "$log"; then
-      echo "    FAIL: a NO-ORACLE row printed a validation/refutation sentence"; r4=1
-    else
-      echo "    ok: no validation/refutation sentence (B6c third frame)"
-    fi
-  fi
 done
-row 4 "Allowed + NO-ORACLE frames" "$([ $r4 -eq 0 ] && echo PASS || echo FAIL)" "3 rows, per-class frames"
+row 4 "widest launch + mu(T)-less rows" "$([ $r4 -eq 0 ] && echo PASS || echo FAIL)" "3 rows, geometry pinned"
 
 # =========================================================================
 # RUNG 5 -- the stress knobs, off then on.  Off is a REBUILD, because the
@@ -334,6 +388,12 @@ if [ -d "$TESTS_DIR/$T5" ]; then
   on_rc=$?
   offlog="$RESULTS/$T5-rung5-stress-off.log"; onlog="$RESULTS/$T5-rung5-stress-on.log"
   [ "$off_rc" -eq 0 ] && [ "$on_rc" -eq 0 ] || { echo "  FAIL  off rc=$off_rc on rc=$on_rc"; r5=1; }
+  # A rebuild is exactly where a reporting frame goes missing, so both builds are
+  # read for the line shapes and the vocabulary before their knobs are compared.
+  for l in "$offlog" "$onlog"; do
+    check_machinery "$l" "$T5" || r5=1
+    check_retired "$l" || r5=1
+  done
   # The knobs are LIVE if the two transcripts differ where stress is reported.
   offline="$(grep -m1 '^HetLitmus cpu-stress:' "$offlog")"
   online="$(grep -m1 '^HetLitmus cpu-stress:' "$onlog")"
@@ -433,7 +493,7 @@ fails=0
 for r in "${ROWS[@]}"; do case "$r" in *FAIL*) fails=$((fails+1));; esac; done
 echo "rungs failed: $fails / ${#ROWS[@]}"
 echo
-echo "REMINDER: this is dev-tier MACHINERY evidence.  Nothing here validates or"
-echo "refutes the compound memory model, and none of it may be merged with GH200"
-echo "evaluation data.  Keep $RESULTS as-is and ship it whole."
+echo "REMINDER: this is dev-tier MACHINERY evidence.  Every count in $RESULTS"
+echo "describes this box; none of it was compared against a model, and none of it"
+echo "may be merged with GH200 evaluation data.  Keep the dir as-is and ship it whole."
 exit "$fails"
