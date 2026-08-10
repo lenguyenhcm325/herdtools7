@@ -734,29 +734,26 @@ hetlitmus-dup: | build
 	python3 hetlitmus/verify/dupcheck.py --bite
 	@ echo "HetLitmus Q10 isomorphism/dedup gate: OK (and the gate bites)"
 
-### hetlitmus-order: the ordering rule behind the two-sided oracle, machine-
-### checked against both constituent solvers.  The `-2s' rows are the only ones
-### that can be Disallowed -- the only ones that can refute the compound model --
-### and they span a 4x4 grid of CPU{STLR/LDAPR,DMB.SY,DMB.ST,DMB.LD} x
-### GPU{rel/acq atoms,fence.sc,fence.release,fence.acquire}.sys.  Which cells
-### forbid is not "both sides have a fence", hand verdicts are how an oracle
-### acquires a silent error, and an oracle error here is a FALSE REFUTATION of
-### the model, so the two-sided verdicts are a compositional rule and this gate
-### proves it is the same function herd7 computes:
-###   ARM     96 CPU-only AArch64 cells under herd7's native model
-###   PTX     96 GPU-only LISA/Bell cells under nvidia-ptx.cat (Lustig'19)
-###   ORACLE  all 128 two-sided 2-proc rows of expected-nvidia.csv -- an asserted
-###           count, so neither can the CSV and the rule drift apart nor can a
-###           half-blind phase pass
-### --bite corrupts the rule nine ways and requires each to redden the phase that
-### names it -- including a revert of the NVOR slot gate to the pre-D3 NAME-TAG
-### shortcut, which must redden ORACLE on the two LB-cg rows Phase E's blind
-### re-derivation found.  ~3 s; no nvcc, no GPU.
-hetlitmus-order: | build
+### hetlitmus-lattice: the per-primitive ordering table behind the control-map
+### lattice, machine-checked against both constituent solvers.  Each CPU
+### primitive {STLR/LDAPR, DMB.SY, DMB.ST, DMB.LD} and each GPU primitive
+### {rel/acq atoms, fence.sc, fence.release, fence.acquire}.sys orders a specific
+### set of program-order pairs, and that set is the `ord' half of the (tier, ord)
+### strength lattice controlmap.py uses to pick each test's positive-control
+### sibling, so a wrong entry silently certifies a sibling that is not weaker.
+### Which cells forbid is not "both sides have a fence": DMB.LD orders nothing on
+### a store;store producer and a PTX release fence nothing on a load;load
+### consumer, so the table meets the solvers rather than being asserted.
+###   ARM  96 CPU-only AArch64 cells under herd7's native model
+###   PTX  96 GPU-only LISA/Bell cells under nvidia-ptx.cat (Lustig'19)
+### --bite corrupts the table four ways (a CPU ordered-pair set, a GPU one, a
+### pattern role, and the pattern clause itself) and requires each to redden the
+### phase that names it.  ~3 s; no nvcc, no GPU.
+hetlitmus-lattice: | build
 	@ echo
 	python3 hetlitmus/verify/ordercheck.py
 	python3 hetlitmus/verify/ordercheck.py --bite
-	@ echo "HetLitmus Q10 two-sided ordering rule: OK (and the gate bites)"
+	@ echo "HetLitmus ordering-table lattice gate: OK (and the gate bites)"
 
 ### hetlitmus-verdict: het_verdict() -- the rule that decides what an observation
 ### MEANS -- compiled from the real emitted header and fed synthetic records.
@@ -1114,7 +1111,7 @@ hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-dup
-hetlitmus-test:: hetlitmus-order
+hetlitmus-test:: hetlitmus-lattice
 hetlitmus-test:: hetlitmus-amd-controlmap
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-noracle
@@ -1156,7 +1153,7 @@ hetlitmus-promote: | build
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
-.PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order
+.PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-lattice
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
 .PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10 hetlitmus-noracle
 .PHONY: hetlitmus-x86fixture hetlitmus-noracle-hw hetlitmus-run-gate hetlitmus-run-hw

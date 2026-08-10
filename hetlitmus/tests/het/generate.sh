@@ -143,9 +143,9 @@ done
 # ordering a primitive supplies depends on which program-order pair its proc
 # has, so sweep  cpu in {ra, sy, st, ld} x gpu in {ra, sc, rel, acq}, named
 # <shape>-<cuttag>-sys-<cpu>.<gpu>-2s.  ../_grid_lib.sh has the token table and
-# why only 2-proc shapes (minus 2+2W) and one cut for SB/LB.  The ordering rule
-# these cells span is machine-checked against herd7 by verify/ordercheck.py
-# (make hetlitmus-order).
+# why only 2-proc shapes (minus 2+2W) and one cut for SB/LB.  The per-primitive
+# ordering these cells span is machine-checked against herd7 by
+# verify/ordercheck.py (make hetlitmus-lattice).
 pair_count=0 diag_count=0
 for shape in $TWO_SIDED_PAIR_SHAPES; do
   cyc="${SHAPE_CYCLE[$shape]}"
