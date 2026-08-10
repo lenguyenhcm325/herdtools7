@@ -2,23 +2,22 @@
 """
 x86fixturecheck.py -- is `hetlitmus/tests/het-x86' still what its generators emit?
 
-That directory is five hand-cut committed files -- three `.litmus' renderings plus
-one-row-per-test extracts of `control-map-amd.csv' and `expected-amd.csv' -- and it
-is the ONLY route to the (x86_64, hip) pair for the cram suite,
-smoke.sh and verdictcheck: the real x86 corpus is generated on demand and never
-committed, and a cram sandbox has no `hetgen7' on $PATH.  Nothing else in the tree
-compares it against its generators, so it can go stale in silence -- and the
-things that move it are exactly the things that move often: `generate-x86.sh',
-`tests/het/control-map-amd.csv' and the AMD oracle (D26-class re-derivations
-rewrite whole columns of the latter two).  A stale fixture does not break a gate;
-it makes every gate that reads it test a configuration nothing ships.
+That directory is five hand-cut committed files -- four `.litmus' renderings plus
+a one-row-per-test extract of `control-map-amd.csv' -- and it is the ONLY route to
+the (x86_64, hip) pair for the cram suite, smoke.sh and verdictcheck: the real x86
+corpus is generated on demand and never committed, and a cram sandbox has no
+`hetgen7' on $PATH.  Nothing else in the tree compares it against its generators,
+so it can go stale in silence -- and the things that move it are exactly the
+things that move often: `generate-x86.sh' and `tests/het/control-map-amd.csv'.  A
+stale fixture does not break a gate; it makes every gate that reads it test a
+configuration nothing ships.
 
 Two comparisons, both verbatim:
 
   P1  run generate-x86.sh into a temp dir and `cmp' each committed .litmus
       against its generated twin, byte for byte
-  P2  for each of the three tests, the committed map ROW must equal the row the
-      generated (re-keyed) map carries, in both maps -- fields, order and text
+  P2  for each of the four tests, the committed map ROW must equal the row the
+      generated (re-keyed) map carries -- fields, order and text
 
 The generator writes the whole 411-test corpus and takes seconds, so this is a
 fast gate and lives in the CUDA-free `hetlitmus-test' umbrella: generation and
@@ -41,13 +40,16 @@ FIXTURE = os.path.join(ROOT, "hetlitmus", "tests", "het-x86")
 GEN_X86 = os.path.join(HET_DIR, "generate-x86.sh")
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
-# The three tests the fixture carries.  Named here rather than globbed so that a
+# The tests the fixture carries.  Named here rather than globbed so that a
 # file DELETED from the fixture is a failure and not an empty loop -- the same
 # non-vacuity rule the other gates run on.
+# S-cg-sys-relaxed is here because the S row NAMES it as mu(T) and the emitter
+# refuses a control it cannot resolve: a fixture that names one has to ship it.
 TESTS = ["MP-cg-sys-relaxed-x86_64",
          "MP-cg-sys-acqrel-2s-x86_64",
-         "S-cg-sys-fence-x86_64"]
-MAPS = ["control-map-amd.csv", "expected-amd.csv"]
+         "S-cg-sys-fence-x86_64",
+         "S-cg-sys-relaxed-x86_64"]
+MAPS = ["control-map-amd.csv"]
 
 fails = []
 
@@ -90,7 +92,7 @@ def rows_of(path):
 
 def phase1(corpus, fixture, quiet=False):
     say = (lambda *_: None) if quiet else print
-    say("===== P1: the three committed .litmus files, byte for byte =====")
+    say("===== P1: the committed .litmus files, byte for byte =====")
     n = 0
     for t in TESTS:
         have = os.path.join(fixture, t + ".litmus")
@@ -188,11 +190,11 @@ def bite():
          "control-map-amd.csv",
          lambda s: s.replace(",self", ",MP-cg-sys-acqrel-2s-x86_64", 1),
          "control-map-amd.csv row for " + TESTS[0] + " DIFFERS"),
-        ("P2", "an oracle row's verdict flipped",
-         "expected-amd.csv",
-         lambda s: s.replace(TESTS[0] + ",Allowed,",
-                             TESTS[0] + ",Disallowed,", 1),
-         "expected-amd.csv row for " + TESTS[0] + " DIFFERS"),
+        ("P2", "a control-map row's mu(T) re-pointed off the floor",
+         "control-map-amd.csv",
+         lambda s: s.replace(TESTS[2] + ",S-cg-sys-relaxed-x86_64",
+                             TESTS[2] + ",S-cg-sys-acqrel-2s-x86_64", 1),
+         "control-map-amd.csv row for " + TESTS[2] + " DIFFERS"),
     ]
     for phase, what, fname, mutate, want in injections:
         tmp = tempfile.mkdtemp(prefix="x86fixturebite.")

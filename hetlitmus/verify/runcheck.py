@@ -54,20 +54,22 @@ BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 sys.path.insert(0, HERE)
 import brandscan          # noqa: E402  (the tree's own module, next to this one)
 
-# The committed (x86_64, *) fixture: three tests, cut verbatim from a
-# generate-x86.sh run and kept that way by hetlitmus-x86fixture.
+# The committed (x86_64, *) fixture, cut verbatim from a generate-x86.sh run and
+# kept that way by hetlitmus-x86fixture.  It is CLOSED UNDER THE CONTROL MAP:
+# S-cg-sys-relaxed-x86_64 is here because the S row names it as mu(T) and
+# emission refuses a control it cannot build.
 X86_DIR = os.path.join(HETL, "tests", "het-x86")
 X86_TESTS = ["MP-cg-sys-acqrel-2s-x86_64", "MP-cg-sys-relaxed-x86_64",
-             "S-cg-sys-fence-x86_64"]
+             "S-cg-sys-fence-x86_64", "S-cg-sys-relaxed-x86_64"]
 # The (AArch64, *) lane is the committed 411-test corpus, and a session over all
 # of it is not a gate.  The cut below is copied out of it VERBATIM at run time --
 # tests plus the two files the emitter resolves beside them -- so it is not a
 # second fixture that could go stale; it is the corpus, minus rows.  Closed under
-# the control map: MP-cg-sys-acqrel-2s names MP-cg-sys-acquire as its mutant and
+# the control map: every row here names its lattice-floor sibling as mu(T) and
 # MP-cg-sys-relaxed as its canary, and emission refuses a control it cannot build.
 AARCH64_DIR = os.path.join(HETL, "tests", "het")
 AARCH64_TESTS = ["MP-cg-sys-acqrel-2s", "MP-cg-sys-acquire", "MP-cg-sys-relaxed",
-                 "S-cg-sys-fence"]
+                 "S-cg-sys-fence", "S-cg-sys-relaxed"]
 AARCH64_SIDE = ["control-map.csv"]
 
 # One HetStats machine line, the whole interface between a harness and

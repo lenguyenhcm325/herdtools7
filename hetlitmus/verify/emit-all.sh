@@ -37,8 +37,8 @@
 # generated into a scratch dir OUTSIDE OUTDIR, so `diff -r' of two snapshots
 # still compares emitted bytes only.  The het corpora are emitted from INSIDE
 # their own directory so emission finds the pair's control map + the co-run
-# sibling .litmus (B6b: a Disallowed test's harness embeds its mu(T) mutant and
-# the canary, resolved relative to the source dir).  gpu-only reuses emit-gpu.sh.
+# sibling .litmus (a harness embeds its mu(T) and its canary, both resolved
+# relative to the source dir).  gpu-only reuses emit-gpu.sh.
 #
 # FAIL-CLOSED (P2b).  This loop used to be
 #     "$LITMUS7" -o "$OUTDIR/het" "$t" >/dev/null
@@ -241,6 +241,15 @@ for lane in $HET_LANES; do
       if grep -rqE "$RETIRED_TOKENS" "$OUTDIR/$sub/$n"; then
         echo "FAIL: $t in the $corpus/$target lane carries the retired verdict vocabulary:" >&2
         grep -rlE "$RETIRED_TOKENS" "$OUTDIR/$sub/$n" >&2
+        exit 1
+      fi
+      # THE CONTROL MAP WAS THERE.  Every het lane emits from beside its own map,
+      # so this define can only appear if the lane lost it -- and a harness that
+      # names no control still emits, still runs and still prints, with every
+      # null it produces uninterpretable.  Nothing else in this script would see
+      # that: the stamps, the pair name and the census are all unaffected.
+      if grep -q '^#define HET_NO_CONTROL_MAP 1' "$OUTDIR/$sub/$n/$n.$ext"; then
+        echo "FAIL: $t in the $corpus/$target lane stamps HET_NO_CONTROL_MAP 1 -- no control map was found beside the test, so it co-runs nothing" >&2
         exit 1
       fi
       # THE PAIR, and the machine words that pair is entitled to.

@@ -33,7 +33,7 @@ the regression it exists to catch.  (ptxcheck's barrier whitelist guards the sam
 invariant independently, at the PTX level: one system-scope fetch_add per
 barrier-joining GPU lane.)
 
-MP-cg-sys-acqrel-2s is a should-be-forbidden test, so its harness CO-RUNS three
+MP-cg-sys-acqrel-2s is off the lattice floor, so its harness CO-RUNS three
 het instances (T, mu(T), the canary).  The invariant is per-participant and
 unchanged -- one free-running window per lane and per CPU wrapper, one barrier
 arrival before each -- so the totals are 3x2 = 6.  The counts are also scoped to

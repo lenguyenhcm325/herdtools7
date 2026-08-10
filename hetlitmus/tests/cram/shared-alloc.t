@@ -116,7 +116,7 @@ gd_alloc_shared's body for the same reason as (c).
   $ grep -c '(void)hipMalloc(&bufP' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   2
 
-(f) the co-run arena.  A should-be-forbidden test co-runs mu(T) and the canary,
+(f) the co-run arena.  A test off the lattice floor co-runs mu(T) and the canary,
 and disjoint addresses are not enough: two variables on one cache line are ONE
 COHERENCE UNIT, so mu(T)'s traffic would drag T's line around and the control
 would perturb the very test it exists to vouch for (Q4-positive-control.md 3.1 /
@@ -142,32 +142,38 @@ coherent path entirely, leaving the harness testing nothing.
   0
 
 The HIP twin carves the same arena from its own gd_alloc_shared (fine-grained
-hipMallocManaged): one template, two renders.  Its slot count is 4, not the 6
-above, and that is the arena sizing of (g) working: on the AMD lattice this row
-is NO-ORACLE and names no mu(T), so the harness is T + canary, 2 instances x 2
-vars.  The CUDA twin is Disallowed on the NVIDIA lattice and co-runs three.
+hipMallocManaged): one template, two renders, and the same 6 slots -- this row is
+off the lattice floor on BOTH lattices, so both co-run three instances.
   $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $COH.hip
   1
   $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $COH.hip
-  4
+  6
 
-(g) the arena is sized from the instance population, not from a fixed 3.  The 395
-canary-only harnesses carve a TWO-INSTANCE arena, so a slot count computed for
-three instances would either overlap the barrier onto a tested variable (the
-rendezvous counter and a litmus location become one coherence unit) or leave the
-last slot past the end of the allocation.  Count the slots and pin the size.
+(g) the arena is sized from the instance population, not from a fixed 3.  The 78
+lattice-floor rows carve a TWO-INSTANCE arena, so a slot count computed for three
+instances would either overlap the barrier onto a tested variable (the rendezvous
+counter and a litmus location become one coherence unit) or leave the last slot
+past the end of the allocation.  Count the slots and pin the size.
 
-MP-cg-sys-acquire is Allowed -> T + canary, 2 instances, 2 vars each: 4 shared
-slots + barrier = 5, allocated 6 lines (one line of alignment slack, because _sa
-rounds the base up).
-  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acquire.litmus >/dev/null 2>&1
-  $ AC=MP-cg-sys-acquire/MP-cg-sys-acquire
+2+2W-cg-sys-relaxed is AT the floor -> T + canary, 2 instances, 2 vars each: 4
+shared slots + barrier = 5, allocated 6 lines (one line of alignment slack,
+because _sa rounds the base up).
+  $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-relaxed.litmus >/dev/null 2>&1
+  $ AC=2+2W-cg-sys-relaxed/2+2W-cg-sys-relaxed
   $ grep -c 'cache-line-padded shared slots: t_x t_y can_x can_y + barrier' $AC.cu
   1
   $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena, (size_t)HET_CACHE_LINE\*6)' $AC.cu
   1
   $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $AC.cu
   4
+
+...and the three-instance arena of the same shape family is two lines longer,
+which is what "sized from the population" means.
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acquire.litmus >/dev/null 2>&1
+  $ grep -c 'cache-line-padded shared slots: t_x t_y mu_x mu_y can_x can_y + barrier' MP-cg-sys-acquire/MP-cg-sys-acquire.cu
+  1
+  $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena, (size_t)HET_CACHE_LINE\*8)' MP-cg-sys-acquire/MP-cg-sys-acquire.cu
+  1
 
 The barrier gets its own line, past the last variable, never sharing one with a
 tested location.

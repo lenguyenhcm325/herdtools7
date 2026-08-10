@@ -62,39 +62,45 @@ on T is.
   0
 
 GPU side (Decision 2): the two GPU stores carry the tag as uint64 atomic_ref
-stores (the observer lane's uint64 loads are counted separately below).
+stores (the observer lane's uint64 loads are counted separately below).  mu(T) is
+structurally identical, so it emits the SAME two stores under the same modulus --
+which is why the file-wide count is twice the per-instance one.
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -c 'ref.store(' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
-  2
+  4
   $ grep -c 'ref.store(((uint64_t)5 \* (_n + 1) + 3)' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
-  1
+  2
 
 Observers (Decision 4/5): the 117 tests whose condition names a memory location
 (every 2+2W, R and S) add ONE GPU observer lane plus ONE CPU observer pthread, so
 NPART grows by 2; each snoops every observed location, and a per-run ws scan
 (Srivastava Eq 3.12) fills _loc with the same-observer-thread cycle.
 
-NPART is a SUM over instances.  2+2W-cg-sys-fence is oracle-Allowed, so it
-co-runs the Layer-B canary: 4 (2 procs + 2 observers) + 2 (the canary's MP) = 6.
-The observer contribution -- the thing this section guards -- is unchanged at +2,
-which is why an MP canary adds exactly 2 and not 4.  Pin the sum and state the
-arithmetic, so a wrong instance count cannot hide inside a plausible number.
-  $ grep -c '#define NPART 6' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+NPART is a SUM over instances.  2+2W-cg-sys-fence is off the lattice floor, so it
+co-runs three: 4 (2 procs + 2 observers) + 4 (mu(T), structurally identical) + 2
+(the canary's MP) = 10.  The observer contribution -- the thing this section
+guards -- is +2 per observer-carrying instance, which is why an MP canary adds
+exactly 2 and not 4.  Pin the sum and state the arithmetic, so a wrong instance
+count cannot hide inside a plausible number.
+  $ grep -c '#define NPART 10' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   1
   $ grep -c 'cpu_obs_thread' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
-  2
+  4
   $ grep -c 'int _t_loc = ((t__ws_x_c && t__ws_y_c) || (t__ws_x_g && t__ws_y_g))' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   1
 
-The canary brings NO second observer (MP's condition names no coherence-final
-location), so cpu_obs_thread stays at 2 occurrences -- definition plus
-pthread_create -- for the one observer T actually has.
+Which four: mu(T) brings its own observer thread, definition plus pthread_create,
+and the canary brings NONE -- MP's condition names no coherence-final location.
+An observer wired to the wrong instance would tally one program's coherence order
+against another's name, and the prefixes are the only thing keeping them apart.
+  $ grep -cE '^static void\* (t|mu)_cpu_obs_thread' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+  2
   $ grep -c 'can_cpu_obs_thread' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu || true
   0
 
 GATE 1: no test may emit a constant detector.  A constant-false _weak reports
-"Never" on every run, and a spurious "Never" on a should-be-forbidden test reads
-as CONFIRMING the model, so the emitter refuses to emit one and HET_PENDING (=0)
+"Never" on every run, and a spurious "Never" is an observation nothing produced,
+so the emitter refuses to emit one and HET_PENDING (=0)
 is gone from it entirely (env-research/impl-briefs/B3c-impl-brief.md).  This can
 only regress by removing that refusal.
   $ grep -cE 'HET_PENDING' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
@@ -113,15 +119,18 @@ GATE 3: T_L>=2 windowing.  SB has no rf anchor (both reads are fr), so the
 partner's frame is SEARCHED over [c-W, c+W] around the synchrony point decoded
 from read-buffer 1, guarded by that tag being real -- a cold frame has no
 synchrony point, and counting it would report 100% weak (Srivastava 4.4).
-SB-cg-sys-acqrel-2s is oracle-Allowed, so it co-runs the canary and the test
-under study carries the `t_' prefix: same scan, same counts, same window.
+SB-cg-sys-acqrel-2s is off the lattice floor, so it co-runs three instances and
+the test under study carries the `t_' prefix: same scan, same counts, same
+window.  Its mu is SB-cg-sys-relaxed -- another T_L>=2 shape -- so the windowed
+search is emitted twice, once per SB instance, and HET_WINDOW is read at both
+sites on top of its #ifndef default.
   $ litmus7 -gpu-target cuda -o . ../het/SB-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ grep -c 'if (t_bufP0_0\[_f\] != 0) {' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
   3
   $ grep -c 'for (_t1 = _c1_lo; _t1 <= _c1_hi && !_rwin; ++_t1)' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
-  1
+  2
   $ grep -c 'HET_WINDOW' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
-  3
+  4
 
 The exhaustive COUNT (ground truth for calibrating W) is emitted too, capped so
 it cannot blow up at N=1e6 -- and it records whether it ran, so a capped-out run

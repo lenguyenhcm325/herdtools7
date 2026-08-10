@@ -685,18 +685,20 @@ hetlitmus-cpustress: | build
 	@ echo "HetLitmus Layer-3 CPU+interconnect stress liveness: OK"
 
 ### hetlitmus-controlmap: the positive control (hetlitmus/docs/positive-control.md).
-### Every one of the 16 Disallowed tests must have a mutant mu(T) that EXISTS and is
-### labelled Allowed, re-derived from the corpus sources + the oracle and never
-### from the test's name (MP-gc-sys-acquire and two siblings do not exist at all).
-### It fails closed: a missing mutant breaks the build rather than skipping the
-### control, because a silently absent control does not weaken a null -- it makes
-### it unfalsifiable.  CUDA-free.
-### --bite is that fail-closed claim's evidence: four injections into a scratch
-### copy of the corpus + oracle + map (mu's .litmus deleted, mu relabelled
-### Disallowed, the Mu column rewritten from the test's NAME, mu swapped for
-### another shape), each of which must redden --check by the NAME of the property
-### it broke.  Until 2026-08-02 this was the one gate in the suite that had never
-### been seen to fail.
+### Every test off the lattice floor -- 333 of the 411 -- must name a mu(T) that
+### EXISTS, is structurally identical, is at the floor of the strength lattice and
+### carries the same scopes; the other 78 ARE the floor and name `none'.  It is
+### re-derived from the corpus sources and never from the test's name
+### (MP-gc-sys-acquire and two siblings do not exist at all).  It fails closed: a
+### missing mutant breaks the build rather than skipping the control, because a
+### silently absent control does not weaken a null -- it makes it unfalsifiable.
+### CUDA-free.
+### --bite is that fail-closed claim's evidence: five injections into a scratch
+### copy of the corpus + map (mu's .litmus deleted, the Mu column rewritten from
+### the test's NAME, mu swapped for another shape, mu swapped for a STRICTLY
+### STRONGER sibling, and the retired 8-column schema fed to both this gate and
+### the emitter's own reader), each of which must redden by the NAME of the
+### property it broke.
 hetlitmus-controlmap: | build
 	@ echo
 	python3 hetlitmus/verify/controlmap.py --check
@@ -706,10 +708,10 @@ hetlitmus-controlmap: | build
 ### hetlitmus-amd-controlmap: the SAME gate on the AMD / MI300A map.  It is a
 ### separate artifact and a separate lattice, not a translation (memo 7.D11): on
 ### x86 the CPU strength lattice loses its middle rung, so a candidate that only
-### moves within {ra,st,ld} is NOT a weakening there.  The oracle it is derived
-### against is expected-amd.csv and its census is 19 Disallowed, not the NVIDIA
-### lane's 16 (AMD: D26 2026-08-04 demoted 127 of 146; NVIDIA: NVOR 2026-08-06
-### demoted 32 of 50, and its Phase-D3 repair 2 more -- unrelated strikes).
+### moves within {ra,st,ld} is NOT a weakening there.  The floor set is the same
+### 78 rows either way -- no row's only ordering op is one of the four the x86
+### lattice drops -- so the two maps differ in their MuAlt column, not their
+### census; --check re-measures both floor sets rather than assuming it.
 ### Regenerate with:
 ###   python3 hetlitmus/verify/controlmap.py --lattice x86 --emit \
 ###     > hetlitmus/tests/het/control-map-amd.csv
@@ -926,16 +928,16 @@ hetlitmus-x86body: | build
 	@ echo "HetLitmus x86-64 tagged CPU body gate: OK (and the gate bites)"
 
 ### hetlitmus-x86fixture: is tests/het-x86 still what its generators emit?
-### Those five committed files -- three .litmus renderings plus one-row-per-test
-### extracts of the two AMD maps -- are the ONLY route to the populated
+### Those five committed files -- four .litmus renderings plus a one-row-per-test
+### extract of control-map-amd.csv -- are the ONLY route to the populated
 ### (x86_64, hip) pair for cram, smoke.sh and verdictcheck, because the real x86
 ### corpus is generated on demand and never committed and a cram sandbox has no
 ### hetgen7 on $$PATH.  Nothing else compared them against generate-x86.sh /
-### tests/het/control-map-amd.csv / expected-amd.csv, so they could go stale in
-### silence -- and a D26-class oracle re-derivation rewrites whole columns of the
-### last two.  A stale fixture breaks no gate; it makes every gate that reads it
-### test a configuration nothing ships.  Two verbatim comparisons (the .litmus
-### bytes, then the map rows), each of which must be seen to fail.
+### tests/het/control-map-amd.csv, so they could go stale in silence -- and a
+### regenerated map rewrites whole columns of the extract.  A stale fixture breaks
+### no gate; it makes every gate that reads it test a configuration nothing ships.
+### Two verbatim comparisons (the .litmus bytes, then the map rows), each of which
+### must be seen to fail.
 ### CUDA-FREE: generation and comparison need no GPU, so it belongs here and not
 ### in the -nvcc umbrella.  Seconds -- generate-x86.sh writes all 411 in ~8 s.
 hetlitmus-x86fixture: | build
@@ -958,12 +960,11 @@ hetlitmus-x86fixture: | build
 HETD10OUT := $(CURDIR)/hetlitmus/tests/het/d10-out
 
 ### The GPU dialect these harnesses are rendered for.  litmus7 emits ONE vendor
-### per harness dir (-gpu-target), and the ORACLE lives on the PAIR: this corpus
-### has an x86_64 CPU column and ships control-map-amd.csv, so `hip' is the
-### populated pair (x86_64, hip) and the one that reads those maps.  Rendering it
-### for `cuda' is legal -- (x86_64, cuda) is registered WITHOUT a control map, the
-### dev box -- but every harness then reads none and co-runs nothing, which is a
-### machinery smoke and not a D10 reading.
+### per harness dir (-gpu-target), and the MACHINE lives on the PAIR: this corpus
+### has an x86_64 CPU column, so `hip' is the pair (x86_64, hip) that names the
+### MI300A.  Rendering it for `cuda' is legal and reads the same control map --
+### the map is named by the CPU frontend, not the dialect -- but the render then
+### names no machine, which is a machinery smoke and not a D10 reading.
 HETD10TARGET ?= hip
 
 ### hetlitmus-d10: the CPU-ONLY POSITIVE CONTROL as a first-class campaign item

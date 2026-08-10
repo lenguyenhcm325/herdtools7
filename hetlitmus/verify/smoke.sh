@@ -29,16 +29,16 @@
 #                              that names the part (litmus/hetMachine.ml).
 #   9. MP-cg-sys-sy.acq-2s     order-pair; the only rep emitting inline
 #                              `fence.acquire.sys' (PTX ISA 8.6 / sm_90), with a
-#                              compiled-in co-run control (mu = MP-cg-sys-ld.acq-2s;
-#                              MP-cg-sys-acquire is that row's MuAlt);
+#                              compiled-in co-run control (mu = the row's
+#                              lattice-floor sibling MP-cg-sys-relaxed);
 #                              also the first rep whose test name contains a `.'
 #  10. S-gc-sys-ra.rel-2s      order-pair; the only rep emitting inline
 #                              `fence.release.sys', paired with CPU STLR/LDAPR,
 #                              and the largest co-run in the corpus (K=4, NPART=10)
-#  11. MP-cg-sys-st.sc-2s      the CPU `dmb st' form; its mu is st.rel, so the
-#                              harness carries two `dmb st' asm blocks
+#  11. MP-cg-sys-st.sc-2s      the CPU `dmb st' form.  Its mu is the floor
+#                              sibling, so the barrier is T's alone
 #  12. MP-gc-sys-ld.sc-2s      the CPU `dmb ld' form on the GPU->CPU cut (the CPU
-#                              proc reads), mu = ld.acq -> two `dmb ld' blocks.
+#                              proc reads), likewise T's alone.
 #                              These reps claim only that the three barrier forms
 #                              BUILD; which one is emitted is pinned by
 #                              l0_tokens.sh selftest [5b].
@@ -63,7 +63,7 @@ cd "$REPO"
 export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 
 HET_DIR="$REPO/hetlitmus/tests/het"
-# The committed one-test fixture for the (x86_64, hip) pair.  The HIP rep does
+# The committed fixture for the (x86_64, hip) pair.  The HIP rep does
 # not come from $HET_DIR: those tests have an AArch64 CPU column, and
 # (AArch64, hip) is in no row of litmus/hetMachine.ml, so it renders a harness
 # that names no machine -- which is not the .hip this rep is here to compile.
@@ -241,12 +241,12 @@ case "$cmd" in
     # the preload, the enemies, both halves of the C2C noise), so it is the one
     # most likely to expose a CUDA/HIP dialect divergence.
     smoke_het_hip MP-cg-sys-relaxed-x86_64 "the AMD/MI300A render, (x86_64, hip) pair (hipcc -c, gfx942)"
-    # The four order-pair reps below are all oracle-Disallowed, so each also
+    # The four order-pair reps below are all off the lattice floor, so each also
     # exercises the co-run control (HET_CONTROL_COMPILED_IN=1) on that family.
     smoke_het     MP-cg-sys-sy.acq-2s   "Q10 order-pair; inline fence.acquire.sys + co-run mu"
     smoke_het     S-gc-sys-ra.rel-2s    "Q10 order-pair; inline fence.release.sys + CPU STLR/LDAPR"
-    smoke_het     MP-cg-sys-st.sc-2s    "Q10b order-pair; CPU dmb st (x2: T + mu) + fence.sc.sys"
-    smoke_het     MP-gc-sys-ld.sc-2s    "Q10b order-pair; CPU dmb ld (x2: T + mu) on the gc cut"
+    smoke_het     MP-cg-sys-st.sc-2s    "Q10b order-pair; CPU dmb st + fence.sc.sys"
+    smoke_het     MP-gc-sys-ld.sc-2s    "Q10b order-pair; CPU dmb ld on the gc cut"
     printf '\n=====================================================================\n'
     # Anti-vacuity: the verdict below reports what RAN, so a deleted or
     # commented-out rep reddens the gate instead of shrinking it silently.

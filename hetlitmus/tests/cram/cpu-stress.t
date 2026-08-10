@@ -325,8 +325,8 @@ preloaded, because its job is to sample the shared locations densely and a cache
 hint per iteration would only thin the sampling (same reason the GPU observer
 lane gets no pre-stress; stress.t (g)).
 
-S-cg-sys-fence is oracle-Allowed, so it co-runs the canary and its observer
-thread is `t_cpu_obs_thread'.  The preload check is a negative (expects 0), and a
+S-cg-sys-fence is off the lattice floor, so it co-runs mu(T) and the canary, and
+its own observer thread is `t_cpu_obs_thread'.  The preload check is a negative (expects 0), and a
 negative whose anchor matches nothing reports 0 and "passes" while checking
 nothing, so it is paired with a positive on the worker thread: the asymmetry
 (worker preloads, observer does not) is the invariant, and pinning one side of it

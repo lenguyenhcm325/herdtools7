@@ -44,7 +44,7 @@ VERDICTS = ["OBSERVED", "NOT-OBSERVED-MU-HOT", "NOT-OBSERVED-CANARY-ONLY",
 # control-map.csv rather than typed: a mu(T) instance is built for every row whose
 # Mu column names a test, a canary instance for every row whose Canary column names
 # one ("self" rows ARE the canary and cannot co-run themselves).
-CENSUS = {"mu": 16, "canary": 409, "tests": 411}
+CENSUS = {"mu": 333, "canary": 409, "tests": 411}
 
 # ---------------------------------------------------------------------------
 # THE RETIRED VERDICT VOCABULARY.  This harness holds no prediction, so no
@@ -606,7 +606,7 @@ def check_machine_prose(header, tmp, quiet, defines_by_pair=None):
 # PHASE 3 -- the emitted corpus stamps its record and co-runs what the map says.
 # ---------------------------------------------------------------------------
 def read_control_map():
-    """test -> (mu, canary), from the committed map (fields 3 and 8)."""
+    """test -> (mu, canary), from the committed map (fields 2 and 6)."""
     want = {}
     with open(CONTROL_MAP) as fh:
         for line in fh:
@@ -614,9 +614,9 @@ def read_control_map():
             if not line or line.startswith("#"):
                 continue
             f = line.split(",")
-            if len(f) < 8 or f[0] == "Test":
+            if len(f) != 6 or f[0] == "Test":
                 continue
-            want[f[0]] = (f[2], f[7])
+            want[f[0]] = (f[1], f[5])
     return want
 
 
@@ -677,7 +677,7 @@ def check_corpus(tamper=None):
             # (b) THE CO-RUN POPULATION, against the map that named it.  A flag set
             # without the instance behind it turns a structural zero into a control.
             mu, can = want.get(t, ("?", "?"))
-            exp_mu = 1 if mu not in ("-", "none", "?") else 0
+            exp_mu = 1 if mu not in ("none", "?") else 0
             exp_can = 1 if can not in ("-", "self", "?") else 0
             got_mu = CTRL_RE.search(src)
             got_can = CAN_RE.search(src)

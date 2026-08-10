@@ -1,7 +1,8 @@
-# THREE ROWS of hetlitmus/tests/het/control-map-amd.csv, re-keyed onto the x86
+# FOUR ROWS of hetlitmus/tests/het/control-map-amd.csv, re-keyed onto the x86
 # rendering the way tests/het/generate-x86.sh re-keys the whole map.  A
 # FIXTURE for the (x86_64, hip) pair, not a corpus map: see ./README.md.
-Test,Expected,Mu,MuExpected,MuRule,MuAlt,MuRelaxed,Canary
-MP-cg-sys-relaxed-x86_64,Allowed,-,-,-,-,-,self
-MP-cg-sys-acqrel-2s-x86_64,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed-x86_64
-S-cg-sys-fence-x86_64,NO-ORACLE,-,-,-,-,-,MP-cg-sys-relaxed-x86_64
+Test,Mu,MuRule,MuAlt,MuRelaxed,Canary
+MP-cg-sys-relaxed-x86_64,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,self
+MP-cg-sys-acqrel-2s-x86_64,MP-cg-sys-relaxed-x86_64,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,MP-cg-sys-relaxed-x86_64,MP-cg-sys-relaxed-x86_64
+S-cg-sys-fence-x86_64,S-cg-sys-relaxed-x86_64,lattice-floor sibling -- fully relaxed on both sides; 12 usable weakening(s) of which 3 maximal,S-cg-sys-acqrel-2s-x86_64,S-cg-sys-relaxed-x86_64,MP-cg-sys-relaxed-x86_64
+S-cg-sys-relaxed-x86_64,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed-x86_64

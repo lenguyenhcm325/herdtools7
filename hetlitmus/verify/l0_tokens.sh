@@ -343,9 +343,9 @@ selftest() {
   fi
 
   # (iii) the other direction: a partial barrier silently STRENGTHENED to the
-  # full one.  MP-cg-sys-st.sc-2s is oracle-Disallowed because `DMB ST' orders
-  # its CPU proc's W;W pair, so a harness quietly running `dmb sy' instead would
-  # still print a null -- one no longer about the primitive the row tests.
+  # full one.  `DMB ST' orders MP-cg-sys-st.sc-2s's CPU proc W;W pair and nothing
+  # else, so a harness quietly running `dmb sy' instead would still print a null
+  # -- one no longer about the primitive the row tests.
   printf '\n[5c] Q10b: a PARTIAL CPU barrier strengthened dmb st -> dmb sy must FAIL(1)\n'
   local ST=MP-cg-sys-st.sc-2s SL2="$HET_DIR/MP-cg-sys-st.sc-2s.litmus"
   local sd="$sc/st" scpu
@@ -645,14 +645,14 @@ PY
   # [9] the co-run: does the faithfulness gate actually see the control?
   # =========================================================================
   # mu(T) and the canary run INSIDE T's harness, so a null on T is read against a
-  # known-Allowed weak behaviour that fired on the same C2C path -- which makes
-  # the control's lowering as load-bearing as T's:
+  # weak behaviour that fired on the same C2C path -- which makes the control's
+  # lowering as load-bearing as T's:
   #   lanes missing        HET_CONTROL_COMPILED_IN still says 1, so every null it
   #                        gates silently reads as a credible null.
-  #   mutant weakened      a different mutant: it no longer isolates the
-  #                        primitive under test, so the vouch is misdirected.
-  #   mutant strengthened  may never fire, leaving the control cold, which
-  #                        discards every null on T.
+  #   mutant strengthened  a different mutant: off the lattice floor it no longer
+  #                        isolates the primitive under test, and it may never
+  #                        fire, leaving the control cold -- which discards every
+  #                        null on T.
   # ptxcheck models every lane of every instance; prove it bites on each.
   printf '\n[9] B6b co-run: the gate must FAIL(1) when a CONTROL instance is corrupted\n'
   local B6T=MP-cg-sys-fence-2s
@@ -705,17 +705,17 @@ PY
       _expect "$lbl" 1 "$rc"
     }
 
-    # (1) the mutant's ordering primitive silently weakened.  mu(MP-*-fence-2s)
-    # is MP-*-fence, whose GPU fence.sc is the primitive T's null is about;
-    # weaken it and mu vouches for a different interleaving than the one T's
-    # ordering is claimed to prevent.
-    _b6bite "mu(T)'s GPU fence.sc WEAKENED to acq_rel (no longer the minimal mutant)" \
+    # (1) the mutant's ordering silently strengthened.  mu(MP-*-fence-2s) is
+    # MP-*-relaxed, T's twin at the lattice floor; annotate its loads and it is
+    # no longer the floor, so it vouches for a different interleaving than the
+    # one T's ordering is claimed to prevent.
+    _b6bite "mu(T)'s GPU loads STRENGTHENED to acquire (no longer the floor sibling)" \
             "$B6T.cu" '
 import os
 s=open(os.environ["IN"]).read()
 i=s.index("if (blockIdx.x == 1 && threadIdx.x == 0) {")
 j=s.index("if (blockIdx.x == 2 && threadIdx.x == 0) {")
-b=s[i:j]; nb=b.replace("fence.sc.sys","fence.acq_rel.sys")
+b=s[i:j]; nb=b.replace("memory_order_relaxed","memory_order_acquire")
 assert nb!=b
 open(os.environ["OUT"],"w").write(s[:i]+nb+s[j:])' ptx || fails=$((fails+1))
 

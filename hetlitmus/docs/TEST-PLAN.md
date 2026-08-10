@@ -204,12 +204,12 @@ are the spec, and this table mirrors them.
 | 6 | 3-proc het (`WRC-ccg-cta-relaxed`) | 3-proc scaffolding — buys down the proc-scaling assumption |
 | 7 | cluster (`tests/cluster/MP-cluster`, gpu-only, `nvcc -c`) | Hopper inline-PTX cluster fence; **outside faithfulness**, so this is its only compile check |
 | 8 | **HIP** render of `MP-cg-sys-acqrel-2s` (`comp.sh hip`) | the AMD/MI300A lane — the only place in the suite that compiles a `.hip` at all. Missing `hipcc` ⇒ **SKIP, loudly**; never a pass |
-| 9 | order pair (`MP-cg-sys-sy.acq-2s`) | the only rep emitting inline `fence.acquire.sys`; carries a compiled-in co-run control (μ = `MP-cg-sys-ld.acq-2s`; `MP-cg-sys-acquire` is its `MuAlt`); first rep whose name contains a `.` |
+| 9 | order pair (`MP-cg-sys-sy.acq-2s`) | the only rep emitting inline `fence.acquire.sys`; carries a compiled-in co-run control (μ = its lattice-floor sibling `MP-cg-sys-relaxed`); first rep whose name contains a `.` |
 | 10 | order pair (`S-gc-sys-ra.rel-2s`) | the only rep emitting inline `fence.release.sys`, paired with CPU STLR/LDAPR; the largest co-run in the corpus (K=4, NPART=10) |
-| 11 | order pair (`MP-cg-sys-st.sc-2s`) | the CPU `dmb st` form; its μ is `st.rel`, so the harness carries **two** `dmb st` asm blocks |
-| 12 | order pair (`MP-gc-sys-ld.sc-2s`) | the CPU `dmb ld` form on the `gc` cut (the CPU proc reads); μ = `ld.acq` ⇒ two `dmb ld` blocks |
+| 11 | order pair (`MP-cg-sys-st.sc-2s`) | the CPU `dmb st` form; its μ is the floor sibling, so the barrier is T's alone |
+| 12 | order pair (`MP-gc-sys-ld.sc-2s`) | the CPU `dmb ld` form on the `gc` cut (the CPU proc reads); likewise T's alone |
 
-Reps 9–12 are all oracle-Disallowed, so each also exercises the co-run control
+Reps 9–12 are all off the lattice floor, so each also exercises the co-run control
 (`HET_CONTROL_COMPILED_IN = 1`) on that family. Reps 11–12 claim only that the
 three barrier forms **build**; *which* one is emitted is pinned by
 `l0_tokens.sh selftest [5b]`.

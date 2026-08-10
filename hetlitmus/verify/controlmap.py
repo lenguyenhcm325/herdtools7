@@ -1,27 +1,32 @@
 #!/usr/bin/env python3
 """The positive-control map: the Layer-A mutant and Layer-B canary each het test
-co-runs.  For a should-be-forbidden test T, mu(T) is its nearest Allowed grid
-neighbour, so a `target_count = 0' on T is a non-observation on a demonstrably
-hot harness rather than an uninterpretable empty histogram.  What the two layers
-buy, and what "minimal" honestly means, is hetlitmus/docs/positive-control.md.
+co-runs.  mu(T) is T's LATTICE-FLOOR sibling -- the same program with every
+ordering annotation dropped -- so a `target_count = 0' on T is a non-observation
+on a harness that demonstrably produced an interleaving of T's own shape rather
+than an uninterpretable empty histogram.  The map carries no verdict: what mu
+buys is a REPORTED count, and hetlitmus/docs/positive-control.md says how a null
+is read against it.
 
-WHY THIS FILE EXISTS (read before "simplifying" it): mu(T) cannot be computed by
-rewriting T's name.  The one-sided grid variants are named for the op the GPU
-performs, `acquire' annotates only reads and `release' only writes
-(tests/_grid_lib.sh ord_for), and the GPU's role flips with the device cut -- so
-a variant whose GPU proc has no access of that kind is degenerate (byte-identical
-to its `relaxed' sibling) and generate.sh dedups it away.  MP-gc-sys-acquire,
-S-gc-sys-acquire and R-gc-sys-acquire therefore do not exist, and a naive
-`acqrel-2s -> acquire' rewrite names a nonexistent test.  So the map is derived
-from the corpus sources + the oracle and gated (--check), and the gate fails
-closed: a missing or non-Allowed mutant breaks the build rather than skipping the
-control, because a silently absent control does not weaken a null -- it makes it
-unfalsifiable, while the null still prints and still looks green.
+WHY THIS FILE EXISTS (read before "simplifying" it): mu(T) is DERIVED from the
+corpus, not rewritten from T's name, and the corpus is what decides.  On the grid
+rows the floor sibling does happen to be `<shape>-<cut>-<scope>-relaxed'; on the
+two non-grid reference tests it is not -- mu(MP-het) is MP-cg-sys-relaxed and
+mu(SB-het) is SB-cg-sys-relaxed, names no rewrite of `MP-het' produces.  MuAlt is
+where a rewrite fails outright: the one-sided variants are named for the op the
+GPU performs, `acquire' annotates only reads and `release' only writes
+(tests/_grid_lib.sh ord_for), and the GPU's role flips with the device cut, so a
+variant whose GPU proc has no access of that kind is degenerate (byte-identical
+to its `relaxed' sibling) and generate.sh dedups it away -- MP-gc-sys-acquire,
+S-gc-sys-acquire and R-gc-sys-acquire do not exist at all.  The gate therefore
+checks the PROPERTY rather than the spelling, and fails closed: a missing or
+non-weaker mutant breaks the build rather than skipping the control, because a
+silently absent control does not weaken a null -- it makes it unfalsifiable,
+while the null still prints and still looks green.
 
 Usage:
-    controlmap.py --emit  [--dir D] [--oracle F]   > control-map.csv
-    controlmap.py --check [--dir D] [--oracle F] [--map F]     (the gate)
-    controlmap.py --bite                           (the gate's negative control)
+    controlmap.py --emit  [--dir D] [--lattice L]        > control-map.csv
+    controlmap.py --check [--dir D] [--lattice L] [--map F]     (the gate)
+    controlmap.py --bite                            (the gate's negative control)
 """
 
 import argparse
@@ -30,63 +35,53 @@ import io
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
+LITMUS7 = os.path.join(HERE, "..", "..", "_build", "install", "default", "bin",
+                       "litmus7")
+LIBDIR = os.path.join(HERE, "..", "..", "litmus", "libdir")
 
-# The Disallowed census the gate asserts (it is not merely reported).  It was 50
-# until the NVOR regeneration (Nguyen 2026-08-06; env-research/NVOR-register.md)
-# demoted 34 of them to NO-ORACLE -- the 23 rows whose derivation needs the
-# SYMMETRIC MEET in the GPU-PRODUCER direction (Q2 declined), the 3 rf-free rows
-# that need an ARM DMB SY to BE a PTX fence.sc (Q3 declined) and the 8 cg rows
-# that need the unidirectional-fence semantics (Q4 declined).  What survives is
-# 16 rows, all CPU-producer: LB-cg 4 + MP-cg 6 + S-cg 6.  MP-cg and S-cg carry
-# {acqrel, fence} on the diagonal plus four order-pair cells; LB-cg carries the
-# same six MINUS `ld.ra' and `ld.sc', which NVOR Phase D3 (2026-08-06) demoted
-# because DMB LD supplies only the acquire role, so their only synchronizing
-# route runs GPU-producer -> CPU-consumer -- the DECLINED Q2 meet, mis-scored as
-# cg by a slot gate that keyed on the test's NAME TAG instead of on the
-# direction of the rf that carries the sw (env-research/NVOR-DR-nvidia-oracle.md).
-# Derivations: env-research/impl-briefs/Q10-REPORT.md, Q10b-REPORT.md,
-# NVOR-phaseC-brief.md sect 3.1.
-N_DISALLOWED = 16
+# ---------------------------------------------------------------------------
+# THE ASSERTED CENSUS.  Every corpus row either names a mu or sits at the floor,
+# so these three numbers partition the corpus and the gate fails if they stop
+# doing so.  They are the same on BOTH lattices, and that is a corpus fact rather
+# than an identity: no row's only ordering op comes from the rung the x86 lattice
+# drops (STLR / LDAPR / DMB.ST / DMB.LD), so nothing that holds a row off the
+# AArch64 floor stops holding it off the x86 one.  check() re-measures both floor
+# sets and reddens if they part company, so these constants cannot outlive the
+# fact they rest on.
+N_TESTS = 411
+N_WITH_MU = 333
+N_FLOOR = 78
 
 # ---------------------------------------------------------------------------
 # THE LATTICE PARAMETER (memo PORT2-R2 7.D11, landed by P2a 2026-08-02).
 #
-# The AMD map is REGENERATED, never translated.  Two things change together and
-# neither is cosmetic:
-#
-#   * the CPU strength lattice LOSES ITS MIDDLE RUNG.  On AArch64 STLR / LDAPR /
-#     DMB.ST / DMB.LD are `partial' (tier 1); their x86 images are all a plain
-#     MOV (memo 3.1's collapse table), so on x86 the only CPU op that orders
-#     anything across a pair is MFENCE.  A candidate that merely moves within
-#     {ra, st, ld} is therefore NOT a weakening on MI300A -- the harness would
-#     run the IDENTICAL program and the "control" would vouch for nothing.
-#     `weakening_of' rejects it as "identical ordering strength", which is the
-#     fail-closed behaviour D11 asks for.
-#   * the Disallowed census goes 16 -> 19 (AMD: D26 2026-08-04 demoted the 127
-#     X2A-carried rows to NO-ORACLE, pre-strike 146; NVIDIA: NVOR 2026-08-06
-#     demoted 34 of 50).  The two numbers are close and entirely
-#     unrelated.  The AMD census is still NOT all two-sided -- the 19 LB
-#     survivors include one-sided cells -- which is why the x86 derivation is a
-#     generic search over the corpus rather than the NVIDIA name cascade.
+# The AMD map is REGENERATED, never translated: the CPU strength lattice LOSES
+# ITS MIDDLE RUNG.  On AArch64 STLR / LDAPR / DMB.ST / DMB.LD are `partial'
+# (tier 1); their x86 images are all a plain MOV (memo 3.1's collapse table), so
+# on x86 the only CPU op that orders anything across a pair is MFENCE.  A
+# candidate that merely moves within {ra, st, ld} is therefore NOT a weakening on
+# MI300A -- the harness would run the IDENTICAL program and the "control" would
+# vouch for nothing.  `weakening_of' rejects it as "identical ordering strength",
+# which is the fail-closed behaviour D11 asks for.
 #
 # LATTICE is module state read by _parse_instr and audit_map.  The default is
 # `aarch64', so the NVIDIA path is byte-for-byte what it was.
 LATTICE = "aarch64"
-N_DISALLOWED_BY_LATTICE = {"aarch64": 16, "x86": 19}
+LATTICES = ("aarch64", "x86")
 
 
 def set_lattice(name):
-    global LATTICE, N_DISALLOWED
-    if name not in N_DISALLOWED_BY_LATTICE:
+    global LATTICE
+    if name not in LATTICES:
         raise SystemExit("controlmap: unknown lattice %r (expected %s)"
-                         % (name, " | ".join(sorted(N_DISALLOWED_BY_LATTICE))))
+                         % (name, " | ".join(LATTICES)))
     LATTICE = name
-    N_DISALLOWED = N_DISALLOWED_BY_LATTICE[name]
 
 # ---------------------------------------------------------------------------
 # The per-side ordering-strength lattice.  mu(T) must be strictly WEAKER
@@ -97,11 +92,10 @@ def set_lattice(name):
 # Strength is not a count of primitives: `acqrel' carries more of them than
 # `fence' (STLR+LDAPR / acquire+release vs one DMB.SY / one fence.sc.sys) yet is
 # strictly weaker, because RCpc release/acquire does not order store->load where
-# an SC fence does -- which is why SB/R-*-acqrel-2s are Allowed while their
-# fence-2s siblings are Disallowed.  Nor is a bare "is it a fence?" tier enough:
-# f[release,sys] is a fence but is weaker than the w[release]/r[acquire] pair,
-# and DMB.ST / DMB.LD are incomparable with each other.  So a side's strength is
-# the pair (tier, ord):
+# an SC fence does.  Nor is a bare "is it a fence?" tier enough: f[release,sys]
+# is a fence but is weaker than the w[release]/r[acquire] pair, and DMB.ST /
+# DMB.LD are incomparable with each other.  So a side's strength is the pair
+# (tier, ord):
 #
 #   tier  2 SC-capable  DMB SY / DSB SY ; f[sc,..] ; an `sc'-tagged access
 #         1 partial     orders something but cannot stand in for an SC fence:
@@ -130,6 +124,11 @@ GPU_FENCE_STRENGTH = {"sc": (SC_TIER, ALL4),
                       "acq_rel": (PART_TIER, REL_ORD | ACQ_ORD),
                       "release": (PART_TIER, REL_ORD),
                       "acquire": (PART_TIER, ACQ_ORD)}
+
+# The bottom of the (cpu,gpu) lattice: a program with no ordering op on either
+# side.  `mu(T) = the floor sibling' is defined against this, and `T is at the
+# floor' -- the one admitted reason for having no mu -- is exactly equality here.
+BOTTOM = ((PLAIN, NONE4), (PLAIN, NONE4))
 
 
 def side_le(a, b):
@@ -181,9 +180,8 @@ class Test:
         self.gpu_strength = (PLAIN, NONE4)
         # the SCOPES the GPU ops are annotated with.  Not part of the strength
         # lattice -- a scope change is not an ordering weakening, it is a
-        # different experiment (memo PORT2-R2 3.2.3 makes every non-sys het row
-        # Allowed for a SCOPE reason) -- but the x86 derivation holds it fixed so
-        # a cta-scoped sibling cannot be crowned mu of a sys-scoped test.
+        # different experiment -- but the derivation holds it fixed so a
+        # cta-scoped sibling cannot be crowned mu of a sys-scoped test.
         self.scopes = set()
 
     # -- the structural fingerprint mu(T) must match exactly ----------------
@@ -196,8 +194,8 @@ class Test:
     def strength(self):
         return (self.cpu_strength, self.gpu_strength)
 
-    def two_sided(self):
-        return self.cpu_strength[0] > PLAIN
+    def at_floor(self):
+        return self.strength() == BOTTOM
 
 
 def _strip_comment(line):
@@ -345,35 +343,10 @@ def _parse_instr(t, p, cell, regmap, path):
 
 
 # ---------------------------------------------------------------------------
-def load_oracle(path):
-    exp = {}
-    with open(path) as fh:
-        for row in csv.reader(l for l in fh if not l.startswith("#")):
-            if not row or row[0] == "Litmus":
-                continue
-            exp[row[0]] = row[1]
-    return exp
-
-
 NAME_RE = re.compile(r"^(?P<shape>.+?)-(?P<cut>[cg]+)-(?P<scope>cta|gpu|sys)-"
                      r"(?P<order>relaxed|acquire|release|fence|acqrel"
                      r"|(?:ra|sy|st|ld)\.(?:ra|sc|rel|acq))"
                      r"(?P<two>-2s)?$")
-
-# Candidate weakenings for a two-sided order-pair cell `<cpu>.<gpu>', tried in
-# this order: weaken the GPU axis, then the CPU axis, then fall back to the
-# one-sided grid cell named for the role the GPU half played (which drops the CPU
-# half of the pair and demotes the GPU primitive to an annotated access).  Every
-# candidate goes through the same structural + strictly-weaker check as the final
-# mu, so one that is not actually a weakening ON THIS SHAPE is skipped rather
-# than crowned: on MP-cg the GPU proc is read;read, so f[release,sys] orders
-# {WW,RW} while the r[acquire] annotation orders {RR,RW} -- incomparable.
-FP_CPU_WEAKER = {"sy": ("ra", "st", "ld")}
-FP_GPU_WEAKER = {"sc": ("ra", "rel", "acq"), "ra": ("rel", "acq")}
-FP_ONESIDED = {"ra":  ("acquire", "release"),
-               "sc":  ("acquire", "release"),
-               "rel": ("release", "acquire"),
-               "acq": ("acquire", "release")}
 
 
 def split_name(name):
@@ -389,209 +362,98 @@ def canary_for(name):
     return "MP-%s-sys-relaxed" % cut if cut in ("cg", "gc") else "MP-cg-sys-relaxed"
 
 
-def derive_x86(tests, oracle):
-    """The AMD / MI300A map (memo 7.D11), REGENERATED not translated.
-
-    The NVIDIA cascade below is keyed on the grid's NAME vocabulary and assumes
-    every Disallowed row is a `-2s' cell.  Neither assumption survives the AMD
-    census (pre-D26: 42 of 146 Disallowed rows were one-sided grid cells, 4
-    FULLY RELAXED, one -- `MP-het' -- a non-grid reference test; post-D26 the
-    19 LB survivors still include one-sided cells).  So mu is chosen by SEARCH
-    over the corpus instead:
-
-      mu(T) = a MAXIMAL element of { M : M is a corpus test, oracle-Allowed,
-              structurally identical to T, and STRICTLY WEAKER componentwise on
-              the x86 (cpu,gpu) lattice }
-
-    Maximal = nearest: no other usable candidate is stronger than it.  Ties are
-    broken by name so the map is deterministic, and the other maximal elements
-    are recorded in MuAlt.  Everything goes through `weakening_of', which is the
-    same property audit_map re-asserts against the committed file.
-
-    A row with NO usable candidate is NOT quietly given `-'.  It is admitted
-    only when nothing weaker CAN exist -- the program is already at the lattice
-    minimum on both sides -- and it is then marked `none' with that reason, so
-    the run lane knows it has a Layer-B canary and no Layer-A mutant.  Any other
-    empty result is a hard error."""
+# ---------------------------------------------------------------------------
+# THE COLUMNS, and why two of them are not the same thing.
+#
+#   Mu        the sibling that is CO-RUN.  T's structural twin at the lattice
+#             floor: every ordering annotation dropped on both sides, so it is
+#             the weakest program of T's own shape the corpus contains and the
+#             one most likely to fire in the window T is being watched in.
+#   MuAlt     the NEAREST weakening -- a maximal element of the same candidate
+#             set.  Documentation only, never compiled in: it is what a
+#             minimal-mutant policy would have co-run, and how far it sits from
+#             the floor is how far T is from its own floor.  `-' where the floor
+#             IS the nearest weakening.
+#   MuRelaxed the fully-relaxed companion, i.e. Mu itself on every row.  The
+#             column stays because positive-control.md names it and because the
+#             gate ASSERTS the identity: a hand-edit that moves one and not the
+#             other splits the co-run choice from the documented one, and that
+#             is exactly the drift the audit has to catch.
+#
+# `none' is the single sentinel and means ONE thing: T is at the lattice floor,
+# so no strictly weaker structural sibling can exist and the harness carries the
+# Layer-B canary alone.
+def derive(tests):
+    """The map.  Returns rows [(test, mu, rule, alt, relaxed, canary)] and a list
+    of hard errors (which make the gate fail)."""
     rows, errors = [], []
-    bottom = ((PLAIN, NONE4), (PLAIN, NONE4))
     for name in sorted(tests):
-        exp = oracle.get(name, "?")
+        T = tests[name]
         canary = canary_for(name)
-        if oracle.get(canary) != "Allowed" or canary not in tests:
-            errors.append("canary %s for %s does not exist or is not Allowed"
+        if canary not in tests:
+            errors.append("canary %s for %s does not exist" % (canary, name))
+        elif not tests[canary].at_floor():
+            errors.append("canary %s for %s is not at the lattice floor -- a "
+                          "floor that orders something is not a floor"
                           % (canary, name))
         if canary == name:
-            canary = "self"
-        mu = mu_exp = rule = alt = relaxed = "-"
-        if exp == "Disallowed":
-            cands = [m for m in sorted(tests)
-                     if m != name and oracle.get(m) == "Allowed"
-                     and tests[m].scopes == tests[name].scopes
-                     and weakening_of(tests[name], tests[m]) is None]
+            canary = "self"          # T IS the canary; it is its own signal
+
+        cands = [m for m in sorted(tests)
+                 if m != name and tests[m].scopes == T.scopes
+                 and weakening_of(T, tests[m]) is None]
+        floor = [c for c in cands if tests[c].at_floor()]
+
+        if not cands:
+            # NO weakening.  Admitted only when none CAN exist -- re-derived
+            # from T's own strength, never inferred from the empty search --
+            # because a silently missing control does not weaken a null, it
+            # makes it unfalsifiable while the null still prints and looks green.
+            if not T.at_floor():
+                errors.append("%s: no structural sibling is a weakening of it, "
+                              "yet it is not at the lattice floor (%s) -- the "
+                              "corpus is missing its floor row"
+                              % (name, _pp(T.strength())))
+            mu = relaxed = "none"
+            alt = "-"
+            rule = ("at the lattice floor -- no strictly weaker structural "
+                    "sibling can exist; Layer-B canary only")
+        elif T.at_floor():
+            errors.append("%s: it is at the lattice floor yet %d sibling(s) "
+                          "claim to be weaker than it" % (name, len(cands)))
+            mu = relaxed = alt = "-"
+            rule = "-"
+        elif len(floor) != 1:
+            # Exactly one fully-relaxed twin per (structure, scopes) class is
+            # what generate.sh's dedup produces.  Zero means the floor row is
+            # missing and mu would silently become some middle rung; two means
+            # the corpus holds a duplicate and the choice would be arbitrary.
+            errors.append("%s: %d fully-relaxed structural sibling(s) %s -- "
+                          "want exactly 1" % (name, len(floor), sorted(floor)))
+            mu = relaxed = alt = "-"
+            rule = "-"
+        else:
+            mu = relaxed = floor[0]
             # maximal = nothing else usable is strictly stronger than it
-            top = [c for c in cands
-                   if not any(c2 != c and weakening_of(tests[c2], tests[c]) is None
-                              for c2 in cands)]
-            # the fully-relaxed companion, if the corpus has one
-            floor = [c for c in cands if tests[c].strength() == bottom]
-            relaxed = sorted(floor)[0] if floor else "none"
-            if top:
-                mu = sorted(top)[0]
-                mu_exp = oracle.get(mu)
-                rule = "maximal weakening on the x86 lattice (%d usable candidate(s))" % len(cands)
-                others = sorted(c for c in top if c != mu)
-                alt = others[0] if others else "-"
-            else:
-                # NOTHING usable.  That is admitted only with a reason RE-DERIVED
-                # from the corpus, never as a bare `-': a silently missing
-                # control does not weaken a null, it makes it unfalsifiable
-                # while the null still prints and still looks green (Q4 2.3).
-                mu, mu_exp = "none", "-"
-                blocked = sorted(
-                    m for m in tests
-                    if m != name and tests[m].scopes == tests[name].scopes
-                    and weakening_of(tests[name], tests[m]) is None)
-                if tests[name].strength() == bottom:
-                    rule = ("NO Layer-A mutant CAN exist: already at the lattice "
-                            "minimum on both sides -- Layer-B canary only")
-                elif blocked:
-                    rule = ("NO Layer-A mutant EXISTS: every weaker structural "
-                            "sibling is itself non-Allowed [%s] -- Layer-B canary "
-                            "only" % "; ".join(blocked))
-                else:
-                    errors.append("%s: NO mu(T) and no reason the corpus supports "
-                                  "-- the control would be silently MISSING "
-                                  "(Q4 2.3)" % name)
-                    mu = "-"
-        rows.append((name, exp, mu, mu_exp, rule, alt, relaxed, canary))
+            top = sorted(c for c in cands
+                         if not any(c2 != c and weakening_of(tests[c2], tests[c]) is None
+                                    for c2 in cands))
+            alt = top[0] if top and top[0] != mu else "-"
+            rule = ("lattice-floor sibling -- fully relaxed on both sides; "
+                    "%d usable weakening(s) of which %d maximal"
+                    % (len(cands), len(top)))
+        rows.append((name, mu, rule, alt, relaxed, canary))
     return rows, errors
 
 
-def derive(tests, oracle):
-    """The map.  Returns rows [(test, expected, mu, mu_expected, rule, alt,
-    relaxed, canary)] and a list of hard errors (which make the gate fail)."""
-    if LATTICE == "x86":
-        return derive_x86(tests, oracle)
-    rows, errors = [], []
-
-    def allowed(n):
-        return n in tests and oracle.get(n) == "Allowed"
-
-    def usable(tname, cand):
-        """The vouch's properties, applied at candidate-selection time so a
-        non-weakening is skipped instead of becoming a hard error.  EVERY branch
-        below selects through this, so no branch crowns an unchecked mu."""
-        return allowed(cand) and weakening_of(tests[tname], tests[cand]) is None
-
-    for name in sorted(tests):
-        exp = oracle.get(name, "?")
-        parts = split_name(name)
-
-        # ---- Layer B: the universal canary.  MP is the only het shape with a
-        # published detected-weak het result (Bagchi ISMM'26 Table 4), so it is
-        # the robust floor.  Match T's C2C DIRECTION where T has one, so the
-        # canary crosses the interconnect the same way round.
-        cut = parts["cut"] if parts else None
-        canary = "MP-%s-sys-relaxed" % cut if cut in ("cg", "gc") else "MP-cg-sys-relaxed"
-        if not allowed(canary):
-            errors.append("canary %s for %s does not exist or is not Allowed"
-                          % (canary, name))
-        if canary == name:
-            canary = "self"          # T IS the canary; it is its own liveness signal
-
-        mu = mu_exp = rule = alt = relaxed = "-"
-
-        if exp == "Disallowed":
-            if parts is None:
-                errors.append("%s: Disallowed but its name does not fit the grid"
-                              % name)
-                rows.append((name, exp, "-", "-", "-", "-", "-", canary))
-                continue
-
-            base = "%s-%s-%s" % (parts["shape"], parts["cut"], parts["scope"])
-            relaxed = base + "-relaxed"
-
-            if "." in parts["order"] and parts["two"]:
-                # Order-pair cell.  Weaken ONE axis and keep everything else,
-                # preferring the GPU axis (the primitive whose scope reach is the
-                # thing under test); fall back to the one-sided cell named for
-                # the GPU fence's role.  Candidates that are themselves not
-                # Allowed (Disallowed, or NO-ORACLE where the two formalisations
-                # disagree) are skipped -- a control whose own weak outcome is
-                # forbidden or unmodelled vouches for nothing.
-                c, g = parts["order"].split(".")
-                cands = ["%s-%s.%s-2s" % (base, c, g2)
-                         for g2 in FP_GPU_WEAKER.get(g, ())]
-                cands += ["%s-%s.%s-2s" % (base, c2, g)
-                          for c2 in FP_CPU_WEAKER.get(c, ())]
-                cands += ["%s-%s" % (base, o) for o in FP_ONESIDED[g]]
-                have = [x for x in cands if usable(name, x)]
-                if have:
-                    mu = have[0]
-                    if mu.endswith("-2s"):
-                        rule = ("%s.%s-2s->%s (weaken ONE axis; pair kept)"
-                                % (c, g, mu.rsplit("-", 2)[-2]))
-                    else:
-                        rule = ("%s.%s-2s->%s (drop the CPU half; keep the GPU "
-                                "%s half)" % (c, g, mu.rsplit("-", 1)[-1],
-                                              mu.rsplit("-", 1)[-1]))
-                    alt = have[1] if len(have) > 1 else "-"
-            elif parts["order"] == "fence" and parts["two"]:
-                # Weaken the primitive under test: SC fence -> RCpc rel/acq, with
-                # the two-sided cross-device pair intact.  Where that is itself
-                # still Disallowed (MP/S/LB), fall back to dropping the CPU half
-                # of the pair.
-                cand = base + "-acqrel-2s"
-                if usable(name, cand):
-                    mu, rule = cand, "fence-2s->acqrel-2s (SC fence -> RCpc rel/acq; pair kept)"
-                elif usable(name, base + "-fence"):
-                    mu, rule = base + "-fence", "fence-2s->fence (drop CPU DMB.SY; GPU fence kept)"
-            elif parts["order"] == "acqrel" and parts["two"]:
-                # Drop the CPU half of the morally-strong pair.  The surviving
-                # one-sided cell is named for the op the GPU still performs, and
-                # the grid has no one-sided `acqrel' cell -- so where the GPU proc
-                # performs both a read and a write (LB/SB, and the -cg cuts of
-                # R/S) both -acquire and -release exist and are equally minimal.
-                # Q4 2.3 names -acquire for the cases it lists; take -acquire
-                # where it exists and record the other as MuAlt.
-                acq, rel = base + "-acquire", base + "-release"
-                have = [c for c in (acq, rel) if usable(name, c)]
-                if acq in have:
-                    mu, rule = acq, "acqrel-2s->acquire (drop CPU half; GPU acquire kept)"
-                elif rel in have:
-                    mu, rule = rel, "acqrel-2s->release (drop CPU half; GPU release kept)"
-                others = [c for c in have if c != mu]
-                alt = others[0] if others else "-"
-            else:
-                errors.append("%s: Disallowed but not a *-2s fence/acqrel row"
-                              % name)
-
-            # ---- the fail-closed gate proper ------------------------------
-            # Every branch above crowns mu only through usable(), so re-testing
-            # existence / Allowed / structure / strictly-weaker on what was just
-            # selected is constant-False -- an assertion that cannot fire is not
-            # a gate.  The one thing selection can still leave broken is that
-            # NOTHING survived it, which is what this asserts.  The properties
-            # themselves are re-asserted by audit_map() against the COMMITTED
-            # map, independently of this derivation, where a hand-edit or a
-            # name-rewritten mu row can and does trip them.
-            if mu == "-":
-                errors.append("%s: NO mu(T) -- the control would be silently "
-                              "MISSING (Q4 2.3)" % name)
-            else:
-                mu_exp = oracle.get(mu)
-
-            if not allowed(relaxed):
-                errors.append("%s: relaxed companion %s missing/not Allowed"
-                              % (name, relaxed))
-
-        rows.append((name, exp, mu, mu_exp, rule, alt, relaxed, canary))
-
-    return rows, errors
+# The header the parsers key on.  litmus/hetControlMap.ml asserts this exact line
+# and refuses the file otherwise, so the two schemas can never be read into each
+# other's field meanings.
+COLUMNS = ["Test", "Mu", "MuRule", "MuAlt", "MuRelaxed", "Canary"]
+HEADER_LINE = ",".join(COLUMNS)
 
 
-def audit_map(text, tests, oracle):
+def audit_map(text, tests):
     """Re-audit the map AS A COMMITTED ARTIFACT, not as something just derived.
 
     derive() enforces the vouch's properties when it SELECTS mu, so asserting
@@ -602,104 +464,132 @@ def audit_map(text, tests, oracle):
     grid cell that does not exist).  Those trip it by NAME of the broken
     property; the byte-comparison against a fresh derivation can only say
     'STALE'."""
-    errors, n_dis = [], 0
-    for row in csv.reader(l for l in text.splitlines() if not l.startswith("#")):
-        if not row or row[0] == "Test":
+    errors = []
+    body = [l for l in text.splitlines() if l and not l.startswith("#")]
+    if not body:
+        return ["the map holds no rows at all"]
+    if body[0] != HEADER_LINE:
+        # FAIL-CLOSED ON THE SCHEMA.  The legacy 8-column map put a verdict in
+        # field 2 and the canary in field 8; read with these column meanings its
+        # Mu column would be a verdict and its canary a scope note.  Refuse the
+        # file rather than mis-bind it -- litmus/hetControlMap.ml refuses the
+        # same line for the same reason.
+        return ["header line is %r, expected %r" % (body[0], HEADER_LINE)]
+    n_mu = n_floor = 0
+    for row in csv.reader(body[1:]):
+        if not row:
             continue
-        name, exp, mu, mu_exp, _rule, _alt, relaxed, canary = row[:8]
-        if canary != "self" and oracle.get(canary) != "Allowed":
-            errors.append("%s: canary %s is not an Allowed test" % (name, canary))
-        if exp != "Disallowed":
+        if len(row) != len(COLUMNS):
+            errors.append("%s: %d fields, expected %d"
+                          % (row[0] if row else "?", len(row), len(COLUMNS)))
             continue
-        n_dis += 1
+        name, mu, _rule, alt, relaxed, canary = row
+        # The OCaml reader splits on ',' with no quoting, so a comma or a quote
+        # anywhere in a field would silently shift every later field by one.
+        for f in row:
+            if "," in f or '"' in f:
+                errors.append("%s: field %r carries a comma or a quote, which "
+                              "the emitter's reader cannot parse" % (name, f))
         if name not in tests:
-            errors.append("%s: Disallowed row names no .litmus" % name)
+            errors.append("%s: names no .litmus in the corpus" % name)
             continue
-        # "Disallowed => two-sided" is a property of the NVIDIA census only (all
-        # 16 of its Disallowed rows are `-2s' cells -- Q10).  The AMD census has
-        # 42 one-sided Disallowed rows and 4 fully relaxed ones, so asserting it
-        # there would be asserting a fact about the wrong oracle.
-        if LATTICE == "aarch64" and not tests[name].two_sided():
-            errors.append("%s: Disallowed row is not two-sided" % name)
-        if relaxed == "none":
-            # admitted only when the corpus provably HAS no fully-relaxed
-            # structural sibling for this row (checked against the corpus, not
-            # taken from the column).
-            sib = [m for m in tests
-                   if m != name and tests[m].structure() == tests[name].structure()
-                   and tests[m].scopes == tests[name].scopes
-                   and oracle.get(m) == "Allowed"
-                   and tests[m].strength() == ((PLAIN, NONE4), (PLAIN, NONE4))]
-            if sib:
-                errors.append("%s: relaxed companion is `none' but %s exists"
-                              % (name, sorted(sib)[0]))
-        elif oracle.get(relaxed) != "Allowed":
-            errors.append("%s: relaxed companion %s missing/not Allowed"
-                          % (name, relaxed))
+        T = tests[name]
+        if canary == "self":
+            if canary_for(name) != name:
+                errors.append("%s: marked its own canary but the canary for it "
+                              "is %s" % (name, canary_for(name)))
+        elif canary not in tests:
+            errors.append("%s: canary %s does not exist as a .litmus"
+                          % (name, canary))
+        elif not tests[canary].at_floor():
+            errors.append("%s: canary %s is not at the lattice floor"
+                          % (name, canary))
+        if relaxed != mu:
+            errors.append("%s: MuRelaxed is %s but Mu is %s -- the co-run "
+                          "control and the documented fully-relaxed companion "
+                          "are the same row by construction" % (name, relaxed, mu))
         if mu == "none":
+            n_floor += 1
             # Admitted only when the CORPUS supports it, re-derived here so a
-            # hand-edited `none' on a row that DOES have a mutant is caught:
-            # either nothing weaker can exist, or every weaker structural
-            # sibling is itself non-Allowed.
-            usable_now = [m for m in tests
-                          if m != name and oracle.get(m) == "Allowed"
-                          and tests[m].scopes == tests[name].scopes
-                          and weakening_of(tests[name], tests[m]) is None]
+            # hand-edited `none' on a row that DOES have a mutant is caught.
+            if not T.at_floor():
+                errors.append("%s: Mu is `none' but the row is not at the "
+                              "lattice floor (%s)" % (name, _pp(T.strength())))
+            usable_now = sorted(m for m in tests
+                                if m != name and tests[m].scopes == T.scopes
+                                and weakening_of(T, tests[m]) is None)
             if usable_now:
-                errors.append("%s: mu(T)=none but %s is an existing Allowed "
-                              "weakening -- a missing control is not a skipped one"
-                              % (name, sorted(usable_now)[0]))
+                errors.append("%s: Mu is `none' but %s is an existing weakening "
+                              "-- a missing control is not a skipped one"
+                              % (name, usable_now[0]))
+            if alt != "-":
+                errors.append("%s: Mu is `none' yet MuAlt names %s"
+                              % (name, alt))
             continue
+        n_mu += 1
+        if T.at_floor():
+            errors.append("%s: it is at the lattice floor, so no sibling can be "
+                          "weaker, yet Mu names %s" % (name, mu))
         if mu not in tests:
             errors.append("%s: mu(T)=%s does not exist as a .litmus" % (name, mu))
             continue
-        if oracle.get(mu) != "Allowed":
-            errors.append("%s: mu(T)=%s is %r, not Allowed -- a control whose weak "
-                          "outcome is itself forbidden vouches for nothing"
-                          % (name, mu, oracle.get(mu)))
-        if mu_exp != oracle.get(mu):
-            errors.append("%s: MuExpected column says %r, the oracle says %r"
-                          % (name, mu_exp, oracle.get(mu)))
-        why = weakening_of(tests[name], tests[mu])
+        why = weakening_of(T, tests[mu])
         if why:
             errors.append("%s: mu(T)=%s is %s" % (name, mu, why))
-        if LATTICE == "x86" and tests[mu].scopes != tests[name].scopes:
+        if not tests[mu].at_floor():
+            errors.append("%s: mu(T)=%s is a weakening but not the LATTICE-FLOOR "
+                          "one (%s) -- the co-run control is the floor sibling"
+                          % (name, mu, _pp(tests[mu].strength())))
+        if tests[mu].scopes != T.scopes:
             errors.append("%s: mu(T)=%s changes the GPU scope %s -> %s, which is "
                           "a different experiment and not an ordering weakening"
-                          % (name, mu, sorted(tests[name].scopes),
-                             sorted(tests[mu].scopes)))
-    if n_dis != N_DISALLOWED:
-        errors.append("committed map holds %d Disallowed rows, expected %d"
-                      % (n_dis, N_DISALLOWED))
+                          % (name, mu, sorted(T.scopes), sorted(tests[mu].scopes)))
+        if alt != "-":
+            if alt not in tests:
+                errors.append("%s: MuAlt=%s does not exist as a .litmus"
+                              % (name, alt))
+            else:
+                why = weakening_of(T, tests[alt])
+                if why:
+                    errors.append("%s: MuAlt=%s is %s" % (name, alt, why))
+    if len(body) - 1 != N_TESTS:
+        errors.append("committed map holds %d rows, expected %d"
+                      % (len(body) - 1, N_TESTS))
+    if n_mu != N_WITH_MU:
+        errors.append("committed map names a mu on %d rows, expected %d"
+                      % (n_mu, N_WITH_MU))
+    if n_floor != N_FLOOR:
+        errors.append("committed map marks %d rows `none', expected %d"
+                      % (n_floor, N_FLOOR))
     return errors
 
 
 HEADER = [
-    "# HetLitmus B6 positive-control map.  GENERATED -- do not hand-edit;",
+    "# HetLitmus positive-control map.  GENERATED -- do not hand-edit;",
     "#   regenerate with  hetlitmus/verify/controlmap.py --emit,",
     "#   gate with        hetlitmus/verify/controlmap.py --check  (make hetlitmus-controlmap).",
     "#",
-    "# Mu      = Layer-A minimal-mutant control: the nearest ALLOWED grid neighbour of a",
-    "#           Disallowed test, co-run on the SAME run/stress/C2C path so that a null on",
-    "#           T means 'not observed on a demonstrably hot harness' rather than nothing",
-    "#           at all (Q4 2.3/2.4; MC-Mutants ASPLOS'23 'Weakening sw' mutator, Table 2).",
+    "# Mu      = Layer-A control, CO-RUN in T's own harness: T's structural twin at the",
+    "#           lattice floor (every ordering annotation dropped on both sides), on the",
+    "#           SAME run/stress/C2C path, so a null on T means 'not observed on a harness",
+    "#           that demonstrably produced an interleaving of this shape'.  Its count is",
+    "#           REPORTED, never compared against a prediction.  `none' = T is itself at",
+    "#           the floor, so no weakening can exist and the canary is the only layer.",
+    "# MuAlt   = the NEAREST weakening (a maximal element of the same candidate set).",
+    "#           Documentation only -- never compiled in.  `-' where the floor is also",
+    "#           the nearest weakening.",
+    "# MuRelaxed = the fully-relaxed companion, i.e. Mu itself on every row; the gate",
+    "#           asserts the identity so the two cannot drift apart.",
     "# Canary  = Layer-B universal floor: a het MP-*-sys-relaxed instance, the only het",
     "#           shape with a published detected-weak result on GH200 (Bagchi ISMM'26 Tab 4).",
     "#           'self' = the test IS the canary.",
-    "# MuAlt   = the OTHER equally-minimal mutant, where the grid contains two (see below).",
-    "# MuRelaxed = the fully-relaxed companion; the documented HW fallback for Layer A if the",
-    "#           minimal mutant cannot be driven to tau_hot (Q4 8.3).  Hardware-only choice.",
     "#",
-    "# HONEST SCOPE OF 'minimal'.  Q4 calls these single-edge mutants.  At the grid's",
-    "# granularity the cell-adjacent neighbour is the smallest weakening AVAILABLE, but it is",
-    "# not always literally one edge: 'acqrel-2s -> acquire' drops the CPU half of the pair AND",
-    "# the GPU's release (the grid has no one-sided 'acqrel' cell), and 'fence-2s -> acqrel-2s'",
-    "# weakens both sides from SC fence to RCpc rel/acq.  What IS machine-checked (--check) is",
-    "# the property the vouch actually rests on: mu(T) is STRUCTURALLY IDENTICAL to T (same",
-    "# procs, devices and ordered accesses -- a pure ordering weakening, not another program)",
-    "# and STRICTLY WEAKER componentwise on the (cpu,gpu) strength lattice.",
+    "# What --check machine-checks is the property the vouch rests on: mu(T) is",
+    "# STRUCTURALLY IDENTICAL to T (same procs, devices and ordered accesses -- a pure",
+    "# ordering weakening, not another program), STRICTLY WEAKER componentwise on the",
+    "# (cpu,gpu) strength lattice, at the floor of it, and annotated with the same scopes.",
     "#",
-    "# Test,Expected,Mu,MuExpected,MuRule,MuAlt,MuRelaxed,Canary",
+    "# " + HEADER_LINE,
 ]
 
 
@@ -717,24 +607,32 @@ def header_for_lattice():
         "# REGENERATED not translated (memo PORT2-R2 7.D11): on x86 the CPU lattice",
         "# loses its middle rung -- STLR / LDAPR / DMB.ST / DMB.LD all have a plain",
         "# MOV as their x86 image -- so a candidate that only moves within",
-        "# {ra, st, ld} is NOT a weakening on MI300A and is refused here.",
-        "# Mu = a MAXIMAL usable weakening.  `none' = the corpus has NO Layer-A",
-        "# mutant for that row and the MuRule column says which of the two admitted",
-        "# reasons applies: the row is already at the lattice minimum, or every",
-        "# weaker structural sibling is itself non-Allowed (the K-CPU rows, whose",
-        "# verdict is carried by their CPU procs).  Those rows have the Layer-B",
-        "# canary and nothing else, and the gate PINS the set so it cannot grow.",
+        "# {ra, st, ld} is NOT a weakening on MI300A and is refused here.  The floor",
+        "# set is the same 78 rows as the AArch64 map's all the same: only the `-2s'",
+        "# and order-pair cells carry a CPU-side ordering op, and each of those",
+        "# carries a GPU-side one too, so the lost rung never holds a row off the",
+        "# floor by itself.  MuAlt does move, because the NEAREST weakening does.",
         "#",
     ] + HEADER[4:])
 
 
-def load(d, oracle_f):
+def load(d):
     tests = {}
     for f in sorted(os.listdir(d)):
         if f.endswith(".litmus"):
             t = parse_litmus(os.path.join(d, f))
             tests[t.name] = t
-    return tests, load_oracle(oracle_f)
+    return tests
+
+
+def floor_set(d, lattice):
+    """The names at the lattice floor under `lattice', whatever LATTICE is now."""
+    prev = LATTICE
+    set_lattice(lattice)
+    try:
+        return {n for n, t in load(d).items() if t.at_floor()}
+    finally:
+        set_lattice(prev)
 
 
 def render(rows):
@@ -742,32 +640,29 @@ def render(rows):
     for l in header_for_lattice():
         buf.write(l + "\n")
     w = csv.writer(buf, lineterminator="\n")
-    w.writerow(["Test", "Expected", "Mu", "MuExpected", "MuRule",
-                "MuAlt", "MuRelaxed", "Canary"])
+    w.writerow(COLUMNS)
     for r in rows:
         w.writerow(r)
     return buf.getvalue()
 
 
-def check(d, oracle_f, map_f, quiet=False):
+def check(d, map_f, quiet=False):
     """The gate.  Returns the list of errors (empty = the map is sound)."""
-    tests, oracle = load(d, oracle_f)
-    rows, errors = derive(tests, oracle)
+    tests = load(d)
+    rows, errors = derive(tests)
     text = render(rows)
-    dis = [r for r in rows if r[1] == "Disallowed"]
+    with_mu = [r for r in rows if r[1] not in ("none", "-")]
 
     if not quiet:
-        print("===== B6 CONTROL MAP: does every Disallowed test have a real control? =====")
+        print("===== CONTROL MAP: does every test co-run a real positive control? =====")
         print("  corpus         : %d tests in %s" % (len(tests), d))
-        print("  oracle         : %d Allowed / %d Disallowed / %d NO-ORACLE"
-              % (sum(1 for r in rows if r[1] == "Allowed"),
-                 len(dis),
-                 sum(1 for r in rows if r[1] == "NO-ORACLE")))
-        print("  canaries       : %d rows carry a Layer-B canary"
-              % sum(1 for r in rows if r[7] != "-"))
-        print()
-        for r in sorted(dis):
-            print("  %-22s mu = %-22s [%s]  %s" % (r[0], r[2], r[3], r[4]))
+        print("  lattice        : %s" % LATTICE)
+        print("  Layer A        : %d rows co-run a lattice-floor mu(T), %d are at "
+              "the floor themselves (canary only)"
+              % (len(with_mu), sum(1 for r in rows if r[1] == "none")))
+        print("  Layer B        : %d rows carry a canary instance, %d ARE the canary"
+              % (sum(1 for r in rows if r[5] not in ("-", "self")),
+                 sum(1 for r in rows if r[5] == "self")))
         print()
 
     # the committed table must match what we just re-derived from source, AND
@@ -780,47 +675,64 @@ def check(d, oracle_f, map_f, quiet=False):
         if on_disk != text:
             errors.append("committed map %s is STALE -- re-run "
                           "`controlmap.py --emit > %s'" % (map_f, map_f))
-        errors += audit_map(on_disk, tests, oracle)
+        errors += audit_map(on_disk, tests)
 
-    # fail closed: the count is asserted, not merely reported
-    if len(dis) != N_DISALLOWED:
-        errors.append("expected %d Disallowed rows, found %d"
-                      % (N_DISALLOWED, len(dis)))
-    if not quiet:
-        # summary only: every row that could lower it has already filed its own
-        # error above, so this line reports, it does not decide
-        ok = sum(1 for r in dis if r[2] != "-" and r[3] == "Allowed")
-        print("  MU MAP: %d/%d Disallowed tests have an existing, Allowed mu(T)"
-              % (ok, len(dis)))
+    # fail closed: the census is asserted, not merely reported
+    if len(tests) != N_TESTS:
+        errors.append("the corpus holds %d tests, expected %d"
+                      % (len(tests), N_TESTS))
+    if len(with_mu) != N_WITH_MU:
+        errors.append("%d rows name a mu, expected %d" % (len(with_mu), N_WITH_MU))
+    # ...and the fact the ONE set of constants rests on: both lattices put the
+    # same rows at the floor, so N_FLOOR is not silently an AArch64 number.
+    fa, fx = floor_set(d, "aarch64"), floor_set(d, "x86")
+    if fa != fx:
+        errors.append("the lattices disagree about the floor (%d aarch64 / %d "
+                      "x86; e.g. %s) -- one N_FLOOR cannot describe both"
+                      % (len(fa), len(fx), sorted(fa ^ fx)[0]))
     return errors
 
 
 # --- the negative control ---------------------------------------------------
-# Until 2026-08-02 this gate had none: no --bite, no selftest section, no cram
-# negative.  A fail-closed gate nobody has seen fail is a claim, not a check.
-# Each injection gets a FRESH scratch corpus (a stale one turns the next bite
-# into a pass for the previous bite's reason), is cmp-verified to have changed
-# the artifact it targets, and must produce the NAMED error -- reddening for
-# some other reason is not this bite passing.
+# A fail-closed gate nobody has seen fail is a claim, not a check.  Each
+# injection gets a FRESH scratch corpus (a stale one turns the next bite into a
+# pass for the previous bite's reason), is cmp-verified to have changed the
+# artifact it targets, and must produce the NAMED error -- reddening for some
+# other reason is not this bite passing.
 def _scratch(d, tmp, tag):
-    """A private copy of corpus + oracle + map to corrupt."""
+    """A private copy of corpus + map to corrupt."""
     dst = os.path.join(tmp, tag)
     os.mkdir(dst)
     for f in os.listdir(d):
-        if f.endswith(".litmus") or f in ("expected-nvidia.csv", "control-map.csv"):
+        if f.endswith(".litmus") or f == "control-map.csv":
             shutil.copy(os.path.join(d, f), dst)
     return dst
 
 
-def _sub(path, old, new):
-    """Rewrite `path', returning False if the edit was a no-op (vacuous bite)."""
-    with open(path) as fh:
-        s = fh.read()
-    if old not in s or old == new:
+def _sub_mu(path, test, new_mu):
+    """Repoint ONE row's Mu field.  Anchored on the row's first field rather than
+    on a substring: `<test>,<mu>,' also occurs inside the MuAlt/MuRelaxed pair of
+    OTHER rows, so a plain replace() silently corrupts a row the bite never named
+    and the injection then reddens for the wrong reason."""
+    lines = open(path).read().splitlines()
+    hit = False
+    for i, l in enumerate(lines):
+        f = l.split(",")
+        if f and f[0] == test and len(f) == len(COLUMNS):
+            if f[1] == new_mu:
+                return False
+            f[1] = new_mu
+            lines[i] = ",".join(f)
+            hit = True
+            break
+    if not hit:
         return False
     with open(path, "w") as fh:
-        fh.write(s.replace(old, new, 1))
+        fh.write("\n".join(lines) + "\n")
     return True
+
+
+LEGACY_HEADER = "Test,Expected,Mu,MuExpected,MuRule,MuAlt,MuRelaxed,Canary"
 
 
 def bite(d):
@@ -829,8 +741,7 @@ def bite(d):
     fails = 0
     try:
         base = _scratch(d, tmp, "clean")
-        errs = check(base, os.path.join(base, "expected-nvidia.csv"),
-                     os.path.join(base, "control-map.csv"), quiet=True)
+        errs = check(base, os.path.join(base, "control-map.csv"), quiet=True)
         print("  [0] control: an untouched scratch copy -> %d error(s) (expect 0)"
               % len(errs))
         if errs:
@@ -838,38 +749,42 @@ def bite(d):
                 print("      *** %s" % e)
             fails += 1
 
-        # real Disallowed rows and their derived mutants, read from the map
+        tests = load(base)
         with open(os.path.join(base, "control-map.csv")) as fh:
             maptext = fh.read()
-        dis_rows = [r for r in csv.reader(l for l in maptext.splitlines()
-                                          if not l.startswith("#"))
-                    if r and r[1] == "Disallowed"]
-        victim, mu = dis_rows[0][0], dis_rows[0][2]
+        mu_rows = [r for r in csv.reader(l for l in maptext.splitlines()
+                                         if not l.startswith("#"))
+                   if r and r[0] != "Test" and r[1] != "none"]
+        victim, mu = mu_rows[0][0], mu_rows[0][1]
         # For bite 3, pick a row whose NAIVE name-rewrite names a test that does
         # not exist -- the failure mode this module was written to prevent, and
         # the only one where rewriting the Mu column is a lie rather than a
-        # coincidence.  Rewriting it on a row where the naive name happens to be
-        # the right answer would be a vacuous bite.
-        # BOTH naive rewrites are tried, not just `acquire'.  Until the NVOR
-        # regeneration (2026-08-06) the `acquire' one alone found material --
-        # MP-gc-sys-acquire and its two siblings are the degenerate variants
-        # generate.sh dedups away -- but every gc-cut Disallowed row demoted to
-        # NO-ORACLE that day and the search went empty, i.e. THE INJECTION
-        # SILENTLY STOPPED BITING while the gate stayed green.  On the surviving
-        # cg-cut rows the degenerate direction is the other one (MP-cg-sys-
-        # release does not exist: on that cut the GPU proc is a reader).
+        # coincidence.  Both naive rewrites are tried: which of `acquire' /
+        # `release' is the degenerate one flips with the device cut, so keying on
+        # one alone lets the search go empty while the gate stays green.
         have = {f[:-len(".litmus")] for f in os.listdir(d) if f.endswith(".litmus")}
         naive_row = None
-        for r in dis_rows:
+        for r in mu_rows:
             p = split_name(r[0])
             if not p:
                 continue
             for ord_tok in ("acquire", "release"):
                 naive = "%s-%s-%s-%s" % (p["shape"], p["cut"], p["scope"], ord_tok)
                 if naive not in have:
-                    naive_row = (r[0], r[2], naive)
+                    naive_row = (r[0], r[1], naive)
                     break
             if naive_row:
+                break
+        # For bite 5, a row whose corpus holds a STRICTLY STRONGER structural
+        # sibling: a real, hot, same-shape test that is not a weakening at all.
+        strong_row = None
+        for r in mu_rows:
+            T = tests[r[0]]
+            up = sorted(m for m in tests
+                        if m != r[0] and tests[m].scopes == T.scopes
+                        and weakening_of(tests[m], T) is None)
+            if up:
+                strong_row = (r[0], r[1], up[0])
                 break
 
         def run(tag, why, edit, want):
@@ -879,8 +794,7 @@ def bite(d):
                 print("  [%s] *** VACUOUS BITE: the injection changed nothing" % tag)
                 fails += 1
                 return
-            got = check(sd, os.path.join(sd, "expected-nvidia.csv"),
-                        os.path.join(sd, "control-map.csv"), quiet=True)
+            got = check(sd, os.path.join(sd, "control-map.csv"), quiet=True)
             hit = [e for e in got if want in e]
             print("  [%s] %s\n        -> %d error(s); named error %s"
                   % (tag, why, len(got), "FOUND: " + hit[0] if hit else
@@ -901,41 +815,94 @@ def bite(d):
         run("1", "mu(T)'s .litmus DELETED",
             del_mu, "mu(T)=%s does not exist as a .litmus" % mu)
 
-        # 2. the mutant relabelled Disallowed: a control whose own weak outcome
-        #    is forbidden vouches for nothing.
-        run("2", "mu(T) relabelled Disallowed in the oracle",
-            lambda sd: _sub(os.path.join(sd, "expected-nvidia.csv"),
-                            "%s,Allowed," % mu, "%s,Disallowed," % mu),
-            "not Allowed -- a control whose weak")
-
         # 3. the map row rewritten from the test's NAME instead of derived --
         #    the exact mistake this module exists to prevent (the naive
         #    `acqrel-2s -> acquire' rewrite names a test that does not exist).
         if naive_row is None:
-            print("  [3] *** no Disallowed row has a nonexistent naive rewrite: "
+            print("  [3] *** no row with a mu has a nonexistent naive rewrite: "
                   "the name-rewrite path cannot be bitten on this corpus")
             fails += 1
         else:
             t3, m3, naive3 = naive_row
             run("3", "the Mu column rewritten from the test's NAME (%s -> %s)"
                      % (m3, naive3),
-                lambda sd: _sub(os.path.join(sd, "control-map.csv"),
-                                "%s,Disallowed,%s," % (t3, m3),
-                                "%s,Disallowed,%s," % (t3, naive3)),
+                lambda sd: _sub_mu(os.path.join(sd, "control-map.csv"), t3, naive3),
                 "%s does not exist as a .litmus" % naive3)
 
-        # 4. mu swapped for an Allowed test of another SHAPE: still a real,
-        #    Allowed, hot test -- just not a weakening of THIS program.
+        # 4. mu swapped for a test of another SHAPE: still a real, hot test --
+        #    just not a weakening of THIS program.
         def swap_shape(sd):
             other = "MP-cg-sys-relaxed" if not victim.startswith("MP-") \
                     else "SB-cg-sys-relaxed"
             if not os.path.exists(os.path.join(sd, other + ".litmus")):
                 return False
-            return _sub(os.path.join(sd, "control-map.csv"),
-                        "%s,Disallowed,%s," % (victim, mu),
-                        "%s,Disallowed,%s," % (victim, other))
-        run("4", "mu(T) swapped for an Allowed test of a DIFFERENT shape",
+            return _sub_mu(os.path.join(sd, "control-map.csv"), victim, other)
+        run("4", "mu(T) swapped for a test of a DIFFERENT shape",
             swap_shape, "access structure differs")
+
+        # 5. mu swapped for a STRICTLY STRONGER structural sibling: same shape,
+        #    same scopes, same locations -- and no weakening at all, so it may
+        #    never fire and every null it gates is discarded rather than vouched.
+        if strong_row is None:
+            print("  [5] *** no row has a strictly stronger structural sibling: "
+                  "the not-a-weakening path cannot be bitten on this corpus")
+            fails += 1
+        else:
+            t5, m5, up5 = strong_row
+            run("5", "%s: mu(T) swapped for a STRICTLY STRONGER sibling (%s -> %s)"
+                     % (t5, m5, up5),
+                lambda sd: _sub_mu(os.path.join(sd, "control-map.csv"), t5, up5),
+                "not weaker (cpu,gpu strength")
+
+        # 6. THE LEGACY 8-COLUMN MAP, refused END TO END.  Its field 2 was a
+        #    verdict and its canary was field 8; read with this schema's column
+        #    meanings the Mu column would be a verdict string.  Both readers must
+        #    refuse the header rather than mis-bind it -- this gate, and the
+        #    emitter's own reader, which is the one whose silence would ship.
+        legacy = _scratch(d, tmp, "6")
+        lm = os.path.join(legacy, "control-map.csv")
+        with open(lm) as fh:
+            lines = fh.read().splitlines()
+        out = []
+        for l in lines:
+            if l == HEADER_LINE:
+                out.append(LEGACY_HEADER)
+            elif l.startswith("#") or not l:
+                out.append(l)
+            else:
+                f = l.split(",")
+                out.append(",".join([f[0], "Allowed", f[1], "Allowed"] + f[2:]))
+        with open(lm, "w") as fh:
+            fh.write("\n".join(out) + "\n")
+        got = check(legacy, lm, quiet=True)
+        want = "header line is"
+        hit = [e for e in got if want in e]
+        print("  [6a] the LEGACY 8-column map fed to --check\n"
+              "        -> %d error(s); named error %s"
+              % (len(got), "FOUND: " + hit[0] if hit else
+                 "*** MISSING (wanted %r)" % want))
+        if not hit:
+            fails += 1
+        # ...and the emitter's reader, on the same file.  A gate that refuses a
+        # schema the harness would happily mis-read protects nothing.
+        l7 = os.path.abspath(LITMUS7)
+        if not os.access(l7, os.X_OK):
+            print("  [6b] *** litmus7 is not built (%s) -- the end-to-end half of "
+                  "this bite cannot run, and a bite that skips is not a bite" % l7)
+            fails += 1
+        else:
+            r = subprocess.run(
+                [l7, "-gpu-target", "cuda", "-set-libdir", os.path.abspath(LIBDIR),
+                 "-o", legacy, os.path.join(legacy, victim + ".litmus")],
+                cwd=legacy, capture_output=True, text=True)
+            said = r.stdout + r.stderr
+            ok = r.returncode != 0 and "control-map.csv" in said
+            print("  [6b] the same file fed to the EMITTER's reader\n"
+                  "        -> exit %d; %s" % (r.returncode,
+                  "REFUSED: " + said.strip().splitlines()[-1][:160] if ok
+                  else "*** ACCEPTED (it must refuse the legacy header)"))
+            if not ok:
+                fails += 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -950,31 +917,28 @@ def bite(d):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", default=DEFAULT_DIR)
-    ap.add_argument("--oracle", default=None)
     ap.add_argument("--map", default=None)
     ap.add_argument("--emit", action="store_true")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--bite", action="store_true")
-    ap.add_argument("--lattice", default="aarch64",
-                    choices=sorted(N_DISALLOWED_BY_LATTICE),
+    ap.add_argument("--lattice", default="aarch64", choices=sorted(LATTICES),
                     help="aarch64 = GH200 (default); x86 = MI300A, memo 7.D11")
     a = ap.parse_args()
 
     set_lattice(a.lattice)
     d = os.path.abspath(a.dir)
-    dflt_oracle = ("expected-amd.csv" if a.lattice == "x86" else "expected-nvidia.csv")
     dflt_map = ("control-map-amd.csv" if a.lattice == "x86" else "control-map.csv")
-    oracle_f = a.oracle or os.path.join(d, dflt_oracle)
     map_f = a.map or os.path.join(d, dflt_map)
 
     if a.emit:
-        tests, oracle = load(d, oracle_f)
-        rows, errors = derive(tests, oracle)
+        rows, errors = derive(load(d))
         sys.stdout.write(render(rows))
+        for e in errors:
+            print("  *** %s" % e, file=sys.stderr)
         return 0 if not errors else 1
 
     if a.check:
-        errors = check(d, oracle_f, map_f)
+        errors = check(d, map_f)
         if errors:
             print()
             for e in errors:

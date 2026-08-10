@@ -48,8 +48,8 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 GEN_X86 = os.path.join(HET_DIR, "generate-x86.sh")
 # P2d (2026-08-03) wired the x86 lane to its OWN lattice: hetCpuFront.X86_64 names
-# control-map-amd.csv, and generate-x86.sh re-keys it (and expected-amd.csv) onto
-# the -x86_64 names inside the generated corpus.  So this gate reads the map the
+# control-map-amd.csv, and generate-x86.sh re-keys it onto the -x86_64 names
+# inside the generated corpus.  So this gate reads the map the
 # emitter reads.  Until then it built a THROWAWAY x86-keyed map out of
 # control-map.csv (the AArch64 lattice) so that the co-run path was exercised at
 # all; that stand-in is gone, and with it the risk of a gate checking a
@@ -92,26 +92,21 @@ N_X86_LOADS = 579
 # P7's probe set: the control-map rows that name a mu(T), hence the harnesses
 # that co-run three instances (T, mu, canary), all three at the SAME proc index
 # -- which is exactly why keying bodies by proc alone lost two of every three.
-# MEASURED on control-map-amd.csv: ALL 19 Disallowed rows name a mu, so the
-# `none' sentinel no longer occurs and the probe set is the whole Disallowed
-# census.  (Pre-D26 it was 130 of 146, with 16 carrying `none' -- no Layer-A
-# mutant EXISTS for them -- hence canary-only BY DERIVATION; and 50 x 3 = 150
-# before that, while the gate read the AArch64 map.)  D26 2026-08-04 demoted the
-# 127 X2A-carried rows, which took all 16 no-mutant rows with them: they were
-# K-CPU rows, whose verdict its CPU procs carry.
-# The body count is NOT 19 x 3: a co-run harness emits one body per (instance,
-# x86 proc) pair and the surviving LB shape has one x86 proc, so the ratio is
-# shape-dependent and both numbers are re-measured, never derived from each
-# other.
-N_CORUN_TESTS = 19
-N_CORUN_BODIES = 57
+# That is every row NOT at the lattice floor: 333 of the 411, the other 78 being
+# the fully-relaxed rows that no sibling can be weaker than.
+# The body count is NOT 333 x 3: a co-run harness emits one body per (instance,
+# x86 proc) pair, and how many x86 procs a shape has runs from one (LB, MP) to
+# three (WRC3), so the ratio is shape-dependent and both numbers are re-measured,
+# never derived from each other.
+N_CORUN_TESTS = 333
+N_CORUN_BODIES = 1365
 
 # Representative harness for the machine-code phase: its x86 CPU proc carries a
 # store, a fence AND a load, so one objdump covers the whole vocabulary.
-# On the AMD lattice it is Disallowed with mu(T) = SB-cg-sys-fence, so it emits
-# THREE instances and its bodies are prefixed (het_run_t_P0, not het_run_P0).
-# That is not a downgrade of the phase -- co-run is the majority case -- but the
-# symbol has to be looked up, not assumed; see MC_SYMS.
+# It is off the lattice floor, so it emits THREE instances and its bodies are
+# prefixed (het_run_t_P0, not het_run_P0).  That is not a downgrade of the phase
+# -- co-run is now every row but the 78 floor ones -- but the symbol has to be
+# looked up, not assumed; see MC_SYMS.
 MC_TEST = "SB-cg-sys-fence-2s-x86_64"
 MC_SYMS = ["het_run_t_P0", "het_run_P0"]
 
@@ -712,7 +707,7 @@ def corun_probe(tmp, corpus):
     control-map-amd.csv the emitter reads (P2d), so nothing is rewritten here --
     the probe set is read out of that same file.  Reading the committed map and
     re-keying it a second way would be a gate checking its own arithmetic.
-    `-', `self' and `none' are sentinels, not names.
+    `self' and `none' are sentinels, not names.
     """
     scratch = os.path.join(tmp, "corun-src")
     shutil.rmtree(scratch, ignore_errors=True)
@@ -727,9 +722,9 @@ def corun_probe(tmp, corpus):
         if l.startswith("#") or not l.strip():
             continue
         f = l.rstrip("\n").split(",")
-        if len(f) < 8 or f[0] == "Test":
+        if len(f) != 6 or f[0] == "Test":
             continue
-        if f[2] not in ("-", "none", ""):
+        if f[1] != "none":
             rows.append(f[0])
     return scratch, rows
 
@@ -760,11 +755,9 @@ def phase7(tmp, corpus, splitter=split_bodies, probe=corun_probe):
                  % (t, sorted(cm)))
             continue
         # The three INSTANCES must all be present.  Not one body each: a test with
-        # two x86 CPU procs contributes two bodies per instance, and pinning the
-        # multiset to exactly ["can_","mu_","t_"] reddened every WRC / WRC3 / IRIW
-        # row the moment this gate started reading the AMD lattice (where those
-        # multi-CPU-proc shapes are Disallowed and so co-run at all).  What has to
-        # hold is that no INSTANCE went missing.
+        # two x86 CPU procs contributes two bodies per instance, so pinning the
+        # multiset to exactly ["can_","mu_","t_"] would redden every WRC / WRC3 /
+        # IRIW row.  What has to hold is that no INSTANCE went missing.
         got_prefixes = sorted(set(r[2] for r in recs))
         if got_prefixes != ["can_", "mu_", "t_"]:
             fail("P7", "%s: the host arm carries bodies %r, but the banner names "
@@ -787,8 +780,8 @@ def phase7(tmp, corpus, splitter=split_bodies, probe=corun_probe):
         mu = can = None
         for l in open(os.path.join(scratch, "control-map-amd.csv")):
             g = l.rstrip("\n").split(",")
-            if len(g) >= 8 and g[0] == t:
-                mu, can = g[2], g[7]
+            if len(g) == 6 and g[0] == t:
+                mu, can = g[1], g[5]
                 break
         for nm in (t, mu, can):
             if nm and nm not in ("-", "none", "self"):

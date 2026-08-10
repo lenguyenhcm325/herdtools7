@@ -26,8 +26,8 @@ second vendor's targets to its reader either.
 (c) the HIP emission is the mirror image, into its own directory.  It comes from
 an x86-64 rendering, not from the AArch64 corpus above: `-gpu-target' names a GPU
 dialect but a harness is a (CPU ISA x GPU dialect) PAIR, and (AArch64, hip) is
-absent from the oracle table (section (j) below).  ../het-x86 is the committed
-one-test fixture for the populated (x86_64, hip) pair.
+in no row of the machine table (section (j) below).  ../het-x86 is the committed
+fixture for the populated (x86_64, hip) pair.
   $ mkdir hip
   $ litmus7 -gpu-target hip -o hip ../het-x86/MP-cg-sys-relaxed-x86_64.litmus >/dev/null 2>&1
   $ ls hip/MP-cg-sys-relaxed-x86_64 | grep -E '\.(cu|hip)$'

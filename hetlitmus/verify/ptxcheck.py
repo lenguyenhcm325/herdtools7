@@ -253,8 +253,8 @@ def device_class(dev):
 
 
 # ---------------------------------------------------------------------------
-# The co-run.  A should-be-forbidden het test is emitted as one kernel and one
-# _cpu.c holding THREE instances -- T, its minimal mutant mu(T) and the canary
+# The co-run.  A het test off the lattice floor is emitted as one kernel and one
+# _cpu.c holding THREE instances -- T, its floor sibling mu(T) and the canary
 # (hetlitmus/docs/positive-control.md).  extract_ptx_ops is file-scoped and
 # flat, so the gate sees three tests' worth of ops in one stream; every lane of
 # every instance is modelled, under the same barrier whitelist, device-scope
@@ -266,9 +266,9 @@ def device_class(dev):
 def load_control_map(litmus_path):
     """(mu, canary) for this test from tests/het/control-map.csv, or (None, None).
 
-    The map is derived from the corpus + the oracle by controlmap.py and gated by
-    `make hetlitmus-controlmap'; it is never a name rewrite (MP-gc-sys-acquire
-    and friends do not exist).  Read the same file the emitter reads, so the gate
+    The map is derived from the corpus by controlmap.py and gated by `make
+    hetlitmus-controlmap'; it is never a name rewrite (MP-gc-sys-acquire and
+    friends do not exist).  Read the same file the emitter reads, so the gate
     cannot disagree with the harness about what is co-running."""
     d = os.path.dirname(os.path.abspath(litmus_path))
     f = os.path.join(d, "control-map.csv")
@@ -280,9 +280,9 @@ def load_control_map(litmus_path):
             if line.startswith('#'):
                 continue
             c = line.rstrip('\n').split(',')
-            if len(c) >= 8 and c[0] == name and c[0] != 'Test':
-                mu = c[2] if c[2] != '-' else None
-                can = c[7] if c[7] not in ('-', 'self') else None
+            if len(c) == 6 and c[0] == name and c[0] != 'Test':
+                mu = c[1] if c[1] != 'none' else None
+                can = c[5] if c[5] != 'self' else None
                 return mu, can
     return None, None
 
@@ -311,11 +311,10 @@ def het_instances(litmus_path):
 
     Mirrors the instance population in litmus/hetEmit.ml:
 
-      mu and canary  ->  [T, mu(T), canary]   the Disallowed tests
-      canary only    ->  [T, canary]          every other test -- a mutant
-                                              presupposes a known-forbidden
-                                              cycle to weaken, so only a
-                                              Disallowed test has one
+      mu and canary  ->  [T, mu(T), canary]   every test off the lattice floor
+      canary only    ->  [T, canary]          a test AT the floor: nothing can
+                                              be weaker than it, so Layer A has
+                                              nothing to build
       neither        ->  [T]                  MP-{cg,gc}-sys-relaxed, which ARE
                                               the canary (control-map.csv:
                                               `self') and cannot co-run
@@ -326,9 +325,9 @@ def het_instances(litmus_path):
     positive control it is not running, and no other check would see it.
 
     Each instance carries its ROLE.  Zipping the list against a positional
-    ("T", "mu(T)", "canary") tuple instead labelled the canary "mu(T)" on the 361
-    tests that co-run a canary and have no mutant, since a None is skipped rather
-    than held as a slot."""
+    ("T", "mu(T)", "canary") tuple instead would label the canary "mu(T)" on
+    every test that co-runs a canary and no mutant, since a None is skipped
+    rather than held as a slot."""
     d = os.path.dirname(os.path.abspath(litmus_path))
     t = instance_of(litmus_path)
     t['role'] = 'T'

@@ -391,9 +391,9 @@ end
 
       (* ======================= THE CO-RUN EMITTER ===========================
          A harness may carry more than one het instance in one translation unit:
-         the test under study T, its minimal mutant mu(T) and the canary (see
-         hetlitmus/docs/positive-control.md sec 5).  What that costs this emitter,
-         and what each invariant prevents:
+         the test under study T, its lattice-floor sibling mu(T) and the canary
+         (see hetlitmus/docs/positive-control.md sec 5).  What that costs this
+         emitter, and what each invariant prevents:
 
            - K (the store-tag modulus) is PER INSTANCE ([i_kmac]), never one
              TU-wide K_TAG: it is 3 for MP/SB/LB and 4 for R/S, and the canary is
@@ -480,7 +480,7 @@ end
       let obsC_of pre l = Printf.sprintf "%sobsC_%s" pre l
       let role_note = function
         | RTest -> "the test under study"
-        | RMu -> "Layer A: the minimal mutant mu(T)"
+        | RMu -> "Layer A: the lattice-floor sibling mu(T)"
         | RCanary -> "Layer B: the universal het-MP canary"
 
       let run _hash_env src_name in_chan _out_chan splitted =
@@ -526,6 +526,19 @@ end
           let cmap =
             HetControlMap.load ~verbose:O.verbose ~dir:src_dir
               ~csv:CpuF.control_map_csv ~src_name in
+          (* WHETHER A POSITIVE-CONTROL MAP WAS READ AT ALL.  The load above is
+             unconditional, so this says the file was missing beside the test:
+             nothing then marks any row the canary, and its missing bound is a
+             build fault rather than a construction -- het_verdict.h has to be
+             able to tell those two apart. *)
+          let no_control_map = (match cmap with None -> true | Some _ -> false) in
+          if not no_control_map && not (HetControlMap.has_row cmap tname) then
+            Warn.user_error
+              "%s: the %s beside it covers the corpus but carries no row for \
+               this test, so it would co-run no control at all and its every \
+               null would be uninterpretable.  Regenerate with \
+               hetlitmus/verify/controlmap.py --emit."
+              tname CpuF.control_map_csv ;
           let mu_name = HetControlMap.control_of cmap tname
           and canary_name = HetControlMap.canary_of cmap tname in
           (* WHICH MACHINE THIS HARNESS MAY NAME, for the emitted stderr WARNINGs
@@ -571,25 +584,18 @@ end
           let pair_label =
             HetMachine.pair_name ~cpu_isa:CpuF.isa_name
               ~target:(List.hd dialects).gd_target in
-          (* WHETHER A POSITIVE-CONTROL MAP WAS READ AT ALL.  The load above is
-             unconditional, so this says the file was missing beside the test:
-             nothing then marks any row the canary, and its missing bound is a
-             build fault rather than a construction -- het_verdict.h has to be
-             able to tell those two apart. *)
-          let no_control_map = HetControlMap.is_empty cmap in
-          (* WHY this harness names no mu(T).  Three different facts, and only one
-             of them is a claim about the strength lattice: no map was read beside
-             this test at all; a map was read and its Mu column names none for this
-             row; or no weaker structural sibling EXISTS (the map's `none'
-             sentinel, whose MuRule column says why).  Emitted verbatim, so a
-             harness sitting in a results tree says which one it is. *)
+          (* WHY this harness names no mu(T).  Two facts, and only one of them is
+             a claim about the strength lattice: no map was read beside this test
+             at all, or the map was read and this test is itself at the lattice
+             floor, where no strictly weaker structural sibling can exist.  Every
+             other row of a map names one.  Emitted verbatim, so a harness sitting
+             in a results tree says which of the two it is. *)
           let mu_absent_why =
             if no_control_map then
               "no positive-control map was read beside this test"
-            else if HetControlMap.no_mutant_exists cmap tname then
-              "no strictly weaker structural sibling exists for this test"
             else
-              "the positive-control map names no mu(T) for this test" in
+              "this test is at the lattice floor, so no strictly weaker \
+               structural sibling exists" in
           (* What goes in HET_CANARY_NAME / _rec.canary_name.  A name is NOT a
              co-run signal -- the map names a canary for every test, including the
              ones that are the canary.  HET_CANARY_COMPILED_IN, set from the
@@ -603,10 +609,10 @@ end
 
           (* ============ derive ONE instance from a parsed het test =============
              A function of (role, prefix, K-macro, name, parse), so one derivation
-             produces T, its minimal mutant and the canary alike.  The decode
-             function and the recovery scan are rendered HERE, because they are
-             pure C over host buffers and need no dialect; that keeps the record
-             small and both render passes readable. *)
+             produces T, its lattice-floor sibling and the canary alike.  The
+             decode function and the recovery scan are rendered HERE, because
+             they are pure C over host buffers and need no dialect; that keeps
+             the record small and both render passes readable. *)
           let derive ~role ~pre ~kmac ~tname ~parsed ~doc =
             (* ---- classify processors by device tag ---- *)
             let dev_of_proc p =
@@ -1622,17 +1628,16 @@ end
             (p, sp.Splitter.name) in
 
           (* ================= the instance population ==========================
-             A should-be-FORBIDDEN test -- the only kind for which control-map.csv
-             names a mu -- becomes a THREE-instance harness: T + mu(T) + the canary,
-             in the same launch, under the same stress, on the same C2C path, on
+             A test the map names a mu for -- every test not itself at the lattice
+             floor -- becomes a THREE-instance harness: T + mu(T) + the canary, in
+             the same launch, under the same stress, on the same C2C path, on
              disjoint cache-line-padded locations.
 
-             Every other test co-runs the canary alone (T + canary).  Without it a
-             non-firing test is as uninterpretable as a bare "Never": nothing tells
-             "the harness was hot and this behaviour did not surface" -- an
-             observability result -- from "the harness was dead".  A mutant is what
-             the others cannot have: it presupposes a known-forbidden cycle to
-             weaken (MC-Mutants sec 1.2).
+             A test AT the floor co-runs the canary alone (T + canary): no sibling
+             of it can be weaker, so Layer A has nothing to build.  Without the
+             canary a non-firing test is as uninterpretable as a bare "Never":
+             nothing tells "the harness was hot and this behaviour did not surface"
+             -- an observability result -- from "the harness was dead".
 
              A test that IS the canary cannot co-run itself, so it stays
              single-instance with prefix "".
@@ -1655,9 +1660,10 @@ end
             | _ -> [ derive ~role:RTest ~pre:"" ~kmac:"K_TAG" ~tname ~parsed ~doc ] in
           let co_run = List.length insts > 1 in
           (* THE TWO FLAGS ARE NOT THE SAME CLAIM: collapsing them is how a null on
-             a test with no mutant would start reading as vouched-for.  Both are
-             computed from the emitted instance population, never from the map,
-             which names a canary even for tests that co-run none. *)
+             a test with no sibling weaker than it would start reading as
+             vouched-for.  Both are computed from the emitted instance population,
+             never from the map, which names a canary even for tests that co-run
+             none. *)
           let has_mu = List.exists (fun i -> i.i_role = RMu) insts
           and has_canary = List.exists (fun i -> i.i_role = RCanary) insts in
           let it = List.hd insts in            (* the test under study *)
@@ -1710,12 +1716,12 @@ end
               (if cpu_only then "  [D10 CPU-ONLY cycle]" else "") ;
             (* The `none' sentinel is a DERIVED absence, not a missing row, and
                the two must not read alike in a build log: this test co-runs the
-               Layer-B canary alone because the corpus contains no weakening of
-               it, so its null is canary-only by construction, forever. *)
-            if HetControlMap.no_mutant_exists cmap tname then
+               Layer-B canary alone because it is itself at the lattice floor, so
+               its null is canary-only by construction, forever. *)
+            if HetControlMap.at_lattice_floor cmap tname then
               Printf.eprintf
-                "  NOTE: the map's Mu column for %s is `none' -- no strictly weaker \
-                 structural sibling EXISTS for it (control-map MuRule says why).  \
+                "  NOTE: %s is at the lattice floor, so the map's Mu column is \
+                 `none' -- no strictly weaker structural sibling can exist.  \
                  HET_CONTROL_COMPILED_IN=0 by derivation: canary only, so every \
                  null from this test is NOT-OBSERVED-CANARY-ONLY.\n%!"
                 tname
@@ -2470,11 +2476,11 @@ end
                        i.i_name i.i_pre i.i_k (role_note i.i_role)))
                 insts ;
               if has_mu then begin
-                s "// mu(T) is a strictly weaker, structurally identical sibling of T,\n" ;
-                s "// co-running on the same launch, stress and C2C path.  A null on T\n" ;
-                s "// means \"not observed on a harness that demonstrably produced an\n" ;
-                s "// interleaving of T's own shape\" -- and NOTHING AT ALL if the\n" ;
-                s "// control did not fire (het_verdict.h).\n"
+                s "// mu(T) is T's structural twin at the lattice floor -- every ordering\n" ;
+                s "// annotation dropped -- co-running on the same launch, the same stress\n" ;
+                s "// and the same C2C path.  A null on T means \"not observed on a harness\n" ;
+                s "// that demonstrably produced an interleaving of T's own shape\" -- and\n" ;
+                s "// NOTHING AT ALL if the control did not fire (het_verdict.h).\n"
               end else begin
                 s (Printf.sprintf
                      "// No Layer-A mu(T) co-runs here: %s.\n" mu_absent_why) ;
@@ -2556,7 +2562,7 @@ end
                instance population, so they cannot drift.
 
                They stay separate because "a canary is co-running" is a weaker claim
-               than "the mutant OF THIS TEST is co-running", and only the second
+               than "the sibling OF THIS TEST is co-running", and only the second
                licenses a credible null; one bit cannot carry both without lying
                about one (hetlitmus/docs/positive-control.md sec 11). *)
             s (Printf.sprintf "#define HET_CONTROL_COMPILED_IN %d\n"
@@ -2565,7 +2571,7 @@ end
                  (if has_canary then 1 else 0)) ;
             (match mu_name with
              | Some m ->
-                s (Printf.sprintf "#define HET_MU_NAME \"%s\"      /* Layer A: the minimal mutant */\n" m)
+                s (Printf.sprintf "#define HET_MU_NAME \"%s\"      /* Layer A: the lattice-floor sibling */\n" m)
              | None -> s "#define HET_MU_NAME NULL\n") ;
             (* A test that IS the canary names itself, which is how het_verdict.h
                separates that designed case from a canary that went missing. *)
@@ -3124,10 +3130,11 @@ end
                   s (Printf.sprintf "- `%s` (%s) -- prefix `%s`, K=%d\n"
                        i.i_name (role_note i.i_role) i.i_pre i.i_k))
                 insts ;
-              s "\nLayer A is a strictly weaker, structurally identical sibling of the test\n" ;
-              s "under study; Layer B is the fixed het canary.  Neither carries a prediction:\n" ;
-              s "their counts say how hot the harness was, and nothing about what the test\n" ;
-              s "ought to have done.  See `het_verdict.h` for the rule that reads them.\n\n"
+              s "\nLayer A is the test under study's structural twin at the lattice floor --\n" ;
+              s "every ordering annotation dropped; Layer B is the fixed het canary.  Neither\n" ;
+              s "carries a prediction: their counts say how hot the harness was, and nothing\n" ;
+              s "about what the test ought to have done.  See `het_verdict.h` for the rule\n" ;
+              s "that reads them.\n\n"
             end ;
             s "Files:\n" ;
             (* the renders first, their descriptions started at a common column *)

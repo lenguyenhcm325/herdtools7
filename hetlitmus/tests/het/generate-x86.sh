@@ -4,15 +4,14 @@
 #
 #   usage:  ./generate-x86.sh OUTDIR
 #
-# Why they are not committed (measured 2026-08-02, P2a): the oracle
-# expected-amd.csv is keyed on the AArch64 test NAMES -- one row per shape x
-# cut x scope x order, whatever ISA the CPU column is rendered in -- and
-# corpus-gate.sh pins tests/het at exactly 411 files while dupcheck.py rejects
-# byte-identical duplicates.  90 of the x86 renderings ARE byte-identical to a
-# sibling (x86-TSO collapses the four CPU order tokens onto two images, see
-# below), so committing them would break both gates for no oracle gain.  They
-# are generated on demand instead -- by this script, which is what makes the
-# x86 lane reproducible.
+# Why they are not committed: control-map-amd.csv is keyed on the AArch64 test
+# NAMES -- one row per shape x cut x scope x order, whatever ISA the CPU column
+# is rendered in -- and corpus-gate.sh pins tests/het at exactly 411 files while
+# dupcheck.py rejects byte-identical duplicates.  90 of the x86 renderings ARE
+# byte-identical to a sibling (x86-TSO collapses the four CPU order tokens onto
+# two images, see below), so committing them would break both gates for nothing.
+# They are generated on demand instead -- by this script, which is what makes
+# the x86 lane reproducible.
 #
 # The CPU rendering is memo PORT2-R2-amd-oracle.md section 3.1's TSO collapse
 # table, verbatim:
@@ -162,39 +161,28 @@ n="$(ls "$OUT"/*.litmus | wc -l)"
 echo "generate-x86: (A) $a + (B) $b (skipped $bskip degenerate) + (D) $d (skipped $dskip degenerate) + (E) $e = $n files in $OUT"
 [ "$n" -eq $((a+b+d+e)) ] || { echo "FAIL: $n files on disk but $((a+b+d+e)) counted" >&2; exit 1; }
 
-# --- the AMD lane's two maps, RE-KEYED onto the x86 file names (P2d) ----------
+# --- the AMD lane's control map, RE-KEYED onto the x86 file names -------------
 # The emitter resolves the control map RELATIVE TO THE .litmus it is given
 # (hetEmit.ml: HetControlMap.load ~dir:src_dir), so without it every x86
-# rendering names no mu(T) and no canary, so nothing co-runs and every null it
-# produces is COLD-INVALID.  MEASURED before this block existed, 2026-08-03: 411
-# of 411.  The verdicts CSV is re-keyed beside it because that is the file an
-# OFFLINE cross-check is run against (hetlitmus/oracle-compare.sh).
+# rendering names no mu(T) and no canary, nothing co-runs, and every null it
+# produces is COLD-INVALID.
 #
-# RE-KEYED, not copied.  The committed maps are keyed on the AArch64 test NAMES
-# -- one row per shape x cut x scope x order, whatever ISA the CPU column is
-# rendered in (that is what makes the oracle ISA-independent, see the header of
-# this file) -- while these renderings are named `<test>-x86_64'.  The rewrite
+# RE-KEYED, not copied.  The committed map is keyed on the AArch64 test NAMES --
+# one row per shape x cut x scope x order, whatever ISA the CPU column is
+# rendered in -- while these renderings are named `<test>-x86_64'.  The rewrite
 # is mechanical and total: every NAME-valued field gets the suffix, so mu(T) and
-# the canary still resolve to a .litmus that exists in $OUT.  `-' and `self' are
-# sentinels, not names, and must NOT be suffixed.
+# the canary still resolve to a .litmus that exists in $OUT.
 #
-# The file NAMES are kept (control-map-amd.csv / expected-amd.csv), not
-# flattened to control-map.csv: hetCpuFront.X86_64 asks for those names, so a
-# directory carrying the NVIDIA maps under their own names cannot be mistaken
-# for an AMD lane -- and the harness records which of the two it was tagged
-# from, so a run log says so too.
+# The file NAME is kept (control-map-amd.csv), not flattened to control-map.csv:
+# hetCpuFront.X86_64 asks for that name, so a directory carrying the NVIDIA map
+# under its own name cannot be mistaken for an AMD lane -- and the harness
+# records which of the two it was tagged from, so a run log says so too.
 #
-# `-`, `self` and `none` are SENTINELS, not names, and must NOT be suffixed.
-# MEASURED 2026-08-03: control-map-amd.csv carries `none' in 16 rows of column 3
-# and in the same 16 rows of column 7 -- all of them Disallowed.  It means "no
-# Layer-A mutant EXISTS for this row" (memo 7.D11; the MuRule column says which
-# of the two admitted reasons applies), a case the AArch64 lattice never needs
-# and control-map.csv therefore never spells.  Suffixed, it became the test name
-# `none-x86_64' and litmus7 refused all 16:
-#   HetLitmus REFUSED ... names the control none-x86_64, but
-#   ./none-x86_64.litmus does not exist
-# Fail-closed thanks to P2b, but 16 tests short of a corpus, and silently so
-# before P2b.  litmus/hetControlMap.ml knows the same three sentinels.
+# `-' (no alternative) and `self' (the test IS the canary) and `none' (the row
+# is at the lattice floor) are SENTINELS, not names, and must NOT be suffixed:
+# suffixed, `none' becomes the test name `none-x86_64' and litmus7 refuses the
+# row -- "names the control none-x86_64, but ./none-x86_64.litmus does not
+# exist".  litmus/hetControlMap.ml knows the same sentinels.
 rekey_names() {                 # rekey_names FILE COL... -- suffix those columns
   local f="$1"; shift
   awk -F, -v cols="$*" -v sfx="-x86_64" 'BEGIN{ n=split(cols,C," ") }
@@ -205,26 +193,21 @@ rekey_names() {                 # rekey_names FILE COL... -- suffix those column
           $c = $c sfx }
       out = $1; for (i = 2; i <= NF; i++) out = out "," $i; print out }' "$f"
 }
-# control-map-amd.csv: Test,Expected,Mu,MuExpected,MuRule,MuAlt,MuRelaxed,Canary
-#   name-valued columns are 1 (Test), 3 (Mu), 6 (MuAlt), 7 (MuRelaxed), 8 (Canary)
-rekey_names "$HETDIR/control-map-amd.csv" 1 3 6 7 8 > "$OUT/control-map-amd.csv"
-# expected-amd.csv: Litmus,Expected,Model,Source -- only column 1 is a name.
-rekey_names "$HETDIR/expected-amd.csv" 1 > "$OUT/expected-amd.csv"
+# control-map-amd.csv: Test,Mu,MuRule,MuAlt,MuRelaxed,Canary
+#   name-valued columns are 1 (Test), 2 (Mu), 4 (MuAlt), 5 (MuRelaxed), 6 (Canary)
+rekey_names "$HETDIR/control-map-amd.csv" 1 2 4 5 6 > "$OUT/control-map-amd.csv"
 
-# Both maps must cover the corpus EXACTLY, in both directions.  A map row with
-# no test is a stale name; a test with no map row co-runs no control at all,
-# which is the failure this block exists to prevent -- and which is silent in
-# the emitted C, so it has to be caught here.
-for m in control-map-amd.csv expected-amd.csv; do
-  awk -F, '!/^#/ && NF>1 && $1 != "Test" && $1 != "Litmus" { print $1 }' \
-    "$OUT/$m" | sort > "$OUT/.keys.$m"
-  ls "$OUT"/*.litmus | sed 's|.*/||; s|\.litmus$||' | sort > "$OUT/.keys.tests"
-  if ! diff -q "$OUT/.keys.$m" "$OUT/.keys.tests" >/dev/null; then
-    echo "FAIL: $m does not key the x86 corpus exactly:" >&2
-    diff "$OUT/.keys.tests" "$OUT/.keys.$m" | head -20 >&2
-    exit 1
-  fi
-  rm -f "$OUT/.keys.$m"
-done
-rm -f "$OUT/.keys.tests"
-echo "generate-x86: re-keyed control-map-amd.csv + expected-amd.csv onto all $n tests"
+# The map must cover the corpus EXACTLY, in both directions.  A map row with no
+# test is a stale name; a test with no map row is refused by the emitter, so the
+# whole lane would stop rather than emit a harness co-running nothing.
+m=control-map-amd.csv
+awk -F, '!/^#/ && NF>1 && $1 != "Test" { print $1 }' \
+  "$OUT/$m" | sort > "$OUT/.keys.$m"
+ls "$OUT"/*.litmus | sed 's|.*/||; s|\.litmus$||' | sort > "$OUT/.keys.tests"
+if ! diff -q "$OUT/.keys.$m" "$OUT/.keys.tests" >/dev/null; then
+  echo "FAIL: $m does not key the x86 corpus exactly:" >&2
+  diff "$OUT/.keys.tests" "$OUT/.keys.$m" | head -20 >&2
+  exit 1
+fi
+rm -f "$OUT/.keys.$m" "$OUT/.keys.tests"
+echo "generate-x86: re-keyed control-map-amd.csv onto all $n tests"
