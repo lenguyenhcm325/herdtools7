@@ -136,7 +136,7 @@ is set through the compiler variable, e.g.
 | `HET_ADAPTIVE` | `1` ⇒ consult `het_campaign_should_stop()` after every run |
 | `HET_P_GOAL` | stop a bound-needing row once `p_bound <= this` |
 | `HET_RATE` | `1` ⇒ a sighting stops nothing; the row runs to budget |
-| `HET_CONFIRM_RUNS` | runs a lone clean sighting may hold a row open for (default 30) |
+| `HET_CONFIRM_RUNS` | runs *after the one it fired in* that a lone clean sighting may hold a row open for (default 30) |
 | `HET_SEED` | overrides the compiled seed base; **must** vary per invocation |
 
 Growing R is done by re-invoking with a fresh seed (`campaign.py`), never by
@@ -160,9 +160,11 @@ floor — the likeliest thing to fire anywhere — rides along with all five.
 * **`campaign.py` reads no map at all.** The corpus is the whole schedule and
   every row takes one stop rule; the only knobs are `--budget-runs`, `--p-goal`,
   `--confirm-runs` and `--rate`. A row that fires once and will not repeat runs
-  to the confirmation window (30 runs by default) **past** `--budget-runs`, and
-  ends `UNCONFIRMED-SIGHTING`; budget your instance time for that, not for the
-  budget alone.
+  for the confirmation window (30 runs by default) **counted from the run it
+  fired in**, which carries it **past** `--budget-runs`, and ends
+  `UNCONFIRMED-SIGHTING`. A row firing in its last budgeted run therefore costs
+  `--budget-runs + --confirm-runs`: budget your instance time for that, not for
+  the budget alone.
 * **Rung 6 is the long one.** Five rows × up to `LADDER_BUDGET` runs ×
   `SIZE_OF_TEST=100000` iterations with full stress. Budget your instance time,
   or lower `LADDER_BUDGET` — but keep it **above 10** (`NUMBER_OF_RUN`), or a

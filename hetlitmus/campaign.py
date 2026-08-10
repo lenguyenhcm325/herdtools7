@@ -196,6 +196,16 @@ def check_flag_mirror(path=_VERDICT_H, name="HET_ST_TAU_UNRESOLVED",
     if not re.search(r'default:[ \t]*return[ \t]+"CONTINUE";', text):
         die("%s no longer returns \"CONTINUE\" for a non-stop -- the scheduler treats "
             "every name it does not know as terminal" % path)
+    # WHERE THE CONFIRMATION WINDOW STARTS is policy too, and it is the one part of it
+    # a name cannot carry: a header measuring the window from run 0 instead of from
+    # the sighting ends rows this scheduler would still be running, at run counts
+    # neither of them agrees on.
+    if not re.search(r"n[ \t]*-[ \t]*st\.n_at_first_sight[ \t]*>=[ \t]*confirm_runs",
+                     text):
+        die("%s no longer measures the confirmation window from n_at_first_sight -- "
+            "the harness and this scheduler would close a lone sighting's window at "
+            "different runs, and a late sighting would be banked with none of it run"
+            % path)
     return bit
 
 
@@ -301,11 +311,14 @@ class TestState(object):
 
     def target_runs(self, budget, rate_mode, confirm_runs):
         """The runs this row is still entitled to.  An open sighting holds it past the
-        budget as far as the confirmation window, so the invocation has to be TOLD
-        that: HET_RUNS_MAX derived from the budget alone would hand the harness a
-        curtailment this scheduler has already overruled."""
+        budget as far as the confirmation window -- which ends confirm_runs runs after
+        the run it fired in, so the entitlement moves with the sighting -- and the
+        invocation has to be TOLD that: HET_RUNS_MAX derived from the budget alone
+        would hand the harness a curtailment this scheduler has already overruled.
+        A row that fires in its last budgeted run therefore costs at most
+        budget + confirm_runs runs, which is the worst case a schedule must price."""
         if self.sighting_open(rate_mode):
-            return max(budget, max(confirm_runs, 1))
+            return max(budget, self.runs_at_first_sight + max(confirm_runs, 1))
         return budget
 
     def decide(self, p_goal, budget, rate_mode, confirm_runs):
@@ -320,7 +333,10 @@ class TestState(object):
                 self.stop, self.note = "CORROBORATED", (
                     "the weak outcome reproduced in %d distinct clean run(s)"
                     % self.k_runs)
-            elif self.runs >= confirm_runs:
+            elif self.runs - self.runs_at_first_sight >= confirm_runs:
+                # The window elapses FROM the sighting (het_verdict.h's rule): against
+                # the pooled run count alone a row firing past run confirm_runs would
+                # be banked here the moment it fired, with none of its window run.
                 self.stop, self.note = "UNCONFIRMED-SIGHTING", (
                     "the confirmation window (%d runs) closed on a lone clean sighting "
                     "that did not reproduce; it first fired at run %d"
@@ -411,12 +427,17 @@ def plan_schedule(a, work):
     """`work` in run order, plus what the schedule costs at the budgets passed.  One
     policy, so one order and one budget: the row that stops early is the one whose
     sighting corroborates or whose bound arrives, not the one whose class was cheap."""
+    # THE WORST CASE CARRIES THE WINDOW.  A row whose one sighting lands in its last
+    # budgeted run is entitled to confirm_runs runs after it, so a row can cost
+    # budget + confirm_runs; --rate, which turns the sighting stop off, caps at the
+    # budget.
+    per_row = a.budget_runs + (0 if a.rate else a.confirm_runs)
     print("campaign: %d test(s), one stop rule each: corroborated sighting, lone "
-          "sighting past %d run(s), pooled bound <= %s, or %d run(s) spent.  Worst "
-          "case %d runs."
+          "sighting %d run(s) after it fires, pooled bound <= %s, or %d run(s) "
+          "spent.  Worst case %d runs."
           % (len(work), a.confirm_runs,
              ("%g" % a.p_goal) if a.p_goal > 0.0 else "(no goal)",
-             a.budget_runs, len(work) * a.budget_runs))
+             a.budget_runs, len(work) * per_row))
     if a.rate:
         print("campaign: --rate: a sighting stops NOTHING; every row runs to its "
               "bound or its budget, so a row that fires yields a rate.")

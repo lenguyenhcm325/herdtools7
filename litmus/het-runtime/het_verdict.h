@@ -398,10 +398,11 @@ static int het_win_of(long f, long n) {
  *   HET_RATE       1 => run to budget even once the outcome has been seen, so a
  *                  row that fires yields a RATE instead of a first sighting.
  *                  Sightings then stop nothing; the bound and the budget still do
- *   HET_CONFIRM_RUNS  how many runs a LONE clean sighting may hold the row open
- *                  for while it fails to reproduce (default 30, floor 1).  This
- *                  is the wait the corroboration bar costs, and it outranks the
- *                  budget stop -- see the stopping rule at the foot of this file
+ *   HET_CONFIRM_RUNS  how many runs after the one it fired in a LONE clean sighting
+ *                  may hold the row open while it fails to reproduce (default 30,
+ *                  floor 1).  This is the wait the corroboration bar costs, and it
+ *                  outranks the budget stop -- see the stopping rule at the foot
+ *                  of this file
  *   HET_SEED       overrides the compiled HET_SEED base.  THE SCHEDULER MUST
  *                  VARY THIS PER INVOCATION: re-running the same seeds adds no
  *                  fresh phase/seed draws, and pooling two such invocations as
@@ -1433,6 +1434,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   int    runs[HET_STATS_MAX_CELLS];
   int    allruns[HET_STATS_MAX_CELLS];
   int i, w, nwin = 0, ne = 0, nl = 0, ncell = 0, nruns = 0, nall = 0, use_canary;
+  int first;                          /* the first STAMPED cell, or n if there is none */
   int n_early, n_late, ks;
   uint64_t mu_total = 0;
   int mu_present = 0;
@@ -1450,21 +1452,29 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
                                          stream can never buy a tighter bound. */
   st->ks_split_window = -1;
   if (n <= 0) { st->obs = HET_OBS_VOID; st->flags |= HET_ST_FANO_UNMEASURED; return; }
-  st->test_name = recs[0].test_name;
-  st->N         = recs[0].N;
   st->R         = n;
-  /* Whether this is a D10 cycle -- a CHECK rather than an assumption: if the cells
-     handed here do not agree on cpu_only they are not one campaign. */
-  st->cpu_only      = recs[0].cpu_only;
-  { int _i;
-    for (_i = 1; _i < n; _i++)
-      if (recs[_i].cpu_only != recs[0].cpu_only) {
-        st->flags |= HET_ST_MIXED_POOL;
-        /* cpu_only resolves upward, because it names the NARROWER experiment: a
-           CPU-only cycle crossed no device boundary, so pooling it with het cells
-           must not let the het reading absorb it silently. */
-        if (recs[_i].cpu_only) st->cpu_only = 1;
-      }
+  /* THE STAMP GATES EVERY READ IN THIS FUNCTION.  Below rec_magic a record is
+     whatever memset left, so the identity of the pool -- its name, its N, whether
+     the cycle is CPU-only -- is read from the first cell that carries the stamp, and
+     an unstamped one contributes nothing but its place in the run count R. */
+  for (first = 0; first < n && recs[first].rec_magic != HET_REC_MAGIC; first++) ;
+  if (first < n) {
+    st->test_name = recs[first].test_name;
+    st->N         = recs[first].N;
+    /* Whether this is a D10 cycle -- a CHECK rather than an assumption: if the cells
+       handed here do not agree on cpu_only they are not one campaign. */
+    st->cpu_only  = recs[first].cpu_only;
+    { int _i;
+      for (_i = first + 1; _i < n; _i++)
+        if (recs[_i].rec_magic == HET_REC_MAGIC
+            && recs[_i].cpu_only != recs[first].cpu_only) {
+          st->flags |= HET_ST_MIXED_POOL;
+          /* cpu_only resolves upward, because it names the NARROWER experiment: a
+             CPU-only cycle crossed no device boundary, so pooling it with het cells
+             must not let the het reading absorb it silently. */
+          if (recs[_i].cpu_only) st->cpu_only = 1;
+        }
+    }
   }
   if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS;
                                  st->flags |= HET_ST_CELLS_TRUNCATED; }
@@ -1475,8 +1485,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
      calibrated off another shape's burstiness is a weaker claim, so which one was
      used is recorded and printed rather than left to the reader to guess. */
   for (i = 0; i < n; i++) {
-    /* An UNSTAMPED cell is unreadable here too (the stamp test is section 2's), and
-       its residue would do two things: put a number in the printed mu report that
+    /* Residue here would do two things: put a number in the printed mu report that
        came from nothing, and SELECT the channel below -- a residue mu_total picks
        mu(T) over a canary that actually fired. */
     if (recs[i].rec_magic != HET_REC_MAGIC) continue;
@@ -1494,15 +1503,18 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   for (i = 0; i < n; i++) {
     uint32_t dq = 0, cv = 0;
     het_verdict_t v = het_verdict(&recs[i], &dq, &cv);
-    /* An UNSTAMPED cell is read by nothing here either: het_verdict() stops at
-       rec_magic, so every count below it -- the target tallies a sighting would be
-       scored from included -- is whatever memset left.  Without this the aggregate
-       would let a harness the emitter built wrong corroborate itself and stop. */
-    int stamped = !(dq & HET_DQ_REC_UNSTAMPED);
-    int y   = stamped && (het_reported_count(&recs[i]) >= 1);
-    int deg = het_cell_degenerate(&recs[i]);
-    uint64_t tot = het_ctrl_total(&recs[i], use_canary);
-    uint64_t sum = 0;
+    int y, deg;
+    uint64_t tot, sum = 0;
+
+    /* An UNSTAMPED cell is read by nothing here: het_verdict() stops at rec_magic,
+       so every field below it -- the target tallies, the decode channel, the run id,
+       the window arrays, the frame count -- is whatever memset left.  Skipped whole,
+       or the aggregate would let a harness the emitter built wrong corroborate
+       itself and stop.  It is COLD by that same test, so nothing usable is lost. */
+    if (dq & HET_DQ_REC_UNSTAMPED) continue;
+    y   = het_reported_count(&recs[i]) >= 1;
+    deg = het_cell_degenerate(&recs[i]);
+    tot = het_ctrl_total(&recs[i], use_canary);
 
     /* A SIGHTING is never COLD (het_verdict believes a positive unconditionally),
        so a usable-cell count can never discard one. */
@@ -1560,11 +1572,12 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
      the per-run liveness block makes; a row that co-runs nothing without naming
      itself has no control map behind it (or an emitter that built it wrong). */
   { int denom;
-    for (i = 0; i < n; i++)
-      if (recs[i].control_compiled_in || recs[i].canary_compiled_in) break;
-    if (i == n) {
-      if (recs[0].canary_name && recs[0].test_name
-          && strcmp(recs[0].canary_name, recs[0].test_name) == 0)
+    for (i = first; i < n; i++)
+      if (recs[i].rec_magic == HET_REC_MAGIC
+          && (recs[i].control_compiled_in || recs[i].canary_compiled_in)) break;
+    if (first < n && i == n) {
+      if (recs[first].canary_name && recs[first].test_name
+          && strcmp(recs[first].canary_name, recs[first].test_name) == 0)
         st->flags |= HET_ST_SELF_CONTROL;
       else
         st->flags |= HET_ST_NO_CONTROL_CORUN;
@@ -2133,11 +2146,14 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
  * shapes need the long tail (Kirkham 4.2 ranks SB hardest on every chip).
  *
  * A lone clean sighting does not stop the row: one clean run cannot rule out a
- * per-run artefact, so the row keeps running to corroborate -- for up to
- * confirm_runs runs (HET_CONFIRM_RUNS), then stops UNCONFIRMED-SIGHTING, which is
- * neither a null nor a corroboration: it says the confirmation window closed on a
- * sighting that did not reproduce, and nothing more.  A degenerate-only sighting is
- * not a clean one, so it takes the null arm and spends its budget.
+ * per-run artefact, so the row keeps running to corroborate -- for confirm_runs runs
+ * (HET_CONFIRM_RUNS) MEASURED FROM THE RUN IT FIRED IN, then stops
+ * UNCONFIRMED-SIGHTING, which is neither a null nor a corroboration: it says the
+ * confirmation window closed on a sighting that did not reproduce, and nothing more.
+ * The window opens at the sighting because it exists to buy that sighting its
+ * reproduction attempts: measured from run 0 it is already spent when a row fires
+ * late, and the row is banked un-reproduced having run none of it.  A degenerate-only
+ * sighting is not a clean one, so it takes the null arm and spends its budget.
  *
  * THE WINDOW OUTRANKS THE BUDGET STOP, because a budget caps the cost of a row that
  * is producing nothing and a lone sighting is not nothing -- ending one at BUDGET
@@ -2219,7 +2235,13 @@ static het_campaign_stop_t het_campaign_should_stop(const het_obs_record *recs,
      and takes the null arm below (st.tier alone would not -- it is set by k). */
   if (st.k_eff > 0 && !rate_mode) {
     if (st.tier == HET_SIGHT_CORROBORATED) return HET_CAMPAIGN_STOP_CORROBORATED;
-    if (n >= confirm_runs) return HET_CAMPAIGN_STOP_UNCONFIRMED;
+    /* THE WINDOW ELAPSES FROM THE SIGHTING.  n_at_first_sight is the run count at
+       the first clean sighting, one-based and > 0 whenever k_eff > 0, so this is the
+       runs spent SINCE it; against n alone a row firing past confirm_runs would be
+       banked UNCONFIRMED with zero runs to reproduce in.  Both counts are runs: the
+       caller passes one record per run, as the budget arm below also assumes. */
+    if (n - st.n_at_first_sight >= confirm_runs)
+      return HET_CAMPAIGN_STOP_UNCONFIRMED;
     return HET_CAMPAIGN_CONTINUE;               /* outranks the budget stop below */
   }
   /* p_bound >= 0 already implies obs == NEVER (it is computed nowhere else); the

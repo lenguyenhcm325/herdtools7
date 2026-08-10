@@ -36,7 +36,8 @@
 #   HET_ADAPTIVE   1 => consult het_campaign_should_stop() after every run
 #   HET_P_GOAL     stop a bound-needing row once p_bound <= this
 #   HET_RATE       1 => a sighting stops nothing; the row runs to budget
-#   HET_CONFIRM_RUNS  runs a LONE clean sighting may hold a row open for
+#   HET_CONFIRM_RUNS  runs after the one it fired in that a LONE clean sighting
+#                  may hold a row open for
 #   HET_SEED       overrides the compiled seed base; MUST vary per invocation
 #
 # Ladder defaults, deliberately tiny -- this is a smoke ladder, not a campaign:

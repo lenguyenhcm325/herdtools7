@@ -158,12 +158,16 @@ cf = os.path.join(d, "inv.count")
 inv = (int(open(cf).read()) + 1) if os.path.exists(cf) else 1
 open(cf, "w").write(str(inv))
 fired = (inv == 1)
-print("HetStats %s cpu_only=0 obs=%s R=10 usable=10 k=%d k_eff=%d k_runs=%d "
+# The harness runs at most HET_RUNS_MAX runs, so this stand-in does too: the last
+# invocation of a row held open past its budget is entitled to a FRACTION of a full
+# one, and a stub ignoring the cap would land on run counts no harness produces.
+R = min(10, int(os.environ.get("HET_RUNS_MAX") or "10"))
+print("HetStats %s cpu_only=0 obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d "
       "degen=0 first_sight=%d ctrl=canary mu_total=0 can_total=5000 win_n=1280 "
       "nwin=128 F_win=1.05 F_cell=1.02 r_hat=inf mu_upper=0 tau_w=1.28 N_eff=100 "
       "tau_need=1 R_eff=0 p_bound=-1 P_rep=-1 acf1=0.01 ks=pass ks_D=0.1 "
       "ks_Dcrit=0.2 ks_split=-1 sighting=%s N=100000 frames=100000 flags=0x0"
-      % (os.path.basename(d), "Sometimes" if fired else "Never",
+      % (os.path.basename(d), "Sometimes" if fired else "Never", R, R,
          fired, fired, fired, 1 if fired else 0,
          "UNCONFIRMED" if fired else "none"))
 '''
@@ -649,9 +653,15 @@ STATE_COLS = ["test", "stop", "invocations", "runs", "usable", "k", "k_eff",
               "nwin", "tau_w", "N_eff", "tau_unresolved", "tau_need", "cpu_only",
               "note"]
 # The window is set BELOW the budget so the two are told apart by the run count
-# alone: a row ending at 30 runs was ended by the window, one ending at 60 by the
-# budget.
-CHAR_BUDGET, CHAR_CONFIRM = 60, 30
+# alone: a row ending at 31 runs or so was ended by the window (LONE_RUNNER fires in
+# run 1 and the window closes confirm_runs runs after that), one ending at 60 by the
+# budget.  The stop is decided BETWEEN invocations, so a row whose capacity is the
+# 60-run budget ends in the first 10-run invocation to carry it past 31 -- run 40 --
+# while one capped by a 10-run budget is handed the single run it is still entitled
+# to and ends at 31 exactly.
+CHAR_BUDGET, CHAR_CONFIRM, CHAR_R = 60, 30, 10
+CHAR_WINDOW_END = CHAR_CONFIRM + 1
+CHAR_LONE_RUNS = -(-CHAR_WINDOW_END // CHAR_R) * CHAR_R
 
 
 def _campaign(campaign, corpus, runner, state, extra, budget=CHAR_BUDGET):
@@ -699,36 +709,42 @@ def phase4_stoprule(campaign, quiet=False):
             print("      a reproduced sighting stops the row CORROBORATED (rc=0)")
 
         # THE FLAGGED STOP, and the precedence that produces it: one sighting, then
-        # nulls.  The row is held open by the confirmation window and ended by it at
-        # 30 runs -- not carried to the 60-run budget, and not banked at the first
-        # sighting either.  It exits 1: a sighting that did not reproduce is not a
-        # row to be read unattended.
+        # nulls.  The row is held open by the confirmation window and ended by it
+        # CHAR_CONFIRM runs after the run it fired in -- not carried to the 60-run
+        # budget, and not banked at the first sighting either.  It exits 1: a sighting
+        # that did not reproduce is not a row to be read unattended.
         st_l = os.path.join(tmp, "lone.csv")
         r = _campaign(campaign, _fresh_corpus(tmp, "lone"), lone, st_l, [])
         for t, stop, runs in state_rows(st_l):
-            if (stop, runs) != ("UNCONFIRMED-SIGHTING", CHAR_CONFIRM):
+            if (stop, runs) != ("UNCONFIRMED-SIGHTING", CHAR_LONE_RUNS):
                 bad.append("%s ended %s after %d run(s), want UNCONFIRMED-SIGHTING "
-                           "after %d: the confirmation window ends a lone sighting, "
-                           "not the budget and not the sighting itself"
-                           % (t, stop, runs, CHAR_CONFIRM))
+                           "after %d (its window closes at run %d): the confirmation "
+                           "window ends a lone sighting %d runs after it fired -- not "
+                           "the budget, not the sighting itself, and not a window "
+                           "that opened before it"
+                           % (t, stop, runs, CHAR_LONE_RUNS, CHAR_WINDOW_END,
+                              CHAR_CONFIRM))
         if r.returncode != 1:
             bad.append("a campaign with an UNCONFIRMED-SIGHTING row exited %d, want "
                        "1: a sighting that would not reproduce demands a human"
                        % r.returncode)
         elif not quiet:
             print("      a lone sighting ends UNCONFIRMED-SIGHTING at the window "
-                  "(%d runs, budget %d), rc=1" % (CHAR_CONFIRM, CHAR_BUDGET))
+                  "(fired in run 1, window closes at %d, ends at %d, budget %d), rc=1"
+                  % (CHAR_WINDOW_END, CHAR_LONE_RUNS, CHAR_BUDGET))
 
         # THE PRECEDENCE, IN HARDWARE HOURS: the same row under a budget SMALLER than
-        # the window.  It must OVERSHOOT the budget and end at the window -- a row
-        # ended at BUDGET here would have banked "seen once, stopped looking".
+        # the window.  It must OVERSHOOT the budget and end at the window, to the run
+        # -- a row ended at BUDGET here would have banked "seen once, stopped
+        # looking", and one curtailed to the budget could never reach the window at
+        # all (its last invocation is the single run the window still owes it).
         st_p = os.path.join(tmp, "prec.csv")
         _campaign(campaign, _fresh_corpus(tmp, "prec"), lone, st_p, [], budget=10)
         for t, stop, runs in state_rows(st_p):
-            if (stop, runs) != ("UNCONFIRMED-SIGHTING", CHAR_CONFIRM):
+            if (stop, runs) != ("UNCONFIRMED-SIGHTING", CHAR_WINDOW_END):
                 bad.append("%s ended %s after %d run(s) under a 10-run budget, want "
                            "UNCONFIRMED-SIGHTING after %d: an open sighting outranks "
-                           "the budget stop" % (t, stop, runs, CHAR_CONFIRM))
+                           "the budget stop" % (t, stop, runs, CHAR_WINDOW_END))
         if not quiet and not bad:
             print("      ... and outruns a 10-run budget to get there (the window "
                   "outranks the budget stop)")
@@ -1265,6 +1281,11 @@ INJECTIONS = [
      lambda s: s.replace("            return self.stop            # outranks the "
                          "budget stop below", "            pass", 1),
      phase4_stoprule, "outranks the budget stop"),
+    ("4", "campaign", "the confirmation window is measured from run 0",
+     lambda s: s.replace(
+         "            elif self.runs - self.runs_at_first_sight >= confirm_runs:",
+         "            elif self.runs >= confirm_runs:", 1),
+     phase4_stoprule, "a window that opened before it"),
     ("4", "campaign", "--rate is read but never applied",
      lambda s: s.replace("        if self.k_eff > 0 and not rate_mode:",
                          "        if self.k_eff > 0:", 1),
