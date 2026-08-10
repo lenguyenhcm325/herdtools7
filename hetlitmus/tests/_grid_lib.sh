@@ -70,7 +70,7 @@ GRID_SCOPES="cta gpu sys"
 GRID_ORDERS="relaxed acquire release fence"
 
 # Two-sided het orders: the complete morally-strong pairings, applied to BOTH
-# devices at sys scope so the cross-device pair closes (docs/het-oracle.md).
+# devices at sys scope so the cross-device pair closes.
 #   acqrel : reads -> acquire, writes -> release
 #   fence  : DMB.SY (CPU) + fence.sc.sys (GPU)
 TWO_SIDED_ORDERS="acqrel fence"
@@ -137,10 +137,9 @@ render_cycle() {
 # pair: the GH200 CPU is ARMv9, not x86, and supplies no implicit
 # acquire/release.  The two-sided variants pass an annotated CPU cycle instead.
 #
-# Instruction mapping (release -> STLR, acquire -> LDAPR i.e. RCpc not RCsc,
-# fence -> DMB.SY) and its grounding: docs/het-oracle.md "The CPU instruction
-# mapping".  ARM ops are scope-free -- unscoped is treated as system scope --
-# so no scope token is appended, unlike the GPU/Bell side.
+# Instruction mapping: release -> STLR, acquire -> LDAPR (RCpc, not RCsc),
+# fence -> DMB.SY.  ARM ops are scope-free -- unscoped is treated as system
+# scope -- so no scope token is appended, unlike the GPU/Bell side.
 #
 # diy atom letters (`diyone7 -arch AArch64 -show annotations'):
 #   L = release (STLR) ; Q = LDAPR (RCpc acquire) ; A = LDAR (RCsc, unused).
@@ -201,8 +200,7 @@ render_cpu_cycle() {
 # 4 x 4 = 16 cells per cut class, of which 2 are the diagonal (`ra.ra' IS
 # <shape>-<cut>-sys-acqrel-2s, `sy.sc' is <shape>-<cut>-sys-fence-2s) -> 14
 # emitted; generate.sh byte-diffs the two rather than assuming the identity.
-# Verdicts: docs/het-oracle.md "Two-sided order pairs" (Q10;
-# env-research/Q10-corpus-coverage.md).
+# Why the grid is swept at all: env-research/Q10-corpus-coverage.md (Q10).
 #
 # `f[acq_rel,sys]' is unavailable: `FenceAcq_relSys' does not lex as a diy edge
 # name (the underscore breaks the edge lexer).

@@ -1,4 +1,8 @@
 Litmus,Expected,Model,Source
+# UNMAINTAINED ARTIFACT of the archived derivation effort (branch
+# hetlitmus-oracle-derivation).  Nothing on this branch generates or maintains
+# it, and every tool and document named below or in a Source string lives only
+# there.  It remains a potential offline input to oracle-compare.sh.
 # AMD MI300A het oracle (Zen 4 x86-64 CCDs + CDNA3 XCDs = AMD-CDNA3-x86).
 # Verdicts are DERIVED not measured; no line of this file is a hardware
 # observation.  Spec: env-research/PORT2-R2-amd-oracle.md (sect 9 is the

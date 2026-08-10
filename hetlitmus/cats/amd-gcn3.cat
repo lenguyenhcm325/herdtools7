@@ -37,7 +37,7 @@
  * ------------------------------------------------------------------------
  * REPAIR LOG -- PORT2-R2 register item D14 (env-research/PORT2-R2-amd-oracle.md
  * section 7.D14).  D14 measured three defects that had to be closed before this
- * file could be cited as an instrument by `amdordercheck.py` Phase 2:
+ * file could be cited as an instrument by the archived AMD oracle derivation:
  *
  *   (i)   no SC-per-location axiom -- `coh-probe` (W -rf-> R -po-> W -co-> W)
  *         was Sometimes.                                  --> axiom (0) below.

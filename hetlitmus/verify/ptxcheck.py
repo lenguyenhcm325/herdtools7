@@ -96,8 +96,8 @@ CPU_MNEMONIC = {
 }
 
 # A barrier's ordered-pair set lives in its OPTION, not its mnemonic: `DMB SY'
-# orders {WW,RR,WR,RW}, `DMB ST' only {WW}, `DMB LD' only {RR,RW} (het-oracle.md;
-# machine-checked by verify/ordercheck.py Phase 1), and they are three distinct
+# orders {WW,RR,WR,RW}, `DMB ST' only {WW}, `DMB LD' only {RR,RW} (machine-
+# checked against herd7 by verify/ordercheck.py Phase 1), and they are three distinct
 # instructions -- d5033fbf / d5033ebf / d5033dbf.  The compared op tuple is
 # (mnemonic, option), so a `DMB SY' lowered to `DMB ST' already reads as a
 # mismatch; what this table adds is the completeness guard on the option, so an

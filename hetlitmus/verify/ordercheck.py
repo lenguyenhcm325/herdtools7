@@ -9,9 +9,9 @@ f[release,sys], f[acquire,sys]}.  Which cells forbid is not "both sides have a
 fence": DMB.LD on a store;store producer orders nothing, and a PTX release fence
 on a load;load consumer orders nothing.  Hand-written verdicts are how an oracle
 acquires a silent error, and an oracle error here is a FALSE REFUTATION of the
-compound memory model.  So build-nvidia-oracle.sh implements a compositional rule
-over ord(p) / role(p) / sync(shape,roles), and this gate proves the rule is the
-same function herd7 computes:
+compound memory model.  So the CSV's verdicts are a compositional rule over
+ord(p) / role(p) / sync(shape,roles), and this gate proves the rule is the same
+function herd7 computes:
 
   PHASE 1  ARM     6 shapes x prim(P0) x prim(P1) = 96 CPU-only AArch64 tests
                    from diyone7, decided by herd7's native AArch64 model.
@@ -19,7 +19,7 @@ same function herd7 computes:
                    herd7 + bells/ptx.bell + cats/nvidia-ptx.cat (Lustig'19).
   PHASE 3  ORACLE  every two-sided 2-proc row of tests/het/expected-nvidia.csv
                    must equal the rule's het verdict AS GATED BY THE NVOR SLOT
-                   RULE, so the bash oracle and this rule cannot drift apart.
+                   RULE, so the CSV and this rule cannot drift apart.
 
 The slot rule (NVOR, Nguyen 2026-08-06; env-research/NVOR-register.md) is the
 provenance layer above the ordering rule: a cell the ordering rule forbids is
@@ -27,7 +27,7 @@ Disallowed only if every registration its derivation needs was REGISTERED.  Thre
 were declined -- the gc-direction meet (Q2), the ARM-DMB-SY-is-a-PTX-fence.sc
 identification (Q3) and the unidirectional-fence semantics (Q4) -- so 34 cells
 are NO-ORACLE naming their own open slot.  `nvor_slots' here is a SECOND,
-independent implementation of build-nvidia-oracle.sh's gate, and the count is
+independent implementation of the slot gate that wrote the CSV, and the count is
 asserted: two implementations agreeing on a gate that is wrong in the same
 direction is the one thing neither can catch alone.
 
@@ -39,11 +39,11 @@ re-derivation found it; NVOR Phase D3 (2026-08-06) repaired both predicates
 independently and the count moved 32 -> 34.  See `sw_devdir' below and
 env-research/NVOR-DR-nvidia-oracle.md.
 
-The rule itself, the source of every table entry, and why a cell on which the two
-primary models disagree is NO-ORACLE rather than Disallowed: hetlitmus/docs/
-het-oracle.md, "Two-sided order pairs".  The one step no solver here can decide
--- that a CPU DMB and a sys-scope GPU fence are morally strong at all -- is
-grounded there too.  (Q10/Q10b)
+The derivation record behind the rule -- the source of every table entry, why a
+cell on which the two primary models disagree is NO-ORACLE rather than
+Disallowed, and the one step no solver here can decide (that a CPU DMB and a
+sys-scope GPU fence are morally strong at all) -- is archived with the rest of
+the derivation effort on branch hetlitmus-oracle-derivation.  (Q10/Q10b)
 
 Usage:  ordercheck.py [-q]     run the gate
         ordercheck.py --bite   prove the gate fails when the rule is corrupted
@@ -172,7 +172,7 @@ def het_verdict(shape, cut, cpu_tok, gpu_tok):
 
 
 # --- the NVOR slot gate (Nguyen 2026-08-06; env-research/NVOR-register.md) ----
-# An INDEPENDENT re-implementation of build-nvidia-oracle.sh's slot gate, in a
+# An INDEPENDENT re-implementation of the slot gate that wrote the CSV, in a
 # different language over a differently-derived cycle table.  A row whose
 # Disallowed derivation needs a DECLINED registration is NO-ORACLE in the CSV,
 # and this is the second measurement of which rows those are:

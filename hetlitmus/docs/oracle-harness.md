@@ -23,8 +23,8 @@ Observation <name> <Never|Sometimes|Always> <count_target> <count_other>
 For an `exists` test, `Never` means the outcome under test was never observed
 across all iterations; `Sometimes`/`Always` mean it was observed. The harness
 keys on the first three fields and ignores the counts and any other log lines.
-`tests/het/sample-observations.txt` is a **synthesized** sample (clearly marked)
-that drives every branch.
+`tests/cram/obs.txt` is a **synthesized** sample (clearly marked) that drives
+every branch.
 
 **Condition lines (quantifier recovery).** litmus7 also prints, immediately
 *before* each Observation, a line naming the test's quantifier
@@ -41,8 +41,8 @@ internally (`litmus/skelUtil.ml:1000-1013`). So for `forall`, `Never` is the
 execution (no counterexample), not that it was never seen. The harness stashes
 the quantifier from each `Condition` line and applies it to the next
 `Observation`; `~exists` reads like `exists` (only `forall` flips). A log with
-no `Condition` lines (e.g. the synthesized sample) defaults to `exists`, so
-older logs classify exactly as before.
+no `Condition` lines defaults to `exists`, so older logs classify exactly as
+before.
 
 **Oracle CSV.** Columns `Litmus,Expected,Model,Source`; `#` comment lines and the
 header are skipped. The reference shipped here is
@@ -76,7 +76,9 @@ classification then keys on that boolean (`seen`):
 | `Disallowed`      | yes                          | MISMATCH  | FORBIDDEN OUTCOME SEEN (violation) |
 | `Allowed`         | yes                          | MATCH     | relaxation seen       |
 | `Allowed`         | no                           | MATCH     | allowed, not exhibited |
-| *(absent)*        | —                            | NO-ORACLE | not in this oracle (GH200/PTX?) |
+| `NO-ORACLE`       | —                            | NO-ORACLE | earned model silence: the CSV has the row and declines to decide it |
+| *(absent)*        | —                            | UNINTERPRETED | no frame for this test at all — never model silence |
+| *(unknown word)*  | —                            | UNINTERPRETED | a corrupt oracle, never a pass |
 
 Concretely, for a `Disallowed` oracle the **same** observation flips verdict by
 quantifier: `exists … Never` → MATCH but `forall … Never` → MISMATCH, and
@@ -92,36 +94,42 @@ the table prints regardless of exit status.
 ./oracle-compare.sh <observations-file> <oracle-csv>
 ```
 
-Running the synthesized sample against the AMD oracle:
+Running the frozen cram fixtures — a synthesized log and a hand-authored oracle,
+paired so that one run drives every result class:
 
 ```
-$ ./hetlitmus/oracle-compare.sh \
-      hetlitmus/tests/het/sample-observations.txt \
-      hetlitmus/tests/gpu-only/expected-amd-gcn3.csv
+$ cd hetlitmus && ./oracle-compare.sh tests/cram/obs.txt tests/cram/oracle.csv
 
-TEST           QUANT   OBSERVED   ORACLE       MODEL          RESULT     NOTE
-----           -----   --------   ------       -----          ------     ----
-MP-sys         exists  Sometimes  Allowed      AMD-GCN3-x86   MATCH      relaxation seen
-MP-sys-F       exists  Never      Disallowed   AMD-GCN3-x86   MATCH      forbidden, not seen
-IRIW-sys-F     exists  Never      Disallowed   AMD-GCN3-x86   MATCH      forbidden, not seen
-SB-sys-F       exists  Sometimes  Disallowed   AMD-GCN3-x86   MISMATCH   FORBIDDEN OUTCOME SEEN
-MP-het         exists  Sometimes  -            -              NO-ORACLE  not in this oracle (GH200/PTX?)
-SB-het         exists  Never      -            -              NO-ORACLE  not in this oracle (GH200/PTX?)
+Oracle:       tests/cram/oracle.csv
+Observations: tests/cram/obs.txt
 
-6 test(s): 3 MATCH, 1 MISMATCH, 2 NO-ORACLE
+TEST           QUANT   OBSERVED   ORACLE       MODEL          RESULT         NOTE
+----           -----   --------   ------       -----          ------         ----
+SB-sys         exists  Sometimes  Allowed      PTX            MATCH          relaxation seen
+MP-sys-F       exists  Sometimes  Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+LB-sys         exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
+SB-sys-fa      forall  Sometimes  Disallowed   PTX            MATCH          forbidden, not seen
+MP-sys-fa      forall  Never      Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+LB-sys-fa      forall  Sometimes  -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
+WS-sys         exists  Sometimes  NO-ORACLE    PTX            NO-ORACLE      model silence: this oracle makes no claim here
+BOGUS-sys      exists  Never      ?            -              UNINTERPRETED  unknown oracle verdict "Perhaps"
+
+8 test(s): 2 MATCH, 2 MISMATCH, 1 NO-ORACLE, 3 UNINTERPRETED
 ```
 
-(The synthesized sample carries no `Condition` lines, so every row defaults to
-`QUANT = exists`. A log with `forall` `Condition` lines exercises the inversion
-described in §3.)
+Every row carries a `Condition` line, so `QUANT` is populated and the `forall`
+inversion of §3 is driven: `MP-sys-fa` is `Disallowed` and `Never`, which under
+`forall` means the forbidden predicate held in every execution — MISMATCH —
+while its `exists` counterpart would read as "forbidden, not seen". The fixture
+also drives the three ways an oracle can fail to decide: the `LB-*` rows are
+absent from the CSV, `WS-sys` is present and declines, and `BOGUS-sys` carries a
+verdict string the harness does not know, which fails closed rather than
+passing. `tests/cram/oracle-negatives.t` pins this run.
 
-The AMD GPU-only tests are grounded by the AMD oracle (MATCH, and the planted
-`SB-sys-F` violation surfaces as MISMATCH); the heterogeneous GH200 tests come
-out NO-ORACLE because the AMD CSV does not cover AArch64+PTX. To validate the AMD
-side end to end on real hardware, point `<observations-file>` at an MI300A
-litmus7 log (caveat: MI300A is CDNA3, several generations past GCN3 — confirm,
-don't assume); to ground the GH200 het tests, supply an `expected-nvidia.csv` as
-the oracle once one exists.
+To validate the AMD side end to end on real hardware, point
+`<observations-file>` at an MI300A litmus7 log and `<oracle-csv>` at
+`tests/gpu-only/expected-amd-gcn3.csv` (caveat: MI300A is CDNA3, several
+generations past GCN3 — confirm, don't assume).
 
 ## 5. The statistics section
 
@@ -147,7 +155,7 @@ A log without `HetStats` lines prints the table alone. Both paths are pinned by
 | File | Purpose |
 |------|---------|
 | `hetlitmus/oracle-compare.sh` | the harness (awk: load CSV, classify each Observation) |
-| `hetlitmus/tests/het/sample-observations.txt` | synthesized sample driving MATCH/MISMATCH/NO-ORACLE |
+| `hetlitmus/tests/cram/obs.txt` + `oracle.csv` | synthesized fixture pair driving every result class (§4) |
 | `hetlitmus/tests/gpu-only/expected-amd-gcn3.csv` | the AMD-GCN3 reference oracle (existing) |
 | `hetlitmus/tests/cram/obs-stats.txt` | frozen log carrying real `HetStats` lines, one per reporting path |
 | `hetlitmus/tests/cram/oracle-stats.csv` | the oracle that fixture is compared against |

@@ -48,8 +48,9 @@ The three discriminating tests all pass: **MP-cta-F** Allowed (scope too narrow)
 
 PORT2-R2 register item **D14** (`env-research/PORT2-R2-amd-oracle.md` §7) measured
 three defects that had to be closed before this file could be cited as an
-instrument by `amdordercheck.py` Phase 2, and none of them is visible to the
-8-anchor contract above:
+instrument by the AMD oracle derivation (archived on branch
+`hetlitmus-oracle-derivation`), and none of them is visible to the 8-anchor
+contract above:
 
 | defect | symptom, measured | repair |
 |---|---|---|

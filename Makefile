@@ -718,243 +718,6 @@ hetlitmus-amd-controlmap: | build
 	python3 hetlitmus/verify/controlmap.py --lattice x86 --check
 	@ echo "HetLitmus AMD control map: OK"
 
-### hetlitmus-oracle: the het oracle's GENERATOR vs its committed artifact.
-### tests/het/expected-nvidia.csv is the 411-row table every het verdict is
-### scored against, and no target and no gate ever re-ran the script that builds
-### it: generator-vs-artifact drift was detectable only on the 128 two-sided rows
-### ordercheck.py independently re-derives, leaving ~283 rows unpinned.  This
-### regenerates it from the corpus into a TEMP dir (the committed file is never
-### touched) and diffs.  build-nvidia-oracle.sh is pure bash -- measured 0.11 s
-### -- so it belongs in the fast CUDA-free `hetlitmus-test' umbrella rather than
-### `-test-all'; no `| build' for the same reason (it invokes no herdtools7 tool).
-### Bite it by pointing HET_ORACLE at a corrupted scratch copy:
-###   make hetlitmus-oracle HET_ORACLE=/tmp/one-row-flipped.csv
-### HET_ORACLE / HET_AMD_ORACLE are also THE DEVIATION PATH for an ablation
-### oracle: the pair table (litmus/hetOracle.ml) fixes which FILE NAME a pair
-### stamps, so scoring a corpus against a variant oracle (expected-amd-x2a.csv,
-### say) means pointing these at it here rather than editing the table.  The
-### stamp then still names the pair's own file, which is correct: the deviation
-### is the reviewer's, not the harness's.
-HET_ORACLE ?= hetlitmus/tests/het/expected-nvidia.csv
-hetlitmus-oracle:
-	@ echo
-	tmp=$$(mktemp -d); \
-	( mkdir -p $$tmp/het \
-	  && cp hetlitmus/tests/_grid_lib.sh $$tmp/ \
-	  && cp hetlitmus/tests/het/build-nvidia-oracle.sh hetlitmus/tests/het/*.litmus $$tmp/het/ \
-	  && bash $$tmp/het/build-nvidia-oracle.sh \
-	  && diff -u $(HET_ORACLE) $$tmp/het/expected-nvidia.csv ); \
-	rc=$$?; rm -rf $$tmp; exit $$rc
-	@ echo "HetLitmus het oracle: OK ($(HET_ORACLE) matches its generator)"
-
-### hetlitmus-nvroundtrip: the NVOR slot toggle's round trip + contingency list
-### (the AMD G16 analog; NVOR, Nguyen 2026-08-06, env-research/NVOR-register.md).
-### The adjudication DECLINED three registrations the Disallowed surface rested
-### on -- the gc-direction meet (Q2, 23 rows), ARM-DMB-SY-is-a-PTX-fence.sc (Q3,
-### 3) and the unidirectional-fence semantics (Q4, 8) -- so 34 rows are
-### NO-ORACLE and the census is 319/16/76, not 319/50/42.  The demotion gates the
-### SLOT, never the verdict: NVOR_ACCEPT_DECLINED=1 re-derives the pre-
-### regeneration verdicts into a SEPARATE file (expected-nvidia-declined.csv --
-### a counterfactual can never clobber the oracle), and this asserts the round
-### trip touches EXACTLY those 34 rows, that each of them goes NO-ORACLE ->
-### Disallowed out of a named UNKEYED class, and that nothing else moves.  It
-### also re-prints the per-row contingency ("observing one of these outcomes on
-### GH200 is DATA, not a refutation") and asserts the printed set is the pinned
-### 34.  Both run INSIDE build-nvidia-oracle.sh on every generation, before the
-### mv; this target is the same guards named and runnable on their own.
-### THE SLOT KEYS ON THE rf DIRECTION, NOT THE TEST NAME (NVOR Phase D3,
-### 2026-08-06).  Phase E's BLIND re-derivation found that both of this gate's
-### implementations asked "is this test NAMED gc-?", which is a different
-### question from "does the derivation need a GPU-producer observation to be
-### morally strong"; they diverge on LB, whose cycle has two Rfe edges, and two
-### rows shipped Disallowed on the DECLINED Q2 meet as a result.  Because BOTH
-### implementations were wrong by the SAME rows, the count and sha pins were
-### stable at the wrong value -- the one failure the register's sect 4 names as
-### uncatchable by either alone.  `--bite' is that predicate's own evidence: it
-### rewrites the generator three ways (the exact pre-D3 name-tag shortcut; the
-### same shortcut restricted to rf-carrying cycles, which re-arms the two rows;
-### the cg/gc tie-break inverted, which strips four sound LB rows of their
-### registered route) and requires each to redden one of the generator's own
-### pins BY NAME, after proving the injection non-vacuous with cmp.
-### Pure bash, ~1 s, no nvcc, no GPU.
-hetlitmus-nvroundtrip:
-	@ echo
-	bash hetlitmus/tests/het/build-nvidia-oracle.sh --roundtrip
-	bash hetlitmus/tests/het/build-nvidia-oracle.sh --declined-list
-	bash hetlitmus/tests/het/build-nvidia-oracle.sh --bite
-	@ echo "HetLitmus NVOR slot toggle: OK (round trip exact on the 34 demoted rows; and the direction predicate bites)"
-
-### hetlitmus-amd-oracle: the SAME check for the AMD MI300A oracle.  Separate
-### target because expected-amd.csv is a separate file with its own Model string
-### -- there is no merge path and no per-row model dispatch (memo 9.2).  The AMD
-### generator carries far more inside it than the NVIDIA one: the 34-row anchor
-### gate G1 (which must pass 34/34 BEFORE the CSV is written), G15's !SWMR hook
-### split, G13/G14's structural assertions and G0's program-synthesis check
-### against all 411 .litmus files, so it takes ~14 s rather than 0.1 s.  Its 146
-### Disallowed rows are 19 candidate FALSE REFUTATIONS of the compound memory
-### model if any of them is wrong, which is why the regeneration is gated at all
-### (D26 2026-08-04: 127 of the former 146 are now NO-ORACLE -- the strike is
-### reversible via X2A_TRANSFERS=1, which gate G16 pins the verdict round trip).
-### Bite it the same way:  make hetlitmus-amd-oracle HET_AMD_ORACLE=/tmp/bad.csv
-HET_AMD_ORACLE ?= hetlitmus/tests/het/expected-amd.csv
-hetlitmus-amd-oracle:
-	@ echo
-	tmp=$$(mktemp -d); \
-	( mkdir -p $$tmp/het \
-	  && cp hetlitmus/tests/_grid_lib.sh $$tmp/ \
-	  && cp hetlitmus/tests/het/build-amd-oracle.sh hetlitmus/tests/het/*.litmus $$tmp/het/ \
-	  && bash $$tmp/het/build-amd-oracle.sh \
-	  && diff -u $(HET_AMD_ORACLE) $$tmp/het/expected-amd.csv ); \
-	rc=$$?; rm -rf $$tmp; exit $$rc
-	@ echo "HetLitmus AMD het oracle: OK ($(HET_AMD_ORACLE) matches its generator)"
-
-### hetlitmus-amdorder: the machine-check behind expected-amd.csv, i.e. the
-### gates of PORT2-R2-amd-oracle.md sect 9.4 that need an instrument the
-### generator does not have.
-###   Phase 1 G3   35 CPU-projection cells (11 shapes x {plain, MFENCE-per-proc})
-###                under herd7 -cat x86tso.cat vs ord_x86, plus the header pin:
-###                an X86_64 header is REFUSED by x86tso.cat and would otherwise
-###                silently default to x86tso-mixed.cat
-###   Phase 2 G4   the 12 GPU primitive cells with the INSTRUMENT NAMED PER CELL
-###                (probe + kernel + recorded asm); amd-gcn3.cat is cited for
-###                exactly two of them and both are DECIDED by running it
-###   Phase 3 G5   the CSV read back: 411 rows, 258/146/7, the ten-class census
-###                and the class -> verdict function ROW BY ROW -- asserted, not
-###                printed.  (It also carried a provenance-grade census until
-###                P2e removed the column, 2026-08-03.)
-###   Phase 4 G6   x86-image collapse: 45 classes, 321 distinct programs, 0
-###                inconsistent (the harness runs the identical x86 program)
-###   Phase 5 G7   the T_x86 rendering under herd7: a NECESSARY condition on the
-###           G8   17 K-CPU rows, and the one-directional guard `Sometimes =>
-###                Allowed', with the strengthening property itself asserted
-###   Phase 6 G12  S_CUT_MCA == 8 by memo 5.2's structural predicate re-derived
-###           G13  here; 1092 external edges and 0 GPU->GPU; the unreachable
-###           G14  primitives really absent
-###   Phase 7 G15  the !SWMR hook split: narrow 48 / wide 65 / delta 17 == K-CPU
-###   Phase 8 G10  the downstream census pins, as a fail-closed ledger
-###   Phase 9 G11  the mu-map on the x86 strength lattice (memo 7.D11), derived
-###                by controlmap.py --lattice x86: all 19 Disallowed rows carry a
-###                Layer-A mutant and the no-mutant set is PINNED EMPTY (pre-D26:
-###                130 of 146 with 16 that provably could not) so it can never
-###                silently grow
-### --bite corrupts the rule, the corpus, the instrument index, the CSV and the
-### downstream pins and requires each injection to redden the phase it names, for
-### the right reason, on CORRUPTION and on OMISSION both.  The injection COUNT is
-### printed by the run itself -- an earlier version of this comment said 33 and
-### the measured value was 35, which is exactly the kind of number nobody
-### re-measures.  Budget roughly 15 s for the check and ~2 min for the bite.
-hetlitmus-amdorder: | build
-	@ echo
-	python3 hetlitmus/verify/amdordercheck.py
-	python3 hetlitmus/verify/amdordercheck.py --bite
-	@ echo "HetLitmus AMD oracle machine-check: OK (and the gate bites)"
-
-### hetlitmus-amdprov: citation PROVENANCE of expected-amd.csv (register D21's
-### fault class, made mechanical).  The whitelist admitted [CMCM] at PAPER
-### granularity; transferability is a property of SECTIONS, and sect 5-6 (the
-### x86TSO+PTX instantiation) is EXCLUDED for the AMD oracle (Nguyen
-### 2026-08-04).  amdprovcheck.py classifies every Source-string citation
-### fragment into GEN (sect 3-4) / PTX (sect 5-6) / AMD (sect 7) / NONCMCM
-### (per-tag disposition), fail-closed: an unknown fragment anywhere is an
-### error, and a PTX-class fragment in a DISALLOWED row is the fault (a
-### candidate false refutation; Allowed/NO-ORACLE are fail-safe directions).
-### Until the regeneration lands, the known pre-regen fault set is PINNED
-### byte-exactly (E2 = 138 rows, E3 = 8 rows, at-risk = 127) so the suite
-### stays green while any drift -- growth OR silent shrink -- reddens the
-### gate; the pin is then flipped to empty-findings.  No `| build' (invokes
-### no herdtools7 tool); ~0.1 s + bite.
-hetlitmus-amdprov:
-	@ echo
-	python3 hetlitmus/verify/amdprovcheck.py
-	python3 hetlitmus/verify/amdprovcheck.py --bite
-	@ echo "HetLitmus AMD oracle provenance: OK (and the gate bites)"
-
-### hetlitmus-nvprov: citation PROVENANCE of expected-nvidia.csv -- the NVIDIA
-### lane of the same fault (NVOR Phases A and D2).  The AMD regeneration's
-### handover pointed D21 at this oracle and it was dropped from that pass's
-### scope, not resolved; these 411 rows are the project's LARGEST falsification
-### surface and were built before the rigor apparatus existed.  GH200 is ARMv9
-### Grace + Hopper/PTX, so it inherits the PTX half of CMCM sect 5-6 and NOT
-### its x86TSO half -- a finer partition than the AMD lane's wholesale strike.
-### nvprovcheck.py classifies every Source-string fragment into GEN / PTX5 /
-### X86C / CMCM-BARE / BAGCHI / ARM / PTX-L19 / PTX-ISA-9.3 / PTX-ISA-8.6 /
-### REGISTRATION / NONCMCM, fail-closed (an unknown fragment anywhere is an
-### error), rejoining CSV fields 4+ because 32 Source strings carry a comma on
-### purpose.  The PTX-ISA-8.6 split is ROW-AWARE -- `fence.{acquire,release}'
-### postdates Lustig'19, so a PTX cite on a `.rel-2s'/`.acq-2s' row is spec
-### prose, not formalization.  REGISTRATION can never be a KEY: a registered
-### decision is not evidence for itself, and if it counted, E3 would be
-### satisfiable by naming the decision that needs support.
-### POST-REGENERATION (D1 landed 2026-08-06; this is the D2 companion).  Phase
-### A pinned the fault numerically (E2 = 2 / E3 = 0 / E5 = 11 / E6 = 21, sha
-### 57298d22a8c3a260 over 34 offender rows); the regeneration removed it, so
-### every rule now pins at ZERO and drift in either direction reddens -- the
-### amdprovcheck post-strike posture, where the file documents the ABSENCE of
-### the fault.  That flip is only honest over a parser that can SEE a
-### re-introduced fault, and R2's counter-probe measured that the Phase-A
-### parser could not (bare CMCM as `[cmcm.paper]', Fig 2a as inline prose or as
-### `[cmcm.figtwoa]', the gxhb axiom as `[gxhb.cmm]' -- all four passed GATE
-### GREEN against a zeroed pin).  So the pin flip lands WITH the repairs, each
-### bitten: B1 an exact event whitelist instead of a fullmatched regex that was
-### `continue'd with no error; B2/B3 a scan for known citations OUTSIDE the
-### brackets (E4/E2 for struck and inadmissible ones, E7 for the rest);
-### B4 E6 on a KEYLESS Allowed row, not merely an instrument-carrying one;
-### B6 E2 corpus-wide and E8 requiring every NVOR-demoted row to name its own
-### registration ID in a citation block.  Also pinned: census 319/16/76; the
-### 34-row demotion set by count, per-registration histogram and sha
-### 31df21956128093d (the builder's own number, a third implementation beside
-### ordercheck.py); the unidirectional-fence exposure as a SPEC-LAG measure
-### (64-row namespace 42 A / 22 N, 40 rows where the promotion fires, and the
-### 17 that NEEDED the 8.6 semantics keeping their Phase-A name-set sha even
-### though all 17 are now NO-ORACLE); and register item O1, CLOSED 2026-08-06 --
-### the 252 Allowed rows that cited bare [CMCM] were re-pointed class by class
-### at the CMCM sect 3-4 paragraph that states each class's rule (read at source
-### and quoted with page locators in env-research/nvor/O1-sweep.md; zero verdict
-### movement, only the Source field of those 252 rows changed).  The bare tag is
-### now STRUCK, its disclosure count pins at ZERO, and a reappearance reddens
-### twice over -- as that pin on an Allowed row, as E5 on a Disallowed one and
-### as E4 anywhere.  The one narrowing is stated and pinned: the bare tag is
-### exempt from the OUTSIDE-bracket scan, because 52 rows argue about the paper
-### in prose ("CMCM's operational LOST-POP has no Fence-SC object") and a key is
-### always inside a bracket; INLINE_EXEMPT_STRUCK may hold that one short string
-### and nothing else, bitten in both directions.  No `| build' (invokes no
-### herdtools7 tool); ~0.4 s + bite.
-hetlitmus-nvprov:
-	@ echo
-	python3 hetlitmus/verify/nvprovcheck.py
-	python3 hetlitmus/verify/nvprovcheck.py --bite
-	@ echo "HetLitmus NVIDIA oracle provenance: OK (and the gate bites)"
-
-### hetlitmus-nvanchor: the Bagchi ANCHOR gate (NVOR Phase D2, register O4).
-### nvprovcheck asks whether a citation MAY stand behind a verdict; this asks
-### whether the one published GH200-native source actually SAYS what the row
-### needs, and in which direction.  Bagchi et al. ISMM'26 is the main and sole
-### published compound anchor for this lane -- the PLDI'23 artifact has no
-### x86+PTX or ARM+PTX compound rows -- so the AMD lane's artifact-anchor gate
-### has no NVIDIA equivalent and this table was built from the paper in Phase C.
-### THE DIRECTION RULE: an OBSERVATION binds HARD (Bagchi saw the weak
-### behaviour on GH200 silicon, so the corpus row of that shape and direction
-### MUST be Allowed -- a Disallowed there is a false refutation in waiting, our
-### harness reporting a model violation the paper recorded as normal hardware).
-### A NON-OBSERVATION never proves Disallowed and may never be a row's sole key.
-### A GAP is an asserted absence, pinned, so a later citation edit cannot invent
-### a Bagchi anchor for a shape the paper never ran.  It has to be a SEPARATE
-### gate: R2 measured that demoting EVERY Bagchi fragment to NOTE moves
-### nvprovcheck's rules by zero rows, so wiring anchors in there would be inert.
-### 22 entries (4 HARD binding 6 rows / 8 CORR / 1 NOTE / 9 GAP), the coverage
-### statement printed on every run (Bagchi's suite is 100% MP-shaped, 2-thread,
-### X at cta or gpu and NEVER at system; no unidirectional fence anywhere), and
-### two pinned DISCLOSURES for the class-level strings that carry an observation
-### onto shapes and directions it does not cover.  Imports nvprovcheck's
-### FRAGMENTS rather than restating it, so the two gates cannot disagree about
-### what a fragment IS while disagreeing about what it may DO.  No `| build';
-### ~0.6 s + bite.
-hetlitmus-nvanchor:
-	@ echo
-	python3 hetlitmus/verify/nvanchorcheck.py
-	python3 hetlitmus/verify/nvanchorcheck.py --bite
-	@ echo "HetLitmus NVIDIA oracle anchors: OK (and the gate bites)"
-
 ### hetlitmus-dup: the isomorphism gate.  generate.sh dedups only by
 ### byte-comparing a variant against ONE designated sibling, which cannot see a
 ### duplicate up to (proc permutation x location renaming).  The corpus carried 39
@@ -978,14 +741,13 @@ hetlitmus-dup: | build
 ### GPU{rel/acq atoms,fence.sc,fence.release,fence.acquire}.sys.  Which cells
 ### forbid is not "both sides have a fence", hand verdicts are how an oracle
 ### acquires a silent error, and an oracle error here is a FALSE REFUTATION of
-### the model, so build-nvidia-oracle.sh carries a compositional rule and this
-### gate proves it is the same function herd7 computes (hetlitmus/docs/
-### het-oracle.md, "Two-sided order pairs"):
+### the model, so the two-sided verdicts are a compositional rule and this gate
+### proves it is the same function herd7 computes:
 ###   ARM     96 CPU-only AArch64 cells under herd7's native model
 ###   PTX     96 GPU-only LISA/Bell cells under nvidia-ptx.cat (Lustig'19)
 ###   ORACLE  all 128 two-sided 2-proc rows of expected-nvidia.csv -- an asserted
-###           count, so neither can the bash oracle and the rule drift apart nor
-###           can a half-blind phase pass
+###           count, so neither can the CSV and the rule drift apart nor can a
+###           half-blind phase pass
 ### --bite corrupts the rule nine ways and requires each to redden the phase that
 ### names it -- including a revert of the NVOR slot gate to the pre-D3 NAME-TAG
 ### shortcut, which must redden ORACLE on the two LB-cg rows Phase E's blind
@@ -1353,13 +1115,6 @@ hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-dup
 hetlitmus-test:: hetlitmus-order
-hetlitmus-test:: hetlitmus-oracle
-hetlitmus-test:: hetlitmus-nvroundtrip
-hetlitmus-test:: hetlitmus-amd-oracle
-hetlitmus-test:: hetlitmus-amdorder
-hetlitmus-test:: hetlitmus-amdprov
-hetlitmus-test:: hetlitmus-nvprov
-hetlitmus-test:: hetlitmus-nvanchor
 hetlitmus-test:: hetlitmus-amd-controlmap
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-noracle
@@ -1392,10 +1147,7 @@ hetlitmus-promote: | build
 	@ echo
 	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/gpu-only/generate.sh
 	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/het/generate.sh
-	bash hetlitmus/tests/het/build-nvidia-oracle.sh
-	bash hetlitmus/tests/het/build-amd-oracle.sh
-	# atomic: a failed --emit must not truncate the committed map (same reason
-	# build-amd-oracle.sh writes to a temp file and renames -- P2a 2026-08-02)
+	# atomic: a failed --emit must not truncate the committed map
 	python3 hetlitmus/verify/controlmap.py --lattice x86 --emit > hetlitmus/tests/het/.control-map-amd.csv.new \
 	  && mv -f hetlitmus/tests/het/.control-map-amd.csv.new hetlitmus/tests/het/control-map-amd.csv
 	dune test hetlitmus/tests/cram --auto-promote
@@ -1404,16 +1156,11 @@ hetlitmus-promote: | build
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
-.PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order hetlitmus-oracle
-.PHONY: hetlitmus-nvroundtrip
+.PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-order
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
 .PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10 hetlitmus-noracle
 .PHONY: hetlitmus-x86fixture hetlitmus-noracle-hw hetlitmus-run-gate hetlitmus-run-hw
-### Neither AMD target was phony until P2a (2026-08-02).  They worked only
-### because no file of those names happened to exist -- one `touch' away from a
-### gate that silently stops running.
-.PHONY: hetlitmus-amd-oracle hetlitmus-amdorder hetlitmus-amdprov hetlitmus-amd-controlmap
-.PHONY: hetlitmus-nvprov hetlitmus-nvanchor
+.PHONY: hetlitmus-amd-controlmap
 .PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64

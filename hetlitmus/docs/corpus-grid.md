@@ -28,11 +28,9 @@ grid — the 248 het tests whose GPU procs are annotated and whose CPU procs are
 plain ARMv9. The het corpus has since grown two further families that the same
 `generate.sh` emits but that are specified elsewhere: the **matched two-sided**
 tests (`-2s`, Task 3) and the **two-sided order pairs** (`-2s` with an
-`<cpu>.<gpu>` order, Q10 / Q10b). For the current split of the 411 by family, and
-for the labelling rule each family uses, see `het-oracle.md` §"The corpus:
-one-sided baseline + two-sided pairs". The counts here are re-derivable at any
-time from `hetlitmus/tests/het/*.litmus` (and `verify/dupcheck.py` reports how
-many of them are distinct experiments).
+`<cpu>.<gpu>` order, Q10 / Q10b). The current split of the 411 by family, like
+the counts here, is re-derivable at any time from `hetlitmus/tests/het/*.litmus`
+(and `verify/dupcheck.py` reports how many of them are distinct experiments).
 
 ## The shape catalogue
 
@@ -165,7 +163,7 @@ defaults to `aarch64`).
 ## End-state checks (reproduce)
 
 ```sh
-# 1. counts  (the het total includes the two-sided families; see het-oracle.md)
+# 1. counts  (the het total includes the two-sided families)
 ls hetlitmus/tests/gpu-only/*.litmus | wc -l                     # 137
 ls hetlitmus/tests/het/*.litmus      | wc -l                     # 411
 ls hetlitmus/tests/het/*.litmus | grep -vc -- '-2s\.litmus'      # 248 one-sided

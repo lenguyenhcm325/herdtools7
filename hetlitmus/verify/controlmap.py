@@ -109,8 +109,8 @@ def set_lattice(name):
 #                       f[release,..] / f[acquire,..] ; DMB ST / DMB LD
 #         0 plain       STR / LDR ; [relaxed,..]
 #   ord   the program-order pairs {WW,RR,WR,RW} that side's ops order inside
-#         their own thread -- the ord(p) table of hetlitmus/docs/het-oracle.md,
-#         machine-checked against herd7 by verify/ordercheck.py.
+#         their own thread -- the ord(p) table of verify/ordercheck.py, which
+#         machine-checks it against herd7.
 #
 # `weaker-or-equal' is (t1,o1) <= (t2,o2) iff t1 < t2, or t1 == t2 and o1 is a
 # subset of o2.  That keeps DMB.ST/DMB.LD incomparable, and f[release] and
@@ -712,7 +712,7 @@ def header_for_lattice():
         "# HetLitmus AMD / MI300A positive-control map (x86 strength lattice).",
         "#   GENERATED -- do not hand-edit;  regenerate with",
         "#     hetlitmus/verify/controlmap.py --lattice x86 --emit > control-map-amd.csv",
-        "#   gate with  hetlitmus/verify/amdordercheck.py  (Phase 9, memo 9.4 G11).",
+        "#   gate with  controlmap.py --lattice x86 --check  (make hetlitmus-amd-controlmap).",
         "#",
         "# REGENERATED not translated (memo PORT2-R2 7.D11): on x86 the CPU lattice",
         "# loses its middle rung -- STLR / LDAPR / DMB.ST / DMB.LD all have a plain",
