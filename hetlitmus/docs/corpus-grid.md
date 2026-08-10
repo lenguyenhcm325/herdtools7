@@ -141,8 +141,11 @@ Two things did *not* change and still bound what the column is worth:
   anywhere in the PLDI'23 artifact, so the "8/8 reproduces the artifact" contract
   cannot test one line of it — measured in `tests/cram/amd-cat.t`: every one of
   the eight single-axiom ablations still scores 8/8.
-* **Oracle status is unchanged.** Every part-(B) grid test is still NO-ORACLE in
-  the oracle-compare sense; `expected-amd-gcn3.csv` covers only the original 8.
+* **Oracle status is unchanged.** `expected-amd-gcn3.csv` covers the original 8 and
+  no part-(B) grid test, so an offline `oracle-compare.sh` pass over one reports
+  UNINTERPRETED rather than a verdict. (The GPU-only lane's other reference,
+  `tests/gpu-only/expected-nvidia.csv`, does cover all 137 — it is machine-computed
+  by `nvidia-ptx.cat`, `run-gpu-only.sh nvidia`; it says nothing about AMD.)
 
 The NVIDIA side is untouched by this: `nvidia-ptx.cat` modelled fences all along.
 

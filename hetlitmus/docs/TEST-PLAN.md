@@ -2,7 +2,9 @@
 
 **Status as of 2026-07-06.** Living document. Captures the design decisions and
 the empirical findings they rest on. `✓` = exists today, `○` = to build. **Build
-status: Layers 1–3 + Makefile wiring are COMPLETE; only Layer 4 (hardware) remains.**
+status: Layers 1–3 + Makefile wiring are COMPLETE, and Layer 4's wiring ships with it
+(gated CUDA-free by `hetlitmus-run-gate`); what remains for Layer 4 is the hardware —
+the measurements, not the machinery.**
 
 ## 0. Goals
 
@@ -77,7 +79,7 @@ was dropped: old L0,L3→**1**; L1,L2-golden→**2**; L2-faithful,L4→**3**; L5
 | **1 Static** | rule-fns as spec (unit); checker discriminating-power (negatives) | dune **cram** | bash/python | anywhere, ms |
 | **2 Generate** | corpus + emission regression golden; parse-smoke; census | **git-diff** + make | `make build` | local/CI, ~10 s |
 | **3 Compile** | PTX faithfulness (all 548); compile-smoke (12 reps) | shell drivers | nvcc+clang, **no GPU** | local / CI-with-CUDA, ~min |
-| **4 Hardware** | behavioral falsification; positive controls | `oracle-compare.sh` | **GH200** | manual, off-CI |
+| **4 Hardware** | behavioral characterization; positive controls; the B7 statistics | `hetlitmus-run.sh` + `campaign.py` | **GH200** | manual, off-CI |
 
 Goal mapping: **regression = Layer 2** (goldens); **works-as-expected = Layers 1,
 3, 4** (spec units, faithfulness, negatives, behavioral).
@@ -144,13 +146,16 @@ already does "run herd over a dir, compare outcomes to expected", so we would
   fence→`DMB.SYd*`), `cut_tag` (2- and 3-proc), `scope_tree` (2- and 3-proc). Exact
   list + real outputs in Appendix B. (Optional +2: unit `arm_ord R/W acqrel`→`Q`/`L`
   to pin the atom mapping directly.)
-- ✓ `oracle-negatives.t` (`0d5940b5e`) — `oracle-compare` on frozen fixtures. This one is
-  **exhaustive**: the full 6-cell decision matrix **{MATCH, MISMATCH, NO-ORACLE} ×
-  {exists, forall}** (no golden covers this logic; the `forall` quantifier inversion
-  is subtle). Any MISMATCH → exit 1. A second fixture (`obs-stats.txt`, carrying
-  `HetStats` lines printed by `het_verdict.h` itself) drives the statistics section:
-  that `het_stats_print`'s block arrives verbatim and that the campaign roll-up
-  (negative control, VOID, VACUOUS) counts it.
+- ✓ `oracle-negatives.t` (`0d5940b5e`) — the **offline** `oracle-compare.sh` on frozen
+  fixtures. This one is **exhaustive**: the full decision matrix **{MATCH, MISMATCH,
+  NO-ORACLE, UNINTERPRETED} × {exists, forall}** in one run (no golden covers this
+  logic; the `forall` quantifier inversion is subtle, and a test the CSV *has and
+  declines* must not read like one the CSV does not have at all). Any MISMATCH → exit 1.
+  A second fixture (`obs-stats.txt`, carrying `HetStats` lines printed by
+  `het_verdict.h` itself) drives the statistics section: that `het_stats_print`'s block
+  arrives verbatim and that the campaign roll-up (negative control, VOID, VACUOUS)
+  counts it. Every `ORACLE` column there is read from the CSV — the run log carries no
+  class of its own.
 - ✓ `ptx-negatives.t` (`0d5940b5e`) — `ptxcheck --ptx <frozen-corrupt.ptx>` → exit 1 (no GPU). A
   thin **byte-freeze** of one corruption; the eyeball gap is already closed in the
   gated `l0_tokens.sh selftest` (`c2e4df4c5`), so this is belt-and-suspenders.
@@ -178,10 +183,18 @@ already does "run herd over a dir, compare outcomes to expected", so we would
   (gpu-only, *outside* faithfulness — smoke is its only compile check).
 
 ### Layer 4 — Hardware (GH200; later)
-- ✓ `oracle-compare.sh`.
-- ○ run wiring + **positive controls**: a known-Allowed relaxation must be observed
-  at least sometimes under stress, else the harness is dead and every "Never" is
-  meaningless. Report effort (rule-of-three), no confidence model.
+- ✓ **positive controls**: every row co-runs a control that must fire under stress, else
+  the harness is dead and its "Never" is meaningless — `mu(T)`, the row's own structural
+  twin at the lattice floor, on the 333 rows that have one, and the Layer-B canary on 409
+  (`positive-control.md`).
+- ✓ **run wiring**: `hetlitmus/hetlitmus-run.sh` (the device session) + `campaign.py`
+  (cross-invocation pooling and the stop rule), gated CUDA-free by `hetlitmus-run-gate`.
+- ✓ **the statistics**: dispersion-aware bound, KS stationarity gate, `N_eff` discount
+  (`het_verdict.h`; `hetlitmus-stats`) — B7 replaced "report effort, no confidence model".
+- ○ the numbers: every knob in `00-environment-design.md` §6 is measured on the target,
+  not settled here.
+- (optional, offline) `oracle-compare.sh` over the collected log, against a verdicts CSV
+  the reader supplies. Not part of a run, and not required for one.
 
 ---
 
@@ -224,22 +237,46 @@ adds (ptxas / CPU clang / link) are near-constant across tests.
 ## 6. Makefile targets
 
 Mirror herdtools7's `::` accumulation + `| build` order-only prereq + `@ echo OK`.
-Renamed the CUDA lane `-gpu`→`-nvcc` (nothing here needs a GPU).
+The CUDA lane is `-nvcc` (it was `-gpu` when nothing in it needed a device; three
+members now do — see below).
 **✓ All targets wired into the top-level Makefile (`68d102ef5`).**
 
+**The Makefile is the roster; this table mirrors it.** Re-read it with
+`grep -E '^hetlitmus-[a-z0-9-]+:' Makefile` before trusting the list below.
+
 Umbrellas (what you press):
-- **`make hetlitmus-test`** → the CUDA-free lane: `hetlitmus-cram` + `hetlitmus-corpus`
-  + `hetlitmus-controlmap` + `hetlitmus-verdict` + `hetlitmus-stats`.
-- **`make hetlitmus-test-nvcc`** → the compile lane: `hetlitmus-faithful` +
-  `hetlitmus-stress` + `hetlitmus-cpustress` + `hetlitmus-smoke`. CUDA, no GPU.
+- **`make hetlitmus-test`** → the CUDA-free lane: `hetlitmus-cram` · `-corpus` · `-dup` ·
+  `-lattice` · `-amd-controlmap` · `-controlmap` · `-verdict` · `-recfields` · `-stats` ·
+  `-hist` · `-tuner` · `-x86body` · `-x86fixture` · `-d10` · `-run-gate`.
+- **`make hetlitmus-test-nvcc`** → the compile lane: `hetlitmus-faithful` · `-stress` ·
+  `-cpustress` · `-obs` · `-hipbuild` · `-characterize-hw` · `-run-hw` · `-l0-selftest` ·
+  `-smoke`. This lane has **outgrown Layer 3**: it still needs CUDA for the compile
+  members, but three of them now need a real device — `-run-hw` and `-characterize-hw`
+  run the wrapper and a built harness on the GPU, and `-stress`'s D1 probe drives
+  `het_do_stress` on hardware to prove the tally is live both ways. The CUDA-free
+  stand-in for the session wrapper (stub compiler, stub probe) is `hetlitmus-run-gate`,
+  which is in the other umbrella.
 - **`make hetlitmus-test-all`** → both. ← pre-commit gate on the dev box.
 - **`make hetlitmus-promote`** → regenerate + `dune test hetlitmus/tests --auto-promote`;
   does **not** commit; prints "review `git diff` then commit".
 
-Building blocks (run solo while iterating):
-`hetlitmus-cram` · `hetlitmus-corpus` · `hetlitmus-faithful` · `hetlitmus-stress` ·
-`hetlitmus-cpustress` · `hetlitmus-smoke` · `hetlitmus-controlmap` · `hetlitmus-verdict` ·
-`hetlitmus-stats`.
+Three of the building blocks are worth naming, because each exists for a failure no other
+gate can see. `hetlitmus-lattice` machine-checks the ordering-strength lattice (`ordercheck.py` phases
+1–2, 96 ARM + 96 PTX cells against herd7) that every `mu(T)` is selected on;
+`hetlitmus-controlmap` / `-amd-controlmap` gate the derived map itself on both lattices;
+`hetlitmus-recfields` pins the emitted `_rec.*` writes against `het_verdict.h`'s members
+and the emitted `#define`s against its `#ifndef` defaults, which is the one skew a
+CPU-only gate would otherwise miss.
+
+**Seven targets were deleted, not renamed** — they derived or audited expected verdicts,
+and the tool claims none: `hetlitmus-oracle`, `-nvroundtrip`, `-amd-oracle`, `-amdorder`,
+`-amdprov`, `-nvprov`, `-nvanchor`. So was `-noracle`, together with the
+`-allow-no-oracle` flag it gated. All of them live on branch
+`hetlitmus-oracle-derivation`. Two survivors moved rather than went:
+`hetlitmus-order` → `hetlitmus-lattice` (its verdict phase dropped, its lattice phases
+kept), and `hetlitmus-noracle-hw` → `hetlitmus-characterize-hw` (the unregistered-pair
+refusal became a warning, so what the gate reads off a real printout is the control
+sentence, not a refusal).
 
 **The B7b lesson on wiring (`hetlitmus-stats`):** `statscheck.py` existed for a full task
 cycle with **no Makefile target invoking it** — a build with `ks_pass` forced constant
@@ -262,15 +299,15 @@ Notes:
   drives the whole chain against a stub compiler and a stub probe) and `hetlitmus-run-hw`
   (the same wrapper on a device).
 
-Cram `dune` stanza (in `hetlitmus/tests/cram/dune`):
-```
-(cram
- (deps %{bin:diyone7} %{bin:hetgen7} %{bin:litmus7}
-       _grid_lib.sh oracle-compare.sh obs.txt oracle.csv
-       obs-stats.txt oracle-stats.csv
-       ptxcheck.py corrupt-strengthen.ptx
-       (glob_files tests/gpu-only/*.litmus)))
-```
+Cram stanzas: `hetlitmus/tests/cram/dune` is the authority and is not mirrored here — it
+carries five `(cram (applies_to …))` stanzas rather than one, because the tests split by
+the heaviest tool they need. The three Layer-1 tests (`basics`, `oracle-negatives`,
+`ptx-negatives`) declare **no** binary, so they stay toolchain-free; the emitting tests
+need `%{bin:litmus7}` **and the whole `tests/het` corpus plus `control-map.csv`**, since
+an emission co-runs `mu(T)` and the canary and there is no principled subset; `gpu-target`
+and `machine-pairs` are separate for reasons the file's own comments give; `amd-cat` is
+the only stanza that runs `herd7`. Each comment there also records a trap (`herd/libdir`
+and `litmus/libdir` cannot be declared as deps) — read them before adding a stanza.
 
 ---
 
@@ -313,7 +350,9 @@ Steps 1–4 all run on the dev box (and in CI, Layer 3 with a CUDA-install step)
 
 ## 10. Open items / pending decisions
 
-- Layer 4 (hardware) run wiring + positive-control design — deferred to GH200 access.
+- Layer 4 **numbers** — every knob, rate and threshold is measured on GH200/MI300A, not
+  here (`00-environment-design.md` §6). The wiring and the positive-control design are
+  shipped and gated; what is deferred is the measurement.
 - Whether to also unit-test `ptxcheck.py` parsers (optional; low priority).
 - Whether to fold `hetlitmus-test` into upstream `test::`.
 
@@ -356,22 +395,13 @@ actual output rather than trusting these bytes):
 ```
 Optional atom-mapping units: `arm_ord R acqrel`→`Q` (LDAPR), `arm_ord W acqrel`→`L` (STLR).
 
-`oracle-negatives.t` (Layer 1; `obs.txt` = 3 Observation lines, `oracle.csv` =
-`Litmus,Expected,Model,Source` with SB-sys Allowed + MP-sys-F Disallowed):
-```
-  $ oracle-compare.sh obs.txt oracle.csv
-  Oracle:       oracle.csv
-  Observations: obs.txt
-  
-  TEST           QUANT   OBSERVED   ORACLE       MODEL          RESULT     NOTE
-  ----           -----   --------   ------       -----          ------     ----
-  SB-sys         exists  Sometimes  Allowed      PTX            MATCH      relaxation seen
-  MP-sys-F       exists  Sometimes  Disallowed   PTX            MISMATCH   FORBIDDEN OUTCOME SEEN
-  LB-sys         exists  Never      -            -              NO-ORACLE  not in this oracle (GH200/PTX?)
-  
-  3 test(s): 1 MATCH, 1 MISMATCH, 1 NO-ORACLE
-  [1]
-```
+`oracle-negatives.t` (Layer 1) is **not** reproduced here: it has outgrown a sample and
+the committed `.t` is the authority. It drives the offline `oracle-compare.sh` over three
+fixture pairs — `obs.txt`/`oracle.csv` (the full class × quantifier matrix in one run),
+`obs-stats.txt`/`oracle-stats.csv` (the statistics section, whose blocks come verbatim from
+`het_verdict.h`), and `obs-amd.txt`/`oracle-amd.csv` (the same decision logic on a different
+`Model` string). Read the file; `dune promote` the actual output rather than any bytes
+quoted in a doc.
 
 `ptx-negatives.t` (Layer 1; frozen corrupted PTX, no GPU):
 ```

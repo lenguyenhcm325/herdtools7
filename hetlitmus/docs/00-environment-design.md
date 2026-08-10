@@ -60,16 +60,21 @@ something.
    per-load N-buffers  ──►  post-hoc recovery  (COUNT exact / COUNTH synchrony-point)
         │                        │  writes ──►  het_obs_record  {target, interleavings, control, skew, …}
         ▼                        ▼
-   outs_t histogram        overdispersion-aware stopping + positive-control gate  ──►  MATCH / MISMATCH /
-   (oracle-compare.sh)     (Q3)                         (Q4)                            NO-ORACLE + FN-bound
+   outs_t histogram        overdispersion-aware stopping + positive-control gate  ──►  OBSERVED / NOT-OBSERVED /
+   (fed per valid frame)   (Q3)                         (Q4)                            COLD-INVALID + FN-bound
                                    ▲
                      autotuner tunes the stress mix to maximise the het-mutant DEATH RATE (Q7)
 ```
 
+**The pipeline ends at the observation.** The harness carries no prediction and prints none;
+comparing a row against a verdicts file the reader supplies is an **offline post-run step**
+(`hetlitmus/oracle-compare.sh`, `oracle-harness.md`), outside the loop above.
+
 The design is overwhelmingly **reuse + adapt**, with original code confined to the genuine gap
 (cross-device orchestration + the het-aware statistics/tuner). Lineage: PerpLE (perpetual instances),
 cuda-litmus / S&D / Kirkham / MC-Mutants (stress + parallelism + reproducibility), litmus7 (CPU harness +
-histogram + asm bodies), Fusco (C2C placement/noise), Goens/Lustig (the oracle).
+histogram + asm bodies), Fusco (C2C placement/noise), Goens/Lustig (the memory models an offline
+comparison would be made against).
 
 ---
 
@@ -158,7 +163,7 @@ break in the het setting:
 `μ_upper(r) = r(0.05^(−1/r) − 1)` (3 → 19 → ~200 as dispersion rises; a bare `3/N` under Fano ≈ 20 is ~6×
 optimistic), using a variance-aware (empirical-Bernstein) bound. **Gate every "Never"** on: KS-stationary +
 positive-control LIVE (§3.8) + `interleavings_detected > 0` + clean negative control, else the run is
-**COLD → discard the null**. `oracle-compare.sh` is **augmented, not replaced**.
+**COLD → discard the null**. An offline `oracle-compare.sh` pass is **augmented, not replaced**.
 
 **Shipped statistics (B7/B7b/B7c/DR1 — `het_verdict.h` is the normative source; this doc does not duplicate
 the formulas).** The bound is scored per `(instance,run)` over `HET_NWIN` windowed sub-tallies. B7b credits
@@ -172,38 +177,40 @@ and operationally fenced via Path 1: see `env-research/decisions/F8-decision.md`
 **UNSET** — `het_budget_runs` returns *NOT SIZED* rather than a fabricated rate — until GH200 measures it.
 The interleaving-liveness gate is **channel-aware** (DR1): reader shapes use `interleavings_detected`, the
 store-only (2+2W) shapes — which have no reader — use `observer_unique_count ≥ θ` instead, and a record with
-neither channel fails closed. And the verdict is **oracle-aware**: a sighting REFUTES only on an
-`ORACLE_DISALLOWED` test, CONFIRMS on the Allowed rows, CHARACTERIZES the NO-ORACLE rows. The
-class split moves with the corpus — read it from `hetlitmus/tests/het/control-map.csv` (today:
-**16 Disallowed / 319 Allowed / 76 NO-ORACLE** over 411 tests — 50/319/42 until NVOR
-(2026-08-06) demoted 32 rows, and 18/319/74 until that day's Phase-D3 repair demoted 2
-more when a blind re-derivation found the slot gate keying on the test NAME instead of
-on the direction of the synchronizing `rf`; the same census is pinned in
-`verify/verdictcheck.py:CENSUS` and gated by `make hetlitmus-verdict`).
+neither channel fails closed. And the outcome carries **no prediction**: one axis, four values —
+`HET_OBSERVED`, `HET_NOT_OBSERVED_MU_HOT`, `HET_NOT_OBSERVED_CANARY_ONLY`, `HET_COLD_INVALID` — where the
+only question a null answers is what vouched for the harness that did not see it. What each row co-runs
+moves with the corpus, so read it from `hetlitmus/tests/het/control-map.csv` (today: **333 of 411 rows
+carry a `mu(T)`**, the other **78 are at the lattice floor**, and **409 co-run a canary**; the census is
+pinned in `verify/verdictcheck.py:CENSUS` and gated by `make hetlitmus-verdict`, and the map's own
+partition by `make hetlitmus-controlmap`).
 
 ### 3.8 Positive control / liveness  [→ `Q4-positive-control.md`]
 A "Never" is only credible if the harness was demonstrably "hot". **The corpus scope×order grid is already
-a mutation lattice**, so the control is essentially free:
-- **Layer A (rigorous):** co-run each Disallowed `-2s` test's *nearest Allowed grid-neighbour* (one
-  ordering-primitive away = an existing single-edge mutant; same shape/scope/direction/C2C structure). This
-  is MC-Mutants' **"Weakening sw"** (fence-removal) mutator; the **scope axis is a HetLitmus extension**
-  MC-Mutants lacks.
-- **Layer B (floor):** always co-run an `MP-{cg,gc}-sys-relaxed` het canary (MP is the only het shape with a
-  Bagchi-demonstrated weak result).
-- **Wiring:** same launch / same stress / disjoint padded locations; feed `control_target_count`. **Null
-  credible only if** `control_target_count ≥ τ_hot` (≥3, prefer 30) **and** `interleavings_detected > 0`
-  that run.
+an ordering-strength lattice**, so the control is essentially free:
+- **Layer A (shape-matched):** co-run every test's own **structural twin at the lattice floor** — the same
+  program with every ordering annotation dropped on both sides, so same shape/scope/direction/C2C structure
+  and the weakest member of the family the corpus holds. This is MC-Mutants' **"Weakening sw"**
+  (fence-removal) mutator taken to the floor rather than one edge; the **scope axis is a HetLitmus
+  extension** MC-Mutants lacks. The 78 rows that *are* the floor have no Layer A by construction.
+- **Layer B (floor):** always co-run an `MP-{cg,gc}-sys-relaxed` het canary, cut the same way round as the
+  test it vouches for (MP is the only het shape with a Bagchi-demonstrated weak result).
+- **Wiring:** same launch / same stress / disjoint padded locations; feed `control_target_count`. A null is
+  `NOT-OBSERVED-MU-HOT` only if `control_target_count ≥ τ_hot` (≥3, prefer 30) **and** the run's decode
+  channel was live **and** the ground-truth scan ran; otherwise it is `NOT-OBSERVED-CANARY-ONLY`, and with
+  nothing hot at all it is `COLD-INVALID`.
 - **Double duty:** the control is also the **calibrator** that measures the Fano factor / overdispersion for
-  §3.7's bound.
-- **Honesty caveat:** mutation-score-as-oracle rests on a bug↔mutant correlation shown on only **3 cases**
-  (PCC .893–.996) → cite as *supporting*, not a guarantee. NO-ORACLE rows get Layer-B liveness only
-  (characterization, not validation).
+  §3.7's bound — `mu(T)` where one fired, the canary otherwise, and the record says which.
+- **Honesty caveat:** mutation-score-as-a-proxy rests on a bug↔mutant correlation shown on only **3 cases**
+  (PCC .893–.996) → cite as *supporting*, not a guarantee. The control's count is **reported**, never
+  compared against a prediction.
 
-### 3.9 Tuning methodology & oracle  [→ `Q7-tuning.md`]
-- **Oracle:** the forbidden violation is 0 on correct hardware (no gradient) → tune to maximise the
-  **het-mutant DEATH RATE** `Δcontrol_target_count/Δt` on §3.8's controls (MC-Mutants metric; ceiling-rate
-  `⌈−ln(1−r)⌉/b`, Alg.1 selection). For the **interconnect** knobs the oracle *must* be a het/cross-C2C
-  observable — a GPU-only rate mis-tunes the C2C lever to zero.
+### 3.9 Tuning methodology & objective  [→ `Q7-tuning.md`]
+- **Tuning objective:** the tests worth tuning for are exactly the ones whose count stays 0, so the target
+  itself supplies no gradient → tune to maximise the **het-mutant DEATH RATE**
+  `Δcontrol_target_count/Δt` on §3.8's controls (MC-Mutants metric; ceiling-rate `⌈−ln(1−r)⌉/b`, Alg.1
+  selection). For the **interconnect** knobs the objective *must* be a het/cross-C2C observable — a
+  GPU-only rate mis-tunes the C2C lever to zero.
 - **Method:** factor the combined Q5∪Q6 knob space into three near-separable sub-searches
   (GPU → CPU → interconnect last), seeded/warm-started random search (GPUHarbor's Park-Miller reproducible
   sampler), shape-priority (Kirkham: LB/S first, SB/IRIW last).
@@ -238,13 +245,14 @@ het_obs_record {
 
 This cleanly separates **did we see it** (`target_count`) from **could we have** (`interleavings_detected` +
 `control_target_count` + skew). It is the input to §3.7's stopping rule, §3.8's null gate, and §3.9's tuning
-oracle. The `outs_t` histogram is retained (fed once per validated frame) so `oracle-compare.sh` keeps
-working.
+objective. The `outs_t` histogram is retained (fed once per validated frame) so an offline
+`oracle-compare.sh` pass over the log keeps working.
 
 *(The block above is the illustrative core; the **shipped** `het_obs_record` — normative in `het_verdict.h`
-— carries ~40 fields: the `sync_valid`/`obs_valid` channel flags plus `observer_unique_count` for the
-store-only channel (DR1), the realised `nwin`, the windowed `control_*`/`canary_*` sub-tallies, the
-`het_oracle` class, and the per-mechanism stress-liveness counters the §3.7 disqualifiers read.)*
+— carries ~40 fields: `rec_magic` (an unstamped record is refused before any other field is read), the
+`sync_valid`/`obs_valid` channel flags plus `observer_unique_count` for the store-only channel (DR1), the
+realised `nwin`, the windowed `control_*`/`canary_*` sub-tallies, and the per-mechanism stress-liveness
+counters the §3.7 disqualifiers read.)*
 
 ---
 
@@ -262,9 +270,9 @@ GH200/MI300A** (§6). A prerequisite audit (P) should run early.
 | **B3** | **`K·n+μ` store-tagging** (touches `ASMLang` for CPU store operands) + per-load N-buffers + **COUNT/COUNTH recovery** + emit the `het_obs_record` tally. | B2,P | Q2; replaces the per-iteration `_cond` check. |
 | **B4** | **GPU stress**: port cuda-litmus `do_stress`/`StressParams` (fix `MEM_STRESS` bug; cite); scratchpad in `cudaMalloc`; widen launch to stress workgroups; **asymmetric instances**. | B2 | Q5/Q2. |
 | **B5** | **CPU stress** recipes (2 sites, both ISAs) + **interconnect stress** (remote-pin + noise kernels); enforce the `-2s` invariants. | B2,B4 | Q6. |
-| **B6** | **Positive control** wiring: co-run adjacent-Allowed neighbour + MP canary; null-credibility gate on `control_target_count` + `interleavings_detected`. | B3,B4 | Q4. |
-| **B7** | **Overdispersion-aware stopping/stats**: `(instance,run)` unit, empirical-Bernstein bound, KS precheck; augment `oracle-compare.sh` with the confidence/FN annotation. | B3,B6 | Q3. |
-| **B8** | **Autotuner**: factored seeded random search, empirical-Bernstein early-stop, round-robin scheduling, KS gate; oracle = het-mutant death rate. | B4,B5,B6,B7 | Q7; runs **on hardware**. |
+| **B6** | **Positive control** wiring: co-run the lattice-floor twin + the MP canary; null-credibility gate on `control_target_count` + `interleavings_detected`. | B3,B4 | Q4. |
+| **B7** | **Overdispersion-aware stopping/stats**: `(instance,run)` unit, empirical-Bernstein bound, KS precheck; augment the offline `oracle-compare.sh` pass with the confidence/FN annotation. | B3,B6 | Q3. |
+| **B8** | **Autotuner**: factored seeded random search, empirical-Bernstein early-stop, round-robin scheduling, KS gate; objective = het-mutant death rate. | B4,B5,B6,B7 | Q7; runs **on hardware**. |
 
 ---
 
@@ -284,22 +292,16 @@ Everything below is unmeasurable on the dev box (wrong substrate, §3.2). **Firs
    disable mechanism.
 8. Per-target **stress tuning** (all numeric knob values).
 
-**The one Disallowed test that needed calibration is no longer Disallowed** (deep-review F5, closed by
-NVOR 2026-08-06). `SB-cg-sys-fence-2s` was the only `T_L ≥ 2` shape among the Disallowed rows: at
-production `N` its exhaustive `O(N^T_L)` scan is capped (`HET_EXHAUSTIVE_MAX = 4096`) →
-`exhaustive_valid = 0`, so it could **never reach CREDIBLE-NULL**, and its only detector was the
-uncalibrated `[c−8, c+8]` window (`HET_WINDOW = 8`). The NVOR regeneration demoted every rf-free row
-(`SB` and `R` at `sys`+`fence` need an ARM `DMB SY` to **be** a PTX `fence.sc`, which is not
-registered), so **all 18 surviving Disallowed rows are `T_L ≤ 1`, exact-`O(N)` and skew-independent**,
-and F5's calibration is no longer a precondition for any Disallowed null. Two consequences to carry:
-(i) it becomes a precondition again the moment `NVOR_ACCEPT_DECLINED=1` or a future registration
-re-arms the `SB`/`R` rows, so measure `skew_*` and calibrate `HET_WINDOW` at bring-up anyway;
-(ii) **no surviving Disallowed row has a windowed μ(T)**, so the
-`control_exhaustive_valid = _mu_exh` emission path is instantiated by zero shipping harnesses today
-(pinned as an absence in `tests/cram/positive-control.t`). Note this was always a property of the
-*Disallowed* subset, not of the corpus: 215 of the 411 tests are `T_L ≥ 2` (`SB` 29, `WRC3` 47,
-`IRIW` 37, `ISA2` 36, `RWC` 33, `WRC` 33). Re-derive from the `exists` conditions if the corpus ever
-grows a Disallowed row in `SB`/`IRIW`/`ISA2`/`RWC`/`WRC`/`WRC3`.
+**`HET_WINDOW` calibration is a precondition for a third of the corpus** (deep-review F5). A `T_L ≥ 2`
+shape's exhaustive `O(N^T_L)` scan is capped at production `N` (`HET_EXHAUSTIVE_MAX = 4096`) →
+`exhaustive_valid = 0`, so such a row can **never** return `NOT-OBSERVED-MU-HOT` — its zero is not a
+measured zero — and its only detector is the uncalibrated `[c−8, c+8]` window (`HET_WINDOW = 8`). That is
+**215 of the 411 tests** (`SB` 29, `WRC3` 47, `IRIW` 37, `ISA2` 36, `RWC` 33, `WRC` 33), re-derivable from
+the `exists` conditions. So measure `skew_*` and calibrate `HET_WINDOW` against `HET_EXHAUSTIVE_MAX` at
+bring-up, before any campaign. Consequence to carry: `mu(T)` is structurally identical to T and inherits
+its `T_L`, so every off-floor `T_L ≥ 2` row emits `control_exhaustive_valid = _mu_exh` and its control is
+windowed too — pinned in **both** directions in `tests/cram/positive-control.t` (`SB-cg-sys-fence-2s`
+emits it; `LB-cg-sys-fence-2s`, whose floor sibling decodes every frame exactly, does not).
 
 **A provisional early-stop below R = 50, and the F8 reopen trigger** (deep-review F8;
 `env-research/decisions/F8-decision.md`, Path 1). The B7c τ-guard scales its threshold by the *estimated* τ,

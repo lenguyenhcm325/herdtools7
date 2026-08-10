@@ -26,10 +26,12 @@ and the emitter (instruction selection) — never in the `.litmus` layer.
 Consequence for the two hardware targets:
 - **MI300A (AMD):** `expected-amd-gcn3.csv` is the right reference — caveat:
   MI300A is CDNA3, several generations past GCN3, so confirm rather than assume.
-- **GH200 (NVIDIA):** PLDI'23 provides **no** NVIDIA oracle. A separate
-  `expected-nvidia.csv` must be derived from the NVIDIA PTX model; the AMD
-  verdicts for `SB-sys-F` / `IRIW-sys-F` in particular may **not** carry over
-  (see "Why the synchronised verdicts hold").
+- **GH200 (NVIDIA):** PLDI'23 provides **no** NVIDIA oracle. The separate
+  `tests/gpu-only/expected-nvidia.csv` now exists and covers all 137 rows,
+  machine-computed from `hetlitmus/cats/nvidia-ptx.cat` (Lustig ASPLOS'19) — see
+  `nvidia-ptx-cat.md`. It disagrees with the AMD verdicts for `SB-sys-F` /
+  `IRIW-sys-F` exactly as this file warned it might (see "Why the synchronised
+  verdicts hold"); the two are different machines and neither carries to the other.
 
 ## Sources
 - **Goens, Chakraborty, Sarkar, Agarwal, Oswald, Nagarajan. "Compound Memory

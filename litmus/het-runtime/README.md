@@ -95,11 +95,13 @@ the stress layer holds two invariants, and both hold BY CONSTRUCTION here:
 
 See also: `hetlitmus/docs/00-environment-design.md` 3.6.
 
-## het_verdict.h — B6/B7: het_obs_record + the null-credibility decision rule
+## het_verdict.h — B6/B7: het_obs_record + the outcome rule
 
 This is the EPISTEMIC CORE of the campaign, not bookkeeping.  Every "Never"
 the harness prints is otherwise uninterpretable: a cold harness and a
-genuinely forbidden behaviour produce the IDENTICAL empty histogram.
+genuinely unreachable behaviour produce the IDENTICAL empty histogram.  The
+rule says whether the outcome was seen and, where it was not, what vouched for
+the harness that did not see it -- it holds no prediction and prints none.
 
 > "When testing, it is impossible to tell if an unobserved illegal execution
 > is not allowed or if it is simply rare and was not exposed by the tests."

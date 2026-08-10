@@ -1,15 +1,27 @@
 # Oracle-comparison harness (HetLitmus Tier 4, comparison axis)
 
-`hetlitmus/oracle-compare.sh` reads the verdicts litmus7 prints after running
-tests and compares each against a **reference oracle CSV passed explicitly**,
-emitting one of three results per test: **MATCH**, **MISMATCH**, or
-**NO-ORACLE**. This is the comparison half of Tier 4; the generation half is
+**This is an OPTIONAL, OFFLINE, POST-RUN step, and nothing in the toolchain
+requires it.** The emitted harness holds no prediction: it reports what it
+observed and what vouched for the harness that did not observe it
+(`positive-control.md`), and no verdict enters the emitter, the record or the
+runtime. Comparing a row against expected verdicts is therefore something a
+*reader* chooses to do afterwards, against a CSV **they** supply — and the
+comparison inherits whatever that CSV is worth. This file describes that step.
+
+`hetlitmus/oracle-compare.sh` reads a litmus7 run log and compares each
+observation against a **reference verdict CSV passed explicitly**, emitting one of
+four results per test: **MATCH**, **MISMATCH**, **NO-ORACLE**, or
+**UNINTERPRETED**. This is the comparison half of Tier 4; the generation half is
 `het-generation.md`.
 
-The harness deliberately does **not** run anything on hardware or in gem5 — that
-is **Task 9** and is out of Tier-4 scope. It consumes *Observation lines* (real,
-from a future hardware/gem5 run, or synthesized) and an oracle CSV, and decides
-conformance.
+The harness deliberately does **not** run anything on hardware or in gem5. It
+consumes *Observation lines* (real, from a hardware/gem5 run, or synthesized) and a
+verdict CSV, and decides conformance. It is a pure text function, which is why it
+can be gated on frozen fixtures with no toolchain at all.
+
+The two het CSVs in `tests/het/` are **not** an input any tool reaches for: they are
+inert data left by the retired per-test derivation effort (branch
+`hetlitmus-oracle-derivation`), and their own headers say so. Nothing reads them.
 
 ## 1. Inputs
 
@@ -49,16 +61,22 @@ header are skipped. The reference shipped here is
 `tests/gpu-only/expected-amd-gcn3.csv`, the PLDI'23 artifact's gem5 `GCN3_X86`
 oracle = **AMD GCN3 GPU + x86 CPU**, with `Expected ∈ {Allowed, Disallowed}`.
 
-## 2. Why NO-ORACLE is a first-class result
+## 2. Why "the CSV does not decide this" is a first-class result
 
 The PLDI'23 `expected.csv` is an **AMD oracle only** (gem5 has no NVIDIA GPU
-model). It grounds the GPU-only AMD corpus, but the **heterogeneous GH200 tests**
-(AArch64 CPU + PTX GPU, e.g. `MP-het`, `SB-het`) have **no oracle yet** — a
-separate `expected-nvidia.csv` must be derived from the NVIDIA PTX model (an open
-question for the GH200 reference model). The harness therefore refuses to assume
-a verdict for a test it cannot ground: a test absent from the supplied CSV is
-**NO-ORACLE**, not a silent pass. This keeps the AMD-grounded results honest and
-makes the missing NVIDIA oracle visible per test rather than hidden.
+model). It grounds the GPU-only AMD corpus and nothing else; the **heterogeneous
+tests** (e.g. `MP-het`, `SB-het`) are outside it entirely. The harness therefore
+refuses to assume a verdict for a test the supplied CSV cannot ground, and it
+distinguishes the two ways that happens, because they are different facts:
+
+* the CSV **has** the row and writes `NO-ORACLE` — *earned model silence*, a
+  decision not to decide;
+* the CSV **does not have** the row at all — **UNINTERPRETED**, no frame for this
+  test, never a silent pass and never model silence.
+
+Aliasing them is how a run whose corpus the CSV never covered would have printed as
+model silence on every row. Which of the two a reader is looking at is the whole
+point of supplying a CSV rather than assuming one.
 
 ## 3. Comparison semantics
 
@@ -143,9 +161,11 @@ re-derive it, because a second implementation of the same decode is what silentl
 drifts from the first.
 
 What the section adds on top of the reprint is the campaign-level roll-up: the
-negative control over the oracle-`Disallowed` rows (PerpLE VII-A — if the decoder
-invented cycles, that is where it would show), plus counts of the `VOID` rows and
-of the nulls whose bound came out ≥ 1 and so bounds nothing.
+negative control over the rows **the supplied CSV** marks `Disallowed` (PerpLE VII-A —
+if the decoder invented cycles, that is where it would show), plus counts of the
+`VOID` rows and of the nulls whose bound came out ≥ 1 and so bounds nothing. The class
+is read from the CSV on every row, because the run log carries none: a harness that
+printed its own class would make this roll-up a check of the emitter against itself.
 
 A log without `HetStats` lines prints the table alone. Both paths are pinned by
 `hetlitmus/tests/cram/oracle-negatives.t`.

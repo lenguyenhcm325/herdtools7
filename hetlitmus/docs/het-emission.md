@@ -32,10 +32,11 @@ litmus7 -gpu-target hip -o hip-out -set-libdir herd/libdir \
   hetlitmus/tests/het-x86/MP-cg-sys-relaxed-x86_64.litmus
 ( cd hip-out/MP-cg-sys-relaxed-x86_64 && sh comp.sh )  # hipcc --offload-arch=gfx942 -c
 
-# the AArch64 corpus paired with HIP is a machine no oracle covers, so it REFUSES:
+# the AArch64 corpus paired with HIP is in no row of the machine table, so it
+# EMITS and claims less -- a stderr warning, no machine define:
 litmus7 -gpu-target hip -set-libdir herd/libdir hetlitmus/tests/het/MP-het.litmus
-# HetLitmus REFUSED (het) ...: no oracle is registered for the CPU-ISA x
-# GPU-dialect pair (AArch64, hip). ...                                  exit 3
+# HetLitmus WARNING: the (CPU ISA x GPU dialect) pair (AArch64, hip) is in no row
+# of litmus/hetMachine.ml, so this harness NAMES NO MACHINE ...            exit 0
 ```
 
 The harness directory is written next to the current directory (or into the
@@ -184,9 +185,14 @@ Three rules make it worth having:
   disabled on a box that has none.
 * **A pair with no row emits anyway, and claims less.** The tool
   characterizes: an unregistered pair still has a machine somebody can run, and
-  what it loses is the right to name it. Emission warns once, stamps no machine
-  define, and the render says in band which of the two nameless states it is in
-  (registered-without-a-row, or in no row at all).
+  what it loses is the right to name it. Emission warns on stderr and names the
+  registered pairs, stamps no machine define — so `het_verdict.h`'s and
+  `het_cpu_stress.h`'s own `#ifndef` fallbacks stand, and those name the
+  *mechanism* — and the render says in band which of the two nameless states it
+  is in (registered-without-a-row, or in no row at all). Nothing about the pair
+  can refuse an emission: `-allow-no-oracle` and the exit-3 refusal it opted out
+  of are gone (they live on branch `hetlitmus-oracle-derivation`), and
+  `-gpu-target` remains mandatory as the render selector.
 * **The machine prose keys on the pair, not on the dialect.** The emitter stamps
   `HET_LINK_NAME` / `HET_HOST_HALF` / `HET_DEV_HALF` / `HET_LLC_MB` (and
   `HET_ALGLAVE_ZERO_MEASURED`, for the one measurement that is NVIDIA-only) from
@@ -336,13 +342,18 @@ byte-identical to before (the cpu column keeps its `cpu` back-compat tag).
   of them are byte-identical to a sibling (x86-TSO collapses the four CPU order
   tokens onto two images) and `dupcheck.py` rejects duplicates. Their names are
   1:1 with the 411-test corpus (`<corpus name>-x86_64`), which is what lets
-  `expected-amd.csv` and `control-map-amd.csv` stay keyed on the unsuffixed
-  names.
+  `control-map-amd.csv` stay keyed on the unsuffixed names: `generate-x86.sh`
+  re-keys its five name-valued columns (`Test`, `Mu`, `MuAlt`, `MuRelaxed`,
+  `Canary` — columns 1, 2, 4, 5, 6 of the six-column schema) onto the suffixed
+  renderings and copies nothing else.
 * A het emission that **cannot** be completed is fail-closed: litmus7 prints
   `HetLitmus REFUSED (het|gpu-only|isa-scan) <test>: <why>` on stderr and exits
   **3** (`HetArch.refused`).  litmus7's own batch driver would have reported the
   refusal and still exited 0, which made a missing harness look like success to
-  any caller that redirects stdout.
+  any caller that redirects stdout. An unregistered **pair** is not such a case
+  — that is a warning (Phase C/D above). What still refuses here is an emission
+  that would be wrong rather than merely nameless: an unresolvable control-map
+  row, a legacy control-map header, or a machine-word hole no row has a word for.
 * The CPU projection supports plain straight-line procs (the het corpus); a proc
   using labels/PTEs/macros would need the corresponding ASMLang machinery and is
   rejected rather than mis-emitted.
