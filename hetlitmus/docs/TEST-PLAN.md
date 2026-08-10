@@ -245,9 +245,9 @@ members now do — see below).
 `grep -E '^hetlitmus-[a-z0-9-]+:' Makefile` before trusting the list below.
 
 Umbrellas (what you press):
-- **`make hetlitmus-test`** → the CUDA-free lane: `hetlitmus-cram` · `-corpus` · `-dup` ·
-  `-lattice` · `-amd-controlmap` · `-controlmap` · `-verdict` · `-recfields` · `-stats` ·
-  `-hist` · `-tuner` · `-x86body` · `-x86fixture` · `-d10` · `-run-gate`.
+- **`make hetlitmus-test`** → the CUDA-free lane: `hetlitmus-cram` · `-corpus` · `-inert` ·
+  `-dup` · `-lattice` · `-amd-controlmap` · `-controlmap` · `-verdict` · `-recfields` ·
+  `-stats` · `-hist` · `-tuner` · `-x86body` · `-x86fixture` · `-d10` · `-run-gate`.
 - **`make hetlitmus-test-nvcc`** → the compile lane: `hetlitmus-faithful` · `-stress` ·
   `-cpustress` · `-obs` · `-hipbuild` · `-characterize-hw` · `-run-hw` · `-l0-selftest` ·
   `-smoke`. This lane has **outgrown Layer 3**: it still needs CUDA for the compile

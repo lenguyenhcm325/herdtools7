@@ -8,29 +8,22 @@
 #   MATCH          the observation is consistent with the oracle verdict
 #   MISMATCH       a FORBIDDEN outcome was observed -- a genuine model violation
 #   NO-ORACLE      the CSV HAS this row and it says NO-ORACLE: EARNED model
-#                  silence -- the model does not decide this test (the 7 rows of
-#                  PORT2-R2-amd-oracle.md sect 6, the 42 of expected-nvidia.csv)
+#                  silence -- the supplied CSV does not decide this test
 #   UNINTERPRETED  the test is ABSENT from this CSV, so there is no frame for it
 #                  at all -- or the CSV carries a verdict this harness does not
 #                  know, which is a corrupt oracle and never a pass
 #
-# THOSE LAST TWO USED TO BE THE SAME WORD, and PORT2-R2-amd-oracle.md sect 1.3
-# calls that hazard out by name: "P2a must give the MI300X frame its own label
-# ... not let it alias the seven earned NO-ORACLE rows of sect 6".  An MI300X run
-# has NO oracle by design, so every one of its rows is absent and would have read
-# as model silence.  Worse, a row whose CSV verdict IS "NO-ORACLE" fell into the
-# unknown-verdict arm and printed `unknown oracle verdict "NO-ORACLE"' with a "?"
-# -- measured on expected-nvidia.csv, which carries 42 such rows, so the harness
-# misreported BOTH oracles.  Fixed 2026-08-02 (P2a); pinned by
-# tests/cram/oracle-negatives.t, whose fixtures now drive all four RESULTs.
+# The last two are kept apart deliberately: a corpus the supplied CSV never
+# covered is absent from it row by row, and reading that as model silence would
+# report "the model makes no claim here" off a file that simply has no rows.
+# All four RESULTs are pinned by tests/cram/oracle-negatives.t.
 #
 # NO-ORACLE is a first-class result, not a default to "pass".  An oracle grounds
 # only the platform it was derived for: the PLDI'23 expected.csv is the gem5
 # GCN3_X86 oracle (AMD GCN3 GPU + x86 CPU), which covers the GPU-only AMD corpus
-# and says nothing about heterogeneous AArch64+PTX GH200 tests -- those need
-# expected-nvidia.csv, derived from the NVIDIA PTX model.  Refusing to assume a
-# verdict for a test it cannot ground is what keeps the grounded rows honest and
-# makes a missing oracle visible per test rather than hidden.
+# and says nothing about a heterogeneous AArch64+PTX GH200 test.  Refusing to
+# assume a verdict for a test it cannot ground is what keeps the grounded rows
+# honest and makes a missing oracle visible per test rather than hidden.
 #
 # The quantifier matters: litmus reports Never/Sometimes/Always relative to the
 # test's validation, and `forall' inverts what "Never" means, so the harness
@@ -52,9 +45,13 @@
 #
 # Usage:   ./oracle-compare.sh <observations-file> <oracle-csv>
 #   observations-file : a litmus7 log, or any file containing Observation lines
-#   oracle-csv        : reference CSV, columns "Litmus,Expected,Model,Source"
-#                       (both shipped oracles use this form).
-#                       ('#' comment lines and the header row are skipped)
+#   oracle-csv        : reference CSV the caller supplies, columns
+#                       "Litmus,Expected,Model,Source" ('#' comment lines and the
+#                       header row are skipped).  This branch maintains none for
+#                       the het corpus: tests/het/expected-nvidia.csv and
+#                       tests/het/expected-amd.csv are unmaintained artifacts of
+#                       an archived derivation effort, and an optional offline
+#                       input here at most (docs/oracle-harness.md).
 #
 # THE MISMATCH SENTENCE (PORT2-R2-amd-oracle.md sect 9.2 as amended by P2e).  A
 # forbidden outcome seen is a disagreement between a RUN and a DERIVATION, and

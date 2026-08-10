@@ -23,12 +23,9 @@
 #  (E) The two-sided order-pair grid <shape>-<cuttag>-sys-<cpu>.<gpu>-2s: the
 #      off-diagonal of (D), 8 cut classes x (16 - 2 diagonal) = 112 files.
 #
-# The oracle is expected-nvidia.csv (Model NVIDIA-PTX-AArch64); the PLDI'23
-# expected.csv is AMD-GCN3+x86 and is not reused.
-# One-sided tests are Allowed/NO-ORACLE; (D) and (E) carry the
-# Disallowed verdicts.  Under herd the (B) `fence' column is advisory (the AMD
-# cat models no fences -- see the GPU-only generate.sh header); litmus7 routes
-# every test regardless.
+# No expected outcome is attached to any of these tests: this branch predicts
+# none, and comparing a run against a verdict CSV is an optional offline step
+# over a file the reader supplies (docs/oracle-harness.md).
 
 set -e
 cd "$(dirname "$0")"
