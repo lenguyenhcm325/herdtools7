@@ -293,7 +293,7 @@ All het logic is confined to:
   `litmus/het-runtime/*` headers), wrapped by the rule in `litmus/dune`;
 * `litmus/hetDialect.ml` — the `gpu_dialect` record, the registry holding one
   of them per vendor, and the `-gpu-target` option that picks exactly one row;
-  read by both GPU-emitting arms and by nothing else;
+  read by both GPU-emitting arms and by litmus7's option table;
 * `litmus/hetEmit.ml` — the `HetEmit.Make` functor (the dialect-parameterised
   file emitter), with two of its phases as their own modules:
   `litmus/hetControlMap.ml` (the positive-control map) and the tagged

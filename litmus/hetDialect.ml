@@ -17,11 +17,11 @@
 (****************************************************************************)
 
 (* ===================== HetLitmus: GPU back-end dialect ===================
-   The combined CPU+GPU harness is emitted for BOTH CUDA and HIP from ONE
-   LISA parse.  CudaLang and HipLang share the layout / globals /
-   result-register analysis byte-for-byte, so a `gpu_dialect' carries only the
-   per-instruction lowering and the few differing host tokens, and one driver
-   template is rendered twice (<t>.cu, <t>.hip).  Per-target behaviour is
+   The combined CPU+GPU harness is emitted for CUDA or HIP from ONE LISA
+   parse.  CudaLang and HipLang share the layout / globals / result-register
+   analysis byte-for-byte, so a `gpu_dialect' carries only the per-instruction
+   lowering and the few differing host tokens, and one driver template is
+   rendered per selected vendor (<t>.cu or <t>.hip).  Per-target behaviour is
    added as a FIELD here, never as a branch in the template. *)
 type gpu_dialect = {
     gd_ext : string ;             (* output extension: "cu" | "hip" *)
@@ -220,8 +220,8 @@ let hip_dialect = {
    every arm, header sentence and narrative of the emitted comp.sh / Makefile
    / README -- folds over this list, so a vendor is added by adding an entry.
    [select] below filters it on `-gpu-target': an emission sees ONE entry, and
-   the folds below then name only that vendor.  List order is emission order;
-   the head is what the build files default to. *)
+   the folds in hetEmit / hetGpuOnly then name only that vendor.  List order
+   is emission order; the head is what the build files default to. *)
 let dialects = [ cuda_dialect ; hip_dialect ]
 
 (* The `-gpu-target' vocabulary IS this list's target column; litmus7's option
