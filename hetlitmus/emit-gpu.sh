@@ -7,7 +7,7 @@
 # atomics, CTA layout from the scope tree), HipLang the .hip (__hip_atomic_*
 # scoped atomics, workgroup layout).  One vendor per pass, so covering both
 # means two passes -- which is what the TARGET OUTDIR pairs are for.
-# See litmus/{CudaLang,HipLang,hetGpuOnly,hetTarget}.ml.
+# See litmus/{CudaLang,HipLang,hetGpuOnly,hetDialect}.ml.
 #
 # litmus7 also drops its C-runtime boilerplate next to the kernels; each output
 # directory's .gitignore keeps only its own dialect.  Compile-checking the .hip

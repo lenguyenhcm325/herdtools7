@@ -20,7 +20,7 @@
 #      TEMP dir and byte-diff the committed samples of BOTH dialects against
 #      their own lane: 10 cuda-out/*.cu against the `-gpu-target cuda' lane, 10
 #      hip-out/*.hip against the `-gpu-target hip' lane.  One emission renders
-#      one vendor (litmus/hetTarget.ml), so the .hip lane is a second pass --
+#      one vendor (litmus/hetDialect.ml), so the .hip lane is a second pass --
 #      and it is not optional: until 2026-08-02 nothing pinned the .hip at all,
 #      on the lane that has already shipped one silent .hip breakage with every
 #      gate green.  A lane drops all 137 of its kernels (plus C-runtime

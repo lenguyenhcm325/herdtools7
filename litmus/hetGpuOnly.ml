@@ -34,26 +34,26 @@ module Make
       end
     module P = GenParser.Make(Cfg)(Arch')(LexParse)
 
-    (* The GPU-only registry: one (hetEmit dialect, banner word, renderer) per
+    (* The GPU-only registry: one (hetDialect row, banner word, renderer) per
        vendor, rendered from the one parse.  Emission folds over it, so a vendor
-       is an entry -- and the entry carries hetEmit's record, so the extension
-       and the `-gpu-target' word are the SAME facts the compound emitter uses. *)
+       is an entry -- and the row is hetDialect's own, so the extension and the
+       `-gpu-target' word are the SAME facts the compound emitter uses. *)
     let dialects = [
-        HetEmit.cuda_dialect, CudaLang.dialect.GpuLang.gl_kind, CudaLang.dump ;
-        HetEmit.hip_dialect,  HipLang.dialect.GpuLang.gl_kind,  HipLang.dump ;
+        HetDialect.cuda_dialect, CudaLang.dialect.GpuLang.gl_kind, CudaLang.dump ;
+        HetDialect.hip_dialect,  HipLang.dialect.GpuLang.gl_kind,  HipLang.dump ;
       ]
 
     let compile _hash_env name in_chan _out_chan splitted =
       try
-        (* `-gpu-target' filtered: one emission, one dialect (hetTarget.ml). *)
+        (* `-gpu-target' filtered: one emission, one dialect (hetDialect.ml). *)
         let dialects =
-          HetTarget.select ~key:(fun (d,_,_) -> d.HetEmit.gd_target) dialects in
+          HetDialect.select ~key:(fun (d,_,_) -> d.HetDialect.gd_target) dialects in
         let parsed = P.parse in_chan splitted in
         close_in in_chan ;
         let tname = splitted.Splitter.name.Name.name in
         List.iter
           (fun (d,kind,dump) ->
-            let ext = "." ^ d.HetEmit.gd_ext in
+            let ext = "." ^ d.HetDialect.gd_ext in
             let outname = Tar.outname (MyName.outname name ext) in
             Misc.output_protect (fun chan -> dump chan tname parsed) outname ;
             if O.verbose >= 0 then

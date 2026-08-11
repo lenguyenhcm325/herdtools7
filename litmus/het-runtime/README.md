@@ -120,7 +120,7 @@ reporting stance) and `hetlitmus/docs/positive-control.md`.
 ## het_alloc_{cuda,hip}.inc, het_noise_{cuda,hip}.inc — B1/B5: the two allocators
 
 The `gd_shared_mem_defs` and `gd_noise_mem_defs` fields of `gpu_dialect`
-(`litmus/hetEmit.ml`).  Each pair is one object class in one dialect:
+(`litmus/hetDialect.ml`).  Each pair is one object class in one dialect:
 
 * `het_alloc_*` — the shared litmus vars + the rendezvous barrier
   (`gd_alloc_shared` / `gd_free_shared`).  The allocator selects the property

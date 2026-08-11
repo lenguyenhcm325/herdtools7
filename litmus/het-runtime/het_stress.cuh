@@ -40,7 +40,7 @@
  * hipMalloc), disjoint from every test location -- that disjointness is what keeps
  * the stress sound (S&D).  The shared litmus variables and the cross-device
  * barrier are a different class and go through gd_alloc_shared; the full list of
- * classes lives at litmus/hetEmit.ml, gd_shared_mem_defs / gd_noise_mem_defs.
+ * classes lives at litmus/hetDialect.ml, gd_shared_mem_defs / gd_noise_mem_defs.
  *
  * Reach.  The scratchpad hammers the GPU's on-die L1/L2.  It does not by itself
  * widen the CPU-GPU (NVLink-C2C) window; that needs interconnect-crossing traffic

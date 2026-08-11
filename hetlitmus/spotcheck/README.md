@@ -197,7 +197,7 @@ along with all five.
 | `pack-bundle.sh` | dev box: emit, prune, stamp, tar |
 | `ladder.sh` | instance: rungs 0–6, exit-code table |
 | `run-one.sh` | one invocation, for `campaign.py --runner` |
-| `STAMP` (in the bundle) | git revision, date, census, per-test geometry, emitter SHA-256 |
+| `STAMP` (in the bundle) | git revision, date, census, per-test geometry, emitter + dialect SHA-256 |
 
 The emitted harness dirs are self-contained — `outs.c/h`, `het_stress.cuh`,
 `het_cpu_stress.h` and `het_verdict.h` are written into every dir at emission —

@@ -1,4 +1,4 @@
-`-gpu-target' -- litmus7's GPU emission target (litmus/hetTarget.ml).  ONE vendor
+`-gpu-target' -- litmus7's GPU emission target (litmus/hetDialect.ml).  ONE vendor
 per emission: the harness directory carries that vendor's render and that vendor's
 build arms, and nothing of any other vendor's.  The flag is MANDATORY on the two
 GPU-emitting arms; a harness whose vendor came from a default is a harness nobody

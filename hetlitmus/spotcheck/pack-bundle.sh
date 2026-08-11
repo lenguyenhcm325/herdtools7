@@ -134,6 +134,9 @@ chmod +x "$BUNDLE/probe.sh" "$BUNDLE/ladder.sh" "$BUNDLE/run-one.sh"
          "control=$(sed -n 's/^#define HET_CONTROL_COMPILED_IN //p' "$cu" | head -1)"
   done
   echo "emitter_sha256=$(sha256sum "$REPO/litmus/hetEmit.ml" | cut -d' ' -f1)"
+  # hetDialect.ml carries the per-vendor records the render is built from, so
+  # the emitter hash alone does not cover what a .cu actually contains.
+  echo "dialect_sha256=$(sha256sum "$REPO/litmus/hetDialect.ml" | cut -d' ' -f1)"
   echo "verdict_h_sha256=$(sha256sum "$REPO/litmus/het-runtime/het_verdict.h" | cut -d' ' -f1)"
   echo "# Dev-tier bundle.  Results from it are MACHINERY evidence only and must"
   echo "# never be merged with GH200 evaluation data (see README.md)."

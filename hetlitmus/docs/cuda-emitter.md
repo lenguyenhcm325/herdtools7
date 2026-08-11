@@ -21,7 +21,7 @@ scoped IR; no native PTX architecture) — see memory `hetlitmus-route-b-fronten
   (a dead path); now returns `copt` so the LISA test can reach the dispatch.
 - **`hetlitmus/emit-cuda.sh`** — regenerates all `.cu` from the corpus; the
   CUDA-side entry point of `hetlitmus/emit-gpu.sh`, which it calls with
-  `-gpu-target cuda` (one vendor per pass; `litmus/hetTarget.ml`).
+  `-gpu-target cuda` (one vendor per pass; `litmus/hetDialect.ml`).
 
 Build: `make all` in the repo root (branch `hetlitmus-work`). Emit:
 `./hetlitmus/emit-cuda.sh [OUTDIR]` (default `hetlitmus/cuda-out/`).

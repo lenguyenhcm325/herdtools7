@@ -726,7 +726,7 @@ def check_barrier_whitelist(result, barrier_ops, n_lanes):
 
 
 # The observer's snoop: `atomic_ref<uint64_t, thread_scope_system>(*l).load(relaxed)`
-# (litmus/hetEmit.ml gd_sys_load_u64) -> ld.relaxed.sys.
+# (litmus/hetDialect.ml gd_sys_load_u64) -> ld.relaxed.sys.
 OBS_OP = ('ld', 'relaxed', 'sys')
 
 # The device-scope window-opener (het_stress.cuh het_spin, ported from
@@ -879,7 +879,8 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
         else:
             cu_path, cpu_c_path = emit_harness(litmus_path, tmp)
             # sm_90 matches the run harness: the emitted Makefile/comp.sh compile
-            # the same .cu with `CUDA_ARCH ?= sm_90' (GH200; litmus/hetEmit.ml).
+            # the same .cu with `CUDA_ARCH ?= sm_90' (GH200;
+            # litmus/hetDialect.ml gd_arch_default).
             # Checking a different arch than the one that runs would leave a
             # soundness gap, and sm_90 is a superset (cluster scope is
             # Hopper-only).  --arch overrides.

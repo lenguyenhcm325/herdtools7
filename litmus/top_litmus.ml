@@ -399,13 +399,13 @@ end = struct
   module SP = Splitter.Make(LexConfig)
 
   (* ===================== HetLitmus ==========================================
-     The het-only code lives in its own modules: hetEmit.ml (the GPU back-end
-     dialect record and the compound CPU+GPU emitter), hetGpuOnly.ml (the
-     `LISA arm), hetCpuFront.ml (the per-CPU-ISA column frontend).  What
-     remains here is the seam: HetOpts is the slice of Top's scope they need,
-     and the `LISA / `Het dispatch arms below close their functors over it,
-     the splitter and Make's compiled-CPU-code extractor, so none of those
-     files depends on this one. *)
+     The het-only code lives in its own modules: hetDialect.ml (the GPU
+     back-end dialect registry and `-gpu-target'), hetEmit.ml (the compound
+     CPU+GPU emitter), hetGpuOnly.ml (the `LISA arm), hetCpuFront.ml (the
+     per-CPU-ISA column frontend).  What remains here is the seam: HetOpts is
+     the slice of Top's scope they need, and the `LISA / `Het dispatch arms
+     below close their functors over it, the splitter and Make's
+     compiled-CPU-code extractor, so none of those files depends on this one. *)
   module HetOpts = struct
     let verbose = OT.verbose
     let nocatch = OT.nocatch

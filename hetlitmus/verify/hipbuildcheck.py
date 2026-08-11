@@ -69,7 +69,7 @@ inert stress, B6a's constant-0 `exhaustive_valid', the faithfulness gate reading
 phase that owns the injected object to redden naming it.
 
 ONE VENDOR PER HARNESS DIRECTORY.  litmus7 renders the dialect `-gpu-target'
-names and no other (litmus/hetTarget.ml), so the AMD arms and the CUDA arms no
+names and no other (litmus/hetDialect.ml), so the AMD arms and the CUDA arms no
 longer live in one directory: this gate emits the same x86 test twice, and P7
 reads the cuda render while P1-P3/P5/P6 read the hip one.  P5's cross-vendor
 stale-link trap needs both, so it plants one vendor's linked binary in the other

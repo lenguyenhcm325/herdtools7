@@ -204,12 +204,12 @@ let opts =
      "<n> insert assembly code in a loop of size <n>" ;
    argbool "-kind" Option.kind "show kind information in output" ;
 (* HetLitmus: GPU emission target.  Read by the `Het and `LISA arms only, so a
-   CPU-only run neither needs it nor is changed by it (litmus/hetTarget.ml). *)
-   "-gpu-target", Arg.String HetTarget.set,
+   CPU-only run neither needs it nor is changed by it (litmus/hetDialect.ml). *)
+   "-gpu-target", Arg.String HetDialect.set,
    sprintf
      "<%s> HetLitmus: which GPU dialect to render; required by het and \
       GPU-only (scoped LISA) emission, unused elsewhere"
-     HetEmit.target_doc ;
+     HetDialect.target_doc ;
 (* Change input *)
    CheckName.parse_names names ;
    CheckName.parse_excl excl ;]

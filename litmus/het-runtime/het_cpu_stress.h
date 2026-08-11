@@ -95,7 +95,7 @@ extern "C" {
                                           from every test location, so it needs
                                           neither GPU coherence nor device memory.
                                           The object classes are listed at
-                                          litmus/hetEmit.ml gd_noise_mem_defs.  */
+                                          litmus/hetDialect.ml gd_noise_mem_defs. */
 #endif
 #ifndef HET_CPU_SPREAD
 #define HET_CPU_SPREAD 8          /* S&D "spread" m: distinct lines hammered     */

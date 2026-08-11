@@ -18,7 +18,7 @@ Two axes are chosen per test rather than hard-wired (the **Phase A/B** work):
   from a shared driver template; only the per-instruction lowering and a few
   host tokens differ. The flag is mandatory on the `Het` and `LISA` arms and has
   no default: a harness directory carries one vendor's render and one vendor's
-  build arms (`litmus/hetTarget.ml`).
+  build arms (`litmus/hetDialect.ml`).
 
 ## Reproduce
 
@@ -141,7 +141,7 @@ The five required pieces, and where each is reused rather than reimplemented:
 
 One LISA parse, one GPU file per emission. The driver template is rendered from
 a `gpu_dialect` record; the registry `dialects = [cuda_dialect; hip_dialect]`
-(`litmus/hetEmit.ml`) holds one record per vendor and `-gpu-target` filters it,
+(`litmus/hetDialect.ml`) holds one record per vendor and `-gpu-target` filters it,
 so every per-vendor site — the render, the comp.sh arms, the Makefile rules, the
 README — folds over the selected list and a third vendor is an entry rather than
 an edit at each site. CUDA and HIP differ only in those record fields; the kernel
@@ -291,9 +291,12 @@ All het logic is confined to:
 * the generated `HetPayloads` module — the verbatim runtime payloads
   (`outs.{c,h}` cat'ed from `litmus/libdir/_outs.{h,c}`, plus the
   `litmus/het-runtime/*` headers), wrapped by the rule in `litmus/dune`;
-* `litmus/hetEmit.ml` — the `gpu_dialect` record + the `HetEmit.Make` functor
-  (the dialect-parameterised file emitter), with two of its phases as their own
-  modules: `litmus/hetControlMap.ml` (the positive-control map) and the tagged
+* `litmus/hetDialect.ml` — the `gpu_dialect` record, the registry holding one
+  of them per vendor, and the `-gpu-target` option that picks exactly one row;
+  read by both GPU-emitting arms and by nothing else;
+* `litmus/hetEmit.ml` — the `HetEmit.Make` functor (the dialect-parameterised
+  file emitter), with two of its phases as their own modules:
+  `litmus/hetControlMap.ml` (the positive-control map) and the tagged
   CPU body, split into `litmus/hetCpuPlan.ml` (the node type, the `cpu_plan`
   the emitter consumes and the C frame both are rendered into) plus
   `litmus/hetCpuBodyA64.ml` and `litmus/hetCpuBodyX86.ml` (one classifier and
