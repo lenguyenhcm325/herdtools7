@@ -22,11 +22,12 @@
 #   5. IRIW-cgcc-cta-relaxed   het 4-proc; largest barrier / scaffolding
 #   6. WRC-ccg-cta-relaxed     het 3-proc; buys down the proc-scaling assumption
 #   7. tests/cluster/MP-cluster  gpu-only Hopper cluster inline-PTX fence path
-#   8. MP-cg-sys-relaxed-x86_64 (HIP)  the AMD/MI300A render -- the only place in
-#                              the whole suite that compiles a .hip at all.  It
-#                              comes from tests/het-x86 because (x86_64, hip) is
-#                              the pair with the MI300A row, so it is the .hip
-#                              that names the part (litmus/hetMachine.ml).
+#   8. MP-cg-sys-relaxed-x86_64 (HIP)  the AMD/MI300A render -- the only rep here
+#                              that compiles a .hip (hipbuildcheck.py compiles
+#                              and links one too).  It comes from tests/het-x86
+#                              because (x86_64, hip) is the pair with the MI300A
+#                              row, so it is the .hip that names the part
+#                              (litmus/hetMachine.ml).
 #   9. MP-cg-sys-sy.acq-2s     order-pair; the only rep emitting inline
 #                              `fence.acquire.sys' (PTX ISA 8.6 / sm_90), with a
 #                              compiled-in co-run control (mu = the row's

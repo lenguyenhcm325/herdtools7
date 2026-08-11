@@ -52,12 +52,14 @@ AGENT=4, SYSTEM=5` (verbatim from `amd_hip_atomic.h`). The cta/gpu/sys ↔
 workgroup/agent/system mapping is the AMD half of the vendor ladder
 cta↔workgroup, gpu↔agent, sys↔system (memory `hetlitmus-amd-oracle-task7`).
 
-**Fences (faithful: order + scope).** The corpus uses no fences (the `-F`
-variants synchronise with release/acquire *atomics*, not fences — memory
-`hetlitmus-amd-oracle-task7`); the fence path exists only for hand-written tests.
-HipLang lowers a fence to the Clang builtin **`__builtin_amdgcn_fence(<order>,
-"<scope-string>")`**, which carries **BOTH** the memory order and the sync scope
-— the AMD counterpart of CudaLang's faithful inline-PTX `fence.<order>.<scope>`.
+**Fences (order + scope; compiled by no target — see *Compile status* below).**
+The `-F` variants do synchronise with release/acquire *atomics*, not fences
+(memory `hetlitmus-amd-oracle-task7`), but the corpus is not fence-free: the
+`-fence` families carry `f[order,scope]` in **33 of the 137** gpu-only and
+**171 of the 411** het `.litmus`. HipLang lowers a fence to the Clang builtin
+**`__builtin_amdgcn_fence(<order>, "<scope-string>")`**, which carries **BOTH**
+the memory order and the sync scope — the AMD counterpart of CudaLang's faithful
+inline-PTX `fence.<order>.<scope>`.
 
 This **supersedes** the old `__threadfence{,_block,_system}` lowering, which
 carried only the *scope* and was always a **full fence**: it silently dropped the
@@ -121,16 +123,33 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
 `hipLaunchKernelGGL(litmus_X, dim3(nblocks), dim3(blockdim), 0, 0, ...)`.
 
 ## Compile status & next steps (HIP analog of CUDA Task 8/9)
-- **HIP compile (Task 8 — DONE):** ROCm/`hipcc` (HIP-Clang 7.2.4) is installed,
-  so the emitted `.hip` are **compile-checked**, not merely emitted. Run
-  `hetlitmus/compile-hip.sh` to cross-compile every corpus `.hip` for the MI300A
-  ISA (`gfx942`) with `hipcc --offload-arch=gfx942 -std=c++17 <test>.hip -o <test>`;
-  all 8 gpu-only tests build clean. `amdclang++` accepts the `__hip_atomic_*` /
-  `__HIP_MEMORY_SCOPE_*` builtins (nvcc does **not**, so this requires the
-  HIP-Clang stack, not HIP-over-CUDA). A clean build proves the scope/order
-  lowering is valid for the target ISA; it does NOT validate memory-model
-  behaviour. The host `main()` is illustrative scaffolding (launch geometry +
-  result-buffer layout), as on the CUDA side.
+- **HIP compile (Task 8 — DONE):** ROCm/`hipcc` is installed, so the emitted
+  `.hip` *can* be compile-checked rather than merely emitted.
+  `hetlitmus/compile-hip.sh [INDIR] [OUTDIR]` cross-compiles every `.hip` in
+  INDIR for the MI300A ISA (`gfx942`) with `hipcc --offload-arch=gfx942
+  -std=c++17 <test>.hip -o <test>`. Measured 2026-08-11 under HIP version
+  7.2.53211: **10/10** on the default INDIR (`hip-out/`, the committed goldens)
+  and **137/137** on a full `emit-hip.sh` of the gpu-only corpus into a temp
+  dir, the 33 `-fence` renders included. `amdclang++` accepts the
+  `__hip_atomic_*` / `__HIP_MEMORY_SCOPE_*` builtins (nvcc does **not**, so this
+  requires the HIP-Clang stack, not HIP-over-CUDA). A clean build proves the
+  scope/order lowering is valid for the target ISA; it does NOT validate
+  memory-model behaviour. The host `main()` is illustrative scaffolding (launch
+  geometry + result-buffer layout), as on the CUDA side.
+- **What a target actually compiles.** `compile-hip.sh` is a manual
+  convenience: no make target and no gate invokes it, and its default INDIR is
+  `hip-out/`, the 10 committed goldens — all fence-free. The two *gated* AMD
+  compile paths are `make hetlitmus-hipbuild` (`verify/hipbuildcheck.py`:
+  compiles, links and re-builds one emitted x86 harness,
+  `MP-cg-sys-acqrel-2s-x86_64`, and **fails** when `hipcc` is absent) and
+  `make hetlitmus-smoke` (`verify/smoke.sh` rep 8,
+  `MP-cg-sys-relaxed-x86_64`, `hipcc -c` only, and it **skips with exit 0**
+  when `hipcc` is absent), both under the `hetlitmus-test-nvcc` umbrella. Both
+  of those tests are fence-free, so no target ever compiles a fence — the
+  numbers above come from a hand-run, not from a gate
+  (`litmus/HipLang.ml`, `hip_fence_scope`). CUDA has no `compile-cuda.sh` twin;
+  neither that absence nor this script's presence is a coverage claim either
+  way.
 - **Task 9 (hardware):** deferred — MI300A runs + stressing + tallying `__out`
   against the `condition` line.
 - **Oracle:** `expected-amd-gcn3.csv` is the AMD GCN3 reference; MI300A is CDNA3

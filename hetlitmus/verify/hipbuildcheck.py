@@ -21,13 +21,15 @@ Seven phases, each of which must be seen to fail:
   P3 link                comp.sh hip-link AND make hip-bin each produce an ELF
                          that carries a real amdgcn gfx942 code object -- not
                          merely an exit status
-  P4 fail-closed on the wrong host, at BOTH stages: the ABSENT (AArch64, hip)
-                         pair refuses at EMISSION naming the pair and writing
-                         nothing; a REGISTERED pair's link arms still refuse an
-                         AArch64 rendering on an x86_64 host, naming the ISA
-                         (the CPU object here is the portable shim and the binary
-                         would test nothing); and the HIP render carries that
-                         same guard, keyed to its own host ISA
+  P4 fail-closed on the wrong host: a pair in no row of litmus/hetMachine.ml is
+                         WARNED about, not refused -- (AArch64, hip) emits, the
+                         warning names the pair, and the render it writes stamps
+                         not one machine define; a registered pair's link arms
+                         do refuse an AArch64 rendering on an x86_64 host,
+                         naming the ISA and leaving no binary (the CPU object
+                         here is the portable shim, so the binary would test
+                         nothing); and the HIP render carries that same guard,
+                         keyed to its own host ISA
   P5 no silent stale     every vendor writes ./<test> on purpose (run-one.sh and
                          campaign.py exec ./<test> and are vendor-agnostic), so
                          each link target must ALWAYS relink.  MEASURED before
@@ -41,6 +43,11 @@ Seven phases, each of which must be seen to fail:
                          refuses the CUDA-only HET_PLACE lever at compile time
   P7 CUDA non-regression the cuda / cuda-link / cuda-bin arms still carry their
                          guard and still build
+
+NO FENCE IS COMPILED HERE.  The test this gate builds carries none, and neither
+does the other AMD compile path (smoke.sh rep 8), so the emitter's
+__builtin_amdgcn_fence lowering is compiled by no target at all; litmus/HipLang.ml
+(hip_fence_scope) is the one home for what that leaves unchecked.
 
 CORRECTNESS IN ISOLATION IS NOT THE MECHANISM BEING LIVE.  P6 drives the resolver
 out-of-line, so on its own it would pass a harness that never calls it -- and on

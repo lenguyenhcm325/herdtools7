@@ -11,7 +11,7 @@
 (* carries BOTH the order and the scope (the AMD counterpart of CudaLang's  *)
 (* faithful inline-PTX fence.<order>.<scope>) -- plus the emitted HIP       *)
 (* tokens; GpuLang holds the shared vocabulary, accessors, launch layout    *)
-(* and driver.                                                              *)
+(* and driver.  No target compiles a fence -- see hip_fence_scope.          *)
 (*                                                                          *)
 (* This software is governed by the CeCILL-B license under French law and   *)
 (* abiding by the rules of distribution of free software.                   *)
@@ -71,6 +71,14 @@ let hip_scope = function
    were always FULL fences -- they silently dropped the annotated order and
    over-synchronised (e.g. a release fence became a full fence).
 
+   Not gated: no target compiles a fence.  Both AMD compile paths build
+   fence-free tests (hipbuildcheck.py; smoke.sh rep 8), no committed hip-out
+   golden carries one, and compile-hip.sh defaults to that same golden dir --
+   so a syntactically broken __builtin_amdgcn_fence still passes
+   hetlitmus-test, -test-nvcc and -corpus.  ptxcheck.py earns the same claim
+   on the CUDA side by reading `nvcc --ptx' back; nothing reads AMD ISA.
+   Fence tests do exist: 33 of the 137 gpu-only and 171 of the 411 het.
+
    Grounded (web-fetched, not memory):
    - LLVM review D75917 ("Expose llvm fence instruction as clang intrinsic")
      and the Clang LanguageExtensions docs: the first arg is a C11 memory-order
@@ -87,11 +95,7 @@ let hip_scope = function
    Scope map mirrors hip_scope: cta -> "workgroup", gpu -> "agent",
    sys -> "" (system, the default), cluster -> "agent" (same documented
    degradation as the atomics above; HIP/LLVM "cluster" is not source-expressible
-   here, see hip_scope and hip-emitter.md).
-
-   The corpus uses no fences (the -F variants synchronise with release/acquire
-   atomics, not fences -- memory hetlitmus-amd-oracle-task7); this path exists
-   only for hand-written fence tests. *)
+   here, see hip_scope and hip-emitter.md). *)
 let hip_fence_scope = function
   | "cta"     -> "workgroup"
   | "gpu"     -> "agent"
@@ -137,7 +141,8 @@ let dump_instr chan ~tag ind i = match i with
         (cluster_note scp)
   | BellBase.Pfence (BellBase.Fence (annots, _)) ->
       let ord, scp = order_scope_of annots in
-      (* Faithful fence: __builtin_amdgcn_fence carries BOTH order and scope.
+      (* __builtin_amdgcn_fence carries BOTH order and scope; see
+         hip_fence_scope for what no target compiles.
          A `relaxed' fence is meaningless (a no-op in the C11/AMDGPU model) and
          __builtin_amdgcn_fence accepts only acquire/release/acq_rel/seq_cst, so
          emit nothing executable for it -- just a traceability comment. *)
