@@ -577,8 +577,8 @@ def emit_aarch64(out):
 # corpus: over its 411 tests the AArch64 vocabulary is exactly MOV r,#k (608),
 # STR (538), LDR (515), STLR (70), LDAPR (64) and DMB SY|ST|LD (61/32/32), all
 # at a bare [Xn].  So emit-all.sh's 411 successful emissions are the control
-# that these four are refused for their instruction and not for their shape,
-# and --bite re-feeds each probe a one-token variant that MUST emit.
+# that these four are refused for their instruction and not for their shape.
+# What --bite substitutes for each of them is stated in [bite].
 #
 # A1_DEAD kills the immediate with a load into the same register: the store's
 # value is then not statically known, and the emitter must refuse to bind

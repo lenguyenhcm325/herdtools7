@@ -24,8 +24,8 @@ val analyze :
   HetCpuPlan.cpu_plan
 
 (* Emit the tagged het_run_<prefix>P<proc> -- see hetCpuPlan.emit_frame for
-   what each label means.  Operands are widened to 64 bits (`movq'): the
-   shared globals are uint64_t and the K*iter+mu tag must not be truncated. *)
+   what each label means.  Operands are widened to 64 bits (`movq'); see
+   hetCpuPlan for why. *)
 val emit_body :
   out_channel -> prefix:string -> proc:int -> k:int -> store_mu:(int -> int) ->
   load_buf:(int -> string) -> reg_env:(string -> string) -> iter:string ->

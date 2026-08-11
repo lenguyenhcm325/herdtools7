@@ -108,10 +108,7 @@ let nodes_of ~reg_env instrs =
     | I_FENCE b -> HetCpuPlan.Fence (pp_barrier b)
     | I_NOP -> HetCpuPlan.Consumed
     | i ->
-       (* Fail closed, at classification: HetEmit calls this before it creates
-          the harness directory, so a refusal leaves nothing behind.  A CPU
-          proc carrying an instruction outside the het vocabulary would
-          otherwise be emitted as a body that tests LESS than the test says. *)
+       (* Fail closed at classification; hetCpuPlan says why. *)
        Warn.fatal
          "hetCpuBodyX86: unsupported CPU instruction %s (het vocabulary is \
           MOV load/store + MFENCE|SFENCE|LFENCE)"

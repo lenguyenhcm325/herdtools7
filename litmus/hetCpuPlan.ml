@@ -27,12 +27,17 @@
    [Consumed] is an instruction this ISA's classifier absorbed because it
    performs no memory access and carries no ordering, so removing it removes no
    tested event.  The absorbed set is per-ISA: AArch64 absorbs the immediate
-   MOV/MOVZ feeding a store value and refuses NOP, x86 absorbs NOP as well. *)
+   MOV/MOVZ and refuses NOP, x86 absorbs NOP as well. *)
 type node =
   | Store of { mnemonic : string ; global : string ; imm : int option }
   | Load of { mnemonic : string ; global : string ; dest : string }
   | Fence of string
   | Consumed
+(* An instruction a classifier cannot map onto one of these nodes is refused,
+   not approximated.  HetEmit classifies before it creates the harness
+   directory, so the refusal leaves nothing behind; emitting the nearest node
+   in the vocabulary instead would ship a body that tests LESS than the test
+   says. *)
 
 (* What HetEmit consumes: one proc's store/load structure in program order with
    addresses resolved to their global C name.  Device-agnostic (plain strings

@@ -85,10 +85,7 @@ let nodes_of ~reg_env instrs =
     | I_FENCE (DMB (SY, ST)) -> HetCpuPlan.Fence "dmb st"
     | I_FENCE (DMB (SY, LD)) -> HetCpuPlan.Fence "dmb ld"
     | i ->
-       (* Fail closed, at classification: HetEmit calls this before it creates
-          the harness directory, so a refusal leaves nothing behind.  A CPU
-          proc carrying an instruction outside the het vocabulary would
-          otherwise be emitted as a body that tests LESS than the test says. *)
+       (* Fail closed at classification; hetCpuPlan says why. *)
        Warn.fatal
          "hetCpuBodyA64: unsupported CPU instruction %s (het vocabulary is \
           MOV|MOVZ #imm, STR|STLR|LDR|LDAR|LDAPR at a bare [Xn], \
