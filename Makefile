@@ -914,16 +914,17 @@ hetlitmus-recfields: | build
 	@ echo "HetLitmus emitter/runtime field + define binding: OK (and the gate bites)"
 
 ### hetlitmus-x86body: the P2b gate -- is the x86-64 CPU thread of a het
-### harness REAL?  Until 2026-08-03 hetCpuFront.ml wired HetCpuBody.empty_plan +
+### harness REAL?  Until 2026-08-03 hetCpuFront.ml wired an empty plan +
 ### emit_stub for X86_64, so an x86 CPU proc emitted a `(void)_n' no-op: the CPU
 ### thread tested nothing AND, measured over the 411 x86 renderings, litmus7
 ### emitted a harness for 39 and REFUSED 372 (308 could bind no read buffer, 64
 ### no mu) -- while EXITING 0.  Seven phases: emission coverage, body-vs-column
 ### fidelity, tag liveness (the B4 lesson -- emitting is not testing), the
-### instructions surviving gcc to the .o, an aarch64 SMOKE, the fail-closed
-### refusal (exit 3 + marker + no harness, plus emit-all.sh's detectors -- the
-### refusal pair and the five per-lane stamp/machine-word ones, which live here
-### because this gate owns the emit-all stand-in rig),
+### instructions surviving gcc to the .o, the aarch64 lane (no x86 leak, and
+### its classifier refusing the four CPU columns it cannot render), the
+### fail-closed refusal (exit 3 + marker + no harness, plus emit-all.sh's
+### detectors -- the refusal pair and the five per-lane stamp/machine-word
+### ones, which live here because this gate owns the emit-all stand-in rig),
 ### and the B6b co-run harnesses (T + mu(T) + canary share a proc index, so
 ### each body must be checked against its OWN test).  P2/P3/P7 pin their counts
 ### against a total derived from the corpus' own columns, so a phase that
@@ -937,7 +938,9 @@ hetlitmus-recfields: | build
 ### lane against an emitter regression is `hetlitmus/verify/emit-all.sh SNAP_x'
 ### run at two revisions followed by `diff -r' (~4938 files).  That is a
 ### two-revision instrument and cannot be a single-shot target, so it is run by
-### hand for every emitter change; P5 below is only a smoke.
+### hand for every emitter change.  P5 does not stand in for it: what P5 owns
+### is the aarch64 lane's refusals, which the byte-diff cannot see because a
+### refused shape is by construction absent from the corpus.
 hetlitmus-x86body: | build
 	@ echo
 	python3 hetlitmus/verify/x86bodycheck.py

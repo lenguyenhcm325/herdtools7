@@ -291,9 +291,9 @@ end
             STRENGTH LATTICE, and the lattice is the CPU column's *)
          val control_map_csv : string
          (* The tagged-CPU-body hooks -- the ONLY CPU-ISA-specific pieces of the
-            het emitter (the AArch64 arm wires HetCpuBody, the x86_64 arm its
-            twin HetCpuBodyX86; both produce the same C shape and share
-            [cpu_plan]).  [het_analyze] resolves one CPU
+            het emitter (the AArch64 arm wires HetCpuBodyA64, the x86_64 arm
+            its twin HetCpuBodyX86; both classify into HetCpuPlan nodes and
+            share its plan and C frame).  [het_analyze] resolves one CPU
             proc's store/load structure (addresses via [reg_env]: addr-reg-name
             -> global C name), feeding the mu map, the read-buffer plan and the
             recovery map.  [het_emit_body] emits the tagged
@@ -303,7 +303,7 @@ end
             control harness apart -- without it T's P0 and mu(T)'s P0 are both
             `het_run_P0'. *)
          val het_analyze :
-           reg_env:(string -> string) -> Cpu.pseudo list -> HetCpuBody.cpu_plan
+           reg_env:(string -> string) -> Cpu.pseudo list -> HetCpuPlan.cpu_plan
          val het_emit_body :
            out_channel -> prefix:string -> proc:int -> k:int ->
            store_mu:(int -> int) -> load_buf:(int -> string) ->
@@ -727,7 +727,7 @@ end
                      let plan =
                        CpuF.het_analyze ~reg_env:(reg_env_of p)
                          (List.map Arch'.to_cpu_pseudo code) in
-                     (p, `Cpu, plan.HetCpuBody.stores, plan.HetCpuBody.loads)
+                     (p, `Cpu, plan.HetCpuPlan.stores, plan.HetCpuPlan.loads)
                   | Some ("gpu"::_) ->
                      let instrs =
                        CudaLang.instrs_of_code (List.map Arch'.to_gpu_pseudo code) in

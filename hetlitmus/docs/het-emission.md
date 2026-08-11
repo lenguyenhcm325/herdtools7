@@ -293,9 +293,11 @@ All het logic is confined to:
   `litmus/het-runtime/*` headers), wrapped by the rule in `litmus/dune`;
 * `litmus/hetEmit.ml` — the `gpu_dialect` record + the `HetEmit.Make` functor
   (the dialect-parameterised file emitter), with two of its phases as their own
-  modules: `litmus/hetControlMap.ml` (the positive-control map) and
-  `litmus/hetCpuBody.ml` + `litmus/hetCpuBodyX86.ml` (the tagged CPU body, one
-  matcher per CPU ISA, sharing `cpu_plan` and emitting the same C shape);
+  modules: `litmus/hetControlMap.ml` (the positive-control map) and the tagged
+  CPU body, split into `litmus/hetCpuPlan.ml` (the node type, the `cpu_plan`
+  the emitter consumes and the C frame both are rendered into) plus
+  `litmus/hetCpuBodyA64.ml` and `litmus/hetCpuBodyX86.ml` (one classifier and
+  one pair of asm operand shapes per CPU ISA);
 * `litmus/hetCpuFront.ml` — the per-CPU-ISA column frontend (`CpuF`), one
   module per supported CPU ISA;
 * the `` `Het `` dispatch arm in `litmus/top_litmus.ml` — the per-ISA module

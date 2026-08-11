@@ -2,8 +2,8 @@
 """
 x86bodycheck.py -- the P2b gate: is the x86-64 CPU thread of a het harness REAL?
 
-Until 2026-08-03 `hetCpuFront.ml' wired `HetCpuBody.empty_plan' + `emit_stub' for
-X86_64, so an x86 CPU proc emitted
+Until 2026-08-03 `hetCpuFront.ml' wired an empty plan + `emit_stub' for X86_64,
+so an x86 CPU proc emitted
 
     void het_run_P0(uint64_t *x, uint64_t *y, int _n) { (void)_n; (void)x; (void)y; }
 
@@ -19,7 +19,8 @@ Seven phases, each of which must be seen to fail:
   P3 tag liveness        every store carries K*(_n+1)+mu, every load reaches a
                          buffer (the B4 lesson: emitting is not testing)
   P4 machine code        the tested instructions survive gcc to the .o
-  P5 AArch64 smoke       the aarch64 lane still emits str/ldr/dmb, no x86 leak
+  P5 AArch64 lane        it still emits str/ldr/dmb with no x86 leak, and its
+                         classifier refuses what it cannot render faithfully
   P6 fail-closed         a refusal exits 3, prints HetLitmus REFUSED, leaves no
                          harness -- and emit-all.sh's two detectors both fire
   P7 co-run bodies       a B6b harness carries T, mu(T) AND the canary at the
@@ -570,18 +571,114 @@ def emit_aarch64(out):
     return out
 
 
-def phase5(tmp, out=None):
-    """A SMOKE, not the byte-diff.
+# ------------------------------------------------------------------ P5 probes
 
-    The instrument that actually protects the validated NVIDIA lane is
-    `hetlitmus/verify/emit-all.sh SNAP_x' run before and after a change,
-    followed by `diff -r' over the ~4938 emitted files.  That is inherently a
-    two-revision comparison and cannot be a single-shot make target; it is run
-    by hand for every emitter change (P2b: clean).  This phase only asserts that
-    the aarch64 lane still emits aarch64 bodies and that no x86 mnemonic leaked
-    into them.
+# Four CPU columns hetCpuBodyA64 must refuse, none of them reachable from the
+# corpus: over its 411 tests the AArch64 vocabulary is exactly MOV r,#k (608),
+# STR (538), LDR (515), STLR (70), LDAPR (64) and DMB SY|ST|LD (61/32/32), all
+# at a bare [Xn].  So emit-all.sh's 411 successful emissions are the control
+# that these four are refused for their instruction and not for their shape,
+# and --bite re-feeds each probe a one-token variant that MUST emit.
+#
+# A1_DEAD kills the immediate with a load into the same register: the store's
+# value is then not statically known, and the emitter must refuse to bind
+# `1:r0=5' to it rather than decode it to the wrong mu.  A1_MOV kills it with a
+# register-to-register MOV, which the classifier refuses outright.  A1_LIVE
+# writes the same 5 with the immediate intact and MUST emit, which is what makes
+# the refusal about value PROVENANCE and not about the literal 5.
+PROBE_A64_DEAD_VALUE = """Het PROVA64
+"probe: the store value is killed by a load into the same register"
+{
+0:X1=x;
+0:X2=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#5   | r[relaxed,sys] r0 y ;
+ LDR W0,[X1] | r[relaxed,sys] r1 x ;
+ STR W0,[X2] |                     ;
+scopes: (sys (gpu (cta P1)))
+exists (1:r0=5)
+"""
+
+PROBE_A64_MOV_REG = """Het PROVMOVA64
+"probe: the store value is killed by a register-to-register MOV"
+{
+0:X1=x;
+0:X2=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#5   | r[relaxed,sys] r0 y ;
+ MOV W0,W3   | r[relaxed,sys] r1 x ;
+ STR W0,[X2] |                     ;
+scopes: (sys (gpu (cta P1)))
+exists (1:r0=5)
+"""
+
+PROBE_A64_LIVE_VALUE = """Het PROVLIVEA64
+"probe: same condition, but the store value reaches the store"
+{
+0:X1=x;
+0:X2=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#5   | r[relaxed,sys] r0 y ;
+ STR W0,[X2] | r[relaxed,sys] r1 x ;
+ MOV W3,#1   |                     ;
+ STR W3,[X1] |                     ;
+scopes: (sys (gpu (cta P1)))
+exists (1:r0=5)
+"""
+
+# A non-zero addressing offset: the operand shapes render `[%[g]]' whatever the
+# MemExt says, so accepting this would test an access to x+0 while the .litmus
+# says x+8.  The --bite variant is the same file with `[X1]'.
+PROBE_A64_OFFSET = """Het OFFSETA64
+"probe: a non-zero load offset"
+{
+0:X1=x;
+0:X2=y;
+}
+ P0:cpu         | P1:gpu              ;
+ MOV W3,#1      | r[relaxed,sys] r0 y ;
+ STR W3,[X2]    | r[relaxed,sys] r1 x ;
+ LDR X0,[X1,#8] |                     ;
+scopes: (sys (gpu (cta P1)))
+exists (1:r0=1)
+"""
+
+# DSB is outside the het fence vocabulary: rendering it as `dmb sy' would put a
+# mnemonic in the asm that the .litmus never named.  The --bite variant is the
+# same file with `DMB SY'.
+PROBE_A64_DSB = """Het DSBA64
+"probe: a DSB on the CPU side"
+{
+0:X1=x;
+0:X3=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#1   | r[relaxed,sys] r0 y ;
+ STR W0,[X1] | f[sc,sys]           ;
+ DSB SY      | r[relaxed,sys] r1 x ;
+ MOV W2,#1   |                     ;
+ STR W2,[X3] |                     ;
+scopes: (sys (gpu (cta P1)))
+exists (1:r0=1 /\\ 1:r1=0)
+"""
+
+
+def phase5(tmp, out=None, litmus7=LITMUS7, dead_text=None, mov_text=None,
+           live_text=None, offset_text=None, dsb_text=None):
+    """The AArch64 lane: it emits aarch64, and it refuses what it cannot render.
+
+    NOT the byte-diff.  The instrument that protects the validated NVIDIA lane
+    is `hetlitmus/verify/emit-all.sh SNAP_x' run before and after a change,
+    followed by `diff -r' over the ~4938 emitted files; that is inherently a
+    two-revision comparison and cannot be a single-shot make target.  What this
+    phase owns is the aarch64 lane's own evidence: no x86 mnemonic in an aarch64
+    body, and the four classifier refusals no corpus test can reach, against a
+    control that must emit.
     """
-    print("== P5  the AArch64 lane still emits aarch64 (SMOKE; the byte-diff is emit-all.sh) ==")
+    print("== P5  the AArch64 lane: emits aarch64, refuses what it cannot render ==")
     if out is None:
         out = emit_aarch64(os.path.join(tmp, "aarch64"))
     for t in AARCH64_TESTS:
@@ -599,6 +696,40 @@ def phase5(tmp, out=None):
             fail("P5", "%s: the aarch64 body carries no str/ldr %%x operand" % t)
     print("  %d aarch64 harnesses checked for str/ldr %%x and for x86 leakage"
           % len(AARCH64_TESTS))
+
+    def refuses(label, text, want, note):
+        st, blob, dirs = litmus_on(tmp, label, text, litmus7)
+        if st != 3 or want not in blob or dirs:
+            fail("P5", "%s: exit=%d dirs=%r, litmus7 said %r"
+                 % (note, st, dirs, blob.strip().splitlines()[-1:]))
+            return False
+        return True
+
+    if refuses("A64DEAD", dead_text or PROBE_A64_DEAD_VALUE,
+               "no store writes 5 to y",
+               "a store whose value a load killed still bound `1:r0=5'"):
+        print("  value provenance: the killed-immediate store refuses (exit 3)")
+    if refuses("A64MOV", mov_text or PROBE_A64_MOV_REG,
+               "unsupported CPU instruction MOV W0,W3",
+               "a register-to-register MOV over a live immediate was accepted"):
+        print("  redefinition: `MOV W0,W3' refuses at classification")
+    if refuses("A64OFF", offset_text or PROBE_A64_OFFSET,
+               "unsupported CPU instruction LDR X0,[X1,#8]",
+               "a non-zero addressing offset was accepted and read at +0"):
+        print("  addressing: `LDR X0,[X1,#8]' refuses at classification")
+    if refuses("A64DSB", dsb_text or PROBE_A64_DSB,
+               "unsupported CPU instruction DSB SY",
+               "a DSB was accepted and rendered as some other fence"):
+        print("  fences: `DSB SY' refuses at classification")
+    st, blob, dirs = litmus_on(tmp, "A64LIVE", live_text or PROBE_A64_LIVE_VALUE,
+                               litmus7)
+    if st != 0 or len(dirs) != 1:
+        fail("P5", "the immediate-store twin did NOT emit, so the refusals above "
+                   "prove nothing about provenance: exit=%d dirs=%r said %r"
+             % (st, dirs, blob.strip().splitlines()[-1:]))
+    else:
+        print("  value provenance: the immediate-store twin emits (exit 0) -- the "
+              "refusal is about provenance, not about the value")
 
 
 # ------------------------------------------------------------------ P6 probes
@@ -1088,6 +1219,33 @@ def bite(tmp, corpus, good):
     os.remove(os.path.join(a64b, t0, t0 + "_cpu.c"))
     ok &= expect_red("P5/omit", lambda: phase5(tmp, out=a64b),
                      "did not emit an aarch64 CPU file")
+
+    # --- P5: the four AArch64 refusals, each fed a test that behaves the other
+    # way.  The refusal probes get a variant that MUST emit and the emission
+    # control gets one that refuses; for the offset and the DSB the substitute
+    # differs in ONE token, so the bite doubles as the evidence that the
+    # refusal is about that token and not about the probe's shape.  [out] is a
+    # clean emission, or the smoke above would redden these on its own.
+    a64c = emit_aarch64(os.path.join(tmp, "a64probe"))
+    ok &= expect_red("P5/a1-dead",
+                     lambda: phase5(tmp, out=a64c, dead_text=PROBE_A64_LIVE_VALUE),
+                     "still bound `1:r0=5'")
+    ok &= expect_red("P5/a1-mov",
+                     lambda: phase5(tmp, out=a64c, mov_text=PROBE_A64_LIVE_VALUE),
+                     "register-to-register MOV over a live immediate")
+    ok &= expect_red("P5/a1-live",
+                     lambda: phase5(tmp, out=a64c, live_text=PROBE_A64_DEAD_VALUE),
+                     "did NOT emit")
+    ok &= expect_red("P5/a2",
+                     lambda: phase5(tmp, out=a64c,
+                                    offset_text=PROBE_A64_OFFSET.replace(
+                                        "[X1,#8]", "[X1]")),
+                     "non-zero addressing offset")
+    ok &= expect_red("P5/a3",
+                     lambda: phase5(tmp, out=a64c,
+                                    dsb_text=PROBE_A64_DSB.replace(
+                                        "DSB SY", "DMB SY")),
+                     "a DSB was accepted")
 
     # --- P6: its OWN three assertions, via a stand-in litmus7 ----------------
     def stub(label, script):

@@ -31,7 +31,7 @@ module AArch64 (O:Config) = struct
     AArch64Lexer.Make (struct include O let is_morello = false end)
 
   let isa_name = "AArch64"
-  let body_module = "hetCpuBody"
+  let body_module = "hetCpuBodyA64"
   let host_macro = "__aarch64__"
   let cross = Some ("aarch64-linux-gnu","gnu11")
   (* The AArch64 strength lattice's own map (positive-control.md). *)
@@ -52,14 +52,14 @@ module AArch64 (O:Config) = struct
           p msg txt)
 
   (* B3: real tagged AArch64 body.  Cpu.pseudo = AArch64Base.pseudo here, so
-     HetCpuBody matches directly after peeling. *)
+     HetCpuBodyA64 matches directly after peeling. *)
   let het_analyze ~reg_env pseudos =
-    HetCpuBody.analyze ~reg_env (HetCpuBody.instrs_of_code pseudos)
+    HetCpuBodyA64.analyze ~reg_env (HetCpuBodyA64.instrs_of_code pseudos)
   let het_emit_body ch ~prefix ~proc ~k ~store_mu ~load_buf
         ~reg_env ~iter ~addr_params ~buf_params pseudos =
-    HetCpuBody.emit_body ch ~prefix ~proc ~k ~store_mu
+    HetCpuBodyA64.emit_body ch ~prefix ~proc ~k ~store_mu
       ~load_buf ~reg_env ~iter ~addr_params ~buf_params
-      (HetCpuBody.instrs_of_code pseudos)
+      (HetCpuBodyA64.instrs_of_code pseudos)
 end
 
 module X86_64 (O:Config) = struct
