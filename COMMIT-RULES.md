@@ -10,10 +10,10 @@ upstream style.
    tooling rather than taste.
 2. **Subject ≤ 72 chars**, target ≤ 65, no trailing period. 72 keeps it
    inside 80 columns under `git format-patch`'s `[PATCH] ` prefix.
-3. **One thesis, not a list.** A commit is one change with consequences: the
-   subject names the change, the body names the consequences. Listing what
-   the patch touched is what pushes a subject past 72 chars. The whole
-   subject line reads
+3. **A subject is a thesis, not an inventory.** A commit may carry several
+   changes; the subject names what the commit as a whole establishes and
+   the body enumerates the parts. Listing what the patch touched is what
+   pushes a subject past 72 chars. The whole subject line reads
 
        PORT1 c4: campaign.py's header skip accepts both real control maps
 
@@ -24,7 +24,9 @@ upstream style.
 
    (88, an inventory of the patch that never says what was wrong). That the
    skip had tested the wrong column name, that the scheduler died on the
-   header row, and that a gate now parses both files, is body.
+   header row, and that a gate now parses both files, is body. When no
+   honest subject covers every part, name the largest and let the body
+   carry the rest.
 4. **Present tense, naming the change, not the defect.** State what the
    commit establishes — "the pair table stops deciding who may emit", "the
    ordering gate becomes the lattice gate" — so a reader of `--oneline`
@@ -34,9 +36,10 @@ upstream style.
 5. **Subject form: `STREAM STEP: thesis`, when the commit implements a
    plan.** STREAM is that plan's ALL-CAPS id (`CHAR`, `NVOR`, `MV`, `PORT1`,
    `PORT2`, `Q10`, `DR1`), STEP its own step id verbatim (`A3`, `D2a`, `c1`,
-   `F`); omit the word "Phase". A commit under no plan takes the gate or
-   file it repairs, spelled as that file is (`x86bodycheck:`, `Makefile:`)
-   so it cannot be read as a stream tag, or no prefix
+   `F`); omit the word "Phase". A commit implementing several steps of one
+   plan joins their ids (`A3+A4`, `c1-c3`). A commit under no plan takes
+   the gate or file it repairs, spelled as that file is (`x86bodycheck:`,
+   `Makefile:`) so it cannot be read as a stream tag, or no prefix
    at all when it has no single home ("X2A_TRANSFERS=1 must be runnable,
    and it is not byte-for-byte"). Never invent a STREAM to fill the slot:
    the tag exists so a plan's commits can be listed later, and a one-off
@@ -53,7 +56,9 @@ upstream style.
 8. **Body ≤ 100 lines**, trailers excluded — a comment, stale-number or
    mechanical fix ≤ 15; a change to behavior or emitted bytes 30–80; a
    change that moves a census, an oracle or a verdict surface may use it
-   all. Surplus goes to the brief in `env-research/`, named in the body.
+   all. A commit carrying several changes takes the budget of its largest
+   part; the 100-line cap still holds. Surplus goes to the brief in
+   `env-research/`, named in the body.
    Past ~60 lines the body must be scannable: ALL-CAPS paragraph leads
    (`THE FAIL-CLOSED REPLACEMENT.`) or `F1.`/`F2.` numbering.
 9. **Wrap at 76, hard limit 80**, exempting a line held long by an
