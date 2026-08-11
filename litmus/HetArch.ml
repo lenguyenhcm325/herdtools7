@@ -334,11 +334,12 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
      [Instruction] payload; the structural skeleton (labels, nop, skip) is
      device-agnostic.  to_{cpu,gpu}_pseudo project a single processor's column
      back onto its native sub-architecture's pseudo, so that processor can be
-     fed to that backend's *own* compiler/emitter (AArch64 -> ASMLang,
-     LISA/Bell -> CudaLang).  The cross-device arms are unreachable for a
-     well-formed test (the het parser tags every cell with its column's device)
-     and fail loudly if reached.  This is the projection inverse of
-     of_{cpu,gpu}_parsed, one level down (internal pseudo, not parsed). *)
+     fed to that backend's *own* compiler/emitter (a CPU column to its
+     Compile_litmus then to HetCpuPlan's tagged body, LISA/Bell to CudaLang).
+     The cross-device arms are unreachable for a well-formed test (the het
+     parser tags every cell with its column's device) and fail loudly if
+     reached.  This is the projection inverse of of_{cpu,gpu}_parsed, one
+     level down (internal pseudo, not parsed). *)
 
   let cpu_reg_of = function
     | CPUreg r -> r

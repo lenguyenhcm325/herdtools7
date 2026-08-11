@@ -87,7 +87,7 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
 | `LDAPR`       | load-acquire (RCpc)  | stays `LDAPR`, never `LDR` |
 | `DMB SY`      | full system barrier  | stays `DMB SY`, never dropped/narrowed (e.g. `DMB ISH`) |
 | `STR`/`LDR`   | plain store/load     | — |
-| `MOV`         | folded into an asm input operand by ASMLang (not a memory op) | — |
+| `MOV`         | absorbed by the tagged-body classifier; the value reaches the asm block as an input operand (not a memory op) | — |
 
 ## Sources
 
@@ -224,8 +224,10 @@ whole corpus.
   Runtime reordering by ptxas/hardware is the *behaviour under test* on real
   hardware (Task 9), not an L0 concern.
 * It is hardware-free: `nvcc --ptx`/`-c` and reading text only; no kernel runs.
-* `MOV` is folded into asm operands by ASMLang and is intentionally excluded from
-  the CPU comparison; only memory/ordering mnemonics are compared.
+* `MOV` is absorbed by the tagged-body classifier (`HetCpuPlan.Consumed`) — the
+  store value it set is replaced by the runtime tag, which reaches the asm block
+  as an input operand — so it is intentionally excluded from the CPU comparison;
+  only memory/ordering mnemonics are compared.
 * No `cluster`/`acq_rel`/RMW/`sc`-on-access appears in the 137+411 corpus; the
   mapping covers them so the guard recognizes (never skips) them if added.
 * **ptxcheck is BLIND to the stress layer, by design — and that blind spot has

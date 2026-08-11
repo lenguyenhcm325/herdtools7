@@ -142,17 +142,28 @@ no placeholders on the parse path:
 
 **In Tier 0 (done):** the `Het` format, the `` `Het `` `Archs` variant, the
 `HetArch` functor satisfying `ArchBase.S`, the per-column parser, the
-AArch64+LISA dispatch arm, and a clean `make all`. End-to-end:
-`litmus7 -gpu-target cuda hetlitmus/tests/het/MP-het.litmus` parses the test
-and reports
+AArch64+LISA dispatch arm, and a clean `make all`. End-to-end, litmus7 parses
+the test and routes each column to its device — and, since Tier 2 was built on
+top of that routing (`hetlitmus/docs/het-emission.md`), emits the harness too:
 
 ```
-HetLitmus: parsed heterogeneous test MP-het (2 procs)
-  P0 device=cpu -> ASMLang (AArch64)
-  P1 device=gpu -> CudaLang (LISA/PTX)
+$ litmus7 -gpu-target cuda -o OUT hetlitmus/tests/het/MP-het.litmus
+HetLitmus: emitting Tier-2 harness for MP-het (2 procs, CPU=AArch64)
+  P0 device=cpu -> CPU pthread (AArch64 asm from hetCpuBodyA64)
+  P1 device=gpu -> GPU kernel (LISA/PTX via CudaLang/HipLang)
+  co-run mu(T)  MP-cg-sys-relaxed      K=3  +2 part  +1 blk  +1 lane
+  co-run canary MP-cg-sys-relaxed      K=3  +2 part  +1 blk  +1 lane
+  => NPART=6 HET_TEST_BLOCKS=3 HET_GPU_LANES=3 HET_SPIN_LANES=3, HET_CONTROL_COMPILED_IN=1 HET_CANARY_COMPILED_IN=1
+  pair: (AArch64, cuda)
+HetLitmus: emitted harness directory OUT/MP-het (MP-het.cu)
 ```
 
-**Deferred to Tier 2 (emission), with the corresponding Tier-0 inertness:**
+The CPU column's asm is written by `HetCpuBodyA64`/`HetCpuBodyX86` over
+`HetCpuPlan`, not by `ASMLang.dump_fun`; what the arm takes from litmus7's own
+CPU compile pipeline is the address parameters and the final registers.
+
+**Deferred to Tier 2 (emission), with the corresponding Tier-0 inertness** (the
+record of what Tier 0 itself shipped; Tier 2 has since closed the first item):
 - The dispatch arm stops after parse + per-proc routing report; it does not
   emit a harness.
 - `nop` / `mk_imm_branch` are `None` (no device-agnostic compound form);

@@ -17,12 +17,14 @@
 (* HetLitmus: the compound (CPU+GPU) harness emitter.
 
    One `Het' test becomes one self-contained harness directory: the CPU
-   proc(s) as real ISA asm via ASMLang, the GPU procs as a CUDA and a HIP
-   render of a single driver template, plus the runtime headers and a build
-   script.  The seam back to Top's scope is three functor parameters ([O] an
-   options slice, [SP] the splitter, [CpuKit] the compiled-CPU-code extractor
-   closed at the dispatch site), so this file does not depend on
-   top_litmus.ml.  Design: hetlitmus/docs/het-emission.md. *)
+   proc(s) as a tagged body of real ISA asm (written by hetCpuPlan and the
+   per-ISA HetCpuBody module), the GPU procs as a single driver template
+   rendered in the one dialect `-gpu-target' names, plus the runtime headers
+   and a build script.  The seam back to Top's scope is three functor
+   parameters ([O] an options slice, [SP] the splitter, [CpuKit] the
+   compiled-CPU-code extractor closed at the dispatch site), so this file
+   does not depend on top_litmus.ml.  Design:
+   hetlitmus/docs/het-emission.md. *)
 
 open Answer
 
@@ -97,10 +99,13 @@ end
        end)
       (CpuKit : sig
          (* Tier-2 CPU backend seam: the REAL litmus7 compile pipeline for the
-            CPU ISA (top_litmus.Make -> Compile.Make), reused so the CPU
-            thread's inline asm comes from ASMLang (not a hand-rolled
-            emitter).  Driven on a CPU-only projection of the het test;
-            returns the compiled per-proc templates (Test_litmus [code]). *)
+            CPU ISA (top_litmus.Make -> Compile.Make), driven on a CPU-only
+            projection of the het test; returns the compiled per-proc
+            templates (Test_litmus [code]).  Exactly two fields of each
+            template are consumed, [Cpu.Out.get_addrs] and [Cpu.Out.final];
+            the template itself is then dropped, because the asm text is
+            written by hetCpuPlan and the per-ISA HetCpuBody module, not by
+            ASMLang.dump_fun. *)
          val compile_code :
            Name.t ->
            (Cpu.location, Cpu.V.v, Cpu.pseudo, Cpu.FaultType.t) MiscParser.r3 ->
@@ -1475,7 +1480,8 @@ end
                 Printf.eprintf "  P%d device=%s -> %s\n%!" p dev
                   (match dev with
                    | "cpu" ->
-                      Printf.sprintf "CPU pthread (%s asm via ASMLang)" CpuF.isa_name
+                      Printf.sprintf "CPU pthread (%s asm from %s)"
+                        CpuF.isa_name CpuF.body_module
                    | "gpu" -> "GPU kernel (LISA/PTX via CudaLang/HipLang)"
                    | _ -> "unknown"))
               parsed.MiscParser.prog ;
@@ -2931,7 +2937,7 @@ end
                      (String.make (ext_w - String.length d.gd_ext) ' ')
                      (fill d.gd_readme_files)))
               dialects ;
-            s (Printf.sprintf "- `%s_cpu.c`  CPU thread(s): real %s inline asm (litmus7 ASMLang).\n" tname CpuF.isa_name) ;
+            s (Printf.sprintf "- `%s_cpu.c`  CPU thread(s): real %s inline asm, emitted by %s.\n" tname CpuF.isa_name CpuF.body_module) ;
             s "- `outs.c/.h` litmus7's outcome histogram (verbatim from litmus/libdir).\n" ;
             s (Printf.sprintf
                  "- `comp.sh` / `Makefile`  compile-only build, plus %s guarded link target%s.\n\n"

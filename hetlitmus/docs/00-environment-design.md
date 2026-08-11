@@ -86,6 +86,7 @@ inline-asm bodies via `ASMLang.dump_fun`, the `_outs.c` histogram, CPU stress *r
 param plumbing, diy7 generation) **without making `Skel.ml` the driver**. `Skel.ml` is single-arch and
 pthread-shaped, has no slot for a co-running kernel, and its per-cell CPU↔GPU barrier *masks the tested
 order and hangs*. No prior work routes GPU/het through litmus7's CPU harness (Bagchi *stitches*).
+*[The `ASMLang.dump_fun` item is superseded — see §7; the rest of the reuse list stands.]*
 
 ### 3.2 Memory & allocation — per-target knob  [→ `Q8-allocation.md`]
 **The allocator selects the property under test.** Emit a per-target allocator:
@@ -267,7 +268,7 @@ GH200/MI300A** (§6). A prerequisite audit (P) should run early.
 | **B0** | Parameterise `100000` → `Cfg.size` (free-running window) + `Cfg.runs` outer loop; surface as `SIZE_OF_TEST`/`NUMBER_OF_RUN` + argv. | — | Cheap; both already in scope. **Do as part of B2**, not standalone (semantics change to a window). |
 | **B1** | Per-target **allocator knob**: `malloc`/GH200, fine-grained/MI300A, managed = CI fallback; `cudaMemAdvise` placement hooks. | — | Q8; replaces `gd_malloc_managed`. |
 | **B2** | **Perpetual-instance rewrite** of the run-loop: launch once, loop inside, sync-once start barrier, occupancy-bounded/cooperative launch; drop per-iteration relaunch + `cudaDeviceSynchronize`. | B0,B1 | Q1/Q9; the biggest single change. |
-| **B3** | **`K·n+μ` store-tagging** (touches `ASMLang` for CPU store operands) + per-load N-buffers + **COUNT/COUNTH recovery** + emit the `het_obs_record` tally. | B2,P | Q2; replaces the per-iteration `_cond` check. |
+| **B3** | **`K·n+μ` store-tagging** (touches `ASMLang` for CPU store operands) *[superseded, §7]* + per-load N-buffers + **COUNT/COUNTH recovery** + emit the `het_obs_record` tally. | B2,P | Q2; replaces the per-iteration `_cond` check. |
 | **B4** | **GPU stress**: port cuda-litmus `do_stress`/`StressParams` (fix `MEM_STRESS` bug; cite); scratchpad in `cudaMalloc`; widen launch to stress workgroups; **asymmetric instances**. | B2 | Q5/Q2. |
 | **B5** | **CPU stress** recipes (2 sites, both ISAs) + **interconnect stress** (remote-pin + noise kernels); enforce the `-2s` invariants. | B2,B4 | Q6. |
 | **B6** | **Positive control** wiring: co-run the lattice-floor twin + the MP canary; null-credibility gate on `control_target_count` + `interleavings_detected`. | B3,B4 | Q4. |
@@ -330,6 +331,11 @@ So:
   mis-attribution; corrected in memory + here.)
 - **Q2's per-frame tally → `(instance,run)` unit** (Q3): raw frame counts are combinatorially inflated and
   break the statistics; the record is consumed at the instance-run level.
+- **B3 does not touch `ASMLang`** (supersedes §3.1's reuse item and §5's B3 row) — litmus7's own lowering
+  bakes a store's value in as an immediate, leaving no runtime seam for the `K·n+μ` tag, so the CPU thread
+  body is written by `litmus/hetCpuPlan.ml` + `litmus/hetCpuBody{A64,X86}.ml` and `ASMLang.dump_fun` is
+  never reached. What the het arm still takes from litmus7's CPU compile pipeline is the address parameters
+  and the final registers (`hetlitmus/docs/het-emission.md`).
 - **cuda-litmus `MEM_STRESS` bug** — fix on port, don't inherit.
 - **Licence** — cuda-litmus reuse is **supervisor-approved for thesis (academic) use** (Anatole, 2026-07-06
   — a supervision decision, *to be captured in writing*; not itself a copyright grant). The upstream repo

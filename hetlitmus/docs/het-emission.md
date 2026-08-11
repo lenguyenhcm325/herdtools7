@@ -82,7 +82,7 @@ ones `-gpu-target` named, and no other vendor's. `<v>` below is that target word
 | file            | role                                                         | compiled by |
 |-----------------|--------------------------------------------------------------|-------------|
 | `<t>.cu` **or** `<t>.hip` | GPU kernel + host driver in the selected dialect (alloc, barrier, launch, readback) — one of the two, never both | `nvcc -c` / `hipcc -c` |
-| `<t>_cpu.c`     | CPU thread(s): real `<ISA>` inline asm (ASMLang)             | `gcc -c` (native or `#else` shim) **and**, for a foreign-ISA host, `clang --target=<triple> -c` (real asm) |
+| `<t>_cpu.c`     | CPU thread(s): real `<ISA>` inline asm, emitted by `HetCpuBody<ISA>` | `gcc -c` (native or `#else` shim) **and**, for a foreign-ISA host, `clang --target=<triple> -c` (real asm) |
 | `outs.c`/`.h`   | litmus7's own outcome histogram, embedded verbatim           | `gcc -c`    |
 | `comp.sh`       | compile-only driver, `sh comp.sh [<v>\|<v>-link]` (default `<v>`); the absent vendor's word is refused by name | —           |
 | `Makefile`      | same; `make <v>` / `make <v>-bin` targets                    | —           |
@@ -92,14 +92,20 @@ The five required pieces, and where each is reused rather than reimplemented:
 
 1. **P(cpu) → a CPU pthread running real AArch64 asm.** The arm projects the
    compound parsed program onto a CPU-only `MiscParser` test
-   (`HetArch.to_cpu_pseudo`), runs the **genuine litmus7 AArch64 compile
-   pipeline** (`SymbReg` → `AArch64Compile_litmus` → `Template`), and emits each
-   thread's inline-asm function with **`ASMLang.dump_fun`** — the exact code path
-   litmus7 uses for its own `-mode presi -ascall` harnesses. The body is the
-   real `asm __volatile__("str %w[x0],[%[x1]]" ...)`, not a hand-rolled string.
-   `<t>.cu`'s `cpu_thread_P<n>` arrives at the barrier and calls the
-   `extern "C" het_run_P<n>(...)` wrapper (a non-static entry into the static
-   `code<n>` ASMLang emits).
+   (`HetArch.to_cpu_pseudo`) and runs the **genuine litmus7 AArch64 compile
+   pipeline** (`SymbReg` → `AArch64Compile_litmus` → `Template`) over it — but
+   it consumes exactly two fields of each compiled template, the address
+   parameters (`Cpu.Out.get_addrs`) and the final registers (`Cpu.Out.final`),
+   and then drops the template. The asm text itself is written by
+   `HetCpuBodyA64`/`HetCpuBodyX86` over `HetCpuPlan`, **not** by
+   `ASMLang.dump_fun`: litmus7's own lowering bakes a store's value in as an
+   immediate, which leaves no runtime seam for the `K*iter+mu` tag (rationale
+   in `litmus/hetCpuPlan.ml`). What that emitter prints is a real
+   `asm __volatile__("str %x[_v0],[%[x]]" ...)` block carrying the tested
+   mnemonics verbatim — hand-rolled, and genuine inline asm. `<t>.cu`'s
+   `cpu_thread_P<n>` arrives at the barrier and calls the `extern "C"
+   het_run_<prefix>P<n>(...)` that `<t>_cpu.c` defines, one per co-running
+   instance.
 
 2. **P(gpu) → a GPU kernel (CUDA *and* HIP).** The arm projects onto the
    Bell/LISA side (`HetArch.to_gpu_pseudo`) and builds the kernel by reusing the
@@ -288,12 +294,18 @@ All het logic is confined to:
   internal pseudo back onto a sub-arch) and the top-level CPU-ISA tag
   classifier + header pre-scan (`cpu_isa_of_tag`, `scan_cpu_isa`) the dispatch
   arm needs *before* it can choose CPU modules;
+* `litmus/hetSlurp.mll` — the section-slurp lexer `HetArch`'s parser reads the
+  whole program section through, verbatim, before re-lexing it column by
+  column with each column's own ISA lexer;
 * the generated `HetPayloads` module — the verbatim runtime payloads
   (`outs.{c,h}` cat'ed from `litmus/libdir/_outs.{h,c}`, plus the
   `litmus/het-runtime/*` headers), wrapped by the rule in `litmus/dune`;
 * `litmus/hetDialect.ml` — the `gpu_dialect` record, the registry holding one
   of them per vendor, and the `-gpu-target` option that picks exactly one row;
   read by both GPU-emitting arms and by litmus7's option table;
+* `litmus/hetGpuOnly.ml` — the other GPU-emitting arm, `` `LISA ``: a scoped
+  Bell/LISA test with no CPU column, parsed once and written out as one bare
+  kernel file in the selected dialect (no harness directory, no payloads);
 * `litmus/hetEmit.ml` — the `HetEmit.Make` functor (the dialect-parameterised
   file emitter), with two of its phases as their own modules:
   `litmus/hetControlMap.ml` (the positive-control map) and the tagged
@@ -301,6 +313,12 @@ All het logic is confined to:
   the emitter consumes and the C frame both are rendered into) plus
   `litmus/hetCpuBodyA64.ml` and `litmus/hetCpuBodyX86.ml` (one classifier and
   one pair of asm operand shapes per CPU ISA);
+* `litmus/hetCond.ml` — pure classification of a test's condition: which
+  locations an observer buffer has to snoop, and the confidence tier a null
+  from that condition shape may be reported at;
+* `litmus/hetMachine.ml` — the (CPU ISA, GPU dialect) pair table: which
+  machine a render may name and the words that fill each `@NAME@` hole of a
+  payload or an emitted sentence, so a pair with no row names no silicon;
 * `litmus/hetCpuFront.ml` — the per-CPU-ISA column frontend (`CpuF`), one
   module per supported CPU ISA;
 * the `` `Het `` dispatch arm in `litmus/top_litmus.ml` — the per-ISA module
@@ -308,7 +326,11 @@ All het logic is confined to:
 
 The only edits outside those are the ones Phase A/B strictly require:
 `lib/X86_64Parser.mly` (the `instr_option_seq` start rule) and `gen/hetGen.ml`
-(the `-cpu-arch` flag, below). `ASMLang` is **reused, not modified**;
+(the `-cpu-arch` flag, below). `ASMLang` is **reused, not modified**: this
+branch never edits it, and litmus7's own CPU-only runs still instantiate it —
+but it is not what writes the het CPU body (piece 1 above). The het arm reads
+the same compiled template `ASMLang.dump_fun` would have read, takes the
+address parameters and the final registers, and stops there.
 `CudaLang`/`HipLang` are reused for the GPU lowering (their shared half is
 `litmus/gpuLang.ml`). One general (non-het) robustness fix lives in
 `litmus/dumpRun.ml`: when no test compiled to a C run harness (e.g. an
@@ -359,8 +381,12 @@ byte-identical to before (the cpu column keeps its `cpu` back-compat tag).
   — that is a warning (Phase C/D above). What still refuses here is an emission
   that would be wrong rather than merely nameless: an unresolvable control-map
   row, a legacy control-map header, or a machine-word hole no row has a word for.
-* The CPU projection supports plain straight-line procs (the het corpus); a proc
-  using labels/PTEs/macros would need the corresponding ASMLang machinery and is
-  rejected rather than mis-emitted.
+* The CPU projection supports plain straight-line procs (the het corpus). An
+  instruction outside the tagged-body vocabulary is refused by name at
+  classification, before any harness directory exists. A structural pseudo is
+  not: `instrs_of_pseudo` peels a `Label` and drops a `Macro`/`Pagealign`/
+  `Symbolic`, so a proc carrying one emits a straight-line body with it
+  silently removed. Supporting them would mean extending the vocabulary in
+  `HetCpuPlan` and its per-ISA classifiers, not in `ASMLang`.
 * COMPILE-ONLY: no GPU is launched. Stress/observability tuning (making the CPU
   and GPU ops actually race) and on-hardware runs are Tier-3 / Task 9.

@@ -83,8 +83,10 @@ GPU_KIND = {
 # CPU (AArch64) ordering mnemonics.  ARM ARM + Bagchi ISMM'26 Fig 1:
 #   STLR  = store-release        LDAR  = load-acquire (RCsc)
 #   LDAPR = load-acquire (RCpc)  DMB <option> = data memory barrier
-# `mov` is folded into an asm input operand by ASMLang and is therefore NOT a
-# memory op; it is recognized (so the guard does not fail) but not compared.
+# `mov` is absorbed by the tagged-body classifier (HetCpuPlan.Consumed) -- the
+# store value it set is replaced by the runtime tag, which reaches the asm block
+# as an input operand -- and is therefore NOT a memory op; it is recognized (so
+# the guard does not fail) but not compared.
 CPU_MNEMONIC = {
     "mov":   ("move",          False),  # folded; not a memory/ordering op
     "str":   ("plain-store",   True),
@@ -393,8 +395,8 @@ def cpu_ops_of_column(cells):
     """Parse a CPU column's cells into ordered memory-op descriptors.
 
     Returns a list of (mnemonic, qualifier) for memory/ordering ops only
-    (mov is folded by ASMLang and excluded).  Completeness guard: any
-    mnemonic not in CPU_MNEMONIC hard-fails."""
+    (mov is absorbed by the tagged-body classifier and excluded).
+    Completeness guard: any mnemonic not in CPU_MNEMONIC hard-fails."""
     ops = []
     for c in cells:
         c = c.strip()
