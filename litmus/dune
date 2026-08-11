@@ -14,7 +14,7 @@
 (rule
  (targets hetPayloads.ml)
  (deps libdir/_outs.h libdir/_outs.c
-       het-runtime/het_stress.cuh
+       het-runtime/het_stress.h
        het-runtime/het_cpu_stress.h
        het-runtime/het_verdict.h
        het-runtime/het_alloc_cuda.inc
@@ -33,8 +33,8 @@
     (echo "let outs_c = {het_payload|")
     (cat libdir/_outs.c)
     (echo "|het_payload}\n\n")
-    (echo "let het_stress_cuh = {het_payload|")
-    (cat het-runtime/het_stress.cuh)
+    (echo "let het_stress_h = {het_payload|")
+    (cat het-runtime/het_stress.h)
     (echo "|het_payload}\n\n")
     (echo "let het_cpu_stress_h = {het_payload|")
     (cat het-runtime/het_cpu_stress.h)

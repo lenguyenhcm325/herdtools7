@@ -2,7 +2,7 @@
 
 These files are the C/CUDA runtime that litmus7's het emitter emits **verbatim**
 — with one exception, the machine-word holes described below.
-The `.h`/`.cuh` payloads become their own file in every emitted harness directory
+The `.h` payloads become their own file in every emitted harness directory
 (`hetEmit.ml`, the `write "..."` calls); the `.inc` payloads are pasted into the
 body of the per-dialect `.cu` / `.hip` render, which is why they carry no include
 guard.  They are real source files so they can be edited with C tooling.  A rule
@@ -24,7 +24,7 @@ kept here (not inside the `.h` files) because the payload bytes are what lands
 in every emitted harness dir — the notes are for the *maintainer* of these
 files, not for every harness copy.
 
-## het_stress.cuh — B4: GPU memory-stress layer
+## het_stress.h — B4: GPU memory-stress layer
 
 Emitted verbatim into every het harness directory and `#include`'d by BOTH the
 `.cu` and the `.hip` render.  It is a SHARED C header (like `outs.h`), not a
@@ -44,14 +44,14 @@ See `env-research/Q5-gpu-stress.md` sections 2 (knob catalog), 3.1 (`do_stress`
 
 ## het_cpu_stress.h — B5: CPU-side + interconnect (C2C) stress
 
-The sibling of `het_stress.cuh`, and it exists for a reason that is worth
+The sibling of `het_stress.h`, and it exists for a reason that is worth
 stating once, at the top: B4's GPU scratchpad stress widens the INTRA-DEVICE
 window.  The heterogeneous weak behaviour does not live there.  It lives in
 the CROSS-DEVICE window — a store in flight across NVLink-C2C but not yet
 globally visible — and nothing in the harness loaded that path deliberately
 until this file.  Q6 (`env-research/Q6-cpu-interconnect-stress.md`) is the spec.
 
-WHY IT IS A SEPARATE HEADER FROM het_stress.cuh, AND NOT PART OF THE .cu.
+WHY IT IS A SEPARATE HEADER FROM het_stress.h, AND NOT PART OF THE .cu.
 This is not tidiness; it is forced, and getting it wrong breaks a gate:
 
 * the emitted CPU thread wrapper (`cpu_thread_P<n>`) and the driver `main()`

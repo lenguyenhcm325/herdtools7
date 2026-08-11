@@ -6,7 +6,7 @@
 #   -> OUTDIR/hetlitmus-spotcheck-<rev>.tar.gz
 #
 # WHY A BUNDLE AND NOT A CHECKOUT.  An emitted harness dir is SELF-CONTAINED:
-# litmus7 writes outs.c/h, het_stress.cuh, het_cpu_stress.h and het_verdict.h
+# litmus7 writes outs.c/h, het_stress.h, het_cpu_stress.h and het_verdict.h
 # into every dir at emission time.  So the rented instance needs no repo, no
 # OCaml, no dune and no litmus7 -- just nvcc, gcc, make and python3.  That also
 # pins the experiment: the bundle carries the git revision it was emitted from,
@@ -17,7 +17,7 @@
 #   control-map.csv      which mu(T) and canary each test co-runs, and WHY that
 #                        pick -- the reason is nowhere in the harness itself
 #   campaign.py          the cross-invocation pooling driver
-#   probe.cu probe.sh    what does this machine offer (run FIRST)
+#   probe.cu probe-cuda.sh  what does this machine offer (run FIRST)
 #   ladder.sh run-one.sh the seven rungs, and campaign.py's --runner template
 #   TESTS.txt README.md  the subset + its rationale, and how to drive it
 #   STAMP                revision, date, census, per-test geometry, emitter
@@ -107,9 +107,9 @@ fi
 echo "[4/5] adding driver, probe, ladder, control map, stamp"
 cp "$HETL/campaign.py"                 "$BUNDLE/"
 cp "$HETL/tests/het/control-map.csv"   "$BUNDLE/"
-cp "$HERE/probe.cu" "$HERE/probe.sh" "$HERE/ladder.sh" "$HERE/run-one.sh" \
+cp "$HERE/probe.cu" "$HERE/probe-cuda.sh" "$HERE/ladder.sh" "$HERE/run-one.sh" \
    "$HERE/TESTS.txt" "$HERE/README.md" "$BUNDLE/"
-chmod +x "$BUNDLE/probe.sh" "$BUNDLE/ladder.sh" "$BUNDLE/run-one.sh"
+chmod +x "$BUNDLE/probe-cuda.sh" "$BUNDLE/ladder.sh" "$BUNDLE/run-one.sh"
 
 {
   echo "bundle=hetlitmus-spotcheck"
@@ -148,4 +148,4 @@ tar -C "$SCRATCH" -czf "$TAR" "hetlitmus-spotcheck-$REV"
 echo ""
 echo "bundle: $TAR  ($(du -h "$TAR" | cut -f1))"
 echo "        ${#WANT[@]} harness dirs, rev $REV"
-echo "next:   scp it over, tar xzf, sh probe.sh, then sh ladder.sh"
+echo "next:   scp it over, tar xzf, sh probe-cuda.sh, then sh ladder.sh"

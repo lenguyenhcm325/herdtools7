@@ -8,9 +8,9 @@
 # because a run whose arch or target was decided invisibly cannot be read
 # afterwards.
 #
-# Composition only: probe.sh / probe-hip.sh probe, litmus7 emits, the emitted
-# comp.sh + Makefile build, campaign.py schedules, run-one.sh invokes.  What is
-# new here is the ORDER, the refusals and the record.
+# Composition only: probe-cuda.sh / probe-hip.sh probe, litmus7 emits, the
+# emitted comp.sh + Makefile build, campaign.py schedules, run-one.sh invokes.
+# What is new here is the ORDER, the refusals and the record.
 #
 # There is no smoke-ladder step between compile and campaign: spotcheck/
 # ladder.sh is that, driven separately, and this wrapper does not wrap it.
@@ -122,7 +122,7 @@ echo "$BUDGET_RUNS" | grep -qE '^[1-9][0-9]*$' \
 if [ "$GPU_TARGET" = cuda ]; then
   COMPILER="${NVCC:-nvcc}"  ; ARCH_VAR=CUDA_ARCH ; RENDER_EXT=cu  ; OTHER_EXT=hip
   ARCH_RE='^sm_[0-9]+[a-z]?$' ; ARCH_SHAPE='sm_XX'
-  PROBE_DEFAULT="$HETL/spotcheck/probe.sh"
+  PROBE_DEFAULT="$HETL/spotcheck/probe-cuda.sh"
   ARCH_TOOLS='nvidia-smi --query-gpu=compute_cap, then nvptx-arch'
 else
   COMPILER="${HIPCC:-hipcc}" ; ARCH_VAR=HIP_ARCH  ; RENDER_EXT=hip ; OTHER_EXT=cu

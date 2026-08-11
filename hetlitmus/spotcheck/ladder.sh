@@ -87,7 +87,7 @@ mkdir -p "$RESULTS"
 if [ -z "${CUDA_ARCH:-}" ] && [ -r "$RESULTS/probe.txt" ]; then
   CUDA_ARCH="$(sed -n 's/^suggested_cuda_arch=//p' "$RESULTS/probe.txt" | head -1)"
 fi
-[ -n "${CUDA_ARCH:-}" ] || die "CUDA_ARCH unset and $RESULTS/probe.txt has no suggested_cuda_arch -- run 'sh probe.sh' first (it is rung -1 for a reason)"
+[ -n "${CUDA_ARCH:-}" ] || die "CUDA_ARCH unset and $RESULTS/probe.txt has no suggested_cuda_arch -- run 'sh probe-cuda.sh' first (it is rung -1 for a reason)"
 export CUDA_ARCH
 
 # Probe facts the conditional bites need.  Absent probe.txt => those bites are

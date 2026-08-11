@@ -87,11 +87,11 @@ scp bundle-out/hetlitmus-spotcheck-*.tar.gz <instance>:
 
 # --- instance ------------------------------------------------------------
 tar xzf hetlitmus-spotcheck-*.tar.gz && cd hetlitmus-spotcheck-*
-sh probe.sh          # rung -1: what does this machine offer?  ALWAYS FIRST.
+sh probe-cuda.sh     # rung -1: what does this machine offer?  ALWAYS FIRST.
 sh ladder.sh         # rungs 0-6
 ```
 
-`probe.sh` writes `results-devtier-.../probe.txt`; `ladder.sh` reads
+`probe-cuda.sh` writes `results-devtier-.../probe.txt`; `ladder.sh` reads
 `suggested_cuda_arch` from it, so running the probe first is not a suggestion.
 
 ## This ladder vs. `hetlitmus/hetlitmus-run.sh`
@@ -104,11 +104,11 @@ from a checkout on the machine under test, and it records the pair, the resolved
 arch and the mode so the results dir can be read afterwards. The wrapper does
 not run the ladder, and the ladder does not emit.
 
-`probe-hip.sh` is the AMD side of `probe.sh` for the wrapper's `--gpu-target hip`
-lane. It records what `hipcc`, `amdgpu-arch` and `rocminfo` report and stamps
-`probe_status=HOST_ONLY`: there is **no** device-attribute kernel for HIP, for
-the reason this file gives above — it cannot be written blind, and there is no
-AMD GPU here to write it against.
+`probe-hip.sh` is the AMD side of `probe-cuda.sh` for the wrapper's
+`--gpu-target hip` lane. It records what `hipcc`, `amdgpu-arch` and `rocminfo`
+report and stamps `probe_status=HOST_ONLY`: there is **no** device-attribute
+kernel for HIP, for the reason this file gives above — it cannot be written
+blind, and there is no AMD GPU here to write it against.
 
 ## Read the probe before the ladder
 
@@ -192,14 +192,14 @@ along with all five.
 
 | file | role |
 | --- | --- |
-| `probe.cu`, `probe.sh` | machine probe → `probe.txt` |
+| `probe.cu`, `probe-cuda.sh` | machine probe → `probe.txt` |
 | `TESTS.txt` | the subset and why each test is in it |
 | `pack-bundle.sh` | dev box: emit, prune, stamp, tar |
 | `ladder.sh` | instance: rungs 0–6, exit-code table |
 | `run-one.sh` | one invocation, for `campaign.py --runner` |
 | `STAMP` (in the bundle) | git revision, date, census, per-test geometry, emitter + dialect SHA-256 |
 
-The emitted harness dirs are self-contained — `outs.c/h`, `het_stress.cuh`,
+The emitted harness dirs are self-contained — `outs.c/h`, `het_stress.h`,
 `het_cpu_stress.h` and `het_verdict.h` are written into every dir at emission —
 so the instance needs no repo, no OCaml and no `litmus7`: just `nvcc`, `gcc`,
 `make` and `python3`.

@@ -599,7 +599,7 @@ static het_verdict_t het_verdict(const het_obs_record *r,
      tally.  Zero spins across an entire run means it never ran. */
   if (het_dead(req, HET_REQ_SPIN, r->spin_rendezvous + r->spin_cap))
                                                   dq |= HET_DQ_SPIN_DEAD;
-  /* The GPU scratchpad stress, evidenced by het_stress.cuh's round tally
+  /* The GPU scratchpad stress, evidenced by het_stress.h's round tally
      (HET_TALLY_STRESS_ROUNDS).  This check and stresscheck.py are not redundant:
      this one proves the loop RAN, stresscheck.py proves it still CONTAINS its
      scratchpad accesses and that they survive the -D pattern knobs.  A layer can

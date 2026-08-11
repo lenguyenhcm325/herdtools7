@@ -3,8 +3,8 @@
 # HetLitmus dev-tier probe driver.  Compiles + runs probe.cu and adds the
 # host-side facts it cannot see from CUDA, into <results>/probe.txt.
 #
-#   sh probe.sh                 # results-devtier-<date>-<host>/probe.txt
-#   RESULTS=... sh probe.sh     # somewhere else
+#   sh probe-cuda.sh                 # results-devtier-<date>-<host>/probe.txt
+#   RESULTS=... sh probe-cuda.sh     # somewhere else
 #
 # PTX-ONLY BUILD.  probe.cu is compiled to compute_75 PTX and JIT-ed at load, so
 # one command works on sm_75 (T4G), sm_90 (GH200) and sm_121 (GB10) without

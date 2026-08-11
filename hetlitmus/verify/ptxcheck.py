@@ -634,7 +634,7 @@ def split_het_segments(observed, n_gpu_procs):
     The anchor is a SYSTEM-SCOPE atom/red.  The corpus model (ptx.bell declares
     R/W/F only) has no RMW, so every atom/red is scaffolding -- but of two kinds,
     and only one is a barrier: the rendezvous fetch_add is system-scoped while
-    the window-opener (het_stress.cuh het_spin) is device-scoped.  Anchoring on
+    the window-opener (het_stress.h het_spin) is device-scoped.  Anchoring on
     scope is the check, not a bypass -- a spin that became system-scoped would be
     counted here as a barrier fetch_add and blow the per-lane count in
     check_barrier_whitelist.
@@ -731,7 +731,7 @@ def check_barrier_whitelist(result, barrier_ops, n_lanes):
 # (litmus/hetDialect.ml gd_sys_load_u64) -> ld.relaxed.sys.
 OBS_OP = ('ld', 'relaxed', 'sys')
 
-# The device-scope window-opener (het_stress.cuh het_spin, ported from
+# The device-scope window-opener (het_stress.h het_spin, ported from
 # cuda-litmus `spin'): a relaxed fetch_add on a device-only scratch word, then
 # the relaxed load of its bounded busy-wait.  Emitted once per GPU test lane, at
 # the top of the perpetual loop (`#pragma unroll 1' pins it to exactly one

@@ -164,9 +164,9 @@ end
       let outs_c_content = HetPayloads.outs_c
       (* the ported cuda-litmus GPU stress layer, emitted verbatim into every het
          harness dir and #include'd by both the .cu and the .hip render. *)
-      let het_stress_content = HetPayloads.het_stress_cuh
+      let het_stress_content = HetPayloads.het_stress_h
       (* the CPU-side + interconnect stress layer.  A SEPARATE header from
-         het_stress.cuh because it is the only place host-ISA asm may live: the
+         het_stress.h because it is the only place host-ISA asm may live: the
          .cu is nvcc's translation unit, and the preload primitives are AArch64
          (dc civac / prfm) or x86 (clflush / prefetcht0) inline asm.  Only
          <test>_cpu.c -- compiled by gcc, and cross-assembled by
@@ -2321,7 +2321,7 @@ end
             (match dialect.gd_place_lever with
              | Some lever -> s (Printf.sprintf "#define HET_PLACE_LEVER %S\n" lever)
              | None -> ()) ;
-            s "#include \"het_stress.cuh\"\n" ;
+            s "#include \"het_stress.h\"\n" ;
             s "#include \"het_cpu_stress.h\"\n" ;
             s "#include \"het_verdict.h\"\n" ;
             s "extern \"C\" {\n" ;
@@ -3038,7 +3038,7 @@ end
                      why pair_label)) in
           write "outs.h" (fun ch -> output_string ch outs_h_content) ;
           write "outs.c" (fun ch -> output_string ch outs_c_content) ;
-          write "het_stress.cuh" (fun ch -> output_string ch het_stress_content) ;
+          write "het_stress.h" (fun ch -> output_string ch het_stress_content) ;
           write "het_cpu_stress.h"
             (fun ch -> output_string ch het_cpu_stress_content) ;
           write "het_verdict.h"

@@ -323,7 +323,7 @@ runtime tally**, so `het_obs_record` carried no evidence the loop had *executed*
 refused to disqualify on `HET_REQ_GPU_STRESS`, because *a check that cannot fail is worse
 than no check*.
 
-**B6b closes it.** `het_stress.cuh` gained `HET_TALLY_STRESS_ROUNDS` (an `atomicMax` of the
+**B6b closes it.** `het_stress.h` gained `HET_TALLY_STRESS_ROUNDS` (an `atomicMax` of the
 rounds any single `het_do_stress` call completed — overflow-free, like `NOISE_ROUNDS`), the
 record gained `gpu_stress_rounds`, and `het_verdict()` gained `HET_DQ_GPU_STRESS_DEAD`.
 `stresscheck.py` gained a **D1 device probe** that drives `het_do_stress` on real hardware

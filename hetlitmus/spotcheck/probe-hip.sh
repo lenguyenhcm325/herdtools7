@@ -1,20 +1,20 @@
 #!/bin/sh
 # =========================================================================
-# HetLitmus device probe, AMD side -- the sibling of probe.sh (NVIDIA).
+# HetLitmus device probe, AMD side -- the sibling of probe-cuda.sh (NVIDIA).
 #
 #   sh probe-hip.sh                 # results-devtier-<date>-<host>/probe.txt
 #   RESULTS=... sh probe-hip.sh     # somewhere else
 #
-# NO DEVICE-ATTRIBUTE KERNEL.  probe.sh compiles and runs probe.cu, which asks
-# the driver what the device offers (managed memory, host page tables, system
-# atomics).  Its HIP twin has to ask different questions of a different runtime
-# and cannot be written blind: there is no AMD GPU on the dev box, so not one of
-# its answers could be observed here (spotcheck/README.md).  This script
-# therefore records what the VENDOR TOOLS report and stamps probe_status so the
+# NO DEVICE-ATTRIBUTE KERNEL.  probe-cuda.sh compiles and runs probe.cu, which
+# asks the driver what the device offers (managed memory, host page tables,
+# system atomics).  Its HIP twin has to ask different questions of a different
+# runtime and cannot be written blind: there is no AMD GPU on the dev box, so
+# not one of its answers could be observed here (spotcheck/README.md).  This
+# script records what the VENDOR TOOLS report and stamps probe_status so the
 # results dir says which probe it got -- it does not stand in for the kernel.
 #
-# The host-half keys are spelled exactly as probe.sh spells them, so a probe.txt
-# from either vendor diffs against one from the other.
+# The host-half keys are spelled exactly as probe-cuda.sh spells them, so a
+# probe.txt from either vendor diffs against one from the other.
 #
 # Everything is key=value, one per line.  Nothing here is a litmus result.
 # =========================================================================

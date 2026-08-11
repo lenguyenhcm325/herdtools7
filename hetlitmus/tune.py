@@ -34,7 +34,7 @@ import sys
 
 # ===========================================================================
 # Park-Miller (Lehmer minimal-standard) RNG.                 [GPUHarbor 3.4]
-# Same multiplier and modulus as het_stress.cuh het_rng, so a tuning campaign
+# Same multiplier and modulus as het_stress.h het_rng, so a tuning campaign
 # replays from its seed on the host exactly as on the device.  Reimplemented
 # rather than shared: het_rng is CUDA, the config search runs host-side.
 # ===========================================================================
@@ -85,7 +85,7 @@ class ParkMiller(object):
 # A domain is ("int", lo, hi) or ("choice", [v, ...]): search spaces, not values.
 # The three sub-searches target three near-separable resources (Q7 3.2): on-die
 # GPU caches (G), CPU caches/LPDDR (C), the C2C interconnect (I).  Every knob
-# below exists in litmus/het-runtime/{het_stress.cuh,het_cpu_stress.h}.
+# below exists in litmus/het-runtime/{het_stress.h,het_cpu_stress.h}.
 # ===========================================================================
 SUBSEARCH = {
     # -- Sub-search G: GPU scratchpad stress (S&D patch/spread/sequence; Q5). ------

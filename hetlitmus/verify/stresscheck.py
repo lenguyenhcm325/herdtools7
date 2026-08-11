@@ -237,7 +237,7 @@ def check_cu(cu_path, arch="sm_90", verbose=True):
 # which is why het_verdict() would otherwise be unable to disqualify a run on
 # HET_REQ_GPU_STRESS.
 #
-# het_stress.cuh counts het_do_stress rounds (HET_TALLY_STRESS_ROUNDS).  A counter
+# het_stress.h counts het_do_stress rounds (HET_TALLY_STRESS_ROUNDS).  A counter
 # is only evidence if it can be shown to move AND to stay at zero, so this probe
 # drives het_do_stress on the real device and asserts BOTH:
 #     iterations > 0  =>  tally != 0     (the mechanism is live)
@@ -252,7 +252,7 @@ D1_SRC = r"""
 #include <cstdio>
 #include <cstdint>
 #include <cuda/atomic>
-#include "het_stress.cuh"
+#include "het_stress.h"
 
 __global__ void probe(uint32_t* scratch, uint32_t* loc, uint32_t* tally,
                       uint32_t iters, uint32_t pat) {
@@ -287,8 +287,8 @@ int main(void) {
 
 def d1_probe(hdir, fail, note):
     """Compile + RUN het_do_stress on the device; require live-when-on, zero-when-off."""
-    if not os.path.exists(os.path.join(hdir, "het_stress.cuh")):
-        fail("D1: het_stress.cuh is not next to the .cu -- cannot probe the tally")
+    if not os.path.exists(os.path.join(hdir, "het_stress.h")):
+        fail("D1: het_stress.h is not next to the .cu -- cannot probe the tally")
         return
     tmp = tempfile.mkdtemp(prefix="stress_d1_")
     try:

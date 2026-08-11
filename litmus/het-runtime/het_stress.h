@@ -1,6 +1,6 @@
 /* =========================================================================
- * het_stress.cuh -- HetLitmus GPU memory-stress layer.
- * Emitted verbatim into every harness dir; edit litmus/het-runtime/het_stress.cuh,
+ * het_stress.h -- HetLitmus GPU memory-stress layer.
+ * Emitted verbatim into every harness dir; edit litmus/het-runtime/het_stress.h,
  * never a harness-dir copy.  Included by both <test>.cu and <test>.hip.
  * Maintainer notes: litmus/het-runtime/README.md; spec: env-research/Q5-gpu-stress.md.
  *
@@ -56,8 +56,8 @@
  *     (at het_do_stress).
  * Forensics: env-research/impl-briefs/B4-impl-brief.md and B4-fix-impl-brief.md.
  * ========================================================================= */
-#ifndef HET_STRESS_CUH
-#define HET_STRESS_CUH
+#ifndef HET_STRESS_H
+#define HET_STRESS_H
 
 #include <stdint.h>
 #include <stdio.h>      /* het_report_spread: a degraded stress layer must say so */
@@ -435,4 +435,4 @@ __host__ static void het_set_scratch_locations(uint32_t* locations, int num_work
   het_report_spread(locations, num_workgroups);
 }
 
-#endif /* HET_STRESS_CUH */
+#endif /* HET_STRESS_H */

@@ -8,7 +8,7 @@
  * litmus/het-runtime/README.md.  Spec: env-research/Q6-cpu-interconnect-stress.md
  * and env-research/impl-briefs/B5-impl-brief.md.
  *
- * WHY THIS LAYER EXISTS.  het_stress.cuh's device-only scratchpad widens the
+ * WHY THIS LAYER EXISTS.  het_stress.h's device-only scratchpad widens the
  * intra-device window.  The heterogeneous weak behaviour lives in the cross-device
  * window -- a store in flight across the CPU-GPU interconnect but not yet globally
  * visible -- which per-device stress on either side never loads.  Two levers here
@@ -35,7 +35,7 @@
  * per-device stress.  Do not upgrade that without hardware evidence.  (Q6 3.3.)
  *
  * SOURCES, cited because they are reused; for cuda-litmus, which carries no
- * licence file, citation is the condition of reuse (stated once, het_stress.cuh).
+ * licence file, citation is the condition of reuse (stated once, het_stress.h).
  *   Alglave, Maranget, Sarkar, Sewell, "Litmus: Running Tests against Hardware",
  *     TACAS'11 section 3 -- the CPU incantation vocabulary ported here: concurrent
  *     instances, indirect (shuffled-pointer) access, preload, affinity.
@@ -43,7 +43,7 @@
  *     all of this sound, and the knobs patch P / sequence sigma / spread m.
  *   Alglave et al., ASPLOS'15 4.3.1 -- the window-widening rationale ("a bus may
  *     be more likely to transfer data out of order when it is under heavy stress")
- *     and the Nvidia/AMD vendor split, which is stated once, in het_stress.cuh.
+ *     and the Nvidia/AMD vendor split, which is stated once, in het_stress.h.
  *   Fusco, Khalilov, Chrapek, Chukkapalli, Schulthess, Hoefler, arXiv:2408.11556
  *     -- the noise-kernel construction (each PU stream-reads the other's memory
  *     from a large buffer), and the caveat that Hopper's L2 caches peer HBM, so
@@ -214,7 +214,7 @@ extern "C" {
 #endif
 
 /* -------------------------------------------------------------------------
- * LIVENESS TALLY -- the CPU twin of het_stress.cuh's.  Nothing in this layer is
+ * LIVENESS TALLY -- the CPU twin of het_stress.h's.  Nothing in this layer is
  * visible to a structural gate: the enemies touch a private scratchpad, the
  * preload emits cache hints, the noise streams a disjoint buffer, and none of it
  * enters the tested op stream (correctly -- it is scaffolding).  So a layer that
@@ -365,7 +365,7 @@ static inline void het_cache_touch(void *p) { (void)p; }
 static inline void het_cache_touch_store(void *p) { (void)p; }
 #endif
 
-/* ---- seeded Park-Miller (host twin of het_stress.cuh's) ------------------ */
+/* ---- seeded Park-Miller (host twin of het_stress.h's) ------------------ */
 static inline uint32_t het_cpu_rng_next(uint32_t *s) {
   *s = (uint32_t)(((uint64_t)*s * 16807ull) % 2147483647ull);
   return *s;
@@ -448,7 +448,7 @@ uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t *rng, int pct) {
  * `seq' is a RUNTIME field, and the accesses are `volatile'.  Both are
  * load-bearing.  A compile-time sigma lets the optimiser fold the switch to one
  * branch and, if that branch has no stores, delete the loop -- the failure mode
- * het_stress.cuh's caller contract describes.  Without `volatile' the loop's only
+ * het_stress.h's caller contract describes.  Without `volatile' the loop's only
  * observable effect is memory traffic it does not name, so -O2 deletes the reads
  * outright; this is where the CPU enemy diverges from the GPU stresser, whose
  * accesses are deliberately non-volatile.  `volatile' forbids elision and

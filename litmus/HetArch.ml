@@ -463,7 +463,7 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
 end
 
 (* The embedded C/CUDA runtime payloads (litmus7's outs.{h,c} histogram +
-   het_stress.cuh + het_cpu_stress.h + het_verdict.h) used to live here as
+   het_stress.h + het_cpu_stress.h + het_verdict.h) used to live here as
    {ocaml|...|ocaml} literals -- 87% of this file.  They are now real source
    files: litmus/libdir/_outs.{h,c} and litmus/het-runtime/* (design notes in
    litmus/het-runtime/README.md), wrapped into the generated HetPayloads module

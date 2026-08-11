@@ -23,8 +23,8 @@
  *   4. a GPU that can be launched on at all, at this compute capability.
  *
  * Everything is printed as key=value, one per line, so probe.txt is greppable
- * and diffable across boxes.  Compile with PTX only (see probe.sh) -- this file
- * must load on sm_60 through sm_121+ without knowing the arch in advance.
+ * and diffable across boxes.  Compile with PTX only (see probe-cuda.sh) -- this
+ * file must load on sm_60 through sm_121+ without knowing the arch in advance.
  *
  * SCOPE: this is a machine probe.  It makes no memory-model claim and its
  * output is never a litmus result.

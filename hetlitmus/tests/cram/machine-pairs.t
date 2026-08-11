@@ -157,7 +157,7 @@ why they are counted here and not left to (e).
   1 MI300
 
 The CUDA render also carries its own DIALECT payload's design notes:
-het_alloc_cuda.inc, het_noise_cuda.inc and het_stress.cuh describe mechanisms
+het_alloc_cuda.inc, het_noise_cuda.inc and het_stress.h describe mechanisms
 derived for GH200 and name it in COMMENTS, which is where all of the residue
 below now is -- the two stress warnings those payloads print take their machine
 nouns from the row that resolved (litmus/hetMachine.ml mc_words), so on this lane

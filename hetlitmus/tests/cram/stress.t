@@ -9,7 +9,7 @@ Stress is not an optimisation: on NVIDIA silicon (our GH200 target) the harness
 observes nothing without it, whereas the same source saw weak behaviours on AMD
 with no incantation at all, so on the .hip render this layer amplifies rates
 rather than enabling observation.  The quotes, tables and vendor split live once,
-in the emitted het_stress.cuh (pinned in (e3)); do not repeat the claim
+in the emitted het_stress.h (pinned in (e3)); do not repeat the claim
 unqualified.
 
 The `.hip' renders come from ../het-x86, not from ../het: a harness is a
@@ -30,12 +30,12 @@ sections read is the GPU render and the shared runtime headers.
 (a) the ported stress layer is emitted ONCE per harness dir and included by that
 dir's render -- one shared header, so all reused cuda-litmus code and its
 mandatory citations sit in one auditable file.
-  $ test -f MP-cg-sys-acqrel-2s/het_stress.cuh && echo present
+  $ test -f MP-cg-sys-acqrel-2s/het_stress.h && echo present
   present
-  $ grep -c '#include "het_stress.cuh"' $MP.cu $MPH.hip
+  $ grep -c '#include "het_stress.h"' $MP.cu $MPH.hip
   MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu:1
   hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64.hip:1
-  $ grep -c 'cuda-litmus' MP-cg-sys-acqrel-2s/het_stress.cuh > /dev/null && echo cited
+  $ grep -c 'cuda-litmus' MP-cg-sys-acqrel-2s/het_stress.h > /dev/null && echo cited
   cited
 
 (b) two object classes, two allocators.  The scratchpad is GPU-only and disjoint
@@ -147,9 +147,9 @@ The pre-stress runs in every test lane, so the control is stressed exactly as T.
 
 and an out-of-range pattern is refused at COMPILE time -- het_do_stress's
 if-chain has no else, so upstream's pattern 57 would silently stress nothing.
-  $ grep -c '#error "HET_PRE_STRESS_PATTERN must be 0..3' MP-cg-sys-acqrel-2s/het_stress.cuh
+  $ grep -c '#error "HET_PRE_STRESS_PATTERN must be 0..3' MP-cg-sys-acqrel-2s/het_stress.h
   1
-  $ grep -c '#error "HET_MEM_STRESS_PATTERN must be 0..3' MP-cg-sys-acqrel-2s/het_stress.cuh
+  $ grep -c '#error "HET_MEM_STRESS_PATTERN must be 0..3' MP-cg-sys-acqrel-2s/het_stress.h
   1
 
 (e2) liveness tally: every mechanism in the stress layer is invisible to the L0
@@ -165,7 +165,7 @@ disqualify a run and the tuner can tune against it.
   1
   $ grep -c 'spin=%llu/%llu stress_trunc=%llu' MP-cg-sys-acqrel-2s/het_verdict.h
   1
-  $ grep -c 'het_scratch_bump(&tally\[(val >= limit) ? HET_TALLY_RDV : HET_TALLY_CAP\])' MP-cg-sys-acqrel-2s/het_stress.cuh
+  $ grep -c 'het_scratch_bump(&tally\[(val >= limit) ? HET_TALLY_RDV : HET_TALLY_CAP\])' MP-cg-sys-acqrel-2s/het_stress.h
   1
 
 (e3) the two UPSTREAM defects are disclosed in the emitted header, not just in a
@@ -175,15 +175,15 @@ used regions and queries it but never inserts, so it never dedups and its
 realised spread is <= m.  We dedup for real, which is a behavioural divergence,
 disclosed both in the header (where a reader looks for provenance) and at the
 code site (where a maintainer looks before "restoring" upstream's version).
-  $ grep -c 'NEVER INSERTS INTO IT' MP-cg-sys-acqrel-2s/het_stress.cuh
+  $ grep -c 'NEVER INSERTS INTO IT' MP-cg-sys-acqrel-2s/het_stress.h
   1
-  $ grep -c 'never inserts into the set' MP-cg-sys-acqrel-2s/het_stress.cuh
+  $ grep -c 'never inserts into the set' MP-cg-sys-acqrel-2s/het_stress.h
   1
 
 and the Alglave "zero without stress" result is qualified to NVIDIA, because this
 header is #include'd by the .hip (AMD) render too -- on AMD the same paper saw lb
 without any incantation.
-  $ grep -c 'VENDOR SPLIT' MP-cg-sys-acqrel-2s/het_stress.cuh
+  $ grep -c 'VENDOR SPLIT' MP-cg-sys-acqrel-2s/het_stress.h
   2
 
 (f) the stress toggles are decided DEVICE-side off a seeded Park-Miller stream:
@@ -241,5 +241,5 @@ atomics, which CUDA and HIP genuinely spell differently -- resolves to the HIP
 spelling.
   $ grep -c 'het_spin(_spin_bar' $SH.hip
   3
-  $ grep -c '__HIP_MEMORY_SCOPE_AGENT' hip/S-cg-sys-fence-x86_64/het_stress.cuh
+  $ grep -c '__HIP_MEMORY_SCOPE_AGENT' hip/S-cg-sys-fence-x86_64/het_stress.h
   2

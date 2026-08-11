@@ -121,8 +121,8 @@ ERR_HARNESS = ("#!/bin/sh\n"
 BAD_CC = "#!/bin/sh\necho 'stub-cc: this compiler always fails' >&2\nexit 1\n"
 
 STUB_PROBE = r'''#!/bin/sh
-# Stand-in for probe.sh / probe-hip.sh: the shape of a probe record, none of the
-# facts.  The wrapper records that a stand-in was used.
+# Stand-in for probe-cuda.sh / probe-hip.sh: the shape of a probe record, none
+# of the facts.  The wrapper records that a stand-in was used.
 set -eu
 mkdir -p "$RESULTS"
 {

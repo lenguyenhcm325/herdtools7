@@ -47,7 +47,7 @@ LANES = [
     (HET_DIR, "IRIW-cgcg-sys-fence-2s", "cuda", "cu"),
     (X86_DIR, "MP-cg-sys-relaxed-x86_64", "hip", "hip"),   # the (X86_64, hip) pair
 ]
-HEADERS = ["het_verdict.h", "het_stress.cuh", "het_cpu_stress.h"]
+HEADERS = ["het_verdict.h", "het_stress.h", "het_cpu_stress.h"]
 
 FIELD_RE = re.compile(r"_rec\.([A-Za-z_][A-Za-z0-9_]*)")
 DEFINE_RE = re.compile(r"^#define (HET_[A-Za-z0-9_]+)", re.M)
