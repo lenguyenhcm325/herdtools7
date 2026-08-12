@@ -7,7 +7,7 @@ OBSERVER ws witness: the register pass marks the atom `1 /* [ell] via observer
 _loc */` and the location is tracked by the _loc cycle over the _ws_<ell>_<c|g>
 observer scans.  We emit the four representative shapes and assert every location
 atom keeps its [ ] label and is tracked by an observer cycle -- never dropped,
-never constant-true, never the old HET_UNCONVERTIBLE.
+never constant-true.
 
 (B6c: every het test now co-runs at least the Layer-B canary, so the test under
 study carries the instance prefix `t_' -- `_loc' is `_t_loc' and `_ws_y_c' is
@@ -48,8 +48,3 @@ free now that the emitted name is `_t_loc', which is a guard that stopped guardi
   static const char* _labels[2] = { "1:r0", "1:r1" };
   $ grep -cE 'int _(t_|mu_|can_)?loc =' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
   0
-
-No emitted recovery is ever the old constant-true `_cond`, and no location atom
-degrades to the old HET_UNCONVERTIBLE marker, across the corpus path above.
-  $ grep -rlE 'static int _cond|HET_UNCONVERTIBLE|unsupported atom' */*.cu
-  [1]

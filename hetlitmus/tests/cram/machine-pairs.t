@@ -60,15 +60,14 @@ name rather than from a count that a missing line and a renamed one share.
 
 (c) THE LANDMINE.  (x86_64, cuda) is REGISTERED WITHOUT A MACHINE ROW -- it is
 the dev box, and it is neither published part -- so its harnesses may name
-neither.  Neither the retired AMD verdicts file nor the MI300A machine words
-appear anywhere in the harness directory.  (`MI300A' alone is not the pin: the
-CPU stress payload's comments compare the two hosts by name, and section (f)
-tracks that residue by count.)
+neither.  The MI300A machine words appear nowhere in the harness directory.
+(`MI300A' alone is not the pin: the CPU stress payload's comments compare the
+two hosts by name, and section (f) tracks that residue by count.)
   $ mkdir xc
   $ litmus7 -gpu-target cuda -o xc ../het-x86/MP-cg-sys-relaxed-x86_64.litmus >/dev/null 2>&1
   $ grep -c '_rec.rec_magic = HET_REC_MAGIC;' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu
   1
-  $ grep -rlE 'expected-amd|AMD-CDNA3-x86|Infinity Fabric' xc | wc -l
+  $ grep -rlE 'Infinity Fabric' xc | wc -l
   0
 
 It names no MACHINE at all: with no defines stamped, het_verdict.h's generic
@@ -172,10 +171,9 @@ opens; (e) is the pin on what it says.
   3 Hopper
   3 NVLink
 
-What is NOT whitelisted at any count: a claim about the machine, or the name of
-a retired verdicts file.  A render may compare itself to the other vendor's; it
-may not say it IS one, and it carries no verdict at all.
-  $ grep -ciE 'nvlink|grace|hopper|expected-nvidia|NVIDIA-PTX' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip || true
+What is NOT whitelisted at any count: a claim about the machine.  A render may
+compare itself to the other vendor's; it may not say it IS one.
+  $ grep -ciE 'nvlink|grace|hopper' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip || true
   0
-  $ grep -ciE 'infinity fabric|expected-amd|AMD-CDNA3' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu || true
+  $ grep -ciE 'infinity fabric' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu || true
   0

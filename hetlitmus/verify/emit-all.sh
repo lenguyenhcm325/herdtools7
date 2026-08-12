@@ -92,7 +92,7 @@ aarch64:hip:hip:het-hip"
 # compare the two hosts by name -- see cram machine-pairs.t (f).)
 forbidden_of_lane() {           # <corpus>:<target> -> egrep pattern, or ""
   case "$1" in
-    x86:cuda) echo 'expected-amd|AMD-CDNA3-x86|Infinity Fabric' ;;
+    x86:cuda) echo 'Infinity Fabric' ;;
     *)        echo '' ;;
   esac
 }

@@ -176,7 +176,7 @@ DISJOINT CACHE-LINE-PADDED LOCATIONS (Q4 3.1).  Disjoint addresses are not
 enough: two variables on one cache line are one coherence unit, so mu(T)'s
 traffic would drag T's line around and the control would perturb the very test it
 exists to vouch for.  One gd_alloc_shared arena, carved one line apart, and the
-allocator must stay the coherent one (shared-alloc.t (f)).
+allocator must stay the coherent one (shared-alloc.t (e)).
   $ grep -c 'HET_CACHE_LINE 128' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
   $ grep -oE 'uint64_t \*(t|mu|can)_[xy] = \(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\);' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
