@@ -6,12 +6,14 @@ No harness carries a prediction, so there is no class to schedule against and ev
 gets the SAME policy: run it until its sighting is corroborated, until a lone sighting
 outlives the confirmation window, or until its budget is gone.
 
-THE POLICY IS het_verdict.h's, MIRRORED.  `TestState.decide' below is a transcription
-of het_campaign_should_stop() -- same precedence, same guards, same names -- applied at
-the cross-invocation scale (pooled runs) instead of the in-invocation one (records so
-far).  Within one invocation the harness applies it itself (HET_ADAPTIVE=1), so the two
-layers cannot disagree about a row; `check_flag_mirror' pins the constants and the stop
-names against the header so they cannot drift silently either.
+THE POLICY IS het_verdict.h's, APPLIED AT A SECOND SCALE.  `TestState.decide' below
+takes its arms in het_verdict.h's precedence, over pooled runs rather than over the
+records one invocation has so far, and inside an invocation the harness applies the
+header's rule itself (HET_ADAPTIVE=1).  Two different units, so nothing makes the two
+layers reach the same arm on the same row.  What is pinned, by `check_flag_mirror'
+against the header, is narrower: HET_CORROB_RUNS, the stop-name strings this driver
+writes into its state file and reads back as terminal, and that the confirmation
+window is measured from the sighting rather than from run 0.
 
   --rate (HET_RATE=1) turns the sighting stop off: the row runs to its budget and
      yields a RATE rather than a first sighting.  The budget still stops it.
@@ -26,7 +28,8 @@ names against the header so they cannot drift silently either.
 POOLING ACROSS INVOCATIONS (the arithmetic, stated so it can be audited; `absorb'
 implements it).  Invocations use FRESH seed bases, since replaying a seed adds no new
 phase draws and a replayed run is not a replicate; the pooled row is therefore a sum
-over independent replicates -- runs*, k* and k_runs* are sums.
+over independent replicates -- runs*, usable*, k*, k_eff* and k_runs* are sums, and it
+is k_eff* the sighting arms branch on, not k* (`sighting_open').
 
 RUNNER CONTRACT: --runner is a command template with '{test}' and '{dir}' substituted.
 It must execute ONE invocation of the test's harness binary and forward the harness
@@ -131,20 +134,20 @@ def fnum(kv, key, dflt=0.0):
         return dflt
 
 
-# CORROB_RUNS and STOP_NAMES are hand-mirrors of the header, and a scheduler applying
-# a stale copy of the policy the harness applies is the drift this whole file is
-# written to avoid.  This file is also deliberately standalone -- it is copied on its
-# own onto a rented GPU box -- so the cross-check is conditional on the header being
-# reachable at its in-repo path: present means it must agree, out of reach means the
-# mirror stands.
+# CORROB_RUNS and STOP_NAMES are hand-mirrors of the header's, and a hand-mirror that
+# went stale would have this scheduler corroborate at a different run count from the
+# harness, or write into its state file a stop name the header no longer returns.
+# This file is also deliberately standalone -- it is copied on its own onto a rented
+# GPU box -- so the cross-check is conditional on the header being reachable at its
+# in-repo path: present means it must agree, out of reach means the mirror stands.
 _VERDICT_H = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
                           "litmus", "het-runtime", "het_verdict.h")
 
 
 def check_flag_mirror(path=_VERDICT_H, corrob=CORROB_RUNS, stops=None):
-    """HET_CORROB_RUNS and every stop-name string, as `path` defines them -- or None
-    when the header is out of reach.  Any disagreement is fatal, and so is a header
-    that no longer defines one of them."""
+    """Every stop-name string as `path` defines it -- or None when the header is out of
+    reach.  HET_CORROB_RUNS is checked against `corrob`, not returned.  Any disagreement
+    is fatal, and so is a header that no longer defines one of them."""
     stops = STOP_NAMES if stops is None else stops
     # The terminal set is this driver's own consistency, checked with or without the
     # header: a stop the scheduler can write but never treats as terminal loops forever.

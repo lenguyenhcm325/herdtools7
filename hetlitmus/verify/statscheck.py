@@ -2499,8 +2499,8 @@ def phase6_campaign(quiet):
             # runs after the run it fired in, so through run 31) and ended by it in
             # the fourth invocation -- not by the 100-run budget.
             "SIGHT-lone": ("UNCONFIRMED-SIGHTING", 4),
-            # a sighting the decode guard rejected stops nothing: it can neither
-            # corroborate nor hold a row open, so the row runs to its budget.
+            # a rejected sighting stops nothing (STUB_RUNNER), so the row runs to its
+            # budget.
             "SIGHT-degen": ("BUDGET", 10),
         }
         for t, (stop, inv) in want.items():
@@ -2547,9 +2547,11 @@ def phase6_campaign(quiet):
             bad += 1
 
         # --- 6.1b: WHAT A NULL IS WORTH IS THE EFFORT THAT FAILED TO SEE IT, so the
-        # pooled null's banked row must carry every run its budget bought.  A scheduler
-        # that ended it early on something the harness reported about it would bank the
-        # same "Never" over less effort, and the state file is where that would show.
+        # row the pooled null leaves in the state file must carry every run its budget
+        # bought.  It is read by column name, so it also pins the five columns it names:
+        # one renamed or dropped reads None here and fails.  `usable' does not
+        # discriminate -- every stub line reports usable == R, so a driver banking
+        # `runs' into both columns would pass this.
         want_bank = {"stop": "BUDGET", "invocations": "10",
                      "runs": str(STUB_BUDGET), "usable": str(STUB_BUDGET), "k": "0"}
         banked = {}
@@ -2590,8 +2592,9 @@ def phase6_campaign(quiet):
                         bad += 1
                     if rate != "0" or int(confirm) != CONFIRM:
                         print("  *** %s invocation %s: HET_RATE=%s HET_CONFIRM_RUNS=%s "
-                              "-- the harness applies the rule too and must be told "
-                              "the SAME policy" % (t, inv, rate, confirm))
+                              "-- the harness applies the rule inside the invocation, "
+                              "on the two policy knobs this driver hands it"
+                              % (t, inv, rate, confirm))
                         bad += 1
                     want_max = STUB_BUDGET - STUB_R * (int(inv) - 1)
                     if int(runs_max) != want_max:
