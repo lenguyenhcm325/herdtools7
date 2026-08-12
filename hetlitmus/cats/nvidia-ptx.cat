@@ -3,8 +3,7 @@
 (*
  * Axiomatic (herd7) model for the HetLitmus GPU-only litmus corpus, targeting
  * the NVIDIA Hopper GPU = the *pure scoped PTX memory model*. Pairs with
- * hetlitmus/bells/ptx.bell. This is the NVIDIA counterpart to amd-gcn3.cat;
- * the .litmus files are vendor-neutral and shared, only the verdicts differ.
+ * hetlitmus/bells/ptx.bell; the .litmus files it reads are vendor-neutral.
  *
  * GOAL: machine-check hetlitmus/tests/gpu-only/expected-nvidia.csv (all 137
  * GPU-only tests), and reproduce the 8 hand-derived PLDI'23-anchored verdicts
@@ -43,10 +42,9 @@
  * cta-scope => weak observed), §2.1/§4 (PTX is non-MCA).
  *
  * ============================ SCOPE ENCODING ===============================
- * Identical machinery to amd-gcn3.cat: herd builds true scope-instance
- * structure (tag2scope) from the parseable `scopes: (sys (gpu (cta P0) ...))'
- * tree the corpus carries. Each proc sits in its own CTA, all CTAs under one
- * GPU under one SYS, so:
+ * herd builds true scope-instance structure (tag2scope) from the parseable
+ * `scopes: (sys (gpu (cta P0) ...))' tree the corpus carries. Each proc sits
+ * in its own CTA, all CTAs under one GPU under one SYS, so:
  *   - cta-scope ops on different procs are in DIFFERENT CTAs  -> NOT morally
  *     strong  -> no cross-thread synchronisation (this is why MP-cta-F is
  *     Allowed: Lustig19 §3.3 / Bagchi26 Fig 2e).

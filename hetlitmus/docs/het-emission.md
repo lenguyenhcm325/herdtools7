@@ -223,18 +223,16 @@ Three rules make it worth having:
 
 ### What the defines close, measured
 
-The prose used to **sniff** the recorded oracle-source string for `NVIDIA`. On
-an AMD-tagged harness it therefore called the two halves of the interconnect
-noise *"the Grace half"* and *"the Hopper half"* and cited *"On NVIDIA silicon
-an unstressed run observes nothing"* as if it applied — and it would have said
-the same on an x86 host with an NVIDIA GPU, whose oracle string still carries
-the word. Measured 2026-08-03 on a real run of `2+2W-cpuonly-x86_64`, whose
+The machine prose once keyed on a string the harness carried for another purpose
+entirely, and inherited that string's blind spots: on an AMD-tagged harness it
+still called the two halves of the interconnect noise *"the Grace half"* and
+*"the Hopper half"*, and it would have said the same on an x86 host with an
+NVIDIA GPU. Measured 2026-08-03 on a real run of `2+2W-cpuonly-x86_64`, whose
 first two stderr lines were *"the Hopper half of the C2C noise is DISABLED"* and
-*"the Grace half … is DISABLED"*. None of those is a statement about the machine
-that ran. Keying on the dialect instead of the pair would have reproduced the
-same defect one table over: the host half is a property of the **pair**, so a
-dialect-keyed `HET_HOST_HALF` stamps *"the Grace half"* on the (x86_64, cuda)
-emission.
+*"the Grace half … is DISABLED"*. Neither is a statement about the machine that
+ran. Keying on the **dialect** would have reproduced the same defect one table
+over: the host half is a property of the **pair**, so a dialect-keyed
+`HET_HOST_HALF` stamps *"the Grace half"* on the (x86_64, cuda) emission.
 
 `HET_LLC_MB` is the same rule applied to a *number*. The threshold a noise
 buffer must exceed to cross anything is per target: 114 MB is

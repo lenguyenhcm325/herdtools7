@@ -77,17 +77,14 @@ sequential consistency / full fences (SB needs store→load ordering; IRIW needs
 multi-copy atomicity), and in their forbidden outcome the acquire loads read the
 *initial* value, so the rel/acq pairing never engages.
 
-`SB-sys-F` and `IRIW-sys-F` are nonetheless **Disallowed** in the oracle because
-on AMD a **system-scope** release/acquire is implemented as a heavyweight **cache
-flush/invalidate to the system coherence point** (HRF semantics), behaving far
-more strongly than textbook release/acquire. That extra strength — *not* the
-rel/acq annotation itself — is what forbids SB and IRIW.
-
-**Implication for Task 7 (the `.cat` oracle):** the AMD `.cat` must model
-system-scope release/acquire as **strong** (store-completion + multi-copy
-atomicity at `sys`). A port of the NVIDIA `ptx.cat`, or any pure-ordering rel/acq
-model, will compute `SB-sys-F` / `IRIW-sys-F` as **Allowed** and contradict
-`expected-amd-gcn3.csv`.
+`SB-sys-F` and `IRIW-sys-F` are nonetheless **Disallowed** in the artifact's
+verdicts. Whatever the `GCN3_X86` target gives system-scope release/acquire, it
+is more than the rel/acq annotation by itself supplies — and that is a property
+of the machine the artifact simulated, recorded here rather than derived. The
+consequence worth carrying forward is the direction of the disagreement: any
+model in which rel/acq is *pure scoped ordering* computes `SB-sys-F` /
+`IRIW-sys-F` as **Allowed**, which is exactly what `nvidia-ptx.cat` does. The two
+targets are different machines and neither reading carries to the other.
 
 ### Naming decoded (from `runall_gpu_only.sh` `genFileName` + source files)
 - `Relax` (suffix `-sys`): plain non-atomic loads/stores, compiler reordering

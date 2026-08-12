@@ -1,19 +1,19 @@
 # NVIDIA PTX scoped axiomatic `.cat` — the GPU-only NVIDIA oracle
 
-`hetlitmus/cats/nvidia-ptx.cat` is the NVIDIA-Hopper counterpart to
-`hetlitmus/cats/amd-gcn3.cat`. It machine-checks
-`hetlitmus/tests/gpu-only/expected-nvidia.csv` (all **137** GPU-only tests) and
-reproduces the **8** hand-derived PLDI'23-anchored verdicts. Drive it with:
+`hetlitmus/cats/nvidia-ptx.cat` is the scoped PTX model for NVIDIA Hopper. It
+machine-checks `hetlitmus/tests/gpu-only/expected-nvidia.csv` (all **137**
+GPU-only tests) and reproduces the **8** hand-derived PLDI'23-anchored verdicts.
+Drive it with:
 
 ```
 bash hetlitmus/cats/run-gpu-only-nvidia.sh     # RESULT: 137/137 match
-bash hetlitmus/cats/run-gpu-only.sh            # AMD, unchanged: RESULT: 8/8 match
 ```
 
-The two oracles share the *same* vendor-neutral `.litmus` corpus and the *same*
-`hetlitmus/bells/ptx.bell` vocabulary; only the `.cat` (the meaning) differs. The
-runner reads the verdict off herd7's `Observation … Never|Sometimes|Always` line
-(Never ⇒ the targeted weak outcome is unreachable ⇒ Forbidden/Disallowed).
+It reads the *vendor-neutral* `.litmus` corpus through the
+`hetlitmus/bells/ptx.bell` vocabulary; the vendor-specific part is the `.cat`
+(the meaning), never the `.litmus` layer. The runner reads the verdict off
+herd7's `Observation … Never|Sometimes|Always` line (Never ⇒ the targeted weak
+outcome is unreachable ⇒ Forbidden/Disallowed).
 
 ---
 
@@ -132,16 +132,14 @@ needs *both* halves, so:
 
 Totals: **114 Allowed, 23 Disallowed** (= 11 shapes × {gpu,sys}-fence + MP-sys-F).
 
-**Vendor difference vs `amd-gcn3.cat`** — same `.litmus` files, three verdicts
-flip, all because PTX rel/acq is pure scoped *ordering* (a `synchronizes-with`
-that needs a real morally-strong `rf` to observe), **not** an AMD-GCN3 HRF
-system-scope cache flush:
+**Where this parts company with the PLDI'23 AMD verdicts** — same `.litmus`
+files, three rows differ, all because PTX rel/acq is pure scoped *ordering* (a
+`synchronizes-with` that needs a real morally-strong `rf` to observe):
 
-| test | AMD-GCN3 | NVIDIA-PTX | reason for NVIDIA value |
+| test | `expected-amd-gcn3.csv` | NVIDIA-PTX | reason for the NVIDIA value |
 |---|---|---|---|
 | `LB-sys` | Disallowed | **Allowed** | No-Thin-Air is `acyclic(rf∪dep)`; no dep ⇒ not forbidden |
 | `SB-sys-F` | Disallowed | **Allowed** | both readers read init ⇒ no `rf` to observe ⇒ `sw` never fires; SB needs `fence.sc` (Fig 6) |
 | `IRIW-sys-F` | Disallowed | **Allowed** | PTX is non-MCA; rel/acq cannot force one write order |
 
-`nvidia-ptx.cat` therefore drops AMD's `load-store` (LB) acyclicity and its
-`sys-strong` flush axiom; that is the whole formal content of the vendor split.
+These are different machines, and neither column carries to the other.

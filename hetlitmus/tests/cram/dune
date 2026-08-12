@@ -70,12 +70,11 @@
 ; gpu-target.t is separate because it is the only cram test that emits a PLAIN
 ; CPU-only test -- the boundary check that `-gpu-target' did not become a
 ; condition on upstream litmus7 usage.  That path needs litmus7's libdir, and the
-; libdir cannot be a declared dep either: its per-arch subdirectories are named
+; libdir cannot be a declared dep: its per-arch subdirectories are named
 ; `_aarch64', `_x86_64', ... and dune ignores directories starting with `_', so
 ; (source_tree ../../../litmus/libdir) stages the top level and NONE of the arch
-; files -- silently, exactly the trap amd-cat.t documents for herd/libdir.  So
-; this test walks up from cwd to the source libdir, the same way, and the stanza
-; above stays as it was.
+; files -- silently, which is worse than an error.  So this test walks up from cwd
+; to the source libdir instead, and the stanza above stays as it was.
 (cram
  (applies_to gpu-target)
  (package herdtools7)
@@ -108,37 +107,3 @@
   (glob_files ../het/*.litmus)
   ../het/control-map.csv
   (glob_files ../het-x86/*)))
-
-; amd-cat.t is the third stanza because it is the only cram test that runs herd7.
-; It guards hetlitmus/cats/amd-gcn3.cat after the PORT2-R2 D14 repair
-; (SC-per-location, the 'sc set, the two fence-ordering mechanisms, and the
-; tag2events fence seam).  That file's own validation -- "8/8 against the PLDI'23
-; artifact" -- is provably blind to every one of those: the test measures that all
-; eight of its ablations still score 8/8.  The 137-test GPU-only corpus is blind to
-; the coherence half as well -- three of the eight ablations (A0, A1, A01) move 0 of
-; its 137 rows.  For those the probes are the ONLY instrument in the tree that sees
-; the repair, which is why D14 asked for a cram test and not a corpus count.
-;
-; herd7's libdir is NOT and CANNOT BE a declared dep: herd/dune line 1 reads
-; `(dirs :standard \ tests/instructions libdir)`, so herd/libdir is outside dune's
-; source scan altogether and both (source_tree ...) and (glob_files ...) on it
-; resolve to NOTHING -- silently, which is worse than an error.  (Measured: with
-; either form declared, every herd7 invocation below still died with "Cannot find
-; file stdlib.cat".)  litmus7 does not have this problem because het emission needs
-; no libdir at all.  amd-cat.t therefore locates the SOURCE libdir at run time by
-; walking up from cwd until it finds herd/libdir/stdlib.cat, which works from the
-; build dir and from a dune sandbox alike.  Consequence, stated so nobody assumes
-; otherwise: editing a file under herd/libdir does NOT invalidate this test's dune
-; cache.  Run `make hetlitmus-cram` after touching herd/libdir, or `dune build
-; @hetlitmus/tests/cram/amd-cat --force`.  If the walk-up ever fails the test does
-; not go quiet -- herd7 prints its libdir error, every verdict line comes out empty
-; and the golden mismatches on the first probe.
-(cram
- (applies_to amd-cat)
- (package herdtools7)
- (deps
-  %{bin:herd7}
-  ../../bells/ptx.bell
-  ../../cats/amd-gcn3.cat
-  (glob_files ../../cats/probes/*)
-  (glob_files ../gpu-only/*.litmus)))

@@ -6,8 +6,6 @@
 #   test | computed | expected | match
 # against that model's expected-*.csv.
 #
-#   amd     amd-gcn3.cat vs expected-amd-gcn3.csv (PLDI'23 GCN3_X86), which
-#           carries verdicts for the 8 PLDI'23-anchored tests only.
 #   nvidia  nvidia-ptx.cat vs expected-nvidia.csv, 137 rows all machine-computed
 #           by this same cat.  The 8 anchored rows were ALSO hand-derived from
 #           the PTX model and are reproduced by the cat -- they are printed
@@ -15,7 +13,7 @@
 #
 # Run from the herdtools7 repo root, with herd7 built in _build (see memory
 # herdtools7-build-run):
-#     bash hetlitmus/cats/run-gpu-only.sh [amd|nvidia]     (default amd)
+#     bash hetlitmus/cats/run-gpu-only.sh [nvidia]         (default nvidia)
 #     bash hetlitmus/cats/run-gpu-only-nvidia.sh           (the nvidia entry point)
 set -u
 
@@ -26,12 +24,10 @@ export PATH="$BIN:$PATH"
 BELL=hetlitmus/bells/ptx.bell
 TESTDIR=hetlitmus/tests/gpu-only
 
-case "${1:-amd}" in
-  amd)    CAT=hetlitmus/cats/amd-gcn3.cat
-          CSV=$TESTDIR/expected-amd-gcn3.csv; ALL=0; W=12; TAIL=6;;
+case "${1:-nvidia}" in
   nvidia) CAT=hetlitmus/cats/nvidia-ptx.cat
           CSV=$TESTDIR/expected-nvidia.csv;   ALL=1; W=20; TAIL=16;;
-  *) echo "usage: $0 [amd|nvidia]" >&2; exit 2;;
+  *) echo "usage: $0 [nvidia]" >&2; exit 2;;
 esac
 
 # The 8 PLDI'23-anchored tests (hand-derived verdicts); printed first.

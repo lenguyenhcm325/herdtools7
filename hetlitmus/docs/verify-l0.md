@@ -115,7 +115,7 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
   full-system Data Memory Barrier) and **Bagchi et al., ISMM '26**, *Consistency
   and Coherence of the NVIDIA Grace-Hopper Superchip*, Fig. 1 (the GH200
   CPU release/acquire/fence → STLR/LDAPR/DMB.SY mapping). The RCpc(`LDAPR`)
-  choice is the one already adopted in the het two-sided oracle.
+  choice is the one the emitter makes (`litmus/hetCpuBodyA64.ml`).
 
 ## What is checked, for every op, both directions
 

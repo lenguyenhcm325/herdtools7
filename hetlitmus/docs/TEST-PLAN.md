@@ -300,14 +300,15 @@ Notes:
   (the same wrapper on a device).
 
 Cram stanzas: `hetlitmus/tests/cram/dune` is the authority and is not mirrored here — it
-carries five `(cram (applies_to …))` stanzas rather than one, because the tests split by
+carries four `(cram (applies_to …))` stanzas rather than one, because the tests split by
 the heaviest tool they need. The three Layer-1 tests (`basics`, `oracle-negatives`,
 `ptx-negatives`) declare **no** binary, so they stay toolchain-free; the emitting tests
 need `%{bin:litmus7}` **and the whole `tests/het` corpus plus `control-map.csv`**, since
 an emission co-runs `mu(T)` and the canary and there is no principled subset; `gpu-target`
-and `machine-pairs` are separate for reasons the file's own comments give; `amd-cat` is
-the only stanza that runs `herd7`. Each comment there also records a trap (`herd/libdir`
-and `litmus/libdir` cannot be declared as deps) — read them before adding a stanza.
+and `machine-pairs` are separate for reasons the file's own comments give. No stanza names
+`herd7`: cram covers emission, and the `.cat` lane is driven by hand. The `gpu-target`
+comment records a trap (`litmus/libdir` cannot be declared as a dep) — read it before
+adding a stanza.
 
 ---
 

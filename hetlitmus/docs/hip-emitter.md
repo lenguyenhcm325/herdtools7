@@ -152,8 +152,9 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
   way.
 - **Task 9 (hardware):** deferred — MI300A runs + stressing + tallying `__out`
   against the `condition` line.
-- **Oracle:** `expected-amd-gcn3.csv` is the AMD GCN3 reference; MI300A is CDNA3
-  (past GCN3) so confirm-don't-assume (memory `hetlitmus-amd-oracle-task7`).
+- **Reference verdicts:** `expected-amd-gcn3.csv` is the AMD GCN3 reference;
+  MI300A is CDNA3, several generations past GCN3, so its rows do not transfer,
+  and no CDNA3 reference replaces them.
 
 ## Grounding sources
 - HIP scoped-atomic builtins + `__HIP_MEMORY_SCOPE_*` ladder: ROCm/clr

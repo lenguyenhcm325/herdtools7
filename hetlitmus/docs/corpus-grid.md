@@ -3,7 +3,8 @@
 This note documents the systematic litmus corpus that
 `hetlitmus/tests/gpu-only/generate.sh` and `hetlitmus/tests/het/generate.sh`
 produce, the shared library that drives them, and two additions a reader should
-know about: the **fence column is advisory** and the **`CPU_ARCHS` knob**.
+know about: the **fence column has no external reference** and the
+**`CPU_ARCHS` knob**.
 
 It supplements the earlier per-area docs: `gpu-only-corpus.md` (the original 8
 PLDI'23-anchored tests + AMD oracle), `het-generation.md` (how `hetgen7` merges
@@ -88,7 +89,8 @@ grid drops 66 (11 shapes × 3 scopes × 4 orders = 132, +8 fixed-name originals
 - GPU-only: `<shape>-<scope>-<order>.litmus` (e.g. `WRC-sys-acquire.litmus`,
   `2+2W-gpu-fence.litmus`). The original 8 keep their fixed names (`MP-sys`,
   `MP-sys-F`, `MP-cta-F`, `LB-sys`, `SB-sys`, `SB-sys-F`, `IRIW-sys`,
-  `IRIW-sys-F`) because the AMD oracle (`run-gpu-only.sh`) references them.
+  `IRIW-sys-F`) because that is how the PLDI'23 artifact names them, and
+  `expected-amd-gcn3.csv` keys its rows on those names.
 - Het: `<shape>-<cuttag>-<scope>-<order>.litmus` (e.g. `MP-cg-sys-fence.litmus`,
   `WRC-gcc-gpu-release.litmus`), where `<cuttag>` abbreviates the device cut
   (`cpu`→`c`, `gpu`→`g`). MP-het/SB-het keep their reference names.
@@ -114,7 +116,7 @@ symmetry-reduced rule (NOT 2ⁿ subsets):
 
 ## Two things to know
 
-### 1. The fence column is ADVISORY (no oracle)
+### 1. The fence column has no external reference
 
 The `fence` column is a **real standalone scoped fence**, distinct from the
 rel/acq columns: the accesses stay relaxed and diy inserts a Bell fence event
@@ -123,31 +125,13 @@ rel/acq columns: the accesses stay relaxed and diy inserts a Bell fence event
 this directly, no generator code change). PTX renders this as
 `fence.sc.<scope>`.
 
-**Caveat — SUPERSEDED for the AMD side, and what replaced it.** This section used
-to say that `hetlitmus/cats/amd-gcn3.cat` deliberately does not model fences, so
-herd7 leaves the fence event unconstrained and the printed `Observation` is
-advisory. That was accurate and is no longer: PORT2-R2 register item **D14**
-required the file to be repaired before it could be cited as an instrument, and
-the repair landed **two** fence-ordering mechanisms — `[HSA]` Fig. 3-15's fence
-clauses in the synchronisation relation, and `[SCATOM]` Def. 27's SC order over
-`'sc` events. Measured over the 6 two-proc shapes × 5 primitives × 5 primitives at
-`sys` scope: **30/150 Forbidden before the repair, 49/150 after**, and 25 of the
-pre-repair 30 were the `LB` block, which `no-load-buffering` decides whatever the
-fence column says. The fence column is therefore **no longer advisory for AMD**.
-
-Two things did *not* change and still bound what the column is worth:
-
-* **The extension is unanchored.** There is no fence and no `sc` operation
-  anywhere in the PLDI'23 artifact, so the "8/8 reproduces the artifact" contract
-  cannot test one line of it — measured in `tests/cram/amd-cat.t`: every one of
-  the eight single-axiom ablations still scores 8/8.
-* **Oracle status is unchanged.** `expected-amd-gcn3.csv` covers the original 8 and
-  no part-(B) grid test, so an offline `oracle-compare.sh` pass over one reports
-  UNINTERPRETED rather than a verdict. (The GPU-only lane's other reference,
-  `tests/gpu-only/expected-nvidia.csv`, does cover all 137 — it is machine-computed
-  by `nvidia-ptx.cat`, `run-gpu-only.sh nvidia`; it says nothing about AMD.)
-
-The NVIDIA side is untouched by this: `nvidia-ptx.cat` modelled fences all along.
+What bounds the column is **provenance, not expressiveness**. There is no fence
+and no `sc` operation anywhere in the PLDI'23 artifact, so `expected-amd-gcn3.csv`
+covers the original 8 and no part-(B) grid test, and an offline
+`oracle-compare.sh` pass over one reports UNINTERPRETED rather than a verdict.
+(The GPU-only lane's other reference, `tests/gpu-only/expected-nvidia.csv`, does
+cover all 137 — it is machine-computed by `nvidia-ptx.cat`,
+`run-gpu-only.sh nvidia`.)
 
 ### 2. The `CPU_ARCHS` knob (het corpus)
 
@@ -171,16 +155,16 @@ ls hetlitmus/tests/gpu-only/*.litmus | wc -l                     # 137
 ls hetlitmus/tests/het/*.litmus      | wc -l                     # 411
 ls hetlitmus/tests/het/*.litmus | grep -vc -- '-2s\.litmus'      # 248 one-sided
 
-# 2. herd7 prints one (advisory) Observation per GPU-only test
+# 2. herd7 prints one Observation per GPU-only test
 cd hetlitmus/tests/gpu-only
 herd7 -set-libdir ../../../herd/libdir -bell ../../bells/ptx.bell \
-      -cat ../../cats/amd-gcn3.cat @all | grep -c '^Observation'   # 137
+      -cat ../../cats/nvidia-ptx.cat @all | grep -c '^Observation'   # 137
 
 # 3. every het test parses + routes through litmus7
 cd ../het
 while read f; do litmus7 -gpu-target cuda -set-libdir ../../../litmus/libdir -o /tmp/r "$f"; done < @all
 
 # 4. no regression
-bash hetlitmus/cats/run-gpu-only.sh                  # 8/8 match
+bash hetlitmus/cats/run-gpu-only.sh                  # 137/137 match
 dune build                                           # exit 0
 ```
