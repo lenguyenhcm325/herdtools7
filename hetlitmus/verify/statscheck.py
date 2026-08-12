@@ -712,13 +712,12 @@ case("self-canary-plus-one-unstamped-cell-is-still-SOMETIMES",
      P_rep=-1.0, p_bound=-1.0)
 
 # --- ... AND THE ROW THAT CO-RUNS NOTHING WITHOUT BEING THE CANARY -------------
-# Every harness of a pair REGISTERED WITHOUT AN ORACLE looks like this: no control
-# map was read, so nothing co-runs AND nothing names this row the canary
-# (canary_name is NULL, not the test's own name).  The arithmetic is the self-canary
-# one -- "usable" is still defined by firing, so the denominator is still R -- but
-# the CLAIM is not: this row is no canary, and its missing bound is an omission we
-# have not closed rather than a property of the design.  Two flags, so the printout
-# can say which.
+# Every harness emitted with no control map beside the test looks like this: nothing
+# co-runs AND nothing names this row the canary (canary_name is NULL, not the test's
+# own name).  The arithmetic is the self-canary one -- "usable" is still defined by
+# firing, so the denominator is still R -- but the CLAIM is not: this row is no
+# canary, and its missing bound is an omission we have not closed rather than a
+# property of the design.  Two flags, so the printout can say which.
 case("no-control-map-fired-3-of-10-is-SOMETIMES-and-is-NOT-the-canary",
      observed(stream(ZERO_CELLS,                      control_compiled_in=0, canary_compiled_in=0,
                      control_target_count=0, canary_target_count=0), 3),
@@ -2736,12 +2735,12 @@ def phase6_campaign(quiet):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 2b -- THE ARM A REGISTERED-NO-ORACLE BUILD ACTUALLY TAKES.  The sentence a
-# row that co-runs nothing prints depends on HET_NO_CONTROL_MAP, which the emitter
-# stamps only for a pair with no oracle, so the default build above can never reach
-# it.  Compiled a second time with the stamp to read it -- and with a HET_PAIR_NAME
-# of its own, because the same build is what proves the two sentences name the PAIR
-# and not the oracle-source string.
+# PHASE 2b -- THE ARM A BUILD WITH NO MAP BESIDE IT TAKES.  The sentence a row that
+# co-runs nothing prints depends on HET_NO_CONTROL_MAP, which the emitter stamps
+# when the control map was not beside the test -- it is looked for beside every
+# one -- so the default build above can never reach that sentence.  Compiled a
+# second time with the stamp to reach it, under a HET_PAIR_NAME found nowhere
+# else, which is what proves the sentence names the pair the binary was built for.
 NCM_PAIR = "(TESTISA, testdialect)"
 
 

@@ -912,9 +912,8 @@ hetlitmus-recfields: | build
 ### compared nothing FAILS instead of passing.  --bite injects into every phase
 ### on corruption AND on omission.
 ### The x86 renderings are generated on demand by tests/het/generate-x86.sh
-### (411, 1:1 with the corpus); they are deliberately NOT committed (the oracle
-### is keyed on the AArch64 names, corpus-gate.sh pins 411 and ~90 of them would
-### be dupcheck duplicates).
+### (411, 1:1 with the corpus); they are deliberately NOT committed
+### (corpus-gate.sh pins 411 and ~90 of them would be dupcheck duplicates).
 ### NOT covered here: the emitter byte-diff.  What protects the validated NVIDIA
 ### lane against an emitter regression is `hetlitmus/verify/emit-all.sh SNAP_x'
 ### run at two revisions followed by `diff -r' (~4938 files).  That is a

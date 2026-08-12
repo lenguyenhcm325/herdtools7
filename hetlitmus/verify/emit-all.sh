@@ -77,9 +77,8 @@
 set -euo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/../paths.sh"
-# Bite seam, same idiom as the Makefile's HET_ORACLE / HET_AMD_ORACLE: point
-# this at a stand-in litmus7 to prove the detectors below actually fire.  A
-# detector that has never been seen to fail is not evidence.
+# Bite seam: point this at a stand-in litmus7 to prove the detectors below
+# actually fire.  A detector that has never been seen to fail is not evidence.
 LITMUS7="${HET_LITMUS7:-$LITMUS7}"
 [ -x "$LITMUS7" ] || { echo "error: $LITMUS7 not built (run 'make all')" >&2; exit 2; }
 
