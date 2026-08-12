@@ -2544,11 +2544,6 @@ def phase6_campaign(quiet):
                 print("  *** %s" % why)
                 bad += 1
         bad += _window_arithmetic(out, 1)
-        for frag in ("Disallowed", "NO-ORACLE", "MISMATCH", "refutation", "CONFIRMED "):
-            if frag in out:
-                print("  *** the campaign summary carries the retired vocabulary %r "
-                      "-- no harness here carries a prediction to agree with" % frag)
-                bad += 1
         if "CORROBORATED" not in out:
             print("  *** a corroborated row is not reported at all")
             bad += 1

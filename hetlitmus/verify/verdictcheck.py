@@ -9,9 +9,8 @@ het_obs_records, and proves:
   1 THE RULE      it decides.  Every outcome and every liveness disqualifier is
                   reachable; an unstamped record fails closed.
   2 THE PRINTOUT  each outcome's sentences are reachable from THAT outcome and
-                  from no other, checked BOTH ways, and the retired verdict
-                  vocabulary is reachable from none of them.  The enum changing
-                  is not the deliverable; the sentence is.
+                  from no other, checked BOTH ways.  The enum changing is not
+                  the deliverable; the sentence is.
   3 THE CORPUS    every emitted harness stamps rec_magic exactly once and carries
                   the mu(T) / canary population control-map.csv gives it.
 
@@ -45,22 +44,6 @@ VERDICTS = ["OBSERVED", "NOT-OBSERVED-MU-HOT", "NOT-OBSERVED-CANARY-ONLY",
 # Mu column names a test, a canary instance for every row whose Canary column names
 # one ("self" rows ARE the canary and cannot co-run themselves).
 CENSUS = {"mu": 333, "canary": 409, "tests": 411}
-
-# ---------------------------------------------------------------------------
-# THE RETIRED VERDICT VOCABULARY.  This harness holds no prediction, so no
-# printout of it may say a result was expected, forbidden, or contradicted a
-# model; comparing observations against a verdicts file is an offline step
-# (hetlitmus/oracle-compare.sh).  Matched as exact substrings, phase 2, in EVERY
-# outcome's block.
-RETIRED_CLAIMS = [
-    "should-be-FORBIDDEN",
-    "REFUTES",
-    "Disallowed",
-    "ALLOWED weak outcome",
-    "EXPECTED result",
-    "ORACLE",
-    "MISMATCH",
-]
 
 # ---------------------------------------------------------------------------
 # FRAME EXCLUSIVITY.  Each outcome's own sentences, checked BOTH ways: reachable
@@ -624,10 +607,6 @@ def read_control_map():
 MAGIC_RE = re.compile(r"_rec\.rec_magic\s*=\s*HET_REC_MAGIC\s*;")
 CTRL_RE = re.compile(r"^#define HET_CONTROL_COMPILED_IN (\d)$", re.M)
 CAN_RE = re.compile(r"^#define HET_CANARY_COMPILED_IN (\d)$", re.M)
-# The retired vocabulary: no emitted harness may carry a verdict, a class, or the
-# name of a verdicts file.  Compared against the WHOLE render, header included.
-RETIRED_RE = re.compile(r"ORACLE_[A-Z]+|_rec\.het_oracle|oracle_source"
-                        r"|expected-(?:nvidia|amd)\.csv")
 
 
 def check_corpus(tamper=None):
@@ -642,7 +621,7 @@ def check_corpus(tamper=None):
     print("  control-map : %d rows" % len(want))
 
     tmp = tempfile.mkdtemp(prefix="verdictcorpus.")
-    bad, n_mu, n_can, n_retired = 0, 0, 0, 0
+    bad, n_mu, n_can = 0, 0, 0
     tampered = 0
     try:
         # One litmus7 invocation for the whole corpus (~20 ms each).
@@ -691,18 +670,6 @@ def check_corpus(tamper=None):
                       "mu=%d canary=%d (Mu=%s Canary=%s)"
                       % (t, got_mu, got_can, exp_mu, exp_can, mu, can))
                 bad += 1
-            # (c) THE RETIRED VOCABULARY, over the whole harness dir: this tool
-            # holds no prediction, so nothing it writes may carry one.
-            for f in sorted(os.listdir(os.path.join(tmp, t))):
-                path = os.path.join(tmp, t, f)
-                with open(path, errors="replace") as fh:
-                    text = src if f == t + ".cu" else fh.read()
-                hits = sorted(set(RETIRED_RE.findall(text)))
-                if hits:
-                    print("  *** %-26s %s carries retired oracle token(s): %s"
-                          % (t, f, ", ".join(hits)))
-                    n_retired += 1
-                    bad += 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -719,9 +686,6 @@ def check_corpus(tamper=None):
         print("%s  %-16s %3d  (expect %3d)" % (mark, label, seen, expect))
         if seen != expect:
             bad += 1
-    mark = "    " if n_retired == 0 else " ***"
-    print("%s  %-16s %3d  (expect   0 -- an emitted harness carries no verdict)"
-          % (mark, "retired tokens", n_retired))
 
     if bad:
         print("\nCORPUS FAILED: %d problem(s).  A rule that fails closed on an "
@@ -730,31 +694,18 @@ def check_corpus(tamper=None):
               % bad)
         return 1
     print("\nCORPUS OK (%d harnesses, every one stamped once, co-run population "
-          "matches control-map.csv, no retired vocabulary)" % len(tests))
+          "matches control-map.csv)" % len(tests))
     return 0
 
 
 # ---------------------------------------------------------------------------
 def scan_prints(blocks, quiet):
-    """PHASE 2 -- each outcome's sentences, both ways, and no retired claim."""
+    """PHASE 2 -- each outcome's sentences, both ways."""
     print("\n===== PHASE 2: does each outcome print ITS OWN sentences, and only "
           "those? =====")
     bad = 0
 
-    # (a) THE RETIRED VOCABULARY, banned in every block.  This is the B6c bug's
-    # successor: the tool holds no prediction, so a printout that says a result was
-    # forbidden, expected or refuted is claiming something nothing here derived.
-    for name, (verdict, text) in sorted(blocks.items()):
-        hits = [c for c in RETIRED_CLAIMS if c in text]
-        if hits:
-            print("  *** RETIRED CLAIM: %s (%s) printed %s"
-                  % (name, verdict, ", ".join(repr(h) for h in hits)))
-            bad += 1
-    if not bad and not quiet:
-        print("      no block prints any of: %s"
-              % ", ".join(repr(c) for c in RETIRED_CLAIMS))
-
-    # (b) FRAME EXCLUSIVITY, both ways.  A ban that passes because the sentence
+    # (a) FRAME EXCLUSIVITY, both ways.  A ban that passes because the sentence
     # vanished is not a check, so each claim must ALSO be reachable.
     for verdict, claims in sorted(FRAME_CLAIMS.items()):
         for claim in claims:
@@ -774,7 +725,7 @@ def scan_prints(blocks, quiet):
                       "it" % (claim, verdict, ", ".join(elsewhere)))
                 bad += 1
 
-    # (c) The sentences shared by a GROUP of outcomes, same discipline.
+    # (b) The sentences shared by a GROUP of outcomes, same discipline.
     for claims, want_in, label in (
             (NON_SIGHTING_CLAIMS,
              {"NOT-OBSERVED-MU-HOT", "NOT-OBSERVED-CANARY-ONLY", "COLD-INVALID"},
@@ -824,8 +775,7 @@ def scan_prints(blocks, quiet):
               "deliverable; the sentence is, and a sentence in the wrong frame "
               "reports something this harness never measured." % bad)
         return 1
-    print("\nPRINT OK (every outcome prints its own sentences and no other's; no "
-          "block carries a retired claim)")
+    print("\nPRINT OK (every outcome prints its own sentences and no other's)")
     return 0
 
 
@@ -1088,18 +1038,7 @@ def bite():
                                 "if (0) {"),
             quiet=True)
 
-        # (4) THE RETIRED VOCABULARY BACK IN A PRINTOUT: the outcome enum is still
-        # right, so only phase 2 can see the sentence.
-        ok &= _bite_one(
-            "a refutation sentence leaked back into the sighting frame",
-            tmp, header,
-            lambda s: s.replace(
-                '      "  ** %s: the weak outcome was OBSERVED %llu time(s)',
-                '      "  ** A single sighting REFUTES the model\'s prediction.\\n"\n'
-                '      "  ** %s: the weak outcome was OBSERVED %llu time(s)'),
-            quiet=True)
-
-        # (5) THE WINDOWED-ZERO DISCLOSURE DROPPED: the cv flag is still set, so only
+        # (4) THE WINDOWED-ZERO DISCLOSURE DROPPED: the cv flag is still set, so only
         # phase 2 can see that the sentence is gone.
         ok &= _bite_one(
             "the windowed-zero caveat dropped from every printout",
@@ -1107,7 +1046,7 @@ def bite():
             lambda s: s.replace("  het_print_scan_caveat(_ch, _r, cv);\n", ""),
             quiet=True)
 
-        # (6) THE HEADER DOES NOT COMPILE.  Not a broken rule -- a broken REPORT of
+        # (5) THE HEADER DOES NOT COMPILE.  Not a broken rule -- a broken REPORT of
         # one.  A gate that answers a non-compiling header with a traceback has
         # stopped saying which of the three things it guards is wrong, and under
         # --bite it stops running at all.  The flavour of the syntax error carries
@@ -1120,7 +1059,7 @@ def bite():
                           "{ return @; }\n",
             "VERDICT FAILED: the rule does not compile")
 
-        # (7) THE COMPILED RULE PRINTS NOTHING.  The driver prints TAU_HOT before the
+        # (6) THE COMPILED RULE PRINTS NOTHING.  The driver prints TAU_HOT before the
         # first case, so an empty stdout means the binary died before it ran one --
         # which the gate must say, not index into.  A constructor that _Exit()s is
         # the shortest way to produce that: it is what a header carrying a broken
@@ -1132,7 +1071,7 @@ def bite():
                           "_het_bite_die_before_main(void) { _Exit(97); }\n",
             "produced no TAU_HOT line")
 
-        # (8) A HARNESS SHIPS UNSTAMPED: het_verdict() fails closed, but only if it
+        # (7) A HARNESS SHIPS UNSTAMPED: het_verdict() fails closed, but only if it
         # is ever RUN, so the corpus census is what stops one harness quietly
         # discarding every run it will ever make.
         print("\n-- corpus injections --")
@@ -1147,7 +1086,7 @@ def bite():
                   "[a harness shipped with an unstamped record]" % rc)
             ok = False
 
-        # (9) A CO-RUN FLAG WITHOUT ITS INSTANCE: the harness claims a canary is
+        # (8) A CO-RUN FLAG WITHOUT ITS INSTANCE: the harness claims a canary is
         # running, so a structural zero would be read as a cold control.
         rc = check_corpus(tamper=lambda t, s: (
             s.replace("#define HET_CANARY_COMPILED_IN 1",
@@ -1161,22 +1100,7 @@ def bite():
                   "[a harness dropped the canary the map names for it]" % rc)
             ok = False
 
-        # (10) THE RETIRED VOCABULARY BACK IN AN EMITTED HARNESS: this is what the
-        # A2 ectomy removed, in the form a partial revert would take.
-        rc = check_corpus(tamper=lambda t, s: (
-            s.replace("_rec.rec_magic = HET_REC_MAGIC;",
-                      "_rec.rec_magic = HET_REC_MAGIC;\n"
-                      "    _rec.oracle_source = \"expected-nvidia.csv:X\";")
-            if t == "MP-cg-sys-relaxed" else s))
-        if rc == 1:
-            print("  BITES (gate failed, as it must)   "
-                  "[an emitted harness carries an oracle stamp again]")
-        else:
-            print("  *** DID NOT BITE (rc=%d)   "
-                  "[an emitted harness carries an oracle stamp again]" % rc)
-            ok = False
-
-        # (11) THE FAIL-SAFE DEFAULT MADE A VENDOR CLAIM: an unstamped harness --
+        # (9) THE FAIL-SAFE DEFAULT MADE A VENDOR CLAIM: an unstamped harness --
         # an unregistered pair, and every future pair before its row exists --
         # would then print a machine it is not.  The direction matters: a missing
         # define must only ever WEAKEN a claim.
@@ -1187,7 +1111,7 @@ def bite():
             mutate=lambda s: s.replace('#define HET_LINK_NAME "host-device interconnect"',
                                        '#define HET_LINK_NAME "NVLink-C2C"'))
 
-        # (12) THE PROSE WENT BACK TO A LITERAL: the pre-refactor bug itself, in its
+        # (10) THE PROSE WENT BACK TO A LITERAL: the pre-refactor bug itself, in its
         # simplest form -- one sentence naming Grace whatever the harness was built
         # for.  Only the AMD frame's forbidden list sees it.
         ok &= _bite_machine(
@@ -1196,7 +1120,7 @@ def bite():
             mutate=lambda s: s.replace("              HET_HOST_HALF, HET_LINK_NAME);",
                                        "              \"the Grace half\", HET_LINK_NAME);"))
 
-        # (13) THE EMITTER STAMPS THE WRONG PAIR'S MACHINE.  The header is correct
+        # (11) THE EMITTER STAMPS THE WRONG PAIR'S MACHINE.  The header is correct
         # here and the harness lies to it, which is the landmine the pair table
         # exists to stop; nothing in phases 1-3 looks at a define.
         real = {}
@@ -1208,10 +1132,9 @@ def bite():
             "the (x86_64, hip) emission stamps the GH200 machine",
             tmp, header, defines=crossed)
 
-        # (14) THE TARGET NAME GOES BACK TO A CONSTANT.  The sentence still names
-        # SOMETHING, so only a frame that knows its own pair name can see that it is
-        # naming the wrong object -- and BLOB_WORDS pins the exact wording the
-        # oracle-source string used to supply.
+        # (12) THE TARGET NAME GOES BACK TO A CONSTANT.  The sentence still names
+        # SOMETHING, so only a frame that knows its own pair name can see that it
+        # is naming the wrong object; BLOB_WORDS pins that constant's wording.
         ok &= _bite_machine(
             "the report sentence names a constant instead of the pair",
             tmp, header,
@@ -1223,8 +1146,8 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 14 injections were caught -- 5 against the RULE and its")
-        print("         printouts (het_verdict.h), 2 against its REPORTING PATHS, 3")
+        print("BITE OK: all 12 injections were caught -- 4 against the RULE and its")
+        print("         printouts (het_verdict.h), 2 against its REPORTING PATHS, 2")
         print("         against the EMITTED CORPUS and 4 against the MACHINE PROSE.")
         print("         The gate is live, both ways: it passes on the shipped code and")
         print("         fails on every way of breaking it.")

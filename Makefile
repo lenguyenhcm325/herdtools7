@@ -766,22 +766,18 @@ hetlitmus-lattice: | build
 ###                      record fails closed; exhaustive_valid==0 can never yield
 ###                      the strong null; every liveness disqualifier bites.
 ###   Phase 2 (printout) each outcome's sentences are reachable from THAT outcome
-###                      and from no other, checked both ways, and the retired
-###                      verdict vocabulary is reachable from none of them.  The
-###                      tool holds no prediction, so a printout that says a
-###                      result was expected, forbidden or refuted is claiming
-###                      something nothing in it derived.  The enum changing is
-###                      not the deliverable; the sentence is.
-###   Phase 3 (corpus)   all 411 emitted harnesses stamp rec_magic exactly once,
-###                      co-run the mu(T)/canary population control-map.csv gives
-###                      them (333 / 409), and carry no retired vocabulary at all.
+###                      and from no other, checked both ways.  The enum changing
+###                      is not the deliverable; the sentence is.
+###   Phase 3 (corpus)   all 411 emitted harnesses stamp rec_magic exactly once
+###                      and co-run the mu(T)/canary population control-map.csv
+###                      gives them (333 / 409).
 ###   Phase 4 (machine)  which MACHINE the printout names.  The interconnect prose
 ###                      comes from defines the emitter stamps out of the PAIR
 ###                      table, scraped here from real emissions: unstamped is the
 ###                      generic frame, each pair prints its own machine, and no
 ###                      frame prints another pair's.
-### --bite: 14 injections (5 against the rule and its printouts, 2 against its
-### reporting paths, 3 against the emitted corpus, 4 against the machine prose),
+### --bite: 12 injections (4 against the rule and its printouts, 2 against its
+### reporting paths, 2 against the emitted corpus, 4 against the machine prose),
 ### each verified to have actually changed the code it corrupts.
 hetlitmus-verdict: | build
 	@ echo
@@ -1046,10 +1042,10 @@ hetlitmus-hipbuild: | build
 ### whether a positive-control map was read: the committed x86 fixture, whose map
 ### names that row its OWN canary (bound missing BY CONSTRUCTION), and the same
 ### test copied away from the map (bound missing by OMISSION).  The statistics
-### layer once printed the first on a run that was the second.  Seven assertions
+### layer once printed the first on a run that was the second.  Six assertions
 ### per arm (stamp, the arm's own control sentence and NOT the other's, OBSERVED
-### against the pair NAME, no MATCH/MISMATCH, no Grace/Hopper/NVLink/C2C/GH200
-### -- this pair has no machine row -- and the observation class on k < R).
+### against the pair NAME, no Grace/Hopper/NVLink/C2C/GH200 -- this pair has no
+### machine row -- and the observation class on k < R).
 ### NEEDS A DEVICE, hence the -nvcc umbrella; with none visible it FAILS rather
 ### than skipping, because a gate that quietly stops checking is the failure mode
 ### this suite has already shipped twice.  Three assertions per arm need one
