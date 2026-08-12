@@ -47,11 +47,9 @@
 #   observations-file : a litmus7 log, or any file containing Observation lines
 #   oracle-csv        : reference CSV the caller supplies, columns
 #                       "Litmus,Expected,Model,Source" ('#' comment lines and the
-#                       header row are skipped).  This branch maintains none for
-#                       the het corpus: tests/het/expected-nvidia.csv and
-#                       tests/het/expected-amd.csv are unmaintained artifacts of
-#                       an archived derivation effort, and an optional offline
-#                       input here at most (docs/oracle-harness.md).
+#                       header row are skipped).  This branch ships none for the
+#                       het corpus and derives none, so the argument is the whole
+#                       supply (docs/oracle-harness.md).
 #
 # THE MISMATCH SENTENCE (PORT2-R2-amd-oracle.md sect 9.2 as amended by P2e).  A
 # forbidden outcome seen is a disagreement between a RUN and a DERIVATION, and

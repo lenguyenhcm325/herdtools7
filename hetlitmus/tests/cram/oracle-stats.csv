@@ -1,12 +1,12 @@
 # HAND-AUTHORED Layer-1 cram fixture, not generated: the oracle obs-stats.txt is
 # compared against in oracle-negatives.t's STATISTICS section.  SB-sys/MP-sys-F
 # carry their real verdicts from tests/gpu-only/expected-nvidia.csv; the `-2s' rows
-# are synthetic names whose Disallowed/CMCM verdict selects the null-reporting
-# paths.  LB-sys is ABSENT ON PURPOSE -- it is the NO-ORACLE row.  Edit with
-# obs-stats.txt and oracle-negatives.t, never alone.  ('#' lines and blanks are
-# skipped -- oracle-compare.sh usage block.)
+# are synthetic throughout -- name, Disallowed/CMCM verdict and Source -- and are
+# what selects the null-reporting paths.  LB-sys is ABSENT ON PURPOSE -- it is
+# the NO-ORACLE row.  Edit with obs-stats.txt and oracle-negatives.t, never
+# alone.  ('#' lines and blanks are skipped -- oracle-compare.sh usage block.)
 Litmus,Expected,Model,Source
 SB-sys,Allowed,PTX,nvidia-ptx.cat
 MP-sys-F,Disallowed,PTX,nvidia-ptx.cat
-SB-sys-2s,Disallowed,CMCM,expected-nvidia.csv
-MP-sys-2s,Disallowed,CMCM,expected-nvidia.csv
+SB-sys-2s,Disallowed,CMCM,hand-authored fixture
+MP-sys-2s,Disallowed,CMCM,hand-authored fixture

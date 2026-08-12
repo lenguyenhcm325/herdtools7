@@ -727,31 +727,16 @@ hetlitmus-amd-controlmap: | build
 ### byte-comparing a variant against ONE designated sibling, which cannot see a
 ### duplicate up to (proc permutation x location renaming).  The corpus carried 39
 ### such classes, all cg/gc mirror pairs of a rotation-invariant shape (SB/LB/2+2W)
-### and some inside the Disallowed rows that carry the falsification claim
+### and none of them an independent sample
 ### (env-research/Q10-corpus-coverage.md sect 2.1); they were removed at the source
-### on 2026-08-01, so the 411 files are 411 distinct experiments and the allowlist is
-### empty.  The gate fails on any duplicate not in the list AND on any list entry
-### that has stopped being one -- an allowlist that cannot rot.  --bite proves both
-### halves fail, each for the right reason.
+### on 2026-08-01, so the 411 files are 411 distinct experiments.  The gate is one
+### check with no exceptions: any duplicate class at all fails it.  --bite clones a
+### test under a new name with its locations renamed and requires that to redden.
 hetlitmus-dup: | build
 	@ echo
 	python3 hetlitmus/verify/dupcheck.py
 	python3 hetlitmus/verify/dupcheck.py --bite
 	@ echo "HetLitmus Q10 isomorphism/dedup gate: OK (and the gate bites)"
-
-### hetlitmus-inert: the two verdict CSVs under hetlitmus/tests/het are
-### unmaintained artifacts of the archived derivation effort, kept as offline
-### data for oracle-compare.sh and read by nothing (docs/oracle-harness.md).
-### Inert is a property of the whole tree, not of the files, so the gate
-### enumerates every tracked file that names one and requires each to sit on an
-### allowlist carrying its reason -- and each entry to still name one, an
-### allowlist that cannot rot.  It also requires both files to keep saying they
-### are unmaintained.  ~0.3 s; no toolchain, no GPU.
-hetlitmus-inert:
-	@ echo
-	bash hetlitmus/verify/inertcheck.sh
-	bash hetlitmus/verify/inertcheck.sh --bite
-	@ echo "HetLitmus inert-data gate: OK (and the gate bites)"
 
 ### hetlitmus-lattice: the per-primitive ordering table behind the control-map
 ### lattice, machine-checked against both constituent solvers.  Each CPU
@@ -1145,7 +1130,6 @@ hetlitmus-l0-selftest: | build
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-corpus
-hetlitmus-test:: hetlitmus-inert
 hetlitmus-test:: hetlitmus-dup
 hetlitmus-test:: hetlitmus-lattice
 hetlitmus-test:: hetlitmus-amd-controlmap
@@ -1191,7 +1175,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-lattice
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
-.PHONY: hetlitmus-recfields hetlitmus-inert
+.PHONY: hetlitmus-recfields
 .PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10
 .PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate hetlitmus-run-hw
 .PHONY: hetlitmus-amd-controlmap

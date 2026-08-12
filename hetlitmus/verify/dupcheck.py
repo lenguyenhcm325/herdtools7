@@ -11,24 +11,15 @@ of a rotation-invariant shape (SB / LB / 2+2W), where swapping P0 and P1 gives
 back the same cycle with the labels exchanged.  Measurement and analysis:
 env-research/Q10-corpus-coverage.md sect 2.1 and 2.3.
 
-Those 39 were REMOVED on 2026-08-01 (450 files -> 411, all distinct), reversing
-the earlier decision to keep and allowlist them.  Their verdicts agreed with
-their mirrors, so nothing was wrong -- but they were not independent samples, and
-some sat inside the Disallowed rows that carry the falsification claim.  The fix
-is at the root: `tests/_grid_lib.sh' SHAPE_HET_CUTS now emits the `cpu,gpu' cut
-alone for those three shapes, the rotation rule SHAPE_2S_PAIR_CUTS already
-applied.  ALLOWLIST is therefore EMPTY.
+Those 39 were REMOVED on 2026-08-01 (450 files -> 411, all distinct): a mirror is
+not an independent sample.  The fix is at the root: `tests/_grid_lib.sh'
+SHAPE_HET_CUTS emits the `cpu,gpu' cut alone for those three shapes, the rotation
+rule SHAPE_2S_PAIR_CUTS already applied.
 
-The gate still checks both directions, so neither the corpus nor the list can
-rot:
-  1. every duplicate class found in the corpus is in ALLOWLIST  (new dup -> FAIL)
-  2. every ALLOWLIST class is still a real duplicate class      (stale -> FAIL)
-Half 1 now rejects every duplicate outright.  Half 2 is what stops the list
-becoming a rubber stamp: an entry that is not a real duplicate class -- listed
-speculatively, or listed once and since edited, renamed or deleted -- is dead
-weight, and the gate says so.  Together they are what makes widening the variant
-vocabulary safe: a new annotation axis multiplies across device cuts, so new
-duplicates are the expected failure mode and they break the build.
+So the gate is one check with no exceptions: any duplicate class in the corpus
+fails it.  That is what makes widening the variant vocabulary safe -- a new
+annotation axis multiplies across device cuts, so new duplicates are the expected
+failure mode and they break the build.
 
 The canonical form is adapted from env-research/Q10-probe/canon.py: parse the Het
 test into (proc -> ordered event list, condition atoms), then minimise over every
@@ -54,16 +45,6 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
-
-# ---------------------------------------------------------------------------
-# The allowlist: duplicate classes waved through on purpose.  EMPTY since the 39
-# `cg'/`gc' mirrors were removed at the source (2026-08-01) -- nothing in the
-# corpus is a duplicate any more.  Extend it only with a documented reason:
-# adding an entry here is how a real duplicate gets waved through, and half 2 of
-# the gate rejects an entry that is not one.
-# ---------------------------------------------------------------------------
-ALLOWLIST = [
-]
 
 
 # ---------------------------------------------------------------------------
@@ -183,27 +164,11 @@ def classes(d):
 def check(d, quiet=False):
     n_files, groups = classes(d)
     found = sorted(tuple(sorted(v)) for v in groups.values() if len(v) > 1)
-    allow = sorted(tuple(sorted(c)) for c in ALLOWLIST)
     redundant = sum(len(c) - 1 for c in found)
 
-    errors = []
-    for c in found:
-        if c not in allow:
-            errors.append("UNALLOWLISTED duplicate class: %s -- these are the "
-                          "SAME experiment up to proc permutation x location "
-                          "renaming; drop one, or (with a reason) allowlist it"
-                          % "  ==  ".join(c))
-    for c in allow:
-        if c not in found:
-            # ONE arm.  An entry stops being a duplicate class whether its tests
-            # were edited apart or one of them was deleted -- a deleted test is
-            # absent from `found' either way -- so the second `file(s) missing'
-            # arm this replaced could not be reached: ALLOWLIST is empty in
-            # production, and its only exerciser (--bite [2]) names two tests
-            # that both exist.
-            errors.append("STALE allowlist entry: %s -- they are no longer "
-                          "isomorphic.  A rotting allowlist silently stops "
-                          "guarding." % "  ==  ".join(c))
+    errors = ["DUPLICATE class: %s -- these are the SAME experiment up to proc "
+              "permutation x location renaming; drop one" % "  ==  ".join(c)
+              for c in found]
 
     if not quiet:
         print("===== DUPCHECK: is any het test a duplicate of another? =====")
@@ -212,8 +177,6 @@ def check(d, quiet=False):
               % len(groups))
         print("  duplicates   : %d class(es), %d redundant file(s)"
               % (len(found), redundant))
-        print("  allowlisted  : %d class(es) (the Q10 sect 2.1 SB/LB/2+2W cg==gc "
-              "mirrors were removed at the source 2026-08-01)" % len(allow))
         print()
     if errors:
         for e in errors:
@@ -240,7 +203,7 @@ def bite(d):
     print("===== DUPCHECK BITE: does the gate fail when it must? =====")
     rc = 0
 
-    # -- bite 1: a NEW duplicate (copy a test under a new name, rename locations)
+    # A NEW duplicate: copy a test under a new name and rename its locations.
     with tempfile.TemporaryDirectory() as tmp:
         work = os.path.join(tmp, "het")
         shutil.copytree(d, work)
@@ -257,42 +220,10 @@ def bite(d):
         dst = os.path.join(work, "MP-cg-sys-relaxed-CLONE.litmus")
         open(dst, "w").write(body)
         c, out = _run_on(work)
-        ok = c != 0 and "UNALLOWLISTED duplicate class" in out \
+        ok = c != 0 and "DUPLICATE class" in out \
             and "MP-cg-sys-relaxed-CLONE" in out
-        print("  [1] synthetic duplicate (MP-cg-sys-relaxed copied with x<->y renamed)")
+        print("  synthetic duplicate (MP-cg-sys-relaxed copied with x<->y renamed)")
         print("      rc=%d  %s" % (c, "BITES" if ok else "*** DID NOT BITE"))
-        for l in out.splitlines():
-            if "***" in l:
-                print("      | " + l.strip())
-        rc |= 0 if ok else 1
-
-    # -- bite 2: a stale allowlist entry.  The list is empty, so the injection
-    # ADDS one naming two real tests that are not isomorphic -- exactly the shape
-    # of an entry written speculatively, or left behind by a partner that has
-    # since been edited or deleted.  Injected by mutating the IMPORTED LIST, not
-    # by patching text -- a text patch would also rewrite this very injection
-    # string.  The reason string is asserted too: `no longer isomorphic' is the
-    # arm under test, `file(s) missing' would be a different one.
-    with tempfile.TemporaryDirectory() as tmp:
-        work = os.path.join(tmp, "het")
-        shutil.copytree(d, work)
-        drv = os.path.join(tmp, "rot.py")
-        open(drv, "w").write(
-            "import sys\n"
-            "sys.path.insert(0, %r)\n"
-            "import dupcheck as D\n"
-            "BAD = ('SB-cg-sys-relaxed', 'MP-cg-sys-relaxed')\n"
-            "assert BAD not in D.ALLOWLIST, 'injection is already listed'\n"
-            "D.ALLOWLIST = D.ALLOWLIST + [BAD]\n"
-            "sys.exit(D.check(%r))\n" % (HERE, work))
-        r = subprocess.run([sys.executable, drv], capture_output=True, text=True)
-        out = r.stdout + r.stderr
-        ok = r.returncode != 0 and "STALE allowlist entry" in out \
-            and "they are no longer isomorphic" in out
-        print("  [2] allowlist rot (SB-cg-sys-relaxed == MP-cg-sys-relaxed listed "
-              "as a duplicate pair)")
-        print("      rc=%d  %s" % (r.returncode,
-                                   "BITES" if ok else "*** DID NOT BITE"))
         for l in out.splitlines():
             if "***" in l:
                 print("      | " + l.strip())
@@ -302,7 +233,7 @@ def bite(d):
     if rc:
         print("BITE FAILED: the gate did not fail where it must.")
         return 1
-    print("BITE OK: the gate has teeth (new duplicate AND allowlist rot both fail it)")
+    print("BITE OK: the gate has teeth (a new duplicate fails it)")
     return 0
 
 

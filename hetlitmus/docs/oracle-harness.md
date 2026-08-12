@@ -19,11 +19,10 @@ consumes *Observation lines* (real, from a hardware/gem5 run, or synthesized) an
 verdict CSV, and decides conformance. It is a pure text function, which is why it
 can be gated on frozen fixtures with no toolchain at all.
 
-The two het CSVs in `tests/het/` are **not** an input any tool reaches for: they are
-inert data left by the retired per-test derivation effort (branch
-`hetlitmus-oracle-derivation`), and their own headers say so. Nothing reads them —
-`make hetlitmus-inert` (`verify/inertcheck.sh`) is what keeps that true, by failing on
-any tracked file that names one and is not on its allowlist.
+This branch derives no per-test verdicts for the het corpus. That derivation is
+retired and its CSVs live on branch `hetlitmus-oracle-derivation`, not here;
+`oracle-compare.sh` reads whatever CSV its caller passes, and the argument is
+mandatory, so there is nothing it can fall back on.
 
 ## 1. Inputs
 

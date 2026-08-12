@@ -78,8 +78,8 @@ LIBDIR = os.path.join(ROOT, "litmus", "libdir")
 # writers so the two-sided annotation has nothing to attach to -- and
 # generate.sh drops precisely that one on the aarch64 lattice.  With the drop
 # mirrored the two name sets are equal in both directions (`comm' over them is
-# empty), which is what lets expected-amd.csv and control-map-amd.csv stay keyed
-# on the UNSUFFIXED names with no orphan.
+# empty), which is what lets control-map-amd.csv stay keyed on the UNSUFFIXED
+# names with no orphan either way.
 N_X86 = 411
 
 # The x86 side of those 411 renderings, counted from their .litmus columns:

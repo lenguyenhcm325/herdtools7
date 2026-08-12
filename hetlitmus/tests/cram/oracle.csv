@@ -4,9 +4,9 @@
 # their real verdicts from tests/gpu-only/expected-nvidia.csv; the `-fa' rows are
 # synthetic names supplying the forall half.  The LB rows are ABSENT ON PURPOSE --
 # that absence is what produces the UNINTERPRETED cells.  WS-sys carries an
-# EARNED NO-ORACLE (the oracle has the row and declines to decide it -- 7 such
-# rows in expected-amd.csv, 42 in expected-nvidia.csv) and BOGUS-sys carries a
-# verdict string no harness knows, which must fail closed rather than pass.
+# EARNED NO-ORACLE (the oracle has the row and declines to decide it) and
+# BOGUS-sys carries a verdict string no harness knows, which must fail closed
+# rather than pass.
 # Edit with oracle-negatives.t, never alone.  ('#' lines and blanks are skipped -- oracle-compare.sh usage block.)
 Litmus,Expected,Model,Source
 SB-sys,Allowed,PTX,nvidia-ptx.cat

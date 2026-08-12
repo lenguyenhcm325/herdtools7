@@ -13,9 +13,8 @@ MI300X run -- which has no oracle by design, so every row is absent -- would hav
 printed as model silence.  BOGUS-sys carries a verdict string the harness does
 not know: that is a corrupt oracle and it fails closed to UNINTERPRETED, never to
 a pass.  Before the fix, a CSV verdict of NO-ORACLE ALSO fell into that arm and
-printed `unknown oracle verdict "NO-ORACLE"' -- expected-nvidia.csv carries 76
-such rows (42 until NVOR demoted 32 more on 2026-08-06 and its Phase-D3 repair 2
-more the same day), so the harness misreported both shipped oracles.
+printed `unknown oracle verdict "NO-ORACLE"', so any oracle that declined to
+decide a row had its silence reported as corruption.
 
   $ bash ../../oracle-compare.sh obs.txt oracle.csv
   Oracle:       oracle.csv
