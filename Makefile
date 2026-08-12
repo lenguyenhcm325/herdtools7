@@ -727,11 +727,11 @@ hetlitmus-amd-controlmap: | build
 ### byte-comparing a variant against ONE designated sibling, which cannot see a
 ### duplicate up to (proc permutation x location renaming).  The corpus carried 39
 ### such classes, all cg/gc mirror pairs of a rotation-invariant shape (SB/LB/2+2W)
-### and none of them an independent sample
-### (env-research/Q10-corpus-coverage.md sect 2.1); they were removed at the source
-### on 2026-08-01, so the 411 files are 411 distinct experiments.  The gate is one
-### check with no exceptions: any duplicate class at all fails it.  --bite clones a
-### test under a new name with its locations renamed and requires that to redden.
+### (env-research/Q10-corpus-coverage.md sect 2.1), and a mirror is not an
+### independent sample.  They were removed at the source on 2026-08-01, so the 411
+### files are 411 distinct experiments.  The gate is one check with no exceptions:
+### any duplicate class at all fails it.  --bite clones a test under a new name
+### with its locations renamed and requires that to redden.
 hetlitmus-dup: | build
 	@ echo
 	python3 hetlitmus/verify/dupcheck.py
