@@ -75,13 +75,11 @@ AARCH64_SIDE = ["control-map.csv"]
 # One HetStats machine line, the whole interface between a harness and
 # campaign.py, in the field order and field set het_stats_line prints -- a stub
 # that speaks a shape the runtime cannot produce is testing a protocol nobody
-# implements.  A null with a measured dispersion, so a bound is reachable and
+# implements.  A null on a live control stream, so the row is reportable and
 # nothing fires: what the scheduler does with it is the phase's subject.
 STUB_STATS = ("HetStats %s cpu_only=0 obs=Never R=10 usable=10 k=0 k_eff=0 "
               "k_runs=0 degen=0 first_sight=0 ctrl=canary mu_total=0 "
-              "can_total=5000 win_n=1280 nwin=128 F_win=1.05 F_cell=1.02 "
-              "r_hat=inf mu_upper=2.9957 tau_w=1.28 N_eff=100 tau_need=1 "
-              "R_eff=100 p_bound=0.029957 P_rep=-1 acf1=0.01 ks=pass ks_D=0.1 "
+              "can_total=5000 win_n=1280 nwin=128 P_rep=-1 ks=pass ks_D=0.1 "
               "ks_Dcrit=0.2 ks_split=-1 sighting=none N=100000 frames=100000 "
               "flags=0x0")
 
@@ -145,8 +143,7 @@ import os, sys
 d = sys.argv[1]
 print("HetStats %s cpu_only=0 obs=Sometimes R=10 usable=10 k=1 k_eff=1 k_runs=3 "
       "degen=0 first_sight=1 ctrl=canary mu_total=0 can_total=5000 win_n=1280 "
-      "nwin=128 F_win=1.05 F_cell=1.02 r_hat=inf mu_upper=0 tau_w=1.28 N_eff=100 "
-      "tau_need=1 R_eff=0 p_bound=-1 P_rep=0.632 acf1=0.01 ks=pass ks_D=0.1 "
+      "nwin=128 P_rep=0.632 ks=pass ks_D=0.1 "
       "ks_Dcrit=0.2 ks_split=-1 sighting=CORROBORATED N=100000 frames=100000 "
       "flags=0x0" % os.path.basename(d))
 '''
@@ -166,8 +163,7 @@ fired = (inv == 1)
 R = min(10, int(os.environ.get("HET_RUNS_MAX") or "10"))
 print("HetStats %s cpu_only=0 obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d "
       "degen=0 first_sight=%d ctrl=canary mu_total=0 can_total=5000 win_n=1280 "
-      "nwin=128 F_win=1.05 F_cell=1.02 r_hat=inf mu_upper=0 tau_w=1.28 N_eff=100 "
-      "tau_need=1 R_eff=0 p_bound=-1 P_rep=-1 acf1=0.01 ks=pass ks_D=0.1 "
+      "nwin=128 P_rep=-1 ks=pass ks_D=0.1 "
       "ks_Dcrit=0.2 ks_split=-1 sighting=%s N=100000 frames=100000 flags=0x0"
       % (os.path.basename(d), "Sometimes" if fired else "Never", R, R,
          fired, fired, fired, 1 if fired else 0,
@@ -227,7 +223,7 @@ def state_rows(path):
 
 # campaign.py's terminal stops, mirrored here so a session's own state file can be
 # read: a row that ended on anything else was written by another stop rule.
-TERMINAL = ("CORROBORATED", "UNCONFIRMED-SIGHTING", "BOUND-MET", "BUDGET", "ERROR")
+TERMINAL = ("CORROBORATED", "UNCONFIRMED-SIGHTING", "BUDGET", "ERROR")
 
 
 def state_is_terminal(pfx, rows, tests):
@@ -1573,10 +1569,11 @@ def hardware_bite():
 # by whether a positive-control map was read at all, and the emitter looks for one
 # beside every test:
 #   map    the committed x86 fixture, whose map names this row its OWN canary --
-#          "it IS the Layer-B canary", and its missing bound IS a construction;
+#          "it IS the Layer-B canary", and its missing calibration channel IS a
+#          construction;
 #   nomap  the same test copied away from the map -- no map was read, nothing
-#          marks this row a canary, and its missing bound is an OMISSION, of the
-#          map FILE beside the test and of nothing else.
+#          marks this row a canary, and its missing calibration channel is an
+#          OMISSION, of the map FILE beside the test and of nothing else.
 # The pair is (X86_64, cuda), which has no machine row, so neither arm may print
 # a word of either row's machine vocabulary either.
 #
@@ -1693,14 +1690,17 @@ def ch_run_until_sighting(d, quiet=False):
 
 
 # The two control sentences, and the arm each belongs to.  Neither may appear in
-# the other arm's printout: a bound that is missing BY CONSTRUCTION and one that
-# is missing because nobody built the instrumentation read alike to everyone
-# except the person who emitted it.
-CH_SELF = ["IS the Layer-B canary", "NO BOUND -- by construction, not by omission"]
+# the other arm's printout: a calibration channel that is absent BY CONSTRUCTION
+# and one that is absent because nobody built the instrumentation read alike to
+# everyone except the person who emitted it.
+CH_SELF = ["IS the Layer-B canary",
+           "NO CALIBRATION CHANNEL -- nothing independent co-runs whose "
+           "stationarity could be tested -- by construction, not by omission"]
 CH_NOMAP = ["NO POSITIVE-CONTROL MAP WAS READ for %s" % CH_PAIR,
             "the map is looked for BESIDE THE TEST",
             "control-map-amd.csv for x86_64), and it was not there",
-            "It gets NO BOUND, and that is an OMISSION, not a construction",
+            "It has NO CALIBRATION CHANNEL, and that is an OMISSION, not a "
+            "construction",
             "what was omitted is the map FILE beside this test"]
 # The map is loaded for EVERY lane, so HET_NO_CONTROL_MAP says the FILE was not
 # beside the test.  These are the sentences that said something else -- that no
@@ -1800,10 +1800,14 @@ CH_INJECTIONS = [
      lambda s: s.replace(
          "  NOTE: this row CO-RUNS NO CONTROL because NO POSITIVE-CONTROL MAP WAS ",
          "  NOTE: this row CO-RUNS NO CONTROL -- it IS the Layer-B canary.  WAS ", 1)),
-    ("C", "nomap", "het_verdict.h", "the bound called structural again",
-     lambda s: s.replace("It gets NO BOUND, and that is an OMISSION, not a "
-                         "construction",
-                         "It gets NO BOUND -- by construction, not by omission", 1)),
+    ("C", "nomap", "het_verdict.h",
+     "the missing calibration channel called structural again",
+     lambda s: s.replace(', and that is an OMISSION, not a "\n'
+                         '          "construction: what was omitted',
+                         ' -- nothing independent co-runs whose stationarity '
+                         'could "\n'
+                         '          "be tested -- by construction, not by '
+                         'omission: what was omitted', 1)),
     ("B/C", "nomap", "het_verdict.h",
      "the flag explained as a pair no registry has a map for",
      lambda s: s.replace("the map is looked for BESIDE THE TEST, under the name this ",

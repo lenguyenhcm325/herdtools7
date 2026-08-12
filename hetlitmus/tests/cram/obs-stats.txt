@@ -1,9 +1,9 @@
 # Synthetic log fixture for oracle-compare.sh's STATISTICS section (Layer-1 cram).
 # Five tests, one per reporting path: a relaxation exhibited on a canary-only
 # harness; a sighting corroborated across three clean runs with mu(T) hot; a null
-# carrying the bound its effort earned; a null whose bound is VACUOUS (tau
-# unresolved on two runs, the control drifting); and a row whose every cell was
-# COLD (VOID).
+# over eight usable runs with a live mu(T) stream; the same null shape over only
+# two (the low-effort NEVER, and the row that shows effort is disclosed rather
+# than priced); and a row whose every cell was COLD (VOID).
 # The HetObs / HetVerdict / HetStats lines were PRINTED BY het_verdict.h's own
 # printers -- het_obs_record_print, het_verdict_print, het_stats_print -- over
 # synthetic het_obs_record streams, the way hetlitmus/verify/statscheck.py drives
@@ -29,11 +29,14 @@
 # The per-window control streams are NOT in the HetObs line and have to be
 # rebuilt: SB-sys / MP-sys-F / SB-sys-2s draw each window from a Poisson with
 # mean ~0.4 (an LCG, so the numbers are machine-independent), and MP-sys-2s
-# fills each window from one slow cosine cycle across the run -- adjacent
-# windows then barely differ, the Geyer sum never decorrelates in view, and its
-# tau is too large for 256 pooled windows to resolve, which is the regime that
-# path exists to report.  Every stream's total is its own sum, or the aggregate
-# would flag HET_ST_WIN_DESYNC.
+# fills each window from one slow cosine cycle across the run.  Every stream's
+# total is its own sum, or the aggregate would flag HET_ST_WIN_DESYNC.  The
+# recipe fixes neither the LCG seed nor the cosine's amplitude, so a regeneration
+# from records is not reproducible from this header alone; the five HetStats
+# BLOCKS, however, are -- het_stats_print is a pure function of het_stats_t, and
+# the machine line carries every field of one except the two KS window counts
+# (fixed by win_n) and n_mu_hot, which each NEVER block states in words.  Those
+# blocks were last reprinted from exactly that.
 # The HetObs line dumps every other field of its record, so the rest of the
 # driver is reconstructible from this fixture.
 #
@@ -85,12 +88,9 @@ HetVerdict SB-sys [ROBUST] run=5: NOT-OBSERVED-CANARY-ONLY
     "In fairness to the authors of [19], we were unable to observe weak behaviours using our
      method on the Nvidia GTX 280 chip they used."
                                      -- Alglave et al., ASPLOS'15, fn.7, p.577.
-HetStats SB-sys cpu_only=0 obs=Sometimes R=6 usable=6 k=3 k_eff=3 k_runs=3 degen=0 first_sight=1 ctrl=canary mu_total=0 can_total=308 win_n=768 nwin=128 F_win=0.9899 F_cell=0.0519 r_hat=inf mu_upper=0.0000 tau_w=1.0663 N_eff=120.0437 tau_need=1 R_eff=0.0000 p_bound=-1 P_rep=0.950213 acf1=0.0116 ks=pass ks_D=0.1444 ks_Dcrit=0.1947 ks_split=-1 sighting=CORROBORATED N=100000 frames=600000 flags=0x208
+HetStats SB-sys cpu_only=0 obs=Sometimes R=6 usable=6 k=3 k_eff=3 k_runs=3 degen=0 first_sight=1 ctrl=canary mu_total=0 can_total=308 win_n=768 nwin=128 P_rep=0.950213 ks=pass ks_D=0.1444 ks_Dcrit=0.1947 ks_split=-1 sighting=CORROBORATED N=100000 frames=600000 flags=0x200
 HetStats SB-sys: 6 cell(s) [(instance,run)], 6 usable, observed in 3 (3 after the decode guard, across 3 distinct run(s)).
-  dispersion (from the Layer-B canary channel, 768 window samples): F_win = 0.990 (Var 0.397 / Mean 0.401), r_hat = inf (Poisson), lag-1 acf = 0.012; F_cell = 0.052.
-  within-run correlation: tau_w = 1.07 window(s) (Geyer initial-positive-sequence over the 128-window control stream) -> N_eff = 120.0 effective independent samples per run, clamped to [1, 128] -- a stream of 128 windows cannot witness more.  A correlated sequence is DISCOUNTED, not discarded: B7 scored each run as ONE Bernoulli bit, the tau = run-length worst case.
-  NOTE: calibrated off the Layer-B canary, not this test's own mu(T).  The canary is the het MP floor, so on any shape but MP that is another shape's burstiness -- weaker than a shape-matched calibration; say so when reporting.
-  NOTE: F_win < 1 (under-dispersed).  Clamped to the Poisson floor: an under-dispersed sample is NOT allowed to make the bound TIGHTER than the rule of three.
+  NOTE: the stationarity precheck read the Layer-B canary's stream, not this test's own mu(T).  The canary is the het MP floor, so on any shape but MP that is another shape's time structure -- weaker than a shape-matched precheck; say so when reporting.
   stationarity: KS pass (D = 0.1444 <= D_crit = 0.1947, 150 early vs 72 late window counts).  On discrete counts the two-sample KS is conservative, so this is the WEAKER of the two possible claims.
   OBSERVED in 3 of 6 usable cell(s).  P_rep = 1 - e^{-k_eff} = 95.02% that a fresh run reproduces it (k_eff = 3 NON-DEGENERATE cells -- Kirkham's n=3 => 95% recipe, relocated to the (instance,run) unit).
   ** SIGHTING CORROBORATED ** -- the weak outcome was observed in 3 distinct non-degenerate RUN(S) (>= HET_CORROB_RUNS = 2).  A decoder artefact does not reproduce across re-seeded runs, so the SIGHTING IS REAL and not a constant-read.  Its reproducibility is the P_rep above, MEASURED -- Kirkham's n = 3 => 95% recipe is the bar for that number, not this one.
@@ -145,11 +145,8 @@ HetVerdict MP-sys-F [ROBUST] run=5: NOT-OBSERVED-MU-HOT
     "In fairness to the authors of [19], we were unable to observe weak behaviours using our
      method on the Nvidia GTX 280 chip they used."
                                      -- Alglave et al., ASPLOS'15, fn.7, p.577.
-HetStats MP-sys-F cpu_only=0 obs=Sometimes R=6 usable=6 k=3 k_eff=3 k_runs=3 degen=0 first_sight=1 ctrl=mu(T) mu_total=368 can_total=288 win_n=768 nwin=128 F_win=0.9242 F_cell=1.5565 r_hat=inf mu_upper=0.0000 tau_w=1.0000 N_eff=128.0000 tau_need=1 R_eff=0.0000 p_bound=-1 P_rep=0.950213 acf1=-0.0466 ks=pass ks_D=0.0311 ks_Dcrit=0.1947 ks_split=-1 sighting=CORROBORATED N=100000 frames=600000 flags=0x8
+HetStats MP-sys-F cpu_only=0 obs=Sometimes R=6 usable=6 k=3 k_eff=3 k_runs=3 degen=0 first_sight=1 ctrl=mu(T) mu_total=368 can_total=288 win_n=768 nwin=128 P_rep=0.950213 ks=pass ks_D=0.0311 ks_Dcrit=0.1947 ks_split=-1 sighting=CORROBORATED N=100000 frames=600000 flags=0x0
 HetStats MP-sys-F: 6 cell(s) [(instance,run)], 6 usable, observed in 3 (3 after the decode guard, across 3 distinct run(s)).
-  dispersion (from the mu(T) lattice-floor twin channel, 768 window samples): F_win = 0.924 (Var 0.443 / Mean 0.479), r_hat = inf (Poisson), lag-1 acf = -0.047; F_cell = 1.557.
-  within-run correlation: tau_w = 1.00 window(s) (Geyer initial-positive-sequence over the 128-window control stream) -> N_eff = 128.0 effective independent samples per run, clamped to [1, 128] -- a stream of 128 windows cannot witness more.  A correlated sequence is DISCOUNTED, not discarded: B7 scored each run as ONE Bernoulli bit, the tau = run-length worst case.
-  NOTE: F_win < 1 (under-dispersed).  Clamped to the Poisson floor: an under-dispersed sample is NOT allowed to make the bound TIGHTER than the rule of three.
   stationarity: KS pass (D = 0.0311 <= D_crit = 0.1947, 150 early vs 72 late window counts).  On discrete counts the two-sample KS is conservative, so this is the WEAKER of the two possible claims.
   OBSERVED in 3 of 6 usable cell(s).  P_rep = 1 - e^{-k_eff} = 95.02% that a fresh run reproduces it (k_eff = 3 NON-DEGENERATE cells -- Kirkham's n=3 => 95% recipe, relocated to the (instance,run) unit).
   ** SIGHTING CORROBORATED ** -- the weak outcome was observed in 3 distinct non-degenerate RUN(S) (>= HET_CORROB_RUNS = 2).  A decoder artefact does not reproduce across re-seeded runs, so the SIGHTING IS REAL and not a constant-read.  Its reproducibility is the P_rep above, MEASURED -- Kirkham's n = 3 => 95% recipe is the bar for that number, not this one.
@@ -239,20 +236,14 @@ HetVerdict SB-sys-2s [ROBUST] run=7: NOT-OBSERVED-MU-HOT
     "In fairness to the authors of [19], we were unable to observe weak behaviours using our
      method on the Nvidia GTX 280 chip they used."
                                      -- Alglave et al., ASPLOS'15, fn.7, p.577.
-HetStats SB-sys-2s cpu_only=0 obs=Never R=8 usable=8 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 ctrl=mu(T) mu_total=386 can_total=412 win_n=1024 nwin=128 F_win=1.0386 F_cell=0.6321 r_hat=9.7735 mu_upper=3.5056 tau_w=1.0730 N_eff=119.2934 tau_need=1 R_eff=954.3472 p_bound=0.00367328 P_rep=-1 acf1=0.0065 ks=pass ks_D=0.0592 ks_Dcrit=0.1686 ks_split=-1 sighting=none N=100000 frames=800000 flags=0x0
+HetStats SB-sys-2s cpu_only=0 obs=Never R=8 usable=8 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 ctrl=mu(T) mu_total=386 can_total=412 win_n=1024 nwin=128 P_rep=-1 ks=pass ks_D=0.0592 ks_Dcrit=0.1686 ks_split=-1 sighting=none N=100000 frames=800000 flags=0x0
 HetStats SB-sys-2s: 8 cell(s) [(instance,run)], 8 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
-  dispersion (from the mu(T) lattice-floor twin channel, 1024 window samples): F_win = 1.039 (Var 0.391 / Mean 0.377), r_hat = finite (see HetStats line), lag-1 acf = 0.007; F_cell = 0.632.
-  within-run correlation: tau_w = 1.07 window(s) (Geyer initial-positive-sequence over the 128-window control stream) -> N_eff = 119.3 effective independent samples per run, clamped to [1, 128] -- a stream of 128 windows cannot witness more.  A correlated sequence is DISCOUNTED, not discarded: B7 scored each run as ONE Bernoulli bit, the tau = run-length worst case.
   stationarity: KS pass (D = 0.0592 <= D_crit = 0.1686, 200 early vs 96 late window counts).  On discrete counts the two-sample KS is conservative, so this is the WEAKER of the two possible claims.
-  NOT OBSERVED in any of the 8 usable cell(s).  95% upper bound on its rate PER EFFECTIVE SAMPLE (one tau_w-window alignment epoch):
-      p < mu_upper(r_hat) / R_eff = 3.5056 / 954.35 = 0.003673
-  (R_eff = 8 usable runs x N_eff 119.3 / DEFF 1.00.  The base unit is the (instance,run) CELL, NOT the frame -- the scan validates N^{T_L} overlapping frames per N iterations, so a frame count fed to 1-e^{-n} returns ~1 vacuously (PerpLE VI-B.1) -- and B7b DISCOUNTS the within-run stream by its measured autocorrelation instead of discarding it to one bit.)
-  implied RUN-level bound: p_run < N_eff x p = 0.4382 -- identical to B7's, BY CONSTRUCTION: the discount adds resolution beneath the run-level claim, it never tightens it for free.  The dividend is paid where the hours are: the budget below is met with N_eff-fold fewer runs.
-  CHARACTERIZATION, NEVER VALIDATION: the bound describes THIS HARNESS's reach on this hardware under this stress, and this harness carries no prediction for it to confirm or refute (Q4 R5).  It feeds B8's stress-tuning priority.
-  effort: 8 run(s) x N=100000 iterations, 800000 frames examined.
-  budget: NOT SIZED.  p_min -- the per-effective-sample rate of the hardest het behaviour we can actually observe -- is HARDWARE-ONLY and unset (HET_P_MIN).
-          It is NOT Bagchi's ~0.2%: that is the GPU-only INTER-CTA rate (their 5.1/4.1), which fires with no CPU participation and never crosses the interconnect.  There is no published numeric het hit-rate for ANY target, and none whatsoever for AMD.
-          Derive it ON THE MACHINE THIS BINARY WAS BUILT FOR -- the pair (unstamped CPU ISA x GPU dialect pair) -- from the rows that DID exhibit their outcome (they ARE the observed-rate population, at THIS HET_NWIN) and re-run with -DHET_P_MIN=<rate>.  A p_min carried over from another target is not a conservative default, it is a different machine's number.
+  NOT OBSERVED in any of the 8 usable cell(s).  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL.  What a non-observation reports is that a harness this hardware kept demonstrably hot did not produce the outcome; falsification is one-sided -- "the possibility, not probability ... is what matters" (Alglave et al., ASPLOS'15 4.3, p.585) -- so what licenses the null is the positive control that fired beside it, never an interval.
+  vouched for by this test's own mu(T) lattice-floor twin: all 8 of these cells are NOT-OBSERVED-MU-HOT.
+  control totals over every stamped cell scored here, cold ones included: mu(T) 386 sighting(s), the Layer-B canary 412.
+  CHARACTERIZATION, NEVER VALIDATION: this harness carries no prediction, so this null agrees with no model and refutes none -- it reports what this harness reached on this hardware under this stress (Q4 R5).
+  effort: 8 run(s) x N=100000 iterations, 800000 frames examined.  Grow R, NOT N (Q3 F4).
 Test SB-sys-2s
 Histogram (1 states)
 Condition exists (1:r0=1 /\ 1:r1=0) is validated
@@ -278,23 +269,14 @@ HetVerdict MP-sys-2s [ROBUST] run=1: NOT-OBSERVED-MU-HOT
     "In fairness to the authors of [19], we were unable to observe weak behaviours using our
      method on the Nvidia GTX 280 chip they used."
                                      -- Alglave et al., ASPLOS'15, fn.7, p.577.
-HetStats MP-sys-2s cpu_only=0 obs=Never R=2 usable=2 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 ctrl=mu(T) mu_total=407 can_total=407 win_n=256 nwin=128 F_win=1.2480 F_cell=9.1425 r_hat=6.4118 mu_upper=3.8186 tau_w=29.7464 N_eff=1.0000 tau_need=12 R_eff=0.2188 p_bound=17.4557 P_rep=-1 acf1=0.9708 ks=pass ks_D=0.2200 ks_Dcrit=0.3372 ks_split=-1 sighting=none N=100000 frames=200000 flags=0x4400
+HetStats MP-sys-2s cpu_only=0 obs=Never R=2 usable=2 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 ctrl=mu(T) mu_total=407 can_total=407 win_n=256 nwin=128 P_rep=-1 ks=pass ks_D=0.2200 ks_Dcrit=0.3372 ks_split=-1 sighting=none N=100000 frames=200000 flags=0x0
 HetStats MP-sys-2s: 2 cell(s) [(instance,run)], 2 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
-  dispersion (from the mu(T) lattice-floor twin channel, 256 window samples): F_win = 1.248 (Var 1.984 / Mean 1.590), r_hat = finite (see HetStats line), lag-1 acf = 0.971; F_cell = 9.143.
-  within-run correlation: tau_w = 29.75 window(s), but tau IS NOT RESOLVED -- the pooled control stream is only 256 sample(s) long and an estimate of tau needs about 50x tau (= 1487) behind it before it can be trusted.  N_eff FALLS BACK TO 1 (B7's one-bit-per-run reading): a tau we could not measure must never buy a tighter bound, exactly as a KS test that could not run must never unlock P_rep.
-  NOTE the direction: this estimator (Geyer initial-positive-sequence) UNDER-reads tau on a stream too short for it -- a spurious non-positive pair truncates the sum early -- so the number above is a FLOOR, it is NOT at the 128-window ceiling, and believing it would have OVER-credited N_eff and reported a bound TIGHTER THAN THE TRUTH.
-  THIS IS NOT A FAILURE AND NOT A VETO -- it is a PRICE, and the price is RUNS: the criterion is on the POOLED count (usable runs x 128 windows), so it relaxes on its own.  Re-run this test with >= 12 usable run(s) (it has 2) and N_eff becomes claimable.  Grow R, NOT N: extra iterations only add correlated frames inside the same alignment windows, while a fresh run adds a fresh phase/seed/thermal draw (Q3 F4).
   stationarity: KS pass (D = 0.2200 <= D_crit = 0.3372, 50 early vs 24 late window counts).  On discrete counts the two-sample KS is conservative, so this is the WEAKER of the two possible claims.
-  NOT OBSERVED in any of the 2 usable cell(s) -- but THE BOUND IS VACUOUS:
-      p < mu_upper(r_hat) / R_eff = 3.819 / 0.22 = 17.46   >= 1
-  the bounded rate is a PROBABILITY, so a bound above 1 bounds NOTHING.  This is not a weak claim, it is the ABSENCE of one, and it must NOT be tabulated as a number.
-  WHY: the control channel is bursty (F_win = 1.25), so the process parks so much probability mass at zero that observing zero is nearly free.  That IS the finding -- and it is exactly the case in which a bare p < 3/N would have claimed a strong result from no evidence at all.
-  REMEDY (Q3 F4/R3): grow R -- more independent perpetual runs, each a fresh phase/seed/thermal draw -- NOT bigger N, which only adds correlated frames inside the same few alignment windows.
-  CHARACTERIZATION, NEVER VALIDATION: the bound describes THIS HARNESS's reach on this hardware under this stress, and this harness carries no prediction for it to confirm or refute (Q4 R5).  It feeds B8's stress-tuning priority.
-  effort: 2 run(s) x N=100000 iterations, 200000 frames examined.
-  budget: NOT SIZED.  p_min -- the per-effective-sample rate of the hardest het behaviour we can actually observe -- is HARDWARE-ONLY and unset (HET_P_MIN).
-          It is NOT Bagchi's ~0.2%: that is the GPU-only INTER-CTA rate (their 5.1/4.1), which fires with no CPU participation and never crosses the interconnect.  There is no published numeric het hit-rate for ANY target, and none whatsoever for AMD.
-          Derive it ON THE MACHINE THIS BINARY WAS BUILT FOR -- the pair (unstamped CPU ISA x GPU dialect pair) -- from the rows that DID exhibit their outcome (they ARE the observed-rate population, at THIS HET_NWIN) and re-run with -DHET_P_MIN=<rate>.  A p_min carried over from another target is not a conservative default, it is a different machine's number.
+  NOT OBSERVED in any of the 2 usable cell(s).  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL.  What a non-observation reports is that a harness this hardware kept demonstrably hot did not produce the outcome; falsification is one-sided -- "the possibility, not probability ... is what matters" (Alglave et al., ASPLOS'15 4.3, p.585) -- so what licenses the null is the positive control that fired beside it, never an interval.
+  vouched for by this test's own mu(T) lattice-floor twin: all 2 of these cells are NOT-OBSERVED-MU-HOT.
+  control totals over every stamped cell scored here, cold ones included: mu(T) 407 sighting(s), the Layer-B canary 407.
+  CHARACTERIZATION, NEVER VALIDATION: this harness carries no prediction, so this null agrees with no model and refutes none -- it reports what this harness reached on this hardware under this stress (Q4 R5).
+  effort: 2 run(s) x N=100000 iterations, 200000 frames examined.  Grow R, NOT N (Q3 F4).
 Test MP-sys-2s
 Histogram (1 states)
 Condition exists (1:r0=1 /\ 1:r1=0) is validated
@@ -328,9 +310,9 @@ HetVerdict LB-sys [ROBUST] run=3: COLD-INVALID
   canary MP-cg-sys-relaxed fired 0 time(s) (tau_hot=30) -- same launch, same stress, same host-device interconnect path.
   DISCARD this null -- the harness was not demonstrably hot:
     - neither mu(T) nor the canary reached tau_hot=30: a known-weak behaviour on this very machinery did not fire, so this harness is not shown to expose anything
-HetStats LB-sys cpu_only=0 obs=VOID R=4 usable=0 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 ctrl=canary mu_total=0 can_total=0 win_n=0 nwin=128 F_win=-1.0000 F_cell=-1.0000 r_hat=inf mu_upper=0.0000 tau_w=-1.0000 N_eff=1.0000 tau_need=0 R_eff=0.0000 p_bound=-1 P_rep=-1 acf1=0.0000 ks=underpowered ks_D=0.0000 ks_Dcrit=0.0000 ks_split=-1 sighting=none N=100000 frames=400000 flags=0x1281
+HetStats LB-sys cpu_only=0 obs=VOID R=4 usable=0 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 ctrl=canary mu_total=0 can_total=0 win_n=0 nwin=128 P_rep=-1 ks=underpowered ks_D=0.0000 ks_Dcrit=0.0000 ks_split=-1 sighting=none N=100000 frames=400000 flags=0x281
 HetStats LB-sys: 4 cell(s) [(instance,run)], 0 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
-  VOID -- not one of the 4 runs was usable (every cell COLD).  There is nothing here to bound: an empty histogram from a dead harness is not a non-observation, it is an absence of data.  See the per-run HetVerdict lines for which mechanism was dead.
+  VOID -- not one of the 4 runs was usable (every cell COLD).  There is nothing here to report: an empty histogram from a dead harness is not a non-observation, it is an absence of data.  See the per-run HetVerdict lines for which mechanism was dead.
 Test LB-sys
 Histogram (1 states)
 Condition exists (1:r0=1 /\ 1:r1=0) is validated

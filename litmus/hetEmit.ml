@@ -317,9 +317,9 @@ end
               ~csv:CpuF.control_map_csv ~src_name in
           (* WHETHER A POSITIVE-CONTROL MAP WAS READ AT ALL.  The load above is
              unconditional, so this says the file was missing beside the test:
-             nothing then marks any row the canary, and its missing bound is a
-             build fault rather than a construction -- het_verdict.h has to be
-             able to tell those two apart. *)
+             nothing then marks any row the canary, and its missing calibration
+             channel is a build fault rather than a construction -- het_verdict.h
+             has to be able to tell those two apart. *)
           let no_control_map = (match cmap with None -> true | Some _ -> false) in
           if not no_control_map && not (HetControlMap.has_row cmap tname) then
             Warn.user_error
@@ -997,9 +997,9 @@ end
                 | RMu -> Some ("control_target_count", "control_win")
                 | RCanary -> Some ("canary_target_count", "canary_win") in
               (* The control channel is the only windowed one: T's target is far
-                 too rare to estimate a variance from -- which is why it needs a
-                 bound at all -- while the control is a high-rate proxy on the same
-                 fabric in the same run (env-research/Q3-stats.md sec 3.3). *)
+                 too rare to say anything about a rate from, while the control is a
+                 high-rate proxy on the same fabric in the same run
+                 (env-research/Q3-stats.md sec 3.3). *)
               let bump_count f w =
                 Printf.sprintf
                   "      if (_weak) { _rec.%s++; _rec.%s[het_win_of(_f, SIZE_OF_TEST)]++; }\n"
@@ -1838,8 +1838,7 @@ end
                and never the frame: the recovery scan validates N^{T_L} overlapping
                frames per N iterations, so a frame count fed into Kirkham's 1-e^{-n}
                returns ~1 vacuously.  Y = 1[target_count >= 1] per cell is the n the
-               reproducibility and rule-of-three math takes
-               (env-research/Q3-stats.md). *)
+               reproducibility math takes (env-research/Q3-stats.md). *)
             s "  het_obs_record _recs[NUMBER_OF_RUN];\n" ;
             s "  memset(_recs, 0, sizeof _recs);\n" ;
             (* The campaign knobs are RUNTIME (getenv), never -D: the scheduler
@@ -1849,8 +1848,8 @@ end
                can only CURTAIL within one invocation, since the record array is
                compiled at NUMBER_OF_RUN; growing R is the outer scheduler's job,
                one fresh-HET_SEED invocation at a time -- replaying the same seeds
-               adds no fresh phase draws, and pooling them would double-count the
-               effective replication. *)
+               adds no fresh phase draws, so pooling them would count one draw twice
+               and report 2R runs of effort for R. *)
             s "  int _runs_budget = (int)het_env_long(\"HET_RUNS_MAX\", NUMBER_OF_RUN);\n" ;
             s "  if (_runs_budget > NUMBER_OF_RUN) {\n" ;
             s "    fprintf(stderr, \"HetLitmus WARNING: HET_RUNS_MAX=%d exceeds the compiled NUMBER_OF_RUN=%d -- clamped.  Grow R by re-invoking with a FRESH HET_SEED (hetlitmus/campaign.py), never by replaying the same seeds.\\n\", _runs_budget, (int)NUMBER_OF_RUN);\n" ;
@@ -1858,7 +1857,6 @@ end
             s "  }\n" ;
             s "  if (_runs_budget < 1) _runs_budget = 1;\n" ;
             s "  int _adaptive = (int)het_env_long(\"HET_ADAPTIVE\", 0);\n" ;
-            s "  double _p_goal = het_env_double(\"HET_P_GOAL\", -1.0);\n" ;
             s "  int _rate_mode = (int)het_env_long(\"HET_RATE\", 0);\n" ;
             s "  int _confirm_runs = (int)het_env_long(\"HET_CONFIRM_RUNS\", 30);\n" ;
             s "  uint32_t _seed0 = (uint32_t)het_env_long(\"HET_SEED\", (long)HET_SEED);\n" ;
@@ -2150,8 +2148,9 @@ end
             s "    _rec.noise_ws_mb = (uint32_t)HET_NOISE_MB;\n" ;
             s "    _rec.place_mode = (uint32_t)HET_PLACE;\n" ;
             (* The window resolution this run REALISED.  HET_NWIN is swept and the
-               autocorrelation-time statistics are resolution-dependent, so a record
-               scored at one nwin must never be silently pooled with another. *)
+               KS stationarity precheck is taken at whatever resolution the run
+               realised, so a record scored at one nwin must never be silently
+               pooled with another. *)
             s "    _rec.nwin = (uint32_t)HET_NWIN;\n" ;
             List.iter (fun i -> s i.i_scan) insts ;
             (* control_Prep is computed AFTER the control's scan, because it reads
@@ -2175,11 +2174,11 @@ end
                _runs_budget.  The rule stays PURE, so the two policy knobs it takes
                (HET_RATE, HET_CONFIRM_RUNS) are read HERE and passed in. *)
             s "    if (_adaptive) {\n" ;
-            s "      het_campaign_stop_t _stop = het_campaign_should_stop(_recs, _nrec, _runs_budget, _p_goal, _rate_mode, _confirm_runs);\n" ;
+            s "      het_campaign_stop_t _stop = het_campaign_should_stop(_recs, _nrec, _runs_budget, _rate_mode, _confirm_runs);\n" ;
             s "      if (_stop != HET_CAMPAIGN_CONTINUE) {\n" ;
             s (Printf.sprintf
-                 "        printf(\"HetCampaign %s stop=%%s runs=%%d budget=%%d p_goal=%%g\\n\",\n\
-                  \               het_campaign_stop_name(_stop), _nrec, _runs_budget, _p_goal);\n"
+                 "        printf(\"HetCampaign %s stop=%%s runs=%%d budget=%%d\\n\",\n\
+                  \               het_campaign_stop_name(_stop), _nrec, _runs_budget);\n"
                  tname) ;
             s "        { const char *_why = het_campaign_stop_why(_stop);\n" ;
             s "          if (*_why) printf(\"  %s.\\n\", _why); }\n" ;
@@ -2190,9 +2189,10 @@ end
             (* ========= the statistics post-pass over the aggregated cells ========
                het_verdict() is a PURE function of one record, so the aggregate reuses
                it instead of re-deriving liveness, inheriting every stress
-               disqualifier.  This is what turns "not observed" into "not observed,
-               under quantified effort, with a 95% bound on the run-level rate" --
-               what makes a Never carry a bound at all (env-research/Q3-stats.md). *)
+               disqualifier.  This is what turns "not observed" into "not observed
+               over this much effort, on a harness a live control kept demonstrably
+               hot" -- no rate and no probability is attached to a null
+               (env-research/Q3-stats.md). *)
             s "  {\n" ;
             s "    het_stats_t _st;\n" ;
             s "    het_stats_compute(_recs, _nrec, &_st);\n" ;

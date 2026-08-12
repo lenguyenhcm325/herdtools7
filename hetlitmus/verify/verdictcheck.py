@@ -194,7 +194,7 @@ CASES = [
     # is structurally 0 and the OBSERVER is their only liveness channel.  All three
     # outcomes stay reachable, or the channel goes constant on those (DR1).
     # (a) live observer (>= HET_THETA_DISTINCT distinct GPU store-values) + hot
-    #     canary, nothing seen -> the bound-carrying null path.
+    #     canary, nothing seen -> the reportable-null path.
     case("store-only-observer-live-is-a-null", "NOT-OBSERVED-CANARY-ONLY",
          control_compiled_in=0, control_target_count=0,
          sync_valid=0, obs_valid=1, observer_unique_count=500,

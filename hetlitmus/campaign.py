@@ -81,7 +81,6 @@ CONFIRM_RUNS = 30                    # the driver's HET_CONFIRM_RUNS default
 STOP_NAMES = {
     "HET_CAMPAIGN_STOP_CORROBORATED": "CORROBORATED",
     "HET_CAMPAIGN_STOP_UNCONFIRMED":  "UNCONFIRMED-SIGHTING",
-    "HET_CAMPAIGN_STOP_BOUND_MET":    "BOUND-MET",
     "HET_CAMPAIGN_STOP_BUDGET":       "BUDGET",
 }
 # ERROR is this driver's own: the harness produced no readable row, which the C rule

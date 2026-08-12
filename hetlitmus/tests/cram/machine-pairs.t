@@ -136,7 +136,7 @@ warning -- the shape a per-line grep of `fprintf(' lines cannot see:
   $ sed -i 's/^Target: NVIDIA CUDA\.$/Target: NVIDIA GH200 (CUDA)./' $P/README.md
   $ printf 'static void _planted(void){ fprintf(stderr, "the Grace "\n  "half is idle\\n"); }\n' >> $P/MP-cg-sys-relaxed-x86_64.cu
   $ python3 ../../verify/brandscan.py --entitled none xc-planted; echo "exit $?"
-  xc-planted/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu:763: names 'Grace' (the gh200 row's word; this lane is entitled to none): the Grace half is idle
+  xc-planted/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu:762: names 'Grace' (the gh200 row's word; this lane is entitled to none): the Grace half is idle
   xc-planted/MP-cg-sys-relaxed-x86_64/README.md:50: names 'GH200' (the gh200 row's word; this lane is entitled to none): Target: NVIDIA GH200 (CUDA).
   FAIL: 2 machine word(s) in a lane entitled to none -- a harness that names the wrong machine runs and reports like one that names the right one
   exit 1

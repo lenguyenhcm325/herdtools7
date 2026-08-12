@@ -129,7 +129,7 @@ whose condition fails is not a weaker experiment, it is undefined. That is why
 
 ## Knobs
 
-Exactly **seven** runtime (`getenv`) knobs; everything else is compile-time and
+Exactly **six** runtime (`getenv`) knobs; everything else is compile-time and
 is set through the compiler variable, e.g.
 `make cuda-bin NVCC="nvcc -DHET_MEM_STRESS_PCT=0"`.
 
@@ -138,7 +138,6 @@ is set through the compiler variable, e.g.
 | `HET_ALLOC` | `auto`\|`malloc`\|`managed`\|`pinned` — shared-memory mode |
 | `HET_RUNS_MAX` | runs this invocation, clamped to the compiled `NUMBER_OF_RUN` (10) |
 | `HET_ADAPTIVE` | `1` ⇒ consult `het_campaign_should_stop()` after every run |
-| `HET_P_GOAL` | stop a bound-needing row once `p_bound <= this` |
 | `HET_RATE` | `1` ⇒ a sighting stops nothing; the row runs to budget |
 | `HET_CONFIRM_RUNS` | runs *after the one it fired in* that a lone clean sighting may hold a row open for (default 30) |
 | `HET_SEED` | overrides the compiled seed base; **must** vary per invocation |

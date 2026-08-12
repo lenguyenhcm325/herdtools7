@@ -808,28 +808,28 @@ hetlitmus-verdict: | build
 ### from the real emitted header and driven with synthetic record streams
 ### (statscheck.py).  A gate that exists but is not in the build is not a gate but
 ### a script, which is why this target lands with the script it runs.
-###   estimator   mu_upper pinned to the closed form (3 -> 19 -> 199.5); budget symbol
+###   window map  het_win_of maps frames to windows and is not a constant
 ###   aggregate   every statistic differentially checked vs an independent Python
 ###               re-derivation; every class/flag/tier reachable (anti-constant)
-###   tau/N_eff   Geyer initial-positive-sequence recovers known AR(1)
-###               autocorrelation times; N_eff clamped to [1, HET_NWIN]; the
-###               tau-at-cap regime reproduces the run-level bound exactly
+###   emptiness   the guard that refuses the KS gate on a control stream that is
+###               absent, all-zero or desynced -- the one thing standing between an
+###               all-zero stream and a P_rep unlocked by a test that never ran
 ###   producer    the per-window sub-tallies live BOTH ways on the real emitted scan
 ###   corpus      all 411 carry the post-pass + a decode channel
 ###   stop rule   het_verdict.h's own policy, which branches on no class: a
 ###               corroborated sighting stops a row, a LONE one holds it open to
 ###               the confirmation window and then ends it UNCONFIRMED-SIGHTING,
 ###               HET_RATE turns the sighting stop off alone, an unstamped record
-###               buys no stop at all, a null stops at its bound or its budget
-###   scheduler   campaign.py on a stub runner: the SAME policy at the pooled
-###               scale, plus the mirror that rejects a header which moved the
-###               corroboration bar or renamed a stop
-### --bite: cmp-verified injections into the statistics.  (B7/B7b)
+###               buys no stop at all, and a null runs to its budget
+###   scheduler   campaign.py on a stub runner: one policy applied a second time
+###               over pooled runs, plus the mirror that rejects a header which
+###               moved the corroboration bar or renamed a stop
+### --bite: cmp-verified injections into the statistics.  (B7)
 hetlitmus-stats: | build
 	@ echo
 	python3 hetlitmus/verify/statscheck.py
 	python3 hetlitmus/verify/statscheck.py --bite
-	@ echo "HetLitmus B7/B7b statistics layer: OK (and the gate bites)"
+	@ echo "HetLitmus B7 statistics layer: OK (and the gate bites)"
 
 ### hetlitmus-hist: the outcome-histogram gate.  verdictcheck and statscheck read
 ### the het_obs_record; nothing else looks at litmus7's inherited outs histogram,
@@ -1059,12 +1059,13 @@ hetlitmus-hipbuild: | build
 ### it and reads the printout, which is the only artefact a result is read off.
 ### TWO ARMS, because the sentence a reader must never see swapped is chosen by
 ### whether a positive-control map was read: the committed x86 fixture, whose map
-### names that row its OWN canary (bound missing BY CONSTRUCTION), and the same
-### test copied away from the map (bound missing by OMISSION).  The statistics
-### layer once printed the first on a run that was the second.  Seven assertions
-### per arm (stamp, the arm's own control sentence and NOT the other's, OBSERVED
-### against the pair NAME, no MATCH/MISMATCH, no Grace/Hopper/NVLink/C2C/GH200
-### -- this pair has no machine row -- and the observation class on k < R).
+### names that row its OWN canary (calibration channel missing BY CONSTRUCTION),
+### and the same test copied away from the map (missing by OMISSION).  The
+### statistics layer once printed the first on a run that was the second.  Seven
+### assertions per arm (stamp, the arm's own control sentence and NOT the
+### other's, OBSERVED against the pair NAME, no MATCH/MISMATCH, no
+### Grace/Hopper/NVLink/C2C/GH200 -- this pair has no machine row -- and the
+### observation class on k < R).
 ### NEEDS A DEVICE, hence the -nvcc umbrella; with none visible it FAILS rather
 ### than skipping, because a gate that quietly stops checking is the failure mode
 ### this suite has already shipped twice.  Three assertions per arm need one

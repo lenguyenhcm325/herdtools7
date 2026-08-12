@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """HetLitmus -- the STATISTICS gate for het_stats_compute() (het_verdict.h).
 
-het_stats_compute() turns a "Never" into a BOUND, and every part of it can pass
-every gate while reporting the same number forever: a Fano factor defaulting to
-1 is the rule of three calling itself dispersion-aware, a KS gate that "passes"
-without running tested nothing, dead sub-tallies make dispersion fiction.  This
-gate therefore drives the REAL emitted header, which cannot drift from a copy:
+het_stats_compute() says what a "Never" is worth and what a sighting reproduces
+at, and every part of it can pass every gate while answering the same thing
+forever: a KS gate that "passes" without running tested nothing, and it passes for
+free on an all-zero stream -- which would unlock P_rep for a harness where nothing
+co-ran.  This gate drives the REAL emitted header, which cannot drift from a copy:
 
-  1 THE ESTIMATOR  mu_upper(r) = r*(0.05^{-1/r} - 1) and het_tau_ips against
-                   their closed forms, both tau clamps, the runs-needed price.
+  1 THE INPUTS     het_win_of maps frames to windows rather than returning a
+                   constant, and the Python mirrors of the header's knobs are
+                   COMPARED to the header instead of assumed.
   2 THE AGGREGATE  every statistic re-derived independently in Python to 1e-9;
                    every class, KS outcome, tier and flag REACHABLE.
   3 THE PRODUCER   the emitted recovery scan, lifted out onto planted buffers.
   4 THE CORPUS     every harness carries the post-pass and a decode channel.
   5/6 SCHEDULING   the stop rule and campaign.py, against a stub runner.
 
-Spec: env-research/Q3-stats.md S2.4/R1-R6; impl-briefs/B7{,b,c}-impl-brief.md.
+Spec: env-research/Q3-stats.md R1-R6; impl-briefs/B7-impl-brief.md.
 
 Usage:  statscheck.py [-q]      run the gate
         statscheck.py --bite    prove the gate FAILS when the mechanism breaks
@@ -47,118 +48,26 @@ CENSUS_SYNC, CENSUS_OBS, CENSUS_NEITHER = 400, 117, 0
 CENSUS_WINBUMP = 409        # 411 - the 2 `self' canaries (a test cannot control itself)
 CENSUS_TESTS = 411
 
-LN20 = -math.log(0.05)      # 2.99573227355399...
-R_POISSON = 1e9
 KS_C05 = 1.358
 # THE PYTHON MIRRORS OF THE HEADER'S KNOBS.  "Must match" is not a check: no fixture
 # straddles the THETA_D or TAU_HOT boundary (the decode counts are 0/1/900/5000, the
 # control totals 0/500/~1280), so a header change would keep every comparison's truth
 # value and desynchronise the mirror in silence.  All four are therefore EMITTED by the
-# C driver and compared in phase 1 -- NWIN on the WIN| line, TAU_MIN_SAMPLES on
-# MINSAMP|, the rest on MIRROR|.
+# C driver and compared in phase 1 -- NWIN on the WIN| line, the rest on MIRROR|.
 NWIN = 128                  # must match HET_NWIN (a swept knob, not a constant)
 CORROB_RUNS = 2             # must match HET_CORROB_RUNS      (pinned via MIRROR|)
 THETA_D = 2                 # must match HET_THETA_DISTINCT   (pinned via MIRROR|)
 TAU_HOT = 30                # must match HET_TAU_HOT          (pinned via MIRROR|)
 MAX_CELLS = 128             # must match HET_STATS_MAX_CELLS  (pinned via MIRROR|)
-TAU_MIN_SAMPLES = 50.0      # must match HET_TAU_MIN_SAMPLES (emcee/Stan's 50*tau)
 
 TOL = 1e-9
 
-# The AR(1) recovery bands (phase 1).  tau_true = (1+rho)/(1-rho); wlen=2048 x 16
-# runs.  Wide enough to survive a change of seed rather than tuned to one draw, and
-# wide enough to contain the IPS truncation bias on finite windows.
-AR1_BANDS = [
-    # rho,  tau_true, lo,    hi
-    (0.00,   1.00,    1.00,  1.30),
-    (0.50,   3.00,    2.30,  3.70),
-    (0.90,  19.00,   13.00, 25.00),
-    (0.99, 199.00,  140.00, 280.00),
-]
-
-# THE RELIABILITY BAND.  At the shipped configuration (R = 10 runs x NWIN = 128) the
-# pooled stream is 1,280 samples, so the 50*tau criterion resolves tau up to 25.6 and
-# no further.  That is a property of how many runs we did, not of the channel, and it
-# relaxes as R grows -- which is what makes TAU_UNRESOLVED a signal, not a veto.
-RESOLVABLE_TAU_AT_R10 = 10 * NWIN / TAU_MIN_SAMPLES     # 25.6
-
 
 # ---------------------------------------------------------------------------
-# THE PYTHON REFERENCE: an independent re-derivation from the closed forms, never a
+# THE PYTHON REFERENCE: an independent re-derivation from the definitions, never a
 # transcription of the C -- a bug transcribed into both sides would pass the
 # differential.
 # ---------------------------------------------------------------------------
-def py_mu_upper(r):
-    if not (r > 0.0):
-        return LN20
-    if not (r < R_POISSON):
-        return LN20
-    return r * (0.05 ** (-1.0 / r) - 1.0)
-
-
-def py_fano(xs):
-    """Returns (F, mean, var); F = -1 when it cannot be measured."""
-    n = len(xs)
-    if n < 2:
-        return -1.0, 0.0, 0.0
-    m = sum(xs) / float(n)
-    v = sum((x - m) ** 2 for x in xs) / float(n - 1)
-    if not (m > 0.0):
-        return -1.0, m, v
-    return v / m, m, v
-
-
-def py_r_from_fano(mean, F):
-    if not (F > 1.0) or not (mean > 0.0):
-        return float("inf")
-    return mean / (F - 1.0)
-
-
-def py_tau_ips(win, wlen, mean):
-    """Geyer initial-positive-sequence, mirroring het_tau_ips' arithmetic exactly
-    (same loop order, biased 1/n autocovariances, within-run lags, exhaustion ->
-    cap, clamp to [1, wlen]) so the differential can hold to 1e-9.  The CLOSED-FORM
-    anchor is independent (AR1_BANDS): a bug transcribed into both mirrors would
-    still fail the closed form."""
-    nwin = len(win)
-    if wlen < 2 or nwin < wlen:
-        return -1.0
-    nrun = nwin // wlen
-    g0 = 0.0
-    for r in range(nrun):
-        for w in range(wlen):
-            d = win[r * wlen + w] - mean
-            g0 += d * d
-    g0 /= float(nrun * wlen)
-    if not (g0 > 0.0):
-        return -1.0
-    s = 0.0
-    exhausted = True
-    m = 0
-    while 2 * m < wlen:
-        G = 0.0
-        for k in (2 * m, 2 * m + 1):
-            if k >= wlen:
-                continue
-            if k == 0:
-                G += 1.0
-                continue
-            g = 0.0
-            for r in range(nrun):
-                for w in range(wlen - k):
-                    g += (win[r * wlen + w] - mean) * (win[r * wlen + w + k] - mean)
-            G += (g / float(nrun * wlen)) / g0
-        if not (G > 0.0):
-            exhausted = False
-            break
-        s += G
-        m += 1
-    if exhausted:
-        return float(wlen)
-    tau = 2.0 * s - 1.0
-    return min(max(tau, 1.0), float(wlen))
-
-
 def py_ks2(a, b):
     """Two-sample KS.  Returns (pass, D, Dcrit); pass=-1 when underpowered."""
     na, nb = len(a), len(b)
@@ -221,8 +130,8 @@ BASE = dict(
 
 # ---------------------------------------------------------------------------
 # THE SYNTHETIC WINDOW STREAMS.  Each RUN gets its OWN stream, because real runs do:
-# ten copies of one hand-picked stream is one sample counted ten times, which drives
-# the across-cell Fano to 0 and makes the KS over-sensitive on the collapsed ECDF.
+# ten copies of one hand-picked stream is one sample counted ten times, and the
+# collapsed ECDF that leaves makes the KS over-sensitive.
 # The RNG is a hand-rolled LCG rather than `random' or numpy so the fixtures -- and
 # therefore the reference numbers -- are identical on every machine and Python.
 # ---------------------------------------------------------------------------
@@ -236,7 +145,8 @@ class _Rng:
 
 
 def _poisson(rng, lam):
-    """Knuth.  Var == Mean, so F -> 1 -- the regime the rule of three assumes."""
+    """Knuth.  Arrivals that neither clump nor drift -- the plain stationary
+    baseline the bursty and drifting streams below are read against."""
     L, k, p = math.exp(-lam), 0, 1.0
     while True:
         p *= rng.u()
@@ -252,15 +162,14 @@ def poisson_stream(rng, lam=10.0):
 def bursty_stream(rng, lam=10.0, nb=16, span=4):
     """The SAME mean rate delivered in BURSTS: a productive CPU/GPU alignment window
     emits many sightings, then a long dry spell (Q1-alignment.md S2(e); PerpLE Fig.12).
-    This is the overdispersed regime Q3-stats.md S2.4 predicts on real C2C, and the
-    one whose measured Fano must widen mu_upper past the Poisson 2.996.
+    This is the regime Q3-stats.md S2.4 predicts on real C2C, and it is STATIONARY --
+    the rate does not change across the run, only its arrivals clump -- which is what
+    makes it the counter-fixture to drift_stream below.
 
     A burst is a TIME INTERVAL, so it spans `span` consecutive windows.  A
     single-bucket burst is a fixture artefact: at a fine HET_NWIN it concentrates the
-    marginal (F_win explodes, r_hat -> 0) instead of doing what a real burst does
-    under refinement, which is raise the window-to-window correlation.  Spanned bursts
-    keep the two instruments factored -- multiplicity in F_win (the numerator),
-    adjacency in tau_w (the denominator)."""
+    marginal instead of doing what a real burst does under refinement, which is raise
+    the window-to-window correlation."""
     w = [0] * NWIN
     for _ in range(nb):
         start = int(rng.u() * NWIN) % NWIN
@@ -276,122 +185,17 @@ def drift_stream(rng, lo=2.0, hi=40.0):
             + [_poisson(rng, hi) for _ in range(NWIN // 2)])
 
 
-def ramp_cells(nrun=10):
-    """THE TAU-AT-CAP REGIME: every window of run r carries the same count and only
-    the level differs across runs, i.e. an alignment regime that outlives the run.
-    Nothing decorrelates in view, so relative to the global mean every lag's products
-    stay positive, the IPS never finds a non-positive pair, and tau saturates at the
-    ceiling.  One run is then one alignment draw: N_eff = 1, and the bound must
-    collapse to the run-level one exactly (B7b-impl-brief.md, the honest failure
-    mode)."""
-    return [[5 * (r + 1)] * NWIN for r in range(nrun)]
-
-
-def cox_cells(rng, nrun=10, rho=0.99, mu=10.0, s=10.0):
-    """THE FIXTURE THE RELIABILITY GUARD NEEDS: a Cox process (doubly-stochastic
-    Poisson) -- a latent AR(1) RATE that drifts, sampled by COUNTING, which is what a
-    control stream physically is.  The bare AR(1) of phase 1 cannot show the failure
-    it guards: noiseless, it never decorrelates in view, the estimator exhausts and
-    TAU_AT_CAP correctly fires.  Add counting noise and the Geyer sum meets a SPURIOUS
-    non-positive pair early, truncates, and returns a tau far below both the truth and
-    the cap -- so nothing is flagged and the under-read tau OVER-credits N_eff
-    (B7c-impl-brief.md).
-
-    It is still an exact instrument: with latent ACF rho^k and Poisson counting on top
-    the counting noise is white, lands entirely at lag 0 and simply scales the ACF, so
-        ACF_k = lam * rho^k,   lam = var_rate / (mean + var_rate)      (k >= 1)
-        tau   = 1 + 2 * lam * rho / (1 - rho)
-    -- and the estimator either recovers it or it does not."""
-    sd = math.sqrt(1.0 / 12.0) / math.sqrt(1.0 - rho * rho)   # sd of the latent AR(1)
-    out = []
-    for _ in range(nrun):
-        x, w = 0.0, []
-        for _i in range(200):                      # burn-in to stationarity
-            x = rho * x + (rng.u() - 0.5)
-        for _i in range(NWIN):
-            x = rho * x + (rng.u() - 0.5)
-            rate = mu + s * x / sd
-            w.append(_poisson(rng, rate if rate > 0.01 else 0.01))
-        out.append(w)
-    return out
-
-
-def cox_tau(rho, mu=10.0, s=10.0):
-    """The closed form the fixture above is pinned against."""
-    lam = (s * s) / (mu + s * s)
-    return 1.0 + 2.0 * lam * rho / (1.0 - rho)
-
-
-def negacf_cells(rng, nrun=10, rho=-0.6):
-    """An ANTI-correlated count stream: AR(1) with rho < 0 rounded to counts, so
-    true tau = (1+rho)/(1-rho) = 0.25 < 1.  The floor must clamp it to 1 and N_eff
-    land EXACTLY at NWIN -- a stream of NWIN windows can never claim more than NWIN
-    independent samples.  An AR(1) and not a bare alternator: an exactly-periodic
-    phase-locked fixture has pair sums +1/n at every lag, an artefact no counts
-    process produces, which reads as never-decorrelating and caps instead."""
-    out = []
-    for _ in range(nrun):
-        x, w = 0.0, []
-        for _i in range(20):
-            x = rho * x + (rng.u() - 0.5)          # burn-in
-        for _i in range(NWIN):
-            x = rho * x + (rng.u() - 0.5)
-            w.append(max(0, int(round(10.0 + 8.0 * x))))
-        out.append(w)
-    return out
-
-
 _R = _Rng(20260714)
 POISSON_CELLS = [poisson_stream(_R) for _ in range(10)]
 BURSTY_CELLS = [bursty_stream(_R) for _ in range(10)]
 DRIFT_CELLS = [drift_stream(_R) for _ in range(10)]
-FLAT_CELLS = [[10] * NWIN for _ in range(10)]     # F = 0: must clamp UP to Poisson
+FLAT_CELLS = [[10] * NWIN for _ in range(10)]     # nonzero, but with no variance
 ZERO_CELLS = [[0] * NWIN for _ in range(10)]
-RAMP_CELLS = ramp_cells()
-NEGACF_CELLS = negacf_cells(_R)
 
-# THE TWO SIDES OF THE RELIABILITY THRESHOLD, both on correlated count streams with
-# an exact closed-form tau, because a guard that always fires is as dead as one that
-# never does.  Both must be reachable at the SHIPPED R = 10 (1,280 pooled samples):
-#   COX_SLOW  rho=0.99 -> tau_true 181, estimated ~54, needing 2,690 -> UNRESOLVED,
-#             N_eff falls back to 1.  Believed, that tau would credit N_eff = 2.4,
-#             and it sits well below the 128 cap so TAU_AT_CAP cannot catch it.
-#   COX_FAST  rho=0.90 -> tau_true 17.4, estimated ~10, needing 513 -> RESOLVED, and
-#             N_eff ~ 12.5 is CLAIMED: the guard has not just pinned N_eff at 1.
-COX_SLOW_RHO, COX_FAST_RHO = 0.99, 0.90
-COX_SLOW_CELLS = cox_cells(_Rng(20260714), 10, COX_SLOW_RHO)
-COX_FAST_CELLS = cox_cells(_Rng(20260714), 10, COX_FAST_RHO)
-# THE SELF-REFERENTIAL ESCAPE -- known-open, disclosed and fenced, not fixed
-# (decisions/F8-decision.md, Path 1).  The guard scales its threshold by the ESTIMATED
-# tau, so a stream whose tau the Geyer sum under-reads hard enough that 50*tau_est
-# drops below the pooled nwin slips past it and credits N_eff off an estimate that
-# vouches for itself.  Lower mu/s than COX_SLOW make the counting noise heavier
-# relative to the drift, so tau_est comes back ~16.8 against tau_true 85.9 and N_eff
-# is credited 7.6 where the honest reading is 1.49.  It is SEED-SENSITIVE (17 ->
-# ~5.1x; 20260714 -> ~3.6x; 42 -> the guard fires and there is no escape), so the
-# witness asserts its OWN escape-precondition: a fixture that has drifted out of the
-# regime it demonstrates must fail loudly rather than pass vacuously.
-COX_ESCAPE_SEED = 17
-COX_ESCAPE_RHO, COX_ESCAPE_MU, COX_ESCAPE_S = 0.99, 3.0, 1.5
-COX_ESCAPE_CELLS = cox_cells(_Rng(COX_ESCAPE_SEED), 10,
-                             COX_ESCAPE_RHO, COX_ESCAPE_MU, COX_ESCAPE_S)
-COX_ESCAPE_TAU_TRUE = cox_tau(COX_ESCAPE_RHO, COX_ESCAPE_MU, COX_ESCAPE_S)   # 85.857
-F8_ESCAPE_CASE = "f8-escape-guard-passes-over-credits"
-F8_NEFF_EXPECT = 7.63        # NWIN/tau_est at seed 17: the current ~5.1x over-credit, pinned
-# TAU AT THE CAP, RESOLVED.  "The regime outlives the run" is itself a claim about
-# tau and needs the same 50*tau evidence as any other: a tau at the 128-window ceiling
-# needs 6,400 pooled samples = 50 usable runs before it may be BELIEVED to be there.
-# At R = 10 the honest reading of a ramp is UNRESOLVED, so the at-cap case runs 64
-# cells or TAU_AT_CAP is unreachable at every R the campaign runs.  The two flags
-# prescribe different remedies -- AT_CAP raise HET_NWIN, UNRESOLVED raise R.
-RAMP_CELLS_RESOLVED = ramp_cells(64)
-# 100 runs of the same Poisson channel.  The bound MUST tighten with R -- if it does
-# not, R_eff is not in the formula and the "bound" is a constant wearing a fraction.
-POISSON_CELLS_100 = [poisson_stream(_R) for _ in range(100)]
 # ONE RECORD MORE THAN THE AGGREGATE CAN HOLD.  het_stats_compute clamps its record
 # array at HET_STATS_MAX_CELLS and the tail is dropped from every statistic; the field
 # is producible (hetEmit sizes _recs[NUMBER_OF_RUN] from Cfg.runs, so litmus7 -r above
-# 128 hands it more than it can hold), and the ONLY thing that says the bound was
+# 128 hands it more than it can hold), and the ONLY thing that says the aggregate was
 # computed from fewer runs than were executed is HET_ST_CELLS_TRUNCATED.  Its own RNG,
 # so adding it cannot shift the draws every earlier fixture is pinned on.
 _R_TRUNC = _Rng(20260801)
@@ -473,91 +277,32 @@ def case(name, cells_, **want):
 
 
 # ============================ THE CASE SET =================================
-# --- NEVER, with a measured dispersion: the thesis's validation claim -------
+# --- NEVER, on a live control stream: the shape every null in the corpus takes ---
 case("never-poisson", stream(POISSON_CELLS),
-     obs="Never", ks="pass", flags_none=["BURSTY", "FANO_UNMEASURED"])
+     obs="Never", ks="pass", flags_none=["CTRL_STREAM_EMPTY"])
 
-# THE BOUND IS NOT A CONSTANT.  Same null, same effort, same mean rate -- only the
-# ARRIVAL PATTERN differs -- so the numerator must widen materially, or the
-# "dispersion-aware" bound is the textbook rule of three in a hat and every
-# non-observation is overclaimed ~6x (Q3-stats.md S2.4).
-# The bursts are heavy but WINDOW-LOCAL (adjacent windows are nearly independent), so
-# tau_w ~ 1 and each run still carries ~NWIN effective samples: the penalty (a wide
-# mu_upper) is paid and the dividend (N_eff) is collected, and ten runs bound
-# something on a channel where one bit per run would not.
-case("never-bursty", stream(BURSTY_CELLS),
-     obs="Never", flags_any=["BURSTY"],
-     flags_none=["FANO_UNMEASURED", "BOUND_VACUOUS", "TAU_UNMEASURED"])
+# A BURSTY STREAM IS NOT A DRIFTING ONE, and the gate must not confuse them: the same
+# mean rate delivered in window-local bursts is stationary, so KS must NOT reject it.
+# A gate that rejected here would suppress P_rep on every real C2C channel, where
+# arrivals come in bursts (Q3-stats.md S2.4) -- the opposite failure to the drift case
+# below, and the reason both are driven.
+case("bursty-stream-is-stationary-and-KS-must-not-reject", stream(BURSTY_CELLS),
+     obs="Never", ks="pass",
+     flags_none=["CTRL_STREAM_EMPTY", "NONSTATIONARY"])
 
-# THE BOUND MUST SCALE WITH R: same channel, 10x the runs, ~10x tighter.  A hardcoded
-# R_eff would leave it unchanged.  Q3-stats.md F4 in one case -- the remedy for a weak
-# null is more RUNS, not a bigger N.
-case("bound-tightens-with-R", stream(POISSON_CELLS_100),
-     obs="Never", flags_none=["FANO_UNMEASURED", "BOUND_VACUOUS"])
-
-# Under-dispersion (F<1) must clamp UP to the Poisson floor, never tighten below it.
-# (A flat stream also has zero variance in time, so tau is unmeasurable there and
-# N_eff stays 1 -- the same one-directional rule on the other axis.)
-case("never-underdispersed-clamps-to-poisson", stream(FLAT_CELLS),
-     obs="Never", flags_any=["UNDERDISPERSED", "TAU_UNMEASURED"], mu_upper=LN20,
-     N_eff=1.0)
-
-# --- THE TWO ENDS OF THE N_eff SCALE ----------------------------------------
-# TAU AT THE CAP, and THE CONTAINMENT CASE.  The alignment regime outlives the run, so
-# the stream never decorrelates in view: tau_w saturates at HET_NWIN, N_eff = 1, and
-# the bound must equal the run-level number EXACTLY (phase 2 pins p_bound ==
-# mu_upper / (R_usable / DEFF) to 1e-9).  A correct N_eff implementation CONTAINS that
-# conservative special case.  The across-run spread also blows up F_cell here, which
-# is what keeps BOUND_VACUOUS reachable.  64 cells, not 10: see RAMP_CELLS_RESOLVED.
-case("never-tau-at-cap-is-B7-exactly", stream(RAMP_CELLS_RESOLVED),
-     obs="Never", flags_any=["TAU_AT_CAP", "BOUND_VACUOUS"],
-     flags_none=["FANO_UNMEASURED", "TAU_UNMEASURED", "TAU_UNRESOLVED"],
-     tau_w=float(NWIN), N_eff=1.0, tau_need=int(TAU_MIN_SAMPLES))
-
-# --- THE RELIABILITY GUARD, BOTH DIRECTIONS ---------------------------------
-# THE OVERCLAIM CASE.  A slow-drifting control rate sampled by counting: tau_true is
-# 181, the Geyer sum truncates early and returns ~54, and 54 is BELOW the 128 cap so
-# TAU_AT_CAP cannot catch it.  Believed, it would credit N_eff = 2.4 and report a
-# bound 2.4x tighter than the truth -- in exactly the slow-skew-drift regime we most
-# expect on real C2C, where the conservative run-level reading is right.  1,280 pooled
-# samples cannot resolve tau = 54, so the guard must FIRE, N_eff fall back to 1, and
-# the bound be the run-level one exactly.
-case("never-tau-unresolved-falls-back-to-B7", stream(COX_SLOW_CELLS),
-     obs="Never", flags_any=["TAU_UNRESOLVED"],
-     flags_none=["FANO_UNMEASURED", "TAU_UNMEASURED", "TAU_AT_CAP"],
-     N_eff=1.0)
-
-# ... AND THE GUARD IS NOT A CONSTANT EITHER: one that always fires would discard the
-# N_eff dividend on every channel.  Same channel, same counting noise, faster
-# decorrelation (tau_true 17.4, estimated ~10, needing 513 of the 1,280 samples we
-# have), so the guard must stay SILENT and N_eff (~12.5) must be CLAIMED.
-case("never-tau-resolved-still-claims-Neff", stream(COX_FAST_CELLS),
-     obs="Never", flags_none=["FANO_UNMEASURED", "TAU_UNMEASURED", "TAU_AT_CAP",
-                              "TAU_UNRESOLVED"])
-
-# THE KNOWN-OPEN ESCAPE WITNESS (COX_ESCAPE_CELLS above; decisions/F8-decision.md).
-# The guard PASSES here (tau_need 7 <= R_usable 10) and credits N_eff off a tau it
-# cannot resolve.  This case pins only what phase 2 can see without the closed form:
-# neither reliability flag fires, so neither can catch it.  The quantitative claims
-# live in check_f8_escape_witness.  BOUND_VACUOUS also fires here (a heavy-F_cell null
-# bounds nothing); that is incidental and deliberately unconstrained.
-case(F8_ESCAPE_CASE, stream(COX_ESCAPE_CELLS),
-     obs="Never",
-     flags_none=["TAU_UNRESOLVED", "TAU_AT_CAP", "TAU_UNMEASURED", "FANO_UNMEASURED"])
-
-# THE FLOOR / CEILING CLAMP: an anti-correlated stream has raw tau < 1, which would
-# credit more independent samples than the stream has windows.  tau clamps to 1 and
-# N_eff to EXACTLY NWIN, never above.
-case("never-neg-acf-clamps-Neff-to-NWIN", stream(NEGACF_CELLS),
-     obs="Never", flags_none=["FANO_UNMEASURED", "TAU_UNMEASURED", "TAU_AT_CAP"],
-     tau_w=1.0, N_eff=float(NWIN))
+# THE EMPTINESS GUARD'S NEGATIVE SIDE.  A constant stream is degenerate in every way
+# a stream can be except the one that matters here: its windows sum to something.  The
+# guard is on the SUM and not on the variance, so this must NOT be called empty -- a
+# guard that fired here would refuse the KS gate on any channel with a steady rate.
+case("flat-nonzero-stream-is-not-an-EMPTY-one", stream(FLAT_CELLS),
+     obs="Never", ks="pass", flags_none=["CTRL_STREAM_EMPTY", "KS_UNDERPOWERED"])
 
 # --- STATIONARITY ----------------------------------------------------------
 # A control rate that CHANGES mid-run.  KS must REJECT and P_rep be suppressed even
 # though the target WAS seen: P_rep is never reported across a non-stationary boundary
 # (Q3-stats.md S2.2, R4 -- the KS precheck is mandatory because Kirkham's own data
 # already fails it 4/18 GPU-only).  The stream rides the CANARY channel, which is the
-# calibration a test with no mu(T) has (canary-calibrated-when-no-mutant below).
+# only one a test with no mu(T) has (canary-channel-read-when-no-mutant below).
 case("ks-split-rejects-and-suppresses-Prep",
      observed(stream(DRIFT_CELLS, chan="canary",                      control_compiled_in=0, control_target_count=0), 4),
      obs="Sometimes", ks="SPLIT", flags_any=["NONSTATIONARY"], P_rep=-1.0)
@@ -570,10 +315,10 @@ case("sometimes-Prep-from-cells-not-frames",
 case("always", observed(stream(POISSON_CELLS), 10),
      obs="Always", k=10)
 
-# --- VOID: a dead harness bounds nothing -----------------------------------
+# --- VOID: a dead harness measured nothing ---------------------------------
 case("void-when-every-cell-is-cold",
      stream(ZERO_CELLS, canary_target_count=0),
-     obs="VOID", p_bound=-1.0, flags_any=["FANO_UNMEASURED", "KS_UNDERPOWERED"])
+     obs="VOID", flags_any=["CTRL_STREAM_EMPTY", "KS_UNDERPOWERED"])
 
 # --- THE DEGENERACY GUARD ---------------------------------------------------
 # Seen in 3 cells, but every decode was CONSTANT -- the reader-stuck-on-one-value
@@ -648,29 +393,30 @@ case("first-sight-counts-the-runs-spent-through-the-sighting",
 
 # --- THE SELF-PROVING INVARIANT --------------------------------------------
 # The window bump sits on the same line as the count, so sum(win) == total.  A total
-# that is nonzero with all windows zero means the bump did not run, and that must VOID
-# the dispersion rather than fall back to Poisson.
-case("window-desync-voids-the-bound",
+# that is nonzero with all windows zero means the bump did not run: the stream is not
+# the run's history, so the stationarity precheck must be REFUSED rather than run on it.
+case("window-desync-refuses-the-stationarity-precheck",
      stream(ZERO_CELLS, control_target_count=500),
-     obs="Never", p_bound=-1.0, flags_any=["WIN_DESYNC", "FANO_UNMEASURED"])
+     obs="Never", ks="underpowered",
+     flags_any=["WIN_DESYNC", "CTRL_STREAM_EMPTY", "KS_UNDERPOWERED"])
 
-# --- CALIBRATION PROVENANCE ------------------------------------------------
-# 78 of 411 have no mu(T) by construction -- they ARE the lattice floor -- so their
-# dispersion is calibrated from the Layer-B canary instead.  That canary is the het MP
-# floor, so on every shape but MP it is another shape's burstiness: a weaker claim,
-# hence a flag.
-case("canary-calibrated-when-no-mutant",
+# --- WHICH CHANNEL THE PRECHECK READ ---------------------------------------
+# 78 of 411 have no mu(T) by construction -- they ARE the lattice floor -- so the
+# stationarity precheck reads the Layer-B canary's stream instead.  That canary is the
+# het MP floor, so on every shape but MP it is another shape's time structure: a
+# weaker claim, hence a flag.
+case("canary-channel-read-when-no-mutant",
      stream(POISSON_CELLS, chan="canary",             control_compiled_in=0, control_target_count=0),
-     obs="Never", flags_any=["CTRL_IS_CANARY"], flags_none=["FANO_UNMEASURED"])
+     obs="Never", flags_any=["CTRL_IS_CANARY"], flags_none=["CTRL_STREAM_EMPTY"])
 
 # --- A MIXED STAMPED/UNSTAMPED STREAM IS READ AS ITS STAMPED HALF -------------
 # Ten stamped cells whose mu(T) is not compiled in, plus two UNSTAMPED cells whose
 # control counts are memset residue.  Everything below rec_magic is unreadable, so
 # the residue must reach neither the printed mu report nor the choice of calibration
 # channel: unguarded it makes mu_total nonzero, which SELECTS mu(T) as the channel --
-# and the stamped cells' mu(T) stream is all zeros, so the dispersion goes unmeasured
-# and the bound disappears.  A wrong number and a lost bound from records nothing may
-# read (het_verdict() stops at the stamp; so does every total here).
+# and the stamped cells' mu(T) stream is all zeros, so the pooled stream is empty and
+# the stationarity precheck is refused.  A wrong number and a refused precheck from
+# records nothing may read (het_verdict() stops at the stamp; so does every total here).
 MIXED_STAMP_CELLS = (
     stream(POISSON_CELLS, chan="canary", control_compiled_in=0,
            control_target_count=0)
@@ -679,7 +425,7 @@ case("unstamped-cells-feed-neither-the-mu-report-nor-the-channel-choice",
      MIXED_STAMP_CELLS,
      obs="Never", R=12, R_usable=10,
      mu_total=0, can_total=sum(sum(w) for w in POISSON_CELLS),
-     flags_any=["CTRL_IS_CANARY"], flags_none=["FANO_UNMEASURED", "WIN_DESYNC"])
+     flags_any=["CTRL_IS_CANARY"], flags_none=["CTRL_STREAM_EMPTY", "WIN_DESYNC"])
 
 # --- THE SELF-CANARY SELECTION EFFECT ---------------------------------------
 # MP-{cg,gc}-sys-relaxed ARE the Layer-B canary, so they co-run no control and a run in
@@ -687,16 +433,17 @@ case("unstamped-cells-feed-neither-the-mu-report-nor-the-channel-choice",
 # the survivors are tautologically the ones that fired.  Classifying over usable cells
 # would report ALWAYS for a canary that fired in 3 runs of 10 -- and that rate is what
 # the rest of the campaign is calibrated against -- so the denominator must be R.  They
-# also get NO BOUND: there is nothing independent to calibrate dispersion against.
+# also have NO CALIBRATION CHANNEL: nothing independent co-runs to test stationarity
+# against, so their P_rep is refused too.
 SELF_CANARY = dict(canary_name='"synthetic"',
                    control_compiled_in=0, canary_compiled_in=0,
                    control_target_count=0, canary_target_count=0)
 case("self-canary-fired-3-of-10-is-SOMETIMES-not-ALWAYS",
      observed(stream(ZERO_CELLS, **SELF_CANARY), 3),
      obs="Sometimes", k=3, k_eff=3, R_usable=3, frames=10 * 100000,
-     flags_any=["SELF_CONTROL", "FANO_UNMEASURED", "KS_UNDERPOWERED"],
+     flags_any=["SELF_CONTROL", "CTRL_STREAM_EMPTY", "KS_UNDERPOWERED"],
      flags_none=["NO_CONTROL_CORUN"],
-     P_rep=-1.0, p_bound=-1.0)
+     P_rep=-1.0)
 
 # ... AND ONE UNSTAMPED CELL MUST NOT UNDO IT.  The same ten, plus a cell whose
 # compiled-in flag is memset residue.  Read, that residue says something co-runs:
@@ -708,39 +455,39 @@ case("self-canary-plus-one-unstamped-cell-is-still-SOMETIMES",
      observed(stream(ZERO_CELLS, **SELF_CANARY), 3)
      + stream_runs([[0] * NWIN], [10], rec_magic=0, control_compiled_in=1),
      obs="Sometimes", k=3, k_eff=3, R=11, R_usable=3, frames=10 * 100000,
-     flags_any=["SELF_CONTROL", "FANO_UNMEASURED", "KS_UNDERPOWERED"],
+     flags_any=["SELF_CONTROL", "CTRL_STREAM_EMPTY", "KS_UNDERPOWERED"],
      flags_none=["NO_CONTROL_CORUN"],
-     P_rep=-1.0, p_bound=-1.0)
+     P_rep=-1.0)
 
 # --- ... AND THE ROW THAT CO-RUNS NOTHING WITHOUT BEING THE CANARY -------------
 # Every harness of a pair REGISTERED WITHOUT AN ORACLE looks like this: no control
 # map was read, so nothing co-runs AND nothing names this row the canary
 # (canary_name is NULL, not the test's own name).  The arithmetic is the self-canary
 # one -- "usable" is still defined by firing, so the denominator is still R -- but
-# the CLAIM is not: this row is no canary, and its missing bound is an omission we
-# have not closed rather than a property of the design.  Two flags, so the printout
-# can say which.
+# the CLAIM is not: this row is no canary, and its missing calibration channel is an
+# omission we have not closed rather than a property of the design.  Two flags, so
+# the printout can say which.
 case("no-control-map-fired-3-of-10-is-SOMETIMES-and-is-NOT-the-canary",
      observed(stream(ZERO_CELLS,                      control_compiled_in=0, canary_compiled_in=0,
                      control_target_count=0, canary_target_count=0), 3),
      obs="Sometimes", k=3, k_eff=3, R_usable=3,
-     flags_any=["NO_CONTROL_CORUN", "FANO_UNMEASURED", "KS_UNDERPOWERED"],
+     flags_any=["NO_CONTROL_CORUN", "CTRL_STREAM_EMPTY", "KS_UNDERPOWERED"],
      flags_none=["SELF_CONTROL"],
-     P_rep=-1.0, p_bound=-1.0)
+     P_rep=-1.0)
 
-# --- A SIGHTING-FREE NULL IS BOUNDED FROM WHAT CO-RAN WITH IT --------------------
-# The bound is a characterization number and depends on nothing but the effort spent
-# and the dispersion measured on the calibrating channel -- here mu(T), which is
-# compiled in and hot; the canary-calibrated half of the pair is
-# canary-calibrated-when-no-mutant above.
-case("sighting-free-null-is-bounded-off-its-mu-channel",
+# --- A SIGHTING-FREE NULL IS CALIBRATED BY WHAT CO-RAN WITH IT ------------------
+# Which channel the precheck reads is a choice, and it must prefer the shape-matched
+# one where it exists and fired -- here mu(T), compiled in and hot; the canary half of
+# the pair is canary-channel-read-when-no-mutant above.
+case("sighting-free-null-reads-its-own-mu-channel",
      stream(POISSON_CELLS),
-     obs="Never", flags_none=["FANO_UNMEASURED", "CTRL_IS_CANARY"])
+     obs="Never", flags_none=["CTRL_STREAM_EMPTY", "CTRL_IS_CANARY"])
 
 # --- MORE RUNS THAN THE AGGREGATE CAN HOLD ----------------------------------
 # The tail beyond HET_STATS_MAX_CELLS is DROPPED from every statistic (R_usable = 128
-# of the 129 supplied), which would quietly bound a campaign on less effort than it
-# spent -- so st->R keeps the PRE-clamp count and the flag says the discard happened.
+# of the 129 supplied), which would quietly report a campaign as having spent less
+# effort than it did -- so st->R keeps the PRE-clamp count and the flag says the
+# discard happened.
 # Production runs at R = 10 per invocation, but campaign.py pools invocations and
 # litmus7 -r is an operator knob, so this is reachable in the field and reached here.
 case("cells-truncated-above-HET_STATS_MAX_CELLS", stream(POISSON_CELLS_TRUNC),
@@ -759,8 +506,8 @@ CONFIRM_RUNS = 30           # must match the driver's HET_CONFIRM_RUNS default
 STOPS = []
 
 
-def stop(name, cells_, budget, p_goal, want, rate=0, confirm=CONFIRM_RUNS):
-    STOPS.append(dict(name=name, cells=cells_, budget=budget, p_goal=p_goal,
+def stop(name, cells_, budget, want, rate=0, confirm=CONFIRM_RUNS):
+    STOPS.append(dict(name=name, cells=cells_, budget=budget,
                       want=want, rate=rate, confirm=confirm))
 
 
@@ -768,26 +515,26 @@ def stop(name, cells_, budget, p_goal, want, rate=0, confirm=CONFIRM_RUNS):
 # so the row keeps running to corroborate.
 stop("one-clean-sighting-does-not-stop",
      observed(stream(POISSON_CELLS), 1),
-     20, -1.0, "CONTINUE")
+     20, "CONTINUE")
 # ... and neither does a degenerate one, at any count: an artefact must never
 # de-schedule a test (the branch is on k_eff, not on the tier, which k sets).
 stop("degenerate-sightings-never-stop",
      observed(stream(POISSON_CELLS), 3, clean=False),
-     20, -1.0, "CONTINUE")
+     20, "CONTINUE")
 # The bar is HET_CORROB_RUNS distinct clean RUNS, and it is reached exactly there.
 stop("sighting-corroborated-stops",
      observed(stream(POISSON_CELLS), CORROB_RUNS),
-     20, -1.0, "CORROBORATED")
+     20, "CORROBORATED")
 # THE CONFIRMATION WINDOW, AT ITS BOUNDARY.  The same lone sighting in the FIRST of
 # ten runs, so nine have elapsed since it: one run short of the window it keeps
 # running, at the window it stops -- and UNCONFIRMED-SIGHTING is its own outcome,
 # neither a corroboration nor a null.
 stop("lone-sighting-below-the-confirm-window-continues",
      observed(stream(POISSON_CELLS), 1),
-     20, -1.0, "CONTINUE", confirm=10)
+     20, "CONTINUE", confirm=10)
 stop("lone-sighting-at-the-confirm-window-stops-unconfirmed",
      observed(stream(POISSON_CELLS), 1),
-     20, -1.0, "UNCONFIRMED-SIGHTING", confirm=9)
+     20, "UNCONFIRMED-SIGHTING", confirm=9)
 # THE PRECEDENCE, BOTH WAYS.  budget is spent (n >= budget) in both, and neither
 # answers BUDGET: while a clean sighting is open the window decides, because a row
 # ended at BUDGET here would bank "seen once, stopped looking".  Below the window
@@ -795,10 +542,10 @@ stop("lone-sighting-at-the-confirm-window-stops-unconfirmed",
 # and the row is left unterminated rather than recorded as budget-stopped.
 stop("lone-sighting-outranks-the-budget-stop",
      observed(stream(POISSON_CELLS), 1),
-     5, -1.0, "CONTINUE")
+     5, "CONTINUE")
 stop("the-window-not-the-budget-ends-a-lone-sighting",
      observed(stream(POISSON_CELLS), 1),
-     5, -1.0, "UNCONFIRMED-SIGHTING", confirm=9)
+     5, "UNCONFIRMED-SIGHTING", confirm=9)
 # THE WINDOW IS MEASURED FROM THE SIGHTING, and these three are why it must be.  A
 # row whose one sighting lands in its LAST run has spent none of its window yet, so
 # it must keep running: closing the window on it hands a sighting zero runs to
@@ -807,65 +554,52 @@ stop("the-window-not-the-budget-ends-a-lone-sighting",
 # it, so a six-run window is still open and a five-run one has just closed.
 stop("a-sighting-in-the-last-run-gets-its-window",
      observed_at(stream(POISSON_CELLS), 9),
-     20, -1.0, "CONTINUE", confirm=5)
+     20, "CONTINUE", confirm=5)
 stop("late-sighting-inside-its-window-continues",
      observed_at(stream(POISSON_CELLS), 4),
-     20, -1.0, "CONTINUE", confirm=6)
+     20, "CONTINUE", confirm=6)
 stop("late-sighting-past-its-window-stops-unconfirmed",
      observed_at(stream(POISSON_CELLS), 4),
-     20, -1.0, "UNCONFIRMED-SIGHTING", confirm=5)
+     20, "UNCONFIRMED-SIGHTING", confirm=5)
 # RATE MODE (HET_RATE=1) disables the sighting stop and nothing else: the row runs on
-# to measure a rate, and its bound and its budget still stop it.
+# to measure a rate, and its budget still stops it.
 stop("rate-mode-does-not-stop-on-a-corroborated-sighting",
      observed(stream(POISSON_CELLS), CORROB_RUNS),
-     20, -1.0, "CONTINUE", rate=1)
+     20, "CONTINUE", rate=1)
 stop("rate-mode-still-stops-at-budget",
      observed(stream(POISSON_CELLS), CORROB_RUNS),
-     10, -1.0, "BUDGET", rate=1)
-stop("rate-mode-still-stops-on-the-bound",
-     stream(POISSON_CELLS),
-     20, 0.05, "BOUND-MET", rate=1)
+     10, "BUDGET", rate=1)
 # ... and a LONE sighting under rate mode is a rate to be measured like any other:
 # neither the corroboration stop nor the confirmation window applies, so the row
 # reaches its budget and is never banked UNCONFIRMED.  (Rate mode is the operator's
 # answer to an UNCONFIRMED row, so it must not be able to produce one.)
 stop("rate-mode-runs-a-lone-sighting-to-budget",
      observed(stream(POISSON_CELLS), 1),
-     10, -1.0, "BUDGET", rate=1)
+     10, "BUDGET", rate=1)
 stop("cold-row-runs-to-budget",
      stream(POISSON_CELLS),
-     10, -1.0, "BUDGET")
-stop("null-stops-at-p-goal",
-     stream(POISSON_CELLS),
-     20, 0.05, "BOUND-MET")
-stop("null-without-a-goal-runs-to-budget",
-     stream(POISSON_CELLS),
-     10, -1.0, "BUDGET")
-# A VACUOUS bound must not satisfy ANY goal -- even an absurdly generous one.
-stop("vacuous-bound-never-meets-a-goal",
-     stream(RAMP_CELLS),
-     20, 1e6, "CONTINUE")
+     10, "BUDGET")
 # An UNSTAMPED record earns no early stop: every cell is COLD-INVALID, so there is
-# no bound to meet and nothing to corroborate, and the row spends its budget.
+# nothing to corroborate, and the row spends its budget.
 stop("unstamped-records-fail-closed-to-budget",
      stream(POISSON_CELLS, rec_magic=0),
-     10, 0.05, "BUDGET")
+     10, "BUDGET")
 # ... and the same holds when the unstamped stream is FULL OF SIGHTINGS in distinct
 # runs.  Every count below rec_magic is then memset residue, so scoring it would let
 # a harness the emitter built wrong corroborate itself into CORROBORATED -- the one
 # stop that means "nothing further is bought by running this row".
 stop("unstamped-sightings-earn-no-corroboration",
      observed(stream(POISSON_CELLS, rec_magic=0), CORROB_RUNS),
-     10, 0.05, "BUDGET")
-# A MIXED stream decides from its stamped half alone.  The residue here would both
-# fake a corroboration and, by making mu_total nonzero, select an all-zero mu(T)
-# stream as the calibration channel -- which leaves the dispersion unmeasured and the
-# bound gone.  The stamped ten are canary-calibrated nulls, so the answer is theirs.
+     10, "BUDGET")
+# A MIXED stream decides from its stamped half alone.  The two unstamped cells are
+# SIGHTINGS in distinct runs, so read, the residue alone would corroborate the row and
+# stop it -- the one stop that means "nothing further is bought here".  The stamped ten
+# are nulls, so the answer is theirs: the row spends its budget.
 stop("mixed-stream-is-decided-by-its-stamped-half",
      (stream(POISSON_CELLS, chan="canary", control_compiled_in=0,
              control_target_count=0)
       + observed(stream_runs(POISSON_CELLS[:2], [10, 11], rec_magic=0), 2)),
-     20, 0.05, "BOUND-MET")
+     12, "BUDGET")
 
 
 # ---------------------------------------------------------------------------
@@ -924,8 +658,22 @@ def py_reference(cells_):
         hot_k = c["canary_compiled_in"] and c["canary_target_count"] >= TAU_HOT
         return bool((hot_c or hot_k) and channel_live(c))
 
-    k = k_eff = n_degen = R_usable = first_sight = 0
-    runs, allruns, win, cellv = [], [], [], []
+    def mu_hot(c):
+        # het_verdict()'s NOT-OBSERVED-MU-HOT tier, which is what a null names as its
+        # voucher: a usable cell that saw nothing and whose OWN mu(T) reached tau_hot
+        # with the ground-truth scan behind it.  Everything else usable carries the
+        # weaker NOT-OBSERVED-CANARY-ONLY.
+        if not usable(c):
+            return False
+        if c["target_count_exhaustive"] > 0 or c["target_count_heuristic"] > 0:
+            return False
+        return bool(c["control_compiled_in"]
+                    and c["control_target_count"] >= TAU_HOT
+                    and c["exhaustive_valid"])
+
+    k = k_eff = n_degen = R_usable = first_sight = n_mu_hot = 0
+    runs, allruns, win = [], [], []
+    ctrl_pooled = 0
     desync = False
     for c in cells_:
         # THE STAMP GATES EVERY READ.  A cell that does not carry it is residue, and
@@ -937,6 +685,8 @@ def py_reference(cells_):
         u = usable(c)
         if u:
             R_usable += 1
+        if mu_hot(c):
+            n_mu_hot += 1
         y = c["target_count_exhaustive"] > 0 or c["target_count_heuristic"] > 0
         # Runs consumed so far, over EVERY stamped cell: first_sight is a price in
         # runs, so the denominator is the runs that were actually spent.
@@ -955,7 +705,7 @@ def py_reference(cells_):
         if sum(ctrl_win(c)) != ctrl_total(c):
             desync = True
         if u:
-            cellv.append(float(ctrl_total(c)))
+            ctrl_pooled += sum(ctrl_win(c))
             win.extend(float(x) for x in ctrl_win(c))
 
     # THE SELECTION EFFECT: wherever nothing co-runs, "usable" is defined by firing,
@@ -975,26 +725,10 @@ def py_reference(cells_):
     else:
         obs = "Sometimes"
 
-    F_win, mean, var = py_fano(win)
-    F_cell, _, _ = py_fano(cellv)
-    unmeasured = (F_win < 0.0) or desync
-    r_hat = float("inf") if unmeasured else py_r_from_fano(mean, F_win)
-
-    # tau on the same stream's temporal axis; N_eff = NWIN/tau in [1, NWIN].  An
-    # unmeasurable tau -- and a tau the stream is TOO SHORT TO RESOLVE -- leaves
-    # N_eff = 1, i.e. each run is one trial, the conservative run-level reading.  The
-    # reliability criterion (Foreman-Mackey: do not trust tau without >= 50*tau
-    # samples) applies to the POOLED count, so it relaxes as runs accumulate; tau_w is
-    # still REPORTED when unresolved, it just may not be SPENT.
-    tau_w, N_eff, tau_need, unresolved = -1.0, 1.0, 0, False
-    if not unmeasured:
-        tau_w = py_tau_ips(win, NWIN, mean)
-        if tau_w > 0.0:
-            tau_need = int(math.ceil(TAU_MIN_SAMPLES * tau_w / NWIN))
-            if len(win) < TAU_MIN_SAMPLES * tau_w:
-                unresolved = True                 # N_eff stays 1: the run-level read
-            else:
-                N_eff = min(max(NWIN / tau_w, 1.0), float(NWIN))
+    # THE EMPTINESS GUARD, re-derived: fewer than two pooled windows, an all-zero
+    # pooled stream, or sub-tallies that do not sum to their totals.  Any of the three
+    # and the KS gate below is REFUSED rather than run on nothing.
+    stream_empty = (len(win) < 2) or (ctrl_pooled == 0) or desync
 
     n_early = max(1, (NWIN * 20) // 100)
     n_late = max(1, (NWIN * 10) // 100)
@@ -1002,7 +736,7 @@ def py_reference(cells_):
     for i in range(0, len(win) - NWIN + 1, NWIN):
         early.extend(win[i:i + n_early])
         late.extend(win[i + NWIN - n_late:i + NWIN])
-    if unmeasured:
+    if stream_empty:
         ks, D, Dcrit = -1, 0.0, 0.0
     else:
         ks, D, Dcrit = py_ks2(early, late)
@@ -1013,15 +747,6 @@ def py_reference(cells_):
     if obs in ("Sometimes", "Always") and ks == 1 and k_eff > 0:
         P_rep = 1.0 - math.exp(-float(k_eff))
 
-    p_bound = -1.0
-    mu_up = R_eff = 0.0
-    if obs == "Never" and not unmeasured:
-        deff = F_cell if F_cell > 1.0 else 1.0
-        R_eff = R_usable * N_eff / deff       # the N_eff dividend, collected
-        mu_up = py_mu_upper(r_hat)
-        if R_eff > 0.0:
-            p_bound = mu_up / R_eff
-
     tier = "none"
     if k > 0:
         tier = ("CORROBORATED" if len(runs) >= CORROB_RUNS else "UNCONFIRMED")
@@ -1031,12 +756,9 @@ def py_reference(cells_):
                 can_total=sum(c["canary_target_count"]
                               for c in cells_ if stamped(c)),
                 frames=sum(c["frames_examined"] for c in cells_ if stamped(c)),
-                R=R, R_usable=R_usable, F_win=F_win, F_cell=F_cell, r_hat=r_hat,
-                mu_upper=mu_up, tau_w=tau_w, N_eff=N_eff, R_eff=R_eff,
-                tau_need=tau_need, unresolved=unresolved,
-                p_bound=p_bound, P_rep=P_rep,
+                R=R, R_usable=R_usable, n_mu_hot=n_mu_hot, P_rep=P_rep,
                 ks=("underpowered" if ks < 0 else ("pass" if ks else "SPLIT")),
-                ks_D=D, tier=tier, unmeasured=unmeasured)
+                ks_D=D, tier=tier, stream_empty=stream_empty)
 
 
 # ---------------------------------------------------------------------------
@@ -1049,19 +771,17 @@ C_MAIN = r"""
 static void run_case(const char *name, const het_obs_record *recs, int n) {
   het_stats_t st;
   het_stats_compute(recs, n, &st);
-  printf("CASE|%s|%s|%d|%d|%d|%d|%d|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%.12g|%s|%.12g|%s|%d|0x%x|%d|%d|%llu|%llu|%llu\n",
+  printf("CASE|%s|%s|%d|%d|%d|%d|%d|%.12g|%s|%.12g|%s|0x%x|%d|%d|%llu|%llu|%llu\n",
          name, het_obs_class_name(st.obs), st.k, st.k_eff, st.k_runs, st.n_degen,
-         st.R_usable, st.F_win, st.F_cell,
-         (st.r_hat >= HET_R_POISSON) ? INFINITY : st.r_hat,
-         st.mu_upper, st.tau_w, st.N_eff, st.R_eff, st.p_bound, st.P_rep,
+         st.R_usable, st.P_rep,
          (st.flags & HET_ST_KS_UNDERPOWERED) ? "underpowered"
            : (st.ks_pass ? "pass" : "SPLIT"),
-         st.ks_D, het_sighting_name(st.tier), st.tau_runs_needed, st.flags,
+         st.ks_D, het_sighting_name(st.tier), st.flags,
          /* st.R is the PRE-clamp record count: R > R_usable can mean cold cells,
             R > HET_STATS_MAX_CELLS means the tail was discarded. */
          st.R, st.n_at_first_sight,
          (unsigned long long)st.mu_total, (unsigned long long)st.can_total,
-         /* the EFFORT total: what a bound is quoted against, summed per cell */
+         /* the EFFORT total, summed per cell: what the effort line discloses */
          (unsigned long long)st.frames_examined);
   printf("PRINT-BEGIN|%s\n", name);
   het_stats_print(stdout, &st);
@@ -1072,19 +792,15 @@ static void run_case(const char *name, const het_obs_record *recs, int n) {
    why-string rides along: it is the one sentence an UNCONFIRMED-SIGHTING stop is
    entitled to, and a sentence nothing checks is a sentence that can go blank. */
 static void stop_case(const char *name, const het_obs_record *recs, int n,
-                      int budget, double p_goal, int rate_mode, int confirm_runs) {
-  het_campaign_stop_t s = het_campaign_should_stop(recs, n, budget, p_goal,
+                      int budget, int rate_mode, int confirm_runs) {
+  het_campaign_stop_t s = het_campaign_should_stop(recs, n, budget,
                                                    rate_mode, confirm_runs);
   printf("STOP|%s|%s|%s\n", name, het_campaign_stop_name(s),
          het_campaign_stop_why(s));
 }
 
-/* PHASE 1 -- the estimator, against the closed form. */
+/* PHASE 1 -- the inputs the aggregate is built on. */
 static void anchors(void) {
-  static const double rs[] = { 0.5, 1.0, 2.0, 5.0, 10.0, HUGE_VAL };
-  int i;
-  for (i = 0; i < 6; i++)
-    printf("MU|%.17g|%.17g\n", rs[i], het_mu_upper(rs[i]));
   /* het_win_of must MAP, not return a constant. */
   printf("WIN|%d|%d|%d|%d\n", het_win_of(0, 100000), het_win_of(50000, 100000),
          het_win_of(99999, 100000), (int)HET_NWIN);
@@ -1094,71 +810,10 @@ static void anchors(void) {
      gate can notice one of these macros moving under the mirror. */
   printf("MIRROR|%d|%d|%d|%d\n", (int)HET_THETA_DISTINCT, (int)HET_TAU_HOT,
          (int)HET_STATS_MAX_CELLS, (int)HET_CORROB_RUNS);
-  /* The campaign budget (Q3-stats.md R3).  p_min MUST stay unset in the shipped
-     header: the het hit-rate is unpublished, and Bagchi's ~0.2% is the GPU-only
-     inter-CTA rate.  An unset p_min must return NOT SIZED, never a budget. */
-  printf("BUDGET|%.17g|%.17g|%.17g|%.17g\n",
-         (double)HET_P_MIN,                     /* must be 0 = UNSET in the shipped hdr */
-         het_budget_runs((double)HET_P_MIN, 1.0),   /* -> -1 (not sized)                */
-         het_budget_runs(0.002, 1.0),               /* a rate: the Poisson budget        */
-         het_budget_runs(0.002, 20.0));             /* ... dispersion-inflated 20x       */
-}
-
-/* PHASE 1b -- het_tau_ips against streams whose tau is KNOWN.  An AR(1) process
-   x_{t+1} = rho*x_t + u_t has the closed form tau = (1+rho)/(1-rho), independent of
-   the noise distribution, so the estimator is validatable with no GPU: if it cannot
-   recover a known tau here, nothing it reports on hardware means anything.
-   Deterministic LCG => the fixtures are identical on every machine. */
-static unsigned long _ar1_lcg;
-static double _ar1_u(void) {
-  _ar1_lcg = (1103515245UL * _ar1_lcg + 12345UL) & 0x7FFFFFFFUL;
-  return (double)_ar1_lcg / (double)0x7FFFFFFFUL;
-}
-static double _ar1_buf[16 * 2048];
-static void ar1_case(const char *tag, double rho, int wlen, int nrun) {
-  double mean = 0.0, x;
-  int n = 0, r, w;
-  _ar1_lcg = 20260714UL;
-  for (r = 0; r < nrun; r++) {
-    x = 0.0;
-    for (w = 0; w < 100; w++) x = rho * x + (_ar1_u() - 0.5);   /* burn-in */
-    for (w = 0; w < wlen; w++) { x = rho * x + (_ar1_u() - 0.5); _ar1_buf[n++] = x; }
-  }
-  for (w = 0; w < n; w++) mean += _ar1_buf[w];
-  mean /= (double)n;
-  printf("TAU|%s|%.17g|%.17g|%d\n", tag, rho,
-         het_tau_ips(_ar1_buf, n, wlen, mean), wlen);
-}
-static void ar1(void) {
-  ar1_case("ar1", 0.0,  2048, 16);
-  ar1_case("ar1", 0.5,  2048, 16);
-  ar1_case("ar1", 0.9,  2048, 16);
-  ar1_case("ar1", 0.99, 2048, 16);
-  /* THE CEILING: tau_true = 199 read through 128-window runs never decorrelates in
-     view, so the estimator must saturate AT the cap -- a truncated partial sum
-     under-reads tau and over-credits N_eff, the one forbidden direction. */
-  ar1_case("cap", 0.99, 128, 16);
-  /* THE FLOOR: anti-correlated (tau_true = 0.33) must clamp to 1 -- a stream of
-     wlen windows can never claim more than wlen independent samples. */
-  ar1_case("floor", -0.5, 128, 16);
-}
-
-/* PHASE 1c -- het_tau_runs_needed() is the PRICE the operator acts on ("run this
-   many runs and N_eff becomes claimable"), pinned against the closed form
-   ceil(HET_TAU_MIN_SAMPLES * tau / HET_NWIN).  A price that is silently 0 turns
-   TAU_UNRESOLVED into a dead end instead of a signal. */
-static void need(void) {
-  static const double ts[] = { -1.0, 0.0, 1.0, 2.56, 25.6, 26.0, 54.0, 128.0 };
-  int i;
-  printf("MINSAMP|%.17g\n", (double)HET_TAU_MIN_SAMPLES);
-  for (i = 0; i < 8; i++)
-    printf("NEED|%.17g|%d\n", ts[i], het_tau_runs_needed(ts[i]));
 }
 
 int main(void) {
   anchors();
-  ar1();
-  need();
 __CASES__
   return 0;
 }
@@ -1193,9 +848,9 @@ def build_c():
     for i, s in enumerate(STOPS):
         body.append("  {")
         body.append(c_cells("stopc%d" % i, s["cells"]))
-        body.append('    stop_case("%s", stopc%d, %d, %d, %s, %d, %d);'
+        body.append('    stop_case("%s", stopc%d, %d, %d, %d, %d);'
                     % (s["name"], i, len(s["cells"]), s["budget"],
-                       repr(s["p_goal"]), s["rate"], s["confirm"]))
+                       s["rate"], s["confirm"]))
         body.append("  }")
     return C_MAIN.replace("__CASES__", "\n".join(body))
 
@@ -1231,129 +886,48 @@ def close(a, b, tol=TOL):
     return abs(a - b) <= tol * max(1.0, abs(a), abs(b))
 
 
-# ORDER IS THE BIT NUMBER (FLAG_BIT below is index-derived), so this list must
-# stay a verbatim transcript of het_verdict.h's HET_ST_* block -- a name skipped
-# here silently mis-decodes every flag above it.
-FLAGS = ["FANO_UNMEASURED", "NONSTATIONARY", "DEGEN_SIGHTING", "UNDERDISPERSED",
-         "BURSTY", "NO_DECODE_CHANNEL", "WIN_DESYNC", "KS_UNDERPOWERED",
-         "CELLS_TRUNCATED", "CTRL_IS_CANARY", "BOUND_VACUOUS", "SELF_CONTROL",
-         "TAU_UNMEASURED", "TAU_AT_CAP", "TAU_UNRESOLVED", "MIXED_POOL",
-         "NO_CONTROL_CORUN"]
-FLAG_BIT = {f: 1 << i for i, f in enumerate(FLAGS)}
+# THE BIT NUMBER IS WRITTEN DOWN, not derived from position in this list.  The
+# header leaves retired bits vacant (3, 4, 10, 12, 13, 14) because flags=0x... is a
+# wire format that archived transcripts and fixtures are already written in, so an
+# index-derived map would silently mis-decode every flag above the first hole -- and
+# a mis-decode here reads as a passing gate, not as an error.
+FLAG_BIT = {
+    "CTRL_STREAM_EMPTY":  1 << 0,
+    "NONSTATIONARY":      1 << 1,
+    "DEGEN_SIGHTING":     1 << 2,
+    "NO_DECODE_CHANNEL":  1 << 5,
+    "WIN_DESYNC":         1 << 6,
+    "KS_UNDERPOWERED":    1 << 7,
+    "CELLS_TRUNCATED":    1 << 8,
+    "CTRL_IS_CANARY":     1 << 9,
+    "SELF_CONTROL":       1 << 11,
+    "MIXED_POOL":         1 << 15,
+    "NO_CONTROL_CORUN":   1 << 16,
+}
+FLAGS = sorted(FLAG_BIT, key=FLAG_BIT.get)
 
 
 def _parse_case_fields(l):
-    """Parse one CASE| line from the C driver into (name, stats-dict).  Single source of
-    truth for phase2 AND the F8 witness bites, so the two can never drift apart."""
+    """Parse one CASE| line from the C driver into (name, stats-dict).  The tuple width
+    is the assertion: a column added or dropped in the C without a matching change here
+    unpacks short and fails loudly, which no other consumer of this line does."""
     f = l.split("|")
-    (_, name, obs, k, k_eff, k_runs, n_degen, R_usable, F_win, F_cell,
-     r_hat, mu_up, tau_w, N_eff, R_eff, p_bound, P_rep, ks, ks_D, tier,
-     tau_need, flags, R, first_sight, mu_total, can_total, frames) = f
+    (_, name, obs, k, k_eff, k_runs, n_degen, R_usable, P_rep, ks, ks_D, tier,
+     flags, R, first_sight, mu_total, can_total, frames) = f
     return name, dict(
         obs=obs, k=int(k), k_eff=int(k_eff), k_runs=int(k_runs),
         n_degen=int(n_degen), R=int(R), R_usable=int(R_usable),
         first_sight=int(first_sight), mu_total=int(mu_total),
         can_total=int(can_total), frames=int(frames),
-        F_win=float(F_win), F_cell=float(F_cell), r_hat=float(r_hat),
-        mu_upper=float(mu_up), tau_w=float(tau_w), N_eff=float(N_eff),
-        R_eff=float(R_eff), p_bound=float(p_bound),
         P_rep=float(P_rep), ks=ks, ks_D=float(ks_D), tier=tier,
-        tau_need=int(tau_need), flags=int(flags, 16))
-
-
-# ---------------------------------------------------------------------------
-# THE KNOWN-OPEN ESCAPE WITNESS.  The tau guard scales its threshold by the ESTIMATED
-# tau, so a count-valued bursty stream whose tau the Geyer sum under-reads slips past
-# it.  Not fixed: disclosed (het_verdict.h, "WHAT THIS GUARD DOES *NOT* DO"),
-# witnessed here, and operationally fenced (hetlitmus/docs/00-environment-design.md
-# S6: any early stop below R = 50 usable runs is provisional).  Rationale and the
-# rejected alternative: env-research/decisions/F8-decision.md.  This pins the CURRENT
-# over-crediting behaviour; a future guard fix makes it fail, and it then BECOMES that
-# fix's bite.
-# ---------------------------------------------------------------------------
-def check_f8_escape_witness(got, quiet=False, neff_expect=F8_NEFF_EXPECT):
-    """Assert the four escape facts on the case's REAL C stats (`got` = phase2's map,
-    already differential-checked against the Python mirror; the only independent anchor
-    used here is the closed form cox_tau, never the mirror).  Returns the failure count.
-    Runs from phase2 on the shipped header (must PASS) and from --bite on a mutated
-    header or a mis-pinned expectation (must FAIL)."""
-    g = got.get(F8_ESCAPE_CASE)
-    if g is None:
-        print("  *** F8-WITNESS: the escape case produced no CASE line")
-        return 1
-    fails = 0
-    tau_est = g["tau_w"]
-    tau_true = COX_ESCAPE_TAU_TRUE
-    nwin = g["R_usable"] * NWIN
-    guard_fired = bool(g["flags"] & FLAG_BIT["TAU_UNRESOLVED"])
-    neff_honest = min(max(NWIN / tau_true, 1.0), float(NWIN))          # 1.49
-    over = g["N_eff"] / neff_honest if neff_honest > 0.0 else 0.0
-
-    # (1) ESCAPE-PRECONDITION / ANTI-VACUITY.  The guard must PASS (nwin >= 50*tau_est
-    #     and TAU_UNRESOLVED clear).  If drift ever lifts the fixture out of the escape
-    #     regime, THIS assertion fails rather than the witness passing on nothing.
-    passes = (nwin >= TAU_MIN_SAMPLES * tau_est) and not guard_fired
-    if not passes:
-        fails += 1
-        print("  *** F8-WITNESS(precondition): guard does NOT pass at R=10 (nwin=%d, "
-              "50*tau_est=%.1f, TAU_UNRESOLVED=%s) -- the fixture is not in the escape "
-              "regime it exists to demonstrate"
-              % (nwin, TAU_MIN_SAMPLES * tau_est, guard_fired))
-
-    # (2) THE UNDER-READ: tau_est < tau_true/2 (measured ~16.8 against 85.9).
-    if not (tau_est < tau_true / 2.0):
-        fails += 1
-        print("  *** F8-WITNESS(under-read): tau_est=%.2f is NOT < tau_true/2=%.2f -- the "
-              "estimator has stopped under-reading, so there is nothing to fool the guard"
-              % (tau_est, tau_true / 2.0))
-
-    # (3) THE OVER-CREDIT, pinned: N_eff credited ~7.6 (+-10%) against an honest
-    #     NWIN/tau_true ~1.49, i.e. ~5x.  If a guard fix just made this fail, this
-    #     witness IS that fix's bite; a corrupted pin must fail here too.
-    if abs(g["N_eff"] - neff_expect) > 0.10 * neff_expect:
-        fails += 1
-        print("  *** F8-WITNESS(over-credit): N_eff credited=%.3f, pinned %.2f +-10%% "
-              "(honest NWIN/tau_true=%.3f => ~%.1fx over-credit) -- either the guard was "
-              "fixed (repurpose this witness) or the pin is wrong"
-              % (g["N_eff"], neff_expect, neff_honest, over))
-
-    # (4) THE MITIGATION: on these same records the RUN-LEVEL bound is unmoved --
-    #     N_eff*p_bound == mu_upper*DEFF/R_usable to 1e-9 (het_verdict.h's R3 identity).
-    #     The over-credit refines the per-effective-sample unit only.
-    if g["p_bound"] >= 0.0:
-        deff = g["F_cell"] if g["F_cell"] > 1.0 else 1.0
-        run_level = g["N_eff"] * g["p_bound"]
-        b7_headline = g["mu_upper"] * deff / g["R_usable"]
-        if not close(run_level, b7_headline):
-            fails += 1
-            print("  *** F8-WITNESS(invariance): N_eff*p_bound=%.12g != mu_upper*DEFF/"
-                  "R_usable=%.12g -- the over-credit is moving the HEADLINE bound, so Path "
-                  "1's 'the escape touches only the secondary number' no longer holds"
-                  % (run_level, b7_headline))
-
-    if not fails and not quiet:
-        print("  the F8 escape witness   :  guard PASSES (nwin=%d >= 50*tau_est=%.0f), "
-              "tau_est=%.1f << tau_true=%.1f, N_eff credited=%.2f vs honest=%.2f (~%.1fx "
-              "over-credit, KNOWN-OPEN); run-level bound invariant to 1e-9"
-              % (nwin, TAU_MIN_SAMPLES * tau_est, tau_est, tau_true, g["N_eff"],
-                 neff_honest, over))
-    return fails
-
-
-class _CompileFailed(Exception):
-    """The C case set did not compile against a given het_verdict.h.  Carries the
-    compiler's output so each caller can report it its own way."""
-
-    def __init__(self, out, err):
-        super().__init__(err)
-        self.out, self.err = out, err
+        flags=int(flags, 16))
 
 
 def _compile_and_run(header_dir, workdir, defines=()):
     """Build the C case set in workdir against header_dir's het_verdict.h, run it and
     return its stdout lines.  Raises _CompileFailed if gcc rejects it.
 
-    ONE definition of the copy/emit/compile/run sequence: run() and _escape_got()
+    ONE definition of the copy/emit/compile/run sequence: run() and phase2b()
     differ only in how they REPORT a compile failure, and a second copy of the flag
     list is a flag list that can drift."""
     shutil.copy(os.path.join(header_dir, "het_verdict.h"),
@@ -1371,41 +945,19 @@ def _compile_and_run(header_dir, workdir, defines=()):
     return subprocess.run([exe], capture_output=True, text=True).stdout.splitlines()
 
 
-def _escape_got(header_dir):
-    """Compile the case set against header_dir's het_verdict.h, run it, and return the
-    parsed C stats for the escape case -- the same fields phase2 parses.  Lets --bite
-    drive check_f8_escape_witness against a MUTATED header."""
-    tmp = tempfile.mkdtemp(prefix="statsf8.")
-    try:
-        try:
-            out = _compile_and_run(header_dir, tmp)
-        except _CompileFailed as e:
-            raise SystemExit("statscheck F8: witness harness did not compile\n" + e.err)
-        for l in out:
-            if l.startswith("CASE|"):
-                name, rec = _parse_case_fields(l)
-                if name == F8_ESCAPE_CASE:
-                    return rec
-        raise SystemExit("statscheck F8: the escape case produced no CASE line")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
 def phase1(lines, quiet):
-    print("===== PHASE 1: is mu_upper() the closed form, or a disguised 3? =====")
+    print("===== PHASE 1: do the aggregate's INPUTS map, and do the mirrors "
+          "hold? =====")
     bad = 0
-    got = {}
     for l in lines:
-        if l.startswith("MU|"):
-            _, r, v = l.split("|")
-            got[float(r)] = float(v)
-        elif l.startswith("WIN|"):
+        if l.startswith("WIN|"):
             _, w0, wmid, wlast, nwin = l.split("|")
             if int(nwin) != NWIN:
                 print("  *** HET_NWIN is %s, statscheck assumes %d" % (nwin, NWIN))
                 bad += 1
-            # het_win_of must MAP: a constant would land every sighting in one bucket
-            # and the Fano would be measuring nothing.
+            # het_win_of must MAP: a constant would land every sighting in one bucket,
+            # and the stream the precheck reads would be that spike rather than the
+            # run's history.
             if not (int(w0) == 0 and int(wmid) == NWIN // 2 and int(wlast) == NWIN - 1):
                 print("  *** het_win_of does not map frames to windows: "
                       "0->%s, N/2->%s, N-1->%s (want 0, %d, %d)"
@@ -1433,7 +985,7 @@ def phase1(lines, quiet):
                  "degenerate that the C does not, or the reverse"),
                 (int(th), TAU_HOT, "HET_TAU_HOT",
                  "the COLD-INVALID threshold: the mirror would count a different "
-                 "set of cells as usable, so R_usable and every bound built on it"),
+                 "set of cells as usable, so R_usable and the pooled stream itself"),
                 (int(mc), MAX_CELLS, "HET_STATS_MAX_CELLS",
                  "the record-array clamp: the truncation fixture is sized from the "
                  "mirror, so it would stop reaching the truncation path"),
@@ -1455,157 +1007,13 @@ def phase1(lines, quiet):
               "at all")
         bad += 1
 
-    # --- The campaign budget: p_min stays a SYMBOL, not a number, until hardware. ---
-    for l in lines:
-        if not l.startswith("BUDGET|"):
-            continue
-        _, pmin, unset, b1, b20 = l.split("|")
-        pmin, unset, b1, b20 = float(pmin), float(unset), float(b1), float(b20)
-        if pmin != 0.0:
-            print("  *** HET_P_MIN IS HARDCODED TO %g IN THE SHIPPED HEADER.  The het "
-                  "hit-rate is UNPUBLISHED -- Bagchi's ~0.2%% is the GPU-only INTER-CTA "
-                  "rate, which never crosses C2C.  A campaign sized off it is sized off "
-                  "the wrong experiment." % pmin)
-            bad += 1
-        if unset >= 0.0:
-            print("  *** an UNSET p_min produced a budget (%g) instead of NOT SIZED.  A "
-                  "budget invented from no data looks like one." % unset)
-            bad += 1
-        want1 = math.log(0.05) / math.log(1.0 - 0.002)
-        if not (close(b1, want1) and close(b20, 20.0 * want1)):
-            print("  *** het_budget_runs is not F*log(0.05)/log(1-p): got %.6g / %.6g, "
-                  "want %.6g / %.6g" % (b1, b20, want1, 20.0 * want1))
-            bad += 1
-        elif not quiet:
-            print("      budget: p_min UNSET -> NOT SIZED (correct); at p=0.2%% it needs "
-                  "%.0f runs, and %.0f if the channel is 20x overdispersed" % (b1, b20))
-
-    for r in (0.5, 1.0, 2.0, 5.0, 10.0, float("inf")):
-        want = py_mu_upper(r)
-        have = got.get(r)
-        if have is None:
-            print("  *** mu_upper(%g) not emitted" % r)
-            bad += 1
-            continue
-        if not close(have, want):
-            print("  *** mu_upper(%g) = %.12g, closed form = %.12g" % (r, have, want))
-            bad += 1
-        elif not quiet:
-            print("      mu_upper(%-5s) = %10.4f   (closed form %.4f)"
-                  % (("inf" if math.isinf(r) else "%g" % r), have, want))
-
-    # The three anchors that carry the argument.
-    for r, anchor, what in ((float("inf"), 2.99573227, "the textbook rule of three"),
-                            (1.0, 19.0, "geometric: the 3 has become 19"),
-                            (0.5, 199.5, "extreme burst: the 3 has become ~200")):
-        have = got.get(r, float("nan"))
-        if abs(have - anchor) > 1e-6:
-            print("  *** ANCHOR mu_upper(%g) = %.8f, want %.8f (%s)"
-                  % (r, have, anchor, what))
-            bad += 1
-        elif not quiet:
-            print("      ANCHOR mu_upper(%-3s) = %8.4f  -- %s"
-                  % (("inf" if math.isinf(r) else "%g" % r), have, what))
-
-    # --- het_tau_ips against KNOWN autocorrelation times.  An estimator that cannot
-    # recover a known tau here reports nothing but noise on hardware.
-    taus = []
-    for l in lines:
-        if l.startswith("TAU|"):
-            _, tag, rho, est, wlen = l.split("|")
-            taus.append((tag, float(rho), float(est), int(wlen)))
-    ar1 = {rho: est for tag, rho, est, _ in taus if tag == "ar1"}
-    for rho, true, lo, hi in AR1_BANDS:
-        have = ar1.get(rho, float("nan"))
-        if not (lo <= have <= hi):
-            print("  *** TAU: AR(1) rho=%.2f has closed-form tau=%.0f but het_tau_ips "
-                  "returned %.2f (allowed [%.0f, %.0f]).  The estimator does not "
-                  "recover a KNOWN autocorrelation time, so every N_eff it produces "
-                  "is fiction." % (rho, true, have, lo, hi))
-            bad += 1
-        elif not quiet:
-            print("      TAU AR(1) rho=%-4.2f -> tau %7.2f   (closed form %6.2f, "
-                  "band [%.0f, %.0f])" % (rho, have, true, lo, hi))
-    for tag, rho, est, wlen in taus:
-        if tag == "cap" and est != float(wlen):
-            print("  *** TAU CEILING: a regime with tau=199 read through %d-window "
-                  "runs returned %.2f, not the cap %d.  A truncated partial sum "
-                  "under-reads tau and OVER-credits N_eff -- the one direction the "
-                  "clamps exist to forbid." % (wlen, est, wlen))
-            bad += 1
-        if tag == "floor" and est != 1.0:
-            print("  *** TAU FLOOR: an anti-correlated stream (tau_true=0.33) "
-                  "returned %.3f, not the floor 1.0 -- it is claiming more "
-                  "independent samples than the stream has windows." % est)
-            bad += 1
-    if not quiet and not bad:
-        print("      TAU ceiling saturates at wlen; floor clamps to 1 "
-              "(both one-directional)")
-
-    # --- HET_TAU_MIN_SAMPLES and the PRICE function: TAU_UNRESOLVED is only a signal
-    # if it comes with a number the operator can act on.
-    for l in lines:
-        if l.startswith("MINSAMP|"):
-            got_ms = float(l.split("|")[1])
-            if got_ms != TAU_MIN_SAMPLES:
-                print("  *** HET_TAU_MIN_SAMPLES is %g, statscheck assumes %g.  The "
-                      "F >= 50 threshold is the emcee/Stan rule of thumb; moving it "
-                      "silently changes what may be CLAIMED." % (got_ms, TAU_MIN_SAMPLES))
-                bad += 1
-            elif not quiet:
-                print("      HET_TAU_MIN_SAMPLES = %g (Foreman-Mackey: don't trust tau "
-                      "without >= 50*tau samples); at R=10 that resolves tau <= %.1f"
-                      % (got_ms, RESOLVABLE_TAU_AT_R10))
-    for l in lines:
-        if not l.startswith("NEED|"):
-            continue
-        _, t, n = l.split("|")
-        t, n = float(t), int(n)
-        want = 0 if not (t > 0.0) else int(math.ceil(TAU_MIN_SAMPLES * t / NWIN))
-        if n != want:
-            print("  *** het_tau_runs_needed(%g) = %d, closed form ceil(%g*tau/%d) = %d"
-                  % (t, n, TAU_MIN_SAMPLES, NWIN, want))
-            bad += 1
-    if not quiet and not bad:
-        print("      the PRICE of an unresolved tau: tau=54 -> %d usable runs, "
-              "tau=128 (the cap) -> %d -- so TAU_UNRESOLVED is actionable, not a veto"
-              % (int(math.ceil(TAU_MIN_SAMPLES * 54.0 / NWIN)),
-                 int(math.ceil(TAU_MIN_SAMPLES * NWIN / NWIN))))
-
     if bad:
-        print("\nESTIMATOR FAILED: %d problem(s).  A bound whose r->inf limit has "
-              "drifted is the rule of three wearing a dispersion-aware hat." % bad)
+        print("\nINPUTS FAILED: %d problem(s).  A window map that is a constant puts "
+              "every sighting in one bucket, and a stale mirror derives the Python "
+              "reference from a different header than the C." % bad)
         return 1
-    print("\nESTIMATOR OK (mu_upper matches the closed form to 1e-9 at every r; the "
-          "3 -> 19 -> 199.5 inflation is real; het_win_of maps; het_tau_ips "
-          "recovers AR(1) tau at every rho and both clamps hold)")
-    return 0
-
-
-def check_neff1_containment(g, what, quiet):
-    """THE CONSERVATIVE SPECIAL CASE IS CONTAINED -- stated as the identity it is.
-
-    At N_eff = 1 the bound mu_upper / (R_usable * N_eff / DEFF) IS B7's run-level
-    mu_upper / (R_usable / DEFF): `x * 1.0' is exact in IEEE754, and phase2's (a')
-    already pins the first form for every case, so re-deriving the second and
-    comparing the two could not fail on any input -- it restates an identity, and a
-    check that cannot fail is not evidence.  What the two conservative regimes (tau at
-    the cap, tau unresolved) actually CLAIM, and what is therefore asserted here, is
-    that N_eff came back EXACTLY 1.0; the bound's equality with B7 then follows.
-    (A genuinely independent containment test would have to re-run het_stats_compute
-    on a header with N_eff forced to 1 and compare THAT number -- a second compile per
-    regime, for an identity.  Deliberately not done.)"""
-    if not g:
-        return 0
-    if g["N_eff"] != 1.0:
-        print("  *** CONTAINMENT BROKEN: %s must score N_eff = 1 EXACTLY (got %.6g), "
-              "so its bound is no longer B7's run-level number -- the N_eff refinement "
-              "has changed a claim it had no licence to change." % (what, g["N_eff"]))
-        return 1
-    if not quiet:
-        print("      containment: %s scores N_eff = 1, so its bound (%.4g) IS B7's "
-              "mu_upper/(R_usable/DEFF) -- identically, not approximately"
-              % (what, g["p_bound"]))
+    print("\nINPUTS OK (het_win_of maps frames to windows and is not a constant; the "
+          "four mirrored knobs are COMPARED to the header, not assumed)")
     return 0
 
 
@@ -1634,6 +1042,7 @@ def phase2(lines, quiet):
         elif cur is not None:
             buf.append(l)
 
+    refs = {}
     for c in CASES:
         name = c["name"]
         g = got.get(name)
@@ -1641,50 +1050,32 @@ def phase2(lines, quiet):
             print("  *** %s produced no CASE line" % name)
             bad += 1
             continue
-        ref = py_reference(c["cells"])
+        ref = refs[name] = py_reference(c["cells"])
         errs = []
 
         # (a) DIFFERENTIAL: every statistic, independently re-derived, to 1e-9.
-        for fld in ("F_win", "F_cell", "r_hat", "mu_upper", "tau_w", "N_eff",
-                    "R_eff", "p_bound", "P_rep", "ks_D"):
+        for fld in ("P_rep", "ks_D"):
             if not close(g[fld], ref[fld]):
                 errs.append("%s: C %.12g != py %.12g" % (fld, g[fld], ref[fld]))
-
-        # (a') SELF-CONSISTENCY, independent of the mirror: N_eff must stay inside the
-        # clamp and the bound must decompose as mu_upper / (R_usable * N_eff / DEFF).
-        if not (1.0 - TOL <= g["N_eff"] <= NWIN + TOL):
-            errs.append("N_eff=%.6g outside [1, %d]" % (g["N_eff"], NWIN))
-        if g["p_bound"] >= 0.0:
-            deff = g["F_cell"] if g["F_cell"] > 1.0 else 1.0
-            want_b = g["mu_upper"] / (g["R_usable"] * g["N_eff"] / deff)
-            if not close(g["p_bound"], want_b):
-                errs.append("p_bound %.12g != mu_upper/(R*N_eff/DEFF) %.12g"
-                            % (g["p_bound"], want_b))
         for fld in ("obs", "k", "k_eff", "k_runs", "n_degen", "R", "R_usable", "ks",
-                    "tier", "tau_need", "first_sight", "mu_total", "can_total",
-                    "frames"):
+                    "tier", "first_sight", "mu_total", "can_total", "frames"):
             if g[fld] != ref[fld]:
                 errs.append("%s: C %s != py %s" % (fld, g[fld], ref[fld]))
 
-        # (a'') THE GUARD/PRICE EQUIVALENCE.  The criterion nwin >= 50*tau on the
-        # POOLED count, with nwin = R_usable * NWIN, is exactly R_usable >=
-        # tau_runs_needed.  Pinning that keeps the flag and the price from drifting
-        # apart: a price the flag disagrees with buys runs that change nothing.
-        if g["tau_w"] > 0.0:
-            fired = bool(g["flags"] & FLAG_BIT["TAU_UNRESOLVED"])
-            want_fired = g["R_usable"] < g["tau_need"]
-            if fired != want_fired:
-                errs.append("TAU_UNRESOLVED=%s but R_usable=%d vs tau_need=%d"
-                            % (fired, g["R_usable"], g["tau_need"]))
-            # An unresolved tau must buy NOTHING.
-            if fired and g["N_eff"] != 1.0:
-                errs.append("TAU_UNRESOLVED but N_eff = %.6g (must be exactly 1: an "
-                            "unmeasurable tau may not buy a tighter bound)" % g["N_eff"])
-            # ... and the two tau flags must never BOTH fire: they prescribe different
-            # remedies (AT_CAP -> raise HET_NWIN; UNRESOLVED -> raise R).
-            if fired and (g["flags"] & FLAG_BIT["TAU_AT_CAP"]):
-                errs.append("both TAU_UNRESOLVED and TAU_AT_CAP set -- they prescribe "
-                            "contradictory remedies")
+        # (a') THE EMPTINESS GUARD, on EVERY case rather than on the few that name it.
+        # It is the one conjunct standing between an all-zero control stream and a KS
+        # "pass" that unlocks P_rep for a harness where nothing ever fired, and the
+        # numbers alone cannot show it: a stream nothing was measured on and a stream
+        # measured to be flat print the same zeros.
+        empty_c = bool(g["flags"] & FLAG_BIT["CTRL_STREAM_EMPTY"])
+        if empty_c != ref["stream_empty"]:
+            errs.append("CTRL_STREAM_EMPTY=%s but the pooled stream %s empty"
+                        % (empty_c, "is" if ref["stream_empty"] else "is NOT"))
+        # ... and what it BUYS: refusing the gate, never passing it.  A guard that
+        # fires and still lets the KS run has moved a flag and nothing else.
+        if ref["stream_empty"] and g["ks"] != "underpowered":
+            errs.append("the pooled stream is empty but the KS gate reports %r"
+                        % g["ks"])
 
         # (b) the case's own expectations
         w = c["want"]
@@ -1707,8 +1098,8 @@ def phase2(lines, quiet):
             bad += 1
             print("  *** %-44s %s" % (name, "; ".join(errs)))
         elif not quiet:
-            print("      %-44s obs=%-9s F_win=%7.3f p_bound=%-10.4g %s"
-                  % (name, g["obs"], g["F_win"], g["p_bound"],
+            print("      %-44s obs=%-9s ks=%-12s P_rep=%-9.4g %s"
+                  % (name, g["obs"], g["ks"], g["P_rep"],
                      ",".join(f for f in FLAGS if g["flags"] & FLAG_BIT[f])))
 
     # ---- THE ANTI-CONSTANT ASSERTIONS -------------------------------------
@@ -1737,11 +1128,10 @@ def phase2(lines, quiet):
         print("  *** UNREACHABLE TIER: %s" % ", ".join(sorted(want_tier - seen_tier)))
         bad += 1
 
-    need_flags = {"FANO_UNMEASURED", "NONSTATIONARY", "DEGEN_SIGHTING",
-                  "UNDERDISPERSED", "BURSTY", "NO_DECODE_CHANNEL", "WIN_DESYNC",
-                  "KS_UNDERPOWERED", "CELLS_TRUNCATED", "CTRL_IS_CANARY",
-                  "BOUND_VACUOUS", "SELF_CONTROL", "TAU_UNMEASURED", "TAU_AT_CAP",
-                  "TAU_UNRESOLVED", "NO_CONTROL_CORUN"}
+    need_flags = {"CTRL_STREAM_EMPTY", "NONSTATIONARY", "DEGEN_SIGHTING",
+                  "NO_DECODE_CHANNEL", "WIN_DESYNC", "KS_UNDERPOWERED",
+                  "CELLS_TRUNCATED", "CTRL_IS_CANARY", "SELF_CONTROL",
+                  "NO_CONTROL_CORUN"}
     print("  diagnostic flags    : %d/%d  (%s)"
           % (len(seen_flags & need_flags), len(need_flags),
              ", ".join(sorted(seen_flags))))
@@ -1750,117 +1140,35 @@ def phase2(lines, quiet):
               "diagnostic" % ", ".join(sorted(need_flags - seen_flags)))
         bad += 1
 
-    # ---- THE OVERCLAIM ASSERTION: a bare 3/N may never be the reported bound unless
-    # the measured Fano really is ~1.  The bursty null and the Poisson null have the
-    # same effort and the same zero, so if their bounds agree the dispersion is inert.
-    p_pois = got.get("never-poisson", {}).get("mu_upper", 0.0)
-    p_burst = got.get("never-bursty", {}).get("mu_upper", 0.0)
-    print()
-    print("  the rule-of-three inflation:  mu_upper(Poisson-like) = %.4f   "
-          "mu_upper(bursty) = %.4f" % (p_pois, p_burst))
-    if p_burst <= p_pois * 1.5:
-        print("  *** THE BOUND DID NOT WIDEN ON A BURSTY CHANNEL.  It is reporting the "
-              "textbook rule of three while calling itself dispersion-aware -- a ~6x "
-              "optimistic overclaim on every non-observation in the thesis.")
-        bad += 1
-    elif not quiet:
-        print("      the bursty channel WIDENED the bound %.1fx -- the constant 3 is "
-              "not being reported" % (p_burst / max(p_pois, 1e-12)))
-
-    # THE BOUND MUST MOVE WHEN THE EFFORT DOES: 10x the runs, ~10x tighter, or R_eff is
-    # not really in the formula.
-    b10 = got.get("never-poisson", {}).get("p_bound", -1.0)
-    b100 = got.get("bound-tightens-with-R", {}).get("p_bound", -1.0)
-    print("  the effort scaling     :  p_bound(R=10) = %.4g   p_bound(R=100) = %.4g"
-          % (b10, b100))
-    if not (0.0 < b100 < b10 / 5.0):
-        print("  *** THE BOUND DID NOT TIGHTEN WITH R.  Ten times the runs bought "
-              "nothing, so R_eff is not really in the formula -- the 'bound' is a "
-              "constant with a fraction bar through it.")
-        bad += 1
-    elif not quiet:
-        print("      10x the runs TIGHTENED the bound %.1fx -- R_eff is live"
-              % (b10 / max(b100, 1e-12)))
-
-    # ---- THE N_eff DIVIDEND IS COLLECTIBLE, BOTH WAYS: a white channel must recover
-    # a large N_eff end to end (a mechanism whose output never leaves 1 is the
-    # run-level reading with extra arithmetic), and the at-cap regime must be exactly 1.
-    ne_w = got.get("never-poisson", {}).get("N_eff", -1.0)
-    ne_c = got.get("never-tau-at-cap-is-B7-exactly", {}).get("N_eff", -1.0)
-    print("  the N_eff dividend     :  N_eff(white) = %.1f   N_eff(at-cap) = %.1f"
-          % (ne_w, ne_c))
-    if not (ne_w > NWIN / 2.0):
-        print("  *** THE DIVIDEND IS NOT COLLECTED: a near-white control stream "
-              "recovered N_eff = %.2f (want > %d).  Every run is still being scored "
-              "as ONE bit, so B7's 1,500-30,000-run budgets stand unshrunk -- the "
-              "mechanism is dead weight." % (ne_w, NWIN // 2))
-        bad += 1
-    bad += check_neff1_containment(got.get("never-tau-at-cap-is-B7-exactly", {}),
-                                   "the tau-at-cap regime", quiet)
-
-    # ---- THE RELIABILITY GUARD, BOTH DIRECTIONS, AND ITS CONTAINMENT.  A guard that
-    # never fires leaves the overclaim in place; one that always fires throws the N_eff
-    # dividend away.  Both fixtures are correlated count streams with an exact
-    # closed-form tau, so this is a measurement rather than a hand-picked fixture.
-    gu = got.get("never-tau-unresolved-falls-back-to-B7", {})
-    gr = got.get("never-tau-resolved-still-claims-Neff", {})
-    print()
-    if gu and gr:
-        print("  the tau reliability guard:  UNRESOLVED tau_w = %.1f (needs %d runs, "
-              "has %d) -> N_eff = %.1f   |   RESOLVED tau_w = %.1f (needs %d) -> "
-              "N_eff = %.1f"
-              % (gu["tau_w"], gu["tau_need"], gu["R_usable"], gu["N_eff"],
-                 gr["tau_w"], gr["tau_need"], gr["N_eff"]))
-        # The unresolved fixture's tau is under-read (~54 against a true 181) and sits
-        # BELOW the 128 cap, so TAU_AT_CAP cannot catch it; unguarded it would credit
-        # N_eff = NWIN/54 = 2.4 and report a bound that much tighter than the truth.
-        naive = min(max(NWIN / gu["tau_w"], 1.0), float(NWIN)) if gu["tau_w"] > 0 else 1.0
-        if naive <= 1.0:
-            print("  *** THE UNRESOLVED FIXTURE IS NOT AN OVERCLAIM FIXTURE: believing "
-                  "its tau would have credited N_eff = %.2f, so this case cannot show "
-                  "that the guard prevents anything.  It has stopped being an "
-                  "instrument." % naive)
-            bad += 1
-        elif not quiet:
-            print("      without the guard this fixture would have credited N_eff = "
-                  "%.1f (tau under-read to %.1f, BELOW the %d cap -- so TAU_AT_CAP "
-                  "could never have caught it): a %.1fx tighter bound than the truth "
-                  "supports" % (naive, gu["tau_w"], NWIN, naive))
-        if gr["N_eff"] <= 1.0:
-            print("  *** THE GUARD IS A SIXTH CONSTANT: it fired on a tau the stream "
-                  "RESOLVES (%.1f, needing only %d runs of the %d it has), so N_eff is "
-                  "pinned at 1 and B7b has been silently reverted to B7 -- the dividend "
-                  "is thrown away on every channel."
-                  % (gr["tau_w"], gr["tau_need"], gr["R_usable"]))
-            bad += 1
-        # CONTAINMENT: when the guard fires the fallback must be the run-level number,
-        # so the guard can never be worse than the baseline it falls back to.
-        bad += check_neff1_containment(gu, "the unresolved-tau fallback", quiet)
-
-    # ---- The guard's two in-band outcomes are pinned above; this pins the third,
-    # self-referential one it cannot see (check_f8_escape_witness).
-    bad += check_f8_escape_witness(got, quiet)
-
-    # THE PRINTOUT IS THE DELIVERABLE, NOT THE FLAG: the human block must SAY that tau
-    # was not resolved, that N_eff fell back, and -- since this is a signal and not a
-    # veto -- what it would COST in runs to resolve it.  Assert the sentences.
+    # THE PRINTOUT IS THE DELIVERABLE, NOT THE FLAG.  A null now says in words that
+    # no rate and no probability is attached to it, and says what vouches for it
+    # instead; a flag nobody reads is not what a reader files the result under.
     for name, g in sorted(got.items()):
         txt = blocks.get(name, "")
-        if g["flags"] & FLAG_BIT["TAU_UNRESOLVED"]:
-            for frag, why in (
-                    ("NOT RESOLVED", "it does not SAY tau is unresolved"),
-                    ("N_eff FALLS BACK TO 1", "it does not say N_eff fell back"),
-                    ("NOT A FAILURE AND NOT A VETO",
-                     "it does not say the guard is a signal, not a veto"),
-                    ("usable run(s)", "it does not PRICE the claim in runs")):
-                if frag not in txt:
-                    print("  *** %s sets TAU_UNRESOLVED but %s.  A flag the printout "
-                          "does not explain is a flag nobody acts on." % (name, why))
-                    bad += 1
-            if ("%d usable run" % g["tau_need"]) not in txt:
-                print("  *** %s does not print the runs needed (%d) to resolve its tau "
-                      "-- the operator cannot act on a price that is not quoted"
-                      % (name, g["tau_need"]))
+        if g["obs"] != "Never":
+            continue
+        # What vouched is a per-cell fact (het_verdict.h, n_mu_hot), so the clause is
+        # pinned against the count of NOT-OBSERVED-MU-HOT cells rather than merely
+        # required to exist -- the pooled channel flag cannot stand in for it.
+        r = refs.get(name, {})
+        nmu, nusable = r.get("n_mu_hot", 0), r.get("R_usable", 0)
+        if nmu == nusable:
+            vouch = ("vouched for by this test's own mu(T) lattice-floor twin: all %d "
+                     "of these cells are NOT-OBSERVED-MU-HOT" % nusable)
+        elif nmu == 0:
+            vouch = ("vouched for by nothing of this test's own shape: all %d of "
+                     "these cells are NOT-OBSERVED-CANARY-ONLY" % nusable)
+        else:
+            vouch = ("lattice-floor twin on only %d of these cells; the other %d are "
+                     "NOT-OBSERVED-CANARY-ONLY" % (nmu, nusable - nmu))
+        for frag, why in (
+                ("NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL",
+                 "it does not say that nothing is attached to the null"),
+                (vouch, "it names a voucher %d of its %d usable cell(s) did not carry"
+                        % (nusable - nmu, nusable)),
+                ("effort:", "it does not disclose the effort behind the zero")):
+            if frag not in txt:
+                print("  *** %s reports a Never but %s" % (name, why))
                 bad += 1
 
     # A ROW THAT CO-RUNS NOTHING MUST NOT CLAIM TO BE THE CANARY.  Both states set
@@ -1894,19 +1202,8 @@ def phase2(lines, quiet):
                   "collapsed onto the runs that fired" % name)
             bad += 1
 
-    # No bound may EVER be printed when the dispersion was not measured.
     for name, g in sorted(got.items()):
-        if (g["flags"] & FLAG_BIT["FANO_UNMEASURED"]) and g["p_bound"] >= 0.0:
-            print("  *** %s printed a bound (%.6g) with an UNMEASURED dispersion -- "
-                  "that bound is the rule of three in disguise" % (name, g["p_bound"]))
-            bad += 1
         txt = blocks.get(name, "")
-        if (g["flags"] & FLAG_BIT["FANO_UNMEASURED"]) and g["obs"] == "Never" \
-           and "NO FALSE-NEGATIVE BOUND IS REPORTED" not in txt:
-            print("  *** %s has no measured dispersion but does not SAY it is "
-                  "reporting no bound" % name)
-            bad += 1
-
         # A REPORTED P_rep OF EXACTLY 0 IS NOT A STATISTIC: 1 - e^{-0} = 0 prints as
         # "P_rep = 0.00%", which reads as "never reproduces" when it means "every
         # sighting failed the decode guard".  Asserted DIRECTLY, not differentially:
@@ -2080,8 +1377,8 @@ def phase3(hdir, tmp, quiet):
         bad += 1
     if s1 != t1:
         print("  *** SPREAD: sum(control_win) = %d but control_target_count = %d.  "
-              "The per-window bump is DEAD or mis-indexed, and every dispersion "
-              "number computed from it would be fiction." % (s1, t1))
+              "The per-window bump is DEAD or mis-indexed, so the stream is not this "
+              "run's history and the precheck reads a fiction." % (s1, t1))
         bad += 1
     if nz1 <= 1:
         print("  *** SPREAD: hits spread across the whole run landed in %d bucket(s) "
@@ -2222,8 +1519,7 @@ def phase5_stops(lines, quiet):
                 print("  *** %s: stop %s carries a sentence of its own (%r)"
                       % (s["name"], have, w))
                 bad += 1
-    want_all = {"CONTINUE", "CORROBORATED", "UNCONFIRMED-SIGHTING", "BOUND-MET",
-                "BUDGET"}
+    want_all = {"CONTINUE", "CORROBORATED", "UNCONFIRMED-SIGHTING", "BUDGET"}
     miss = want_all - seen
     print("  stop reasons reachable: %d/%d  (%s)"
           % (len(seen & want_all), len(want_all), ", ".join(sorted(seen))))
@@ -2237,8 +1533,8 @@ def phase5_stops(lines, quiet):
     print("\nSTOPPING RULE OK (every reason reachable; a lone clean sighting holds "
           "the row open for the confirmation window MEASURED FROM THE RUN IT FIRED "
           "IN, and no further; a degenerate one holds nothing open; rate mode "
-          "disables the sighting stop and nothing else; a vacuous bound satisfies no "
-          "goal; unstamped residue decides nothing)")
+          "disables the sighting stop and nothing else; unstamped residue decides "
+          "nothing)")
     return 0
 
 
@@ -2273,13 +1569,11 @@ with open(os.path.join(d, "seeds.log"), "a") as fh:
 # nowhere else, and a stub that ignored the cap would land on run counts no harness
 # can produce.  Everything it reports scales with that R.
 R = min(10, int(os.environ.get("HET_RUNS_MAX") or "10"))
-base = ("R=%d usable=%d degen=0 ctrl=canary win_n=1280 nwin=128 F_win=1.05 "
-        "F_cell=1.02 r_hat=inf acf1=0.01 ks=pass ks_D=0.1 ks_Dcrit=0.2 "
+base = ("R=%d usable=%d degen=0 ctrl=canary win_n=1280 nwin=128 "
+        "ks=pass ks_D=0.1 ks_Dcrit=0.2 "
         "ks_split=-1 N=100000 frames=100000 flags=0x0" % (R, R))
-NULL = ("mu_upper=2.9957 tau_w=1.28 N_eff=100 tau_need=1 R_eff=%d "
-        "p_bound=%.6g P_rep=-1" % (10 * R, 2.9957 / (10.0 * R)))
-FIRED = ("mu_upper=0 tau_w=1.28 N_eff=100 tau_need=1 R_eff=0 p_bound=-1 "
-         "P_rep=0.632 first_sight=1")
+NULL = "P_rep=-1"
+FIRED = "P_rep=0.632 first_sight=1"
 if test == "NULL-pooled":
     print("HetStats %s obs=Never k=0 k_eff=0 k_runs=0 sighting=none "
           "%s %s" % (test, NULL, base))
@@ -2312,9 +1606,8 @@ elif test == "SIGHT-degen":
     # A sighting the decode guard REJECTED (k=1, k_eff=0).  It corroborates nothing
     # and holds nothing open, so the row runs to its budget.
     print("HetStats %s obs=Sometimes k=1 k_eff=0 k_runs=0 degen=1 "
-          "sighting=UNCONFIRMED mu_upper=0 tau_w=1.28 N_eff=100 tau_need=1 R_eff=0 "
-          "p_bound=-1 P_rep=-1 first_sight=0 R=10 usable=10 ctrl=canary win_n=1280 "
-          "nwin=128 F_win=1.05 F_cell=1.02 r_hat=inf acf1=0.01 ks=pass ks_D=0.1 "
+          "sighting=UNCONFIRMED P_rep=-1 first_sight=0 R=10 usable=10 ctrl=canary "
+          "win_n=1280 nwin=128 ks=pass ks_D=0.1 "
           "ks_Dcrit=0.2 ks_split=-1 N=100000 frames=100000 flags=0x0" % test)
 else:
     sys.exit(3)
@@ -2765,7 +2058,8 @@ def phase2b(header_dir, tmp, quiet):
              "it does not say a map was never read, or does not name the pair"),
             ("Nothing marks this row a canary",
              "it does not say the row is unmarked"),
-            ("It gets NO BOUND, and that is an OMISSION, not a construction",
+            ("It has NO CALIBRATION CHANNEL, and that is an OMISSION, not a "
+             "construction",
              "it calls a gap we have not closed a property of the design"),
             # ...and WHICH omission.  The map is loaded for every lane, so the
             # flag says the FILE was not beside the test; a note that blamed a
@@ -2773,7 +2067,8 @@ def phase2b(header_dir, tmp, quiet):
             ("the map is looked for BESIDE THE TEST",
              "it does not say where the map was looked for"),
             ("what was omitted is the map FILE beside this test",
-             "it does not say WHICH omission the missing bound came from")):
+             "it does not say WHICH omission the missing calibration channel came "
+             "from")):
         if frag not in txt:
             print("  *** the no-control-map note %s" % why)
             bad += 1
@@ -2795,7 +2090,8 @@ def phase2b(header_dir, tmp, quiet):
         print("\nNO-CONTROL-MAP PROSE FAILED: %d problem(s)." % bad)
         return 1
     print("\nNO-CONTROL-MAP PROSE OK (its own sentence, naming the pair, calling "
-          "the missing bound an omission; the self-canary note untouched)")
+          "the missing calibration channel an omission; the self-canary note "
+          "untouched)")
     return 0
 
 
@@ -2838,7 +2134,7 @@ def main():
     if rc:
         print("STATSCHECK: FAIL")
     else:
-        print("STATSCHECK: PASS  (estimator + tau + aggregate + producer + corpus "
+        print("STATSCHECK: PASS  (inputs + aggregate + producer + corpus "
               "+ stopping rule + scheduler)")
     return 1 if rc else 0
 
@@ -2898,14 +2194,30 @@ def bite():
     try:
         hdir = emit_harness(tmp)
 
-        # (1) F_hat FORCED TO 1: the layer still compiles, still prints a bound and
-        # still calls itself dispersion-aware, while reporting the textbook rule of
-        # three on an overdispersed channel.
-        ok &= _bite("the Fano factor forced to 1 (the bound becomes the textbook 3)",
-                    hdir,
-                    lambda s: s.replace("  return v / m;\n", "  return 1.0;\n"))
+        # (1) THE EMPTINESS CONJUNCT DROPPED FROM THE KS GATE.  The flag still fires
+        # and still prints; the gate simply stops consulting it, so a `self' canary row
+        # -- which co-runs no control by construction -- has its all-zero stream KS-ed
+        # against itself, D = 0 against 0, "pass", and P_rep is unlocked for a harness
+        # in which nothing ever fired.  This is the one way this layer can OVERCLAIM.
+        ok &= _bite("the KS gate stops consulting the emptiness guard (an all-zero "
+                    "stream passes and unlocks P_rep)", hdir,
+                    lambda s: _subst(s, [
+                        ("  ks = (st->flags & HET_ST_CTRL_STREAM_EMPTY)\n"
+                         "       ? -1\n",
+                         "  ks = 0\n       ? -1\n")]))
 
-        # (2) THE DEGENERACY GUARD DISABLED: a constant-read decoder artefact could
+        # (2) ... and the same overclaim from the other side: the guard never fires,
+        # so there is nothing for the gate to consult.  Two injections because the
+        # guard has two halves -- the predicate that raises it and the consumer that
+        # obeys it -- and either alone reaches the same P_rep.
+        ok &= _bite("the emptiness test forced false (nothing is ever called empty)",
+                    hdir,
+                    lambda s: _subst(s, [
+                        ("  if (nwin < 2 || ctrl_pooled == 0 || "
+                         "(st->flags & HET_ST_WIN_DESYNC))\n",
+                         "  if (0)\n")]))
+
+        # (3) THE DEGENERACY GUARD DISABLED: a constant-read decoder artefact could
         # then forge a CORROBORATED sighting out of an artefact that never varied.
         ok &= _bite("the degeneracy guard disabled (a constant read can forge a "
                     "corroborated sighting)", hdir,
@@ -2914,59 +2226,13 @@ def bite():
                         "static int het_cell_degenerate(const het_obs_record *r) {\n"
                         "  if (r) return 0;"))
 
-        # (3) THE KS GATE MADE CONSTANT-PASS: stationarity is never tested and P_rep
+        # (4) THE KS GATE MADE CONSTANT-PASS: stationarity is never tested and P_rep
         # is reported across a rate change, which Kirkham's own data says to expect.
         ok &= _bite("the KS gate made constant-pass (stationarity never tested)", hdir,
                     lambda s: s.replace("  return (D <= *Dcrit_out) ? 1 : 0;\n",
                                         "  return 1;\n"))
 
-        # (4) THE r->inf LIMIT DRIFTS: mu_upper returns 3.0 instead of ln(20)=2.9957,
-        # a plausible-looking simplification that restores the hard-coded constant.
-        ok &= _bite("mu_upper's Poisson limit hard-coded back to 3.0", hdir,
-                    lambda s: s.replace("  const double L = -log(0.05);        /* ln 20"
-                                        " = 2.99573227... */",
-                                        "  const double L = 3.0;"))
-
-        # ---- the tau / N_eff machinery ------------------------------------------
-        # (7) TAU FORCED TO 1 -- "every window is independent".  Every run would claim
-        # the full HET_NWIN effective samples and every bound would tighten ~128x on
-        # evidence that does not support it.
-        ok &= _bite("tau forced to 1 (every window claimed independent)", hdir,
-                    lambda s: s.replace(
-                        "  if (wlen < 2 || nwin < wlen) return -1.0;",
-                        "  if (wlen < 2 || nwin < wlen) return -1.0;\n"
-                        "  return 1.0;"))
-
-        # (8) THE [1, wlen] CLAMPS DELETED: an anti-correlated stream's raw tau < 1
-        # then credits more independent samples than the stream has windows.
-        ok &= _bite("the tau clamps deleted (N_eff can exceed the resolution)", hdir,
-                    lambda s: s.replace(
-                        "  if (tau < 1.0) tau = 1.0;\n"
-                        "  if (tau > (double)wlen) tau = (double)wlen;\n"
-                        "  return tau;",
-                        "  return tau;"))
-
-        # (9) THE EXHAUSTION CAP DELETED: a regime longer than the window returns a
-        # truncated partial sum, i.e. an under-read of tau and an over-credit of N_eff.
-        # Only the AR(1) ceiling check can see it -- the Python mirror computes the
-        # same truncated sum, so the differential is blind to it by construction.
-        ok &= _bite("the never-decorrelated cap deleted (tau under-read at the "
-                    "boundary)", hdir,
-                    lambda s: s.replace(
-                        "  if (exhausted) return (double)wlen;",
-                        "  if (0 && exhausted) return (double)wlen;"))
-
-        # (10) THE DIVIDEND DROPPED FROM THE DENOMINATOR: R_eff relapses to R/DEFF
-        # while tau and N_eff still print plausibly.  Note the asymmetry -- N_eff = 1 as
-        # a MEASURED outcome (tau at cap) is the contained conservative case and must
-        # PASS; N_eff = 1 as a WIRING CONSTANT is a dead mechanism and must FAIL.
-        ok &= _bite("N_eff dropped from R_eff (the dividend silently un-collected)",
-                    hdir,
-                    lambda s: s.replace(
-                        "    st->R_eff    = (double)st->R_usable * st->N_eff / deff;",
-                        "    st->R_eff    = (double)st->R_usable / deff;"))
-
-        # (11) THE CORROBORATION GUARD GUTTED: one un-reproduced sighting would stop
+        # (5) THE CORROBORATION GUARD GUTTED: one un-reproduced sighting would stop
         # the row and bank a sighting nothing reproduced.
         ok &= _bite("the stop rule corroborates on ONE sighting (an unreproduced "
                     "sighting banked)", hdir,
@@ -2975,14 +2241,14 @@ def bite():
                         "return HET_CAMPAIGN_STOP_CORROBORATED;",
                         "    if (st.k > 0) return HET_CAMPAIGN_STOP_CORROBORATED;"))
 
-        # (11a) RATE MODE IGNORED: the row that was supposed to run on and yield a
+        # (6) RATE MODE IGNORED: the row that was supposed to run on and yield a
         # rate stops at its first corroborated sighting instead, and the campaign
         # measures nothing it was asked to measure.
         ok &= _bite("rate mode ignored (a sighting stops the row anyway)", hdir,
                     lambda s: s.replace("  if (st.k_eff > 0 && !rate_mode) {",
                                         "  if (st.k_eff > 0) {"))
 
-        # (11b) THE CONFIRMATION WINDOW NEVER CLOSES: a lone sighting holds the row
+        # (7) THE CONFIRMATION WINDOW NEVER CLOSES: a lone sighting holds the row
         # open forever, and UNCONFIRMED-SIGHTING -- the one flagged outcome -- becomes
         # unreachable while the row silently eats the budget it was allowed to
         # outrun.
@@ -2992,7 +2258,7 @@ def bite():
                         "    if (n - st.n_at_first_sight >= confirm_runs)",
                         "    if (0)"))
 
-        # (11b') THE WINDOW MEASURED FROM RUN 0 AGAIN: it then closes on a row that
+        # (8) THE WINDOW MEASURED FROM RUN 0 AGAIN: it then closes on a row that
         # fires late before that row has run any of it, and UNCONFIRMED-SIGHTING --
         # the outcome that says "we looked and it did not come back" -- is written
         # over a row nobody looked at again.
@@ -3002,48 +2268,19 @@ def bite():
                         "    if (n - st.n_at_first_sight >= confirm_runs)",
                         "    if (n >= confirm_runs)"))
 
-        # (11c) THE CORROBORATION BAR MOVED: HET_CORROB_RUNS is what both sides of
+        # (9) THE CORROBORATION BAR MOVED: HET_CORROB_RUNS is what both sides of
         # the tier fixtures are sized from and what the MIRROR| line pins, so a
         # header that quietly raises it must redden by NAME.
         ok &= _bite("the corroboration bar raised (HET_CORROB_RUNS 2 -> 3)", hdir,
                     lambda s: s.replace("#define HET_CORROB_RUNS 2",
                                         "#define HET_CORROB_RUNS 3"))
 
-        # (11d) THE RECORD STAMP STOPS BEING CHECKED: het_stats_compute reuses
+        # (10) THE RECORD STAMP STOPS BEING CHECKED: het_stats_compute reuses
         # het_verdict() per cell, so an unstamped stream would score as a live one
-        # and the aggregate would report a bound over memset zeros.
+        # and the aggregate would report a result over memset zeros.
         ok &= _bite("rec_magic no longer fails closed inside the aggregate", hdir,
                     lambda s: s.replace("  if (r->rec_magic != HET_REC_MAGIC) {",
                                         "  if (0) {"))
-
-        # ---- the tau RELIABILITY guard -----------------------------------------
-        # (12) THE GUARD DELETED: an unresolvable tau is believed anyway.  Geyer IPS
-        # under-reads it, so the returned tau sits BELOW the cap, TAU_AT_CAP does not
-        # fire, and N_eff is credited ~2.4x too high with nothing flagged.
-        ok &= _bite("the tau reliability guard deleted (an unresolvable tau is "
-                    "believed, and OVER-credits N_eff)", hdir,
-                    lambda s: s.replace(
-                        "      if ((double)nwin < HET_TAU_MIN_SAMPLES * st->tau_w) {",
-                        "      if (0) {"))
-
-        # (13) THE GUARD FORCED ALWAYS-ON -- the opposite failure, and just as dead.
-        # N_eff pinned at 1 on EVERY channel throws the dividend away and brings back
-        # the 1,500-30,000-run budgets (B7b-impl-brief.md), with nothing "wrong".
-        ok &= _bite("the tau guard forced always-on (a sixth constant: B7b silently "
-                    "reverted to B7)", hdir,
-                    lambda s: s.replace(
-                        "      if ((double)nwin < HET_TAU_MIN_SAMPLES * st->tau_w) {",
-                        "      if (1) {"))
-
-        # (14) THE PRICE SILENCED: the flag still fires and the arithmetic is right,
-        # but tau_runs_needed returns 0 so the printout cannot say what resolving tau
-        # would COST.  TAU_UNRESOLVED then reads as "give up" rather than "run more
-        # runs", and the guard becomes a veto.
-        ok &= _bite("the runs-needed price silenced (the signal becomes a veto)", hdir,
-                    lambda s: s.replace(
-                        "static int het_tau_runs_needed(double tau_w) {\n  double need;",
-                        "static int het_tau_runs_needed(double tau_w) {\n  double need;\n"
-                        "  if (tau_w > 0.0) return 0;"))
 
         # ---- THE STRUCTURAL INVARIANTS ------------------------------------------
         # This family of assertions guards structure the shipped header enforces
@@ -3052,7 +2289,7 @@ def bite():
         # evidence that it is compared.  Each injection below deletes the ONE line
         # that makes one of them true.
 
-        # (17) THE RUN DEDUP DELETED: several cells of ONE run then count as several
+        # (11) THE RUN DEDUP DELETED: several cells of ONE run then count as several
         # runs, so sightings from a single thermal/phase draw corroborate each
         # other -- a sighting "corroborated" by itself.
         ok &= _bite("the run dedup deleted (cells of ONE run corroborate each other)",
@@ -3062,7 +2299,7 @@ def bite():
                         "if (runs[j] == recs[i].run_id) seen = 1;",
                         "        for (j = 0; j < nruns; j++) if (0) seen = 1;")]))
 
-        # (18) THE P_rep DECODE GUARD DELETED: where every sighting was rejected by
+        # (12) THE P_rep DECODE GUARD DELETED: where every sighting was rejected by
         # the degeneracy guard, 1 - e^{-0} = 0 is then reported as "P_rep = 0.00%",
         # which reads as "never reproduces" when it means "no clean cell to estimate
         # from" -- a number that walks into a table as evidence of the opposite.
@@ -3071,32 +2308,9 @@ def bite():
                     lambda s: _subst(s, [("    if (st->ks_pass && st->k_eff > 0)",
                                           "    if (st->ks_pass)")]))
 
-        # (19) THE tau FLOOR AND THE N_eff CEILING DELETED TOGETHER.  Either alone is
-        # invisible -- the tau floor keeps N_eff <= HET_NWIN, and the N_eff ceiling
-        # re-clamps whatever the tau floor lets past -- so only removing both can show
-        # the [1, HET_NWIN] assertion is live.  An anti-correlated stream then claims
-        # 512 independent samples from 128 windows.
-        ok &= _bite("the tau floor AND the N_eff ceiling deleted (N_eff exceeds the "
-                    "stream's own resolution)", hdir,
-                    lambda s: _subst(s, [
-                        ("  if (tau < 1.0) tau = 1.0;\n", ""),
-                        ("        if (st->N_eff > (double)HET_NWIN)  "
-                         "st->N_eff = (double)HET_NWIN;\n", "")]))
-
-        # (20) THE "NO BOUND WITHOUT A MEASURED DISPERSION" CONJUNCT DELETED: a null
-        # whose control stream desynced then still gets a bound -- computed from the
-        # DEFAULT r -> inf, i.e. the textbook 3/N, reported as though it had been
-        # measured.  That is the exact substitution this whole layer exists to refuse.
-        ok &= _bite("the FANO_UNMEASURED conjunct deleted (a bound from a dispersion "
-                    "that was never measured)", hdir,
-                    lambda s: _subst(s, [(
-                        "  if (st->obs == HET_OBS_NEVER && "
-                        "!(st->flags & HET_ST_FANO_UNMEASURED)) {",
-                        "  if (st->obs == HET_OBS_NEVER) {")]))
-
-        # (21) THE TRUNCATION STOPS SAYING IT TRUNCATED: the tail is still discarded
-        # (the clamp stays, so nothing overruns), but nothing records that the bound
-        # was computed from fewer runs than the campaign paid for.
+        # (13) THE TRUNCATION STOPS SAYING IT TRUNCATED: the tail is still discarded
+        # (the clamp stays, so nothing overruns), but nothing records that the
+        # aggregate was computed from fewer runs than the campaign paid for.
         ok &= _bite("the CELLS_TRUNCATED flag dropped (a silently shortened campaign)",
                     hdir,
                     lambda s: _subst(s, [(
@@ -3106,7 +2320,7 @@ def bite():
                         "  if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS; }")]))
 
         # ---- THE PYTHON MIRRORS -------------------------------------------------
-        # (22)-(24) Move a mirrored macro in the header and leave statscheck's Python
+        # (14)-(16) Move a mirrored macro in the header and leave statscheck's Python
         # copy behind.  Every fixture here sits far from these boundaries, so NOTHING
         # ELSE in the gate changes: without the MIRROR| comparison each of these is a
         # green run on a mirror that no longer describes the header.
@@ -3120,51 +2334,7 @@ def bite():
                     lambda s: _subst(s, [("#define HET_STATS_MAX_CELLS 128",
                                           "#define HET_STATS_MAX_CELLS 129")]))
 
-        # ---- THE KNOWN-OPEN ESCAPE WITNESS, BOTH DIRECTIONS ---------------------
-        # check_f8_escape_witness pins the current over-crediting behaviour, so it must
-        # FAIL both (15) when the escape DISAPPEARS -- the guard made
-        # non-self-referential, the alternative F8-decision.md rejected -- and (16) when
-        # the over-credit is MIS-PINNED.  Both drive the real compiled header.
-        print("\n-- F8 escape witness (the known-open self-referential escape) --")
-
-        # (15) THE ESCAPE REMOVED: with a 50*HET_NWIN threshold the guard fires here
-        #      (1280 < 6400) and N_eff falls to 1, so the witness's precondition and its
-        #      over-credit assertion must both catch it -- the witness repurposed as the
-        #      fix's bite, made executable.
-        f8dir = tempfile.mkdtemp(prefix="statsf8bite.")
-        try:
-            with open(os.path.join(hdir, "het_verdict.h")) as fh:
-                horig = fh.read()
-            hnew = horig.replace(
-                "if ((double)nwin < HET_TAU_MIN_SAMPLES * st->tau_w) {",
-                "if ((double)nwin < HET_TAU_MIN_SAMPLES * (double)HET_NWIN) {")
-            if hnew == horig:
-                print("  *** VACUOUS BITE: the guard-threshold injection matched NOTHING")
-                ok = False
-            else:
-                with open(os.path.join(f8dir, "het_verdict.h"), "w") as fh:
-                    fh.write(hnew)
-                if check_f8_escape_witness({F8_ESCAPE_CASE: _escape_got(f8dir)},
-                                           quiet=True) > 0:
-                    print("  BITES (gate failed, as it must)   [the guard made "
-                          "non-self-referential -> the escape vanishes -> witness fires]")
-                else:
-                    print("  *** DID NOT BITE   [the escape witness passed a fixed guard]")
-                    ok = False
-        finally:
-            shutil.rmtree(f8dir, ignore_errors=True)
-
-        # (16) THE OVER-CREDIT MIS-PINNED: same real header, pinned expectation
-        #      corrupted to 3x, proving the pin is compared rather than decorative.
-        if check_f8_escape_witness({F8_ESCAPE_CASE: _escape_got(hdir)}, quiet=True,
-                                   neff_expect=F8_NEFF_EXPECT * 3.0) > 0:
-            print("  BITES (gate failed, as it must)   [the over-credit pin corrupted "
-                  "-> the witness rejects it]")
-        else:
-            print("  *** DID NOT BITE   [a corrupted over-credit pin passed]")
-            ok = False
-
-        # THE TWO NO-CONTROL STATES CONFLATED AGAIN.  This is the shipped defect in
+        # (17)-(18) THE TWO NO-CONTROL STATES CONFLATED.  This is the defect in
         # its simplest form: infer "this row IS the Layer-B canary" from "no record
         # has a control", which is true of EVERY harness of a pair with no control
         # map.  The numbers do not move -- both states take the same denominator --
@@ -3187,9 +2357,9 @@ def bite():
                          'recs[first].test_name) == 0)\n',
                          '      if (0)\n')]))
 
-        # (5) THE WINDOW BUMP DELETED FROM THE PRODUCER: het_win_of still exists and
-        # the aggregate still computes, but the sub-tallies never move, so every
-        # dispersion number is fiction.  Only phase 3 can see this.
+        # (19) THE WINDOW BUMP DELETED FROM THE PRODUCER: het_win_of still exists and
+        # the aggregate still computes, but the sub-tallies never move, so the stream
+        # the precheck reads is a fiction.  Only phase 3 can see this.
         print("\n-- producer injection (the sub-tallies themselves) --")
         sub = tempfile.mkdtemp(prefix="statsbite.")
         try:
@@ -3218,7 +2388,7 @@ def bite():
         finally:
             shutil.rmtree(sub, ignore_errors=True)
 
-        # (6) THE EMITTER STOPS TAGGING THE DECODE CHANNEL: the guard would read a
+        # (20) THE EMITTER STOPS TAGGING THE DECODE CHANNEL: the guard would read a
         # structurally-zero skew_stddev as "degenerate" on the 11 store-only tests and
         # pin their P_rep at a constant 0.  Only phase 4 can see this.
         print("\n-- corpus injection --")
@@ -3234,18 +2404,20 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 31 injections were caught -- 4 against the B7")
-        print("         ESTIMATOR/RULE, 10 against the B7b tau/N_eff/stop machinery")
-        print("         (including the corroboration bar, the record stamp and both")
-        print("         ways of losing the confirmation window),")
-        print("         3 against the B7c reliability guard (deleted / always-on /")
-        print("         price silenced -- both directions AND the signal), 5 against")
-        print("         the STRUCTURAL INVARIANTS (run dedup, the P_rep decode")
-        print("         conjunct, the tau/N_eff clamps, the unmeasured-dispersion")
-        print("         conjunct, the truncation flag),")
+        print("BITE OK: all 20 injections were caught --")
+        print("         2 against the EMPTINESS GUARD, one per half (the KS gate")
+        print("         stops consulting it; the test that raises it forced false):")
+        print("         either one alone unlocks P_rep on a stream nothing fired on,")
+        print("         which is the only way this layer can overclaim,")
+        print("         2 against the DECODE and STATIONARITY guards (degeneracy")
+        print("         disabled, KS made constant-pass),")
+        print("         6 against the STOP RULE (corroboration on one sighting, rate")
+        print("         mode ignored, both ways of losing the confirmation window,")
+        print("         the corroboration bar, the record stamp),")
+        print("         3 against the STRUCTURAL INVARIANTS (run dedup, the P_rep")
+        print("         decode conjunct, the truncation flag),")
         print("         3 against the PYTHON MIRRORS (THETA_D / TAU_HOT / MAX_CELLS")
-        print("         moved under them), 2 against the B7c/F8 known-open escape")
-        print("         witness (the escape removed AND the over-credit mis-pinned),")
+        print("         moved under them),")
         print("         2 against the SELF-CANARY INFERENCE (both directions: a row")
         print("         that co-runs nothing called the canary, and a real canary")
         print("         demoted), 1 against the PRODUCER (the sub-tallies), 1 against")

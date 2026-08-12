@@ -66,18 +66,22 @@ its own -- the two states the P2a split exists to keep apart.
   5
 
 Reprinting is what keeps this section from drifting away from the harness, and
-the two things a re-implementation got wrong are pinned here: the within-run
-correlation reading is VISIBLE (it is dropped by anything that decodes only the
-flag bits below it), and the bound is labelled per EFFECTIVE SAMPLE with the
-run-level bound printed beside it, not in place of it.
-  $ grep -c 'within-run correlation' stats.out
-  4
-  $ grep -c 'tau IS NOT RESOLVED' stats.out
-  1
-  $ grep -c 'rate PER EFFECTIVE SAMPLE' stats.out
-  1
-  $ grep -c 'implied RUN-level bound' stats.out
-  1
+what a null now says is what is pinned here: the two NEVER rows carry all four
+sentences of it -- no rate is attached, which control actually vouched, that the
+row is characterization and agrees with no model, and the effort behind the zero
+-- so a reprint that dropped any of them would show up as a count of 1 rather
+than 2.  The vouching sentence names the PER-CELL tier, not the pooled channel
+the precheck read, because the two can disagree.
+  $ grep -c 'NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL' stats.out
+  2
+  $ grep -c 'vouched for by' stats.out
+  2
+  $ grep -c 'these cells are NOT-OBSERVED-MU-HOT' stats.out
+  2
+  $ grep -c 'CHARACTERIZATION, NEVER VALIDATION' stats.out
+  2
+  $ grep -c 'effort: [0-9]* run(s)' stats.out
+  2
 
 The block is delimited by indentation, so the per-run HetVerdict output around it
 does not leak in.

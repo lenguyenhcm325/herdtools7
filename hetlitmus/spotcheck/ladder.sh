@@ -21,7 +21,7 @@
 # GH200 evaluation data.  See README.md.
 #
 # ---- runtime knobs -------------------------------------------------------
-# The harness has exactly seven runtime (getenv) knobs.  Everything else --
+# The harness has exactly six runtime (getenv) knobs.  Everything else --
 # HET_PLACE, the stress percentages, HET_NWIN, SIZE_OF_TEST, NUMBER_OF_RUN -- is
 # compile-time and is set through the compiler, e.g.
 #   make cuda-bin NVCC="nvcc -DHET_MEM_STRESS_PCT=0"
@@ -31,7 +31,6 @@
 #   HET_ALLOC      auto|malloc|managed|pinned   shared-memory mode      (PORT1)
 #   HET_RUNS_MAX   runs this invocation, clamped to the compiled NUMBER_OF_RUN
 #   HET_ADAPTIVE   1 => consult het_campaign_should_stop() after every run
-#   HET_P_GOAL     stop a bound-needing row once p_bound <= this
 #   HET_RATE       1 => a sighting stops nothing; the row runs to budget
 #   HET_CONFIRM_RUNS  runs after the one it fired in that a LONE clean sighting
 #                  may hold a row open for

@@ -338,7 +338,7 @@ STATE="$OUT/campaign-state.csv"
 RESUMABLE=0 ; RESUMABLE_SHORT=""
 if [ -r "$STATE" ]; then
   RESUMABLE="$(awk -F, 'NR > 1 && ($2 == "CORROBORATED" ||
-      $2 == "UNCONFIRMED-SIGHTING" || $2 == "BOUND-MET" || $2 == "BUDGET" ||
+      $2 == "UNCONFIRMED-SIGHTING" || $2 == "BUDGET" ||
       $2 == "ERROR")' "$STATE" | wc -l)"
   RESUMABLE_SHORT="$(awk -F, -v b="$BUDGET_RUNS" \
     'NR > 1 && $2 == "BUDGET" && $4 + 0 < b + 0 \
@@ -584,7 +584,7 @@ count_stop() {                  # <STOP> -> rows of the campaign state carrying 
     echo "  resumed     $RESUMABLE row(s) (not measured in this session)"
   fi
   echo "  transcripts $OUT/hetstats/   ($(find "$OUT/hetstats" -name '*.log' 2>/dev/null | wc -l) harness log(s))"
-  for s in CORROBORATED UNCONFIRMED-SIGHTING BOUND-MET BUDGET ERROR; do
+  for s in CORROBORATED UNCONFIRMED-SIGHTING BUDGET ERROR; do
     n="$(count_stop "$s")"
     if [ "$n" -gt 0 ]; then printf '              %-21s %d row(s)\n' "$s" "$n" ; fi
   done
