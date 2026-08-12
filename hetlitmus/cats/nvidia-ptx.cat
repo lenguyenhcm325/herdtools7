@@ -14,12 +14,13 @@
  * model rather than being asserted.  It decides no thesis test and no run
  * path consults it.
  *
- * One departure from Lustig19: Frel/Facq below admit f[release,*] and
- * f[acquire,*], outside Fig 3c's modelled fence subset (.sem = {.sc,
- * .acq_rel}); those qualifiers postdate the paper ([PTXISA] §9.7.14.4: PTX ISA
- * 8.6, sm_90) and [PTXISA] §8.8 gives them the pattern positions used here.
- * Fidelity record, with the specialisations vacuous for this vocabulary:
- * hetlitmus/docs/nvidia-ptx-cat.md.
+ * Two departures from Lustig19, in opposite directions.  Frel/Facq admit
+ * f[release,*] and f[acquire,*], outside Fig 3c's modelled fence subset
+ * (.sem = {.sc, .acq_rel}); those qualifiers postdate the paper ([PTXISA]
+ * §9.7.14.4: PTX ISA 8.6, sm_90) and [PTXISA] §8.8 gives them the pattern
+ * positions used here.  Neither set admits f[acq_rel,*], which Lustig19 has
+ * in both; no test carries one.  Fidelity record, with the specialisations
+ * vacuous for this vocabulary: hetlitmus/docs/nvidia-ptx-cat.md §3 and §5.
  *)
 
 (* ================================================================== *)
