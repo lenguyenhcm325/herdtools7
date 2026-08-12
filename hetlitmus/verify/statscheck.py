@@ -22,6 +22,7 @@ Usage:  statscheck.py [-q]      run the gate
 """
 
 import argparse
+import csv
 import math
 import os
 import re
@@ -2245,8 +2246,8 @@ def phase5_stops(lines, quiet):
 # PHASE 5b -- THE SCHEDULER, END TO END, against a stub runner.  campaign.py spends
 # (or saves) the hardware hours and none of its policy needs a GPU: the HetStats line
 # is its whole interface.  The stub emits deterministic lines per (test, invocation),
-# so the pooling arithmetic and the stop decisions are pinned exactly -- e.g. the
-# pooled bound 2.9957/(100*i) crosses p_goal=0.01 at exactly the third invocation.
+# so the pooling arithmetic and the stop decisions are pinned exactly -- e.g. a null
+# pools 10 runs an invocation and is ended by its 100-run budget in the tenth.
 #
 # WHAT IS PINNED HERE is that campaign.py applies het_verdict.h's rule at the pooled
 # scale: one policy for every row, corroboration before the confirmation window before
@@ -2279,22 +2280,9 @@ NULL = ("mu_upper=2.9957 tau_w=1.28 N_eff=100 tau_need=1 R_eff=%d "
         "p_bound=%.6g P_rep=-1" % (10 * R, 2.9957 / (10.0 * R)))
 FIRED = ("mu_upper=0 tau_w=1.28 N_eff=100 tau_need=1 R_eff=0 p_bound=-1 "
          "P_rep=0.632 first_sight=1")
-if test == "NULL-fast":
+if test == "NULL-pooled":
     print("HetStats %s obs=Never k=0 k_eff=0 k_runs=0 sighting=none "
           "%s %s" % (test, NULL, base))
-elif test == "NULL-unres":
-    # THE SAME NULL AND THE SAME EFFORT as NULL-fast, but this channel's tau (53.8)
-    # needs 22 usable runs and the invocation has 10, so it is UNRESOLVED: N_eff falls
-    # back to 1 and R_eff is 10, not 100.  Believing the under-read tau would give
-    # R_eff = 100, the pooled bound 2.9957/(100*i) would cross p_goal=0.01 at
-    # invocation 3, and the campaign would bank a bound it never earned.  Guarded, the
-    # pooled bound 2.9957/(10*i) never reaches 0.01 inside the budget and the row keeps
-    # running: "run more runs", not "give up" and not "stop early".
-    print("HetStats %s obs=Never k=0 k_eff=0 k_runs=0 sighting=none "
-          "mu_upper=2.9957 tau_w=53.8 N_eff=1 tau_need=22 R_eff=10 p_bound=0.29957 "
-          "P_rep=-1 R=10 usable=10 degen=0 ctrl=canary win_n=1280 nwin=128 F_win=1.05 "
-          "F_cell=1.02 r_hat=inf acf1=0.01 ks=pass ks_D=0.1 ks_Dcrit=0.2 ks_split=-1 "
-          "N=100000 frames=100000 flags=0x4000" % test)
 elif test == "SIGHT-corrob":
     # One clean sighting in one distinct run EVERY invocation: the pooled k_runs
     # reaches HET_CORROB_RUNS at invocation 2, and nothing further is bought.
@@ -2321,8 +2309,8 @@ elif test == "SIGHT-late":
         print("HetStats %s obs=Never k=0 k_eff=0 k_runs=0 sighting=none "
               "%s %s" % (test, NULL, base))
 elif test == "SIGHT-degen":
-    # A sighting the decode guard REJECTED (k=1, k_eff=0).  It holds nothing open --
-    # and it is not a null either, so no bound is pooled for it: it runs to budget.
+    # A sighting the decode guard REJECTED (k=1, k_eff=0).  It corroborates nothing
+    # and holds nothing open, so the row runs to its budget.
     print("HetStats %s obs=Sometimes k=1 k_eff=0 k_runs=0 degen=1 "
           "sighting=UNCONFIRMED mu_upper=0 tau_w=1.28 N_eff=100 tau_need=1 R_eff=0 "
           "p_bound=-1 P_rep=-1 first_sight=0 R=10 usable=10 ctrl=canary win_n=1280 "
@@ -2337,8 +2325,8 @@ SEED_STRIDE = 100003     # must match campaign.py
 # The budget phase 6 drives the campaign with, the confirmation window it passes, and
 # the R every STUB_RUNNER line reports.  Named because the HET_RUNS_MAX assertion
 # re-derives what the row is entitled to from them.
-BOUND_BUDGET, CONFIRM, STUB_R = 100, 30, 10
-STUB_TESTS = ["NULL-fast", "NULL-unres", "SIGHT-corrob", "SIGHT-degen", "SIGHT-lone"]
+STUB_BUDGET, CONFIRM, STUB_R = 100, 30, 10
+STUB_TESTS = ["NULL-pooled", "SIGHT-corrob", "SIGHT-degen", "SIGHT-lone"]
 
 
 def _mk_corpus(tmp, name, tests):
@@ -2352,7 +2340,7 @@ def _run_campaign(stub, corpus, state, extra):
     return subprocess.run(
         [sys.executable, CAMPAIGN, "--corpus", corpus,
          "--runner", "%s %s {dir}" % (sys.executable, stub),
-         "--budget-runs", str(BOUND_BUDGET), "--confirm-runs", str(CONFIRM),
+         "--budget-runs", str(STUB_BUDGET), "--confirm-runs", str(CONFIRM),
          "--seed0", "777", "--state", state] + extra,
         capture_output=True, text=True)
 
@@ -2479,7 +2467,7 @@ def phase6_campaign(quiet):
         # --- 6.1: THE POLICY, END TO END.
         corpus = _mk_corpus(tmp, "corpus", STUB_TESTS)
         state = os.path.join(tmp, "state.csv")
-        r = _run_campaign(stub, corpus, state, ["--p-goal", "0.01"])
+        r = _run_campaign(stub, corpus, state, [])
         out = r.stdout
 
         # A CRASH EXITS 1 TOO.  This fixture set ends one row UNCONFIRMED-SIGHTING, so
@@ -2501,20 +2489,18 @@ def phase6_campaign(quiet):
                   "corpus's" % order)
             bad += 1
         want = {
-            # pooled bound 2.9957/(100*i) <= 0.01 first at i=3: EXACT arithmetic.
-            "NULL-fast": ("BOUND-MET", 3),
-            # Same null and effort but tau UNRESOLVED, so N_eff = 1, R_eff = 10 per
-            # invocation, and the pooled bound 2.9957/(10*i) never reaches p_goal
-            # inside the budget: this row runs to BUDGET where NULL-fast banks
-            # BOUND-MET at 3.  That divergence is the guard, in hardware hours.
-            "NULL-unres": ("BUDGET", 10),
+            # A null is ended by the budget and by nothing else: 10 runs an
+            # invocation, so the 100-run budget lands in the tenth.  Nothing the
+            # harness reports about the null shortens that.
+            "NULL-pooled": ("BUDGET", 10),
             # clean sightings pool to k_runs >= HET_CORROB_RUNS at invocation 2.
             "SIGHT-corrob": ("CORROBORATED", 2),
             # one sighting in the first run, then nulls: held open by the window (30
             # runs after the run it fired in, so through run 31) and ended by it in
             # the fourth invocation -- not by the 100-run budget.
             "SIGHT-lone": ("UNCONFIRMED-SIGHTING", 4),
-            # a sighting the decode guard rejected stops nothing and bounds nothing.
+            # a sighting the decode guard rejected stops nothing: it can neither
+            # corroborate nor hold a row open, so the row runs to its budget.
             "SIGHT-degen": ("BUDGET", 10),
         }
         for t, (stop, inv) in want.items():
@@ -2553,38 +2539,39 @@ def phase6_campaign(quiet):
             print("  *** a corroborated row is not reported at all")
             bad += 1
 
-        # THE SCHEDULER MUST TREAT AN UNRESOLVED TAU AS A PRICE, NOT A FAILURE: not an
-        # ERROR (that de-schedules a test for being honest), it KEEPS RUNNING (asserted
-        # above by NULL-unres reaching BUDGET), and the price in runs is reported --
-        # a signal the operator cannot see is a veto.
-        gu = done.get("NULL-unres", {})
-        if gu.get("stop") == "ERROR":
-            print("  *** an UNRESOLVED tau was recorded as an ERROR.  It is not a "
-                  "failure -- it is a conservative (B7) bound plus a price in runs.")
-            bad += 1
-        for frag, why in (
-                ("tau UNRESOLVED", "the campaign does not report which rows could not "
-                                   "claim their N_eff"),
-                ("PRICE, not a failure", "the campaign does not say an unresolved tau "
-                                         "is a price rather than a failure"),
-                ("22 usable run", "the campaign does not quote the runs needed")):
-            if frag not in out:
-                print("  *** %s -- an unclaimable dividend the operator cannot see is "
-                      "an unclaimable dividend forever." % why)
-                bad += 1
         # The D10 precondition is LOUDER when it did not run than when it failed: this
         # corpus has no CPU-only row, so the WB probe did not run and must say so.
         if "WB probe): *** NOT RUN" not in out:
             print("  *** the D10 WB probe is silently absent -- a precondition nobody "
                   "sees is a precondition nobody checked")
             bad += 1
-        if not quiet:
-            print("      NULL-unres  tau UNRESOLVED -> N_eff not claimed -> keeps "
-                  "running to BUDGET (the early BOUND-MET the over-credit would have "
-                  "stolen); price surfaced as >=22 runs/inv")
+
+        # --- 6.1b: WHAT A NULL IS WORTH IS THE EFFORT THAT FAILED TO SEE IT, so the
+        # pooled null's banked row must carry every run its budget bought.  A scheduler
+        # that ended it early on something the harness reported about it would bank the
+        # same "Never" over less effort, and the state file is where that would show.
+        want_bank = {"stop": "BUDGET", "invocations": "10",
+                     "runs": str(STUB_BUDGET), "usable": str(STUB_BUDGET), "k": "0"}
+        banked = {}
+        if os.path.exists(state):
+            with open(state) as fh:
+                banked = {row["test"]: row for row in csv.DictReader(fh)}
+        bank = banked.get("NULL-pooled")
+        if bank is None:
+            print("  *** NULL-pooled has no row in the campaign state at all")
+            bad += 1
+        elif {c: bank.get(c) for c in want_bank} != want_bank:
+            print("  *** the pooled null NULL-pooled banked %s, want %s: it ran to its "
+                  "budget, so the row it leaves behind is all %d of the runs that "
+                  "failed to see the outcome"
+                  % ({c: bank.get(c) for c in want_bank}, want_bank, STUB_BUDGET))
+            bad += 1
+        elif not quiet:
+            print("      NULL-pooled  banks 10 invocation(s) / %d run(s) at BUDGET -- "
+                  "a null is worth the effort spent on it" % STUB_BUDGET)
 
         # Every invocation must carry a FRESH seed base (seed0 + i*stride) and the
-        # adaptive knobs -- replayed seeds would double-count R_eff -- and it must
+        # adaptive knobs -- a replayed seed adds no new phase draws -- and it must
         # carry the run count the row is ENTITLED to.  HET_RUNS_MAX is how a budget of
         # 100 becomes ten invocations of 10 rather than ten of 100: unchecked, the last
         # invocation of a nearly-spent row could overshoot by a whole invocation.  The
@@ -2606,19 +2593,19 @@ def phase6_campaign(quiet):
                               "-- the harness applies the rule too and must be told "
                               "the SAME policy" % (t, inv, rate, confirm))
                         bad += 1
-                    want_max = BOUND_BUDGET - STUB_R * (int(inv) - 1)
+                    want_max = STUB_BUDGET - STUB_R * (int(inv) - 1)
                     if int(runs_max) != want_max:
                         print("  *** %s invocation %s: HET_RUNS_MAX=%s, want %d "
                               "(budget %d minus the %d runs already spent).  The "
                               "harness is being told to run past the budget the "
                               "campaign is accounting for."
-                              % (t, inv, runs_max, want_max, BOUND_BUDGET,
+                              % (t, inv, runs_max, want_max, STUB_BUDGET,
                                  STUB_R * (int(inv) - 1)))
                         bad += 1
         if not quiet:
             print("      HET_RUNS_MAX curtails each invocation to the REMAINING "
                   "budget (%d, %d, %d, ...); HET_RATE/HET_CONFIRM_RUNS ride along"
-                  % (BOUND_BUDGET, BOUND_BUDGET - STUB_R, BOUND_BUDGET - 2 * STUB_R))
+                  % (STUB_BUDGET, STUB_BUDGET - STUB_R, STUB_BUDGET - 2 * STUB_R))
         if not os.path.exists(state):
             print("  *** no campaign state written")
             bad += 1
@@ -2664,13 +2651,12 @@ def phase6_campaign(quiet):
         # 100-run budget), so its window closes at run 71 and the row ends in the
         # eighth.  Measured from run 0 the window is long gone when the sighting
         # lands: the row is banked UNCONFIRMED the moment it fires, having run none
-        # of the runs the window exists to buy.  No --p-goal, so nothing but the
-        # sighting rule or the budget can end it.
+        # of the runs the window exists to buy.
         late = _mk_corpus(tmp, "late", ["SIGHT-late"])
         r2b = subprocess.run(
             [sys.executable, CAMPAIGN, "--corpus", late,
              "--runner", "%s %s {dir}" % (sys.executable, stub),
-             "--budget-runs", str(BOUND_BUDGET), "--confirm-runs", str(CONFIRM),
+             "--budget-runs", str(STUB_BUDGET), "--confirm-runs", str(CONFIRM),
              "--seed0", "777", "--state", os.path.join(tmp, "late.csv")],
             capture_output=True, text=True)
         d2b, _ = _done_rows(r2b.stdout)
@@ -2689,14 +2675,13 @@ def phase6_campaign(quiet):
         bad += _window_arithmetic(r2b.stdout, 1)
 
         # --- 6.3: --rate DISABLES THE SIGHTING STOP AND NOTHING ELSE.  The row that
-        # corroborates at invocation 2 above must now run to its budget, and the null
-        # that meets its bound must still meet it.
-        rate = _mk_corpus(tmp, "rate", ["SIGHT-corrob", "NULL-fast"])
-        r3 = _run_campaign(stub, rate, os.path.join(tmp, "rate.csv"),
-                           ["--p-goal", "0.01", "--rate"])
+        # corroborates at invocation 2 above must now run to its budget, and the null,
+        # which no sighting stop was holding anyway, must end exactly where it did.
+        rate = _mk_corpus(tmp, "rate", ["SIGHT-corrob", "NULL-pooled"])
+        r3 = _run_campaign(stub, rate, os.path.join(tmp, "rate.csv"), ["--rate"])
         d3, _ = _done_rows(r3.stdout)
         for t, want3 in (("SIGHT-corrob", ("BUDGET", 10)),
-                         ("NULL-fast", ("BOUND-MET", 3))):
+                         ("NULL-pooled", ("BUDGET", 10))):
             g3 = d3.get(t, {})
             if (g3.get("stop"), g3.get("inv")) != want3:
                 print("  *** --rate: %s ended %s after %s invocation(s), want %s -- "
@@ -2711,8 +2696,8 @@ def phase6_campaign(quiet):
                   "was flagged)" % r3.returncode)
             bad += 1
         elif not quiet:
-            print("      --rate       SIGHT-corrob runs to BUDGET, NULL-fast still "
-                  "BOUND-MET at 3")
+            print("      --rate       SIGHT-corrob runs to BUDGET, NULL-pooled ends "
+                  "where it did")
 
         # FAIL CLOSED: a named test with no harness dir must kill the campaign (rc=2).
         r4 = subprocess.run(
@@ -2731,12 +2716,12 @@ def phase6_campaign(quiet):
         print("\nSCHEDULER FAILED: %d problem(s)." % bad)
         return 1
     print("\nSCHEDULER OK -- campaign.py applies het_verdict.h's rule at the pooled "
-          "scale (corroboration, then the confirmation window, then the bound, then "
-          "the budget), the window runs from the sighting and outranks the budget in "
-          "hardware hours, --rate disables the sighting stop alone, and the mirror "
-          "rejects a header that moved the bar, renamed a stop or moved the window's "
-          "origin.  The pooled bound crosses p_goal at exactly the predicted "
-          "invocation; seeds are fresh per invocation.")
+          "scale (corroboration, then the confirmation window, then the budget), the "
+          "window runs from the sighting and outranks the budget in hardware hours, "
+          "--rate disables the sighting stop alone, and the mirror rejects a header "
+          "that moved the bar, renamed a stop or moved the window's origin.  A null "
+          "runs to its budget and banks every run of it; seeds are fresh per "
+          "invocation.")
     return 0
 
 

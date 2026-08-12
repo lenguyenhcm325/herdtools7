@@ -41,8 +41,7 @@ usage: hetlitmus-run.sh --gpu-target cuda|hip --corpus DIR [options]
   --gpu-target cuda|hip      the GPU dialect litmus7 renders (MANDATORY)
   --corpus DIR               directory of .litmus tests (MANDATORY)
   --arch auto|sm_XX|gfxXXX   device arch to build for (default: auto)
-  --budget-runs N            max runs per bound row (default 100)
-  --p-goal P                 stop a bound row once its pooled bound <= P
+  --budget-runs N            max runs per row (default 100)
   --out DIR                  results dir (default hetlitmus/run-out/<stamp>)
   --reuse-emitted            reuse <out>/emit instead of emitting again
   --resume                   continue the campaign state already in <out>
@@ -81,7 +80,7 @@ need_val() {                    # <flag> <remaining argc>
   [ "$2" -ge 2 ] || { usage >&2 ; die "$1 needs a value"; }
 }
 
-GPU_TARGET="" ; CORPUS="" ; ARCH="auto" ; BUDGET_RUNS=100 ; P_GOAL=""
+GPU_TARGET="" ; CORPUS="" ; ARCH="auto" ; BUDGET_RUNS=100
 OUT="" ; REUSE=0 ; DRYRUN=0 ; RESUME=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -89,7 +88,6 @@ while [ $# -gt 0 ]; do
     --corpus)        need_val "$1" $# ; CORPUS="$2" ; shift 2 ;;
     --arch)          need_val "$1" $# ; ARCH="$2" ; shift 2 ;;
     --budget-runs)   need_val "$1" $# ; BUDGET_RUNS="$2" ; shift 2 ;;
-    --p-goal)        need_val "$1" $# ; P_GOAL="$2" ; shift 2 ;;
     --out)           need_val "$1" $# ; OUT="$2" ; shift 2 ;;
     --reuse-emitted) REUSE=1 ; shift ;;
     --resume)        RESUME=1 ; shift ;;
@@ -112,12 +110,10 @@ esac
 which is the other half of the pair"
 [ -d "$CORPUS" ] || die "--corpus $CORPUS is not a directory"
 CORPUS="$(cd "$CORPUS" && pwd)"
-# The budgets are checked HERE and not by campaign.py's argparse: that runs after
-# a whole corpus has been emitted and built, which on a real session is an hour.
+# The budget is checked HERE and not by campaign.py's argparse: that runs after a
+# whole corpus has been emitted and built, which on a real session is an hour.
 echo "$BUDGET_RUNS" | grep -qE '^[1-9][0-9]*$' \
   || die "--budget-runs \"$BUDGET_RUNS\" is not a positive integer"
-[ -z "$P_GOAL" ] || echo "$P_GOAL" | grep -qE '^0?\.[0-9]+([eE]-?[0-9]+)?$|^[0-9]+(\.[0-9]+)?([eE]-?[0-9]+)?$' \
-  || die "--p-goal \"$P_GOAL\" is not a probability"
 
 if [ "$GPU_TARGET" = cuda ]; then
   COMPILER="${NVCC:-nvcc}"  ; ARCH_VAR=CUDA_ARCH ; RENDER_EXT=cu  ; OTHER_EXT=hip
@@ -356,7 +352,7 @@ echo "  corpus        $CORPUS   (${#CORPUS_TESTS[@]} test(s), $CPU_ISA CPU lane)
 echo "  gpu-target    $GPU_TARGET   (compiler $COMPILER)"
 echo "  pair          $PAIR_LONG"
 echo "  arch          $ARCH   [$ARCH_SOURCE]   passed to the build as $ARCH_VAR"
-echo "  budget        --budget-runs $BUDGET_RUNS   --p-goal ${P_GOAL:-<unset: bound rows run to budget>}"
+echo "  budget        --budget-runs $BUDGET_RUNS   (every row runs to it or to a stop)"
 echo "  results       $OUT"
 echo "  probe         $PROBE_SH"
 echo "  runner        $RUNNER"
@@ -383,10 +379,10 @@ rows are then disclosed as not measured here), or move $STATE aside to measure \
 again into this dir."
 fi
 if [ "$RESUME" -eq 1 ] && [ -n "$RESUMABLE_SHORT" ]; then
-  die "--resume, but --budget-runs $BUDGET_RUNS is above what these bound row(s) \
-spent, and a resumed row is never re-run: $RESUMABLE_SHORT.  Their bounds were \
-measured at their own budget, so banking them under this one would label a bound \
-with runs nobody spent; re-run at their budget, or move $STATE aside."
+  die "--resume, but --budget-runs $BUDGET_RUNS is above what these row(s) spent, \
+and a resumed row is never re-run: $RESUMABLE_SHORT.  Each stopped at the budget it \
+was given, so inheriting them under this one would credit the session with runs \
+nobody spent; re-run at their budget, or move $STATE aside."
 fi
 if [ "$DRYRUN" -eq 1 ]; then
   echo
@@ -420,7 +416,6 @@ RECORD="$OUT/run-record.txt" ; SUMMARY="$OUT/summary.txt"
   echo "arch_source=$ARCH_SOURCE"
   echo "compiler=$COMPILER"
   echo "budget_runs=$BUDGET_RUNS"
-  echo "p_goal=${P_GOAL:-UNSET}"
   echo "run_timeout_s=$HET_RUN_TIMEOUT"
   echo "runner=$RUNNER"
   echo "probe_cmd=$PROBE_SH"
@@ -562,7 +557,6 @@ export HET_RUN_LOG_DIR="$OUT/hetstats"
 TESTS_CSV="$(IFS=, ; echo "${CORPUS_TESTS[*]}")"
 CAMPAIGN_ARGS=(--corpus "$EMIT" --runner "$RUNNER" --tests "$TESTS_CSV"
                --budget-runs "$BUDGET_RUNS" --state "$STATE")
-if [ -n "$P_GOAL" ]; then CAMPAIGN_ARGS+=(--p-goal "$P_GOAL"); fi
 camp_rc=0
 python3 "$HETL/campaign.py" "${CAMPAIGN_ARGS[@]}" > "$OUT/campaign.log" 2>&1 || camp_rc=$?
 tail -40 "$OUT/campaign.log" | sed 's/^/    /'

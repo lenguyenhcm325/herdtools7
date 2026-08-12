@@ -2,11 +2,9 @@
 """The campaign scheduler: where the GPU hours are spent, or saved (B7b;
 env-research/impl-briefs/B7b-impl-brief.md, Q3-stats.md).
 
-A defensible "Never" needs a bound, and a bound costs thousands of runs per test.  No
-harness carries a prediction, so there is no class to schedule against and every row
+No harness carries a prediction, so there is no class to schedule against and every row
 gets the SAME policy: run it until its sighting is corroborated, until a lone sighting
-outlives the confirmation window, until its false-negative bound reaches --p-goal, or
-until its budget is gone.
+outlives the confirmation window, or until its budget is gone.
 
 THE POLICY IS het_verdict.h's, MIRRORED.  `TestState.decide' below is a transcription
 of het_campaign_should_stop() -- same precedence, same guards, same names -- applied at
@@ -16,31 +14,26 @@ layers cannot disagree about a row; `check_flag_mirror' pins the constants and t
 names against the header so they cannot drift silently either.
 
   --rate (HET_RATE=1) turns the sighting stop off: the row runs to its budget and
-     yields a RATE rather than a first sighting.  The bound and the budget still stop it.
+     yields a RATE rather than a first sighting.  The budget still stops it.
   --confirm-runs (HET_CONFIRM_RUNS) is how long a LONE clean sighting may hold a row
      open while failing to reproduce.  It OUTRANKS the budget stop, because a row ended
      at BUDGET on one sighting banks "seen once, stopped looking"; het_verdict.h states
      the precedence and what it deliberately does not outrank.
 
-  H > 1 (parallel het pairs) is deliberately absent: it is real emitter work, the pairs
-     share the interconnect so DEFF eats part of the gain, and it is the lever most
-     likely to be redundant once N_eff is measured.  Build it only if N_eff comes out
-     small.
+  H > 1 (parallel het pairs) is deliberately absent: it is real emitter work, and the
+     pairs would share the interconnect, so the gain is not the pair count.
 
-POOLING ACROSS INVOCATIONS (the arithmetic, stated so it can be audited; `absorb' and
-`pooled_bound' implement it).  Invocations use FRESH seed bases, since replaying a seed
-adds no new phase draws and pooling replays would double-count R_eff, so they are
-independent replicates:  k* and k_runs* are sums; R_eff* sums only over invocations
-that themselves reported a bound; and bound* = max(mu_upper_i) / R_eff* -- the widest
-numerator over the summed denominator, i.e. conservative.  An invocation whose
-dispersion went unmeasured printed no bound, so pooling its effort would invent one.
+POOLING ACROSS INVOCATIONS (the arithmetic, stated so it can be audited; `absorb'
+implements it).  Invocations use FRESH seed bases, since replaying a seed adds no new
+phase draws and a replayed run is not a replicate; the pooled row is therefore a sum
+over independent replicates -- runs*, k* and k_runs* are sums.
 
 RUNNER CONTRACT: --runner is a command template with '{test}' and '{dir}' substituted.
 It must execute ONE invocation of the test's harness binary and forward the harness
 stdout -- the HetStats line is the whole interface.  Per invocation this driver sets
-HET_SEED (a fresh base), HET_ADAPTIVE=1, HET_RUNS_MAX, HET_RATE, HET_CONFIRM_RUNS and
-HET_P_GOAL.  Nothing here needs a GPU: hetlitmus/verify/statscheck.py phase 6 drives it
-end to end against a stub runner.
+HET_SEED (a fresh base), HET_ADAPTIVE=1, HET_RUNS_MAX, HET_RATE and HET_CONFIRM_RUNS.
+Nothing here needs a GPU: hetlitmus/verify/statscheck.py phase 6 drives it end to end
+against a stub runner.
 
 The runner is 'sh spotcheck/run-one.sh {dir} {test}', which is `cd {dir}; exec
 ./{test}'.  NOT ./run.exe -- that is upstream litmus7's binary name and no het
@@ -55,7 +48,7 @@ invoked.  Adding a --target axis here would be a knob with nothing behind it.
 
 Usage:
   campaign.py --corpus <dir of emitted harness dirs>
-              --runner CMD [--p-goal F] [--budget-runs N] [--rate]
+              --runner CMD [--budget-runs N] [--rate]
               [--confirm-runs N] [--state campaign.csv] [--seed0 N] [--dry-run]
               [--tests A,B,...]
 Exit: 0 = campaign completed; 2 = configuration/corpus error (fail closed);
@@ -138,26 +131,20 @@ def fnum(kv, key, dflt=0.0):
         return dflt
 
 
-# het_verdict.h HET_ST_TAU_UNRESOLVED: tau was not resolved by this invocation's
-# pooled stream, so N_eff fell back to 1 -- the conservative reading.
-HET_ST_TAU_UNRESOLVED = 1 << 14
-
-# The bit above, CORROB_RUNS and STOP_NAMES are hand-mirrors of the header, and a
-# scheduler applying a stale copy of the policy the harness applies is the drift this
-# whole file is written to avoid.  This file is also deliberately standalone -- it is
-# copied on its own onto a rented GPU box -- so the cross-check is conditional on the
-# header being reachable at its in-repo path: present means it must agree, out of
-# reach means the mirror stands.
+# CORROB_RUNS and STOP_NAMES are hand-mirrors of the header, and a scheduler applying
+# a stale copy of the policy the harness applies is the drift this whole file is
+# written to avoid.  This file is also deliberately standalone -- it is copied on its
+# own onto a rented GPU box -- so the cross-check is conditional on the header being
+# reachable at its in-repo path: present means it must agree, out of reach means the
+# mirror stands.
 _VERDICT_H = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
                           "litmus", "het-runtime", "het_verdict.h")
 
 
-def check_flag_mirror(path=_VERDICT_H, name="HET_ST_TAU_UNRESOLVED",
-                      mirrored=HET_ST_TAU_UNRESOLVED, corrob=CORROB_RUNS,
-                      stops=None):
-    """The bit `name`, HET_CORROB_RUNS and every stop-name string, as `path` defines
-    them -- or None when the header is out of reach.  Any disagreement is fatal, and so
-    is a header that no longer defines one of them."""
+def check_flag_mirror(path=_VERDICT_H, corrob=CORROB_RUNS, stops=None):
+    """HET_CORROB_RUNS and every stop-name string, as `path` defines them -- or None
+    when the header is out of reach.  Any disagreement is fatal, and so is a header
+    that no longer defines one of them."""
     stops = STOP_NAMES if stops is None else stops
     # The terminal set is this driver's own consistency, checked with or without the
     # header: a stop the scheduler can write but never treats as terminal loops forever.
@@ -169,15 +156,6 @@ def check_flag_mirror(path=_VERDICT_H, name="HET_ST_TAU_UNRESOLVED",
             text = fh.read()
     except (IOError, OSError):
         return None
-    m = re.search(r"^#define[ \t]+%s[ \t]+\([ \t]*1u?[ \t]*<<[ \t]*(\d+)[ \t]*\)"
-                  % re.escape(name), text, re.M)
-    if m is None:
-        die("%s no longer defines %s -- the mirrored bit cannot be verified, and an "
-            "unverifiable mirror of a flag word is not one" % (path, name))
-    bit = 1 << int(m.group(1))
-    if bit != mirrored:
-        die("%s drifted: %s is 1<<%s there, 0x%x here" % (path, name, m.group(1),
-                                                          mirrored))
     mc = re.search(r"^#define[ \t]+HET_CORROB_RUNS[ \t]+(\d+)", text, re.M)
     if mc is None:
         die("%s no longer defines HET_CORROB_RUNS -- the corroboration bar this "
@@ -206,18 +184,10 @@ def check_flag_mirror(path=_VERDICT_H, name="HET_ST_TAU_UNRESOLVED",
             "the harness and this scheduler would close a lone sighting's window at "
             "different runs, and a late sighting would be banked with none of it run"
             % path)
-    return bit
+    return got
 
 
 check_flag_mirror()
-
-
-def flags(kv):
-    """The HetStats line carries flags=0x<hex>."""
-    try:
-        return int(kv.get("flags", "0"), 16)
-    except ValueError:
-        return 0
 
 
 class TestState(object):
@@ -231,26 +201,12 @@ class TestState(object):
         # price of a sighting in the unit the campaign spends, carried so a row that
         # ends UNCONFIRMED can say how long ago the one sighting was.
         self.runs_at_first_sight = 0
-        self.R_eff = 0.0         # summed over MEASURED invocations only
-        self.mu_upper_max = 0.0
-        self.nwin = 0
-        self.tau_w = self.N_eff = -1.0   # last measured (reporting only)
-        # An invocation whose tau was unresolved scored N_eff = 1: not an error and not
-        # a dead end, but a PRICE, with tau_need the price in runs.  Carried so the
-        # campaign can say which rows bought no dividend and what buying one costs.
-        self.tau_unresolved = 0          # invocations whose tau was unresolved
-        self.tau_need_max = 0            # ... and the largest run count they wanted
         self.stop = ""
         self.note = ""
         # The HetStats line carries `cpu_only=<0|1>', and it caps what a sighting on
         # this row licenses: on an all-CPU cycle no cross-device path carried the
         # cycle.  Read rather than assumed, and 0 until a line says otherwise.
         self.cpu_only = 0
-
-    def pooled_bound(self):
-        if self.k > 0 or self.R_eff <= 0.0 or self.mu_upper_max <= 0.0:
-            return -1.0
-        return self.mu_upper_max / self.R_eff
 
     def absorb(self, kv):
         self.invocations += 1
@@ -274,34 +230,6 @@ class TestState(object):
             # can only over-state the price.
             fs = int(fnum(kv, "first_sight"))
             self.runs_at_first_sight = before + (fs if fs > 0 else int(fnum(kv, "R")))
-        nwin = int(fnum(kv, "nwin"))
-        if self.nwin and nwin and nwin != self.nwin:
-            # tau_w/F_win/N_eff are window-resolution dependent (het_verdict.h), so
-            # records scored at different resolutions must not be silently pooled.
-            self.stop, self.note = "ERROR", (
-                "nwin changed mid-test (%d -> %d): a swept HET_NWIN needs a fresh "
-                "campaign state, not a silent pool" % (self.nwin, nwin))
-            return
-        self.nwin = nwin or self.nwin
-        mu = fnum(kv, "mu_upper", -1.0)
-        reff = fnum(kv, "R_eff", 0.0)
-        p_bound = fnum(kv, "p_bound", -1.0)
-        # Only an invocation that reported a bound itself may contribute effort to the
-        # pooled one: p_bound >= 0 implies its dispersion was measured.
-        if p_bound >= 0.0 and reff > 0.0:
-            self.R_eff += reff
-            self.mu_upper_max = max(self.mu_upper_max, mu)
-        if fnum(kv, "tau_w", -1.0) > 0.0:
-            self.tau_w = fnum(kv, "tau_w")
-            self.N_eff = fnum(kv, "N_eff", -1.0)
-        # An unresolved tau needs no special case: N_eff = 1 makes this invocation's
-        # R_eff conservative and the pooled bound wider, so the row keeps running of its
-        # own accord.  Never an ERROR -- that would de-schedule a test for being honest
-        # -- and a BOUND-MET earned on the conservative reading stands.  What the
-        # campaign owes the operator is the price, in runs.
-        if flags(kv) & HET_ST_TAU_UNRESOLVED:
-            self.tau_unresolved += 1
-            self.tau_need_max = max(self.tau_need_max, int(fnum(kv, "tau_need", 0)))
 
     def sighting_open(self, rate_mode):
         """A CLEAN sighting this row has not corroborated yet -- the state that holds a
@@ -321,7 +249,7 @@ class TestState(object):
             return max(budget, self.runs_at_first_sight + max(confirm_runs, 1))
         return budget
 
-    def decide(self, p_goal, budget, rate_mode, confirm_runs):
+    def decide(self, budget, rate_mode, confirm_runs):
         """het_campaign_should_stop(), at the pooled scale: `runs' here is what `n' is
         there.  The order of the arms IS the policy and must not be rearranged."""
         if self.stop:
@@ -342,13 +270,7 @@ class TestState(object):
                     "that did not reproduce; it first fired at run %d"
                     % (confirm_runs, self.runs_at_first_sight))
             return self.stop            # outranks the budget stop below
-        if self.k == 0 and p_goal > 0.0:
-            b = self.pooled_bound()
-            # b >= 1 bounds nothing (het_verdict.h HET_ST_BOUND_VACUOUS), so it may not
-            # meet a goal however generous the goal is.
-            if 0.0 <= b < 1.0 and b <= p_goal:
-                self.stop = "BOUND-MET"
-        if not self.stop and budget > 0 and self.runs >= budget:
+        if budget > 0 and self.runs >= budget:
             self.stop = "BUDGET"
         return self.stop
 
@@ -364,18 +286,13 @@ def load_state(path):
 
 def save_state(path, states):
     cols = ["test", "stop", "invocations", "runs", "usable", "k", "k_eff",
-            "k_runs", "first_sight", "R_eff", "mu_upper_max", "pooled_bound",
-            "nwin", "tau_w", "N_eff", "tau_unresolved", "tau_need", "cpu_only",
-            "note"]
+            "k_runs", "first_sight", "cpu_only", "note"]
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(cols)
         for s in states:
             w.writerow([s.name, s.stop, s.invocations, s.runs, s.usable,
                         s.k, s.k_eff, s.k_runs, s.runs_at_first_sight,
-                        "%.6g" % s.R_eff, "%.6g" % s.mu_upper_max,
-                        "%.6g" % s.pooled_bound(), s.nwin, "%.4g" % s.tau_w,
-                        "%.4g" % s.N_eff, s.tau_unresolved, s.tau_need_max,
                         s.cpu_only, s.note])
 
 
@@ -385,9 +302,6 @@ def parse_args():
                     help="directory holding one emitted harness dir per test")
     ap.add_argument("--runner", required=True,
                     help="command template; {test} and {dir} are substituted")
-    ap.add_argument("--p-goal", type=float, default=-1.0,
-                    help="stop a row once its pooled bound <= this "
-                         "(unset: rows run to budget)")
     ap.add_argument("--budget-runs", type=int, default=100,
                     help="max runs per row")
     ap.add_argument("--rate", action="store_true",
@@ -426,31 +340,25 @@ def select_work(a, tests):
 def plan_schedule(a, work):
     """`work` in run order, plus what the schedule costs at the budgets passed.  One
     policy, so one order and one budget: the row that stops early is the one whose
-    sighting corroborates or whose bound arrives, not the one whose class was cheap."""
+    sighting corroborates, not the one whose class was cheap."""
     # THE WORST CASE CARRIES THE WINDOW.  A row whose one sighting lands in its last
     # budgeted run is entitled to confirm_runs runs after it, so a row can cost
     # budget + confirm_runs; --rate, which turns the sighting stop off, caps at the
     # budget.
     per_row = a.budget_runs + (0 if a.rate else a.confirm_runs)
     print("campaign: %d test(s), one stop rule each: corroborated sighting, lone "
-          "sighting %d run(s) after it fires, pooled bound <= %s, or %d run(s) "
-          "spent.  Worst case %d runs."
-          % (len(work), a.confirm_runs,
-             ("%g" % a.p_goal) if a.p_goal > 0.0 else "(no goal)",
-             a.budget_runs, len(work) * per_row))
+          "sighting %d run(s) after it fires, or %d run(s) spent.  Worst case %d runs."
+          % (len(work), a.confirm_runs, a.budget_runs, len(work) * per_row))
     if a.rate:
         print("campaign: --rate: a sighting stops NOTHING; every row runs to its "
-              "bound or its budget, so a row that fires yields a rate.")
-    if a.p_goal <= 0.0:
-        print("campaign: NOTE --p-goal unset: every row will run to budget "
-              "(a stopping target is a campaign decision; none is baked in).")
+              "budget, so a row that fires yields a rate.")
     return work
 
 
 def drive_test(a, st, budget):
     """Invoke one test's runner until its stop rule fires, pooling each HetStats line.
     Every failure mode ends the test as ERROR rather than looping on it."""
-    while not st.decide(a.p_goal, budget, a.rate, a.confirm_runs):
+    while not st.decide(budget, a.rate, a.confirm_runs):
         env = dict(os.environ)
         env["HET_SEED"] = str(a.seed0 + st.invocations * SEED_STRIDE)
         env["HET_ADAPTIVE"] = "1"
@@ -461,8 +369,6 @@ def drive_test(a, st, budget):
             1, st.target_runs(budget, a.rate, a.confirm_runs) - st.runs))
         env["HET_RATE"] = "1" if a.rate else "0"
         env["HET_CONFIRM_RUNS"] = str(a.confirm_runs)
-        if a.p_goal > 0.0:
-            env["HET_P_GOAL"] = repr(a.p_goal)
         cmd = a.runner.replace("{test}", st.name).replace(
             "{dir}", os.path.join(a.corpus, st.name))
         r = subprocess.run(cmd if os.name == "nt" else shlex.split(cmd),
@@ -486,14 +392,9 @@ def drive_test(a, st, budget):
 
 
 def report_test(st):
-    b = st.pooled_bound()
-    print("done  %-28s %-20s inv=%d runs=%d k=%d k_eff=%d k_runs=%d "
-          "R_eff=%.4g bound=%s%s%s"
+    print("done  %-28s %-20s inv=%d runs=%d k=%d k_eff=%d k_runs=%d%s"
           % (st.name, st.stop, st.invocations, st.runs, st.k, st.k_eff,
-             st.k_runs, st.R_eff, ("%.4g" % b) if b >= 0 else "-",
-             ("  tau-UNRESOLVED in %d/%d inv (needs >=%d runs/inv)"
-              % (st.tau_unresolved, st.invocations, st.tau_need_max))
-             if st.tau_unresolved else "",
+             st.k_runs,
              ("  ** " + st.note + " **")
              if st.stop == "UNCONFIRMED-SIGHTING" else ""))
 
@@ -547,27 +448,6 @@ def report_campaign(states, errors, unconfirmed):
         print("            %-28s k_runs=%d cpu_only=%d" % (s.name, s.k_runs,
                                                            s.cpu_only))
 
-    # The price of the unclaimed dividend.  These rows are not failures and their
-    # bounds are not wrong; they are the conservative bounds, because the run count
-    # they were given could not resolve their tau.  Surfaced, never auto-applied:
-    # raising the run count spends GPU hours, so it is a campaign decision like
-    # --p-goal and HET_P_MIN.
-    unres = [s for s in states if s.tau_unresolved]
-    if unres:
-        need = max(s.tau_need_max for s in unres)
-        print("campaign: %d test(s) ended with tau UNRESOLVED -- their N_eff could "
-              "NOT be claimed, so they report B7's conservative (wider) bound.  This "
-              "is a PRICE, not a failure: the criterion is on the POOLED window count "
-              "(usable runs x HET_NWIN), so it relaxes with RUNS.  The hungriest row "
-              "wants >= %d usable run(s) per invocation; re-run those tests with a "
-              "larger NUMBER_OF_RUN / --budget-runs to buy the dividend.  (Grow R, "
-              "NOT N: extra iterations only add correlated frames inside the same "
-              "alignment windows.)" % (len(unres), need))
-        for s in unres:
-            print("            %-28s tau_w=%.4g  needs >=%d runs/inv "
-                  "(had %d over %d invocation(s))"
-                  % (s.name, s.tau_w, s.tau_need_max,
-                     s.runs // max(s.invocations, 1), s.invocations))
     if errors:
         print("campaign: %d test(s) ERRORED -- their rows are not results." % errors)
     if unconfirmed:
@@ -589,7 +469,7 @@ def report_campaign(states, errors, unconfirmed):
     # rules a UC mapping out for this allocator).  Until it is, the memory type of
     # the shared allocation is unestablished and every null in this campaign rests
     # on an unchecked assumption about it -- so this is checked before, not after,
-    # anyone reads the bounds above.
+    # anyone reads the rows above.
     d10 = [s for s in states if s.cpu_only]
     if not d10:
         # A SILENTLY ABSENT PRECONDITION IS THE FAILURE MODE THIS BLOCK EXISTS TO
@@ -599,7 +479,7 @@ def report_campaign(states, errors, unconfirmed):
         print("\ncampaign D10 (CPU-only positive control / memo sect 8 P1 WB probe): "
               "*** NOT RUN.  No CPU-only row was in this campaign, so the WB probe "
               "did not run and therefore did NOT pass.  Until it does, the memory "
-              "type of the shared allocation is UNRESOLVED and every bound above "
+              "type of the shared allocation is UNRESOLVED and every null above "
               "rests on an unchecked assumption about it.  Generate the set with "
               "hetlitmus/tests/het/generate-d10.sh (or `make hetlitmus-d10') and run "
               "it ON THIS BOX -- a D10 reading from another machine is not a D10 "
@@ -612,7 +492,7 @@ def report_campaign(states, errors, unconfirmed):
             print("campaign D10: *** WB PROBE FAILED -- not one CPU-only row fired.  "
                   "The x86 store buffer is the most reproducible relaxation the ISA "
                   "has, so this is evidence about the SHARED ALLOCATION, not about "
-                  "the window.  The memory type is UNRESOLVED and every bound above "
+                  "the window.  The memory type is UNRESOLVED and every null above "
                   "rests on an unchecked assumption about it.  Check PAT/MTRR and "
                   "/proc/self/smaps for this allocator before reporting anything. ***")
         else:

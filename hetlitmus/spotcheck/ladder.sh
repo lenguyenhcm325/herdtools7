@@ -21,7 +21,7 @@
 # GH200 evaluation data.  See README.md.
 #
 # ---- runtime knobs -------------------------------------------------------
-# The harness has exactly seven runtime (getenv) knobs.  Everything else --
+# The harness has exactly six runtime (getenv) knobs.  Everything else --
 # HET_PLACE, the stress percentages, HET_NWIN, SIZE_OF_TEST, NUMBER_OF_RUN -- is
 # compile-time and is set through the compiler, e.g.
 #   make cuda-bin NVCC="nvcc -DHET_MEM_STRESS_PCT=0"
@@ -31,7 +31,6 @@
 #   HET_ALLOC      auto|malloc|managed|pinned   shared-memory mode      (PORT1)
 #   HET_RUNS_MAX   runs this invocation, clamped to the compiled NUMBER_OF_RUN
 #   HET_ADAPTIVE   1 => consult het_campaign_should_stop() after every run
-#   HET_P_GOAL     stop a bound-needing row once p_bound <= this
 #   HET_RATE       1 => a sighting stops nothing; the row runs to budget
 #   HET_CONFIRM_RUNS  runs after the one it fired in that a LONE clean sighting
 #                  may hold a row open for
@@ -41,8 +40,8 @@
 LADDER_RUNS_TINY="${LADDER_RUNS_TINY:-2}"     # rungs 2-3
 LADDER_RUNS_MAIN="${LADDER_RUNS_MAIN:-4}"     # rungs 4-5
 LADDER_BUDGET="${LADDER_BUDGET:-16}"          # rung 6; > NUMBER_OF_RUN (10) so
-                                              # a bound row MUST take >= 2
-                                              # invocations and pooling engages
+                                              # a row MUST take >= 2 invocations
+                                              # and pooling engages
 LADDER_SEED0="${LADDER_SEED0:-20260731}"
 LADDER_TIMEOUT="${LADDER_TIMEOUT:-300}"       # seconds per harness invocation.
                                               # Not optional: HET_ALLOC=pinned
@@ -446,10 +445,9 @@ fi
 row 5 "stress off -> on ($T5)" "$([ $r5 -eq 0 ] && echo PASS || echo FAIL)" "knobs live + degradation declared"
 
 # =========================================================================
-# RUNG 6 -- campaign.py: >= 2 invocations per row, fresh seed each time, so
-# the cross-invocation pooling and the B7/B7b statistics actually engage.
-# The budget is deliberately above the compiled NUMBER_OF_RUN (10) so a bound
-# row CANNOT finish in one invocation.
+# RUNG 6 -- campaign.py: >= 2 invocations per row, fresh seed each time, so the
+# cross-invocation pooling actually engages.  The budget is deliberately above
+# the compiled NUMBER_OF_RUN (10) so a row CANNOT finish in one invocation.
 # =========================================================================
 echo; echo "== rung 6: campaign pooling =="
 # One stop rule per row, so the only knobs are the budget and the confirmation
@@ -474,7 +472,8 @@ if [ -r "$STATE" ]; then
     echo "        others, but check WHY (a row whose sighting corroborated stops"
     echo "        there, which is a legitimate early stop, not a fault)."
   else
-    echo "  ok    every row took >= 2 invocations -- pooling and B7 stats engaged"
+    echo "  ok    every row took >= 2 invocations -- the runs, sightings and clean"
+    echo "        runs of each row were pooled across them"
   fi
 else
   echo "  FAIL  no campaign state written"; r6=1

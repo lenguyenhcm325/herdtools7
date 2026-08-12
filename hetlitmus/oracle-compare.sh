@@ -184,10 +184,10 @@ END {
     printf "Each block below is reprinted verbatim from het_stats_print (het_verdict.h),\n"
     printf "under the oracle RESULT from the table above.  The replication unit is the\n"
     printf "(instance,run) CELL, never the frame: the recovery scan validates N^{T_L}\n"
-    printf "OVERLAPPING frames per N iterations (PerpLE VI-B.1), so a frame count fed into\n"
-    printf "the 1-e^{-n} recipe returns ~1 VACUOUSLY.\n\n"
+    printf "OVERLAPPING frames per N iterations (PerpLE VI-B.1), so the frame count is not\n"
+    printf "a count of independent replicates.\n\n"
 
-    ndis = 0; ndis_fired = 0; nvoid = 0; nvac = 0
+    ndis = 0; ndis_fired = 0; nvoid = 0
     for (si = 0; si < nstats; si++) {
       t = sorder[si]
       # THE CLASS COMES FROM THE CSV, never from the log: the harness carries no
@@ -195,13 +195,10 @@ END {
       # would be reading a field that no longer exists (and, before A2, one the
       # emitter put there).  A test the CSV does not cover has no class here.
       orc = (t in orac) ? orac[t] : "-"
-      ob = S[t, "obs"]; pb = S[t, "p_bound"] + 0
+      ob = S[t, "obs"]
 
       if (orc == "Disallowed") { ndis++; if (ob != "Never" && ob != "VOID") ndis_fired++ }
       if (ob == "VOID") nvoid++
-      # The bounded rate is a PROBABILITY, so a bound at or above 1 bounds nothing --
-      # the same test the harness prints the null under.
-      if (ob == "Never" && pb >= 1) nvac++
 
       printf "%s : %s   oracle=%s\n", t, (t in resmap) ? resmap[t] : "-", orc
       if (nblk[t] + 0 == 0)
@@ -224,8 +221,6 @@ END {
       printf "  *** A FORBIDDEN OUTCOME FIRED.  Either this oracle row is wrong (it is a\n      DERIVATION over cited sources, not a measurement) or the DECODER is unsound, in\n      which case every null in this campaign is void.  The SIGHTING TIER above is what\n      tells an artefact from a real observation: an artefact does not reproduce across\n      re-seeded runs.  Do not report either way until it is settled.\n"
     if (nvoid > 0)
       printf "VOID: %d row(s) came from a harness that was never demonstrably hot -- DISCARDED.\n", nvoid
-    if (nvac > 0)
-      printf "VACUOUS: %d null(s) bound their rate at >= 1, i.e. at nothing.  Grow R (Q3 F4).\n", nvac
     printf "---------------------------------------------------------------------\n"
   }
 

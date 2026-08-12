@@ -87,13 +87,11 @@ does not leak in.
   0
 
 What the section adds on top is the campaign-level roll-up: the negative control
-over the Disallowed rows, and the two counts that say a row must not be tabulated.
+over the Disallowed rows, and the count that says a row must not be tabulated.
   $ grep 'NEGATIVE CONTROL (campaign-level)' stats.out
   NEGATIVE CONTROL (campaign-level): 1 of 3 should-be-FORBIDDEN test(s) fired.
   $ grep '^VOID:' stats.out
   VOID: 1 row(s) came from a harness that was never demonstrably hot -- DISCARDED.
-  $ grep '^VACUOUS:' stats.out
-  VACUOUS: 1 null(s) bound their rate at >= 1, i.e. at nothing.  Grow R (Q3 F4).
 
 The AMD oracle drives the SAME decision logic on a different Model string, and
 the mismatch sentence is UNCONDITIONAL (PORT2-R2-amd-oracle.md sect 9.2 as

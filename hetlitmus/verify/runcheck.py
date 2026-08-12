@@ -651,9 +651,7 @@ def phase3_refusals(wrapper, quiet=False):
 # ---------------------------------------------------------------------------
 CHAR_TESTS = ["CH-one", "CH-two"]
 STATE_COLS = ["test", "stop", "invocations", "runs", "usable", "k", "k_eff",
-              "k_runs", "first_sight", "R_eff", "mu_upper_max", "pooled_bound",
-              "nwin", "tau_w", "N_eff", "tau_unresolved", "tau_need", "cpu_only",
-              "note"]
+              "k_runs", "first_sight", "cpu_only", "note"]
 # The window is set BELOW the budget so the two are told apart by the run count
 # alone: a row ending at 31 runs or so was ended by the window (LONE_RUNNER fires in
 # run 1 and the window closes confirm_runs runs after that), one ending at 60 by the
@@ -782,8 +780,8 @@ def phase4_stoprule(campaign, quiet=False):
             w = csv.writer(fh)
             w.writerow(STATE_COLS)
             for t, stop in (("CH-one", "OBSERVED"), ("CH-two", "CONFIRMED")):
-                w.writerow([t, stop, 1, 10, 10, 1, 1, 3, 1, "0", "0", "-1", 128,
-                            "1.28", "100", 0, 1, 0, "banked by another rule"])
+                w.writerow([t, stop, 1, 10, 10, 1, 1, 3, 1, 0,
+                            "banked by another rule"])
         r = _campaign(campaign, corpus, runner, legacy, [])
         if r.returncode != 2:
             bad.append("resuming a state banked by another stop rule exited %d, want "
@@ -1090,7 +1088,7 @@ def phase7_second_session(wrapper, quiet=False):
             bad.append("--resume with a budget above what the resumed rows spent "
                        "exited %d, want 2: those rows are never re-run, so the "
                        "raised budget would go silently unspent" % r.returncode)
-        elif "is above what these bound row(s) spent" not in r.stderr:
+        elif "is above what these row(s) spent" not in r.stderr:
             bad.append("the raised-budget resume was refused for another reason: %s"
                        % r.stderr.strip()[-300:])
         elif not quiet:
