@@ -7,7 +7,7 @@
 # .litmus annotation exactly (hetlitmus/docs/verify-l0.md).  This script loops
 # the corpus and prints a per-test PASS/FAIL table + tally; the sub-commands
 # exercise the completeness guard and the negative controls that give the gate
-# its teeth.  Mirrors hetlitmus/cats/run-gpu-only.sh.
+# its teeth.
 #
 # Usage:
 #   bash hetlitmus/verify/l0_tokens.sh            # gpu-only + het table + tally

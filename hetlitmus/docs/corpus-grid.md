@@ -7,7 +7,7 @@ know about: the **fence column has no external reference** and the
 **`CPU_ARCHS` knob**.
 
 It supplements the earlier per-area docs: `gpu-only-corpus.md` (the original 8
-PLDI'23-anchored tests + AMD oracle), `het-generation.md` (how `hetgen7` merges
+PLDI'23-anchored tests), `het-generation.md` (how `hetgen7` merges
 two single-arch runs into one `Het` test) and `het-litmus-format.md` /
 `het-emission.md` (the Tier-0 format and Tier-2 harness emission).
 
@@ -89,8 +89,7 @@ grid drops 66 (11 shapes × 3 scopes × 4 orders = 132, +8 fixed-name originals
 - GPU-only: `<shape>-<scope>-<order>.litmus` (e.g. `WRC-sys-acquire.litmus`,
   `2+2W-gpu-fence.litmus`). The original 8 keep their fixed names (`MP-sys`,
   `MP-sys-F`, `MP-cta-F`, `LB-sys`, `SB-sys`, `SB-sys-F`, `IRIW-sys`,
-  `IRIW-sys-F`) because that is how the PLDI'23 artifact names them, and
-  `expected-amd-gcn3.csv` keys its rows on those names.
+  `IRIW-sys-F`) because that is how the PLDI'23 artifact names them.
 - Het: `<shape>-<cuttag>-<scope>-<order>.litmus` (e.g. `MP-cg-sys-fence.litmus`,
   `WRC-gcc-gpu-release.litmus`), where `<cuttag>` abbreviates the device cut
   (`cpu`→`c`, `gpu`→`g`). MP-het/SB-het keep their reference names.
@@ -126,12 +125,10 @@ this directly, no generator code change). PTX renders this as
 `fence.sc.<scope>`.
 
 What bounds the column is **provenance, not expressiveness**. There is no fence
-and no `sc` operation anywhere in the PLDI'23 artifact, so `expected-amd-gcn3.csv`
-covers the original 8 and no part-(B) grid test, and an offline
-`oracle-compare.sh` pass over one reports UNINTERPRETED rather than a verdict.
-(The GPU-only lane's other reference, `tests/gpu-only/expected-nvidia.csv`, does
-cover all 137 — it is machine-computed by `nvidia-ptx.cat`,
-`run-gpu-only.sh nvidia`.)
+and no `sc` operation anywhere in the PLDI'23 artifact, so its verdicts reach the
+original 8 and no part-(B) grid test: an offline `oracle-compare.sh` pass of a
+grid row against a CSV built from that artifact reports UNINTERPRETED rather than
+a verdict.
 
 ### 2. The `CPU_ARCHS` knob (het corpus)
 
@@ -165,6 +162,5 @@ cd ../het
 while read f; do litmus7 -gpu-target cuda -set-libdir ../../../litmus/libdir -o /tmp/r "$f"; done < @all
 
 # 4. no regression
-bash hetlitmus/cats/run-gpu-only.sh                  # 137/137 match
 dune build                                           # exit 0
 ```

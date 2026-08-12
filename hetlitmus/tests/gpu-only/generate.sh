@@ -17,11 +17,11 @@
 # atom rendered <Order><Scope> (gen/common/edge.ml pp_edge_compat).  The grid
 # annotation rule + the fence column are defined in ../_grid_lib.sh.
 #
-# REFERENCE VERDICTS: only the 8 part-(A) tests carry an EXTERNAL one, from the
-# PLDI'23 artifact (expected-amd-gcn3.csv, AMD GCN3 + x86).  The part-(B) grid
+# REFERENCE VERDICTS: only the 8 part-(A) tests carry an external one, from the
+# PLDI'23 artifact's own expected.csv (AMD GCN3 + x86).  The part-(B) grid
 # reaches past that artifact -- which has no fence and no `sc' operation
-# anywhere -- so an offline oracle-compare.sh pass of a grid row against that CSV
-# reports UNINTERPRETED rather than a verdict.
+# anywhere -- so an offline oracle-compare.sh pass of a grid row against a CSV
+# built from it reports UNINTERPRETED rather than a verdict.
 # See hetlitmus/docs/{gpu-only-corpus,corpus-grid}.md.
 
 set -e

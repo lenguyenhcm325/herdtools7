@@ -152,9 +152,9 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
   way.
 - **Task 9 (hardware):** deferred — MI300A runs + stressing + tallying `__out`
   against the `condition` line.
-- **Reference verdicts:** `expected-amd-gcn3.csv` is the AMD GCN3 reference;
-  MI300A is CDNA3, several generations past GCN3, so its rows do not transfer,
-  and no CDNA3 reference replaces them.
+- **Reference verdicts:** the PLDI'23 artifact's are AMD GCN3; MI300A is CDNA3,
+  several generations past GCN3, so they do not transfer, no CDNA3 reference
+  replaces them, and this project derives none of its own.
 
 ## Grounding sources
 - HIP scoped-atomic builtins + `__HIP_MEMORY_SCOPE_*` ladder: ROCm/clr

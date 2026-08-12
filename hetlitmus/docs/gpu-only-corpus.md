@@ -4,11 +4,11 @@ Inventory of the GPU-only test family the HetLitmus frontend must be able to
 express and generate. Derived by inspecting the PLDI'23 Compound Memory Models
 artifact (gem5 + HIP litmus tests), cross-checked against the in-tree PTX `.cat`.
 
-## Oracle provenance & vendor scope (read this first)
-The Allowed/Disallowed verdicts in this corpus come from the artifact's gem5
-build target **`GCN3_X86`** — an **AMD GCN3 GPU + x86 CPU** (the HIP sources build
-for `gfx801,gfx803`). They are therefore **AMD-specific, not vendor-neutral**, and
-live in `tests/gpu-only/expected-amd-gcn3.csv`.
+## Verdict provenance & vendor scope (read this first)
+The Allowed/Disallowed verdicts quoted below come from the artifact's gem5 build
+target **`GCN3_X86`** — an **AMD GCN3 GPU + x86 CPU** (the HIP sources build for
+`gfx801,gfx803`). They are therefore **AMD-specific, not vendor-neutral**. They
+are the artifact's, and this tree ships no verdict CSV of its own.
 
 Note the deliberate split this creates:
 - **Vocabulary** (`cta`/`gpu`/`sys`, and the `ptx.cat` cross-check below) is
@@ -23,23 +23,14 @@ relaxed/acquire/release × cta/sys words appear), so they are reused unchanged f
 both vendors; the vendor difference lives **downstream** — in the `.cat` (meaning)
 and the emitter (instruction selection) — never in the `.litmus` layer.
 
-Consequence for the two hardware targets:
-- **MI300A (AMD):** `expected-amd-gcn3.csv` is the right reference — caveat:
-  MI300A is CDNA3, several generations past GCN3, so confirm rather than assume.
-- **GH200 (NVIDIA):** PLDI'23 provides **no** NVIDIA oracle. The separate
-  `tests/gpu-only/expected-nvidia.csv` now exists and covers all 137 rows,
-  machine-computed from `hetlitmus/cats/nvidia-ptx.cat` (Lustig ASPLOS'19) — see
-  `nvidia-ptx-cat.md`. It disagrees with the AMD verdicts for `SB-sys-F` /
-  `IRIW-sys-F` exactly as this file warned it might (see "Why the synchronised
-  verdicts hold"); the two are different machines and neither carries to the other.
-
 ## Sources
 - **Goens, Chakraborty, Sarkar, Agarwal, Oswald, Nagarajan. "Compound Memory
   Models." PLDI 2023.** Artifact: `PLDI23_Compound_Simulation`
   (https://github.com/sukarnagarwal/PLDI23_Compound_Simulation), paper:
   https://homepages.inf.ed.ac.uk/vnagaraj/papers/pldi23.pdf
-  - Oracle: `expected-amd-gcn3.csv` (Allowed/Disallowed per test; **AMD GCN3 +
-    x86** — see "Oracle provenance & vendor scope" above).
+  - Oracle: the artifact's own `expected.csv`, `GPU-Only` rows
+    (Allowed/Disallowed per test; **AMD GCN3 + x86** — see "Verdict provenance &
+    vendor scope" above).
   - Runner: `runall_gpu_only.sh`.
   - Test sources: `gem5-resources/gpu/GPU_Litmus_test/{MP,LB,SB,IRIW}/`
     (HIP `__atomic_*` C++ kernels for the AMD GCN3 gem5 model).
@@ -82,9 +73,9 @@ verdicts. Whatever the `GCN3_X86` target gives system-scope release/acquire, it
 is more than the rel/acq annotation by itself supplies — and that is a property
 of the machine the artifact simulated, recorded here rather than derived. The
 consequence worth carrying forward is the direction of the disagreement: any
-model in which rel/acq is *pure scoped ordering* computes `SB-sys-F` /
-`IRIW-sys-F` as **Allowed**, which is exactly what `nvidia-ptx.cat` does. The two
-targets are different machines and neither reading carries to the other.
+model in which rel/acq is *pure scoped ordering* would read `SB-sys-F` /
+`IRIW-sys-F` the other way. Different machines, and neither reading carries to
+the other.
 
 ### Naming decoded (from `runall_gpu_only.sh` `genFileName` + source files)
 - `Relax` (suffix `-sys`): plain non-atomic loads/stores, compiler reordering

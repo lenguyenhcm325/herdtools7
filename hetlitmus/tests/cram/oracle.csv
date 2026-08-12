@@ -1,7 +1,7 @@
 # HAND-AUTHORED Layer-1 cram fixture, not generated: the oracle half of
 # oracle-negatives.t, paired with obs.txt so one run drives the full
-# {MATCH,MISMATCH,NO-ORACLE,UNINTERPRETED} x {exists,forall} matrix.  SB-sys/MP-sys-F carry
-# their real verdicts from tests/gpu-only/expected-nvidia.csv; the `-fa' rows are
+# {MATCH,MISMATCH,NO-ORACLE,UNINTERPRETED} x {exists,forall} matrix.  SB-sys/MP-sys-F
+# are names the gpu-only corpus really carries; the `-fa' rows are
 # synthetic names supplying the forall half.  The LB rows are ABSENT ON PURPOSE --
 # that absence is what produces the UNINTERPRETED cells.  WS-sys carries an
 # EARNED NO-ORACLE (the oracle has the row and declines to decide it) and
