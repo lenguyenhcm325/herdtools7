@@ -156,18 +156,20 @@ generations past GCN3 — confirm, don't assume).
 A log from a real het harness also carries `HetStats` lines (`het_verdict.h`,
 `het_stats_line` + `het_stats_print`). When it does, a second section follows the
 table: for each test, its `RESULT` from the table, then **`het_stats_print`'s own
-block reprinted verbatim** — what the null is worth, its dispersion, its
-within-run correlation reading, its bound and its budget. The interpretation is
-written once, in C, beside the numbers it belongs to; the harness does not
-re-derive it, because a second implementation of the same decode is what silently
-drifts from the first.
+block reprinted verbatim** — for a null, that the outcome was not observed in the usable
+cells scored, with **no rate and no probability attached to it**, which control vouched,
+that the row is characterization and agrees with no model, and the effort behind the
+zero; for a sighting, its corroboration tier and `P_rep`. The interpretation is written once,
+in C, beside the numbers it belongs to; the harness does not re-derive it, because a
+second implementation of the same decode is what silently drifts from the first.
 
 What the section adds on top of the reprint is the campaign-level roll-up: the
 negative control over the rows **the supplied CSV** marks `Disallowed` (PerpLE VII-A —
-if the decoder invented cycles, that is where it would show), plus counts of the
-`VOID` rows and of the nulls whose bound came out ≥ 1 and so bounds nothing. The class
-is read from the CSV on every row, because the run log carries none: a harness that
-printed its own class would make this roll-up a check of the emitter against itself.
+if the decoder invented cycles, that is where it would show), plus a count of the
+`VOID` rows, which came from a harness that was never demonstrably hot and must not be
+tabulated at all. The class is read from the CSV on every row, because the run log
+carries none: a harness that printed its own class would make this roll-up a check of
+the emitter against itself.
 
 A log without `HetStats` lines prints the table alone. Both paths are pinned by
 `hetlitmus/tests/cram/oracle-negatives.t`.

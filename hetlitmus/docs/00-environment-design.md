@@ -60,8 +60,9 @@ something.
    per-load N-buffers  ──►  post-hoc recovery  (COUNT exact / COUNTH synchrony-point)
         │                        │  writes ──►  het_obs_record  {target, interleavings, control, skew, …}
         ▼                        ▼
-   outs_t histogram        overdispersion-aware stopping + positive-control gate  ──►  OBSERVED / NOT-OBSERVED /
-   (fed per valid frame)   (Q3)                         (Q4)                            COLD-INVALID + FN-bound
+   outs_t histogram        positive-control gate + liveness disqualifiers  ──►  OBSERVED /
+   (fed per valid frame)   (Q4, DR1)                                            NOT-OBSERVED / COLD-INVALID
+                           stationarity gate (Q3)  ──►  P_rep + sighting tier, on the OBSERVED side only
                                    ▲
                      autotuner tunes the stress mix to maximise the het-mutant DEATH RATE (Q7)
 ```
@@ -149,42 +150,69 @@ needs — so it must be paired with §3.6.
   (Fusco measured bandwidth, not weak-behaviour yield) → hardware-only. MI300A analogue = contention on the
   single HBM pool, not placement.
 
-### 3.7 Non-observation statistics — `1−e⁻ⁿ` does NOT transfer  [→ `Q3-stats.md`]
-Kirkham's `1−e⁻ⁿ` reproducibility model is a Bernoulli→Poisson approximation whose three assumptions all
-break in the het setting:
-- **trial unit** — the recovery counts per *frame* (`N^{T_L}` overlapping frames) → raw counts aren't
-  independent Bernoulli. **Fix: compute all confidence stats at the `(instance,run)` unit** via
-  `Y = 1[target_count ≥ 1]`, never from raw frame counts. (This *refines* §3.4's tally.)
-- **stationarity** — occupancy warm-up + alignment/skew drift; Kirkham's own KS precheck fails 4/18 even
-  GPU-only → **KS stationarity precheck is mandatory, in-loop.**
-- **independence** — skew drift → autocorrelated/bursty/overdispersed; shared fabric → cross-instance
-  correlation → `1−e⁻ⁿ`/rule-of-three are **optimistic**.
+### 3.7 What a non-observation reports — no rate, no probability  [→ `Q3-stats.md`]
+**A null carries no rate and no probability.** The harness reports that the outcome was **not observed** in
+the usable `(instance,run)` cells it scored, names the control that vouched for them, says that this is
+characterization and that the null agrees with no model and refutes none, and discloses the effort spent —
+and stops there. Falsification is one-sided:
 
-**Replacement:** an overdispersion-aware rule-of-three — replace the constant `3` with
-`μ_upper(r) = r(0.05^(−1/r) − 1)` (3 → 19 → ~200 as dispersion rises; a bare `3/N` under Fano ≈ 20 is ~6×
-optimistic), using a variance-aware (empirical-Bernstein) bound. **Gate every "Never"** on: KS-stationary +
-positive-control LIVE (§3.8) + `interleavings_detected > 0` + clean negative control, else the run is
-**COLD → discard the null**. An offline `oracle-compare.sh` pass is **augmented, not replaced**.
+> "we emphasise that for correct GPU programming the possibility, not probability of weak behaviours is
+> what matters." — Alglave et al., ASPLOS'15 §4.3, p.585.
 
-**Shipped statistics (B7/B7b/B7c/DR1 — `het_verdict.h` is the normative source; this doc does not duplicate
-the formulas).** The bound is scored per `(instance,run)` over `HET_NWIN` windowed sub-tallies. B7b credits
-the intra-run dividend `N_eff = HET_NWIN / τ_w` (τ_w = Geyer initial-positive-sequence autocorrelation time,
-clamped to `[1, HET_NWIN]`), so `R_eff = R_usable · N_eff / DEFF`; the **run-level** bound
-`N_eff · p_bound = μ_upper · DEFF / R_usable` is invariant to `N_eff` by construction — the discount adds
-resolution beneath B7's number, never weakens it. B7c refuses to *spend* a τ the pooled stream is too short
-to resolve (`nwin < HET_TAU_MIN_SAMPLES · τ_w` → `TAU_UNRESOLVED`, `N_eff = 1`, i.e. B7 exactly); its
-count-valued-stream over-credit residual is a **known-open** item (deep-review F8 — disclosed, witnessed,
-and operationally fenced via Path 1: see `env-research/decisions/F8-decision.md` and §6). `HET_P_MIN` stays
-**UNSET** — `het_budget_runs` returns *NOT SIZED* rather than a fabricated rate — until GH200 measures it.
-The interleaving-liveness gate is **channel-aware** (DR1): reader shapes use `interleavings_detected`, the
-store-only (2+2W) shapes — which have no reader — use `observer_unique_count ≥ θ` instead, and a record with
-neither channel fails closed. And the outcome carries **no prediction**: one axis, four values —
-`HET_OBSERVED`, `HET_NOT_OBSERVED_MU_HOT`, `HET_NOT_OBSERVED_CANARY_ONLY`, `HET_COLD_INVALID` — where the
-only question a null answers is what vouched for the harness that did not see it. What each row co-runs
-moves with the corpus, so read it from `hetlitmus/tests/het/control-map.csv` (today: **333 of 411 rows
-carry a `mu(T)`**, the other **78 are at the lattice floor**, and **409 co-run a canary**; the census is
-pinned in `verify/verdictcheck.py:CENSUS` and gated by `make hetlitmus-verdict`, and the map's own
-partition by `make hetlitmus-controlmap`).
+So what licenses a null is not an interval. It is the two-layer positive control that fired **beside** it,
+in the same launch, under the same stress, on the same C2C path (§3.8); `het_verdict()`'s liveness
+disqualifiers, which discard a run whose stress, window-opener or decode channel was dead rather than
+reporting its empty histogram; and the reported effort, ending on **grow R, not N**. The stop rule holds
+the other side to a matching bar: a *sighting* is not written up until it reproduces (below).
+`het_verdict.h` is the normative source and this doc does not duplicate its printouts.
+
+**The frame is not the trial, and that correction is load-bearing.** The recovery scan validates `N^{T_L}`
+*overlapping* frames per `N` iterations (PerpLE §VI-B.1), so raw frame counts are neither independent nor
+Bernoulli, and Kirkham's `1−e⁻ⁿ` evaluated on one is driven to 1 vacuously. Every statistic is therefore
+scored at the **`(instance,run)` cell** via `Y = 1[target_count ≥ 1]` (this *refines* §3.4's per-frame
+tally), and the one reproducibility number the layer reports — `P_rep = 1 − e^{−k_eff}` over the cells that
+passed the decode guard — sits on the **OBSERVED** side, where the harness has something it actually
+measured.
+
+**Stationarity is tested, never assumed — the gate is mandatory.** Occupancy warm-up, thermal/DVFS drift
+and alignment drift all act along the run, and Kirkham's own precheck already fails 4 of 18 chip/test
+combinations GPU-only. Each run's control sightings are sub-tallied into `HET_NWIN` windows
+(`control_win[]` or `canary_win[]`, whichever channel calibrated — the same selection §3.8 records as
+`ctrl=` — whose sum against the total is the one runtime check that the tallies are alive at all,
+`WIN_DESYNC`), and the early windows of every usable run are two-sample-KS'd against the late ones
+(`het_ks2`, `HET_KS_C05 = 1.358`). One divergence from Kirkham: they KS a *Poisson fit* of early against
+late, this layer KS's the counts directly, the Poisson being the wrong likelihood on a channel whose
+arrivals come in bursts. The gate **fails closed** — a control stream that is empty or desynchronised is
+`KS_UNDERPOWERED`, never a free pass — a rejection is `NONSTATIONARY` and suppresses `P_rep`, and
+`het_changepoint` locates where to split the run (Kirkham §5.1). The same reading is what §3.9's tuner
+drops a bout on.
+
+**Where the hardware hours go.** One stop rule for every row, because no row carries a prediction to
+schedule against: a sighting stops it once it reproduces in `HET_CORROB_RUNS = 2` distinct clean runs; a
+*lone* clean sighting holds the row open for `HET_CONFIRM_RUNS` runs **measured from the run it fired in**
+— outranking the budget stop, since ending there would bank "seen once, stopped looking" — and then stops
+`UNCONFIRMED-SIGHTING`, which is neither a null nor a corroboration; a row that never fires stops when its
+budget is spent. `HET_RATE=1` turns the sighting stop off, so a row that fires yields a rate instead of a
+first sighting. `hetlitmus/campaign.py` applies the same rule across invocations, each with a fresh seed
+base — replaying a seed adds no new phase draw and is not a replicate.
+
+**Shipped (DR1 — `het_verdict.h` is normative).** The interleaving-liveness gate is **channel-aware**:
+reader shapes use `interleavings_detected`, the store-only (2+2W) shapes — which have no reader — use
+`observer_unique_count ≥ θ` instead, and a record with neither channel fails closed. And the outcome
+carries **no prediction**: one axis, four values — `HET_OBSERVED`, `HET_NOT_OBSERVED_MU_HOT`,
+`HET_NOT_OBSERVED_CANARY_ONLY`, `HET_COLD_INVALID` — where the only question a null answers is what vouched
+for the harness that did not see it, and which tier a null is reported at is read off **its own cells**
+(`n_mu_hot`), never off the pooled control channel. What each row co-runs moves with the corpus, so read it
+from `hetlitmus/tests/het/control-map.csv` (today: **333 of 411 rows carry a `mu(T)`**, the other **78 are
+at the lattice floor**, and **409 co-run a canary**; the census is pinned in `verify/verdictcheck.py:CENSUS`
+and gated by `make hetlitmus-verdict`, and the map's own partition by `make hetlitmus-controlmap`).
+
+**This restores the position the project argued before B7 was built** — `env-research/Q4-positive-control.md`
+§5(5): *"Do NOT over-engineer the statistics … The positive control is the primary evidence."* The
+dispersion-aware 95 % upper bound B7/B7b/B7c shipped on the rate of a never-observed outcome, and every
+scheduler arm, tuner knob and roll-up column that existed to compute or justify it, are **withdrawn**. The
+withdrawal goes one step past that memo, which still allowed an optional per-config rule-of-three garnish:
+nothing here prices the probability of what the harness missed.
 
 ### 3.8 Positive control / liveness  [→ `Q4-positive-control.md`]
 A "Never" is only credible if the harness was demonstrably "hot". **The corpus scope×order grid is already
@@ -200,8 +228,12 @@ an ordering-strength lattice**, so the control is essentially free:
   `NOT-OBSERVED-MU-HOT` only if `control_target_count ≥ τ_hot` (≥3, prefer 30) **and** the run's decode
   channel was live **and** the ground-truth scan ran; otherwise it is `NOT-OBSERVED-CANARY-ONLY`, and with
   nothing hot at all it is `COLD-INVALID`.
-- **Double duty:** the control is also the **calibrator** that measures the Fano factor / overdispersion for
-  §3.7's bound — `mu(T)` where one fired, the canary otherwise, and the record says which.
+- **Double duty:** the control's per-window sub-tallies are also the **only stream §3.7's stationarity gate
+  can test** — the target is far too rare to say anything about a rate from, and the control is a
+  strictly weaker shape, so it fires at least as often, on the same fabric in the same run under the
+  same stress. How often that is has not been measured (§6 item 1). `mu(T)` calibrates wherever one is
+  compiled in and fired, the canary otherwise, and the record says which (`ctrl=`,
+  `HET_ST_CTRL_IS_CANARY`). That is the whole of the second duty; nothing is priced off it.
 - **Honesty caveat:** mutation-score-as-a-proxy rests on a bug↔mutant correlation shown on only **3 cases**
   (PCC .893–.996) → cite as *supporting*, not a guarantee. The control's count is **reported**, never
   compared against a prediction.
@@ -215,13 +247,16 @@ an ordering-strength lattice**, so the control is essentially free:
 - **Method:** factor the combined Q5∪Q6 knob space into three near-separable sub-searches
   (GPU → CPU → interconnect last), seeded/warm-started random search (GPUHarbor's Park-Miller reproducible
   sampler), shape-priority (Kirkham: LB/S first, SB/IRIW last).
-- **Overdispersion transfer (Q3 core):** Kirkham data-peeking's Bernoulli CI is too narrow → swap for an
-  **empirical-Bernstein** variance-aware early-stop at the `(instance,run)` unit; **randomized round-robin
-  (SER³)** config scheduling to avoid drift aliasing; KS gate in-loop. The early-stop spends a **fixed
-  per-comparison** δ (Mnih'08 §2's per-round radius), **not** the anytime (Mnih'08 §3.1, EBStop) or
-  family-wise racing (Mnih'08 §4) guarantee — implementing the §3.1 δ-spending schedule empirically broke
-  elimination (tunecheck 4/7). The tuner's pick is therefore a *heuristic* validated by §3.7's campaign
-  statistics, not by the racing rule's confidence; this residual is a **known-open** item (deep-review F9).
+- **The racing rule — the tuner's, and nothing else's (`tune.py`):** Kirkham data-peeking's Bernoulli CI is
+  too narrow on a bursty channel → swap for an **empirical-Bernstein** variance-aware early-stop at the
+  `(instance,run)` unit, whose radius absorbs the between-bout spread with no pre-estimated dispersion
+  figure; **randomized round-robin (SER³)** config scheduling to avoid drift aliasing; §3.7's KS reading
+  drops a non-stationary bout in-loop. The early-stop spends a **fixed per-comparison** δ (Mnih'08 §2's
+  per-round radius), **not** the anytime (Mnih'08 §3.1, EBStop) or family-wise racing (Mnih'08 §4)
+  guarantee — implementing the §3.1 δ-spending schedule empirically broke elimination (tunecheck 4/7). The
+  tuner's pick is therefore a *heuristic*: what its config is worth is established by the campaign the
+  tuned harness then runs, not by this rule's confidence, and it feeds no reported outcome. This residual
+  is a **known-open** item (deep-review F9).
 - **Portability:** ship *structure + seed*; **re-tune every numeric on the actual hardware** (x86 → GH200 →
   MI300A can't share — the interconnect lever itself differs). No post-2023 memory-testing autotuner handles
   het/overdispersion → this tuner is at the frontier.
@@ -239,7 +274,8 @@ het_obs_record {
   target_count           // exhaustive COUNT + heuristic COUNTH: "did we see the weak behaviour"
   interleavings_detected // "could we have" — CPU/GPU iterations that provably overlapped
   distinct_decoded_iters // decoder soundness / coverage
-  skew_min/max/mean/stddev  // alignment drift diagnostic (feeds stationarity + overdispersion)
+  skew_min/max/mean/stddev  // alignment drift diagnostic; skew_stddev is the synchrony
+                            // channel's decode guard (a decode that never varied)
   control_target_count   // the positive-control (§3.8) death signal → "harness was hot"
 }
 ```
@@ -272,7 +308,7 @@ GH200/MI300A** (§6). A prerequisite audit (P) should run early.
 | **B4** | **GPU stress**: port cuda-litmus `do_stress`/`StressParams` (fix `MEM_STRESS` bug; cite); scratchpad in `cudaMalloc`; widen launch to stress workgroups; **asymmetric instances**. | B2 | Q5/Q2. |
 | **B5** | **CPU stress** recipes (2 sites, both ISAs) + **interconnect stress** (remote-pin + noise kernels); enforce the `-2s` invariants. | B2,B4 | Q6. |
 | **B6** | **Positive control** wiring: co-run the lattice-floor twin + the MP canary; null-credibility gate on `control_target_count` + `interleavings_detected`. | B3,B4 | Q4. |
-| **B7** | **Overdispersion-aware stopping/stats**: `(instance,run)` unit, empirical-Bernstein bound, KS precheck; augment the offline `oracle-compare.sh` pass with the confidence/FN annotation. | B3,B6 | Q3. |
+| **B7** | **Non-observation statistics**: `(instance,run)` unit, mandatory KS stationarity gate, `P_rep` on the observed side, corroboration stop rule; augment the offline `oracle-compare.sh` pass with each test's own block. | B3,B6 | Q3. |
 | **B8** | **Autotuner**: factored seeded random search, empirical-Bernstein early-stop, round-robin scheduling, KS gate; objective = het-mutant death rate. | B4,B5,B6,B7 | Q7; runs **on hardware**. |
 
 ---
@@ -281,10 +317,13 @@ GH200/MI300A** (§6). A prerequisite audit (P) should run early.
 
 Everything below is unmeasurable on the dev box (wrong substrate, §3.2). **First bring-up measurement:**
 
-1. **The Fano factor `F̂`** of het weak-behaviour counts — sets the CI width, the run budget, and the
-   false-negative bound (§3.7/§3.9). *Measure this first.*
-2. The **het weak-behaviour hit-rate** — genuinely unknown (the 0.2 % was GPU-only). This is `HET_P_MIN`,
-   which sizes `het_budget_runs` (§3.7); it stays UNSET (budget = *NOT SIZED*) until measured here.
+1. **The control channel's rate and its time structure** — how often `mu(T)` and the canary fire per run,
+   and whether that rate holds *across* a run at all. §3.7's stationarity gate is a pass/fail on exactly
+   this stream and §3.9's tuner races on it, so both are running blind until it is measured, and `tau_hot`
+   cannot be calibrated without it. *Measure this first.*
+2. The **het weak-behaviour hit-rate** — genuinely unknown (the 0.2 % was GPU-only, §7). Nothing the
+   harness reports rests on it; what it settles is how much effort a row is worth before its null is
+   banked, i.e. what `--budget-runs` should be. Grow R, not N.
 3. Whether the **perpetual rendezvous sustains** on GH200 without the Srivastava-style 2–3-iteration stall.
 4. Whether **interconnect stress raises yield** vs per-device (currently an inference from bandwidth).
 5. The **`cntvct_el0`↔`%globaltimer` drift-stability** (Layer-5 timebase spike).
@@ -303,24 +342,6 @@ bring-up, before any campaign. Consequence to carry: `mu(T)` is structurally ide
 its `T_L`, so every off-floor `T_L ≥ 2` row emits `control_exhaustive_valid = _mu_exh` and its control is
 windowed too — pinned in **both** directions in `tests/cram/positive-control.t` (`SB-cg-sys-fence-2s`
 emits it; `LB-cg-sys-fence-2s`, whose floor sibling decodes every frame exactly, does not).
-
-**A provisional early-stop below R = 50, and the F8 reopen trigger** (deep-review F8;
-`env-research/decisions/F8-decision.md`, Path 1). The B7c τ-guard scales its threshold by the *estimated* τ,
-and on a count-valued bursty control stream that estimate can be under-read enough to slip past `50·τ` —
-over-crediting `N_eff` up to ~5× at the shipped R = 10 (witness: `statscheck.py` COX_ESCAPE, seed 17). The
-**run-level** bound is invariant to this by construction (`N_eff · p_bound = μ_upper · DEFF / R_usable`), and
-the escape closes on its own at R ≥ 50 (the pooled stream is then ≥ 50× the maximum representable τ); the one
-live hazard is the adaptive scheduler consulting the credited bound *while* R climbs through the fooling zone.
-So:
-1. **Any `BOUND-MET` / `het_campaign_should_stop` "goal met" issued below R = 50 usable runs is
-   PROVISIONAL** — the credited `N_eff` it rests on is inside the F8 escape zone. Continue, or re-confirm the
-   bound once past R = 50, before acting on it. This is a **run-plan rule, deliberately not a coded floor**:
-   coding an `nwin ≥ 50·HET_NWIN` gate is exactly the rejected Path 2, whose ~8-fixture/scheduler cascade is
-   why Path 1 was chosen (§3.7's known-open; the memo's options table).
-2. **The reopen trigger.** The first canary `F̂`/τ measured at bring-up (item 1 above) decides F8's final
-   disposition: if the real control stream lands in the escape regime — count-valued and bursty, with
-   `50·τ_est` within ~2× of the pooled `nwin` — **reopen Path 2** (the non-self-referential `50·HET_NWIN`
-   floor) with data in hand before any small-R credited bound is trusted (memo, *"What would reopen"*).
 
 ---
 
@@ -352,9 +373,9 @@ So:
 
 The environment is mostly reuse; the defensible new contributions are:
 1. **A native, open, `herdtools7`-integrated** heterogeneous run pipeline (vs Bagchi's unreleased stitch).
-2. **Overdispersion-aware non-observation statistics** — the first het-adapted replacement for `1−e⁻ⁿ`
-   (unit-lift + empirical-Bernstein + stationarity gate), strictly more rigorous than Kirkham (stationarity
-   only) or Iorga (no model).
+2. **Non-observation reporting at the right replication unit** — scoring at the `(instance,run)` cell
+   rather than the frame count, which makes `1−e⁻ⁿ` vacuous (PerpLE §VI-B.1), under a mandatory KS
+   stationarity gate, and paired with positive controls rather than with a confidence bound.
 3. **A het-aware autotuner** — no prior memory-testing tuner handles the het/overdispersed regime.
 4. **Explicit interconnect stress** (placement + noise kernels) — a lever no single-die prior work had.
 5. The **scope axis as a mutation-lattice extension** beyond MC-Mutants' po/sw mutators.
@@ -368,7 +389,9 @@ GH200/CMCM (Bagchi has that).
 
 - **Findings (detailed specs + evidence):** `env-research/Q1-alignment.md`, `Q2-runloop.md`, `Q3-stats.md`,
   `Q4-positive-control.md`, `Q5-gpu-stress.md`, `Q6-cpu-interconnect-stress.md`, `Q8-allocation.md`,
-  `Q9-build-strategy.md`, `Q7-tuning.md`; verification `env-research/verify-gpuharbor-mcmutants.md`.
+  `Q9-build-strategy.md`, `Q7-tuning.md`; verification `env-research/verify-gpuharbor-mcmutants.md`. These
+  are the research specs, not the tool: `Q3-stats.md` still designs the bound §3.7 withdrew, and where a
+  spec and `het_verdict.h` disagree the header is what ships.
 - **Memory:** `memory/hetlitmus-env-design.md` (one-paragraph record), `hetlitmus-nonobservation-alignment.md`,
   `hetlitmus-task6-stress-reuse.md`, `het-verify-imported-assumptions.md`.
 - **Primary sources:** the 19 survey notes in `survey-notes/` (each read cover-to-cover) + the local PDFs in

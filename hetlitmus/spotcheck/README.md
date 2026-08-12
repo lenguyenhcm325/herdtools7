@@ -11,10 +11,11 @@ probe reads off the machine.
 It **can** establish that the code works: that a harness dir builds and links,
 that both devices launch and rendezvous, that `HET_ALLOC` selects a shared-memory
 mode and refuses the illegal ones, that the co-running controls stay hot and the
-machine line names the channel it calibrated off, that every reporting frame is
-printed and parseable, that the stress knobs actually reach the build, and that
-`campaign.py` pools across invocations so the B7 statistics engage. Every one of
-those is a property of the code and is checkable anywhere.
+machine line names the control channel its stationarity gate read, that every
+reporting frame is printed and parseable, that the stress knobs actually reach
+the build, and that `campaign.py` pools across invocations, so a row is scored
+over more `(instance,run)` cells than one invocation holds. Every one of those is
+a property of the code and is checkable anywhere.
 
 It **cannot** establish anything about a memory model — and neither can the
 bundle, which ships no prediction to compare a row against. A non-GH200 box also

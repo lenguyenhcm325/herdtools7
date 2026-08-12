@@ -192,22 +192,25 @@ treating "counter == 0" as disqualifying on its own would make an intentional no
 baseline COLD forever — which is just another way of building a rule that always says the
 same thing.
 
-### The statistics this changed — read before comparing two campaigns
+### The calibration channel this changed — read before comparing two campaigns
 
-**`p_bound` values produced before the corpus-wide `mu` roll-out are NOT comparable with
-those produced after.** The bound's dispersion is calibrated off a control stream, and
-which stream that is changed on **every one of the 333 rows that now co-run a `mu`**: 317
-of them had no Layer A at all and were calibrated off the Layer-B canary, and on the 16
-that did, `mu(T)` itself became a different program (nearest weakening → lattice floor —
-measured: the two differ on all 16). A bound calibrated off another shape's burstiness is a
-weaker and simply *different* claim from one calibrated off a shape-matched twin, so the
-two families of numbers must not be pooled, differenced or plotted on one axis.
+**Two rows whose stationarity was tested against different channels are not directly
+comparable.** The KS precheck is run on a *control* stream — the target is far too rare to
+carry a time series — and which stream that is changed on **every one of the 333 rows that
+now co-run a `mu`**: 317 of them had no Layer A at all and were tested against the Layer-B
+canary, and on the 16 that did, `mu(T)` itself became a different program (nearest
+weakening → lattice floor — measured: the two differ on all 16). A stationarity claim
+carried by another shape's stream is the weaker of the two, and on any shape but MP the
+canary *is* another shape, so a `ctrl=canary` pass and a `ctrl=mu(T)` pass are not the same
+statement about the same window.
 
-Which channel calibrated a given run is **on the record**, not left to the reader:
+Which channel a row was tested against is **on the record**, not left to the reader — the channel is
+chosen once from the pooled totals and applies to every run in the pool, so there is one such fact per
+row and not one per run:
 `HetStats … ctrl=mu(T)` or `ctrl=canary`, backed by the `HET_ST_CTRL_IS_CANARY` flag bit in
 the same line's `flags=`, and `het_stats_print` adds an explicit note whenever the canary
-was used. Selection is mechanical: `mu` calibrates whenever one is compiled in and fired,
-otherwise the canary does.
+was used. Selection is mechanical: `mu` is read whenever one is compiled in and fired,
+otherwise the canary is.
 
 ## 5. The co-run, and what Q4's cost model got wrong
 
