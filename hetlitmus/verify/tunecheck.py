@@ -89,10 +89,10 @@ def _patched_tune(label, *subs):
 # ===========================================================================
 # The synthetic objective.  A config carries a hidden "_id"; the objective maps id ->
 # true mean, optionally adds a wall-time drift baseline, and draws each bout as a
-# latent rate plus a within-bout binomial (the Cox / beta-binomial process statscheck's
-# overdispersion fixture uses).  od_amp>0 makes the counts OVERDISPERSED (Fano>1);
-# weight_deflate mimics the N_eff deflation, while raw_n stays the inflated cell count
-# the Bernoulli CI trusts.
+# latent rate plus a within-bout binomial -- doubly stochastic, so od_amp>0 makes the
+# counts OVERDISPERSED (Fano>1).  weight_deflate makes the bout report fewer effective
+# samples than cells drawn, while raw_n stays the full cell count the Bernoulli CI
+# trusts, so the two CI rules divide by different Q (phase 4).
 # ===========================================================================
 class Synth(object):
     def __init__(self, means, cells=16, od_amp=0.0, drift=0.0, weight_deflate=1.0,
@@ -409,11 +409,13 @@ def phase5():
         if ik + "=" in body:
             print("  *** a non-experiment knob %s leaked into the config file" % ik); ok = False
     # reader rejects an instrument knob planted in a file.
+    planted = "HET_NWIN"
     with open(fpath, "a") as fh:
-        fh.write("HET_P_GOAL=0.001\n")
+        fh.write("%s=64\n" % planted)
     try:
         read_config(fpath)
-        print("  *** read_config accepted a planted instrument knob"); ok = False
+        print("  *** read_config accepted the planted instrument knob %s" % planted)
+        ok = False
     except ValueError:
         pass
     print("  => PASS" if ok else "  => FAIL")

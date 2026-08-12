@@ -130,8 +130,8 @@ SUBSEARCH = {
 # The instrument knobs, named explicitly so the gate can assert this set and the
 # whitelist are DISJOINT and that no draw ever lands in it (tunecheck.py phase 5).
 INSTRUMENT_KNOBS = frozenset({
-    "HET_TAU_HOT", "HET_THETA_DISTINCT", "HET_P_GOAL", "HET_P_MIN", "HET_NWIN",
-    "HET_STATS_MAX_CELLS", "HET_TAU_MIN_SAMPLES", "HET_EXHAUSTIVE_MAX",
+    "HET_TAU_HOT", "HET_THETA_DISTINCT", "HET_NWIN",
+    "HET_STATS_MAX_CELLS", "HET_EXHAUSTIVE_MAX",
 })
 # HET_WINDOW is a detector-resolution knob: calibrated against the exhaustive scan's
 # ground truth at bring-up (docs/00-environment-design.md 6), never tuned (Q7 trap 2).
@@ -218,9 +218,9 @@ class Bout(object):
     """One measurement of a config: a run (or short group of runs) of the harness.
 
       value   observed mutant-kill RATE in [0,1] (real adapter: k_eff/usable).
-      weight  EFFECTIVE sample count = R_eff = R_usable*N_eff/DEFF (het_verdict.h;
-              Q3 R1 lifts the unit from frames to (instance,run) cells).  Deflated by
-              within-run correlation, which is how the racing radius learns to widen.
+      weight  EFFECTIVE sample count for this bout, supplied by the objective -- nothing
+              here derives one.  It is the bout's share of Q, which weights the arm's
+              mean and variance and divides its empirical-Bernstein radius.
       raw_n   RAW usable-run count -- used only by `bernoulli_radius`, which trusts it
               as a count of iid trials.
       secs    wall-clock seconds this bout cost.
