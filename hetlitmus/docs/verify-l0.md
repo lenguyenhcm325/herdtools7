@@ -63,7 +63,6 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
 | `cta`           | `.cta`    | `thread_scope_block`  |
 | `gpu`           | `.gpu`    | `thread_scope_device` |
 | `sys`           | `.sys`    | `thread_scope_system` |
-| `cluster`       | `.cluster`| inline PTX (no `thread_scope_cluster`); sm_90 |
 
 ### GPU — op kind
 
@@ -75,7 +74,7 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
 | RMW           | `atom` (returns old value) / `red` (no-return reduction) |
 
 > The corpus (`ptx.bell` declares only `R`/`W`/`F`) contains **no** RMW and no
-> `cluster`/`acq_rel`/`sc`-on-access. Those rows are kept so the completeness
+> `acq_rel`/`sc`-on-access. Those rows are kept so the completeness
 > guard *recognizes* such a token rather than skipping it.
 
 ### CPU (AArch64) — het column
@@ -97,7 +96,7 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
   <https://docs.nvidia.com/cuda/parallel-thread-execution/index.html>.
   These ground the qualifier vocabulary: `ld{.relaxed,.acquire}`,
   `st{.relaxed,.release}`, `fence{.sc,.acq_rel,.acquire,.release}`, scope
-  `{.cta,.cluster,.gpu,.sys}`, sem-before-scope; `atom` is an RMW returning the
+  `{.cta,.gpu,.sys}`, sem-before-scope; `atom` is an RMW returning the
   old value, `red` a reduction with no return.
 * **The strongest primary evidence is nvcc itself.** Every token in the table
   was *emitted and assembled exit 0* by `nvcc -std=c++17 -arch=sm_86/90 --ptx`:
@@ -105,7 +104,7 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
   `fence.sc.sys`, `atom.add.acquire.sys`. An assembler that accepts and lowers a
   token is the ground truth for what that token is and means.
 * **Fence availability** (`fence.{acq_rel,sc}` PTX ISA 6.0/SM_70;
-  `.cluster` 7.8/SM_90; `fence.{acquire,release}` 8.6/SM_90) is already grounded
+  `fence.{acquire,release}` 8.6/SM_90) is already grounded
   in [`cuda-emitter.md`](cuda-emitter.md) against the cccl headers
   (`__ptx/instructions/generated/fence.h`).
 * **Annotation vocabulary:** [`../bells/ptx.bell`](../bells/ptx.bell)
@@ -189,8 +188,7 @@ python3 hetlitmus/verify/ptxcheck.py hetlitmus/tests/gpu-only/MP-sys-F.litmus
 `ptxcheck.py` exits **0 = PASS**, **1 = FAIL** (with an exact per-position diff),
 **2 = completeness hard-fail**, **3 = tool/emit error**. Requirements: `litmus7`
 built in `_build` (see `herdtools7-build-run`) and `nvcc` on `PATH`
-(`/usr/local/cuda/bin`; CUDA 12.9). Default arch `sm_86`, `sm_90` when a test
-uses `cluster` scope.
+(`/usr/local/cuda/bin`; CUDA 12.9). Default arch `sm_90`.
 
 ## Result
 
@@ -228,7 +226,7 @@ whole corpus.
   store value it set is replaced by the runtime tag, which reaches the asm block
   as an input operand — so it is intentionally excluded from the CPU comparison;
   only memory/ordering mnemonics are compared.
-* No `cluster`/`acq_rel`/RMW/`sc`-on-access appears in the 137+411 corpus; the
+* No `acq_rel`/RMW/`sc`-on-access appears in the 137+411 corpus; the
   mapping covers them so the guard recognizes (never skips) them if added.
 * **ptxcheck is BLIND to the stress layer, by design — and that blind spot has
   already cost us.** Stress is scaffolding, not a tested op: it carries no

@@ -71,7 +71,6 @@ annotated order (a `release` fence became a full fence) and over-synchronised.
 | `f[acquire,cta]`  | `__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup");` |
 | `f[acq_rel,gpu]`  | `__builtin_amdgcn_fence(__ATOMIC_ACQ_REL, "agent");`  |
 | `f[sc,sys]`       | `__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "");`       |
-| `f[*,cluster]`    | `__builtin_amdgcn_fence(<order>, "agent");` (degraded — see below) |
 
 The **order** reuses the same `__ATOMIC_*` mapping as the atomics. The **scope
 string** is the AMDHSA LLVM sync-scope name: `cta → "workgroup"`, `gpu →
@@ -82,37 +81,6 @@ load-bearing). A `relaxed` fence is meaningless (a no-op in the C11/AMDGPU model
 emits **nothing executable** for it, only a `// f[relaxed,scope] (relaxed fence =
 no-op; ...)` comment. Each emitted fence keeps a trailing `// f[order,scope]`
 traceability comment.
-
-## Cluster scope → AGENT (grounded degradation)
-AMD **does** have a cluster synchronization scope: the LLVM AMDGPU memory model
-defines `syncscope("cluster")` / `"cluster-one-as"`, sitting **between
-`workgroup` and `agent`**, and **degrading to `agent` on targets without
-workgroup-cluster launch support** (LLVM `AMDGPUUsage`, "Memory Model" / sync
-scopes). So the vendor ladders align: cta↔workgroup, **cluster↔cluster**,
-gpu↔agent, sys↔system.
-
-**But HIP source cannot name it** from the *atomics* side. `amd_hip_atomic.h`
-defines **no** `__HIP_MEMORY_SCOPE_CLUSTER` (only
-SINGLETHREAD/WAVEFRONT/WORKGROUP/AGENT/SYSTEM); the cluster sync scope is
-reachable only at the LLVM-IR level (`syncscope("cluster")`). This is the mirror
-image of the CUDA side: there libcu++'s `enum thread_scope` also lacks cluster,
-but NVIDIA could drop to inline PTX `.cluster`; AMD source has **no** equivalent
-token. (The *fence* builtin `__builtin_amdgcn_fence` does accept a `"cluster"`
-syncscope string, but HipLang keeps fences and atomics on the **same** scope
-ladder so a cluster test degrades consistently rather than mixing a true
-`"cluster"` fence with an agent-scoped atomic; both go to **agent**.)
-
-HipLang therefore lowers a cluster-scoped op to the nearest **source-expressible
-scope that is never weaker** — `__HIP_MEMORY_SCOPE_AGENT` for atomics, the
-`"agent"` syncscope string for `__builtin_amdgcn_fence` — which is exactly the
-documented hardware degradation, and **flags every such op inline**
-(`// cluster -> AGENT (HIP has no __HIP_MEMORY_SCOPE_CLUSTER; see hip-emitter.md)`).
-Caveat: agent is *wider* than cluster, so on a true cluster-capable target this
-**over-synchronises** and may mask the weak behaviour a cluster litmus test is
-meant to expose. A faithful cluster HIP test would need the LLVM-IR sync scope
-(or a future `__HIP_MEMORY_SCOPE_CLUSTER`); flagged for when AMD cluster launch
-is actually targeted (MI300A `gfx942` cluster-launch support is unconfirmed —
-memory `hetlitmus-amd-oracle-task7`).
 
 ## Launch geometry
 Same as CudaLang: a *workgroup* (block) = a maximal subtree rooted at a `cta`
@@ -142,7 +110,7 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
   compile paths are `make hetlitmus-hipbuild` (`verify/hipbuildcheck.py`:
   compiles, links and re-builds one emitted x86 harness,
   `MP-cg-sys-acqrel-2s-x86_64`, and **fails** when `hipcc` is absent) and
-  `make hetlitmus-smoke` (`verify/smoke.sh` rep 8,
+  `make hetlitmus-smoke` (`verify/smoke.sh` rep 7,
   `MP-cg-sys-relaxed-x86_64`, `hipcc -c` only, and it **skips with exit 0**
   when `hipcc` is absent), both under the `hetlitmus-test-toolchain` umbrella. Both
   of those tests are fence-free, so no target ever compiles a fence — the
@@ -160,16 +128,14 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
 - HIP scoped-atomic builtins + `__HIP_MEMORY_SCOPE_*` ladder: ROCm/clr
   `hipamd/include/hip/amd_detail/amd_hip_atomic.h` (fetched from the ROCm
   GitHub source).
-- AMDGPU `cluster` synchronization scope + agent degradation: LLVM
-  `AMDGPUUsage` documentation (`llvm.org/docs/AMDGPUUsage.html`, memory model /
-  sync scopes).
 - Faithful fence builtin `__builtin_amdgcn_fence(<order>, "<scope>")`: LLVM
   review **D75917** ("Expose llvm fence instruction as clang intrinsic",
   `reviews.llvm.org/D75917`) — first arg is a C11 order constant
   (`__ATOMIC_{ACQUIRE,RELEASE,ACQ_REL,SEQ_CST}`), second arg is an AMDHSA LLVM
   sync-scope string; the clang builtin tests use `"workgroup"`, `"agent"`, and
-  `""` (system). The exact sync-scope string names (`"workgroup"`, `"agent"`,
-  `"wavefront"`, `"singlethread"`, `"cluster"`, and **system = the default =
-  empty string**) are from the LLVM `AMDGPUUsage` "AMDHSA LLVM Sync Scopes"
-  table. (This **replaces** the earlier `__threadfence{,_block,_system}`
-  lowering, which carried scope but not order.)
+  `""` (system). The exact sync-scope string names come from the LLVM
+  `AMDGPUUsage` "AMDHSA LLVM Sync Scopes" table, among them `"workgroup"`,
+  `"agent"`, `"wavefront"`, `"singlethread"`, and **system = the default =
+  empty string**. (This
+  **replaces** the earlier `__threadfence{,_block,_system}` lowering, which
+  carried scope but not order.)

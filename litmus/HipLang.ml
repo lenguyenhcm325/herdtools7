@@ -41,26 +41,10 @@ let hip_memory_order = function
   | "sc"      -> "__ATOMIC_SEQ_CST"
   | s -> Warn.user_error "HipLang: unknown memory order %S" s
 
-(* Cluster scope on AMD: the LLVM AMDGPU memory model DOES define a "cluster"
-   synchronization scope (syncscope("cluster")/"cluster-one-as"), sitting
-   BETWEEN workgroup and agent and degrading to "agent" on targets without
-   workgroup-cluster launch support (LLVM AMDGPUUsage, "Memory Scopes").
-   BUT it is NOT exposed in HIP source: amd_hip_atomic.h has no
-   __HIP_MEMORY_SCOPE_CLUSTER (only SINGLETHREAD/WAVEFRONT/WORKGROUP/AGENT/
-   SYSTEM).  It is reachable only at the LLVM-IR level.  So a cluster-scoped
-   HIP atomic cannot name its true scope from C++; HipLang emits the nearest
-   source-expressible scope that is never weaker -- AGENT (which is exactly the
-   documented hardware degradation) -- and flags it inline + in the doc.  This
-   is the AMD counterpart of CudaLang's libcu++ cluster gap (there NVIDIA could
-   drop to inline PTX `.cluster'; AMD source has no equivalent token).  See
-   memory hetlitmus-amd-oracle-task7 and hetlitmus/docs/hip-emitter.md. *)
-let scope_is_cluster scp = (scp = "cluster")
-
 let hip_scope = function
   | "cta"     -> "__HIP_MEMORY_SCOPE_WORKGROUP"
   | "gpu"     -> "__HIP_MEMORY_SCOPE_AGENT"
   | "sys"     -> "__HIP_MEMORY_SCOPE_SYSTEM"
-  | "cluster" -> "__HIP_MEMORY_SCOPE_AGENT" (* degradation, see above *)
   | s -> Warn.user_error "HipLang: unknown scope %S" s
 
 (* Faithful HIP fence lowering via the Clang builtin __builtin_amdgcn_fence,
@@ -73,7 +57,7 @@ let hip_scope = function
 
    Gated by compilation, and only that: hipbuildcheck.py P8 renders the x86
    MP-cg-sys-fence with -gpu-target hip and builds it, which is the one target
-   in the tree that compiles this builtin -- smoke.sh rep 8, the other AMD
+   in the tree that compiles this builtin -- smoke.sh rep 7, the other AMD
    phases and every committed hip-out golden are fence-free.  So a builtin
    hipcc rejects, or a sync scope AMDHSA does not have, now fails a gate; what
    stays unread is the AMD ISA an accepted fence lowers to, which ptxcheck.py's
@@ -87,21 +71,18 @@ let hip_scope = function
      second arg is an AMDHSA LLVM sync-scope STRING.  The clang builtin tests in
      D75917 use exactly "workgroup", "agent", and "" (the empty string) for the
      system scope.
-   - LLVM AMDGPUUsage "AMDHSA LLVM Sync Scopes" table: the named scopes are
-     "workgroup", "agent", "wavefront", "singlethread", "cluster"; SYSTEM is the
+   - LLVM AMDGPUUsage "AMDHSA LLVM Sync Scopes" table: the named scopes include
+     "workgroup", "agent", "wavefront" and "singlethread"; SYSTEM is the
      DEFAULT and is the EMPTY STRING "" (no syncscope name).  Getting `sys' wrong
      (e.g. naming a scope instead of "") would silently NARROW the scope, so the
      empty string is load-bearing.
 
    Scope map mirrors hip_scope: cta -> "workgroup", gpu -> "agent",
-   sys -> "" (system, the default), cluster -> "agent" (same documented
-   degradation as the atomics above; HIP/LLVM "cluster" is not source-expressible
-   here, see hip_scope and hip-emitter.md). *)
+   sys -> "" (system, the default). *)
 let hip_fence_scope = function
   | "cta"     -> "workgroup"
   | "gpu"     -> "agent"
   | "sys"     -> ""        (* system = the default = empty syncscope string *)
-  | "cluster" -> "agent"   (* cluster -> agent, see hip_scope *)
   | s -> Warn.user_error "HipLang: unknown fence scope %S" s
 
 (* The pointer passed to __hip_atomic_*: memory locations are kernel int*
@@ -111,12 +92,6 @@ let ptr_of_addr_op = var_of_addr_op
 (* ------------------------------------------------------------------ *)
 (* Instruction translation                                            *)
 (* ------------------------------------------------------------------ *)
-
-(* Inline tail comment flagging the cluster->agent degradation. *)
-let cluster_note scp =
-  if scope_is_cluster scp then
-    "  // cluster -> AGENT (HIP has no __HIP_MEMORY_SCOPE_CLUSTER; see hip-emitter.md)"
-  else ""
 
 (* On the tagged path the store value is a uint64_t; the __hip_atomic_*
    builtins are type-generic, so widening is carried by the uint64_t* kernel
@@ -129,17 +104,15 @@ let dump_instr chan ~tag ind i = match i with
         | None -> value_of_roi roi in
       let ord, scp = order_scope_of annots in
       fprintf chan "%s// w[%s,%s] %s %s\n" ind ord scp var v ;
-      fprintf chan "%s__hip_atomic_store(%s, %s, %s, %s);%s\n"
+      fprintf chan "%s__hip_atomic_store(%s, %s, %s, %s);\n"
         ind (ptr_of_addr_op ao) v (hip_memory_order ord) (hip_scope scp)
-        (cluster_note scp)
   | BellBase.Pld (r, ao, annots) ->
       let var = var_of_addr_op ao
       and dst = reg_name r in
       let ord, scp = order_scope_of annots in
       fprintf chan "%s// r[%s,%s] %s %s\n" ind ord scp dst var ;
-      fprintf chan "%s%s = __hip_atomic_load(%s, %s, %s);%s\n"
+      fprintf chan "%s%s = __hip_atomic_load(%s, %s, %s);\n"
         ind dst (ptr_of_addr_op ao) (hip_memory_order ord) (hip_scope scp)
-        (cluster_note scp)
   | BellBase.Pfence (BellBase.Fence (annots, _)) ->
       let ord, scp = order_scope_of annots in
       (* __builtin_amdgcn_fence carries BOTH order and scope; see
@@ -148,12 +121,11 @@ let dump_instr chan ~tag ind i = match i with
          __builtin_amdgcn_fence accepts only acquire/release/acq_rel/seq_cst, so
          emit nothing executable for it -- just a traceability comment. *)
       if ord = "relaxed" then
-        fprintf chan "%s// f[%s,%s] (relaxed fence = no-op; nothing emitted)%s\n"
-          ind ord scp (cluster_note scp)
+        fprintf chan "%s// f[%s,%s] (relaxed fence = no-op; nothing emitted)\n"
+          ind ord scp
       else
-        fprintf chan "%s__builtin_amdgcn_fence(%s, %S); // f[%s,%s]%s\n"
+        fprintf chan "%s__builtin_amdgcn_fence(%s, %S); // f[%s,%s]\n"
           ind (hip_memory_order ord) (hip_fence_scope scp) ord scp
-          (cluster_note scp)
   | BellBase.Pnop -> ()
   | _ ->
       fprintf chan "%s// UNSUPPORTED: %s\n" ind (BellBase.dump_instruction i)

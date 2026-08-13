@@ -29,7 +29,7 @@ let is_order = function
   | _ -> false
 
 let is_scope = function
-  | "cta" | "gpu" | "sys" | "cluster" -> true
+  | "cta" | "gpu" | "sys" -> true
   | _ -> false
 
 (* Split a Bell annotation list (e.g. ["release";"sys"]) into the
