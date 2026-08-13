@@ -45,7 +45,7 @@ Seven phases, each of which must be seen to fail:
                          guard and still build
 
 NO FENCE IS COMPILED HERE.  The test this gate builds carries none, and neither
-does the other AMD compile path (smoke.sh rep 8), so the emitter's
+does the other AMD compile path (smoke.sh rep 7), so the emitter's
 __builtin_amdgcn_fence lowering is compiled by no target at all; litmus/HipLang.ml
 (hip_fence_scope) is the one home for what that leaves unchecked.
 

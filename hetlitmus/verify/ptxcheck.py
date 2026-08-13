@@ -63,7 +63,6 @@ GPU_SCOPE = {
     "cta":     "cta",
     "gpu":     "gpu",
     "sys":     "sys",
-    "cluster": "cluster",
 }
 
 # Op kind: LISA mnemonic  ->  expected PTX opcode class.
@@ -126,7 +125,7 @@ def barrier_option(mn, tokens, where):
     return opt
 
 PTX_ORDERS = set(GPU_ORDER.values())          # {relaxed,acquire,release,acq_rel,sc}
-PTX_SCOPES = set(GPU_SCOPE.values())          # {cta,gpu,sys,cluster}
+PTX_SCOPES = set(GPU_SCOPE.values())          # {cta,gpu,sys}
 
 
 class CompletenessError(Exception):
@@ -884,8 +883,9 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
             # the same .cu with `CUDA_ARCH ?= sm_90' (GH200;
             # litmus/hetDialect.ml gd_arch_default).
             # Checking a different arch than the one that runs would leave a
-            # soundness gap, and sm_90 is a superset (cluster scope is
-            # Hopper-only).  --arch overrides.
+            # soundness gap, and sm_90 is also the floor for the corpus's
+            # fence.acquire/fence.release (PTX ISA 8.6; litmus/CudaLang.ml).
+            # --arch overrides.
             use_arch = arch or "sm_90"
             ptx_path = os.path.join(tmp, name + ".ptx")
             compile_ptx(cu_path, ptx_path, use_arch)

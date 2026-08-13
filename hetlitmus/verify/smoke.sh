@@ -4,16 +4,16 @@
 #
 # "Does the emitted harness actually COMPILE end-to-end?"  The faithfulness sweep
 # (l0_tokens.sh) `nvcc --ptx'-compiles every gpu-only .cu but exercises neither
-# the het harness's CPU side, the `nvcc -c'/ptxas object stage, the AMD/HIP
-# render, nor the Hopper-cluster inline-PTX path.  smoke.sh emits a curated
-# 12-rep sample and drives each test's OWN comp.sh (compile-only: gcc host +
+# the het harness's CPU side, the `nvcc -c'/ptxas object stage, nor the AMD/HIP
+# render.  smoke.sh emits a curated 11-rep sample and drives each test's OWN
+# comp.sh (compile-only: gcc host +
 # `clang --target=aarch64-linux-gnu' real AArch64 asm + `nvcc -std=c++17
 # -arch=sm_90 -c' + `hipcc --offload-arch=gfx942 -c').  Needs nvcc/hipcc/clang
 # but NO GPU -- `-arch' is a compile target, not a device requirement; only
 # launching a kernel needs hardware (Layer 4).  Reuses comp.sh verbatim (no new
 # build code); see hetlitmus/docs/TEST-PLAN.md sec.5.
 #
-# The 12 reps -- each hits one distinct compile path once:
+# The 11 reps -- each hits one distinct compile path once:
 #   1. MP-cg-cta-acquire       het one-sided; plain CPU STR/LDR + barrier
 #   2. 2+2W-cg-sys-acqrel-2s   het two-sided; CPU STLR (store-only shape: no load)
 #   3. MP-gc-sys-acqrel-2s     het two-sided GPU->CPU; the only rep emitting a CPU
@@ -21,39 +21,38 @@
 #   4. 2+2W-cg-sys-fence-2s    het two-sided; CPU DMB.SY fence
 #   5. IRIW-cgcc-cta-relaxed   het 4-proc; largest barrier / scaffolding
 #   6. WRC-ccg-cta-relaxed     het 3-proc; buys down the proc-scaling assumption
-#   7. tests/cluster/MP-cluster  gpu-only Hopper cluster inline-PTX fence path
-#   8. MP-cg-sys-relaxed-x86_64 (HIP)  the AMD/MI300A render -- the only rep here
+#   7. MP-cg-sys-relaxed-x86_64 (HIP)  the AMD/MI300A render -- the only rep here
 #                              that compiles a .hip (hipbuildcheck.py compiles
 #                              and links one too).  It comes from tests/het-x86
 #                              because (x86_64, hip) is the pair with the MI300A
 #                              row, so it is the .hip that names the part
 #                              (litmus/hetMachine.ml).
-#   9. MP-cg-sys-sy.acq-2s     order-pair; the only rep emitting inline
+#   8. MP-cg-sys-sy.acq-2s     order-pair; the only rep emitting inline
 #                              `fence.acquire.sys' (PTX ISA 8.6 / sm_90), with a
 #                              compiled-in co-run control (mu = the row's
 #                              lattice-floor sibling MP-cg-sys-relaxed);
 #                              also the first rep whose test name contains a `.'
-#  10. S-gc-sys-ra.rel-2s      order-pair; the only rep emitting inline
+#   9. S-gc-sys-ra.rel-2s      order-pair; the only rep emitting inline
 #                              `fence.release.sys', paired with CPU STLR/LDAPR,
 #                              and the largest co-run in the corpus (K=4, NPART=10)
-#  11. MP-cg-sys-st.sc-2s      the CPU `dmb st' form.  Its mu is the floor
+#  10. MP-cg-sys-st.sc-2s      the CPU `dmb st' form.  Its mu is the floor
 #                              sibling, so the barrier is T's alone
-#  12. MP-gc-sys-ld.sc-2s      the CPU `dmb ld' form on the GPU->CPU cut (the CPU
+#  11. MP-gc-sys-ld.sc-2s      the CPU `dmb ld' form on the GPU->CPU cut (the CPU
 #                              proc reads), likewise T's alone.
 #                              These reps claim only that the three barrier forms
 #                              BUILD; which one is emitted is pinned by
 #                              l0_tokens.sh selftest [5b].
 #
 # Usage:
-#   bash hetlitmus/verify/smoke.sh          # run all 12 reps (pre-commit gate)
+#   bash hetlitmus/verify/smoke.sh          # run all 11 reps (pre-commit gate)
 #   bash hetlitmus/verify/smoke.sh bite     # prove the gate has teeth (self-test)
 #
-# Exit 0 (prints `SMOKE OK') iff all 12 reps compile.  A missing hipcc SKIPS rep 8
+# Exit 0 (prints `SMOKE OK') iff all 11 reps compile.  A missing hipcc SKIPS rep 7
 # loudly -- it never counts as a pass.  The reps that RAN are counted (`n', bumped
 # inside each rep) and the count is asserted against NREPS before any OK is
 # printed: `fails' can only be raised from inside a rep, so a rep that is never
 # CALLED contributes nothing and a shrunken rep list would otherwise leave the
-# gate green with the verdict line still claiming 12/12 -- the same vacuous-pass
+# gate green with the verdict line still claiming 11/11 -- the same vacuous-pass
 # hole the census tripwires of l0_tokens.sh / corpus-gate.sh / emit-all.sh close.
 # ---------------------------------------------------------------------------
 set -u
@@ -69,11 +68,10 @@ HET_DIR="$REPO/hetlitmus/tests/het"
 # (AArch64, hip) is in no row of litmus/hetMachine.ml, so it renders a harness
 # that names no machine -- which is not the .hip this rep is here to compile.
 HETX86_DIR="$REPO/hetlitmus/tests/het-x86"
-CLU_DIR="$REPO/hetlitmus/tests/cluster"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-NREPS=12          # keep in sync with the rep list in the header and below
+NREPS=11          # keep in sync with the rep list in the header and below
 fails=0
 skips=0
 n=0               # reps that actually RAN; asserted == NREPS before any OK
@@ -133,27 +131,6 @@ _smoke_het_rep() { # name dialect tool blurb srcdir
 smoke_het() { _smoke_het_rep "$1" cuda '' "$2" "$HET_DIR"; }        # name blurb
 smoke_het_hip() { _smoke_het_rep "$1" hip hipcc "$2" "$HETX86_DIR"; }  # name blurb
 
-# ---- cluster rep: gpu-only, flat .cu, bare `nvcc -c' -----------------------
-# The cluster family is GPU-only (no CPU side, no comp.sh) and sits outside the
-# faithfulness sweep (l0_tokens covers only gpu-only + het), so smoke is its ONLY
-# compile check.  Emit the flat <name>.cu, then object-compile it.
-smoke_cluster() { # name blurb
-  local name="$1" blurb="$2" d out rc
-  n=$((n+1))
-  printf '\n[%d/%d] cluster  %-22s -- %s\n' "$n" "$NREPS" "$name" "$blurb"
-  d="$WORK/e_$name"; mkdir -p "$d"
-  if ! out="$(litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$d" "$CLU_DIR/$name.litmus" 2>&1)"; then
-    printf '%s\n' "$out"; printf '  FAIL %s (emission)\n' "$name"; fails=$((fails+1)); return
-  fi
-  printf '+ nvcc -std=c++17 -arch=sm_90 -c %s.cu\n' "$name"
-  out="$(nvcc -std=c++17 -arch=sm_90 -c "$d/$name.cu" -o /dev/null 2>&1)"; rc=$?
-  if [ "$rc" -eq 0 ]; then
-    printf '  PASS %s\n' "$name"
-  else
-    printf '%s\n' "$out"; printf '  FAIL %s (nvcc -c rc=%d)\n' "$name" "$rc"; fails=$((fails+1))
-  fi
-}
-
 # ---- gate teeth: corrupt a scratch copy of an emitted harness, expect FAIL --
 # Emit a throwaway het harness, inject a syntax error into its (scratch) _cpu.c,
 # and confirm comp.sh now exits NONZERO.  Proves smoke actually bites; operates
@@ -185,7 +162,7 @@ bite_compile() {
 # nothing about a rep that never runs, which is the cheaper way to lose
 # coverage.  Delete every rep invocation from a scratch copy of this script and
 # require the census to redden it -- before the `n' assertion that copy printed
-# `SMOKE OK (12/12 reps compiled)' having compiled nothing.  Costs no compiler
+# `SMOKE OK (11/11 reps compiled)' having compiled nothing.  Costs no compiler
 # time precisely because the doctored copy runs zero reps.
 bite_census() {
   local sc="$WORK/census" nreps out rc
@@ -237,7 +214,6 @@ case "$cmd" in
     smoke_het     2+2W-cg-sys-fence-2s  "two-sided; CPU DMB.SY fence"
     smoke_het     IRIW-cgcc-cta-relaxed "4-proc; largest barrier / scaffolding"
     smoke_het     WRC-ccg-cta-relaxed   "3-proc; buys down the proc-scaling assumption"
-    smoke_cluster MP-cluster            "Hopper cluster inline-PTX fence path (nvcc -c)"
     # This rep carries the most CPU/interconnect-stress surface (a -2s CPU body,
     # the preload, the enemies, both halves of the C2C noise), so it is the one
     # most likely to expose a CUDA/HIP dialect divergence.

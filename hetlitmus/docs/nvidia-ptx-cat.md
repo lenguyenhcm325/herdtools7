@@ -118,9 +118,8 @@ subset — flips **20 of ordercheck.py's 96 PTX cells** from Forbidden to Allowe
 positive-control siblings against a table the solver no longer supports.
 
 A caveat, not carried into the `.cat`: `ptxas` 12.9 accepts `fence.release.sys`
-at `.version 6.0` / `.target sm_70`, i.e. it enforces neither floor, while it
-does enforce both for `.cluster` scope. For version and target floors the spec
-is authoritative and the assembler is not.
+at `.version 6.0` / `.target sm_70`, i.e. it enforces neither floor. For version
+and target floors the spec is authoritative and the assembler is not.
 
 ---
 

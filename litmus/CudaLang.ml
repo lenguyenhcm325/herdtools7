@@ -37,68 +37,28 @@ let thread_scope = function
   | "cta"     -> "cuda::thread_scope_block"
   | "gpu"     -> "cuda::thread_scope_device"
   | "sys"     -> "cuda::thread_scope_system"
-  | "cluster" ->
-      (* Unreachable guard.  libcu++'s `enum thread_scope' has only
-         {thread,block,device,system} -- there is NO thread_scope_cluster
-         enumerator (only an internal __thread_scope_cluster_tag).  So a
-         cluster-scoped op cannot go through atomic_ref; dump_instr emits it
-         as inline PTX instead (see ptx_* below).  We fail loudly rather than
-         emit a token that does not exist. *)
-      Warn.user_error
-        "CudaLang: cluster scope is emitted as inline PTX, not atomic_ref \
-         (libcu++ has no cuda::thread_scope_cluster)"
   | s -> Warn.user_error "CudaLang: unknown scope %S" s
 
 (* ------------------------------------------------------------------ *)
-(* Inline-PTX path.  We drop to inline PTX (rather than libcu++) in two
-   cases:
-     (1) Cluster scope (NVIDIA Hopper thread-block clusters; PTX .cluster,
-         between .cta and .gpu) has NO libcu++ atomic_ref form -- enum
-         thread_scope lacks a cluster enumerator -- so cluster loads/stores
-         must be inline PTX:
-           ld.{relaxed,acquire}.cluster.b32 %0,[%1];
-           st.{relaxed,release}.cluster.b32 [%0],%1;
-     (2) FENCES (all scopes): libcu++'s cuda::atomic_thread_fence COLLAPSES
-         an acquire/release/acq_rel thread-fence to fence.acq_rel (verified
-         in CUDA 12.9 cuda/std/__atomic/functions/cuda_ptx_generated.h,
-         __atomic_thread_fence_cuda), losing the release-vs-acquire
-         distinction.  To keep fences faithful to the .litmus annotation we
-         emit them as inline PTX at every scope:
-           fence.{acquire,release,acq_rel,sc}.{cta,gpu,sys,cluster};
+(* Inline-PTX fences.  libcu++'s cuda::atomic_thread_fence COLLAPSES an
+   acquire/release/acq_rel thread-fence to fence.acq_rel (verified in CUDA
+   12.9 cuda/std/__atomic/functions/cuda_ptx_generated.h,
+   __atomic_thread_fence_cuda), losing the release-vs-acquire distinction.
+   To keep fences faithful to the .litmus annotation we emit them as inline
+   PTX at every scope:
+     fence.{acquire,release,acq_rel,sc}.{cta,gpu,sys};
    PTX availability (NVIDIA PTX ISA; cross-checked against cccl
    __ptx/instructions/generated/fence.h):
      - fence.{acq_rel,sc}.{cta,gpu,sys} : PTX ISA 6.0, SM_70
-     - fence.{acq_rel,sc}.cluster       : PTX ISA 7.8, SM_90
      - fence.{acquire,release}.<any>    : PTX ISA 8.6, SM_90
-   So fence.acquire/fence.release ARE real PTX instructions (added in PTX
-   ISA 8.6).  The CUDA 12.2 toolkit this file was first written against
-   predates them, so ptxas-12.2 rejected them -- a toolkit-version limit,
-   NOT an absence in the ISA.  nvcc-verified on CUDA 12.9:
-   fence.{acquire,release}.cluster assemble with
-   `nvcc -std=c++17 -arch=sm_90'.  Generic addressing, .b32 for ld/st. *)
+   fence.acquire/fence.release therefore need a ptxas that implements PTX ISA
+   8.6 -- a toolkit floor, not an absence in the ISA.  nvcc-verified on CUDA
+   12.9 with `nvcc -std=c++17 -arch=sm_90'. *)
 (* ------------------------------------------------------------------ *)
 
-let ptx_load_sem = function
-  | "relaxed" -> "relaxed"
-  | "acquire" -> "acquire"
-  | s -> Warn.user_error
-      "CudaLang: cluster-scope load order %S has no single-instruction PTX \
-       form (PTX ld has only .relaxed/.acquire; sc needs a fence.sc.cluster \
-       sequence -- not yet emitted)" s
-
-let ptx_store_sem = function
-  | "relaxed" -> "relaxed"
-  | "release" -> "release"
-  | s -> Warn.user_error
-      "CudaLang: cluster-scope store order %S has no single-instruction PTX \
-       form (PTX st has only .relaxed/.release; sc needs a fence.sc.cluster \
-       sequence -- not yet emitted)" s
-
 (* PTX fence semantics, FAITHFUL: each annotated order maps to its own PTX
-   fence (acquire/release added in PTX ISA 8.6 / SM_90; acq_rel/sc since PTX
-   ISA 6.0 / SM_70, cluster since 7.8 / SM_90).  This differs from libcu++'s
-   atomic_thread_fence, which collapses acquire/release -> fence.acq_rel.  A
-   relaxed fence is a no-op with no PTX form; the corpus never emits one
+   fence, not to the collapsed fence.acq_rel above.  A relaxed fence is a
+   no-op with no PTX form; the corpus never emits one
    (ptx.bell F = {acquire,release,acq_rel,sc}), so fail loudly. *)
 let ptx_fence_sem = function
   | "acquire" -> "acquire"
@@ -110,16 +70,16 @@ let ptx_fence_sem = function
   | s -> Warn.user_error "CudaLang: unknown fence order %S" s
 
 (* PTX scope suffix for inline fences.  The LISA scope names coincide with
-   the PTX scope tokens (.cta/.gpu/.sys/.cluster). *)
+   the PTX scope tokens (.cta/.gpu/.sys). *)
 let ptx_scope = function
-  | "cta" -> "cta" | "gpu" -> "gpu" | "sys" -> "sys" | "cluster" -> "cluster"
+  | "cta" -> "cta" | "gpu" -> "gpu" | "sys" -> "sys"
   | s -> Warn.user_error "CudaLang: unknown fence scope %S" s
 
-(* Minimum SM target for an (order,scope) fence (see availability table
-   above): acquire/release OR cluster scope need SM_90; acq_rel/sc at
-   cta/gpu/sys work on SM_70+.  Emitted as a trailing comment for the reader. *)
-let fence_min_arch ord scp =
-  if scp = "cluster" || ord = "acquire" || ord = "release"
+(* Minimum SM target for a fence order (see availability table above):
+   acquire/release need SM_90, acq_rel/sc work on SM_70+.  Emitted as a
+   trailing comment for the reader. *)
+let fence_min_arch ord =
+  if ord = "acquire" || ord = "release"
   then "requires sm_90" else "sm_70+"
 
 (* Kernel lvalue for atomic_ref binding.  Memory locations are passed to the
@@ -130,13 +90,6 @@ let lvalue_of_addr_op ao = sprintf "*%s" (var_of_addr_op ao)
 (* Element type of the scoped atomic_ref: widened to uint64_t on the het
    tag path (B3 Decision 3), plain int on the GPU-only path. *)
 let ref_elt_type : tag_ctx -> string = function Some _ -> "uint64_t" | None -> "int"
-
-(* PTX width suffix for the cluster inline-PTX arm: .b64 tagged, .b32 plain. *)
-let ptx_width : tag_ctx -> string = function Some _ -> "b64" | None -> "b32"
-
-(* Inline-PTX operand constraint for the cluster value/dest: "l" (64-bit) on
-   the tagged path, "r" (32-bit) on the GPU-only path. *)
-let ptx_val_constraint : tag_ctx -> string = function Some _ -> "l" | None -> "r"
 
 (* ------------------------------------------------------------------ *)
 (* Instruction translation                                            *)
@@ -158,32 +111,16 @@ let dump_instr chan ~tag ind i = match i with
         | None -> value_of_roi roi in
       let ord, scp = order_scope_of annots in
       fprintf chan "%s{ // w[%s,%s] %s %s\n" ind ord scp var v ;
-      if scp = "cluster" then
-        (* inline PTX: the operand is the bare pointer (an address), not the
-           *deref lvalue the atomic_ref path binds. *)
-        fprintf chan
-          "%s  asm volatile(\"st.%s.cluster.%s [%%0],%%1;\" :: \"l\"(%s), \"%s\"(%s) : \"memory\"); // sm_90\n"
-          ind (ptx_store_sem ord) (ptx_width tag) (var_of_addr_op ao)
-          (ptx_val_constraint tag) v
-      else begin
-        scoped_ref ~tag (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
-        fprintf chan "%s  ref.store(%s, %s);\n" ind v (memory_order ord)
-      end ;
+      scoped_ref ~tag (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
+      fprintf chan "%s  ref.store(%s, %s);\n" ind v (memory_order ord) ;
       fprintf chan "%s}\n" ind
   | BellBase.Pld (r, ao, annots) ->
       let var = var_of_addr_op ao
       and dst = reg_name r in
       let ord, scp = order_scope_of annots in
       fprintf chan "%s{ // r[%s,%s] %s %s\n" ind ord scp dst var ;
-      if scp = "cluster" then
-        fprintf chan
-          "%s  asm volatile(\"ld.%s.cluster.%s %%0,[%%1];\" : \"=%s\"(%s) : \"l\"(%s) : \"memory\"); // sm_90\n"
-          ind (ptx_load_sem ord) (ptx_width tag) (ptx_val_constraint tag) dst
-          (var_of_addr_op ao)
-      else begin
-        scoped_ref ~tag (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
-        fprintf chan "%s  %s = ref.load(%s);\n" ind dst (memory_order ord)
-      end ;
+      scoped_ref ~tag (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
+      fprintf chan "%s  %s = ref.load(%s);\n" ind dst (memory_order ord) ;
       fprintf chan "%s}\n" ind
   | BellBase.Pfence (BellBase.Fence (annots, _)) ->
       let ord, scp = order_scope_of annots in
@@ -191,7 +128,7 @@ let dump_instr chan ~tag ind i = match i with
          (bypasses libcu++ atomic_thread_fence, which collapses
          acquire/release -> fence.acq_rel).  See the inline-PTX note above. *)
       fprintf chan "%sasm volatile(\"fence.%s.%s;\" ::: \"memory\"); // %s\n"
-        ind (ptx_fence_sem ord) (ptx_scope scp) (fence_min_arch ord scp)
+        ind (ptx_fence_sem ord) (ptx_scope scp) (fence_min_arch ord)
   | BellBase.Pnop -> ()
   | _ ->
       fprintf chan "%s// UNSUPPORTED: %s\n" ind (BellBase.dump_instruction i)

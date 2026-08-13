@@ -60,26 +60,9 @@ with `ref.store(v, order)` / `ref.load(order)`. Memory locations are kernel
 | scope `gpu`     | `cuda::thread_scope_device` |
 | scope `sys`     | `cuda::thread_scope_system` |
 
-**Cluster scope → inline PTX.** libcu++'s `enum thread_scope` has only
-`{thread,block,device,system}` — there is **no `thread_scope_cluster`**, so a
-cluster-scoped op cannot go through `atomic_ref`. `CudaLang` emits it as inline
-PTX instead — the exact strings libcu++ itself lowers cluster atomics to
-(grounded against cccl `cuda_ptx_generated.h` / `__ptx/.../fence.h`):
-
-| LISA op (scope `cluster`) | emitted PTX |
-|---------------------------|-------------|
-| load `relaxed`/`acquire`  | `ld.{relaxed,acquire}.cluster.b32 %0,[%1];` |
-| store `relaxed`/`release` | `st.{relaxed,release}.cluster.b32 [%0],%1;` |
-| fence `acquire`/`release`/`acq_rel`/`sc` | `fence.{…}.cluster;` |
-
-Generic addressing, `.b32`; **requires PTX ISA ≥ 7.8 and `sm_90`** (Hopper).
-Caveats: (a) `sc`/`acq_rel` on a cluster *load/store* has no single PTX
-instruction, so it raises a loud error (the SC fence-sequence is not yet
-emitted); cluster *fences* cover all four orders. (b) Forming an actual cluster
-at launch (`cudaLaunchKernelEx` cluster dim / `__cluster_dims__`) is part of the
-host run — Task 9 — so cluster-scoped ordering only takes effect once that
-lands; the per-op codegen here is the piece this change makes correct. (c) Not
-nvcc-compiled (Task 8); grounded against the PTX libcu++ emits.
+**No cluster scope.** PTX `.cluster` (`sm_90`) is NVIDIA-only — HIP source has no
+`__HIP_MEMORY_SCOPE_CLUSTER` — and the transcribed PTX model's scope tags are
+`.cta`/`.gpu`/`.sys` ([`nvidia-ptx-cat.md`](nvidia-ptx-cat.md)).
 
 CTA layout: a *block* = a maximal subtree rooted at a `cta` node in the scope
 tree; CTAs numbered in DFS order, procs guarded by
@@ -129,38 +112,23 @@ assembles **exit 0**.
 
   All 10 (MP/LB/SB/IRIW × relaxed/-F, MP-cta-F, plus MP-gpu-release and
   WRC-sys-relaxed) compile exit 0. `sm_86` = this box's RTX 3060 Laptop
-  (Ampere), so the non-cluster corpus can also smoke *run* here.
+  (Ampere), so the corpus can also smoke *run* here.
 
-- **Cluster (inline-PTX path), Hopper** — the hand-written
-  `tests/cluster/*.litmus` (`MP-cluster` = explicit cluster fences) assemble
-  with:
-
-  ```
-  nvcc -std=c++17 -arch=sm_90 <test>.cu -o /tmp/<test>
-  ```
-
-  It exits 0, proving the inline-PTX cluster ops assemble. `sm_90` (Hopper) is
-  required for `.cluster`; these won't *run* here (no Hopper), only assemble.
-
-**Fence lowering (revised — faithful inline PTX).** During Task 8 (on CUDA 12.2)
-the cluster *fence* path was first written to collapse acquire/release/acq_rel →
-`fence.acq_rel` and sc → `fence.sc`, because **that toolkit's ptxas (PTX ISA 8.2)
-rejected `fence.acquire`/`fence.release`**. That was a *toolkit-version* limit,
-not a PTX-ISA one: `fence.acquire`/`fence.release` are real instructions added in
-**PTX ISA 8.6 (SM_90)** and they assemble on this box's current **CUDA 12.9**
-(`nvcc -std=c++17 -arch=sm_90`). The emitter now lowers fences **faithfully** at
-every scope via inline PTX — `fence.<order>.<scope>`, `<order> ∈
-{acquire,release,acq_rel,sc}`, `<scope> ∈ {cta,gpu,sys,cluster}` — bypassing
+**Fence lowering (faithful inline PTX).** `fence.acquire`/`fence.release` are
+real instructions added in **PTX ISA 8.6 (SM_90)**; a ptxas implementing an
+earlier ISA rejects them (CUDA 12.2's, at PTX ISA 8.2, does), which is a
+*toolkit-version* limit and not a PTX-ISA one. They assemble on this box's
+current **CUDA 12.9** (`nvcc -std=c++17 -arch=sm_90`). The emitter lowers fences
+**faithfully** at every scope via inline PTX — `fence.<order>.<scope>`, `<order>
+∈ {acquire,release,acq_rel,sc}`, `<scope> ∈ {cta,gpu,sys}` — bypassing
 `cuda::atomic_thread_fence`, which (verified in CUDA 12.9
 `cuda/std/__atomic/functions/cuda_ptx_generated.h`) **still** collapses
-acquire/release → `fence.acq_rel`. So `MP-cluster` now emits a true
-`fence.release.cluster` on the writer and `fence.acquire.cluster` on the reader
-(was `fence.acq_rel.cluster` for both). Availability: `fence.{acq_rel,sc}` work on
-SM_70+ (cluster needs SM_90); `fence.{acquire,release}` need SM_90 — so a
-fence-bearing test now assembles only for sm_90 (fine for the GH200 target; the
-corpus has no fences, so the 10 `.cu` stay byte-stable). Load/store mapping is
-unchanged: rel/acq on ops already map exactly (`st.release.<scope>` /
-`ld.acquire.<scope>`); only standalone fences were affected.
+acquire/release → `fence.acq_rel`. Availability: `fence.{acq_rel,sc}` work on
+SM_70+; `fence.{acquire,release}` need SM_90 — so a fence-bearing test assembles
+only for sm_90 (fine for the GH200 target; the 10 samples above carry no fence,
+so their `.cu` stay byte-stable). Load/store mapping is unchanged: rel/acq on ops
+already map exactly (`st.release.<scope>` / `ld.acquire.<scope>`); only
+standalone fences are affected.
 
 ## Out of scope / next steps
 - **Task 9 (hardware):** deferred — GH200 / MI300A runs + stressing + tallying
@@ -170,9 +138,3 @@ unchanged: rel/acq on ops already map exactly (`st.release.<scope>` /
   (see thesis principles); that lands with Task 9.
 - Reference verdicts: no external reference covers GH200, and this project
   derives none of its own.
-- Cluster scope is supported in the *emitter* (inline PTX, see Mappings) and now
-  exercised by the **hand-written** `tests/cluster/*.litmus`. The diy-generated
-  **gpu-only** corpus still does not cover cluster: that needs `'cluster` added to
-  `bells/ptx.bell`'s `enum scopes` + scope order (`cta < cluster < gpu < sys`) —
-  deliberately deferred (the ptx.bell cluster extension). *Running* cluster tests
-  also needs the Task-9 cluster launch (`cudaLaunchKernelEx` / `__cluster_dims__`).
