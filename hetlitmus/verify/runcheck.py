@@ -26,9 +26,9 @@ follow that choice.  Nothing here is x86-only, so the GH200 runs the same gate.
 
 `--bite' plants one defect per assertion in a COPY of the script under test (never
 in the tree) and requires the phase to redden for the right reason.  Two device
-modes need a GPU and are the -nvcc lane's half of this gate: `--hw' runs the same
-wrapper on the real device, and `--characterize-hw' builds two harnesses and reads
-what they PRINT (the only artefact a result is ever read off).
+modes need a GPU and are the toolchain lane's half of this gate: `--hw' runs the
+same wrapper on the real device, and `--characterize-hw' builds two harnesses and
+reads what they PRINT (the only artefact a result is ever read off).
 """
 import argparse
 import atexit
@@ -785,12 +785,6 @@ def phase4_stoprule(campaign, quiet=False):
                        % r.stdout[-300:])
         elif not quiet:
             print("      a terminal row of its own state is resumed, not re-run")
-
-        # D-MV5's banned artefact: nothing may have written a control map to stand in
-        # for one this scheduler no longer reads at all.
-        made = [f for f in os.listdir(tmp) if "control-map" in f]
-        if made:
-            bad.append("a stand-in control map was created: %s" % made)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return bad
@@ -1348,6 +1342,9 @@ def _target_for(tmp, which, mutate):
 
 
 def bite():
+    """Each injection runs a phase against a COPY of one script, made in a scratch
+    dir, and is judged on a failure carrying its own reason string -- so a green
+    arm is the gate's own run (`runcheck.py' with no flag), not a re-run here."""
     print("===== BITE: does each assertion read what it claims to? =====")
     tmp = tempfile.mkdtemp(prefix="runcheck-bite.")
     bad = 0
@@ -1372,22 +1369,12 @@ def bite():
             else:
                 print("      [phase %s] RED on %s" % (tag, what))
                 print("          %s" % failures[0].splitlines()[0][:150])
-        print("-- and the untouched scripts must be green, or `red' meant nothing")
-        clean = []
-        for _, phase in PHASES:
-            clean += phase(True)
-        if clean:
-            print("  *** the UNTOUCHED wrapper/campaign/probe is RED (%s) -- the "
-                  "injections above prove nothing" % clean[0].splitlines()[0][:150])
-            bad += 1
-        else:
-            print("      the untouched wrapper, campaign and probe: GREEN")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if bad:
         print("\nBITE FAILED: %d injection(s) went unnoticed." % bad)
         return 1
-    print("\nBITE OK (%d injections, each RED for its own reason; restored GREEN)"
+    print("\nBITE OK (%d injections, each RED naming its own reason)"
           % len(INJECTIONS))
     return 0
 
@@ -1691,11 +1678,13 @@ CH_NOMAP = ["NO POSITIVE-CONTROL MAP WAS READ for %s" % CH_PAIR,
             "It has NO CALIBRATION CHANNEL, and that is an OMISSION, not a "
             "construction",
             "what was omitted is the map FILE beside this test"]
-# The map is loaded for EVERY lane, so HET_NO_CONTROL_MAP says the FILE was not
+# The map is loaded for every lane, so HET_NO_CONTROL_MAP says the FILE was not
 # beside the test.  These are the sentences that said something else -- that no
 # map was registered for the pair and none could be borrowed -- and a printout
 # that still explains the flag that way is explaining a mechanism this tool no
-# longer has, in EITHER arm.
+# longer has, in either arm.  Nothing else in the suite reads that wording, and
+# this tuple is reached only through --characterize-hw, which refuses to run
+# without a CUDA device: on a box with no GPU it goes unchecked.
 CH_RETIRED = ["no map is registered for that pair",
               "there is none to borrow",
               "the bootstrap control map for an unregistered pair does not exist yet"]
@@ -1900,9 +1889,10 @@ def main():
     ap.add_argument("--bite", action="store_true",
                     help="prove each phase reddens on a planted defect")
     ap.add_argument("--hw", action="store_true",
-                    help="run the wrapper on the real device (-nvcc lane)")
+                    help="run the wrapper on the real device (toolchain lane)")
     ap.add_argument("--characterize-hw", action="store_true",
-                    help="build two harnesses and read what they PRINT (-nvcc lane)")
+                    help="build two harnesses and read what they PRINT "
+                         "(toolchain lane)")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
 

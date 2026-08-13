@@ -33,6 +33,13 @@ it.  Flip it without the co-run behind it and every "Never" silently becomes a
 *credible* "Never" -- an unfalsifiable null.  Everything below exists to make the
 1 true, not merely present.
 
+The co-run flags of the whole corpus are also checked by verdictcheck phase 3 --
+but against control-map.csv, which is the file the emitter read to set them, so
+that check and the literal values pinned here are independent of each other only
+through `controlmap.py --check' (make hetlitmus-controlmap), which re-derives the
+map from the corpus.  Hence the literals: they name what a given render must say
+without consulting the map at all.
+
   $ grep -c '#define HET_CONTROL_COMPILED_IN 1' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 

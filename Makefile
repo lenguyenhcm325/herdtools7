@@ -641,7 +641,7 @@ $(V)SILENTOPT=-s
 ### Deliberately NOT wired into upstream `test::`: the main suite stays fast and
 ### CUDA-free (folding in `hetlitmus-test` is a documented open decision, sec.10).
 ### The verify scripts self-export PATH (`_build/install/default/bin`, plus
-### `/usr/local/cuda/bin` on the nvcc lane), so leaf targets just invoke them.
+### `/usr/local/cuda/bin` on the toolchain lane), so leaf targets just invoke them.
 
 ### Building blocks (run solo while iterating).
 hetlitmus-cram: | build
@@ -752,7 +752,8 @@ hetlitmus-dup: | build
 ###   PTX  96 GPU-only LISA/Bell cells under nvidia-ptx.cat (Lustig'19)
 ### --bite corrupts the table four ways (a CPU ordered-pair set, a GPU one, a
 ### pattern role, and the pattern clause itself) and requires each to redden the
-### phase that names it.  ~3 s; no nvcc, no GPU.
+### phase that names it -- which is the only phase it runs, each key having a
+### single phase's reader.  No nvcc, no GPU.
 hetlitmus-lattice: | build
 	@ echo
 	python3 hetlitmus/verify/ordercheck.py
@@ -783,7 +784,7 @@ hetlitmus-verdict: | build
 	@ echo
 	python3 hetlitmus/verify/verdictcheck.py
 	python3 hetlitmus/verify/verdictcheck.py --bite
-	@ echo "HetLitmus B6/B6c decision rule: OK (and the gate bites)"
+	@ echo "HetLitmus B6 decision rule: OK (and the gate bites)"
 
 ### hetlitmus-stats: het_stats_compute() -- what a "Never" is WORTH -- compiled
 ### from the real emitted header and driven with synthetic record streams
@@ -886,7 +887,7 @@ hetlitmus-obs: | build
 ###             by the windowed scan alone)
 ###   default   every stamped define het_verdict.h reads has an `#ifndef' default
 ###             there, so a lane that stamps nothing still compiles
-### --bite: 7 injections, each required to redden BY NAME -- five into the
+### --bite: 6 injections, each required to redden BY NAME -- four into the
 ### emitted render and two into the header, since either side can drift.
 hetlitmus-recfields: | build
 	@ echo
@@ -939,7 +940,7 @@ hetlitmus-x86body: | build
 ### Two verbatim comparisons (the .litmus bytes, then the map rows), each of which
 ### must be seen to fail.
 ### CUDA-FREE: generation and comparison need no GPU, so it belongs here and not
-### in the -nvcc umbrella.  Seconds -- generate-x86.sh writes all 411 in ~8 s.
+### in the toolchain umbrella.
 hetlitmus-x86fixture: | build
 	@ echo
 	python3 hetlitmus/verify/x86fixturecheck.py
@@ -1018,8 +1019,7 @@ hetlitmus-d10: | build
 ### four builds because the trap needs the other vendor's object to exist and be
 ### OLDER than the binary: a two-round A-then-B check passes against a broken
 ### Makefile.
-### NEEDS hipcc AND nvcc, hence the -nvcc umbrella (which is really the
-### toolchain umbrella: smoke.sh already needs nvcc+hipcc+clang).
+### NEEDS hipcc AND nvcc, hence the toolchain umbrella.
 ### DEFERRED, and the gate says so on success: there is NO AMD GPU on this box
 ### (`rocminfo' reports 0 gfx agents), so no phase EXECUTES the linked harness on
 ### a device.  P6 lifts the allocator resolver verbatim out of the emitted .hip
@@ -1045,7 +1045,7 @@ hetlitmus-hipbuild: | build
 ### assertions per arm (stamp, the arm's own control sentence and NOT the
 ### other's, OBSERVED against the pair NAME, no Grace/Hopper/NVLink/C2C/GH200
 ### -- this pair has no machine row -- and the observation class on k < R).
-### NEEDS A DEVICE, hence the -nvcc umbrella; with none visible it FAILS rather
+### NEEDS A DEVICE, hence the toolchain umbrella; with none visible it FAILS rather
 ### than skipping, because a gate that quietly stops checking is the failure mode
 ### this suite has already shipped twice.  Three assertions per arm need one
 ### sighting, so it re-seeds up to 12 times (~3 s per run) before giving up.
@@ -1099,14 +1099,14 @@ hetlitmus-run-gate: | build
 ### host can lose a barrier increment and stall (the probe measures it on this
 ### box); a stalled session is retried up to 3 times and only an all-stall is
 ### reported, the same rule --characterize-hw uses.
-### NEEDS A DEVICE, hence the -nvcc umbrella.
+### NEEDS A DEVICE, hence the toolchain umbrella.
 hetlitmus-run-hw: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py --hw
 	python3 hetlitmus/verify/runcheck.py --hw --bite
 	@ echo "HetLitmus device-session wrapper runtime gate: OK (and the gate bites)"
 
-### hetlitmus-l0-selftest: the DISCRIMINATING-POWER proofs of the nvcc lane.
+### hetlitmus-l0-selftest: the DISCRIMINATING-POWER proofs of the toolchain lane.
 ### l0_tokens.sh {selftest,guard} prove ptxcheck can detect a weakened scope/order
 ### and that the stress/cpustress scaffolding bites a dead layer; smoke.sh bite
 ### proves the co-run gate catches a missing control.  Without this target a
@@ -1139,20 +1139,26 @@ hetlitmus-test:: hetlitmus-x86fixture
 hetlitmus-test:: hetlitmus-d10
 hetlitmus-test:: hetlitmus-run-gate
 
-hetlitmus-test-nvcc:: | build
-hetlitmus-test-nvcc:: hetlitmus-faithful
-hetlitmus-test-nvcc:: hetlitmus-stress
-hetlitmus-test-nvcc:: hetlitmus-cpustress
-hetlitmus-test-nvcc:: hetlitmus-obs
-hetlitmus-test-nvcc:: hetlitmus-hipbuild
-hetlitmus-test-nvcc:: hetlitmus-characterize-hw
-hetlitmus-test-nvcc:: hetlitmus-run-hw
-hetlitmus-test-nvcc:: hetlitmus-l0-selftest
-hetlitmus-test-nvcc:: hetlitmus-smoke
+### The second umbrella takes a target when it needs a TOOLCHAIN or a DEVICE
+### this box may not have -- nvcc, hipcc, clang, an NVIDIA GPU, an AMD GPU -- and
+### not when it is about GPU code: x86body and d10 read emitted GPU renders and
+### belong to the CUDA-free lane.  `hetlitmus-test-nvcc' stays as its old name.
+hetlitmus-test-toolchain:: | build
+hetlitmus-test-toolchain:: hetlitmus-faithful
+hetlitmus-test-toolchain:: hetlitmus-stress
+hetlitmus-test-toolchain:: hetlitmus-cpustress
+hetlitmus-test-toolchain:: hetlitmus-obs
+hetlitmus-test-toolchain:: hetlitmus-hipbuild
+hetlitmus-test-toolchain:: hetlitmus-characterize-hw
+hetlitmus-test-toolchain:: hetlitmus-run-hw
+hetlitmus-test-toolchain:: hetlitmus-l0-selftest
+hetlitmus-test-toolchain:: hetlitmus-smoke
+
+hetlitmus-test-nvcc: hetlitmus-test-toolchain
 
 hetlitmus-test-all:: | build
 hetlitmus-test-all:: hetlitmus-test
-hetlitmus-test-all:: hetlitmus-test-nvcc
+hetlitmus-test-all:: hetlitmus-test-toolchain
 
 ### Regenerate both corpora in place + promote cram goldens.  Does NOT commit.
 hetlitmus-promote: | build
@@ -1174,7 +1180,8 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10
 .PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate hetlitmus-run-hw
 .PHONY: hetlitmus-amd-controlmap
-.PHONY: hetlitmus-test hetlitmus-test-nvcc hetlitmus-test-all hetlitmus-promote
+.PHONY: hetlitmus-test hetlitmus-test-toolchain hetlitmus-test-nvcc
+.PHONY: hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64
 include Makefile.aarch64

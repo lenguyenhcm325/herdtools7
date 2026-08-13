@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """The campaign scheduler: where the GPU hours are spent, or saved (B7b;
-env-research/impl-briefs/B7b-impl-brief.md, Q3-stats.md).
+env-research/impl-briefs/B7b-impl-brief.md, Q3-stats.md -- both SUPERSEDED, they
+design the withdrawn non-observation bound; where they and
+litmus/het-runtime/het_verdict.h disagree the header is what ships).
 
 No harness carries a prediction, so there is no class to schedule against and every row
 gets the SAME policy: run it until its sighting is corroborated, until a lone sighting

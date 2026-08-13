@@ -609,6 +609,41 @@ CTRL_RE = re.compile(r"^#define HET_CONTROL_COMPILED_IN (\d)$", re.M)
 CAN_RE = re.compile(r"^#define HET_CANARY_COMPILED_IN (\d)$", re.M)
 
 
+_CORPUS = None
+
+
+def emit_corpus(tests):
+    """{test: .cu source, or None if the harness did not appear}, from ONE litmus7
+    invocation over the whole corpus, held for the life of the process.  An
+    injection rewrites the source it is handed and never the file, so the same
+    emission serves the phase and every corpus bite; the scratch dir is dropped as
+    soon as it has been read.  None on an emitter failure, already reported."""
+    global _CORPUS
+    if _CORPUS is None:
+        tmp = tempfile.mkdtemp(prefix="verdictcorpus.")
+        try:
+            r = subprocess.run(
+                ["litmus7", "-gpu-target", "cuda",
+                 "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
+                 "-o", tmp] + [os.path.join(HET_DIR, t + ".litmus") for t in tests],
+                cwd=ROOT, env=_env(), capture_output=True, text=True)
+            if r.returncode != 0:
+                print("  *** litmus7 failed to emit the corpus:\n" + r.stderr[-2000:])
+                return None
+            out = {}
+            for t in tests:
+                cu = os.path.join(tmp, t, t + ".cu")
+                if not os.path.exists(cu):
+                    out[t] = None
+                    continue
+                with open(cu) as fh:
+                    out[t] = fh.read()
+            _CORPUS = out
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    return _CORPUS
+
+
 def check_corpus(tamper=None):
     """tamper: (test, src) -> src.  Used ONLY by --bite, to prove this phase FAILS
     when an emitted harness loses its stamp or its co-run population."""
@@ -620,58 +655,46 @@ def check_corpus(tamper=None):
     print("  het corpus  : %d .litmus" % len(tests))
     print("  control-map : %d rows" % len(want))
 
-    tmp = tempfile.mkdtemp(prefix="verdictcorpus.")
     bad, n_mu, n_can = 0, 0, 0
     tampered = 0
-    try:
-        # One litmus7 invocation for the whole corpus (~20 ms each).
-        r = subprocess.run(
-            ["litmus7", "-gpu-target", "cuda", "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
-             "-o", tmp] + [os.path.join(HET_DIR, t + ".litmus") for t in tests],
-            cwd=ROOT, env=_env(), capture_output=True, text=True)
-        if r.returncode != 0:
-            print("  *** litmus7 failed to emit the corpus:\n" + r.stderr[-2000:])
-            return 1
-
-        for t in tests:
-            cu = os.path.join(tmp, t, t + ".cu")
-            if not os.path.exists(cu):
-                print("  *** %-26s no .cu emitted" % t)
-                bad += 1
-                continue
-            with open(cu) as fh:
-                src = fh.read()
-            if tamper is not None:
-                new = tamper(t, src)
-                if new != src:            # cmp: the injection must really have hit
-                    tampered += 1
-                src = new
-            # (a) THE STAMP, exactly once and by its symbol.  het_verdict() reads no
-            # field of an unstamped record, so a harness that lost this line reports
-            # a build bug for every run it will ever make.
-            n_magic = len(MAGIC_RE.findall(src))
-            if n_magic != 1:
-                print("  *** %-26s stamps rec_magic %d time(s) (want exactly 1)"
-                      % (t, n_magic))
-                bad += 1
-            # (b) THE CO-RUN POPULATION, against the map that named it.  A flag set
-            # without the instance behind it turns a structural zero into a control.
-            mu, can = want.get(t, ("?", "?"))
-            exp_mu = 1 if mu not in ("none", "?") else 0
-            exp_can = 1 if can not in ("-", "self", "?") else 0
-            got_mu = CTRL_RE.search(src)
-            got_can = CAN_RE.search(src)
-            got_mu = int(got_mu.group(1)) if got_mu else -1
-            got_can = int(got_can.group(1)) if got_can else -1
-            n_mu += 1 if got_mu == 1 else 0
-            n_can += 1 if got_can == 1 else 0
-            if got_mu != exp_mu or got_can != exp_can:
-                print("  *** %-26s co-runs mu=%d canary=%d, control-map.csv says "
-                      "mu=%d canary=%d (Mu=%s Canary=%s)"
-                      % (t, got_mu, got_can, exp_mu, exp_can, mu, can))
-                bad += 1
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    sources = emit_corpus(tests)
+    if sources is None:
+        return 1
+    for t in tests:
+        src = sources.get(t)
+        if src is None:
+            print("  *** %-26s no .cu emitted" % t)
+            bad += 1
+            continue
+        if tamper is not None:
+            new = tamper(t, src)
+            if new != src:            # cmp: the injection must really have hit
+                tampered += 1
+            src = new
+        # (a) THE STAMP, exactly once and by its symbol.  het_verdict() reads no
+        # field of an unstamped record, so a harness that lost this line reports
+        # a build bug for every run it will ever make.
+        n_magic = len(MAGIC_RE.findall(src))
+        if n_magic != 1:
+            print("  *** %-26s stamps rec_magic %d time(s) (want exactly 1)"
+                  % (t, n_magic))
+            bad += 1
+        # (b) THE CO-RUN POPULATION, against the map that named it.  A flag set
+        # without the instance behind it turns a structural zero into a control.
+        mu, can = want.get(t, ("?", "?"))
+        exp_mu = 1 if mu not in ("none", "?") else 0
+        exp_can = 1 if can not in ("-", "self", "?") else 0
+        got_mu = CTRL_RE.search(src)
+        got_can = CAN_RE.search(src)
+        got_mu = int(got_mu.group(1)) if got_mu else -1
+        got_can = int(got_can.group(1)) if got_can else -1
+        n_mu += 1 if got_mu == 1 else 0
+        n_can += 1 if got_can == 1 else 0
+        if got_mu != exp_mu or got_can != exp_can:
+            print("  *** %-26s co-runs mu=%d canary=%d, control-map.csv says "
+                  "mu=%d canary=%d (Mu=%s Canary=%s)"
+                  % (t, got_mu, got_can, exp_mu, exp_can, mu, can))
+            bad += 1
 
     if tamper is not None and tampered == 0:
         # An injection that matched nothing would "pass" for free.

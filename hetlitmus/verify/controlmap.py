@@ -668,13 +668,24 @@ def header_for_lattice():
     ] + HEADER[4:])
 
 
+_LOADED = {}
+
+
 def load(d):
-    tests = {}
-    for f in sorted(os.listdir(d)):
-        if f.endswith(".litmus"):
-            t = parse_litmus(os.path.join(d, f))
-            tests[t.name] = t
-    return tests
+    """Every .litmus in `d', parsed under the ACTIVE lattice and memoized on
+    (dir, lattice).  Both halves of the key matter: the parse is lattice-dependent
+    (DMB.ST has no x86 image), and a Test is written only while it is being
+    parsed, so a cache hit hands back the same corpus read the same way.  Callers
+    that corrupt a corpus copy it first, into a directory of its own."""
+    key = (d, LATTICE)
+    if key not in _LOADED:
+        tests = {}
+        for f in sorted(os.listdir(d)):
+            if f.endswith(".litmus"):
+                t = parse_litmus(os.path.join(d, f))
+                tests[t.name] = t
+        _LOADED[key] = tests
+    return _LOADED[key]
 
 
 def floor_set(d, lattice):
@@ -752,7 +763,10 @@ def check(d, map_f, quiet=False):
 # artifact it targets, and must produce the NAMED error -- reddening for some
 # other reason is not this bite passing.
 def _scratch(d, tmp, tag):
-    """A private copy of corpus + map to corrupt."""
+    """A private copy of corpus + map to corrupt.  The parse cache is dropped as
+    the belt to the fresh directory's braces: a corrupted corpus is never read
+    through an entry made before it was corrupted."""
+    _LOADED.clear()
     dst = os.path.join(tmp, tag)
     os.mkdir(dst)
     for f in os.listdir(d):

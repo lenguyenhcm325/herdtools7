@@ -75,7 +75,7 @@ let hip_scope = function
    fence-free tests (hipbuildcheck.py; smoke.sh rep 8), no committed hip-out
    golden carries one, and compile-hip.sh defaults to that same golden dir --
    so a syntactically broken __builtin_amdgcn_fence still passes
-   hetlitmus-test, -test-nvcc and -corpus.  ptxcheck.py earns the same claim
+   hetlitmus-test, -test-toolchain and -corpus.  ptxcheck.py earns the same claim
    on the CUDA side by reading `nvcc --ptx' back; nothing reads AMD ISA.
    Fence tests do exist: 33 of the 137 gpu-only and 171 of the 411 het.
 

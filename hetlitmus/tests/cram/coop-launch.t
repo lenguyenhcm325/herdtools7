@@ -75,8 +75,9 @@ grid.sync().
   $ grep -cE '#define SIZE_OF_TEST|#define NUMBER_OF_RUN' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   2
 
-(g) the grid <= co-resident cap guard is installed, and stays installed when the
-stress layer raises _grid toward the cap (stress.t (c)).
+(g) the grid <= co-resident cap guard, pinned here alone: it must stay installed
+when the stress layer raises _grid toward the cap.  stress.t (c) reads that
+raise; this section reads the guard.
   $ grep -c '_grid > _maxGrid' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 

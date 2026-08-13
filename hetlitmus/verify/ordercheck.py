@@ -233,14 +233,23 @@ def phase_ptx(tmp, quiet):
     return bad
 
 
-def run(quiet=False):
+# The two phases, by the prefix their mismatches carry.  A caller may run one of
+# them alone; each entry carries the per-shape cell count the census multiplies
+# len(SHAPES) by, so the printed census is of the cells actually decided.
+PHASES = {"ARM": (phase_arm, len(DMBS) ** 2),
+          "PTX": (phase_ptx, len(FENCES) ** 2)}
+
+
+def run(quiet=False, phases=("ARM", "PTX")):
     for b in ("herd7", "diyone7"):
         if not os.path.exists(os.path.join(BIN, b)):
             print("FATAL: %s/%s not built -- run 'make all'" % (BIN, b))
             return 2
     tmp = tempfile.mkdtemp(prefix="ordercheck.")
+    bad = []
     try:
-        bad = phase_arm(tmp, quiet) + phase_ptx(tmp, quiet)
+        for p in phases:
+            bad += PHASES[p][0](tmp, quiet)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     if bad:
@@ -252,13 +261,17 @@ def run(quiet=False):
         return 1
     if not quiet:
         print("\nORDERCHECK OK  (%d solver cells all agree with the table)"
-              % (len(SHAPES) * (len(DMBS) ** 2 + len(FENCES) ** 2)))
+              % (len(SHAPES) * sum(PHASES[p][1] for p in phases)))
     return 0
 
 
 # --- bite -------------------------------------------------------------------
-# Each injection names the phase it MUST redden; a bite that only reddens some
-# other phase is not evidence for that phase.
+# Each injection names the phase it MUST redden, which is also the prefix that
+# phase's mismatches carry.  Every key injected here is read by one phase only --
+# the DMB names index no fence cell and ROLE/sync_ok have no ARM reader (an ARM
+# barrier is cumulative and needs no partner), so the named phase is the only one
+# that could redden -- and only that phase is run, since a red elsewhere would be
+# evidence for some other injection.
 INJECTIONS = [
     ("ORD[DMB.ST] gains RR -- a store barrier that orders load;load",
      "D.ORD['ST'] = frozenset(('WW','RR'))", "ARM "),
@@ -283,7 +296,8 @@ def bite():
                   "before = snap()\n"
                   "%s\n"
                   "assert before != snap(), 'injection was vacuous'\n"
-                  "sys.exit(D.run(quiet=True))\n" % (HERE, inj))
+                  "sys.exit(D.run(quiet=True, phases=(%r,)))\n"
+                  % (HERE, inj, where.strip()))
         drv.close()
         r = _run([sys.executable, drv.name])
         os.unlink(drv.name)

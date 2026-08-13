@@ -57,13 +57,12 @@ lines.
   1
 
 (c) the pure-stress workgroups: every block above the test/observer blocks
-hammers the scratchpad, and the grid is raised toward the co-resident cap while
-the launch guard stays -- an over-large cooperative launch must be REJECTED at
-launch, not silently deadlock, because a silent hang is indistinguishable from a
-genuine non-observation (coop-launch.t (g)).
+hammers the scratchpad, and the grid is raised toward the co-resident cap.  The
+launch guard that must survive that raise -- an over-large cooperative launch is
+REJECTED at launch rather than silently deadlocking, a silent hang being
+indistinguishable from a genuine non-observation -- is pinned once, in
+coop-launch.t (g), which reads this same render.
   $ grep -c 'blockIdx.x >= HET_TEST_BLOCKS' $MP.cu
-  1
-  $ grep -c '_grid > _maxGrid' $MP.cu
   1
   $ grep -c '_stressBlocks = (HET_STRESS_BLOCKS >= 0)' $MP.cu
   1
@@ -93,15 +92,8 @@ HET_SPIN_LANES would make the limit unreachable and every spin would burn the
   $ grep -c '#define HET_SPIN_LANES 3' $MP.cu
   1
 
-(The arrival count matches `_bar.fetch_add', the barrier's OWN atomic, not a bare
-`fetch_add': the CPU stress tally is an atomic RMW in this file too, and bumping
-the expectation to sweep it up would leave the check satisfiable by a real third
-barrier arrival, which is the regression it exists to catch.  Same reasoning in
-coop-launch.t.)
-  $ grep -c '_bar.fetch_add' $MP.cu
-  6
-  $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' $MP.cu | grep -c '_bar.fetch_add'
-  1
+(The cross-device arrivals themselves -- six on `_bar.fetch_add', one inside T's
+own lane -- are pinned in coop-launch.t (b,c), on this same render.)
 
 and the barrier is ALL-OR-NONE, with its limit indexed by the barriers taken --
 the adaptation the perpetual loop forces.  Upstream relaunches per iteration, so

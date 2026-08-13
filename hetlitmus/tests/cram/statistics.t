@@ -1,8 +1,10 @@
-Statistics-layer guard (B7; env-research/Q3-stats.md).  What makes a "Never"
-readable at all is the per-window sub-tallies of the control channel: they are
-the only view of the count stream INSIDE a run, so without them the stationarity
-precheck has nothing to test and a P_rep would be reported across a rate change
-nobody could have seen.
+Statistics-layer guard (B7; env-research/Q3-stats.md, SUPERSEDED -- it designs
+the withdrawn non-observation bound, and where it and litmus/het-runtime/
+het_verdict.h disagree the header is what ships).  What makes a "Never" readable
+at all is the per-window sub-tallies of the control channel: they are the only
+view of the count stream INSIDE a run, so without them the stationarity precheck
+has nothing to test and a P_rep would be reported across a rate change nobody
+could have seen.
 
 The layer's own behaviour is gated by hetlitmus/verify/statscheck.py, which
 compiles the real het_verdict.h and drives it with synthetic record streams.

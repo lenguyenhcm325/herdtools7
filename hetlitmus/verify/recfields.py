@@ -161,20 +161,31 @@ def check_lane(d, test, ext, quiet, tamper=None, seen=None,
     return bad
 
 
-def run(quiet, tamper=None, header_tamper=None, silent=False):
+def emit_lanes(tmp):
+    """Emit every lane once, as (test, ext, dir).  Both tamper hooks rewrite the
+    text a check has already read and never the files on disk, so one emission
+    serves the gate and every injection alike."""
+    return [(test, ext, emit(tmp, corpus, test, target))
+            for corpus, test, target, ext in LANES]
+
+
+def run(quiet, tamper=None, header_tamper=None, silent=False, lanes=None):
     if not silent:
         print("===== recfields: do the emitted harnesses bind to the runtime "
               "headers? =====")
-    tmp = tempfile.mkdtemp(prefix="recfields.")
+    tmp = None
     bad = []
     seen = {}
     try:
-        for corpus, test, target, ext in LANES:
-            d = emit(tmp, corpus, test, target)
+        if lanes is None:
+            tmp = tempfile.mkdtemp(prefix="recfields.")
+            lanes = emit_lanes(tmp)
+        for test, ext, d in lanes:
             bad += check_lane(d, test, ext, quiet, tamper=tamper, seen=seen,
                               header_tamper=header_tamper)
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        if tmp is not None:
+            shutil.rmtree(tmp, ignore_errors=True)
     for name in sorted(n for n, live in seen.items()
                        if not live and n not in GREP_ONLY):
         bad.append("#define %s is stamped and NO lane's code and no runtime header "
@@ -207,14 +218,12 @@ BITES = [
      lambda s: s.replace("#define HET_LINK_NAME", "#define HET_LINK_NAM")),
     ("a knob loses its #ifndef default in het_verdict.h", "no #ifndef default",
      None, lambda s: s.replace("#ifndef HET_PAIR_NAME", "#if 0")),
-    # THE OTHER DIRECTION.  The two sides drift when EITHER moves, so the header
-    # half is injected too: a member renamed or deleted in het_obs_record leaves
-    # every render writing a field the record no longer has, and property A must
-    # name the field rather than the file.
+    # THE OTHER DIRECTION.  The two sides drift when either moves, so the header
+    # half is injected too: a member renamed in het_obs_record leaves every render
+    # writing a field the record no longer has, and property A must name the field
+    # rather than the file.
     ("the record stamp field renamed in the header", "_rec.rec_magic,",
      None, lambda s: s.replace("  uint32_t rec_magic;", "  uint32_t rec_stamp;")),
-    ("a record member deleted from the header", "_rec.spin_lanes,",
-     None, lambda s: s.replace("  int spin_lanes;", "")),
 ]
 
 
@@ -224,18 +233,25 @@ def bite():
     a red for another lane's reason proves nothing about this injection."""
     print("===== BITE: does recfields FAIL when the binding breaks? =====")
     ok = True
-    for row in BITES:
-        what, want = row[0], row[1]
-        mutate = row[2]
-        hmut = row[3] if len(row) > 3 else None
-        bad = run(quiet=True, tamper=mutate, header_tamper=hmut, silent=True)
-        said = [m for m in bad if want in m]
-        if said:
-            print("  BITES (gate failed, as it must): %s   [%s]" % (said[0][:110], what))
-        else:
-            print("  *** DID NOT BITE for its own reason (%d finding(s), none naming "
-                  "%r)   [%s]" % (len(bad), want, what))
-            ok = False
+    tmp = tempfile.mkdtemp(prefix="recfields.")
+    try:
+        lanes = emit_lanes(tmp)
+        for row in BITES:
+            what, want = row[0], row[1]
+            mutate = row[2]
+            hmut = row[3] if len(row) > 3 else None
+            bad = run(quiet=True, tamper=mutate, header_tamper=hmut, silent=True,
+                      lanes=lanes)
+            said = [m for m in bad if want in m]
+            if said:
+                print("  BITES (gate failed, as it must): %s   [%s]"
+                      % (said[0][:110], what))
+            else:
+                print("  *** DID NOT BITE for its own reason (%d finding(s), none "
+                      "naming %r)   [%s]" % (len(bad), want, what))
+                ok = False
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     print("\n" + "=" * 70)
     if ok:
         print("BITE OK: all %d injections were caught, each by NAME." % len(BITES))

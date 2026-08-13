@@ -240,8 +240,8 @@ adds (ptxas / CPU clang / link) are near-constant across tests.
 ## 6. Makefile targets
 
 Mirror herdtools7's `::` accumulation + `| build` order-only prereq + `@ echo OK`.
-The CUDA lane is `-nvcc` (it was `-gpu` when nothing in it needed a device; three
-members now do — see below).
+The second lane is `-toolchain`: a target joins it when it needs a compiler or a
+device this box may not have, three of its members needing a real GPU (see below).
 **✓ All targets wired into the top-level Makefile (`68d102ef5`).**
 
 **The Makefile is the roster; this table mirrors it.** Re-read it with
@@ -251,7 +251,8 @@ Umbrellas (what you press):
 - **`make hetlitmus-test`** → the CUDA-free lane: `hetlitmus-cram` · `-corpus` ·
   `-dup` · `-lattice` · `-amd-controlmap` · `-controlmap` · `-verdict` · `-recfields` ·
   `-stats` · `-hist` · `-tuner` · `-x86body` · `-x86fixture` · `-d10` · `-run-gate`.
-- **`make hetlitmus-test-nvcc`** → the compile lane: `hetlitmus-faithful` · `-stress` ·
+- **`make hetlitmus-test-toolchain`** (old name `hetlitmus-test-nvcc`, kept as an alias)
+  → the toolchain lane: `hetlitmus-faithful` · `-stress` ·
   `-cpustress` · `-obs` · `-hipbuild` · `-characterize-hw` · `-run-hw` · `-l0-selftest` ·
   `-smoke`. This lane has **outgrown Layer 3**: it still needs CUDA for the compile
   members, but three of them now need a real device — `-run-hw` and `-characterize-hw`

@@ -16,14 +16,19 @@ co-ran.  This gate drives the REAL emitted header, which cannot drift from a cop
   4 THE CORPUS     every harness carries the post-pass and a decode channel.
   5/6 SCHEDULING   the stop rule and campaign.py, against a stub runner.
 
-Spec: env-research/Q3-stats.md R1-R6; impl-briefs/B7-impl-brief.md.
+Spec: env-research/Q3-stats.md R1-R6; impl-briefs/B7-impl-brief.md -- both
+SUPERSEDED (they design the withdrawn non-observation bound).  Where they and
+litmus/het-runtime/het_verdict.h disagree the header is what ships, and what a
+null reports now is hetlitmus/docs/00-environment-design.md 3.7.
 
 Usage:  statscheck.py [-q]      run the gate
         statscheck.py --bite    prove the gate FAILS when the mechanism breaks
 """
 
 import argparse
+import contextlib
 import csv
+import io
 import math
 import os
 import re
@@ -1195,6 +1200,13 @@ def phase2(lines, quiet):
                 print("  *** %s co-runs nothing with a control map present and the "
                       "printout does not call that a build bug" % name)
                 bad += 1
+        # An obs of ALWAYS on a row that co-runs nothing.  The runcheck twin of this
+        # line (ch_check's F assertion) additionally reads `0 < k < R', because it
+        # judges a device run where k == R is a legitimate Always.  Here that guard
+        # would delete the check: the fixture this line catches by itself is
+        # `always', k = R = 10, when a leak in het_verdict.h's co-run scan marks it
+        # as co-running nothing.  Its case names no flag expectation, so the
+        # differential sees nothing move.
         if (g["flags"] & (FLAG_BIT["SELF_CONTROL"] | FLAG_BIT["NO_CONTROL_CORUN"])) \
            and g["k"] > 0 and g["obs"] == "Always":
             print("  *** %s reports ALWAYS while nothing co-runs: the denominator "
@@ -2068,8 +2080,10 @@ def phase2b(header_dir, tmp, quiet):
             bad += 1
         elif not quiet:
             print("      %s" % frag[:96])
-    for frag in ("IS the Layer-B canary", "by construction, not by omission",
-                 "no map is registered for that pair", "there is none to borrow"):
+    # The self-canary arm's two sentences, refused here: they are the OTHER absence,
+    # and a note that borrows them files a gap in the instrumentation under a
+    # property of the design.
+    for frag in ("IS the Layer-B canary", "by construction, not by omission"):
         if frag in txt:
             print("  *** the no-control-map note still says %r" % frag)
             bad += 1
@@ -2090,17 +2104,35 @@ def phase2b(header_dir, tmp, quiet):
 
 
 # ---------------------------------------------------------------------------
-def run(header_dir, tmp, quiet):
-    try:
-        out = _compile_and_run(header_dir, tmp)
-    except _CompileFailed as e:
-        print(e.out + e.err)
-        print("\nSTATSCHECK FAILED: the statistics layer does not compile")
-        return 1
-    rc = phase1(out, quiet)
-    rc |= phase2(out, quiet)
-    rc |= phase2b(header_dir, tmp, quiet)
-    rc |= phase5_stops(out, quiet)
+# The header-driven phases, in print order.  1, 2 and 5 read one compiled run of
+# the layer; 2b and 3 each build a program of their own, so a caller that names
+# only the phases its subject can reach builds one program rather than three.
+GATE_PHASES = ("1", "2", "2b", "5")
+
+
+def run(header_dir, tmp, quiet, phases=GATE_PHASES):
+    out = None
+    if {"1", "2", "5"} & set(phases):
+        try:
+            out = _compile_and_run(header_dir, tmp)
+        except _CompileFailed as e:
+            print(e.out + e.err)
+            print("\nSTATSCHECK FAILED: the statistics layer does not compile")
+            return 1
+    rc = 0
+    for p in ("1", "2", "2b", "5", "3"):
+        if p not in phases:
+            continue
+        if p == "1":
+            rc |= phase1(out, quiet)
+        elif p == "2":
+            rc |= phase2(out, quiet)
+        elif p == "2b":
+            rc |= phase2b(header_dir, tmp, quiet)
+        elif p == "5":
+            rc |= phase5_stops(out, quiet)
+        else:
+            rc |= phase3(header_dir, tmp, quiet)
     return rc
 
 
@@ -2136,8 +2168,9 @@ def main():
 # ---------------------------------------------------------------------------
 # --bite: every injection below is a way this layer could ship a constant while
 # compiling cleanly and passing every structural gate.  Each is verified to have
-# actually CHANGED the file (one that matched nothing would pass for free) and each
-# must drive the gate to a NONZERO exit.
+# actually CHANGED the file (one that matched nothing would pass for free), names
+# the phases it can reach, and must redden one of them with a diagnostic carrying
+# its own reason -- the fixture that moved and which way it moved.
 # ---------------------------------------------------------------------------
 def _subst(s, pairs):
     """Apply (find, replace) pairs, FAILING LOUDLY if any `find' matched nothing.
@@ -2153,7 +2186,23 @@ def _subst(s, pairs):
     return s
 
 
-def _bite(label, hdir, mutate):
+def _named(said, expect):
+    """The diagnostic that names this injection: one `***' line carrying every
+    fragment of `expect'.  Both halves are required of a fragment pair -- the
+    fixture that moved and WHICH WAY it moved -- because a phase reddening on some
+    other fixture is another injection's evidence, not this one's."""
+    want = (expect,) if isinstance(expect, str) else expect
+    for l in said.splitlines():
+        s = l.strip()
+        if s.startswith("***") and all(w in s for w in want):
+            return s
+    return None
+
+
+def _bite(label, hdir, mutate, phases, expect):
+    """`phases' are the ones this injection can reach, `expect' the diagnostic it
+    must produce there.  A nonzero exit is not enough on its own: a red for
+    another reason would let a broken injection stand in for a live gate."""
     hp = os.path.join(hdir, "het_verdict.h")
     with open(hp) as fh:
         orig = fh.read()
@@ -2162,6 +2211,7 @@ def _bite(label, hdir, mutate):
         print("  *** VACUOUS BITE: the injection changed nothing   [%s]" % label)
         return False
     sub = tempfile.mkdtemp(prefix="statsbite.")
+    said = io.StringIO()
     try:
         # phase3 derives the test name from the directory basename: keep it.
         test = os.path.basename(hdir)
@@ -2170,14 +2220,19 @@ def _bite(label, hdir, mutate):
         shutil.copy(os.path.join(hdir, test + ".cu"), bdir)
         with open(os.path.join(bdir, "het_verdict.h"), "w") as fh:
             fh.write(new)
-        rc = run(bdir, sub, quiet=True)
-        rc |= phase3(bdir, sub, quiet=True)
+        with contextlib.redirect_stdout(said):
+            rc = run(bdir, sub, quiet=True, phases=phases)
     finally:
         shutil.rmtree(sub, ignore_errors=True)
-    if rc:
-        print("  BITES (gate failed, as it must)   [%s]" % label)
+    hit = _named(said.getvalue(), expect)
+    if rc and hit:
+        print("  BITES (P%s): %s   [%s]" % ("+".join(phases), hit[:104], label))
         return True
-    print("  *** DID NOT BITE: the gate PASSED on a broken layer   [%s]" % label)
+    print("  *** DID NOT BITE for its own reason (P%s rc=%d, wanted %r)   [%s]"
+          % ("+".join(phases), rc, expect, label))
+    for l in said.getvalue().splitlines():
+        if l.strip().startswith("***"):
+            print("        | " + l.strip()[:140])
     return False
 
 
@@ -2198,7 +2253,8 @@ def bite():
                     lambda s: _subst(s, [
                         ("  ks = (st->flags & HET_ST_CTRL_STREAM_EMPTY)\n"
                          "       ? -1\n",
-                         "  ks = 0\n       ? -1\n")]))
+                         "  ks = 0\n       ? -1\n")]),
+                    ("2",), "the pooled stream is empty but the KS gate reports")
 
         # (2) ... and the same overclaim from the other side: the guard never fires,
         # so there is nothing for the gate to consult.  Two injections because the
@@ -2209,7 +2265,8 @@ def bite():
                     lambda s: _subst(s, [
                         ("  if (nwin < 2 || ctrl_pooled == 0 || "
                          "(st->flags & HET_ST_WIN_DESYNC))\n",
-                         "  if (0)\n")]))
+                         "  if (0)\n")]),
+                    ("2",), "CTRL_STREAM_EMPTY=False but the pooled stream is empty")
 
         # (3) THE DEGENERACY GUARD DISABLED: a constant-read decoder artefact could
         # then forge a CORROBORATED sighting out of an artefact that never varied.
@@ -2218,13 +2275,17 @@ def bite():
                     lambda s: s.replace(
                         "static int het_cell_degenerate(const het_obs_record *r) {",
                         "static int het_cell_degenerate(const het_obs_record *r) {\n"
-                        "  if (r) return 0;"))
+                        "  if (r) return 0;"),
+                    ("5",), ("degenerate-sightings-never-stop",
+                             "CORROBORATED, want CONTINUE"))
 
         # (4) THE KS GATE MADE CONSTANT-PASS: stationarity is never tested and P_rep
         # is reported across a rate change, which Kirkham's own data says to expect.
         ok &= _bite("the KS gate made constant-pass (stationarity never tested)", hdir,
                     lambda s: s.replace("  return (D <= *Dcrit_out) ? 1 : 0;\n",
-                                        "  return 1;\n"))
+                                        "  return 1;\n"),
+                    ("2",), ("ks-split-rejects-and-suppresses-Prep",
+                             "ks: C pass != py SPLIT"))
 
         # (5) THE CORROBORATION GUARD GUTTED: one un-reproduced sighting would stop
         # the row and bank a sighting nothing reproduced.
@@ -2233,14 +2294,18 @@ def bite():
                     lambda s: s.replace(
                         "    if (st.tier == HET_SIGHT_CORROBORATED) "
                         "return HET_CAMPAIGN_STOP_CORROBORATED;",
-                        "    if (st.k > 0) return HET_CAMPAIGN_STOP_CORROBORATED;"))
+                        "    if (st.k > 0) return HET_CAMPAIGN_STOP_CORROBORATED;"),
+                    ("5",), ("one-clean-sighting-does-not-stop",
+                             "CORROBORATED, want CONTINUE"))
 
         # (6) RATE MODE IGNORED: the row that was supposed to run on and yield a
         # rate stops at its first corroborated sighting instead, and the campaign
         # measures nothing it was asked to measure.
         ok &= _bite("rate mode ignored (a sighting stops the row anyway)", hdir,
                     lambda s: s.replace("  if (st.k_eff > 0 && !rate_mode) {",
-                                        "  if (st.k_eff > 0) {"))
+                                        "  if (st.k_eff > 0) {"),
+                    ("5",), ("rate-mode-does-not-stop-on-a-corroborated-sighting",
+                             "CORROBORATED, want CONTINUE"))
 
         # (7) THE CONFIRMATION WINDOW NEVER CLOSES: a lone sighting holds the row
         # open forever, and UNCONFIRMED-SIGHTING -- the one flagged outcome -- becomes
@@ -2250,7 +2315,9 @@ def bite():
                     "forever)", hdir,
                     lambda s: s.replace(
                         "    if (n - st.n_at_first_sight >= confirm_runs)",
-                        "    if (0)"))
+                        "    if (0)"),
+                    ("5",), ("lone-sighting-at-the-confirm-window-stops-unconfirmed",
+                             "CONTINUE, want UNCONFIRMED-SIGHTING"))
 
         # (8) THE WINDOW MEASURED FROM RUN 0 AGAIN: it then closes on a row that
         # fires late before that row has run any of it, and UNCONFIRMED-SIGHTING --
@@ -2260,21 +2327,26 @@ def bite():
                     "gets none of it)", hdir,
                     lambda s: s.replace(
                         "    if (n - st.n_at_first_sight >= confirm_runs)",
-                        "    if (n >= confirm_runs)"))
+                        "    if (n >= confirm_runs)"),
+                    ("5",), ("lone-sighting-below-the-confirm-window-continues",
+                             "UNCONFIRMED-SIGHTING, want CONTINUE"))
 
         # (9) THE CORROBORATION BAR MOVED: HET_CORROB_RUNS is what both sides of
         # the tier fixtures are sized from and what the MIRROR| line pins, so a
         # header that quietly raises it must redden by NAME.
         ok &= _bite("the corroboration bar raised (HET_CORROB_RUNS 2 -> 3)", hdir,
                     lambda s: s.replace("#define HET_CORROB_RUNS 2",
-                                        "#define HET_CORROB_RUNS 3"))
+                                        "#define HET_CORROB_RUNS 3"),
+                    ("1",), "MIRROR DRIFT: HET_CORROB_RUNS is 3 in the header")
 
         # (10) THE RECORD STAMP STOPS BEING CHECKED: het_stats_compute reuses
         # het_verdict() per cell, so an unstamped stream would score as a live one
         # and the aggregate would report a result over memset zeros.
         ok &= _bite("rec_magic no longer fails closed inside the aggregate", hdir,
                     lambda s: s.replace("  if (r->rec_magic != HET_REC_MAGIC) {",
-                                        "  if (0) {"))
+                                        "  if (0) {"),
+                    ("5",), ("unstamped-sightings-earn-no-corroboration",
+                             "CORROBORATED, want BUDGET"))
 
         # ---- THE STRUCTURAL INVARIANTS ------------------------------------------
         # This family of assertions guards structure the shipped header enforces
@@ -2291,7 +2363,9 @@ def bite():
                     lambda s: _subst(s, [(
                         "        for (j = 0; j < nruns; j++) "
                         "if (runs[j] == recs[i].run_id) seen = 1;",
-                        "        for (j = 0; j < nruns; j++) if (0) seen = 1;")]))
+                        "        for (j = 0; j < nruns; j++) if (0) seen = 1;")]),
+                    ("2",), ("sighting-unconfirmed-3-cells-of-ONE-run",
+                             "k_runs: C 3 != py 1"))
 
         # (12) THE P_rep DECODE GUARD DELETED: where every sighting was rejected by
         # the degeneracy guard, 1 - e^{-0} = 0 is then reported as "P_rep = 0.00%",
@@ -2300,7 +2374,9 @@ def bite():
         ok &= _bite("the P_rep k_eff>0 conjunct deleted (an ABSENCE printed as 0.00%)",
                     hdir,
                     lambda s: _subst(s, [("    if (st->ks_pass && st->k_eff > 0)",
-                                          "    if (st->ks_pass)")]))
+                                          "    if (st->ks_pass)")]),
+                    ("2",), ("degenerate-sightings-rejected-but-reported",
+                             "P_rep: C 0 != py -1"))
 
         # (13) THE TRUNCATION STOPS SAYING IT TRUNCATED: the tail is still discarded
         # (the clamp stays, so nothing overruns), but nothing records that the
@@ -2311,22 +2387,31 @@ def bite():
                         "  if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS;\n"
                         "                                 st->flags |= "
                         "HET_ST_CELLS_TRUNCATED; }",
-                        "  if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS; }")]))
+                        "  if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS; }")]),
+                    ("2",), ("cells-truncated-above-HET_STATS_MAX_CELLS",
+                             "flag CELLS_TRUNCATED NOT set"))
 
         # ---- THE PYTHON MIRRORS -------------------------------------------------
         # (14)-(16) Move a mirrored macro in the header and leave statscheck's Python
-        # copy behind.  Every fixture here sits far from these boundaries, so NOTHING
-        # ELSE in the gate changes: without the MIRROR| comparison each of these is a
-        # green run on a mirror that no longer describes the header.
+        # copy behind.  The MIRROR| comparison in phase 1 is what must name each
+        # drift, and for THETA_DISTINCT and TAU_HOT it is the ONLY thing that can:
+        # every fixture sits far from those two boundaries, so each comparison keeps
+        # its truth value on both sides of the move and the differential stays green
+        # on a mirror that no longer describes the header.  MAX_CELLS is not like
+        # that -- the truncation fixture is sized from it, so the differential moves
+        # too -- but phase 1 is still where the drift is named.
         ok &= _bite("HET_THETA_DISTINCT moved under the Python mirror", hdir,
                     lambda s: _subst(s, [("#define HET_THETA_DISTINCT 2",
-                                          "#define HET_THETA_DISTINCT 3")]))
+                                          "#define HET_THETA_DISTINCT 3")]),
+                    ("1",), "MIRROR DRIFT: HET_THETA_DISTINCT is 3 in the header")
         ok &= _bite("HET_TAU_HOT moved under the Python mirror", hdir,
                     lambda s: _subst(s, [("#define HET_TAU_HOT 30",
-                                          "#define HET_TAU_HOT 31")]))
+                                          "#define HET_TAU_HOT 31")]),
+                    ("1",), "MIRROR DRIFT: HET_TAU_HOT is 31 in the header")
         ok &= _bite("HET_STATS_MAX_CELLS moved under the Python mirror", hdir,
                     lambda s: _subst(s, [("#define HET_STATS_MAX_CELLS 128",
-                                          "#define HET_STATS_MAX_CELLS 129")]))
+                                          "#define HET_STATS_MAX_CELLS 129")]),
+                    ("1",), "MIRROR DRIFT: HET_STATS_MAX_CELLS is 129 in the header")
 
         # (17)-(18) THE TWO NO-CONTROL STATES CONFLATED.  This is the defect in
         # its simplest form: infer "this row IS the Layer-B canary" from "no record
@@ -2340,7 +2425,10 @@ def bite():
                         ('      if (recs[first].canary_name && recs[first].test_name\n'
                          '          && strcmp(recs[first].canary_name, '
                          'recs[first].test_name) == 0)\n',
-                         '      if (1)\n')]))
+                         '      if (1)\n')]),
+                    ("2", "2b"),
+                    ("no-control-map-fired-3-of-10-is-SOMETIMES-and-is-NOT-the-canary",
+                     "flag SELF_CONTROL set (must not be)"))
         # ... and the reverse: a genuine self-canary row demoted to the no-map state,
         # which would report a gap in the instrumentation where the design has none.
         ok &= _bite("the self-canary test made unsatisfiable (a real canary row "
@@ -2349,7 +2437,10 @@ def bite():
                         ('      if (recs[first].canary_name && recs[first].test_name\n'
                          '          && strcmp(recs[first].canary_name, '
                          'recs[first].test_name) == 0)\n',
-                         '      if (0)\n')]))
+                         '      if (0)\n')]),
+                    ("2", "2b"),
+                    ("self-canary-fired-3-of-10-is-SOMETIMES-not-ALWAYS",
+                     "flag SELF_CONTROL NOT set"))
 
         # (19) THE WINDOW BUMP DELETED FROM THE PRODUCER: het_win_of still exists and
         # the aggregate still computes, but the sub-tallies never move, so the stream

@@ -103,6 +103,10 @@ def emit_corpus(tmp):
 # a very small C block scanner (brace depth, string/char literals removed)
 # ---------------------------------------------------------------------------
 def _strip_literals(line):
+    # No quote opens the scan below, so it copies the line character by character:
+    # on a line without one the loop is the identity and the copy is skipped.
+    if '"' not in line and "'" not in line:
+        return line
     out, i, n = [], 0, len(line)
     while i < n:
         c = line[i]

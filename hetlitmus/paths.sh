@@ -5,7 +5,7 @@
 #   . "$(dirname "$0")/../paths.sh"                  # a script in hetlitmus/verify/
 #   . ../../paths.sh                                 # after cd'ing into a test dir
 #
-# PATH is deliberately NOT touched here: the nvcc-lane scripts need
+# PATH is deliberately NOT touched here: the toolchain-lane scripts need
 # /usr/local/cuda/bin ahead of $BIN and the corpus generators do not, so each
 # caller exports the search path it wants.
 HETL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

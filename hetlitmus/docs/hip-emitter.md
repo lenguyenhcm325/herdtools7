@@ -144,7 +144,7 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
   `MP-cg-sys-acqrel-2s-x86_64`, and **fails** when `hipcc` is absent) and
   `make hetlitmus-smoke` (`verify/smoke.sh` rep 8,
   `MP-cg-sys-relaxed-x86_64`, `hipcc -c` only, and it **skips with exit 0**
-  when `hipcc` is absent), both under the `hetlitmus-test-nvcc` umbrella. Both
+  when `hipcc` is absent), both under the `hetlitmus-test-toolchain` umbrella. Both
   of those tests are fence-free, so no target ever compiles a fence — the
   numbers above come from a hand-run, not from a gate
   (`litmus/HipLang.ml`, `hip_fence_scope`). CUDA has no `compile-cuda.sh` twin;

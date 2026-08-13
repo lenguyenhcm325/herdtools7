@@ -19,9 +19,10 @@ Two comparisons, both verbatim:
   P2  for each of the four tests, the committed map ROW must equal the row the
       generated (re-keyed) map carries -- fields, order and text
 
-The generator writes the whole 411-test corpus and takes seconds, so this is a
-fast gate and lives in the CUDA-free `hetlitmus-test' umbrella: generation and
-comparison need no GPU.
+The generator writes the whole 411-test corpus, once per invocation: every
+comparison reads that one scratch corpus, since only the fixture side is ever
+perturbed.  Generation and comparison need no GPU, so the gate lives in the
+CUDA-free `hetlitmus-test' umbrella.
 
 `--bite' perturbs one committed .litmus body and one committed map row in a COPY
 of the fixture and requires the matching phase to redden naming the file.
@@ -152,15 +153,10 @@ def phase2(corpus, fixture, quiet=False):
     return n
 
 
-def run_once(fixture, quiet=False):
+def run_once(fixture, corpus, quiet=False):
     del fails[:]
-    tmp = tempfile.mkdtemp(prefix="x86fixturecheck.")
-    try:
-        corpus = generate(tmp)
-        n1 = phase1(corpus, fixture, quiet)
-        n2 = phase2(corpus, fixture, quiet)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    n1 = phase1(corpus, fixture, quiet)
+    n2 = phase2(corpus, fixture, quiet)
     if fails:
         if not quiet:
             print("\nX86FIXTURECHECK FAILED: %d problem(s)." % len(fails))
@@ -176,7 +172,7 @@ def run_once(fixture, quiet=False):
     return 0
 
 
-def bite():
+def bite(corpus):
     """Each injection is into a COPY of the fixture, so the committed one is never
     touched, and each must redden its OWN phase naming the file it broke."""
     print("===== BITE: does this gate see a stale fixture? =====")
@@ -210,7 +206,7 @@ def bite():
                 bad += 1
                 continue
             open(p, "w").write(new)
-            rc = run_once(copy, quiet=True)
+            rc = run_once(copy, corpus, quiet=True)
             hit = any(ph == phase and want in m for ph, m in fails)
             if rc == 0 or not hit:
                 print("  *** [%s] %s: gate rc=%d, %s -- it did not catch this"
@@ -222,7 +218,7 @@ def bite():
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
     # ... and GREEN again on the untouched fixture, so "red" was the injection.
-    rc = run_once(FIXTURE, quiet=True)
+    rc = run_once(FIXTURE, corpus, quiet=True)
     if rc != 0:
         print("  *** the committed fixture itself is RED -- the bites above prove "
               "nothing about the injections")
@@ -244,7 +240,12 @@ def main():
     a = ap.parse_args()
     if not os.access(os.path.join(BIN, "hetgen7"), os.X_OK):
         raise SystemExit("x86fixturecheck: hetgen7 not built (run 'make all')")
-    return bite() if a.bite else run_once(FIXTURE)
+    tmp = tempfile.mkdtemp(prefix="x86fixturecheck.")
+    try:
+        corpus = generate(tmp)
+        return bite(corpus) if a.bite else run_once(FIXTURE, corpus)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

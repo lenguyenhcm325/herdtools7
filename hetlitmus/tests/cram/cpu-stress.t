@@ -125,21 +125,13 @@ on a tested cache line.  The shared test vars and the barrier go through
 gd_alloc_shared (coherent -- the property under test); the GPU stress scratchpad
 through cudaMalloc (device-only, disjoint); the CPU enemy scratchpad through
 plain host malloc (CPU-only, disjoint); and the noise buffers through
-gd_alloc_noise (homed on the OTHER processing unit).  In a co-run harness the
-shared vars and the barrier come from one cache-line-padded gd_alloc_shared
-arena -- see shared-alloc.t (e) for why the padding and the allocator both
-matter.
-  $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $MP.cu
-  1
-  $ grep -c 'gd_alloc_shared((void\*\*)&' $MP.cu
-  1
-  $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $MP.cu
-  6
+gd_alloc_noise (homed on the OTHER processing unit).  The first two classes are
+read on this same MP-cg-sys-acqrel-2s render elsewhere -- the padded co-run arena
+and its matching free in shared-alloc.t (e), the GPU scratchpad in stress.t (b).
+What is pinned here is the barrier's own slot in that arena, which nothing else
+reads; the two CPU-side classes; and the refusal that keeps the enemy scratchpad
+off the coherent allocator.
   $ grep -cE 'int \*barrier = \(int\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*6\)' $MP.cu
-  1
-  $ grep -c 'gd_free_shared(_shared_arena)' $MP.cu
-  1
-  $ grep -c 'cudaMalloc(&_scratch, sizeof(uint32_t)\*HET_SCRATCH_SIZE)' $MP.cu
   1
   $ grep -c 'malloc_check(sizeof(uint64_t)\*HET_CPU_SCRATCH_WORDS)' $MP.cu
   1

@@ -17,9 +17,11 @@ identically, and only this define says which machine it was measuring.
 
 (a) Every render stamps the record, exactly once and by the SYMBOL.
 het_verdict() reads no field of a record that does not carry HET_REC_MAGIC, so a
-render that lost this line would discard every run it ever made.
-  $ grep -c '_rec.rec_magic = HET_REC_MAGIC;' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
-  1
+render that lost this line would discard every run it ever made.  The two REGISTERED
+pairs are read by hetlitmus-recfields, over this same MP-cg-sys-relaxed shape and
+by the same rule; the (X86_64, hip) half stays here because the sections below
+read that render for its machine defines, and the two dev-tier pairs -- which no
+other gate emits -- are read at (c) and (d).
   $ grep -c '_rec.rec_magic = HET_REC_MAGIC;' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   1
 
