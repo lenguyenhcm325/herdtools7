@@ -199,41 +199,90 @@ def _run_on(d):
     return r.returncode, r.stdout + r.stderr
 
 
-def bite(d):
-    print("===== DUPCHECK BITE: does the gate fail when it must? =====")
-    rc = 0
+def _rename_locs(txt):
+    """x <-> y, on word boundaries so `exists' and `X1' are untouched.  A pure
+    location renaming is by definition the same experiment."""
+    out = re.sub(r"\b([xy])\b", lambda m: "y" if m.group(1) == "x" else "x", txt)
+    assert out.count("=x;") == 1 and out.count("=y;") == 1 and "exists" in out, \
+        "the location renaming corrupted the test"
+    return out
 
-    # A NEW duplicate: copy a test under a new name and rename its locations.
+
+def _swap_procs(txt):
+    """P0 <-> P1 on a 2-proc test, DEVICE TAG AND ALL.  Locations, values and
+    annotations are untouched, so the result is the same experiment under the other
+    half of the canonical form -- the half the 39 classes removed in 2026-08-01 were
+    duplicates under (Q10 sect 2.1), where a `cg' test and its `gc' mirror differ
+    only in which proc index carries which device."""
+    out = []
+    for l in txt.splitlines():
+        if "|" not in l:
+            out.append(l)
+            continue
+        body = l.rstrip()
+        semi = body.endswith(";")
+        if semi:
+            body = body[:-1]
+        a, b = (c.strip() for c in body.split("|"))
+        if a.startswith("P0:") and b.startswith("P1:"):
+            a, b = "P0:" + b[3:], "P1:" + a[3:]   # the header row: tags travel
+        else:
+            a, b = b, a
+        out.append(" %-20s| %-20s%s" % (a, b, ";" if semi else ""))
+    s = "\n".join(out) + "\n"
+    # A proc is named by number in the init bindings, in the condition and in the
+    # scope tree, and every one of those has to follow its column.
+    s = re.sub(r"\b0:", "\x00:", s)
+    s = re.sub(r"\b1:", "0:", s)
+    s = s.replace("\x00:", "1:")
+    for a, b in (("(cta P1)", "(cta \x00)"), ("(cta P0)", "(cta P1)"),
+                 ("(cta \x00)", "(cta P0)")):
+        s = s.replace(a, b)
+    return s
+
+
+def _clone_arm(d, why, base, suffix, rewrite):
+    """Copy the corpus, add ONE clone of `base' built by `rewrite', and require the
+    gate to fail naming it."""
     with tempfile.TemporaryDirectory() as tmp:
         work = os.path.join(tmp, "het")
         shutil.copytree(d, work)
-        src = os.path.join(work, "MP-cg-sys-relaxed.litmus")
-        txt = open(src).read()
-        # x<->y renaming only -- word-boundary, so `exists' / `X1' are untouched.
-        # A pure location rename is by definition the same experiment.
-        body = re.sub(r"\b([xy])\b", lambda m: "y" if m.group(1) == "x" else "x",
-                      txt)
-        body = body.replace("MP-cg-sys-relaxed", "MP-cg-sys-relaxed-CLONE")
-        assert body.count("=x;") == 1 and body.count("=y;") == 1 \
-            and "exists" in body, "injection corrupted the test"
+        name = base + suffix
+        txt = open(os.path.join(work, base + ".litmus")).read()
+        body = rewrite(txt).replace(base, name)
         assert body != txt, "injection was vacuous"
-        dst = os.path.join(work, "MP-cg-sys-relaxed-CLONE.litmus")
-        open(dst, "w").write(body)
+        open(os.path.join(work, name + ".litmus"), "w").write(body)
         c, out = _run_on(work)
-        ok = c != 0 and "DUPLICATE class" in out \
-            and "MP-cg-sys-relaxed-CLONE" in out
-        print("  synthetic duplicate (MP-cg-sys-relaxed copied with x<->y renamed)")
+        ok = c != 0 and "DUPLICATE class" in out and name in out
+        print("  %s" % why)
         print("      rc=%d  %s" % (c, "BITES" if ok else "*** DID NOT BITE"))
         for l in out.splitlines():
             if "***" in l:
                 print("      | " + l.strip())
-        rc |= 0 if ok else 1
+        return 0 if ok else 1
+
+
+def bite(d):
+    print("===== DUPCHECK BITE: does the gate fail when it must? =====")
+    rc = 0
+
+    # The canonical form minimises over (proc permutation) x (location renaming),
+    # and each half needs its own clone: a renamed-location clone leaves the proc
+    # permutation untested, and that is the half the 39 historical duplicates were
+    # duplicates under.
+    rc |= _clone_arm(
+        d, "synthetic duplicate (MP-cg-sys-relaxed copied with x<->y renamed)",
+        "MP-cg-sys-relaxed", "-CLONE", _rename_locs)
+    rc |= _clone_arm(
+        d, "synthetic duplicate (MP-cg-sys-relaxed copied with P0 and P1 swapped)",
+        "MP-cg-sys-relaxed", "-SWAP", _swap_procs)
 
     print()
     if rc:
         print("BITE FAILED: the gate did not fail where it must.")
         return 1
-    print("BITE OK: the gate has teeth (a new duplicate fails it)")
+    print("BITE OK: the gate has teeth (a duplicate under either half of the "
+          "canonical form fails it)")
     return 0
 
 

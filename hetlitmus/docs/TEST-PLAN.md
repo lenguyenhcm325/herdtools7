@@ -96,7 +96,7 @@ exhaustively over **all 548** by:
 
 | What is checked over ALL 548 | Layer |
 |---|---|
-| byte-pinned (regression) | 2 golden (`git status --porcelain`) |
+| byte-pinned (regression) | 2 golden (regenerate out of tree + byte-diff) |
 | PTX/asm matches its annotation (faithfulness) | 3 (`l0_tokens.sh all`) |
 | compiles | 3 (faithful `nvcc --ptx` + smoke) |
 | enumeration didn't silently shrink | 2 census (counts 137/411, `@all`) |
@@ -162,8 +162,10 @@ our generation is byte-stable so we don't need it.
 
 ### Layer 2 — Generate (git-diff + make; OCaml build)
 - ✓ `generate.sh` (both dirs), byte-stable.
-- ✓ **golden gate** (`verify/corpus-gate.sh`, `6e92f2657`): regenerate, then fail on
-  any tree change including added/removed files — `git status --porcelain -- hetlitmus/tests/`, **not** bare `git diff`.
+- ✓ **golden gate** (`verify/corpus-gate.sh`, `6e92f2657`): regenerate into a temp
+  tree (`generate.sh OUTDIR`), then fail on any name-set or byte difference against the
+  committed corpus — added, removed and modified files are each named. `--bite` reddens it
+  with a generator that writes nothing and with one tampered byte.
 - ✓ emission golden (in `corpus-gate.sh`): 10 `cuda-out/*.cu` **and** 10 `hip-out/*.hip`
   samples are committed; `emit-cuda.sh` and `emit-hip.sh` each emit all 137 to a
   **temp dir** and each sample is diffed against its own lane — emitter drift = nonzero
@@ -267,7 +269,8 @@ Umbrellas (what you press):
 
 Three of the building blocks are worth naming, because each exists for a failure no other
 gate can see. `hetlitmus-lattice` machine-checks the ordering-strength lattice (`ordercheck.py` phases
-1–2, 96 ARM + 96 PTX cells against herd7) that every `mu(T)` is selected on;
+1–2, 96 ARM + 96 PTX cells against herd7, plus phase 3 keying its 8 primitives against
+`controlmap.py`'s own copy of the same sets) that every `mu(T)` is selected on;
 `hetlitmus-controlmap` / `-amd-controlmap` gate the derived map itself on both lattices;
 `hetlitmus-recfields` pins the emitted `_rec.*` writes against `het_verdict.h`'s members
 and the emitted `#define`s against its `#ifndef` defaults, which is the one skew a
@@ -298,7 +301,7 @@ layer is **in the PTX at all**. It exists because B4 shipped a pre-stress incant
 nvcc had dead-code-eliminated to zero instructions, and every other gate stayed green.
 
 Notes:
-- `hetlitmus-corpus` uses `git status --porcelain` (catches add/remove; non-invasive).
+- `hetlitmus-corpus` compares a fresh out-of-tree regeneration against the committed corpus (catches add/remove/modify; writes nothing into the tree).
 - GPU/nvcc targets are never wired into upstream `test::`. **Decided: hetlitmus targets
   stay standalone (not folded into `test::`) to keep the main suite fast + CUDA-free.**
 - Layer 4 is `hetlitmus/hetlitmus-run.sh`, the device-session wrapper: run by hand on the
@@ -349,7 +352,7 @@ Steps 1–4 all run on the dev box (and in CI, Layer 3 with a CUDA-install step)
 | PTX faithfulness | ✓ `ptxcheck.py` + `l0_tokens.sh` |
 | oracle comparison | ✓ `oracle-compare.sh` |
 | annotation rules under test | ✓ `_grid_lib.sh` functions |
-| corpus golden store + promote | ✓ git (`status --porcelain` / `commit` / `checkout`) |
+| corpus golden store + promote | ✓ git (`commit` / `checkout`) + regenerate-and-diff |
 | cram runner + promote | ✓ dune (`(cram enable)` already in `dune-project`; `dune promote`) |
 | Makefile idiom | ✓ herdtools7 `test::`/`| build`/`@ echo OK` |
 

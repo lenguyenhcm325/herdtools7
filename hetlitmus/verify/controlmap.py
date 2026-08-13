@@ -26,7 +26,7 @@ while the null still prints and still looks green.
 Usage:
     controlmap.py --emit  [--dir D] [--lattice L]        > control-map.csv
     controlmap.py --check [--dir D] [--lattice L] [--map F]     (the gate)
-    controlmap.py --bite                            (the gate's negative control)
+    controlmap.py --bite  [--dir D] [--lattice L]   (the gate's negative control)
 """
 
 import argparse
@@ -41,6 +41,10 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
+# The committed (x86_64, hip) pair fixture.  litmus7 resolves the map name from
+# the CPU column, so only an x86 rendering asks for the AMD map by name; the het
+# corpus is rendered for AArch64 whatever lattice the audit runs under.
+X86_FIXTURE = os.path.join(HERE, "..", "tests", "het-x86")
 LITMUS7 = os.path.join(HERE, "..", "..", "_build", "install", "default", "bin",
                        "litmus7")
 LIBDIR = os.path.join(HERE, "..", "..", "litmus", "libdir")
@@ -83,6 +87,13 @@ def set_lattice(name):
                          % (name, " | ".join(LATTICES)))
     LATTICE = name
 
+
+def map_basename(lattice=None):
+    """Which map file a lattice's artifact is: the two are separate files, and
+    litmus/hetCpuFront.ml names the same two."""
+    return ("control-map-amd.csv" if (lattice or LATTICE) == "x86"
+            else "control-map.csv")
+
 # ---------------------------------------------------------------------------
 # The per-side ordering-strength lattice.  mu(T) must be strictly WEAKER
 # componentwise (cpu,gpu) and structurally identical to T -- same procs, same
@@ -104,7 +115,7 @@ def set_lattice(name):
 #         0 plain       STR / LDR ; [relaxed,..]
 #   ord   the program-order pairs {WW,RR,WR,RW} that side's ops order inside
 #         their own thread -- the ord(p) table of verify/ordercheck.py, which
-#         machine-checks it against herd7.
+#         machine-checks it against herd7 and keys these two copies together.
 #
 # `weaker-or-equal' is (t1,o1) <= (t2,o2) iff t1 < t2, or t1 == t2 and o1 is a
 # subset of o2.  That keeps DMB.ST/DMB.LD incomparable, and f[release] and
@@ -154,6 +165,11 @@ def _pp(s):
                                s[1][0], "".join(sorted(s[1][1])) or "-")
 
 
+# The rejection D11 asks for, spelled once: `--bite' injection [2] wants this
+# exact string back, so the message and the expectation cannot drift apart.
+SAME_STRENGTH = "identical ordering strength -- not a weakening at all"
+
+
 def weakening_of(T, M):
     """Why M cannot serve as mu(T), or None if it can.  The two properties the
     vouch rests on, in one place: candidate selection asks for None, and the
@@ -164,7 +180,7 @@ def weakening_of(T, M):
     if not (side_le(ms[0], ts[0]) and side_le(ms[1], ts[1])):
         return ("not weaker (cpu,gpu strength %s vs %s)" % (_pp(ms), _pp(ts)))
     if ms == ts:
-        return "identical ordering strength -- not a weakening at all"
+        return SAME_STRENGTH
     return None
 
 
@@ -762,15 +778,19 @@ def check(d, map_f, quiet=False):
 # pass for the previous bite's reason), is cmp-verified to have changed the
 # artifact it targets, and must produce the NAMED error -- reddening for some
 # other reason is not this bite passing.
-def _scratch(d, tmp, tag):
-    """A private copy of corpus + map to corrupt.  The parse cache is dropped as
-    the belt to the fresh directory's braces: a corrupted corpus is never read
-    through an entry made before it was corrupted."""
+def _scratch(d, tmp, tag, map_base):
+    """A private copy of corpus + map to corrupt.  `map_base' is the lattice's
+    own map file, so the x86 arm copies and corrupts the AMD map rather than the
+    AArch64 one sitting beside it.  The parse cache is dropped as the belt to the
+    fresh directory's braces: a corrupted corpus is never read through an entry
+    made before it was corrupted.  The cache key stays (dir, lattice) -- load()
+    reads .litmus files and no map, so which CSV check() opens is not part of
+    what is memoized."""
     _LOADED.clear()
     dst = os.path.join(tmp, tag)
     os.mkdir(dst)
     for f in os.listdir(d):
-        if f.endswith(".litmus") or f == "control-map.csv":
+        if f.endswith(".litmus") or f == map_base:
             shutil.copy(os.path.join(d, f), dst)
     return dst
 
@@ -801,13 +821,34 @@ def _sub_mu(path, test, new_mu):
 LEGACY_HEADER = "Test,Expected,Mu,MuExpected,MuRule,MuAlt,MuRelaxed,Canary"
 
 
-def bite(d):
-    print("===== --bite: the control map's OWN negative control =====")
+def _make_legacy(path):
+    """Rewrite a map into the retired 8-column schema, in place.  False when the
+    header was not there to replace, i.e. the injection changed nothing."""
+    lines = open(path).read().splitlines()
+    if HEADER_LINE not in lines:
+        return False
+    out = []
+    for l in lines:
+        if l == HEADER_LINE:
+            out.append(LEGACY_HEADER)
+        elif l.startswith("#") or not l:
+            out.append(l)
+        else:
+            f = l.split(",")
+            out.append(",".join([f[0], "Allowed", f[1], "Allowed"] + f[2:]))
+    with open(path, "w") as fh:
+        fh.write("\n".join(out) + "\n")
+    return True
+
+
+def bite(d, map_base):
+    print("===== --bite: the control map's OWN negative control (lattice: %s, "
+          "map: %s) =====" % (LATTICE, map_base))
     tmp = tempfile.mkdtemp(prefix="controlmap-bite.")
     fails = 0
     try:
-        base = _scratch(d, tmp, "clean")
-        errs = check(base, os.path.join(base, "control-map.csv"), quiet=True)
+        base = _scratch(d, tmp, "clean", map_base)
+        errs = check(base, os.path.join(base, map_base), quiet=True)
         print("  [0] control: an untouched scratch copy -> %d error(s) (expect 0)"
               % len(errs))
         if errs:
@@ -816,7 +857,7 @@ def bite(d):
             fails += 1
 
         tests = load(base)
-        with open(os.path.join(base, "control-map.csv")) as fh:
+        with open(os.path.join(base, map_base)) as fh:
             maptext = fh.read()
         mu_rows = [r for r in csv.reader(l for l in maptext.splitlines()
                                          if not l.startswith("#"))
@@ -841,6 +882,21 @@ def bite(d):
                     break
             if naive_row:
                 break
+        # For bite 2, a row whose corpus holds a structural sibling of the SAME
+        # strength on the active lattice.  Which pairs qualify is what the two
+        # lattices disagree about: on x86 the pair is usually one AArch64 would
+        # accept as a weakening, because STLR / LDAPR / DMB.ST / DMB.LD collapse
+        # to a plain MOV there (memo PORT2-R2 7.D11), so the sibling and the row
+        # are then the same program.
+        same_row = None
+        for r in mu_rows:
+            T = tests[r[0]]
+            twin = sorted(m for m in tests
+                          if m != r[0] and tests[m].scopes == T.scopes
+                          and weakening_of(T, tests[m]) == SAME_STRENGTH)
+            if twin:
+                same_row = (r[0], r[1], twin[0])
+                break
         # For bite 5, a row whose corpus holds a STRICTLY STRONGER structural
         # sibling: a real, hot, same-shape test that is not a weakening at all.
         strong_row = None
@@ -855,12 +911,12 @@ def bite(d):
 
         def run(tag, why, edit, want):
             nonlocal fails
-            sd = _scratch(d, tmp, tag)
+            sd = _scratch(d, tmp, tag, map_base)
             if not edit(sd):
                 print("  [%s] *** VACUOUS BITE: the injection changed nothing" % tag)
                 fails += 1
                 return
-            got = check(sd, os.path.join(sd, "control-map.csv"), quiet=True)
+            got = check(sd, os.path.join(sd, map_base), quiet=True)
             hit = [e for e in got if want in e]
             print("  [%s] %s\n        -> %d error(s); named error %s"
                   % (tag, why, len(got), "FOUND: " + hit[0] if hit else
@@ -881,6 +937,24 @@ def bite(d):
         run("1", "mu(T)'s .litmus DELETED",
             del_mu, "mu(T)=%s does not exist as a .litmus" % mu)
 
+        # 2. mu swapped for a structural sibling of the same ordering strength.
+        #    Every other check here stays green: the structure matches, the
+        #    scopes match, no side is stronger -- and the "control" is the same
+        #    program as T on this lattice, so it fires exactly when T does and
+        #    vouches for nothing.  This is the rejection the second lattice
+        #    exists for, and nothing else in this gate reaches it.
+        if same_row is None:
+            print("  [2] *** no row has a structural sibling of identical "
+                  "strength: the not-a-weakening-at-all path cannot be bitten "
+                  "on this corpus")
+            fails += 1
+        else:
+            t2, m2, same2 = same_row
+            run("2", "%s: mu(T) swapped for a sibling of IDENTICAL strength "
+                     "(%s -> %s)" % (t2, m2, same2),
+                lambda sd: _sub_mu(os.path.join(sd, map_base), t2, same2),
+                "mu(T)=%s is %s" % (same2, SAME_STRENGTH))
+
         # 3. the map row rewritten from the test's NAME instead of derived --
         #    the exact mistake this module exists to prevent (the naive
         #    `acqrel-2s -> acquire' rewrite names a test that does not exist).
@@ -892,7 +966,7 @@ def bite(d):
             t3, m3, naive3 = naive_row
             run("3", "the Mu column rewritten from the test's NAME (%s -> %s)"
                      % (m3, naive3),
-                lambda sd: _sub_mu(os.path.join(sd, "control-map.csv"), t3, naive3),
+                lambda sd: _sub_mu(os.path.join(sd, map_base), t3, naive3),
                 "%s does not exist as a .litmus" % naive3)
 
         # 4. mu swapped for a test of another SHAPE: still a real, hot test --
@@ -902,7 +976,7 @@ def bite(d):
                     else "SB-cg-sys-relaxed"
             if not os.path.exists(os.path.join(sd, other + ".litmus")):
                 return False
-            return _sub_mu(os.path.join(sd, "control-map.csv"), victim, other)
+            return _sub_mu(os.path.join(sd, map_base), victim, other)
         run("4", "mu(T) swapped for a test of a DIFFERENT shape",
             swap_shape, "access structure differs")
 
@@ -917,7 +991,7 @@ def bite(d):
             t5, m5, up5 = strong_row
             run("5", "%s: mu(T) swapped for a STRICTLY STRONGER sibling (%s -> %s)"
                      % (t5, m5, up5),
-                lambda sd: _sub_mu(os.path.join(sd, "control-map.csv"), t5, up5),
+                lambda sd: _sub_mu(os.path.join(sd, map_base), t5, up5),
                 "not weaker (cpu,gpu strength")
 
         # 6. THE LEGACY 8-COLUMN MAP, refused END TO END.  Its field 2 was a
@@ -925,21 +999,12 @@ def bite(d):
         #    meanings the Mu column would be a verdict string.  Both readers must
         #    refuse the header rather than mis-bind it -- this gate, and the
         #    emitter's own reader, which is the one whose silence would ship.
-        legacy = _scratch(d, tmp, "6")
-        lm = os.path.join(legacy, "control-map.csv")
-        with open(lm) as fh:
-            lines = fh.read().splitlines()
-        out = []
-        for l in lines:
-            if l == HEADER_LINE:
-                out.append(LEGACY_HEADER)
-            elif l.startswith("#") or not l:
-                out.append(l)
-            else:
-                f = l.split(",")
-                out.append(",".join([f[0], "Allowed", f[1], "Allowed"] + f[2:]))
-        with open(lm, "w") as fh:
-            fh.write("\n".join(out) + "\n")
+        legacy = _scratch(d, tmp, "6a", map_base)
+        lm = os.path.join(legacy, map_base)
+        if not _make_legacy(lm):
+            print("  [6a] *** VACUOUS BITE: %s carries no %r header to replace"
+                  % (map_base, HEADER_LINE))
+            fails += 1
         got = check(legacy, lm, quiet=True)
         want = "header line is"
         hit = [e for e in got if want in e]
@@ -949,24 +1014,46 @@ def bite(d):
                  "*** MISSING (wanted %r)" % want))
         if not hit:
             fails += 1
-        # ...and the emitter's reader, on the same file.  A gate that refuses a
-        # schema the harness would happily mis-read protects nothing.
+        # ...and the emitter's reader, on a map of the same schema.  A gate that
+        # refuses a schema the harness would happily mis-read protects nothing.
+        # Under --lattice x86 the rendering fed to it comes out of X86_FIXTURE,
+        # whose definition says which map name that makes litmus7 ask for.
+        emit_src = os.path.abspath(X86_FIXTURE) if LATTICE == "x86" else d
+        emit_tgt = "hip" if LATTICE == "x86" else "cuda"
+        emit = _scratch(emit_src, tmp, "6b", map_base)
+        emit_victim = (victim if emit_src == d else
+                       sorted(f[: -len(".litmus")] for f in os.listdir(emit_src)
+                              if f.endswith(".litmus"))[0])
         l7 = os.path.abspath(LITMUS7)
-        if not os.access(l7, os.X_OK):
+        if not _make_legacy(os.path.join(emit, map_base)):
+            print("  [6b] *** VACUOUS BITE: %s/%s carries no header to replace"
+                  % (emit_src, map_base))
+            fails += 1
+        elif not os.access(l7, os.X_OK):
             print("  [6b] *** litmus7 is not built (%s) -- the end-to-end half of "
                   "this bite cannot run, and a bite that skips is not a bite" % l7)
             fails += 1
         else:
             r = subprocess.run(
-                [l7, "-gpu-target", "cuda", "-set-libdir", os.path.abspath(LIBDIR),
-                 "-o", legacy, os.path.join(legacy, victim + ".litmus")],
-                cwd=legacy, capture_output=True, text=True)
+                [l7, "-gpu-target", emit_tgt, "-set-libdir", os.path.abspath(LIBDIR),
+                 "-o", emit, os.path.join(emit, emit_victim + ".litmus")],
+                cwd=emit, capture_output=True, text=True)
             said = r.stdout + r.stderr
-            ok = r.returncode != 0 and "control-map.csv" in said
-            print("  [6b] the same file fed to the EMITTER's reader\n"
-                  "        -> exit %d; %s" % (r.returncode,
-                  "REFUSED: " + said.strip().splitlines()[-1][:160] if ok
-                  else "*** ACCEPTED (it must refuse the legacy header)"))
+            # The refusal has to be the HEADER's.  Three fatal paths in
+            # litmus/hetControlMap.ml name this file -- a wrong header, a row of
+            # the wrong width, a map with no rows -- and the 8-column file trips
+            # the second one on its own once the first is gone, so an exit code
+            # plus the file name would report the header gate as alive after it
+            # had been deleted.  [6a] asks its own reader for the same property.
+            want_e = "header is"
+            ok = (r.returncode != 0 and map_base in said and want_e in said)
+            last = said.strip().splitlines()[-1][:160] if said.strip() else "(silence)"
+            print("  [6b] the same schema fed to the EMITTER's reader (%s, "
+                  "-gpu-target %s)\n        -> exit %d; %s"
+                  % (emit_victim, emit_tgt, r.returncode,
+                     "REFUSED: " + last if ok else
+                     "*** NOT REFUSED FOR ITS HEADER (wanted %r): %s"
+                     % (want_e, last)))
             if not ok:
                 fails += 1
 
@@ -1014,7 +1101,7 @@ def main():
 
     set_lattice(a.lattice)
     d = os.path.abspath(a.dir)
-    dflt_map = ("control-map-amd.csv" if a.lattice == "x86" else "control-map.csv")
+    dflt_map = map_basename(a.lattice)
     map_f = a.map or os.path.join(d, dflt_map)
 
     if a.emit:
@@ -1037,7 +1124,9 @@ def main():
         return 0
 
     if a.bite:
-        return bite(d)
+        # --bite corrupts scratch copies of the lattice's own artifact, so it
+        # takes the default map name rather than --map's arbitrary path.
+        return bite(d, dflt_map)
 
     ap.error("one of --emit / --check / --bite is required")
 

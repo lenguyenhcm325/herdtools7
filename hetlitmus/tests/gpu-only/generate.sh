@@ -1,6 +1,12 @@
 #!/bin/bash
 # Generate the GPU-only HetLitmus litmus corpus as scoped LISA tests.
 #
+#   usage:  ./generate.sh             # this directory + the @all manifest
+#           ./generate.sh OUTDIR      # the same corpus, into OUTDIR instead
+#
+# OUTDIR (default: this directory) exists for verify/corpus-gate.sh, which says
+# there why it regenerates out of tree.
+#
 # Two parts:
 #  (A) The 8 PLDI'23-anchored tests (MP/LB/SB/IRIW, the relaxed + "-F"
 #      release/acquire variants, plus MP-cta-F).  These keep their original
@@ -25,12 +31,22 @@
 # See hetlitmus/docs/{gpu-only-corpus,corpus-grid}.md.
 
 set -e
+# OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so
+# a relative path works -- the same rule generate-x86.sh states at this spot.
+OUT="${1:-}"
+if [ -n "$OUT" ]; then mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"; fi
+
 cd "$(dirname "$0")"
+: "${OUT:=$(pwd)}"
 # shellcheck source=../../paths.sh
 source ../../paths.sh
 COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell -arch LISA"
 # shellcheck source=../_grid_lib.sh
 source ../_grid_lib.sh
+
+# diyone7 writes each test into the cwd, so the corpus lands wherever OUTDIR
+# points.
+cd "$OUT"
 
 # ---------------------------------------------------------------------------
 # (A) PLDI'23-anchored tests (oracle set) -- generated verbatim, names fixed.

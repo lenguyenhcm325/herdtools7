@@ -5,7 +5,11 @@
 # and why: hetlitmus/docs/het-generation.md; the grid rule: docs/corpus-grid.md.
 #
 #   usage:  ./generate.sh             # the committed corpus + the @all manifest
+#           ./generate.sh OUTDIR      # the same corpus, into OUTDIR instead
 #           CPU_ARCHS="aarch64 x86_64" ./generate.sh
+#
+# OUTDIR (default: this directory) exists for verify/corpus-gate.sh, which says
+# there why it regenerates out of tree.
 #
 # CPU_ARCHS (default "aarch64", matching GH200) selects which CPU ISAs the
 # cpu-tagged procs are generated for; the x86_64 variants (suffix -x86_64) are
@@ -13,7 +17,8 @@
 #
 # The corpus, in the order the sections below emit it:
 #  (A) MP-het, SB-het -- the hand-checked reference tests.  MP-het is
-#      regenerated and diffed, not overwritten; SB-het is (re)generated.
+#      regenerated and diffed, never overwritten here (an OUTDIR gets the
+#      regeneration, so its rendering is complete); SB-het is (re)generated.
 #  (B) The one-sided grid <shape>-<cuttag>-<scope>-<order>.litmus: every shape x
 #      canonical device cut x scope{cta,gpu,sys} x order{relaxed,acquire,
 #      release,fence}.  GPU procs carry the annotation, CPU procs are plain
@@ -28,12 +33,24 @@
 # over a file the reader supplies (docs/oracle-harness.md).
 
 set -e
+# OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so
+# a relative path works -- the same rule generate-x86.sh and generate-d10.sh
+# state at this spot.
+OUT="${1:-}"
+if [ -n "$OUT" ]; then mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"; fi
+
 cd "$(dirname "$0")"
+HETDIR="$(pwd)"
+: "${OUT:=$HETDIR}"
 # shellcheck source=../../paths.sh
 source ../../paths.sh
 COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell"
 # shellcheck source=../_grid_lib.sh
 source ../_grid_lib.sh
+
+# Everything below writes and reads siblings relative to the cwd, so the corpus
+# lands wherever OUTDIR points; $HETDIR stays the address of the committed tree.
+cd "$OUT"
 
 CPU_ARCHS="${CPU_ARCHS:-aarch64}"
 
@@ -47,18 +64,22 @@ CPU_ARCHS="${CPU_ARCHS:-aarch64}"
   > SB-het.litmus
 echo "generated SB-het.litmus"
 
+regen="${TMPDIR:-/tmp}/MP-het.regen.$$.litmus"
 "$BIN/hetgen7" $COMMON -devices cpu,gpu -name MP-het \
   -com "Heterogeneous message-passing: P0 on the CPU (AArch64), P1 on the GPU (LISA/PTX)" \
   -cpu "PodWW Rfe PodRR Fre" \
   -gpu "PodWWRelaxedSysReleaseSys RfeReleaseSysAcquireSys PodRRAcquireSysRelaxedSys FreRelaxedSysRelaxedSys" \
-  > /tmp/MP-het.regen.$$.litmus
-if diff -w -q /tmp/MP-het.regen.$$.litmus MP-het.litmus >/dev/null; then
+  > "$regen"
+if diff -w -q "$regen" "$HETDIR/MP-het.litmus" >/dev/null; then
   echo "MP-het: generator reproduces hand-written MP-het.litmus (modulo whitespace)"
 else
   echo "MP-het: WARNING generated output differs from MP-het.litmus" >&2
-  diff -w /tmp/MP-het.regen.$$.litmus MP-het.litmus || true
+  diff -w "$regen" "$HETDIR/MP-het.litmus" || true
 fi
-rm -f /tmp/MP-het.regen.$$.litmus
+# In the committed tree the hand-written file is authoritative, so it is left
+# alone; an OUTDIR rendering has to carry the test all the same.
+[ "$OUT" = "$HETDIR" ] || cp "$regen" "$OUT/MP-het.litmus"
+rm -f "$regen"
 
 # ---------------------------------------------------------------------------
 # (B) The grid.

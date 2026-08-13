@@ -15,6 +15,9 @@ model solvers here rather than being asserted:
                 diyone7, decided by herd7's native AArch64 model.
   PHASE 2  PTX  the same 96 cells as sys-scope LISA/Bell tests, decided by
                 herd7 + bells/ptx.bell + cats/nvidia-ptx.cat (Lustig'19).
+  PHASE 3  AGREE  no solver: the join with controlmap.py, keyed primitive by
+                primitive, since agreeing with herd7 does not make two restated
+                copies of the same table agree with each other.
 
 Usage:  ordercheck.py [-q]     run the gate
         ordercheck.py --bite   prove the gate fails when the table is corrupted
@@ -27,6 +30,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+import controlmap
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HETL = os.path.dirname(HERE)
@@ -233,14 +238,85 @@ def phase_ptx(tmp, quiet):
     return bad
 
 
-# The two phases, by the prefix their mismatches carry.  A caller may run one of
+# --- phase 3: agreement with the control-map lattice ------------------------
+# ORD is the `ord' half of controlmap.py's (tier, ord) strength lattice, which
+# is restated there rather than imported.  Agreeing with herd7 does not make the
+# two copies agree with each other -- one of them can be edited alone -- so this
+# phase is the join, and it names the controlmap expression each ORD key has to
+# equal instead of comparing two anonymous dicts.
+#
+# The `tier' half is NOT covered.  controlmap's side_le compares tier first, so
+# promoting a primitive from `partial' to `SC-capable' changes which siblings
+# count as weakenings while every ord set stays put, and nothing here would see
+# it.
+#
+#   ordercheck key, controlmap table, key in it
+KEY_MAP = [
+    ("SY",      "DMB",   "SY"),
+    ("ST",      "DMB",   "ST"),
+    ("LD",      "DMB",   "LD"),
+    # STLR + LDAPR on one proc: controlmap raises the side once per access, so
+    # its image of the atom pair is the union of the two contributions.
+    ("RA",      "ATOMS", "REL_ORD | ACQ_ORD"),
+    ("Sc",      "GPU",   "sc"),
+    ("Release", "GPU",   "release"),
+    ("Acquire", "GPU",   "acquire"),
+    # w[release] + r[acquire] on one proc, which is what f[acq_rel] names.
+    ("Ra",      "GPU",   "acq_rel"),
+]
+
+
+def _cm_ord(tbl, key):
+    """The ord set controlmap gives that primitive."""
+    if tbl == "DMB":
+        return controlmap.DMB_STRENGTH[key][1]
+    if tbl == "GPU":
+        return controlmap.GPU_FENCE_STRENGTH[key][1]
+    return controlmap.REL_ORD | controlmap.ACQ_ORD
+
+
+def _cm_name(tbl, key):
+    return key if tbl == "ATOMS" else "%s_STRENGTH[%r]" % (
+        "DMB" if tbl == "DMB" else "GPU_FENCE", key)
+
+
+def phase_agree(_tmp, quiet):
+    bad = []
+    if not quiet:
+        print("\n===== PHASE 3: AGREE -- controlmap.py's lattice vs the table "
+              "(%d primitives) =====" % len(KEY_MAP))
+    mapped = {k for k, _, _ in KEY_MAP}
+    if mapped != set(ORD):
+        bad.append("AGREE the key map covers %s but ORD holds %s -- a primitive "
+                   "with no counterpart is unchecked"
+                   % (sorted(mapped), sorted(ORD)))
+    for tbl, table in (("DMB", controlmap.DMB_STRENGTH),
+                       ("GPU", controlmap.GPU_FENCE_STRENGTH)):
+        named = {k for _, t, k in KEY_MAP if t == tbl}
+        if named != set(table):
+            bad.append("AGREE the key map names %s of controlmap's %s table, "
+                       "which holds %s" % (sorted(named), tbl, sorted(table)))
+    for k, tbl, ck in KEY_MAP:
+        mine, theirs = frozenset(ORD[k]), frozenset(_cm_ord(tbl, ck))
+        if not quiet:
+            print("  %-8s %-30s %s" % (k, _cm_name(tbl, ck),
+                                       "".join(sorted(mine)) or "-"))
+        if mine != theirs:
+            bad.append("AGREE %s: ORD=%s but controlmap %s=%s"
+                       % (k, sorted(mine), _cm_name(tbl, ck), sorted(theirs)))
+    return bad
+
+
+# The phases, by the prefix their mismatches carry.  A caller may run one of
 # them alone; each entry carries the per-shape cell count the census multiplies
-# len(SHAPES) by, so the printed census is of the cells actually decided.
+# len(SHAPES) by, so the printed census is of the cells actually decided.  AGREE
+# decides no cell -- it runs no solver -- and is counted separately.
 PHASES = {"ARM": (phase_arm, len(DMBS) ** 2),
-          "PTX": (phase_ptx, len(FENCES) ** 2)}
+          "PTX": (phase_ptx, len(FENCES) ** 2),
+          "AGREE": (phase_agree, 0)}
 
 
-def run(quiet=False, phases=("ARM", "PTX")):
+def run(quiet=False, phases=("ARM", "PTX", "AGREE")):
     for b in ("herd7", "diyone7"):
         if not os.path.exists(os.path.join(BIN, b)):
             print("FATAL: %s/%s not built -- run 'make all'" % (BIN, b))
@@ -257,21 +333,26 @@ def run(quiet=False, phases=("ARM", "PTX")):
         for b in bad:
             print("  *** %s" % b)
         print("\nORDERCHECK FAILED: %d mismatch(es).  The ordering table is not "
-              "what the model solvers compute." % len(bad))
+              "what the model solvers compute, or not what controlmap.py holds."
+              % len(bad))
         return 1
     if not quiet:
-        print("\nORDERCHECK OK  (%d solver cells all agree with the table)"
-              % (len(SHAPES) * sum(PHASES[p][1] for p in phases)))
+        joined = (", and %d primitives agree with controlmap.py"
+                  % len(KEY_MAP)) if "AGREE" in phases else ""
+        print("\nORDERCHECK OK  (%d solver cells all agree with the table%s)"
+              % (len(SHAPES) * sum(PHASES[p][1] for p in phases), joined))
     return 0
 
 
 # --- bite -------------------------------------------------------------------
 # Each injection names the phase it MUST redden, which is also the prefix that
-# phase's mismatches carry.  Every key injected here is read by one phase only --
-# the DMB names index no fence cell and ROLE/sync_ok have no ARM reader (an ARM
-# barrier is cumulative and needs no partner), so the named phase is the only one
-# that could redden -- and only that phase is run, since a red elsewhere would be
-# evidence for some other injection.
+# phase's mismatches carry, and only that phase is run: a red anywhere else would
+# be evidence for some other injection.  The DMB names index no fence cell and
+# ROLE/sync_ok have no ARM reader (an ARM barrier is cumulative and needs no
+# partner), so no solver phase can stand in for another.  ORD is read by its
+# solver phase and by AGREE, so which of the two a corruption of it is charged to
+# is a choice this list makes; controlmap's own tables have no solver-phase
+# reader, so the AGREE injection could redden nothing else.
 INJECTIONS = [
     ("ORD[DMB.ST] gains RR -- a store barrier that orders load;load",
      "D.ORD['ST'] = frozenset(('WW','RR'))", "ARM "),
@@ -281,6 +362,8 @@ INJECTIONS = [
      "D.sync_ok = lambda *a: True", "PTX "),
     ("ROLE[f[acquire]] gains rel -- an acquire fence that also releases",
      "D.ROLE['Acquire'] = frozenset(('acq','rel'))", "PTX "),
+    ("controlmap's DMB_STRENGTH[ST] gains RR -- the two copies part company",
+     "C.DMB_STRENGTH['ST'] = (C.PART_TIER, frozenset(('WW','RR')))", "AGREE"),
 ]
 
 
@@ -290,9 +373,11 @@ def bite():
     for desc, inj, where in INJECTIONS:
         drv = tempfile.NamedTemporaryFile("w", suffix=".py", delete=False)
         drv.write("import sys\nsys.path.insert(0, %r)\nimport ordercheck as D\n"
+                  "import controlmap as C\n"
                   "def snap():\n"
                   "    return (frozenset(D.ORD['ST']), frozenset(D.ORD['Acquire']),"
-                  " frozenset(D.ROLE['Acquire']), D.sync_ok)\n"
+                  " frozenset(D.ROLE['Acquire']), D.sync_ok,"
+                  " C.DMB_STRENGTH['ST'], C.GPU_FENCE_STRENGTH['acquire'])\n"
                   "before = snap()\n"
                   "%s\n"
                   "assert before != snap(), 'injection was vacuous'\n"

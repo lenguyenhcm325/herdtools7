@@ -369,6 +369,31 @@ case("sighting-unconfirmed-one-run-short",
      observed(stream(POISSON_CELLS), CORROB_RUNS - 1),
      obs="Sometimes", tier="UNCONFIRMED", k_runs=CORROB_RUNS - 1)
 
+# THE CPU-ONLY CAMPAIGN (memo 7.D10).  het_stats_compute resolves cpu_only upward
+# over the cells it is handed and het_stats_print says, inside the sighting tier
+# and nowhere else, that no cross-device path carried the cycle.  It is the
+# campaign-level twin of the per-run sentence verify/verdictcheck.py pins, and a
+# CPU-only sighting written up without it reads as a compound-model result.
+CPU_ONLY_CASE = "cpu-only-sighting-says-what-was-under-test"
+CPU_ONLY_TEXT = "CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc"
+# The same fact machine-readably, on het_stats_line rather than in the tier block.
+CPU_ONLY_LINE = re.compile(r"HetStats \S+ cpu_only=\d+ ")
+case(CPU_ONLY_CASE,
+     observed(stream(POISSON_CELLS, cpu_only=1), CORROB_RUNS),
+     obs="Sometimes", tier="CORROBORATED", k_runs=CORROB_RUNS)
+
+# ... AND A POOL WHOSE CELLS DISAGREE, which is the only fixture that runs the
+# resolution at all: cpu_only names the narrower experiment, so a pool carrying one
+# CPU-only cell resolves to CPU-only and is flagged rather than absorbed into the
+# het reading.  The disagreeing cell is not the first, since the first is what the
+# rest are compared against.
+MIXED_POOL_CASE = "mixed-pool-resolves-cpu-only-upward"
+_mixed = observed(stream(POISSON_CELLS), CORROB_RUNS)
+_mixed[CORROB_RUNS]["cpu_only"] = 1
+case(MIXED_POOL_CASE, _mixed,
+     obs="Sometimes", tier="CORROBORATED", k_runs=CORROB_RUNS,
+     flags_any=["MIXED_POOL"])
+
 # ... AND THE RULE IS ABOUT RUNS, NOT CELLS.  Three clean sightings that all landed in
 # the SAME run: runs are re-seeded and carry a fresh phase/thermal draw, three cells of
 # one run do not, so this must stay UNCONFIRMED where the case above it is
@@ -613,6 +638,7 @@ def py_reference(cells_):
     # The record array is CLAMPED at HET_STATS_MAX_CELLS and the tail is dropped from
     # every statistic below; st->R keeps the pre-clamp count so the discard is visible.
     R = len(cells_)
+    pool = cells_
     cells_ = cells_[:MAX_CELLS]
     n = len(cells_)
 
@@ -621,6 +647,12 @@ def py_reference(cells_):
         # neither does anything derived from one: every total, every count, every
         # calibration sample here is drawn from the stamped cells alone.
         return c["rec_magic"] == "HET_REC_MAGIC"
+
+    # The pool's IDENTITY, read before the clamp and resolved upward: one CPU-only
+    # cell names the narrower experiment for the whole pool, so a het reading may
+    # not absorb it.  het_stats_line prints it and hetlitmus/campaign.py schedules
+    # off that field.
+    cpu_only = 1 if any(c.get("cpu_only", 0) for c in pool if stamped(c)) else 0
 
     mu_present = any(c["control_compiled_in"] for c in cells_ if stamped(c))
     mu_total = sum(c["control_target_count"] for c in cells_ if stamped(c))
@@ -762,7 +794,7 @@ def py_reference(cells_):
                 frames=sum(c["frames_examined"] for c in cells_ if stamped(c)),
                 R=R, R_usable=R_usable, n_mu_hot=n_mu_hot, P_rep=P_rep,
                 ks=("underpowered" if ks < 0 else ("pass" if ks else "SPLIT")),
-                ks_D=D, tier=tier, stream_empty=stream_empty)
+                ks_D=D, tier=tier, stream_empty=stream_empty, cpu_only=cpu_only)
 
 
 # ---------------------------------------------------------------------------
@@ -1135,7 +1167,7 @@ def phase2(lines, quiet):
     need_flags = {"CTRL_STREAM_EMPTY", "NONSTATIONARY", "DEGEN_SIGHTING",
                   "NO_DECODE_CHANNEL", "WIN_DESYNC", "KS_UNDERPOWERED",
                   "CELLS_TRUNCATED", "CTRL_IS_CANARY", "SELF_CONTROL",
-                  "NO_CONTROL_CORUN"}
+                  "MIXED_POOL", "NO_CONTROL_CORUN"}
     print("  diagnostic flags    : %d/%d  (%s)"
           % (len(seen_flags & need_flags), len(need_flags),
              ", ".join(sorted(seen_flags))))
@@ -1174,6 +1206,40 @@ def phase2(lines, quiet):
             if frag not in txt:
                 print("  *** %s reports a Never but %s" % (name, why))
                 bad += 1
+
+    # THE CPU-ONLY SENTENCE, both ways.  het_stats_print carries it inside the
+    # sighting tier and nowhere else, so the campaigns entitled to it are the ones
+    # the mirror resolves to cpu_only with a tier to print it under -- keyed on
+    # that rather than on a case name, so a fixture whose pool resolves the flag
+    # is covered by construction.  Why both directions, at verdictcheck.py's
+    # CPU_ONLY_TEXT, which pins the per-run twin.
+    for name in sorted(refs):
+        owed = bool(refs[name]["cpu_only"] and refs[name]["tier"] != "none")
+        said = CPU_ONLY_TEXT in blocks.get(name, "")
+        if owed and not said:
+            print("  *** %s is a CPU-only campaign but its printout never says so"
+                  % name)
+            bad += 1
+        elif said and not owed:
+            print("  *** %s printed the CPU-only sentence, which belongs to a cycle "
+                  "whose every proc is a CPU proc" % name)
+            bad += 1
+
+    # ... and the machine-readable twin of that sentence, which prints on every
+    # campaign rather than on the sighting tier alone.  het_stats_line's field is
+    # what hetlitmus/campaign.py schedules off, so it is asserted against the same
+    # Python re-derivation as the statistics: a constant there is invisible to the
+    # sentence above, and on a mixed pool the field is the only reader of the
+    # upward resolution at all.
+    for name in sorted(refs):
+        line = next((l for l in blocks.get(name, "").splitlines()
+                     if CPU_ONLY_LINE.match(l)), "")
+        want = "cpu_only=%d" % refs[name]["cpu_only"]
+        if want not in line:
+            print("  *** %s pools %s, but its HetStats line says %r"
+                  % (name, "a CPU-only cell" if refs[name]["cpu_only"]
+                     else "no CPU-only cell", line[:64]))
+            bad += 1
 
     # A ROW THAT CO-RUNS NOTHING MUST NOT CLAIM TO BE THE CANARY.  Both states set
     # the same denominator, so the numbers alone cannot tell them apart; only the
@@ -1640,9 +1706,9 @@ def _mk_corpus(tmp, name, tests):
     return corpus
 
 
-def _run_campaign(stub, corpus, state, extra):
+def _run_campaign(stub, corpus, state, extra, campaign_py=None):
     return subprocess.run(
-        [sys.executable, CAMPAIGN, "--corpus", corpus,
+        [sys.executable, campaign_py or CAMPAIGN, "--corpus", corpus,
          "--runner", "%s %s {dir}" % (sys.executable, stub),
          "--budget-runs", str(STUB_BUDGET), "--confirm-runs", str(CONFIRM),
          "--seed0", "777", "--state", state] + extra,
@@ -1660,7 +1726,7 @@ def _done_rows(out):
     return done, order
 
 
-def _mirror_bite(tmp, name, doctor, want_frag, quiet):
+def _mirror_bite(tmp, name, doctor, want_frag, quiet, campaign_py=None):
     """campaign.py's mirror, against a DOCTORED copy of the header.  A mirror nothing
     ever contradicts is not a mirror, so both halves of it are contradicted here."""
     hdr = os.path.join(tmp, "h-%s.h" % name)
@@ -1676,7 +1742,7 @@ def _mirror_bite(tmp, name, doctor, want_frag, quiet):
         [sys.executable, "-c",
          "import sys; sys.path.insert(0, %r); import campaign; "
          "campaign.check_flag_mirror(path=sys.argv[1])"
-         % os.path.join(ROOT, "hetlitmus"), hdr],
+         % os.path.dirname(campaign_py or CAMPAIGN), hdr],
         capture_output=True, text=True)
     if r.returncode != 2 or want_frag not in r.stderr:
         print("  *** the mirror did not FATAL on %s (rc=%d, stderr=%r) -- a scheduler "
@@ -1709,7 +1775,11 @@ def _window_arithmetic(out, want_rows):
     return bad
 
 
-def phase6_campaign(quiet):
+def phase6_campaign(quiet, campaign_py=None):
+    """`campaign_py' is the scheduler under test.  It is a parameter so --bite can
+    point the phase at a doctored copy: nothing else here reaches campaign.py, and a
+    phase no injection reaches is a phase nobody has seen fail."""
+    campaign_py = campaign_py or CAMPAIGN
     print("\n===== PHASE 6: does the scheduler spend the hours where the brief "
           "says? =====")
     tmp = tempfile.mkdtemp(prefix="statssched.")
@@ -1720,7 +1790,7 @@ def phase6_campaign(quiet):
         # boxes, so nothing but this check stands between the two policies drifting.
         # It must pass against the real header and FATAL against a doctored one.
         loader = ("import sys; sys.path.insert(0, %r); import campaign; "
-                  % os.path.join(ROOT, "hetlitmus"))
+                  % os.path.dirname(campaign_py))
         r0 = subprocess.run(
             [sys.executable, "-c", loader +
              "assert campaign.check_flag_mirror() is not None, 'header out of reach'; "
@@ -1736,14 +1806,14 @@ def phase6_campaign(quiet):
             tmp, "a moved corroboration bar",
             lambda s: s.replace("#define HET_CORROB_RUNS 2",
                                 "#define HET_CORROB_RUNS 3", 1),
-            "HET_CORROB_RUNS", quiet)
+            "HET_CORROB_RUNS", quiet, campaign_py)
         bad += _mirror_bite(
             tmp, "a renamed stop",
             lambda s: s.replace('case HET_CAMPAIGN_STOP_CORROBORATED: return '
                                 '"CORROBORATED";',
                                 'case HET_CAMPAIGN_STOP_CORROBORATED: return '
                                 '"CONFIRMED";', 1),
-            "stop names", quiet)
+            "stop names", quiet, campaign_py)
         # ... and the third piece of the policy a name cannot carry: WHERE the
         # confirmation window starts.  A header that measures it from run 0 ends rows
         # this scheduler would still be running.
@@ -1751,7 +1821,7 @@ def phase6_campaign(quiet):
             tmp, "a window measured from run 0",
             lambda s: s.replace("if (n - st.n_at_first_sight >= confirm_runs)",
                                 "if (n >= confirm_runs)", 1),
-            "n_at_first_sight", quiet)
+            "n_at_first_sight", quiet, campaign_py)
         # A header out of reach is the standalone-copy case: the mirror stands rather
         # than dying, or campaign.py could not run on the box it is copied to.
         r1 = subprocess.run(
@@ -1771,7 +1841,7 @@ def phase6_campaign(quiet):
         # --- 6.1: THE POLICY, END TO END.
         corpus = _mk_corpus(tmp, "corpus", STUB_TESTS)
         state = os.path.join(tmp, "state.csv")
-        r = _run_campaign(stub, corpus, state, [])
+        r = _run_campaign(stub, corpus, state, [], campaign_py)
         out = r.stdout
 
         # A CRASH EXITS 1 TOO.  This fixture set ends one row UNCONFIRMED-SIGHTING, so
@@ -1919,7 +1989,7 @@ def phase6_campaign(quiet):
         # precedence this row banks "seen once, stopped looking" at 20 runs.
         lone = _mk_corpus(tmp, "lone", ["SIGHT-lone"])
         r2 = subprocess.run(
-            [sys.executable, CAMPAIGN, "--corpus", lone,
+            [sys.executable, campaign_py, "--corpus", lone,
              "--runner", "%s %s {dir}" % (sys.executable, stub),
              "--budget-runs", "20", "--confirm-runs", str(CONFIRM),
              "--seed0", "777", "--state", os.path.join(tmp, "lone.csv")],
@@ -1956,7 +2026,7 @@ def phase6_campaign(quiet):
         # of the runs the window exists to buy.
         late = _mk_corpus(tmp, "late", ["SIGHT-late"])
         r2b = subprocess.run(
-            [sys.executable, CAMPAIGN, "--corpus", late,
+            [sys.executable, campaign_py, "--corpus", late,
              "--runner", "%s %s {dir}" % (sys.executable, stub),
              "--budget-runs", str(STUB_BUDGET), "--confirm-runs", str(CONFIRM),
              "--seed0", "777", "--state", os.path.join(tmp, "late.csv")],
@@ -1980,7 +2050,8 @@ def phase6_campaign(quiet):
         # corroborates at invocation 2 above must now run to its budget, and the null,
         # which no sighting stop was holding anyway, must end exactly where it did.
         rate = _mk_corpus(tmp, "rate", ["SIGHT-corrob", "NULL-pooled"])
-        r3 = _run_campaign(stub, rate, os.path.join(tmp, "rate.csv"), ["--rate"])
+        r3 = _run_campaign(stub, rate, os.path.join(tmp, "rate.csv"), ["--rate"],
+                           campaign_py)
         d3, _ = _done_rows(r3.stdout)
         for t, want3 in (("SIGHT-corrob", ("BUDGET", 10)),
                          ("NULL-pooled", ("BUDGET", 10))):
@@ -2003,7 +2074,7 @@ def phase6_campaign(quiet):
 
         # FAIL CLOSED: a named test with no harness dir must kill the campaign (rc=2).
         r4 = subprocess.run(
-            [sys.executable, CAMPAIGN, "--corpus", corpus, "--runner", "true",
+            [sys.executable, campaign_py, "--corpus", corpus, "--runner", "true",
              "--tests", "GHOST"], capture_output=True, text=True)
         if r4.returncode != 2:
             print("  *** a test with no harness dir exited %d, want 2 (fail closed: "
@@ -2110,7 +2181,7 @@ def phase2b(header_dir, tmp, quiet):
 GATE_PHASES = ("1", "2", "2b", "5")
 
 
-def run(header_dir, tmp, quiet, phases=GATE_PHASES):
+def run(header_dir, tmp, quiet, phases=GATE_PHASES, campaign_py=None):
     out = None
     if {"1", "2", "5"} & set(phases):
         try:
@@ -2120,7 +2191,7 @@ def run(header_dir, tmp, quiet, phases=GATE_PHASES):
             print("\nSTATSCHECK FAILED: the statistics layer does not compile")
             return 1
     rc = 0
-    for p in ("1", "2", "2b", "5", "3"):
+    for p in ("1", "2", "2b", "5", "3", "6"):
         if p not in phases:
             continue
         if p == "1":
@@ -2131,6 +2202,8 @@ def run(header_dir, tmp, quiet, phases=GATE_PHASES):
             rc |= phase2b(header_dir, tmp, quiet)
         elif p == "5":
             rc |= phase5_stops(out, quiet)
+        elif p == "6":
+            rc |= phase6_campaign(quiet, campaign_py)
         else:
             rc |= phase3(header_dir, tmp, quiet)
     return rc
@@ -2154,7 +2227,7 @@ def main():
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     rc |= phase4()
-    rc |= phase6_campaign(a.quiet)
+    rc |= run(None, None, a.quiet, phases=("6",))
 
     print("\n" + "=" * 70)
     if rc:
@@ -2230,6 +2303,46 @@ def _bite(label, hdir, mutate, phases, expect):
         return True
     print("  *** DID NOT BITE for its own reason (P%s rc=%d, wanted %r)   [%s]"
           % ("+".join(phases), rc, expect, label))
+    for l in said.getvalue().splitlines():
+        if l.strip().startswith("***"):
+            print("        | " + l.strip()[:140])
+    return False
+
+
+def _bite_campaign(label, mutate, expect):
+    """Doctor a COPY of campaign.py and require phase 6 to redden by name.
+
+    The copy keeps campaign.py's own path shape -- <root>/hetlitmus/campaign.py
+    beside <root>/litmus/het-runtime/het_verdict.h -- because campaign.py resolves
+    the header it mirrors relative to itself, and a copy that cannot reach one
+    would redden phase 6 for being out of reach rather than for the injection."""
+    tmp = tempfile.mkdtemp(prefix="statscampbite.")
+    said = io.StringIO()
+    try:
+        hetl = os.path.join(tmp, "hetlitmus")
+        hrt = os.path.join(tmp, "litmus", "het-runtime")
+        os.makedirs(hetl)
+        os.makedirs(hrt)
+        shutil.copy(os.path.join(ROOT, "litmus", "het-runtime", "het_verdict.h"), hrt)
+        with open(CAMPAIGN) as fh:
+            orig = fh.read()
+        new = mutate(orig)
+        if new == orig:
+            print("  *** VACUOUS BITE: the injection changed nothing   [%s]" % label)
+            return False
+        cp = os.path.join(hetl, "campaign.py")
+        with open(cp, "w") as fh:
+            fh.write(new)
+        with contextlib.redirect_stdout(said):
+            rc = run(None, None, True, phases=("6",), campaign_py=cp)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    hit = _named(said.getvalue(), expect)
+    if rc and hit:
+        print("  BITES (P6): %s   [%s]" % (hit[:104], label))
+        return True
+    print("  *** DID NOT BITE for its own reason (P6 rc=%d, wanted %r)   [%s]"
+          % (rc, expect, label))
     for l in said.getvalue().splitlines():
         if l.strip().startswith("***"):
             print("        | " + l.strip()[:140])
@@ -2442,6 +2555,52 @@ def bite():
                     ("self-canary-fired-3-of-10-is-SOMETIMES-not-ALWAYS",
                      "flag SELF_CONTROL NOT set"))
 
+        # (18b) THE CPU-ONLY SENTENCE INVERTED.  One injection reaches both halves
+        # of the assertion at once: the CPU-only campaign loses the sentence that
+        # says what was under test, and every other sighting gains it.
+        print("\n-- the CPU-only campaign sentence --")
+        ok &= _bite("the CPU-only sentence keyed on the negation of the flag", hdir,
+                    lambda s: _subst(s, [
+                        ("    if (_s->cpu_only)\n", "    if (!_s->cpu_only)\n")]),
+                    ("2",),
+                    (CPU_ONLY_CASE, "never says so"))
+        # ... and the two readers of that flag no sentence covers: the field
+        # campaign.py schedules off, and the resolution that decides what the field
+        # says on a pool holding both kinds of cell.
+        ok &= _bite("the HetStats line's cpu_only field keyed on the negation of "
+                    "the flag", hdir,
+                    lambda s: _subst(s, [
+                        ("    _s->cpu_only,\n", "    !_s->cpu_only,\n")]),
+                    ("2",),
+                    (CPU_ONLY_CASE, "its HetStats line says"))
+        ok &= _bite("the upward resolution dropped (a mixed pool reads as a het "
+                    "campaign)", hdir,
+                    lambda s: _subst(s, [
+                        ("          if (recs[_i].cpu_only) st->cpu_only = 1;\n",
+                         "")]),
+                    ("2",),
+                    (MIXED_POOL_CASE, "its HetStats line says"))
+        ok &= _bite("the mixed-pool flag never raised (two experiments pooled as "
+                    "one, silently)", hdir,
+                    lambda s: _subst(s, [
+                        ("          st->flags |= HET_ST_MIXED_POOL;\n", "")]),
+                    ("2",),
+                    (MIXED_POOL_CASE, "flag MIXED_POOL NOT set"))
+
+        # (18c) THE SCHEDULER'S CONFIRMATION WINDOW MEASURED FROM RUN 0.  Phase 6 is
+        # the only reader of campaign.py, and the header-side twin of this defect is
+        # already a mirror arm -- but the mirror compares the header against
+        # campaign.py's names and numbers, not against its arithmetic, so the same
+        # mistake made on this side is invisible to it.  A row that fired late then
+        # banks the moment it fires, with none of its window run.
+        print("\n-- the scheduler (campaign.py) --")
+        ok &= _bite_campaign(
+            "the confirmation window measured from run 0, not from the sighting",
+            lambda s: s.replace(
+                "elif self.runs - self.runs_at_first_sight >= confirm_runs:",
+                "elif self.runs >= confirm_runs:", 1),
+            ("SIGHT-lone", "want stop=UNCONFIRMED-SIGHTING"))
+
         # (19) THE WINDOW BUMP DELETED FROM THE PRODUCER: het_win_of still exists and
         # the aggregate still computes, but the sub-tallies never move, so the stream
         # the precheck reads is a fiction.  Only phase 3 can see this.
@@ -2489,7 +2648,7 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 20 injections were caught --")
+        print("BITE OK: all 25 injections were caught --")
         print("         2 against the EMPTINESS GUARD, one per half (the KS gate")
         print("         stops consulting it; the test that raises it forced false):")
         print("         either one alone unlocks P_rep on a stream nothing fired on,")
@@ -2505,7 +2664,12 @@ def bite():
         print("         moved under them),")
         print("         2 against the SELF-CANARY INFERENCE (both directions: a row")
         print("         that co-runs nothing called the canary, and a real canary")
-        print("         demoted), 1 against the PRODUCER (the sub-tallies), 1 against")
+        print("         demoted), 4 against the CPU-ONLY campaign (the sentence and")
+        print("         the machine-readable field, each inverted so both halves of")
+        print("         its assertion fire at once, plus the two halves of the")
+        print("         mixed-pool resolution), 1 against the")
+        print("         SCHEDULER (campaign.py's confirmation window measured from")
+        print("         run 0), 1 against the PRODUCER (the sub-tallies), 1 against")
         print("         the EMITTED CORPUS.")
         print("         The gate is live both ways: it passes on the shipped code and")
         print("         fails on every way of breaking it.")

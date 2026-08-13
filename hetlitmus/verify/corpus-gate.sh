@@ -8,12 +8,13 @@
 # pure regenerate + emit + text-diff over the committed corpus.
 #
 # What it does (return 0 only if ALL of corpus / census / emission are clean):
-#   1. Corpus regression -- regenerate BOTH corpora in place (byte-stable) and
-#      assert `git status --porcelain` over the two test dirs is empty, catching
-#      add / remove / modify (a bare `git diff` would miss added/removed files).
-#      A pre-existing working-tree edit is snapshotted BEFORE regen, because
-#      regen overwrites (and would silently clobber) a hand-edit to a
-#      grid-generated .litmus.
+#   1. Corpus regression -- regenerate both corpora into a temp tree and compare
+#      the result against the committed one by name set and by bytes, so an
+#      added, removed or modified test is named.  An in-place regen followed by
+#      a `git status --porcelain` assertion cannot do this: an empty porcelain
+#      is also what a generator that wrote nothing leaves behind, and a
+#      hand-edited .litmus is clobbered by the regen before it is looked at.
+#      --bite is that claim's evidence.
 #   2. Census tripwire -- exactly 137 gpu-only + 411 het .litmus (the grid did
 #      not silently shrink or grow).
 #   3. Emission golden -- emit the gpu-only corpus ONCE PER GPU TARGET into a
@@ -27,14 +28,15 @@
 #      boilerplate); emitting to a temp dir keeps the golden dirs pristine
 #      (in-place would litter 127 untracked files each).
 #
-# Non-destructive: regen is in place but byte-stable, emission uses a temp dir
-# (auto-cleaned).  After a clean run the working tree is unchanged.
+# Non-destructive: nothing here writes inside the repo.  Both the regeneration
+# and the emission go to a temp dir (auto-cleaned), so the working tree is
+# untouched whether the gate passes or fails.
 #
 # Promote (when a change to the tools is intended): review `git diff`, then
 #   - corpus:   regenerate + `git commit` the new .litmus (TEST-PLAN.md sect 7).
 #   - emission: re-emit the samples into cuda-out/ + hip-out/ + `git commit`.
 #
-# Usage:  hetlitmus/verify/corpus-gate.sh        (no args)
+# Usage:  hetlitmus/verify/corpus-gate.sh [--bite]
 # Exit:   0 = PASS, 1 = drift (offending paths/diffs printed), 2 = infra error.
 
 set -uo pipefail   # NOT -e: we run every check and aggregate, not fail-fast.
@@ -55,6 +57,21 @@ EXPECT_HET=411
 
 fail=0
 
+MODE=check
+case "${1:-}" in
+  "")     ;;
+  --bite) MODE=bite ;;
+  *)      echo "usage: corpus-gate.sh [--bite]" >&2; exit 2 ;;
+esac
+
+# HET_GENERATE_SH is --bite's own seam and the bite sets it per arm; inherited
+# from the environment it would let a caller decide what [1/3] compares against.
+if [ -n "${HET_GENERATE_SH:-}" ]; then
+  echo "FATAL: HET_GENERATE_SH is set in the environment -- it is --bite's seam," >&2
+  echo "       and a run through someone else's generator checks nothing." >&2
+  exit 2
+fi
+
 # --- toolchain guard ---------------------------------------------------------
 for b in diyone7 hetgen7 litmus7; do
   if [ ! -e "$BIN/$b" ]; then
@@ -68,40 +85,176 @@ EMITTMP="$(mktemp -d "${TMPDIR:-/tmp}/hetlitmus-gate.XXXXXX")"
 cleanup() { rm -rf "$EMITTMP"; }
 trap cleanup EXIT
 
+# ---------------------------------------------------------------------------
+# 1. CORPUS REGRESSION  (regenerate out of tree; compare names + bytes)
+# ---------------------------------------------------------------------------
+
+# corpus_regen SRCDIR OUTDIR -- run SRCDIR's generator so it writes into OUTDIR.
+# HET_GENERATE_SH is --bite's seam and receives the same two arguments.
+corpus_regen() {
+  if [ -n "${HET_GENERATE_SH:-}" ]; then
+    bash "$HET_GENERATE_SH" "$1" "$2"
+  else
+    bash "$1/generate.sh" "$2"
+  fi
+}
+
+# What one generator run produces: its tests plus the @all manifest.  Anything
+# else a corpus directory holds (the generators themselves, the control maps) is
+# not generated and is not this check's business.
+list_products() {
+  ( cd "$1" && ls -1 ) 2>/dev/null | grep -E '\.litmus$|^@all$' | LC_ALL=C sort
+}
+
+# corpus_check WORKROOT -- regenerate both corpora under WORKROOT and compare
+# each against its committed directory.  0 = clean, 1 = drift, 2 = infra error.
+corpus_check() {
+  local root="$1" drift=0 label src out f
+  for label in gpu het; do
+    case "$label" in
+      gpu) src="$GPU_DIR" ;;
+      het) src="$HET_DIR" ;;
+    esac
+    out="$root/$label"
+    mkdir -p "$out"
+    if ! corpus_regen "$src" "$out" >"$root/$label.gen.log" 2>&1; then
+      echo "FATAL: the generator for $src failed:" >&2
+      cat "$root/$label.gen.log" >&2
+      return 2
+    fi
+    list_products "$src" >"$root/$label.committed"
+    list_products "$out" >"$root/$label.fresh"
+    while read -r f; do
+      [ -n "$f" ] || continue
+      echo "  DRIFT: $src/$f is committed but the generator did not produce it"
+      drift=1
+    done < <(comm -23 "$root/$label.committed" "$root/$label.fresh")
+    while read -r f; do
+      [ -n "$f" ] || continue
+      echo "  DRIFT: the generator produced $f, which $src does not carry"
+      drift=1
+    done < <(comm -13 "$root/$label.committed" "$root/$label.fresh")
+    while read -r f; do
+      [ -n "$f" ] || continue
+      cmp -s "$src/$f" "$out/$f" && continue
+      echo "  DRIFT: $src/$f differs from its regeneration"
+      diff -u "$src/$f" "$out/$f" | head -20 | sed 's/^/        /'
+      drift=1
+    done < <(comm -12 "$root/$label.committed" "$root/$label.fresh")
+    echo "        $src: $(wc -l <"$root/$label.committed" | tr -d ' ') committed / $(wc -l <"$root/$label.fresh" | tr -d ' ') regenerated"
+  done
+  return $drift
+}
+
+# --- the negative control ---------------------------------------------------
+# A regression check nobody has seen fail is a claim.  Each arm swaps the
+# generator through HET_GENERATE_SH and reruns the SAME comparison, and each has
+# to name the file it broke and be shown non-vacuous against the workroot it left
+# behind, so a red arm is the injection speaking and not a broken box.  The clean
+# control is [1/3] itself, which `make hetlitmus-corpus' runs immediately before
+# this and on the same tree; re-running it here would buy a second copy of it.
+bite() {
+  local tmp="$EMITTMP/bite" fails=0 victim rc n hit
+  mkdir -p "$tmp"
+
+  # The stubs, written here so a reader sees what each arm replaced.
+  cat >"$tmp/noop.sh" <<'EOF'
+#!/usr/bin/env bash
+# Arm 1's generator: it writes nothing.  Why that is the interesting failure is
+# in this file's header, item 1.
+exit 0
+EOF
+  cat >"$tmp/tamper.sh" <<'EOF'
+#!/usr/bin/env bash
+# The shipped generator, then one emitted test given a trailing byte.
+set -e
+bash "$1/generate.sh" "$2"
+[ "$1" != "$HET_BITE_DIR" ] || printf '(* bite *)\n' >>"$2/$HET_BITE_VICTIM"
+EOF
+
+  # The victim is the het corpus's first test by name, so both stubs and both
+  # expectations below name one file that certainly exists.
+  victim="$(list_products "$HET_DIR" | grep '\.litmus$' | head -1)"
+  export HET_BITE_DIR="$HET_DIR" HET_BITE_VICTIM="$victim"
+
+  echo "===== --bite: [1/3]'s OWN negative control ====="
+  echo "  victim: $HET_DIR/$victim"
+
+  arm() {                     # arm TAG WHY SEAM WANT_RC WANT_STR
+    local tag="$1" why="$2" seam="$3" want_rc="$4" want="$5"
+    local root="$tmp/$tag" log="$tmp/$tag.log"
+    mkdir -p "$root"
+    HET_GENERATE_SH="$seam"
+    corpus_check "$root" >"$log" 2>&1
+    rc=$?
+    HET_GENERATE_SH=""
+    n="$(grep -c '^  DRIFT: ' "$log")"
+    echo "  [$tag] $why"
+    echo "        -> rc $rc (expect $want_rc), $n drift line(s)"
+    if [ "$rc" != "$want_rc" ]; then
+      echo "        *** WRONG RESULT"
+      head -10 "$log" | sed 's/^/        /'
+      fails=$((fails + 1))
+      return
+    fi
+    [ -n "$want" ] || return
+    hit="$(grep -m1 -F -- "$want" "$log")"
+    if [ -n "$hit" ]; then
+      echo "        named drift FOUND:$hit"
+    else
+      echo "        *** named drift MISSING (wanted: $want)"
+      fails=$((fails + 1))
+    fi
+  }
+
+  arm 1 "a generator that writes nothing at all" \
+      "$tmp/noop.sh" 1 "$HET_DIR/$victim is committed but the generator did not produce it"
+  # Non-vacuity: the stub really produced no corpus, so arm 1's red is the
+  # comparison talking and not a generator that quietly ran anyway.
+  if [ -n "$(list_products "$tmp/1/het")" ]; then
+    echo "        *** VACUOUS: the no-op generator still wrote products"
+    fails=$((fails + 1))
+  fi
+
+  arm 2 "the shipped generator, then one emitted .litmus given a trailing byte" \
+      "$tmp/tamper.sh" 1 "$HET_DIR/$victim differs from its regeneration"
+  # Non-vacuity: the byte really landed, so arm 2's red is a byte comparison and
+  # not a name-set difference wearing its message.
+  if cmp -s "$HET_DIR/$victim" "$tmp/2/het/$victim"; then
+    echo "        *** VACUOUS: the tampered rendering equals the committed file"
+    fails=$((fails + 1))
+  fi
+
+  unset HET_BITE_DIR HET_BITE_VICTIM
+  if [ "$fails" -ne 0 ]; then
+    echo
+    echo "CORPUS BITE FAILED: $fails arm(s) did not behave as the check claims"
+    return 1
+  fi
+  echo
+  echo "CORPUS BITE OK: [1/3] reddens, by file name, on both a generator that"
+  echo "produces nothing and one byte of drift"
+  return 0
+}
+
+if [ "$MODE" = bite ]; then
+  bite
+  exit $?
+fi
+
 echo "HetLitmus Layer-2 golden gate  (repo: $REPO)"
 echo "=================================================================="
 
-# ---------------------------------------------------------------------------
-# 1. CORPUS REGRESSION  (regenerate in place; porcelain must be empty)
-# ---------------------------------------------------------------------------
-echo "[1/3] Corpus regression (regenerate + git porcelain)"
-
-pre="$(git status --porcelain -- "$GPU_DIR" "$HET_DIR")"
-if [ -n "$pre" ]; then
-  # Uncommitted edit already present.  Do NOT regenerate: regen would overwrite
-  # (clobber) a hand-edited grid test and mask the drift.
-  echo "  FAIL: corpus has uncommitted changes (tamper / stale golden):"
-  printf '%s\n' "$pre" | sed 's/^/        /'
-  echo "        restore with: git checkout -- $GPU_DIR $HET_DIR"
-  fail=1
-else
-  glog="$EMITTMP/generate.log"
-  if ! bash "$GPU_DIR/generate.sh" >"$glog" 2>&1; then
-    echo "FATAL: $GPU_DIR/generate.sh failed:" >&2; cat "$glog" >&2; exit 2
-  fi
-  if ! bash "$HET_DIR/generate.sh" >"$glog" 2>&1; then
-    echo "FATAL: $HET_DIR/generate.sh failed:" >&2; cat "$glog" >&2; exit 2
-  fi
-  post="$(git status --porcelain -- "$GPU_DIR" "$HET_DIR")"
-  if [ -n "$post" ]; then
-    echo "  FAIL: regeneration diverged from the committed corpus (tool drift):"
-    printf '%s\n' "$post" | sed 's/^/        /'
-    echo "        review 'git diff -- $GPU_DIR $HET_DIR', then commit if intended."
-    fail=1
-  else
-    echo "  PASS: both corpora regenerated byte-identical to HEAD (porcelain clean)"
-  fi
-fi
+echo "[1/3] Corpus regression (regenerate out of tree + byte-diff the committed one)"
+corpus_check "$EMITTMP/regen"
+case "$?" in
+  0) echo "  PASS: both corpora regenerate byte-identical to the committed tree" ;;
+  1) echo "  FAIL: the regeneration diverged from the committed corpus -- tool"
+     echo "        drift, or a hand-edited .litmus.  Review the paths above, then"
+     echo "        commit the new corpus if the change was intended."
+     fail=1 ;;
+  *) exit 2 ;;
+esac
 
 # ---------------------------------------------------------------------------
 # 2. CENSUS  (the grid did not silently change size)

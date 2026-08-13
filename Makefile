@@ -649,10 +649,15 @@ hetlitmus-cram: | build
 	dune runtest hetlitmus/tests/cram
 	@ echo "HetLitmus Layer-1 cram: OK"
 
+### hetlitmus-corpus: the Layer-2 golden gate -- corpus regression, census and
+### emission golden.  --bite is the corpus half's evidence: [1/3] regenerates
+### into a temp tree and compares it against the committed one, so a generator
+### that writes nothing and one byte of drift each redden it by file name.
 hetlitmus-corpus: | build
 	@ echo
 	bash hetlitmus/verify/corpus-gate.sh
-	@ echo "HetLitmus Layer-2 corpus golden: OK"
+	bash hetlitmus/verify/corpus-gate.sh --bite
+	@ echo "HetLitmus Layer-2 corpus golden: OK (and the gate bites)"
 
 hetlitmus-faithful: | build
 	@ echo
@@ -695,13 +700,15 @@ hetlitmus-cpustress: | build
 ### missing mutant breaks the build rather than skipping the control, because a
 ### silently absent control does not weaken a null -- it makes it unfalsifiable.
 ### CUDA-free.
-### --bite is that fail-closed claim's evidence: six injections into a scratch
-### copy of the corpus + map (mu's .litmus deleted, the Mu column rewritten from
-### the test's NAME, mu swapped for another shape, mu swapped for a STRICTLY
-### STRONGER sibling, the retired 8-column schema fed to both this gate and the
-### emitter's own reader, and a mu whose accesses and annotations all still match
-### while its `exists' counts a different outcome), each of which must redden by
-### the NAME of the property it broke.
+### --bite is that fail-closed claim's evidence: seven injections into a scratch
+### copy of the corpus + map, run as eight arms because one of them is fed to two
+### readers.  mu's .litmus deleted; mu swapped for a sibling of identical
+### ordering strength on this lattice; the Mu column rewritten from the test's
+### name; mu swapped for another shape; mu swapped for a strictly stronger
+### sibling; the retired 8-column schema fed to both this gate and the emitter's
+### own reader; and a mu whose accesses and annotations all still match while its
+### `exists' counts a different outcome.  Each must redden by the NAME of the
+### property it broke.
 hetlitmus-controlmap: | build
 	@ echo
 	python3 hetlitmus/verify/controlmap.py --check
@@ -715,13 +722,19 @@ hetlitmus-controlmap: | build
 ### 78 rows either way -- no row's only ordering op is one of the four the x86
 ### lattice drops -- so the two maps differ in their MuAlt column, not their
 ### census; --check re-measures both floor sets rather than assuming it.
+### --bite runs the same injections against a scratch copy of this lattice's
+### artifact.  Its end-to-end arm feeds the emitter an x86 rendering out of
+### tests/het-x86 rather than a corpus test, because litmus7 asks for the map by
+### a name it takes from the CPU column (litmus/hetCpuFront.ml) and the het
+### corpus is rendered for AArch64 under either lattice.
 ### Regenerate with:
 ###   python3 hetlitmus/verify/controlmap.py --lattice x86 --emit \
 ###     > hetlitmus/tests/het/control-map-amd.csv
 hetlitmus-amd-controlmap: | build
 	@ echo
 	python3 hetlitmus/verify/controlmap.py --lattice x86 --check
-	@ echo "HetLitmus AMD control map: OK"
+	python3 hetlitmus/verify/controlmap.py --lattice x86 --bite
+	@ echo "HetLitmus AMD control map: OK (and the gate bites)"
 
 ### hetlitmus-dup: the isomorphism gate.  generate.sh dedups only by
 ### byte-comparing a variant against ONE designated sibling, which cannot see a
@@ -731,7 +744,9 @@ hetlitmus-amd-controlmap: | build
 ### independent sample.  They were removed at the source on 2026-08-01, so the 411
 ### files are 411 distinct experiments.  The gate is one check with no exceptions:
 ### any duplicate class at all fails it.  --bite clones a test under a new name
-### with its locations renamed and requires that to redden.
+### twice, once per half of the canonical form -- locations renamed, and P0/P1
+### swapped with their device tags -- and requires each to redden.  The second is
+### the half the 39 were duplicates under.
 hetlitmus-dup: | build
 	@ echo
 	python3 hetlitmus/verify/dupcheck.py
@@ -748,12 +763,16 @@ hetlitmus-dup: | build
 ### Which cells forbid is not "both sides have a fence": DMB.LD orders nothing on
 ### a store;store producer and a PTX release fence nothing on a load;load
 ### consumer, so the table meets the solvers rather than being asserted.
-###   ARM  96 CPU-only AArch64 cells under herd7's native model
-###   PTX  96 GPU-only LISA/Bell cells under nvidia-ptx.cat (Lustig'19)
-### --bite corrupts the table four ways (a CPU ordered-pair set, a GPU one, a
-### pattern role, and the pattern clause itself) and requires each to redden the
-### phase that names it -- which is the only phase it runs, each key having a
-### single phase's reader.  No nvcc, no GPU.
+###   ARM    96 CPU-only AArch64 cells under herd7's native model
+###   PTX    96 GPU-only LISA/Bell cells under nvidia-ptx.cat (Lustig'19)
+###   AGREE  the 8 primitives keyed one by one against controlmap.py's own copy
+###          of the same `ord' sets: agreeing with herd7 is not what keeps two
+###          restated tables agreeing with each other.  The lattice's TIER half
+###          is out of its reach and ordercheck.py says so at the key map.
+### --bite corrupts the table five ways (a CPU ordered-pair set, a GPU one, a
+### pattern role, the pattern clause itself, and controlmap's own copy) and
+### requires each to redden the phase that names it -- which is the only phase it
+### runs.  No nvcc, no GPU.
 hetlitmus-lattice: | build
 	@ echo
 	python3 hetlitmus/verify/ordercheck.py
@@ -777,9 +796,12 @@ hetlitmus-lattice: | build
 ###                      table, scraped here from real emissions: unstamped is the
 ###                      generic frame, each pair prints its own machine, and no
 ###                      frame prints another pair's.
-### --bite: 12 injections (4 against the rule and its printouts, 2 against its
-### reporting paths, 2 against the emitted corpus, 4 against the machine prose),
-### each verified to have actually changed the code it corrupts.
+### --bite: 17 injections (8 against the rule and its printouts, 2 against its
+### reporting paths, 2 against the emitted corpus, 5 against the machine prose),
+### each verified to have actually changed the code it corrupts.  A machine arm
+### also names the diagnostic it expects first, because the prose is guarded in
+### two directions -- a sentence that stopped printing and a sentence that names
+### another vendor -- and only the last arm reddens on the second.
 hetlitmus-verdict: | build
 	@ echo
 	python3 hetlitmus/verify/verdictcheck.py
@@ -972,6 +994,14 @@ HETD10OUT := $(CURDIR)/hetlitmus/tests/het/d10-out
 ### names no machine, which is a machinery smoke and not a D10 reading.
 HETD10TARGET ?= hip
 
+### The NEGATIVE control for the cpu_only stamp: a corpus test with a GPU proc,
+### which the emitter must stamp 0.  It is emitted into a temp dir rather than
+### into $(HETD10OUT), whose harness-dir count is pinned at six.  Both halves are
+### knobs so that the check can be shown to bite: point them at one of the D10
+### tests and the grep for `= 0' must fail.
+HETD10NEGDIR ?= $(CURDIR)/hetlitmus/tests/het
+HETD10NEG ?= MP-cg-sys-relaxed
+
 ### hetlitmus-d10: the CPU-ONLY POSITIVE CONTROL as a first-class campaign item
 ### (memo sect 7.D10, PHASE2-plan:71).  Generates the six CPU-only shapes, emits
 ### their harnesses and prints the campaign command for a machine that has a GPU.
@@ -981,6 +1011,11 @@ HETD10TARGET ?= hip
 ### not, and that is exactly why a target that had never worked once shipped
 ### green: the SCIENCE this target carries was gated elsewhere, but nothing
 ### gated the COMMAND a human is told to run.
+### The renders are read, not merely counted: all six must stamp
+### `_rec.cpu_only = 1' -- the flag het_verdict.h keys its D10 sentences off --
+### and a corpus test with a GPU proc, emitted into a temp dir, must stamp 0, so
+### the six 1s are a measurement of the emitter's classifier and not of a
+### constant.  See HETD10NEGDIR for how the second half is bitten.
 hetlitmus-d10: | build
 	@ echo
 	rm -rf $(HETD10OUT)
@@ -992,6 +1027,27 @@ hetlitmus-d10: | build
 	      -o . "$$t" 2>&1 | grep -E 'pair:|REFUSED' ; done
 	@ set -e ; n=$$(ls -d $(HETD10OUT)/*/ 2>/dev/null | wc -l) ; \
 	  test "$$n" -eq 6 || { echo "hetlitmus-d10: emitted $$n harness dir(s), expected 6" ; exit 1 ; }
+	@ set -e ; n=0 ; for d in $(HETD10OUT)/*/ ; do \
+	    r=$$(ls $$d*.hip $$d*.cu 2>/dev/null | head -1) ; \
+	    test -n "$$r" || { echo "hetlitmus-d10: $$d carries no render" ; exit 1 ; } ; \
+	    grep -q '_rec\.cpu_only = 1;' "$$r" || { \
+	      echo "hetlitmus-d10: $$r does not stamp _rec.cpu_only = 1 -- a CPU-only" ; \
+	      echo "  cycle whose harness does not say so is reported as a compound-model row" ; \
+	      exit 1 ; } ; \
+	    n=$$((n+1)) ; done ; \
+	  echo "hetlitmus-d10: $$n/6 renders stamp _rec.cpu_only = 1"
+	@ set -e ; t=$$(mktemp -d) ; \
+	  $(CURDIR)/_build/install/default/bin/litmus7 -gpu-target cuda \
+	    -set-libdir $(CURDIR)/litmus/libdir -o "$$t" \
+	    $(HETD10NEGDIR)/$(HETD10NEG).litmus >"$$t/emit.log" 2>&1 \
+	    || { cat "$$t/emit.log" ; rm -rf "$$t" ; exit 1 ; } ; \
+	  r="$$t/$(HETD10NEG)/$(HETD10NEG).cu" ; \
+	  grep -q '_rec\.cpu_only = 0;' "$$r" \
+	    || { echo "hetlitmus-d10: the het control $(HETD10NEG) does not stamp" ; \
+	         echo "  _rec.cpu_only = 0 -- the flag is a constant, so the six 1s above" ; \
+	         echo "  vouch for nothing" ; rm -rf "$$t" ; exit 1 ; } ; \
+	  rm -rf "$$t" ; \
+	  echo "hetlitmus-d10: the het control $(HETD10NEG) stamps _rec.cpu_only = 0"
 	@ echo
 	@ echo "D10 harnesses in $(HETD10OUT), rendered for $(HETD10TARGET).  On the TARGET box:"
 	@ echo "    cd <test> && sh comp.sh $(HETD10TARGET)-link"
