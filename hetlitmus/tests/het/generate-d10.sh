@@ -32,17 +32,8 @@
 # when every one of them is a CPU proc; het_verdict.h keys the D10 sentences off
 # that flag, so nothing here depends on the FILE NAME saying "cpuonly".
 #
-# THE ORACLE.  Every verdict below was machine-checked against herd7 +
-# herd/libdir/x86tso.cat on the SAME cycle rendered with `diyone7 -arch X86'.
-# Measured 2026-08-03:
-#     MP    Never 0 3      LB    Never 0 3      2+2W  Never 0 3
-#     IRIW  Never 0 15     SB    Sometimes 1 3  R     Sometimes 1 3
-# which reproduces D10's prose (SB/R observable, MP/LB/2+2W/IRIW not) and, on
-# the four shapes it covers, the PLDI'23 artifact's own expected.csv:
-#     CPU-Only,MP-sys,Disallowed   CPU-Only,LB-sys,Disallowed
-#     CPU-Only,SB-sys,Allowed      CPU-Only,IRIW-sys,Disallowed
-# OPEN, AND IT AFFECTS EXACTLY ONE ROW OF THIS SET -- read before using 2+2W.
-# MEASURED 2026-08-03 on the dev box (12th Gen Intel i5-12500H + RTX 3060,
+# ONE ROW OF THIS SET CARRIES AN OPEN DEFECT -- read this before using 2+2W.
+# Measured 2026-08-03 on the dev box (12th Gen Intel i5-12500H + RTX 3060,
 # HET_ALLOC=pinned): SB and R fired (the WB probe passed, so the allocation is
 # not UC), MP / LB / IRIW were not observed in 10 runs each -- exactly what
 # x86-TSO predicts -- and 2+2W-cpuonly reported MISMATCH-CONFIRMED, 10 runs of
@@ -58,11 +49,8 @@
 # `/ T_K_TAG'; the quotient is used only by the observer-uniqueness blocks).
 # Under the perpetual loop the observer therefore matches "mu_a seen before
 # mu_b" ACROSS iterations, where the coherence order it is meant to witness is
-# only defined WITHIN one.  D10 is the first time this detector has been aimed
-# at a cycle whose oracle FORBIDS it -- in the het corpus every 2+2W row is
-# Allowed, so over-reporting there looks like success -- so the sighting is
-# equally consistent with the detector over-reporting and with a real property
-# of the pinned allocation.
+# only defined WITHIN one.  So the sighting is equally consistent with the
+# detector over-reporting and with a real property of the pinned allocation.
 #
 # It does not touch the four ARTIFACT shapes (MP, LB, SB, IRIW): each has a real
 # x86 reader, so its cycle closes through a load and none of this applies.  Use
@@ -91,9 +79,9 @@ COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell"
 
 # shape | nprocs | cycle
 #
-# The harnesses carry no verdict: what these six shapes do under x86-TSO is the
-# block above, and comparing an observation against it is the offline step
-# (hetlitmus/oracle-compare.sh).  Whatever a run shows, it is not a compound-model
+# The harnesses carry no verdict, and this script supplies none: comparing an
+# observation against an oracle is the offline step (hetlitmus/oracle-compare.sh),
+# over a CSV the caller brings.  Whatever a run shows, it is not a compound-model
 # result: the CPU-only branch of het_verdict.h outranks the ordinary sentence,
 # because on an all-CPU cycle the compound model is not under test.
 D10_ROWS="

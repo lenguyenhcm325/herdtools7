@@ -125,26 +125,28 @@ Observations: tests/cram/obs.txt
 
 TEST           QUANT   OBSERVED   ORACLE       MODEL          RESULT         NOTE
 ----           -----   --------   ------       -----          ------         ----
-SB-sys         exists  Sometimes  Allowed      PTX            MATCH          relaxation seen
-MP-sys-F       exists  Sometimes  Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
-LB-sys         exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
-SB-sys-fa      forall  Sometimes  Disallowed   PTX            MATCH          forbidden, not seen
-MP-sys-fa      forall  Never      Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
-LB-sys-fa      forall  Sometimes  -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
-WS-sys         exists  Sometimes  NO-ORACLE    PTX            NO-ORACLE      model silence: this oracle makes no claim here
-BOGUS-sys      exists  Never      ?            -              UNINTERPRETED  unknown oracle verdict "Perhaps"
+FX-match-ex    exists  Sometimes  Allowed      FIXTURE        MATCH          relaxation seen
+FX-mismatch-ex exists  Sometimes  Disallowed   FIXTURE        MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+FX-absent-ex   exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
+FX-match-fa    forall  Sometimes  Disallowed   FIXTURE        MATCH          forbidden, not seen
+FX-mismatch-fa forall  Never      Disallowed   FIXTURE        MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+FX-absent-fa   forall  Sometimes  -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
+FX-silent      exists  Sometimes  NO-ORACLE    FIXTURE        NO-ORACLE      model silence: this oracle makes no claim here
+FX-silent-forall forall  Sometimes  NO-ORACLE    FIXTURE        NO-ORACLE      model silence: this oracle makes no claim here
+FX-corrupt     exists  Never      ?            -              UNINTERPRETED  unknown oracle verdict "Perhaps"
 
-8 test(s): 2 MATCH, 2 MISMATCH, 1 NO-ORACLE, 3 UNINTERPRETED
+9 test(s): 2 MATCH, 2 MISMATCH, 2 NO-ORACLE, 3 UNINTERPRETED
 ```
 
 Every row carries a `Condition` line, so `QUANT` is populated and the `forall`
-inversion of §3 is driven: `MP-sys-fa` is `Disallowed` and `Never`, which under
-`forall` means the forbidden predicate held in every execution — MISMATCH —
+inversion of §3 is driven: `FX-mismatch-fa` is `Disallowed` and `Never`, which
+under `forall` means the forbidden predicate held in every execution — MISMATCH —
 while its `exists` counterpart would read as "forbidden, not seen". The fixture
-also drives the three ways an oracle can fail to decide: the `LB-*` rows are
-absent from the CSV, `WS-sys` is present and declines, and `BOGUS-sys` carries a
-verdict string the harness does not know, which fails closed rather than
-passing. `tests/cram/oracle-negatives.t` pins this run.
+also drives the three ways an oracle can fail to decide: the `FX-absent-*` rows
+are absent from the CSV, `FX-silent`/`FX-silent-forall` are present and decline,
+and `FX-corrupt` carries a verdict string the harness does not know, which fails
+closed rather than passing. `tests/cram/oracle-negatives.t` pins this run, and
+says what the fixture pair is and is not.
 
 To drive the harness end to end on the AMD side, point `<observations-file>` at
 an MI300A litmus7 log and `<oracle-csv>` at a CSV the caller supplies (caveat: a

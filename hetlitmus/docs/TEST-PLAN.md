@@ -129,10 +129,7 @@ is what you *wanted*.
 
 **Not used:** the `.expected` + `REGRESSION_TEST_MODE` OCaml-driver idiom. Its one
 advantage over git-diff is *normalization* (order-insensitive/derived comparison);
-our generation is byte-stable so we don't need it. The only place normalization
-matters is verdict-level oracle checks (Layer 4) — and there `herd_regression_test.exe`
-already does "run herd over a dir, compare outcomes to expected", so we would
-**reuse** it, never write one.
+our generation is byte-stable so we don't need it.
 
 ---
 
@@ -165,10 +162,12 @@ already does "run herd over a dir, compare outcomes to expected", so we would
 - ✓ `generate.sh` (both dirs), byte-stable.
 - ✓ **golden gate** (`verify/corpus-gate.sh`, `6e92f2657`): regenerate, then fail on
   any tree change including added/removed files — `git status --porcelain -- hetlitmus/tests/`, **not** bare `git diff`.
-- ✓ emission golden (in `corpus-gate.sh`): the 10 `cuda-out/*.cu` samples are committed;
-  `emit-cuda.sh` emits to a **temp dir** and the 10 are diffed against it (`emit-cuda`
-  emits all 137; only these 10 are committed) — emitter drift = nonzero diff. (Not
-  re-emitted in place: that would litter 127 untracked `.cu` in `cuda-out/`.)
+- ✓ emission golden (in `corpus-gate.sh`): 10 `cuda-out/*.cu` **and** 10 `hip-out/*.hip`
+  samples are committed; `emit-cuda.sh` and `emit-hip.sh` each emit all 137 to a
+  **temp dir** and each sample is diffed against its own lane — emitter drift = nonzero
+  diff. One emission renders one vendor (`litmus/hetDialect.ml`), so the `.hip` lane is a
+  second pass and not optional. (Not re-emitted in place: that would litter 127 untracked
+  files per lane.)
 - ~ parse-smoke (every `.litmus` emits without error) already comes free from the
   Layer-3 faithfulness sweep, which emits every test.
 - ✓ census (in `corpus-gate.sh`): asserts counts 137/411. The extra per-test
@@ -257,8 +256,9 @@ Umbrellas (what you press):
   stand-in for the session wrapper (stub compiler, stub probe) is `hetlitmus-run-gate`,
   which is in the other umbrella.
 - **`make hetlitmus-test-all`** → both. ← pre-commit gate on the dev box.
-- **`make hetlitmus-promote`** → regenerate + `dune test hetlitmus/tests --auto-promote`;
-  does **not** commit; prints "review `git diff` then commit".
+- **`make hetlitmus-promote`** → regenerate both corpora, re-emit `control-map-amd.csv`,
+  then `dune test hetlitmus/tests/cram --auto-promote` (the cram dir only); does **not**
+  commit; prints "review `git diff` then commit".
 
 Three of the building blocks are worth naming, because each exists for a failure no other
 gate can see. `hetlitmus-lattice` machine-checks the ordering-strength lattice (`ordercheck.py` phases
@@ -345,7 +345,6 @@ Steps 1–4 all run on the dev box (and in CI, Layer 3 with a CUDA-install step)
 | corpus golden store + promote | ✓ git (`status --porcelain` / `commit` / `checkout`) |
 | cram runner + promote | ✓ dune (`(cram enable)` already in `dune-project`; `dune promote`) |
 | Makefile idiom | ✓ herdtools7 `test::`/`| build`/`@ echo OK` |
-| verdict-level oracle driver (Layer 4, if needed) | ✓ `internal/herd_regression_test.exe` — reuse, don't build |
 
 ---
 
@@ -400,9 +399,10 @@ Optional atom-mapping units: `arm_ord R acqrel`→`Q` (LDAPR), `arm_ord W acqrel
 the committed `.t` is the authority. It drives the offline `oracle-compare.sh` over three
 fixture pairs — `obs.txt`/`oracle.csv` (the full class × quantifier matrix in one run),
 `obs-stats.txt`/`oracle-stats.csv` (the statistics section, whose blocks come verbatim from
-`het_verdict.h`), and `obs-amd.txt`/`oracle-amd.csv` (the same decision logic on a different
-`Model` string). Read the file; `dune promote` the actual output rather than any bytes
-quoted in a doc.
+`het_verdict.h`), and `obs-amd.txt`/`oracle-amd.csv` (the same decision logic over a
+differently shaped CSV, pinning the mismatch sentence as unconditional across three
+different `Source` cells). Read the file; `dune promote` the actual output rather than any
+bytes quoted in a doc.
 
 `ptx-negatives.t` (Layer 1; frozen corrupted PTX, no GPU):
 ```

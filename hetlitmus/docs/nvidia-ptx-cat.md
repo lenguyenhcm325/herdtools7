@@ -24,6 +24,9 @@ asserted.
   §9.7.14.4 *"membar/fence"*
   (`docs.nvidia.com/cuda/parallel-thread-execution/`). Cited only for the
   extension in §3.
+* **[PTXISA60]** NVIDIA PTX ISA 6.0, §9.7.12.3 *"membar/fence"*
+  (`docs.nvidia.com/cuda/archive/9.0/parallel-thread-execution/`) — the ISA
+  revision [Lustig19] analyses. Cited only for the extension in §3.
 
 **A later formalisation exists, and this file does not follow it.** D. Lustig,
 S. Cooksey, O. Giroux, *"Mixed-Proxy Extensions for the NVIDIA PTX Memory
@@ -85,13 +88,23 @@ paper's own `F^{REL}` / `F^{ACQ}` therefore range over `{acq_rel, sc}` alone.
 
 The extension is disclosed rather than removed, on two grounds:
 
-1. **The instructions are real, and postdate the paper.** [PTXISA] §9.7.14.4
-   gives `.sem = { .sc, .acq_rel, .acquire, .release }` and states, verbatim,
-   *".acquire and .release qualifiers for fence instruction introduced in PTX
-   ISA version 8.6"* and *".acquire and .release qualifiers for fence
-   instruction require sm_90 or higher."* The same bound is recorded in-tree at
-   `litmus/CudaLang.ml` (`fence.{acquire,release}.<any>` : PTX ISA 8.6, SM_90),
-   nvcc-verified on CUDA 12.9.
+1. **The paper writes these fences even where it does not model them.**
+   [Lustig19] Figure 11 (*"Our mapping from C/C++ to PTX"*, §4.2, p.265) names
+   `fence.acquire.<sco>` and `fence.release.<sco>` in its PTX column, as the
+   targets of the scoped-C++ fences `F^{ACQ,sco}` and `F^{REL,sco}` (beside
+   `fence.acq_rel.<sco>` and `fence.sc.<sco>`). Three things hold at once, and
+   the extension rests on the first: the paper's mapping table **writes** these
+   fences (Fig 11, p.265); its axioms do not **range over** them (Fig 3c,
+   p.260); and the ISA of the day did not **define** them — PTX ISA 6.0, the
+   revision [Lustig19] analyses, gives the fence as `fence{.sem}.scope` with
+   `.sem = {.sc, .acq_rel}` and no `.acquire` or `.release` ([PTXISA60]
+   §9.7.12.3). They are defined now:
+   [PTXISA] §9.7.14.4 gives `.sem = { .sc, .acq_rel, .acquire, .release }` and
+   states, verbatim, *".acquire and .release qualifiers for fence instruction
+   introduced in PTX ISA version 8.6"* and *".acquire and .release qualifiers
+   for fence instruction require sm_90 or higher."* The same bound is recorded
+   in-tree at `litmus/CudaLang.ml` (`fence.{acquire,release}.<any>` : PTX ISA
+   8.6, SM_90), nvcc-verified on CUDA 12.9.
 2. **[PTXISA] §8.8 puts them in exactly these pattern positions.** The release
    pattern includes *"a release or acquire-release memory fence followed by a
    strong write on M in program order"* (`fence.release; st.relaxed [M];`), and

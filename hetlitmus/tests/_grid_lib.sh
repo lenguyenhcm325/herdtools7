@@ -207,14 +207,14 @@ render_cpu_cycle() {
 TWO_SIDED_CPU_ORDERS="ra sy st ld"
 TWO_SIDED_GPU_ORDERS="ra sc rel acq"
 
-# Shapes + cuts for the off-diagonal sweep.  2-proc only: NO-ORACLE is a
-# property of the SHAPE (transitive shapes need cross-device multi-copy
-# atomicity or A-cumulativity, which Bagchi ISMM'26 sect 2.1 defers), so no
-# annotation on one can produce a Disallowed row; 2+2W is excluded for the same
-# reason (two `co' edges, no `rf').  SB and LB emit one cut: their cycle is
-# invariant under rotation-by-two, which swaps P0/P1, and the annotation
-# follows the device rather than the proc index, so `gc' would be `cg' with the
-# labels exchanged.  verify/dupcheck.py holds that honest.
+# Shapes + cuts for the off-diagonal sweep.  What it has to cover is the
+# (primitive, program-order pair) product, since the pair a proc carries is what
+# decides what its primitive orders (note above).  These five 2-proc shapes
+# already realise all four Pod kinds -- WW RR WR RW -- on the CPU side and all
+# four on the GPU side, so no further shape adds a combination.  Two procs also
+# keep a cell legible: one cpu and one gpu token per test, so a 3- or 4-proc cut
+# would put a single token on several procs at once.  SB and LB emit one cut,
+# for the rotation-by-two reason recorded at SHAPE_HET_CUTS above.
 TWO_SIDED_PAIR_SHAPES="MP SB LB R S"
 declare -A SHAPE_2S_PAIR_CUTS=(
   [MP]="cpu,gpu gpu,cpu"

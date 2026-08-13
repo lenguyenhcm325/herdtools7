@@ -1,16 +1,15 @@
-# HAND-AUTHORED Layer-1 cram fixture, not generated: the AMD form of the oracle
-# CSV (Litmus,Expected,Model,Source).  Paired with obs-amd.txt to drive
-# oracle-compare.sh over an AMD-tagged oracle -- the AMD Model string, the
-# UNCONDITIONAL mismatch sentence (PORT2-R2-amd-oracle.md sect 9.2 as amended by
-# P2e: a forbidden outcome seen indicts THAT ORACLE ROW first, because the row is
-# a derivation and not a measurement), an EARNED NO-ORACLE row, and a test the
-# file does not have at all.  The three MISMATCH rows below carry three different
-# Source strings and print the SAME sentence, which is the point: nothing in the
-# CSV may make one of them read as a refutation of the compound model.
+# HAND-AUTHORED Layer-1 cram fixture, not generated: a second oracle CSV
+# (Litmus,Expected,Model,Source), paired with obs-amd.txt so oracle-compare.sh
+# runs its decision logic twice over differently shaped input -- an EARNED
+# NO-ORACLE row, a MATCH, a test the file does not carry at all, and above all
+# three MISMATCH rows whose Source cells are three DIFFERENT strings.  Those
+# three are why this pair exists: the mismatch note is UNCONDITIONAL, so nothing
+# a CSV puts in a cell may make one row read as a refutation of the compound
+# model.
 # Edit with oracle-negatives.t, never alone.
 Litmus,Expected,Model,Source
-MP-cg-sys-acquire,Disallowed,AMD-CDNA3-x86,S_CUT (cycle cut: morally-strong sys-scope endpoints)
-WRC-ccg-sys-relaxed,Disallowed,AMD-CDNA3-x86,S_CUT (cycle cut on a shape with no artifact anchor)
-IRIW-gccc-sys-acquire,Disallowed,AMD-CDNA3-x86,S_CUT_MCA (decision D2)
-2+2W-cg-sys-fence,NO-ORACLE,AMD-CDNA3-x86,S_WS_FENCE (write serialisation unresolved)
-MP-cg-sys-relaxed,Allowed,AMD-CDNA3-x86,S_PPO_G
+FXB-mism-1,Disallowed,FIXTURE,hand-authored fixture -- source string A
+FXB-mism-2,Disallowed,FIXTURE,hand-authored fixture -- source string B
+FXB-mism-3,Disallowed,FIXTURE,hand-authored fixture -- source string C
+FXB-silent,NO-ORACLE,FIXTURE,hand-authored fixture
+FXB-match,Allowed,FIXTURE,hand-authored fixture

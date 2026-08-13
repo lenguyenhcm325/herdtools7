@@ -1,20 +1,28 @@
 Layer-1 exhaustive spec of oracle-compare.sh's decision logic (no golden covers
 it; the forall quantifier inversion is subtle -- see TEST-PLAN.md sec 4).  The
 frozen fixtures obs.txt + oracle.csv drive the FULL matrix
-{MATCH, MISMATCH, NO-ORACLE, UNINTERPRETED} x {exists, forall} in a single run.
+{MATCH, MISMATCH, NO-ORACLE, UNINTERPRETED} x {exists, forall} in a single run --
+nine rows over the eight cells.
+Both hand-authored pairs (obs.txt + oracle.csv, obs-amd.txt + oracle-amd.csv) are
+invented throughout -- every name, verdict, Source and count -- so no row of
+either is a claim about any real test, and the FX-/FXB- prefixes are there so
+none can be read as one.  oracle-stats.csv, which the STATISTICS section below
+uses, is the one fixture not like that; its own header says how.
+FX-silent-forall is deliberately past the 14-column TEST field, because real test
+names routinely overflow it and a fixture whose names all fitted would stop
+pinning how the table renders when they do not.
 A MISMATCH (forbidden outcome observed) makes the harness exit 1 -- that nonzero
 `[1]' is part of the frozen expectation, proving the CI gate bites.
 
-The last two rows are the 2026-08-02 (P2a) split that
-env-research/PORT2-R2-amd-oracle.md sect 1.3 demands: a test the oracle HAS and
-declines to decide (WS-sys, EARNED model silence) must not read the same as a
-test the oracle does not have at all (the LB rows).  Aliasing them is how an
-MI300X run -- which has no oracle by design, so every row is absent -- would have
-printed as model silence.  BOGUS-sys carries a verdict string the harness does
+FX-silent, FX-silent-forall and the FX-absent rows are the 2026-08-02 (P2a)
+split: a test the oracle HAS and declines to decide (EARNED model silence) must
+not read the same as a test the oracle does not have at all.  Aliasing them is how
+a run against a CSV that covers none of its tests -- every row absent -- would
+print as model silence.  FX-corrupt carries a verdict string the harness does
 not know: that is a corrupt oracle and it fails closed to UNINTERPRETED, never to
-a pass.  Before the fix, a CSV verdict of NO-ORACLE ALSO fell into that arm and
-printed `unknown oracle verdict "NO-ORACLE"', so any oracle that declined to
-decide a row had its silence reported as corruption.
+a pass.  A CSV verdict of NO-ORACLE must not reach that same arm, or an oracle
+that declined to decide a row would have its silence reported as
+`unknown oracle verdict "NO-ORACLE"'.
 
   $ bash ../../oracle-compare.sh obs.txt oracle.csv
   Oracle:       oracle.csv
@@ -22,16 +30,17 @@ decide a row had its silence reported as corruption.
   
   TEST           QUANT   OBSERVED   ORACLE       MODEL          RESULT         NOTE
   ----           -----   --------   ------       -----          ------         ----
-  SB-sys         exists  Sometimes  Allowed      PTX            MATCH          relaxation seen
-  MP-sys-F       exists  Sometimes  Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
-  LB-sys         exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
-  SB-sys-fa      forall  Sometimes  Disallowed   PTX            MATCH          forbidden, not seen
-  MP-sys-fa      forall  Never      Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
-  LB-sys-fa      forall  Sometimes  -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
-  WS-sys         exists  Sometimes  NO-ORACLE    PTX            NO-ORACLE      model silence: this oracle makes no claim here
-  BOGUS-sys      exists  Never      ?            -              UNINTERPRETED  unknown oracle verdict "Perhaps"
+  FX-match-ex    exists  Sometimes  Allowed      FIXTURE        MATCH          relaxation seen
+  FX-mismatch-ex exists  Sometimes  Disallowed   FIXTURE        MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+  FX-absent-ex   exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
+  FX-match-fa    forall  Sometimes  Disallowed   FIXTURE        MATCH          forbidden, not seen
+  FX-mismatch-fa forall  Never      Disallowed   FIXTURE        MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+  FX-absent-fa   forall  Sometimes  -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
+  FX-silent      exists  Sometimes  NO-ORACLE    FIXTURE        NO-ORACLE      model silence: this oracle makes no claim here
+  FX-silent-forall forall  Sometimes  NO-ORACLE    FIXTURE        NO-ORACLE      model silence: this oracle makes no claim here
+  FX-corrupt     exists  Never      ?            -              UNINTERPRETED  unknown oracle verdict "Perhaps"
   
-  8 test(s): 2 MATCH, 2 MISMATCH, 1 NO-ORACLE, 3 UNINTERPRETED
+  9 test(s): 2 MATCH, 2 MISMATCH, 2 NO-ORACLE, 3 UNINTERPRETED
   [1]
 
 The STATISTICS section, which the matrix above never reaches: obs.txt carries no
@@ -94,14 +103,14 @@ over the Disallowed rows, and the two counts that say a row must not be tabulate
   $ grep '^VACUOUS:' stats.out
   VACUOUS: 1 null(s) bound their rate at >= 1, i.e. at nothing.  Grow R (Q3 F4).
 
-The AMD oracle drives the SAME decision logic on a different Model string, and
-the mismatch sentence is UNCONDITIONAL (PORT2-R2-amd-oracle.md sect 9.2 as
-amended by P2e): no row of either oracle is a hardware measurement, so a
-forbidden outcome seen indicts THE ORACLE ROW first, never the compound model.
-The three MISMATCH rows below carry three different Source strings and must all
-print that one sentence -- a printer that graded them would be visible here,
-because the SENTENCE is the deliverable and not the enum.  Nothing in the file
-distinguishes them, and nothing may.
+The second hand-authored pair runs the same decision logic over a differently
+shaped CSV, and pins the mismatch sentence as UNCONDITIONAL: no row of a
+supplied oracle is a hardware measurement, so a forbidden outcome seen indicts
+that oracle row first, never the compound model.  The three MISMATCH rows below
+carry three different Source strings and must all print that one sentence -- a
+printer that graded them would be visible here, because the SENTENCE is the
+deliverable and not the enum.  Nothing in the file distinguishes them, and
+nothing may.
 
   $ bash ../../oracle-compare.sh obs-amd.txt oracle-amd.csv
   Oracle:       oracle-amd.csv
@@ -109,12 +118,12 @@ distinguishes them, and nothing may.
   
   TEST           QUANT   OBSERVED   ORACLE       MODEL          RESULT         NOTE
   ----           -----   --------   ------       -----          ------         ----
-  MP-cg-sys-acquire exists  Sometimes  Disallowed   AMD-CDNA3-x86  MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
-  WRC-ccg-sys-relaxed exists  Sometimes  Disallowed   AMD-CDNA3-x86  MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
-  IRIW-gccc-sys-acquire exists  Sometimes  Disallowed   AMD-CDNA3-x86  MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
-  2+2W-cg-sys-fence exists  Sometimes  NO-ORACLE    AMD-CDNA3-x86  NO-ORACLE      model silence: this oracle makes no claim here
-  MP-cg-sys-relaxed exists  Sometimes  Allowed      AMD-CDNA3-x86  MATCH          relaxation seen
-  NOT-IN-THE-AMD-ORACLE exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
+  FXB-mism-1     exists  Sometimes  Disallowed   FIXTURE        MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+  FXB-mism-2     exists  Sometimes  Disallowed   FIXTURE        MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+  FXB-mism-3     exists  Sometimes  Disallowed   FIXTURE        MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+  FXB-silent     exists  Sometimes  NO-ORACLE    FIXTURE        NO-ORACLE      model silence: this oracle makes no claim here
+  FXB-match      exists  Sometimes  Allowed      FIXTURE        MATCH          relaxation seen
+  FXB-absent     exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
   
   6 test(s): 1 MATCH, 3 MISMATCH, 1 NO-ORACLE, 1 UNINTERPRETED
   [1]

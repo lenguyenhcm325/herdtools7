@@ -98,13 +98,14 @@ done
 # (D) The two-sided family: complete the morally-strong cross-device pair.
 # ---------------------------------------------------------------------------
 # Both halves annotated: the CPU cycle with ARM atoms (render_cpu_cycle) and the
-# GPU cycle with the matching sys annotation, so a complete morally-strong pair
-# can form and the targeted outcome can be Disallowed.  Restricted to sys scope
-# (cta/gpu can never encompass the CPU thread however the CPU is annotated) and
-# to the complete pairings {acqrel, fence} -- acquire or release alone annotates
-# one role only.
-# Generated for aarch64 only: the GH200 target is AArch64+PTX, and an x86 CPU
-# would be a different oracle.
+# GPU cycle with the matching sys annotation, so the corpus carries the
+# cross-device pair annotated on BOTH sides -- (B) annotates the GPU half alone.
+# Restricted to sys scope (cta and gpu name GPU threads only, so a CPU proc sits
+# outside them however it is annotated) and to the complete pairings {acqrel,
+# fence} -- acquire or release alone annotates one role only.
+# Generated for aarch64 only: the committed corpus is the AArch64 rendering, and
+# the x86 CPU column is emitted on demand by generate-x86.sh (its header says
+# why it is not committed).
 twosided_count=0
 for shape in $SHAPE_ORDER; do
   cyc="${SHAPE_CYCLE[$shape]}"
