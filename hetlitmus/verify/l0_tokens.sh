@@ -15,7 +15,7 @@
 #   bash hetlitmus/verify/l0_tokens.sh het        # just the 411 het
 #   bash hetlitmus/verify/l0_tokens.sh guard      # completeness-guard report
 #   bash hetlitmus/verify/l0_tokens.sh selftest   # inject weaken+strengthen
-#   JOBS=8 bash hetlitmus/verify/l0_tokens.sh     # parallelism (default 4)
+#   JOBS=8 bash hetlitmus/verify/l0_tokens.sh     # workers (default: nproc, max 12)
 # ---------------------------------------------------------------------------
 set -u
 
@@ -29,7 +29,17 @@ CHECK="$REPO/hetlitmus/verify/ptxcheck.py"
 # the expected 137/411 fails).  Default is the real corpus.
 GPU_DIR="${GPU_DIR:-$REPO/hetlitmus/tests/gpu-only}"
 HET_DIR="${HET_DIR:-$REPO/hetlitmus/tests/het}"
-JOBS="${JOBS:-4}"
+# Per-test workers for the corpus loops below.  `nproc' honours this process's
+# affinity mask but NOT a cgroup CPU quota, so an uncapped default can
+# oversubscribe a container several times over; the cap bounds that without
+# reading cgroup files whose layout differs between v1 and v2.
+_jobs_default() {
+  local n
+  n="$(nproc 2>/dev/null || echo 4)"
+  if [ "$n" -gt 12 ]; then n=12; fi
+  echo "$n"
+}
+JOBS="${JOBS:-$(_jobs_default)}"
 RESDIR="$(mktemp -d)"
 trap 'rm -rf "$RESDIR"' EXIT
 
@@ -491,30 +501,54 @@ PY
     python3 "$SL" --cu "$s4cu" -q >/dev/null 2>&1; s4rc=$?
     _expect "stress liveness control (unmodified harness)" 0 "$s4rc" || fails=$((fails+1))
 
-    _s4bite() { # label sed-expr
-      local lbl="$1" expr="$2" rc
+    # Each injection names the stresscheck check it can reach, so the compiles the
+    # others need are not run for a mutation that cannot move them -- and a
+    # nonzero exit can then only have come from the check the injection targets.
+    # The file is a parameter because the last one doctors the emitted
+    # het_stress.h rather than the render.
+    _s4bite() { # label  file  --checks selection  sed-expr  [phrase it must print]
+      local lbl="$1" file="$2" only="$3" expr="$4" want="${5:-}" rc out bad=0
       rm -rf "$s4/mut"; cp -r "$s4/$S4T" "$s4/mut"
-      sed -i "$expr" "$s4/mut/$S4T.cu"
-      if cmp -s "$s4cu" "$s4/mut/$S4T.cu"; then
+      sed -i "$expr" "$s4/mut/$file"
+      if cmp -s "$s4/$S4T/$file" "$s4/mut/$file"; then
         printf '  *** VACUOUS BITE: injection changed nothing    [%s]\n' "$lbl"
         return 1
       fi
-      python3 "$SL" --cu "$s4/mut/$S4T.cu" -q >/dev/null 2>&1; rc=$?
-      _expect "$lbl" 1 "$rc"
+      out="$(python3 "$SL" --cu "$s4/mut/$S4T.cu" --checks "$only" 2>&1)"; rc=$?
+      _expect "$lbl [checks=$only]" 1 "$rc" || bad=1
+      if [ -n "$want" ] && ! printf '%s\n' "$out" | grep -qF "$want"; then
+        printf '  *** WRONG REASON: the failure never printed %s    [%s]\n' \
+               "$want" "$lbl"
+        printf '%s\n' "$out" | grep -F 'FAIL:' | head -2
+        bad=1
+      fi
+      return "$bad"
     }
     # Both call sites: hand het_do_stress a compile-time pattern and the tuned
     # default (3 = ld;ld) is dead-code-eliminated away.
     _s4bite "pre-stress pattern made compile-time (the B4 regression itself)" \
+            "$S4T.cu" pre \
             's/HET_PRE_STRESS_ITER, _pre_pat/HET_PRE_STRESS_ITER, HET_PRE_STRESS_PATTERN/' \
             || fails=$((fails+1))
     _s4bite "mem-stress pattern made compile-time (the B8 autotune blast radius)" \
+            "$S4T.cu" mem \
             's/HET_MEM_STRESS_ITER, _mem_pat/HET_MEM_STRESS_ITER, HET_MEM_STRESS_PATTERN/' \
             || fails=$((fails+1))
     _s4bite "pre-stress call dropped (test lanes stop self-stressing)" \
+            "$S4T.cu" pre \
             '/het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER/d' \
             || fails=$((fails+1))
     _s4bite "mem-stress call dropped (stressing workgroups stop stressing)" \
+            "$S4T.cu" mem \
             '/het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER/d' \
+            || fails=$((fails+1))
+    # ...and the assertion that lets check 4 read its two per-class parts out of
+    # the pattern sweep: move the emitted header off a swept default and it must
+    # refuse rather than compare the shipped config against a different compile.
+    _s4bite "het_stress.h pre-stress pattern default moved off the swept value" \
+            het_stress.h default \
+            's/^#define HET_PRE_STRESS_PATTERN 3/#define HET_PRE_STRESS_PATTERN 2/' \
+            'het_stress.h ships' \
             || fails=$((fails+1))
     rm -rf "$s4/mut"
   fi
@@ -523,8 +557,8 @@ PY
   # cpustresscheck.py is the one checker able to catch a regression that
   # preserves the source text while killing the COMPILED mechanism -- strip
   # `volatile' and the enemy still reads beautifully and issues nothing -- so it
-  # needs a negative control of its own.  Seven injections, one per way the layer
-  # can silently die: five mutate het_cpu_stress.h (the mechanisms), two the
+  # needs a negative control of its own.  Eight injections, one per way the layer
+  # can silently die: six mutate het_cpu_stress.h (the mechanisms), two the
   # emitted .cu driver (invariants S5/S6 -- a noise buffer that fits in cache,
   # and enemies pointed at the locations under test).
   printf '\n[8] B5 CPU/interconnect stress: the liveness gate must FAIL(1) on a dead layer\n'
@@ -542,25 +576,24 @@ PY
     python3 "$CS" "$B5L" --harness-dir "$b5/$B5T" >/dev/null 2>&1; b5rc=$?
     _expect "B5 control (shipped CPU/interconnect layer)" 0 "$b5rc" || fails=$((fails+1))
 
-    # The optional 4th argument is a phrase the FAIL output must contain.  Six of
-    # the seven injections below break a mechanism no other assertion looks at, so
-    # a nonzero exit can only have come from the one they broke; injection (5)
-    # does not have that luxury -- it lands inside S3, next to the load and store
-    # counts, and a bite that tripped THOSE instead would report OK for a check it
-    # never exercised.  So it names the sentence it is owed.
-    _b5bite() { # label  file  sed-expr  [phrase the failure must print]
-      local lbl="$1" file="$2" expr="$3" want="${4:-}" rc out
+    # Each injection names the cpustresscheck check it can reach and, where two of
+    # them land in the same check, the sentence that check owes it: (1) and (6)
+    # both sit in S3 next to the load and store counts, (2) and (3) both sit in
+    # S4, and (4) and (5) both sit in the dynamic probe, so an exit code alone
+    # would report OK for an assertion the injection never exercised.
+    _b5bite() { # label  file  --checks selection  sed-expr  [phrase it must print]
+      local lbl="$1" file="$2" only="$3" expr="$4" want="${5:-}" rc out
       rm -rf "$b5/mut"; cp -r "$b5/$B5T" "$b5/mut"
       sed -i "$expr" "$b5/mut/$file"
       if cmp -s "$b5/$B5T/$file" "$b5/mut/$file"; then
         printf '  *** VACUOUS BITE: injection changed nothing    [%s]\n' "$lbl"
         return 1
       fi
-      out="$(python3 "$CS" "$B5L" --harness-dir "$b5/mut" 2>&1)"; rc=$?
+      out="$(python3 "$CS" "$B5L" --harness-dir "$b5/mut" --checks "$only" 2>&1)"; rc=$?
       # Both assertions always run: reporting only the first would hide an exit
       # code that is right for a reason that is not.
       local bad=0
-      _expect "$lbl" 1 "$rc" || bad=1
+      _expect "$lbl [checks=$only]" 1 "$rc" || bad=1
       if [ -n "$want" ] && ! printf '%s\n' "$out" | grep -qF "$want"; then
         printf '  *** WRONG REASON: the failure never printed %s    [%s]\n' \
                "$want" "$lbl"
@@ -575,33 +608,47 @@ PY
     # them, and sigma 0's double store collapses to one.  The loop survives, so
     # it still LOOKS like a stressor; it just issues no read traffic.
     _b5bite "enemy scratchpad volatile STRIPPED (all read traffic deleted)" \
-            het_cpu_stress.h \
+            het_cpu_stress.h s3 \
             's/volatile uint64_t \*scratch/uint64_t *scratch/; s/volatile uint64_t \*l =/uint64_t *l =/' \
+            'NO discarded load' \
             || fails=$((fails+1))
 
     # (2) sigma as a compile-time constant: the optimiser folds the switch to one
     # branch and, for ld;ld, deletes the loop -- section [7]'s bug, CPU side.
     _b5bite "sigma made COMPILE-TIME (an autotuner config can delete the stress)" \
-            het_cpu_stress.h \
+            het_cpu_stress.h s4 \
             's/switch (a->seq) {/switch (HET_CPU_ENEMY_SEQ) {/' \
+            'op count MOVES with -DHET_CPU_ENEMY_SEQ' \
             || fails=$((fails+1))
 
-    # (3) the M3 preload made inert -- the incantation is still there and still
+    # (3) the enemy missing from the object -- renamed here, the state a deleted
+    # or never-compiled one also lands in.  S4 is the sigma sweep and never runs
+    # S3, so its own anchor is all that stands between it and four Nones reading
+    # as perfect invariance.
+    _b5bite "het_cpu_enemy RENAMED away (S4's own anchor, with S3 deselected)" \
+            het_cpu_stress.h s4 \
+            's/^void \*het_cpu_enemy(/void *het_cpu_enemy_renamed(/' \
+            'a set of one None is not invariance' \
+            || fails=$((fails+1))
+
+    # (4) the M3 preload made inert -- the incantation is still there and still
     # called, it just issues no cache hints.  Only a run can see this.
     _b5bite "preload hints DROPPED (M3 incantation inert)" \
-            het_cpu_stress.h \
+            het_cpu_stress.h dyn \
             's/^  uint32_t n = 0u;/  uint32_t n = 0u; return n;/' \
+            'with the CPU stress ON, preload_ops is 0' \
             || fails=$((fails+1))
 
-    # (4) first-touch dropped: an unwritten malloc'd buffer is ONE shared zero
+    # (5) first-touch dropped: an unwritten malloc'd buffer is ONE shared zero
     # page, so the "noise" streams a single cache line out of L1 and crosses
     # nothing.
     _b5bite "noise first-touch DROPPED (8 GB buffer is one shared zero page)" \
-            het_cpu_stress.h \
+            het_cpu_stress.h dyn \
             's|^void het_cpu_first_touch(void \*p, size_t bytes) {|void het_cpu_first_touch(void *p, size_t bytes) { (void)p; (void)bytes; return;|' \
+            'D3: het_cpu_first_touch grew RSS by only' \
             || fails=$((fails+1))
 
-    # (5) the STRAIGHT-LINE enemy: both loops removed, everything else left alone.
+    # (6) the STRAIGHT-LINE enemy: both loops removed, everything else left alone.
     # This is the shape the pre-repair "still a loop" test could not reject.  It
     # counted every branch to a `.LBB' label, forward ones included, and a body
     # with both loops gone still shows 16 of them -- the `switch (a->seq)' arms,
@@ -613,20 +660,20 @@ PY
     # `while (go)' -> `if (go)', the index loop -> a plain block -- so the enemy
     # still compiles and still issues its loads and stores; it issues them once.
     _b5bite "enemy LOOPS REMOVED (traffic still there, nothing repeats it)" \
-            het_cpu_stress.h \
+            het_cpu_stress.h s3 \
             '/^void \*het_cpu_enemy/,/^}/{s/while (__atomic_load_n(a->go, __ATOMIC_RELAXED)) {/if (__atomic_load_n(a->go, __ATOMIC_RELAXED)) {/; s/for (uint32_t r = 0; r < a->nidx; r++) {/{ uint32_t r = 0;/}' \
             'NO back edge around its scratchpad traffic' \
             || fails=$((fails+1))
 
-    # (6) driver: the noise working set decoupled from HET_NOISE_MB and shrunk
+    # (7) driver: the noise working set decoupled from HET_NOISE_MB and shrunk
     # below the LLC -- served from cache, zero interconnect traffic, every
     # counter still moving.  This is what invariant S5 is for.
     _b5bite "noise buffer UNDERSIZED (fits in cache => no C2C traffic)" \
-            "$B5T.cu" \
+            "$B5T.cu" s5 \
             's|uint64_t _noise_words = (uint64_t)HET_NOISE_MB \* 1024ull \* 1024ull / sizeof(uint64_t);|uint64_t _noise_words = 4096ull;|' \
             || fails=$((fails+1))
 
-    # (7) driver: the enemies pointed at a test variable.  Not a weaker
+    # (8) driver: the enemies pointed at a test variable.  Not a weaker
     # experiment but a fabricated one -- an enemy writing the location under test
     # can manufacture the weak behaviour outright.  This is what invariant S6 is
     # for.  The target is `t_x', not `x': this test co-runs three instances, so
@@ -634,7 +681,7 @@ PY
     # not exist would fail to COMPILE (cpustresscheck exit 2, a toolchain error)
     # instead of tripping S6 -- a bite that fails for the wrong reason.
     _b5bite "enemy scratchpad ALIASED onto a test variable (fabricates outcomes)" \
-            "$B5T.cu" \
+            "$B5T.cu" s6 \
             's/_ea\[_e\]\.scratch = _cpu_scratch;/_ea[_e].scratch = t_x;/' \
             || fails=$((fails+1))
 
@@ -937,19 +984,48 @@ PY
 # the checker and the two label strings differ -- and the rep-selection rationale
 # stays at each call site, where it is the thing worth reading.
 #   $1 banner (printed between `===== '), $2 tag, $3 what-failed, $4 checker,
-#   $5.. the reps.
+#   $5 extra args for every rep AFTER the first ("" = run them all identically),
+#   $6.. the reps.
 _liveness_report() {
-  local banner="$1" tag="$2" what="$3" checker="$4"
-  shift 4
+  local banner="$1" tag="$2" what="$3" checker="$4" rest="$5"
+  shift 5
   local reps="$*"
-  local fails=0 rc t
+  local fails=0 rc t out first=1 dfile="$RESDIR/hdr.$tag" nrep nd
+  : > "$dfile"
   printf '\n===== %s =====\n' "$banner"
   for t in $reps; do
     printf '\n-- %s --\n' "$t"
-    python3 "$REPO/hetlitmus/verify/$checker" "$HET_DIR/$t.litmus"; rc=$?
+    if [ "$first" -eq 1 ]; then
+      out="$(python3 "$REPO/hetlitmus/verify/$checker" "$HET_DIR/$t.litmus" 2>&1)"
+      rc=$?
+      first=0
+    else
+      out="$(python3 "$REPO/hetlitmus/verify/$checker" "$HET_DIR/$t.litmus" $rest 2>&1)"
+      rc=$?
+    fi
+    printf '%s\n' "$out"
     [ "$rc" -ne 0 ] && fails=$((fails+1))
+    printf '%s\n' "$out" \
+      | sed -n 's/.*het_stress\.h=\([0-9a-z]*\).*/\1/p' >> "$dfile"
   done
   printf '\n'
+  # A reduced check set on the later reps is only covered by the first rep if
+  # every rep compiled against the SAME het_stress.h -- that header is the whole
+  # of what the device probe reads.  The checker prints its digest; require one
+  # per rep and one distinct value.
+  if [ -n "$rest" ]; then
+    nrep=$(printf '%s\n' $reps | wc -l)
+    nd=$(sort -u "$dfile" | wc -l)
+    if [ "$(wc -l < "$dfile")" -ne "$nrep" ] || [ "$nd" -ne 1 ]; then
+      echo "$tag FAILED: the $nrep reps reported $(wc -l < "$dfile") het_stress.h"\
+           "digest(s), $nd distinct -- the reps that ran \`$rest' are NOT covered"\
+           "by the first rep's full run"
+      cat "$dfile"
+      return 1
+    fi
+    echo "$tag: every rep compiled against het_stress.h $(head -1 "$dfile"), so the"\
+         "first rep's device probe covers them all"
+  fi
   if [ "$fails" -eq 0 ]; then
     echo "$tag OK (${reps// /, })"
     return 0
@@ -966,9 +1042,15 @@ _liveness_report() {
 #   MP-cg-sys-acqrel-2s   1 GPU test lane, no observer
 #   S-cg-sys-fence        1 GPU test lane + the observer lane (which must NOT spin)
 #   IRIW-gcgc-sys-fence   2 GPU test lanes (the shape where the spin has partners)
+# D1 -- the RUNTIME tally -- compiles and runs a probe whose only input from the
+# harness is het_stress.h, and litmus7 writes that file verbatim for every test
+# (hetEmit.ml, `write "het_stress.h"'), so the three reps would drive the same
+# device probe three times.  The first rep runs it; the others run the structural
+# checks, and _liveness_report compares the digest each rep prints so a header
+# that stopped being verbatim cannot make that shortcut silent.
 stress_report() {
   _liveness_report "STRESS LIVENESS: is the B4 layer actually in the PTX?" \
-    STRESS "carry a dead stress layer" stresscheck.py \
+    STRESS "carry a dead stress layer" stresscheck.py "--checks structural" \
     MP-cg-sys-acqrel-2s S-cg-sys-fence IRIW-gcgc-sys-fence
 }
 
@@ -988,7 +1070,7 @@ stress_report() {
 #   S-cg-sys-fence        has the observer thread (pinned, but NOT preloaded)
 cpustress_report() {
   _liveness_report "CPU + INTERCONNECT STRESS LIVENESS: does the B5 layer run?" \
-    CPUSTRESS "carry a dead CPU/interconnect stress layer" cpustresscheck.py \
+    CPUSTRESS "carry a dead CPU/interconnect stress layer" cpustresscheck.py "" \
     MP-cg-sys-acqrel-2s S-cg-sys-fence
 }
 

@@ -8,7 +8,7 @@ could be turned into an AMD executable at all: the CUDA lane had `cuda-link' and
 `make cuda-bin', the HIP lane had no counterpart.  Emitting a .hip that no target
 links is the same defect class as the .hip that, until B5, no gate compiled.
 
-Seven phases, each of which must be seen to fail:
+Eight phases, each of which must be seen to fail:
 
   P1 build-script arms   the emitted comp.sh / Makefile CARRY hip-link + hip-bin,
                          advertise them in their usage/help text, and hip-bin is
@@ -39,8 +39,11 @@ Seven phases, each of which must be seen to fail:
   P6 allocator           the HIP shared allocator resolves ONE mode and REFUSES
                          every other spelling and every unmet precondition
                          (rule 8), classifies APU vs discrete, IS ACTUALLY CALLED
-                         by gd_alloc_shared and called BEFORE the allocation, and
-                         refuses the CUDA-only HET_PLACE lever at compile time
+                         by gd_alloc_shared and called BEFORE the allocation
+  P6b HET_PLACE          the CUDA-only placement lever is refused at compile
+                         time, and HET_PLACE=0 still builds.  Split from P6
+                         because it is the hipcc half: P6's five injections all
+                         corrupt the lifted resolver and none can reach it
   P7 CUDA non-regression the cuda / cuda-link / cuda-bin arms still carry their
                          guard and still build
 
@@ -723,40 +726,55 @@ def phase6(tmp, d):
                    "keyed on the resolver so a second mode cannot leave a mismatched "
                    "free behind")
 
-    # (f) HET_PLACE is CUDA-only and must be REFUSED here, not silently reported.
+    print("      %d assertions" % counts.get("P6", 0))
+    if not counts.get("P6"):
+        fail("P6", "phase made no assertions")
+
+
+def phase6b(tmp, d):
+    """HET_PLACE is CUDA-only and must be REFUSED here, not silently reported.
+
+    Its own phase because it is the only part of the allocator story that builds
+    with hipcc: the five P6 injections all corrupt the resolver, which is lifted
+    out and driven under a stub, and none of them can move a compile-time
+    refusal.  Splitting the two means each injection pays for the phase it can
+    redden.
+    """
+    print("[P6b] HET_PLACE: the CUDA-only lever the AMD render must refuse")
     # Both renders print `place=%d' in the cpu-stress banner and carry place_mode
     # in the statistics record (one emitter, two dialects), but placement is
     # cudaMemAdvise/cudaMemPrefetchAsync and lives only in het_alloc_cuda.inc.
     # _het_place_failures has TWO READERS and ZERO WRITERS on this lane, so a
     # `-DHET_PLACE=1' AMD build would log `place=1 ... place_fail=0' -- placement
     # requested, no refusals -- with nothing placed and nothing placeable.
-    tick("P6")
+    hip_src = open(os.path.join(d, test_of(d) + ".hip")).read()
+    tick("P6b")
     if "#if (HET_PLACE) != 0" not in hip_src or "# error" not in hip_src:
-        fail("P6", "the emitted .hip does not REFUSE a non-zero HET_PLACE at compile "
-                   "time -- a -DHET_PLACE=1 AMD build would report place=1 with "
-                   "place_fail=0 while placing nothing")
+        fail("P6b", "the emitted .hip does not REFUSE a non-zero HET_PLACE at compile "
+                    "time -- a -DHET_PLACE=1 AMD build would report place=1 with "
+                    "place_fail=0 while placing nothing")
     if have("hipcc"):
         w = fresh(tmp, d, "p6place")
         r = run(["make", "hip", "HIPCC=hipcc -DHET_PLACE=1"], cwd=w)
-        tick("P6")
+        tick("P6b")
         if r.returncode == 0:
-            fail("P6", "`make hip HIPCC=\"hipcc -DHET_PLACE=1\"' SUCCEEDED -- the AMD "
-                       "render accepted a placement lever it does not implement")
-        tick("P6")
+            fail("P6b", "`make hip HIPCC=\"hipcc -DHET_PLACE=1\"' SUCCEEDED -- the AMD "
+                        "render accepted a placement lever it does not implement")
+        tick("P6b")
         if "HET_PLACE is a CUDA-only lever" not in (r.stdout + r.stderr):
-            fail("P6", "a -DHET_PLACE=1 AMD build failed without saying why:\n%s"
+            fail("P6b", "a -DHET_PLACE=1 AMD build failed without saying why:\n%s"
                  % (r.stdout + r.stderr)[-800:])
         # ...and HET_PLACE=0, the default and the only honourable value, still builds.
         w = fresh(tmp, d, "p6place0")
         r = run(["make", "hip", "HIPCC=hipcc -DHET_PLACE=0"], cwd=w)
-        tick("P6")
+        tick("P6b")
         if r.returncode != 0:
-            fail("P6", "-DHET_PLACE=0 (the DEFAULT) no longer compiles -- the refusal "
-                       "is over-broad and blocks every ordinary AMD build:\n%s"
+            fail("P6b", "-DHET_PLACE=0 (the DEFAULT) no longer compiles -- the refusal "
+                        "is over-broad and blocks every ordinary AMD build:\n%s"
                  % (r.stdout + r.stderr)[-800:])
-    print("      %d assertions" % counts.get("P6", 0))
-    if not counts.get("P6"):
-        fail("P6", "phase made no assertions")
+    print("      %d assertions" % counts.get("P6b", 0))
+    if not counts.get("P6b"):
+        fail("P6b", "phase made no assertions")
 
 
 def phase7(tmp, d):
@@ -1074,13 +1092,14 @@ def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda):
         "/* resolve + guard once, before the first alloc */\n")
     ok &= bite_one("the guard moved BELOW hipMallocManaged", "P6",
                    lambda: phase6(tmp, w), "AFTER hipMallocManaged")
+    # --- P6b ----------------------------------------------------------------
     # HET_PLACE: the CUDA-only lever both renders PRINT.
     w = W("p6place")
     hp = os.path.join(w, test_of(w) + ".hip")
     sub(hp, "#if (HET_PLACE) != 0", "#if 0")
     ok &= bite_one("the HET_PLACE compile-time refusal disabled (a -DHET_PLACE=1 AMD "
-                   "build would log place=1 place_fail=0 having placed nothing)", "P6",
-                   lambda: phase6(tmp, w), "does not REFUSE a non-zero HET_PLACE")
+                   "build would log place=1 place_fail=0 having placed nothing)", "P6b",
+                   lambda: phase6b(tmp, w), "does not REFUSE a non-zero HET_PLACE")
 
     # --- P7 -----------------------------------------------------------------
     w = W("p7c", d_x86_cuda)
@@ -1149,6 +1168,7 @@ def main():
         phase4(tmp, d_aa_cuda, d_x86)
         phase5(tmp, d_x86_cuda, d_x86)
         phase6(tmp, d_x86)
+        phase6b(tmp, d_x86)
         phase7(tmp, d_x86_cuda)
         print("=" * 70)
         if fails:
@@ -1156,7 +1176,7 @@ def main():
             for ph, m in fails:
                 print("  [%s] %s" % (ph, m))
             return 1
-        print("HIPBUILDCHECK: PASS (%d assertions over 7 phases)" % sum(counts.values()))
+        print("HIPBUILDCHECK: PASS (%d assertions over 8 phases)" % sum(counts.values()))
         print("  DEFERRED to Phase 3a (MI300X): there is no AMD GPU here, so the "
               "linked harness was never EXECUTED on a device.  P6 executed the "
               "allocator resolver under a stub hipDeviceGetAttribute; the real "

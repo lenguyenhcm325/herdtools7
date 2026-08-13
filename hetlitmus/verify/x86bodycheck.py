@@ -672,7 +672,7 @@ def phase5(tmp, out=None, litmus7=LITMUS7, dead_text=None, mov_text=None,
 
     NOT the byte-diff.  The instrument that protects the validated NVIDIA lane
     is `hetlitmus/verify/emit-all.sh SNAP_x' run before and after a change,
-    followed by `diff -r' over the ~4938 emitted files; that is inherently a
+    followed by `diff -r' over the 16,732 emitted files; that is inherently a
     two-revision comparison and cannot be a single-shot make target.  What this
     phase owns is the aarch64 lane's own evidence: no x86 mnemonic in an aarch64
     body, and the four classifier refusals no corpus test can reach, against a
@@ -1012,16 +1012,38 @@ def lane_stub(what, lane, where, victim, body):
     return STUB_LANE % (what, lane, where, LITMUS7, lane, victim, body)
 
 
-def emit_all_bite(tmp, label, script, want):
+def emit_all_bite(tmp, label, script, want, lane=None, tests=None):
+    """Drive emit-all.sh under a stand-in litmus7, over [lane] and [tests] only.
+
+    [lane] is the OUTDIR subdir the stub corrupts something in; [tests] are that
+    lane's own corpus names -- the victim plus one neighbour, so the per-test
+    loop the detector lives in is entered more than once.  Each injection is
+    caught inside that loop or by the per-lane brandscan, both of which run
+    before the census, so the census expectation moving to the selected count
+    cannot mask one.  Neither given = the whole corpus.  The PARTIAL SNAPSHOT
+    banner is required exactly one way round, so a selection silently ignored
+    and a whole run labelling itself a subset are both refusals.
+    """
     path = os.path.join(tmp, "litmus7-" + label)
     open(path, "w").write(script)
     os.chmod(path, 0o755)
     e = dict(os.environ)
     e["HET_LITMUS7"] = path
+    e["HET_LANES_ONLY"] = lane or ""
+    e["HET_TESTS_ONLY"] = " ".join(tests or ())
     out = os.path.join(tmp, "ea-" + label)
     shutil.rmtree(out, ignore_errors=True)
     r = subprocess.run(["bash", EMIT_ALL, out], capture_output=True, text=True, env=e)
     blob = r.stdout + r.stderr
+    partial = "PARTIAL SNAPSHOT" in blob
+    if (lane or tests) and not partial:
+        print("  *** SEAM IGNORED [%s]: emit-all.sh announced no partial snapshot, "
+              "so the selection above was not honoured" % label)
+        return False
+    if not (lane or tests) and partial:
+        print("  *** PARTIAL WHEN WHOLE [%s]: emit-all.sh announced a partial "
+              "snapshot for a run that selected nothing" % label)
+        return False
     if r.returncode == 0:
         print("  *** DID NOT BITE [%s]: emit-all.sh reported success" % label)
         return False
@@ -1320,35 +1342,40 @@ def bite(tmp, corpus, good):
 
     # --- P6: the two emit-all.sh detectors, each alone ------------------------
     ok &= emit_all_bite(tmp, "omit", STUB_OMIT % (LITMUS7, "MP-gc-cta-fence"),
-                        "emitted no MP-gc-cta-fence/MP-gc-cta-fence_cpu.c")
+                        "emitted no MP-gc-cta-fence/MP-gc-cta-fence_cpu.c",
+                        "het-cuda", ["MP-gc-cta-fence", "MP-cg-cta-fence"])
     # emit-all.sh names the LANE it was refused in (`-gpu-target cuda'), because
     # a refusal that reached only one vendor is the interesting half of the news.
     ok &= emit_all_bite(tmp, "refuse", STUB_REFUSE % (LITMUS7, "MP-cg-cta-acquire"),
-                        "REFUSED MP-cg-cta-acquire.litmus")
+                        "REFUSED MP-cg-cta-acquire.litmus",
+                        "het-cuda", ["MP-cg-cta-acquire", "MP-cg-cta-fence"])
     # ...and its per-lane MIS-TAGGING assertions, one victim each.  This gate owns
     # the emit-all stand-in rig, which is why they live here and not beside the
     # table they protect (litmus/hetMachine.ml, cram machine-pairs.t).
-    for label, stub, want in [
+    for label, stub, want, lane, tests in [
         # (1) the PAIR NAME, exactly once.  Twice is the interesting direction: a
         # count of "at least one" passes a render carrying two pairs' names.
         ("pair-twice",
          lane_stub("stamp HET_PAIR_NAME twice", "het-cuda", "render",
                    "MP-cg-cta-acquire", r"""sed -i '/^#define HET_PAIR_NAME/p' "$r" """),
-         "does not stamp HET_PAIR_NAME \"(AArch64, cuda)\" exactly once"),
+         "does not stamp HET_PAIR_NAME \"(AArch64, cuda)\" exactly once",
+         "het-cuda", ["MP-cg-cta-acquire", "MP-cg-cta-fence"]),
         # (2) the MACHINE DEFINE BLOCK, compared whole: one line short of the row
         # this lane is entitled to, which no per-line grep for "a machine define"
         # would notice.
         ("machine-short",
          lane_stub("drop HET_LLC_MB", "het-cuda", "render", "MP-cg-cta-fence",
                    r"""sed -i '/^#define HET_LLC_MB /d' "$r" """),
-         "stamps the wrong machine"),
+         "stamps the wrong machine",
+         "het-cuda", ["MP-cg-cta-fence", "MP-cg-cta-acquire"]),
         # (3) the NO-MACHINE NOTE: without it a registered pair that is
         # deliberately nameless and a pair in no row at all read identically.
         ("no-note",
          lane_stub("delete the no-machine note", "het-x86-cuda", "render",
                    "MP-cg-cta-acquire-x86_64",
                    r"""sed -i '/No machine defines: no machine row backs/d' "$r" """),
-         "names no machine and does not say WHY"),
+         "names no machine and does not say WHY",
+         "het-x86-cuda", ["MP-cg-cta-acquire-x86_64", "MP-cg-cta-fence-x86_64"]),
         # (4) a machine word in a nameless lane's README -- prose, which no check
         # over #defines or over the render can see.
         ("brand-readme",
@@ -1356,16 +1383,21 @@ def bite(tmp, corpus, good):
                    "MP-cg-cta-fence-x86_64",
                    r"""sed -i 's/^Target: NVIDIA CUDA\.$/Target: NVIDIA GH200 (CUDA)./' \
        "$d/README.md" """),
-         "names 'GH200' (the gh200 row's word; this lane is entitled to none)"),
+         "names 'GH200' (the gh200 row's word; this lane is entitled to none)",
+         "het-x86-cuda", ["MP-cg-cta-fence-x86_64", "MP-cg-cta-acquire-x86_64"]),
         # (5) ...and one SPLIT ACROSS TWO ADJACENT LITERALS on two lines, which is
-        # the shape a grep of `fprintf(' lines cannot see.
+        # the shape a grep of `fprintf(' lines cannot see.  This one runs
+        # unseamed: it is caught in the fourth het lane's brandscan, so reaching
+        # it walks all four lanes' 411 tests through the per-test assertions and
+        # the three earlier brandscans, which nothing else in the suite does.
         ("brand-split",
          lane_stub("plant a two-line printed literal", "het-hip", "render",
                    "MP-cg-cta-acquire",
                    r"""grep -q _planted "$r" || printf 'static void _planted(void){ fprintf(stderr, "the MI300A "\n"APU is idle\\n"); }\n' >> "$r" """),
-         "names 'MI300A' (the mi300a row's word; this lane is entitled to none)"),
+         "names 'MI300A' (the mi300a row's word; this lane is entitled to none)",
+         None, None),
     ]:
-        ok &= emit_all_bite(tmp, label, stub, want)
+        ok &= emit_all_bite(tmp, label, stub, want, lane, tests)
 
     fails.clear()
     print()

@@ -43,12 +43,16 @@
 # ---------------------------------------------------------------------------
 # WHAT IT ASSERTS
 #
-#   1. isolation is sound            n_none == 0
-#   2. test lanes carry pre-stress   n_pre  has >= 1 load AND >= 1 store
-#   3. stress blocks carry mem-str.  n_mem  has >= 1 load AND >= 1 store
-#   4. the shipped default is live   n_both >= max(n_pre, n_mem) > 0
+# (the bracketed name is what `--checks' calls it)
+#
+#   1. isolation is sound            n_none == 0                        [anchor]
+#   2. test lanes carry pre-stress   n_pre  has >= 1 load AND >= 1 store   [pre]
+#   3. stress blocks carry mem-str.  n_mem  has >= 1 load AND >= 1 store   [mem]
+#   4. the shipped default is live   n_both >= max(n_pre, n_mem) > 0   [default]
+#      ...and het_stress.h's own pattern defaults are ones (2)/(3) swept, which
+#      is what makes n_pre and n_mem readable out of that sweep
 #   5. THE PATTERN IS A RUNTIME VALUE: counts are INVARIANT under
-#      -DHET_{PRE,MEM}_STRESS_PATTERN=0..3.
+#      -DHET_{PRE,MEM}_STRESS_PATTERN=0..3.                        [pre and mem]
 #
 # (5) is the sharp one.  A compile-time pattern makes the count swing with the -D
 # and can fold the loop away entirely (per-pattern op counts measured on sm_90 are
@@ -63,6 +67,7 @@
 # ---------------------------------------------------------------------------
 
 import argparse
+import hashlib
 import os
 import re
 import shutil
@@ -79,6 +84,69 @@ NVCC = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
 # A plain (non-inline-asm) 32-bit global load/store == a scratchpad access.
 STRESS_OP = re.compile(r'^\s*(ld|st)\.global\.u32\b')
 PATTERNS = (0, 1, 2, 3)
+
+# The access pattern each knob falls back to when nothing -D's it, read out of
+# the het_stress.h emitted beside the harness (hetEmit copies it verbatim) and
+# asserted at check 4, which is where the reuse these values license is derived.
+SHIPPED_PATTERNS = {"HET_PRE_STRESS_PATTERN": 3, "HET_MEM_STRESS_PATTERN": 0}
+PATTERN_DEFAULT_RE = re.compile(
+    r"^#define\s+(HET_(?:PRE|MEM)_STRESS_PATTERN)\s+(\d+)", re.M)
+
+
+def header_pattern_defaults(hdir):
+    """{knob: value} from the het_stress.h beside the harness, or None."""
+    p = os.path.join(hdir, "het_stress.h")
+    if not os.path.exists(p):
+        return None
+    with open(p) as f:
+        return {m.group(1): int(m.group(2))
+                for m in PATTERN_DEFAULT_RE.finditer(f.read())}
+
+
+def header_digest(hdir):
+    """Short sha256 of the het_stress.h beside the harness, or `absent'.
+
+    Printed in the banner because D1 compiles its probe against that header and
+    nothing else of the harness: two runs reporting the same digest ran the same
+    device probe, which is what lets a multi-test caller pay for it once.
+    """
+    p = os.path.join(hdir, "het_stress.h")
+    if not os.path.exists(p):
+        return "absent"
+    with open(p, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()[:12]
+
+
+# ---------------------------------------------------------------------------
+# THE CHECK SELECTION.  Each check below is named, and `--checks' runs only the
+# ones named.  A negative control that can reach exactly one of them says so, so
+# the nvcc compiles the others need are not run for a mutation that cannot move
+# them -- and the run is then evidence about the named check and nothing else,
+# which a bare exit code never was.  `all' is every check; `structural' is every
+# one but the device probe (D1), which asks a question no compile can.
+# ---------------------------------------------------------------------------
+CHECKS = ("anchor", "pre", "mem", "default", "d1")
+CHECK_GROUPS = {"all": CHECKS, "structural": ("anchor", "pre", "mem", "default")}
+
+
+def select_checks(spec):
+    sel = set()
+    for w in spec.split(","):
+        w = w.strip()
+        if w in CHECK_GROUPS:
+            sel.update(CHECK_GROUPS[w])
+        elif w in CHECKS:
+            sel.add(w)
+        else:
+            raise SystemExit("stresscheck: unknown check %r (have: %s)"
+                             % (w, ", ".join(CHECKS + tuple(CHECK_GROUPS))))
+    if not sel:
+        raise SystemExit("stresscheck: --checks selected nothing to run")
+    # Check 4 compares the shipped default against the two per-class sweeps, so
+    # it cannot be asked for without them.
+    if "default" in sel:
+        sel.update(("pre", "mem"))
+    return sel
 
 
 class Counts:
@@ -134,12 +202,13 @@ def counts_of(cu_path, flags, arch, tmp):
     return count_stress_ops(ptx_of(cu_path, flags, arch, tmp))
 
 
-def check_cu(cu_path, arch="sm_90", verbose=True):
+def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
     """Run the checks, then report.  The checks live in a nested function so that the two
     that STOP the run -- no stress layer at all, and an unsound isolation anchor -- reach
     the reporting block like every other failure: a refusal nobody can read is a bare
     exit code, and the anchor's is the one that says this checker must be re-grounded."""
     lines, ok = [], [True]
+    sel = set(CHECKS) if sel is None else sel
 
     def fail(msg):
         ok[0] = False
@@ -149,7 +218,10 @@ def check_cu(cu_path, arch="sm_90", verbose=True):
         lines.append(msg)
 
     name = os.path.basename(cu_path)
-    note("=== stress liveness: %s [%s] ===" % (name, arch))
+    hdir = os.path.dirname(os.path.abspath(cu_path))
+    note("=== stress liveness: %s [%s] checks=%s het_stress.h=%s ==="
+         % (name, arch, ",".join(c for c in CHECKS if c in sel),
+            header_digest(hdir)))
 
     def checks():
         with open(cu_path) as f:
@@ -163,25 +235,29 @@ def check_cu(cu_path, arch="sm_90", verbose=True):
         tmp = tempfile.mkdtemp(prefix="stresscheck_")
         try:
             # ---- 1. isolation anchor: with both toggles folded off, NO stress op --
-            none = counts_of(cu_path, ["-DHET_PRE_STRESS_PCT=0", "-DHET_MEM_STRESS_PCT=0"],
-                             arch, tmp)
-            if none.total != 0:
-                fail("isolation anchor is NOT clean: %s plain scratchpad op(s) survive "
-                     "with both stress toggles compiled off.  Either -DHET_*_PCT=0 no "
-                     "longer folds, or a NON-stress object is being accessed as u32 -- "
-                     "in both cases the per-lane-class attribution below is unsound and "
-                     "this checker must be re-grounded before it is trusted." % none)
-                return
-            note("  isolation anchor OK (both toggles off -> 0 scratchpad ops: the u32 "
-                 "signature is pure and -DHET_*_PCT=0 folds)")
+            if "anchor" in sel:
+                none = counts_of(cu_path, ["-DHET_PRE_STRESS_PCT=0", "-DHET_MEM_STRESS_PCT=0"],
+                                 arch, tmp)
+                if none.total != 0:
+                    fail("isolation anchor is NOT clean: %s plain scratchpad op(s) survive "
+                         "with both stress toggles compiled off.  Either -DHET_*_PCT=0 no "
+                         "longer folds, or a NON-stress object is being accessed as u32 -- "
+                         "in both cases the per-lane-class attribution below is unsound and "
+                         "this checker must be re-grounded before it is trusted." % none)
+                    return
+                note("  isolation anchor OK (both toggles off -> 0 scratchpad ops: the u32 "
+                     "signature is pure and -DHET_*_PCT=0 folds)")
 
             # ---- 2/3/5. per lane class, swept over every access pattern ------------
-            for cls, pct_off, pat_knob in (
-                    ("test lanes  (pre-stress)", "-DHET_MEM_STRESS_PCT=0",
+            sweep = {}
+            for key, cls, pct_off, pat_knob in (
+                    ("pre", "test lanes  (pre-stress)", "-DHET_MEM_STRESS_PCT=0",
                      "-DHET_PRE_STRESS_PATTERN="),
-                    ("stress blks (mem-stress)", "-DHET_PRE_STRESS_PCT=0",
+                    ("mem", "stress blks (mem-stress)", "-DHET_PRE_STRESS_PCT=0",
                      "-DHET_MEM_STRESS_PATTERN=")):
-                per_pat = {}
+                if key not in sel:
+                    continue
+                per_pat = sweep[key] = {}
                 for p in PATTERNS:
                     per_pat[p] = counts_of(cu_path, [pct_off, pat_knob + str(p)], arch, tmp)
                 for p in PATTERNS:
@@ -206,17 +282,41 @@ def check_cu(cu_path, arch="sm_90", verbose=True):
                          % (cls, per_pat[0]))
 
             # ---- 4. the shipped default carries both -------------------------------
-            both = counts_of(cu_path, [], arch, tmp)
-            pre = counts_of(cu_path, ["-DHET_MEM_STRESS_PCT=0"], arch, tmp)
-            mem = counts_of(cu_path, ["-DHET_PRE_STRESS_PCT=0"], arch, tmp)
-            if both.total < max(pre.total, mem.total) or both.total == 0:
-                fail("the SHIPPED default config carries %s, less than one of its parts "
-                     "(pre %s / mem %s)" % (both, pre, mem))
-            else:
-                note("  shipped default OK (%s = pre %s + mem %s)" % (both, pre, mem))
+            # Its two per-class parts are the sweep above, read at the pattern the
+            # header would have supplied: `-DHET_PRE_STRESS_PATTERN=3' and the
+            # header's own `#ifndef ... #define ... 3' hand nvcc the same macro,
+            # so the compile is the same compile.  That equality holds only while
+            # the shipped defaults are patterns the sweep covers, which is what
+            # the assertion below is for -- the reuse is not sound without it.
+            # `both' is NOT reusable: no -DHET_*_PCT=0 folds anything away in it.
+            if "default" in sel:
+                shipped = header_pattern_defaults(hdir)
+                if shipped is None:
+                    fail("no het_stress.h beside %s, so the pattern defaults check 4 "
+                         "reuses the sweep at cannot be read" % name)
+                elif shipped != SHIPPED_PATTERNS:
+                    fail("het_stress.h ships %s, but check 4 reads its per-class parts "
+                         "out of the -DHET_*_STRESS_PATTERN sweep, which covers %s and "
+                         "expects the defaults to be %s.  With the header on a value "
+                         "the sweep does not cover, the two would be different compiles "
+                         "and check 4 would be comparing the shipped config against a "
+                         "config nothing ships."
+                         % (shipped, list(PATTERNS), SHIPPED_PATTERNS))
+                else:
+                    both = counts_of(cu_path, [], arch, tmp)
+                    pre = sweep["pre"][SHIPPED_PATTERNS["HET_PRE_STRESS_PATTERN"]]
+                    mem = sweep["mem"][SHIPPED_PATTERNS["HET_MEM_STRESS_PATTERN"]]
+                    if both.total < max(pre.total, mem.total) or both.total == 0:
+                        fail("the SHIPPED default config carries %s, less than one of its "
+                             "parts (pre %s / mem %s)" % (both, pre, mem))
+                    else:
+                        note("  shipped default OK (%s = pre %s + mem %s), and "
+                             "het_stress.h still defaults to the swept patterns %s"
+                             % (both, pre, mem, SHIPPED_PATTERNS))
 
             # ---- 6. the RUNTIME tally.  Everything above is STRUCTURAL -------------
-            d1_probe(os.path.dirname(os.path.abspath(cu_path)), fail, note)
+            if "d1" in sel:
+                d1_probe(hdir, fail, note)
         except RuntimeError as e:
             fail(str(e))
         finally:
@@ -230,7 +330,7 @@ def check_cu(cu_path, arch="sm_90", verbose=True):
 
 
 # ===========================================================================
-# D1 -- het_do_stress's RUNTIME tally, proved live BOTH WAYS on device
+# D1 -- het_do_stress's RUNTIME tally, proved live BOTH WAYS on device   [d1]
 # ===========================================================================
 # Checks 1-5 above are STRUCTURAL: they prove the scratchpad accesses are in the
 # emitted PTX and cannot be folded away.  They cannot prove the loop ever RUNS,
@@ -365,8 +465,13 @@ def main():
                                  "bite tests, which mutate a copy)")
     ap.add_argument("--arch", default="sm_90",
                     help="nvcc -arch (default sm_90, matching the run harness)")
+    ap.add_argument("--checks", default="all",
+                    help="which checks to run: a comma list of %s, or the groups "
+                         "%s (default all)"
+                         % (", ".join(CHECKS), ", ".join(sorted(CHECK_GROUPS))))
     ap.add_argument("-q", "--quiet", action="store_true")
     args = ap.parse_args()
+    sel = select_checks(args.checks)
 
     if not args.cu and not args.litmus:
         ap.error("give a .litmus test or --cu <file>")
@@ -375,7 +480,7 @@ def main():
         cu = args.cu
         if cu is None:
             cu, tmp = emit_cu(args.litmus)
-        ok, _ = check_cu(cu, arch=args.arch, verbose=not args.quiet)
+        ok, _ = check_cu(cu, arch=args.arch, verbose=not args.quiet, sel=sel)
     except Exception as e:
         print("ERROR: %s" % e)
         sys.exit(2)

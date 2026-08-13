@@ -917,11 +917,15 @@ hetlitmus-recfields: | build
 ### (corpus-gate.sh pins 411 and ~90 of them would be dupcheck duplicates).
 ### NOT covered here: the emitter byte-diff.  What protects the validated NVIDIA
 ### lane against an emitter regression is `hetlitmus/verify/emit-all.sh SNAP_x'
-### run at two revisions followed by `diff -r' (~4938 files).  That is a
-### two-revision instrument and cannot be a single-shot target, so it is run by
-### hand for every emitter change.  P5 does not stand in for it: what P5 owns
-### is the aarch64 lane's refusals, which the byte-diff cannot see because a
-### refused shape is by construction absent from the corpus.
+### run at two revisions followed by `diff -r' (16,732 files, measured
+### 2026-08-13), with HET_LANES_ONLY and HET_TESTS_ONLY unset -- either seam
+### emits a subset, which emit-all.sh marks with a .het-partial-snapshot dotfile
+### carrying a per-run nonce, so two subsets cannot diff clean against each
+### other either.  That is a two-revision instrument and cannot be a single-shot
+### target, so it is run by hand for every emitter change.  P5 does not stand in
+### for it: what P5 owns is the aarch64 lane's refusals, which the byte-diff
+### cannot see because a refused shape is by construction absent from the
+### corpus.
 hetlitmus-x86body: | build
 	@ echo
 	python3 hetlitmus/verify/x86bodycheck.py
@@ -1003,13 +1007,16 @@ hetlitmus-d10: | build
 ### comp.sh's `hip' arm was compile-only (`hipcc -c') and the Makefile had no HIP
 ### link target at all, so nothing this suite emits could become an AMD
 ### executable.  Emitting a .hip that no target links is the same defect class as
-### the .hip that, until B5, no gate compiled.  Seven phases: the build-script
+### the .hip that, until B5, no gate compiled.  Eight phases: the build-script
 ### arms, `hipcc --offload-arch=gfx942 -c', the two link arms each producing an
 ### ELF that CARRIES the gfx942 code object (the ELF is read -- a gfx90a build
 ### links and exits 0 too), the uname -m refusal on an AArch64 render, the
 ### no-silent-stale-link rounds, the allocator's fail-closed HET_ALLOC handling,
-### and CUDA non-regression.  Every phase counts its assertions and fails if it
-### made none.  --bite injects into all seven on corruption AND on omission.
+### the compile-time refusal of the CUDA-only HET_PLACE lever (its own phase: it
+### is the hipcc half of the allocator story, and the allocator's own injections
+### all corrupt a resolver driven under a stub, which no compile-time refusal can
+### see), and CUDA non-regression.  Every phase counts its assertions and fails
+### if it made none.  --bite injects into all eight on corruption AND on omission.
 ### P5 EXISTS BECAUSE OF A MEASURED REGRESSION.  Both vendors link ./<test> on
 ### purpose (run-one.sh and campaign.py exec ./<test> and stay vendor-agnostic).
 ### With cuda-bin as a phony carrying a FILE prerequisite, `make cuda-bin' after
