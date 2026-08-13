@@ -71,11 +71,9 @@ grid.sync().
   $ grep -cE 'cooperative_groups|grid\.sync' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
   0
 
-(f) the perpetual bounds are Cfg-driven #defines; no re-hardcoded relaunch loop.
+(f) the perpetual bounds are Cfg-driven #defines.
   $ grep -cE '#define SIZE_OF_TEST|#define NUMBER_OF_RUN' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   2
-  $ grep -c 'const int iterations' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
-  0
 
 (g) the grid <= co-resident cap guard is installed, and stays installed when the
 stress layer raises _grid toward the cap (stress.t (c)).

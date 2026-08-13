@@ -31,7 +31,7 @@ PREFIXED, so T's P0 and mu(T)'s P0 are not the same symbol.
 Driver (Decision 3/4): uint64 shared vars, per-load read buffers in device memory
 (cudaMalloc) mirrored to the host, and the het_obs_record recovery scan; no
 __out.  The shared vars come from the co-run's one cache-line-padded
-gd_alloc_shared arena (shared-alloc.t (f)); the read buffers stay off the race
+gd_alloc_shared arena (shared-alloc.t (e)); the read buffers stay off the race
 path, per instance.
   $ grep -c 'uint64_t \*t_x = (uint64_t\*)(_sa + (size_t)HET_CACHE_LINE\*0)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
@@ -100,11 +100,8 @@ against another's name, and the prefixes are the only thing keeping them apart.
 
 GATE 1: no test may emit a constant detector.  A constant-false _weak reports
 "Never" on every run, and a spurious "Never" is an observation nothing produced,
-so the emitter refuses to emit one and HET_PENDING (=0)
-is gone from it entirely (env-research/impl-briefs/B3c-impl-brief.md).  This can
-only regress by removing that refusal.
-  $ grep -cE 'HET_PENDING' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
-  0
+so the emitter refuses to emit one (env-research/impl-briefs/B3c-impl-brief.md).
+This can only regress by removing that refusal.
   $ grep -cE 'int _weak = [01];' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
   0
 

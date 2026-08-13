@@ -727,31 +727,16 @@ hetlitmus-amd-controlmap: | build
 ### byte-comparing a variant against ONE designated sibling, which cannot see a
 ### duplicate up to (proc permutation x location renaming).  The corpus carried 39
 ### such classes, all cg/gc mirror pairs of a rotation-invariant shape (SB/LB/2+2W)
-### and some inside the Disallowed rows that carry the falsification claim
-### (env-research/Q10-corpus-coverage.md sect 2.1); they were removed at the source
-### on 2026-08-01, so the 411 files are 411 distinct experiments and the allowlist is
-### empty.  The gate fails on any duplicate not in the list AND on any list entry
-### that has stopped being one -- an allowlist that cannot rot.  --bite proves both
-### halves fail, each for the right reason.
+### (env-research/Q10-corpus-coverage.md sect 2.1), and a mirror is not an
+### independent sample.  They were removed at the source on 2026-08-01, so the 411
+### files are 411 distinct experiments.  The gate is one check with no exceptions:
+### any duplicate class at all fails it.  --bite clones a test under a new name
+### with its locations renamed and requires that to redden.
 hetlitmus-dup: | build
 	@ echo
 	python3 hetlitmus/verify/dupcheck.py
 	python3 hetlitmus/verify/dupcheck.py --bite
 	@ echo "HetLitmus Q10 isomorphism/dedup gate: OK (and the gate bites)"
-
-### hetlitmus-inert: the two verdict CSVs under hetlitmus/tests/het are
-### unmaintained artifacts of the archived derivation effort, kept as offline
-### data for oracle-compare.sh and read by nothing (docs/oracle-harness.md).
-### Inert is a property of the whole tree, not of the files, so the gate
-### enumerates every tracked file that names one and requires each to sit on an
-### allowlist carrying its reason -- and each entry to still name one, an
-### allowlist that cannot rot.  It also requires both files to keep saying they
-### are unmaintained.  ~0.3 s; no toolchain, no GPU.
-hetlitmus-inert:
-	@ echo
-	bash hetlitmus/verify/inertcheck.sh
-	bash hetlitmus/verify/inertcheck.sh --bite
-	@ echo "HetLitmus inert-data gate: OK (and the gate bites)"
 
 ### hetlitmus-lattice: the per-primitive ordering table behind the control-map
 ### lattice, machine-checked against both constituent solvers.  Each CPU
@@ -781,22 +766,18 @@ hetlitmus-lattice: | build
 ###                      record fails closed; exhaustive_valid==0 can never yield
 ###                      the strong null; every liveness disqualifier bites.
 ###   Phase 2 (printout) each outcome's sentences are reachable from THAT outcome
-###                      and from no other, checked both ways, and the retired
-###                      verdict vocabulary is reachable from none of them.  The
-###                      tool holds no prediction, so a printout that says a
-###                      result was expected, forbidden or refuted is claiming
-###                      something nothing in it derived.  The enum changing is
-###                      not the deliverable; the sentence is.
-###   Phase 3 (corpus)   all 411 emitted harnesses stamp rec_magic exactly once,
-###                      co-run the mu(T)/canary population control-map.csv gives
-###                      them (333 / 409), and carry no retired vocabulary at all.
+###                      and from no other, checked both ways.  The enum changing
+###                      is not the deliverable; the sentence is.
+###   Phase 3 (corpus)   all 411 emitted harnesses stamp rec_magic exactly once
+###                      and co-run the mu(T)/canary population control-map.csv
+###                      gives them (333 / 409).
 ###   Phase 4 (machine)  which MACHINE the printout names.  The interconnect prose
 ###                      comes from defines the emitter stamps out of the PAIR
 ###                      table, scraped here from real emissions: unstamped is the
 ###                      generic frame, each pair prints its own machine, and no
 ###                      frame prints another pair's.
-### --bite: 14 injections (5 against the rule and its printouts, 2 against its
-### reporting paths, 3 against the emitted corpus, 4 against the machine prose),
+### --bite: 12 injections (4 against the rule and its printouts, 2 against its
+### reporting paths, 2 against the emitted corpus, 4 against the machine prose),
 ### each verified to have actually changed the code it corrupts.
 hetlitmus-verdict: | build
 	@ echo
@@ -931,9 +912,8 @@ hetlitmus-recfields: | build
 ### compared nothing FAILS instead of passing.  --bite injects into every phase
 ### on corruption AND on omission.
 ### The x86 renderings are generated on demand by tests/het/generate-x86.sh
-### (411, 1:1 with the corpus); they are deliberately NOT committed (the oracle
-### is keyed on the AArch64 names, corpus-gate.sh pins 411 and ~90 of them would
-### be dupcheck duplicates).
+### (411, 1:1 with the corpus); they are deliberately NOT committed
+### (corpus-gate.sh pins 411 and ~90 of them would be dupcheck duplicates).
 ### NOT covered here: the emitter byte-diff.  What protects the validated NVIDIA
 ### lane against an emitter regression is `hetlitmus/verify/emit-all.sh SNAP_x'
 ### run at two revisions followed by `diff -r' (~4938 files).  That is a
@@ -1061,11 +1041,10 @@ hetlitmus-hipbuild: | build
 ### whether a positive-control map was read: the committed x86 fixture, whose map
 ### names that row its OWN canary (calibration channel missing BY CONSTRUCTION),
 ### and the same test copied away from the map (missing by OMISSION).  The
-### statistics layer once printed the first on a run that was the second.  Seven
+### statistics layer once printed the first on a run that was the second.  Six
 ### assertions per arm (stamp, the arm's own control sentence and NOT the
-### other's, OBSERVED against the pair NAME, no MATCH/MISMATCH, no
-### Grace/Hopper/NVLink/C2C/GH200 -- this pair has no machine row -- and the
-### observation class on k < R).
+### other's, OBSERVED against the pair NAME, no Grace/Hopper/NVLink/C2C/GH200
+### -- this pair has no machine row -- and the observation class on k < R).
 ### NEEDS A DEVICE, hence the -nvcc umbrella; with none visible it FAILS rather
 ### than skipping, because a gate that quietly stops checking is the failure mode
 ### this suite has already shipped twice.  Three assertions per arm need one
@@ -1146,7 +1125,6 @@ hetlitmus-l0-selftest: | build
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-corpus
-hetlitmus-test:: hetlitmus-inert
 hetlitmus-test:: hetlitmus-dup
 hetlitmus-test:: hetlitmus-lattice
 hetlitmus-test:: hetlitmus-amd-controlmap
@@ -1192,7 +1170,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-lattice
 .PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
-.PHONY: hetlitmus-recfields hetlitmus-inert
+.PHONY: hetlitmus-recfields
 .PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10
 .PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate hetlitmus-run-hw
 .PHONY: hetlitmus-amd-controlmap

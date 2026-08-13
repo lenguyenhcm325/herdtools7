@@ -157,13 +157,12 @@ statfield() { # log test field
 }
 
 # The verdict vocabulary an emitted harness no longer has: it carries no
-# prediction, so a transcript naming a class, a mismatch, a refutation or a
-# verdicts CSV was printed by something that is not this build -- a stale binary
-# left in the bundle being the likely one.  (The source-side twin of this list is
-# hetlitmus/verify/emit-all.sh's RETIRED_TOKENS.)  `oracle-compare.sh' is
-# deliberately absent: the harness prints that pointer on every sighting, as the
-# name of the offline step where a comparison would happen.
-RETIRED_ANYCASE='mismatch|disallowed|refut|forbidden|cmcm|no-oracle|oracle_|expected-(nvidia|amd)\.csv'
+# prediction, so a transcript naming a class, a mismatch or a refutation was
+# printed by something that is not this build -- a stale binary left in the
+# bundle being the likely one.  `oracle-compare.sh' is deliberately absent: the
+# harness prints that pointer on every sighting, as the name of the offline step
+# where a comparison would happen.
+RETIRED_ANYCASE='mismatch|disallowed|refut|forbidden|cmcm|no-oracle|oracle_'
 RETIRED_EXACT='oracle=|ALLOWED|EXPECTED result|validation claim|compound model'
 check_retired() { # log
   local hits

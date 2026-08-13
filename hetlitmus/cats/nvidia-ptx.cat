@@ -1,70 +1,26 @@
-"NVIDIA PTX scoped axiomatic model (HetLitmus GPU-only oracle, NVIDIA side)"
+"NVIDIA PTX scoped axiomatic model (Lustig'19 transcription)"
 
 (*
- * Axiomatic (herd7) model for the HetLitmus GPU-only litmus corpus, targeting
- * the NVIDIA Hopper GPU = the *pure scoped PTX memory model*. Pairs with
- * hetlitmus/bells/ptx.bell. This is the NVIDIA counterpart to amd-gcn3.cat;
- * the .litmus files are vendor-neutral and shared, only the verdicts differ.
- *
- * GOAL: machine-check hetlitmus/tests/gpu-only/expected-nvidia.csv (all 137
- * GPU-only tests), and reproduce the 8 hand-derived PLDI'23-anchored verdicts
- * (MP-sys, MP-sys-F, MP-cta-F, LB-sys, SB-sys, SB-sys-F, IRIW-sys, IRIW-sys-F).
- *
- * ============================ SOURCE / AUTHORITY ============================
- * This model is a DIRECT, LINE-BY-LINE encoding of the formal axiomatic PTX
- * memory model of:
+ * Transcription of the axiomatic PTX memory model of
  *   [Lustig19] D. Lustig, S. Sahasrabuddhe, O. Giroux, "A Formal Analysis of
- *     the NVIDIA PTX Memory Consistency Model", ASPLOS'19.
- *       - Fig 4  : the PTX relations (pattern_rel, obs, pattern_acq, sw,
- *                  cause_base, cause).
- *       - Fig 7  : the SIX top-level axioms (Coherence, FenceSC, Atomicity,
- *                  No-Thin-Air, SC-per-Location, Causality).
- *       - Fig 5  : release/acquire synchronisation forbids MP (§3.4.1).
- *       - Fig 6  : preventing store buffering (SB) REQUIRES a morally-strong
- *                  fence.sc on each thread -- acquire/release ALONE cannot
- *                  prevent SB (§3.4.3). This is the headline vendor difference
- *                  from AMD-GCN3 (where sys rel/acq is an HRF cache flush).
- *       - §3.3   : "strong" operation and "morally strong" (mutually
- *                  scope-encompassing) -- the synchronisation eligibility test.
- *       - §3.4   : "The PTX model is not multi-copy atomic" -> rel/acq on the
- *                  IRIW readers does NOT forbid IRIW (needs a fence.sc).
+ *     the NVIDIA PTX Memory Consistency Model", ASPLOS'19 -- Fig 4 relations
+ *     and Fig 7 axioms, over the hetlitmus/bells/ptx.bell vocabulary.
+ *   [PTXISA] NVIDIA PTX ISA 9.3, §8.8 "Release and Acquire Patterns",
+ *     §9.7.14.4 "membar/fence".
  *
- * AUTHORITY FINDING (grounded, see hetlitmus/docs/nvidia-ptx-cat.md): Lustig19
- * is the canonical axiomatic formalisation, and it formalises the OFFICIAL
- * NVIDIA PTX ISA memory-model chapter (PTX ISA Chapter 8: "morally strong",
- * §8.7 release/acquire patterns, §8.8 fence-SC order, §8.9 axioms Coherence
- * /Atomicity/No-Thin-Air/SC-per-Location/Causality). The current PTX ISA (9.x)
- * still carries the same chapter; Lustig19 is NOT superseded. The only later
- * formalisation, "Mixed-Proxy Extensions for the NVIDIA PTX MCM" (ISCA'22),
- * ADDS texture/surface/constant proxy handling, irrelevant to this single
- * (generic global-memory) proxy corpus. Empirical confirmation on real Hopper
- * silicon: [Bagchi26] ISMM'26 §3.2 (moral strength = mutual scope
- * encompassment), §4.1 (morally-strong gpu+ rel/acq => no weak MP; one-sided /
- * cta-scope => weak observed), §2.1/§4 (PTX is non-MCA).
+ * It is a SOLVER, not an oracle: its one consumer is verify/ordercheck.py,
+ * whose PTX phase decides 96 sys-scope LISA cells so the per-primitive
+ * ordering table behind controlmap.py's positive-control lattice meets a
+ * model rather than being asserted.  It decides no thesis test and no run
+ * path consults it.
  *
- * ============================ SCOPE ENCODING ===============================
- * Identical machinery to amd-gcn3.cat: herd builds true scope-instance
- * structure (tag2scope) from the parseable `scopes: (sys (gpu (cta P0) ...))'
- * tree the corpus carries. Each proc sits in its own CTA, all CTAs under one
- * GPU under one SYS, so:
- *   - cta-scope ops on different procs are in DIFFERENT CTAs  -> NOT morally
- *     strong  -> no cross-thread synchronisation (this is why MP-cta-F is
- *     Allowed: Lustig19 §3.3 / Bagchi26 Fig 2e).
- *   - gpu/sys-scope ops share their instance -> morally strong.
- *
- * ====================== WHAT THE VENDOR DIFFERENCE IS =======================
- * vs amd-gcn3.cat, this model has NO `load-store' (LB) acyclicity and NO
- * `sys-strong' flush axiom. PTX rel/acq is pure scoped ORDERING (a
- * synchronizes-with that needs an actual morally-strong rf to observe), NOT an
- * AMD-style heavyweight system flush. Consequences the axioms below produce:
- *   - LB-sys (relaxed)  : Allowed   (No-Thin-Air = acyclic(rf|dep), no dep).
- *   - SB-sys-F (rel/acq): Allowed   (both readers read init -> no rf to
- *                                    observe -> sw never fires; Fig 6 needs
- *                                    fence.sc).
- *   - IRIW-sys-F        : Allowed   (non-MCA; rel/acq orders each reader's
- *                                    loads but cannot force one write order).
- *   - *-fence at gpu/sys: Forbidden (morally-strong fence.sc => sc order =>
- *                                    Causality/FenceSC cut every cycle).
+ * Two departures from Lustig19, in opposite directions.  Frel/Facq admit
+ * f[release,*] and f[acquire,*]: Fig 11 maps onto both, but Fig 3c's modelled
+ * fence subset is .sem = {.sc, .acq_rel} and excludes them ([PTXISA] §9.7.14.4
+ * dates the qualifiers, PTX ISA 8.6 / sm_90; §8.8 gives them the pattern
+ * positions used here).  Neither set admits f[acq_rel,*], which Lustig19 has
+ * in both; no test carries one.  Fidelity record, with the specialisations
+ * vacuous for this vocabulary: hetlitmus/docs/nvidia-ptx-cat.md §3 and §5.
  *)
 
 (* ================================================================== *)
@@ -76,9 +32,8 @@ include "cos.cat"
 
 (* ================================================================== *)
 (* Annotation event sets, from ptx.bell tags via tag2events.          *)
-(* memory-order lattice (ptx.bell): relaxed < {acquire,release} <      *)
-(* acq_rel < sc.  A fence.sc (corpus fences are f[sc,<scope>]) is BOTH *)
-(* a release fence and an acquire fence (sc >= rel and sc >= acq).     *)
+(* memory-order lattice (ptx.bell): relaxed < {acquire,release} <     *)
+(* acq_rel < sc, so f[sc,*] is both a release and an acquire fence.   *)
 (* ================================================================== *)
 let REL = tag2events('release)
 let ACQ = tag2events('acquire)
@@ -90,22 +45,22 @@ let SYS = tag2events('sys)
 
 let Wrel = W & (REL | SCo)        (* W^{>=REL} : release (or sc) write     *)
 let Racq = R & (ACQ | SCo)        (* R^{>=ACQ} : acquire (or sc) read      *)
-let Frel = F & (REL | SCo)        (* F^{>=REL} : release fence (fence.sc)  *)
-let Facq = F & (ACQ | SCo)        (* F^{>=ACQ} : acquire fence (fence.sc)  *)
+let Frel = F & (REL | SCo)        (* F^{>=REL} : fence.release, fence.sc   *)
+let Facq = F & (ACQ | SCo)        (* F^{>=ACQ} : fence.acquire, fence.sc   *)
 let FSC  = F & SCo                (* fence.sc                              *)
 
 let MEM = R | W
 
 (* ================================================================== *)
-(* MORAL STRENGTH (Lustig19 §3.3 / Bagchi26 §3.2).                      *)
-(*  A pair is morally strong iff each op is strong (here every scoped   *)
-(*  op is, none are .weak) AND each op's scope encompasses the thread   *)
-(*  of the other AND, if both are memory ops, they overlap (same addr); *)
-(*  also any two program-order-related ops are morally strong.          *)
-(*                                                                       *)
-(*  enc(e1,e2): e1's own scope-instance contains thread(e2). With one   *)
-(*  scope tag per event, enc = union over levels of [tagged-at-S];      *)
-(*  tag2scope(S). mutual = enc & enc^-1 = "each encompasses the other". *)
+(* MORAL STRENGTH (Lustig19 §3.3).  A pair is morally strong iff each  *)
+(*  op is strong (every scoped op here is; none are .weak), each op's  *)
+(*  scope encompasses the other's thread, and -- if both are memory    *)
+(*  ops -- they overlap; program-order-related pairs count too.        *)
+(*                                                                     *)
+(*  enc(e1,e2): e1's own scope-instance contains thread(e2). With one  *)
+(*  scope tag per event, enc = union over levels of [tagged-at-S];     *)
+(*  tag2scope(S), which reads the test's own `scopes:' tree; mutual =  *)
+(*  enc & enc^-1 = "each encompasses the other".                       *)
 (* ================================================================== *)
 let enc = ([CTA] ; tag2scope('cta))
         | ([GPUscope] ; tag2scope('gpu))
@@ -124,8 +79,8 @@ let ms = (mutual & loc & (MEM * MEM))
 (*  sc = an acyclic order relating every pair of morally-strong         *)
 (*  fence.sc ops, determined at runtime. Encoded the herd way: let the  *)
 (*  tool enumerate total orders of the fence.sc events, then keep only  *)
-(*  the morally-strong pairs (so at cta scope, where fences sit in       *)
-(*  different CTAs and are NOT morally strong, sc is empty).            *)
+(*  the morally-strong pairs (so under a scopes: tree that puts each    *)
+(*  proc in its own CTA, cta-scope fences leave sc empty).              *)
 (* ================================================================== *)
 with sc_tot from linearisations(FSC, 0)
 let sc = sc_tot & ms
@@ -138,12 +93,12 @@ let pol = po & loc                                   (* po_loc *)
 let pattern_rel = ([Wrel] ; pol? ; [W]) | ([Frel] ; po ; [W])
 let pattern_acq = ([R] ; pol? ; [Racq]) | ([R] ; po ; [Facq])
 
-(* obs := (morally_strong & rf) | (obs;rmw;obs).  rmw = {} in this       *)
-(* corpus (no atomic read-modify-writes), so the fixpoint is just the    *)
-(* base term -- obs;rmw;obs contributes nothing.                         *)
+(* obs := (morally_strong & rf) | (obs;rmw;obs).  ptx.bell declares no    *)
+(* read-modify-write instruction, so rmw is empty and the fixpoint is     *)
+(* just the base term -- obs;rmw;obs contributes nothing.                 *)
 let obs = ms & rf
 
-let sync_barrier = 0                                 (* no bar.sync in corpus *)
+let sync_barrier = 0                       (* ptx.bell has no bar.sync *)
 
 let sw = (ms & (pattern_rel ; obs ; pattern_acq)) | sync_barrier | sc
 let cause_base = (po? ; sw ; po?)+
@@ -153,19 +108,21 @@ let cause = cause_base | (obs ; (cause_base | pol))
 (* PTX AXIOMS (Lustig19 Fig 7).                                         *)
 (* ================================================================== *)
 
-(* Axiom 1 Coherence: [W];cause;[W] subset co. co is per-location, so    *)
-(* restrict the cause-ordered write pairs to overlapping (same-loc) ones.*)
+(* Axiom 1 Coherence: [W];cause;[W] subset co.  PTX co relates the pairs *)
+(* that OVERLAP (Lustig19 §3.5.1) and herd's co is per-location, so the  *)
+(* cause-ordered write pairs are restricted to same-loc ones.            *)
 let coherence_req = ([W] ; cause ; [W]) & loc
 empty (coherence_req \ co) as coherence
 
 (* Axiom 2 FenceSC *)
 irreflexive (sc ; cause) as fence_sc
 
-(* Axiom 3 Atomicity (rmw = {} here -> vacuous, kept for faithfulness) *)
+(* Axiom 3 Atomicity (rmw is empty here -> vacuous; transcribed anyway) *)
 empty (((ms & fr) ; (ms & co)) & rmw) as atomicity
 
-(* Axiom 4 No-Thin-Air: acyclic(rf | dep). diy generates no dependencies *)
-(* for this corpus, so dep = {} and this never constrains (LB Allowed).  *)
+(* Axiom 4 No-Thin-Air: acyclic(rf | dep).  herd binds no `dep' for a    *)
+(* Bell model, so the line is forced, not chosen; diy emits no dependency *)
+(* edge here, which is what makes 0 the faithful binding.                *)
 let dep = 0
 acyclic (rf | dep) as no_thin_air
 

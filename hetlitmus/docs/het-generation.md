@@ -135,6 +135,30 @@ node either all-procs or all-subtrees, so a CPU proc could not share the `sys`
 node with the `gpu` subtree in any case). With no GPU proc the tree degenerates
 to `scopes: (sys)`.
 
+That GPU-only precedent is worth spelling out, because it took two repairs to
+**upstream** files before diy could produce a herd-parseable `scopes:` section
+at all — until they landed, `tests/gpu-only/generate.sh` had to append the line
+with `awk`. Both are live in this tree:
+
+* **The dumper discarded the tree it was handed.** `diyone7` already builds the
+  structured scope tree and passes it down as `MiscParser.BellExtra`
+  (`gen/top_gen.ml`), but `lib/coreDumper.ml`'s `do_dump` printed info, init,
+  program and condition and dropped `extra_data`. It now prints the tree through
+  `BellInfo.pp` ahead of the condition, guarded so it stays inert for a test that
+  carries no scope tree. herd's parser already *read* `scopes:`; the dumper now
+  *writes* it.
+* **The literal `-scopes "(tree)"` path could not lex.** `lib/scopeParser.mly`
+  starts at `main: top_scope_tree EOF`, but `lib/scopeLexer.mll` had no `eof`
+  rule, so end of input fell through to the error case (*"Lex error Scope
+  lexer"*) and every nested literal tree was rejected. `| eof { EOF }` supplies
+  the token the grammar requires.
+
+With both in place, `diyone7 … -scopes "(sys (gpu (cta P0) …))"` writes the
+`scopes:` line itself (`hetlitmus/tests/gpu-only/generate.sh`), with no shell
+post-processing. `hetgen7` does **not** route through that path — it composes
+its own `scopes:` line into the test buffer directly (`gen/hetGen.ml`) — but it
+emits the same grammar, so both corpora carry the tree in one form.
+
 The het tests are **not** herd-ingested (the single-arch assumption blocks that),
 so the tree is documentary rather than load-bearing: litmus7's `Het` arm parser
 (`HetArch.het_parser`) explicitly **skips** the `scopes:` line — it carries no

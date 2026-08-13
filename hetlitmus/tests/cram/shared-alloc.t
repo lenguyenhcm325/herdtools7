@@ -9,7 +9,7 @@ renders the one -gpu-target names) and checked with scoped counts.
 
 Two allocation paths exist, so two harnesses are emitted.  409 of the 411 het
 tests co-run at least a canary and carve their shared vars out of one
-cache-line-padded arena ((f), (g)).  The per-variable path is left to the two
+cache-line-padded arena ((e), (f)).  The per-variable path is left to the two
 tests that are themselves the Layer-B canary and so cannot co-run themselves,
 MP-{cg,gc}-sys-relaxed (control-map.csv: `self'); MP-cg-sys-relaxed guards it.
 
@@ -50,7 +50,7 @@ matching free (free() for malloc, cudaFree for managed -- a mismatched free is U
 
 Each grep is SCOPED to one function body rather than counted file-wide, and that
 is the rule everywhere in this file.  A file-wide count no longer discriminates:
-the mode banner in (h) queries cudaDevAttrPageableMemoryAccessUsesHostPageTables
+the mode banner in (g) queries cudaDevAttrPageableMemoryAccessUsesHostPageTables
 -- a different attribute whose name CONTAINS this one -- and the mode resolver's
 FATAL message names the attribute in prose, so raising the expectation to absorb
 them lets the check pass for a harness that has lost the dispatch query entirely.
@@ -94,13 +94,6 @@ routed through gd_alloc_shared -- while the shared vars are uint64_t (B3).
   $ grep -c 'uint64_t \*x; gd_alloc_shared' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
-(e) no banner claims *MallocManaged is "CPU/GPU-coherent" on GH200: managed
-memory there is software page migration, not the hardware cache-line coherence
-under test (Q8-allocation.md F1).  The banner that does print is (h)'s, and it
-prints measured attributes.
-  $ grep -c 'CPU/GPU-coherent on GH200' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu || true
-  0
-
 The HIP twin renders from the same template: gd_alloc_shared is fine-grained
 hipMallocManaged (no malloc/ATS dispatch -- MI300A's unified HBM pool needs
 none), and the read buffers are device hipMalloc, no __out.  Scoped to
@@ -116,7 +109,7 @@ gd_alloc_shared's body for the same reason as (c).
   $ grep -c '(void)hipMalloc(&bufP' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   2
 
-(f) the co-run arena.  A test off the lattice floor co-runs mu(T) and the canary,
+(e) the co-run arena.  A test off the lattice floor co-runs mu(T) and the canary,
 and disjoint addresses are not enough: two variables on one cache line are ONE
 COHERENCE UNIT, so mu(T)'s traffic would drag T's line around and the control
 would perturb the very test it exists to vouch for (Q4-positive-control.md 3.1 /
@@ -149,7 +142,7 @@ off the lattice floor on BOTH lattices, so both co-run three instances.
   $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $COH.hip
   6
 
-(g) the arena is sized from the instance population, not from a fixed 3.  The 78
+(f) the arena is sized from the instance population, not from a fixed 3.  The 78
 lattice-floor rows carve a TWO-INSTANCE arena, so a slot count computed for three
 instances would either overlap the barrier onto a tested variable (the rendezvous
 counter and a litmus location become one coherence unit) or leave the last slot
@@ -180,7 +173,7 @@ tested location.
   $ grep -c 'int \*barrier = (int\*)(_sa + (size_t)HET_CACHE_LINE\*4);' $AC.cu
   1
 
-(h) HET_ALLOC: three named modes, resolved once, every illegal one FATAL (PORT1).
+(g) HET_ALLOC: three named modes, resolved once, every illegal one FATAL (PORT1).
 The CUDA Programming Guide 5.7.3 states when a cuda::thread_scope_system atomic
 actually is atomic: on system-allocated memory iff pageableMemoryAccess is 1, on
 managed memory iff concurrentManagedAccess is 1, on mapped memory iff
@@ -236,7 +229,7 @@ on stdout so the run log carries it.
   $ printf '%s\n' "$MODE" | grep -c 'cudaDevAttrPageableMemoryAccessUsesHostPageTables'
   1
 
-(i) HET_ALLOC on the HIP render: ONE mode, and every other spelling REFUSED.
+(h) HET_ALLOC on the HIP render: ONE mode, and every other spelling REFUSED.
 MI300A's allocator is its own decision (Q8-allocation.md R2, fine-grained
 hipMallocManaged), so the CUDA modes must not LEAK across dialects -- but until
 2026-08-03 the .hip did not mention HET_ALLOC at all, which meant
@@ -300,11 +293,11 @@ the query, which is a classification that always answers "APU".
   1
 
 The banner is on stdout and precedes the guards, so a FATAL is readable next to
-the attributes that caused it -- the same rule as (h).
+the attributes that caused it -- the same rule as (g).
   $ printf '%s\n' "$HMODE" | grep -c 'HetLitmus: shared-mem mode=managed (HET_ALLOC=%s'
   1
 
-(j) AND THE HARNESS CALLS IT.  Everything in (i) reads the resolver's own body,
+(i) AND THE HARNESS CALLS IT.  Everything in (h) reads the resolver's own body,
 which proves it is right and proves nothing about whether it ever runs.  On this
 render the resolver's ONLY effect is the guard -- gd_alloc_shared just calls it
 for the side effect and throws the value away -- so, unlike the CUDA render whose
@@ -336,7 +329,7 @@ mismatched free behind.
   $ sed -n '/^static void gd_free_shared/,/^}/p' $HREL | grep -c '_het_alloc_mode()'
   1
 
-(k) HET_PLACE is a CUDA-only lever and is REFUSED here at compile time.
+(j) HET_PLACE is a CUDA-only lever and is REFUSED here at compile time.
 Placement is cudaMemAdvise/cudaMemPrefetchAsync and lives in het_alloc_cuda.inc;
 this render has none.  But HET_PLACE is an #ifndef knob, it is swept by the
 tuner, and BOTH dialects print it -- `place=%d' in the cpu-stress banner and

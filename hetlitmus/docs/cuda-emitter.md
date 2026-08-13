@@ -168,8 +168,8 @@ unchanged: rel/acq on ops already map exactly (`st.release.<scope>` /
 - The host harness currently has no result tally and no stress (timing jitter,
   memory pressure). Stressing is essential for non‑observations to be meaningful
   (see thesis principles); that lands with Task 9.
-- Oracle: `expected-amd-gcn3.csv` is AMD‑only; GH200 needs its own oracle (memory
-  `hetlitmus-amd-oracle-task7`).
+- Reference verdicts: no external reference covers GH200, and this project
+  derives none of its own.
 - Cluster scope is supported in the *emitter* (inline PTX, see Mappings) and now
   exercised by the **hand-written** `tests/cluster/*.litmus`. The diy-generated
   **gpu-only** corpus still does not cover cluster: that needs `'cluster` added to

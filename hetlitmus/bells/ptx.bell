@@ -2,7 +2,7 @@
 
 (*
  * Bell annotation vocabulary for scoped GPU litmus tests, used by diy7 to
- * generate scoped LISA tests and (later) by herd7 as a faithfulness oracle.
+ * generate scoped LISA tests and by herd7, via -bell, to read them back.
  *
  * Design = the C11 memory-order Bell + the GPU scope Bell, combined so that a
  * single load/store/fence carries BOTH a memory order AND a scope (PTX-style
@@ -47,9 +47,9 @@ instructions W[{'relaxed,'release,'sc}, scopes]
 instructions F[{'acquire,'release,'acq_rel,'sc}, scopes]
 
 (* NB: the memory-order / scope convenience sets (ACQ, REL, RLX, and the scope
-   sets CTA/GPU/SYS) live in the accompanying .cat oracle, NOT here. `tag2set`
-   is interpreter-internal and is NOT exposed in either Bell or cat scope (a
-   bell or cat that uses it fails to load with "unbound var: tag2set"). The Bell
+   sets CTA/GPU/SYS) live in the accompanying .cat, NOT here. `tag2set` is
+   interpreter-internal and is NOT exposed in either Bell or cat scope (a bell
+   or cat that uses it fails to load with "unbound var: tag2set"). The Bell
    only needs to declare the annotation vocabulary (the enums + `instructions`
    lines above); herd then exposes one event set per tag, which the .cat
-   retrieves with `tag2events('<tag>)`. See hetlitmus/cats/amd-gcn3.cat. *)
+   retrieves with `tag2events('<tag>)`. See hetlitmus/cats/nvidia-ptx.cat. *)

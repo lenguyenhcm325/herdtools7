@@ -19,11 +19,10 @@ consumes *Observation lines* (real, from a hardware/gem5 run, or synthesized) an
 verdict CSV, and decides conformance. It is a pure text function, which is why it
 can be gated on frozen fixtures with no toolchain at all.
 
-The two het CSVs in `tests/het/` are **not** an input any tool reaches for: they are
-inert data left by the retired per-test derivation effort (branch
-`hetlitmus-oracle-derivation`), and their own headers say so. Nothing reads them —
-`make hetlitmus-inert` (`verify/inertcheck.sh`) is what keeps that true, by failing on
-any tracked file that names one and is not on its allowlist.
+This branch derives no per-test verdicts for the het corpus. That derivation is
+retired and its CSVs live on branch `hetlitmus-oracle-derivation`, not here;
+`oracle-compare.sh` reads whatever CSV its caller passes, and the argument is
+mandatory, so there is nothing it can fall back on.
 
 ## 1. Inputs
 
@@ -59,9 +58,10 @@ no `Condition` lines defaults to `exists`, so older logs classify exactly as
 before.
 
 **Oracle CSV.** Columns `Litmus,Expected,Model,Source`; `#` comment lines and the
-header are skipped. The reference shipped here is
-`tests/gpu-only/expected-amd-gcn3.csv`, the PLDI'23 artifact's gem5 `GCN3_X86`
-oracle = **AMD GCN3 GPU + x86 CPU**, with `Expected ∈ {Allowed, Disallowed}`.
+header are skipped. **The caller supplies it; this tree ships none.** One
+available source is the PLDI'23 Compound Memory Models artifact's own
+`expected.csv` (`PLDI23_Compound_Simulation/expected.csv`), whose `GPU-Only`
+rows come from the gem5 `GCN3_X86` target = **AMD GCN3 GPU + x86 CPU**.
 
 ## 2. Why "the CSV does not decide this" is a first-class result
 
@@ -125,31 +125,33 @@ Observations: tests/cram/obs.txt
 
 TEST           QUANT   OBSERVED   ORACLE       MODEL          RESULT         NOTE
 ----           -----   --------   ------       -----          ------         ----
-SB-sys         exists  Sometimes  Allowed      PTX            MATCH          relaxation seen
-MP-sys-F       exists  Sometimes  Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
-LB-sys         exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
-SB-sys-fa      forall  Sometimes  Disallowed   PTX            MATCH          forbidden, not seen
-MP-sys-fa      forall  Never      Disallowed   PTX            MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
-LB-sys-fa      forall  Sometimes  -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
-WS-sys         exists  Sometimes  NO-ORACLE    PTX            NO-ORACLE      model silence: this oracle makes no claim here
-BOGUS-sys      exists  Never      ?            -              UNINTERPRETED  unknown oracle verdict "Perhaps"
+FX-match-ex    exists  Sometimes  Allowed      FIXTURE        MATCH          relaxation seen
+FX-mismatch-ex exists  Sometimes  Disallowed   FIXTURE        MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+FX-absent-ex   exists  Never      -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
+FX-match-fa    forall  Sometimes  Disallowed   FIXTURE        MATCH          forbidden, not seen
+FX-mismatch-fa forall  Never      Disallowed   FIXTURE        MISMATCH       FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM
+FX-absent-fa   forall  Sometimes  -            -              UNINTERPRETED  ABSENT from this oracle -- no frame for this test (never model silence)
+FX-silent      exists  Sometimes  NO-ORACLE    FIXTURE        NO-ORACLE      model silence: this oracle makes no claim here
+FX-silent-forall forall  Sometimes  NO-ORACLE    FIXTURE        NO-ORACLE      model silence: this oracle makes no claim here
+FX-corrupt     exists  Never      ?            -              UNINTERPRETED  unknown oracle verdict "Perhaps"
 
-8 test(s): 2 MATCH, 2 MISMATCH, 1 NO-ORACLE, 3 UNINTERPRETED
+9 test(s): 2 MATCH, 2 MISMATCH, 2 NO-ORACLE, 3 UNINTERPRETED
 ```
 
 Every row carries a `Condition` line, so `QUANT` is populated and the `forall`
-inversion of §3 is driven: `MP-sys-fa` is `Disallowed` and `Never`, which under
-`forall` means the forbidden predicate held in every execution — MISMATCH —
+inversion of §3 is driven: `FX-mismatch-fa` is `Disallowed` and `Never`, which
+under `forall` means the forbidden predicate held in every execution — MISMATCH —
 while its `exists` counterpart would read as "forbidden, not seen". The fixture
-also drives the three ways an oracle can fail to decide: the `LB-*` rows are
-absent from the CSV, `WS-sys` is present and declines, and `BOGUS-sys` carries a
-verdict string the harness does not know, which fails closed rather than
-passing. `tests/cram/oracle-negatives.t` pins this run.
+also drives the three ways an oracle can fail to decide: the `FX-absent-*` rows
+are absent from the CSV, `FX-silent`/`FX-silent-forall` are present and decline,
+and `FX-corrupt` carries a verdict string the harness does not know, which fails
+closed rather than passing. `tests/cram/oracle-negatives.t` pins this run, and
+says what the fixture pair is and is not.
 
-To validate the AMD side end to end on real hardware, point
-`<observations-file>` at an MI300A litmus7 log and `<oracle-csv>` at
-`tests/gpu-only/expected-amd-gcn3.csv` (caveat: MI300A is CDNA3, several
-generations past GCN3 — confirm, don't assume).
+To drive the harness end to end on the AMD side, point `<observations-file>` at
+an MI300A litmus7 log and `<oracle-csv>` at a CSV the caller supplies (caveat: a
+CSV built from the PLDI'23 artifact carries GCN3 verdicts, and MI300A is CDNA3,
+several generations past GCN3 — confirm, don't assume).
 
 ## 5. The statistics section
 
@@ -180,6 +182,5 @@ A log without `HetStats` lines prints the table alone. Both paths are pinned by
 |------|---------|
 | `hetlitmus/oracle-compare.sh` | the harness (awk: load CSV, classify each Observation) |
 | `hetlitmus/tests/cram/obs.txt` + `oracle.csv` | synthesized fixture pair driving every result class (§4) |
-| `hetlitmus/tests/gpu-only/expected-amd-gcn3.csv` | the AMD-GCN3 reference oracle (existing) |
 | `hetlitmus/tests/cram/obs-stats.txt` | frozen log carrying real `HetStats` lines, one per reporting path |
 | `hetlitmus/tests/cram/oracle-stats.csv` | the oracle that fixture is compared against |

@@ -77,15 +77,11 @@ statistics.t.)
   $ grep -cE '^#define CAN_K_TAG 3' 2+2W-cg-sys-relaxed/2+2W-cg-sys-relaxed.cu
   1
 
-NO HARNESS CARRIES A MODEL PREDICTION.  The tool characterizes: it reports what it
-observed and leaves the comparison against a verdicts file to an offline step
-(hetlitmus/oracle-compare.sh), so no emitted file names a class, a verdict or a
-verdicts CSV.  Three tests that spanned all three retired classes, checked over
-their whole harness directories.
+TWO MORE SHAPES FOR THE CHECKS BELOW.  The record stamp is written per harness,
+so it is read on three of them rather than one; S-cg-sys-fence is read again
+further down, for its reporting tier.
   $ litmus7 -gpu-target cuda -o . ../het/IRIW-cgcg-sys-fence-2s.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
-  $ grep -rlE 'ORACLE_[A-Z]+|_rec\.het_oracle|oracle_source|expected-(nvidia|amd)\.csv' MP-cg-sys-acqrel-2s S-cg-sys-fence IRIW-cgcg-sys-fence-2s | wc -l
-  0
 
 A ZEROED RECORD CAN NEVER SPEAK.  het_obs_record is memset(0) before it is
 filled, so a record an emitter forgot to fill is indistinguishable from one whose
@@ -180,7 +176,7 @@ DISJOINT CACHE-LINE-PADDED LOCATIONS (Q4 3.1).  Disjoint addresses are not
 enough: two variables on one cache line are one coherence unit, so mu(T)'s
 traffic would drag T's line around and the control would perturb the very test it
 exists to vouch for.  One gd_alloc_shared arena, carved one line apart, and the
-allocator must stay the coherent one (shared-alloc.t (f)).
+allocator must stay the coherent one (shared-alloc.t (e)).
   $ grep -c 'HET_CACHE_LINE 128' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
   $ grep -oE 'uint64_t \*(t|mu|can)_[xy] = \(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\);' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu

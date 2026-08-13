@@ -127,7 +127,7 @@ through cudaMalloc (device-only, disjoint); the CPU enemy scratchpad through
 plain host malloc (CPU-only, disjoint); and the noise buffers through
 gd_alloc_noise (homed on the OTHER processing unit).  In a co-run harness the
 shared vars and the barrier come from one cache-line-padded gd_alloc_shared
-arena -- see shared-alloc.t (f) for why the padding and the allocator both
+arena -- see shared-alloc.t (e) for why the padding and the allocator both
 matter.
   $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $MP.cu
   1

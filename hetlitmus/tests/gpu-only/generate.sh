@@ -4,8 +4,8 @@
 # Two parts:
 #  (A) The 8 PLDI'23-anchored tests (MP/LB/SB/IRIW, the relaxed + "-F"
 #      release/acquire variants, plus MP-cta-F).  These keep their original
-#      names because they are the oracle-anchored set verified 8/8 against
-#      expected-amd-gcn3.csv by ../../cats/run-gpu-only.sh.  Generated verbatim.
+#      names because that is how the PLDI'23 artifact names them.  Generated
+#      verbatim.
 #  (B) The systematic grid: every standard shape
 #         MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3
 #      swept over  scope in {cta,gpu,sys}  x  order in {relaxed,acquire,release,
@@ -17,16 +17,11 @@
 # atom rendered <Order><Scope> (gen/common/edge.ml pp_edge_compat).  The grid
 # annotation rule + the fence column are defined in ../_grid_lib.sh.
 #
-# ORACLE STATUS: only the 8 part-(A) tests have a reference verdict
-# (expected-amd-gcn3.csv, AMD GCN3 + x86).  Every part-(B) grid test is
-# NO-ORACLE in the oracle-compare sense.
-# The `fence' column used to be ADVISORY on the AMD side as well, because
-# amd-gcn3.cat did not model fences at all.  That is no longer true: the PORT2-R2
-# D14 repair gave it two fence-ordering mechanisms ([HSA] Fig. 3-15 fence clauses
-# and [SCATOM] Def. 27's sc order), so herd7 now decides the fence column.  What
-# has NOT changed is that the extension is unanchored -- there is no fence in the
-# PLDI'23 artifact -- so the 8-anchor contract cannot validate it; the probes in
-# ../../cats/probes/ and tests/cram/amd-cat.t are what pin it.
+# REFERENCE VERDICTS: only the 8 part-(A) tests carry an external one, from the
+# PLDI'23 artifact's own expected.csv (AMD GCN3 + x86).  The part-(B) grid
+# reaches past that artifact -- which has no fence and no `sc' operation
+# anywhere -- so an offline oracle-compare.sh pass of a grid row against a CSV
+# built from it reports UNINTERPRETED rather than a verdict.
 # See hetlitmus/docs/{gpu-only-corpus,corpus-grid}.md.
 
 set -e

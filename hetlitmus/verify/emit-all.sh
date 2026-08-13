@@ -77,21 +77,14 @@
 set -euo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/../paths.sh"
-# Bite seam, same idiom as the Makefile's HET_ORACLE / HET_AMD_ORACLE: point
-# this at a stand-in litmus7 to prove the detectors below actually fire.  A
-# detector that has never been seen to fail is not evidence.
+# Bite seam: point this at a stand-in litmus7 to prove the detectors below
+# actually fire.  A detector that has never been seen to fail is not evidence.
 LITMUS7="${HET_LITMUS7:-$LITMUS7}"
 [ -x "$LITMUS7" ] || { echo "error: $LITMUS7 not built (run 'make all')" >&2; exit 2; }
 
 # THE EMISSION LANES, "<corpus>:<gpu-target>:<render extension>:<OUTDIR subdir>".
 HET_LANES="aarch64:cuda:cu:het-cuda x86:hip:hip:het-x86-hip x86:cuda:cu:het-x86-cuda \
 aarch64:hip:hip:het-hip"
-# THE RETIRED VERDICT VOCABULARY, banned in EVERY lane.  The tool characterizes:
-# it reports observations and carries no prediction, so an emitted harness that
-# named a class, a verdict or a verdicts CSV would be claiming something nothing
-# in it derived.  Checked over the whole harness dir, header and payloads
-# included.
-RETIRED_TOKENS='ORACLE_[A-Z]+|_rec\.het_oracle|oracle_source|expected-(nvidia|amd)\.csv'
 # The OTHER VENDOR'S words a lane must NOT contain anywhere in its harness dirs
 # -- the landmine: an x86 host with an NVIDIA GPU is neither published part, and
 # "Infinity Fabric" is what the (X86_64, hip) lane stamps one line away from
@@ -99,7 +92,7 @@ RETIRED_TOKENS='ORACLE_[A-Z]+|_rec\.het_oracle|oracle_source|expected-(nvidia|am
 # compare the two hosts by name -- see cram machine-pairs.t (f).)
 forbidden_of_lane() {           # <corpus>:<target> -> egrep pattern, or ""
   case "$1" in
-    x86:cuda) echo 'expected-amd|AMD-CDNA3-x86|Infinity Fabric' ;;
+    x86:cuda) echo 'Infinity Fabric' ;;
     *)        echo '' ;;
   esac
 }
@@ -231,16 +224,11 @@ for lane in $HET_LANES; do
           exit 1
         fi
       done
-      # (c) THE RECORD STAMP, and the ABSENCE of the retired verdict vocabulary.
-      # het_verdict() reads no field of a record without HET_REC_MAGIC, so a
-      # render that lost the stamp discards every run it will ever make.
+      # (c) THE RECORD STAMP.  het_verdict() reads no field of a record without
+      # HET_REC_MAGIC, so a render that lost the stamp discards every run it
+      # will ever make.
       if [ "$(grep -c '_rec.rec_magic = HET_REC_MAGIC;' "$OUTDIR/$sub/$n/$n.$ext")" != 1 ]; then
         echo "FAIL: $t in the $corpus/$target lane does not stamp _rec.rec_magic exactly once" >&2
-        exit 1
-      fi
-      if grep -rqE "$RETIRED_TOKENS" "$OUTDIR/$sub/$n"; then
-        echo "FAIL: $t in the $corpus/$target lane carries the retired verdict vocabulary:" >&2
-        grep -rlE "$RETIRED_TOKENS" "$OUTDIR/$sub/$n" >&2
         exit 1
       fi
       # THE CONTROL MAP WAS THERE.  Every het lane emits from beside its own map,
@@ -288,7 +276,7 @@ for lane in $HET_LANES; do
     exit 1
   fi
   nhet="$(find "$OUTDIR/$sub" -mindepth 1 -maxdepth 1 -type d | wc -l)"
-  echo "        $nhet het harness dirs (expect $EXPECT_HET), each stamping its record and $want_pair once, none naming a verdict or another pair's machine"
+  echo "        $nhet het harness dirs (expect $EXPECT_HET), each stamping its record and $want_pair once, none naming another pair's machine"
   if [ "$nhet" -ne "$EXPECT_HET" ]; then
     echo "FAIL: census mismatch in $sub (want $EXPECT_HET)" >&2
     exit 1

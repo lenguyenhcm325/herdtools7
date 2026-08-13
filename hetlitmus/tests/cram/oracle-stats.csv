@@ -1,12 +1,20 @@
 # HAND-AUTHORED Layer-1 cram fixture, not generated: the oracle obs-stats.txt is
-# compared against in oracle-negatives.t's STATISTICS section.  SB-sys/MP-sys-F
-# carry their real verdicts from tests/gpu-only/expected-nvidia.csv; the `-2s' rows
-# are synthetic names whose Disallowed/CMCM verdict selects the null-reporting
-# paths.  LB-sys is ABSENT ON PURPOSE -- it is the NO-ORACLE row.  Edit with
-# obs-stats.txt and oracle-negatives.t, never alone.  ('#' lines and blanks are
-# skipped -- oracle-compare.sh usage block.)
+# compared against in oracle-negatives.t's STATISTICS section.  Provenance here is
+# MIXED, unlike the FX-/FXB- pairs: SB-sys and MP-sys-F are tests the gpu-only
+# corpus really carries and their Expected cells are the verdicts
+# hetlitmus/cats/nvidia-ptx.cat computes for them (herd7 reports SB-sys Sometimes,
+# MP-sys-F Never), while no test is named by the `-2s' rows, whose cells are
+# synthetic.
+# Neither half makes this file an oracle: what a row selects is a reporting path
+# -- an Allowed row, a Disallowed row and a null under each.  The names cannot
+# move, because obs-stats.txt was printed by het_verdict.h's own printers, which
+# stamp the test name into every block.  LB-sys is absent on purpose: absent from
+# the CSV prints UNINTERPRETED with oracle=-, which is what the section pins
+# beside it.
+# Edit with obs-stats.txt and oracle-negatives.t, never alone.  ('#' lines and
+# blanks are skipped -- oracle-compare.sh usage block.)
 Litmus,Expected,Model,Source
-SB-sys,Allowed,PTX,nvidia-ptx.cat
-MP-sys-F,Disallowed,PTX,nvidia-ptx.cat
-SB-sys-2s,Disallowed,CMCM,expected-nvidia.csv
-MP-sys-2s,Disallowed,CMCM,expected-nvidia.csv
+SB-sys,Allowed,PTX,hand-authored fixture
+MP-sys-F,Disallowed,PTX,hand-authored fixture
+SB-sys-2s,Disallowed,CMCM,hand-authored fixture
+MP-sys-2s,Disallowed,CMCM,hand-authored fixture

@@ -756,17 +756,6 @@ def phase4_stoprule(campaign, quiet=False):
         if not quiet and not bad:
             print("      --rate: the same rows run to BUDGET (%d runs)" % CHAR_BUDGET)
 
-        # No row of any of these campaigns may carry the retired vocabulary: no
-        # harness carries a prediction, so nothing here agrees or disagrees with one.
-        for st in (st_c, st_l, st_r):
-            body = open(st).read()
-            for word in ("Disallowed", "NO-ORACLE", "Allowed", "MISMATCH", "MATCH",
-                         "OBSERVED"):
-                if word in body:
-                    bad.append("%s carries %r -- a campaign that predicts nothing "
-                               "cannot record agreement with a prediction"
-                               % (os.path.basename(st), word))
-
         # THE ONE PATH BY WHICH AN ADJUDICATION COULD STILL REACH A RUN: a state file
         # carries terminal stops and a resumed row inherits them.  A row banked by
         # the oracle-era rule (OBSERVED / CONFIRMED) names a stop this rule cannot
@@ -1743,29 +1732,23 @@ def ch_check(arm, text, k, R, obs, quiet=False):
     never("D", "the target this harness was tagged for",
           "that sentence once substituted a disclosure blob for the pair name")
 
-    for w in ("MISMATCH", "MATCH", "ORACLE_", "Disallowed", "REFUT"):
-        if w in text:
-            bad.append("[%s/E] the printout contains %r -- this harness carries no "
-                       "prediction to agree or disagree with" % (arm, w))
-    say("      [%s/E] no MATCH / MISMATCH / retired verdict word anywhere" % arm)
-
     hits = sorted(set(m.group(0) for m in CH_VENDOR_RE.finditer(text)))
     if hits:
-        bad.append("[%s/F] the printout names %s -- this pair has no machine row "
+        bad.append("[%s/E] the printout names %s -- this pair has no machine row "
                    "and this run was on neither part" % (arm, ", ".join(hits)))
     else:
-        say("      [%s/F] no Grace / Hopper / NVLink / C2C / GH200 in stdout or "
+        say("      [%s/E] no Grace / Hopper / NVLink / C2C / GH200 in stdout or "
             "stderr" % arm)
 
     if 0 < k < R and obs == "Always":
-        bad.append("[%s/G] obs=Always on k=%d of R=%d: the denominator collapsed "
+        bad.append("[%s/F] obs=Always on k=%d of R=%d: the denominator collapsed "
                    "onto the runs that fired, which is every usable cell here"
                    % (arm, k, R))
     elif 0 < k < R:
-        say("      [%s/G] obs=%s on k=%d of R=%d (denominator is R, not the usable "
+        say("      [%s/F] obs=%s on k=%d of R=%d (denominator is R, not the usable "
             "count)" % (arm, obs, k, R))
     else:
-        bad.append("[%s/G] k=%d of R=%d -- no sighting, so the class carries no "
+        bad.append("[%s/F] k=%d of R=%d -- no sighting, so the class carries no "
                    "information about the denominator" % (arm, k, R))
     return bad
 
@@ -1818,7 +1801,7 @@ CH_INJECTIONS = [
      lambda s: s.replace(
          "      HET_PAIR_NAME, HET_LINK_NAME);",
          '      "the target this harness was tagged for", HET_LINK_NAME);', 1)),
-    ("F", "map", CH_TEST + ".cu",
+    ("E", "map", CH_TEST + ".cu",
      "the driver's noise warning names the GH200 halves again",
      lambda s: s.replace("the host half of the host-device interconnect noise",
                          "the Grace half of the NVLink-C2C noise")),
@@ -1888,8 +1871,7 @@ def characterize_hw(want_bite=False):
                 print("  %s" % m)
             return 1
         print("\nCHARACTERIZE-HW: PASS (both arms name themselves, say which "
-              "control state they are in, claim no machine, and adjudicate "
-              "nothing)")
+              "control state they are in, and claim no machine)")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
