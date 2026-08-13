@@ -225,7 +225,7 @@ EOF
 }
 
 # ---- negative/completeness self-test on COPIED artifacts (gated) ----------
-# Sections [0]-[12] below: a clean control that must PASS(0), then one injection
+# Sections [0]-[13] below: a clean control that must PASS(0), then one injection
 # per way the lowering or the scaffolding can silently die, each of which must
 # FAIL(1) (or hard-fail(2) for an unmodelled token).  Aggregates: returns nonzero
 # if any actual rc differs from its expectation.  Operates only on copies -- the
@@ -966,6 +966,66 @@ PY
               0 "$rc" || fails=$((fails+1))
     fi
     rm -rf "$dt/corpus"
+  fi
+
+  # =========================================================================
+  # [13] the CPU-GPU rendezvous barrier's own scope
+  # =========================================================================
+  # check_barrier_whitelist tests every op of the rendezvous for system scope,
+  # and only the fetch_add is scope-selected upstream: split_het_segments anchors
+  # a segment on a sys-scope atom/red, so a narrowed fetch_add never reaches the
+  # whitelist and the lane count fires instead.  The two seq_cst fences and the
+  # spin load reach it and are tested NOWHERE ELSE -- narrow either and the
+  # rendezvous stops spanning the two devices while every model op still matches,
+  # which is a het harness whose CPU and GPU halves never met.
+  printf '\n[13] the het rendezvous barrier narrowed to device scope must FAIL(1)\n'
+  # The harness is the one section [12] emitted and compiled -- the same test,
+  # the same emission command -- so its PTX and its CPU render are read here
+  # instead of a second copy being built.  [12] writes them inside a conditional
+  # and deletes only its corpus copy, so their absence means [12] never got that
+  # far, and this section says so rather than emitting over the top of it.
+  local RVT="$DVT" RVL="$HET_DIR/$DVT.litmus" rv="$sc/rv"
+  local rvptx="$dt/clean.ptx" rvcpu="$dtcpu"
+  mkdir -p "$rv"
+  if [ ! -s "$rvptx" ] || [ ! -s "$rvcpu" ]; then
+    echo "  *** section [12] left no compiled $RVT harness for this one to read"
+    fails=$((fails+1))
+  else
+    python3 "$CHECK" "$RVL" --ptx "$rvptx" --cpu-c "$rvcpu" -q >/dev/null 2>&1; rc=$?
+    _expect "rendezvous control (clean het PTX)" 0 "$rc" || fails=$((fails+1))
+
+    # Every failure the run reports must be the barrier-scope one.  A sed that
+    # also caught a model op would redden through the ordered-stream check
+    # instead, and this section would report OK for an assertion it never
+    # reached; the counts are compared rather than grepped for that reason.
+    local rvn=0
+    _rvbite() { # label sed-expr
+      local lbl="$1" expr="$2" rc out f bad=0 nf ns
+      rvn=$((rvn+1)); f="$rv/bite$rvn.ptx"
+      sed "$expr" "$rvptx" > "$f"
+      if [ ! -s "$f" ] || cmp -s "$rvptx" "$f"; then
+        printf '  *** VACUOUS BITE: injection changed nothing    [%s]\n' "$lbl"
+        return 1
+      fi
+      out="$(python3 "$CHECK" "$RVL" --ptx "$f" --cpu-c "$rvcpu" 2>&1)"; rc=$?
+      _expect "$lbl" 1 "$rc" || bad=1
+      nf=$(printf '%s\n' "$out" | grep -c '^FAIL: ')
+      ns=$(printf '%s\n' "$out" | grep -c '^FAIL: barrier op .* NOT system scope')
+      if [ "$ns" -eq 0 ] || [ "$nf" -ne "$ns" ]; then
+        printf '  *** WRONG REASON: %d of %d failures are the barrier-scope one    [%s]\n' \
+               "$ns" "$nf" "$lbl"
+        printf '%s\n' "$out" | grep -E '^FAIL:|^RESULT' | head -3
+        bad=1
+      else
+        printf '  %d x %s\n' "$ns" \
+               "$(printf '%s\n' "$out" | grep -m1 '^FAIL: barrier op')"
+      fi
+      return "$bad"
+    }
+    _rvbite "both rendezvous seq_cst fences narrowed sys -> gpu" \
+            's/fence\.sys\.sc/fence.gpu.sc/g' || fails=$((fails+1))
+    _rvbite "the rendezvous spin load narrowed sys -> gpu" \
+            's/ld\.acquire\.sys\.b32/ld.acquire.gpu.b32/g' || fails=$((fails+1))
   fi
 
   printf '\n'

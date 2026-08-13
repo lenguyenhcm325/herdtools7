@@ -1063,7 +1063,7 @@ hetlitmus-d10: | build
 ### comp.sh's `hip' arm was compile-only (`hipcc -c') and the Makefile had no HIP
 ### link target at all, so nothing this suite emits could become an AMD
 ### executable.  Emitting a .hip that no target links is the same defect class as
-### the .hip that, until B5, no gate compiled.  Eight phases: the build-script
+### the .hip that, until B5, no gate compiled.  Nine phases: the build-script
 ### arms, `hipcc --offload-arch=gfx942 -c', the two link arms each producing an
 ### ELF that CARRIES the gfx942 code object (the ELF is read -- a gfx90a build
 ### links and exits 0 too), the uname -m refusal on an AArch64 render, the
@@ -1071,8 +1071,11 @@ hetlitmus-d10: | build
 ### the compile-time refusal of the CUDA-only HET_PLACE lever (its own phase: it
 ### is the hipcc half of the allocator story, and the allocator's own injections
 ### all corrupt a resolver driven under a stub, which no compile-time refusal can
-### see), and CUDA non-regression.  Every phase counts its assertions and fails
-### if it made none.  --bite injects into all eight on corruption AND on omission.
+### see), CUDA non-regression, and the fence -- a second render, of a family
+### that annotates one, because the harness every other phase drives is
+### fence-free and litmus/HipLang.ml's __builtin_amdgcn_fence reaches a compiler
+### nowhere else.  Every phase counts its assertions and fails if it made
+### none.  --bite injects into all nine on corruption AND on omission.
 ### P5 EXISTS BECAUSE OF A MEASURED REGRESSION.  Both vendors link ./<test> on
 ### purpose (run-one.sh and campaign.py exec ./<test> and stay vendor-agnostic).
 ### With cuda-bin as a phony carrying a FILE prerequisite, `make cuda-bin' after
@@ -1107,11 +1110,14 @@ hetlitmus-hipbuild: | build
 ### statistics layer once printed the first on a run that was the second.  Six
 ### assertions per arm (stamp, the arm's own control sentence and NOT the
 ### other's, OBSERVED against the pair NAME, no Grace/Hopper/NVLink/C2C/GH200
-### -- this pair has no machine row -- and the observation class on k < R).
+### -- this pair has no machine row -- and the observation class against the k
+### and the R it was read off, where k==R is the class that says every run
+### fired).  A run that fires the outcome in none of them never reaches that
+### judgement: the run driver stops first, on a sentence of its own.
 ### NEEDS A DEVICE, hence the toolchain umbrella; with none visible it FAILS rather
 ### than skipping, because a gate that quietly stops checking is the failure mode
 ### this suite has already shipped twice.  Three assertions per arm need one
-### sighting, so it re-seeds up to 12 times (~3 s per run) before giving up.
+### sighting, so it re-seeds up to 12 times before giving up.
 hetlitmus-characterize-hw: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py --characterize-hw

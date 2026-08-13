@@ -708,6 +708,10 @@ def check_barrier_whitelist(result, barrier_ops, n_lanes):
     if not barrier_ops:
         result.fail("het kernel has NO barrier (expected sys-scope rendezvous)")
         return
+    # The only scope test the two seq_cst fences and the spin load get.  The
+    # fetch_adds pass it by construction: split_het_segments anchors a segment on
+    # a SYSTEM-SCOPE atom/red, so a narrowed fetch_add never enters barrier_ops
+    # at all -- its segment disappears and the lane count below is what fires.
     for op in barrier_ops:
         if op[2] != 'sys':
             result.fail("barrier op %s is NOT system scope (weakened/narrowed)" % fmt(op))
@@ -715,11 +719,6 @@ def check_barrier_whitelist(result, barrier_ops, n_lanes):
     atoms = [o for o in barrier_ops if o[0] in ('atom', 'red')]
     if not any(o[1] == 'sc' for o in fences):
         result.fail("barrier has no seq_cst fence (fence.sc.sys) -- weakened")
-    # The fetch_adds' own scope needs no assertion here: split_het_segments
-    # anchors segments on a SYSTEM-SCOPE atom/red, so a fetch_add narrowed to
-    # device scope never enters barrier_ops at all -- its segment disappears and
-    # the lane count above is what fires.  That is the check; re-testing
-    # a[2]=='sys' on the survivors is constant-false by construction.
     if len(atoms) != n_lanes:
         result.fail("expected one barrier fetch_add per barrier-joining GPU lane (%d); found %d"
                     % (n_lanes, len(atoms)))

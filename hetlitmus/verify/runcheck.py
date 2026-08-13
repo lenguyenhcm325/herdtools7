@@ -1170,9 +1170,7 @@ def phase8_probe_hip(probe, quiet=False):
 # ---------------------------------------------------------------------------
 # THE BITES.  One planted defect per assertion, in a copy of the script under
 # test.  Each names the failure it must produce: a phase that reddens for some
-# other reason has not been shown to read what the injection broke.  A `None'
-# there means any failure will do, and is for the one injection whose own failure
-# text is a property of the host's fixture rather than of the defect.
+# other reason has not been shown to read what the injection broke.
 # ---------------------------------------------------------------------------
 def copy_wrapper(tmp, mutate=None, runone_mutate=None):
     """A hetlitmus-run.sh in its own dir, beside a paths.sh that points back at
@@ -1277,9 +1275,17 @@ INJECTIONS = [
      lambda s: s.replace("/^[ \\t]*\\][ \\t]*$/ { intab = 0 ; next }",
                          "/^[ \\t]*\\][ \\t]*$/ { next }", 1),
      phase5_reader, "not bounded to the table literal"),
+    # Four of the phase-6 handlers are SUBSUMED downstream: with the handler
+    # removed the session still stops, elsewhere and saying something else, so
+    # each of those four names the substitute that was observed -- the campaign's
+    # errored-row exit (1, not 2) for `build', the emitted harness's own host-ISA
+    # guard for `emitted-isa', the per-render check for `reuse-missing', the pair
+    # stamp for `reuse-partial'.  What their injections prove is that the phase
+    # notices its handler is gone, not that nothing else would have stopped the
+    # session.
     ("6", "wrapper", "a harness that did not build does not stop the session",
      lambda s: s.replace('if [ "$nfail" -ne 0 ]; then', 'if false; then', 1),
-     _p6("build"), "build"),
+     _p6("build"), "[build] exited 1, want 2"),
     ("6", "wrapper", "a probe that did not complete does not stop the session",
      lambda s: s.replace('if [ "$probe_rc" -ne 0 ]; then', 'if false; then', 1),
      _p6("probe"), "probe"),
@@ -1296,7 +1302,7 @@ INJECTIONS = [
     ("6", "wrapper", "the emitted CPU lane is not mirrored against the corpus",
      lambda s: s.replace('[ "$EMITTED_ISA" = "$CPU_ISA" ] || die',
                          '[ 1 = 1 ] || die', 1),
-     _p6("emitted-isa"), "emitted-isa"),
+     _p6("emitted-isa"), "harness(es) did not build"),
     ("6", "wrapper", "the emitted pair name is not cross-checked",
      lambda s: s.replace('grep -qF "#define HET_PAIR_NAME \\"$PAIR\\"" "$f" || {',
                          'true || {', 1),
@@ -1304,11 +1310,11 @@ INJECTIONS = [
     ("6", "wrapper", "--reuse-emitted accepts a missing emission",
      lambda s: s.replace('[ -d "$EMIT" ] || die "--reuse-emitted, but there is no',
                          '[ 1 = 1 ] || die "--reuse-emitted, but there is no', 1),
-     _p6("reuse-missing"), "reuse-missing"),
+     _p6("reuse-missing"), "REFUSING -- no .cu render for"),
     ("6", "wrapper", "a missing render is not noticed on reuse",
      lambda s: s.replace('[ -s "$f" ] || die "no .$RENDER_EXT render for $t under $EMIT"',
                          ': || die "no .$RENDER_EXT render for $t under $EMIT"', 1),
-     _p6("reuse-partial"), "reuse-partial"),
+     _p6("reuse-partial"), "REFUSING -- the emitted pair name of"),
     ("6", "wrapper", "an other-vendor render beside the render is not noticed",
      lambda s: s.replace('[ ! -e "$EMIT/$t/$t.$OTHER_EXT" ] \\\n    || die',
                          '[ 1 = 1 ] \\\n    || die', 1),
@@ -1690,6 +1696,36 @@ CH_RETIRED = ["no map is registered for that pair",
               "the bootstrap control map for an unregistered pair does not exist yet"]
 
 
+def ch_class(arm, k, R, obs):
+    """Judge the observation class against the counts it was read off.  Returns
+    (failure, note) with exactly one of the two set.
+
+    Both arms here make the row its own denominator -- self-control on the map
+    arm, no co-run at all on the nomap one -- so het_verdict.h reads obs=Always
+    off k >= R.  k==R is then the class saying the outcome fired in every run,
+    which is a reading and not the absence of one; obs=Always under k<R would
+    mean the denominator had collapsed onto the usable count instead.
+
+    No run arrives here with k==0: ch_run_once stops on that first, with its
+    own sentence about an outcome that never fired.  The branch below is the
+    classifier's floor, and the bite's shape table is what drives it."""
+    if k == 0:
+        return ("[%s/F] k=%d of R=%d -- no sighting, so the class carries no "
+                "information about the denominator" % (arm, k, R), None)
+    if k < R and obs == "Always":
+        return ("[%s/F] obs=Always on k=%d of R=%d: the denominator collapsed "
+                "onto the runs that fired, which is every usable cell here"
+                % (arm, k, R), None)
+    if k < R:
+        return (None, "[%s/F] obs=%s on k=%d of R=%d (denominator is R, not the "
+                      "usable count)" % (arm, obs, k, R))
+    if k == R and obs == "Always":
+        return (None, "[%s/F] obs=Always on k=%d of R=%d (every run fired, and "
+                      "that is the class which says so)" % (arm, k, R))
+    return ("[%s/F] obs=%s on k=%d of R=%d: every run fired and the class does "
+            "not say so" % (arm, obs, k, R), None)
+
+
 def ch_check(arm, text, k, R, obs, quiet=False):
     """Every assertion is on the PRINTOUT.  Returns a list of failures."""
     bad = []
@@ -1729,16 +1765,11 @@ def ch_check(arm, text, k, R, obs, quiet=False):
         say("      [%s/E] no Grace / Hopper / NVLink / C2C / GH200 in stdout or "
             "stderr" % arm)
 
-    if 0 < k < R and obs == "Always":
-        bad.append("[%s/F] obs=Always on k=%d of R=%d: the denominator collapsed "
-                   "onto the runs that fired, which is every usable cell here"
-                   % (arm, k, R))
-    elif 0 < k < R:
-        say("      [%s/F] obs=%s on k=%d of R=%d (denominator is R, not the usable "
-            "count)" % (arm, obs, k, R))
+    why, note = ch_class(arm, k, R, obs)
+    if why is not None:
+        bad.append(why)
     else:
-        bad.append("[%s/F] k=%d of R=%d -- no sighting, so the class carries no "
-                   "information about the denominator" % (arm, k, R))
+        say("      %s" % note)
     return bad
 
 
@@ -1762,16 +1793,19 @@ def ch_arm(arm, tmp, arch, quiet=False):
     return ch_run_once(arm, d, quiet=quiet)
 
 
-# Each injection rewrites ONE file of the emitted harness (never the source tree)
-# and names the file, because the two halves of the printout come from two places:
-# the verdict/statistics prose from het_verdict.h, and the driver's own WARNINGS
-# from the render itself.
+# Each injection rewrites one file of the emitted harness (never the source tree)
+# and names both that file -- the two halves of the printout come from two places,
+# the verdict/statistics prose from het_verdict.h and the driver's own warnings
+# from the render itself -- and the failure it must produce, which is the
+# assertion that catches the sentence it PLANTED rather than the one that merely
+# notices a sentence went missing.
 CH_INJECTIONS = [
     ("B/C", "nomap", "het_verdict.h",
      "the no-control-map note reverted to the self-canary sentence",
      lambda s: s.replace(
          "  NOTE: this row CO-RUNS NO CONTROL because NO POSITIVE-CONTROL MAP WAS ",
-         "  NOTE: this row CO-RUNS NO CONTROL -- it IS the Layer-B canary.  WAS ", 1)),
+         "  NOTE: this row CO-RUNS NO CONTROL -- it IS the Layer-B canary.  WAS ", 1),
+     "the printout says 'IS the Layer-B canary'"),
     ("C", "nomap", "het_verdict.h",
      "the missing calibration channel called structural again",
      lambda s: s.replace(', and that is an OMISSION, not a "\n'
@@ -1779,28 +1813,78 @@ CH_INJECTIONS = [
                          ' -- nothing independent co-runs whose stationarity '
                          'could "\n'
                          '          "be tested -- by construction, not by '
-                         'omission: what was omitted', 1)),
+                         'omission: what was omitted', 1),
+     "by construction, not by omission' -- that is the OTHER arm's control state"),
     ("B/C", "nomap", "het_verdict.h",
      "the flag explained as a pair no registry has a map for",
      lambda s: s.replace("the map is looked for BESIDE THE TEST, under the name this ",
                          "no map is registered for that pair, and there is none to "
-                         "borrow, so this ", 1)),
+                         "borrow, so this ", 1),
+     "the printout says 'no map is registered for that pair'"),
     ("A/D", "map", "het_verdict.h",
      "the report sentence names a constant instead of the pair",
      lambda s: s.replace(
          "      HET_PAIR_NAME, HET_LINK_NAME);",
-         '      "the target this harness was tagged for", HET_LINK_NAME);', 1)),
+         '      "the target this harness was tagged for", HET_LINK_NAME);', 1),
+     "the printout says 'the target this harness was tagged for'"),
     ("E", "map", CH_TEST + ".cu",
      "the driver's noise warning names the GH200 halves again",
      lambda s: s.replace("the host half of the host-device interconnect noise",
-                         "the Grace half of the NVLink-C2C noise")),
+                         "the Grace half of the NVLink-C2C noise"),
+     "the printout names C2C, Grace, NVLink"),
+]
+
+
+# The four (k, obs) shapes ch_class must tell apart.  Which one a run lands in is
+# the device's to decide and not this gate's, so the classifier and the ch_check
+# call that turns its verdict into a failure are driven directly: (k, R, obs,
+# must the class READ, the fragment its own sentence owes).
+CH_SHAPES = [
+    (0, 10, "Never", False, "no sighting"),
+    (4, 10, "Always", False, "the denominator collapsed"),
+    (4, 10, "Sometimes", True, "denominator is R"),
+    (10, 10, "Always", True, "every run fired"),
 ]
 
 
 def characterize_hw_bite(tmp, arch):
+    """Every injection is judged on a failure carrying its own reason string, so
+    the green arm is the gate's own run -- `--characterize-hw' with no flag,
+    which the Makefile runs first -- and not a re-run here.  A box on which the
+    outcome stopped firing reddens every injection with the no-sighting sentence,
+    which is no injection's reason, and is reported as the box rather than banked
+    as five bites."""
     print("===== BITE: does this gate read the PRINTOUT? =====")
     bad = 0
-    for tag, arm, fname, what, mutate in CH_INJECTIONS:
+    for k, R, obs, want_read, frag in CH_SHAPES:
+        why, note = ch_class("map", k, R, obs)
+        got = note if why is None else why
+        # A class only counts once ch_check has carried it into the failures a
+        # run is judged on: a refusal must arrive there and a reading must leave
+        # nothing behind.  The printout handed over is empty, because ch_check's
+        # assertions on a printout are what the injections below drive, on the
+        # device; the class is the one verdict it reaches without one.
+        carried = [m for m in ch_check("map", "", k, R, obs, quiet=True)
+                   if m.startswith("[map/F]")]
+        if (why is None) != want_read:
+            print("  *** [F] k=%d of R=%d obs=%s: the class is %s and must be %s "
+                  "-- %s" % (k, R, obs, "read" if why is None else "refused",
+                             "read" if want_read else "refused", got))
+            bad += 1
+        elif frag not in got:
+            print("  *** [F] k=%d of R=%d obs=%s: judged, but not by its own "
+                  "sentence (%r is not in it) -- %s" % (k, R, obs, frag, got))
+            bad += 1
+        elif carried != ([] if want_read else [why]):
+            print("  *** [F] k=%d of R=%d obs=%s: the class is %s, and ch_check "
+                  "returns %s -- a run is judged on that list, so it carries the "
+                  "refusal or it carries nothing"
+                  % (k, R, obs, "read" if want_read else "refused",
+                     ", ".join(carried) or "no class failure at all"))
+            bad += 1
+        else:
+            print("      %s" % got)
+    for tag, arm, fname, what, mutate, expect in CH_INJECTIONS:
         d = ch_emit(tmp, arm)
         hdr = os.path.join(d, fname)
         src = open(hdr).read()
@@ -1813,25 +1897,24 @@ def characterize_hw_bite(tmp, arch):
         open(hdr, "w").write(new)
         ch_build(d, arch)
         rc, why = ch_run_once(arm, d, quiet=True)
+        hit = [m for m in why if expect in m]
         if rc == 0:
             print("  *** [%s] %s: the gate stayed GREEN" % (tag, what))
             bad += 1
-        else:
-            print("      [%s] RED on %s" % (tag, what))
-            print("          %s" % why[0][:150])
-    # ... and the untouched arms must be green, or "red" meant nothing.
-    for arm in CH_ARMS:
-        rc, why = ch_arm(arm, tmp, arch, quiet=True)
-        if rc != 0:
-            print("  *** the UNTOUCHED %s arm is RED (%s) -- the injections above "
-                  "prove nothing" % (arm, why[0][:150] if why else "?"))
+        elif not hit:
+            # A run that never fired the outcome reddens too, and says so; it is
+            # the box that failed, not the injection that was seen.
+            print("  *** [%s] %s: RED, but for another reason (%r is in no "
+                  "failure): %s" % (tag, what, expect, why[0][:150]))
             bad += 1
         else:
-            print("      the untouched %s arm: GREEN" % arm)
+            print("      [%s] RED on %s" % (tag, what))
+            print("          %s" % hit[0][:150])
     if bad:
         print("\nBITE FAILED: %d injection(s) went unnoticed." % bad)
         return 1
-    print("\nBITE OK (%d injections, each RED; restored GREEN)" % len(CH_INJECTIONS))
+    print("\nBITE OK (%d injections, each RED for its own reason; %d observation "
+          "classes told apart)" % (len(CH_INJECTIONS), len(CH_SHAPES)))
     return 0
 
 

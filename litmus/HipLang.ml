@@ -71,12 +71,13 @@ let hip_scope = function
    were always FULL fences -- they silently dropped the annotated order and
    over-synchronised (e.g. a release fence became a full fence).
 
-   Not gated: no target compiles a fence.  Both AMD compile paths build
-   fence-free tests (hipbuildcheck.py; smoke.sh rep 8), no committed hip-out
-   golden carries one, and compile-hip.sh defaults to that same golden dir --
-   so a syntactically broken __builtin_amdgcn_fence still passes
-   hetlitmus-test, -test-toolchain and -corpus.  ptxcheck.py earns the same claim
-   on the CUDA side by reading `nvcc --ptx' back; nothing reads AMD ISA.
+   Gated by compilation, and only that: hipbuildcheck.py P8 renders the x86
+   MP-cg-sys-fence with -gpu-target hip and builds it, which is the one target
+   in the tree that compiles this builtin -- smoke.sh rep 8, the other AMD
+   phases and every committed hip-out golden are fence-free.  So a builtin
+   hipcc rejects, or a sync scope AMDHSA does not have, now fails a gate; what
+   stays unread is the AMD ISA an accepted fence lowers to, which ptxcheck.py's
+   `nvcc --ptx' read-back is the CUDA-side counterpart of.
    Fence tests do exist: 33 of the 137 gpu-only and 171 of the 411 het.
 
    Grounded (web-fetched, not memory):

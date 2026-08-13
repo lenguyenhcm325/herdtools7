@@ -8,7 +8,7 @@ could be turned into an AMD executable at all: the CUDA lane had `cuda-link' and
 `make cuda-bin', the HIP lane had no counterpart.  Emitting a .hip that no target
 links is the same defect class as the .hip that, until B5, no gate compiled.
 
-Eight phases, each of which must be seen to fail:
+Nine phases, each of which must be seen to fail:
 
   P1 build-script arms   the emitted comp.sh / Makefile CARRY hip-link + hip-bin,
                          advertise them in their usage/help text, and hip-bin is
@@ -46,11 +46,14 @@ Eight phases, each of which must be seen to fail:
                          corrupt the lifted resolver and none can reach it
   P7 CUDA non-regression the cuda / cuda-link / cuda-bin arms still carry their
                          guard and still build
+  P8 fence               the fence-carrying render emits the documented
+                         __builtin_amdgcn_fence lowering for every `f[sc,sys]'
+                         it annotates, and hipcc compiles it
 
-NO FENCE IS COMPILED HERE.  The test this gate builds carries none, and neither
-does the other AMD compile path (smoke.sh rep 8), so the emitter's
-__builtin_amdgcn_fence lowering is compiled by no target at all; litmus/HipLang.ml
-(hip_fence_scope) is the one home for what that leaves unchecked.
+THE FENCE IS COMPILED, NOT RUN.  P8 is the only place in this tree where
+litmus/HipLang.ml's __builtin_amdgcn_fence reaches a compiler; what that compile
+leaves unsettled, and how many tests carry a fence, is stated there
+(hip_fence_scope).
 
 CORRECTNESS IN ISOLATION IS NOT THE MECHANISM BEING LIVE.  P6 drives the resolver
 out-of-line, so on its own it would pass a harness that never calls it -- and on
@@ -116,6 +119,11 @@ LIBDIR = os.path.join(ROOT, "litmus", "libdir")
 # one.  Its AArch64 twin is P4's refusal probe, on this same x86_64 host.
 X86_TEST = "MP-cg-sys-acqrel-2s-x86_64"
 AARCH64_TEST = "MP-cg-sys-acqrel-2s"
+# The fence-carrying render P8 builds, and the lowering its .hip owes for each
+# annotation; why that exact spelling is litmus/HipLang.ml (hip_fence_scope).
+X86_FENCE_TEST = "MP-cg-sys-fence-x86_64"
+FENCE_ANNOT = "f[sc,sys]"
+FENCE_CALL = '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "")'
 
 # MI300A / MI300X.  Both parts report gfx942; hipDeviceAttributeIntegrated is
 # what separates them, and P6 checks the harness reads it.
@@ -817,6 +825,51 @@ def phase7(tmp, d):
         fail("P7", "phase made no assertions")
 
 
+def phase8(tmp, d, src):
+    """The AMD fence: the one compile in the tree that reads it.
+
+    Two text assertions keep that compile from being vacuous -- a fence-free
+    .hip compiles beautifully and proves nothing -- and the compile is the
+    assertion neither of them can make.
+    """
+    print("[P8] AMD fence: the emitted %s, compiled by hipcc" % FENCE_CALL)
+    t = test_of(d)
+    annots = re.findall(r"f\[[^\]]*\]", open(src).read())
+    tick("P8")
+    if not annots or set(annots) != {FENCE_ANNOT}:
+        fail("P8", "%s annotates %s, not one or more %s -- this phase would "
+                   "compile a different lowering, or none at all"
+             % (os.path.basename(src), sorted(set(annots)) or "no GPU fence",
+                FENCE_ANNOT))
+        return
+    hip = open(os.path.join(d, t + ".hip")).read()
+    n_any = hip.count("__builtin_amdgcn_fence(")
+    n_doc = hip.count(FENCE_CALL)
+    tick("P8")
+    if n_any < len(annots):
+        fail("P8", "the emitted .hip carries %d __builtin_amdgcn_fence( for a "
+                   "test annotating %d %s -- the fence was dropped on the way out"
+             % (n_any, len(annots), FENCE_ANNOT))
+    tick("P8")
+    if n_doc != n_any:
+        fail("P8", "%d of the %d emitted fence(s) carry the documented lowering "
+                   "%s -- a named sync scope compiles too, and is narrower than "
+                   "system" % (n_doc, n_any, FENCE_CALL))
+    if not have("hipcc"):
+        fail("P8", "hipcc not on PATH -- the fence lowering cannot be compiled here")
+    else:
+        w = fresh(tmp, d, "p8")
+        r = run(["sh", "comp.sh", "hip"], cwd=w)
+        tick("P8")
+        if r.returncode != 0:
+            fail("P8", "comp.sh hip failed on the fence-carrying render (exit %d) "
+                       "-- the one target that compiles this builtin:\n%s%s"
+                 % (r.returncode, r.stdout[-1500:], r.stderr[-1500:]))
+    print("      %d assertions" % counts.get("P8", 0))
+    if not counts.get("P8"):
+        fail("P8", "phase made no assertions")
+
+
 # -------------------------------------------------------------------- bite
 
 def sub(path, old, new, count=0):
@@ -883,7 +936,7 @@ def bite_one(label, phase, runner, expect):
     return True
 
 
-def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda):
+def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda, d_fence, fence_src):
     print("===== HIPBUILDCHECK BITE: every phase, on corruption AND on omission =====")
     ok = True
     n = [0]
@@ -1114,6 +1167,37 @@ def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda):
     ok &= bite_one("comp.sh cuda-link arm DELETED", "P7", lambda: phase7(tmp, w),
                    "cuda-link case arm")
 
+    # --- P8 -----------------------------------------------------------------
+    # OMISSION: the fence gone from the render.  The .hip still compiles, and no
+    # other check in the tree reads the AMD lowering, so only the text assertion
+    # stands between this and a fence-free AMD harness for a fence test.
+    w = W("p8o", d_fence)
+    hp = os.path.join(w, test_of(w) + ".hip")
+    s = re.sub(r"^.*__builtin_amdgcn_fence\(.*\n", "",
+               open(hp).read(), flags=re.M)
+    open(hp, "w").write(s)
+    ok &= bite_one("the emitted __builtin_amdgcn_fence DELETED", "P8",
+                   lambda: phase8(tmp, w, fence_src),
+                   "the fence was dropped on the way out")
+    # CORRUPTION THAT COMPILES: system scope is the empty string, so naming a
+    # scope narrows the fence to one agent and hipcc says nothing.  This is the
+    # half the compile cannot reach.
+    w = W("p8n", d_fence)
+    sub(os.path.join(w, test_of(w) + ".hip"), FENCE_CALL,
+        '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "agent")')
+    ok &= bite_one('the fence sync scope narrowed to "agent" (it still builds)',
+                   "P8", lambda: phase8(tmp, w, fence_src),
+                   "carry the documented lowering")
+    # CORRUPTION THE COMPILE CATCHES: "system" is not an AMDHSA sync-scope name,
+    # and it is the exact way to get `sys' wrong.  It trips the text assertion
+    # too; the assertion this bite is for is the one bite_one prints.
+    w = W("p8c", d_fence)
+    sub(os.path.join(w, test_of(w) + ".hip"), FENCE_CALL,
+        '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "system")')
+    ok &= bite_one('the fence sync scope spelt "system"', "P8",
+                   lambda: phase8(tmp, w, fence_src),
+                   "comp.sh hip failed on the fence-carrying render")
+
     fails.clear()
     print()
     if ok:
@@ -1155,9 +1239,17 @@ def main():
         # is what makes the substitution sound.
         d_aa_cuda = emit(tmp, os.path.join(HET_DIR, AARCH64_TEST + ".litmus"),
                          os.path.join(tmp, "out-aa"), "AArch64 render", "cuda")
+        # ...and the fence-carrying render, which is a different test: the one
+        # every other phase drives annotates no fence at all.
+        fence_src = os.path.join(corpus, X86_FENCE_TEST + ".litmus")
+        if not os.path.isfile(fence_src):
+            raise SystemExit("hipbuildcheck: generate-x86.sh emitted no %s"
+                             % X86_FENCE_TEST)
+        d_fence = emit(tmp, fence_src, os.path.join(tmp, "out-x86-fence-hip"),
+                       "x86 fence render", "hip")
 
         if a.bite:
-            return bite(tmp, d_x86, d_x86_cuda, d_aa_cuda)
+            return bite(tmp, d_x86, d_x86_cuda, d_aa_cuda, d_fence, fence_src)
 
         print("===== HIPBUILDCHECK: can an AMD harness be built and run? =====")
         print("  host %s, hipcc=%s nvcc=%s"
@@ -1170,13 +1262,14 @@ def main():
         phase6(tmp, d_x86)
         phase6b(tmp, d_x86)
         phase7(tmp, d_x86_cuda)
+        phase8(tmp, d_fence, fence_src)
         print("=" * 70)
         if fails:
             print("HIPBUILDCHECK FAILED: %d assertion(s)" % len(fails))
             for ph, m in fails:
                 print("  [%s] %s" % (ph, m))
             return 1
-        print("HIPBUILDCHECK: PASS (%d assertions over 8 phases)" % sum(counts.values()))
+        print("HIPBUILDCHECK: PASS (%d assertions over 9 phases)" % sum(counts.values()))
         print("  DEFERRED to Phase 3a (MI300X): there is no AMD GPU here, so the "
               "linked harness was never EXECUTED on a device.  P6 executed the "
               "allocator resolver under a stub hipDeviceGetAttribute; the real "
