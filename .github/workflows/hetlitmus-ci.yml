@@ -1,0 +1,149 @@
+# Every hetlitmus make gate that runs without a GPU device: the base
+# umbrella (make hetlitmus-test) in one job, the five compile-only
+# toolchain gates in the other.  BOTH jobs install nvcc and hipcc --
+# the device-session gate inside the base umbrella preflights them on
+# PATH -- but no job needs a device.  The four device-executing gates
+# (hetlitmus-stress, -selftest, -characterize-hw, -run-hw) probe for
+# real hardware and fail closed on a hosted runner; they run on a GPU
+# box only (hetlitmus/docs/TEST-PLAN.md).
+name: hetlitmus
+
+on:
+  push:
+    branches: [hetlitmus-work]
+
+permissions: read-all
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  base-lane:
+    name: base gates (make hetlitmus-test)
+    # x86_64 (the x86-body gate asserts over native gcc + objdump output);
+    # jammy, matching the suite of the ROCm apt line below.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.1"
+          dune-cache: true
+
+      - name: Install clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Install CUDA toolkit (nvcc)
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: "12.9.1"
+          method: network
+          sub-packages: '["nvcc", "cudart", "cudart-dev"]'
+
+      - name: Install HIP toolchain (hipcc)
+        run: |
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key \
+            | gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
+          echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/7.2.4 jammy main' \
+            | sudo tee /etc/apt/sources.list.d/rocm.list
+          printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' \
+            | sudo tee /etc/apt/preferences.d/rocm-pin-600
+          sudo apt-get update
+          sudo apt-get install -y hipcc hip-dev hip-runtime-amd rocm-device-libs
+          echo /opt/rocm/bin >> "$GITHUB_PATH"
+
+      # The device-session gate's wrapper refuses without real nvcc and
+      # hipcc on PATH; a missing tool must fail here, not mid-umbrella.
+      - name: Preflight toolchain assertion
+        run: |
+          for t in nvcc hipcc clang gcc g++ objdump python3; do
+            command -v "$t" || { echo "missing: $t"; exit 1; }
+          done
+
+      - name: Install opam dependencies
+        run: opam install . --deps-only --yes --with-test
+
+      # Version.ml is generated, not committed; a bare dune build fails
+      # without it.
+      - name: Build
+        run: opam exec -- make build
+
+      - name: Run the base gates
+        # The dune cache replays recorded cram output; the gates only count
+        # as executed with it off.
+        env:
+          DUNE_CACHE: disabled
+        run: opam exec -- make hetlitmus-test
+
+  toolchain-lane:
+    name: toolchain gates (compile-only, no device)
+    # jammy: must match the suite of the ROCm apt line below.
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout tree
+        uses: actions/checkout@v4
+
+      - name: Set-up OCaml
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: "5.1"
+          dune-cache: true
+
+      - name: Install clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Install CUDA toolkit (nvcc)
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: "12.9.1"
+          method: network
+          sub-packages: '["nvcc", "cudart", "cudart-dev"]'
+
+      - name: Install HIP toolchain (hipcc)
+        run: |
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key \
+            | gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
+          echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/7.2.4 jammy main' \
+            | sudo tee /etc/apt/sources.list.d/rocm.list
+          printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' \
+            | sudo tee /etc/apt/preferences.d/rocm-pin-600
+          sudo apt-get update
+          sudo apt-get install -y hipcc hip-dev hip-runtime-amd rocm-device-libs
+          echo /opt/rocm/bin >> "$GITHUB_PATH"
+
+      # smoke and cpustress degrade to SKIP without hipcc or nvcc; a missing
+      # tool must fail here instead.
+      - name: Preflight toolchain assertion
+        run: |
+          for t in nvcc hipcc clang gcc g++ objdump python3; do
+            command -v "$t" || { echo "missing: $t"; exit 1; }
+          done
+          nvcc --version | tail -1
+          hipcc --version | head -1
+
+      - name: Install opam dependencies
+        run: opam install . --deps-only --yes --with-test
+
+      - name: Build
+        run: opam exec -- make build
+
+      - name: Run the toolchain gates
+        run: >-
+          opam exec -- make
+          hetlitmus-faithful
+          hetlitmus-smoke
+          hetlitmus-obs
+          hetlitmus-cpustress
+          hetlitmus-hipbuild
