@@ -3,7 +3,7 @@
 # smoke.sh -- Layer-3 compile-smoke for the HetLitmus toolchain.
 #
 # "Does the emitted harness actually compile end-to-end?"  The faithfulness sweep
-# (l0_tokens.sh) `nvcc --ptx'-compiles every gpu-only .cu but exercises neither
+# (tokens.sh) `nvcc --ptx'-compiles every gpu-only .cu but exercises neither
 # the het harness's CPU side, the `nvcc -c'/ptxas object stage, nor the AMD/HIP
 # render.  smoke.sh emits a curated rep sample and drives each test's own
 # comp.sh (compile-only: gcc host +
@@ -42,7 +42,7 @@
 #                              proc reads), likewise T's alone.
 #                              These reps claim only that the three barrier forms
 #                              build; which one is emitted is pinned by
-#                              l0_tokens.sh selftest [5b].
+#                              tokens.sh selftest [5b].
 #
 # Usage:
 #   bash hetlitmus/verify/smoke.sh          # run every rep (pre-commit gate)
@@ -54,7 +54,7 @@
 # any OK is printed: `fails' can only be raised from inside a rep, so a rep that
 # is never called contributes nothing, and a shrunken rep list would otherwise
 # leave the gate green with the verdict line still claiming a full pass -- the
-# same vacuous-pass hole the census tripwires of l0_tokens.sh / corpus-gate.sh /
+# same vacuous-pass hole the census tripwires of tokens.sh / corpus-gate.sh /
 # emit-all.sh close.
 # ---------------------------------------------------------------------------
 set -u
@@ -221,10 +221,10 @@ case "$cmd" in
     smoke_het_hip MP-cg-sys-relaxed-x86_64 "the AMD/MI300A render, (x86_64, hip) pair (hipcc -c, gfx942)"
     # The four order-pair reps below are all off the lattice floor, so each also
     # exercises the co-run control (HET_CONTROL_COMPILED_IN=1) on that family.
-    smoke_het     MP-cg-sys-sy.acq-2s   "Q10 order-pair; inline fence.acquire.sys + co-run mu"
-    smoke_het     S-gc-sys-ra.rel-2s    "Q10 order-pair; inline fence.release.sys + CPU STLR/LDAPR"
-    smoke_het     MP-cg-sys-st.sc-2s    "Q10b order-pair; CPU dmb st + fence.sc.sys"
-    smoke_het     MP-gc-sys-ld.sc-2s    "Q10b order-pair; CPU dmb ld on the gc cut"
+    smoke_het     MP-cg-sys-sy.acq-2s   "order-pair; inline fence.acquire.sys + co-run mu"
+    smoke_het     S-gc-sys-ra.rel-2s    "order-pair; inline fence.release.sys + CPU STLR/LDAPR"
+    smoke_het     MP-cg-sys-st.sc-2s    "order-pair; CPU dmb st + fence.sc.sys"
+    smoke_het     MP-gc-sys-ld.sc-2s    "order-pair; CPU dmb ld on the gc cut"
     printf '\n=====================================================================\n'
     # Anti-vacuity: the verdict below reports what RAN, so a deleted or
     # commented-out rep reddens the gate instead of shrinking it silently.

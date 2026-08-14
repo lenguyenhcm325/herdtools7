@@ -3,7 +3,7 @@
 # ptxcheck.py -- static faithfulness: an emitted harness carries exactly the
 # memory ops its .litmus annotates, with the annotated kind, order and scope.
 # The mapping table below, its grounding and what each check asserts are in
-# hetlitmus/docs/verify-l0.md.
+# hetlitmus/docs/faithfulness.md.
 #
 #   .litmus annotation --(CudaLang)--> .cu --(nvcc --ptx)--> PTX --(this)-->
 #       expected (kind,order,scope) profile == observed PTX instructions ?
@@ -43,7 +43,7 @@ NVCC = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
 
 # ===========================================================================
 # 1. The mapping table  (annotation -> expected PTX / ARM profile), grounded in
-#    hetlitmus/docs/verify-l0.md.  It builds the expected profile and doubles as
+#    hetlitmus/docs/faithfulness.md.  It builds the expected profile and doubles as
 #    the completeness guard: an annotation token that is not a key here
 #    hard-fails, so nothing is ever silently skipped.
 # ===========================================================================
@@ -625,7 +625,7 @@ def split_het_segments(observed, n_gpu_procs):
     """Separate barrier ops from GPU model ops in a het kernel.
 
     One barrier instance per GPU proc, not a single prologue: each proc is
-    emitted as its own guarded block `{ barrier; model... }' (verify-l0.md, "Het
+    emitted as its own guarded block `{ barrier; model... }' (faithfulness.md, "Het
     barrier/model separation").  Segment the stream at each barrier fetch_add and
     strip the fixed template [fence.sc][atom.sys][spin fence.sc][spin ld.sys]
     from the front of each segment; what remains is that proc's model ops (plus,
@@ -955,7 +955,8 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
 
 
 def main():
-    ap = argparse.ArgumentParser(description="HetLitmus L0 PTX faithfulness checker")
+    ap = argparse.ArgumentParser(
+        description="HetLitmus static token check: PTX/asm faithfulness")
     ap.add_argument("litmus", help=".litmus test path")
     ap.add_argument("--ptx", help="use this PTX file instead of emitting+nvcc (self-test)")
     ap.add_argument("--cpu-c", help="use this _cpu.c instead of emitting (self-test)")

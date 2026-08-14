@@ -253,10 +253,7 @@ case "$PAIR_STATE" in
   # harnesses that characterize exactly as well and claim less.
   ABSENT)
     PAIR_MACHINE=""
-    echo "hetlitmus-run: WARNING -- the pair $PAIR is in no row of \
-litmus/hetMachine.ml, so every harness in this session NAMES NO MACHINE (no \
-machine define is stamped and the runtime's mechanism-naming defaults stand).  \
-The session runs; nothing it produces claims to be a named part." >&2 ;;
+    echo "hetlitmus-run: WARNING -- the pair $PAIR is in no row of litmus/hetMachine.ml, so every harness in this session NAMES NO MACHINE: nothing it produces claims to be a named part." >&2 ;;
   *)
     die "litmus/hetMachine.ml did not yield a state for $PAIR (got \"$PAIR_STATE\") -- \
 the table's shape changed and this wrapper reads it; fix the reader rather than \

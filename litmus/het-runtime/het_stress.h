@@ -21,12 +21,12 @@
  *                                           [GPUHarbor23 sec 3.4]
  *
  * VENDOR SPLIT, stated once, here, because the AMD .hip render includes this
- * header too.  On NVIDIA silicon the stress layer decides whether anything is
- * observed at all: sb and lb sit at zero on a GTX Titan in every column without
- * memory stress, while lb reaches 10959 per 100k on a Radeon HD 7970 with no
- * incantation at all [Alglave15 sec 4.3.1 Tab.6].  On AMD it is a rate
- * amplifier, not an on/off switch, and "zero without stress" is an NVIDIA
- * result that stays scoped to NVIDIA.
+ * header too.  On the NVIDIA part measured, the stress layer decides whether
+ * the inter-CTA lb and sb shapes are observed at all: both sit at zero on a GTX
+ * Titan in every column without memory stress, while lb reaches 10959 per 100k
+ * on a Radeon HD 7970 with no incantation at all [Alglave15 sec 4.3.1 Tab.6].
+ * On AMD it is a rate amplifier, not an on/off switch, and "zero without
+ * stress" is an NVIDIA result that stays scoped to NVIDIA.
  *
  * The scratchpad is GPU-only device memory (cudaMalloc / hipMalloc), disjoint
  * from every test location; that disjointness is what keeps the stress sound
@@ -215,8 +215,8 @@ __device__ static inline void het_scratch_max(uint32_t* p, uint32_t v) {
  * scratch line: pattern 0 = st;st, 1 = st;ld, 2 = ld;st, 3 = ld;ld -- the
  * AccessPattern A0;A1 of [Kirkham20 sec 3.1].  The longer sigma of [Sorensen16
  * sec 3.3], up to five instructions, is in neither.  Pattern 0 is the only pure
- * writer, and store traffic -- invalidating lines, forcing ownership transfer --
- * is the strong stressor.
+ * writer, and in that same section every most-effective sequence mixes loads and
+ * stores while on most chips the stores-only ones rank lowest.
  *
  * CALLER CONTRACT: `pattern' must arrive as a runtime value (a kernel argument).
  * Handed a compile-time constant, nvcc folds the if-chain to one branch, and
@@ -341,7 +341,7 @@ __device__ static void het_spin(uint32_t* barrier, uint32_t limit,
  * exhaust the region pool, which dead code could not, hence the explicit break.
  * ------------------------------------------------------------------------- */
 #if HET_STRESS_TARGETS < 1
-#error "HET_STRESS_TARGETS must be >= 1 (it is S&D's spread m)"
+#error "HET_STRESS_TARGETS must be >= 1 (it is the spread m of [Sorensen16 sec 3.4])"
 #endif
 /* The realised spread can be smaller than the knob, silently: chunking divides
    num_workgroups by HET_STRESS_TARGETS, so a grid smaller than the target count
@@ -362,8 +362,9 @@ __host__ static void het_report_spread(const uint32_t* locations, int num_workgr
     fprintf(stderr,
             "HetLitmus WARNING: realised stress spread is %d line(s), not "
             "HET_STRESS_TARGETS=%d -- %d stressing workgroup(s) cannot cover %d "
-            "lines (S&D's spread m).  The stress is weaker than the configuration "
-            "says; raise the grid or lower HET_STRESS_TARGETS.\n",
+            "lines (the spread m of [Sorensen16 sec 3.4]).  The stress is weaker "
+            "than the configuration says; raise the grid or lower "
+            "HET_STRESS_TARGETS.\n",
             distinct, (int)HET_STRESS_TARGETS, num_workgroups,
             (int)HET_STRESS_TARGETS);
   }

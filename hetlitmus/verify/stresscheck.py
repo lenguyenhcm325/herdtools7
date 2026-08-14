@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ---------------------------------------------------------------------------
-# stresscheck.py  --  HetLitmus L0 stress-LIVENESS checker  (sibling of ptxcheck.py)
+# stresscheck.py  --  HetLitmus static stress-LIVENESS checker (sibling of ptxcheck.py)
 # ---------------------------------------------------------------------------
 # ptxcheck asks "does the harness carry EXACTLY the tested memory ops?", and is
 # deliberately BLIND to the stress layer: stress is scaffolding, not a model op, so
@@ -13,7 +13,7 @@
 #     does the emitted PTX still CONTAIN the stress traffic it claims to?
 #
 # It is a GATE, not a report: a mechanism that cannot be observed to be alive must
-# be assumed dead.  Context: hetlitmus/docs/verify-l0.md; the forensics are in
+# be assumed dead.  Context: hetlitmus/docs/faithfulness.md; the forensics are in
 # env-research/impl-briefs/B4-fix-impl-brief.md.
 #
 # ---------------------------------------------------------------------------
@@ -59,7 +59,7 @@
 # in B4-fix-impl-brief.md, issue 1); a runtime pattern emits all four branches, so
 # the count cannot move.  Invariance IS the property "no autotuner config can
 # silently switch the stress off", which is what the stress tuner needs.  Requiring
-# a store as well as a load in (2)/(3) pins the strong coherence stressor: a
+# a store as well as a load in (2)/(3) keeps the access sequence mixed: a
 # pattern chain with no reachable store branch hammers a region nothing ever
 # writes.
 #
@@ -106,7 +106,7 @@ def header_pattern_defaults(hdir):
 def header_digest(hdir):
     """Short sha256 of the het_stress.h beside the harness, or `absent'.
 
-    Printed in the banner because D1 compiles its probe against that header and
+    Printed in the banner because the device probe compiles against that header and
     nothing else of the harness: two runs reporting the same digest ran the same
     device probe, which is what lets a multi-test caller pay for it once.
     """
@@ -123,9 +123,9 @@ def header_digest(hdir):
 # the nvcc compiles the others need are not run for a mutation that cannot move
 # them -- and the run is then evidence about the named check and nothing else,
 # which a bare exit code never was.  `all' is every check; `structural' is every
-# one but the device probe (D1), which asks a question no compile can.
+# one but the device probe, which asks a question no compile can.
 # ---------------------------------------------------------------------------
-CHECKS = ("anchor", "pre", "mem", "default", "d1")
+CHECKS = ("anchor", "pre", "mem", "default", "device-probe")
 CHECK_GROUPS = {"all": CHECKS, "structural": ("anchor", "pre", "mem", "default")}
 
 
@@ -228,8 +228,9 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
             src = f.read()
         # Never pass vacuously on a harness that has no stress layer at all.
         if "het_do_stress" not in src:
-            fail("%s carries NO stress layer (no het_do_stress call): the harness "
-                 "would observe nothing (Alglave 4.3.1 on Nvidia silicon)" % name)
+            fail("%s carries NO stress layer (no het_do_stress call): on the NVIDIA "
+                 "GTX Titan the inter-CTA lb and sb tests were observed 0 per 100k "
+                 "without memory stress [Alglave15 Tab. 6]" % name)
             return
 
         tmp = tempfile.mkdtemp(prefix="stresscheck_")
@@ -264,17 +265,15 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
                     c = per_pat[p]
                     if c.ld < 1 or c.st < 1:
                         fail("%s carry NO stress traffic at pattern %d (%s).  The "
-                             "scratchpad must be both READ and WRITTEN: store traffic "
-                             "forces ownership transfer and is the strong coherence "
-                             "stressor (S&D 3.3)." % (cls, p, c))
+                             "scratchpad must be both READ and WRITTEN: the most "
+                             "effective access sequences mix loads and stores "
+                             "[Sorensen16 sec 3.3]." % (cls, p, c))
                 distinct = {(per_pat[p].ld, per_pat[p].st) for p in PATTERNS}
                 if len(distinct) != 1:
-                    fail("%s: the scratchpad-op count MOVES with -D%s* (%s).  The access "
-                         "pattern is reaching het_do_stress as a COMPILE-TIME constant, "
-                         "so nvcc folds its if-chain to one branch and can delete the "
-                         "loop entirely (pattern 3 = ld;ld is side-effect-free -- that "
-                         "is exactly the B4 regression).  Pass the pattern as a kernel "
-                         "ARGUMENT."
+                    fail("%s: the scratchpad-op count MOVES with -D%s* (%s).  A "
+                         "compile-time pattern lets nvcc fold the if-chain to one branch "
+                         "and delete the loop entirely (pattern 3 = ld;ld is "
+                         "side-effect-free).  Pass the pattern as a kernel ARGUMENT."
                          % (cls, pat_knob.split('=')[0][2:],
                             ", ".join("p%d: %s" % (p, per_pat[p]) for p in PATTERNS)))
                 else:
@@ -315,8 +314,8 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
                              % (both, pre, mem, SHIPPED_PATTERNS))
 
             # ---- 6. the RUNTIME tally.  Everything above is STRUCTURAL -------------
-            if "d1" in sel:
-                d1_probe(hdir, fail, note)
+            if "device-probe" in sel:
+                device_probe(hdir, fail, note)
         except RuntimeError as e:
             fail(str(e))
         finally:
@@ -330,7 +329,7 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
 
 
 # ===========================================================================
-# D1 -- het_do_stress's RUNTIME tally, proved live BOTH WAYS on device   [d1]
+# het_do_stress's RUNTIME tally, live BOTH WAYS on device      [device-probe]
 # ===========================================================================
 # Checks 1-5 above are STRUCTURAL: they prove the scratchpad accesses are in the
 # emitted PTX and cannot be folded away.  They cannot prove the loop ever RUNS,
@@ -347,7 +346,7 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
 # shared memory, no memory-model claim.  It is sound on any CUDA device (the dev
 # box included); nothing about the SCIENCE is being run here.
 
-D1_SRC = r"""
+PROBE_SRC = r"""
 /* GENERATED by hetlitmus/verify/stresscheck.py -- do not edit. */
 #include <cstdio>
 #include <cstdint>
@@ -385,24 +384,26 @@ int main(void) {
 """
 
 
-def d1_probe(hdir, fail, note):
+def device_probe(hdir, fail, note):
     """Compile + RUN het_do_stress on the device; require live-when-on, zero-when-off."""
     if not os.path.exists(os.path.join(hdir, "het_stress.h")):
-        fail("D1: het_stress.h is not next to the .cu -- cannot probe the tally")
+        fail("device-probe: het_stress.h is not next to the .cu -- cannot probe the "
+             "tally")
         return
-    tmp = tempfile.mkdtemp(prefix="stress_d1_")
+    tmp = tempfile.mkdtemp(prefix="stress_probe_")
     try:
-        src = os.path.join(tmp, "d1.cu")
+        src = os.path.join(tmp, "probe.cu")
         with open(src, "w") as f:
-            f.write(D1_SRC)
-        exe = os.path.join(tmp, "d1")
+            f.write(PROBE_SRC)
+        exe = os.path.join(tmp, "probe")
         # sm_86 == the dev box.  The probe is arch-agnostic scaffolding; it is the
         # RUN that matters, and it must run on the machine the gate runs on.
         cc = subprocess.run(
             [NVCC, "-std=c++17", "-arch=sm_86", "-I", hdir, src, "-o", exe],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         if cc.returncode != 0:
-            fail("D1: the het_do_stress probe does not compile:\n%s" % cc.stdout)
+            fail("device-probe: the het_do_stress probe does not compile:\n%s"
+                 % cc.stdout)
             return
         r = subprocess.run([exe], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            text=True, timeout=120)
@@ -410,9 +411,10 @@ def d1_probe(hdir, fail, note):
             # No usable GPU is a REFUSAL, not a pass: the runtime tally is the only
             # evidence the stress loop executes, so a gate that silently skips it
             # is no gate at all.
-            fail("D1: the het_do_stress probe did not RUN (rc=%d).  The runtime tally "
-                 "is the ONLY evidence the GPU stress loop executes -- structural "
-                 "checks 1-5 above cannot see it.  Output:\n%s" % (r.returncode, r.stdout))
+            fail("device-probe: the het_do_stress probe did not RUN (rc=%d).  The "
+                 "runtime tally is the ONLY evidence the GPU stress loop executes -- "
+                 "structural checks 1-5 above cannot see it.  Output:\n%s"
+                 % (r.returncode, r.stdout))
             return
         on_vals, off_vals = [], []
         for ln in r.stdout.splitlines():
@@ -421,24 +423,25 @@ def d1_probe(hdir, fail, note):
                 (on_vals if m.group(2) == "1" else off_vals).append(
                     (int(m.group(1)), int(m.group(3))))
         if len(on_vals) != 4 or len(off_vals) != 4:
-            fail("D1: the probe did not report all 8 configurations:\n%s" % r.stdout)
+            fail("device-probe: the probe did not report all 8 configurations:\n%s"
+                 % r.stdout)
             return
         dead = [p for p, v in on_vals if v == 0]
         if dead:
-            fail("D1: het_do_stress completed ZERO rounds at pattern(s) %s with "
-                 "iterations=64.  The GPU stress layer is present in the PTX and does "
-                 "NOT RUN -- exactly the B4 failure, one level down." % dead)
+            fail("device-probe: het_do_stress completed ZERO rounds at pattern(s) %s "
+                 "with iterations=64.  The GPU stress layer is in the PTX and does NOT "
+                 "RUN." % dead)
         stuck = [p for p, v in off_vals if v != 0]
         if stuck:
-            fail("D1: the round tally is NONZERO at pattern(s) %s with iterations=0.  "
-                 "A counter that cannot go to zero is not evidence of liveness -- it "
-                 "would report a dead stress layer as live." % stuck)
+            fail("device-probe: the round tally is NONZERO at pattern(s) %s with "
+                 "iterations=0.  A counter that cannot go to zero would report a dead "
+                 "stress layer as live." % stuck)
         if not dead and not stuck:
-            note("  D1 het_do_stress RUNTIME tally live BOTH ways on device "
+            note("  device-probe: het_do_stress's runtime tally is live BOTH ways "
                  "(iters=64 -> rounds=%s ; iters=0 -> rounds=0 for every pattern)"
                  % sorted({v for _, v in on_vals}))
     except subprocess.TimeoutExpired:
-        fail("D1: the het_do_stress probe hung")
+        fail("device-probe: the het_do_stress probe hung")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

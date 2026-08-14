@@ -194,16 +194,36 @@ Disqualifying: an unstamped record; neither layer compiled in; no interleaving o
 synchrony channel, or fewer than `HET_THETA_DISTINCT` distinct store-values on the
 observer channel (the store-only shapes' only channel); `stress_truncated > 0`; both
 controls cold; and *requested-but-dead* — the window opener, the GPU scratchpad stress,
-the CPU enemies, the M3 preload, and either half of the C2C noise. Caveating:
+the CPU enemies, the cache preload, and either half of the C2C noise. Caveating:
 `cpu_aff_failures` (pinning is fiction), `place_failures` (`cudaMemAdvise` refused), a
 mostly-`spin_cap` run (a delay loop, not a rendezvous), an unstressed run (Kirkham exposed
-only 1 of 6 mutants with no stress), a zero lane count (D10: the mechanism is structurally
+only 1 of 6 mutants with no stress), a zero lane count (the mechanism is structurally
 absent, not dead), a canary-only vouch, and a non-measured exhaustive count.
 
 *Requested*-but-dead, not merely zero: a deliberately disabled mechanism is not a bug, and
 treating "counter == 0" as disqualifying on its own would make an intentional no-stress
 baseline COLD forever — which is just another way of building a rule that always says the
 same thing.
+
+### The mechanism behind two of the caveat lines
+
+The printout states each caveat in one line and cites nothing; the reasoning is here.
+
+**A zero lane count is structural, not dead.** `het_do_stress`'s round loop is guarded by
+`_gpu_done < HET_GPU_LANES`, which is false at 0 before the body runs once, so at zero
+lanes the mechanism cannot report a round however hard the run tries — and a tally of 0 is
+therefore not evidence of anything. The emitter withholds the two GPU-side mechanisms
+separately (`hetEmit.ml`'s `stress_requested` guards `HET_REQ_GPU_STRESS` on
+`HET_GPU_LANES` and `HET_REQ_SPIN` on `HET_SPIN_LANES`), so a zero count drops exactly one
+of them out of `stress_requested` while the other keeps its disqualifier. The caveat prints
+both counts, so the claim is checkable against the harness's own `#define`s rather than
+taken on trust.
+
+**A KS rejection is common enough to budget for.** [Kirkham20] §4.3's own precheck already
+rejects 4 of its 18 chip/test combinations GPU-only (Tab. 7), and a het run adds warm-up,
+thermal drift and alignment drift on top of whatever the GPU-only case carried. `P_rep` is
+suppressed across a non-stationary boundary rather than reported over it; the remedy is to
+re-run split at the change-point the printout names and score the segments separately.
 
 ### The calibration channel this changed — read before comparing two campaigns
 
@@ -333,7 +353,7 @@ run measures one, so the slot carries no bits to print and the emitted driver pr
 there. `verify/histcheck.py` phase 2 gates that in both directions — every register slot
 prints numerically, every location slot prints `?`.
 
-### The CPU-only set (`tests/het/generate-d10.sh`)
+### The CPU-only set (`tests/het/generate-cpuonly.sh`)
 
 Six shapes — MP, LB, SB, 2+2W, R, IRIW — rendered as het tests whose *every* proc is
 tagged `cpu`, so they run as pure x86 tests **on the shared allocation** instead of on
@@ -391,7 +411,7 @@ with a real x86 reader close their cycle through a load, and none of this reache
 | `make hetlitmus-controlmap` | every row's `mu(T)` **exists**, is structurally identical to T and strictly weaker, at the floor of the lattice, with the same scopes and condition; `none` ⟺ at the floor; the census 411 = 333 + 78 holds. Fails closed. `--bite` proves it fails on six injections (§3). |
 | `make hetlitmus-amd-controlmap` | the same derivation over the x86 strength lattice, and that the two lattices put the **same** rows at the floor — so `N_FLOOR` is not silently an AArch64 number. |
 | `make hetlitmus-verdict` | four phases + `--bite`. `het_verdict()` is compiled from the **real emitted header** and fed synthetic records: all four outcomes and every liveness disqualifier reachable (**provably not constant**), an unstamped record fails closed, `tau_hot` bites exactly at `tau_hot`; each outcome's sentences are reachable from that outcome and no other, checked **both ways**; **every** emitted harness stamps `rec_magic` once and carries the co-run population the map gives it (census pinned as `verdictcheck.py:CENSUS`); and the printout names only the machine its pair is entitled to. |
-| `l0_tokens.sh selftest [8]` | B5's CPU/interconnect liveness gate **bites** — seven injections, each `cmp -s`-verified to have actually changed the file. |
+| `tokens.sh selftest [8]` | B5's CPU/interconnect liveness gate **bites** — seven injections, each `cmp -s`-verified to have actually changed the file. |
 | `hetlitmus-faithful` (`ptxcheck`) | every lane of **every co-running instance** is modelled — a missing control lane means the harness *reports* a positive control it is not running. `het_instances()` mirrors the emitter's population exactly (T / T+canary / T+`mu`+canary), and disagreeing is a hard failure. |
 | `hetlitmus-cram positive-control.t` | the emitted wiring: control names, the direction-matched canary, the `HET_MU_NAME NULL` sentinel and the in-harness sentence that says *why* a floor row co-runs no `mu`, `control_exhaustive_valid` per `T_L` class in both directions, the R→EXPLORATORY reporting demotion, the two compiled-in flags, and the canary's real co-run (name ≠ co-run). |
 
@@ -406,7 +426,7 @@ than no check*.
 **B6b closes it.** `het_stress.h` gained `HET_TALLY_STRESS_ROUNDS` (an `atomicMax` of the
 rounds any single `het_do_stress` call completed — overflow-free, like `NOISE_ROUNDS`), the
 record gained `gpu_stress_rounds`, and `het_verdict()` gained `HET_DQ_GPU_STRESS_DEAD`.
-`stresscheck.py` gained a **D1 device probe** that drives `het_do_stress` on real hardware
+`stresscheck.py` gained a **device-probe check** that drives `het_do_stress` on real hardware
 and requires the tally to be **nonzero when on and zero when off**, for every access pattern
 — a counter that cannot go to zero is not evidence of liveness.
 

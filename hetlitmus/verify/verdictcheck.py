@@ -67,7 +67,7 @@ NON_SIGHTING_CLAIMS = ["the weak outcome was NOT observed"]
 # a dead harness as reach.
 NULL_TIER_CLAIMS = [
     "OBSERVABILITY result about this harness",
-    "we were unable to observe weak behaviours using our",
+    "has precedent: Alglave et al., ASPLOS'15, fn.7, p.577",
 ]
 
 # ---------------------------------------------------------------------------
@@ -335,7 +335,7 @@ CASES = [
     #     cross-device path carried the cycle, so what a sighting shows is the host
     #     ISA on the shared allocation and what a null probes is that allocation's
     #     memory type.  The set carrying it comes from
-    #     hetlitmus/tests/het/generate-d10.sh, whose map writes `none' in the Mu
+    #     hetlitmus/tests/het/generate-cpuonly.sh, whose map writes `none' in the Mu
     #     column of every row, so both cases here co-run none either.
     # =======================================================================
     case("cpu-only-sighting-names-what-fired", "OBSERVED",
@@ -369,9 +369,9 @@ NO_CANARY_ONLY_CV = {"canary-only-when-no-mu-is-compiled-in",
 # than dropping its half of the pair silently.
 CPU_ONLY_TEXT = {
     "cpu-only-sighting-names-what-fired":
-        "CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc",
+        "CPU-ONLY CYCLE: every proc of this test is a CPU proc",
     "cpu-only-null-probes-the-allocation":
-        "D10 / SHARED-ALLOCATION PROBE: this is a CPU-ONLY shape",
+        "SHARED-ALLOCATION PROBE: this is a CPU-ONLY shape",
 }
 # The two other readers of the same flag, which say nothing in prose: the verdict
 # banner's tag and the machine-readable field hetlitmus/campaign.py schedules off.
@@ -493,8 +493,8 @@ GENERIC_MUST = [
     "same host-device interconnect path.",
     "the host-device interconnect path is alive",
     "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
-    '(Alglave 4.3.1\'s "zero without stress" was measured on NVIDIA parts and is '
-    'NOT claimed for this target',
+    "(Alglave ASPLOS'15 Tab. 6's zero without memory stress is an NVIDIA GTX Titan "
+    "measurement and is NOT claimed for this target",
     # The sentence that has to NAME the target, and the only one carrying BOTH
     # stamped strings.  Each frame asserts its own name, so a constant fails here.
     "Report it as what (unstamped CPU ISA x GPU dialect pair) exhibited under "
@@ -506,7 +506,9 @@ NVIDIA_MUST = [
     "same NVLink-C2C path.",
     "the NVLink-C2C path is alive",
     "CAVEAT: cudaMemAdvise was REFUSED -- HET_PLACE placed nothing.",
-    "On NVIDIA silicon an unstressed run observes nothing (Alglave 4.3.1)",
+    "On the NVIDIA GTX Titan the inter-CTA lb and sb tests were observed 0 per 100k "
+    "without memory stress, while mp and coRR were observed (Alglave ASPLOS'15 "
+    "Tab. 6)",
     "Report it as what (AArch64, cuda) exhibited under this harness, this stress "
     "and this NVLink-C2C path.",
 ]
@@ -515,16 +517,16 @@ AMD_MUST = [
     "- the MI300A device half of the Infinity Fabric noise did NOT run",
     "same Infinity Fabric path.",
     "the Infinity Fabric path is alive",
-    # No placement lever on this render, and no [Alglave15 sec 4.3.1] figure
-    # covers this part.
+    # No placement lever on this render, and no [Alglave15 Tab. 6] figure covers
+    # this part.
     "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
-    '(Alglave 4.3.1\'s "zero without stress" was measured on NVIDIA parts and is '
-    'NOT claimed for this target',
+    "(Alglave ASPLOS'15 Tab. 6's zero without memory stress is an NVIDIA GTX Titan "
+    "measurement and is NOT claimed for this target",
     "Report it as what (X86_64, hip) exhibited under this harness, this stress "
     "and this Infinity Fabric path.",
 ]
 NVIDIA_WORDS = ["Grace", "Hopper", "NVLink", "cudaMemAdvise",
-                "On NVIDIA silicon an unstressed run observes nothing",
+                "the inter-CTA lb and sb tests were observed 0 per 100k",
                 "(AArch64, cuda)"]
 AMD_WORDS = ["Infinity Fabric", "MI300A", "the x86 half", "(X86_64, hip)"]
 # Forbidden in EVERY frame: a constant standing in for the pair the binary was
@@ -820,17 +822,17 @@ def scan_prints(blocks, quiet):
     # prints either (see CPU_ONLY_TEXT).
     for owner, text in sorted(CPU_ONLY_TEXT.items()):
         if text not in blocks.get(owner, ("", ""))[1]:
-            print("  *** %s carries cpu_only=1 but never printed its D10 "
+            print("  *** %s carries cpu_only=1 but never printed its CPU-only "
                   "sentence %r -- a CPU-only cycle that does not say so is "
                   "reported as a compound-model result" % (owner, text))
             bad += 1
         for name in sorted(n for n in blocks if n != owner):
             if text in blocks[name][1]:
-                print("  *** %s printed the D10 sentence %r, which belongs to a "
+                print("  *** %s printed the CPU-only sentence %r, which belongs to a "
                       "CPU-only cycle" % (name, text))
                 bad += 1
         if not quiet:
-            print("      %-46s prints its D10 sentence, and only it does" % owner)
+            print("      %-46s prints its CPU-only sentence, and only it does" % owner)
 
     # ... and the same flag's two readers that print no sentence at all, each
     # against the case's own record rather than a list of names.  A constant in
@@ -1169,11 +1171,11 @@ def bite():
         # carried the cycle, so a frozen flag either hides that on the CPU-only set
         # or claims it about every het test in the corpus.
         ok &= _bite_one(
-            "the cpu_only branches forced OFF (no D10 sentence anywhere)",
+            "the cpu_only branches forced OFF (no CPU-only sentence anywhere)",
             tmp, header,
             lambda s: s.replace("if (_r->cpu_only)", "if (0)"),
             quiet=True,
-            expect="never printed its D10 sentence")
+            expect="never printed its CPU-only sentence")
         ok &= _bite_one(
             "the cpu_only branches forced ON (every cycle claims to be CPU-only)",
             tmp, header,
@@ -1326,13 +1328,9 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 17 injections were caught -- 8 against the RULE and its")
-        print("         printouts (het_verdict.h), 2 against its REPORTING PATHS, 2")
-        print("         against the EMITTED CORPUS and 5 against the MACHINE PROSE,")
-        print("         each machine arm and each cpu_only arm by the diagnostic it")
-        print("         named.")
-        print("         The gate is live, both ways: it passes on the shipped code and")
-        print("         fails on every way of breaking it.")
+        print("BITE OK: 17/17 injections caught, each by the diagnostic it named --")
+        print("         rule + printouts 8, reporting paths 2, emitted corpus 2,")
+        print("         machine prose 5.")
         return 0
     print("BITE FAILED: an injection slipped through -- this gate is decorative")
     return 1

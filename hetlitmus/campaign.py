@@ -441,33 +441,29 @@ def report_campaign(states, errors, unconfirmed):
     # allocator, and until one lands the memory type of the shared allocation is
     # unestablished and every null above rests on an assumption about it.  What such a
     # sighting does and does not settle: litmus/het-runtime/het_verdict.h, [APM sec 7.2].
-    d10 = [s for s in states if s.cpu_only]
-    if not d10:
+    cpu_only_rows = [s for s in states if s.cpu_only]
+    if not cpu_only_rows:
         # The normal campaign -- the het corpus alone -- holds no CPU-only row, so the
         # absent case has to print: silence here reads as a satisfied precondition.
-        print("\ncampaign D10 (CPU-only positive control / memo sect 8 P1 WB probe): "
-              "*** NOT RUN.  No CPU-only row was in this campaign, so the WB probe "
-              "did not run and therefore did NOT pass.  Until it does, the memory "
-              "type of the shared allocation is UNRESOLVED and every null above "
-              "rests on an unchecked assumption about it.  Generate the set with "
-              "hetlitmus/tests/het/generate-d10.sh (or `make hetlitmus-d10') and run "
-              "it ON THIS BOX -- a D10 reading from another machine is not a D10 "
-              "reading. ***")
+        print("\ncampaign write-back probe (CPU-only positive control): *** NOT RUN.  "
+              "No CPU-only row was in this campaign, so the probe did NOT pass: the "
+              "memory type of the shared allocation stays UNRESOLVED and every null "
+              "above rests on it.  Generate the set (`make hetlitmus-cpuonly') and "
+              "run it on THIS box -- a reading from another machine is not one. ***")
     else:
-        fired = [s for s in d10 if s.k_eff > 0]
-        print("\ncampaign D10 (CPU-only positive control / memo sect 8 P1 WB probe): "
-              "%d CPU-only row(s), %d of them fired." % (len(d10), len(fired)))
+        fired = [s for s in cpu_only_rows if s.k_eff > 0]
+        print("\ncampaign write-back probe (CPU-only positive control): %d CPU-only "
+              "row(s), %d of them fired." % (len(cpu_only_rows), len(fired)))
         if not fired:
-            print("campaign D10: *** WB PROBE FAILED -- not one CPU-only row fired.  "
-                  "The x86 store buffer is the most reproducible relaxation the ISA "
-                  "has, so this is evidence about the SHARED ALLOCATION, not about "
-                  "the window.  The memory type is UNRESOLVED and every null above "
-                  "rests on an unchecked assumption about it.  Check PAT/MTRR and "
-                  "/proc/self/smaps for this allocator before reporting anything. ***")
+            print("campaign write-back probe: *** FAILED -- not one CPU-only row "
+                  "fired.  The x86 store buffer is the most reproducible relaxation "
+                  "the ISA has, so this is evidence about the SHARED ALLOCATION and "
+                  "not about the window: check PAT/MTRR and /proc/self/smaps for this "
+                  "allocator before reporting anything. ***")
         else:
-            print("campaign D10: WB probe PASSED (%s) -- a UC mapping is ruled out "
-                  "for this allocator.  It does NOT establish WB over WC; only the "
-                  "CPU-only shapes that stay silent do that."
+            print("campaign write-back probe: PASSED (%s) -- a UC mapping is ruled "
+                  "out for this allocator.  It does NOT establish WB over WC; only "
+                  "the CPU-only shapes that stay silent do that."
                   % ", ".join(s.name for s in fired))
 
 

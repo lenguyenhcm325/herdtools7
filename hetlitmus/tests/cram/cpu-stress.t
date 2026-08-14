@@ -183,8 +183,8 @@ for the prefetch that moves the HBM noise buffer across the interconnect.
 access pattern lets nvcc fold the stress if-chain to the one live branch, and a
 side-effect-free branch takes the whole stress loop with it; the CPU enemy has
 the identical shape, so the -D knob is read host-side and handed over as a
-runtime value.  cpustresscheck.py S4 gates the compiled consequence: the op count
-must be invariant under -DHET_CPU_ENEMY_SEQ.
+runtime value.  cpustresscheck.py's enemy-seq-runtime check gates the compiled
+consequence: the op count must be invariant under -DHET_CPU_ENEMY_SEQ.
   $ grep -c '_ea\[_e\].seq     = (uint32_t)HET_CPU_ENEMY_SEQ;' $MP.cu
   1
   $ grep -c 'switch (a->seq)' MP-cg-sys-acqrel-2s/het_cpu_stress.h
@@ -260,7 +260,8 @@ untouched anonymous page to one shared, read-only zero page -- so a noise kernel
 reading an 8 GB buffer that was never first-touched touches a single cache line,
 is served entirely from L1, and generates no interconnect traffic while reporting
 healthy round counts (het_cpu_stress.h carries the figures).  So both renders
-fault the pages in, and cpustresscheck.py D3 proves at run time that it works.
+fault the pages in, and cpustresscheck.py's first-touch check proves at run time
+that it works.
   $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MP.cu
   2
   $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MPH.hip
@@ -306,7 +307,7 @@ ours.
   $ grep -c '\[Alglave11' MP-cg-sys-acqrel-2s/het_cpu_stress.h
   4
   $ grep -c '\[Sorensen16' MP-cg-sys-acqrel-2s/het_cpu_stress.h
-  4
+  6
   $ grep -c '\[Fusco24' MP-cg-sys-acqrel-2s/het_cpu_stress.h
   3
   $ grep -c '\[Schieffer24' MP-cg-sys-acqrel-2s/het_cpu_stress.h

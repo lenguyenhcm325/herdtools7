@@ -29,7 +29,7 @@ type machine = {
     mc_link_name : string ;   (* no leading article: use sites supply their own *)
     mc_host_half : string ;
     mc_dev_half : string ;
-    mc_alglave_zero : bool ;  (* the "zero without stress" figure was measured here *)
+    mc_alglave_zero : bool ;  (* NVIDIA row: may quote "zero without stress" *)
     mc_llc_mb : int option ;  (* last level a noise buffer must EXCEED, in MB *)
     mc_llc_note : string ;    (* the parenthetical printed after that warning *)
     (* THIS MACHINE'S OWN WORDS, by the name of the hole each one fills.  A

@@ -28,7 +28,7 @@
 set -e
 # OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so
 # a relative path -- what a Makefile caller passes -- is correct.  The same rule
-# generate.sh and generate-d10.sh state at this spot.
+# generate.sh and generate-cpuonly.sh state at this spot.
 OUT="${1:?usage: generate-x86.sh OUTDIR}"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"

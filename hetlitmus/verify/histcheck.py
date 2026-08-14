@@ -220,7 +220,7 @@ def phase1(srcs):
             if inside is not None:
                 print("  *** %-26s HAS NO per-frame observable (no `int _hot =') yet its "
                       "histogram add sits INSIDE the frame loop -- one per-run witness "
-                      "would be tallied N times.  THIS IS F-A." % t)
+                      "would be tallied N times" % t)
                 bad += 1
                 continue
             locs = LOC_DECL_RE.findall(src)
@@ -297,7 +297,7 @@ def phase2(srcs):
             if hi > n_reg:
                 print("  *** %-26s prints slots [%d,%d) as numbers, but only [0,%d) are "
                       "measured registers -- an unmeasured location column would print a "
-                      "fabricated value.  THIS IS F-A(b)." % (t, lo, hi, n_reg))
+                      "fabricated value" % (t, lo, hi, n_reg))
                 bad += 1
         if nloc == 0:
             if que:
@@ -399,7 +399,7 @@ def extract_tally(src):
     # invariant (1) breaking, and must be named as such.
     if add < loop_extent(lines, depths, hdrs[0]):
         return None, ("the histogram add sits INSIDE the per-frame loop -- a "
-                      "reader-less shape has no per-frame outcome to tally.  THIS IS F-A")
+                      "reader-less shape has no per-frame outcome to tally")
     body = "\n".join(lines[hdrs[0]:add + 1])
     if "add_outcome_outs" not in body:
         return None, "extraction lost the add"
@@ -653,7 +653,7 @@ def _move_add_into_frame_loop(t, src):
 
 
 INJECTIONS = [
-    ("F-A itself: per-run witness added per FRAME (2+2W)", _reinsert_per_frame_add, ("P1", "P3")),
+    ("the per-run witness added per FRAME (2+2W)",         _reinsert_per_frame_add, ("P1", "P3")),
     ("the add MOVED into the frame loop (count still 1)",  _move_add_into_frame_loop, ("P1", "P3")),
     ("store-only shapes tally nothing at all",             _drop_per_run_add,       ("P1", "P3")),
     ("reader shape gated on the RUN-level witness",        _run_constant_guard,     ("P1",)),

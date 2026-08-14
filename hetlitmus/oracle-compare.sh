@@ -182,7 +182,7 @@ END {
     else if (ndis_fired == 0)
       printf "  The decoder does not generate false positives on this run:\n    \"PerpLE%s failure to observe these forbidden outcomes can be viewed as a\n     reassurance that PerpLE does not generate false positives.\"  -- PerpLE VII-A.\n", "'\''s"
     else
-      printf "  *** A FORBIDDEN OUTCOME FIRED.  Either this oracle row is wrong (it is a\n      DERIVATION over cited sources, not a measurement) or the DECODER is unsound, in\n      which case every null in this campaign is void.  The SIGHTING TIER above is what\n      tells an artefact from a real observation: an artefact does not reproduce across\n      re-seeded runs.  Do not report either way until it is settled.\n"
+      printf "  *** A FORBIDDEN OUTCOME FIRED: either this oracle row (a DERIVATION, not a\n      measurement) is wrong or the decoder is unsound, in which case every null here is\n      void.  Settle it against the SIGHTING TIER -- an artefact does not reproduce across\n      re-seeded runs -- before reporting either way.\n"
     if (nvoid > 0)
       printf "VOID: %d row(s) came from a harness that was never demonstrably hot -- DISCARDED.\n", nvoid
     printf "---------------------------------------------------------------------\n"

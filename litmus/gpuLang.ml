@@ -300,7 +300,7 @@ let dump_test d chan tname parsed =
     (d.gl_launch (c_ident tname) n_blocks block_dim
        (String.concat ", " (globals @ ["__out"]))) ;
   p "    %s\n" d.gl_sync ;
-  p "    // TODO(hardware, Task 9): tally __out against the condition.\n" ;
+  p "    // TODO(hardware): tally __out against the condition.\n" ;
   p "  }\n" ;
   p "  return 0;\n" ;
   p "}\n" ;

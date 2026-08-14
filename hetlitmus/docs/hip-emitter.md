@@ -114,9 +114,10 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
   `MP-cg-sys-relaxed-x86_64`, `hipcc -c` only, and it **skips with exit 0**
   when `hipcc` is absent), both under the `hetlitmus-test-toolchain` umbrella. Both
   of those tests are fence-free; the fence lowering is compiled by
-  `hipbuildcheck.py` P8, which renders and builds the fence-carrying
-  `MP-cg-sys-fence-x86_64` — the one place `__builtin_amdgcn_fence` reaches a
-  compiler (`litmus/HipLang.ml`, `hip_fence_scope`). The full-corpus numbers
+  `hipbuildcheck.py`'s fence-lowering phase, which renders and builds the
+  fence-carrying `MP-cg-sys-fence-x86_64` — the one place
+  `__builtin_amdgcn_fence` reaches a compiler (`litmus/HipLang.ml`,
+  `hip_fence_scope`). The full-corpus numbers
   above still come from a hand-run, not from a gate. CUDA has no
   `compile-cuda.sh` twin; neither that absence nor this script's presence is a
   coverage claim either way.

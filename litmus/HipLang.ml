@@ -112,7 +112,7 @@ let dialect = {
     gl_group = "workgroup" ;
     gl_include = "#include <hip/hip_runtime.h>" ;
     gl_harness_note =
-      "// ---- host harness (illustrative; compile-checked for gfx942 via hetlitmus/compile-hip.sh; run = Task 9, MI300A) ----" ;
+      "// ---- host harness (illustrative; compile-checked for gfx942 by hipcc) ----" ;
     gl_alloc =
       (fun p bytes -> sprintf "(void)hipMallocManaged(%s, %s);" p bytes) ;
     gl_launch =

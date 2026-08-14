@@ -98,10 +98,10 @@ extern "C" {
 #endif
 #ifndef HET_CPU_ENEMY_SEQ
 #define HET_CPU_ENEMY_SEQ 0       /* sigma: 0=st;st 1=st;ld 2=ld;st 3=ld;ld.
-                                     0 is the only pure writer, and store traffic
-                                     is the strong coherence stressor.  It reaches
-                                     the enemy as a RUNTIME field -- see
-                                     het_cpu_enemy.                              */
+                                     0 is the only pure writer, and on most GPUs
+                                     measured a stores-only sequence ranks lowest
+                                     [Sorensen16 sec 3.3].  It reaches the enemy
+                                     as a RUNTIME field -- see het_cpu_enemy.    */
 #endif
 #ifndef HET_CPU_PRELOAD_PCT
 #define HET_CPU_PRELOAD_PCT 50    /* % of iterations a TEST thread preloads its
@@ -185,7 +185,7 @@ extern "C" {
 #error "HET_PLACE must be 0 (first-touch), 1 (prefer HBM) or 2 (prefer DDR)"
 #endif
 #if (HET_CPU_SPREAD) < 1
-#error "HET_CPU_SPREAD must be >= 1 (it is S&D's spread m)"
+#error "HET_CPU_SPREAD must be >= 1 (it is the spread m of [Sorensen16 sec 3.4])"
 #endif
 #if (HET_CPU_STRIDE) < 1
 #error "HET_CPU_STRIDE must be >= 1"

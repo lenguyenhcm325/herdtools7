@@ -11,10 +11,10 @@ compares the fixture against its generators, and what moves it --
 fixture breaks no gate; it makes every gate that reads it test a configuration
 nothing ships.
 
-  P1  run generate-x86.sh into a temp dir and `cmp' each committed .litmus
-      against its generated twin, byte for byte
-  P2  each committed map row must equal the row the generated (re-keyed) map
-      carries -- fields, order and text
+  litmus-bytes  run generate-x86.sh into a temp dir and `cmp' each committed
+                .litmus against its generated twin, byte for byte
+  map-rows      each committed map row must equal the row the generated
+                (re-keyed) map carries -- fields, order and text
 
 One generator run serves both phases, since only the fixture side is ever
 perturbed, and neither phase needs a GPU: the gate lives in the CUDA-free
@@ -87,62 +87,62 @@ def rows_of(path):
 
 def phase1(corpus, fixture, quiet=False):
     say = (lambda *_: None) if quiet else print
-    say("===== P1: the committed .litmus files, byte for byte =====")
+    say("===== litmus-bytes: the committed .litmus files, byte for byte =====")
     n = 0
     for t in TESTS:
         have = os.path.join(fixture, t + ".litmus")
         want = os.path.join(corpus, t + ".litmus")
         if not os.path.exists(have):
-            fail("P1", "%s.litmus is missing from the fixture" % t)
+            fail("litmus-bytes", "%s.litmus is missing from the fixture" % t)
             continue
         if not os.path.exists(want):
-            fail("P1", "generate-x86.sh no longer emits %s.litmus -- the fixture "
+            fail("litmus-bytes", "generate-x86.sh no longer emits %s.litmus -- the fixture "
                        "names a test its generator does not produce" % t)
             continue
         n += 1
         if open(have, "rb").read() != open(want, "rb").read():
-            fail("P1", "%s.litmus DIFFERS from generate-x86.sh's rendering" % t)
+            fail("litmus-bytes", "%s.litmus DIFFERS from generate-x86.sh's rendering" % t)
         else:
             say("      %-32s identical" % (t + ".litmus"))
     if n != len(TESTS):
-        fail("P1", "compared %d of %d fixtures -- a comparison that did not happen "
+        fail("litmus-bytes", "compared %d of %d fixtures -- a comparison that did not happen "
                    "is not a pass" % (n, len(TESTS)))
     return n
 
 
 def phase2(corpus, fixture, quiet=False):
     say = (lambda *_: None) if quiet else print
-    say("\n===== P2: the committed map rows, against the re-keyed originals =====")
+    say("\n===== map-rows: the committed rows, against the re-keyed originals =====")
     n = 0
     for m in MAPS:
         have_p, want_p = os.path.join(fixture, m), os.path.join(corpus, m)
         if not os.path.exists(have_p):
-            fail("P2", "%s is missing from the fixture" % m)
+            fail("map-rows", "%s is missing from the fixture" % m)
             continue
         have, want = rows_of(have_p), rows_of(want_p)
         extra = sorted(set(have) - set(TESTS))
         if extra:
-            fail("P2", "%s carries row(s) for %s, which the fixture does not ship "
+            fail("map-rows", "%s carries row(s) for %s, which the fixture does not ship "
                        "a .litmus for" % (m, ", ".join(extra)))
         for t in TESTS:
             if t not in have:
-                fail("P2", "%s has no row for %s" % (m, t))
+                fail("map-rows", "%s has no row for %s" % (m, t))
                 continue
             if t not in want:
-                fail("P2", "%s: the generated map has no row for %s -- the fixture "
+                fail("map-rows", "%s: the generated map has no row for %s -- the fixture "
                            "row is keyed on a name the map no longer carries"
                            % (m, t))
                 continue
             n += 1
             if have[t] != want[t]:
-                fail("P2", "%s row for %s DIFFERS from the generated map's:\n"
+                fail("map-rows", "%s row for %s DIFFERS from the generated map's:\n"
                            "        committed: %s\n        generated: %s"
                      % (m, t, have[t], want[t]))
             else:
                 say("      %-24s %-28s row identical" % (m, t))
     need = len(MAPS) * len(TESTS)
     if n != need:
-        fail("P2", "compared %d of %d map rows -- a comparison that did not happen "
+        fail("map-rows", "compared %d of %d map rows -- a comparison that did not happen "
                    "is not a pass" % (n, need))
     return n
 
@@ -172,15 +172,15 @@ def bite(corpus):
     print("===== BITE: does this gate see a stale fixture? =====")
     bad = 0
     injections = [
-        ("P1", "a .litmus body edited (one register renamed)",
+        ("litmus-bytes", "a .litmus body edited (one register renamed)",
          TESTS[0] + ".litmus",
          lambda s: s.replace("r0", "r9", 1),
          TESTS[0] + ".litmus DIFFERS"),
-        ("P2", "a control-map row's canary re-pointed",
+        ("map-rows", "a control-map row's canary re-pointed",
          "control-map-amd.csv",
          lambda s: s.replace(",self", ",MP-cg-sys-acqrel-2s-x86_64", 1),
          "control-map-amd.csv row for " + TESTS[0] + " DIFFERS"),
-        ("P2", "a control-map row's mu(T) re-pointed off the floor",
+        ("map-rows", "a control-map row's mu(T) re-pointed off the floor",
          "control-map-amd.csv",
          lambda s: s.replace(TESTS[2] + ",S-cg-sys-relaxed-x86_64",
                              TESTS[2] + ",S-cg-sys-acqrel-2s-x86_64", 1),

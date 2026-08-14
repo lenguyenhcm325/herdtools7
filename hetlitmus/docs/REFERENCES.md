@@ -23,19 +23,21 @@ Claim(s) this project takes from it:
 * §4.3.1 (Table 6) is the memory-stress figure the emitted "empty stress
   population" warning rests on: on the NVIDIA GTX Titan the inter-CTA `lb` and
   `sb` tests are observed 0 times per 100k executions in every column without the
-  memory-stress incantation, while on the Radeon HD 7970 `lb` reaches 10959 per
-  100k with no incantation at all. "Zero without stress" is therefore an NVIDIA
-  result and is scoped to a machine row that carries it.
+  memory-stress incantation — §4.3.1 states it outright, "we did not observe sb
+  and lb on Titan without this incantation" — while on the Radeon HD 7970 `lb`
+  reaches 10959 per 100k with no incantation at all. The zero covers `lb` and
+  `sb` and no other test: on the same chip and the same columns `mp` (inter-CTA)
+  reaches 2921 and `coRR` (intra-CTA) 9774 unstressed. It is therefore a
+  per-test, per-chip figure, scoped in every string that carries it to the NVIDIA
+  part it was measured on and to those two tests.
 * §4.3 also states that "for correct GPU programming the possibility, not
   probability of weak behaviours is what matters" — the one-sided reading the
   reporting stance takes.
-
-Deviation(s):
-* The *emitted* warning string in `litmus/hetEmit.ml` says an unstressed run on
-  NVIDIA silicon "observes nothing", which is broader than Table 6 supports —
-  `mp` and `coRR` were observed there without memory stress. The comment beside
-  it states the scoped claim; the string is a runtime artifact and changing it
-  is a separate change with its own gate re-recording.
+* Footnote 7, p. 577 — "In fairness to the authors of [19], we were unable to
+  observe weak behaviours using our method on the Nvidia GTX 280 chip they used."
+  — is the precedent for reporting a non-observation as one. `het_verdict.h`
+  cites it; the quotation itself lives in
+  `hetlitmus/docs/positive-control.md` sec 6.
 
 ## [Kirkham20]
 
@@ -49,7 +51,11 @@ Claim(s) this project takes from it:
   relaxed behaviour was observed (`n=1` → 63.21 %, `n=2` → 86.47 %, `n=3` →
   95.02 %).
 * §4.3 makes the stationarity assumption explicit and supplies the KS precheck
-  the statistics layer runs; §5.1 supplies the restart-from-instability remedy.
+  the statistics layer runs — the first 20 % of the iterations against the last
+  10 % — and reports its own outcome: "We found 4 combinations (out of 18) that
+  are not stable across iterations" (Table 7, over three GPUs x six tests). That
+  rejection rate is why the precheck is mandatory here rather than advisory.
+  §5.1 supplies the restart-from-instability remedy.
 * Fig. 10 (p. 226:19) is the data-peeking pseudocode: candidate configurations
   are visited one at a time against a running incumbent, each stopped early when
   its `Z·sqrt(W(1-W)/Q)` interval falls below the incumbent's. The tuner reuses
@@ -276,14 +282,20 @@ Claim(s) this project takes from it:
   and data, the set of possible behaviours a program can exhibit remains the
   same." The GPU scratchpad, the CPU enemy scratchpad and the noise buffers are
   all disjoint from every test location for this reason.
-* §1 also fixes the stressing-thread count against occupancy: each stressing
-  block "employs a random number of stressing threads such that the total number
+* §3.2 fixes the stressing-thread count against occupancy: each micro-benchmark
+  execution "employs a random number of stressing threads such that the total number
   of threads executing the kernel is 50% to 100% of the maximum threads that can
   run concurrently on the GPU."
 * §3.2 defines the *critical patch size* P, §3.3 the *access sequence* sigma, and
   §3.4 the *spread* m ("stressing is applied to m distinct critical patch-sized
   regions"). `HET_STRESS_LINE_SIZE`, `HET_*_STRESS_PATTERN` and
   `HET_STRESS_TARGETS` are those three knobs.
+* §3.3 also ranks the sequences by measured effectiveness, which is why both
+  stress gates require a load AND a store: "We observe that all of the *most
+  effective* sequences involve a combination of loads and stores", while "for
+  most chips, the lowest ranked sigmas consist exclusively of stores" (Tab. 2
+  gives the per-chip winners, Tab. 3 the Titan ranking). Store traffic alone is
+  the *least* effective sequence measured, not the strongest stressor.
 
 Deviation(s):
 * §3.3 tests access sequences up to five instructions; both `het_do_stress` and

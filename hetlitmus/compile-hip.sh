@@ -49,5 +49,5 @@ for t in "$INDIR"/*.hip; do
   fi
 done
 
-echo "compile-check: $pass passed, $fail failed (arch=$ARCH; run = Task 9 / MI300A-gated)"
+echo "compile-check: $pass passed, $fail failed (arch=$ARCH; nothing is launched -- running a kernel needs an AMD device)"
 [ "$fail" -eq 0 ]

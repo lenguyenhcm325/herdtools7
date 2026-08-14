@@ -170,6 +170,60 @@ plus `<target>-bin`, which links. Name the GPU arch explicitly
 update 1 onwards, and a build for the wrong arch links and exits 0 just as
 happily.
 
+### The emitted `README.md`, and what it points here for
+
+The emitted `README.md` is a page: the file list, the build and link commands,
+and a closing `Target:` line naming the part the pair's machine row entitles it
+to (Phase C/D). Everything a reader needs *once* rather than per harness lives
+here instead: emission writes one harness directory per test per lane, so a
+paragraph put there is copied once per test.
+
+**Why the co-run layers are in the launch.** A null result is evidence only if
+the harness would have seen a weak behaviour had one occurred. Every instance
+listed in a co-running harness therefore shares one launch, one stress config
+and one interconnect path, on disjoint cache-line-padded locations. *Layer A* is
+the test under study's structural twin at the lattice floor — every ordering
+annotation dropped. *Layer B* is the fixed het canary. Neither carries a
+prediction: their counts say how hot the harness was, and nothing about what the
+test ought to have done. `litmus/het-runtime/het_verdict.h` holds the rule that
+reads them.
+
+**Why there is one binary path per vendor.** Both link paths write `./<t>`, so
+`hetlitmus/spotcheck/run-one.sh` and `hetlitmus/campaign.py` exec `./<test>` and
+stay vendor-agnostic. The GPU compiler driver pulls in its own device runtime;
+`-lpthread -lm` cover the CPU threads and the statistics layer (`het_verdict.h`
+includes `<math.h>` for the KS statistic). `<target>-bin` is `.PHONY` and always
+relinks, so a build can never report success while leaving a stale binary in
+place.
+
+**Why both link paths refuse a foreign host.** `<t>_cpu.c` carries the tested asm
+under `#if defined(<host_macro>)` and a portable shim in the `#else` branch, so
+`gcc -c` succeeds anywhere. Linking elsewhere therefore produces a binary that
+runs, prints a histogram and tests nothing, and both `comp.sh <target>-link` and
+`make <target>-bin` compare `uname -m` against the render's ISA and refuse
+instead (`comp.sh` exits 3; the make recipe exits 3, which `make` reports as its
+own exit 2). `make <t>` refuses too, and the refusal rule is not by itself what
+makes that hold. With both link targets phony no rule names `./<t>`, and on a
+CUDA render the GPU object *is* `<t>.o` — exactly what GNU make's built-in
+`%: %.o` rule wants, so make would link past the guard with `$(CC)`.
+`.SUFFIXES:` is what removes that rule: the built-in link rules are
+suffix-derived, so clearing the suffix list drops `%: %.o` and `%: %.c`
+together, and every object rule the harness emits is explicit. Reached, the
+built-in rule would not even leave a wrong binary behind — `$(CC)` links no
+device runtime, so the link dies on undefined `cudaLaunchKernel` — but that
+failure is incidental rather than the guard's, so `./<t>` also gets a rule of
+its own, which refuses by name and points at `<target>-bin`. That rule is
+`.PHONY` as well: a plain rule whose target already exists is "up to date", so
+`make <t>` would otherwise exit 0 and hand back whichever binary was lying in
+the directory.
+
+**Compile-time knobs** go through the compiler variable, e.g.
+`make cuda-bin NVCC="nvcc -DHET_MEM_STRESS_PCT=0"`. `HET_PLACE` is the exception:
+page placement exists only on a render whose runtime has a placement API, and a
+non-zero value is an `#error` on a render that has none
+(`litmus/het-runtime/het_alloc_hip.inc`) rather than a value reported in the
+banner without anything having been placed.
+
 ## Phase C/D — the machine table, and the machine a harness may name
 
 A harness is not "an AArch64 test" or "a HIP test": it is a **(CPU ISA x GPU

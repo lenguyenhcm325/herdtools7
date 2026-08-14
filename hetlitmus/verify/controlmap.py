@@ -647,7 +647,7 @@ def header_for_lattice():
         "#     hetlitmus/verify/controlmap.py --lattice x86 --emit > control-map-amd.csv",
         "#   gate with  controlmap.py --lattice x86 --check  (make hetlitmus-amd-controlmap).",
         "#",
-        "# REGENERATED not translated (memo PORT2-R2 7.D11): on x86 the CPU lattice",
+        "# REGENERATED, not translated from the AArch64 map: on x86 the CPU lattice",
         "# loses its middle rung -- STLR / LDAPR / DMB.ST / DMB.LD all have a plain",
         "# MOV as their x86 image -- so a candidate that only moves within",
         "# {ra, st, ld} is NOT a weakening on MI300A and is refused here.  The floor",
@@ -1071,7 +1071,7 @@ def main():
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--bite", action="store_true")
     ap.add_argument("--lattice", default="aarch64", choices=sorted(LATTICES),
-                    help="aarch64 = GH200 (default); x86 = MI300A, memo 7.D11")
+                    help="aarch64 = GH200 (default); x86 = MI300A")
     a = ap.parse_args()
 
     set_lattice(a.lattice)

@@ -89,8 +89,7 @@ def extract_probe(cu):
         # Not a compile problem but a science one: the emitter dropped the
         # qualifier, so the observer will hoist.
         raise SystemExit("obscheck: the emitted cpu_obs_args struct has NO `volatile' "
-                         "-- the F1 fix has regressed; the observer will hoist.\n"
-                         + struct)
+                         "-- the observer will hoist.\n" + struct)
     tu = (
         "#include <stdint.h>\n"
         "#ifndef SIZE_OF_TEST\n#define SIZE_OF_TEST 64\n#endif\n"
@@ -237,8 +236,8 @@ def main():
             print("OBSCHECK: PASS  (per-iteration observed-pointer load survives -O2 on "
                   "x86-64 AND aarch64)")
             return 0
-        print("OBSCHECK: FAIL  (the observer's read is HOISTED -- F1 has regressed; the "
-              "store-only recovery channel is inert)")
+        print("OBSCHECK: FAIL  (the observer's read is HOISTED -- the store-only "
+              "recovery channel is inert)")
         return 1
     finally:
         import shutil

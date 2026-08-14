@@ -9,24 +9,24 @@ of the corpus, and a refusal that exits 0 reports success.
 
 Seven phases, each of which must be seen to fail:
 
-  P1 emission coverage   every x86 rendering emits a complete harness
-  P2 body fidelity       each emitted body is its OWN test's program, not a stub
-  P3 tag liveness        every store carries K*(_n+1)+mu, every load reaches a
-                         buffer -- emitting is not testing
-  P4 machine code        the tested instructions survive gcc to the .o
-  P5 AArch64 lane        it still emits str/ldr/dmb with no x86 leak, and its
-                         classifier refuses what it cannot render faithfully
-  P6 fail-closed         a refusal exits 3, prints HetLitmus REFUSED and leaves
-                         no harness; `--bite' drives emit-all.sh's three
-                         detectors from here as well
-  P7 co-run bodies       a co-run harness carries T, mu(T) AND the canary at the
-                         same proc index; each must be checked against its own
-                         test, none silently dropped
+  emission-coverage  every x86 rendering emits a complete harness
+  body-fidelity      each emitted body is its OWN test's program, not a stub
+  tag-liveness       every store carries K*(_n+1)+mu, every load reaches a
+                     buffer -- emitting is not testing
+  machine-code       the tested instructions survive gcc to the .o
+  aarch64-lane       it still emits str/ldr/dmb with no x86 leak, and its
+                     classifier refuses what it cannot render faithfully
+  fail-closed        a refusal exits 3, prints HetLitmus REFUSED and leaves
+                     no harness; `--bite' drives emit-all.sh's three
+                     detectors from here as well
+  corun-bodies       a co-run harness carries T, mu(T) AND the canary at the
+                     same proc index; each must be checked against its own
+                     test, none silently dropped
 
-Non-vacuity: P2/P3/P7 do not merely count what they saw.  Each pins its count
-against a total derived from the corpus' own .litmus columns AND against a
-measured constant, so a phase that made zero comparisons fails rather than
-printing "0 comparisons made" and passing.
+Non-vacuity: body-fidelity, tag-liveness and corun-bodies do not merely count
+what they saw.  Each pins its count against a total derived from the corpus' own
+.litmus columns AND against a measured constant, so a phase that made zero
+comparisons fails rather than printing "0 comparisons made" and passing.
 
 `--bite' injects into each phase, on CORRUPTION and on OMISSION, and requires the
 phase that owns the injected object to redden naming it.
@@ -68,7 +68,7 @@ N_X86_PROCS = 663
 N_X86_STORES = 608
 N_X86_LOADS = 579
 
-# P7's probe set: the control-map rows that name a mu(T), hence the harnesses
+# corun-bodies's probe set: the control-map rows that name a mu(T), hence the harnesses
 # that co-run three instances (T, mu, canary), all three at the SAME proc index
 # -- which is why keying bodies by proc alone loses two of every three.  That is
 # every row off the lattice floor; the rest are the fully-relaxed rows no sibling
@@ -88,12 +88,12 @@ N_CORUN_BODIES = 1365
 MC_TEST = "SB-cg-sys-fence-2s-x86_64"
 MC_SYMS = ["het_run_t_P0", "het_run_P0"]
 
-# AArch64 tests P5 re-emits (a store proc, a load proc, a two-sided proc).
+# AArch64 tests aarch64-lane re-emits (a store proc, a load proc, a two-sided proc).
 AARCH64_TESTS = ["2+2W-cg-sys-relaxed", "MP-gc-sys-relaxed", "MP-cg-sys-fence-2s"]
 
 # Which GPU dialect the x86 renderings are emitted for.  A harness is a
 # (CPU ISA x GPU dialect) pair, and (x86_64, hip) is the one with an MI300A row
-# (litmus/hetMachine.ml).  Either x86 dialect would do for what P7 reads -- both
+# (litmus/hetMachine.ml).  Either x86 dialect would do for what corun-bodies reads -- both
 # read control-map-amd.csv, which is keyed on the CPU frontend -- and hip is the
 # render the rest of this gate builds.  The CPU body itself is
 # dialect-independent (one <t>_cpu.c per harness), which is what makes this
@@ -182,7 +182,8 @@ def corpus_x86_census(corpus):
     """(procs, stores, loads) over every x86_64 column in [corpus].
 
     Derived from the .litmus SOURCES, never from an emitted harness, so it is a
-    genuine expectation for P2/P3 rather than a restatement of what they saw.
+    genuine expectation for body-fidelity/tag-liveness rather than a restatement
+    of what they saw.
     """
     procs = stores = loads = 0
     for f in sorted(os.listdir(corpus)):
@@ -231,8 +232,9 @@ def split_bodies(region):
     Keyed by (proc, fname), NOT by proc.  A co-run harness carries het_run_t_P0,
     het_run_mu_P0 and het_run_can_P0 -- three different programs at the same proc
     index -- so a proc-keyed dict keeps only the last of them (the canary) and
-    P2/P3 stop checking T and mu(T) altogether.  On every `-relaxed' rendering T
-    and the canary have the same (kind,global) sequence, so P2 goes on passing
+    body-fidelity and tag-liveness stop checking T and mu(T) altogether.  On every
+    `-relaxed' rendering T and the canary have the same (kind,global) sequence, so
+    body-fidelity goes on passing
     while checking the wrong program.
     """
     bodies, cur, key, prefix = {}, None, None, None
@@ -255,7 +257,8 @@ def split_bodies(region):
 
 def split_bodies_proc_keyed(region):
     """The proc-keyed splitter, which loses every body but the last at a shared
-    proc index.  Kept ONLY so --bite can restore that defect and watch P7 redden;
+    proc index.  Kept ONLY so --bite can restore that defect and watch
+    corun-bodies redden;
     no passing run uses it."""
     out = {}
     for (proc, fname), v in split_bodies(region).items():
@@ -317,7 +320,7 @@ def body_nodes(lines):
     return out
 
 
-# ------------------------------------------------------------------- P1 + P2/3
+# ----------------------------- emission-coverage + body-fidelity/tag-liveness
 
 def emit_corpus(tmp, corpus, sub="emit"):
     """Emit every rendering in [corpus]; return {name: harness dir}, refusals."""
@@ -349,16 +352,17 @@ def emit_corpus(tmp, corpus, sub="emit"):
 
 
 def phase1(corpus, good, bad):
-    print("== P1  emission coverage (was 39/411 with the stub) ==")
+    print("== emission-coverage: every x86 rendering emits a complete harness ==")
     n = len([f for f in os.listdir(corpus) if f.endswith(".litmus")])
     if n != N_X86:
-        fail("P1", "generate-x86.sh produced %d renderings, expected %d" % (n, N_X86))
+        fail("emission-coverage",
+             "generate-x86.sh produced %d renderings, expected %d" % (n, N_X86))
     for name, why in bad:
-        fail("P1", "%s did not emit a complete harness (%s)" % (name, why))
+        fail("emission-coverage", "%s did not emit a complete harness (%s)" % (name, why))
     # Second, INDEPENDENT detector: `bad' is what emit_corpus noticed; this pin
     # fires even if a rendering never reached it at all.
     if len(good) != n:
-        fail("P1", "%d of the %d renderings emitted a complete harness"
+        fail("emission-coverage", "%d of the %d renderings emitted a complete harness"
              % (len(good), n))
     print("  emitted %d / %d x86 renderings" % (len(good), n))
 
@@ -397,7 +401,7 @@ def check_fidelity(phase, corpus, name, recs, cm):
 
 
 def phase2(corpus, good, splitter=split_bodies):
-    print("== P2  body fidelity: every emitted body IS its own test's column ==")
+    print("== body-fidelity: every emitted body IS its own test's column ==")
     # Derived from the CORPUS, not from [good]: a run that emitted nothing must
     # fail the pin instead of passing on zero comparisons.
     want_procs, _, _ = corpus_x86_census(corpus)
@@ -408,20 +412,20 @@ def phase2(corpus, good, splitter=split_bodies):
         cpu_c = os.path.join(d, name + "_cpu.c")
         region = host_region(cpu_c)
         if "(void)_n;" in region:
-            fail("P2", "%s: the host arm still carries a STUB body ((void)_n)" % name)
+            fail("body-fidelity", "%s: the host arm still carries a STUB body ((void)_n)" % name)
             continue
         recs, cm = resolve_bodies(corpus, name, cpu_c, splitter)
-        c, own = check_fidelity("P2", corpus, name, recs, cm)
+        c, own = check_fidelity("body-fidelity", corpus, name, recs, cm)
         compared += c
         for p in sorted(x86procs - own):
-            fail("P2", "%s: no body of its own for x86 proc P%d (found %r)"
+            fail("body-fidelity", "%s: no body of its own for x86 proc P%d (found %r)"
                  % (name, p, [r[1] for r in recs]))
         covered += len(own & x86procs)
     if covered != want_procs:
-        fail("P2", "covered %d of the %d x86 procs the corpus declares -- a phase "
+        fail("body-fidelity", "covered %d of the %d x86 procs the corpus declares -- a phase "
                    "that checks nothing must not pass" % (covered, want_procs))
     if want_procs != N_X86_PROCS:
-        fail("P2", "the corpus declares %d x86 procs, pinned at %d"
+        fail("body-fidelity", "the corpus declares %d x86 procs, pinned at %d"
              % (want_procs, N_X86_PROCS))
     print("  %d bodies compared against their own test's column (%d of them the "
           "corpus' own %d x86 procs)" % (compared, covered, want_procs))
@@ -468,7 +472,7 @@ def check_liveness(phase, name, recs):
 
 
 def phase3(corpus, good, splitter=split_bodies):
-    print("== P3  tag liveness: stores tag, loads reach a buffer ==")
+    print("== tag-liveness: stores tag, loads reach a buffer ==")
     _, want_st, want_ld = corpus_x86_census(corpus)
     own_st = own_ld = co_st = co_ld = 0
     for name, d in sorted(good.items()):
@@ -476,37 +480,37 @@ def phase3(corpus, good, splitter=split_bodies):
         recs, _cm = resolve_bodies(corpus, name, cpu_c, splitter)
         own = [r for r in recs if r[2] in ("", "t_")]
         co = [r for r in recs if r[2] not in ("", "t_")]
-        a, b = check_liveness("P3", name, own)
+        a, b = check_liveness("tag-liveness", name, own)
         own_st += a
         own_ld += b
-        a, b = check_liveness("P3", name, co)
+        a, b = check_liveness("tag-liveness", name, co)
         co_st += a
         co_ld += b
     # The pins count the harnesses' OWN bodies only, so the co-run bodies the
     # control map beside the renderings adds do not disturb them.
     if (own_st, own_ld) != (want_st, want_ld):
-        fail("P3", "checked %d stores / %d loads in the tests' own bodies, but the "
+        fail("tag-liveness", "checked %d stores / %d loads in the tests' own bodies, but the "
                    "corpus' x86 columns declare %d / %d"
              % (own_st, own_ld, want_st, want_ld))
     if (want_st, want_ld) != (N_X86_STORES, N_X86_LOADS):
-        fail("P3", "the corpus declares %d stores / %d loads, pinned at %d / %d"
+        fail("tag-liveness", "the corpus declares %d stores / %d loads, pinned at %d / %d"
              % (want_st, want_ld, N_X86_STORES, N_X86_LOADS))
     print("  %d tagged stores, %d buffered loads (+ %d / %d in co-run bodies)"
           % (own_st, own_ld, co_st, co_ld))
 
 
 def phase4(tmp, good):
-    print("== P4  machine code: the tested instructions survive gcc ==")
+    print("== machine-code: the tested instructions survive gcc ==")
     if MC_TEST not in good:
-        fail("P4", "%s did not emit, so no object could be built" % MC_TEST)
+        fail("machine-code", "%s did not emit, so no object could be built" % MC_TEST)
         return
     cpu_c = os.path.join(good[MC_TEST], MC_TEST + "_cpu.c")
-    ok, why = objdump_ok(tmp, cpu_c, "P4")
+    ok, why = objdump_ok(tmp, cpu_c, "machine-code")
     if ok:
         print("  %s: the test's own body contains store + mfence + load in program "
               "order" % MC_TEST)
     else:
-        fail("P4", "%s: %s" % (MC_TEST, why))
+        fail("machine-code", "%s: %s" % (MC_TEST, why))
 
 
 def objdump_ok(tmp, cpu_c, phase):
@@ -547,7 +551,7 @@ def emit_aarch64(out):
     return out
 
 
-# ------------------------------------------------------------------ P5 probes
+# -------------------------------------------------------- aarch64-lane probes
 
 # Four CPU columns hetCpuBodyA64 must refuse, none of them reachable from the
 # corpus: its AArch64 vocabulary is MOV r,#k / STR / LDR / STLR / LDAPR /
@@ -654,61 +658,64 @@ def phase5(tmp, out=None, litmus7=LITMUS7, dead_text=None, mov_text=None,
     four classifier refusals no corpus test can reach, against a control that
     must emit.
     """
-    print("== P5  the AArch64 lane: emits aarch64, refuses what it cannot render ==")
+    print("== aarch64-lane: emits aarch64, refuses what it cannot render ==")
     if out is None:
         out = emit_aarch64(os.path.join(tmp, "aarch64"))
     for t in AARCH64_TESTS:
         cpu_c = os.path.join(out, t, t + "_cpu.c")
         if not os.path.exists(cpu_c):
-            fail("P5", "%s did not emit an aarch64 CPU file" % t)
+            fail("aarch64-lane", "%s did not emit an aarch64 CPU file" % t)
             continue
         txt = open(cpu_c).read()
         if "hetCpuBodyX86" in txt:
-            fail("P5", "%s: the aarch64 harness names the x86 body emitter" % t)
+            fail("aarch64-lane", "%s: the aarch64 harness names the x86 body emitter" % t)
         if "movq " in txt:
-            fail("P5", "%s: x86 mnemonics leaked into the aarch64 harness" % t)
+            fail("aarch64-lane", "%s: x86 mnemonics leaked into the aarch64 harness" % t)
         region = host_region(cpu_c)
         if not re.search(r'"(str|stlr|ldr|ldar|ldapr) %x\[', region):
-            fail("P5", "%s: the aarch64 body carries no str/ldr %%x operand" % t)
+            fail("aarch64-lane", "%s: the aarch64 body carries no str/ldr %%x operand" % t)
     print("  %d aarch64 harnesses checked for str/ldr %%x and for x86 leakage"
           % len(AARCH64_TESTS))
 
     def refuses(label, text, want, note):
         st, blob, dirs = litmus_on(tmp, label, text, litmus7)
         if st != 3 or want not in blob or dirs:
-            fail("P5", "%s: exit=%d dirs=%r, litmus7 said %r"
+            fail("aarch64-lane", "%s: exit=%d dirs=%r, litmus7 said %r"
                  % (note, st, dirs, blob.strip().splitlines()[-1:]))
             return False
         return True
 
+    refused = []
     if refuses("A64DEAD", dead_text or PROBE_A64_DEAD_VALUE,
                "no store writes 5 to y",
                "a store whose value a load killed still bound `1:r0=5'"):
-        print("  value provenance: the killed-immediate store refuses (exit 3)")
+        refused.append("killed-immediate store")
     if refuses("A64MOV", mov_text or PROBE_A64_MOV_REG,
                "unsupported CPU instruction MOV W0,W3",
                "a register-to-register MOV over a live immediate was accepted"):
-        print("  redefinition: `MOV W0,W3' refuses at classification")
+        refused.append("`MOV W0,W3'")
     if refuses("A64OFF", offset_text or PROBE_A64_OFFSET,
                "unsupported CPU instruction LDR X0,[X1,#8]",
                "a non-zero addressing offset was accepted and read at +0"):
-        print("  addressing: `LDR X0,[X1,#8]' refuses at classification")
+        refused.append("`LDR X0,[X1,#8]'")
     if refuses("A64DSB", dsb_text or PROBE_A64_DSB,
                "unsupported CPU instruction DSB SY",
                "a DSB was accepted and rendered as some other fence"):
-        print("  fences: `DSB SY' refuses at classification")
+        refused.append("`DSB SY'")
+    print("  %d/4 refused at classification (exit 3): %s"
+          % (len(refused), ", ".join(refused) if refused else "none"))
     st, blob, dirs = litmus_on(tmp, "A64LIVE", live_text or PROBE_A64_LIVE_VALUE,
                                litmus7)
     if st != 0 or len(dirs) != 1:
-        fail("P5", "the immediate-store twin did NOT emit, so the refusals above "
+        fail("aarch64-lane", "the immediate-store twin did NOT emit, so the refusals above "
                    "prove nothing about provenance: exit=%d dirs=%r said %r"
              % (st, dirs, blob.strip().splitlines()[-1:]))
     else:
-        print("  value provenance: the immediate-store twin emits (exit 0) -- the "
-              "refusal is about provenance, not about the value")
+        print("  ...and the immediate-store twin emits (exit 0), so the first refusal "
+              "is about provenance, not about the value")
 
 
-# ------------------------------------------------------------------ P6 probes
+# --------------------------------------------------------- fail-closed probes
 
 # These two probes are about value provenance: where a stored value came from
 # inside the CPU column.
@@ -759,35 +766,35 @@ def litmus_on(tmp, label, text, litmus7=LITMUS7):
 
 
 def phase6(tmp, corpus, prov_text=None, live_text=None, litmus7=LITMUS7):
-    print("== P6  fail-closed: a refusal exits 3 and emits nothing ==")
+    print("== fail-closed: a refusal exits 3 and emits nothing ==")
     src = os.path.join(corpus, "MP-gc-sys-relaxed-x86_64.litmus")
     txt = open(src).read()
     # name a register no proc loads into: the condition can bind no read buffer
     bent = txt.replace("1:rax=", "1:rcx=")
     if bent == txt:
-        fail("P6", "could not build a refusable test from %s" % src)
+        fail("fail-closed", "could not build a refusable test from %s" % src)
         return
     st, blob, left = litmus_on(tmp, "REFUSEME", bent, litmus7)
     if st != 3:
-        fail("P6", "litmus7 exited %d on a test it cannot emit, expected 3" % st)
+        fail("fail-closed", "litmus7 exited %d on a test it cannot emit, expected 3" % st)
     if "HetLitmus REFUSED" not in blob:
-        fail("P6", "no `HetLitmus REFUSED' marker on stderr; got %r" % blob.strip()[-200:])
+        fail("fail-closed", "no `HetLitmus REFUSED' marker on stderr; got %r" % blob.strip()[-200:])
     if left:
-        fail("P6", "a refused test left harness directories behind: %r" % left)
+        fail("fail-closed", "a refused test left harness directories behind: %r" % left)
     print("  litmus7 exit=%d, marker printed, %d directories left behind"
           % (st, len(left)))
 
-    # --- value provenance, BOTH ways -----------------------------------------
+    # --- value provenance, BOTH ways ----------------------------------------
     st, blob, dirs = litmus_on(tmp, "PROV", prov_text or (PROBE_KILLED_VALUE % 5), litmus7)
     if st != 3 or "no store writes 5 to y" not in blob:
-        fail("P6", "a store whose value a load killed still bound `1:r0=5': "
+        fail("fail-closed", "a store whose value a load killed still bound `1:r0=5': "
                    "exit=%d dirs=%r, litmus7 said %r"
              % (st, dirs, blob.strip().splitlines()[-1:]))
     else:
         print("  value provenance: the killed-immediate store refuses (exit 3)")
     st, blob, dirs = litmus_on(tmp, "PROVLIVE", live_text or (PROBE_LIVE_VALUE % 5), litmus7)
     if st != 0 or len(dirs) != 1:
-        fail("P6", "the immediate-store twin did NOT emit, so the refusal above "
+        fail("fail-closed", "the immediate-store twin did NOT emit, so the refusal above "
                    "proves nothing about provenance: exit=%d dirs=%r said %r"
              % (st, dirs, blob.strip().splitlines()[-1:]))
     else:
@@ -795,7 +802,7 @@ def phase6(tmp, corpus, prov_text=None, live_text=None, litmus7=LITMUS7):
               "refusal is about provenance, not about the value")
 
 
-# -------------------------------------------------------------------- P7 co-run
+# --------------------------------------------------------------- corun-bodies
 
 def n_x86_procs(path):
     """How many x86_64 CPU columns this .litmus declares (its proc header line)."""
@@ -819,7 +826,7 @@ def corun_probe(tmp, corpus):
     shutil.copytree(corpus, scratch)
     m = os.path.join(scratch, "control-map-amd.csv")
     if not os.path.exists(m):
-        fail("P7", "the generated corpus carries no control-map-amd.csv -- the "
+        fail("corun-bodies", "the generated corpus carries no control-map-amd.csv -- the "
                    "emitter would co-run no control at all")
         return scratch, []
     rows = []
@@ -835,10 +842,10 @@ def corun_probe(tmp, corpus):
 
 
 def phase7(tmp, corpus, splitter=split_bodies, probe=corun_probe):
-    print("== P7  co-run: T, mu(T) and the canary are EACH checked, none dropped ==")
+    print("== corun-bodies: T, mu(T) and the canary are EACH checked, none dropped ==")
     scratch, rows = probe(tmp, corpus)
     if len(rows) != N_CORUN_TESTS:
-        fail("P7", "control-map-amd.csv names %d mu(T) rows, pinned at %d"
+        fail("corun-bodies", "control-map-amd.csv names %d mu(T) rows, pinned at %d"
              % (len(rows), N_CORUN_TESTS))
     out = os.path.join(tmp, "corun-out")
     os.makedirs(out, exist_ok=True)
@@ -846,17 +853,17 @@ def phase7(tmp, corpus, splitter=split_bodies, probe=corun_probe):
     for t in sorted(rows):
         src = os.path.join(scratch, t + ".litmus")
         if not os.path.exists(src):
-            fail("P7", "%s has no x86 rendering" % t)
+            fail("corun-bodies", "%s has no x86 rendering" % t)
             continue
         r = run([LITMUS7, "-gpu-target", X86_TARGET, "-set-libdir", LIBDIR, "-o", out, src], cwd=scratch)
         cpu_c = os.path.join(out, t, t + "_cpu.c")
         if r.returncode != 0 or not (os.path.exists(cpu_c) and os.path.getsize(cpu_c)):
-            fail("P7", "%s emitted no co-run harness (exit %d): %s"
+            fail("corun-bodies", "%s emitted no co-run harness (exit %d): %s"
                  % (t, r.returncode, (r.stdout + r.stderr).strip().splitlines()[-1:]))
             continue
         recs, cm = resolve_bodies(scratch, t, cpu_c, splitter)
         if set(cm) != {"t_", "mu_", "can_"}:
-            fail("P7", "%s: CO-RUN banner names %r, expected T + mu(T) + canary"
+            fail("corun-bodies", "%s: CO-RUN banner names %r, expected T + mu(T) + canary"
                  % (t, sorted(cm)))
             continue
         # The three INSTANCES must all be present.  Not one body each: a test with
@@ -865,14 +872,14 @@ def phase7(tmp, corpus, splitter=split_bodies, probe=corun_probe):
         # IRIW row.  What has to hold is that no INSTANCE went missing.
         got_prefixes = sorted(set(r[2] for r in recs))
         if got_prefixes != ["can_", "mu_", "t_"]:
-            fail("P7", "%s: the host arm carries bodies %r, but the banner names "
+            fail("corun-bodies", "%s: the host arm carries bodies %r, but the banner names "
                        "three instances -- a body was dropped"
                  % (t, [r[1] for r in recs]))
         bodies += len(recs)
         collapsed += len(recs) - len({r[0] for r in recs})
-        c, _own = check_fidelity("P7", scratch, t, recs, cm)
+        c, _own = check_fidelity("corun-bodies", scratch, t, recs, cm)
         compared += c
-        check_liveness("P7", t, recs)
+        check_liveness("corun-bodies", t, recs)
     # DERIVED as well as pinned: the number of co-run bodies is the sum, over the
     # probe set, of the x86 CPU procs of T, of mu(T) and of the canary.  A pin on
     # its own goes stale silently the next time the lattice moves; a derivation on
@@ -894,16 +901,16 @@ def phase7(tmp, corpus, splitter=split_bodies, probe=corun_probe):
                 if os.path.exists(q):
                     want += n_x86_procs(q)
     if bodies != want:
-        fail("P7", "found %d co-run bodies, the corpus' own columns say %d"
+        fail("corun-bodies", "found %d co-run bodies, the corpus' own columns say %d"
              % (bodies, want))
     if bodies != N_CORUN_BODIES:
-        fail("P7", "found %d co-run bodies, pinned at %d" % (bodies, N_CORUN_BODIES))
+        fail("corun-bodies", "found %d co-run bodies, pinned at %d" % (bodies, N_CORUN_BODIES))
     if compared != bodies:
-        fail("P7", "compared %d of the %d co-run bodies" % (compared, bodies))
+        fail("corun-bodies", "compared %d of the %d co-run bodies" % (compared, bodies))
     # Non-vacuity: this phase is only evidence about the (proc,fname) keying if
     # some harness really does carry >1 body at one proc index.
     if collapsed < 1:
-        fail("P7", "no harness carried two bodies at one proc index, so this "
+        fail("corun-bodies", "no harness carried two bodies at one proc index, so this "
                    "phase says nothing about the keying it exists to protect")
     print("  %d co-run bodies over %d harnesses, each compared with its own test "
           "(%d would be LOST by proc-only keying)" % (bodies, len(rows), collapsed))
@@ -923,13 +930,13 @@ for a in "$@"; do [ "$prev" = "-o" ] && outdir="$a"; prev="$a"; done
 exit $st
 """
 
-# Two stand-in litmus7 binaries for P6's OWN three assertions (exit 3 / marker /
+# Two stand-in litmus7 binaries for fail-closed's OWN three assertions (exit 3 / marker /
 # nothing left behind).  Neither is reachable by doctoring a file: what they
 # stand for is HetArch.refused ceasing to refuse, and a refusal leaving a partial
 # harness, so the bite has to substitute the tool.
 STUB_SWALLOW = r"""#!/usr/bin/env bash
 # The PRE-P2b behaviour, reproduced: emit what you can, swallow the failure,
-# print nothing on stderr, exit 0.  P6's exit-code AND marker checks must fire.
+# print nothing on stderr, exit 0.  fail-closed's exit-code AND marker checks must fire.
 REAL=%s
 "$REAL" "$@" >/dev/null 2>&1
 exit 0
@@ -937,7 +944,7 @@ exit 0
 
 STUB_LITTER = r"""#!/usr/bin/env bash
 # Refuses correctly (exit 3 + marker) but leaves a half-built harness behind.
-# ONLY P6's "directories left behind" check can see this.
+# ONLY fail-closed's "directories left behind" check can see this.
 REAL=%s
 out=""; prev=""
 for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; done
@@ -1054,7 +1061,7 @@ def bite(tmp, corpus, good):
     print("===== X86BODYCHECK BITE =====")
     ok = True
 
-    # --- P1: CORRUPTION of a rendering -> that test must stop emitting -------
+    # --- emission-coverage: CORRUPTION of a rendering -> that test must stop emitting ---
     scratch = os.path.join(tmp, "bite-corpus")
     shutil.rmtree(scratch, ignore_errors=True)
     shutil.copytree(corpus, scratch)
@@ -1064,21 +1071,21 @@ def bite(tmp, corpus, good):
     open(p, "w").write(t.replace("1:rax=", "1:rcx="))
     _PARSE_CACHE.pop(p, None)
     g2, b2 = emit_corpus(os.path.join(tmp, "b1"), scratch)
-    ok &= expect_red("P1/corrupt", lambda: phase1(scratch, g2, b2), victim)
+    ok &= expect_red("emission-coverage/corrupt", lambda: phase1(scratch, g2, b2), victim)
 
-    # --- P1: OMISSION of a rendering -> the census pin must fire -------------
+    # --- emission-coverage: OMISSION of a rendering -> the census pin must fire ---
     os.remove(os.path.join(scratch, victim + ".litmus"))
     g3, b3 = emit_corpus(os.path.join(tmp, "b1b"), scratch)
-    ok &= expect_red("P1/omit", lambda: phase1(scratch, g3, b3),
+    ok &= expect_red("emission-coverage/omit", lambda: phase1(scratch, g3, b3),
                      "produced 410 renderings")
 
-    # --- P1: a harness that never reached `bad' at all -----------------------
+    # --- emission-coverage: a harness that never reached `bad' at all -------
     short = dict(good)
     short.pop(victim, None)
-    ok &= expect_red("P1/short", lambda: phase1(corpus, short, []),
+    ok &= expect_red("emission-coverage/short", lambda: phase1(corpus, short, []),
                      "of the %d renderings emitted" % N_X86)
 
-    # --- P2: the STUB body itself -- the shape this gate exists to catch -----
+    # --- body-fidelity: the STUB body itself -- the shape this gate exists to catch ---
     d = good[victim]
     src = os.path.join(d, victim + "_cpu.c")
     stubbed = os.path.join(tmp, "stub")
@@ -1094,11 +1101,11 @@ def bite(tmp, corpus, good):
     host = host_region(src)
     open(os.path.join(stubbed, victim, victim + "_cpu.c"), "w").write(
         txt.replace(host, stub))
-    ok &= expect_red("P2/stub",
+    ok &= expect_red("body-fidelity/stub",
                      lambda: phase2(corpus, {victim: os.path.join(stubbed, victim)}),
                      "STUB body")
 
-    # --- P2: OMISSION of one instruction from the emitted body ---------------
+    # --- body-fidelity: OMISSION of one instruction from the emitted body ---
     dropped = os.path.join(tmp, "drop")
     shutil.rmtree(dropped, ignore_errors=True)
     shutil.copytree(d, os.path.join(dropped, victim))
@@ -1106,19 +1113,19 @@ def bite(tmp, corpus, good):
     t = open(f).read()
     t2 = re.sub(r'^\s*"movq \(%\[\w+\]\),%\[_t1\]\\n"\n', "", t, count=1, flags=re.M)
     if t2 == t:
-        print("  *** VACUOUS BITE [P2/drop]: no load line to remove")
+        print("  *** VACUOUS BITE [body-fidelity/drop]: no load line to remove")
         ok = False
     else:
         open(f, "w").write(t2)
-        ok &= expect_red("P2/drop",
+        ok &= expect_red("body-fidelity/drop",
                          lambda: phase2(corpus, {victim: os.path.join(dropped, victim)}),
                          "but %s P1 says" % victim)
 
-    # --- P2: VACUITY -- a run that compared nothing must FAIL, not pass ------
-    ok &= expect_red("P2/vacuous", lambda: phase2(corpus, {}),
+    # --- body-fidelity: VACUITY -- a run that compared nothing must FAIL, not pass ---
+    ok &= expect_red("body-fidelity/vacuous", lambda: phase2(corpus, {}),
                      "covered 0 of the %d x86 procs" % N_X86_PROCS)
 
-    # --- P3: CORRUPTION of the tag -> a constant store ------------------------
+    # --- tag-liveness: CORRUPTION of the tag -> a constant store ------------
     const = os.path.join(tmp, "const")
     shutil.rmtree(const, ignore_errors=True)
     shutil.copytree(good[MC_TEST], os.path.join(const, MC_TEST))
@@ -1127,15 +1134,15 @@ def bite(tmp, corpus, good):
     t2 = re.sub(r"uint64_t _v0 = \(uint64_t\)\d+ \* \(_n \+ 1\) \+ \d+;",
                 "uint64_t _v0 = (uint64_t)0 * (_n + 1) + 0;", t, count=1)
     if t2 == t:
-        print("  *** VACUOUS BITE [P3/const]: no tag to flatten")
+        print("  *** VACUOUS BITE [tag-liveness/const]: no tag to flatten")
         ok = False
     else:
         open(f, "w").write(t2)
-        ok &= expect_red("P3/const",
+        ok &= expect_red("tag-liveness/const",
                          lambda: phase3(corpus, {MC_TEST: os.path.join(const, MC_TEST)}),
                          "a constant store")
 
-    # --- P3: OMISSION of the buffer write -------------------------------------
+    # --- tag-liveness: OMISSION of the buffer write -------------------------
     nobuf = os.path.join(tmp, "nobuf")
     shutil.rmtree(nobuf, ignore_errors=True)
     shutil.copytree(good[MC_TEST], os.path.join(nobuf, MC_TEST))
@@ -1143,19 +1150,19 @@ def bite(tmp, corpus, good):
     t = open(f).read()
     t2 = re.sub(r"^\s*\w+\[_n\] = _t0;\n", "", t, count=1, flags=re.M)
     if t2 == t:
-        print("  *** VACUOUS BITE [P3/nobuf]: no buffer write to remove")
+        print("  *** VACUOUS BITE [tag-liveness/nobuf]: no buffer write to remove")
         ok = False
     else:
         open(f, "w").write(t2)
-        ok &= expect_red("P3/nobuf",
+        ok &= expect_red("tag-liveness/nobuf",
                          lambda: phase3(corpus, {MC_TEST: os.path.join(nobuf, MC_TEST)}),
                          "never recorded into a buffer")
 
-    # --- P3: VACUITY ----------------------------------------------------------
-    ok &= expect_red("P3/vacuous", lambda: phase3(corpus, {}),
+    # --- tag-liveness: VACUITY ----------------------------------------------
+    ok &= expect_red("tag-liveness/vacuous", lambda: phase3(corpus, {}),
                      "checked 0 stores / 0 loads")
 
-    # --- P4: OMISSION of the fence from the compiled body ---------------------
+    # --- machine-code: OMISSION of the fence from the compiled body ---------
     nofence = os.path.join(tmp, "nofence")
     shutil.rmtree(nofence, ignore_errors=True)
     shutil.copytree(good[MC_TEST], os.path.join(nofence, MC_TEST))
@@ -1163,20 +1170,21 @@ def bite(tmp, corpus, good):
     t = open(f).read()
     t2 = t.replace('    "mfence\\n"\n', "", 1)
     if t2 == t:
-        print("  *** VACUOUS BITE [P4/nofence]: no mfence to remove")
+        print("  *** VACUOUS BITE [machine-code/nofence]: no mfence to remove")
         ok = False
     else:
         open(f, "w").write(t2)
-        good2, why = objdump_ok(tmp, f, "P4")
+        good2, why = objdump_ok(tmp, f, "machine-code")
         if good2:
-            print("  *** DID NOT BITE [P4/nofence]: a fenceless object passed P4")
+            print("  *** DID NOT BITE [machine-code/nofence]: a fenceless object "
+                  "passed machine-code")
             ok = False
         else:
-            print("  bite P4/nofence    -> %s" % why)
+            print("  bite machine-code/nofence  -> %s" % why)
 
-    # --- P4: CORRUPTION -- the fence moved BEFORE the store -------------------
+    # --- machine-code: CORRUPTION -- the fence moved BEFORE the store -------
     # Nothing is missing; only the order is wrong.  A phase that merely counted
-    # mnemonics would still pass, which is why P4 compares a SEQUENCE.
+    # mnemonics would still pass, which is why machine-code compares a SEQUENCE.
     reord = os.path.join(tmp, "reorder")
     shutil.rmtree(reord, ignore_errors=True)
     shutil.copytree(good[MC_TEST], os.path.join(reord, MC_TEST))
@@ -1184,106 +1192,107 @@ def bite(tmp, corpus, good):
     t = open(f).read()
     mst = re.search(r'^    "movq %\[_v0\],\(%\[\w+\]\)\\n"\n', t, flags=re.M)
     if mst is None or '    "mfence\\n"\n' not in t:
-        print("  *** VACUOUS BITE [P4/reorder]: no store+mfence pair to swap")
+        print("  *** VACUOUS BITE [machine-code/reorder]: no store+mfence pair to swap")
         ok = False
     else:
         t2 = t.replace('    "mfence\\n"\n', "", 1)
         t2 = t2.replace(mst.group(0), '    "mfence\\n"\n' + mst.group(0), 1)
         open(f, "w").write(t2)
-        good2, why = objdump_ok(tmp, f, "P4")
+        good2, why = objdump_ok(tmp, f, "machine-code")
         if good2:
-            print("  *** DID NOT BITE [P4/reorder]: a reordered object passed P4")
+            print("  *** DID NOT BITE [machine-code/reorder]: a reordered object "
+                  "passed machine-code")
             ok = False
         else:
-            print("  bite P4/reorder    -> %s" % why)
+            print("  bite machine-code/reorder  -> %s" % why)
 
-    # --- P5: CORRUPTION -- an x86 mnemonic inside an aarch64 harness ----------
+    # --- aarch64-lane: CORRUPTION -- an x86 mnemonic inside an aarch64 harness ---
     a64 = emit_aarch64(os.path.join(tmp, "a64bite"))
     t0 = AARCH64_TESTS[0]
     f = os.path.join(a64, t0, t0 + "_cpu.c")
     t = open(f).read()
     t2 = t.replace('"str %x[', '"movq %x[')
     if t2 == t:
-        print("  *** VACUOUS BITE [P5/leak]: no str %x[ to replace")
+        print("  *** VACUOUS BITE [aarch64-lane/leak]: no str %x[ to replace")
         ok = False
     else:
         open(f, "w").write(t2)
-        ok &= expect_red("P5/leak", lambda: phase5(tmp, out=a64), "leaked")
+        ok &= expect_red("aarch64-lane/leak", lambda: phase5(tmp, out=a64), "leaked")
 
-    # --- P5: OMISSION -- an aarch64 harness that never emitted ----------------
+    # --- aarch64-lane: OMISSION -- an aarch64 harness that never emitted ----
     a64b = emit_aarch64(os.path.join(tmp, "a64omit"))
     os.remove(os.path.join(a64b, t0, t0 + "_cpu.c"))
-    ok &= expect_red("P5/omit", lambda: phase5(tmp, out=a64b),
+    ok &= expect_red("aarch64-lane/omit", lambda: phase5(tmp, out=a64b),
                      "did not emit an aarch64 CPU file")
 
-    # --- P5: the four AArch64 refusals, each fed a test that behaves the other
+    # --- aarch64-lane: the four AArch64 refusals, each fed a test that behaves the other
     # way.  The refusal probes get a variant that MUST emit and the emission
     # control gets one that refuses; for the offset and the DSB the substitute
     # differs in ONE token, so the bite doubles as the evidence that the
     # refusal is about that token and not about the probe's shape.  [out] is a
     # clean emission, or the smoke above would redden these on its own.
     a64c = emit_aarch64(os.path.join(tmp, "a64probe"))
-    ok &= expect_red("P5/a1-dead",
+    ok &= expect_red("aarch64-lane/a1-dead",
                      lambda: phase5(tmp, out=a64c, dead_text=PROBE_A64_LIVE_VALUE),
                      "still bound `1:r0=5'")
-    ok &= expect_red("P5/a1-mov",
+    ok &= expect_red("aarch64-lane/a1-mov",
                      lambda: phase5(tmp, out=a64c, mov_text=PROBE_A64_LIVE_VALUE),
                      "register-to-register MOV over a live immediate")
-    ok &= expect_red("P5/a1-live",
+    ok &= expect_red("aarch64-lane/a1-live",
                      lambda: phase5(tmp, out=a64c, live_text=PROBE_A64_DEAD_VALUE),
                      "did NOT emit")
-    ok &= expect_red("P5/a2",
+    ok &= expect_red("aarch64-lane/a2",
                      lambda: phase5(tmp, out=a64c,
                                     offset_text=PROBE_A64_OFFSET.replace(
                                         "[X1,#8]", "[X1]")),
                      "non-zero addressing offset")
-    ok &= expect_red("P5/a3",
+    ok &= expect_red("aarch64-lane/a3",
                      lambda: phase5(tmp, out=a64c,
                                     dsb_text=PROBE_A64_DSB.replace(
                                         "DSB SY", "DMB SY")),
                      "a DSB was accepted")
 
-    # --- P6: its OWN three assertions, via a stand-in litmus7 ----------------
+    # --- fail-closed: its OWN three assertions, via a stand-in litmus7 ------
     def stub(label, script):
         p = os.path.join(tmp, "l7-" + label)
         open(p, "w").write(script)
         os.chmod(p, 0o755)
         return p
 
-    ok &= expect_red("P6/swallow",
+    ok &= expect_red("fail-closed/swallow",
                      lambda: phase6(tmp, corpus,
                                     litmus7=stub("swallow", STUB_SWALLOW % LITMUS7)),
                      "expected 3")
-    ok &= expect_red("P6/litter",
+    ok &= expect_red("fail-closed/litter",
                      lambda: phase6(tmp, corpus,
                                     litmus7=stub("litter", STUB_LITTER % LITMUS7)),
                      "left harness directories behind")
 
-    # --- P6: value provenance, both directions -------------------------------
+    # --- fail-closed: value provenance, both directions ---------------------
     # Feed each probe the OTHER's expectation: the refusal check must redden on
     # a test that emits, and the emission check on a test that refuses.
-    ok &= expect_red("P6/prov-live",
+    ok &= expect_red("fail-closed/prov-live",
                      lambda: phase6(tmp, corpus, prov_text=PROBE_LIVE_VALUE % 5),
                      "still bound `1:r0=5'")
-    ok &= expect_red("P6/prov-dead",
+    ok &= expect_red("fail-closed/prov-dead",
                      lambda: phase6(tmp, corpus, live_text=PROBE_KILLED_VALUE % 5),
                      "did NOT emit")
 
-    # --- P7: the proc-keyed splitter, which drops two bodies of every three --
-    ok &= expect_red("P7/proc-keyed",
+    # --- corun-bodies: the proc-keyed splitter, which drops two bodies of every three --
+    ok &= expect_red("corun-bodies/proc-keyed",
                      lambda: phase7(tmp, corpus, splitter=split_bodies_proc_keyed),
                      "a body was dropped")
 
-    # --- P7: OMISSION -- one co-run harness never probed at all --------------
+    # --- corun-bodies: OMISSION -- one co-run harness never probed at all ---
     ok &= expect_red(
-        "P7/omit",
+        "corun-bodies/omit",
         lambda: phase7(os.path.join(tmp, "p7short"), corpus,
                        probe=lambda t2, c2: (lambda s, r: (s, r[:-1]))(*corun_probe(t2, c2))),
         "pinned at %d" % N_CORUN_TESTS)
 
-    # --- P7: the co-run FIDELITY arm, on the mu body specifically ------------
-    # P7 passing is only evidence if a wrong mu/canary body would be caught, so
-    # break one and require P7's comparator to name THAT body and THAT test.
+    # --- corun-bodies: the co-run FIDELITY arm, on the mu body specifically -
+    # corun-bodies passing is only evidence if a wrong mu/canary body would be caught, so
+    # break one and require corun-bodies's comparator to name THAT body and THAT test.
     scr, rows = corun_probe(os.path.join(tmp, "p7fid"), corpus)
     tvic = sorted(rows)[0]
     o7 = os.path.join(tmp, "p7fid", "out")
@@ -1296,25 +1305,25 @@ def bite(tmp, corpus, good):
     mu_at = tx.index("void het_run_mu_")
     cut = re.search(r'^\s*"movq [^\n]*\\n"\n', tx[mu_at:], flags=re.M)
     if cut is None:
-        print("  *** VACUOUS BITE [P7/mu-drop]: no asm line in the mu body")
+        print("  *** VACUOUS BITE [corun-bodies/mu-drop]: no asm line in the mu body")
         ok = False
     else:
         open(fv, "w").write(tx[:mu_at] + tx[mu_at:].replace(cut.group(0), "", 1))
         recs, cm = resolve_bodies(scr, tvic, fv)
-        ok &= expect_red("P7/mu-drop",
-                         lambda: check_fidelity("P7", scr, tvic, recs, cm),
+        ok &= expect_red("corun-bodies/mu-drop",
+                         lambda: check_fidelity("corun-bodies", scr, tvic, recs, cm),
                          "het_run_mu_")
 
-    # --- P7: OMISSION of the CO-RUN banner -> bodies become unattributable ---
+    # --- corun-bodies: OMISSION of the CO-RUN banner -> bodies become unattributable ---
     tx = open(fv).read()
     open(fv, "w").write(re.sub(r"^\s+(T|mu\(T\)|canary)\s+\S+\s+K=\d+\s*$", "  /* */",
                                tx, flags=re.M))
     recs, cm = resolve_bodies(scr, tvic, fv)
-    ok &= expect_red("P7/banner",
-                     lambda: check_fidelity("P7", scr, tvic, recs, cm),
+    ok &= expect_red("corun-bodies/banner",
+                     lambda: check_fidelity("corun-bodies", scr, tvic, recs, cm),
                      "cannot attribute it to a test")
 
-    # --- P6: emit-all.sh's refusal and omission detectors, each alone ---------
+    # --- fail-closed: emit-all.sh's refusal and omission detectors, each alone ---
     ok &= emit_all_bite(tmp, "omit", STUB_OMIT % (LITMUS7, "MP-gc-cta-fence"),
                         "emitted no MP-gc-cta-fence/MP-gc-cta-fence_cpu.c",
                         "het-cuda", ["MP-gc-cta-fence", "MP-cg-cta-fence"])

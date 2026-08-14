@@ -1245,8 +1245,9 @@ INJECTIONS = [
                          '[ 1 = 1 ] || die', 1),
      phase3_refusals, "corpus with no control map"),
     ("3", "wrapper", "an unregistered pair passes without a word",
-     lambda s: s.replace('    echo "hetlitmus-run: WARNING -- the pair $PAIR is in no row of \\',
-                         '    echo "hetlitmus-run: (nothing to report) \\', 1),
+     lambda s: s.replace('echo "hetlitmus-run: WARNING -- the pair $PAIR is in no row '
+                         'of litmus/hetMachine.ml',
+                         'echo "hetlitmus-run: (nothing to report)', 1),
      phase3_refusals, "says nothing about the unregistered pair"),
     ("4", "campaign", "a LONE sighting is banked as if it had reproduced",
      lambda s: s.replace("            if self.k_runs >= CORROB_RUNS:",

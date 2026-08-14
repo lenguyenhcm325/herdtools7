@@ -45,9 +45,9 @@
 #ifndef HET_DEV_HALF
 #define HET_DEV_HALF "the device half"
 #endif
-/* "Zero without stress" [Alglave15 sec 4.3.1] is an NVIDIA measurement: 1 only on
-   a machine it was measured on, so that everywhere else the run is told no
-   equivalent figure exists rather than being handed somebody else's. */
+/* "Zero without stress" [Alglave15 sec 4.3.1] is one NVIDIA part's measurement:
+   1 only on an NVIDIA row, which names that part when quoting it, so everywhere
+   else the run is told the gap rather than being handed somebody else's. */
 #ifndef HET_ALGLAVE_ZERO_MEASURED
 #define HET_ALGLAVE_ZERO_MEASURED 0
 #endif
@@ -648,7 +648,7 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
  * a bare "Never".  Every null prints paired with the control that vouches for it,
  * in absolute numbers, so a reader can recalibrate the bar instead of taking the
  * harness's word for it.  Where a shape's control cannot be made hot the printout
- * says so plainly, carrying its precedent [Alglave15 fn.7 p.577] verbatim.
+ * says so plainly and cites the precedent [Alglave15 fn.7 p.577].
  * ------------------------------------------------------------------------- */
 /* The stress-provenance caveats, printed for a sighting as well as for a null. */
 static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) {
@@ -673,12 +673,9 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
        HET_SPIN_LANES).  The counts are printed so the claim is checkable against
        the harness's own #defines instead of being asserted. */
     fprintf(_ch,
-      "  CAVEAT (D10): HET_GPU_LANES=%d HET_SPIN_LANES=%d on this harness.  A "
-      "mechanism whose lane count is 0 is STRUCTURALLY ABSENT, not dead "
-      "(het_do_stress's round loop is guarded by `_gpu_done < HET_GPU_LANES', "
-      "which is false at 0 before the body runs once), so it is NOT counted as "
-      "requested and its zero tally is not a disqualifier -- see stress_requested "
-      "in the config line.  Absent here:%s%s.\n",
+      "  CAVEAT: HET_GPU_LANES=%d HET_SPIN_LANES=%d.  A mechanism with 0 lanes is "
+      "STRUCTURALLY ABSENT, not dead, so it is not counted as requested and its "
+      "zero tally disqualifies nothing.  Absent here:%s%s.\n",
       _r->gpu_lanes, _r->spin_lanes,
       _r->gpu_lanes == 0 ? " the GPU scratchpad stress" : "",
       _r->spin_lanes == 0 ? (_r->gpu_lanes == 0
@@ -689,8 +686,8 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
        zero tally there is a disqualifier like anywhere else. */
     if (_r->gpu_lanes > 0 || _r->spin_lanes > 0)
       fprintf(_ch,
-        "  CAVEAT (D10, cont.): the OTHER mechanism is present (%s lane(s)) and IS "
-        "counted as requested -- this caveat does not excuse a zero tally there.\n",
+        "  CAVEAT (cont.): the OTHER mechanism is present (%s lane(s)) and IS "
+        "counted as requested -- its zero tally is not excused.\n",
         _r->gpu_lanes > 0 ? "GPU stress" : "window-opener");
   }
 }
@@ -729,7 +726,7 @@ static void het_print_scan_caveat(FILE *_ch, const het_obs_record *_r, uint32_t 
   fprintf(_ch,
     "  CAVEAT: the O(N^T_L) ground-truth scan did NOT run at N=%llu "
     "(HET_EXHAUSTIVE_MAX), so this count rests on the WINDOWED heuristic, whose "
-    "radius HET_WINDOW is an uncalibrated placeholder (B8).  The window is a strict "
+    "radius HET_WINDOW is an uncalibrated placeholder.  The window is a strict "
     "subset of the full range: it can MISS cycles, it cannot invent them -- so a "
     "sighting is real and a zero is NOT a measured zero.\n",
     (unsigned long long)_r->N);
@@ -839,12 +836,11 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
          none of it [APM Table 7-2].  The MAPPING is therefore part of what this
          row measures, and a sighting rules the uncacheable one out. */
       fprintf(_ch,
-        "  ** CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc, so NO "
+        "  ** CPU-ONLY CYCLE: every proc of this test is a CPU proc, so NO "
         "CROSS-DEVICE PATH CARRIED THIS CYCLE -- what fired is the host ISA on the "
-        "SHARED ALLOCATION.  The memory TYPE of that allocation is part of what "
-        "this row measures (WB vs WC, memo sect 8 P1); the sighting does rule out "
-        "an uncacheable (UC) mapping, which reorders nothing ([APM] Table 7-2), "
-        "but it does not by itself establish WB over WC.\n");
+        "SHARED ALLOCATION, whose memory TYPE is part of what this row measures: "
+        "the sighting rules out an uncacheable (UC) mapping ([APM] Table 7-2) but "
+        "does not establish WB over WC.\n");
       /* The `co' edge of a store-only shape comes from an OBSERVER, and this
          harness carries two -- a CPU thread and a GPU lane.  Which one closed the
          cycle decides whether a host-ISA agent observed anything at all, so it is
@@ -852,11 +848,10 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       if (_r->obs_ws_via_gpu && !_r->obs_ws_via_cpu)
         fprintf(_ch,
           "  ** THE co EDGE CAME ONLY FROM THE GPU OBSERVER (obs_ws_via_gpu=1, "
-          "obs_ws_via_cpu=0), AND THE GPU IS NOT AN x86 AGENT.  No x86 agent "
-          "observed these two x86 stores out of order, so this is a "
-          "cross-device-visibility observation about this platform and not a datum "
-          "about the host ISA.  For the host ISA itself, run a shape with an x86 "
-          "READER (MP / LB / SB / IRIW), whose cycle closes inside the CPU.\n");
+          "obs_ws_via_cpu=0), AND THE GPU IS NOT AN x86 AGENT: this is a "
+          "cross-device-visibility observation, not a datum about the host ISA.  "
+          "For that, run a shape with an x86 READER (MP / LB / SB / IRIW), whose "
+          "cycle closes inside the CPU.\n");
       else if (_r->obs_ws_via_cpu)
         fprintf(_ch,
           "  ** The co edge WAS recovered by the x86-side observer "
@@ -882,7 +877,7 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   if (v == HET_COLD_INVALID) {
     fprintf(_ch, "  DISCARD this null -- the harness was not demonstrably hot:\n");
     if (dq & HET_DQ_NO_CONTROL_BUILT)
-      fprintf(_ch, "    - no positive control was compiled in (B6b)\n");
+      fprintf(_ch, "    - no positive control was compiled in\n");
     if (dq & HET_DQ_NO_INTERLEAVING)
       fprintf(_ch, "    - interleavings_detected == 0: the two engines never "
                    "overlapped; nothing raced, so nothing could have been seen\n");
@@ -909,7 +904,7 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     if (dq & HET_DQ_CPU_ENEMY_DEAD)
       fprintf(_ch, "    - the CPU enemies were requested but completed ZERO rounds\n");
     if (dq & HET_DQ_CPU_PRELOAD_DEAD)
-      fprintf(_ch, "    - the M3 preload was requested but issued ZERO hints\n");
+      fprintf(_ch, "    - the cache preload was requested but issued ZERO hints\n");
     if (dq & HET_DQ_NOISE_CPU_DEAD)
       fprintf(_ch, "    - %s of the %s noise did NOT run: this run "
                    "is not interconnect-stressed\n",
@@ -922,20 +917,22 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       fprintf(_ch, "    - the GPU scratchpad stress was requested "
                    "(HET_PRE_STRESS_PCT/HET_MEM_STRESS_PCT) but het_do_stress "
                    "completed ZERO rounds: it never ran\n");
-      /* "Zero without stress" [Alglave15 sec 4.3.1] is an NVIDIA measurement.
-         Printing it as a general fact on an AMD-tagged run would be borrowing
-         somebody else's number, and no equivalent figure is published for that
-         part, so the run is told the gap instead.  Keyed on an explicit stamp,
-         never on the shape of a string: the emitter sets
-         HET_ALGLAVE_ZERO_MEASURED for the machines the figure was measured on
-         and for no others. */
+      /* "Zero without stress" [Alglave15 Tab. 6] is one NVIDIA part's
+         measurement, and it is narrower than "nothing is observed": on that
+         chip mp and coRR WERE observed unstressed.  Printing it as a general
+         fact on an AMD-tagged run would be borrowing somebody else's number,
+         and no equivalent figure is published for that part, so the run is told
+         the gap instead.  Keyed on an explicit stamp, never on the shape of a
+         string: the emitter sets HET_ALGLAVE_ZERO_MEASURED on the NVIDIA rows,
+         which name the measured part when they quote it, and on no others. */
       if (HET_ALGLAVE_ZERO_MEASURED)
-        fprintf(_ch, "      On NVIDIA silicon an unstressed run observes nothing "
-                     "(Alglave 4.3.1)\n");
+        fprintf(_ch, "      On the NVIDIA GTX Titan the inter-CTA lb and sb tests "
+                     "were observed 0 per 100k without memory stress, while mp and "
+                     "coRR were observed (Alglave ASPLOS'15 Tab. 6)\n");
       else
-        fprintf(_ch, "      (Alglave 4.3.1's \"zero without stress\" was measured "
-                     "on NVIDIA parts and is NOT claimed for this target; no "
-                     "equivalent figure is published for it, so the dead "
+        fprintf(_ch, "      (Alglave ASPLOS'15 Tab. 6's zero without memory stress "
+                     "is an NVIDIA GTX Titan measurement and is NOT claimed for this "
+                     "target; no equivalent figure is published for it, so the dead "
                      "mechanism disqualifies this run on its own terms)\n");
     }
     het_print_caveats(_ch, _r, cv);
@@ -967,7 +964,7 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       fprintf(_ch, "    - only the Layer-B canary fired: the %s path is alive, "
                    "but the co-running mu(T) instance -- this test's own "
                    "lattice-floor twin -- did not reach tau_hot.  Escalate "
-                   "stress tuning for it (B8).\n",
+                   "stress tuning for it.\n",
               HET_LINK_NAME);
     if (cv & HET_CV_NO_EXHAUSTIVE)
       fprintf(_ch, "    - the O(N^T_L) ground-truth scan did not run at N=%llu, so "
@@ -976,26 +973,25 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   }
 
   /* One sentence for both tiers, because it is the same statement: a null is a
-     fact about this harness's reach, not about a model [Alglave15 fn.7 p.577]. */
+     fact about this harness's reach, not about a model.  The precedent is quoted
+     verbatim in hetlitmus/docs/positive-control.md sec 6 [Alglave15 fn.7 p.577];
+     the printout carries the citation, not the quotation. */
   fprintf(_ch,
     "  Either way this is an OBSERVABILITY result about this harness on this "
     "hardware and under this stress -- never a model result -- and it feeds the "
-    "stress-tuning priority (B8).  The precedent for saying so plainly:\n"
-    "    \"In fairness to the authors of [19], we were unable to observe weak "
-    "behaviours using our\n"
-    "     method on the Nvidia GTX 280 chip they used.\"\n"
-    "                                     -- Alglave et al., ASPLOS'15, fn.7, p.577.\n");
+    "stress-tuning priority.  Reporting one that way has precedent: Alglave et "
+    "al., ASPLOS'15, fn.7, p.577.\n");
   if (_r->cpu_only)
     /* The CPU-only null: on such a shape the weak outcome is the host store
        buffer, among the most reproducible relaxations the ISA has, so a null is
        evidence about the ALLOCATION rather than about a narrow window. */
     fprintf(_ch,
-      "  *** D10 / SHARED-ALLOCATION PROBE: this is a CPU-ONLY shape, and its weak "
+      "  *** SHARED-ALLOCATION PROBE: this is a CPU-ONLY shape, and its weak "
       "outcome is the host STORE BUFFER -- among the most reproducible relaxations "
       "the ISA has.  A null here is evidence about the SHARED ALLOCATION, not a "
-      "narrow window: if the mapping is not WB (write-back cacheable), memo sect 8 "
-      "P1 is UNRESOLVED.  Check PAT/MTRR and /proc/self/smaps for this allocator "
-      "before running anything else.\n");
+      "narrow window: read it as unresolved until the mapping is known to be WB "
+      "(write-back cacheable).  Check PAT/MTRR and /proc/self/smaps for this "
+      "allocator before running anything else.\n");
 
   het_print_scan_caveat(_ch, _r, cv);
   het_print_caveats(_ch, _r, cv);
@@ -1546,10 +1542,8 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     fprintf(_ch,
       "  stationarity: *** KS REJECTED *** (D = %.4f > D_crit = %.4f).  The control "
       "rate is NOT stationary across the run: the change-point is near window %d of "
-      "%d.  Kirkham's own precheck already fails 4/18 GPU-only chip/test "
-      "combinations, and het adds warm-up, thermal drift and alignment drift on top.\n"
-      "  P_rep is NOT reported across a non-stationary boundary (Q3 R4).  Re-run "
-      "split at the change-point and score the segments separately -- Kirkham 5.1: "
+      "%d.  P_rep is NOT reported across such a boundary.  Re-run split at the "
+      "change-point and score the segments separately -- Kirkham 5.1: "
       "\"non-stable runs can then be restarted from the point of instability\".\n",
       _s->ks_D, _s->ks_Dcrit, _s->ks_split_window, (int)HET_NWIN);
 
@@ -1557,11 +1551,10 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
   if (_s->obs == HET_OBS_NEVER) {
     fprintf(_ch,
       "  NOT OBSERVED in any of the %d usable cell(s).  NO RATE AND NO PROBABILITY "
-      "IS ATTACHED TO THIS NULL.  What a non-observation reports is that a harness "
-      "this hardware kept demonstrably hot did not produce the outcome; "
-      "falsification is one-sided -- \"the possibility, not probability ... is what "
-      "matters\" (Alglave et al., ASPLOS'15 4.3, p.585) -- so what licenses the null "
-      "is the positive control that fired beside it, never an interval.\n",
+      "IS ATTACHED TO THIS NULL: falsification is one-sided -- \"the possibility, "
+      "not probability ... is what matters\" (Alglave et al., ASPLOS'15 4.3, p.585) "
+      "-- so what licenses the null is the positive control that fired beside it, "
+      "never an interval.\n",
       _s->R_usable);
     /* Keyed on the per-cell tier count, not on the pooled channel flag: see
        n_mu_hot. */
@@ -1583,9 +1576,9 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
       "mu(T) %llu sighting(s), the Layer-B canary %llu.\n"
       "  CHARACTERIZATION, NEVER VALIDATION: this harness carries no prediction, so "
       "this null agrees with no model and refutes none -- it reports what this "
-      "harness reached on this hardware under this stress (Q4 R5).\n"
+      "harness reached on this hardware under this stress.\n"
       "  effort: %d run(s) x N=%llu iterations, %llu frames examined.  Grow R, "
-      "NOT N (Q3 F4).\n",
+      "NOT N.\n",
       (unsigned long long)_s->mu_total, (unsigned long long)_s->can_total,
       _s->R_usable, (unsigned long long)_s->N,
       (unsigned long long)_s->frames_examined);
@@ -1611,12 +1604,11 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     if (_s->flags & HET_ST_SELF_CONTROL)
       fprintf(_ch,
         "  NOTE: this row CO-RUNS NO CONTROL -- it IS the Layer-B canary (the control "
-        "map names it as its own canary), and a test cannot control itself (B6b).  A "
-        "run in which it did not fire is therefore COLD and carries no information, so\n"
-        "  \"usable cells\" is DEFINED BY firing.  The denominator above is R -- the "
-        "runs executed -- not the usable count: otherwise a canary that fired in %d of "
-        "%d runs would report ALWAYS, and that rate is precisely what the rest of the\n"
-        "  campaign is calibrated against.  For the same reason this row has NO "
+        "map names it as its own canary), and a test cannot control itself.  Its "
+        "\"usable cells\" are DEFINED BY firing, so the denominator above is R -- the "
+        "runs executed (%d of %d fired) -- and not that count: scored on the cells\n"
+        "  it fired in, a canary reports ALWAYS, and its rate is what the rest of the "
+        "campaign is calibrated against.  For the same reason this row has NO "
         "CALIBRATION CHANNEL -- nothing independent co-runs whose stationarity could "
         "be tested -- by construction, not by omission.\n",
         _s->k, _s->R);
@@ -1632,12 +1624,10 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
           "READ for %s -- the map is looked for BESIDE THE TEST, under the name this "
           "CPU frontend gives it (control-map.csv for AArch64,\n"
           "  control-map-amd.csv for x86_64), and it was not there.  Put it beside the "
-          "test and re-emit.  Nothing marks this row a canary.  A run in which it did "
-          "not fire is COLD and carries no information, so \"usable cells\" is\n"
-          "  defined by firing and the denominator above is R -- the runs executed -- "
-          "not the usable count, which would report ALWAYS for a row that fired in %d "
-          "of %d runs.\n"
-          "  It has NO CALIBRATION CHANNEL, and that is an OMISSION, not a "
+          "test and re-emit.  Nothing marks this row a canary, so its \"usable cells\" "
+          "are defined by firing and the denominator above is R -- the runs\n"
+          "  executed (%d of %d fired) -- and not that count.  It has NO CALIBRATION "
+          "CHANNEL, and that is an OMISSION, not a "
           "construction: what was omitted is the map FILE beside this test, not any "
           "entry in any registry.\n",
           HET_PAIR_NAME, _s->k, _s->R);
@@ -1692,14 +1682,13 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     if (_s->n_at_first_sight > 0)
       fprintf(_ch,
         "  It first fired after %d run(s) of the %d supplied, which is what a fresh "
-        "campaign should budget for it (Q3 F4: grow R, not N).\n",
+        "campaign should budget for it: grow R, not N.\n",
         _s->n_at_first_sight, _s->R);
     if (_s->cpu_only)
       fprintf(_ch,
-        "  ** CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc, so no "
+        "  ** CPU-ONLY CYCLE: every proc of this test is a CPU proc, so no "
         "cross-device path carried this cycle -- what fired is the host ISA on the "
-        "shared allocation, and the memory type of that allocation is part of what "
-        "it measures (memo sect 8 P1).\n");
+        "shared allocation, whose memory type is part of what it measures.\n");
   }
 }
 

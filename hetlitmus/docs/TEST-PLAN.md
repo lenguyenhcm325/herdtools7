@@ -55,9 +55,9 @@ All verified on the dev box (has `dune`/`ocaml`, `herd7`/`litmus7`/`hetgen7`/
   acquire, fence→standalone scoped fence / DMB.SY).
 
 ### Current state of `hetlitmus/verify/` against this plan
-- **Layer 3 faithfulness: ✓ and gated.** `l0_tokens.sh all` sweeps all 548 via
+- **Layer 3 faithfulness: ✓ and gated.** `tokens.sh all` sweeps all 548 via
   `nvcc --ptx` + `ptxcheck`, returning nonzero on any FAIL.
-- **Layer 1 negatives: now gated (`c2e4df4c5`).** `l0_tokens.sh selftest` (weaken
+- **Layer 1 negatives: now gated (`c2e4df4c5`).** `tokens.sh selftest` (weaken
   order/scope, miscount, CPU STLR→STR) and `guard` (unknown-token → exit 2) are real
   injections that now **aggregate and return nonzero**, printing `SELFTEST OK` /
   `GUARD OK` sentinels. The eyeball gap is closed in the shell; the Layer-1 cram
@@ -97,7 +97,7 @@ exhaustively over **all 548** by:
 | What is checked over ALL 548 | Layer |
 |---|---|
 | byte-pinned (regression) | 2 golden (regenerate out of tree + byte-diff) |
-| PTX/asm matches its annotation (faithfulness) | 3 (`l0_tokens.sh all`) |
+| PTX/asm matches its annotation (faithfulness) | 3 (`tokens.sh all`) |
 | compiles | 3 (faithful `nvcc --ptx` + smoke) |
 | enumeration didn't silently shrink | 2 census (counts 137/411, `@all`) |
 
@@ -118,7 +118,7 @@ Three golden mechanisms, each matched to a layer by shape of the check:
 |---|---|---|---|
 | **dune cram `.t`** | Layer 1 units + negatives | `dune promote` | each is one command → exact stdout/exit |
 | **git-diff** | Layer 2 corpus/emission golden | `git commit` | 548 byte-stable files; git already is the store + promote |
-| **shell drivers** (`l0_tokens.sh`, new `smoke.sh`) | Layer 3 sweeps | n/a (pass/fail) | directory sweeps / multi-step |
+| **shell drivers** (`tokens.sh`, new `smoke.sh`) | Layer 3 sweeps | n/a (pass/fail) | directory sweeps / multi-step |
 | (none) | Layer 4 | n/a | nondeterministic, hardware |
 
 **Cram in one line:** a `.t` is `  $ command` followed by its frozen expected
@@ -157,7 +157,7 @@ our generation is byte-stable so we don't need it.
   class of its own.
 - ✓ `ptx-negatives.t` (`0d5940b5e`) — `ptxcheck --ptx <frozen-corrupt.ptx>` → exit 1 (no GPU). A
   thin **byte-freeze** of one corruption; the eyeball gap is already closed in the
-  gated `l0_tokens.sh selftest` (`c2e4df4c5`), so this is belt-and-suspenders.
+  gated `tokens.sh selftest` (`c2e4df4c5`), so this is belt-and-suspenders.
 - (optional, lower priority) unit-test `ptxcheck.py` parsers (`classify_ptx_op`, …).
 
 ### Layer 2 — Generate (git-diff + make; OCaml build)
@@ -178,7 +178,7 @@ our generation is byte-stable so we don't need it.
   column-count / `@all` contracts remain optional (not implemented).
 
 ### Layer 3 — Compile (shell drivers; nvcc+clang, no GPU)
-- ✓ faithfulness: `verify/l0_tokens.sh all` (already gated).
+- ✓ faithfulness: `verify/tokens.sh all` (already gated).
 - ✓ `comp.sh` per test (verified compiles no-GPU).
 - ✓ `smoke.sh` (built, `fa2adc9db`): emit + compile the 11 reps (§5), fail on any
   nonzero. `nvcc --ptx` from faithfulness already covers gpu-only/het `.cu`, so smoke
@@ -228,7 +228,7 @@ mirrors them.
 Reps 8–11 are all off the lattice floor, so each also exercises the co-run control
 (`HET_CONTROL_COMPILED_IN = 1`) on that family. Reps 10–11 claim only that the
 three barrier forms **build**; *which* one is emitted is pinned by
-`l0_tokens.sh selftest [5b]`.
+`tokens.sh selftest [5b]`.
 
 Tens of seconds total (last timed at the original 6 reps; not re-measured at 11).
 Residual risk (11 reps ≠ proof all 548 build) is accepted once: the same gate
@@ -250,13 +250,13 @@ device this box may not have, three of its members needing a real GPU (see below
 Umbrellas (what you press):
 - **`make hetlitmus-test`** → the CUDA-free lane: `hetlitmus-cram` · `-corpus` ·
   `-dup` · `-lattice` · `-amd-controlmap` · `-controlmap` · `-verdict` · `-recfields` ·
-  `-stats` · `-hist` · `-tuner` · `-x86body` · `-x86fixture` · `-d10` · `-run-gate`.
+  `-stats` · `-hist` · `-tuner` · `-x86body` · `-x86fixture` · `-cpuonly` · `-run-gate`.
 - **`make hetlitmus-test-toolchain`** (old name `hetlitmus-test-nvcc`, kept as an alias)
   → the toolchain lane: `hetlitmus-faithful` · `-stress` ·
-  `-cpustress` · `-obs` · `-hipbuild` · `-characterize-hw` · `-run-hw` · `-l0-selftest` ·
+  `-cpustress` · `-obs` · `-hipbuild` · `-characterize-hw` · `-run-hw` · `-selftest` ·
   `-smoke`. This lane has **outgrown Layer 3**: it still needs CUDA for the compile
   members, but three of them now need a real device — `-run-hw` and `-characterize-hw`
-  run the wrapper and a built harness on the GPU, and `-stress`'s D1 probe drives
+  run the wrapper and a built harness on the GPU, and `-stress`'s device-probe check drives
   `het_do_stress` on hardware to prove the tally is live both ways. The CUDA-free
   stand-in for the session wrapper (stub compiler, stub probe) is `hetlitmus-run-gate`,
   which is in the other umbrella.
@@ -347,7 +347,7 @@ Steps 1–4 all run on the dev box (and in CI, Layer 3 with a CUDA-install step)
 | Need | Reuse |
 |---|---|
 | compile-smoke | ✓ `comp.sh` (emitted per test) |
-| PTX faithfulness | ✓ `ptxcheck.py` + `l0_tokens.sh` |
+| PTX faithfulness | ✓ `ptxcheck.py` + `tokens.sh` |
 | oracle comparison | ✓ `oracle-compare.sh` |
 | annotation rules under test | ✓ `_grid_lib.sh` functions |
 | corpus golden store + promote | ✓ git (`commit` / `checkout`) + regenerate-and-diff |
@@ -366,12 +366,11 @@ Steps 1–4 all run on the dev box (and in CI, Layer 3 with a CUDA-install step)
 
 ---
 
-## Appendix A — naming collision (important)
+## Appendix A — where the token check sits
 
-The **"L0"** in `verify/l0_tokens.sh` means *static, hardware-free token
-faithfulness* — that is **Layer 3** here, NOT Layer 1. Do not let the `l0`
-filename leak into a Layer-1 target name. (This is why the faithfulness make
-target is `hetlitmus-faithful`, not `hetlitmus-l0`.)
+`verify/tokens.sh` checks *static, hardware-free token faithfulness* — that is
+**Layer 3** here, NOT Layer 1, even though it needs no device. Its make target is
+`hetlitmus-faithful`; its discriminating-power lane is `hetlitmus-selftest`.
 
 ## Appendix B — ready-to-use cram examples (real captured output)
 

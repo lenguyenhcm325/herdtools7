@@ -20,9 +20,10 @@ type machine = {
     mc_link_name : string ;   (* no leading article: use sites supply their own *)
     mc_host_half : string ;
     mc_dev_half : string ;
-    (* "Zero without stress" is a measurement on NVIDIA silicon
-       [Alglave15 sec 4.3.1].  True only where it was measured; everywhere else
-       the gap is stated instead of the number being borrowed. *)
+    (* "Zero without stress" is one NVIDIA part's measurement
+       [Alglave15 sec 4.3.1].  True on an NVIDIA row, which names that part when
+       it quotes the figure; elsewhere the gap is stated instead of the number
+       being borrowed. *)
     mc_alglave_zero : bool ;
     (* The last-level cache a noise buffer must EXCEED to cross anything on this
        part, in MB, and the parenthetical printed after that warning.  [None]
@@ -183,10 +184,8 @@ let resolve ~verbose ~cpu_isa ~target =
        Printf.eprintf
          "HetLitmus WARNING: the (CPU ISA x GPU dialect) pair %s is in no row of \
           litmus/hetMachine.ml, so this harness NAMES NO MACHINE: it stamps no \
-          machine define, and wherever it would have printed one the runtime \
-          headers' own #ifndef fallbacks stand -- het_verdict.h's wording for \
-          the interconnect and its two halves, and het_cpu_stress.h's HET_LLC_MB, \
-          which is a cache size measured on another part rather than a name.  \
+          machine define, and the runtime headers' own #ifndef fallbacks -- \
+          which name the mechanism -- stand in place of every machine word.  \
           Registered pairs: %s.\n%!"
          (pair_name ~cpu_isa ~target) (registered_doc ()) ;
      None, false

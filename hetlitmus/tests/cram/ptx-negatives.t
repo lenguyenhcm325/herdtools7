@@ -1,5 +1,5 @@
 Layer-1 byte-freeze of ptxcheck.py's discriminating power (belt-and-suspenders;
-the eyeball gap is already closed in the gated verify/l0_tokens.sh selftest, see
+the eyeball gap is already closed in the gated verify/tokens.sh selftest, see
 TEST-PLAN.md sec 4).  corrupt-strengthen.ptx is a committed, frozen PTX in which
 the single relaxed load of MP-sys-F (`ld.relaxed.sys') was strengthened to
 `ld.acquire.sys'.  The checker must catch the one-token deviation and FAIL (exit

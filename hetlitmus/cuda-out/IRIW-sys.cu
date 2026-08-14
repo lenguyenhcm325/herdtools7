@@ -68,7 +68,7 @@ __global__ void litmus_IRIW_sys(int* x, int* y, int* __out) {
   }
 }
 
-// ---- host harness (illustrative; emit-only, not compiled here) ----
+// ---- host harness (illustrative; compile-checked for sm_90 by nvcc --ptx) ----
 // Result buffer layout: __out[proc * 4 + regIndex].
 // Reset all globals to 0 before each launch; the weak outcome under
 // test is exactly the `condition' line above.
@@ -81,7 +81,7 @@ int main(void) {
     *y = 0;
     litmus_IRIW_sys<<<4, 1>>>(x, y, __out);
     cudaDeviceSynchronize();
-    // TODO(hardware, Task 9): tally __out against the condition.
+    // TODO(hardware): tally __out against the condition.
   }
   return 0;
 }

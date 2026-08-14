@@ -53,7 +53,7 @@ TUNE_PY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tune.p
 # own name.  Every phase below is written as a property parameterized on the tune module
 # (or on a race callable), so a bite re-runs the phase's own check against a broken
 # tuner instead of re-deriving it.  tune.py itself is NEVER written -- the shell gates
-# corrupt copies the same way (hetlitmus/verify/l0_tokens.sh).
+# corrupt copies the same way (hetlitmus/verify/tokens.sh).
 # ===========================================================================
 _SCRATCH = []
 _NBITE = [0]
@@ -378,7 +378,7 @@ def _split_property(mod, emit):
         emit("*** the sampler EMITTED a non-experiment knob: %s" % sorted(hit))
         bad.append("emitted")
     if "HET_WINDOW" in seen:
-        emit("*** HET_WINDOW (a detector knob) was sampled -- TRAP 2 violated")
+        emit("*** HET_WINDOW was sampled: a detector-resolution knob is never sampled")
         bad.append("window")
     outside = seen - wl
     if outside:

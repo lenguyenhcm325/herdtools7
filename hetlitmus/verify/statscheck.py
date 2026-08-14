@@ -374,7 +374,7 @@ case("sighting-unconfirmed-one-run-short",
 # twin of the per-run sentence verify/verdictcheck.py pins, and a CPU-only sighting
 # written up without it reads as a compound-model result.
 CPU_ONLY_CASE = "cpu-only-sighting-says-what-was-under-test"
-CPU_ONLY_TEXT = "CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc"
+CPU_ONLY_TEXT = "CPU-ONLY CYCLE: every proc of this test is a CPU proc"
 # The same fact machine-readably, on het_stats_line rather than in the tier block.
 CPU_ONLY_LINE = re.compile(r"HetStats \S+ cpu_only=\d+ ")
 case(CPU_ONLY_CASE,
@@ -1478,7 +1478,8 @@ def phase3(hdir, tmp, quiet):
 
 # ---------------------------------------------------------------------------
 def phase4(tamper=None):
-    print("\n===== PHASE 4: does the EMITTED CORPUS carry the B7 machinery? =====")
+    print("\n===== PHASE 4: does the EMITTED CORPUS carry the statistics machinery? "
+          "=====")
     tests = sorted(t[:-len(".litmus")] for t in os.listdir(HET_DIR)
                    if t.endswith(".litmus"))
     tmp = tempfile.mkdtemp(prefix="statscorpus.")
@@ -1907,9 +1908,9 @@ def phase6_campaign(quiet, campaign_py=None):
 
         # The CPU-only precondition is louder when it did not run than when it failed:
         # this corpus holds no CPU-only row, so the probe did not run and must say so.
-        if "WB probe): *** NOT RUN" not in out:
-            print("  *** the D10 WB probe is silently absent -- a precondition nobody "
-                  "sees is a precondition nobody checked")
+        if "write-back probe (CPU-only positive control): *** NOT RUN" not in out:
+            print("  *** the CPU-only write-back probe is silently absent -- a "
+                  "precondition nobody sees is a precondition nobody checked")
             bad += 1
 
         # --- 6.1b: what a null is worth is the effort that failed to see it, so the
@@ -2086,12 +2087,9 @@ def phase6_campaign(quiet, campaign_py=None):
         print("\nSCHEDULER FAILED: %d problem(s)." % bad)
         return 1
     print("\nSCHEDULER OK -- campaign.py applies het_verdict.h's rule at the pooled "
-          "scale (corroboration, then the confirmation window, then the budget), the "
-          "window runs from the sighting and outranks the budget in hardware hours, "
-          "--rate disables the sighting stop alone, and the mirror rejects a header "
-          "that moved the bar, renamed a stop or moved the window's origin.  A null "
-          "runs to its budget and banks every run of it; seeds are fresh per "
-          "invocation.")
+          "scale, the confirmation window outranks the budget, --rate disables the "
+          "sighting stop alone, and the mirror rejects a moved bar, a renamed stop or "
+          "a moved window origin.")
     return 0
 
 
@@ -2347,7 +2345,7 @@ def _bite_campaign(label, mutate, expect):
 
 
 def bite():
-    print("===== B7 BITE TEST: does this gate FAIL when the statistics break? =====")
+    print("===== BITE TEST: does this gate FAIL when the statistics break? =====")
     tmp = tempfile.mkdtemp(prefix="statsbite.")
     ok = True
     try:
@@ -2645,31 +2643,10 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: all 25 injections were caught --")
-        print("         2 against the EMPTINESS GUARD, one per half (the KS gate")
-        print("         stops consulting it; the test that raises it forced false):")
-        print("         either one alone unlocks P_rep on a stream nothing fired on,")
-        print("         which is the only way this layer can overclaim,")
-        print("         2 against the DECODE and STATIONARITY guards (degeneracy")
-        print("         disabled, KS made constant-pass),")
-        print("         6 against the STOP RULE (corroboration on one sighting, rate")
-        print("         mode ignored, both ways of losing the confirmation window,")
-        print("         the corroboration bar, the record stamp),")
-        print("         3 against the STRUCTURAL INVARIANTS (run dedup, the P_rep")
-        print("         decode conjunct, the truncation flag),")
-        print("         3 against the PYTHON MIRRORS (THETA_D / TAU_HOT / MAX_CELLS")
-        print("         moved under them),")
-        print("         2 against the SELF-CANARY INFERENCE (both directions: a row")
-        print("         that co-runs nothing called the canary, and a real canary")
-        print("         demoted), 4 against the CPU-ONLY campaign (the sentence and")
-        print("         the machine-readable field, each inverted so both halves of")
-        print("         its assertion fire at once, plus the two halves of the")
-        print("         mixed-pool resolution), 1 against the")
-        print("         SCHEDULER (campaign.py's confirmation window measured from")
-        print("         run 0), 1 against the PRODUCER (the sub-tallies), 1 against")
-        print("         the EMITTED CORPUS.")
-        print("         The gate is live both ways: it passes on the shipped code and")
-        print("         fails on every way of breaking it.")
+        print("BITE OK: 25/25 injections caught -- emptiness guard 2, decode +")
+        print("         stationarity 2, stop rule 6, structural invariants 3, Python")
+        print("         mirrors 3, self-canary inference 2, CPU-only campaign 4,")
+        print("         scheduler 1, producer 1, emitted corpus 1.")
         return 0
     print("BITE FAILED: an injection slipped through -- this gate is decorative")
     return 1

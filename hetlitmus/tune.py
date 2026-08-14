@@ -151,9 +151,9 @@ def _assert_split_is_clean():
     leaked = reach & (INSTRUMENT_KNOBS | DETECTOR_KNOBS)
     if leaked:
         raise AssertionError(
-            "TRAP 1/2 VIOLATION: the sampler can reach non-experiment knob(s) %s -- "
-            "tuning an instrument/detector knob is fabrication, not tuning.  Remove it "
-            "from SUBSEARCH." % sorted(leaked))
+            "the sampler can reach non-experiment knob(s) %s: only whitelisted "
+            "stress knobs are tunable, and a detector-resolution knob is never "
+            "sampled.  Remove it from SUBSEARCH." % sorted(leaked))
 
 
 _assert_split_is_clean()
@@ -439,9 +439,9 @@ def write_config(path, config_by_sub, target, measured=False):
                  "parseStressParamsFile).")
     if not measured:
         lines.append("# *** NOT MEASURED HERE ***  Every value below is a WARM-START SEED,")
-        lines.append("# not a tuned number.  The dev box (no CPU-GPU coherence, no C2C) is the")
-        lines.append("# WRONG SUBSTRATE (Q7 4.2): it validates the tuning MACHINERY, never a")
-        lines.append("# value.  Re-tune on the actual %s hardware (B8b)." % target)
+        lines.append("# not a tuned number: a box with no CPU-GPU coherence and no C2C link")
+        lines.append("# validates the tuning MACHINERY, never a value.  Re-tune on %s."
+                     % target)
     for sub in SUBSEARCH_ORDER:
         cfg = config_by_sub.get(sub, {})
         if not cfg:
@@ -450,8 +450,8 @@ def write_config(path, config_by_sub, target, measured=False):
         for knob in sorted(cfg):
             if knob not in whitelisted_knobs():
                 raise AssertionError(
-                    "refusing to write non-experiment knob %r to the config file "
-                    "(TRAP 1: only whitelisted stress knobs are tunable output)" % knob)
+                    "refusing to write non-experiment knob %r to the config file: "
+                    "only whitelisted stress knobs are tunable output" % knob)
             lines.append("%s=%s" % (knob, cfg[knob]))
     with open(path, "w") as fh:
         fh.write("\n".join(lines) + "\n")
@@ -474,7 +474,7 @@ def read_config(path):
             if k in INSTRUMENT_KNOBS or k in DETECTOR_KNOBS:
                 raise ValueError("config file carries a non-tunable knob %r -- an "
                                  "instrument/detector knob is never part of a stress "
-                                 "config (TRAP 1/2)" % k)
+                                 "config" % k)
             if k not in wl:
                 raise ValueError("config file carries unknown knob %r" % k)
             out[k] = int(v)
@@ -527,7 +527,8 @@ class _TrivialObjective(object):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="HetLitmus B8a stress autotuner (machinery).")
+    ap = argparse.ArgumentParser(
+        description="HetLitmus stress autotuner (search machinery).")
     ap.add_argument("--self-test", action="store_true",
                     help="run the search on a trivial synthetic objective (plumbing smoke)")
     ap.add_argument("--target", default="devbox",

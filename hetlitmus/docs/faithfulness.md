@@ -1,11 +1,11 @@
-# L0 — static PTX/ASM faithfulness check
+# Static PTX/ASM faithfulness check
 
 **Question answered:** does every emitted GPU (and, for het tests, CPU) harness
 carry *exactly* the memory **order + scope + op-kind** that its `.litmus`
 annotation specifies — with no weakening, strengthening, miscount,
 misplacement, or missing qualifier?
 
-This is **L0**: a *static, hardware-free* check. It emits the harness, compiles
+This is a *static, hardware-free* check. It emits the harness, compiles
 it to PTX, and inspects the text. **It never launches a kernel.** It is not a
 herd re-check, a mutation campaign, or a differential test — it is one thing:
 token-level lowering faithfulness of the chain
@@ -22,7 +22,8 @@ The bug this exists to catch is real and documented in
 [`cuda-emitter.md`](cuda-emitter.md) ("Fence lowering"): libcu++'s
 `cuda::atomic_thread_fence` **collapses** `acquire`/`release` →
 `fence.acq_rel`, *losing the order*. `CudaLang` therefore bypasses it and emits
-faithful inline PTX. L0 proves that faithfulness **end-to-end through nvcc**, and
+faithful inline PTX. This check proves that faithfulness **end-to-end through
+nvcc**, and
 would FAIL the day a collapse/weakening/narrowing returns — whether introduced
 by `CudaLang`, by a libcu++ upgrade, or by a toolkit change.
 
@@ -118,7 +119,7 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
 
 ## What is checked, for every op, both directions
 
-For each test L0 builds the **expected profile** from the `.litmus` and the
+For each test the checker builds the **expected profile** from the `.litmus` and the
 **observed profile** from the PTX (and `_cpu.c`), then asserts:
 
 1. **ORDERED equality** of the model-op streams — element-wise
@@ -144,7 +145,7 @@ Each GPU proc is emitted as its own guarded block `{ barrier; model… }` (every
 GPU thread must rendezvous), so the barrier is **not** a single prologue — there
 is one barrier instance per GPU proc. The barrier's `fetch_add` is the unique
 anchor: the corpus model has **no** `atom`/`red`, so every `atom`/`red` in the
-kernel is a barrier fetch_add. L0 segments the op stream at each fetch_add and
+kernel is a barrier fetch_add. The checker segments the op stream at each fetch_add and
 strips the fixed barrier template
 `[leading fence.sc][atom.sys][spin fence.sc][spin ld.sys]` from each segment's
 front; the remainder is that proc's model ops, in proc order. This correctly
@@ -156,7 +157,7 @@ fences.
 The mapping table **is** the guard. Building the expected profile looks up every
 order, scope, op-kind, and CPU mnemonic in the table; a token that is not a key
 raises `CompletenessError`, which **hard-fails the test with exit 2** — it is
-never skipped. `l0_tokens.sh guard` enumerates every *distinct* annotation in the
+never skipped. `tokens.sh guard` enumerates every *distinct* annotation in the
 corpus, confirms each is `MAPPED`, and then feeds a deliberately-unknown
 annotation (`w[consume,sys]`) to show the hard-fail.
 
@@ -171,15 +172,15 @@ CPU: MOV STR LDR STLR LDAPR DMB
 
 ```
 # full corpus: per-test PASS/FAIL table + tally (137 gpu-only, 411 het)
-JOBS=8 bash hetlitmus/verify/l0_tokens.sh            # both
-JOBS=8 bash hetlitmus/verify/l0_tokens.sh gpu-only   # 137
-JOBS=8 bash hetlitmus/verify/l0_tokens.sh het        # 411
+JOBS=8 bash hetlitmus/verify/tokens.sh            # both
+JOBS=8 bash hetlitmus/verify/tokens.sh gpu-only   # 137
+JOBS=8 bash hetlitmus/verify/tokens.sh het        # 411
 
 # completeness-guard report (distinct annotations + unknown hard-fail)
-bash hetlitmus/verify/l0_tokens.sh guard
+bash hetlitmus/verify/tokens.sh guard
 
 # weaken/strengthen self-test on a copied PTX
-bash hetlitmus/verify/l0_tokens.sh selftest
+bash hetlitmus/verify/tokens.sh selftest
 
 # a single test (full pipeline: emit -> nvcc --ptx -> check)
 python3 hetlitmus/verify/ptxcheck.py hetlitmus/tests/gpu-only/MP-sys-F.litmus
@@ -218,9 +219,10 @@ whole corpus.
 
 ## Scope / limits
 
-* L0 proves **static lowering** faithfulness (annotation → emitted PTX/asm token).
+* This check proves **static lowering** faithfulness (annotation → emitted PTX/asm
+  token).
   Runtime reordering by ptxas/hardware is the *behaviour under test* on real
-  hardware (Task 9), not an L0 concern.
+  hardware, not a concern of this check.
 * It is hardware-free: `nvcc --ptx`/`-c` and reading text only; no kernel runs.
 * `MOV` is absorbed by the tagged-body classifier (`HetCpuPlan.Consumed`) — the
   store value it set is replaced by the runtime tag, which reaches the asm block
@@ -237,11 +239,11 @@ whole corpus.
   `do_stress`'s if-chain to `ld;ld`, whose loads only feed a `break`, which is
   provably side-effect-free) and a device-scope window-opener that released on its
   deadlock cap 99.6% of the time. Both passed every gate in this suite.
-  The other half of L0 is therefore **`hetlitmus/verify/stresscheck.py`**
+  The other half of the static check is therefore **`hetlitmus/verify/stresscheck.py`**
   (`make hetlitmus-stress`), which counts scratchpad ops in the emitted PTX per
   lane class and asserts the count is *invariant* under `-DHET_*_PATTERN` — i.e.
   that no autotune config can silently switch the stress off. Bite-tested in
-  `l0_tokens.sh selftest` section [7]. **A mechanism no gate can observe must be
+  `tokens.sh selftest` section [7]. **A mechanism no gate can observe must be
   assumed dead**: if you add scaffolding here, add the gate that watches it.
 
 ## CPU-side stress liveness
@@ -274,7 +276,7 @@ through, and a count of *all* `ldr` stays comfortably nonzero from the
 = 4 for the same reason: the four sigma branches declare 2+1+1+0 scratchpad stores
 between them, and a non-volatile build lands well under that.
 
-Bite-tested in `l0_tokens.sh selftest` section [8], which is why the checker takes
+Bite-tested in `tokens.sh selftest` section [8], which is why the checker takes
 `--harness-dir`: it re-emits from source on every normal run, so a negative control
 has nothing to land on unless it can be pointed at an already-emitted (mutated)
 harness dir.

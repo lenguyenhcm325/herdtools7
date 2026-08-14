@@ -104,9 +104,8 @@ static int _het_alloc_mode(void){
     fprintf(stderr,
             "HetLitmus FATAL: this run would use managed memory, but the device "
             "reports cudaDevAttrConcurrentManagedAccess=0: the CPU may not touch a "
-            "managed allocation while the kernel is live (the access faults), and a "
-            "system-scope atomic on it is not atomic.  EVERY heterogeneous test here "
-            "does exactly that, so there is nothing to salvage -- rerun with "
+            "managed allocation while the kernel is live (the access faults), and "
+            "EVERY heterogeneous test here does exactly that.  Rerun with "
             "HET_ALLOC=pinned, or on a device that supports concurrent managed "
             "access.\n");
     exit(2);

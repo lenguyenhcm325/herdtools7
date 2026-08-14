@@ -1428,7 +1428,7 @@ end
           let base_of i = List.assoc i.i_pre bases in
           if O.verbose >= 0 then begin
             Printf.eprintf
-              "HetLitmus: emitting Tier-2 harness for %s (%d procs, CPU=%s)\n%!"
+              "HetLitmus: emitting CPU+GPU harness for %s (%d procs, CPU=%s)\n%!"
               tname nprocs_total CpuF.isa_name ;
             List.iter
               (fun ((p,annot,_),_code) ->
@@ -1459,7 +1459,7 @@ end
             end ;
             Printf.eprintf
               "  pair: %s%s\n%!" pair_label
-              (if cpu_only then "  [D10 CPU-ONLY cycle]" else "") ;
+              (if cpu_only then "  [CPU-only cycle]" else "") ;
             (* The `none' sentinel is a DERIVED absence, not a missing row, and
                the two must not read alike in a build log: this test co-runs the
                Layer-B canary alone because it is itself at the lattice floor, so
@@ -1677,19 +1677,20 @@ end
             (* A co-run harness reserves several times the test blocks, so the
                stress population is the first thing the co-residency cap squeezes
                out.  An empty one is a run with no memory stress at all, and on
-               the NVIDIA part measured there the lb and sb shapes yielded zero
-               observations without it [Alglave15 sec 4.3.1].  The tally would
-               catch that afterwards; warn BEFORE the run. *)
+               the NVIDIA part measured there the inter-CTA lb and sb shapes
+               yielded zero observations without it [Alglave15 Tab. 6].  The
+               tally would catch that afterwards; warn BEFORE the run. *)
             s "  if (HET_MEM_STRESS_PCT > 0 && _stressBlocks == 0)\n" ;
-            (* "Zero without stress" is an NVIDIA-only figure [Alglave15
-               sec 4.3.1], so the sentence below claims it only for a machine row
-               that carries it, and states the gap for one that does not. *)
+            (* That zero is one NVIDIA part's figure and covers lb and sb only --
+               mp and coRR were observed unstressed -- so the sentence below
+               claims it, scoped, for a machine row that carries it and states
+               the gap for one that does not. *)
             s (Printf.sprintf
                  "    fprintf(stderr, \"HetLitmus WARNING: the mem-stress population is EMPTY (test=%%d + noise=%%d fills the co-resident cap %%d).  HET_MEM_STRESS_PCT=%%d asks for scratchpad stress and NO block will do any.  %s\\n\",\n\
                \            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_MEM_STRESS_PCT);\n"
                  (if mc.HetMachine.mc_alglave_zero
-                  then "On NVIDIA silicon an unstressed run observes nothing (Alglave ASPLOS'15 4.3.1)."
-                  else "(Alglave ASPLOS'15 4.3.1's \\\"zero without stress\\\" was measured on NVIDIA parts and is not claimed for this target; no equivalent figure is published for it.)")) ;
+                  then "On the NVIDIA GTX Titan the inter-CTA lb and sb tests were observed 0 per 100k without memory stress (Alglave ASPLOS'15 Tab. 6)."
+                  else "(Alglave ASPLOS'15 Tab. 6's zero without memory stress is an NVIDIA GTX Titan measurement and is not claimed for this target; no equivalent figure is published for it.)")) ;
             s "  uint32_t _pre_pat = (uint32_t)HET_PRE_STRESS_PATTERN;\n" ;
             s "  uint32_t _mem_pat = (uint32_t)HET_MEM_STRESS_PATTERN;\n" ;
             s "  fprintf(stderr, \"HetLitmus: blockDim=%d grid=%d (test=%d stress=%d, co-resident cap=%d) pre_pat=%u mem_pat=%u\\n\",\n\
@@ -2000,7 +2001,7 @@ end
             s "      if (_nEnemy > 0 && _er == 0)\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: %d CPU enemy thread(s) were spawned but completed ZERO rounds -- the CPU-side stress did NOT run.  Its non-observations are not those of a CPU-stressed run.\\n\", _nEnemy);\n" ;
             s "      if (HET_CPU_PRELOAD_PCT > 0 && _pl == 0)\n" ;
-            s "        fprintf(stderr, \"HetLitmus WARNING: HET_CPU_PRELOAD_PCT=%d but ZERO preload hints were issued -- the M3 incantation is INERT (this host may have no cache primitives; see het_cpu_stress.h HET_CPU_PRELOAD_LIVE).\\n\", (int)HET_CPU_PRELOAD_PCT);\n" ;
+            s "        fprintf(stderr, \"HetLitmus WARNING: HET_CPU_PRELOAD_PCT=%d but ZERO preload hints were issued -- the cache preload is INERT (this host may have no cache primitives; see het_cpu_stress.h HET_CPU_PRELOAD_LIVE).\\n\", (int)HET_CPU_PRELOAD_PCT);\n" ;
             s "      if (_noise_blocks > 0 && _ng == 0)\n" ;
             s (Printf.sprintf
                  "        fprintf(stderr, \"HetLitmus WARNING: %%u device-side noise block(s) were launched but NONE completed a round -- %s of the %s noise did NOT run.  This run is not interconnect-stressed.\\n\", _noise_blocks);\n"
@@ -2041,7 +2042,7 @@ end
                indistinguishable from a run that saw nothing. *)
             s "    _rec.rec_magic = HET_REC_MAGIC;\n" ;
             s (Printf.sprintf
-                 "    _rec.cpu_only = %d;  /* D10: 1 iff EVERY proc is a CPU proc */\n"
+                 "    _rec.cpu_only = %d;  /* 1 iff EVERY proc is a CPU proc */\n"
                  (if cpu_only then 1 else 0)) ;
             (* The build facts behind the "structurally absent stress" caveat,
                taken from the constants that actually guard the two loops rather
@@ -2692,8 +2693,8 @@ end
                      "    if [ \"$TARGET\" = %s-link ] && [ \"$(uname -m)\" != \"$HET_HOST_ISA\" ]; then\n"
                      d.gd_target) ;
                 s (Printf.sprintf
-                     "      echo \"error: comp.sh %s-link refuses on $(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $HET_HOST_ISA host\" >&2\n"
-                     d.gd_target CpuF.isa_name tname) ;
+                     "      echo \"error: comp.sh %s-link refuses on $(uname -m): %s_cpu_host.o here is the PORTABLE SHIM, not %s asm, so the binary would test nothing -- link on a $HET_HOST_ISA host\" >&2\n"
+                     d.gd_target tname CpuF.isa_name) ;
                 s "      exit 3\n" ;
                 s "    fi\n" ;
                 s (Printf.sprintf
@@ -2785,8 +2786,8 @@ end
                 s (Printf.sprintf "%s-bin: %s outs.o %s_cpu_host.o\n"
                      d.gd_target (gpu_obj d tname) tname) ;
                 s (Printf.sprintf
-                     "\t@ test \"$$(uname -m)\" = \"$(HET_HOST_ISA)\" || { echo \"error: %s-bin refuses on $$(uname -m): this harness's CPU thread is %s asm, so %s_cpu_host.o here is the PORTABLE SHIM and the binary would test nothing -- link on a $(HET_HOST_ISA) host\" >&2 ; exit 3 ; }\n"
-                     d.gd_target CpuF.isa_name tname) ;
+                     "\t@ test \"$$(uname -m)\" = \"$(HET_HOST_ISA)\" || { echo \"error: %s-bin refuses on $$(uname -m): %s_cpu_host.o here is the PORTABLE SHIM, not %s asm, so the binary would test nothing -- link on a $(HET_HOST_ISA) host\" >&2 ; exit 3 ; }\n"
+                     d.gd_target tname CpuF.isa_name) ;
                 s (Printf.sprintf "\t$(%s) %s$(%s) $^ -o %s -lpthread -lm\n\n"
                      d.gd_compiler_var d.gd_arch_flag d.gd_arch_var tname))
               dialects ;
@@ -2801,7 +2802,7 @@ end
             s ".SUFFIXES:\n\n" ;
             s (Printf.sprintf "%s:\n" tname) ;
             s (Printf.sprintf
-                 "\t@ echo \"error: \\`make %s' is not a build target: it would bypass the uname -m guard (and, without this rule, make's built-in \\`%%: %%.o' rule links it with \\$$(CC) and no device code at all).  Link it with %s, %s uname -m first.\" >&2 ; exit 3\n\n"
+                 "\t@ echo \"error: \\`make %s' is not a build target: it would bypass the uname -m guard.  Link it with %s, %s uname -m first.\" >&2 ; exit 3\n\n"
                  tname
                  (String.concat " or "
                     (List.map
@@ -2818,7 +2819,6 @@ end
           let dump_readme ch =
             let s = output_string ch in
             s (Printf.sprintf "# HetLitmus heterogeneous harness: %s\n\n" tname) ;
-            s "Heterogeneous CPU+GPU litmus harness emitted by litmus7 (`Het` arch).\n\n" ;
             s (Printf.sprintf "CPU ISA: %s.  GPU dialect%s: %s.\n\n"
                  CpuF.isa_name (plural "" "s")
                  (String.concat " + "
@@ -2826,21 +2826,13 @@ end
                        (fun d -> Printf.sprintf "%s (`.%s`)" d.gd_name d.gd_ext)
                        dialects))) ;
             if co_run then begin
-              s "## The positive control is CO-RUNNING in this harness\n\n" ;
-              s "A test's null result is evidence only if the harness would have seen a\n" ;
-              s "weak behaviour had one occurred.  Every het instance below therefore\n" ;
-              s (fill "shares this launch, this stress config and this @LINK@ path, on disjoint\n") ;
-              s "cache-line-padded locations:\n\n" ;
+              s "Co-running in this launch, on disjoint cache-line-padded locations:\n\n" ;
               List.iter
                 (fun i ->
                   s (Printf.sprintf "- `%s` (%s) -- prefix `%s`, K=%d\n"
                        i.i_name (role_note i.i_role) i.i_pre i.i_k))
                 insts ;
-              s "\nLayer A is the test under study's structural twin at the lattice floor --\n" ;
-              s "every ordering annotation dropped; Layer B is the fixed het canary.  Neither\n" ;
-              s "carries a prediction: their counts say how hot the harness was, and nothing\n" ;
-              s "about what the test ought to have done.  See `het_verdict.h` for the rule\n" ;
-              s "that reads them.\n\n"
+              s "\n"
             end ;
             s "Files:\n" ;
             (* the renders first, their descriptions started at a common column *)
@@ -2859,77 +2851,32 @@ end
                  "- `comp.sh` / `Makefile`  compile-only build, plus %s guarded link target%s.\n\n"
                  (plural "the" "the two") (plural "" "s")) ;
             s (Printf.sprintf
-                 "Build (compile-only; no GPU needed): `sh comp.sh [%s]` (default %s),\n"
-                 (String.concat "|" targets) d0.gd_target) ;
-            s (Printf.sprintf "or %s.\n\n"
+                 "Build (compile-only, no GPU): `sh comp.sh [%s]` (default %s), or %s.\n"
+                 (String.concat "|" targets) d0.gd_target
                  (String.concat " / "
                     (List.map (fun t -> Printf.sprintf "`make %s`" t)
                        targets))) ;
-            s "## Building the executable\n\n" ;
             List.iter
               (fun d ->
                 s (Printf.sprintf
-                     "%s: `sh comp.sh %s-link` or `make %s-bin` links `./%s` from `%s`\n"
-                     d.gd_vendor d.gd_target d.gd_target tname (gpu_obj d tname)) ;
-                s (Printf.sprintf "(`$%s %s$%s`, %s).\n"
-                     d.gd_compiler_var d.gd_arch_flag d.gd_arch_var
+                     "Link: `sh comp.sh %s-link` or `make %s-bin` writes `./%s` from `%s`\n"
+                     d.gd_target d.gd_target tname (gpu_obj d tname)) ;
+                s (Printf.sprintf "  (%s: `$%s %s$%s`, %s).\n"
+                     d.gd_vendor d.gd_compiler_var d.gd_arch_flag d.gd_arch_var
                      (match mc_part with
                       | Some p -> Printf.sprintf "%s = %s" d.gd_arch_default p
                       | None -> "default " ^ d.gd_arch_default)))
               dialects ;
-            s "\n" ;
-            s "The GPU compiler driver pulls in its own device runtime; `-lpthread -lm`\n" ;
-            s "cover the CPU threads and the statistics layer.  ONE binary path per vendor\n" ;
-            s "is deliberate: `run-one.sh` and `campaign.py` exec `./<test>` and stay\n" ;
-            s "vendor-agnostic.  litmus7 renders ONE dialect per harness (`-gpu-target`),\n" ;
             s (Printf.sprintf
-                 "so this directory carries the %s build arms and nothing else; %s\n"
-                 vendors
-                 (enum (List.map (fun t -> Printf.sprintf "`make %s-bin`" t) targets))) ;
+                 "%s link paths REFUSE unless `uname -m` is `%s`: elsewhere\n"
+                 (count_word (2 * n_d)) host_uname) ;
             s (Printf.sprintf
-                 "%s `.PHONY` and always relink%s, so a build can never report success\n"
-                 (plural "is" "are") (plural "s" "")) ;
-            s "while leaving a stale binary in place.\n\n" ;
-            s (Printf.sprintf "%s %s\n"
-                 (count_word (2 * n_d))
-                 (enum
-                    (List.concat
-                       (List.map
-                          (fun d ->
-                            [ Printf.sprintf "`sh comp.sh %s-link`" d.gd_target ;
-                              Printf.sprintf "`make %s-bin`" d.gd_target ])
-                          dialects)))) ;
+                 "`%s_cpu_host.o` is the portable shim, not the %s asm, and the binary\n"
+                 tname CpuF.isa_name) ;
+            s "would test nothing.\n\n" ;
             s (Printf.sprintf
-                 "REFUSE unless `uname -m` is `%s`: elsewhere `%s_cpu_host.o` is compiled\n"
-                 host_uname tname) ;
-            s (Printf.sprintf
-                 "from the `#else` shim, not the %s asm, so the binary would run happily and\n"
-                 CpuF.isa_name) ;
-            s "test nothing.\n\n" ;
-            List.iter
-              (fun d ->
-                s (Printf.sprintf
-                     "Name the GPU arch explicitly, e.g. `%s=%s make %s-bin`%s: a build\n"
-                     d.gd_arch_var d.gd_arch_default d.gd_target
-                     (match mc_part with
-                      | Some p -> Printf.sprintf " (%s)" p
-                      | None -> "")) ;
-                s "for the wrong arch links and exits 0 just as happily.  Compile-time knobs\n" ;
-                s (Printf.sprintf
-                     "go through the compiler variable, e.g. `make %s-bin %s=\"%s -DHET_MEM_STRESS_PCT=0\"`.\n"
-                     d.gd_target d.gd_compiler_var d.gd_compiler))
-              dialects ;
-            s "\n" ;
-            s "`HET_PLACE` is the exception: page placement exists only on a render whose\n" ;
-            s "runtime has a placement API, and a non-zero value REFUSES to compile on a\n" ;
-            s "render that has none rather than be reported in the banner without placing\n" ;
-            s "anything.\n\n" ;
-            s (Printf.sprintf
-                 "`make %s` is NOT one of these targets and refuses: it would bypass\n" tname) ;
-            s "the `uname -m` guard, and without that refusal make silently falls back to its\n" ;
-            s "built-in `%: %.o` rule and links the harness with `$(CC)` and no device code.\n" ;
-            s (Printf.sprintf "Use %s.\n\n"
-                 (enum (List.map (fun t -> Printf.sprintf "`make %s-bin`" t) targets))) ;
+                 "The co-run layers, the build knobs and why `make %s` refuses:\n" tname) ;
+            s "`hetlitmus/docs/het-emission.md`.\n\n" ;
             (* What this harness was built for, and the last line a reader of a
                results tree meets.  A part is named only where the pair's machine
                row names one; where none does, the pair and the reason stand in
@@ -2949,8 +2896,8 @@ end
              | None -> ()
              | Some why ->
                 s (Printf.sprintf
-                     "This harness names no silicon: %s.\nA result from it is filed \
-                      under `%s` and nothing more.\n"
+                     "It names no silicon (%s), so a result from it is filed\nunder \
+                      `%s` and nothing more.\n"
                      why pair_label)) in
           write "outs.h" (fun ch -> output_string ch outs_h_content) ;
           write "outs.c" (fun ch -> output_string ch outs_c_content) ;

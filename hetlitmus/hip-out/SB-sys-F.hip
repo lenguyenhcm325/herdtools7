@@ -38,7 +38,7 @@ __global__ void litmus_SB_sys_F(int* x, int* y, int* __out) {
   }
 }
 
-// ---- host harness (illustrative; compile-checked for gfx942 via hetlitmus/compile-hip.sh; run = Task 9, MI300A) ----
+// ---- host harness (illustrative; compile-checked for gfx942 by hipcc) ----
 // Result buffer layout: __out[proc * 4 + regIndex].
 // Reset all globals to 0 before each launch; the weak outcome under
 // test is exactly the `condition' line above.
@@ -51,7 +51,7 @@ int main(void) {
     *y = 0;
     hipLaunchKernelGGL(litmus_SB_sys_F, dim3(2), dim3(1), 0, 0, x, y, __out);
     (void)hipDeviceSynchronize();
-    // TODO(hardware, Task 9): tally __out against the condition.
+    // TODO(hardware): tally __out against the condition.
   }
   return 0;
 }

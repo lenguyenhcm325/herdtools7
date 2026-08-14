@@ -5,10 +5,10 @@ window-opener kept separate from the system-scope cross-device rendezvous; and
 the perpetual-loop invariants (co-residency guard, observer slot, pinned trip
 counts) still standing underneath it.
 
-Stress is not an optimisation: on NVIDIA silicon (our GH200 target) the harness
-observes nothing without it, whereas the same source saw weak behaviours on AMD
-with no incantation at all, so on the .hip render this layer amplifies rates
-rather than enabling observation.  The quotes, tables and vendor split live once,
+Stress is not an optimisation: on the NVIDIA GTX Titan the inter-CTA lb and sb
+tests were observed 0 per 100k without it, whereas the same source saw weak
+behaviours on AMD with no incantation at all, so on the .hip render this layer
+amplifies rates rather than enabling observation.  The quotes, tables and vendor split live once,
 in the emitted het_stress.h (pinned in (e3)); do not repeat the claim
 unqualified.
 
@@ -143,8 +143,8 @@ if-chain has no else, so upstream's pattern 57 would silently stress nothing.
   $ grep -c '#error "HET_MEM_STRESS_PATTERN must be 0..3' MP-cg-sys-acqrel-2s/het_stress.h
   1
 
-(e2) liveness tally: every mechanism in the stress layer is invisible to the L0
-faithfulness gate (it is scaffolding, not a tested op), so its health is measured
+(e2) liveness tally: every mechanism in the stress layer is invisible to the
+static faithfulness gate (it is scaffolding, not a tested op), so its health is measured
 at RUN TIME or not at all.  het_spin tallies how each spin ended (rendezvous vs
 the 1024-spin deadlock cap); the stress lanes flag a HET_STRESS_MAX_ROUNDS
 cap-exit, which means stress stopped while the test was still running.  The host

@@ -662,10 +662,10 @@ hetlitmus-corpus: | build
 
 ### Every emitted harness carries exactly the memory ops its .litmus annotates,
 ### with the right kind, order and scope, and no others
-### (hetlitmus/verify/ptxcheck.py; hetlitmus/docs/verify-l0.md).
+### (hetlitmus/verify/ptxcheck.py; hetlitmus/docs/faithfulness.md).
 hetlitmus-faithful: | build
 	@ echo
-	bash hetlitmus/verify/l0_tokens.sh all
+	bash hetlitmus/verify/tokens.sh all
 	@ echo "HetLitmus Layer-3 PTX faithfulness (548): OK"
 
 ### A curated sample of emitted harnesses builds end to end through its own
@@ -681,7 +681,7 @@ hetlitmus-smoke: | build
 ### scaffolding, not a model op (hetlitmus/verify/stresscheck.py).
 hetlitmus-stress: | build
 	@ echo
-	bash hetlitmus/verify/l0_tokens.sh stress
+	bash hetlitmus/verify/tokens.sh stress
 	@ echo "HetLitmus Layer-3 stress liveness: OK"
 
 ### The CPU-side and interconnect stress mechanisms -- invisible to both PTX
@@ -689,7 +689,7 @@ hetlitmus-stress: | build
 ### and zero when off (hetlitmus/verify/cpustresscheck.py).
 hetlitmus-cpustress: | build
 	@ echo
-	bash hetlitmus/verify/l0_tokens.sh cpustress
+	bash hetlitmus/verify/tokens.sh cpustress
 	@ echo "HetLitmus Layer-3 CPU+interconnect stress liveness: OK"
 
 ### Every test off the lattice floor names a mu(T) that exists and is strictly
@@ -699,7 +699,7 @@ hetlitmus-controlmap: | build
 	@ echo
 	python3 hetlitmus/verify/controlmap.py --check
 	python3 hetlitmus/verify/controlmap.py --bite
-	@ echo "HetLitmus B6 control map: OK (and the gate bites)"
+	@ echo "HetLitmus control map: OK (and the gate bites)"
 
 ### The same gate on the x86 lattice, which loses the middle rung the AArch64
 ### one has, so the AMD map is a separate artifact and never a translation.
@@ -717,7 +717,7 @@ hetlitmus-dup: | build
 	@ echo
 	python3 hetlitmus/verify/dupcheck.py
 	python3 hetlitmus/verify/dupcheck.py --bite
-	@ echo "HetLitmus Q10 isomorphism/dedup gate: OK (and the gate bites)"
+	@ echo "HetLitmus isomorphism/dedup gate: OK (and the gate bites)"
 
 ### The per-primitive ordering table behind the control-map lattice, decided by
 ### herd7's native AArch64 model and by hetlitmus/cats/nvidia-ptx.cat [Lustig19]
@@ -735,7 +735,7 @@ hetlitmus-verdict: | build
 	@ echo
 	python3 hetlitmus/verify/verdictcheck.py
 	python3 hetlitmus/verify/verdictcheck.py --bite
-	@ echo "HetLitmus B6 decision rule: OK (and the gate bites)"
+	@ echo "HetLitmus decision rule: OK (and the gate bites)"
 
 ### het_stats_compute() -- what a "Never" is worth -- compiled from the real
 ### emitted header and driven with synthetic record streams, through the stop
@@ -744,7 +744,7 @@ hetlitmus-stats: | build
 	@ echo
 	python3 hetlitmus/verify/statscheck.py
 	python3 hetlitmus/verify/statscheck.py --bite
-	@ echo "HetLitmus B7 statistics layer: OK (and the gate bites)"
+	@ echo "HetLitmus statistics layer: OK (and the gate bites)"
 
 ### litmus7's inherited outs histogram: fed exactly once per observation, and
 ### never printing a number for a location column no run measures
@@ -753,7 +753,7 @@ hetlitmus-hist: | build
 	@ echo
 	python3 hetlitmus/verify/histcheck.py
 	python3 hetlitmus/verify/histcheck.py --bite
-	@ echo "HetLitmus F-A histogram tally + display: OK (and the gate bites)"
+	@ echo "HetLitmus histogram tally + display: OK (and the gate bites)"
 
 ### The autotuner search machinery (hetlitmus/tune.py): it finds a known optimum,
 ### crowns nobody on a constant objective, and breaks when any transfer fix is
@@ -763,7 +763,7 @@ hetlitmus-tuner:
 	python3 hetlitmus/tune.py --self-test >/dev/null
 	python3 hetlitmus/verify/tunecheck.py
 	python3 hetlitmus/verify/tunecheck.py --bite
-	@ echo "HetLitmus B8a tuner search machinery: OK (and the gate bites)"
+	@ echo "HetLitmus tuner search machinery: OK (and the gate bites)"
 
 ### The emitted CPU observer still reloads once per iteration at clang -O2 on
 ### both host ISAs -- it is the only recovery channel the store-only shapes have
@@ -805,65 +805,60 @@ hetlitmus-x86fixture: | build
 ### they are generated on demand, so corpus-gate.sh's census and dupcheck.py --
 ### both of which scan hetlitmus/tests/het non-recursively -- stay meaningful.
 ### Absolute, because the generator and the recipe below both cd elsewhere.
-HETD10OUT := $(CURDIR)/hetlitmus/tests/het/d10-out
+HETCPUONLYOUT := $(CURDIR)/hetlitmus/tests/het/cpuonly-out
 
 ### The GPU dialect these harnesses are rendered for.  litmus7 emits ONE vendor
 ### per harness dir, and the machine lives on the pair: this corpus has an x86_64
 ### CPU column, so `hip' selects the pair that names the MI300A.  `cuda' is legal
 ### and reads the same map, but names no machine, so it is a machinery smoke.
-HETD10TARGET ?= hip
+HETCPUONLYTARGET ?= hip
 
 ### The negative control for the cpu_only stamp: a corpus test with a GPU proc,
 ### which the emitter must stamp 0.  Emitted into a temp dir, since the count of
-### harness dirs in $(HETD10OUT) is pinned.  Both halves are knobs so the check
-### can be shown to bite: point them at a CPU-only test and the grep must fail.
-HETD10NEGDIR ?= $(CURDIR)/hetlitmus/tests/het
-HETD10NEG ?= MP-cg-sys-relaxed
+### harness dirs in $(HETCPUONLYOUT) is pinned.  Both halves are knobs so the
+### check can be shown to bite: point them at a CPU-only test and the grep fails.
+HETCPUONLYNEGDIR ?= $(CURDIR)/hetlitmus/tests/het
+HETCPUONLYNEG ?= MP-cg-sys-relaxed
 
 ### The CPU-only shapes as a campaign item: generate, emit, read every render for
 ### the `_rec.cpu_only = 1' stamp against a het control that must stamp 0, print
 ### the campaign command.  It does NOT run them: only the target box's would count.
-hetlitmus-d10: | build
+hetlitmus-cpuonly: | build
 	@ echo
-	rm -rf $(HETD10OUT)
-	hetlitmus/tests/het/generate-d10.sh $(HETD10OUT)
-	@ set -e ; cd $(HETD10OUT) ; for t in *.litmus ; do \
+	rm -rf $(HETCPUONLYOUT)
+	hetlitmus/tests/het/generate-cpuonly.sh $(HETCPUONLYOUT)
+	@ set -e ; cd $(HETCPUONLYOUT) ; for t in *.litmus ; do \
 	    $(CURDIR)/_build/install/default/bin/litmus7 \
-	      -gpu-target $(HETD10TARGET) \
+	      -gpu-target $(HETCPUONLYTARGET) \
 	      -set-libdir $(CURDIR)/litmus/libdir \
 	      -o . "$$t" 2>&1 | grep -E 'pair:|REFUSED' ; done
-	@ set -e ; n=$$(ls -d $(HETD10OUT)/*/ 2>/dev/null | wc -l) ; \
-	  test "$$n" -eq 6 || { echo "hetlitmus-d10: emitted $$n harness dir(s), expected 6" ; exit 1 ; }
-	@ set -e ; n=0 ; for d in $(HETD10OUT)/*/ ; do \
+	@ set -e ; n=$$(ls -d $(HETCPUONLYOUT)/*/ 2>/dev/null | wc -l) ; \
+	  test "$$n" -eq 6 || { echo "hetlitmus-cpuonly: emitted $$n harness dir(s), expected 6" ; exit 1 ; }
+	@ set -e ; n=0 ; for d in $(HETCPUONLYOUT)/*/ ; do \
 	    r=$$(ls $$d*.hip $$d*.cu 2>/dev/null | head -1) ; \
-	    test -n "$$r" || { echo "hetlitmus-d10: $$d carries no render" ; exit 1 ; } ; \
+	    test -n "$$r" || { echo "hetlitmus-cpuonly: $$d carries no render" ; exit 1 ; } ; \
 	    grep -q '_rec\.cpu_only = 1;' "$$r" || { \
-	      echo "hetlitmus-d10: $$r does not stamp _rec.cpu_only = 1 -- a CPU-only" ; \
+	      echo "hetlitmus-cpuonly: $$r does not stamp _rec.cpu_only = 1 -- a CPU-only" ; \
 	      echo "  cycle whose harness does not say so is reported as a compound-model row" ; \
 	      exit 1 ; } ; \
 	    n=$$((n+1)) ; done ; \
-	  echo "hetlitmus-d10: $$n/6 renders stamp _rec.cpu_only = 1"
+	  echo "hetlitmus-cpuonly: $$n/6 renders stamp _rec.cpu_only = 1"
 	@ set -e ; t=$$(mktemp -d) ; \
 	  $(CURDIR)/_build/install/default/bin/litmus7 -gpu-target cuda \
 	    -set-libdir $(CURDIR)/litmus/libdir -o "$$t" \
-	    $(HETD10NEGDIR)/$(HETD10NEG).litmus >"$$t/emit.log" 2>&1 \
+	    $(HETCPUONLYNEGDIR)/$(HETCPUONLYNEG).litmus >"$$t/emit.log" 2>&1 \
 	    || { cat "$$t/emit.log" ; rm -rf "$$t" ; exit 1 ; } ; \
-	  r="$$t/$(HETD10NEG)/$(HETD10NEG).cu" ; \
+	  r="$$t/$(HETCPUONLYNEG)/$(HETCPUONLYNEG).cu" ; \
 	  grep -q '_rec\.cpu_only = 0;' "$$r" \
-	    || { echo "hetlitmus-d10: the het control $(HETD10NEG) does not stamp" ; \
+	    || { echo "hetlitmus-cpuonly: the het control $(HETCPUONLYNEG) does not stamp" ; \
 	         echo "  _rec.cpu_only = 0 -- the flag is a constant, so the six 1s above" ; \
 	         echo "  vouch for nothing" ; rm -rf "$$t" ; exit 1 ; } ; \
 	  rm -rf "$$t" ; \
-	  echo "hetlitmus-d10: the het control $(HETD10NEG) stamps _rec.cpu_only = 0"
+	  echo "hetlitmus-cpuonly: the het control $(HETCPUONLYNEG) stamps _rec.cpu_only = 0"
 	@ echo
-	@ echo "D10 harnesses in $(HETD10OUT), rendered for $(HETD10TARGET).  On the TARGET box:"
-	@ echo "    cd <test> && sh comp.sh $(HETD10TARGET)-link"
-	@ echo "    ./<test>                            # SB and R must FIRE"
-	@ echo "  then, for the campaign:"
-	@ echo "    python3 hetlitmus/campaign.py --corpus $(HETD10OUT) \\"
-	@ echo "        --runner 'sh hetlitmus/spotcheck/run-one.sh {dir} {test}'"
-	@ echo "  (no --d10 flag: campaign.py reads cpu_only= off the HetStats line,"
-	@ echo "   so the WB-probe verdict cannot be forgotten at the command line.)"
+	@ echo "CPU-only harnesses in $(HETCPUONLYOUT), rendered for $(HETCPUONLYTARGET).  On the target box:"
+	@ echo "    cd <test> && sh comp.sh $(HETCPUONLYTARGET)-link && ./<test>    # SB and R must FIRE"
+	@ echo "    python3 hetlitmus/campaign.py --corpus $(HETCPUONLYOUT) --runner 'sh hetlitmus/spotcheck/run-one.sh {dir} {test}'"
 
 ### An AMD harness builds and links into an ELF carrying real gfx942 code, its
 ### allocator and placement refusals execute under a stub, and the CUDA lane does
@@ -904,12 +899,12 @@ hetlitmus-run-hw: | build
 ### The discriminating power of the toolchain lane: ptxcheck detects a weakened
 ### scope or order, the stress scaffolding bites a dead layer, the co-run gate
 ### catches a missing control, and two invariance checks get their teeth here.
-hetlitmus-l0-selftest: | build
+hetlitmus-selftest: | build
 	@ echo
-	bash hetlitmus/verify/l0_tokens.sh selftest
-	bash hetlitmus/verify/l0_tokens.sh guard
+	bash hetlitmus/verify/tokens.sh selftest
+	bash hetlitmus/verify/tokens.sh guard
 	bash hetlitmus/verify/smoke.sh bite
-	@ echo "HetLitmus L0 discriminating power (selftest + guard + smoke bite): OK"
+	@ echo "HetLitmus static token check discriminating power (selftest + guard + smoke bite): OK"
 
 ### Umbrellas (what you press).  `::` accumulation, order-only `| build`.
 hetlitmus-test:: | build
@@ -926,7 +921,7 @@ hetlitmus-test:: hetlitmus-hist
 hetlitmus-test:: hetlitmus-tuner
 hetlitmus-test:: hetlitmus-x86body
 hetlitmus-test:: hetlitmus-x86fixture
-hetlitmus-test:: hetlitmus-d10
+hetlitmus-test:: hetlitmus-cpuonly
 hetlitmus-test:: hetlitmus-run-gate
 
 ### The second umbrella takes a target when it needs a toolchain or a device this
@@ -940,7 +935,7 @@ hetlitmus-test-toolchain:: hetlitmus-obs
 hetlitmus-test-toolchain:: hetlitmus-hipbuild
 hetlitmus-test-toolchain:: hetlitmus-characterize-hw
 hetlitmus-test-toolchain:: hetlitmus-run-hw
-hetlitmus-test-toolchain:: hetlitmus-l0-selftest
+hetlitmus-test-toolchain:: hetlitmus-selftest
 hetlitmus-test-toolchain:: hetlitmus-smoke
 
 hetlitmus-test-nvcc: hetlitmus-test-toolchain
@@ -964,9 +959,9 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
 .PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-lattice
-.PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-l0-selftest
+.PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-selftest
 .PHONY: hetlitmus-recfields
-.PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-d10
+.PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-cpuonly
 .PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate hetlitmus-run-hw
 .PHONY: hetlitmus-amd-controlmap
 .PHONY: hetlitmus-test hetlitmus-test-toolchain hetlitmus-test-nvcc

@@ -35,7 +35,7 @@
 
 set -e
 # OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so
-# a relative path works -- the same rule generate-x86.sh and generate-d10.sh
+# a relative path works -- the same rule generate-x86.sh and generate-cpuonly.sh
 # state at this spot.
 OUT="${1:-}"
 if [ -n "$OUT" ]; then mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"; fi
@@ -206,4 +206,5 @@ done
 # @all manifest (only the committed, default-arch tests if CPU_ARCHS=aarch64).
 # ---------------------------------------------------------------------------
 ls *.litmus | LC_ALL=C sort > @all
-echo "Done. $(wc -l < @all) tests in $(pwd) (grid: $grid_count generated, $skip_count degenerate skipped; two-sided: $twosided_count; order-pair: $pair_count generated, $diag_count diagonal cells verified == their (D) sibling and skipped); manifest @all written."
+echo "Done. $(wc -l < @all) tests in $(pwd); manifest @all written."
+echo "  grid $grid_count (+$skip_count degenerate skipped), two-sided $twosided_count, order-pair $pair_count (+$diag_count diagonal cells == their (D) sibling)"

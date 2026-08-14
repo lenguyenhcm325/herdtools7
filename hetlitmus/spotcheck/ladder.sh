@@ -411,7 +411,7 @@ if [ -d "$TESTS_DIR/$T5" ]; then
   # knobs at 0 the mechanisms are not requested, so the `dead' disqualifiers
   # correctly do not fire and nothing says "unstressed".
   obsfield() { grep -m1 '^HetObs ' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p"; }
-  for pair in "do_stress_rounds GPU scratchpad" "enemy_rounds CPU enemies" "preload M3 preload"; do
+  for pair in "do_stress_rounds GPU scratchpad" "enemy_rounds CPU enemies" "preload CPU cache preload"; do
     f="${pair%% *}"; what="${pair#* }"
     voff="$(obsfield "$offlog" "$f")"; von="$(obsfield "$onlog" "$f")"
     if [ "${voff:-x}" = "0" ] && [ -n "${von:-}" ] && [ "${von:-0}" != "0" ]; then
