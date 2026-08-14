@@ -40,7 +40,7 @@ cd "$(dirname "$0")"
 : "${OUT:=$(pwd)}"
 # shellcheck source=../../paths.sh
 source ../../paths.sh
-COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell -arch LISA"
+COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell -arch LISA -oneloc"
 # shellcheck source=../_grid_lib.sh
 source ../_grid_lib.sh
 

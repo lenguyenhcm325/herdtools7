@@ -12,11 +12,14 @@
 # The grid rule and its rationale: hetlitmus/docs/corpus-grid.md.
 
 # --- shape catalogue: cycle (base edges) + proc count -----------------------
-# Base-edge vocabulary used here:
-#   Pod<XY>  intra-proc program order, X->Y, different location (X,Y in {W,R})
-#   Rfe      read-from external          (W -> R)
-#   Fre      from-read external          (R -> W)
-#   Coe      coherence-order external    (W -> W)
+# Base-edge vocabulary used here, with L the location letter (d = different
+# location, s = same location):
+#   Po<L><XY>  intra-proc program order, X->Y  (X,Y in {W,R})
+#   Rfe        read-from external          (W -> R)
+#   Fre        from-read external          (R -> W)
+#   Coe        coherence-order external    (W -> W)
+# A cycle whose program-order edges are all `Pos' touches one location, which
+# diy refuses unless the driver passes `-oneloc'.
 declare -A SHAPE_CYCLE=(
   [MP]="PodWW Rfe PodRR Fre"
   [SB]="PodWR Fre PodWR Fre"
@@ -78,10 +81,17 @@ TWO_SIDED_ORDERS="acqrel fence"
 scope_cc() { case "$1" in cta) echo Cta;; gpu) echo Gpu;; sys) echo Sys;;
   *) echo "bad scope: $1" >&2; return 1;; esac; }
 
-# edge_src_dst <base-edge>  -> sets globals SRC,DST (each W or R) and IS_PO (0/1)
+# edge_src_dst <base-edge>  -> sets globals SRC,DST (each W or R), IS_PO (0/1)
+# and, for an intra-proc edge, its location letter PO_LOC (d|s) plus access
+# suffix PO_XY.  A fence edge is spelled <fence><PO_LOC><PO_XY>, so the letter
+# travels with the edge instead of being fixed at each call site.  Every arm
+# assigns all five: an external edge clears PO_LOC/PO_XY, so a caller that reads
+# them without checking IS_PO cannot pick up the previous edge's letters.
 edge_src_dst() {
+  PO_LOC=""; PO_XY=""
   case "$1" in
-    Pod??) local xy=${1#Pod}; SRC=${xy:0:1}; DST=${xy:1:1}; IS_PO=1;;
+    Po[ds]??) PO_LOC=${1:2:1}; PO_XY=${1:3:2}
+              SRC=${PO_XY:0:1}; DST=${PO_XY:1:1}; IS_PO=1;;
     Rfe)   SRC=W; DST=R; IS_PO=0;;
     Fre)   SRC=R; DST=W; IS_PO=0;;
     Coe)   SRC=W; DST=W; IS_PO=0;;
@@ -120,7 +130,7 @@ render_cycle() {
     base="$e"
     if [ "$order" = fence ] && [ "$IS_PO" = 1 ]; then
       # standalone scoped fence between the two (relaxed) accesses of this proc
-      base="FenceSc${SC}d${e#Pod}"
+      base="FenceSc${SC}${PO_LOC}${PO_XY}"
     fi
     out="$out ${base}${os}${SC}${od}${SC}"
   done
@@ -153,13 +163,13 @@ arm_ord() {
 # render_cpu_cycle <order> <base-edge>...  ->  annotated AArch64 edge token list
 # (the CPU-side mirror of render_cycle, but with ARM atoms and NO scope).
 #   acqrel   : every read -> LDAPR (Q), every write -> STLR (L)  (atom per end)
-#   fence    : every access plain; each intra-proc Pod<XY> becomes the
-#              full-barrier edge `DMB.SYd<XY>'.  External edges (Rfe/Fre/Coe)
+#   fence    : every access plain; each intra-proc Po<L><XY> becomes the
+#              full-barrier edge `DMB.SY<L><XY>'.  External edges (Rfe/Fre/Coe)
 #              stay bare: their plain ends agree with the adjacent atoms.
-#   fence-st : the same with the partial barriers `DMB.STd<XY>' (orders
-#   fence-ld   store->store only) and `DMB.LDd<XY>' (load->load and load->store
-#              only) -- the CPU one-role halves.  Used only by the order-pair
-#              grid; the matched two-sided family stays on acqrel/fence.
+#   fence-st : the same with the partial barriers `DMB.ST<L><XY>' (orders
+#   fence-ld   store->store only) and `DMB.LD<L><XY>' (load->load and
+#              load->store only) -- the CPU one-role halves, used only by the
+#              order-pair grid (the two-sided family stays on acqrel/fence).
 render_cpu_cycle() {
   local order="$1"; shift
   local out="" e as ad base fb=""
@@ -171,7 +181,7 @@ render_cpu_cycle() {
   for e in "$@"; do
     edge_src_dst "$e" || return 1
     if [ -n "$fb" ]; then
-      if [ "$IS_PO" = 1 ]; then base="${fb}d${e#Pod}"; else base="$e"; fi
+      if [ "$IS_PO" = 1 ]; then base="${fb}${PO_LOC}${PO_XY}"; else base="$e"; fi
       out="$out $base"
     else
       as=$(arm_ord "$SRC" "$order") || return 1
@@ -210,7 +220,8 @@ TWO_SIDED_GPU_ORDERS="ra sc rel acq"
 # four on the GPU side, so no further shape adds a combination.  Two procs also
 # keep a cell legible: one cpu and one gpu token per test, so a 3- or 4-proc cut
 # would put a single token on several procs at once.  SB and LB emit one cut,
-# for the rotation-by-two reason recorded at SHAPE_HET_CUTS above.
+# for the rotation-by-two reason recorded at SHAPE_HET_CUTS above.  A `Pos'
+# shape stays out: only one of its procs carries a program-order pair.
 TWO_SIDED_PAIR_SHAPES="MP SB LB R S"
 declare -A SHAPE_2S_PAIR_CUTS=(
   [MP]="cpu,gpu gpu,cpu"
@@ -234,8 +245,8 @@ render_2s_cpu() {
 
 # render_2s_gpu <gpu-tok> <base-edge>...  ->  Bell/LISA edge token list.
 # `sc|rel|acq' keep every access relaxed at sys scope and put the ordering in a
-# standalone fence event, as the `fence' column does; `sc' reproduces
-# `render_cycle sys fence' token for token.
+# standalone `Fence<o>Sys<L><XY>' event, as the `fence' column does; `sc'
+# reproduces `render_cycle sys fence' token for token.
 render_2s_gpu() {
   local t="$1"; shift
   local o
@@ -250,7 +261,7 @@ render_2s_gpu() {
   for e in "$@"; do
     edge_src_dst "$e" || return 1
     base="$e"
-    [ "$IS_PO" = 1 ] && base="Fence${o}Sysd${e#Pod}"
+    [ "$IS_PO" = 1 ] && base="Fence${o}Sys${PO_LOC}${PO_XY}"
     out="$out ${base}RelaxedSysRelaxedSys"
   done
   echo "${out# }"

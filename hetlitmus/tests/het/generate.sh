@@ -45,7 +45,7 @@ HETDIR="$(pwd)"
 : "${OUT:=$HETDIR}"
 # shellcheck source=../../paths.sh
 source ../../paths.sh
-COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell"
+COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell -oneloc"
 # shellcheck source=../_grid_lib.sh
 source ../_grid_lib.sh
 

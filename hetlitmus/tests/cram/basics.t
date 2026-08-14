@@ -25,12 +25,22 @@ acqrel: the complete pair in one cycle -- reads -> Acquire AND writes -> Release
 Reachable only through the two-sided family, so nothing else specifies it.
   $ bash -c 'source ../_grid_lib.sh; render_cycle sys acqrel PodWW Rfe PodRR Fre'
   PodWWReleaseSysReleaseSys RfeReleaseSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysReleaseSys
+Same-location program order: a Pos<XY> edge carries its own location letter into
+the fence spelling (FenceSc<Scope>s<XY>, double s), and on a non-fence order the
+base edge reaches the atom path unchanged.
+  $ bash -c 'source ../_grid_lib.sh; render_cycle sys fence Rfe PosRR Fre'
+  RfeRelaxedSysRelaxedSys FenceScSyssRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
+  $ bash -c 'source ../_grid_lib.sh; render_cycle sys acquire Rfe PosRR Fre'
+  RfeRelaxedSysAcquireSys PosRRAcquireSysAcquireSys FreAcquireSysRelaxedSys
 render_cpu_cycle -- the AArch64 mirror.  acqrel: read -> LDAPR (Q), write -> STLR (L).
   $ bash -c 'source ../_grid_lib.sh; render_cpu_cycle acqrel PodWR Fre PodWR Fre'
   PodWRLQ FreQL PodWRLQ FreQL
 fence: each intra-proc Pod<XY> becomes the full-barrier edge DMB.SYd<XY>.
   $ bash -c 'source ../_grid_lib.sh; render_cpu_cycle fence PodWW Rfe PodRR Fre'
   DMB.SYdWW Rfe DMB.SYdRR Fre
+The same letter reaches the CPU barrier edge: a same-location pair gives DMB.SYs<XY>.
+  $ bash -c 'source ../_grid_lib.sh; render_cpu_cycle fence PosWR Fre Coe'
+  DMB.SYsWR Fre Coe
 render_2s_cpu -- the two-sided order-pair dispatcher, one line per dispatch
 token, on the SB cycle the pair grid sweeps.  It is the ONLY caller of
 render_cpu_cycle's partial-barrier branches, so st/ld here are also the unit spec
@@ -56,6 +66,10 @@ own rendering loop rather than a parameter -- which is why each is pinned.
   FenceReleaseSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys FenceReleaseSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
   $ bash -c 'source ../_grid_lib.sh; render_2s_gpu acq PodWR Fre PodWR Fre'
   FenceAcquireSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys FenceAcquireSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
+That loop spells its own fence edge, so the location letter is pinned here too;
+the pair grid generates no same-location cell (SHAPE_2S_PAIR_CUTS says why).
+  $ bash -c 'source ../_grid_lib.sh; render_2s_gpu sc Rfe PosRR Fre'
+  RfeRelaxedSysRelaxedSys FenceScSyssRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
 cut_tag -- device-cut abbreviation, 2-proc and 3-proc.
   $ bash -c 'source ../_grid_lib.sh; cut_tag cpu,gpu'
   cg

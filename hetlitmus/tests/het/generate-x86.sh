@@ -40,7 +40,7 @@ cd "$(dirname "$0")"
 HETDIR="$(pwd)"
 # shellcheck source=../../paths.sh
 source ../../paths.sh
-COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell"
+COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell -oneloc"
 # shellcheck source=../_grid_lib.sh
 source ../_grid_lib.sh
 
@@ -48,7 +48,7 @@ source ../_grid_lib.sh
 
 # render_x86_cpu <cpu-tok> <base-edge>...  -> x86-64 diy edge token list.
 #   plain image  : the bare base cycle (an x86 MOV is already rel/acq under TSO)
-#   mfence image : each intra-proc Pod<XY> becomes MFenced<XY>
+#   mfence image : each intra-proc Po<L><XY> becomes MFence<L><XY>
 render_x86_cpu() {
   local t="$1"; shift
   case "$t" in
@@ -56,7 +56,7 @@ render_x86_cpu() {
     sy) local out="" e
         for e in "$@"; do
           edge_src_dst "$e"
-          if [ "$IS_PO" = 1 ]; then out="$out MFenced${e#Pod}"; else out="$out $e"; fi
+          if [ "$IS_PO" = 1 ]; then out="$out MFence${PO_LOC}${PO_XY}"; else out="$out $e"; fi
         done
         echo "${out# }";;
     *) echo "render_x86_cpu: bad token $t" >&2; return 1;;
