@@ -84,9 +84,9 @@ scope_cc() { case "$1" in cta) echo Cta;; gpu) echo Gpu;; sys) echo Sys;;
 # edge_src_dst <base-edge>  -> sets globals SRC,DST (each W or R), IS_PO (0/1)
 # and, for an intra-proc edge, its location letter PO_LOC (d|s) plus access
 # suffix PO_XY.  A fence edge is spelled <fence><PO_LOC><PO_XY>, so the letter
-# travels with the edge instead of being fixed at each call site.  Every arm
-# assigns all five: an external edge clears PO_LOC/PO_XY, so a caller that reads
-# them without checking IS_PO cannot pick up the previous edge's letters.
+# travels with the edge instead of being fixed at each call site.  PO_LOC and
+# PO_XY are cleared before the case, so a caller that reads them without
+# checking IS_PO cannot pick up the previous edge's letters.
 edge_src_dst() {
   PO_LOC=""; PO_XY=""
   case "$1" in
