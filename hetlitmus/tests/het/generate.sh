@@ -26,7 +26,8 @@
 #  (D) The two-sided family <shape>-<cuttag>-sys-{acqrel,fence}-2s: BOTH devices
 #      annotated, so a complete morally-strong cross-device pair can form.
 #  (E) The two-sided order-pair grid <shape>-<cuttag>-sys-<cpu>.<gpu>-2s: the
-#      off-diagonal of (D), 8 cut classes x (16 - 2 diagonal) = 112 files.
+#      off-diagonal of (D), one file per pair-grid cut class x non-diagonal
+#      cell of the (cpu order, gpu order) grid (../_grid_lib.sh).
 #
 # No expected outcome is attached to any of these tests: this branch predicts
 # none, and comparing a run against a verdict CSV is an optional offline step

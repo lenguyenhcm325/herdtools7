@@ -98,10 +98,11 @@ let parse s = match System.parse s with
       | "LISA" -> Some `LISA
       | "JAVA" | "Java" -> Some `JAVA
       | "ASL" -> Some `ASL
-      (* HetLitmus Tier-0: the compound pseudo-arch (fork (a)).  A single
-         `Het' arch value lets the rest of the pipeline stay single-arch-typed
-         (one Archs.t in the splitter); the CPU-vs-GPU split lives INSIDE the
-         HetArch functor and a per-proc device tag.  See hetlitmus/docs. *)
+      (* HetLitmus: the compound pseudo-arch.  One `Het' arch value keeps the
+         rest of the pipeline single-arch-typed (one Archs.t in the splitter);
+         the CPU-vs-GPU split lives inside the HetArch functor and a per-proc
+         device tag in the program header.
+         See hetlitmus/docs/het-litmus-format.md. *)
       | "Het" -> Some `Het
       | _ -> None
   end

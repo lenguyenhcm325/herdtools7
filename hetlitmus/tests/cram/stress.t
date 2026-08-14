@@ -1,6 +1,6 @@
-GPU memory-stress guard (B4; env-research/Q5-gpu-stress.md).  The emitted het
-harness carries the stress layer ported from cuda-litmus, in the shape the design
-requires: stress in DEVICE memory, disjoint from the test; the device-scope
+GPU memory-stress guard (hetlitmus/docs/00-environment-design.md sec 3.5).  The
+emitted het harness carries the stress layer ported from [CudaLitmus], in the
+shape the design requires: stress in DEVICE memory, disjoint from the test; the device-scope
 window-opener kept separate from the system-scope cross-device rendezvous; and
 the perpetual-loop invariants (co-residency guard, observer slot, pinned trip
 counts) still standing underneath it.
@@ -28,7 +28,7 @@ sections read is the GPU render and the shared runtime headers.
   $ SH=hip/S-cg-sys-fence-x86_64/S-cg-sys-fence-x86_64
 
 (a) the ported stress layer is emitted ONCE per harness dir and included by that
-dir's render -- one shared header, so all reused cuda-litmus code and its
+dir's render -- one shared header, so all reused [CudaLitmus] code and its
 mandatory citations sit in one auditable file.
   $ test -f MP-cg-sys-acqrel-2s/het_stress.h && echo present
   present
@@ -71,8 +71,8 @@ coop-launch.t (g), which reads this same render.
 het_spin aligns the GPU test lanes; gd_bar is the CPU<->GPU start barrier and
 fires once, outside the perpetual loop.  Merging them would put a per-iteration
 cross-device barrier in the loop, which masks the tested order and stalls
-(Srivastava 4.1).  One spin call per GPU test lane; one gd_bar fetch_add per
-barrier-joining participant.
+(het_stress.h, het_spin, states it once, with its source).  One spin call per GPU
+test lane; one gd_bar fetch_add per barrier-joining participant.
 
 MP-cg-sys-acqrel-2s is a co-run harness -- T, mu(T) and the canary share this
 launch -- so there are three GPU test lanes and three CPU threads.  The per-lane
@@ -98,7 +98,8 @@ own lane -- are pinned in coop-launch.t (b,c), on this same render.)
 and the barrier is ALL-OR-NONE, with its limit indexed by the barriers taken --
 the adaptation the perpetual loop forces.  Upstream relaunches per iteration, so
 its counter is fresh each time and its toggle is one host-set boolean, uniform
-across the launch: all testing threads spin, or none do (litmus.cuh:340).  Our
+across the launch: all testing threads spin, or none do ([CudaLitmus]
+litmus.cuh:340).  Our
 counter grows, so the limit must grow with it, and it is only attainable if every
 lane contributes exactly one increment to each barrier.  Hence the roll is drawn
 from a lane-independent stream (keyed by the iteration, not the lane) and the
@@ -110,21 +111,19 @@ instances reach the same verdict for iteration _n.
   3
 
 A per-lane roll with an iteration-indexed limit ((_n+1)*lanes) is the defect this
-pins: a lane increments on only HET_BARRIER_PCT% of iterations while the limit
-rises every iteration, so the counter falls permanently behind and every spin
-burns the full 1024-spin deadlock cap instead of rendezvousing (measured on
-device: 99.6% cap-released, counter deficit 627 --
-env-research/impl-briefs/B4-fix-impl-brief.md).
+pins: a lane would increment on only HET_BARRIER_PCT% of iterations while the
+limit rose every iteration, so the counter falls permanently behind and every
+spin burns the full 1024-spin deadlock cap instead of rendezvousing.
   $ grep -c '(uint32_t)(_n + 1) \* HET_SPIN_LANES' $MP.cu || true
   0
 
 (e) the ACCESS PATTERN reaches het_do_stress as a runtime kernel argument, never
 as a compile-time constant.  Two defects meet in this one line: upstream passes
-an iteration count where do_stress expects the pattern (litmus.cuh:346), so
-mem-stress spins doing nothing; and a compile-time pattern lets nvcc fold the
-if-chain to the one live branch, which for the tuned default (3 = ld;ld, whose
-loads only feed a `break') is side-effect-free, taking the whole loop with it
-(env-research/impl-briefs/B4-fix-impl-brief.md).  hetlitmus/verify/stresscheck.py
+an iteration count where do_stress expects the pattern ([CudaLitmus]
+litmus.cuh:346), so mem-stress spins doing nothing; and a compile-time pattern
+lets nvcc fold the if-chain to the one live branch, which for the tuned default
+(3 = ld;ld, whose loads only feed a `break') is side-effect-free, taking the whole
+loop with it.  hetlitmus/verify/stresscheck.py
 is the gate, and _stress_tally counts the rounds het_do_stress completed, so a
 layer that is present in the PTX and never executes is visible to het_verdict().
 The pre-stress runs in every test lane, so the control is stressed exactly as T.
@@ -160,27 +159,27 @@ disqualify a run and the tuner can tune against it.
   $ grep -c 'het_scratch_bump(&tally\[(val >= limit) ? HET_TALLY_RDV : HET_TALLY_CAP\])' MP-cg-sys-acqrel-2s/het_stress.h
   1
 
-(e3) the two UPSTREAM defects are disclosed in the emitted header, not just in a
-commit message: we cite Levine, so a reader must be able to tell which lines are
-theirs.  The second is a dead dedup -- setScratchLocations declares a std::set of
+(e3) the two upstream defects are disclosed in the emitted header, not just in a
+commit message: we cite [CudaLitmus], so a reader must be able to tell which
+lines are theirs.  The second is a dead dedup -- setScratchLocations declares a std::set of
 used regions and queries it but never inserts, so it never dedups and its
 realised spread is <= m.  We dedup for real, which is a behavioural divergence,
 disclosed both in the header (where a reader looks for provenance) and at the
 code site (where a maintainer looks before "restoring" upstream's version).
-  $ grep -c 'NEVER INSERTS INTO IT' MP-cg-sys-acqrel-2s/het_stress.h
-  1
   $ grep -c 'never inserts into the set' MP-cg-sys-acqrel-2s/het_stress.h
   1
+  $ grep -c 'A real dedup (see above)' MP-cg-sys-acqrel-2s/het_stress.h
+  1
 
-and the Alglave "zero without stress" result is qualified to NVIDIA, because this
-header is #include'd by the .hip (AMD) render too -- on AMD the same paper saw lb
-without any incantation.
+and the "zero without stress" result of [Alglave15 sec 4.3.1] is qualified to
+NVIDIA, because this header is #include'd by the .hip (AMD) render too -- on AMD
+the same paper saw lb without any incantation.
   $ grep -c 'VENDOR SPLIT' MP-cg-sys-acqrel-2s/het_stress.h
-  2
+  1
 
 (f) the stress toggles are decided DEVICE-side off a seeded Park-Miller stream:
 the perpetual kernel has no per-iteration host round-trip to re-roll them, and a
-fixed seed keeps a run replayable (GPUHarbor).  The lane draws its own stream for
+fixed seed keeps a run replayable ([GPUHarbor23 sec 3.4]).  The lane draws its own stream for
 the pre-stress toggle, which feeds no shared counter; the barrier's stream is the
 lane-independent one checked in (d).
   $ grep -c 'het_rng_t _rng = het_rng_init(_seed, blockIdx.x \* blockDim.x + threadIdx.x)' $MP.cu

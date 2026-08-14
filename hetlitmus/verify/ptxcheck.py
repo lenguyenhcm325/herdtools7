@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 # ---------------------------------------------------------------------------
-# ptxcheck.py -- L0 static faithfulness check.  See hetlitmus/docs/verify-l0.md
-# for the mapping table, its grounding, and what each phase asserts.
+# ptxcheck.py -- static faithfulness: an emitted harness carries exactly the
+# memory ops its .litmus annotates, with the annotated kind, order and scope.
+# The mapping table below, its grounding and what each check asserts are in
+# hetlitmus/docs/verify-l0.md.
 #
 #   .litmus annotation --(CudaLang)--> .cu --(nvcc --ptx)--> PTX --(this)-->
 #       expected (kind,order,scope) profile == observed PTX instructions ?
 #
 # Hardware-free: it emits, compiles to PTX and reads the text, never launching a
-# kernel.  The lowering bug it guards: libcu++'s cuda::atomic_thread_fence
-# collapses acquire/release to fence.acq_rel, losing the order, so CudaLang
-# emits faithful inline PTX instead (cuda-emitter.md, "Fence lowering").
+# kernel.  The lowering it guards: libcu++'s cuda::atomic_thread_fence collapses
+# acquire/release to fence.acq_rel, losing the order, so CudaLang emits faithful
+# inline PTX instead (cuda-emitter.md, "Fence lowering").
 #
-# Reading nvcc --ptx is sound, not lucky.  libcu++ scoped atomics and CudaLang's
-# inline PTX are both asm volatile with a "memory" clobber -- a hard
-# compiler-ordering barrier -- so nvcc cannot reorder model ops relative to one
-# another even when they are relaxed, and the textual order of the ops between
-# the `// begin/end inline asm' markers is source program order.  Scaffolding
-# (ld.param / st.global / cvta) sits outside those markers.  Procs are emitted in
-# column order and cells in row order, so the flattened streams line up.
+# Reading nvcc --ptx is sound.  libcu++ scoped atomics and CudaLang's inline PTX
+# are both asm volatile with a "memory" clobber, so nvcc may NOT reorder model
+# ops against one another even when they are relaxed, and the textual order
+# between the `// begin/end inline asm' markers is source program order.
+# Scaffolding (ld.param / st.global / cvta) sits outside those markers; procs are
+# emitted in column order and cells in row order, so the streams line up flat.
 #
 # Exit 0 = PASS, 1 = FAIL (exact diff), 2 = completeness hard-fail, 3 = error.
 # ---------------------------------------------------------------------------
@@ -79,7 +80,7 @@ GPU_KIND = {
     "f": "fence",
 }
 
-# CPU (AArch64) ordering mnemonics.  ARM ARM + Bagchi ISMM'26 Fig 1:
+# CPU (AArch64) ordering mnemonics:
 #   STLR  = store-release        LDAR  = load-acquire (RCsc)
 #   LDAPR = load-acquire (RCpc)  DMB <option> = data memory barrier
 # `mov` is absorbed by the tagged-body classifier (HetCpuPlan.Consumed) -- the
@@ -98,12 +99,12 @@ CPU_MNEMONIC = {
 
 # A barrier's ordered-pair set lives in its OPTION, not its mnemonic: `DMB SY'
 # orders {WW,RR,WR,RW}, `DMB ST' only {WW}, `DMB LD' only {RR,RW} (machine-
-# checked against herd7 by verify/ordercheck.py Phase 1), and they are three distinct
-# instructions -- d5033fbf / d5033ebf / d5033dbf.  The compared op tuple is
-# (mnemonic, option), so a `DMB SY' lowered to `DMB ST' already reads as a
+# checked against herd7 by verify/ordercheck.py Phase 1), and they are three
+# distinct instructions -- d5033fbf / d5033ebf / d5033dbf.  The compared op tuple
+# is (mnemonic, option), so a `DMB SY' lowered to `DMB ST' already reads as a
 # mismatch; what this table adds is the completeness guard on the option, so an
 # unmodelled one (`DMB ISH', `DMB OSHST', a bare `DMB') hard-fails rather than
-# being compared as an opaque string.  (Q10b)
+# being compared as an opaque string.
 CPU_BARRIER_OPTION = {
     "sy": "fence-full",     # DMB SY : orders {WW,RR,WR,RW}  (full system barrier)
     "st": "fence-store",    # DMB ST : orders {WW}           (the `rel' half only)
@@ -261,7 +262,7 @@ def device_class(dev):
 # every instance is modelled, under the same barrier whitelist, device-scope
 # spin, observer profile and ordered + per-proc multiset comparison.  A control
 # whose lanes are missing entirely fails too -- that is a harness reporting a
-# positive control it is not running.  (B6b)
+# positive control it is not running.
 # ---------------------------------------------------------------------------
 
 def load_control_map(litmus_path):
@@ -526,7 +527,7 @@ def extract_cpu_ops(cpu_c_text):
         #     "str %x[_v1],[%[y]]\n"    "dmb sy\n"
         # is ONE asm line carrying two instructions.  search would read only the
         # first, hiding an instruction appended to a body -- i.e. a silently
-        # STRENGTHENED mutant, which may never fire, and a control that never
+        # strengthened mutant, which may never fire, and a control that never
         # fires discards every null it was meant to vouch for.  The emitter does
         # emit one per line, but a gate that works only because of how its input
         # happens to be formatted is not a gate.
@@ -603,11 +604,11 @@ def check_gpu(result, expected_per_proc, observed, label):
     # ----- PER-PROC LOCALIZER (diagnostic, NOT a detector) -------------------
     # An order-blind multiset test is strictly weaker than the order-sensitive
     # one above: if the ordered check passed, the two lists are identical, so
-    # every slice matches element-wise and no multiset comparison can differ.
-    # (The global multiset that used to sit here was that and nothing else, so it
-    # is gone.)  What the per-proc slicing DOES add is localization -- it names
-    # the instance and proc a mismatch is in, which the flat index diff cannot --
-    # so it runs only once something has already failed, and only reports.
+    # every slice matches element-wise and no multiset comparison can differ.  A
+    # GLOBAL multiset would therefore detect nothing at all.  What the per-proc
+    # slicing adds is localization -- it names the instance and proc a mismatch
+    # is in, which the flat index diff cannot -- so it runs only once something
+    # has already failed, and only reports.
     if not result.ok:
         pos = 0
         for plabel, ops in expected_per_proc:
@@ -729,11 +730,11 @@ def check_barrier_whitelist(result, barrier_ops, n_lanes):
 # (litmus/hetDialect.ml gd_sys_load_u64) -> ld.relaxed.sys.
 OBS_OP = ('ld', 'relaxed', 'sys')
 
-# The device-scope window-opener (het_stress.h het_spin, ported from
-# cuda-litmus `spin'): a relaxed fetch_add on a device-only scratch word, then
-# the relaxed load of its bounded busy-wait.  Emitted once per GPU test lane, at
-# the top of the perpetual loop (`#pragma unroll 1' pins it to exactly one
-# textual copy, as it does for the tested ops).
+# The device-scope window-opener (litmus/het-runtime/het_stress.h, het_spin): a
+# relaxed fetch_add on a device-only scratch word, then the relaxed load of its
+# bounded busy-wait.  Emitted once per GPU test lane, at the top of the perpetual
+# loop (`#pragma unroll 1' pins it to exactly one textual copy, as it does for
+# the tested ops).
 SPIN_OPS = [('atom', 'relaxed', 'gpu'), ('ld', 'relaxed', 'gpu')]
 
 
@@ -744,9 +745,9 @@ def check_spin(result, seg, pidx, iname=""):
 
     The spin aligns the GPU test lanes of one instance; the CPU-GPU rendezvous is
     the separate system-scope gd_bar, which fires once, outside the perpetual
-    loop.  A spin widened to system scope would become a per-iteration
-    CROSS-DEVICE barrier, which masks the order under test and stalls the run
-    (Srivastava §4.1; env-research/Q5-gpu-stress.md).  This also fails if the
+    loop.  Widening the spin to system scope would put a per-iteration
+    cross-device barrier around the tested accesses, and why the two must stay
+    apart is litmus/het-runtime/het_stress.h (het_spin).  This also fails if the
     window-opener is dropped, duplicated, strengthened (relaxed -> acquire), or
     moved after the tested ops."""
     who = ("%s:P%d" % (iname, pidx)) if iname else ("P%d" % pidx)
@@ -808,11 +809,10 @@ def check_observer(result, seg, obs_locs, iname=""):
     """The observer lane must contribute exactly one relaxed/system-scope load per
     observed location, and nothing else.
 
-    The observer's loads are real memory ops on the tested locations -- a
-    deliberate perturbation, and the only way a ws/co edge (which has no read
-    node) is recoverable at all (env-research/decisions/B3-decision.md §5;
-    Srivastava §3.3).  Modelling them completes the expectation without relaxing
-    the check: it still fails if the observer is narrowed (sys -> cta),
+    The observer's loads are real memory ops on the tested locations, a
+    deliberate perturbation [Srivastava24 sec 3.3]; why the lane exists at all is
+    condition_locations above.  Modelling them completes the expectation without
+    relaxing the check: it still fails if the observer is narrowed (sys -> cta),
     strengthened (relaxed -> acquire), or gains/loses a load -- e.g. if the
     `#pragma unroll 1' that pins its trip count is dropped."""
     who = ("%s observer" % iname) if iname else "observer"
@@ -856,12 +856,11 @@ def check_cpu(result, expected_per_proc, cpu_c_text):
 
 def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
                arch=None, verbose=True):
-    # instance_of parses, transposes and classifies the columns -- the same six
-    # statements this driver used to inline -- so the completeness guard still
-    # fires here, on the same two column parsers.  The Het branch below rebuilds
-    # both profiles from het_instances (T + its co-run controls); only the
-    # gpu-only branch consumes gpu_expected as computed here, and no path reads a
-    # CPU profile from it.
+    # instance_of parses, transposes and classifies the columns, so the
+    # completeness guard fires here too, on the same two column parsers.  The Het
+    # branch below rebuilds both profiles from het_instances (T + its co-run
+    # controls); ONLY the gpu-only branch consumes gpu_expected as computed here,
+    # and no path reads a CPU profile from it.
     inst = instance_of(litmus_path)
     kind, name = inst['kind'], inst['name']
     gpu_expected = inst['gpu']   # list of (proc_idx, [ (kind,order,scope) ])
@@ -879,12 +878,10 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
         else:
             cu_path, cpu_c_path = emit_harness(litmus_path, tmp)
             # sm_90 matches the run harness: the emitted Makefile/comp.sh compile
-            # the same .cu with `CUDA_ARCH ?= sm_90' (GH200;
-            # litmus/hetDialect.ml gd_arch_default).
-            # Checking a different arch than the one that runs would leave a
-            # soundness gap, and sm_90 is also the floor for the corpus's
-            # fence.acquire/fence.release (PTX ISA 8.6; litmus/CudaLang.ml).
-            # --arch overrides.
+            # the same .cu with `CUDA_ARCH ?= sm_90' (litmus/hetDialect.ml,
+            # gd_arch_default).  Checking a different arch than the one that runs
+            # would leave a soundness gap, and sm_90 is also the floor for the
+            # corpus's fence.acquire/fence.release [CCCL].  --arch overrides.
             use_arch = arch or "sm_90"
             ptx_path = os.path.join(tmp, name + ".ptx")
             compile_ptx(cu_path, ptx_path, use_arch)

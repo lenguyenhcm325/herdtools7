@@ -2,10 +2,10 @@
 # ---------------------------------------------------------------------------
 # smoke.sh -- Layer-3 compile-smoke for the HetLitmus toolchain.
 #
-# "Does the emitted harness actually COMPILE end-to-end?"  The faithfulness sweep
+# "Does the emitted harness actually compile end-to-end?"  The faithfulness sweep
 # (l0_tokens.sh) `nvcc --ptx'-compiles every gpu-only .cu but exercises neither
 # the het harness's CPU side, the `nvcc -c'/ptxas object stage, nor the AMD/HIP
-# render.  smoke.sh emits a curated 11-rep sample and drives each test's OWN
+# render.  smoke.sh emits a curated rep sample and drives each test's own
 # comp.sh (compile-only: gcc host +
 # `clang --target=aarch64-linux-gnu' real AArch64 asm + `nvcc -std=c++17
 # -arch=sm_90 -c' + `hipcc --offload-arch=gfx942 -c').  Needs nvcc/hipcc/clang
@@ -13,7 +13,8 @@
 # launching a kernel needs hardware (Layer 4).  Reuses comp.sh verbatim (no new
 # build code); see hetlitmus/docs/TEST-PLAN.md sec.5.
 #
-# The 11 reps -- each hits one distinct compile path once:
+# The reps -- each hits one distinct compile path once, and NREPS below counts
+# them:
 #   1. MP-cg-cta-acquire       het one-sided; plain CPU STR/LDR + barrier
 #   2. 2+2W-cg-sys-acqrel-2s   het two-sided; CPU STLR (store-only shape: no load)
 #   3. MP-gc-sys-acqrel-2s     het two-sided GPU->CPU; the only rep emitting a CPU
@@ -28,32 +29,33 @@
 #                              row, so it is the .hip that names the part
 #                              (litmus/hetMachine.ml).
 #   8. MP-cg-sys-sy.acq-2s     order-pair; the only rep emitting inline
-#                              `fence.acquire.sys' (PTX ISA 8.6 / sm_90), with a
-#                              compiled-in co-run control (mu = the row's
+#                              `fence.acquire.sys', which needs sm_90 [CCCL],
+#                              with a compiled-in co-run control (mu = the row's
 #                              lattice-floor sibling MP-cg-sys-relaxed);
 #                              also the first rep whose test name contains a `.'
 #   9. S-gc-sys-ra.rel-2s      order-pair; the only rep emitting inline
 #                              `fence.release.sys', paired with CPU STLR/LDAPR,
-#                              and the largest co-run in the corpus (K=4, NPART=10)
+#                              and an observer lane in every co-run instance
 #  10. MP-cg-sys-st.sc-2s      the CPU `dmb st' form.  Its mu is the floor
 #                              sibling, so the barrier is T's alone
 #  11. MP-gc-sys-ld.sc-2s      the CPU `dmb ld' form on the GPU->CPU cut (the CPU
 #                              proc reads), likewise T's alone.
 #                              These reps claim only that the three barrier forms
-#                              BUILD; which one is emitted is pinned by
+#                              build; which one is emitted is pinned by
 #                              l0_tokens.sh selftest [5b].
 #
 # Usage:
-#   bash hetlitmus/verify/smoke.sh          # run all 11 reps (pre-commit gate)
+#   bash hetlitmus/verify/smoke.sh          # run every rep (pre-commit gate)
 #   bash hetlitmus/verify/smoke.sh bite     # prove the gate has teeth (self-test)
 #
-# Exit 0 (prints `SMOKE OK') iff all 11 reps compile.  A missing hipcc SKIPS rep 7
-# loudly -- it never counts as a pass.  The reps that RAN are counted (`n', bumped
-# inside each rep) and the count is asserted against NREPS before any OK is
-# printed: `fails' can only be raised from inside a rep, so a rep that is never
-# CALLED contributes nothing and a shrunken rep list would otherwise leave the
-# gate green with the verdict line still claiming 11/11 -- the same vacuous-pass
-# hole the census tripwires of l0_tokens.sh / corpus-gate.sh / emit-all.sh close.
+# Exit 0 (prints `SMOKE OK') iff every rep compiles.  A missing hipcc skips the
+# hip rep loudly -- it NEVER counts as a pass.  The reps that ran are counted
+# (`n', bumped inside each rep) and the count is asserted against NREPS before
+# any OK is printed: `fails' can only be raised from inside a rep, so a rep that
+# is never called contributes nothing, and a shrunken rep list would otherwise
+# leave the gate green with the verdict line still claiming a full pass -- the
+# same vacuous-pass hole the census tripwires of l0_tokens.sh / corpus-gate.sh /
+# emit-all.sh close.
 # ---------------------------------------------------------------------------
 set -u
 
@@ -76,7 +78,7 @@ fails=0
 skips=0
 n=0               # reps that actually RAN; asserted == NREPS before any OK
 
-# ---- het rep, either dialect: emit the Tier-2 harness dir, run its OWN comp.sh
+# ---- het rep, either dialect: emit the harness dir, run its OWN comp.sh -----
 # litmus7 -o <d> writes a nested <d>/<name>/ dir holding <name>.cu (or .hip),
 # <name>_cpu.c, outs.c and comp.sh.  `sh comp.sh <dialect>' compiles only (-c, no
 # link, no GPU), printing `HetLitmus: compile OK' and exiting 0 on success (set -e
@@ -161,9 +163,9 @@ bite_compile() {
 # The compile bite above proves a broken harness reddens the gate; it says
 # nothing about a rep that never runs, which is the cheaper way to lose
 # coverage.  Delete every rep invocation from a scratch copy of this script and
-# require the census to redden it -- before the `n' assertion that copy printed
-# `SMOKE OK (11/11 reps compiled)' having compiled nothing.  Costs no compiler
-# time precisely because the doctored copy runs zero reps.
+# require the census to redden it: without the `n' assertion that copy prints an
+# OK line having compiled nothing.  Costs no compiler time precisely because the
+# doctored copy runs zero reps.
 bite_census() {
   local sc="$WORK/census" nreps out rc
   printf '\n===== SMOKE BITE: a rep list that ran NOTHING must FAIL the gate =====\n'
@@ -214,9 +216,8 @@ case "$cmd" in
     smoke_het     2+2W-cg-sys-fence-2s  "two-sided; CPU DMB.SY fence"
     smoke_het     IRIW-cgcc-cta-relaxed "4-proc; largest barrier / scaffolding"
     smoke_het     WRC-ccg-cta-relaxed   "3-proc; buys down the proc-scaling assumption"
-    # This rep carries the most CPU/interconnect-stress surface (a -2s CPU body,
-    # the preload, the enemies, both halves of the C2C noise), so it is the one
-    # most likely to expose a CUDA/HIP dialect divergence.
+    # The only rep whose render is a .hip, so it is where a CUDA/HIP divergence
+    # in the shared runtime headers shows up.
     smoke_het_hip MP-cg-sys-relaxed-x86_64 "the AMD/MI300A render, (x86_64, hip) pair (hipcc -c, gfx942)"
     # The four order-pair reps below are all off the lattice floor, so each also
     # exercises the co-run control (HET_CONTROL_COMPILED_IN=1) on that family.

@@ -40,18 +40,15 @@ declare -A SHAPE_NPROCS=(
 SHAPE_ORDER="MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3"
 
 # --- heterogeneous device cuts ----------------------------------------------
-# Role-based and symmetry-reduced, NOT 2^n.  2-proc shapes: both directions,
-# except SB / LB / 2+2W, which emit one cut: their cycle is invariant under
-# rotation-by-two, which swaps P0/P1, and the annotation follows the device
-# rather than the proc index, so `gc' would be `cg' with the labels exchanged.
-# verify/dupcheck.py holds that honest.
-# 3-proc shapes (distinct roles): each proc in turn is the single GPU
-# participant.  IRIW (2 symmetric writers + 2 symmetric readers): four cuts
-# {one writer, one reader, both writers, both readers} -- four of its eight
-# symmetry classes; the mixed writer+reader and 3-GPU classes are not
-# generated.  WRC3 (4-stage causal chain, all roles distinct): each chain stage
-# in turn on the GPU.  Coverage measured in
-# env-research/Q10-corpus-coverage.md sect 2.2 (Q10-probe/canon.py --cuts).
+# Role-based and symmetry-reduced, NOT 2^n.  2-proc shapes take both directions
+# except SB / LB / 2+2W, whose cycle is invariant under rotation-by-two (it
+# swaps P0/P1, and the annotation follows the device rather than the proc
+# index), so those emit one cut and verify/dupcheck.py holds that honest.
+# 3-proc shapes (distinct roles) put each proc in turn on the GPU; IRIW (2
+# symmetric writers + 2 symmetric readers) takes four of its eight symmetry
+# classes {one writer, one reader, both writers, both readers}; WRC3 (4-stage
+# causal chain) puts each chain stage in turn on the GPU.  The rule and its
+# rationale: hetlitmus/docs/corpus-grid.md, "Heterogeneous device cuts".
 declare -A SHAPE_HET_CUTS=(
   [MP]="cpu,gpu gpu,cpu"
   [SB]="cpu,gpu"
@@ -200,7 +197,6 @@ render_cpu_cycle() {
 # 4 x 4 = 16 cells per cut class, of which 2 are the diagonal (`ra.ra' IS
 # <shape>-<cut>-sys-acqrel-2s, `sy.sc' is <shape>-<cut>-sys-fence-2s) -> 14
 # emitted; generate.sh byte-diffs the two rather than assuming the identity.
-# Why the grid is swept at all: env-research/Q10-corpus-coverage.md (Q10).
 #
 # `f[acq_rel,sys]' is unavailable: `FenceAcq_relSys' does not lex as a diy edge
 # name (the underscore breaks the edge lexer).

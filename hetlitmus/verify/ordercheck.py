@@ -11,10 +11,10 @@ lattice picks each test's positive-control sibling, so a wrong entry on either
 side silently certifies a sibling that is not weaker.  Hence the table meets the
 model solvers here rather than being asserted:
 
-  PHASE 1  ARM  6 shapes x prim(P0) x prim(P1) = 96 CPU-only AArch64 tests from
-                diyone7, decided by herd7's native AArch64 model.
-  PHASE 2  PTX  the same 96 cells as sys-scope LISA/Bell tests, decided by
-                herd7 + bells/ptx.bell + cats/nvidia-ptx.cat (Lustig'19).
+  PHASE 1  ARM  every shape x prim(P0) x prim(P1) cell, as a CPU-only AArch64
+                test from diyone7, decided by herd7's native AArch64 model.
+  PHASE 2  PTX  the same cells as sys-scope LISA/Bell tests, decided by herd7 +
+                bells/ptx.bell + cats/nvidia-ptx.cat [Lustig19].
   PHASE 3  AGREE  no solver: the join with controlmap.py, keyed primitive by
                 primitive, since agreeing with herd7 does not make two restated
                 copies of the same table agree with each other.
@@ -91,7 +91,9 @@ def rf_dirs(shape):
 
 
 def sync_ok(shape, r0, r1):
-    """The Lustig'19 pattern requirement, per proc role set."""
+    """A release pattern, an observation and an acquire pattern are what make a
+    PTX synchronizes-with edge [Lustig19 Fig.4], so a cycle with no rf edge to
+    observe needs fence.sc on both procs instead [Lustig19 Fig.6]."""
     r = (r0, r1)
     dirs = rf_dirs(shape)
     if not dirs:                       # no rf to observe -> fence.sc on BOTH
@@ -109,7 +111,7 @@ def arm_verdict(shape, d0, d1):
 
 def ptx_verdict(shape, f0, f1):
     """Per-side ordering plus a completing release/acquire pattern: a PTX fence
-    orders nothing across threads on its own (Lustig'19 Fig 4)."""
+    orders nothing across threads on its own [Lustig19 Fig.4]."""
     p0, p1 = pairs(shape)
     ok = p0 in ORD[f0] and p1 in ORD[f1] and sync_ok(shape, ROLE[f0], ROLE[f1])
     return "Forbidden" if ok else "Allowed"
@@ -239,16 +241,11 @@ def phase_ptx(tmp, quiet):
 
 
 # --- phase 3: agreement with the control-map lattice ------------------------
-# ORD is the `ord' half of controlmap.py's (tier, ord) strength lattice, which
-# is restated there rather than imported.  Agreeing with herd7 does not make the
-# two copies agree with each other -- one of them can be edited alone -- so this
-# phase is the join, and it names the controlmap expression each ORD key has to
-# equal instead of comparing two anonymous dicts.
-#
-# The `tier' half is NOT covered.  controlmap's side_le compares tier first, so
-# promoting a primitive from `partial' to `SC-capable' changes which siblings
-# count as weakenings while every ord set stays put, and nothing here would see
-# it.
+# The join, naming the controlmap expression each ORD key has to equal instead
+# of comparing two anonymous dicts.  The `tier' half is NOT covered: controlmap's
+# side_le compares tier first, so promoting a primitive from `partial' to
+# `SC-capable' changes which siblings count as weakenings while every ord set
+# stays put, and nothing here would see it.
 #
 #   ordercheck key, controlmap table, key in it
 KEY_MAP = [
@@ -345,14 +342,13 @@ def run(quiet=False, phases=("ARM", "PTX", "AGREE")):
 
 
 # --- bite -------------------------------------------------------------------
-# Each injection names the phase it MUST redden, which is also the prefix that
-# phase's mismatches carry, and only that phase is run: a red anywhere else would
-# be evidence for some other injection.  The DMB names index no fence cell and
-# ROLE/sync_ok have no ARM reader (an ARM barrier is cumulative and needs no
-# partner), so no solver phase can stand in for another.  ORD is read by its
-# solver phase and by AGREE, so which of the two a corruption of it is charged to
-# is a choice this list makes; controlmap's own tables have no solver-phase
-# reader, so the AGREE injection could redden nothing else.
+# Each injection names the phase it MUST redden -- also the prefix that phase's
+# mismatches carry -- and only that phase runs: a red anywhere else would be
+# evidence for some other injection.  The DMB names index no fence cell and
+# ROLE/sync_ok have no ARM reader, so no solver phase can stand in for another.
+# ORD is read by its solver phase and by AGREE, so which of the two a corruption
+# of it is charged to is this list's choice; controlmap's own tables have no
+# solver-phase reader, so the AGREE injection could redden nothing else.
 INJECTIONS = [
     ("ORD[DMB.ST] gains RR -- a store barrier that orders load;load",
      "D.ORD['ST'] = frozenset(('WW','RR'))", "ARM "),

@@ -1,16 +1,13 @@
 (rule
  (copy ../Version.ml Version.ml))
 
-; HetLitmus: generate the HetPayloads module -- the C/CUDA runtime sources the
-; het emitter writes VERBATIM into every emitted harness dir (top_litmus.ml,
-; `write' calls in the Het arm).  The payloads are real files under
-; het-runtime/ (editable with C tooling; design notes in het-runtime/README.md)
-; and are wrapped into OCaml string literals here at build time, so the string
-; can never drift from the file.  outs.{h,c} are litmus7's OWN histogram: they
-; are cat'ed straight from libdir/_outs.{h,c}, which makes the old
-; comment-enforced invariant "keep byte-identical to libdir" hold by
-; construction.  If a payload ever contains the raw-string delimiter
-; `|het_payload}' the generated module fails to compile -- loud, not silent.
+; HetLitmus: wrap the C/CUDA runtime payloads a harness carries into the
+; generated HetPayloads module, read by hetEmit.ml and hetDialect.ml.  Why they
+; are real source files rather than OCaml literals: the foot of
+; litmus/HetArch.ml.  outs.{h,c} are cat'ed from libdir/_outs.{h,c}, so a
+; harness histogram is litmus7's own rather than a copy of it.  A payload
+; containing the raw-string delimiter `|het_payload}' makes the generated
+; module fail to compile.
 (rule
  (targets hetPayloads.ml)
  (deps libdir/_outs.h libdir/_outs.c

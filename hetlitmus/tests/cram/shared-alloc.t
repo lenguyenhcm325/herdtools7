@@ -1,4 +1,4 @@
-Shared-memory allocation guard (B1; env-research/Q8-allocation.md R1-R4).
+Shared-memory allocation guard (hetlitmus/docs/00-environment-design.md sec 3.2).
 The shared litmus vars and the rendezvous barrier route through the per-target
 gd_alloc_shared / gd_free_shared allocator, never a hard-coded *MallocManaged.
 That allocator SELECTS THE PROPERTY UNDER TEST -- system malloc/ATS cache-line
@@ -7,10 +7,10 @@ cudaMallocManaged only as the dev-box/CI fallback -- so it is correctness, not
 tuning.  One representative MP shape is emitted once per dialect (litmus7
 renders the one -gpu-target names) and checked with scoped counts.
 
-Two allocation paths exist, so two harnesses are emitted.  409 of the 411 het
-tests co-run at least a canary and carve their shared vars out of one
-cache-line-padded arena ((e), (f)).  The per-variable path is left to the two
-tests that are themselves the Layer-B canary and so cannot co-run themselves,
+Two allocation paths exist, so two harnesses are emitted.  Every het test that
+co-runs at least a canary carves its shared vars out of one cache-line-padded
+arena ((e), (f)).  The per-variable path is left to the two tests that are
+themselves the Layer-B canary and so cannot co-run themselves,
 MP-{cg,gc}-sys-relaxed (control-map.csv: `self'); MP-cg-sys-relaxed guards it.
 
 The `.hip' renders come from ../het-x86, not from ../het: a harness is a
@@ -49,7 +49,7 @@ on a pageable device (GH200) and the cudaMallocManaged fallback otherwise, with 
 matching free (free() for malloc, cudaFree for managed -- a mismatched free is UB).
 
 Each grep is SCOPED to one function body rather than counted file-wide, and that
-is the rule everywhere in this file.  A file-wide count no longer discriminates:
+is the rule everywhere in this file.  A file-wide count cannot discriminate:
 the mode banner in (g) queries cudaDevAttrPageableMemoryAccessUsesHostPageTables
 -- a different attribute whose name CONTAINS this one -- and the mode resolver's
 FATAL message names the attribute in prose, so raising the expectation to absorb
@@ -86,7 +86,8 @@ _het_alloc_mode(), and no attribute query may survive in the free.
 
 (d) __out is gone and the per-load read buffers sit off the concurrent-race path
 -- device memory (cudaMalloc) plus a host mirror for the post-run scan, not
-routed through gd_alloc_shared -- while the shared vars are uint64_t (B3).
+routed through gd_alloc_shared -- while the shared vars are uint64_t, wide enough
+for the store tags (tagged-recover.t).
   $ grep -c '__out' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu || true
   0
   $ grep -c 'cudaMalloc(&bufP' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
@@ -112,9 +113,9 @@ gd_alloc_shared's body for the same reason as (c).
 (e) the co-run arena.  A test off the lattice floor co-runs mu(T) and the canary,
 and disjoint addresses are not enough: two variables on one cache line are ONE
 COHERENCE UNIT, so mu(T)'s traffic would drag T's line around and the control
-would perturb the very test it exists to vouch for (Q4-positive-control.md 3.1 /
-8.4).  Six separate 8-byte mallocs cannot prevent that; one padded arena can, and
-it still goes through gd_alloc_shared with a matching gd_free_shared (B6b).
+would perturb the very test it exists to vouch for (positive-control.md sec 5).
+Six separate 8-byte mallocs cannot prevent that; one padded arena can, and it
+still goes through gd_alloc_shared with a matching gd_free_shared.
   $ CO=MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
   $ COH=hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64
   $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $CO.cu
@@ -142,8 +143,8 @@ off the lattice floor on BOTH lattices, so both co-run three instances.
   $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $COH.hip
   6
 
-(f) the arena is sized from the instance population, not from a fixed 3.  The 78
-lattice-floor rows carve a TWO-INSTANCE arena, so a slot count computed for three
+(f) the arena is sized from the instance population, not from a fixed 3.  A
+lattice-floor row carves a TWO-INSTANCE arena, so a slot count computed for three
 instances would either overlap the barrier onto a tested variable (the rendezvous
 counter and a litmus location become one coherence unit) or leave the last slot
 past the end of the allocation.  Count the slots and pin the size.
@@ -173,9 +174,9 @@ tested location.
   $ grep -c 'int \*barrier = (int\*)(_sa + (size_t)HET_CACHE_LINE\*4);' $AC.cu
   1
 
-(g) HET_ALLOC: three named modes, resolved once, every illegal one FATAL (PORT1).
-The CUDA Programming Guide 5.7.3 states when a cuda::thread_scope_system atomic
-actually is atomic: on system-allocated memory iff pageableMemoryAccess is 1, on
+(g) HET_ALLOC: three named modes, resolved once, every illegal one FATAL.
+[CudaGuide "Atomicity"] states when a cuda::thread_scope_system atomic actually
+is atomic: on system-allocated memory iff pageableMemoryAccess is 1, on
 managed memory iff concurrentManagedAccess is 1, on mapped memory iff
 hostNativeAtomicSupported is 1 (plain naturally-aligned 1/2/4/8/16-byte
 loads/stores on mapped memory are the one exception).  Every tested access here,
@@ -230,13 +231,13 @@ on stdout so the run log carries it.
   1
 
 (h) HET_ALLOC on the HIP render: ONE mode, and every other spelling REFUSED.
-MI300A's allocator is its own decision (Q8-allocation.md R2, fine-grained
-hipMallocManaged), so the CUDA modes must not LEAK across dialects -- but until
-2026-08-03 the .hip did not mention HET_ALLOC at all, which meant
-`HET_ALLOC=malloc' on an AMD box was silently IGNORED and the run allocated
-managed memory under the name of an experiment it was not running.  Not
-mentioning a knob is not the same as refusing it.  The .hip now names HET_ALLOC
-only to refuse: no malloc branch, no pinned branch, no second allocator.
+MI300A's allocator is its own decision (fine-grained hipMallocManaged,
+docs/00-environment-design.md sec 3.2), so the CUDA modes must not leak across
+dialects.  A .hip that did not mention HET_ALLOC at all would leave
+`HET_ALLOC=malloc' on an AMD box silently ignored, allocating managed memory
+under the name of an experiment it was not running: not mentioning a knob is not
+the same as refusing it.  So the .hip names HET_ALLOC only to refuse -- no malloc
+branch, no pinned branch, no second allocator.
 
   $ HREL=hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   $ grep -c 'getenv("HET_ALLOC")' $HREL
@@ -256,9 +257,9 @@ on a .hip that had grown a malloc branch, so these are scoped to the calls.
   $ grep -cE '\*_pp = malloc|hipHostMalloc|HET_ALLOC_PINNED|_shared_pageable' $HREL || true
   0
 
-Two exit(2)s guard the device, one guards the knob.  hipMallocManaged DEGRADES
-SILENTLY to hipMallocHost when HMM is absent -- hip_runtime_api.h says so, and
-asks for the capability check by name -- and pinned host memory is not the
+Two exit(2)s guard the device, one guards the knob.  hipMallocManaged degrades
+SILENTLY to hipMallocHost when HMM is absent -- [HipRuntimeApi] says so, and asks
+for the capability check by name -- and pinned host memory is not the
 coherent path this harness exists to test.  concurrentManagedAccess is the same
 precondition the CUDA render enforces: every het test has the CPU touching the
 shared allocation while the kernel is live.
@@ -277,7 +278,7 @@ whose CCD and XCD chiplets share one HBM pool is not the same experiment as a
 discrete accelerator over a host interconnect, so the class is stamped into the
 stdout banner -- the run log carries it whether or not anyone reads the source --
 and a discrete part is warned about rather than silently accepted.  It is NOT
-fatal: MI300X is the Phase-3a bring-up target and must be able to run.
+fatal: MI300X is a bring-up target and must be able to run.
 The attribute is QUERIED once and NAMED once, and the two are counted separately:
 a bare count of the word passes for a harness that kept the warning text and lost
 the query, which is a classification that always answers "APU".
@@ -302,12 +303,12 @@ which proves it is right and proves nothing about whether it ever runs.  On this
 render the resolver's ONLY effect is the guard -- gd_alloc_shared just calls it
 for the side effect and throws the value away -- so, unlike the CUDA render whose
 gd_alloc_shared DISPATCHES on the returned mode and would not compile without it,
-nothing structural holds the call in place.  MEASURED 2026-08-03: deleting that
-one statement from het_alloc_hip.inc left this file green, hipbuildcheck at 69/69
-PASS and `make hetlitmus-test' green, while the built harness ignored HET_ALLOC
-and both device preconditions at allocation time -- the guard would then have
-fired in gd_free_shared, after the experiment and after the histogram.  So the
-CALL SITE is pinned here too, scoped to the function body.
+nothing structural holds the call in place: deleting that one statement from
+het_alloc_hip.inc leaves this file, hipbuildcheck and `make hetlitmus-test' green
+while the built harness ignores HET_ALLOC and both device preconditions at
+allocation time -- the guard then fires in gd_free_shared, after the experiment
+and after the histogram.  So the CALL SITE is pinned here too, scoped to the
+function body.
   $ HALLOC=$(sed -n '/^static void gd_alloc_shared/,/^}/p' $HREL)
   $ printf '%s\n' "$HALLOC" | grep -c '_het_alloc_mode()'
   1
@@ -335,9 +336,8 @@ this render has none.  But HET_PLACE is an #ifndef knob, it is swept by the
 tuner, and BOTH dialects print it -- `place=%d' in the cpu-stress banner and
 `place_mode' in the statistics record -- because those lines are emitted once for
 both.  _het_place_failures has two READERS and no writer on this lane, so
-`make hip-bin HIPCC="hipcc -DHET_PLACE=1"' would have logged `place=1 ...
-place_fail=0': placement requested, no refusals, nothing placed and nothing
-placeable.  A knob read into the log and never applied, with a constant-0
+`make hip-bin HIPCC="hipcc -DHET_PLACE=1"' would log `place=1 ... place_fail=0':
+placement requested, no refusals, nothing placed and nothing placeable.  A knob read into the log and never applied, with a constant-0
 companion so no reader can tell.  Refused at compile time rather than warned
 about at run time (the CUDA render's _het_place_inert) because there the mode is
 a run-time HET_ALLOC choice and placement genuinely exists in one of the three

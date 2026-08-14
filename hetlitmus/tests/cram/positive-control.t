@@ -47,9 +47,9 @@ The Layer-B canary rides a SEPARATE flag rather than widening this one.  "A cana
 is co-running" and "the sibling of this test is co-running" are different claims,
 and only the second says this shape's own window was demonstrably hit; collapsed
 into one bit, a null on a test that can have no sibling would start reading as
-vouched-for.  So the Layer-A guard is exactly the 333 rows OFF the lattice floor,
-and the 78 rows AT it -- the fully-relaxed ones, which nothing can be weaker than
--- say so in their own flag.
+vouched-for.  So the Layer-A guard covers exactly the rows OFF the lattice floor,
+and the rows at it -- the fully-relaxed ones, which nothing can be weaker than --
+say so in their own flag.
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-relaxed.litmus >/dev/null 2>&1
   $ grep -c 'HET_MU_NAME NULL' 2+2W-cg-sys-relaxed/2+2W-cg-sys-relaxed.cu
   1
@@ -66,7 +66,7 @@ not because a map went missing.
 
 ...and the canary really is IN there, not merely named: its own instance, its own
 K, its own recovery scan feeding its own channel.  A name is not a co-run -- the
-map names a canary for all 411 rows -- so both are checked.
+map names a canary for every row -- so both are checked.
   $ grep -c 'HET_CANARY_NAME "MP-cg-sys-relaxed"' 2+2W-cg-sys-relaxed/2+2W-cg-sys-relaxed.cu
   1
   $ grep -c 'recovery scan: MP-cg-sys-relaxed' 2+2W-cg-sys-relaxed/2+2W-cg-sys-relaxed.cu
@@ -76,8 +76,8 @@ predicate.  That pairing is what makes `sum(canary_win[]) == canary_target_count
 an invariant, and that invariant is the only run-time evidence that the
 sub-tallies are alive at all (het_stats_compute raises HET_ST_WIN_DESYNC when it
 breaks).  Pin the pair, not just the count: a window bump that drifted onto its
-own line under its own condition could silently stop tracking.  (B7;
-statistics.t.)
+own line under its own condition could silently stop tracking.  (statistics.t
+reads the same pairing on the mu channel.)
 
   $ grep -c 'if (_weak) { _rec.canary_target_count++; _rec.canary_win\[het_win_of(_f, SIZE_OF_TEST)\]++; }' 2+2W-cg-sys-relaxed/2+2W-cg-sys-relaxed.cu
   1
@@ -106,7 +106,7 @@ than a silent mis-read.
   1
 
 THE SHARPEST INSTANCE: THE CANARY ITSELF.  MP-cg-sys-relaxed is the Layer-B
-canary for 335 rows of control-map.csv and is itself at the lattice floor.  It
+canary named by most rows of control-map.csv and is itself at the lattice floor.  It
 cannot co-run itself (the map says `self') and has no sibling weaker than it, so
 both flags are 0 and it stays single-instance -- while being the one test whose
 entire job is to fire.  It names itself as its canary, which is how het_verdict.h
@@ -179,7 +179,8 @@ instance's cycles against another's name and make the whole control a fiction.
 (2 each: the real AArch64 body under #if defined(__aarch64__), and the portable
 compile-only shim under #else.)
 
-DISJOINT CACHE-LINE-PADDED LOCATIONS (Q4 3.1).  Disjoint addresses are not
+DISJOINT CACHE-LINE-PADDED LOCATIONS (positive-control.md sec 5).  Disjoint
+addresses are not
 enough: two variables on one cache line are one coherence unit, so mu(T)'s
 traffic would drag T's line around and the control would perturb the very test it
 exists to vouch for.  One gd_alloc_shared arena, carved one line apart, and the
@@ -196,7 +197,7 @@ allocator must stay the coherent one (shared-alloc.t (e)).
 
 THREE RECOVERY SCANS, THREE CHANNELS.  The controls are tallied by the same scan
 as T -- the control is not special-cased, it is another instance whose target is
-tallied by the identical scan (Q4 3.2) -- but into their own channels, so their
+tallied by the identical scan -- but into their own channels, so their
 outcomes never pollute T's histogram.  mu and the canary being the SAME program
 here is exactly why the channels have to stay separate.
   $ grep -cE '_rec\.target_count_exhaustive\+\+' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
@@ -217,7 +218,8 @@ its ROLE, not by the mu's name, which on this row the canary shares.
 
 EXHAUSTIVE_VALID IS A VALIDITY FLAG, NOT A FORMALITY, AND EACH INSTANCE HAS ITS
 OWN.  Set to (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX) for every test it would be 0 on
-all 411 at the default N=100000 (the cap is 4096), including a T_L<=1 test that
+every row of the corpus at the default N=100000 (the cap is 4096), including a
+T_L<=1 test that
 decodes every frame exactly and counts unconditionally -- and the rule, which
 refuses a credible null unless the flag is 1, would then call every run COLD
 forever: a decision rule that always says the same thing.
@@ -274,10 +276,9 @@ the fragile observer, exactly like 2+2W, and is demoted for REPORTING only.
 The other two tiers, and which of the two fields the printed [...] label is.  The
 pair above pins only the tier where the two fields DIFFER; the floor (2+2W, both
 EXPLORATORY) and the ceiling (a pure-register shape, both ROBUST) would otherwise
-be untested, so a rule collapsed to a constant would still pass.
-env-research/decisions/taskP-decision.md `REPORTING-TIER UPDATE' puts R at
-EXPLORATORY, which on the 411-test corpus gives ROBUST 294 / ADVISORY 53 (S) /
-EXPLORATORY 64 (2+2W 11 + R 53).
+be untested, so a rule collapsed to a constant would still pass.  R reports at
+the 2+2W floor rather than at S's tier, for the reason positive-control.md sec 6
+("The three reporting tiers") gives.
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -E '_rec\.(confidence|reporting) =' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
       _rec.confidence = CONF_EXPLORATORY;
@@ -288,7 +289,7 @@ EXPLORATORY 64 (2+2W 11 + R 53).
       _rec.reporting = CONF_ROBUST;
 
 And the label the human reads is the REPORTING tier.  Printing `confidence' there
-instead would relabel all 53 R rows [ADVISORY] -- claiming a null from a shape
+instead would relabel every R row [ADVISORY] -- claiming a null from a shape
 that borrows both its synchrony point and its ws edge from the observer is as
 good as one recovered from read buffers.  Pinned on the emitted header, not the
 source copy.

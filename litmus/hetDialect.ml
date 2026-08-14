@@ -1,28 +1,33 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
 (*                                                                          *)
-(* hetDialect: the GPU back-end dialect registry -- one record per vendor   *)
-(* -- and litmus7's `-gpu-target' option, which picks exactly one of its    *)
-(* rows.  The accepted vocabulary is not spelled out anywhere: it IS the    *)
-(* registry's target column, so a vendor becomes accepted by being          *)
-(* registered.  Both GPU-emitting arms (hetEmit's harness directory,        *)
-(* hetGpuOnly's scoped-LISA renders) filter it through [select], so one     *)
-(* emission produces one vendor's render and one vendor's build arms.       *)
-(* Outside them only litmus7's option table touches this file, so a         *)
-(* CPU-only run is unaffected.                                              *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
-(* This software is governed by the CeCILL-B license under French law.      *)
+(* This software is governed by the CeCILL-B license under French law and   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* ===================== HetLitmus: GPU back-end dialect ===================
-   The combined CPU+GPU harness is emitted for CUDA or HIP from ONE LISA
-   parse.  CudaLang and HipLang share the layout / globals / result-register
-   analysis byte-for-byte, so a `gpu_dialect' carries only the per-instruction
-   lowering and the few differing host tokens, and one driver template is
-   rendered per selected vendor (<t>.cu or <t>.hip).  Per-target behaviour is
-   added as a FIELD here, never as a branch in the template. *)
+(* HetLitmus: the GPU back-end dialect registry -- one record per vendor --
+   and litmus7's `-gpu-target' option, which picks exactly one of its rows.
+   The accepted vocabulary is not spelled out anywhere: it IS the registry's
+   target column, so a vendor becomes accepted by being registered.  Both
+   GPU-emitting arms (hetEmit's harness directory, hetGpuOnly's scoped-LISA
+   renders) filter it through [select], so one emission produces one vendor's
+   render and one vendor's build arms.  Outside them only litmus7's option
+   table touches this file, so a CPU-only run is unaffected. *)
+
+(* CudaLang and HipLang share the layout / globals / result-register analysis,
+   so a `gpu_dialect' carries only the per-instruction lowering and the few
+   differing host tokens, and one driver template is rendered per selected
+   vendor (<t>.cu or <t>.hip).  Per-target behaviour is added as a FIELD here,
+   never as a branch in the template. *)
 type gpu_dialect = {
     gd_ext : string ;             (* output extension: "cu" | "hip" *)
     gd_name : string ;            (* "CUDA" | "HIP" *)
@@ -52,7 +57,8 @@ type gpu_dialect = {
     gd_bar : string -> string -> string ; (* indent, ptr-expr -> arrive+spin *)
     (* Per-target allocator for the shared litmus vars + the rendezvous
        barrier; the banner in [gd_shared_mem_defs] states why the choice is
-       correctness rather than tuning (env-research/Q8-allocation.md).
+       correctness rather than tuning
+       (hetlitmus/docs/00-environment-design.md sec 3.2).
        [gd_shared_mem_defs] emits the file-scope gd_alloc_shared /
        gd_free_shared, so call sites stay dialect-agnostic C;
        [gd_shared_mem_note] is the harness-header banner comment.  __out is
@@ -71,7 +77,7 @@ type gpu_dialect = {
        targets differ in kind: GH200 places pages across an LPDDR/HBM split,
        MI300A has one HBM pool and gets its interconnect pressure from
        cross-chiplet contention instead
-       (env-research/Q6-cpu-interconnect-stress.md sec 3.2/3.4). *)
+       (hetlitmus/docs/00-environment-design.md sec 3.6). *)
     gd_noise_mem_defs : string ;   (* file-scope gd_alloc_noise / gd_free_noise *)
     (* Cooperative-launch API tokens, used only for the co-residency +
        weak-progress guarantee of the persistent kernel; the CPU<->GPU

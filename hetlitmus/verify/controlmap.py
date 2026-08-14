@@ -4,24 +4,18 @@ co-runs.  mu(T) is T's LATTICE-FLOOR sibling -- the same program with every
 ordering annotation dropped -- so a `target_count = 0' on T is a non-observation
 on a harness that demonstrably produced an interleaving of T's own shape rather
 than an uninterpretable empty histogram.  The map carries no verdict: what mu
-buys is a REPORTED count, and hetlitmus/docs/positive-control.md says how a null
+buys is a reported count, and hetlitmus/docs/positive-control.md says how a null
 is read against it.
 
-WHY THIS FILE EXISTS (read before "simplifying" it): mu(T) is DERIVED from the
-corpus, not rewritten from T's name, and the corpus is what decides.  On the grid
-rows the floor sibling does happen to be `<shape>-<cut>-<scope>-relaxed'; on the
-two non-grid reference tests it is not -- mu(MP-het) is MP-cg-sys-relaxed and
-mu(SB-het) is SB-cg-sys-relaxed, names no rewrite of `MP-het' produces.  MuAlt is
-where a rewrite fails outright: the one-sided variants are named for the op the
-GPU performs, `acquire' annotates only reads and `release' only writes
-(tests/_grid_lib.sh ord_for), and the GPU's role flips with the device cut, so a
-variant whose GPU proc has no access of that kind is degenerate (byte-identical
-to its `relaxed' sibling) and generate.sh dedups it away -- MP-gc-sys-acquire,
-S-gc-sys-acquire and R-gc-sys-acquire do not exist at all.  The gate therefore
-checks the PROPERTY rather than the spelling, and fails closed: a missing or
-non-weaker mutant breaks the build rather than skipping the control, because a
-silently absent control does not weaken a null -- it makes it unfalsifiable,
-while the null still prints and still looks green.
+mu(T) is derived from the corpus and never rewritten from T's name: the floor
+sibling of a non-grid reference test spells nothing a rewrite of its name
+produces, and a one-sided variant whose GPU proc has no access of the annotated
+kind is degenerate, deduped away by generate.sh, and does not exist at all
+(positive-control.md S3).  So the gate checks the property rather than the
+spelling, and fails closed: a missing or non-weaker mutant breaks the build
+rather than skipping the control, because a silently absent control does not
+weaken a null -- it makes it unfalsifiable, while the null still prints and
+still looks green.
 
 Usage:
     controlmap.py --emit  [--dir D] [--lattice L]        > control-map.csv
@@ -50,32 +44,27 @@ LITMUS7 = os.path.join(HERE, "..", "..", "_build", "install", "default", "bin",
 LIBDIR = os.path.join(HERE, "..", "..", "litmus", "libdir")
 
 # ---------------------------------------------------------------------------
-# THE ASSERTED CENSUS.  Every corpus row either names a mu or sits at the floor,
+# The asserted census.  Every corpus row either names a mu or sits at the floor,
 # so these three numbers partition the corpus and the gate fails if they stop
-# doing so.  They are the same on BOTH lattices, and that is a corpus fact rather
-# than an identity: no row's only ordering op comes from the rung the x86 lattice
-# drops (STLR / LDAPR / DMB.ST / DMB.LD), so nothing that holds a row off the
-# AArch64 floor stops holding it off the x86 one.  check() re-measures both floor
-# sets and reddens if they part company, so these constants cannot outlive the
-# fact they rest on.
+# doing so.  They hold on BOTH lattices, which is a corpus fact rather than an
+# identity: no row's only ordering op comes from the rung the x86 lattice drops
+# (STLR / LDAPR / DMB.ST / DMB.LD).  check() re-measures both floor sets and
+# reddens if they part company, so these constants cannot outlive that fact.
 N_TESTS = 411
 N_WITH_MU = 333
 N_FLOOR = 78
 
 # ---------------------------------------------------------------------------
-# THE LATTICE PARAMETER (memo PORT2-R2 7.D11, landed by P2a 2026-08-02).
-#
-# The AMD map is REGENERATED, never translated: the CPU strength lattice LOSES
-# ITS MIDDLE RUNG.  On AArch64 STLR / LDAPR / DMB.ST / DMB.LD are `partial'
-# (tier 1); their x86 images are all a plain MOV (memo 3.1's collapse table), so
-# on x86 the only CPU op that orders anything across a pair is MFENCE.  A
-# candidate that merely moves within {ra, st, ld} is therefore NOT a weakening on
-# MI300A -- the harness would run the IDENTICAL program and the "control" would
-# vouch for nothing.  `weakening_of' rejects it as "identical ordering strength",
-# which is the fail-closed behaviour D11 asks for.
-#
-# LATTICE is module state read by _parse_instr and audit_map.  The default is
-# `aarch64', so the NVIDIA path is byte-for-byte what it was.
+# The lattice parameter.  The AMD map is regenerated, never translated: the CPU
+# strength lattice loses its middle rung.  On AArch64 STLR / LDAPR / DMB.ST /
+# DMB.LD are `partial' (tier 1) and their x86 images are all a plain MOV, so on
+# x86 the only CPU op that orders anything across a pair is MFENCE, and a
+# candidate that merely moves within {ra, st, ld} is NOT a weakening on MI300A --
+# the harness would run the identical program and the "control" would vouch for
+# nothing.  `weakening_of' rejects it as "identical ordering strength"
+# (hetlitmus/docs/positive-control.md S3).
+
+# LATTICE is module state read by _parse_instr and audit_map.
 LATTICE = "aarch64"
 LATTICES = ("aarch64", "x86")
 
@@ -120,7 +109,7 @@ def map_basename(lattice=None):
 # `weaker-or-equal' is (t1,o1) <= (t2,o2) iff t1 < t2, or t1 == t2 and o1 is a
 # subset of o2.  That keeps DMB.ST/DMB.LD incomparable, and f[release] and
 # r[acquire]-annotated reads incomparable: neither is a weakening of the other,
-# and a control that is not a weakening vouches for nothing.  (Q10)
+# and a control that is not a weakening vouches for nothing.
 SC_TIER, PART_TIER, PLAIN = 2, 1, 0
 
 ALL4 = frozenset(("WW", "RR", "WR", "RW"))
@@ -165,8 +154,8 @@ def _pp(s):
                                s[1][0], "".join(sorted(s[1][1])) or "-")
 
 
-# The rejection D11 asks for, spelled once: `--bite' injection [2] wants this
-# exact string back, so the message and the expectation cannot drift apart.
+# The rejection, spelled once: `--bite' injection [2] wants this exact string
+# back, so the message and the expectation cannot drift apart.
 SAME_STRENGTH = "identical ordering strength -- not a weakening at all"
 
 
@@ -363,8 +352,8 @@ def _parse_instr(t, p, cell, regmap, path):
         return                                   # immediate setup, not an access
     m = re.match(r"^(?:DMB|DSB)[\s.]+(SY|ST|LD)$", up)
     if m:
-        # x86 lattice: DMB.ST and DMB.LD have NO x86 image at all (memo 3.1
-        # drops them), so they raise nothing; only DMB.SY -> MFENCE survives.
+        # x86 lattice: DMB.ST and DMB.LD have NO x86 image at all, so they raise
+        # nothing; only DMB.SY -> MFENCE survives.
         if LATTICE == "x86" and m.group(1) != "SY":
             return
         t.cpu_strength = raise_side(t.cpu_strength, *DMB_STRENGTH[m.group(1)])
@@ -380,8 +369,8 @@ def _parse_instr(t, p, cell, regmap, path):
     if loc is None:
         raise ValueError("%s: P%d addr reg %s is not bound in the init block"
                          % (path, p, reg))
-    # x86 lattice: STLR and LDAPR/LDAR both collapse to a plain MOV (memo 3.1),
-    # so neither raises the CPU side.  This is the middle rung D11 removes.
+    # x86 lattice: STLR and LDAPR/LDAR both collapse to a plain MOV, so neither
+    # raises the CPU side.  This is the middle rung the x86 lattice loses.
     x86 = (LATTICE == "x86")
     if mnem in ("STLR", "STR"):
         t.accesses[p].append(("W", loc))
@@ -414,26 +403,12 @@ def canary_for(name):
 
 
 # ---------------------------------------------------------------------------
-# THE COLUMNS, and why two of them are not the same thing.
-#
-#   Mu        the sibling that is CO-RUN.  T's structural twin at the lattice
-#             floor: every ordering annotation dropped on both sides, so it is
-#             the weakest program of T's own shape the corpus contains and the
-#             one most likely to fire in the window T is being watched in.
-#   MuAlt     the NEAREST weakening -- a maximal element of the same candidate
-#             set.  Documentation only, never compiled in: it is what a
-#             minimal-mutant policy would have co-run, and how far it sits from
-#             the floor is how far T is from its own floor.  `-' where the floor
-#             IS the nearest weakening.
-#   MuRelaxed the fully-relaxed companion, i.e. Mu itself on every row.  The
-#             column stays because positive-control.md names it and because the
-#             gate ASSERTS the identity: a hand-edit that moves one and not the
-#             other splits the co-run choice from the documented one, and that
-#             is exactly the drift the audit has to catch.
-#
-# `none' is the single sentinel and means ONE thing: T is at the lattice floor,
-# so no strictly weaker structural sibling can exist and the harness carries the
-# Layer-B canary alone.
+# The columns, spelled for the reader of the CSV by HEADER below and by
+# hetlitmus/docs/positive-control.md S3.  Two of them are not the same thing: Mu
+# is the sibling that is CO-RUN, MuAlt the nearest weakening -- documentation
+# only, never compiled in.  `none' is the single sentinel and means one thing:
+# T is at the lattice floor, so no strictly weaker structural sibling can exist
+# and the harness carries the Layer-B canary alone.
 def derive(tests):
     """The map.  Returns rows [(test, mu, rule, alt, relaxed, canary)] and a list
     of hard errors (which make the gate fail)."""
@@ -520,7 +495,7 @@ def audit_map(text, tests):
     if not body:
         return ["the map holds no rows at all"]
     if body[0] != HEADER_LINE:
-        # FAIL-CLOSED ON THE SCHEMA.  The legacy 8-column map put a verdict in
+        # Fail closed on the schema.  The legacy 8-column map put a verdict in
         # field 2 and the canary in field 8; read with these column meanings its
         # Mu column would be a verdict and its canary a scope note.  Refuse the
         # file rather than mis-bind it -- litmus/hetControlMap.ml refuses the
@@ -886,8 +861,8 @@ def bite(d, map_base):
         # strength on the active lattice.  Which pairs qualify is what the two
         # lattices disagree about: on x86 the pair is usually one AArch64 would
         # accept as a weakening, because STLR / LDAPR / DMB.ST / DMB.LD collapse
-        # to a plain MOV there (memo PORT2-R2 7.D11), so the sibling and the row
-        # are then the same program.
+        # to a plain MOV there, so the sibling and the row are then the same
+        # program.
         same_row = None
         for r in mu_rows:
             T = tests[r[0]]
@@ -994,7 +969,7 @@ def bite(d, map_base):
                 lambda sd: _sub_mu(os.path.join(sd, map_base), t5, up5),
                 "not weaker (cpu,gpu strength")
 
-        # 6. THE LEGACY 8-COLUMN MAP, refused END TO END.  Its field 2 was a
+        # 6. The legacy 8-column map, refused END TO END.  Its field 2 was a
         #    verdict and its canary was field 8; read with this schema's column
         #    meanings the Mu column would be a verdict string.  Both readers must
         #    refuse the header rather than mis-bind it -- this gate, and the

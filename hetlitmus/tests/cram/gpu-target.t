@@ -39,8 +39,9 @@ fixture for the populated (x86_64, hip) pair.
   $ grep -ciE 'cuda|nvidia|nvcc' hip/MP-cg-sys-relaxed-x86_64/README.md || true
   0
 
-(d) the .hip banner names the HIP build commands.  It said `comp.sh cuda-link /
-make cuda-bin' until this directory stopped carrying both.
+(d) the .hip banner names the HIP build commands -- this directory carries the
+hip arms and no cuda ones, so naming a cuda target here would send its reader to
+a rule that does not exist.
   $ grep -c 'comp.sh hip-link / make hip-bin' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   1
 

@@ -1,7 +1,11 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus Tier-4 generation support.                                     *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
+(*                                                                          *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
 (* This software is governed by the CeCILL-B license under French law and   *)
 (* abiding by the rules of distribution of free software. You can use,      *)
@@ -10,11 +14,12 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* A single-arch test rendered as device-neutral STRING fragments, so that a
-   heterogeneous driver (gen/hetGen.ml) can merge per-proc columns taken from
-   two single-arch runs (one per device) into one Tier-0 `Het` test.
-   Strings (not arch-typed values) are the erasure boundary that lets the
-   AArch64 and LISA builders -- two different `A` modules -- be combined. *)
+(* HetLitmus: a single-arch test rendered as device-neutral string fragments,
+   so that a heterogeneous driver (gen/hetGen.ml) can merge per-proc columns
+   taken from two single-arch runs (one per device) into one `Het` test.
+   Strings, not arch-typed values, are the erasure boundary that lets the
+   AArch64 and LISA builders -- two different `A` modules -- be combined.
+   Design: hetlitmus/docs/het-generation.md. *)
 type t = {
   (* Initial state atoms with their owning proc: (Some p,"0:X1=x") is proc-p's,
      (None,"x=0") is a global.  No trailing ';'. *)

@@ -7,10 +7,10 @@
      noise buffers              -> HERE             (system memory homed on the OTHER
                                                      PU, so streaming it crosses C2C)
 
-   Fusco et al. (arXiv:2408.11556): a Grace and a Hopper noise kernel each
-   continuously stream-read a large buffer homed on the other unit -- Grace reads
-   HBM, Hopper reads DDR.  BOTH buffers are system-allocated and differ only in
-   where their pages are homed, which is what `_where' selects.
+   The construction is [Fusco24 sec III-E.1]'s: a Grace and a Hopper noise kernel
+   each continuously stream-read a large buffer homed on the other unit -- Grace
+   reads HBM, Hopper reads DDR.  BOTH buffers are system-allocated and differ only
+   in where their pages are homed, which is what `_where' selects.
 
    Returns 0 = placed, 1 = allocated but NOT interconnect-capable (degraded), -1 =
    failed.  The caller must say which -- a noise buffer that could not be homed

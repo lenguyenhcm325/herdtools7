@@ -1,23 +1,23 @@
 #!/usr/bin/env bash
-# HetLitmus emission snapshot: emit the FULL corpus over every (CPU ISA x GPU
-# dialect) pair into OUTDIR -- 411 het harness dirs per het lane and 137
-# gpu-only kernels per gpu-only lane.
+# Emission snapshot: emit the whole corpus over every (CPU ISA x GPU dialect)
+# pair into OUTDIR, one lane per pair, at the censuses EXPECT_HET / EXPECT_GPU
+# below.
 #
-# Purpose: the refactor golden.  The Layer-2 gate (corpus-gate.sh) byte-pins
-# only the committed gpu-only samples; every other emitted artifact is covered
-# by PROPERTY gates (cram greps, ptxcheck, verdictcheck/statscheck corpus
-# phases), which by design pass a range of outputs.  A behaviour-preserving
-# refactor of the emitter should instead prove BYTE-IDENTICAL output: emit
-# before, emit after, `diff -r`.  Emission is deterministic (corpus-gate.sh
-# already relies on this for its samples).
+# It is the refactor golden.  The Layer-2 gate (corpus-gate.sh) byte-pins only
+# the committed gpu-only samples; every other emitted artifact is covered by
+# property gates (cram greps, ptxcheck, verdictcheck/statscheck corpus phases),
+# which by design pass a range of outputs.  A behaviour-preserving refactor of
+# the emitter proves byte-identical output instead: emit before, emit after,
+# `diff -r'.  Emission is deterministic (corpus-gate.sh already relies on that
+# for its samples).
 #
 #   ./emit-all.sh SNAP_BEFORE     # at the pre-refactor commit
 #   ...refactor...
 #   ./emit-all.sh SNAP_AFTER
 #   diff -r SNAP_BEFORE SNAP_AFTER && echo BYTE-IDENTICAL
 #
-# THE LANES ARE PAIRS, not vendors.  A compound harness is a CPU ISA and a GPU
-# dialect, and litmus/hetMachine.ml's table says which of those pairs may NAME a
+# The lanes are pairs, not vendors.  A compound harness is a CPU ISA and a GPU
+# dialect, and litmus/hetMachine.ml's table says which of those pairs may name a
 # machine.  Every pair emits; the table decides what the render is entitled to
 # claim, so the emission surface is one lane per (corpus x dialect) combination,
 # listed in HET_LANES / GPU_LANES below and nowhere else:
@@ -29,43 +29,31 @@
 #   gpu-cuda / gpu-hip                    the GPU-only (scoped LISA) arm, which
 #                                         has no CPU column and so no pair
 #
-# The two lanes that stamp NOTHING are the LANDMINE SURFACE, asserted per lane
-# below: a render that names a machine its pair has no row for is the one defect
-# no reader of a results tree could catch afterwards.
+# The two lanes that stamp nothing carry the landmine, asserted per lane below:
+# a render that names a machine its pair has no row for is the one defect no
+# reader of a results tree could catch afterwards.
 #
-# The x86 corpus is NOT committed (tests/het/generate-x86.sh says why); it is
-# generated into a scratch dir OUTSIDE OUTDIR, so `diff -r' of two snapshots
-# still compares emitted bytes only.  The het corpora are emitted from INSIDE
-# their own directory so emission finds the pair's control map + the co-run
+# The x86 corpus is not committed (tests/het/generate-x86.sh says why); it is
+# generated into a scratch dir outside OUTDIR, so `diff -r' of two snapshots
+# still compares emitted bytes only.  The het corpora are emitted from inside
+# their own directory so emission finds the pair's control map and the co-run
 # sibling .litmus (a harness embeds its mu(T) and its canary, both resolved
 # relative to the source dir).  gpu-only reuses emit-gpu.sh.
 #
-# FAIL-CLOSED (P2b).  This loop used to be
-#     "$LITMUS7" -o "$OUTDIR/het" "$t" >/dev/null
-# and litmus7 itself EXITED 0 on a refusal: its batch driver caught the emission
-# exception, printed it on the discarded stream and returned success
-# (dumpRun.ml:266-281 -> litmus.ml:383-385).  Measured, by replaying the
-# pre-P2b script against stand-in litmus7 binaries:
-#   * a wholly MISSING harness directory WAS caught, but only by the aggregate
-#     census at the bottom -- `emitted: 410 ...' / `FAIL: census mismatch',
-#     exit 1, naming no test and no reason (and the count is not even
-#     proportionate: one broken test also breaks every harness that co-runs it
-#     as mu(T)/canary);
-#   * an INCOMPLETE harness -- directory present, <t>_cpu.c gone -- was NOT
-#     caught: `emitted: 411 het harness dirs', exit 0.  A snapshot with a whole
-#     CPU thread missing reported success.
-# Inert while every committed test emitted; live the moment the x86 CPU lane was
-# wired.  Three INDEPENDENT detectors now stand between a refusal and a green run:
-#   (a) CORRUPTION -- litmus7 exits 3 and prints "HetLitmus REFUSED" (see
+# Fail-closed, because litmus7's batch driver catches an emission exception,
+# prints it on the stream this script discards and still exits 0
+# (dumpRun.ml -> litmus.ml).  Three independent detectors stand between a
+# refusal and a green run:
+#   (a) corruption -- litmus7 exits 3 and prints "HetLitmus REFUSED" (see
 #       HetArch.refused); this script checks the status AND greps the marker,
 #       so neither one alone is load-bearing;
-#   (b) OMISSION   -- the harness directory the test must produce is checked
-#       for existence and for its <t>_cpu.c and its OWN render, which fires even
+#   (b) omission   -- the harness directory the test must produce is checked
+#       for existence and for its <t>_cpu.c and its own render, which fires even
 #       if litmus7 were to exit 0 with nothing written.  The lane's render is
-#       also required to be the ONLY one: a dir carrying the other vendor's
+#       also required to be the only one: a dir carrying the other vendor's
 #       file too would mean -gpu-target stopped filtering.
-#   (c) MIS-TAGGING -- every harness of a lane must carry that PAIR's name and
-#       that pair's machine defines, and the lane as a whole must SAY no other
+#   (c) mis-tagging -- every harness of a lane must carry that pair's name and
+#       that pair's machine defines, and the lane as a whole must say no other
 #       row's machine words (brandscan.py, over the printed literals and the
 #       README / build files).  A harness built for the wrong pair compiles,
 #       runs and reports; the stamps and the sentences are what say which
@@ -99,10 +87,10 @@ lane_selected() {               # <OUTDIR subdir> -> 0 when this run emits it
   return 1
 }
 
-# THE EMISSION LANES, "<corpus>:<gpu-target>:<render extension>:<OUTDIR subdir>".
+# The emission lanes, "<corpus>:<gpu-target>:<render extension>:<OUTDIR subdir>".
 HET_LANES="aarch64:cuda:cu:het-cuda x86:hip:hip:het-x86-hip x86:cuda:cu:het-x86-cuda \
 aarch64:hip:hip:het-hip"
-# The OTHER VENDOR'S words a lane must NOT contain anywhere in its harness dirs
+# The other vendor's words a lane must NOT contain anywhere in its harness dirs
 # -- the landmine: an x86 host with an NVIDIA GPU is neither published part, and
 # "Infinity Fabric" is what the (X86_64, hip) lane stamps one line away from
 # here.  (`MI300A' alone is not a landmine: the CPU stress payload's comments
@@ -113,12 +101,12 @@ forbidden_of_lane() {           # <corpus>:<target> -> egrep pattern, or ""
     *)        echo '' ;;
   esac
 }
-# WHOSE WORDS EACH LANE MAY PRINT, for brandscan.py -- which reads the string
+# Whose words each lane may print, for brandscan.py -- which reads the string
 # literals a driver prints and the README / build files a reader opens, and
-# leaves the comparative COMMENTS alone (a payload explains its lane by naming
+# leaves the comparative comments alone (a payload explains its lane by naming
 # the part it was derived for, and de-branding a citation falsifies it).  The
-# defines above say what a render stamps; this says what it SAYS, and the two are
-# not the same check: the Grace half a harness names in a warning is a claim
+# defines above say what a render stamps; this says what it prints, and the two
+# are not the same check: the Grace half a harness names in a warning is a claim
 # about the box it ran on whether or not any define produced the word.
 entitled_of_lane() {            # <corpus>:<target> -> the row it may name
   case "$1" in
@@ -127,7 +115,7 @@ entitled_of_lane() {            # <corpus>:<target> -> the row it may name
     *)            echo none ;;
   esac
 }
-# THE PAIR NAME each lane's renders must stamp, and the MACHINE DEFINE BLOCK each
+# The pair name each lane's renders must stamp, and the machine define block each
 # is entitled to -- verbatim, in emission order, empty where the pair has no
 # machine row (litmus/hetMachine.ml).  Checked as a whole block rather than by
 # count: a lane that stamped another row's words in the right number would pass a
@@ -155,7 +143,7 @@ machine_of_lane() {             # <corpus>:<target> -> the #define block, or ""
     *) : ;;
   esac
 }
-# ...and, where no machine is stamped, WHICH of the two reasons the render gives
+# ...and, where no machine is stamped, which of the two reasons the render gives
 # for it: a REGISTERED pair is deliberately nameless, an unregistered one was
 # never considered.  Only litmus/hetMachine.ml's registered bit tells them apart,
 # and this line is the only place that bit reaches a reader.
@@ -175,7 +163,7 @@ OUTDIR="${1:?usage: emit-all.sh OUTDIR}"
 mkdir -p "$OUTDIR"
 OUTDIR="$(cd "$OUTDIR" && pwd)"
 
-# THE SNAPSHOT GUARD.  A seam-restricted run emits a subset, so `diff -r' against
+# The snapshot guard.  A seam-restricted run emits a subset, so `diff -r' against
 # a full snapshot would report the missing lanes and tests as emitter changes.
 # The marker is a dotfile, and `diff -r' compares dotfiles, so the instrument that
 # reads snapshots cannot take a subset for one.  It carries a per-run nonce as
@@ -195,7 +183,7 @@ else
   rm -f "$SNAP_MARKER"
 fi
 
-# OUTSIDE OUTDIR: a snapshot is byte-diffed with `diff -r', which compares
+# Outside OUTDIR: a snapshot is byte-diffed with `diff -r', which compares
 # dotfiles too, so no scratch file may land in it.
 LOG="$(mktemp)"
 SCRATCH="$(mktemp -d)"
@@ -275,14 +263,14 @@ for lane in $HET_LANES; do
           exit 1
         fi
       done
-      # (c) THE RECORD STAMP.  het_verdict() reads no field of a record without
+      # (c) The record stamp.  het_verdict() reads no field of a record without
       # HET_REC_MAGIC, so a render that lost the stamp discards every run it
       # will ever make.
       if [ "$(grep -c '_rec.rec_magic = HET_REC_MAGIC;' "$OUTDIR/$sub/$n/$n.$ext")" != 1 ]; then
         echo "FAIL: $t in the $corpus/$target lane does not stamp _rec.rec_magic exactly once" >&2
         exit 1
       fi
-      # THE CONTROL MAP WAS THERE.  Every het lane emits from beside its own map,
+      # The control map was there.  Every het lane emits from beside its own map,
       # so this define can only appear if the lane lost it -- and a harness that
       # names no control still emits, still runs and still prints, with every
       # null it produces uninterpretable.  Nothing else in this script would see
@@ -291,7 +279,7 @@ for lane in $HET_LANES; do
         echo "FAIL: $t in the $corpus/$target lane stamps HET_NO_CONTROL_MAP 1 -- no control map was found beside the test, so it co-runs nothing" >&2
         exit 1
       fi
-      # THE PAIR, and the machine words that pair is entitled to.
+      # The pair, and the machine words that pair is entitled to.
       if [ "$(grep -cF "#define HET_PAIR_NAME \"$want_pair\"" "$OUTDIR/$sub/$n/$n.$ext")" != 1 ]; then
         echo "FAIL: $t in the $corpus/$target lane does not stamp HET_PAIR_NAME \"$want_pair\" exactly once; it stamps:" >&2
         grep -F '#define HET_PAIR_NAME' "$OUTDIR/$sub/$n/$n.$ext" >&2 \
@@ -319,7 +307,7 @@ for lane in $HET_LANES; do
         exit 1
       fi
     done )
-  # WHAT THE LANE SAYS, over the lane at once: 411 harness dirs are one scan, and
+  # What the lane says, over the lane at once: a whole lane is one scan, and
   # brandscan.py names the file, the line and the row whose word it found.
   if ! python3 "$HETL/verify/brandscan.py" --entitled "$want_entitled" --quiet \
        "$OUTDIR/$sub"; then

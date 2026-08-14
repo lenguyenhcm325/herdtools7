@@ -1,33 +1,30 @@
 #!/usr/bin/env python3
-"""histcheck.py -- the outcome-histogram gate.  It pins two invariants (F-A; the
-diagnosis, the hardware log and the runtime experiment that settled it are in
-env-research/impl-briefs/FA-FB-REPORT.md):
+"""histcheck.py -- the outcome-histogram gate.  It pins two invariants:
 
-  (1) THE HISTOGRAM IS FED ONCE PER OBSERVATION.  A shape with a reader has a
+  (1) The histogram is fed once per observation.  A shape with a reader has a
       per-frame observable (`int _hot ='), so its add belongs inside the per-frame
       loop; a reader-less store-only shape has only the run-level observer witness,
-      which is constant across the frame loop, so its add belongs at RUN level.
-      Adding a per-run fact once per frame multiplies one observation by N.
-  (2) A coherence-final `[ell]' column is never printed as a number, because no such
-      number is measured: an [ell]=v atom is decided by the per-run observer `ws'
-      witness and reported through HetObs / HetVerdict (env-research/decisions/
-      B3-decision.md 4), so the slot carries no bits to print.
+      which is constant across that loop, so its add belongs at run level.  A
+      per-run fact added once per frame multiplies one observation by N.
+  (2) A coherence-final `[ell]' column never prints a number, because none is
+      measured: that atom is decided by the per-run observer `ws' witness and
+      reported through HetObs / HetVerdict (hetlitmus/docs/positive-control.md S6),
+      so the slot carries no bits to print.
 
-  PHASE 1 -- SHAPE (all 411 emitted harnesses).  Exactly one histogram add per
-    harness, since only T feeds it.  With a per-frame observable it sits inside the
-    frame loop guarded by exactly `_hot || _weak'; without one it is an
-    unconditional per-run add at run level, shown by an observer `_loc' witness.
-    Census 400 / 11.
-  PHASE 2 -- DISPLAY (all 411).  Register slots print numerically, location slots
-    print `?', checked both ways, and the loop bounds must partition the slots
-    exactly.
-  PHASE 3 -- ARITHMETIC (the real emitted tally, compiled and RUN).  The store-only
-    tally region is extracted VERBATIM from the emitted .cu, so emission drift shows
-    up here, then linked against the harness's own outs.c and driven with forced
-    per-run witness patterns: `sum_outs(hist)' must equal R for every pattern and
-    must not scale with SIZE_OF_TEST.  The phase then re-runs itself on the
-    per-frame variant and requires that to be REJECTED -- an arithmetic check never
-    seen to reject anything is not evidence.
+  PHASE 1 -- shape, over every emitted harness.  Exactly one histogram add each,
+    since only T feeds it: inside the frame loop guarded by exactly
+    `_hot || _weak' where a per-frame observable exists, and an unconditional
+    run-level add shown by an observer `_loc' witness where none does.
+  PHASE 2 -- display, over the same corpus.  Register slots print numerically and
+    location slots print `?', checked both ways, the print loops partitioning the
+    slots exactly.
+  PHASE 3 -- arithmetic, on the real emitted tally, compiled and run.  The
+    store-only tally region is lifted verbatim out of the emitted .cu, so emission
+    drift shows up here, then linked against the harness's own outs.c and driven
+    with forced per-run witness patterns: `sum_outs(hist)' must equal R for every
+    pattern and must not scale with SIZE_OF_TEST.  The per-frame variant of that
+    same tally must then be REJECTED -- an arithmetic check never seen to reject
+    anything is not evidence.
 
 Usage:  histcheck.py           run the gate
         histcheck.py --bite    prove the gate FAILS when the mechanism breaks
@@ -50,7 +47,7 @@ HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 # is what this gate is for.
 N_TESTS = 411
 N_STORE_ONLY = 11           # the 2+2W family: no reader, observer-only
-N_WITH_LOC_COLUMN = 117     # 2+2W 11 + R 53 + S 53 (Q10 +12 R +12 S; Q10b +16 R +16 S)
+N_WITH_LOC_COLUMN = 117     # the shapes with a ws-location: 2+2W 11 + R 53 + S 53
 
 # The store-only shape whose tally Phase 3 extracts and runs.
 TALLY_TEST = "2+2W-cg-sys-fence"
@@ -488,10 +485,10 @@ def phase3(srcs):
             if not ok:
                 bad += 1
             # No `total > frames' assertion here: extract_tally admits only a body
-            # with exactly ONE add, executed at most once per frame iteration, so
-            # total <= R*SIZE_OF_TEST = frames holds by construction and the test
-            # could never fire.  The GB10 symptom is reproduced -- and required --
-            # on the PRE-FIX arm below, where it is a real observation.
+            # with exactly one add, executed at most once per frame iteration, so
+            # total <= R*SIZE_OF_TEST = frames holds by construction and the check
+            # could never fire.  The per-frame arm below is where that inequality
+            # is a real assertion.
             want_show = 1 if any(pattern) else 0
             if show != want_show:
                 print("     *** show=%d, want %d (the `*' marker must track the "
@@ -511,12 +508,12 @@ def phase3(srcs):
                 bad += 1
             else:
                 # Two patterns, because they prove different things.  [1,0,1] pins
-                # the closed form against a partial witness run; the ALL-ONES one
-                # is the only pattern that puts the tally ABOVE the frames
-                # examined (3*1000+3 > 3*1000), i.e. reproduces the GB10 line
-                # itself -- the impossible row that started F-A.  Neither is
-                # allowed to coincide with the fixed tally: an arm whose output is
-                # what the fixed variant already prints rejects nothing.
+                # the closed form against a partial witness run; the all-ones one
+                # is the ONLY pattern that puts the tally above the frames examined
+                # (3*1000+3 > 3*1000), which is the impossible row the diagnostic
+                # below names.  Neither may coincide with the fixed tally: an arm
+                # whose output is what the fixed variant already prints rejects
+                # nothing.
                 distinguishing = 0
                 gb10 = 0
                 for pattern in ([1, 0, 1], [1, 1, 1]):
@@ -644,9 +641,9 @@ def _numeric_location_column(t, src):
 
 
 def _move_add_into_frame_loop(t, src):
-    """The same category error with the add COUNT still 1, so it can only be caught
-       by the `no per-frame observable' rule and not by counting.  Without this the
-       headline assertion of Phase 1 would never have been seen to fail."""
+    """The same category error with the add count still 1, so the `no per-frame
+       observable' rule is the ONLY thing that can catch it -- and this is the
+       injection that drives Phase 1's headline assertion."""
     if t != TALLY_TEST:
         return src
     src2 = _drop_per_run_add(t, src)

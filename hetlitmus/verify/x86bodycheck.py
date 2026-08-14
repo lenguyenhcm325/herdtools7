@@ -1,37 +1,32 @@
 #!/usr/bin/env python3
 """
-x86bodycheck.py -- the P2b gate: is the x86-64 CPU thread of a het harness REAL?
+x86bodycheck.py -- is the x86-64 CPU thread of a het harness REAL?
 
-Until 2026-08-03 `hetCpuFront.ml' wired an empty plan + `emit_stub' for X86_64,
-so an x86 CPU proc emitted
-
-    void het_run_P0(uint64_t *x, uint64_t *y, int _n) { (void)_n; (void)x; (void)y; }
-
--- a body that tests nothing.  Measured consequence, over the x86 renderings of
-the corpus: litmus7 emitted a harness for 39 and REFUSED the rest, because with
-no tagged store and no bound load the condition could resolve neither a read
-buffer (308 rows) nor a mu (64 rows).  And it refused while EXITING 0.
+A stub body -- an x86 CPU proc emitted as `{ (void)_n; (void)x; (void)y; }' --
+tests nothing and does not fail loudly: with no tagged store and no bound load
+the condition can resolve neither a read buffer nor a mu, so litmus7 refuses most
+of the corpus, and a refusal that exits 0 reports success.
 
 Seven phases, each of which must be seen to fail:
 
   P1 emission coverage   every x86 rendering emits a complete harness
   P2 body fidelity       each emitted body is its OWN test's program, not a stub
   P3 tag liveness        every store carries K*(_n+1)+mu, every load reaches a
-                         buffer (the B4 lesson: emitting is not testing)
+                         buffer -- emitting is not testing
   P4 machine code        the tested instructions survive gcc to the .o
   P5 AArch64 lane        it still emits str/ldr/dmb with no x86 leak, and its
                          classifier refuses what it cannot render faithfully
-  P6 fail-closed         a refusal exits 3, prints HetLitmus REFUSED, leaves no
-                         harness -- and emit-all.sh's two detectors both fire
-  P7 co-run bodies       a B6b harness carries T, mu(T) AND the canary at the
+  P6 fail-closed         a refusal exits 3, prints HetLitmus REFUSED and leaves
+                         no harness; `--bite' drives emit-all.sh's three
+                         detectors from here as well
+  P7 co-run bodies       a co-run harness carries T, mu(T) AND the canary at the
                          same proc index; each must be checked against its own
                          test, none silently dropped
 
-NON-VACUITY.  P2/P3/P7 do not merely count what they saw: each pins its count
-against a total DERIVED from the corpus' own .litmus columns and against an
-absolute measured constant.  A phase that made zero comparisons therefore FAILS
-rather than printing "0 comparisons made" and passing -- the B6a
-`exhaustive_valid'-constant-0 / B4-inert failure mode.
+Non-vacuity: P2/P3/P7 do not merely count what they saw.  Each pins its count
+against a total derived from the corpus' own .litmus columns AND against a
+measured constant, so a phase that made zero comparisons fails rather than
+printing "0 comparisons made" and passing.
 
 `--bite' injects into each phase, on CORRUPTION and on OMISSION, and requires the
 phase that owns the injected object to redden naming it.
@@ -48,79 +43,61 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 GEN_X86 = os.path.join(HET_DIR, "generate-x86.sh")
-# P2d (2026-08-03) wired the x86 lane to its OWN lattice: hetCpuFront.X86_64 names
-# control-map-amd.csv, and generate-x86.sh re-keys it onto the -x86_64 names
-# inside the generated corpus.  So this gate reads the map the
-# emitter reads.  Until then it built a THROWAWAY x86-keyed map out of
-# control-map.csv (the AArch64 lattice) so that the co-run path was exercised at
-# all; that stand-in is gone, and with it the risk of a gate checking a
-# configuration nothing ships.
+# The x86 lane has its OWN lattice: hetCpuFront.X86_64 names control-map-amd.csv,
+# and generate-x86.sh re-keys it onto the -x86_64 names inside the generated
+# corpus.  This gate therefore reads the map the emitter reads, rather than
+# building an x86-keyed stand-in and checking a configuration nothing ships.
 CONTROL_MAP = os.path.join(HET_DIR, "control-map-amd.csv")
 EMIT_ALL = os.path.join(HERE, "emit-all.sh")
 LITMUS7 = os.path.join(ROOT, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(ROOT, "litmus", "libdir")
 
 # ---------------------------------------------------------------------------
-# Census pins.  Every one of these was MEASURED, and each is cross-checked at
-# run time against a value derived live from the corpus, so a pin can go stale
-# only by someone changing both.
+# Census pins.  Each is cross-checked at run time against a value derived live
+# from the corpus, so a pin can go stale only by someone changing both.
 # ---------------------------------------------------------------------------
 
-# generate-x86.sh's census: (A) 2 + (B) 246 + (D) 51 + (E) 112.
-#
-# It is 411 -- exactly the corpus size -- because (D) mirrors generate.sh's
-# degenerate two-sided drop (generate.sh:127-133).  Until 2026-08-03 it did not,
-# and emitted a 412th rendering, IRIW-gcgc-sys-fence-2s-x86_64.  That file is
-# NOT a test the aarch64 corpus lost: `git log --all -- IRIW-gcgc-sys-fence-2s
-# .litmus' returns nothing, the name has never existed in this repository.  It
-# is a DEGENERATE DUPLICATE -- byte-identical below the 2-line header to
-# IRIW-gcgc-sys-fence-x86_64, because both CPU procs of the gcgc cut are single
-# writers so the two-sided annotation has nothing to attach to -- and
-# generate.sh drops precisely that one on the aarch64 lattice.  With the drop
-# mirrored the two name sets are equal in both directions (`comm' over them is
-# empty), which is what lets control-map-amd.csv stay keyed on the UNSUFFIXED
-# names with no orphan either way.
+# One x86 rendering per corpus test: generate-x86.sh mirrors generate.sh's
+# degenerate two-sided drop, so the two name sets are equal in both directions
+# and control-map-amd.csv can stay keyed on the unsuffixed names with NO orphan
+# either way.  That script explains its sections and prints their census.
 N_X86 = 411
 
-# The x86 side of those 411 renderings, counted from their .litmus columns:
-# 663 x86_64 procs carrying 608 stores + 579 loads (+ 61 mfences).  Vocabulary,
-# measured exhaustively: movl $1,(g) 489, movl $2,(g) 64, movl (g),%eax 406,
-# movl (g),%ebx 173, mfence 61 -- and nothing else.
+# The x86 side of those renderings, counted from their .litmus columns.
 N_X86_PROCS = 663
 N_X86_STORES = 608
 N_X86_LOADS = 579
 
 # P7's probe set: the control-map rows that name a mu(T), hence the harnesses
 # that co-run three instances (T, mu, canary), all three at the SAME proc index
-# -- which is exactly why keying bodies by proc alone lost two of every three.
-# That is every row NOT at the lattice floor: 333 of the 411, the other 78 being
-# the fully-relaxed rows that no sibling can be weaker than.
-# The body count is NOT 333 x 3: a co-run harness emits one body per (instance,
-# x86 proc) pair, and how many x86 procs a shape has runs from one (LB, MP) to
-# three (WRC3), so the ratio is shape-dependent and both numbers are re-measured,
-# never derived from each other.
+# -- which is why keying bodies by proc alone loses two of every three.  That is
+# every row off the lattice floor; the rest are the fully-relaxed rows no sibling
+# can be weaker than.
+# The body count is not N_CORUN_TESTS x 3: a co-run harness emits one body per
+# (instance, x86 proc) pair, and how many x86 procs a shape has runs from one
+# (LB, MP) to three (WRC3), so the ratio is shape-dependent and the two numbers
+# are measured separately, never derived from each other.
 N_CORUN_TESTS = 333
 N_CORUN_BODIES = 1365
 
 # Representative harness for the machine-code phase: its x86 CPU proc carries a
-# store, a fence AND a load, so one objdump covers the whole vocabulary.
-# It is off the lattice floor, so it emits THREE instances and its bodies are
-# prefixed (het_run_t_P0, not het_run_P0).  That is not a downgrade of the phase
-# -- co-run is now every row but the 78 floor ones -- but the symbol has to be
-# looked up, not assumed; see MC_SYMS.
+# store, a fence AND a load, so one objdump covers the whole vocabulary.  It is
+# off the lattice floor, so it emits three instances and its bodies are prefixed
+# (het_run_t_P0, not het_run_P0) -- the symbol has to be looked up rather than
+# assumed; see MC_SYMS.
 MC_TEST = "SB-cg-sys-fence-2s-x86_64"
 MC_SYMS = ["het_run_t_P0", "het_run_P0"]
 
 # AArch64 tests P5 re-emits (a store proc, a load proc, a two-sided proc).
 AARCH64_TESTS = ["2+2W-cg-sys-relaxed", "MP-gc-sys-relaxed", "MP-cg-sys-fence-2s"]
 
-# WHICH GPU DIALECT THE x86 RENDERINGS ARE EMITTED FOR.  A harness is a
-# (CPU ISA x GPU dialect) PAIR, and (x86_64, hip) is the one this project has an
-# MI300A row for (litmus/hetMachine.ml).  Either x86 dialect would do for what P7
-# reads -- both read control-map-amd.csv, which is keyed on the CPU frontend --
-# and hip is the render the rest of this gate builds.
-# The CPU body itself is dialect-independent (one <t>_cpu.c per harness), which
-# is what makes this phase's subject the same either way.
+# Which GPU dialect the x86 renderings are emitted for.  A harness is a
+# (CPU ISA x GPU dialect) pair, and (x86_64, hip) is the one with an MI300A row
+# (litmus/hetMachine.ml).  Either x86 dialect would do for what P7 reads -- both
+# read control-map-amd.csv, which is keyed on the CPU frontend -- and hip is the
+# render the rest of this gate builds.  The CPU body itself is
+# dialect-independent (one <t>_cpu.c per harness), which is what makes this
+# phase's subject the same either way.
 X86_TARGET = "hip"
 X86_EXT = "hip"
 
@@ -226,8 +203,8 @@ def corpus_x86_census(corpus):
 
 # ------------------------------------------------------------- body extraction
 
-# Group 2 is the CO-RUN PREFIX: "" for a single-instance harness, else "t_",
-# "mu_" or "can_" (hetEmit's B6b naming).  Capturing it is what lets a body be
+# Group 2 is the co-run prefix: "" for a single-instance harness, else "t_",
+# "mu_" or "can_" (hetEmit's co-run naming).  Capturing it is what lets a body be
 # checked against ITS OWN test rather than against the harness' T.
 RE_FUNC = re.compile(r"^void (het_run_(\w*?)P(\d+))\(([^)]*)\) \{$")
 
@@ -251,12 +228,12 @@ def host_region(cpu_c):
 def split_bodies(region):
     """{(proc, fname): (prefix, [lines])} for each het_run_*P<n> in the host arm.
 
-    KEYED BY (proc, fname), not by proc.  A B6b co-run harness carries
-    het_run_t_P0, het_run_mu_P0 and het_run_can_P0 -- three DIFFERENT programs
-    at the same proc index -- so a proc-keyed dict silently kept only the last
-    (the canary) and P2/P3 stopped checking T and mu(T) altogether.  On every
-    `-relaxed' rendering T and the canary have the same (kind,global) sequence,
-    so P2 would have gone on PASSING while checking the wrong program.
+    Keyed by (proc, fname), NOT by proc.  A co-run harness carries het_run_t_P0,
+    het_run_mu_P0 and het_run_can_P0 -- three different programs at the same proc
+    index -- so a proc-keyed dict keeps only the last of them (the canary) and
+    P2/P3 stop checking T and mu(T) altogether.  On every `-relaxed' rendering T
+    and the canary have the same (kind,global) sequence, so P2 goes on passing
+    while checking the wrong program.
     """
     bodies, cur, key, prefix = {}, None, None, None
     for l in region.splitlines():
@@ -277,9 +254,9 @@ def split_bodies(region):
 
 
 def split_bodies_proc_keyed(region):
-    """The PRE-FIX splitter, kept only so --bite can restore the defect and
-
-    watch P7 redden.  Never used by a passing run."""
+    """The proc-keyed splitter, which loses every body but the last at a shared
+    proc index.  Kept ONLY so --bite can restore that defect and watch P7 redden;
+    no passing run uses it."""
     out = {}
     for (proc, fname), v in split_bodies(region).items():
         out[(proc, "het_run_P%d" % proc)] = v
@@ -505,8 +482,8 @@ def phase3(corpus, good, splitter=split_bodies):
         a, b = check_liveness("P3", name, co)
         co_st += a
         co_ld += b
-    # The pins are on the harnesses' OWN bodies, so a future control map beside
-    # the renderings (P2d) adds co-run bodies without invalidating them.
+    # The pins count the harnesses' OWN bodies only, so the co-run bodies the
+    # control map beside the renderings adds do not disturb them.
     if (own_st, own_ld) != (want_st, want_ld):
         fail("P3", "checked %d stores / %d loads in the tests' own bodies, but the "
                    "corpus' x86 columns declare %d / %d"
@@ -541,8 +518,7 @@ def objdump_ok(tmp, cpu_c, phase):
     if r.returncode != 0:
         return False, "objdump failed: %s" % r.stderr.strip()[:200]
     # Slice from the symbol header to the next one.  Not `(.*?)\n\n': at -O2
-    # het_run_P0 can be the LAST function in .text, and then no blank line
-    # follows it -- which is how this extraction first went (wrongly) red.
+    # het_run_P0 can be the LAST function in .text, with no blank line after it.
     parts = re.split(r"^[0-9a-f]+ <[^>]+>:$", r.stdout, flags=re.M)
     names = re.findall(r"^[0-9a-f]+ <([^>]+)>:$", r.stdout, flags=re.M)
     sym = next((x for x in MC_SYMS if x in names), None)
@@ -574,18 +550,18 @@ def emit_aarch64(out):
 # ------------------------------------------------------------------ P5 probes
 
 # Four CPU columns hetCpuBodyA64 must refuse, none of them reachable from the
-# corpus: over its 411 tests the AArch64 vocabulary is exactly MOV r,#k (608),
-# STR (538), LDR (515), STLR (70), LDAPR (64) and DMB SY|ST|LD (61/32/32), all
-# at a bare [Xn].  So emit-all.sh's 411 successful emissions are the control
-# that these four are refused for their instruction and not for their shape.
-# What --bite substitutes for each of them is stated in [bite].
+# corpus: its AArch64 vocabulary is MOV r,#k / STR / LDR / STLR / LDAPR /
+# DMB SY|ST|LD, all at a bare [Xn].  emit-all.sh emitting the whole corpus is
+# therefore the control that these four are refused for their instruction and NOT
+# for their shape.  What --bite substitutes for each is stated in [bite].
 #
-# A1_DEAD kills the immediate with a load into the same register: the store's
-# value is then not statically known, and the emitter must refuse to bind
-# `1:r0=5' to it rather than decode it to the wrong mu.  A1_MOV kills it with a
-# register-to-register MOV, which the classifier refuses outright.  A1_LIVE
-# writes the same 5 with the immediate intact and MUST emit, which is what makes
-# the refusal about value PROVENANCE and not about the literal 5.
+# PROBE_A64_DEAD_VALUE kills the immediate with a load into the same register:
+# the store's value is then not statically known, and the emitter must refuse to
+# bind `1:r0=5' to it rather than decode it to the wrong mu.  PROBE_A64_MOV_REG
+# kills it with a register-to-register MOV, which the classifier refuses
+# outright.  PROBE_A64_LIVE_VALUE writes the same 5 with the immediate intact and
+# must emit, which is what makes the refusal about value provenance and not about
+# the literal 5.
 PROBE_A64_DEAD_VALUE = """Het PROVA64
 "probe: the store value is killed by a load into the same register"
 {
@@ -670,13 +646,13 @@ def phase5(tmp, out=None, litmus7=LITMUS7, dead_text=None, mov_text=None,
            live_text=None, offset_text=None, dsb_text=None):
     """The AArch64 lane: it emits aarch64, and it refuses what it cannot render.
 
-    NOT the byte-diff.  The instrument that protects the validated NVIDIA lane
-    is `hetlitmus/verify/emit-all.sh SNAP_x' run before and after a change,
-    followed by `diff -r' over the 16,732 emitted files; that is inherently a
-    two-revision comparison and cannot be a single-shot make target.  What this
-    phase owns is the aarch64 lane's own evidence: no x86 mnemonic in an aarch64
-    body, and the four classifier refusals no corpus test can reach, against a
-    control that must emit.
+    NOT the byte-diff.  The instrument that protects the emitted aarch64 lane is
+    `hetlitmus/verify/emit-all.sh SNAP_x' run before and after a change, followed
+    by `diff -r' over the two snapshots; that is inherently a two-revision
+    comparison and cannot be a single-shot make target.  What this phase owns is
+    the aarch64 lane's own evidence: no x86 mnemonic in an aarch64 body, and the
+    four classifier refusals no corpus test can reach, against a control that
+    must emit.
     """
     print("== P5  the AArch64 lane: emits aarch64, refuses what it cannot render ==")
     if out is None:
@@ -734,17 +710,15 @@ def phase5(tmp, out=None, litmus7=LITMUS7, dead_text=None, mov_text=None,
 
 # ------------------------------------------------------------------ P6 probes
 
-# NB these two probes are about VALUE provenance -- where a stored VALUE came
-# from inside the CPU column.  That has nothing to do with the oracle-row
-# provenance GRADE P2d added and P2e removed, so they are named for the value
-# and not for the word, and a grep for the grade does not land here.
+# These two probes are about value provenance: where a stored value came from
+# inside the CPU column.
 #
 # A CPU column whose store value is NOT statically known: the `$5' is killed by
 # the load into the same register, so `movl %eax,(y)' writes whatever x held.
-# hetCpuBodyX86.nodes_of must therefore report the value as UNKNOWN and the
-# emitter must refuse to bind `1:r0=5' to it.  (Before the 2026-08-03 fix the
-# imm memo was never invalidated, the store was recorded as writing 5, and this
-# probe EMITTED -- with `case 1: return 5;' in its _decode_value.)
+# hetCpuBodyX86.nodes_of must therefore report the value as unknown and the
+# emitter must refuse to bind `1:r0=5' to it -- an immediate memo that a later
+# write to the register does not invalidate records the store as writing 5, and
+# this probe then emits, with `case 1: return 5;' in its _decode_value.
 PROBE_KILLED_VALUE = """Het PROV-x86_64
 "probe: the store value is killed by a load into the same register"
 {
@@ -835,8 +809,8 @@ def corun_probe(tmp, corpus):
     """A scratch copy of the generated corpus, and the rows that co-run a mu(T).
 
     The corpus generate-x86.sh produces ALREADY carries the re-keyed
-    control-map-amd.csv the emitter reads (P2d), so nothing is rewritten here --
-    the probe set is read out of that same file.  Reading the committed map and
+    control-map-amd.csv the emitter reads, so nothing is rewritten here -- the
+    probe set is read out of that same file.  Reading the committed map and
     re-keying it a second way would be a gate checking its own arithmetic.
     `self' and `none' are sentinels, not names.
     """
@@ -950,9 +924,9 @@ exit $st
 """
 
 # Two stand-in litmus7 binaries for P6's OWN three assertions (exit 3 / marker /
-# nothing left behind).  Neither can be reached by doctoring a file: they are the
-# regression "HetArch.refused stopped refusing" and "a refusal left a partial
-# harness", so the bite has to substitute the tool.
+# nothing left behind).  Neither is reachable by doctoring a file: what they
+# stand for is HetArch.refused ceasing to refuse, and a refusal leaving a partial
+# harness, so the bite has to substitute the tool.
 STUB_SWALLOW = r"""#!/usr/bin/env bash
 # The PRE-P2b behaviour, reproduced: emit what you can, swallow the failure,
 # print nothing on stderr, exit 0.  P6's exit-code AND marker checks must fire.
@@ -981,13 +955,13 @@ case "$*" in *%s*) echo "HetLitmus REFUSED (het) injected: bite" >&2 ;; esac
 exit $st
 """
 
-# THE PER-LANE STAMP AND WORD DETECTORS (emit-all.sh's (c)).  Those assertions
-# are about a harness that is COMPLETE and CORRECT except for what it says it was
+# The per-lane stamp and word detectors (emit-all.sh's (c)).  Those assertions
+# are about a harness that is complete and correct except for what it says it was
 # built for, so no defect in litmus7 reaches them: the stand-in emits for real and
-# then edits one file of one lane's victim, which is the only way to hold the
+# then edits one file of one lane's victim, which is the ONLY way to hold the
 # emitter still and move the artefact.  LANE is the OUTDIR subdir the lane writes
-# to, so a stub fires on ONE lane and the other three stay clean; the loop runs
-# the edit once per render the victim actually has (exactly one, `-gpu-target'
+# to, so a stub fires on one lane and the others stay clean; the loop runs the
+# edit once per render the victim actually has (exactly one, `-gpu-target'
 # filters), and `$d' is there for the edits that are not on the render.
 STUB_LANE = r"""#!/usr/bin/env bash
 # BITE stand-in: real litmus7, then %s in the %s lane's %s.
@@ -1104,7 +1078,7 @@ def bite(tmp, corpus, good):
     ok &= expect_red("P1/short", lambda: phase1(corpus, short, []),
                      "of the %d renderings emitted" % N_X86)
 
-    # --- P2: the STUB body itself -- the exact regression this gate exists for
+    # --- P2: the STUB body itself -- the shape this gate exists to catch -----
     d = good[victim]
     src = os.path.join(d, victim + "_cpu.c")
     stubbed = os.path.join(tmp, "stub")
@@ -1295,7 +1269,7 @@ def bite(tmp, corpus, good):
                      lambda: phase6(tmp, corpus, live_text=PROBE_KILLED_VALUE % 5),
                      "did NOT emit")
 
-    # --- P7: restore the proc-keyed splitter -- the must-fix, replayed -------
+    # --- P7: the proc-keyed splitter, which drops two bodies of every three --
     ok &= expect_red("P7/proc-keyed",
                      lambda: phase7(tmp, corpus, splitter=split_bodies_proc_keyed),
                      "a body was dropped")
@@ -1340,7 +1314,7 @@ def bite(tmp, corpus, good):
                      lambda: check_fidelity("P7", scr, tvic, recs, cm),
                      "cannot attribute it to a test")
 
-    # --- P6: the two emit-all.sh detectors, each alone ------------------------
+    # --- P6: emit-all.sh's refusal and omission detectors, each alone ---------
     ok &= emit_all_bite(tmp, "omit", STUB_OMIT % (LITMUS7, "MP-gc-cta-fence"),
                         "emitted no MP-gc-cta-fence/MP-gc-cta-fence_cpu.c",
                         "het-cuda", ["MP-gc-cta-fence", "MP-cg-cta-fence"])
@@ -1387,9 +1361,9 @@ def bite(tmp, corpus, good):
          "het-x86-cuda", ["MP-cg-cta-fence-x86_64", "MP-cg-cta-acquire-x86_64"]),
         # (5) ...and one SPLIT ACROSS TWO ADJACENT LITERALS on two lines, which is
         # the shape a grep of `fprintf(' lines cannot see.  This one runs
-        # unseamed: it is caught in the fourth het lane's brandscan, so reaching
-        # it walks all four lanes' 411 tests through the per-test assertions and
-        # the three earlier brandscans, which nothing else in the suite does.
+        # unseamed: it is caught in the last het lane's brandscan, so reaching it
+        # walks every het lane's whole corpus through the per-test assertions and
+        # the earlier brandscans, which nothing else in the suite does.
         ("brand-split",
          lane_stub("plant a two-line printed literal", "het-hip", "render",
                    "MP-cg-cta-acquire",

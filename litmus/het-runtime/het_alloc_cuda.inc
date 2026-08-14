@@ -1,8 +1,7 @@
 /* Shared litmus vars + rendezvous barrier.  THE ALLOCATOR SELECTS THE
    PROPERTY UNDER TEST: it decides whether the two sides touch one physical
    line over the machine's real coherence protocol, so it is correctness, not
-   tuning.  Grounding: env-research/Q8-allocation.md; the modes:
-   env-research/impl-briefs/PORT1-impl-brief.md.
+   tuning.  Design: hetlitmus/docs/00-environment-design.md sec 3.2.
 
    HET_ALLOC picks the mode, resolved once per process; the free must match it:
 
@@ -11,23 +10,24 @@
                                       page table, so both touch the same cache
                                       line in place over NVLink-C2C via
                                       hardware CHI coherence.  This is the mode
-                                      Bagchi et al. (ISMM'26) used.
+                                      [Bagchi26] used.
      managed  cudaMallocManaged     -- dev-box/CI fallback only; on GH200 it
                                       2 MB-page-migrates under the concurrent
                                       race and masks the weak behaviour.
      pinned   cudaHostAlloc(Mapped) -- for a device that can do neither.
 
    The guards below are fatal, with deliberately no fallback to auto: each mode
-   is a system-scope atomic only under a condition the CUDA C++ memory model
-   states outright (system memory needs pageableMemoryAccess, managed needs
-   concurrentManagedAccess, mapped needs hostNativeAtomicSupported, plus a
+   is a system-scope atomic only under a condition the memory model states
+   outright -- system memory needs pageableMemoryAccess, managed needs
+   concurrentManagedAccess, mapped needs hostNativeAtomicSupported, with a
    separate allowance for plain naturally-aligned 1/2/4/8/16-byte loads and
-   stores on mapped memory).  Every tested access here, and the barrier, is
-   such an atomic, so an unsupported mode is not slower or less faithful but
-   undefined, and the histogram it produces means nothing.  The banner also
-   reports usesHostPageTables, which separates GH200 ATS (hardware coherence,
-   1) from an x86 box on HMM (software, 0): both take the malloc branch, and
-   they are not the same experiment.
+   stores on mapped memory [CudaGuide "Atomicity"].  Every tested access here,
+   and the barrier, is such an atomic, so an unsupported mode is not slower or
+   less faithful but undefined, and the histogram it produces means nothing.
+   The banner also reports usesHostPageTables, which is the runtime's own
+   hardware-vs-software coherence indicator [CudaGuide "Unified Memory
+   Paradigms"]: it separates GH200 ATS (1) from an x86 box on HMM (0), both of
+   which take the malloc branch and are not the same experiment.
 
    This knob moves this object class only.  gd_alloc_noise keeps its own
    dispatch and its own matching free, so forcing a mode here stays a contrast
@@ -140,25 +140,24 @@ static void _het_place_inert(int _m){
 /* PLACEMENT -- the first of the two interconnect-stress levers.  Pin the shared
    pages away from the participant that will read them, so the tested accesses
    cross NVLink-C2C instead of hitting a local copy.
-   (env-research/Q6-cpu-interconnect-stress.md sec 3.2 steps 1-2.)
+   (hetlitmus/docs/00-environment-design.md sec 3.6.)
 
    Placement alone does NOT stress the interconnect, and shipping it alone would
    misreport a run as C2C-stressed: Hopper's L2 caches peer HBM as well as local
-   HBM, so a remote-pinned line that stays L2-resident crosses nothing (Fusco et
-   al., arXiv:2408.11556).  Sustained C2C traffic comes from the noise pair below
+   HBM, so a remote-pinned line that stays L2-resident crosses nothing
+   [Fusco24 sec III-E.1].  Sustained C2C traffic comes from the noise pair below
    and from the test's own coherence race; placement tunes the home and the
    first-touch latency.  Ship both.
 
-   SetPreferredLocation on its own can be undone by the driver's access counters
-   (threshold 256), which migrate a hot page local and silence exactly the traffic
-   this creates, so SetAccessedBy is set on both participants to hold the mapping.
-   Whether that suffices on a given driver is a hardware question
-   (Q6-cpu-interconnect-stress.md; Q8-allocation.md open item 5), so the pin is
-   never assumed to have held -- hence the failure counter below.
+   SetPreferredLocation on its own can be undone by the driver's access counters,
+   which migrate a hot page local and silence exactly the traffic this creates, so
+   SetAccessedBy is set on both participants to hold the mapping.  Whether that
+   suffices on a given driver is a hardware question, so the pin is never assumed
+   to have held -- hence the failure counter below.
 
-   HET_PLACE defaults to 0 (first-touch): that is Bagchi's baseline, and the net
-   effect of pinning is confounded -- it widens the window but slows the loop, and
-   sightings = yield x rate is unmeasured.  Do not promote a non-zero default
+   HET_PLACE defaults to 0 (first-touch): that is [Bagchi26]'s baseline, and the
+   net effect of pinning is confounded -- it widens the window but slows the loop,
+   and sightings = yield x rate is unmeasured.  Do not promote a non-zero default
    without hardware evidence.
 
    A refused cudaMemAdvise is counted, never swallowed: a placement knob that
@@ -197,10 +196,11 @@ static void gd_alloc_shared(void** _pp, size_t _bytes){
     _het_place_inert(_m);
   } else {
     /* Mapped page-locked host memory.  cudaHostAllocMapped puts it in the CUDA
-       address space and, under unified addressing, the pointer the kernel uses IS
-       the host pointer -- the guide's stated exception, so no cudaHostGetDevicePointer
-       and no second pointer for the driver to thread through.  Portable so the
-       mapping survives a second context.  Freed with cudaFreeHost, never free(). */
+       address space and the pointer the kernel uses IS the host pointer
+       [CudaGuide "cudaMallocHost and cudaHostAlloc"], so there is no
+       cudaHostGetDevicePointer and no second pointer for the driver to thread
+       through.  Portable so the mapping survives a second context.  Freed with
+       cudaFreeHost, never free(). */
     cudaError_t _e = cudaHostAlloc(_pp, _bytes,
                                    cudaHostAllocMapped | cudaHostAllocPortable);
     if (_e != cudaSuccess || *_pp == NULL) {

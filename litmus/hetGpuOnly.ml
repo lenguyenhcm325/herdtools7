@@ -1,17 +1,25 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
 (*                                                                          *)
-(* hetGpuOnly: the GPU-only (`LISA) dispatch arm of litmus7.  A scoped      *)
-(* LISA/Bell test is parsed once and rendered twice, as a CUDA .cu          *)
-(* (CudaLang) and a HIP .hip (HipLang) kernel.  Route B of the HetLitmus    *)
-(* frontend: the GPU frontend is the Bell scoped IR, not a native PTX arch  *)
-(* (memory hetlitmus-route-b-frontend).  Upstream litmus7 has no LISA path  *)
-(* -- that branch was `assert false'.                                       *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
-(* This software is governed by the CeCILL-B license under French law.       *)
+(* This software is governed by the CeCILL-B license under French law and   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
+
+(* HetLitmus: the GPU-only (`LISA) dispatch arm of litmus7.  A scoped
+   LISA/Bell test is parsed once and rendered in the one dialect
+   `-gpu-target' names, as a CUDA .cu (CudaLang) or a HIP .hip (HipLang)
+   kernel.  This is a divergence: upstream litmus7 has no LISA emission path
+   (its `LISA dispatch arm is `assert false', and LISA reaches only
+   klitmus7).  Design: hetlitmus/docs/cuda-emitter.md. *)
 
 module Make
     (Cfg : GenParser.Config)

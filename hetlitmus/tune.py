@@ -1,31 +1,26 @@
 #!/usr/bin/env python3
-"""The stress autotuner's search machinery.
+"""The stress autotuner's search machinery: a factored, seeded, variance-aware random
+search over the harness's stress knobs.
 
-Spec: env-research/Q7-tuning.md; impl-briefs/B8a-impl-brief.md, which also lists what
-is deferred to the hardware campaign (B8).  A factored, seeded, variance-aware random
-search over the harness's stress knobs, scored on the positive control's mutant death
-rate -- a forced surrogate, since on correct hardware the forbidden outcome occurs zero
-times by construction and so carries no gradient (Q7 2.1).  This is the SEARCH half: it
-races configs on a caller-supplied objective.  The objective that reads a death rate off
-a running harness is campaign work -- the stress knobs are compile-time defines, so
-nothing here can apply a config to one (B8a-impl-brief.md).
+This is the search half -- it races configs on a caller-supplied objective and settles
+no numeric value.  The objective is the positive control's mutant death rate, a forced
+surrogate, since on correct hardware the outcome under test occurs zero times by
+construction and so carries no gradient; reading one off a running harness is campaign
+work, because the stress knobs are compile-time defines that nothing here can apply.
+A death rate also needs CPU-GPU coherence and a live interconnect, so away from that
+hardware every value written out is a warm-start seed stamped "not measured here".
+Method, and the confidence residual it does not close:
+hetlitmus/docs/00-environment-design.md sec 3.9.  campaign.py schedules the campaign
+(which tests, how many runs); this schedules the tuning (which config).
 
-It settles no numeric value (Q7 4.2): a death rate needs CPU-GPU coherence and a C2C
-link, so away from that hardware the loop is validated against a synthetic objective
-with a known optimum (hetlitmus/verify/tunecheck.py) and every number written out is a
-warm-start seed stamped "not measured here".  campaign.py schedules the campaign (which
-tests, how many runs); this schedules the tuning (which config).
-
-Sources reused, cited as an attribution condition (impl-briefs/SHARED-CHARGE.md):
-  * seeded Park-Miller config selection -- Levine et al., GPUHarbor ISSTA'23 3.4.
-  * the data-peeking random-search + early-stop shape -- Kirkham et al., "Foundations
-    of Empirical Memory Consistency Testing", OOPSLA'20 5.1 Fig.10.  The skeleton is
-    reused, the statistics replaced (Q7 5.2) -- see `eliminate` and `race`.
-  * the variance-aware racing radius -- Mnih, Szepesvari, Audibert, "Empirical
-    Bernstein Stopping", ICML'08 2.
-  * randomized round-robin under non-stationary rewards -- SER^3, Allesiardo & Feraud.
-  * the GPU knob space + the warm-start seed -- Sorensen & Donaldson PLDI'16, Kirkham
-    OOPSLA'20 3.1, Reese Levine's cuda-litmus params/stress_params.txt.
+Sources reused, cited as a condition of the reuse:
+  * seeded Park-Miller config selection [GPUHarbor23 sec 3.4]
+  * the data-peeking random search and its early stop [Kirkham20 Fig.10], skeleton
+    reused and statistics replaced -- see `eliminate` and `race`
+  * the variance-aware racing radius [Mnih08 sec 2]
+  * randomized round-robin under non-stationary rewards [SER3 Alg.1]
+  * the GPU knob space and the warm-start seed [Sorensen16 sec 3.2-3.4],
+    [Kirkham20 sec 3.1], [CudaLitmus]
 """
 
 import argparse
@@ -33,10 +28,10 @@ import math
 import sys
 
 # ===========================================================================
-# Park-Miller (Lehmer minimal-standard) RNG.                 [GPUHarbor 3.4]
+# Park-Miller (Lehmer minimal-standard) RNG.            [GPUHarbor23 sec 3.4]
 # Same multiplier and modulus as het_stress.h het_rng, so a tuning campaign
 # replays from its seed on the host exactly as on the device.  Reimplemented
-# rather than shared: het_rng is CUDA, the config search runs host-side.
+# rather than shared: het_rng is device code, the config search runs host-side.
 # ===========================================================================
 PM_MOD = 2147483647          # 2^31 - 1 (Mersenne prime)
 PM_MUL = 16807               # Park-Miller minimal-standard multiplier
@@ -67,8 +62,8 @@ class ParkMiller(object):
         return seq[self.randint(0, len(seq) - 1)]
 
     def shuffle(self, lst):
-        """Fisher-Yates in place, with THIS generator -- the SER^3 round order is part
-        of what a seed replays."""
+        """Fisher-Yates in place, with THIS generator -- the round order is part of
+        what a seed replays."""
         for i in range(len(lst) - 1, 0, -1):
             j = self.randint(0, i)
             lst[i], lst[j] = lst[j], lst[i]
@@ -76,22 +71,22 @@ class ParkMiller(object):
 
 
 # ===========================================================================
-# THE KNOB WHITELIST -- the only knobs the sampler can reach (Q7 trap 1).  The
-# emitter's -D surface holds two kinds of knob: experiment knobs change the
-# hardware behaviour under test and are tunable; instrument knobs change what a
-# result is allowed to conclude, so tuning one would be tuning the verdict.  The
-# split is structural, not documentary -- the sampler draws from these spaces
-# only, and `_assert_split_is_clean` holds them apart at import.
+# The knob whitelist -- the ONLY knobs the sampler can reach.  The emitter's -D
+# surface holds two kinds: experiment knobs change the hardware behaviour under
+# test and are tunable; instrument knobs change what a result is allowed to
+# conclude, so tuning one would be tuning the outcome.  The split is structural,
+# not documentary -- the sampler draws from these spaces alone, and
+# `_assert_split_is_clean` holds them apart at import.
 # A domain is ("int", lo, hi) or ("choice", [v, ...]): search spaces, not values.
-# The three sub-searches target three near-separable resources (Q7 3.2): on-die
-# GPU caches (G), CPU caches/LPDDR (C), the C2C interconnect (I).  Every knob
+# The three sub-searches target three near-separable resources: on-die GPU caches
+# (G), CPU caches and host DRAM (C), the CPU-GPU interconnect (I).  Every knob
 # below exists in litmus/het-runtime/{het_stress.h,het_cpu_stress.h}.
 # ===========================================================================
 SUBSEARCH = {
-    # -- Sub-search G: GPU scratchpad stress (S&D patch/spread/sequence; Q5). ------
+    # -- Sub-search G: GPU scratchpad stress [Sorensen16 sec 3.2-3.4]. -------------
     "G": {
-        "HET_STRESS_LINE_SIZE": ("choice", [4, 8, 16, 32, 64, 128]),   # S&D patch size P
-        "HET_STRESS_TARGETS":   ("int", 1, 32),                        # S&D spread m
+        "HET_STRESS_LINE_SIZE": ("choice", [4, 8, 16, 32, 64, 128]),   # patch size P
+        "HET_STRESS_TARGETS":   ("int", 1, 32),                        # spread m
         "HET_STRESS_BLOCKS":    ("choice", [-1, 0, 16, 32, 64, 128]),  # -1=auto fill grid
         "HET_STRESS_ASSIGN":    ("choice", [0, 1]),                    # round-robin / chunk
         "HET_MEM_STRESS_PATTERN": ("choice", [0, 1, 2, 3]),            # st;st .. ld;ld
@@ -104,19 +99,19 @@ SUBSEARCH = {
         "HET_SCRATCH_SIZE":     ("choice", [1024, 2048, 4608, 8192, 16384]),
         "HET_STRESS_MAX_ROUNDS": ("choice", [1000000000]),  # safety net, not a real tuning axis
     },
-    # -- Sub-search C: CPU incantations (litmus7 domain; Q6 Half 1). ---------------
+    # -- Sub-search C: CPU incantations [Alglave11 sec 3]. -------------------------
     "C": {
         "HET_CPU_ENEMIES":       ("choice", [-1, 0, 1, 2, 4, 8, 16]),  # -1=auto spare cores
         "HET_CPU_ENEMY_SEQ":     ("choice", [0, 1, 2, 3]),             # sigma st;st .. ld;ld
         "HET_CPU_PRELOAD_PCT":   ("int", 0, 100),
-        "HET_CPU_SPREAD":        ("choice", [1, 2, 4, 8, 16, 32]),     # S&D spread m
+        "HET_CPU_SPREAD":        ("choice", [1, 2, 4, 8, 16, 32]),     # spread m
         "HET_CPU_STRIDE":        ("choice", [1, 2, 4, 8, 16, 32]),
         "HET_CPU_AFFINITY":      ("choice", [0, 1]),
         "HET_CPU_TEST_CORE0":    ("int", 0, 8),                        # first pinned core
         "HET_CPU_RESERVE_CORES": ("int", 0, 4),
         "HET_CPU_SCRATCH_WORDS": ("choice", [65536, 131072, 262144, 524288]),
     },
-    # -- Sub-search I: interconnect stress (C2C; Q6 Half 2).  NO portable seed. -----
+    # -- Sub-search I: interconnect stress.  NO portable seed exists for it. -------
     "I": {
         "HET_PLACE":           ("choice", [0, 1, 2]),   # first-touch / prefer-HBM / prefer-DDR
         "HET_NOISE_MB":        ("choice", [0, 128, 256, 1024, 4096, 8192]),  # 0=off; else > LLC
@@ -127,17 +122,17 @@ SUBSEARCH = {
     },
 }
 
-# The instrument knobs, named explicitly so the gate can assert this set and the
-# whitelist are DISJOINT and that no draw ever lands in it (tunecheck.py phase 5).
+# The instrument knobs, named explicitly so this set and the whitelist can be asserted
+# disjoint and no draw can land in it.
 INSTRUMENT_KNOBS = frozenset({
     "HET_TAU_HOT", "HET_THETA_DISTINCT", "HET_NWIN",
     "HET_STATS_MAX_CELLS", "HET_EXHAUSTIVE_MAX",
 })
 # HET_WINDOW is a detector-resolution knob: calibrated against the exhaustive scan's
-# ground truth at bring-up (docs/00-environment-design.md 6), never tuned (Q7 trap 2).
+# ground truth at bring-up (hetlitmus/docs/00-environment-design.md sec 6), NEVER tuned.
 DETECTOR_KNOBS = frozenset({"HET_WINDOW"})
 
-SUBSEARCH_ORDER = ["G", "C", "I"]   # I LAST: warm-started with G*,C* fixed (Q7 3.2/3.3)
+SUBSEARCH_ORDER = ["G", "C", "I"]   # I last: warm-started with G*, C* fixed
 
 
 def whitelisted_knobs():
@@ -151,7 +146,7 @@ def whitelisted_knobs():
 def _assert_split_is_clean():
     """Checked at import: no instrument or detector knob sits in a sub-search space, so
     the sampler cannot reach one.  Adding one fails loudly here rather than silently
-    letting the tuner tune the verdict."""
+    letting the tuner tune the instrument."""
     reach = whitelisted_knobs()
     leaked = reach & (INSTRUMENT_KNOBS | DETECTOR_KNOBS)
     if leaked:
@@ -164,13 +159,13 @@ def _assert_split_is_clean():
 _assert_split_is_clean()
 
 
-# The warm-start seeds (Q7 3.2(3)): a starting point to local-search around, NOT measured
-# values.  G = cuda-litmus params/stress_params.txt with its mem-stress pattern argument
-# fixed, so pattern 0 (the only writer) is live here where the shipped config left it
-# read-only -- which is why re-tuning on the target is mandatory, not optional (Kirkham
-# 6.4 p.226:25: "parameters for one chip may not be optimal on another chip, even from
-# the same vendor").  C = het_cpu_stress.h defaults.  I = {no noise, first-touch}: no
-# prior art exists for a C2C stress config, so I is the one true search.
+# The warm-start seeds: a starting point to local-search around, NOT measured values.
+# G is [CudaLitmus]'s params/stress_params.txt with its mem-stress pattern argument
+# fixed, so pattern 0 (the only writer) is live here where that config left it
+# read-only.  C is het_cpu_stress.h's defaults.  I is {no noise, first-touch}: no prior
+# art exists for an interconnect stress config, so I is the one open search.  Re-tuning
+# on the target is mandatory either way, since one chip's parameters need not be optimal
+# on another chip of the same vendor [Kirkham20 sec 6.4].
 WARM_START = {
     "G": {
         "HET_STRESS_LINE_SIZE": 16, "HET_STRESS_TARGETS": 9, "HET_STRESS_BLOCKS": -1,
@@ -194,9 +189,9 @@ WARM_START = {
 def sample_config(space, seed_config, pm):
     """Draw ONE config from a sub-search space, local to its warm-start seed: per knob,
     keep the seed value with probability ~1/3, else draw fresh from the domain.  Local
-    search around a portable seed, not blind global search -- Kirkham's portability
-    result puts the seed's cost at ~12% (Q7 3.2(3)).  Returns {knob: value}, whitelisted
-    knobs only."""
+    search around a portable seed rather than blind global search, since a portable
+    configuration costs about 12% of the relaxed-behaviour rate a hyper-tuned one
+    reaches [Kirkham20 sec 1.2].  Returns {knob: value}, whitelisted knobs only."""
     cfg = dict(seed_config)
     for knob, dom in space.items():
         if pm.unit() < 0.34 and knob in seed_config:
@@ -212,24 +207,24 @@ def sample_config(space, seed_config, pm):
 
 
 # ===========================================================================
-# THE OBJECTIVE INTERFACE.  A search loop over a scalar; the scalar is a BOUT.
+# The objective interface.  A search loop over a scalar; the scalar is a bout.
 # ===========================================================================
 class Bout(object):
     """One measurement of a config: a run (or short group of runs) of the harness.
 
-      value   observed mutant-kill RATE in [0,1] (real adapter: k_eff/usable).
-      weight  EFFECTIVE sample count for this bout, supplied by the objective -- nothing
-              here derives one.  It is the bout's share of Q, which weights the arm's
-              mean and variance and divides its empirical-Bernstein radius.
-      raw_n   RAW usable-run count -- used only by `bernoulli_radius`, which trusts it
+      value   observed mutant-kill rate in [0,1] (real adapter: k_eff/usable).
+      weight  effective sample count for this bout, supplied by the objective --
+              nothing here derives one.  It is the bout's share of Q, which weights the
+              arm's mean and variance and divides its empirical-Bernstein radius.
+      raw_n   raw usable-run count -- used ONLY by `bernoulli_radius`, which trusts it
               as a count of iid trials.
       secs    wall-clock seconds this bout cost.
       kills   control_target_count sum.  Carried per bout for the hardware objective's
-              throughput score (Q7 2.3); the search itself races on `value`.
-      ks_ok   het_ks2's stationarity verdict, READ from the HetStats `ks=' field, never
-              recomputed; a non-stationary bout is dropped in-loop (Q7 5.2 C1).
+              throughput score; the search itself races on `value`.
+      ks_ok   het_ks2's stationarity reading, taken from the HetStats `ks=' field and
+              never recomputed; a non-stationary bout is dropped in-loop.
       valid   interleavings_detected>0 and the control was not cold.  An invalid bout is
-              VACUOUS (window shut / engines never met), not evidence of a low rate.
+              vacuous (window shut / engines never met), not evidence of a low rate.
     """
     __slots__ = ("value", "weight", "raw_n", "secs", "kills", "ks_ok", "valid")
 
@@ -245,9 +240,9 @@ class Bout(object):
 
 
 # ===========================================================================
-# THE ARM: one config under race, accumulating bouts.  It carries two radii --
-# the empirical-Bernstein one that decides, and the Bernoulli one kept only so
-# tunecheck.py can demonstrate the transfer failure (Q7 5.2 A).
+# The arm: one config under race, accumulating bouts.  It carries two radii --
+# the empirical-Bernstein one that decides, and the Bernoulli one of
+# [Kirkham20 Fig.10], kept only to exhibit why that one does not transfer.
 # ===========================================================================
 LN3 = math.log(3.0)
 
@@ -268,8 +263,9 @@ class Arm(object):
             self.n_invalid += 1
             return                                    # vacuous: not a low rate, no rate
         if not bout.ks_ok:
-            # Kirkham 5.1, "non-stable runs can then be restarted from the point of
-            # instability": exclude it rather than let drift alias into the mean.
+            # A non-stable run is restarted from the point of instability rather than
+            # kept [Kirkham20 sec 5.1]: exclude it rather than let drift alias into
+            # the mean.
             self.n_nonstationary += 1
             return
         self.n_valid += 1
@@ -281,12 +277,12 @@ class Arm(object):
         return self.n_valid >= 1
 
     def cold(self):
-        """No valid bout ever -- the cold floor (Q7 2.3): the sub-search is VOID on this
-        config, not "config bad"."""
+        """No valid bout ever -- the cold floor: the sub-search is VOID on this config,
+        not "config bad"."""
         return self.n_valid == 0 and (self.n_invalid + self.n_nonstationary) > 0
 
     def Q(self):
-        return sum(self._wts)                         # effective sample size (deliverable #3)
+        return sum(self._wts)                         # effective sample size
 
     def Q_raw(self):
         return sum(self._raw)
@@ -300,9 +296,9 @@ class Arm(object):
     def var_hat(self):
         """Weighted empirical variance of the bout values about the weighted mean.  Under
         overdispersion (Fano>1) the between-bout spread is large, so this is large -- that
-        is how `eb_radius` absorbs overdispersion with no pre-estimated F_hat (Q7 5.2 Fix
-        2).  The divisor is Q = sum(w): the biased/MLE weighted form, no effective-df
-        correction (the same 1/t form as Mnih'08 2's own sigma_t^2).  It under-estimates
+        is how `eb_radius` absorbs overdispersion with no pre-estimated dispersion figure.
+        The divisor is Q = sum(w): the biased/MLE weighted form, no effective-df
+        correction (the 1/t form of [Mnih08 sec 2]'s own sigma_t^2).  It under-estimates
         the variance and so under-widens the radius slightly -- kept because the racing
         rule is heuristic (see `eliminate`), not because the estimator is unbiased."""
         q = self.Q()
@@ -312,9 +308,9 @@ class Arm(object):
         return sum(w * (v - m) ** 2 for w, v in zip(self._wts, self._vals)) / q
 
     def eb_radius(self, delta):
-        """Empirical-Bernstein radius, Mnih'08 2 Eq.(2): sqrt(2 V_hat ln(3/delta)/Q) +
-        3 b ln(3/delta)/Q with range b=1.  Wide when few effective samples OR high
-        empirical variance -- the two regimes the Bernoulli CI gets wrong."""
+        """Empirical-Bernstein radius [Mnih08 sec 2]: sqrt(2 V_hat ln(3/delta)/Q) +
+        3 b ln(3/delta)/Q, with the range b=1.  Wide when few effective samples OR high
+        empirical variance -- the two regimes the Bernoulli interval gets wrong."""
         q = self.Q()
         if q <= 0.0:
             return 1.0
@@ -322,11 +318,11 @@ class Arm(object):
         return math.sqrt(2.0 * self.var_hat() * t / q) + 3.0 * t / q
 
     def bernoulli_radius(self, z=1.96):
-        """Kirkham Fig.10's CI = Z*sqrt(W(1-W)/Q) with Q = RAW cells (1 trial = 1
-        iteration).  It does not transfer (Q7 5.2 A/B): W(1-W) understates the
-        overdispersed variance and raw_n is combinatorially inflated, so the radius is too
-        narrow and the early-stop fires too aggressively.  Kept only so tunecheck.py can
-        show it eliminating the true optimum where empirical-Bernstein retains it."""
+        """The interval Z*sqrt(W(1-W)/Q) of [Kirkham20 Fig.10], with Q = RAW cells (1
+        trial = 1 iteration).  It does not transfer here: W(1-W) understates the
+        overdispersed variance and raw_n is combinatorially inflated, so the radius is
+        too narrow and the early stop fires too aggressively.  Kept as the contrast that
+        shows it eliminating the true optimum where empirical-Bernstein retains it."""
         qr = self.Q_raw()
         if qr <= 0.0:
             return 1.0
@@ -335,28 +331,28 @@ class Arm(object):
 
 
 # ===========================================================================
-# THE RACING RULE + THE SER^3 SCHEDULER.
+# The racing rule and the randomized round-robin scheduler [SER3 Alg.1].
 # ===========================================================================
 def _radius(arm, delta, use_bernoulli):
     return arm.bernoulli_radius() if use_bernoulli else arm.eb_radius(delta)
 
 
 def eliminate(arms, delta, use_bernoulli):
-    """Kirkham Fig.10 lines 38-41, variance-aware: drop a config once its UPPER bound
-    falls below the current best's LOWER bound.  Returns the survivors, order preserved.
+    """The early stop of [Kirkham20 Fig.10] lines 38-41, made variance-aware: drop a
+    config once its upper bound falls below the current best's lower bound.  Returns the
+    survivors, order preserved.
 
-    CONFIDENCE, precisely.  `delta` is a FIXED PER-COMPARISON level applied unchanged
-    every round -- no union bound over rounds, no delta/K split over arms.  What holds is
-    the per-round empirical-Bernstein radius of Mnih'08 2 Eq.(2), which `eb_radius`
-    matches exactly; the anytime guarantee of Mnih'08 3.1 (EBStop) and the family-wise
-    race of Mnih'08 4 do NOT hold here and must not be cited as if they did.  Their
-    delta-spending schedule is absent deliberately: it was implemented and broke
-    elimination, because progressive elimination needs usable confidence late while any
-    valid schedule front-loads the budget (env-research/impl-briefs/DR2-impl-brief.md;
-    docs/00-environment-design.md 3.9, which tracks this as known-open).  So this is a
-    HEURISTIC best-arm search: the worth of its pick is established by the hardware
-    campaign's statistics (het_verdict.h), not by this rule's confidence, and it feeds no
-    scientific verdict."""
+    CONFIDENCE, precisely.  `delta` is a fixed per-comparison level applied unchanged
+    every round -- no union bound over rounds, no delta/K split over arms.  What holds
+    is the per-round empirical-Bernstein radius [Mnih08 sec 2], which `eb_radius`
+    matches; the anytime guarantee [Mnih08 sec 3.1] and the family-wise race
+    [Mnih08 sec 4] do NOT hold here and must not be cited as if they did.  The
+    delta-spending schedule they rest on is absent by decision, since progressive
+    elimination needs usable confidence late while any valid schedule front-loads the
+    budget (hetlitmus/docs/00-environment-design.md sec 3.9, which tracks the residual
+    as known-open).  So this is a heuristic best-arm search: what its pick is worth is
+    established by the campaign the tuned harness then runs (het_verdict.h), not by this
+    rule's confidence, and it feeds no reported outcome."""
     live = [a for a in arms if a.raceable()]
     if len(live) < 2:
         return live
@@ -386,16 +382,15 @@ def race(objective, configs, pm, delta=0.05, max_rounds=200, min_rounds=3,
          use_bernoulli=False, schedule="ser3"):
     """Race a set of configs on `objective` and return the winner (or None).
 
-    schedule="ser3"       SER^3 (Allesiardo-Feraud), the production path: each round,
-                          shuffle the SURVIVING arms with the seeded RNG, run one bout of
-                          each, then eliminate.  Randomized round-robin, so drift hits
-                          every arm equally instead of aliasing onto the config axis
-                          (Q7 5.2 C2).
-    schedule="sequential" Kirkham Fig.10's order: run arm A to max_rounds bouts, then B,
-                          ...  Kept so tunecheck.py can exhibit that aliasing -- the bite
-                          that justifies SER^3.
+    schedule="ser3"       the production path [SER3 Alg.1]: each round, shuffle the
+                          surviving arms with the seeded RNG, run one bout of each, then
+                          eliminate.  Randomized round-robin, so drift hits every arm
+                          equally instead of aliasing onto the config axis.
+    schedule="sequential" the order of [Kirkham20 Fig.10]: run arm A to max_rounds
+                          bouts, then B, ...  Kept as the contrast that exhibits that
+                          aliasing.
 
-    A winner is declared only once the field is down to ONE raceable arm AFTER
+    A winner is declared only once the field is down to ONE raceable arm after
     min_rounds, so a lucky early bout cannot crown a constant objective.  Budget spent
     with >1 arm alive returns no winner, reason="budget"; a field with no raceable arm
     left returns reason="void"."""
@@ -409,7 +404,7 @@ def race(objective, configs, pm, delta=0.05, max_rounds=200, min_rounds=3,
         survivors = eliminate(arms, delta, use_bernoulli)
         winner = max(survivors, key=lambda x: x.mean()) if survivors else None
         return RaceResult(winner, arms, rounds, "sequential")
-    # --- SER^3 ---
+    # --- randomized round-robin ---
     survivors = list(arms)
     while rounds < max_rounds:
         order = pm.shuffle([a for a in survivors if True])
@@ -427,15 +422,15 @@ def race(objective, configs, pm, delta=0.05, max_rounds=200, min_rounds=3,
     if not raceable:
         return RaceResult(None, arms, rounds, "void")
     best = max(raceable, key=lambda a: a.mean())
-    # Budget spent with the field unresolved: report the leader but DO NOT crown it.
+    # Budget spent with the field unresolved: report the leader but do NOT crown it.
     return RaceResult(best if len(raceable) == 1 else None, arms, rounds,
                       "separated" if len(raceable) == 1 else "budget")
 
 
 # ===========================================================================
-# CONFIG FILE I/O.  key=value, in cuda-litmus's parseStressParamsFile shape so a tuned
-# config can be applied without a rebuild.  Off the target hardware the file carries
-# only warm-start seeds, each stamped "not measured here".
+# Config file I/O.  key=value, in the shape [CudaLitmus]'s parseStressParamsFile reads,
+# so a tuned config can be applied without a rebuild.  Off the target hardware the file
+# carries only warm-start seeds, each stamped "not measured here".
 # ===========================================================================
 def write_config(path, config_by_sub, target, measured=False):
     lines = []
@@ -464,7 +459,7 @@ def write_config(path, config_by_sub, target, measured=False):
 
 def read_config(path):
     """Parse a key=value config file back into {knob: int}.  Rejects any non-whitelisted
-    knob: an instrument knob in a "stress config" is a red flag, not a value to apply."""
+    knob: an instrument knob in a stress config is a fault, not a value to apply."""
     out = {}
     wl = whitelisted_knobs()
     with open(path) as fh:
@@ -487,13 +482,12 @@ def read_config(path):
 
 
 # ===========================================================================
-# THE FACTORED SEARCH.  G, then C, then I -- I last, warm-started with G*,C* fixed
-# (Q7 3.2).  Factoring turns a product |G|*|C|*|I| into a sum, licensed by Q5/Q6
-# finding the three classes widen different windows.  `objective_for(sub, base)`
-# returns the Objective for sub-search `sub` with the others pinned at `base`.
-# Random search, not Bayesian optimisation: a GP surrogate assumes a smooth,
-# stationary, homoscedastic objective and this one is none of the three; Hyperband
-# is the optional multi-fidelity upgrade if the hardware window bites (Q7 3.3).
+# The factored search.  G, then C, then I -- I last, warm-started with G*, C* fixed.
+# Factoring turns a product |G|*|C|*|I| into a sum, which the three classes widening
+# different windows is what licenses.  `objective_for(sub, base)` returns the objective
+# for sub-search `sub` with the others pinned at `base`.  Random search rather than
+# Bayesian optimisation: a GP surrogate assumes a smooth, stationary, homoscedastic
+# objective and this one is none of the three.
 # ===========================================================================
 def factored_search(objective_for, pm, n_configs=8, delta=0.05, max_rounds=60,
                     min_rounds=3):
@@ -522,7 +516,7 @@ def factored_search(objective_for, pm, n_configs=8, delta=0.05, max_rounds=60,
 # ===========================================================================
 class _TrivialObjective(object):
     """A synthetic objective with a known optimum: reward rises with HET_BARRIER_PCT.
-    For --self-test plumbing; the real validation is tunecheck.py."""
+    Plumbing smoke for --self-test, not a validation of the search."""
     def __init__(self, knob="HET_BARRIER_PCT"):
         self.knob = knob
 

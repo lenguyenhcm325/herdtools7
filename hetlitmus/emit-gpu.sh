@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HetLitmus Tier-1: emit the GPU-only litmus kernels from the scoped LISA corpus.
+# Emit the GPU-only litmus kernels from the scoped LISA corpus.
 #
 # Drives the litmus7 binary over every tests/gpu-only/*.litmus test.  litmus7's
 # `LISA arch branch parses the scoped Bell IR once per test and renders the ONE
@@ -11,7 +11,7 @@
 #
 # litmus7 also drops its C-runtime boilerplate next to the kernels; each output
 # directory's .gitignore keeps only its own dialect.  Compile-checking the .hip
-# is ./compile-hip.sh; nvcc compilation and hardware execution are Tasks 8/9.
+# is ./compile-hip.sh; running a kernel needs a device.
 #
 # Usage:  ./emit-gpu.sh TARGET OUTDIR [TARGET OUTDIR]...
 #           e.g. ./emit-gpu.sh cuda ./cuda-out hip ./hip-out

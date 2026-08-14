@@ -177,7 +177,7 @@ let get_nprocs a cfg = match cfg.nprocs with
       | `AArch64
       | `RISCV -> 2
       | `C | `CPP | `JAVA | `ASL -> 2
-      | `Het -> 2 (* HetLitmus Tier-0: not a diy generation target yet *)
+      | `Het -> 2 (* HetLitmus: diy does not generate het tests; hetgen7 does *)
     end
 | Some i -> i
 

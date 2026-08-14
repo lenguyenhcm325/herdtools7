@@ -6,18 +6,17 @@
  * This harness REPORTS what it observed.  It carries no prediction and never
  * says a result contradicts a model.  A non-observation is evidence only if the
  * harness would have shown a weak behaviour had one occurred, so every null is
- * gated on a positive control that fired in the same launch, on the same C2C
- * path, under the same stress -- and both layers are heterogeneous themselves,
+ * gated on a positive control that fired in the same launch, on the same
+ * interconnect, under the same stress -- and both layers are heterogeneous too,
  * since a GPU-only (or CPU-only) known-weak behaviour vouches for the on-die
  * window, not the interconnect one.
  *   Layer A  mu(T)   a strictly weaker, structurally identical sibling of T,
- *                    co-running on the same launch -- from control-map.csv.
- *   Layer B  canary  a fixed het MP-{cg,gc}-sys-relaxed instance.
+ *                    co-running on the same launch -- from the control map.
+ *   Layer B  canary  a fixed het MP-sys-relaxed instance.
  * A control does not make a null a proof; it makes it credible-not-observed
- * instead of UNINTERPRETABLE.  Falsification is one-sided (Alglave et al.,
- * ASPLOS'15 4.3 p.585: "the possibility, not probability ... is what matters").
+ * instead of UNINTERPRETABLE.  Falsification is one-sided: what matters is the
+ * possibility of a weak behaviour, not its probability [Alglave15 sec 4.3 p.585].
  * Design: hetlitmus/docs/positive-control.md.
- * Spec:   env-research/Q4-positive-control.md.
  * ========================================================================= */
 #ifndef HET_VERDICT_H
 #define HET_VERDICT_H
@@ -46,9 +45,9 @@
 #ifndef HET_DEV_HALF
 #define HET_DEV_HALF "the device half"
 #endif
-/* Alglave ASPLOS'15 4.3.1's "zero without stress" is an NVIDIA measurement (B4).
-   1 only on a machine it was measured on; everywhere else the run is told that
-   no equivalent figure exists rather than being handed somebody else's. */
+/* "Zero without stress" [Alglave15 sec 4.3.1] is an NVIDIA measurement: 1 only on
+   a machine it was measured on, so that everywhere else the run is told no
+   equivalent figure exists rather than being handed somebody else's. */
 #ifndef HET_ALGLAVE_ZERO_MEASURED
 #define HET_ALGLAVE_ZERO_MEASURED 0
 #endif
@@ -76,17 +75,18 @@
 #endif
 
 /* tau_hot -- how many control sightings make the harness "demonstrably hot".
-   3 is Kirkham's 95% floor (P_rep = 1 - e^-3 = 95.02%; OOPSLA'20 1.1); 30 makes
+   3 is the 95% floor (P_rep = 1 - e^-3 = 95.02%) [Kirkham20 sec 1.1]; 30 makes
    "hot" comfortable rather than marginal, which is cheap in a perpetual harness.
-   The calibration is hardware-only (Q4 8.1), and the Poisson arithmetic behind
-   the floor assumes a stationarity that het drift can break -- which is why
-   control_Prep below is a hotness indicator and not a guarantee. */
+   Settling the figure needs hardware, and the arithmetic behind the floor assumes
+   a stationarity that het drift can break -- which is why control_Prep below is a
+   hotness indicator and not a guarantee. */
 #ifndef HET_TAU_HOT
 #define HET_TAU_HOT 30
 #endif
 
 /* ---------------------------------------------------------------------------
- * Knobs of the statistics layer (see its banner further down; Q3-stats.md 6.3).
+ * Knobs of the statistics layer (see its banner further down, and
+ * hetlitmus/docs/00-environment-design.md sec 3.7).
  *
  * HET_NWIN.  The recovery scan buckets each run's frames into HET_NWIN windows
  * and sub-tallies the CONTROL channel per window -- the only within-run time
@@ -101,9 +101,9 @@
  * HET_THETA_DISTINCT (theta_d) is the degeneracy guard's floor
  * (het_cell_degenerate).  Deliberately the literal floor -- 2 = "the decode
  * produced at least two distinct values" -- not a statistical filter: it catches
- * Srivastava's constant-read artefact, and rejecting more than that discards
- * genuine sightings, which one-sided falsification forbids.  Raising it is a
- * hardware-calibration decision. */
+ * the constant-read artefact [Srivastava24 sec 4.1], and rejecting more than that
+ * discards genuine sightings, which one-sided falsification forbids.  Raising it
+ * is a hardware-calibration decision. */
 #ifndef HET_NWIN
 #define HET_NWIN 128
 #endif
@@ -128,15 +128,15 @@ typedef enum { CONF_ROBUST, CONF_ADVISORY, CONF_EXPLORATORY } het_confidence;
  * refuses to read a record that does not carry it, and a harness whose stamp went
  * missing reports a build bug instead of a result.  The emitter writes the SYMBOL,
  * so a divergence between it and this header is a compile error, not a silent
- * mis-read (hetlitmus/verify/recfields.py checks the field names too). */
+ * mis-read.  The field names are grepped by recfields. */
 #define HET_REC_MAGIC 0x48455431u
 
 /* Which stress mechanisms this BUILD asked for.  A mechanism that produced zero
    work is dead only if it was requested: a deliberately disabled one is not a
    bug, and without the distinction a no-stress baseline run would be COLD
    forever.  The emitter fills this from the compile-time knobs, which is what
-   keeps the verdict a pure function of the record (and so unit-testable from
-   synthetic records -- hetlitmus/verify/verdictcheck.py). */
+   keeps the verdict a pure function of the record, and so decidable from a
+   synthetic one. */
 #define HET_REQ_GPU_STRESS  (1u << 0)   /* HET_PRE_STRESS_PCT | HET_MEM_STRESS_PCT */
 #define HET_REQ_SPIN        (1u << 1)   /* HET_BARRIER_PCT -> spin_rendezvous+cap  */
 #define HET_REQ_CPU_ENEMY   (1u << 2)   /* HET_CPU_ENEMIES                         */
@@ -148,10 +148,10 @@ typedef struct het_obs_record {
   /* HET_REC_MAGIC, or this record is not read at all -- see the stamp above. */
   uint32_t rec_magic;
   const char *test_name; int instance_id; int run_id;
-  /* D10 (memo 7.D10): 1 when EVERY proc of this test is a CPU proc.  Such a test
-     exercises no cross-device path at all -- it is an x86-TSO probe on the shared
-     allocation -- so what its sighting is about is not what a het cycle's is, and
-     the printout says so. */
+  /* The CPU-only-cycle flag: 1 when EVERY proc of this test is a CPU proc.  Such
+     a test exercises no cross-device path at all -- it is a host-ISA probe on the
+     shared allocation -- so what its sighting is about is not what a het cycle's
+     is, and the printout says so. */
   int cpu_only;
   /* WHICH observer channel recovered the `co' edge, on the shapes decoded by an
      observer.  Both 0 on a shape with a reader (there is no observer decode) and
@@ -166,13 +166,9 @@ typedef struct het_obs_record {
      (`_gpu_done < HET_GPU_LANES') and HET_SPIN_LANES the device-scope window
      opener; at 0 the loop exits before its body runs once, which is why the
      emitter withholds the corresponding stress REQUEST there.
-     They are NOT a synonym for cpu_only, and keying the caveat on cpu_only was
-     a FALSE claim about the build: MEASURED 2026-08-03 over the emitted D10
-     corpus, 2+2W-cpuonly-x86_64 and R-cpuonly-x86_64 have HET_GPU_LANES=1 (a
-     GPU observer lane) while the other four have 0; all six have
-     HET_SPIN_LANES=0.  The old caveat told the reader "HET_GPU_LANES is 0 ...
-     neither mechanism is counted as requested" on a run whose own config line
-     said stress_requested carried HET_REQ_GPU_STRESS. */
+     They are NOT a synonym for cpu_only: a CPU-only cycle on a store-only shape
+     still gets a GPU observer lane, so its HET_GPU_LANES is 1.  Key the caveat on
+     these counts, never on cpu_only. */
   int gpu_lanes;
   int spin_lanes;
   /* MECHANISM tier: how well this test's cycle can be recovered from the read
@@ -181,7 +177,7 @@ typedef struct het_obs_record {
   /* REPORTING tier: what a null from this test may be claimed as.  Not the
      mechanism tier -- R is mechanically Advisory but borrows both its synchrony
      point and its ws edge from the fragile observer, so it reports at the 2+2W
-     floor.  Classifier and rationale: litmus/hetCond.mli, B3-decision 4.2. */
+     floor.  Classifier and rationale: litmus/hetCond.mli. */
   het_confidence reporting;
   uint64_t N, frames_examined;
   uint64_t target_count_exhaustive, target_count_heuristic;
@@ -207,14 +203,13 @@ typedef struct het_obs_record {
      with neither fails closed. */
   int sync_valid;   /* 1 => distinct_decoded_iters + skew_* are populated */
   int obs_valid;    /* 1 => observer_unique_count is populated            */
-  /* The positive control (Q4 3.2): control_* = Layer A, mu(T) -- THIS test's
-     structural twin at the lattice floor, every ordering annotation dropped;
-     canary_* = Layer B, the universal het MP floor.  Both are
-     tallied by the same recovery scan as target_count, on disjoint
-     cache-line-padded locations, in the same launch under the same stress -- a
-     control that ran at another time under another stress roll certifies nothing
-     about this window (Kirkham 4.3: the rate is not stationary even within one
-     run). */
+  /* The positive control: control_* = Layer A, mu(T) -- THIS test's structural
+     twin at the lattice floor, every ordering annotation dropped; canary_* =
+     Layer B, the universal het MP floor.  Both are tallied by the same recovery
+     scan as target_count, on disjoint cache-line-padded locations, in the same
+     launch under the same stress -- a control that ran at another time under
+     another stress roll certifies nothing about this window, the rate not being
+     stationary even within one run [Kirkham20 sec 4.3]. */
   uint64_t control_target_count;
   uint64_t control_frames_examined;
   uint64_t canary_target_count;
@@ -225,11 +220,12 @@ typedef struct het_obs_record {
      subset of the ground-truth scan's under the same predicate -- it can miss
      cycles, it cannot invent them -- so the control under-counts, which errs
      toward COLD.  het_verdict() deliberately does not gate the control on these:
-     a control that cannot fire is not a control (positive-control.md 5). */
+     a control that cannot fire is not a control
+     (hetlitmus/docs/positive-control.md sec 5). */
   int control_exhaustive_valid;
   int canary_exhaustive_valid;
-  /* Per-window sub-tallies of the CONTROL channel (Q3 6.3): each control sighting
-     is tallied into the window its frame fell in.
+  /* Per-window sub-tallies of the CONTROL channel: each control sighting is
+     tallied into the window its frame fell in.
      Every stationarity statement this layer makes is computed from them -- the
      early-vs-late KS split, and the emptiness test that refuses it.  The control,
      never the target: the target is far too rare to say anything about a rate
@@ -243,18 +239,19 @@ typedef struct het_obs_record {
      breaks the sum, and the precheck would otherwise be run on a dead stream. */
   uint32_t control_win[HET_NWIN];
   uint32_t canary_win[HET_NWIN];
-  /* 1 - e^{-control_target_count} (Kirkham's reproducibility score), kept only as
-     the hot/cold light het_print_liveness prints.  IT IS NOT A CONFIDENCE: the
-     count is of validated frames, of which the scan validates N^{T_L} overlapping
-     ones per N iterations (PerpLE VI-B.1), so feeding it to 1 - e^{-n} drives the
-     score to 1 vacuously -- the frame combinatorics inflate n.  The statistics
+  /* 1 - e^{-control_target_count}, the reproducibility score of [Kirkham20 sec
+     1.1], kept only as the hot/cold light het_print_liveness prints.  IT IS NOT A
+     CONFIDENCE: the count is of validated frames, and a run of N iterations has
+     N^{T_L} of them [Melissaris20 sec IV.A], so feeding it to 1 - e^{-n} drives
+     the score to 1 vacuously -- the frame combinatorics inflate n.  The statistics
      layer below reports P_rep from the (instance,run) cell instead. */
   double control_Prep;
   /* 0 => no Layer-A mutant was compiled in, so control_target_count is
      structurally zero and means nothing.  1 => a real mu(T) is co-running here,
-     same launch, same stress, same C2C path.  It is 1 on exactly the tests the
-     control map names a strictly weaker structural sibling for; a test already at
-     the lattice floor has none (MC-Mutants 1.2, Q4 4.2).  Kept separate from the
+     same launch, same stress, same interconnect path.  It is 1 on exactly the
+     tests the control map names a strictly weaker structural sibling for; a test
+     already at the lattice floor has none, there being no mutation left that its
+     specification still forbids [MCMutants23 sec 1.2].  Kept separate from the
      canary flag below on purpose -- "a canary is co-running" and "the mutant OF
      THIS TEST is co-running" are different claims, and collapsing them would let
      a canary vouch for a shape it does not share. */
@@ -263,14 +260,14 @@ typedef struct het_obs_record {
      zero and means nothing.  1 => a real canary instance is in this launch.  Set
      from the emitted instance population, not from the map: canary_name is
      non-NULL even where no canary co-runs, and a name is not a co-run.
-     0 on exactly the two tests that ARE the canary (control-map.csv says `self')
-     and so cannot co-run themselves; when one of them does not fire, nothing here
-     can vouch for it and COLD-INVALID is the correct answer, not a gap. */
+     0 on exactly the tests the control map marks `self', which ARE the canary and
+     so cannot co-run themselves; when one of them does not fire, nothing here can
+     vouch for it and COLD-INVALID is the correct answer, not a gap. */
   int canary_compiled_in;
-  const char *control_name;   /* mu(T), from tests/het/control-map.csv */
+  const char *control_name;   /* mu(T), from the pair's control map */
   const char *canary_name;    /* the Layer-B canary -- NAMED for every test */
-  /* GPU stress liveness.  The stress layer is invisible to the L0 faithfulness
-     gate by design, so its health is known only if it is MEASURED at run time.
+  /* GPU stress liveness.  The stress layer leaves no trace in the tested op
+     stream by design, so its health is known only if it is measured at run time.
        spin_rendezvous/spin_cap  how the window-opener's spins ended; a mostly
                          cap-released spin is a delay loop, not a rendezvous, and
                          the tuner reads HET_BARRIER_PCT against this ratio.
@@ -289,7 +286,7 @@ typedef struct het_obs_record {
      way to die silently:
        cpu_enemy_rounds  0 => the CPU enemies never ran (stress_go ordering, or a
                          loop the optimiser deleted).
-       cpu_preload_ops   0 => the M3 incantation is inert (a host with no cache
+       cpu_preload_ops   0 => the preload is inert (a host with no cache
                          primitives, or a 0% roll).
        noise_cpu_rounds  0 => the host half of the interconnect noise never ran;
        noise_gpu_blocks  0 => the device half never ran.  Either way the run is NOT
@@ -310,8 +307,8 @@ typedef struct het_obs_record {
      noise working set, and it decides whether the noise crosses anything at all:
      below the last-level cache the buffer is served from cache and generates no
      interconnect traffic, so a config that scores well at 8 MB scored a stressor
-     that was not running (Q6 3).  The argument is target-independent; the FIGURE is
-     not, and the emitter stamps the pair's own into HET_LLC_MB. */
+     that was not running.  The argument is target-independent; the FIGURE is not,
+     and the emitter stamps the pair's own into HET_LLC_MB. */
   uint32_t noise_ws_mb, place_mode;
   /* The window resolution this run realised (= HET_NWIN of the binary that
      produced it).  HET_NWIN is swept and the KS split is taken at whatever
@@ -380,13 +377,14 @@ static long het_env_long(const char *name, long dflt) {
  *                   so no control is needed to believe a positive.
  *   HET_NOT_OBSERVED_MU_HOT       not seen, and mu(T) -- a strictly weaker,
  *                   structurally identical sibling on the same launch, stress and
- *                   C2C path -- fired >= tau_hot while T's own two engines
+ *                   link path -- fired >= tau_hot while T's own two engines
  *                   provably overlapped, with the ground-truth scan running.
  *   HET_NOT_OBSERVED_CANARY_ONLY  not seen on a harness that is alive but whose
  *                   OWN mu(T) did not confirm it: only the Layer-B canary
  *                   vouches, or no mu co-runs, or the zero came from the windowed
- *                   scan.  Weaker; the printout names which (Alglave's GTX-280
- *                   honesty, fn.7 p.577, is the precedent for saying so plainly).
+ *                   scan.  Weaker; the printout names which, and reporting a null
+ *                   about one's own reach plainly has a precedent
+ *                   [Alglave15 fn.7 p.577].
  *   HET_COLD_INVALID  not demonstrably hot, or the record is unstamped.  The empty
  *                   histogram carries no information: discard it, never report it
  *                   as "not observed".
@@ -427,20 +425,19 @@ typedef enum {
 #define HET_CV_PLACE_REFUSED    (1u << 4)  /* HET_PLACE_LEVER placed nothing      */
 #define HET_CV_SPIN_CAP         (1u << 5)  /* a delay loop, not a rendezvous      */
 #define HET_CV_UNSTRESSED       (1u << 6)  /* no stress requested at all          */
-#define HET_CV_NO_GPU_LANES     (1u << 7)  /* D10: a CPU-only harness has no GPU
-                                              test lane, so the GPU scratchpad
-                                              stress and the device-scope
-                                              window-opener are STRUCTURALLY
-                                              absent -- not dead, absent.  The
-                                              null rests on CPU-side stress
-                                              alone and must say so.            */
+#define HET_CV_NO_GPU_LANES     (1u << 7)  /* a harness with no GPU test lane has
+                                              the GPU scratchpad stress and the
+                                              device-scope window-opener
+                                              STRUCTURALLY absent -- not dead,
+                                              absent.  The null rests on CPU-side
+                                              stress alone and must say so.     */
 
 static int het_dead(uint32_t req, uint32_t bit, uint64_t rounds) {
   return (req & bit) && rounds == 0;
 }
 
-/* The rule (Q4 3.3, plus the exhaustive_valid gate and the stress-liveness
-   disqualifiers).  A pure function of the record. */
+/* The rule (hetlitmus/docs/positive-control.md sec 4).  A pure function of the
+   record. */
 static het_verdict_t het_verdict(const het_obs_record *r,
                                  uint32_t *dq_out, uint32_t *cv_out) {
   uint32_t dq = 0, cv = 0;
@@ -466,35 +463,33 @@ static het_verdict_t het_verdict(const het_obs_record *r,
 
   /* ---- 1. The caveats are computed FIRST, because a SIGHTING needs them too: a
      weak behaviour observed under a stress config nobody recorded is not
-     reproducible.  (The stress incantations travel with the sighting for the same
-     reason Alglave et al. report absolute counts per incantation combination --
-     ASPLOS'15 4.3 p.585, Tab.6.)  The outcome is unchanged; only its provenance
+     reproducible.  The stress incantations travel with the sighting for the same
+     reason absolute counts are reported per incantation combination
+     [Alglave15 sec 4.3 Tab.6].  The outcome is unchanged; only its provenance
      travels. */
   if (!r->exhaustive_valid)         cv |= HET_CV_NO_EXHAUSTIVE;
   /* "Layer B fired, Layer A did not" is a caveat only where a Layer A exists to
      have not fired.  Without the control_compiled_in guard it would be raised on
      every test at the lattice floor -- which has no mutant by construction --
-     turning a real diagnostic into boilerplate on the 78 corpus rows of 411
-     that ARE the floor. */
+     turning a real diagnostic into boilerplate on every one of them. */
   if (r->control_compiled_in && !hot_control && hot_canary)
                                     cv |= HET_CV_CANARY_ONLY;
   if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
   if (r->place_failures > 0)        cv |= HET_CV_PLACE_REFUSED;
   if (req == 0)                     cv |= HET_CV_UNSTRESSED;
-  /* D10.  The emitter withholds HET_REQ_GPU_STRESS / HET_REQ_SPIN on a harness
-     whose corresponding lane count is 0, because there the mechanism is
-     structurally unreachable rather than dead.  Withholding a request silently
-     would be the "bump the threshold to get green" move, so it is CAVEATED here
-     instead: the reader is told which window-openers could not have run.
+  /* The emitter withholds HET_REQ_GPU_STRESS / HET_REQ_SPIN on a harness whose
+     corresponding lane count is 0, because there the mechanism is structurally
+     unreachable rather than dead.  Withholding a request silently would be the
+     "bump the threshold to get green" move, so it is CAVEATED here instead: the
+     reader is told which window-openers could not have run.
      KEYED ON THE LANE COUNTS THE EMITTER ACTUALLY WROTE, not on cpu_only.
      cpu_only is a property of the CYCLE (every proc is a CPU proc); the lane
-     counts are a property of the BUILD, and they differ -- a CPU-only cycle
-     still gets a GPU observer lane on a store-only shape.  Keying the build
-     claim on the cycle property made the caveat assert "HET_GPU_LANES is 0" on
-     two harnesses where it is 1 (MEASURED: 2+2W-cpuonly-x86_64,
-     R-cpuonly-x86_64).  A harness that merely FORGOT to request a reachable
-     mechanism still cannot borrow this excuse: a nonzero lane count no longer
-     raises the flag for that mechanism, and het_dead() disqualifies it. */
+     counts are a property of the BUILD, and they differ -- a CPU-only cycle still
+     gets a GPU observer lane on a store-only shape, so keying the build claim on
+     the cycle property asserts a lane count of 0 where it is 1.  A harness that
+     merely FORGOT to request a reachable mechanism cannot borrow this excuse: a
+     nonzero lane count does not raise the flag for that mechanism, and het_dead()
+     disqualifies it. */
   if (r->gpu_lanes == 0 || r->spin_lanes == 0)
                                     cv |= HET_CV_NO_GPU_LANES;
   { uint64_t spins = r->spin_rendezvous + r->spin_cap;
@@ -503,10 +498,10 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   /* ---- 2. A SIGHTING, believed unconditionally: no control is needed to believe
      a positive, and an inert-stress run that saw the outcome still saw it.
 
-     Counting the heuristic tally as well diverges from Q4 3.3, which keys the
-     sighting off target_count_exhaustive alone: on a T_L>=2 shape at production N
-     it is 0 by construction (HET_EXHAUSTIVE_MAX), so a real sighting would be
-     silently dropped.  The windowed heuristic searches [c-W, c+W] against the
+     The heuristic tally counts here too, and must: on a T_L>=2 shape at
+     production N target_count_exhaustive is 0 by construction
+     (HET_EXHAUSTIVE_MAX), so keying the sighting off it alone would silently drop
+     a real one.  The windowed heuristic searches [c-W, c+W] against the
      ground-truth scan's [0, N-1] under the same predicate, so its hits are a
      subset -- it can miss cycles, it cannot invent them.  Flagged
      HET_CV_HEURISTIC_SIGHT so the report never passes it off as ground truth. */
@@ -542,10 +537,10 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   if (het_dead(req, HET_REQ_SPIN, r->spin_rendezvous + r->spin_cap))
                                                   dq |= HET_DQ_SPIN_DEAD;
   /* The GPU scratchpad stress, evidenced by het_stress.h's round tally
-     (HET_TALLY_STRESS_ROUNDS).  This check and stresscheck.py are not redundant:
-     this one proves the loop RAN, stresscheck.py proves it still CONTAINS its
-     scratchpad accesses and that they survive the -D pattern knobs.  A layer can
-     be in the source, gone from the PTX, and green on every structural gate. */
+     (HET_TALLY_STRESS_ROUNDS).  This proves the loop RAN; that it still CONTAINS
+     its scratchpad accesses is a static question and neither answer subsumes the
+     other, because a layer can be in the source, gone from the emitted GPU code,
+     and green on every reading of the source. */
   if (het_dead(req, HET_REQ_GPU_STRESS,  r->gpu_stress_rounds))
                                                   dq |= HET_DQ_GPU_STRESS_DEAD;
   if (het_dead(req, HET_REQ_CPU_ENEMY,   r->cpu_enemy_rounds))
@@ -566,7 +561,7 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   if (dq) {
     v = HET_COLD_INVALID;
   } else if (hot_control && r->exhaustive_valid) {
-    /* mu(T) fired on the same run, stress and C2C path, and T's own two engines
+    /* mu(T) fired on the same run, stress and link path, and T's own two engines
        provably overlapped: the harness produced a cross-device interleaving of
        T's own shape, and the zero is a ground-truth zero. */
     v = HET_NOT_OBSERVED_MU_HOT;
@@ -649,11 +644,11 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
 }
 
 /* ---------------------------------------------------------------------------
- * The reporting contract (Q4 5): NEVER print a bare "Never".  Every null prints
- * paired with the control that vouches for it, in absolute numbers, so a reader
- * can recalibrate the bar instead of taking our word for it.  Where a shape's
- * control cannot be made hot we say so plainly (the printouts below carry
- * Alglave's GTX-280 precedent verbatim).
+ * The reporting contract (hetlitmus/docs/positive-control.md sec 6): NEVER print
+ * a bare "Never".  Every null prints paired with the control that vouches for it,
+ * in absolute numbers, so a reader can recalibrate the bar instead of taking the
+ * harness's word for it.  Where a shape's control cannot be made hot the printout
+ * says so plainly, carrying its precedent [Alglave15 fn.7 p.577] verbatim.
  * ------------------------------------------------------------------------- */
 /* The stress-provenance caveats, printed for a sighting as well as for a null. */
 static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) {
@@ -752,7 +747,7 @@ static void het_print_notobserved(FILE *_ch, const het_obs_record *_r) {
 }
 
 /* How hot the harness was -- printed under every null of every class, because a
-   non-observation is worth exactly what the co-running controls say (Q4 5.2). */
+   non-observation is worth exactly what the co-running controls say. */
 static void het_print_liveness(FILE *_ch, const het_obs_record *_r) {
   if (_r->control_compiled_in)
     fprintf(_ch,
@@ -834,14 +829,15 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       (unsigned long long)_r->target_count_heuristic, _n, _pct,
       HET_PAIR_NAME, HET_LINK_NAME);
     if (_r->cpu_only) {
-      /* D10 (memo 7.D10) says WHAT WAS UNDER TEST, which is not a model call:
+      /* The CPU-only case says WHAT WAS UNDER TEST, which is not a model call:
          every proc is a CPU proc, so no cross-device path carried this cycle and
-         what fired is the host ISA on the shared allocation.  The x86 ordering
-         rules are scoped to WB (write-back cacheable) memory ([APM] 7.2, [CACM]
-         p.90) and a WC mapping legalises store-store and load-load reordering
-         outright (memo sect 8 P1), so the MAPPING is part of what this row
-         measures -- and a UC mapping reorders nothing at all ([APM] Table 7-2),
-         which is why a sighting rules that one out. */
+         what fired is the host ISA on the shared allocation.  The AMD64 ordering
+         rules are stated over normal cacheable naturally-aligned accesses to
+         write-back memory [APM sec 7.2]; other memory types may order more
+         weakly [APM sec 7.4.2], and a write-combining mapping in particular
+         allows stores to complete out of order, while an uncacheable one allows
+         none of it [APM Table 7-2].  The MAPPING is therefore part of what this
+         row measures, and a sighting rules the uncacheable one out. */
       fprintf(_ch,
         "  ** CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc, so NO "
         "CROSS-DEVICE PATH CARRIED THIS CYCLE -- what fired is the host ISA on the "
@@ -926,12 +922,11 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       fprintf(_ch, "    - the GPU scratchpad stress was requested "
                    "(HET_PRE_STRESS_PCT/HET_MEM_STRESS_PCT) but het_do_stress "
                    "completed ZERO rounds: it never ran\n");
-      /* Alglave's "zero without stress" is an NVIDIA measurement and this
-         project has already recorded it as NVIDIA-only (B4).  Printing it as a
-         general fact on an AMD-tagged run would be borrowing somebody else's
-         number; saying that no equivalent number exists is the honest form, and
-         PORT2-reading-list.md is where that gap was established.  Keyed on an
-         explicit stamp, never on the shape of a string: the emitter sets
+      /* "Zero without stress" [Alglave15 sec 4.3.1] is an NVIDIA measurement.
+         Printing it as a general fact on an AMD-tagged run would be borrowing
+         somebody else's number, and no equivalent figure is published for that
+         part, so the run is told the gap instead.  Keyed on an explicit stamp,
+         never on the shape of a string: the emitter sets
          HET_ALGLAVE_ZERO_MEASURED for the machines the figure was measured on
          and for no others. */
       if (HET_ALGLAVE_ZERO_MEASURED)
@@ -981,8 +976,7 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   }
 
   /* One sentence for both tiers, because it is the same statement: a null is a
-     fact about this harness's reach, not about a model.  Alglave et al. said it
-     first about their own null on the chip [19] reported weak behaviours on. */
+     fact about this harness's reach, not about a model [Alglave15 fn.7 p.577]. */
   fprintf(_ch,
     "  Either way this is an OBSERVABILITY result about this harness on this "
     "hardware and under this stress -- never a model result -- and it feeds the "
@@ -992,7 +986,7 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     "     method on the Nvidia GTX 280 chip they used.\"\n"
     "                                     -- Alglave et al., ASPLOS'15, fn.7, p.577.\n");
   if (_r->cpu_only)
-    /* D10's null half: on a CPU-only shape the weak outcome is the host store
+    /* The CPU-only null: on such a shape the weak outcome is the host store
        buffer, among the most reproducible relaxations the ISA has, so a null is
        evidence about the ALLOCATION rather than about a narrow window. */
     fprintf(_ch,
@@ -1009,22 +1003,21 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
 
 /* =========================================================================
  * THE STATISTICS LAYER -- what a "Never" is worth, and what it is not.  A pure
- * function of an array of het_obs_records (host-side post-pass, Q3 6.6), so it is
- * unit-testable from synthetic record streams: hetlitmus/verify/statscheck.py.
+ * function of an array of het_obs_records (a host-side post-pass), so it is
+ * unit-testable from synthetic record streams.
  *
- * The frame is not the trial: the scan validates N^{T_L} overlapping frames per N
- * iterations (PerpLE VI-B.1), so the replication unit is the (instance,run) cell
- * and Y = 1[target_count >= 1] is what is counted.  A non-observation is reported
- * as a non-observation: no rate and no probability is attached to one, because
- * falsification is one-sided and what licenses a null here is the control that
- * fired beside it.  What this layer computes is therefore the reproducibility of
- * a SIGHTING -- P_rep from k_eff -- and the one precondition that may not be
- * assumed for it: Kirkham 4.3's stationarity precheck, which already fails 4 of 18
- * chip/test combinations GPU-only, hence mandatory here.  One divergence from it:
- * they KS-test a POISSON FIT of the early against the late window, we two-sample
- * KS the counts directly, the Poisson being the wrong likelihood on a channel
- * whose arrivals come in bursts.
- * Derivation and sources: Q3-stats.md (3 the units, 4.2 the strata).
+ * The frame is not the trial: a run of N iterations holds N^{T_L} overlapping
+ * frames [Melissaris20 sec IV.A], so the replication unit is the (instance,run)
+ * cell and Y = 1[target_count >= 1] is what is counted.  A non-observation is
+ * reported as a non-observation: no rate and no probability is attached to one,
+ * because falsification is one-sided and what licenses a null here is the control
+ * that fired beside it.  What this layer computes is therefore the reproducibility
+ * of a SIGHTING -- P_rep from k_eff -- and the one precondition that may not be
+ * assumed for it: the stationarity precheck of [Kirkham20 sec 4.3], which already
+ * rejects 4 of its own 18 chip/test combinations GPU-only (Tab.7), hence mandatory
+ * here.  Its split is the first 20% of a run against the last 10%; the axis here
+ * is the window instead, pooled over every usable cell.
+ * Design: hetlitmus/docs/00-environment-design.md sec 3.7.
  * ========================================================================= */
 
 /* What the campaign SAW, at the (instance,run) unit. */
@@ -1037,18 +1030,18 @@ typedef enum {
 } het_obs_class;
 
 /* Corroboration.  A sighting that does not reproduce is the most damaging thing
-   this campaign can write down, and Srivastava observed the mechanism that would
-   forge one: a constant-read artefact (a reader stuck on init or on one value)
-   yields a spurious 100%/0%.  The fix is not to suppress sightings --
-   falsification is one-sided.  "Is the sighting real?" (decoder soundness) and
-   "is it reproducible?" (statistical confidence) are two questions, so they get
-   two answers: het_verdict() still returns HET_OBSERVED on the first sighting,
-   and this tier layers on top and suppresses nothing.
+   this campaign can write down, and the mechanism that would forge one is on
+   record: a constant-read artefact -- a reader stuck on its initial value or on
+   one value -- yields a spurious 100%/0% [Srivastava24 sec 4.1].  The fix is not
+   to suppress sightings -- falsification is one-sided.  "Is the sighting real?"
+   (decoder soundness) and "is it reproducible?" (statistical confidence) are two
+   questions, so they get two answers: het_verdict() still returns HET_OBSERVED on
+   the first sighting, and this tier layers on top and suppresses nothing.
 
-   HET_CORROB_RUNS is the campaign's corroboration bar, and it is NOT Kirkham's
-   n = 3: three clean runs are the 95% P_rep recipe (Q3 R2), while two are what
-   rules out a per-run artefact at all.  The measured P_rep is printed beside the
-   tier, so the bar and the confidence it bought are never conflated. */
+   HET_CORROB_RUNS is the campaign's corroboration bar, and it is NOT the n = 3 of
+   [Kirkham20 sec 1.1]: three clean runs are that 95% P_rep recipe, while two are
+   what rules out a per-run artefact at all.  The measured P_rep is printed beside
+   the tier, so the bar and the confidence it bought are never conflated. */
 #define HET_CORROB_RUNS 2
 typedef enum {
   HET_SIGHT_NONE = 0,
@@ -1071,7 +1064,7 @@ typedef enum {
 #define HET_ST_CTRL_STREAM_EMPTY (1u << 0) /* no pooled per-window control stream:
                                               nothing co-ran, or what did never
                                               fired.  The KS gate refuses on it. */
-#define HET_ST_NONSTATIONARY     (1u << 1) /* KS rejected: P_rep suppressed (Q3 R4) */
+#define HET_ST_NONSTATIONARY     (1u << 1) /* KS rejected: P_rep is suppressed   */
 #define HET_ST_DEGEN_SIGHTING    (1u << 2) /* >=1 sighting failed the decode guard */
 #define HET_ST_NO_DECODE_CHANNEL (1u << 5) /* no sync AND no observer: fail closed */
 #define HET_ST_WIN_DESYNC        (1u << 6) /* sum(win[]) != total: the sub-tallies
@@ -1118,8 +1111,8 @@ typedef struct het_stats {
   int k_runs;         /* distinct RUNS among them (the most independent draws)    */
   int n_degen;        /* sightings REJECTED by the guard (reported, never hidden) */
   /* Distinct runs consumed when the FIRST clean sighting landed; 0 = none did.
-     The price of the sighting, in the unit the campaign spends (Q3 F4), and the
-     one number a stop rule that watches for a lone sighting needs. */
+     The price of the sighting, in the unit the campaign spends, and the one
+     number a stop rule that watches for a lone sighting needs. */
   int n_at_first_sight;
   /* What the two control channels totalled over every stamped cell scored here,
      cold ones included, reported rather than left to be inferred from ctrl= and
@@ -1140,8 +1133,8 @@ typedef struct het_stats {
 } het_stats_t;
 
 /* ---------------------------------------------------------------------------
- * THE STATIONARITY INSTRUMENTS.  Small, pure, and separately testable against
- * synthetic streams (statscheck.py). */
+ * THE STATIONARITY INSTRUMENTS.  Small, pure, and separately decidable from a
+ * synthetic stream. */
 
 static int het_dcmp(const void *a, const void *b) {
   double x = *(const double *)a, y = *(const double *)b;
@@ -1174,9 +1167,9 @@ static int het_ks2(double *a, int na, double *b, int nb,
   return (D <= *Dcrit_out) ? 1 : 0;
 }
 
-/* Kirkham's remedy for a non-stationary run is to SPLIT IT AT THE CHANGE-POINT
-   ("non-stable runs can then be restarted from the point of instability", 5.1).
-   This locates it: the window index whose before/after means differ most. */
+/* The remedy for a non-stationary run is to SPLIT IT AT THE CHANGE-POINT and
+   restart from the point of instability [Kirkham20 sec 5.1].  This locates it:
+   the window index whose before/after means differ most. */
 static int het_changepoint(const double *prof, int n) {
   int i, best = -1;
   double bd = -1.0;
@@ -1192,7 +1185,7 @@ static int het_changepoint(const double *prof, int n) {
 }
 
 /* The decode guard: is this cell's decode trustworthy, or could the "sighting" be
-   Srivastava's constant-read artefact?  A ZERO FIELD IS NOT A DEGENERATE DECODE --
+   the constant-read artefact?  A ZERO FIELD IS NOT A DEGENERATE DECODE --
    a store-only shape has no reader (so it cannot have a constant-read artefact at
    all) and leaves the synchrony fields at their memset zero, decoding through the
    observer instead.  Every test has one channel or both, so the guard switches
@@ -1216,7 +1209,7 @@ static uint64_t het_ctrl_total(const het_obs_record *r, int use_canary) {
 }
 
 /* ---------------------------------------------------------------------------
- * THE AGGREGATE.  A pure function of the record stream (Q3 6.6). */
+ * THE AGGREGATE.  A pure function of the record stream. */
 static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st) {
   double win[HET_STATS_MAX_CELLS * HET_NWIN];
   double early[HET_STATS_MAX_CELLS * HET_NWIN];
@@ -1245,7 +1238,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   if (first < n) {
     st->test_name = recs[first].test_name;
     st->N         = recs[first].N;
-    /* Whether this is a D10 cycle -- a CHECK rather than an assumption: if the cells
+    /* Whether the cycle is CPU-only -- a CHECK rather than an assumption: if the cells
        handed here do not agree on cpu_only they are not one campaign. */
     st->cpu_only  = recs[first].cpu_only;
     { int _i;
@@ -1268,10 +1261,10 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
      is the universal floor and is all a test at the lattice floor has.  A precheck
      run on another shape's stream is a weaker claim, so which one was used is
      recorded and printed rather than left to the reader to guess.
-     Where T's floor twin IS the canary -- 37 corpus rows on either lattice, all
-     of them MP shapes -- mu(T) and the canary are the same program in two
-     instances: preferring mu buys a second draw of one channel there rather than
-     a shape-match, and nothing below reads the two as different shapes. */
+     Where T's floor twin IS the canary the two co-running instances run the same
+     program: preferring mu buys a second draw of one channel there rather than a
+     shape-match, and nothing below reads the two as different shapes.  How many
+     rows that is: hetlitmus/docs/positive-control.md sec 11. */
   for (i = 0; i < n; i++) {
     /* Residue here would do two things: put a number in the printed mu report that
        came from nothing, and SELECT the channel below -- a residue mu_total picks
@@ -1350,7 +1343,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   }
   st->k_runs = nruns;
 
-  /* ---- 3. The observation class at the (instance,run) unit (Q3 R1).
+  /* ---- 3. The observation class at the (instance,run) unit.
      THE SELECTION EFFECT: a cell is usable if it fired or if its control was hot,
      so where nothing co-runs "usable" is defined by firing -- the survivors are
      tautologically the runs that fired, and classifying over them reports ALWAYS
@@ -1389,7 +1382,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   if (nwin < 2 || ctrl_pooled == 0 || (st->flags & HET_ST_WIN_DESYNC))
     st->flags |= HET_ST_CTRL_STREAM_EMPTY;
 
-  /* ---- 5. The stationarity gate (Q3 R4-i; MANDATORY, not optional).  Kirkham's
+  /* ---- 5. The stationarity gate: MANDATORY, not optional.  The
      first-20%-vs-last-10% split moved to the window axis: early windows from every
      usable run against late windows from every usable run -- the axis on which
      warm-up, thermal/DVFS drift and alignment drift all act. */
@@ -1426,8 +1419,8 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     }
   }
 
-  /* ---- 6. OBSERVED (Q3 R2): P_rep at the (instance,run) unit, from k_eff, never
-     from the frame count; suppressed across a non-stationary boundary (R4).
+  /* ---- 6. OBSERVED: P_rep at the (instance,run) unit, from k_eff, never from
+     the frame count; suppressed across a non-stationary boundary.
      The k_eff > 0 test is LOAD-BEARING, not a division guard: at k_eff = 0 -- every
      sighting rejected by the decode guard -- the formula returns 1 - e^0 = 0, and
      "P_rep = 0.00%" reads as "never reproduces" when what happened is that there is
@@ -1439,7 +1432,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   /* ---- 7. The corroboration tier, layered ON TOP of het_verdict()'s immediate
      HET_OBSERVED and never suppressing one.  Distinct RUNS, not merely distinct
      cells: runs are re-seeded and carry a fresh phase/thermal draw, so they are
-     the most independent replicates the harness produces (Q3 3.1, F4). */
+     the most independent replicates the harness produces. */
   if (st->k > 0)
     st->tier = (st->k_runs >= HET_CORROB_RUNS) ? HET_SIGHT_CORROBORATED
                                                : HET_SIGHT_UNCONFIRMED;
@@ -1463,8 +1456,8 @@ static const char *het_sighting_name(het_sighting_tier t) {
 }
 
 /* The machine-readable line.  hetlitmus/oracle-compare.sh parses THIS and layers
-   the annotation onto its offline comparison table (Q3 R6: augment, do not
-   replace); hetlitmus/campaign.py schedules from it.  mu_total/can_total are here
+   the annotation onto its offline comparison table, augmenting it rather than
+   replacing it; hetlitmus/campaign.py schedules from it.  mu_total/can_total are here
    because a roll-up must be able to see HOW HOT each control layer was without
    re-reading the per-run lines. */
 static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
@@ -1716,7 +1709,9 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
  * stops once its sighting is CORROBORATED (nothing more is bought by running a
  * reproduced sighting further), and a row that never fires stops once its budget
  * is spent.  Most nulls converge early and only the stubborn shapes need the long
- * tail (Kirkham 4.2 ranks SB hardest on every chip).
+ * tail, and which shape is stubborn is a property of the chip: SB has the lowest
+ * observed rate on two of the three chips of [Kirkham20 sec 4.2 Tab.6] and the
+ * highest on the third.
  *
  * A lone clean sighting does not stop the row: one clean run cannot rule out a
  * per-run artefact, so the row keeps running to corroborate -- for confirm_runs runs
@@ -1743,8 +1738,8 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
  *
  * A pure function of the record stream, like het_verdict() and
  * het_stats_compute(), so the in-binary adaptive loop (HET_ADAPTIVE=1) and
- * hetlitmus/campaign.py's cross-invocation loop apply the SAME policy and
- * statscheck.py can unit-test it from synthetic records. */
+ * hetlitmus/campaign.py's cross-invocation loop apply the SAME policy, and both
+ * are decidable from a synthetic record stream. */
 typedef enum {
   HET_CAMPAIGN_CONTINUE = 0,
   HET_CAMPAIGN_STOP_CORROBORATED, /* sighting reproduced in HET_CORROB_RUNS runs  */

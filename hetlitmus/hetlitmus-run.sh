@@ -49,7 +49,7 @@ usage: hetlitmus-run.sh --gpu-target cuda|hip --corpus DIR [options]
 EOF
 }
 
-# THE SESSION STATUS, written into the results dir and kept true at every exit:
+# The session status, written into the results dir and kept true at every exit:
 # RUNNING while the chain is in flight, COMPLETE at step 7, REFUSED@step<N> when a
 # step fails closed, ABORTED@step<N> if the shell died some other way.  Without it
 # a refused session and a finished one leave results dirs that read alike.
@@ -160,7 +160,7 @@ corpus_cpu_lanes() {            # <file.litmus>... -> "<file> aarch64|x86_64|NON
     END { flush() }' "$@"
 }
 
-# THE MACHINE TABLE IS litmus/hetMachine.ml AND THIS READS THAT FILE.  A second
+# The machine table is litmus/hetMachine.ml and this reads that file: a second
 # copy of the table here could drift from the one the emitter obeys, and the
 # drift would show up as a results dir naming a machine the renders do not.  What
 # the emitter decided is checked against this in step 3, off the pair name it
@@ -193,7 +193,7 @@ machine_pair() {                # <ISA key> <target> -> "MACHINE <row>" | NO-MAC
     }' "$REPO/litmus/hetMachine.ml"
 }
 
-# THE CONTROL MAP THIS LANE READS, mirroring litmus/hetCpuFront.ml: mu(T) is a
+# The control map this lane reads, mirroring litmus/hetCpuFront.ml: mu(T) is a
 # weakening on a strength lattice and the lattice is the CPU column's, so the map
 # is keyed on the CPU ISA and never on the dialect.
 control_map_of_isa() {          # <ISA key> -> the CSV file name
@@ -248,8 +248,8 @@ case "$PAIR_STATE" in
   MACHINE) ;;
   NO-MACHINE)
     PAIR_MACHINE="" ;;
-  # WARNED, NOT REFUSED.  The pair decides which silicon the renders may name,
-  # not whether this box can be measured: an unregistered one emits generic
+  # Warned, NOT refused: the pair decides which silicon the renders may name,
+  # not whether this box can be measured, and an unregistered one emits generic
   # harnesses that characterize exactly as well and claim less.
   ABSENT)
     PAIR_MACHINE=""
@@ -328,7 +328,7 @@ PAIR_LONG="$PAIR -> ${PAIR_MACHINE:-no machine row: the renders name none}"
 RUNONE="$HETL/spotcheck/run-one.sh"
 RUNNER="timeout $HET_RUN_TIMEOUT sh $RUNONE {dir} {test}"
 
-# WHAT A SECOND SESSION INTO THIS DIR WOULD INHERIT.  campaign.py resumes every
+# What a second session into this dir would inherit: campaign.py resumes every
 # terminal row it finds in --state rather than re-running it, so without an
 # explicit --resume a repeat session invokes no harness at all and still reports a
 # complete one.  The short list is the subset that would also silently swallow a
@@ -429,7 +429,7 @@ RECORD="$OUT/run-record.txt" ; SUMMARY="$OUT/summary.txt"
   echo "litmus7=$LITMUS7"
   echo "git_rev=$(cd "$REPO" && git rev-parse HEAD 2>/dev/null || echo nogit)"
   echo "git_dirty=$( [ -z "$(cd "$REPO" && git status --porcelain -- litmus hetlitmus 2>/dev/null)" ] && echo no || echo YES )"
-  # LOUD WHEN A SEAM IS IN USE: a stub probe or a stand-in litmus7 makes this
+  # Loud when a seam is in use: a stub probe or a stand-in litmus7 makes this
   # results dir a machinery artefact and not a reading of the machine.
   if [ -n "${HET_PROBE_SH:-}" ]; then echo "seam_probe=STUB($HET_PROBE_SH)"; fi
   if [ -n "${HET_LITMUS7:-}" ]; then echo "seam_litmus7=STUB($HET_LITMUS7)"; fi

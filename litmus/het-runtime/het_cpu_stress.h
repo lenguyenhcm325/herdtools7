@@ -1,66 +1,57 @@
 /* =========================================================================
- * het_cpu_stress.h -- HetLitmus CPU-side + interconnect (C2C) stress.
+ * het_cpu_stress.h -- HetLitmus CPU-side + interconnect stress.
  * Emitted verbatim into every harness dir; edit litmus/het-runtime/het_cpu_stress.h,
  * never a harness-dir copy.  <test>_cpu.c includes it with HET_CPU_STRESS_IMPL and
  * compiles the bodies; <test>.cu / .hip see only the knobs, the argument structs
  * and the declarations -- the bodies are host-ISA inline asm nvcc must not meet.
  * Why this is a separate header, and the -2s invariants it holds by construction:
- * litmus/het-runtime/README.md.  Spec: env-research/Q6-cpu-interconnect-stress.md
- * and env-research/impl-briefs/B5-impl-brief.md.
+ * litmus/het-runtime/README.md.  Design:
+ * hetlitmus/docs/00-environment-design.md sec 3.6.
  *
  * WHY THIS LAYER EXISTS.  het_stress.h's device-only scratchpad widens the
  * intra-device window.  The heterogeneous weak behaviour lives in the cross-device
- * window -- a store in flight across the CPU-GPU interconnect but not yet globally
- * visible -- which per-device stress on either side never loads.  Two levers here
- * do.  Half 1, CPU-side stress: litmus7's incantation vocabulary ported as recipes
- * (never through Skel.ml) -- preload, disjoint-scratchpad enemy threads, indirect
- * access, stride/spread, affinity.  Half 2, interconnect stress: (a) placement,
- * pinning the shared pages remote to their consumer, which lives in the .cu beside
- * gd_alloc_shared because it is CUDA API rather than host asm; and (b) noise, each
- * processing unit continuously stream-reading the other one's memory over a
- * working set far larger than any cache.
+ * window -- a store in flight across the host-device interconnect but not yet
+ * globally visible -- which per-device stress on either side never loads.  Two
+ * levers here do.  Half 1, CPU-side stress: litmus7's incantation vocabulary
+ * ported as recipes (never through Skel.ml) -- preload, disjoint-scratchpad enemy
+ * threads, indirect access, stride/spread, affinity.  Half 2, interconnect stress:
+ * (a) placement, pinning the shared pages remote to their consumer, which lives in
+ * the .cu beside gd_alloc_shared because it is vendor API rather than host asm;
+ * and (b) noise, each processing unit continuously stream-reading the other one's
+ * memory over a working set far larger than any cache.
  *
- * Half 2 is the thesis's methodological addition beyond Bagchi et al. (ISMM'26),
- * who stressed each device independently -- "Each was executed millions of times
- * with memory stressing [21] on both devices" (4.2) -- with no link-directed
- * component anywhere in the paper: no placement, no cudaMemAdvise, no C2C noise.
+ * What half 2 buys is an INFERENCE, and a confounded one: placement and noise slow
+ * the whole loop, so there are fewer rendezvous per second, and sightings = yield
+ * x rate.  What it supports is that interconnect stress is additive with
+ * per-device stress and is the lever most specific to the cross-device window --
+ * not that it beats per-device stress.  Do not upgrade that without hardware
+ * evidence.
  *
- * What half 2 buys is an INFERENCE, not a measurement, and the thesis must say so.
- * Fusco et al. measured bandwidth degradation under noise; nobody has measured
- * whether C2C saturation raises heterogeneous litmus yield.  It is also
- * confounded: placement and noise slow the whole loop, so there are fewer
- * rendezvous per second, and sightings = yield x rate.  The defensible claim is
- * that interconnect stress is additive and composable with per-device stress and
- * is the lever most specific to the cross-device window -- not that it beats
- * per-device stress.  Do not upgrade that without hardware evidence.  (Q6 3.3.)
- *
- * SOURCES, cited because they are reused; for cuda-litmus, which carries no
- * licence file, citation is the condition of reuse (stated once, het_stress.h).
- *   Alglave, Maranget, Sarkar, Sewell, "Litmus: Running Tests against Hardware",
- *     TACAS'11 section 3 -- the CPU incantation vocabulary ported here: concurrent
- *     instances, indirect (shuffled-pointer) access, preload, affinity.
- *   Sorensen & Donaldson, PLDI'16 -- the disjoint-scratchpad invariant that makes
- *     all of this sound, and the knobs patch P / sequence sigma / spread m.
- *   Alglave et al., ASPLOS'15 4.3.1 -- the window-widening rationale ("a bus may
- *     be more likely to transfer data out of order when it is under heavy stress")
- *     and the Nvidia/AMD vendor split, which is stated once, in het_stress.h.
- *   Fusco, Khalilov, Chrapek, Chukkapalli, Schulthess, Hoefler, arXiv:2408.11556
- *     -- the noise-kernel construction (each PU stream-reads the other's memory
- *     from a large buffer), and the caveat that Hopper's L2 caches peer HBM, so
- *     placement alone guarantees no C2C traffic.  See HET_NOISE_MB / HET_LLC_MB.
- *   arXiv:2508.12743 and Schieffer et al., arXiv:2410.00801 -- the MI300A
- *     analogue.  There is no placement lever there (one HBM pool, no cudaMemAdvise
- *     equivalent) and caching of remote coherent memory is permitted, so fabric
- *     traffic is not automatic per access; the analogue is cross-chiplet coherence
- *     contention, which the same noise pair produces when both sides stream one
- *     shared fine-grained-coherent pool.  Only the placement half is Nvidia-only.
- *   The M3 cache primitives are litmus7's own, reused verbatim from
+ * SOURCES, cited because they are reused; for [CudaLitmus], which carries no
+ * licence file, citation is the condition of the reuse (stated once, het_stress.h).
+ *   [Alglave11 sec 3] -- the CPU incantation vocabulary ported here: concurrent
+ *     instances, indirect (shuffled-pointer) access, preload, affinity; and sec 4,
+ *     that a good parameter combination is a property of the testbed.
+ *   [Sorensen16 sec 1] -- the disjoint-scratchpad invariant that makes all of this
+ *     sound, and (sec 3.2-3.4) the knobs patch P / sequence sigma / spread m.
+ *   [Alglave15 sec 4.3.1] -- the window-widening hypothesis, that a bus under
+ *     heavy stress is likelier to transfer data out of order, and the NVIDIA/AMD
+ *     vendor split, which is stated once, in het_stress.h.
+ *   [Fusco24 sec III-E.1] -- the noise-kernel construction (each unit
+ *     stream-reads the other's memory from a large buffer), and the caveat that
+ *     Hopper's L2 caches peer HBM, so placement alone does not guarantee that
+ *     anything crosses.  See HET_NOISE_MB / HET_LLC_MB.
+ *   [Schieffer24 sec II.C] and [Wahlgren25 sec 4.4] -- the MI300A analogue.
+ *     There is no placement lever there (one HBM pool, no cudaMemAdvise
+ *     equivalent); the analogue is cross-chiplet coherence contention, which the
+ *     same noise pair produces when both sides stream one shared fine-grained
+ *     coherent pool.  Only the placement half is NVIDIA-only.
+ *   The cache primitives are litmus7's own, reused verbatim from
  *     litmus/libdir/_aarch64/_cache.h and _x86_64/_cache.h (CeCILL-B).
  *
- * NOT PORTED (Q6 2.3): launch randomisation; a per-cell CPU<->GPU barrier, which
- * masks the tested order and stalls (Srivastava 4.1); and a shared-timebase
- * release, for which no shared clock exists -- Grace's cntvct_el0 and Hopper's
- * %globaltimer have different epochs.
+ * NOT PORTED: launch randomisation; a per-cell CPU<->GPU barrier (het_spin in
+ * het_stress.h says why); and a shared-timebase release, for which no shared clock
+ * exists -- Grace's cntvct_el0 and Hopper's %globaltimer have different epochs.
  * ========================================================================= */
 #ifndef HET_CPU_STRESS_H
 #define HET_CPU_STRESS_H
@@ -78,13 +69,13 @@ extern "C" {
 
 /* -------------------------------------------------------------------------
  * HALF 1 KNOBS -- CPU-side stress.  Every numeric here and below is a SEED, not a
- * tuning: stress is per-testbed (Alglave TACAS'11 4), and "parameters for one chip
- * may not be optimal on another chip, even from the same vendor" (Kirkham
- * OOPSLA'20 6.4).  Re-tune on GH200 and again on MI300A -- they do not even share
- * the interconnect lever.  All are -D-overridable so a sweep needs no re-emission,
- * and main() reports the realised counters and warns when one falls short of its
- * knob, because a knob that says 9 while the hardware realised 1 mis-tunes the
- * autotuner silently.
+ * tuning: a good combination is a property of the testbed [Alglave11 sec 4], and
+ * a chip's parameters need not suit another chip of the same vendor [Kirkham20
+ * sec 6.4].  Re-tune on GH200 and again on MI300A -- they do not even share the
+ * interconnect lever.  All are -D-overridable so a sweep needs no re-emission, and
+ * main() reports the realised counters and warns when one falls short of its knob,
+ * because a knob that says 9 while the hardware realised 1 mis-tunes the autotuner
+ * silently.
  * ------------------------------------------------------------------------- */
 #ifndef HET_CPU_ENEMIES
 #define HET_CPU_ENEMIES (-1)      /* -1 = auto: every spare core (see main())    */
@@ -98,12 +89,12 @@ extern "C" {
                                           litmus/hetDialect.ml gd_noise_mem_defs. */
 #endif
 #ifndef HET_CPU_SPREAD
-#define HET_CPU_SPREAD 8          /* S&D "spread" m: distinct lines hammered     */
+#define HET_CPU_SPREAD 8          /* spread m [Sorensen16]: distinct lines hit   */
 #endif
 #ifndef HET_CPU_STRIDE
-#define HET_CPU_STRIDE 8          /* M4 stride: word gap between regions.  8 x 8B
-                                     = 64B = one cache line, so consecutive
-                                     regions land on distinct lines.             */
+#define HET_CPU_STRIDE 8          /* word gap between regions.  8 x 8B = 64B =
+                                     one cache line, so consecutive regions land
+                                     on distinct lines.                          */
 #endif
 #ifndef HET_CPU_ENEMY_SEQ
 #define HET_CPU_ENEMY_SEQ 0       /* sigma: 0=st;st 1=st;ld 2=ld;st 3=ld;ld.
@@ -113,12 +104,12 @@ extern "C" {
                                      het_cpu_enemy.                              */
 #endif
 #ifndef HET_CPU_PRELOAD_PCT
-#define HET_CPU_PRELOAD_PCT 50    /* M3: % of iterations a TEST thread preloads
-                                     its own test variables (litmus7's default
-                                     preload mode is RandomPL).                  */
+#define HET_CPU_PRELOAD_PCT 50    /* % of iterations a TEST thread preloads its
+                                     own test variables (litmus7's default preload
+                                     mode is RandomPL).                          */
 #endif
 #ifndef HET_CPU_AFFINITY
-#define HET_CPU_AFFINITY 1        /* M6: pin threads to cores (sched_setaffinity)*/
+#define HET_CPU_AFFINITY 1        /* pin threads to cores (sched_setaffinity)    */
 #endif
 #ifndef HET_CPU_TEST_CORE0
 #define HET_CPU_TEST_CORE0 0      /* first core the CPU test threads are pinned to*/
@@ -129,43 +120,43 @@ extern "C" {
                                      no SMT, so litmus7's SMT/hyperthread knobs are
                                      inert there and affinity reduces to which core
                                      plus L2/L3 locality; on the x86 MI300A host
-                                     (24c/48t/3 CCD) they are live.  Q6 2.5.     */
+                                     (24c/48t over 3 CCDs) they are live.        */
 #endif
 
 /* -------------------------------------------------------------------------
- * HALF 2 KNOBS -- interconnect (C2C).  HET_PLACE is consumed in the .cu (it is
- * CUDA API, not host asm); the noise knobs are consumed on both sides.
+ * HALF 2 KNOBS -- interconnect.  HET_PLACE is consumed in the .cu (it is vendor
+ * API, not host asm); the noise knobs are consumed on both sides.
  * ------------------------------------------------------------------------- */
 #ifndef HET_PLACE
 #define HET_PLACE 0               /* shared-var placement:
-                                     0 = first-touch (DEFAULT).  Bagchi's baseline
-                                         -- plain malloc(), first touch decides --
-                                         and the honest default while Q6 3.3 finds
-                                         the net effect of pinning confounded.
+                                     0 = first-touch (DEFAULT) -- plain malloc(),
+                                         first touch decides, which is [Bagchi26]'s
+                                         baseline and the honest default while the
+                                         net effect of pinning stays confounded.
                                      1 = prefer HBM  (pages home on the GPU)
                                      2 = prefer DDR  (pages home on the CPU)
                                      Swept by the tuner.  Do not promote a non-zero
                                      default without hardware evidence.          */
 #endif
 #ifndef HET_NOISE_MB
-#define HET_NOISE_MB 8192         /* per noise buffer.  Fusco's is 8 GB, and the
-                                     size is not arbitrary: the buffer must exceed
-                                     the last-level cache on the path, or the reads
-                                     hit cache and cross nothing.  Checked at run
-                                     time -- see HET_LLC_MB.                     */
+#define HET_NOISE_MB 8192         /* per noise buffer, matching [Fusco24]'s 8 GB.
+                                     The size is not arbitrary: the buffer must
+                                     exceed the last-level cache on the path, or
+                                     the reads hit cache and cross nothing.
+                                     Checked at run time -- see HET_LLC_MB.      */
 #endif
 #ifndef HET_NOISE_CPU
-#define HET_NOISE_CPU 1           /* the Grace half: a CPU thread stream-reading a
-                                     HBM-homed buffer                             */
+#define HET_NOISE_CPU 1           /* the host half: a CPU thread stream-reading a
+                                     buffer homed on device memory               */
 #endif
 #ifndef HET_NOISE_GPU_BLOCKS
-#define HET_NOISE_GPU_BLOCKS 8    /* the Hopper half: blocks of the PERSISTENT grid
-                                     stream-reading a DDR-homed buffer.  They are
+#define HET_NOISE_GPU_BLOCKS 8    /* the device half: blocks of the PERSISTENT grid
+                                     stream-reading a host-homed buffer.  They are
                                      extra blocks of the existing kernel, never a
                                      second __global__ -- a separate kernel would
-                                     drop its ops into the middle of the flat PTX
-                                     op stream that the L0 faithfulness gate slices
-                                     per lane.                                    */
+                                     drop its ops into the middle of the flat GPU
+                                     op stream that a static faithfulness reading
+                                     slices per lane.                             */
 #endif
 #ifndef HET_NOISE_CHUNK
 #define HET_NOISE_CHUNK 4096      /* words streamed per round before re-testing the
@@ -181,8 +172,8 @@ extern "C" {
    crosses nothing, so the driver warns at run time rather than let a green
    compile imply a live mechanism.  The figure is per target and the emitter
    stamps the pair's own (litmus/hetMachine.ml); this default is the GH200 row's
-   max(Grace L3 114 MB, Hopper L2 51 MB) -- Bagchi ISMM'26 Table 1 -- and the
-   warning that fires against it says so wherever it is not the target's own. */
+   max(Grace L3 114 MB, Hopper L2 51 MB) [Bagchi26 Table 1], and the warning that
+   fires against it says so wherever it is not the target's own. */
 #ifndef HET_LLC_MB
 #define HET_LLC_MB 114
 #endif
@@ -214,18 +205,18 @@ extern "C" {
 #endif
 
 /* -------------------------------------------------------------------------
- * LIVENESS TALLY -- the CPU twin of het_stress.h's.  Nothing in this layer is
- * visible to a structural gate: the enemies touch a private scratchpad, the
- * preload emits cache hints, the noise streams a disjoint buffer, and none of it
- * enters the tested op stream (correctly -- it is scaffolding).  So a layer that
- * has silently stopped working looks exactly like one that is working, and these
+ * LIVENESS TALLY -- the CPU twin of het_stress.h's.  Nothing in this layer shows
+ * up in a static reading: the enemies touch a private scratchpad, the preload
+ * emits cache hints, the noise streams a disjoint buffer, and none of it enters
+ * the tested op stream (correctly -- it is scaffolding).  So a layer that has
+ * silently stopped working looks exactly like one that is working, and these
  * counters are the only run-time evidence that distinguishes them.
  *
  *   enemy_rounds     0 => the enemies never ran (a stop flag set after they
  *                    exited, or a loop the optimiser deleted as side-effect-free).
  *   preload_ops      0 => the preload is inert (a host ISA with no cache
  *                    primitives, or a 0% roll).
- *   noise_cpu_rounds 0 => the Grace half of the C2C noise never ran.
+ *   noise_cpu_rounds 0 => the host half of the interconnect noise never ran.
  *   aff_failures    >0 => sched_setaffinity failed, so every thread landed
  *                    wherever the scheduler chose and the stress topology is not
  *                    the one the tuning assumed.
@@ -236,9 +227,9 @@ extern "C" {
 typedef struct het_cpu_tally {
   uint64_t enemy_rounds;      /* enemy loop iterations, summed over enemies      */
   uint64_t enemy_accesses;    /* scratchpad accesses issued by the enemies       */
-  uint64_t preload_ops;       /* M3 cache hints actually issued                  */
-  uint64_t noise_cpu_rounds;  /* Grace noise thread: streaming rounds            */
-  uint64_t noise_cpu_words;   /* Grace noise thread: words read                  */
+  uint64_t preload_ops;       /* preload cache hints actually issued             */
+  uint64_t noise_cpu_rounds;  /* host noise thread: streaming rounds             */
+  uint64_t noise_cpu_words;   /* host noise thread: words read                   */
   uint64_t noise_sink;        /* the streamed values, forced to escape (below)   */
   uint32_t enemies_realised;  /* enemy threads that actually entered their loop  */
   uint32_t aff_failures;      /* sched_setaffinity failures -- never silent      */
@@ -249,18 +240,18 @@ typedef struct het_cpu_tally {
 /* Enemy arguments.  Every behavioural field is a runtime value (het_cpu_enemy). */
 typedef struct het_cpu_enemy_args {
   volatile uint64_t *scratch; /* DISJOINT host scratchpad.  Never a test var.    */
-  const uint32_t *idx;        /* M2: shuffled region indices (indirection)       */
-  uint32_t nidx;              /* M4: spread m -- how many regions per round      */
-  uint32_t stride;            /* M4: word gap between regions                    */
+  const uint32_t *idx;        /* shuffled region indices (the indirection)       */
+  uint32_t nidx;              /* spread m -- how many regions per round          */
+  uint32_t stride;            /* word gap between regions                        */
   uint32_t seq;               /* sigma, 0..3.  Runtime -- see het_cpu_enemy.     */
-  int core;                   /* M6: core to pin to, or -1 for unpinned          */
+  int core;                   /* core to pin to, or -1 for unpinned              */
   int *go;                    /* the stop flag; set BEFORE the enemies are spawned*/
   het_cpu_tally *tally;
 } het_cpu_enemy_args;
 
-/* Grace-side noise arguments (half 2b).  `buf' is the OTHER PU's memory. */
+/* Host-side noise arguments (half 2b).  `buf' is the OTHER unit's memory. */
 typedef struct het_cpu_noise_args {
-  volatile const uint64_t *buf;  /* HBM-homed buffer -- every read crosses C2C   */
+  volatile const uint64_t *buf;  /* device-homed: every read crosses the link    */
   uint64_t words;
   uint32_t chunk;             /* words per round before the stop flag is re-tested*/
   uint32_t stride;
@@ -275,9 +266,9 @@ typedef struct het_cpu_noise_args {
 int      het_cpu_affinity(int core, het_cpu_tally *t);  /* 0 = pinned, -1 = failed */
 int      het_cpu_ncores(void);
 uint32_t het_cpu_rng_init(uint32_t seed, uint32_t lane);
-/* M3.  Returns the number of hints issued, so the caller can accumulate locally
-   and flush once -- an atomic bump per hint would put scaffolding contention in
-   the middle of the tested loop, which is the one place it must not be. */
+/* The preload.  Returns the number of hints issued, so the caller can accumulate
+   locally and flush once -- an atomic bump per hint would put scaffolding
+   contention in the middle of the tested loop, the one place it must not be. */
 uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t *rng, int pct);
 /* Exposes the host-only HET_CPU_PRELOAD_LIVE to the .cu driver, which cannot read
    the macro (it is defined only under HET_CPU_STRESS_IMPL, which nvcc never
@@ -286,7 +277,7 @@ uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t *rng, int pct);
    which would otherwise disqualify the run and turn every null cold. */
 int      het_cpu_preload_live(void);
 void    *het_cpu_enemy(void *a);   /* pthread body; NOT a pthread dependency       */
-void    *het_cpu_noise(void *a);   /* pthread body; the Grace half of the C2C noise*/
+void    *het_cpu_noise(void *a);   /* pthread body; the host half of the noise pair*/
 /* -------------------------------------------------------------------------
  * FIRST-TOUCH -- the difference between a noise buffer that stresses the
  * interconnect and one that stresses nothing.
@@ -297,8 +288,8 @@ void    *het_cpu_noise(void *a);   /* pthread body; the Grace half of the C2C no
  * touches ONE physical cache line however large the buffer is: every read hits L1
  * and generates no DRAM and no interconnect traffic, while the round counters
  * still look healthy.  An 8 GB noise buffer would be 4 KB of physical memory.
- * hetlitmus/verify/cpustresscheck.py check D3 measures both halves (the hazard is
- * real; this call fixes it) through RSS on every gate run.
+ * Both halves of that -- the hazard and this call's fix -- are measured through
+ * RSS by cpustresscheck.
  *
  * It also decides the page's NUMA home on GH200, which is why the caller advises
  * the preferred location BEFORE calling this and prefetches afterwards if the
@@ -306,7 +297,7 @@ void    *het_cpu_noise(void *a);   /* pthread body; the Grace half of the C2C no
  * ------------------------------------------------------------------------- */
 void     het_cpu_first_touch(void *p, size_t bytes);
 /* Host-side, seeded from srand() by the driver, so a run replays from its seed
-   (GPUHarbor ISSTA'23 3.4's reproducibility discipline). */
+   [GPUHarbor23 sec 3.4]. */
 void     het_cpu_shuffle(uint32_t *idx, uint32_t n);
 
 #ifdef HET_CPU_STRESS_IMPL
@@ -320,16 +311,15 @@ void     het_cpu_shuffle(uint32_t *idx, uint32_t n);
 #include <sched.h>
 #include <unistd.h>
 
-/* ---- M3 cache primitives -------------------------------------------------
+/* ---- cache primitives ----------------------------------------------------
  * litmus7's own, reused verbatim from litmus/libdir/_aarch64/_cache.h and
  * litmus/libdir/_x86_64/_cache.h (CeCILL-B, as the rest of the tree).
  *
  * On AArch64 `dc civac' cleans and invalidates to the point of coherence, which on
  * GH200 is the coherence point shared with the GPU over C2C -- so the preload
  * plausibly touches the cross-device path and not merely the CPU's own cache.
- * That is an INFERENCE (Q6 2.1 M3), unmeasured and hardware-only: it may equally
- * be redundant with the coherence traffic the test's own race already generates.
- * Do not claim it in the thesis without measuring it.
+ * That is an INFERENCE, unmeasured: it may equally be redundant with the coherence
+ * traffic the test's own race already generates.  Measure it before claiming it.
  * ------------------------------------------------------------------------- */
 #if defined(__aarch64__)
 #define HET_CPU_PRELOAD_LIVE 1
@@ -384,10 +374,10 @@ int het_cpu_ncores(void) {
   return (n < 1) ? 1 : (int)n;
 }
 
-/* ---- M6 affinity ---------------------------------------------------------
+/* ---- affinity ------------------------------------------------------------
  * The reuse path is litmus7's write_one_affinity (libdir/_linux_affinity.c:117):
- * it bottoms out in sched_setaffinity with a one-CPU mask.  We reuse the recipe,
- * not the file (Q9: no route through Skel.ml).
+ * it bottoms out in sched_setaffinity with a one-CPU mask.  The recipe is reused,
+ * not the file: this harness has no route through Skel.ml.
  *
  * One deliberate difference: litmus7 errexit()s on failure.  A campaign must not
  * die mid-run, but a silently failed pin puts every thread wherever the scheduler
@@ -406,13 +396,13 @@ int het_cpu_affinity(int core, het_cpu_tally *t) {
   return 0;
 }
 
-/* ---- M3 preload ----------------------------------------------------------
+/* ---- preload -------------------------------------------------------------
  * Called from cpu_thread_P<n>, per iteration, BEFORE het_run_P<n> -- never inside
  * it (-2s invariant (ii), README.md).  It targets the test variables on purpose:
- * that is what M3 is, and it stays -2s-safe because a cache hint changes residency
- * rather than program order, and because it cannot migrate into the tested
- * sequence -- that body is an opaque call into another translation unit and every
- * primitive above is asm volatile with a "memory" clobber.
+ * that is what a preload is, and it stays -2s-safe because a cache hint changes
+ * residency rather than program order, and because it cannot migrate into the
+ * tested sequence -- that body is an opaque call into another translation unit and
+ * every primitive above is asm volatile with a "memory" clobber.
  * ------------------------------------------------------------------------- */
 int het_cpu_preload_live(void) { return HET_CPU_PRELOAD_LIVE; }
 
@@ -437,13 +427,14 @@ uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t *rng, int pct) {
 #endif
 }
 
-/* ---- M1 (S&D form) + M2 + M4: the disjoint-scratchpad enemy ---------------
- * Divergence from litmus7: M1 is ported as S&D-style enemy threads, not as NEXE.
- * NEXE runs n = max(1, a/t) copies of the whole test concurrently, which does not
- * compose with a persistent GPU kernel (the het instance count is capped by CPU
- * cores, not test replicas), so what is ported is the idea -- concurrent
- * memory-subsystem contention -- in the disjoint-scratchpad form, which is -2s-safe
- * by construction.  Q6 2.1 M1.
+/* ---- the disjoint-scratchpad enemy ----------------------------------------
+ * Divergence from litmus7: concurrent instances are ported as enemy threads in the
+ * form of [Sorensen16 sec 1], not as its own test repetition.  That runs
+ * n = max(1, a/t) copies of the whole test concurrently [Alglave11 sec 3], which
+ * does not compose with a persistent GPU kernel -- the het instance count is
+ * capped by CPU cores, not test replicas -- so what is ported is the idea,
+ * concurrent memory-subsystem contention, in the disjoint-scratchpad form, which
+ * is -2s-safe by construction.
  *
  * `seq' is a RUNTIME field, and the accesses are `volatile'.  Both are
  * load-bearing.  A compile-time sigma lets the optimiser fold the switch to one
@@ -453,7 +444,7 @@ uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t *rng, int pct) {
  * outright; this is where the CPU enemy diverges from the GPU stresser, whose
  * accesses are deliberately non-volatile.  `volatile' forbids elision and
  * reordering while leaving the traffic ordinary and cacheable to the hardware.
- * hetlitmus/verify/cpustresscheck.py reads the COMPILED asm to prove both, because
+ * Both properties are read off the COMPILED asm by cpustresscheck, because
  * reading the source proves nothing.
  * ------------------------------------------------------------------------- */
 void *het_cpu_enemy(void *_a) {
@@ -467,12 +458,12 @@ void *het_cpu_enemy(void *_a) {
      out of the loop, and an enemy that never re-reads its flag never stops. */
   while (__atomic_load_n(a->go, __ATOMIC_RELAXED)) {
     for (uint32_t r = 0; r < a->nidx; r++) {
-      /* M2 (indirect): the region is reached through a shuffled index array, not
-         by walking r -- "a shuffled array of pointers, giving a much greater
-         variability of outcomes" (Alglave TACAS'11 3).  Indirection is applied to
-         the SCRATCHPAD ONLY; the coherent single-word test variables stay direct.
-         M4 (stride): consecutive regions are `stride' words apart, so they land on
-         distinct cache lines -- the CPU-side analogue of S&D's spread/distance. */
+      /* Indirect access: the region is reached through a shuffled index array
+         rather than by walking r, which buys a much greater variability of
+         outcomes [Alglave11 sec 3].  It is applied to the SCRATCHPAD ONLY; the
+         coherent single-word test variables stay direct.  Consecutive regions are
+         `stride' words apart, so they land on distinct cache lines -- the CPU-side
+         analogue of the spread/distance of [Sorensen16 sec 3.4]. */
       volatile uint64_t *l = a->scratch + (size_t)a->idx[r] * (size_t)a->stride;
       switch (a->seq) {              /* sigma -- runtime, see above */
       case 0:  *l = i; *l = i + 1;        break;   /* st;st -- the pure writer */
@@ -492,13 +483,13 @@ void *het_cpu_enemy(void *_a) {
   return NULL;
 }
 
-/* ---- half 2b: the GRACE noise thread -------------------------------------
- * Fusco's Grace noise kernel: continuously stream-read a buffer homed on the other
- * processing unit's memory (HBM), so every read that misses cache crosses the C2C
- * interconnect.  The Hopper twin is emitted into the .cu as extra blocks of the
- * persistent grid, never a second kernel (see HET_NOISE_GPU_BLOCKS).  The buffer
- * is disjoint from every test location, so this is -2s-safe by the same S&D
- * invariant as the enemies.
+/* ---- half 2b: the HOST noise thread --------------------------------------
+ * The noise-kernel construction of [Fusco24 sec III-E.1]: continuously stream-read
+ * a buffer homed on the other processing unit's memory, so every read that misses
+ * cache crosses the interconnect.  The device twin is emitted into the .cu as
+ * extra blocks of the persistent grid, never a second kernel (see
+ * HET_NOISE_GPU_BLOCKS).  The buffer is disjoint from every test location, so this
+ * is -2s-safe by the same disjointness invariant as the enemies.
  *
  * `buf' is volatile and the accumulator escapes into the tally: otherwise the
  * accumulator is dead and -O2 deletes the entire stream.
@@ -536,7 +527,7 @@ void het_cpu_first_touch(void *p, size_t bytes) {
   if (bytes > 0) b[bytes - 1] = 1u;      /* the tail page, if bytes is not a multiple */
 }
 
-/* ---- M2: the shuffle behind the indirection ------------------------------
+/* ---- the shuffle behind the indirection ----------------------------------
  * Fisher-Yates over rand(), which the driver seeds per run from (seed0 + run),
  * seed0 being HET_SEED or its run-time env override, so the layout is replayable.
  * The CPU twin of het_set_scratch_locations' random line choice.

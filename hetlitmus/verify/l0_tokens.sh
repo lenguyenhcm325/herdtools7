@@ -11,8 +11,8 @@
 #
 # Usage:
 #   bash hetlitmus/verify/l0_tokens.sh            # gpu-only + het table + tally
-#   bash hetlitmus/verify/l0_tokens.sh gpu-only   # just the 137 gpu-only
-#   bash hetlitmus/verify/l0_tokens.sh het        # just the 411 het
+#   bash hetlitmus/verify/l0_tokens.sh gpu-only   # just the gpu-only corpus
+#   bash hetlitmus/verify/l0_tokens.sh het        # just the het corpus
 #   bash hetlitmus/verify/l0_tokens.sh guard      # completeness-guard report
 #   bash hetlitmus/verify/l0_tokens.sh selftest   # inject weaken+strengthen
 #   JOBS=8 bash hetlitmus/verify/l0_tokens.sh     # workers (default: nproc, max 12)
@@ -123,12 +123,11 @@ guard_report() {
   # the heredoc); the empty-list case is itself a hard fail (no vacuous pass).
   #
   # The KIND token is matched as `[a-z_]+', not as the allow-list `[wrf]': every
-  # kind ptxcheck maps is one of w/r/f, so a `[wrf]' extractor made the kind
-  # lookup below constant-true AND -- the real cost -- silently dropped any
-  # annotation carrying a NEW kind (an `rmw[..]'), so the one thing this section
+  # kind ptxcheck maps is one of w/r/f, so a `[wrf]' extractor would make the
+  # kind lookup below constant-true and -- the real cost -- silently drop any
+  # annotation carrying a new kind (an `rmw[..]'), so the one thing this section
   # exists to catch could never reach it.  Same no-allow-list discipline as the
-  # CPU half below.  Widening the extractor adds no hits on today's corpus: 17
-  # distinct annotations before and after.
+  # CPU half below.
   local annof="$RESDIR/gpu_annos.txt"
   grep -rhoE '[a-z_]+\[[a-z_]+,[a-z_]+\]' "$GPU_DIR"/*.litmus "$HET_DIR"/*.litmus \
     | sort -u > "$annof"
@@ -478,9 +477,9 @@ PY
 
   # ---- [7] the stress layer is live, and the liveness gate bites -------------
   # ptxcheck is blind to the stress layer by design (scaffolding carries no
-  # order/scope qualifier, so it is not a model op), which is how a pre-stress
-  # incantation that nvcc had dead-code-eliminated to zero instructions once
-  # passed every gate (verify-l0.md, "Scope / limits").  stresscheck.py closes
+  # order/scope qualifier, so it is not a model op), so a pre-stress incantation
+  # that nvcc dead-code-eliminates to zero instructions passes it while doing
+  # nothing (verify-l0.md, "Scope / limits").  stresscheck.py closes
   # that: it counts scratchpad ops in the emitted PTX per lane class and asserts
   # the count is INVARIANT under -DHET_*_PATTERN -- i.e. that the pattern is a
   # runtime value, so no autotuner config can switch the stress off.  Prove it
@@ -722,10 +721,10 @@ PY
       || fails=$((fails+1))
 
     # As in section [6]: a FRESH .ptx per bite.  Deleting the canary's lane by
-    # raw string slicing can leave source nvcc rejects, and with one shared
-    # mut.ptx that compile failure silently re-checked the PREVIOUS bite's
-    # artifact -- still corrupt, so ptxcheck still returned 1 and the section
-    # reported OK for a corruption it had never seen.
+    # raw string slicing can leave source nvcc rejects, and one shared mut.ptx
+    # would then hand the checker the previous bite's still-corrupt artifact --
+    # ptxcheck returns 1 off that one and the section reports OK for a
+    # corruption it never saw.
     local b6n=0
     _b6bite() { # label  file  python-corruption-of-$IN-to-$OUT  ptx|cpu
       local lbl="$1" src="$2" prog="$3" kind="$4" rc mptx
@@ -799,15 +798,14 @@ open(os.environ["OUT"], "w").write(s[:i] + nb + s[j:])' cpu || fails=$((fails+1)
   fi
 
   # =========================================================================
-  # [10] the CORPUS-LEVEL guards: do they fail on a corpus that is not there,
+  # [10] the corpus-level guards: do they fail on a corpus that is not there,
   # and on an op kind nothing models?
   # =========================================================================
   # Sections [0]-[9] all bite the checker.  These two bite the SWEEP: the census
   # tripwire in run_dir (`pass -eq total' is vacuously true on 0 tests) and the
   # completeness extractor in guard_report are the whole defence against a green
   # run over a corpus that silently vanished or grew a token nothing maps.
-  # GPU_DIR/HET_DIR are overridable precisely so both can be bitten; until this
-  # section nothing ever did, so neither had been seen to fail.
+  # GPU_DIR/HET_DIR are overridable precisely so both can be bitten here.
   printf '\n[10] corpus guards: an EMPTY corpus and an UNMODELLED op kind must FAIL(1)\n'
   local g10="$sc/g10" out10 rc10
   rm -rf "$g10"; mkdir -p "$g10/empty" "$g10/gpu"
@@ -818,8 +816,8 @@ open(os.environ["OUT"], "w").write(s[:i] + nb + s[j:])' cpu || fails=$((fails+1)
 
   cp "$GPU_DIR"/*.litmus "$g10/gpu/"
   # `q' is a kind ptxcheck's GPU_KIND has no entry for.  A `[wrf]'-shaped
-  # extractor never handed such a token to the mapping check at all -- it
-  # dropped it, which is the failure mode the widened extractor exists to close.
+  # extractor would not hand such a token to the mapping check at all -- it
+  # drops it, which is the failure mode the widened extractor exists to close.
   printf ' q[relaxed,sys] x 1 ;\n' >> "$g10/gpu/MP-sys-F.litmus"
   if cmp -s "$GPU_DIR/MP-sys-F.litmus" "$g10/gpu/MP-sys-F.litmus"; then
     printf '  *** VACUOUS BITE: the unknown-kind injection changed nothing\n'
@@ -899,14 +897,13 @@ PY
   # =========================================================================
   # [12] the device tag on a het proc header is not guessable
   # =========================================================================
-  # An untagged column used to default to "gpu".  On a gpu-only LISA test that is
-  # right by construction -- one device -- but on a Het test it is a guess, and
-  # the dangerous case is the guess that happens to be CORRECT: an untagged GPU
-  # column parsed, compared and PASSED, so the tag that decides which ISA a column
-  # is checked against was not being read at all.  It now hard-fails (exit 2).
-  # Both arms read the message, because exit 2 alone does not separate the fix
-  # from the bug: stripping the CPU tag hard-failed before it too, but as
-  # `unrecognized GPU cell 'MOV W0,#1'' -- the right exit for the wrong reason.
+  # Defaulting an untagged column to "gpu" is right by construction on a gpu-only
+  # LISA test -- one device -- but on a Het test it is a guess, and the dangerous
+  # case is the guess that happens to be CORRECT: an untagged GPU column would
+  # parse, compare and pass, so the tag that decides which ISA a column is checked
+  # against would not be read at all.  An untagged het column therefore hard-fails
+  # (exit 2).  Both arms read the message, because exit 2 alone does not separate
+  # that refusal from a parse that died on an unrecognized cell.
   printf '\n[12] a het proc header with NO device tag must HARD-FAIL(2)\n'
   local DVT=MP-cg-sys-acqrel-2s
   local dt="$sc/dt" dtcpu

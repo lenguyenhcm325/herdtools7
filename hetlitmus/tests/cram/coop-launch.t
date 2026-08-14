@@ -1,4 +1,4 @@
-Perpetual-loop guard (B2; env-research/decisions/B2-decision.md).  The emitted
+Perpetual-loop guard (hetlitmus/docs/00-environment-design.md sec 3.3).  The emitted
 het GPU driver is a persistent, launch-once perpetual loop whose forward progress
 is guaranteed by cudaLaunchCooperativeKernel (HIP: hipLaunchCooperativeKernel),
 never a per-iteration <<<>>> relaunch.  The representative MP shape is emitted

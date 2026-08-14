@@ -6,29 +6,26 @@ The wrapper is the one command a hardware session runs, so what it decides -- th
 pair, the machine that pair may name, the architecture the binaries are built for
 -- is decided on a machine nobody is watching and is visible afterwards only in
 what it wrote down.  Every phase below drives it with the compiler and the probe
-replaced by the wrapper's documented stand-ins, so those decisions are checked
-here rather than on rented hardware.
-
-HOST-ADAPTIVE.  The chain phases need a corpus whose CPU column is this host's:
-`fixture()' picks the committed x86 fixture on an x86_64 box and a cut of the
-committed AArch64 corpus on an aarch64 one, and the pairs each phase expects
-follow that choice.  Nothing here is x86-only, so the GH200 runs the same gate.
+replaced by the wrapper's documented stand-ins.  The chain phases need a corpus
+whose CPU column is this host's, so `fixture()' picks the committed x86 fixture on
+an x86_64 box and a cut of the committed AArch64 corpus on an aarch64 one, and the
+pairs each phase expects follow that choice: nothing here is x86-only.
 
   PHASE 1  --dry-run prints the plan and does NOT act: no results dir at all.
   PHASE 2  the chain end to end on each dialect this host reaches.
   PHASE 3  the refusals, each by its own reason -- and the unregistered pair,
-           which is a WARNING and emits.
+           which is warned about and emits.
   PHASE 4  campaign.py's stop rule, and the states it may not resume.
   PHASE 5  the machine-table reader, bounded to the table literal.
   PHASE 6  the fail-closed handlers, each under its own induced condition.
   PHASE 7  a second session into a results dir that already holds one.
   PHASE 8  probe-hip.sh's exit paths.
 
-`--bite' plants one defect per assertion in a COPY of the script under test (never
+`--bite' plants one defect per assertion in a copy of the script under test (never
 in the tree) and requires the phase to redden for the right reason.  Two device
 modes need a GPU and are the toolchain lane's half of this gate: `--hw' runs the
 same wrapper on the real device, and `--characterize-hw' builds two harnesses and
-reads what they PRINT (the only artefact a result is ever read off).
+reads what they print, which is the only artefact a result is ever read off.
 """
 import argparse
 import atexit
@@ -61,8 +58,8 @@ import brandscan          # noqa: E402  (the tree's own module, next to this one
 X86_DIR = os.path.join(HETL, "tests", "het-x86")
 X86_TESTS = ["MP-cg-sys-acqrel-2s-x86_64", "MP-cg-sys-relaxed-x86_64",
              "S-cg-sys-fence-x86_64", "S-cg-sys-relaxed-x86_64"]
-# The (AArch64, *) lane is the committed 411-test corpus, and a session over all
-# of it is not a gate.  The cut below is copied out of it VERBATIM at run time --
+# The (AArch64, *) lane is the committed het corpus, and a session over all of it
+# is not a gate.  The cut below is copied out of it verbatim at run time --
 # tests plus the two files the emitter resolves beside them -- so it is not a
 # second fixture that could go stale; it is the corpus, minus rows.  Closed under
 # the control map: every row here names its lattice-floor sibling as mu(T) and
@@ -246,7 +243,7 @@ def state_notes(path):
 
 
 # ---------------------------------------------------------------------------
-# THE FIXTURE THIS HOST CAN DRIVE, and what litmus/hetMachine.ml says about its
+# The fixture this host can drive, and what litmus/hetMachine.ml says about its
 # two dialects.  The emitted link targets refuse a foreign host, so a corpus
 # whose CPU column is not this box's has no chain to drive here.  Every row of
 # every campaign takes the same stop rule whatever the pair: no harness carries a
@@ -366,7 +363,7 @@ def _e2e(wrapper, tmp, fx, target, arm, quiet):
         bad.append("%s chain exited %d:\n%s\n%s"
                    % (target, r.returncode, r.stdout[-1200:], r.stderr[-600:]))
         return bad, out
-    # THE RESULTS DIR IS THE DELIVERABLE: a session that ran but recorded nothing
+    # The results dir is the deliverable: a session that ran but recorded nothing
     # cannot be read afterwards.
     for f in ("run-record.txt", "probe.txt", "build-failures.txt", "summary.txt",
               "campaign-state.csv", "campaign.log", "emit.log"):
@@ -466,8 +463,9 @@ def phase2_e2e(wrapper, quiet=False):
 # refused everything with one message would pass a bare exit-code check.
 # ---------------------------------------------------------------------------
 def mixed_corpus(tmp):
-    """A corpus carrying both CPU lanes.  Only the first test used to be read, so
-    this passed the preflight and died at emission blaming the pair table."""
+    """A corpus carrying both CPU lanes.  The preflight has to read EVERY test's
+    lane: a preflight reading only the first passes this corpus and lets emission
+    die blaming the pair table."""
     d = os.path.join(tmp, "mixed")
     os.makedirs(d, exist_ok=True)
     for f in os.listdir(X86_DIR):
@@ -587,7 +585,7 @@ def phase3_refusals(wrapper, quiet=False):
     tmp = tempfile.mkdtemp(prefix="runcheck3.")
     try:
         cc, probe = make_stubs(tmp)
-        # A PATH with neither device-listing tool, to make --arch auto see nothing.
+        # A PATH with neither device-listing tool, so --arch auto sees nothing.
         nogpu = os.path.join(tmp, "nogpu-bin")
         os.makedirs(nogpu)
         for tool in ("nvidia-smi", "nvptx-arch", "amdgpu-arch", "rocminfo"):
@@ -634,7 +632,7 @@ def phase3_refusals(wrapper, quiet=False):
                            % (name, frag, r.stderr.strip()[-300:]))
             elif not quiet:
                 print("      %-34s rc=2, names it" % name)
-        # ...AND THE ONE THING THAT IS NO LONGER A REFUSAL.
+        # ... and the one case that is not a refusal at all.
         bad += unregistered_emits(quiet)
         bad += unregistered_session(wrapper, fx, quiet)
     finally:
@@ -686,8 +684,8 @@ def phase4_stoprule(campaign, quiet=False):
         runner = write_exec(os.path.join(tmp, "matchy.py"), MATCHY_RUNNER)
         lone = write_exec(os.path.join(tmp, "lone.py"), LONE_RUNNER)
 
-        # THE STOP THAT ENDS A ROW EARLY: a sighting reproduced across distinct clean
-        # runs.  Without it the phase below would prove nothing -- a runner whose
+        # The stop that ends a row early: a sighting reproduced across distinct
+        # clean runs.  Without it the phase below proves nothing -- a runner whose
         # rows can only run to budget would "pass" every assertion for free.
         st_c = os.path.join(tmp, "corrob.csv")
         r = _campaign(campaign, corpus, runner, st_c, [])
@@ -704,7 +702,7 @@ def phase4_stoprule(campaign, quiet=False):
         elif not quiet:
             print("      a reproduced sighting stops the row CORROBORATED (rc=0)")
 
-        # THE FLAGGED STOP, and the precedence that produces it: one sighting, then
+        # The flagged stop, and the precedence that produces it: one sighting, then
         # nulls.  The row is held open by the confirmation window and ended by it
         # CHAR_CONFIRM runs after the run it fired in -- not carried to the 60-run
         # budget, and not banked at the first sighting either.  It exits 1: a sighting
@@ -729,7 +727,7 @@ def phase4_stoprule(campaign, quiet=False):
                   "(fired in run 1, window closes at %d, ends at %d, budget %d), rc=1"
                   % (CHAR_WINDOW_END, CHAR_LONE_RUNS, CHAR_BUDGET))
 
-        # THE PRECEDENCE, IN HARDWARE HOURS: the same row under a budget SMALLER than
+        # The precedence, in hardware hours: the same row under a budget smaller than
         # the window.  It must OVERSHOOT the budget and end at the window, to the run
         # -- a row ended at BUDGET here would have banked "seen once, stopped
         # looking", and one curtailed to the budget could never reach the window at
@@ -756,10 +754,10 @@ def phase4_stoprule(campaign, quiet=False):
         if not quiet and not bad:
             print("      --rate: the same rows run to BUDGET (%d runs)" % CHAR_BUDGET)
 
-        # THE ONE PATH BY WHICH AN ADJUDICATION COULD STILL REACH A RUN: a state file
-        # carries terminal stops and a resumed row inherits them.  A row banked by
-        # the oracle-era rule (OBSERVED / CONFIRMED) names a stop this rule cannot
-        # write, so resuming it must fail closed rather than inherit it.
+        # A state file carries terminal stops and a resumed row inherits them, so a
+        # row banked under a stop name this rule cannot write (OBSERVED, CONFIRMED)
+        # must fail closed rather than be inherited: nothing else stands between a
+        # stop written by another rule and a session that reports it as its own.
         legacy = os.path.join(tmp, "legacy.csv")
         with open(legacy, "w", newline="") as fh:
             w = csv.writer(fh)
@@ -1093,8 +1091,8 @@ def phase7_second_session(wrapper, quiet=False):
                 print("      --resume runs no harness and discloses the inherited "
                       "row(s)")
 
-        # A REFUSED SESSION MUST NOT LEAVE THE PREVIOUS ONE'S SUMMARY BESIDE ITS
-        # OWN RECORD: one dir would then describe two different sessions.
+        # A refused session must NOT leave the previous one's summary beside its own
+        # record: one dir would then describe two different sessions.
         os.remove(os.path.join(out, "campaign-state.csv"))
         bp = write_exec(os.path.join(tmp, "bad-probe.sh"), BAD_PROBE)
         r = run_wrapper(wrapper, base + ["--budget-runs", "10"],
@@ -1117,8 +1115,8 @@ def phase7_second_session(wrapper, quiet=False):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 8 -- probe-hip.sh, under stand-in vendor tools.  It runs on no box the
-# project owns, so its device answers are reachable here and nowhere else.
+# PHASE 8 -- probe-hip.sh, under stand-in vendor tools.  No AMD device is
+# reachable from this tree, so its device answers are checked here or nowhere.
 # ---------------------------------------------------------------------------
 def _hip_tools(tmp, gfx):
     d = os.path.join(tmp, "hipbin-" + ("-".join(gfx) or "none"))
@@ -1168,7 +1166,7 @@ def phase8_probe_hip(probe, quiet=False):
 
 
 # ---------------------------------------------------------------------------
-# THE BITES.  One planted defect per assertion, in a copy of the script under
+# The bites.  One planted defect per assertion, in a copy of the script under
 # test.  Each names the failure it must produce: a phase that reddens for some
 # other reason has not been shown to read what the injection broke.
 # ---------------------------------------------------------------------------
@@ -1275,14 +1273,14 @@ INJECTIONS = [
      lambda s: s.replace("/^[ \\t]*\\][ \\t]*$/ { intab = 0 ; next }",
                          "/^[ \\t]*\\][ \\t]*$/ { next }", 1),
      phase5_reader, "not bounded to the table literal"),
-    # Four of the phase-6 handlers are SUBSUMED downstream: with the handler
+    # Four of the phase-6 handlers are subsumed downstream: with the handler
     # removed the session still stops, elsewhere and saying something else, so
-    # each of those four names the substitute that was observed -- the campaign's
-    # errored-row exit (1, not 2) for `build', the emitted harness's own host-ISA
-    # guard for `emitted-isa', the per-render check for `reuse-missing', the pair
-    # stamp for `reuse-partial'.  What their injections prove is that the phase
-    # notices its handler is gone, not that nothing else would have stopped the
-    # session.
+    # each of those four names the substitute the phase reaches instead -- the
+    # campaign's errored-row exit (1, not 2) for `build', the emitted harness's
+    # own host-ISA guard for `emitted-isa', the per-render check for
+    # `reuse-missing', the pair stamp for `reuse-partial'.  What their injections
+    # prove is that the phase notices its handler is gone, NOT that nothing else
+    # would have stopped the session.
     ("6", "wrapper", "a harness that did not build does not stop the session",
      lambda s: s.replace('if [ "$nfail" -ne 0 ]; then', 'if false; then', 1),
      _p6("build"), "[build] exited 1, want 2"),
@@ -1394,8 +1392,8 @@ def bite():
 # A harness that loses a barrier increment stalls until the runner's timeout
 # kills it (campaign.py then records `runner rc=124').  On a device whose pinned
 # read-modify-write is not system-atomic against the host -- which the probe
-# measures, and which this box is -- that is a property of the box and not of the
-# session, so it is retried and only an all-stall is reported.
+# measures -- that is a property of the box and not of the session, so it is
+# retried and ONLY an all-stall is reported.
 STALL_TRIES = 3
 RUN_TIMEOUT = "90"
 
@@ -1498,9 +1496,8 @@ def hardware(wrapper=WRAPPER, quiet=False):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-# The device lane's own bite: the assertions above read a REAL session, so they
-# are proved to bite against a real session too, not only against the stubbed
-# chain of phase 2.
+# The device lane's own bite: the assertions above read a real session, so they
+# are bitten against one too and not only against phase 2's stubbed chain.
 def hardware_bite():
     print("===== BITE: does the device lane read the session it ran? =====")
     fx = fixture()
@@ -1513,7 +1510,7 @@ def hardware_bite():
             print("  *** the injection changed NOTHING -- this bite proves nothing")
             return 1
         rc, why = hardware(target, quiet=True)
-        # RED FOR THE RIGHT REASON: a stalled session is red too, and would make
+        # Red for the right reason: a stalled session is red too, and would make
         # this bite pass without the assertion having read anything.  The injection
         # substitutes the pair's whole machine row, so its name settles it.
         named = ["pair_machine", "pair_state"]
@@ -1542,20 +1539,20 @@ def hardware_bite():
 
 
 # ---------------------------------------------------------------------------
-# --characterize-hw -- what a harness actually PRINTS, on the device.  Every
+# --characterize-hw -- what a harness actually prints, on the device.  Every
 # other gate on the verdict/statistics stack drives it from synthetic records or
 # from emitted text; this one builds a harness, runs it on the GPU and reads the
 # printout, which is the only artefact a result is ever read off.
 #
-# TWO ARMS, because the two sentences a reader must never see swapped are chosen
+# Two arms, because the two sentences a reader must NEVER see swapped are chosen
 # by whether a positive-control map was read at all, and the emitter looks for one
 # beside every test:
-#   map    the committed x86 fixture, whose map names this row its OWN canary --
-#          "it IS the Layer-B canary", and its missing calibration channel IS a
+#   map    the committed x86 fixture, whose map names this row its own canary --
+#          "it IS the Layer-B canary", and its missing calibration channel is a
 #          construction;
 #   nomap  the same test copied away from the map -- no map was read, nothing
 #          marks this row a canary, and its missing calibration channel is an
-#          OMISSION, of the map FILE beside the test and of nothing else.
+#          omission, of the map file beside the test and of nothing else.
 # The pair is (X86_64, cuda), which has no machine row, so neither arm may print
 # a word of either row's machine vocabulary either.
 #
@@ -1580,8 +1577,8 @@ def _ch_env():
 
 
 def ch_arch():
-    """sm_XY of the device this will actually run on -- never a hardcoded GH200
-    sm_90, which does not load here."""
+    """sm_XY of the device this will actually run on, NEVER a hardcoded sm_90: a
+    cubin built for another architecture does not load."""
     if os.environ.get("CUDA_ARCH"):
         return os.environ["CUDA_ARCH"]
     r = sh(["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"])
@@ -1685,12 +1682,11 @@ CH_NOMAP = ["NO POSITIVE-CONTROL MAP WAS READ for %s" % CH_PAIR,
             "construction",
             "what was omitted is the map FILE beside this test"]
 # The map is loaded for every lane, so HET_NO_CONTROL_MAP says the FILE was not
-# beside the test.  These are the sentences that said something else -- that no
-# map was registered for the pair and none could be borrowed -- and a printout
-# that still explains the flag that way is explaining a mechanism this tool no
-# longer has, in either arm.  Nothing else in the suite reads that wording, and
-# this tuple is reached only through --characterize-hw, which refuses to run
-# without a CUDA device: on a box with no GPU it goes unchecked.
+# beside the test.  A printout explaining the flag as a pair no registry holds a
+# map for -- and none to borrow -- describes a mechanism this tool does not have,
+# in either arm.  Nothing else in the suite reads that wording, and this tuple is
+# reached only through --characterize-hw, which refuses to run without a CUDA
+# device: on a box with no GPU it goes unchecked.
 CH_RETIRED = ["no map is registered for that pair",
               "there is none to borrow",
               "the bootstrap control map for an unregistered pair does not exist yet"]

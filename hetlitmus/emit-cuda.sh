@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HetLitmus Tier-1: emit CUDA (.cu) litmus kernels from the GPU-only LISA corpus.
+# Emit CUDA (.cu) litmus kernels from the GPU-only LISA corpus.
 #
 # The CUDA-side entry point named in every emitted .cu banner (litmus/CudaLang.ml).
 # The work lives in ./emit-gpu.sh; this names the vendor, so everything lands in

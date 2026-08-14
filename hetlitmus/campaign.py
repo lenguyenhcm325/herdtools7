@@ -1,55 +1,24 @@
 #!/usr/bin/env python3
-"""The campaign scheduler: where the GPU hours are spent, or saved (B7b;
-env-research/impl-briefs/B7b-impl-brief.md, Q3-stats.md -- both SUPERSEDED, they
-design the withdrawn non-observation bound; where they and
-litmus/het-runtime/het_verdict.h disagree the header is what ships).
+"""The campaign scheduler: where the hardware hours are spent, or saved.
 
 No harness carries a prediction, so there is no class to schedule against and every row
-gets the SAME policy: run it until its sighting is corroborated, until a lone sighting
-outlives the confirmation window, or until its budget is gone.
-
-THE POLICY IS het_verdict.h's, APPLIED AT A SECOND SCALE.  `TestState.decide' below
-takes its arms in het_verdict.h's precedence, over pooled runs rather than over the
-records one invocation has so far, and inside an invocation the harness applies the
-header's rule itself (HET_ADAPTIVE=1).  Two different units, so nothing makes the two
-layers reach the same arm on the same row.  What is pinned, by `check_flag_mirror'
-against the header, is narrower: HET_CORROB_RUNS, the stop-name strings this driver
-writes into its state file and reads back as terminal, and that the confirmation
-window is measured from the sighting rather than from run 0.
-
-  --rate (HET_RATE=1) turns the sighting stop off: the row runs to its budget and
-     yields a RATE rather than a first sighting.  The budget still stops it.
-  --confirm-runs (HET_CONFIRM_RUNS) is how long a LONE clean sighting may hold a row
-     open while failing to reproduce.  It OUTRANKS the budget stop, because a row ended
-     at BUDGET on one sighting banks "seen once, stopped looking"; het_verdict.h states
-     the precedence and what it deliberately does not outrank.
-
-  H > 1 (parallel het pairs) is deliberately absent: it is real emitter work, and the
-     pairs would share the interconnect, so the gain is not the pair count.
-
-POOLING ACROSS INVOCATIONS (the arithmetic, stated so it can be audited; `absorb'
-implements it).  Invocations use FRESH seed bases, since replaying a seed adds no new
-phase draws and a replayed run is not a replicate; the pooled row is therefore a sum
-over independent replicates -- runs*, usable*, k*, k_eff* and k_runs* are sums, and it
-is k_eff* the sighting arms branch on, not k* (`sighting_open').
+takes one policy: run it until its sighting is corroborated, until a lone sighting
+outlives the confirmation window, or until its budget is gone.  That policy is
+litmus/het-runtime/het_verdict.h's, applied here over POOLED runs rather than over the
+records one invocation holds, while inside an invocation the harness applies the
+header's rule itself (HET_ADAPTIVE=1); two units, so the two scales need not reach the
+same arm on the same row.  `check_flag_mirror' pins the part that must agree.  The rule
+and its knob table: hetlitmus/docs/00-environment-design.md sec 3.7 and
+hetlitmus/spotcheck/README.md.
 
 RUNNER CONTRACT: --runner is a command template with '{test}' and '{dir}' substituted.
 It must execute ONE invocation of the test's harness binary and forward the harness
 stdout -- the HetStats line is the whole interface.  Per invocation this driver sets
 HET_SEED (a fresh base), HET_ADAPTIVE=1, HET_RUNS_MAX, HET_RATE and HET_CONFIRM_RUNS.
-Nothing here needs a GPU: hetlitmus/verify/statscheck.py phase 6 drives it end to end
-against a stub runner.
-
-The runner is 'sh spotcheck/run-one.sh {dir} {test}', which is `cd {dir}; exec
-./{test}'.  NOT ./run.exe -- that is upstream litmus7's binary name and no het
-harness emits one; the het link targets write ./<test>.
-
-VENDOR-AGNOSTIC ON PURPOSE, AND MEASURED (P2c, 2026-08-03): this file contains
-zero occurrences of `cuda' or `hip', and it needs none.  Both vendors' link
-targets -- `comp.sh cuda-link' / `make cuda-bin' and `comp.sh hip-link' / `make
-hip-bin' -- write the SAME ./<test>, so an AMD campaign differs from an NVIDIA one
-only in which target built the binary, which happens before this driver is
-invoked.  Adding a --target axis here would be a knob with nothing behind it.
+The harness binary is ./<test>, which both vendors' link targets write and which is not
+upstream litmus7's ./run.exe; this driver therefore names no GPU dialect, and a
+--target axis would be a knob with nothing behind it
+(hetlitmus/spotcheck/run-one.sh, hetlitmus/spotcheck/README.md).
 
 Usage:
   campaign.py --corpus <dir of emitted harness dirs>
@@ -75,7 +44,7 @@ import sys
 # run < NUMBER_OF_RUN, so bases never collide across invocations of one test.
 SEED_STRIDE = 100003
 
-# THE MIRRORED HALF OF het_verdict.h's STOPPING RULE.  Every name and number here is
+# The mirrored half of het_verdict.h's stopping rule.  Every name and number here is
 # pinned against the header by check_flag_mirror() below, so a change on one side and
 # not the other is fatal rather than silent.
 CORROB_RUNS = 2                      # HET_CORROB_RUNS
@@ -135,12 +104,12 @@ def fnum(kv, key, dflt=0.0):
         return dflt
 
 
-# CORROB_RUNS and STOP_NAMES are hand-mirrors of the header's, and a hand-mirror that
-# went stale would have this scheduler corroborate at a different run count from the
-# harness, or write into its state file a stop name the header no longer returns.
-# This file is also deliberately standalone -- it is copied on its own onto a rented
-# GPU box -- so the cross-check is conditional on the header being reachable at its
-# in-repo path: present means it must agree, out of reach means the mirror stands.
+# CORROB_RUNS and STOP_NAMES are hand-mirrors of the header's, and a stale hand-mirror
+# would have this scheduler corroborate at a different run count from the harness, or
+# write into its state file a stop name the header no longer returns.  This file also
+# travels on its own, without the repo (hetlitmus/spotcheck/pack-bundle.sh), so the
+# cross-check is conditional on the header being reachable at its in-repo path: present
+# means it must agree, out of reach means the mirror stands.
 _VERDICT_H = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
                           "litmus", "het-runtime", "het_verdict.h")
 
@@ -178,10 +147,9 @@ def check_flag_mirror(path=_VERDICT_H, corrob=CORROB_RUNS, stops=None):
     if not re.search(r'default:[ \t]*return[ \t]+"CONTINUE";', text):
         die("%s no longer returns \"CONTINUE\" for a non-stop -- the scheduler treats "
             "every name it does not know as terminal" % path)
-    # WHERE THE CONFIRMATION WINDOW STARTS is policy too, and it is the one part of it
-    # a name cannot carry: a header measuring the window from run 0 instead of from
-    # the sighting ends rows this scheduler would still be running, at run counts
-    # neither of them agrees on.
+    # Where the confirmation window starts is policy too, and the one part of it a name
+    # cannot carry: a header measuring the window from run 0 instead of from the
+    # sighting ends rows this scheduler would still be running.
     if not re.search(r"n[ \t]*-[ \t]*st\.n_at_first_sight[ \t]*>=[ \t]*confirm_runs",
                      text):
         die("%s no longer measures the confirmation window from n_at_first_sight -- "
@@ -209,15 +177,16 @@ class TestState(object):
         self.note = ""
         # The HetStats line carries `cpu_only=<0|1>', and it caps what a sighting on
         # this row licenses: on an all-CPU cycle no cross-device path carried the
-        # cycle.  Read rather than assumed, and 0 until a line says otherwise.
+        # cycle [Goens23 sec 4.6].  Read rather than assumed, and 0 until a line says
+        # otherwise.
         self.cpu_only = 0
 
     def absorb(self, kv):
         self.invocations += 1
-        # cpu_only resolves UPWARD across invocations, the same direction
-        # het_stats_compute resolves it in: the CPU-only sentence is the WEAKER
-        # claim about the compound model, so one D10 invocation in the pool is
-        # enough to withhold the compound reading from the whole row.
+        # cpu_only resolves upward across invocations, the direction
+        # het_stats_compute resolves it in: the CPU-only sentence is the weaker claim
+        # about the compound model, so ONE such invocation in the pool withholds the
+        # compound reading from the whole row.
         if int(fnum(kv, "cpu_only")):
             self.cpu_only = 1
         before = self.runs
@@ -236,8 +205,8 @@ class TestState(object):
             self.runs_at_first_sight = before + (fs if fs > 0 else int(fnum(kv, "R")))
 
     def sighting_open(self, rate_mode):
-        """A CLEAN sighting this row has not corroborated yet -- the state that holds a
-        row open past its budget.  k_eff, never k: a sighting the decode guard rejected
+        """A clean sighting this row has not corroborated yet -- the state that holds a
+        row open past its budget.  k_eff, NEVER k: a sighting the decode guard rejected
         can neither stop a row nor keep one alive."""
         return (not rate_mode) and self.k_eff > 0 and self.k_runs < CORROB_RUNS
 
@@ -245,7 +214,7 @@ class TestState(object):
         """The runs this row is still entitled to.  An open sighting holds it past the
         budget as far as the confirmation window -- which ends confirm_runs runs after
         the run it fired in, so the entitlement moves with the sighting -- and the
-        invocation has to be TOLD that: HET_RUNS_MAX derived from the budget alone
+        invocation has to be told that: HET_RUNS_MAX derived from the budget alone
         would hand the harness a curtailment this scheduler has already overruled.
         A row that fires in its last budgeted run therefore costs at most
         budget + confirm_runs runs, which is the worst case a schedule must price."""
@@ -255,7 +224,7 @@ class TestState(object):
 
     def decide(self, budget, rate_mode, confirm_runs):
         """het_campaign_should_stop(), at the pooled scale: `runs' here is what `n' is
-        there.  The order of the arms IS the policy and must not be rearranged."""
+        there.  The order of the arms is the policy and must NOT be rearranged."""
         if self.stop:
             return self.stop
         if confirm_runs < 1:
@@ -267,8 +236,8 @@ class TestState(object):
                     % self.k_runs)
             elif self.runs - self.runs_at_first_sight >= confirm_runs:
                 # The window elapses FROM the sighting (het_verdict.h's rule): against
-                # the pooled run count alone a row firing past run confirm_runs would
-                # be banked here the moment it fired, with none of its window run.
+                # the pooled run count alone, a row firing past run confirm_runs is
+                # banked here the moment it fires, with none of its window run.
                 self.stop, self.note = "UNCONFIRMED-SIGHTING", (
                     "the confirmation window (%d runs) closed on a lone clean sighting "
                     "that did not reproduce; it first fired at run %d"
@@ -345,9 +314,9 @@ def plan_schedule(a, work):
     """`work` in run order, plus what the schedule costs at the budgets passed.  One
     policy, so one order and one budget: the row that stops early is the one whose
     sighting corroborates, not the one whose class was cheap."""
-    # THE WORST CASE CARRIES THE WINDOW.  A row whose one sighting lands in its last
+    # The worst case carries the window: a row whose one sighting lands in its last
     # budgeted run is entitled to confirm_runs runs after it, so a row can cost
-    # budget + confirm_runs; --rate, which turns the sighting stop off, caps at the
+    # budget + confirm_runs.  --rate, which turns the sighting stop off, caps at the
     # budget.
     per_row = a.budget_runs + (0 if a.rate else a.confirm_runs)
     print("campaign: %d test(s), one stop rule each: corroborated sighting, lone "
@@ -412,10 +381,9 @@ def run_campaign(a, work):
     for t in work:
         st = TestState(t)
         states.append(st)
-        # A ROW MAY ONLY BE RESUMED BY THE STOP RULE THAT WROTE IT.  The stop name IS
-        # the rule's signature, so a stop this policy cannot write was written by
-        # another one -- an oracle-era OBSERVED or CONFIRMED, say -- and resuming it
-        # would bank an adjudication no harness here makes.
+        # A row may be resumed ONLY by the stop rule that wrote it.  The stop name is
+        # the rule's signature, so a stop this policy cannot write came from another
+        # policy, and resuming it would bank an adjudication no harness here makes.
         if t in prior:
             pstop = (prior[t].get("stop") or "").strip()
             if pstop and pstop not in TERMINAL:
@@ -468,18 +436,15 @@ def report_campaign(states, errors, unconfirmed):
             print("            %-28s first fired at run %d of %d  cpu_only=%d"
                   % (s.name, s.runs_at_first_sight, s.runs, s.cpu_only))
 
-    # D10 -- the CPU-only positive control, and it is a PRECONDITION, not a row.
-    # memo sect 7.D10: SB and R must be OBSERVED (the store buffer is live, which
-    # rules a UC mapping out for this allocator).  Until it is, the memory type of
-    # the shared allocation is unestablished and every null in this campaign rests
-    # on an unchecked assumption about it -- so this is checked before, not after,
-    # anyone reads the rows above.
+    # The CPU-only rows are a PRECONDITION on the campaign, not results of it: a
+    # sighting on an all-CPU cycle is what rules an uncacheable mapping out for this
+    # allocator, and until one lands the memory type of the shared allocation is
+    # unestablished and every null above rests on an assumption about it.  What such a
+    # sighting does and does not settle: litmus/het-runtime/het_verdict.h, [APM sec 7.2].
     d10 = [s for s in states if s.cpu_only]
     if not d10:
-        # A SILENTLY ABSENT PRECONDITION IS THE FAILURE MODE THIS BLOCK EXISTS TO
-        # PREVENT.  It used to run under a bare `if d10:' with no else, so a campaign
-        # over the het corpus alone -- the normal case -- printed no D10 line at all
-        # and read as if the probe had been satisfied.
+        # The normal campaign -- the het corpus alone -- holds no CPU-only row, so the
+        # absent case has to print: silence here reads as a satisfied precondition.
         print("\ncampaign D10 (CPU-only positive control / memo sect 8 P1 WB probe): "
               "*** NOT RUN.  No CPU-only row was in this campaign, so the WB probe "
               "did not run and therefore did NOT pass.  Until it does, the memory "

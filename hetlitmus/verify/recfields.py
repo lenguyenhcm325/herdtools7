@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HetLitmus -- the EMITTER/RUNTIME SKEW tripwire.
+"""HetLitmus -- the emitter/runtime skew tripwire.
 
 het_obs_record and the HET_* knob defaults live in litmus/het-runtime/*.h; the
 lines that fill them live in litmus/hetEmit.ml.  Nothing but a compiler binds the
@@ -7,13 +7,13 @@ two, so on the CPU-only lanes a rename, a typo'd stamp or a dropped default is
 invisible until an nvcc or hipcc build runs -- which is why this gate exists and
 why it needs no GPU.  Four properties, over real emissions of both pairs:
 
-  A FIELDS   every `_rec.<name>' the render writes is a member of het_obs_record.
-  B STAMP    every render writes `_rec.rec_magic = HET_REC_MAGIC;' exactly once,
-             by the SYMBOL: het_verdict() reads no field of a record without it.
-  C LIVE     every `#define HET_*' the renders stamp is READ somewhere -- by
+  A Fields   every `_rec.<name>' the render writes is a member of het_obs_record.
+  B Stamp    every render writes `_rec.rec_magic = HET_REC_MAGIC;' exactly once,
+             by the symbol: het_verdict() reads no field of a record without it.
+  C Live     every `#define HET_*' the renders stamp is read somewhere -- by
              some lane's code or by a staged runtime header.  A stamp nobody
              reads is a stamp whose name drifted.
-  D DEFAULT  every stamped define that het_verdict.h READS has an `#ifndef'
+  D Default  every stamped define that het_verdict.h reads has an `#ifndef'
              default there, so a lane that stamps nothing still compiles and
              still prints the mechanism rather than a vendor.
 
@@ -54,8 +54,8 @@ DEFINE_RE = re.compile(r"^#define (HET_[A-Za-z0-9_]+)", re.M)
 IFNDEF_RE = re.compile(r"^#ifndef (HET_[A-Za-z0-9_]+)", re.M)
 STAMP_RE = re.compile(r"_rec\.rec_magic\s*=\s*HET_REC_MAGIC\s*;")
 
-# Stamped defines whose reader is a GATE, not C code: they are the emitted record
-# of which control this harness names, pinned by hetlitmus/tests/cram/
+# Stamped defines whose reader is a gate rather than C code: they are the emitted
+# record of which control this harness names, pinned by hetlitmus/tests/cram/
 # positive-control.t and by nothing the compiler sees.  Named here so a genuinely
 # dead stamp is still caught, rather than the whole check being loosened.
 GREP_ONLY = {"HET_MU_NAME", "HET_CANARY_NAME"}
@@ -64,7 +64,7 @@ GREP_ONLY = {"HET_MU_NAME", "HET_CANARY_NAME"}
 def code_only(text):
     """Drop /*...*/ comments, //-comments and string literals: an identifier that
     survives is one the preprocessor or the compiler actually sees.  het_verdict.h
-    NAMES half these knobs in its prose and in its printf strings, and reading
+    names many of these knobs in its prose and in its printf strings, and reading
     those as uses would call every one of them read."""
     text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
     text = re.sub(r"//[^\n]*", " ", text)
@@ -131,7 +131,7 @@ def check_lane(d, test, ext, quiet, tamper=None, seen=None,
     if n != 1:
         bad.append("%s stamps `_rec.rec_magic = HET_REC_MAGIC;' %d time(s), want 1 "
                    "-- an unstamped record is discarded by het_verdict()" % (test, n))
-    # C/D -- the defines.  Collected here, JUDGED over the union of lanes: a knob
+    # C/D -- the defines.  Collected here, judged over the union of lanes: a knob
     # the emitter stamps unconditionally may be consumed only by the shapes that
     # need it (HET_WINDOW is read by the windowed scan alone), and calling that
     # drift would make the check fire on every lane that does not use it.
@@ -218,7 +218,7 @@ BITES = [
      lambda s: s.replace("#define HET_LINK_NAME", "#define HET_LINK_NAM")),
     ("a knob loses its #ifndef default in het_verdict.h", "no #ifndef default",
      None, lambda s: s.replace("#ifndef HET_PAIR_NAME", "#if 0")),
-    # THE OTHER DIRECTION.  The two sides drift when either moves, so the header
+    # The other direction.  The two sides drift when either moves, so the header
     # half is injected too: a member renamed in het_obs_record leaves every render
     # writing a field the record no longer has, and property A must name the field
     # rather than the file.

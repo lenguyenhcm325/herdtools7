@@ -6,16 +6,18 @@ of them is a shape a constant can impersonate.  So this gate compiles the REAL
 emitted header -- not a copy, which would be free to drift -- feeds it synthetic
 het_obs_records, and proves:
 
-  1 THE RULE      it decides.  Every outcome and every liveness disqualifier is
+  1 the rule      it decides.  Every outcome and every liveness disqualifier is
                   reachable; an unstamped record fails closed.
-  2 THE PRINTOUT  each outcome's sentences are reachable from THAT outcome and
-                  from no other, checked BOTH ways.  The enum changing is not
+  2 the printout  each outcome's sentences are reachable from THAT outcome and
+                  from no other, checked both ways.  The enum changing is not
                   the deliverable; the sentence is.
-  3 THE CORPUS    every emitted harness stamps rec_magic exactly once and carries
+  3 the corpus    every emitted harness stamps rec_magic exactly once and carries
                   the mu(T) / canary population control-map.csv gives it.
+  4 the machine   the printout names only the machine the pair's row in
+                  litmus/hetMachine.ml entitles it to, and a harness stamped
+                  with no row names none.
 
-The rule and its reporting frames: hetlitmus/docs/positive-control.md S4/S11;
-env-research/Q4-positive-control.md S3.3 and R5.
+The rule and its reporting frames: hetlitmus/docs/positive-control.md S4/S11.
 
 Usage:  verdictcheck.py [--header PATH] [-q]   run the gate
         verdictcheck.py --bite                 prove it FAILS on a broken rule
@@ -46,7 +48,7 @@ VERDICTS = ["OBSERVED", "NOT-OBSERVED-MU-HOT", "NOT-OBSERVED-CANARY-ONLY",
 CENSUS = {"mu": 333, "canary": 409, "tests": 411}
 
 # ---------------------------------------------------------------------------
-# FRAME EXCLUSIVITY.  Each outcome's own sentences, checked BOTH ways: reachable
+# Frame exclusivity.  Each outcome's own sentences, checked BOTH ways: reachable
 # from that outcome (a ban that passes because the text vanished is not a check),
 # and printed by no other.  The strings are spliced back together across the C
 # string concatenations they are written in.
@@ -80,12 +82,12 @@ BASE = dict(
     target_count_exhaustive=0,
     target_count_heuristic=0,
     interleavings_detected=1000,
-    # THE DECODE CHANNEL, stated once (DR1).  The verdict is channel-aware: the sync
-    # channel's liveness evidence is interleavings_detected, the observer channel's is
-    # observer_unique_count, and a record with neither flag fails closed.  The baseline
-    # is a reader -- 400 of the 411; only the 11 store-only 2+2W rows have no reader,
-    # and those cases flip to sync_valid=0, obs_valid=1 below.
-    # (Census derivation: statscheck.py CENSUS_SYNC / CENSUS_OBS.)
+    # The decode channel, stated once.  The verdict is channel-aware: the sync
+    # channel's liveness evidence is interleavings_detected, the observer channel's
+    # is observer_unique_count, and a record with NEITHER flag fails closed.  The
+    # baseline is a reader; the store-only 2+2W rows have none and flip to
+    # sync_valid=0, obs_valid=1 below.  (The reader / store-only split is pinned as
+    # statscheck.py's CENSUS_SYNC and histcheck.py's N_STORE_ONLY.)
     sync_valid=1,
     control_compiled_in=1,
     canary_compiled_in=1,
@@ -115,7 +117,7 @@ def case(name, verdict, dq=(), cv=(), **kw):
 
 CASES = [
     # =======================================================================
-    # 1. THE STRONG NULL: mu(T) -- a strictly weaker structural sibling -- fired
+    # 1. The strong null: mu(T) -- a strictly weaker structural sibling -- fired
     #    on the same launch, and the ground-truth scan ran.
     # =======================================================================
     case("mu-hot-null", "NOT-OBSERVED-MU-HOT"),
@@ -131,24 +133,23 @@ CASES = [
 
     # A windowed hit is a strict subset of the exhaustive scan's under the same
     # predicate, so it is a genuine recovered cycle; at production N a T_L>=2 shape
-    # never runs the exhaustive scan, so keying the sighting off that field alone --
-    # Q4 S3.3's literal text -- would drop real observations.  Counted, and flagged.
-    # (Disclosed deviation: hetlitmus/docs/positive-control.md S4.)
+    # never runs the exhaustive scan, so keying the sighting off that field alone
+    # would drop real observations.  Counted, and flagged; the deviation from the
+    # rule as written is in hetlitmus/docs/positive-control.md S4.
     case("observed-heuristic-only", "OBSERVED", cv=["HEURISTIC_SIGHT"],
          target_count_heuristic=1, target_count_exhaustive=0, exhaustive_valid=0),
 
     # =======================================================================
-    # 2. THE WEAKER NULL: the harness is alive, but not through THIS shape.
+    # 2. The weaker null: the harness is alive, but not through THIS shape.
     # =======================================================================
     case("canary-only-when-mu-is-cold", "NOT-OBSERVED-CANARY-ONLY",
          cv=["CANARY_ONLY"], control_target_count=0, canary_target_count=500),
 
-    # 78 of the 411 rows co-run no mu at all: they ARE the lattice floor, so no
-    # strictly weaker structural sibling of them exists.  Their null is the weaker
-    # tier for a DIFFERENT reason, and CV_CANARY_ONLY -- "Layer B fired, Layer A
-    # did not" -- must NOT be raised where no Layer A was compiled in, or a real
-    # diagnostic becomes boilerplate on the 78 corpus rows of 411 that ARE the
-    # floor.
+    # The rows that co-run no mu at all are the lattice floor (CENSUS: tests minus
+    # mu), so no strictly weaker structural sibling of them exists.  Their null is
+    # the weaker tier for a different reason, and CV_CANARY_ONLY -- "Layer B fired,
+    # Layer A did not" -- must NOT be raised where no Layer A was compiled in, or a
+    # real diagnostic becomes boilerplate on every floor row.
     case("canary-only-when-no-mu-is-compiled-in", "NOT-OBSERVED-CANARY-ONLY",
          control_compiled_in=0, control_target_count=0, canary_target_count=500),
 
@@ -163,9 +164,9 @@ CASES = [
          cv=["NO_EXHAUSTIVE"], exhaustive_valid=0, control_target_count=500),
 
     # =======================================================================
-    # 3. THE SHARPEST INSTANCE: MP-cg-sys-relaxed IS the Layer-B canary for most of
+    # 3. The sharpest instance: MP-cg-sys-relaxed is the Layer-B canary for most of
     #    the corpus, so it co-runs nothing (control-map.csv says `self') and BOTH
-    #    compiled-in flags are 0.  The one test whose whole job is to FIRE must
+    #    compiled-in flags are 0.  The one test whose whole job is to fire must
     #    still be readable when it does.
     # =======================================================================
     case("the-canary-itself-firing-is-a-plain-sighting", "OBSERVED",
@@ -173,9 +174,9 @@ CASES = [
          control_target_count=0, canary_target_count=0,
          target_count_exhaustive=412, target_count_heuristic=412),
 
-    # THE STORE-ONLY (2+2W) ARM: 11 tests with no reader, so interleavings_detected
-    # is structurally 0 and the OBSERVER is their only liveness channel.  All three
-    # outcomes stay reachable, or the channel goes constant on those (DR1).
+    # The store-only (2+2W) arm: no reader, so interleavings_detected is
+    # structurally 0 and the observer is their ONLY liveness channel.  All three
+    # outcomes stay reachable, or the channel goes constant on those rows.
     # (a) live observer (>= HET_THETA_DISTINCT distinct GPU store-values) + hot
     #     canary, nothing seen -> the reportable-null path.
     case("store-only-observer-live-is-a-null", "NOT-OBSERVED-CANARY-ONLY",
@@ -204,7 +205,7 @@ CASES = [
          control_compiled_in=0, control_target_count=0, canary_target_count=0),
 
     # =======================================================================
-    # 4. AN UNSTAMPED RECORD FAILS CLOSED.  het_obs_record is memset(0), so a
+    # 4. An unstamped record fails closed.  het_obs_record is memset(0), so a
     #    zeroed rec_magic is what an emitter that skipped the stamp produces; the
     #    rule must claim NOTHING then, not even on a sighting, because every field
     #    it would read is a memset zero.
@@ -240,10 +241,10 @@ CASES = [
     case("cold-noise-gpu-dead", "COLD-INVALID", dq=["NOISE_GPU_DEAD"],
          noise_gpu_blocks=0),
 
-    # het_do_stress carries a runtime tally, so "requested and completed ZERO rounds"
+    # het_do_stress carries a runtime tally, so "requested and completed zero rounds"
     # is a check that can fail -- and must be: HET_TEST_BLOCKS is a sum over the
     # co-run instances, and stressing blocks fill only what the co-residency cap
-    # leaves over (Q5-gpu-stress.md S3.2).
+    # leaves over (hetlitmus/docs/positive-control.md S9).
     case("cold-gpu-stress-dead", "COLD-INVALID", dq=["GPU_STRESS_DEAD"],
          gpu_stress_rounds=0),
 
@@ -254,8 +255,8 @@ CASES = [
          gpu_stress_rounds=0),
 
     # =======================================================================
-    # 6. NOT-requested mechanisms must NOT disqualify.  A deliberately unstressed
-    #    baseline has every stress counter at zero, so disqualifying on
+    # 6. A mechanism that was not requested must NOT disqualify.  A deliberately
+    #    unstressed baseline has every stress counter at zero, so disqualifying on
     #    "counter == 0" alone would make every no-stress config COLD forever.  It
     #    stays reportable and carries the unstressed caveat instead
     #    (positive-control.md S4: requested-but-dead, not merely zero).
@@ -291,10 +292,11 @@ CASES = [
          spin_rendezvous=100, spin_cap=900),
 
     # =======================================================================
-    # 9. A SIGHTING MUST CARRY ITS STRESS PROVENANCE.  Observation frequency is
-    #    strongly sensitive to the stress/affinity parameters, the machine and the
-    #    OS (Alglave TACAS'11 S4, p.44), so a result reported without the config it
-    #    was seen under is not reproducible.
+    # 9. A sighting must carry the stress it was seen under.  Test parameters have
+    #    a large impact on how often an outcome appears, and the observed frequency
+    #    is sensitive to the machine and its operating system besides
+    #    [Alglave11 sec 4], so a result reported without its configuration is not
+    #    reproducible.
     # =======================================================================
     case("sighting-carries-its-caveats", "OBSERVED",
          cv=["AFF_FAILED", "PLACE_REFUSED", "SPIN_CAP"],
@@ -308,7 +310,7 @@ CASES = [
          noise_cpu_rounds=0, noise_gpu_blocks=0),
 
     # =======================================================================
-    # 10. THE CONTROL'S OWN exhaustive_valid MUST NOT GATE THE NULL.  A mutant can
+    # 10. The control's own exhaustive_valid must NOT gate the null.  A mutant can
     #     itself be a T_L>=2 shape (mu(SB-*-sys-fence-2s) IS SB-*-sys-acqrel-2s), so
     #     its exhaustive scan does not run at production N and its count comes from
     #     the windowed detector -- which under-counts but cannot invent a cycle.
@@ -320,7 +322,7 @@ CASES = [
          control_exhaustive_valid=0, control_target_count=500),
 
     # =======================================================================
-    # 11. A WINDOWED ZERO IS NOT A MEASURED ZERO, and the printout must say so or
+    # 11. A windowed zero is NOT a measured zero, and the printout must say so or
     #     it overstates the effort behind a non-observation.
     # =======================================================================
     case("windowed-zero-must-say-so", "NOT-OBSERVED-CANARY-ONLY",
@@ -328,13 +330,13 @@ CASES = [
          control_compiled_in=0, control_target_count=0),
 
     # =======================================================================
-    # 12. THE CPU-ONLY CYCLE (memo 7.D10).  The emitter sets cpu_only when every
-    #     proc carries the `cpu' tag, and both outcome frames then say what was
-    #     under test: no cross-device path carried the cycle, so what a sighting
-    #     shows is the host ISA on the shared allocation and what a null probes
-    #     is that allocation's memory type.  Reported on the D10 set alone --
-    #     tests/het/generate-d10.sh -- so both cases co-run no mu, which is what
-    #     the D10 map says (`none' on every row, and it is a derived absence).
+    # 12. The CPU-only cycle.  The emitter sets cpu_only when every proc carries
+    #     the `cpu' tag, and both outcome frames then say what was under test: no
+    #     cross-device path carried the cycle, so what a sighting shows is the host
+    #     ISA on the shared allocation and what a null probes is that allocation's
+    #     memory type.  The set carrying it comes from
+    #     hetlitmus/tests/het/generate-d10.sh, whose map writes `none' in the Mu
+    #     column of every row, so both cases here co-run none either.
     # =======================================================================
     case("cpu-only-sighting-names-what-fired", "OBSERVED",
          cpu_only=1, target_count_exhaustive=3, target_count_heuristic=3,
@@ -350,7 +352,7 @@ MUST_PRINT_SCAN_CAVEAT = {"windowed-zero-must-say-so",
 SCAN_CAVEAT_TEXT = "rests on the WINDOWED heuristic"
 
 # A store-only COLD null must NAME the observer channel that failed; the generic
-# "interleavings_detected==0" is meaningless for a shape with no reader (DR1).
+# "interleavings_detected==0" is meaningless for a shape with no reader.
 MUST_NAME_OBSERVER_CHANNEL = {"store-only-observer-cold-is-COLD"}
 OBSERVER_CHANNEL_TEXT = "OBSERVER channel was COLD"
 
@@ -359,12 +361,12 @@ NO_CANARY_ONLY_CV = {"canary-only-when-no-mu-is-compiled-in",
                      "store-only-observer-live-is-a-null",
                      "canary-tau-exactly-at"}
 
-# The D10 sentences, owner case -> the fragment only that case may print.  Both
-# are keyed on `_r->cpu_only' in het_verdict.h, and every reader of that flag is
-# checked both ways: the owner must print its sentence and every other case must
-# print neither, so a flag read as constant is caught whichever constant it froze
-# to.  A name here that no case carries reddens too, rather than dropping its
-# half of the pair silently.
+# The CPU-only sentences, owner case -> the fragment only that case may print.
+# Both are keyed on `_r->cpu_only' in het_verdict.h, and every reader of that
+# flag is checked both ways: the owner must print its sentence and every other
+# case must print neither, so a flag read as constant is caught whichever
+# constant it froze to.  A name here that no case carries reddens too, rather
+# than dropping its half of the pair silently.
 CPU_ONLY_TEXT = {
     "cpu-only-sighting-names-what-fired":
         "CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc",
@@ -459,21 +461,17 @@ def _env():
 
 
 # ---------------------------------------------------------------------------
-# PHASE 4 -- WHICH MACHINE THE PRINTOUT NAMES.
+# PHASE 4 -- which machine the printout names.
 #
 # Every machine word het_verdict.h prints comes from a define the emitter stamps
-# out of the MACHINE TABLE row (litmus/hetMachine.ml), with generic defaults when none
-# are stamped.  Three properties, all three read off the PRINTOUT rather than off
-# the defines (the enum changing is not the deliverable, the sentence is):
-#
-#   * with NO defines the frame is the GENERIC one -- an unset stamp must fail
-#     SAFE, naming the mechanism and never a vendor;
-#   * with the (AArch64, cuda) defines the frame is the GH200 machine;
-#   * with the (x86_64, hip) defines the frame is that pair's OWN machine, and
-#     carries no Grace/Hopper/NVLink and none of the NVIDIA-only measurements.
-#
-# The defines are SCRAPED from real emissions, never typed here, so this phase
-# tests what the emitter actually stamps.
+# out of the machine-table row (litmus/hetMachine.ml), with generic defaults when
+# none are stamped.  Three properties, all read off the printout rather than off
+# the defines (the enum changing is not the deliverable, the sentence is): with no
+# defines the frame is the generic one, naming the mechanism and NEVER a vendor;
+# with the (AArch64, cuda) defines it is the GH200 machine; with the (x86_64, hip)
+# defines it is that pair's own machine, carrying no Grace/Hopper/NVLink and none
+# of the NVIDIA-only measurements.  The defines are scraped from real emissions,
+# never typed here, so the phase tests what the emitter stamps.
 # ---------------------------------------------------------------------------
 MACHINE_DEFINE_RE = re.compile(
     r"^#define HET_(?:LINK_NAME|HOST_HALF|DEV_HALF|ALGLAVE_ZERO_MEASURED"
@@ -517,7 +515,8 @@ AMD_MUST = [
     "- the MI300A device half of the Infinity Fabric noise did NOT run",
     "same Infinity Fabric path.",
     "the Infinity Fabric path is alive",
-    # No placement lever on this render, and no Alglave number for this part.
+    # No placement lever on this render, and no [Alglave15 sec 4.3.1] figure
+    # covers this part.
     "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
     '(Alglave 4.3.1\'s "zero without stress" was measured on NVIDIA parts and is '
     'NOT claimed for this target',
@@ -707,7 +706,7 @@ def check_corpus(tamper=None):
             if new != src:            # cmp: the injection must really have hit
                 tampered += 1
             src = new
-        # (a) THE STAMP, exactly once and by its symbol.  het_verdict() reads no
+        # (a) The stamp, exactly once and by its symbol.  het_verdict() reads no
         # field of an unstamped record, so a harness that lost this line reports
         # a build bug for every run it will ever make.
         n_magic = len(MAGIC_RE.findall(src))
@@ -715,7 +714,7 @@ def check_corpus(tamper=None):
             print("  *** %-26s stamps rec_magic %d time(s) (want exactly 1)"
                   % (t, n_magic))
             bad += 1
-        # (b) THE CO-RUN POPULATION, against the map that named it.  A flag set
+        # (b) The co-run population, against the map that named it.  A flag set
         # without the instance behind it turns a structural zero into a control.
         mu, can = want.get(t, ("?", "?"))
         exp_mu = 1 if mu not in ("none", "?") else 0
@@ -764,7 +763,7 @@ def scan_prints(blocks, quiet):
           "those? =====")
     bad = 0
 
-    # (a) FRAME EXCLUSIVITY, both ways.  A ban that passes because the sentence
+    # (a) Frame exclusivity, both ways.  A ban that passes because the sentence
     # vanished is not a check, so each claim must ALSO be reachable.
     for verdict, claims in sorted(FRAME_CLAIMS.items()):
         for claim in claims:
@@ -817,7 +816,7 @@ def scan_prints(blocks, quiet):
         elif not quiet:
             print("      %-46s discloses its windowed zero (correctly)" % name)
 
-    # The D10 sentences, both ways: the owner prints its own and nobody else
+    # The CPU-only sentences, both ways: the owner prints its own and nobody else
     # prints either (see CPU_ONLY_TEXT).
     for owner, text in sorted(CPU_ONLY_TEXT.items()):
         if text not in blocks.get(owner, ("", ""))[1]:
@@ -890,10 +889,9 @@ def run_rule(header, tmp, quiet):
         ["gcc", "-std=c99", "-O2", "-Wall", "-Wno-unused-function",
          "-I", tmp, src, "-o", exe, "-lm"],
         capture_output=True, text=True)
-    # Every exit from here returns the (rc, blocks) pair both call sites unpack.
-    # Returning a bare int instead made a non-compiling header raise TypeError:
-    # the process still exited nonzero, but with a traceback in place of the
-    # diagnostic, and under --bite it aborted the remaining injections.
+    # Every exit from here returns the (rc, blocks) pair both call sites unpack: a
+    # bare int turns a non-compiling header into a TypeError traceback in place of
+    # the diagnostic, which under --bite abandons every injection after it.
     if cc.returncode != 0:
         print(cc.stdout + cc.stderr)
         print("\nVERDICT FAILED: the rule does not compile")
@@ -903,8 +901,8 @@ def run_rule(header, tmp, quiet):
     lines = run.stdout.splitlines()
 
     # The driver prints TAU_HOT before the first case, so a missing first line
-    # means the binary died before it ran anything.  Report that; do not index
-    # into an empty list and turn it into an AttributeError/IndexError.
+    # means the binary died before it ran anything.  That is reported, NEVER
+    # indexed into: an empty list here raises in place of the diagnostic.
     m = re.match(r"TAU_HOT=(\d+)", lines[0]) if lines else None
     if m is None:
         print(run.stdout + run.stderr)
@@ -1038,17 +1036,14 @@ def _bite_one(label, tmp, header, mutate, quiet, expect=None):
 def _bite_report(label, header, mutate, want):
     """A bite on a REPORTING path: the gate must SAY what went wrong.
 
-    Distinct from _bite_one, which reads the exit status alone.  Neither path
-    bitten through this helper can be checked that way, because on both of them
-    the process was ALREADY going to exit nonzero -- it exited by raising.
-    run_rule returned a bare int on a compile failure while both call sites
-    unpack (rc, blocks), so the diagnostic it had just printed was followed by a
-    TypeError traceback (and under --bite the traceback abandoned every injection
-    after it); and lines[0] was indexed unguarded, so a binary that printed
-    nothing raised IndexError with no diagnostic at all.  The deliverable is the
-    sentence, so the sentence is what is asserted: no exception, rc == 1, and
-    `want' in what the gate printed.  Each bite gets a fresh scratch dir, so a
-    write that failed cannot hand run_rule a previous bite's header."""
+    Distinct from _bite_one, which reads the exit status alone.  The two paths
+    bitten through this helper cannot be checked that way, because a run_rule that
+    raises -- on a header that does not compile, or on a binary that printed
+    nothing -- exits nonzero too, with a traceback in place of the sentence.  The
+    sentence is the deliverable, so the sentence is what is asserted: no
+    exception, rc == 1, and `want' in what the gate printed.  Each bite gets a
+    fresh scratch dir, so a write that failed cannot hand run_rule a previous
+    bite's header."""
     with open(header) as fh:
         orig = fh.read()
     new = mutate(orig)
@@ -1132,7 +1127,7 @@ def bite():
     try:
         header = emit_header(tmp)
 
-        # (1) THE SIGHTING BRANCH MADE CONSTANT: every record reads as OBSERVED, so
+        # (1) The sighting branch made CONSTANT: every record reads as OBSERVED, so
         # every null case takes the sighting frame.
         ok &= _bite_one(
             "the sighting test forced CONSTANT (every record read as OBSERVED)",
@@ -1142,7 +1137,7 @@ def bite():
                 "if (1) {"),
             quiet=True)
 
-        # (2) THE TWO NULL TIERS COLLAPSED: mu(T)'s own liveness stops selecting the
+        # (2) The two null tiers collapsed: mu(T)'s own liveness stops selecting the
         # strong null, so a canary-only harness reports a mu-hot null.  The record
         # fields are untouched, so only the outcome comparison sees it.
         ok &= _bite_one(
@@ -1152,7 +1147,7 @@ def bite():
                                 "} else if (1) {"),
             quiet=True)
 
-        # (3) rec_magic NO LONGER FAILS CLOSED: a memset-zeroed record is read as a
+        # (3) rec_magic stops failing closed: a memset-zeroed record is read as a
         # live one, which is the whole property the stamp exists for.
         ok &= _bite_one(
             "rec_magic no longer fails closed (an unstamped record is read)",
@@ -1161,7 +1156,7 @@ def bite():
                                 "if (0) {"),
             quiet=True)
 
-        # (4) THE WINDOWED-ZERO DISCLOSURE DROPPED: the cv flag is still set, so only
+        # (4) The windowed-zero disclosure dropped: the cv flag is still set, so ONLY
         # phase 2 can see that the sentence is gone.
         ok &= _bite_one(
             "the windowed-zero caveat dropped from every printout",
@@ -1169,10 +1164,10 @@ def bite():
             lambda s: s.replace("  het_print_scan_caveat(_ch, _r, cv);\n", ""),
             quiet=True)
 
-        # (4b) THE CPU-ONLY FLAG READ AS A CONSTANT, both ways.  The D10 sentences
-        # are the only place the printout says that no cross-device path carried
-        # the cycle, so a frozen flag either hides that on the D10 set or claims
-        # it about every het test in the corpus.
+        # (4b) The cpu_only flag read as a CONSTANT, both ways.  The CPU-only
+        # sentences are the only place the printout says that no cross-device path
+        # carried the cycle, so a frozen flag either hides that on the CPU-only set
+        # or claims it about every het test in the corpus.
         ok &= _bite_one(
             "the cpu_only branches forced OFF (no D10 sentence anywhere)",
             tmp, header,
@@ -1205,11 +1200,11 @@ def bite():
             quiet=True,
             expect="its HetObs line does not say so")
 
-        # (5) THE HEADER DOES NOT COMPILE.  Not a broken rule -- a broken REPORT of
+        # (5) The header does not compile.  Not a broken rule -- a broken report of
         # one.  A gate that answers a non-compiling header with a traceback has
-        # stopped saying which of the three things it guards is wrong, and under
-        # --bite it stops running at all.  The flavour of the syntax error carries
-        # no meaning; `@' is simply not a C token.
+        # stopped saying which part of what it guards is wrong, and under --bite it
+        # stops running at all.  The flavour of the syntax error carries no
+        # meaning; `@' is simply not a C token.
         print("\n-- reporting-path injections --")
         ok &= _bite_report(
             "a header that DOES NOT COMPILE must be REPORTED, not raised",
@@ -1218,11 +1213,11 @@ def bite():
                           "{ return @; }\n",
             "VERDICT FAILED: the rule does not compile")
 
-        # (6) THE COMPILED RULE PRINTS NOTHING.  The driver prints TAU_HOT before the
-        # first case, so an empty stdout means the binary died before it ran one --
-        # which the gate must say, not index into.  A constructor that _Exit()s is
-        # the shortest way to produce that: it is what a header carrying a broken
-        # static initialiser does in the wild, one step earlier.
+        # (6) The compiled rule prints nothing.  The driver prints TAU_HOT before
+        # the first case, so an empty stdout means the binary died before it ran
+        # one -- which the gate must say, NEVER index into.  A constructor that
+        # _Exit()s is the shortest way to produce that: it is what a header
+        # carrying a broken static initialiser does in the wild, one step earlier.
         ok &= _bite_report(
             "a compiled rule that produces NO TAU_HOT line must be REPORTED",
             header,
@@ -1230,8 +1225,8 @@ def bite():
                           "_het_bite_die_before_main(void) { _Exit(97); }\n",
             "produced no TAU_HOT line")
 
-        # (7) A HARNESS SHIPS UNSTAMPED: het_verdict() fails closed, but only if it
-        # is ever RUN, so the corpus census is what stops one harness quietly
+        # (7) A harness ships unstamped: het_verdict() fails closed, but ONLY if it
+        # is ever run, so the corpus census is what stops one harness quietly
         # discarding every run it will ever make.
         print("\n-- corpus injections --")
         rc = check_corpus(tamper=lambda t, s: (
@@ -1245,7 +1240,7 @@ def bite():
                   "[a harness shipped with an unstamped record]" % rc)
             ok = False
 
-        # (8) A CO-RUN FLAG WITHOUT ITS INSTANCE: the harness claims a canary is
+        # (8) A co-run flag without its instance: the harness claims a canary is
         # running, so a structural zero would be read as a cold control.
         rc = check_corpus(tamper=lambda t, s: (
             s.replace("#define HET_CANARY_COMPILED_IN 1",
@@ -1259,10 +1254,10 @@ def bite():
                   "[a harness dropped the canary the map names for it]" % rc)
             ok = False
 
-        # (9) THE FAIL-SAFE DEFAULT MADE A VENDOR CLAIM: an unstamped harness --
+        # (9) The fail-safe default made a vendor claim: an unstamped harness --
         # an unregistered pair, and every future pair before its row exists --
         # would then print a machine it is not.  The direction matters: a missing
-        # define must only ever WEAKEN a claim.
+        # define may ONLY weaken a claim.
         print("\n-- machine-prose injections --")
         ok &= _bite_machine(
             "the #ifndef DEFAULT names a vendor (unstamped => \"NVLink-C2C\")",
@@ -1272,11 +1267,11 @@ def bite():
             expect="never printed '- the host half of the host-device "
                    "interconnect noise did NOT run'")
 
-        # (10) THE PROSE WENT BACK TO A LITERAL: the pre-refactor bug itself, in its
-        # simplest form -- one sentence naming Grace whatever the harness was built
-        # for.  The generic frame catches it as a must it stopped printing, before
-        # any frame's forbidden list reaches the word `Grace' -- so this arm holds
-        # the must direction and injection (13) holds the other one.
+        # (10) One sentence goes back to a literal, which is the defect the stamped
+        # defines exist to stop in its simplest form: a sentence naming Grace
+        # whatever the harness was built for.  The generic frame catches it as a
+        # must it stopped printing, before any frame's forbidden list reaches the
+        # word `Grace' -- so this arm holds the must direction and (13) the other.
         ok &= _bite_machine(
             "one sentence hardcodes \"the Grace half\" again",
             tmp, header,
@@ -1285,9 +1280,9 @@ def bite():
             expect="never printed '- the host half of the host-device "
                    "interconnect noise did NOT run'")
 
-        # (11) THE EMITTER STAMPS THE WRONG PAIR'S MACHINE.  The header is correct
-        # here and the harness lies to it, which is the landmine the pair table
-        # exists to stop; nothing in phases 1-3 looks at a define.
+        # (11) The emitter stamps the wrong pair's machine.  The header is correct
+        # here and the harness lies to it, which is what the pair table exists to
+        # stop; nothing in phases 1-3 looks at a define.
         real = {}
         for lbl, corpus, test, target, ext in MACHINE_PAIRS:
             real[lbl] = scrape_machine_defines(tmp, lbl, corpus, test, target, ext)
@@ -1299,8 +1294,8 @@ def bite():
             expect="never printed '- the x86 half of the Infinity Fabric "
                    "noise did NOT run'")
 
-        # (12) THE TARGET NAME GOES BACK TO A CONSTANT.  The sentence still names
-        # SOMETHING, so only a frame that knows its own pair name can see that it
+        # (12) The target name goes back to a constant.  The sentence still names
+        # something, so ONLY a frame that knows its own pair name can see that it
         # is naming the wrong object; BLOB_WORDS pins that constant's wording.
         ok &= _bite_machine(
             "the report sentence names a constant instead of the pair",
@@ -1311,12 +1306,12 @@ def bite():
             expect="never printed 'Report it as what (unstamped CPU ISA x GPU "
                    "dialect pair)")
 
-        # (13) A SENTENCE NAMES ANOTHER VENDOR AND EVERY `must' STILL PRINTS.  The
+        # (13) A sentence names another vendor and every `must' still prints.  The
         # verdict banner gains an "[Infinity Fabric]" tag, which no frame's must
-        # list mentions and which no parameterised sentence loses, so the only
+        # list mentions and which no parameterised sentence loses, so the ONLY
         # thing that can see it is the forbidden-word list.  Injections (9)-(12)
-        # each redden on a must first; empty every forbid list and all four still
-        # report a bite, so without this arm that whole direction is unbitten.
+        # each redden on a must first, so without this arm the forbidden-word
+        # direction is unbitten.
         ok &= _bite_machine(
             "the verdict banner tags every run with another vendor's fabric",
             tmp, header,

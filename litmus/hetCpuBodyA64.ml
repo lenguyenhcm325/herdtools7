@@ -1,21 +1,29 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
 (*                                                                          *)
-(* hetCpuBodyA64: the AArch64 half of a tagged CPU thread body -- one       *)
-(* classifier over AArch64Base.instruction (Cpu.instruction =               *)
-(* int AArch64Base.kinstruction) and the two asm operand shapes, widened to *)
-(* 64-bit `%x' registers because the shared globals are uint64_t.  The node *)
-(* type, the plan HetEmit consumes and the C frame are hetCpuPlan's; the    *)
-(* x86_64 twin is hetCpuBodyX86.                                            *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
-(* Evidence for the bespoke body (rationale in hetCpuPlan): ASMLang bakes a *)
-(* store value as a `mov #imm' immediate and declares the value register a  *)
-(* trashed output operand (env-research/decisions/B3-decision.md, 1).       *)
-(*                                                                          *)
-(* This software is governed by the CeCILL-B license under French law.       *)
+(* This software is governed by the CeCILL-B license under French law and   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
+
+(* HetLitmus: the AArch64 half of a tagged CPU thread body -- one classifier
+   over AArch64Base.instruction (Cpu.instruction = int
+   AArch64Base.kinstruction) and the two asm operand shapes, widened to 64-bit
+   `%x' registers because the shared globals are uint64_t.  The node type, the
+   plan HetEmit consumes and the C frame are hetCpuPlan's; the x86_64 twin is
+   hetCpuBodyX86.
+
+   Evidence for the bespoke body (rationale in hetCpuPlan): ASMLang bakes a
+   store value in as a `mov #imm' immediate and declares the value register a
+   trashed output operand. *)
 
 open AArch64Base
 
@@ -45,12 +53,10 @@ let reg_name r = pp_reg r
    matched.  [imm] memoises the last immediate MOV'd into each register; it is
    a VALUE memo, so every redefinition of a tracked register must invalidate
    it, or `MOV W0,#5 ; LDR W0,[X1] ; STR W0,[X2]' records the store as writing
-   5 and HetEmit's (loc,value)->mu recovery map decodes it to the wrong mu.
-   The fail-closed arm below closes that enumeration: of the shapes accepted
-   here only MOV/MOVZ writes a tracked register and only a LDR/LDAR
-   destination redefines one -- STR/STLR and DMB write none, and the
-   zero-offset [Xn] form has no base writeback -- so clearing on a load
-   destination is exhaustive. *)
+   5 and HetEmit's (loc,value)->mu recovery map decodes the wrong mu.  Clearing
+   on a load destination is exhaustive here: of the accepted shapes only
+   MOV/MOVZ writes a tracked register and only a LDR/LDAR destination redefines
+   one, the zero-offset [Xn] form having no base writeback. *)
 let nodes_of ~reg_env instrs =
   let imm = Hashtbl.create 8 in
   let set_imm r v = Hashtbl.replace imm (reg_name r) v in
@@ -107,10 +113,10 @@ let lowering =
 
 (* LDAPR is RCpc (ARMv8.3); the rest of the het vocabulary
    (str/stlr/ldr/ldar/dmb sy|st|ld) is base ARMv8.0.  The harness compiles with
-   no -march/-mcpu override, so RCpc is off and an LDAPR in inline asm fails to
-   assemble ("instruction requires: rcpc"), which would make every two-sided
-   test unbuildable.  Enable the extension only for a proc that uses it, so a
-   plain-LDR body stays byte-identical. *)
+   no -march/-mcpu override, so RCpc is off and an LDAPR in inline asm does not
+   assemble, which would leave every two-sided test unbuildable.  The extension
+   is enabled only for a proc that uses it, so a body without LDAPR carries no
+   directive. *)
 let prologue instrs =
   if List.exists (function I_LDAR (_,AQ,_,_) -> true | _ -> false) instrs then
     "    \".arch_extension rcpc\\n\"\n"

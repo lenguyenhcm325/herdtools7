@@ -8,9 +8,9 @@
 # there why it regenerates out of tree.
 #
 # Two parts:
-#  (A) The 8 PLDI'23-anchored tests (MP/LB/SB/IRIW, the relaxed + "-F"
-#      release/acquire variants, plus MP-cta-F).  These keep their original
-#      names because that is how the PLDI'23 artifact names them.  Generated
+#  (A) The tests anchored on the [Goens23] artifact (MP/LB/SB/IRIW, the relaxed
+#      + "-F" release/acquire variants, plus MP-cta-F).  These keep their
+#      original names because that is how the artifact names them.  Generated
 #      verbatim.
 #  (B) The systematic grid: every standard shape
 #         MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3
@@ -23,12 +23,12 @@
 # atom rendered <Order><Scope> (gen/common/edge.ml pp_edge_compat).  The grid
 # annotation rule + the fence column are defined in ../_grid_lib.sh.
 #
-# REFERENCE VERDICTS: only the 8 part-(A) tests carry an external one, from the
-# PLDI'23 artifact's own expected.csv (AMD GCN3 + x86).  The part-(B) grid
+# Reference verdicts: only the part-(A) tests carry an external one, from the
+# [Goens23] artifact's own expected.csv (AMD GCN3 + x86).  The part-(B) grid
 # reaches past that artifact -- which has no fence and no `sc' operation
 # anywhere -- so an offline oracle-compare.sh pass of a grid row against a CSV
-# built from it reports UNINTERPRETED rather than a verdict.
-# See hetlitmus/docs/{gpu-only-corpus,corpus-grid}.md.
+# built from it reports UNINTERPRETED rather than a verdict.  Provenance and
+# vendor scope: hetlitmus/docs/{gpu-only-corpus,corpus-grid}.md.
 
 set -e
 # OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so
@@ -49,7 +49,7 @@ source ../_grid_lib.sh
 cd "$OUT"
 
 # ---------------------------------------------------------------------------
-# (A) PLDI'23-anchored tests (oracle set) -- generated verbatim, names fixed.
+# (A) Artifact-anchored tests (oracle set) -- generated verbatim, names fixed.
 # ---------------------------------------------------------------------------
 TREE2="(sys (gpu (cta P0) (cta P1)))"
 TREE4="(sys (gpu (cta P0) (cta P1) (cta P2) (cta P3)))"

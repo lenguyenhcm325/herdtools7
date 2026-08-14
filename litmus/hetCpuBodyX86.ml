@@ -1,23 +1,31 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
 (*                                                                          *)
-(* hetCpuBodyX86: the x86-64 half of a tagged CPU thread body -- one        *)
-(* classifier over X86_64Base.instruction (= Cpu.instruction here) and the  *)
-(* two asm operand shapes (AT&T, memory operand `(%[g])').  The node type,  *)
-(* the plan HetEmit consumes and the C frame are hetCpuPlan's; the AArch64  *)
-(* twin is hetCpuBodyA64.                                                   *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
-(* Evidence for the bespoke body (rationale in hetCpuPlan):                 *)
-(* X86_64Compile_litmus.ml:172-180 builds `movl $1,(x)' from                *)
-(* [Operand_immediate] through [compile_op], so the store value never       *)
-(* becomes an asm operand.  Widening to `movq' costs nothing on x86-TSO: an *)
-(* aligned 8-byte MOV is a single access, ordered as a 4-byte one is (SDM   *)
-(* Vol.3A 9.2.3 "Memory Ordering" is stated over accesses, not widths).     *)
-(*                                                                          *)
-(* This software is governed by the CeCILL-B license under French law.       *)
+(* This software is governed by the CeCILL-B license under French law and   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
+
+(* HetLitmus: the x86-64 half of a tagged CPU thread body -- one classifier
+   over X86_64Base.instruction (= Cpu.instruction here) and the two asm operand
+   shapes (AT&T, memory operand `(%[g])').  The node type, the plan HetEmit
+   consumes and the C frame are hetCpuPlan's; the AArch64 twin is
+   hetCpuBodyA64.
+
+   Evidence for the bespoke body (rationale in hetCpuPlan):
+   X86_64Compile_litmus.ml's [move] builds `movl $1,(x)' from
+   [Operand_immediate] through [compile_op], so the store value never becomes
+   an asm operand.  Widening to `movq' costs nothing here: an aligned 8-byte
+   access is atomic [IntelSDM 9.1.1] and the ordering rules are stated over
+   reads and writes, not over widths [IntelSDM 9.2.2]. *)
 
 open X86_64Base
 
@@ -37,9 +45,10 @@ let rec instrs_of_pseudo = function
 let instrs_of_code code = List.concat_map instrs_of_pseudo code
 
 (* Name of a register as the test's CONDITION spells it.  litmus7's x86-64
-   frontend parses a condition register with [parse_list64] (X86_64Base.ml:187,
-   64-bit names only), so `1:rax' is Ireg (AX,R64b) whatever width the load
-   used: `movl (x),%eax' is Ireg (AX,R32b) and must still record "rax". *)
+   frontend parses a condition register through X86_64Base.parse_reg, whose
+   [parse_list64] holds 64-bit names only, so `1:rax' is Ireg (AX,R64b)
+   whatever width the load used: `movl (x),%eax' is Ireg (AX,R32b) and must
+   still record "rax". *)
 let reg_name = function
   | Ireg (b,_) -> reg64_string b
   | r -> pp_reg r
@@ -69,13 +78,10 @@ let global_of_rm ~reg_env = function
    matched.  [imm] memoises the last immediate MOV'd into each register, keyed
    by its 64-bit name; it is a VALUE memo, so every redefinition of a tracked
    register must invalidate it, or `movl $5,%eax ; movl (x),%eax ;
-   movl %eax,(y)' records the store's value as 5 rather than "unknown" and the
-   (loc,value)->mu recovery map HetEmit builds from [analyze] decodes that
-   store to the wrong mu.  A load's destination is therefore CLEARED, which
-   yields [None] = "value not statically known".  Unreachable from today's
-   corpus -- over all 411 x86 renderings the vocabulary is {movl $imm,(g),
-   movl (g),%eax, movl (g),%ebx, mfence}, with zero `movl %reg,(g)' -- but the
-   .mli advertises `MOV %r,(g)', so the arm has to be correct. *)
+   movl %eax,(y)' records the store's value as 5 and the (loc,value)->mu
+   recovery map decodes the wrong mu.  A load's destination is therefore
+   cleared, yielding [None] = "value not statically known" -- an arm the
+   corpus renderings never reach, but one the .mli advertises. *)
 let nodes_of ~reg_env instrs =
   let imm = Hashtbl.create 8 in
   let set_imm r v = Hashtbl.replace imm (reg_name r) v in

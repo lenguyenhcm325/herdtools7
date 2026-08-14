@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
 """
-obscheck.py -- the observer-liveness gate (DR1-A3).
+obscheck.py -- the observer-liveness gate.
 
-The CPU observer is the ONLY recovery channel the 11 store-only (2+2W) shapes have,
-and statscheck.py feeds the verdict a synthetic observer_unique_count, so nothing else
-in CI compiles the real emitted observer loop.  This gate does.
+The CPU observer is the ONLY recovery channel the store-only (2+2W) shapes have, and
+statscheck.py feeds the verdict a synthetic observer_unique_count, so nothing else in
+this suite compiles the real emitted observer loop.  This gate does.
 
-It emits a store-only het test through the real litmus7, extracts the actual
-`*cpu_obs_args' struct and observer for-loop from the emitted `.cu' -- from the
-artifact, never hand-copied, so emission drift is visible here -- wraps them in a host
-translation unit, and compiles at `clang -O2' for both x86-64 and the GH200's aarch64.
-Both halves of that are load-bearing: -O2 is where the hoist happens, and the two ISAs
-are the two hosts the campaign runs on.  The assertion is that a per-iteration load
-survives inside EVERY loop the compiler emits, scoped to the loop body rather than to
-loads anywhere in the function.  With the emitter's `volatile const' on the observed
-pointers the loop body reloads each iteration; a plain `uint64_t*' instead yields an
-alias-versioned fast loop that broadcasts one hoisted value and whose body has no load
-(aarch64 `ld1r', x86 `pshufd' splat), which pins observer_unique_count at <=1 and
-leaves those 11 tests inert.  So "every loop body has a load" is true clean and false
-once hoisted.
+It emits a store-only het test through the real litmus7, lifts the `*cpu_obs_args'
+struct and the observer for-loop out of the emitted `.cu' -- from the artifact, never
+hand-copied, so emission drift is visible here -- wraps them in a host translation
+unit, and compiles at `clang -O2' for x86-64 and for aarch64, the two hosts a campaign
+runs on.  -O2 is where the hoist happens.
+
+The assertion: a load survives inside every loop body the compiler emits, scoped to
+the body rather than to loads anywhere in the function.  With the emitter's
+`volatile const' on the observed pointers the body reloads each iteration; a plain
+`uint64_t*' yields an alias-versioned fast loop that broadcasts one hoisted value and
+whose body has no load (aarch64 `ld1r', x86 `pshufd' splat), which pins
+observer_unique_count at <=1 and leaves the store-only tests inert.
 
 `--bite' strips `volatile' from the extracted TU, confirms the strip really changed
-it, recompiles, and requires the same assertion to FAIL.
+it, recompiles, and requires the same assertion to fail.
 """
 import argparse
 import os
@@ -38,8 +37,8 @@ HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 # the gate must keep alive.
 STORE_ONLY_TEST = "2+2W-cg-sys-fence.litmus"
 
-# clang -O2 for both target ISAs the campaign runs on: aarch64 is the GH200 CPU,
-# x86-64 the MI300A host and the dev box.
+# clang -O2 for both target ISAs a campaign runs on: aarch64 is the GH200 CPU,
+# x86-64 the MI300A host.
 TARGETS = [
     ("x86-64",  ["clang", "-O2", "-S"]),
     ("aarch64", ["clang", "--target=aarch64-linux-gnu", "-O2", "-S"]),
@@ -70,8 +69,8 @@ def emit_store_only(tmp):
 
 
 def extract_probe(cu):
-    """Pull the REAL cpu_obs_args struct + observer loop from the emitted .cu and wrap
-       them in a host TU.  Only the wrapper (signature + stubs) belongs to the gate; the
+    """Pull the cpu_obs_args struct + observer loop out of the emitted .cu and wrap them
+       in a host TU.  Only the wrapper (signature + stubs) belongs to the gate; the
        struct and the loop are the artifact's, so a regression in either shows up."""
     src = open(cu).read()
     ms = re.search(r'struct (\w*cpu_obs_args) \{.*?\n\};', src, re.S)
@@ -187,7 +186,7 @@ def _compile_asm(cc, tu):
 
 
 def analyse(tu, quiet):
-    """Compile `tu' for both ISAs; return True iff EVERY loop on EVERY ISA has a
+    """Compile `tu' for both ISAs; return True iff every loop on BOTH of them has a
        per-iteration load in its body."""
     ok_all = True
     for isa, cc in TARGETS:

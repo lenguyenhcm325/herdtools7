@@ -984,10 +984,10 @@ let max_set = IntSet.max_elt
     else
       dump_test_channel_full chan t
 
-(* HetLitmus Tier-4: expose the test as device-neutral string fragments.
-   `fmt_io` mirrors lib/simpleDumper.ml so a proc's cells render exactly as in a
-   normal dump.  The proc owner of each init atom (and, downstream, of each
-   condition atom) lets the het driver pick the right column from each run. *)
+(* HetLitmus: expose the test as device-neutral string fragments.  `fmt_io`
+   mirrors lib/simpleDumper.ml so a proc's cells render exactly as in a normal
+   dump.  The proc owner of each init atom (and, downstream, of each condition
+   atom) lets the het driver pick the right column from each run. *)
   let het_cells t =
     let rec fmt_io io = match io with
       | A.Nop -> ""

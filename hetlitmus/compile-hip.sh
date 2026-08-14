@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# HetLitmus Task 8 (HIP analog): compile-check the emitted AMD HIP (.hip) litmus
-# kernels with hipcc/amdclang, cross-compiling for the MI300A ISA (gfx942).
+# Compile-check the emitted AMD HIP (.hip) litmus kernels with hipcc/amdclang,
+# cross-compiling for the MI300A ISA (gfx942).
 #
-# This is the AMD counterpart of CUDA's Task 8 (nvcc compile).  It does NOT run
-# the kernels: this box has no AMD GPU (no /dev/kfd), so execution stays
-# MI300A-gated (Task 9).  A clean compile proves the __hip_atomic_* / scope
-# lowering is valid for the target ISA; it does NOT validate memory-model
-# behaviour.  amdclang++ (HIP-Clang) accepts the __hip_atomic_* builtins the
-# emitter produces; nvcc does not, so the HIP-Clang stack is required here (not
-# HIP-over-CUDA).  See litmus/HipLang.ml + hetlitmus/docs/hip-emitter.md.
+# Compile only, and no kernel is launched: a clean compile says the
+# __hip_atomic_* / scope lowering is valid for the target ISA and says NOTHING
+# about memory-model behaviour, which needs an AMD device.  amdclang++
+# (HIP-Clang) accepts the __hip_atomic_* builtins the emitter produces and nvcc
+# does not, so the HIP-Clang stack is required here rather than HIP-over-CUDA.
+# See litmus/HipLang.ml + hetlitmus/docs/hip-emitter.md.
 #
 # Usage:  ./compile-hip.sh [INDIR] [OUTDIR]
 #   INDIR   dir of emitted .hip   (default ./hip-out)

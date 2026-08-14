@@ -1,24 +1,32 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
 (*                                                                          *)
-(* hetCpuFront: the per-CPU-ISA column frontend the het emitter is closed   *)
-(* over (HetEmit.Make's CpuF parameter).  One module per supported CPU ISA, *)
-(* holding the ISA label, the host/cross-compilation tokens, the            *)
-(* single-column sub-parser and the two tagged-body hooks.  Nothing here    *)
-(* mentions the Arch_litmus/Compile_litmus modules: the litmus7 `Het'       *)
-(* dispatch arm pairs one of these with the matching module chain after     *)
-(* HetArch.scan_cpu_isa has named the ISA.                                  *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
-(* NO MACHINE LIVES HERE.  Which silicon a harness may name belongs to the  *)
-(* (CPU ISA x GPU dialect) PAIR (litmus/hetMachine.ml); these modules       *)
-(* contribute [isa_name], one coordinate of that key.  The positive-control *)
-(* map IS theirs: mu(T) is a weakening on a STRENGTH LATTICE, and the       *)
-(* lattice is the CPU column's.                                            *)
-(*                                                                          *)
-(* This software is governed by the CeCILL-B license under French law.       *)
+(* This software is governed by the CeCILL-B license under French law and   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
+
+(* HetLitmus: the per-CPU-ISA column frontend the het emitter is closed over
+   (HetEmit.Make's CpuF parameter).  One module per supported CPU ISA, holding
+   the ISA label, the host/cross-compilation tokens, the single-column
+   sub-parser and the two tagged-body hooks.  Nothing here mentions the
+   Arch_litmus/Compile_litmus modules: the litmus7 `Het' dispatch arm pairs one
+   of these with the matching module chain after HetArch.scan_cpu_isa has named
+   the ISA.
+
+   No machine lives here.  Which silicon a harness may name belongs to the
+   (CPU ISA x GPU dialect) pair (litmus/hetMachine.ml); these modules
+   contribute [isa_name], one coordinate of that key.  The positive-control
+   map is theirs, because mu(T) is a weakening on a strength lattice and the
+   lattice is the CPU column's. *)
 
 (* Only [debug] is needed: the column sub-parsers drive an ISA lexer, and
    LexUtils.Config is that lexer's whole configuration. *)
@@ -34,7 +42,8 @@ module AArch64 (O:Config) = struct
   let body_module = "hetCpuBodyA64"
   let host_macro = "__aarch64__"
   let cross = Some ("aarch64-linux-gnu","gnu11")
-  (* The AArch64 strength lattice's own map (positive-control.md). *)
+  (* The AArch64 strength lattice's own map
+     (hetlitmus/docs/positive-control.md sec 3). *)
   let control_map_csv = "control-map.csv"
 
   let parse_column p txt =
@@ -51,8 +60,8 @@ module AArch64 (O:Config) = struct
           "HetLitmus: P%d (cpu, AArch64) lexing error: %s (in column %S)"
           p msg txt)
 
-  (* B3: real tagged AArch64 body.  Cpu.pseudo = AArch64Base.pseudo here, so
-     HetCpuBodyA64 matches directly after peeling. *)
+  (* Cpu.pseudo = AArch64Base.pseudo here, so HetCpuBodyA64 matches directly
+     after peeling. *)
   let het_analyze ~reg_env pseudos =
     HetCpuBodyA64.analyze ~reg_env (HetCpuBodyA64.instrs_of_code pseudos)
   let het_emit_body ch ~prefix ~proc ~k ~store_mu ~load_buf
@@ -70,8 +79,9 @@ module X86_64 (O:Config) = struct
   let host_macro = "__x86_64__"
   let cross = None
   (* The x86 lattice loses the AArch64 lattice's middle rung, so a mu(T) chosen
-     on that one is not a weakening here: this lane needs its own map (memo
-     PORT2-R2 7.D11).  The file keeps its AMD-era name. *)
+     on that one is not a weakening here: this lane derives its own map
+     (hetlitmus/docs/positive-control.md sec 3).  The file keeps its AMD-era
+     name. *)
   let control_map_csv = "control-map-amd.csv"
 
   let parse_column p txt =
@@ -88,11 +98,10 @@ module X86_64 (O:Config) = struct
           "HetLitmus: P%d (cpu, X86_64) lexing error: %s (in column %S)"
           p msg txt)
 
-  (* B3: real tagged x86-64 body (P2b).  Cpu.pseudo = X86_64Base.pseudo here,
-     so HetCpuBodyX86 matches directly after peeling.  Was a compile-only stub
-     until 2026-08-03: an x86 CPU proc emitted a no-op, which both untested the
-     CPU thread and left 372 of the 411 x86 renderings unemittable (the
-     condition could bind neither a read buffer nor a mu). *)
+  (* Cpu.pseudo = X86_64Base.pseudo here, so HetCpuBodyX86 matches directly
+     after peeling.  A CPU proc that emitted no body would leave the CPU thread
+     untested and most x86 renderings unemittable, because the condition could
+     bind neither a read buffer nor a mu. *)
   let het_analyze ~reg_env pseudos =
     HetCpuBodyX86.analyze ~reg_env (HetCpuBodyX86.instrs_of_code pseudos)
   let het_emit_body ch ~prefix ~proc ~k ~store_mu ~load_buf

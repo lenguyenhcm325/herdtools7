@@ -1,6 +1,6 @@
-Statistics-layer guard (B7; env-research/Q3-stats.md, SUPERSEDED -- it designs
-the withdrawn non-observation bound, and where it and litmus/het-runtime/
-het_verdict.h disagree the header is what ships).  What makes a "Never" readable
+Statistics-layer guard (hetlitmus/docs/00-environment-design.md sec 3.7; where
+that design and litmus/het-runtime/het_verdict.h disagree, the header is what
+ships).  What makes a "Never" readable
 at all is the per-window sub-tallies of the control channel: they are the only
 view of the count stream INSIDE a run, so without them the stationarity precheck
 has nothing to test and a P_rep would be reported across a rate change nobody
@@ -54,7 +54,7 @@ exactly one stopping policy.  The rule stays PURE, so the driver reads its two
 policy knobs and PASSES them; a rule that read its own environment could not be
 unit-tested from synthetic records.  The record also reports the window
 resolution the run realised: HET_NWIN is swept, and a record scored at one nwin
-must never be pooled with another (B7).
+must never be pooled with another.
 
   $ grep -c 'het_campaign_should_stop(_recs, _nrec, _runs_budget, _rate_mode, _confirm_runs)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
@@ -95,10 +95,10 @@ above.
 THE DEGENERACY GUARD MUST NOT GO CONSTANT ON THE STORE-ONLY SHAPES.
 distinct_decoded_iters and skew_stddev are both written from the same
 synchrony-decode block, so a test with no synchrony read leaves both at their
-memset zero.  11 of the 411 -- every 2+2W, which is store-only and has no reader
-at all -- sit in exactly that position, and a guard reading `skew_stddev == 0' as
-"the decoder is degenerate" would condemn every cell of all 22 forever, making
-k_eff constant 0 and P_rep a constant 1 - e^0 = 0 on them.  0 means NOT MEASURED,
+memset zero.  Every 2+2W -- store-only, with no reader at all -- sits in exactly
+that position, and a guard reading `skew_stddev == 0' as "the decoder is
+degenerate" would condemn every one of their cells forever, making k_eff constant
+0 and P_rep a constant 1 - e^0 = 0 on them.  0 means NOT MEASURED,
 never "measured zero", so the emitter tags which channel each test actually has
 and the guard switches channel rather than firing blind.
 

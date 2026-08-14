@@ -403,9 +403,9 @@ end = struct
      back-end dialect registry and `-gpu-target'), hetEmit.ml (the compound
      CPU+GPU emitter), hetGpuOnly.ml (the `LISA arm), hetCpuFront.ml (the
      per-CPU-ISA column frontend).  What remains here is the seam: HetOpts is
-     the slice of Top's scope they need, and the `LISA / `Het dispatch arms
-     below close their functors over it, the splitter and Make's
-     compiled-CPU-code extractor, so none of those files depends on this one. *)
+     the slice of Top's scope they need, over which the dispatch arms below
+     close their functors -- the `Het one also over the splitter and Make's
+     compiled-CPU-code extractor -- so none of them depends on this file. *)
   module HetOpts = struct
     let verbose = OT.verbose
     let nocatch = OT.nocatch
@@ -626,15 +626,11 @@ end = struct
              let module G = HetGpuOnly.Make(Cfg)(HetOpts)(Tar) in
              G.compile
           | `Het ->
-             (* HetLitmus Phase A: the per-column device tag NAMES the CPU ISA.
-                Pre-scan the program-section header to pick the ONE CPU ISA the
-                test's CPU columns share, instantiate the matching CPU module
-                chain (Arch_litmus + Compile_litmus + a HetCpuFront column
-                frontend), and drive the shared HetEmit functor.  The GPU side
-                stays LISA/Bell -> CudaLang/HipLang; HetEmit renders the single
-                dialect `-gpu-target' names, so the harness directory carries
-                <t>.cu or <t>.hip, never both.  See
-                hetlitmus/docs/het-emission.md. *)
+             (* HetArch.scan_cpu_isa names the CPU ISA before any parser
+                exists; this arm pairs it with the matching module chain
+                (Arch_litmus + Compile_litmus + a HetCpuFront column frontend)
+                and drives the shared HetEmit functor over it.  The GPU side
+                stays LISA/Bell.  See hetlitmus/docs/het-emission.md. *)
              (fun hash_env name in_chan out_chan splitted ->
                try
                  let prog_text = HetArch.prog_section_text splitted name in
@@ -690,10 +686,8 @@ end = struct
                           end) in
                       H.run in
                  run hash_env name in_chan out_chan splitted
-               (* FAIL-CLOSED: this arm owns the pre-parse ISA scan, so a het
-                  test that dies before HetEmit.run is entered must refuse
-                  loudly here too (HetArch.refused explains why exit 0 is
-                  wrong for a het test). *)
+               (* This arm owns the pre-parse ISA scan, so it is a het emission
+                  boundary and refuses through HetArch.refused. *)
                with e ->
                  if OT.nocatch then raise e ;
                  HetArch.refused "isa-scan" name e)

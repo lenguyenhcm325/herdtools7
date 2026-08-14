@@ -120,6 +120,19 @@ stays because the gate **asserts that identity**, so a hand-edit that moves one 
 the other is caught instead of silently splitting the co-run choice from the documented
 one.
 
+**The x86 lane derives its own map; it does not translate the AArch64 one.** The
+per-side strength lattice `mu(T)` is weakened on is CPU-ISA vocabulary. On AArch64 it
+has a middle rung — `STLR`/`LDAPR`/`LDAR`/`DMB.ST`/`DMB.LD` are *partial* orderings
+above plain accesses and below `DMB SY`. On x86 that rung collapses: those images are
+all a plain `MOV`, so the only CPU op that orders a pair is `MFENCE`, and `mu(T)` for an
+`MFENCE`-bearing test is the **`MFENCE`-deleted** test rather than an `acqrel` one. A
+candidate that merely moves within the collapsed set is not a weakening at all — the
+harness would co-run the identical program and the "control" would vouch for nothing —
+so `controlmap.py --lattice x86` refuses it and emits a separate file,
+`tests/het/control-map-amd.csv`. Which map a lane reads is therefore a property of its
+**CPU column**, named by that column's frontend (`litmus/hetCpuFront.ml`); the file
+keeps its AMD-era name.
+
 ## 4. The decision rule (`het_verdict.h`)
 
 **One axis, four outcomes: was the weak outcome seen, and if not, what vouches for the
@@ -291,6 +304,70 @@ different CTAs). It fires with **no CPU participation and without crossing C2C**
 detected/not-detected). The het control/canary hit-rate is **hardware-only: measure it,
 never assume it.**
 
+### The three reporting tiers (`het_confidence`)
+
+What a null may be *claimed* as is fixed by the shape of the test's condition,
+classified in `litmus/hetCond.ml` and stamped beside the `het_obs_record` it labels:
+
+- **`CONF_ROBUST`** — the condition carries no `Location_global` atom, so every atom is
+  a register read the recovery scan decodes on its own (every shape but 2+2W, R and S).
+- **`CONF_ADVISORY`** — at least one register atom and exactly one ws-location (R, S).
+- **`CONF_EXPLORATORY`** — register-free, every atom a `Location_global` (2+2W), and any
+  other unanticipated shape: the lowest-confidence floor.
+
+`perpetual_class` computes the **mechanism** tier and stops there. The **reporting** tier
+demotes exactly one case. R and S are mechanically alike (one ws-location each), but only
+S's read is an `rf` read: it observes a real writer's tag, which decodes a synchrony
+point. R's only read is the fr-against-init read, which in the weak case returns the init
+value, whose tag is 0 — no writer, no iteration, no synchrony. R must therefore borrow
+both its synchrony point and its ws edge from the fragile observer, exactly as 2+2W does,
+so its full-cycle result is reported at the 2+2W floor. `reporting_class ~has_rf_anchor`
+applies that demotion and must not be folded back into `perpetual_class`; the emitter
+supplies `has_rf_anchor`, because `hetCond` never sees the program.
+
+### A ws-location is not a histogram column
+
+A coherence-final `[ell]=v` atom is decided by the per-run observer `ws` witness and
+reported through `HetObs` / `HetVerdict`, never as a number in the outcome histogram: no
+run measures one, so the slot carries no bits to print and the emitted driver prints `?`
+there. `verify/histcheck.py` phase 2 gates that in both directions — every register slot
+prints numerically, every location slot prints `?`.
+
+### The CPU-only set (`tests/het/generate-d10.sh`)
+
+Six shapes — MP, LB, SB, 2+2W, R, IRIW — rendered as het tests whose *every* proc is
+tagged `cpu`, so they run as pure x86 tests **on the shared allocation** instead of on
+litmus7's own. A plain litmus7 X86 run would allocate `x` and `y` itself, and the question
+this set asks is about *that* allocation; the het harness reaches it through
+`gd_alloc_shared` (`HET_ALLOC` / `hipMallocManaged`), runs the same stress and prints the
+same verdict machinery.
+
+* **`SB` and `R` must be observed** — the store buffer is live — which doubles as the
+  write-back probe: a CPU-only sighting on the shared allocation rules the uncacheable
+  mapping out ([APM] Table 7-2). `MP`, `LB`, `2+2W` and `IRIW` must never be.
+* **A sighting of a shape x86-TSO forbids is a finding about this host's TSO conformance,
+  never a refutation of the compound model:** on an all-CPU cycle no compound composition
+  is under test ([Goens23] §4.6). That disambiguation is wired into the verdict rather
+  than left to the reader — `het_verdict.h` keys those sentences off `_rec.cpu_only`,
+  which the emitter sets when every proc of the test is a CPU proc, so nothing depends on
+  the file name saying `cpuonly`.
+* **Every row is at the lattice floor** (`Mu = none`): an x86 rendering of these cycles is
+  plain `MOV`s with no fence to drop, so no weakening exists and the Layer-B canary is the
+  whole vouch. That canary is `SB-cpuonly-x86_64` rather than the het `MP` the main corpus
+  uses — what a null here needs vouched for is *the shared allocation's* store buffer, and
+  only a CPU-only Allowed shape on that allocation vouches for it; the het canary would
+  vouch for a C2C path these tests never take.
+
+**The `2+2W` row is unresolved and must not be read as a TSO violation.** It is the one
+store-only shape in the set: with no reader, its cycle is reconstructed from an observer,
+and the emitted `ws` scans test the per-store tag `K*(_n+1)+mu` **modulo** `T_K_TAG` — the
+store id — never its quotient, the iteration (the quotient is read only by the
+observer-uniqueness blocks beside them). Under the perpetual loop the witness therefore
+matches "`mu_a` seen before `mu_b`" *across* iterations, where the coherence order it is
+meant to witness is defined only *within* one, so a sighting is equally consistent with
+the detector over-reporting and with a real property of the allocation. The four shapes
+with a real x86 reader close their cycle through a load, and none of this reaches them.
+
 ## 7. Hardware-only (do not settle these in code)
 
 - The het control/canary **hit-rate** — unpublished.
@@ -380,6 +457,13 @@ invisible.
 The canary is matched on **direction**, not only on shape: a `cg`-cut row gets the `cg`
 canary (335 rows today) and a `gc`-cut row the `gc` one (74), because a canary that crosses
 the interconnect the other way round would vouch for traffic the test never generates.
+
+On **37 of the 411 rows** of either lattice (counted over `control-map.csv` and
+`control-map-amd.csv`: rows whose `Mu` is neither `none` nor `self` and equals their
+`Canary`), `mu(T)` *is* the canary shape. There the two co-running instances run the same
+program, so preferring the `mu` channel for the stationarity precheck buys a **second draw
+of one channel**, not a shape-match — and nothing in `het_verdict.h` reads the two as
+different shapes.
 
 ### The two tests that are their own canary
 

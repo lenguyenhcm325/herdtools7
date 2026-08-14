@@ -89,6 +89,17 @@ pthread-shaped, has no slot for a co-running kernel, and its per-cell CPU↔GPU 
 order and hangs*. No prior work routes GPU/het through litmus7's CPU harness (Bagchi *stitches*).
 *[The `ASMLang.dump_fun` item is superseded — see §7; the rest of the reuse list stands.]*
 
+*[Sourcing note on the sentence above, added when the payload comments were keyed to
+`REFERENCES.md`. The two halves of "masks the tested order and hangs" have different
+provenance and must not be cited together. The **hang** is sourced: [Srivastava24 §4.1]
+reports a per-iteration, both-sided CPU↔GPU spin barrier getting stuck for good after 2–3
+iterations — but on two **integrated** parts (an AMD Ryzen 7 5700G and an Intel i7-12700K
+with their integrated GPUs), and the thesis reads it as CPU-GPU shared-memory visibility
+failing, not as a property of per-trial barriers as such. The **masking** half appears
+nowhere in that source: it is this project's own reasoning, that a barrier between the
+tested accesses adds ordering the test does not have. `het_stress.h`'s `het_spin` banner
+states the two separately for that reason.]*
+
 ### 3.2 Memory & allocation — per-target knob  [→ `Q8-allocation.md`]
 **The allocator selects the property under test.** Emit a per-target allocator:
 - **GH200 → system `malloc()`** for the shared vars *and the barrier* (cache-line CHI coherence via ATS —
@@ -149,6 +160,16 @@ needs — so it must be paired with §3.6.
   no link-directed component → this is a modest, honest addition. **"More effective" is an inference**
   (Fusco measured bandwidth, not weak-behaviour yield) → hardware-only. MI300A analogue = contention on the
   single HBM pool, not placement.
+- **What Bagchi actually did, verbatim** (§4.2): *"Each was executed millions of times with memory
+  stressing [21] on both devices."* Per-device stress on both devices; no page placement, no
+  `cudaMemAdvise`, no link-directed noise anywhere in the paper (its only use of "placement" is thread
+  placement, §4.3).
+- **The inference is also *confounded*, and the claim is bounded accordingly.** Placement and noise slow
+  the whole loop, so there are fewer rendezvous per second, and `sightings = yield × rate`. What the
+  interconnect lever supports is that it is **additive** with per-device stress and is the lever most
+  **specific** to the cross-device window — never that it beats per-device stress. Do not upgrade that
+  without hardware evidence. The same bound is restated at the head of `het_cpu_stress.h`, which is the
+  copy that travels to a GPU box.
 
 ### 3.7 What a non-observation reports — no rate, no probability  [→ `Q3-stats.md`]
 **A null carries no rate and no probability.** The harness reports that the outcome was **not observed** in
@@ -195,6 +216,10 @@ schedule against: a sighting stops it once it reproduces in `HET_CORROB_RUNS = 2
 budget is spent. `HET_RATE=1` turns the sighting stop off, so a row that fires yields a rate instead of a
 first sighting. `hetlitmus/campaign.py` applies the same rule across invocations, each with a fresh seed
 base — replaying a seed adds no new phase draw and is not a replicate.
+
+**The scheduler has no parallelism axis, deliberately.** Running `H > 1` het pairs at once is real emitter
+work, and the pairs would share the one interconnect under test, so the gain is not the pair count. The
+policy levers stay `--budget-runs`, `--confirm-runs` and `--rate`.
 
 **Shipped (DR1 — `het_verdict.h` is normative).** The interleaving-liveness gate is **channel-aware**:
 reader shapes use `interleavings_detected`, the store-only (2+2W) shapes — which have no reader — use

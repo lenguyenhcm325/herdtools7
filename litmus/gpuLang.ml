@@ -1,22 +1,30 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
 (*                                                                          *)
-(* gpuLang: everything the CUDA (.cu) and HIP (.hip) litmus renders share.  *)
-(* Both consume the *parsed* Bell program (BellBase.pseudo, ints), not the  *)
-(* litmus7 Out template: the template flattens a scoped load/store into an  *)
-(* opaque `memo' string, losing the structured order+scope annotation.      *)
-(* Working on BellBase.Pld/Pst directly keeps the scope/order mapping       *)
-(* exact.  The annotation vocabulary, the BellBase accessors, the launch    *)
-(* layout and the whole-test driver live here once; a [t] dialect record    *)
-(* carries the per-instruction lowering and the differing emitted tokens,   *)
-(* so CudaLang and HipLang are thin instantiations (Route B of the          *)
-(* HetLitmus frontend, memory hetlitmus-route-b-frontend).                  *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
 (* This software is governed by the CeCILL-B license under French law and   *)
-(* abiding by the rules of distribution of free software.                   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
+
+(* HetLitmus: everything the CUDA (.cu) and HIP (.hip) litmus renders share.
+   Both consume the *parsed* Bell program (BellBase.pseudo, ints), not the
+   litmus7 Out template: the template flattens a scoped load/store into an
+   opaque `memo' string, losing the structured order+scope annotation, so
+   matching BellBase.Pld/Pst directly is what keeps the scope/order mapping
+   exact.  The annotation vocabulary, the BellBase accessors, the launch
+   layout and the whole-test driver live here once; a [t] dialect record
+   carries the per-instruction lowering and the differing emitted tokens, so
+   CudaLang and HipLang are thin instantiations.  The GPU frontend is the
+   Bell/LISA scoped IR rather than a native GPU architecture; design:
+   hetlitmus/docs/cuda-emitter.md. *)
 
 open Printf
 
@@ -173,20 +181,20 @@ let cond_to_string cond =
   ConstrGen.constraints_to_string pp_atom cond
 
 (* ------------------------------------------------------------------ *)
-(* HetLitmus B3: store-tagging context (K*_n + mu).                    *)
+(* Store-tagging context (K*iter + mu).                                *)
 (* ------------------------------------------------------------------ *)
 
-(* [~tag:(Some (iter,k,mu))] selects the HetLitmus tagged/uint64 path: a
-   store's value becomes the per-iteration tag (uint64_t)(K*iter + mu), mu
-   resolved per store node by the caller.  [~tag:None] is the standalone
-   GPU-only path (int).  A plain tuple rather than a record, so hetEmit's one
-   gd_dump_instr field unifies across both dialects.  See
-   env-research/decisions/B3-decision.md. *)
+(* [~tag:(Some (iter,k,mu))] selects the tagged/uint64 path: a store's value
+   becomes the per-iteration tag (uint64_t)(K*iter + mu), mu resolved per
+   store node by the caller.  [~tag:None] is the standalone GPU-only path
+   (int).  A plain tuple rather than a record, so hetEmit's one gd_dump_instr
+   field unifies across both dialects.  Design:
+   hetlitmus/docs/het-emission.md. *)
 type tag_ctx = (string * int * int) option
 
 (* The tagged store value, computed in C: (uint64_t)K*iter + mu.  K is cast
-   first so iter is promoted to 64-bit before the multiply (no int overflow at
-   large N -- B3-decision Decision 2). *)
+   first so iter is promoted to 64-bit before the multiply, which is what
+   keeps the tag from overflowing at a large window. *)
 let tagged_value iter k mu = sprintf "((uint64_t)%d * %s + %d)" k iter mu
 
 (* ------------------------------------------------------------------ *)

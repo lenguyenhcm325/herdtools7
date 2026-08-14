@@ -1,31 +1,38 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus: the positive-control map.  See hetControlMap.mli for the      *)
-(* contract and hetlitmus/docs/positive-control.md for the design.          *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
+(*                                                                          *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
+(*                                                                          *)
+(* This software is governed by the CeCILL-B license under French law and   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
+
+(* HetLitmus: the positive-control map.  See hetControlMap.mli for the
+   contract and hetlitmus/docs/positive-control.md for the design. *)
 
 (* The harness co-runs mu(T), T's structural twin at the lattice floor, so that
    `target_count = 0' means "not observed on a harness that demonstrably
-   produced an interleaving of this shape" rather than nothing at all.
-
-   mu(T) is looked up in the control map beside the input .litmus, derived from
-   the corpus sources by hetlitmus/verify/controlmap.py (gated by `make
-   hetlitmus-controlmap').  It is not recomputed here at all: the two non-grid
-   reference tests have a floor sibling no rewrite of their name produces, and
-   which rows have one is a fact about the corpus, not about the spelling
-   (positive-control.md sec 3).
-
-   With no map no control is named, control_compiled_in stays 0, and
-   het_verdict() returns COLD and says so; it never quietly proceeds. *)
+   produced an interleaving of this shape" rather than nothing at all.  mu(T)
+   is read from the control map beside the input .litmus, which
+   hetlitmus/verify/controlmap.py derives from the corpus sources.  It is not
+   recomputed here, because which rows have a floor sibling, and what that
+   sibling is called, are facts about the corpus rather than about the name
+   (hetlitmus/docs/positive-control.md sec 3). *)
 
 type t = (string, string * string) Hashtbl.t
 
-(* The schema, asserted verbatim.  The retired 8-column map put a verdict in
-   field 2 and its canary in field 8; read with these column meanings its Mu
-   column would be a verdict string and its canary a rule fragment, and every
-   harness would co-run a test named "Allowed".  So the header is a gate, not a
-   comment: a file that does not open with this line is refused. *)
+(* The schema, asserted verbatim.  A file carrying the legacy 8-column schema
+   binds Mu to a verdict string and the canary to a rule fragment under these
+   column meanings, so every harness would co-run a test named "Allowed".  The
+   header is therefore a gate, not a comment: a file that does not open with
+   this line is refused rather than read. *)
 let header = "Test,Mu,MuRule,MuAlt,MuRelaxed,Canary"
 
 let read_lines ch =

@@ -4,23 +4,25 @@
 It does not check that the tuner RUNS -- structure is what every other gate checks, and
 a tuner that always returned its seed would pass those while searching nothing.  It
 checks that the search finds the right answer, refuses to answer when there is none, and
-that removing any of Q7 5.2's three transfer fixes breaks it.
+that removing any of the three adaptations to a drifting, overdispersed objective
+breaks it.
 
   PHASE 1  it finds a known optimum: given configs with distinct true means, the winner
            is the arg-max, and the win is by separation rather than by budget.
   PHASE 2  no phantom winner: on a constant objective it crowns nobody.
-  PHASE 3  the drift bite (Q7 5.2 C2).  Under a rising baseline the sequential order
-           (Kirkham Fig.10) picks the LATE config while SER^3 picks the true best, so
-           the two schedules must disagree in those fixed directions.
-  PHASE 4  the overdispersion bite (Q7 5.2 A).  On identical seeded bout streams the
-           Bernoulli CI eliminates the true optimum far more often than empirical-
-           Bernstein, which must both retain it and still crown it.
-  PHASE 5  the structural split (Q7 traps 1/2): thousands of draws emit only experiment
-           knobs, and the config writer and reader refuse anything else.
-  PHASE 6  the in-loop KS gate (Q7 5.2 C1): a non-stationary bout is excluded from a
+  PHASE 3  the drift bite.  Under a rising baseline the sequential order
+           [Kirkham20 Fig.10] picks the LATE config while the shuffled one
+           [SER3 Alg.1] picks the true best, so the two must disagree in those
+           directions.
+  PHASE 4  the overdispersion bite.  On identical seeded bout streams the Bernoulli
+           interval eliminates the true optimum far more often than empirical-Bernstein,
+           which must both retain it and still crown it.
+  PHASE 5  the structural split: thousands of draws emit experiment knobs only, and the
+           config writer and reader refuse anything else.
+  PHASE 6  the in-loop stationarity gate: a non-stationary bout is excluded from a
            config's rate estimate, and an all-invalid arm is the cold floor -- void,
            not a low rate.
-  PHASE 7  the factored search over the REAL knob spaces: the warm-start seed is a floor
+  PHASE 7  the factored search over the real knob spaces: the warm-start seed is a floor
            the search never regresses below, and it strictly beats the seed in a
            majority of trials.
 
@@ -47,11 +49,11 @@ TUNE_PY = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tune.p
 
 
 # ===========================================================================
-# The bite tool: a SCRATCH COPY of tune.py with a fragment replaced, imported under its
+# The bite tool: a scratch copy of tune.py with a fragment replaced, imported under its
 # own name.  Every phase below is written as a property parameterized on the tune module
 # (or on a race callable), so a bite re-runs the phase's own check against a broken
-# tuner instead of re-deriving it.  tune.py itself is never written -- the shell gates
-# corrupt copies the same way (l0_tokens.sh).
+# tuner instead of re-deriving it.  tune.py itself is NEVER written -- the shell gates
+# corrupt copies the same way (hetlitmus/verify/l0_tokens.sh).
 # ===========================================================================
 _SCRATCH = []
 _NBITE = [0]
@@ -90,9 +92,9 @@ def _patched_tune(label, *subs):
 # The synthetic objective.  A config carries a hidden "_id"; the objective maps id ->
 # true mean, optionally adds a wall-time drift baseline, and draws each bout as a
 # latent rate plus a within-bout binomial -- doubly stochastic, so od_amp>0 makes the
-# counts OVERDISPERSED (Fano>1).  weight_deflate makes the bout report fewer effective
-# samples than cells drawn, while raw_n stays the full cell count the Bernoulli CI
-# trusts, so the two CI rules divide by different Q (phase 4).
+# counts overdispersed (Fano>1).  weight_deflate makes the bout report fewer effective
+# samples than cells drawn, while raw_n stays the full cell count the Bernoulli interval
+# trusts, so the two rules divide by different Q (phase 4).
 # ===========================================================================
 class Synth(object):
     def __init__(self, means, cells=16, od_amp=0.0, drift=0.0, weight_deflate=1.0,
@@ -162,12 +164,12 @@ def _winner_id(res):
 
 def _simulate_elim(means, seed, rounds, cells, od_amp, deflate, use_bernoulli,
                    min_rounds=3, delta=0.05, mod=tune):
-    """Drive a race by hand in a fixed round-robin order, so the ONLY variable is the CI
-    rule, and track cumulative elimination: once a config's upper bound falls below the
-    best's lower bound it is dropped for good (Kirkham Fig.10's early-stop is permanent).
-    Both rules see the identical bout stream (same seed => same Synth draws).  `mod`
-    selects the tune module, so a bite can re-run this against a patched CI rule.
-    Returns (eliminated_ids, crowned_id_or_None)."""
+    """Drive a race by hand in a fixed round-robin order, so the ONLY variable is the
+    interval rule, and track cumulative elimination: once a config's upper bound falls
+    below the best's lower bound it is dropped for good, the early stop of
+    [Kirkham20 Fig.10] being permanent.  Both rules see the identical bout stream (same
+    seed => same Synth draws).  `mod` selects the tune module, so a bite can re-run this
+    against a patched interval rule.  Returns (eliminated_ids, crowned_id_or_None)."""
     pm = ParkMiller(seed)
     obj = Synth(means, cells=cells, od_amp=od_amp, weight_deflate=deflate)
     arms = {c: mod.Arm({"_id": c}, "c%d" % c) for c in means}
@@ -248,7 +250,7 @@ def phase3():
     print("\n===== PHASE 3: THE DRIFT BITE -- SER^3 de-confounds a rising baseline =====")
     # id 0 = true best (mean 0.60), id 1 = decoy (0.40), and the drift rises with the
     # global bout counter.  Sequential runs id 0 early/cold and id 1 late/hot, so the
-    # decoy looks better; SER^3 interleaves, so both see the same mean drift.
+    # decoy looks better; the shuffled schedule interleaves, so both see the same drift.
     means = {0: 0.60, 1: 0.40}
     ok = True
     seq_late = 0     # sequential picks the LATE config (id 1) = the confound
@@ -265,7 +267,7 @@ def phase3():
     print("  sequential picked the LATE decoy (id 1): %d/20  <- the drift confound" % seq_late)
     print("  SER^3      picked the TRUE best (id 0): %d/20  <- the fix" % ser_true)
     # The bite is the disagreement, in those directions: if sequential also picked id 0
-    # the drift never bit, and SER^3 would be demonstrating nothing.
+    # the drift never bit, and the shuffled schedule would be demonstrating nothing.
     if seq_late < 15:
         print("  *** the drift did not confound the SEQUENTIAL order -- the fixture is inert, "
               "so SER^3 demonstrates nothing (VACUOUS)")
@@ -280,19 +282,20 @@ def phase3():
 
 # --------------------------------------------------------------------------- PHASE 4
 # id 0 = true best (mean 0.55), id 1 = decoy (0.45), under strong between-bout
-# overdispersion.  Bernoulli's W(1-W)/Q_raw CI is far too narrow, so the decoy's transient
-# early lead eliminates the true best FOR GOOD (the early-stop is permanent);
+# overdispersion.  The Bernoulli W(1-W)/Q_raw interval is far too narrow, so the decoy's
+# transient early lead eliminates the true best FOR GOOD (the early stop is permanent);
 # empirical-Bernstein's empirical variance and deflated effective Q keep the radius
-# honest.  The fixture point was picked by sweeping (OD, DEFL, CELLS, R) for a contrast
-# that holds across seeds, not from one lucky seed.
+# honest.  The fixture point holds the contrast across seeds rather than on one: a
+# single-seed point would move with any change to the draw order.
 P4_MEANS = {0: 0.55, 1: 0.45}
 P4_OD, P4_DEFL, P4_CELLS, P4_R, P4_SEEDS = 0.40, 4.0, 24, 120, 40
 
 
 def _od_contrast(mod=tune, seeds=P4_SEEDS):
-    """PHASE 4's sweep: over identical bout streams, how often each CI rule eliminates the
-    true optimum (id 0), and how often empirical-Bernstein still crowns it.  `mod` selects
-    the tune module, so a bite re-runs the sweep against a patched CI rule."""
+    """PHASE 4's sweep: over identical bout streams, how often each interval rule
+    eliminates the true optimum (id 0), and how often empirical-Bernstein still crowns
+    it.  `mod` selects the tune module, so a bite re-runs the sweep against a patched
+    interval rule."""
     eb_elim = be_elim = eb_crown = 0
     for s in range(seeds):
         e_eb, w_eb = _simulate_elim(P4_MEANS, s, P4_R, P4_CELLS, P4_OD, P4_DEFL,
@@ -310,8 +313,8 @@ def _od_contrast(mod=tune, seeds=P4_SEEDS):
 
 def _od_verdict(counts, emit):
     """PHASE 4's three assertions over an `_od_contrast` result; returns the tags that
-    failed.  Bernoulli must eliminate the true optimum materially more often than EB --
-    equal counts would leave Q7 5.2 A's central claim unproven in our own code."""
+    failed.  Bernoulli must eliminate the true optimum materially more often than
+    empirical-Bernstein -- equal counts leave the reason for the swap unproven here."""
     eb_elim, be_elim, eb_crown = counts
     bad = []
     if be_elim - eb_elim < 8:
@@ -352,10 +355,10 @@ def phase4():
 
 # --------------------------------------------------------------------------- PHASE 5
 def _split_property(mod, emit):
-    """PHASE 5(a)+(b): the whitelist is disjoint from the never-tune sets, and thousands of
-    draws from the REAL sampler emit whitelisted knobs only.  Parameterized on the tune
-    module, so a bite runs the identical property against a corrupted sampler or a leaking
-    whitelist.  Returns (failing tags, distinct knobs drawn)."""
+    """PHASE 5(a)+(b): the whitelist is disjoint from the never-tune sets, and thousands
+    of draws from the real sampler emit whitelisted knobs ONLY.  Parameterized on the
+    tune module, so a bite runs the identical property against a corrupted sampler or a
+    leaking whitelist.  Returns (failing tags, distinct knobs drawn)."""
     bad = []
     wl = mod.whitelisted_knobs()
     never = mod.INSTRUMENT_KNOBS | mod.DETECTOR_KNOBS
@@ -456,11 +459,12 @@ def phase6():
 
 # --------------------------------------------------------------------------- PHASE 7
 # A per-sub-search gradient: each sub-search gets one rewarded knob whose domain-max is
-# optimal (near-separable, Q7 3.2).  Two invariants -- the seed floor, since the warm-start
-# seed is always a candidate and the search must NEVER land below it; and strict
-# improvement over the seed in a majority of trials, without which the search may simply be
-# returning the seed.  Every rewarded knob must be seeded INTERIOR to its domain, or the
-# floor half of that pair holds by arithmetic rather than by search (`_seed_is_interior`).
+# optimal, the three being near-separable.  Two invariants -- the seed floor, since the
+# warm-start seed is always a candidate and the search must NEVER land below it; and
+# strict improvement over the seed in a majority of trials, without which the search may
+# simply be returning the seed.  Every rewarded knob has to be seeded interior to its
+# domain, or the floor half of that pair holds by arithmetic rather than by search
+# (`_seed_is_interior`).
 P7_REWARD = {"G": ("HET_BARRIER_PCT", 100.0),
              "C": ("HET_CPU_PRELOAD_PCT", 100.0),
              "I": ("HET_NOISE_CHUNK", 8192.0)}
@@ -544,8 +548,8 @@ def phase7():
 
 
 # ===========================================================================
-# --bite : corrupt the machinery and prove each guard BITES, non-vacuously.  Each bite
-# runs the PHASE's own property -- once against tune.py, once against a scratch copy with
+# --bite : corrupt the machinery and prove each guard bites, non-vacuously.  Each bite
+# runs the phase's own property -- once against tune.py, once against a scratch copy with
 # one fragment replaced -- so what goes red is the shipped check, not a restatement of it.
 # ===========================================================================
 def _quiet(_msg):
@@ -588,8 +592,9 @@ def bite():
             print("  *** the anti-phantom guard is not what stops the phantom (VACUOUS)")
             ok = False
 
-        # BITE 3 -- PHASE 4's verdict re-run against a `_radius` that ignores
-        # use_bernoulli: both arms then race on the Bernoulli CI and the contrast collapses.
+        # BITE 3 -- PHASE 4's assertions re-run against a `_radius` that ignores
+        # use_bernoulli: both arms then race on the Bernoulli interval and the contrast
+        # collapses.
         b3 = _patched_tune("_radius always Bernoulli", (
             '    return arm.bernoulli_radius() if use_bernoulli else arm.eb_radius(delta)\n',
             '    return arm.bernoulli_radius()\n'))
@@ -625,9 +630,9 @@ def bite():
             print("  BITE 4: planting an instrument knob in a whitelist trips the split "
                   "guard; removing it restores clean (non-vacuous).")
 
-        # BITE 5 -- the SAMPLER, which BITE 4 does not reach: sample_config plants a
+        # BITE 5 -- the sampler, which BITE 4 does not reach: sample_config plants a
         # detector knob in every draw while the sub-search spaces stay clean, so the
-        # import guard sees nothing and only PHASE 5's 4000-draw loop can catch it.
+        # import guard sees nothing and ONLY PHASE 5's draw loop can catch it.
         b5 = _patched_tune("sampler plants HET_WINDOW", (
             '    cfg = dict(seed_config)\n',
             '    cfg = dict(seed_config)\n    cfg["HET_WINDOW"] = 4\n'))
@@ -660,9 +665,9 @@ def bite():
                   "whitelist")
             ok = False
 
-        # BITE 7a -- the seed floor is evidence only where the reward knob is seeded
-        # INTERIOR to its domain; rewarding I on a knob seeded at its domain minimum must
-        # be rejected outright.
+        # BITE 7a -- the seed floor is evidence ONLY where the reward knob is seeded
+        # interior to its domain; rewarding I on a knob seeded at its domain minimum has
+        # to be rejected outright.
         stale = dict(P7_REWARD, I=("HET_NOISE_GPU_BLOCKS", 32.0))
         vac = [s for s in SUBSEARCH_ORDER if not _seed_is_interior(tune, s, stale[s][0])]
         live = [s for s in SUBSEARCH_ORDER

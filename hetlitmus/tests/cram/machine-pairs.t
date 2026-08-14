@@ -38,12 +38,14 @@ would stamp "the Grace half" on a machine with no Grace in it.
   #define HET_PLACE_LEVER "cudaMemAdvise"
 
 HET_ALGLAVE_ZERO_MEASURED is absent on the AMD pair (the "zero without stress"
-figure was measured on NVIDIA parts and no equivalent is published for MI300A),
+figure of [Alglave15 sec 4.3.1] was measured on NVIDIA parts and no equivalent is
+published for MI300A),
 and so is HET_PLACE_LEVER (the HIP render carries no placement code at all).  An
 absent define is the SAFE direction: het_verdict.h's default names the mechanism.
 HET_LLC_MB is not absent, because a figure IS published for this part -- 256 MB
-of MALL against Grace's 114, so the ported constant UNDER-fires the noise-buffer
-guard here and the target's own figure is the conservative reading too.
+of MALL ([Tee25 Table 1]) against Grace's 114 ([Bagchi26 Table 1]), so the ported
+constant UNDER-fires the noise-buffer guard here and the target's own figure is
+the conservative reading too.
   $ grep -E '^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|ALGLAVE_ZERO_MEASURED|PLACE_LEVER)' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   #define HET_LINK_NAME "Infinity Fabric"
   #define HET_HOST_HALF "the x86 half"

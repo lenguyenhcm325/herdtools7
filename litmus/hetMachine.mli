@@ -1,18 +1,26 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
 (*                                                                          *)
-(* hetMachine: WHICH SILICON A COMPOUND HARNESS MAY NAME.  A harness is a   *)
-(* CPU ISA and a GPU dialect, and the machine it names belongs to THE PAIR: *)
-(* an AArch64 host is a Grace only opposite a Hopper, so a dialect-keyed    *)
-(* host half would name one on the (X86_64, cuda) emission.  A pair with no *)
-(* row here names no machine and emits anyway -- the tool characterizes, so *)
-(* the render that claims least is the one that is always correct.          *)
-(* Design: hetlitmus/docs/het-emission.md.                                  *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
-(* This software is governed by the CeCILL-B license under French law.      *)
+(* This software is governed by the CeCILL-B license under French law and   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
+
+(* HetLitmus: which silicon a compound harness may name.  A harness is a CPU
+   ISA and a GPU dialect, and the machine it names belongs to the PAIR: an
+   AArch64 host is a Grace only opposite a Hopper, so a dialect-keyed host half
+   would name one on the (X86_64, cuda) emission.  A pair with no row here
+   names no machine and emits anyway -- the tool characterizes, so the render
+   that claims least is the one that is always correct.  Design:
+   hetlitmus/docs/het-emission.md. *)
 
 (* The words and figures ONE machine is entitled to have printed about it.
    Every field below reaches a reader as a #define het_verdict.h prints from,

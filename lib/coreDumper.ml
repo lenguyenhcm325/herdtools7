@@ -90,10 +90,11 @@ S with
     | locs ->
         fprintf chan "%s\n" (dump_locations locs)
     end ;
-    (* Emit the Bell scope/region/level tree (e.g. "scopes: (sys (cta P0) ...)")
-       so scoped LISA tests round-trip: herd's parser reads this body form, and
-       it is the only form it parses into tag2scope relations (the "Scopes=" info
-       field is inert metadata). Inert unless the test carries a scope tree. *)
+    (* Emit the Bell scope tree (e.g. "scopes: (sys (cta P0) ...)") and region
+       map so scoped LISA tests round-trip: herd's parser reads this body form,
+       and it is the only form it parses into tag2scope relations (the
+       "Scopes=" info field is inert metadata).  A test carrying neither emits
+       nothing. *)
     List.iter
       (function
         | MiscParser.BellExtra bi -> fprintf chan "%s" (BellInfo.pp bi)

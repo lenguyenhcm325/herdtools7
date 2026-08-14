@@ -1,28 +1,33 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
 (*                                                                          *)
-(* CudaLang: emit a CUDA C++ (.cu) litmus kernel from a parsed LISA/Bell    *)
-(* scoped test.  The CUDA half of GpuLang: this file holds the libcu++ /    *)
-(* inline-PTX lowering and the emitted CUDA tokens, GpuLang the shared      *)
-(* vocabulary, accessors, launch layout and driver.                         *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
 (* This software is governed by the CeCILL-B license under French law and   *)
-(* abiding by the rules of distribution of free software.                   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
+
+(* HetLitmus: emit a CUDA C++ (.cu) litmus kernel from a parsed LISA/Bell
+   scoped test.  The CUDA half of gpuLang: this file holds the libcu++ /
+   inline-PTX lowering and the emitted CUDA tokens; gpuLang holds the shared
+   vocabulary, the accessors, the launch layout and the whole-test driver.
+   Design: hetlitmus/docs/cuda-emitter.md. *)
 
 open Printf
 include GpuLang
 
 (* ------------------------------------------------------------------ *)
 (* Order / scope vocabulary  (.litmus annotation  ->  libcu++ token)  *)
-(* Grounded against libcu++ (NVIDIA/cccl): header <cuda/atomic>,      *)
-(*   cuda::atomic_ref<T, cuda::thread_scope_{block,device,system}>    *)
-(*   ref(lvalue); ref.store(v, cuda::memory_order_release);           *)
-(*   r = ref.load(cuda::memory_order_acquire);                        *)
-(* Scope map (gpu-only-corpus.md): cta<->block, gpu<->device,         *)
-(*   sys<->system.                                                    *)
+(* An access is a cuda::atomic_ref<T, cuda::thread_scope_*> over      *)
+(* <cuda/atomic> [CCCL]; the scope map cta<->block, gpu<->device,     *)
+(* sys<->system is stated in hetlitmus/docs/cuda-emitter.md.          *)
 (* ------------------------------------------------------------------ *)
 
 let memory_order = function
@@ -40,26 +45,20 @@ let thread_scope = function
   | s -> Warn.user_error "CudaLang: unknown scope %S" s
 
 (* ------------------------------------------------------------------ *)
-(* Inline-PTX fences.  libcu++'s cuda::atomic_thread_fence COLLAPSES an
-   acquire/release/acq_rel thread-fence to fence.acq_rel (verified in CUDA
-   12.9 cuda/std/__atomic/functions/cuda_ptx_generated.h,
-   __atomic_thread_fence_cuda), losing the release-vs-acquire distinction.
-   To keep fences faithful to the .litmus annotation we emit them as inline
-   PTX at every scope:
-     fence.{acquire,release,acq_rel,sc}.{cta,gpu,sys};
-   PTX availability (NVIDIA PTX ISA; cross-checked against cccl
-   __ptx/instructions/generated/fence.h):
-     - fence.{acq_rel,sc}.{cta,gpu,sys} : PTX ISA 6.0, SM_70
-     - fence.{acquire,release}.<any>    : PTX ISA 8.6, SM_90
-   fence.acquire/fence.release therefore need a ptxas that implements PTX ISA
-   8.6 -- a toolkit floor, not an absence in the ISA.  nvcc-verified on CUDA
-   12.9 with `nvcc -std=c++17 -arch=sm_90'. *)
+(* Inline-PTX fences.  cuda::atomic_thread_fence maps acquire, release and
+   acq_rel alike onto fence.<scope>.acq_rel
+   [CCCL "cuda/std/__atomic/functions/cuda_ptx_generated.h"], which loses the
+   release-vs-acquire distinction the annotation carries, so a fence is
+   emitted as inline PTX instead, at every scope.  Availability
+   [CCCL "cuda/__ptx/instructions/generated/fence.h"]: fence.{acq_rel,sc}
+   from PTX ISA 6.0 / SM_70, fence.{acquire,release} from PTX ISA 8.6 /
+   SM_90 -- a floor on the toolkit, NOT an absence in the ISA. *)
 (* ------------------------------------------------------------------ *)
 
-(* PTX fence semantics, FAITHFUL: each annotated order maps to its own PTX
-   fence, not to the collapsed fence.acq_rel above.  A relaxed fence is a
-   no-op with no PTX form; the corpus never emits one
-   (ptx.bell F = {acquire,release,acq_rel,sc}), so fail loudly. *)
+(* Each annotated order maps to its own PTX fence rather than to the collapsed
+   fence.acq_rel above.  A relaxed fence is a no-op with no PTX form; the
+   corpus never emits one (hetlitmus/bells/ptx.bell declares
+   F[{acquire,release,acq_rel,sc}]), so fail loudly. *)
 let ptx_fence_sem = function
   | "acquire" -> "acquire"
   | "release" -> "release"
@@ -75,9 +74,9 @@ let ptx_scope = function
   | "cta" -> "cta" | "gpu" -> "gpu" | "sys" -> "sys"
   | s -> Warn.user_error "CudaLang: unknown fence scope %S" s
 
-(* Minimum SM target for a fence order (see availability table above):
-   acquire/release need SM_90, acq_rel/sc work on SM_70+.  Emitted as a
-   trailing comment for the reader. *)
+(* Minimum SM target for a fence order (availability above): acquire/release
+   need SM_90, acq_rel/sc work on SM_70+.  Emitted as a trailing comment for
+   the reader. *)
 let fence_min_arch ord =
   if ord = "acquire" || ord = "release"
   then "requires sm_90" else "sm_70+"
@@ -87,8 +86,9 @@ let fence_min_arch ord =
    a global `x' becomes `*x', a register-held address `r0' becomes `*r0'. *)
 let lvalue_of_addr_op ao = sprintf "*%s" (var_of_addr_op ao)
 
-(* Element type of the scoped atomic_ref: widened to uint64_t on the het
-   tag path (B3 Decision 3), plain int on the GPU-only path. *)
+(* Element type of the scoped atomic_ref: uint64_t on the het tag path, so a
+   store value cannot truncate to less than a tag; plain int on the GPU-only
+   path (see GpuLang.tag_ctx). *)
 let ref_elt_type : tag_ctx -> string = function Some _ -> "uint64_t" | None -> "int"
 
 (* ------------------------------------------------------------------ *)
@@ -100,8 +100,8 @@ let scoped_ref ~tag ind chan var scope =
     ind (ref_elt_type tag) (thread_scope scope) var
 
 (* dest reg of a load is declared at proc scope; here we just assign.
-   [~tag] gates the HetLitmus tagged/uint64 path (Some) vs the standalone
-   GPU-only path (None, byte-for-byte unchanged). *)
+   [~tag] selects the tagged/uint64 path (Some) over the standalone GPU-only
+   path (None). *)
 let dump_instr chan ~tag ind i = match i with
   | BellBase.Pst (ao, roi, annots) ->
       let var = var_of_addr_op ao in
@@ -124,9 +124,8 @@ let dump_instr chan ~tag ind i = match i with
       fprintf chan "%s}\n" ind
   | BellBase.Pfence (BellBase.Fence (annots, _)) ->
       let ord, scp = order_scope_of annots in
-      (* Faithful fence: emit the annotated order as inline PTX at its scope
-         (bypasses libcu++ atomic_thread_fence, which collapses
-         acquire/release -> fence.acq_rel).  See the inline-PTX note above. *)
+      (* The annotated order, as inline PTX at its scope; see the note above
+         this file's ptx_fence_sem. *)
       fprintf chan "%sasm volatile(\"fence.%s.%s;\" ::: \"memory\"); // %s\n"
         ind (ptx_fence_sem ord) (ptx_scope scp) (fence_min_arch ord)
   | BellBase.Pnop -> ()
@@ -143,8 +142,6 @@ let dialect = {
     gl_emit_script = "hetlitmus/emit-cuda.sh" ;
     gl_group = "CTA" ;
     gl_include = "#include <cuda/atomic>" ;
-    (* NOT nvcc-checked: Task 8/9 are out of scope for this render; the
-       harness documents launch geometry + result slots. *)
     gl_harness_note =
       "// ---- host harness (illustrative; emit-only, not compiled here) ----" ;
     gl_alloc =

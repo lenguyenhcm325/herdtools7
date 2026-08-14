@@ -4,18 +4,17 @@
    (coarse-grained memory becomes visible only at a kernel-boundary sync, which
    would void every heterogeneous test).  Which allocator runs decides what
    property the harness tests, so this is correctness rather than tuning; see
-   env-research/Q8-allocation.md.  MI300A's unified HBM pool needs no page
-   migration, so no dispatch is required for correctness, and the free matches
-   (hipFree).  A malloc plus HSA_XNACK=1 variant is a runtime-env choice, not a
-   codegen one.  The read buffers are not routed here -- device memory
-   (hipMalloc), off the coherent race path.
+   hetlitmus/docs/00-environment-design.md sec 3.2.  MI300A's unified HBM pool
+   needs no page migration, so no dispatch is required for correctness, and the
+   free matches (hipFree).  A malloc plus HSA_XNACK=1 variant is a runtime-env
+   choice, not a codegen one.  The read buffers are not routed here -- device
+   memory (hipMalloc), off the coherent race path.
 
-   "Fine-grained by default" is the ROCm runtime's own statement, not an
-   inference: hipMemAdviseSetCoarseGrain is documented in hip_runtime_api.h as
-   "The default memory model is fine-grain.  That allows coherent operations
-   between host and device, while executing kernels.  The coarse-grain can be
-   used for data that only needs to be coherent at dispatch boundaries for better
-   performance" (ROCm 7.2.4).  Nothing here ever advises coarse grain.
+   Fine-grain is the runtime's own documented default memory model, the one that
+   allows coherent host-device operations while kernels execute; coarse-grain is
+   for data that need only be coherent at dispatch boundaries
+   [HipRuntimeApi "hipMemAdviseSetCoarseGrain"].  Nothing here advises coarse
+   grain.
 
    ONE MODE, AND IT SAYS SO.  The CUDA render dispatches over three HET_ALLOC
    modes; this one implements exactly one, so every other spelling is REFUSED
@@ -36,8 +35,7 @@
    refusals recorded.  Both halves false -- nothing was placed and nothing could
    have been refused, because _het_place_failures has no writer on this lane.
    That is a knob read into the log and never applied, with a companion counter
-   that is constant-0 so no reader can tell (the shape of B4's inert stress and
-   B6a's constant-0 exhaustive_valid).
+   that is constant-0 so no reader can tell.
    Refused at COMPILE time rather than warned about at run time -- the opposite
    of the CUDA render's _het_place_inert -- because there the mode is chosen at
    run time by HET_ALLOC and placement genuinely exists in one of the three
@@ -53,16 +51,16 @@ static int _het_hip_attr(hipDeviceAttribute_t _a){
   (void)hipDeviceGetAttribute(&_v, _a, 0);
   return _v;
 }
-/* APU (MI300A) vs discrete (MI300X): hipDeviceAttributeIntegrated, documented in
-   hip_runtime_api.h as "Device is integrated GPU" and mirrored by
-   hipDeviceProp_t::integrated, "APU vs dGPU".  gcnArchName cannot make this call
-   -- both parts report gfx942 -- and the distinction is not cosmetic: MI300A is
-   an APU whose CCD and XCD chiplets share ONE HBM pool, while MI300X is a
+/* APU (MI300A) vs discrete (MI300X): hipDeviceAttributeIntegrated is the runtime's
+   own integrated-GPU flag, mirrored by hipDeviceProp_t::integrated
+   [HipRuntimeApi "hipDeviceAttributeIntegrated"].  gcnArchName cannot make this
+   call -- both parts report gfx942 -- and the distinction is not cosmetic: MI300A
+   is an APU whose CCD and XCD chiplets share ONE HBM pool, while MI300X is a
    discrete accelerator reached over a host interconnect.  Their coherence
    behaviour is not the same experiment and an MI300X sighting must never be
-   reported as an MI300A result (env-research PORT2 scope decision, 2026-08-01).
-   The class is therefore stamped into the banner, so the log a run leaves behind
-   carries it whether or not anyone reads this file. */
+   reported as an MI300A result.  The class is therefore stamped into the banner,
+   so the log a run leaves behind carries it whether or not anyone reads this
+   file. */
 static const char* _het_amd_part_class(int _integrated){
   return _integrated ? "APU(@APU_CLASS@)" : "DISCRETE(@DGPU_CLASS@)";
 }
@@ -99,12 +97,11 @@ static int _het_alloc_mode(void){
          _het_amd_part_class(_integrated), _integrated, _managed, _cma, _pg);
   fflush(stdout);
   /* hipMallocManaged DEGRADES SILENTLY, and the degradation is exactly the thing
-     under test.  hip_runtime_api.h: "If HMM is not supported, the function
-     behaves the same as hipMallocHost", and it asks for the capability check by
-     name -- "It is recommend to do the capability check before call this API".
-     hipMallocHost is pinned host memory, not fine-grained device-coherent
-     memory, so the harness would keep running and quietly stop testing the
-     coherence path.  Fatal, never a warning. */
+     under test: without HMM support it behaves as hipMallocHost, and the runtime
+     asks for the capability check by name [HipRuntimeApi "hipMallocManaged"].
+     hipMallocHost is pinned host memory, not fine-grained device-coherent memory,
+     so the harness would keep running and quietly stop testing the coherence
+     path.  Fatal, never a warning. */
   if (!_managed) {
     fprintf(stderr,
             "HetLitmus FATAL: this device reports hipDeviceAttributeManagedMemory=0, "
@@ -125,10 +122,10 @@ static int _het_alloc_mode(void){
             "so there is nothing to salvage.\n");
     exit(2);
   }
-  /* Not fatal: MI300X is the Phase-3a machinery bring-up target and must be able
-     to run.  It is announced on stderr AND stamped in the banner above so that no
-     discrete-part histogram can later be read as an MI300A result by someone
-     holding only the log. */
+  /* Not fatal: a discrete part is a valid machinery bring-up target and must be
+     able to run.  It is announced on stderr AND stamped in the banner above so
+     that no discrete-part histogram can later be read as an MI300A result by
+     someone holding only the log. */
   if (!_integrated) {
     fprintf(stderr,
             "HetLitmus WARNING: hipDeviceAttributeIntegrated=0 -- this is a DISCRETE "
@@ -146,7 +143,7 @@ static void gd_alloc_shared(void** _pp, size_t _bytes){
      and XCD (GPU) chiplets means no LPDDR/HBM split, no first-touch home to
      choose and nothing to pin.  Its analogue of the interconnect lever is
      CONTENTION, which the noise pair below supplies when both sides stream the
-     same coherent pool (env-research/Q6-cpu-interconnect-stress.md sec 3.4). */
+     same coherent pool (hetlitmus/docs/00-environment-design.md sec 3.6). */
 }
 static void gd_free_shared(void* _p){
   /* Cached mode, NOT a re-query -- one mode here, but the free stays keyed on the

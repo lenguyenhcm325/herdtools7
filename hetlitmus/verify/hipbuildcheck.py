@@ -1,101 +1,87 @@
 #!/usr/bin/env python3
 """
-hipbuildcheck.py -- the P2c gate: can an AMD harness actually be BUILT AND RUN?
-
-Until 2026-08-03 `hetEmit.ml' contained zero occurrences of hip-link / hip-bin.
-comp.sh's `hip' arm was COMPILE-ONLY (`hipcc -c'), so nothing this suite emits
-could be turned into an AMD executable at all: the CUDA lane had `cuda-link' and
-`make cuda-bin', the HIP lane had no counterpart.  Emitting a .hip that no target
-links is the same defect class as the .hip that, until B5, no gate compiled.
+hipbuildcheck.py -- can an AMD harness be built, linked and refused correctly?
 
 Nine phases, each of which must be seen to fail:
 
-  P1 build-script arms   the emitted comp.sh / Makefile CARRY hip-link + hip-bin,
-                         advertise them in their usage/help text, and hip-bin is
-                         .PHONY.  AND `make <test>' REFUSES -- checked by RUNNING
-                         it: making both link targets phony removed the only rule
-                         naming ./<test>, so make fell through to its built-in
-                         `%: %.o' rule and linked it with $(CC), guard and device
-                         code both gone
+  P1 build-script arms   the emitted comp.sh / Makefile carry hip-link + hip-bin,
+                         advertise them in their usage text, and hip-bin is
+                         .PHONY; and `make <test>' refuses, checked by RUNNING
+                         it, because with no rule naming ./<test> make falls
+                         through to its built-in `%: %.o' rule and links with
+                         $(CC) -- guard and device code both gone, and an absent
+                         rule is invisible to a grep
   P2 compile             hipcc --offload-arch=gfx942 compiles the emitted .hip
-  P3 link                comp.sh hip-link AND make hip-bin each produce an ELF
-                         that carries a real amdgcn gfx942 code object -- not
-                         merely an exit status
+  P3 link                comp.sh hip-link and make hip-bin each produce an ELF
+                         carrying a real amdgcn gfx942 code object, read out of
+                         the bytes rather than inferred from an exit status
   P4 fail-closed on the wrong host: a pair in no row of litmus/hetMachine.ml is
-                         WARNED about, not refused -- (AArch64, hip) emits, the
-                         warning names the pair, and the render it writes stamps
-                         not one machine define; a registered pair's link arms
-                         do refuse an AArch64 rendering on an x86_64 host,
-                         naming the ISA and leaving no binary (the CPU object
-                         here is the portable shim, so the binary would test
-                         nothing); and the HIP render carries that same guard,
-                         keyed to its own host ISA
-  P5 no silent stale     every vendor writes ./<test> on purpose (run-one.sh and
-                         campaign.py exec ./<test> and are vendor-agnostic), so
-                         each link target must ALWAYS relink.  MEASURED before
-                         the fix: `make cuda-bin' after `make hip-bin' printed
-                         "Nothing to be done for 'cuda-bin'", exited 0 and left
-                         the gfx942 binary in place
-  P6 allocator           the HIP shared allocator resolves ONE mode and REFUSES
-                         every other spelling and every unmet precondition
-                         (rule 8), classifies APU vs discrete, IS ACTUALLY CALLED
-                         by gd_alloc_shared and called BEFORE the allocation
+                         warned about, never refused -- (AArch64, hip) emits, the
+                         warning names the pair, and its render stamps NOT one
+                         machine define; a registered pair's link arms do refuse
+                         an AArch64 rendering on an x86_64 host, naming the ISA
+                         and leaving no binary (the CPU object there is the
+                         portable shim, so the binary would test nothing); and
+                         the HIP render carries that same guard, keyed to its own
+                         host ISA
+  P5 no silent stale     every vendor writes ./<test> (run-one.sh and campaign.py
+                         exec it and are vendor-agnostic), so each link target
+                         must always relink -- one reporting "nothing to be done"
+                         hands back whichever vendor's binary is lying there
+  P6 allocator           the HIP shared allocator resolves one mode and refuses
+                         every other spelling and every unmet device
+                         precondition, classifies APU vs discrete, and is CALLED
+                         by gd_alloc_shared before the allocation it must vet
   P6b HET_PLACE          the CUDA-only placement lever is refused at compile
-                         time, and HET_PLACE=0 still builds.  Split from P6
-                         because it is the hipcc half: P6's five injections all
-                         corrupt the lifted resolver and none can reach it
+                         time, and HET_PLACE=0 still builds.  Its own phase
+                         because it is the hipcc half: P6's injections all
+                         corrupt the lifted resolver, and none of them can move a
+                         compile-time refusal
   P7 CUDA non-regression the cuda / cuda-link / cuda-bin arms still carry their
                          guard and still build
   P8 fence               the fence-carrying render emits the documented
                          __builtin_amdgcn_fence lowering for every `f[sc,sys]'
                          it annotates, and hipcc compiles it
 
-THE FENCE IS COMPILED, NOT RUN.  P8 is the only place in this tree where
-litmus/HipLang.ml's __builtin_amdgcn_fence reaches a compiler; what that compile
-leaves unsettled, and how many tests carry a fence, is stated there
-(hip_fence_scope).
+P8 is the only place in this tree where litmus/HipLang.ml's
+__builtin_amdgcn_fence reaches a compiler.  What that compile settles, what it
+leaves open and how much of the corpus carries a fence are in
+hetlitmus/docs/hip-emitter.md ("Fences", "Compile status & next steps").
 
-CORRECTNESS IN ISOLATION IS NOT THE MECHANISM BEING LIVE.  P6 drives the resolver
-out-of-line, so on its own it would pass a harness that never calls it -- and on
-2026-08-03 it did: deleting gd_alloc_shared's one `(void)_het_alloc_mode();' left
-this gate at 69/69 PASS, cram green and `make hetlitmus-test' green, while the
-binary ignored HET_ALLOC and both device preconditions until teardown.  P6(e)
-therefore pins the CALL SITE, scoped to gd_alloc_shared's body and to its order
-against the allocation.  The same shape, one layer up, is why P1 RUNS `make
-<test>' instead of grepping for it: the defect there was an ABSENT rule.
+Correctness in isolation is not the mechanism being live.  P6 drives the resolver
+out-of-line, so on its own it would pass a harness that never calls it, and on
+this lane the call's ONLY effect is the guard, so nothing else anchors it: P6(e)
+pins the call site, scoped to gd_alloc_shared's body and to its order against the
+allocation.  (The CUDA render dispatches on the returned mode, so there dropping
+the call does not compile.)  The same shape one layer up is why P1 runs `make
+<test>' instead of grepping for it.
 
-P6 IS A RUNTIME PHASE WITHOUT AN AMD GPU.  There is no AMD device on this box
-(`rocminfo' reports 0 gfx agents), so the linked harness cannot be run: it exits
-2 at its cooperative-launch capability check.  Rather than assert nothing, P6
-lifts the resolver OUT of the emitted .hip verbatim and drives it against a stub
-`hipDeviceGetAttribute' whose answers this gate chooses, so every refusal path is
-genuinely EXECUTED and its message observed.  What stays deferred to Phase 3a
-(MI300X) is the real hipMallocManaged / coherence behaviour, which no shim can
-stand in for.
+P6 is a runtime phase without an AMD GPU.  Where no AMD device is present the
+linked harness cannot be run -- it exits 2 at its cooperative-launch capability
+check -- so P6 lifts the resolver out of the emitted .hip verbatim and drives it
+against a stub `hipDeviceGetAttribute' whose answers this gate chooses; every
+refusal path is then genuinely EXECUTED and its message observed.  The real
+hipMallocManaged and coherence behaviour, which no shim stands in for, stays
+deferred to an MI300X bring-up run.
 
-NON-VACUITY.  Every phase counts its own assertions and FAILS if it made none --
-a phase that silently stopped checking is this project's recurring failure (B4's
-inert stress, B6a's constant-0 `exhaustive_valid', the faithfulness gate reading
-0/338 while reporting success).
+Every phase counts its own assertions and fails if it made none.  `--bite'
+injects into each phase, on corruption and on omission, and requires the phase
+that owns the injected object to redden naming it.
 
-`--bite' injects into each phase, on CORRUPTION and on OMISSION, and requires the
-phase that owns the injected object to redden naming it.
+One vendor per harness directory: litmus7 renders the dialect `-gpu-target' names
+and no other (litmus/hetDialect.ml), so the AMD arms and the CUDA arms sit in
+different directories -- this gate emits the same x86 test twice, P7 reading the
+cuda render and P1-P3/P5/P6 the hip one.  P5's cross-vendor stale-link trap needs
+both: it plants one vendor's linked binary in the other's directory, a ./<test>
+newer than the objects and carrying the wrong device image, which is the state a
+results tree reused across boxes reaches for real.
 
-ONE VENDOR PER HARNESS DIRECTORY.  litmus7 renders the dialect `-gpu-target'
-names and no other (litmus/hetDialect.ml), so the AMD arms and the CUDA arms no
-longer live in one directory: this gate emits the same x86 test twice, and P7
-reads the cuda render while P1-P3/P5/P6 read the hip one.  P5's cross-vendor
-stale-link trap needs both, so it plants one vendor's linked binary in the other
-vendor's directory -- the state the trap needs (a ./<test> NEWER than the
-objects, carrying the wrong device image), reached the way a reused results tree
-reaches it.
-
-AND ONE PAIR PER HARNESS.  A harness is a (CPU ISA x GPU dialect) pair, and
-litmus/hetMachine.ml says which of them may name a machine.  The AMD phases
-therefore run on the x86 rendering -- (x86_64, hip) is the pair with the MI300A
-row -- and the AArch64 half of P4 runs on (AArch64, cuda), which is the AArch64
-pair that names a machine; that (AArch64, hip) emits and names none is itself one
-of P4's assertions.
+And one pair per harness.  A harness is a (CPU ISA x GPU dialect) pair and
+litmus/hetMachine.ml says which of them may name a machine, so the AMD phases run
+on the x86 rendering -- (x86_64, hip) is the pair with the MI300A row -- while the
+AArch64 half of P4 runs on (AArch64, cuda), the AArch64 pair that names a
+machine.  That (AArch64, hip) emits and names none is itself one of P4's
+assertions.
 """
 import argparse
 import os
@@ -112,11 +98,11 @@ GEN_X86 = os.path.join(HET_DIR, "generate-x86.sh")
 LITMUS7 = os.path.join(ROOT, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(ROOT, "litmus", "libdir")
 
-# The x86_64 rendering is the one that can be LINKED here: its CPU thread is real
-# x86-64 asm (P2b) and this gate's host is x86_64, so the uname guard admits it.
-# MP-cg-sys-acqrel-2s is the co-run shape -- three instances, a shared arena --
-# so it exercises gd_alloc_shared on the arena path rather than the per-variable
-# one.  Its AArch64 twin is P4's refusal probe, on this same x86_64 host.
+# The x86_64 rendering is the one an x86_64 host can LINK: its CPU thread is real
+# x86-64 asm, so the uname guard admits it.  MP-cg-sys-acqrel-2s is the co-run
+# shape -- three instances, a shared arena -- so it exercises gd_alloc_shared on
+# the arena path rather than the per-variable one.  Its AArch64 twin is P4's
+# refusal probe, on that same x86_64 host.
 X86_TEST = "MP-cg-sys-acqrel-2s-x86_64"
 AARCH64_TEST = "MP-cg-sys-acqrel-2s"
 # The fence-carrying render P8 builds, and the lowering its .hip owes for each
@@ -237,9 +223,9 @@ def phase1(tmp, d):
         ("hip-link success line", r'^if \[ "\$TARGET" = hip-link \]; then$', comp, "comp.sh"),
         ("hip-bin rule", r"^hip-bin: %s_hip\.o outs\.o %s_cpu_host\.o$" % (re.escape(t), re.escape(t)), mk, "Makefile"),
         ("hip-bin .PHONY", r"^\.PHONY:.*\bhip-bin\b", mk, "Makefile"),
-        # Making both link targets phony removed the only rule naming ./<test>,
-        # so make fell through to its BUILT-IN `%: %.o' -- see the behavioural
-        # check below, which is the one that actually matters.
+        # With both link targets phony and no rule naming ./<test>, make falls
+        # through to its BUILT-IN `%: %.o' -- see the behavioural check below,
+        # which is the one that can detect that.
         ("./<test> refusal rule", r"^%s:$" % re.escape(t), mk, "Makefile"),
         ("built-in rules disabled", r"^\.SUFFIXES:$", mk, "Makefile"),
         ("./<test> .PHONY", r"^\.PHONY:.*\b%s\b" % re.escape(t), mk, "Makefile"),
@@ -272,15 +258,13 @@ def phase1(tmp, d):
 
 
 def make_test_refuses(tmp, d, phase, link_target):
-    """`make <test>' MUST REFUSE -- checked by RUNNING it, because the defect it
-       guards was invisible to every grep.  MEASURED 2026-08-03: with the link
-       targets phony and no rule naming ./<test>, `make <test>' on an emitted x86
-       harness ran `cc <test>.o -o <test>' under `[<builtin>]' -- GNU make's
-       built-in `%: %.o' link rule, which never consults the uname -m guard.  It
-       failed there only because those objects carry CUDA/C++ symbols; the guard
-       is not what stopped it.  The hole was the ABSENCE of a rule, so no grep of
-       the Makefile would have shown it.
-       Run on EVERY render: the built-in rule can only fire where the GPU object
+    """`make <test>' must refuse, checked by RUNNING it: with the link targets
+       phony and no rule naming ./<test>, `make <test>' reaches GNU make's
+       built-in `%: %.o' link rule, which never consults the uname -m guard, and
+       whether that link then fails is up to the objects' symbols rather than to
+       the guard.  The hole is the absence of a rule, which no grep of the
+       Makefile can show.
+       Run on every render: the built-in rule can only fire where the GPU object
        is <test>.o, i.e. on the CUDA render, so checking the HIP one alone would
        leave the reachable case unchecked."""
     t = test_of(d)
@@ -643,8 +627,9 @@ def phase6(tmp, d):
         if "FATAL" not in r.stderr or "not a shared-memory mode" not in r.stderr:
             fail("P6", "HET_ALLOC=%r refused without naming the reason:\n%s" % (m, r.stderr[-600:]))
     # (c) device preconditions.  hipMallocManaged degrades to hipMallocHost when
-    #     HMM is absent (hip_runtime_api.h), and the CPU may not touch managed
-    #     memory mid-kernel without concurrent managed access.  Both fatal.
+    #     HMM is absent [HipRuntimeApi "hipMallocManaged"], and the CPU may not
+    #     touch managed memory mid-kernel without concurrent managed access.
+    #     Both fatal.
     for label, kw, needle in [
         ("managedMemory=0", dict(managed=0), "hipDeviceAttributeManagedMemory=0"),
         ("concurrentManagedAccess=0", dict(cma=0), "hipDeviceAttributeConcurrentManagedAccess=0"),
@@ -678,21 +663,16 @@ def phase6(tmp, d):
         fail("P6", "integrated=0 produced no warning that this is not an MI300A result:\n%s"
              % r.stderr[-600:])
 
-    # (e) ...AND THE HARNESS MUST ACTUALLY CALL IT.
-    # Everything above drives the resolver in ISOLATION.  It proves the resolver
-    # is right; it says NOTHING about whether the harness ever runs it, and that
-    # gap is this project's signature failure (B4's stress read its knobs and
-    # applied none; B6a's exhaustive_valid was constant-0 so the rule was cold).
-    # MEASURED 2026-08-03: deleting the single statement
+    # (e) ...and the harness must actually call it.
+    # Everything above drives the resolver in isolation: it says NOTHING about
+    # whether the harness ever runs it.  Drop gd_alloc_shared's one
     #     (void)_het_alloc_mode();   /* resolve + guard once, before the ... */
-    # from gd_alloc_shared in het_alloc_hip.inc -- leaving the resolver defined
-    # and gd_free_shared's call intact -- left this gate at 69/69 PASS, `dune
-    # runtest hetlitmus/tests/cram' green and `make hetlitmus-test' green, while
-    # the shipped binary ignored HET_ALLOC and BOTH device preconditions at
-    # allocation time.  The guard would then fire only in gd_free_shared, i.e.
-    # after the whole experiment and after the histogram, the HetVerdict and the
-    # HetStats lines had been printed.
-    # The CUDA render needs no such assertion: its gd_alloc_shared DISPATCHES on
+    # in het_alloc_hip.inc and the resolver stays defined, gd_free_shared still
+    # calls it, and every assertion above still passes -- while the shipped
+    # binary ignores HET_ALLOC and both device preconditions at allocation time
+    # and the guard fires only at teardown, after the histogram, the HetVerdict
+    # and the HetStats lines have been printed.
+    # The CUDA render needs no such assertion: its gd_alloc_shared dispatches on
     # the returned mode (`int _m = _het_alloc_mode(); if (_m == HET_ALLOC_MALLOC)
     # ...'), so dropping the call does not compile.  The HIP call's only effect
     # is the guard, so nothing anchors it but this.
@@ -751,10 +731,9 @@ def phase6b(tmp, d):
     print("[P6b] HET_PLACE: the CUDA-only lever the AMD render must refuse")
     # Both renders print `place=%d' in the cpu-stress banner and carry place_mode
     # in the statistics record (one emitter, two dialects), but placement is
-    # cudaMemAdvise/cudaMemPrefetchAsync and lives only in het_alloc_cuda.inc.
-    # _het_place_failures has TWO READERS and ZERO WRITERS on this lane, so a
-    # `-DHET_PLACE=1' AMD build would log `place=1 ... place_fail=0' -- placement
-    # requested, no refusals -- with nothing placed and nothing placeable.
+    # cudaMemAdvise/cudaMemPrefetchAsync and lives only in het_alloc_cuda.inc --
+    # why the AMD answer is a compile-time refusal rather than a runtime warning
+    # is litmus/het-runtime/het_alloc_hip.inc.
     hip_src = open(os.path.join(d, test_of(d) + ".hip")).read()
     tick("P6b")
     if "#if (HET_PLACE) != 0" not in hip_src or "# error" not in hip_src:
@@ -892,11 +871,11 @@ def phony_line(d):
 
 
 def strip_refusal_rule(d):
-    """Put the Makefile back into its pre-2026-08-03 shape: no `.SUFFIXES:', no
-       rule naming ./<test>, and ./<test> not phony.  That is the state in which
-       `make <test>' reached GNU make's built-in `%: %.o' link rule -- and it is
-       also the state P5's stale-link trap needs, because a PHONY ./<test> is
-       never "up to date" and the trap could not spring."""
+    """Strip the Makefile to the shape with no `.SUFFIXES:', no rule naming
+       ./<test>, and ./<test> not phony.  That is the state in which `make
+       <test>' reaches GNU make's built-in `%: %.o' link rule -- and it is also
+       the state P5's stale-link trap needs, because a PHONY ./<test> is never
+       "up to date" and the trap could not spring."""
     p = os.path.join(d, "Makefile")
     t = test_of(d)
     s = open(p).read()
@@ -970,13 +949,12 @@ def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda, d_fence, fence_src):
     sub(os.path.join(w, "Makefile"), phony_line(w),
         phony_line(w).replace(" hip-bin", "", 1))
     ok &= bite_one("hip-bin dropped from .PHONY", "P1", lambda: phase1(tmp, w), "hip-bin .PHONY")
-    # OMISSION, and the one that bit for real: with the link targets phony there
-    # is no rule naming ./<test>, so make falls through to its BUILT-IN `%: %.o'
-    # and links it with $(CC), guard and device code both gone.  Deleting the
-    # refusal rule restores exactly that state -- P1 must catch it by RUNNING
-    # make, not by grepping, because the defect is an absent rule.
-    # ...on the CUDA render, the only one where the fall-through is REACHABLE:
-    # the built-in rule is `%: %.o', and the HIP render's GPU object is
+    # OMISSION: with the link targets phony there is no rule naming ./<test>, so
+    # make falls through to its BUILT-IN `%: %.o' and links it with $(CC), guard
+    # and device code both gone.  Deleting the refusal rule reaches exactly that
+    # state, and only RUNNING make can catch it, since the defect is an absent
+    # rule.  Driven on the CUDA render, the only one where the fall-through is
+    # reachable: the built-in rule is `%: %.o' and the HIP render's GPU object is
     # <test>_hip.o, so there make simply reports no rule at all.  P7 owns the
     # behavioural check on that render.
     w = W("p7b", d_x86_cuda)
@@ -1064,11 +1042,11 @@ def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda, d_fence, fence_src):
     # P5 drives two directories, so each injection goes into ONE of them and the
     # other stays pristine -- otherwise a bite could redden for the wrong render.
     w = W("p5c", d_x86_cuda)
-    # Restore the pre-fix shape: cuda-bin as a phony with a FILE prerequisite.
-    # This is the measured regression, replayed.  The refusal rule has to come
-    # out FIRST: it makes ./<test> phony, and a phony target is never "up to
-    # date", so with it in place make would rerun the recipe for a reason that
-    # has nothing to do with the trap and this bite would go inert.
+    # cuda-bin as a phony with a FILE prerequisite -- the shape in which make
+    # answers "nothing to be done".  The refusal rule has to come out first: it
+    # makes ./<test> phony, and a phony target is never "up to date", so with it
+    # in place make would rerun the recipe for a reason that has nothing to do
+    # with the trap and this bite would go inert.
     strip_refusal_rule(w)
     s = open(os.path.join(w, "Makefile")).read()
     t = test_of(w)
@@ -1121,10 +1099,9 @@ def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda, d_fence, fence_src):
     open(hp, "w").write(s)
     ok &= bite_one("MI300X classified as an MI300A APU", "P6",
                    lambda: phase6(tmp, w), "not classified as a discrete part")
-    # THE INERT-MECHANISM OMISSION.  Everything P6 does above still passes with
+    # The inert-mechanism omission.  Everything P6 does above still passes with
     # this deleted -- the resolver is still defined, still correct, and still
-    # called by gd_free_shared.  It is simply never called where it has to run.
-    # This is the injection that left the gate at 69/69 on 2026-08-03.
+    # called by gd_free_shared.  It is simply NEVER called where it has to run.
     w = W("p6call")
     hp = os.path.join(w, test_of(w) + ".hip")
     sub(hp, "  (void)_het_alloc_mode();               "

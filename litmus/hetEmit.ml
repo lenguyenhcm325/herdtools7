@@ -4,7 +4,7 @@
 (* Jade Alglave, University College London, UK.                             *)
 (* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
 (*                                                                          *)
-(* Copyright 2010-present Institut National de Recherche en Informatique et *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
 (* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
 (* This software is governed by the CeCILL-B license under French law and   *)
@@ -43,13 +43,11 @@ module type Config = sig
   val runs : int
 end
 
-  (* ===================== HetLitmus: the compound emitter ===================
-     A functor over the CPU module chain (Arch_litmus + Compile_litmus + a small
+  (* A functor over the CPU module chain (Arch_litmus + Compile_litmus + a
      column frontend), applied at AArch64 or X86_64 by the `Het' dispatch arm,
      which pre-scans the per-column device tag.  The GPU side is fixed
-     (LISA/Bell -> CudaLang/HipLang).  Every CPU reference below goes through the
-     [Cpu]/[CpuF] parameters, so the body is ISA-agnostic.
-     See hetlitmus/docs/het-emission.md. *)
+     (LISA/Bell -> CudaLang/HipLang), and every CPU reference below goes through
+     the [Cpu]/[CpuF] parameters, so the body is ISA-agnostic. *)
   module Make
       (Cfg : Config)
       (O : sig
@@ -74,22 +72,21 @@ end
             dev host; None when the build host already IS this ISA (native gcc) *)
          val cross : (string * string) option
          (* the positive-control map this lane reads: mu(T) is a weakening on a
-            STRENGTH LATTICE, and the lattice is the CPU column's *)
+            strength lattice, and the lattice is the CPU column's *)
          val control_map_csv : string
          (* The tagged-CPU-body hooks -- the ONLY CPU-ISA-specific pieces of the
-            het emitter (the AArch64 arm wires HetCpuBodyA64, the x86_64 arm
-            its twin HetCpuBodyX86; both classify into HetCpuPlan nodes and
-            share its plan and C frame).  [het_analyze] resolves one CPU
-            proc's store/load structure (addresses via [reg_env]: addr-reg-name
-            -> global C name), feeding the mu map, the read-buffer plan and the
-            recovery map.  [het_emit_body] emits the tagged
-            het_run_<prefix>P<proc>: store values rebound to K*(_n+1)+mu, loads
-            recorded into per-iteration buffers, tested mnemonics and DMB SY
-            verbatim.  [~prefix] is what keeps the co-running instances of a
-            control harness apart -- without it T's P0 and mu(T)'s P0 are both
-            `het_run_P0'. *)
+            het emitter (the AArch64 arm wires HetCpuBodyA64, the x86_64 arm its
+            twin HetCpuBodyX86; both classify into HetCpuPlan nodes and share its
+            plan and C frame).  [het_analyze] resolves one CPU proc's store/load
+            structure (addresses via [reg_env]: addr-reg-name -> global C name),
+            feeding the mu map, the read-buffer plan and the recovery map. *)
          val het_analyze :
            reg_env:(string -> string) -> Cpu.pseudo list -> HetCpuPlan.cpu_plan
+         (* [het_emit_body] emits the tagged het_run_<prefix>P<proc>: store values
+            rebound to the per-iteration tag K*(_n+1)+mu, loads recorded into
+            per-iteration buffers, tested mnemonics and DMB SY verbatim.
+            [~prefix] is what keeps the co-running instances of a control harness
+            apart -- without it T's P0 and mu(T)'s P0 are both `het_run_P0'. *)
          val het_emit_body :
            out_channel -> prefix:string -> proc:int -> k:int ->
            store_mu:(int -> int) -> load_buf:(int -> string) ->
@@ -98,8 +95,8 @@ end
            buf_params:(string * string) list -> Cpu.pseudo list -> unit
        end)
       (CpuKit : sig
-         (* Tier-2 CPU backend seam: the REAL litmus7 compile pipeline for the
-            CPU ISA (top_litmus.Make -> Compile.Make), driven on a CPU-only
+         (* The CPU backend seam: litmus7's own compile pipeline for the CPU
+            ISA (top_litmus.Make -> Compile.Make), driven on a CPU-only
             projection of the het test; returns the compiled per-proc
             templates (Test_litmus [code]).  Exactly two fields of each
             template are consumed, [Cpu.Out.get_addrs] and [Cpu.Out.final];
@@ -162,48 +159,33 @@ end
 
       let outs_h_content = HetPayloads.outs_h
       let outs_c_content = HetPayloads.outs_c
-      (* the ported cuda-litmus GPU stress layer, emitted verbatim into every het
-         harness dir and #include'd by both the .cu and the .hip render. *)
+      (* the GPU memory-stress layer, emitted verbatim into every het harness
+         dir and #include'd by both the .cu and the .hip render; the sources it
+         reuses and the citation condition of that reuse are stated in
+         litmus/het-runtime/het_stress.h. *)
       let het_stress_content = HetPayloads.het_stress_h
-      (* the CPU-side + interconnect stress layer.  A SEPARATE header from
+      (* the CPU-side + interconnect stress layer.  A separate header from
          het_stress.h because it is the only place host-ISA asm may live: the
          .cu is nvcc's translation unit, and the preload primitives are AArch64
          (dc civac / prfm) or x86 (clflush / prefetcht0) inline asm.  Only
          <test>_cpu.c -- compiled by gcc, and cross-assembled by
          `clang --target=aarch64-linux-gnu' -- defines HET_CPU_STRESS_IMPL and so
          compiles the bodies; the .cu gets the knobs, the arg structs and the
-         declarations, and NOT ONE LINE of host ISA. *)
+         declarations, and NO host ISA at all. *)
       let het_cpu_stress_content = HetPayloads.het_cpu_stress_h
-      (* het_obs_record + the null-credibility decision rule.  Shared with the
-         verdictcheck gate, so the gate runs the rule that ships. *)
+      (* het_obs_record + the null-credibility decision rule.  Edits belong in
+         litmus/het-runtime/het_verdict.h, which litmus/dune wraps into
+         HetPayloads at build time. *)
       let het_verdict_content = HetPayloads.het_verdict_h
 
-      (* ======================= THE CO-RUN EMITTER ===========================
-         A harness may carry more than one het instance in one translation unit:
-         the test under study T, its lattice-floor sibling mu(T) and the canary
-         (see hetlitmus/docs/positive-control.md sec 5).  What that costs this
-         emitter, and what each invariant prevents:
-
-           - K (the store-tag modulus) is PER INSTANCE ([i_kmac]), never one
-             TU-wide K_TAG: it is 3 for MP/SB/LB and 4 for R/S, and the canary is
-             always an MP, so an R/S harness genuinely mixes both.  A tag decoded
-             with the wrong K mis-attributes writer (tag % K) and iteration
-             (tag / K) alike, making the recovered cycles fiction.
-           - C identifiers are prefixed t_ / mu_ / can_, ALL THREE of them, so a
-             missed prefix fails to compile instead of silently binding to T's
-             object.  A single-instance harness keeps prefix "".
-           - every participant count (NPART, blocks, lanes) is a SUM over the
-             instances, never a constant: S and R carry observer lanes, so a
-             hardcoded total would let the system-scope rendezvous release before
-             their observers arrive -- a barrier that looks alive and is not.
-           - each instance carries its own frame binding, detector, recovery scan
-             and exhaustive_valid.
-
-         The one thing NOT prefixed is the GPU lane's view of its own locations:
-         CudaLang/HipLang name a global by its LISA name (`*x') and they are
-         SHARED backends this file may not touch, so each lane opens with a local
-         alias (`uint64_t* x = t_x;') that binds the emitted `*x' to this
-         instance's object without changing the lowering. *)
+      (* ---- the co-run emitter ----------------------------------------------
+         One translation unit may carry the test under study T, its lattice-floor
+         sibling mu(T) and the canary.  Four invariants follow, and
+         hetlitmus/docs/positive-control.md sec 5 says what each prevents: K is
+         per instance ([i_kmac]), never one translation-unit-wide K_TAG; every C
+         identifier takes a t_ / mu_ / can_ prefix ("" when single-instance);
+         every participant count is a sum over the instances; and each instance
+         has its own frame binding, detector, scan and exhaustive_valid. *)
 
       type dev = [ `Cpu | `Gpu ]
       type mode = [ `Exh | `Heur ]
@@ -246,8 +228,8 @@ end
           i_npart : int ;                (* cpu procs + gpu procs + observers *)
           i_blocks : int ;               (* i_nblocks + the observer block *)
           i_lanes : int ;                (* gpu procs + the observer lane *)
-          i_spin : int ;                 (* gpu TEST lanes (observer excluded) *)
-          (* read buffers: (proc, load idx, PREFIXED name, device, global) *)
+          i_spin : int ;                 (* gpu test lanes (observer excluded) *)
+          (* read buffers: (proc, load idx, prefixed name, device, global) *)
           i_bufs : (int * int * string * dev * string) list ;
           i_decode : string ;            (* the _<pre>decode_value fn ("" unless T) *)
           i_scan : string ;              (* the whole pre-rendered recovery scan *)
@@ -274,12 +256,12 @@ end
 
       let run _hash_env src_name in_chan _out_chan splitted =
         try
-          (* THE dialect list for this emission: `-gpu-target' filtered, so every
+          (* The dialect list for this emission: `-gpu-target' filtered, so every
              per-vendor fold below renders and names one vendor.  Resolved before
              the parse -- an unregistered target must refuse having written
              nothing. *)
           let dialects = HetDialect.select ~key:(fun d -> d.gd_target) dialects in
-          (* THE MACHINE ROW for this emission, resolved in the same breath: one
+          (* The machine row for this emission, resolved in the same breath: one
              dialect survives the filter, so the (CPU ISA x GPU dialect) pair is
              fixed here, and an unregistered pair is worth its one warning before
              anything is written.  It never refuses -- see litmus/hetMachine.ml. *)
@@ -291,14 +273,14 @@ end
           let tname = splitted.Splitter.name.Name.name in
           let doc = splitted.Splitter.name in
           let nprocs_total = List.length parsed.MiscParser.prog in
-          (* D10 (memo 7.D10): is the CYCLE of the test under study CPU-ONLY?
-             MEASURED from the per-column device tags, never from the name --
-             a name-based rule would silently mis-classify anything renamed.
-             A CPU-only test on the shared allocation is not a compound-model
-             experiment at all: it tests x86-TSO on this silicon, so a sighting
-             of a forbidden outcome indicts x86-TSO (or the memory type of the
-             allocation, memo 8 P1) and NEVER the CMCM.  het_verdict.h owns that
-             sentence; this flag is what lets it be written. *)
+          (* Is the cycle of the test under study CPU-only?  Derived from the
+             per-column device tags, never from the name -- a name-based rule
+             would silently mis-classify anything renamed.  Such a test has
+             threads of a single architecture, so it is no compound-model
+             experiment [Goens23 sec 4.6]: what a sighting of a forbidden
+             outcome indicts is the host ISA and the memory type of the shared
+             allocation.  litmus/het-runtime/het_verdict.h writes that sentence;
+             this flag is what lets it be written. *)
           let cpu_only =
             parsed.MiscParser.prog <> [] &&
             List.for_all
@@ -315,7 +297,7 @@ end
           let cmap =
             HetControlMap.load ~verbose:O.verbose ~dir:src_dir
               ~csv:CpuF.control_map_csv ~src_name in
-          (* WHETHER A POSITIVE-CONTROL MAP WAS READ AT ALL.  The load above is
+          (* Whether a positive-control map was read at all.  The load above is
              unconditional, so this says the file was missing beside the test:
              nothing then marks any row the canary, and its missing calibration
              channel is a build fault rather than a construction -- het_verdict.h
@@ -330,9 +312,9 @@ end
               tname CpuF.control_map_csv ;
           let mu_name = HetControlMap.control_of cmap tname
           and canary_name = HetControlMap.canary_of cmap tname in
-          (* WHICH MACHINE THIS HARNESS MAY NAME, for the emitted stderr WARNINGs
+          (* Which machine this harness may name, for the emitted stderr warnings
              -- the two halves of the interconnect noise and the link between
-             them.  It comes from the MACHINE ROW (litmus/hetMachine.ml), which is
+             them.  It comes from the machine row (litmus/hetMachine.ml), which is
              also what stamps the HET_LINK_NAME / HET_HOST_HALF / HET_DEV_HALF
              defines het_verdict.h prints from, so the driver's wording and the
              verdict's wording cannot disagree: one record feeds both. *)
@@ -343,7 +325,7 @@ end
           let host_half = mc.HetMachine.mc_host_half
           and dev_half = mc.HetMachine.mc_dev_half
           and link_name = mc.HetMachine.mc_link_name in
-          (* EVERY OTHER PLACE THIS HARNESS NAMES ITS MACHINE.  The dialect
+          (* Every other place this harness names its machine.  The dialect
              payloads pasted below, this render's README and its comp.sh are
              written with `@NAME@' holes and filled from the row that resolved,
              so a sentence written for one part cannot be pasted into a render
@@ -352,7 +334,7 @@ end
              that would print one print nothing there. *)
           let fill = HetMachine.fill mc in
           let mc_part = HetMachine.word mc "PART" in
-          (* WHY this harness names no machine, and [None] where it names one.
+          (* Why this harness names no machine, and [None] where it names one.
              Two ways to have no machine row and a results tree six months on is
              where they have to be told apart: a REGISTERED pair is deliberately
              nameless, a pair in no row was never considered.  Written once, read
@@ -373,7 +355,7 @@ end
           let pair_label =
             HetMachine.pair_name ~cpu_isa:CpuF.isa_name
               ~target:(List.hd dialects).gd_target in
-          (* WHY this harness names no mu(T).  Two facts, and only one of them is
+          (* Why this harness names no mu(T).  Two facts, and only one of them is
              a claim about the strength lattice: no map was read beside this test
              at all, or the map was read and this test is itself at the lattice
              floor, where no strictly weaker structural sibling can exist.  Every
@@ -386,8 +368,8 @@ end
               "this test is at the lattice floor, so no strictly weaker \
                structural sibling exists" in
           (* What goes in HET_CANARY_NAME / _rec.canary_name.  A name is NOT a
-             co-run signal -- the map names a canary for every test, including the
-             ones that are the canary.  HET_CANARY_COMPILED_IN, set from the
+             co-run signal -- the map names a canary for every test, including
+             the ones that are the canary.  HET_CANARY_COMPILED_IN, set from the
              instance population below, is the co-run signal. *)
           let canary_named =
             match canary_name with
@@ -396,10 +378,10 @@ end
                if HetControlMap.is_self_canary cmap tname then Some tname
                else None in
 
-          (* ============ derive ONE instance from a parsed het test =============
+          (* ---- derive ONE instance from a parsed het test ----------------
              A function of (role, prefix, K-macro, name, parse), so one derivation
              produces T, its lattice-floor sibling and the canary alike.  The
-             decode function and the recovery scan are rendered HERE, because
+             decode function and the recovery scan are rendered here, because
              they are pure C over host buffers and need no dialect; that keeps
              the record small and both render passes readable. *)
           let derive ~role ~pre ~kmac ~tname ~parsed ~doc =
@@ -664,7 +646,7 @@ end
                 | [] -> "0"
                 | [p] -> p
                 | ps -> "(" ^ String.concat " || " ps ^ ")" in
-            (* ======================= FRAME BINDING ========================== *)
+            (* ---- the frame binding ------------------------------------- *)
             let read_atoms =
               let acc = ref [] in
               let rec scan p = let open ConstrGen in match p with
@@ -791,8 +773,8 @@ end
                   | _ -> None)
                 (List.map (fun (p,_,_,_) -> (p,())) read_atoms
                  |> List.sort_uniq compare) in
-            (* Every tag decode below spells K as THIS INSTANCE's macro [kmac],
-               never a translation-unit-wide K_TAG; see the co-run banner above. *)
+            (* Every tag decode below spells K as this instance's OWN macro
+               [kmac], never a translation-unit-wide K_TAG. *)
             let rec c_tag_of_prop m p =
               let open ConstrGen in
               match p with
@@ -869,15 +851,13 @@ end
                         c_loc "g" (prop_of parsed.MiscParser.condition) ]
               else "1" in
             let locv = usym pre "_loc" in
-            (* HARD INVARIANT, checked here for EVERY instance: the emitted
-               weak-behaviour detector may never be a CONSTANT.  A constant-true
-               one reports the weak behaviour on every run; a constant-false one
-               reports "Never" on every run, and a spurious "Never" is an
-               observation nothing produced.  On a control the same two failures
-               read as "permanently cold" and "every null credible for free", and
-               both look like a working control from outside.  Refusing to emit
-               is structural, so it cannot regress
-               (env-research/impl-briefs/SHARED-CHARGE.md). *)
+            (* The emitted weak-behaviour detector may NEVER be a constant, on
+               any instance.  A constant-true one reports the weak behaviour on
+               every run; a constant-false one reports "Never" on every run, and
+               a spurious "Never" is an observation nothing produced.  On a
+               control the same two failures read as "permanently cold" and
+               "every null credible for free", and both look like a working
+               control from outside. *)
             let weak_expr =
               if has_observers then mk_and [cond_expr ; locv] else cond_expr in
             if is_true weak_expr || is_false weak_expr then
@@ -936,15 +916,14 @@ end
                      @ List.map (Printf.sprintf "\"[%s]\"") loc_slots) in
                 s (Printf.sprintf "static const char* _labels[%d] = { %s };\n"
                      (max 1 nslots) labelstr) ;
-                (* A coherence-final [ell] column is never MEASURED here: the
+                (* A coherence-final [ell] column carries no measured number: the
                    perpetual loop reads no location's final value, so `_o[n_reg+j]'
                    is the literal 0 at every call site, and an [ell]=v atom is
-                   instead decided by the per-run observer ws witness reported
+                   decided instead by the per-run observer ws witness reported
                    through HetObs / HetVerdict.  The columns therefore print `?';
-                   printing the 0 would assert a state the test cannot end in, next
-                   to the `*' witness marker that says the opposite.  `_labels' is
-                   untouched -- the [ ] label still names the atom, and cram
-                   pfix-cond.t pins it.  (env-research/impl-briefs/FA-FB-REPORT.md) *)
+                   the 0 would assert a state the test cannot end in, beside the
+                   `*' witness marker saying the opposite.  `_labels' still names
+                   the atom (byte-pinned by cram pfix-cond.t). *)
                 s {ocaml|static void _dump_one(FILE* _ch, intmax_t* o, count_t c, int show){
   fprintf(_ch, "%-8" PRIu64 "%c> ", c, show ? '*' : ' ');
 |ocaml} ;
@@ -968,17 +947,14 @@ end
 |ocaml} ;
                 Buffer.contents b
               end in
-            (* ================= the pre-rendered RECOVERY SCAN =================
+            (* ---- the pre-rendered recovery scan ----------------------------
                Pure C over host buffers, so it needs no dialect.  The instance's
-               ROLE picks which channel of het_obs_record it feeds:
-                 RTest   -> target_count_{exhaustive,heuristic}, interleavings,
-                            frames_examined, skew/distinct, observer, the histogram
-                 RMu     -> control_target_count / control_frames_examined
-                 RCanary -> canary_target_count / canary_frames_examined
-               It is the SAME scan for all three: a control is not special-cased,
-               it is another instance whose target the identical scan tallies.  Each
-               carries its own frame binding, detector and exhaustive_valid, because
-               the shapes differ. *)
+               role picks which channel of het_obs_record it feeds -- T the
+               target/interleaving/skew/histogram channels, RMu and RCanary their
+               own target and frame counts.  It is the same scan for all three: a
+               control is not special-cased, it is another instance whose target
+               the identical scan tallies, carrying its own frame binding,
+               detector and exhaustive_valid because the shapes differ. *)
             let scan =
               let b = Buffer.create 4096 in
               let s = Buffer.add_string b in
@@ -999,7 +975,7 @@ end
               (* The control channel is the only windowed one: T's target is far
                  too rare to say anything about a rate from, while the control is a
                  high-rate proxy on the same fabric in the same run
-                 (env-research/Q3-stats.md sec 3.3). *)
+                 (hetlitmus/docs/00-environment-design.md sec 3.7). *)
               let bump_count f w =
                 Printf.sprintf
                   "      if (_weak) { _rec.%s++; _rec.%s[het_win_of(_f, SIZE_OF_TEST)]++; }\n"
@@ -1007,7 +983,7 @@ end
               if pre <> "" then
                 s (Printf.sprintf "    /* ---- recovery scan: %s -- %s (K=%d) ---- */\n"
                      tname (role_note role) k_tag) ;
-              (* Every scan-local name lives in its own block, so only the BUFFERS
+              (* Every scan-local name lives in its own block, so only the buffers
                  (which are main-scope) carry the instance prefix. *)
               if pre <> "" then s "    {\n" ;
               (match sync_src with
@@ -1068,27 +1044,21 @@ end
                 end else
                   s "    (void)_obs_uniq;  /* the controls report only their target count */\n" ;
                 s (Printf.sprintf "    int %s = %s;\n" locv loc_expr) ;
-                (* WHICH OBSERVER RECOVERED THE `co' EDGE.  loc_expr is the
+                (* Which observer recovered the `co' edge.  loc_expr is the
                    disjunction of the CPU-observer decode and the GPU-observer
-                   decode, and on a CPU-ONLY test (D10) the difference decides
-                   what the sighting is EVIDENCE OF: x86-TSO constrains the order
-                   in which x86 agents see two x86 stores, and the GPU is not an
-                   x86 agent, so a co edge seen only through the GPU observer is
-                   NOT an x86-TSO statement at all.
-                   MEASURED 2026-08-03 (i5-12500H + RTX 3060, HET_ALLOC=pinned):
-                   2+2W-cpuonly-x86_64 reported a corroborated sighting, 10 of 10
-                   runs, with ws_via_obs=1 -- and its detector is exactly this
-                   disjunction.  Without recording the two arms separately, the
-                   run log could not tell an Intel TSO violation from a GPU
-                   observing two CPU stores out of order.  Recorded for the test
-                   under study only; the controls report only their target count. *)
+                   decode, and on a CPU-only test that difference decides what a
+                   sighting is evidence of: the host ISA constrains the order in
+                   which its OWN agents see two of its stores, and the GPU is not
+                   one of them, so a co edge seen only through the GPU observer
+                   says nothing about the host model.  Recorded for the test under
+                   study alone; the controls report only their target count. *)
                 if is_test then begin
                   let cprop = prop_of parsed.MiscParser.condition in
                   s (Printf.sprintf "    _rec.obs_ws_via_cpu = %s;\n" (c_loc "c" cprop)) ;
                   s (Printf.sprintf "    _rec.obs_ws_via_gpu = %s;\n" (c_loc "g" cprop))
                 end
               end ;
-              (* exhaustive_valid, PER INSTANCE and per shape.  T_L<=1: every frame
+              (* exhaustive_valid, per instance and per shape.  T_L<=1: every frame
                  decodes exactly, so the O(N) scan is ground truth at any N.  T_L>=2:
                  valid only where the O(N^T_L) search actually ran.  Keying it off
                  (N <= HET_EXHAUSTIVE_MAX) for every test instead would make it 0 at
@@ -1255,17 +1225,13 @@ end
                            (if has_observers then mk_and ["_rex"; locv] else "_rex")) ;
                       s "      if (_weak_ex) _rec.target_count_exhaustive++;\n"
                    | Some (f,w) ->
-                      (* A control counts its WINDOWED detector, because that is the
-                         count actually measured at production N.  Some mutants are
-                         themselves T_L>=2 shapes whose exhaustive scan does not run
-                         above HET_EXHAUSTIVE_MAX, so keying the control off the
-                         exhaustive count would leave control_target_count zero by
-                         construction and their nulls COLD forever -- a control that
-                         cannot fire is not a control.  The window is a subset of the
-                         full range under the SAME predicate, so it can miss cycles
-                         but never invent them: under-counting errs toward COLD.
-                         control_exhaustive_valid travels alongside so a reader can
-                         see which kind of count it is
+                      (* A control counts its windowed detector, the count actually
+                         measured at production N: keying it off the exhaustive one
+                         would leave the T_L>=2 mutants' control_target_count zero
+                         by construction and their nulls COLD forever, and a control
+                         that cannot fire is not a control.  The window is a subset
+                         of the full range under the same predicate, so it
+                         under-counts, which errs toward COLD
                          (hetlitmus/docs/positive-control.md sec 5). *)
                       s (bump_count f w))) ;
               (* liveness guard: the synchrony decode must actually VARY. *)
@@ -1280,15 +1246,14 @@ end
                   s "        if (!_have_prev || _ms != _prev_m) { _rec.distinct_decoded_iters++; _prev_m = _ms; _have_prev = 1; }\n" ;
                   s "      }\n"
                | _ -> ()) ;
-              (* Histogram: T only, and ONLY where an outcome is a per-FRAME fact.
+              (* Histogram: T only, and ONLY where an outcome is a per-frame fact.
                  A store-only shape (read_buffers = []) has no reader, so its `_weak'
                  is the bare run-level `_loc' -- the observer's ws witness over the
-                 WHOLE run, computed before this loop and constant inside it.  Adding
+                 whole run, computed before this loop and constant inside it.  Adding
                  it here would stamp one per-run observation into the histogram N
-                 times, printing a total that exceeds the frames examined and is a
-                 per-frame tally of nothing.  The per-RUN entry below is the sole
-                 correct tally for those shapes
-                 (env-research/impl-briefs/FA-FB-REPORT.md; gated by histcheck.py). *)
+                 times, printing a total above the frames examined and a per-frame
+                 tally of nothing.  The per-run entry below is the sole correct tally
+                 for those shapes; this guard text is grepped by histcheck.py. *)
               if is_test && read_buffers <> [] then begin
                 s "      if (_hot || _weak) {\n" ;
                 s (Printf.sprintf "        intmax_t _o[%d];\n" (max 1 nslots)) ;
@@ -1319,9 +1284,9 @@ end
               s "    }\n" ;                                (* end for (_f) *)
               (match sync_src with
                | Some _ when is_test ->
-                  (* This test HAS a synchrony decode, so the degeneracy guard may
+                  (* This test has a synchrony decode, so the degeneracy guard may
                      read distinct_decoded_iters / skew_stddev.  The flag says the
-                     fields are POPULATED, not that they are healthy: without it a
+                     fields are populated, NOT that they are healthy: without it a
                      zero would be indistinguishable from "never measured". *)
                   s "    _rec.sync_valid = 1;\n" ;
                   s "    if (_skew_n > 0) {\n" ;
@@ -1331,7 +1296,7 @@ end
                   s "      _rec.skew_stddev = _var > 0.0 ? sqrt(_var) : 0.0;\n" ;
                   s "    }\n"
                | _ -> ()) ;
-              (* A pure-location (store-only) test's weak result is per-RUN. *)
+              (* A pure-location (store-only) test's weak result is per run. *)
               if has_observers && read_buffers = [] then begin
                 (match count_field with
                  | None ->
@@ -1340,11 +1305,9 @@ end
                  | Some (f,w) ->
                     (* The per-window stream must collapse WITH the count, or
                        sum(win[]) != total fires the WIN_DESYNC alarm on a harness
-                       behaving exactly as designed.  No control in the shipped
-                       corpus is a store-only shape, so this arm is unreached today;
-                       it stays because that invariant is the only run-time evidence
-                       the sub-tallies are alive, and one that can misfire is one
-                       nobody will trust. *)
+                       behaving exactly as designed.  A store-only test's own
+                       lattice-floor sibling is store-only too, so a control
+                       reaches this arm. *)
                     s (Printf.sprintf
                          "    { int _cw, _cf = -1;   /* store-only: the weak result is per-RUN */\n\
                           \      for (_cw = 0; _cw < HET_NWIN; ++_cw)\n\
@@ -1416,21 +1379,14 @@ end
             close_in ch ;
             (p, sp.Splitter.name) in
 
-          (* ================= the instance population ==========================
-             A test the map names a mu for -- every test not itself at the lattice
-             floor -- becomes a THREE-instance harness: T + mu(T) + the canary, in
-             the same launch, under the same stress, on the same C2C path, on
-             disjoint cache-line-padded locations.
-
-             A test AT the floor co-runs the canary alone (T + canary): no sibling
-             of it can be weaker, so Layer A has nothing to build.  Without the
-             canary a non-firing test is as uninterpretable as a bare "Never":
-             nothing tells "the harness was hot and this behaviour did not surface"
-             -- an observability result -- from "the harness was dead".
-
-             A test that IS the canary cannot co-run itself, so it stays
-             single-instance with prefix "".
-             (hetlitmus/docs/positive-control.md sec 5 and 11.) *)
+          (* ---- the instance population -----------------------------------
+             A test the map names a mu for becomes T + mu(T) + the canary, in one
+             launch, under one stress config, on one interconnect path, on
+             disjoint cache-line-padded locations.  A test AT the lattice floor
+             co-runs the canary alone: no sibling of it can be weaker.  A test
+             that IS the canary cannot co-run itself and stays single-instance
+             with prefix "".  What each population licenses a null to say:
+             hetlitmus/docs/positive-control.md sec 5 and 11. *)
           let insts =
             match mu_name, canary_name with
             | Some m, Some c ->
@@ -1448,7 +1404,7 @@ end
                    ~tname:c ~parsed:cp ~doc:cdoc ]
             | _ -> [ derive ~role:RTest ~pre:"" ~kmac:"K_TAG" ~tname ~parsed ~doc ] in
           let co_run = List.length insts > 1 in
-          (* THE TWO FLAGS ARE NOT THE SAME CLAIM: collapsing them is how a null on
+          (* The two flags are NOT the same claim: collapsing them is how a null on
              a test with no sibling weaker than it would start reading as
              vouched-for.  Both are computed from the emitted instance population,
              never from the map, which names a canary even for tests that co-run
@@ -1541,20 +1497,13 @@ end
             String.concat ","
               (List.map fst (cpu_addr_u64 cp @ cpu_bufs i cp) @ ["int _n"]) in
           let gsym i g = i.i_pre ^ g in     (* this instance's copy of global [g] *)
-          (* WHICH TEST GLOBALS THE KERNEL NEEDS AS PARAMETERS.  Not
-             [i_gpu_globals]: the GPU OBSERVER lane dereferences every location
-             in [i_obs_locs], and on a test where no GPU proc happens to touch
-             one of them that pointer would be undeclared.
-             MEASURED 2026-08-03 on the D10 CPU-only set, where no GPU proc
-             touches anything at all:
-               2+2W-cpuonly-x86_64.cu(100): error: identifier "t_x" is undefined
-               2+2W-cpuonly-x86_64.cu(101): error: identifier "t_y" is undefined
-             -- 2 of the 6 D10 tests would not compile.  The committed het
-             corpus never hit it (its 2+2W GPU proc writes BOTH locations, so
-             both were already parameters), which is why it surfaced only when
-             an all-CPU cycle was first emitted.  Order-preserving and
-             append-only, so a test with no observer is byte-identical to
-             before. *)
+          (* Which test globals the kernel takes as parameters.  NOT
+             [i_gpu_globals] alone: the GPU observer lane dereferences every
+             location in [i_obs_locs], so on a test whose GPU procs touch none of
+             them -- a CPU-only cycle touches nothing at all -- that pointer
+             would be undeclared and the render would not compile.
+             Order-preserving and append-only, so a test with no observer takes
+             the same parameters it would have without this. *)
           let kernel_globals i =
             i.i_gpu_globals
             @ List.filter (fun l -> not (List.mem l i.i_gpu_globals))
@@ -1728,12 +1677,13 @@ end
             (* A co-run harness reserves several times the test blocks, so the
                stress population is the first thing the co-residency cap squeezes
                out.  An empty one is a run with no memory stress at all, and on
-               NVIDIA silicon that is a run that observes nothing (Alglave
-               ASPLOS'15 sec 4.3.1).  The tally would catch it afterwards; warn
-               BEFORE the run. *)
+               the NVIDIA part measured there the lb and sb shapes yielded zero
+               observations without it [Alglave15 sec 4.3.1].  The tally would
+               catch that afterwards; warn BEFORE the run. *)
             s "  if (HET_MEM_STRESS_PCT > 0 && _stressBlocks == 0)\n" ;
-            (* Alglave's "zero without stress" is an NVIDIA measurement (B4), so
-               it is cited only where it applies; elsewhere the gap is stated. *)
+            (* "Zero without stress" is an NVIDIA-only figure [Alglave15
+               sec 4.3.1], so the sentence below claims it only for a machine row
+               that carries it, and states the gap for one that does not. *)
             s (Printf.sprintf
                  "    fprintf(stderr, \"HetLitmus WARNING: the mem-stress population is EMPTY (test=%%d + noise=%%d fills the co-resident cap %%d).  HET_MEM_STRESS_PCT=%%d asks for scratchpad stress and NO block will do any.  %s\\n\",\n\
                \            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_MEM_STRESS_PCT);\n"
@@ -1833,23 +1783,23 @@ end
                \          _noise_blocks, (int)HET_NOISE_CPU,\n\
                \          (unsigned long long)_noise_words, (int)HET_NOISE_MB, (int)HET_PLACE);\n" ;
             s "  outs_t* hist = NULL;\n" ;
-            (* The statistics are computed over the (instance,run) CELLS, so the
+            (* The statistics are computed over the (instance,run) cells, so the
                records must OUTLIVE the run loop.  The replication unit is the cell
                and never the frame: the recovery scan validates N^{T_L} overlapping
-               frames per N iterations, so a frame count fed into Kirkham's 1-e^{-n}
-               returns ~1 vacuously.  Y = 1[target_count >= 1] per cell is the n the
-               reproducibility math takes (env-research/Q3-stats.md). *)
+               frames per N iterations, so a frame count fed into the 1-e^{-n}
+               reproducibility rate [Kirkham20 sec 1.1] returns ~1 vacuously.
+               Y = 1[target_count >= 1] per cell is the n it takes
+               (hetlitmus/docs/00-environment-design.md sec 3.7). *)
             s "  het_obs_record _recs[NUMBER_OF_RUN];\n" ;
             s "  memset(_recs, 0, sizeof _recs);\n" ;
-            (* The campaign knobs are RUNTIME (getenv), never -D: the scheduler
-               retunes them per invocation without a rebuild, and a compile-time
-               knob threaded through an if-chain is what lets a whole mechanism be
-               folded away.  Unset envs leave the compiled defaults.  HET_RUNS_MAX
-               can only CURTAIL within one invocation, since the record array is
-               compiled at NUMBER_OF_RUN; growing R is the outer scheduler's job,
-               one fresh-HET_SEED invocation at a time -- replaying the same seeds
-               adds no fresh phase draws, so pooling them would count one draw twice
-               and report 2R runs of effort for R. *)
+            (* The campaign knobs are read at run time (getenv), never -D: the
+               scheduler retunes them per invocation without a rebuild, and a
+               compile-time knob threaded through an if-chain is what lets a whole
+               mechanism be folded away.  Unset envs leave the compiled defaults.
+               HET_RUNS_MAX can only CURTAIL within one invocation, the record
+               array being compiled at NUMBER_OF_RUN; growing R is the scheduler's
+               job, one fresh-HET_SEED invocation at a time -- replayed seeds draw
+               no fresh phase, so pooling them counts one draw twice. *)
             s "  int _runs_budget = (int)het_env_long(\"HET_RUNS_MAX\", NUMBER_OF_RUN);\n" ;
             s "  if (_runs_budget > NUMBER_OF_RUN) {\n" ;
             s "    fprintf(stderr, \"HetLitmus WARNING: HET_RUNS_MAX=%d exceeds the compiled NUMBER_OF_RUN=%d -- clamped.  Grow R by re-invoking with a FRESH HET_SEED (hetlitmus/campaign.py), never by replaying the same seeds.\\n\", _runs_budget, (int)NUMBER_OF_RUN);\n" ;
@@ -1988,7 +1938,7 @@ end
                        (usym i.i_pre "_cao"))
                 end)
               insts ;
-            (* args[] in KERNEL-PARAM order. *)
+            (* args[] in kernel-parameter order. *)
             let args_addrs =
               String.concat ", "
                 (List.concat_map
@@ -2083,7 +2033,7 @@ end
             s (Printf.sprintf "    _rec.reporting = %s;\n"
                  (HetCond.confidence_c_name it.i_report)) ;
             s "    _rec.N = SIZE_OF_TEST;\n" ;
-            (* THE RECORD STAMP, written as the SYMBOL so a rename in
+            (* The record stamp, written as the SYMBOL so a rename in
                het_verdict.h is a compile error here rather than a silent
                mis-read.  het_verdict() reads no field of an unstamped record:
                the record is memset(0) just above, so without this line every
@@ -2093,12 +2043,11 @@ end
             s (Printf.sprintf
                  "    _rec.cpu_only = %d;  /* D10: 1 iff EVERY proc is a CPU proc */\n"
                  (if cpu_only then 1 else 0)) ;
-            (* THE BUILD FACTS behind the "structurally absent stress" caveat,
+            (* The build facts behind the "structurally absent stress" caveat,
                taken from the constants that actually guard the two loops rather
                than re-derived in het_verdict.h.  cpu_only is NOT a proxy for
                them: a CPU-only store-only shape still carries a GPU observer
-               lane, so 2+2W-cpuonly-x86_64 and R-cpuonly-x86_64 emit
-               HET_GPU_LANES=1 while the caveat used to assert 0 for all six. *)
+               lane, so such a harness stamps HET_GPU_LANES=1. *)
             s "    _rec.gpu_lanes = HET_GPU_LANES;\n" ;
             s "    _rec.spin_lanes = HET_SPIN_LANES;\n" ;
             (match mu_name with
@@ -2112,18 +2061,14 @@ end
              | None -> s "    _rec.canary_name = NULL;\n") ;
             s "    _rec.control_compiled_in = HET_CONTROL_COMPILED_IN;\n" ;
             s "    _rec.canary_compiled_in = HET_CANARY_COMPILED_IN;\n" ;
-            (* THE TWO GPU MECHANISMS ARE ONLY REQUESTED WHERE THEY CAN RUN.
+            (* The two GPU mechanisms are requested ONLY where they can run.
                het_do_stress's loop guard is `_gpu_done < HET_GPU_LANES' and the
-               window-opener spins over HET_SPIN_LANES; on a CPU-only harness both
-               constants are 0, so both loops exit before their body runs once.
-               MEASURED 2026-08-03 on MP-cpuonly-x86_64 (RTX 3060, HET_ALLOC=pinned):
-               spin=0/0 do_stress_rounds=0 with req=0xf, so het_dead() fired on both
-               and ALL TEN runs came back COLD-INVALID -- a row whose null can
-               never be a datum.  These are structurally absent mechanisms, not
-               dead ones, which is exactly the distinction stress_requested exists to
-               draw.  het_verdict() still raises HET_CV_NO_GPU_LANES so the null says
-               out loud that only CPU-side stress opened its window.
-               A het harness has HET_GPU_LANES >= 1, so the mask is unchanged there. *)
+               window-opener spins over HET_SPIN_LANES; where both constants are 0
+               each loop exits before its body runs once, and a request left
+               standing would make het_dead() disqualify every run of that harness.
+               These are structurally absent mechanisms, not dead ones, which is
+               the distinction stress_requested draws; het_verdict() still raises
+               HET_CV_NO_GPU_LANES to say only CPU-side stress opened a window. *)
             s "    _rec.stress_requested =\n\
                \        ((HET_GPU_LANES > 0 && (HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0)) ? HET_REQ_GPU_STRESS : 0u)\n\
                \      | ((HET_SPIN_LANES > 0 && HET_BARRIER_PCT > 0) ? HET_REQ_SPIN : 0u)\n\
@@ -2158,7 +2103,7 @@ end
                Computing it earlier can only ever yield 1 - e^0 = 0. *)
             s "    _rec.control_Prep = 1.0 - exp(-(double)_rec.control_target_count);\n" ;
             s "    het_obs_record_print(stdout, &_rec);\n" ;
-            (* THE REPORTING CONTRACT: never print a bare "Never".  Every null is
+            (* The reporting contract: NEVER print a bare "Never".  Every null is
                printed paired with the control that vouches for it, by name and in
                absolute numbers, and a null no control vouches for is printed as
                discard-this rather than as a result.  It is the harness's own output,
@@ -2171,8 +2116,8 @@ end
                statistic already computed, so consulting it after each run gives the
                campaign scheduler its per-test early stop with no new decision
                machinery.  With HET_ADAPTIVE unset the loop simply runs to
-               _runs_budget.  The rule stays PURE, so the two policy knobs it takes
-               (HET_RATE, HET_CONFIRM_RUNS) are read HERE and passed in. *)
+               _runs_budget.  The rule stays pure, so the two policy knobs it takes
+               (HET_RATE, HET_CONFIRM_RUNS) are read here and passed in. *)
             s "    if (_adaptive) {\n" ;
             s "      het_campaign_stop_t _stop = het_campaign_should_stop(_recs, _nrec, _runs_budget, _rate_mode, _confirm_runs);\n" ;
             s "      if (_stop != HET_CAMPAIGN_CONTINUE) {\n" ;
@@ -2186,13 +2131,13 @@ end
             s "      }\n" ;
             s "    }\n" ;
             s "  }\n" ;
-            (* ========= the statistics post-pass over the aggregated cells ========
-               het_verdict() is a PURE function of one record, so the aggregate reuses
-               it instead of re-deriving liveness, inheriting every stress
-               disqualifier.  This is what turns "not observed" into "not observed
-               over this much effort, on a harness a live control kept demonstrably
-               hot" -- no rate and no probability is attached to a null
-               (env-research/Q3-stats.md). *)
+            (* ---- the statistics post-pass over the aggregated cells --------
+               het_verdict() is a pure function of one record, so the aggregate
+               reuses it instead of re-deriving liveness, inheriting every stress
+               disqualifier.  That turns "not observed" into "not observed over
+               this much effort, on a harness a live control kept demonstrably
+               hot": no rate and no probability is attached to a null
+               (hetlitmus/docs/00-environment-design.md sec 3.7). *)
             s "  {\n" ;
             s "    het_stats_t _st;\n" ;
             s "    het_stats_compute(_recs, _nrec, &_st);\n" ;
@@ -2289,15 +2234,14 @@ end
             s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
             s "#include <cstring>\n#include <cmath>\n" ;
             s "#include <pthread.h>\n#include <inttypes.h>\n" ;
-            (* WHAT THE MACHINE ROW STAMPS, ahead of the runtime headers that
-               read it.  The machine words -- the two halves of the interconnect
-               noise, the link between them, this part's last level -- are claims
-               about silicon, so a pair with no machine row stamps none of them
-               and the headers' #ifndef defaults name the mechanism instead: a
-               missing define can only weaken a claim.  The two build facts below
-               are stamped by every pair, because they are true of the binary
-               whatever the machine row says.  HET_PLACE_LEVER is separate again:
-               the vendor API call this render contains is a dialect fact. *)
+            (* What the machine row stamps, ahead of the runtime headers that read
+               it.  The machine words -- the two halves of the interconnect noise,
+               the link between them, this part's last level -- are claims about
+               silicon, so a pair with no machine row stamps NONE of them and the
+               headers' #ifndef defaults name the mechanism instead.  The two
+               build facts below are stamped by every pair, being true of the
+               binary whatever the row says; HET_PLACE_LEVER is separate again,
+               the vendor API call a render contains being a dialect fact. *)
             (match machine with
              | Some m ->
                 s (Printf.sprintf "#define HET_LINK_NAME %S\n"
@@ -2342,19 +2286,14 @@ end
 }
 |ocaml} ;
             s (Printf.sprintf "\n#define NPART %d\n" npart) ;
-            (* ---- THE POSITIVE CONTROL: TWO LAYERS, TWO FLAGS.
+            (* ---- the positive control: two layers, two flags.
                0 means the corresponding *_target_count is structurally zero and
-               carries no information; 1 means that layer is genuinely co-running in
-               this launch, under this stress, on this C2C path, so a count may be
-               read against it.  Neither may ever be 1 without the co-run behind it,
-               or a "Never" silently becomes a CREDIBLE "Never" -- an unfalsifiable
-               null reading as confirmation of the model.  Both come from the
-               instance population, so they cannot drift.
-
-               They stay separate because "a canary is co-running" is a weaker claim
-               than "the sibling OF THIS TEST is co-running", and only the second
-               licenses a credible null; one bit cannot carry both without lying
-               about one (hetlitmus/docs/positive-control.md sec 11). *)
+               carries no information; 1 means that layer is genuinely co-running
+               in this launch, so a count may be read against it.  Neither may
+               ever be 1 without the co-run behind it, or an unfalsifiable "Never"
+               starts reading as confirmation.  They stay separate because "a
+               canary is co-running" is the weaker claim, and one bit cannot carry
+               both (hetlitmus/docs/positive-control.md sec 11). *)
             s (Printf.sprintf "#define HET_CONTROL_COMPILED_IN %d\n"
                  (if has_mu then 1 else 0)) ;
             s (Printf.sprintf "#define HET_CANARY_COMPILED_IN %d\n"
@@ -2401,7 +2340,7 @@ end
             s (Printf.sprintf "#define HET_TEST_BLOCKS %d\n" test_blocks) ;
             s (Printf.sprintf "#define HET_GPU_LANES %d\n" gpu_lanes) ;
             s (Printf.sprintf "#define HET_SPIN_LANES %d\n\n" spin_lanes) ;
-            (* _decode_value (T only): a store tag -> the ORIGINAL value that write
+            (* _decode_value (T only): a store tag -> the original value that write
                carried.  Keyed on T's OWN K. *)
             List.iter (fun i -> s i.i_decode) insts ;
             (* ---------------------------- the kernel ------------------------- *)
@@ -2430,14 +2369,16 @@ end
             List.iter
               (fun i ->
                 let bb = base_of i in
-                (* the GPU TEST lanes of this instance *)
+                (* the GPU test lanes of this instance *)
                 List.iter
                   (fun gp ->
                     s (Printf.sprintf "  if (blockIdx.x == %d && threadIdx.x == %d) {\n"
                          (bb + gp.gp_blk) gp.gp_lane) ;
-                    (* Bind this instance's object to the LISA name the shared GPU
-                       lowering emits; see the co-run banner.  A single-instance
-                       harness has prefix "" and emits no alias. *)
+                    (* CudaLang/HipLang name a global by its LISA name (`*x') and
+                       are shared backends this file may not touch, so each lane
+                       opens with a local alias binding the emitted `*x' to this
+                       instance's own object, leaving the lowering unchanged.  A
+                       single-instance harness has prefix "" and emits none. *)
                     if co_run then
                       List.iter
                         (fun g ->
@@ -2449,25 +2390,24 @@ end
                     List.iter (fun n -> s (Printf.sprintf "    uint64_t r%d = 0;\n" n))
                       gp.gp_regs ;
                     s "    uint32_t _nb = 0;\n" ;
-                    (* FAITHFULNESS, do not remove: SIZE_OF_TEST is a compile-time
-                       constant, so without this pragma nvcc unrolls the loop and the
-                       emitted PTX carries many copies of the tested instructions --
-                       a different program microarchitecturally, and one the L0
-                       faithfulness gate rejects.  The observer loop below needs the
-                       same pragma for the same reason. *)
+                    (* Do NOT remove: SIZE_OF_TEST is a compile-time constant, so
+                       without this pragma nvcc unrolls the loop and the emitted PTX
+                       carries many copies of the tested instructions -- a different
+                       program microarchitecturally, and not the one the .litmus
+                       names.  The observer loop below needs the same pragma for the
+                       same reason. *)
                     s "    #pragma unroll 1\n" ;
                     s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
                     s "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n" ;
                     s "        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally);\n" ;
-                    (* The barrier roll is drawn from a LANE-INDEPENDENT stream, keyed
-                       by the iteration rather than the lane, so every test lane in
-                       every co-running instance decides the same way for iteration
-                       _n.  The barrier is then taken by all the spin lanes or none,
-                       each contributing one increment, and the counter reaches
-                       _nb*HET_SPIN_LANES exactly when the last lane arrives.  A
-                       per-lane roll makes that limit unreachable after the first
-                       skipped roll, and the spin degrades into a delay loop that
-                       releases on its deadlock cap. *)
+                    (* The barrier roll is drawn from a LANE-INDEPENDENT stream,
+                       keyed by the iteration rather than the lane, so every test
+                       lane of every co-running instance decides alike for
+                       iteration _n and the counter reaches _nb*HET_SPIN_LANES
+                       exactly when the last lane arrives.  A per-lane roll makes
+                       that limit unreachable after the first skipped roll, and
+                       the spin degrades into a delay loop releasing on its
+                       deadlock cap. *)
                     s "      het_rng_t _brng = het_rng_init(_seed ^ 0x9e3779b9u, (uint32_t)_n);\n" ;
                     s "      if (het_rng_pct(&_brng, HET_BARRIER_PCT)) {\n" ;
                     s "        _nb++;\n" ;
@@ -2591,15 +2531,14 @@ end
                 (* this instance's CPU observer pthread *)
                 if i.i_obs then begin
                   s (Printf.sprintf "struct %scpu_obs_args {\n" i.i_pre) ;
-                  (* The OBSERVED shared locations are `volatile const' so that the
+                  (* The observed shared locations are `volatile const' so the
                      observer's per-iteration reads cannot be hoisted out of the
-                     perpetual loop at -O2 -- the same treatment the noise buffers
-                     get, and what the GPU-side atomic observer gets structurally.
-                     A plain deref, never written on this thread, is hoisted to one
-                     broadcast load: the observer would then record a single value N
-                     times, pinning observer_unique_count at 1 and leaving a
-                     store-only test's only recovery channel inert.  The
-                     non-observed globals are not dereferenced here and stay plain. *)
+                     perpetual loop at -O2.  A plain deref, never written on this
+                     thread, is hoisted to ONE broadcast load: the observer would
+                     record a single value N times, pinning observer_unique_count
+                     at 1 and leaving a store-only test's only recovery channel
+                     inert.  The non-observed globals are not dereferenced here
+                     and stay plain. *)
                   List.iter
                     (fun l ->
                       let ty =
@@ -2833,23 +2772,14 @@ end
               dialects ;
             s "outs.o: outs.c\n\t$(CC) -c $< -o $@\n\n" ;
             s (Printf.sprintf "%s_cpu_host.o: %s_cpu.c\n\t$(CC) -c $< -o $@\n\n" tname tname) ;
-            (* THE TWO LINK TARGETS ARE .PHONY RECIPES, NOT FILE RULES.  Both
+            (* The two link targets are .PHONY recipes, NOT file rules.  Both
                vendors write the same ./<test> -- deliberate, so run-one.sh and
-               campaign.py stay vendor-agnostic (they exec ./<test>) -- and make
-               cannot carry two file rules for one target.
-
-               A file rule would also be SKIPPED whenever ./<test> is newer than
-               its objects, which is exactly the state the other vendor's link
-               leaves behind.  MEASURED on this tree before the fix, with
-               `cuda-bin: <test>' + a `<test>: <test>.o ...' file rule: after
-               `make hip-bin', `make cuda-bin' printed "Nothing to be done for
-               'cuda-bin'", EXITED 0, and left the gfx942 binary in place -- a
-               CUDA build that reports success and hands back the AMD harness.
-               Inert while only one vendor could link; live from the moment
-               hip-bin existed.  Both link unconditionally now: a link target
-               that silently links nothing is this project's recurring failure
-               mode.  Guarded for the same reason as comp.sh's *-link arms: on a
-               foreign host $(TEST)_cpu_host.o is the portable shim. *)
+               campaign.py stay vendor-agnostic -- and make cannot carry two file
+               rules for one target.  A file rule is also skipped whenever
+               ./<test> is newer than its objects, the state the other vendor's
+               link leaves behind: the build would report success and hand back
+               that binary.  Both link unconditionally, guarded like comp.sh's
+               *-link arms: on a foreign host the CPU object is the shim. *)
             List.iter
               (fun d ->
                 s (Printf.sprintf "%s-bin: %s outs.o %s_cpu_host.o\n"
@@ -2860,28 +2790,14 @@ end
                 s (Printf.sprintf "\t$(%s) %s$(%s) $^ -o %s -lpthread -lm\n\n"
                      d.gd_compiler_var d.gd_arch_flag d.gd_arch_var tname))
               dialects ;
-            (* ...AND `make <test>' MUST NOT BUILD ANYTHING EITHER.  Making the two
-               link targets phony removed the only rule that named ./<test>, so
-               GNU make fell through to its BUILT-IN link rule `%: %.o' -- which
-               links <test>.o with $(CC) and never consults the uname -m guard.
-               MEASURED 2026-08-03 on an emitted x86 harness:
-
-                 $ make MP-cg-sys-acqrel-2s-x86_64
-                 cc   MP-cg-sys-acqrel-2s-x86_64.o   -o MP-cg-sys-acqrel-2s-x86_64
-                 ... undefined reference to `cudaLaunchKernel'
-                 make: *** [<builtin>: MP-cg-sys-acqrel-2s-x86_64] Error 1
-
-               It failed only because these objects carry CUDA/C++ symbols the
-               plain $(CC) link cannot resolve -- the ISA guard is NOT what
-               stopped it, and `[<builtin>]' says so.  Before the link targets
-               became phony the same command went through the guarded file rule.
-               So: `.SUFFIXES:' kills the built-in fall-through for every target
-               here (all four object rules are explicit, so nothing needs it),
-               and ./<test> additionally gets a rule that SAYS which target to
-               use.  It is .PHONY as well as explicit because a plain rule whose
-               target already exists is "up to date": make would exit 0 printing
-               nothing and hand back whichever vendor's binary was lying there --
-               the same silent-success shape as the stale-link trap above. *)
+            (* ...and `make <test>' must not build anything either.  With both
+               link targets phony, no rule names ./<test>, so GNU make falls
+               through to its built-in `%: %.o' rule, linking <test>.o with $(CC)
+               past the uname -m guard.  `.SUFFIXES:' kills that fall-through
+               here (all four object rules are explicit), and ./<test> gets a rule
+               naming the target to use instead.  It is .PHONY too: a plain rule
+               whose target exists is "up to date", so make would exit 0 and hand
+               back whichever binary was lying there. *)
             s ".SUFFIXES:\n\n" ;
             s (Printf.sprintf "%s:\n" tname) ;
             s (Printf.sprintf
@@ -3014,7 +2930,7 @@ end
             s "built-in `%: %.o` rule and links the harness with `$(CC)` and no device code.\n" ;
             s (Printf.sprintf "Use %s.\n\n"
                  (enum (List.map (fun t -> Printf.sprintf "`make %s-bin`" t) targets))) ;
-            (* WHAT THIS HARNESS WAS BUILT FOR, and the last line a reader of a
+            (* What this harness was built for, and the last line a reader of a
                results tree meets.  A part is named only where the pair's machine
                row names one; where none does, the pair and the reason stand in
                its place, because "no target stated" and "the target nobody
@@ -3058,7 +2974,7 @@ end
               "HetLitmus: emitted harness directory %s (%s)\n%!"
               dir (String.concat " + " renders) ;
           Absent
-        (* FAIL-CLOSED: the emitted harness directory is this function's ONLY
+        (* Fail closed: the emitted harness directory is this function's ONLY
            deliverable, so a refusal must not be reported as success.  See
            HetArch.refused. *)
         with e ->

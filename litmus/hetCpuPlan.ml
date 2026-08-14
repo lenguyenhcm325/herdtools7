@@ -1,33 +1,39 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
 (*                                                                          *)
-(* hetCpuPlan: the CPU-ISA-independent half of a tagged CPU thread body --  *)
-(* the node list a per-ISA classifier produces, the plan HetEmit consumes,  *)
-(* and the C frame both are rendered into.  A node's mnemonic is the one    *)
-(* the test's own instruction column names (HetCpuFront's per-ISA           *)
-(* sub-parser reads it), reproduced verbatim; only the store value (rebound *)
-(* to the runtime tag K*iter+mu) and the load destination (a per-iteration  *)
-(* buffer) change.  Every emitted datum is uint64_t so the tag cannot       *)
-(* truncate (env-research/decisions/B3-decision.md, Decision 3).            *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
-(* Not ASMLang.dump_fun: litmus7's own lowering bakes a store value as an   *)
-(* immediate, leaving no runtime seam for the tag (B3-decision.md,          *)
-(* Decision 1); each ISA module carries its own evidence for that.          *)
-(*                                                                          *)
-(* This software is governed by the CeCILL-B license under French law.       *)
+(* This software is governed by the CeCILL-B license under French law and   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
+
+(* HetLitmus: the CPU-ISA-independent half of a tagged CPU thread body -- the
+   node list a per-ISA classifier produces, the plan HetEmit consumes, and the
+   C frame both are rendered into.  A node's mnemonic is the one the test's own
+   instruction column names (HetCpuFront's per-ISA sub-parser reads it),
+   reproduced verbatim; only the store value (rebound to the runtime tag
+   K*iter+mu) and the load destination (a per-iteration buffer) change.  Every
+   emitted datum is uint64_t so the tag cannot truncate.
+
+   Not ASMLang.dump_fun: litmus7's own lowering bakes a store value in as an
+   immediate, leaving no runtime seam for the tag; each ISA module carries its
+   own evidence for that.  Design: hetlitmus/docs/het-emission.md. *)
 
 (* One CPU proc's program, classified: one node per source instruction, in
    program order.  A store's mu is keyed on its ORDINAL in this list
-   (hetEmit.ml), so the plan below and the C frame further down have to agree
-   on which instructions count -- they walk the one list, which is what makes
-   them agree by construction instead of by two matchers staying in step.
-   [Consumed] is an instruction this ISA's classifier absorbed because it
-   performs no memory access and carries no ordering, so removing it removes no
-   tested event.  The absorbed set is per-ISA: AArch64 absorbs the immediate
-   MOV/MOVZ and refuses NOP, x86 absorbs NOP as well. *)
+   (hetEmit.ml), so the plan below and the C frame further down agree on which
+   instructions count by walking the one list, rather than by two matchers
+   staying in step.  [Consumed] is an instruction the classifier absorbed
+   because it performs no memory access and carries no ordering, so dropping it
+   drops no tested event; the absorbed set is per-ISA (AArch64 takes the
+   immediate MOV/MOVZ and refuses NOP, x86 takes NOP too). *)
 type node =
   | Store of { mnemonic : string ; global : string ; imm : int option }
   | Load of { mnemonic : string ; global : string ; dest : string }
@@ -76,10 +82,8 @@ type lowering = {
    C tag-index expression (the caller passes "(_n + 1)", so i=0 stays the
    init/stale marker); [addr_params]/[buf_params] are the (decl,name) lists
    top_litmus also uses for the .cu extern decl and the driver call;
-   [prologue] is asm text emitted before the first instruction ("" for none),
-   for an assembler directive a mnemonic needs; [prefix] keeps a co-run
-   harness' three instances apart -- without it T's P0 and mu(T)'s P0 are both
-   `het_run_P0'. *)
+   [prologue] is asm text for a directive a mnemonic needs; [prefix] keeps a
+   co-run harness' instances apart, whose P0 bodies would share one name. *)
 let emit_frame chan ~prefix ~proc ~k ~store_mu ~load_buf ~iter
       ~addr_params ~buf_params ~lowering ~prologue nodes =
   let s = output_string chan in

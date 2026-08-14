@@ -1,32 +1,30 @@
 #!/usr/bin/env bash
-# HetLitmus Layer-2 GOLDEN GATE (corpus + emission regression).
+# The Layer-2 golden gate: corpus + emission regression.
 #
-# See hetlitmus/docs/TEST-PLAN.md sections 2 ("Coverage map"), 4 ("Layer 2 -
-# Generate") and 7 ("Golden & promote model").  This is the "no regression"
-# guarantee for the generator/emitter black box: pin what the tools produce
-# today and shout on ANY drift.  It needs NO nvcc/clang and NO GPU -- it is a
-# pure regenerate + emit + text-diff over the committed corpus.
+# The no-regression guarantee for the generator/emitter black box -- pin what
+# the tools produce today and shout on any drift.  It needs no nvcc/clang and no
+# GPU: a pure regenerate + emit + text-diff over the committed corpus.  Layer
+# map and the promote model: hetlitmus/docs/TEST-PLAN.md sections 2 ("Coverage
+# map"), 4 ("Layer 2 - Generate") and 7 ("Golden & promote model").
 #
-# What it does (return 0 only if ALL of corpus / census / emission are clean):
+# What it does (return 0 only if corpus, census and emission are ALL clean):
 #   1. Corpus regression -- regenerate both corpora into a temp tree and compare
 #      the result against the committed one by name set and by bytes, so an
 #      added, removed or modified test is named.  An in-place regen followed by
-#      a `git status --porcelain` assertion cannot do this: an empty porcelain
+#      a `git status --porcelain' assertion cannot do this: an empty porcelain
 #      is also what a generator that wrote nothing leaves behind, and a
 #      hand-edited .litmus is clobbered by the regen before it is looked at.
 #      --bite is that claim's evidence.
-#   2. Census tripwire -- exactly 137 gpu-only + 411 het .litmus (the grid did
-#      not silently shrink or grow).
-#   3. Emission golden -- emit the gpu-only corpus ONCE PER GPU TARGET into a
-#      TEMP dir and byte-diff the committed samples of BOTH dialects against
-#      their own lane: 10 cuda-out/*.cu against the `-gpu-target cuda' lane, 10
-#      hip-out/*.hip against the `-gpu-target hip' lane.  One emission renders
-#      one vendor (litmus/hetDialect.ml), so the .hip lane is a second pass --
-#      and it is not optional: until 2026-08-02 nothing pinned the .hip at all,
-#      on the lane that has already shipped one silent .hip breakage with every
-#      gate green.  A lane drops all 137 of its kernels (plus C-runtime
-#      boilerplate); emitting to a temp dir keeps the golden dirs pristine
-#      (in-place would litter 127 untracked files each).
+#   2. Census tripwire -- the .litmus counts against EXPECT_GPU / EXPECT_HET
+#      below, so a grid that silently shrank or grew is named here.
+#   3. Emission golden -- emit the gpu-only corpus once per GPU target into a
+#      temp dir and byte-diff the committed samples of both dialects against
+#      their own lane, .cu against the `-gpu-target cuda' lane and .hip against
+#      the `-gpu-target hip' lane.  One emission renders one vendor
+#      (litmus/hetDialect.ml), so the .hip lane is a second pass rather than an
+#      option.  Emitting to a temp dir keeps the golden dirs pristine: a lane
+#      drops every kernel of the corpus plus its C-runtime boilerplate, which
+#      in-place would leave as untracked files.
 #
 # Non-destructive: nothing here writes inside the repo.  Both the regeneration
 # and the emission go to a temp dir (auto-cleaned), so the working tree is

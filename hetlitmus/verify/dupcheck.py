@@ -2,31 +2,28 @@
 """dupcheck.py -- the isomorphism (duplicate-test) gate.
 
 `hetlitmus/tests/het/generate.sh' loops shape x device-cut x scope x order and
-dedups only by byte-comparing a variant against one designated sibling
-(generate.sh:87-92, :128-133).  That filter cannot see duplicates of the second
-kind: two different names whose programs are the same experiment up to
-(permutation of procs) x (renaming of locations), device tag travelling with the
-proc.  The corpus carried 39 such classes -- every one the `cg'/`gc' mirror pair
-of a rotation-invariant shape (SB / LB / 2+2W), where swapping P0 and P1 gives
-back the same cycle with the labels exchanged.  Measurement and analysis:
-env-research/Q10-corpus-coverage.md sect 2.1 and 2.3.
-
-Those 39 were REMOVED on 2026-08-01 (450 files -> 411, all distinct): a mirror is
-not an independent sample.  The fix is at the root: `tests/_grid_lib.sh'
-SHAPE_HET_CUTS emits the `cpu,gpu' cut alone for those three shapes, the rotation
-rule SHAPE_2S_PAIR_CUTS already applied.
+dedups only by byte-comparing a variant against one designated sibling.  That
+filter cannot see duplicates of the second kind: two different names whose
+programs are the same experiment up to (permutation of procs) x (renaming of
+locations), device tag travelling with the proc.  The `cg'/`gc' mirror pair of a
+rotation-invariant shape (SB / LB / 2+2W) is that kind -- swapping P0 and P1
+gives back the same cycle with the labels exchanged -- and a mirror is not an
+independent sample.  The corpus keeps them out at the root: `tests/_grid_lib.sh'
+gives those three shapes the `cpu,gpu' cut alone (SHAPE_HET_CUTS), and the
+order-pair sweep does the same for the two of them it covers
+(SHAPE_2S_PAIR_CUTS; hetlitmus/docs/corpus-grid.md, "Heterogeneous device cuts").
 
 So the gate is one check with no exceptions: any duplicate class in the corpus
 fails it.  That is what makes widening the variant vocabulary safe -- a new
 annotation axis multiplies across device cuts, so new duplicates are the expected
 failure mode and they break the build.
 
-The canonical form is adapted from env-research/Q10-probe/canon.py: parse the Het
-test into (proc -> ordered event list, condition atoms), then minimise over every
-permutation of procs x every renaming of locations.  Events carry their
-annotation (`plain' / `rel' / `acq' / `dmb sy' / `release,sys' / ...), so a
-weakening is never canonically equal to the test it weakens, and the device tag
-is part of the proc record, so a cpu/gpu swap is not a duplicate.
+The canonical form: parse the Het test into (proc -> ordered event list,
+condition atoms), then minimise over every permutation of procs x every renaming
+of locations.  Events carry their annotation (`plain' / `rel' / `acq' /
+`dmb sy' / `release,sys' / ...), so a weakening is never canonically equal to the
+test it weakens, and the device tag is part of the proc record, so a cpu/gpu swap
+is not a duplicate.
 
 Usage:  dupcheck.py [--dir D] [-q]   run the gate      (exit 0 = clean)
         dupcheck.py --bite           prove the gate fails when it must
@@ -48,7 +45,7 @@ DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
 
 
 # ---------------------------------------------------------------------------
-# Canonical form.  Adapted from env-research/Q10-probe/canon.py (Q10 sect 7).
+# Canonical form.
 # ---------------------------------------------------------------------------
 def _rk(r):
     """W0 and X0 are the same AArch64 register -- key by the number."""
@@ -209,11 +206,10 @@ def _rename_locs(txt):
 
 
 def _swap_procs(txt):
-    """P0 <-> P1 on a 2-proc test, DEVICE TAG AND ALL.  Locations, values and
+    """P0 <-> P1 on a 2-proc test, device tag AND all.  Locations, values and
     annotations are untouched, so the result is the same experiment under the other
-    half of the canonical form -- the half the 39 classes removed in 2026-08-01 were
-    duplicates under (Q10 sect 2.1), where a `cg' test and its `gc' mirror differ
-    only in which proc index carries which device."""
+    half of the canonical form -- the half a `cg' test and its `gc' mirror are
+    duplicates under, differing only in which proc index carries which device."""
     out = []
     for l in txt.splitlines():
         if "|" not in l:
@@ -268,8 +264,8 @@ def bite(d):
 
     # The canonical form minimises over (proc permutation) x (location renaming),
     # and each half needs its own clone: a renamed-location clone leaves the proc
-    # permutation untested, and that is the half the 39 historical duplicates were
-    # duplicates under.
+    # permutation untested, and the proc permutation is the half a device-cut
+    # mirror would be a duplicate under.
     rc |= _clone_arm(
         d, "synthetic duplicate (MP-cg-sys-relaxed copied with x<->y renamed)",
         "MP-cg-sys-relaxed", "-CLONE", _rename_locs)

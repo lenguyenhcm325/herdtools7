@@ -14,35 +14,24 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus Tier-0: the compound pseudo-architecture (design fork (a)).
+(* HetLitmus: the compound pseudo-architecture.
 
-   herdtools7 hard-assumes ONE ISA per litmus test: a parsed test is
-   monomorphic in a single ['pseudo], and the litmus7 dispatch instantiates one
-   functor stack that fixes that ['pseudo] for the whole test.  Heterogeneous
-   CPU-GPU tests have no representation under that assumption.
-
-   Fork (a) breaks the assumption WITHOUT making the rest of litmus7
-   multi-arch: the per-processor CPU-vs-GPU split is hidden INSIDE one
-   architecture module whose instruction type is a SUM,
+   herdtools7 hard-assumes ONE ISA per litmus test, so heterogeneous CPU-GPU
+   tests have no representation.  This functor takes the two real backend
+   architectures and hides the per-processor split inside one module whose
+   instruction type is a sum,
 
        instruction = CPUins of Cpu.instruction | GPUins of Gpu.instruction
 
-   so the pipeline stays single-arch-typed (one [`Het] value of Archs.t, one
-   ['pseudo]).  This functor takes the two real backend architectures as
-   arguments and delegates every operation per constructor.  The GH200 pairing
-   is AArch64 (CPU) + LISA/PTX (GPU); other pairings are just different
-   applications of this functor at a litmus7 dispatch arm.
+   delegating every operation per constructor, so the rest of the pipeline
+   stays single-arch-typed (one [`Het] value of Archs.t, one ['pseudo]).  A
+   pairing -- AArch64 + LISA/PTX for GH200, and the others -- is one more
+   application of this functor at a litmus7 dispatch arm.  Scope here is
+   representation + parse; cross-device emission lives in litmus/hetEmit.ml.
+   Design (fork (a)): hetlitmus/docs/het-litmus-format.md. *)
 
-   SCOPE (Tier 0): representation + parse.  The result is an ArchBase.S, which
-   is what the het GenParser instance needs, plus the parser helpers at the
-   bottom of this file that the emitter drives; cross-device code EMISSION
-   (asymmetric launch, coherent allocation, rendezvous barrier, result
-   readback) lives in litmus/hetEmit.ml.  See
-   hetlitmus/docs/het-litmus-format.md. *)
-
-(* HetLitmus Phase A: the per-column device tag NAMES the CPU ISA.  `cpu' stays
-   a back-compat alias for AArch64 (so pre-Phase-A tests and hetgen7 output are
-   byte-unchanged); `aarch64'/`x86_64' name the ISA explicitly.  These are
+(* The per-column device tag names the CPU ISA: `aarch64'/`x86_64' name it
+   explicitly and `cpu' is a back-compat alias for AArch64.  These are
    top-level (outside the Make functor) because the litmus7 `Het' dispatch arm
    must pick the CPU ISA -- and so which CPU modules to feed the functor -- by
    pre-scanning the program header BEFORE any HetArch.Make application exists.
@@ -94,17 +83,14 @@ let prog_section_text splitted name =
   close_in ic ; txt
 
 (* ---------------------------------------------------------------------- *)
-(* FAIL-CLOSED refusal (P2b).                                             *)
+(* FAIL-CLOSED refusal.                                                   *)
 (*                                                                        *)
 (* litmus7's batch driver turns an emission exception into                *)
-(* [Answer.Interrupted], prints it on stderr, records a failure stub in    *)
-(* the run harness and STILL EXITS 0 (dumpRun.ml:266-281 ->               *)
-(* litmus.ml:383-385 `exit 0').  That is deliberate for a multi-test      *)
-(* batch whose deliverable is the tarball -- one unsupported test must not *)
-(* stop the run -- but it is wrong for a het test, whose ONLY deliverable  *)
-(* is the emitted harness directory.  A caller that redirects stdout       *)
-(* (hetlitmus/verify/emit-all.sh, under `set -euo pipefail') then saw a    *)
-(* clean exit and no harness: success reported for nothing produced.       *)
+(* [Answer.Interrupted] (dumpRun.ml), records a failure stub in the run    *)
+(* harness and still exits 0 -- deliberate for a multi-test batch whose    *)
+(* deliverable is the tarball, wrong for a het test whose ONLY deliverable *)
+(* is the emitted harness directory: a caller that redirects stdout reads  *)
+(* that exit as success for nothing produced.                             *)
 (*                                                                        *)
 (* So a het refusal names itself on stderr with a greppable marker and     *)
 (* exits 3 -- distinct from litmus7's own 2 (usage / lex-rename errors),   *)
@@ -159,8 +145,8 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
     | GPUreg r -> Gpu.symb_reg_name r
 
   (* fresh symbolic register: only reachable from symbolic-register allocation
-     in the (Tier-2) emission path, never from the het parser, where registers
-     arrive already device-tagged from the sub-parsers.  Default to the CPU. *)
+     in the emission path, never from the het parser, where registers arrive
+     already device-tagged from the sub-parsers.  Default to the CPU. *)
   let symb_reg s = CPUreg (Cpu.symb_reg s)
 
   let type_reg = function
@@ -251,13 +237,12 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
     | GPUins i -> Gpu.get_exported_label i
 
   (* ---------------- Pseudo layer ----------------
-
-     Generated by Pseudo.Make from the instruction-level delegates.  Every
-     input is delegated FAITHFULLY through a sub-architecture's exposed
-     Pseudo.S output (no placeholders): per-instruction memory-access counts
-     via [get_naccesses [Instruction i]], [size_of_ins], [fold_labels] and
-     [map_labels_base].  parsed_tr recovers the sub-arch's parsed->internal
-     translation by round-tripping a singleton [Instruction] pseudo. *)
+     Generated by Pseudo.Make from the instruction-level delegates: every input
+     routes through a sub-architecture's own Pseudo.S output and never through
+     a placeholder -- access counts via [get_naccesses [Instruction i]], plus
+     [size_of_ins], [fold_labels], [map_labels_base].  parsed_tr recovers the
+     sub-arch's parsed->internal translation by round-tripping a singleton
+     [Instruction] pseudo. *)
 
   include Pseudo.Make (struct
     type ins = instruction
@@ -293,15 +278,14 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
       | GPUins i -> GPUins (Gpu.map_labels_base f i)
   end)
 
-  (* Macros are arch-specific assembler conveniences; the Tier-0 het corpus
-     uses none.  Reached only if a Macro pseudo survives to expansion. *)
+  (* Macros are arch-specific assembler conveniences; the het corpus uses
+     none.  Reached only if a Macro pseudo survives to expansion. *)
   let get_macro name =
     fun _ _ -> Warn.fatal "HetArch: macro %s is unsupported in heterogeneous tests" name
 
   let hash_pteval p = Cpu.hash_pteval p
 
-  (* ---------------- Parser support (Tier-0) ----------------
-
+  (* ---------------- Parser support ----------------
      of_{cpu,gpu}_parsed lift a sub-architecture's parsed pseudo into the
      compound parsed pseudo; the structural kpseudo skeleton (labels, nop) is
      device-agnostic, only the instruction payload is tagged.  The actual
@@ -328,18 +312,14 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
     | Gpu.Pagealign -> Pagealign
     | Gpu.Skip n -> Skip n
 
-  (* ---------------- Tier-2 emission support ----------------
-
-     A compound (internal) pseudo carries one device's instruction in its
-     [Instruction] payload; the structural skeleton (labels, nop, skip) is
-     device-agnostic.  to_{cpu,gpu}_pseudo project a single processor's column
-     back onto its native sub-architecture's pseudo, so that processor can be
-     fed to that backend's *own* compiler/emitter (a CPU column to its
-     Compile_litmus then to HetCpuPlan's tagged body, LISA/Bell to CudaLang).
-     The cross-device arms are unreachable for a well-formed test (the het
-     parser tags every cell with its column's device) and fail loudly if
-     reached.  This is the projection inverse of of_{cpu,gpu}_parsed, one
-     level down (internal pseudo, not parsed). *)
+  (* ---------------- Emission support ----------------
+     to_{cpu,gpu}_pseudo project one processor's column back onto its native
+     sub-architecture's pseudo -- the inverse of of_{cpu,gpu}_parsed, one level
+     down -- so that processor can be fed to that backend's own
+     compiler/emitter (a CPU column to its Compile_litmus and then to
+     HetCpuPlan's tagged body, LISA/Bell to the GPU dialect).  The cross-device
+     arms are unreachable for a well-formed test, whose every cell the het
+     parser tagged with its column's device, and fail loudly. *)
 
   let cpu_reg_of = function
     | CPUreg r -> r
@@ -412,12 +392,12 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
   let het_parser ~cpu ~gpu _lexer lexbuf =
     let text = HetSlurp.slurp (Buffer.create 256) lexbuf in
     let is_blank s = String.trim s = "" in
-    (* A `scopes:' tree (HetLitmus Task 8) sits in the program section between
-       the last instruction row and the condition, so HetSlurp pulls it in
-       here.  It carries no `;', so it would survive as a spurious trailing
-       "row"; drop it.  het tests are not herd-ingested (the single-arch
-       assumption blocks that), so the tree is documentary -- the CPU emission
-       does not consume it. *)
+    (* A `scopes:' tree sits in the program section between the last
+       instruction row and the condition, so HetSlurp pulls it in here.  It
+       carries no `;', so it would survive as a spurious trailing "row"; drop
+       it.  het tests are not herd-ingested (the single-arch assumption blocks
+       that), so the tree is documentary -- the CPU emission does not consume
+       it. *)
     let is_scopes s =
       let t = String.trim s in
       String.length t >= 7 && String.sub t 0 7 = "scopes:" in
@@ -462,9 +442,10 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
        (procs,prog_rows,MiscParser.empty_extra)
 end
 
-(* The embedded C/CUDA runtime payloads (litmus7's outs.{h,c} histogram +
-   het_stress.h + het_cpu_stress.h + het_verdict.h) used to live here as
-   {ocaml|...|ocaml} literals -- 87% of this file.  They are now real source
-   files: litmus/libdir/_outs.{h,c} and litmus/het-runtime/* (design notes in
-   litmus/het-runtime/README.md), wrapped into the generated HetPayloads module
-   by the rule in litmus/dune.  Consumers reference HetPayloads.* directly. *)
+(* The C/CUDA runtime payloads a harness carries (litmus7's outs.{h,c}
+   histogram + het_stress.h + het_cpu_stress.h + het_verdict.h) are real source
+   files -- litmus/libdir/_outs.{h,c} and litmus/het-runtime/* (design notes in
+   litmus/het-runtime/README.md) -- wrapped into the generated HetPayloads
+   module by the rule in litmus/dune, so an edit to a payload lands in the C
+   file rather than in an OCaml literal.  Consumers reference HetPayloads.*
+   directly. *)

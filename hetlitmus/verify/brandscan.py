@@ -3,18 +3,15 @@
 
 litmus/hetMachine.ml says which machine a (CPU ISA x GPU dialect) pair may name.
 A render built for the wrong pair compiles, runs and reports like one built for
-the right pair, so what the directory SAYS is all that separates them.
+the right pair, so what the directory says is all that separates them.
 
-SCANNED: every string literal of a C/CUDA/HIP source, comments stripped and
-adjacent literals joined the way the compiler joins them (a phrase split across
-two chunks or two lines is still seen), plus README.md / comp.sh / Makefile in
-full.  NOT the comments: a payload explains its lane by naming the part it was
-derived for, and cites Fusco et al. by naming the part they measured -- and
-de-branding a citation falsifies it.
+Scanned: the string literals of a C/CUDA/HIP source, comments stripped and
+adjacent literals joined as the compiler joins them, plus README.md, comp.sh and
+Makefile whole.  NOT the comments: a payload names, and cites by, the part it
+derives from.
 
-Keyed on ENTITLEMENT, never a global ban: the (AArch64, cuda) lane prints "the
-Grace half" because its row says GH200.  --entitled names the row whose words
-are allowed; every other row's words are a finding.
+Entitlement, not a global ban: --entitled names the row whose words this lane
+may use, and every other row's words are a finding.
 
   brandscan.py --entitled gh200|mi300a|none PATH...   # exit 1 on any hit
   brandscan.py --rows                                 # the vocabularies
@@ -25,13 +22,12 @@ import os
 import re
 import sys
 
-# THE ROWS' VOCABULARIES.  One entry per machine row of litmus/hetMachine.ml,
-# and every word that row's silicon goes by in this tree -- not the defines it
-# stamps, because a sentence can name a part without using any define at all.
-# "the x86 half" is in the AMD row for the same reason its HET_HOST_HALF is: an
-# x86 host is HALF of that row's package, and no other row may call anything
-# that.  (The bare word "x86" is not: the corpus, the ISA and the frontend are
-# all named for it.)
+# One entry per machine row of litmus/hetMachine.ml, holding every word that
+# row's silicon goes by in this tree -- not the defines it stamps, because a
+# sentence can name a part without using any define at all.  "the x86 half" is
+# in the AMD row for the same reason its HET_HOST_HALF is: an x86 host is half
+# of that row's package, and no other row may call anything that.  (The bare
+# word "x86" is not: the corpus, the ISA and the frontend are all named for it.)
 ROWS = {
     "gh200": r"Grace|Hopper|GH200|NVLink|C2C",
     "mi300a": r"MI300A|MI300X|Infinity\s+Fabric|the\s+x86\s+half",
@@ -46,8 +42,9 @@ WHOLE_FILE = ("README.md", "comp.sh", "Makefile")
 
 def literals(text):
     """[(line, text)] for every run of adjacent C string literals, comments and
-    character constants removed.  Adjacent literals are JOINED, because that is
-    what the compiler does and what the reader sees."""
+    character constants removed.  Adjacent literals are joined, because that is
+    what the compiler does and what the reader sees: a phrase split across two
+    chunks or two lines is still one phrase."""
     out, i, n, line, cur = [], 0, len(text), 1, None
     while i < n:
         c = text[i]

@@ -1,9 +1,21 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus (Task P, decisions/taskP-decision.md 7b): condition            *)
-(* classification helpers.  See hetCond.mli for the contract.               *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
+(*                                                                          *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
+(*                                                                          *)
+(* This software is governed by the CeCILL-B license under French law and   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
+
+(* HetLitmus: condition classification helpers.  See hetCond.mli for the
+   contract. *)
 
 (* Collect the Location_global payloads referenced by the condition's atoms.
    fold_prop uses List.fold_right over And/Or children, so prepending yields
@@ -37,16 +49,12 @@ let perpetual_class p =
           | MiscParser.Location_reg _ | MiscParser.Location_sreg _ -> incr nregs)
       | ConstrGen.LL _ | ConstrGen.FF _ -> ())
     p () ;
-  if !nlocs = 0 then `Robust                          (* 266 pure-register    *)
-  else if !nregs >= 1 && !nlocs = 1 then `Advisory    (* R / S: one ws-location *)
-  else `Exploratory                                   (* 2+2W + any other shape *)
+  if !nlocs = 0 then `Robust
+  else if !nregs >= 1 && !nlocs = 1 then `Advisory
+  else `Exploratory
 
-(* B6 (Q4 Item E.3): the REPORTING tier is not the MECHANISM tier.  R and S are
-   both `Advisory above, but only S has an rf anchor; R's sole read is the
-   fr-against-init read, which in the weak case decodes to tag 0 -- no writer, no
-   synchrony -- so R leans on the fragile observer for both the synchrony point
-   and the ws edge, exactly like 2+2W.  Demote it for reporting; leave
-   perpetual_class (the mechanism) alone.  See hetCond.mli. *)
+(* The reporting tier is not the mechanism tier: R is demoted here and
+   perpetual_class above is left alone.  Why, in hetCond.mli. *)
 let reporting_class ~has_rf_anchor m = match m with
   | `Advisory when not has_rf_anchor -> `Exploratory
   | (`Robust | `Advisory | `Exploratory) as c -> c

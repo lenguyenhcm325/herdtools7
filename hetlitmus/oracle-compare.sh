@@ -1,67 +1,28 @@
 #!/usr/bin/env bash
-# HetLitmus Tier-4 -- oracle-comparison harness.  Spec, comparison semantics and
-# a worked example: hetlitmus/docs/oracle-harness.md.
+# Oracle comparison: read litmus7 "Observation <name> <Never|Sometimes|Always>"
+# lines and classify each against a reference verdict CSV the caller supplies,
+# as MATCH / MISMATCH / NO-ORACLE / UNINTERPRETED.  Comparison semantics, the
+# quantifier inversion, the statistics section and a worked example:
+# hetlitmus/docs/oracle-harness.md; tests/cram/oracle-negatives.t pins all four.
 #
-# Reads litmus7 "Observation <name> <Never|Sometimes|Always> ..." lines and
-# compares each against the reference oracle CSV given as the second argument:
+# NO-ORACLE and UNINTERPRETED are kept apart: a CSV that has the row and
+# declines to decide it is earned model silence, a test the CSV never covered
+# has no frame at all, and reading the second as the first reports "the model
+# makes no claim here" off a file that simply has no rows.
 #
-#   MATCH          the observation is consistent with the oracle verdict
-#   MISMATCH       a FORBIDDEN outcome was observed -- a genuine model violation
-#   NO-ORACLE      the CSV HAS this row and it says NO-ORACLE: EARNED model
-#                  silence -- the supplied CSV does not decide this test
-#   UNINTERPRETED  the test is ABSENT from this CSV, so there is no frame for it
-#                  at all -- or the CSV carries a verdict this harness does not
-#                  know, which is a corrupt oracle and never a pass
-#
-# The last two are kept apart deliberately: a corpus the supplied CSV never
-# covered is absent from it row by row, and reading that as model silence would
-# report "the model makes no claim here" off a file that simply has no rows.
-# All four RESULTs are pinned by tests/cram/oracle-negatives.t.
-#
-# NO-ORACLE is a first-class result, not a default to "pass".  An oracle grounds
-# only the platform it was derived for: the PLDI'23 expected.csv is the gem5
-# GCN3_X86 oracle (AMD GCN3 GPU + x86 CPU), which covers the GPU-only AMD corpus
-# and says nothing about a heterogeneous AArch64+PTX GH200 test.  Refusing to
-# assume a verdict for a test it cannot ground is what keeps the grounded rows
-# honest and makes a missing oracle visible per test rather than hidden.
-#
-# The quantifier matters: litmus reports Never/Sometimes/Always relative to the
-# test's validation, and `forall' inverts what "Never" means, so the harness
-# recovers it from the "Condition <quant> (...)" line preceding each Observation
-# (oracle-harness.md sec 1 and 3).  No Condition line => `exists'.
-#
-# A second section says what each verdict is statistically WORTH: het_stats_print's
-# own per-test block, reprinted verbatim under that test's result, plus a
-# campaign-level negative control rolled up from the `HetStats' data lines
-# (het_verdict.h, het_stats_line).  The interpretation is written once, in C, beside
-# the numbers it belongs to; restating it here is how the two drift apart.  The
-# section appears only when the log carries those lines, so a log without them (the
-# synthesized samples, the cram fixtures) prints the table alone.
-#
-# THIS FILE IS THE ONLY PLACE THE VERDICT VOCABULARY SURVIVES.  The harness
+# The verdict vocabulary enters ONLY through the CSV.  This harness
 # characterizes: it reports observations and carries no prediction, so every
-# Allowed/Disallowed word below comes from the user-supplied CSV and from nowhere
-# in the run log.
+# Allowed/Disallowed word below comes from the caller's file and none from the
+# run log.
 #
 # Usage:   ./oracle-compare.sh <observations-file> <oracle-csv>
 #   observations-file : a litmus7 log, or any file containing Observation lines
-#   oracle-csv        : reference CSV the caller supplies, columns
-#                       "Litmus,Expected,Model,Source" ('#' comment lines and the
-#                       header row are skipped).  This branch ships none for the
-#                       het corpus and derives none, so the argument is the whole
-#                       supply (docs/oracle-harness.md).
-#
-# THE MISMATCH SENTENCE (PORT2-R2-amd-oracle.md sect 9.2 as amended by P2e).  A
-# forbidden outcome seen is a disagreement between a RUN and a DERIVATION, and
-# the derivation is the nearer of the two candidate culprits: no row of a
-# derived oracle is a hardware measurement.  So the note says so unconditionally:
-# one constant sentence, byte-identical on every MISMATCH row.  Nothing in the
-# CSV can grade one row against another -- only Litmus, Expected and Model are
-# parsed out of it, and the Source column reaches no printed line.  P2e removed
-# the provenance column and the two-key rule that produced it.
-#
-# Exit status: 0 if no MISMATCH, 1 if any MISMATCH (so it is CI-usable).  The
-# table is printed regardless of exit status.
+#   oracle-csv        : the reference CSV, columns "Litmus,Expected,Model,Source"
+#                       ('#' comment lines and the header row are skipped).  This
+#                       branch ships none and derives none, so the argument is
+#                       the whole supply.
+# Exit status: 0 if no MISMATCH, 1 if any (so it is CI-usable); the table is
+# printed either way.
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
@@ -105,7 +66,7 @@ BEGIN {
 }
 # The harness prints its own aggregate twice.  Two shapes both begin "HetStats " --
 # the key=value line, which drives the roll-up below, and the human block from
-# het_stats_print, whose second field ends in ":" and which is REPRINTED VERBATIM:
+# het_stats_print, whose second field ends in ":" and which is reprinted VERBATIM:
 # the interpretation is written once, in C, next to the numbers it belongs to.
 /^HetStats / {
   if ($2 ~ /:$/) {
@@ -143,8 +104,11 @@ blk != "" {
     if (verdict == "Disallowed") {
       if (seen) {
         result="MISMATCH"
-        # sect 9.2 as amended by P2e: one sentence, and it names the nearer
-        # candidate culprit.  The oracle row is a derivation, not a measurement.
+        # One constant sentence on every MISMATCH row, naming the nearer
+        # candidate culprit: the oracle row is a derivation, not a measurement.
+        # Nothing in the CSV may grade one row against another -- only Litmus,
+        # Expected and Model are parsed out of it, and Source reaches no
+        # printed line.
         note="FORBIDDEN OUTCOME SEEN -- indicts THIS ORACLE ROW first not the CMCM"
       }
       else      { result="MATCH";    note="forbidden, not seen" }
@@ -190,10 +154,10 @@ END {
     ndis = 0; ndis_fired = 0; nvoid = 0
     for (si = 0; si < nstats; si++) {
       t = sorder[si]
-      # THE CLASS COMES FROM THE CSV, never from the log: the harness carries no
-      # prediction and prints none, so a roll-up that read one off a run line
-      # would be reading a field that no longer exists (and, before A2, one the
-      # emitter put there).  A test the CSV does not cover has no class here.
+      # The class comes from the CSV and NEVER from the log: the harness carries
+      # no prediction and prints none, so a roll-up that read one off a run line
+      # would be reading a field that does not exist.  A test the CSV does not
+      # cover has no class here.
       orc = (t in orac) ? orac[t] : "-"
       ob = S[t, "obs"]
 
@@ -206,10 +170,10 @@ END {
       for (bi = 0; bi < nblk[t]; bi++) printf "%s\n", block[t, bi]
       printf "\n"
     }
-    # ---- the campaign-level NEGATIVE CONTROL (Q3 R4-iii; PerpLE VII-A). ------
-    # PerpLE co-runs forbidden tests and confirms they stay at zero.  The same
-    # assurance across this campaign comes from the oracle-Disallowed rows: if the
-    # decoder invented cycles, they are where it would show.
+    # ---- the campaign-level negative control ---------------------------------
+    # The rows the supplied CSV marks Disallowed are where an inventive decoder
+    # would show, so they carry the assurance that this campaign invents no
+    # cycles.  The sentence printed below names its source.
     printf "---------------------------------------------------------------------\n"
     printf "NEGATIVE CONTROL (campaign-level): %d of %d should-be-FORBIDDEN test(s) fired.\n", \
            ndis_fired, ndis

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# HetLitmus Tier-1: emit AMD HIP (.hip) litmus kernels from the GPU-only LISA corpus.
+# Emit AMD HIP (.hip) litmus kernels from the GPU-only LISA corpus.
 #
 # The HIP-side entry point named in every emitted .hip banner (litmus/HipLang.ml).
 # The work lives in ./emit-gpu.sh; this names the vendor, so everything lands in
 # OUTDIR, whose .gitignore keeps only the .hip.  Compile-check the result with
-# ./compile-hip.sh (hipcc, gfx942); hardware execution stays Task 9 / MI300A-gated.
+# ./compile-hip.sh (hipcc, gfx942); running a kernel needs an AMD device.
 #
 # Usage:  ./emit-hip.sh [OUTDIR]      (default OUTDIR=./hip-out)
 set -euo pipefail

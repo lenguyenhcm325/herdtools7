@@ -1,36 +1,36 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
 (*                                                                          *)
-(* HipLang: emit an AMD HIP C++ (.hip) litmus kernel from a parsed          *)
-(* LISA/Bell scoped test.  The HIP half of GpuLang: this file holds the     *)
-(* lowering into the HIP scoped-atomic builtins                            *)
-(* __hip_atomic_load/store(..., order, __HIP_MEMORY_SCOPE_<s>) and the      *)
-(* Clang builtin __builtin_amdgcn_fence(order, "<scope-string>") -- which   *)
-(* carries BOTH the order and the scope (the AMD counterpart of CudaLang's  *)
-(* faithful inline-PTX fence.<order>.<scope>) -- plus the emitted HIP       *)
-(* tokens; GpuLang holds the shared vocabulary, accessors, launch layout    *)
-(* and driver.  No target compiles a fence -- see hip_fence_scope.          *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
 (* This software is governed by the CeCILL-B license under French law and   *)
-(* abiding by the rules of distribution of free software.                   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
+
+(* HetLitmus: emit an AMD HIP C++ (.hip) litmus kernel from a parsed
+   LISA/Bell scoped test.  The HIP half of gpuLang: this file holds the
+   lowering into the HIP scoped-atomic builtins __hip_atomic_load/store and
+   into the Clang builtin __builtin_amdgcn_fence, plus the emitted HIP
+   tokens; gpuLang holds the shared vocabulary, the accessors, the launch
+   layout and the whole-test driver.  Design:
+   hetlitmus/docs/hip-emitter.md. *)
 
 open Printf
 include GpuLang
 
 (* ------------------------------------------------------------------ *)
 (* Order / scope vocabulary  (.litmus annotation  ->  HIP token)      *)
-(* Grounded against the HIP scoped-atomic builtins (ROCm/clr           *)
-(*   hipamd/include/hip/amd_detail/amd_hip_atomic.h) and Clang:        *)
-(*   __hip_atomic_store(ptr, val, memorder, scope);                    *)
-(*   v = __hip_atomic_load(ptr, memorder, scope);                      *)
-(*   memorder in {__ATOMIC_RELAXED,_ACQUIRE,_RELEASE,_ACQ_REL,_SEQ_CST}*)
-(*   scope    = __HIP_MEMORY_SCOPE_{SINGLETHREAD=1,WAVEFRONT=2,         *)
-(*              WORKGROUP=3,AGENT=4,SYSTEM=5}.                          *)
-(* Scope map (gpu-only-corpus.md, vendor ladder cta<->workgroup,       *)
-(*   gpu<->agent, sys<->system): see hetlitmus/docs/hip-emitter.md.    *)
+(* The scope ladder is __HIP_MEMORY_SCOPE_{SINGLETHREAD=1,WAVEFRONT=2, *)
+(* WORKGROUP=3,AGENT=4,SYSTEM=5} [HipAtomicHeader]; the vendor rungs   *)
+(* cta<->workgroup, gpu<->agent, sys<->system are stated in            *)
+(* hetlitmus/docs/hip-emitter.md.                                      *)
 (* ------------------------------------------------------------------ *)
 
 let hip_memory_order = function
@@ -47,42 +47,15 @@ let hip_scope = function
   | "sys"     -> "__HIP_MEMORY_SCOPE_SYSTEM"
   | s -> Warn.user_error "HipLang: unknown scope %S" s
 
-(* Faithful HIP fence lowering via the Clang builtin __builtin_amdgcn_fence,
-   the AMD counterpart of CudaLang's inline-PTX `fence.<order>.<scope>'.
-     __builtin_amdgcn_fence(<order>, "<scope-string>")
-   carries BOTH the memory order AND the sync scope.  This SUPERSEDES the old
-   __threadfence{,_block,_system} primitives, which carried only the scope and
-   were always FULL fences -- they silently dropped the annotated order and
-   over-synchronised (e.g. a release fence became a full fence).
-
-   Gated by compilation, and only that: hipbuildcheck.py P8 renders the x86
-   MP-cg-sys-fence with -gpu-target hip and builds it, which is the one target
-   in the tree that compiles this builtin -- smoke.sh rep 7, the other AMD
-   phases and every committed hip-out golden are fence-free.  So a builtin
-   hipcc rejects, or a sync scope AMDHSA does not have, now fails a gate; what
-   stays unread is the AMD ISA an accepted fence lowers to, which ptxcheck.py's
-   `nvcc --ptx' read-back is the CUDA-side counterpart of.
-   Fence tests do exist: 33 of the 137 gpu-only and 171 of the 411 het.
-
-   Grounded (web-fetched, not memory):
-   - LLVM review D75917 ("Expose llvm fence instruction as clang intrinsic")
-     and the Clang LanguageExtensions docs: the first arg is a C11 memory-order
-     constant -- one of __ATOMIC_{ACQUIRE,RELEASE,ACQ_REL,SEQ_CST} -- and the
-     second arg is an AMDHSA LLVM sync-scope STRING.  The clang builtin tests in
-     D75917 use exactly "workgroup", "agent", and "" (the empty string) for the
-     system scope.
-   - LLVM AMDGPUUsage "AMDHSA LLVM Sync Scopes" table: the named scopes include
-     "workgroup", "agent", "wavefront" and "singlethread"; SYSTEM is the
-     DEFAULT and is the EMPTY STRING "" (no syncscope name).  Getting `sys' wrong
-     (e.g. naming a scope instead of "") would silently NARROW the scope, so the
-     empty string is load-bearing.
-
-   Scope map mirrors hip_scope: cta -> "workgroup", gpu -> "agent",
-   sys -> "" (system, the default). *)
+(* __builtin_amdgcn_fence(<order>, "<scope-string>") carries BOTH the memory
+   order and the sync scope [D75917], which is what lets a fence keep the order
+   its annotation names.  The scope map mirrors hip_scope. *)
 let hip_fence_scope = function
   | "cta"     -> "workgroup"
   | "gpu"     -> "agent"
-  | "sys"     -> ""        (* system = the default = empty syncscope string *)
+  (* `sys' is the default sync scope, whose name is the empty string; naming
+     a scope here instead would NARROW it [AMDGPUUsage "Memory Scopes"]. *)
+  | "sys"     -> ""
   | s -> Warn.user_error "HipLang: unknown fence scope %S" s
 
 (* The pointer passed to __hip_atomic_*: memory locations are kernel int*
@@ -115,11 +88,9 @@ let dump_instr chan ~tag ind i = match i with
         ind dst (ptr_of_addr_op ao) (hip_memory_order ord) (hip_scope scp)
   | BellBase.Pfence (BellBase.Fence (annots, _)) ->
       let ord, scp = order_scope_of annots in
-      (* __builtin_amdgcn_fence carries BOTH order and scope; see
-         hip_fence_scope for what no target compiles.
-         A `relaxed' fence is meaningless (a no-op in the C11/AMDGPU model) and
-         __builtin_amdgcn_fence accepts only acquire/release/acq_rel/seq_cst, so
-         emit nothing executable for it -- just a traceability comment. *)
+      (* A `relaxed' fence is a no-op in the C11/AMDGPU model, and
+         __builtin_amdgcn_fence accepts only acquire/release/acq_rel/seq_cst,
+         so nothing executable is emitted for it. *)
       if ord = "relaxed" then
         fprintf chan "%s// f[%s,%s] (relaxed fence = no-op; nothing emitted)\n"
           ind ord scp
@@ -140,10 +111,6 @@ let dialect = {
     gl_emit_script = "hetlitmus/emit-hip.sh" ;
     gl_group = "workgroup" ;
     gl_include = "#include <hip/hip_runtime.h>" ;
-    (* The device kernel + this harness are compile-checked for the MI300A ISA
-       (gfx942) by hetlitmus/compile-hip.sh (the HIP analog of CUDA Task 8);
-       hardware execution stays Task 9 / MI300A-gated.  See
-       hetlitmus/docs/hip-emitter.md. *)
     gl_harness_note =
       "// ---- host harness (illustrative; compile-checked for gfx942 via hetlitmus/compile-hip.sh; run = Task 9, MI300A) ----" ;
     gl_alloc =

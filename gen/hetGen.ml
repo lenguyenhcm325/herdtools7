@@ -1,7 +1,11 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus Tier-4: heterogeneous CPU-GPU litmus-test generator.           *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
+(*                                                                          *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
 (* This software is governed by the CeCILL-B license under French law and   *)
 (* abiding by the rules of distribution of free software. You can use,      *)
@@ -10,30 +14,21 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* hetgen7 -- generate a single heterogeneous (compound) litmus test in the
-   Tier-0 `Het` format.
+(* HetLitmus hetgen7 -- generate a single heterogeneous (compound) litmus test
+   in the `Het` format (hetlitmus/docs/het-litmus-format.md).
 
    The diy cycle engine is monomorphic in one architecture, so a het test
-   cannot be produced by a single run.  Instead this driver runs the engine
-   ONCE PER DEVICE on a device-appropriate edge cycle of the SAME logical
-   shape (e.g. MP):
+   cannot be produced by a single run.  This driver runs the engine once per
+   device, on a device-appropriate edge cycle of the same logical shape, then
+   keeps for each processor the column produced by the run that owns that
+   processor's device (`-devices cpu,gpu`) and merges the columns, the init
+   atoms and the condition atoms into one test.  The runs differ only in
+   instruction encoding -- locations and the event graph are the same -- which
+   is what makes the merge well defined.
 
-     - the CPU run (`-cpu <edges>`, AArch64) generates plain accesses;
-     - the GPU run (`-gpu <edges>`, LISA/Bell with -bell ptx.bell) generates
-       scoped acquire/release accesses.
-
-   Because both runs share the same cycle shape, diy assigns the same shared
-   locations and the same per-proc roles in both.  We then keep, for each
-   processor, the column produced by the run that OWNS that processor's device
-   (`-devices cpu,gpu`), and merge the columns -- plus each proc's init atoms
-   and condition atoms -- into one `Het` test.  Only the instruction ENCODING
-   differs between the two runs; locations and the event graph do not, so the
-   merge is well defined.
-
-   This is the gen-side analogue of litmus/HetArch.ml: heterogeneity is added
-   as a per-proc {device,scope} assignment over otherwise standard single-arch
-   generation, with strings as the cross-arch erasure boundary (HetCells.t).
-*)
+   The gen-side analogue of litmus/HetArch.ml, with strings as the cross-arch
+   erasure boundary (HetCells.t).  Design:
+   hetlitmus/docs/het-generation.md. *)
 
 open Printf
 
@@ -42,10 +37,10 @@ let cpu_edges = ref ""
 let gpu_edges = ref ""
 let devices = ref "cpu,gpu"
 let comment = ref None
-(* HetLitmus Phase A: the CPU ISA the cpu-tagged procs are generated for.  The
-   emitted device tag names this ISA so litmus7's `Het' arm can pick the
-   matching CPU sub-parser/compiler.  Default AArch64 keeps pre-Phase-A output
-   byte-identical (cpu procs still tagged `cpu', the AArch64 back-compat alias). *)
+(* The CPU ISA the cpu-tagged procs are generated for.  The emitted device tag
+   names this ISA so litmus7's `Het' arm can pick the matching CPU
+   sub-parser/compiler; the default AArch64 emits the `cpu' back-compat
+   alias. *)
 let cpu_arch = ref `AArch64
 
 let myspec =
@@ -209,9 +204,9 @@ let () =
           nprocs who (List.length hc.HetCells.hc_cols))
     ["cpu",ccpu; "gpu",cgpu] ;
 
-  (* The emitted header tag for a cpu proc NAMES its ISA (Phase A): default
-     AArch64 keeps the back-compat `cpu' alias, x86_64 names itself.  gpu procs
-     keep their `gpu' tag.  (run_of still keys on the device class cpu|gpu.) *)
+  (* The emitted header tag for a cpu proc names its ISA: AArch64 emits the
+     back-compat `cpu' alias, x86_64 names itself.  gpu procs keep their `gpu'
+     tag.  (run_of still keys on the device class cpu|gpu.) *)
   let cpu_tag = match !cpu_arch with `AArch64 -> "cpu" | `X86_64 -> "x86_64" in
   let header_tag = function "cpu" -> cpu_tag | other -> other in
 
@@ -246,10 +241,10 @@ let () =
   let init_lines = global_init @ per_proc_init in
 
   (* Condition: each proc's atoms from its owner; global atoms (proc = None)
-     unioned across BOTH runs and de-duplicated -- mirroring [global_init]
-     above.  Taking globals from the cpu run alone dropped any global condition
-     atom that only the gpu run carries (e.g. a location condition [x]=N on the
-     GPU column), silently weakening the merged test's condition. *)
+     unioned across BOTH runs and de-duplicated, mirroring [global_init] above.
+     Taking globals from the cpu run alone silently weakens the merged
+     condition, by dropping a global atom only the gpu run carries (e.g. a
+     location condition [x]=N on the GPU column). *)
   let merged_cond =
     let quant,_ = parse_cond ccpu.HetCells.hc_cond in
     let per_proc =
@@ -273,16 +268,14 @@ let () =
     if atoms = [] then sprintf "%s (true)" quant
     else sprintf "%s (%s)" quant (String.concat " /\\ " atoms) in
 
-  (* HetLitmus Task 8: a parseable nested `scopes:' body tree (grammar
-     lib/scopeRules.mly).  diy's `Scopes=' header info field is NOT herd-
-     parseable, so we follow the gpu-only generate.sh precedent and emit the
-     tree into the test body instead.  Each GPU-owned proc nests in its own CTA
-     under the GPU device: (sys (gpu (cta P<i>) ...)).  CPU procs are
-     system-scope and are therefore omitted -- a proc absent from every
-     sub-scope group sits at the sys root by default (the scope grammar makes a
-     node either all-procs or all-subtrees, so a CPU proc cannot share the sys
-     node with the gpu subtree anyway).  With no GPU proc the tree degenerates
-     to (sys). *)
+  (* A parseable nested `scopes:' body tree (grammar lib/scopeRules.mly).
+     diy's `Scopes=' header info field is NOT herd-parseable, so the tree goes
+     into the test body instead, as the gpu-only generate.sh does.  Each
+     GPU-owned proc nests in its own CTA under the GPU device:
+     (sys (gpu (cta P<i>) ...)).  CPU procs are system-scope and omitted,
+     sitting at the sys root by default -- the scope grammar makes a node
+     either all-procs or all-subtrees, so a CPU proc could not share the sys
+     node with the gpu subtree.  With no GPU proc the tree is (sys). *)
   let gpu_procs =
     Misc.filter_map (fun (i,dev) -> if dev = "gpu" then Some i else None)
       (List.mapi (fun i dev -> (i,dev)) devs) in

@@ -1,20 +1,28 @@
 (****************************************************************************)
 (*                           the diy toolsuite                              *)
 (*                                                                          *)
-(* HetLitmus extension (TUM thesis, Nguyen / DSE chair).                    *)
+(* Jade Alglave, University College London, UK.                             *)
+(* Luc Maranget, INRIA Paris-Rocquencourt, France.                          *)
 (*                                                                          *)
-(* hetMachine: the MACHINE TABLE.  Contract and rationale in the .mli.      *)
+(* Copyright 2013-present Institut National de Recherche en Informatique et *)
+(* en Automatique and the authors. All rights reserved.                     *)
 (*                                                                          *)
-(* This software is governed by the CeCILL-B license under French law.      *)
+(* This software is governed by the CeCILL-B license under French law and   *)
+(* abiding by the rules of distribution of free software. You can use,      *)
+(* modify and/ or redistribute the software under the terms of the CeCILL-B *)
+(* license as circulated by CEA, CNRS and INRIA at the following URL        *)
+(* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
+
+(* HetLitmus: the machine table.  Contract and rationale in the .mli. *)
 
 type machine = {
     mc_link_name : string ;   (* no leading article: use sites supply their own *)
     mc_host_half : string ;
     mc_dev_half : string ;
-    (* Alglave ASPLOS'15 4.3.1's "zero without stress" is an NVIDIA measurement
-       (B4).  True only where it was measured; everywhere else the gap is stated
-       instead of the number being borrowed. *)
+    (* "Zero without stress" is a measurement on NVIDIA silicon
+       [Alglave15 sec 4.3.1].  True only where it was measured; everywhere else
+       the gap is stated instead of the number being borrowed. *)
     mc_alglave_zero : bool ;
     (* The last-level cache a noise buffer must EXCEED to cross anything on this
        part, in MB, and the parenthetical printed after that warning.  [None]
@@ -61,14 +69,14 @@ let generic_machine = {
       ] ;
   }
 
-(* GH200: Grace (AArch64) + Hopper over NVLink-C2C.  The Fusco note is that
-   Hopper's L2 caches HBM whether the line is local or peer. *)
+(* GH200: Grace (AArch64) + Hopper over NVLink-C2C.  Hopper's L2 caches HBM
+   whether the line is local or peer [Fusco24 sec III-E.1]. *)
 let gh200_machine = {
     mc_link_name = "NVLink-C2C" ;
     mc_host_half = "the Grace half" ;
     mc_dev_half = "the Hopper half" ;
     mc_alglave_zero = true ;
-    (* max(Grace L3 114 MB, Hopper L2 51 MB) -- Bagchi ISMM'26 Table 1. *)
+    (* max(Grace L3 114 MB, Hopper L2 51 MB) [Bagchi26 Table 1]. *)
     mc_llc_mb = Some 114 ;
     mc_llc_note = " (Fusco: Hopper L2 caches HBM, local and peer)" ;
     mc_words = [
@@ -80,22 +88,18 @@ let gh200_machine = {
       ] ;
   }
 
-(* MI300A: Zen-4 x86-64 CCDs + CDNA3 XCDs on one package over Infinity Fabric,
-   named verbatim from the memo that characterises the part
-   (env-research/PORT2-R2-amd-oracle.md sec 1).  Alglave's "zero without stress"
-   stays withheld: no equivalent figure is published for this part.  The LLC
-   figure is not withheld, because one IS published for it -- 256 MB, and the
-   Grace 114 MB it replaces UNDER-fires here, so the target's own figure is both
-   the grounded and the conservative reading. *)
+(* MI300A: Zen-4 x86-64 CCDs + CDNA3 XCDs on one package over Infinity Fabric.
+   "Zero without stress" stays withheld: no equivalent figure is published for
+   this part.  The LLC figure is not withheld, because one IS published for it
+   -- 256 MB, and the Grace 114 MB it replaces under-fires here, so this
+   part's own figure is at once the published one and the conservative one. *)
 let mi300a_machine = {
     mc_link_name = "Infinity Fabric" ;
     mc_host_half = "the x86 half" ;
     mc_dev_half = "the MI300A device half" ;
     mc_alglave_zero = false ;
-    (* The MALL / AMD Infinity Cache on the IOD is this part's last level, above
-       both the per-XCD 4 MB L2 and the per-CCD Zen-4 L3, and all HBM traffic
-       passes through it: Tee et al., "The MALL is Open", SC Workshops '25,
-       Table 1 p.1111 (MI300A: sL1 16 KB, L2 4 MB/XCD, MALL 256 MB). *)
+    (* The MALL / AMD Infinity Cache on the I/O die is this part's last level,
+       256 MB above the per-XCD 4 MB L2 [Tee25 Table 1]. *)
     mc_llc_mb = Some 256 ;
     mc_llc_note =
       " (the MALL / AMD Infinity Cache, 256 MB -- Tee et al., The MALL is \

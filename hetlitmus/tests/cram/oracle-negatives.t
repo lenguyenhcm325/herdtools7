@@ -14,9 +14,9 @@ pinning how the table renders when they do not.
 A MISMATCH (forbidden outcome observed) makes the harness exit 1 -- that nonzero
 `[1]' is part of the frozen expectation, proving the CI gate bites.
 
-FX-silent, FX-silent-forall and the FX-absent rows are the 2026-08-02 (P2a)
-split: a test the oracle HAS and declines to decide (EARNED model silence) must
-not read the same as a test the oracle does not have at all.  Aliasing them is how
+FX-silent, FX-silent-forall and the FX-absent rows are the split this file
+exists for: a test the oracle HAS and declines to decide (EARNED model silence)
+must not read the same as a test the oracle does not have at all.  Aliasing them is how
 a run against a CSV that covers none of its tests -- every row absent -- would
 print as model silence.  FX-corrupt carries a verdict string the harness does
 not know: that is a corrupt oracle and it fails closed to UNINTERPRETED, never to
@@ -62,8 +62,8 @@ verdict class of its own, so every ORACLE column below is read from the CSV.
 
 Each test is headed by its result from that table, and the block underneath is
 het_stats_print's own output, reprinted verbatim.  LB-sys reads `oracle=-'
-because it is ABSENT from the CSV and the run log no longer carries a class of
-its own -- the two states the P2a split exists to keep apart.
+because it is ABSENT from the CSV and the run log carries no class of its own --
+the two states that split exists to keep apart.
   $ grep -E '^(SB|MP|LB)-sys[^ ]* : ' stats.out
   SB-sys : MATCH   oracle=Allowed
   MP-sys-F : MISMATCH   oracle=Disallowed

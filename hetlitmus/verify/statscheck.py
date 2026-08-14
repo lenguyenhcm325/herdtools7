@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""HetLitmus -- the STATISTICS gate for het_stats_compute() (het_verdict.h).
+"""HetLitmus -- the statistics gate for het_stats_compute() (het_verdict.h).
 
 het_stats_compute() says what a "Never" is worth and what a sighting reproduces
-at, and every part of it can pass every gate while answering the same thing
-forever: a KS gate that "passes" without running tested nothing, and it passes for
+at, and every part of it can pass a structural gate while answering the same thing
+forever: a stationarity precheck that never ran tested nothing, and it passes for
 free on an all-zero stream -- which would unlock P_rep for a harness where nothing
-co-ran.  This gate drives the REAL emitted header, which cannot drift from a copy:
+co-ran.  This gate drives the emitted header itself, which cannot drift from a
+copy.  What a null is entitled to report:
+hetlitmus/docs/00-environment-design.md sec 3.7.
 
-  1 THE INPUTS     het_win_of maps frames to windows rather than returning a
-                   constant, and the Python mirrors of the header's knobs are
-                   COMPARED to the header instead of assumed.
-  2 THE AGGREGATE  every statistic re-derived independently in Python to 1e-9;
-                   every class, KS outcome, tier and flag REACHABLE.
-  3 THE PRODUCER   the emitted recovery scan, lifted out onto planted buffers.
-  4 THE CORPUS     every harness carries the post-pass and a decode channel.
-  5/6 SCHEDULING   the stop rule and campaign.py, against a stub runner.
-
-Spec: env-research/Q3-stats.md R1-R6; impl-briefs/B7-impl-brief.md -- both
-SUPERSEDED (they design the withdrawn non-observation bound).  Where they and
-litmus/het-runtime/het_verdict.h disagree the header is what ships, and what a
-null reports now is hetlitmus/docs/00-environment-design.md 3.7.
+  1  Inputs      het_win_of maps frames to windows rather than returning a
+                 constant, and the Python mirrors of the header's knobs are
+                 compared to the header instead of assumed.
+  2  Aggregate   every statistic re-derived independently in Python to 1e-9;
+                 every class, KS outcome, tier and flag reachable.
+  2b No-map arm  the prose a pair built with no control map beside it prints,
+                 reached by compiling the case set a second time.
+  3  Producer    the emitted recovery scan, lifted out onto planted buffers.
+  4  Corpus      every harness carries the post-pass and a decode channel.
+  5  Stop rule   every reason reachable, each guard driven at its boundary.
+  6  Scheduler   campaign.py end to end, against a stub runner.
 
 Usage:  statscheck.py [-q]      run the gate
         statscheck.py --bite    prove the gate FAILS when the mechanism breaks
@@ -41,24 +41,23 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 
-# The emitted-corpus census.  DERIVED, not observed-and-pasted:
-#   sync = every test with a register (reader) observable   = 411 - the 11
-#          store-only 2+2W harnesses                        = 400
-#   obs  = every test with a coherence-final [loc] atom     = those 11 + R 53
-#          + S 53                                           = 117
-# 106 carry both and NONE carries neither, which is what lets the degeneracy guard
-# switch channel instead of firing blind, and phase 4 measures all three from the
-# emitted corpus.  (Per-sweep derivation: env-research/impl-briefs/Q10b-REPORT.md.)
+# The emitted-corpus census, derived from the corpus rather than pasted off a run: a
+# test carries the sync channel when it has a register (reader) observable and the
+# observer channel when it has a coherence-final [loc] atom, and the store-only shapes
+# are exactly the ones with no reader.  Most carry both; a test carrying NEITHER is a
+# build bug, and its absence is what lets the degeneracy guard switch channel instead
+# of firing blind.  Phase 4 measures all three off the emitted corpus.
 CENSUS_SYNC, CENSUS_OBS, CENSUS_NEITHER = 400, 117, 0
-CENSUS_WINBUMP = 409        # 411 - the 2 `self' canaries (a test cannot control itself)
+CENSUS_WINBUMP = 409        # every test but the `self' canaries, which cannot co-run
+                            # a control of their own
 CENSUS_TESTS = 411
 
 KS_C05 = 1.358
-# THE PYTHON MIRRORS OF THE HEADER'S KNOBS.  "Must match" is not a check: no fixture
-# straddles the THETA_D or TAU_HOT boundary (the decode counts are 0/1/900/5000, the
-# control totals 0/500/~1280), so a header change would keep every comparison's truth
-# value and desynchronise the mirror in silence.  All four are therefore EMITTED by the
-# C driver and compared in phase 1 -- NWIN on the WIN| line, the rest on MIRROR|.
+# The Python mirrors of the header's knobs.  "Must match" is not a check: no fixture
+# straddles the THETA_D or TAU_HOT boundary, so a header change would keep every
+# comparison's truth value and desynchronise the mirror in silence.  All four are
+# therefore emitted by the C driver and COMPARED in phase 1 -- NWIN on the WIN| line,
+# the rest on MIRROR|.
 NWIN = 128                  # must match HET_NWIN (a swept knob, not a constant)
 CORROB_RUNS = 2             # must match HET_CORROB_RUNS      (pinned via MIRROR|)
 THETA_D = 2                 # must match HET_THETA_DISTINCT   (pinned via MIRROR|)
@@ -69,7 +68,7 @@ TOL = 1e-9
 
 
 # ---------------------------------------------------------------------------
-# THE PYTHON REFERENCE: an independent re-derivation from the definitions, never a
+# The Python reference: an independent re-derivation from the definitions, NEVER a
 # transcription of the C -- a bug transcribed into both sides would pass the
 # differential.
 # ---------------------------------------------------------------------------
@@ -93,13 +92,13 @@ def py_ks2(a, b):
 
 
 # ---------------------------------------------------------------------------
-# SYNTHETIC CELLS.  A cell is one (instance, run).  BASE is a live, hot, credible
+# Synthetic cells.  A cell is one (instance, run).  BASE is a live, hot, credible
 # run whose mu(T) fired; each case perturbs a few fields, so each isolates
 # exactly one reason.  (Same construction as verdictcheck.py, on purpose.)
 # ---------------------------------------------------------------------------
 BASE = dict(
     test_name='"synthetic"',
-    # The stamp, by SYMBOL: het_verdict() reads no field of a record that does not
+    # The stamp, by symbol: het_verdict() reads no field of a record that does not
     # carry it, so every fixture here has to be a stamped one.
     rec_magic="HET_REC_MAGIC",
     exhaustive_valid=1,
@@ -134,7 +133,7 @@ BASE = dict(
 )
 
 # ---------------------------------------------------------------------------
-# THE SYNTHETIC WINDOW STREAMS.  Each RUN gets its OWN stream, because real runs do:
+# The synthetic window streams.  Each run gets its OWN stream, because real runs do:
 # ten copies of one hand-picked stream is one sample counted ten times, and the
 # collapsed ECDF that leaves makes the KS over-sensitive.
 # The RNG is a hand-rolled LCG rather than `random' or numpy so the fixtures -- and
@@ -165,16 +164,16 @@ def poisson_stream(rng, lam=10.0):
 
 
 def bursty_stream(rng, lam=10.0, nb=16, span=4):
-    """The SAME mean rate delivered in BURSTS: a productive CPU/GPU alignment window
-    emits many sightings, then a long dry spell (Q1-alignment.md S2(e); PerpLE Fig.12).
-    This is the regime Q3-stats.md S2.4 predicts on real C2C, and it is STATIONARY --
+    """The same mean rate delivered in bursts: the skew between the two threads of a
+    perpetual harness wanders widely across a run [Melissaris20 sec VII-E, Fig.12], so
+    sightings clump into alignment windows.  The stream is STATIONARY all the same --
     the rate does not change across the run, only its arrivals clump -- which is what
     makes it the counter-fixture to drift_stream below.
 
-    A burst is a TIME INTERVAL, so it spans `span` consecutive windows.  A
-    single-bucket burst is a fixture artefact: at a fine HET_NWIN it concentrates the
-    marginal instead of doing what a real burst does under refinement, which is raise
-    the window-to-window correlation."""
+    A burst is a time interval, so it spans `span` consecutive windows.  A single-bucket
+    burst is a fixture artefact: at a fine HET_NWIN it concentrates the marginal instead
+    of doing what a real burst does under refinement, which is raise the
+    window-to-window correlation."""
     w = [0] * NWIN
     for _ in range(nb):
         start = int(rng.u() * NWIN) % NWIN
@@ -184,8 +183,8 @@ def bursty_stream(rng, lam=10.0, nb=16, span=4):
 
 
 def drift_stream(rng, lo=2.0, hi=40.0):
-    """A rate that CHANGES mid-run -- Kirkham's Vega-LB rate jump at ~7M iterations
-    (Q3-stats.md S2.2).  The KS gate must REJECT this."""
+    """A rate that changes mid-run, as one of the unstable chip/test combinations does
+    around 7M iterations [Kirkham20 Fig.7b].  The KS gate must REJECT this."""
     return ([_poisson(rng, lo) for _ in range(NWIN // 2)]
             + [_poisson(rng, hi) for _ in range(NWIN // 2)])
 
@@ -197,12 +196,12 @@ DRIFT_CELLS = [drift_stream(_R) for _ in range(10)]
 FLAT_CELLS = [[10] * NWIN for _ in range(10)]     # nonzero, but with no variance
 ZERO_CELLS = [[0] * NWIN for _ in range(10)]
 
-# ONE RECORD MORE THAN THE AGGREGATE CAN HOLD.  het_stats_compute clamps its record
+# One record more than the aggregate can hold.  het_stats_compute clamps its record
 # array at HET_STATS_MAX_CELLS and the tail is dropped from every statistic; the field
 # is producible (hetEmit sizes _recs[NUMBER_OF_RUN] from Cfg.runs, so litmus7 -r above
-# 128 hands it more than it can hold), and the ONLY thing that says the aggregate was
-# computed from fewer runs than were executed is HET_ST_CELLS_TRUNCATED.  Its own RNG,
-# so adding it cannot shift the draws every earlier fixture is pinned on.
+# that clamp hands it more than it can hold), and the ONLY thing that says the aggregate
+# was computed from fewer runs than were executed is HET_ST_CELLS_TRUNCATED.  Its own
+# RNG, so adding it cannot shift the draws every earlier fixture is pinned on.
 _R_TRUNC = _Rng(20260801)
 POISSON_CELLS_TRUNC = [poisson_stream(_R_TRUNC) for _ in range(MAX_CELLS + 1)]
 
@@ -237,12 +236,12 @@ def stream(cells_, chan="control", **kw):
 
 
 def stream_runs(cells_, run_ids, chan="control", **kw):
-    """stream() with EXPLICIT run ids, so a fixture can put SEVERAL cells in ONE run.
+    """stream() with explicit run ids, so a fixture can put several cells in ONE run.
     stream() numbers its cells 0, 1, 2, ..., which makes k_runs identically k_eff and
     leaves het_stats_compute's run-dedup loop -- and with it the corroboration tier's
-    "distinct RUNS, not merely distinct cells" rule -- unexercised.  Today's emitter
-    does write one record per run, so this is the multi-record-per-run layout the tier
-    rule is WRITTEN for, driven before the emitter grows one."""
+    "distinct runs, not merely distinct cells" rule -- unexercised.  The emitter writes
+    one record per run, so this is the multi-record-per-run layout the tier rule is
+    written for, driven before an emitter grows one."""
     if len(run_ids) != len(cells_):
         raise SystemExit("statscheck: stream_runs got %d run ids for %d cells"
                          % (len(run_ids), len(cells_)))
@@ -251,10 +250,10 @@ def stream_runs(cells_, run_ids, chan="control", **kw):
 
 
 def observed(cells_, k, clean=True, obs_degen=False):
-    """Make the first k cells SEE the target (optionally in a degenerate decode).
-       obs_degen degrades the OBSERVER channel on the SIGHTING cells only (a real
+    """Make the first k cells see the target (optionally in a degenerate decode).
+       obs_degen degrades the observer channel on the sighting cells ONLY (a real
        ws-edge needs >=2 distinct GPU store-values, so observer_unique_count=1 on a
-       sighting IS the constant-read artefact), leaving the background nulls live."""
+       sighting is the constant-read artefact), leaving the background nulls live."""
     for i in range(k):
         cells_[i]["target_count_exhaustive"] = 7
         cells_[i]["target_count_heuristic"] = 7
@@ -267,7 +266,7 @@ def observed(cells_, k, clean=True, obs_degen=False):
 
 
 def observed_at(cells_, idx):
-    """Make the cell at idx -- and ONLY it -- see the target, cleanly.  WHERE in the
+    """Make the cell at idx -- and ONLY it -- see the target, cleanly.  Where in the
     stream a sighting lands is what the confirmation window is measured from, so a
     fixture that can only fire at the head cannot drive that window at all."""
     observed(cells_[idx:idx + 1], 1)
@@ -281,38 +280,37 @@ def case(name, cells_, **want):
     CASES.append(dict(name=name, cells=cells_, want=want))
 
 
-# ============================ THE CASE SET =================================
-# --- NEVER, on a live control stream: the shape every null in the corpus takes ---
+# ============================== The case set ===============================
+# --- Never, on a live control stream: the shape every null in the corpus takes ---
 case("never-poisson", stream(POISSON_CELLS),
      obs="Never", ks="pass", flags_none=["CTRL_STREAM_EMPTY"])
 
-# A BURSTY STREAM IS NOT A DRIFTING ONE, and the gate must not confuse them: the same
-# mean rate delivered in window-local bursts is stationary, so KS must NOT reject it.
-# A gate that rejected here would suppress P_rep on every real C2C channel, where
-# arrivals come in bursts (Q3-stats.md S2.4) -- the opposite failure to the drift case
-# below, and the reason both are driven.
+# A bursty stream is not a drifting one, and the gate must NOT confuse them: the same
+# mean rate delivered in window-local bursts is stationary, so KS may not reject it.
+# A gate that rejected here would suppress P_rep on every channel whose arrivals clump
+# -- the opposite failure to the drift case below, and the reason both are driven.
 case("bursty-stream-is-stationary-and-KS-must-not-reject", stream(BURSTY_CELLS),
      obs="Never", ks="pass",
      flags_none=["CTRL_STREAM_EMPTY", "NONSTATIONARY"])
 
-# THE EMPTINESS GUARD'S NEGATIVE SIDE.  A constant stream is degenerate in every way
-# a stream can be except the one that matters here: its windows sum to something.  The
-# guard is on the SUM and not on the variance, so this must NOT be called empty -- a
+# The emptiness guard's negative side.  A constant stream is degenerate in every way a
+# stream can be except the one that matters here: its windows sum to something.  The
+# guard is on the sum and not on the variance, so this must NOT be called empty -- a
 # guard that fired here would refuse the KS gate on any channel with a steady rate.
 case("flat-nonzero-stream-is-not-an-EMPTY-one", stream(FLAT_CELLS),
      obs="Never", ks="pass", flags_none=["CTRL_STREAM_EMPTY", "KS_UNDERPOWERED"])
 
-# --- STATIONARITY ----------------------------------------------------------
-# A control rate that CHANGES mid-run.  KS must REJECT and P_rep be suppressed even
-# though the target WAS seen: P_rep is never reported across a non-stationary boundary
-# (Q3-stats.md S2.2, R4 -- the KS precheck is mandatory because Kirkham's own data
-# already fails it 4/18 GPU-only).  The stream rides the CANARY channel, which is the
-# only one a test with no mu(T) has (canary-channel-read-when-no-mutant below).
+# --- Stationarity ----------------------------------------------------------
+# A control rate that changes mid-run.  KS must reject and P_rep be suppressed even
+# though the target was seen: P_rep is NEVER reported across a non-stationary boundary,
+# and the precheck is mandatory because 4 of the 18 chip/test combinations behind it
+# already fail it [Kirkham20 sec 4.3, Table 7].  The stream rides the canary channel,
+# the only one a test with no mu(T) has (canary-channel-read-when-no-mutant below).
 case("ks-split-rejects-and-suppresses-Prep",
      observed(stream(DRIFT_CELLS, chan="canary",                      control_compiled_in=0, control_target_count=0), 4),
      obs="Sometimes", ks="SPLIT", flags_any=["NONSTATIONARY"], P_rep=-1.0)
 
-# --- OBSERVED: P_rep at the (instance,run) unit, from k_eff -----------------
+# --- Observed: P_rep at the (instance,run) unit, from k_eff ----------------
 case("sometimes-Prep-from-cells-not-frames",
      observed(stream(POISSON_CELLS), 3),
      obs="Sometimes", ks="pass", P_rep=1.0 - math.exp(-3.0), k=3, k_eff=3)
@@ -320,46 +318,47 @@ case("sometimes-Prep-from-cells-not-frames",
 case("always", observed(stream(POISSON_CELLS), 10),
      obs="Always", k=10)
 
-# --- VOID: a dead harness measured nothing ---------------------------------
+# --- Void: a dead harness measured nothing ---------------------------------
 case("void-when-every-cell-is-cold",
      stream(ZERO_CELLS, canary_target_count=0),
      obs="VOID", flags_any=["CTRL_STREAM_EMPTY", "KS_UNDERPOWERED"])
 
-# --- THE DEGENERACY GUARD ---------------------------------------------------
-# Seen in 3 cells, but every decode was CONSTANT -- the reader-stuck-on-one-value
-# artefact Srivastava S4.1 observed (Q3-stats.md S3.1).  k=3 but k_eff=0, so it cannot
-# corroborate; it is still REPORTED, and P_rep is NOT REPORTED (-1) rather than the
-# 1-e^0 = 0 that would read as "never reproduces".
+# --- The degeneracy guard ---------------------------------------------------
+# Seen in 3 cells, but every decode was constant -- the reader-stuck-on-one-value
+# artefact of [Srivastava24 sec 4.1].  k=3 but k_eff=0, so it cannot corroborate; it is
+# still reported, and P_rep is NOT reported (-1) rather than the 1-e^0 = 0 that would
+# read as "never reproduces".
 case("degenerate-sightings-rejected-but-reported",
      observed(stream(POISSON_CELLS), 3, clean=False),
      obs="Sometimes", k=3, k_eff=0, n_degen=3, P_rep=-1.0,
      flags_any=["DEGEN_SIGHTING"], tier="UNCONFIRMED")
 
-# The 11 store-only (2+2W) tests decode through the OBSERVER, not a synchrony read, so
-# reading skew_stddev on them would call every cell degenerate forever.  Both arms of
+# The store-only (2+2W) tests decode through the observer, not a synchrony read, so
+# reading skew_stddev on them would call every cell degenerate forever.  BOTH arms of
 # the channel switch must be live:
 case("observer-channel-clean",
      observed(stream(POISSON_CELLS,                      sync_valid=0, obs_valid=1, observer_unique_count=900,
                      distinct_decoded_iters=0, skew_stddev=0.0), 3),
      obs="Sometimes", k=3, k_eff=3, flags_none=["DEGEN_SIGHTING"])
 
-# ... and the degenerate arm.  The degeneracy sits on the SIGHTINGS (unique_count=1),
+# ... and the degenerate arm.  The degeneracy sits on the sightings (unique_count=1),
 # where it physically belongs: a cold observer on a non-sighting null COLD-INVALIDs
-# that cell instead, so the 7 background nulls stay usable and the classification
-# stays honestly "Sometimes" with all 3 sightings degenerate.
+# that cell instead, so the background nulls stay usable and the classification stays
+# honestly "Sometimes" with every sighting degenerate.
 case("observer-channel-degenerate",
      observed(stream(POISSON_CELLS,                      sync_valid=0, obs_valid=1, observer_unique_count=900,
                      distinct_decoded_iters=0, skew_stddev=0.0), 3, obs_degen=True),
      obs="Sometimes", k=3, k_eff=0, flags_any=["DEGEN_SIGHTING"])
 
-# No decode channel at all: FAIL CLOSED (0 of 411 today -- reaching it is a build bug).
+# No decode channel at all: FAIL CLOSED.  No emitted harness is in that state
+# (CENSUS_NEITHER), so reaching it is a build bug.
 case("no-decode-channel-fails-closed",
      observed(stream(POISSON_CELLS, sync_valid=0, obs_valid=0,
                      distinct_decoded_iters=0, skew_stddev=0.0), 3),
      k=3, k_eff=0, flags_any=["NO_DECODE_CHANNEL", "DEGEN_SIGHTING"])
 
-# --- THE CORROBORATION TIER (HET_CORROB_RUNS distinct clean RUNS) -----------
-# The bar is on RUNS and the boundary is at HET_CORROB_RUNS exactly, so both sides
+# --- The corroboration tier (HET_CORROB_RUNS distinct clean runs) -----------
+# The bar is on runs and the boundary is at HET_CORROB_RUNS exactly, so BOTH sides
 # of it are driven: one run short is UNCONFIRMED, one run over is CORROBORATED.
 case("sighting-corroborated-at-the-bar",
      observed(stream(POISSON_CELLS), CORROB_RUNS),
@@ -369,11 +368,11 @@ case("sighting-unconfirmed-one-run-short",
      observed(stream(POISSON_CELLS), CORROB_RUNS - 1),
      obs="Sometimes", tier="UNCONFIRMED", k_runs=CORROB_RUNS - 1)
 
-# THE CPU-ONLY CAMPAIGN (memo 7.D10).  het_stats_compute resolves cpu_only upward
-# over the cells it is handed and het_stats_print says, inside the sighting tier
-# and nowhere else, that no cross-device path carried the cycle.  It is the
-# campaign-level twin of the per-run sentence verify/verdictcheck.py pins, and a
-# CPU-only sighting written up without it reads as a compound-model result.
+# The CPU-only campaign.  het_stats_compute resolves cpu_only upward over the cells it
+# is handed and het_stats_print says, inside the sighting tier and nowhere else, that
+# no cross-device path carried the cycle [Goens23 sec 4.6].  It is the campaign-level
+# twin of the per-run sentence verify/verdictcheck.py pins, and a CPU-only sighting
+# written up without it reads as a compound-model result.
 CPU_ONLY_CASE = "cpu-only-sighting-says-what-was-under-test"
 CPU_ONLY_TEXT = "CPU-ONLY CYCLE (D10): every proc of this test is a CPU proc"
 # The same fact machine-readably, on het_stats_line rather than in the tier block.
@@ -382,7 +381,7 @@ case(CPU_ONLY_CASE,
      observed(stream(POISSON_CELLS, cpu_only=1), CORROB_RUNS),
      obs="Sometimes", tier="CORROBORATED", k_runs=CORROB_RUNS)
 
-# ... AND A POOL WHOSE CELLS DISAGREE, which is the only fixture that runs the
+# ... and a pool whose cells disagree, which is the ONLY fixture that runs the
 # resolution at all: cpu_only names the narrower experiment, so a pool carrying one
 # CPU-only cell resolves to CPU-only and is flagged rather than absorbed into the
 # het reading.  The disagreeing cell is not the first, since the first is what the
@@ -394,8 +393,8 @@ case(MIXED_POOL_CASE, _mixed,
      obs="Sometimes", tier="CORROBORATED", k_runs=CORROB_RUNS,
      flags_any=["MIXED_POOL"])
 
-# ... AND THE RULE IS ABOUT RUNS, NOT CELLS.  Three clean sightings that all landed in
-# the SAME run: runs are re-seeded and carry a fresh phase/thermal draw, three cells of
+# ... and the rule is about runs, NOT cells.  Three clean sightings that all landed in
+# the same run: runs are re-seeded and carry a fresh phase/thermal draw, three cells of
 # one run do not, so this must stay UNCONFIRMED where the case above it is
 # CORROBORATED.  The only fixture where k_runs < k_eff, and therefore the only one that
 # runs het_stats_compute's run-dedup loop at all.
@@ -403,17 +402,17 @@ case("sighting-unconfirmed-3-cells-of-ONE-run",
      observed(stream_runs(POISSON_CELLS, [0, 0, 0] + list(range(1, 8))), 3),
      obs="Sometimes", k=3, k_eff=3, k_runs=1, tier="UNCONFIRMED")
 
-# ... and n_at_first_sight is the PRICE in runs, so it must be the run the first
-# clean sighting landed in and not the count of sightings.  Here the first three
+# ... and n_at_first_sight is the price in runs, so it must be the run the first
+# clean sighting landed in and NOT the count of sightings.  Here the first three
 # runs are null and run 3 (the fourth) fires.
 case("first-sight-is-priced-in-runs",
      observed(stream_runs(POISSON_CELLS, [3, 4, 0, 1, 2, 5, 6, 7, 8, 9]), 1),
      obs="Sometimes", k=1, k_eff=1, k_runs=1, tier="UNCONFIRMED",
      first_sight=1)
 
-# ... and the same price at a LATE position, which is what pins the INDEXING: the
+# ... and the same price at a late position, which is what pins the indexing: the
 # fifth run of ten fires, so the price is 5 -- the count of runs spent through the
-# sighting, one-based, neither the four spent before it nor a run id.  The
+# sighting, one-based, NEITHER the four spent before it nor a run id.  The
 # confirmation window is measured from this number (het_verdict.h's stopping rule),
 # so an off-by-one here silently shortens or lengthens every window by a run.
 case("first-sight-counts-the-runs-spent-through-the-sighting",
@@ -421,17 +420,17 @@ case("first-sight-counts-the-runs-spent-through-the-sighting",
      obs="Sometimes", k=1, k_eff=1, k_runs=1, tier="UNCONFIRMED",
      first_sight=5)
 
-# --- THE SELF-PROVING INVARIANT --------------------------------------------
+# --- The self-proving invariant --------------------------------------------
 # The window bump sits on the same line as the count, so sum(win) == total.  A total
 # that is nonzero with all windows zero means the bump did not run: the stream is not
-# the run's history, so the stationarity precheck must be REFUSED rather than run on it.
+# the run's history, so the stationarity precheck is REFUSED rather than run on it.
 case("window-desync-refuses-the-stationarity-precheck",
      stream(ZERO_CELLS, control_target_count=500),
      obs="Never", ks="underpowered",
      flags_any=["WIN_DESYNC", "CTRL_STREAM_EMPTY", "KS_UNDERPOWERED"])
 
-# --- WHICH CHANNEL THE PRECHECK READ ---------------------------------------
-# 78 of 411 have no mu(T) by construction -- they ARE the lattice floor -- so the
+# --- Which channel the precheck read ---------------------------------------
+# The tests that ARE the lattice floor have no mu(T) by construction, so the
 # stationarity precheck reads the Layer-B canary's stream instead.  That canary is the
 # het MP floor, so on every shape but MP it is another shape's time structure: a
 # weaker claim, hence a flag.
@@ -439,11 +438,11 @@ case("canary-channel-read-when-no-mutant",
      stream(POISSON_CELLS, chan="canary",             control_compiled_in=0, control_target_count=0),
      obs="Never", flags_any=["CTRL_IS_CANARY"], flags_none=["CTRL_STREAM_EMPTY"])
 
-# --- A MIXED STAMPED/UNSTAMPED STREAM IS READ AS ITS STAMPED HALF -------------
-# Ten stamped cells whose mu(T) is not compiled in, plus two UNSTAMPED cells whose
+# --- A mixed stamped/unstamped stream is read as its stamped half -------------
+# Ten stamped cells whose mu(T) is not compiled in, plus two unstamped cells whose
 # control counts are memset residue.  Everything below rec_magic is unreadable, so
-# the residue must reach neither the printed mu report nor the choice of calibration
-# channel: unguarded it makes mu_total nonzero, which SELECTS mu(T) as the channel --
+# the residue must reach NEITHER the printed mu report nor the choice of calibration
+# channel: unguarded it makes mu_total nonzero, which selects mu(T) as the channel --
 # and the stamped cells' mu(T) stream is all zeros, so the pooled stream is empty and
 # the stationarity precheck is refused.  A wrong number and a refused precheck from
 # records nothing may read (het_verdict() stops at the stamp; so does every total here).
@@ -457,13 +456,13 @@ case("unstamped-cells-feed-neither-the-mu-report-nor-the-channel-choice",
      mu_total=0, can_total=sum(sum(w) for w in POISSON_CELLS),
      flags_any=["CTRL_IS_CANARY"], flags_none=["CTRL_STREAM_EMPTY", "WIN_DESYNC"])
 
-# --- THE SELF-CANARY SELECTION EFFECT ---------------------------------------
-# MP-{cg,gc}-sys-relaxed ARE the Layer-B canary, so they co-run no control and a run in
-# which they did not fire is COLD and discarded: "usable" is then DEFINED BY firing and
+# --- The self-canary selection effect ---------------------------------------
+# MP-{cg,gc}-sys-relaxed are the Layer-B canary, so they co-run no control and a run in
+# which they did not fire is COLD and discarded: "usable" is then defined by firing and
 # the survivors are tautologically the ones that fired.  Classifying over usable cells
-# would report ALWAYS for a canary that fired in 3 runs of 10 -- and that rate is what
+# would report Always for a canary that fired in 3 runs of 10 -- and that rate is what
 # the rest of the campaign is calibrated against -- so the denominator must be R.  They
-# also have NO CALIBRATION CHANNEL: nothing independent co-runs to test stationarity
+# also have no calibration channel: nothing independent co-runs to test stationarity
 # against, so their P_rep is refused too.
 SELF_CANARY = dict(canary_name='"synthetic"',
                    control_compiled_in=0, canary_compiled_in=0,
@@ -475,10 +474,10 @@ case("self-canary-fired-3-of-10-is-SOMETIMES-not-ALWAYS",
      flags_none=["NO_CONTROL_CORUN"],
      P_rep=-1.0)
 
-# ... AND ONE UNSTAMPED CELL MUST NOT UNDO IT.  The same ten, plus a cell whose
+# ... and one unstamped cell must NOT undo it.  The same ten, plus a cell whose
 # compiled-in flag is memset residue.  Read, that residue says something co-runs:
 # the row stops naming itself the canary, the denominator moves from R to R_usable
-# -- where "usable" is defined by firing -- and 3 of 10 is reported as ALWAYS.  Its
+# -- where "usable" is defined by firing -- and 3 of 10 is reported as Always.  Its
 # frame count would be added to the effort total on the same pass.  Same answer as
 # the case above, to the flag and to the frame, is the whole assertion.
 case("self-canary-plus-one-unstamped-cell-is-still-SOMETIMES",
@@ -489,13 +488,13 @@ case("self-canary-plus-one-unstamped-cell-is-still-SOMETIMES",
      flags_none=["NO_CONTROL_CORUN"],
      P_rep=-1.0)
 
-# --- ... AND THE ROW THAT CO-RUNS NOTHING WITHOUT BEING THE CANARY -------------
+# --- ... and the row that co-runs nothing without being the canary -------------
 # Every harness emitted with no control map beside the test looks like this: nothing
-# co-runs AND nothing names this row the canary (canary_name is NULL, not the test's
+# co-runs and nothing names this row the canary (canary_name is NULL, not the test's
 # own name).  The arithmetic is the self-canary one -- "usable" is still defined by
-# firing, so the denominator is still R -- but the CLAIM is not: this row is no
-# canary, and its missing calibration channel is an omission we have not closed
-# rather than a property of the design.  Two flags, so the printout can say which.
+# firing, so the denominator is still R -- but the claim is NOT: this row is no
+# canary, and its missing calibration channel is an omission rather than a property
+# of the design.  Two flags, so the printout can say which.
 case("no-control-map-fired-3-of-10-is-SOMETIMES-and-is-NOT-the-canary",
      observed(stream(ZERO_CELLS,                      control_compiled_in=0, canary_compiled_in=0,
                      control_target_count=0, canary_target_count=0), 3),
@@ -504,7 +503,7 @@ case("no-control-map-fired-3-of-10-is-SOMETIMES-and-is-NOT-the-canary",
      flags_none=["SELF_CONTROL"],
      P_rep=-1.0)
 
-# --- A SIGHTING-FREE NULL IS CALIBRATED BY WHAT CO-RAN WITH IT ------------------
+# --- A sighting-free null is calibrated by what co-ran with it ------------------
 # Which channel the precheck reads is a choice, and it must prefer the shape-matched
 # one where it exists and fired -- here mu(T), compiled in and hot; the canary half of
 # the pair is canary-channel-read-when-no-mutant above.
@@ -512,25 +511,24 @@ case("sighting-free-null-reads-its-own-mu-channel",
      stream(POISSON_CELLS),
      obs="Never", flags_none=["CTRL_STREAM_EMPTY", "CTRL_IS_CANARY"])
 
-# --- MORE RUNS THAN THE AGGREGATE CAN HOLD ----------------------------------
-# The tail beyond HET_STATS_MAX_CELLS is DROPPED from every statistic (R_usable = 128
-# of the 129 supplied), which would quietly report a campaign as having spent less
-# effort than it did -- so st->R keeps the PRE-clamp count and the flag says the
-# discard happened.
-# Production runs at R = 10 per invocation, but campaign.py pools invocations and
-# litmus7 -r is an operator knob, so this is reachable in the field and reached here.
+# --- More runs than the aggregate can hold ----------------------------------
+# The tail beyond HET_STATS_MAX_CELLS is dropped from every statistic, which would
+# quietly report a campaign as having spent less effort than it did -- so st->R keeps
+# the pre-clamp count and the flag says the discard happened.  A harness runs fewer
+# cells than that per invocation, but campaign.py pools invocations and litmus7 -r is
+# an operator knob, so the path is reachable in the field and reached here.
 case("cells-truncated-above-HET_STATS_MAX_CELLS", stream(POISSON_CELLS_TRUNC),
      obs="Never", R=MAX_CELLS + 1, R_usable=MAX_CELLS,
      flags_any=["CELLS_TRUNCATED"])
 
 
-# ===================== PHASE 5a: THE STOPPING RULE ==========================
+# ===================== PHASE 5a: the stopping rule ==========================
 # het_campaign_should_stop() decides where the hardware hours go, so every reason it
-# can give must be REACHABLE and every guard must hold at its boundary: a lone clean
-# sighting holds the row open (it is not banked) but only as far as the confirmation
-# window; a degenerate-only sighting holds nothing open; rate mode disables the
-# sighting stop and NOTHING else; and residue from an unstamped record decides
-# nothing.  The matrix drives the C rule directly, on synthetic records, with no GPU.
+# can give has to be reachable and every guard has to hold at its boundary: a lone
+# clean sighting holds the row open (it is not banked) but only as far as the
+# confirmation window; a degenerate-only sighting holds nothing open; rate mode
+# disables the sighting stop and NOTHING else; and residue from an unstamped record
+# decides nothing.  The matrix drives the C rule directly, on synthetic records.
 CONFIRM_RUNS = 30           # must match the driver's HET_CONFIRM_RUNS default
 STOPS = []
 
@@ -540,31 +538,31 @@ def stop(name, cells_, budget, want, rate=0, confirm=CONFIRM_RUNS):
                       want=want, rate=rate, confirm=confirm))
 
 
-# A LONE clean sighting does NOT stop: one run cannot rule out a per-run artefact,
+# A lone clean sighting does NOT stop: one run cannot rule out a per-run artefact,
 # so the row keeps running to corroborate.
 stop("one-clean-sighting-does-not-stop",
      observed(stream(POISSON_CELLS), 1),
      20, "CONTINUE")
-# ... and neither does a degenerate one, at any count: an artefact must never
+# ... and neither does a degenerate one, at any count: an artefact must NEVER
 # de-schedule a test (the branch is on k_eff, not on the tier, which k sets).
 stop("degenerate-sightings-never-stop",
      observed(stream(POISSON_CELLS), 3, clean=False),
      20, "CONTINUE")
-# The bar is HET_CORROB_RUNS distinct clean RUNS, and it is reached exactly there.
+# The bar is HET_CORROB_RUNS distinct clean runs, and it is reached exactly there.
 stop("sighting-corroborated-stops",
      observed(stream(POISSON_CELLS), CORROB_RUNS),
      20, "CORROBORATED")
-# THE CONFIRMATION WINDOW, AT ITS BOUNDARY.  The same lone sighting in the FIRST of
+# The confirmation window, at its boundary.  The same lone sighting in the first of
 # ten runs, so nine have elapsed since it: one run short of the window it keeps
 # running, at the window it stops -- and UNCONFIRMED-SIGHTING is its own outcome,
-# neither a corroboration nor a null.
+# NEITHER a corroboration nor a null.
 stop("lone-sighting-below-the-confirm-window-continues",
      observed(stream(POISSON_CELLS), 1),
      20, "CONTINUE", confirm=10)
 stop("lone-sighting-at-the-confirm-window-stops-unconfirmed",
      observed(stream(POISSON_CELLS), 1),
      20, "UNCONFIRMED-SIGHTING", confirm=9)
-# THE PRECEDENCE, BOTH WAYS.  budget is spent (n >= budget) in both, and neither
+# The precedence, both ways.  budget is spent (n >= budget) in both, and NEITHER
 # answers BUDGET: while a clean sighting is open the window decides, because a row
 # ended at BUDGET here would bank "seen once, stopped looking".  Below the window
 # that means CONTINUE -- the caller's own run capacity is what ends the invocation,
@@ -575,12 +573,12 @@ stop("lone-sighting-outranks-the-budget-stop",
 stop("the-window-not-the-budget-ends-a-lone-sighting",
      observed(stream(POISSON_CELLS), 1),
      5, "UNCONFIRMED-SIGHTING", confirm=9)
-# THE WINDOW IS MEASURED FROM THE SIGHTING, and these three are why it must be.  A
+# The window is measured from the sighting, and these three are why it must be.  A
 # row whose one sighting lands in its LAST run has spent none of its window yet, so
-# it must keep running: closing the window on it hands a sighting zero runs to
-# reproduce in and banks the un-reproduced answer.  With the sighting at the fifth
-# run of ten the boundary is driven from both sides -- five runs have elapsed since
-# it, so a six-run window is still open and a five-run one has just closed.
+# it keeps running: closing the window on it hands a sighting zero runs to reproduce
+# in and banks the un-reproduced answer.  With the sighting at the fifth run of ten
+# the boundary is driven from both sides -- five runs have elapsed since it, so a
+# six-run window is still open and a five-run one has just closed.
 stop("a-sighting-in-the-last-run-gets-its-window",
      observed_at(stream(POISSON_CELLS), 9),
      20, "CONTINUE", confirm=5)
@@ -590,7 +588,7 @@ stop("late-sighting-inside-its-window-continues",
 stop("late-sighting-past-its-window-stops-unconfirmed",
      observed_at(stream(POISSON_CELLS), 4),
      20, "UNCONFIRMED-SIGHTING", confirm=5)
-# RATE MODE (HET_RATE=1) disables the sighting stop and nothing else: the row runs on
+# Rate mode (HET_RATE=1) disables the sighting stop and NOTHING else: the row runs on
 # to measure a rate, and its budget still stops it.
 stop("rate-mode-does-not-stop-on-a-corroborated-sighting",
      observed(stream(POISSON_CELLS), CORROB_RUNS),
@@ -598,30 +596,30 @@ stop("rate-mode-does-not-stop-on-a-corroborated-sighting",
 stop("rate-mode-still-stops-at-budget",
      observed(stream(POISSON_CELLS), CORROB_RUNS),
      10, "BUDGET", rate=1)
-# ... and a LONE sighting under rate mode is a rate to be measured like any other:
+# ... and a lone sighting under rate mode is a rate to be measured like any other:
 # neither the corroboration stop nor the confirmation window applies, so the row
-# reaches its budget and is never banked UNCONFIRMED.  (Rate mode is the operator's
-# answer to an UNCONFIRMED row, so it must not be able to produce one.)
+# reaches its budget and is never banked UNCONFIRMED.  Rate mode is the operator's
+# answer to an UNCONFIRMED row, so it must NOT be able to produce one.
 stop("rate-mode-runs-a-lone-sighting-to-budget",
      observed(stream(POISSON_CELLS), 1),
      10, "BUDGET", rate=1)
 stop("cold-row-runs-to-budget",
      stream(POISSON_CELLS),
      10, "BUDGET")
-# An UNSTAMPED record earns no early stop: every cell is COLD-INVALID, so there is
+# An unstamped record earns no early stop: every cell is COLD-INVALID, so there is
 # nothing to corroborate, and the row spends its budget.
 stop("unstamped-records-fail-closed-to-budget",
      stream(POISSON_CELLS, rec_magic=0),
      10, "BUDGET")
-# ... and the same holds when the unstamped stream is FULL OF SIGHTINGS in distinct
+# ... and the same holds when the unstamped stream is full of sightings in distinct
 # runs.  Every count below rec_magic is then memset residue, so scoring it would let
 # a harness the emitter built wrong corroborate itself into CORROBORATED -- the one
 # stop that means "nothing further is bought by running this row".
 stop("unstamped-sightings-earn-no-corroboration",
      observed(stream(POISSON_CELLS, rec_magic=0), CORROB_RUNS),
      10, "BUDGET")
-# A MIXED stream decides from its stamped half alone.  The two unstamped cells are
-# SIGHTINGS in distinct runs, so read, the residue alone would corroborate the row and
+# A mixed stream decides from its stamped half ALONE.  The two unstamped cells are
+# sightings in distinct runs, so read, the residue alone would corroborate the row and
 # stop it -- the one stop that means "nothing further is bought here".  The stamped ten
 # are nulls, so the answer is theirs: the row spends its budget.
 stop("mixed-stream-is-decided-by-its-stamped-half",
@@ -635,7 +633,7 @@ stop("mixed-stream-is-decided-by-its-stamped-half",
 # The Python reference for a whole case (mirrors het_stats_compute's structure).
 # ---------------------------------------------------------------------------
 def py_reference(cells_):
-    # The record array is CLAMPED at HET_STATS_MAX_CELLS and the tail is dropped from
+    # The record array is clamped at HET_STATS_MAX_CELLS and the tail is dropped from
     # every statistic below; st->R keeps the pre-clamp count so the discard is visible.
     R = len(cells_)
     pool = cells_
@@ -645,13 +643,13 @@ def py_reference(cells_):
     def stamped(c):
         # het_verdict() reads no field of a record that does not carry the stamp, so
         # neither does anything derived from one: every total, every count, every
-        # calibration sample here is drawn from the stamped cells alone.
+        # calibration sample here is drawn from the stamped cells ALONE.
         return c["rec_magic"] == "HET_REC_MAGIC"
 
-    # The pool's IDENTITY, read before the clamp and resolved upward: one CPU-only
-    # cell names the narrower experiment for the whole pool, so a het reading may
-    # not absorb it.  het_stats_line prints it and hetlitmus/campaign.py schedules
-    # off that field.
+    # The pool's identity, read before the clamp and resolved upward: ONE CPU-only
+    # cell names the narrower experiment for the whole pool, so a het reading may not
+    # absorb it.  het_stats_line prints it and hetlitmus/campaign.py schedules off
+    # that field.
     cpu_only = 1 if any(c.get("cpu_only", 0) for c in pool if stamped(c)) else 0
 
     mu_present = any(c["control_compiled_in"] for c in cells_ if stamped(c))
@@ -674,8 +672,7 @@ def py_reference(cells_):
     def channel_live(c):
         # Mirrors het_verdict()'s channel-aware liveness disqualifier: the sync
         # channel's evidence is interleavings_detected>0, the observer channel's is
-        # observer_unique_count>=THETA_D, and a record with NEITHER fails closed
-        # (0 of 411 in the shipped corpus).
+        # observer_unique_count>=THETA_D, and a record with NEITHER fails closed.
         if c["sync_valid"]:
             return c["interleavings_detected"] > 0
         if c["obs_valid"]:
@@ -684,7 +681,7 @@ def py_reference(cells_):
 
     def usable(c):
         # Mirrors het_verdict()'s COLD-INVALID: an unstamped record is cold at step 0;
-        # a sighting is never cold; otherwise the harness must be hot (mu(T) or canary
+        # a sighting is never cold; otherwise the harness has to be hot (mu(T) or canary
         # >= tau) AND its decode channel live.
         if not stamped(c):
             return False
@@ -698,7 +695,7 @@ def py_reference(cells_):
         # het_verdict()'s NOT-OBSERVED-MU-HOT tier, which is what a null names as its
         # voucher: a usable cell that saw nothing and whose OWN mu(T) reached tau_hot
         # with the ground-truth scan behind it.  Everything else usable carries the
-        # weaker NOT-OBSERVED-CANARY-ONLY.
+        # weaker NOT-OBSERVED-CANARY-ONLY tier.
         if not usable(c):
             return False
         if c["target_count_exhaustive"] > 0 or c["target_count_heuristic"] > 0:
@@ -712,10 +709,10 @@ def py_reference(cells_):
     ctrl_pooled = 0
     desync = False
     for c in cells_:
-        # THE STAMP GATES EVERY READ.  A cell that does not carry it is residue, and
-        # nothing below may see one: not the run tally, not the window sums, not the
-        # frames, not the calibration samples.  It is unusable by that same test, so
-        # skipping it whole loses nothing but the residue.
+        # The stamp gates every read.  A cell that does not carry it is residue, and
+        # nothing below may see one: NEITHER the run tally, nor the window sums, nor
+        # the frames, nor the calibration samples.  It is unusable by that same test,
+        # so skipping it whole loses nothing but the residue.
         if not stamped(c):
             continue
         u = usable(c)
@@ -744,10 +741,10 @@ def py_reference(cells_):
             ctrl_pooled += sum(ctrl_win(c))
             win.extend(float(x) for x in ctrl_win(c))
 
-    # THE SELECTION EFFECT: wherever nothing co-runs, "usable" is defined by firing,
+    # The selection effect: wherever nothing co-runs, "usable" is defined by firing,
     # so the denominator is R and not R_usable.  That holds for the `self' canary rows
     # and for every harness of a pair with no control map alike -- the C splits them
-    # into two FLAGS, because only one of them is a canary, but not into two
+    # into two flags, because ONLY one of them is a canary, but not into two
     # denominators (see the two cases of those names).
     nothing_coruns = not any(c["control_compiled_in"] or c["canary_compiled_in"]
                              for c in cells_ if stamped(c))
@@ -761,7 +758,7 @@ def py_reference(cells_):
     else:
         obs = "Sometimes"
 
-    # THE EMPTINESS GUARD, re-derived: fewer than two pooled windows, an all-zero
+    # The emptiness guard, re-derived: fewer than two pooled windows, an all-zero
     # pooled stream, or sub-tallies that do not sum to their totals.  Any of the three
     # and the KS gate below is REFUSED rather than run on nothing.
     stream_empty = (len(win) < 2) or (ctrl_pooled == 0) or desync
@@ -779,7 +776,8 @@ def py_reference(cells_):
 
     P_rep = -1.0
     # k_eff > 0 is load-bearing: 1 - e^0 = 0 prints as "P_rep = 0.00%", which reads as
-    # "never reproduces" when it means "no clean cell to estimate from".
+    # "never reproduces" when it means "no clean cell to estimate from" [Kirkham20
+    # sec 1.1].
     if obs in ("Sometimes", "Always") and ks == 1 and k_eff > 0:
         P_rep = 1.0 - math.exp(-float(k_eff))
 
@@ -991,7 +989,7 @@ def phase1(lines, quiet):
             if int(nwin) != NWIN:
                 print("  *** HET_NWIN is %s, statscheck assumes %d" % (nwin, NWIN))
                 bad += 1
-            # het_win_of must MAP: a constant would land every sighting in one bucket,
+            # het_win_of must map: a constant would land every sighting in one bucket,
             # and the stream the precheck reads would be that spike rather than the
             # run's history.
             if not (int(w0) == 0 and int(wmid) == NWIN // 2 and int(wlast) == NWIN - 1):
@@ -1003,12 +1001,12 @@ def phase1(lines, quiet):
                 print("      het_win_of maps 0->0, N/2->%d, N-1->%d (it is not a "
                       "constant)" % (NWIN // 2, NWIN - 1))
 
-    # --- THE MIRROR PINS.  statscheck re-derives every statistic in Python, and three
-    # of the header's knobs are hard-coded there rather than read from it.  No fixture
-    # straddles their boundaries, so a differential CANNOT notice the drift: with
-    # HET_THETA_DISTINCT moved 2 -> 3 every decode count in this file (0, 1, 900, 5000)
-    # keeps its truth value on both sides and the gate stays green on a stale mirror.
-    # Compared here, exactly as HET_NWIN is compared on the WIN| line.
+    # --- The mirror pins.  statscheck re-derives every statistic in Python, and the
+    # header's knobs are hard-coded there rather than read from it.  No fixture
+    # straddles their boundaries, so a differential CANNOT notice the drift: move
+    # HET_THETA_DISTINCT by one and every decode count in this file keeps its truth
+    # value on both sides while the gate stays green on a stale mirror.  Compared
+    # here, exactly as HET_NWIN is compared on the WIN| line.
     seen_mirror = False
     for l in lines:
         if not l.startswith("MIRROR|"):
@@ -1089,7 +1087,7 @@ def phase2(lines, quiet):
         ref = refs[name] = py_reference(c["cells"])
         errs = []
 
-        # (a) DIFFERENTIAL: every statistic, independently re-derived, to 1e-9.
+        # (a) The differential: every statistic, independently re-derived, to 1e-9.
         for fld in ("P_rep", "ks_D"):
             if not close(g[fld], ref[fld]):
                 errs.append("%s: C %.12g != py %.12g" % (fld, g[fld], ref[fld]))
@@ -1098,7 +1096,7 @@ def phase2(lines, quiet):
             if g[fld] != ref[fld]:
                 errs.append("%s: C %s != py %s" % (fld, g[fld], ref[fld]))
 
-        # (a') THE EMPTINESS GUARD, on EVERY case rather than on the few that name it.
+        # (a') The emptiness guard, on EVERY case rather than on the few that name it.
         # It is the one conjunct standing between an all-zero control stream and a KS
         # "pass" that unlocks P_rep for a harness where nothing ever fired, and the
         # numbers alone cannot show it: a stream nothing was measured on and a stream
@@ -1107,7 +1105,7 @@ def phase2(lines, quiet):
         if empty_c != ref["stream_empty"]:
             errs.append("CTRL_STREAM_EMPTY=%s but the pooled stream %s empty"
                         % (empty_c, "is" if ref["stream_empty"] else "is NOT"))
-        # ... and what it BUYS: refusing the gate, never passing it.  A guard that
+        # ... and what it buys: refusing the gate, NEVER passing it.  A guard that
         # fires and still lets the KS run has moved a flag and nothing else.
         if ref["stream_empty"] and g["ks"] != "underpowered":
             errs.append("the pooled stream is empty but the KS gate reports %r"
@@ -1138,7 +1136,7 @@ def phase2(lines, quiet):
                   % (name, g["obs"], g["ks"], g["P_rep"],
                      ",".join(f for f in FLAGS if g["flags"] & FLAG_BIT[f])))
 
-    # ---- THE ANTI-CONSTANT ASSERTIONS -------------------------------------
+    # ---- The anti-constant assertions --------------------------------------
     print()
     want_obs = {"VOID", "Never", "Sometimes", "Always"}
     miss = want_obs - seen_obs
@@ -1176,8 +1174,8 @@ def phase2(lines, quiet):
               "diagnostic" % ", ".join(sorted(need_flags - seen_flags)))
         bad += 1
 
-    # THE PRINTOUT IS THE DELIVERABLE, NOT THE FLAG.  A null now says in words that
-    # no rate and no probability is attached to it, and says what vouches for it
+    # The printout is the deliverable, NOT the flag.  A null says in words that no
+    # rate and no probability is attached to it, and says what vouches for it
     # instead; a flag nobody reads is not what a reader files the result under.
     for name, g in sorted(got.items()):
         txt = blocks.get(name, "")
@@ -1185,7 +1183,7 @@ def phase2(lines, quiet):
             continue
         # What vouched is a per-cell fact (het_verdict.h, n_mu_hot), so the clause is
         # pinned against the count of NOT-OBSERVED-MU-HOT cells rather than merely
-        # required to exist -- the pooled channel flag cannot stand in for it.
+        # required to exist: the pooled channel flag cannot stand in for it.
         r = refs.get(name, {})
         nmu, nusable = r.get("n_mu_hot", 0), r.get("R_usable", 0)
         if nmu == nusable:
@@ -1207,12 +1205,12 @@ def phase2(lines, quiet):
                 print("  *** %s reports a Never but %s" % (name, why))
                 bad += 1
 
-    # THE CPU-ONLY SENTENCE, both ways.  het_stats_print carries it inside the
+    # The CPU-only sentence, BOTH ways.  het_stats_print carries it inside the
     # sighting tier and nowhere else, so the campaigns entitled to it are the ones
-    # the mirror resolves to cpu_only with a tier to print it under -- keyed on
-    # that rather than on a case name, so a fixture whose pool resolves the flag
-    # is covered by construction.  Why both directions, at verdictcheck.py's
-    # CPU_ONLY_TEXT, which pins the per-run twin.
+    # the mirror resolves to cpu_only with a tier to print it under -- keyed on that
+    # rather than on a case name, so a fixture whose pool resolves the flag is covered
+    # by construction.  Why both directions: verify/verdictcheck.py's CPU_ONLY_TEXT,
+    # which pins the per-run twin.
     for name in sorted(refs):
         owed = bool(refs[name]["cpu_only"] and refs[name]["tier"] != "none")
         said = CPU_ONLY_TEXT in blocks.get(name, "")
@@ -1226,11 +1224,11 @@ def phase2(lines, quiet):
             bad += 1
 
     # ... and the machine-readable twin of that sentence, which prints on every
-    # campaign rather than on the sighting tier alone.  het_stats_line's field is
-    # what hetlitmus/campaign.py schedules off, so it is asserted against the same
-    # Python re-derivation as the statistics: a constant there is invisible to the
-    # sentence above, and on a mixed pool the field is the only reader of the
-    # upward resolution at all.
+    # campaign rather than on the sighting tier alone.  het_stats_line's field is what
+    # hetlitmus/campaign.py schedules off, so it is asserted against the same Python
+    # re-derivation as the statistics: a constant there is invisible to the sentence
+    # above, and on a mixed pool the field is the ONLY reader of the upward
+    # resolution.
     for name in sorted(refs):
         line = next((l for l in blocks.get(name, "").splitlines()
                      if CPU_ONLY_LINE.match(l)), "")
@@ -1241,7 +1239,7 @@ def phase2(lines, quiet):
                      else "no CPU-only cell", line[:64]))
             bad += 1
 
-    # A ROW THAT CO-RUNS NOTHING MUST NOT CLAIM TO BE THE CANARY.  Both states set
+    # A row that co-runs nothing must NOT claim to be the canary.  Both states set
     # the same denominator, so the numbers alone cannot tell them apart; only the
     # sentence can, and it is the sentence a reader files the result under.
     for name, g in sorted(got.items()):
@@ -1261,18 +1259,17 @@ def phase2(lines, quiet):
                       "inference, not the record" % name)
                 bad += 1
             # HET_NO_CONTROL_MAP is 0 in this standalone build, so this is the
-            # can't-happen arm: a map WAS read and still nothing vouches for the row.
+            # can't-happen arm: a map was read and still nothing vouches for the row.
             if "that is a BUILD BUG, not a result" not in txt:
                 print("  *** %s co-runs nothing with a control map present and the "
                       "printout does not call that a build bug" % name)
                 bad += 1
-        # An obs of ALWAYS on a row that co-runs nothing.  The runcheck twin of this
-        # line (ch_check's F assertion) additionally reads `0 < k < R', because it
-        # judges a device run where k == R is a legitimate Always.  Here that guard
-        # would delete the check: the fixture this line catches by itself is
-        # `always', k = R = 10, when a leak in het_verdict.h's co-run scan marks it
-        # as co-running nothing.  Its case names no flag expectation, so the
-        # differential sees nothing move.
+        # An obs of Always on a row that co-runs nothing.  The runcheck twin of this
+        # line additionally reads `0 < k < R', because it judges a device run where
+        # k == R a legitimate Always.  Here that guard would delete the check: the
+        # fixture this line catches by itself is `always', k = R, raised when a leak in
+        # het_verdict.h's co-run scan marks the row as co-running nothing.  Its case
+        # names no flag expectation, so the differential sees nothing move.
         if (g["flags"] & (FLAG_BIT["SELF_CONTROL"] | FLAG_BIT["NO_CONTROL_CORUN"])) \
            and g["k"] > 0 and g["obs"] == "Always":
             print("  *** %s reports ALWAYS while nothing co-runs: the denominator "
@@ -1281,9 +1278,9 @@ def phase2(lines, quiet):
 
     for name, g in sorted(got.items()):
         txt = blocks.get(name, "")
-        # A REPORTED P_rep OF EXACTLY 0 IS NOT A STATISTIC: 1 - e^{-0} = 0 prints as
+        # A reported P_rep of exactly 0 is not a statistic: 1 - e^{-0} = 0 prints as
         # "P_rep = 0.00%", which reads as "never reproduces" when it means "every
-        # sighting failed the decode guard".  Asserted DIRECTLY, not differentially:
+        # sighting failed the decode guard".  Asserted directly, NOT differentially:
         # both mirrors would compute the same 0, so the cross-check cannot see it.
         if g["P_rep"] == 0.0:
             print("  *** %s reports P_rep = 0.00%%.  That is not a reproducibility "
@@ -1305,11 +1302,11 @@ def phase2(lines, quiet):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 3 -- THE PRODUCER, LIVE BOTH WAYS.  The recovery scan is pure host C over host
-# buffers, so it can be lifted out of the emitted harness and run on PLANTED buffers.
-# That tests the DECODER only -- no GPU, no coherence, no memory-model claim -- which
-# is the class of probe the dev box is allowed to run (impl-briefs/SHARED-CHARGE.md:
-# "compile and (where a probe applies) smoke-run for plumbing/ABI only").
+# PHASE 3 -- the producer, live both ways.  The recovery scan is pure host C over host
+# buffers, so it can be lifted out of the emitted harness and run on planted buffers.
+# That tests the decoder ONLY -- no GPU, no coherence, no memory-model claim -- which
+# is the class of probe a box without the target hardware may run at all
+# (hetlitmus/docs/TEST-PLAN.md sec 2, layers 3 and 4).
 # ---------------------------------------------------------------------------
 SCAN_RE = re.compile(r"/\* ---- recovery scan: [^\n]*Layer A[^\n]*\*/\n")
 
@@ -1447,7 +1444,7 @@ def phase3(hdir, tmp, quiet):
         bad += 1
 
     # ON: a tally that is always zero and one that is always nonzero are equally
-    # worthless.  This half proves the bump RUNS.
+    # worthless.  This half proves the bump runs.
     if t1 == 0:
         print("  *** SPREAD: the scan recovered NOTHING from planted cycles -- the "
               "detector is constant-false")
@@ -1462,7 +1459,7 @@ def phase3(hdir, tmp, quiet):
               "-- het_win_of is behaving like a constant" % nz1)
         bad += 1
 
-    # THE MAPPING: sum(win)==total would still hold if every hit went to bucket 0, so
+    # The mapping: sum(win)==total would still hold if every hit went to bucket 0, so
     # hits confined to the first half-window must put ALL the mass in window 0.
     if not (t2 > 0 and nz2 == 1 and w2 == t2):
         print("  *** EARLY: %d hit(s) confined to the first half-window landed in "
@@ -1521,9 +1518,9 @@ def phase4(tamper=None):
                 n_win += 1
             if "het_stats_compute" in src:
                 n_stats += 1
-            # The REALISED window resolution must ride in every record -- a swept
-            # HET_NWIN the record does not report would silently mis-tune the
-            # tuner -- and every harness must carry the adaptive stop.
+            # The realised window resolution rides in every record -- a swept HET_NWIN
+            # the record does not report would silently mis-tune the tuner -- and every
+            # harness carries the adaptive stop.
             if "_rec.nwin = (uint32_t)HET_NWIN;" in src:
                 n_nwin += 1
             if "het_campaign_should_stop" in src:
@@ -1557,7 +1554,7 @@ def phase4(tamper=None):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 5a -- THE STOPPING RULE.
+# PHASE 5a -- the stopping rule.
 # ---------------------------------------------------------------------------
 def phase5_stops(lines, quiet):
     print("\n===== PHASE 5: does the stopping rule DECIDE, or always say one "
@@ -1580,9 +1577,9 @@ def phase5_stops(lines, quiet):
             bad += 1
         elif not quiet:
             print("      %-52s -> %s" % (s["name"], have))
-        # WHAT THE UNCONFIRMED STOP IS ALLOWED TO SAY, and where it must say nothing.
+        # What the UNCONFIRMED stop is allowed to say, and where it must say nothing.
         # It is the one outcome whose name is not its meaning, so it carries one
-        # sentence -- and the sentence must not creep onto the other stops, where it
+        # sentence -- and the sentence must NOT creep onto the other stops, where it
         # would read as an adjudication of them.
         if have is not None:
             w = why.get(s["name"], "")
@@ -1616,17 +1613,17 @@ def phase5_stops(lines, quiet):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 5b -- THE SCHEDULER, END TO END, against a stub runner.  campaign.py spends
+# PHASE 5b -- the scheduler, end to end, against a stub runner.  campaign.py spends
 # (or saves) the hardware hours and none of its policy needs a GPU: the HetStats line
 # is its whole interface.  The stub emits deterministic lines per (test, invocation),
-# so the pooling arithmetic and the stop decisions are pinned exactly -- e.g. a null
-# pools 10 runs an invocation and is ended by its 100-run budget in the tenth.
+# so the pooling arithmetic and the stop decisions are pinned exactly -- a null pools
+# STUB_R runs an invocation and is ended by its STUB_BUDGET budget.
 #
-# WHAT IS PINNED HERE is that campaign.py applies het_verdict.h's rule at the pooled
+# What is pinned here is that campaign.py applies het_verdict.h's rule at the pooled
 # scale: one policy for every row, corroboration before the confirmation window before
-# the budget, rate mode disabling the sighting stop alone, and the mirror that keeps
-# the two copies of the rule from drifting.  The fixtures are named for the BEHAVIOUR
-# they drive, because there is no class left to name them after.
+# the budget, rate mode disabling the sighting stop ALONE, and the mirror that keeps
+# the two copies of the rule from drifting.  The fixtures are named for the behaviour
+# they drive, since no class of row is left to name them after.
 # ---------------------------------------------------------------------------
 STUB_RUNNER = r'''#!/usr/bin/env python3
 import os, sys
@@ -1727,8 +1724,8 @@ def _done_rows(out):
 
 
 def _mirror_bite(tmp, name, doctor, want_frag, quiet, campaign_py=None):
-    """campaign.py's mirror, against a DOCTORED copy of the header.  A mirror nothing
-    ever contradicts is not a mirror, so both halves of it are contradicted here."""
+    """campaign.py's mirror, against a doctored copy of the header.  A mirror nothing
+    ever contradicts is not a mirror, so BOTH halves of it are contradicted here."""
     hdr = os.path.join(tmp, "h-%s.h" % name)
     with open(os.path.join(ROOT, "litmus", "het-runtime", "het_verdict.h")) as fh:
         src = fh.read()
@@ -1755,7 +1752,7 @@ def _mirror_bite(tmp, name, doctor, want_frag, quiet, campaign_py=None):
 
 
 def _window_arithmetic(out, want_rows):
-    """THE PRINTED SENTENCE MUST ADD UP.  The summary says where each flagged row's
+    """The printed sentence has to add up.  The summary says where each flagged row's
     sighting fired and where the row ended; a row the confirmation window ended ran
     at least that window's runs AFTER firing, or the sentence reports a window that
     closed before it opened."""
@@ -1785,10 +1782,10 @@ def phase6_campaign(quiet, campaign_py=None):
     tmp = tempfile.mkdtemp(prefix="statssched.")
     bad = 0
     try:
-        # --- 6.0: THE MIRROR.  campaign.py carries its own copy of the corroboration
-        # bar and of every stop-name string, and it is copied standalone onto rented
-        # boxes, so nothing but this check stands between the two policies drifting.
-        # It must pass against the real header and FATAL against a doctored one.
+        # --- 6.0: the mirror.  campaign.py carries its own copy of the corroboration
+        # bar and of every stop-name string, and it travels without the repo, so
+        # nothing but this check stands between the two policies drifting.  It must
+        # pass against the shipped header and FATAL against a doctored one.
         loader = ("import sys; sys.path.insert(0, %r); import campaign; "
                   % os.path.dirname(campaign_py))
         r0 = subprocess.run(
@@ -1814,7 +1811,7 @@ def phase6_campaign(quiet, campaign_py=None):
                                 'case HET_CAMPAIGN_STOP_CORROBORATED: return '
                                 '"CONFIRMED";', 1),
             "stop names", quiet, campaign_py)
-        # ... and the third piece of the policy a name cannot carry: WHERE the
+        # ... and the third piece of the policy a name cannot carry: where the
         # confirmation window starts.  A header that measures it from run 0 ends rows
         # this scheduler would still be running.
         bad += _mirror_bite(
@@ -1822,8 +1819,8 @@ def phase6_campaign(quiet, campaign_py=None):
             lambda s: s.replace("if (n - st.n_at_first_sight >= confirm_runs)",
                                 "if (n >= confirm_runs)", 1),
             "n_at_first_sight", quiet, campaign_py)
-        # A header out of reach is the standalone-copy case: the mirror stands rather
-        # than dying, or campaign.py could not run on the box it is copied to.
+        # A header out of reach is the travelling-copy case: the mirror stands rather
+        # than dying, or campaign.py could not run on the box it was copied to.
         r1 = subprocess.run(
             [sys.executable, "-c", loader +
              "assert campaign.check_flag_mirror(path='/nonexistent/het_verdict.h') "
@@ -1838,13 +1835,13 @@ def phase6_campaign(quiet, campaign_py=None):
         with open(stub, "w") as fh:
             fh.write(STUB_RUNNER)
 
-        # --- 6.1: THE POLICY, END TO END.
+        # --- 6.1: the policy, end to end.
         corpus = _mk_corpus(tmp, "corpus", STUB_TESTS)
         state = os.path.join(tmp, "state.csv")
         r = _run_campaign(stub, corpus, state, [], campaign_py)
         out = r.stdout
 
-        # A CRASH EXITS 1 TOO.  This fixture set ends one row UNCONFIRMED-SIGHTING, so
+        # A crash exits 1 too.  This fixture set ends one row UNCONFIRMED-SIGHTING, so
         # the campaign is expected to exit 1 -- which means an unhandled exception
         # produces the "right" code by accident and the rc check below passes for free.
         if "Traceback" in r.stderr:
@@ -1863,15 +1860,15 @@ def phase6_campaign(quiet, campaign_py=None):
                   "corpus's" % order)
             bad += 1
         want = {
-            # A null is ended by the budget and by nothing else: 10 runs an
-            # invocation, so the 100-run budget lands in the tenth.  Nothing the
-            # harness reports about the null shortens that.
+            # A null is ended by the budget and by NOTHING else: STUB_R runs an
+            # invocation, so the budget lands in the tenth.  Nothing the harness
+            # reports about a null shortens that.
             "NULL-pooled": ("BUDGET", 10),
             # clean sightings pool to k_runs >= HET_CORROB_RUNS at invocation 2.
             "SIGHT-corrob": ("CORROBORATED", 2),
-            # one sighting in the first run, then nulls: held open by the window (30
-            # runs after the run it fired in, so through run 31) and ended by it in
-            # the fourth invocation -- not by the 100-run budget.
+            # one sighting in the first run, then nulls: held open by the window
+            # (CONFIRM runs after the run it fired in, so through run 31) and ended by
+            # it in the fourth invocation -- NOT by the budget.
             "SIGHT-lone": ("UNCONFIRMED-SIGHTING", 4),
             # a rejected sighting stops nothing (STUB_RUNNER), so the row runs to its
             # budget.
@@ -1889,8 +1886,8 @@ def phase6_campaign(quiet, campaign_py=None):
             elif not quiet:
                 print("      %-12s stop=%-20s after %d invocation(s)"
                       % (t, g["stop"], g["inv"]))
-        # The flagged row must be called out AND say what it is: a lone sighting the
-        # window closed on, which STANDS as an observation and must be reproduced
+        # The flagged row is called out AND says what it is: a lone sighting the
+        # window closed on, which STANDS as an observation and has to be reproduced
         # before it is written up.  No adjudication -- nothing here says what the
         # sighting is worth against a model.
         for frag, why in (
@@ -1908,17 +1905,17 @@ def phase6_campaign(quiet, campaign_py=None):
             print("  *** a corroborated row is not reported at all")
             bad += 1
 
-        # The D10 precondition is LOUDER when it did not run than when it failed: this
-        # corpus has no CPU-only row, so the WB probe did not run and must say so.
+        # The CPU-only precondition is louder when it did not run than when it failed:
+        # this corpus holds no CPU-only row, so the probe did not run and must say so.
         if "WB probe): *** NOT RUN" not in out:
             print("  *** the D10 WB probe is silently absent -- a precondition nobody "
                   "sees is a precondition nobody checked")
             bad += 1
 
-        # --- 6.1b: WHAT A NULL IS WORTH IS THE EFFORT THAT FAILED TO SEE IT, so the
-        # row the pooled null leaves in the state file must carry every run its budget
-        # bought.  It is read by column name, so it also pins the five columns it names:
-        # one renamed or dropped reads None here and fails.  `usable' does not
+        # --- 6.1b: what a null is worth is the effort that failed to see it, so the
+        # row the pooled null leaves in the state file carries every run its budget
+        # bought.  It is read by column name, so it also pins the columns it names: one
+        # renamed or dropped reads None here and fails.  `usable' does not
         # discriminate -- every stub line reports usable == R, so a driver banking
         # `runs' into both columns would pass this.
         want_bank = {"stop": "BUDGET", "invocations": "10",
@@ -1941,14 +1938,14 @@ def phase6_campaign(quiet, campaign_py=None):
             print("      NULL-pooled  banks 10 invocation(s) / %d run(s) at BUDGET -- "
                   "a null is worth the effort spent on it" % STUB_BUDGET)
 
-        # Every invocation must carry a FRESH seed base (seed0 + i*stride) and the
-        # adaptive knobs -- a replayed seed adds no new phase draws -- and it must
-        # carry the run count the row is ENTITLED to.  HET_RUNS_MAX is how a budget of
-        # 100 becomes ten invocations of 10 rather than ten of 100: unchecked, the last
-        # invocation of a nearly-spent row could overshoot by a whole invocation.  The
-        # harness applies the same rule inside the invocation, so it also gets
-        # HET_RATE and HET_CONFIRM_RUNS -- a harness told a different policy from the
-        # scheduler's would stop on its own terms.
+        # Every invocation carries a fresh seed base (seed0 + i*stride) and the
+        # adaptive knobs -- a replayed seed adds no new phase draws -- and the run count
+        # the row is ENTITLED to.  HET_RUNS_MAX is how a budget becomes ten invocations
+        # of STUB_R rather than ten of the whole budget: unchecked, the last invocation
+        # of a nearly-spent row overshoots by a whole invocation.  The harness applies
+        # the same rule inside the invocation, so it also gets HET_RATE and
+        # HET_CONFIRM_RUNS -- a harness told a different policy from the scheduler's
+        # would stop on its own terms.
         for t in STUB_TESTS:
             log = os.path.join(corpus, t, "seeds.log")
             with open(log) as fh:
@@ -1982,11 +1979,11 @@ def phase6_campaign(quiet, campaign_py=None):
             print("  *** no campaign state written")
             bad += 1
 
-        # --- 6.2: THE CONFIRMATION WINDOW OUTRANKS THE BUDGET, in hardware hours.
-        # The SAME lone-sighting row under a budget SMALLER than the window: it must
-        # neither stop at BUDGET nor be curtailed to it -- the row runs past the
-        # budget to the window and ends UNCONFIRMED-SIGHTING there.  Without the
-        # precedence this row banks "seen once, stopped looking" at 20 runs.
+        # --- 6.2: the confirmation window outranks the budget, in hardware hours.
+        # The same lone-sighting row under a budget smaller than the window: it must
+        # NEITHER stop at BUDGET nor be curtailed to it -- the row runs past the budget
+        # to the window and ends UNCONFIRMED-SIGHTING there.  Without the precedence
+        # this row banks "seen once, stopped looking" at 20 runs.
         lone = _mk_corpus(tmp, "lone", ["SIGHT-lone"])
         r2 = subprocess.run(
             [sys.executable, campaign_py, "--corpus", lone,
@@ -2006,7 +2003,7 @@ def phase6_campaign(quiet, campaign_py=None):
         else:
             maxes = [int(l.split()[3])
                      for l in open(os.path.join(lone, "SIGHT-lone", "seeds.log"))]
-            # 21 is the assertion: the entitlement is the WINDOW's end (run 31), not
+            # 21 is the assertion: the entitlement is the window's end (run 31), NOT
             # the budget (20), and the harness is told so run by run.
             if maxes != [20, 21, 11, 1]:
                 print("  *** HET_RUNS_MAX over the overshoot was %s, want "
@@ -2018,12 +2015,12 @@ def phase6_campaign(quiet, campaign_py=None):
                 print("      SIGHT-lone   budget 20 < window (fired at run 1, closes "
                       "at 31) -> runs 31 (HET_RUNS_MAX 20, 21, 11, 1)")
 
-        # --- 6.2b: A LATE SIGHTING GETS A WHOLE WINDOW, not the remains of one that
-        # opened at run 0.  This row fires ONCE, in its fifth invocation (run 41 of a
-        # 100-run budget), so its window closes at run 71 and the row ends in the
-        # eighth.  Measured from run 0 the window is long gone when the sighting
-        # lands: the row is banked UNCONFIRMED the moment it fires, having run none
-        # of the runs the window exists to buy.
+        # --- 6.2b: a late sighting gets a WHOLE window, not the remains of one that
+        # opened at run 0.  This row fires once, in its fifth invocation (run 41 of the
+        # budget), so its window closes at run 71 and the row ends in the eighth.
+        # Measured from run 0 the window is long gone when the sighting lands: the row
+        # is banked UNCONFIRMED the moment it fires, having run none of the runs the
+        # window exists to buy.
         late = _mk_corpus(tmp, "late", ["SIGHT-late"])
         r2b = subprocess.run(
             [sys.executable, campaign_py, "--corpus", late,
@@ -2046,9 +2043,9 @@ def phase6_campaign(quiet, campaign_py=None):
                   "UNCONFIRMED-SIGHTING at run 80 (invocation 8)")
         bad += _window_arithmetic(r2b.stdout, 1)
 
-        # --- 6.3: --rate DISABLES THE SIGHTING STOP AND NOTHING ELSE.  The row that
-        # corroborates at invocation 2 above must now run to its budget, and the null,
-        # which no sighting stop was holding anyway, must end exactly where it did.
+        # --- 6.3: --rate disables the sighting stop and NOTHING else.  The row that
+        # corroborates at invocation 2 above now runs to its budget, and the null,
+        # which no sighting stop was holding anyway, ends exactly where it did.
         rate = _mk_corpus(tmp, "rate", ["SIGHT-corrob", "NULL-pooled"])
         r3 = _run_campaign(stub, rate, os.path.join(tmp, "rate.csv"), ["--rate"],
                            campaign_py)
@@ -2072,7 +2069,7 @@ def phase6_campaign(quiet, campaign_py=None):
             print("      --rate       SIGHT-corrob runs to BUDGET, NULL-pooled ends "
                   "where it did")
 
-        # FAIL CLOSED: a named test with no harness dir must kill the campaign (rc=2).
+        # Fail closed: a named test with no harness dir kills the campaign (rc=2).
         r4 = subprocess.run(
             [sys.executable, campaign_py, "--corpus", corpus, "--runner", "true",
              "--tests", "GHOST"], capture_output=True, text=True)
@@ -2099,12 +2096,12 @@ def phase6_campaign(quiet, campaign_py=None):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 2b -- THE ARM A BUILD WITH NO MAP BESIDE IT TAKES.  The sentence a row that
-# co-runs nothing prints depends on HET_NO_CONTROL_MAP, which the emitter stamps
-# when the control map was not beside the test -- it is looked for beside every
-# one -- so the default build above can never reach that sentence.  Compiled a
-# second time with the stamp to reach it, under a HET_PAIR_NAME found nowhere
-# else, which is what proves the sentence names the pair the binary was built for.
+# PHASE 2b -- the arm a build with no map beside it takes.  The sentence a row that
+# co-runs nothing prints depends on HET_NO_CONTROL_MAP, which the emitter stamps when
+# the control map was not beside the test -- it is looked for beside every one -- so
+# the default build above can NEVER reach that sentence.  Compiled a second time with
+# the stamp to reach it, under a HET_PAIR_NAME found nowhere else, which is what proves
+# the sentence names the pair the binary was built for.
 NCM_PAIR = "(TESTISA, testdialect)"
 
 
@@ -2138,9 +2135,9 @@ def phase2b(header_dir, tmp, quiet):
             ("It has NO CALIBRATION CHANNEL, and that is an OMISSION, not a "
              "construction",
              "it calls a gap we have not closed a property of the design"),
-            # ...and WHICH omission.  The map is loaded for every lane, so the
-            # flag says the FILE was not beside the test; a note that blamed a
-            # registry would send a reader looking for a row to add.
+            # ... and which omission.  The map is loaded for every lane, so the flag
+            # says the FILE was not beside the test; a note that blamed a registry
+            # would send a reader looking for a row to add.
             ("the map is looked for BESIDE THE TEST",
              "it does not say where the map was looked for"),
             ("what was omitted is the map FILE beside this test",
@@ -2151,15 +2148,15 @@ def phase2b(header_dir, tmp, quiet):
             bad += 1
         elif not quiet:
             print("      %s" % frag[:96])
-    # The self-canary arm's two sentences, refused here: they are the OTHER absence,
-    # and a note that borrows them files a gap in the instrumentation under a
-    # property of the design.
+    # The self-canary arm's two sentences, refused here: they are the other absence,
+    # and a note that borrows them files a gap in the instrumentation under a property
+    # of the design.
     for frag in ("IS the Layer-B canary", "by construction, not by omission"):
         if frag in txt:
             print("  *** the no-control-map note still says %r" % frag)
             bad += 1
-    # ... and the SELF-canary row keeps its own sentence in this same build: the
-    # define is a property of the pair, not a switch that rewrites every row.
+    # ... and the self-canary row keeps its own sentence in this same build: the
+    # define is a property of the pair, NOT a switch that rewrites every row.
     self_txt = blocks.get("self-canary-fired-3-of-10-is-SOMETIMES-not-ALWAYS", "")
     if "it IS the Layer-B canary" not in self_txt:
         print("  *** HET_NO_CONTROL_MAP=1 also silenced the genuine self-canary "
@@ -2241,12 +2238,12 @@ def main():
 # ---------------------------------------------------------------------------
 # --bite: every injection below is a way this layer could ship a constant while
 # compiling cleanly and passing every structural gate.  Each is verified to have
-# actually CHANGED the file (one that matched nothing would pass for free), names
-# the phases it can reach, and must redden one of them with a diagnostic carrying
-# its own reason -- the fixture that moved and which way it moved.
+# actually changed the file (one that matched nothing would pass for free), names the
+# phases it can reach, and must redden one of them with a diagnostic carrying its own
+# reason -- the fixture that moved and WHICH way it moved.
 # ---------------------------------------------------------------------------
 def _subst(s, pairs):
-    """Apply (find, replace) pairs, FAILING LOUDLY if any `find' matched nothing.
+    """Apply (find, replace) pairs, failing loudly if any `find' matched nothing.
     _bite only checks that the header changed OVERALL, which a two-fragment injection
     satisfies with one fragment matched and the other silently dropped -- half an
     injection that still reports "BITES"."""
@@ -2261,9 +2258,9 @@ def _subst(s, pairs):
 
 def _named(said, expect):
     """The diagnostic that names this injection: one `***' line carrying every
-    fragment of `expect'.  Both halves are required of a fragment pair -- the
-    fixture that moved and WHICH WAY it moved -- because a phase reddening on some
-    other fixture is another injection's evidence, not this one's."""
+    fragment of `expect'.  BOTH halves are required of a fragment pair -- the fixture
+    that moved and which way it moved -- because a phase reddening on some other
+    fixture is another injection's evidence, not this one's."""
     want = (expect,) if isinstance(expect, str) else expect
     for l in said.splitlines():
         s = l.strip()
@@ -2273,9 +2270,9 @@ def _named(said, expect):
 
 
 def _bite(label, hdir, mutate, phases, expect):
-    """`phases' are the ones this injection can reach, `expect' the diagnostic it
-    must produce there.  A nonzero exit is not enough on its own: a red for
-    another reason would let a broken injection stand in for a live gate."""
+    """`phases' are the ones this injection can reach, `expect' the diagnostic it has
+    to produce there.  A nonzero exit is not enough on its own: a red for another
+    reason would let a broken injection stand in for a live gate."""
     hp = os.path.join(hdir, "het_verdict.h")
     with open(hp) as fh:
         orig = fh.read()
@@ -2310,12 +2307,12 @@ def _bite(label, hdir, mutate, phases, expect):
 
 
 def _bite_campaign(label, mutate, expect):
-    """Doctor a COPY of campaign.py and require phase 6 to redden by name.
+    """Doctor a copy of campaign.py and require phase 6 to redden by name.
 
-    The copy keeps campaign.py's own path shape -- <root>/hetlitmus/campaign.py
-    beside <root>/litmus/het-runtime/het_verdict.h -- because campaign.py resolves
-    the header it mirrors relative to itself, and a copy that cannot reach one
-    would redden phase 6 for being out of reach rather than for the injection."""
+    The copy keeps campaign.py's own path shape -- <root>/hetlitmus/campaign.py beside
+    <root>/litmus/het-runtime/het_verdict.h -- because campaign.py resolves the header
+    it mirrors relative to itself, and a copy that cannot reach one would redden phase
+    6 for being out of reach rather than for the injection."""
     tmp = tempfile.mkdtemp(prefix="statscampbite.")
     said = io.StringIO()
     try:
@@ -2356,11 +2353,11 @@ def bite():
     try:
         hdir = emit_harness(tmp)
 
-        # (1) THE EMPTINESS CONJUNCT DROPPED FROM THE KS GATE.  The flag still fires
+        # (1) The emptiness conjunct dropped from the KS gate.  The flag still fires
         # and still prints; the gate simply stops consulting it, so a `self' canary row
         # -- which co-runs no control by construction -- has its all-zero stream KS-ed
         # against itself, D = 0 against 0, "pass", and P_rep is unlocked for a harness
-        # in which nothing ever fired.  This is the one way this layer can OVERCLAIM.
+        # in which nothing ever fired.  This is the one way this layer can overclaim.
         ok &= _bite("the KS gate stops consulting the emptiness guard (an all-zero "
                     "stream passes and unlocks P_rep)", hdir,
                     lambda s: _subst(s, [
@@ -2381,8 +2378,8 @@ def bite():
                          "  if (0)\n")]),
                     ("2",), "CTRL_STREAM_EMPTY=False but the pooled stream is empty")
 
-        # (3) THE DEGENERACY GUARD DISABLED: a constant-read decoder artefact could
-        # then forge a CORROBORATED sighting out of an artefact that never varied.
+        # (3) The degeneracy guard disabled: a decoder that never varied could then
+        # forge a CORROBORATED sighting out of a constant read.
         ok &= _bite("the degeneracy guard disabled (a constant read can forge a "
                     "corroborated sighting)", hdir,
                     lambda s: s.replace(
@@ -2392,15 +2389,16 @@ def bite():
                     ("5",), ("degenerate-sightings-never-stop",
                              "CORROBORATED, want CONTINUE"))
 
-        # (4) THE KS GATE MADE CONSTANT-PASS: stationarity is never tested and P_rep
-        # is reported across a rate change, which Kirkham's own data says to expect.
+        # (4) The KS gate made constant-pass: stationarity is never tested and P_rep
+        # is reported across a rate change, which the data behind the precheck says to
+        # expect [Kirkham20 sec 4.3].
         ok &= _bite("the KS gate made constant-pass (stationarity never tested)", hdir,
                     lambda s: s.replace("  return (D <= *Dcrit_out) ? 1 : 0;\n",
                                         "  return 1;\n"),
                     ("2",), ("ks-split-rejects-and-suppresses-Prep",
                              "ks: C pass != py SPLIT"))
 
-        # (5) THE CORROBORATION GUARD GUTTED: one un-reproduced sighting would stop
+        # (5) The corroboration guard gutted: ONE un-reproduced sighting would stop
         # the row and bank a sighting nothing reproduced.
         ok &= _bite("the stop rule corroborates on ONE sighting (an unreproduced "
                     "sighting banked)", hdir,
@@ -2411,19 +2409,18 @@ def bite():
                     ("5",), ("one-clean-sighting-does-not-stop",
                              "CORROBORATED, want CONTINUE"))
 
-        # (6) RATE MODE IGNORED: the row that was supposed to run on and yield a
-        # rate stops at its first corroborated sighting instead, and the campaign
-        # measures nothing it was asked to measure.
+        # (6) Rate mode ignored: the row that was to run on and yield a rate stops at
+        # its first corroborated sighting instead, and the campaign measures nothing it
+        # was asked to measure.
         ok &= _bite("rate mode ignored (a sighting stops the row anyway)", hdir,
                     lambda s: s.replace("  if (st.k_eff > 0 && !rate_mode) {",
                                         "  if (st.k_eff > 0) {"),
                     ("5",), ("rate-mode-does-not-stop-on-a-corroborated-sighting",
                              "CORROBORATED, want CONTINUE"))
 
-        # (7) THE CONFIRMATION WINDOW NEVER CLOSES: a lone sighting holds the row
-        # open forever, and UNCONFIRMED-SIGHTING -- the one flagged outcome -- becomes
-        # unreachable while the row silently eats the budget it was allowed to
-        # outrun.
+        # (7) The confirmation window never closes: a lone sighting holds the row open
+        # forever, and UNCONFIRMED-SIGHTING -- the one flagged outcome -- becomes
+        # unreachable while the row silently eats the budget it was allowed to outrun.
         ok &= _bite("the confirmation window never closes (a lone sighting runs "
                     "forever)", hdir,
                     lambda s: s.replace(
@@ -2432,10 +2429,10 @@ def bite():
                     ("5",), ("lone-sighting-at-the-confirm-window-stops-unconfirmed",
                              "CONTINUE, want UNCONFIRMED-SIGHTING"))
 
-        # (8) THE WINDOW MEASURED FROM RUN 0 AGAIN: it then closes on a row that
-        # fires late before that row has run any of it, and UNCONFIRMED-SIGHTING --
-        # the outcome that says "we looked and it did not come back" -- is written
-        # over a row nobody looked at again.
+        # (8) The window measured from run 0: it then closes on a row that fires late
+        # before that row has run any of it, and UNCONFIRMED-SIGHTING -- the outcome
+        # that says "we looked and it did not come back" -- is written over a row
+        # nobody looked at again.
         ok &= _bite("the confirmation window measured from run 0 (a late sighting "
                     "gets none of it)", hdir,
                     lambda s: s.replace(
@@ -2444,33 +2441,33 @@ def bite():
                     ("5",), ("lone-sighting-below-the-confirm-window-continues",
                              "UNCONFIRMED-SIGHTING, want CONTINUE"))
 
-        # (9) THE CORROBORATION BAR MOVED: HET_CORROB_RUNS is what both sides of
-        # the tier fixtures are sized from and what the MIRROR| line pins, so a
-        # header that quietly raises it must redden by NAME.
+        # (9) The corroboration bar moved: HET_CORROB_RUNS is what both sides of the
+        # tier fixtures are sized from and what the MIRROR| line pins, so a header that
+        # quietly raises it must redden by NAME.
         ok &= _bite("the corroboration bar raised (HET_CORROB_RUNS 2 -> 3)", hdir,
                     lambda s: s.replace("#define HET_CORROB_RUNS 2",
                                         "#define HET_CORROB_RUNS 3"),
                     ("1",), "MIRROR DRIFT: HET_CORROB_RUNS is 3 in the header")
 
-        # (10) THE RECORD STAMP STOPS BEING CHECKED: het_stats_compute reuses
-        # het_verdict() per cell, so an unstamped stream would score as a live one
-        # and the aggregate would report a result over memset zeros.
+        # (10) The record stamp stops being checked: het_stats_compute reuses
+        # het_verdict() per cell, so an unstamped stream would score as a live one and
+        # the aggregate would report a result over memset zeros.
         ok &= _bite("rec_magic no longer fails closed inside the aggregate", hdir,
                     lambda s: s.replace("  if (r->rec_magic != HET_REC_MAGIC) {",
                                         "  if (0) {"),
                     ("5",), ("unstamped-sightings-earn-no-corroboration",
                              "CORROBORATED, want BUDGET"))
 
-        # ---- THE STRUCTURAL INVARIANTS ------------------------------------------
+        # ---- The structural invariants ------------------------------------------
         # This family of assertions guards structure the shipped header enforces
         # unconditionally -- a clamp, a conjunct, a dedup, a flag -- so no injection
-        # above can redden one of them, and an assertion never seen to fail is not
-        # evidence that it is compared.  Each injection below deletes the ONE line
+        # above can redden one of them, and an assertion NEVER seen to fail is not
+        # evidence that it is compared.  Each injection below deletes the one line
         # that makes one of them true.
 
-        # (11) THE RUN DEDUP DELETED: several cells of ONE run then count as several
-        # runs, so sightings from a single thermal/phase draw corroborate each
-        # other -- a sighting "corroborated" by itself.
+        # (11) The run dedup deleted: several cells of ONE run then count as several
+        # runs, so sightings from a single thermal/phase draw corroborate each other --
+        # a sighting "corroborated" by itself.
         ok &= _bite("the run dedup deleted (cells of ONE run corroborate each other)",
                     hdir,
                     lambda s: _subst(s, [(
@@ -2480,7 +2477,7 @@ def bite():
                     ("2",), ("sighting-unconfirmed-3-cells-of-ONE-run",
                              "k_runs: C 3 != py 1"))
 
-        # (12) THE P_rep DECODE GUARD DELETED: where every sighting was rejected by
+        # (12) The P_rep decode guard deleted: where every sighting was rejected by
         # the degeneracy guard, 1 - e^{-0} = 0 is then reported as "P_rep = 0.00%",
         # which reads as "never reproduces" when it means "no clean cell to estimate
         # from" -- a number that walks into a table as evidence of the opposite.
@@ -2491,7 +2488,7 @@ def bite():
                     ("2",), ("degenerate-sightings-rejected-but-reported",
                              "P_rep: C 0 != py -1"))
 
-        # (13) THE TRUNCATION STOPS SAYING IT TRUNCATED: the tail is still discarded
+        # (13) The truncation stops saying it truncated: the tail is still discarded
         # (the clamp stays, so nothing overruns), but nothing records that the
         # aggregate was computed from fewer runs than the campaign paid for.
         ok &= _bite("the CELLS_TRUNCATED flag dropped (a silently shortened campaign)",
@@ -2504,15 +2501,15 @@ def bite():
                     ("2",), ("cells-truncated-above-HET_STATS_MAX_CELLS",
                              "flag CELLS_TRUNCATED NOT set"))
 
-        # ---- THE PYTHON MIRRORS -------------------------------------------------
+        # ---- The Python mirrors -------------------------------------------------
         # (14)-(16) Move a mirrored macro in the header and leave statscheck's Python
-        # copy behind.  The MIRROR| comparison in phase 1 is what must name each
-        # drift, and for THETA_DISTINCT and TAU_HOT it is the ONLY thing that can:
-        # every fixture sits far from those two boundaries, so each comparison keeps
-        # its truth value on both sides of the move and the differential stays green
-        # on a mirror that no longer describes the header.  MAX_CELLS is not like
-        # that -- the truncation fixture is sized from it, so the differential moves
-        # too -- but phase 1 is still where the drift is named.
+        # copy behind.  The MIRROR| comparison in phase 1 is what names each drift, and
+        # for THETA_DISTINCT and TAU_HOT it is the ONLY thing that can: every fixture
+        # sits far from those two boundaries, so each comparison keeps its truth value
+        # on both sides of the move and the differential stays green on a mirror that
+        # no longer describes the header.  MAX_CELLS is not like that -- the truncation
+        # fixture is sized from it, so the differential moves too -- but phase 1 is
+        # still where the drift is named.
         ok &= _bite("HET_THETA_DISTINCT moved under the Python mirror", hdir,
                     lambda s: _subst(s, [("#define HET_THETA_DISTINCT 2",
                                           "#define HET_THETA_DISTINCT 3")]),
@@ -2526,11 +2523,11 @@ def bite():
                                           "#define HET_STATS_MAX_CELLS 129")]),
                     ("1",), "MIRROR DRIFT: HET_STATS_MAX_CELLS is 129 in the header")
 
-        # (17)-(18) THE TWO NO-CONTROL STATES CONFLATED.  This is the defect in
-        # its simplest form: infer "this row IS the Layer-B canary" from "no record
-        # has a control", which is true of EVERY harness of a pair with no control
-        # map.  The numbers do not move -- both states take the same denominator --
-        # so nothing but the flag and the sentence can see it.
+        # (17)-(18) The two no-control states conflated.  This is the defect in its
+        # simplest form: infer "this row is the Layer-B canary" from "no record has a
+        # control", which is true of EVERY harness of a pair with no control map.  The
+        # numbers do not move -- both states take the same denominator -- so nothing
+        # but the flag and the sentence can see it.
         print("\n-- the self-canary inference --")
         ok &= _bite("the self-canary test dropped (anything that co-runs nothing is "
                     "called the canary)", hdir,
@@ -2555,9 +2552,9 @@ def bite():
                     ("self-canary-fired-3-of-10-is-SOMETIMES-not-ALWAYS",
                      "flag SELF_CONTROL NOT set"))
 
-        # (18b) THE CPU-ONLY SENTENCE INVERTED.  One injection reaches both halves
-        # of the assertion at once: the CPU-only campaign loses the sentence that
-        # says what was under test, and every other sighting gains it.
+        # (18b) The CPU-only sentence inverted.  One injection reaches BOTH halves of
+        # the assertion at once: the CPU-only campaign loses the sentence that says
+        # what was under test, and every other sighting gains it.
         print("\n-- the CPU-only campaign sentence --")
         ok &= _bite("the CPU-only sentence keyed on the negation of the flag", hdir,
                     lambda s: _subst(s, [
@@ -2587,10 +2584,10 @@ def bite():
                     ("2",),
                     (MIXED_POOL_CASE, "flag MIXED_POOL NOT set"))
 
-        # (18c) THE SCHEDULER'S CONFIRMATION WINDOW MEASURED FROM RUN 0.  Phase 6 is
+        # (18c) The scheduler's confirmation window measured from run 0.  Phase 6 is
         # the only reader of campaign.py, and the header-side twin of this defect is
         # already a mirror arm -- but the mirror compares the header against
-        # campaign.py's names and numbers, not against its arithmetic, so the same
+        # campaign.py's names and numbers, NOT against its arithmetic, so the same
         # mistake made on this side is invisible to it.  A row that fired late then
         # banks the moment it fires, with none of its window run.
         print("\n-- the scheduler (campaign.py) --")
@@ -2601,9 +2598,9 @@ def bite():
                 "elif self.runs >= confirm_runs:", 1),
             ("SIGHT-lone", "want stop=UNCONFIRMED-SIGHTING"))
 
-        # (19) THE WINDOW BUMP DELETED FROM THE PRODUCER: het_win_of still exists and
+        # (19) The window bump deleted from the producer: het_win_of still exists and
         # the aggregate still computes, but the sub-tallies never move, so the stream
-        # the precheck reads is a fiction.  Only phase 3 can see this.
+        # the precheck reads is a fiction.  ONLY phase 3 can see this.
         print("\n-- producer injection (the sub-tallies themselves) --")
         sub = tempfile.mkdtemp(prefix="statsbite.")
         try:
@@ -2632,9 +2629,9 @@ def bite():
         finally:
             shutil.rmtree(sub, ignore_errors=True)
 
-        # (20) THE EMITTER STOPS TAGGING THE DECODE CHANNEL: the guard would read a
-        # structurally-zero skew_stddev as "degenerate" on the 11 store-only tests and
-        # pin their P_rep at a constant 0.  Only phase 4 can see this.
+        # (20) The emitter stops tagging the decode channel: the guard would read a
+        # structurally-zero skew_stddev as "degenerate" on the store-only tests and pin
+        # their P_rep at a constant 0.  ONLY phase 4 can see this.
         print("\n-- corpus injection --")
         rc = phase4(tamper=lambda t, s: s.replace("_rec.obs_valid = 1;\n", ""))
         if rc == 1:

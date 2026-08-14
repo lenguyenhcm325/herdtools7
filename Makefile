@@ -636,12 +636,14 @@ RUN_TESTS?=false
 $(V).SILENT:
 $(V)SILENTOPT=-s
 
-### HetLitmus test targets (Layer 1-3; see hetlitmus/docs/TEST-PLAN.md sec.6).
-### Mirror the herdtools7 idiom (`| build` order-only prereq + `@ echo OK`).
-### Deliberately NOT wired into upstream `test::`: the main suite stays fast and
-### CUDA-free (folding in `hetlitmus-test` is a documented open decision, sec.10).
-### The verify scripts self-export PATH (`_build/install/default/bin`, plus
-### `/usr/local/cuda/bin` on the toolchain lane), so leaf targets just invoke them.
+### HetLitmus test targets.  Each gate's contract lives in the script it runs;
+### the headers below carry only what a target proves and how to regenerate what
+### it pins.  Roster and lane split: hetlitmus/docs/TEST-PLAN.md sec.6.
+### Deliberately NOT wired into upstream `test::`, so the main suite stays fast
+### and CUDA-free; sec.10 holds that decision open.  Upstream idiom: `| build`
+### order-only prereq + `@ echo OK`.  The verify scripts export their own PATH
+### (`_build/install/default/bin`, plus `/usr/local/cuda/bin` on the toolchain
+### lane), so leaf targets just invoke them.
 
 ### Building blocks (run solo while iterating).
 hetlitmus-cram: | build
@@ -649,231 +651,113 @@ hetlitmus-cram: | build
 	dune runtest hetlitmus/tests/cram
 	@ echo "HetLitmus Layer-1 cram: OK"
 
-### hetlitmus-corpus: the Layer-2 golden gate -- corpus regression, census and
-### emission golden.  --bite is the corpus half's evidence: [1/3] regenerates
-### into a temp tree and compares it against the committed one, so a generator
-### that writes nothing and one byte of drift each redden it by file name.
+### The committed corpora and the pinned gpu-only samples are still what the
+### generators and the emitter produce (hetlitmus/verify/corpus-gate.sh).
+### Regenerate both corpora with `make hetlitmus-promote`.
 hetlitmus-corpus: | build
 	@ echo
 	bash hetlitmus/verify/corpus-gate.sh
 	bash hetlitmus/verify/corpus-gate.sh --bite
 	@ echo "HetLitmus Layer-2 corpus golden: OK (and the gate bites)"
 
+### Every emitted harness carries exactly the memory ops its .litmus annotates,
+### with the right kind, order and scope, and no others
+### (hetlitmus/verify/ptxcheck.py; hetlitmus/docs/verify-l0.md).
 hetlitmus-faithful: | build
 	@ echo
 	bash hetlitmus/verify/l0_tokens.sh all
 	@ echo "HetLitmus Layer-3 PTX faithfulness (548): OK"
 
+### A curated sample of emitted harnesses builds end to end through its own
+### comp.sh -- host CPU object, cross-assembly, .cu and .hip
+### (hetlitmus/verify/smoke.sh).  Needs nvcc, hipcc and clang.
 hetlitmus-smoke: | build
 	@ echo
 	bash hetlitmus/verify/smoke.sh
 	@ echo "HetLitmus Layer-3 compile-smoke: OK"
 
-### hetlitmus-faithful proves the harness carries exactly the tested ops and is
-### blind to the stress layer by design (scaffolding is not a model op) -- which
-### is how a stress layer that compiled to ZERO instructions once passed it.
-### This gate is the other half: the scaffolding must be in the PTX.
+### The GPU scratchpad stress layer is present in the emitted PTX rather than
+### folded away, which the faithfulness gate is blind to by design -- stress is
+### scaffolding, not a model op (hetlitmus/verify/stresscheck.py).
 hetlitmus-stress: | build
 	@ echo
 	bash hetlitmus/verify/l0_tokens.sh stress
 	@ echo "HetLitmus Layer-3 stress liveness: OK"
 
-### hetlitmus-stress covers the GPU scratchpad layer.  The CPU-side and
-### interconnect (C2C) levers are invisible to both ptxcheck and stresscheck: the
-### M3 preload emits host cache hints (no order, no scope, not a model op), the
-### enemies are host threads that never enter the PTX, and the noise streams a
-### disjoint buffer.  This gate reads the COMPILED -O2 asm (both host ISAs) and
-### runs the layer, requiring it to be live when on and zero when off.
+### The CPU-side and interconnect stress mechanisms -- invisible to both PTX
+### gates -- survive -O2 on both host ISAs and do work at run time, live when on
+### and zero when off (hetlitmus/verify/cpustresscheck.py).
 hetlitmus-cpustress: | build
 	@ echo
 	bash hetlitmus/verify/l0_tokens.sh cpustress
 	@ echo "HetLitmus Layer-3 CPU+interconnect stress liveness: OK"
 
-### hetlitmus-controlmap: the positive control (hetlitmus/docs/positive-control.md).
-### Every test off the lattice floor -- 333 of the 411 -- must name a mu(T) that
-### EXISTS, is structurally identical, is at the floor of the strength lattice,
-### carries the same scopes, and holds the rest of the experiment fixed (same init
-### block, `scopes:' tree and condition, so it counts T's outcome and not another
-### one); the other 78 ARE the floor and name `none'.  It is
-### re-derived from the corpus sources and never from the test's name
-### (MP-gc-sys-acquire and two siblings do not exist at all).  It fails closed: a
-### missing mutant breaks the build rather than skipping the control, because a
-### silently absent control does not weaken a null -- it makes it unfalsifiable.
-### CUDA-free.
-### --bite is that fail-closed claim's evidence: seven injections into a scratch
-### copy of the corpus + map, run as eight arms because one of them is fed to two
-### readers.  mu's .litmus deleted; mu swapped for a sibling of identical
-### ordering strength on this lattice; the Mu column rewritten from the test's
-### name; mu swapped for another shape; mu swapped for a strictly stronger
-### sibling; the retired 8-column schema fed to both this gate and the emitter's
-### own reader; and a mu whose accesses and annotations all still match while its
-### `exists' counts a different outcome.  Each must redden by the NAME of the
-### property it broke.
+### Every test off the lattice floor names a mu(T) that exists and is strictly
+### weaker on this lattice, and the map fails closed (verify/controlmap.py;
+### docs/positive-control.md).  Regenerate: `--emit > tests/het/control-map.csv`.
 hetlitmus-controlmap: | build
 	@ echo
 	python3 hetlitmus/verify/controlmap.py --check
 	python3 hetlitmus/verify/controlmap.py --bite
 	@ echo "HetLitmus B6 control map: OK (and the gate bites)"
 
-### hetlitmus-amd-controlmap: the SAME gate on the AMD / MI300A map.  It is a
-### separate artifact and a separate lattice, not a translation (memo 7.D11): on
-### x86 the CPU strength lattice loses its middle rung, so a candidate that only
-### moves within {ra,st,ld} is NOT a weakening there.  The floor set is the same
-### 78 rows either way -- no row's only ordering op is one of the four the x86
-### lattice drops -- so the two maps differ in their MuAlt column, not their
-### census; --check re-measures both floor sets rather than assuming it.
-### --bite runs the same injections against a scratch copy of this lattice's
-### artifact.  Its end-to-end arm feeds the emitter an x86 rendering out of
-### tests/het-x86 rather than a corpus test, because litmus7 asks for the map by
-### a name it takes from the CPU column (litmus/hetCpuFront.ml) and the het
-### corpus is rendered for AArch64 under either lattice.
-### Regenerate with:
-###   python3 hetlitmus/verify/controlmap.py --lattice x86 --emit \
-###     > hetlitmus/tests/het/control-map-amd.csv
+### The same gate on the x86 lattice, which loses the middle rung the AArch64
+### one has, so the AMD map is a separate artifact and never a translation.
+### Regenerate: `controlmap.py --lattice x86 --emit > tests/het/control-map-amd.csv`.
 hetlitmus-amd-controlmap: | build
 	@ echo
 	python3 hetlitmus/verify/controlmap.py --lattice x86 --check
 	python3 hetlitmus/verify/controlmap.py --lattice x86 --bite
 	@ echo "HetLitmus AMD control map: OK (and the gate bites)"
 
-### hetlitmus-dup: the isomorphism gate.  generate.sh dedups only by
-### byte-comparing a variant against ONE designated sibling, which cannot see a
-### duplicate up to (proc permutation x location renaming).  The corpus carried 39
-### such classes, all cg/gc mirror pairs of a rotation-invariant shape (SB/LB/2+2W)
-### (env-research/Q10-corpus-coverage.md sect 2.1), and a mirror is not an
-### independent sample.  They were removed at the source on 2026-08-01, so the 411
-### files are 411 distinct experiments.  The gate is one check with no exceptions:
-### any duplicate class at all fails it.  --bite clones a test under a new name
-### twice, once per half of the canonical form -- locations renamed, and P0/P1
-### swapped with their device tags -- and requires each to redden.  The second is
-### the half the 39 were duplicates under.
+### The isomorphism gate: no two corpus tests are the same experiment up to
+### (proc permutation x location renaming), which is the duplicate class the
+### generators' byte-comparison cannot see (hetlitmus/verify/dupcheck.py).
 hetlitmus-dup: | build
 	@ echo
 	python3 hetlitmus/verify/dupcheck.py
 	python3 hetlitmus/verify/dupcheck.py --bite
 	@ echo "HetLitmus Q10 isomorphism/dedup gate: OK (and the gate bites)"
 
-### hetlitmus-lattice: the per-primitive ordering table behind the control-map
-### lattice, machine-checked against both constituent solvers.  Each CPU
-### primitive {STLR/LDAPR, DMB.SY, DMB.ST, DMB.LD} and each GPU primitive
-### {rel/acq atoms, fence.sc, fence.release, fence.acquire}.sys orders a specific
-### set of program-order pairs, and that set is the `ord' half of the (tier, ord)
-### strength lattice controlmap.py uses to pick each test's positive-control
-### sibling, so a wrong entry silently certifies a sibling that is not weaker.
-### Which cells forbid is not "both sides have a fence": DMB.LD orders nothing on
-### a store;store producer and a PTX release fence nothing on a load;load
-### consumer, so the table meets the solvers rather than being asserted.
-###   ARM    96 CPU-only AArch64 cells under herd7's native model
-###   PTX    96 GPU-only LISA/Bell cells under nvidia-ptx.cat (Lustig'19)
-###   AGREE  the 8 primitives keyed one by one against controlmap.py's own copy
-###          of the same `ord' sets: agreeing with herd7 is not what keeps two
-###          restated tables agreeing with each other.  The lattice's TIER half
-###          is out of its reach and ordercheck.py says so at the key map.
-### --bite corrupts the table five ways (a CPU ordered-pair set, a GPU one, a
-### pattern role, the pattern clause itself, and controlmap's own copy) and
-### requires each to redden the phase that names it -- which is the only phase it
-### runs.  No nvcc, no GPU.
+### The per-primitive ordering table behind the control-map lattice, decided by
+### herd7's native AArch64 model and by hetlitmus/cats/nvidia-ptx.cat [Lustig19]
+### rather than asserted (hetlitmus/verify/ordercheck.py).
 hetlitmus-lattice: | build
 	@ echo
 	python3 hetlitmus/verify/ordercheck.py
 	python3 hetlitmus/verify/ordercheck.py --bite
 	@ echo "HetLitmus ordering-table lattice gate: OK (and the gate bites)"
 
-### hetlitmus-verdict: het_verdict() -- the rule that decides what an observation
-### MEANS -- compiled from the real emitted header and fed synthetic records.
-###   Phase 1 (rule)     all four outcomes are reachable (a rule that always
-###                      returns the same one is not a decision); an UNSTAMPED
-###                      record fails closed; exhaustive_valid==0 can never yield
-###                      the strong null; every liveness disqualifier bites.
-###   Phase 2 (printout) each outcome's sentences are reachable from THAT outcome
-###                      and from no other, checked both ways.  The enum changing
-###                      is not the deliverable; the sentence is.
-###   Phase 3 (corpus)   all 411 emitted harnesses stamp rec_magic exactly once
-###                      and co-run the mu(T)/canary population control-map.csv
-###                      gives them (333 / 409).
-###   Phase 4 (machine)  which MACHINE the printout names.  The interconnect prose
-###                      comes from defines the emitter stamps out of the PAIR
-###                      table, scraped here from real emissions: unstamped is the
-###                      generic frame, each pair prints its own machine, and no
-###                      frame prints another pair's.
-### --bite: 17 injections (8 against the rule and its printouts, 2 against its
-### reporting paths, 2 against the emitted corpus, 5 against the machine prose),
-### each verified to have actually changed the code it corrupts.  A machine arm
-### also names the diagnostic it expects first, because the prose is guarded in
-### two directions -- a sentence that stopped printing and a sentence that names
-### another vendor -- and only the last arm reddens on the second.
+### het_verdict() -- the rule deciding what an observation MEANS -- compiled from
+### the real emitted header and driven with synthetic records, together with the
+### machine words each pair's printout may name (hetlitmus/verify/verdictcheck.py).
 hetlitmus-verdict: | build
 	@ echo
 	python3 hetlitmus/verify/verdictcheck.py
 	python3 hetlitmus/verify/verdictcheck.py --bite
 	@ echo "HetLitmus B6 decision rule: OK (and the gate bites)"
 
-### hetlitmus-stats: het_stats_compute() -- what a "Never" is WORTH -- compiled
-### from the real emitted header and driven with synthetic record streams
-### (statscheck.py).  A gate that exists but is not in the build is not a gate but
-### a script, which is why this target lands with the script it runs.
-###   window map  het_win_of maps frames to windows and is not a constant
-###   aggregate   every statistic differentially checked vs an independent Python
-###               re-derivation; every class/flag/tier reachable (anti-constant)
-###   emptiness   the guard that refuses the KS gate on a control stream that is
-###               absent, all-zero or desynced -- the one thing standing between an
-###               all-zero stream and a P_rep unlocked by a test that never ran
-###   producer    the per-window sub-tallies live BOTH ways on the real emitted scan
-###   corpus      all 411 carry the post-pass + a decode channel
-###   stop rule   het_verdict.h's own policy, which branches on no class: a
-###               corroborated sighting stops a row, a LONE one holds it open to
-###               the confirmation window and then ends it UNCONFIRMED-SIGHTING,
-###               HET_RATE turns the sighting stop off alone, an unstamped record
-###               buys no stop at all, and a null runs to its budget
-###   scheduler   campaign.py on a stub runner: one policy applied a second time
-###               over pooled runs, plus the mirror that rejects a header which
-###               moved the corroboration bar or renamed a stop
-### --bite: cmp-verified injections into the statistics.  (B7)
+### het_stats_compute() -- what a "Never" is worth -- compiled from the real
+### emitted header and driven with synthetic record streams, through the stop
+### rule and campaign.py's scheduler (hetlitmus/verify/statscheck.py).
 hetlitmus-stats: | build
 	@ echo
 	python3 hetlitmus/verify/statscheck.py
 	python3 hetlitmus/verify/statscheck.py --bite
 	@ echo "HetLitmus B7 statistics layer: OK (and the gate bites)"
 
-### hetlitmus-hist: the outcome-histogram gate.  verdictcheck and statscheck read
-### the het_obs_record; nothing else looks at litmus7's inherited outs histogram,
-### where a hardware run once printed a witness total ABOVE the frames examined,
-### on a row whose columns contradicted the witness.
-###   shape       the histogram add is inside the per-frame loop iff the harness
-###               has a per-frame observable; the 11 reader-less shapes add once
-###               per run (their `_weak' is the run-level observer witness, so an
-###               in-loop add multiplies one observation by N)
-###   display     a coherence-final [ell] column is never printed as a number: no
-###               such number is measured (`_o[n_reg+j]' is the constant 0)
-###   arithmetic  the store-only tally is extracted verbatim from the emitted .cu,
-###               linked against the harness's own outs.c and RUN: sum_outs must
-###               be R for every forced witness pattern and must not scale with N
-### CUDA-free (litmus7 + cc).  --bite: 5 injections, each cmp-verified non-vacuous
-### and each required to redden the phase that names it -- an injection that only
-### breaks compilation (exit 2) is not a bite.  (F-A)
+### litmus7's inherited outs histogram: fed exactly once per observation, and
+### never printing a number for a location column no run measures
+### (hetlitmus/verify/histcheck.py).
 hetlitmus-hist: | build
 	@ echo
 	python3 hetlitmus/verify/histcheck.py
 	python3 hetlitmus/verify/histcheck.py --bite
 	@ echo "HetLitmus F-A histogram tally + display: OK (and the gate bites)"
 
-### hetlitmus-tuner: the autotuner SEARCH MACHINERY (tune.py), validated on the
-### dev box against synthetic objectives with a known optimum, because a real
-### death rate is hardware-only (Q7 4.2).  Pure Python (no litmus7, no nvcc), so
-### no `| build`.  The gate does not check that the search runs -- a tuner that
-### always returns the seed would pass that -- but that it FINDS a known optimum,
-### refuses to crown a phantom on a constant objective, and breaks when any of
-### Q7's three data-peeking adaptations is removed:
-###   optimum     the search returns the arg-max of distinct true means (100% of seeds)
-###   phantom     a constant objective yields NO confident winner (anti-7th-constant)
-###   drift       SER^3 randomized round-robin de-confounds a rising baseline where the
-###               SEQUENTIAL order (Kirkham Fig.10) picks the late config     [Q7 5.2 C2]
-###   overdisp    empirical-Bernstein RETAINS the true optimum where the Bernoulli CI
-###               ELIMINATES it under Fano>1                                  [Q7 5.2 A]
-###   structural  the sampler can never reach an INSTRUMENT/DETECTOR knob (TRAP 1/2);
-###               the config file carries zero tuned numerics on the dev box
-###   ks-in-loop  a non-stationary bout (het_ks2 verdict, reused) is EXCLUDED [Q7 5.2 C1]
-### --bite then PROVES each guard FAILS on a broken tuner, cmp-verified non-vacuous.
+### The autotuner search machinery (hetlitmus/tune.py): it finds a known optimum,
+### crowns nobody on a constant objective, and breaks when any transfer fix is
+### removed (hetlitmus/verify/tunecheck.py).  Pure Python, hence no `| build`.
 hetlitmus-tuner:
 	@ echo
 	python3 hetlitmus/tune.py --self-test >/dev/null
@@ -881,141 +765,64 @@ hetlitmus-tuner:
 	python3 hetlitmus/verify/tunecheck.py --bite
 	@ echo "HetLitmus B8a tuner search machinery: OK (and the gate bites)"
 
-### hetlitmus-obs: the observer-liveness gate.  statscheck feeds a synthetic
-### observer_unique_count, so no gate compiles the REAL emitted observer loop --
-### which is how an -O2 hoist that pinned observer_unique_count<=1, leaving the 11
-### store-only tests' only channel inert, stayed invisible to CI.  This extracts
-### the real emitted observer + its args struct and compiles them at clang -O2 for
-### x86-64 and aarch64, asserting a per-iteration reload survives inside every
-### loop body.  --bite strips the `volatile' and requires a hoisted observer to
-### fail (cmp-verified non-vacuous).  (DR1)
+### The emitted CPU observer still reloads once per iteration at clang -O2 on
+### both host ISAs -- it is the only recovery channel the store-only shapes have
+### (hetlitmus/verify/obscheck.py).
 hetlitmus-obs: | build
 	@ echo
 	python3 hetlitmus/verify/obscheck.py
 	python3 hetlitmus/verify/obscheck.py --bite
 	@ echo "HetLitmus observer-liveness gate: OK (and the gate bites)"
 
-### hetlitmus-recfields: the EMITTER/RUNTIME SKEW tripwire.  het_obs_record and
-### the HET_* knob defaults live in litmus/het-runtime/*.h, the lines that fill
-### them in litmus/hetEmit.ml, and NOTHING but a compiler binds the two -- so on
-### every CPU-only lane a renamed field, a dropped record stamp or a define
-### stamped under a drifted name is invisible until an nvcc/hipcc build runs.
-### Four properties over real emissions of both pairs (6 shapes, ~5 s, no GPU):
-###   fields    every `_rec.<name>' a render writes is a het_obs_record member
-###   stamp     every render writes `_rec.rec_magic = HET_REC_MAGIC;' ONCE, by the
-###             SYMBOL -- het_verdict() reads no field of a record without it
-###   live      every stamped `#define HET_*' is read by some lane's code or by a
-###             staged runtime header (judged over the UNION: HET_WINDOW is read
-###             by the windowed scan alone)
-###   default   every stamped define het_verdict.h reads has an `#ifndef' default
-###             there, so a lane that stamps nothing still compiles
-### --bite: 6 injections, each required to redden BY NAME -- four into the
-### emitted render and two into the header, since either side can drift.
+### The emitter/runtime skew tripwire: every field a render writes and every
+### HET_* define it stamps still binds to litmus/het-runtime/*.h, which nothing
+### but a compiler otherwise checks (hetlitmus/verify/recfields.py).
 hetlitmus-recfields: | build
 	@ echo
 	python3 hetlitmus/verify/recfields.py
 	python3 hetlitmus/verify/recfields.py --bite
 	@ echo "HetLitmus emitter/runtime field + define binding: OK (and the gate bites)"
 
-### hetlitmus-x86body: the P2b gate -- is the x86-64 CPU thread of a het
-### harness REAL?  Until 2026-08-03 hetCpuFront.ml wired an empty plan +
-### emit_stub for X86_64, so an x86 CPU proc emitted a `(void)_n' no-op: the CPU
-### thread tested nothing AND, measured over the 411 x86 renderings, litmus7
-### emitted a harness for 39 and REFUSED 372 (308 could bind no read buffer, 64
-### no mu) -- while EXITING 0.  Seven phases: emission coverage, body-vs-column
-### fidelity, tag liveness (the B4 lesson -- emitting is not testing), the
-### instructions surviving gcc to the .o, the aarch64 lane (no x86 leak, and
-### its classifier refusing the four CPU columns it cannot render), the
-### fail-closed refusal (exit 3 + marker + no harness, plus emit-all.sh's
-### detectors -- the refusal pair and the five per-lane stamp/machine-word
-### ones, which live here because this gate owns the emit-all stand-in rig),
-### and the B6b co-run harnesses (T + mu(T) + canary share a proc index, so
-### each body must be checked against its OWN test).  P2/P3/P7 pin their counts
-### against a total derived from the corpus' own columns, so a phase that
-### compared nothing FAILS instead of passing.  --bite injects into every phase
-### on corruption AND on omission.
-### The x86 renderings are generated on demand by tests/het/generate-x86.sh
-### (411, 1:1 with the corpus); they are deliberately NOT committed
-### (corpus-gate.sh pins 411 and ~90 of them would be dupcheck duplicates).
-### NOT covered here: the emitter byte-diff.  What protects the validated NVIDIA
-### lane against an emitter regression is `hetlitmus/verify/emit-all.sh SNAP_x'
-### run at two revisions followed by `diff -r' (16,732 files, measured
-### 2026-08-13), with HET_LANES_ONLY and HET_TESTS_ONLY unset -- either seam
-### emits a subset, which emit-all.sh marks with a .het-partial-snapshot dotfile
-### carrying a per-run nonce, so two subsets cannot diff clean against each
-### other either.  That is a two-revision instrument and cannot be a single-shot
-### target, so it is run by hand for every emitter change.  P5 does not stand in
-### for it: what P5 owns is the aarch64 lane's refusals, which the byte-diff
-### cannot see because a refused shape is by construction absent from the
-### corpus.
+### The x86-64 CPU thread of a het harness is that test's own program, down to
+### the object file, and a refusal is fail-closed (verify/x86bodycheck.py).  Its
+### input corpus: tests/het/generate-x86.sh, which says why it is not committed.
 hetlitmus-x86body: | build
 	@ echo
 	python3 hetlitmus/verify/x86bodycheck.py
 	python3 hetlitmus/verify/x86bodycheck.py --bite
 	@ echo "HetLitmus x86-64 tagged CPU body gate: OK (and the gate bites)"
 
-### hetlitmus-x86fixture: is tests/het-x86 still what its generators emit?
-### Those five committed files -- four .litmus renderings plus a one-row-per-test
-### extract of control-map-amd.csv -- are the ONLY route to the populated
-### (x86_64, hip) pair for cram, smoke.sh and verdictcheck, because the real x86
-### corpus is generated on demand and never committed and a cram sandbox has no
-### hetgen7 on $$PATH.  Nothing else compared them against generate-x86.sh /
-### tests/het/control-map-amd.csv, so they could go stale in silence -- and a
-### regenerated map rewrites whole columns of the extract.  A stale fixture breaks
-### no gate; it makes every gate that reads it test a configuration nothing ships.
-### Two verbatim comparisons (the .litmus bytes, then the map rows), each of which
-### must be seen to fail.
-### CUDA-FREE: generation and comparison need no GPU, so it belongs here and not
-### in the toolchain umbrella.
+### hetlitmus/tests/het-x86 is still, byte for byte, what its generators emit --
+### it is the only committed route to the populated (x86_64, hip) pair
+### (hetlitmus/verify/x86fixturecheck.py).  Re-cut it per its own README.md.
 hetlitmus-x86fixture: | build
 	@ echo
 	python3 hetlitmus/verify/x86fixturecheck.py
 	python3 hetlitmus/verify/x86fixturecheck.py --bite
 	@ echo "HetLitmus het-x86 fixture sync gate: OK (and the gate bites)"
 
-### Scratch output dir for hetlitmus-d10.  Never committed (.gitignore'd): the
-### D10 tests are generated on demand, exactly like the x86 renderings
-### (generate-x86.sh), so that corpus-gate.sh's 411-file pin and dupcheck.py stay
-### meaningful -- both scan hetlitmus/tests/het NON-recursively (`find -maxdepth
-### 1' / `glob("*.litmus")'), so a subdirectory is invisible to them.
-### ABSOLUTE, and that is not cosmetic: generate-d10.sh cd's to its own directory
-### before it resolved OUTDIR, so the relative form of this variable used to be
-### re-rooted at hetlitmus/tests/het/ and the target had NEVER worked (MEASURED
-### 2026-08-03: RC=2 plus a stray hetlitmus/tests/het/hetlitmus/ tree).  The
-### generator now resolves OUTDIR first; this stays absolute as the belt to that
-### braces, and because the recipe below cd's into it.
+### Scratch output dir for the CPU-only shapes.  Never committed (.gitignore'd):
+### they are generated on demand, so corpus-gate.sh's census and dupcheck.py --
+### both of which scan hetlitmus/tests/het non-recursively -- stay meaningful.
+### Absolute, because the generator and the recipe below both cd elsewhere.
 HETD10OUT := $(CURDIR)/hetlitmus/tests/het/d10-out
 
 ### The GPU dialect these harnesses are rendered for.  litmus7 emits ONE vendor
-### per harness dir (-gpu-target), and the MACHINE lives on the PAIR: this corpus
-### has an x86_64 CPU column, so `hip' is the pair (x86_64, hip) that names the
-### MI300A.  Rendering it for `cuda' is legal and reads the same control map --
-### the map is named by the CPU frontend, not the dialect -- but the render then
-### names no machine, which is a machinery smoke and not a D10 reading.
+### per harness dir, and the machine lives on the pair: this corpus has an x86_64
+### CPU column, so `hip' selects the pair that names the MI300A.  `cuda' is legal
+### and reads the same map, but names no machine, so it is a machinery smoke.
 HETD10TARGET ?= hip
 
-### The NEGATIVE control for the cpu_only stamp: a corpus test with a GPU proc,
-### which the emitter must stamp 0.  It is emitted into a temp dir rather than
-### into $(HETD10OUT), whose harness-dir count is pinned at six.  Both halves are
-### knobs so that the check can be shown to bite: point them at one of the D10
-### tests and the grep for `= 0' must fail.
+### The negative control for the cpu_only stamp: a corpus test with a GPU proc,
+### which the emitter must stamp 0.  Emitted into a temp dir, since the count of
+### harness dirs in $(HETD10OUT) is pinned.  Both halves are knobs so the check
+### can be shown to bite: point them at a CPU-only test and the grep must fail.
 HETD10NEGDIR ?= $(CURDIR)/hetlitmus/tests/het
 HETD10NEG ?= MP-cg-sys-relaxed
 
-### hetlitmus-d10: the CPU-ONLY POSITIVE CONTROL as a first-class campaign item
-### (memo sect 7.D10, PHASE2-plan:71).  Generates the six CPU-only shapes, emits
-### their harnesses and prints the campaign command for a machine that has a GPU.
-### It does NOT run them: the D10 reading is about the SHARED ALLOCATION of the
-### target box, so a result from any other machine is not a D10 result.
-### IT IS IN THE `hetlitmus-test' UMBRELLA (generate + emit need no GPU).  It was
-### not, and that is exactly why a target that had never worked once shipped
-### green: the SCIENCE this target carries was gated elsewhere, but nothing
-### gated the COMMAND a human is told to run.
-### The renders are read, not merely counted: all six must stamp
-### `_rec.cpu_only = 1' -- the flag het_verdict.h keys its D10 sentences off --
-### and a corpus test with a GPU proc, emitted into a temp dir, must stamp 0, so
-### the six 1s are a measurement of the emitter's classifier and not of a
-### constant.  See HETD10NEGDIR for how the second half is bitten.
+### The CPU-only shapes as a campaign item: generate, emit, read every render for
+### the `_rec.cpu_only = 1' stamp against a het control that must stamp 0, print
+### the campaign command.  It does NOT run them: only the target box's would count.
 hetlitmus-d10: | build
 	@ echo
 	rm -rf $(HETD10OUT)
@@ -1058,131 +865,45 @@ hetlitmus-d10: | build
 	@ echo "  (no --d10 flag: campaign.py reads cpu_only= off the HetStats line,"
 	@ echo "   so the WB-probe verdict cannot be forgotten at the command line.)"
 
-### hetlitmus-hipbuild: the P2c gate -- can an AMD harness be BUILT AND RUN?
-### Until 2026-08-03 hetEmit.ml contained ZERO occurrences of hip-link/hip-bin:
-### comp.sh's `hip' arm was compile-only (`hipcc -c') and the Makefile had no HIP
-### link target at all, so nothing this suite emits could become an AMD
-### executable.  Emitting a .hip that no target links is the same defect class as
-### the .hip that, until B5, no gate compiled.  Nine phases: the build-script
-### arms, `hipcc --offload-arch=gfx942 -c', the two link arms each producing an
-### ELF that CARRIES the gfx942 code object (the ELF is read -- a gfx90a build
-### links and exits 0 too), the uname -m refusal on an AArch64 render, the
-### no-silent-stale-link rounds, the allocator's fail-closed HET_ALLOC handling,
-### the compile-time refusal of the CUDA-only HET_PLACE lever (its own phase: it
-### is the hipcc half of the allocator story, and the allocator's own injections
-### all corrupt a resolver driven under a stub, which no compile-time refusal can
-### see), CUDA non-regression, and the fence -- a second render, of a family
-### that annotates one, because the harness every other phase drives is
-### fence-free and litmus/HipLang.ml's __builtin_amdgcn_fence reaches a compiler
-### nowhere else.  Every phase counts its assertions and fails if it made
-### none.  --bite injects into all nine on corruption AND on omission.
-### P5 EXISTS BECAUSE OF A MEASURED REGRESSION.  Both vendors link ./<test> on
-### purpose (run-one.sh and campaign.py exec ./<test> and stay vendor-agnostic).
-### With cuda-bin as a phony carrying a FILE prerequisite, `make cuda-bin' after
-### `make hip-bin' printed "Nothing to be done for 'cuda-bin'", exited 0 and left
-### the gfx942 binary in place -- a CUDA build handing back the AMD harness.
-### Both link targets are unconditional .PHONY recipes now, and P5 alternates
-### four builds because the trap needs the other vendor's object to exist and be
-### OLDER than the binary: a two-round A-then-B check passes against a broken
-### Makefile.
-### NEEDS hipcc AND nvcc, hence the toolchain umbrella.
-### DEFERRED, and the gate says so on success: there is NO AMD GPU on this box
-### (`rocminfo' reports 0 gfx agents), so no phase EXECUTES the linked harness on
-### a device.  P6 lifts the allocator resolver verbatim out of the emitted .hip
-### and drives it against a stub hipDeviceGetAttribute, so every refusal path is
-### really executed and its message observed; the real hipMallocManaged
-### coherence behaviour stays unverified until Phase 3a (MI300X).
+### An AMD harness builds and links into an ELF carrying real gfx942 code, its
+### allocator and placement refusals execute under a stub, and the CUDA lane does
+### not regress (verify/hipbuildcheck.py).  Needs hipcc AND nvcc, but no device.
 hetlitmus-hipbuild: | build
 	@ echo
 	python3 hetlitmus/verify/hipbuildcheck.py
 	python3 hetlitmus/verify/hipbuildcheck.py --bite
 	@ echo "HetLitmus AMD build/link gate: OK (and the gate bites)"
 
-### hetlitmus-characterize-hw: what a het harness PRINTS, on a GPU.  The pair is
-### (x86_64, cuda) -- the dev box, and what every runtime bite in this tree
-### actually executes.  Every other gate on the verdict/statistics stack drives it
-### from synthetic records or from emitted TEXT; this one builds a harness, RUNS
-### it and reads the printout, which is the only artefact a result is read off.
-### TWO ARMS, because the sentence a reader must never see swapped is chosen by
-### whether a positive-control map was read: the committed x86 fixture, whose map
-### names that row its OWN canary (calibration channel missing BY CONSTRUCTION),
-### and the same test copied away from the map (missing by OMISSION).  The
-### statistics layer once printed the first on a run that was the second.  Six
-### assertions per arm (stamp, the arm's own control sentence and NOT the
-### other's, OBSERVED against the pair NAME, no Grace/Hopper/NVLink/C2C/GH200
-### -- this pair has no machine row -- and the observation class against the k
-### and the R it was read off, where k==R is the class that says every run
-### fired).  A run that fires the outcome in none of them never reaches that
-### judgement: the run driver stops first, on a sentence of its own.
-### NEEDS A DEVICE, hence the toolchain umbrella; with none visible it FAILS rather
-### than skipping, because a gate that quietly stops checking is the failure mode
-### this suite has already shipped twice.  Three assertions per arm need one
-### sighting, so it re-seeds up to 12 times before giving up.
+### What a het harness PRINTS on a device -- the only artefact a result is read
+### off -- on both control-map arms, so the two sentences a reader must never see
+### swapped are told apart (verify/runcheck.py --characterize-hw).  Needs a GPU.
 hetlitmus-characterize-hw: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py --characterize-hw
 	python3 hetlitmus/verify/runcheck.py --characterize-hw --bite
 	@ echo "HetLitmus harness-printout runtime gate: OK (and the gate bites)"
 
-### hetlitmus-run-gate: the DEVICE-SESSION WRAPPER (hetlitmus/hetlitmus-run.sh),
-### driven end to end with no device.  The wrapper is the one command a hardware
-### session runs, and what it decides -- which pair the corpus and the -gpu-target
-### flag select, which machine that pair may name, which architecture the binaries
-### are built for -- is decided on a machine nobody is watching and survives only
-### in what it wrote down.
-### CUDA-FREE because the wrapper's seams take stand-ins: NVCC/HIPCC point at a
-### stub compiler that writes a harness printing one HetStats line, and
-### HET_PROBE_SH at a stub probe.  The chain itself is real -- litmus7 emits, the
-### emitted comp.sh + Makefile build, campaign.py schedules -- and the wrapper
-### RECORDS that stand-ins were used, so a stubbed results dir can never be read
-### as a reading of a machine.
-### Eight phases: --dry-run writes nothing at all; the chain end to end on each
-### dialect, plus --reuse-emitted; the refusals, each by its own reason, and the
-### unregistered pair, which is NOT one -- it warns once and emits a harness that
-### names no machine; campaign.py's stop rule, where a reproduced sighting ends a
-### row CORROBORATED, a lone one outruns the budget to end UNCONFIRMED-SIGHTING at
-### the confirmation window, --rate runs both to budget, and a row banked by
-### another stop rule is not resumable; the machine-table reader, bounded to the
-### table literal; every fail-closed handler,
-### under the condition it exists for (a failing compiler, a failing probe, two
-### devices, an errored campaign, a doctored emission); a second session into a
-### results dir that already holds one; and probe-hip.sh's exit paths.  --bite
-### plants one defect per assertion in a COPY of the script under test and
-### requires the phase to redden FOR THAT REASON.
-### HOST-ADAPTIVE, not x86-only: the chain phases pick the committed x86 fixture
-### on an x86_64 box and a cut of the committed AArch64 corpus on an aarch64 one,
-### so the GH200 runs this same gate over its own (AArch64, cuda) pair.
+### The device-session wrapper (hetlitmus/hetlitmus-run.sh) end to end with its
+### documented stand-ins for the compiler and the probe, so what it decides on an
+### unwatched machine is decided here (verify/runcheck.py).  Host-adaptive.
 hetlitmus-run-gate: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py
 	python3 hetlitmus/verify/runcheck.py --bite
 	@ echo "HetLitmus device-session wrapper gate: OK (and the gate bites)"
 
-### hetlitmus-run-hw: the same wrapper, on the device, with NO stand-in -- the
-### real probe, the real nvcc, the real harness.  The pair it reaches is the
-### (<this host's CPU lane>, cuda) row, which on the dev box carries no machine:
-### what is asserted is that the chain completes, that the results dir records
-### the machine that row entitles the session to name and no other, and that it
-### names the arch it resolved and no stand-in.
-### A harness whose pinned read-modify-write is not system-atomic against the
-### host can lose a barrier increment and stall (the probe measures it on this
-### box); a stalled session is retried up to 3 times and only an all-stall is
-### reported, the same rule --characterize-hw uses.
-### NEEDS A DEVICE, hence the toolchain umbrella.
+### The same wrapper on the device with NO stand-in -- real probe, real nvcc,
+### real harness -- so the chain completes and the results dir records only the
+### machine its pair entitles it to name (verify/runcheck.py --hw).  Needs a GPU.
 hetlitmus-run-hw: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py --hw
 	python3 hetlitmus/verify/runcheck.py --hw --bite
 	@ echo "HetLitmus device-session wrapper runtime gate: OK (and the gate bites)"
 
-### hetlitmus-l0-selftest: the DISCRIMINATING-POWER proofs of the toolchain lane.
-### l0_tokens.sh {selftest,guard} prove ptxcheck can detect a weakened scope/order
-### and that the stress/cpustress scaffolding bites a dead layer; smoke.sh bite
-### proves the co-run gate catches a missing control.  Without this target a
-### silently neutered ptxcheck would still pass `make hetlitmus-test-all'.  Two
-### invariance checks (stresscheck check-5 pattern-invariance, cpustresscheck
-### S4/G2) pass trivially on shipped runtime-valued code and get their teeth only
-### here.  (DR1)
+### The discriminating power of the toolchain lane: ptxcheck detects a weakened
+### scope or order, the stress scaffolding bites a dead layer, the co-run gate
+### catches a missing control, and two invariance checks get their teeth here.
 hetlitmus-l0-selftest: | build
 	@ echo
 	bash hetlitmus/verify/l0_tokens.sh selftest
@@ -1208,10 +929,9 @@ hetlitmus-test:: hetlitmus-x86fixture
 hetlitmus-test:: hetlitmus-d10
 hetlitmus-test:: hetlitmus-run-gate
 
-### The second umbrella takes a target when it needs a TOOLCHAIN or a DEVICE
-### this box may not have -- nvcc, hipcc, clang, an NVIDIA GPU, an AMD GPU -- and
-### not when it is about GPU code: x86body and d10 read emitted GPU renders and
-### belong to the CUDA-free lane.  `hetlitmus-test-nvcc' stays as its old name.
+### The second umbrella takes a target when it needs a toolchain or a device this
+### box may not have, and NOT when it merely concerns GPU code: the targets that
+### read emitted GPU renders belong to the CUDA-free lane.
 hetlitmus-test-toolchain:: | build
 hetlitmus-test-toolchain:: hetlitmus-faithful
 hetlitmus-test-toolchain:: hetlitmus-stress

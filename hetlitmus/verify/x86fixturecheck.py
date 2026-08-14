@@ -3,29 +3,24 @@
 x86fixturecheck.py -- is `hetlitmus/tests/het-x86' still what its generators emit?
 
 That directory is five hand-cut committed files -- four `.litmus' renderings plus
-a one-row-per-test extract of `control-map-amd.csv' -- and it is the ONLY route to
-the (x86_64, hip) pair for the cram suite, smoke.sh and verdictcheck: the real x86
-corpus is generated on demand and never committed, and a cram sandbox has no
-`hetgen7' on $PATH.  Nothing else in the tree compares it against its generators,
-so it can go stale in silence -- and the things that move it are exactly the
-things that move often: `generate-x86.sh' and `tests/het/control-map-amd.csv'.  A
-stale fixture does not break a gate; it makes every gate that reads it test a
-configuration nothing ships.
-
-Two comparisons, both verbatim:
+a one-row-per-test extract of `control-map-amd.csv' -- and the ONLY committed
+route to the (x86_64, hip) pair: the real x86 corpus is generated on demand and
+never committed, and a cram sandbox has no `hetgen7' on $PATH.  Nothing else
+compares the fixture against its generators, and what moves it --
+`generate-x86.sh', `tests/het/control-map-amd.csv' -- moves often.  A stale
+fixture breaks no gate; it makes every gate that reads it test a configuration
+nothing ships.
 
   P1  run generate-x86.sh into a temp dir and `cmp' each committed .litmus
       against its generated twin, byte for byte
-  P2  for each of the four tests, the committed map ROW must equal the row the
-      generated (re-keyed) map carries -- fields, order and text
+  P2  each committed map row must equal the row the generated (re-keyed) map
+      carries -- fields, order and text
 
-The generator writes the whole 411-test corpus, once per invocation: every
-comparison reads that one scratch corpus, since only the fixture side is ever
-perturbed.  Generation and comparison need no GPU, so the gate lives in the
-CUDA-free `hetlitmus-test' umbrella.
-
-`--bite' perturbs one committed .litmus body and one committed map row in a COPY
-of the fixture and requires the matching phase to redden naming the file.
+One generator run serves both phases, since only the fixture side is ever
+perturbed, and neither phase needs a GPU: the gate lives in the CUDA-free
+`hetlitmus-test' umbrella.  `--bite' perturbs one committed .litmus body and one
+committed map row in a COPY of the fixture and requires the matching phase to
+redden naming the file.
 """
 import argparse
 import os
@@ -41,10 +36,9 @@ FIXTURE = os.path.join(ROOT, "hetlitmus", "tests", "het-x86")
 GEN_X86 = os.path.join(HET_DIR, "generate-x86.sh")
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
-# The tests the fixture carries.  Named here rather than globbed so that a
-# file DELETED from the fixture is a failure and not an empty loop -- the same
-# non-vacuity rule the other gates run on.
-# S-cg-sys-relaxed is here because the S row NAMES it as mu(T) and the emitter
+# The tests the fixture carries.  Named here rather than globbed so that a file
+# deleted from the fixture is a failure and NOT an empty loop.
+# S-cg-sys-relaxed is here because the S row names it as mu(T) and the emitter
 # refuses a control it cannot resolve: a fixture that names one has to ship it.
 TESTS = ["MP-cg-sys-relaxed-x86_64",
          "MP-cg-sys-acqrel-2s-x86_64",
@@ -173,8 +167,8 @@ def run_once(fixture, corpus, quiet=False):
 
 
 def bite(corpus):
-    """Each injection is into a COPY of the fixture, so the committed one is never
-    touched, and each must redden its OWN phase naming the file it broke."""
+    """Each injection is into a COPY of the fixture, so the committed one is NEVER
+    touched, and each must redden its own phase naming the file it broke."""
     print("===== BITE: does this gate see a stale fixture? =====")
     bad = 0
     injections = [
@@ -217,7 +211,7 @@ def bite(corpus):
                 print("      [%s] RED on %s" % (phase, what))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-    # ... and GREEN again on the untouched fixture, so "red" was the injection.
+    # ... and green again on the untouched fixture, so "red" was the injection.
     rc = run_once(FIXTURE, corpus, quiet=True)
     if rc != 0:
         print("  *** the committed fixture itself is RED -- the bites above prove "

@@ -1,11 +1,11 @@
-Store-tag + recovery guard (B3; env-research/decisions/B3-decision.md).  The het
-harness carries the K*(_n+1)+mu store tags, uint64 read buffers off the race
-path, and the het_obs_record recovery scan; the standalone GPU-only path stays
-UNTAGGED, because the tag context is gated on het emission.
+Store-tag + recovery guard.  The het harness carries the K*(_n+1)+mu store tags,
+uint64 read buffers off the race path, and the het_obs_record recovery scan; the
+standalone GPU-only path stays UNTAGGED, because the tag context is gated on het
+emission.
 
-CPU side (Decision 1): the tagged body sources each store value from a
-K*(_n+1)+mu REGISTER operand (no `mov #imm'), preserves the tested mnemonic
-verbatim, and widens to 64-bit %x.
+CPU side: the tagged body sources each store value from a K*(_n+1)+mu REGISTER
+operand (no `mov #imm'), preserves the tested mnemonic verbatim, and widens to
+64-bit %x.
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ grep -c 'mov %w' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c || true
   0
@@ -28,7 +28,7 @@ PREFIXED, so T's P0 and mu(T)'s P0 are not the same symbol.
   $ grep -c 'void het_run_mu_P0(uint64_t \*x, uint64_t \*y, int _n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
   1
 
-Driver (Decision 3/4): uint64 shared vars, per-load read buffers in device memory
+Driver: uint64 shared vars, per-load read buffers in device memory
 (cudaMalloc) mirrored to the host, and the het_obs_record recovery scan; no
 __out.  The shared vars come from the co-run's one cache-line-padded
 gd_alloc_shared arena (shared-alloc.t (e)); the read buffers stay off the race
@@ -61,7 +61,7 @@ on T is.
   $ grep -c '__out' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
   0
 
-GPU side (Decision 2): the two GPU stores carry the tag as uint64 atomic_ref
+GPU side: the two GPU stores carry the tag as uint64 atomic_ref
 stores (the observer lane's uint64 loads are counted separately below).  mu(T) is
 structurally identical, so it emits the SAME two stores under the same modulus --
 which is why the file-wide count is twice the per-instance one.
@@ -71,10 +71,11 @@ which is why the file-wide count is twice the per-instance one.
   $ grep -c 'ref.store(((uint64_t)5 \* (_n + 1) + 3)' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   2
 
-Observers (Decision 4/5): the 117 tests whose condition names a memory location
-(every 2+2W, R and S) add ONE GPU observer lane plus ONE CPU observer pthread, so
-NPART grows by 2; each snoops every observed location, and a per-run ws scan
-(Srivastava Eq 3.12) fills _loc with the same-observer-thread cycle.
+Observers: every test whose condition names a memory location (every 2+2W, R and
+S) adds ONE GPU observer lane plus ONE CPU observer pthread, so NPART grows by 2;
+each snoops every observed location, and a per-run ws scan fills _loc with the
+same-observer-thread cycle -- the observer-buffer method of
+[Srivastava24 sec 3.3].
 
 NPART is a SUM over instances.  2+2W-cg-sys-fence is off the lattice floor, so it
 co-runs three: 4 (2 procs + 2 observers) + 4 (mu(T), structurally identical) + 2
@@ -100,8 +101,8 @@ against another's name, and the prefixes are the only thing keeping them apart.
 
 GATE 1: no test may emit a constant detector.  A constant-false _weak reports
 "Never" on every run, and a spurious "Never" is an observation nothing produced,
-so the emitter refuses to emit one (env-research/impl-briefs/B3c-impl-brief.md).
-This can only regress by removing that refusal.
+so the emitter refuses to emit one.  This can only regress by removing that
+refusal.
   $ grep -cE 'int _weak = [01];' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
   0
 
@@ -115,7 +116,8 @@ host buffer.
 GATE 3: T_L>=2 windowing.  SB has no rf anchor (both reads are fr), so the
 partner's frame is SEARCHED over [c-W, c+W] around the synchrony point decoded
 from read-buffer 1, guarded by that tag being real -- a cold frame has no
-synchrony point, and counting it would report 100% weak (Srivastava 4.4).
+synchrony point, and counting it would report 100% weak
+([Srivastava24 sec 4.1]).
 SB-cg-sys-acqrel-2s is off the lattice floor, so it co-runs three instances and
 the test under study carries the `t_' prefix: same scan, same counts, same
 window.  Its mu is SB-cg-sys-relaxed -- another T_L>=2 shape -- so the windowed

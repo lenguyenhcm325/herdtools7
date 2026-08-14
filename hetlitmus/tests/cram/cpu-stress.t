@@ -1,4 +1,5 @@
-CPU-side + interconnect stress guard (B5; env-research/Q6-cpu-interconnect-stress.md).
+CPU-side + interconnect stress guard (hetlitmus/docs/00-environment-design.md
+sec 3.6).
 The emitted het harness carries both stress layers in the shape the design
 requires: host ISA asm kept out of the nvcc translation unit, the -2s invariants
 held by construction, four object classes in four allocators, and the stress
@@ -8,11 +9,12 @@ Per-device stress widens the INTRA-DEVICE window, while the heterogeneous weak
 behaviour lives in the cross-device one -- a store in flight across C2C but not
 yet globally visible.  CPU cache stress never crosses the link and GPU scratchpad
 stress never leaves the die, so Half 2 (placement in (g), the noise pair in (h))
-is the only lever that does (Q6 3.1/3.2).  It is also the methodological addition
-beyond Bagchi et al. ISMM'26 4.2, who stressed each device independently with no
-link-directed component; its efficacy is an inference, not a measurement, so the
-claim is "additive, composable, most specific to the cross-device window", never
-"more effective than per-device stress" (Q6 3.3/3.5).
+is the only lever that does.  It is also the methodological addition beyond
+[Bagchi26 sec 4.2], which stresses both devices and carries no link-directed
+component; its efficacy is an inference, not a measurement, so the claim is
+"additive, composable, most specific to the cross-device window", never "more
+effective than per-device stress" (docs/00-environment-design.md sec 3.6 bounds
+it, and says why it is confounded too).
 
 The `.hip' renders come from ../het-x86, not from ../het: a harness is a
 (CPU ISA x GPU dialect) PAIR, and (x86_64, hip) is the one this project has an
@@ -70,8 +72,8 @@ litmus/het-runtime/README.md.
 (b) -2s invariant (ii): nothing is injected inside the tested body.  For a
 two-sided test the CPU issues the ordering instructions under test (STLR/LDAPR/
 DMB.SY) -- they ARE the hypothesis, so a fence or atomic between the two tested
-accesses would change what is being tested (Q6 2.4).  T's own body must stay
-exactly its two tested stores, with the preload outside it, before the call.
+accesses would change what is being tested.  T's own body must stay exactly its
+two tested stores, with the preload outside it, before the call.
   $ sed -n '/^void het_run_t_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE '"(stlr|ldapr|dmb|str|ldr)'
   2
   $ sed -n '/^#if defined(__aarch64__)/,/^#else/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE 'het_cpu_preload|het_cpu_affinity|dc civac|prfm' || true
@@ -99,8 +101,8 @@ primitive is asm volatile with a "memory" clobber.
   1
 
 and every instance preloads its own vars -- the control must be stressed exactly
-as T is, or it is not certifying T's window (Q4 3.1: same run, same stress, same
-C2C path).
+as T is, or it is not certifying T's window (positive-control.md sec 2: the same
+run, the same stress, the same C2C path).
   $ grep -c 'het_cpu_preload(_pl, 2, &_plrng, HET_CPU_PRELOAD_PCT)' $MP.cu
   3
 
@@ -111,7 +113,7 @@ core when the race starts:
 
 (c) -2s invariant (i): the enemy and noise traffic is disjoint from the test.  An
 enemy that WRITES a test variable injects co/rf edges and the run stops being a
-test of the CPU/GPU order (Sorensen & Donaldson PLDI'16 1, quoted verbatim in
+test of the CPU/GPU order ([Sorensen16 sec 1], quoted verbatim in
 het_cpu_stress.h).  So no stress object may ever be x, y or barrier.
   $ grep -cE '_ea\[_e\]\.(scratch|idx) *= *(_cpu_scratch|_cpu_idx)' $MP.cu
   2
@@ -147,8 +149,7 @@ off the coherent allocator.
 exercises the emitted driver -- so it is gated here, structurally.  The order IS
 the mechanism: raise stress_go, then spawn the enemies and the noise, then the
 test threads and the kernel.  A flag raised after the enemies were spawned races
-them; one raised after the test finished means they never ran at all
-(env-research/impl-briefs/B4-fix-impl-brief.md).
+them; one raised after the test finished means they never ran at all.
 
 The test-thread spawn is matched on the wrapper (`, cpu_thread_'), not on a
 literal `&_th0': the three co-running instances name theirs _t_th0 / _mu_th0 /
@@ -166,8 +167,8 @@ the ordering is asserted for all three instances.
   go < enemies < test threads (all) < launch
 
 and it comes down only after the device has drained, so the stress covers the
-whole tested window and no more (S&D knob F, per Q6 3.2: the enemy runs at least
-as long as the test).  Lowering it before the sync would stop the stress while
+whole tested window and no more -- the enemy has to run at least as long as the
+test.  Lowering it before the sync would stop the stress while
 GPU lanes were still looping; never lowering it would hang the join.  The anchor
 is the TERMINAL sync -- `cudaError_t _s = cudaDeviceSynchronize()' -- not any
 cudaDeviceSynchronize: gd_alloc_noise has its own, one-shot at start-up, waiting
@@ -182,9 +183,8 @@ for the prefetch that moves the HBM noise buffer across the interconnect.
 access pattern lets nvcc fold the stress if-chain to the one live branch, and a
 side-effect-free branch takes the whole stress loop with it; the CPU enemy has
 the identical shape, so the -D knob is read host-side and handed over as a
-runtime value (env-research/impl-briefs/B4-fix-impl-brief.md).  cpustresscheck.py
-S4 gates the compiled consequence: the op count must be invariant under
--DHET_CPU_ENEMY_SEQ.
+runtime value.  cpustresscheck.py S4 gates the compiled consequence: the op count
+must be invariant under -DHET_CPU_ENEMY_SEQ.
   $ grep -c '_ea\[_e\].seq     = (uint32_t)HET_CPU_ENEMY_SEQ;' $MP.cu
   1
   $ grep -c 'switch (a->seq)' MP-cg-sys-acqrel-2s/het_cpu_stress.h
@@ -209,10 +209,10 @@ inert mechanism reporting itself as live.
   $ grep -c '_het_place_failures++' $MP.cu
   2
 
-The default is 0 = first-touch, deliberately: that is Bagchi's baseline, and Q6
-3.3 finds the net effect of pinning confounded (it widens the window but slows
-the loop, so sightings = yield x rate could move either way, and nobody has
-measured it).
+The default is 0 = first-touch, deliberately (het_alloc_cuda.inc says why): the
+net effect of pinning is confounded, since it widens the window but slows the
+loop, so sightings = yield x rate could move either way and nobody has measured
+it.
   $ grep -A1 '#ifndef HET_PLACE' MP-cg-sys-acqrel-2s/het_cpu_stress.h | grep -c '#define HET_PLACE 0'
   1
 
@@ -229,8 +229,8 @@ satisfied by the prose that documents its absence.
   $ grep -c 'CONTENTION' $MPH.hip
   2
 
-(h) Half 2b -- the Fusco noise pair (arXiv:2408.11556, construction quoted
-verbatim in het_cpu_stress.h): each processing unit continuously stream-reads the
+(h) Half 2b -- the noise pair of [Fusco24 sec III-E.1], its construction quoted
+verbatim in het_cpu_stress.h: each processing unit continuously stream-reads the
 OTHER one's memory.  The Hopper half runs as extra blocks of the persistent grid,
 never as a second __global__, because ptxcheck scans the whole PTX file in flat
 order and slices that one op stream per lane -- a second kernel would drop its
@@ -245,9 +245,10 @@ ops into the middle of the stream being sliced.
   1
 
 The working set is the whole point: a buffer that fits in cache is served from
-cache and crosses nothing, and Hopper's L2 caches peer HBM too.  Grace L3 = 114
-MB and Hopper L2 = 51 MB (Bagchi Tab. 1, p.70), Fusco's buffer is 8 GB, and a
-sub-LLC configuration is warned about at run time.
+cache and crosses nothing, and Hopper's L2 caches peer HBM too ([Fusco24 sec
+III-E.1]).  Grace L3 = 114 MB and Hopper L2 = 51 MB ([Bagchi26 Table 1]),
+HET_NOISE_MB is 8 GB per buffer, and a sub-LLC configuration is warned about at
+run time.
   $ grep -A1 '#ifndef HET_NOISE_MB' MP-cg-sys-acqrel-2s/het_cpu_stress.h | grep -c '#define HET_NOISE_MB 8192'
   1
   $ grep -c 'HET_NOISE_MB < HET_LLC_MB' $MP.cu
@@ -258,8 +259,8 @@ been WRITTEN is not backed by physical memory at all -- Linux maps every
 untouched anonymous page to one shared, read-only zero page -- so a noise kernel
 reading an 8 GB buffer that was never first-touched touches a single cache line,
 is served entirely from L1, and generates no interconnect traffic while reporting
-healthy round counts (measured, in het_cpu_stress.h).  So both renders fault the
-pages in, and cpustresscheck.py D3 proves at run time that it works.
+healthy round counts (het_cpu_stress.h carries the figures).  So both renders
+fault the pages in, and cpustresscheck.py D3 proves at run time that it works.
   $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MP.cu
   2
   $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MPH.hip
@@ -292,24 +293,27 @@ to die.
 and the two knobs the tuner turns the interconnect lever with travel WITH the
 result.  The working set is what decides whether the noise crosses anything at
 all -- below the last-level cache the buffer is served from cache -- so a tuning
-log that does not record it cannot tell a good config from a dead stressor (B8).
+log that does not record it cannot tell a good config from a dead stressor.
   $ grep -c 'noise_ws=%uMB place=%u' MP-cg-sys-acqrel-2s/het_verdict.h
   1
   $ grep -c '_rec.noise_ws_mb = (uint32_t)HET_NOISE_MB' $MP.cu
   1
 
 (j) the sources are cited in the emitted header, not merely in a commit message:
-we reuse this work, and for cuda-litmus (no licence file) citation is the
-condition of reuse.  A reader must be able to tell which ideas are ours.
-  $ grep -c 'TACAS' MP-cg-sys-acqrel-2s/het_cpu_stress.h
+we reuse this work, and for [CudaLitmus], which carries no licence file, citation
+is the condition of that reuse.  A reader must be able to tell which ideas are
+ours.
+  $ grep -c '\[Alglave11' MP-cg-sys-acqrel-2s/het_cpu_stress.h
+  4
+  $ grep -c '\[Sorensen16' MP-cg-sys-acqrel-2s/het_cpu_stress.h
+  4
+  $ grep -c '\[Fusco24' MP-cg-sys-acqrel-2s/het_cpu_stress.h
   3
-  $ grep -c 'Sorensen & Donaldson' MP-cg-sys-acqrel-2s/het_cpu_stress.h
+  $ grep -c '\[Schieffer24' MP-cg-sys-acqrel-2s/het_cpu_stress.h
   1
-  $ grep -c 'arXiv:2408.11556' MP-cg-sys-acqrel-2s/het_cpu_stress.h
+  $ grep -c '\[Wahlgren25' MP-cg-sys-acqrel-2s/het_cpu_stress.h
   1
-  $ grep -c 'arXiv:2410.00801' MP-cg-sys-acqrel-2s/het_cpu_stress.h
-  1
-  $ grep -c 'INFERENCE, not a measurement' MP-cg-sys-acqrel-2s/het_cpu_stress.h
+  $ grep -c 'an INFERENCE, and a confounded one' MP-cg-sys-acqrel-2s/het_cpu_stress.h
   1
 
 (k) the observer test renders the same shape: the observer is PINNED but not
