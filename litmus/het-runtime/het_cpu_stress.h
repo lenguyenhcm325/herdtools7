@@ -437,15 +437,15 @@ uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t *rng, int pct) {
  * is -2s-safe by construction.
  *
  * `seq' is a RUNTIME field, and the accesses are `volatile'.  Both are
- * load-bearing.  A compile-time sigma lets the optimiser fold the switch to one
- * branch and, if that branch has no stores, delete the loop -- the failure mode
- * het_stress.h's caller contract describes.  Without `volatile' the loop's only
- * observable effect is memory traffic it does not name, so -O2 deletes the reads
- * outright; this is where the CPU enemy diverges from the GPU stresser, whose
- * accesses are deliberately non-volatile.  `volatile' forbids elision and
- * reordering while leaving the traffic ordinary and cacheable to the hardware.
- * Both properties are read off the COMPILED asm by cpustresscheck, because
- * reading the source proves nothing.
+ * load-bearing.  A compile-time sigma lets the optimiser fold the switch to the
+ * one branch -D named, and a branch whose accesses it can discard takes the
+ * traffic with it -- the failure mode het_stress.h's caller contract describes.
+ * Without `volatile' the loop's only observable effect is memory traffic it does
+ * not name, so -O2 deletes the reads outright; this is where the CPU enemy
+ * diverges from the GPU stresser, whose accesses are deliberately non-volatile.
+ * `volatile' forbids elision and reordering while leaving the traffic ordinary
+ * and cacheable to the hardware.  Both properties are read off the COMPILED asm
+ * by cpustresscheck, because reading the source proves nothing.
  * ------------------------------------------------------------------------- */
 void *het_cpu_enemy(void *_a) {
   het_cpu_enemy_args *a = (het_cpu_enemy_args *)_a;

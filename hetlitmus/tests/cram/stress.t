@@ -121,9 +121,10 @@ spin burns the full 1024-spin deadlock cap instead of rendezvousing.
 as a compile-time constant.  Two defects meet in this one line: upstream passes
 an iteration count where do_stress expects the pattern ([CudaLitmus]
 litmus.cuh:346), so mem-stress spins doing nothing; and a compile-time pattern
-lets nvcc fold the if-chain to the one live branch, which for the tuned default
-(3 = ld;ld, whose loads only feed a `break') is side-effect-free, taking the whole
-loop with it.  hetlitmus/verify/stresscheck.py
+lets nvcc fold the if-chain to the one live branch, and the shipped pre-stress
+default (3 = ld;ld, whose loads only feed a `break') writes nothing, so those
+loads hoist out of the loop and leave the round counting without the traffic.
+hetlitmus/verify/stresscheck.py
 is the gate, and _stress_tally counts the rounds het_do_stress completed, so a
 layer that is present in the PTX and never executes is visible to het_verdict().
 The pre-stress runs in every test lane, so the control is stressed exactly as T.

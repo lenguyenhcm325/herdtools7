@@ -13,8 +13,8 @@
 #     does the emitted PTX still CONTAIN the stress traffic it claims to?
 #
 # It is a GATE, not a report: a mechanism that cannot be observed to be alive must
-# be assumed dead.  Context: hetlitmus/docs/faithfulness.md; the forensics are in
-# env-research/impl-briefs/B4-fix-impl-brief.md.
+# be assumed dead.  Context: hetlitmus/docs/faithfulness.md, "What a compile-time
+# access pattern costs".
 #
 # ---------------------------------------------------------------------------
 # HOW IT ATTRIBUTES OPS TO LANE CLASSES (without parsing PTX control flow)
@@ -54,14 +54,15 @@
 #   5. THE PATTERN IS A RUNTIME VALUE: counts are INVARIANT under
 #      -DHET_{PRE,MEM}_STRESS_PATTERN=0..3.                        [pre and mem]
 #
-# (5) is the sharp one.  A compile-time pattern makes the count swing with the -D
-# and can fold the loop away entirely (per-pattern op counts measured on sm_90 are
-# in B4-fix-impl-brief.md, issue 1); a runtime pattern emits all four branches, so
-# the count cannot move.  Invariance IS the property "no autotuner config can
-# silently switch the stress off", which is what the stress tuner needs.  Requiring
-# a store as well as a load in (2)/(3) keeps the access sequence mixed: a
-# pattern chain with no reachable store branch hammers a region nothing ever
-# writes.
+# (5) is the sharp one.  A compile-time pattern makes the count swing with the -D,
+# and for a branch that writes nothing the loads hoist out of the loop and almost
+# all the traffic goes with them (per-pattern op counts measured on sm_90 are in
+# hetlitmus/docs/faithfulness.md, "What a compile-time access pattern costs");
+# a runtime pattern emits all four branches, so the count cannot move.  Invariance
+# IS the property "no autotuner config can silently switch the stress off", which
+# is what the stress tuner needs.  Requiring a store as well as a load in (2)/(3)
+# keeps the access sequence mixed: a pattern chain with no reachable store branch
+# hammers a region nothing ever writes.
 #
 # Exit 0 = PASS, 1 = FAIL, 2 = usage/toolchain error.
 # ---------------------------------------------------------------------------
@@ -271,9 +272,10 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
                 distinct = {(per_pat[p].ld, per_pat[p].st) for p in PATTERNS}
                 if len(distinct) != 1:
                     fail("%s: the scratchpad-op count MOVES with -D%s* (%s).  A "
-                         "compile-time pattern lets nvcc fold the if-chain to one branch "
-                         "and delete the loop entirely (pattern 3 = ld;ld is "
-                         "side-effect-free).  Pass the pattern as a kernel ARGUMENT."
+                         "compile-time pattern lets nvcc fold the if-chain to one branch, "
+                         "and a branch that writes nothing (pattern 3 = ld;ld) has its "
+                         "loads hoisted out of the loop, leaving the round counting "
+                         "without the traffic.  Pass the pattern as a kernel ARGUMENT."
                          % (cls, pat_knob.split('=')[0][2:],
                             ", ".join("p%d: %s" % (p, per_pat[p]) for p in PATTERNS)))
                 else:

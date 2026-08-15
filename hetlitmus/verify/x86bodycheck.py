@@ -935,8 +935,8 @@ exit $st
 # stand for is HetArch.refused ceasing to refuse, and a refusal leaving a partial
 # harness, so the bite has to substitute the tool.
 STUB_SWALLOW = r"""#!/usr/bin/env bash
-# The PRE-P2b behaviour, reproduced: emit what you can, swallow the failure,
-# print nothing on stderr, exit 0.  fail-closed's exit-code AND marker checks must fire.
+# A litmus7 that emits what it can and then swallows the refusal: nothing on
+# stderr, exit 0.  fail-closed's exit-code AND marker checks must both fire on it.
 REAL=%s
 "$REAL" "$@" >/dev/null 2>&1
 exit 0

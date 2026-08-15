@@ -1,9 +1,9 @@
-# Tasks 4–6 — CUDA emitter spine (CudaLang)
+# CUDA emitter spine (CudaLang)
 
-The HetLitmus Tier‑1 GPU code generator. Turns the GPU‑only LISA/Bell scoped
+The HetLitmus GPU code generator. Turns the GPU‑only LISA/Bell scoped
 corpus (`hetlitmus/tests/gpu-only/*.litmus`) into CUDA C++ (`.cu`) litmus
 kernels, one per test. **Route B** of the frontend decision (reuse the Bell/LISA
-scoped IR; no native PTX architecture) — see memory `hetlitmus-route-b-frontend`.
+scoped IR; no native PTX architecture).
 
 ## What ships
 - **`litmus/CudaLang.ml`** — the emitter. Translates parsed `BellBase` scoped
@@ -23,7 +23,7 @@ scoped IR; no native PTX architecture) — see memory `hetlitmus-route-b-fronten
   CUDA-side entry point of `hetlitmus/emit-gpu.sh`, which it calls with
   `-gpu-target cuda` (one vendor per pass; `litmus/hetDialect.ml`).
 
-Build: `make all` in the repo root (branch `hetlitmus-work`). Emit:
+Build: `make all` in the repo root. Emit:
 `./hetlitmus/emit-cuda.sh [OUTDIR]` (default `hetlitmus/cuda-out/`).
 
 ## How it works (and why this shape)
@@ -71,10 +71,11 @@ proc in its **own** CTA — so the two MP threads sit in *distinct* CTAs, which 
 exactly what makes `MP-cta-F` (block‑scope rel/acq across distinct CTAs) the
 moral‑strength / scope‑mismatch demonstration.
 
-## Task‑6 gate — eyeball checklist (10/10)
-Each emitted kernel checked against the ASPLOS'15 (Alglave et al., "GPU
-Concurrency") MP/SB/IRIW shapes (plus the standard 3‑proc write‑read‑causality
-WRC shape) and the scope mapping above.
+## Eyeball checklist (10/10)
+Each emitted kernel checked against the MP, LB and SB shapes of
+[Alglave15 Tab. 6], against the standard IRIW and 3‑proc write‑read‑causality
+WRC shapes — for which that paper reports no result — and against the scope
+mapping above.
 
 | test | scoped-atomic ops emitted | scope → thread_scope | CTA/thread layout | matches shape? |
 |------|---------------------------|----------------------|-------------------|--------------------|
@@ -98,11 +99,11 @@ un‑eyeballed codegen branches: `MP-gpu-release` is the only **device‑scope**
 (`gpu → thread_scope_device`; all other samples are sys/cta), and `WRC-sys-relaxed`
 is the only **3‑proc** launch geometry (`<<<3,1>>>`, three distinct CTAs).
 
-## Task 8 — nvcc compile (DONE)
+## nvcc compile
 Done on this WSL box (CUDA Toolkit **12.9**, `nvcc /usr/local/cuda/bin/nvcc`;
-`export PATH=/usr/local/cuda/bin:$PATH`; originally Task 8 ran on 12.2 — see the
-fence-lowering note below for what the upgrade changed). Every emitted kernel
-assembles **exit 0**.
+`export PATH=/usr/local/cuda/bin:$PATH`; the first such pass ran on 12.2 — see
+the fence-lowering note below for what the upgrade changed). Every emitted
+kernel assembles **exit 0**.
 
 - **Corpus (cta/sys/gpu), Ampere** — each of the 10 `cuda-out/*.cu`:
 
@@ -131,10 +132,10 @@ already map exactly (`st.release.<scope>` / `ld.acquire.<scope>`); only
 standalone fences are affected.
 
 ## Out of scope / next steps
-- **Task 9 (hardware):** deferred — GH200 / MI300A runs + stressing + tallying
+- **Hardware runs (deferred):** GH200 / MI300A runs + stressing + tallying
   `__out` against the `condition` line.
 - The host harness currently has no result tally and no stress (timing jitter,
   memory pressure). Stressing is essential for non‑observations to be meaningful
-  (see thesis principles); that lands with Task 9.
+  (see thesis principles); that lands with those runs.
 - Reference verdicts: no external reference covers GH200, and this project
   derives none of its own.

@@ -128,7 +128,6 @@ static void exercise(const char *mode, int reachable, const char *why_not,
 int main(void) {
   int n = 0, drv = 0, rt = 0;
   cudaError_t e = cudaGetDeviceCount(&n);
-  printf("probe_version=PORT1\n");
   printf("device_count=%d\n", n);
   if (e != cudaSuccess || n < 1) {
     printf("probe_status=NO_DEVICE(%s)\n", cudaGetErrorString(e));

@@ -1,12 +1,12 @@
-# Heterogeneous litmus tests (HetLitmus Tier 0)
+# Heterogeneous litmus tests (the compound format)
 
 This document specifies the **compound `.litmus` format** for heterogeneous
 CPU-GPU tests and how it is implemented in litmus7 via the **compound
-pseudo-architecture** (design fork (a)). Tier 0 is the *single-arch break*: it
+pseudo-architecture** (design fork (a)). It is the *single-arch break*: it
 makes a single test whose processors span a CPU ISA and a GPU ISA
 *representable, parseable, and dispatchable* inside herdtools7. Cross-device
 code **emission** (asymmetric launch, coherent allocation, rendezvous barrier,
-result readback) is **Tier 2** and deliberately out of scope here.
+result readback) is `het-emission.md`'s job and deliberately out of scope here.
 
 ## 1. The problem (the blocker)
 
@@ -61,7 +61,7 @@ A heterogeneous test differs from a normal `.litmus` in exactly two places:
 1. **Compound-arch header.** The first-line arch token is `Het`. It is parsed
    by the splitter through the ordinary `Archs.parse` path (no splitter grammar
    change) into the single value `` `Het ``. The sub-architecture *pairing*
-   (AArch64 + LISA in Tier 0) is fixed by the chosen dispatch arm, not by the
+   (AArch64 + LISA) is fixed by the chosen dispatch arm, not by the
    header.
 
 2. **Per-processor device tag.** Each processor in the program header carries a
@@ -138,13 +138,14 @@ no placeholders on the parse path:
 - `is_valid` / `norm_ins` / `dump_instruction_hash` (used by the validity check
   and the test hash) delegate per constructor.
 
-## 5. Scope boundary and Tier-0 simplifications
+## 5. Scope boundary and simplifications
 
-**In Tier 0 (done):** the `Het` format, the `` `Het `` `Archs` variant, the
-`HetArch` functor satisfying `ArchBase.S`, the per-column parser, the
-AArch64+LISA dispatch arm, and a clean `make all`. End-to-end, litmus7 parses
-the test and routes each column to its device — and, since Tier 2 was built on
-top of that routing (`hetlitmus/docs/het-emission.md`), emits the harness too:
+**What the compound format itself ships:** the `Het` format, the `` `Het ``
+`Archs` variant, the `HetArch` functor satisfying `ArchBase.S`, the per-column
+parser, the AArch64+LISA dispatch arm, and a clean `make all`. End-to-end,
+litmus7 parses the test and routes each column to its device — and, since
+harness emission was built on top of that routing
+(`hetlitmus/docs/het-emission.md`), emits the harness too:
 
 ```
 $ litmus7 -gpu-target cuda -o OUT hetlitmus/tests/het/MP-het.litmus
@@ -162,8 +163,8 @@ The CPU column's asm is written by `HetCpuBodyA64`/`HetCpuBodyX86` over
 `HetCpuPlan`, not by `ASMLang.dump_fun`; what the arm takes from litmus7's own
 CPU compile pipeline is the address parameters and the final registers.
 
-**Deferred to Tier 2 (emission), with the corresponding Tier-0 inertness** (the
-record of what Tier 0 itself shipped; Tier 2 has since closed the first item):
+**Left to emission, and inert here** (the record of what the single-arch break
+itself shipped; emission has since closed the first item):
 - The dispatch arm stops after parse + per-proc routing report; it does not
   emit a harness.
 - `nop` / `mk_imm_branch` are `None` (no device-agnostic compound form);
@@ -171,7 +172,7 @@ record of what Tier 0 itself shipped; Tier 2 has since closed the first item):
   cross-device arms of `map_regs` default harmlessly (registers never cross
   devices). None of these are on the parse path.
 
-**Tier-0 lexical limitations of the per-column splitter** (documented, safe for
+**Lexical limitations of the per-column splitter** (documented, safe for
 the hand-written corpus): the program body must not contain `;` or `|` *inside*
 an instruction cell, and must not contain comments — these characters are
 treated purely as table delimiters. `map_labels` is **not** a placeholder: it
@@ -179,7 +180,7 @@ delegates per constructor to each sub-architecture's `map_labels_base` (see §4)
 so labels and branch targets *within* a processor are renamed faithfully. The
 only structural caveat is that a label cannot cross devices — each processor's
 column is parsed independently — but a cross-device branch is meaningless
-anyway. The Tier-0 corpus happens to use no branch targets, so this path is
+anyway. The het corpus happens to use no branch targets, so this path is
 currently unexercised in practice.
 
 ## 6. Files

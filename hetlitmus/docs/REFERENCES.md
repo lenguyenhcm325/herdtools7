@@ -3,7 +3,9 @@
 A `[Key]` in a HetLitmus comment resolves here. Each entry holds the full
 citation, the claim(s) this project takes from the source — one bullet per
 claim — and any deviation from it, one bullet per deviation. Append-only: keys
-never change spelling once used, and an entry is edited only to correct it.
+never change spelling once used, and an entry is edited only to correct it. An
+entry is not widened to cover a new site: a site that takes a further claim from
+a source cites `[Key + locator]` and states its own claim where it stands.
 
 Locators follow the citation rule in `COMMENT-RULES.md` (rule 9): papers get a
 fixed `§`/Fig./Table locator, living documents get the section *name*.

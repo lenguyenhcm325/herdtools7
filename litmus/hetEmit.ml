@@ -2608,37 +2608,27 @@ end
           let count_word = function
             | 1 -> "The one" | 2 -> "Both" | 3 -> "All three" | 4 -> "All four"
             | k -> Printf.sprintf "All %d" k in
-          let vendors = enum (List.map (fun d -> d.gd_vendor) dialects) in
-          let bin_targets =
-            List.map (fun t -> Printf.sprintf "`make %s-bin'" t) targets in
           let dump_comp ch =
             let s = output_string ch in
+            (* The header says what this script does and what its argument may
+               be.  The guard, the ./<test> path and the build knobs are one
+               idea each, stated once in the doc it points at rather than in
+               every harness directory the corpus emits. *)
             s "#!/bin/sh\n" ;
             s (Printf.sprintf
                  "# Compile-only check for HetLitmus harness '%s' (%s render).\n"
                  tname (enum (List.map (fun d -> d.gd_name) dialects))) ;
-            s "# COMPILE-ONLY by default (-c, no link, no GPU run).\n" ;
             s (Printf.sprintf
-                 "# Adding `-link' to a target (%s) LINKS ./%s as well, making\n"
+                 "# COMPILE-ONLY by default (-c, no link, no GPU run); %s links ./%s too.\n"
                  (String.concat " / "
                     (List.map (fun t -> Printf.sprintf "`%s-link'" t) targets))
                  tname) ;
-            s "# the harness runnable on real hardware.  Every link target is GUARDED by\n" ;
-            s "# uname -m: on a foreign host the CPU object carries the portable shim, not\n" ;
-            s "# the tested asm.\n" ;
             s (Printf.sprintf "# Usage: sh comp.sh [%s]   (default %s)\n"
                  comp_args d0.gd_target) ;
             s (Printf.sprintf
-                 "# The link writes ./%s -- the path EVERY vendor's render links to, so\n"
+                 "# Why the link is guarded, why every render writes ./%s, and the build\n"
                  tname) ;
-            s "# run-one.sh / campaign.py stay vendor-agnostic (they exec ./<test> and read\n" ;
-            s (Printf.sprintf
-                 "# the HetStats line).  This harness carries the %s build arms only; the\n"
-                 vendors) ;
-            s (Printf.sprintf
-                 "# link is unconditional and %s %s .PHONY, so a stale binary left by an\n"
-                 (enum bin_targets) (plural "is" "are")) ;
-            s "# earlier build is never mistaken for a fresh one.\n" ;
+            s "# knobs: hetlitmus/docs/het-emission.md\n" ;
             s "set -e\n" ;
             s (Printf.sprintf "TARGET=\"${1:-%s}\"\n" d0.gd_target) ;
             (* one `compiler ; arch' line per dialect, their arch notes aligned *)
@@ -2773,14 +2763,14 @@ end
               dialects ;
             s "outs.o: outs.c\n\t$(CC) -c $< -o $@\n\n" ;
             s (Printf.sprintf "%s_cpu_host.o: %s_cpu.c\n\t$(CC) -c $< -o $@\n\n" tname tname) ;
-            (* The two link targets are .PHONY recipes, NOT file rules.  Both
-               vendors write the same ./<test> -- deliberate, so run-one.sh and
-               campaign.py stay vendor-agnostic -- and make cannot carry two file
-               rules for one target.  A file rule is also skipped whenever
-               ./<test> is newer than its objects, the state the other vendor's
-               link leaves behind: the build would report success and hand back
-               that binary.  Both link unconditionally, guarded like comp.sh's
-               *-link arms: on a foreign host the CPU object is the shim. *)
+            (* A link target is a .PHONY recipe, NOT a file rule.  Every vendor's
+               render links to the same ./<test> (run-one.sh and campaign.py stay
+               vendor-agnostic), and make cannot carry two file rules for one
+               target.  A file rule is also skipped when ./<test> is newer than
+               its objects, the state another vendor's link leaves: the build
+               would report success on a stale binary.  It links unconditionally,
+               guarded like comp.sh's *-link arms: on a foreign host the CPU
+               object is the shim. *)
             List.iter
               (fun d ->
                 s (Printf.sprintf "%s-bin: %s outs.o %s_cpu_host.o\n"
@@ -2791,14 +2781,14 @@ end
                 s (Printf.sprintf "\t$(%s) %s$(%s) $^ -o %s -lpthread -lm\n\n"
                      d.gd_compiler_var d.gd_arch_flag d.gd_arch_var tname))
               dialects ;
-            (* ...and `make <test>' must not build anything either.  With both
-               link targets phony, no rule names ./<test>, so GNU make falls
+            (* ...and `make <test>' must not build anything either.  With every
+               link target phony, no rule names ./<test>, so GNU make falls
                through to its built-in `%: %.o' rule, linking <test>.o with $(CC)
                past the uname -m guard.  `.SUFFIXES:' kills that fall-through
-               here (all four object rules are explicit), and ./<test> gets a rule
-               naming the target to use instead.  It is .PHONY too: a plain rule
-               whose target exists is "up to date", so make would exit 0 and hand
-               back whichever binary was lying there. *)
+               here (every object rule the harness emits is explicit), and
+               ./<test> gets a rule naming the target to use instead.  It is
+               .PHONY too: a plain rule whose target exists is "up to date", so
+               make would exit 0 and hand back whichever binary was there. *)
             s ".SUFFIXES:\n\n" ;
             s (Printf.sprintf "%s:\n" tname) ;
             s (Printf.sprintf
@@ -2874,8 +2864,17 @@ end
                  "`%s_cpu_host.o` is the portable shim, not the %s asm, and the binary\n"
                  tname CpuF.isa_name) ;
             s "would test nothing.\n\n" ;
-            s (Printf.sprintf
-                 "The co-run layers, the build knobs and why `make %s` refuses:\n" tname) ;
+            (* A harness whose control map names it its own canary co-runs
+               nothing, so there are no co-run layers for its README to point
+               at.  Both arms are one line: the `Target:' line below is pinned
+               by line number (cram machine-pairs.t). *)
+            s (if co_run then
+                 Printf.sprintf
+                   "The co-run layers, the build knobs and why `make %s` refuses:\n"
+                   tname
+               else
+                 Printf.sprintf
+                   "The build knobs and why `make %s` refuses:\n" tname) ;
             s "`hetlitmus/docs/het-emission.md`.\n\n" ;
             (* What this harness was built for, and the last line a reader of a
                results tree meets.  A part is named only where the pair's machine

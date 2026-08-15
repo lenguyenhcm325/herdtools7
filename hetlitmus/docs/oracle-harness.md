@@ -1,4 +1,4 @@
-# Oracle-comparison harness (HetLitmus Tier 4, comparison axis)
+# Oracle-comparison harness (comparison axis)
 
 **This is an OPTIONAL, OFFLINE, POST-RUN step, and nothing in the toolchain
 requires it.** The emitted harness holds no prediction: it reports what it
@@ -11,7 +11,7 @@ comparison inherits whatever that CSV is worth. This file describes that step.
 `hetlitmus/oracle-compare.sh` reads a litmus7 run log and compares each
 observation against a **reference verdict CSV passed explicitly**, emitting one of
 four results per test: **MATCH**, **MISMATCH**, **NO-ORACLE**, or
-**UNINTERPRETED**. This is the comparison half of Tier 4; the generation half is
+**UNINTERPRETED**. This is the comparison half; the generation half is
 `het-generation.md`.
 
 The harness deliberately does **not** run anything on hardware or in gem5. It
@@ -19,10 +19,10 @@ consumes *Observation lines* (real, from a hardware/gem5 run, or synthesized) an
 verdict CSV, and decides conformance. It is a pure text function, which is why it
 can be gated on frozen fixtures with no toolchain at all.
 
-This branch derives no per-test verdicts for the het corpus. That derivation is
-retired and its CSVs live on branch `hetlitmus-oracle-derivation`, not here;
-`oracle-compare.sh` reads whatever CSV its caller passes, and the argument is
-mandatory, so there is nothing it can fall back on.
+This tree derives no per-test verdicts for the het corpus. That derivation is
+retired and its CSVs live outside this tree; `oracle-compare.sh` reads whatever
+CSV its caller passes, and the argument is mandatory, so there is nothing it can
+fall back on.
 
 ## 1. Inputs
 
@@ -166,7 +166,7 @@ in C, beside the numbers it belongs to; the harness does not re-derive it, becau
 second implementation of the same decode is what silently drifts from the first.
 
 What the section adds on top of the reprint is the campaign-level roll-up: the
-negative control over the rows **the supplied CSV** marks `Disallowed` (PerpLE VII-A —
+negative control over the rows **the supplied CSV** marks `Disallowed` ([Melissaris20 §VII-A] —
 if the decoder invented cycles, that is where it would show), plus a count of the
 `VOID` rows, which came from a harness that was never demonstrably hot and must not be
 tabulated at all. The class is read from the CSV on every row, because the run log

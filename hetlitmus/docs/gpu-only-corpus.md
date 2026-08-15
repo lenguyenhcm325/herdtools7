@@ -1,4 +1,4 @@
-# Task 1 — PLDI'23 GPU-only litmus corpus (frontend target)
+# PLDI'23 GPU-only litmus corpus (frontend target)
 
 Inventory of the GPU-only test family the HetLitmus frontend must be able to
 express and generate. Derived by inspecting the PLDI'23 Compound Memory Models
@@ -24,8 +24,8 @@ both vendors; the vendor difference lives **downstream** — in the `.cat` (mean
 and the emitter (instruction selection) — never in the `.litmus` layer.
 
 ## Sources
-- **Goens, Chakraborty, Sarkar, Agarwal, Oswald, Nagarajan. "Compound Memory
-  Models." PLDI 2023.** Artifact: `PLDI23_Compound_Simulation`
+- **[Goens23] Goens, Chakraborty, Sarkar, Agarwal, Oswald, Nagarajan. "Compound
+  Memory Models." PLDI 2023.** Artifact: `PLDI23_Compound_Simulation`
   (https://github.com/sukarnagarwal/PLDI23_Compound_Simulation), paper:
   https://homepages.inf.ed.ac.uk/vnagaraj/papers/pldi23.pdf
   - Oracle: the artifact's own `expected.csv`, `GPU-Only` rows
@@ -36,8 +36,8 @@ and the emitter (instruction selection) — never in the `.litmus` layer.
     (HIP `__atomic_*` C++ kernels for the AMD GCN3 gem5 model).
 - **In-tree PTX axiomatic model**: `catalogue/demo/cats/ptx.cat`
   (3-scope membar model: `membar.cta` ⊂ `membar.gl` ⊂ `membar.sys`).
-  Originates from Alglave et al., "GPU Concurrency: Weak Behaviours and
-  Programming Assumptions", ASPLOS 2015.
+  Originates from [Alglave15 §5.3, Fig. 16] ("RMO per scope"), whose
+  `rmo-cta`/`rmo-gl`/`rmo-sys` acyclicity constraints it carries.
 
 ## Families and variants (the corpus)
 Four classic shapes, each in a relaxed and a synchronised variant:

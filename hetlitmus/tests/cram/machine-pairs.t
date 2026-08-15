@@ -38,8 +38,9 @@ would stamp "the Grace half" on a machine with no Grace in it.
   #define HET_PLACE_LEVER "cudaMemAdvise"
 
 HET_ALGLAVE_ZERO_MEASURED is absent on the AMD pair (the "zero without stress"
-figure of [Alglave15 sec 4.3.1] was measured on NVIDIA parts and no equivalent is
-published for MI300A),
+figure of [Alglave15 sec 4.3.1] is the NVIDIA GTX Titan's -- inter-CTA lb and sb
+at 0 per 100k in every unstressed column -- and no equivalent is published for
+MI300A),
 and so is HET_PLACE_LEVER (the HIP render carries no placement code at all).  An
 absent define is the SAFE direction: het_verdict.h's default names the mechanism.
 HET_LLC_MB is not absent, because a figure IS published for this part -- 256 MB

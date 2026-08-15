@@ -110,12 +110,13 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
   (`__ptx/instructions/generated/fence.h`).
 * **Annotation vocabulary:** [`../bells/ptx.bell`](../bells/ptx.bell)
   (`enum memory_order`, `enum scopes`, `instructions R/W/F`).
-* **CPU mapping:** the *Arm Architecture Reference Manual* (STLR = Store-Release;
-  LDAR = Load-Acquire RCsc; LDAPR = Load-AcquirePC RCpc, FEAT_LRCPC; DMB SY =
-  full-system Data Memory Barrier) and **Bagchi et al., ISMM '26**, *Consistency
-  and Coherence of the NVIDIA Grace-Hopper Superchip*, Fig. 1 (the GH200
-  CPU release/acquire/fence → STLR/LDAPR/DMB.SY mapping). The RCpc(`LDAPR`)
-  choice is the one the emitter makes (`litmus/hetCpuBodyA64.ml`).
+* **CPU mapping:** the *Arm Architecture Reference Manual* is the source of the whole
+  map — STLR = Store-Release; LDAR = Load-Acquire RCsc; LDAPR = Load-AcquirePC RCpc,
+  FEAT_LRCPC; DMB SY = full-system Data Memory Barrier. [Bagchi26 Fig. 1] is cited for
+  what it depicts, and for that alone: an unscoped ARM release store (`STLR`) pairing
+  with a system-scoped PTX acquire load (`ld.acquire.sys.b32`) — the compound question
+  the het column poses. The RCpc(`LDAPR`) choice is the one the emitter makes
+  (`litmus/hetCpuBodyA64.ml`).
 
 ## What is checked, for every op, both directions
 
@@ -188,7 +189,7 @@ python3 hetlitmus/verify/ptxcheck.py hetlitmus/tests/gpu-only/MP-sys-F.litmus
 
 `ptxcheck.py` exits **0 = PASS**, **1 = FAIL** (with an exact per-position diff),
 **2 = completeness hard-fail**, **3 = tool/emit error**. Requirements: `litmus7`
-built in `_build` (see `herdtools7-build-run`) and `nvcc` on `PATH`
+built in `_build` (`make all` at the repo root) and `nvcc` on `PATH`
 (`/usr/local/cuda/bin`; CUDA 12.9). Default arch `sm_90`.
 
 ## Result
@@ -234,11 +235,12 @@ whole corpus.
   already cost us.** Stress is scaffolding, not a tested op: it carries no
   order/scope qualifier and sits outside the inline-asm markers, so it can never
   enter the op stream this checker compares. Correct — but it means *no gate here
-  can tell whether the stress layer exists at all*. B4 duly shipped a pre-stress
-  incantation that nvcc had **deleted** (a compile-time access pattern folds
-  `do_stress`'s if-chain to `ld;ld`, whose loads only feed a `break`, which is
-  provably side-effect-free) and a device-scope window-opener that released on its
-  deadlock cap 99.6% of the time. Both passed every gate in this suite.
+  can tell whether the stress layer exists at all*. The pre-stress incantation
+  once shipped in a form whose traffic nvcc had **hoisted away** (a compile-time
+  access pattern folds `do_stress`'s if-chain to `ld;ld`, whose loads feed only a
+  `break` and so leave the loop — measured under "What a compile-time access
+  pattern costs" below), beside a device-scope window-opener that released on
+  its deadlock cap 99.6% of the time. Both passed every gate in this suite.
   The other half of the static check is therefore **`hetlitmus/verify/stresscheck.py`**
   (`make hetlitmus-stress`), which counts scratchpad ops in the emitted PTX per
   lane class and asserts the count is *invariant* under `-DHET_*_PATTERN` — i.e.
@@ -246,10 +248,50 @@ whole corpus.
   `tokens.sh selftest` section [7]. **A mechanism no gate can observe must be
   assumed dead**: if you add scaffolding here, add the gate that watches it.
 
+### What a compile-time access pattern costs
+
+`het_do_stress` takes its access pattern as a **runtime kernel argument**: the
+emitter reads `HET_PRE_STRESS_PATTERN` / `HET_MEM_STRESS_PATTERN` into host
+variables and passes them in (`litmus/hetEmit.ml`), so the if-chain lowers to a
+four-way dispatch and the scratchpad traffic survives whatever the `-D` says.
+Hand the same body a compile-time constant instead and nvcc folds the chain to
+the one named branch. The loop is not deleted outright — its round count reaches
+the liveness tally, so the trip count is observable — but branch 3 (`ld;ld`, the
+shipped pre-stress default) writes nothing, which makes both of its loads
+loop-invariant: nvcc hoists them out and leaves one peeled iteration's two
+loads, the `break` test on the first of them, and an empty counting loop feeding
+the tally. The bookkeeping survives; the stress does not.
+
+Measured on the emitted PTX (`nvcc -std=c++17 -arch=sm_90 --ptx`), plain
+`ld/st.global.u32` — stresscheck's own signature — inside one test lane's
+perpetual loop:
+
+| how the pattern reaches `het_do_stress` | pattern | scratchpad ops |
+|---|---|---|
+| compile-time constant | 3 = `ld;ld` (the pre-stress default) | **2**, no store |
+| compile-time constant, `HET_PRE_STRESS_PCT=100` | 3 | **2**, no store |
+| compile-time constant | 1 = `st;ld` | 13 |
+| compile-time constant | 2 = `ld;st` | 12 |
+| compile-time constant | 0 = `st;st` | 228 |
+| runtime kernel argument (the shipped shape) | dispatched at run time | 49 |
+| compile-time constant, `volatile` scratchpad | 3 | 1, plus 8 `ld.volatile.global.u32` |
+
+Asking harder does not help: the count stays at 2 with `HET_PRE_STRESS_PCT=100`,
+because raising how *often* a lane calls a hoisted loop adds nothing. `volatile`
+is not the fix either — it holds the accesses inside the loop by changing what
+they are, and this stress is meant to be plain, non-volatile, ordinary cacheable
+traffic (`litmus/het-runtime/het_stress.h` carries that constraint and its
+source). The same fold reaches mem-stress, where a stress block's 49 ops become
+16, 13, 12 or 2 as the compile-time pattern moves 0 → 1 → 2 → 3. That is what an
+autotuner sweeping `pattern ∈ {0,1,2,3}` would be scoring — a knob deciding how
+much stress exists rather than which stress it is, and no other gate in this
+suite can tell those configurations apart — which is why `stresscheck.py`'s
+invariance assertion (5) is the load-bearing one rather than a formality.
+
 ## CPU-side stress liveness
 
 `hetlitmus/verify/cpustresscheck.py` is the CPU/interconnect sibling of
-`stresscheck.py`. The M3 preload, the CPU enemy threads and the C2C noise pair are
+`stresscheck.py`. The cache preload, the CPU enemy threads and the C2C noise pair are
 invisible to *both* PTX checkers — the preload emits host cache hints (no order, no
 scope, not a model op), the enemies are host code that never reaches the PTX, and
 the noise streams a disjoint buffer — so that layer is unguarded without it. It

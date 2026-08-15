@@ -1,6 +1,6 @@
 # The positive control: what makes a "Never" mean anything
 
-**Spec:** `env-research/Q4-positive-control.md`. **Design doc:** `00-environment-design.md` §3.8.
+**Design doc:** `00-environment-design.md` §3.8.
 **Status:** shipped, and **characterization-only**. The harness reports what it observed
 and carries no prediction; comparing a row against a verdicts file is an offline
 post-run step (`hetlitmus/oracle-compare.sh`), never part of a run.
@@ -30,7 +30,7 @@ genuinely unreachable behaviour produce the **identical empty histogram**:
 
 > "When testing, it is impossible to tell if an unobserved illegal execution is not
 > allowed or if it is simply rare and was not exposed by the tests."
-> — MC-Mutants (Levine et al., ASPLOS'23) §1.1, p.474.
+> — [MCMutants23 §1.1], p. 474.
 
 So without a positive control, **every null in the campaign carries no evidential weight
 at all**, whatever anyone later compares it against.
@@ -39,14 +39,16 @@ What the control buys, precisely: it does **not** upgrade a null to a proof. It 
 it from **uninterpretable** to **credible-not-observed**. Falsification is one-sided:
 
 > "we emphasise that for correct GPU programming the possibility, not probability of
-> weak behaviours is what matters." — Alglave et al., ASPLOS'15 §4.3, p.585.
+> weak behaviours is what matters." — [Alglave15 §4.3], p. 585.
 
 ## 2. The two layers
 
 Both are **themselves heterogeneous and cross C2C**. That is the whole point, and it is
 what disqualifies the cheap controls: *a GPU-only observability result does not vouch for
 the C2C path* (it fires with no CPU participation and without crossing the interconnect).
-This is Q5/Q6's stress finding applied to controls.
+It is the stress design's own reasoning applied to controls — this project's, carried by no
+source: a mechanism confined to one device reaches that device's own coherence, never the
+link (`00-environment-design.md` §3.5, §3.6).
 
 - **Layer A — `mu(T)`, T's structural twin at the lattice floor.** For each test off the
   floor, co-run the same program with **every ordering annotation dropped on both sides**:
@@ -59,12 +61,12 @@ This is Q5/Q6's stress finding applied to controls.
 
 - **Layer B — the universal canary.** A fixed het `MP-{cg,gc}-sys-relaxed` instance, cut
   the same way round as the test it vouches for. MP is the only het shape with a published
-  detected-weak result on GH200 (Bagchi ISMM'26 Table 4), so it is the robust floor that
+  detected-weak result on GH200 ([Bagchi26 Table 4]), so it is the robust floor that
   fires when a stubborn shape does not.
 
 Layer B fires and Layer A does not ⇒ *diagnostic*, not failure: the C2C path is live but
-that shape's window needs more stress tuning (feeds B8). **Neither** fires ⇒ the harness
-was cold ⇒ the run is invalid.
+that shape's window needs more stress tuning (feeds the autotuner, `hetlitmus/tune.py`).
+**Neither** fires ⇒ the harness was cold ⇒ the run is invalid.
 
 **Why the floor and not the nearest weakening.** A nearest-weakening `mu(T)` would be a
 closer shape-match to T, but it is also the choice most likely to be *as cold as T itself*
@@ -166,20 +168,22 @@ harness that did not see it.** No prediction enters and none is printed — "obs
 C2C path, T's own two engines provably overlapped, and the zero came from the
 ground-truth scan. `HET_NOT_OBSERVED_CANARY_ONLY` is the weaker one and the printout names
 *which* weakness applies — no `mu` co-runs, or it did not reach `tau_hot`, or the
-ground-truth scan never ran so the zero is not a measured zero. Alglave's GTX-280 honesty
-(fn. 7, p.577) is the precedent for saying so plainly rather than reporting the two alike.
+ground-truth scan never ran so the zero is not a measured zero. The GTX 280 honesty of
+[Alglave15 fn. 7], p. 577 is the precedent for saying so plainly rather than reporting the
+two alike.
 
 `COLD-INVALID` stays reachable from every row on purpose, including the ones with no
 Layer A: characterizing a **dead** harness is a fabrication, not a finding ("under a
 harness where the canary fired 0 times, the machine exhibited the outcome 0 times" is not
 a datum).
 
-`tau_hot = 30` (`HET_TAU_HOT`; Kirkham's 95 % floor is 3 — 30 makes "hot" comfortable
+`tau_hot = 30` (`HET_TAU_HOT`; [Kirkham20 §1.1]'s 95 % floor is 3 — 30 makes "hot" comfortable
 rather than marginal, which is cheap in a perpetual harness). Its calibration is
 hardware-only.
 
-**One disclosed deviation from Q4 §3.3's literal text.** Q4 keys the sighting off
-`target_count_exhaustive` alone. For a `T_L ≥ 2` shape at production `N` the exhaustive
+**One disclosed deviation, and step 2 of the rule above is where it sits.** Keying the
+sighting off `target_count_exhaustive` alone would be the tighter rule; `het_verdict()`
+ORs `target_count_heuristic` in. For a `T_L ≥ 2` shape at production `N` the exhaustive
 scan does not run (`HET_EXHAUSTIVE_MAX = 4096`), so that field is 0 *by construction* and a
 real sighting would be **silently dropped** — a false negative on the single most valuable
 outcome the campaign can produce. The windowed heuristic searches `[c−W, c+W]` and the
@@ -188,7 +192,7 @@ are a strict **subset**: a heuristic hit is a genuine recovered cycle (it can mi
 it cannot invent them). It is counted, and flagged `HET_CV_HEURISTIC_SIGHT` so it is never
 passed off as ground truth.
 
-**Liveness disqualifiers** (B4/B5). A null from a run whose stress was inert is not the
+**Liveness disqualifiers.** A null from a run whose stress was inert is not the
 same datum as one from a stressed run, and nothing else in the record would say so.
 Disqualifying: an unstamped record; neither layer compiled in; no interleaving on the
 synchrony channel, or fewer than `HET_THETA_DISTINCT` distinct store-values on the
@@ -196,9 +200,9 @@ observer channel (the store-only shapes' only channel); `stress_truncated > 0`; 
 controls cold; and *requested-but-dead* — the window opener, the GPU scratchpad stress,
 the CPU enemies, the cache preload, and either half of the C2C noise. Caveating:
 `cpu_aff_failures` (pinning is fiction), `place_failures` (`cudaMemAdvise` refused), a
-mostly-`spin_cap` run (a delay loop, not a rendezvous), an unstressed run (Kirkham exposed
-only 1 of 6 mutants with no stress), a zero lane count (the mechanism is structurally
-absent, not dead), a canary-only vouch, and a non-measured exhaustive count.
+mostly-`spin_cap` run (a delay loop, not a rendezvous), an unstressed run (1 of 6 mutants
+exposed with no stress at all, [Kirkham20 §6.2 Tab.10]), a zero lane count (the mechanism
+is structurally absent, not dead), a canary-only vouch, and a non-measured exhaustive count.
 
 *Requested*-but-dead, not merely zero: a deliberately disabled mechanism is not a bug, and
 treating "counter == 0" as disqualifying on its own would make an intentional no-stress
@@ -245,10 +249,10 @@ the same line's `flags=`, and `het_stats_print` adds an explicit note whenever t
 was used. Selection is mechanical: `mu` is read whenever one is compiled in and fired,
 otherwise the canary is.
 
-## 5. The co-run, and what Q4's cost model got wrong
+## 5. The co-run, and what the design estimate got wrong
 
-Q4 §2.4 calls the control "just another het instance… **No new machinery**" and §2.3
-"essentially free". **Against live code that was false**, and the four collisions are worth
+The design estimate priced the co-run as just another het instance, needing no new machinery
+and essentially free. **Against live code that was false**, and the four collisions are worth
 recording because each one would have failed *silently*:
 
 1. **`K_TAG` was one `#define` per translation unit** — and it is 3 for MP/SB/LB but 4 for
@@ -286,8 +290,8 @@ equally uninformative.
 
 **Disjoint cache-line-padded locations.** Disjoint *addresses* are not enough: two variables
 on one cache line are one coherence unit, so `mu(T)`'s traffic would drag T's line around
-and the control would perturb the very test it exists to vouch for (Q4 §8.4). The
-instances' shared vars and the barrier are carved out of **one `gd_alloc_shared` arena, one
+and the control would perturb the very test it exists to vouch for. The instances'
+shared vars and the barrier are carved out of **one `gd_alloc_shared` arena, one
 cache line apart** — still the coherent allocator, which is what selects the property under
 test.
 
@@ -308,11 +312,11 @@ an observed row the other — is assembled **offline**, against a verdicts file 
 supplies (`oracle-harness.md`), because it is a claim about a model and the harness holds
 none.
 
-Where a shape's control cannot be made hot, say so plainly — the GTX-280 honesty:
+Where a shape's control cannot be made hot, say so plainly — the GTX 280 honesty:
 
 > "In fairness to the authors of [19], we were unable to observe weak behaviours
 > using our method on the Nvidia GTX 280 chip they used."
-> — Alglave et al., ASPLOS'15, footnote 7, p.577.
+> — [Alglave15 fn. 7], p. 577.
 
 ### The 0.2 % correction — disclose it
 
@@ -392,16 +396,18 @@ with a real x86 reader close their cycle through a load, and none of this reache
 
 - The het control/canary **hit-rate** — unpublished.
 - **Which shapes' mutants are observable at all** on GH200 (MP almost certainly; SB/LB/S/R
-  unknown — Kirkham ranks **SB hardest on every chip**). This decides which nulls are even
-  interpretable.
+  unknown — SB is revealed by the fewest parameter configurations across [Kirkham20 §4.1]'s
+  three GPUs and carries the lowest rate on two of them, yet the **highest** rate on the
+  third [Kirkham20 §4.2 Tab.6], so shape difficulty does **not** transfer between parts).
+  This decides which nulls are even interpretable.
 - `tau_hot` calibration; `HET_WINDOW` calibration (it is a **placeholder, not a
-  measurement** — owned by B8, and it must be calibrated against `HET_EXHAUSTIVE_MAX`).
+  measurement** — owned by the autotuner (`hetlitmus/tune.py`), and it must be calibrated
+  against `HET_EXHAUSTIVE_MAX`).
 - Whether the floor twin is hot enough often enough that the **nearest** weakening (`MuAlt`,
-  §3) could be afforded instead — Q4 §8.3's open question, taken the other way round. The
-  shipped `mu` *is* the fully-relaxed companion Q4 named as the fallback, so this is a
-  re-tightening question rather than a fallback: a nearest-weakening control would vouch for
-  a state closer to T, and only measured rates can say whether it fires enough to be worth
-  the distance it gives up.
+  §3) could be afforded instead. The shipped `mu` *is* the fully-relaxed companion, the
+  weakest candidate the corpus holds, so this is a re-tightening question rather than a
+  fallback: a nearest-weakening control would vouch for a state closer to T, and only
+  measured rates can say whether it fires enough to be worth the distance it gives up.
 - Whether a co-running control **perturbs** T through C2C contention.
 
 ## 8. Gates
@@ -411,30 +417,31 @@ with a real x86 reader close their cycle through a load, and none of this reache
 | `make hetlitmus-controlmap` | every row's `mu(T)` **exists**, is structurally identical to T and strictly weaker, at the floor of the lattice, with the same scopes and condition; `none` ⟺ at the floor; the census 411 = 333 + 78 holds. Fails closed. `--bite` proves it fails on six injections (§3). |
 | `make hetlitmus-amd-controlmap` | the same derivation over the x86 strength lattice, and that the two lattices put the **same** rows at the floor — so `N_FLOOR` is not silently an AArch64 number. |
 | `make hetlitmus-verdict` | four phases + `--bite`. `het_verdict()` is compiled from the **real emitted header** and fed synthetic records: all four outcomes and every liveness disqualifier reachable (**provably not constant**), an unstamped record fails closed, `tau_hot` bites exactly at `tau_hot`; each outcome's sentences are reachable from that outcome and no other, checked **both ways**; **every** emitted harness stamps `rec_magic` once and carries the co-run population the map gives it (census pinned as `verdictcheck.py:CENSUS`); and the printout names only the machine its pair is entitled to. |
-| `tokens.sh selftest [8]` | B5's CPU/interconnect liveness gate **bites** — seven injections, each `cmp -s`-verified to have actually changed the file. |
+| `tokens.sh selftest [8]` | the CPU/interconnect stress-liveness checker (`verify/cpustresscheck.py`) **bites** — seven injections, each `cmp -s`-verified to have actually changed the file. |
 | `hetlitmus-faithful` (`ptxcheck`) | every lane of **every co-running instance** is modelled — a missing control lane means the harness *reports* a positive control it is not running. `het_instances()` mirrors the emitter's population exactly (T / T+canary / T+`mu`+canary), and disagreeing is a hard failure. |
 | `hetlitmus-cram positive-control.t` | the emitted wiring: control names, the direction-matched canary, the `HET_MU_NAME NULL` sentinel and the in-harness sentence that says *why* a floor row co-runs no `mu`, `control_exhaustive_valid` per `T_L` class in both directions, the R→EXPLORATORY reporting demotion, the two compiled-in flags, and the canary's real co-run (name ≠ co-run). |
 
-## 9. The gap B6a stated plainly — now closed
+## 9. Proving the GPU stress ran, not just that it exists
 
-B6a recorded that `het_do_stress` (the scratchpad loop that *is* the GPU stress) had **no
-runtime tally**, so `het_obs_record` carried no evidence the loop had *executed* — only
+`het_do_stress` (the scratchpad loop that *is* the GPU stress) once had **no runtime
+tally**, so `het_obs_record` carried no evidence the loop had *executed* — only
 `stresscheck.py`'s structural proof that it had survived into the PTX. The rule therefore
 refused to disqualify on `HET_REQ_GPU_STRESS`, because *a check that cannot fail is worse
 than no check*.
 
-**B6b closes it.** `het_stress.h` gained `HET_TALLY_STRESS_ROUNDS` (an `atomicMax` of the
-rounds any single `het_do_stress` call completed — overflow-free, like `NOISE_ROUNDS`), the
-record gained `gpu_stress_rounds`, and `het_verdict()` gained `HET_DQ_GPU_STRESS_DEAD`.
+**The runtime tally closes that.** `het_stress.h` gained `HET_TALLY_STRESS_ROUNDS` (an
+`atomicMax` of the rounds any single `het_do_stress` call completed — overflow-free, like
+`NOISE_ROUNDS`), the record gained `gpu_stress_rounds`, and `het_verdict()` gained
+`HET_DQ_GPU_STRESS_DEAD`.
 `stresscheck.py` gained a **device-probe check** that drives `het_do_stress` on real hardware
 and requires the tally to be **nonzero when on and zero when off**, for every access pattern
 — a counter that cannot go to zero is not evidence of liveness.
 
-The two checks are **not redundant**, and that distinction is the whole lesson of B4: the
-runtime tally proves the loop *ran*; `stresscheck.py` proves it still *contains* its
-scratchpad accesses and that they are invariant under the `-D` pattern knobs (which is what
-makes them undeletable). B4's layer was in the source, gone from the PTX, and green on every
-gate — neither check alone would have caught it.
+The two checks are **not redundant**, and that distinction is the whole lesson of the stress
+layer nvcc deleted: the runtime tally proves the loop *ran*; `stresscheck.py` proves it still
+*contains* its scratchpad accesses and that they are invariant under the `-D` pattern knobs
+(which is what makes them undeletable). That layer was in the source, gone from the PTX, and
+green on every gate — neither check alone would have caught it.
 
 It also has a **new** job. A co-run harness reserves 3×–5× the test blocks, so the stress
 population is the first thing the co-residency cap squeezes to zero: the code present,
@@ -445,15 +452,15 @@ the run.
 
 - Everything in §7 remains hardware-only, and the co-run makes one of them sharper: whether
   the co-running control **perturbs** T through C2C contention is now a live question about a
-  harness that actually exists (Q4 §8.4). Disjoint padded locations prevent *semantic*
-  masking; contention on the window is unmeasured.
+  harness that actually exists. Disjoint padded locations prevent *semantic* masking;
+  contention on the window is unmeasured.
 - **`mu` everywhere costs blocks.** Co-run harnesses reserve 3×–5× the test blocks
-  (Q4 §8.4's contention question is the other half of the same budget), so the census of
+  (the contention question above is the other half of the same budget), so the census of
   `NPART`/blocks against the device's `cooperativeLaunchMaxBlocks` must be taken on the
   target before a campaign, not after.
 - `NOT-OBSERVED-CANARY-ONLY` is an outcome the campaign can actually produce on any row, and
-  *which shapes land there* is exactly the observability question Q4 §8.2 flags. It is also
-  the input B8 tunes against.
+  *which shapes land there* is exactly the observability question §7 flags. It is also
+  the input the autotuner (`hetlitmus/tune.py`) tunes against.
 
 ---
 

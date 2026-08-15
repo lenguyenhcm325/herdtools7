@@ -526,7 +526,9 @@ def check(litmus_path, arch="sm_90", harness_dir=None, sel=None):
                 fail("enemy-seq-runtime: het_cpu_enemy's "
                      "op count MOVES with -DHET_CPU_ENEMY_SEQ"
                      " %s.  A compile-time sigma lets the optimiser "
-                     "fold the switch to one branch and delete a store-free loop; it must "
+                     "fold the switch to one branch, so the object carries only the "
+                     "pattern that -D named -- and on the non-volatile GPU twin, that "
+                     "is how a write-free branch loses its loads.  It must "
                      "arrive in het_cpu_enemy_args as a RUNTIME field."
                      % {q: per_seq[q] for q in SEQS})
             else:

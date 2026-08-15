@@ -224,7 +224,7 @@ def phase1(tmp, d):
         ("hip-link success line", r'^if \[ "\$TARGET" = hip-link \]; then$', comp, "comp.sh"),
         ("hip-bin rule", r"^hip-bin: %s_hip\.o outs\.o %s_cpu_host\.o$" % (re.escape(t), re.escape(t)), mk, "Makefile"),
         ("hip-bin .PHONY", r"^\.PHONY:.*\bhip-bin\b", mk, "Makefile"),
-        # With both link targets phony and no rule naming ./<test>, make falls
+        # With every link target phony and no rule naming ./<test>, make falls
         # through to its BUILT-IN `%: %.o' -- see the behavioural check below,
         # which is the one that can detect that.
         ("./<test> refusal rule", r"^%s:$" % re.escape(t), mk, "Makefile"),
@@ -260,7 +260,7 @@ def phase1(tmp, d):
 
 
 def make_test_refuses(tmp, d, phase, link_target):
-    """`make <test>' must refuse, checked by RUNNING it: with the link targets
+    """`make <test>' must refuse, checked by RUNNING it: with every link target
        phony and no rule naming ./<test>, `make <test>' reaches GNU make's
        built-in `%: %.o' link rule, which never consults the uname -m guard, and
        whether that link then fails is up to the objects' symbols rather than to
@@ -979,7 +979,7 @@ def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda, d_fence, fence_src):
         phony_line(w).replace(" hip-bin", "", 1))
     ok &= bite_one("hip-bin dropped from .PHONY", "build-arms",
                    lambda: phase1(tmp, w), "hip-bin .PHONY")
-    # OMISSION: with the link targets phony there is no rule naming ./<test>, so
+    # OMISSION: with every link target phony there is no rule naming ./<test>, so
     # make falls through to its BUILT-IN `%: %.o' and links it with $(CC), guard
     # and device code both gone.  Deleting the refusal rule reaches exactly that
     # state, and only RUNNING make can catch it, since the defect is an absent

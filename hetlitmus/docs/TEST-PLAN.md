@@ -70,9 +70,9 @@ All verified on the dev box (has `dune`/`ocaml`, `herd7`/`litmus7`/`hetgen7`/
 
 ## 2. The 4 layers
 
-Consolidated from an earlier 6-layer cut. Boundary between layers = the heaviest
-tool you must install to run it: **nothing → OCaml build → CUDA → GPU.** Nothing
-was dropped: old L0,L3→**1**; L1,L2-golden→**2**; L2-faithful,L4→**3**; L5→**4**.
+Consolidated from an earlier six-layer cut; nothing was dropped. Boundary
+between layers = the heaviest tool you must install to run it: **nothing →
+OCaml build → CUDA → GPU.**
 
 | Layer | Checks | Mechanism | Needs | Runs |
 |---|---|---|---|---|
@@ -277,8 +277,8 @@ CPU-only gate would otherwise miss.
 **Seven targets were deleted, not renamed** — they derived or audited expected verdicts,
 and the tool claims none: `hetlitmus-oracle`, `-nvroundtrip`, `-amd-oracle`, `-amdorder`,
 `-amdprov`, `-nvprov`, `-nvanchor`. So was `-noracle`, together with the
-`-allow-no-oracle` flag it gated. All of them live on branch
-`hetlitmus-oracle-derivation`. Two survivors moved rather than went:
+`-allow-no-oracle` flag it gated. All of them live on with the retired
+oracle-derivation lineage, outside this tree. Two survivors moved rather than went:
 `hetlitmus-order` → `hetlitmus-lattice` (its verdict phase dropped, its lattice phases
 kept), and `hetlitmus-noracle-hw` → `hetlitmus-characterize-hw` (the unregistered-pair
 refusal became a warning, so what the gate reads off a real printout is the control
@@ -295,8 +295,9 @@ land **in the same commit**.
 `hetlitmus-faithful` proves the harness carries **exactly the tested ops**; it is blind to
 the **scaffolding** (stress carries no order/scope qualifier, so it is not a model op — by
 design). `hetlitmus-stress` (`verify/stresscheck.py`) is the other half: it proves the stress
-layer is **in the PTX at all**. It exists because B4 shipped a pre-stress incantation that
-nvcc had dead-code-eliminated to zero instructions, and every other gate stayed green.
+layer is **in the PTX at all**. It exists because the GPU scratchpad stress once shipped as
+a pre-stress incantation whose traffic nvcc had hoisted clean out of the loop, and every
+other gate stayed green.
 
 Notes:
 - `hetlitmus-corpus` compares a fresh out-of-tree regeneration against the committed corpus (catches add/remove/modify; writes nothing into the tree).

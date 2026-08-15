@@ -28,7 +28,7 @@
 # (why: het_verdict.h, "RUNTIME knobs" -- a -D the device code can see is how a
 # stress layer gets silently folded away.)
 #
-#   HET_ALLOC      auto|malloc|managed|pinned   shared-memory mode      (PORT1)
+#   HET_ALLOC      auto|malloc|managed|pinned   shared-memory mode
 #   HET_RUNS_MAX   runs this invocation, clamped to the compiled NUMBER_OF_RUN
 #   HET_ADAPTIVE   1 => consult het_campaign_should_stop() after every run
 #   HET_RATE       1 => a sighting stops nothing; the row runs to budget

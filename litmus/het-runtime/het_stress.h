@@ -219,14 +219,16 @@ __device__ static inline void het_scratch_max(uint32_t* p, uint32_t v) {
  * stores while on most chips the stores-only ones rank lowest.
  *
  * CALLER CONTRACT: `pattern' must arrive as a runtime value (a kernel argument).
- * Handed a compile-time constant, nvcc folds the if-chain to one branch, and
- * branch 3 (ld;ld, the tuned pre-stress default) is side-effect-free, so the
- * entire loop is deleted while the source still reads correctly.  The accesses
- * stay plain and non-volatile, as upstream's are, so they are ordinary cacheable
- * traffic -- fresh lines in, remote lines invalidated [Kirkham20 sec 3.1] -- and
- * add no ordering edge to the test; keeping them plain is what makes the runtime
- * pattern load-bearing rather than a style choice.  That the pattern is still a
- * runtime value is checked by stresscheck.
+ * Handed a compile-time constant, nvcc folds the if-chain to the one named
+ * branch; the shipped pre-stress default (3 = ld;ld) writes nothing, so its
+ * loads hoist out of the loop, leaving an empty counting loop that still feeds
+ * the tally -- the mechanism reads live while its traffic is gone.  What each
+ * compile-time pattern costs is measured in hetlitmus/docs/faithfulness.md.
+ * The accesses stay plain and non-volatile, as upstream's are, so they are
+ * ordinary cacheable traffic -- fresh lines in, remote lines invalidated
+ * [Kirkham20 sec 3.1] -- and add no ordering edge to the test; keeping them
+ * plain is what makes the runtime pattern load-bearing rather than a style
+ * choice.  That the pattern is still a runtime value is checked by stresscheck.
  *
  * Added here, not upstream: the [tally] parameter and the closing het_scratch_max.
  * The counter is taken outside the loop, so no atomic lands in the stress traffic.

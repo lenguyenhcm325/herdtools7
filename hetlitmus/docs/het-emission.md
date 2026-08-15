@@ -1,19 +1,19 @@
-# HetLitmus Tier-2: heterogeneous CPU+GPU harness emission
+# Heterogeneous CPU+GPU harness emission
 
 This document describes how `litmus7` turns a `Het` (compound) `.litmus` test
-into **one compilable CPU+GPU harness directory**. It is the Tier-2 follow-on to
-Tier-0 (the compound pseudo-arch / single-arch break, see
-`docs/het-litmus-format.md`) and Tier-1 (the GPU-only CudaLang/HipLang emitters,
-see `docs/cuda-emitter.md`). Cross-device *execution* on real hardware is **Task
-9** and out of scope here; Tier-2 stops at a harness that **compiles**.
+into **one compilable CPU+GPU harness directory**. It builds on the compound
+pseudo-arch / single-arch break (see `docs/het-litmus-format.md`) and on the
+GPU-only CudaLang/HipLang emitters (see `docs/cuda-emitter.md`). Cross-device
+*execution* on real hardware is out of scope here; emission stops at a harness
+that **compiles**.
 
-Two axes are chosen per test rather than hard-wired (the **Phase A/B** work):
+Two axes are chosen per test rather than hard-wired:
 
-* **CPU ISA is selected by the per-column device tag** (Phase A). The header tag
+* **CPU ISA is selected by the per-column device tag.** The header tag
   *names* the CPU ISA — `P0:aarch64` or `P0:x86_64` — and `P0:cpu` is a
   back-compat alias for AArch64. litmus7 pre-scans the header, then instantiates
   the matching CPU sub-parser + compile pipeline. The GPU side stays LISA/Bell.
-* **The GPU dialect is selected by `-gpu-target`** (Phase B). One LISA parse
+* **The GPU dialect is selected by `-gpu-target`.** One LISA parse
   yields the ONE render that flag names — `<t>.cu` (CUDA) or `<t>.hip` (HIP) —
   from a shared driver template; only the per-instruction lowering and a few
   host tokens differ. The flag is mandatory on the `Het` and `LISA` arms and has
@@ -46,9 +46,9 @@ run harness (and therefore needs no `_show.awk`/`cache.h` runtime from the
 libdir — which is why `-set-libdir herd/libdir` is fine even though those files
 live under `litmus/libdir`).
 
-## Phase A — CPU ISA from the device tag (a functor, not a flag)
+## CPU ISA from the device tag (a functor, not a flag)
 
-The Tier-2 body used to be AArch64-specific. It is now a **functor over the CPU
+The harness body used to be AArch64-specific. It is now a **functor over the CPU
 module chain**, `HetEmit.Make` in `litmus/hetEmit.ml` (extracted from
 `top_litmus.ml`; the seam back to `Top`'s scope is the options slice, the
 splitter, and `Make`'s compiled-CPU-code extractor, closed at the dispatch
@@ -76,7 +76,7 @@ parser consumes. The GPU side is fixed (LISA/Bell) inside the functor.
 
 Each `Het` test yields a directory containing (CPU ISA = whatever the tag named):
 
-ONE GPU dialect per directory (Phase B): the render and the build arms are the
+ONE GPU dialect per directory: the render and the build arms are the
 ones `-gpu-target` named, and no other vendor's. `<v>` below is that target word.
 
 | file            | role                                                         | compiled by |
@@ -129,11 +129,10 @@ The five required pieces, and where each is reused rather than reimplemented:
    __HIP_MEMORY_SCOPE_SYSTEM)` (HIP). Each participant `fetch_add(1, seq_cst)`
    then spins until the count reaches `NPART` (= #CPU pthreads + #GPU threads).
    System scope is used deliberately so the barrier itself is *strong* and does
-   not contaminate the relaxed/scoped behaviour under test (see
-   `hetlitmus-work-tiers`, Tier-2/Tier-3 note). The driver resets `*barrier = 0`
-   each iteration, between a `pthread_join` + device-sync. The `__hip_atomic_*`
-   builtins compile in **host** code under hipcc (verified), so the same barrier
-   idiom works in the pthread and in the kernel.
+   not contaminate the relaxed/scoped behaviour under test. The driver resets
+   `*barrier = 0` each iteration, between a `pthread_join` + device-sync. The
+   `__hip_atomic_*` builtins compile in **host** code under hipcc (verified), so
+   the same barrier idiom works in the pthread and in the kernel.
 
 5. **GPU readback merged into litmus7's outs histogram.** The kernel writes each
    result register to `__out[proc*NREGS + n]` (managed memory); the CPU asm
@@ -143,7 +142,7 @@ The five required pieces, and where each is reused rather than reimplemented:
    the histogram, marking outcomes that satisfy the test's `exists` condition
    (compiled to a C predicate `_cond` over `_o[]`).
 
-## Phase B — one render per `-gpu-target`, and `comp.sh [<target>|<target>-link]`
+## One render per `-gpu-target`, and `comp.sh [<target>|<target>-link]`
 
 One LISA parse, one GPU file per emission. The driver template is rendered from
 a `gpu_dialect` record; the registry `dialects = [cuda_dialect; hip_dialect]`
@@ -174,9 +173,18 @@ happily.
 
 The emitted `README.md` is a page: the file list, the build and link commands,
 and a closing `Target:` line naming the part the pair's machine row entitles it
-to (Phase C/D). Everything a reader needs *once* rather than per harness lives
-here instead: emission writes one harness directory per test per lane, so a
-paragraph put there is copied once per test.
+to (the machine table below). Everything a reader needs *once* rather than per
+harness lives here instead: emission writes one harness directory per test per
+lane, so a paragraph put there is copied once per test.
+
+**Where an emitted file's repo paths point.** Every repo path an emitted file
+names — `hetlitmus/docs/het-emission.md` in the README, `litmus/hetMachine.ml`
+and `hetlitmus/campaign.py` in the runtime headers — resolves against a
+herdtools7 checkout, never against the harness directory; the headers beside a
+harness are copies of `litmus/het-runtime/*`, so such a path names the original
+rather than the file next to it. A harness travels to a GPU box and comes back
+as a results tree, and those pointers are that tree's only trail back to the
+emitter: provenance for a reader who has the repo, inert for one who does not.
 
 **Why the co-run layers are in the launch.** A null result is evidence only if
 the harness would have seen a weak behaviour had one occurred. Every instance
@@ -189,12 +197,12 @@ test ought to have done. `litmus/het-runtime/het_verdict.h` holds the rule that
 reads them.
 
 **Why there is one binary path per vendor.** Both link paths write `./<t>`, so
-`hetlitmus/spotcheck/run-one.sh` and `hetlitmus/campaign.py` exec `./<test>` and
-stay vendor-agnostic. The GPU compiler driver pulls in its own device runtime;
-`-lpthread -lm` cover the CPU threads and the statistics layer (`het_verdict.h`
-includes `<math.h>` for the KS statistic). `<target>-bin` is `.PHONY` and always
-relinks, so a build can never report success while leaving a stale binary in
-place.
+`hetlitmus/spotcheck/run-one.sh` and `hetlitmus/campaign.py` exec `./<test>`,
+read its `HetStats` line and stay vendor-agnostic. The GPU compiler driver pulls
+in its own device runtime; `-lpthread -lm` cover the CPU threads and the
+statistics layer (`het_verdict.h` includes `<math.h>` for the KS statistic).
+`<target>-bin` is `.PHONY` and always relinks, so a build can never report
+success while leaving a stale binary in place.
 
 **Why both link paths refuse a foreign host.** `<t>_cpu.c` carries the tested asm
 under `#if defined(<host_macro>)` and a portable shim in the `#else` branch, so
@@ -203,7 +211,7 @@ runs, prints a histogram and tests nothing, and both `comp.sh <target>-link` and
 `make <target>-bin` compare `uname -m` against the render's ISA and refuse
 instead (`comp.sh` exits 3; the make recipe exits 3, which `make` reports as its
 own exit 2). `make <t>` refuses too, and the refusal rule is not by itself what
-makes that hold. With both link targets phony no rule names `./<t>`, and on a
+makes that hold. With every link target phony no rule names `./<t>`, and on a
 CUDA render the GPU object *is* `<t>.o` — exactly what GNU make's built-in
 `%: %.o` rule wants, so make would link past the guard with `$(CC)`.
 `.SUFFIXES:` is what removes that rule: the built-in link rules are
@@ -224,7 +232,7 @@ non-zero value is an `#error` on a render that has none
 (`litmus/het-runtime/het_alloc_hip.inc`) rather than a value reported in the
 banner without anything having been placed.
 
-## Phase C/D — the machine table, and the machine a harness may name
+## The machine table, and the machine a harness may name
 
 A harness is not "an AArch64 test" or "a HIP test": it is a **(CPU ISA x GPU
 dialect) PAIR**, and the silicon the run *names* belongs to that pair.
@@ -251,8 +259,8 @@ Three rules make it worth having:
   *mechanism* — and the render says in band which of the two nameless states it
   is in (registered-without-a-row, or in no row at all). Nothing about the pair
   can refuse an emission: `-allow-no-oracle` and the exit-3 refusal it opted out
-  of are gone (they live on branch `hetlitmus-oracle-derivation`), and
-  `-gpu-target` remains mandatory as the render selector.
+  of are gone with the retired oracle-derivation lineage, which lives outside
+  this tree, and `-gpu-target` remains mandatory as the render selector.
 * **The machine prose keys on the pair, not on the dialect.** The emitter stamps
   `HET_LINK_NAME` / `HET_HOST_HALF` / `HET_DEV_HALF` / `HET_LLC_MB` (and
   `HET_ALGLAVE_ZERO_MEASURED`, for the one measurement that is NVIDIA-only) from
@@ -290,13 +298,12 @@ over: the host half is a property of the **pair**, so a dialect-keyed
 
 `HET_LLC_MB` is the same rule applied to a *number*. The threshold a noise
 buffer must exceed to cross anything is per target: 114 MB is
-`max(Grace L3, Hopper L2)` (Bagchi ISMM'26 Table 1) and **under-fires** on
+`max(Grace L3, Hopper L2)` ([Bagchi26 Table 1]) and **under-fires** on
 MI300A, whose last level is the 256 MB MALL / AMD Infinity Cache on the IOD
-(Tee et al., *The MALL is Open*, SC Workshops '25, Table 1 p. 1111 — MI300A:
-sL1 16 KB, L2 4 MB/XCD, MALL 256 MB). Each pair with a row stamps its own; 114
-stays as `het_cpu_stress.h`'s `#ifndef` default, and where it is *not* the
-target's own figure the emitted warning says so instead of naming it as this
-machine's cache.
+([Tee25 Table 1], p. 1111 — MI300A: sL1 16 KB, L2 4 MB/XCD, MALL 256 MB). Each
+pair with a row stamps its own; 114 stays as `het_cpu_stress.h`'s `#ifndef`
+default, and where it is *not* the target's own figure the emitted warning says
+so instead of naming it as this machine's cache.
 
 ### Two build facts every pair stamps
 
@@ -376,13 +383,13 @@ All het logic is confined to:
 * the `` `Het `` dispatch arm in `litmus/top_litmus.ml` — the per-ISA module
   instantiation, closing `HetEmit.Make`'s seam over `Top`'s scope.
 
-The only edits outside those are the ones Phase A/B strictly require:
-`lib/X86_64Parser.mly` (the `instr_option_seq` start rule) and `gen/hetGen.ml`
-(the `-cpu-arch` flag, below). `ASMLang` is **reused, not modified**: this
-branch never edits it, and litmus7's own CPU-only runs still instantiate it —
-but it is not what writes the het CPU body (piece 1 above). The het arm reads
-the same compiled template `ASMLang.dump_fun` would have read, takes the
-address parameters and the final registers, and stops there.
+The only edits outside those are the ones the two selection axes strictly
+require: `lib/X86_64Parser.mly` (the `instr_option_seq` start rule) and
+`gen/hetGen.ml` (the `-cpu-arch` flag, below). `ASMLang` is **reused, not
+modified**: this branch never edits it, and litmus7's own CPU-only runs still
+instantiate it — but it is not what writes the het CPU body (piece 1 above).
+The het arm reads the same compiled template `ASMLang.dump_fun` would have
+read, takes the address parameters and the final registers, and stops there.
 `CudaLang`/`HipLang` are reused for the GPU lowering (their shared half is
 `litmus/gpuLang.ml`). One general (non-het) robustness fix lives in
 `litmus/dumpRun.ml`: when no test compiled to a C run harness (e.g. an
@@ -409,12 +416,12 @@ byte-identical to before (the cpu column keeps its `cpu` back-compat tag).
   emit; what the machine table decides is which of them may name a machine.
   GH200 (AArch64+CUDA) and MI300A (x86_64+HIP) are the two science targets,
   x86_64+CUDA is the dev box, and AArch64+HIP is in no row and names none.
-* Both CPU ISAs emit a **real B3-tagged body** since P2b (2026-08-03): store
-  values rebound to `K*(_n+1)+mu`, loads recorded into per-iteration buffers,
-  the tested mnemonics reproduced verbatim (`str`/`stlr`/`ldr`/`ldar`/`ldapr`/
+* Both CPU ISAs emit a **real tagged body**: store values rebound to
+  `K*(_n+1)+mu`, loads recorded into per-iteration buffers, the tested
+  mnemonics reproduced verbatim (`str`/`stlr`/`ldr`/`ldar`/`ldapr`/
   `dmb` on AArch64, `movq`/`mfence` on x86-64), widened to 64-bit operands.
-  Before P2b the x86_64 arm emitted a `(void)_n` no-op: the CPU thread tested
-  nothing, and litmus7 could emit a harness for only 39 of the 411 x86
+  An earlier x86_64 arm emitted a `(void)_n` no-op instead: the CPU thread
+  tested nothing, and litmus7 could emit a harness for only 39 of the 411 x86
   renderings (the condition could bind neither a read buffer nor a `mu`).
   The renderings themselves are produced on demand by
   `hetlitmus/tests/het/generate-x86.sh OUTDIR` — never committed, because ~90
@@ -430,9 +437,10 @@ byte-identical to before (the cpu column keeps its `cpu` back-compat tag).
   **3** (`HetArch.refused`).  litmus7's own batch driver would have reported the
   refusal and still exited 0, which made a missing harness look like success to
   any caller that redirects stdout. An unregistered **pair** is not such a case
-  — that is a warning (Phase C/D above). What still refuses here is an emission
-  that would be wrong rather than merely nameless: an unresolvable control-map
-  row, a legacy control-map header, or a machine-word hole no row has a word for.
+  — that is a warning (the machine table above). What still refuses here is an
+  emission that would be wrong rather than merely nameless: an unresolvable
+  control-map row, a legacy control-map header, or a machine-word hole no row
+  has a word for.
 * The CPU projection supports plain straight-line procs (the het corpus). An
   instruction outside the tagged-body vocabulary is refused by name at
   classification, before any harness directory exists. A structural pseudo is
@@ -441,4 +449,5 @@ byte-identical to before (the cpu column keeps its `cpu` back-compat tag).
   silently removed. Supporting them would mean extending the vocabulary in
   `HetCpuPlan` and its per-ISA classifiers, not in `ASMLang`.
 * COMPILE-ONLY: no GPU is launched. Stress/observability tuning (making the CPU
-  and GPU ops actually race) and on-hardware runs are Tier-3 / Task 9.
+  and GPU ops actually race) and on-hardware runs are hardware-only work
+  (`00-environment-design.md` §6).

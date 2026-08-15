@@ -47,7 +47,7 @@ __global__ void litmus_WRC_sys_relaxed(int* x, int* y, int* __out) {
   }
 }
 
-// ---- host harness (illustrative; compile-checked for gfx942 by hipcc) ----
+// ---- host harness (illustrative; hetlitmus/compile-hip.sh compiles it for gfx942 by hand; no gate does) ----
 // Result buffer layout: __out[proc * 4 + regIndex].
 // Reset all globals to 0 before each launch; the weak outcome under
 // test is exactly the `condition' line above.

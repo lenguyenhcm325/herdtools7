@@ -2,21 +2,21 @@
 
 **Status:** consolidated design, 2026-07-06. This is the synthesis of a nine-question deep-research
 effort into how to *run* heterogeneous CPU–GPU litmus tests on real hardware (GH200, then MI300A) so that
-the results are meaningful. It is the coding spec for the "Task 9 / Layer 4" run-wiring the emitter
+the results are meaningful. It is the coding spec for the "Layer 4" run-wiring the emitter
 currently stops short of.
 
-**How to read this.** This document is the coherent architecture + the build order. It does **not** re-embed
-every detail — each component points to its detailed findings file under `hetlitmus/../env-research/Q*.md`
-(nine files, each with verbatim-quoted primary-source evidence + an assumption-transfer analysis + a
-recommendation). The one-paragraph memory record is `memory/hetlitmus-env-design.md`.
+**How to read this.** This document is the coherent architecture + the build order. It does **not**
+re-embed every detail: each section states one design decision and names the code that carries it, and
+the sibling docs in this directory carry the mechanisms in full. §9 names the artefact that wins where
+a document and the shipped header disagree.
 
 **Provenance / corrections folded in** (see §7): the "~0.2 % relaxed-MP" figure is a *GPU-only* rate, not
-het (verified against Bagchi pp.74–76); Q2's per-frame tally is lifted to the `(instance,run)` unit by Q3;
+het ([Bagchi26 §5.1]); the per-frame tally is lifted to the `(instance,run)` unit;
 the cuda-litmus `MEM_STRESS` macro ships a bug; the cuda-litmus reuse is **supervisor-approved for thesis
 (academic) use with citation required** (Anatole, 2026-07-06 — to be captured in writing; the upstream repo
 carries **NO license**, so an explicit grant from Levine is needed before any public artifact, see §7); the
-GPUHarbor + MC-Mutants secondhand claims were verified against the
-local PDFs (`env-research/verify-gpuharbor-mcmutants.md`).
+reproducibility statistics GPUHarbor runs on are MC-Mutants' ([GPUHarbor23 §6], [MCMutants23 §4.2]), and
+GPUHarbor's own addition is a correlation validation and not a second statistics layer.
 
 ---
 
@@ -34,13 +34,15 @@ silicon it would almost certainly observe **nothing**:
 - **no stress**, **no cross-device alignment**, **no positive control**;
 - shared vars allocated with `*MallocManaged`, which on GH200 page-migrates at 2 MB and *masks* the race.
 
-Per the GPU-litmus literature — on **Nvidia** silicon, which is the GH200 target (Alglave'15 §4.3.1: *"we
+Per the GPU-litmus literature — on **Nvidia** silicon, which is the GH200 target ([Alglave15 §4.3.1]: *"we
 did not observe sb and lb on Titan without this incantation"*, Table 6 showing them at **zero** in every
-column without memory stress; S&D: 0/1000 → 102/1000 on a Tesla K20) — every "Never" from this harness is
-meaningless. (On **AMD** the same paper found weak behaviours *without* stress — `lb` at 10959/100k with no
-incantations — so for MI300A the layer amplifies rates rather than enabling observation; do not carry the
-unqualified claim across vendors.) This document specifies the environment that makes a "Never" mean
-something.
+column without memory stress; and [Sorensen16 §1], where the weak-memory error in the `cbe-dot`
+*application* — a spinlock-guarded CUDA dot product, not a litmus test — appears in **0 of 1000** executions
+on a Tesla K20 unstressed and **102 of 1000** under their tuned stressing environment) — every "Never" from
+this harness is meaningless. (On **AMD** the same [Alglave15] table records weak behaviours *without*
+stress — `lb` at 10959/100k on the Radeon HD 7970 with no incantations at all — so for MI300A the layer
+amplifies rates rather than enabling observation; do not carry the unqualified claim across vendors.) This
+document specifies the environment that makes a "Never" mean something.
 
 ---
 
@@ -61,10 +63,10 @@ something.
         │                        │  writes ──►  het_obs_record  {target, interleavings, control, skew, …}
         ▼                        ▼
    outs_t histogram        positive-control gate + liveness disqualifiers  ──►  OBSERVED /
-   (fed per valid frame)   (Q4, DR1)                                            NOT-OBSERVED / COLD-INVALID
-                           stationarity gate (Q3)  ──►  P_rep + sighting tier, on the OBSERVED side only
+   (fed per valid frame)   (het_verdict.h)                                      NOT-OBSERVED / COLD-INVALID
+                           stationarity gate       ──►  P_rep + sighting tier, on the OBSERVED side only
                                    ▲
-                     autotuner tunes the stress mix to maximise the het-mutant DEATH RATE (Q7)
+                     autotuner tunes the stress mix to maximise the het-mutant DEATH RATE
 ```
 
 **The pipeline ends at the observation.** The harness carries no prediction and prints none;
@@ -72,35 +74,28 @@ comparing a row against a verdicts file the reader supplies is an **offline post
 (`hetlitmus/oracle-compare.sh`, `oracle-harness.md`), outside the loop above.
 
 The design is overwhelmingly **reuse + adapt**, with original code confined to the genuine gap
-(cross-device orchestration + the het-aware statistics/tuner). Lineage: PerpLE (perpetual instances),
-cuda-litmus / S&D / Kirkham / MC-Mutants (stress + parallelism + reproducibility), litmus7 (CPU harness +
-histogram + asm bodies), Fusco (C2C placement/noise), Goens/Lustig (the memory models an offline
+(cross-device orchestration + the het-aware statistics/tuner). Lineage: PerpLE [Melissaris20] (perpetual
+instances), cuda-litmus / S&D / Kirkham / MC-Mutants (stress + parallelism + reproducibility), litmus7 (CPU
+harness + histogram + asm bodies), Fusco (C2C placement/noise), Goens/Lustig (the memory models an offline
 comparison would be made against).
 
 ---
 
-## 3. Component design (each points to its findings file)
+## 3. Component design
 
-### 3.1 Build strategy — hybrid bespoke spine  [→ `Q9-build-strategy.md`]
+### 3.1 Build strategy — hybrid bespoke spine
 Keep the bespoke `.cu`/`.hip` translation unit as the outer spine; **reuse litmus7's *parts*** (CPU
 inline-asm bodies via `ASMLang.dump_fun`, the `_outs.c` histogram, CPU stress *recipes*, `-size`/`-nruns`
 param plumbing, diy7 generation) **without making `Skel.ml` the driver**. `Skel.ml` is single-arch and
-pthread-shaped, has no slot for a co-running kernel, and its per-cell CPU↔GPU barrier *masks the tested
-order and hangs*. No prior work routes GPU/het through litmus7's CPU harness (Bagchi *stitches*).
+pthread-shaped, and has no slot for a co-running kernel. Its per-cell CPU↔GPU barrier is refused on two
+grounds of different provenance: it *hangs* — on integrated CPU↔GPU parts a per-iteration, both-sided
+CPU↔GPU spin barrier has been seen to get no further than 2–3 iterations before sticking for good
+[Srivastava24 §4.1] — and it *masks the tested order*, which no source states and which is this project's
+own reasoning, that a barrier between the tested accesses adds ordering the test does not have. No prior
+work routes GPU/het through litmus7's CPU harness (Bagchi *stitches*).
 *[The `ASMLang.dump_fun` item is superseded — see §7; the rest of the reuse list stands.]*
 
-*[Sourcing note on the sentence above, added when the payload comments were keyed to
-`REFERENCES.md`. The two halves of "masks the tested order and hangs" have different
-provenance and must not be cited together. The **hang** is sourced: [Srivastava24 §4.1]
-reports a per-iteration, both-sided CPU↔GPU spin barrier getting stuck for good after 2–3
-iterations — but on two **integrated** parts (an AMD Ryzen 7 5700G and an Intel i7-12700K
-with their integrated GPUs), and the thesis reads it as CPU-GPU shared-memory visibility
-failing, not as a property of per-trial barriers as such. The **masking** half appears
-nowhere in that source: it is this project's own reasoning, that a barrier between the
-tested accesses adds ordering the test does not have. `het_stress.h`'s `het_spin` banner
-states the two separately for that reason.]*
-
-### 3.2 Memory & allocation — per-target knob  [→ `Q8-allocation.md`]
+### 3.2 Memory & allocation — per-target knob
 **The allocator selects the property under test.** Emit a per-target allocator:
 - **GH200 → system `malloc()`** for the shared vars *and the barrier* (cache-line CHI coherence via ATS —
   what Bagchi used). NOT `cudaMallocManaged` (2 MB migration serialises + masks the race).
@@ -112,16 +107,16 @@ states the two separately for that reason.]*
 - **Placement is a knob** (§3.6): first-touch / `cudaMemAdvise` remote-pinning is the interconnect-stress
   lever. `__out` may stay in ordinary host memory (off the race path).
 
-### 3.3 Run-loop & alignment — perpetual-instance, buy alignment  [→ `Q1-alignment.md`]
+### 3.3 Run-loop & alignment — perpetual-instance, buy alignment
 Launch the GPU kernel **once** and the CPU pthreads **once**; loop *inside*; rendezvous with **one**
 system-scope start barrier; then free-run. Guard GPU forward progress with **occupancy-bounded or
 cooperative launch** (`cudaLaunchCooperativeKernel` + `grid.sync()`; HIP equivalents). Do **not** add a
 per-trial cross-device barrier. There is no shared clock and no ordering-free side channel, so alignment is
 **bought**: volume + both-side stress (window-widener) + phase drift, and recovered post-hoc (§3.4). Bagchi
-never precisely aligned. *Optional Layer-5 research spike:* a calibrated `cntvct_el0`↔`%globaltimer`
+never precisely aligned. *Optional research spike:* a calibrated `cntvct_el0`↔`%globaltimer`
 cross-device timebase (both 1 GHz/32 ns, different epochs) — novel, do only after the basics work.
 
-### 3.4 Instance structure & recovery — asymmetric + clock-independent  [→ `Q2-runloop.md`]
+### 3.4 Instance structure & recovery — asymmetric + clock-independent
 - **Asymmetric instances:** a *few* genuinely-het pairs (H ≤ reserved Grace cores, ~1–8; 1 pinned CPU
   pthread ⋈ 1 GPU lane, on cache-line-padded private `malloc` locations) + *many* GPU-only stress
   instances filling the co-residency-capped grid. **Het volume comes from the perpetual inner loop, not the
@@ -135,7 +130,7 @@ cross-device timebase (both 1 GHz/32 ns, different epochs) — novel, do only af
 - **Loop nesting:** `RUNS (=Cfg.runs) × [one launch; one start barrier; inner for n<N]`; the old `100000`
   becomes `N = Cfg.size` = the free-running window (drivable to millions).
 
-### 3.5 GPU-side stress — reuse cuda-litmus  [→ `Q5-gpu-stress.md`]
+### 3.5 GPU-side stress — reuse cuda-litmus
 Port cuda-litmus `do_stress` + `StressParams` (`functions.cu`, `params/stress_params.txt`) into the emitted
 kernel — **supervisor-approved for thesis use, MUST cite** cuda-litmus/Levine + the papers (S&D, Kirkham,
 Alglave'15, MC-Mutants); the upstream repo carries **no license**, so an explicit grant from Levine is
@@ -146,7 +141,7 @@ device-scope) → it is a starting seed, not a preset library; re-tune (§3.9). 
 GPU scratchpad stress loads the *on-die* coherence protocol, **not** the C2C path the het weak behaviour
 needs — so it must be paired with §3.6.
 
-### 3.6 CPU-side + interconnect stress  [→ `Q6-cpu-interconnect-stress.md`]
+### 3.6 CPU-side + interconnect stress
 - **CPU stress = litmus7 recipes** ported into the emitted CPU thread at two sites (preload before the
   tested body; disjoint-scratchpad enemy threads + affinity in the driver), for both host ISAs (AArch64
   primitives `dc civac`/`prfm`; x86 `clflush`/`prefetcht0`). Wire `iterations`→`Cfg.size`.
@@ -156,14 +151,14 @@ needs — so it must be paired with §3.6.
 - **Interconnect stress (the genuine novelty):** remote-pin a shared page to the *consumer's* far memory
   (`cudaMemAdvise` + defeat access-counter migration) so every access crosses NVLink-C2C, and/or run **Fusco
   "noise kernels"** (each side stream-reads the other's memory → C2C bandwidth to 17 %/65 %). GPU-only /
-  CPU-local stress *cannot* reach the C2C window (triangulated by Q5+Q6). Bagchi did per-device stress only,
+  CPU-local stress *cannot* reach the C2C window. Bagchi did per-device stress only,
   no link-directed component → this is a modest, honest addition. **"More effective" is an inference**
   (Fusco measured bandwidth, not weak-behaviour yield) → hardware-only. MI300A analogue = contention on the
   single HBM pool, not placement.
-- **What Bagchi actually did, verbatim** (§4.2): *"Each was executed millions of times with memory
+- **What Bagchi actually did, verbatim** [Bagchi26 §4.2]: *"Each was executed millions of times with memory
   stressing [21] on both devices."* Per-device stress on both devices; no page placement, no
-  `cudaMemAdvise`, no link-directed noise anywhere in the paper (its only use of "placement" is thread
-  placement, §4.3).
+  `cudaMemAdvise`, no link-directed noise anywhere in the paper — where §4.3 says "placement" it means
+  thread placement.
 - **The inference is also *confounded*, and the claim is bounded accordingly.** Placement and noise slow
   the whole loop, so there are fewer rendezvous per second, and `sightings = yield × rate`. What the
   interconnect lever supports is that it is **additive** with per-device stress and is the lever most
@@ -171,14 +166,14 @@ needs — so it must be paired with §3.6.
   without hardware evidence. The same bound is restated at the head of `het_cpu_stress.h`, which is the
   copy that travels to a GPU box.
 
-### 3.7 What a non-observation reports — no rate, no probability  [→ `Q3-stats.md`]
+### 3.7 What a non-observation reports — no rate, no probability
 **A null carries no rate and no probability.** The harness reports that the outcome was **not observed** in
 the usable `(instance,run)` cells it scored, names the control that vouched for them, says that this is
 characterization and that the null agrees with no model and refutes none, and discloses the effort spent —
 and stops there. Falsification is one-sided:
 
 > "we emphasise that for correct GPU programming the possibility, not probability of weak behaviours is
-> what matters." — Alglave et al., ASPLOS'15 §4.3, p.585.
+> what matters." — [Alglave15 §4.3], p. 585.
 
 So what licenses a null is not an interval. It is the two-layer positive control that fired **beside** it,
 in the same launch, under the same stress, on the same C2C path (§3.8); `het_verdict()`'s liveness
@@ -188,25 +183,26 @@ the other side to a matching bar: a *sighting* is not written up until it reprod
 `het_verdict.h` is the normative source and this doc does not duplicate its printouts.
 
 **The frame is not the trial, and that correction is load-bearing.** The recovery scan validates `N^{T_L}`
-*overlapping* frames per `N` iterations (PerpLE §VI-B.1), so raw frame counts are neither independent nor
-Bernoulli, and Kirkham's `1−e⁻ⁿ` evaluated on one is driven to 1 vacuously. Every statistic is therefore
-scored at the **`(instance,run)` cell** via `Y = 1[target_count ≥ 1]` (this *refines* §3.4's per-frame
-tally), and the one reproducibility number the layer reports — `P_rep = 1 − e^{−k_eff}` over the cells that
-passed the decode guard — sits on the **OBSERVED** side, where the harness has something it actually
-measured.
+*overlapping* frames per `N` iterations [Melissaris20 §IV.A], so raw frame counts are neither independent
+nor Bernoulli, and [Kirkham20 §1.1]'s `1−e⁻ⁿ` evaluated on one is driven to 1 vacuously. Every statistic is
+therefore scored at the **`(instance,run)` cell** via `Y = 1[target_count ≥ 1]` (this *refines* §3.4's
+per-frame tally), and the one reproducibility number the layer reports — `P_rep = 1 − e^{−k_eff}` over the
+cells that passed the decode guard — sits on the **OBSERVED** side, where the harness has something it
+actually measured.
 
 **Stationarity is tested, never assumed — the gate is mandatory.** Occupancy warm-up, thermal/DVFS drift
-and alignment drift all act along the run, and Kirkham's own precheck already fails 4 of 18 chip/test
-combinations GPU-only. Each run's control sightings are sub-tallied into `HET_NWIN` windows
+and alignment drift all act along the run, and [Kirkham20 §4.3 Tab.7]'s own precheck already fails 4 of
+18 chip/test combinations GPU-only. Each run's control sightings are sub-tallied into `HET_NWIN` windows
 (`control_win[]` or `canary_win[]`, whichever channel calibrated — the same selection §3.8 records as
 `ctrl=` — whose sum against the total is the one runtime check that the tallies are alive at all,
 `WIN_DESYNC`), and the early windows of every usable run are two-sample-KS'd against the late ones
-(`het_ks2`, `HET_KS_C05 = 1.358`). One divergence from Kirkham: they KS a *Poisson fit* of early against
-late, this layer KS's the counts directly, the Poisson being the wrong likelihood on a channel whose
-arrivals come in bursts. The gate **fails closed** — a control stream that is empty or desynchronised is
-`KS_UNDERPOWERED`, never a free pass — a rejection is `NONSTATIONARY` and suppresses `P_rep`, and
-`het_changepoint` locates where to split the run (Kirkham §5.1). The same reading is what §3.9's tuner
-drops a bout on.
+(`het_ks2`, `HET_KS_C05 = 1.358`), on the same 20 %/10 % early-late split [Kirkham20 §4.3] uses. One
+divergence: what is compared there is the *inter-arrival* distribution, with the rate read off a Poisson
+fit; this layer compares the per-window sighting counts and fits nothing, the Poisson being the wrong
+likelihood on a channel whose arrivals come in bursts. The gate **fails closed** — a control stream that
+is empty or desynchronised is `KS_UNDERPOWERED`, never a free pass — a rejection is `NONSTATIONARY` and
+suppresses `P_rep`, and `het_changepoint` locates where to split the run [Kirkham20 §5.1]. The same
+reading is what §3.9's tuner drops a bout on.
 
 **Where the hardware hours go.** One stop rule for every row, because no row carries a prediction to
 schedule against: a sighting stops it once it reproduces in `HET_CORROB_RUNS = 2` distinct clean runs; a
@@ -221,7 +217,7 @@ base — replaying a seed adds no new phase draw and is not a replicate.
 work, and the pairs would share the one interconnect under test, so the gain is not the pair count. The
 policy levers stay `--budget-runs`, `--confirm-runs` and `--rate`.
 
-**Shipped (DR1 — `het_verdict.h` is normative).** The interleaving-liveness gate is **channel-aware**:
+**Shipped (`het_verdict.h` is normative).** The interleaving-liveness gate is **channel-aware**:
 reader shapes use `interleavings_detected`, the store-only (2+2W) shapes — which have no reader — use
 `observer_unique_count ≥ θ` instead, and a record with neither channel fails closed. And the outcome
 carries **no prediction**: one axis, four values — `HET_OBSERVED`, `HET_NOT_OBSERVED_MU_HOT`,
@@ -232,14 +228,12 @@ from `hetlitmus/tests/het/control-map.csv` (today: **333 of 411 rows carry a `mu
 at the lattice floor**, and **409 co-run a canary**; the census is pinned in `verify/verdictcheck.py:CENSUS`
 and gated by `make hetlitmus-verdict`, and the map's own partition by `make hetlitmus-controlmap`).
 
-**This restores the position the project argued before B7 was built** — `env-research/Q4-positive-control.md`
-§5(5): *"Do NOT over-engineer the statistics … The positive control is the primary evidence."* The
-dispersion-aware 95 % upper bound B7/B7b/B7c shipped on the rate of a never-observed outcome, and every
-scheduler arm, tuner knob and roll-up column that existed to compute or justify it, are **withdrawn**. The
-withdrawal goes one step past that memo, which still allowed an optional per-config rule-of-three garnish:
-nothing here prices the probability of what the harness missed.
+**The positive control is the primary evidence, and the statistics are not.** The dispersion-aware 95 %
+upper bound on the rate of a never-observed outcome is **withdrawn**, and with it every scheduler arm,
+tuner knob and roll-up column that existed to compute or justify it, and the optional per-config
+rule-of-three garnish as well: nothing here prices the probability of what the harness missed.
 
-### 3.8 Positive control / liveness  [→ `Q4-positive-control.md`]
+### 3.8 Positive control / liveness
 A "Never" is only credible if the harness was demonstrably "hot". **The corpus scope×order grid is already
 an ordering-strength lattice**, so the control is essentially free:
 - **Layer A (shape-matched):** co-run every test's own **structural twin at the lattice floor** — the same
@@ -248,7 +242,8 @@ an ordering-strength lattice**, so the control is essentially free:
   (fence-removal) mutator taken to the floor rather than one edge; the **scope axis is a HetLitmus
   extension** MC-Mutants lacks. The 78 rows that *are* the floor have no Layer A by construction.
 - **Layer B (floor):** always co-run an `MP-{cg,gc}-sys-relaxed` het canary, cut the same way round as the
-  test it vouches for (MP is the only het shape with a Bagchi-demonstrated weak result).
+  test it vouches for (MP is the only het shape with a published detected-weak result on GH200,
+  [Bagchi26 Table 4] listing MP variants and nothing else).
 - **Wiring:** same launch / same stress / disjoint padded locations; feed `control_target_count`. A null is
   `NOT-OBSERVED-MU-HOT` only if `control_target_count ≥ τ_hot` (≥3, prefer 30) **and** the run's decode
   channel was live **and** the ground-truth scan ran; otherwise it is `NOT-OBSERVED-CANARY-ONLY`, and with
@@ -263,25 +258,29 @@ an ordering-strength lattice**, so the control is essentially free:
   (PCC .893–.996) → cite as *supporting*, not a guarantee. The control's count is **reported**, never
   compared against a prediction.
 
-### 3.9 Tuning methodology & objective  [→ `Q7-tuning.md`]
+### 3.9 Tuning methodology & objective
 - **Tuning objective:** the tests worth tuning for are exactly the ones whose count stays 0, so the target
   itself supplies no gradient → tune to maximise the **het-mutant DEATH RATE**
-  `Δcontrol_target_count/Δt` on §3.8's controls (MC-Mutants metric; ceiling-rate `⌈−ln(1−r)⌉/b`, Alg.1
-  selection). For the **interconnect** knobs the objective *must* be a het/cross-C2C observable — a
-  GPU-only rate mis-tunes the C2C lever to zero.
-- **Method:** factor the combined Q5∪Q6 knob space into three near-separable sub-searches
-  (GPU → CPU → interconnect last), seeded/warm-started random search (GPUHarbor's Park-Miller reproducible
-  sampler), shape-priority (Kirkham: LB/S first, SB/IRIW last).
-- **The racing rule — the tuner's, and nothing else's (`tune.py`):** Kirkham data-peeking's Bernoulli CI is
-  too narrow on a bursty channel → swap for an **empirical-Bernstein** variance-aware early-stop at the
-  `(instance,run)` unit, whose radius absorbs the between-bout spread with no pre-estimated dispersion
-  figure; **randomized round-robin (SER³)** config scheduling to avoid drift aliasing; §3.7's KS reading
-  drops a non-stationary bout in-loop. The early-stop spends a **fixed per-comparison** δ (Mnih'08 §2's
+  `Δcontrol_target_count/Δt` on §3.8's controls (the metric of [MCMutants23 §4.2], whose Alg.1 picks a
+  per-test environment against a ceiling rate `⌈−ln(1−r)⌉/b`). For the **interconnect** knobs the
+  objective *must* be a het/cross-C2C observable — a GPU-only rate mis-tunes the C2C lever to zero.
+- **Method:** factor the combined stress knob space into three near-separable sub-searches
+  (GPU → CPU → interconnect last), seeded/warm-started random search (the seedable Park-Miller sampler of
+  [GPUHarbor23 §3.4], which is what makes one stress configuration replayable across devices),
+  shape-priority: LB/S first, SB/IRIW last on the two discrete GPUs of [Kirkham20 §4.1], neither of which
+  shows IRIW at all [Kirkham20 §6.4 Tab.11] — an order that **inverts** on that paper's integrated part,
+  so re-measure it per part.
+- **The racing rule — the tuner's, and nothing else's (`tune.py`):** the data-peeking CI of
+  [Kirkham20 §5.1 Fig.10] is a normal approximation to a binomial, too narrow on a bursty channel → swap
+  for an **empirical-Bernstein** variance-aware early-stop at the `(instance,run)` unit, whose radius
+  absorbs the between-bout spread with no pre-estimated dispersion figure; **randomized round-robin
+  (SER³)** config scheduling to avoid drift aliasing; §3.7's KS reading drops a non-stationary bout
+  in-loop. The early-stop spends a **fixed per-comparison** δ (Mnih'08 §2's
   per-round radius), **not** the anytime (Mnih'08 §3.1, EBStop) or family-wise racing (Mnih'08 §4)
   guarantee — implementing the §3.1 δ-spending schedule empirically broke elimination (tunecheck 4/7). The
   tuner's pick is therefore a *heuristic*: what its config is worth is established by the campaign the
   tuned harness then runs, not by this rule's confidence, and it feeds no reported outcome. This residual
-  is a **known-open** item (deep-review F9).
+  is a **known-open** item.
 - **Portability:** ship *structure + seed*; **re-tune every numeric on the actual hardware** (x86 → GH200 →
   MI300A can't share — the interconnect lever itself differs). No post-2023 memory-testing autotuner handles
   het/overdispersion → this tuner is at the frontier.
@@ -312,7 +311,7 @@ objective. The `outs_t` histogram is retained (fed once per validated frame) so 
 
 *(The block above is the illustrative core; the **shipped** `het_obs_record` — normative in `het_verdict.h`
 — carries ~40 fields: `rec_magic` (an unstamped record is refused before any other field is read), the
-`sync_valid`/`obs_valid` channel flags plus `observer_unique_count` for the store-only channel (DR1), the
+`sync_valid`/`obs_valid` channel flags plus `observer_unique_count` for the store-only channel, the
 realised `nwin`, the windowed `control_*`/`canary_*` sub-tallies, and the per-mechanism stress-liveness
 counters the §3.7 disqualifiers read.)*
 
@@ -320,21 +319,27 @@ counters the §3.7 disqualifiers read.)*
 
 ## 5. Build order (implementation roadmap)
 
-Dependencies flow top-down. **B0–B7 are dev-box compile/CI-testable; the science + tuning need
-GH200/MI300A** (§6). A prerequisite audit (P) should run early.
+Every component below is shipped. Dependencies flow top-down: the corpus audit and the
+allocator knob have no prerequisites, everything from store-tagging onwards needs the
+perpetual-instance loop, and the autotuner needs both stress layers, the positive control and
+the statistics. Two of them *read* the audit rather than merely following it (`litmus/hetCond.ml`
+computes its shape rule): store-tagging + recovery emits an observer channel exactly on the shapes
+it marks, and the positive control's co-run sums the block and lane counts those observers add.
+Everything is dev-box compile/CI-testable except the **science + tuning, which need
+GH200/MI300A** (§6).
 
-| # | Task | Depends on | Notes |
-|---|------|-----------|-------|
-| **P** | Corpus audit: classify which het tests carry **un-convertible `[x]=N`** final-value conditions (they don't fit the recovery scheme). Audited at 281 tests; the rule is per *shape*, so it still holds on the 411-test corpus — 117 tests (R, S, 2+2W) carry an observer channel. | — | Q2; informs B3/B6. |
-| **B0** | Parameterise `100000` → `Cfg.size` (free-running window) + `Cfg.runs` outer loop; surface as `SIZE_OF_TEST`/`NUMBER_OF_RUN` + argv. | — | Cheap; both already in scope. **Do as part of B2**, not standalone (semantics change to a window). |
-| **B1** | Per-target **allocator knob**: `malloc`/GH200, fine-grained/MI300A, managed = CI fallback; `cudaMemAdvise` placement hooks. | — | Q8; replaces `gd_malloc_managed`. |
-| **B2** | **Perpetual-instance rewrite** of the run-loop: launch once, loop inside, sync-once start barrier, occupancy-bounded/cooperative launch; drop per-iteration relaunch + `cudaDeviceSynchronize`. | B0,B1 | Q1/Q9; the biggest single change. |
-| **B3** | **`K·n+μ` store-tagging** (touches `ASMLang` for CPU store operands) *[superseded, §7]* + per-load N-buffers + **COUNT/COUNTH recovery** + emit the `het_obs_record` tally. | B2,P | Q2; replaces the per-iteration `_cond` check. |
-| **B4** | **GPU stress**: port cuda-litmus `do_stress`/`StressParams` (fix `MEM_STRESS` bug; cite); scratchpad in `cudaMalloc`; widen launch to stress workgroups; **asymmetric instances**. | B2 | Q5/Q2. |
-| **B5** | **CPU stress** recipes (2 sites, both ISAs) + **interconnect stress** (remote-pin + noise kernels); enforce the `-2s` invariants. | B2,B4 | Q6. |
-| **B6** | **Positive control** wiring: co-run the lattice-floor twin + the MP canary; null-credibility gate on `control_target_count` + `interleavings_detected`. | B3,B4 | Q4. |
-| **B7** | **Non-observation statistics**: `(instance,run)` unit, mandatory KS stationarity gate, `P_rep` on the observed side, corroboration stop rule; augment the offline `oracle-compare.sh` pass with each test's own block. | B3,B6 | Q3. |
-| **B8** | **Autotuner**: factored seeded random search, empirical-Bernstein early-stop, round-robin scheduling, KS gate; objective = het-mutant death rate. | B4,B5,B6,B7 | Q7; runs **on hardware**. |
+| component | what it carries |
+|---|---|
+| **Corpus audit** | Which het tests carry **un-convertible `[x]=N`** final-value conditions (they don't fit the recovery scheme). Audited at 281 tests; the rule is per *shape*, so it still holds on the 411-test corpus — 117 tests (R, S, 2+2W) carry an observer channel. |
+| **Free-running window** | `100000` → `Cfg.size` + a `Cfg.runs` outer loop, surfaced as `SIZE_OF_TEST`/`NUMBER_OF_RUN` + argv. Not a standalone step: the semantics change to a window, so it lands with the perpetual-instance loop. |
+| **Allocator knob** | Per target: `malloc`/GH200, fine-grained/MI300A, managed = CI fallback; `cudaMemAdvise` placement hooks. Replaces `gd_malloc_managed`. |
+| **Perpetual-instance loop** | Launch once, loop inside, sync-once start barrier, occupancy-bounded/cooperative launch; no per-iteration relaunch and no `cudaDeviceSynchronize`. The biggest single change. |
+| **Store-tagging + recovery** | **`K·n+μ` store-tagging** (planned to touch `ASMLang` for CPU store operands *[superseded, §7]*) + per-load N-buffers + **COUNT/COUNTH recovery** + the emitted `het_obs_record` tally. Replaces the per-iteration `_cond` check. |
+| **GPU stress** | Port cuda-litmus `do_stress`/`StressParams` (fix the `MEM_STRESS` bug; cite); scratchpad in `cudaMalloc`; launch widened to stress workgroups; **asymmetric instances**. |
+| **CPU + interconnect stress** | CPU recipes at two sites on both ISAs + remote-pinning and noise kernels; the `-2s` invariants enforced by construction. |
+| **Positive control** | Co-run the lattice-floor twin + the MP canary; null-credibility gate on `control_target_count` + `interleavings_detected`. |
+| **Non-observation statistics** | `(instance,run)` unit, mandatory KS stationarity gate, `P_rep` on the observed side, corroboration stop rule; the offline `oracle-compare.sh` pass augmented with each test's own block. |
+| **Autotuner** | Factored seeded random search, empirical-Bernstein early-stop, round-robin scheduling, KS gate; objective = het-mutant death rate. Runs **on hardware**. |
 
 ---
 
@@ -351,13 +356,13 @@ Everything below is unmeasurable on the dev box (wrong substrate, §3.2). **Firs
    banked, i.e. what `--budget-runs` should be. Grow R, not N.
 3. Whether the **perpetual rendezvous sustains** on GH200 without the Srivastava-style 2–3-iteration stall.
 4. Whether **interconnect stress raises yield** vs per-device (currently an inference from bandwidth).
-5. The **`cntvct_el0`↔`%globaltimer` drift-stability** (Layer-5 timebase spike).
+5. The **`cntvct_el0`↔`%globaltimer` drift-stability** (the cross-device timebase spike, §3.3).
 6. **All MI300A specifics** — coherent rendezvous, XNACK, `s_memtime`↔`rdtsc`, per-shape observability.
 7. Site-specific attributes: `concurrentManagedAccess`, `pageableMemoryAccess`, access-counter-migration
    disable mechanism.
 8. Per-target **stress tuning** (all numeric knob values).
 
-**`HET_WINDOW` calibration is a precondition for a third of the corpus** (deep-review F5). A `T_L ≥ 2`
+**`HET_WINDOW` calibration is a precondition for a third of the corpus.** A `T_L ≥ 2`
 shape's exhaustive `O(N^T_L)` scan is capped at production `N` (`HET_EXHAUSTIVE_MAX = 4096`) →
 `exhaustive_valid = 0`, so such a row can **never** return `NOT-OBSERVED-MU-HOT` — its zero is not a
 measured zero — and its only detector is the uncalibrated `[c−8, c+8]` window (`HET_WINDOW = 8`). That is
@@ -372,15 +377,16 @@ emits it; `LB-cg-sys-fence-2s`, whose floor sibling decodes every frame exactly,
 
 ## 7. Cross-cutting corrections folded in
 
-- **The "~0.2 %" is GPU-only, not het** — verified against Bagchi pp.74–76 (§5.1 quotes §4.1's GPU inter-CTA
-  result). Bagchi gives no numeric het rate → the het hit-rate is hardware-only. (Q1's file carried the
-  mis-attribution; corrected in memory + here.)
-- **Q2's per-frame tally → `(instance,run)` unit** (Q3): raw frame counts are combinatorially inflated and
+- **The "~0.2 %" is GPU-only, not het** — [Bagchi26 §5.1] quotes it back from §4.1, where it is the
+  inter-CTA GPU-only result. Bagchi gives no numeric het rate → the het hit-rate is hardware-only. The
+  earlier reading of it as a het rate is a mis-attribution, corrected here.
+- **The per-frame tally → `(instance,run)` unit**: raw frame counts are combinatorially inflated and
   break the statistics; the record is consumed at the instance-run level.
-- **B3 does not touch `ASMLang`** (supersedes §3.1's reuse item and §5's B3 row) — litmus7's own lowering
-  bakes a store's value in as an immediate, leaving no runtime seam for the `K·n+μ` tag, so the CPU thread
-  body is written by `litmus/hetCpuPlan.ml` + `litmus/hetCpuBody{A64,X86}.ml` and `ASMLang.dump_fun` is
-  never reached. What the het arm still takes from litmus7's CPU compile pipeline is the address parameters
+- **The store-tagging does not touch `ASMLang`** (supersedes §3.1's reuse item and §5's store-tagging
+  row) — litmus7's own lowering bakes a store's value in as an immediate, leaving no runtime seam for
+  the `K·n+μ` tag, so the CPU thread body is written by `litmus/hetCpuPlan.ml` +
+  `litmus/hetCpuBody{A64,X86}.ml` and `ASMLang.dump_fun` is never reached. What the het arm still
+  takes from litmus7's CPU compile pipeline is the address parameters
   and the final registers (`hetlitmus/docs/het-emission.md`).
 - **cuda-litmus `MEM_STRESS` bug** — fix on port, don't inherit.
 - **Licence** — cuda-litmus reuse is **supervisor-approved for thesis (academic) use** (Anatole, 2026-07-06
@@ -388,9 +394,13 @@ emits it; `LB-cg-sys-fence-2s`, whose floor sibling decodes every frame exactly,
   (`reeselevine/cuda-litmus`) carries **NO license file** (exhaustively checked), so Levine remains the sole
   rights-holder: **citation is required**, and an **explicit grant from Levine is needed before any public
   artifact ships**. A courtesy ack is prudent regardless.
-- **GPUHarbor + MC-Mutants** secondhand claims verified against local PDFs
-  (`env-research/verify-gpuharbor-mcmutants.md`); GPUHarbor adds a correlation validation but **no new
-  reproducibility model** (don't overstate as "zero statistics").
+- **GPUHarbor carries no reproducibility model of its own** — the statistical measures of
+  reproducibility it runs on are MC-Mutants' time-budget/confidence strategy [MCMutants23 §4.2], which
+  it reuses [GPUHarbor23 §6]. What GPUHarbor adds is a **correlation validation**: over 150 random
+  stress configurations on each of three devices, the Pearson coefficient between the `MP`
+  weak-behaviour rate and the `MP-CO` coherence-bug rate is 0.732-0.832 [GPUHarbor23 §5.1] — evidence
+  that a configuration tuned on weak behaviours also reveals conformance bugs. So it is neither a
+  second statistics layer nor "zero statistics".
 
 ---
 
@@ -399,7 +409,7 @@ emits it; `LB-cg-sys-fence-2s`, whose floor sibling decodes every frame exactly,
 The environment is mostly reuse; the defensible new contributions are:
 1. **A native, open, `herdtools7`-integrated** heterogeneous run pipeline (vs Bagchi's unreleased stitch).
 2. **Non-observation reporting at the right replication unit** — scoring at the `(instance,run)` cell
-   rather than the frame count, which makes `1−e⁻ⁿ` vacuous (PerpLE §VI-B.1), under a mandatory KS
+   rather than the frame count, which makes `1−e⁻ⁿ` vacuous [Melissaris20 §IV.A], under a mandatory KS
    stationarity gate, and paired with positive controls rather than with a confidence bound.
 3. **A het-aware autotuner** — no prior memory-testing tuner handles the het/overdispersed regime.
 4. **Explicit interconnect stress** (placement + noise kernels) — a lever no single-die prior work had.
@@ -412,12 +422,13 @@ GH200/CMCM (Bagchi has that).
 
 ## 9. Pointers
 
-- **Findings (detailed specs + evidence):** `env-research/Q1-alignment.md`, `Q2-runloop.md`, `Q3-stats.md`,
-  `Q4-positive-control.md`, `Q5-gpu-stress.md`, `Q6-cpu-interconnect-stress.md`, `Q8-allocation.md`,
-  `Q9-build-strategy.md`, `Q7-tuning.md`; verification `env-research/verify-gpuharbor-mcmutants.md`. These
-  are the research specs, not the tool: `Q3-stats.md` still designs the bound §3.7 withdrew, and where a
-  spec and `het_verdict.h` disagree the header is what ships.
-- **Memory:** `memory/hetlitmus-env-design.md` (one-paragraph record), `hetlitmus-nonobservation-alignment.md`,
-  `hetlitmus-task6-stress-reuse.md`, `het-verify-imported-assumptions.md`.
-- **Primary sources:** the 19 survey notes in `survey-notes/` (each read cover-to-cover) + the local PDFs in
-  `papers*/`.
+- **External sources:** every `[Key]` above resolves in `hetlitmus/docs/REFERENCES.md`, which holds the
+  full citation, the claim this project takes from it, and any deviation from it.
+- **The mechanisms in full:** `positive-control.md` (§3.8's two layers and the decision rule),
+  `faithfulness.md` (what the static checkers can and cannot see), `het-emission.md` (how a harness is
+  built), `oracle-harness.md` (the offline comparison), `TEST-PLAN.md` (which gate proves what).
+- **What actually ships:** the runtime headers under `litmus/het-runtime/` — `het_verdict.h` above all,
+  which is the normative source for the outcome vocabulary, the liveness disqualifiers and every
+  sentence a verdict prints (the allocator, stress and noise layers print their own).
+  **Where a design document and `het_verdict.h` disagree, the header is what ships**: a document can
+  describe a bound or a knob the harness no longer carries, and the header cannot.

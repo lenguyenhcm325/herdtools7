@@ -180,9 +180,10 @@ for the prefetch that moves the HBM noise buffer across the interconnect.
   device sync < lower go < join enemies
 
 (f) sigma is a RUNTIME FIELD, not a -D the compiler can fold.  A compile-time
-access pattern lets nvcc fold the stress if-chain to the one live branch, and a
-side-effect-free branch takes the whole stress loop with it; the CPU enemy has
-the identical shape, so the -D knob is read host-side and handed over as a
+access pattern lets the compiler fold the stress switch to the one live branch:
+on the GPU twin, whose accesses are non-volatile, a branch that writes nothing
+then loses its loads to hoisting and the traffic goes with them.  The CPU enemy
+has the identical shape, so the -D knob is read host-side and handed over as a
 runtime value.  cpustresscheck.py's enemy-seq-runtime check gates the compiled
 consequence: the op count must be invariant under -DHET_CPU_ENEMY_SEQ.
   $ grep -c '_ea\[_e\].seq     = (uint32_t)HET_CPU_ENEMY_SEQ;' $MP.cu

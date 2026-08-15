@@ -1,12 +1,12 @@
-# HipLang — the AMD HIP emitter (Tier-1)
+# HipLang — the AMD HIP emitter
 
 `litmus/HipLang.ml` is the AMD sibling of `CudaLang` (see `cuda-emitter.md`). It
 turns the GPU-only LISA/Bell scoped corpus (`hetlitmus/tests/gpu-only/*.litmus`)
 into AMD **HIP** C++ (`.hip`) litmus kernels, one per test — **Route B** of the
-frontend decision (reuse the Bell/LISA scoped IR; no native arch), memory
-`hetlitmus-route-b-frontend`. The `.litmus` layer is vendor-neutral, so the
-same corpus feeds both vendors; the vendor difference lives only in the emitter
-(memory `hetlitmus-amd-oracle-task7`).
+frontend decision (reuse the Bell/LISA scoped IR; no native arch). The `.litmus`
+layer is vendor-neutral, so the same corpus feeds both vendors; the vendor
+difference lives only in the emitter, and `-gpu-target` is what picks one
+(`litmus/hetDialect.ml`).
 
 ## What ships
 - **`litmus/HipLang.ml`** — the emitter. Consumes the *parsed* `BellBase`
@@ -23,7 +23,7 @@ same corpus feeds both vendors; the vendor difference lives only in the emitter
   HIP-side entry point of `hetlitmus/emit-gpu.sh`, which it calls with
   `-gpu-target hip`: one vendor per pass, so filling both trees is two passes.
 
-Build: `make all` (branch `hetlitmus-work`). Emit: `./hetlitmus/emit-hip.sh`.
+Build: `make all` in the repo root. Emit: `./hetlitmus/emit-hip.sh`.
 
 ## Mappings (grounded)
 HIP scoped atomics are Clang builtins. Memory locations are kernel `int*`
@@ -50,13 +50,18 @@ v = __hip_atomic_load(ptr, memorder, scope);
 The `__HIP_MEMORY_SCOPE_*` ladder is `SINGLETHREAD=1, WAVEFRONT=2, WORKGROUP=3,
 AGENT=4, SYSTEM=5` (verbatim from `amd_hip_atomic.h`). The cta/gpu/sys ↔
 workgroup/agent/system mapping is the AMD half of the vendor ladder
-cta↔workgroup, gpu↔agent, sys↔system (memory `hetlitmus-amd-oracle-task7`).
+cta↔workgroup, gpu↔agent, sys↔system.
 
-**Fences (order + scope; compiled by no target — see *Compile status* below).**
-The `-F` variants do synchronise with release/acquire *atomics*, not fences
-(memory `hetlitmus-amd-oracle-task7`), but the corpus is not fence-free: the
+**Fences (order + scope; one gated AMD compile — see *Compile status* below).**
+The `-F` variants do synchronise with release/acquire *atomics*, not fences —
+their sources carry no fence intrinsic at all (`gpu-only-corpus.md`, "Why the
+synchronised verdicts hold") — but the corpus is not fence-free: the
 `-fence` families carry `f[order,scope]` in **33 of the 137** gpu-only and
-**171 of the 411** het `.litmus`. HipLang lowers a fence to the Clang builtin
+**171 of the 411** het `.litmus`. Exactly one rendering of one of them reaches
+an AMD compiler under a *gate*: `make hetlitmus-hipbuild`'s `fence-lowering`
+phase, which fails outright where `hipcc` is absent. What else has been built,
+by what, and what a clean build settles is *Compile status* below.
+HipLang lowers a fence to the Clang builtin
 **`__builtin_amdgcn_fence(<order>, "<scope-string>")`**, which carries **BOTH**
 the memory order and the sync scope — the AMD counterpart of CudaLang's faithful
 inline-PTX `fence.<order>.<scope>`.
@@ -90,8 +95,8 @@ its own workgroup, so `MP-cta-F` puts the two threads in *distinct* workgroups �
 the moral-strength / scope-mismatch demonstration. Host launch uses
 `hipLaunchKernelGGL(litmus_X, dim3(nblocks), dim3(blockdim), 0, 0, ...)`.
 
-## Compile status & next steps (HIP analog of CUDA Task 8/9)
-- **HIP compile (Task 8 — DONE):** ROCm/`hipcc` is installed, so the emitted
+## Compile status & next steps
+- **HIP compile:** ROCm/`hipcc` is installed, so the emitted
   `.hip` *can* be compile-checked rather than merely emitted.
   `hetlitmus/compile-hip.sh [INDIR] [OUTDIR]` cross-compiles every `.hip` in
   INDIR for the MI300A ISA (`gfx942`) with `hipcc --offload-arch=gfx942
@@ -121,7 +126,7 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
   above still come from a hand-run, not from a gate. CUDA has no
   `compile-cuda.sh` twin; neither that absence nor this script's presence is a
   coverage claim either way.
-- **Task 9 (hardware):** deferred — MI300A runs + stressing + tallying `__out`
+- **Hardware runs (deferred):** MI300A runs + stressing + tallying `__out`
   against the `condition` line.
 - **Reference verdicts:** the PLDI'23 artifact's are AMD GCN3; MI300A is CDNA3,
   several generations past GCN3, so they do not transfer, no CDNA3 reference

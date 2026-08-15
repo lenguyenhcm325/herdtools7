@@ -33,13 +33,13 @@ they migrate, or they cross PCIe. So:
 Results go to `results-devtier-<date>-<host>/` and **must never be merged with
 GH200 evaluation data**.
 
-## This ladder is NVIDIA-only. The AMD one is Phase 3a.
+## This ladder is NVIDIA-only. The AMD one is unwritten.
 
-P2c made AMD harnesses *linkable and runnable* — `sh comp.sh hip-link` and `make
-hip-bin` produce `./<test>` from `<test>_hip.o` at `--offload-arch=gfx942`, under
-the same `uname -m` refusal as the CUDA arms. What P2c deliberately did **not**
-do is port this ladder, and the reason is that porting it half-way would be
-worse than not porting it:
+The AMD build arms make AMD harnesses *linkable and runnable* — `sh comp.sh
+hip-link` and `make hip-bin` produce `./<test>` from `<test>_hip.o` at
+`--offload-arch=gfx942`, under the same `uname -m` refusal as the CUDA arms.
+What they deliberately do **not** do is port this ladder, and the reason is that
+porting it half-way would be worse than not porting it:
 
 * `probe.cu` is CUDA (`cudaDeviceGetAttribute`, `cudaMallocManaged`,
   `cudaHostAlloc`); its HIP twin has to ask different questions
@@ -55,7 +55,7 @@ worse than not porting it:
 
 `ladder.sh` already fails closed on an AMD box: it `die`s on `nvcc not on PATH`
 before rung 0. Leave it that way until the AMD ladder is written *against real
-MI300X hardware* in Phase 3a.
+MI300X hardware*.
 
 ### What did NOT need porting, and why (measured 2026-08-03)
 
@@ -68,7 +68,7 @@ MI300X hardware* in Phase 3a.
 * Both vendors' link targets write the **same** `./<test>`, which is what makes
   that possible. `make hip-bin` is `.PHONY` and relinks unconditionally, so it
   can never report success while leaving the other vendor's binary in place —
-  the failure `make cuda-bin` had before P2c, and which
+  the failure `make cuda-bin` once had, and which
   `hetlitmus/verify/hipbuildcheck.py` phase 5 now pins in both directions.
 
 `pack-bundle.sh` ships whole harness dirs, so the `.hip`, the HIP arms of

@@ -143,7 +143,7 @@ let dialect = {
     gl_group = "CTA" ;
     gl_include = "#include <cuda/atomic>" ;
     gl_harness_note =
-      "// ---- host harness (illustrative; compile-checked for sm_90 by nvcc --ptx) ----" ;
+      "// ---- host harness (illustrative; hetlitmus/verify/ptxcheck.py compiles it for sm_90 with nvcc --ptx) ----" ;
     gl_alloc =
       (fun p bytes -> sprintf "cudaMallocManaged(%s, %s);" p bytes) ;
     gl_launch =

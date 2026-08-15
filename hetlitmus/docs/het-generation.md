@@ -1,13 +1,13 @@
-# Heterogeneous test generation (HetLitmus Tier 4, generation axis)
+# Heterogeneous test generation (generation axis)
 
 This document specifies how `diy7` is extended to **generate** heterogeneous
-CPU-GPU litmus tests in the Tier-0 `Het` format (see `het-litmus-format.md`).
-Tier 0 made a hand-written compound test *representable, parseable, and
-routable*; Tier 4 makes the diy generator *emit* such tests automatically from a
-per-processor `{device, scope}` assignment.
+CPU-GPU litmus tests in the compound `Het` format (see `het-litmus-format.md`).
+The compound pseudo-arch made a hand-written compound test *representable,
+parseable, and routable*; the generator described here *emits* such tests
+automatically from a per-processor `{device, scope}` assignment.
 
-The hardware/gem5 *execution* of these tests is **Task 9 and is out of scope**;
-the matching oracle-comparison half of Tier 4 is `oracle-harness.md`.
+The hardware/gem5 *execution* of these tests is **out of scope**; the matching
+oracle-comparison half is `oracle-harness.md`.
 
 ## 1. The problem: the generator is monomorphic in one architecture
 
@@ -15,7 +15,7 @@ The diy cycle engine (`gen/top_gen.ml`) compiles **one** critical cycle of
 annotated edges into a test whose every processor is encoded in **one**
 architecture: `diyone7 -arch AArch64` emits AArch64 on every proc, `diyone7
 -bell ptx.bell -arch LISA` emits LISA on every proc. This is the gen-side mirror
-of the litmus7 single-arch blocker that Tier 0 solved with `HetArch`. A single
+of the litmus7 single-arch blocker that `HetArch` solved. A single
 engine run therefore cannot produce a test whose `P0` is an AArch64 CPU thread
 and whose `P1` is a scoped LISA/PTX GPU thread.
 
@@ -55,7 +55,7 @@ Het MP-het
 exists (1:r0=1 /\ 1:r1=0)
 ```
 
-This is byte-for-byte (modulo table whitespace) the hand-written Tier-0
+This is byte-for-byte (modulo table whitespace) the hand-written
 `MP-het.litmus`; `tests/het/generate.sh` regenerates it and checks the
 reproduction with `diff -w`.
 
@@ -200,7 +200,7 @@ parse and route through litmus7's `Het` arm without error.
 | `hetlitmus/tests/het/generate.sh` | generate the het corpus (`SB-het`, reproduce `MP-het`) |
 | `hetlitmus/tests/het/SB-het.litmus` | generated het store-buffering test |
 
-## 7. Limitations (Tier 4 scope)
+## 7. Limitations (generation scope)
 
 - The two `-cpu` / `-gpu` cycles must describe the **same logical shape** (same
   proc count and per-proc roles); the driver checks proc counts but not deeper
@@ -209,9 +209,9 @@ parse and route through litmus7's `Het` arm without error.
   (`a /\ b /\ …`), which the MP/SB/LB/IRIW corpus uses; disjunctions are not
   split.
 - Device pairing is fixed to **AArch64 (cpu) + LISA/PTX (gpu)** (the GH200
-  target), matching the single Tier-0 dispatch arm. A second `+ HIP` pairing
+  target), matching the single compound dispatch arm. A second `+ HIP` pairing
   (MI300A) would add one builder wiring here and one dispatch arm in
   `litmus/top_litmus.ml`.
 - Generation produces the **test**; cross-device harness *emission* (asymmetric
-  launch, coherent allocation, rendezvous barrier, readback) remains **Tier 2**,
-  and *execution* remains **Task 9**.
+  launch, coherent allocation, rendezvous barrier, readback) is
+  `het-emission.md`'s job, and *execution* is hardware-only.

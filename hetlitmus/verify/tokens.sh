@@ -478,7 +478,7 @@ PY
   # ---- [7] the stress layer is live, and the liveness gate bites -------------
   # ptxcheck is blind to the stress layer by design (scaffolding carries no
   # order/scope qualifier, so it is not a model op), so a pre-stress incantation
-  # that nvcc dead-code-eliminates to zero instructions passes it while doing
+  # whose traffic nvcc has hoisted out of the loop passes it while stressing
   # nothing (faithfulness.md, "Scope / limits").  stresscheck.py closes
   # that: it counts scratchpad ops in the emitted PTX per lane class and asserts
   # the count is INVARIANT under -DHET_*_PATTERN -- i.e. that the pattern is a
@@ -523,8 +523,8 @@ PY
       fi
       return "$bad"
     }
-    # Both call sites: hand het_do_stress a compile-time pattern and the tuned
-    # default (3 = ld;ld) is dead-code-eliminated away.
+    # Both call sites: hand het_do_stress a compile-time pattern and the shipped
+    # pre-stress default (3 = ld;ld) loses its loads to hoisting.
     _s4bite "pre-stress pattern made compile-time (the dead-layer regression)" \
             "$S4T.cu" pre \
             's/HET_PRE_STRESS_ITER, _pre_pat/HET_PRE_STRESS_ITER, HET_PRE_STRESS_PATTERN/' \
@@ -613,8 +613,9 @@ PY
             || fails=$((fails+1))
 
     # (2) sigma as a compile-time constant: the optimiser folds the switch to one
-    # branch and, for ld;ld, deletes the loop -- section [7]'s bug, CPU side.
-    _b5bite "sigma made COMPILE-TIME (an autotuner config can delete the stress)" \
+    # branch, so the object carries only the pattern the -D named -- section [7]'s
+    # bug, CPU side.
+    _b5bite "sigma made COMPILE-TIME (the -D, not the runtime field, picks it)" \
             het_cpu_stress.h enemy-seq-runtime \
             's/switch (a->seq) {/switch (HET_CPU_ENEMY_SEQ) {/' \
             'op count MOVES with -DHET_CPU_ENEMY_SEQ' \

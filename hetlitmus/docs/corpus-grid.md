@@ -9,7 +9,7 @@ know about: the **fence column has no external reference** and the
 It supplements the earlier per-area docs: `gpu-only-corpus.md` (the original 8
 PLDI'23-anchored tests), `het-generation.md` (how `hetgen7` merges
 two single-arch runs into one `Het` test) and `het-litmus-format.md` /
-`het-emission.md` (the Tier-0 format and Tier-2 harness emission).
+`het-emission.md` (the compound format and harness emission).
 
 ## What was added
 
@@ -27,9 +27,10 @@ an `@all` list-file (herd7/litmus7 read `@all` as "one test path per line",
 **Scope of *this* note.** What follows describes the **one-sided** scope × order
 grid — the 248 het tests whose GPU procs are annotated and whose CPU procs are
 plain ARMv9. The het corpus has since grown two further families that the same
-`generate.sh` emits but that are specified elsewhere: the **matched two-sided**
-tests (`-2s`, Task 3) and the **two-sided order pairs** (`-2s` with an
-`<cpu>.<gpu>` order, Q10 / Q10b). The current split of the 411 by family, like
+`generate.sh` emits and specifies in place — its arms (D) and (E), over the token
+table and order-pair rules in `hetlitmus/tests/_grid_lib.sh`: the **matched
+two-sided** tests (`-2s`) and the **two-sided order pairs** (`-2s` with an
+`<cpu>.<gpu>` order). The current split of the 411 by family, like
 the counts here, is re-derivable at any time from `hetlitmus/tests/het/*.litmus`
 (and `verify/dupcheck.py` reports how many of them are distinct experiments).
 
