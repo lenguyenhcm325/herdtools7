@@ -224,8 +224,8 @@ carries **no prediction**: one axis, four values — `HET_OBSERVED`, `HET_NOT_OB
 `HET_NOT_OBSERVED_CANARY_ONLY`, `HET_COLD_INVALID` — where the only question a null answers is what vouched
 for the harness that did not see it, and which tier a null is reported at is read off **its own cells**
 (`n_mu_hot`), never off the pooled control channel. What each row co-runs moves with the corpus, so read it
-from `hetlitmus/tests/het/control-map.csv` (today: **333 of 411 rows carry a `mu(T)`**, the other **78 are
-at the lattice floor**, and **409 co-run a canary**; the census is pinned in `verify/verdictcheck.py:CENSUS`
+from `hetlitmus/tests/het/control-map.csv` (today: **375 of 471 rows carry a `mu(T)`**, the other **96 are
+at the lattice floor**, and **469 co-run a canary**; the census is pinned in `verify/verdictcheck.py:CENSUS`
 and gated by `make hetlitmus-verdict`, and the map's own partition by `make hetlitmus-controlmap`).
 
 **The positive control is the primary evidence, and the statistics are not.** The dispersion-aware 95 %
@@ -240,7 +240,7 @@ an ordering-strength lattice**, so the control is essentially free:
   program with every ordering annotation dropped on both sides, so same shape/scope/direction/C2C structure
   and the weakest member of the family the corpus holds. This is MC-Mutants' **"Weakening sw"**
   (fence-removal) mutator taken to the floor rather than one edge; the **scope axis is a HetLitmus
-  extension** MC-Mutants lacks. The 78 rows that *are* the floor have no Layer A by construction.
+  extension** MC-Mutants lacks. The 96 rows that *are* the floor have no Layer A by construction.
 - **Layer B (floor):** always co-run an `MP-{cg,gc}-sys-relaxed` het canary, cut the same way round as the
   test it vouches for (MP is the only het shape with a published detected-weak result on GH200,
   [Bagchi26 Table 4] listing MP variants and nothing else).
@@ -330,7 +330,7 @@ GH200/MI300A** (§6).
 
 | component | what it carries |
 |---|---|
-| **Corpus audit** | Which het tests carry **un-convertible `[x]=N`** final-value conditions (they don't fit the recovery scheme). Audited at 281 tests; the rule is per *shape*, so it still holds on the 411-test corpus — 117 tests (R, S, 2+2W) carry an observer channel. |
+| **Corpus audit** | Which het tests carry **un-convertible `[x]=N`** final-value conditions (they don't fit the recovery scheme). Audited at 281 tests; the rule is per *shape*, so it still holds on the 471-test corpus — 159 tests (2+2W, R, S, CoWR, CoRW2) carry an observer channel. |
 | **Free-running window** | `100000` → `Cfg.size` + a `Cfg.runs` outer loop, surfaced as `SIZE_OF_TEST`/`NUMBER_OF_RUN` + argv. Not a standalone step: the semantics change to a window, so it lands with the perpetual-instance loop. |
 | **Allocator knob** | Per target: `malloc`/GH200, fine-grained/MI300A, managed = CI fallback; `cudaMemAdvise` placement hooks. Replaces `gd_malloc_managed`. |
 | **Perpetual-instance loop** | Launch once, loop inside, sync-once start barrier, occupancy-bounded/cooperative launch; no per-iteration relaunch and no `cudaDeviceSynchronize`. The biggest single change. |
@@ -362,11 +362,11 @@ Everything below is unmeasurable on the dev box (wrong substrate, §3.2). **Firs
    disable mechanism.
 8. Per-target **stress tuning** (all numeric knob values).
 
-**`HET_WINDOW` calibration is a precondition for a third of the corpus.** A `T_L ≥ 2`
+**`HET_WINDOW` calibration is a precondition for nearly half the corpus.** A `T_L ≥ 2`
 shape's exhaustive `O(N^T_L)` scan is capped at production `N` (`HET_EXHAUSTIVE_MAX = 4096`) →
 `exhaustive_valid = 0`, so such a row can **never** return `NOT-OBSERVED-MU-HOT` — its zero is not a
 measured zero — and its only detector is the uncalibrated `[c−8, c+8]` window (`HET_WINDOW = 8`). That is
-**215 of the 411 tests** (`SB` 29, `WRC3` 47, `IRIW` 37, `ISA2` 36, `RWC` 33, `WRC` 33), re-derivable from
+**215 of the 471 tests** (`SB` 29, `WRC3` 47, `IRIW` 37, `ISA2` 36, `RWC` 33, `WRC` 33), re-derivable from
 the `exists` conditions. So measure `skew_*` and calibrate `HET_WINDOW` against `HET_EXHAUSTIVE_MAX` at
 bring-up, before any campaign. Consequence to carry: `mu(T)` is structurally identical to T and inherits
 its `T_L`, so every off-floor `T_L ≥ 2` row emits `control_exhaustive_valid = _mu_exh` and its control is

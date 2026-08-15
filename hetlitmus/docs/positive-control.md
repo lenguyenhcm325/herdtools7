@@ -17,8 +17,8 @@ says a canary is co-running: **1** wherever `control-map.csv` names a real canar
 cannot co-run themselves). See §5 and §11.
 
 **Counts move with the corpus; `control-map.csv` is the authority.** At the time of
-writing the corpus is 411 het tests: **333 carry a `mu(T)`**, **78 are at the lattice
-floor**, and **409 co-run a canary** (411 minus the two that are it). Re-measure rather
+writing the corpus is 471 het tests: **375 carry a `mu(T)`**, **96 are at the lattice
+floor**, and **469 co-run a canary** (471 minus the two that are it). Re-measure rather
 than quote: `verify/controlmap.py --check` gates the map and asserts that partition
 (`N_TESTS` / `N_WITH_MU` / `N_FLOOR`), and `verify/verdictcheck.py` phase 3 gates that the
 emitted corpus reproduces the co-run census (`verdictcheck.py:CENSUS`).
@@ -115,7 +115,7 @@ refuses a schema the harness would happily mis-read protects nothing).
 
 **The two documentation columns.** `MuAlt` is the **nearest** weakening — a maximal
 element of the same candidate set, i.e. what a minimal-mutant policy would have co-run.
-It is never compiled in; it records how far T sits from its own floor (198 of the 411
+It is never compiled in; it records how far T sits from its own floor (243 of the 471
 rows leave it `-`, meaning the floor *is* the nearest weakening or T is already at it).
 `MuRelaxed` is the fully-relaxed companion, which is `Mu` itself on every row; the column
 stays because the gate **asserts that identity**, so a hand-edit that moves one and not
@@ -233,8 +233,8 @@ re-run split at the change-point the printout names and score the segments separ
 
 **Two rows whose stationarity was tested against different channels are not directly
 comparable.** The KS precheck is run on a *control* stream — the target is far too rare to
-carry a time series — and which stream that is changed on **every one of the 333 rows that
-now co-run a `mu`**: 317 of them had no Layer A at all and were tested against the Layer-B
+carry a time series — and which stream that is changed on **every one of the 375 rows that
+now co-run a `mu`**: all but 16 had no Layer A at all and were tested against the Layer-B
 canary, and on the 16 that did, `mu(T)` itself became a different program (nearest
 weakening → lattice floor — measured: the two differ on all 16). A stationarity claim
 carried by another shape's stream is the weaker of the two, and on any shape but MP the
@@ -295,7 +295,7 @@ shared vars and the barrier are carved out of **one `gd_alloc_shared` arena, one
 cache line apart** — still the coherent allocator, which is what selects the property under
 test.
 
-**The 78 tests at the lattice floor keep `HET_CONTROL_COMPILED_IN 0`**, and that is right:
+**The 96 tests at the lattice floor keep `HET_CONTROL_COMPILED_IN 0`**, and that is right:
 no sibling of them can be weaker, so Layer A has nothing to build, and `het_verdict()`
 still refuses to return `NOT-OBSERVED-MU-HOT` for any of their nulls. They carry a Layer-B
 canary under the separate flag — see §11.
@@ -414,7 +414,7 @@ with a real x86 reader close their cycle through a load, and none of this reache
 
 | gate | what it proves |
 |---|---|
-| `make hetlitmus-controlmap` | every row's `mu(T)` **exists**, is structurally identical to T and strictly weaker, at the floor of the lattice, with the same scopes and condition; `none` ⟺ at the floor; the census 411 = 333 + 78 holds. Fails closed. `--bite` proves it fails on six injections (§3). |
+| `make hetlitmus-controlmap` | every row's `mu(T)` **exists**, is structurally identical to T and strictly weaker, at the floor of the lattice, with the same scopes and condition; `none` ⟺ at the floor; the census 471 = 375 + 96 holds. Fails closed. `--bite` proves it fails on six injections (§3). |
 | `make hetlitmus-amd-controlmap` | the same derivation over the x86 strength lattice, and that the two lattices put the **same** rows at the floor — so `N_FLOOR` is not silently an AArch64 number. |
 | `make hetlitmus-verdict` | four phases + `--bite`. `het_verdict()` is compiled from the **real emitted header** and fed synthetic records: all four outcomes and every liveness disqualifier reachable (**provably not constant**), an unstamped record fails closed, `tau_hot` bites exactly at `tau_hot`; each outcome's sentences are reachable from that outcome and no other, checked **both ways**; **every** emitted harness stamps `rec_magic` once and carries the co-run population the map gives it (census pinned as `verdictcheck.py:CENSUS`); and the printout names only the machine its pair is entitled to. |
 | `tokens.sh selftest [8]` | the CPU/interconnect stress-liveness checker (`verify/cpustresscheck.py`) **bites** — seven injections, each `cmp -s`-verified to have actually changed the file. |
@@ -471,21 +471,21 @@ co-running" and "the structural twin **of this test** is co-running" are differe
 and only the second licenses `NOT-OBSERVED-MU-HOT`. Collapsed into one bit, a null on a test
 that has **no mutant at all** would start reading as vouched-for by its own shape — the same
 class of unfalsifiable-null bug the flag exists to prevent. So Layer A keeps its flag
-(exactly the rows off the floor — 333 today) and Layer B has its own
+(exactly the rows off the floor — 375 today) and Layer B has its own
 (`HET_CANARY_COMPILED_IN` — 1 on every row whose `Canary` field is neither `-` nor `self`,
-i.e. 409 of 411, **including** all 333 that also co-run a `mu`).
+i.e. 469 of 471, **including** all 375 that also co-run a `mu`).
 
-Beware `canary_name`: the map **names** a canary for **every** row (411), including the two
-that name *themselves*; only 409 **run** one. **A name is not a co-run.** Only the flag says
+Beware `canary_name`: the map **names** a canary for **every** row (471), including the two
+that name *themselves*; only 469 **run** one. **A name is not a co-run.** Only the flag says
 the instance is there. `het_verdict()` gates each layer on its own flag for the same reason:
-gating the canary on the mutant's flag would make the liveness evidence of the 78 floor rows
+gating the canary on the mutant's flag would make the liveness evidence of the 96 floor rows
 invisible.
 
 The canary is matched on **direction**, not only on shape: a `cg`-cut row gets the `cg`
-canary (335 rows today) and a `gc`-cut row the `gc` one (74), because a canary that crosses
+canary (359 rows today) and a `gc`-cut row the `gc` one (110), because a canary that crosses
 the interconnect the other way round would vouch for traffic the test never generates.
 
-On **37 of the 411 rows** of either lattice (counted over `control-map.csv` and
+On **37 of the 471 rows** of either lattice (counted over `control-map.csv` and
 `control-map-amd.csv`: rows whose `Mu` is neither `none` nor `self` and equals their
 `Canary`), `mu(T)` *is* the canary shape. There the two co-running instances run the same
 program, so preferring the `mu` channel for the stationarity precheck buys a **second draw
@@ -501,7 +501,7 @@ harness can vouch for it and the outcome is `COLD-INVALID`. That is not a gap in
 instrumentation: **it is what "the harness was cold" means** — the most observable het shape
 available did not fire.
 
-They also still take the **per-variable** allocation path (the other 409 carve a padded
+They also still take the **per-variable** allocation path (the other 469 carve a padded
 arena), which is why `shared-alloc.t`'s per-variable guard sits on `MP-cg-sys-relaxed` rather
 than having been deleted.
 

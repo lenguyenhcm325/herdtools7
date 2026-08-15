@@ -167,7 +167,7 @@ write W precedes an overlapping write W' in causality order, then W must precede
 W' in coherence order"*. So `& loc` restores the paper's *"overlapping"*.
 
 Measured both ways: dropping `& loc` changes no verdict on either surface — 0 of
-the 96 lattice cells, 0 of the 137 `tests/gpu-only` tests. It is not a no-op on
+the 96 lattice cells, 0 of the 173 `tests/gpu-only` tests. It is not a no-op on
 the executions themselves (`ISA2-{gpu,sys}-fence` fall from 18 candidate
 executions to 6, `WRC3-{gpu,sys}-fence` from 44 to 30), so the two forms are
 verdict-equivalent here rather than interchangeable.
@@ -195,7 +195,7 @@ The formal gap is transitivity: a *partial order* containing the morally-strong
 pairs also contains whatever transitivity forces through morally-weak fences, and
 `sc_tot & ms` does not. Closing it (`let sc = (sc_tot & ms)+`) was measured and
 changes nothing on either surface: 0 of 96 lattice cells, and byte-identical
-`Observation` lines — including execution counts — across all 137
+`Observation` lines — including execution counts — across all 173
 `tests/gpu-only` tests. Under a `scopes:` tree that puts each proc in its own CTA
 and every CTA under one GPU under one SYS, all fences in a single test share one
 scope, so the mixed morally-strong/morally-weak configuration that would separate
@@ -229,5 +229,5 @@ make hetlitmus-lattice
 # herd7 parses and solves every gpu-only test under this model.
 cd hetlitmus/tests/gpu-only
 herd7 -set-libdir ../../../herd/libdir -bell ../../bells/ptx.bell \
-      -cat ../../cats/nvidia-ptx.cat @all | grep -c '^Observation'   # 137
+      -cat ../../cats/nvidia-ptx.cat @all | grep -c '^Observation'   # 173
 ```

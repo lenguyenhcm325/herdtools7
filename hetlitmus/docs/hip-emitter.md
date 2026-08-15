@@ -56,8 +56,8 @@ cta↔workgroup, gpu↔agent, sys↔system.
 The `-F` variants do synchronise with release/acquire *atomics*, not fences —
 their sources carry no fence intrinsic at all (`gpu-only-corpus.md`, "Why the
 synchronised verdicts hold") — but the corpus is not fence-free: the
-`-fence` families carry `f[order,scope]` in **33 of the 137** gpu-only and
-**171 of the 411** het `.litmus`. Exactly one rendering of one of them reaches
+`-fence` families carry `f[order,scope]` in **42 of the 173** gpu-only and
+**180 of the 471** het `.litmus`. Exactly one rendering of one of them reaches
 an AMD compiler under a *gate*: `make hetlitmus-hipbuild`'s `fence-lowering`
 phase, which fails outright where `hipcc` is absent. What else has been built,
 by what, and what a clean build settles is *Compile status* below.
@@ -100,10 +100,10 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
   `.hip` *can* be compile-checked rather than merely emitted.
   `hetlitmus/compile-hip.sh [INDIR] [OUTDIR]` cross-compiles every `.hip` in
   INDIR for the MI300A ISA (`gfx942`) with `hipcc --offload-arch=gfx942
-  -std=c++17 <test>.hip -o <test>`. Measured 2026-08-11 under HIP version
+  -std=c++17 <test>.hip -o <test>`. Measured 2026-08-15 under HIP version
   7.2.53211: **10/10** on the default INDIR (`hip-out/`, the committed goldens)
-  and **137/137** on a full `emit-hip.sh` of the gpu-only corpus into a temp
-  dir, the 33 `-fence` renders included. `amdclang++` accepts the
+  and **173/173** on a full `emit-hip.sh` of the gpu-only corpus into a temp
+  dir, the 42 `-fence` renders included. `amdclang++` accepts the
   `__hip_atomic_*` / `__HIP_MEMORY_SCOPE_*` builtins (nvcc does **not**, so this
   requires the HIP-Clang stack, not HIP-over-CUDA). A clean build proves the
   scope/order lowering is valid for the target ISA; it does NOT validate

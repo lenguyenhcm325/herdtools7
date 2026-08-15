@@ -422,12 +422,12 @@ byte-identical to before (the cpu column keeps its `cpu` back-compat tag).
   `dmb` on AArch64, `movq`/`mfence` on x86-64), widened to 64-bit operands.
   An earlier x86_64 arm emitted a `(void)_n` no-op instead: the CPU thread
   tested nothing, and litmus7 could emit a harness for only 39 of the 411 x86
-  renderings (the condition could bind neither a read buffer nor a `mu`).
-  The renderings themselves are produced on demand by
-  `hetlitmus/tests/het/generate-x86.sh OUTDIR` — never committed, because ~90
+  renderings the corpus then held (the condition could bind neither a read
+  buffer nor a `mu`). The renderings themselves are produced on demand by
+  `hetlitmus/tests/het/generate-x86.sh OUTDIR` — never committed, because 94
   of them are byte-identical to a sibling (x86-TSO collapses the four CPU order
   tokens onto two images) and `dupcheck.py` rejects duplicates. Their names are
-  1:1 with the 411-test corpus (`<corpus name>-x86_64`), which is what lets
+  1:1 with the 471-test corpus (`<corpus name>-x86_64`), which is what lets
   `control-map-amd.csv` stay keyed on the unsuffixed names: `generate-x86.sh`
   re-keys its five name-valued columns (`Test`, `Mu`, `MuAlt`, `MuRelaxed`,
   `Canary` — columns 1, 2, 4, 5, 6 of the six-column schema) onto the suffixed

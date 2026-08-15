@@ -17,20 +17,20 @@ Before: ~10 hand-listed tests (8 GPU-only + MP-het/SB-het). After:
 
 | corpus    | tests | manifest |
 |-----------|-------|----------|
-| gpu-only  | 137   | `tests/gpu-only/@all` |
-| het       | 411   | `tests/het/@all`      |
+| gpu-only  | 173   | `tests/gpu-only/@all` |
+| het       | 471   | `tests/het/@all`      |
 
 Both corpora are now driven from committed, reproducible scripts that also write
 an `@all` list-file (herd7/litmus7 read `@all` as "one test path per line",
 `lib/misc.ml:is_list`). Re-running either `generate.sh` reproduces its corpus.
 
 **Scope of *this* note.** What follows describes the **one-sided** scope × order
-grid — the 248 het tests whose GPU procs are annotated and whose CPU procs are
+grid — the 299 het tests whose GPU procs are annotated and whose CPU procs are
 plain ARMv9. The het corpus has since grown two further families that the same
 `generate.sh` emits and specifies in place — its arms (D) and (E), over the token
 table and order-pair rules in `hetlitmus/tests/_grid_lib.sh`: the **matched
 two-sided** tests (`-2s`) and the **two-sided order pairs** (`-2s` with an
-`<cpu>.<gpu>` order). The current split of the 411 by family, like
+`<cpu>.<gpu>` order). The current split of the 471 by family, like
 the counts here, is re-derivable at any time from `hetlitmus/tests/het/*.litmus`
 (and `verify/dupcheck.py` reports how many of them are distinct experiments).
 
@@ -38,8 +38,9 @@ the counts here, is re-derivable at any time from `hetlitmus/tests/het/*.litmus`
 
 `tests/_grid_lib.sh` (sourced by both scripts) defines each standard shape as a
 closed critical cycle in diy's architecture-agnostic edge vocabulary
-(`Pod<XY>` = intra-proc program order X→Y to a different location; `Rfe`/`Fre` =
-read-from/from-read external; `Coe` = coherence-order external):
+(`Po<L><XY>` = intra-proc program order X→Y, with `L` = `d` to a *different*
+location and `s` to the *same* one; `Rfe`/`Fre` = read-from/from-read external;
+`Coe` = coherence-order external):
 
 | shape | procs | cycle |
 |-------|-------|-------|
@@ -54,9 +55,22 @@ read-from/from-read external; `Coe` = coherence-order external):
 | ISA2  | 3 | `PodWW Rfe PodRW Rfe PodRR Fre` |
 | IRIW  | 4 | `Rfe PodRR Fre Rfe PodRR Fre` |
 | WRC3  | 4 | `Rfe PodRW Rfe PodRW Rfe PodRR Fre` (a 3-hop transitive MP/WRC chain) |
+| CoRR  | 2 | `Rfe PosRR Fre` |
+| CoWR  | 2 | `PosWR Fre Coe` |
+| CoRW2 | 2 | `Rfe PosRW Coe` |
 
-MP/SB/LB/IRIW already had their original PLDI'23-anchored variants; 2+2W, R, S,
-WRC, RWC, ISA2 and the transitive chain WRC3 are the newly added shapes.
+MP/SB/LB/IRIW carry the original PLDI'23-anchored variants. 2+2W, R, S, WRC,
+RWC, ISA2 and the transitive chain WRC3 extend the different-location family;
+CoRR, CoWR and CoRW2 are the same-location (coherence) family.
+
+The three `Co` names are diy's own: put to `diyone7` without `-name`, those
+cycles come back named `CoRR`, `CoWR` and `CoRW2`. Their edge order is not free
+either — `PosWR Coe Fre` and `Rfe PosRW Fre` are both refused (*"Impossible
+direction"*), because a `Pos` edge's far end has to agree in direction with the
+external edge that follows it. A cycle whose program-order edges are all `Pos`
+touches one location, which diy refuses unless the driver passes `-oneloc`; the
+three scripts that drive this catalogue — `tests/gpu-only/generate.sh`,
+`tests/het/generate.sh` and `tests/het/generate-x86.sh` — all pass it.
 
 ## The scope × order grid
 
@@ -80,10 +94,22 @@ scope strength is *read* from the tree, not assumed (same convention as
 byte-identical to its relaxed sibling is not a new test, so it is skipped: e.g.
 `acquire` on the all-write shape 2+2W (no read to upgrade), and, in the het
 corpus, any column whose changed annotation landed on a CPU proc or on a GPU
-proc with no matching access. GPU-only drops 3 such columns; the one-sided het
-grid drops 66 (11 shapes × 3 scopes × 4 orders = 132, +8 fixed-name originals
-= 140, −3 ⇒ 137 gpu-only; 26 het cut-classes × 3 × 4 = 312, +`MP-het`/`SB-het`
-= 314, −66 ⇒ 248 one-sided het).
+proc with no matching access. On a `Co` shape, which columns survive turns on
+which proc the cut put on the GPU: a single-write proc keeps {relaxed, release},
+an R;R proc keeps {relaxed, acquire, fence}, and a two-access proc keeps all
+four. GPU-only drops 3 such columns; the one-sided het grid drops 87 (14 shapes
+× 3 scopes × 4 orders = 168, +8 fixed-name originals = 176, −3 ⇒ 173 gpu-only;
+32 het cut-classes × 3 × 4 = 384, +`MP-het`/`SB-het` = 386, −87 ⇒ 299 one-sided
+het).
+
+The rest of the het corpus is the two families this note does not specify: 60
+matched two-sided tests (32 cut-classes × 2 complete pairings = 64, less the 4
+`fence` cells whose CPU procs are all single-access, so the CPU barrier has
+nothing to sit between) and 112 two-sided order pairs (8 pair cut-classes × 16
+cells, less the 16 diagonal cells that already exist as matched two-sided
+tests) — 299 + 60 + 112 = 471. `generate-x86.sh` prints exactly that breakdown
+as it runs; `generate.sh` prints the same per-section counts but tallies the
+two kinds of skip together.
 
 ### Naming
 
@@ -121,9 +147,9 @@ symmetry-reduced rule (NOT 2ⁿ subsets):
 The `fence` column is a **real standalone scoped fence**, distinct from the
 rel/acq columns: the accesses stay relaxed and diy inserts a Bell fence event
 `f[sc,<scope>]` between the two accesses of each proc (the intra-proc edge
-`Pod<XY>` is generated as the fence edge `FenceSc<Scope>d<XY>` — diy supports
-this directly, no generator code change). PTX renders this as
-`fence.sc.<scope>`.
+`Po<L><XY>` is generated as the fence edge `FenceSc<Scope><L><XY>`, carrying the
+same location letter — diy supports this directly, no generator code change).
+PTX renders this as `fence.sc.<scope>`.
 
 What bounds the column is **provenance, not expressiveness**. There is no fence
 and no `sc` operation anywhere in the PLDI'23 artifact, so its verdicts reach the
@@ -149,14 +175,14 @@ defaults to `aarch64`).
 
 ```sh
 # 1. counts  (the het total includes the two-sided families)
-ls hetlitmus/tests/gpu-only/*.litmus | wc -l                     # 137
-ls hetlitmus/tests/het/*.litmus      | wc -l                     # 411
-ls hetlitmus/tests/het/*.litmus | grep -vc -- '-2s\.litmus'      # 248 one-sided
+ls hetlitmus/tests/gpu-only/*.litmus | wc -l                     # 173
+ls hetlitmus/tests/het/*.litmus      | wc -l                     # 471
+ls hetlitmus/tests/het/*.litmus | grep -vc -- '-2s\.litmus'      # 299 one-sided
 
 # 2. herd7 prints one Observation per GPU-only test
 cd hetlitmus/tests/gpu-only
 herd7 -set-libdir ../../../herd/libdir -bell ../../bells/ptx.bell \
-      -cat ../../cats/nvidia-ptx.cat @all | grep -c '^Observation'   # 137
+      -cat ../../cats/nvidia-ptx.cat @all | grep -c '^Observation'   # 173
 
 # 3. every het test parses + routes through litmus7
 cd ../het

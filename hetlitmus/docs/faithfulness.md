@@ -165,17 +165,18 @@ annotation (`w[consume,sys]`) to show the hard-fail.
 Distinct annotations in the corpus (all MAPPED):
 
 ```
-GPU: w/r[relaxed,{cta,gpu,sys}]  w[release,{cta,gpu,sys}]  r[acquire,{cta,gpu,sys}]  f[sc,{cta,gpu,sys}]
+GPU: w/r[relaxed,{cta,gpu,sys}]  w[release,{cta,gpu,sys}]  r[acquire,{cta,gpu,sys}]
+     f[sc,{cta,gpu,sys}]  f[release,sys]  f[acquire,sys]
 CPU: MOV STR LDR STLR LDAPR DMB
 ```
 
 ## How to run
 
 ```
-# full corpus: per-test PASS/FAIL table + tally (137 gpu-only, 411 het)
+# full corpus: per-test PASS/FAIL table + tally (173 gpu-only, 471 het)
 JOBS=8 bash hetlitmus/verify/tokens.sh            # both
-JOBS=8 bash hetlitmus/verify/tokens.sh gpu-only   # 137
-JOBS=8 bash hetlitmus/verify/tokens.sh het        # 411
+JOBS=8 bash hetlitmus/verify/tokens.sh gpu-only   # 173
+JOBS=8 bash hetlitmus/verify/tokens.sh het        # 471
 
 # completeness-guard report (distinct annotations + unknown hard-fail)
 bash hetlitmus/verify/tokens.sh guard
@@ -195,15 +196,15 @@ built in `_build` (`make all` at the repo root) and `nvcc` on `PATH`
 ## Result
 
 ```
-TALLY gpu-only: 137/137 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
-TALLY het:      411/411 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
+TALLY gpu-only: 173/173 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
+TALLY het: 471/471 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
 ```
 
 * **Self-test:** a copied `MP-sys-F.ptx` mutated `st.release.sys`→`st.relaxed.sys`
   (weakening) and `ld.relaxed.sys`→`ld.acquire.sys` (strengthening) each FAIL
   with an exact `[idx] expected … observed …` diff (exit 1); the unmutated
   control PASSes. Scope-narrowing (`.sys`→`.cta`) also FAILs.
-* **Completeness:** all 15 distinct GPU annotations + 6 CPU mnemonics MAPPED; an
+* **Completeness:** all 17 distinct GPU annotations + 6 CPU mnemonics MAPPED; an
   unknown `w[consume,sys]` hard-fails (exit 2).
 
 ### Triage log (every FAIL accounted for)
@@ -215,8 +216,8 @@ emitter mismatch: the het barrier/model separator assumed a single barrier
 proc guard block** (`[barrier][model]` × 2). The fix (segment on the fetch_add
 anchor, strip the barrier template per segment) was applied **in the checker
 only**; the emitter, `.litmus` corpus, and `ptx.bell` were not touched. After the
-fix: 411/411. No emitter mismatch was found — the lowering is faithful across the
-whole corpus.
+fix, every het test PASSed. No emitter mismatch was found — the lowering is
+faithful across the whole corpus.
 
 ## Scope / limits
 
@@ -229,7 +230,7 @@ whole corpus.
   store value it set is replaced by the runtime tag, which reaches the asm block
   as an input operand — so it is intentionally excluded from the CPU comparison;
   only memory/ordering mnemonics are compared.
-* No `acq_rel`/RMW/`sc`-on-access appears in the 137+411 corpus; the
+* No `acq_rel`/RMW/`sc`-on-access appears in the 173+471 corpus; the
   mapping covers them so the guard recognizes (never skips) them if added.
 * **ptxcheck is BLIND to the stress layer, by design — and that blind spot has
   already cost us.** Stress is scaffolding, not a tested op: it carries no
