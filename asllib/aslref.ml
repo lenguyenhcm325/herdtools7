@@ -32,7 +32,7 @@ let parse_args () =
   let print_serialized = ref false in
   let print_serialized_typed = ref false in
   let print_typed = ref false in
-  let print_lisp = ref false in
+  let print_lisp = ref None in
   let opn = ref "" in
   let strictness : strictness ref = ref TypeCheck in
   let set_strictness s () = strictness := s in
@@ -48,7 +48,7 @@ let parse_args () =
   let use_fine_grained_side_effects = ref false in
   let use_conflincting_side_effects_extension = ref false in
   let v0_use_split_chunks = ref false in
-
+  let version_eac1 = ref false in
   let speclist =
     [
       ("--exec", Arg.Set exec, " Execute the asl program (default).");
@@ -67,8 +67,12 @@ let parse_args () =
         Arg.Set print_typed,
         " Print the parsed AST after typing and before executing it." );
       ( "--print-lisp",
-        Arg.Set print_lisp,
+        Arg.Unit (fun () -> print_lisp := Some Readable),
         " Print the parsed and typechecked AST in the Lisp object format." );
+      ( "--print-lisp-compact",
+        Arg.Unit (fun () -> print_lisp := Some Compact),
+        " Print the parsed and typechecked AST in a compact Lisp object format."
+      );
       ( "--format-csv",
         Arg.Unit (fun () -> output_format := Error.CSV),
         " Output the errors in a CSV format." );
@@ -145,6 +149,11 @@ let parse_args () =
         Arg.Set v0_use_split_chunks,
         " While lexing v0 files, split the files along separator comment \
          lines. Error display might be impacted." );
+      ( "--version-eac1",
+        Arg.Set version_eac1,
+        " Enables deprecated ASLv1 features that exist only in EAC1:\n\
+         1. the slicing shorthands [:N] and [A*:B].\n\
+         2. eliding parameters in function calls." );
     ]
     |> Arg.align ?limit:None
   in
@@ -183,6 +192,7 @@ let parse_args () =
       no_stdlib = !no_stdlib;
       no_stdlib0 = !no_stdlib0;
       v0_use_split_chunks = !v0_use_split_chunks;
+      version_eac1 = !version_eac1;
     }
   in
 
@@ -209,7 +219,7 @@ let parse_args () =
   let () =
     if !show_version then
       let () = Printf.printf "aslref version %s\n%!" Version.version in
-      raise (Exit 0)
+      exit 0
   in
 
   let () =
@@ -218,13 +228,17 @@ let parse_args () =
         Printf.eprintf
           "No files supplied! Run `aslref --help` for information on usage.\n"
       in
-      raise (Exit 1)
+      exit 1
   in
 
   args
 
 let () =
-  try
-    let args = parse_args () in
-    run_with args
-  with Exit n -> exit n
+  let args = parse_args () in
+  let exit_code =
+    (* If the user wants to see a backtrace, we do not catch errors and OCaml
+       handle them. OCaml by default does not have backtrace on, so the default
+       behaviour for aslref is [safe_run]. *)
+    if Printexc.backtrace_status () then run args else safe_run args
+  in
+  exit exit_code

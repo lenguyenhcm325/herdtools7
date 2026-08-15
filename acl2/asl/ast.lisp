@@ -110,6 +110,8 @@ never used in the interpreter")
   (:precision_full ())
   (:precision_lost ()))
 
+(defenum pattern_kind-p (:positive :negative))
+
 
 (defenum subprogram_type-p
   (:st_procedure :st_function :st_getter :st_emptygetter :st_setter :st_emptysetter))
@@ -170,9 +172,6 @@ concatenated together, MSBs first, to form the result.</p>")
     (:e_getarray ((base expr)
                   (index expr))
      :short "Array lookup expression")
-    (:e_getenumarray ((base expr)
-                      (index expr))
-     :short "Enumarray lookup expression")
     (:e_getfield ((base expr)
                   (field identifier))
      :short "Record field lookup expression")
@@ -197,16 +196,11 @@ e_getfields))")
                (value expr))
      :short "Array construction expression. (No syntax for this; only produced for initial
 values.)")
-    (:e_enumarray ((enum identifier)
-                   (labels identifierlist)
-                   (value expr))
-     :short "Enumarray construction expression. (No syntax for this; only produced for
-initial values.)")
     (:e_arbitrary ((type ty))
      :short "Arbitrary value expression. Semantics: reads the oracle to construct a value of
 the given type.")
     (:e_pattern ((expr expr)
-                 (pattern pattern))
+                 (pattern pattern_matcher))
      :short "Pattern match expression")
     :base-case-override :e_literal
     :measure (acl2::two-nats-measure (acl2-count x) 10))
@@ -224,15 +218,12 @@ the given type.")
   (deftagsum pattern_desc
     :short "ASL pattern expression (main body)"
     (:pattern_all ())
-    (:pattern_any ((patterns patternlist)))
     (:pattern_geq ((expr expr)))
     (:pattern_leq ((expr expr)))
     (:pattern_mask ((mask bitvector_mask)))
-    (:pattern_not ((pattern pattern)))
     (:pattern_range ((lower expr)
                      (upper expr)))
     (:pattern_single ((expr expr)))
-    (:pattern_tuple ((patterns patternlist)))
     :measure (acl2::two-nats-measure (acl2-count x) 10))
 
   (defprod pattern ((desc pattern_desc "Main pattern")
@@ -244,6 +235,13 @@ the given type.")
   (deflist patternlist :elt-type pattern :true-listp t
     :short "List of ASL patterns"
     :measure (acl2::two-nats-measure (acl2-count x) 10))
+
+  (defprod pattern_matcher
+    ((patterns patternlist)
+     (kind pattern_kind-p))
+    :short "Pattern matcher: a list of patterns and whether they are matched positively or negatively."
+    :layout :fulltree
+    :measure (acl2::two-nats-measure (acl2-count x) 20))
 
   (deftagsum slice
     :short "ASL bitvector slice expression"
@@ -289,10 +287,10 @@ to them are removed by the typechecker.")
     (:t_bool ())
     (:t_enum ((elts identifierlist)))
     (:t_tuple ((types tylist)))
-    (:t_array ((index array_index)
+    (:t_array ((index expr)
                (type ty))
-     :short "Array type, either an integer-indexed array or an enumarray depending on
-@('index'). All elements are of type @('type').")
+     :short "Array type. @('index') is the length expression and all elements are of type
+@('type').")
     (:t_record ((fields typed_identifierlist)))
     (:t_exception ((fields typed_identifierlist)))
     (:t_collection ((fields typed_identifierlist)))
@@ -358,14 +356,6 @@ are semantically relevant.</p>"
     :short "List of ASL bitfields"
     :measure (acl2::two-nats-measure (acl2-count x) 10))
 
-  (deftagsum array_index
-    :short "Array indexing specification -- either a length (indicating a regular array) or
-an enum type (indicating an enumarray)."
-    (:arraylength_expr ((length expr)))
-    (:arraylength_enum ((name identifier)
-                        (elts identifierlist)))
-    :measure (acl2::two-nats-measure (acl2-count x) 10))
-
   (defprod named_expr
     :short "Pairing of a name (identifier) with an expression, as in @(see e_record)"
     ((name identifier)
@@ -417,8 +407,6 @@ a bitvector slice"
      :short "Assignment to a list of bitvector slices: see @(see write_to_bitvector)")
     (:le_setarray ((base lexpr)
                    (index expr)))
-    (:le_setenumarray ((base lexpr)
-                       (index expr)))
     (:le_setfield ((base lexpr)
                    (field identifier)))
     (:le_setfields ((base lexpr)
@@ -601,8 +589,7 @@ body, return type, and recursion limit."
   (:d_globalstorage ((decl global_decl))
    :short "Global data declaration")
   (:d_typedecl ((name identifier)
-                (ty ty)
-                (supertype maybe-supertype))
+                (ty ty))
    :short "Type declaration")
   (:d_pragma ((name identifier)
               (exprs exprlist))
@@ -673,7 +660,6 @@ exception.</p>"
   ((declared_types ty-timeframe-imap "Maps type names to their definitions -- used in @(see resolve-ty)")
    (constant_values literal-storage "Maps constant names to their (literal) values")
    (storage_types ty-global_decl_keyword-imap "Maps global variable names to their types and declaration keywords")
-   (subtypes identifier-imap "Maps named types to their declared supertypes -- used in @(see find_catcher)")
    (subprograms func-ses-imap "Maps function names to their definitions -- used in @(see eval_subprogram)")
    (overloaded_subprograms identifierlist-imap)
    (expr_equiv expr-imap))

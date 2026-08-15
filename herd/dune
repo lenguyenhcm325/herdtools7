@@ -1,5 +1,7 @@
 (dirs :standard \ tests/instructions libdir)
 
+(data_only_dirs libdir)
+
 (rule
  (copy ../Version.ml Version.ml))
 
@@ -22,10 +24,12 @@
 
 (ocamllex lexConf_herd)
 
-(executable
- (name herd)
- (public_name herd7)
+(library
+ (name herd_core)
  (libraries unix herdtools)
+ (wrapped true)
+ (modules
+  (:standard \ herd cli itimer))
  (modules_without_implementation
   AArch64Sig
   action
@@ -34,3 +38,16 @@
   sem
   XXXMem
   port))
+
+(executable
+ (name herd)
+ (public_name herd7)
+ (package herdtools7)
+ (modules herd cli itimer)
+ (libraries unix herdtools herd_core))
+
+(install
+ (source_trees
+  (libdir as herd))
+ (section share)
+ (package herdtools7))

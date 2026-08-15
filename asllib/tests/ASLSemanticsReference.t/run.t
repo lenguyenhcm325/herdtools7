@@ -54,7 +54,7 @@ ASL Semantics Tests:
   $ aslref SemanticsRule.EPattern.asl
   $ aslref SemanticsRule.LELocalVar.asl
   $ aslref SemanticsRule.LESetArray.asl
-  $ aslref SemanticsRule.LESetEnumArray.asl
+  $ aslref SemanticsRule.LESetCollectionFields.asl
   $ aslref SemanticsRule.SReturnNone.asl
   $ aslref SemanticsRule.SCond.asl
   $ aslref SemanticsRule.SCase.asl
@@ -156,14 +156,11 @@ ASL Semantics Tests:
   [1]
   $ aslref SemanticsRule.FCall.asl
   $ aslref SemanticsRule.PAll.asl
-  $ aslref SemanticsRule.PAny.asl
   $ aslref SemanticsRule.PGeq.asl
   $ aslref SemanticsRule.PLeq.asl
-  $ aslref SemanticsRule.PNot.asl
   $ aslref SemanticsRule.PRange.asl
   $ aslref SemanticsRule.PSingle.asl
   $ aslref SemanticsRule.PMask.asl
-  $ aslref SemanticsRule.PTuple.asl
   $ aslref SemanticsRule.ATCValue.asl
   $ aslref -0 SemanticsRule.LEUndefIdentV0.asl
   $ aslref SemanticsRule.LEUndefIdentV1.asl
@@ -178,8 +175,6 @@ ASL Semantics Tests:
   $ aslref SemanticsRule.SliceSingle.asl
   $ aslref SemanticsRule.SliceLength.asl
   $ aslref SemanticsRule.SliceRange.asl
-  $ aslref SemanticsRule.SliceStar.asl
-  $ aslref SemanticsRule.SliceFromZero.asl
   $ aslref SemanticsRule.Slices.asl
   $ aslref SemanticsRule.LDTuple.asl
   $ aslref SemanticsRule.LDTypedTuple.asl
@@ -238,7 +233,6 @@ ASL Semantics Tests:
   [1]
   $ aslref SemanticsRule.SCond4.asl
   $ aslref SemanticsRule.STry.asl
-  $ aslref SemanticsRule.EGetEnumArray.asl
   $ aslref SemanticsRule.CheckNonOverlappingSlices.asl
   $ aslref SemanticsRule.CheckNonOverlappingSlices.bad.asl
   ASL Dynamic error: overlapping slices (N - 2)+:2, 0+:1.

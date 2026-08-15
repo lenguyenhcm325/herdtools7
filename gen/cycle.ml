@@ -157,6 +157,7 @@ module Make (O:Config) (E:Edge.S) :
   let do_sve = O.variant Variant_gen.SVE
   let do_sme = O.variant Variant_gen.SME
   let do_no_fault = O.variant Variant_gen.NoFault
+  let do_store_only = O.variant Variant_gen.StoreOnly
 
   type fence = E.fence
   type edge = E.edge
@@ -488,7 +489,7 @@ let diff_loc e = Code.is_diff_loc @@ E.loc_sd e
 let same_proc e = E.get_ie e = Int
 let diff_proc e = E.get_ie e = Ext
 let int_com e = match e.E.edge with
-  | E.Rf Int|E.Fr Int|E.Ws Int -> true
+  | E.Communication (_,Int) -> true
   | _ -> false
 
 
@@ -572,25 +573,22 @@ module CoSt = struct
     Some ( (Label.next_label "L"), (Value.can_fault dir pte_val) )
 
   (* Helper function returns a fresh label and a boolean for if it should fault,
-     if a fault check is need. Otherwise return `None`. *)
+     if a fault check is needed. Otherwise return `None`. *)
   let fault_update st dir =
     let unset_check_fault st = {st with check_fault = NoDir } in
     let pte_val = get_pte_value st in
-    match () with
-    | _ when (st.check_fault = NoDir || do_no_fault) -> None,unset_check_fault st
-      (* Need to check fault *)
-    | _ when do_kvm ->
-      let fault,check_fault = match dir,st.check_fault with
-      | _,NoDir -> None,NoDir
-      | (R|W),Irr | W,Dir W | R,Dir R -> label_pte_fault dir pte_val,NoDir
-      | W,Dir R -> None,Dir R
-      | R,Dir W -> None,Dir W in
-      fault,{st with check_fault}
-      (* In variants `memtag` and `morello`, the cycles are constructed such that
-         no fault occurs *)
-    | _ when do_memtag || do_morello ->
+    match st.check_fault,dir with
+    | _,_ when do_no_fault -> None,unset_check_fault st
+    | NoDir,_ -> None,st
+    | Irr,(R|W) | Dir W,W | Dir R,R when do_kvm ->
+        label_pte_fault dir pte_val,unset_check_fault st
+    | Dir R,W | Dir W,R when do_kvm ->
+        None,st
+    | _,R when do_store_only ->
+        None,st
+    | _,_ when do_memtag || do_morello ->
       Some ((Label.next_label "L"), false),unset_check_fault st
-    |_ -> None,unset_check_fault st
+    | _,_ -> None,st
 
   let implicit_pte_update st dir =
     match Value.implicitly_set_pteval dir st.machine_feature st.pte_value with
@@ -728,7 +726,7 @@ let remove_store n0 =
     begin
       let p = find_non_pseudo_prev m.prev in
       match p.edge.E.edge with
-      | (E.Rf Ext | E.Fr Ext) ->
+      | (E.Communication (Rf,Ext) | E.Communication (Fr,Ext)) ->
         Warn.fatal "Insert pseudo edge %s appears after external communication edge %s"
         (E.pp_edge m.edge) (E.pp_edge p.edge)
       | _ -> ()
@@ -1611,7 +1609,7 @@ let merge_changes n nss =
     let k = IntSet.empty in
     let k = if e.proc >= 0 then IntSet.add e.proc k else k in
     let k = match n.edge.E.edge with
-    | E.Rf _ -> IntSet.add n.next.evt.proc k
+    | E.Communication (Rf,_) -> IntSet.add n.next.evt.proc k
     | _ -> k in
     k
 

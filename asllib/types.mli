@@ -50,7 +50,7 @@ val get_structure : env -> ty -> ty
 (** The structure of a type is the primitive type that can hold the same values.
 *)
 
-val parameterized_ty : loc:'a annotated -> identifier -> ty
+val parameterized_ty : loc:_ t_annotated -> identifier -> ty
 (** Builds an parameterized integer type from a declared variable. *)
 
 val to_well_constrained : ty -> ty
@@ -63,16 +63,6 @@ val get_well_constrained_structure : env -> ty -> ty
     [get_structure env ty |> to_well_constrained]. *)
 
 (** {2 Orders on types} *)
-
-val subtypes : env -> ty -> ty -> bool
-(** [subtypes env t1 t2] is true if and only if [t1] is a declared subtype of
-    [t2]. *)
-
-val subtypes_names : env -> identifier -> identifier -> bool
-(** [subtypes_names env s1 s2] is true if and only if the type named [s1] is a
-    declared subtype of the type named [s2].
-
-    Equivalent to [subtypes env (T_Named s1 |> here) (T_Named s2 |> here)]. *)
 
 val subtype_satisfies : env -> ty -> ty -> bool
 (** Subtype-satisfaction test. *)
@@ -90,7 +80,7 @@ val type_clashes : env -> ty -> ty -> bool
 val subprogram_clashes : env -> func -> func -> bool
 (** Subprogram clashing relation. *)
 
-val lowest_common_ancestor : loc:'a annotated -> env -> ty -> ty -> ty option
+val lowest_common_ancestor : loc:_ t_annotated -> env -> ty -> ty -> ty option
 (** Lowest common ancestor. *)
 
 val type_equal : env -> ty -> ty -> bool

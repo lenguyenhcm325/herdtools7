@@ -124,8 +124,6 @@ let rec pp_expr =
         bprintf f "E_Cond (%a, %a, %a)" pp_expr e1 pp_expr e2 pp_expr e3
     | E_GetArray (e1, e2) ->
         bprintf f "E_GetArray (%a, %a)" pp_expr e1 pp_expr e2
-    | E_GetEnumArray (e1, e2) ->
-        bprintf f "E_GetEnumArray (%a, %a)" pp_expr e1 pp_expr e2
     | E_GetField (e, x) -> bprintf f "E_GetField (%a, %S)" pp_expr e x
     | E_GetFields (e, x) ->
         bprintf f "E_GetFields (%a, %a)" pp_expr e (pp_list pp_string) x
@@ -140,11 +138,9 @@ let rec pp_expr =
     | E_Array { length; value } ->
         bprintf f "E_Array { length=(%a); value=(%a) }" pp_expr length pp_expr
           value
-    | E_EnumArray { enum; labels; value } ->
-        bprintf f "E_EnumArray { enum=%S; labels=(%a); value=(%a) }" enum
-          (pp_list pp_string) labels pp_expr value
     | E_Arbitrary ty -> bprintf f "E_Arbitrary (%a)" pp_ty ty
-    | E_Pattern (e, p) -> bprintf f "E_Pattern (%a, %a)" pp_expr e pp_pattern p
+    | E_Pattern (e, p) ->
+        bprintf f "E_Pattern (%a, %a)" pp_expr e pp_pattern_matcher p
   in
   fun f e -> pp_annotated pp_desc f e
 
@@ -159,26 +155,27 @@ and pp_slice f = function
       bprintf f "Slice_Length (%a, %a)" pp_expr e1 pp_expr e2
   | Slice_Star (e1, e2) -> bprintf f "Slice_Star (%a, %a)" pp_expr e1 pp_expr e2
 
-and pp_pattern =
-  let pp_desc f = function
+and pp_pattern_matcher =
+  let pp_pattern_desc f = function
     | Pattern_All -> addb f "Pattern_All"
-    | Pattern_Any li ->
-        addb f "Pattern_Any ";
-        pp_list pp_pattern f li
     | Pattern_Geq e -> bprintf f "Pattern_Geq (%a)" pp_expr e
     | Pattern_Leq e -> bprintf f "Pattern_Leq (%a)" pp_expr e
     | Pattern_Mask m ->
         bprintf f "Pattern_Mask (Bitvector.mask_of_string \"%S\")"
           (Bitvector.mask_to_canonical_string m)
-    | Pattern_Not p -> bprintf f "Pattern_Not (%a)" pp_pattern p
     | Pattern_Range (e1, e2) ->
         bprintf f "Pattern_Range (%a, %a)" pp_expr e1 pp_expr e2
     | Pattern_Single e -> bprintf f "Pattern_Single (%a)" pp_expr e
-    | Pattern_Tuple li ->
-        addb f "Pattern_Tuple ";
-        pp_list pp_pattern f li
   in
-  fun f p -> pp_annotated pp_desc f p
+  let pattern_kind_to_string = function
+    | Positive -> "Positive"
+    | Negative -> "Negative"
+  in
+  let pp_pattern_kind f pk = addb f (pattern_kind_to_string pk) in
+  fun f (ps, pk) ->
+    bprintf f "(%a,%a)"
+      (pp_list (pp_annotated pp_pattern_desc))
+      ps pp_pattern_kind pk
 
 and pp_ty =
   let pp_desc f = function
@@ -195,7 +192,7 @@ and pp_ty =
         addb f "T_Tuple ";
         pp_list pp_ty f li
     | T_Array (length, elt_type) ->
-        bprintf f "T_Array (%a, %a)" pp_array_length length pp_ty elt_type
+        bprintf f "T_Array (%a, %a)" pp_expr length pp_ty elt_type
     | T_Collection li ->
         addb f "T_Collection ";
         pp_id_assoc pp_ty f li
@@ -208,11 +205,6 @@ and pp_ty =
     | T_Named identifier -> bprintf f "T_Named %S" identifier
   in
   fun f s -> pp_annotated pp_desc f s
-
-and pp_array_length f = function
-  | ArrayLength_Expr e -> bprintf f "ArrayLength_Expr (%a)" pp_expr e
-  | ArrayLength_Enum (enum, labels) ->
-      bprintf f "ArrayLength_Enum (%s, %a)" enum (pp_list pp_string) labels
 
 and pp_bitfield f = function
   | BitField_Simple (name, slices) ->
@@ -250,8 +242,6 @@ let rec pp_lexpr =
         bprintf f "LE_Slice (%a, %a)" pp_lexpr le pp_slice_list args
     | LE_SetArray (le, e) ->
         bprintf f "LE_SetArray (%a, %a)" pp_lexpr le pp_expr e
-    | LE_SetEnumArray (le, e) ->
-        bprintf f "LE_SetEnumArray (%a, %a)" pp_lexpr le pp_expr e
     | LE_SetField (le, x) -> bprintf f "LE_SetField (%a, %S)" pp_lexpr le x
     | LE_SetFields (le, x, slices) ->
         bprintf f "LE_SetFields (%a, %a, %a)" pp_lexpr le (pp_list pp_string) x
@@ -367,10 +357,8 @@ let pp_decl f d =
       bprintf f
         "D_GlobalStorage { name=%S; keyword=%a; ty=%a; initial_value=%a}" name
         pp_gdk keyword (pp_option pp_ty) ty (pp_option pp_expr) initial_value
-  | D_TypeDecl (name, type_desc, subty_opt) ->
-      bprintf f "D_TypeDecl (%S, %a, %a)" name pp_ty type_desc
-        (pp_option (pp_pair pp_string (pp_id_assoc pp_ty)))
-        subty_opt
+  | D_TypeDecl (name, type_desc) ->
+      bprintf f "D_TypeDecl (%S, %a)" name pp_ty type_desc
   | D_Pragma (name, exprs) ->
       bprintf f "D_Pragma (%S, %a)" name (pp_list pp_expr) exprs
 

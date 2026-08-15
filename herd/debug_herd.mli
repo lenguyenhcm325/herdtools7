@@ -35,6 +35,7 @@ type t = {
   asl_symb: bool ;
   asl_stack: bool ;
   profile_mem: bool ;
+  timers : bool ;
   exc : bool ;  }
 
 val none : t

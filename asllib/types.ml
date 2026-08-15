@@ -37,7 +37,6 @@ let undefined_identifier pos x =
 let thing_equal astutil_equal env = astutil_equal (StaticModel.equal_in_env env)
 let expr_equal = thing_equal expr_equal
 let type_equal = thing_equal type_equal
-let array_length_equal = thing_equal array_length_equal
 let bitwidth_equal = thing_equal bitwidth_equal
 let slices_equal = thing_equal slices_equal
 let bitfield_equal = thing_equal bitfield_equal
@@ -124,7 +123,7 @@ let parameterized_ty ~loc var = T_Int (Parameterized var) |> add_pos_from loc
 
 let to_well_constrained ty =
   match ty.desc with
-  | T_Int (Parameterized var) -> var_ var |> integer_exact
+  | T_Int (Parameterized var) -> expr_of_var var |> integer_exact
   | _ -> ty
 
 let get_well_constrained_structure env ty =
@@ -198,7 +197,7 @@ module Domain = struct
     match ty.desc with
     | T_Int UnConstrained -> Top
     | T_Int (Parameterized var) ->
-        Subdomains [ ConstrainedDom (Constraint_Exact (var_ var)) ]
+        Subdomains [ ConstrainedDom (Constraint_Exact (expr_of_var var)) ]
     | T_Int (WellConstrained (constraints, _)) ->
         Subdomains (List.map (symdom_of_constraint env) constraints)
     | T_Int PendingConstrained
@@ -416,21 +415,6 @@ end
 
 (* --------------------------------------------------------------------------*)
 
-(* Begin Subtype *)
-let rec subtypes_names env s1 s2 =
-  if String.equal s1 s2 then true
-  else
-    match IMap.find_opt s1 env.SEnv.global.subtypes with
-    | None -> false
-    | Some s1' -> subtypes_names env s1' s2
-
-let subtypes env t1 t2 =
-  (match (t1.desc, t2.desc) with
-    | T_Named s1, T_Named s2 -> subtypes_names env s1 s2
-    | _ -> false)
-  |: TypingRule.Subtype
-(* End Subtype *)
-
 let rec bitfields_included env bfs1 bfs2 =
   let rec mem_bfs bfs2 bf1 =
     match find_bitfield_opt (bitfield_get_name bf1) bfs2 with
@@ -493,18 +477,9 @@ and subtype_satisfies env t s =
         bitfields_subtype && widths_subtype
     (* If S has the structure of an array type with elements of type E then
      T must have the structure of an array type with elements of type E,
-     and T must have the same element indices as S. *)
-    | T_Array (length_s, ty_s), T_Array (length_t, ty_t) -> (
-        type_equal env ty_s ty_t
-        &&
-        match (length_s, length_t) with
-        | ArrayLength_Expr length_expr_s, ArrayLength_Expr length_expr_t ->
-            expr_equal env length_expr_s length_expr_t
-        | ArrayLength_Enum (name_s, _), ArrayLength_Enum (name_t, _) ->
-            String.equal name_s name_t
-        | ArrayLength_Enum (_, _), ArrayLength_Expr _
-        | ArrayLength_Expr _, ArrayLength_Enum (_, _) ->
-            false)
+     and T must have the same length as S. *)
+    | T_Array (length_s, ty_s), T_Array (length_t, ty_t) ->
+        type_equal env ty_s ty_t && expr_equal env length_s length_t
     (* If S has the structure of a tuple type then T must have the
      structure of a tuple type with same number of elements as S,
      and each element in T must type-satisfy the corresponding
@@ -533,8 +508,8 @@ and subtype_satisfies env t s =
 and type_satisfies env t s =
   ((* Type T type-satisfies type S if and only if at least one of the following
       conditions holds: *)
-   (* T is a subtype of S *)
-   subtypes env t s
+   (* T is equivalent to S *)
+   type_equal env t s
   (* T subtype-satisfies S and at least one of S or T is an anonymous type *)
   || ((is_anonymous t || is_anonymous s) && subtype_satisfies env t s)
   ||
@@ -566,24 +541,25 @@ let rec type_clashes env t s =
         type-clash
       • they both have the structure of tuples of the same length whose
         corresponding element types type-clash
-      • S is either a subtype or a supertype of T *)
+      • S and T are same-named types *)
   (* We will add a rule for boolean and boolean. *)
-  ((subtypes env s t || subtypes env t s)
-  ||
-  let s_struct = get_structure env s and t_struct = get_structure env t in
-  match (s_struct.desc, t_struct.desc) with
-  | T_Int _, T_Int _
-  | T_Real, T_Real
-  | T_String, T_String
-  | T_Bits _, T_Bits _
-  | T_Bool, T_Bool ->
-      true
-  | T_Enum li_s, T_Enum li_t -> List.equal String.equal li_s li_t
-  | T_Array (_, ty_s), T_Array (_, ty_t) -> type_clashes env ty_s ty_t
-  | T_Tuple li_s, T_Tuple li_t ->
-      List.compare_lengths li_s li_t = 0
-      && List.for_all2 (type_clashes env) li_s li_t
-  | _ -> false)
+  (match (s.desc, t.desc) with
+    | T_Int _, T_Int _
+    | T_Real, T_Real
+    | T_String, T_String
+    | T_Bits _, T_Bits _
+    | T_Bool, T_Bool ->
+        true
+    | T_Enum li_s, T_Enum li_t -> List.equal String.equal li_s li_t
+    | T_Array (_, ty_s), T_Array (_, ty_t) -> type_clashes env ty_s ty_t
+    | T_Tuple li_s, T_Tuple li_t ->
+        List.compare_lengths li_s li_t = 0
+        && List.for_all2 (type_clashes env) li_s li_t
+    | T_Named s_name, T_Named t_name when String.equal s_name t_name -> true
+    | T_Named _, _ | _, T_Named _ ->
+        let t1 = make_anonymous env t and s1 = make_anonymous env s in
+        type_clashes env s1 t1
+    | _ -> false |: TypingRule.TypeClash)
   |: TypingRule.TypeClash
 (* End *)
 
@@ -605,30 +581,6 @@ let subprogram_clashes env (f1 : func) (f2 : func) =
 
 (* --------------------------------------------------------------------------*)
 
-let supertypes_set (env : env) =
-  let rec aux acc x =
-    let acc = ISet.add x acc in
-    match IMap.find_opt x env.global.subtypes with
-    | Some x' -> aux acc x'
-    | None -> acc
-  in
-  aux ISet.empty
-
-let find_named_lowest_common_supertype env x1 x2 =
-  (* TODO: Have a better algorithm? This is in O(h * log h) because set
-     insertions are in O (log h), where h is the max height of the subtype
-     tree. Wikipedia says it is in O(h) generally, and it can be precomputed,
-     in which case it becomes O(1). *)
-  let set1 = supertypes_set env x1 in
-  let rec aux x =
-    if ISet.mem x set1 then Some x
-    else
-      match IMap.find_opt x env.global.subtypes with
-      | None -> None
-      | Some x' -> aux x'
-  in
-  aux x2
-
 (** [unpack_options li] is [Some [x1; ... x_n]] if [li] is
     [[Some x1; ... Some x_n]], [None] otherwise *)
 let unpack_options li =
@@ -643,17 +595,12 @@ let rec lowest_common_ancestor ~loc env s t =
   (* The lowest common ancestor of types S and T is: *)
   (match (s.desc, t.desc) with
     | _, _ when type_equal env s t ->
-        (* • If S and T are the same type: S (or T). *)
+        (* If S and T are the same type: S (or T). *)
         Some s
-    | T_Named name_s, T_Named name_t -> (
-        (* If S and T are both named types: the (unique) common supertype of S
-         and T that is a subtype of all other common supertypes of S and T. *)
-        match find_named_lowest_common_supertype env name_s name_t with
-        | Some name -> Some (T_Named name |> here)
-        | None ->
-            let anon_s = make_anonymous env s
-            and anon_t = make_anonymous env t in
-            lowest_common_ancestor ~loc env anon_s anon_t)
+    | T_Named s_name, T_Named t_name ->
+        assert (not (String.equal s_name t_name));
+        let anon_s = make_anonymous env s and anon_t = make_anonymous env t in
+        lowest_common_ancestor ~loc env anon_s anon_t
     | _, T_Named _ | T_Named _, _ ->
         let anon_s = make_anonymous env s and anon_t = make_anonymous env t in
         if type_equal env anon_s anon_t then
@@ -674,10 +621,10 @@ let rec lowest_common_ancestor ~loc env s t =
     | T_Bits (e_s, _), T_Bits (e_t, _) when expr_equal env e_s e_t ->
         (* We forget the bitfields if they are not equal. *)
         Some (T_Bits (e_s, []) |> here)
-    | T_Array (width_s, ty_s), T_Array (width_t, ty_t)
-      when array_length_equal env width_s width_t ->
+    | T_Array (length_s, ty_s), T_Array (length_t, ty_t)
+      when expr_equal env length_s length_t ->
         let+ t = lowest_common_ancestor ~loc env ty_s ty_t in
-        T_Array (width_s, t) |> here
+        T_Array (length_s, t) |> here
     | T_Tuple li_s, T_Tuple li_t when List.compare_lengths li_s li_t = 0 ->
         (* If S and T both are tuple types with the same number of elements:
          the tuple type with the type of each element the lowest common ancestor

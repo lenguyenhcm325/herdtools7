@@ -135,7 +135,6 @@ let token_of_string =
  | "SHR"                -> s SHR
  | "SLICING"            -> s SLICING
  | "STRING"             -> s STRING
- | "SUBTYPES"           -> s SUBTYPES
  | "THEN"               -> s THEN
  | "THROW"              -> s THROW
  | "TO"                 -> s TO
@@ -148,7 +147,6 @@ let token_of_string =
  | "WHEN"               -> s WHEN
  | "WHERE"              -> s WHERE
  | "WHILE"              -> s WHILE
- | "WITH"               -> s WITH
  | "LLBRACKET"          -> s LLBRACKET
  | "RRBRACKET"          -> s RRBRACKET
  | _ -> None
@@ -246,7 +244,6 @@ let token_to_symbol = function
   | RETURN             -> "return"
   | SETTER             -> "setter"
   | STRING             -> "string"
-  | SUBTYPES           -> "subtypes"
   | THEN               -> "then"
   | THROW              -> "throw"
   | TO                 -> "to"
@@ -259,7 +256,6 @@ let token_to_symbol = function
   | WHEN               -> "when"
   | WHERE              -> "where"
   | WHILE              -> "while"
-  | WITH               -> "with"
   | BOOL_LIT _
   | INT_LIT _
   | REAL_LIT _
@@ -287,6 +283,7 @@ let fatal lexbuf desc =
       version = V1;
       pos_start = Lexing.lexeme_start_p lexbuf;
       pos_end = Lexing.lexeme_end_p lexbuf;
+      ty_opt = None;
     }
   |> Error.fatal
 
@@ -347,7 +344,6 @@ let tr_name s = match s with
 | "return"        -> RETURN
 | "setter"        -> SETTER
 | "string"        -> STRING
-| "subtypes"      -> SUBTYPES
 | "then"          -> THEN
 | "throw"         -> THROW
 | "to"            -> TO
@@ -361,7 +357,6 @@ let tr_name s = match s with
 | "when"          -> WHEN
 | "where"         -> WHERE
 | "while"         -> WHILE
-| "with"          -> WITH
 (* Reserved identifiers *)
 | x when is_reserved_keyword x -> reserved_err x
 | x when String.starts_with ~prefix:"__" x -> reserved_err x

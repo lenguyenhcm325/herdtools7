@@ -4,7 +4,7 @@
 ;;
 ;; SPDX-FileCopyrightText: Copyright 2025 Arm Limited and/or its affiliates <open-source-office@arm.com>
 ;; SPDX-License-Identifier: BSD-3-Clause
-;; 
+;;
 ;;****************************************************************************;;
 ;; Disclaimer:                                                                ;;
 ;; This material covers both ASLv0 (viz, the existing ASL pseudocode language ;;
@@ -229,7 +229,7 @@
   (fty::defvisitors :template traced-callsigs
     :types (expr)
     :measure (acl2::nat-list-measure (list :count 0)))
-  
+
   :defines-args (:flag-local nil))
 
 
@@ -263,7 +263,7 @@
   (fty::defvisitors :template traced-callsigs
     :types (stmt)
     :measure (acl2::nat-list-measure (list :count 0)))
-  
+
   :defines-args (:flag-local nil))
 
 
@@ -595,7 +595,7 @@
           (call-siglist->fns (cdr x)))))
 
 
-;; Depth-first-search to find all calls that can occur within a function and its subfunctions. 
+;; Depth-first-search to find all calls that can occur within a function and its subfunctions.
 (defines all-callsigs-rec
   (define all-callsigs-rec ((x call-sig-p)
                             (static static_env_global-p)
@@ -665,7 +665,7 @@
       :fn all-callsigs-list-rec))
 
   (verify-guards all-callsigs-rec)
-  
+
   (std::defret-mutual <fn>-subsetp
     (defret <fn>-subsetp
       (subsetp-equal (call-siglist-fix acc) new-acc)
@@ -746,7 +746,7 @@
 
      (local (in-theory (disable all-callsigs-rec-seen-normalize-acc-cond
                                 all-callsigs-list-rec-seen-normalize-acc-cond)))
-  
+
      (std::defret-mutual <fn>-seen-normalize-acc-lemma
        (defret <fn>-seen-normalize-acc-lemma
          (all-callsigs-rec-seen-normalize-acc-cond x static seen)
@@ -766,7 +766,7 @@
       :hints (("goal" :use <fn>-seen-normalize-acc-lemma
                :in-theory (disable <fn>-seen-normalize-acc-lemma)))
       :fn all-callsigs-rec)
-  
+
   (defret <fn>-seen-normalize-acc
     (implies (syntaxp (not (equal acc ''nil)))
              (equal new-seen
@@ -774,7 +774,7 @@
     :hints (("goal" :use <fn>-seen-normalize-acc-lemma
              :in-theory (disable <fn>-seen-normalize-acc-lemma)))
     :fn all-callsigs-list-rec)
-  
+
   (local
    (defund graph-nodes-is-subprograms (static)
      (equal (acl2::graph-nodes)
@@ -790,8 +790,8 @@
                       graph-node-succs-is-subprogram-calls-necc))
 
   (local (in-theory (enable graph-node-succs-is-subprogram-calls-necc)))
-  
-  (local 
+
+  (local
    (std::defret-mutual <fn>-seen-is-dfs-traverse
      (defret <fn>-seen-is-dfs-traverse
        (implies (graph-node-succs-is-subprogram-calls static)
@@ -846,8 +846,8 @@
                                    (call-siglist->fns (all-callsigs-fnname x static)))))
            :rewrite :direct))
   (local (in-theory (disable crock graph-node-succs-is-subprogram-calls)))
-  
-  
+
+
   (defretd <fn>-top-seen-collects-successors
     :pre-bind ((seen nil)
                (static static0))
@@ -965,7 +965,7 @@
       :fn all-subfunctions-list-rec))
 
   (verify-guards all-subfunctions-rec)
-  
+
 
   (std::defret-mutual <fn>-seen-keys-identifierlist-p
     (defret <fn>-seen-keys-identifierlist-p
@@ -978,7 +978,7 @@
                (identifierlist-p (acl2::alist-keys new-seen)))
       :hints ('(:expand (<call>)))
       :fn all-subfunctions-list-rec))
-  
+
   (local
    (defund graph-nodes-is-subprograms (static)
      (equal (acl2::graph-nodes)
@@ -994,8 +994,8 @@
                       graph-node-succs-is-subprogram-calls-necc))
 
   (local (in-theory (enable graph-node-succs-is-subprogram-calls-necc)))
-  
-  (local 
+
+  (local
    (std::defret-mutual <fn>-seen-is-dfs-traverse
      (defret <fn>-seen-is-dfs-traverse
        (implies (graph-node-succs-is-subprogram-calls static)
@@ -1050,8 +1050,8 @@
                                    (call-siglist->fns (all-callsigs-fnname x static)))))
            :rewrite :direct))
   (local (in-theory (disable crock graph-node-succs-is-subprogram-calls)))
-  
-  
+
+
   (defretd <fn>-top-seen-collects-successors
     :pre-bind ((seen nil)
                (static static0))
@@ -1148,7 +1148,7 @@
   (local (in-theory (e/d (acl2::hons-assoc-equal-iff-member-alist-keys)
                          (acl2::alist-keys-member-hons-assoc-equal
                           all-subfunctions-list))))
-  
+
   (local (defthm member-when-member
            (implies (and (member f fns)
                          (member s (all-subfunctions f static)))
@@ -1167,11 +1167,11 @@
                     (subsetp (all-subfunctions-list fs static)
                              (all-subfunctions-list fns static)))
            :hints(("Goal" :in-theory (enable acl2::subsetp-witness-rw)))))
-  
+
   (defcong acl2::set-equiv acl2::set-equiv (all-subfunctions-list fns static) 1
     :hints(("Goal" :in-theory (enable acl2::set-equiv))))
 
-  
+
   (defthm all-subfunctions-of-call-sig
     (acl2::set-equiv (all-subfunctions (call-sig name pos) static)
                      (cons (identifier-fix name)
@@ -1182,7 +1182,7 @@
 
 
 
-                                      
+
 
 
 (define all-stmts-func ((x func-p))
@@ -1304,7 +1304,7 @@
                     (subsetp (traced-stmts-fnnames fs static tracespec)
                              (traced-stmts-fnnames fns static tracespec)))
            :hints(("Goal" :in-theory (enable acl2::subsetp-witness-rw)))))
-  
+
   (defcong acl2::set-equiv acl2::set-equiv (traced-stmts-fnnames fns static tracespec) 1
     :hints(("Goal" :in-theory (enable acl2::set-equiv))))
 
@@ -1337,7 +1337,7 @@
     (append (traced-callsigs-fnname (car fns) static tracespec)
             (traced-callsigs-fnnames (cdr fns) static tracespec)))
   ///
-  
+
   (local (defthm member-when-member
            (implies (and (member f fns)
                          (member s (traced-callsigs-fnname f static tracespec)))
@@ -1353,7 +1353,7 @@
                     (subsetp (traced-callsigs-fnnames fs static tracespec)
                              (traced-callsigs-fnnames fns static tracespec)))
            :hints(("Goal" :in-theory (enable acl2::subsetp-witness-rw)))))
-  
+
   (defcong acl2::set-equiv acl2::set-equiv (traced-callsigs-fnnames fns static tracespec) 1
     :hints(("Goal" :in-theory (enable acl2::set-equiv))))
 
@@ -1400,6 +1400,7 @@
 (def-trace-free-x pattern_desc)
 (def-trace-free-x pattern)
 (def-trace-free-x patternlist)
+(def-trace-free-x pattern_matcher)
 (def-trace-free-x slice)
 (def-trace-free-x slicelist)
 (def-trace-free-x call)
@@ -1409,7 +1410,6 @@
 (def-trace-free-x int_constraint)
 (def-trace-free-x int_constraintlist)
 (def-trace-free-x constraint_kind)
-(def-trace-free-x array_index)
 (def-trace-free-x named_expr)
 (def-trace-free-x named_exprlist)
 (def-trace-free-x maybe-ty)
@@ -1441,22 +1441,19 @@
          :e_cond (and (trace-free-expr-p x.test)
                       (trace-free-expr-p x.then)
                       (trace-free-expr-p x.else))
-         :e_getarray (and (trace-free-expr-p x.base)
-                          (trace-free-expr-p x.index))
-         :e_getenumarray (and (trace-free-expr-p x.base)
-                              (trace-free-expr-p x.index))
-         :e_getfield (trace-free-expr-p x.base)
+        :e_getarray (and (trace-free-expr-p x.base)
+                         (trace-free-expr-p x.index))
+        :e_getfield (trace-free-expr-p x.base)
          :e_getfields (trace-free-expr-p x.base)
          :e_getitem (trace-free-expr-p x.base)
          :e_record (and (trace-free-ty-p x.type)
                         (trace-free-named_exprlist-p x.fields))
          :e_tuple (trace-free-exprlist-p x.exprs)
-         :e_array (and (trace-free-expr-p x.length)
-                       (trace-free-expr-p x.value))
-         :e_enumarray (trace-free-expr-p x.value)
-         :e_arbitrary (trace-free-ty-p x.type)
+        :e_array (and (trace-free-expr-p x.length)
+                      (trace-free-expr-p x.value))
+        :e_arbitrary (trace-free-ty-p x.type)
          :e_pattern (and (trace-free-expr-p x.expr)
-                         (trace-free-pattern-p x.pattern))
+                         (trace-free-pattern_matcher-p x.pattern))
          :otherwise t))
   :hints(("Goal" :in-theory (enable trace-free-expr_desc-p
                                     trace-free-expr-p
@@ -1465,6 +1462,7 @@
                                     trace-free-slicelist-p
                                     trace-free-named_exprlist-p
                                     trace-free-exprlist-p
+                                    trace-free-pattern_matcher-p
                                     trace-free-pattern-p)
           :expand ((all-callsigs-expr_desc x))))
   :rule-classes :definition)
@@ -1508,14 +1506,11 @@
 (defthmd trace-free-pattern_desc-p-redef
   (iff (trace-free-pattern_desc-p x)
        (pattern_desc-case x
-         :pattern_any (trace-free-patternlist-p x.patterns)
          :pattern_geq (trace-free-expr-p x.expr)
          :pattern_leq (trace-free-expr-p x.expr)
-         :pattern_not (trace-free-pattern-p x.pattern)
          :pattern_range (and (trace-free-expr-p x.lower)
                              (trace-free-expr-p x.upper))
          :pattern_single (trace-free-expr-p x.expr)
-         :pattern_tuple (trace-free-patternlist-p x.patterns)
          :otherwise t))
   :hints(("Goal" :in-theory (enable trace-free-patternlist-p
                                     trace-free-pattern-p
@@ -1530,6 +1525,14 @@
   :hints(("Goal" :in-theory (enable trace-free-pattern_desc-p
                                     trace-free-pattern-p)
           :expand ((all-callsigs-pattern x))))
+  :rule-classes :definition)
+
+(defthmd trace-free-pattern_matcher-p-redef
+  (iff (trace-free-pattern_matcher-p x)
+       (trace-free-patternlist-p (pattern_matcher->patterns x)))
+  :hints(("Goal" :in-theory (enable trace-free-pattern_matcher-p
+                                    trace-free-patternlist-p)
+          :expand ((all-callsigs-pattern_matcher x))))
   :rule-classes :definition)
 
 (defthmd trace-free-patternlist-p-redef
@@ -1623,7 +1626,7 @@
                                      traced-callsigs-func
                                      maybe-expr-some->val))))
 
-           
+
 
 
 
@@ -1633,8 +1636,8 @@
          :t_int (trace-free-constraint_kind-p x.constraint)
          :t_bits (trace-free-expr-p x.expr)
          :t_tuple (trace-free-tylist-p x.types)
-         :t_array (and (trace-free-array_index-p x.index)
-                       (trace-free-ty-p x.type))
+        :t_array (and (trace-free-expr-p x.index)
+                      (trace-free-ty-p x.type))
          :t_record (trace-free-typed_identifierlist-p x.fields)
          :t_exception (trace-free-typed_identifierlist-p x.fields)
          :t_collection (trace-free-typed_identifierlist-p x.fields)
@@ -1644,7 +1647,6 @@
                                     trace-free-expr-p
                                     trace-free-tylist-p
                                     trace-free-ty-p
-                                    trace-free-array_index-p
                                     trace-free-typed_identifierlist-p)
           :expand ((all-callsigs-type_desc x))))
   :rule-classes :definition)
@@ -1703,17 +1705,6 @@
   :rule-classes :definition)
 
 
-(defthmd trace-free-array_index-p-redef
-  (iff (trace-free-array_index-p x)
-       (array_index-case x
-         :arraylength_expr (trace-free-expr-p x.length)
-         :otherwise t))
-  :hints(("Goal" :in-theory (enable trace-free-array_index-p
-                                    trace-free-expr-p)
-          :expand ((all-callsigs-array_index x))))
-  :rule-classes :definition)
-
-
 (defthmd trace-free-named_expr-p-redef
   (iff (trace-free-named_expr-p x)
        (b* (((named_expr x)))
@@ -1769,11 +1760,9 @@
        (lexpr_desc-case x
          :le_slice (and (trace-free-lexpr-p x.base)
                         (trace-free-slicelist-p x.slices))
-         :le_setarray (and (trace-free-lexpr-p x.base)
-                           (trace-free-expr-p x.index))
-         :le_setenumarray (and (trace-free-lexpr-p x.base)
-                               (trace-free-expr-p x.index))
-         :le_setfield (trace-free-lexpr-p x.base)
+        :le_setarray (and (trace-free-lexpr-p x.base)
+                          (trace-free-expr-p x.index))
+        :le_setfield (trace-free-lexpr-p x.base)
          :le_setfields (trace-free-lexpr-p x.base)
          :le_destructuring (trace-free-lexprlist-p x.elts)
          :otherwise t))
@@ -1829,7 +1818,7 @@
                    (all-callsigs-ty-timeframe (cdar x))
                    (traced-callsigs-ty-timeframe-imap x tracespec)
                    (traced-callsigs-ty-timeframe (cdar x) tracespec)))))
-                             
+
 
 
 (defmacro def-trace-free-s (type)
@@ -2204,7 +2193,7 @@
                                     all-callsigs-expr
                                     all-callsigs-expr-aux
                                     all-callsigs-expr_desc))))
-          
+
 
 (defthm trace-free-exprlist-p-of-named_exprlist->exprs
   (implies (trace-free-named_exprlist-p x)
@@ -2328,6 +2317,7 @@
                   ((ty-p x) (trace-free-ty-p x))
                   ((pattern-p x) (trace-free-pattern-p x))
                   ((patternlist-p x) (trace-free-patternlist-p x))
+                  ((pattern_matcher-p x) (trace-free-pattern_matcher-p x))
                   ((exprlist-p x) (trace-free-exprlist-p x))
                   ((lexpr-p x) (trace-free-lexpr-p x))
                   ((lexprlist-p x) (trace-free-lexprlist-p x))
@@ -2337,7 +2327,7 @@
                   ((maybe-stmt-p x) (trace-free-maybe-stmt-p x))
                   ((slice-p x) (trace-free-slice-p x))
                   ((slicelist-p x) (trace-free-slicelist-p x)))
-                
+
     :rules ((t ;; (:add-bindings ((static-env (global-env->static (env->global env)))))
              (:add-concl (not (equal (ev_error->desc res) "Trace abort")))
              (:add-concl (equal trace nil))
@@ -2383,16 +2373,16 @@
              (:add-hyp (trace-free-fnname-p name)))
             ((:fnname eval_expr_list-*t)
              (:add-keyword :hints ('(:expand ((trace-free-exprlist-p e))))))
-            ((or (:fnname eval_pattern-any-*t)
-                 (:fnname eval_pattern_tuple-*t))
+            ((:fnname eval_pattern_list-*t)
              (:add-keyword :hints ('(:expand ((trace-free-patternlist-p p))))))
+            ((:fnname eval_pattern_matcher-*t)
+             (:add-keyword :hints ('(:expand ((trace-free-pattern_matcher-p p))))))
             ((:fnname eval_pattern-*t)
              (:add-keyword :hints ('(:expand ((trace-free-pattern-p p)
                                               (trace-free-pattern_desc-p (pattern->desc p)))))))
             ((:fnname resolve-ty-*t)
              (:add-keyword :hints ('(:expand ((trace-free-ty-p x)
-                                              (trace-free-type_desc-p (ty->desc x))
-                                              (TRACE-FREE-ARRAY_INDEX-P (T_ARRAY->INDEX (TY->DESC X))))))))
+                                              (trace-free-type_desc-p (ty->desc x)))))))
             ((:fnname resolve-typed_identifierlist-*t)
              (:add-keyword :hints ('(:expand ((trace-free-typed_identifierlist-p x)
                                               (TRACE-FREE-TYPED_IDENTIFIER-P (CAR X)))))))
@@ -2549,7 +2539,7 @@
   :hints (("Goal"
            :expand ((:free (tracespec) (eval_stmt-*t env s))
                     (find-stmt-tracespec s '(nil nil nil nil)))
-           
+
            :in-theory (enable stmt-interior-tracespec
                               eval_stmt-*t1-equals-original
                               maybe-stmt-tracespec->interior-tracespec
@@ -2583,8 +2573,3 @@
                               eval_subprogram-*t1-equals-original
                               maybe-call-tracespec->interior-tracespec
                               maybe-call-tracespec->empty-tracespec))))
-
-
-
-
-

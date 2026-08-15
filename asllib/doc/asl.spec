@@ -117,6 +117,12 @@ constant main : Identifier
   math_macro = \vmain,
 };
 
+constant discard_var : Identifier
+{
+  "the discard identifier \discardvar{}",
+  math_macro = \discardvar,
+};
+
 typedef ASTLabels
 {
   "\hyperlink{type-ASTLabels}{AST label}",
@@ -493,7 +499,7 @@ variadic operator intersect[T](sets: list0(powerset(T))) -> powerset(T)
   prose_application = "the intersection of {sets}",
 };
 
-variadic operator intersect_finite[T](sets: list0(powerset_finite(T))) -> powerset_finite(T)
+variadic operator intersect_finite[T](sets: list1(powerset_finite(T))) -> powerset_finite(T)
 {
   math_macro = \cap,
   associative = true,
@@ -915,8 +921,8 @@ ast expr { "expression" } =
     { "the tuple expression for the components given by {components}" }
     | E_Arbitrary(type: ty)
     { "the arbitrary value choice expression for {type}" }
-    | E_Pattern(discriminant: expr, pattern: pattern)
-    { "the pattern expression for the discriminant given by {discriminant} and {pattern}" }
+    | E_Pattern(discriminant: expr, matcher: pattern_matcher)
+    { "the pattern expression for the discriminant given by {discriminant} and pattern matcher given by {matcher}" }
 
 ////////////////////////////////////////////////
 // Typed AST
@@ -928,14 +934,6 @@ ast expr { "expression" } =
         array_value: expr { math_macro = \arrayvalue }
       ]
     { "the array construction expression for an array of length given by {length} and all cells initialized by {array_value}" }
-    | E_EnumArray[
-        enum: Identifier,
-        labels: list1(Identifier),
-        enum_array_value: expr { math_macro = \enumarrayvalue }
-      ]
-    { "the array construction expression for an array associating each label in {labels} with the value given by {enum_array_value}" }
-    | E_GetEnumArray(base: expr, key: expr)
-    { "the enumeration-indexed array read expression for the array expression given by {base} and key expression given by {key}" }
     | E_GetCollectionFields(collection_name: Identifier, field_names: list0(Identifier))
     { "the multi-field read expression for the collection variable named {collection_name} and fields given by {field_names}" }
 ;
@@ -969,13 +967,13 @@ render expr_cond = expr(E_Cond);
 render expr_getarray = expr(E_GetArray);
 render expr_getfield = expr(E_GetField);
 render expr_getfields = expr(E_GetFields);
+render expr_epattern = expr(E_Pattern);
 render expr_record = expr(E_Record);
 render expr_tuple = expr(E_Tuple);
 render expr_arbitrary = expr(E_Arbitrary);
-render expr_pattern = expr(E_Pattern);
 
-render typed_expr { lhs_hypertargets = false } = expr(E_GetItem, E_Array, E_EnumArray, E_GetEnumArray, E_GetCollectionFields);
-render expr_array = expr(E_Array, E_EnumArray);
+render typed_expr { lhs_hypertargets = false } = expr(E_GetItem, E_Array, E_GetCollectionFields);
+render expr_array = expr(E_Array);
 
 constant zero_bit : Bit
 { "\texttt{0}", math_macro = \zerobit };
@@ -989,22 +987,28 @@ constant x_bit
 ast pattern { "pattern" } =
     | Pattern_All
     { "the match-all pattern" }
-    | Pattern_Any(patterns: list0(pattern))
-    { "the match-any pattern for {patterns}" }
     | Pattern_Geq(subexpression: expr)
     { "the greater-or-equal pattern for {subexpression}" }
     | Pattern_Leq(subexpression: expr)
     { "the less-or-equal pattern for {subexpression}" }
     | Pattern_Mask(mask_constant: list0(constants_set(zero_bit, one_bit, x_bit)))
     { "the mask pattern for the mask given by {mask_constant}" }
-    | Pattern_Not(subpattern: pattern)
-    { "the negation pattern for {subpattern}" }
     | Pattern_Range(lower: expr, upper: expr)
     { "the range pattern for the low expression given by {lower} and high expression given by {upper}" }
     | Pattern_Single(subexpression: expr)
     { "the single-expression pattern for {subexpression}" }
-    | Pattern_Tuple(patterns:list0(pattern))
-    { "the tuple pattern for {patterns}" }
+;
+
+ast pattern_kind { "pattern kind" } =
+    | Positive
+    { "the positive pattern kind" }
+    | Negative
+    { "the negative pattern kind" }
+;
+
+ast pattern_matcher { "pattern matcher" } =
+    (patterns: list0(pattern), pattern_kind: pattern_kind)
+    { "the pattern matcher given by {patterns} and {pattern_kind}" }
 ;
 
 ast slice
@@ -1018,8 +1022,6 @@ ast slice
     { "the slice from the position given by {upper_index} down to the position given by {lower_index}" }
     | Slice_Length(start_index: expr, length: expr)
     { "the slice from the position given by {start_index} and length given by {length}" }
-    | Slice_Star(factor: expr, scale: expr)
-    { "the slice from the position given by {factor}*{scale} and length given by {scale}" }
 
 ////////////////////////////////////////
 // Typed AST
@@ -1035,7 +1037,6 @@ render untyped_slice = slice(
     Slice_Single,
     Slice_Range,
     Slice_Length,
-    Slice_Star,
 );
 
 render typed_slice { lhs_hypertargets = false } = slice(typed_Slice_Length);
@@ -1065,8 +1066,8 @@ ast ty { "type" } =
     { "the \bitvectortypeterm{} with bitwidth given by {width} and bitfields given by {bitfields}" }
     | T_Tuple(component_types: list0(ty))
     { "the \tupletypeterm{} with component types given by {component_types}" }
-    | T_Array(index: array_index, element_type: ty)
-    { "the \arraytypeterm{} with index given by {index} and element type given by {element_type}" }
+    | T_Array(length: expr, element_type: ty)
+    { "the \arraytypeterm{} of length given by {length} and element type given by {element_type}" }
     | T_Named(type_name: Identifier)
     { "the \namedtypeterm{} with name {type_name}" }
     | T_Enum(labels: list1(Identifier))
@@ -1164,22 +1165,7 @@ constant label_BitField_Simple : ASTLabels { math_macro = \BitFieldSimple };
 constant label_BitField_Nested : ASTLabels { math_macro = \BitFieldNested };
 constant label_BitField_Type : ASTLabels { math_macro = \BitFieldType };
 
-ast array_index { "array index" } =
-//////////////////////////////////////////////////
-// Untyped AST
-//////////////////////////////////////////////////
-    ArrayLength_Expr(length: expr)
-    { "the integer length expression {length}" }
-
-//////////////////////////////////////////////////
-// Typed AST
-//////////////////////////////////////////////////
-    | ArrayLength_Enum(enumeration_name: Identifier, enumeration_labels: list1(Identifier))
-    { "the index for the enumeration with name given by {enumeration_name} and labels given by {enumeration_labels}" }
-;
-
 constant label_E_Arbitrary : ASTLabels { math_macro = \EArbitrary };
-constant label_ArrayLength_Expr : ASTLabels { math_macro = \ArrayLengthExpr };
 constant label_E_Call : ASTLabels { math_macro = \ECall };
 constant label_E_Literal : ASTLabels { math_macro = \ELiteral };
 constant label_E_Var : ASTLabels { math_macro = \EVar };
@@ -1188,9 +1174,6 @@ constant label_E_Binop : ASTLabels { math_macro = \EBinop };
 constant label_E_Unop : ASTLabels { math_macro = \EUnop };
 constant label_E_Cond : ASTLabels { math_macro = \ECond };
 constant label_E_Tuple : ASTLabels { math_macro = \ETuple };
-
-render untyped_array_index = array_index(ArrayLength_Expr);
-render typed_array_index = array_index(ArrayLength_Enum);
 
 ast field { "field" } =
     (name: Identifier, type: ty)
@@ -1225,8 +1208,6 @@ ast lexpr { "\assignableexpression{}" } =
 // Typed AST
 ////////////////////////////////////////////////
 
-    | LE_SetEnumArray(base: lexpr, index: expr)
-    { "the array write \assignableexpression{} for the enumeration-indexed array {base} at the index given by {index}" }
     | LE_SetCollectionFields(collection_name: Identifier, field_names: list0(Identifier), slices: list0((Z, Z)))
     { "the multi-field write \assignableexpression{} for the collection named {collection_name}, field names given by {field_names}, and inferred slices given by {slices}", }
     | typed_LE_SetFields(base: lexpr, field_names: list0(Identifier), slices: list0((Z, Z)))
@@ -1249,7 +1230,7 @@ render untyped_lexpr = lexpr(
     LE_SetFields,
     LE_Destructuring,
 );
-render typed_lexpr { lhs_hypertargets = false } = lexpr(LE_SetEnumArray, LE_SetCollectionFields, typed_LE_SetFields);
+render typed_lexpr { lhs_hypertargets = false } = lexpr(LE_SetCollectionFields, typed_LE_SetFields);
 
 render lexpr_discard = lexpr(LE_Discard);
 render lexpr_var = lexpr(LE_Var);
@@ -1258,18 +1239,15 @@ render lexpr_setarray = lexpr(LE_SetArray);
 render lexpr_setfield = lexpr(LE_SetField);
 render lexpr_setfields = lexpr(LE_SetFields);
 render lexpr_destructuring = lexpr(LE_Destructuring);
-render lexpr_setarray_and_typed = lexpr(LE_SetArray, LE_SetEnumArray);
+render lexpr_setarray_and_typed = lexpr(LE_SetArray);
 
+render patterns = pattern_matcher(-), pattern_kind(-);
 render pattern_all = pattern(Pattern_All);
 render pattern_single = pattern(Pattern_Single);
 render pattern_range = pattern(Pattern_Range);
 render pattern_leq = pattern(Pattern_Leq);
 render pattern_geq = pattern(Pattern_Geq);
 render pattern_mask = pattern(Pattern_Mask);
-render pattern_tuple = pattern(Pattern_Tuple);
-render pattern_any = pattern(Pattern_Any);
-render pattern_not = pattern(Pattern_Not);
-
 render ty_real = ty(T_Real);
 render ty_string = ty(T_String);
 render ty_bool = ty(T_Bool);
@@ -1421,11 +1399,11 @@ constant label_S_Print : ASTLabels { math_macro = \SPrint };
 
 ast case_alt { "case alternative" } =
     [
-      case_alt_pattern: pattern { math_macro = \casealtpattern },
+      case_alt_pattern: pattern_matcher { math_macro = \casealtpattern },
       where: option(expr),
       case_alt_stmt: stmt { math_macro = \casealtstmt }
     ]
-    { "the \casealternativeterm{} for the pattern {case_alt_pattern},
+    { "the \casealternativeterm{} for {case_alt_pattern},
         optional \texttt{where} expression {where},
         and statement {case_alt_stmt}"
     }
@@ -1522,11 +1500,10 @@ ast decl { "global declaration" } =
     { "the \hyperlink{ast-DFunc}{subprogram declaration} with {descriptor}" }
     | D_GlobalStorage(storage_declaration: global_decl)
     { "the \hyperlink{ast-DGlobalStorage}{global storage declaration} with {storage_declaration}" }
-    | D_TypeDecl(type_name: Identifier, annotation: ty, extra_fields: option((super_type: Identifier, with_fields: list0(field))))
+    | D_TypeDecl(type_name: Identifier, annotation: ty)
     {
-      "the \hyperlink{ast-DTypeDecl}{type declaration} for the type name {type_name},
-      type annotation {annotation},
-      optional extra fields {extra_fields} in addition to those in the super type"
+      "the \hyperlink{ast-DTypeDecl}{type declaration} for the type name {type_name}
+      and type annotation {annotation}"
     }
     | D_Pragma(pragma_name: Identifier, arguments: list0(expr))
     { "the \hyperlink{ast-DPragma}{pragma declaration} for the pragma name {pragma_name} and
@@ -1582,8 +1559,6 @@ typedef global_static_envs
         constant_values: partial Identifier -> literal,
         global_storage_types: partial Identifier -> (element_type: ty, declared_keyword: global_decl_keyword),
         global_expr_equiv: partial Identifier -> (initializer: expr) { math_macro = \globalstaticenvsexprequiv },
-        subtypes: partial (sub_type: Identifier) ->
-         (super_type: Identifier),
         subprogram: partial Identifier -> (func, side_effects: powerset(TSideEffect)),
         overloaded_subprograms: partial Identifier -> powerset(Strings)
     ]
@@ -1681,13 +1656,6 @@ typedef TSideEffect { "\sideeffectdescriptorterm{}" } =
 ////////////////////////////////////////////////////////////////////////////////
 // Dynamic Semantics Types
 ////////////////////////////////////////////////////////////////////////////////
-
-function dynamic_domain(env: envs, t: ty) -> (d: powerset(native_value))
-{
-  "assigns a set of \nativevaluesterm{} {d} to the annotated type {t} in the \environmentterm{} {env}.",
-  prose_application = "the \hyperlink{relation-dynamicdomain}{dynamic domain} of {t} in {env}",
-  prose_transition = "the \hyperlink{relation-dynamicdomain}{dynamic domain} of {t} in {env} is",
-};
 
 typedef native_value
     {
@@ -1809,6 +1777,62 @@ typedef local_dynamic_envs
 
 render dynamic_envs_and_components = dynamic_envs(-), global_dynamic_envs(-), local_dynamic_envs(-);
 
+operator bitvector_domain(width: Z) -> (d: powerset(native_value))
+{
+  math_macro = \bitvectordomainop,
+  prose_application = "the set of native bitvectors of width {width}",
+};
+
+////////////////////////////////////////////////////////////////////////////////
+// Operators for generating sets of values
+// Since we don't support dependent types, we use operators.
+
+operator bool_domain() -> (d: powerset(native_value))
+{
+  math_macro = \tbool,
+  prose_application = "the set of native boolean values",
+};
+
+operator integer_domain() -> (d: powerset(native_value))
+{
+  math_macro = \tint,
+  prose_application = "the set of native integer values",
+};
+
+operator real_domain() -> (d: powerset(native_value))
+{
+  math_macro = \treal,
+  prose_application = "the set of native real values",
+};
+
+operator string_domain() -> (d: powerset(native_value))
+{
+  math_macro = \tstring,
+  prose_application = "the set of native string values",
+};
+
+operator vector_domain(component_domains: list0(powerset(native_value))) -> (d: powerset(native_value))
+{
+  math_macro = \vectordomainop,
+  prose_application = "the set of native vectors whose components are drawn from {component_domains}",
+};
+
+operator array_domain(length: Z, element_domain: powerset(native_value)) -> (d: powerset(native_value))
+{
+  math_macro = \arraydomainop,
+  custom = true,
+  prose_application = "the set of native vectors of length {length} whose values are drawn from {element_domain}",
+};
+
+operator record_domain(names: list0(Identifier), field_domains: list0(powerset(native_value))) -> (d: powerset(native_value))
+{
+  math_macro = \recorddomainop,
+  custom = true,
+  prose_application = "the set of native records with fields {names} whose values are drawn from {field_domains}",
+};
+
+////////////////////////////////////////////////////////////////////////////////
+
 constant empty_denv : dynamic_envs
     {
         "the \hyperlink{constant-emptydenv}{empty dynamic environment}",
@@ -1821,6 +1845,213 @@ constant empty_env : envs
         "the \hyperlink{def-emptyenv}{empty environment}",
         math_macro = \emptyenv,
     } = (empty_tenv, empty_denv)
+;
+
+
+function dynamic_domain(env: envs, t: ty) -> (d: powerset(native_value))
+{
+  "assigns a set of \nativevaluesterm{} {d} to the annotated type {t} in the \environmentterm{} {env}.",
+  prose_application = "the \hyperlink{relation-dynamicdomain}{dynamic domain} of {t} in {env}",
+  prose_transition = "the \hyperlink{relation-dynamicdomain}{dynamic domain} of {t} in {env} is",
+} =
+  case t_bool {
+    t = T_Bool;
+    --
+    bool_domain();
+  }
+
+  case t_string {
+    t = T_String;
+    --
+    string_domain();
+  }
+
+  case t_real {
+    t = T_Real;
+    --
+    real_domain();
+  }
+
+  case t_enumeration {
+    t =: T_Enum(labels);
+    d := set_from_list(label, labels, NV_Literal(L_Label(label)));
+    --
+    d;
+  }
+
+  case t_int_unconstrained {
+    t =: T_Int(Unconstrained);
+    --
+    integer_domain();
+  }
+
+  case t_int_well_constrained {
+    t =: T_Int(WellConstrained(cs));
+    ds := list_map(c, cs, dynamic_domain_constraint(env, c));
+    --
+    union_list(ds);
+  }
+
+  case t_int_parameterized {
+    t =: T_Int(Parameterized(id));
+    env =: (_, denv);
+    denv.dynamic_envs_L(id) =: nvint(n);
+    --
+    make_set(nvint(n));
+  }
+
+  case t_bits_dynamic_error {
+    t =: T_Bits(e, _);
+    eval_expr_sef(env, e) -> DynamicError(_) | ;
+    --
+    empty_set;
+  }
+
+  case t_bits_diverging {
+    t =: T_Bits(e, _);
+    eval_expr_sef(env, e) -> Diverging | ;
+    --
+    empty_set;
+  }
+
+  case t_bits_negative_width_error {
+    t =: T_Bits(e, _);
+    eval_expr_sef(env, e) -> ResultExprSEF(nvint(k), _) | ;
+    k < zero;
+    --
+    empty_set;
+  }
+
+  case t_bits_okay {
+    t =: T_Bits(e, _);
+    eval_expr_sef(env, e) -> ResultExprSEF(nvint(k), _) | ;
+    k >= zero;
+    --
+    bitvector_domain(k);
+  }
+
+  case t_tuple {
+    t =: T_Tuple(ts);
+    ds := list_map(ti, ts, dynamic_domain(env, ti));
+    --
+    vector_domain(ds);
+  }
+
+  case t_array_dynamic_error {
+    t =: T_Array(e_length, _);
+    eval_expr_sef(env, e_length) -> DynamicError(_) | ;
+    --
+    empty_set;
+  }
+
+  case t_array_diverging {
+    t =: T_Array(e_length, _);
+    eval_expr_sef(env, e_length) -> Diverging | ;
+    --
+    empty_set;
+  }
+
+  case t_array_negative_length_error {
+    t =: T_Array(e_length, _);
+    eval_expr_sef(env, e_length) -> ResultExprSEF(nvint(k), _) | ;
+    k < zero;
+    --
+    empty_set;
+  }
+
+  case t_array_okay {
+    t =: T_Array(e_length, t_elem);
+    eval_expr_sef(env, e_length) -> ResultExprSEF(nvint(k), _) | ;
+    k >= zero;
+    dynamic_domain(env, t_elem) -> d_elem;
+    --
+    array_domain(k, d_elem);
+  }
+
+  case t_structured {
+    t =: make_structured(L, fields);
+    L in make_set(label_T_Record, label_T_Exception);
+    fields =: list_combine(fields_names, types);
+    ds := list_map(ti, types, dynamic_domain(env, ti));
+    --
+    record_domain(fields_names, ds);
+  }
+
+  case t_named {
+    t =: T_Named(id);
+    env =: (tenv, _);
+    tenv.static_envs_G.declared_types(id) =: (t_def, _);
+    dynamic_domain(env, t_def) -> d;
+    --
+    d;
+  }
+;
+
+function dynamic_domain_constraint(env: envs, c: int_constraint) -> (d: powerset(native_value))
+{
+  "assigns a set of \nativevaluesterm{} {d} to the integer constraint {c} in the \environmentterm{} {env}.",
+  prose_application = "the \hyperlink{relation-dynamicdomain}{dynamic domain} of {c} in {env}",
+  prose_transition = "the \hyperlink{relation-dynamicdomain}{dynamic domain} of {c} in {env} is",
+} =
+  case constraint_exact_okay {
+    c =: Constraint_Exact(e);
+    eval_expr_sef(env, e) -> ResultExprSEF(nvint(n), _) | ;
+    --
+    make_set(nvint(n));
+  }
+
+  case constraint_exact_dynamic_error {
+    c =: Constraint_Exact(e);
+    eval_expr_sef(env, e) -> DynamicError(_) | ;
+    --
+    empty_set;
+  }
+
+  case constraint_exact_diverging {
+    c =: Constraint_Exact(e);
+    eval_expr_sef(env, e) -> Diverging | ;
+    --
+    empty_set;
+  }
+
+  case constraint_range_okay {
+    c =: Constraint_Range(e1, e2);
+    eval_expr_sef(env, e1) -> ResultExprSEF(nvint(a), _) | ;
+    eval_expr_sef(env, e2) -> ResultExprSEF(nvint(b), _) | ;
+    ns := range_list(a, b);
+    --
+    set_from_list(n, ns, nvint(n));
+  }
+
+  case constraint_range_dynamic_error1 {
+    c =: Constraint_Range(e1, _);
+    eval_expr_sef(env, e1) -> DynamicError(_) | ;
+    --
+    empty_set;
+  }
+
+  case constraint_range_diverging1 {
+    c =: Constraint_Range(e1, _);
+    eval_expr_sef(env, e1) -> Diverging | ;
+    --
+    empty_set;
+  }
+
+  case constraint_range_dynamic_error2 {
+    c =: Constraint_Range(e1, e2);
+    eval_expr_sef(env, e1) -> ResultExprSEF(_, _) | ;
+    eval_expr_sef(env, e2) -> DynamicError(_) | ;
+    --
+    empty_set;
+  }
+
+  case constraint_range_diverging2 {
+    c =: Constraint_Range(e1, e2);
+    eval_expr_sef(env, e1) -> ResultExprSEF(_, _) | ;
+    eval_expr_sef(env, e2) -> Diverging | ;
+    --
+    empty_set;
+  }
 ;
 
 typedef envs
@@ -2116,13 +2347,66 @@ function bool_transition(condition: Bool) -> (result: Bool)
   condition;
 ;
 
+// This corresponds to [ASTUtils.ml/expr_of_lexpr]
 function rexpr(le: lexpr) -> (re: expr)
 {
   "transforms the \assignableexpression{} {le} to the \rhsexpression{} {re}.",
   prose_transition = "transforming the \assignableexpression{} {le} to a \rhsexpression{} yields",
   prose_application = "the \rhsexpression{} corresponding to {le}",
   math_macro = \torexpr,
-};
+} =
+  case var {
+    le =: LE_Var(x);
+    --
+    E_Var(x);
+  }
+  case slice {
+    le =: LE_Slice(base, slices);
+    rexpr(base) -> base';
+    --
+    E_Slice(base', slices);
+  }
+  case set_array {
+    le =: LE_SetArray(base, index);
+    rexpr(base) -> base';
+    --
+    E_GetArray(base', index);
+  }
+  case set_field {
+    le =: LE_SetField(base, field_name);
+    rexpr(base) -> base';
+    --
+    E_GetField(base', field_name);
+  }
+  case set_fields {
+    le =: LE_SetFields(base, field_names);
+    rexpr(base) -> base';
+    --
+    E_GetFields(base', field_names);
+  }
+  case set_fields_typed {
+    le =: typed_LE_SetFields(base, field_names, _);
+    rexpr(base) -> base';
+    --
+    E_GetFields(base', field_names);
+  }
+  case set_collection_fields {
+    le =: LE_SetCollectionFields(collection_name, field_names, _);
+    --
+    E_GetCollectionFields(collection_name, field_names);
+  }
+  case discard {
+    le =: LE_Discard;
+    --
+    E_Var(discard_var);
+  }
+  case destructuring {
+    le =: LE_Destructuring(les);
+    es := list_map(le1, les, rexpr(le1));
+    --
+    E_Tuple(match_non_empty_list(es));
+  }
+;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Relations and functions for Literals
@@ -2292,8 +2576,8 @@ typing relation annotate_expr(tenv: static_envs, e: expr) -> (t: ty, new_e: expr
     annotate_expr(tenv, e_base) -> (t_base, e_base', ses_base);
     make_anonymous(tenv, t_base) -> t_anon_base;
     te_check(ast_label(t_anon_base) = label_T_Array, TE_UT) -> True;
-    t_anon_base =: T_Array(size, t_elem);
-    annotate_get_array(tenv, (size, t_elem), (e_base', ses_base, e_index)) -> (t, new_e, ses)
+    t_anon_base =: T_Array(_, t_elem);
+    annotate_get_array(tenv, t_elem, (e_base', ses_base, e_index)) -> (t, new_e, ses)
     { math_layout = [_] };
     --
     (t, new_e, ses);
@@ -2417,7 +2701,7 @@ typing relation annotate_expr(tenv: static_envs, e: expr) -> (t: ty, new_e: expr
       width_plus(tenv, e_width) -> e_slice_width;
       --
       (T_Bits(e_slice_width, empty_list), E_GetCollectionFields(base_collection_name, fields), ses_base)
-      { math_layout = [_, [_]] };
+      { math_layout = [_, [_] ] };
     }
     case error {
       make_anonymous(tenv, t_base_annot) -> t_base_annot_anon;
@@ -2444,12 +2728,13 @@ typing relation annotate_expr(tenv: static_envs, e: expr) -> (t: ty, new_e: expr
   }
 
   case EPattern {
-    e =: E_Pattern(e1, pat);
+    e =: E_Pattern(e1, pattern_matcher);
     annotate_expr(tenv, e1) -> (t_e2, e2, ses_e);
-    annotate_pattern(tenv, t_e2, pat) -> (pat', ses_pat);
+    annotate_pattern_matcher(tenv, t_e2, pattern_matcher) -> (pattern_matcher', ses_pat)
+    { [_] };
     ses := union(ses_e, ses_pat);
     --
-    (T_Bool, E_Pattern(e2, pat'), ses);
+    (T_Bool, E_Pattern(e2, pattern_matcher'), ses);
   }
 
   case EArbitrary {
@@ -2578,36 +2863,28 @@ typing relation annotate_field_init(
 
 typing relation annotate_get_array(
         tenv: static_envs,
-        (size: array_index, t_elem: ty),
+        t_elem: ty,
         (e_base: expr, ses_base: powerset(TSideEffect), e_index: expr)) ->
         (t: ty, new_e: expr, ses: powerset(TSideEffect))
 {
-  "annotates an array access expression with the
-  following elements: {size} is the expression
-  representing the array size, {t_elem} is the type of
+  "annotates an array access expression where {t_elem} is the type of
   array elements, {e_base} is the annotated expression
   for the array base, {e_index} is the index expression.
   The function returns the type of the annotated
   expression in {t}, the annotated expression {new_e},
   and the inferred \sideeffectdescriptorterm{} {ses}.",
   prose_application = "the annotated array access expression for base {e_base} and index {e_index}",
-  prose_transition = "annotating the array access expression with array size given by {size},
+  prose_transition = "annotating the array access expression with
     type of array elements given by {t_elem},
     array base expression given by {e_base},
     its associated {ses_base},
     and index expression given by {e_index} yields",
-  math_layout = [(_,(_,_),[_,_,_]),_],
+  math_layout = [(_,_,[_,_,_]),_],
 } =
   annotate_expr(tenv, e_index) -> (t_index', e_index', ses_index);
-  type_of_array_length(size) -> wanted_t_index;
-  check_type_satisfies(tenv, t_index', wanted_t_index) -> True;
+  check_type_satisfies(tenv, t_index', unconstrained_integer) -> True;
   ses := union(ses_index, ses_base);
-  new_e :=
-    if ast_label(size) = label_ArrayLength_Expr then
-      E_GetArray(e_base, e_index')
-    else
-      E_GetEnumArray(e_base, e_index')
-  { math_layout = (lhs, [_]) };
+  new_e := E_GetArray(e_base, e_index');
   --
   (t_elem, new_e, ses)
   { math_layout = [_] };
@@ -2832,17 +3109,6 @@ semantics relation eval_expr(env: envs, e: expr) ->
     ResultExpr((v, g), new_env);
   }
 
-  case EGetEnumArray {
-    e =: E_GetEnumArray(e_array, e_index);
-    eval_expr(env, e_array) -> ResultExpr((v_array, g1), env1);
-    eval_expr(env1, e_index) -> ResultExpr((v_index, g2), new_env);
-    v_index =: NV_Literal(L_Label(label));
-    get_field(label, v_array) -> v;
-    g := parallel(g1, g2);
-    --
-    ResultExpr((v, g), new_env);
-  }
-
   case EGetTupleItem {
     e =: E_GetItem(e_tuple, index);
     eval_expr(env, e_tuple) -> ResultExpr((v_tuple, g), new_env);
@@ -2874,7 +3140,7 @@ semantics relation eval_expr(env: envs, e: expr) ->
     e =: E_GetFields(e_record, field_names);
     eval_expr(env, e_record) -> ResultExpr((v_record, g), new_env);
     ( INDEX(i, field_names: get_field(field_names[i], v_record) -> NV_Literal(L_Bitvector(field_bits[i]))) )
-    { ([_,[_]]) };
+    { ([_,[_] ]) };
     field_bitvectors := list_map(bits, field_bits, nvbitvector(bits));
     concat_bitvectors(field_bitvectors) -> v;
     --
@@ -2907,16 +3173,6 @@ semantics relation eval_expr(env: envs, e: expr) ->
     ResultExpr((v, g), new_env);
   }
 
-  case EEnumArray {
-    e =: E_EnumArray[ enum: _, labels: labels, enum_array_value: e_value ];
-    eval_expr(env, e_value) -> ResultExpr((value, g), new_env);
-    label_value_pairs := list_map(l, labels, (l, value));
-    field_map := bindings_to_map(label_value_pairs);
-    v := NV_Record(field_map);
-    --
-    ResultExpr((v, g), new_env);
-  }
-
   case EArbitrary {
     e =: E_Arbitrary(ty);
     dynamic_domain(env, ty) -> d;
@@ -2933,9 +3189,9 @@ semantics relation eval_expr(env: envs, e: expr) ->
   }
 
   case EPattern {
-    e =: E_Pattern(e1, p);
+    e =: E_Pattern(e1, matcher);
     eval_expr(env, e1) -> ResultExpr((v1, g1), new_env);
-    eval_pattern(env, v1, p) -> ResultPattern(v, g2);
+    eval_pattern_matcher(env, v1, matcher) -> ResultPattern(v, g2);
     g := ordered_data(g1, g2);
     --
     ResultExpr((v, g), new_env);
@@ -2947,7 +3203,7 @@ semantics relation eval_expr(env: envs, e: expr) ->
     denv.dynamic_envs_G.storage(base) =: record;
     record =: NV_Record(field_map);
     ( INDEX(i, field_names: get_field(field_names[i], record) -> NV_Literal(L_Bitvector(bits[i]))) )
-    { ([_, [_]]) };
+    { ([_, [_] ]) };
     vs := list_map(b, bits, nvbitvector(b));
     concat_bitvectors(vs) -> v;
     field_ids := list_map(f, field_names, concat(base, dot_str, f));
@@ -2988,14 +3244,12 @@ render rule eval_expr_ECond = eval_expr(ECond);
 render rule eval_expr_ECall = eval_expr(ECall);
 render rule eval_expr_ESlice = eval_expr(ESlice);
 render rule eval_expr_EGetArray = eval_expr(EGetArray);
-render rule eval_expr_EGetEnumArray = eval_expr(EGetEnumArray);
 render rule eval_expr_EGetTupleItem = eval_expr(EGetTupleItem);
 render rule eval_expr_ERecord = eval_expr(ERecord);
 render rule eval_expr_EGetField = eval_expr(EGetField);
 render rule eval_expr_EGetFields = eval_expr(EGetFields);
 render rule eval_expr_ETuple = eval_expr(ETuple);
 render rule eval_expr_EArray = eval_expr(EArray);
-render rule eval_expr_EEnumArray = eval_expr(EEnumArray);
 render rule eval_expr_EArbitrary = eval_expr(EArbitrary);
 render rule eval_expr_EPattern = eval_expr(EPattern);
 render rule eval_expr_EGetCollectionFields = eval_expr(EGetCollectionFields);
@@ -3188,9 +3442,9 @@ typing relation annotate_lexpr(tenv: static_envs, le: lexpr, t_e: ty) ->
     annotate_expr(tenv, rexpr(e_base)) -> (t_base, _, _);
     make_anonymous(tenv, t_base) -> t_anon_base;
     te_check(ast_label(t_anon_base) = label_T_Array, TE_UT) -> True;
-    t_anon_base =: T_Array(size, t_elem);
+    t_anon_base =: T_Array(_, t_elem);
     annotate_lexpr(tenv, e_base, t_base) -> (e_base', ses_base);
-    annotate_set_array(tenv, (size, t_elem), t_e, (e_base', ses_base, e_index)) -> (new_le, ses)
+    annotate_set_array(tenv, t_elem, t_e, (e_base', ses_base, e_index)) -> (new_le, ses)
     { math_layout = [_] };
     --
     (new_le, ses);
@@ -3323,7 +3577,7 @@ typing relation annotate_lexpr(tenv: static_envs, le: lexpr, t_e: ty) ->
      check_type_satisfies(tenv, t_e, t_lhs) -> True;
      --
      (LE_SetCollectionFields(base_name, le_fields, slices), ses_base)
-     { math_layout = [_, [_]] };
+     { math_layout = [_, [_] ] };
    }
 
    case error {
@@ -3429,21 +3683,6 @@ semantics relation eval_lexpr(env: envs, le: lexpr, m: (native_value, XGraphs)) 
     ResultLexpr(new_g, new_env);
   }
 
-  case LESetEnumArray {
-    le =: LE_SetEnumArray(re_array, e_index);
-    m =: (v, g);
-    eval_expr(env, rexpr(re_array)) -> ResultExpr(rm_array, env1);
-    eval_expr(env1, e_index) -> ResultExpr(m_index, env2);
-    m_index =: (index, g1);
-    index =: NV_Literal(L_Label(l));
-    rm_array =: (rv_array, g2);
-    set_field(l, v, rv_array) -> v1;
-    m1 := (v1, ordered_data(g, parallel(g1, g2)));
-    eval_lexpr(env2, re_array, m1) -> ResultLexpr(new_g, new_env);
-    --
-    ResultLexpr(new_g, new_env);
-  }
-
   case LESetField {
     le =: LE_SetField(re_record, field_name);
     m =: (v, g);
@@ -3491,7 +3730,6 @@ render rule eval_lexpr_LEDiscard = eval_lexpr(LEDiscard);
 render rule eval_lexpr_LEVar = eval_lexpr(LEVar);
 render rule eval_lexpr_LEDestructuring = eval_lexpr(LEDestructuring);
 render rule eval_lexpr_LESetArray = eval_lexpr(LESetArray);
-render rule eval_lexpr_LESetEnumArray = eval_lexpr(LESetEnumArray);
 render rule eval_lexpr_LESlice = eval_lexpr(LESlice);
 render rule eval_lexpr_LESetField = eval_lexpr(LESetField);
 render rule eval_lexpr_LESetFields = eval_lexpr(LESetFields);
@@ -3561,32 +3799,27 @@ semantics relation protected_multi_assign(env: envs, lelist: list0(lexpr), vmlis
 
 typing relation annotate_set_array(
   tenv: static_envs,
-  (size: array_index, t_elem: ty),
+  t_elem: ty,
   rhs_ty: ty,
   (e_base: lexpr, ses_base: powerset(TSideEffect), e_index: expr)
   ) ->
     (new_le: lexpr, ses: powerset(TSideEffect)) | type_error
 {
   "annotates an array update in the \staticenvironmentterm{} {tenv}
-  where {size} is kind of array index and {t_elem} is the type of array elements,
+  where {t_elem} is the type of array elements,
   {rhs_ty} is the type of the \rhsexpression{},
   the annotated array based expression is {e_base},
   the \sideeffectsetterm{} {ses_base} inferred for the base,
   and the index expression {e_index}.
   The result is the annotated \assignableexpression{} {new_le} and \sideeffectsetterm{} for the annotated expression {ses}. \ProseOtherwiseTypeError",
-  prose_transition = "annotating the array update with {size}, {t_elem}, {rhs_ty}, {e_base}, {ses_base}, and {e_index} in {tenv} yields",
-  math_layout = [[_,_,_,_],_],
+  prose_transition = "annotating the array update with {t_elem}, {rhs_ty}, {e_base}, {ses_base}, and {e_index} in {tenv} yields",
+  math_layout = [ [_,_,_,_],_],
 } =
   check_type_satisfies(tenv, rhs_ty, t_elem) -> True;
   annotate_expr(tenv, e_index) -> (t_index', e_index', ses_index);
-  type_of_array_length(size) -> wanted_t_index;
-  check_type_satisfies(tenv, t_index', wanted_t_index) -> True;
+  check_type_satisfies(tenv, t_index', unconstrained_integer) -> True;
   ses := union(ses_base, ses_index);
-  new_le := if_then_else(
-    equal(ast_label(size), label_ArrayLength_Expr),
-    LE_SetArray(e_base, e_index'),
-    LE_SetEnumArray(e_base, e_index')
-  ) { (_, [_]) };
+  new_le := LE_SetArray(e_base, e_index');
   --
   (new_le, ses) { ([_], _) };
 ;
@@ -3617,7 +3850,7 @@ semantics function check_non_overlapping_slices(value_ranges: list0((native_valu
   case non_empty {
     value_ranges =: match_cons(head_range, tail_ranges);
     ( INDEX(i, tail_ranges: check_two_ranges_non_overlapping(head_range, tail_ranges[i]) -> True) )
-    { ([_, [_]]) };
+    { ([_, [_] ]) };
     check_non_overlapping_slices(tail_ranges) -> True;
     --
     True;
@@ -3805,18 +4038,11 @@ typing function base_value(tenv: static_envs, t: ty) ->
     E_Tuple(match_non_empty_list(es));
   }
 
-  case t_array_enum {
-    t =: T_Array(ArrayLength_Enum(enum, labels), ty);
-    base_value(tenv, ty) -> value;
-    --
-    E_EnumArray [ enum : enum, labels : labels, enum_array_value : value ];
-  }
-
   case t_array_expr {
-    t =: T_Array(ArrayLength_Expr(length), ty);
+    t =: T_Array(e_length, ty);
     base_value(tenv, ty) -> value;
     --
-    E_Array[ length : length, array_value : value ];
+    E_Array[ length : e_length, array_value : value ];
   }
 ;
 
@@ -4484,7 +4710,9 @@ semantics function find_catcher(tenv: static_envs, v_ty: ty, catchers: list0(cat
   case match {
     catchers =: match_cons(c, catchers1);
     c =: (name_opt, e_ty, s);
-    is_subtype(tenv, v_ty, e_ty) -> True;
+    v_ty =: T_Named(v_name);
+    e_ty =: T_Named(e_name);
+    v_name = e_name;
     --
     some(c);
   }
@@ -4492,7 +4720,7 @@ semantics function find_catcher(tenv: static_envs, v_ty: ty, catchers: list0(cat
   case no_match {
     catchers =: match_cons(c, catchers1);
     c =: (name_opt, e_ty, s);
-    is_subtype(tenv, v_ty, e_ty) -> False;
+    not(v_ty = T_Named(_) && e_ty = T_Named(_) && v_ty = e_ty);
     find_catcher(tenv, v_ty, catchers1) -> d;
     --
     d;
@@ -4536,12 +4764,12 @@ typing relation declare_global_storage(genv: global_static_envs, gsd: global_dec
   with_empty_local(genv) -> tenv;
   must_be_pure := keyword in make_set(GDK_Config, GDK_Constant);
   annotate_ty_opt_initial_value(tenv, keyword, must_be_pure, ty_opt, initial_value) -> (typed_initial_value, ty_opt', declared_t)
-  { [[_], [_]] };
+  { [ [_], [_] ] };
   add_global_storage(genv, name, keyword, declared_t) -> genv1;
   with_empty_local(genv1) -> tenv1;
   typed_initial_value =: (initial_value', t_init, ses_initial_value);
   update_global_storage(tenv1, name, keyword, (t_init, initial_value', ses_initial_value)) -> tenv2
-  { [[_], _] };
+  { [ [_], _] };
   new_gsd := [keyword: keyword, global_decl_name: name, global_decl_ty: ty_opt', initial_value: some(initial_value')];
   new_genv := tenv2.static_envs_G;
   --
@@ -4608,7 +4836,7 @@ typing relation annotate_ty_opt_initial_value(
     typed_initial_value := (e', t', empty_set);
     --
     (typed_initial_value, some(t'), t')
-    { [[_], [_]] };
+    { [ [_], [_] ] };
   }
 
   case none_some {
@@ -4773,7 +5001,7 @@ typing relation annotate_local_decl_item(
   prose_transition = "annotating {ldi} and {ldk}
   with {ty} and {e_opt}
   in {tenv} yields",
-  math_layout = [[_,_,_,_,_], _],
+  math_layout = [ [_,_,_,_,_], _],
 } =
   case var {
     ldi =: LDI_Var(x);
@@ -5027,34 +5255,6 @@ typing relation annotate_pattern(tenv: static_envs, t: ty, p: pattern) ->
     (Pattern_Mask(m), empty_set);
   }
 
-  case tuple {
-    p =: Pattern_Tuple(li);
-    get_structure(tenv, t) -> t_struct;
-    te_check(ast_label(t_struct) = label_T_Tuple, TE_UT) -> True;
-    t_struct =: T_Tuple(ts);
-    te_check(same_length(li, ts), TE_UT) -> True;
-    INDEX(i, li: annotate_pattern(tenv, ts[i], li[i]) -> (li'[i], xs[i]));
-    new_li := li';
-    ses := union_list(xs);
-    --
-    (Pattern_Tuple(new_li), ses);
-  }
-
-  case any {
-    p =: Pattern_Any(li);
-    INDEX(i, li: annotate_pattern(tenv, t, li[i]) -> (new_l[i], xs[i]));
-    new_li := new_l;
-    ses := union_list(xs);
-    --
-    (Pattern_Any(new_li), ses);
-  }
-
-  case neg {
-    p =: Pattern_Not(q);
-    annotate_pattern(tenv, t, q) -> (new_q, ses);
-    --
-    (Pattern_Not(new_q), ses);
-  }
 ;
 
 render rule annotate_pattern_all = annotate_pattern(all);
@@ -5063,9 +5263,22 @@ render rule annotate_pattern_range = annotate_pattern(range);
 render rule annotate_pattern_leq = annotate_pattern(leq);
 render rule annotate_pattern_geq = annotate_pattern(geq);
 render rule annotate_pattern_mask = annotate_pattern(mask);
-render rule annotate_pattern_tuple = annotate_pattern(tuple);
-render rule annotate_pattern_any = annotate_pattern(any);
-render rule annotate_pattern_neg = annotate_pattern(neg);
+
+typing relation annotate_pattern_matcher(tenv: static_envs, t: ty, (ps: list0(pattern), pk: pattern_kind)) ->
+         ((new_ps: list0(pattern), new_pk: pattern_kind), ses: powerset(TSideEffect)) | type_error
+{
+  "annotates the pattern list {ps} with pattern kind {pk} in the \staticenvironmentterm{}
+  {tenv} given a type {t}, resulting in {new_ps}, {new_pk}, and the inferred
+  \sideeffectsetterm{} {ses}. \ProseOtherwiseTypeError",
+  prose_transition = "annotating {ps} with {pk} and {t} in {tenv} yields",
+  math_layout = [_,_],
+} =
+  INDEX(i, ps: annotate_pattern(tenv, t, ps[i]) -> (new_ps[i], xs[i]));
+  ses := union_list(xs);
+  new_pk := pk;
+  --
+  ((new_ps, new_pk), ses);
+;
 
 semantics relation eval_pattern(env: envs, v: native_value, p: pattern) -> ResultPattern(b: tbool, new_g: XGraphs) | TDynError | TDiverging
 {
@@ -5135,34 +5348,6 @@ semantics relation eval_pattern(env: envs, v: native_value, p: pattern) -> Resul
     }
   }
 
-  case PTuple {
-    p =: Pattern_Tuple(ps);
-    INDEX(i, ps: get_index(i, v) -> values[i]);
-    ( INDEX(i, ps: eval_pattern(env, values[i], ps[i]) -> ResultPattern(nvbool(bs[i]), gs[i])) )
-    { ([_]) };
-    all_patterns_match := list_and(bs);
-    g := parallel_graphs(gs);
-    --
-    ResultPattern(nvbool(all_patterns_match), g);
-  }
-
-  case PAny {
-    p =: Pattern_Any(ps);
-    INDEX(i, ps: eval_pattern(env, v, ps[i]) -> ResultPattern(nvbool(bs[i]), gs[i]))
-    { [_] };
-    any_pattern_matches := list_or(bs);
-    g := parallel_graphs(gs);
-    --
-    ResultPattern(nvbool(any_pattern_matches), g);
-  }
-
-  case PNot {
-    p =: Pattern_Not(p1);
-    eval_pattern(env, v, p1) -> ResultPattern(b', new_g);
-    eval_unop(BNOT, b') -> b;
-    --
-    ResultPattern(native_value_as_tbool(b), new_g);
-  }
 ;
 
 render rule eval_pattern_PAll = eval_pattern(PAll);
@@ -5171,9 +5356,25 @@ render rule eval_pattern_PRange = eval_pattern(PRange);
 render rule eval_pattern_PLeq = eval_pattern(PLeq);
 render rule eval_pattern_PGeq = eval_pattern(PGeq);
 render rule eval_pattern_PMask = eval_pattern(PMask);
-render rule eval_pattern_PTuple = eval_pattern(PTuple);
-render rule eval_pattern_PAny = eval_pattern(PAny);
-render rule eval_pattern_PNot = eval_pattern(PNot);
+
+semantics relation eval_pattern_matcher(env: envs, v: native_value, (ps: list0(pattern), pk: pattern_kind)) ->
+  ResultPattern(b: tbool, new_g: XGraphs) | TDynError | TDiverging
+{
+  prose_description = "determines whether a value {v} matches the pattern list
+                       {ps} with pattern kind {pk} in the environment {env},
+                       resulting in either the \hyperlink{type-ResultPattern}{pattern result configuration}
+                       for {b} and {new_g} or an abnormal configuration.",
+  prose_transition = "evaluating whether {v} matches {ps} with {pk} in {env} yields",
+  [_,_]
+} =
+  ( INDEX(i, ps: eval_pattern(env, v, ps[i]) -> ResultPattern(nvbool(bs[i]), gs[i])) )
+  { ([_]) };
+  any_pattern_matches := list_or(bs);
+  b := if pk = Negative then not_single(any_pattern_matches) else any_pattern_matches;
+  g := parallel_graphs(gs);
+  --
+  ResultPattern(nvbool(b), g);
+;
 
 semantics function mask_match(mv: constants_set(zero_bit, one_bit, x_bit), b: Bit) -> (res: Bool)
 {
@@ -5774,7 +5975,6 @@ typing function binop_literals(op: binop, v1: literal, v2: literal) ->
 
     case concat {
       op = STR_CONCAT;
-      binary_or(ast_label(v1) != label_L_Bitvector, ast_label(v2) != label_L_Bitvector);
       literal_to_string(v1) -> s1;
       literal_to_string(v2) -> s2;
       --
@@ -5905,47 +6105,6 @@ semantics function eval_binop(op: binop, v1: native_value, v2: native_value) ->
 //////////////////////////////////////////////////
 // Relations for Relations On Types
 
-typing function is_subtype(tenv: static_envs, t1: ty, t2: ty) -> (b: Bool)
-{
-    "defines whether the type {t1} \subtypesterm{} the type {t2} in the \staticenvironmentterm{} {tenv},
-    yielding the result in {b}.",
-    prose_application = "{t1} is a \subtypesterm{} of {t2} in {tenv}",
-    prose_transition = "testing whether {t1} is a \subtypesterm{} of {t2} in {tenv} yields",
-} =
-  case reflexive {
-    t1 =: T_Named(id1);
-    t2 =: T_Named(id2);
-    id1 = id2;
-    --
-    True;
-  }
-
-  case transitive {
-    t1 =: T_Named(id1);
-    t2 =: T_Named(id2);
-    id1 != id2;
-    tenv.static_envs_G.subtypes(id1) =: id3;
-    is_subtype(tenv, T_Named(id3), t2) -> b;
-    --
-    b;
-  }
-
-  case no_supertype {
-    t1 =: T_Named(id1);
-    t2 =: T_Named(id2);
-    id1 != id2;
-    id1 not_in dom(tenv.static_envs_G.subtypes);
-    --
-    False;
-  }
-
-  case not_named {
-    binary_or(ast_label(t1) != label_T_Named, ast_label(t2) != label_T_Named);
-    --
-    False;
-  }
-;
-
 typing function subtype_satisfies(tenv: static_envs, t: ty, s: ty) -> (b: Bool) | type_error
 {
     "determines whether a type {t} \emph{\subtypesatisfiesterm} a type {s} in the static environment {tenv},
@@ -6003,22 +6162,9 @@ typing function subtype_satisfies(tenv: static_envs, t: ty, s: ty) -> (b: Bool) 
     make_anonymous(tenv, t) -> T_Array(length_t, ty_t);
     type_equal(tenv, ty_s, ty_t) -> True | False;
     bool_transition(ast_label(length_s) = ast_label(length_t)) -> True | False;
-    length_s =: ArrayLength_Expr(length_expr_s);
-    length_t =: ArrayLength_Expr(length_expr_t);
-    expr_equal(tenv, length_expr_s, length_expr_t) -> b;
+    expr_equal(tenv, length_s, length_t) -> b;
     --
     b;
-  }
-
-  case t_array_enum {
-    make_anonymous(tenv, s) -> T_Array(length_s, ty_s);
-    make_anonymous(tenv, t) -> T_Array(length_t, ty_t);
-    type_equal(tenv, ty_s, ty_t) -> True;
-    bool_transition(ast_label(length_s) = ast_label(length_t)) -> True | False;
-    length_s =: ArrayLength_Enum(name_s, _);
-    length_t =: ArrayLength_Enum(name_t, _);
-    --
-    name_s = name_t;
   }
 
   case t_tuple {
@@ -6026,7 +6172,7 @@ typing function subtype_satisfies(tenv: static_envs, t: ty, s: ty) -> (b: Bool) 
     make_anonymous(tenv, t) -> T_Tuple(li_t);
     bool_transition(same_length(li_s, li_t)) -> True | False;
     ( INDEX(i, li_s: type_satisfies(tenv, li_t[i], li_s[i]) -> component_type_satisfies[i]) )
-    { ([_, [_]]) };
+    { ([_, [_] ]) };
     --
     list_and(component_type_satisfies);
   }
@@ -6047,7 +6193,7 @@ typing function subtype_satisfies(tenv: static_envs, t: ty, s: ty) -> (b: Bool) 
     INDEX(i, names_s: field_type(fields_t, names_s[i]) -> some(field_types_t[i]))
     { [_] };
     ( INDEX(i, field_types_s: type_equal(tenv, field_types_s[i], field_types_t[i]) -> field_tys_equal[i]) )
-    { ([_, [_]]) };
+    { ([_, [_] ]) };
     --
     list_and(field_tys_equal);
   }
@@ -6097,14 +6243,14 @@ typing function type_satisfies(tenv: static_envs, t: ty, s: ty) -> (b: Bool) | t
     yielding the result {b}. \ProseOtherwiseTypeError",
     prose_transition = "testing whether {t} \typesatisfiesterm{} {s} in {tenv} yields",
 } =
-  case subtypes {
-    is_subtype(tenv, t, s) -> True;
+  case equal {
+    type_equal(tenv, t, s) -> True;
     --
     True;
   }
 
-  case not_subtypes {
-    is_subtype(tenv, t, s) -> False;
+  case not_equal {
+    type_equal(tenv, t, s) -> False;
 
     case anonymous_or_subtype_satisfies {
       binary_or(is_anonymous(t), is_anonymous(s));
@@ -6170,45 +6316,36 @@ typing relation lowest_common_ancestor(tenv: static_envs, t: ty, s: ty) -> (ty: 
     s;
   }
 
-  case named_subtype1 {
-    t =: T_Named(name_s);
-    s =: T_Named(name_t);
+  case distinct_named {
     type_equal(tenv, t, s) -> False;
-    named_lowest_common_ancestor(tenv, name_s, name_t) -> none;
-    make_anonymous(tenv, s) -> s_anon;
+    t =: T_Named(t_name);
+    s =: T_Named(s_name);
+    s_name != t_name;
     make_anonymous(tenv, t) -> t_anon;
+    make_anonymous(tenv, s) -> s_anon;
     lowest_common_ancestor(tenv, t_anon, s_anon) -> ty;
     --
     ty;
   }
 
-  case named_subtype2 {
-    t =: T_Named(name_s);
-    s =: T_Named(name_t);
-    type_equal(tenv, t, s) -> False;
-    named_lowest_common_ancestor(tenv, name_s, name_t) -> some(name);
-    --
-    T_Named(name);
-  }
-
-  case one_named1 {
+  case named_same_anonymous {
     type_equal(tenv, t, s) -> False;
     binary_or(ast_label(t) = label_T_Named, ast_label(s) = label_T_Named);
-    ast_label(t) != ast_label(s);
-    make_anonymous(tenv, s) -> s_anon;
+    binary_or(ast_label(t) != label_T_Named, ast_label(s) != label_T_Named);
     make_anonymous(tenv, t) -> t_anon;
+    make_anonymous(tenv, s) -> s_anon;
     type_equal(tenv, t_anon, s_anon) -> True;
     ty := if (ast_label(t) = label_T_Named) then t else s;
     --
     ty;
   }
 
-  case one_named2 {
+  case named_different_anonymous {
     type_equal(tenv, t, s) -> False;
     binary_or(ast_label(t) = label_T_Named, ast_label(s) = label_T_Named);
-    ast_label(t) != ast_label(s);
-    make_anonymous(tenv, s) -> s_anon;
+    binary_or(ast_label(t) != label_T_Named, ast_label(s) != label_T_Named);
     make_anonymous(tenv, t) -> t_anon;
+    make_anonymous(tenv, s) -> s_anon;
     type_equal(tenv, t_anon, s_anon) -> False;
     lowest_common_ancestor(tenv, t_anon, s_anon) -> ty;
     --
@@ -6257,14 +6394,14 @@ typing relation lowest_common_ancestor(tenv: static_envs, t: ty, s: ty) -> (ty: 
   }
 
   case t_array {
-    t =: T_Array(width_t, ty_t);
-    s =: T_Array(width_s, ty_s);
+    t =: T_Array(length_t, ty_t);
+    s =: T_Array(length_s, ty_s);
     type_equal(tenv, t, s) -> False;
-    array_length_equal(tenv, width_t, width_s) -> b_equal_length;
+    expr_equal(tenv, length_t, length_s) -> b_equal_length;
     te_check(b_equal_length, TE_LCA) -> True;
     lowest_common_ancestor(tenv, ty_t, ty_s) -> ty1;
     --
-    T_Array(width_t, ty1);
+    T_Array(length_t, ty1);
   }
 
   case t_tuple {
@@ -6437,7 +6574,6 @@ typing relation apply_binop_types(tenv: static_envs, op: binop, t1: ty, t2: ty) 
 
   case string_concat {
     op = STR_CONCAT;
-    binary_or(ast_label(t1) != label_T_Bits, ast_label(t2) != label_T_Bits);
     is_singular(tenv, t1) -> t1_singular;
     is_singular(tenv, t2) -> t2_singular;
     te_check(t1_singular, TE_UT) -> True;
@@ -6521,49 +6657,6 @@ typing relation apply_binop_types(tenv: static_envs, op: binop, t1: ty, t2: ty) 
   }
 ;
 
-// REVIEW: signature changed for translation; please confirm expected argument/return types.
-// Previous: typing relation named_lowest_common_ancestor(tenv: static_envs, t: ty, s: ty) -> (name_opt: option(Identifier)) | type_error
-typing function named_lowest_common_ancestor(tenv: static_envs, t: Identifier, s: Identifier) ->
-         (name_opt: option(Identifier)) | type_error
-{
-  "returns the lowest common named super type
-   of types {t} and {s} in {tenv} in {name_opt}.",
-  prose_transition = "finding the lowest common named supertype of {t} and {s} in {tenv} yields",
-} =
-  case found {
-    supers(tenv, t) -> t_supers;
-    s in t_supers;
-    --
-    some(s);
-  }
-
-  case super {
-    supers(tenv, t) -> t_supers;
-    s not_in t_supers;
-    tenv.static_envs_G.subtypes(s) =: s';
-    named_lowest_common_ancestor(tenv, t, s') -> name_opt;
-    --
-    name_opt;
-  }
-
-  case none {
-    supers(tenv, t) -> t_supers;
-    s not_in t_supers;
-    s not_in dom(tenv.static_envs_G.subtypes);
-    --
-    none;
-  }
-;
-
-typing function supers(tenv: static_envs, t: Identifier) ->
-         (powerset(Identifier))
-{
-  "returns the set of \emph{named supertypes} of a type
-  {t} in the $\subtypes$ function of a
-  \globalstaticenvironmentterm{} {tenv}.",
-  prose_transition = "computing the set of named supertypes of {t} in {tenv} yields",
-}; // Using direct definition in LaTeX; no rule needed.
-
 constant max_constraint_size : N { math_macro = \maxconstraintsize };
 constant max_exploded_interal_size : N { math_macro = \maxexplodedintervalsize };
 
@@ -6587,7 +6680,7 @@ typing relation annotate_constraint_binop(
   context of approximating lists of constraints).
   \ProseOtherwiseTypeError",
   prose_transition = "annotating the application of {op} to {cs1} and {cs2} in {tenv} with approximation mode {approx} yields",
-  math_layout = [[_,_,_,_,_],_],
+  math_layout = [ [_,_,_,_,_],_],
 } =
   case exploding {
     binop_filter_rhs(approx, tenv, op, cs2) -> cs2f;
@@ -6784,7 +6877,7 @@ typing relation filter_reduce_constraint_div(c: int_constraint) ->
       binary_and((z1_opt = none), (z2_opt =: some(z6e)))        : some(AbbrevConstraintRange(e1, ELint(z6e))),
       binary_and((z1_opt = none), (z2_opt = none))              : some(c)
     )
-    { (_, [c1[_, [_]], c2[_, [_]], c3[_, [_]],_]) };
+    { (_, [c1[_, [_] ], c2[_, [_] ], c3[_, [_] ],_]) };
     --
     c_opt;
   }
@@ -7784,12 +7877,6 @@ typing relation annotate_slice(tenv: static_envs, s: slice) -> (s': slice, ses: 
     ses := union(ses_offset, ses_length);
     s' := Slice_Length(offset', length');
   }
-
-  case scaled {
-    s =: Slice_Star(factor, length);
-    offset := AbbrevEBinop(MUL, factor, length);
-    annotate_slice(tenv, Slice_Length(offset, length)) -> (s', ses);
-  }
   --
   (s', ses);
 ;
@@ -7829,12 +7916,6 @@ typing function slice_width(slice: slice) ->
     slice = Slice_Single(_);
     --
     ELint(one);
-  }
-
-  case scaled {
-    slice =: Slice_Star(_, e);
-    --
-    e;
   }
 
   case length {
@@ -7923,15 +8004,6 @@ semantics relation eval_slice(env: envs, s: slice) ->
     new_g := parallel(g1, g2);
   }
 
-  case scaled {
-    s =: Slice_Star(e_factor, e_length);
-    eval_expr(env, e_factor) -> ResultExpr(m_factor, env1);
-    (v_factor, g1) := m_factor;
-    eval_expr(env1, e_length) -> ResultExpr(m_length, new_env);
-    (v_length, g2) := m_length;
-    eval_binop(MUL, v_factor, v_length) -> v_start;
-    new_g := parallel(g1, g2);
-  }
   range := (v_start, v_length);
   range_and_graph := (range, new_g);
   --
@@ -7987,10 +8059,10 @@ typing relation typecheck_decl(genv: global_static_envs, d: decl) ->
   }
 
   case type_decl {
-    d =: D_TypeDecl(x, ty, s);
-    declare_type(genv, x, ty, s) -> (new_genv, ty', s');
+    d =: D_TypeDecl(x, ty);
+    declare_type(genv, x, ty) -> (new_genv, ty');
     --
-    (D_TypeDecl(x, ty', s'), new_genv);
+    (D_TypeDecl(x, ty'), new_genv);
   }
 
   case func {
@@ -8111,13 +8183,13 @@ typing relation type_check_mutually_rec(genv: global_static_envs, decls: list0(d
   env_and_fs2 =: list_combine_three(lenvs2, fs2, ses_fs2);
   ( INDEX(i, fs2:
       annotate_subprogram(
-        [static_envs_G: genv2, static_envs_L: lenvs2[i]],
+        [static_envs_G: genv2, static_envs_L: lenvs2[i] ],
         fs2[i],
         ses_fs2[i]
       ) -> (new_fs[i], ses'[i])
     )
   )
-  { ( [_, [_]] ) };
+  { ( [_, [_] ] ) };
   new_decls := list_map(i, indices(new_fs), D_Func(new_fs[i]));
   sess := list_combine(new_fs, ses');
   with_empty_local(genv2) -> tenv2;
@@ -8438,7 +8510,7 @@ typing function def_decl(d: decl) ->
   }
 
   case d_typedecl {
-    d =: D_TypeDecl(id, _, _);
+    d =: D_TypeDecl(id, _);
     --
     Other(id);
   }
@@ -8454,14 +8526,14 @@ typing function def_enum_labels(d: decl) ->
   prose_transition = "computing the enumeration labels defined by {d} yields",
 } =
   case decl_enum {
-    d =: D_TypeDecl(_, T_Enum(labels1), _);
+    d =: D_TypeDecl(_, T_Enum(labels1));
     labels := set_from_list(l, labels1, Other(l));
     --
     labels;
   }
 
   case other {
-    not(d = D_TypeDecl(_, T_Enum(_), _));
+    not(d = D_TypeDecl(_, T_Enum(_)));
     --
     empty_set;
   }
@@ -8476,10 +8548,9 @@ typing function use_decl(d: decl) ->
   prose_transition = "computing the set of identifiers used by {d} yields",
 } =
   case decl_typedecl {
-    d =: D_TypeDecl(_, ty, fields);
-    ids := union(use_ty(ty), use_subtypes(fields));
+    d =: D_TypeDecl(_, ty);
     --
-    ids;
+    use_ty(ty);
   }
 
   case decl_globalstorage {
@@ -8557,15 +8628,8 @@ typing function use_ty(t: ty) -> (ids: powerset(def_use_name))
   }
 
   case array_expr {
-    t =: T_Array(ArrayLength_Expr(e), ty);
+    t =: T_Array(e, ty);
     ids := union(use_expr(e), use_ty(ty));
-    --
-    ids;
-  }
-
-  case array_enum {
-    t =: T_Array(ArrayLength_Enum(enum, _), ty);
-    ids := union(make_set(Other(enum)), use_ty(ty));
     --
     ids;
   }
@@ -8574,32 +8638,6 @@ typing function use_ty(t: ty) -> (ids: powerset(def_use_name))
     t =: T_Bits(e, bitfields);
     field_ids := list_map(bf, bitfields, use_bitfield(bf));
     ids := union(use_expr(e), union_list(field_ids));
-    --
-    ids;
-  }
-;
-
-typing function use_subtypes(fields: option((x: Identifier, subfields: list0(field)))) ->
-         (ids: powerset(def_use_name))
-{
-  "returns the set of identifiers {ids} which the
-  \optionalterm{} pair consisting of identifier {x} (the type
-  being subtyped) and fields {subfields} depends on.",
-  prose_application = "the set of identifiers used by {fields}",
-  prose_transition = "computing the set of identifiers used by {fields}
-    consisting of the identifier {x} (the type being subtyped) and fields {subfields}> yields",
-} =
-  case none {
-    fields = none;
-    --
-    empty_set;
-  }
-
-  case some {
-    fields =: some((x1, subfields1));
-    subfields1 =: list_combine(sub_names, sub_types);
-    sub_ids := list_map(sub_ty, sub_types, use_ty(sub_ty));
-    ids := union(make_set(Other(x1)), union_list(sub_ids));
     --
     ids;
   }
@@ -8633,12 +8671,6 @@ typing function use_expr(e: expr) -> (ids: powerset(def_use_name))
 
   case e_getarray {
     e =: E_GetArray(e1, e2);
-    --
-    union(use_expr(e1), use_expr(e2));
-  }
-
-  case e_getenumarray {
-    e =: E_GetEnumArray(e1, e2);
     --
     union(use_expr(e1), use_expr(e2));
   }
@@ -8716,14 +8748,6 @@ case e_array {
   union(use_expr(e1), use_expr(e2));
 }
 
-  case e_enumarray {
-    e =: E_EnumArray[enum: enum_id, labels: labels, enum_array_value: v];
-    label_ids := list_map(l, labels, make_set(Other(l)));
-    ids := union(make_set(Other(enum_id)), union_list(label_ids), use_expr(v));
-    --
-    ids;
-  }
-
   case e_arbitrary {
     e =: E_Arbitrary(ty);
     --
@@ -8731,9 +8755,11 @@ case e_array {
   }
 
   case e_pattern {
-    e =: E_Pattern(e1, pat);
+    e =: E_Pattern(e1, pattern_matcher);
+    pattern_matcher =: (ps, _);
+    ids_sets := list_map(p, ps, use_pattern(p));
     --
-    union(use_expr(e1), use_pattern(pat));
+    union(use_expr(e1), union_list(ids_sets));
   }
 
   case e_getcollectionfields {
@@ -8778,13 +8804,6 @@ typing function use_lexpr(le: lexpr) ->
     ids;
   }
 
-  case le_setenumarray {
-    le =: LE_SetEnumArray(le1, e1);
-    ids := union(use_lexpr(le1), use_expr(e1));
-    --
-    ids;
-  }
-
   case le_setfield {
     le =: LE_SetField(le1, _);
     --
@@ -8820,20 +8839,6 @@ typing function use_pattern(p: pattern) ->
     empty_set;
   }
 
-  case tuple {
-    p =: Pattern_Tuple(patterns);
-    ids_sets := list_map(p1, patterns, use_pattern(p1));
-    --
-    union_list(ids_sets);
-  }
-
-  case any {
-    p =: Pattern_Any(patterns);
-    ids_sets := list_map(p1, patterns, use_pattern(p1));
-    --
-    union_list(ids_sets);
-  }
-
   case single {
     p =: Pattern_Single(e);
     --
@@ -8850,12 +8855,6 @@ typing function use_pattern(p: pattern) ->
     p =: Pattern_Leq(e);
     --
     use_expr(e);
-  }
-
-  case not {
-    p =: Pattern_Not(p1);
-    --
-    use_pattern(p1);
   }
 
   case range {
@@ -8878,13 +8877,6 @@ typing function use_slice(s: slice) ->
     s =: Slice_Single(e);
     --
     use_expr(e);
-  }
-
-  case star {
-    s =: Slice_Star(e1, e2);
-    ids := union(use_expr(e1), use_expr(e2));
-    --
-    ids;
   }
 
   case length {
@@ -10608,14 +10600,6 @@ typing function subst_expr(tenv: static_envs, substs: list0((Identifier, expr)),
     E_GetArray(e1', e2');
   }
 
-  case e_getenumarray {
-    e =: E_GetEnumArray(e1, e2);
-    subst_expr(tenv, substs, e1) -> e1';
-    subst_expr(tenv, substs, e2) -> e2';
-    --
-    E_GetEnumArray(e1', e2');
-  }
-
   case e_getfield {
     e =: E_GetField(e1, field);
     subst_expr(tenv, substs, e1) -> e1';
@@ -10638,11 +10622,11 @@ typing function subst_expr(tenv: static_envs, substs: list0((Identifier, expr)),
   }
 
   case e_pattern {
-    e =: E_Pattern(e1, pat);
+    e =: E_Pattern(e1, pattern_matcher);
     subst_expr(tenv, substs, e1) -> e1';
-    // TODO: shouldn't we also transform pat?
+    // TODO: shouldn't we also transform pattern_matcher?
     --
-    E_Pattern(e1', pat);
+    E_Pattern(e1', pattern_matcher);
   }
 
   case e_record {
@@ -10675,13 +10659,6 @@ typing function subst_expr(tenv: static_envs, substs: list0((Identifier, expr)),
     subst_expr(tenv, substs, value) -> value';
     --
     E_Array[length: length', array_value: value'];
-  }
-
-  case e_enumarray {
-    e =: E_EnumArray[enum: enum_id, labels: labels, enum_array_value: value];
-    subst_expr(tenv, substs, value) -> value';
-    --
-    E_EnumArray[enum: enum_id, labels: labels, enum_array_value: value'];
   }
 
   case e_atc {
@@ -10732,7 +10709,7 @@ typing function check_args_typesat(tenv: static_envs, func_sig_args: list0((Iden
   the types of the corresponding formal arguments
   {func_sig_args} with the parameters substituted with
   their corresponding arguments as per {eqs}.
-  \ProseOtherwiseTypeError{}.",
+  \ProseOtherwiseTypeError{}",
   prose_transition = "checking that {arg_types} \typesatisfyterm{} the types of {func_sig_args} with parameters substituted as per {eqs} in the context of {tenv} yields",
 } =
   case empty {
@@ -10906,60 +10883,68 @@ typing function type_clashes(tenv: static_envs, t: ty, s: ty) ->
   result {b}. \ProseOtherwiseTypeError",
   prose_transition = "determining whether {t} clashes with {s} in the context of {tenv} yields",
 } =
-  case subtype {
-    binary_or(is_subtype(tenv, s, t), is_subtype(tenv, t, s));
+  case simple {
+    ast_label(t) = ast_label(s);
+    ast_label(t) in make_set(label_T_Bits, label_T_Bool, label_T_Int, label_T_Real, label_T_String);
     --
     True;
   }
 
-  case no_subtype {
-    is_subtype(tenv, s, t) -> False;
-    is_subtype(tenv, t, s) -> False;
-    get_structure(tenv, t) -> t_struct;
-    get_structure(tenv, s) -> s_struct;
-    case simple {
-      ast_label(t_struct) = ast_label(s_struct);
-      ast_label(t_struct) in make_set(label_T_Bits, label_T_Bool, label_T_Int, label_T_Real, label_T_String);
-      --
-      True;
-    }
+  case t_enum {
+    t =: T_Enum(labels_t);
+    s =: T_Enum(labels_s);
+    --
+    labels_t = labels_s;
+  }
 
-    case t_enum {
-      t_struct =: T_Enum(labels_t);
-      s_struct =: T_Enum(labels_s);
-      --
-      labels_t = labels_s;
-    }
+  case t_array {
+    t =: T_Array(_, ty_t);
+    s =: T_Array(_, ty_s);
+    type_clashes(tenv, ty_s, ty_t) -> b;
+    --
+    b;
+  }
 
-    case t_array {
-      t_struct =: T_Array(_, ty_t);
-      s_struct =: T_Array(_, ty_s);
-      type_clashes(tenv, ty_t, ty_s) -> b;
-      --
-      b;
-    }
+  case t_tuple {
+    t =: T_Tuple(ts_t);
+    s =: T_Tuple(ts_s);
+    bool_transition(same_length(ts_t, ts_s)) -> True | False;
+    INDEX(i, ts_t: type_clashes(tenv, ts_s[i], ts_t[i]) -> clashes[i]);
+    --
+    list_and(clashes);
+  }
 
-    case t_tuple {
-      t_struct =: T_Tuple(ts_t);
-      s_struct =: T_Tuple(ts_s);
-      bool_transition(same_length(ts_t, ts_s)) -> True | False;
-      INDEX(i, ts_t: type_clashes(tenv, ts_t[i], ts_s[i]) -> clashes[i]);
-      --
-      list_and(clashes);
-    }
+  case same_named {
+    t =: T_Named(t_name);
+    s =: T_Named(s_name);
+    t_name = s_name;
+    --
+    True;
+  }
 
-    case otherwise_different_labels {
-      ast_label(t_struct) != ast_label(s_struct);
-      --
-      False;
-    }
+  case named {
+    binary_or(ast_label(t) = label_T_Named, ast_label(s) = label_T_Named);
+    t != s;
+    make_anonymous(tenv, t) -> t1;
+    make_anonymous(tenv, s) -> s1;
+    type_clashes(tenv, s1, t1) -> b;
+    --
+    b;
+  }
 
-    case otherwise_structured {
-      ast_label(t_struct) = ast_label(s_struct);
-      ast_label(t_struct) in make_set(label_T_Collection, label_T_Exception, label_T_Record);
-      --
-      False;
-    }
+  case otherwise_different_labels {
+    ast_label(t) != label_T_Named;
+    ast_label(s) != label_T_Named;
+    ast_label(t) != ast_label(s);
+    --
+    False;
+  }
+
+  case otherwise_structured {
+    ast_label(t) = ast_label(s);
+    ast_label(t) in make_set(label_T_Collection, label_T_Exception, label_T_Record);
+    --
+    False;
   }
 ;
 
@@ -11235,14 +11220,14 @@ typing relation annotate_func_sig(genv: global_static_envs, func_sig: func) ->
     func_sig.args,
     (tenv_with_params, empty_list, ses_with_params)
   ) -> (tenv_with_args, args, ses_with_args)
-  { [[_], _] };
+  { [ [_], _] };
   annotate_return_type(
     tenv_with_args,
     tenv_with_params,
     func_sig.return_type,
     ses_with_args
   ) -> (new_tenv, return_type, ses_with_return)
-  { [[_], _]};
+  { [ [_], _]};
   ses_list := list_set(ses_with_return);
   ses_list_no_locals := list_filter(se, ses_list, not(se = LocalEffect(_)));
   ses' := list_to_set(ses_list_no_locals);
@@ -12520,10 +12505,10 @@ typing function expr_equal_case(tenv: static_envs, e1: expr, e2: expr) ->
   }
 
   case e_pattern {
-    e1 =: E_Pattern(e1', p1);
-    e2 =: E_Pattern(e2', p2);
+    e1 =: E_Pattern(e1', pattern_matcher1);
+    e2 =: E_Pattern(e2', pattern_matcher2);
     expr_equal(tenv, e1', e2') -> b1;
-    pattern_equal(tenv, p1, p2) -> b2;
+    pattern_matcher_equal(tenv, pattern_matcher1, pattern_matcher2) -> b2;
     --
     b1 && b2;
   }
@@ -12553,24 +12538,6 @@ typing function pattern_equal(tenv: static_envs, p1: pattern, p2: pattern) ->
     p2 = Pattern_All;
     --
     True;
-  }
-
-  case any_len {
-    p1 =: Pattern_Any(ps1);
-    p2 =: Pattern_Any(ps2);
-    bool_transition(same_length(ps1, ps2)) -> True | False;
-    INDEX(i, ps1: pattern_equal(tenv, ps1[i], ps2[i]) -> bs[i]);
-    --
-    list_and(bs);
-  }
-
-  case tuple_len {
-    p1 =: Pattern_Tuple(ps1);
-    p2 =: Pattern_Tuple(ps2);
-    bool_transition(same_length(ps1, ps2)) -> True | False;
-    INDEX(i, ps1: pattern_equal(tenv, ps1[i], ps2[i]) -> bs[i]);
-    --
-    list_and(bs);
   }
 
   case geq {
@@ -12604,14 +12571,6 @@ typing function pattern_equal(tenv: static_envs, p1: pattern, p2: pattern) ->
     m1 = m2;
   }
 
-  case not {
-    p1 =: Pattern_Not(p1');
-    p2 =: Pattern_Not(p2');
-    pattern_equal(tenv, p1', p2') -> b;
-    --
-    b;
-  }
-
   case range {
     p1 =: Pattern_Range(e11, e12);
     p2 =: Pattern_Range(e21, e22);
@@ -12626,6 +12585,22 @@ typing function pattern_equal(tenv: static_envs, p1: pattern, p2: pattern) ->
     --
     False;
   }
+;
+
+typing function pattern_matcher_equal(tenv: static_envs, pattern_matcher1: pattern_matcher, pattern_matcher2: pattern_matcher) ->
+  (b: Bool) | type_error
+{
+  "tests whether the pattern matcher {pattern_matcher1} is equivalent
+  to the pattern matcher given by {pattern_matcher2} in {tenv} and yields the
+  result in {b}. \ProseOtherwiseTypeError",
+  prose_transition = "testing whether the pattern matcher given by {pattern_matcher1} is equivalent to {pattern_matcher2} in {tenv} yields",
+} =
+  pattern_matcher1 =: (ps1, pk1);
+  pattern_matcher2 =: (ps2, pk2);
+  bool_transition(same_length(ps1, ps2)) -> True | False;
+  INDEX(i, ps1: pattern_equal(tenv, ps1[i], ps2[i]) -> bs[i]);
+  --
+  list_and(bs) && pk1 = pk2;
 ;
 
 typing function type_equal(tenv: static_envs, t1: ty, t2: ty) ->
@@ -12684,7 +12659,7 @@ typing function type_equal(tenv: static_envs, t1: ty, t2: ty) ->
   case tarray {
     t1 =: T_Array(l1, ty1);
     t2 =: T_Array(l2, ty2);
-    array_length_equal(tenv, l1, l2) -> b1;
+    expr_equal(tenv, l1, l2) -> b1;
     type_equal(tenv, ty1, ty2) -> b2;
     --
     b1 && b2;
@@ -12901,49 +12876,10 @@ typing function slice_equal(tenv: static_envs, slice1: slice, slice2: slice) ->
     b1 && b2;
   }
 
-  case star_exprs {
-    slice1 =: Slice_Star(e1, e2);
-    slice2 =: Slice_Star(e3, e4);
-    expr_equal(tenv, e1, e3) -> b1;
-    expr_equal(tenv, e2, e4) -> b2;
-    --
-    b1 && b2;
-  }
-
   case different_labels {
     ast_label(slice1) != ast_label(slice2);
     --
     False;
-  }
-;
-
-typing function array_length_equal(tenv: static_envs, l1: array_index, l2: array_index) ->
-         (b: Bool) | type_error
-{
-  "tests whether the array lengths {l1} and {l2} are
-  equivalent and yields the result in {b}.
-  \ProseOtherwiseTypeError",
-  prose_transition = "testing whether {l1} and {l2} are equivalent yields",
-} =
-  case different_labels {
-    ast_label(l1) != ast_label(l2);
-    --
-    False;
-  }
-
-  case expr_expr {
-    l1 =: ArrayLength_Expr(e1);
-    l2 =: ArrayLength_Expr(e2);
-    expr_equal(tenv, e1, e2) -> b;
-    --
-    b;
-  }
-
-  case enum_enum {
-    l1 =: ArrayLength_Enum(enum1, _);
-    l2 =: ArrayLength_Enum(enum2, _);
-    --
-    enum1 = enum2;
   }
 ;
 
@@ -13840,7 +13776,7 @@ typing function approx_constraint_binop(tenv: static_envs, approx: constants_set
     {s2} with
     the \approximationdirectionterm{} given by {approx}
     in the context of {tenv} yields",
-  math_layout = [[_,_,_,_,_],_],
+  math_layout = [ [_,_,_,_,_],_],
 } =
   case over {
     approx = Over;
@@ -14231,9 +14167,8 @@ typing function is_structured(ty: ty) -> (b: Bool)
 typing function get_structure(tenv: static_envs, ty: ty) ->
          (t: ty) | type_error
 {
-  "returns the \hypertarget{def-tstruct}{\emph{\structureterm}} of {ty},
-  which is the type formed by recursively replacing
-  named types by their type definition in the
+  "returns the \structureterm{} of {ty}
+  by recursively replacing named types by their type definition in the
   \staticenvironmentterm{} {tenv}. If a \namedtype{} is
   not associated with a declared type in {tenv}, a
   \typingerrorterm{} is returned.",
@@ -14280,13 +14215,9 @@ typing function get_structure(tenv: static_envs, ty: ty) ->
 typing function make_anonymous(tenv: static_envs, ty: ty) ->
          (t: ty) | type_error
 {
-  "returns the \emph{\underlyingtypeterm} {t} of
+  "returns the \underlyingtypeterm{} {t} of
   the type {ty} in the \staticenvironmentterm{} {tenv}
-  or a \typingerrorterm{}. Intuitively, {ty} is the
-  first non-\namedtype{} that is used to define {ty}.
-  Unlike $\tstruct$, $\makeanonymous$ replaces named
-  types by their definition until the first non-named
-  type is found but does not recurse further.",
+  or a \typingerrorterm{}.",
   prose_transition = "obtaining the \underlyingtypeterm{} of {ty} in {tenv} yields",
 } =
   case named {
@@ -14344,101 +14275,35 @@ typing function check_constrained_integer(tenv: static_envs, t: ty) ->
 typing relation declare_type(
   genv: global_static_envs,
   name: Identifier,
-  ty: ty,
-  s: option((Identifier, list0(field)))) ->
+  ty: ty) ->
          (new_genv: global_static_envs,
-         t2: ty,
-         s': option((Identifier, list0(field)))) | type_error
+         t2: ty) | type_error
 {
-  "declares a type named {name} with type {ty} and
-  \optionalterm{} additional fields over another type {s} in
+  "declares a type named {name} with type {ty} in
   the \globalstaticenvironmentterm{} {genv}, resulting
   in the modified \globalstaticenvironmentterm{}
-  {new_genv}, annotated type {t2}, and annotated
-  \optionalterm{} additional fields {s'}.
+  {new_genv} and annotated type {t2}.
   \ProseOtherwiseTypeError",
-  prose_transition = "declaring a type for {name} with {ty}
-    and optionally additional fields given by {s}
-    in {genv} yields",
+  prose_transition = "declaring a type for {name} with {ty} in {genv} yields",
   math_layout = [_,_],
 } =
   check_var_not_in_genv(genv, name) -> True;
   with_empty_local(genv) -> tenv;
   annotate_type(True, tenv, ty) -> (t1, ses_t);
-  annotate_extra_fields(tenv, name, t1, s) -> (tenv1, t2, s');
   ses_is_pure(ses_t) -> b;
   purity := if_then_else(b, SE_Pure, SE_Readonly);
-  add_type(tenv1, name, t2, purity) -> tenv2;
+  add_type(tenv, name, t1, purity) -> tenv1;
   case enum {
-    t2 =: T_Enum(ids);
-    declare_enum_labels(tenv2, name, ids) -> tenv3;
+    t1 =: T_Enum(ids);
+    declare_enum_labels(tenv1, name, ids) -> tenv2;
     --
-    (tenv3.static_envs_G, t2, s');
+    (tenv2.static_envs_G, t1);
   }
 
   case not_enum {
-    ast_label(t2) != label_T_Enum;
+    ast_label(t1) != label_T_Enum;
     --
-    (tenv2.static_envs_G, t2, s');
-  }
-;
-
-typing relation annotate_extra_fields(tenv: static_envs, name: Identifier, ty: ty, s: option((super: Identifier, extra_fields: list0(field)))) ->
-         (new_tenv: static_envs, new_ty: ty, s': option((Identifier, list0(field)))) | type_error
-{
-  "annotates the type {ty} with the \optionalterm{} extra
-  fields {s} in {tenv}, yielding the modified
-  environment {new_tenv}, type {new_ty}, and \optionalterm{}
-  extra fields {s'}. \ProseOtherwiseTypeError",
-  prose_transition = "annotating {ty} with optional extra fields given by
-    {s} in {tenv} yields",
-  math_layout = [_,_],
-} =
-  case none {
-    s = none;
-    --
-    (tenv, ty, none);
-  }
-
-  case empty_fields {
-    s =: some((super_name, extra_fields'));
-    subtype_satisfies(tenv, ty, T_Named(super_name)) -> b;
-    te_check(b, TE_UT) -> True;
-    extra_fields' = empty_list;
-    updated_subtypes := map_update(tenv.static_envs_G.subtypes, name, super_name);
-    new_genv := tenv.static_envs_G(subtypes: updated_subtypes);
-    new_tenv := tenv(static_envs_G: new_genv);
-    --
-    (new_tenv, ty, some((super_name, empty_list)))
-    { [_] };
-  }
-
-  case no_super {
-    s =: some((super_name, extra_fields'));
-    subtype_satisfies(tenv, ty, T_Named(super_name)) -> b;
-    te_check(b, TE_UT) -> True;
-    extra_fields' != empty_list;
-    super_name not_in dom(tenv.static_envs_G.declared_types);
-    --
-    TypeError(TE_UI);
-  }
-
-  case structured {
-    s =: some((super_name, extra_fields'));
-    subtype_satisfies(tenv, ty, T_Named(super_name)) -> b;
-    te_check(b, TE_UT) -> True;
-    extra_fields' != empty_list;
-    tenv.static_envs_G.declared_types(super_name) =: (t_super, _);
-    te_check(ast_label(t_super) in make_set(label_T_Exception, label_T_Record), TE_UT) -> True
-    { (((_, [_]), _), _) };
-    t_super =: make_structured(L, fields);
-    new_ty := make_structured(L, concat(fields, extra_fields'));
-    updated_subtypes := map_update(tenv.static_envs_G.subtypes, name, super_name);
-    new_genv := tenv.static_envs_G(subtypes: updated_subtypes);
-    new_tenv := tenv(static_envs_G: new_genv);
-    --
-    (new_tenv, new_ty, some((super_name, empty_list)))
-    { [_] };
+    (tenv1.static_envs_G, t1);
   }
 ;
 
@@ -14614,23 +14479,12 @@ typing relation annotate_type(decl: Bool, tenv: static_envs, ty: ty) ->
   }
 
   case t_array {
-    ty =: T_Array(index, t);
-    annotate_type(False, tenv, t) -> (t', ses_t);
-    index =: ArrayLength_Expr(e);
-    case expr_is_enum {
-      get_variable_enum(tenv, e) -> some((s, labels));
-      index' := ArrayLength_Enum(s, labels);
-      ses_index := empty_set;
-    }
-
-    case expr_not_enum {
-      get_variable_enum(tenv, e) -> none;
-      annotate_symbolic_constrained_integer(tenv, e) -> (e', ses_index);
-      index' := ArrayLength_Expr(e');
-    }
-    ses := union(ses_t, ses_index);
+    ty =: T_Array(e_length, t_elem);
+    annotate_type(False, tenv, t_elem) -> (annot_t_elem, ses_t);
+    annotate_symbolic_constrained_integer(tenv, e_length) -> (annot_length, ses_length);
+    ses := union(ses_t, ses_length);
     --
-    (T_Array(index', t'), ses)
+    (T_Array(annot_length, annot_t_elem), ses)
     { [_] };
   }
 
@@ -14713,50 +14567,6 @@ typing relation annotate_constraint(tenv: static_envs, c: int_constraint) ->
     ses := union(ses1, ses2);
     --
     (Constraint_Range(e1', e2'), ses);
-  }
-;
-
-typing function get_variable_enum(tenv: static_envs, e: expr) ->
-         (option((x: Identifier, labels: list1(Identifier))))
-{
-  "tests whether the expression {e} represents a variable
-  of an \enumerationtypeterm{}. If so, the result is
-  the \optionalterm{} pair consisting of the name of the variable {x} and the list of labels
-  {labels}, declared for the \enumerationtypeterm{}.
-  Otherwise, the result is $\none$.",
-  prose_application = "the \optionalterm{} for the enumeration identifier and labels
-    for the {e}, if it a variable of an enumerationtypeterm{}",
-  prose_transition = "testing whether {e} represents a variable of an \enumerationtypeterm{} yields",
-} =
-  case not_evar {
-    ast_label(e) != label_E_Var;
-    --
-    none;
-  }
-
-  case undeclared {
-    e =: E_Var(x);
-    x not_in dom(tenv.static_envs_G.declared_types);
-    --
-    none;
-  }
-
-  case declared_enum {
-    e =: E_Var(x);
-    tenv.static_envs_G.declared_types(x) =: (t, _);
-    make_anonymous(tenv, t) -> t1;
-    t1 =: T_Enum(labels);
-    --
-    some((x, labels));
-  }
-
-  case declared_not_enum {
-    e =: E_Var(x);
-    tenv.static_envs_G.declared_types(x) =: (t, _);
-    make_anonymous(tenv, t) -> t1;
-    ast_label(t1) != label_T_Enum;
-    --
-    none;
   }
 ;
 
@@ -14846,25 +14656,6 @@ typing function find_bitfield_opt(name: Identifier, bitfields: list0(bitfield)) 
     bitfields = empty_list;
     --
     none;
-  }
-;
-
-typing function type_of_array_length(size: array_index) ->
-         (t: ty)
-{
-  "returns the type {t} for the array length {size}.",
-  prose_transition = "returning the type of {size} yields",
-} =
-  case enum {
-    size =: ArrayLength_Enum(name, _);
-    --
-    T_Named(name);
-  }
-
-  case expr {
-    size = ArrayLength_Expr(_);
-    --
-    unconstrained_integer;
   }
 ;
 
@@ -15119,7 +14910,7 @@ typing function add_immutable_expression(
     the initialization given by {e_opt},
     and {x} for the local storage element yields",
   math_macro = \addimmutableexpression,
-  math_layout = [[_,_,_,_],_],
+  math_layout = [ [_,_,_,_],_],
 } =
   case remember {
     ldk = LDK_Let;

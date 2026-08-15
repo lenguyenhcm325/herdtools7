@@ -1,5 +1,7 @@
 CAT2HTML7=$(if $(shell which cat2html7), cat2html7, ../_build/default/tools/cat2html.exe)
-AARCH64_BOOKS= aarch64 aarch64-ifetch aarch64-mixed aarch64-MTE aarch64-MTE-mixed aarch64-VMSA aarch64-ETS2 aarch64-faults aarch64-readers-guide
+AARCH64_BOOKS=aarch64 aarch64-ifetch aarch64-mixed aarch64-MTE \
+							aarch64-MTE-mixed aarch64-VMSA aarch64-ETS2 aarch64-ETS3 \
+							aarch64-BBM aarch64-faults aarch64-readers-guide
 BOOKS= $(AARCH64_BOOKS) bpf x86 linux
 WWW_CATALOGUE=www/catalogue
 HERD_CATALOGUE=../catalogue
@@ -9,7 +11,7 @@ WWW_LIB=www/weblib
 JSON_SHELVES=$(foreach book,$(BOOKS),$(WWW_CATALOGUE)/$(book)/shelf.json)
 ARM_ARM_RELEASES=$(wildcard ../herd/libdir/aarch64/*)
 ENV_PAIRS := $(foreach d,$(ARM_ARM_RELEASES),-env $(notdir $(d))=$(d))
-CATINCLUDES=../herd/libdir linux $(foreach b,$(BOOKS),$(HERD_CATALOGUE)/$(b)/cats)
+CATINCLUDES=../herd/libdir $(foreach b,$(BOOKS),$(HERD_CATALOGUE)/$(b)/cats)
 DUNETGT=../_build/default/herd-www
 all: web
 

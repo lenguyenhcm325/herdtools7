@@ -138,8 +138,9 @@ module Layout = struct
   let rec for_type_term term =
     let open Term in
     match term with
-    | Label _ -> Unspecified
-    | TypeOperator { term = _, t } -> for_type_term t
+    | Label _ | Parameter _ -> Unspecified
+    | TypeOperator { term = _, t } | ParamType { term = _, t } ->
+        for_type_term t
     | Tuple { args = [] | _ :: [] } -> Unspecified
     | Tuple { args } ->
         Horizontal (List.map (fun (_, t) -> for_type_term t) args)
@@ -186,6 +187,7 @@ let list_definition_nodes ast =
             List.fold_right
               (fun ({ TypeVariant.term } as variant) acc_nodes ->
                 match term with
+                | Parameter _ -> acc_nodes
                 | Label _ | Tuple { label_opt = Some _ } ->
                     Node_TypeVariant variant :: acc_nodes
                 | Record { label_opt; fields } ->
@@ -198,7 +200,7 @@ let list_definition_nodes ast =
                     in
                     variant_if_labelled @ field_nodes @ acc_nodes
                 | Tuple { label_opt = None }
-                | Function _ | ConstantsSet _ | TypeOperator _ ->
+                | Function _ | ConstantsSet _ | TypeOperator _ | ParamType _ ->
                     acc_nodes)
               variants acc_nodes
           in
@@ -359,7 +361,10 @@ let symbol_table_for_id id_to_defining_node id =
   | Some (Node_Relation { Relation.parameters; loc }) ->
       List.fold_left
         (fun curr_table param ->
-          let type_for_param = Type.make loc TypeKind_Generic param [] [] in
+          let type_for_param =
+            Type.make loc ~type_kind:TypeKind_Generic ~name:param
+              ~param_opt:None ~variants:[] ~attribute_pairs:[]
+          in
           StringMap.add param (Node_Type type_for_param) curr_table)
         id_to_defining_node parameters
   | _ -> id_to_defining_node
@@ -593,8 +598,9 @@ module ResolveRules = struct
           let args = List.map arg_of args in
           Expr.make_opt_labelled_tuple (Term.loc_of term) label_opt args
       | ( None,
-          ( Term.Label _ | Term.Record _ | Term.TypeOperator _ | Term.Function _
-          | Term.ConstantsSet _ ) ) ->
+          Term.(
+            ( Label _ | Parameter _ | Record _ | TypeOperator _ | ParamType _
+            | Function _ | ConstantsSet _ )) ) ->
           Format.kasprintf failwith "Unexpected un-named argument term: %a"
             PP.pp_type_term (snd opt_named_term)
     in
@@ -798,70 +804,282 @@ let filter_rule_for_path { Relation.name; rule_opt; loc } path_str =
   filter_rule_elements (Option.get rule_opt) path
 
 module Check = struct
-  (** [check_layout term layout] checks that the given [layout] is structurally
-      consistent with the given [term]. If not, raises a [SpecError] describing
-      the issue. *)
-  let rec check_layout term layout =
-    let consistent_layout = Layout.for_type_term term in
-    let open Layout in
-    let open Term in
-    match (term, layout) with
-    | Label _, Unspecified -> ()
-    | Label _, _ -> Error.bad_layout term layout ~consistent_layout
-    | TypeOperator { term = _, t }, _ -> check_layout t layout
-    | Tuple { args }, Horizontal cells | Tuple { args }, Vertical cells ->
-        if List.compare_lengths args cells <> 0 then
-          Error.bad_layout term layout ~consistent_layout
-        else
-          List.iter2 (fun (_, term) cell -> check_layout term cell) args cells
-    | Record { fields }, Horizontal cells | Record { fields }, Vertical cells ->
-        if List.compare_lengths fields cells <> 0 then
-          Error.bad_layout term layout ~consistent_layout
-        else
-          List.iter2
-            (fun { Term.term } cell -> check_layout term cell)
-            fields cells
-    | ConstantsSet { loc; labels }, (Horizontal cells | Vertical cells) ->
-        if List.compare_lengths labels cells <> 0 then
-          Error.bad_layout term layout ~consistent_layout
-        else
-          List.iter2
-            (fun _ cell -> check_layout (Label { loc; label = "" }) cell)
-            labels cells
-    | ( Function { from_type = _, from_term; to_type = _, to_term; _ },
-        (Horizontal cells | Vertical cells) ) ->
-        if List.length cells <> 2 then
-          Error.bad_layout term layout ~consistent_layout
-        else check_layout from_term (List.nth cells 0);
-        check_layout to_term (List.nth cells 1)
-    | _, Unspecified -> ()
+  (** [check spec] checks that all math layout attributes in [spec] match the
+      structure of their respective AST nodes, raising a [SpecError] if any
+      check fails. *)
+  module CheckLayout : sig
+    val check : t -> unit
+  end = struct
+    let is_default_layout = function
+      | Unspecified | Horizontal [ Unspecified ] | Vertical [ Unspecified ] ->
+          true
+      | Horizontal _ | Vertical _ -> false
 
-  (** [check_math_layout spec] checks that the math layouts for all defining
-      nodes in [spec] are structurally consistent with their type terms. *)
-  let check_math_layout spec =
-    let check_math_layout_for_definition_node node =
-      let loc = loc_of_definition_node node in
+    (** [check_term term layout] checks that the given [layout] is structurally
+        consistent with the given [term]. If not, raises a [SpecError]
+        describing the issue. *)
+    let rec check_term term layout =
+      let consistent_layout = Layout.for_type_term term in
       let open Layout in
-      match node with
-      | Node_Type { Type.name } ->
-          check_layout (Label { loc; label = name }) (math_layout_for_node node)
-      | Node_Constant { Constant.name } ->
-          check_layout (Label { loc; label = name }) (math_layout_for_node node)
-      | Node_TypeVariant { TypeVariant.term } ->
-          check_layout term (math_layout_for_node node)
-      | Node_Relation def ->
-          check_layout (relation_to_tuple def) (math_layout_for_node node)
-      | Node_RecordField { term } ->
-          check_layout term (math_layout_for_node node)
-    in
-    iter_defined_nodes spec check_math_layout_for_definition_node
+      let open Term in
+      let check_term_list terms cells =
+        if List.compare_lengths terms cells <> 0 then
+          Error.bad_layout term layout ~consistent_layout
+        else List.iter2 check_term terms cells
+      in
+      match (term, layout) with
+      (* Default layouts are valid for every term. *)
+      | _, (Unspecified | Horizontal [ Unspecified ] | Vertical [ Unspecified ])
+        ->
+          ()
+      | (Label _ | Parameter _), _ ->
+          Error.bad_layout term layout ~consistent_layout
+      | TypeOperator { term = _, t }, _ -> check_term t layout
+      | ParamType { term = _, t }, _ -> check_term t layout
+      | Tuple { args }, Horizontal cells | Tuple { args }, Vertical cells ->
+          check_term_list (List.map snd args) cells
+      | Record { fields }, Horizontal cells | Record { fields }, Vertical cells
+        ->
+          check_term_list (List.map (fun { Term.term } -> term) fields) cells
+      | ConstantsSet { labels }, (Horizontal cells | Vertical cells) ->
+          if
+            List.compare_lengths labels cells = 0
+            && List.for_all is_default_layout cells
+          then ()
+          else Error.bad_layout term layout ~consistent_layout
+      | ( Function { from_type = _, from_term; to_type = _, to_term; _ },
+          ( Horizontal [ from_layout; to_layout ]
+          | Vertical [ from_layout; to_layout ] ) ) ->
+          check_term from_term from_layout;
+          check_term to_term to_layout
+      | Function _, _ -> Error.bad_layout term layout ~consistent_layout
+
+    let rec check_expr_list spec exprs layout ~expr_for_error =
+      let consistent_layout =
+        Horizontal (LayoutUtils.unspecified_for_elements exprs)
+      in
+      match layout with
+      (* List renderers treat a single default cell as "use the default layout
+         for every element", regardless of list length. For example, both
+         "r(a, b) { (_) }" and "r(a, b) { [_] }" are valid. *)
+      | Unspecified | Horizontal [ Unspecified ] | Vertical [ Unspecified ] ->
+          ()
+      | Horizontal cells | Vertical cells ->
+          if List.compare_lengths exprs cells <> 0 then
+            Error.bad_expr_layout expr_for_error layout ~consistent_layout
+          else List.iter2 (check_expr spec) exprs cells
+
+    (* Pair renderers such as transitions use pp_connect_pair, not the generic
+       list renderer. Like list renderers, they accept a single default cell as
+       shorthand: "r(a) -> b { (_) }" defaults both sides. Record updates are not
+       rendered through pp_connect_pair, so this shorthand is disabled for them. *)
+    and check_expr_pair ?(allow_single_unspecified = true) spec lhs rhs layout
+        ~expr_for_error =
+      match layout with
+      | Unspecified -> ()
+      | (Horizontal [ Unspecified ] | Vertical [ Unspecified ])
+        when allow_single_unspecified ->
+          ()
+      | Horizontal [ lhs_layout; rhs_layout ]
+      | Vertical [ lhs_layout; rhs_layout ] ->
+          check_expr spec lhs lhs_layout;
+          check_expr spec rhs rhs_layout
+      | Horizontal _ | Vertical _ ->
+          let consistent_layout =
+            Horizontal [ layout_for_expr lhs; layout_for_expr rhs ]
+          in
+          Error.bad_expr_layout expr_for_error layout ~consistent_layout
+
+    and check_operator_expr spec expr name args layout =
+      let operator = relation_for_id spec name in
+      match (operator.Relation.input, args) with
+      | [], [] ->
+          (* Nullary operators render as atomic expressions, so they accept only
+             default layouts. For example, "op() { _ }" is valid, but
+             "op() { () }" is not. *)
+          if is_default_layout layout then ()
+          else Error.bad_expr_layout expr layout ~consistent_layout:Unspecified
+      | [ _ ], [ arg ] ->
+          if operator.Relation.is_variadic then
+            (* A variadic operator has one formal input even when it has multiple
+               actual arguments, which the renderer lays out as a list. For
+               example, "make_set((a, b)) { (_, _) }" is invalid because it
+               provides two list cells for one argument; the valid layout is
+               "((_, _))". *)
+            check_expr_list spec args layout ~expr_for_error:expr
+          else
+            (* A non-variadic unary operator passes its layout directly to its
+               argument. For example, "some((a, b)) { (_, _) }" is valid because
+               the pair layout applies directly to the tuple. *)
+            check_expr spec arg layout
+      | _ -> check_expr_list spec args layout ~expr_for_error:expr
+
+    and check_expr spec expr layout =
+      let open Expr in
+      match expr with
+      | NamedExpr { expr = sub_expr } ->
+          (* Internal names are layout-transparent. The layout applies to the
+             wrapped expression: "x /* y */ { _ }" is checked like "x { _ }". *)
+          check_expr spec sub_expr layout
+      | Var _ ->
+          (* Variables are atomic layout leaves. They have no child expressions
+             to distribute layout cells to, so only the default layout is valid:
+             "x { _ }" and "x { (_) }" are valid, but "x { (_, _) }" is not. *)
+          if is_default_layout layout then ()
+          else Error.bad_expr_layout expr layout ~consistent_layout:Unspecified
+      | Relation { name; is_operator = true; args } ->
+          (* Operators have a few renderer-specific forms: nullary operators are
+             atomic leaves, simple unary operators pass their layout to their
+             sole argument, and other operators distribute layout cells over
+             arguments. For example, "a + (b, c) { (_, (_, _)) }" lays out the
+             left and right operands separately. *)
+          check_operator_expr spec expr name args layout
+      | Relation { args } | Tuple { args } | Map { args } ->
+          (* Relations, tuples, and maps render their arguments as a list, so
+             layout cells are distributed over that list. A single default cell
+             covers the whole list. For example, "r(a, b) { (_) }" and
+             "r(a, (b, c)) { (_, (_, _)) }" are valid, while "r(a, b) { (_, _,
+             _) }" is not. *)
+          check_expr_list spec args layout ~expr_for_error:expr
+      | Record { fields } ->
+          (* Records render their field values as a list in field order, with
+             the field names outside the expression layout. For example,
+             "[f: a, g: (b, c)] { (_, (_, _)) }" is valid. *)
+          check_expr_list spec (List.map snd fields) layout ~expr_for_error:expr
+      | RecordUpdate { record_expr; updates } ->
+          (* Record updates are a pair: the base record expression and the
+             update fields. The update fields then have their own list layout.
+             For example, "r(f: a, g: b) { (_, (_, _)) }" is valid. Since record
+             updates are not rendered through pp_connect_pair, "r(f: a) { (_) }"
+             is not. *)
+          let updates_expr =
+            Expr.Record
+              { loc = Expr.loc_of expr; label_opt = None; fields = updates }
+          in
+          check_expr_pair ~allow_single_unspecified:false spec record_expr
+            updates_expr layout ~expr_for_error:expr
+      | ListIndex { index = sub_expr } | FieldAccess { base = sub_expr } ->
+          (* List indexing and field access are layout-transparent wrappers
+             around their sub-expression: "xs[(a, b)] { (_, _) }" checks the
+             index layout, and "r.f { _ }" checks the base expression layout. *)
+          check_expr spec sub_expr layout
+      | Indexed { body } -> (
+          if
+            is_default_layout layout
+            (* Indexed judgments render as an index binder paired with the body.
+             The binder itself has no expression layout, so either the default
+             layout or a two-cell pair is valid:
+             "INDEX(i, xs: body) { (_, body_layout) }". *)
+          then ()
+          else
+            match layout with
+            | Horizontal [ index_layout; body_layout ]
+            | Vertical [ index_layout; body_layout ] ->
+                if not (is_default_layout index_layout) then
+                  Error.bad_expr_layout expr layout
+                    ~consistent_layout:(layout_for_expr expr)
+                else check_expr spec body body_layout
+            | _ ->
+                Error.bad_expr_layout expr layout
+                  ~consistent_layout:
+                    (Horizontal [ Unspecified; layout_for_expr body ]))
+      | Transition { lhs; rhs } ->
+          (* Transitions render as a top-level lhs/rhs pair around the arrow.
+             This is why output judgments are checked after resolution as
+             "r(args) -> out": "r(a) -> (b, c) { (_, (_, _)) }" is valid. *)
+          check_expr_pair spec lhs rhs layout ~expr_for_error:expr
+      | UnresolvedApplication _ -> assert false
+
+    and layout_for_expr expr =
+      let open Expr in
+      match expr with
+      | NamedExpr { expr = sub_expr } -> layout_for_expr sub_expr
+      | Var _ -> Unspecified
+      | Relation { args } | Tuple { args } | Map { args } ->
+          Horizontal (List.map layout_for_expr args)
+      | Record { fields } ->
+          Horizontal (List.map (fun (_, expr) -> layout_for_expr expr) fields)
+      | RecordUpdate { record_expr; updates } ->
+          Horizontal
+            [
+              layout_for_expr record_expr;
+              Horizontal
+                (List.map (fun (_, expr) -> layout_for_expr expr) updates);
+            ]
+      | ListIndex { index } -> layout_for_expr index
+      | FieldAccess { base } -> layout_for_expr base
+      | Indexed { body } -> Horizontal [ Unspecified; layout_for_expr body ]
+      | Transition { lhs; rhs } ->
+          Horizontal [ layout_for_expr lhs; layout_for_expr rhs ]
+      | UnresolvedApplication _ -> Unspecified
+
+    let rec check_rule_element spec =
+      let open Rule in
+      function
+      | Judgment ({ expr } as judgment) ->
+          check_expr spec expr (Rule.judgment_layout judgment)
+      | Cases cases ->
+          List.iter
+            (fun { elements; _ } ->
+              List.iter (check_rule_element spec) elements)
+            cases
+
+    (** [check spec] checks that the math layouts for all defining nodes in
+        [spec] are structurally consistent with their type terms, and that rule
+        judgment layouts are structurally consistent with their expressions. *)
+    let check spec =
+      let check_math_layout_for_definition_node node =
+        let loc = loc_of_definition_node node in
+        let open Layout in
+        match node with
+        | Node_Type { Type.name } ->
+            check_term (Label { loc; label = name }) (math_layout_for_node node)
+        | Node_Constant ({ Constant.name; opt_value_and_attributes } as def) ->
+            check_term (Label { loc; label = name }) (math_layout_for_node node);
+            Option.iter
+              (fun (expr, _) ->
+                let layout =
+                  Option.value
+                    (Constant.value_math_layout def)
+                    ~default:Unspecified
+                in
+                check_expr spec expr layout)
+              opt_value_and_attributes
+        | Node_TypeVariant { TypeVariant.term } ->
+            check_term term (math_layout_for_node node)
+        | Node_Relation def ->
+            check_term (relation_to_tuple def) (math_layout_for_node node)
+        | Node_RecordField { term } ->
+            check_term term (math_layout_for_node node)
+      in
+      let check_rule_layout_for_elem = function
+        | Elem_Relation { Relation.rule_opt = Some elements } ->
+            List.iter (check_rule_element spec) elements
+        | _ -> ()
+      in
+      let check_type_variant_layout_for_elem = function
+        | Elem_Type { Type.variants } ->
+            List.iter
+              (fun ({ TypeVariant.term } as variant) ->
+                check_term term
+                  (Layout.math_layout_for_node (Node_TypeVariant variant)))
+              variants
+        | _ -> ()
+      in
+      iter_defined_nodes spec check_math_layout_for_definition_node;
+      List.iter check_type_variant_layout_for_elem spec.ast;
+      List.iter check_rule_layout_for_elem spec.ast
+  end
 
   (** Returns all the identifiers referencing nodes that define identifiers. *)
   let rec referenced_ids =
     let open Term in
     function
     | Label { label } -> [ label ]
+    | Parameter _ -> []
+    (* A parameter is a variable, not a defined top-level entity. *)
     | TypeOperator { term = _, t } -> referenced_ids t
+    | ParamType { typename; term = _, t } -> typename :: referenced_ids t
     | Tuple { label_opt; args } -> (
         let component_ids =
           List.map snd args |> List.concat_map referenced_ids
@@ -915,7 +1133,9 @@ module Check = struct
             Error.undefined_reference missing_location id elem_name)
         ids_referenced_by_elem
     in
-    List.iter (check_no_undefined_ids_in_elem id_to_defining_node) ast
+    List.iter
+      (fun elem -> check_no_undefined_ids_in_elem id_to_defining_node elem)
+      ast
 
   (** [check_relation_outputs elems id_to_defining_node] checks that, for each
       relation in [elems], the first output type term is arbitrary, and that all
@@ -1172,8 +1392,9 @@ module Check = struct
 
     (** [type_term_depth term] computes the depth of [term]. *)
     let rec type_term_depth = function
-      | Label _ | ConstantsSet _ -> 1
-      | TypeOperator { term = _, term; _ } -> 1 + type_term_depth term
+      | Label _ | Parameter _ | ConstantsSet _ -> 1
+      | TypeOperator { term = _, term; _ } | ParamType { term = _, term; _ } ->
+          1 + type_term_depth term
       | Tuple { args; _ } -> 1 + opt_named_type_terms_depth args
       | Record { fields; _ } ->
           1 + list_depth (fun { Term.term; _ } -> type_term_depth term) fields
@@ -1281,6 +1502,13 @@ module Check = struct
             operator_subsumed sub_op super_op
             && subsumed_rec spec expansion_limit expanded_types sub_term
                  super_term
+        | ( ParamType { typename = sub_typename; term = _, sub_term },
+            ParamType { typename = super_typename; term = _, super_term } ) ->
+            String.equal sub_typename super_typename
+            && subsumed_rec spec expansion_limit expanded_types sub_term
+                 super_term
+        | Parameter { name = sub_name }, Parameter { name = super_name } ->
+            String.equal sub_name super_name
         | ( Tuple { label_opt = sub_label_opt; args = sub_components },
             Tuple { label_opt = super_label_opt; args = super_components } ) ->
             Option.equal String.equal sub_label_opt super_label_opt
@@ -1408,6 +1636,15 @@ module Check = struct
       match term with
       | TypeOperator { term = _, operator_term } ->
           check_well_instantiated spec operator_term
+      | ParamType { typename; term = _, sub_term } -> (
+          let () = check_well_instantiated spec sub_term in
+          let type_def = StringMap.find_opt typename spec.id_to_defining_node in
+          match type_def with
+          | Some (Node_Type { Type.param_opt = Some _ }) -> ()
+          | Some (Node_Type { Type.param_opt = None }) ->
+              Error.type_not_parameterized term typename
+          | Some _ -> Error.expected_type_name term typename
+          | None -> Error.undefined_type term typename)
       | Tuple { label_opt; args } -> (
           let terms = List.map snd args in
           let () = List.iter (check_well_instantiated spec) terms in
@@ -1439,7 +1676,7 @@ module Check = struct
       | Function { from_type = _, from_term; to_type = _, to_term } ->
           check_well_instantiated spec from_term;
           check_well_instantiated spec to_term
-      | ConstantsSet _ | Label _ -> ()
+      | ConstantsSet _ | Label _ | Parameter _ -> ()
 
     (** [check_well_formed id_to_defining_node term] checks that [term] is
         well-formed with respect to the type definitions in the range of
@@ -1452,7 +1689,8 @@ module Check = struct
           structural induction on [term]. *)
     let rec check_well_formed id_to_defining_node term =
       match term with
-      | TypeOperator { term = _, sub_term } ->
+      | TypeOperator { term = _, sub_term } | ParamType { term = _, sub_term }
+        ->
           check_well_formed id_to_defining_node sub_term
       | Tuple { label_opt; args } -> (
           let terms = List.map snd args in
@@ -1503,6 +1741,7 @@ module Check = struct
           match variant_def with
           | Node_Type _ | Node_TypeVariant { TypeVariant.term = Label _ } -> ()
           | _ -> Error.instantiation_failure_not_a_type term label)
+      | Parameter _ -> ()
 
     let check_well_typed spec term =
       check_well_formed spec.id_to_defining_node term;
@@ -2101,6 +2340,15 @@ module Check = struct
             in
             infer_parameter_type spec ~relation_name parameters
               formal_inner_term arg_inner_term type_env
+        | ( ParamType { typename = formal_typename; term = _, formal_inner_term },
+            ParamType { typename = arg_typename; term = _, arg_inner_term } ) ->
+            let () =
+              if not (String.equal formal_typename arg_typename) then
+                Error.param_type_instantiation_failure ~relation_name
+                  formal_type arg_type
+            in
+            infer_parameter_type spec ~relation_name parameters
+              formal_inner_term arg_inner_term type_env
         | _ -> type_env
 
       (** [substitute_type_parameters term parameter_env] substitutes type
@@ -2109,8 +2357,8 @@ module Check = struct
       let rec substitute_type_parameters term parameter_env =
         let open Term in
         match term with
-        | Label { label } -> (
-            match StringMap.find_opt label parameter_env with
+        | Label { label = name } | Parameter { name } -> (
+            match StringMap.find_opt name parameter_env with
             | Some substituted_type -> substituted_type
             | None -> term)
         | Tuple ({ args } as node) ->
@@ -2153,6 +2401,11 @@ module Check = struct
             in
             TypeOperator
               { node with term = (term_name, substituted_inner_term) }
+        | ParamType ({ term = term_name, inner_term } as node) ->
+            let substituted_inner_term =
+              substitute_type_parameters inner_term parameter_env
+            in
+            ParamType { node with term = (term_name, substituted_inner_term) }
         | ConstantsSet _ -> term
 
       (** [make_operator_formals_for_actual_num_of_args spec operator_name
@@ -2901,8 +3154,8 @@ module Check = struct
           List.fold_left
             (fun curr_env arg -> update_env_for_term curr_env arg)
             type_env args
-      | Term.Label _ | Term.TypeOperator _ | Term.Record _ | Term.Function _
-      | Term.ConstantsSet _ ->
+      | Term.Label _ | Term.Parameter _ | Term.TypeOperator _ | Term.ParamType _
+      | Term.Record _ | Term.Function _ | Term.ConstantsSet _ ->
           type_env
 
     (** [generate_type_env_from_relation_args relation] generates a type
@@ -2912,7 +3165,7 @@ module Check = struct
         {[
           relation annotate_get_array(
               tenv: static_envs,
-              (size: array_index, t_elem: ty),
+              (size: expr, t_elem: ty),
               (e_base: expr, ses_base: powerset(TSideEffect),
               e_index: expr)) ->
                 (t: ty, new_e: expr, ses: powerset(TSideEffect))
@@ -2920,7 +3173,7 @@ module Check = struct
         the resulting type environment is
         {[
           "tenv" -> static_envs,
-          "size" -> array_index,
+          "size" -> expr,
           "t_elem" -> ty,
           "e_base" -> expr,
           "ses_base" -> powerset(TSideEffect),
@@ -3411,6 +3664,78 @@ module ExtendConstantsWithTypes = struct
     update_spec_ast spec (List.rev ast)
 end
 
+(** A module for resolving type-parameter references inside type definitions.
+
+    Within a parameterized type definition, a term [Label param] denotes the
+    type parameter rather than a label/type with the same name. This pass makes
+    that distinction explicit by rewriting those occurrences to
+    [Parameter param]. *)
+module SubstituteTypeParameters : sig
+  val resolve : AST.t -> AST.t
+end = struct
+  let rec resolve_type_term param term =
+    let open Term in
+    match term with
+    | Label { loc; label } when String.equal label param ->
+        Parameter { loc; name = label }
+    | Label _ | Parameter _ | ConstantsSet _ -> term
+    | TypeOperator ({ term = name_opt, sub_term } as type_op) ->
+        TypeOperator
+          { type_op with term = (name_opt, resolve_type_term param sub_term) }
+    | ParamType ({ term = name_opt, sub_term } as param_type) ->
+        ParamType
+          {
+            param_type with
+            term = (name_opt, resolve_type_term param sub_term);
+          }
+    | Tuple ({ args } as tuple) ->
+        Tuple
+          {
+            tuple with
+            args =
+              List.map
+                (fun (name_opt, arg) -> (name_opt, resolve_type_term param arg))
+                args;
+          }
+    | Record ({ fields } as record_type) ->
+        Record
+          {
+            record_type with
+            fields =
+              List.map
+                (fun ({ Term.term = field_term; _ } as field) ->
+                  { field with term = resolve_type_term param field_term })
+                fields;
+          }
+    | Function
+        ({
+           from_type = from_name_opt, from_term;
+           to_type = to_name_opt, to_term;
+         } as function_type) ->
+        Function
+          {
+            function_type with
+            from_type = (from_name_opt, resolve_type_term param from_term);
+            to_type = (to_name_opt, resolve_type_term param to_term);
+          }
+
+  let resolve_variant param ({ TypeVariant.term } as variant) =
+    { variant with term = resolve_type_term param term }
+
+  let resolve_type ({ Type.param_opt; variants } as type_def) =
+    match param_opt with
+    | None -> type_def
+    | Some param ->
+        let variants = List.map (resolve_variant param) variants in
+        { type_def with variants }
+
+  let resolve ast =
+    List.map
+      (function
+        | Elem_Type type_def -> Elem_Type (resolve_type type_def) | elem -> elem)
+      ast
+end
+
 (** [add_default_rule_renders ast] adds default render rules for relations that
     have rules but do not have any rule render associated with them. That is,
     for a relation
@@ -3508,6 +3833,7 @@ let prepend_ast_with_builtins ast id_to_defining_node =
     Parsing.parse_spec_from_string ~spec:Builtins.builtin_spec_str
       ~filename:"builtins.ml"
   in
+  let builtin_ast = SubstituteTypeParameters.resolve builtin_ast in
   List.fold_right
     (fun elem acc_elems ->
       let elem_name = ASTUtils.elem_name elem in
@@ -3518,6 +3844,8 @@ let prepend_ast_with_builtins ast id_to_defining_node =
 (** [make_spec_with_builtins ast] constructs a specification containing the
     builtin definitions. *)
 let make_spec_with_builtins ast =
+  let ast = SubstituteTypeParameters.resolve ast in
+
   let id_to_defining_node = make_symbol_table ast in
   let ast = prepend_ast_with_builtins ast id_to_defining_node in
   let id_to_defining_node = make_symbol_table ast in
@@ -3561,12 +3889,12 @@ let from_ast ast =
   let () = Check.check_no_undefined_ids spec in
   let () = Check.check_relation_outputs spec in
   let () = Check.CheckTypeInstantiations.check spec in
-  let () = Check.check_math_layout spec in
   let () = Check.CheckProseTemplates.check spec in
   let () = Check.relation_named_arguments_if_exists_rule ast in
   let spec = ResolveApplicationExpr.resolve spec in
   let spec = ExtendConstantsWithTypes.extend spec in
   let spec = ResolveRules.resolve spec in
+  let () = Check.CheckLayout.check spec in
   let spec = ExtendNames.extend spec in
   let () = Check.CheckRules.check spec in
   let spec = add_default_rule_renders spec in

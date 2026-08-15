@@ -70,11 +70,6 @@ let version = V1
 let t_bit ~loc = T_Bits (E_Literal (L_Int Z.one) |> add_pos_from loc, [])
 let zero ~loc = E_Literal (L_Int Z.zero) |> add_pos_from loc
 
-let make_ty_decl_subtype (x, s) =
-  let name, _fields = s.desc in
-  let ty = ASTUtils.add_pos_from s (T_Named name) in
-  D_TypeDecl (x, ty, Some s.desc)
-
 let prec =
   let open AST in
   function
@@ -130,6 +125,10 @@ let s_call call = S_Call { call with call_type = ST_Procedure }
 
 let le_var x = LE_Var x.desc |> add_pos_from x
 
+let obsolete_elided_parameter_call =
+  Error.ObsoleteSyntax (fun fmt ->
+    Format.pp_print_string fmt
+      "Deprecated elided parameter call syntax, pass parameters explicitly.")
 %}
 
 (* ------------------------------------------------------------------------- *)
@@ -168,7 +167,7 @@ let some(x) == ~ = x ; <Some>
 let terminated_by(x, y) == terminated(y, x)
 
 (* Position annotation *)
-let annotated(x) == desc = x; { { desc; pos_start=$symbolstartpos; pos_end=$endpos; version } }
+let annotated(x) == desc = x; { { desc; pos_start=$symbolstartpos; pos_end=$endpos; version; ty_opt=None } }
 
 (* ------------------------------------------------------------------------- *)
 (* List handling *)
@@ -285,15 +284,14 @@ let expr :=
     | ~=expr; AS; ~=implicit_t_int;                           < E_ATC                >
 
     | ~=expr; IN; ~=pattern_set;                              < E_Pattern            >
-    | ~=expr; EQ_EQ; ~=pattern_mask;                          < E_Pattern            >
-    | e=expr; NE; p=pattern_mask;                             { E_Pattern (e, Pattern_Not (p) |> add_pos_from p) }
+    | e=expr; EQ_EQ; p=pattern_mask;                          { E_Pattern (e, ([p], Positive)) }
+    | e=expr; NE; p=pattern_mask;                             { E_Pattern (e, ([p], Negative)) }
     | ARBITRARY; COLON; ~=ty;                                 < E_Arbitrary        >
     | e=pared(expr);                                          { E_Tuple [ e ]        }
     | t=annotated(IDENTIFIER); LBRACE; MINUS; RBRACE;
         { E_Record (add_pos_from t (T_Named t.desc), []) }
     | t=annotated(IDENTIFIER); fields=braced(clist1(field_assign));
         { E_Record (add_pos_from t (T_Named t.desc), fields) }
-    (* Excluded from expr_pattern *)
     | ~=plist2(expr);                                             < E_Tuple              >
   )
 
@@ -318,57 +316,21 @@ let int_constraint :=
   | ~=expr;                     < Constraint_Exact >
   | e1=expr; SLICING; e2=expr;  < Constraint_Range >
 
-
-let expr_pattern :=
-  annotated(
-    (* A union of cexpr, cexpr_cmp, cexpr_add_sub, cepxr mul_div, cexpr_pow,
-       bexpr, expr_term, expr_atom *)
-    | ~=value ;                                                   < E_Literal            >
-    | ~=IDENTIFIER ;                                              < E_Var                >
-    | e1=expr_pattern; op=binop; e2=expr;                             < e_binop              >
-    | op=unop; e=expr;                                            < E_Unop               > %prec UNOPS
-    | IF; e1=expr; THEN; e2=expr; ~=e_else;                       < E_Cond               >
-    | ~=call;                                                     < e_call               >
-    | e=expr_pattern; ~=slices;                                       < E_Slice              >
-    | e1=expr_pattern; LLBRACKET; e2=expr; RRBRACKET;                 < E_GetArray           >
-    | e=expr_pattern; DOT; x=IDENTIFIER;                              < E_GetField           >
-    | e=expr_pattern; DOT; fs=bracketed(clist1(IDENTIFIER));          < E_GetFields          >
-
-    | ~=expr_pattern; AS; ~=ty;                                       < E_ATC                >
-    | ~=expr_pattern; AS; ~=implicit_t_int;                           < E_ATC                >
-
-    | ~=expr_pattern; IN; ~=pattern_set;                              < E_Pattern            >
-    | ~=expr_pattern; EQ_EQ; ~=pattern_mask;                          < E_Pattern            >
-    | e=expr_pattern; NE; p=pattern_mask;                             { E_Pattern (e, Pattern_Not (p) |> add_pos_from p) }
-
-    | ARBITRARY; COLON; ~=ty;                                         < E_Arbitrary        >
-    | e=pared(expr_pattern);                                          { E_Tuple [ e ]        }
-    | t=annotated(IDENTIFIER); LBRACE; MINUS; RBRACE;
-        { E_Record (add_pos_from t (T_Named t.desc), []) }
-    | t=annotated(IDENTIFIER); fields=braced(clist1(field_assign));
-        { E_Record (add_pos_from t (T_Named t.desc), fields) }
-  )
-
 let pattern_mask == annotated(~=MASK_LIT; < Pattern_Mask >)
-let pattern_list := annotated(~=clist1(pattern); < Pattern_Any >)
-
 let pattern :=
   annotated (
-    | ~=expr_pattern; < Pattern_Single >
-    | e1=expr_pattern; SLICING; e2=expr; < Pattern_Range >
+    | ~=expr; < Pattern_Single >
+    | e1=expr; SLICING; e2=expr; < Pattern_Range >
     | MINUS; { Pattern_All }
     | LE; ~=expr; < Pattern_Leq >
     | GE; ~=expr; < Pattern_Geq >
-    | ~=plist2(pattern); < Pattern_Tuple >
   )
   | pattern_mask
-  | pattern_set
 
+let pattern_list := clist1(pattern)
 let pattern_set :=
-  | braced(pattern_list)
-  | annotated (
-      BNOT; ~=braced(pattern_list); < Pattern_Not >
-    )
+  | ps=braced(pattern_list); { (ps, Positive) }
+  | BNOT; ps=braced(pattern_list); { (ps, Negative) }
 
 let fields :=
     braced(MINUS); { [] }
@@ -380,8 +342,27 @@ let slice :=
   | ~=expr;                       < Slice_Single  >
   | e1=expr; COLON; e2=expr;      < Slice_Range   >
   | e1=expr; PLUS_COLON; e2=expr; < Slice_Length  >
-  | loc=annotated(COLON); e=expr; { Slice_Length(zero ~loc, e) }
-  | e1=expr; STAR_COLON; e2=expr; < Slice_Star    >
+  | loc=annotated(COLON); e=expr;
+  {
+    if Config.version_eac1 then Slice_Length(zero ~loc, e)
+    else
+    let msg fmt =
+        Format.fprintf fmt "Deprecated slice syntax, use \"0 +: %a\" instead." PP.pp_expr e
+      in
+      Error.fatal_here $startpos $endpos @@
+      Error.ObsoleteSyntax msg
+  }
+  | e1=expr; STAR_COLON; e2=expr;
+  {
+    if Config.version_eac1 then Slice_Star(e1, e2)
+    else
+      let msg fmt =
+        Format.fprintf fmt "Deprecated slice syntax, use \"%a*%a +: %a\" instead."
+          PP.pp_expr e1 PP.pp_expr e2 PP.pp_expr e2
+      in
+      Error.fatal_here $startpos $endpos @@
+      Error.ObsoleteSyntax msg
+  }
 
 (* Bitfields *)
 let bitfields_opt := { [] } | bitfields
@@ -403,7 +384,7 @@ let ty :=
     | BITS; ~=pared(expr); ~=bitfields_opt;             < T_Bits       >
     | ~=plist2(ty);                                     < T_Tuple      >
     | name=IDENTIFIER;                                  < T_Named      >
-    | ARRAY; LLBRACKET; e=expr; RRBRACKET; OF; t=ty;    { T_Array (ArrayLength_Expr e, t) }
+    | ARRAY; LLBRACKET; e=expr; RRBRACKET; OF; t=ty;    { T_Array (e, t) }
   )
 
 let ty_decl := ty |
@@ -458,7 +439,7 @@ let access :=
 
 let basic_lexpr :=
   | base=annotated(IDENTIFIER); ~=access;
-    { ( base, {access; slices=add_dummy_annotation ~version []} ) }
+    { ( base, {access; slices=add_dummy_pos ~version []} ) }
   | base=annotated(IDENTIFIER); ~=access; slices=annotated(slices);
     { ( base, {access; slices} ) }
 
@@ -524,9 +505,15 @@ let global_keyword ==
 
 let direction := | TO; { AST.Up } | DOWNTO; { AST.Down }
 
+let case_pattern :=
+  annotated(
+    | pattern_set
+    | ps=pattern_list; { (ps, Positive) }
+  )
+
 let case_alt :=
   annotated(
-    WHEN; pattern=pattern_list; where=ioption(WHERE; expr); ARROW; stmt=stmt_list;
+    WHEN; pattern=case_pattern; where=ioption(WHERE; expr); ARROW; stmt=stmt_list;
       { { pattern; where; stmt } }
   )
 
@@ -567,7 +554,7 @@ let stmt :=
       | ~=local_decl_keyword; ~=decl_item; ~=ty_opt; EQ; ~=some(expr); < S_Decl   >
       | le=lexpr; EQ; e=expr;                                < S_Assign >
       | call=annotated(call); ~=setter_access; EQ; rhs=expr;
-        { desugar_setter call { access=setter_access; slices=add_dummy_annotation ~version [] } rhs }
+        { desugar_setter call { access=setter_access; slices=add_dummy_pos ~version [] } rhs }
       | call=annotated(call); ~=setter_access; slices=annotated(slices); EQ; rhs=expr;
         { desugar_setter call { access=setter_access; slices } rhs }
       | call=annotated(call); DOT; flds=bracketed(clist2(IDENTIFIER)); EQ; rhs=expr;
@@ -601,11 +588,6 @@ let s_else :=
 
   ------------------------------------------------------------------------- *)
 
-let with_opt == { [] } | WITH; ~=fields; <>
-
-let subtype := SUBTYPES; ~=IDENTIFIER; ~=with_opt; <>
-let subtype_opt := ioption(subtype)
-
 let opt_typed_identifier := pair(IDENTIFIER, ty_opt)
 let return_type := ARROW; ty
 let params_opt := { [] } | braced(clist1(opt_typed_identifier))
@@ -618,9 +600,19 @@ let call :=
     { { name; params; args; call_type = ST_Function } }
 let elided_param_call :=
   | name=IDENTIFIER; LBRACE; RBRACE; args=opt_call_args;
-    { { name; params=[]; args; call_type = ST_Function } }
+    {
+      if Config.version_eac1 then { name; params=[]; args; call_type = ST_Function }
+      else
+        Error.fatal_here $startpos $endpos @@
+        obsolete_elided_parameter_call
+    }
   | name=IDENTIFIER; LBRACE; COMMA; params=clist1(expr); RBRACE; args=opt_call_args;
-    { { name; params; args; call_type = ST_Function } }
+    {
+      if Config.version_eac1 then { name; params; args; call_type = ST_Function }
+      else
+        Error.fatal_here $startpos $endpos @@
+        obsolete_elided_parameter_call
+    }
 let func_args := plist0(typed_identifier)
 let func_body == delimited(BEGIN, stmt_list, end_semicolon)
 let recurse_limit := ioption(RECURSELIMIT; expr)
@@ -697,10 +689,7 @@ let decl :=
     (* End *)
     | terminated_by(SEMI_COLON,
       (* Begin type_decl *)
-      | TYPE; x=IDENTIFIER; OF; t=ty_decl; ~=subtype_opt; < D_TypeDecl           >
-      (* End *)
-      (* Begin subtype_decl *)
-      | TYPE; x=IDENTIFIER; s=annotated(subtype);         < make_ty_decl_subtype >
+      | TYPE; x=IDENTIFIER; OF; t=ty_decl; < D_TypeDecl >
       (* End *)
       (* Begin global_storage *)
       | keyword=global_keyword_non_config; name=ignored_or_identifier;
@@ -745,7 +734,7 @@ let opn [@internal true] := body=stmt_list0; EOF;
             parameters = [];
             body = SB_ASL body;
             return_type =
-              Some (T_Int UnConstrained |> add_dummy_annotation ~version);
+              Some (T_Int UnConstrained |> add_dummy_pos ~version);
             subprogram_type = ST_Function;
             recurse_limit = None;
             qualifier = None;

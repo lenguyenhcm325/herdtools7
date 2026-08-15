@@ -60,8 +60,7 @@ let rec use_e e =
   | E_Literal _ -> Fun.id
   | E_ATC (e, ty) -> use_ty ty $ use_e e
   | E_Var x -> add_maybe_pgm e x
-  | E_GetArray (e1, e2) | E_GetEnumArray (e1, e2) | E_Binop (_, e1, e2) ->
-      use_e e1 $ use_e e2
+  | E_GetArray (e1, e2) | E_Binop (_, e1, e2) -> use_e e1 $ use_e e2
   | E_Unop (_op, e) -> use_e e
   | E_Call { name; args; params } ->
       NameSet.add (Subprogram name) $ use_es params $ use_es args
@@ -74,10 +73,8 @@ let rec use_e e =
   | E_Record (ty, li) -> use_ty ty $ use_fields li
   | E_Tuple es -> use_es es
   | E_Array { length; value } -> use_e length $ use_e value
-  | E_EnumArray { labels; value } ->
-      use_list (fun id -> add_other id) labels $ use_e value
   | E_Arbitrary t -> use_ty t
-  | E_Pattern (e, p) -> use_e e $ use_pattern p
+  | E_Pattern (e, p) -> use_e e $ use_pattern_matcher p
 
 and use_es es acc = use_list use_e es acc
 and use_fields fields acc = use_named_list use_e fields acc
@@ -85,10 +82,10 @@ and use_fields fields acc = use_named_list use_e fields acc
 and use_pattern p =
   match p.desc with
   | Pattern_Mask _ | Pattern_All -> Fun.id
-  | Pattern_Tuple li | Pattern_Any li -> use_list use_pattern li
   | Pattern_Single e | Pattern_Geq e | Pattern_Leq e -> use_e e
-  | Pattern_Not p -> use_pattern p
   | Pattern_Range (e1, e2) -> use_e e1 $ use_e e2
+
+and use_pattern_matcher (ps, _) = use_list use_pattern ps
 
 and use_slice = function
   | Slice_Single e -> use_e e
@@ -109,8 +106,7 @@ and use_ty t =
   | T_Tuple li -> use_list use_ty li
   | T_Record fields | T_Collection fields | T_Exception fields ->
       use_named_list use_ty fields
-  | T_Array (ArrayLength_Expr e, t') -> use_e e $ use_ty t'
-  | T_Array (ArrayLength_Enum (s, _), t') -> add_other s $ use_ty t'
+  | T_Array (e, t') -> use_e e $ use_ty t'
   | T_Bits (e, bit_fields) -> use_e e $ use_bitfields bit_fields
 
 and use_bitfields bitfields = use_list use_bitfield bitfields
@@ -159,7 +155,7 @@ and use_le le =
   | LE_Var x -> add_maybe_pgm le x
   | LE_Destructuring les -> List.fold_right use_le les
   | LE_Discard -> Fun.id
-  | LE_SetArray (le, e) | LE_SetEnumArray (le, e) -> use_le le $ use_e e
+  | LE_SetArray (le, e) -> use_le le $ use_e e
   | LE_SetField (le, _) | LE_SetFields (le, _, _) -> use_le le
   | LE_Slice (le, slices) -> use_slices slices $ use_le le
   | LE_SetCollectionFields (x, _, _) -> add_maybe_pgm le x
@@ -169,7 +165,7 @@ and use_catchers catchers = use_list use_catcher catchers
 
 and use_decl d =
   match d.desc with
-  | D_TypeDecl (_name, ty, fields) -> use_ty ty $ use_option use_subtypes fields
+  | D_TypeDecl (_name, ty) -> use_ty ty
   | D_GlobalStorage { initial_value; ty; name = _; keyword = _ } ->
       use_option use_e initial_value $ use_option use_ty ty
   | D_Func
@@ -188,8 +184,6 @@ and use_decl d =
       $ (match body with SB_ASL s -> use_s s | SB_Primitive _ -> Fun.id)
       $ use_option use_e recurse_limit
   | D_Pragma (name, args) -> add_other name $ use_es args
-
-and use_subtypes (x, subfields) = add_other x $ use_named_list use_ty subfields
 
 let used_identifiers_decl d = use_decl d NameSet.empty
 let used_identifiers_decls ast = use_list use_decl ast NameSet.empty

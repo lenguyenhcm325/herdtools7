@@ -1,10 +1,10 @@
-(lang dune 3.10)
+(lang dune 3.11)
 (using menhir 2.0)
 (cram enable)
 
 (generate_opam_files)
 
-(version 1.0-EAC1)
+(version 1.0-EAC2)
 
 (homepage "https://github.com/herd/herdtools7")
 (authors "Arm Ltd - ATG Formal <atg-formal@arm.com>")
@@ -19,7 +19,7 @@
  (synopsis "Architecture Specification Language reference implementation")
  (depends
    (ocaml (>= 4.14))
-   dune
+   (dune (>= 3.14))
    (menhir (>= 20231231))
    (zarith (>= 1.13)))
  (depopts

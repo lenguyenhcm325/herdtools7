@@ -49,10 +49,6 @@ occurs is implementation-defined, including, but not limited to,
 Implementations should detect and report \dynamicerrorsterm{} on a ``best effort'' basis
 (that is, they are not required to detect and/or report \dynamicerrorsterm{}).
 %
-If an implementation raises an exception in response to a \dynamicerrorterm{},
-the exception must have the \supertypeterm{}
-\verb|runtime_exception|.
-%
 \listingref{dynamic-error-reporting} shows a specification containing a \dynamicerrorterm{},
 followed by an example of a report from \aslrefterm{} in a \linuxbashshellterm.
 
@@ -345,7 +341,7 @@ The following table summarises all error codes.
   For example:
   \begin{itemize}
     \item Incorrect declaration of parameters (\TypingRuleRef{CheckParamDecls}).
-    \item Clashes with another subprogram (\TypingRuleRef{AddNewFunc})
+    \item Clashes with another subprogram (\TypingRuleRef{AddNewFunc}).
     \item A procedure or setter returns a value (\TypingRuleRef{SReturn}).
     \item A function contains a control-flow path that does not terminate with either:
           return of a value, throwing of an exception, or an \unreachablestatementterm{} \\

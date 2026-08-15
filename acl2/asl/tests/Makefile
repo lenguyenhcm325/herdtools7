@@ -62,10 +62,8 @@ ASLSemanticsReference.t/SemanticsRule.EConcat2.asl \
 ASLSemanticsReference.t/SemanticsRule.LEGlobalVar.asl \
 ASLSemanticsReference.t/SemanticsRule.SCond2.asl \
 ASLSemanticsReference.t/SemanticsRule.SCond4.asl \
-ASLSemanticsReference.t/SemanticsRule.EGetEnumArray.asl \
 ASLSemanticsReference.t/SemanticsRule.EBinopAndFalse.asl \
 ASLSemanticsReference.t/SemanticsRule.ETuple.asl \
-ASLSemanticsReference.t/SemanticsRule.PTuple.asl \
 ASLSemanticsReference.t/SemanticsRule.LESlice.asl \
 ASLSemanticsReference.t/SemanticsRule.PMask.asl \
 ASLSemanticsReference.t/SemanticsRule.LDTuple.asl \
@@ -122,9 +120,7 @@ regressions.t/bad-shift.asl \
 regressions.t/tuple_items.asl \
 regressions.t/cases_where.asl \
 regressions.t/slice-width-shorthand.asl \
-regressions.t/enum-array.asl \
 regressions.t/anonymous-types-example-success.asl \
-regressions.t/array-with-enums.asl \
 regressions.t/array.asl \
 regressions.t/assign1.asl \
 regressions.t/big-ints.asl \
@@ -218,7 +214,7 @@ control-flow.t/try-02.asl \
 control-flow.t/try-00.asl \
 control-flow.t/always-throw.asl \
 
-# side-effects.t/assert-unknown.asl \   assertion fails due to the expectation that ARBITRARY returns a default value 
+# side-effects.t/assert-unknown.asl \   assertion fails due to the expectation that ARBITRARY returns a default value
 
 FAILING_TESTS := \
 ASLSemanticsReference.t/SemanticsRule.EArbitraryInteger0.asl \
@@ -264,4 +260,3 @@ export PATH := $(BINDIR):$(PATH)
 clean :
 	@rm -f $(PASSING_TARGETS) $(FAILING_TARGETS)
 	@find . -name '*.t' | xargs rm -rf
-

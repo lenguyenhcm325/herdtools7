@@ -609,14 +609,14 @@ class RuleBlock:
     CONVENTION_RULE = "Convention"
 
     rule_begin_pattern = re.compile(
-        r"\\(TypingRuleDef|SemanticsRuleDef|ASTRuleDef|ConventionDef|RequirementDef){(.*?)}"
+        r"\\(TypingRuleDef|SemanticsRuleDef|ASTRuleDef|ConventionDef|RequirementDef)(?:\[.*?\])?{(.*?)}"
     )
     end_patterns = [
         r"\\section{.*}",
         r"\\subsection{.*}",
-        r"\\TypingRuleDef{.*}",
-        r"\\SemanticsRuleDef{.*}",
-        r"\\ASTRuleDef{.*}",
+        r"\\TypingRuleDef(?:\[.*?\])?{.*}",
+        r"\\SemanticsRuleDef(?:\[.*?\])?{.*}",
+        r"\\ASTRuleDef(?:\[.*?\])?{.*}",
         r"\\ConventionDef{.*}",
         r"\\RequirementDef{.*}",
         r"\\SyntacticSugarDef{.*}",
@@ -861,6 +861,8 @@ def spellcheck(reference_dictionary_path: str, latex_files: list[str]) -> int:
         reference_words = set(reference_word_list)
 
     patterns_to_remove = [
+        # Issue-code style identifiers such as AARCH-25136.
+        r"\b[A-Z]{2,}-\d+\b",
         # Patterns for environments inside which spellchecking is not needed:
         r"\$.*?\$",
         r"\\\[.*?\\\]",
@@ -869,6 +871,7 @@ def spellcheck(reference_dictionary_path: str, latex_files: list[str]) -> int:
         r"\\begin\{flalign\*\}.*?\\end\{flalign\*\}",
         r"\\begin{table}.*?\\end{table}",
         r"\\begin{lstlisting}.*?\\end{lstlisting}",
+        r"\\lstinline(?:\[.*?\])?\{.*?\}",
         r"\\begin\{Verbatim\}.*?\\end\{Verbatim\}",
         r"\\begin\{verbatim\}.*?\\end\{verbatim\}",
         r"\\begin{tabular}.*?\\end{tabular}",
@@ -881,11 +884,13 @@ def spellcheck(reference_dictionary_path: str, latex_files: list[str]) -> int:
         r"\\LexicalRuleRef{.*?}",
         r"\\ASTRuleRef{.*?}",
         r"\\ASTRuleCaseRef{.*?}{.*?}",
-        r"\\ASTRuleDef{.*?}",
+        r"\\ASTRuleDef(?:\[.*?\])?{.*?}",
+        r"\\begin{(?:AST|Typing|Semantics)RuleList}{.*?}",
+        r"\\end{(?:AST|Typing|Semantics)RuleList}",
         r"\\TypingRuleRef{.*?}",
-        r"\\TypingRuleDef{.*?}",
+        r"\\TypingRuleDef(?:\[.*?\])?{.*?}",
         r"\\SemanticsRuleRef{.*?}",
-        r"\\SemanticsRuleDef{.*?}",
+        r"\\SemanticsRuleDef(?:\[.*?\])?{.*?}",
         r"\\RequirementDef{.*?}",
         r"\\RequirementRef{.*?}",
         r"\\SyntacticSugarDef{.*?}",

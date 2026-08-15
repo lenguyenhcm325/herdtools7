@@ -197,6 +197,7 @@ end = struct
   let is_atomic = function
     | Access (_,A.Location_global _,_,_,at,_) -> at
     | _ -> false
+  and is_exclusive _ = false
 
   let is_fault _ = false
 
@@ -321,9 +322,11 @@ end = struct
   | _ -> false
 
 (* Architecture-specific sets *)
+  let is_rmw_or_atomic e = is_rmw e || is_atomic e
 
   let arch_sets = [
-    "RMW",(fun e -> is_rmw e || is_atomic e);
+(* Both names below are needed for stdlib.cat and LKMM model respectively *)
+    "X",is_rmw_or_atomic; "RMW",is_rmw_or_atomic;
     "LK", is_lock; "LKR", is_lock_read; "LKW",is_lock_write;
     "LS", is_successful_lock;"LF", is_failed_lock;
     "UL", is_unlock;

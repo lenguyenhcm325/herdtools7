@@ -49,22 +49,21 @@ build-release: Version.ml
 build: check-deps | just-build
 
 install-herdtools:
-	sh ./dune-install.sh $(PREFIX)
+	dune install herdtools7 --prefix=$(PREFIX)
 
 build-aslref:
 	dune build -p aslref --profile $(DUNE_PROFILE)
 
 install-aslref:
-	# There are no lib files for aslref so we don't need dune-install.sh
-	dune install aslref --prefix $(PREFIX)
+	dune install aslref --prefix=$(PREFIX)
 
 install: install-herdtools
 
 uninstall:
-	sh ./dune-uninstall.sh $(PREFIX)
+	dune uninstall herdtools7 --prefix=$(PREFIX)
 
 uninstall-aslref:
-	dune uninstall aslref --prefix $(PREFIX)
+	dune uninstall aslref --prefix=$(PREFIX)
 
 clean: dune-clean clean-asl-pseudocode clean-asldoc
 	rm -f Version.ml
@@ -171,6 +170,8 @@ test:: test.herd-asl.inst.AArch64.kvm
 
 test-local:: test.herd-asl.inst.AArch64.sve
 
+test-all-asl:: test.herd.inst.ASL
+test-all-asl:: test.herd.inst.ASL-pseudo-arch
 test-all-asl:: test.herd-asl.inst.AArch64
 test-all-asl:: test.herd-asl.inst.AArch64.sve
 test-all-asl:: test.herd-asl.inst.AArch64.kvm
@@ -279,9 +280,25 @@ cata-test:: test.herd.cata.aarch64-cas
 cata-test-all:: test.herd.cata.aarch64-VMSA
 cata-test:: test.herd.cata.aarch64-ETS2
 cata-test:: test.herd.cata.aarch64-ETS3
+cata-test:: test.herd.cata.aarch64-readers-guide
 
 cata-test:: test.herd.cata.bpf
 cata-test:: test.herd.cata.x86_64
+
+test.herd.cata-extended.%:
+	@ echo
+	$(HERD_REGRESSION_TEST) \
+		-j $(J) \
+		$(NOHASH) \
+		-herd-path $(HERD) \
+		-libdir-path ./herd/libdir \
+		-litmus-dir  catalogue/$*/tests \
+		-conf catalogue/$*/cfgs/ci.cfg \
+		$(REGRESSION_TEST_MODE)
+	@ echo "herd7 catalogue extended $* tests: OK"
+
+cata-test-all:: test.herd.cata-extended.aarch64-BBM
+cata-test:: test.herd.cata-extended.linux
 
 test.herd-mixed.cata.%:
 	@ echo

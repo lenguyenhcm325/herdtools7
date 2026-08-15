@@ -28,26 +28,28 @@ jobs:
     steps:
       - name: Checkout PR head ref (if provided)
         if: ${{ github.event.inputs.pr_number != '' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: refs/pull/${{ github.event.inputs.pr_number }}/head
 
       - name: Checkout default branch
         if: ${{ github.event.inputs.pr_number == '' }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set-up OCaml 5
         uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: 5
+          ocaml-compiler: dune,menhir,zarith,js_of_ocaml,js_of_ocaml-ppx,zarith_stubs_js,logs
+      - name: Install herd-www dependencies
+        working-directory: herd-www
+        run: opam install . --deps-only --yes
       - run: |
-          opam install dune menhir zarith js_of_ocaml js_of_ocaml-ppx zarith_stubs_js logs
           opam exec -- make Version.ml
           opam exec -- dune build tools/cat2html.exe
           opam exec -- make -C herd-www
       - name: Upload www artifact (manual only)
         if: ${{ inputs.upload_artifact }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: www
           path: |
@@ -58,14 +60,13 @@ jobs:
 
     steps:
       - name: Checkout head
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set-up OCaml 5
         uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: 5
+          ocaml-compiler: dune,menhir,zarith,js_of_ocaml,js_of_ocaml-ppx,zarith_stubs_js,logs
 
       - run: |
-          opam install dune menhir zarith js_of_ocaml js_of_ocaml-ppx zarith_stubs_js logs
           opam exec -- make Version.ml
           opam exec -- dune build --profile=release asllib/asllib-www

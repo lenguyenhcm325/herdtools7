@@ -51,7 +51,7 @@ module Make
         HetDialect.hip_dialect,  HipLang.dialect.GpuLang.gl_kind,  HipLang.dump ;
       ]
 
-    let compile _hash_env name in_chan _out_chan splitted =
+    let compile _compileonly _hash_env name in_chan _out_chan splitted =
       try
         (* `-gpu-target' filtered: one emission, one dialect (hetDialect.ml). *)
         let dialects =

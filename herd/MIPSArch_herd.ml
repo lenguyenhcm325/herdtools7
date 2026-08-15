@@ -21,7 +21,7 @@ module Make
          (V:Value.S with type Cst.Instr.exec  = MIPSBase.instruction ) =
   struct
     include MIPSBase
-    let is_amo _ = false
+
     let pp_barrier_short = pp_barrier
     let reject_mixed = false
 
@@ -29,7 +29,8 @@ module Make
     let get_machsize _ = V.Cst.Scalar.machsize
 
     let empty_annot = false
-    let is_atomic annot = annot
+    let is_atomic _ = false
+    let is_exclusive annot = annot
 
     let ifetch_value_sets = []
 
@@ -37,7 +38,10 @@ module Make
 
     let cmo_sets = []
 
-    let annot_sets = ["X", is_atomic]
+    let annot_sets = [
+      "X", is_atomic;
+      "EX", is_exclusive;
+    ]
 
     include Explicit.No
     include PteValSets.No

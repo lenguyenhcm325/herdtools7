@@ -40,13 +40,13 @@
       List.fold_right (map2_desc folder) s_elsifs s_else
 
     let t_bit =
-      T_Bits (E_Literal (L_Int Z.one) |> add_dummy_annotation ~version, [])
+      T_Bits (E_Literal (L_Int Z.one) |> add_dummy_pos ~version, [])
 
 
     let make_ldi_vars (ty, xs) =
       let make_one x =
         S_Decl (LDK_Var, LDI_Var x, Some ty, None)
-        |> add_dummy_annotation ~version
+        |> add_dummy_pos ~version
       in
       List.map make_one xs |> stmt_from_list |> desc
 
@@ -247,7 +247,7 @@ let opn := list(EOL); body=list(stmts); EOF;
           parameters = [];
           body = SB_ASL body;
           return_type =
-            Some (T_Int UnConstrained |> ASTUtils.add_dummy_annotation ~version);
+            Some (T_Int UnConstrained |> ASTUtils.add_dummy_pos ~version);
           subprogram_type = ST_Function;
           recurse_limit = None;
           override = None;
@@ -265,7 +265,7 @@ let decl ==
   | setter_decl
   | type_decl
 
-let annotated(x) == desc = x; { AST.{ desc; pos_start=$symbolstartpos; pos_end=$endpos; version }}
+let annotated(x) == desc = x; { AST.{ desc; pos_start=$symbolstartpos; pos_end=$endpos; version; ty_opt=None }}
 
 let unimplemented_decl(x) == x; { None }
 let unimplemented_ty(x) == x; { AST.(T_Bits (ASTUtils.expr_of_int 0, [])) }
@@ -276,18 +276,18 @@ let type_decl ==
     annotated (
       | terminated_by(SEMICOLON; EOL,
         | TYPE; x=tidentdecl; EQ; ~=ty;
-          { AST.(D_TypeDecl (x, ty, None)) }
+          { AST.(D_TypeDecl (x, ty)) }
         | RECORD; x=tidentdecl; fields=annotated(braced(nlist(field)));
-          { AST.(D_TypeDecl (x, ASTUtils.add_pos_from fields (T_Record fields.desc), None)) }
+          { AST.(D_TypeDecl (x, ASTUtils.add_pos_from fields (T_Record fields.desc))) }
         | ENUMERATION; x=tidentdecl; li=annotated(braced(ntclist(ident)));
-          { AST.(D_TypeDecl (x, ASTUtils.add_pos_from li (T_Enum li.desc), None)) }
+          { AST.(D_TypeDecl (x, ASTUtils.add_pos_from li (T_Enum li.desc))) }
 
         | TYPE; t=tidentdecl; ty=annotated(unimplemented_ty(<>));
-          { AST.D_TypeDecl (t, ty, None) }
+          { AST.D_TypeDecl (t, ty) }
       )
 
       | TYPE; x=tidentdecl; IS; li=annotated(pared(ntclist(field_ns))); EOL;
-        { AST.(D_TypeDecl (x, ASTUtils.add_pos_from li (T_Record li.desc), None)) }
+        { AST.(D_TypeDecl (x, ASTUtils.add_pos_from li (T_Record li.desc))) }
     )
   )
 
@@ -383,8 +383,8 @@ let binop_expr(e, b) ==
       | ~=e; ~=bracketed(clist(slice));               < AST.E_Slice     >
       | ~=bracketed(clist(expr));                     < make_concat     >
       | ~=e; IN; ~=bpattern;                          < AST.E_Pattern   >
-      | ~=e; EQ_EQ; ~=pattern_mask;                   < AST.E_Pattern   >
-      | ~=e; ~=annotated(BANG_EQ; pm=pattern_mask; < AST.Pattern_Not >); < AST.E_Pattern >
+      | e=e; EQ_EQ; pm=pattern_mask;                  { AST.E_Pattern (e, ([pm], AST.Positive)) }
+      | e=e; BANG_EQ; pm=pattern_mask;                { AST.E_Pattern (e, ([pm], AST.Negative)) }
       | ~=annotated(ty_non_tuple); UNKNOWN;           < AST.E_Arbitrary >
       (*
       | ~=e; LT; ~=clist(slice); GT;          < AST.E_Slice     >
@@ -440,8 +440,8 @@ let variable_decl ==
           { AST.(D_GlobalStorage {
             keyword = GDK_Var;
             name = x;
-            ty = Some (T_Array (ArrayLength_Expr e, ty)
-                       |> ASTUtils.add_dummy_annotation ~version);
+            ty = Some (T_Array (e, ty)
+                       |> ASTUtils.add_dummy_pos ~version);
             initial_value = None;
           })}
       )))
@@ -737,12 +737,14 @@ let s_else == ~=list(s_elsif); ~=ioption(ELSE; possibly_empty_block); < build_st
 
 let alt ==
   annotated (
-    | WHEN; pattern=pattern_list; where=opt_where; stmt=possibly_empty_block;
+    | WHEN; pattern=annotated(pattern_list); where=opt_where; stmt=possibly_empty_block;
         { AST.{ pattern; where; stmt } }
-    | WHEN; pattern=pattern_list; where=opt_where; stmt=simple_if_stmt;
+    | WHEN; pattern=annotated(pattern_list); where=opt_where; stmt=simple_if_stmt;
         { AST.{ pattern; where; stmt } }
     | loc=annotated(OTHERWISE); stmt=possibly_empty_block;
-        { AST.{ pattern = ASTUtils.add_pos_from loc Pattern_All; where = None; stmt } }
+        { let any_pattern = ASTUtils.add_pos_from loc AST.Pattern_All in
+          let pattern = ASTUtils.add_pos_from loc ([any_pattern], AST.Positive) in
+          AST.{ pattern; where = None; stmt } }
   )
 
 let opt_where ==
@@ -753,9 +755,8 @@ let otherwise == annotated (OTHERWISE; possibly_empty_block)
 
 let pattern_mask == annotated(~=MASK_LIT; <AST.Pattern_Mask>)
 let pattern_all == annotated(MINUS; { AST.Pattern_All })
-let pattern_list == annotated(~=nclist(pattern); < AST.Pattern_Any >)
+let pattern_list == ps=nclist(pattern); {(ps, AST.Positive)}
 let pattern ==
-    | bpattern
     | pattern_mask
     | pattern_all
     | annotated (
@@ -764,7 +765,7 @@ let pattern ==
         | ~=qualident; < AST.E_Var >
       ); < AST.Pattern_Single >
     )
-let bpattern == annotated(braced(~=nclist(apattern); < AST.Pattern_Any >))
+let bpattern == braced(ps=nclist(apattern); {(ps, AST.Positive)})
 let apattern ==
   | annotated (
     | ~=expr; < AST.Pattern_Single >

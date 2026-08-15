@@ -285,7 +285,9 @@ module Make (Conf : Config) = struct
             (* Read has priority, as for native VMSA *)
             access_bool_field accdesc "read" map
       in
-      let is_ax x n = if is_atomic || is_exclusive then x else n in
+      assert (not (is_exclusive && is_atomic));
+      let is_ax x n = if is_atomic then x else n in
+      let is_eax ex x n = if is_exclusive then ex else is_ax x n in
       let is_noret =
         if not is_atomic then false
         else
@@ -314,11 +316,11 @@ module Make (Conf : Config) = struct
           | _ -> false
       in
       let an =
-        if (not is_read) && is_release then is_ax XL L
+        if (not is_read) && is_release then is_eax EXL XL L
         else if is_noret then NoRet
-        else if is_read && is_acquiresc then is_ax XA A
+        else if is_read && is_acquiresc then is_eax EXA XA A
         else if is_read && is_acquirepc then is_ax XQ Q
-        else is_ax X N
+        else is_eax EX X N
       in
       let () =
         if false && an <> N then
@@ -585,10 +587,10 @@ module Make (Conf : Config) = struct
     let dom_of_label =
       let open AArch64Base in
       function
-      | "MBReqDomain_Nonshareable" -> NSH
-      | "MBReqDomain_InnerShareable" -> ISH
-      | "MBReqDomain_OuterShareable" -> OSH
-      | "MBReqDomain_FullSystem" -> SY
+      | "MBMaintenanceScope_Nonshareable" -> NSH
+      | "MBMaintenanceScope_InnerShareable" -> ISH
+      | "MBMaintenanceScope_OuterShareable" -> OSH
+      | "MBMaintenanceScope_None" -> SY
       | _ -> assert false
 
     and btyp_of_label =
@@ -599,14 +601,16 @@ module Make (Conf : Config) = struct
       | "MBReqTypes_All" -> FULL
       | _ -> assert false
 
-    let primitive_db constr (ii, poi) ~d:dom_m ~t:btyp_m =
+    let primitive_dmb (ii, poi) ~t:btyp_m =
+      let* btyp_v = btyp_m in
+      let t = btyp_v |> v_to_label |> btyp_of_label in
+      create_barrier AArch64Base.(DMB (SY, t)) (use_ii_with_poi ii poi)
+
+    and primitive_dsb (ii, poi) ~d:dom_m ~t:btyp_m =
       let* dom_v = dom_m and* btyp_v = btyp_m in
       let dom = dom_v |> v_to_label |> dom_of_label
       and btyp = btyp_v |> v_to_label |> btyp_of_label in
-      create_barrier (constr (dom, btyp)) (use_ii_with_poi ii poi)
-
-    let primitive_dmb = primitive_db (fun (d, t) -> AArch64Base.DMB (d, t))
-    and primitive_dsb = primitive_db (fun (d, t) -> AArch64Base.DSB (d, t))
+      create_barrier (AArch64Base.DSB (dom, btyp)) (use_ii_with_poi ii poi)
 
     (*
      * Primitives for read and write events.
@@ -641,12 +645,6 @@ module Make (Conf : Config) = struct
     let read_memory ii ~n ~addr =
       do_read_memory ii addr n aneutral aexp avir
 
-    let read_pte ii ~n ~addr =
-      (* We do all the operations with 64 bits, even if the argument passed is different. *)
-      let* _ = n in
-      do_read_memory ii addr (M.unitT (V.intToV 64))
-        aneutral (AArch64Explicit.(NExp Other)) apte
-
     let read_memory_gen ii ~n ~addr ~accdesc ~access =
       let* accdesc = accdesc and* access = access in
       do_read_memory ii addr n (accdesc_to_annot Read accdesc)
@@ -671,41 +669,31 @@ module Make (Conf : Config) = struct
  * sets that appear in the aarch64.cat model source text.
  *)
 
-    let as_bool b_m =
-      let* b =  b_m in
-      let (>>=) = Option.bind in
-      V.as_scalar b >>= ASLScalar.as_bool |>
-      fun b -> M.unitT (Misc.as_some b)
+    let tthm = Option.value Conf.dirty ~default:DirtyBit.soft
 
-    let pte_nexp_nat proc is_write =
+    let pte_nexp_nat proc =
       let open DirtyBit in
       let open AArch64Explicit in
-      let d =
-        match Conf.dirty with
-        | None -> soft
-        | Some d -> d in
       NExp
-        (if is_write then
-           if d.hd proc then AFDB
-           else if d.ha proc then AF
-           else Other
-         else if d.ha proc then AF
+        (if tthm.hd proc then AFDB
+         else if tthm.ha proc then AF
          else Other)
 
-    (* Always quad size, whatever parameter _N is *)
-    let size_m_64 =  M.unitT (V.intToV 64)
+    let pte_read_annot proc =
+      let open DirtyBit in
+      if tthm.ha proc then aatomic else aneutral
 
-    (* Second pte read, used for flag update *)
-    let read_pte_again (iinst,_ as ii) ~n:_ ~addr ~is_write =
-      let* is_write = as_bool is_write in
-      let nexp_nat = pte_nexp_nat iinst.A.proc is_write in
-      do_read_memory ii addr size_m_64
-        aatomic nexp_nat apte
+    (* Always quad size, whatever parameter _N is *)
+    let size_m_64 = M.unitT (V.intToV 64)
+
+    let read_pte (iinst, _ as ii) ~n:_ ~addr =
+      let nexp_nat = pte_nexp_nat iinst.A.proc in
+      let annot = pte_read_annot iinst.A.proc in
+      do_read_memory ii addr size_m_64 annot nexp_nat apte
 
     (* Pte write for flag update *)
-    let write_pte (iinst,_ as ii) ~n:_ ~addr ~data ~is_write =
-      let* is_write = as_bool is_write in
-      let nexp_nat = pte_nexp_nat iinst.A.proc is_write in
+    let write_pte (iinst,_ as ii) ~n:_ ~addr ~data =
+      let nexp_nat = pte_nexp_nat iinst.A.proc in
       do_write_memory ii addr size_m_64 data aatomic nexp_nat apte
 
     (*********************)
@@ -797,11 +785,10 @@ module Make (Conf : Config) = struct
       let read_memory_gen = read_memory_gen
       let write_memory = write_memory
       let write_memory_gen = write_memory_gen
-      let read_pte_primitive = read_pte
       let data_abort_primitive = data_abort_fault
       let get_ha_primitive = get_ha
       let get_hd_primitive = get_hd
-      let read_pte_again_primitive = read_pte_again
+      let read_pte_primitive = read_pte
       let write_pte_primitive = write_pte
       let check_prop = check_prop
       let check_eq = check_eq

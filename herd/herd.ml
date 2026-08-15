@@ -16,6 +16,7 @@
 
 (** Entry point to Herd  *)
 
+open Herd_core
 open Printf
 open Archs
 open Opts
@@ -597,6 +598,9 @@ let conds = LR.read_from_files !conds (fun s -> Some s)
 
 (* Configure parser/models/etc. *)
 let () =
+  let timer_module =
+    if !debug.Debug_herd.timers then (module Timer.Ok:Timer.S)
+    else (module Timer.No:Timer.S) in
   let module Config = struct
     let timeout = !timeout
     let candidates = !candidates
@@ -633,6 +637,7 @@ let () =
     let check_filter = !check_filter
     let debug = !debug
     let debuglexer = debug.Debug_herd.lexer
+    module Timer = (val timer_module : Timer.S)
     let verbose = !verbose
     let hexa = !PP.hexa
     let unroll = !unroll

@@ -31,6 +31,7 @@ module type A = sig
   val dirty_sets : (string * (DirtyBit.my_t -> V.Cst.PteVal.t -> bool)) list
 
   val is_atomic : lannot -> bool
+  val is_exclusive : lannot -> bool
   val is_isync : barrier -> bool
   val pp_isync : string
 
@@ -286,17 +287,25 @@ end = struct
 
   let is_additional_mem _ = false
 
-  let is_atomic a = match a with
-  | Access (_,_,_,an,_,_,_) ->
-      is_mem a && A.is_atomic an
+  let do_is_annot pred a = match a with
+  | Access (_,_,_,an,_,_,_)|Amo (_,_,_,an,_,_,_) ->
+      is_mem a && pred an
   | Arch a ->
-     is_mem_arch_action a && A.is_atomic (A.ArchAction.get_lannot a)
+     is_mem_arch_action a && pred (A.ArchAction.get_lannot a)
   | _ -> false
+
+  let is_atomic = do_is_annot A.is_atomic
+  and is_exclusive = do_is_annot A.is_exclusive
 
   let is_tag = function
     | Access (_,_,_,_,_,_,Access.TAG) -> true
     | Access _|Barrier _|Commit _
     | Amo _|Fault _|CutOff _|Inv _|CMO _|Arch _|NoAction-> false
+
+  let is_gcs = function
+    | Access (_,A.Location_global _,_,_,exp,_,_) ->
+      A.is_gcs exp
+    | _ -> false
 
   let is_inv = function
     | Inv _ -> true
@@ -558,6 +567,7 @@ end = struct
         A.TLBI.sets
     in
     ("T",is_tag)::
+    ("GCS",is_gcs)::
     ("TLBI",is_inv)::
     ("no-loc", fun a -> Misc.is_none (location_of a))::
     (if kvm then
@@ -644,7 +654,30 @@ end = struct
           | Some s1,Some s2 -> A.V.Cst.PteVal.same_oa s1 s2
           | _,_ -> false) in
 
-      [("inv-domain",inv_domain_act); ("alias",alias_act);]
+      let pte_to_pa_act =
+        let ptevals act =
+          let get_pteval =
+            let open Constant in
+            function
+            | Some (A.V.Val (PteVal v)) -> Some v
+            | Some _ | None -> None in
+          List.filter_map get_pteval [read_of act; written_of act] in
+        let is_physical_location pteval act =
+          match A.V.Cst.PteVal.as_physical pteval, location_of act with
+          | Some s, Some loc ->
+              begin match A.symbol loc with
+              | Some (Constant.Physical (s', _)) -> String.equal s s'
+              | _ -> false
+              end
+          | None, _ | _, None -> false in
+        fun act1 act2 ->
+          is_pt act1 && is_mem act2 &&
+          List.exists (fun pteval -> is_physical_location pteval act2)
+            (ptevals act1) in
+
+      [("inv-domain",inv_domain_act);
+       ("alias",alias_act);
+       ("PTEtoPA",pte_to_pa_act);]
     else []
 
   let arch_dirty =

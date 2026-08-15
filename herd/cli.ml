@@ -14,6 +14,7 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
+open Herd_core
 module TR = Top_herd.TestResult
 
 let iter_count (i : ('a -> unit) -> 'b) : ('a -> unit) -> int * 'b =
@@ -69,7 +70,7 @@ end) = struct
     | Some (chan,fname) ->
        match O.outputdir with
        | PrettyConf.NoOutputdir | PrettyConf.Outputdir _ ->
-          if O.PC.debug then Printf.eprintf "close %s\n" fname ;
+          if O.PC.debug then Printf.eprintf "close %s\n%!" fname ;
           close_out chan
        | PrettyConf.StdoutOutput ->
           Printf.fprintf stdout "\nDOTEND %s\n" fname
@@ -130,7 +131,7 @@ end) = struct
       begin match ochan with
       | Some (_,fname) when shown > 0 ->
           let module SH = Show.Make(S.O.PC) in
-          if O.PC.debug then Printf.eprintf "show %s file\n" fname ;
+          if O.PC.debug then Printf.eprintf "show %s file\n%!" fname ;
           SH.show_file fname
       | Some _|None -> ()
       end ;
@@ -154,7 +155,12 @@ end) = struct
         Itimer.stop O.timeout ;
 (* Now output *)
         let time = Sys.time () -. start_time in
-        Format.printf "%a\n" (fun fmt () -> PP.pp_stats ~time test c fmt) ();
+        Format.printf "%a@." (fun fmt () -> PP.pp_stats ~time test c fmt) ();
+        if O.debug.Debug_herd.timers then
+          Format.printf "Timers: %a, %a, %a@."
+            O.Timer.pp O.Timer.run
+            O.Timer.pp O.Timer.semantics
+            O.Timer.pp O.Timer.model;
         do_show ();
         begin
           match TR.cutoff c with

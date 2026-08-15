@@ -5,9 +5,8 @@ Hello world should work:
 
 ASL Typing Tests:
   $ aslref TypingRule.SubtypeSatisfaction1.asl
-  $ aslref --no-exec TypingRule.SubtypeSatisfaction2.asl
   $ aslref TypingRule.SubtypeSatisfaction3.asl
-  File TypingRule.SubtypeSatisfaction3.asl, line 9, characters 4 to 45:
+  File TypingRule.SubtypeSatisfaction3.asl, line 8, characters 4 to 45:
       var dogLegs : AnimalLegs = myCircleSides; // illegal: unrelated types
       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   ASL Type error: a subtype of AnimalLegs was expected, provided ShapeSides.
@@ -43,15 +42,20 @@ ASL Typing Tests:
   [1]
   $ aslref --no-exec TypingRule.TypeClashes.asl
   $ aslref --no-exec TypingRule.TypeClashes.bad.asl
-  File TypingRule.TypeClashes.bad.asl, line 3, characters 0 to 55:
-  func structured_procedure(r: SuperRec) begin pass; end;
-  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  ASL Type error: cannot declare already declared element
-    "structured_procedure".
+  File TypingRule.TypeClashes.bad.asl, line 2, characters 0 to 32:
+  func f(r: time) begin pass; end;
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  ASL Type error: cannot declare already declared element "f".
   [1]
   $ aslref TypingRule.LowestCommonAncestor.asl
+  $ aslref TypingRule.LowestCommonAncestor.bad.asl
+  File TypingRule.LowestCommonAncestor.bad.asl, line 10, characters 13 to 53:
+      var o  = if ARBITRARY : boolean then arr1 else ex;
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  ASL Type error: cannot find a common ancestor to those two types
+    array [[8]] of Word1 and Exc.
+  [1]
   $ aslref --no-exec TypingRule.LowestCommonAncestor2.asl
-  $ aslref TypingRule.FindNamedLCA.asl
   $ aslref TypingRule.ApplyUnopType.asl
   $ aslref TypingRule.EConcatUnresolvableToInteger.asl
   File TypingRule.EConcatUnresolvableToInteger.asl, line 12, character 4 to
@@ -181,25 +185,12 @@ ASL Typing Tests / annotating types:
   [1]
   $ aslref TypingRule.AnnotateSymbolicallyEvaluableExpr.asl
   $ aslref --no-exec TypingRule.TEnumDecl.asl
-  $ aslref --no-exec TypingRule.TEnumDecl.subtypes.asl
+  $ aslref --no-exec TypingRule.TEnumDecls.asl
   $ aslref --no-exec TypingRule.TEnumDecl.bad.asl
   File TypingRule.TEnumDecl.bad.asl, line 1, characters 0 to 19:
   constant GREEN = 1;
   ^^^^^^^^^^^^^^^^^^^
   ASL Type error: cannot declare already declared element "GREEN".
-  [1]
-  $ aslref --no-exec TypingRule.TEnumDecl.bad2.asl
-  File TypingRule.TEnumDecl.bad2.asl, line 4, characters 24 to 47:
-  type SubEnumIllegal1 of enumeration {LOW, HIGH} subtypes SuperEnum;
-                          ^^^^^^^^^^^^^^^^^^^^^^^
-  ASL Type error: cannot declare already declared element "LOW".
-  [1]
-  $ aslref --no-exec TypingRule.TEnumDecl.bad3.asl
-  File TypingRule.TEnumDecl.bad3.asl, line 5, characters 0 to 69:
-  type SubEnumIllegal2 of enumeration {TOP, BOTTOM} subtypes SuperEnum;
-  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  ASL Type error: a subtype of SuperEnum was expected,
-    provided enumeration {TOP, BOTTOM}.
   [1]
   $ aslref --no-exec TypingRule.TEnumDecl.bad4.asl
   File TypingRule.TEnumDecl.bad4.asl, line 1, characters 14 to 48:
@@ -207,8 +198,6 @@ ASL Typing Tests / annotating types:
                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
   ASL Type error: cannot declare already declared element "RED".
   [1]
-  $ aslref --no-exec TypingRule.Subtype.asl
-  $ aslref --no-exec TypingRule.GetVariableEnum.asl
   $ aslref TypingRule.TRecordDecl.asl
   $ aslref TypingRule.TRecordDecl.bad.asl
   File TypingRule.TRecordDecl.bad.asl, line 1, characters 17 to 57:
@@ -261,7 +250,6 @@ ASL Typing Tests / annotating types:
   record_base_init = {data=0x00, time=0, flag=FALSE}
   exception_base = {msg=}
   integer_array_base = [[0, 0, 0, 0]]
-  enumeration_array_base = [[RED=0, GREEN=0, BLUE=0]]
   $ aslref --no-exec TypingRule.BaseValue.parameterized.asl
   $ aslref TypingRule.BaseValue.bad_negative_width.asl
   File TypingRule.BaseValue.bad_negative_width.asl, line 1, characters 0 to 24:
@@ -376,9 +364,10 @@ ASL Typing Tests / annotating types:
   ne_string: "hello" != "world" = TRUE
   eq_enum: RED == RED = TRUE
   eq_enum: RED == GREEN = FALSE
-  eq_enum: RED != RED = FALSE
-  eq_enum: RED != GREEN = TRUE
+  ne_enum: RED != RED = FALSE
+  ne_enum: RED != GREEN = TRUE
   concat_string: 0 ++ '1' ++ 2.0 ++ TRUE ++ "foo" ++ RED = 00x12TRUEfooRED
+  concat_string: '10' ++ '1' = 0x20x1
 
   $ aslref TypingRule.EVar.asl
   $ aslref TypingRule.EVar.undefined.asl
@@ -421,7 +410,7 @@ ASL Typing Tests / annotating types:
     integer.
   [1]
   $ aslref --no-exec TypingRule.CheckATC.asl
-  File TypingRule.CheckATC.asl, line 7, characters 12 to 32:
+  File TypingRule.CheckATC.asl, line 6, characters 12 to 32:
       var a = 3.0 as integer{1, 2};
               ^^^^^^^^^^^^^^^^^^^^
   ASL Type error: cannot perform Asserted Type Conversion on real by
@@ -451,22 +440,15 @@ ASL Typing Tests / annotating types:
       ^
   ASL Static error: Undefined identifier: 'x'
   [1]
-  $ aslref TypingRule.LESetBadField.asl
-  File TypingRule.LESetBadField.asl, line 6, characters 4 to 5:
-      x.RED = 42;
-      ^
-  ASL Type error: array [[Color]] of integer does not subtype any of: bits(-),
-    record {  }, exception {  }, collection {  }.
-  [1]
-  $ aslref TypingRule.LESetBadField.asl
-  File TypingRule.LESetBadField.asl, line 6, characters 4 to 5:
-      x.RED = 42;
-      ^
-  ASL Type error: array [[Color]] of integer does not subtype any of: bits(-),
-    record {  }, exception {  }, collection {  }.
-  [1]
   $ aslref TypingRule.LESetStructuredField.asl
   $ aslref TypingRule.LESetField.asl
+  $ aslref TypingRule.LESetBadField.asl
+  File TypingRule.LESetBadField.asl, line 10, characters 4 to 5:
+      x.RED = 42;
+      ^
+  ASL Type error: integer does not subtype any of: bits(-), record {  },
+    exception {  }, collection {  }.
+  [1]
   $ aslref TypingRule.LESetFields.asl
   $ aslref TypingRule.LESlice.bad.asl
   File TypingRule.LESlice.bad.asl, line 4, characters 3 to 11:
@@ -574,7 +556,7 @@ ASL Typing Tests / annotating types:
       [4] flag,
       // Illegal: slices declared for the same bitfield must not overlap
       [3:0, 5:3] data,
-      [3*:4] value
+      [3*4 +: 4] value
   };
   ASL Static error: overlapping slices 0+:4, 3+:3.
   [1]
@@ -584,7 +566,7 @@ ASL Typing Tests / annotating types:
   var myData: bits(16) {
       [4] flag,
       [3:0, 5+:3] data,
-      [3*:5] value // Illegal: position 19 exceeds 15
+      [3*5 +:5] value // Illegal: position 19 exceeds 15
   };
   ASL Static error:
     Cannot extract from bitvector of length 16 slice (3 * 5)+:5.
@@ -649,18 +631,6 @@ ASL Typing Tests / annotating types:
   ASL Type error: Erroneous pattern >= (3.0 / 1.0) for expression of type
     integer {42}.
   [1]
-  $ aslref TypingRule.PTuple.bad.asl
-  File TypingRule.PTuple.bad.asl, line 4, characters 11 to 45:
-      assert (3, '101010') IN { ('xx1010', 5) };
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  ASL Type error: a subtype of bits(-) was expected, provided integer {3}.
-  [1]
-  $ aslref TypingRule.PTuple.bad2.asl
-  File TypingRule.PTuple.bad2.asl, line 5, characters 11 to 26:
-      assert 3 IN { (3, 4) };
-             ^^^^^^^^^^^^^^^
-  ASL Type error: a subtype of () was expected, provided integer {3}.
-  [1]
   $ aslref TypingRule.PMask.asl
   $ aslref TypingRule.PMask.bad.asl
   File TypingRule.PMask.bad.asl, line 5, characters 11 to 34:
@@ -682,7 +652,6 @@ ASL Typing Tests / annotating types:
               ^^^^^^^^^^
   ASL Grammar error: Cannot parse.
   [1]
-  $ aslref TypingRule.LESetCollectionFields.asl
   $ aslref TypingRule.TypecheckDecl.asl
   0x0000000000000000
   0xffffffffffffffff
@@ -735,12 +704,6 @@ ASL Typing Tests / annotating types:
     guaranteed to either return, raise an exception, or invoke unreachable.
   [1]
   $ aslref --no-exec TypingRule.DeclareType.asl
-  $ aslref TypingRule.AnnotateExtraFields.bad.asl
-  File TypingRule.AnnotateExtraFields.bad.asl, line 1, characters 15 to 39:
-  type SubRecord subtypes Record with {-};
-                 ^^^^^^^^^^^^^^^^^^^^^^^^
-  ASL Static error: Undefined identifier: 'Record'
-  [1]
   $ aslref --no-exec TypingRule.DeclaredType.asl
   $ aslref --no-exec TypingRule.DeclaredType.bad.asl
   File TypingRule.DeclaredType.bad.asl, line 3, characters 12 to 23:
@@ -748,7 +711,6 @@ ASL Typing Tests / annotating types:
               ^^^^^^^^^^^
   ASL Static error: Undefined identifier: 'MyInt'
   [1]
-  $ aslref --no-exec TypingRule.DeclareConst.asl
   $ aslref --no-exec TypingRule.DeclareGlobalStorage.config.asl
   $ aslref --no-exec TypingRule.DeclareGlobalStorage.config.bad.asl
   File TypingRule.DeclareGlobalStorage.config.bad.asl, line 2,
@@ -1090,13 +1052,6 @@ ASL Typing Tests / annotating types:
   [1]
   $ aslref --no-exec TypingRule.TypeEqual.asl
   $ aslref TypingRule.ExprEqual.asl
-  $ aslref TypingRule.ArrayLengthEqual.bad.asl
-  File TypingRule.ArrayLengthEqual.bad.asl, line 9, characters 4 to 5:
-      x = y;
-      ^
-  ASL Type error: a subtype of array [[3]] of integer was expected,
-    provided array [[Color]] of integer.
-  [1]
   $ aslref TypingRule.ReduceConstraint.asl
   File TypingRule.ReduceConstraint.asl, line 6, characters 4 to 67:
       var x : integer{3 * w, 0..(5 * z - z) - 2 * z,  w + z} = w + z;
@@ -1249,22 +1204,22 @@ ASL Typing Tests / annotating types:
   $ aslref --no-exec TypingRule.AddNewFunc.bad1.asl
   File TypingRule.AddNewFunc.bad1.asl, line 8, character 0 to line 11,
     character 4:
-  func f(x: shape)
+  func f(x: circle)
   begin
       pass;
   end;
   ASL Type error: cannot declare already declared element "f".
   [1]
   $ aslref --no-exec TypingRule.AddNewFunc.bad2.asl
-  File TypingRule.AddNewFunc.bad2.asl, line 22, characters 4 to 20:
-      g(myShape, 0.1); // illegal
-      ^^^^^^^^^^^^^^^^
-  ASL Type error: a subtype of square was expected, provided shape.
+  File TypingRule.AddNewFunc.bad2.asl, line 18, characters 4 to 21:
+      g(myCircle, 0.1); // illegal
+      ^^^^^^^^^^^^^^^^^
+  ASL Type error: a subtype of square was expected, provided circle.
   [1]
   $ aslref --no-exec TypingRule.AddNewFunc.bad3.asl
   File TypingRule.AddNewFunc.bad3.asl, line 8, character 0 to line 11,
     character 4:
-  func h(x: shape, y: square)
+  func h(x: circle, y: square)
   begin
       pass;
   end;

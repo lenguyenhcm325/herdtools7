@@ -48,7 +48,9 @@ type sd = Same|Diff|UnspecLoc
 (* Direction of related events *)
 type extr = Dir of dir | Irr | NoDir
 
-
+val equal_ie : ie -> ie -> bool
+val equal_sd : sd -> sd -> bool
+val equal_extr : extr -> extr -> bool
 
 (* Associated pretty print & generators *)
 val pp_ie : ie -> string
@@ -74,8 +76,9 @@ val pp_check : check -> string
 val checks : string list
 
 (* Com *)
-type com =  CRf | CFr | CWs
+type com =  Rf | Fr | Co
 
+val equal_com : com -> com -> bool
 val pp_com : com -> string
 val fold_com : (com -> 'a -> 'a) -> 'a -> 'a
 

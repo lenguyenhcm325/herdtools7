@@ -11,7 +11,7 @@ module Make (C : Config.S) = struct
   open Feat
   open Enum
 
-  let annot desc = ASTUtils.add_dummy_annotation desc
+  let annot desc = ASTUtils.add_dummy_pos desc
 
   (* Util not to forget to pay ==> make payment mandatory on recursion. *)
   let fix f = Fix.Memoize.Int.fix (fun blah -> f (pay blah))
@@ -410,7 +410,7 @@ module Make (C : Config.S) = struct
 
   let gdks = scaled_finite [ GDK_Config; GDK_Let; GDK_Constant; GDK_Var ]
 
-  let decls =
+  let decls : decl enum =
     let d_func =
       let make_func (name, (body, (return_type, (args, subprogram_type)))) =
         let parameters = [] and body = SB_ASL body and recurse_limit = None in
@@ -447,7 +447,7 @@ module Make (C : Config.S) = struct
       in
       gdks ** vars ** no_double_none tys exprs |> map make_global_decl
     and d_type_decl =
-      let make_type_decl (name, ty) = D_TypeDecl (name, ty, None) in
+      let make_type_decl (name, ty) = D_TypeDecl (name, ty) in
       names ** ty_decl |> map make_type_decl
     in
     d_func ++ d_global_storage ++ d_type_decl |> map annot

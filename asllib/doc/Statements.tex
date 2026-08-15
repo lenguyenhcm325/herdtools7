@@ -12,7 +12,6 @@ Statements update storage elements and determine the flow of control in a subpro
   \item \secref{AssignmentStatements} defines assignment statements;
   \item \secref{SetterAssignmentStatements} defines setter assignment statements;
   \item \secref{DeclarationStatements} defines declaration statements;
-  \item \secref{DeclarationStatementsElidedParameter} defines declaration statements with an elided parameter;
   \item \secref{SequencingStatement} defines sequencing statements;
   \item \secref{CallStatements} defines call statements;
   \item \secref{ConditionalStatements} defines conditional statements;
@@ -453,7 +452,7 @@ As given by applying the relevant rules to the desugared AST.
 \listingref{typing-sdecl} shows well-typed declaration statements.
 \ASLListing{Typing declaration statements}{typing-sdecl}{\typingtests/TypingRule.SDecl.asl}
 
-The specifications in \listingref{typing-sdecl-bad1} ill-typed,
+The specification in \listingref{typing-sdecl-bad1} is ill-typed,
 since local constant storage elements are not allowed.
 \ASLListing{A (illegal) local constant declaration}{typing-sdecl-bad1}{\typingtests/TypingRule.SDecl.bad1.asl}
 
@@ -463,7 +462,7 @@ since immutable local storage elements require an initialising expression.
 
 
 \RenderProseAndFormally{annotate_stmt_SDecl}
-\CodeSubsection{\SDeclegin}{\SDeclEnd}{../Typing.ml}
+\CodeSubsection{\SDeclBegin}{\SDeclEnd}{../Typing.ml}
 
 \TypingRuleDef{AnnotateLocalDeclTypeAnnot}
 \RenderRelation{annotate_local_decl_type_annot}
@@ -533,137 +532,6 @@ In \listingref{semantics-sdeclnone},
 
 \RenderProseAndFormally{eval_stmt_SDecl}
 \CodeSubsection{\EvalSDeclBegin}{\EvalSDeclEnd}{../Interpreter.ml}
-
-\section{Declaration Statements with an Elided Parameter\label{sec:DeclarationStatementsElidedParameter}}
-\subsection{Syntax}
-\begin{flalign*}
-\Nstmt \derives \
-   & \Nlocaldeclkeyword \parsesep \Ndeclitem \parsesep \Nasty \parsesep \Teq \\
-   & \wrappedline\ \Nelidedparamcall \parsesep \Tsemicolon &\\
-\end{flalign*}
-
-\begin{flalign*}
-\Nelidedparamcall \derives \
-     & \Tidentifier \parsesep \Tlbrace \parsesep \Trbrace &\\
-  |\ & \Tidentifier \parsesep \Tlbrace \parsesep \Trbrace \parsesep \PlistZero{\Nexpr} &\\
-  |\ & \Tidentifier \parsesep \Tlbrace \parsesep \Tcomma \parsesep \ClistOne{\Nexpr} \parsesep \Trbrace &\\
-  |\ & \Tidentifier \parsesep \Tlbrace \parsesep \Tcomma \parsesep \ClistOne{\Nexpr} \parsesep \Trbrace \parsesep \PlistZero{\Nexpr}&
-\end{flalign*}
-
-\SyntacticSugarDef{ParameterElision}
-In a call to a parameterised subprogram, a parameter can be elided,
-if it can be inferred from the left-hand-side type annotation,
-as detailed by \ASTRuleRef{ElidedParamCall} (See also \secref{ParameterElision}).
-
-\ASTRuleDef{ElidedParamCall}
-\hypertarget{build-elided-param-call}{}
-The function $\buildelidedparamcall$ builds a $\call$ from a parsed $\Nelidedparamcall$.
-
-\begin{mathpar}
-\inferrule{
-  \buildcall(\Ncall(\Tidentifier(\id), \Tlpar, \Trpar))
-  \astarrow \vastnode
-}{
-  \buildelidedparamcall(\Nelidedparamcall (\Tidentifier(\id), \Tlbrace, \Trbrace))
-  \astarrow \vastnode
-}
-\end{mathpar}
-
-\begin{mathpar}
-\inferrule{
-  \vparsednode = \Nelidedparamcall(\Tidentifier(\id), \Tlbrace, \Trbrace, \namednode{\vargs}{\PlistZero{\Nexpr}})\\
-  \buildcall(\Ncall(\Tidentifier(\id), \vargs))
-  \astarrow \vastnode
-}{
-  \buildelidedparamcall(\vparsednode) \astarrow \vastnode
-}
-\end{mathpar}
-
-\begin{mathpar}
-\inferrule{
-  \vparsednode = \Nelidedparamcall(\Tidentifier(\id), \Tlbrace, \Tcomma, \namednode{\vparams}{\ClistOne{\Nexpr}}, \Trbrace)\\
-  \buildcall(\Ncall(\Tidentifier(\id), \Tlbrace, \vparams, \Trbrace))
-  \astarrow \vastnode
-}{
-  \buildelidedparamcall(\vparsednode) \astarrow \vastnode
-}
-\end{mathpar}
-
-\begin{mathpar}
-\inferrule{
-  {
-  \vparsednode = \Nelidedparamcall\left(
-    \begin{array}{l}
-    \Tidentifier(\id), \Tlbrace, \Tcomma, \namednode{\vparams}{\ClistOne{\Nexpr}}, \Trbrace, \\
-    \wrappedline\ \namednode{\vargs}{\PlistZero{\Nexpr}}
-    \end{array}
-    \right)
-  }\hva\\
-  \buildcall(\Ncall(\Tidentifier(\id), \Tlbrace, \vparams, \Trbrace, \vargs))
-  \astarrow \vastnode
-}{
-  \buildelidedparamcall(\vparsednode) \astarrow \vastnode
-}
-\end{mathpar}
-
-\ASTRuleDef{DesugarElidedParameter}
-\NotImportedToASLSpecYet{
-\hypertarget{def-desugarelidedparameter}{}
-The function
-\[
-\desugarelidedparameter(
-  \overname{\ty}{\vt} \aslsep
-  \overname{\call}{\vcall})
-\aslto
-\overname{\Option{\expr}}{\vexpr}
-\cup\ \overname{\TBuildError}{\ParseErrorConfig}
-\]
-builds an expression $\vexpr$ from an assignment of the call $\vcall$ to the left-hand side with type annotation $\vt$, where the call has an elided parameter.
-Otherwise, the result is a parse error.
-} % END_OF_UNIMPORTED_RELATION
-
-
-\ExampleDef{Desugaring Parameter Elision Based on Declared Type Annotation}
-\listingref{DesugarElidedParameter} shows examples of how parameters can be elided
-if they can be copied from the type annotation in declaration statements.
-\ASLListing{Desugaring parameter elision based on declared type annotation}{DesugarElidedParameter}{\syntaxtests/ASTRule.DesugarElidedParameter.asl}
-
-\begin{mathpar}
-\inferrule{
-  \becheck(\vt = \TBits(\Ignore, \Ignore), \ParseError) \typearrow \True \;\terminateas \ParseErrorConfig \\
-  \vt \reverseeqdef \TBits(\ve, \Ignore) \\
-  \vcallp \eqdef \vcall[\callparams\mapsto [\ve] \concat \vcall.\callparams ]
-}{
-  \desugarelidedparameter(\ldk, \ldi, \vt, \vcall)
-  \astarrow
-  \some{\ECall(\vcallp)}
-}
-\end{mathpar}
-
-\ASTRuleDef{ElidedParamDecl}
-\begin{mathpar}
-\inferrule{
-  \buildelidedparamcall (\vcall) \astarrow \astversion{\vcall} \\
-  \desugarelidedparameter(\astof{\vasty}, \astversion{\vcall}) \astarrow \vexpr
-}{
-  {
-    \begin{array}{r}
-    \buildstmt\left(
-      \Nstmt\left(
-        \begin{array}{l}
-          \punnode{\Nlocaldeclkeyword}, \\
-          \wrappedline\ \punnode{\Ndeclitem}, \punnode{\Nasty}, \Teq, \\
-          \wrappedline\ \namednode{\vcall}{\Nelidedparamcall}, \Tsemicolon
-        \end{array}
-      \right)
-    \right) \astarrow \\ \overname{\SDecl(\astof{\vlocaldeclkeyword}, \astof{\vdeclitem}, \some{\vasty}, \vexpr)}{\vastnode}
-    \end{array}
-  }
-}
-\end{mathpar}
-
-\subsection{Typing and semantics}
-As given by the applying the relevant rules to the desugared AST (see \secref{DeclarationStatements}).
 
 \section{Sequencing Statements\label{sec:SequencingStatement}}
 \hypertarget{def-sequencestatementterm}{}
@@ -828,11 +696,11 @@ changes the call type of $\vcall$ to $\calltype$.
 In \listingref{scall}, the call statement \verb|catenate_into_g{4, 3}(x, y, TRUE);|
 is well-typed.
 
-\ExampleDef{Ill-defined Call to a Function}
+\ExampleDef{An ill-typed Call to a Function}
 In \listingref{scall-bad}, the call statement \verb|zero();| is ill-typed,
 since call statements are only allowed for procedures, not functions.
 
-\ASLListing{An ill-defined call statement}{scall-bad}{\typingtests/TypingRule.SCall.bad.asl}
+\ASLListing{An ill-typed call statement}{scall-bad}{\typingtests/TypingRule.SCall.bad.asl}
 
 
 \RenderProseAndFormally{annotate_stmt_SCall}
@@ -1040,7 +908,9 @@ yields a \dynamicerrorterm{}.
 |\ & \Tcase \parsesep \Nexpr \parsesep \Tof \parsesep \Ncasealtlist \parsesep \Totherwise \parsesep \Tarrow &\\
    & \wrappedline\ \Nstmtlist \parsesep \Tend \parsesep \Tsemicolon &\\
 \Ncasealtlist \derives \ & \ClistOne{\Ncasealt} \parsesep &\\
-\Ncasealt \derives \ & \Twhen \parsesep \Npatternlist \parsesep \option{\Twhere \parsesep \Nexpr} \parsesep \Tarrow \parsesep \Nstmtlist &\\
+\Ncasealt \derives \ & \Twhen \parsesep \Ncasepattern \parsesep \option{\Twhere \parsesep \Nexpr} \parsesep \Tarrow \parsesep \Nstmtlist &\\
+\Ncasepattern \derives \ & \Npatternset &\\
+|\ & \Npatternlist &\\
 \end{flalign*}
 
 \listingref{CaseStatement-bad} shows an example of an erroneous case statement
@@ -1172,21 +1042,50 @@ transforms a parse node $\vparsednode$ into an AST node $\vastnode$.
 
 \begin{mathpar}
 \inferrule{
+  \buildcasepattern(\vcasepattern) \astarrow (\vpatternasts, \vpatternkind)\\
   \buildoption[\buildexpr](\vwhereopt) \astarrow \vwhereast
 }{
   {
     \begin{array}{r}
   \buildcasealt\left(\overname{\Ncasealt\left(
     \begin{array}{l}
-    \Twhen, \punnode{\Npatternlist}, \\
+    \Twhen, \namednode{\vcasepattern}{\Ncasepattern}, \\
     \wrappedline\ \namednode{\vwhereopt}{\option{\Twhere, \Nexpr}}, \Tarrow, \\
     \wrappedline\ \namednode{\vstmts}{\Nstmtlist}
     \end{array}
     \right)}{\vparsednode}\right)
   \astarrow \\
-  \overname{\casealt(\CasePattern: \astof{\vpatternlist}, \CaseWhere: \vwhereast, \CaseStmt: \astof{\vstmtlist})}{\vastnode}
+  \overname{\casealt(\CasePattern: (\vpatternasts, \vpatternkind), \CaseWhere: \vwhereast, \CaseStmt: \astof{\vstmtlist})}{\vastnode}
     \end{array}
   }
+}
+\end{mathpar}
+
+\ASTRuleDef{BuildCasePattern}
+\NotImportedToASLSpecYet{
+\hypertarget{build-casepattern}{}
+The function
+\[
+\buildcasepattern(\overname{\parsenode{\Ncasepattern}}{\vparsednode}) \;\aslto\; \overname{(\overname{\pattern^*}{\vpatterns}, \overname{\patternkind}{\vpatternkind})}{\vastnode}
+\]
+transforms a parse node $\vparsednode$ into a pattern list and pattern kind.
+} % END_OF_UNIMPORTED_RELATION
+
+\begin{mathpar}
+\inferrule[set]{
+  \buildpatternset(\punnode{\Npatternset}) \astarrow (\vpatternasts, \vpatternkind)
+}{
+  \buildcasepattern(\overname{\Ncasepattern(\punnode{\Npatternset})}{\vparsednode}) \astarrow
+  \overname{(\vpatternasts, \vpatternkind)}{\vastnode}
+}
+\end{mathpar}
+
+\begin{mathpar}
+\inferrule[list]{
+  \buildpatternlist(\punnode{\Npatternlist}) \astarrow \vpatternasts
+}{
+  \buildcasepattern(\overname{\Ncasepattern(\punnode{\Npatternlist})}{\vparsednode}) \astarrow
+  \overname{(\vpatternasts, \Positive)}{\vastnode}
 }
 \end{mathpar}
 
@@ -1278,8 +1177,8 @@ a list of \texttt{case} alternatives already converted to conditionals, into a c
 
 \begin{mathpar}
 \inferrule{
-  \vcase \reverseeqdef \{ \CasePattern : \vpattern, \CaseWhere : \vwhere, \CaseStmt : \vstmt \}\\
-  \vepattern \eqdef \EPattern(\vezero, \vpattern)\hva\\
+  \vcase \reverseeqdef \{ \CasePattern : (\vpatternasts, \vpatternkind), \CaseWhere : \vwhere, \CaseStmt : \vstmt \}\\
+  \vepattern \eqdef \EPattern(\vezero, (\vpatternasts, \vpatternkind))\hva\\
   {
   \vcond \eqdef \ifthenelseop[V]{\vwhere = \some{\vewhere}}{\EBinop(\BAND, \vepattern, \vewhere)}{\vepattern}
   }
@@ -1339,7 +1238,7 @@ The first call to \verb|checked_8bit_add| succeeds, whereas the second call fail
 \subsection{Typing}
 \TypingRuleDef{SAssert}
 \ExampleDef{Type Assertion Statements}
-The specifications in \listingref{semantics-sasertok} and \listingref{semantics-sassertno}
+The specifications in \listingref{semantics-sassert-ok} and \listingref{semantics-sassertno}
 are well-typed.
 
 The assertion statements in \listingref{assert-ill-typed} are ill-typed,
@@ -1354,9 +1253,9 @@ since the expression needs to be both of a \booleantypeterm{} and \readonlyterm{
 \subsection{Semantics}
 \SemanticsRuleDef{SAssert}
 \ExampleDef{Evaluation of Assertions: Success}
-In \listingref{semantics-sasertok},
+In \listingref{semantics-sassert-ok},
 \texttt{assert (42 != 3);} ensures that \texttt{3} is not equal to \texttt{42}.
-\ASLListing{Evaluating an assertion that succeeds}{semantics-sasertok}{\semanticstests/SemanticsRule.SAssertOk.asl}
+\ASLListing{Evaluating an assertion that succeeds}{semantics-sassert-ok}{\semanticstests/SemanticsRule.SAssertOk.asl}
 
 \ExampleDef{Evaluation of Assertions: Failure}
 In \listingref{semantics-sassertno},
@@ -1463,7 +1362,7 @@ expression \verb|N|, while the loop in \verb|main| does not
 have a loop limit.
 
 The loop in \listingref{typing-swhile-bad-limit} uses
-the limit expression \verb|i_limit| whose type the
+the limit expression \verb|i_limit| whose type is the
 \unconstrainedintegertypeterm, which is illegal for
 limit expressions.
 

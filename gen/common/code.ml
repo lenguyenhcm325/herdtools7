@@ -75,6 +75,25 @@ type sd = Same|Diff|UnspecLoc
 (* Direction of related events *)
 type extr = Dir of dir | Irr | NoDir
 
+let equal_ie ie1 ie2 = match ie1,ie2 with
+  | Int,Int
+  | Ext,Ext
+  | UnspecCom,UnspecCom -> true
+  | (Int|Ext|UnspecCom),_ -> false
+
+let equal_sd sd1 sd2 = match sd1,sd2 with
+  | Same,Same
+  | Diff,Diff
+  | UnspecLoc,UnspecLoc -> true
+  | (Same|Diff|UnspecLoc),_ -> false
+
+let equal_extr e1 e2 = match e1,e2 with
+  | Dir W,Dir W
+  | Dir R,Dir R
+  | Irr,Irr
+  | NoDir,NoDir -> true
+  | (Dir _|Irr|NoDir),_ -> false
+
 (* Associated pretty print & generators *)
 let pp_dir = function
   | W -> "W"
@@ -153,14 +172,20 @@ let checks =
 
 
 (* Com relation *)
-type com =  CRf | CFr | CWs
+type com =  Rf | Fr | Co
+
+let equal_com c1 c2 = match c1,c2 with
+  | Rf,Rf
+  | Fr,Fr
+  | Co,Co -> true
+  | (Rf|Fr|Co),_ -> false
 
 let pp_com = function
-  | CRf -> "Rf"
-  | CFr -> "Fr"
-  | CWs -> "Co"
+  | Rf -> "Rf"
+  | Fr -> "Fr"
+  | Co -> "Co"
 
-let fold_com f r = f CRf (f CFr (f CWs r))
+let fold_com f r = f Rf (f Fr (f Co r))
 
 (* Info in tests *)
 type info = (string * string) list

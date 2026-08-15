@@ -30,7 +30,8 @@ module Make
     end) = struct
 
 let do_self = C.variant Variant_gen.Self
-let do_tag = C.variant Variant_gen.MemTag
+let do_memtag = C.variant Variant_gen.MemTag
+let do_store_only = C.variant Variant_gen.StoreOnly
 let do_morello = C.variant Variant_gen.Morello
 let do_kvm = C.variant Variant_gen.KVM
 let do_neon = C.variant Variant_gen.Neon
@@ -563,7 +564,7 @@ let is_tthm fields =
    let fold_atom_rw f r = f PP (f PL (f AP (f AL r)))
 
    let fold_tag =
-     if do_tag then fun f r -> f Tag r
+     if do_memtag then fun f r -> f Tag r
      else fun _f r -> r
 
    let fold_morello =
@@ -949,6 +950,13 @@ type csel = OkCsel|NoCsel
 
 type dp = D.dp * csel
 
+let equal_csel c1 c2 = match c1,c2 with
+  | OkCsel,OkCsel
+  | NoCsel,NoCsel -> true
+  | (OkCsel|NoCsel),_ -> false
+
+let equal_dp (d1,c1) (d2,c2) = D.equal_dp d1 d2 && equal_csel c1 c2
+
 let fold_dpr f r =
   D.fold_dpr
     (fun d r -> f (d,NoCsel) (f (d,OkCsel) r))
@@ -1033,6 +1041,27 @@ let pp_rmw compat = function
   | StOp op -> sprintf "Amo.St%s" (pp_aop op)
   | AllAmo -> sprintf "Amo"
   | SafeAmo -> sprintf "Amo.Safe"
+
+let equal_aop op1 op2 = match op1,op2 with
+  | A_ADD,A_ADD
+  | A_EOR,A_EOR
+  | A_SET,A_SET
+  | A_CLR,A_CLR
+  | A_SMAX,A_SMAX
+  | A_SMIN,A_SMIN
+  | A_UMAX,A_UMAX
+  | A_UMIN,A_UMIN -> true
+  | (A_ADD|A_EOR|A_SET|A_CLR|A_SMAX|A_SMIN|A_UMAX|A_UMIN),_ -> false
+
+let equal_rmw rmw1 rmw2 = match rmw1,rmw2 with
+  | LrSc,LrSc
+  | Swp,Swp
+  | Cas,Cas
+  | AllAmo,AllAmo
+  | SafeAmo,SafeAmo -> true
+  | LdOp op1,LdOp op2
+  | StOp op1,StOp op2 -> equal_aop op1 op2
+  | (LrSc|LdOp _|StOp _|Swp|Cas|AllAmo|SafeAmo),_ -> false
 
 let is_one_instruction = function
   | LrSc -> false

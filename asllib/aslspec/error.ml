@@ -27,6 +27,13 @@ let bad_layout term layout ~consistent_layout =
        "layout %a is inconsistent with %a. Here's a consistent layout: %a"
        PP.pp_layout layout PP.pp_type_term term PP.pp_layout consistent_layout
 
+let bad_expr_layout expr layout ~consistent_layout =
+  spec_error_loc_of_expr expr
+  @@ Format.asprintf
+       "layout %a is inconsistent with expression %a. Here's a consistent \
+        layout: %a"
+       PP.pp_layout layout PP.pp_expr expr PP.pp_layout consistent_layout
+
 let undefined_reference loc id context =
   spec_error loc @@ Format.asprintf "Undefined reference to %s in %s" id context
 
@@ -79,6 +86,18 @@ let non_constant_used_as_constant_set context_term id =
   spec_error_loc_of_term context_term
   @@ Format.asprintf
        "%s is used as a constant even though it is not defined as one" id
+
+let type_not_parameterized context_term id =
+  spec_error_loc_of_term context_term
+  @@ Format.asprintf "Type %s is not a parameterized type, but is used as one"
+       id
+
+let expected_type_name context_term id =
+  spec_error_loc_of_term context_term
+  @@ Format.asprintf "Expected a type name, found %s" id
+
+let undefined_type context_term id =
+  spec_error_loc_of_term context_term @@ Format.asprintf "Undefined type %s" id
 
 let tuple_instantiation_length_failure term args label def_components =
   spec_error_loc_of_term term
@@ -246,6 +265,13 @@ let type_operator_instantiation_failure ~relation_name formal_type arg_type =
   @@ Format.asprintf
        "The type term `%a` cannot be instantiated with `%a` for operator `%s` \
         since there are incompatible argument types for it"
+       PP.pp_type_term formal_type PP.pp_type_term arg_type relation_name
+
+let param_type_instantiation_failure ~relation_name formal_type arg_type =
+  spec_error_loc_of_term arg_type
+  @@ Format.asprintf
+       "The type term `%a` cannot be instantiated with `%a` in relation `%s` \
+        since the parameterized types do not match"
        PP.pp_type_term formal_type PP.pp_type_term arg_type relation_name
 
 let uninstantiated_parameter_in_relation param relation_name ~context_expr =

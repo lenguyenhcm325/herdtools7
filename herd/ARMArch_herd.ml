@@ -17,7 +17,7 @@
 (** Define ARM architecture *)
 module Types = struct
   type annot =
-      A | L | X | XL | XA | N | NoRet
+      A | L | EX | EXL | EXA | N
   type lannot = annot
   type explicit = Exp | NExp
 end
@@ -25,7 +25,7 @@ end
 module Make (C:Arch_herd.Config) (V:Value.S) =
   struct
     include ARMBase
-    let is_amo _ = false
+
     let pp_barrier_short = pp_barrier
     let reject_mixed = false
 
@@ -36,19 +36,16 @@ module Make (C:Arch_herd.Config) (V:Value.S) =
     include PteValSets.No
 
     let is_barrier b1 b2 = barrier_compare b1 b2 = 0
-    let is_atomic = function
-      | A | L | X | XL | XA | NoRet -> true
+    let is_exclusive = function
+      |  EX | EXL | EXA -> true
       | _ -> false
+    let is_atomic _ = false
 
     let is_acquire = function
-      | A | XA -> true
+      | A | EXA -> true
       | _ -> false
     let is_release = function
-      | L | XL -> true
-      | _ -> false
-
-    let is_noreturn = function
-      | NoRet -> true
+      | L | EXL -> true
       | _ -> false
 
     let ifetch_value_sets = []
@@ -67,10 +64,10 @@ module Make (C:Arch_herd.Config) (V:Value.S) =
 
     let annot_sets = [
       "X", is_atomic;
+      "EX", is_exclusive;
       "A",  is_acquire;
       "L",  is_release;
       "AL", is_acquire;
-      "NoRet", is_noreturn;
     ]
     let explicit_sets = [
     ]
@@ -88,6 +85,8 @@ module Make (C:Arch_herd.Config) (V:Value.S) =
 
     and is_ifetch_annot _ = false
 
+    and is_gcs _ = false
+
     let nexp_annot = NExp
     let exp_annot = Exp
 
@@ -98,11 +97,10 @@ module Make (C:Arch_herd.Config) (V:Value.S) =
     let pp_annot annot = match annot with
       | A -> "Acq"
       | L -> "Rel"
-      | XA -> "Acq*"
-      | XL -> "Rel*"
-      | NoRet -> "NoRet"
+      | EXA -> "Acq*"
+      | EXL -> "Rel*"
       | N -> ""
-      | X -> "*"
+      | EX -> "*"
 
     module V = V
 

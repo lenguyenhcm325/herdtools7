@@ -22,8 +22,10 @@
 % \mathhypertarget{} is suitable for math environments,
 % whereas the \texthypertarget{} is suitable for text environments.
 \makeatletter
-\newcommand\mathhypertarget[1]{\Hy@raisedlink{\hypertarget{#1}}} % DO NOT LINT
-\newcommand\texthypertarget[1]{\Hy@raisedlink{\hypertarget{#1}{}}} % DO NOT LINT
+% Use \providecommand so the HTML build can keep the HeVeA-specific definitions
+% from macros.hva without reporting redefinition warnings.
+\providecommand\mathhypertarget[1]{\Hy@raisedlink{\hypertarget{#1}}} % DO NOT LINT
+\providecommand\texthypertarget[1]{\Hy@raisedlink{\hypertarget{#1}{}}} % DO NOT LINT
 \makeatother
 
 \usepackage{listings}
@@ -84,7 +86,6 @@
       return,
       setter,
       string,
-      subtypes,
       then,
       throw,
       to,
@@ -97,8 +98,7 @@
       var,
       when,
       where,
-      while,
-      with
+      while
     },
     keywordstyle=\color{red},
     morecomment=[l][\color{blue}]{//},
@@ -106,7 +106,9 @@
     morestring=[b][\color{cyan}]",
     morestring=[d][\color{cyan}]',
 }
-\newcommand{\lightyellow}{\color{yellow!10}}
+% Use \providecommand so the HTML build can keep the HeVeA-specific definition
+% from macros.hva without reporting a redefinition warning.
+\providecommand{\lightyellow}{\color{yellow!10}}
 \lstset{
   language=ASL,
   basicstyle=\ttfamily\scriptsize,
@@ -124,7 +126,6 @@
 \usepackage[export]{adjustbox}  % For centering too wide figures
 \usepackage{mathpartir}  % For deduction rules and equations paragraphs
 \newcommand\hva[0]{} % Disable the macro, just for the current PR.
-\usepackage{comment}
 \usepackage{fancyvrb}
 \usepackage[
   % Notes on the right, should be less than outer
@@ -211,6 +212,93 @@
 \newcommand\CodeSubsection[3]{}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Rule list generation macros
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%
+% These environments generate rule-reference lists using the same multi-run
+% approach as the table of contents. Place the rules to include inside the
+% corresponding ...RuleList environment and run LaTeX twice.
+\makeatletter
+\let\ASLCurrentASTRuleList\@empty
+\let\ASLCurrentTypingRuleList\@empty
+\let\ASLCurrentSemanticsRuleList\@empty
+
+\newcommand\ASLRuleListEntry[5]{%
+  \@ifundefined{ASLRuleList@#1@#2}{%
+    \expandafter\gdef\csname ASLRuleList@#1@#2\endcsname{}%
+  }{}%
+  \def\ASLRuleListDescription{#5}%
+  \ifx\ASLRuleListDescription\@empty
+    \expandafter\g@addto@macro\csname ASLRuleList@#1@#2\endcsname{%
+      \item \csname #3\endcsname{#4}%
+    }%
+  \else
+    \expandafter\g@addto@macro\csname ASLRuleList@#1@#2\endcsname{%
+      \item \csname #3\endcsname{#4} #5%
+    }%
+  \fi
+}
+
+\newcommand\ASLPrintRuleList[2]{%
+  \begin{itemize}
+  \@ifundefined{ASLRuleList@#1@#2}{%
+    \item \emph{Run LaTeX again to generate this rule list.}%
+  }{%
+    \csname ASLRuleList@#1@#2\endcsname
+  }%
+  \end{itemize}%
+}
+
+\newenvironment{ASTRuleList}[1]{%
+  \ASLPrintRuleList{AST}{#1}%
+  \gdef\ASLCurrentASTRuleList{#1}%
+}{%
+  \global\let\ASLCurrentASTRuleList\@empty
+}
+
+\newenvironment{TypingRuleList}[1]{%
+  \ASLPrintRuleList{Typing}{#1}%
+  \gdef\ASLCurrentTypingRuleList{#1}%
+}{%
+  \global\let\ASLCurrentTypingRuleList\@empty
+}
+
+\newenvironment{SemanticsRuleList}[1]{%
+  \ASLPrintRuleList{Semantics}{#1}%
+  \gdef\ASLCurrentSemanticsRuleList{#1}%
+}{%
+  \global\let\ASLCurrentSemanticsRuleList\@empty
+}
+
+\newcommand\ASLRecordASTRule[2]{%
+  \ifx\ASLCurrentASTRuleList\@empty
+  \else
+    \immediate\write\@auxout{%
+      \string\ASLRuleListEntry{AST}{\ASLCurrentASTRuleList}{ASTRuleRef}{#2}{\unexpanded{#1}}%
+    }%
+  \fi
+}
+
+\newcommand\ASLRecordTypingRule[2]{%
+  \ifx\ASLCurrentTypingRuleList\@empty
+  \else
+    \immediate\write\@auxout{%
+      \string\ASLRuleListEntry{Typing}{\ASLCurrentTypingRuleList}{TypingRuleRef}{#2}{\unexpanded{#1}}%
+    }%
+  \fi
+}
+
+\newcommand\ASLRecordSemanticsRule[2]{%
+  \ifx\ASLCurrentSemanticsRuleList\@empty
+  \else
+    \immediate\write\@auxout{%
+      \string\ASLRuleListEntry{Semantics}{\ASLCurrentSemanticsRuleList}{SemanticsRuleRef}{#2}{\unexpanded{#1}}%
+    }%
+  \fi
+}
+\makeatother
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 % Typesetting macros
 \newtheorem{definition}{Definition}
 \newtheorem{example}{Example}
@@ -220,11 +308,11 @@
 \newcommand\SyntacticSugarDef[1]{\paragraph{Guide.SyntacticSugar.#1\label{Guide.SyntacticSugar.#1}}}
 \newcommand\SyntacticSugarExample[1]{\emph{Guide.SyntacticSugar.#1}}
 \newcommand\LexicalRuleDef[1]{\subsubsection{LexicalRule.#1\label{sec:LexicalRule.#1}}}
-\newcommand\ASTRuleDef[1]{\subsubsection{ASTRule.#1\label{sec:ASTRule.#1}}}
+\newcommand\ASTRuleDef[2][]{\subsubsection{ASTRule.#2\label{sec:ASTRule.#2}}\ASLRecordASTRule{#1}{#2}}
 \newcommand\ASTRuleDefExample[1]{\emph{ASTRule.#1}}
-\newcommand\TypingRuleDef[1]{\subsubsection{TypingRule.#1\label{sec:TypingRule.#1}}}
+\newcommand\TypingRuleDef[2][]{\subsubsection{TypingRule.#2\label{sec:TypingRule.#2}}\ASLRecordTypingRule{#1}{#2}}
 \newcommand\TypingRuleDefExample[1]{\emph{TypingRule.#1}}
-\newcommand\SemanticsRuleDef[1]{\subsubsection{SemanticsRule.#1\label{sec:SemanticsRule.#1}}}
+\newcommand\SemanticsRuleDef[2][]{\subsubsection{SemanticsRule.#2\label{sec:SemanticsRule.#2}}\ASLRecordSemanticsRule{#1}{#2}}
 \newcommand\SemanticsRuleDefExample[1]{\emph{SemanticsRule.#1}}
 \newcommand\listingref[1]{Listing~\ref{listing:#1}}
 \newcommand\taref[1]{Table.~\ref{ta:#1}}
@@ -241,8 +329,6 @@
 \newcommand\ie{i.\,e.}
 \newcommand\eg{e.\,g.}
 \newcommand\wrappedline[0]{{\hyperlink{def-wrapline}{\color{red}\hookrightarrow}}}
-\newcommand\commonprefixline[0]{{\hyperlink{def-commonprefixline}{\color{cyan}{\text{\tiny******** common prefix ********}} }}}
-\newcommand\commonsuffixline[0]{{\hyperlink{def-commonsuffixline}{\color{cyan}{\text{\tiny******** common suffix ********}} }}}
 \newcommand\stdlibfunc[1]{standard library function \texttt{#1}}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%$%%%%%
@@ -422,7 +508,9 @@
 \newcommand\opnot[1]{\hyperlink{relation-neg}{\neg}{\left(#1\right)}}
 \newcommand\opnotvar[1]{\hyperlink{relation-neg}{\neg}{#1}}
 \newcommand\IFF[0]{\hyperlink{relation-IFF}{\Leftrightarrow}}
-\renewcommand\implies[0]{\hyperlink{relation-implies}{\Rightarrow}}
+% Use \def rather than \renewcommand to avoid a HeVeA warning for redefining
+% the built-in \implies macro; the expansion remains the linked implication.
+\def\implies{\hyperlink{relation-implies}{\Rightarrow}}
 
 \newcommand\some[1]{\hyperlink{relation-some}{\textsf{some}}\left({#1}\right)} % The optional expression with one element
 \newcommand\makeset[1]{\left\{{#1}\right\}} % A set of expressions
@@ -652,7 +740,7 @@
 
 % General types
 \newcommand\N[0]{\hyperlink{type-N}{\mathbb{N}}}
-\newcommand\Npos[0]{\hyperlink{type-Npos}{\mathbb{N}^{+}}}
+\newcommand\Npos[0]{\hyperlink{type-Npos}{\mathbb{N}^{\text{pos}}}}
 \newcommand\Q[0]{\hyperlink{type-Q}{\mathbb{Q}}}
 \newcommand\Z[0]{\hyperlink{type-Z}{\mathbb{Z}}}
 \newcommand\Bool[0]{\hyperlink{type-Bool}{\mathbb{B}}}
@@ -800,14 +888,12 @@
 \newcommand\Trepeat[0]{\verbatimterminal{REPEAT}{repeat}}
 \newcommand\Treturn[0]{\verbatimterminal{RETURN}{return}}
 \newcommand\Trpar[0]{\verbatimterminal{RPAR}{)}}
-\newcommand\Tstarcolon[0]{\verbatimterminal{STAR\_COLON}{*:}}
 \newcommand\Tsemicolon[0]{\verbatimterminal{SEMI\_COLON}{;}}
 \newcommand\Tsetter[0]{\verbatimterminal{SETTER}{setter}}
 \newcommand\Tshl[0]{\verbatimterminal{SHL}{{<}{<}}}
 \newcommand\Tshr[0]{\verbatimterminal{SHR}{{>}{>}}}
 \newcommand\Tslicing[0]{\verbatimterminal{SLICING}{..}}
 \newcommand\Tstring[0]{\verbatimterminal{STRING}{string}}
-\newcommand\Tsubtypes[0]{\verbatimterminal{SUBTYPES}{subtypes}}
 \newcommand\Tthen[0]{\verbatimterminal{THEN}{then}}
 \newcommand\Tthrow[0]{\verbatimterminal{THROW}{throw}}
 \newcommand\Tto[0]{\verbatimterminal{TO}{to}}
@@ -819,7 +905,6 @@
 \newcommand\Twhen[0]{\verbatimterminal{WHEN}{when}}
 \newcommand\Twhere[0]{\verbatimterminal{WHERE}{where}}
 \newcommand\Twhile[0]{\verbatimterminal{WHILE}{while}}
-\newcommand\Twith[0]{\verbatimterminal{WITH}{with}}
 
 \newcommand\Tidentifier[0]{\hyperlink{def-tidentifier}{\terminal{ID}}}
 \newcommand\Tstringlit[0]{\hyperlink{def-tstringlit}{\terminal{STRING\_LIT}}}
@@ -839,7 +924,6 @@
 \newcommand\Ndecl[0]{\hyperlink{def-ndecl}{\nonterminal{decl}}}
 \newcommand\Nparamsopt[0]{\hyperlink{def-nparamsopt}{\nonterminal{params\_opt}}}
 \newcommand\Ncall[0]{\hyperlink{def-ncall}{\nonterminal{call}}}
-\newcommand\Nelidedparamcall[0]{\hyperlink{def-nelidedparamcall}{\nonterminal{elided\_param\_call}}}
 \newcommand\Nfuncargs[0]{\hyperlink{def-nfuncargs}{\nonterminal{func\_args}}}
 \newcommand\Naccessorbody[0]{\hyperlink{def-naccessorbody}{\nonterminal{accessor\_body}}}
 \newcommand\Naccessors[0]{\hyperlink{def-naccessors}{\nonterminal{accessors}}}
@@ -852,8 +936,6 @@
 \newcommand\Ntypedidentifier[0]{\hyperlink{def-ntypedidentifier}{\nonterminal{typed\_identifier}}}
 \newcommand\Nasty[0]{\hyperlink{def-nasty}{\nonterminal{as\_ty}}}
 \newcommand\Ntydecl[0]{\hyperlink{def-ntydecl}{\nonterminal{ty\_decl}}}
-\newcommand\Nsubtype[0]{\hyperlink{def-nsubtype}{\nonterminal{subtype}}}
-\newcommand\Nsubtypeopt[0]{\hyperlink{def-nsubtypeopt}{\nonterminal{subtype\_opt}}}
 \newcommand\Nglobaldeclkeywordnonconfig[0]{\hyperlink{def-nglobaldeclkeywordnonconfig}{\nonterminal{global\_keyword\_non\_config}}}
 \newcommand\Nglobaldeclkeyword[0]{\hyperlink{def-nglobaldeclkeyword}{\nonterminal{global\_keyword}}}
 \newcommand\Nignoredoridentifier[0]{\hyperlink{def-nignoredoridentifier}{\nonterminal{ignored\_or\_identifier}}}
@@ -871,6 +953,7 @@
 \newcommand\Nstmtlist[0]{\hyperlink{def-nstmtlist}{\nonterminal{stmt\_list}}}
 \newcommand\Nlocaldeclkeyword[0]{\hyperlink{def-nlocaldeclkeyword}{\nonterminal{local\_decl\_keyword}}}
 \newcommand\Ndirection[0]{\hyperlink{def-ndirection}{\nonterminal{direction}}}
+\newcommand\Ncasepattern[0]{\hyperlink{def-ncasepattern}{\nonterminal{case\_pattern}}}
 \newcommand\Ncasealt[0]{\hyperlink{def-ncasealt}{\nonterminal{case\_alt}}}
 \newcommand\Ncasealtlist[0]{\hyperlink{def-ncasealtlist}{\nonterminal{case\_alt\_list}}}
 \newcommand\Npatternlist[0]{\hyperlink{def-npatternlist}{\nonterminal{pattern\_list}}}
@@ -884,7 +967,6 @@
 \newcommand\Nconstraintkind[0]{\hyperlink{def-nintconstraints}{\nonterminal{constraint\_kind}}}
 \newcommand\Nconstraintkindopt[0]{\hyperlink{def-nintconstraintsopt}{\nonterminal{constraint\_kind\_opt}}}
 \newcommand\Nintconstraint[0]{\hyperlink{def-nintconstraint}{\nonterminal{int\_constraint}}}
-\newcommand\Nexprpattern[0]{\hyperlink{def-nexprpattern}{\nonterminal{expr\_pattern}}}
 \newcommand\Npatternset[0]{\hyperlink{def-npatternset}{\nonterminal{pattern\_set}}}
 \newcommand\Npattern[0]{\hyperlink{def-npattern}{\nonterminal{pattern}}}
 \newcommand\Nbitfields[0]{\hyperlink{def-nbitfields}{\nonterminal{bitfields}}}
@@ -994,7 +1076,6 @@
 \newcommand\desugaraccessorpair[0]{\hyperlink{def-desugaraccessorpair}{\textfunc{desugar\_accessor\_pair}}} % SPECIFICATION_DEFERRED
 \newcommand\buildlooplimit[0]{\hyperlink{build-looplimit}{\textfunc{build\_looplimit}}} % SPECIFICATION_DEFERRED
 \newcommand\buildrecurselimit[0]{\hyperlink{build-recurselimit}{\textfunc{build\_recurselimit}}} % SPECIFICATION_DEFERRED
-\newcommand\desugarelidedparameter[0]{\hyperlink{def-desugarelidedparameter}{\textfunc{desugar\_elided\_parameter}}} % SPECIFICATION_DEFERRED
 \newcommand\buildstmt[0]{\hyperlink{build-stmt}{\textfunc{build\_stmt}}} % SPECIFICATION_DEFERRED
 \newcommand\buildexpr[0]{\hyperlink{build-expr}{\textfunc{build\_expr}}} % SPECIFICATION_DEFERRED
 \newcommand\buildlexpr[0]{\hyperlink{build-lexpr}{\textfunc{build\_lexpr}}} % SPECIFICATION_DEFERRED
@@ -1010,7 +1091,6 @@
 \newcommand\buildparamsopt[0]{\hyperlink{build-paramsopt}{\textfunc{build\_params\_opt}}} % SPECIFICATION_DEFERRED
 \newcommand\buildfuncargs[0]{\hyperlink{build-funcargs}{\textfunc{build\_func\_args}}} % SPECIFICATION_DEFERRED
 \newcommand\buildcall[0]{\hyperlink{build-call}{\textfunc{build\_call}}} % SPECIFICATION_DEFERRED
-\newcommand\buildelidedparamcall[0]{\hyperlink{build-elided-param-call}{\textfunc{build\_elided\_param\_call}}} % SPECIFICATION_DEFERRED
 \newcommand\setcalltype[0]{\hyperlink{def-setcalltype}{\textfunc{set\_call\_type}}} % SPECIFICATION_DEFERRED
 \newcommand\buildreturntype[0]{\hyperlink{build-returntype}{\textfunc{build\_return\_type}}} % SPECIFICATION_DEFERRED
 \newcommand\buildfuncbody[0]{\hyperlink{build-funcbody}{\textfunc{build\_func\_body}}} % SPECIFICATION_DEFERRED
@@ -1023,13 +1103,12 @@
 \newcommand\buildopttypedidentifier[0]{\hyperlink{build-opttypedidentifier}{\textfunc{build\_opt\_typed\_identifier}}} % SPECIFICATION_DEFERRED
 \newcommand\buildtydecl[0]{\hyperlink{build-tydecl}{\textfunc{build\_ty\_decl}}} % SPECIFICATION_DEFERRED
 \newcommand\buildtyorcollection[0]{\hyperlink{build-tyorcollection}{\textfunc{build\_ty\_or\_collection}}} % SPECIFICATION_DEFERRED
-\newcommand\buildsubtype[0]{\hyperlink{build-subtype}{\textfunc{build\_subtype}}} % SPECIFICATION_DEFERRED
-\newcommand\buildsubtypeopt[0]{\hyperlink{build-subtypeopt}{\textfunc{build\_subtype\_opt}}} % SPECIFICATION_DEFERRED
 \newcommand\buildglobaldeclkeywordnonconfig[0]{\hyperlink{build-globaldeclkeywordnonconfig}{\textfunc{build\_global\_keyword\_non\_config}}} % SPECIFICATION_DEFERRED
 \newcommand\buildglobaldeclkeyword[0]{\hyperlink{build-globaldeclkeyword}{\textfunc{build\_global\_keyword}}} % SPECIFICATION_DEFERRED
 \newcommand\builddirection[0]{\hyperlink{build-direction}{\textfunc{build\_direction}}} % SPECIFICATION_DEFERRED
 \newcommand\buildcasealt[0]{\hyperlink{build-casealt}{\textfunc{build\_case\_alt}}} % SPECIFICATION_DEFERRED
 \newcommand\buildcasealtlist[0]{\hyperlink{build-casealtlist}{\textfunc{build\_case\_alt\_list}}} % SPECIFICATION_DEFERRED
+\newcommand\buildcasepattern[0]{\hyperlink{build-casepattern}{\textfunc{build\_case\_pattern}}} % SPECIFICATION_DEFERRED
 \newcommand\buildotherwiseopt[0]{\hyperlink{build-otherwiseopt}{\textfunc{build\_otherwise\_opt}}} % SPECIFICATION_DEFERRED
 \newcommand\buildcatcher[0]{\hyperlink{build-catcher}{\textfunc{build\_catcher}}} % SPECIFICATION_DEFERRED
 \newcommand\buildasty[0]{\hyperlink{build-as-ty}{\textfunc{build\_as\_ty}}} % SPECIFICATION_DEFERRED
@@ -1040,7 +1119,6 @@
 \newcommand\buildconstraintkind[0]{\hyperlink{build-constraintkind}{\textfunc{build\_constraint\_kind}}} % SPECIFICATION_DEFERRED
 \newcommand\buildconstraintkindopt[0]{\hyperlink{build-constraintkindopt}{\textfunc{build\_constraint\_kind\_opt}}} % SPECIFICATION_DEFERRED
 \newcommand\buildintconstraint[0]{\hyperlink{build-intconstraint}{\textfunc{build\_int\_constraint}}} % SPECIFICATION_DEFERRED
-\newcommand\buildexprpattern[0]{\hyperlink{build-exprpattern}{\textfunc{build\_expr\_pattern}}} % SPECIFICATION_DEFERRED
 \newcommand\buildfieldassign[0]{\hyperlink{build-fieldassign}{\textfunc{build\_field\_assign}}} % SPECIFICATION_DEFERRED
 \newcommand\buildpatternset[0]{\hyperlink{build-patternset}{\textfunc{build\_pattern\_set}}} % SPECIFICATION_DEFERRED
 \newcommand\buildpatternlist[0]{\hyperlink{build-patternlist}{\textfunc{build\_pattern\_list}}} % SPECIFICATION_DEFERRED
@@ -1146,7 +1224,6 @@
 \newcommand\dynamicenvsG[0]{\hyperlink{recordfield-dynamicenvsG}{\textsf{G}}}
 \newcommand\dynamicenvsL[0]{\hyperlink{recordfield-dynamicenvsL}{\textsf{L}}}
 \newcommand\arrayvalue[0]{\hyperlink{recordfield-arrayvalue}{\textsf{value}}}
-\newcommand\enumarrayvalue[0]{\hyperlink{recordfield-enumarrayvalue}{\textsf{value}}}
 \newcommand\casealtpattern[0]{\hyperlink{recordfield-casealtpattern}{\textsf{pattern}}}
 \newcommand\casealtstmt[0]{\hyperlink{recordfield-casealtstmt}{\textsf{stmt}}}
 \newcommand\globaldeclname[0]{\hyperlink{recordfield-globaldeclname}{\textsf{name}}}
@@ -1174,8 +1251,6 @@
 \newcommand\Forbody[0]{\textsf{body}}
 \newcommand\Forlimit[0]{\textsf{limit}}
 \newcommand\EArrayLength[0]{\textsf{length}}
-\newcommand\EArrayEnum[0]{\textsf{enum}}
-\newcommand\EArrayLabels[0]{\textsf{labels}}
 \newcommand\EArrayValue[0]{\textsf{value}}
 \newcommand\callname[0]{\hyperlink{recordfield-callname}{\textsf{name}}}
 \newcommand\callparams[0]{\textsf{params}}
@@ -1220,7 +1295,6 @@
 \newcommand\localstoragetypes[0]{\hyperlink{def-localstoragetypes}{\textsf{local\_storage\_types}}}
 \newcommand\returntype[0]{\hyperlink{def-returntype}{\textsf{return\_type}}}
 \newcommand\declaredtypes[0]{\hyperlink{def-declaredtypes}{\textsf{declared\_types}}}
-\newcommand\subtypes[0]{\hyperlink{def-subtypes}{\textsf{subtypes}}}
 \newcommand\subprograms[0]{\hyperlink{def-subprograms}{\textsf{subprograms}}}
 \newcommand\overloadedsubprograms[0]{\hyperlink{def-overloadedsubprograms}{\textsf{overloaded\_subprograms}}}
 \newcommand\exprequiv[0]{\hyperlink{def-exprequiv}{\textsf{expr\_equiv}}}
@@ -1252,6 +1326,32 @@
 \newcommand\tvector[0]{\hyperlink{type-tvector}{\mathcal{V}\mathcal{E}\mathcal{C}}}
 \newcommand\trecord[0]{\hyperlink{type-trecord}{\mathcal{R}\mathcal{E}\mathcal{C}}}
 \newcommand\tlabel[0]{\hyperlink{type-tlabel}{\mathcal{L}\mathcal{A}\mathcal{B}\mathcal{E}\mathcal{L}}}
+\newcommand\bitvectordomainop[1]{\hyperlink{relation-bitvectordomain}{\mathsf{BitvectorDomain}}\left(#1\right)}
+\newcommand\vectordomainop[1]{\hyperlink{relation-vectordomain}{\mathsf{VectorDomain}}\left(#1\right)}
+\newcommand\arraydomainname[0]{\hyperlink{relation-arraydomain}{\mathsf{ArrayDomain}}}
+\newcommand\arraydomainop[3][H]{
+  \ifthenelse{\equal{#1}{H}}{
+    \arraydomainname\left({#2}, {#3}\right)
+  }{
+    \arraydomainname
+    \left(\begin{array}{l}
+    {#2},\\
+    {#3}
+    \end{array}\right)
+  }
+}
+\newcommand\recorddomainname[0]{\hyperlink{relation-recorddomain}{\mathsf{RecordDomain}}}
+\newcommand\recorddomainop[3][H]{
+  \ifthenelse{\equal{#1}{H}}{
+    \recorddomainname\left({#2}, {#3}\right)
+  }{
+    \recorddomainname
+    \left(\begin{array}{l}
+    {#2},\\
+    {#3}
+    \end{array}\right)
+  }
+}
 
 \newcommand\evalrel[0]{\hyperlink{def-evalrel}{\textsf{eval}}}
 \newcommand\evalarrow[0]{\xrightarrow{\evalrel}}
@@ -1413,6 +1513,13 @@
 
 \newcommand\eqstring[0]{\hyperlink{def-eqstring}{\text{eq\_string}}}
 \newcommand\nestring[0]{\hyperlink{def-nestring}{\text{ne\_string}}}
+\newcommand\bitsname[0]{bits}
+\newcommand\boolname[0]{bool}
+\newcommand\intname[0]{int}
+\newcommand\labelname[0]{label}
+\newcommand\realname[0]{real}
+\newcommand\stringname[0]{string}
+\newcommand\concatstringop[2]{\hyperlink{def-concatstring}{\text{concat\_str\_#1\_#2}}}
 
 \newcommand\eqenum[0]{\hyperlink{def-eqenum}{\text{eq\_enum}}}
 \newcommand\neenum[0]{\hyperlink{def-neenum}{\text{ne\_enum}}}
@@ -1426,8 +1533,6 @@
 \newcommand\AbbrevConstraintRangeOp[3][H]{\overbracket{#2..#3}^{\hyperlink{def-abbrevconstraintrange}{\abbrevfont{Constraint\_Range}}}}
 \newcommand\AbbrevConstraintExactOp[1]{\overbracket{#1}^{\hyperlink{def-abbrevconstraintexact}{\abbrevfont{Constraint\_Exact}}}}
 \newcommand\AbbrevTArray[2]{\overbracket{\texttt{array }[#1]\texttt{ of }#2}^{\hyperlink{def-abbrevtarray}{\abbrevfont{T\_Array}}}}
-\newcommand\AbbrevTArrayLengthExpr[2]{\overbracket{\texttt{array [[}#1\texttt{]] of }#2}^{\hyperlink{def-abbrevtarraylengthexpr}{\abbrevfont{T\_Array(ArrayLength\_Expr)}}}}
-\newcommand\AbbrevTArrayLengthEnum[3]{\overbracket{\texttt{array [[}#1 \# #2\texttt{]] of }#3}^{\hyperlink{def-abbrevtarraylengthenum}{\abbrevfont{T\_Array(Array\_Length\_Enum)}}}}
 \newcommand\AbbrevEVar[1]{\overbracket{#1}^{\hyperlink{def-abbrevevar}{\abbrevfont{E\_Var}}}}
 
 \newcommand\TIntWellConstrainedInt[1]{\TInt(\WellConstrained(#1))}
@@ -1473,7 +1578,6 @@
   the local storage elements in the type #1 yields the type #2}
 \newcommand\renamelocalsslice[0]{\hyperlink{def-renamelocalsslice}{\textfunc{rename\_locals\_slice}}} % SPECIFICATION_DEFERRED
 \newcommand\renamelocalsconstraint[0]{\hyperlink{def-renamelocalsconstraint}{\textfunc{rename\_locals\_constraint}}} % SPECIFICATION_DEFERRED
-\newcommand\renamelocalsarrayindex[0]{\hyperlink{def-renamelocalsarrayindex}{\textfunc{rename\_locals\_array\_index}}} % SPECIFICATION_DEFERRED
 \newcommand\renamelocalspattern[0]{\hyperlink{def-renamelocalspattern}{\textfunc{rename\_locals\_pattern}}} % SPECIFICATION_DEFERRED
 \newcommand\renamelocalscatcher[0]{\hyperlink{def-renamelocalscatcher}{\textfunc{rename\_locals\_catcher}}} % SPECIFICATION_DEFERRED
 
@@ -1531,9 +1635,6 @@
 \newcommand\Anonymoustypes[0]{\hyperlink{relation-isanonymous}{Anonymous types}}
 \newcommand\namedtype[0]{\hyperlink{relation-isnamed}{named type}}
 \newcommand\namedtypes[0]{\hyperlink{relation-isnamed}{named types}}
-\newcommand\subtypesterm[0]{\hyperlink{def-subtypes}{subtypes}}
-\newcommand\subtypeterm[0]{\hyperlink{def-subtypes}{subtype}}
-\newcommand\supertypeterm[0]{\hyperlink{def-supertypeterm}{supertype}}
 \newcommand\normalizedexpressionterm[0]{\hyperlink{def-normalizedterm}{normalized expression}}
 \newcommand\symbolicexpressionterm[0]{\hyperlink{def-symbolicexpressionterm}{symbolic expression}}
 \newcommand\symbolicexpressionsterm[0]{\hyperlink{def-symbolicexpressionterm}{symbolic expressions}}
@@ -1554,19 +1655,13 @@
 \newcommand\booleantypeterm[0]{\hyperlink{booleantypeterm}{boolean type}}
 \newcommand\booleantypesterm[0]{\hyperlink{booleantypeterm}{boolean types}}
 \newcommand\enumerationtypeterm[0]{\hyperlink{enumerationtypeterm}{enumeration type}}
-\newcommand\enumerationtypesterm[0]{\hyperlink{enumerationtypeterm}{enumeration types}}
+\newcommand\enumerationtypesterm[0]{\hyperlink{enumerationtypeterm}{enumeration types}} % DO NOT LINT
 \newcommand\Enumerationtypesterm[0]{\hyperlink{enumerationtypeterm}{Enumeration types}}
 \newcommand\tupletypeterm[0]{\hyperlink{tupletypeterm}{tuple type}}
 \newcommand\tupletypesterm[0]{\hyperlink{tupletypeterm}{tuple types}}
 \newcommand\Tupletypesterm[0]{\hyperlink{tupletypeterm}{Tuple types}}
 \newcommand\arraytypeterm[0]{\hyperlink{arraytypeterm}{array type}}
-\newcommand\intarraysterm[0]{\hyperlink{intarraytypeterm}{integer-indexed arrays}}
-\newcommand\intarraytypeterm[0]{\hyperlink{intarraytypeterm}{integer-indexed array type}}
-\newcommand\Intarraytypeterm[0]{\hyperlink{intarraytypeterm}{Integer-indexed array type}}
-\newcommand\enumarraysterm[0]{\hyperlink{enumarraytypeterm}{Enumeration-indexed arrays}}
-\newcommand\Enumarraytypeterm[0]{\hyperlink{enumarraytypeterm}{Enumeration-indexed array type}}
 \newcommand\namedtypeterm[0]{\hyperlink{namedtypeterm}{named type}}
-\newcommand\namedtypesterm[0]{\hyperlink{namedtypeterm}{named types}}
 \newcommand\recordtypeterm[0]{\hyperlink{recordtypeterm}{record type}}
 \newcommand\exceptiontypeterm[0]{\hyperlink{exceptiontypeterm}{exception type}}
 \newcommand\collectiontypeterm[0]{\hyperlink{collectiontypeterm}{collection type}}
@@ -1608,7 +1703,6 @@
 \newcommand\singleslice[0]{\hyperlink{def-singleslice}{single slice}}
 \newcommand\rangeslice[0]{\hyperlink{def-rangeslice}{range slice}}
 \newcommand\lengthslice[0]{\hyperlink{def-lengthslice}{length slice}}
-\newcommand\scaledslice[0]{\hyperlink{def-scaledslice}{scaled slice}}
 
 \newcommand\rhsexpression[0]{\hyperlink{def-rhsexpression}{right-hand-side expression}}
 \newcommand\rhsexpressions[0]{\hyperlink{def-rhsexpression}{right-hand-side expressions}}
@@ -1662,8 +1756,6 @@
 \newcommand\arrayaccessexpressionsterm[0]{\hyperlink{def-arrayaccessexpressionsterm}{array access expressions}}
 \newcommand\getarrayexpression[2]{\hyperlink{def-getarrayexpressionterm}
   {array read expression} for the array base expression #1 and index expression #2}
-\newcommand\getenumarrayexpression[2]{\hyperlink{def-getenumarrayexpression}
-{array read expression} for the array base expression #1 and enumeration-typed index expression #2}
 \newcommand\getfieldexpression[2]{\hyperlink{def-getfieldexpressionterm}
   {field read expression} for the record base expression #1 and field identifier #2}
 \newcommand\getfieldsexpression[2]{\hyperlink{def-getfieldsexpressionterm}

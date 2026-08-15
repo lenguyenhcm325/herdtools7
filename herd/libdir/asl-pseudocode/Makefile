@@ -16,7 +16,7 @@ BUNDLER_ARGS := -vv $(BUNDLER_JOBS)
 BUNDLER := bundler.py
 BUNDLER_CMD := $(PYTHON) $(BUNDLER) $(BUNDLER_ARGS)
 
-ARCHITECTURE_RELEASE = 2025-12
+ARCHITECTURE_RELEASE = 2026-06
 
 BASE_URL := https://developer.arm.com/-/cdn-downloads/permalink
 
@@ -103,9 +103,11 @@ $(SYSREGS_OFILE): $(SYSREGS_NAME)
 
 TO_CLEANUP += $(FEATURES_OFILE) $(FEATURES_NAME)
 
+EXTRA_FEATURES := FEAT_RASSA_ACR,FEAT_RASSAv2
+
 $(FEATURES_OFILE): $(FEATURES_NAME)
 	@ echo "Extracting Features type definition from json file $^"
-	@ $(PYTHON) build_features.py -o $@ $^
+	@ $(PYTHON) build_features.py -o $@ --extra-features "$(EXTRA_FEATURES)" $^
 
 .PHONY: a64
 a64: $(ISA_A64_OFILE) shared_pseudocode.asl
@@ -152,6 +154,10 @@ ALLOW_CONDITIONAL_FIELDS_FOR := $\
 		PMCNTENSET_EL0,$\
 		PMINTENSET_EL1,$\
 		PMCR_EL0,$\
+		TFSRE0_EL1,$\
+		TFSR_EL1,$\
+		TFSR_EL2,$\
+		TFSR_EL3,$\
 		TCR2_EL2,$\
 		TCR2MASK_EL2,$\
 		TTBCR,$\
@@ -193,14 +199,15 @@ DO_NOT_GENERATE_VARIABLES_FOR := $\
 		BRBTGT<n>_EL1,$\
 		BRBSRC<n>_EL1,$\
 		BRBINF<n>_EL1,$\
+		ERRIRQCR<m>,$\
 		SVCR
 
 TO_CLEANUP += all-registers-notice.html all_system_registers.asl $(SYSREGS_NAME).log
 
 # To turn these options on, use on the make command line:
 # USE_ARRAY_VARIABLES=--use-array-variables NO_REGISTER_VARIABLE_PREFIX=--no-register-variable-prefix
-USE_ARRAY_VARIABLES := 
-NO_REGISTER_VARIABLE_PREFIX := 
+USE_ARRAY_VARIABLES :=
+NO_REGISTER_VARIABLE_PREFIX :=
 
 all_system_registers.asl: $(SYSREGS_NAME)
 	@ cp $^/xhtml/notice.html $(@D)/all-registers-notice.html
@@ -234,7 +241,7 @@ ASLREF := aslref
 
 .PHONY: type-check
 type-check: $(FEATURES_OFILE) all_system_registers.asl all_instructions.asl shared_pseudocode.asl type-checking-implementations.asl pmu_event_types.asl trbmpam_el1.asl
-	$(ASLREF) --no-exec $^
+	$(ASLREF) --no-exec --version-eac1 $^
 
 
 # Ensure that the content of .INTERMEDIATE is empty

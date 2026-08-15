@@ -26,13 +26,14 @@
 open Typing
 
 type file_type = NormalV1 | NormalV0 | PatchV1 | PatchV0
+type lisp_format = Readable | Compact
 
 type args = {
   exec : bool;
   files : (file_type * string) list;
   opn : string option;
   print_ast : bool;
-  print_lisp : bool;
+  print_lisp : lisp_format option;
   print_serialized : bool;
   print_serialized_typed : bool;
   print_typed : bool;
@@ -47,6 +48,7 @@ type args = {
   no_stdlib : bool;
   no_stdlib0 : bool;
   v0_use_split_chunks : bool;
+  version_eac1 : bool;
 }
 
 let default_args =
@@ -55,7 +57,7 @@ let default_args =
     files = [];
     opn = None;
     print_ast = false;
-    print_lisp = false;
+    print_lisp = None;
     print_serialized = false;
     print_serialized_typed = false;
     print_typed = false;
@@ -70,38 +72,25 @@ let default_args =
     no_stdlib = false;
     no_stdlib0 = false;
     v0_use_split_chunks = false;
+    version_eac1 = false;
   }
 
-exception Exit of int
+(** Run ASLRef with the supplied arguments, and returns the exit code from the
+    program.
 
-(** Run ASLRef with the supplied arguments. This function never returns: it
-    raises an [Exit] exception containing ASLRef's exit code. *)
-let run_with (args : args) : unit =
+    @raise Error.ASLException *)
+let run (args : args) : int =
   let parser_config =
     let v0_use_split_chunks = args.v0_use_split_chunks in
+    let version_eac1 = args.version_eac1 in
     let open Builder in
-    { v0_use_split_chunks }
-  in
-
-  let or_exit f =
-    if Printexc.backtrace_status () then f ()
-    else
-      match Error.intercept f () with
-      | Ok res -> res
-      | Error e ->
-          let module EP = Error.ErrorPrinter (struct
-            let output_format = args.output_format
-          end) in
-          EP.eprintln e;
-          raise (Exit 1)
+    { v0_use_split_chunks; version_eac1 }
   in
 
   let extra_main =
     match args.opn with
     | None -> []
-    | Some fname ->
-        or_exit @@ fun () ->
-        Builder.from_file ~ast_type:`Opn ~parser_config `ASLv1 fname
+    | Some fname -> Builder.from_file ~ast_type:`Opn ~parser_config `ASLv1 fname
   in
 
   let ast =
@@ -116,7 +105,7 @@ let run_with (args : args) : unit =
       | NormalV0 | NormalV1 -> List.rev_append this_ast ast
       | PatchV1 | PatchV0 -> ASTUtils.patch ~src:ast ~patches:this_ast
     in
-    or_exit @@ fun () -> List.fold_right folder args.files []
+    List.fold_right folder args.files []
   in
 
   let ast = List.rev_append extra_main ast in
@@ -151,7 +140,9 @@ let run_with (args : args) : unit =
     let check = args.strictness
 
     let print_typed =
-      args.print_typed || args.print_lisp || args.print_serialized_typed
+      args.print_typed
+      || Option.is_some args.print_lisp
+      || args.print_serialized_typed
 
     let use_field_getter_extension = args.use_field_getter_extension
     let override_mode = args.override_mode
@@ -164,7 +155,7 @@ let run_with (args : args) : unit =
       args.use_conflicting_side_effects_extension
   end in
   let module T = Annotate (C) in
-  let typed_ast, static_env = or_exit @@ fun () -> T.type_check_ast ast in
+  let typed_ast, static_env = T.type_check_ast ast in
 
   let () =
     if args.print_serialized_typed then
@@ -177,17 +168,27 @@ let run_with (args : args) : unit =
   in
 
   let () =
-    if args.print_lisp then
-      let lisp_ast = ToLisp.of_ast typed_ast in
-      let lisp_static_env = ToLisp.of_static_env_global static_env in
-      Lispobj.print_obj Format.std_formatter
-        (Lispobj.Cons (lisp_static_env, lisp_ast))
+    match args.print_lisp with
+    | None -> ()
+    | Some lisp_format ->
+        let module LispConf = struct
+          let defaultpkg = "ACL2"
+          let downcase = true
+
+          let compact =
+            match lisp_format with Readable -> false | Compact -> true
+        end in
+        let module Lisp = ToLisp.Make (LispConf) in
+        let lisp_ast = Lisp.of_ast typed_ast in
+        let lisp_static_env = Lisp.of_static_env_global static_env in
+        let module LispPP = Lispobj.MakePrinter (LispConf) in
+        LispPP.pp Format.std_formatter
+          (Lispobj.Cons (lisp_static_env, lisp_ast))
   in
 
   let exit_code, used_rules =
     if args.exec then
       let instrumentation = if args.show_rules then true else false in
-      or_exit @@ fun () ->
       let main_name = T.find_main static_env in
       Native.interpret ~instrumentation static_env main_name typed_ast
     else (0, [])
@@ -200,4 +201,15 @@ let run_with (args : args) : unit =
         (pp_print_list ~pp_sep:pp_print_cut Instrumentation.SemanticsRule.pp)
         used_rules
   in
-  raise (Exit exit_code)
+  exit_code
+
+(** Run ASLRef with the supplied arguments, and returns the exit code from the
+    program. Return error code 1 if an ASLException is raised. *)
+let safe_run args : int =
+  try run args
+  with Error.ASLException e ->
+    let module EP = Error.ErrorPrinter (struct
+      let output_format = args.output_format
+    end) in
+    EP.eprintln e;
+    1

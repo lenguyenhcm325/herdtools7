@@ -1126,7 +1126,7 @@ error has been reached. Arguably unnecessary given FGL's backtrace capability."
 
 (defmacro evo_error (&rest args)
   `(pass-error (ev_error . ,args) orac))
-                     
+
 (acl2::def-b*-binder evo
   :parents (asl-interpreter-functions)
   :short "Binds an eval_result object. If it is an ev_error or ev_throwing,
@@ -1167,7 +1167,7 @@ binder)."
   (defret val_result-p-of-<fn>
     (implies (val_result-p x)
              (val_result-p new-x)))
-  
+
   (defthm ev_error->desc-of-init-backtrace
          (equal (ev_error->desc (init-backtrace err storage pos))
                 (ev_error->desc err))
@@ -1236,67 +1236,14 @@ evaluates the rest of the bindings/body."
   :short "@(csee B*) binder: see @(see patbind-evs)")
 
 
-(encapsulate nil
-  (local (in-theory (enable nfix)))
-  ;; Note: if the subtypes map is malformed, this function won't terminate.
-  (defxdoc subtypes_names
-    :short "Checks the subtypes map of the given @(see static_env_global) to
- see if @('name1') is a subtype of @('name2'). That is, it checks whether
- either the two names are equal, or else the supertype of @('name1') according
- to the subtypes map is transitively a subtype of @('name2')."
-    :long "<p>This is defined with @('acl2::def-tr') to create a function that doesn't
-necessarily terminate, e.g. if we encounter a cycle in the subtypes
-relation. In this case it returns NIL (not a subtype).</p>")
-
-  (acl2::def-tr subtypes_names (tenv name1 name2)
-    (declare (xargs :guard (and (static_env_global-p tenv)
-                                (identifier-p name1)
-                                (identifier-p name2))))
-    (b* ((name1 (identifier-fix name1))
-         (name2 (identifier-fix name2))
-         ((when (equal name1 name2)) t)
-         (look (hons-assoc-equal name1 (static_env_global->subtypes tenv)))
-         ((unless look) nil))
-      (subtypes_names tenv (cdr look) name2))
-    :diverge nil)
-
-  (fty::deffixequiv subtypes_names-steps
-    :args ((tenv static_env_global-p)
-           (name1 identifier-p)
-           (name2 identifier-p)))
-
-  (local (defun terminates-hint (stable-under-simplificationp clause)
-           (and stable-under-simplificationp
-                (let ((lit (assoc 'subtypes_names-terminates clause))
-                      (other (cadr (assoc 'not clause))))
-                  (case-match lit
-                    (('subtypes_names-terminates tenv name1 name2)
-                     `(:expand (:with subtypes_names-terminates ,other)
-                       :use ((:instance subtypes_names-terminates-suff
-                              (tr-clk (subtypes_names-terminates-witness
-                                       . ,(cdr other)))
-                              (tenv ,tenv) (name1 ,name1) (name2 ,name2)))))
-                    (& nil))))))
-  (fty::deffixcong static_env_global-equiv iff (subtypes_names-terminates tenv name1 name2) tenv
-    :hints ((terminates-hint stable-under-simplificationp clause)))
-
-  (fty::deffixequiv subtypes_names :args ((tenv static_env_global-p)
-                                          (name1 identifier-p)
-                                          (name2 identifier-p))))
-
-(define subtypes ((tenv static_env_global-p)
-                  (ty1 ty-p)
-                  (ty2 ty-p))
-  :short "Checks whether @('ty1') is a subtype of @('ty2') according to the subtypes
-map. Following ASLRef, this only is the case if both types are named and
-@('ty2') is among the chain of supertypes of @('ty1') in the static
-environment's subtypes map (according to @(see subtypes_names))."
-  (b* ((ty1 (ty->desc ty1))
-       (ty2 (ty->desc ty2)))
-    (fty::multicase ((type_desc-case ty1)
-                     (type_desc-case ty2))
-      ((:t_named :t_named) (subtypes_names tenv ty1.name ty2.name))
-      (- nil))))
+(define same_named_type ((x ty-p) (y ty-p))
+  (b* (((ty x))
+       ((ty y)))
+    (type_desc-case x.desc
+      :t_named (type_desc-case y.desc
+                 :t_named (equal x.desc.name y.desc.name)
+                 :otherwise nil)
+      :otherwise nil)))
 
 
 (fty::defoption maybe-catcher catcher)
@@ -1310,7 +1257,7 @@ accepted by the catcher."
   :returns (catcher maybe-catcher-p)
   (b* (((when (atom catchers)) nil)
        ((catcher c) (car catchers))
-       ((when (subtypes tenv ty c.ty))
+       ((when (same_named_type ty c.ty))
         (catcher-fix c)))
     (find_catcher tenv ty (cdr catchers)))
   ///
@@ -1572,7 +1519,7 @@ be updated since expressions can include function calls."
                                                                (local-env->storage (env->local env))
                                                                (global-env->storage (env->global env)))))))
            :e_pattern (b* (((evoo (expr_result v1)) (eval_expr env desc.expr))
-                           ((evoo val) (eval_pattern v1.env v1.val desc.pattern)))
+                           ((evoo val) (eval_pattern_matcher v1.env v1.val desc.pattern)))
                         (evo_normal (expr_result val v1.env)))
            :e_unop ;; anna
            (b* (((evoo (expr_result v)) (eval_expr env desc.arg))
@@ -1609,7 +1556,7 @@ be updated since expressions can include function calls."
                         :otherwise (evo_error "DE_BO: First argument of ==> evaluated to non-boolean"
                                               desc (list pos)))))
              ;;all other ops
-             (otherwise 
+             (otherwise
               (b* (((evoo (expr_result v1)) (eval_expr env desc.arg1))
                    ((evoo (expr_result v2)) (eval_expr v1.env desc.arg2))
                    ((evob val) (eval_binop desc.op v1.val v2.val)))
@@ -1661,19 +1608,6 @@ be updated since expressions can include function calls."
                       (< idxv (len arrv)))
                  (evo_normal (expr_result (nth idxv arrv) idx.env))
                (evo_error "DE_BI: getarray index out of range" desc (list pos))))
-           :e_getenumarray ;; sol
-           (b* (((evoo (expr_result arr)) (eval_expr env desc.base))
-                ((evoo (expr_result idx)) (eval_expr arr.env desc.index))
-                ((evo idxv) (val-case idx.val
-                              :v_label (ev_normal idx.val.val)
-                              :otherwise (ev_error "DE_BI: getenumarray non-label index" desc (list pos))))
-                ((evo arrv) (val-case arr.val
-                              :v_record (ev_normal arr.val.rec)
-                              :otherwise (ev_error "getenumarray non-record value" desc (list pos))))
-                (look (omap::assoc idxv arrv)))
-             (if look
-                 (evo_normal (expr_result (cdr look) idx.env))
-               (evo_error "DE_BI: getenumarray index not found" desc (list pos))))
            :e_getfield ;; anna
            (b* (((evoo (expr_result recres)) (eval_expr env desc.base))
                 ((evob fieldval) (get_field desc.field recres.val)))
@@ -1713,14 +1647,6 @@ be updated since expressions can include function calls."
                                        (ev_error "DE_NE: negative array length" desc (list pos)))
                               :otherwise (ev_error "array non-integer length" desc (list pos)))))
              (evo_normal (expr_result (v_array (make-list lenv :initial-element v.val)) len.env)))
-           :e_enumarray ;; anna
-           (b* (((evoo (expr_result v)) (eval_expr env desc.value))
-                (labels (set::mergesort desc.labels))
-                (len (len labels))
-                (vals (make-list len :initial-element v.val)) 
-                (rec (omap::from-lists labels vals))
-                )
-             (evo_normal (expr_result (v_record rec) v.env)))
            :e_arbitrary ;; sol
            (b* (((evoo ty) (resolve-ty env desc.type))
                 ((mv val orac) (ty-oracle-val ty orac))
@@ -1860,20 +1786,17 @@ evaluation of @('e_arbitrary') expressions."
                                              (ty-fix x) (list pos))))
            :t_tuple (b* (((evoo tys) (resolve-tylist env ty.types)))
                       (evo_normal (ty (t_tuple tys) pos)))
-           :t_array (b* (((evoo base) (resolve-ty env ty.type)))
-                      (array_index-case ty.index
-                        :arraylength_expr (b* (((evoo (expr_result len)) (eval_expr env ty.index.length)))
-                                            (val-case len.val
-                                              :v_int ;;(if (<= 0 len.val.val)
-                                              (evo_normal (ty (t_array
-                                                               (arraylength_expr
-                                                                (expr (e_literal (l_int len.val.val)) pos))
-                                                               base)
-                                                              pos))
-                                              ;; (evo_error "Negative array length resolving type" x))
-                                              :otherwise (evo_error "Unexpected type of array length"
-                                                                    (ty-fix x) (list pos))))
-                        :arraylength_enum (evo_normal (ty (t_array ty.index base) pos))))
+           :t_array (b* (((evoo base) (resolve-ty env ty.type))
+                         ((evoo (expr_result len)) (eval_expr env ty.index)))
+                      (val-case len.val
+                        :v_int ;;(if (<= 0 len.val.val)
+                        (evo_normal (ty (t_array
+                                         (expr (e_literal (l_int len.val.val)) pos)
+                                         base)
+                                        pos))
+                        ;; (evo_error "Negative array length resolving type" x))
+                        :otherwise (evo_error "Unexpected type of array length"
+                                              (ty-fix x) (list pos))))
            :t_record (b* (((evoo fields)
                            (resolve-typed_identifierlist env ty.fields)))
                        (evo_normal (ty (t_record fields) pos)))
@@ -1911,7 +1834,6 @@ evaluation of @('e_arbitrary') expressions."
             (pos (pattern->pos_start p)))
          (pattern_desc-case desc
            :pattern_all (evo_normal (v_bool t)) ;; SemanticsRule.PAll
-           :pattern_any (evtailcall (eval_pattern-any env val desc.patterns))
            :pattern_geq (b* (((evoo (expr_result v1)) (eval_expr env desc.expr)))
                           (evo-return (init-backtrace (eval_binop :ge val v1.val)
                                                       (local-env->storage (env->local env))
@@ -1924,10 +1846,6 @@ evaluation of @('e_arbitrary') expressions."
            (val-case val
              :v_bitvector (evo-return (eval_pattern_mask val desc.mask))
              :otherwise (evo_error "Unsupported pattern_mask case" desc (list pos)))
-           :pattern_not (b* (((evoo v1) (eval_pattern env val desc.pattern)))
-                          (evo-return (init-backtrace (eval_unop :bnot v1)
-                                                      (local-env->storage (env->local env))
-                                                      pos)))
            :pattern_range (b* (((evoo (expr_result v1)) (eval_expr env desc.lower))
                                ((evoo (expr_result v2)) (eval_expr env desc.upper))
                                ((evob lower) (eval_binop :ge val v1.val))
@@ -1938,42 +1856,14 @@ evaluation of @('e_arbitrary') expressions."
            :pattern_single (b* (((evoo (expr_result v1)) (eval_expr env desc.expr)))
                              (evo-return (init-backtrace (eval_binop :eq val v1.val)
                                                          (local-env->storage (env->local env))
-                                                         pos)))
-           :pattern_tuple (b* ((len (len desc.patterns))
-                               ((evo vs) (val-case val
-                                           :v_array (if (eql (len val.arr) len)
-                                                        (ev_normal val.arr)
-                                                      (ev_error "pattern tuple length mismatch"
-                                                                (pattern-fix p) (list pos)))
-                                           :otherwise (ev_error "pattern tuple type mismatch"
-                                                                (pattern-fix p) (list pos)))))
-                            (evtailcall (eval_pattern_tuple env vs desc.patterns))))))
+                                                         pos))))))
 
-     (define eval_pattern_tuple ((env env-p)
-                                 (vals vallist-p)
-                                 (p patternlist-p)
-                                 &key
-                                 ((clk natp) 'clk)
-                                 (orac 'orac))
-       :short "Evaluate whether the @(see patternlist) @('p') matches the values @('vals')."
-       :guard (eql (len vals) (len p))
-       :measure (nats-measure clk 0 (patternlist-count p) 0)
-       :returns (mv (res val_result-p) new-orac)
-       (b* (((when (atom p)) (evo_normal (v_bool t)))
-            ((evoo first) (eval_pattern env (car vals) (car p)))
-            ;; short circuit?
-            ((when (val-case first :v_bool (not first.val) :otherwise nil))
-             (evo_normal first))
-            ((evoo rest) (eval_pattern_tuple env (cdr vals) (cdr p))))
-         (evo-return (eval_binop :band first rest))))
-
-
-     (define eval_pattern-any ((env env-p)
-                               (val val-p)
-                               (p patternlist-p)
-                               &key
-                               ((clk natp) 'clk)
-                               (orac 'orac))
+     (define eval_pattern_list ((env env-p)
+                                (val val-p)
+                                (p patternlist-p)
+                                &key
+                                ((clk natp) 'clk)
+                                (orac 'orac))
        :short "Evaluate whether any pattern in @(see patternlist) @('p') matches the value @('val')."
        :measure (nats-measure clk 0 (patternlist-count p) 0)
        :returns (mv (res val_result-p) new-orac)
@@ -1983,8 +1873,27 @@ evaluation of @('e_arbitrary') expressions."
            (val-case v1
              :v_bool (if v1.val
                          (evo_normal v1)
-                       (evtailcall (eval_pattern-any env val (cdr p))))
+                       (evtailcall (eval_pattern_list env val (cdr p))))
              :otherwise (evo_error "Bad result type from eval_pattern" v1 (list (pattern->pos_start (car p))))))))
+
+     (define eval_pattern_matcher ((env env-p)
+                                   (val val-p)
+                                   (p pattern_matcher-p)
+                                   &key
+                                   ((clk natp) 'clk)
+                                   (orac 'orac))
+       :short "Evaluate whether a pattern matcher matches the value @('val')."
+       :measure (nats-measure clk 0 (pattern_matcher-count p) 0)
+       :returns (mv (res val_result-p) new-orac)
+       (b* (((evoo any-match)
+             (eval_pattern_list env val (pattern_matcher->patterns p))))
+         (val-case any-match
+           :v_bool (evo_normal
+                    (v_bool (if (eq (pattern_matcher->kind p) :negative)
+                                (not any-match.val)
+                              any-match.val)))
+           :otherwise (evo_error "Bad result type from eval_pattern_list"
+                                  any-match nil))))
 
 
      (define eval_expr_list ((env env-p)
@@ -2166,18 +2075,6 @@ pattern for assigning @('<base>.<field>') is:</p>
                                            (ev_error "DE_BI: le_setarray index out of obunds" lx (list pos)))
                                 :otherwise (ev_error "le_setarray non array base" lx (list pos)))))
                           (evtailcall (eval_lexpr idx.env lx.base newarray)))
-           :le_setenumarray (b* ((rbase (expr_of_lexpr lx.base))
-                                 ((evoo (expr_result rbv)) (eval_expr env rbase))
-                                 ((evoo (expr_result idx)) (eval_expr rbv.env lx.index))
-                                 ((evob idxv) (v_to_label idx.val))
-                                 ((evo newarray)
-                                  (val-case rbv.val
-                                    :v_record (if (omap::assoc idxv rbv.val.rec)
-                                                  (ev_normal (v_record (omap::update idxv (val-fix v) rbv.val.rec)))
-                                                (ev_error "DE_BI: le_setenumarray unrecognized index"
-                                                          lx (list pos)))
-                                    :otherwise (ev_error "le_setenumarray non record base" lx (list pos)))))
-                              (evtailcall (eval_lexpr idx.env lx.base newarray)))
            :le_setfield (b* ((rbase (expr_of_lexpr lx.base))
                              ((evoo (expr_result rbv)) (eval_expr env rbase))
                              ((evo newrec)
@@ -2695,7 +2592,6 @@ ASLRef we don't return the environment.</p>"
                   (ty-resolved-p (ev_normal->res res)))
          :hints ('(:expand ((:free (clk) <call>))
                    :in-theory (enable ty-resolved-p
-                                      array_index-resolved-p
                                       int-literal-expr-p))
                  (and stable-under-simplificationp
                       '(:expand ((ty-resolved-p x)))))

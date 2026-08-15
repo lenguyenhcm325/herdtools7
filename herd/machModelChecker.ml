@@ -156,24 +156,17 @@ module Make
             S.A.V.Cst.PteVal.same_oa p1 p2
         | _ -> false
 
-      let writable2 =
-        let writable ha hd e = match S.E.value_of e with
+      let writable2 e1 e2 =
+        let writable e =
+          let open DirtyBit in
+          let ha, hd = match O.dirty with
+          | Some d -> d.some_ha, d.some_hd
+          | _ -> false, false in
+          match S.E.value_of e with
           | Some (S.A.V.Val (Constant.PteVal p)) ->
-              S.A.V.Cst.PteVal.writable ha hd p
+            S.A.V.Cst.PteVal.writable ha hd p
           | _ -> false in
-        fun e1 e2 ->
-        let p = S.E.proc_of e1 in
-        match p with
-        | None ->
-           Warn.user_error
-             "Init or spurious write as first argument of writable2"
-        | Some p ->
-            let ha,hd =
-              let open DirtyBit in
-              match O.dirty with
-              | Some d -> d.ha p,d.hd p
-              | None -> false,false in
-            writable ha hd e1 || writable ha hd e2
+        writable e1 || writable e2
 
     end
 
@@ -352,18 +345,11 @@ module Make
              E.EventRel.filter_nodes relevant
            else
              fun po ->
-               let po =
-                 E.EventRel.restrict_rel
-                   (fun e1 e2 ->
-                     relevant e1 && relevant e2
-                     && (not (E.same_instance e1 e2)))
-                   po in
-               if catdep then po
-               else
-                 (* Non-catdep models do not explicit include
-                    rmw into po where appropriate,
-                    for instance in their internal check. *)
-                 E.EventRel.union conc.S.atomic_load_store po)
+               E.EventRel.restrict_rel
+                 (fun e1 e2 ->
+                   relevant e1 && relevant e2
+                   && (not (E.same_instance e1 e2)))
+                 po)
           conc.S.po in
       let partial_po =
         lazy begin
@@ -436,12 +422,6 @@ module Make
               "ext",lazy begin
                 comp_ext (Lazy.force by_proc)
               end ;
-              "rmw",lazy conc.S.atomic_load_store;
-              "amo",
-              lazy begin
-                E.EventRel.restrict_rel E.po_eq
-                  conc.S.atomic_load_store
-              end;
               "po", lazy po;
               "partial_po", partial_po;
               "depend", lazy (Lazy.force pr).S.depend;
@@ -493,7 +473,6 @@ module Make
                  "NExp", E.is_not_explicit;
                  "SPEC", is_spec;
                  "EXEC", (fun e -> not (is_spec e));
-                 "AMO",E.is_amo;
                  "SPURIOUS", E.is_spurious;
                  "IW", E.is_mem_store_init;
                  "FW",

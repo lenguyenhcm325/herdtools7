@@ -82,6 +82,12 @@ module Make (S : SPEC_VALUE) = struct
     in
     pp_one_arg_macro (operator_to_macro_name op) pp_arg fmt arg
 
+  (** [pp_parameterized_type fmt typename pp_arg arg] renders the application of
+      the parameterized type [typename] to [arg] with [fmt]. *)
+  let pp_parameterized_type fmt typename pp_arg arg =
+    let type_name_macro = get_or_gen_math_macro typename in
+    fprintf fmt "%s{%a}" type_name_macro pp_arg arg
+
   let pp_field_name fmt field_name = pp_id_as_macro fmt field_name
 
   (** [pp_type_term fmt (type_term, layout)] renders [type_term] with [fmt],
@@ -96,8 +102,11 @@ module Make (S : SPEC_VALUE) = struct
             pp_overtext fmt pp_id_as_macro label pp_print_string
               short_circuit_macro
         | None -> pp_id_as_macro fmt label)
+    | Parameter { name } -> pp_var fmt name
     | TypeOperator { op; term = sub_term } ->
         pp_type_operator fmt op pp_opt_named_type_term (sub_term, layout)
+    | ParamType { typename; term } ->
+        pp_parameterized_type fmt typename pp_opt_named_type_term (term, layout)
     | Tuple { label_opt = None; args = [ type_term ] } ->
         (* Singleton unlabelled tuples are a special case -
            they are used to reference type terms, rather than defining them. *)
@@ -209,14 +218,30 @@ module Make (S : SPEC_VALUE) = struct
     in
     pp_type_term fmt (term, layout)
 
+  (** [get_type_parameter_name_opt type_name] returns the name of the type
+      parameter for the type [type_name], if it has one. *)
+  let get_type_parameter_name_opt type_name =
+    match Spec.defining_node_for_id S.spec type_name with
+    | Node_Type { Type.param_opt = Some param } -> Some param
+    | _ -> None
+
+  (** [pp_type fmt type_name] renders the type name [type_name] in the context
+      of rendering a type definition, with special handling for types with
+      parameters, using the formatter [fmt]. *)
+  let pp_type fmt type_name =
+    match get_type_parameter_name_opt type_name with
+    | Some param ->
+        (* Special handling for types with parameters. *)
+        pp_parameterized_type fmt type_name pp_var param
+    | None -> pp_id_as_macro fmt type_name
+
   (** [pp_typename_with_hypertarget fmt type_name] renders the type name
       [type_name] along with its hypertarget. *)
   let pp_typename_with_hypertarget fmt type_name =
     let hyperlink_target = hypertarget_for_id type_name in
     (* The hypertarget macro must come after the type name macro.
        Otherwise LaTeX compilation fails. *)
-    fprintf fmt "%a%a" pp_id_as_macro type_name pp_mathhypertarget
-      hyperlink_target
+    fprintf fmt "%a%a" pp_type type_name pp_mathhypertarget hyperlink_target
 
   (** [pp_variant_with_hypertarget fmt variant] renders the variant [variant]
       along with its hypertarget. *)
@@ -292,7 +317,7 @@ module Make (S : SPEC_VALUE) = struct
       variants) [basic_type] with the formatter [fmt]. *)
   let pp_basic_type fmt { Type.name } =
     let hyperlink_target = hypertarget_for_id name in
-    fprintf fmt "%a$%a$" pp_texthypertarget hyperlink_target pp_id_as_macro name
+    fprintf fmt "%a$%a$" pp_texthypertarget hyperlink_target pp_type name
 
   (** [pp_type_definition fmt def] renders the type definition [def] with the
       formatter [fmt]. *)
@@ -760,13 +785,16 @@ module Make (S : SPEC_VALUE) = struct
     let rec expr_to_prose expr =
       let open Expr in
       match expr with
-      | NamedExpr { expr = sub_expr; name } ->
+      | NamedExpr { expr = sub_expr; name; same_name } ->
           (* We strip names from the sub-expression to avoid prose like
             "... (for the output variable a) (for the output variable b)". *)
           let stripped_sub_expr = strip_names_from_expr sub_expr in
           let expr_prose = expr_to_prose stripped_sub_expr in
-          Format.asprintf "%s (for the output variable %s)" expr_prose
-            (var_to_prose name)
+          let pp_output_variable_prose fmt name =
+            if same_name then ()
+            else fprintf fmt " (for the output variable %s)" (var_to_prose name)
+          in
+          Format.asprintf "%s%a" expr_prose pp_output_variable_prose name
       | Var { id } when String.equal id Spec.ignore_var ->
           "some arbitrary value"
       | Var { id } -> (
@@ -1042,13 +1070,20 @@ module Make (S : SPEC_VALUE) = struct
     (** [pp_prose_rule_element fmt element] renders the prose for a single
         element of a rule with the formatter [fmt]. *)
     let rec pp_prose_rule_element fmt element =
-      let pp_case fmt { name; elements } =
-        pp_prose_rule_elements fmt ~case_name:name elements
-      in
       match element with
       | Judgment judgment -> pp_prose_judgment fmt judgment
-      | Cases cases ->
-          fprintf fmt "\\OneApplies@;<0 0>%a" (pp_itemized_list pp_case) cases
+      | Cases cases -> pp_prose_one_applies fmt cases
+
+    (** [pp_prose_one_applies fmt cases] renders the list [cases] with the
+        formatter [fmt] with the prose that implies only one of the cases should
+        apply. *)
+    and pp_prose_one_applies fmt cases =
+      fprintf fmt "\\OneApplies@;<0 0>%a" (pp_itemized_list pp_case) cases
+
+    (** [pp_case fmt case] renders the prose for the single case [case] with the
+        formatter [fmt]. *)
+    and pp_case fmt { name; elements } =
+      pp_prose_rule_elements fmt ~case_name:name elements
 
     (** [pp_prose_rule_elements fmt ~case_name_opt elements] renders the prose
         for a list of rule elements [elements] with the formatter [fmt]. If
@@ -1078,10 +1113,20 @@ module Make (S : SPEC_VALUE) = struct
     let pp_render_rule_prose fmt { RuleRender.relation_name; path } =
       let relation = Spec.relation_for_id S.spec relation_name in
       let rule_elements = Spec.filter_rule_for_path relation path in
-      (* The case name is empty, since we are rendering at the top-level and
-        don't want to start with an "all of the following apply" or
-        "one of the following applies". *)
-      pp_prose_rule_elements fmt ~case_name:"" rule_elements
+      match rule_elements with
+      | [ Cases cases ] ->
+          (* When the top-level is just a list of cases, we want to start with
+             an "one of the following applies" without an extra level of nesting.
+             (The case of a single judgment is already handled as an optimization
+             in [pp_prose_rule_elements].)
+          *)
+          pp_prose_one_applies fmt cases
+      | _ ->
+          (* The case name is empty, since we are rendering at the top-level and
+             don't want to start with an "all of the following apply" or
+             "one of the following applies".
+          *)
+          pp_prose_rule_elements fmt ~case_name:"" rule_elements
 
     (** [pp_render_rule_math_and_prose fmt def] renders both the mathematical
         inference rules and the prose description of the rules referenced by
@@ -1210,9 +1255,16 @@ module Make (S : SPEC_VALUE) = struct
     if Option.is_some (Spec.math_macro_opt_for_node node) then ()
     else
       let typeset_macro = Latex.spec_var_to_latex_var ~font_type id in
-      fprintf fmt
-        {|\newcommand%a[0]{ \hyperlink{%s}{%s} } %% Generated from %s|}
-        pp_id_as_macro id hyperlink_target typeset_macro id
+      match get_type_parameter_name_opt id with
+      | Some _ ->
+          (* Types with parameters require unary macros. *)
+          fprintf fmt
+            {|\newcommand%a[1]{ \hyperlink{%s}{%s}(#1) } %% Generated from %s|}
+            pp_id_as_macro id hyperlink_target typeset_macro id
+      | None ->
+          fprintf fmt
+            {|\newcommand%a[0]{ \hyperlink{%s}{%s} } %% Generated from %s|}
+            pp_id_as_macro id hyperlink_target typeset_macro id
 
   (** [generate_latex_macros fmt] generates LaTeX macros for all of the elements
       defined in [S.spec] using the formatter [fmt]. *)

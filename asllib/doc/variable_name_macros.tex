@@ -20,9 +20,7 @@
 \newcommand\csonep[0]{\texttt{cs1'}}
 \newcommand\dir[0]{\texttt{dir}}
 \newcommand\dst[0]{\texttt{dst}}
-\newcommand\ebase[0]{\texttt{e\_base}}
 \newcommand\econd[0]{\texttt{e\_cond}}
-\newcommand\elength[0]{\texttt{e\_length}}
 \newcommand\envone[0]{\texttt{env1}}
 \newcommand\envp[0]{\texttt{env'}}
 \newcommand\envthrow[0]{\texttt{env\_throw}}
@@ -31,8 +29,7 @@
 \newcommand\estartp[0]{\texttt{e\_start'}}
 \newcommand\eend[0]{\texttt{e\_end}}
 \newcommand\eendp[0]{\texttt{e\_end'}}
-\newcommand\evalue[0]{\texttt{e\_value}}
-\newcommand\ekey[0]{\texttt{e\_key}}
+
 \newcommand\vfield[0]{\texttt{field}}
 \newcommand\fieldname[0]{\texttt{field\_name}}
 \newcommand\fields[0]{\texttt{fields}}
@@ -65,7 +62,6 @@
 \newcommand\newe[0]{\texttt{new\_e}}
 \newcommand\newenv[0]{\texttt{new\_env}}
 \newcommand\newg[0]{\texttt{new\_g}}
-\newcommand\newl[0]{\texttt{new\_l}}
 \newcommand\newldi[0]{\texttt{new\_ldi}}
 \newcommand\newle[0]{\texttt{new\_le}}
 \newcommand\newli[0]{\texttt{new\_li}}
@@ -101,7 +97,6 @@
 \newcommand\stm[0]{\texttt{stm}}
 \newcommand\subpgmtypeone[0]{\texttt{subpgm\_type1}}
 \newcommand\subpgmtypetwo[0]{\texttt{subpgm\_type2}}
-\newcommand\telem[0]{\texttt{t\_elem}}
 \newcommand\tenv[0]{\texttt{tenv}}
 \newcommand\denv[0]{\texttt{denv}}
 \newcommand\env[0]{\texttt{env}}
@@ -110,7 +105,6 @@
 \newcommand\tenvwithparams[0]{\texttt{tenv\_with\_params}}
 \newcommand\ts[0]{\textit{ts}}
 \newcommand\tstwo[0]{\textit{ts2}}
-\newcommand\tsy[0]{\texttt{sy}}
 \newcommand\tty[0]{\texttt{ty}}
 \newcommand\ttyp[0]{\texttt{ty'}}
 \newcommand\tyopt[0]{\texttt{ty\_opt}}
@@ -127,6 +121,7 @@
 \newcommand\vcases[0]{\texttt{cases}}
 \newcommand\vcasealtlist[0]{\texttt{case\_alt\_list}}
 \newcommand\vcasealtlistast[0]{\texttt{case\_alt\_list\_ast}}
+\newcommand\vcasepattern[0]{\texttt{case\_pattern}}
 \newcommand\votherwise[0]{\texttt{otherwise}}
 \newcommand\voverride[0]{\texttt{override}}
 \newcommand\varg[0]{\texttt{arg}}
@@ -201,7 +196,6 @@
 \newcommand\vewhere[0]{\texttt{e\_where}}
 \newcommand\vexpr[0]{\texttt{expr}}
 \newcommand\vexprasts[0]{\texttt{expr\_asts}}
-\newcommand\vexprpattern[0]{\texttt{expr\_pattern}}
 \newcommand\vexprs[0]{\texttt{exprs}}
 \newcommand\vf[0]{\texttt{f}}
 \newcommand\vfl[0]{\texttt{fl}}
@@ -271,11 +265,9 @@
 \newcommand\vparams[0]{\texttt{params}}
 \newcommand\vparamsopt[0]{\texttt{params\_opt}}
 \newcommand\vparsednode[0]{\texttt{parsed\_node}}
-\newcommand\vpattern[0]{\texttt{pattern}}
 \newcommand\vpatternasts[0]{\texttt{pattern\_asts}}
-\newcommand\vpatternlist[0]{\texttt{pattern\_list}}
+\newcommand\vpatternkind[0]{\texttt{pattern\_kind}}
 \newcommand\vpatterns[0]{\texttt{patterns}}
-\newcommand\vpatternset[0]{\texttt{pattern\_set}}
 \newcommand\vpone[0]{\texttt{p1}}
 \newcommand\vpp[0]{\texttt{p'}}
 \newcommand\vps[0]{\texttt{ps}}
@@ -324,7 +316,6 @@
 \newcommand\vstwo[0]{\texttt{s2}}
 \newcommand\vstwop[0]{\texttt{s2'}}
 \newcommand\vsubtype[0]{\texttt{subtype}}
-\newcommand\vsubtypeopt[0]{\texttt{subtype\_opt}}
 \newcommand\vsym[0]{\texttt{sym}}
 \newcommand\vsymast[0]{\texttt{sym\_ast}}
 \newcommand\vsymasts[0]{\texttt{sym\_asts}}
@@ -357,7 +348,6 @@
 \newcommand\vwidth[0]{\texttt{width}}
 \newcommand\vx[0]{\texttt{x}}
 \newcommand\vxp[0]{\texttt{x'}}
-\newcommand\vxs[0]{\texttt{xs}}
 \newcommand\vy[0]{\texttt{y}}
 \newcommand\vz[0]{\texttt{z}}
 \newcommand\vzone[0]{\texttt{z1}}
@@ -370,18 +360,12 @@
 \newcommand\vsetter[0]{\texttt{setter}}
 \newcommand\vgetter[0]{\texttt{getter}}
 \newcommand\vcode[0]{\texttt{code}}
-\newcommand\vAbf[0]{\textbf{A}}
-\newcommand\vBbf[0]{\textbf{B}}
-\newcommand\vBIG[0]{\textbf{BIG}}
-\newcommand\vLITTLE[0]{\textbf{LITTLE}}
 \newcommand\vHALFWORDSIZE[0]{\texttt{HALF\_WORD\_SIZE}}
 \newcommand\vWORDSIZE[0]{\texttt{WORD\_SIZE}}
 \newcommand\PI[0]{\texttt{PI}}
 \newcommand\RED[0]{\texttt{RED}}
 \newcommand\GREEN[0]{\texttt{GREEN}}
 \newcommand\BLUE[0]{\texttt{BLUE}}
-\newcommand\RecordBase[0]{\texttt{RecordBase}}
-\newcommand\HalfWordBits[0]{\texttt{HALF\_WORD\_BITS}}
 \newcommand\MyRecord[0]{\texttt{MyRecord}}
 \newcommand\Color[0]{\texttt{Color}}
 \newcommand\rotatecolor[0]{\texttt{rotate\_color}}
@@ -394,15 +378,11 @@
 \newcommand\factorial[0]{\texttt{factorial}}
 \newcommand\increment[0]{\texttt{increment}}
 \newcommand\incrementone[0]{\texttt{increment-1}}
-\newcommand\BitsArray[0]{\texttt{BitsArray}}
 \newcommand\vN[0]{\texttt{N}}
 \newcommand\vA[0]{\texttt{A}}
 \newcommand\paramname[0]{\texttt{param\_name}}
 \newcommand\elemty[0]{\texttt{elem\_ty}}
 \newcommand\newindex[0]{\texttt{new\_index}}
-\newcommand\newelength[0]{\texttt{new\_e\_length}}
-\newcommand\pl[0]{\texttt{pl}}
-\newcommand\newpl[0]{\texttt{newpl}}
 \newcommand\vpe[0]{\texttt{p\_e}}
 \newcommand\vnewpe[0]{\texttt{new\_p\_e}}
 \newcommand\optexnname[0]{\texttt{opt\_exn\_name}}
@@ -429,3 +409,4 @@
 \newcommand\vtuplevalue[0]{\texttt{tuple\_value}}
 \newcommand\vtupleelements[0]{\texttt{tuple\_elements}}
 \newcommand\nmlist[0]{\texttt{nmlist}}
+\newcommand\vsubprogramtype[0]{\texttt{subprogram\_type}}

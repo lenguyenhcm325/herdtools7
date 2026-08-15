@@ -311,14 +311,14 @@ module NativeBackend (C : Config) = struct
     let round_towards_zero = wrap_real_to_int "RoundTowardsZero" truncate
 
     let primitives =
-      let e_var x = E_Var x |> add_dummy_annotation in
+      let e_var x = E_Var x |> add_dummy_pos in
       let eoi i = expr_of_int i in
       let binop = ASTUtils.binop in
       let minus_one e = binop `SUB e (eoi 1) in
       let pow_2 = binop `POW (eoi 2) in
       let neg e = E_Unop (NEG, e) |> add_pos_from e in
       (* [t_bits "N"] is the bitvector type of length [N]. *)
-      let t_bits x = T_Bits (e_var x, []) |> add_dummy_annotation in
+      let t_bits x = T_Bits (e_var x, []) |> add_dummy_pos in
       (* [p ~parameters ~args ~returns name f] declares a primtive named [name]
          with body [f], and signature specified by [parameters] [args] and
          [returns]. *)
@@ -396,23 +396,14 @@ let rec unknown_of_aggregate_type unknown_of_singular_type ~eval_expr_sef ty =
   match ty.desc with
   | T_Real | T_String | T_Bool | T_Bits _ | T_Int _ ->
       unknown_of_singular_type ~eval_expr_sef ty
-  | T_Array (length, t_elem) -> (
-      match length with
-      | ArrayLength_Expr e -> (
-          match eval_expr_sef e with
-          | NV_Literal (L_Int n) ->
-              let n = Z.to_int n in
-              if n >= 0 then
-                NV_Vector (List.init n (fun _ -> unknown_of_type t_elem))
-              else Error.(fatal_from ty (UnsupportedExpr (Dynamic, e)))
-          | _ -> (* Bad types *) assert false)
-      | ArrayLength_Enum (_enum, labels) ->
-          let fields =
-            List.map
-              (fun field_name -> (field_name, unknown_of_type t_elem))
-              labels
-          in
-          NV_Record (IMap.of_list fields))
+  | T_Array (e_length, t_elem) -> (
+      match eval_expr_sef e_length with
+      | NV_Literal (L_Int n) ->
+          let n = Z.to_int n in
+          if n >= 0 then
+            NV_Vector (List.init n (fun _ -> unknown_of_type t_elem))
+          else Error.(fatal_from ty (UnsupportedExpr (Dynamic, e_length)))
+      | _ -> (* Bad types *) assert false)
   | T_Record fields | T_Exception fields ->
       fields
       |> List.map (fun (field_name, t) -> (field_name, unknown_of_type t))

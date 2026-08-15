@@ -40,7 +40,6 @@ module SemanticsRule = struct
     | ESlice
     | ECall
     | EGetArray
-    | EGetEnumArray
     | ESliceError
     | ERecord
     | EGetBitField
@@ -49,7 +48,6 @@ module SemanticsRule = struct
     | EConcat
     | ETuple
     | EArray
-    | EEnumArray
     | EArbitrary
     | EPattern
     | LEDiscard
@@ -59,21 +57,18 @@ module SemanticsRule = struct
     | LEUndefIdentV1
     | LESlice
     | LESetArray
-    | LESetEnumArray
     | LESetField
     | LESetFields
     | LEDestructuring
     | Slices
     | Slice
     | PAll
-    | PAny
     | PGeq
     | PLeq
-    | PNot
     | PRange
     | PSingle
     | PMask
-    | PTuple
+    | PatternMatcher
     | LDDiscard
     | LDVar
     | LDTuple
@@ -136,9 +131,7 @@ module SemanticsRule = struct
     | EConcat -> "EConcat"
     | ETuple -> "ETuple"
     | EArray -> "EArray"
-    | EEnumArray -> "EEnumArray"
     | EGetArray -> "EGetArray"
-    | EGetEnumArray -> "EGetEnumArray"
     | ESliceError -> "ESliceError"
     | EArbitrary -> "EArbitrary"
     | EPattern -> "EPattern"
@@ -147,7 +140,6 @@ module SemanticsRule = struct
     | LEMultiAssign -> "LEMultiAssign"
     | LESlice -> "LESlice"
     | LESetArray -> "LESetArray"
-    | LESetEnumArray -> "LESetEnumArray"
     | LESetField -> "LESetField"
     | LESetFields -> "LESetFields"
     | LEDestructuring -> "LEDestructuring"
@@ -156,14 +148,12 @@ module SemanticsRule = struct
     | Slices -> "Slices"
     | Slice -> "Slice"
     | PAll -> "PAll"
-    | PAny -> "PAny"
     | PGeq -> "PGeq"
     | PLeq -> "PLeq"
-    | PNot -> "PNot"
     | PRange -> "PRange"
     | PSingle -> "PSingle"
     | PMask -> "PMask"
-    | PTuple -> "PTuple"
+    | PatternMatcher -> "PatternMatcher"
     | LDDiscard -> "LDDiscard"
     | LDVar -> "LDVar"
     | LDTuple -> "LDTuple"
@@ -223,7 +213,6 @@ module SemanticsRule = struct
       ESlice;
       ECall;
       EGetArray;
-      EGetEnumArray;
       ESliceError;
       ERecord;
       EGetBitField;
@@ -232,7 +221,6 @@ module SemanticsRule = struct
       EConcat;
       ETuple;
       EArray;
-      EEnumArray;
       EArbitrary;
       EPattern;
       LEDiscard;
@@ -242,21 +230,18 @@ module SemanticsRule = struct
       LEUndefIdentV1;
       LESlice;
       LESetArray;
-      LESetEnumArray;
       LESetField;
       LESetFields;
       LEDestructuring;
       Slices;
       Slice;
       PAll;
-      PAny;
       PGeq;
       PLeq;
-      PNot;
       PRange;
       PSingle;
       PMask;
-      PTuple;
+      PatternMatcher;
       LDDiscard;
       LDVar;
       LDTuple;
@@ -336,9 +321,6 @@ module TypingRule = struct
     | Structure
     | Canonical
     | Domain
-    | Subtype
-    | StructuralSubtypeSatisfaction
-    | DomainSubtypeSatisfaction
     | SubtypeSatisfaction
     | TypeSatisfaction
     | TypeClash
@@ -378,6 +360,7 @@ module TypingRule = struct
     | LESlice
     | LESetArray
     | LESetStructuredField
+    | LESetCollectionField
     | LESetBadBitField
     | LESetBitField
     | LESetBadField
@@ -385,14 +368,11 @@ module TypingRule = struct
     | LEConcat
     | Slice
     | PAll
-    | PAny
     | PGeq
     | PLeq
-    | PNot
     | PRange
     | PSingle
     | PMask
-    | PTuple
     | LDDiscard
     | LDVar
     | LDTuple
@@ -444,7 +424,6 @@ module TypingRule = struct
     | TBitField
     | TBitFields
     | ReduceSlicesToCall
-    | TypeOfArrayLength
     | TypecheckDecl
     | CheckGlobalPragma
     | AnnotateAndDeclareFunc
@@ -524,9 +503,6 @@ module TypingRule = struct
     | Canonical -> "Canonical"
     | Domain -> "Domain"
     | Structure -> "Structure"
-    | Subtype -> "Subtype"
-    | StructuralSubtypeSatisfaction -> "StructuralSubtypeSatisfaction"
-    | DomainSubtypeSatisfaction -> "DomainSubtypeSatisfaction"
     | SubtypeSatisfaction -> "SubtypeSatisfaction"
     | TypeSatisfaction -> "TypeSatisfaction"
     | TypeClash -> "TypeClash"
@@ -563,6 +539,7 @@ module TypingRule = struct
     | LESlice -> "LESlice"
     | LESetArray -> "LESetArray"
     | LESetStructuredField -> "LESetStructuredField"
+    | LESetCollectionField -> "LESetCollectionField"
     | LESetBadBitField -> "LESetBadBitField"
     | LESetBitField -> "LESetBitField"
     | LESetBadField -> "LESetBadField"
@@ -573,14 +550,11 @@ module TypingRule = struct
     | LEUndefIdentV1 -> "LEUndefIdentV1"
     | Slice -> "Slice"
     | PAll -> "PAll"
-    | PAny -> "PAny"
     | PGeq -> "PGeq"
     | PLeq -> "PLeq"
-    | PNot -> "PNot"
     | PRange -> "PRange"
     | PSingle -> "PSingle"
     | PMask -> "PMask"
-    | PTuple -> "PTuple"
     | LDDiscard -> "LDDiscardNone"
     | LDVar -> "LDVar"
     | LDUninitialisedVar -> "LDUninitialisedVar"
@@ -632,7 +606,6 @@ module TypingRule = struct
     | TBitField -> "TBitField"
     | TBitFields -> "TBitFields"
     | ReduceSlicesToCall -> "ReduceSlicesToCall"
-    | TypeOfArrayLength -> "TypeOfArrayLength"
     | TypecheckDecl -> "TypecheckDecl"
     | CheckGlobalPragma -> "CheckGlobalPragmas"
     | AnnotateAndDeclareFunc -> "AnnotateAndDeclareFunc"
@@ -715,9 +688,6 @@ module TypingRule = struct
       Canonical;
       Domain;
       Structure;
-      Subtype;
-      DomainSubtypeSatisfaction;
-      StructuralSubtypeSatisfaction;
       SubtypeSatisfaction;
       TypeSatisfaction;
       TypeClash;
@@ -754,6 +724,7 @@ module TypingRule = struct
       LESlice;
       LESetArray;
       LESetStructuredField;
+      LESetCollectionField;
       LESetBadBitField;
       LESetBitField;
       LESetBadField;
@@ -804,7 +775,6 @@ module TypingRule = struct
       TBitField;
       TBitFields;
       ReduceSlicesToCall;
-      TypeOfArrayLength;
       TypecheckDecl;
       CheckGlobalPragma;
       AnnotateAndDeclareFunc;

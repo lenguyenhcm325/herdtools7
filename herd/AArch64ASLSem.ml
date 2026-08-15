@@ -24,7 +24,7 @@ let aarch64_iico_order = "aarch64_iico_order"
 let return_i i =
   let open Asllib.AST in
   let open Asllib.ASTUtils in
-  add_dummy_annotation (S_Return (Some (expr_of_int i)))
+  add_dummy_pos (S_Return (Some (expr_of_int i)))
 
 let return_0 = return_i 0
 
@@ -32,14 +32,14 @@ let catch_silent_exit body =
   let open Asllib.AST in
   let open Asllib.ASTUtils in
   let exit_type : Asllib.AST.ty =
-    add_dummy_annotation (T_Named "SilentExit") in
+    add_dummy_pos (T_Named "SilentExit") in
   let catcher = (None,exit_type,return_0) in
-  add_dummy_annotation (S_Try (body,[catcher],None))
+  add_dummy_pos (S_Try (body,[catcher],None))
 
 let setup_registers is_vmsa =
   let open Asllib.AST in
   let open Asllib.ASTUtils in
-  add_dummy_annotation
+  add_dummy_pos
     (S_Call
        {
          name = "_SetUpRegisters";
@@ -66,6 +66,7 @@ module Make (TopConf : AArch64Sig.Config) (V : Value.AArch64ASL) :
   let _dbg = TopConf.C.debug.Debug_herd.monad
   let _profile = TopConf.C.debug.Debug_herd.profile_asl
 
+  module Timer = TopConf.C.Timer
   let start_profile = if _profile then Sys.time else Fun.const 0.
   let end_profile = if _profile then end_profile else fun _ _ -> ()
 
@@ -159,10 +160,10 @@ module Make (TopConf : AArch64Sig.Config) (V : Value.AArch64ASL) :
     let barrier_domain =
       let open AArch64Base in
       function
-      | NSH -> "MBReqDomain_Nonshareable"
-      | ISH -> "MBReqDomain_InnerShareable"
-      | OSH -> "MBReqDomain_OuterShareable"
-      | SY -> "MBReqDomain_FullSystem"
+      | NSH -> "MBMaintenanceScope_Nonshareable"
+      | ISH -> "MBMaintenanceScope_InnerShareable"
+      | OSH -> "MBMaintenanceScope_OuterShareable"
+      | SY -> "MBMaintenanceScope_None"
 
     and barrier_typ =
       let open AArch64Base in
@@ -214,7 +215,7 @@ module Make (TopConf : AArch64Sig.Config) (V : Value.AArch64ASL) :
     let decode_inst ii =
       let ii = unalias ii in
       let open Asllib.AST in
-      let with_pos desc = Asllib.ASTUtils.add_dummy_annotation ~version:V0 desc in
+      let with_pos desc = Asllib.ASTUtils.add_dummy_pos ~version:V0 desc in
       let ( ^= ) x e = S_Decl (LDK_Let, LDI_Var x, None, Some e) |> with_pos in
       let lit v = E_Literal v |> with_pos in
       let liti i = lit (L_Int (Z.of_int i)) in
@@ -1002,12 +1003,11 @@ module Make (TopConf : AArch64Sig.Config) (V : Value.AArch64ASL) :
                 ])
 
       | I_FENCE ISB -> Some ("control/barriers/ISB_BI_barriers.opn", stmt [])
-      | I_FENCE (DMB (dom, btyp)) ->
+      | I_FENCE (DMB (SY, btyp)) ->
           Some
             ( "control/barriers/DMB_BO_barriers.opn",
               stmt
                 [
-                  "domain" ^= var (barrier_domain dom);
                   "types" ^= var (barrier_typ btyp);
                 ] )
       | I_FENCE (DSB (dom, btyp)) ->
@@ -1017,7 +1017,7 @@ module Make (TopConf : AArch64Sig.Config) (V : Value.AArch64ASL) :
                 [
                   "nXS" ^= litb false;
                   "alias" ^= var "DSBAlias_DSB";
-                  "domain" ^= var (barrier_domain dom);
+                  "scope" ^= var (barrier_domain dom);
                   "types" ^= var (barrier_typ btyp);
                 ] )
       | I_UDF k when C.variant Variant.ASL_AArch64_UDF ->
@@ -1686,12 +1686,14 @@ module Make (TopConf : AArch64Sig.Config) (V : Value.AArch64ASL) :
       | Some _ when AArch64.is_mixed -> check_strict test_aarch64 ii
       | Some (fname, args) -> (
           profile "build AArch64 semantics from ASL" @@ fun () ->
+          Timer.start Timer.semantics;
           let test_asl, eqs_test = fake_test ii fname args in
           let model = build_model_from_file "asl.cat" in
           let { MC.event_structures = rfms; _ }, test_asl =
             profile "run ASL Semantics" @@ fun () ->
             MC.glommed_event_structures ~is_pgm:false test_asl
           in
+          Timer.stop Timer.semantics;
           let () =
             if _dbg then
               Printf.eprintf "Got rfms back: %d of them.\n%!" (List.length rfms)
@@ -1718,7 +1720,10 @@ module Make (TopConf : AArch64Sig.Config) (V : Value.AArch64ASL) :
               let () = end_profile t0 "ASL cat, success" in
               Translator.tr_execution ii eqs_test c :: acc
             in
-            check_event_structure model test_asl conc kfail ksuccess acc
+            Timer.start Timer.model;
+            let c = check_event_structure model test_asl conc kfail ksuccess acc in
+            Timer.stop Timer.model;
+            c
           in
           let check_and_translate acc c =
             profile "check and translate" @@ fun () ->
@@ -1748,6 +1753,8 @@ module Make (TopConf : AArch64Sig.Config) (V : Value.AArch64ASL) :
       match ii.A.inst with
        (* Specific -> get TLBI key *)
       | I_OP3 (V64,LSR,_,_,OpExt.Imm (12,0))
+       (* Unsupported by the Arm ARM since M.c: only SY is supported. *)
+      | I_FENCE (DMB ((NSH | OSH | ISH), _))
       (* Register or zero comparison, 64 is for addresses and pteval,
          32 is for instructions *)
       | I_OP3 ((V64|V32),SUBS,ZR,_,
