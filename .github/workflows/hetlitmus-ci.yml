@@ -1,8 +1,7 @@
 # Every hetlitmus make gate that runs without a GPU device: the base
 # umbrella (make hetlitmus-test) in one job, the five compile-only
-# toolchain gates in the other.  BOTH jobs install nvcc and hipcc --
-# the device-session gate inside the base umbrella preflights them on
-# PATH -- but no job needs a device.  The four device-executing gates
+# toolchain gates in the other.  Only the second job installs nvcc and
+# hipcc; no job needs a device.  The four device-executing gates
 # (hetlitmus-stress, -selftest, -characterize-hw, -run-hw) probe for
 # real hardware and fail closed on a hosted runner; they run on a GPU
 # box only (hetlitmus/docs/TEST-PLAN.md).
@@ -40,31 +39,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang
 
-      - name: Install CUDA toolkit (nvcc)
-        uses: Jimver/cuda-toolkit@v0.2.36
-        with:
-          cuda: "12.9.1"
-          method: network
-          sub-packages: '["nvcc", "cudart", "cudart-dev"]'
-
-      - name: Install HIP toolchain (hipcc)
-        run: |
-          sudo mkdir -p /etc/apt/keyrings
-          curl -fsSL https://repo.radeon.com/rocm/rocm.gpg.key \
-            | gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
-          echo 'deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/7.2.4 jammy main' \
-            | sudo tee /etc/apt/sources.list.d/rocm.list
-          printf 'Package: *\nPin: release o=repo.radeon.com\nPin-Priority: 600\n' \
-            | sudo tee /etc/apt/preferences.d/rocm-pin-600
-          sudo apt-get update
-          sudo apt-get install -y hipcc hip-dev hip-runtime-amd rocm-device-libs
-          echo /opt/rocm/bin >> "$GITHUB_PATH"
-
-      # The device-session gate's wrapper refuses without real nvcc and
-      # hipcc on PATH; a missing tool must fail here, not mid-umbrella.
       - name: Preflight toolchain assertion
         run: |
-          for t in nvcc hipcc clang gcc g++ objdump python3; do
+          for t in clang gcc g++ objdump python3; do
             command -v "$t" || { echo "missing: $t"; exit 1; }
           done
 

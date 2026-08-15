@@ -323,9 +323,11 @@ def phase1_dryrun(wrapper, quiet=False):
     bad = []
     tmp = tempfile.mkdtemp(prefix="runcheck1.")
     try:
+        cc, probe = make_stubs(tmp)
         out = os.path.join(tmp, "never-created")
         r = run_wrapper(wrapper, ["--gpu-target", "cuda", "--corpus", fx["dir"],
-                                  "--arch", arm["arch"], "--out", out, "--dry-run"])
+                                  "--arch", arm["arch"], "--out", out, "--dry-run"],
+                        env=wrapper_env(cc, probe))
         if r.returncode != 0:
             bad.append("--dry-run exited %d: %s" % (r.returncode,
                                                     r.stderr.strip()[-200:]))
@@ -536,7 +538,7 @@ def unregistered_emits(quiet=False):
     return bad
 
 
-def unregistered_session(wrapper, fx, quiet=False):
+def unregistered_session(wrapper, fx, env, quiet=False):
     """...and the WRAPPER does not refuse one either.  On a host whose own CPU
     lane makes the unregistered pair the session runs; elsewhere the aarch64
     corpus reaches the warning and then dies of the FOREIGN HOST, not of the
@@ -550,7 +552,7 @@ def unregistered_session(wrapper, fx, quiet=False):
         args = ["--gpu-target", "hip", "--corpus", aarch64_corpus(), "--arch",
                 "gfx942", "--dry-run"]
         want_rc, want_frag = 2, "uname -m is"
-    r = run_wrapper(wrapper, args)
+    r = run_wrapper(wrapper, args, env=env)
     if r.returncode != want_rc:
         bad.append("the wrapper exited %d on the unregistered pair, want %d -- an "
                    "unregistered pair is warned about, not refused: %s"
@@ -635,7 +637,7 @@ def phase3_refusals(wrapper, quiet=False):
                 print("      %-34s rc=2, names it" % name)
         # ... and the one case that is not a refusal at all.
         bad += unregistered_emits(quiet)
-        bad += unregistered_session(wrapper, fx, quiet)
+        bad += unregistered_session(wrapper, fx, wrapper_env(cc, probe), quiet)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return bad
