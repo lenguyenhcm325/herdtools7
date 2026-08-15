@@ -53,10 +53,11 @@ import brandscan          # noqa: E402  (the tree's own module, next to this one
 
 # The committed (x86_64, *) fixture, cut verbatim from a generate-x86.sh run and
 # kept that way by hetlitmus-x86fixture.  It is CLOSED UNDER THE CONTROL MAP:
-# S-cg-sys-relaxed-x86_64 is here because the S row names it as mu(T) and
+# every `-relaxed' entry is here because some row names it as mu(T), and
 # emission refuses a control it cannot build.
 X86_DIR = os.path.join(HETL, "tests", "het-x86")
-X86_TESTS = ["MP-cg-sys-acqrel-2s-x86_64", "MP-cg-sys-relaxed-x86_64",
+X86_TESTS = ["CoRR-cg-sys-fence-2s-x86_64", "CoRR-cg-sys-relaxed-x86_64",
+             "MP-cg-sys-acqrel-2s-x86_64", "MP-cg-sys-relaxed-x86_64",
              "S-cg-sys-fence-x86_64", "S-cg-sys-relaxed-x86_64"]
 # The (AArch64, *) lane is the committed het corpus, and a session over all of it
 # is not a gate.  The cut below is copied out of it verbatim at run time --

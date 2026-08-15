@@ -1,0 +1,10 @@
+Het CoRR-cg-sys-fence-2s-x86_64
+"Heterogeneous CoRR-cg-sys-fence-2s-x86_64: per-proc device assignment cpu,gpu (cpu=x86_64, gpu=LISA/PTX)"
+{
+}
+ P0:x86_64     | P1:gpu             ;
+ movl (x),%eax | w[relaxed,sys] x 1 ;
+ mfence        |                    ;
+ movl (x),%ebx |                    ;
+scopes: (sys (gpu (cta P1)))
+exists (0:rax=1 /\ 0:rbx=0)

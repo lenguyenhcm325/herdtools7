@@ -47,10 +47,10 @@ HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 # are exactly the ones with no reader.  Most carry both; a test carrying NEITHER is a
 # build bug, and its absence is what lets the degeneracy guard switch channel instead
 # of firing blind.  Phase 4 measures all three off the emitted corpus.
-CENSUS_SYNC, CENSUS_OBS, CENSUS_NEITHER = 400, 117, 0
-CENSUS_WINBUMP = 409        # every test but the `self' canaries, which cannot co-run
+CENSUS_SYNC, CENSUS_OBS, CENSUS_NEITHER = 460, 159, 0
+CENSUS_WINBUMP = 469        # every test but the `self' canaries, which cannot co-run
                             # a control of their own
-CENSUS_TESTS = 411
+CENSUS_TESTS = 471
 
 KS_C05 = 1.358
 # The Python mirrors of the header's knobs.  "Must match" is not a check: no fixture

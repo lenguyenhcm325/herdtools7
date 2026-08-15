@@ -50,8 +50,8 @@ GPU_DIR="hetlitmus/tests/gpu-only"
 HET_DIR="hetlitmus/tests/het"
 CUDA_OUT="hetlitmus/cuda-out"
 HIP_OUT="hetlitmus/hip-out"
-EXPECT_GPU=137
-EXPECT_HET=411
+EXPECT_GPU=173
+EXPECT_HET=471
 
 fail=0
 

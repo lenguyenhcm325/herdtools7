@@ -61,12 +61,12 @@ LIBDIR = os.path.join(ROOT, "litmus", "libdir")
 # degenerate two-sided drop, so the two name sets are equal in both directions
 # and control-map-amd.csv can stay keyed on the unsuffixed names with NO orphan
 # either way.  That script explains its sections and prints their census.
-N_X86 = 411
+N_X86 = 471
 
 # The x86 side of those renderings, counted from their .litmus columns.
-N_X86_PROCS = 663
-N_X86_STORES = 608
-N_X86_LOADS = 579
+N_X86_PROCS = 723
+N_X86_STORES = 660
+N_X86_LOADS = 611
 
 # corun-bodies's probe set: the control-map rows that name a mu(T), hence the harnesses
 # that co-run three instances (T, mu, canary), all three at the SAME proc index
@@ -77,8 +77,8 @@ N_X86_LOADS = 579
 # (instance, x86 proc) pair, and how many x86 procs a shape has runs from one
 # (LB, MP) to three (WRC3), so the ratio is shape-dependent and the two numbers
 # are measured separately, never derived from each other.
-N_CORUN_TESTS = 333
-N_CORUN_BODIES = 1365
+N_CORUN_TESTS = 375
+N_CORUN_BODIES = 1491
 
 # Representative harness for the machine-code phase: its x86 CPU proc carries a
 # store, a fence AND a load, so one objdump covers the whole vocabulary.  It is
@@ -1077,7 +1077,7 @@ def bite(tmp, corpus, good):
     os.remove(os.path.join(scratch, victim + ".litmus"))
     g3, b3 = emit_corpus(os.path.join(tmp, "b1b"), scratch)
     ok &= expect_red("emission-coverage/omit", lambda: phase1(scratch, g3, b3),
-                     "produced 410 renderings")
+                     "produced %d renderings" % (N_X86 - 1))
 
     # --- emission-coverage: a harness that never reached `bad' at all -------
     short = dict(good)

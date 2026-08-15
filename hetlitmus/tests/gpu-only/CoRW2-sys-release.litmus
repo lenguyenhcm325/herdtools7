@@ -1,0 +1,14 @@
+LISA CoRW2-sys-release
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1)))
+Com=Co Rf
+Orig=RfeReleaseSysRelaxedSys PosRWRelaxedSysReleaseSys CoeReleaseSysReleaseSys
+"RfeReleaseSysRelaxedSys PosRWRelaxedSysReleaseSys CoeReleaseSysReleaseSys"
+{
+}
+ P0                  | P1                 ;
+ r[relaxed,sys] r0 x | w[release,sys] x 2 ;
+ w[release,sys] x 1  |                    ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists ([x]=2 /\ 0:r0=2)

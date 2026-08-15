@@ -45,9 +45,9 @@ HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 # Corpus censuses, re-derived below from the emitted artifacts.  A mismatch means
 # either the corpus changed (update these, deliberately) or the emitter did -- which
 # is what this gate is for.
-N_TESTS = 411
+N_TESTS = 471
 N_STORE_ONLY = 11           # the 2+2W family: no reader, observer-only
-N_WITH_LOC_COLUMN = 117     # the shapes with a ws-location: 2+2W 11 + R 53 + S 53
+N_WITH_LOC_COLUMN = 159     # the shapes with a ws-location: 2+2W R S CoWR CoRW2
 
 # The store-only shape whose tally Phase 3 extracts and runs.
 TALLY_TEST = "2+2W-cg-sys-fence"

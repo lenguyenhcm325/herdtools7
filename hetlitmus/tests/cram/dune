@@ -84,7 +84,7 @@
   ../het/control-map.csv
   ; The HIP half of this test emits from the (x86_64, hip) pair, the one with an
   ; MI300A row (litmus/hetMachine.ml; machine-pairs.t (b)).  ../het-x86 is the
-  ; committed fixture for that pair -- see its README for why the 411-test x86
+  ; committed fixture for that pair -- see its README for why the generated x86
   ; corpus is not usable here (generate-x86.sh needs hetgen7 on $PATH).
   (glob_files ../het-x86/*)
   ../gpu-only/MP-sys-acquire.litmus))

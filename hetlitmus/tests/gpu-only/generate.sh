@@ -13,7 +13,7 @@
 #      original names because that is how the artifact names them.  Generated
 #      verbatim.
 #  (B) The systematic grid: every standard shape
-#         MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3
+#         MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3 CoRR CoWR CoRW2
 #      swept over  scope in {cta,gpu,sys}  x  order in {relaxed,acquire,release,
 #      fence}, named <shape>-<scope>-<order>.litmus.
 #

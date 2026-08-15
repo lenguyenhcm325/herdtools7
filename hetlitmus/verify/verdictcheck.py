@@ -45,7 +45,7 @@ VERDICTS = ["OBSERVED", "NOT-OBSERVED-MU-HOT", "NOT-OBSERVED-CANARY-ONLY",
 # control-map.csv rather than typed: a mu(T) instance is built for every row whose
 # Mu column names a test, a canary instance for every row whose Canary column names
 # one ("self" rows ARE the canary and cannot co-run themselves).
-CENSUS = {"mu": 333, "canary": 409, "tests": 411}
+CENSUS = {"mu": 375, "canary": 469, "tests": 471}
 
 # ---------------------------------------------------------------------------
 # Frame exclusivity.  Each outcome's own sentences, checked BOTH ways: reachable

@@ -1,0 +1,15 @@
+LISA CoRW2-sys-fence
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1)))
+Com=Co Rf
+Orig=RfeRelaxedSysRelaxedSys FenceScSyssRWRelaxedSysRelaxedSys CoeRelaxedSysRelaxedSys
+"RfeRelaxedSysRelaxedSys FenceScSyssRWRelaxedSysRelaxedSys CoeRelaxedSysRelaxedSys"
+{
+}
+ P0                  | P1                 ;
+ r[relaxed,sys] r0 x | w[relaxed,sys] x 2 ;
+ f[sc,sys]           |                    ;
+ w[relaxed,sys] x 1  |                    ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists ([x]=2 /\ 0:r0=2)

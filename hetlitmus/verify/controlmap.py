@@ -50,9 +50,9 @@ LIBDIR = os.path.join(HERE, "..", "..", "litmus", "libdir")
 # identity: no row's only ordering op comes from the rung the x86 lattice drops
 # (STLR / LDAPR / DMB.ST / DMB.LD).  check() re-measures both floor sets and
 # reddens if they part company, so these constants cannot outlive that fact.
-N_TESTS = 411
-N_WITH_MU = 333
-N_FLOOR = 78
+N_TESTS = 471
+N_WITH_MU = 375
+N_FLOOR = 96
 
 # ---------------------------------------------------------------------------
 # The lattice parameter.  The AMD map is regenerated, never translated: the CPU
@@ -651,10 +651,10 @@ def header_for_lattice():
         "# loses its middle rung -- STLR / LDAPR / DMB.ST / DMB.LD all have a plain",
         "# MOV as their x86 image -- so a candidate that only moves within",
         "# {ra, st, ld} is NOT a weakening on MI300A and is refused here.  The floor",
-        "# set is the same 78 rows as the AArch64 map's all the same: only the `-2s'",
-        "# and order-pair cells carry a CPU-side ordering op, and each of those",
-        "# carries a GPU-side one too, so the lost rung never holds a row off the",
-        "# floor by itself.  MuAlt does move, because the NEAREST weakening does.",
+        "# set matches the AArch64 map's all the same: only the `-2s' and order-pair",
+        "# cells carry a CPU-side ordering op, and each of those carries a GPU-side",
+        "# one too, so the lost rung never holds a row off the floor by itself.",
+        "# MuAlt does move, because the NEAREST weakening does.",
         "#",
     ] + HEADER[4:])
 

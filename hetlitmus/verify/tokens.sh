@@ -26,7 +26,7 @@ export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 
 CHECK="$REPO/hetlitmus/verify/ptxcheck.py"
 # Overridable so the census guard below can be bitten (point at an empty dir ->
-# the expected 137/411 fails).  Default is the real corpus.
+# the expected count fails).  Default is the real corpus.
 GPU_DIR="${GPU_DIR:-$REPO/hetlitmus/tests/gpu-only}"
 HET_DIR="${HET_DIR:-$REPO/hetlitmus/tests/het}"
 # Per-test workers for the corpus loops below.  `nproc' honours this process's
@@ -85,9 +85,9 @@ run_dir() {
     done
   fi
   # `pass -eq total' is VACUOUSLY true on an empty or misnamed corpus (0 -eq 0):
-  # it would report OK for zero tests.  So assert the known census (het=411,
-  # gpu-only=137), the same exact-count discipline corpus-gate and verdictcheck
-  # use; a census change then has to be a deliberate edit to the call site.
+  # it would report OK for zero tests.  So assert the known census, passed in by
+  # the call site below -- the same exact-count discipline corpus-gate and
+  # verdictcheck use; a census change then has to be a deliberate edit there.
   if [ "$expect" -gt 0 ] && [ "$total" -ne "$expect" ]; then
     printf 'CENSUS FAIL %s: %d .litmus emitted, expected %d (empty/misnamed corpus?)\n' \
            "$label" "$total" "$expect" >&2
@@ -1135,16 +1135,16 @@ cpustress_report() {
 # ---------------------------------------------------------------------------
 cmd="${1:-all}"
 case "$cmd" in
-  gpu-only)  run_dir "$GPU_DIR" gpu-only 137 ;;
-  het)       run_dir "$HET_DIR" het 411 ;;
+  gpu-only)  run_dir "$GPU_DIR" gpu-only 173 ;;
+  het)       run_dir "$HET_DIR" het 471 ;;
   guard)     guard_report; exit $? ;;
   selftest)  selftest; exit $? ;;
   stress)    stress_report; exit $? ;;
   cpustress) cpustress_report; exit $? ;;
   all)
     rc=0
-    run_dir "$GPU_DIR" gpu-only 137 || rc=1
-    run_dir "$HET_DIR" het 411 || rc=1
+    run_dir "$GPU_DIR" gpu-only 173 || rc=1
+    run_dir "$HET_DIR" het 471 || rc=1
     exit $rc ;;
   *) echo "usage: $0 [all|gpu-only|het|guard|selftest|stress|cpustress]"; exit 64 ;;
 esac

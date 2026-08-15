@@ -1,0 +1,14 @@
+LISA CoWR-cta-release
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1)))
+Com=Fr Co
+Orig=PosWRReleaseCtaRelaxedCta FreRelaxedCtaReleaseCta CoeReleaseCtaReleaseCta
+"PosWRReleaseCtaRelaxedCta FreRelaxedCtaReleaseCta CoeReleaseCtaReleaseCta"
+{
+}
+ P0                  | P1                 ;
+ w[release,cta] x 2  | w[release,cta] x 1 ;
+ r[relaxed,cta] r0 x |                    ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists ([x]=2 /\ 0:r0=0)

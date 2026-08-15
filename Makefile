@@ -666,7 +666,7 @@ hetlitmus-corpus: | build
 hetlitmus-faithful: | build
 	@ echo
 	bash hetlitmus/verify/tokens.sh all
-	@ echo "HetLitmus Layer-3 PTX faithfulness (548): OK"
+	@ echo "HetLitmus Layer-3 PTX faithfulness (644): OK"
 
 ### A curated sample of emitted harnesses builds end to end through its own
 ### comp.sh -- host CPU object, cross-assembly, .cu and .hip

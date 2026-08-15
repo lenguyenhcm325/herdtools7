@@ -1,0 +1,15 @@
+LISA CoWR-cta-fence
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1)))
+Com=Fr Co
+Orig=FenceScCtasWRRelaxedCtaRelaxedCta FreRelaxedCtaRelaxedCta CoeRelaxedCtaRelaxedCta
+"FenceScCtasWRRelaxedCtaRelaxedCta FreRelaxedCtaRelaxedCta CoeRelaxedCtaRelaxedCta"
+{
+}
+ P0                  | P1                 ;
+ w[relaxed,cta] x 2  | w[relaxed,cta] x 1 ;
+ f[sc,cta]           |                    ;
+ r[relaxed,cta] r0 x |                    ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists ([x]=2 /\ 0:r0=0)

@@ -32,15 +32,18 @@ declare -A SHAPE_CYCLE=(
   [ISA2]="PodWW Rfe PodRW Rfe PodRR Fre"
   [IRIW]="Rfe PodRR Fre Rfe PodRR Fre"
   [WRC3]="Rfe PodRW Rfe PodRW Rfe PodRR Fre"
+  [CoRR]="Rfe PosRR Fre"
+  [CoWR]="PosWR Fre Coe"
+  [CoRW2]="Rfe PosRW Coe"
 )
 declare -A SHAPE_NPROCS=(
-  [MP]=2 [SB]=2 [LB]=2 [2+2W]=2 [R]=2 [S]=2
+  [MP]=2 [SB]=2 [LB]=2 [2+2W]=2 [R]=2 [S]=2 [CoRR]=2 [CoWR]=2 [CoRW2]=2
   [WRC]=3 [RWC]=3 [ISA2]=3
   [IRIW]=4 [WRC3]=4
 )
 
 # Generation order (associative arrays are unordered in bash).
-SHAPE_ORDER="MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3"
+SHAPE_ORDER="MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3 CoRR CoWR CoRW2"
 
 # --- heterogeneous device cuts ----------------------------------------------
 # Role-based and symmetry-reduced, NOT 2^n.  2-proc shapes take both directions
@@ -64,6 +67,9 @@ declare -A SHAPE_HET_CUTS=(
   [ISA2]="gpu,cpu,cpu cpu,gpu,cpu cpu,cpu,gpu"
   [IRIW]="cpu,gpu,cpu,cpu gpu,cpu,cpu,cpu cpu,gpu,cpu,gpu gpu,cpu,gpu,cpu"
   [WRC3]="gpu,cpu,cpu,cpu cpu,gpu,cpu,cpu cpu,cpu,gpu,cpu cpu,cpu,cpu,gpu"
+  [CoRR]="cpu,gpu gpu,cpu"
+  [CoWR]="cpu,gpu gpu,cpu"
+  [CoRW2]="cpu,gpu gpu,cpu"
 )
 
 GRID_SCOPES="cta gpu sys"

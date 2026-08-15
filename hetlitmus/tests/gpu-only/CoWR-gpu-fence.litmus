@@ -1,0 +1,15 @@
+LISA CoWR-gpu-fence
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1)))
+Com=Fr Co
+Orig=FenceScGpusWRRelaxedGpuRelaxedGpu FreRelaxedGpuRelaxedGpu CoeRelaxedGpuRelaxedGpu
+"FenceScGpusWRRelaxedGpuRelaxedGpu FreRelaxedGpuRelaxedGpu CoeRelaxedGpuRelaxedGpu"
+{
+}
+ P0                  | P1                 ;
+ w[relaxed,gpu] x 2  | w[relaxed,gpu] x 1 ;
+ f[sc,gpu]           |                    ;
+ r[relaxed,gpu] r0 x |                    ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists ([x]=2 /\ 0:r0=0)

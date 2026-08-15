@@ -1,0 +1,11 @@
+Het CoRW2-gc-cta-fence
+"Heterogeneous CoRW2-gc-cta-fence: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X0=x;
+}
+ P0:gpu              | P1:cpu      ;
+ r[relaxed,cta] r0 x | MOV W1,#2   ;
+ f[sc,cta]           | STR W1,[X0] ;
+ w[relaxed,cta] x 1  |             ;
+scopes: (sys (gpu (cta P0)))
+exists (0:r0=2 /\ [x]=2)

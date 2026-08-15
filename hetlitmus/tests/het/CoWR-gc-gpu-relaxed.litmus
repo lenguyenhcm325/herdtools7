@@ -1,0 +1,10 @@
+Het CoWR-gc-gpu-relaxed
+"Heterogeneous CoWR-gc-gpu-relaxed: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X1=x;
+}
+ P0:gpu              | P1:cpu      ;
+ w[relaxed,gpu] x 2  | MOV W0,#1   ;
+ r[relaxed,gpu] r0 x | STR W0,[X1] ;
+scopes: (sys (gpu (cta P0)))
+exists (0:r0=0 /\ [x]=2)

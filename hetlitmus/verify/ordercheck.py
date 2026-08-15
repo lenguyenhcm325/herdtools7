@@ -42,7 +42,15 @@ HERD_LIBDIR = os.path.join(REPO, "herd", "libdir")
 BELL = os.path.join(HETL, "bells", "ptx.bell")
 CAT = os.path.join(HETL, "cats", "nvidia-ptx.cat")
 
-# --- shape catalogue (must mirror tests/_grid_lib.sh SHAPE_CYCLE) ------------
+# --- shape catalogue --------------------------------------------------------
+# The shapes of tests/_grid_lib.sh whose every proc carries a program-order pair
+# of its own: `_edges' builds exactly the four edge tokens of a 2-proc cycle, and
+# a per-primitive ordering claim needs a pair to be about.  The 3- and 4-proc
+# shapes stay out, and a same-location (`Pos') shape -- three edges, one proc
+# single-access -- stays out for the reason _grid_lib.sh gives beside
+# TWO_SIDED_PAIR_SHAPES.  Admitting one means first moving `pairs', `_edges',
+# `_arm_po' and `_ptx_po' off the literal `d' and the fixed 3-character `Pod'
+# slice they cut the access suffix with.
 CYCLE = {
     "MP":   ["PodWW", "Rfe", "PodRR", "Fre"],
     "SB":   ["PodWR", "Fre", "PodWR", "Fre"],

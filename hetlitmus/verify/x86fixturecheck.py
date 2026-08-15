@@ -2,11 +2,11 @@
 """
 x86fixturecheck.py -- is `hetlitmus/tests/het-x86' still what its generators emit?
 
-That directory is five hand-cut committed files -- four `.litmus' renderings plus
-a one-row-per-test extract of `control-map-amd.csv' -- and the ONLY committed
-route to the (x86_64, hip) pair: the real x86 corpus is generated on demand and
-never committed, and a cram sandbox has no `hetgen7' on $PATH.  Nothing else
-compares the fixture against its generators, and what moves it --
+That directory is hand-cut committed files -- the `.litmus' renderings named in
+TESTS plus a one-row-per-test extract of `control-map-amd.csv' -- and the ONLY
+committed route to the (x86_64, hip) pair: the real x86 corpus is generated on
+demand and never committed, and a cram sandbox has no `hetgen7' on $PATH.
+Nothing else compares the fixture against its generators, and what moves it --
 `generate-x86.sh', `tests/het/control-map-amd.csv' -- moves often.  A stale
 fixture breaks no gate; it makes every gate that reads it test a configuration
 nothing ships.
@@ -18,8 +18,8 @@ nothing ships.
 
 One generator run serves both phases, since only the fixture side is ever
 perturbed, and neither phase needs a GPU: the gate lives in the CUDA-free
-`hetlitmus-test' umbrella.  `--bite' perturbs one committed .litmus body and one
-committed map row in a COPY of the fixture and requires the matching phase to
+`hetlitmus-test' umbrella.  `--bite' perturbs committed .litmus bodies and
+committed map rows in a COPY of the fixture and requires the matching phase to
 redden naming the file.
 """
 import argparse
@@ -37,13 +37,19 @@ GEN_X86 = os.path.join(HET_DIR, "generate-x86.sh")
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
 # The tests the fixture carries.  Named here rather than globbed so that a file
-# deleted from the fixture is a failure and NOT an empty loop.
+# deleted from the fixture is a failure and NOT an empty loop.  Order is load
+# bearing: `--bite' indexes this list.
 # S-cg-sys-relaxed is here because the S row names it as mu(T) and the emitter
 # refuses a control it cannot resolve: a fixture that names one has to ship it.
+# The CoRR pair carries render_x86_cpu's same-location fence spelling
+# (`MFences<XY>'), which no other committed artifact holds; CoRR-cg-sys-relaxed
+# is its mu(T), by the same rule as S's.
 TESTS = ["MP-cg-sys-relaxed-x86_64",
          "MP-cg-sys-acqrel-2s-x86_64",
          "S-cg-sys-fence-x86_64",
-         "S-cg-sys-relaxed-x86_64"]
+         "S-cg-sys-relaxed-x86_64",
+         "CoRR-cg-sys-fence-2s-x86_64",
+         "CoRR-cg-sys-relaxed-x86_64"]
 MAPS = ["control-map-amd.csv"]
 
 fails = []
@@ -176,6 +182,10 @@ def bite(corpus):
          TESTS[0] + ".litmus",
          lambda s: s.replace("r0", "r9", 1),
          TESTS[0] + ".litmus DIFFERS"),
+        ("litmus-bytes", "the same-location CPU fence weakened (mfence -> lfence)",
+         TESTS[4] + ".litmus",
+         lambda s: s.replace("mfence", "lfence", 1),
+         TESTS[4] + ".litmus DIFFERS"),
         ("map-rows", "a control-map row's canary re-pointed",
          "control-map-amd.csv",
          lambda s: s.replace(",self", ",MP-cg-sys-acqrel-2s-x86_64", 1),

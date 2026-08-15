@@ -1,0 +1,10 @@
+Het CoRR-cg-cta-release
+"Heterogeneous CoRR-cg-cta-release: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+0:X0=x;
+}
+ P0:cpu      | P1:gpu             ;
+ LDR W1,[X0] | w[release,cta] x 1 ;
+ LDR W2,[X0] |                    ;
+scopes: (sys (gpu (cta P1)))
+exists (0:X1=1 /\ 0:X2=0)

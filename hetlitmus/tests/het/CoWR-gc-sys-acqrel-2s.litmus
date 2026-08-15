@@ -1,0 +1,10 @@
+Het CoWR-gc-sys-acqrel-2s
+"Heterogeneous CoWR-gc-sys-acqrel-2s: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+{
+1:X1=x;
+}
+ P0:gpu              | P1:cpu       ;
+ w[release,sys] x 2  | MOV W0,#1    ;
+ r[acquire,sys] r0 x | STLR W0,[X1] ;
+scopes: (sys (gpu (cta P0)))
+exists (0:r0=0 /\ [x]=2)

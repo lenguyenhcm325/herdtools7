@@ -156,8 +156,8 @@ nomachine_note_of_lane() {      # <corpus>:<target> -> the sentence, or ""
 }
 MACHINE_DEFINE_RE='^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|ALGLAVE_ZERO_MEASURED)'
 GPU_LANES="cuda:cu:gpu-cuda hip:hip:gpu-hip"
-EXPECT_HET=411          # harness dirs per het lane
-EXPECT_GPU=137          # kernels per gpu-only lane
+EXPECT_HET=471          # harness dirs per het lane
+EXPECT_GPU=173          # kernels per gpu-only lane
 
 OUTDIR="${1:?usage: emit-all.sh OUTDIR}"
 mkdir -p "$OUTDIR"

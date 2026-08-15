@@ -7,10 +7,10 @@
 # loses its middle rung -- STLR / LDAPR / DMB.ST / DMB.LD all have a plain
 # MOV as their x86 image -- so a candidate that only moves within
 # {ra, st, ld} is NOT a weakening on MI300A and is refused here.  The floor
-# set is the same 78 rows as the AArch64 map's all the same: only the `-2s'
-# and order-pair cells carry a CPU-side ordering op, and each of those
-# carries a GPU-side one too, so the lost rung never holds a row off the
-# floor by itself.  MuAlt does move, because the NEAREST weakening does.
+# set matches the AArch64 map's all the same: only the `-2s' and order-pair
+# cells carry a CPU-side ordering op, and each of those carries a GPU-side
+# one too, so the lost rung never holds a row off the floor by itself.
+# MuAlt does move, because the NEAREST weakening does.
 #
 # Mu      = Layer-A control, CO-RUN in T's own harness: T's structural twin at the
 #           lattice floor (every ordering annotation dropped on both sides), on the
@@ -47,6 +47,66 @@ Test,Mu,MuRule,MuAlt,MuRelaxed,Canary
 2+2W-cg-sys-fence-2s,2+2W-cg-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 4 usable weakening(s) of which 1 maximal,2+2W-cg-sys-fence,2+2W-cg-sys-relaxed,MP-cg-sys-relaxed
 2+2W-cg-sys-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed
 2+2W-cg-sys-release,2+2W-cg-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,2+2W-cg-sys-relaxed,MP-cg-sys-relaxed
+CoRR-cg-cta-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed
+CoRR-cg-cta-release,CoRR-cg-cta-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRR-cg-cta-relaxed,MP-cg-sys-relaxed
+CoRR-cg-gpu-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed
+CoRR-cg-gpu-release,CoRR-cg-gpu-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRR-cg-gpu-relaxed,MP-cg-sys-relaxed
+CoRR-cg-sys-acqrel-2s,CoRR-cg-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRR-cg-sys-relaxed,MP-cg-sys-relaxed
+CoRR-cg-sys-fence-2s,CoRR-cg-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRR-cg-sys-relaxed,MP-cg-sys-relaxed
+CoRR-cg-sys-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed
+CoRR-cg-sys-release,CoRR-cg-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRR-cg-sys-relaxed,MP-cg-sys-relaxed
+CoRR-gc-cta-acquire,CoRR-gc-cta-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRR-gc-cta-relaxed,MP-gc-sys-relaxed
+CoRR-gc-cta-fence,CoRR-gc-cta-relaxed,lattice-floor sibling -- fully relaxed on both sides; 2 usable weakening(s) of which 1 maximal,CoRR-gc-cta-acquire,CoRR-gc-cta-relaxed,MP-gc-sys-relaxed
+CoRR-gc-cta-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-gc-sys-relaxed
+CoRR-gc-gpu-acquire,CoRR-gc-gpu-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRR-gc-gpu-relaxed,MP-gc-sys-relaxed
+CoRR-gc-gpu-fence,CoRR-gc-gpu-relaxed,lattice-floor sibling -- fully relaxed on both sides; 2 usable weakening(s) of which 1 maximal,CoRR-gc-gpu-acquire,CoRR-gc-gpu-relaxed,MP-gc-sys-relaxed
+CoRR-gc-gpu-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-gc-sys-relaxed
+CoRR-gc-sys-acqrel-2s,CoRR-gc-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRR-gc-sys-relaxed,MP-gc-sys-relaxed
+CoRR-gc-sys-acquire,CoRR-gc-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRR-gc-sys-relaxed,MP-gc-sys-relaxed
+CoRR-gc-sys-fence,CoRR-gc-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 3 usable weakening(s) of which 2 maximal,CoRR-gc-sys-acqrel-2s,CoRR-gc-sys-relaxed,MP-gc-sys-relaxed
+CoRR-gc-sys-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-gc-sys-relaxed
+CoRW2-cg-cta-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed
+CoRW2-cg-cta-release,CoRW2-cg-cta-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRW2-cg-cta-relaxed,MP-cg-sys-relaxed
+CoRW2-cg-gpu-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed
+CoRW2-cg-gpu-release,CoRW2-cg-gpu-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRW2-cg-gpu-relaxed,MP-cg-sys-relaxed
+CoRW2-cg-sys-acqrel-2s,CoRW2-cg-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRW2-cg-sys-relaxed,MP-cg-sys-relaxed
+CoRW2-cg-sys-fence-2s,CoRW2-cg-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRW2-cg-sys-relaxed,MP-cg-sys-relaxed
+CoRW2-cg-sys-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed
+CoRW2-cg-sys-release,CoRW2-cg-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRW2-cg-sys-relaxed,MP-cg-sys-relaxed
+CoRW2-gc-cta-acquire,CoRW2-gc-cta-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRW2-gc-cta-relaxed,MP-gc-sys-relaxed
+CoRW2-gc-cta-fence,CoRW2-gc-cta-relaxed,lattice-floor sibling -- fully relaxed on both sides; 3 usable weakening(s) of which 2 maximal,CoRW2-gc-cta-acquire,CoRW2-gc-cta-relaxed,MP-gc-sys-relaxed
+CoRW2-gc-cta-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-gc-sys-relaxed
+CoRW2-gc-cta-release,CoRW2-gc-cta-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRW2-gc-cta-relaxed,MP-gc-sys-relaxed
+CoRW2-gc-gpu-acquire,CoRW2-gc-gpu-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRW2-gc-gpu-relaxed,MP-gc-sys-relaxed
+CoRW2-gc-gpu-fence,CoRW2-gc-gpu-relaxed,lattice-floor sibling -- fully relaxed on both sides; 3 usable weakening(s) of which 2 maximal,CoRW2-gc-gpu-acquire,CoRW2-gc-gpu-relaxed,MP-gc-sys-relaxed
+CoRW2-gc-gpu-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-gc-sys-relaxed
+CoRW2-gc-gpu-release,CoRW2-gc-gpu-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRW2-gc-gpu-relaxed,MP-gc-sys-relaxed
+CoRW2-gc-sys-acqrel-2s,CoRW2-gc-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 3 usable weakening(s) of which 2 maximal,CoRW2-gc-sys-acquire,CoRW2-gc-sys-relaxed,MP-gc-sys-relaxed
+CoRW2-gc-sys-acquire,CoRW2-gc-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRW2-gc-sys-relaxed,MP-gc-sys-relaxed
+CoRW2-gc-sys-fence,CoRW2-gc-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 4 usable weakening(s) of which 1 maximal,CoRW2-gc-sys-acqrel-2s,CoRW2-gc-sys-relaxed,MP-gc-sys-relaxed
+CoRW2-gc-sys-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-gc-sys-relaxed
+CoRW2-gc-sys-release,CoRW2-gc-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoRW2-gc-sys-relaxed,MP-gc-sys-relaxed
+CoWR-cg-cta-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed
+CoWR-cg-cta-release,CoWR-cg-cta-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoWR-cg-cta-relaxed,MP-cg-sys-relaxed
+CoWR-cg-gpu-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed
+CoWR-cg-gpu-release,CoWR-cg-gpu-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoWR-cg-gpu-relaxed,MP-cg-sys-relaxed
+CoWR-cg-sys-acqrel-2s,CoWR-cg-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoWR-cg-sys-relaxed,MP-cg-sys-relaxed
+CoWR-cg-sys-fence-2s,CoWR-cg-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoWR-cg-sys-relaxed,MP-cg-sys-relaxed
+CoWR-cg-sys-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed
+CoWR-cg-sys-release,CoWR-cg-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoWR-cg-sys-relaxed,MP-cg-sys-relaxed
+CoWR-gc-cta-acquire,CoWR-gc-cta-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoWR-gc-cta-relaxed,MP-gc-sys-relaxed
+CoWR-gc-cta-fence,CoWR-gc-cta-relaxed,lattice-floor sibling -- fully relaxed on both sides; 3 usable weakening(s) of which 2 maximal,CoWR-gc-cta-acquire,CoWR-gc-cta-relaxed,MP-gc-sys-relaxed
+CoWR-gc-cta-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-gc-sys-relaxed
+CoWR-gc-cta-release,CoWR-gc-cta-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoWR-gc-cta-relaxed,MP-gc-sys-relaxed
+CoWR-gc-gpu-acquire,CoWR-gc-gpu-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoWR-gc-gpu-relaxed,MP-gc-sys-relaxed
+CoWR-gc-gpu-fence,CoWR-gc-gpu-relaxed,lattice-floor sibling -- fully relaxed on both sides; 3 usable weakening(s) of which 2 maximal,CoWR-gc-gpu-acquire,CoWR-gc-gpu-relaxed,MP-gc-sys-relaxed
+CoWR-gc-gpu-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-gc-sys-relaxed
+CoWR-gc-gpu-release,CoWR-gc-gpu-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoWR-gc-gpu-relaxed,MP-gc-sys-relaxed
+CoWR-gc-sys-acqrel-2s,CoWR-gc-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 3 usable weakening(s) of which 2 maximal,CoWR-gc-sys-acquire,CoWR-gc-sys-relaxed,MP-gc-sys-relaxed
+CoWR-gc-sys-acquire,CoWR-gc-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoWR-gc-sys-relaxed,MP-gc-sys-relaxed
+CoWR-gc-sys-fence,CoWR-gc-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 4 usable weakening(s) of which 1 maximal,CoWR-gc-sys-acqrel-2s,CoWR-gc-sys-relaxed,MP-gc-sys-relaxed
+CoWR-gc-sys-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-gc-sys-relaxed
+CoWR-gc-sys-release,CoWR-gc-sys-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,CoWR-gc-sys-relaxed,MP-gc-sys-relaxed
 IRIW-cgcc-cta-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed
 IRIW-cgcc-cta-release,IRIW-cgcc-cta-relaxed,lattice-floor sibling -- fully relaxed on both sides; 1 usable weakening(s) of which 1 maximal,-,IRIW-cgcc-cta-relaxed,MP-cg-sys-relaxed
 IRIW-cgcc-gpu-relaxed,none,at the lattice floor -- no strictly weaker structural sibling can exist; Layer-B canary only,-,none,MP-cg-sys-relaxed

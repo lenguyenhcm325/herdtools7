@@ -1,0 +1,14 @@
+LISA CoRR-cta-release
+Generator=diyone7 (version 7.58+1)
+Scopes=(sys (gpu (cta 0) (cta 1)))
+Com=Fr Rf
+Orig=RfeReleaseCtaRelaxedCta PosRRRelaxedCtaRelaxedCta FreRelaxedCtaReleaseCta
+"RfeReleaseCtaRelaxedCta PosRRRelaxedCtaRelaxedCta FreRelaxedCtaReleaseCta"
+{
+}
+ P0                  | P1                 ;
+ r[relaxed,cta] r0 x | w[release,cta] x 1 ;
+ r[relaxed,cta] r1 x |                    ;
+
+scopes: (sys (gpu (cta 0) (cta 1)))
+exists (0:r0=1 /\ 0:r1=0)
