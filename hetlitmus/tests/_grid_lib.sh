@@ -220,14 +220,13 @@ TWO_SIDED_CPU_ORDERS="ra sy st ld"
 TWO_SIDED_GPU_ORDERS="ra sc rel acq"
 
 # Shapes + cuts for the off-diagonal sweep.  What it has to cover is the
-# (primitive, program-order pair) product, since the pair a proc carries is what
-# decides what its primitive orders (note above).  These five 2-proc shapes
-# already realise all four Pod kinds -- WW RR WR RW -- on the CPU side and all
-# four on the GPU side, so no further shape adds a combination.  Two procs also
-# keep a cell legible: one cpu and one gpu token per test, so a 3- or 4-proc cut
-# would put a single token on several procs at once.  SB and LB emit one cut,
-# for the rotation-by-two reason recorded at SHAPE_HET_CUTS above.  A `Pos'
-# shape stays out: only one of its procs carries a program-order pair.
+# (primitive, program-order pair) product, since the pair a proc carries decides
+# what its primitive orders (note above).  These 2-proc shapes realise all four
+# Pod kinds -- WW RR WR RW -- on each side, so no further shape widens it; two
+# procs also keep a cell legible: one cpu and one gpu token per test, which a 3-
+# or 4-proc cut would spread over several.  SB and LB emit one cut, for the
+# rotation-by-two reason at SHAPE_HET_CUTS above.  The product is over Pod
+# pairs: a `Pos' shape stays out, only one of its procs carrying a pair.
 TWO_SIDED_PAIR_SHAPES="MP SB LB R S"
 declare -A SHAPE_2S_PAIR_CUTS=(
   [MP]="cpu,gpu gpu,cpu"

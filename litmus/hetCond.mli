@@ -24,8 +24,9 @@
 (* The Location_global atoms of a condition, in source order, de-duplicated
    by printed name.  Each is the observation of one ws/co (write->write
    coherence-order-external) edge -- exactly the location an observer buffer
-   must snoop.  Register atoms are ignored.
-   2+2W -> [x; y] ; R -> [y] ; S -> [x] ; every other shape -> []. *)
+   must snoop.  Register atoms are ignored.  A shape's cycle contributes one
+   entry per `Coe' edge, so 2+2W's two give [x; y] and a cycle carrying none
+   gives []. *)
 val condition_locations : MiscParser.prop -> MiscParser.maybev list
 
 (* Mechanism confidence tier.  Mechanism only: R and S are BOTH `Advisory
@@ -34,8 +35,8 @@ val condition_locations : MiscParser.prop -> MiscParser.maybev list
    by [reporting_class] and not here. *)
 type mechanism_class = [ `Robust | `Advisory | `Exploratory ]
 
-(* Robust      : no Location_global atom (all shapes but 2+2W, R, S)
-   Advisory    : >= 1 register atom AND exactly 1 ws-location (R, S)
+(* Robust      : no Location_global atom
+   Advisory    : >= 1 register atom AND exactly 1 ws-location
    Exploratory : register-free, all atoms are Location_global (2+2W), and any
                  other unanticipated shape (lowest-confidence floor). *)
 val perpetual_class : MiscParser.prop -> mechanism_class

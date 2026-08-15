@@ -71,10 +71,10 @@ which is why the file-wide count is twice the per-instance one.
   $ grep -c 'ref.store(((uint64_t)5 \* (_n + 1) + 3)' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   2
 
-Observers: every test whose condition names a memory location (every 2+2W, R and
-S) adds ONE GPU observer lane plus ONE CPU observer pthread, so NPART grows by 2;
-each snoops every observed location, and a per-run ws scan fills _loc with the
-same-observer-thread cycle -- the observer-buffer method of
+Observers: every test whose condition names a memory location (every 2+2W, R, S,
+CoWR and CoRW2) adds ONE GPU observer lane plus ONE CPU observer pthread, so
+NPART grows by 2; each snoops every observed location, and a per-run ws scan
+fills _loc with the same-observer-thread cycle -- the observer-buffer method of
 [Srivastava24 sec 3.3].
 
 NPART is a SUM over instances.  2+2W-cg-sys-fence is off the lattice floor, so it

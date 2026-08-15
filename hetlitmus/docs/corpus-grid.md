@@ -27,10 +27,12 @@ an `@all` list-file (herd7/litmus7 read `@all` as "one test path per line",
 **Scope of *this* note.** What follows describes the **one-sided** scope × order
 grid — the 299 het tests whose GPU procs are annotated and whose CPU procs are
 plain ARMv9. The het corpus has since grown two further families that the same
-`generate.sh` emits and specifies in place — its arms (D) and (E), over the token
-table and order-pair rules in `hetlitmus/tests/_grid_lib.sh`: the **matched
-two-sided** tests (`-2s`) and the **two-sided order pairs** (`-2s` with an
-`<cpu>.<gpu>` order). The current split of the 471 by family, like
+`generate.sh` emits and specifies in place — its arms (D) and (E), each beside
+the knob that drives it in `hetlitmus/tests/_grid_lib.sh`: the **matched
+two-sided** tests (`-2s`; `TWO_SIDED_ORDERS`) and the **two-sided order pairs**
+(`-2s` with an `<cpu>.<gpu>` order; `TWO_SIDED_PAIR_SHAPES` /
+`SHAPE_2S_PAIR_CUTS`, where the pair sweep's shape and cut choices are
+recorded). The current split of the 471 by family, like
 the counts here, is re-derivable at any time from `hetlitmus/tests/het/*.litmus`
 (and `verify/dupcheck.py` reports how many of them are distinct experiments).
 

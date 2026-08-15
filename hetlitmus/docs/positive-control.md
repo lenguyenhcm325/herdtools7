@@ -334,20 +334,25 @@ What a null may be *claimed* as is fixed by the shape of the test's condition,
 classified in `litmus/hetCond.ml` and stamped beside the `het_obs_record` it labels:
 
 - **`CONF_ROBUST`** — the condition carries no `Location_global` atom, so every atom is
-  a register read the recovery scan decodes on its own (every shape but 2+2W, R and S).
-- **`CONF_ADVISORY`** — at least one register atom and exactly one ws-location (R, S).
+  a register read the recovery scan decodes on its own (every shape whose cycle carries
+  no `Coe` edge: everything but 2+2W, R, S, CoWR and CoRW2).
+- **`CONF_ADVISORY`** — at least one register atom and exactly one ws-location (R, S,
+  CoWR, CoRW2).
 - **`CONF_EXPLORATORY`** — register-free, every atom a `Location_global` (2+2W), and any
   other unanticipated shape: the lowest-confidence floor.
 
 `perpetual_class` computes the **mechanism** tier and stops there. The **reporting** tier
-demotes exactly one case. R and S are mechanically alike (one ws-location each), but only
-S's read is an `rf` read: it observes a real writer's tag, which decodes a synchrony
-point. R's only read is the fr-against-init read, which in the weak case returns the init
-value, whose tag is 0 — no writer, no iteration, no synchrony. R must therefore borrow
-both its synchrony point and its ws edge from the fragile observer, exactly as 2+2W does,
-so its full-cycle result is reported at the 2+2W floor. `reporting_class ~has_rf_anchor`
-applies that demotion and must not be folded back into `perpetual_class`; the emitter
-supplies `has_rf_anchor`, because `hetCond` never sees the program.
+demotes the advisory shapes whose read is not an `rf` read. R and S are mechanically alike
+(one ws-location each), but only S's read is an `rf` read: it observes a real writer's tag,
+which decodes a synchrony point. R's only read is the fr-against-init read, which in the
+weak case returns the init value, whose tag is 0 — no writer, no iteration, no synchrony.
+R must therefore borrow both its synchrony point and its ws edge from the fragile observer,
+exactly as 2+2W does, so its full-cycle result is reported at the 2+2W floor. The
+same-location pair splits the same way: `CoWR`'s read is the fr-against-init one and is
+demoted beside R, `CoRW2`'s is an `rf` read and stays advisory beside S.
+`reporting_class ~has_rf_anchor` applies that demotion and must not be folded back into
+`perpetual_class`; the emitter supplies `has_rf_anchor`, because `hetCond` never sees the
+program.
 
 ### A ws-location is not a histogram column
 

@@ -139,9 +139,10 @@ File "/tmp/nodep.cat", line 125, characters 14-17: unbound var: dep
 ```
 
 Binding it to `0` is faithful for the inputs this file sees: diy emits no
-dependency edge on either surface (the edge vocabulary is `Pod<XY>`,
-`Fence<Order><Scope>d<XY>`, `Rfe`, `Fre`, `Coe`). An input carrying a real
-dependency would need the binding revisited.
+dependency edge on either surface (the edge vocabulary is `Po<L><XY>`,
+`Fence<Order><Scope><L><XY>`, `Rfe`, `Fre`, `Coe`, with `L` the location letter
+`d` or `s`). An input carrying a real dependency would need the binding
+revisited.
 
 ### `let sync_barrier = 0`
 
