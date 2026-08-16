@@ -71,7 +71,9 @@ Extending to another GPU generation: fetch that generation's "Memory Model
 GFX<NNN>" section of [AMDGPUUsage], derive its code-sequence rows, its
 assembler-directive preconditions, its scaffolding signatures and its bite
 mutations into a new LoweringProfile, then run `--arch gfxNNN --reps` on that
-toolchain.  Nothing outside the profile object names a generation.
+toolchain.  A generation's target name is spelled inside its profile and
+nowhere else; the target-name prefix and the vendor's offload triple, which
+every generation shares, are machinery.
 
 ptxcheck.py is the NVIDIA read-back twin and hipsrccheck.py the HIP source
 gate; both are imported, never modified.  Their .litmus parsers, control-map
@@ -513,8 +515,8 @@ class Gfx942(LoweringProfile):
                  lambda t: _sub_first(t, r'^\tglobal_load_dword '
                                          r'(?![^\n]*sc0)[^\n]* sc1\n', '',
                                       "an agent-scope scaffolding load")),
-        Mutation("a co-run control's model block DELETED",
-                 "het", 1, ":P1 [",
+        Mutation("one co-run instance's two-load model block DELETED",
+                 "het", 1, ":P1 [ld64(sys) ld64(sys)]",
                  lambda t: _sub_first(t, r'^\tglobal_load_dwordx2 [^\n]* sc0 sc1\n'
                                          r'\tglobal_load_dwordx2 [^\n]* sc0 sc1\n',
                                       '',
@@ -524,6 +526,14 @@ class Gfx942(LoweringProfile):
                  lambda t: _sub_first(t, r'^(\tflat_load_dwordx2 [^\n]*)$',
                                       r'\1\n\tbuffer_inv sc0 sc1',
                                       "the interconnect-noise reader")),
+        # A bit-less access names no scope, so the block match filters it out
+        # and the census exempts it; the multiple-of-copies law is the ONLY net
+        # left under it.
+        Mutation("one access of the inlined stress body DELETED",
+                 "het", 1, "ld32(-), which is not a positive multiple",
+                 lambda t: _sub_first(t, r'^\tglobal_load_dword '
+                                         r'(?![^\n]*sc[01])[^\n]*\n', '',
+                                      "a bit-less 32-bit load")),
     )
 
 
@@ -532,12 +542,18 @@ PROFILES = {p.arch: p() for p in (Gfx942,)}
 DEFAULT_ARCH = Gfx942.arch
 
 
+def generation_of(arch):
+    """The generation one target's [AMDGPUUsage] memory-model section is titled
+    after: the target-name prefix every AMD generation shares, dropped."""
+    return re.sub(r'^gfx', '', arch).upper()
+
+
 def profile_for(arch):
     """The lowering profile for one target, or a refusal naming the section of
     [AMDGPUUsage] a new one is derived from."""
     if arch in PROFILES:
         return PROFILES[arch]
-    gen = re.sub(r'^gfx', '', arch).upper()
+    gen = generation_of(arch)
     raise CompletenessError(
         "no lowering profile for %s -- derive one from the \"Memory Model "
         "GFX%s\" section of the AMDGPU backend user guide (known: %s)"
@@ -1440,6 +1456,7 @@ def sweep(gpu_dir, x86_dir, arch, jobs):
     profile = profile_for(arch)
     require_tool(HIPCC, "hipcc")
     tmp = tempfile.mkdtemp(prefix="amdisacheck-all.")
+    diffs = None
     t0 = time.time()
     try:
         # Both censuses are asserted before a single render compiles: a corpus
@@ -1475,6 +1492,10 @@ def sweep(gpu_dir, x86_dir, arch, jobs):
                  if crosscheck_report(profile, path, arch, tmp))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+        # A refused corpus raises before a verdict is written, so the directory
+        # goes with the rest of the scratch unless it holds output to read.
+        if diffs is not None and os.path.isdir(diffs) and not os.listdir(diffs):
+            os.rmdir(diffs)
     ok = ((gp, gt) == (hip.GPU_ONLY_N, hip.GPU_ONLY_N)
           and (xp, xt) == (hip.X86_HET_N, hip.X86_HET_N) and nx == len(pair))
     print("\nISA READ-BACK GATE: %s -- gpu-only %d/%d, x86_64 het %d/%d (the "
@@ -1485,8 +1506,6 @@ def sweep(gpu_dir, x86_dir, arch, jobs):
     print("  each kernel's blocks are the multiset its lanes prescribe; which "
           "lane runs an op, and the order of a workgroup-scope one, are the HIP "
           "source gate's to say")
-    if ok:
-        shutil.rmtree(diffs, ignore_errors=True)
     return 0 if ok else 1
 
 
@@ -1498,11 +1517,24 @@ def sweep(gpu_dir, x86_dir, arch, jobs):
 # profile lowers no row for, so the refusal that a row is missing cannot rot
 # unbitten; hipsrccheck.py owns the .litmus body, the annotation and its name.
 BITE_SYNTH = "F-acqrel-sys"
-# A target no profile is written for, which the registry must refuse by naming
-# the section of [AMDGPUUsage] the next one is derived from.
-BITE_UNKNOWN_ARCH = "gfx90a"
 # A second function symbol, whose instructions would belong to no lane.
 BITE_SECOND_SYMBOL = "device_helper_the_compiler_did_not_inline"
+
+
+def _unknown_arch():
+    """A target no lowering profile is written for, which the registry must
+    refuse by naming the section of [AMDGPUUsage] the next one is derived from.
+
+    It is walked off a known target rather than written down, so the driver
+    spells no generation of its own and a profile added later cannot leave the
+    injection pointing at a target that is no longer unknown."""
+    known = sorted(PROFILES)[0]
+    for c in "0123456789abcdef":
+        cand = known[:-1] + c
+        if cand not in PROFILES:
+            return cand
+    raise GateError("--bite: every neighbour of %s carries a profile, so no "
+                    "target is left for the registry to refuse" % known)
 
 
 def _worker_dies(_job):
@@ -1655,10 +1687,10 @@ def bite(arch, tmp):
                "the kernel's own function symbol"))
 
     print("\n-- the tables, the tools and the rep set the gate runs through --")
+    unknown = _unknown_arch()
     b.record("a target no lowering profile is written for (--arch %s)"
-             % BITE_UNKNOWN_ARCH, 2, "Memory Model GFX%s"
-             % BITE_UNKNOWN_ARCH[len("gfx"):].upper(),
-             *run_check(plain, BITE_UNKNOWN_ARCH))
+             % unknown, 2, "Memory Model GFX%s" % generation_of(unknown),
+             *run_check(plain, unknown))
 
     sdir = os.path.join(b.work, "synth")
     os.makedirs(sdir)
@@ -1717,6 +1749,13 @@ def bite(arch, tmp):
     b.record("an x86_64 het corpus SHORT of its census", 3,
              "holds %d .litmus, expected %d" % (len(few), hip.X86_HET_N),
              *capture(lambda: sweep(hip.GPU_ONLY_DIR, short, arch, 2)))
+
+    names = [os.path.basename(p)[:-len(".litmus")] for p in het_files]
+    nomap = hip.corpus_slice(corpus, os.path.join(b.work, "nomap"), names,
+                             drop_map=True)
+    b.record("a FULL-SIZE x86_64 het corpus carrying no control map", 3,
+             "without it every lane plan",
+             *capture(lambda: sweep(hip.GPU_ONLY_DIR, nomap, arch, 2)))
 
     b.record("a sweep worker KILLED, which breaks the pool without raising", 3,
              "a sweep worker died without raising",

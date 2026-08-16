@@ -896,8 +896,8 @@ hetlitmus-hipbuild: | build
 	@ echo "HetLitmus AMD build/link gate: OK (and the gate bites)"
 
 ### Every emitted HIP kernel's gfx942 lowering, read back from `hipcc -S' and
-### matched per basic block to what its .litmus annotates -- 173 gpu-only and
-### 471 x86_64 het, plus 2 disassembly cross-checks (verify/amdisacheck.py).
+### matched per basic block to what its .litmus annotates.  No kernel runs, and
+### which lane runs an op is the source gate's to say (verify/amdisacheck.py).
 hetlitmus-amd-faithful: | build
 	@ echo
 	python3 hetlitmus/verify/amdisacheck.py --all
