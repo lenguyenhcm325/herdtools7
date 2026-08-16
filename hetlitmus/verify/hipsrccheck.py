@@ -17,7 +17,7 @@ around them -- system-scope rendezvous, window-opener spin, observer snoop,
 result stores -- is exactly what the lane plan predicts; the x86_64 CPU column
 is rendered into the _cpu.c asm block mnemonic for mnemonic; and a lane carries
 no further memory construct -- atomic, fence, inline asm or volatile.  A het
-lane also runs its ops once per iteration of one `#pragma unroll 1' loop over
+lane's ops also sit unguarded in the body of one `#pragma unroll 1' loop over
 SIZE_OF_TEST, which is placement the anchor stream cannot see; the gpu-only
 path has no such loop, its procs running once (litmus/gpuLang.ml dump_test).
 
@@ -544,6 +544,15 @@ PER_ITERATION = ('st', 'ld', 'fence', 'spin', 'res', 'obs-ld')
 # the loop opens; a copy inside it is a per-iteration cross-device barrier
 # around every tested access, and the anchor stream alone cannot see the move.
 ONCE_PER_LANE = ('rdv-add', 'rdv-spin', 'bump')
+# The one guard litmus/hetEmit.ml writes around an anchor: the window-opener
+# spin runs on the iterations the barrier roll draws, so `spin' is the ONLY
+# anchor a level deeper than the loop body.
+BARRIER_ROLL = re.compile(r'^if \(het_rng_pct\(&_brng, HET_BARRIER_PCT\)\) \{$')
+# A statement that can guard the line under it without a brace of its own, and
+# a jump that can skip the rest of an iteration: both leave an op's order, its
+# constants and its comment untouched while it stops running per iteration.
+CTRL_HEAD = re.compile(r'^(if|for|while|else)\b')
+LOOP_JUMP = re.compile(r'\b(break|continue|goto|return)\b')
 
 
 class Anchor:
@@ -894,16 +903,47 @@ def check_stream(result, expected, anchors, who):
     return False
 
 
+def guard_chains(body):
+    """Per line of a lane, the statements guarding it: the brace openers it sits
+    inside, innermost last, plus a braceless control head it is the body of.
+
+    Brace depth alone reads `if (_n == 0) __hip_atomic_store(...)' as ordinary
+    lane code, so the braceless form counts as a guard too -- litmus/hetEmit.ml
+    writes one itself, over the pre-stress roll."""
+    chains, stack, dangling = [], [], ()
+    for i, ln in enumerate(body):
+        t = ln.strip()
+        if not t:
+            chains.append(tuple(stack) + dangling)
+            continue
+        n_open, n_close = t.count('{'), t.count('}')
+        if t.startswith('}'):
+            for _ in range(min(n_close, len(stack))):
+                stack.pop()
+            n_close, dangling = 0, ()
+        chains.append(tuple(stack) + dangling)
+        dangling = (i,) if (CTRL_HEAD.match(t) and not n_open and not n_close
+                            and not t.endswith(';')) else ()
+        for _ in range(n_open):
+            stack.append(i)
+        for _ in range(n_close):
+            if stack:
+                stack.pop()
+    return chains
+
+
 def check_lane_loop(result, body, anchors, who):
-    """Every het lane runs its ops once per iteration, inside one unrolled-by-one
-    loop over SIZE_OF_TEST.
+    """Every het lane's ops sit unguarded in the body of one loop over
+    SIZE_OF_TEST, unrolled by one, with no jump able to skip them.
 
     The gpu-only path has no such loop by design -- litmus/gpuLang.ml dump_test
-    emits each proc's ops once into its guarded block -- so this is asked of het
-    lanes ONLY.  What it catches is placement, which no anchor stream can see: a
-    hoisted op keeps its order and its constants and stops being per-iteration,
-    and a rendezvous dragged inside the loop keeps both and becomes a barrier
-    around every tested access."""
+    emits each proc's ops once -- so this is asked of het lanes ONLY.  It reads
+    placement, which no anchor stream can see: an op keeps its order, constants
+    and comment whether it is hoisted out of the loop, guarded inside it or
+    jumped over, and a rendezvous dragged in becomes a barrier around every
+    tested access.  The window-opener spin is the one anchor litmus/hetEmit.ml
+    guards itself, under the barrier roll."""
+    chains = guard_chains(body)
     heads = [i for i, ln in enumerate(body) if LOOP_HEAD.match(ln.strip())]
     if len(heads) != 1:
         result.fail("%s carries %d per-iteration loop(s), not one -- the lane's "
@@ -923,6 +963,11 @@ def check_lane_loop(result, body, anchors, who):
         result.fail("%s: the iteration loop is not opened by `%s', so a "
                     "compile-time trip count may unroll the tested ops into many "
                     "textual copies" % (who, LOOP_PRAGMA))
+    if chains[h]:
+        bad = True
+        result.fail("%s: the iteration loop is itself guarded by `%s', so the "
+                    "lane iterates only when that guard holds"
+                    % (who, body[chains[h][-1]].strip()))
     depth, close = 1, None
     for j in range(h + 1, len(body)):
         t = body[j].strip()
@@ -934,22 +979,44 @@ def check_lane_loop(result, body, anchors, who):
         result.fail("%s: the iteration loop has no closing brace inside the lane"
                     % who)
         return
+    for j in range(h + 1, close):
+        t = body[j].strip()
+        if LOOP_JUMP.search(t):
+            bad = True
+            result.fail("%s: `%s' inside the iteration loop can skip the rest of "
+                        "an iteration, so what follows it is not per-iteration"
+                        % (who, t))
     for a in anchors:
-        inside = h < a.idx < close
-        if a.sig[0] in PER_ITERATION and not inside:
-            bad = True
-            result.fail("%s: %s sits OUTSIDE the per-iteration loop -- it runs "
-                        "once per launch, not once per iteration"
-                        % (who, fmt(a.sig)))
-        elif a.sig[0] in ONCE_PER_LANE and inside:
-            bad = True
-            result.fail("%s: %s sits INSIDE the per-iteration loop -- it is the "
-                        "lane's once-per-launch scaffolding"
-                        % (who, fmt(a.sig)))
+        chain = chains[a.idx]
+        inside = bool(chain) and chain[0] == h
+        if a.sig[0] in PER_ITERATION:
+            if not inside:
+                bad = True
+                result.fail("%s: %s sits OUTSIDE the per-iteration loop -- it "
+                            "runs once per launch, not once per iteration"
+                            % (who, fmt(a.sig)))
+            elif chain != (h,) and not (a.sig[0] == 'spin' and len(chain) == 2
+                                        and BARRIER_ROLL.match(body[chain[1]].strip())):
+                bad = True
+                result.fail("%s: %s is guarded by `%s' inside the loop, so it "
+                            "does not run on every iteration"
+                            % (who, fmt(a.sig), body[chain[-1]].strip()))
+        elif a.sig[0] in ONCE_PER_LANE:
+            if inside:
+                bad = True
+                result.fail("%s: %s sits INSIDE the per-iteration loop -- it is "
+                            "the lane's once-per-launch scaffolding"
+                            % (who, fmt(a.sig)))
+            elif chain:
+                bad = True
+                result.fail("%s: %s is guarded by `%s', so the lane's "
+                            "once-per-launch scaffolding may not run at all"
+                            % (who, fmt(a.sig), body[chain[-1]].strip()))
     if not bad:
         result.note("  %s loop structure OK (%s over %s, %d anchor(s) inside)"
                     % (who, LOOP_PRAGMA, LOOP_BOUND,
-                       sum(1 for a in anchors if h < a.idx < close)))
+                       sum(1 for a in anchors
+                           if chains[a.idx] and chains[a.idx][0] == h)))
 
 
 def tag_value(k, mu):
@@ -1377,6 +1444,11 @@ def guard_report():
     print("  %s" % LOOP_PRAGMA)
     print("  for (int _n=0; _n<%s; ++_n) {   %s inside, %s outside"
           % (LOOP_BOUND, "/".join(PER_ITERATION), "/".join(ONCE_PER_LANE)))
+    print("  a guard is a place: %s is the one an anchor (het_spin) may sit under"
+          % BARRIER_ROLL.pattern)
+    print("  and no %s reaches into the loop" % LOOP_JUMP.pattern)
+    if 'continue' not in LOOP_JUMP.pattern or 'het_rng_pct' not in BARRIER_ROLL.pattern:
+        bad += 1
     print("  (the gpu-only path has no loop: its procs run once)")
 
     print("\n-- device helpers a het kernel may carry (litmus/het-runtime/het_stress.h) --")
@@ -1441,8 +1513,8 @@ def regen_x86(dst):
 
 
 def _sweep_one(litmus_path):
-    """One test, as (verdict, name, output).  A worker that raises is that test's
-    ERROR; nothing here can turn an exception into a PASS."""
+    """One test, as (verdict, name, output).  A worker that raises is reported as
+    that test's error verdict; nothing here can turn an exception into a pass."""
     name = os.path.basename(litmus_path)[:-len(".litmus")]
     try:
         rc, out = run_check(litmus_path)
@@ -1460,9 +1532,17 @@ def sweep_dir(files, label, jobs, diffs):
     print("%-42s | %s" % ("test", "verdict"))
     print("-" * 43 + "+---------")
     rows = []
-    with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
-        for verdict, name, out in pool.map(_sweep_one, files):
-            rows.append((name, verdict, out))
+    try:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
+            for verdict, name, out in pool.map(_sweep_one, files):
+                rows.append((name, verdict, out))
+    except concurrent.futures.BrokenExecutor as e:
+        # _sweep_one turns a raising worker into that test's error verdict; a
+        # worker killed outright never reaches it, and the tests it held have no
+        # verdict at all, so the corpus is refused rather than tallied short.
+        raise GateError("a sweep worker died without raising, breaking the pool "
+                        "after %d of %d %s test(s): %s"
+                        % (len(rows), len(files), label, e))
     rows.sort()
     for name, verdict, _out in rows:
         print("%-42s | %s" % (name, verdict))
@@ -1487,9 +1567,9 @@ def sweep_dir(files, label, jobs, diffs):
 def sweep(gpu_dir, x86_dir, jobs):
     """Both corpora, each against its pinned census.
 
-    The 471 are the x86_64 het rendering this lane emits, NOT the AArch64 471
-    ptxcheck.py reads: the same shapes, a different CPU column, and every count
-    printed here says which."""
+    X86_HET_N counts the x86_64 het rendering this lane emits, NOT the AArch64
+    corpus ptxcheck.py reads: the same shapes, a different CPU column, and every
+    count printed here says which."""
     tmp = None
     try:
         # Both censuses are asserted before a single test runs: a corpus that is
@@ -1645,8 +1725,8 @@ def reheader(text):
 
     The header is found the way load_control_map_amd finds it -- the first line
     that is neither blank nor a comment -- because the file's own preamble
-    quotes the header in a comment, and an injection that rewrote THAT would
-    change the bytes and corrupt nothing."""
+    quotes the header in a comment, and an injection that rewrote the comment
+    would change the bytes and corrupt nothing."""
     lines = text.splitlines()
     for i, l in enumerate(lines):
         if not l.strip() or l.startswith('#'):
@@ -1656,6 +1736,12 @@ def reheader(text):
         lines[i] = l + ",Verdict"
         return "\n".join(lines) + "\n"
     raise GateError("--bite: the control map has no header line to rewrite")
+
+
+def _worker_dies(_litmus_path):
+    """A sweep worker that dies without raising, which --bite puts in the pool:
+    _sweep_one's handler never sees it, and the pool breaks instead."""
+    os._exit(1)
 
 
 def mkdir(d):
@@ -1762,6 +1848,33 @@ def bite(tmp):
     b.check("a gpu-only __out result slot DELETED", 1,
             "expected __out[1 * 4 + 1]=r1", gpu_l, hip=w, orig=g_hip)
 
+    w = b.fresh("out-dup", g_hip)
+    sub(w, "    __out[1 * 4 + 1] = r1;\n",
+        "    __out[1 * 4 + 1] = r1;\n    __out[1 * 4 + 1] = r1;\n")
+    b.check("a gpu-only __out result slot DUPLICATED", 1,
+            "multiset expected [] observed [('out', 1, 4, 1, 'r1')]",
+            gpu_l, hip=w, orig=g_hip)
+
+    w = b.fresh("out-reindex", g_hip)
+    sub(w, "__out[1 * 4 + 1] = r1;", "__out[1 * 4 + 2] = r1;")
+    b.check("a gpu-only __out result slot RE-INDEXED (the read reaches another "
+            "slot of the same proc)", 1, "observed __out[1 * 4 + 2]=r1",
+            gpu_l, hip=w, orig=g_hip)
+
+    print("\n-- constants no mapping row accounts for (a refusal, not a compare) --")
+    w = b.fresh("order-const", g_hip)
+    sub(w, "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM)",
+        "__ATOMIC_CONSUME, __HIP_MEMORY_SCOPE_SYSTEM)")
+    b.check("a memory-order constant HipLang.ml never writes (__ATOMIC_CONSUME)",
+            2, "unknown memory-order constant", gpu_l, hip=w, orig=g_hip)
+
+    w = b.fresh("fence-scope", g_hip)
+    sub(w, '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "")',
+        '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "system")')
+    b.check("the fence's sync scope NAMED (an unnamed one is system scope, so a "
+            "name narrows the fence)", 2, "unknown AMDHSA sync-scope string "
+            "'system'", gpu_l, hip=w, orig=g_hip)
+
     # ---- constructs the gate has no model for -------------------------------
     print("\n-- constructs no anchor accounts for (each a refusal, not a compare) --")
     for tag, line, want, label in (
@@ -1806,6 +1919,38 @@ def bite(tmp):
              "__hip_atomic_fetch_add((barrier), 2,")
     b.check("the rendezvous arriving by 2 (NPART then names no lane population)",
             1, "the rendezvous arrives by 2", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
+
+    w = b.fresh("alias", h_hip)
+    sub_lane(w, 0, "uint64_t* y = t_y;", "uint64_t* y = mu_y;")
+    b.check("a lane's alias REBOUND to another instance's global", 1,
+            "alias binds y to mu_y", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
+
+    w = b.fresh("rdv-ptr", h_hip)
+    sub_lane(w, 0, "__hip_atomic_fetch_add((barrier), 1,",
+             "__hip_atomic_fetch_add((_spin_bar), 1,")
+    b.check("the rendezvous counting on the spin word instead of the barrier", 1,
+            "the rendezvous counts on", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
+
+    w = b.fresh("spin-ptr", h_hip)
+    sub_lane(w, 0, "het_spin(_spin_bar,", "het_spin((uint32_t*)barrier,")
+    b.check("the window-opener handed the RENDEZVOUS word (a cross-device "
+            "barrier around every tested access)", 1,
+            "the window-opener spins on", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
+
+    w = b.fresh("bump-name", h_hip)
+    sub_lane(w, 0, "het_scratch_bump(_gpu_done);", "het_scratch_bump(_scratch_loc);")
+    b.check("the lane's completion bump RENAMED off _gpu_done (the stress "
+            "workgroups stop learning the lane finished)", 1,
+            "completion bump names _scratch_loc", het_l, hip=w, cpu_c=h_cpu,
+            orig=h_hip)
+
+    w = b.fresh("stress-store", h_hip)
+    sub(w, "  if (blockIdx.x >= HET_TEST_BLOCKS) {\n",
+        "  if (blockIdx.x >= HET_TEST_BLOCKS) {\n    __hip_atomic_store(t_x, 9, "
+        "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n")
+    b.check("an atomic store hidden in the stress region, outside every lane", 1,
+            "atomic-or-fence construct(s) outside every lane", het_l, hip=w,
+            cpu_c=h_cpu, orig=h_hip)
 
     w = b.fresh("spin-gone", h_hip)
     sub_lane(w, 0, "        het_spin(_spin_bar, _nb * HET_SPIN_LANES, "
@@ -1867,6 +2012,57 @@ def bite(tmp):
             1, "sits INSIDE the per-iteration loop", het_l, hip=w,
             cpu_c=h_cpu, orig=h_hip)
 
+    ops = ("      // w[relaxed,sys] x ((uint64_t)5 * (_n + 1) + 4)\n"
+           "      __hip_atomic_store(x, ((uint64_t)5 * (_n + 1) + 4), "
+           "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n")
+    w = b.fresh("loop-guard", h_hip)
+    sub_lane(w, 0, ops, "      if (_n == 0) {\n" + ops + "      }\n")
+    b.check("a test lane's store GUARDED inside the loop (its order, constants "
+            "and comment all kept)", 1,
+            "is guarded by `if (_n == 0) {' inside the loop", het_l, hip=w,
+            cpu_c=h_cpu, orig=h_hip)
+
+    w = b.fresh("loop-braceless", h_hip)
+    sub_lane(w, 0, ops, ops.split("\n")[0] + "\n      if (_n == 0)\n"
+             + ops.split("\n")[1] + "\n")
+    b.check("the same guard written WITHOUT braces (brace depth alone reads it "
+            "as ordinary lane code)", 1,
+            "is guarded by `if (_n == 0)' inside the loop", het_l, hip=w,
+            cpu_c=h_cpu, orig=h_hip)
+
+    w = b.fresh("loop-nest", h_hip)
+    snoop = ("      t_obsG_y[_n] = __hip_atomic_load(t_y, __ATOMIC_RELAXED, "
+             "__HIP_MEMORY_SCOPE_SYSTEM);\n")
+    sub_lane(w, 1, snoop, "      for (int _m=0; _m<1; ++_m) {\n" + snoop
+             + "      }\n")
+    b.check("the observer's snoop NESTED in a one-trip loop inside the loop", 1,
+            "is guarded by `for (int _m=0; _m<1; ++_m) {' inside the loop",
+            het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
+
+    w = b.fresh("loop-wrapped", h_hip)
+    sub_lane(w, 0, "    #pragma unroll 1\n",
+             "    if (_nb < 99) {\n    #pragma unroll 1\n")
+    sub_lane(w, 0, "    }\n    het_scratch_bump(_gpu_done);\n",
+             "    }\n    }\n    het_scratch_bump(_gpu_done);\n")
+    b.check("the whole iteration loop WRAPPED in a conditional", 1,
+            "the iteration loop is itself guarded by `if (_nb < 99) {'",
+            het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
+
+    w = b.fresh("loop-jump", h_hip)
+    sub_lane(w, 0, "      het_rng_t _brng",
+             "      if (_n == 3) continue;\n      het_rng_t _brng")
+    b.check("a `continue' inside the loop (the ops keep their place and stop "
+            "running on every iteration)", 1,
+            "can skip the rest of an iteration", het_l, hip=w, cpu_c=h_cpu,
+            orig=h_hip)
+
+    w = b.fresh("loop-bump-guard", h_hip)
+    sub_lane(w, 0, "    het_scratch_bump(_gpu_done);\n",
+             "    if (_nb > 0) {\n      het_scratch_bump(_gpu_done);\n    }\n")
+    b.check("the completion bump GUARDED outside the loop", 1,
+            "once-per-launch scaffolding may not run at all", het_l, hip=w,
+            cpu_c=h_cpu, orig=h_hip)
+
     # ---- the x86_64 CPU column ---------------------------------------------
     print("\n-- het: the x86_64 CPU column against its _cpu.c asm block --")
     w = b.fresh("mfence", h_cpu)
@@ -1885,6 +2081,18 @@ def bite(tmp):
     sub(w, '"mfence\\n"', '"lock incl (%[x])\\n"')
     b.check("a `lock incl' spliced into a tagged body", 2,
             "outside the emitted vocabulary", het_l, hip=h_hip, cpu_c=w,
+            orig=h_cpu, cur=w)
+
+    w = b.fresh("asm-two-ins", h_cpu)
+    sub(w, '    "mfence\\n"\n', '    "mfence\\nsfence\\n"\n')
+    b.check("two instructions in ONE asm literal", 2,
+            "carries 2 instructions in one asm literal", het_l, hip=h_hip,
+            cpu_c=w, orig=h_cpu, cur=w)
+
+    w = b.fresh("asm-quote", h_cpu)
+    sub(w, '    "mfence\\n"\n', '    "mfence\\n\n')
+    b.check("an asm template with an UNPAIRED quote", 2,
+            "unpaired quote in its asm template", het_l, hip=h_hip, cpu_c=w,
             orig=h_cpu, cur=w)
 
     w = b.fresh("asm-unterminated", h_cpu)
@@ -1958,6 +2166,11 @@ def bite(tmp):
     b.record("an x86_64 het corpus SHORT of its census", 3,
              "holds 3 .litmus, expected %d" % X86_HET_N,
              *capture(lambda: sweep(GPU_ONLY_DIR, short, 2)))
+
+    b.record("a sweep worker KILLED, which breaks the pool without raising", 3,
+             "a sweep worker died without raising",
+             *capture(lambda: sweep(GPU_ONLY_DIR, corpus, 2),
+                      _sweep_one=_worker_dies))
 
     print("\n-- the guard report, which vouches for the tables --")
     b.record("the memory-order table EMPTIED", 1, "*** empty table ***",
