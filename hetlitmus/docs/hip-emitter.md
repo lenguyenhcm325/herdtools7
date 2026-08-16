@@ -105,10 +105,9 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
   `.hip` *can* be compile-checked rather than merely emitted.
   `hetlitmus/compile-hip.sh [INDIR] [OUTDIR]` cross-compiles every `.hip` in
   INDIR for the MI300A ISA (`gfx942`) with `hipcc --offload-arch=gfx942
-  -std=c++17 <test>.hip -o <test>`. Measured 2026-08-15 under HIP version
-  7.2.53211: **10/10** on the default INDIR (`hip-out/`, the committed goldens)
-  and **173/173** on a full `emit-hip.sh` of the gpu-only corpus into a temp
-  dir, the 42 `-fence` renders included. `amdclang++` accepts the
+  -std=c++17 <test>.hip -o <test>`, a by-hand build of one host binary per
+  render; the gated compile of every render is `make hetlitmus-amd-faithful`
+  (next bullet). `amdclang++` accepts the
   `__hip_atomic_*` / `__HIP_MEMORY_SCOPE_*` builtins (nvcc does **not**, so this
   requires the HIP-Clang stack, not HIP-over-CUDA). A clean build proves the
   scope/order lowering is valid for the target ISA; it does NOT validate

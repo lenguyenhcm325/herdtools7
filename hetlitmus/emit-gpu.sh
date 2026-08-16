@@ -10,8 +10,10 @@
 # See litmus/{CudaLang,HipLang,hetGpuOnly,hetDialect}.ml.
 #
 # litmus7 also drops its C-runtime boilerplate next to the kernels; each output
-# directory's .gitignore keeps only its own dialect.  Compile-checking the .hip
-# is ./compile-hip.sh; running a kernel needs a device.
+# directory's .gitignore keeps only its own dialect.  The faithfulness gates
+# compile the renders (`make hetlitmus-faithful' the .cu, `make
+# hetlitmus-amd-faithful' the .hip); ./compile-hip.sh builds the .hip into host
+# binaries by hand; running a kernel needs a device.
 #
 # Usage:  ./emit-gpu.sh TARGET OUTDIR [TARGET OUTDIR]...
 #           e.g. ./emit-gpu.sh cuda ./cuda-out hip ./hip-out

@@ -238,8 +238,9 @@ class Gfx942(LoweringProfile):
 
     # The rows are the non-TgSplit branch of the table, and the directive says
     # which branch the compiler took; it is emitted only for targets carrying
-    # the tgsplit-support feature ([AMDGPUUsage] :2624), which is why the list
-    # is a profile datum and not a machinery constant.
+    # the tgsplit-support feature ([AMDGPUUsage "LLVM IR Attributes"], the
+    # "amdgpu-tg-split" row), which is why the list is a profile datum and not
+    # a machinery constant.
     preconditions = (
         (".amdgcn_target", '"amdgcn-amd-amdhsa--gfx942"',
          "the assembly was generated for another target"),
