@@ -222,12 +222,16 @@ class Gfx942(LoweringProfile):
          "row, which adds a wait and an invalidate this profile does not carry"),
     )
 
-    # Vector-memory and wait instructions.  A mnemonic matching this that the
+    # Every memory, wait and barrier instruction family this generation
+    # spells, vector, scalar and LDS alike.  A mnemonic matching this that the
     # tables below cannot classify is refused: it would be a memory operation
-    # the gate has no token for.  Scalar loads (s_load_*) are excluded on
-    # purpose -- they read the kernarg segment, and an atomic is never lowered
-    # to one.
-    FAMILY = re.compile(r'^(global|flat|buffer|scratch|ds)_|^s_wait')
+    # the gate has no token for.  DROPPED is the one family that carries no
+    # token on purpose -- the scalar loads read the kernarg segment, and no
+    # atomic is ever lowered to one.
+    FAMILY = re.compile(r'^(global|flat|buffer|scratch|ds|tbuffer|image)_'
+                        r'|^s_(load|store|buffer|atomic|dcache|atc|mem)'
+                        r'|^s_wait|^s_barrier')
+    DROPPED = ("s_load",)
 
     # mnemonic head -> access kind, and the data-width suffix of an access.
     ACCESS = {"global_load": LD, "flat_load": LD, "buffer_load": LD,
@@ -265,6 +269,8 @@ class Gfx942(LoweringProfile):
 
         is_memory says the mnemonic belongs to this generation's memory
         instruction family, so a caller can refuse an unclassifiable one."""
+        if any(mnemonic.startswith(pre) for pre in self.DROPPED):
+            return None, False
         fam = bool(self.FAMILY.match(mnemonic))
         if mnemonic in self.WAITS:
             return WAIT_TOKEN, True                 # masks are never compared
@@ -333,8 +339,11 @@ class Gfx942(LoweringProfile):
     # [AMDGPUUsage "AMDHSA Memory Model Code Sequences GFX942"], each row keyed
     # by its line in that section's source.  A row that requires a wait before
     # its invalidate carries the wait token; every other wait the compiler
-    # emits is glue whose mask and position it decides.  A seq_cst load, store
-    # or RMW is the acq_rel row of the same scope (:13452, :13457).
+    # emits is glue whose mask and position it decides.  The table spells a
+    # seq_cst RMW as the acq_rel RMW of the same scope (:13452) and a seq_cst
+    # fence as the acq_rel fence (:13457), while a seq_cst load is the acquire
+    # load of the same scope behind a leading wait (:13354) that the filter
+    # below drops with the other glue.
     def row(self, kind, order, scope, width, ret=False):
         acc = lambda k, s: Token(k, width, s, False)
         wbl2 = lambda s: Token(WBL2, None, s, False)
@@ -364,13 +373,13 @@ class Gfx942(LoweringProfile):
             ("fence", "release", "sys"): [wbl2("sys")],              # :12392
             # Scaffolding orders, which no .litmus column names.
             ("ld", "sc", "sys"): [acc(LD, "sys"), WAIT_TOKEN,
-                                  inv("sys")],                       # :11460
+                                  inv("sys")],                       # :13354
             ("rmw", "relaxed", "gpu"): [Token(ATOMIC, width,
                                               "gpu" if ret else None,
                                               ret)],                 # :11345
             ("rmw", "sc", "sys"): [wbl2("sys"),
                                    Token(ATOMIC, width, "sys", ret),
-                                   WAIT_TOKEN, inv("sys")],          # :11349
+                                   WAIT_TOKEN, inv("sys")],          # :12690
             # A volatile non-atomic access is system-coherent by the table.
             ("vld", "-", "sys"): [acc(LD, "sys")],                   # :11254
         }
@@ -505,7 +514,6 @@ FUNC_SYMBOL = re.compile(r'^\s*\.type\s+([\w.$]+)\s*,\s*@function\s*$')
 MANGLED = re.compile(r'^_Z(\d+)(\w+)')
 BLOCK_LABEL = re.compile(r'^(\.LBB\d+_\d+):')
 BLOCK_MARKER = re.compile(r'^;\s*(%bb\.\d+):')
-FUNC_END = re.compile(r'^\.Lfunc_end\d*:')
 SECTION = re.compile(r'^\s*\.section\b')
 INSTRUCTION = re.compile(r'^\s+([a-z][\w.]*)\b(.*)$')
 
@@ -542,9 +550,9 @@ def kernel_lines(text, tname, path):
         raise GateError("%s: no label for %s" % (path, sym))
     end = len(lines)
     for j in range(start + 1, len(lines)):
-        # The kernel descriptor sits between the last instruction and
-        # .Lfunc_end as its own section; it is data, not code.
-        if SECTION.match(lines[j]) or FUNC_END.match(lines[j]):
+        # The kernel descriptor follows the last instruction as its own
+        # section; it is data, not code, and it is what ends the region.
+        if SECTION.match(lines[j]):
             end = j
             break
     return sym, lines[start + 1:end]
@@ -600,20 +608,21 @@ def classify_lines(profile, lines, where):
 
 def filter_tokens(tokens):
     """The compared stream: scoped accesses and cache operations, plus the wait
-    a row requires immediately ahead of an invalidate.
+    a row requires ahead of an invalidate with no memory operation between.
 
-    An access carrying no cache bits names no scope at ISA level, so it is
-    dropped with the plain result-buffer and counter traffic; the census below
-    is what accounts for those.  Every other wait is glue whose mask and
-    position the compiler decides, and masks are never compared."""
-    kept = [t for t in tokens
-            if not (t.kind in ACCESS_KINDS and t.scope is None)]
+    That wait is read off the unfiltered stream, so traffic the scope filter
+    drops still separates it from the invalidate.  An access carrying no cache
+    bits names no scope at ISA level, so it is dropped with the plain
+    result-buffer and counter traffic the census below accounts for, and every
+    other wait is glue whose mask and position the compiler decides."""
     out = []
-    for i, t in enumerate(kept):
+    for i, t in enumerate(tokens):
         if t.kind == WAIT:
-            nxt = kept[i + 1] if i + 1 < len(kept) else None
+            nxt = tokens[i + 1] if i + 1 < len(tokens) else None
             if nxt is None or nxt.kind != INV:
                 continue
+        elif t.kind in ACCESS_KINDS and t.scope is None:
+            continue
         out.append(t)
     return out
 
@@ -999,14 +1008,13 @@ def select_reps(gpu, het):
 
     Per row the first carrier by test name, a gpu-only test preferred, then one
     test per fixed het shape.  "First by name" is not stable under arbitrary
-    corpus growth, which is why the coverage tripwire below recomputes the
-    containment instead of trusting this list."""
-    carriers, insts, all_rows = {}, {}, {}
+    corpus growth, which is why the coverage tripwire below reads the rows back
+    off the files instead of trusting the bookkeeping here."""
+    carriers, insts = {}, {}
     for path in gpu + het:
         inst = hip.instance_of(path)
         insts[path] = inst
-        all_rows[path] = rows_of(inst)
-        for row in all_rows[path]:
+        for row in rows_of(inst):
             carriers.setdefault(row, path)
     reps = collections.OrderedDict()
     for row, path in sorted(carriers.items()):
@@ -1023,36 +1031,57 @@ def select_reps(gpu, het):
             raise CompletenessError(
                 "no test in the x86_64 het corpus satisfies the rep shape %r -- "
                 "the shape the rep stood for is no longer in the corpus" % label)
-    return reps, carriers, all_rows, shapes
+    return reps, shapes
 
 
-def coverage_tripwire(reps, carriers, all_rows, shapes):
-    """Recomputed every run: every row the corpus carries is carried by a rep,
-    every rep file exists, and every fixed shape still holds of its rep."""
-    covered = set()
-    for path in reps:
-        if not os.path.exists(path):
-            raise CompletenessError(
-                "the rep %s no longer exists -- the corpus was renamed under "
-                "the rep set" % path)
-        # A rep the corpus scan did not produce is exactly the drift this
-        # tripwire is for, so its rows are read rather than looked up.
-        covered |= all_rows.get(path) or rows_of(hip.instance_of(path))
-    missing = sorted(set(carriers) - covered)
+def coverage_tripwire(profile, rep_paths, corpus_paths, shapes):
+    """Recomputed every run, off the files rather than off the rep builder's
+    bookkeeping: every annotation row the corpus carries is carried by a rep
+    and lowered by the profile, and every fixed shape holds of its rep.
+
+    Reading the rows again here is what makes this an audit of select_reps
+    rather than a restatement of it -- a row it leaves without a carrier, a rep
+    it drops and a shape it files under the wrong test are each drift the rep
+    set cannot survive, and NONE of them shows in a list it built itself."""
+    want, covered = set(), set()
+    for path in corpus_paths:
+        want |= rows_of(hip.instance_of(path))
+    for path in rep_paths:
+        covered |= rows_of(hip.instance_of(path))
+    missing = sorted(want - covered)
     if missing:
         raise CompletenessError(
             "the rep set covers %d of %d corpus row(s); uncovered: %s"
-            % (len(covered & set(carriers)), len(carriers),
+            % (len(want & covered), len(want),
                ", ".join(fmt_row(r) for r in missing)))
-    for label, path in shapes.items():
-        inst = hip.instance_of(path)
-        ins = hip.het_instances(path)
+    # A row the corpus carries and the profile does not lower is refused here,
+    # before a compile runs, rather than on whichever rep first reaches it.
+    for kind, order, scope in sorted(want):
+        profile.row(kind, order, scope, MODEL_WIDTH_GPU_ONLY)
+    for label, path in sorted(shapes.items()):
         holds = dict(SHAPES)[label]
-        if not holds(inst, ins):
+        if not holds(hip.instance_of(path), hip.het_instances(path)):
             raise CompletenessError(
                 "the rep %s no longer satisfies the shape %r it is in the set "
                 "for" % (os.path.basename(path), label))
-    return covered
+    return want
+
+
+def mutation_carrier(mutation, rep_paths, het_paths):
+    """The rep one profile mutation can be injected into, or None.
+
+    A mutation names what a carrier must hold -- an annotation row, any het
+    render, or a het render with an observer lane -- and a name the rep set
+    cannot answer is a mutation whose carrier left the corpus."""
+    need, het = mutation.needs, set(het_paths)
+    for path in rep_paths:
+        if need in ("het", "het-obs"):
+            if path in het and (need == "het"
+                                or any(i['obs'] for i in hip.het_instances(path))):
+                return path
+        elif need in rows_of(hip.instance_of(path)):
+            return path
+    return None
 
 
 # ===========================================================================
@@ -1147,10 +1176,10 @@ def reps(arch, verbose=True):
         gpu, het = corpus(tmp)
         print("  corpus: %d gpu-only + %d x86_64 het (the x86_64 rendering of "
               "the het corpus, not the AArch64 one)" % (len(gpu), len(het)))
-        rep, carriers, all_rows, shapes = select_reps(gpu, het)
-        covered = coverage_tripwire(rep, carriers, all_rows, shapes)
+        rep, shapes = select_reps(gpu, het)
+        covered = coverage_tripwire(profile, list(rep), gpu + het, shapes)
         print("  %d row(s) in the corpus, all carried by %d rep(s)"
-              % (len(carriers), len(rep)))
+              % (len(covered), len(rep)))
         print("\n%-42s | %s" % ("rep", "stands for"))
         print("-" * 43 + "+" + "-" * 34)
         for path, why in rep.items():
@@ -1237,6 +1266,8 @@ def guard_report(arch):
             print("  %-14s %-18s -> %s" % (label, k, v))
     print("  %-14s %s" % ("wait", ", ".join(profile.WAITS)))
     print("  %-14s %s" % ("memory family", profile.FAMILY.pattern))
+    print("  %-14s %s (no token, and no refusal)"
+          % ("dropped", ", ".join(pre + "*" for pre in profile.DROPPED)))
     print("\n-- cache annotation -> scope --")
     if not profile.BITS_OF_SCOPE:
         bad += 1
@@ -1270,31 +1301,39 @@ def guard_report(arch):
         w = MODEL_WIDTH_HET if spec in (OBSERVER_LOAD, NOISE_READ) else SCAFFOLD_WIDTH
         print("  %-24s %-22s %s" % (label, "%s[%s,%s]" % spec[:3],
                                     fmt_seq(_seq(profile, spec, w))))
-    print("\n-- bite mutations this profile owns --")
-    if not profile.mutations:
-        bad += 1
-    for m in profile.mutations:
-        print("  exit %d  %-62s carrier: %s"
-              % (m.rc, m.label,
-                 m.needs if isinstance(m.needs, str) else fmt_row(m.needs)))
     print("\n-- the rep set, derived from the corpus --")
     tmp = tempfile.mkdtemp(prefix="amdisacheck-guard.")
     try:
         gpu, het = corpus(tmp)
-        rep, carriers, all_rows, shapes = select_reps(gpu, het)
-        coverage_tripwire(rep, carriers, all_rows, shapes)
+        rep, shapes = select_reps(gpu, het)
+        covered = coverage_tripwire(profile, list(rep), gpu + het, shapes)
         for path, why in rep.items():
             print("  %-42s %s" % (os.path.basename(path)[:-len(".litmus")],
                                   "; ".join(why)))
-        print("  %d rep(s) covering all %d corpus row(s)" % (len(rep), len(carriers)))
+        print("  %d rep(s) covering all %d corpus row(s)" % (len(rep), len(covered)))
         if not rep:
             bad += 1
+        print("\n-- bite mutations this profile owns, each resolved to the "
+              "carrier it names --")
+        if not profile.mutations:
+            bad += 1
+        for m in profile.mutations:
+            who = mutation_carrier(m, list(rep), het)
+            if who is None:
+                bad += 1
+            print("  exit %d  %-56s %s"
+                  % (m.rc, m.label,
+                     os.path.basename(who)[:-len(".litmus")] if who
+                     else "*** NO CARRIER IN THE REP SET (%s) ***"
+                          % (m.needs if isinstance(m.needs, str)
+                             else fmt_row(m.needs))))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print("\n-- exit contract --")
     print("  0 PASS   1 FAIL   2 completeness hard-fail   3 error")
     if bad:
-        print("\nGUARD FAILED: %d unresolved tool(s) or empty table(s)" % bad)
+        print("\nGUARD FAILED: %d unresolved tool(s), carrier(s) or empty "
+              "table(s)" % bad)
     return 1 if bad else 0
 
 
