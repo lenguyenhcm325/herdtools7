@@ -267,16 +267,17 @@ an ordering-strength lattice**, so the control is essentially free:
 - **Method:** factor the combined stress knob space into three near-separable sub-searches
   (GPU → CPU → interconnect last), seeded/warm-started random search (the seedable Park-Miller sampler of
   [GPUHarbor23 §3.4], which is what makes one stress configuration replayable across devices),
-  shape-priority: LB/S first, SB/IRIW last on the two discrete GPUs of [Kirkham20 §4.1], neither of which
-  shows IRIW at all [Kirkham20 §6.4 Tab.11] — an order that **inverts** on that paper's integrated part,
-  so re-measure it per part.
+  shape-priority: LB/S first, SB/IRIW last on the two discrete GPUs (Vega and Quadro, [Kirkham20 Tab.1])
+  of [Kirkham20 §4.1], neither of which shows IRIW at all [Kirkham20 §6.4 Tab.11] — an order that
+  **inverts** on that paper's integrated part (LB/S are revealed by the fewest configurations there
+  [Kirkham20 §4.1], and SB carries its highest rate there [Kirkham20 §4.2]), so re-measure it per part.
 - **The racing rule — the tuner's, and nothing else's (`tune.py`):** the data-peeking CI of
   [Kirkham20 §5.1 Fig.10] is a normal approximation to a binomial, too narrow on a bursty channel → swap
   for an **empirical-Bernstein** variance-aware early-stop at the `(instance,run)` unit, whose radius
   absorbs the between-bout spread with no pre-estimated dispersion figure; **randomized round-robin
   (SER³)** config scheduling to avoid drift aliasing; §3.7's KS reading drops a non-stationary bout
-  in-loop. The early-stop spends a **fixed per-comparison** δ (Mnih'08 §2's
-  per-round radius), **not** the anytime (Mnih'08 §3.1, EBStop) or family-wise racing (Mnih'08 §4)
+  in-loop. The early-stop spends a **fixed per-comparison** δ ([Mnih08 §2]'s
+  per-round radius), **not** the anytime ([Mnih08 §3.1], EBStop) or family-wise racing ([Mnih08 §4])
   guarantee — implementing the §3.1 δ-spending schedule empirically broke elimination (tunecheck 4/7). The
   tuner's pick is therefore a *heuristic*: what its config is worth is established by the campaign the
   tuned harness then runs, not by this rule's confidence, and it feeds no reported outcome. This residual
