@@ -7,25 +7,25 @@ the memory ops its .litmus annotates, with the annotated kind, order and scope.
         expected (kind,order,scope) == the emitted builtin's constants, its
         traceability comment and its operands, all three agreeing.
 
-WHAT IT PROVES.  The HIP path carries no inline assembly: every memory
+What it proves.  The HIP path carries no inline assembly: every memory
 primitive is a compiler-owned source construct, so the annotation survives into
 the source as a constant that can be read back without naming a GPU generation.
 Per proc (gpu-only) or per barrier-joining lane (het) the model ops appear in
 .litmus column order, each as its mapped builtin with the mapped __ATOMIC_* and
-__HIP_MEMORY_SCOPE_* constants; the het scaffolding around them -- system-scope
-rendezvous, window-opener spin, observer snoop, result stores -- is exactly what
-the lane plan predicts; the x86_64 CPU column is rendered into the _cpu.c asm
-block mnemonic for mnemonic; and no other atomic-or-fence construct appears
-anywhere in the kernel.
+__HIP_MEMORY_SCOPE_* constants, its result store included; the het scaffolding
+around them -- system-scope rendezvous, window-opener spin, observer snoop,
+result stores -- is exactly what the lane plan predicts; the x86_64 CPU column
+is rendered into the _cpu.c asm block mnemonic for mnemonic; and a lane carries
+no further memory construct -- atomic, fence, inline asm or volatile.
 
-WHAT IT DOES NOT PROVE.  Nothing about what a compiler makes of those
+What it does not prove.  Nothing about what a compiler makes of those
 constructs: no ISA is read, no code is generated, no kernel runs.  It is also
 a parser of the .litmus CPU column's rendering only -- the per-iteration
 clflush/prefetcht0 preload and the CPU observer's plain volatile read touch the
 same locations and are outside its vocabulary by design
 (litmus/het-runtime/het_cpu_stress.h).
 
-CORPUS.  gpu-only tests plus the x86_64 het rendering that
+Corpus.  gpu-only tests plus the x86_64 het rendering that
 hetlitmus/tests/het/generate-x86.sh writes -- NOT the AArch64 het corpus, whose
 CPU column this lane never emits.  Every printed count names which.
 
@@ -142,13 +142,20 @@ DEVICE_HELPERS = {
     "het_do_stress", "het_spin",
 }
 
-# Every atomic-or-fence-shaped token, so one appearing outside the modelled
+# Every memory-construct-shaped token, so one appearing outside the modelled
 # anchors is surfaced rather than skipped.  Scaffolding may be invisible only
 # because it is unordered device-scope traffic; an ordered or scoped construct
-# the gate has no model for is not scaffolding.
-ATOMIC_SHAPED = re.compile(
-    r'(__hip_atomic_\w+|__builtin_amdgcn_\w+|__threadfence\w*|__atomic_\w+'
-    r'|__sync_\w+|\batomic[A-Za-z_]\w*|\bhet_[a-z]\w*)')
+# the gate has no model for is not scaffolding.  `asm' is in the list because
+# a source-level read stands for the whole memory behaviour ONLY while the HIP
+# path carries no inline assembly.
+_SHAPED = (r'__hip_atomic_\w+|__builtin_\w+|__threadfence\w*|__atomic_\w+'
+           r'|__sync_\w+|\batomic[A-Za-z_]\w*|\bhet_[a-z]\w*'
+           r'|\basm\b|__asm__')
+ATOMIC_SHAPED = re.compile(r'(%s)' % _SHAPED)
+# Inside a lane every access is accounted for by an anchor, so a volatile one
+# is an access no anchor carries.  The interconnect-noise reader is the
+# modelled volatile access and lives outside every lane.
+LANE_SHAPED = re.compile(r'(%s|\bvolatile\b)' % _SHAPED)
 
 
 # ===========================================================================
@@ -497,7 +504,10 @@ C_RESULT = re.compile(r'^(\w+)\[_n\] = \(uint64_t\)(\w+);$')
 C_OBSDST = re.compile(r'^(\w+)\[_n\]$')
 C_ALIAS = re.compile(
     r'^uint64_t\* (\w+) = (\w+);\s*/\* this instance\'s (\w+) \*/$')
-C_OUT = re.compile(r'^__out\[\d+ \* \d+ \+ \d+\] = \w+;$')
+C_OUT = re.compile(r'^__out\[(\d+) \* (\d+) \+ (\d+)\] = (\w+);$')
+# litmus/gpuLang.ml nregs_layout: the result slots one proc owns in __out.
+GPU_OUT_STRIDE = 4
+GPU_REG = re.compile(r'^r(\d+)$')
 
 
 class Anchor:
@@ -542,9 +552,22 @@ def parse_lane(body, helpers, where):
             continue
         m = C_RELAXED_FENCE.match(s)
         if m:
+            order, scope = m.group(1), m.group(2)
+            if scope not in HIP_SCOPE:
+                raise CompletenessError(
+                    "%s: the no-op fence comment names scope %r: %r"
+                    % (where, scope, s))
+            # Nothing executable is emitted here, so the annotation is both the
+            # claim and the whole evidence.  HipLang.dump_instr writes this form
+            # for a relaxed fence and for no other, so any other order means a
+            # fence that is NOT there.
+            if order != 'relaxed':
+                raise CompletenessError(
+                    "%s renders f[%s,%s] as a comment and emits nothing, and "
+                    "HipLang.dump_instr writes that form only for a relaxed "
+                    "fence: %r" % (where, order, scope, s))
             flush()
-            anchors.append(Anchor(('fence', m.group(1), m.group(2)),
-                                  [], emitted=False))
+            anchors.append(Anchor(('fence', order, scope), [], emitted=False))
             continue
         m = C_STORE.match(s)
         if m:
@@ -634,9 +657,15 @@ def parse_lane(body, helpers, where):
             if m:
                 flush()
                 a = Anchor(('res', m.group(1), m.group(2)), [])
+        if a is None:
+            m = C_OUT.match(s)
+            if m:
+                flush()
+                a = Anchor(('out', int(m.group(1)), int(m.group(2)),
+                            int(m.group(3)), m.group(4)), [])
         if a is not None:
             allowed = helpers | a.tokens
-            stray = [t for t in ATOMIC_SHAPED.findall(s) if t not in allowed]
+            stray = [t for t in LANE_SHAPED.findall(s) if t not in allowed]
             if stray:
                 raise CompletenessError(
                     "%s carries %s outside the construct it renders: %r"
@@ -648,13 +677,11 @@ def parse_lane(body, helpers, where):
         if m:
             anchors.append(Anchor(('alias', m.group(1), m.group(2)), []))
             continue
-        if C_OUT.match(s):
-            continue
-        stray = [t for t in ATOMIC_SHAPED.findall(s) if t not in helpers]
+        stray = [t for t in LANE_SHAPED.findall(s) if t not in helpers]
         if stray:
             raise CompletenessError(
-                "%s carries an atomic-or-fence construct the gate has no model "
-                "for (%s): %r" % (where, ", ".join(sorted(set(stray))), s))
+                "%s carries a memory construct the gate has no model for (%s): "
+                "%r" % (where, ", ".join(sorted(set(stray))), s))
     flush()
     return anchors
 
@@ -667,18 +694,44 @@ X86_BLOCK = re.compile(r'#if defined\(__x86_64__\)(.*?)(?:^#else|^#endif)',
                        re.S | re.M)
 X86_BODY = re.compile(r'^void het_run_(\w*?)P(\d+)\(', re.M)
 X86_ASM = re.compile(r'asm __volatile__\((.*?)\n\s*:', re.S)
-ASM_STR = re.compile(r'"([^"\n]*)\\n"')
+ASM_STR = re.compile(r'"([^"\n]*)"')
 A_STORE = re.compile(r'^(\w+)\s+%\[_v(\d+)\],\(%\[(\w+)\]\)$')
 A_LOAD = re.compile(r'^(\w+)\s+\(%\[(\w+)\]\),%\[_t(\d+)\]$')
+
+
+def asm_instrs(template, path, who):
+    """The instructions of one asm template, in order, one per string literal.
+
+    EVERY literal is read, and each must be one instruction closed by the
+    newline escape, as hetCpuPlan's lowering writes them.  C concatenates
+    adjacent literals, so a literal the parse skipped -- an unterminated one,
+    or a second instruction sharing a line -- is an instruction spliced into a
+    tested body that the op stream never shows: a strengthened mutant reading
+    as the original."""
+    lits = ASM_STR.findall(template)
+    if template.count('"') != 2 * len(lits):
+        raise CompletenessError(
+            "%s: body %s has an unpaired quote in its asm template" % (path, who))
+    out = []
+    for lit in lits:
+        if not lit.endswith('\\n'):
+            raise CompletenessError(
+                "%s: body %s carries the asm literal %r, which no newline escape "
+                "closes -- it concatenates with its neighbour" % (path, who, lit))
+        ins = lit[:-2]
+        if '\\n' in ins:
+            raise CompletenessError(
+                "%s: body %s carries %d instructions in one asm literal (%r)"
+                % (path, who, ins.count('\\n') + 1, lit))
+        out.append(ins.strip())
+    return out
 
 
 def x86_bodies(cpu_c_text, path):
     """Every tagged body in the real x86_64 block, as (prefix, proc, [ops]).
 
-    finditer over the blocks AND over the asm string literals: C concatenates
-    adjacent literals, so two instructions can share one source line, and a
-    `search' would read only the first -- hiding an instruction appended to a
-    body, i.e. a silently strengthened mutant."""
+    finditer over the blocks, not `search': a co-run harness holds one block
+    per instance and every one of them is the tested path."""
     out = []
     blocks = X86_BLOCK.findall(cpu_c_text)
     if not blocks:
@@ -696,8 +749,8 @@ def x86_bodies(cpu_c_text, path):
                     "%s: body het_run_%sP%s carries no asm __volatile__ block"
                     % (path, h.group(1), h.group(2)))
             ops, si, li = [], 0, 0
-            for line in [l for blk_asm in asms for l in ASM_STR.findall(blk_asm)]:
-                ins = line.strip()
+            who = "het_run_%sP%s" % (h.group(1), h.group(2))
+            for ins in [i for a in asms for i in asm_instrs(a, path, who)]:
                 mn = ins.split()[0].lower() if ins else ''
                 if mn in X86_FENCE:
                     if ins.lower() != mn:
@@ -746,6 +799,8 @@ def fmt(sig):
         return "observer.load[%s,%s]" % (sig[1], sig[2])
     if k == 'res':
         return "result_store %s=%s" % (sig[1], sig[2])
+    if k == 'out':
+        return "__out[%d * %d + %d]=%s" % (sig[1], sig[2], sig[3], sig[4])
     if k == 'orphan-comment':
         return "comment %s[%s,%s] with no call" % (sig[1], sig[2], sig[3])
     if k == 'alias':
@@ -798,10 +853,50 @@ def check_stream(result, expected, anchors, who):
     return False
 
 
-TAG_VALUE = re.compile(r'^\(\(uint64_t\)\d+ \* \(_n \+ 1\) \+ \d+\)$')
+def tag_value(k, mu):
+    """litmus/gpuLang.ml tagged_value's own spelling of one store tag."""
+    return "((uint64_t)%s * (_n + 1) + %s)" % (k, mu)
 
 
-def check_operands(result, anchors, cells, who, tagged):
+def tag_plan(inst):
+    """(K, {proc: [mu per store]}) as litmus/hetEmit.ml numbers one instance.
+
+    mu runs over the instance's stores -- procs in index order, stores in
+    column order -- and K is one past the last, which is what makes the
+    (location, value) -> mu decode invertible.  The numbering is shared with
+    the CPU column, so a GPU store's mu counts the CPU column's stores too,
+    and K is wrong for the whole instance the moment either side gains one."""
+    counts = [(proc, sum(1 for c in inst['cells'][proc] if c[0] == 'w'))
+              for proc, _ in inst['gpu']]
+    counts += [(proc, sum(1 for o in ops if o[0] == 'store'))
+               for proc, ops in inst['cpu']]
+    mus, nxt = {}, 1
+    for proc, n in sorted(counts):
+        mus[proc] = list(range(nxt, nxt + n))
+        nxt += n
+    return nxt, mus
+
+
+def out_anchors(cells, pidx):
+    """The result stores a gpu-only proc ends on: one per read register, into
+    the slot litmus/gpuLang.ml dump_test reserves for it.  They are the only
+    channel by which a gpu-only read reaches an outcome, so a dropped or
+    misindexed one loses a read with nothing else to notice."""
+    out, seen = [], []
+    for kind, _o, _s, dst, _v in cells:
+        if kind != 'r' or dst in seen:
+            continue
+        seen.append(dst)
+        m = GPU_REG.match(dst)
+        if not m:
+            raise CompletenessError(
+                "gpu-only P%d loads into %r, which names no __out slot -- that "
+                "buffer is indexed by the register number" % (pidx, dst))
+        out.append(('out', pidx, GPU_OUT_STRIDE, int(m.group(1)), dst))
+    return out
+
+
+def check_operands(result, anchors, cells, who, tagged, tags=None):
     """Comment, constants and operands must agree with each other and with the
     .litmus cell that produced them.  The constants alone are what the stream
     compare sees, so a comment edited on its own would otherwise be invisible --
@@ -809,11 +904,19 @@ def check_operands(result, anchors, cells, who, tagged):
     model = [a for a in anchors if a.sig[0] in ('st', 'ld', 'fence')]
     if len(model) != len(cells):
         return                                   # the stream compare said so
+    nst = sum(1 for c in cells if c[0] == 'w')
+    if tagged and (tags is None or len(tags) != nst):
+        raise GateError("%s: %d store tag(s) planned for %d store(s)"
+                        % (who, -1 if tags is None else len(tags), nst))
+    si = 0
     for a, cell in zip(model, cells):
         kind, order, scope, o1, o2 = cell
         if a.sig[0] == 'fence':
             if not getattr(a, 'emitted', True):
-                continue                         # a relaxed fence is a comment
+                # A relaxed fence emits nothing, so its annotation is the whole
+                # construct; parse_lane refuses that form for any other order,
+                # and the stream compare has already bound this one to the cell.
+                continue
             if (a.c_order, a.c_scope) != (order, scope):
                 result.fail("%s: fence comment says f[%s,%s], its call says "
                             "f[%s,%s]" % (who, a.c_order, a.c_scope, order, scope))
@@ -834,6 +937,8 @@ def check_operands(result, anchors, cells, who, tagged):
                         % (who, fmt(a.sig), len(tail)))
             continue
         if a.sig[0] == 'st':
+            k, mu = tags[si] if tagged else (None, None)
+            si += 1
             if tail[0] != o1 or a.ptr != o1:
                 result.fail("%s: store names %r/%r, the .litmus cell stores to %r"
                             % (who, tail[0], a.ptr, o1))
@@ -841,9 +946,11 @@ def check_operands(result, anchors, cells, who, tagged):
                 result.fail("%s: store comment values %r, the call stores %r"
                             % (who, tail[1], a.val))
             elif tagged:
-                if not TAG_VALUE.match(a.val):
-                    result.fail("%s: store value %r is not the per-iteration tag"
-                                % (who, a.val))
+                if a.val != tag_value(k, mu):
+                    result.fail("%s: store carries the tag %s, hetEmit's plan "
+                                "for this instance gives it %s -- a wrong K or a "
+                                "repeated mu decodes the wrong writer"
+                                % (who, a.val, tag_value(k, mu)))
             elif a.val != o2:
                 result.fail("%s: store writes %r, the .litmus cell writes %r"
                             % (who, a.val, o2))
@@ -881,8 +988,10 @@ def check_gpu_only(result, inst, lanes, klines):
                         "selects (workgroup %d, lane %d)"
                         % (who, b.group(1), b.group(2), b.group(3), blk, lane))
         anchors = parse_lane(body, set(), "gpu-only %s" % who)
-        if check_stream(result, list(ops), anchors, who):
-            check_operands(result, anchors, inst['cells'][pidx], who, tagged=False)
+        cells = inst['cells'][pidx]
+        expected = list(ops) + out_anchors(cells, pidx)
+        if check_stream(result, expected, anchors, who):
+            check_operands(result, anchors, cells, who, tagged=False)
 
 
 def check_het(result, insts, lanes):
@@ -894,6 +1003,7 @@ def check_het(result, insts, lanes):
                               for i in insts])
     pre_of = {i['label']: i['pre'] for i in insts}
     cells_of = {i['label']: i['cells'] for i in insts}
+    plan_of = {i['label']: tag_plan(i) for i in insts}
     names = ", ".join("%s:%s" % (l[3], "P%d" % l[1] if l[0] == 'test' else "obs")
                       for l in plan)
     if len(lanes) != len(plan):
@@ -936,8 +1046,10 @@ def check_het(result, insts, lanes):
                                 "instance's %s" % (who, a.sig[1], a.sig[2],
                                                    pre + a.sig[1]))
             model = [a for a in anchors if a.sig[0] != 'alias']
+            k, mus = plan_of[iname]
             if check_stream(result, expected, model, who):
-                check_operands(result, model, cells, who, tagged=True)
+                check_operands(result, model, cells, who, tagged=True,
+                               tags=[(k, mu) for mu in mus[pidx]])
         # The scaffolding's operands, which the anchor stream does not carry.
         # The window-opener aligns the test lanes of one instance and the
         # rendezvous joins the two devices; a spin handed the rendezvous word
@@ -1085,7 +1197,11 @@ def guard_report():
     print("  w[o,s] <var> <value>   __hip_atomic_store(<var>, <value>, <ORDER>, <SCOPE>)")
     print("  r[o,s] <dst> <var>     <dst> = __hip_atomic_load(<var>, <ORDER>, <SCOPE>)")
     print("  f[o,s]                 __builtin_amdgcn_fence(<ORDER>, \"<scope>\"); // f[o,s]")
-    print("  f[relaxed,s]           a comment only; nothing executable")
+    print("  f[relaxed,s]           a comment only; nothing executable, and no")
+    print("                         other order may be rendered that way")
+    print("  gpu-only result store  __out[<proc> * %d + <n>] = r<n>, one per read"
+          % GPU_OUT_STRIDE)
+    print("  het store value        %s" % tag_value("K", "mu"))
     for label, table in (("memory orders", HIP_ORDER), ("access scopes", HIP_SCOPE),
                          ("fence sync scopes", HIP_FENCE_SCOPE)):
         print("\n-- %s --" % label)
@@ -1115,6 +1231,12 @@ def guard_report():
     if not DEVICE_HELPERS:
         bad += 1
     print("  %s" % " ".join(sorted(DEVICE_HELPERS)))
+
+    print("\n-- memory constructs surfaced as unmodelled, by region --")
+    print("  in a lane            %s" % LANE_SHAPED.pattern)
+    print("  outside every lane   %s" % ATOMIC_SHAPED.pattern)
+    if not (_SHAPED and 'asm' in LANE_SHAPED.pattern):
+        bad += 1
 
     print("\n-- exit contract --")
     print("  0 PASS   1 FAIL   2 completeness hard-fail   3 error")
