@@ -10,16 +10,16 @@ generates for an emitted harness carry exactly the ordering effects its
 
 What it proves.  Every access and cache operation the compiler emitted inside
 the kernel's own symbol is read back and mapped, through the profile, to an
-abstract token (kind, width class, scope, returns-value).  Per proc (gpu-only)
-or per barrier-joining lane (het) the basic block holding a lane's model ops
-carries, in emitted order, exactly the tokens the AMDGPU memory-model code
-sequence for that (kind, order, scope) prescribes: the access with its scope's
-cache bits, the writeback ahead of a release, the invalidate behind an acquire,
-and the wait the row requires between an acquire access and its invalidate.
-The het scaffolding -- rendezvous arrive and spin, window-opener spin, observer
-snoop -- is the block population the lane plan predicts, and a whole-kernel
-token census is a second, independent net over the counts the block match
-cannot see.
+abstract token (kind, width class, scope, returns-value).  The basic blocks
+carrying tokens are then the multiset of sequences the harness prescribes --
+one per proc (gpu-only) or per barrier-joining lane (het), each in emitted
+order, holding exactly the tokens the AMDGPU memory-model code sequence for
+that (kind, order, scope) asks for: the access with its scope's cache bits, the
+writeback ahead of a release, the invalidate behind an acquire, and the wait
+the row requires between an acquire access and its invalidate.  The het
+scaffolding -- rendezvous arrive and spin, window-opener spin, observer snoop
+-- is the block population the lane plan predicts, and a whole-kernel token
+census is a second, independent net over the counts the block match cannot see.
 
 What it does not prove.  Nothing is launched; no device is needed.  Three
 gaps are structural, not incidental:
@@ -34,17 +34,26 @@ gaps are structural, not incidental:
     and a relaxed load followed by an acquire fence are the same instructions,
     as are a release store and a release fence followed by a relaxed store.
     Which annotation produced an effect is again the source gate's to say.
-  * Procs and lanes with equal token sequences are matched as a multiset, so a
-    swap of two symmetric ones reads as no change.
+  * That match is a multiset equality over every expected sequence, so any
+    permutation of them across procs, lanes or co-running instances reads as no
+    change -- an ordering effect moved out of the test instance's lane and into
+    its mu(T) control's lane included, and not merely a swap of two symmetric
+    procs.  The source gate carries that attribution, comparing each lane's ops
+    in order and binding each instance's aliases; a permutation here could only
+    come from one there, a compiler having no way to move code across mutually
+    exclusive blockIdx/threadIdx guards.  What is established here is that the
+    multiset of per-lane lowerings is the expected one and that nothing else
+    bit-carrying exists.
 
 Also unmodelled by construction: an access carrying no cache bits (the result
 buffers, the scratch counters, a discarded agent-scope RMW) is dropped with the
 plain accesses, since at ISA level it names no scope; an unmatched basic block
 may hold loads (the interconnect-noise reader lives in one); and one compile
 under the shipped flags is read, with -S bounded against the shipped object by
-the disassembly cross-check of --reps.  Two census figures are how many copies
-this toolchain makes of a loop-carried scaffolding read, so a toolchain bump
-can redden them; that is a profile re-derivation, logged, not a loosened check.
+the disassembly cross-check --reps and --all both run.  Two census figures are
+how many copies this toolchain makes of a loop-carried scaffolding read, so a
+toolchain bump can redden them; that is a profile re-derivation, logged, not a
+loosened check.
 
 Why reading -S is sound.  Spatially, every token is attributed to the kernel's
 own mangled symbol, and a second function symbol in the output is refused
@@ -70,13 +79,18 @@ loader, lane plan and emit recipe are the expected side here too.
 
 Usage:
   amdisacheck.py TEST.litmus [--arch gfxNNN] [--asm F] [-q]
+  amdisacheck.py --all [--gpu-dir D] [--x86-dir D] [--jobs N] [--arch gfxNNN]
   amdisacheck.py --reps [--arch gfxNNN]
+  amdisacheck.py --bite [--arch gfxNNN]
   amdisacheck.py --guard
 """
 
 import argparse
 import collections
+import concurrent.futures
+import contextlib
 import importlib.util
+import io
 import os
 import re
 import shutil
@@ -165,6 +179,16 @@ Mutation = collections.namedtuple("Mutation", "label needs rc want apply")
 def _sub_first(text, pattern, repl, what):
     new, n = re.subn(pattern, repl, text, count=1, flags=re.M)
     if n != 1:
+        raise GateError("mutation anchor %s is absent from the assembly" % what)
+    return new
+
+
+def _sub_all(text, pattern, repl, what):
+    """The same, over every occurrence: a directive the profile asserts is not
+    promised to be written once, and leaving a second copy behind would leave
+    the assertion holding."""
+    new, n = re.subn(pattern, repl, text, flags=re.M)
+    if not n:
         raise GateError("mutation anchor %s is absent from the assembly" % what)
     return new
 
@@ -400,7 +424,7 @@ class Gfx942(LoweringProfile):
                  ("st", "release", "sys"), 1, "no basic block carries",
                  lambda t: _sub_first(t, r'^\tbuffer_wbl2 sc0 sc1\n', '',
                                       "a system-scope buffer_wbl2")),
-        Mutation("a model access NARROWED from system to agent scope",
+        Mutation("a system-scope access NARROWED to agent scope",
                  ("st", "relaxed", "sys"), 1, "no basic block carries",
                  lambda t: _sub_first(t, r'^(\tglobal_(?:load|store)_dword.*) '
                                          r'sc0 sc1$', r'\1 sc1',
@@ -411,8 +435,8 @@ class Gfx942(LoweringProfile):
                  lambda t: _sub_first(t, r'^\ts_waitcnt [^\n]*\n(\tbuffer_inv)',
                                       r'\1',
                                       "a wait ahead of a buffer_inv")),
-        Mutation("an ordering effect the .litmus does not name INSERTED after "
-                 "a relaxed load",
+        Mutation("an ordering effect no lane asks for INSERTED after a "
+                 "system-scope load",
                  ("ld", "relaxed", "sys"), 1, "no lane accounts for",
                  lambda t: _sub_first(t, r'^(\tglobal_load_dword.* sc0 sc1)$',
                                       r'\1\n\ts_waitcnt vmcnt(0)\n'
@@ -438,6 +462,68 @@ class Gfx942(LoweringProfile):
                  lambda t: _sub_first(t, r'^\tglobal_load_dwordx2 [^\n]* '
                                          r'sc0 sc1\n', '',
                                       "a system-scope 64-bit model load")),
+        Mutation("an observer lane's snoop NARROWED to agent scope",
+                 "het-obs", 1, ":obs [",
+                 lambda t: _sub_first(t, r'^(\tglobal_load_dwordx2 [^\n]*) '
+                                         r'sc0 sc1$', r'\1 sc1',
+                                      "a system-scope 64-bit model load")),
+        Mutation("the whole seq_cst fence lowering STRIPPED",
+                 ("fence", "sc", "sys"), 1, "no basic block carries",
+                 lambda t: _sub_first(t, r'^\tbuffer_wbl2 sc0 sc1\n'
+                                         r'\ts_waitcnt [^\n]*\n'
+                                         r'\tbuffer_inv sc0 sc1\n', '',
+                                      "a system-scope fence lowering")),
+        Mutation("only the invalidate of a seq_cst fence DELETED, its "
+                 "writeback and wait left in place",
+                 ("fence", "sc", "sys"), 1, "no basic block carries",
+                 lambda t: _sub_first(t, r'^(\tbuffer_wbl2 sc0 sc1\n'
+                                         r'\ts_waitcnt [^\n]*\n)'
+                                         r'\tbuffer_inv sc0 sc1\n', r'\1',
+                                      "a system-scope fence lowering")),
+        Mutation("a model store DELETED",
+                 ("st", "relaxed", "sys"), 1, "no basic block carries",
+                 lambda t: _sub_first(t, r'^\tglobal_store_dword[^\n]* sc0 sc1\n',
+                                      '', "a system-scope store")),
+        Mutation("a bit-less store PLANTED between a row-required wait and the "
+                 "invalidate it guards",
+                 ("ld", "acquire", "sys"), 1, "no basic block carries",
+                 lambda t: _sub_first(t, r'^(\ts_waitcnt [^\n]*\n)'
+                                         r'(\tbuffer_inv sc0 sc1\n)',
+                                      r'\1\tglobal_store_dword v0, v1, s[6:7]\n\2',
+                                      "a wait ahead of a buffer_inv")),
+        Mutation("the rendezvous invalidate NARROWED to agent scope",
+                 "het", 1, "rendezvous-arrive",
+                 lambda t: _sub_first(t, r'^(\tglobal_atomic_add [^\n]* sc1\n'
+                                         r'\ts_waitcnt [^\n]*\n'
+                                         r'\tbuffer_inv) sc0 sc1$', r'\1 sc1',
+                                      "the rendezvous arrival")),
+        Mutation("the rendezvous spin's load DELETED",
+                 "het", 1, "rendezvous-spin",
+                 lambda t: _sub_first(t, r'^\tglobal_load_dword [^\n]* sc0 sc1\n',
+                                      '', "the rendezvous spin")),
+        Mutation("the window-opener's arrival DELETED",
+                 "het", 1, "window-opener-arrive",
+                 lambda t: _sub_first(t, r'^\tglobal_atomic_add [^\n]* sc0\n', '',
+                                      "an agent-scope returning RMW")),
+        # The poll shares its lowering with the folded counter reads, which
+        # sit in load-only blocks the tail policy admits, so the block match
+        # matches one of those in its place and the census is what sees it gone.
+        Mutation("the window-opener's poll DELETED",
+                 "het", 1, "ld32(gpu), the lane plan accounts for",
+                 lambda t: _sub_first(t, r'^\tglobal_load_dword '
+                                         r'(?![^\n]*sc0)[^\n]* sc1\n', '',
+                                      "an agent-scope scaffolding load")),
+        Mutation("a co-run control's model block DELETED",
+                 "het", 1, ":P1 [",
+                 lambda t: _sub_first(t, r'^\tglobal_load_dwordx2 [^\n]* sc0 sc1\n'
+                                         r'\tglobal_load_dwordx2 [^\n]* sc0 sc1\n',
+                                      '',
+                                      "two adjacent 64-bit system-scope loads")),
+        Mutation("a cache invalidate PLANTED in a block no lane accounts for",
+                 "het", 1, "no lane accounts for",
+                 lambda t: _sub_first(t, r'^(\tflat_load_dwordx2 [^\n]*)$',
+                                      r'\1\n\tbuffer_inv sc0 sc1',
+                                      "the interconnect-noise reader")),
     )
 
 
@@ -823,8 +909,9 @@ def match_blocks(result, expected, actual, tail_allowed):
     """Match every expected block to a basic block by its ordered tokens.
 
     The compiler lays blocks in an order of its own, so the match is on
-    contents; procs and lanes whose sequences are equal are therefore matched as
-    a multiset, and a swap between two such reads as no change.  With
+    contents, which makes it a multiset equality: any permutation of the
+    expected sequences across procs, lanes or instances passes, and attributing
+    an op to a lane is the source gate's job (hipsrccheck.py).  With
     tail_allowed an unmatched block may hold loads -- the interconnect-noise
     reader and the folded counter reads live in those -- and nothing else."""
     want = collections.defaultdict(list)
@@ -1118,10 +1205,13 @@ def disasm_lines(text, tname, path):
     return lines[i + 1:]
 
 
-def crosscheck(profile, litmus_path, arch, work):
+def crosscheck(profile, litmus_path, arch, work, doctor=None):
     """The -S token stream against the disassembly of the shipped object.
 
-    Block structure is lost in a disassembly, so both routes are read flat."""
+    Block structure is lost in a disassembly, so both routes are read flat.
+    `doctor' rewrites the -S text after the compiler wrote it, which is the
+    divergence this comparison exists to catch; the text it injects is the
+    profile's, since nothing here names an instruction."""
     require_tool(BUNDLER, "clang-offload-bundler")
     require_tool(OBJDUMP, "llvm-objdump")
     name = ptx.litmus_name(ptx.read_litmus(litmus_path))
@@ -1130,6 +1220,9 @@ def crosscheck(profile, litmus_path, arch, work):
     hip_path, _cpu = hip.emit_harness(litmus_path, d)
     s_path = os.path.join(d, name + ".s")
     compile_asm(hip_path, arch, s_path)
+    if doctor is not None:
+        text = open(s_path).read()
+        open(s_path, "w").write(doctor(text))
     co = os.path.join(d, name + ".co")
     r = _run([HIPCC, "--offload-arch=" + arch] + list(GENCO_FLAGS)
              + ["-I", os.path.dirname(os.path.abspath(hip_path)), hip_path,
@@ -1149,6 +1242,28 @@ def crosscheck(profile, litmus_path, arch, work):
     b = filter_tokens(classify_lines(profile, disasm_lines(r.stdout, name, elf),
                                      elf))
     return a, b
+
+
+def crosscheck_report(profile, litmus_path, arch, work, doctor=None):
+    """One cross-check, printed.  True when the two routes agree."""
+    a, b = crosscheck(profile, litmus_path, arch, work, doctor=doctor)
+    name = os.path.basename(litmus_path)[:-len(".litmus")]
+    if a == b:
+        print("  %-42s OK (%d token(s) identical)" % (name, len(a)))
+        return True
+    print("  %-42s DIFFERS" % name)
+    print("     assembly     %s" % fmt_seq(a))
+    print("     disassembly  %s" % fmt_seq(b))
+    return False
+
+
+def crosscheck_pair(rep, gpu_paths, het_paths):
+    """The smallest and the largest shape the rep set holds: its first gpu-only
+    rep, and its het rep with the most lanes."""
+    gpu, het = set(gpu_paths), set(het_paths)
+    hets = [p for p in rep if p in het]
+    return [next(p for p in rep if p in gpu),
+            max(hets, key=lambda p: (lane_count(p), os.path.basename(p)))]
 
 
 # ===========================================================================
@@ -1191,24 +1306,10 @@ def reps(arch, verbose=True):
             ok = check_test(path, arch, verbose=verbose)
             print("RESULT: %s" % ("PASS" if ok else "FAIL"))
             npass += 1 if ok else 0
-        # The cross-check runs on the smallest and the largest shape the rep
-        # set holds: its first gpu-only rep, and its het rep with the most
-        # lanes.
-        hets = [p for p in rep if p in het]
-        pair = [next(p for p in rep if p in gpu),
-                max(hets, key=lambda p: (lane_count(p), os.path.basename(p)))]
+        pair = crosscheck_pair(rep, gpu, het)
         print("\n-- the assembly against the disassembly of the shipped object --")
-        nx = 0
-        for path in pair:
-            a, b = crosscheck(profile, path, arch, tmp)
-            name = os.path.basename(path)[:-len(".litmus")]
-            if a == b:
-                nx += 1
-                print("  %-42s OK (%d token(s) identical)" % (name, len(a)))
-            else:
-                print("  %-42s DIFFERS" % name)
-                print("     assembly     %s" % fmt_seq(a))
-                print("     disassembly  %s" % fmt_seq(b))
+        nx = sum(1 for path in pair
+                 if crosscheck_report(profile, path, arch, tmp))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     ok = npass == len(rep) and nx == len(pair)
@@ -1220,7 +1321,424 @@ def reps(arch, verbose=True):
 
 
 # ===========================================================================
-# 11. --guard
+# 11. THE CORPUS SWEEP  (--all)
+# ===========================================================================
+
+def run_check(litmus_path, arch, asm=None, verbose=True):
+    """(exit code, printed output) of one check.
+
+    Returning the exit code rather than raising is what lets the sweep and an
+    injection under --bite read the same verdict the command line prints."""
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            ok = check_test(litmus_path, arch, asm_override=asm, verbose=verbose)
+            print("RESULT:", "PASS" if ok else "FAIL")
+        rc = 0 if ok else 1
+    except CompletenessError as e:
+        buf.write("COMPLETENESS HARD-FAIL: %s\n" % e)
+        rc = 2
+    except GateError as e:
+        buf.write("ERROR: %s\n" % e)
+        rc = 3
+    except Exception as e:
+        buf.write("ERROR: %s: %s\n" % (type(e).__name__, e))
+        rc = 3
+    return rc, buf.getvalue()
+
+
+def capture(fn, **override):
+    """(exit code, printed output) of an in-process call, with module globals
+    temporarily replaced.
+
+    The sweep resolves its worker and its toolchain through those globals, so a
+    worker that dies and an unresolvable hipcc are injections like any other."""
+    g = globals()
+    saved = {k: g[k] for k in override}
+    g.update(override)
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            rc = fn()
+    except CompletenessError as e:
+        buf.write("COMPLETENESS HARD-FAIL: %s\n" % e)
+        rc = 2
+    except GateError as e:
+        buf.write("ERROR: %s\n" % e)
+        rc = 3
+    except Exception as e:
+        buf.write("ERROR: %s: %s\n" % (type(e).__name__, e))
+        rc = 3
+    finally:
+        g.update(saved)
+    return rc, buf.getvalue()
+
+
+def _sweep_one(job):
+    """One test, as (verdict, name, output).
+
+    A worker that raises is reported as that test's error verdict, so nothing
+    here can turn an exception into a pass."""
+    litmus_path, arch = job
+    name = os.path.basename(litmus_path)[:-len(".litmus")]
+    try:
+        rc, out = run_check(litmus_path, arch)
+    except Exception as e:
+        return "ERROR", name, "ERROR: %s: %s\n" % (type(e).__name__, e)
+    return {0: "PASS", 1: "FAIL", 2: "GUARD-FAIL"}.get(rc, "ERROR"), name, out
+
+
+def sweep_dir(files, label, arch, jobs, diffs):
+    """Check one corpus in a worker pool; print its table and TALLY line.
+
+    Returns (pass, total).  Every non-PASS test's own output is written into
+    [diffs] and echoed, so a failure is never reduced to a count."""
+    print("\n===== lowering faithfulness: %s =====" % label)
+    print("%-42s | %s" % ("test", "verdict"))
+    print("-" * 43 + "+---------")
+    rows = []
+    try:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as pool:
+            for verdict, name, out in pool.map(_sweep_one,
+                                               [(f, arch) for f in files]):
+                rows.append((name, verdict, out))
+    except concurrent.futures.BrokenExecutor as e:
+        # A worker killed outright never reaches _sweep_one's own handler, and
+        # the tests it held come back with no verdict at all, so the corpus is
+        # refused here rather than tallied short.
+        raise GateError("a sweep worker died without raising, breaking the pool "
+                        "after %d of %d %s test(s): %s"
+                        % (len(rows), len(files), label, e))
+    rows.sort()
+    for name, verdict, _out in rows:
+        print("%-42s | %s" % (name, verdict))
+    print("-" * 43 + "+---------")
+    n = {v: sum(1 for _, w, _ in rows if w == v)
+         for v in ("PASS", "FAIL", "GUARD-FAIL", "ERROR")}
+    print("TALLY %s: %d/%d PASS  (FAIL=%d  GUARD-FAIL=%d  ERROR=%d)"
+          % (label, n["PASS"], len(rows), n["FAIL"], n["GUARD-FAIL"], n["ERROR"]))
+    if n["PASS"] != len(rows):
+        print("\n--- output for every non-PASS %s test (saved in %s) ---"
+              % (label, diffs))
+        for name, verdict, out in rows:
+            if verdict == "PASS":
+                continue
+            with open(os.path.join(diffs, "diff." + name), "w") as fh:
+                fh.write(out)
+            print(">>> %s %s" % (verdict, name))
+            print(out.rstrip())
+    return n["PASS"], len(rows)
+
+
+def sweep(gpu_dir, x86_dir, arch, jobs):
+    """Both corpora, each against its pinned census, with the rep-set tripwire
+    and the cross-check reading the same generated corpus the sweep does.
+
+    The het half is the x86_64 rendering this lane emits, NOT the AArch64 one
+    ptxcheck.py reads -- the same shapes under a different CPU column -- so
+    every count printed here says which corpus it counts."""
+    profile = profile_for(arch)
+    require_tool(HIPCC, "hipcc")
+    tmp = tempfile.mkdtemp(prefix="amdisacheck-all.")
+    t0 = time.time()
+    try:
+        # Both censuses are asserted before a single render compiles: a corpus
+        # that is not there cannot be reported as a corpus that passed.
+        gpu_files = hip.corpus_files(gpu_dir, "gpu-only", hip.GPU_ONLY_N)
+        generated = x86_dir is None
+        if generated:
+            x86_dir = hip.regen_x86(os.path.join(tmp, "corpus"))
+        x86_files = hip.corpus_files(x86_dir, "x86_64 het", hip.X86_HET_N)
+        if not os.path.exists(os.path.join(x86_dir, hip.CONTROL_MAP)):
+            raise GateError(
+                "no %s in the x86_64 het corpus %s -- without it every lane plan "
+                "collapses to a single instance" % (hip.CONTROL_MAP, x86_dir))
+        print("===== ISA READ-BACK GATE: %d gpu-only + %d x86_64 het renders ====="
+              % (hip.GPU_ONLY_N, hip.X86_HET_N))
+        print("  %s" % toolchain_banner())
+        print("  profile     %s, derived from \"%s\""
+              % (profile.name, profile.section))
+        print("  gpu-only    %s" % gpu_dir)
+        print("  x86_64 het  %s%s" % (x86_dir, " (generated)" if generated else ""))
+        print("  workers     %d" % jobs)
+        rep, shapes = select_reps(gpu_files, x86_files)
+        covered = coverage_tripwire(profile, list(rep), gpu_files + x86_files,
+                                    shapes)
+        print("  rep set     %d rep(s) carrying all %d corpus row(s), each row "
+              "lowered by the profile" % (len(rep), len(covered)))
+        diffs = tempfile.mkdtemp(prefix="amdisacheck-diffs.")
+        gp, gt = sweep_dir(gpu_files, "gpu-only", arch, jobs, diffs)
+        xp, xt = sweep_dir(x86_files, "x86_64 het", arch, jobs, diffs)
+        print("\n-- the assembly against the disassembly of the shipped object --")
+        pair = crosscheck_pair(rep, gpu_files, x86_files)
+        nx = sum(1 for path in pair
+                 if crosscheck_report(profile, path, arch, tmp))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    ok = ((gp, gt) == (hip.GPU_ONLY_N, hip.GPU_ONLY_N)
+          and (xp, xt) == (hip.X86_HET_N, hip.X86_HET_N) and nx == len(pair))
+    print("\nISA READ-BACK GATE: %s -- gpu-only %d/%d, x86_64 het %d/%d (the "
+          "x86_64 rendering of the het corpus, not the AArch64 one), %d/%d "
+          "cross-check(s), %d row(s) covered, %.1f s"
+          % ("PASS" if ok else "FAILED", gp, gt, xp, xt, nx, len(pair),
+             len(covered), time.time() - t0))
+    print("  each kernel's blocks are the multiset its lanes prescribe; which "
+          "lane runs an op, and the order of a workgroup-scope one, are the HIP "
+          "source gate's to say")
+    if ok:
+        shutil.rmtree(diffs, ignore_errors=True)
+    return 0 if ok else 1
+
+
+# ===========================================================================
+# 12. BITE  (every check reddened on a fresh artifact)
+# ===========================================================================
+
+# A synthetic carrier for an annotation the corpus does not hold and this
+# profile lowers no row for, so the refusal that a row is missing cannot rot
+# unbitten; hipsrccheck.py owns the .litmus body, the annotation and its name.
+BITE_SYNTH = "F-acqrel-sys"
+# A target no profile is written for, which the registry must refuse by naming
+# the section of [AMDGPUUsage] the next one is derived from.
+BITE_UNKNOWN_ARCH = "gfx90a"
+# A second function symbol, whose instructions would belong to no lane.
+BITE_SECOND_SYMBOL = "device_helper_the_compiler_did_not_inline"
+
+
+def _worker_dies(_job):
+    """A sweep worker that dies without raising, which --bite puts in the pool:
+    _sweep_one's handler never sees it, and the pool breaks instead."""
+    os._exit(1)
+
+
+def _rotated_preconditions(profile):
+    """Each declared precondition paired with a value the profile declares for
+    another of them, so an injection is always a value this target never
+    carries and the driver still names no directive of its own."""
+    values = [v for _d, v, _w in profile.preconditions]
+    return [(d, v, values[(i + 1) % len(values)])
+            for i, (d, v, _w) in enumerate(profile.preconditions)]
+
+
+def _uncovering_rep(rep_paths, corpus_paths):
+    """The rep whose loss leaves a corpus row with no carrier at all.
+
+    The tripwire exists for exactly that drift, so the injection is computed
+    from the corpus rather than pinned to a test name."""
+    want = set()
+    for path in corpus_paths:
+        want |= rows_of(hip.instance_of(path))
+    for drop in rep_paths:
+        kept = set()
+        for path in rep_paths:
+            if path != drop:
+                kept |= rows_of(hip.instance_of(path))
+        if want - kept:
+            return drop, [p for p in rep_paths if p != drop]
+    raise GateError("--bite: no rep is the sole carrier of a row, so dropping "
+                    "one cannot uncover any")
+
+
+def _misfiled_shape(shapes, het_paths):
+    """One fixed shape re-filed under a test that does not satisfy it."""
+    for label in sorted(shapes):
+        holds = dict(SHAPES)[label]
+        for other in het_paths:
+            if not holds(hip.instance_of(other), hip.het_instances(other)):
+                bad = dict(shapes)
+                bad[label] = other
+                return label, other, bad
+    raise GateError("--bite: every het test satisfies every fixed shape, so no "
+                    "rep can be misfiled")
+
+
+def bite(arch, tmp):
+    """Every check on a fresh artifact, on the corruption it exists to catch.
+
+    Exit codes are the contract, so each injection names the code it owes as
+    well as the assertion: 1 is generated code that differs from what its
+    .litmus prescribes, 2 a construct the profile has no model for and must
+    refuse rather than compare, 3 a gate that cannot run at all."""
+    profile = profile_for(arch)
+    require_tool(HIPCC, "hipcc")
+    b = hip.Bites()
+    b.work = os.path.join(tmp, "bites")
+    os.makedirs(b.work)
+    srcs = os.path.join(tmp, "src")
+    os.makedirs(srcs)
+    corpus = hip.regen_x86(os.path.join(tmp, "x86"))
+    gpu_files = hip.corpus_files(hip.GPU_ONLY_DIR, "gpu-only", hip.GPU_ONLY_N)
+    het_files = hip.corpus_files(corpus, "x86_64 het", hip.X86_HET_N)
+    rep, shapes = select_reps(gpu_files, het_files)
+
+    cache = {}
+
+    def run_printing(litmus_path, target):
+        """One check whose output reaches the caller's stdout, so an injection
+        made through capture() sees the message the command line would."""
+        rc, out = run_check(litmus_path, target)
+        print(out, end="")
+        return rc
+
+    def asm_of(litmus_path):
+        """The compiled assembly of one carrier, once per run."""
+        if litmus_path not in cache:
+            d = os.path.join(srcs, "src%02d" % len(cache))
+            os.makedirs(d)
+            hip_path, _cpu = hip.emit_harness(litmus_path, d)
+            out = os.path.join(d, ptx.litmus_name(ptx.read_litmus(litmus_path))
+                               + ".s")
+            compile_asm(hip_path, arch, out)
+            cache[litmus_path] = out
+        return cache[litmus_path]
+
+    def inject(tag, label, litmus_path, rc, want, apply_to):
+        """One injection into a pristine copy of a carrier's assembly."""
+        src = asm_of(litmus_path)
+        w = b.fresh(tag, src)
+        text = open(w).read()
+        open(w, "w").write(apply_to(text))
+        return b.record(label, rc, want, *run_check(litmus_path, arch, asm=w),
+                        orig=src, cur=w)
+
+    print("===== ISA READ-BACK GATE BITE: the clean controls, then every check =====")
+    print("  profile %s, derived from \"%s\"" % (profile.name, profile.section))
+    print("  corpus  %d gpu-only + %d x86_64 het (generated)"
+          % (len(gpu_files), len(het_files)))
+
+    print("\n-- clean controls (an injection is evidence only against a green "
+          "base) --")
+    controls = [mutation_carrier(m, list(rep), het_files)
+                for m in profile.mutations]
+    for path in sorted(set(p for p in controls if p is not None)):
+        name = os.path.basename(path)[:-len(".litmus")]
+        b.record("%s (unmodified assembly)" % name, 0, "RESULT: PASS",
+                 *run_check(path, arch, asm=asm_of(path)))
+
+    print("\n-- the lowering profile's own mutations, on the carriers --guard "
+          "resolves --")
+    for i, m in enumerate(profile.mutations):
+        who = controls[i]
+        if who is None:
+            print("  *** NO CARRIER IN THE REP SET    [%s]" % m.label)
+            b.n += 1
+            b.bad += 1
+            continue
+        inject("mut%02d" % i, m.label, who, m.rc, m.want, m.apply)
+
+    # The refusals below are about the file rather than about a lane, so they
+    # all read one already compiled gpu-only carrier.
+    plain = sorted(p for p in cache if p in set(gpu_files))[0]
+
+    print("\n-- the assembler directives the profile's rows rest on --")
+    for directive, value, other in _rotated_preconditions(profile):
+        inject("pre-%s" % directive.strip("."),
+               "the precondition `%s %s' CARRYING ANOTHER DECLARED VALUE"
+               % (directive, value), plain, 2, "%s is" % directive,
+               lambda t, d=directive, o=other: _sub_all(
+                   t, r'^(\s*%s\s+)\S.*$' % re.escape(d),
+                   lambda mm, o=o: mm.group(1) + o, "the directive %s" % d))
+        inject("pre-gone-%s" % directive.strip("."),
+               "the precondition `%s %s' DELETED" % (directive, value),
+               plain, 2, "does not carry at all",
+               lambda t, d=directive: _sub_all(
+                   t, r'^\s*%s\b[^\n]*\n' % re.escape(d), '',
+                   "the directive %s" % d))
+
+    print("\n-- the symbol every token is attributed to --")
+    inject("second-symbol", "a SECOND @function symbol in the output",
+           plain, 3, "@function symbol(s)",
+           lambda t: _sub_first(
+               t, r'^(\s*\.type\s+[\w.$]+\s*,\s*@function\s*)$',
+               lambda mm: "%s\n\t.type\t%s,@function"
+                          % (mm.group(1), BITE_SECOND_SYMBOL),
+               "the kernel's own function symbol"))
+
+    print("\n-- the tables, the tools and the rep set the gate runs through --")
+    b.record("a target no lowering profile is written for (--arch %s)"
+             % BITE_UNKNOWN_ARCH, 2, "Memory Model GFX%s"
+             % BITE_UNKNOWN_ARCH[len("gfx"):].upper(),
+             *run_check(plain, BITE_UNKNOWN_ARCH))
+
+    sdir = os.path.join(b.work, "synth")
+    os.makedirs(sdir)
+    synth = hip.synth_carrier(sdir, BITE_SYNTH)
+    b.record("an annotation this profile lowers no row for (%s)"
+             % hip.SYNTH[BITE_SYNTH], 2, "has no row for",
+             *run_check(synth, arch))
+
+    b.record("hipcc UNRESOLVABLE (the gate reads generated code, so a missing "
+             "toolchain is a refusal)", 3, "is not resolvable at",
+             *capture(lambda: run_printing(plain, arch),
+                      HIPCC=os.path.join(tmp, "no", "such", "hipcc")))
+
+    dropped, kept = _uncovering_rep(list(rep), gpu_files + het_files)
+    b.record("the SOLE carrier of a corpus row dropped from the rep set (%s)"
+             % os.path.basename(dropped)[:-len(".litmus")], 2, "uncovered:",
+             *capture(lambda: coverage_tripwire(profile, kept,
+                                                gpu_files + het_files, shapes)))
+
+    label, other, misfiled = _misfiled_shape(shapes, het_files)
+    b.record("the shape %r re-filed under a test that does not satisfy it (%s)"
+             % (label, os.path.basename(other)[:-len(".litmus")]), 2,
+             "no longer satisfies the shape",
+             *capture(lambda: coverage_tripwire(profile, list(rep),
+                                                gpu_files + het_files, misfiled)))
+
+    print("\n-- the cross-check that bounds -S against the shipped object --")
+    doctor = next(m for m in profile.mutations
+                  if m.rc == 1 and mutation_carrier(m, list(rep), het_files)
+                  in set(gpu_files))
+    victim = mutation_carrier(doctor, list(rep), het_files)
+    clean = os.path.join(b.work, "cross-clean")
+    os.makedirs(clean)
+    b.record("%s cross-checked UNDOCTORED (control)"
+             % os.path.basename(victim)[:-len(".litmus")], 0, "OK (",
+             *capture(lambda: 0 if crosscheck_report(profile, victim, arch, clean)
+                      else 1))
+    doctored = os.path.join(b.work, "cross-doctored")
+    os.makedirs(doctored)
+    b.record("the assembly DOCTORED under the cross-check (%s)" % doctor.label,
+             1, "DIFFERS",
+             *capture(lambda: 0 if crosscheck_report(profile, victim, arch,
+                                                     doctored,
+                                                     doctor=doctor.apply)
+                      else 1))
+
+    print("\n-- the census the sweep asserts before it compiles a single render --")
+    empty = os.path.join(b.work, "empty")
+    os.makedirs(empty)
+    b.record("an EMPTY gpu-only directory swept as if it were the corpus", 3,
+             "holds 0 .litmus, expected %d" % hip.GPU_ONLY_N,
+             *capture(lambda: sweep(empty, corpus, arch, 2)))
+
+    few = [os.path.basename(p)[:-len(".litmus")] for p in het_files[:3]]
+    short = hip.corpus_slice(corpus, os.path.join(b.work, "short"), few)
+    b.record("an x86_64 het corpus SHORT of its census", 3,
+             "holds %d .litmus, expected %d" % (len(few), hip.X86_HET_N),
+             *capture(lambda: sweep(hip.GPU_ONLY_DIR, short, arch, 2)))
+
+    b.record("a sweep worker KILLED, which breaks the pool without raising", 3,
+             "a sweep worker died without raising",
+             *capture(lambda: sweep(hip.GPU_ONLY_DIR, corpus, arch, 2),
+                      _sweep_one=_worker_dies))
+
+    print()
+    if b.n == 0:
+        print("ISA READ-BACK GATE BITE FAILED: no injection ran")
+        return 1
+    if b.bad:
+        print("ISA READ-BACK GATE BITE FAILED: %d of %d assertion(s) did not "
+              "hold (%d reddened for the wrong reason)" % (b.bad, b.n, b.wrong))
+        return 1
+    print("ISA READ-BACK GATE BITE OK: %d injections, each reddening its own "
+          "assertion, 0 for a wrong reason; %d clean control(s) green"
+          % (b.red, b.green))
+    return 0
+
+
+# ===========================================================================
+# 13. --guard
 # ===========================================================================
 
 def guard_report(arch):
@@ -1353,7 +1871,7 @@ def _all_rows(profile):
 
 
 # ===========================================================================
-# 12. DRIVER
+# 14. DRIVER
 # ===========================================================================
 
 def main():
@@ -1366,9 +1884,21 @@ def main():
                          "(default %s, what the emitted comp.sh compiles for)"
                          % DEFAULT_ARCH)
     ap.add_argument("--asm", help="read this .s instead of emitting and compiling")
+    ap.add_argument("--all", action="store_true",
+                    help="sweep both corpora (%d gpu-only + %d x86_64 het)"
+                         % (hip.GPU_ONLY_N, hip.X86_HET_N))
+    ap.add_argument("--gpu-dir", default=hip.GPU_ONLY_DIR,
+                    help="the gpu-only corpus to sweep")
+    ap.add_argument("--x86-dir",
+                    help="an x86_64 het corpus to sweep (default: regenerate one)")
+    ap.add_argument("--jobs", type=int, default=hip.default_jobs(),
+                    help="sweep workers (default: CPUs, capped at %d)"
+                         % hip.JOBS_CAP)
     ap.add_argument("--reps", action="store_true",
                     help="check the rep set derived from the corpus, then "
                          "cross-check two of them against the shipped object")
+    ap.add_argument("--bite", action="store_true",
+                    help="prove every check FAILS on the corruption it is for")
     ap.add_argument("--guard", action="store_true",
                     help="print the tables, the tools and the rep set, then exit")
     ap.add_argument("-q", "--quiet", action="store_true")
@@ -1376,11 +1906,20 @@ def main():
     try:
         if args.guard:
             sys.exit(guard_report(args.arch))
+        if args.bite:
+            tmp = tempfile.mkdtemp(prefix="amdisacheck-bite.")
+            try:
+                sys.exit(bite(args.arch, tmp))
+            finally:
+                shutil.rmtree(tmp, ignore_errors=True)
+        if args.all:
+            sys.exit(sweep(args.gpu_dir, args.x86_dir, args.arch,
+                           max(1, args.jobs)))
         if args.reps:
             sys.exit(reps(args.arch, verbose=not args.quiet))
         if not args.litmus:
-            print("ERROR: no .litmus given (and neither --reps nor --guard "
-                  "asked for)")
+            print("ERROR: no .litmus given (and none of --all/--reps/--bite/"
+                  "--guard asked for)")
             sys.exit(3)
         ok = check_test(args.litmus, args.arch, asm_override=args.asm,
                         verbose=not args.quiet)

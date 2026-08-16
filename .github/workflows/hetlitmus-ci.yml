@@ -1,10 +1,10 @@
 # Every hetlitmus make gate that runs without a GPU device: the base
-# umbrella (make hetlitmus-test) in one job, the five compile-only
-# toolchain gates in the other.  Only the second job installs nvcc and
-# hipcc; no job needs a device.  The four device-executing gates
-# (hetlitmus-stress, -selftest, -characterize-hw, -run-hw) probe for
-# real hardware and fail closed on a hosted runner; they run on a GPU
-# box only (hetlitmus/docs/TEST-PLAN.md).
+# umbrella (make hetlitmus-test) in one job, the six compile-only
+# toolchain gates in the other.  Only the second job installs nvcc,
+# hipcc and the ROCm LLVM tools; no job needs a device.  The four
+# device-executing gates (hetlitmus-stress, -selftest, -characterize-hw,
+# -run-hw) probe for real hardware and fail closed on a hosted runner;
+# they run on a GPU box only (hetlitmus/docs/TEST-PLAN.md).
 name: hetlitmus
 
 on:
@@ -107,6 +107,12 @@ jobs:
           for t in nvcc hipcc clang gcc g++ objdump python3; do
             command -v "$t" || { echo "missing: $t"; exit 1; }
           done
+          # The ISA read-back gate's disassembly cross-check resolves these two
+          # off PATH, from the rocm-llvm package hipcc already needs.
+          for t in /opt/rocm/llvm/bin/llvm-objdump \
+                   /opt/rocm/llvm/bin/clang-offload-bundler; do
+            test -x "$t" || { echo "missing: $t"; exit 1; }
+          done
           nvcc --version | tail -1
           hipcc --version | head -1
 
@@ -124,3 +130,4 @@ jobs:
           hetlitmus-obs
           hetlitmus-cpustress
           hetlitmus-hipbuild
+          hetlitmus-amd-faithful
