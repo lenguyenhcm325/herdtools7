@@ -16,6 +16,13 @@ token-level lowering faithfulness of the chain
                     --(ptxcheck.py)------->  expected (kind,order,scope) profile  ==  observed?
 ```
 
+The AMD lane's twin of this document is
+[`amd-faithfulness.md`](amd-faithfulness.md). The HIP path carries no inline
+assembly, so it needs *two* gates over its own 644 renders — the 173 gpu-only
+plus the **x86_64** het 471, not the AArch64 471 read here: a source-level one
+(`hipsrccheck.py`, `make hetlitmus-hipsrc`, base lane) and an ISA read-back one
+(`amdisacheck.py`, `make hetlitmus-amd-faithful`, toolchain lane).
+
 ## Why this is the right guard
 
 The bug this exists to catch is real and documented in

@@ -219,7 +219,7 @@ mirrors them.
 | 4 | `*-fence-2s` (`2+2W-cg-sys-fence-2s`) | CPU `DMB.SY` |
 | 5 | 4-proc het (`IRIW-cgcc-cta-relaxed`) | largest barrier / proc count |
 | 6 | 3-proc het (`WRC-ccg-cta-relaxed`) | 3-proc scaffolding — buys down the proc-scaling assumption |
-| 7 | **HIP** render of `MP-cg-sys-acqrel-2s` (`comp.sh hip`) | the AMD/MI300A lane — the only place in the suite that compiles a `.hip` at all. Missing `hipcc` ⇒ **SKIP, loudly**; never a pass |
+| 7 | **HIP** render of `MP-cg-sys-relaxed-x86_64` (`comp.sh hip`) | the AMD/MI300A lane — the only rep here whose render is a `.hip`. `hipbuildcheck.py` compiles and links one too, and `amdisacheck.py` compiles all 644 device-only (`amd-faithfulness.md`). Missing `hipcc` ⇒ **SKIP, loudly**; never a pass |
 | 8 | order pair (`MP-cg-sys-sy.acq-2s`) | the only rep emitting inline `fence.acquire.sys`; carries a compiled-in co-run control (μ = its lattice-floor sibling `MP-cg-sys-relaxed`); first rep whose name contains a `.` |
 | 9 | order pair (`S-gc-sys-ra.rel-2s`) | the only rep emitting inline `fence.release.sys`, paired with CPU STLR/LDAPR; the largest co-run in the corpus (K=4, NPART=10) |
 | 10 | order pair (`MP-cg-sys-st.sc-2s`) | the CPU `dmb st` form; its μ is the floor sibling, so the barrier is T's alone |
@@ -249,12 +249,13 @@ device this box may not have, three of its members needing a real GPU (see below
 
 Umbrellas (what you press):
 - **`make hetlitmus-test`** → the CUDA-free lane: `hetlitmus-cram` · `-corpus` ·
-  `-dup` · `-lattice` · `-amd-controlmap` · `-controlmap` · `-verdict` · `-recfields` ·
-  `-stats` · `-hist` · `-tuner` · `-x86body` · `-x86fixture` · `-cpuonly` · `-run-gate`.
+  `-dup` · `-lattice` · `-hipsrc` · `-amd-controlmap` · `-controlmap` · `-verdict` ·
+  `-recfields` · `-stats` · `-hist` · `-tuner` · `-x86body` · `-x86fixture` ·
+  `-cpuonly` · `-run-gate`.
 - **`make hetlitmus-test-toolchain`** (old name `hetlitmus-test-nvcc`, kept as an alias)
   → the toolchain lane: `hetlitmus-faithful` · `-stress` ·
-  `-cpustress` · `-obs` · `-hipbuild` · `-characterize-hw` · `-run-hw` · `-selftest` ·
-  `-smoke`. This lane has **outgrown Layer 3**: it still needs CUDA for the compile
+  `-cpustress` · `-obs` · `-hipbuild` · `-amd-faithful` · `-characterize-hw` ·
+  `-run-hw` · `-selftest` · `-smoke`. This lane has **outgrown Layer 3**: it still needs CUDA for the compile
   members, but three of them now need a real device — `-run-hw` and `-characterize-hw`
   run the wrapper and a built harness on the GPU, and `-stress`'s device-probe check drives
   `het_do_stress` on hardware to prove the tally is live both ways. The CUDA-free

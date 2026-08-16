@@ -38,7 +38,7 @@ __global__ void litmus_SB_sys(int* x, int* y, int* __out) {
   }
 }
 
-// ---- host harness (illustrative; hetlitmus/compile-hip.sh compiles it for gfx942 by hand; no gate does) ----
+// ---- host harness (illustrative; hetlitmus/verify/amdisacheck.py compiles it for gfx942 with hipcc -S) ----
 // Result buffer layout: __out[proc * 4 + regIndex].
 // Reset all globals to 0 before each launch; the weak outcome under
 // test is exactly the `condition' line above.

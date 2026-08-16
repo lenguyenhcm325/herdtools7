@@ -687,7 +687,7 @@ hetlitmus-faithful: | build
 
 ### Every emitted HIP kernel and x86_64 CPU body carries exactly the memory ops,
 ### orders, scopes and loop structure its .litmus annotates -- source-level, so
-### no toolchain -- over 173 gpu-only + 471 x86_64 het (verify/hipsrccheck.py).
+### no toolchain (hetlitmus/docs/amd-faithfulness.md).
 hetlitmus-hipsrc: | build
 	@ echo
 	python3 hetlitmus/verify/hipsrccheck.py --all
@@ -897,7 +897,7 @@ hetlitmus-hipbuild: | build
 
 ### Every emitted HIP kernel's gfx942 lowering, read back from `hipcc -S' and
 ### matched per basic block to what its .litmus annotates.  No kernel runs, and
-### which lane runs an op is the source gate's to say (verify/amdisacheck.py).
+### lane attribution is the source gate's (hetlitmus/docs/amd-faithfulness.md).
 hetlitmus-amd-faithful: | build
 	@ echo
 	python3 hetlitmus/verify/amdisacheck.py --all
