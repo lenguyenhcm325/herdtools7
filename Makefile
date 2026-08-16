@@ -685,6 +685,15 @@ hetlitmus-faithful: | build
 	bash hetlitmus/verify/tokens.sh all
 	@ echo "HetLitmus Layer-3 PTX faithfulness (644): OK"
 
+### Every emitted HIP kernel and x86_64 CPU body carries exactly the memory ops,
+### orders, scopes and loop structure its .litmus annotates -- source-level, so
+### no toolchain -- over 173 gpu-only + 471 x86_64 het (verify/hipsrccheck.py).
+hetlitmus-hipsrc: | build
+	@ echo
+	python3 hetlitmus/verify/hipsrccheck.py --all
+	python3 hetlitmus/verify/hipsrccheck.py --bite
+	@ echo "HetLitmus HIP source faithfulness (173 gpu-only + 471 x86_64 het): OK (and the gate bites)"
+
 ### A curated sample of emitted harnesses builds end to end through its own
 ### comp.sh -- host CPU object, cross-assembly, .cu and .hip
 ### (hetlitmus/verify/smoke.sh).  Needs nvcc, hipcc and clang.
@@ -929,6 +938,7 @@ hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-dup
 hetlitmus-test:: hetlitmus-lattice
+hetlitmus-test:: hetlitmus-hipsrc
 hetlitmus-test:: hetlitmus-amd-controlmap
 hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-verdict
@@ -980,7 +990,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-recfields
 .PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-cpuonly
 .PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate hetlitmus-run-hw
-.PHONY: hetlitmus-amd-controlmap
+.PHONY: hetlitmus-amd-controlmap hetlitmus-hipsrc
 .PHONY: hetlitmus-test hetlitmus-test-toolchain hetlitmus-test-nvcc
 .PHONY: hetlitmus-test-all hetlitmus-promote
 
