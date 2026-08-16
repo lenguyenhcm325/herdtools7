@@ -135,14 +135,18 @@ For each test the checker builds the **expected profile** from the `.litmus` and
    **and placement** (a fence between the right accesses; load/store order
    preserved). A strengthening (`relaxed`→`acquire`) or weakening
    (`release`→`relaxed`) shows up as a positional mismatch.
-2. **GLOBAL multiset equality** — order-blind corroboration.
-3. **PER-PROC multiset equality** (not subset) — slices the observed stream by
-   the expected per-proc op counts and compares `Counter`s, so a *strengthening*
-   fails too (subset would wrongly pass).
-4. **(het) barrier whitelist** — the system-scope rendezvous barrier(s) must
+2. **PER-PROC localization** — a diagnostic, **not** a second detector. An
+   order-blind multiset test is strictly weaker than item 1: if the ordered
+   comparison passes the two streams are identical, so no multiset test could
+   differ and a global one would detect nothing at all. What slicing the
+   observed stream by the expected per-proc op counts and comparing `Counter`s
+   adds is the instance and proc a mismatch sits in, which a flat index diff
+   cannot name — so it runs only after item 1 has failed, and only reports
+   (`ptxcheck.py:604-620`).
+3. **(het) barrier whitelist** — the system-scope rendezvous barrier(s) must
    stay strong: every barrier op `sys`-scoped (never narrowed), one `fetch_add`
    (`atom`/`red`) **per GPU proc** at `sys`, and a seq_cst fence present.
-5. **(het) CPU column** — the ordered memory/ordering mnemonics of the `.litmus`
+4. **(het) CPU column** — the ordered memory/ordering mnemonics of the `.litmus`
    CPU column must reproduce in the emitted `_cpu.c` real-asm block (under
    `#if defined(__aarch64__)`), catching `STLR`→`STR`, `LDAPR`→`LDR`,
    `DMB SY` drop/narrowing.

@@ -204,9 +204,11 @@ vocabulary by design (`litmus/het-runtime/het_cpu_stress.h`).
 
 The compile itself is the flags the harness ships with — the emitted `comp.sh`
 runs `hipcc --offload-arch=gfx942 -std=c++17 -c <test>.hip` — plus
-`--offload-device-only -S`, which turns that compile into readable device text
-and is the only addition. Reading a different flag set would leave the gate
-checking another program.
+`--offload-device-only -S`, which turns that compile into readable device text,
+and `-I <render dir>`, which keeps the render's own includes resolvable when it
+is compiled from elsewhere. Nothing else is added, and `--guard` prints the
+whole line. Reading a different flag set would leave the gate checking another
+program.
 
 ### The gfx942 lowering profile
 
@@ -230,7 +232,7 @@ read):
 | `st[release,cta]` | `[st(cta)]` | `:11969` |
 | `st[release,gpu]` | `[wbl2(gpu) st(gpu)]` | `:12008` |
 | `st[release,sys]` | `[wbl2(sys) st(sys)]` | `:12064` |
-| `fence[sc,cta]` | `[]` — nothing at all | `:12934` |
+| `fence[sc,cta]` | `[]` — no token; the wait it asks for is glue | `:12934` |
 | `fence[sc,gpu]` | `[wbl2(gpu) wait inv(gpu)]` | `:13044` |
 | `fence[sc,sys]` | `[wbl2(sys) wait inv(sys)]` | `:13148` |
 | `fence[acquire,sys]` | `[wait inv(sys)]` | `:11886` |
@@ -240,9 +242,13 @@ read):
 | `rmw[sc,sys]` (scaffolding) | `[wbl2(sys) atomic(sys) wait inv(sys)]` | `:12690` |
 | `vld[-,sys]` (a volatile non-atomic access, system-coherent by the table) | `[ld(sys)]` | `:11254` |
 
-The width class is elided above because it is a parameter: the same row is taken
-at 32 bits on the gpu-only path and at 64 on the het path, and `--guard` prints
-it (`ld32(sys)`, `ld64(sys)`).
+The width class is elided above because it is a parameter. A **model** row is
+taken at 32 bits on the gpu-only path and at 64 on the het path; the runtime
+scaffolding is taken at 32 (`SCAFFOLD_WIDTH`, `amdisacheck.py:771`) except the
+observer snoop and the interconnect-noise read, whose sources read 64-bit words
+(`gd_sys_load_u64`; `volatile const uint64_t*`, `litmus/hetEmit.ml`). `--guard`
+prints the rows at the gpu-only width and each scaffolding signature at its own
+(`ld32(sys)`, `ld64(sys)`).
 
 Seventeen of those rows are the ones the corpus annotates; the other four are the
 orders the runtime scaffolding asks for. The table spells a seq_cst RMW as the
@@ -259,11 +265,18 @@ Four facts about this generation shape everything above:
   `sc0` on "returns the original value" and keeps only `sc1` for scope (`:11154`).
   So a discarded agent-scope RMW carries no bits at all, and workgroup and agent
   are indistinguishable on an RMW.
-* **The workgroup (cta) degeneracy.** At workgroup scope the ordering rows
-  collapse: `ld[relaxed,cta]` and `ld[acquire,cta]` are the same instruction, so
-  are `st[relaxed,cta]` and `st[release,cta]`, and `fence[sc,cta]` emits nothing.
-  Their waits and invalidates are the TgSplit branch of the table, which
-  `.amdhsa_tg_split 0` excludes.
+* **The workgroup (cta) degeneracy.** At workgroup scope the ordering rows ask
+  for no cache operation at all — only a counter wait, which the narrow pinning
+  below leaves as glue. So `ld[relaxed,cta]` and `ld[acquire,cta]` carry the
+  same tokens, so do `st[relaxed,cta]` and `st[release,cta]`, and
+  `fence[sc,cta]` carries none. **Only the acquire load's** wait and invalidate
+  are the TgSplit branch that `.amdhsa_tg_split 0` excludes (`:11361`, both
+  steps "If not TgSplit execution mode, omit"); the release store's wait
+  (`:11969`) and the fence's (`:12934`) stand in *both* branches — TgSplit
+  changes which counter, not whether there is a wait — and the compiler emits
+  them where there is LDS traffic to wait on. No render here has any: none
+  declares `__shared__`, and `2+2W-cta-relaxed`, `-release` and `-fence`
+  compile to one instruction stream.
 * **The narrow wait pinning.** A row carries a `wait` token **only** where the
   table requires a wait immediately before an invalidate. Every other wait the
   compiler emits is glue whose mask and position it decides, and no waitcnt mask
@@ -276,7 +289,7 @@ Four facts about this generation shape everything above:
   |---|---|---|
   | `.amdgcn_target` | `"amdgcn-amd-amdhsa--gfx942"` | the assembly was generated for another target |
   | `.amdhsa_code_object_version` | `6` | the kernel descriptor has another layout |
-  | `.amdhsa_tg_split` | `0` | TgSplit execution mode selects the *other* branch of every workgroup row, adding a wait and an invalidate this profile does not carry |
+  | `.amdhsa_tg_split` | `0` | TgSplit execution mode selects the *other* branch of the workgroup rows, giving the acquire load a wait and an invalidate this profile does not carry |
 
   `.amdhsa_tg_split` is emitted only for targets carrying the `tgsplit-support`
   feature ([`AMDGPUUsage` "LLVM IR Attributes", the `"amdgpu-tg-split"` row;
@@ -369,7 +382,13 @@ legal without letting a store or a cache operation hide beside them.
 
 A whole-kernel **token census** is the second, independent net over what the
 block match cannot see — the counts inside tail blocks and every access the scope
-filter drops:
+filter drops. On the **gpu-only** path it is the model tokens themselves, with
+stores at both widths exempt (`amdisacheck.py:1054-1062`): the result-buffer
+stores the filter drops are the compiler's to merge into one
+`global_store_dwordx2`, so a *bit-less store* planted in a gpu-only kernel is
+the one thing invisible to both nets — a bit-less load or RMW there is not, and
+a store carrying any cache bit fails the block match. On the **het** path it
+pins:
 
 * one result store per read register of a test lane and per location an observer
   lane snoops;
@@ -447,15 +466,15 @@ TALLY x86_64 het: 471/471 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
   2+2W-cta-fence                             OK (4 token(s) identical)
   2+2W-cg-sys-fence-2s-x86_64                OK (59 token(s) identical)
 ISA READ-BACK GATE: PASS -- gpu-only 173/173, x86_64 het 471/471 ...,
-  2/2 cross-check(s), 17 row(s) covered, 83.4 s
+  2/2 cross-check(s), 17 row(s) covered, 84.7 s
 ISA READ-BACK GATE BITE OK: 38 injections, each reddening its own assertion,
   0 for a wrong reason; 6 clean control(s) green
 ```
 
-44 assertions in the bite (38 injections + 6 clean controls). The sweep is 83.4 s
-at 12 workers and the whole target, sweep plus bite, 94.3 s — 78.1 s and 88.9 s
-on a less loaded run of the same tree, so read those as an order of magnitude,
-not a pin. `--reps` alone is 16.2 s (18/18 reps, 2/2 cross-checks, 17 rows
+44 assertions in the bite (38 injections + 6 clean controls). The sweep is 84.7 s
+at 12 workers and the whole target, sweep plus bite, 95 s — 78.1 s and 88.9 s on
+a less loaded run of the same tree, so read those as an order of magnitude, not
+a pin. `--reps` alone is 16.4 s (18/18 reps, 2/2 cross-checks, 17 rows
 covered).
 
 ### Triage log
@@ -501,21 +520,25 @@ Each limit below is stated where it lives in the code, so it cannot be softened
 in one place and kept in the other.
 
 * **At workgroup scope the generated code witnesses NO order at all**
-  (`amdisacheck.py:27-31`). A relaxed and a release store are the same
-  instruction, so are a relaxed and an acquire load, and a seq_cst workgroup
-  fence emits nothing: there is no cache operation to look for. **175 ordered
+  (`amdisacheck.py:27-32`). Those rows ask for no cache operation, only a
+  counter wait, and a wait is a token only immediately before an invalidate —
+  so a relaxed and a release store carry the same tokens, so do a relaxed and
+  an acquire load, and a workgroup seq_cst fence carries none. In this corpus
+  the compiler emits the same instructions either way (`2+2W-cta-relaxed`,
+  `-release` and `-fence` compile to one instruction stream), so the order is
+  absent from the text, not merely from the profile's vocabulary. **175 ordered
   workgroup-scope annotation cells of the corpus — 52 `f[sc,cta]`, 59
   `r[acquire,cta]`, 64 `w[release,cta]`, spread over 109 of the 644 renders —
   therefore rest on the HIP source gate alone.** The ISA gate still checks that
   the access itself is there and carries `sc0`; it does not, and cannot, witness
   its order.
 * **At agent and system scope, order is witnessed as presence and relative
-  position, never as attribution** (`amdisacheck.py:32-36`). An acquire load and
+  position, never as attribution** (`amdisacheck.py:33-37`). An acquire load and
   a relaxed load followed by an acquire fence lower identically, as do a release
   store and a release fence followed by a relaxed store. Which annotation
   produced an ordering effect is the source gate's to say.
 * **Block matching is a multiset over ALL lanes and procs**
-  (`amdisacheck.py:37-46`, `match_blocks` at `:924`). Any permutation of the
+  (`amdisacheck.py:38-47`, `match_blocks` at `:929`). Any permutation of the
   expected sequences passes — not only a swap of two symmetric procs, but an
   ordering effect moved out of the test instance's lane into its `mu(T)`
   control's lane. Lane attribution is the source gate's, which compares each
@@ -524,23 +547,25 @@ in one place and kept in the other.
   move code across mutually exclusive `blockIdx`/`threadIdx` guards. No
   `blockIdx` recovery is attempted.
 * **The window-opener poll has only a census witness**
-  (`amdisacheck.py:510-517`). Its `[ld32(gpu)]` is exactly what the folded
+  (`amdisacheck.py:513-520`). Its `[ld32(gpu)]` is exactly what the folded
   counter reads lower to, and those sit in the load-only blocks the tail policy
   admits, so the block match matches one of them in the poll's place; only the
   whole-kernel count sees the poll gone.
 * **The tail policy admits unmatched blocks holding loads (and waits) only**
-  (`match_blocks`, `amdisacheck.py:924-962`). A store, an atomic or a cache
-  operation in an unmatched block fails.
+  (`match_blocks`, `amdisacheck.py:929-967`). A store, an atomic or a cache
+  operation carrying cache bits in an unmatched block fails; the blocks it
+  matches are the filtered stream, so a bit-less access is not there to see
+  (`filter_tokens`, `amdisacheck.py:716-734`).
 * **Two census constants are compiler copy counts, pinned exactly**
-  (`amdisacheck.py:785,787`): 3 folded `het_scratch_read` copies and 2 volatile
+  (`amdisacheck.py:790,792`): 3 folded `het_scratch_read` copies and 2 volatile
   noise loads. A ROCm change that rotates those loops differently reddens them
   for a reason that is **not** faithfulness. The response is a profile
   re-derivation, logged — not a loosened check.
 * **One compile, under the shipped flags** (`COMPILE_FLAGS`,
-  `amdisacheck.py:574`). `-S` is bounded against the object the harness would
+  `amdisacheck.py:579`). `-S` is bounded against the object the harness would
   ship only by the two-rep disassembly cross-check (`crosscheck`,
-  `amdisacheck.py:1224`), not render by render.
-* **The LLVM reorder status is three-part** (`amdisacheck.py:62-68`):
+  `amdisacheck.py:1229`), not render by render.
+* **The LLVM reorder status is three-part** (`amdisacheck.py:63-67`):
   machine-scheduler-excluded [`LLVMSched`], IR-optimizer-unverified,
   probe-unobserved. It is never "low probability".
 * **The source gate's loop check is a source-level read**
@@ -548,11 +573,11 @@ in one place and kept in the other.
   unguarded in the loop body with no jump able to skip them — not that they
   "run once per iteration", which no source-level read can establish.
 * **An unknown construct is exit 2; a known construct in the wrong place is exit
-  1** (`hipsrccheck.py:54`, `amdisacheck.py:68`). Completeness and correctness
+  1** (`hipsrccheck.py:54`, `amdisacheck.py:69`). Completeness and correctness
   are different verdicts on purpose: a gate that skipped what it did not
   recognize would be green on exactly the change that most needs a reader.
 * **The AMD lane faces SIX `AMDGPUUsage` per-generation memory-model tables, and
-  only `gfx942` has a profile** (`PROFILES`, `amdisacheck.py:540`) — the other
+  only `gfx942` has a profile** (`PROFILES`, `amdisacheck.py:543`) — the other
   five are `GFX6-GFX9`, `GFX90A`, `GFX10-GFX11`, `GFX12` and `GFX125x`. Every
   other target is exit 2 naming the section to derive it from — never a silent
   comparison against the wrong table.
@@ -567,15 +592,21 @@ census constant is a profile re-derivation; a red row is a finding.
 
 ## Extending to another GPU generation
 
-Executable from this page. Nothing outside step 2 changes.
+Executable from this page. Steps 2 and 3 are the only edits: a new profile
+class, and the one registry line that names it.
 
 1. **Ask the gate.** `python3 hetlitmus/verify/amdisacheck.py --arch gfxNNN
    --reps` on the new toolchain. With no profile it exits 2 naming what to read:
    `no lowering profile for gfxNNN -- derive one from the "Memory Model GFXNNN"
    section of the AMDGPU backend user guide (known: gfx942)`.
 2. **Fetch that section** of `llvm/docs/AMDGPUUsage.rst` (or the rendered
-   `llvm.org/docs/AMDGPUUsage.html`) and write a new `LoweringProfile` subclass
-   beside `Gfx942`, filling in exactly five things:
+   `llvm.org/docs/AMDGPUUsage.html`) and write a new profile class beside
+   `Gfx942`. Subclass **`Gfx942`** where the generation spells its mnemonics,
+   width suffixes and cache bits the same way — then the five things below are
+   the whole edit. Subclass `LoweringProfile` directly and it also owes
+   `classify`, abstract there (`amdisacheck.py:214`) — the method that maps a
+   mnemonic and its operands to a token, bit-set → scope decode included, for
+   which `Gfx942`'s is the model. Either way, fill in:
    * `name`/`arch`/`section` — the target name (spelled here and nowhere else)
      and the title of that generation's code-sequence table;
    * `preconditions` — the assembler directives whose values decide which branch
@@ -612,14 +643,13 @@ count on either side says which. `amdisacheck.py` and `hipsrccheck.py` import
 `ptxcheck.py` and never modify it: its `.litmus` parsers, its GPU mapping table
 and its lane plan are the expected side here too.
 
-One heads-up for a reader moving between the two documents: `faithfulness.md`'s
-"What is checked" list (items 2 and 3, `:138-142`) describes a **global
-multiset** check and a **per-proc multiset** check as detectors. `ptxcheck.py`
-performs neither as a detector today — there is no global multiset comparison at
-all, and the per-proc `Counter` comparison runs *only after* the ordered check
-has already failed, as a localizer that names the instance and proc
-(`ptxcheck.py:604-620`). The ordered comparison subsumes both: if it passes, the
-two lists are identical and no multiset test could differ. The AMD gates state
-the same reasoning where they use a multiset — the source gate's is a
-post-failure localizer (`hipsrccheck.py:885-903`), while the ISA gate's block
-match is genuinely a multiset and says so.
+One heads-up for a reader moving between the two documents: **a multiset is a
+localizer wherever an ordered comparison already covers the same stream**, and
+all three gates are written that way. An order-blind multiset test is strictly
+weaker than an ordered one, so on a green stream it can detect nothing — which
+is why `ptxcheck.py`'s per-proc `Counter` comparison runs only after the ordered
+check has failed (`ptxcheck.py:604-620`, `faithfulness.md` item 2) and so does
+the source gate's (`hipsrccheck.py:885-903`). The ISA gate's block match is the
+one genuine multiset of the three, because the compiler lays a lane's block
+where it likes, and it says so — with the attribution that costs it named in
+"Scope and limits" above.

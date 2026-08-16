@@ -24,11 +24,12 @@ census is a second, independent net over the counts the block match cannot see.
 What it does not prove.  Nothing is launched; no device is needed.  Three
 gaps are structural, not incidental:
 
-  * At workgroup scope the generated code witnesses NO order.  The machine
-    already provides it there, so a relaxed and a release store, and a relaxed
-    and an acquire load, are the same instruction, and a seq_cst workgroup
-    fence emits nothing at all.  Those annotations rest on the HIP source gate
-    (hipsrccheck.py) alone.
+  * At workgroup scope the generated code witnesses NO order.  Those rows ask
+    for no cache operation at all, only a counter wait, and a wait is a token
+    here only immediately before an invalidate: a relaxed and a release store
+    carry the same tokens, so do a relaxed and an acquire load, and a seq_cst
+    workgroup fence carries none.  Those annotations rest on the HIP source
+    gate (hipsrccheck.py) alone.
   * At agent and system scope order is witnessed as the presence and relative
     position of the ordering effect, never as its attribution: an acquire load
     and a relaxed load followed by an acquire fence are the same instructions,
@@ -226,9 +227,10 @@ class Gfx942(LoweringProfile):
     scope at all -- with the atomic as the exception: it spends sc0 on
     "returns the original value" and keeps only sc1 for scope (:11154), so a
     discarded agent-scope RMW is bit-less and workgroup and agent are
-    indistinguishable on an RMW.  At workgroup scope the ordering rows collapse,
-    their waits and invalidates being the TgSplit branch that
-    `.amdhsa_tg_split 0' excludes."""
+    indistinguishable on an RMW.  At workgroup scope the ordering rows ask for
+    no cache operation and differ only by a counter wait, which the table
+    places in both TgSplit branches and which is glue here; the acquire load's
+    invalidate is the branch `.amdhsa_tg_split 0' excludes."""
 
     name = "gfx942"
     arch = "gfx942"
@@ -244,8 +246,9 @@ class Gfx942(LoweringProfile):
         (".amdhsa_code_object_version", "6",
          "the kernel descriptor has another layout"),
         (".amdhsa_tg_split", "0",
-         "TgSplit execution mode selects the OTHER branch of every workgroup "
-         "row, which adds a wait and an invalidate this profile does not carry"),
+         "TgSplit execution mode selects the OTHER branch of the workgroup "
+         "rows, which gives the acquire load a wait and an invalidate this "
+         "profile does not carry"),
     )
 
     # Every memory, wait and barrier instruction family this generation
@@ -568,9 +571,11 @@ def profile_for(arch):
 # `$HIPCC --offload-arch=$HIP_ARCH -std=c++17 -c <test>.hip', and
 # hetlitmus/compile-hip.sh the same without -c.  Reading a different flag set
 # than the one that ships would leave the gate checking another program.
-# --offload-device-only -S turns that compile into readable device text and is
-# the only addition; it makes --hip-link unused, which is the one diagnostic
-# the compile is expected to print.
+# --offload-device-only -S turns that compile into readable device text, and
+# -I the render's own directory keeps its includes resolvable when it is
+# compiled from elsewhere; nothing else is added.  --offload-device-only makes
+# --hip-link unused, which is the one diagnostic the compile is expected to
+# print.
 COMPILE_FLAGS = ("-std=c++17", "--offload-device-only", "-S")
 BENIGN_DIAGNOSTIC = ("clang++: warning: argument unused during compilation: "
                      "'--hip-link'")

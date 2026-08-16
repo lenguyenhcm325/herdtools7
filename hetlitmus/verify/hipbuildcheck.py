@@ -871,7 +871,8 @@ def phase8(tmp, d, src):
         tick("fence-lowering")
         if r.returncode != 0:
             fail("fence-lowering", "comp.sh hip failed on the fence-carrying render (exit %d) "
-                       "-- the one target that compiles this builtin:\n%s%s"
+                       "-- the render must build under the flags the harness "
+                       "ships:\n%s%s"
                  % (r.returncode, r.stdout[-1500:], r.stderr[-1500:]))
     print("      %d assertions" % counts.get("fence-lowering", 0))
     if not counts.get("fence-lowering"):
