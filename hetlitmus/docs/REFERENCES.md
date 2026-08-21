@@ -58,19 +58,12 @@ Claim(s) this project takes from it:
   are not stable across iterations" (Table 7, over three GPUs x six tests). That
   rejection rate is why the precheck is mandatory here rather than advisory.
   §5.1 supplies the restart-from-instability remedy.
-* Fig. 10 (p. 226:19) is the data-peeking pseudocode: candidate configurations
-  are visited one at a time against a running incumbent, each stopped early when
-  its `Z·sqrt(W(1-W)/Q)` interval falls below the incumbent's. The tuner reuses
-  that skeleton.
 
 Deviation(s):
 * `1 - e^{-n}` is scored at the `(instance,run)` cell, never at a frame of the
   perpetual harness — the recovery scan validates `N^{T_L}` *overlapping*
   frames per `N` iterations, so a frame count drives the expression to 1
   vacuously.
-* The tuner replaces Fig. 10's sequential configuration order with a randomized
-  round-robin, and its Bernoulli interval with an empirical-Bernstein bound,
-  because the objective is non-stationary and overdispersed.
 
 ## [Lustig19]
 
@@ -82,8 +75,7 @@ Claim(s) this project takes from it:
 * The first formal axiomatic model of the official PTX memory consistency
   model, adapted from the public PTX documentation.
 * `hetlitmus/cats/nvidia-ptx.cat` transcribes that model into herd7's cat
-  language over `hetlitmus/bells/ptx.bell`, and the ordering-table gate decides
-  its GPU-only cells under it rather than asserting them.
+  language over `hetlitmus/bells/ptx.bell`.
 
 Deviation(s):
 * The transcription's fidelity record, including where it departs from the
@@ -529,56 +521,6 @@ Claim(s) this project takes from it:
 * `hipDeviceAttributeIntegrated` is "Device is integrated GPU", mirrored by
   `hipDeviceProp_t::integrated`, "APU vs dGPU". It is the only runtime query that
   separates MI300A from MI300X, which both report `gfx942`.
-
-## [Mnih08]
-
-Volodymyr Mnih, Csaba Szepesvári, Jean-Yves Audibert. *Empirical Bernstein
-Stopping.* ICML 2008, pp. 672-679. DOI 10.1145/1390156.1390241. Read as the
-authors' copy at `https://www.cs.toronto.edu/~vmnih/docs/ebstop.pdf`.
-
-Claim(s) this project takes from it:
-* §2 gives the empirical Bernstein bound: with probability at least 1-δ,
-  |X̄_t − μ| ≤ σ̄_t·sqrt(2 log(3/δ)/t) + 3R·log(3/δ)/t, where R is the range and
-  σ̄_t the empirical standard deviation taken with the 1/t divisor,
-  σ̄_t² = (1/t)·Σ(X_i − X̄_t)². `Arm.eb_radius` in `hetlitmus/tune.py` is that
-  expression at R = 1, and `Arm.var_hat` keeps the same 1/t (weighted MLE)
-  divisor rather than an effective-degrees-of-freedom one. The bound is an
-  *unnumbered* display on that page: the numbered Eq. (2) beside it is Domingo
-  et al.'s NAS sample-complexity bound, not this radius.
-* §3.1 (EBStop) buys its anytime guarantee with a δ-spending sequence d_t with
-  Σd_t ≤ δ (there d_t = c/t^p, c = δ(p−1)/p), and §4's racing algorithm buys its
-  family-wise guarantee by splitting δ/(MN) over M options and N rounds. The
-  tuner's `eliminate` implements NEITHER, which is why it states that only the
-  per-round radius holds of it.
-
-Deviation(s):
-* The bound is stated for iid draws of known range; the tuner applies it to
-  bouts whose effective weights come from the objective, and spends a fixed
-  per-comparison δ every round instead of a schedule.
-
-## [SER3]
-
-Robin Allesiardo, Raphaël Féraud, Odalric-Ambrym Maillard. *Random Shuffling and
-Resets for the Non-stationary Stochastic Bandit Problem.* arXiv:1609.02139v1
-[cs.AI], 7 September 2016.
-
-Claim(s) this project takes from it:
-* §3, Algorithm 1 defines SUCCESSIVE ELIMINATION WITH RANDOMIZED ROUND-ROBIN
-  (SER3): while more than one arm survives, shuffle the surviving set, play each
-  arm once, and — once τ ≥ τ_min — remove every arm k with
-  μ̂_max(τ) − μ̂_k(τ) + ε ≥ sqrt((2/τ)·log(4Kτ²/δ)). `race(schedule="ser3")` is
-  that loop, `ParkMiller.shuffle` its shuffle and `min_rounds` its τ_min.
-* §3.1 "Randomization of the Round-Robin" (Fig. 1) is why the shuffle is
-  load-bearing: a deterministic play order can be tricked by a mean sequence that
-  alternates with it, so the arm eliminated is the one the order happened to
-  sample in its cold phase rather than the worse one. That is the fixture
-  `hetlitmus/verify/tunecheck.py`'s drift phase drives.
-
-Deviation(s):
-* Only the schedule is taken. SER3's radius is a Hoeffding one, union-bounded
-  over the K arms and the round index; `eliminate` uses an empirical-Bernstein
-  radius at a fixed per-comparison δ and inherits none of SER3's sample-complexity
-  or regret guarantees. τ_min is log(K/δ) there and a constant here.
 
 ## [LLVMSched]
 

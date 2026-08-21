@@ -270,7 +270,7 @@ typedef struct het_obs_record {
      stream by design, so its health is known only if it is measured at run time.
        spin_rendezvous/spin_cap  how the window-opener's spins ended; a mostly
                          cap-released spin is a delay loop, not a rendezvous, and
-                         the tuner reads HET_BARRIER_PCT against this ratio.
+                         HET_BARRIER_PCT is calibrated against this ratio.
        stress_truncated  lanes that hit HET_STRESS_MAX_ROUNDS, i.e. stopped
                          stressing while the test still ran.  Disqualifying: such
                          a run's non-observations are not a stressed run's.
@@ -302,8 +302,8 @@ typedef struct het_obs_record {
   uint64_t noise_cpu_rounds, noise_cpu_words;
   uint32_t noise_gpu_blocks, noise_gpu_rounds;
   uint32_t cpu_enemies, cpu_aff_failures, place_failures;
-  /* The two knobs the tuner drives the interconnect lever with, carried per run so
-     it reads what the run REALISED, not what it asked for.  noise_ws_mb is the
+  /* The two knobs the interconnect lever is driven with, carried per run so a
+     reader sees what the run REALISED, not what it asked for.  noise_ws_mb is the
      noise working set, and it decides whether the noise crosses anything at all:
      below the last-level cache the buffer is served from cache and generates no
      interconnect traffic, so a config that scores well at 8 MB scored a stressor

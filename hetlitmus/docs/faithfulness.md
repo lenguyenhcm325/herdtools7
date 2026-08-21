@@ -256,7 +256,7 @@ faithful across the whole corpus.
   The other half of the static check is therefore **`hetlitmus/verify/stresscheck.py`**
   (`make hetlitmus-stress`), which counts scratchpad ops in the emitted PTX per
   lane class and asserts the count is *invariant* under `-DHET_*_PATTERN` — i.e.
-  that no autotune config can silently switch the stress off. Bite-tested in
+  that no stress configuration can silently switch it off. Bite-tested in
   `tokens.sh selftest` section [7]. **A mechanism no gate can observe must be
   assumed dead**: if you add scaffolding here, add the gate that watches it.
 
@@ -294,11 +294,11 @@ is not the fix either — it holds the accesses inside the loop by changing what
 they are, and this stress is meant to be plain, non-volatile, ordinary cacheable
 traffic (`litmus/het-runtime/het_stress.h` carries that constraint and its
 source). The same fold reaches mem-stress, where a stress block's 49 ops become
-16, 13, 12 or 2 as the compile-time pattern moves 0 → 1 → 2 → 3. That is what an
-autotuner sweeping `pattern ∈ {0,1,2,3}` would be scoring — a knob deciding how
-much stress exists rather than which stress it is, and no other gate in this
-suite can tell those configurations apart — which is why `stresscheck.py`'s
-invariance assertion (5) is the load-bearing one rather than a formality.
+16, 13, 12 or 2 as the compile-time pattern moves 0 → 1 → 2 → 3. That is what a
+sweep over `pattern ∈ {0,1,2,3}` would be scoring — a knob deciding how much
+stress exists rather than which stress it is, and no other gate in this suite can
+tell those configurations apart — which is why `stresscheck.py`'s invariance
+assertion (5) is the load-bearing one rather than a formality.
 
 ## CPU-side stress liveness
 

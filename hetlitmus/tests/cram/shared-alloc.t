@@ -332,8 +332,8 @@ mismatched free behind.
 
 (j) HET_PLACE is a CUDA-only lever and is REFUSED here at compile time.
 Placement is cudaMemAdvise/cudaMemPrefetchAsync and lives in het_alloc_cuda.inc;
-this render has none.  But HET_PLACE is an #ifndef knob, it is swept by the
-tuner, and BOTH dialects print it -- `place=%d' in the cpu-stress banner and
+this render has none.  But HET_PLACE is an #ifndef knob, it is swept on
+hardware, and BOTH dialects print it -- `place=%d' in the cpu-stress banner and
 `place_mode' in the statistics record -- because those lines are emitted once for
 both.  _het_place_failures has two READERS and no writer on this lane, so
 `make hip-bin HIPCC="hipcc -DHET_PLACE=1"' would log `place=1 ... place_fail=0':

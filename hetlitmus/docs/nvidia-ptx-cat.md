@@ -6,11 +6,9 @@ vocabulary. This note answers one question: **how faithful is the transcription,
 and where does it depart?**
 
 It is a solver, not an oracle. It predicts nothing about hardware, decides no
-thesis test, and no run path consults it. Its only executable consumer is
-`hetlitmus/verify/ordercheck.py`, whose PTX phase (`make hetlitmus-lattice`)
-decides 96 sys-scope LISA cells so that the per-primitive ordering table behind
-`verify/controlmap.py`'s positive-control lattice meets a model instead of being
-asserted.
+thesis test, and no run path consults it. It has no executable consumer in the
+tree either: herd7 loads it by hand (§6), and what it is kept for is the
+transcription this note records.
 
 ---
 
@@ -37,8 +35,8 @@ causality gains program order, of which the paper says *"This change by itself
 has no effect in the pre-existing memory model without proxies"* (§6.2.3); and a
 proxy-preserved base causality order is newly created (§6.2.4). `ptx.bell`
 carries no proxy tag, so this transcription targets the pre-proxy ASPLOS'19
-model by construction. Whether the ISCA'22 revision would decide the 96 lattice
-cells identically is **not** adjudicated here.
+model by construction. Whether the ISCA'22 revision would decide the same
+verdicts is **not** adjudicated here.
 
 ---
 
@@ -111,11 +109,13 @@ The extension is disclosed rather than removed, on two grounds:
    the acquire pattern includes *"a strong read on M followed by an acquire
    memory fence in program order"* (`ld.relaxed [M]; fence.acquire;`).
 
-**It is load-bearing.** Restricting both sets to `F & SCo` — Lustig19's modelled
-subset — flips **20 of ordercheck.py's 96 PTX cells** from Forbidden to Allowed
-(five `MP`, ten `LB`, five `S`; every one a cell where a `fence.release` or
-`fence.acquire` completes the pattern). The lattice gate would then certify
-positive-control siblings against a table the solver no longer supports.
+**The extension changes verdicts.** Restricting both sets to `F & SCo` —
+Lustig19's modelled subset — flips **20 of 96 sys-scope cells** from Forbidden to
+Allowed (five `MP`, ten `LB`, five `S`; every one a cell where a `fence.release`
+or `fence.acquire` completes the pattern). Those 96 cells are the six two-proc
+cycle shapes whose every proc carries a program-order pair of its own (`MP`,
+`SB`, `LB`, `2+2W`, `R`, `S`), crossed with one sys-scope primitive per proc
+(`w[release]`/`r[acquire]`, `f[sc,sys]`, `f[release,sys]`, `f[acquire,sys]`).
 
 A caveat, not carried into the `.cat`: `ptxas` 12.9 accepts `fence.release.sys`
 at `.version 6.0` / `.target sm_70`, i.e. it enforces neither floor. For version
@@ -168,8 +168,8 @@ write W precedes an overlapping write W' in causality order, then W must precede
 W' in coherence order"*. So `& loc` restores the paper's *"overlapping"*.
 
 Measured both ways: dropping `& loc` changes no verdict on either surface — 0 of
-the 96 lattice cells, 0 of the 173 `tests/gpu-only` tests. It is not a no-op on
-the executions themselves (`ISA2-{gpu,sys}-fence` fall from 18 candidate
+the 96 sys-scope cells of §3, 0 of the 173 `tests/gpu-only` tests. It is not a
+no-op on the executions themselves (`ISA2-{gpu,sys}-fence` fall from 18 candidate
 executions to 6, `WRC3-{gpu,sys}-fence` from 44 to 30), so the two forms are
 verdict-equivalent here rather than interchangeable.
 
@@ -195,8 +195,8 @@ met.
 The formal gap is transitivity: a *partial order* containing the morally-strong
 pairs also contains whatever transitivity forces through morally-weak fences, and
 `sc_tot & ms` does not. Closing it (`let sc = (sc_tot & ms)+`) was measured and
-changes nothing on either surface: 0 of 96 lattice cells, and byte-identical
-`Observation` lines — including execution counts — across all 173
+changes nothing on either surface: 0 of the 96 sys-scope cells of §3, and
+byte-identical `Observation` lines — including execution counts — across all 173
 `tests/gpu-only` tests. Under a `scopes:` tree that puts each proc in its own CTA
 and every CTA under one GPU under one SYS, all fences in a single test share one
 scope, so the mixed morally-strong/morally-weak configuration that would separate
@@ -223,10 +223,6 @@ change model behaviour that no consumer asks for.
 ## 6. Reproduce
 
 ```sh
-# The live consumer: 192 solver cells (96 AArch64 + 96 PTX) against the table,
-# plus the four injections that must redden it.
-make hetlitmus-lattice
-
 # herd7 parses and solves every gpu-only test under this model.
 cd hetlitmus/tests/gpu-only
 herd7 -set-libdir ../../../herd/libdir -bell ../../bells/ptx.bell \

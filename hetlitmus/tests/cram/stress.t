@@ -150,7 +150,7 @@ at RUN TIME or not at all.  het_spin tallies how each spin ended (rendezvous vs
 the 1024-spin deadlock cap); the stress lanes flag a HET_STRESS_MAX_ROUNDS
 cap-exit, which means stress stopped while the test was still running.  The host
 prints both and carries them into the HetObs record, so the statistics layer can
-disqualify a run and the tuner can tune against it.
+disqualify a run and a hardware sweep can be scored on it.
   $ grep -c 'het_scratch_bump(&_stress_tally\[HET_TALLY_TRUNC\])' $MP.cu
   1
   $ grep -c 'HetLitmus stress: spins=%llu rendezvous=%llu cap=%llu' $MP.cu

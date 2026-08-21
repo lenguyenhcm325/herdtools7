@@ -59,10 +59,10 @@
 # all the traffic goes with them (per-pattern op counts measured on sm_90 are in
 # hetlitmus/docs/faithfulness.md, "What a compile-time access pattern costs");
 # a runtime pattern emits all four branches, so the count cannot move.  Invariance
-# IS the property "no autotuner config can silently switch the stress off", which
-# is what the stress tuner needs.  Requiring a store as well as a load in (2)/(3)
-# keeps the access sequence mixed: a pattern chain with no reachable store branch
-# hammers a region nothing ever writes.
+# IS the property "no stress configuration can silently switch the stress off".
+# Requiring a store as well as a load in (2)/(3) keeps the access sequence mixed:
+# a pattern chain with no reachable store branch hammers a region nothing ever
+# writes.
 #
 # Exit 0 = PASS, 1 = FAIL, 2 = usage/toolchain error.
 # ---------------------------------------------------------------------------

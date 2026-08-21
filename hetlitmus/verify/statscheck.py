@@ -1520,8 +1520,8 @@ def phase4(tamper=None):
             if "het_stats_compute" in src:
                 n_stats += 1
             # The realised window resolution rides in every record -- a swept HET_NWIN
-            # the record does not report would silently mis-tune the tuner -- and every
-            # harness carries the adaptive stop.
+            # the record does not report would leave a reader with the wrong one -- and
+            # every harness carries the adaptive stop.
             if "_rec.nwin = (uint32_t)HET_NWIN;" in src:
                 n_nwin += 1
             if "het_campaign_should_stop" in src:

@@ -27,7 +27,7 @@
 /* HET_PLACE IS REFUSED HERE, FOR THE SAME REASON AS HET_ALLOC=malloc.  The
    placement lever is CUDA API (cudaMemAdvise / cudaMemPrefetchAsync) and lives
    in het_alloc_cuda.inc; this render has no placement code at all.  But
-   HET_PLACE is an #ifndef knob, it is swept by the tuner, and BOTH renders print
+   HET_PLACE is an #ifndef knob, it is swept on hardware, and BOTH renders print
    it -- `place=%d' in the cpu-stress banner and `place_mode' in the per-run
    statistics record -- because those two lines are emitted once for both
    dialects.  So `make hip-bin HIPCC="hipcc -DHET_PLACE=1"' would have produced a

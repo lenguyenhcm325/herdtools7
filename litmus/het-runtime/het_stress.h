@@ -11,7 +11,7 @@
  * reuse, so every mechanism keeps its code source and its defining paper:
  *   scratchpad; critical patch size P; access sequence sigma; spread m;
  *   occupancy-scaled stressing-thread count [Sorensen16 sec 1, 3.2-3.4]
- *   the stress-parameter space, its autotuning, the reproducibility bound
+ *   the stress-parameter space and the reproducibility bound
  *                                           [Kirkham20 sec 3.1]
  *   the four incantations and the busy-wait deadlock guard
  *                                           [Alglave15 sec 4.3]
@@ -49,7 +49,7 @@
 
 /* -------------------------------------------------------------------------
  * Stress knobs -- A SEED, NOT A TUNED CONFIGURATION.  These are [CudaLitmus]'s
- * committed params/stress_params.txt: a device-scope, GPU-only autotuner output,
+ * committed params/stress_params.txt: a device-scope, GPU-only tuning output,
  * produced while the MEM_STRESS pattern defect (below) held its mem-stress knobs
  * inert.  HetLitmus tests system scope across a host-device interconnect, and
  * "parameters for one chip may not be optimal on another chip, even from the same
@@ -350,9 +350,9 @@ __device__ static void het_spin(uint32_t* barrier, uint32_t limit,
    gives per == 0 and the tail case dumps every workgroup on the last line --
    realised spread 1, while the knob still says m.  Round-robin degrades more
    gently but still leaves targets unused.  The stress is then weaker than the
-   configuration claims, and the stress tuner sweeps exactly these knobs
-   (HET_STRESS_BLOCKS x HET_STRESS_TARGETS), so it must never score a spread-1
-   config as if it were spread-m.  Count what was actually assigned and say so. */
+   configuration claims, and these two knobs (HET_STRESS_BLOCKS x
+   HET_STRESS_TARGETS) are what a hardware sweep turns, so a spread-1 config must
+   never be read as a spread-m one.  Count what was actually assigned and say so. */
 __host__ static void het_report_spread(const uint32_t* locations, int num_workgroups) {
   int distinct = 0;
   for (int i = 0; i < num_workgroups; i++) {

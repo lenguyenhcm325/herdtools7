@@ -259,32 +259,8 @@ an ordering-strength lattice**, so the control is essentially free:
   compared against a prediction.
 
 ### 3.9 Tuning methodology & objective
-- **Tuning objective:** the tests worth tuning for are exactly the ones whose count stays 0, so the target
-  itself supplies no gradient → tune to maximise the **het-mutant DEATH RATE**
-  `Δcontrol_target_count/Δt` on §3.8's controls (the metric of [MCMutants23 §4.2], whose Alg.1 picks a
-  per-test environment against a ceiling rate `⌈−ln(1−r)⌉/b`). For the **interconnect** knobs the
-  objective *must* be a het/cross-C2C observable — a GPU-only rate mis-tunes the C2C lever to zero.
-- **Method:** factor the combined stress knob space into three near-separable sub-searches
-  (GPU → CPU → interconnect last), seeded/warm-started random search (the seedable Park-Miller sampler of
-  [GPUHarbor23 §3.4], which is what makes one stress configuration replayable across devices),
-  shape-priority: LB/S first, SB/IRIW last on the two discrete GPUs (Vega and Quadro, [Kirkham20 Tab.1])
-  of [Kirkham20 §4.1], neither of which shows IRIW at all [Kirkham20 §6.4 Tab.11] — an order that
-  **inverts** on that paper's integrated part (LB/S are revealed by the fewest configurations there
-  [Kirkham20 §4.1], and SB carries its highest rate there [Kirkham20 §4.2]), so re-measure it per part.
-- **The racing rule — the tuner's, and nothing else's (`tune.py`):** the data-peeking CI of
-  [Kirkham20 §5.1 Fig.10] is a normal approximation to a binomial, too narrow on a bursty channel → swap
-  for an **empirical-Bernstein** variance-aware early-stop at the `(instance,run)` unit, whose radius
-  absorbs the between-bout spread with no pre-estimated dispersion figure; **randomized round-robin
-  (SER³)** config scheduling to avoid drift aliasing; §3.7's KS reading drops a non-stationary bout
-  in-loop. The early-stop spends a **fixed per-comparison** δ ([Mnih08 §2]'s
-  per-round radius), **not** the anytime ([Mnih08 §3.1], EBStop) or family-wise racing ([Mnih08 §4])
-  guarantee — implementing the §3.1 δ-spending schedule empirically broke elimination (tunecheck 4/7). The
-  tuner's pick is therefore a *heuristic*: what its config is worth is established by the campaign the
-  tuned harness then runs, not by this rule's confidence, and it feeds no reported outcome. This residual
-  is a **known-open** item.
-- **Portability:** ship *structure + seed*; **re-tune every numeric on the actual hardware** (x86 → GH200 →
-  MI300A can't share — the interconnect lever itself differs). No post-2023 memory-testing autotuner handles
-  het/overdispersion → this tuner is at the frontier.
+- **Withdrawn with the positive control:** the objective was the control's het-mutant death rate, and
+  with no control there is no such rate to tune against.
 
 ---
 

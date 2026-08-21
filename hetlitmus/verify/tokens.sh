@@ -482,7 +482,7 @@ PY
   # nothing (faithfulness.md, "Scope / limits").  stresscheck.py closes
   # that: it counts scratchpad ops in the emitted PTX per lane class and asserts
   # the count is INVARIANT under -DHET_*_PATTERN -- i.e. that the pattern is a
-  # runtime value, so no autotuner config can switch the stress off.  Prove it
+  # runtime value, so no stress configuration can switch it off.  Prove it
   # bites, or it is decoration.
   printf '\n[7] GPU stress liveness: the gate must FAIL(1) on a dead stress layer\n'
   local SL="$REPO/hetlitmus/verify/stresscheck.py"
@@ -529,7 +529,7 @@ PY
             "$S4T.cu" pre \
             's/HET_PRE_STRESS_ITER, _pre_pat/HET_PRE_STRESS_ITER, HET_PRE_STRESS_PATTERN/' \
             || fails=$((fails+1))
-    _s4bite "mem-stress pattern made compile-time (the autotuner blast radius)" \
+    _s4bite "mem-stress pattern made compile-time (a config could switch it off)" \
             "$S4T.cu" mem \
             's/HET_MEM_STRESS_ITER, _mem_pat/HET_MEM_STRESS_ITER, HET_MEM_STRESS_PATTERN/' \
             || fails=$((fails+1))

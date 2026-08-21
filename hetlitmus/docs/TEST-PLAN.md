@@ -249,9 +249,8 @@ device this box may not have, three of its members needing a real GPU (see below
 
 Umbrellas (what you press):
 - **`make hetlitmus-test`** → the CUDA-free lane: `hetlitmus-cram` · `-corpus` ·
-  `-dup` · `-lattice` · `-hipsrc` · `-amd-controlmap` · `-controlmap` · `-verdict` ·
-  `-recfields` · `-stats` · `-hist` · `-tuner` · `-x86body` · `-x86fixture` ·
-  `-cpuonly` · `-run-gate`.
+  `-dup` · `-hipsrc` · `-verdict` · `-recfields` · `-stats` · `-hist` ·
+  `-x86body` · `-x86fixture` · `-cpuonly` · `-run-gate`.
 - **`make hetlitmus-test-toolchain`** (old name `hetlitmus-test-nvcc`, kept as an alias)
   → the toolchain lane: `hetlitmus-faithful` · `-stress` ·
   `-cpustress` · `-obs` · `-hipbuild` · `-amd-faithful` · `-characterize-hw` ·
@@ -262,26 +261,25 @@ Umbrellas (what you press):
   stand-in for the session wrapper (stub compiler, stub probe) is `hetlitmus-run-gate`,
   which is in the other umbrella.
 - **`make hetlitmus-test-all`** → both. ← pre-commit gate on the dev box.
-- **`make hetlitmus-promote`** → regenerate both corpora, re-emit `control-map-amd.csv`,
-  then `dune test hetlitmus/tests/cram --auto-promote` (the cram dir only); does **not**
+- **`make hetlitmus-promote`** → regenerate both corpora, then
+  `dune test hetlitmus/tests/cram --auto-promote` (the cram dir only); does **not**
   commit; prints "review `git diff` then commit".
 
-Three of the building blocks are worth naming, because each exists for a failure no other
-gate can see. `hetlitmus-lattice` machine-checks the ordering-strength lattice (`ordercheck.py` phases
-1–2, 96 ARM + 96 PTX cells against herd7, plus phase 3 keying its 8 primitives against
-`controlmap.py`'s own copy of the same sets) that every `mu(T)` is selected on;
-`hetlitmus-controlmap` / `-amd-controlmap` gate the derived map itself on both lattices;
-`hetlitmus-recfields` pins the emitted `_rec.*` writes against `het_verdict.h`'s members
-and the emitted `#define`s against its `#ifndef` defaults, which is the one skew a
-CPU-only gate would otherwise miss.
+One building block is worth naming, because it exists for a failure no other gate can
+see: `hetlitmus-recfields` pins the emitted `_rec.*` writes against `het_verdict.h`'s
+members and the emitted `#define`s against its `#ifndef` defaults, which is the one skew
+a CPU-only gate would otherwise miss.
 
 **Seven targets were deleted, not renamed** — they derived or audited expected verdicts,
 and the tool claims none: `hetlitmus-oracle`, `-nvroundtrip`, `-amd-oracle`, `-amdorder`,
 `-amdprov`, `-nvprov`, `-nvanchor`. So was `-noracle`, together with the
 `-allow-no-oracle` flag it gated. All of them live on with the retired
-oracle-derivation lineage, outside this tree. Two survivors moved rather than went:
-`hetlitmus-order` → `hetlitmus-lattice` (its verdict phase dropped, its lattice phases
-kept), and `hetlitmus-noracle-hw` → `hetlitmus-characterize-hw` (the unregistered-pair
+oracle-derivation lineage, outside this tree. **Four more went with the positive
+control**, which is withdrawn: `hetlitmus-controlmap` and `-amd-controlmap` gated its
+map, `-lattice` the ordering-strength lattice its siblings were selected on, and
+`-tuner` the stress autotuner whose objective was its death rate. `hetlitmus-order`
+had become `hetlitmus-lattice` and goes with it. One survivor moved rather than went:
+`hetlitmus-noracle-hw` → `hetlitmus-characterize-hw` (the unregistered-pair
 refusal became a warning, so what the gate reads off a real printout is the control
 sentence, not a refusal).
 

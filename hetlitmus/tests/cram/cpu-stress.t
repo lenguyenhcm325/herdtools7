@@ -292,10 +292,10 @@ to die.
   $ sed -n '/^static void het_obs_record_print/,/^}/p' MP-cg-sys-acqrel-2s/het_verdict.h | grep -c 'enemies=%u enemy_rounds=%llu'
   1
 
-and the two knobs the tuner turns the interconnect lever with travel WITH the
-result.  The working set is what decides whether the noise crosses anything at
-all -- below the last-level cache the buffer is served from cache -- so a tuning
-log that does not record it cannot tell a good config from a dead stressor.
+and the two knobs the interconnect lever is driven with travel WITH the result.
+The working set is what decides whether the noise crosses anything at all --
+below the last-level cache the buffer is served from cache -- so a log that does
+not record it cannot tell a good config from a dead stressor.
   $ grep -c 'noise_ws=%uMB place=%u' MP-cg-sys-acqrel-2s/het_verdict.h
   1
   $ grep -c '_rec.noise_ws_mb = (uint32_t)HET_NOISE_MB' $MP.cu

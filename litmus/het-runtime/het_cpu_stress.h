@@ -74,8 +74,8 @@ extern "C" {
  * sec 6.4].  Re-tune on GH200 and again on MI300A -- they do not even share the
  * interconnect lever.  All are -D-overridable so a sweep needs no re-emission, and
  * main() reports the realised counters and warns when one falls short of its knob,
- * because a knob that says 9 while the hardware realised 1 mis-tunes the autotuner
- * silently.
+ * because a knob that says 9 while the hardware realised 1 silently misstates the
+ * stress that re-tuning reads.
  * ------------------------------------------------------------------------- */
 #ifndef HET_CPU_ENEMIES
 #define HET_CPU_ENEMIES (-1)      /* -1 = auto: every spare core (see main())    */
@@ -135,7 +135,7 @@ extern "C" {
                                          net effect of pinning stays confounded.
                                      1 = prefer HBM  (pages home on the GPU)
                                      2 = prefer DDR  (pages home on the CPU)
-                                     Swept by the tuner.  Do not promote a non-zero
+                                     Swept on hardware.  Do not promote a non-zero
                                      default without hardware evidence.          */
 #endif
 #ifndef HET_NOISE_MB

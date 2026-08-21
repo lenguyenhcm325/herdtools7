@@ -549,8 +549,8 @@ def check(litmus_path, arch="sm_90", harness_dir=None, sel=None):
         # [Bagchi26 Table 1]) the buffer is served from cache and generates NO
         # interconnect traffic, so a config that "scored well" scored a stressor
         # that was not running.  The allocation must therefore derive from
-        # HET_NOISE_MB, so that the tuner and het_obs_record's noise_ws_mb describe
-        # the buffer really allocated, and the below-LLC guard must still be there.
+        # HET_NOISE_MB, so that het_obs_record's noise_ws_mb describes the buffer
+        # really allocated, and the below-LLC guard must still be there.
         if want("noise-size"):
             m = re.search(r"_noise_words\s*=\s*([^;]+);", cu_src)
             if not m:
@@ -691,7 +691,7 @@ def check(litmus_path, arch="sm_90", harness_dir=None, sel=None):
                 if len({n_on, *counts.values()}) != 1:
                     fail("gpu-noise-runtime: the noise-op count MOVES with "
                          "-DHET_NOISE_GPU_BLOCKS (%s vs %d by default).  A compile-time "
-                         "block count lets nvcc delete the noise for a config the tuner "
+                         "block count lets nvcc delete the noise for a config a sweep "
                          "may pick; it must be a RUNTIME kernel argument."
                          % (counts, n_on))
                 else:

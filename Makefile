@@ -718,24 +718,6 @@ hetlitmus-cpustress: | build
 	bash hetlitmus/verify/tokens.sh cpustress
 	@ echo "HetLitmus Layer-3 CPU+interconnect stress liveness: OK"
 
-### Every test off the lattice floor names a mu(T) that exists and is strictly
-### weaker on this lattice, and the map fails closed (verify/controlmap.py;
-### docs/positive-control.md).  Regenerate: `--emit > tests/het/control-map.csv`.
-hetlitmus-controlmap: | build
-	@ echo
-	python3 hetlitmus/verify/controlmap.py --check
-	python3 hetlitmus/verify/controlmap.py --bite
-	@ echo "HetLitmus control map: OK (and the gate bites)"
-
-### The same gate on the x86 lattice, which loses the middle rung the AArch64
-### one has, so the AMD map is a separate artifact and never a translation.
-### Regenerate: `controlmap.py --lattice x86 --emit > tests/het/control-map-amd.csv`.
-hetlitmus-amd-controlmap: | build
-	@ echo
-	python3 hetlitmus/verify/controlmap.py --lattice x86 --check
-	python3 hetlitmus/verify/controlmap.py --lattice x86 --bite
-	@ echo "HetLitmus AMD control map: OK (and the gate bites)"
-
 ### The isomorphism gate: no two corpus tests are the same experiment up to
 ### (proc permutation x location renaming), which is the duplicate class the
 ### generators' byte-comparison cannot see (hetlitmus/verify/dupcheck.py).
@@ -744,15 +726,6 @@ hetlitmus-dup: | build
 	python3 hetlitmus/verify/dupcheck.py
 	python3 hetlitmus/verify/dupcheck.py --bite
 	@ echo "HetLitmus isomorphism/dedup gate: OK (and the gate bites)"
-
-### The per-primitive ordering table behind the control-map lattice, decided by
-### herd7's native AArch64 model and by hetlitmus/cats/nvidia-ptx.cat [Lustig19]
-### rather than asserted (hetlitmus/verify/ordercheck.py).
-hetlitmus-lattice: | build
-	@ echo
-	python3 hetlitmus/verify/ordercheck.py
-	python3 hetlitmus/verify/ordercheck.py --bite
-	@ echo "HetLitmus ordering-table lattice gate: OK (and the gate bites)"
 
 ### het_verdict() -- the rule deciding what an observation MEANS -- compiled from
 ### the real emitted header and driven with synthetic records, together with the
@@ -780,16 +753,6 @@ hetlitmus-hist: | build
 	python3 hetlitmus/verify/histcheck.py
 	python3 hetlitmus/verify/histcheck.py --bite
 	@ echo "HetLitmus histogram tally + display: OK (and the gate bites)"
-
-### The autotuner search machinery (hetlitmus/tune.py): it finds a known optimum,
-### crowns nobody on a constant objective, and breaks when any transfer fix is
-### removed (hetlitmus/verify/tunecheck.py).  Pure Python, hence no `| build`.
-hetlitmus-tuner:
-	@ echo
-	python3 hetlitmus/tune.py --self-test >/dev/null
-	python3 hetlitmus/verify/tunecheck.py
-	python3 hetlitmus/verify/tunecheck.py --bite
-	@ echo "HetLitmus tuner search machinery: OK (and the gate bites)"
 
 ### The emitted CPU observer still reloads once per iteration at clang -O2 on
 ### both host ISAs -- it is the only recovery channel the store-only shapes have
@@ -946,15 +909,11 @@ hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-dup
-hetlitmus-test:: hetlitmus-lattice
 hetlitmus-test:: hetlitmus-hipsrc
-hetlitmus-test:: hetlitmus-amd-controlmap
-hetlitmus-test:: hetlitmus-controlmap
 hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-recfields
 hetlitmus-test:: hetlitmus-stats
 hetlitmus-test:: hetlitmus-hist
-hetlitmus-test:: hetlitmus-tuner
 hetlitmus-test:: hetlitmus-x86body
 hetlitmus-test:: hetlitmus-x86fixture
 hetlitmus-test:: hetlitmus-cpuonly
@@ -986,21 +945,17 @@ hetlitmus-promote: | build
 	@ echo
 	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/gpu-only/generate.sh
 	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/het/generate.sh
-	# atomic: a failed --emit must not truncate the committed map
-	python3 hetlitmus/verify/controlmap.py --lattice x86 --emit > hetlitmus/tests/het/.control-map-amd.csv.new \
-	  && mv -f hetlitmus/tests/het/.control-map-amd.csv.new hetlitmus/tests/het/control-map-amd.csv
 	dune test hetlitmus/tests/cram --auto-promote
 	@ echo "hetlitmus-promote: corpora regenerated + cram goldens promoted (NOT committed)."
 	@ echo "hetlitmus-promote: review 'git diff' then commit yourself."
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
-.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-tuner hetlitmus-obs
-.PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-lattice
-.PHONY: hetlitmus-controlmap hetlitmus-verdict hetlitmus-selftest
+.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-obs
+.PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-verdict hetlitmus-selftest
 .PHONY: hetlitmus-recfields
 .PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-cpuonly
 .PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate hetlitmus-run-hw
-.PHONY: hetlitmus-amd-controlmap hetlitmus-hipsrc hetlitmus-amd-faithful
+.PHONY: hetlitmus-hipsrc hetlitmus-amd-faithful
 .PHONY: hetlitmus-test hetlitmus-test-toolchain hetlitmus-test-nvcc
 .PHONY: hetlitmus-test-all hetlitmus-promote
 
