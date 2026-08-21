@@ -38,8 +38,7 @@ BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 # (corpus dir, test, -gpu-target, render extension) -- one shape per decode
 # channel and one per pair, because different shapes write different fields.
 LANES = [
-    (HET_DIR, "MP-cg-sys-fence-2s", "cuda", "cu"),   # reader + mu(T) + canary
-    (HET_DIR, "MP-cg-sys-relaxed", "cuda", "cu"),    # the `self' canary, no co-run
+    (HET_DIR, "MP-cg-sys-fence-2s", "cuda", "cu"),   # the reader channel
     (HET_DIR, "2+2W-cg-sys-fence", "cuda", "cu"),    # store-only: observer channel
     (HET_DIR, "S-cg-sys-fence", "cuda", "cu"),       # observer + reader
     # A T_L>=2 shape: the only one whose scan reads HET_WINDOW and
@@ -53,13 +52,6 @@ FIELD_RE = re.compile(r"_rec\.([A-Za-z_][A-Za-z0-9_]*)")
 DEFINE_RE = re.compile(r"^#define (HET_[A-Za-z0-9_]+)", re.M)
 IFNDEF_RE = re.compile(r"^#ifndef (HET_[A-Za-z0-9_]+)", re.M)
 STAMP_RE = re.compile(r"_rec\.rec_magic\s*=\s*HET_REC_MAGIC\s*;")
-
-# Stamped defines whose reader is a gate rather than C code: they are the emitted
-# record of which control this harness names, pinned by hetlitmus/tests/cram/
-# positive-control.t and by nothing the compiler sees.  Named here so a genuinely
-# dead stamp is still caught, rather than the whole check being loosened.
-GREP_ONLY = {"HET_MU_NAME", "HET_CANARY_NAME"}
-
 
 def code_only(text):
     """Drop /*...*/ comments, //-comments and string literals: an identifier that
@@ -186,8 +178,7 @@ def run(quiet, tamper=None, header_tamper=None, silent=False, lanes=None):
     finally:
         if tmp is not None:
             shutil.rmtree(tmp, ignore_errors=True)
-    for name in sorted(n for n, live in seen.items()
-                       if not live and n not in GREP_ONLY):
+    for name in sorted(n for n, live in seen.items() if not live):
         bad.append("#define %s is stamped and NO lane's code and no runtime header "
                    "reads it -- a stamp whose name drifted is a default that "
                    "silently stands" % name)

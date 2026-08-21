@@ -11,8 +11,7 @@ het_obs_records, and proves:
   2 the printout  each outcome's sentences are reachable from THAT outcome and
                   from no other, checked both ways.  The enum changing is not
                   the deliverable; the sentence is.
-  3 the corpus    every emitted harness stamps rec_magic exactly once and carries
-                  the mu(T) / canary population control-map.csv gives it.
+  3 the corpus    every emitted harness stamps rec_magic exactly once.
   4 the machine   the printout names only the machine the pair's row in
                   litmus/hetMachine.ml entitles it to, and a harness stamped
                   with no row names none.
@@ -36,16 +35,12 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
-CONTROL_MAP = os.path.join(HET_DIR, "control-map.csv")
 
 VERDICTS = ["OBSERVED", "NOT-OBSERVED-MU-HOT", "NOT-OBSERVED-CANARY-ONLY",
             "COLD-INVALID"]
 
-# The co-run census the emitted corpus MUST reproduce, re-derived from
-# control-map.csv rather than typed: a mu(T) instance is built for every row whose
-# Mu column names a test, a canary instance for every row whose Canary column names
-# one ("self" rows ARE the canary and cannot co-run themselves).
-CENSUS = {"mu": 375, "canary": 469, "tests": 471}
+# The census the emitted corpus MUST reproduce: one harness per corpus test.
+CENSUS = {"tests": 471}
 
 # ---------------------------------------------------------------------------
 # Frame exclusivity.  Each outcome's own sentences, checked BOTH ways: reachable
@@ -145,8 +140,8 @@ CASES = [
     case("canary-only-when-mu-is-cold", "NOT-OBSERVED-CANARY-ONLY",
          cv=["CANARY_ONLY"], control_target_count=0, canary_target_count=500),
 
-    # The rows that co-run no mu at all are the lattice floor (CENSUS: tests minus
-    # mu), so no strictly weaker structural sibling of them exists.  Their null is
+    # The rows that co-run no mu at all are the lattice floor, so no strictly
+    # weaker structural sibling of them exists.  Their null is
     # the weaker tier for a different reason, and CV_CANARY_ONLY -- "Layer B fired,
     # Layer A did not" -- must NOT be raised where no Layer A was compiled in, or a
     # real diagnostic becomes boilerplate on every floor row.
@@ -624,26 +619,9 @@ def check_machine_prose(header, tmp, quiet, defines_by_pair=None):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 3 -- the emitted corpus stamps its record and co-runs what the map says.
+# PHASE 3 -- the emitted corpus stamps its record.
 # ---------------------------------------------------------------------------
-def read_control_map():
-    """test -> (mu, canary), from the committed map (fields 2 and 6)."""
-    want = {}
-    with open(CONTROL_MAP) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            f = line.split(",")
-            if len(f) != 6 or f[0] == "Test":
-                continue
-            want[f[0]] = (f[1], f[5])
-    return want
-
-
 MAGIC_RE = re.compile(r"_rec\.rec_magic\s*=\s*HET_REC_MAGIC\s*;")
-CTRL_RE = re.compile(r"^#define HET_CONTROL_COMPILED_IN (\d)$", re.M)
-CAN_RE = re.compile(r"^#define HET_CANARY_COMPILED_IN (\d)$", re.M)
 
 
 _CORPUS = None
@@ -683,16 +661,13 @@ def emit_corpus(tests):
 
 def check_corpus(tamper=None):
     """tamper: (test, src) -> src.  Used ONLY by --bite, to prove this phase FAILS
-    when an emitted harness loses its stamp or its co-run population."""
-    print("\n===== PHASE 3: does the EMITTED CORPUS stamp and co-run what it "
-          "must? =====")
-    want = read_control_map()
+    when an emitted harness loses its stamp."""
+    print("\n===== PHASE 3: does the EMITTED CORPUS stamp its record? =====")
     tests = sorted(t[:-len(".litmus")] for t in os.listdir(HET_DIR)
                    if t.endswith(".litmus"))
     print("  het corpus  : %d .litmus" % len(tests))
-    print("  control-map : %d rows" % len(want))
 
-    bad, n_mu, n_can = 0, 0, 0
+    bad = 0
     tampered = 0
     sources = emit_corpus(tests)
     if sources is None:
@@ -716,22 +691,6 @@ def check_corpus(tamper=None):
             print("  *** %-26s stamps rec_magic %d time(s) (want exactly 1)"
                   % (t, n_magic))
             bad += 1
-        # (b) The co-run population, against the map that named it.  A flag set
-        # without the instance behind it turns a structural zero into a control.
-        mu, can = want.get(t, ("?", "?"))
-        exp_mu = 1 if mu not in ("none", "?") else 0
-        exp_can = 1 if can not in ("-", "self", "?") else 0
-        got_mu = CTRL_RE.search(src)
-        got_can = CAN_RE.search(src)
-        got_mu = int(got_mu.group(1)) if got_mu else -1
-        got_can = int(got_can.group(1)) if got_can else -1
-        n_mu += 1 if got_mu == 1 else 0
-        n_can += 1 if got_can == 1 else 0
-        if got_mu != exp_mu or got_can != exp_can:
-            print("  *** %-26s co-runs mu=%d canary=%d, control-map.csv says "
-                  "mu=%d canary=%d (Mu=%s Canary=%s)"
-                  % (t, got_mu, got_can, exp_mu, exp_can, mu, can))
-            bad += 1
 
     if tamper is not None and tampered == 0:
         # An injection that matched nothing would "pass" for free.
@@ -739,9 +698,7 @@ def check_corpus(tamper=None):
         return 2
 
     print()
-    for label, seen, expect in (("mu(T) co-run", n_mu, CENSUS["mu"]),
-                                ("canary co-run", n_can, CENSUS["canary"]),
-                                ("harnesses", len(tests), CENSUS["tests"])):
+    for label, seen, expect in (("harnesses", len(tests), CENSUS["tests"]),):
         mark = "    " if seen == expect else " ***"
         print("%s  %-16s %3d  (expect %3d)" % (mark, label, seen, expect))
         if seen != expect:
@@ -749,12 +706,9 @@ def check_corpus(tamper=None):
 
     if bad:
         print("\nCORPUS FAILED: %d problem(s).  A rule that fails closed on an "
-              "unstamped record only helps if the emitter stamps; a co-run flag "
-              "without its instance makes a structural zero read as a control."
-              % bad)
+              "unstamped record only helps if the emitter stamps." % bad)
         return 1
-    print("\nCORPUS OK (%d harnesses, every one stamped once, co-run population "
-          "matches control-map.csv)" % len(tests))
+    print("\nCORPUS OK (%d harnesses, every one stamped once)" % len(tests))
     return 0
 
 
@@ -1242,20 +1196,6 @@ def bite():
                   "[a harness shipped with an unstamped record]" % rc)
             ok = False
 
-        # (8) A co-run flag without its instance: the harness claims a canary is
-        # running, so a structural zero would be read as a cold control.
-        rc = check_corpus(tamper=lambda t, s: (
-            s.replace("#define HET_CANARY_COMPILED_IN 1",
-                      "#define HET_CANARY_COMPILED_IN 0")
-            if t == "IRIW-cgcg-sys-fence-2s" else s))
-        if rc == 1:
-            print("  BITES (gate failed, as it must)   "
-                  "[a harness dropped the canary the map names for it]")
-        else:
-            print("  *** DID NOT BITE (rc=%d)   "
-                  "[a harness dropped the canary the map names for it]" % rc)
-            ok = False
-
         # (9) The fail-safe default made a vendor claim: an unstamped harness --
         # an unregistered pair, and every future pair before its row exists --
         # would then print a machine it is not.  The direction matters: a missing
@@ -1328,8 +1268,8 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: 17/17 injections caught, each by the diagnostic it named --")
-        print("         rule + printouts 8, reporting paths 2, emitted corpus 2,")
+        print("BITE OK: 16/16 injections caught, each by the diagnostic it named --")
+        print("         rule + printouts 8, reporting paths 2, emitted corpus 1,")
         print("         machine prose 5.")
         return 0
     print("BITE FAILED: an injection slipped through -- this gate is decorative")

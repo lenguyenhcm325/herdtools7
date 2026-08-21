@@ -1,10 +1,9 @@
 Statistics-layer guard (hetlitmus/docs/00-environment-design.md sec 3.7; where
 that design and litmus/het-runtime/het_verdict.h disagree, the header is what
-ships).  What makes a "Never" readable
-at all is the per-window sub-tallies of the control channel: they are the only
-view of the count stream INSIDE a run, so without them the stationarity precheck
-has nothing to test and a P_rep would be reported across a rate change nobody
-could have seen.
+ships).  A "Never" is readable only against the effort that produced it, so the
+harness has to carry every input the estimator reads out of a run: the record
+array that outlives the run loop, the campaign knobs read at run time, the
+adaptive stop, and the decode channel each shape actually has.
 
 The layer's own behaviour is gated by hetlitmus/verify/statscheck.py, which
 compiles the real het_verdict.h and drives it with synthetic record streams.
@@ -14,7 +13,6 @@ indistinguishable from one that works.
 
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-fence-2s.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
-  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
 
 THE RECORDS MUST OUTLIVE THE RUN LOOP.  The statistics are computed over the
 (instance,run) cells, so a single reused _rec would leave nothing to aggregate.
@@ -65,32 +63,14 @@ must never be pooled with another.
   $ grep -c '_rec.nwin = (uint32_t)HET_NWIN;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
 
-THE COUNT AND ITS WINDOW BUMP RIDE ONE LINE, UNDER ONE PREDICATE.  This is what
-makes `sum(control_win[]) == control_target_count' an invariant -- and that
-invariant is the only run-time evidence, on real hardware, that the sub-tallies
-are alive at all (het_stats_compute raises HET_ST_WIN_DESYNC when it breaks, and
-refuses the stationarity precheck).  A window bump that drifted onto its own line
-under its own condition could silently stop tracking while every structural gate
-stayed green.
-
-  $ grep -c 'if (_weak) { _rec.control_target_count++; _rec.control_win\[het_win_of(_f, SIZE_OF_TEST)\]++; }' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
-  1
-  $ grep -c 'if (_weak) { _rec.canary_target_count++; _rec.canary_win\[het_win_of(_f, SIZE_OF_TEST)\]++; }' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
-  1
-
-THE CONTROL CHANNEL, NEVER THE TARGET.  The target is far too rare to say
-anything about a rate from -- that is why the control is the calibrating
-channel -- so the test's own scan must not be windowed.  Pinned by counting the
-WINDOWING CALL, not by forbidding a field name: het_obs_record has exactly two
-per-window arrays (control_win, canary_win) and no third, so a target scan that
-started windowing would have to reuse one of them or add one -- either way it is
-a third het_win_of call site, and this count is 2 for the two bumps pinned just
-above.
+THE TARGET COUNT IS BUMPED ON ONE LINE, UNDER ONE PREDICATE, on both channels
+at once: the exhaustive count and the heuristic one are the same sighting read
+two ways, and a bump that drifted onto its own line under its own condition
+would let the two disagree about a frame while every structural gate stayed
+green.
 
   $ grep -c 'target_count_exhaustive++; _rec.target_count_heuristic++' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
-  $ grep -c 'het_win_of' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
-  2
 
 THE DEGENERACY GUARD MUST NOT GO CONSTANT ON THE STORE-ONLY SHAPES.
 distinct_decoded_iters and skew_stddev are both written from the same
@@ -117,19 +97,6 @@ MP has a reader -> the synchrony channel:
   $ grep -c '_rec.sync_valid = 1;' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   0
   [1]
-
-THE TWO `self' CANARY ROWS HAVE NO CONTROL STREAM, AND THAT IS BY CONSTRUCTION.
-MP-{cg,gc}-sys-relaxed are the Layer-B canary and cannot co-run themselves, so
-they carry no window bump.  het_stats_compute must then report
-CTRL_STREAM_EMPTY and REFUSE the KS gate: run anyway, that gate "passes" on their
-all-zero stream and unlocks a P_rep from a stationarity test that never ran.  They
-still compute and print their aggregate; nothing calibrates it.
-
-  $ grep -c 'het_win_of' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
-  0
-  [1]
-  $ grep -c 'het_stats_compute(_recs, _nrec, &_st);' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
-  1
 
 THE INSTRUMENTS THEMSELVES ARE IN THE EMITTED HEADER, NOT IN A SCRIPT.  A reader
 who cannot recompute an outcome from the artefact has not been given a result.

@@ -74,26 +74,24 @@ cross-device barrier in the loop, which masks the tested order and stalls
 (het_stress.h, het_spin, states it once, with its source).  One spin call per GPU
 test lane; one gd_bar fetch_add per barrier-joining participant.
 
-MP-cg-sys-acqrel-2s is a co-run harness -- T, mu(T) and the canary share this
-launch -- so there are three GPU test lanes and three CPU threads.  The per-lane
-invariant is what is asserted: exactly one spin per test lane, and (below)
-exactly one inside T's own lane, so a total of 3 cannot be satisfied by a lane
-that lost its spin while another gained two.
+The per-lane invariant is what is asserted: exactly one spin per GPU test lane,
+and the file-wide count is that same one, so a lane that lost its spin cannot be
+made up for by another gaining two.
   $ grep -c 'het_spin(_spin_bar' $MP.cu
-  3
+  1
   $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' $MP.cu | grep -c 'het_spin(_spin_bar'
   1
 
-All three lanes spin on the SAME device-scope word, and HET_SPIN_LANES is their
-sum.  That is required, not incidental: the barrier's limit is
+Every spinning lane spins on the SAME device-scope word, and HET_SPIN_LANES
+counts them.  That is required, not incidental: the barrier's limit is
 _nb*HET_SPIN_LANES, so a lane that joined the spin without being counted in
 HET_SPIN_LANES would make the limit unreachable and every spin would burn the
 1024-iteration deadlock cap.
-  $ grep -c '#define HET_SPIN_LANES 3' $MP.cu
+  $ grep -c '#define HET_SPIN_LANES 1' $MP.cu
   1
 
-(The cross-device arrivals themselves -- six on `_bar.fetch_add', one inside T's
-own lane -- are pinned in coop-launch.t (b,c), on this same render.)
+(The cross-device arrivals themselves are pinned in coop-launch.t (b,c), on this
+same render.)
 
 and the barrier is ALL-OR-NONE, with its limit indexed by the barriers taken --
 the adaptation the perpetual loop forces.  Upstream relaunches per iteration, so
@@ -103,12 +101,12 @@ litmus.cuh:340).  Our
 counter grows, so the limit must grow with it, and it is only attainable if every
 lane contributes exactly one increment to each barrier.  Hence the roll is drawn
 from a lane-independent stream (keyed by the iteration, not the lane) and the
-limit counts taken barriers (_nb), not iterations -- so all three co-running
-instances reach the same verdict for iteration _n.
+limit counts taken barriers (_nb), not iterations -- so every test lane reaches
+the same verdict for iteration _n.
   $ grep -c 'het_rng_init(_seed ^ 0x9e3779b9u, (uint32_t)_n)' $MP.cu
-  3
+  1
   $ grep -c 'het_spin(_spin_bar, _nb \* HET_SPIN_LANES, _stress_tally)' $MP.cu
-  3
+  1
 
 A per-lane roll with an iteration-indexed limit ((_n+1)*lanes) is the defect this
 pins: a lane would increment on only HET_BARRIER_PCT% of iterations while the
@@ -127,9 +125,9 @@ loads hoist out of the loop and leave the round counting without the traffic.
 hetlitmus/verify/stresscheck.py
 is the gate, and _stress_tally counts the rounds het_do_stress completed, so a
 layer that is present in the PTX and never executes is visible to het_verdict().
-The pre-stress runs in every test lane, so the control is stressed exactly as T.
+The pre-stress runs in every test lane.
   $ grep -c 'het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally)' $MP.cu
-  3
+  1
   $ grep -c 'het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally)' $MP.cu
   1
   $ grep -c 'uint32_t _pre_pat = (uint32_t)HET_PRE_STRESS_PATTERN;' $MP.cu
@@ -191,47 +189,40 @@ keeps its reserved grid slot and its pinned trip count, and it does not spin --
 its job is to sample the shared locations densely, and gating it on the test
 lanes would couple two lanes that run at different rates.
 
-S-cg-sys-fence is off the lattice floor, so it co-runs three instances and every
-count here is a SUM over them.  T (an S) contributes 2 blocks (GPU proc +
-observer), 2 lanes and 1 spin -- the observer does not spin -- mu(T) is an S too
-and contributes the same, and the canary (an MP) contributes 1 block, 1 lane and
-1 spin: totals 5 blocks, 5 lanes, 3 spins.  SPIN_LANES (3) staying strictly below
-GPU_LANES (5) is the property that matters; hardcode any of these and the
-system-scope rendezvous releases before the observers arrive.
+S-cg-sys-fence carries an observer, so it runs 2 blocks (GPU proc + observer),
+2 lanes and 1 spin -- the observer does not spin.  SPIN_LANES (1) staying
+strictly below GPU_LANES (2) is the property that matters; hardcode either and
+the system-scope rendezvous releases before the observer arrives.
 
-Every `unroll 1' pragma survives per instance -- dropping one lets nvcc unroll
-that perpetual loop, and the PTX then carries many times the declared ops, which
-is the faithfulness gate's subject -- so the file-wide count is 5: two each for T
-and mu(T), one for the canary.
+Every `unroll 1' pragma survives per lane -- dropping one lets nvcc unroll that
+perpetual loop, and the PTX then carries many times the declared ops, which is
+the faithfulness gate's subject.
   $ grep -E '^#define HET_(TEST_BLOCKS|GPU_LANES|SPIN_LANES)' $S.cu
-  #define HET_TEST_BLOCKS 5
-  #define HET_GPU_LANES 5
-  #define HET_SPIN_LANES 3
+  #define HET_TEST_BLOCKS 2
+  #define HET_GPU_LANES 2
+  #define HET_SPIN_LANES 1
   $ grep -c 'het_spin(_spin_bar' $S.cu
-  3
+  1
   $ grep -c '#pragma unroll 1' $S.cu
-  5
+  2
 
-The observer lanes are still the ones that do NOT spin: their block bodies carry
-the perpetual loop but no het_spin.  Checked PER LANE by extracting each block
-body, because the file-wide sum of 3 below is equally satisfied by one lane
-spinning twice and an observer once -- which is the exact regression this guards.
-The blocks are T's GPU proc, T's observer, mu(T)'s GPU proc, mu(T)'s observer,
-the canary.
-  $ for b in 0 1 2 3 4; do sed -n "/if (blockIdx.x == $b && threadIdx.x == 0) {/,/^  }$/p" $S.cu | grep -c 'het_spin(_spin_bar'; done
+The observer lane is still the one that does NOT spin: its block body carries the
+perpetual loop but no het_spin.  Checked PER LANE by extracting each block body,
+because the file-wide sum below is equally satisfied by the test lane spinning
+twice and the observer once -- which is the exact regression this guards.  The
+blocks are the GPU proc and the observer.
+  $ for b in 0 1; do sed -n "/if (blockIdx.x == $b && threadIdx.x == 0) {/,/^  }$/p" $S.cu | grep -c 'het_spin(_spin_bar'; done
   1
   0
-  1
-  0
-  1
+  [1]
   $ grep -c 'het_spin(_spin_bar, _nb \* HET_SPIN_LANES, _stress_tally)' $S.cu
-  3
+  1
 
 (h) the HIP twin renders the same shape from the same template (per-dialect
 fields, not per-dialect branches), and the header's one divergence -- device-scope
 atomics, which CUDA and HIP genuinely spell differently -- resolves to the HIP
 spelling.
   $ grep -c 'het_spin(_spin_bar' $SH.hip
-  3
+  1
   $ grep -c '__HIP_MEMORY_SCOPE_AGENT' hip/S-cg-sys-fence-x86_64/het_stress.h
   2

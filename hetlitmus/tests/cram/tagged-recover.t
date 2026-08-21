@@ -11,33 +11,22 @@ operand (no `mov #imm'), preserves the tested mnemonic verbatim, and widens to
   0
   $ grep -c 'stlr %x\[_v0\],\[%\[x\]\]' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
   1
-  $ sed -n '/^void het_run_t_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -c 'uint64_t _v0 = (uint64_t)3 \* (_n + 1) + 1;'
+  $ sed -n '/^void het_run_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -c 'uint64_t _v0 = (uint64_t)3 \* (_n + 1) + 1;'
   1
 
-This is a co-run harness (T + mu(T) + the canary), so the tag plan is asserted
-per INSTANCE.  All three MP instances happen to have K=3, and each still tags
-with its own K -- which is what matters the moment an R/S harness puts K=4 beside
-K=3 (positive-control.t).
-  $ grep -c 'uint64_t _v0 = (uint64_t)3 \* (_n + 1) + 1;' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
-  3
-
-The CPU signature is widened and takes threads _n (no *out pointers), and it is
-PREFIXED, so T's P0 and mu(T)'s P0 are not the same symbol.
-  $ grep -c 'void het_run_t_P0(uint64_t \*x, uint64_t \*y, int _n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
-  1
-  $ grep -c 'void het_run_mu_P0(uint64_t \*x, uint64_t \*y, int _n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
+The CPU signature is widened and takes threads _n (no *out pointers).
+  $ grep -c 'void het_run_P0(uint64_t \*x, uint64_t \*y, int _n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
   1
 
 Driver: uint64 shared vars, per-load read buffers in device memory
 (cudaMalloc) mirrored to the host, and the het_obs_record recovery scan; no
-__out.  The shared vars come from the co-run's one cache-line-padded
-gd_alloc_shared arena (shared-alloc.t (e)); the read buffers stay off the race
-path, per instance.
-  $ grep -c 'uint64_t \*t_x = (uint64_t\*)(_sa + (size_t)HET_CACHE_LINE\*0)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+__out.  The shared vars are allocated one at a time through gd_alloc_shared
+(shared-alloc.t (a)); the read buffers stay off the race path.
+  $ grep -c 'uint64_t \*x; gd_alloc_shared((void\*\*)&x, sizeof(uint64_t));' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
-  $ grep -c 'cudaMalloc(&t_bufP1_0' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  $ grep -c 'cudaMalloc(&bufP1_0' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
-  $ grep -c 'cudaMemcpy(t_bufP1_0_h' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  $ grep -c 'cudaMemcpy(bufP1_0_h' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 het_obs_record lives in the shared het_verdict.h, next to the decision rule that
 reads it: ONE DEFINITION, shared by every harness and by verdictcheck.py, so the
@@ -49,27 +38,20 @@ gate exercises the struct that actually ships.
   1
   $ grep -c 'het_obs_record_print(stdout' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
-  $ grep -c '#define T_K_TAG   3' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  $ grep -c '#define K_TAG 3' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
-
-Three instances, three detectors -- and GATE 1 below covers all three, so a
-constant-false detector on the CONTROL (which would leave it permanently cold,
-and so discard every null it was supposed to vouch for) is refused exactly as one
-on T is.
   $ grep -c 'int _weak =' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
-  3
+  1
   $ grep -c '__out' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
   0
 
-GPU side: the two GPU stores carry the tag as uint64 atomic_ref
-stores (the observer lane's uint64 loads are counted separately below).  mu(T) is
-structurally identical, so it emits the SAME two stores under the same modulus --
-which is why the file-wide count is twice the per-instance one.
+GPU side: the two GPU stores carry the tag as uint64 atomic_ref stores (the
+observer lane's uint64 loads are counted separately below).
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -c 'ref.store(' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
-  4
-  $ grep -c 'ref.store(((uint64_t)5 \* (_n + 1) + 3)' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   2
+  $ grep -c 'ref.store(((uint64_t)5 \* (_n + 1) + 3)' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+  1
 
 Observers: every test whose condition names a memory location (every 2+2W, R, S,
 CoWR and CoRW2) adds ONE GPU observer lane plus ONE CPU observer pthread, so
@@ -77,27 +59,15 @@ NPART grows by 2; each snoops every observed location, and a per-run ws scan
 fills _loc with the same-observer-thread cycle -- the observer-buffer method of
 [Srivastava24 sec 3.3].
 
-NPART is a SUM over instances.  2+2W-cg-sys-fence is off the lattice floor, so it
-co-runs three: 4 (2 procs + 2 observers) + 4 (mu(T), structurally identical) + 2
-(the canary's MP) = 10.  The observer contribution -- the thing this section
-guards -- is +2 per observer-carrying instance, which is why an MP canary adds
-exactly 2 and not 4.  Pin the sum and state the arithmetic, so a wrong instance
-count cannot hide inside a plausible number.
-  $ grep -c '#define NPART 10' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+NPART counts the participants: 2 procs + 2 observers = 4.  Pin the total and
+state the arithmetic, so a wrong lane count cannot hide inside a plausible
+number.
+  $ grep -c '#define NPART 4' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   1
   $ grep -c 'cpu_obs_thread' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
-  4
-  $ grep -c 'int _t_loc = ((t__ws_x_c && t__ws_y_c) || (t__ws_x_g && t__ws_y_g))' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
-  1
-
-Which four: mu(T) brings its own observer thread, definition plus pthread_create,
-and the canary brings NONE -- MP's condition names no coherence-final location.
-An observer wired to the wrong instance would tally one program's coherence order
-against another's name, and the prefixes are the only thing keeping them apart.
-  $ grep -cE '^static void\* (t|mu)_cpu_obs_thread' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   2
-  $ grep -c 'can_cpu_obs_thread' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu || true
-  0
+  $ grep -c 'int _loc = ((_ws_x_c && _ws_y_c) || (_ws_x_g && _ws_y_g))' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+  1
 
 GATE 1: no test may emit a constant detector.  A constant-false _weak reports
 "Never" on every run, and a spurious "Never" is an observation nothing produced,
@@ -110,7 +80,7 @@ GATE 2: a CPU-side read is bound to its buffer by LOAD NODE, not by device, so
 MP-gc (GPU writes, CPU reads) is the same exact O(N) scan as MP-cg, just over the
 host buffer.
   $ litmus7 -gpu-target cuda -o . ../het/MP-gc-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ grep -c 'int _weak = ((t_bufP1_0\[_f\] != 0 && t_bufP1_0\[_f\] % T_K_TAG == 2) && (t_bufP1_1\[_f\] < (uint64_t)T_K_TAG\*_m0 + 1));' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
+  $ grep -c 'int _weak = ((bufP1_0\[_f\] != 0 && bufP1_0\[_f\] % K_TAG == 2) && (bufP1_1\[_f\] < (uint64_t)K_TAG\*_m0 + 1));' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s.cu
   1
 
 GATE 3: T_L>=2 windowing.  SB has no rf anchor (both reads are fr), so the
@@ -118,31 +88,29 @@ partner's frame is SEARCHED over [c-W, c+W] around the synchrony point decoded
 from read-buffer 1, guarded by that tag being real -- a cold frame has no
 synchrony point, and counting it would report 100% weak
 ([Srivastava24 sec 4.1]).
-SB-cg-sys-acqrel-2s is off the lattice floor, so it co-runs three instances and
-the test under study carries the `t_' prefix: same scan, same counts, same
-window.  Its mu is SB-cg-sys-relaxed -- another T_L>=2 shape -- so the windowed
-search is emitted twice, once per SB instance, and HET_WINDOW is read at both
-sites on top of its #ifndef default.
   $ litmus7 -gpu-target cuda -o . ../het/SB-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ grep -c 'if (t_bufP0_0\[_f\] != 0) {' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
+  $ grep -c 'if (bufP0_0\[_f\] != 0) {' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
   3
   $ grep -c 'for (_t1 = _c1_lo; _t1 <= _c1_hi && !_rwin; ++_t1)' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
-  2
+  1
   $ grep -c 'HET_WINDOW' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
-  4
+  3
 
 The exhaustive COUNT (ground truth for calibrating W) is emitted too, capped so
 it cannot blow up at N=1e6 -- and it records whether it ran, so a capped-out run
 is never misread as "exhaustively counted zero".
-  $ grep -c 'const int _t_exh = (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX);' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
+  $ grep -c 'const int _exh = (SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX);' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
   1
-  $ grep -c '_rec.exhaustive_valid = _t_exh;' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
+  $ grep -c '_rec.exhaustive_valid = _exh;' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
   1
 
-The canary's own exhaustive_valid is separate and is 1: MP is T_L<=1, so its O(N)
-scan is exact at any N.  T's is the one that gates T's null; the canary's gates
-nothing, because a control that cannot fire is not a control.
-  $ grep -c '_rec.canary_exhaustive_valid = 1;' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
+The other direction: MP has no windowed proc (T_L<=1), so its O(N) scan IS the
+ground truth at any N and the flag is the literal 1.  Setting it to
+(SIZE_OF_TEST <= HET_EXHAUSTIVE_MAX) everywhere would make it 0 on every row of
+the corpus at the default N=100000 (the cap is 4096), and the rule -- which
+refuses a credible null unless the flag is 1 -- would call every run COLD
+forever: a decision rule that always says the same thing.
+  $ grep -c '_rec.exhaustive_valid = 1;' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 
 GATE 4: LB's two rf edges decode each other exactly (no window): P1's frame is
@@ -151,7 +119,7 @@ pinned by P0's read, and P1's read must decode back to P0's own frame _f.
 pair is emitted unconditionally, and each windowed read adds one further line, so
 2 means "no windowed read here" exactly as the 3 above means "one".
   $ litmus7 -gpu-target cuda -o . ../het/LB-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ grep -c 't_bufP1_0_h\[(_m1 - 1)\] / T_K_TAG == (uint64_t)(_f + 1)' LB-cg-sys-acqrel-2s/LB-cg-sys-acqrel-2s.cu
+  $ grep -c 'bufP1_0_h\[(_m1 - 1)\] / K_TAG == (uint64_t)(_f + 1)' LB-cg-sys-acqrel-2s/LB-cg-sys-acqrel-2s.cu
   1
   $ grep -c 'HET_WINDOW' LB-cg-sys-acqrel-2s/LB-cg-sys-acqrel-2s.cu
   2

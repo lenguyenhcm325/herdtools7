@@ -23,7 +23,7 @@ sections read is the GPU render and the shared runtime headers.
 
 (b,c) the inner free-running window: one for(_n<SIZE_OF_TEST) in the kernel and
 one in the CPU wrapper, each with gd_bar fired once before it -- 2 loops and 2
-arrivals per instance.
+arrivals.
 
 The arrival count is matched on `_bar.fetch_add', the barrier's OWN atomic, and
 not on a bare `fetch_add': the CPU stress tally is an atomic RMW in this file
@@ -33,23 +33,21 @@ the regression it exists to catch.  (ptxcheck's barrier whitelist guards the sam
 invariant independently, at the PTX level: one system-scope fetch_add per
 barrier-joining GPU lane.)
 
-MP-cg-sys-acqrel-2s is off the lattice floor, so its harness CO-RUNS three
-het instances (T, mu(T), the canary).  The invariant is per-participant and
-unchanged -- one free-running window per lane and per CPU wrapper, one barrier
-arrival before each -- so the totals are 3x2 = 6.  The counts are also scoped to
-T's own GPU lane, so 6 cannot be satisfied by a lane that lost its barrier while
-another gained a second loop.
+MP-cg-sys-acqrel-2s runs one GPU lane and one CPU wrapper.  The invariant is
+per-participant -- one free-running window each, one barrier arrival before each
+-- so the totals are 2.  The counts are also scoped to the GPU lane, so 2 cannot
+be satisfied by a lane that lost its barrier while another gained a second loop.
   $ grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
-  6
+  2
   $ grep -c '_bar.fetch_add' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
-  6
+  2
   $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n)'
   1
   $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c '_bar.fetch_add'
   1
 
-and NPART is the SUM over the instances, so the rendezvous waits for all six.
-  $ grep -c '#define NPART 6' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+and NPART counts them, so the rendezvous waits for both.
+  $ grep -c '#define NPART 2' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   1
 
 (d) a SINGLE terminal device sync per RUN.  The kernel is persistent, so the run

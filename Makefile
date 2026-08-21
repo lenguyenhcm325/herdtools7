@@ -868,8 +868,8 @@ hetlitmus-amd-faithful: | build
 	@ echo "HetLitmus AMD gfx942 lowering faithfulness (173 gpu-only + 471 x86_64 het): OK (and the gate bites)"
 
 ### What a het harness PRINTS on a device -- the only artefact a result is read
-### off -- on both control-map arms, so the two sentences a reader must never see
-### swapped are told apart (verify/runcheck.py --characterize-hw).  Needs a GPU.
+### off -- so the control state it names is the one it is really in
+### (verify/runcheck.py --characterize-hw).  Needs a GPU.
 hetlitmus-characterize-hw: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py --characterize-hw
@@ -895,8 +895,8 @@ hetlitmus-run-hw: | build
 	@ echo "HetLitmus device-session wrapper runtime gate: OK (and the gate bites)"
 
 ### The discriminating power of the toolchain lane: ptxcheck detects a weakened
-### scope or order, the stress scaffolding bites a dead layer, the co-run gate
-### catches a missing control, and two invariance checks get their teeth here.
+### scope or order, the stress scaffolding bites a dead layer, and two
+### invariance checks get their teeth here.
 hetlitmus-selftest: | build
 	@ echo
 	bash hetlitmus/verify/tokens.sh selftest

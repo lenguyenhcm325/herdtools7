@@ -37,29 +37,21 @@
 ; raise after the joins passes cpustresscheck and fails here.
 ; Scoped so the three Layer-1 tests above stay toolchain-free.  litmus7 het emission
 ; needs no -set-libdir, so only the binary + the .litmus inputs are required.
-; statistics.t guards B7 -- the EMITTER half of the statistics layer.  The estimator's
+; statistics.t guards the EMITTER half of the statistics layer.  The estimator's
 ; own behaviour is gated by hetlitmus/verify/statscheck.py (which compiles the real
-; het_verdict.h and drives it with synthetic record streams); what cram pins is that the
-; harness actually PRODUCES the inputs that layer consumes -- above all the per-window
-; sub-tallies, and the fact that the count and its window bump ride ONE line under ONE
-; predicate, which is what makes sum(win[]) == total an invariant the run can check.
+; het_verdict.h and drives it with synthetic record streams); what cram pins is that
+; the harness actually PRODUCES the inputs that layer consumes.
+; reporting-tier.t pins the two confidence tiers a record carries and which of them
+; the printed label is.
 (cram
  (applies_to pfix-cond coop-launch shared-alloc tagged-recover stress cpu-stress
-   positive-control statistics)
+   reporting-tier statistics)
  (package herdtools7)
  (deps
   %{bin:litmus7}
-  ; Emitting a het test READS two more corpus tests -- mu(T) and the canary, named
-  ; by the derived control map -- because the harness CO-RUNS them.  Naming each
-  ; one here would silently break the moment a cram test touched a different row
-  ; (the emitter would refuse, and the guard would fail with "no such file" rather
-  ; than on its own subject), so the whole corpus is staged.  The corpus IS the
-  ; strength lattice; the controls are drawn from it, and there is no principled
-  ; subset.
+  ; The whole corpus is staged: these tests emit from it, and naming each test
+  ; here would silently break the moment one of them touched a different row.
   (glob_files ../het/*.litmus)
-  ; The map itself is an INPUT to emission, not just a doc: it is what names the
-  ; controls, and it is DERIVED from the corpus (controlmap.py), never rewritten
-  ; from the test's name.
   ../het/control-map.csv
   ; Every .hip render in these tests comes from ../het-x86: a HIP harness is the
   ; (x86_64, hip) pair, the one this project has an MI300A row for
@@ -93,8 +85,7 @@
 ; may name a machine, which are registered without one, which are in no row at
 ; all -- and, the point of the table, that a pair NEVER inherits a neighbour's
 ; machine name.  It reads emitted bytes only, so it needs no toolchain; both
-; corpora are staged because every lane's emission co-runs mu(T) and the canary
-; out of its own corpus.
+; corpora are staged because it emits a lane out of each.
 (cram
  (applies_to machine-pairs)
  (package herdtools7)

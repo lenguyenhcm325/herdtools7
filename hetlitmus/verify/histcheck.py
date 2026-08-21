@@ -368,7 +368,7 @@ int main(int argc, char** argv) {
   uint64_t frames = 0;
   for (int _run = 0; _run < R; ++_run) {
     memset(&_rec, 0, sizeof _rec);
-    int _t_loc = atoi(argv[_run + 1]);
+    int _loc = atoi(argv[_run + 1]);
 %(BODY)s
     frames += _rec.frames_examined;
   }
@@ -627,7 +627,7 @@ def _run_constant_guard(t, src):
     """A reader shape whose in-loop add is gated on the RUN-level witness."""
     if not t.startswith("R-cg-sys-"):
         return src
-    return src.replace("      if (_hot || _weak) {\n", "      if (_t_loc) {\n", 1)
+    return src.replace("      if (_hot || _weak) {\n", "      if (_loc) {\n", 1)
 
 
 def _numeric_location_column(t, src):

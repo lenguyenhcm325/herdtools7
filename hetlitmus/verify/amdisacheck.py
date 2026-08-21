@@ -36,15 +36,13 @@ gaps are structural, not incidental:
     as are a release store and a release fence followed by a relaxed store.
     Which annotation produced an effect is again the source gate's to say.
   * That match is a multiset equality over every expected sequence, so any
-    permutation of them across procs, lanes or co-running instances reads as no
-    change -- an ordering effect moved out of the test instance's lane and into
-    its mu(T) control's lane included, and not merely a swap of two symmetric
-    procs.  The source gate carries that attribution, comparing each lane's ops
-    in order and binding each instance's aliases; a permutation here could only
-    come from one there, a compiler having no way to move code across mutually
-    exclusive blockIdx/threadIdx guards.  What is established here is that the
-    multiset of per-lane lowerings is the expected one and that nothing else
-    bit-carrying exists.
+    permutation of them across procs or lanes reads as no change, and not
+    merely a swap of two symmetric procs.  The source gate carries that
+    attribution, comparing each lane's ops in order; a permutation here could
+    only come from one there, a compiler having no way to move code across
+    mutually exclusive blockIdx/threadIdx guards.  What is established here is
+    that the multiset of per-lane lowerings is the expected one and that
+    nothing else bit-carrying exists.
 
 Also unmodelled by construction: an access carrying no cache bits (the result
 buffers, the scratch counters, a discarded agent-scope RMW) is dropped with the
@@ -77,8 +75,8 @@ nowhere else; the target-name prefix and the vendor's offload triple, which
 every generation shares, are machinery.
 
 ptxcheck.py is the NVIDIA read-back twin and hipsrccheck.py the HIP source
-gate; both are imported, never modified.  Their .litmus parsers, control-map
-loader, lane plan and emit recipe are the expected side here too.
+gate; both are imported, never modified.  Their .litmus parsers, lane plan and
+emit recipe are the expected side here too.
 
 Usage:
   amdisacheck.py TEST.litmus [--arch gfxNNN] [--asm F] [-q]
@@ -519,12 +517,15 @@ class Gfx942(LoweringProfile):
                  lambda t: _sub_first(t, r'^\tglobal_load_dword '
                                          r'(?![^\n]*sc0)[^\n]* sc1\n', '',
                                       "an agent-scope scaffolding load")),
-        Mutation("one co-run instance's two-load model block DELETED",
-                 "het", 1, ":P1 [ld64(sys) ld64(sys)]",
-                 lambda t: _sub_first(t, r'^\tglobal_load_dwordx2 [^\n]* sc0 sc1\n'
-                                         r'\tglobal_load_dwordx2 [^\n]* sc0 sc1\n',
-                                      '',
-                                      "two adjacent 64-bit system-scope loads")),
+        # _sub_all, not _sub_first: this is the whole model block leaving, and
+        # the block match has to report the lane rather than satisfy it with
+        # another block.  The observer's snoops are the only 64-bit
+        # system-scope loads a het render carries.
+        Mutation("an observer lane's WHOLE snoop pair DELETED",
+                 "het-obs", 1, ":obs [",
+                 lambda t: _sub_all(t, r'^\tglobal_load_dwordx2 [^\n]* sc0 sc1\n',
+                                    '',
+                                    "every 64-bit system-scope model load")),
         Mutation("a cache invalidate PLANTED in a block no lane accounts for",
                  "het", 1, "no lane accounts for",
                  lambda t: _sub_first(t, r'^(\tflat_load_dwordx2 [^\n]*)$',
@@ -829,16 +830,16 @@ def read_registers(cells):
     return regs
 
 
-def expected_het(profile, insts):
+def expected_het(profile, inst):
     """The blocks a het kernel owes, and the lane figures the census needs.
 
     Every barrier-joining lane opens with the rendezvous arrival and its spin,
     each in its own block; every test lane also carries the window-opener's
     arrival and its poll, again one block each; a test lane's model ops sit in
     one block and an observer lane's snoops in one."""
-    plan = ptx.het_lane_plan([dict(gpu=i['gpu'], obs=i['obs'], name=i['label'])
-                              for i in insts])
-    cells_of = dict((i['label'], i['cells']) for i in insts)
+    plan = ptx.het_lane_plan(dict(gpu=inst['gpu'], obs=inst['obs'],
+                                  name=inst['name']))
+    cells_of = {inst['name']: inst['cells']}
     arrive = _seq(profile, RENDEZVOUS_ARRIVE, SCAFFOLD_WIDTH)
     spin = _seq(profile, RENDEZVOUS_SPIN, SCAFFOLD_WIDTH)
     w_arrive = _seq(profile, WINDOW_ARRIVE, SCAFFOLD_WIDTH)
@@ -1013,13 +1014,13 @@ def check_test(litmus_path, arch, asm_override=None, verbose=True):
     result = Result()
     result.note("=== %s [%s, %s corpus, profile %s] ==="
                 % (name, kind, corpus, profile.name))
-    # The whole expected side is built first, so a control map the gate cannot
-    # read and an annotation the profile has no row for are each a refusal on
-    # every path, including the one where no compile runs.
-    insts = f = None
+    # The whole expected side is built first, so a corpus the gate cannot read
+    # and an annotation the profile has no row for are each a refusal on every
+    # path, including the one where no compile runs.
+    f = None
     if kind == 'Het':
-        insts = hip.het_instances(litmus_path)
-        expected, f = expected_het(profile, insts)
+        hip.load_control_map_amd(litmus_path)
+        expected, f = expected_het(profile, inst)
     else:
         expected = expected_gpu_only(profile, inst)
 
@@ -1040,10 +1041,6 @@ def check_test(litmus_path, arch, asm_override=None, verbose=True):
                     % (sym, len(blocks)))
 
         if kind == 'Het':
-            if len(insts) > 1:
-                result.note("  CO-RUN harness: %s"
-                            % " + ".join("%s (%s)" % (i['name'], i['role'])
-                                         for i in insts))
             result.note("  lane plan (x86_64 het): %d lane(s) -- %s"
                         % (f['lanes'], f['names']))
             match_blocks(result, expected, blocks, tail_allowed=True)
@@ -1075,20 +1072,17 @@ def check_test(litmus_path, arch, asm_override=None, verbose=True):
 # ===========================================================================
 
 # Each fixed het shape a rep must exist for, and the property that decides it.
-# They are the shapes a lane-plan implementation gets wrong on its own: a
-# co-running trio with an observer, a test whose GPU side is more than one
-# lane, the system-fence carrier, and the degenerate test that IS its own
-# canary and runs a single lane.
+# They are the shapes a lane-plan implementation gets wrong on its own: a test
+# carrying an observer lane, a test whose GPU side is more than one lane, the
+# system-fence carrier, and the test that runs a single lane.
 SHAPES = (
-    ("co-run trio with an observer lane",
-     lambda i, ins: len(ins) == 3 and any(x['obs'] for x in ins)),
+    ("carries an observer lane", lambda i: bool(i['obs'])),
     ("an IRIW with more than one GPU proc",
-     lambda i, ins: i['name'].startswith("IRIW") and len(i['gpu']) >= 2),
+     lambda i: i['name'].startswith("IRIW") and len(i['gpu']) >= 2),
     ("carries a system-scope seq_cst fence",
-     lambda i, ins: ("fence", "sc", "sys") in
-                    set(o for _p, ops in i['gpu'] for o in ops)),
-    ("one instance, one lane",
-     lambda i, ins: len(ins) == 1 and len(ptx.het_lane_plan(ins)) == 1),
+     lambda i: ("fence", "sc", "sys") in
+               set(o for _p, ops in i['gpu'] for o in ops)),
+    ("one lane", lambda i: len(ptx.het_lane_plan(i)) == 1),
 )
 
 
@@ -1128,11 +1122,10 @@ def select_reps(gpu, het):
     reps = collections.OrderedDict()
     for row, path in sorted(carriers.items()):
         reps.setdefault(path, []).append("row " + fmt_row(row))
-    shapes, plans = {}, {}
+    shapes = {}
     for label, holds in SHAPES:
         for path in het:
-            ins = plans.setdefault(path, hip.het_instances(path))
-            if holds(insts[path], ins):
+            if holds(insts[path]):
                 shapes[label] = path
                 reps.setdefault(path, []).append("shape " + label)
                 break
@@ -1169,7 +1162,7 @@ def coverage_tripwire(profile, rep_paths, corpus_paths, shapes):
         profile.row(kind, order, scope, MODEL_WIDTH_GPU_ONLY)
     for label, path in sorted(shapes.items()):
         holds = dict(SHAPES)[label]
-        if not holds(hip.instance_of(path), hip.het_instances(path)):
+        if not holds(hip.instance_of(path)):
             raise CompletenessError(
                 "the rep %s no longer satisfies the shape %r it is in the set "
                 "for" % (os.path.basename(path), label))
@@ -1186,7 +1179,7 @@ def mutation_carrier(mutation, rep_paths, het_paths):
     for path in rep_paths:
         if need in ("het", "het-obs"):
             if path in het and (need == "het"
-                                or any(i['obs'] for i in hip.het_instances(path))):
+                                or hip.instance_of(path)['obs']):
                 return path
         elif need in rows_of(hip.instance_of(path)):
             return path
@@ -1298,7 +1291,7 @@ def toolchain_banner():
 
 
 def lane_count(path):
-    return len(ptx.het_lane_plan(hip.het_instances(path)))
+    return len(ptx.het_lane_plan(hip.instance_of(path)))
 
 
 def reps(arch, verbose=True):
@@ -1474,8 +1467,9 @@ def sweep(gpu_dir, x86_dir, arch, jobs):
         x86_files = hip.corpus_files(x86_dir, "x86_64 het", hip.X86_HET_N)
         if not os.path.exists(os.path.join(x86_dir, hip.CONTROL_MAP)):
             raise GateError(
-                "no %s in the x86_64 het corpus %s -- without it every lane plan "
-                "collapses to a single instance" % (hip.CONTROL_MAP, x86_dir))
+                "no %s in the x86_64 het corpus %s -- a corpus short of the map "
+                "it is pinned against is refused, never swept"
+                % (hip.CONTROL_MAP, x86_dir))
         print("===== ISA READ-BACK GATE: %d gpu-only + %d x86_64 het renders ====="
               % (hip.GPU_ONLY_N, hip.X86_HET_N))
         print("  %s" % toolchain_banner())
@@ -1582,7 +1576,7 @@ def _misfiled_shape(shapes, het_paths):
     for label in sorted(shapes):
         holds = dict(SHAPES)[label]
         for other in het_paths:
-            if not holds(hip.instance_of(other), hip.het_instances(other)):
+            if not holds(hip.instance_of(other)):
                 bad = dict(shapes)
                 bad[label] = other
                 return label, other, bad
@@ -1759,8 +1753,8 @@ def bite(arch, tmp):
     names = [os.path.basename(p)[:-len(".litmus")] for p in het_files]
     nomap = hip.corpus_slice(corpus, os.path.join(b.work, "nomap"), names,
                              drop_map=True)
-    b.record("a FULL-SIZE x86_64 het corpus carrying no control map", 3,
-             "without it every lane plan",
+    b.record("a FULL-SIZE x86_64 het corpus carrying no map", 3,
+             "a corpus short of the map it is pinned against",
              *capture(lambda: sweep(hip.GPU_ONLY_DIR, nomap, arch, 2)))
 
     b.record("a sweep worker KILLED, which breaks the pool without raising", 3,

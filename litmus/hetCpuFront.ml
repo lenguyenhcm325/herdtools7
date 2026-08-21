@@ -24,9 +24,7 @@
 
    No machine lives here.  Which silicon a harness may name belongs to the
    (CPU ISA x GPU dialect) pair (litmus/hetMachine.ml); these modules
-   contribute [isa_name], one coordinate of that key.  The positive-control
-   map is theirs, because mu(T) is a weakening on a strength lattice and the
-   lattice is the CPU column's. *)
+   contribute [isa_name], one coordinate of that key. *)
 
 (* Only [debug] is needed: the column sub-parsers drive an ISA lexer, and
    LexUtils.Config is that lexer's whole configuration. *)
@@ -42,9 +40,6 @@ module AArch64 (O:Config) = struct
   let body_module = "hetCpuBodyA64"
   let host_macro = "__aarch64__"
   let cross = Some ("aarch64-linux-gnu","gnu11")
-  (* The AArch64 strength lattice's own map
-     (hetlitmus/docs/positive-control.md sec 3). *)
-  let control_map_csv = "control-map.csv"
 
   let parse_column p txt =
     let lexbuf = Lexing.from_string txt in
@@ -64,9 +59,9 @@ module AArch64 (O:Config) = struct
      after peeling. *)
   let het_analyze ~reg_env pseudos =
     HetCpuBodyA64.analyze ~reg_env (HetCpuBodyA64.instrs_of_code pseudos)
-  let het_emit_body ch ~prefix ~proc ~k ~store_mu ~load_buf
+  let het_emit_body ch ~proc ~k ~store_mu ~load_buf
         ~reg_env ~iter ~addr_params ~buf_params pseudos =
-    HetCpuBodyA64.emit_body ch ~prefix ~proc ~k ~store_mu
+    HetCpuBodyA64.emit_body ch ~proc ~k ~store_mu
       ~load_buf ~reg_env ~iter ~addr_params ~buf_params
       (HetCpuBodyA64.instrs_of_code pseudos)
 end
@@ -78,11 +73,6 @@ module X86_64 (O:Config) = struct
   let body_module = "hetCpuBodyX86"
   let host_macro = "__x86_64__"
   let cross = None
-  (* The x86 lattice loses the AArch64 lattice's middle rung, so a mu(T) chosen
-     on that one is not a weakening here: this lane derives its own map
-     (hetlitmus/docs/positive-control.md sec 3).  The file keeps its AMD-era
-     name. *)
-  let control_map_csv = "control-map-amd.csv"
 
   let parse_column p txt =
     let lexbuf = Lexing.from_string txt in
@@ -104,9 +94,9 @@ module X86_64 (O:Config) = struct
      bind neither a read buffer nor a mu. *)
   let het_analyze ~reg_env pseudos =
     HetCpuBodyX86.analyze ~reg_env (HetCpuBodyX86.instrs_of_code pseudos)
-  let het_emit_body ch ~prefix ~proc ~k ~store_mu ~load_buf
+  let het_emit_body ch ~proc ~k ~store_mu ~load_buf
         ~reg_env ~iter ~addr_params ~buf_params pseudos =
-    HetCpuBodyX86.emit_body ch ~prefix ~proc ~k ~store_mu
+    HetCpuBodyX86.emit_body ch ~proc ~k ~store_mu
       ~load_buf ~reg_env ~iter ~addr_params ~buf_params
       (HetCpuBodyX86.instrs_of_code pseudos)
 end

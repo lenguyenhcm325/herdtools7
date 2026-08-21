@@ -7,11 +7,10 @@ cudaMallocManaged only as the dev-box/CI fallback -- so it is correctness, not
 tuning.  One representative MP shape is emitted once per dialect (litmus7
 renders the one -gpu-target names) and checked with scoped counts.
 
-Two allocation paths exist, so two harnesses are emitted.  Every het test that
-co-runs at least a canary carves its shared vars out of one cache-line-padded
-arena ((e), (f)).  The per-variable path is left to the two tests that are
-themselves the Layer-B canary and so cannot co-run themselves,
-MP-{cg,gc}-sys-relaxed (control-map.csv: `self'); MP-cg-sys-relaxed guards it.
+Every shared location is allocated on its own, one gd_alloc_shared call each,
+so the free still matches the allocator.  Two shapes are emitted per dialect,
+because a two-sided row and a fully-relaxed one differ in what their CPU column
+does and this file reads the driver both carries.
 
 The `.hip' renders come from ../het-x86, not from ../het: a harness is a
 (CPU ISA x GPU dialect) PAIR, and (x86_64, hip) is the one this project has an
@@ -23,13 +22,6 @@ sections read is the GPU render and the shared runtime headers.
   $ mkdir hip
   $ litmus7 -gpu-target hip -o hip ../het-x86/MP-cg-sys-relaxed-x86_64.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target hip -o hip ../het-x86/MP-cg-sys-acqrel-2s-x86_64.litmus >/dev/null 2>&1
-
-Single-instance means no arena, so the per-variable calls below are the ones
-this harness actually makes.
-  $ grep -c '#define HET_CANARY_COMPILED_IN 0' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
-  1
-  $ grep -c '_shared_arena' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu || true
-  0
 
 (a) the shared vars (x, y) and the barrier route through gd_alloc_shared (3 call
 sites), and each is freed by the allocator-aware gd_free_shared (3 frees).
@@ -110,71 +102,7 @@ gd_alloc_shared's body for the same reason as (c).
   $ grep -c '(void)hipMalloc(&bufP' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   2
 
-(e) the co-run arena.  A test off the lattice floor co-runs mu(T) and the canary,
-and disjoint addresses are not enough: two variables on one cache line are ONE
-COHERENCE UNIT, so mu(T)'s traffic would drag T's line around and the control
-would perturb the very test it exists to vouch for (positive-control.md sec 5).
-Six separate 8-byte mallocs cannot prevent that; one padded arena can, and it
-still goes through gd_alloc_shared with a matching gd_free_shared.
-  $ CO=MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
-  $ COH=hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64
-  $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $CO.cu
-  1
-  $ grep -c 'gd_alloc_shared((void\*\*)&' $CO.cu
-  1
-  $ grep -c 'gd_free_shared(_shared_arena)' $CO.cu
-  1
-  $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $CO.cu
-  6
-  $ grep -c 'HET_CACHE_LINE 128' $CO.cu
-  1
-
-The arena is not plain malloc: that is the enemy-scratchpad class (host-only,
-disjoint), and putting the tested locations there would take them off the
-coherent path entirely, leaving the harness testing nothing.
-  $ grep -c 'malloc_check(.*_shared_arena' $CO.cu || true
-  0
-
-The HIP twin carves the same arena from its own gd_alloc_shared (fine-grained
-hipMallocManaged): one template, two renders, and the same 6 slots -- this row is
-off the lattice floor on BOTH lattices, so both co-run three instances.
-  $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena' $COH.hip
-  1
-  $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $COH.hip
-  6
-
-(f) the arena is sized from the instance population, not from a fixed 3.  A
-lattice-floor row carves a TWO-INSTANCE arena, so a slot count computed for three
-instances would either overlap the barrier onto a tested variable (the rendezvous
-counter and a litmus location become one coherence unit) or leave the last slot
-past the end of the allocation.  Count the slots and pin the size.
-
-2+2W-cg-sys-relaxed is AT the floor -> T + canary, 2 instances, 2 vars each: 4
-shared slots + barrier = 5, allocated 6 lines (one line of alignment slack,
-because _sa rounds the base up).
-  $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-relaxed.litmus >/dev/null 2>&1
-  $ AC=2+2W-cg-sys-relaxed/2+2W-cg-sys-relaxed
-  $ grep -c 'cache-line-padded shared slots: t_x t_y can_x can_y + barrier' $AC.cu
-  1
-  $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena, (size_t)HET_CACHE_LINE\*6)' $AC.cu
-  1
-  $ grep -cE '\(uint64_t\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*[0-9]+\)' $AC.cu
-  4
-
-...and the three-instance arena of the same shape family is two lines longer,
-which is what "sized from the population" means.
-  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acquire.litmus >/dev/null 2>&1
-  $ grep -c 'cache-line-padded shared slots: t_x t_y mu_x mu_y can_x can_y + barrier' MP-cg-sys-acquire/MP-cg-sys-acquire.cu
-  1
-  $ grep -c 'gd_alloc_shared((void\*\*)&_shared_arena, (size_t)HET_CACHE_LINE\*8)' MP-cg-sys-acquire/MP-cg-sys-acquire.cu
-  1
-
-The barrier gets its own line, past the last variable, never sharing one with a
-tested location.
-  $ grep -c 'int \*barrier = (int\*)(_sa + (size_t)HET_CACHE_LINE\*4);' $AC.cu
-  1
-
-(g) HET_ALLOC: three named modes, resolved once, every illegal one FATAL.
+(e) HET_ALLOC: three named modes, resolved once, every illegal one FATAL.
 [CudaGuide "Atomicity"] states when a cuda::thread_scope_system atomic actually
 is atomic: on system-allocated memory iff pageableMemoryAccess is 1, on
 managed memory iff concurrentManagedAccess is 1, on mapped memory iff
@@ -230,7 +158,7 @@ on stdout so the run log carries it.
   $ printf '%s\n' "$MODE" | grep -c 'cudaDevAttrPageableMemoryAccessUsesHostPageTables'
   1
 
-(h) HET_ALLOC on the HIP render: ONE mode, and every other spelling REFUSED.
+(f) HET_ALLOC on the HIP render: ONE mode, and every other spelling REFUSED.
 MI300A's allocator is its own decision (fine-grained hipMallocManaged,
 docs/00-environment-design.md sec 3.2), so the CUDA modes must not leak across
 dialects.  A .hip that did not mention HET_ALLOC at all would leave
@@ -298,7 +226,7 @@ the attributes that caused it -- the same rule as (g).
   $ printf '%s\n' "$HMODE" | grep -c 'HetLitmus: shared-mem mode=managed (HET_ALLOC=%s'
   1
 
-(i) AND THE HARNESS CALLS IT.  Everything in (h) reads the resolver's own body,
+(g) AND THE HARNESS CALLS IT.  Everything in (f) reads the resolver's own body,
 which proves it is right and proves nothing about whether it ever runs.  On this
 render the resolver's ONLY effect is the guard -- gd_alloc_shared just calls it
 for the side effect and throws the value away -- so, unlike the CUDA render whose
@@ -330,7 +258,7 @@ mismatched free behind.
   $ sed -n '/^static void gd_free_shared/,/^}/p' $HREL | grep -c '_het_alloc_mode()'
   1
 
-(j) HET_PLACE is a CUDA-only lever and is REFUSED here at compile time.
+(h) HET_PLACE is a CUDA-only lever and is REFUSED here at compile time.
 Placement is cudaMemAdvise/cudaMemPrefetchAsync and lives in het_alloc_cuda.inc;
 this render has none.  But HET_PLACE is an #ifndef knob, it is swept on
 hardware, and BOTH dialects print it -- `place=%d' in the cpu-stress banner and

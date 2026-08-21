@@ -37,7 +37,7 @@ type lowering = {
   }
 
 val emit_frame :
-  out_channel -> prefix:string -> proc:int -> k:int -> store_mu:(int -> int) ->
+  out_channel -> proc:int -> k:int -> store_mu:(int -> int) ->
   load_buf:(int -> string) -> iter:string ->
   addr_params:(string * string) list -> buf_params:(string * string) list ->
   lowering:lowering -> prologue:string -> node list -> unit

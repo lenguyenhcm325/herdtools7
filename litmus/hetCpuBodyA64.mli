@@ -33,13 +33,13 @@ val analyze :
   reg_env:(string -> string) -> AArch64Base.instruction list ->
   HetCpuPlan.cpu_plan
 
-(* Emit the tagged het_run_<prefix>P<proc> -- see hetCpuPlan.emit_frame for
+(* Emit the tagged het_run_P<proc> -- see hetCpuPlan.emit_frame for
    what each label means.  Each store's value is rebound to the tag operand
    (uint64_t)K*iter + store_mu(store-index) and each load recorded into
    load_buf(load-index)[_n]; the tested mnemonics and fences are reproduced
    verbatim as one asm block, widened to `%x'. *)
 val emit_body :
-  out_channel -> prefix:string -> proc:int -> k:int -> store_mu:(int -> int) ->
+  out_channel -> proc:int -> k:int -> store_mu:(int -> int) ->
   load_buf:(int -> string) -> reg_env:(string -> string) -> iter:string ->
   addr_params:(string * string) list -> buf_params:(string * string) list ->
   AArch64Base.instruction list -> unit

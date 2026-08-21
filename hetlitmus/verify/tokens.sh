@@ -333,8 +333,8 @@ selftest() {
     fi
 
     # (ii) unmodelled option, consistent on BOTH sides -- the case a pure
-    # expected-vs-observed comparison cannot see.  The whole corpus copy is
-    # rewritten so the co-run mutant/canary columns agree too.
+    # expected-vs-observed comparison cannot see.  The rewrite lands in a copy
+    # of the corpus, never in the tree.
     rm -rf "$dd/ish"; cp -r "$HET_DIR" "$dd/ish"
     sed -i 's/DMB SY/DMB ISH/' "$dd"/ish/*.litmus
     sed 's/\bdmb sy\b/dmb ish/g' "$dcpu" > "$dd/ish_cpu.c"
@@ -676,126 +676,16 @@ PY
     # (8) driver: the enemies pointed at a test variable.  Not a weaker
     # experiment but a fabricated one -- an enemy writing the location under test
     # can manufacture the weak behaviour outright.  This is what scratch-disjoint
-    # is for.  The target is `t_x', not `x': this test co-runs three instances, so
-    # every instance's locations are prefixed, and aliasing onto a name that does
-    # not exist would fail to COMPILE (cpustresscheck exit 2, a toolchain error)
-    # instead of tripping scratch-disjoint -- a bite that fails for the wrong reason.
+    # is for.  The target must be a location the harness really declares:
+    # aliasing onto a name that does not exist would fail to COMPILE
+    # (cpustresscheck exit 2, a toolchain error) instead of tripping
+    # scratch-disjoint -- a bite that fails for the wrong reason.
     _b5bite "enemy scratchpad ALIASED onto a test variable (fabricates outcomes)" \
             "$B5T.cu" scratch-disjoint \
-            's/_ea\[_e\]\.scratch = _cpu_scratch;/_ea[_e].scratch = t_x;/' \
+            's/_ea\[_e\]\.scratch = _cpu_scratch;/_ea[_e].scratch = x;/' \
             || fails=$((fails+1))
 
     rm -rf "$b5/mut"
-  fi
-
-  # =========================================================================
-  # [9] the co-run: does the faithfulness gate actually see the control?
-  # =========================================================================
-  # mu(T) and the canary run INSIDE T's harness, so a null on T is read against a
-  # weak behaviour that fired on the same C2C path -- which makes the control's
-  # lowering as load-bearing as T's:
-  #   lanes missing        HET_CONTROL_COMPILED_IN still says 1, so every null it
-  #                        gates silently reads as a credible null.
-  #   mutant strengthened  a different mutant: off the lattice floor it no longer
-  #                        isolates the primitive under test, and it may never
-  #                        fire, leaving the control cold -- which discards every
-  #                        null on T.
-  # ptxcheck models every lane of every instance; prove it bites on each.
-  printf '\n[9] co-run: the gate must FAIL(1) when a CONTROL instance is corrupted\n'
-  local B6T=MP-cg-sys-fence-2s
-  local B6L="$HET_DIR/$B6T.litmus" b6="$sc/b6" b6rc
-  mkdir -p "$b6"
-  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$b6" "$B6L" >/dev/null 2>&1
-  if [ ! -s "$b6/$B6T/$B6T.cu" ]; then
-    echo "  *** could not emit the co-run harness for $B6T"
-    fails=$((fails+1))
-  elif ! grep -q '#define HET_CONTROL_COMPILED_IN 1' "$b6/$B6T/$B6T.cu"; then
-    # Never let the section pass vacuously on a single-instance emit: a co-run
-    # harness that is not co-running is the failure it exists to prevent.
-    echo "  *** $B6T did not emit a CO-RUN harness (HET_CONTROL_COMPILED_IN != 1)"
-    fails=$((fails+1))
-  else
-    nvcc -std=c++17 -arch=sm_90 --ptx -o "$b6/clean.ptx" "$b6/$B6T/$B6T.cu" 2>/dev/null
-    python3 "$CHECK" "$B6L" --ptx "$b6/clean.ptx" --cpu-c "$b6/$B6T/${B6T}_cpu.c" \
-      >/dev/null 2>&1; b6rc=$?
-    _expect "control (shipped co-run harness: T + mu(T) + canary)" 0 "$b6rc" \
-      || fails=$((fails+1))
-
-    # As in section [6]: a FRESH .ptx per bite.  Deleting the canary's lane by
-    # raw string slicing can leave source nvcc rejects, and one shared mut.ptx
-    # would then hand the checker the previous bite's still-corrupt artifact --
-    # ptxcheck returns 1 off that one and the section reports OK for a
-    # corruption it never saw.
-    local b6n=0
-    _b6bite() { # label  file  python-corruption-of-$IN-to-$OUT  ptx|cpu
-      local lbl="$1" src="$2" prog="$3" kind="$4" rc mptx
-      rm -rf "$b6/mut"; cp -r "$b6/$B6T" "$b6/mut"
-      IN="$b6/$B6T/$src" OUT="$b6/mut/$src" python3 -c "$prog" 2>/dev/null || {
-        printf '  *** BITE SCRIPT FAILED (nothing to corrupt)    [%s]\n' "$lbl"; return 1; }
-      if cmp -s "$b6/$B6T/$src" "$b6/mut/$src"; then
-        printf '  *** VACUOUS BITE: injection changed nothing    [%s]\n' "$lbl"
-        return 1
-      fi
-      if [ "$kind" = ptx ]; then
-        b6n=$((b6n+1)); mptx="$b6/mut$b6n.ptx"
-        nvcc -std=c++17 -arch=sm_90 --ptx -o "$mptx" "$b6/mut/$B6T.cu" 2>/dev/null
-        if [ ! -s "$mptx" ]; then
-          printf '  *** BITE COMPILE FAILED (no PTX to check)    [%s]\n' "$lbl"
-          return 1
-        fi
-        python3 "$CHECK" "$B6L" --ptx "$mptx" \
-          --cpu-c "$b6/$B6T/${B6T}_cpu.c" >/dev/null 2>&1; rc=$?
-      else
-        python3 "$CHECK" "$B6L" --ptx "$b6/clean.ptx" \
-          --cpu-c "$b6/mut/${B6T}_cpu.c" >/dev/null 2>&1; rc=$?
-      fi
-      _expect "$lbl" 1 "$rc"
-    }
-
-    # (1) the mutant's ordering silently strengthened.  mu(MP-*-fence-2s) is
-    # MP-*-relaxed, T's twin at the lattice floor; annotate its loads and it is
-    # no longer the floor, so it vouches for a different interleaving than the
-    # one T's ordering is claimed to prevent.
-    _b6bite "mu(T)'s GPU loads STRENGTHENED to acquire (no longer the floor sibling)" \
-            "$B6T.cu" '
-import os
-s=open(os.environ["IN"]).read()
-i=s.index("if (blockIdx.x == 1 && threadIdx.x == 0) {")
-j=s.index("if (blockIdx.x == 2 && threadIdx.x == 0) {")
-b=s[i:j]; nb=b.replace("memory_order_relaxed","memory_order_acquire")
-assert nb!=b
-open(os.environ["OUT"],"w").write(s[:i]+nb+s[j:])' ptx || fails=$((fails+1))
-
-    # (2) the canary's lane deleted, while HET_CONTROL_COMPILED_IN still says 1.
-    _b6bite "the canary's entire GPU lane DELETED (a control that is not there)" \
-            "$B6T.cu" '
-import os
-s=open(os.environ["IN"]).read()
-i=s.index("if (blockIdx.x == 2 && threadIdx.x == 0) {")
-j=s.index("if (blockIdx.x >= HET_TEST_BLOCKS) {")
-assert i<j
-open(os.environ["OUT"],"w").write(s[:i]+s[j:])' ptx || fails=$((fails+1))
-
-    # (3) the mutant's CPU body silently strengthened, so it may never fire and
-    # every null on T is discarded as COLD-INVALID on a test that looks healthy.
-    # No backslashes in this program: it reaches python -c through bash single
-    # quotes, where an escaped \n would be mangled into a bite that corrupts
-    # nothing and so passes for free.  chr(92) is the backslash the asm needs.
-    _b6bite "mu(T)'s CPU body STRENGTHENED with a dmb sy (mutant no longer weaker)" \
-            "${B6T}_cpu.c" '
-import os
-BS = chr(92); Q = chr(34); NL = chr(10)
-s = open(os.environ["IN"]).read()
-i = s.index("void het_run_mu_P0"); j = s.index("void het_run_can_P0")
-b = s[i:j]
-anchor = "asm __volatile__(" + NL
-k = b.index(anchor) + len(anchor)
-ins = "    " + Q + "dmb sy" + BS + "n" + Q + NL
-nb = b[:k] + ins + b[k:]
-assert nb != b
-open(os.environ["OUT"], "w").write(s[:i] + nb + s[j:])' cpu || fails=$((fails+1))
-
-    rm -rf "$b6/mut"
   fi
 
   # =========================================================================
@@ -912,10 +802,8 @@ PY
   litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$dt" "$HET_DIR/$DVT.litmus" >/dev/null 2>&1
   dtcpu="$dt/$DVT/${DVT}_cpu.c"
   nvcc -std=c++17 -arch=sm_90 --ptx -o "$dt/clean.ptx" "$dt/$DVT/$DVT.cu" >/dev/null 2>&1
-  # The corpus is copied whole, as in [5b](ii): load_control_map reads
-  # control-map.csv beside the .litmus and het_instances then opens the mutant and
-  # the canary beside it, so a lone file would fail on a missing co-run instance
-  # rather than on the tag -- a bite that never reaches the parser it is aimed at.
+  # The .litmus is injected in a copy, as in [5b](ii), so no bite ever rewrites
+  # the corpus in the tree.
   cp -r "$HET_DIR" "$dt/corpus"
   if [ ! -s "$dt/clean.ptx" ] || [ ! -s "$dtcpu" ] || [ ! -s "$dt/corpus/$DVT.litmus" ]; then
     echo "  *** could not emit/compile the het harness (or copy the corpus) for $DVT"

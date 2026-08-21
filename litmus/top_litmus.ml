@@ -653,7 +653,7 @@ end = struct
                         end in
                       let module CpuX = Make(Cfg)(Cpu)(CpuLP)(CpuComp) in
                       let module H =
-                        HetEmit.Make(Cfg)(HetOpts)(SP)(Cpu)(CpuF)
+                        HetEmit.Make(Cfg)(HetOpts)(Cpu)(CpuF)
                           (struct
                             let compile_code doc alloc =
                               (CpuX.Comp.compile doc alloc).CpuX.Utils.T.code
@@ -680,7 +680,7 @@ end = struct
                         end in
                       let module CpuX = Make(Cfg)(Cpu)(CpuLP)(CpuComp) in
                       let module H =
-                        HetEmit.Make(Cfg)(HetOpts)(SP)(Cpu)(CpuF)
+                        HetEmit.Make(Cfg)(HetOpts)(Cpu)(CpuF)
                           (struct
                             let compile_code doc alloc =
                               (CpuX.Comp.compile doc alloc).CpuX.Utils.T.code

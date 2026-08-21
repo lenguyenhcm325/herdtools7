@@ -24,8 +24,8 @@ pairs each phase expects follow that choice: nothing here is x86-only.
 `--bite' plants one defect per assertion in a copy of the script under test (never
 in the tree) and requires the phase to redden for the right reason.  Two device
 modes need a GPU and are the toolchain lane's half of this gate: `--hw' runs the
-same wrapper on the real device, and `--characterize-hw' builds two harnesses and
-reads what they print, which is the only artefact a result is ever read off.
+same wrapper on the real device, and `--characterize-hw' builds a harness and
+reads what it prints, which is the only artefact a result is ever read off.
 """
 import argparse
 import atexit
@@ -52,19 +52,15 @@ sys.path.insert(0, HERE)
 import brandscan          # noqa: E402  (the tree's own module, next to this one)
 
 # The committed (x86_64, *) fixture, cut verbatim from a generate-x86.sh run and
-# kept that way by hetlitmus-x86fixture.  It is CLOSED UNDER THE CONTROL MAP:
-# every `-relaxed' entry is here because some row names it as mu(T), and
-# emission refuses a control it cannot build.
+# kept that way by hetlitmus-x86fixture.
 X86_DIR = os.path.join(HETL, "tests", "het-x86")
 X86_TESTS = ["CoRR-cg-sys-fence-2s-x86_64", "CoRR-cg-sys-relaxed-x86_64",
              "MP-cg-sys-acqrel-2s-x86_64", "MP-cg-sys-relaxed-x86_64",
              "S-cg-sys-fence-x86_64", "S-cg-sys-relaxed-x86_64"]
 # The (AArch64, *) lane is the committed het corpus, and a session over all of it
 # is not a gate.  The cut below is copied out of it verbatim at run time --
-# tests plus the two files the emitter resolves beside them -- so it is not a
-# second fixture that could go stale; it is the corpus, minus rows.  Closed under
-# the control map: every row here names its lattice-floor sibling as mu(T) and
-# MP-cg-sys-relaxed as its canary, and emission refuses a control it cannot build.
+# the tests plus the map campaign.py reads beside them -- so it is not a second
+# fixture that could go stale; it is the corpus, minus rows.
 AARCH64_DIR = os.path.join(HETL, "tests", "het")
 AARCH64_TESTS = ["MP-cg-sys-acqrel-2s", "MP-cg-sys-acquire", "MP-cg-sys-relaxed",
                  "S-cg-sys-fence", "S-cg-sys-relaxed"]
@@ -1548,19 +1544,10 @@ def hardware_bite():
 # from emitted text; this one builds a harness, runs it on the GPU and reads the
 # printout, which is the only artefact a result is ever read off.
 #
-# Two arms, because the two sentences a reader must NEVER see swapped are chosen
-# by whether a positive-control map was read at all, and the emitter looks for one
-# beside every test:
-#   map    the committed x86 fixture, whose map names this row its own canary --
-#          "it IS the Layer-B canary", and its missing calibration channel is a
-#          construction;
-#   nomap  the same test copied away from the map -- no map was read, nothing
-#          marks this row a canary, and its missing calibration channel is an
-#          omission, of the map file beside the test and of nothing else.
-# The pair is (X86_64, cuda), which has no machine row, so neither arm may print
-# a word of either row's machine vocabulary either.
+# The pair is (X86_64, cuda), which has no machine row, so the printout may not
+# carry a word of either row's machine vocabulary.
 #
-# The outcome is stochastic, so each arm is re-seeded until it fires; a pair that
+# The outcome is stochastic, so the run is re-seeded until it fires; a pair that
 # cannot fire the most observable het shape in that many runs is itself the
 # finding, and this says so rather than passing vacuously.
 # ---------------------------------------------------------------------------
@@ -1571,7 +1558,6 @@ CH_RUN_TIMEOUT = 90          # a healthy run is ~3 s; past this it is stalled
 # Both rows' vocabularies, from the one place that spells them (brandscan.py).
 # The pair here is entitled to neither, so any of them in a PRINTOUT is a finding.
 CH_VENDOR_RE = re.compile("|".join(brandscan.ROWS.values()), re.I)
-CH_ARMS = ("map", "nomap")
 
 
 def _ch_env():
@@ -1592,27 +1578,16 @@ def ch_arch():
     return "sm_" + caps[0].replace(".", "")
 
 
-def ch_emit(tmp, arm):
-    """Emit CH_TEST for one arm and return its harness dir.  The `nomap' arm is
-    emitted from a copy of the test WITHOUT the lane's map beside it."""
-    src = X86_DIR
-    if arm == "nomap":
-        src = tempfile.mkdtemp(dir=tmp)
-        shutil.copy(os.path.join(X86_DIR, CH_TEST + ".litmus"), src)
+def ch_emit(tmp):
+    """Emit CH_TEST and return its harness dir."""
     out = tempfile.mkdtemp(dir=tmp)
     r = sh(["litmus7", "-gpu-target", "cuda", "-set-libdir",
             os.path.join(ROOT, "litmus", "libdir"), "-o", out,
-            os.path.join(src, CH_TEST + ".litmus")], cwd=ROOT, env=_ch_env())
+            os.path.join(X86_DIR, CH_TEST + ".litmus")], cwd=ROOT, env=_ch_env())
     d = os.path.join(out, CH_TEST)
     if r.returncode != 0 or not os.path.exists(os.path.join(d, CH_TEST + ".cu")):
-        raise SystemExit("runcheck --characterize-hw: litmus7 emitted no %s "
-                         "harness:\n%s" % (arm, r.stderr))
-    stamped = "#define HET_NO_CONTROL_MAP 1" in open(
-        os.path.join(d, CH_TEST + ".cu")).read()
-    if stamped != (arm == "nomap"):
-        raise SystemExit("runcheck --characterize-hw: the %s arm stamps "
-                         "HET_NO_CONTROL_MAP=%d -- the arm does not set up the "
-                         "state it exists to read" % (arm, stamped))
+        raise SystemExit("runcheck --characterize-hw: litmus7 emitted no "
+                         "harness:\n%s" % r.stderr)
     return d
 
 
@@ -1672,10 +1647,19 @@ def ch_run_until_sighting(d, quiet=False):
     return last
 
 
-# The two control sentences, and the arm each belongs to.  Neither may appear in
-# the other arm's printout: a calibration channel that is absent BY CONSTRUCTION
-# and one that is absent because nobody built the instrumentation read alike to
-# everyone except the person who emitted it.
+# The control state a harness is in, as the printout states it: the record
+# carries no co-running control, so het_verdict.h's own note for that record is
+# what a reader meets.
+CH_NOCORUN = ["CO-RUNS NO CONTROL, names no canary, and a control map WAS read "
+              "for %s" % CH_PAIR,
+              "that is a BUILD BUG, not a result"]
+# The three control states this harness is NOT in.  Each is a sentence
+# het_verdict.h can still print, and each would tell a reader the null was
+# calibrated by something: a row that names itself the canary, a build that never
+# found the map file, and a pair no registry holds a map for -- a mechanism this
+# tool does not have at all.  Nothing else in the suite reads that wording, and
+# these tuples are reached only through --characterize-hw, which refuses to run
+# without a CUDA device: on a box with no GPU they go unchecked.
 CH_SELF = ["IS the Layer-B canary",
            "NO CALIBRATION CHANNEL -- nothing independent co-runs whose "
            "stationarity could be tested -- by construction, not by omission"]
@@ -1685,73 +1669,70 @@ CH_NOMAP = ["NO POSITIVE-CONTROL MAP WAS READ for %s" % CH_PAIR,
             "It has NO CALIBRATION CHANNEL, and that is an OMISSION, not a "
             "construction",
             "what was omitted is the map FILE beside this test"]
-# The map is loaded for every lane, so HET_NO_CONTROL_MAP says the FILE was not
-# beside the test.  A printout explaining the flag as a pair no registry holds a
-# map for -- and none to borrow -- describes a mechanism this tool does not have,
-# in either arm.  Nothing else in the suite reads that wording, and this tuple is
-# reached only through --characterize-hw, which refuses to run without a CUDA
-# device: on a box with no GPU it goes unchecked.
 CH_RETIRED = ["no map is registered for that pair",
               "there is none to borrow",
               "the bootstrap control map for an unregistered pair does not exist yet"]
 
 
-def ch_class(arm, k, R, obs):
+def ch_class(k, R, obs):
     """Judge the observation class against the counts it was read off.  Returns
     (failure, note) with exactly one of the two set.
 
-    Both arms here make the row its own denominator -- self-control on the map
-    arm, no co-run at all on the nomap one -- so het_verdict.h reads obs=Always
-    off k >= R.  k==R is then the class saying the outcome fired in every run,
-    which is a reading and not the absence of one; obs=Always under k<R would
-    mean the denominator had collapsed onto the usable count instead.
+    This row co-runs nothing, so it is its own denominator and het_verdict.h
+    reads obs=Always off k >= R.  k==R is then the class saying the outcome
+    fired in every run, which is a reading and not the absence of one;
+    obs=Always under k<R would mean the denominator had collapsed onto the
+    usable count instead.
 
     No run arrives here with k==0: ch_run_once stops on that first, with its
     own sentence about an outcome that never fired.  The branch below is the
     classifier's floor, and the bite's shape table is what drives it."""
     if k == 0:
-        return ("[%s/F] k=%d of R=%d -- no sighting, so the class carries no "
-                "information about the denominator" % (arm, k, R), None)
+        return ("[F] k=%d of R=%d -- no sighting, so the class carries no "
+                "information about the denominator" % (k, R), None)
     if k < R and obs == "Always":
-        return ("[%s/F] obs=Always on k=%d of R=%d: the denominator collapsed "
+        return ("[F] obs=Always on k=%d of R=%d: the denominator collapsed "
                 "onto the runs that fired, which is every usable cell here"
-                % (arm, k, R), None)
+                % (k, R), None)
     if k < R:
-        return (None, "[%s/F] obs=%s on k=%d of R=%d (denominator is R, not the "
-                      "usable count)" % (arm, obs, k, R))
+        return (None, "[F] obs=%s on k=%d of R=%d (denominator is R, not the "
+                      "usable count)" % (obs, k, R))
     if k == R and obs == "Always":
-        return (None, "[%s/F] obs=Always on k=%d of R=%d (every run fired, and "
-                      "that is the class which says so)" % (arm, k, R))
-    return ("[%s/F] obs=%s on k=%d of R=%d: every run fired and the class does "
-            "not say so" % (arm, obs, k, R), None)
+        return (None, "[F] obs=Always on k=%d of R=%d (every run fired, and "
+                      "that is the class which says so)" % (k, R))
+    return ("[F] obs=%s on k=%d of R=%d: every run fired and the class does "
+            "not say so" % (obs, k, R), None)
 
 
-def ch_check(arm, text, k, R, obs, quiet=False):
+def ch_check(text, k, R, obs, quiet=False):
     """Every assertion is on the PRINTOUT.  Returns a list of failures."""
     bad = []
     say = (lambda *_: None) if quiet else print
 
     def must(tag, frag):
         if frag not in text:
-            bad.append("[%s/%s] the printout never says %r" % (arm, tag, frag))
+            bad.append("[%s] the printout never says %r" % (tag, frag))
         else:
-            say("      [%s/%s] %s" % (arm, tag, frag[:88]))
+            say("      [%s] %s" % (tag, frag[:88]))
 
     def never(tag, frag, why):
         if frag in text:
-            bad.append("[%s/%s] the printout says %r -- %s" % (arm, tag, frag, why))
+            bad.append("[%s] the printout says %r -- %s" % (tag, frag, why))
 
     must("A", "HetVerdict %s [" % CH_TEST)
     must("A", "Report it as what %s exhibited" % CH_PAIR)
 
-    mine, theirs = (CH_SELF, CH_NOMAP) if arm == "map" else (CH_NOMAP, CH_SELF)
-    for frag in mine:
+    for frag in CH_NOCORUN:
         must("B/C", frag)
-    for frag in theirs:
-        never("B/C", frag, "that is the OTHER arm's control state")
+    for frag in CH_SELF:
+        never("B/C", frag, "nothing co-runs here, so nothing may say this row "
+                           "is its own canary")
+    for frag in CH_NOMAP:
+        never("B/C", frag, "the map was read; a missing map file is a state this "
+                           "build is not in")
     for frag in CH_RETIRED:
-        never("B/C", frag, "the flag means the map FILE was not beside the test, "
-                           "not that a registry has no row for the pair")
+        never("B/C", frag, "a registry with no row for the pair is a mechanism "
+                           "this tool does not have")
 
     must("D", ": OBSERVED")
     never("D", "the target this harness was tagged for",
@@ -1759,13 +1740,13 @@ def ch_check(arm, text, k, R, obs, quiet=False):
 
     hits = sorted(set(m.group(0) for m in CH_VENDOR_RE.finditer(text)))
     if hits:
-        bad.append("[%s/E] the printout names %s -- this pair has no machine row "
-                   "and this run was on neither part" % (arm, ", ".join(hits)))
+        bad.append("[E] the printout names %s -- this pair has no machine row "
+                   "and this run was on neither part" % ", ".join(hits))
     else:
-        say("      [%s/E] no Grace / Hopper / NVLink / C2C / GH200 in stdout or "
-            "stderr" % arm)
+        say("      [E] no Grace / Hopper / NVLink / C2C / GH200 in stdout or "
+            "stderr")
 
-    why, note = ch_class(arm, k, R, obs)
+    why, note = ch_class(k, R, obs)
     if why is not None:
         bad.append(why)
     else:
@@ -1773,24 +1754,24 @@ def ch_check(arm, text, k, R, obs, quiet=False):
     return bad
 
 
-def ch_run_once(arm, d, quiet=False):
+def ch_run_once(d, quiet=False):
     got = ch_run_until_sighting(d, quiet=quiet)
     if got is None:
-        return 1, ["the %s harness produced no run at all" % arm]
+        return 1, ["the harness produced no run at all"]
     text, k, R, obs, tries = got
     if k == 0:
-        return 1, ["the %s outcome never fired in %d x %d runs -- the sighting "
+        return 1, ["the outcome never fired in %d x %d runs -- the sighting "
                    "assertions cannot be read, and a pair that cannot fire the "
                    "most observable het shape is itself the finding"
-                   % (arm, tries, R)]
-    bad = ch_check(arm, text, k, R, obs, quiet=quiet)
+                   % (tries, R)]
+    bad = ch_check(text, k, R, obs, quiet=quiet)
     return (1 if bad else 0), bad
 
 
-def ch_arm(arm, tmp, arch, quiet=False):
-    d = ch_emit(tmp, arm)
+def ch_probe(tmp, arch, quiet=False):
+    d = ch_emit(tmp)
     ch_build(d, arch)
-    return ch_run_once(arm, d, quiet=quiet)
+    return ch_run_once(d, quiet=quiet)
 
 
 # Each injection rewrites one file of the emitted harness (never the source tree)
@@ -1800,34 +1781,20 @@ def ch_arm(arm, tmp, arch, quiet=False):
 # assertion that catches the sentence it PLANTED rather than the one that merely
 # notices a sentence went missing.
 CH_INJECTIONS = [
-    ("B/C", "nomap", "het_verdict.h",
-     "the no-control-map note reverted to the self-canary sentence",
+    ("B/C", "het_verdict.h",
+     "the no-control note claims the row is its own canary",
      lambda s: s.replace(
-         "  NOTE: this row CO-RUNS NO CONTROL because NO POSITIVE-CONTROL MAP WAS ",
-         "  NOTE: this row CO-RUNS NO CONTROL -- it IS the Layer-B canary.  WAS ", 1),
+         "  *** NOTE: this row CO-RUNS NO CONTROL, names no canary, and a control map ",
+         "  *** NOTE: this row CO-RUNS NO CONTROL -- it IS the Layer-B canary, and a "
+         "control map ", 1),
      "the printout says 'IS the Layer-B canary'"),
-    ("C", "nomap", "het_verdict.h",
-     "the missing calibration channel called structural again",
-     lambda s: s.replace(', and that is an OMISSION, not a "\n'
-                         '          "construction: what was omitted',
-                         ' -- nothing independent co-runs whose stationarity '
-                         'could "\n'
-                         '          "be tested -- by construction, not by '
-                         'omission: what was omitted', 1),
-     "by construction, not by omission' -- that is the OTHER arm's control state"),
-    ("B/C", "nomap", "het_verdict.h",
-     "the flag explained as a pair no registry has a map for",
-     lambda s: s.replace("the map is looked for BESIDE THE TEST, under the name this ",
-                         "no map is registered for that pair, and there is none to "
-                         "borrow, so this ", 1),
-     "the printout says 'no map is registered for that pair'"),
-    ("A/D", "map", "het_verdict.h",
+    ("A/D", "het_verdict.h",
      "the report sentence names a constant instead of the pair",
      lambda s: s.replace(
          "      HET_PAIR_NAME, HET_LINK_NAME);",
          '      "the target this harness was tagged for", HET_LINK_NAME);', 1),
      "the printout says 'the target this harness was tagged for'"),
-    ("E", "map", CH_TEST + ".cu",
+    ("E", CH_TEST + ".cu",
      "the driver's noise warning names the GH200 halves again",
      lambda s: s.replace("the host half of the host-device interconnect noise",
                          "the Grace half of the NVLink-C2C noise"),
@@ -1857,15 +1824,15 @@ def characterize_hw_bite(tmp, arch):
     print("===== BITE: does this gate read the PRINTOUT? =====")
     bad = 0
     for k, R, obs, want_read, frag in CH_SHAPES:
-        why, note = ch_class("map", k, R, obs)
+        why, note = ch_class(k, R, obs)
         got = note if why is None else why
         # A class only counts once ch_check has carried it into the failures a
         # run is judged on: a refusal must arrive there and a reading must leave
         # nothing behind.  The printout handed over is empty, because ch_check's
         # assertions on a printout are what the injections below drive, on the
         # device; the class is the one verdict it reaches without one.
-        carried = [m for m in ch_check("map", "", k, R, obs, quiet=True)
-                   if m.startswith("[map/F]")]
+        carried = [m for m in ch_check("", k, R, obs, quiet=True)
+                   if m.startswith("[F]")]
         if (why is None) != want_read:
             print("  *** [F] k=%d of R=%d obs=%s: the class is %s and must be %s "
                   "-- %s" % (k, R, obs, "read" if why is None else "refused",
@@ -1884,8 +1851,8 @@ def characterize_hw_bite(tmp, arch):
             bad += 1
         else:
             print("      %s" % got)
-    for tag, arm, fname, what, mutate, expect in CH_INJECTIONS:
-        d = ch_emit(tmp, arm)
+    for tag, fname, what, mutate, expect in CH_INJECTIONS:
+        d = ch_emit(tmp)
         hdr = os.path.join(d, fname)
         src = open(hdr).read()
         new = mutate(src)
@@ -1896,7 +1863,7 @@ def characterize_hw_bite(tmp, arch):
             continue
         open(hdr, "w").write(new)
         ch_build(d, arch)
-        rc, why = ch_run_once(arm, d, quiet=True)
+        rc, why = ch_run_once(d, quiet=True)
         hit = [m for m in why if expect in m]
         if rc == 0:
             print("  *** [%s] %s: the gate stayed GREEN" % (tag, what))
@@ -1933,17 +1900,15 @@ def characterize_hw(want_bite=False):
     try:
         if want_bite:
             return characterize_hw_bite(tmp, arch)
-        bad = []
-        for arm in CH_ARMS:
-            print("===== the printout of a %s run =====" % arm)
-            bad += ch_arm(arm, tmp, arch)[1]
+        print("===== the printout of a run =====")
+        bad = ch_probe(tmp, arch)[1]
         if bad:
             print("\nCHARACTERIZE-HW FAILED: %d problem(s)." % len(bad))
             for m in bad:
                 print("  %s" % m)
             return 1
-        print("\nCHARACTERIZE-HW: PASS (both arms name themselves, say which "
-              "control state they are in, and claim no machine)")
+        print("\nCHARACTERIZE-HW: PASS (the printout names the test, says "
+              "which control state it is in, and claims no machine)")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

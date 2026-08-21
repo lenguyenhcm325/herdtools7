@@ -53,14 +53,11 @@ the conservative reading too.
   #define HET_DEV_HALF "the MI300A device half"
   #define HET_LLC_MB 256
 
-Both these pairs READ A MAP, so neither stamps HET_NO_CONTROL_MAP: the flag says
-the map file was not beside the test, and it is what stops the statistics layer
-from reading "nothing co-runs" as "this row IS the canary".  Grepped for both
-defines at once, so an absent flag is read off the same output as a present pair
-name rather than from a count that a missing line and a renamed one share.
-  $ grep -E '^#define HET_(PAIR_NAME|NO_CONTROL_MAP)' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+Each stamps its OWN pair name.  Read as the whole matched line rather than as a
+count, so a renamed pair and a missing define do not share one number.
+  $ grep -E '^#define HET_PAIR_NAME' aa/MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   #define HET_PAIR_NAME "(AArch64, cuda)"
-  $ grep -E '^#define HET_(PAIR_NAME|NO_CONTROL_MAP)' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
+  $ grep -E '^#define HET_PAIR_NAME' xh/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   #define HET_PAIR_NAME "(X86_64, hip)"
 
 (c) THE LANDMINE.  (x86_64, cuda) is REGISTERED WITHOUT A MACHINE ROW -- it is
@@ -84,18 +81,10 @@ registered pair that is deliberately nameless and a pair nobody has considered
 read alike six months later in a results tree.
   $ grep -cE '^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|ALGLAVE_ZERO_MEASURED)' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu || true
   0
-  $ grep -E '^#define HET_(PAIR_NAME|NO_CONTROL_MAP)' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu
+  $ grep -E '^#define HET_PAIR_NAME' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu
   #define HET_PAIR_NAME "(X86_64, cuda)"
   $ grep -c 'no machine row backs this' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu
   1
-
-The positive-control map is keyed on the CPU FRONTEND and read for every lane,
-so this pair reads control-map-amd.csv exactly as the (X86_64, hip) lane does:
-mu(T) is a weakening on a strength lattice, and the lattice is the CPU column's.
-HET_NO_CONTROL_MAP is therefore absent here (it says the file was not beside the
-test), and this row's map cell names it its own canary.
-  $ grep -E '^#define HET_CANARY_NAME' xc/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu
-  #define HET_CANARY_NAME "MP-cg-sys-relaxed-x86_64"  /* Layer B: the universal het-MP floor */
 
 (d) UNREGISTERED: (AArch64, hip) is in no row, and it EMITS -- warned, not
 refused.  The tool characterizes, so a pair nobody has a machine for still has a
@@ -140,7 +129,7 @@ warning -- the shape a per-line grep of `fprintf(' lines cannot see:
   $ sed -i 's/^Target: NVIDIA CUDA\.$/Target: NVIDIA GH200 (CUDA)./' $P/README.md
   $ printf 'static void _planted(void){ fprintf(stderr, "the Grace "\n  "half is idle\\n"); }\n' >> $P/MP-cg-sys-relaxed-x86_64.cu
   $ python3 ../../verify/brandscan.py --entitled none xc-planted; echo "exit $?"
-  xc-planted/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu:761: names 'Grace' (the gh200 row's word; this lane is entitled to none): the Grace half is idle
+  xc-planted/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.cu:752: names 'Grace' (the gh200 row's word; this lane is entitled to none): the Grace half is idle
   xc-planted/MP-cg-sys-relaxed-x86_64/README.md:23: names 'GH200' (the gh200 row's word; this lane is entitled to none): Target: NVIDIA GH200 (CUDA).
   FAIL: 2 machine word(s) in a lane entitled to none -- a harness that names the wrong machine runs and reports like one that names the right one
   exit 1

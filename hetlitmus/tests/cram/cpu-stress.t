@@ -30,9 +30,8 @@ sections read is the GPU render and the shared runtime headers.
   $ S=S-cg-sys-fence/S-cg-sys-fence
 
 Counts that a wrong site could satisfy are SCOPED to one function body rather
-than raised to a file-wide total: three instances co-run in this harness, so a
-raised total can be met by a lane that lost its mechanism while another gained
-two.  That rule governs every count below.
+than raised to a file-wide total: a raised total can be met by a lane that lost
+its mechanism while another gained two.  That rule governs every count below.
 
 (a) the host ISA must not reach nvcc.  cpu_thread_P<n> and main() both live in
 the .cu -- <test>_cpu.c holds only the opaque tested body -- so the preload
@@ -74,41 +73,29 @@ two-sided test the CPU issues the ordering instructions under test (STLR/LDAPR/
 DMB.SY) -- they ARE the hypothesis, so a fence or atomic between the two tested
 accesses would change what is being tested.  T's own body must stay exactly its
 two tested stores, with the preload outside it, before the call.
-  $ sed -n '/^void het_run_t_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE '"(stlr|ldapr|dmb|str|ldr)'
+  $ sed -n '/^void het_run_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE '"(stlr|ldapr|dmb|str|ldr)'
   2
   $ sed -n '/^#if defined(__aarch64__)/,/^#else/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE 'het_cpu_preload|het_cpu_affinity|dc civac|prfm' || true
   0
 
-The mutant's body is a different program from T's, which is what makes it a
-mutant: T is two-sided (the CPU issues the release stores under test), mu(T) is
-the one-sided weakening, so its CPU side is plain.  Identical bodies would leave
-mu(T) no weakening at all, and the control would vouch for nothing.
-  $ sed -n '/^void het_run_mu_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"(stlr|str) '
+Both tested stores are the release form this two-sided row is about, and nothing
+weaker stands in for either.
+  $ sed -n '/^void het_run_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"stlr '
   2
-  $ sed -n '/^void het_run_t_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"stlr '
-  2
-  $ sed -n '/^void het_run_mu_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"stlr ' || true
-  0
 
 The preload is called per iteration, before the tested body, on this proc's own
 test variables.  A cache hint changes residency, not program order, so preloading
 the very variables under test is -2s-safe -- and it cannot drift into the tested
 sequence, because het_run_*_P0 is a call into another translation unit and every
 primitive is asm volatile with a "memory" clobber.
-  $ sed -n '/^static void\* cpu_thread_t_P0/,/^}/p' $MP.cu | grep -c 'het_cpu_preload(_pl, 2, &_plrng, HET_CPU_PRELOAD_PCT)'
+  $ sed -n '/^static void\* cpu_thread_P0/,/^}/p' $MP.cu | grep -c 'het_cpu_preload(_pl, 2, &_plrng, HET_CPU_PRELOAD_PCT)'
   1
-  $ sed -n '/^static void\* cpu_thread_t_P0/,/^}/p' $MP.cu | grep -c 'void\* const _pl\[2\] = { (void\*)a->x, (void\*)a->y }'
+  $ sed -n '/^static void\* cpu_thread_P0/,/^}/p' $MP.cu | grep -c 'void\* const _pl\[2\] = { (void\*)a->x, (void\*)a->y }'
   1
-
-and every instance preloads its own vars -- the control must be stressed exactly
-as T is, or it is not certifying T's window (positive-control.md sec 2: the same
-run, the same stress, the same C2C path).
-  $ grep -c 'het_cpu_preload(_pl, 2, &_plrng, HET_CPU_PRELOAD_PCT)' $MP.cu
-  3
 
 and affinity is applied BEFORE the rendezvous, so the thread is already on its
 core when the race starts:
-  $ grep -A2 'static void\* cpu_thread_t_P0' $MP.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
+  $ grep -A2 'static void\* cpu_thread_P0' $MP.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
   1
 
 (c) -2s invariant (i): the enemy and noise traffic is disjoint from the test.  An
@@ -128,12 +115,12 @@ gd_alloc_shared (coherent -- the property under test); the GPU stress scratchpad
 through cudaMalloc (device-only, disjoint); the CPU enemy scratchpad through
 plain host malloc (CPU-only, disjoint); and the noise buffers through
 gd_alloc_noise (homed on the OTHER processing unit).  The first two classes are
-read on this same MP-cg-sys-acqrel-2s render elsewhere -- the padded co-run arena
-and its matching free in shared-alloc.t (e), the GPU scratchpad in stress.t (b).
-What is pinned here is the barrier's own slot in that arena, which nothing else
-reads; the two CPU-side classes; and the refusal that keeps the enemy scratchpad
-off the coherent allocator.
-  $ grep -cE 'int \*barrier = \(int\*\)\(_sa \+ \(size_t\)HET_CACHE_LINE\*6\)' $MP.cu
+read on this same MP-cg-sys-acqrel-2s render elsewhere -- the shared allocator
+and its matching free in shared-alloc.t (a), the GPU scratchpad in stress.t (b).
+What is pinned here is the barrier's own allocation, which nothing else reads;
+the two CPU-side classes; and the refusal that keeps the enemy scratchpad off
+the coherent allocator.
+  $ grep -c 'int \*barrier; gd_alloc_shared((void\*\*)&barrier, sizeof(int));' $MP.cu
   1
   $ grep -c 'malloc_check(sizeof(uint64_t)\*HET_CPU_SCRATCH_WORDS)' $MP.cu
   1
@@ -151,11 +138,11 @@ the mechanism: raise stress_go, then spawn the enemies and the noise, then the
 test threads and the kernel.  A flag raised after the enemies were spawned races
 them; one raised after the test finished means they never ran at all.
 
-The test-thread spawn is matched on the wrapper (`, cpu_thread_'), not on a
-literal `&_th0': the three co-running instances name theirs _t_th0 / _mu_th0 /
-_can_th0, and a pattern that matched none would leave $TH empty and this guard
-vacuously true.  First spawn after the enemies, last spawn before the launch, so
-the ordering is asserted for all three instances.
+The test-thread spawn is matched on the wrapper (`, cpu_thread_'), so a shape
+with several CPU procs is covered by the same pattern; a pattern that matched
+none would leave $TH empty and this guard vacuously true.  First spawn after the
+enemies, last spawn before the launch, so the ordering is asserted for every
+test thread.
   $ GO=$(grep -n '__atomic_store_n(&_stress_go, 1' $MP.cu | cut -d: -f1)
   $ EN=$(grep -n 'pthread_create(&_eth' $MP.cu | cut -d: -f1)
   $ TH=$(grep -n ', cpu_thread_' $MP.cu | head -1 | cut -d: -f1)
@@ -323,22 +310,16 @@ preloaded, because its job is to sample the shared locations densely and a cache
 hint per iteration would only thin the sampling (same reason the GPU observer
 lane gets no pre-stress; stress.t (g)).
 
-S-cg-sys-fence is off the lattice floor, so it co-runs mu(T) and the canary, and
-its own observer thread is `t_cpu_obs_thread'.  The preload check is a negative (expects 0), and a
-negative whose anchor matches nothing reports 0 and "passes" while checking
-nothing, so it is paired with a positive on the worker thread: the asymmetry
-(worker preloads, observer does not) is the invariant, and pinning one side of it
-alone can go vacuous unnoticed.
-  $ grep -A2 'static void\* t_cpu_obs_thread' $S.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
+The preload check is a negative (expects 0), and a negative whose anchor matches
+nothing reports 0 and "passes" while checking nothing, so it is paired with a
+positive on the worker thread: the asymmetry (worker preloads, observer does
+not) is the invariant, and pinning one side of it alone can go vacuous
+unnoticed.
+  $ grep -A2 'static void\* cpu_obs_thread' $S.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
   1
-  $ grep -A4 'static void\* t_cpu_obs_thread' $S.cu | grep -c 'het_cpu_preload' || true
+  $ grep -A4 'static void\* cpu_obs_thread' $S.cu | grep -c 'het_cpu_preload' || true
   0
 
 The worker DOES preload -- so the 0 above is a real absence, not a failed match.
-  $ awk '/^static void\* cpu_thread_t_P0\(void\* _a\)/,/^}$/' $S.cu | grep -c 'het_cpu_preload'
-  1
-
-...and so does the co-running canary's worker: the control is stressed exactly
-like the test it vouches for, or it vouches for a different machine.
-  $ awk '/^static void\* cpu_thread_can_P0\(void\* _a\)/,/^}$/' $S.cu | grep -c 'het_cpu_preload'
+  $ awk '/^static void\* cpu_thread_P0\(void\* _a\)/,/^}$/' $S.cu | grep -c 'het_cpu_preload'
   1

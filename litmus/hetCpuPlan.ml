@@ -76,21 +76,20 @@ type lowering = {
     load_line : mnemonic:string -> idx:int -> global:string -> string ;
   }
 
-(* emit_frame: the tagged het_run_<prefix>P<proc>, everything except the two
-   asm operand shapes.  [store_mu]/[load_buf] map a 0-based store/load ordinal
+(* emit_frame: the tagged het_run_P<proc>, everything except the two asm
+   operand shapes.  [store_mu]/[load_buf] map a 0-based store/load ordinal
    to its mu and to the C buffer param the load is recorded into; [iter] is the
    C tag-index expression (the caller passes "(_n + 1)", so i=0 stays the
    init/stale marker); [addr_params]/[buf_params] are the (decl,name) lists
    top_litmus also uses for the .cu extern decl and the driver call;
-   [prologue] is asm text for a directive a mnemonic needs; [prefix] keeps a
-   co-run harness' instances apart, whose P0 bodies would share one name. *)
-let emit_frame chan ~prefix ~proc ~k ~store_mu ~load_buf ~iter
+   [prologue] is asm text for a directive a mnemonic needs. *)
+let emit_frame chan ~proc ~k ~store_mu ~load_buf ~iter
       ~addr_params ~buf_params ~lowering ~prologue nodes =
   let s = output_string chan in
   let params =
     String.concat ", "
       (List.map fst addr_params @ List.map fst buf_params @ ["int _n"]) in
-  s (Printf.sprintf "void het_run_%sP%d(%s) {\n" prefix proc params) ;
+  s (Printf.sprintf "void het_run_P%d(%s) {\n" proc params) ;
   (* Tag values + load temps, materialised in C BEFORE the single asm block
      (so the block contains ONLY the tested instructions, in order). *)
   let n_stores = ref 0 and n_loads = ref 0 in

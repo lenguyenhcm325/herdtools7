@@ -122,8 +122,8 @@ let prologue instrs =
     "    \".arch_extension rcpc\\n\"\n"
   else ""
 
-let emit_body chan ~prefix ~proc ~k ~store_mu ~load_buf ~reg_env ~iter
+let emit_body chan ~proc ~k ~store_mu ~load_buf ~reg_env ~iter
       ~addr_params ~buf_params instrs =
-  HetCpuPlan.emit_frame chan ~prefix ~proc ~k ~store_mu ~load_buf ~iter
+  HetCpuPlan.emit_frame chan ~proc ~k ~store_mu ~load_buf ~iter
     ~addr_params ~buf_params ~lowering ~prologue:(prologue instrs)
     (nodes_of ~reg_env instrs)

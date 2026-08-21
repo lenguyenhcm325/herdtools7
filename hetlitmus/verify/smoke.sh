@@ -29,17 +29,14 @@
 #                              row, so it is the .hip that names the part
 #                              (litmus/hetMachine.ml).
 #   8. MP-cg-sys-sy.acq-2s     order-pair; the only rep emitting inline
-#                              `fence.acquire.sys', which needs sm_90 [CCCL],
-#                              with a compiled-in co-run control (mu = the row's
-#                              lattice-floor sibling MP-cg-sys-relaxed);
+#                              `fence.acquire.sys', which needs sm_90 [CCCL];
 #                              also the first rep whose test name contains a `.'
 #   9. S-gc-sys-ra.rel-2s      order-pair; the only rep emitting inline
 #                              `fence.release.sys', paired with CPU STLR/LDAPR,
-#                              and an observer lane in every co-run instance
-#  10. MP-cg-sys-st.sc-2s      the CPU `dmb st' form.  Its mu is the floor
-#                              sibling, so the barrier is T's alone
+#                              and an observer lane
+#  10. MP-cg-sys-st.sc-2s      the CPU `dmb st' form
 #  11. MP-gc-sys-ld.sc-2s      the CPU `dmb ld' form on the GPU->CPU cut (the CPU
-#                              proc reads), likewise T's alone.
+#                              proc reads).
 #                              These reps claim only that the three barrier forms
 #                              build; which one is emitted is pinned by
 #                              tokens.sh selftest [5b].
@@ -219,9 +216,7 @@ case "$cmd" in
     # The only rep whose render is a .hip, so it is where a CUDA/HIP divergence
     # in the shared runtime headers shows up.
     smoke_het_hip MP-cg-sys-relaxed-x86_64 "the AMD/MI300A render, (x86_64, hip) pair (hipcc -c, gfx942)"
-    # The four order-pair reps below are all off the lattice floor, so each also
-    # exercises the co-run control (HET_CONTROL_COMPILED_IN=1) on that family.
-    smoke_het     MP-cg-sys-sy.acq-2s   "order-pair; inline fence.acquire.sys + co-run mu"
+    smoke_het     MP-cg-sys-sy.acq-2s   "order-pair; inline fence.acquire.sys"
     smoke_het     S-gc-sys-ra.rel-2s    "order-pair; inline fence.release.sys + CPU STLR/LDAPR"
     smoke_het     MP-cg-sys-st.sc-2s    "order-pair; CPU dmb st + fence.sc.sys"
     smoke_het     MP-gc-sys-ld.sc-2s    "order-pair; CPU dmb ld on the gc cut"

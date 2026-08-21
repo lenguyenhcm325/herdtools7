@@ -34,11 +34,11 @@ val analyze :
   reg_env:(string -> string) -> X86_64Base.instruction list ->
   HetCpuPlan.cpu_plan
 
-(* Emit the tagged het_run_<prefix>P<proc> -- see hetCpuPlan.emit_frame for
+(* Emit the tagged het_run_P<proc> -- see hetCpuPlan.emit_frame for
    what each label means.  Operands are widened to 64 bits (`movq'); see
    hetCpuPlan for why. *)
 val emit_body :
-  out_channel -> prefix:string -> proc:int -> k:int -> store_mu:(int -> int) ->
+  out_channel -> proc:int -> k:int -> store_mu:(int -> int) ->
   load_buf:(int -> string) -> reg_env:(string -> string) -> iter:string ->
   addr_params:(string * string) list -> buf_params:(string * string) list ->
   X86_64Base.instruction list -> unit

@@ -36,9 +36,9 @@
 # The x86 corpus is not committed (tests/het/generate-x86.sh says why); it is
 # generated into a scratch dir outside OUTDIR, so `diff -r' of two snapshots
 # still compares emitted bytes only.  The het corpora are emitted from inside
-# their own directory so emission finds the pair's control map and the co-run
-# sibling .litmus (a harness embeds its mu(T) and its canary, both resolved
-# relative to the source dir).  gpu-only reuses emit-gpu.sh.
+# their own directory, so litmus7 is handed bare <test>.litmus names and the
+# harness dir it writes carries the test's own name.  gpu-only reuses
+# emit-gpu.sh.
 #
 # Fail-closed, because litmus7's batch driver catches an emission exception,
 # prints it on the stream this script discards and still exits 0
@@ -268,15 +268,6 @@ for lane in $HET_LANES; do
       # will ever make.
       if [ "$(grep -c '_rec.rec_magic = HET_REC_MAGIC;' "$OUTDIR/$sub/$n/$n.$ext")" != 1 ]; then
         echo "FAIL: $t in the $corpus/$target lane does not stamp _rec.rec_magic exactly once" >&2
-        exit 1
-      fi
-      # The control map was there.  Every het lane emits from beside its own map,
-      # so this define can only appear if the lane lost it -- and a harness that
-      # names no control still emits, still runs and still prints, with every
-      # null it produces uninterpretable.  Nothing else in this script would see
-      # that: the stamps, the pair name and the census are all unaffected.
-      if grep -q '^#define HET_NO_CONTROL_MAP 1' "$OUTDIR/$sub/$n/$n.$ext"; then
-        echo "FAIL: $t in the $corpus/$target lane stamps HET_NO_CONTROL_MAP 1 -- no control map was found beside the test, so it co-runs nothing" >&2
         exit 1
       fi
       # The pair, and the machine words that pair is entitled to.
