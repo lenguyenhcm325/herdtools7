@@ -24,8 +24,7 @@
  * machine, and the pair it was built for is HET_PAIR_NAME.
  * Design: hetlitmus/docs/het-emission.md.
  * ------------------------------------------------------------------------- */
-/* no leading article: use sites supply their own */
-#define HET_LINK_NAME "host-device interconnect"
+#define HET_LINK_NAME "host-device interconnect"  /* no leading article: sites add it */
 #define HET_HOST_HALF "the host half"
 #define HET_DEV_HALF "the device half"
 /* The page-placement lever HET_PLACE drives, by its API name.  A DIALECT fact:

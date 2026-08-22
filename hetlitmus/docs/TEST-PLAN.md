@@ -287,8 +287,13 @@ the `@NAME@` payload holes it filled, the entitlement checks in `runcheck.py` /
 `emit-all.sh` / `x86bodycheck.py` / `verdictcheck.py` / `hipbuildcheck.py`, the scanner
 `verify/brandscan.py` and the cram test `machine-pairs.t`. A render names no machine now:
 only the pair it was built for (`HET_PAIR_NAME`) and the mechanism words `het_verdict.h`
-defines. Nothing polices the absence, and the bites those checks carried were re-seated on
-surviving seams rather than dropped.
+defines. Nothing polices the absence. Four bites were re-seated rather than left vacuous:
+`x86bodycheck`'s unseamed full-corpus arm now stamps `_rec.rec_magic` twice, `recfields`'
+drift bite renames `HET_PLACE_LEVER`, `runcheck`'s device-lane bite picks its injection
+by label, and `hipbuildcheck`'s allocator bite reads the integrated/discrete literals.
+The seven with no seam left went with the checks they bit: `x86bodycheck`'s
+`machine-short`, `no-note` and `brand-readme`, three `runcheck` injections and its `[E]`
+vendor-word scan.
 
 **A gate that is not in the build is a script, not a gate — `hetlitmus-stats` is the
 worked example.** `statscheck.py` once sat in the tree with **no Makefile target invoking
