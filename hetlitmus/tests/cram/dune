@@ -23,14 +23,14 @@
 
 ; pfix-cond.t, coop-launch.t and shared-alloc.t are the exceptions that DO need the
 ; OCaml build: they emit representative het tests through litmus7 and read the
-; generated driver.  pfix-cond guards the Task P condition-compiler fix (7a/7b);
-; coop-launch guards the B2 perpetual-loop + cooperative-launch driver shape;
-; shared-alloc guards the B1 per-target gd_alloc_shared / gd_free_shared allocator;
-; stress guards the B4 GPU memory-stress layer (device-memory scratchpad, pure-stress
-; workgroups, and the device-scope window-opener kept SEPARATE from the system-scope
-; cross-device rendezvous); cpu-stress guards the B5 CPU + interconnect layer -- the
-; host ISA kept out of the nvcc TU, the -2s invariants, the four object classes, and
-; above all the stress_go ORDERING, which is the one B5 property the liveness gate
+; generated driver.  pfix-cond guards the condition compiler on location atoms;
+; coop-launch guards the perpetual-loop + cooperative-launch driver shape;
+; shared-alloc guards the per-target gd_alloc_shared / gd_free_shared allocator;
+; stress guards the GPU memory-stress layer (device-memory scratchpad, pure-stress
+; workgroups, and every scaffolding op confined to that scratchpad); cpu-stress
+; guards the CPU + interconnect layer -- the host ISA kept out of the nvcc TU, the
+; -2s invariants, the four object classes, and above all the stress_go ORDERING,
+; which is the one property of that layer the liveness gate
 ; (hetlitmus/verify/cpustresscheck.py) structurally cannot see: its dynamic probe
 ; drives het_cpu_stress.h's mechanisms with its own flag and never exercises the
 ; emitted driver's orchestration.  Confirmed by bite test -- moving the stress_go
@@ -42,8 +42,9 @@
 ; het_verdict.h and drives it with synthetic record streams); what cram pins is that
 ; the harness actually PRODUCES the inputs that layer consumes.
 ; slot-readout.t pins the per-iteration slot layout, the one-pass readout that
-; reads iteration n's outcome out of slot n, and the emitter's refusal to write a
-; constant weak-behaviour detector.
+; reads iteration n's outcome out of slot n, and the condition compiler's two
+; refusals -- an atom no outcome column backs, and a constant weak-behaviour
+; detector -- each matched on the words only it prints.
 (cram
  (applies_to pfix-cond coop-launch shared-alloc slot-readout stress cpu-stress
    statistics)

@@ -3,7 +3,7 @@ design document and litmus/het-runtime/het_verdict.h disagree, the header is
 what ships).  A "Never" is readable only against the effort that produced it,
 so the harness carries every input the estimator reads out of a run: the record
 array that outlives the run loop, the campaign knobs read at run time, the
-adaptive stop, and the decode channel each shape actually has.
+adaptive stop, and the readout counts and degeneracy evidence every shape writes.
 
 The layer's own behaviour is gated by hetlitmus/verify/statscheck.py, which
 compiles the real het_verdict.h and drives it with synthetic record streams.

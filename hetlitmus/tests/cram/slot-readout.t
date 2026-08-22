@@ -123,13 +123,17 @@ default is a flag list, not a missing one.
   $ grep -c 'HET_CPU_CFLAGS="${HET_CPU_CFLAGS:-}"' MP-cg-sys-relaxed-x86_64/comp.sh
   1
 
-REFUSAL: the emitted weak-behaviour detector may never be a constant.  A
-constant-true one reports the weak behaviour on every run and a constant-false
-one reports "Never" on every run, so the emitter refuses rather than emit one --
-exit 3, with nothing written.
-  $ cat > const-detector.litmus <<'EOF'
-  > Het CONST-DETECTOR
-  > "a condition no proc can decide"
+The condition compiler has two refusals, and they are separate rows here because
+one generic "REFUSED" grep cannot tell them apart: each is matched on the words
+only it prints.
+
+REFUSAL (a): an atom no outcome column backs.  Every atom is one column of the
+vector the readout builds, so an atom naming a location no proc of the test
+touches has no slot to read; dropping it would weaken the detector the harness
+exists to evaluate, so the emitter refuses -- exit 3, with nothing written.
+  $ cat > unbacked-loc.litmus <<'EOF'
+  > Het UNBACKED-LOC
+  > "a condition naming a location no proc touches"
   > {
   > 0:X1=x;
   > }
@@ -139,12 +143,54 @@ exit 3, with nothing written.
   > scopes: (sys (gpu (cta P1)))
   > exists ([q]=1)
   > EOF
-  $ litmus7 -gpu-target cuda -o . const-detector.litmus 2>&1 | grep -c 'HetLitmus REFUSED'
+  $ litmus7 -gpu-target cuda -o . unbacked-loc.litmus 2>&1 | grep -c 'but no proc of this test touches that location (no slot backs it)'
   1
-  $ litmus7 -gpu-target cuda -o . const-detector.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . unbacked-loc.litmus >/dev/null 2>&1
   [3]
-  $ test -d CONST-DETECTOR && echo "a refusal left a harness behind" || echo "nothing written"
+  $ test -d UNBACKED-LOC && echo "a refusal left a harness behind" || echo "nothing written"
   nothing written
+
+REFUSAL (b): the emitted weak-behaviour detector may never be a constant.  A
+constant-true one reports the weak behaviour on every run and a constant-false
+one reports "Never" on every run, so the emitter refuses rather than emit one.
+The fixtures are `true' and `false' because those are the ONLY conditions that
+reach this guard: the grammar folds them to an empty conjunction and an empty
+disjunction (lib/stateParser.mly), and every other parsable atom compiles to an
+outcome-column comparison or is refused by (a).
+  $ cat > const-true.litmus <<'EOF'
+  > Het CONST-TRUE
+  > "a condition that decides nothing, always true"
+  > {
+  > 0:X1=x;
+  > }
+  >  P0:cpu       | P1:gpu             ;
+  >  MOV W0,#1    | w[relaxed,sys] x 1 ;
+  >  STR W0,[X1]  |                    ;
+  > scopes: (sys (gpu (cta P1)))
+  > exists (true)
+  > EOF
+  $ litmus7 -gpu-target cuda -o . const-true.litmus 2>&1 | grep -c 'would emit a CONSTANT weak-behaviour detector (_weak = 1)'
+  1
+  $ litmus7 -gpu-target cuda -o . const-true.litmus >/dev/null 2>&1
+  [3]
+  $ cat > const-false.litmus <<'EOF'
+  > Het CONST-FALSE
+  > "a condition that decides nothing, always false"
+  > {
+  > 0:X1=x;
+  > }
+  >  P0:cpu       | P1:gpu             ;
+  >  MOV W0,#1    | w[relaxed,sys] x 1 ;
+  >  STR W0,[X1]  |                    ;
+  > scopes: (sys (gpu (cta P1)))
+  > exists (false)
+  > EOF
+  $ litmus7 -gpu-target cuda -o . const-false.litmus 2>&1 | grep -c 'would emit a CONSTANT weak-behaviour detector (_weak = 0)'
+  1
+  $ litmus7 -gpu-target cuda -o . const-false.litmus >/dev/null 2>&1
+  [3]
+  $ ls -d CONST-TRUE CONST-FALSE 2>/dev/null | wc -l
+  0
 
 The standalone GPU-only path is untouched by any of it: plain int atomic_ref on
 one word per location, no slots, no record, no readout.

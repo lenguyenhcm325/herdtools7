@@ -324,15 +324,15 @@ ours.
 CPU thread it has is a test thread, pinned and preloaded, and there is no second
 kind of CPU thread for the preload to be asymmetric about.
 
-The negative is what says so: no thread of this render is anything but a
-cpu_thread_P<n>, and a negative whose anchor matches nothing reports 0 and
-"passes" while checking nothing, so it is paired with the positive under it.
+Counting BOTH ways is what says so: the first pattern counts every CPU thread
+function this render has, the second only the test threads, and a thread of any
+other kind would push the first count above the second.
   $ grep -cE '^static void\* cpu_[A-Za-z_0-9]+\(void\* _a\)' $S.cu
   1
   $ grep -cE '^static void\* cpu_thread_P[0-9]+\(void\* _a\)' $S.cu
   1
 
-The worker thread is there and DOES preload -- so the 0 above is a real absence,
-not a failed match.
+That one thread does preload, so the equality above is between two counts that
+matched something, not between two patterns that both matched nothing.
   $ awk '/^static void\* cpu_thread_P0\(void\* _a\)/,/^}$/' $S.cu | grep -c 'het_cpu_preload'
   1

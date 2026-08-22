@@ -14,7 +14,8 @@ over its runs: sec 5.
                  header instead of assumed.
   2  Aggregate   every statistic re-derived independently in Python; every
                  class, tier and flag reachable.
-  4  Corpus      every harness carries the post-pass and a decode channel.
+  4  Corpus      every harness fills iters_scored, writes the outcomes_vary
+                 evidence and runs the post-pass.
   5  Stop rule   every reason reachable, each guard driven at its boundary.
   6  Scheduler   campaign.py end to end, against a stub runner.
 
@@ -81,9 +82,8 @@ BASE = dict(
 # ---------------------------------------------------------------------------
 # The record stream.  A cell is one (instance, run) and carries exactly what the
 # surviving estimator reads off it: which outcome het_verdict() gives it, whether
-# it saw the target, whether its decode is degenerate, and which decode channel it
-# has.  The fixtures are therefore counts of records rather than sampled series --
-# nothing here is drawn.
+# it saw the target, and whether its decode is degenerate.  The fixtures are
+# therefore counts of records rather than sampled series -- nothing here is drawn.
 # ---------------------------------------------------------------------------
 CELLS = 10                        # the record stream most fixtures are R long
 # One record more than the aggregate can hold.  het_stats_compute clamps its record

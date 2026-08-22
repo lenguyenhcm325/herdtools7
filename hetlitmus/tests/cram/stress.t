@@ -1,9 +1,9 @@
 GPU memory-stress guard (hetlitmus/docs/00-environment-design.md sec 3.5).  The
 emitted het harness carries the stress layer ported from [CudaLitmus], in the
-shape the design requires: stress in DEVICE memory, disjoint from the test; the device-scope
-window-opener kept separate from the system-scope cross-device rendezvous; and
-the perpetual-loop invariants (co-residency guard, observer slot, pinned trip
-counts) still standing underneath it.
+shape the design requires: stress in DEVICE memory, disjoint from the test; every
+scaffolding op confined to that scratchpad and to its own tally words; and the
+perpetual-loop invariants (co-residency guard, pinned trip counts) still standing
+underneath it.
 
 Stress is not an optimisation: on the NVIDIA GTX Titan the inter-CTA lb and sb
 tests were observed 0 per 100k without it, whereas the same source saw weak
@@ -52,7 +52,7 @@ lines.
   $ grep -c 'hipMalloc(&_scratch, sizeof(uint32_t)\*HET_SCRATCH_SIZE)' $MPH.hip
   1
 
-(c) the pure-stress workgroups: every block above the test/observer blocks
+(c) the pure-stress workgroups: every block above the test blocks
 hammers the scratchpad, and the grid is raised toward the co-resident cap.  The
 launch guard that must survive that raise -- an over-large cooperative launch is
 REJECTED at launch rather than silently deadlocking, a silent hang being

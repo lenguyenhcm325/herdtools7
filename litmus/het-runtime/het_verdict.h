@@ -688,10 +688,10 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     int y, deg;
 
     /* An UNSTAMPED cell is read by nothing here: het_verdict() stops at rec_magic,
-       so every field below it -- the target tallies, the decode channel, the run id,
-       the frame count -- is whatever memset left.  Skipped whole, or the aggregate
-       would let a harness the emitter built wrong corroborate itself and stop.  It
-       is COLD by that same test, so nothing usable is lost. */
+       so every field below it -- the readout counts, the target tallies, the run
+       id -- is whatever memset left.  Skipped whole, or the aggregate would let a
+       harness the emitter built wrong corroborate itself and stop.  It is COLD by
+       that same test, so nothing usable is lost. */
     if (dq & HET_DQ_REC_UNSTAMPED) continue;
     y   = recs[i].target_count >= 1;
     deg = het_cell_degenerate(&recs[i]);

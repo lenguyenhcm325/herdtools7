@@ -25,9 +25,8 @@ path has no such loop, its procs running once (litmus/gpuLang.ml dump_test).
 What it does not prove.  Nothing about what a compiler makes of those
 constructs: no ISA is read, no code is generated, no kernel runs.  It is also
 a parser of the .litmus CPU column's rendering only -- the per-iteration
-clflush/prefetcht0 preload and the CPU observer's plain volatile read touch the
-same locations and are outside its vocabulary by design
-(litmus/het-runtime/het_cpu_stress.h).
+clflush/prefetcht0 preload touches the same locations and is outside its
+vocabulary by design (litmus/het-runtime/het_cpu_stress.h).
 
 Corpus.  gpu-only tests plus the x86_64 het rendering that
 hetlitmus/tests/het/generate-x86.sh writes -- NOT the AArch64 het corpus, whose
@@ -1451,9 +1450,9 @@ def sweep(gpu_dir, x86_dir, jobs):
 
 # The two renders the injections are made from.  MP-sys-fence is the gpu-only
 # shape carrying both fences, both kinds of model op and two __out slots;
-# 2+2W-cg-sys-fence-2s-x86_64 is the het shape with two observer lanes, a GPU
-# test lane carrying two tagged stores across a fence, and a tagged CPU column
-# with an MFENCE between its stores.
+# 2+2W-cg-sys-fence-2s-x86_64 is the het shape with one GPU test lane carrying
+# two slot-addressed stores across a fence and an x86_64 CPU column with an
+# MFENCE between its stores.
 BITE_GPU = "MP-sys-fence"
 BITE_HET = "2+2W-cg-sys-fence-2s-x86_64"
 # The annotations no corpus test carries (litmus/HipLang.ml maps them, so an

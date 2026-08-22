@@ -38,8 +38,9 @@ HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 X86_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het-x86")
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
-# (corpus dir, test, -gpu-target, render extension) -- one shape per decode
-# channel and one per pair, because different shapes write different fields.
+# (corpus dir, test, -gpu-target, render extension) -- one shape per kind of
+# outcome column and one per pair, because different shapes write different
+# fields.
 LANES = [
     (HET_DIR, "MP-cg-sys-fence-2s", "cuda", "cu"),   # register columns only
     (HET_DIR, "2+2W-cg-sys-fence", "cuda", "cu"),    # location columns only
