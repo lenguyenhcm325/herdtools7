@@ -810,7 +810,7 @@ HETCPUONLYNEGDIR ?= $(CURDIR)/hetlitmus/tests/het
 HETCPUONLYNEG ?= MP-cg-sys-relaxed
 
 ### The CPU-only shapes as a campaign item: generate, emit, read every render for
-### the `_rec.cpu_only = 1' stamp against a het control that must stamp 0, print
+### the `_rec.cpu_only = 1' stamp against a negative control that stamps 0, print
 ### the campaign command.  It does NOT run them: only the target box's would count.
 hetlitmus-cpuonly: | build
 	@ echo
@@ -839,11 +839,11 @@ hetlitmus-cpuonly: | build
 	    || { cat "$$t/emit.log" ; rm -rf "$$t" ; exit 1 ; } ; \
 	  r="$$t/$(HETCPUONLYNEG)/$(HETCPUONLYNEG).cu" ; \
 	  grep -q '_rec\.cpu_only = 0;' "$$r" \
-	    || { echo "hetlitmus-cpuonly: the het control $(HETCPUONLYNEG) does not stamp" ; \
+	    || { echo "hetlitmus-cpuonly: the negative control $(HETCPUONLYNEG) does not stamp" ; \
 	         echo "  _rec.cpu_only = 0 -- the flag is a constant, so the six 1s above" ; \
 	         echo "  vouch for nothing" ; rm -rf "$$t" ; exit 1 ; } ; \
 	  rm -rf "$$t" ; \
-	  echo "hetlitmus-cpuonly: the het control $(HETCPUONLYNEG) stamps _rec.cpu_only = 0"
+	  echo "hetlitmus-cpuonly: the negative control $(HETCPUONLYNEG) stamps _rec.cpu_only = 0"
 	@ echo
 	@ echo "CPU-only harnesses in $(HETCPUONLYOUT), rendered for $(HETCPUONLYTARGET).  On the target box:"
 	@ echo "    cd <test> && sh comp.sh $(HETCPUONLYTARGET)-link && ./<test>    # SB and R must FIRE"

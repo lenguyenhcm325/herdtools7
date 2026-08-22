@@ -38,7 +38,8 @@ Claim(s) this project takes from it:
 * Footnote 7, p. 577 — "In fairness to the authors of [19], we were unable to
   observe weak behaviours using our method on the Nvidia GTX 280 chip they used."
   — is the precedent for reporting a non-observation as one. `het_verdict.h`
-  cites the key and asserts no location; the quotation lives here.
+  cites it with that locator and prints the citation, not the quotation; the
+  quotation lives here.
 
 ## [Kirkham20]
 
@@ -549,3 +550,19 @@ Deviation(s):
   LLVM IR pass may reorder two model operations before instruction selection,
   which is why the ISA read-back gate states that half as unverified rather than
   excluded.
+
+## [Iorga21]
+
+Dan Iorga, Alastair F. Donaldson, Tyler Sorensen, John Wickerson. *The Semantics
+of Shared Memory in Intel CPU/FPGA Systems.* Proc. ACM Program. Lang. 5, OOPSLA,
+Article 120 (October 2021), 28 pages. DOI 10.1145/3485497.
+
+Claim(s) this project takes from it:
+* §6 (Table 3) is the two-sided reading a heterogeneous campaign is assembled
+  into. Run a million times each, none of the 583 model-disallowed outcomes is
+  observed — "we did not observe any of the disallowed behaviours, even when
+  enabling the stress generator" — while weak behaviour does appear in 4 of the
+  10 allowed tests once stress is tuned by hand: one direction bounded by what
+  did not appear, the other by what did. `harness-reporting.md` §4 cites it for
+  the shape of that reading only. This harness holds no model, so it stops at
+  the observation and the pairing is an offline step.

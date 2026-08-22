@@ -129,9 +129,9 @@ GTX 280 footnote of [Alglave15 fn. 7] p. 577, whose quotation lives in `REFERENC
 The runtime carries the citation, not the quotation.
 
 The harness stops at the observation. A two-sided reading — a not-observed row bounding
-one direction and an observed row the other — is a claim about a model, and this harness
-holds none, so it is assembled **offline** against a verdicts file the reader supplies
-(`oracle-harness.md`).
+one direction and an observed row the other, as [Iorga21 §6] reads a CPU/FPGA campaign —
+is a claim about a model, and this harness holds none, so it is assembled **offline**
+against a verdicts file the reader supplies (`oracle-harness.md`).
 
 ## 5. The aggregate — what a campaign reports over its runs
 

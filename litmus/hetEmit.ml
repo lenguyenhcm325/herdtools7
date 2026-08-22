@@ -1457,7 +1457,7 @@ end
                and never the frame: the recovery scan validates N^{T_L} overlapping
                frames per N iterations, so a frame count is not a count of runs.
                Y = 1[target_count >= 1] per cell is what is counted
-               (hetlitmus/docs/00-environment-design.md sec 3.7). *)
+               (hetlitmus/docs/harness-reporting.md sec 5). *)
             s "  het_obs_record _recs[NUMBER_OF_RUN];\n" ;
             s "  memset(_recs, 0, sizeof _recs);\n" ;
             (* The campaign knobs are read at run time (getenv), never -D: the

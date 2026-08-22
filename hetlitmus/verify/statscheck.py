@@ -7,7 +7,8 @@ answering the same thing forever: a denominator that collapses onto the runs tha
 fired reports ALWAYS for a row that fired in 3 of 10, and a decode guard that
 never fires lets a constant read corroborate itself.  This gate drives the
 emitted header itself, which cannot drift from a copy.  What a null is entitled
-to report: hetlitmus/docs/00-environment-design.md sec 3.7.
+to report: hetlitmus/docs/harness-reporting.md sec 4; what a campaign reports
+over its runs: sec 5.
 
   1  Inputs      the Python mirrors of the header's knobs are compared to the
                  header instead of assumed.

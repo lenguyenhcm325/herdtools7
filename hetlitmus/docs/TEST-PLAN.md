@@ -221,7 +221,7 @@ mirrors them.
 | 6 | 3-proc het (`WRC-ccg-cta-relaxed`) | 3-proc scaffolding — buys down the proc-scaling assumption |
 | 7 | **HIP** render of `MP-cg-sys-relaxed-x86_64` (`comp.sh hip`) | the AMD/MI300A lane — the only rep here whose render is a `.hip`. `hipbuildcheck.py` compiles and links one too, and `amdisacheck.py` compiles all 644 device-only (`amd-faithfulness.md`). Missing `hipcc` ⇒ **SKIP, loudly**; never a pass |
 | 8 | order pair (`MP-cg-sys-sy.acq-2s`) | the only rep emitting inline `fence.acquire.sys`; first rep whose name contains a `.` |
-| 9 | order pair (`S-gc-sys-ra.rel-2s`) | the only rep emitting inline `fence.release.sys`, paired with CPU STLR/LDAPR; an observer-bearing shape, so `K_TAG` is 4 rather than 3 |
+| 9 | order pair (`S-gc-sys-ra.rel-2s`) | the only rep emitting inline `fence.release.sys`, paired with CPU STLR/LDAPR, and an observer lane |
 | 10 | order pair (`MP-cg-sys-st.sc-2s`) | the CPU `dmb st` form |
 | 11 | order pair (`MP-gc-sys-ld.sc-2s`) | the CPU `dmb ld` form on the `gc` cut (the CPU proc reads) |
 

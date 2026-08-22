@@ -175,45 +175,22 @@ Falsification is one-sided:
 > "we emphasise that for correct GPU programming the possibility, not probability of weak
 > behaviours is what matters." — [Alglave15 §4.3], p. 585.
 
-So what a null carries is not an interval. It is `het_verdict()`'s **liveness disqualifiers**, which
-discard a run whose stress, window-opener or decode channel was dead rather than reporting its empty
-histogram, and the reported effort, ending on **grow R, not N**. The stop rule holds the other side to a
-matching bar: a *sighting* is not written up until it reproduces (below). `het_verdict.h` is the
-normative source, `harness-reporting.md` describes the rule and every sentence a verdict prints, and this
-doc duplicates neither.
+So what a null carries is not an interval: it is the effort behind it, ending on **grow R, not N**, and
+the stop rule holds the other side to a matching bar — a *sighting* is not written up until it
+reproduces. `het_verdict.h` is the normative source, and `harness-reporting.md` is where the rule it
+implements is written down: the three outcomes, the liveness disqualifiers and caveats, the denominator,
+the corroboration tier and the stop rule, and every sentence a verdict prints. What this section carries
+is the decision and the reasoning that fixed it.
 
 **The frame is not the trial, and that correction is load-bearing.** The recovery scan validates
 `N^{T_L}` *overlapping* frames per `N` iterations [Melissaris20 §IV.A], so raw frame counts are neither
-independent nor Bernoulli. Every statistic is therefore scored at the **`(instance,run)` cell** via
-`Y = 1[target_count ≥ 1]` (this *refines* §3.4's per-frame tally). No reproducibility number is computed
-from it: what the layer reports of a sighting is how many independent **runs** reproduced it, and of a
-null the effort it cost.
-
-**The denominator is `R`, the runs executed, for every row alike.** "Usable" is outcome-dependent unless
-something co-running makes it outcome-independent, and nothing does: a cell is usable when it fired *or*
-when its own liveness counters were alive, so scoring over the usable cells alone would report `Always`
-for a row that fired in only some of its runs. `VOID` is the one class read off `R_usable` instead — a
-pool with no usable cell measured nothing at all, and that is an absence of data rather than a
-non-observation.
-
-**Where the hardware hours go.** One stop rule for every row, because no row carries a prediction to
-schedule against: a sighting stops it once it reproduces in `HET_CORROB_RUNS = 2` distinct clean runs; a
-*lone* clean sighting holds the row open for `HET_CONFIRM_RUNS` runs **measured from the run it fired
-in** — outranking the budget stop, since ending there would bank "seen once, stopped looking" — and then
-stops `UNCONFIRMED-SIGHTING`, which is neither a null nor a corroboration; a row that never fires stops
-when its budget is spent. `HET_RATE=1` turns the sighting stop off, so a row that fires yields a rate
-instead of a first sighting. `hetlitmus/campaign.py` applies the same rule across invocations, each with
-a fresh seed base — replaying a seed adds no new phase draw and is not a replicate.
+independent nor Bernoulli and the replication unit is the `(instance,run)` cell instead. That *refines*
+§3.4's per-frame tally rather than replacing it — the `outs_t` histogram is still fed once per validated
+frame — and no reproducibility number is computed from the unit (`harness-reporting.md` §5).
 
 **The scheduler has no parallelism axis, deliberately.** Running `H > 1` het pairs at once is real
 emitter work, and the pairs would share the one interconnect under test, so the gain is not the pair
 count. The policy levers stay `--budget-runs`, `--confirm-runs` and `--rate`.
-
-**Shipped (`het_verdict.h` is normative).** The interleaving-liveness gate is **channel-aware**: reader
-shapes use `interleavings_detected`, the store-only (2+2W) shapes — which have no reader — use
-`observer_unique_count ≥ θ` instead, and a record with neither channel fails closed. And the outcome
-carries **no prediction**: one axis, three values — `HET_OBSERVED`, `HET_NOT_OBSERVED`,
-`HET_COLD_INVALID` — where the only question a null answers is what this run's own cells reached.
 
 **Nothing here prices what the harness missed.** The dispersion-aware 95 % upper bound on the rate of a
 never-observed outcome is **withdrawn**, and with it every scheduler arm, tuner knob and roll-up column
@@ -246,14 +223,15 @@ het_obs_record {
 ```
 
 This cleanly separates **did we see it** (`target_count`) from **could we have** (`interleavings_detected`
-+ skew). It is the input to §3.7's liveness gate and stopping rule. The `outs_t` histogram is retained
-(fed once per validated frame) so an offline `oracle-compare.sh` pass over the log keeps working.
++ skew). It is the input to the liveness gate and the stop rule (`harness-reporting.md` §3, §5). The
+`outs_t` histogram is retained (fed once per validated frame) so an offline `oracle-compare.sh` pass over
+the log keeps working.
 
 *(The block above is the illustrative core; the **shipped** `het_obs_record` — normative in `het_verdict.h`
 — carries a good deal more: `rec_magic` (an unstamped record is refused before any other field is read), the
 `sync_valid`/`obs_valid` channel flags plus `observer_unique_count` for the store-only channel, the
 `gpu_lanes`/`spin_lanes` build facts the structural-absence caveat asserts, and the per-mechanism
-stress-liveness counters the §3.7 disqualifiers read.)*
+stress-liveness counters the disqualifiers read (`harness-reporting.md` §3).)*
 
 ---
 
@@ -307,7 +285,8 @@ Everything below is unmeasurable on the dev box (wrong substrate, §3.2). **Firs
    `HET_NOISE_GPU_BLOCKS` against the cap the emitted driver computes at start-up
    (`*OccupancyMaxActiveBlocksPerMultiprocessor` x the SM count), taken on the target *before* a
    campaign. The stress blocks fill only what that cap leaves over, so an over-large test geometry
-   silently squeezes the stress population to zero (`faithfulness.md`).
+   squeezes the stress population to zero — which the driver warns about *before* the run rather than
+   leaving to the tally afterwards (`faithfulness.md`), but only the target says which geometries do it.
 
 **`HET_WINDOW` calibration is a precondition for nearly half the corpus.** A `T_L ≥ 2` shape's exhaustive
 `O(N^T_L)` scan is capped at production `N` (`HET_EXHAUSTIVE_MAX = 4096`) → `exhaustive_valid = 0`, so such
@@ -378,8 +357,8 @@ GH200/CMCM (Bagchi has that).
 
 - **External sources:** every `[Key]` above resolves in `hetlitmus/docs/REFERENCES.md`, which holds the
   full citation, the claim this project takes from it, and any deviation from it.
-- **The mechanisms in full:** `harness-reporting.md` (what a printout means — §3.7's rule, the
-  liveness disqualifiers and caveats, the reporting tiers), `faithfulness.md` (what the static checkers
+- **The mechanisms in full:** `harness-reporting.md` (what a printout means — the three-outcome rule,
+  the liveness disqualifiers and caveats, the reporting tiers), `faithfulness.md` (what the static checkers
   can and cannot see), `het-emission.md` (how a harness is built), `oracle-harness.md` (the offline
   comparison), `TEST-PLAN.md` (which gate proves what).
 - **What actually ships:** the runtime headers under `litmus/het-runtime/` — `het_verdict.h` above all,

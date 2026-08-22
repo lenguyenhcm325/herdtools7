@@ -1,7 +1,7 @@
-Statistics-layer guard (hetlitmus/docs/00-environment-design.md sec 3.7; where
-that design and litmus/het-runtime/het_verdict.h disagree, the header is what
-ships).  A "Never" is readable only against the effort that produced it, so the
-harness has to carry every input the estimator reads out of a run: the record
+Statistics-layer guard (hetlitmus/docs/harness-reporting.md sec 5; where a
+design document and litmus/het-runtime/het_verdict.h disagree, the header is
+what ships).  A "Never" is readable only against the effort that produced it,
+so the harness carries every input the estimator reads out of a run: the record
 array that outlives the run loop, the campaign knobs read at run time, the
 adaptive stop, and the decode channel each shape actually has.
 

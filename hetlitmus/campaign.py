@@ -7,9 +7,8 @@ outlives the confirmation window, or until its budget is gone.  That policy is
 litmus/het-runtime/het_verdict.h's, applied here over POOLED runs rather than over the
 records one invocation holds, while inside an invocation the harness applies the
 header's rule itself (HET_ADAPTIVE=1); two units, so the two scales need not reach the
-same arm on the same row.  `check_flag_mirror' pins the part that must agree.  The rule
-and its knob table: hetlitmus/docs/00-environment-design.md sec 3.7 and
-hetlitmus/spotcheck/README.md.
+same arm on the same row.  `check_flag_mirror' pins the part that must agree.  The rule:
+hetlitmus/docs/harness-reporting.md sec 5; the knob table: hetlitmus/spotcheck/README.md.
 
 RUNNER CONTRACT: --runner is a command template with '{test}' and '{dir}' substituted.
 It must execute ONE invocation of the test's harness binary and forward the harness

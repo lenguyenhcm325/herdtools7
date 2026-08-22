@@ -4,19 +4,11 @@
 #
 #   usage:  ./generate-cpuonly.sh OUTDIR
 #
-# A het test rather than an upstream X86_64 one, and that is the whole point: a
-# plain litmus7 X86 run allocates x and y with litmus7's own allocator, while
-# the question here is whether the SHARED allocation is write-back cacheable.
-# The het harness reaches it through gd_alloc_shared (HET_ALLOC /
-# hipMallocManaged), runs the same stress and prints the same verdict
-# machinery.  The emitter classifies procs by their device tag and sets
-# `_rec.cpu_only = 1' when every one of them is a CPU proc, so nothing here
-# depends on the file name saying "cpuonly".
-#
-# Treat the 2+2W row as unresolved: it is the one store-only shape here, so its
-# cycle is reconstructed by an observer whose scan matches store ids across
-# iterations, where the coherence order it witnesses is defined within one.  The
-# four shapes with a real reader are unaffected.
+# Het rather than upstream X86_64 so the cells sit on the SHARED allocation
+# (gd_alloc_shared), which is what the set asks about; the emitter stamps
+# `_rec.cpu_only = 1' from the procs' device tags, so nothing here depends on
+# the file name.  Why the set exists, what each row must show and why the 2+2W
+# row is unresolved: hetlitmus/docs/het-emission.md, "The CPU-only set".
 set -e
 # OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so
 # a relative path -- what the Makefile caller passes -- is correct.  The same
