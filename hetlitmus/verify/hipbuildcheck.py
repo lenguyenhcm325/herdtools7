@@ -40,11 +40,10 @@ Nine phases, each of which must be seen to fail:
                       it annotates, and hipcc compiles it
 
 fence-lowering compiles litmus/HipLang.ml's __builtin_amdgcn_fence as the
-harness ships it, host half and all; what the compiler makes of it is read back
-by hetlitmus/verify/amdisacheck.py (hetlitmus/docs/amd-faithfulness.md).  What
-that compile settles, what it leaves open and how much of the corpus carries a
-fence are in hetlitmus/docs/hip-emitter.md ("Fences", "Compile status & next
-steps").
+harness ships it, host half and all; what the compiler makes of it is
+UNVERIFIED (hetlitmus/docs/amd-faithfulness.md).  What that compile settles,
+what it leaves open and how much of the corpus carries a fence are in
+hetlitmus/docs/hip-emitter.md ("Fences", "Compile status & next steps").
 
 Correctness in isolation is not the mechanism being live.  hip-allocator drives
 the resolver out-of-line, so on its own it would pass a harness that never calls
@@ -1134,9 +1133,8 @@ def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda, d_fence, fence_src):
 
     # --- fence-lowering -----------------------------------------------------
     # OMISSION: the fence gone from the render.  The .hip still compiles, so on
-    # this gate the text assertion is what stands between it and a fence-free
-    # AMD harness for a fence test; what the compiler made of the fence is read
-    # back by hetlitmus/verify/amdisacheck.py.
+    # this gate the text assertion is ALL that stands between it and a fence-free
+    # AMD harness for a fence test: nothing reads the compiled fence back.
     w = W("p8o", d_fence)
     hp = os.path.join(w, test_of(w) + ".hip")
     s = re.sub(r"^.*__builtin_amdgcn_fence\(.*\n", "",

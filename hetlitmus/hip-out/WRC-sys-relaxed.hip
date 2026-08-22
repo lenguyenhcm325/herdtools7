@@ -47,7 +47,7 @@ __global__ void litmus_WRC_sys_relaxed(int* x, int* y, int* __out) {
   }
 }
 
-// ---- host harness (illustrative; hetlitmus/verify/amdisacheck.py compiles this file's device half for gfx942 with hipcc -S) ----
+// ---- host harness (illustrative; hetlitmus/verify/hipsrccheck.py checks this file's device half at source level, no compile) ----
 // Result buffer layout: __out[proc * 4 + regIndex].
 // Reset all globals to 0 before each launch; the weak outcome under
 // test is exactly the `condition' line above.

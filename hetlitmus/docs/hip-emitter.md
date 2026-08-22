@@ -52,19 +52,18 @@ AGENT=4, SYSTEM=5` (verbatim from `amd_hip_atomic.h`). The cta/gpu/sys ↔
 workgroup/agent/system mapping is the AMD half of the vendor ladder
 cta↔workgroup, gpu↔agent, sys↔system.
 
-**Fences (order + scope; compiled and read back under a gate — see *Compile
+**Fences (order + scope; read under a gate at source level — see *Compile
 status* below).**
 The `-F` variants do synchronise with release/acquire *atomics*, not fences —
 their sources carry no fence intrinsic at all (`gpu-only-corpus.md`, "Why the
 synchronised verdicts hold") — but the corpus is not fence-free: the
 `-fence` families carry `f[order,scope]` in **42 of the 173** gpu-only and
-**180 of the 471** het `.litmus`. Every one of those renderings now reaches an
-AMD compiler under a *gate*: `make hetlitmus-amd-faithful` compiles all 644 of
-the AMD lane's renders (173 gpu-only + 471 x86_64 het) with `hipcc -S` and reads
-the emitted gfx942 lowering back against the annotation
+**180 of the 471** het `.litmus`. Every one of those renderings is read under a
+*gate*: `make hetlitmus-hipsrc` checks all 644 of the AMD lane's renders (173
+gpu-only + 471 x86_64 het) against their annotations at source level
 ([`amd-faithfulness.md`](amd-faithfulness.md)), and `make hetlitmus-hipbuild`'s
-`fence-lowering` phase compiles one of them as the harness itself ships it. Both
-fail outright where `hipcc` is absent. What each settles is *Compile status*
+`fence-lowering` phase compiles one of them as the harness itself ships it,
+failing outright where `hipcc` is absent. What each settles is *Compile status*
 below.
 HipLang lowers a fence to the Clang builtin
 **`__builtin_amdgcn_fence(<order>, "<scope-string>")`**, which carries **BOTH**
@@ -106,22 +105,15 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
   `hetlitmus/compile-hip.sh [INDIR] [OUTDIR]` cross-compiles every `.hip` in
   INDIR for the MI300A ISA (`gfx942`) with `hipcc --offload-arch=gfx942
   -std=c++17 <test>.hip -o <test>`, a by-hand build of one host binary per
-  render; the gated compile of every render is `make hetlitmus-amd-faithful`
-  (next bullet). `amdclang++` accepts the
+  render; the gated compiles (next bullet) each build one render, not all of
+  them. `amdclang++` accepts the
   `__hip_atomic_*` / `__HIP_MEMORY_SCOPE_*` builtins (nvcc does **not**, so this
   requires the HIP-Clang stack, not HIP-over-CUDA). A clean build proves the
   scope/order lowering is valid for the target ISA; it does NOT validate
   memory-model behaviour. The host `main()` is illustrative scaffolding (launch
   geometry + result-buffer layout), as on the CUDA side.
-- **What a target actually compiles.** Three *gated* AMD compile paths, all
+- **What a target actually compiles.** Two *gated* AMD compile paths, both
   under the `hetlitmus-test-toolchain` umbrella:
-  - `make hetlitmus-amd-faithful` (`verify/amdisacheck.py --all`) compiles all
-    644 of the AMD lane's renders — 173 gpu-only + 471 x86_64 het, the
-    fence-carrying ones included — with `hipcc --offload-arch=gfx942 -std=c++17
-    --offload-device-only -S`, reads the emitted gfx942 lowering back against
-    each `.litmus` annotation, and cross-checks two of them against the
-    disassembly of the device object `hipcc --genco` builds
-    ([`amd-faithfulness.md`](amd-faithfulness.md)).
   - `make hetlitmus-hipbuild` (`verify/hipbuildcheck.py`) compiles, links and
     re-builds one emitted x86 harness, `MP-cg-sys-acqrel-2s-x86_64`, and
     **fails** when `hipcc` is absent; its `fence-lowering` phase renders the
@@ -134,10 +126,9 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
   `compile-hip.sh` sits beside them as a manual convenience: no make target and
   no gate invokes it, and its default INDIR is `hip-out/`, the 10 committed
   goldens — all fence-free. The `10/10` and `173/173` figures above are a
-  hand-run of that script, which links a host binary per render; the gate above
-  compiles the same 173 renders device-only. CUDA has no `compile-cuda.sh`
-  twin; neither that absence nor this script's presence is a coverage claim
-  either way.
+  hand-run of that script, which links a host binary per render. CUDA has no
+  `compile-cuda.sh` twin; neither that absence nor this script's presence is a
+  coverage claim either way.
 - **What reads the emission without a compiler.** `make hetlitmus-hipsrc`
   (`verify/hipsrccheck.py`), on the CUDA-free lane: it checks the same 644
   renders at source level — each model op's builtin, order-constant,

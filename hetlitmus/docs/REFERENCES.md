@@ -523,34 +523,6 @@ Claim(s) this project takes from it:
   `hipDeviceProp_t::integrated`, "APU vs dGPU". It is the only runtime query that
   separates MI300A from MI300X, which both report `gfx942`.
 
-## [LLVMSched]
-
-LLVM Project. *LLVM source*, `github.com/llvm/llvm-project`, branch `main` — the
-machine-instruction scheduler's memory-dependence construction and the AMDGPU
-override of it. Locators are the function names, which outlive the line numbers
-recorded beside them:
-
-* `MachineMemOperand::isUnordered` — `llvm/include/llvm/CodeGen/MachineMemOperand.h:328-332`
-* `MachineInstr::hasOrderedMemoryRef` — `llvm/lib/CodeGen/MachineInstr.cpp:1595-1612`
-* `TargetInstrInfo::isGlobalMemoryObject` — `llvm/lib/CodeGen/TargetInstrInfo.cpp:2232-2235`
-* `ScheduleDAGInstrs::buildSchedGraph` — `llvm/lib/CodeGen/ScheduleDAGInstrs.cpp:876-921`
-* `SIInstrInfo::isGlobalMemoryObject` — `llvm/lib/Target/AMDGPU/SIInstrInfo.cpp:11708-11713`
-
-Claim(s) this project takes from it:
-* The machine scheduler does not reorder two atomic accesses against each other.
-  A memory operand whose success ordering is neither `NotAtomic` nor `Unordered`
-  is not unordered, so the instruction carrying it has an ordered memory
-  reference, so it is a global memory object; `buildSchedGraph` then makes such
-  an instruction the barrier chain and gives every later memory instruction a
-  dependency edge to it. On AMDGPU the hook is overridden only to exempt IGLP
-  pseudo-instructions, which a litmus kernel never carries.
-
-Deviation(s):
-* This bounds the machine scheduler alone. Nothing here says whether a mid-level
-  LLVM IR pass may reorder two model operations before instruction selection,
-  which is why the ISA read-back gate states that half as unverified rather than
-  excluded.
-
 ## [Iorga21]
 
 Dan Iorga, Alastair F. Donaldson, Tyler Sorensen, John Wickerson. *The Semantics

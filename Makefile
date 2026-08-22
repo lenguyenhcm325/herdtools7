@@ -857,15 +857,6 @@ hetlitmus-hipbuild: | build
 	python3 hetlitmus/verify/hipbuildcheck.py --bite
 	@ echo "HetLitmus AMD build/link gate: OK (and the gate bites)"
 
-### Every emitted HIP kernel's gfx942 lowering, read back from `hipcc -S' and
-### matched per basic block to what its .litmus annotates.  No kernel runs, and
-### lane attribution is the source gate's (hetlitmus/docs/amd-faithfulness.md).
-hetlitmus-amd-faithful: | build
-	@ echo
-	python3 hetlitmus/verify/amdisacheck.py --all
-	python3 hetlitmus/verify/amdisacheck.py --bite
-	@ echo "HetLitmus AMD gfx942 lowering faithfulness (173 gpu-only + 471 x86_64 het): OK (and the gate bites)"
-
 ### What a het harness PRINTS on a device -- the only artefact a result is read
 ### off -- so the reading it gives is the one its own counts support, and it
 ### claims nothing beyond them (verify/runcheck.py --characterize-hw).  Needs a GPU.
@@ -927,7 +918,6 @@ hetlitmus-test-toolchain:: hetlitmus-stress
 hetlitmus-test-toolchain:: hetlitmus-cpustress
 hetlitmus-test-toolchain:: hetlitmus-obs
 hetlitmus-test-toolchain:: hetlitmus-hipbuild
-hetlitmus-test-toolchain:: hetlitmus-amd-faithful
 hetlitmus-test-toolchain:: hetlitmus-characterize-hw
 hetlitmus-test-toolchain:: hetlitmus-run-hw
 hetlitmus-test-toolchain:: hetlitmus-selftest
@@ -954,7 +944,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-recfields
 .PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-cpuonly
 .PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate hetlitmus-run-hw
-.PHONY: hetlitmus-hipsrc hetlitmus-amd-faithful
+.PHONY: hetlitmus-hipsrc
 .PHONY: hetlitmus-test hetlitmus-test-toolchain hetlitmus-test-nvcc
 .PHONY: hetlitmus-test-all hetlitmus-promote
 

@@ -219,7 +219,7 @@ mirrors them.
 | 4 | `*-fence-2s` (`2+2W-cg-sys-fence-2s`) | CPU `DMB.SY` |
 | 5 | 4-proc het (`IRIW-cgcc-cta-relaxed`) | largest barrier / proc count |
 | 6 | 3-proc het (`WRC-ccg-cta-relaxed`) | 3-proc scaffolding — buys down the proc-scaling assumption |
-| 7 | **HIP** render of `MP-cg-sys-relaxed-x86_64` (`comp.sh hip`) | the AMD/MI300A lane — the only rep here whose render is a `.hip`. `hipbuildcheck.py` compiles and links one too, and `amdisacheck.py` compiles all 644 device-only (`amd-faithfulness.md`). Missing `hipcc` ⇒ **SKIP, loudly**; never a pass |
+| 7 | **HIP** render of `MP-cg-sys-relaxed-x86_64` (`comp.sh hip`) | the AMD/MI300A lane — the only rep here whose render is a `.hip`. `hipbuildcheck.py` compiles and links one too; no gate compiles the corpus, and what `hipcc` makes of the emitted constants is unverified (`amd-faithfulness.md`). Missing `hipcc` ⇒ **SKIP, loudly**; never a pass |
 | 8 | order pair (`MP-cg-sys-sy.acq-2s`) | the only rep emitting inline `fence.acquire.sys`; first rep whose name contains a `.` |
 | 9 | order pair (`S-gc-sys-ra.rel-2s`) | the only rep emitting inline `fence.release.sys`, paired with CPU STLR/LDAPR, and an observer lane |
 | 10 | order pair (`MP-cg-sys-st.sc-2s`) | the CPU `dmb st` form |
@@ -251,7 +251,7 @@ Umbrellas (what you press):
   `-x86body` · `-x86fixture` · `-cpuonly` · `-run-gate`.
 - **`make hetlitmus-test-toolchain`** (old name `hetlitmus-test-nvcc`, kept as an alias)
   → the toolchain lane: `hetlitmus-faithful` · `-stress` ·
-  `-cpustress` · `-obs` · `-hipbuild` · `-amd-faithful` · `-characterize-hw` ·
+  `-cpustress` · `-obs` · `-hipbuild` · `-characterize-hw` ·
   `-run-hw` · `-selftest` · `-smoke`. This lane has **outgrown Layer 3**: it still needs CUDA for the compile
   members, but three of them now need a real device — `-run-hw` and `-characterize-hw`
   run the wrapper and a built harness on the GPU, and `-stress`'s device-probe check drives
@@ -294,6 +294,15 @@ by label, and `hipbuildcheck`'s allocator bite reads the integrated/discrete lit
 The seven with no seam left went with the checks they bit: `x86bodycheck`'s
 `machine-short`, `no-note` and `brand-readme`, three `runcheck` injections and its `[E]`
 vendor-word scan.
+
+**The AMD ISA read-back gate went the same way** — `hetlitmus-amd-faithful` and
+`verify/amdisacheck.py`, which compiled every `.hip` with `hipcc -S` and matched the
+gfx942 cache-control sequences against a hand-derived per-generation lowering profile.
+AMD publishes no stable specified virtual ISA and `AMDGPUUsage` spells the memory model
+once per GPU generation, so such a gate is only as generic as its profile data.
+`hipsrccheck.py` (`hetlitmus-hipsrc`, base lane) is the sole AMD faithfulness gate now,
+and what `hipcc` makes of the emitted constants is stated as unverified rather than
+checked (`amd-faithfulness.md`). Nothing polices the absence.
 
 **A gate that is not in the build is a script, not a gate — `hetlitmus-stats` is the
 worked example.** `statscheck.py` once sat in the tree with **no Makefile target invoking

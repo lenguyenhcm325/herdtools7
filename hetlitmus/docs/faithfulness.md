@@ -18,10 +18,10 @@ token-level lowering faithfulness of the chain
 
 The AMD lane's twin of this document is
 [`amd-faithfulness.md`](amd-faithfulness.md). The HIP path carries no inline
-assembly, so it needs *two* gates over its own 644 renders — the 173 gpu-only
-plus the **x86_64** het 471, not the AArch64 471 read here: a source-level one
-(`hipsrccheck.py`, `make hetlitmus-hipsrc`, base lane) and an ISA read-back one
-(`amdisacheck.py`, `make hetlitmus-amd-faithful`, toolchain lane).
+assembly, so its one gate reads the emitted source rather than generated code
+(`hipsrccheck.py`, `make hetlitmus-hipsrc`, base lane), over its own 644
+renders — the 173 gpu-only plus the **x86_64** het 471, not the AArch64 471 read
+here. What `hipcc` lowers that source to is unverified.
 
 ## Why this is the right guard
 

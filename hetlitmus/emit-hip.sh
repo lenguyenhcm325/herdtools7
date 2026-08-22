@@ -3,10 +3,9 @@
 #
 # The HIP-side entry point named in every emitted .hip banner (litmus/HipLang.ml).
 # The work lives in ./emit-gpu.sh; this names the vendor, so everything lands in
-# OUTDIR, whose .gitignore keeps only the .hip.  `make hetlitmus-amd-faithful'
-# compiles every render's device half and reads the gfx942 lowering back;
-# ./compile-hip.sh builds them into host binaries by hand; running a kernel
-# needs an AMD device.
+# OUTDIR, whose .gitignore keeps only the .hip.  No gate compiles the .hip
+# renders; `make hetlitmus-hipsrc' reads them at source level.  ./compile-hip.sh
+# builds them into host binaries by hand; running a kernel needs an AMD device.
 #
 # Usage:  ./emit-hip.sh [OUTDIR]      (default OUTDIR=./hip-out)
 set -euo pipefail
