@@ -23,9 +23,11 @@ runtime header they all stage:
                follows it and the tested ops follow that.
   3 CPU thread one het_rdv_host() per cpu_thread_P<n>, inside its loop, ahead of
                the het_run_P<n> call the tested body lives in.
-  4 Readout    exactly one add_outcome_outs() site, inside the readout loop, so
-               an iteration reaches the histogram once and only after its
-               rendezvous flags were read.
+  4 Readout    exactly one add_outcome_outs() site and one discard site, both
+               inside the readout loop, so an iteration reaches the histogram
+               once and only after its rendezvous flags were read -- and one
+               those flags reject is COUNTED, since that count is the whole
+               input to the discard-rate disqualifier.
   5 Knobs      every rendezvous knob a render uses is defined by the staged
                het_rdv.h, and _dump_one prints every column as a number.
 
@@ -166,6 +168,7 @@ MODEL_OP = re.compile(r'//\s*[wrf]\[')
 RUN_CALL = re.compile(r'^\s*het_run_P(\d+)\(')
 ADD_OUT = re.compile(r'\badd_outcome_outs\(')
 SCORED = re.compile(r'^\s*_rec\.iters_scored\+\+;$')
+DISCARDED = re.compile(r'^\s*if \(!_ok\) \{ _rec\.iters_discarded\+\+; continue; \}$')
 DUMP_ONE = re.compile(r'^static void _dump_one\(')
 
 
@@ -289,6 +292,19 @@ def check_render(label, name, text):
                        "loop, so an outcome reaches the histogram without its "
                        "iteration's rendezvous flags being read" % who0)
 
+    # ... and the iteration those flags rejected, which is counted and not merely
+    # skipped: iters_discarded is the whole input to the discard-rate rule, so a
+    # readout that stopped counting would read a run the two sides never shared as
+    # a clean null.
+    disc = [i for i, ln in enumerate(lines) if DISCARDED.match(ln)]
+    if len(disc) != 1:
+        bad.append("%s carries %d discard site(s), not one -- an iteration whose "
+                   "rendezvous timed out is counted, and that count is what "
+                   "disqualifies the run" % (who0, len(disc)))
+    elif len(scored) == 1 and disc[0] > scored[0]:
+        bad.append("%s scores an iteration before it discards one, so an iteration "
+                   "its rendezvous flags rejected reaches the histogram too" % who0)
+
     # ---- 5. the outcome dump prints numbers ------------------------------
     dump = [i for i, ln in enumerate(lines) if DUMP_ONE.match(ln)]
     if len(dump) != 1:
@@ -388,7 +404,7 @@ def run(quiet=False, render_tamper=None, header_tamper=None, only=None,
         return 1
     print("\nRDVCHECK OK (%d + %d render(s): one rendezvous per participant per "
           "iteration, ahead of every tested access, relaxed and fence-free, and "
-          "one histogram site inside the readout)"
+          "one histogram site and one discard site inside the readout)"
           % (HET_N, hip.X86_HET_N))
     return 0
 
@@ -449,6 +465,15 @@ def _drop_cpu_rendezvous(text):
     return text.replace(line[0] + "\n", "", 1)
 
 
+def _drop_discard_count(text):
+    """(e) The readout stops counting the iterations its flags rejected -- and,
+    with the `continue' that line carries, stops skipping them."""
+    line = [ln for ln in text.splitlines() if DISCARDED.match(ln)]
+    if not line:
+        raise GateError("bite (e): the render carries no discard site to drop")
+    return text.replace(line[0] + "\n", "", 1)
+
+
 BITES = [
     ("(a) the rendezvous moved BEHIND the tested accesses",
      "sits AFTER a tested access", _move_rdv_after_tested_ops, None),
@@ -458,6 +483,8 @@ BITES = [
      "add_outcome_outs site(s)", _second_histogram_site, None),
     ("(d) het_rdv_host dropped from one CPU thread",
      "a thread that never arrives", _drop_cpu_rendezvous, None),
+    ("(e) the readout stops counting the iterations it discarded",
+     "discard site(s), not one", _drop_discard_count, None),
 ]
 
 

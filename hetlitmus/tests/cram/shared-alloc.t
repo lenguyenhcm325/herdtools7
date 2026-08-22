@@ -143,10 +143,11 @@ value, malloc without pageable access, managed without concurrent access.
 
 pinned is permitted without native host atomics -- it is the escape hatch for a
 box that has neither of the other two -- but it says what it cannot promise: the
-plain tested accesses stand, the barrier's read-modify-write does not.
+plain tested accesses stand, the rendezvous counter's read-modify-write does not,
+and what a lost increment costs is the cap and the discard, not the session.
   $ printf '%s\n' "$MODE" | grep -c 'cudaDevAttrHostNativeAtomicSupported'
   2
-  $ printf '%s\n' "$MODE" | grep -c 'the run can hang at'
+  $ printf '%s\n' "$MODE" | grep -c 'slow rather than hung'
   1
 
 The banner is the ATS-vs-HMM discriminator (usesHostPageTables: 1 = hardware

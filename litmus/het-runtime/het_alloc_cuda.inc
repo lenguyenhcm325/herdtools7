@@ -117,10 +117,12 @@ static int _het_alloc_mode(void){
             "cudaDevAttrHostNativeAtomicSupported=0.  On mapped memory only plain "
             "naturally-aligned loads/stores of 1/2/4/8/16 bytes are system-scope "
             "atomic; a read-modify-write is NOT.  The tested accesses are plain "
-            "loads and stores and stand, but the rendezvous BARRIER is a fetch_add "
-            "shared with the CPU, so increments can be lost and the run can hang at "
-            "the barrier.  Use a timeout, and do not read this mode as evidence "
-            "about hardware atomicity.\n");
+            "loads and stores and stand, but the rendezvous counter is a fetch_add "
+            "shared with the CPU, so an increment can be lost -- and an iteration "
+            "whose partner never arrives spends its whole cap and is discarded, so "
+            "the run is slow rather than hung and is thrown away once the discards "
+            "pass their budget.  Do not read this mode as evidence about hardware "
+            "atomicity.\n");
   }
   return _mode;
 }

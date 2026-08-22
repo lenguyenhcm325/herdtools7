@@ -28,10 +28,14 @@ set -euo pipefail
 # results dir when it is not the default, so a bundle can never pass a stub probe
 # or a stub compiler off as the real one.
 LITMUS7="${HET_LITMUS7:-$LITMUS7}"
-# Seconds per harness invocation.  campaign.py has no timeout of its own, and a
-# harness that stalls at the rendezvous (the shared-memory banner names the
-# allocators that can) would otherwise hold the session open indefinitely.
-HET_RUN_TIMEOUT="${HET_RUN_TIMEOUT:-300}"
+# Seconds per harness invocation -- campaign.py has no timeout of its own.  An
+# invocation is up to NUMBER_OF_RUN runs, and on a box that loses rendezvous
+# arrivals (the shared-memory banner names the allocators that can) every
+# iteration spends its whole cap before it is discarded: such a run is slow
+# rather than hung, and killing it here reaches campaign.py as `runner
+# rc=124', which it records as an ERROR row -- a dead partner read as a
+# tooling failure, which is what the discard rule exists to prevent.
+HET_RUN_TIMEOUT="${HET_RUN_TIMEOUT:-900}"
 
 usage() {
   cat <<'EOF'

@@ -13,7 +13,8 @@ over its runs: sec 5.
   1  Inputs      the Python mirrors of the header's knobs are compared to the
                  header instead of assumed.
   2  Aggregate   every statistic re-derived independently in Python; every
-                 class, tier and flag reachable.
+                 class, tier and flag reachable; the machine line's field set is
+                 the one every stand-in under verify/ speaks.
   4  Corpus      every harness fills iters_scored, writes the outcomes_vary
                  evidence and runs the post-pass.
   5  Stop rule   every reason reachable, each guard driven at its boundary.
@@ -279,6 +280,19 @@ for _c in _never_cold[3:]:
 case(NEVER_COLD_CASE, _never_cold,
      obs="Never", k=0, R=CELLS, R_usable=3, scored=CELLS * 100000)
 
+# ... and the OTHER half of that disclosure: the iterations the rendezvous threw
+# away before the readout could score them.  Every fixture above discards nothing, so
+# without this one the discarded total is a constant zero over the whole input space
+# and a sum that stopped summing would read as right.  Each of the ten runs here
+# scores 60 % of N and discards the rest, which is under the share of N that
+# disqualifies a run -- that boundary is verify/verdictcheck.py's subject, and here
+# the cells stay live so only the two totals move.
+DISCARD_CASE = "never-with-part-of-every-run-discarded"
+case(DISCARD_CASE,
+     stream(CELLS, iters_scored=60000, iters_discarded=40000),
+     obs="Never", k=0, R=CELLS, R_usable=CELLS,
+     scored=CELLS * 60000, discarded=CELLS * 40000)
+
 # --- More runs than the aggregate can hold ----------------------------------
 # The tail beyond HET_STATS_MAX_CELLS is dropped from every statistic, which would
 # quietly report a campaign as having spent less effort than it did -- so st->R keeps
@@ -485,6 +499,7 @@ def py_reference(cells_):
     return dict(obs=obs, k=k, k_eff=k_eff, k_runs=len(runs), n_degen=n_degen,
                 first_sight=first_sight,
                 scored=sum(c["iters_scored"] for c in cells_ if stamped(c)),
+                discarded=sum(c["iters_discarded"] for c in cells_ if stamped(c)),
                 R=R, R_usable=R_usable, tier=tier, cpu_only=cpu_only)
 
 
@@ -498,14 +513,16 @@ C_MAIN = r"""
 static void run_case(const char *name, const het_obs_record *recs, int n) {
   het_stats_t st;
   het_stats_compute(recs, n, &st);
-  printf("CASE|%s|%s|%d|%d|%d|%d|%d|%s|0x%x|%d|%d|%llu\n",
+  printf("CASE|%s|%s|%d|%d|%d|%d|%d|%s|0x%x|%d|%d|%llu|%llu\n",
          name, het_obs_class_name(st.obs), st.k, st.k_eff, st.k_runs, st.n_degen,
          st.R_usable, het_sighting_name(st.tier), st.flags,
          /* st.R is the PRE-clamp record count: R > R_usable can mean cold cells,
             R > HET_STATS_MAX_CELLS means the tail was discarded. */
          st.R, st.n_at_first_sight,
-         /* the EFFORT total, summed per cell: what the effort line discloses */
-         (unsigned long long)st.iters_scored);
+         /* the effort totals, summed per cell: the iterations the readout
+            scored, and the ones the rendezvous threw away before it could */
+         (unsigned long long)st.iters_scored,
+         (unsigned long long)st.iters_discarded);
   printf("PRINT-BEGIN|%s\n", name);
   het_stats_print(stdout, &st);
   printf("PRINT-END|%s\n", name);
@@ -617,12 +634,12 @@ def _parse_case_fields(l):
     unpacks short and fails loudly, which no other consumer of this line does."""
     f = l.split("|")
     (_, name, obs, k, k_eff, k_runs, n_degen, R_usable, tier,
-     flags, R, first_sight, scored) = f
+     flags, R, first_sight, scored, discarded) = f
     return name, dict(
         obs=obs, k=int(k), k_eff=int(k_eff), k_runs=int(k_runs),
         n_degen=int(n_degen), R=int(R), R_usable=int(R_usable),
         first_sight=int(first_sight), scored=int(scored),
-        tier=tier, flags=int(flags, 16))
+        discarded=int(discarded), tier=tier, flags=int(flags, 16))
 
 
 class _CompileFailed(Exception):
@@ -695,6 +712,58 @@ def phase1(lines, quiet):
     return 0
 
 
+# The HetStats line is the whole interface between a harness and its readers, and
+# the gates that drive campaign.py without a device print it themselves.  A stub
+# speaking a shape het_stats_line cannot produce tests a protocol nobody
+# implements, and nothing else compares the two: below, the field names are read
+# off the line the compiled header actually printed and off every producer under
+# verify/, which are ENUMERATED rather than listed, so a stub added later is
+# covered the day it appears.
+_KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=")
+
+
+def _stats_keys(seg):
+    """The ordered field names of one HetStats line -- a printed one, or a producer's
+    format string with its quoting stripped -- or None if `seg' is not one.  A line
+    qualifies by starting at cpu_only and ending at flags, which is what separates a
+    producer from the several places that merely MATCH on the "HetStats " prefix."""
+    keys = []
+    for k in _KEY_RE.findall(seg):
+        keys.append(k)
+        if k == "flags":
+            return keys if keys[0] == "cpu_only" else None
+    return None
+
+
+def _stub_producers():
+    """Every HetStats line the gates under verify/ print themselves, as
+    (file, line, field names).  Anchored on the line's TERMINATOR and walked back to
+    its prefix: one printed line is then one entry however many source lines its
+    literal is split over, and the places that merely name "HetStats " in prose
+    contribute nothing."""
+    out = []
+    for fn in sorted(f for f in os.listdir(HERE) if f.endswith(".py")):
+        with open(os.path.join(HERE, fn)) as fh:
+            txt = fh.read()
+        for m in re.finditer(r"flags=0x", txt):
+            head = txt.rfind("HetStats ", max(0, m.start() - 800), m.start())
+            if head < 0:
+                continue
+            seg = txt[head + len("HetStats "):m.start() + 20]
+            keys = _stats_keys(" ".join(seg.replace('"', "").replace("'", "").split()))
+            if keys is not None:
+                out.append((fn, txt.count("\n", 0, head) + 1, keys))
+    return out
+
+
+def _keydiff(got, want):
+    miss = [k for k in want if k not in got]
+    extra = [k for k in got if k not in want]
+    if miss or extra:
+        return "missing %s, extra %s" % (miss or "none", extra or "none")
+    return "the same fields in a different ORDER: %s, not %s" % (got, want)
+
+
 def phase2(lines, quiet):
     print("\n===== PHASE 2: is het_stats_compute() a statistic, or a constant? =====")
     bad = 0
@@ -732,7 +801,7 @@ def phase2(lines, quiet):
 
         # (a) The differential: every statistic, independently re-derived.
         for fld in ("obs", "k", "k_eff", "k_runs", "n_degen", "R", "R_usable",
-                    "tier", "first_sight", "scored"):
+                    "tier", "first_sight", "scored", "discarded"):
             if g[fld] != ref[fld]:
                 errs.append("%s: C %s != py %s" % (fld, g[fld], ref[fld]))
 
@@ -806,7 +875,10 @@ def phase2(lines, quiet):
                 ("effort: %d run(s)" % r.get("R", -1),
                  "it does not disclose the effort behind the zero"),
                 ("%llu scored".replace("%llu", "%d") % r.get("scored", -1),
-                 "the effort line does not carry the iterations this pool scored")):
+                 "the effort line does not carry the iterations this pool scored"),
+                ("%llu discarded".replace("%llu", "%d") % r.get("discarded", -1),
+                 "the effort line does not carry the iterations its rendezvous "
+                 "threw away")):
             if frag not in txt:
                 print("  *** %s reports a Never but %s" % (name, why))
                 bad += 1
@@ -844,6 +916,32 @@ def phase2(lines, quiet):
                   % (name, "a CPU-only cell" if refs[name]["cpu_only"]
                      else "no CPU-only cell", line[:64]))
             bad += 1
+
+    # ... and the stand-ins that speak this line without a device.  campaign.py's
+    # whole interface to a harness is the HetStats line, and the gates that drive
+    # the scheduler print it themselves, so a field the printer gained is a field
+    # they are testing the protocol without.  The authority is the line the header
+    # just printed, never a copy of its format string.
+    real = next((l for b in sorted(blocks) for l in blocks[b].splitlines()
+                 if CPU_ONLY_LINE.match(l)), None)
+    want_keys = _stats_keys(real.split("HetStats ", 1)[1]) if real else None
+    if want_keys is None:
+        print("  *** no HetStats line was printed at all, so the field set the "
+              "stand-ins are held to is being read off nothing")
+        bad += 1
+    else:
+        prod = _stub_producers()
+        if not prod:
+            print("  *** no gate under verify/ prints a HetStats line of its own: "
+                  "this check has nothing to compare and is inspecting nothing")
+            bad += 1
+        for fn, ln, keys in prod:
+            if keys != want_keys:
+                print("  *** %s:%d speaks a HetStats line het_stats_line cannot "
+                      "produce: %s" % (fn, ln, _keydiff(keys, want_keys)))
+                bad += 1
+        print("  HetStats stand-ins  : %d, each in the printed line's %d field(s)"
+              % (len(prod), len(want_keys)))
 
     # ALWAYS is the class that says "every run fired", so it may be reported only
     # where every run did.  Nothing co-runs, so a cell is usable partly BECAUSE it
@@ -1033,7 +1131,8 @@ def line(obs, k, k_eff, k_runs, degen, first_sight, sighting):
     stub speaking a shape the runtime cannot produce tests a protocol nobody
     implements."""
     print("HetStats %s cpu_only=0 obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d "
-          "degen=%d first_sight=%d sighting=%s N=100000 scored=100000 flags=0x0"
+          "degen=%d first_sight=%d sighting=%s N=100000 scored=100000 discarded=0 "
+          "flags=0x0"
           % (test, obs, R, R, k, k_eff, k_runs, degen, first_sight, sighting))
 
 
@@ -1667,6 +1766,28 @@ def bite():
                     ("2",), (NEVER_COLD_CASE,
                              "does not disclose the effort behind the zero"))
 
+        # (1c) A field renamed on the printer alone.  campaign.py and every gate that
+        # drives it without a device reads this line by field name, so a printer
+        # that stops speaking one of them splits the protocol while compiling,
+        # running and reporting -- and each side keeps passing its own tests.
+        ok &= _bite("a HetStats field renamed on the printer alone (the stand-ins "
+                    "then speak a shape the runtime cannot produce)", hdir,
+                    lambda s: _subst(s, [("scored=%llu discarded=%llu flags=0x%x",
+                                          "scored=%llu dropped=%llu flags=0x%x")]),
+                    ("2",), ("speaks a HetStats line het_stats_line cannot produce",
+                             "extra ['discarded']"))
+
+        # (1d) ... and the discarded total never summed: the effort line then prices a
+        # null over the iterations that ran without the ones the rendezvous threw
+        # away, which is the half that says how much of the run the two sides were
+        # never in together.
+        ok &= _bite("the discarded total stops being summed (a null priced over the "
+                    "iterations that survived)", hdir,
+                    lambda s: _subst(s, [
+                        ("    st->iters_discarded += recs[i].iters_discarded;\n",
+                         "")]),
+                    ("2",), (DISCARD_CASE, "discarded: C 0 != py 400000"))
+
         # (2) The degeneracy guard disabled: a decoder that never varied could then
         # forge a CORROBORATED sighting out of a constant read.
         ok &= _bite("the degeneracy guard disabled (a constant read can forge a "
@@ -1845,10 +1966,10 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: 18/18 injections caught -- denominator 1, effort 1,")
-        print("         decode guard 1, stop rule 6, structural invariants 2,")
-        print("         Python mirror 1, CPU-only campaign 4, scheduler 1,")
-        print("         emitted corpus 1.")
+        print("BITE OK: 20/20 injections caught -- denominator 1, effort 1,")
+        print("         HetStats protocol 2, decode guard 1, stop rule 6,")
+        print("         structural invariants 2, Python mirror 1,")
+        print("         CPU-only campaign 4, scheduler 1, emitted corpus 1.")
         return 0
     print("BITE FAILED: an injection slipped through -- this gate is decorative")
     return 1
