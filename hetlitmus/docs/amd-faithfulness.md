@@ -444,11 +444,11 @@ TALLY gpu-only: 173/173 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
 TALLY x86_64 het: 471/471 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
 HIP SOURCE GATE: PASS -- gpu-only 173/173, x86_64 het 471/471 (the x86_64
   rendering of the het corpus, not the AArch64 one)
-HIP SOURCE GATE BITE OK: 58 injections, each reddening its own assertion,
+HIP SOURCE GATE BITE OK: 54 injections, each reddening its own assertion,
   0 for a wrong reason; 4 clean control(s) green
 ```
 
-The sweep runs 12 workers; the bite makes 62 assertions — 58 injections, each
+The sweep runs 12 workers; the bite makes 58 assertions — 54 injections, each
 reddening its own assertion, and 4 clean controls green first.
 
 **ISA read-back gate** (`make hetlitmus-amd-faithful`, toolchain lane):
@@ -459,17 +459,17 @@ rep set     18 rep(s) carrying all 17 corpus row(s), each row lowered by the pro
 TALLY gpu-only: 173/173 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
 TALLY x86_64 het: 471/471 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
   2+2W-cta-fence                             OK (4 token(s) identical)
-  2+2W-cg-sys-fence-2s-x86_64                OK (59 token(s) identical)
+  IRIW-cgcg-cta-relaxed-x86_64               OK (25 token(s) identical)
 ISA READ-BACK GATE: PASS -- gpu-only 173/173, x86_64 het 471/471 ...,
-  2/2 cross-check(s), 17 row(s) covered, 84.7 s
-ISA READ-BACK GATE BITE OK: 38 injections, each reddening its own assertion,
+  2/2 cross-check(s), 17 row(s) covered, 63.0 s
+ISA READ-BACK GATE BITE OK: 37 injections, each reddening its own assertion,
   0 for a wrong reason; 6 clean control(s) green
 ```
 
-44 assertions in the bite (38 injections + 6 clean controls). The sweep is 84.7 s
-at 12 workers and the whole target, sweep plus bite, 95 s — 78.1 s and 88.9 s on
-a less loaded run of the same tree, so read those as an order of magnitude, not
-a pin. `--reps` alone is 16.4 s (18/18 reps, 2/2 cross-checks, 17 rows
+43 assertions in the bite (37 injections + 6 clean controls). The sweep above is
+63.0 s at 12 workers and the whole target, sweep plus bite, 73 s; the same tree
+has measured 84.7 s and 95 s under load, so read these as an order of magnitude,
+not a pin. `--reps` alone is 15.4 s (18/18 reps, 2/2 cross-checks, 17 rows
 covered).
 
 ### Triage log

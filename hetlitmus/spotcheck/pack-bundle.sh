@@ -27,7 +27,9 @@
 #
 # FAIL-LOUD.  Every name in TESTS.txt must resolve to an emitted dir.  A typo
 # there would otherwise ship a bundle that is quietly one test short, and the
-# instance session would run the ladder against a subset nobody chose.
+# instance session would run the ladder against a subset nobody chose.  The
+# widest-launch row is re-measured against the whole emitted corpus too, so no
+# bundle ships a rung-4 claim the corpus has outgrown.
 #
 # CUDA BUNDLE.  probe.cu and ladder.sh's `comp.sh cuda && make cuda-bin' make
 # this the NVIDIA dev-tier bundle, so it ships the emission lane to match and
@@ -112,6 +114,39 @@ if [ "${#missing[@]}" -gt 0 ]; then
   echo "      Refusing to ship a bundle that is silently short of the chosen subset." >&2
   exit 1
 fi
+
+# The widest-launch row is the one subset choice that is a claim about the rest
+# of the corpus: ladder.sh's rung 4 runs it as the maximum on all three launch
+# axes.  The whole corpus is on disk here and nowhere on the instance, so the
+# claim is re-measured here or not at all.
+WIDEST_ROLE=3-widest-launch
+mapfile -t WIDE < <(grep -vE '^[[:space:]]*(#|$)' "$TESTS_FILE" \
+                    | awk -F'\t' -v r="$WIDEST_ROLE" '$2 == r {print $1}')
+if [ "${#WIDE[@]}" -ne 1 ]; then
+  echo "" >&2
+  echo "FAIL: $TESTS_FILE has ${#WIDE[@]} row(s) with role '$WIDEST_ROLE'; rung 4 runs" >&2
+  echo "      exactly one widest-launch pick, so the geometry claim cannot be checked." >&2
+  exit 1
+fi
+# The three launch axes, maximised over the .cu files named; over a single
+# harness that is just its own geometry, so one reader serves both sides.
+axes_max() {
+  awk '/^#define NPART /          {if ($3+0 > n) n = $3+0}
+       /^#define HET_TEST_BLOCKS /{if ($3+0 > b) b = $3+0}
+       /^#define HET_SPIN_LANES / {if ($3+0 > s) s = $3+0}
+       END {print n+0, b+0, s+0}' "$@"
+}
+read -r wn wb ws <<<"$(axes_max "$BUNDLE/tests/${WIDE[0]}/${WIDE[0]}.cu")"
+read -r mn mb ms <<<"$(axes_max "$SCRATCH/emit/het-$GPU_TARGET"/*/*.cu)"
+if [ "$wn" != "$mn" ] || [ "$wb" != "$mb" ] || [ "$ws" != "$ms" ]; then
+  echo "" >&2
+  echo "FAIL: ${WIDE[0]} is npart=$wn blocks=$wb spin_lanes=$ws, but the emitted corpus" >&2
+  echo "      reaches npart=$mn blocks=$mb spin_lanes=$ms." >&2
+  echo "      ladder.sh rung 4 and TESTS.txt call that pick the corpus maximum on all" >&2
+  echo "      three axes; re-pick the row, or re-word the rung, before packing." >&2
+  exit 1
+fi
+echo "      widest launch: ${WIDE[0]} npart=$wn blocks=$wb spin_lanes=$ws (corpus maximum)"
 
 echo "[4/5] adding driver, probe, ladder, stamp"
 cp "$HETL/campaign.py"                 "$BUNDLE/"

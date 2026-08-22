@@ -186,7 +186,7 @@ both decode channels at once (R), one store-only (2+2W).
 | --- | --- |
 | `probe.cu`, `probe-cuda.sh` | machine probe → `probe.txt` |
 | `TESTS.txt` | the subset and why each test is in it |
-| `pack-bundle.sh` | dev box: emit, prune, stamp, tar |
+| `pack-bundle.sh` | dev box: emit, prune, re-measure the widest launch, stamp, tar |
 | `ladder.sh` | instance: rungs 0–6, exit-code table |
 | `run-one.sh` | one invocation, for `campaign.py --runner` |
 | `STAMP` (in the bundle) | git revision, date, census, per-test geometry, emitter + dialect SHA-256 |

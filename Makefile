@@ -799,7 +799,7 @@ HETCPUONLYOUT := $(CURDIR)/hetlitmus/tests/het/cpuonly-out
 ### The GPU dialect these harnesses are rendered for.  litmus7 emits ONE vendor
 ### per harness dir, and the machine lives on the pair: this corpus has an x86_64
 ### CPU column, so `hip' selects the pair that names the MI300A.  `cuda' is legal
-### and reads the same map, but names no machine, so it is a machinery smoke.
+### but names no machine, so it is a machinery smoke.
 HETCPUONLYTARGET ?= hip
 
 ### The negative control for the cpu_only stamp: a corpus test with a GPU proc,

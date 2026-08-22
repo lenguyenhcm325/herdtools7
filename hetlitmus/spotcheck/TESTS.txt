@@ -8,15 +8,17 @@
 # which decode channel carries the outcome.
 #
 # Format: <test> <TAB> <role> <TAB> <rationale>.  pack-bundle.sh reads field 1
-# and FAILS if any name is not an emitted harness dir; ladder.sh reads field 1
-# too, and names its own picks per rung, so a name changed here without changing
+# and FAILS if any name is not an emitted harness dir; it reads field 2 to find
+# the `3-widest-launch' row and refuses to pack unless that row's launch is
+# still the corpus maximum on all three axes.  ladder.sh reads field 1 too, and
+# names its own picks per rung, so a name changed here without changing
 # ladder.sh leaves a rung reporting that its pick is not in the bundle.
 
 MP-cg-sys-fence-2s	1-two-sided	TWO-SIDED: both halves carry an ordering annotation (CPU DMB SY, GPU fence.sc.sys), which is the only way a het cycle is closed from both ends. Its geometry is the subset's smallest -- NPART=2, one block, one spin lane -- so what a rung reads off it is the annotation and not the launch.
 MP-cg-cta-acquire	2-one-sided	ONE-SIDED: the only annotation is on the GPU proc, and it is an acquire at cta scope -- the narrowest scope the corpus emits, so the residual weakness sits on a GPU reader whose acquire does not reach the CPU thread. Same geometry as the two-sided pick (NPART=2, one block, one spin lane), so the pair isolates the CPU-side annotation as the only difference.
-IRIW-gcgc-sys-fence	3-widest-launch	THE LARGEST LAUNCH IN THE CORPUS: 4 procs of which 2 are GPU procs, so the harness is NPART=4 across 2 blocks with 2 spin lanes -- the maximum on all three axes. It is the shape whose barrier and scaffolding could outgrow a cooperative launch, and the only pick here where that would show.
+IRIW-gcgc-sys-fence	3-widest-launch	THE LARGEST LAUNCH IN THE CORPUS: NPART=4 across 2 blocks with 2 spin lanes -- the maximum on all three axes.  NPART counts observer threads as well as procs, and this row's four are all procs, two of them GPU procs. It is the shape whose barrier and scaffolding could outgrow a cooperative launch, and the only pick here where that would show.
 R-cg-sys-relaxed	4-both-decode-channels	BOTH DECODE CHANNELS AT ONCE: its condition is `exists (1:r0=0 /\ [y]=2)', a register outcome AND a final-memory outcome on the same row, so the target can only be recovered if the synchrony decode and the CPU observer are BOTH live -- the only pick where one dead channel cannot be masked by the other. R is the fragile half of the R/S observer asymmetry, which makes it the honest choice over S.
-2+2W-cg-sys-relaxed	5-store-only	STORE-ONLY (both procs write; no tested load), so interleavings_detected is structurally 0 and the CPU observer is the ONLY decode channel the outcome can arrive on. This is the shape whose _hot signal and observer liveness are hardest to keep live and where the exhaustive-scan degeneracy guard has the least to work with.
+2+2W-cg-sys-relaxed	5-store-only	STORE-ONLY (both procs write; no tested load), so interleavings_detected is structurally 0 and the observer channel is the ONLY one the outcome can arrive on. It emits no per-frame _hot at all -- the whole witness is reconstructed from the observer samples -- so observer_unique_count is what stands between this row and a cold-observer disqualifier, and the exhaustive scan has the least to work with.
 
 # Rung 5 (stress off -> on) reuses MP-cg-sys-fence-2s: it rebuilds that dir
 # twice with different -D knobs and compares the two transcripts' HetObs

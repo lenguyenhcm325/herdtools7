@@ -302,10 +302,11 @@ row 3 "two-sided row ($T3)" "$([ $r3 -eq 0 ] && echo PASS || echo FAIL)" "${r3no
 
 # =========================================================================
 # RUNG 4 -- the widest launch in the corpus, and the two rows whose outcome is
-# hardest to decode.  IRIW-gcgc-sys-fence is 4 procs of which 2 are GPU procs,
-# so its launch is NPART=4 across 2 blocks with 2 spin lanes -- the corpus
-# maximum on all three axes, and so the closest any pick comes to a
-# cooperative-launch limit.  R needs both decode channels at once and 2+2W is
+# hardest to decode.  IRIW-gcgc-sys-fence launches NPART=4 across 2 blocks with
+# 2 spin lanes -- the corpus maximum on all three axes, and so the closest any
+# pick comes to a cooperative-launch limit; pack-bundle.sh re-measures that
+# against the whole emitted corpus and refuses to ship a bundle where it has
+# stopped holding.  R needs both decode channels at once and 2+2W is
 # store-only, so between them they cover the two ways a target can fail to
 # arrive.
 # =========================================================================
