@@ -38,6 +38,24 @@ HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 
 VERDICTS = ["OBSERVED", "NOT-OBSERVED", "COLD-INVALID"]
 
+# The liveness disqualifiers and the caveats, read off the header's own #defines
+# rather than listed here.  A list kept by hand grows only when someone remembers
+# to grow it, and each case below carries its own expected dq/cv word, so a bit
+# that no case sets is a branch nothing here drives and no per-case comparison can
+# see.  A retired bit carries no #define, so the vacancies are not read.
+FLAG_DEFINE_RE = re.compile(r"^#define (HET_(?:DQ|CV)_\w+)\s+\(1u << (\d+)\)", re.M)
+
+
+def flag_bits(header):
+    """{"DISQUALIFIER": {name: bit}, "CAVEAT": {...}} off the header."""
+    out = {"DISQUALIFIER": {}, "CAVEAT": {}}
+    with open(header) as fh:
+        for name, bit in FLAG_DEFINE_RE.findall(fh.read()):
+            out["DISQUALIFIER" if name.startswith("HET_DQ_")
+                else "CAVEAT"][name] = int(bit)
+    return out
+
+
 # The census the emitted corpus MUST reproduce: one harness per corpus test.
 CENSUS = {"tests": 471}
 
@@ -791,15 +809,15 @@ def run_rule(header, tmp, quiet):
         return 1, {}
     print("  max_cells: %d\n" % int(m.group(1)))
 
-    seen_v, seen_dq, bad = set(), set(), 0
+    seen_v, seen_dq, seen_cv, bad = set(), 0, 0, 0
     blocks, cur, buf = {}, None, []
 
     for l in lines[1:]:
         if l.startswith("CASE|"):
             _, name, want, got, dq, cv, ok = l.split("|")
             seen_v.add(got)
-            if int(dq, 16):
-                seen_dq.add(int(dq, 16))
+            seen_dq |= int(dq, 16)
+            seen_cv |= int(cv, 16)
             blocks[name] = [got, ""]
             if ok != "1":
                 bad += 1
@@ -827,13 +845,32 @@ def run_rule(header, tmp, quiet):
               "outcome the rule may never return" % ", ".join(missing_v))
         bad += 1
 
+    # ... and the same assertion on the two flag words, whose bits the header
+    # declares and the cases have to reach.  Read off the header, so a bit added
+    # there arrives with no case setting it and is named here.
+    defs = flag_bits(header)
+    for kind, word in (("DISQUALIFIER", seen_dq), ("CAVEAT", seen_cv)):
+        names = defs[kind]
+        if not names:
+            print("  *** the header declares no %s bit at all -- this coverage "
+                  "assertion read NOTHING" % kind)
+            bad += 1
+            continue
+        missing = sorted(n for n, b in names.items() if not (word >> b) & 1)
+        print("  %-22s: %d/%d" % (kind.lower() + "s reached",
+                                  len(names) - len(missing), len(names)))
+        if missing:
+            print("  *** UNREACHED %s: %s -- a bit no case sets is a branch this "
+                  "gate never drives" % (kind, ", ".join(missing)))
+            bad += 1
+
     blocks = {k: (v[0], v[1]) for k, v in blocks.items()}
     if bad:
         print("\nVERDICT FAILED: %d case(s) wrong." % bad)
         return 1, blocks
     print("\nVERDICT OK (%d cases; all %d outcomes reachable; an unstamped record "
-          "fails closed; a windowed zero says so; every disqualifier bites)"
-          % (len(CASES), len(VERDICTS)))
+          "fails closed; a windowed zero says so; every disqualifier and caveat "
+          "the header declares is reached)" % (len(CASES), len(VERDICTS)))
     return 0, blocks
 
 
@@ -1025,6 +1062,20 @@ def bite():
                                 "  v = HET_NOT_OBSERVED;"),
             quiet=True)
 
+        # (2b) A disqualifier bit no case reaches.  Every case carries the dq word
+        # it expects, so a bit ADDED to the header arrives with nothing setting it
+        # and every per-case comparison stays green; only the coverage assertion
+        # can see a branch this gate never drives.
+        ok &= _bite_one(
+            "a disqualifier bit the case set never reaches",
+            tmp, header,
+            lambda s: s.replace(
+                "#define HET_DQ_OBSERVER_COLD    (1u << 11)",
+                "#define HET_DQ_OBSERVER_COLD    (1u << 11)\n"
+                "#define HET_DQ_UNREACHED        (1u << 12)"),
+            quiet=True,
+            expect="UNREACHED DISQUALIFIER: HET_DQ_UNREACHED")
+
         # (3) rec_magic stops failing closed: a memset-zeroed record is read as a
         # live one, which is the whole property the stamp exists for.
         ok &= _bite_one(
@@ -1190,8 +1241,8 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: 16/16 injections caught, each by the diagnostic it named --")
-        print("         rule + printouts 8, reporting paths 2, emitted corpus 1,")
+        print("BITE OK: 17/17 injections caught, each by the diagnostic it named --")
+        print("         rule + printouts 9, reporting paths 2, emitted corpus 1,")
         print("         machine prose 5.")
         return 0
     print("BITE FAILED: an injection slipped through -- this gate is decorative")

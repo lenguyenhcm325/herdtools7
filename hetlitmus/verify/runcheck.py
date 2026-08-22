@@ -1652,21 +1652,21 @@ CH_NULL = ["NOT OBSERVED under this effort",
            "NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL",
            "CHARACTERIZATION, NEVER VALIDATION",
            "effort:"]
-# What NEITHER arm may carry: every one of these would tell a reader that
-# something certified this run -- a tier a voucher earned, a voucher named, a
-# calibration channel described, a registry consulted -- or that the harness is
-# reporting a build fault as a result.  Nothing else in the suite reads that
-# wording, and these tuples are reached only through --characterize-hw, which
-# refuses to run without a CUDA device: on a box with no GPU they go unchecked.
-CH_NEVER_SAYS = ["NOT-OBSERVED-MU-HOT",
-                 "NOT-OBSERVED-CANARY-ONLY",
-                 "vouched for by",
-                 "IS the Layer-B canary",
-                 "NO POSITIVE-CONTROL MAP WAS READ",
-                 "NO CALIBRATION CHANNEL",
-                 "no map is registered for that pair",
-                 "BUILD BUG",
-                 "the target this harness was tagged for"]
+# What NEITHER arm may carry: a voucher named, a constant standing in for the pair,
+# a build fault reported as a result.  Every entry is planted by an injection
+# below, so this list holds only wording a run can be made to carry; a sentence no
+# code produces would be looked for here forever and catch nothing.  These tuples
+# are reached only through --characterize-hw, which refuses to run without a CUDA
+# device: on a box with no GPU they go unchecked.
+CH_NEVER_SAYS = [
+    ("vouched for by",
+     "nothing here certifies this run, and the printout may not say that "
+     "anything does"),
+    ("the target this harness was tagged for",
+     "a constant standing in for the pair names an object no stamp makes right"),
+    ("BUILD BUG",
+     "the harness is reporting a build fault, which is not a result to read"),
+]
 
 
 def ch_class(k, R, obs):
@@ -1722,9 +1722,8 @@ def ch_check(text, k, R, obs, quiet=False):
 
     for frag in (CH_OBSERVED if k > 0 else CH_NULL):
         must("D", frag)
-    for frag in CH_NEVER_SAYS:
-        never("B/C", frag, "nothing here certifies this run, and the printout "
-                           "may not say that anything does")
+    for frag, why in CH_NEVER_SAYS:
+        never("B/C", frag, why)
 
     hits = sorted(set(m.group(0) for m in CH_VENDOR_RE.finditer(text)))
     if hits:
@@ -1760,34 +1759,58 @@ def ch_probe(tmp, arch, quiet=False):
     return ch_run_once(d, quiet=quiet)
 
 
+def _subst(s, pairs):
+    """Apply (find, replace) pairs, failing loudly if any `find' matched nothing.
+
+    characterize_hw_bite checks only that the file changed OVERALL, which a
+    two-fragment injection satisfies with one fragment matched and the other
+    silently dropped -- half an injection that still reports RED for its own
+    reason.  One `find' per site, replaced once."""
+    for a, b in pairs:
+        if a not in s:
+            raise SystemExit("runcheck --characterize-hw bite: injection fragment "
+                             "not found in the emitted harness -- the file moved "
+                             "under the bite: %r" % a[:70])
+        s = s.replace(a, b, 1)
+    return s
+
+
 # Each injection rewrites one file of the emitted harness (never the source tree)
 # and names both that file -- the two halves of the printout come from two places,
 # the verdict/statistics prose from het_verdict.h and the driver's own warnings
 # from the render itself -- and the failure it must produce, which is the
-# assertion that catches the sentence it PLANTED rather than the one that merely
+# assertion that catches the sentence it planted rather than the one that merely
 # notices a sentence went missing.
 # Each injection lands on a line EVERY run prints, whichever arm it took, so a
-# device that fires and a device that does not both exercise it.
+# device that fires and a device that does not both exercise it.  Between them
+# they plant every entry of CH_NEVER_SAYS.
 CH_INJECTIONS = [
     ("B/C", "het_verdict.h",
      "the verdict banner says something vouched for the run",
-     lambda s: s.replace(
-         '  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s\\n",',
-         '  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s'
-         '  (vouched for by mu(T))\\n",', 1),
+     lambda s: _subst(s, [
+         ('  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s\\n",',
+          '  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s'
+          '  (vouched for by mu(T))\\n",')]),
      "the printout says 'vouched for by'"),
     ("A/D", "het_verdict.h",
      "the pair-naming sentences name a constant instead of the pair",
-     lambda s: s.replace(
-         "      HET_PAIR_NAME, HET_LINK_NAME);",
-         '      "the target this harness was tagged for", HET_LINK_NAME);', 1)
-     .replace("    HET_PAIR_NAME);",
-              '    "the target this harness was tagged for");', 1),
+     lambda s: _subst(s, [
+         ("      HET_PAIR_NAME, HET_LINK_NAME);",
+          '      "the target this harness was tagged for", HET_LINK_NAME);'),
+         ("    HET_PAIR_NAME);",
+          '    "the target this harness was tagged for");')]),
      "the printout says 'the target this harness was tagged for'"),
+    ("B/C", "het_verdict.h",
+     "the no-decode-channel flag raised on a harness that has one",
+     lambda s: _subst(s, [
+         ("    if (!recs[i].sync_valid && !recs[i].obs_valid)\n",
+          "    if (1)\n")]),
+     "the printout says 'BUILD BUG'"),
     ("E", CH_TEST + ".cu",
      "the driver's noise warning names the GH200 halves again",
-     lambda s: s.replace("the host half of the host-device interconnect noise",
-                         "the Grace half of the NVLink-C2C noise"),
+     lambda s: _subst(s, [
+         ("the host half of the host-device interconnect noise",
+          "the Grace half of the NVLink-C2C noise")]),
      "the printout names C2C, Grace, NVLink"),
 ]
 
@@ -1812,7 +1835,7 @@ def characterize_hw_bite(tmp, arch):
     which the Makefile runs first -- and not a re-run here.  A box on which the
     outcome stopped firing reddens every injection with the no-sighting sentence,
     which is no injection's reason, and is reported as the box rather than banked
-    as five bites."""
+    as bites."""
     print("===== BITE: does this gate read the PRINTOUT? =====")
     bad = 0
     for k, R, obs, want_read, frag in CH_SHAPES:
@@ -1900,8 +1923,7 @@ def characterize_hw(want_bite=False):
                 print("  %s" % m)
             return 1
         print("\nCHARACTERIZE-HW: PASS (the printout names the test, reads as "
-              "the arm the run took, claims no machine and says nothing "
-              "vouches for it)")
+              "the arm the run took, claims no machine and names no voucher)")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

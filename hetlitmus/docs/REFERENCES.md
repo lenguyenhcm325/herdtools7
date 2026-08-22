@@ -60,6 +60,10 @@ Claim(s) this project takes from it:
   per chip: SB is the lowest-rate test on two of the three GPUs and the highest
   on the third, which is why `het_verdict.h`'s stopping rule treats shape
   difficulty as a property of the part and not of the shape.
+* §6.2 (Table 10) evaluates stress configurations by mutation testing over six
+  memory-order weakenings of the vendor OpenCL implementation, and finds that
+  only one of the six was exposed with no stress at all. `het_verdict.h`'s
+  unstressed caveat rests on that count.
 
 Deviation(s):
 * The parameter space is realised in CUDA/HIP rather than in the paper's

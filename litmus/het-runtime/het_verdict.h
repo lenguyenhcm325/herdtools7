@@ -485,9 +485,10 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
 /* The stress-provenance caveats, printed for a sighting as well as for a null. */
 static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) {
   if (cv & HET_CV_UNSTRESSED)
-    fprintf(_ch, "  CAVEAT: no stress was requested.  Kirkham (6.2) exposed only "
-                 "ONE of six mutants with no stress -- an unstressed null is weak "
-                 "evidence whatever else this record carries.\n");
+    fprintf(_ch, "  CAVEAT: no stress was requested.  Kirkham et al., OOPSLA'20, "
+                 "sec 6.2 exposed only ONE of six mutants with no stress -- an "
+                 "unstressed null is weak evidence whatever else this record "
+                 "carries.\n");
   if (cv & HET_CV_SPIN_CAP)
     fprintf(_ch, "  CAVEAT: the window-opener released on the deadlock cap in most "
                  "spins -- it is a delay loop, not a rendezvous.\n");
@@ -727,9 +728,8 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
 
   /* The one null frame.  A null is a fact about this harness's reach, not about a
      model, and nothing certifies that reach: the numbers above are the whole
-     claim.  The precedent is quoted verbatim in
-     hetlitmus/docs/00-environment-design.md sec 3.7 [Alglave15 fn.7 p.577]; the
-     printout carries the citation, not the quotation. */
+     claim.  Reporting a non-observation as one has precedent [Alglave15 fn.7
+     p.577]; the printout carries the citation, not the quotation. */
   fprintf(_ch,
     "  NOT OBSERVED under this effort -- never \"cannot happen\".  "
     "NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES "
@@ -1038,22 +1038,26 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     return;
   }
 
-  /* ---- the headline, by observation class. */
+  /* ---- the headline, by observation class.
+     A null's two numbers come from two pools: the scoring statement is over the
+     usable cells, the effort over the runs executed, which is the pool
+     frames_examined is summed over in het_stats_compute.  A discarded run still
+     spent its frames; what it did NOT do is license a reading. */
   if (_s->obs == HET_OBS_NEVER) {
     fprintf(_ch,
       "  NOT OBSERVED in any of the %d usable cell(s).  NO RATE AND NO PROBABILITY "
       "IS ATTACHED TO THIS NULL: falsification is one-sided -- \"the possibility, "
       "not probability ... is what matters\" (Alglave et al., ASPLOS'15 4.3, p.585) "
       "-- so what a null carries is the effort behind it, never an interval.\n"
-      "  NOTHING VOUCHES FOR THIS HARNESS: no control co-runs, so what is reported "
-      "here is the reach this harness demonstrated on its own liveness counters, "
-      "which the per-run HetVerdict lines carry.\n"
+      "  NOTHING VOUCHES FOR THIS HARNESS: what is reported here is the reach it "
+      "demonstrated on its own liveness counters, which the per-run HetVerdict "
+      "lines carry.\n"
       "  CHARACTERIZATION, NEVER VALIDATION: this harness carries no prediction, so "
       "this null agrees with no model and refutes none -- it reports what this "
       "harness reached on this hardware under this stress.\n"
       "  effort: %d run(s) x N=%llu iterations, %llu frames examined.  Grow R, "
       "NOT N.\n",
-      _s->R_usable, _s->R_usable, (unsigned long long)_s->N,
+      _s->R_usable, _s->R, (unsigned long long)_s->N,
       (unsigned long long)_s->frames_examined);
     return;
   }

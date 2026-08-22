@@ -301,6 +301,18 @@ case("plus-one-unstamped-cell-is-still-SOMETIMES",
      obs="Sometimes", k=3, k_eff=3, R=CELLS + 1, R_usable=3,
      frames=CELLS * 100000)
 
+# ... and the same effect on a NULL, which is where the two numbers a null prints
+# are told apart: three live runs of ten saw nothing and seven were COLD, so the
+# scoring statement is over the three usable cells while the effort is over the ten
+# runs executed -- the pool the frame total is summed over.  A fixture whose R and
+# R_usable agree cannot tell the two apart at all.
+NEVER_COLD_CASE = "never-over-three-live-runs-of-ten"
+_never_cold = stream(CELLS)
+for _c in _never_cold[3:]:
+    _c["interleavings_detected"] = 0
+case(NEVER_COLD_CASE, _never_cold,
+     obs="Never", k=0, R=CELLS, R_usable=3, frames=CELLS * 100000)
+
 # --- More runs than the aggregate can hold ----------------------------------
 # The tail beyond HET_STATS_MAX_CELLS is dropped from every statistic, which would
 # quietly report a campaign as having spent less effort than it did -- so st->R keeps
@@ -839,7 +851,7 @@ def phase2(lines, quiet):
                  "it does not say that nothing certifies the reach it reports"),
                 ("CHARACTERIZATION, NEVER VALIDATION",
                  "it does not say the null agrees with no model and refutes none"),
-                ("effort: %d run(s)" % r.get("R_usable", -1),
+                ("effort: %d run(s)" % r.get("R", -1),
                  "it does not disclose the effort behind the zero"),
                 ("%d frames examined" % r.get("frames", -1),
                  "the effort line does not carry the frames this pool examined")):
@@ -1689,6 +1701,19 @@ def bite():
                     ("2",), ("fired-3-of-10-is-SOMETIMES-not-ALWAYS",
                              "obs: C Always != py Sometimes"))
 
+        # (1b) The EFFORT priced over the usable cells instead of the runs executed.
+        # The frame total beside it is summed over every stamped cell, so a null with
+        # cold runs in it would print three runs against ten runs of frames -- and
+        # only a pool whose R and R_usable differ can see that.
+        ok &= _bite("the null's effort priced over the usable cells (three runs "
+                    "against ten runs of frames)", hdir,
+                    lambda s: _subst(s, [("      _s->R_usable, _s->R, "
+                                          "(unsigned long long)_s->N,\n",
+                                          "      _s->R_usable, _s->R_usable, "
+                                          "(unsigned long long)_s->N,\n")]),
+                    ("2",), (NEVER_COLD_CASE,
+                             "does not disclose the effort behind the zero"))
+
         # (2) The degeneracy guard disabled: a decoder that never varied could then
         # forge a CORROBORATED sighting out of a constant read.
         ok &= _bite("the degeneracy guard disabled (a constant read can forge a "
@@ -1872,9 +1897,10 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: 18/18 injections caught -- denominator 1, decode guard 1,")
-        print("         stop rule 6, structural invariants 2, Python mirrors 2,")
-        print("         CPU-only campaign 4, scheduler 1, emitted corpus 1.")
+        print("BITE OK: 19/19 injections caught -- denominator 1, effort 1,")
+        print("         decode guard 1, stop rule 6, structural invariants 2,")
+        print("         Python mirrors 2, CPU-only campaign 4, scheduler 1,")
+        print("         emitted corpus 1.")
         return 0
     print("BITE FAILED: an injection slipped through -- this gate is decorative")
     return 1

@@ -144,7 +144,7 @@ HetVerdict SB-sys-2s [ROBUST] run=7: NOT-OBSERVED
 HetStats SB-sys-2s cpu_only=0 obs=Never R=8 usable=8 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 sighting=none N=100000 frames=800000 flags=0x0
 HetStats SB-sys-2s: 8 cell(s) [(instance,run)], 8 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
   NOT OBSERVED in any of the 8 usable cell(s).  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL: falsification is one-sided -- "the possibility, not probability ... is what matters" (Alglave et al., ASPLOS'15 4.3, p.585) -- so what a null carries is the effort behind it, never an interval.
-  NOTHING VOUCHES FOR THIS HARNESS: no control co-runs, so what is reported here is the reach this harness demonstrated on its own liveness counters, which the per-run HetVerdict lines carry.
+  NOTHING VOUCHES FOR THIS HARNESS: what is reported here is the reach it demonstrated on its own liveness counters, which the per-run HetVerdict lines carry.
   CHARACTERIZATION, NEVER VALIDATION: this harness carries no prediction, so this null agrees with no model and refutes none -- it reports what this harness reached on this hardware under this stress.
   effort: 8 run(s) x N=100000 iterations, 800000 frames examined.  Grow R, NOT N.
 Test SB-sys-2s
@@ -165,7 +165,7 @@ HetVerdict MP-sys-2s [ROBUST] run=1: NOT-OBSERVED
 HetStats MP-sys-2s cpu_only=0 obs=Never R=2 usable=2 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 sighting=none N=100000 frames=200000 flags=0x0
 HetStats MP-sys-2s: 2 cell(s) [(instance,run)], 2 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
   NOT OBSERVED in any of the 2 usable cell(s).  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL: falsification is one-sided -- "the possibility, not probability ... is what matters" (Alglave et al., ASPLOS'15 4.3, p.585) -- so what a null carries is the effort behind it, never an interval.
-  NOTHING VOUCHES FOR THIS HARNESS: no control co-runs, so what is reported here is the reach this harness demonstrated on its own liveness counters, which the per-run HetVerdict lines carry.
+  NOTHING VOUCHES FOR THIS HARNESS: what is reported here is the reach it demonstrated on its own liveness counters, which the per-run HetVerdict lines carry.
   CHARACTERIZATION, NEVER VALIDATION: this harness carries no prediction, so this null agrees with no model and refutes none -- it reports what this harness reached on this hardware under this stress.
   effort: 2 run(s) x N=100000 iterations, 200000 frames examined.  Grow R, NOT N.
 Test MP-sys-2s
