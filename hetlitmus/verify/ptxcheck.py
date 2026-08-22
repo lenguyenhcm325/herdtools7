@@ -83,10 +83,8 @@ GPU_KIND = {
 # CPU (AArch64) ordering mnemonics:
 #   STLR  = store-release        LDAR  = load-acquire (RCsc)
 #   LDAPR = load-acquire (RCpc)  DMB <option> = data memory barrier
-# `mov` is absorbed by the tagged-body classifier (HetCpuPlan.Consumed) -- the
-# store value it set is replaced by the runtime tag, which reaches the asm block
-# as an input operand -- and is therefore NOT a memory op; it is recognized (so
-# the guard does not fail) but not compared.
+# `mov' materialises a store's value in a register and is therefore NOT a memory
+# op; it is recognized (so the guard does not fail) but not compared.
 CPU_MNEMONIC = {
     "mov":   ("move",          False),  # folded; not a memory/ordering op
     "str":   ("plain-store",   True),
@@ -216,33 +214,6 @@ def parse_body(text):
     return procs, rows
 
 
-# Coherence-final atom in a condition:  `[x]=2`  (as opposed to a register atom
-# `1:r0=1`).  Each one observes a ws/co edge.
-COND_LOC = re.compile(r'\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]\s*=')
-
-
-def condition_locations(text):
-    """Shared locations named by coherence-final atoms (`[x]=v') in the
-    condition, de-duplicated in source order.
-
-    Mirrors HetCond.condition_locations in the emitter (litmus/hetCond.ml).  A
-    ws/co edge has no read node, so the emitter answers each such atom with one
-    extra observer lane that snoops every one of these locations (relaxed,
-    system scope) per iteration.  That lane joins the rendezvous barrier, so it
-    contributes one extra fetch_add and exactly |locs| extra `ld.relaxed.sys' to
-    the kernel op stream; modelling it is what keeps the S/R/2+2W tests from
-    looking like they carry stray memory ops.  Register atoms (`1:r0=1') are
-    recovered from read buffers and need no observer."""
-    locs = []
-    for ln in text.splitlines():
-        s = ln.strip()
-        if s.startswith('exists') or s.startswith('forall') or s.startswith('filter'):
-            for m in COND_LOC.finditer(s):
-                if m.group(1) not in locs:
-                    locs.append(m.group(1))
-    return locs
-
-
 def device_class(dev):
     """Map a column device tag to 'gpu' or 'cpu'."""
     d = dev.lower()
@@ -269,18 +240,15 @@ def instance_of(litmus_path):
         else:
             cpu.append((pidx, cpu_ops_of_column(cols[col])))
     return dict(name=litmus_name(text), kind=litmus_kind(text),
-                gpu=gpu, cpu=cpu, obs=condition_locations(text))
+                gpu=gpu, cpu=cpu)
 
 
 def het_lane_plan(inst):
-    """The barrier-joining GPU lanes, in the order dump_gpu_file emits them:
-    the GPU test lanes (proc order), then the observer lane.
+    """The barrier-joining GPU lanes, in the order dump_gpu_file emits them: the
+    GPU test lanes, in proc order.
 
-    Returns a list of ('test', proc, ops, name) / ('obs', None, locs, name)."""
-    lanes = [('test', pidx, ops, inst['name']) for pidx, ops in inst['gpu']]
-    if inst['obs']:
-        lanes.append(('obs', None, inst['obs'], inst['name']))
-    return lanes
+    Returns a list of ('test', proc, ops, name)."""
+    return [('test', pidx, ops, inst['name']) for pidx, ops in inst['gpu']]
 
 
 # ----- per-column op extraction --------------------------------------------
@@ -315,7 +283,7 @@ def cpu_ops_of_column(cells):
     """Parse a CPU column's cells into ordered memory-op descriptors.
 
     Returns a list of (mnemonic, qualifier) for memory/ordering ops only
-    (mov is absorbed by the tagged-body classifier and excluded).
+    (mov materialises a value and is excluded).
     Completeness guard: any mnemonic not in CPU_MNEMONIC hard-fails."""
     ops = []
     for c in cells:
@@ -431,7 +399,13 @@ ASM_STR = re.compile(r'"\s*([a-zA-Z][a-zA-Z0-9.]*)([^"]*)\\n"')
 
 def extract_cpu_ops(cpu_c_text):
     """Ordered (mnemonic,qualifier) memory ops from the REAL aarch64 asm block
-    (between `#if defined(__aarch64__)` and `#else`).  mov is excluded."""
+    (between `#if defined(__aarch64__)` and `#else`).  mov is excluded.
+
+    The block is litmus7's own (ASMLang.dump_fun), so its instruction lines carry
+    `%w[x0]' / `%[x1]' operands and are interleaved with `#START _litmus_P<n>' /
+    `#_litmus_P<n>_<i>' / `#END _litmus_P<n>' marker literals.  A marker begins
+    with `#', which ASM_STR's leading [a-zA-Z] rejects, so only instructions are
+    read."""
     lines = cpu_c_text.splitlines()
     start = end = None
     for i, ln in enumerate(lines):
@@ -546,20 +520,18 @@ def split_het_segments(observed, n_gpu_procs):
     emitted as its own guarded block `{ barrier; model... }' (faithfulness.md, "Het
     barrier/model separation").  Segment the stream at each barrier fetch_add and
     strip the fixed template [fence.sc][atom.sys][spin fence.sc][spin ld.sys]
-    from the front of each segment; what remains is that proc's model ops (plus,
-    on a test lane, the window-opener check_spin strips).
+    from the front of each segment; what remains is that proc's model ops.
 
     The anchor is a SYSTEM-SCOPE atom/red.  The corpus model (ptx.bell declares
-    R/W/F only) has no RMW, so every atom/red is scaffolding -- but of two kinds,
-    and only one is a barrier: the rendezvous fetch_add is system-scoped while
-    the window-opener (het_stress.h het_spin) is device-scoped.  Anchoring on
-    scope is the check, not a bypass -- a spin that became system-scoped would be
+    R/W/F only) has no RMW, so every atom/red is scaffolding, and the rendezvous
+    fetch_add is the system-scoped one.  Anchoring on scope is the check, not a
+    bypass -- a device-scope scaffolding atom that became system-scoped would be
     counted here as a barrier fetch_add and blow the per-lane count in
     check_barrier_whitelist.
 
     Returns (pre_ops, barrier_ops, model_per_segment): the model ops emitted
     BEFORE the first rendezvous (see check_no_pre_barrier_ops), then one list per
-    barrier-joining GPU lane in emission order (test lanes, then the observer)."""
+    barrier-joining GPU lane in emission order."""
     atom_idx = [i for i, op in enumerate(observed)
                 if op[0] in ('atom', 'red') and op[2] == 'sys']
     if not atom_idx:
@@ -620,9 +592,7 @@ def check_barrier_whitelist(result, barrier_ops, n_lanes):
     system-scoped (not narrowed), one fetch_add (atom/red) per barrier-joining
     GPU lane, and a seq_cst fence present.
 
-    n_lanes = (#GPU procs) + (1 if the test has an observer lane).  The observer
-    rendezvouses too -- it must not start snooping before the test threads run --
-    so it contributes its own fetch_add."""
+    n_lanes = the number of GPU procs: each one rendezvouses once."""
     if not barrier_ops:
         result.fail("het kernel has NO barrier (expected sys-scope rendezvous)")
         return
@@ -642,43 +612,6 @@ def check_barrier_whitelist(result, barrier_ops, n_lanes):
                     % (n_lanes, len(atoms)))
     result.note("  barrier whitelist OK (%d ops, %d fetch_add for %d lane(s), all sys, seq_cst fence)"
                 % (len(barrier_ops), len(atoms), n_lanes))
-
-
-# The observer's snoop: `atomic_ref<uint64_t, thread_scope_system>(*l).load(relaxed)`
-# (litmus/hetDialect.ml gd_sys_load_u64) -> ld.relaxed.sys.
-OBS_OP = ('ld', 'relaxed', 'sys')
-
-# The device-scope window-opener (litmus/het-runtime/het_stress.h, het_spin): a
-# relaxed fetch_add on a device-only scratch word, then the relaxed load of its
-# bounded busy-wait.  Emitted once per GPU test lane, at the top of the perpetual
-# loop (`#pragma unroll 1' pins it to exactly one textual copy, as it does for
-# the tested ops).
-SPIN_OPS = [('atom', 'relaxed', 'gpu'), ('ld', 'relaxed', 'gpu')]
-
-
-def check_spin(result, seg, pidx, iname=""):
-    """A GPU test lane must open its window with exactly the device-scope spin.
-    Returns the segment with the spin stripped, so what remains is the lane's
-    model ops.
-
-    The spin aligns the GPU test lanes; the CPU-GPU rendezvous is the separate
-    system-scope gd_bar, which fires once, outside the perpetual
-    loop.  Widening the spin to system scope would put a per-iteration
-    cross-device barrier around the tested accesses, and why the two must stay
-    apart is litmus/het-runtime/het_stress.h (het_spin).  This also fails if the
-    window-opener is dropped, duplicated, strengthened (relaxed -> acquire), or
-    moved after the tested ops."""
-    who = ("%s:P%d" % (iname, pidx)) if iname else ("P%d" % pidx)
-    got = seg[:len(SPIN_OPS)]
-    if got != SPIN_OPS:
-        result.fail("%s window-opener (het_spin) op stream differs -- expected the "
-                    "device-scope spin before the tested ops" % who)
-        for d in diff_sequences(SPIN_OPS, got):
-            result.note(d)
-        return seg          # strip nothing: let the model-op check report the rest
-    result.note("  %s window-opener OK (device-scope spin: %s)"
-                % (who, ", ".join(fmt(o) for o in SPIN_OPS)))
-    return seg[len(SPIN_OPS):]
 
 
 def stray_sys_ops(ptx_text):
@@ -721,28 +654,6 @@ def check_no_stray_sys(result, ptx_text):
             result.note("  stray: %s" % s)
     else:
         result.note("  no stray system-scope ops outside the model-op stream")
-
-
-def check_observer(result, seg, obs_locs, iname=""):
-    """The observer lane must contribute exactly one relaxed/system-scope load per
-    observed location, and nothing else.
-
-    The observer's loads are real memory ops on the tested locations, a
-    deliberate perturbation [Srivastava24 sec 3.3]; why the lane exists at all is
-    condition_locations above.  Modelling them completes the expectation without
-    relaxing the check: it still fails if the observer is narrowed (sys -> cta),
-    strengthened (relaxed -> acquire), or gains/loses a load -- e.g. if the
-    `#pragma unroll 1' that pins its trip count is dropped."""
-    who = ("%s observer" % iname) if iname else "observer"
-    expected = [OBS_OP] * len(obs_locs)
-    if seg != expected:
-        result.fail("%s lane op stream differs (observes %s)"
-                    % (who, ", ".join(obs_locs)))
-        for d in diff_sequences(expected, seg):
-            result.note(d)
-    else:
-        result.note("  %s lane OK (%d relaxed/sys load(s): %s)"
-                    % (who, len(expected), ", ".join(obs_locs)))
 
 
 def check_cpu(result, expected_per_proc, cpu_c_text):
@@ -816,27 +727,18 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
             if len(model_per_seg) != n_lanes:
                 result.fail("expected %d barrier-joining GPU lane(s) (%s); found %d"
                             % (n_lanes,
-                               ", ".join("%s:%s" % (l[3], "P%d" % l[1] if l[0] == 'test'
-                                                    else "obs")
-                                         for l in lanes),
+                               ", ".join("%s:P%d" % (l[3], l[1]) for l in lanes),
                                len(model_per_seg)))
             else:
-                # Walk lanes and PTX segments in lockstep.  The observer does not
-                # spin -- its job is to sample densely, and gating it on the test
-                # lanes would couple two lanes that run at different rates -- so
-                # it is the one barrier-joining lane with no window-opener.
+                # Walk lanes and PTX segments in lockstep.
                 gpu_expected = []
                 model_ops = []
-                for (kindl, pidx, payload, iname), seg in zip(lanes, model_per_seg):
-                    if kindl == 'obs':
-                        check_observer(result, seg, payload, iname)
-                    else:
-                        seg = check_spin(result, seg, pidx, iname)
-                        gpu_expected.append(("%s:P%d" % (iname, pidx), payload))
-                        model_ops.extend(seg)
+                for (_kindl, pidx, payload, iname), seg in zip(lanes, model_per_seg):
+                    gpu_expected.append(("%s:P%d" % (iname, pidx), payload))
+                    model_ops.extend(seg)
                 check_gpu(result, gpu_expected, model_ops, "GPU")
             check_no_stray_sys(result, ptx_text)
-            # The CPU side: _cpu.c carries the tagged asm blocks inside ONE
+            # The CPU side: _cpu.c carries litmus7's own asm blocks inside ONE
             # `#if defined(__aarch64__)' region.
             cpu_expected = [("%s:P%d" % (name, p), ops) for p, ops in inst['cpu']]
             if cpu_expected:

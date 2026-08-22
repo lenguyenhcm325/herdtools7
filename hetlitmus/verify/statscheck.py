@@ -37,21 +37,17 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 
-# The emitted-corpus census, derived from the corpus rather than pasted off a run: a
-# test carries the sync channel when it has a register (reader) observable and the
-# observer channel when it has a coherence-final [loc] atom, and the store-only shapes
-# are exactly the ones with no reader.  Most carry both; a test carrying NEITHER is a
-# build bug, and its absence is what lets the degeneracy guard switch channel instead
-# of firing blind.  Phase 4 measures all three off the emitted corpus.
-CENSUS_SYNC, CENSUS_OBS, CENSUS_NEITHER = 460, 159, 0
+# The emitted-corpus census.  Every harness reads its outcome back per iteration and
+# runs the post-pass over the cells, so phase 4 measures the three pieces the
+# statistics layer branches on -- the readout that fills iters_scored, the
+# outcomes_vary evidence its degeneracy guard reads, and the aggregate itself.
 CENSUS_TESTS = 471
 
 # The Python mirrors of the header's knobs.  "Must match" is not a check: no fixture
-# straddles the THETA_D boundary, so a header change would keep every comparison's
-# truth value and desynchronise the mirror in silence.  All three are therefore
-# emitted by the C driver and COMPARED in phase 1, on the MIRROR| line.
+# straddles their boundaries, so a header change would keep every comparison's truth
+# value and desynchronise the mirror in silence.  Both are therefore emitted by the C
+# driver and COMPARED in phase 1, on the MIRROR| line.
 CORROB_RUNS = 2             # must match HET_CORROB_RUNS      (pinned via MIRROR|)
-THETA_D = 2                 # must match HET_THETA_DISTINCT   (pinned via MIRROR|)
 MAX_CELLS = 128             # must match HET_STATS_MAX_CELLS  (pinned via MIRROR|)
 
 
@@ -66,17 +62,9 @@ BASE = dict(
     # The stamp, by symbol: het_verdict() reads no field of a record that does not
     # carry it, so every fixture here has to be a stamped one.
     rec_magic="HET_REC_MAGIC",
-    exhaustive_valid=1,
-    target_count_exhaustive=0,
-    target_count_heuristic=0,
-    interleavings_detected=1000,
-    sync_valid=1,
-    distinct_decoded_iters=5000,
-    skew_stddev=3.5,
-    observer_unique_count=0,
-    obs_valid=0,
+    target_count=0,
+    outcomes_vary=1,
     stress_truncated=0,
-    spin_rendezvous=900, spin_cap=100,
     gpu_stress_rounds=64,
     cpu_enemy_rounds=1000,
     cpu_preload_ops=1000,
@@ -84,9 +72,9 @@ BASE = dict(
     noise_gpu_blocks=8,
     cpu_aff_failures=0,
     place_failures=0,
-    stress_requested=0x3F,
+    stress_requested=0x3D,
     N=100000,
-    frames_examined=100000,
+    iters_scored=100000,
     run_id=0,
 )
 
@@ -127,19 +115,14 @@ def stream_runs(run_ids, **kw):
     return [cell(run_id=r, **kw) for r in run_ids]
 
 
-def observed(cells_, k, clean=True, obs_degen=False):
-    """Make the first k cells see the target (optionally in a degenerate decode).
-       obs_degen degrades the observer channel on the sighting cells ONLY (a real
-       ws-edge needs >=2 distinct GPU store-values, so observer_unique_count=1 on a
-       sighting is the constant-read artefact), leaving the background nulls live."""
+def observed(cells_, k, clean=True):
+    """Make the first k cells see the target, optionally in a degenerate readout
+       (every scored iteration read back one outcome vector: the constant-read
+       artefact), leaving the background nulls live."""
     for i in range(k):
-        cells_[i]["target_count_exhaustive"] = 7
-        cells_[i]["target_count_heuristic"] = 7
+        cells_[i]["target_count"] = 7
         if not clean:
-            cells_[i]["distinct_decoded_iters"] = 1     # the constant-read artefact
-            cells_[i]["skew_stddev"] = 0.0
-        if obs_degen:
-            cells_[i]["observer_unique_count"] = 1      # observer-channel constant-read
+            cells_[i]["outcomes_vary"] = 0
     return cells_
 
 
@@ -170,10 +153,10 @@ case("sometimes-3-of-10-cells-not-frames", observed(stream(CELLS), 3),
 case("always", observed(stream(CELLS), CELLS), obs="Always", k=CELLS)
 
 # --- Void: a dead harness measured nothing ---------------------------------
-# Every cell COLD-INVALID (the two engines never overlapped), so R_usable is 0 and
-# there is no reading at all -- which is NOT the same answer as "Never".
+# Every cell COLD-INVALID (its stress stopped mid-run), so R_usable is 0 and there is
+# no reading at all -- which is NOT the same answer as "Never".
 case("void-when-every-cell-is-cold",
-     stream(CELLS, interleavings_detected=0),
+     stream(CELLS, stress_truncated=1),
      obs="VOID", R=CELLS, R_usable=0)
 
 # --- The degeneracy guard ---------------------------------------------------
@@ -184,30 +167,6 @@ case("degenerate-sightings-rejected-but-reported",
      observed(stream(CELLS), 3, clean=False),
      obs="Sometimes", k=3, k_eff=0, n_degen=3,
      flags_any=["DEGEN_SIGHTING"], tier="UNCONFIRMED")
-
-# The store-only (2+2W) tests decode through the observer, not a synchrony read, so
-# reading skew_stddev on them would call every cell degenerate forever.  BOTH arms of
-# the channel switch must be live:
-case("observer-channel-clean",
-     observed(stream(CELLS, sync_valid=0, obs_valid=1, observer_unique_count=900,
-                     distinct_decoded_iters=0, skew_stddev=0.0), 3),
-     obs="Sometimes", k=3, k_eff=3, flags_none=["DEGEN_SIGHTING"])
-
-# ... and the degenerate arm.  The degeneracy sits on the sightings (unique_count=1),
-# where it physically belongs: a cold observer on a non-sighting null COLD-INVALIDs
-# that cell instead, so the background nulls stay usable and the classification stays
-# honestly "Sometimes" with every sighting degenerate.
-case("observer-channel-degenerate",
-     observed(stream(CELLS, sync_valid=0, obs_valid=1, observer_unique_count=900,
-                     distinct_decoded_iters=0, skew_stddev=0.0), 3, obs_degen=True),
-     obs="Sometimes", k=3, k_eff=0, flags_any=["DEGEN_SIGHTING"])
-
-# No decode channel at all: FAIL CLOSED.  No emitted harness is in that state
-# (CENSUS_NEITHER), so reaching it is a build bug.
-case("no-decode-channel-fails-closed",
-     observed(stream(CELLS, sync_valid=0, obs_valid=0,
-                     distinct_decoded_iters=0, skew_stddev=0.0), 3),
-     k=3, k_eff=0, flags_any=["NO_DECODE_CHANNEL", "DEGEN_SIGHTING"])
 
 # --- The corroboration tier (HET_CORROB_RUNS distinct clean runs) -----------
 # The bar is on runs and the boundary is at HET_CORROB_RUNS exactly, so BOTH sides
@@ -275,44 +234,44 @@ case("first-sight-counts-the-runs-spent-through-the-sighting",
 # --- A mixed stamped/unstamped stream is read as its stamped half -------------
 # Ten stamped null cells plus two unstamped ones whose every field is memset residue.
 # Everything below rec_magic is unreadable, so nothing here may see one: not the run
-# count, not the frame total, not R_usable.  R keeps them, because R is the records
+# count, not the scored total, not R_usable.  R keeps them, because R is the records
 # supplied and the discard has to stay visible.
 MIXED_STAMP_CELLS = stream(CELLS) + stream_runs([10, 11], rec_magic=0)
 case("unstamped-cells-are-read-by-nothing",
      MIXED_STAMP_CELLS,
-     obs="Never", R=CELLS + 2, R_usable=CELLS, frames=CELLS * 100000)
+     obs="Never", R=CELLS + 2, R_usable=CELLS, scored=CELLS * 100000)
 
 # --- The selection effect on the denominator ---------------------------------
 # Nothing co-runs, so a cell is usable when it fired or when its own liveness
-# counters were alive: here seven runs saw no interleaving at all and are COLD, and
+# counters were alive: here seven runs stopped stressing mid-run and are COLD, and
 # the three that fired are usable BECAUSE they fired.  Classifying over usable cells
 # would report Always for a row that fired in 3 runs of 10, so the denominator is R
 # -- the runs EXECUTED.
 case("fired-3-of-10-is-SOMETIMES-not-ALWAYS",
-     observed(stream(CELLS, interleavings_detected=0), 3),
-     obs="Sometimes", k=3, k_eff=3, R=CELLS, R_usable=3, frames=CELLS * 100000)
+     observed(stream(CELLS, stress_truncated=1), 3),
+     obs="Sometimes", k=3, k_eff=3, R=CELLS, R_usable=3, scored=CELLS * 100000)
 
 # ... and one unstamped cell must NOT undo it.  The same ten, plus a cell that is
-# memset residue throughout.  Read, the residue adds a usable cell and a frame
+# memset residue throughout.  Read, the residue adds a usable cell and a scored
 # total; counted into R alone, it moves the denominator the right way and nothing
-# else.  Same class and same frame count as the case above is the whole assertion.
+# else.  Same class and same scored count as the case above is the whole assertion.
 case("plus-one-unstamped-cell-is-still-SOMETIMES",
-     observed(stream(CELLS, interleavings_detected=0), 3)
+     observed(stream(CELLS, stress_truncated=1), 3)
      + stream_runs([10], rec_magic=0),
      obs="Sometimes", k=3, k_eff=3, R=CELLS + 1, R_usable=3,
-     frames=CELLS * 100000)
+     scored=CELLS * 100000)
 
 # ... and the same effect on a NULL, which is where the two numbers a null prints
 # are told apart: three live runs of ten saw nothing and seven were COLD, so the
 # scoring statement is over the three usable cells while the effort is over the ten
-# runs executed -- the pool the frame total is summed over.  A fixture whose R and
+# runs executed -- the pool the scored total is summed over.  A fixture whose R and
 # R_usable agree cannot tell the two apart at all.
 NEVER_COLD_CASE = "never-over-three-live-runs-of-ten"
 _never_cold = stream(CELLS)
 for _c in _never_cold[3:]:
-    _c["interleavings_detected"] = 0
+    _c["stress_truncated"] = 1
 case(NEVER_COLD_CASE, _never_cold,
-     obs="Never", k=0, R=CELLS, R_usable=3, frames=CELLS * 100000)
+     obs="Never", k=0, R=CELLS, R_usable=3, scored=CELLS * 100000)
 
 # --- More runs than the aggregate can hold ----------------------------------
 # The tail beyond HET_STATS_MAX_CELLS is dropped from every statistic, which would
@@ -455,43 +414,34 @@ def py_reference(cells_):
     cpu_only = 1 if any(c.get("cpu_only", 0) for c in pool if stamped(c)) else 0
 
     def degenerate(c):
-        if c["sync_valid"]:
-            return (c["distinct_decoded_iters"] < THETA_D) or (c["skew_stddev"] == 0.0)
-        if c["obs_valid"]:
-            return c["observer_unique_count"] < THETA_D
-        return True
-
-    def channel_live(c):
-        # Mirrors het_verdict()'s channel-aware liveness disqualifier: the sync
-        # channel's evidence is interleavings_detected>0, the observer channel's is
-        # observer_unique_count>=THETA_D, and a record with NEITHER fails closed.
-        if c["sync_valid"]:
-            return c["interleavings_detected"] > 0
-        if c["obs_valid"]:
-            return c["observer_unique_count"] >= THETA_D
-        return False
+        # Mirrors het_cell_degenerate: a cell that scored nothing read nothing back,
+        # and one whose every iteration produced the same outcome vector measured
+        # one thing N times.
+        return (c["iters_scored"] == 0) or not c["outcomes_vary"]
 
     def usable(c):
         # Mirrors het_verdict()'s COLD-INVALID: an unstamped record is cold at step 0;
-        # a sighting is never cold; otherwise the run's decode channel has to be live.
+        # a sighting is never cold; otherwise no stress mechanism may be dead.  Only
+        # stress_truncated is perturbed by the fixtures here, so it is the one
+        # disqualifier re-derived; the rest are verify/verdictcheck.py's subject.
         if not stamped(c):
             return False
-        if c["target_count_exhaustive"] > 0 or c["target_count_heuristic"] > 0:
+        if c["target_count"] > 0:
             return True
-        return channel_live(c)
+        return c["stress_truncated"] == 0
 
     k = k_eff = n_degen = R_usable = first_sight = 0
     runs, allruns = [], []
     for c in cells_:
         # The stamp gates every read.  A cell that does not carry it is residue, and
         # nothing below may see one: NEITHER the run tally, nor the window sums, nor
-        # the frames, nor the calibration samples.  It is unusable by that same test,
+        # the scored total, nor the calibration samples.  It is unusable by that same test,
         # so skipping it whole loses nothing but the residue.
         if not stamped(c):
             continue
         if usable(c):
             R_usable += 1
-        y = c["target_count_exhaustive"] > 0 or c["target_count_heuristic"] > 0
+        y = c["target_count"] > 0
         # Runs consumed so far, over EVERY stamped cell: first_sight is a price in
         # runs, so the denominator is the runs that were actually spent.
         if c["run_id"] not in allruns:
@@ -526,7 +476,7 @@ def py_reference(cells_):
 
     return dict(obs=obs, k=k, k_eff=k_eff, k_runs=len(runs), n_degen=n_degen,
                 first_sight=first_sight,
-                frames=sum(c["frames_examined"] for c in cells_ if stamped(c)),
+                scored=sum(c["iters_scored"] for c in cells_ if stamped(c)),
                 R=R, R_usable=R_usable, tier=tier, cpu_only=cpu_only)
 
 
@@ -547,7 +497,7 @@ static void run_case(const char *name, const het_obs_record *recs, int n) {
             R > HET_STATS_MAX_CELLS means the tail was discarded. */
          st.R, st.n_at_first_sight,
          /* the EFFORT total, summed per cell: what the effort line discloses */
-         (unsigned long long)st.frames_examined);
+         (unsigned long long)st.iters_scored);
   printf("PRINT-BEGIN|%s\n", name);
   het_stats_print(stdout, &st);
   printf("PRINT-END|%s\n", name);
@@ -566,12 +516,11 @@ static void stop_case(const char *name, const het_obs_record *recs, int n,
 
 /* PHASE 1 -- the constants the aggregate is built on.
    THE PYTHON MIRRORS, emitted so they can be COMPARED.  Every fixture below sits
-   far from the THETA_D boundary -- deliberately, since a fixture at the boundary
-   tests the boundary and not the statistic -- so nothing else in this gate can
-   notice one of these macros moving under the mirror. */
+   far from these constants' boundaries -- deliberately, since a fixture at a
+   boundary tests the boundary and not the statistic -- so nothing else in this gate
+   can notice one of these macros moving under the mirror. */
 static void anchors(void) {
-  printf("MIRROR|%d|%d|%d\n", (int)HET_THETA_DISTINCT,
-         (int)HET_STATS_MAX_CELLS, (int)HET_CORROB_RUNS);
+  printf("MIRROR|%d|%d\n", (int)HET_STATS_MAX_CELLS, (int)HET_CORROB_RUNS);
 }
 
 int main(void) {
@@ -641,14 +590,13 @@ def emit_harness(tmp):
 
 # ---------------------------------------------------------------------------
 # THE BIT NUMBER IS WRITTEN DOWN, not derived from position in this list.  The
-# header leaves retired bits vacant (0, 1, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14, 16)
+# header leaves retired bits vacant (0, 1, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 16)
 # because flags=0x... is a wire format that archived transcripts and fixtures are
 # already written in, so an index-derived map would silently mis-decode every flag
 # above the first hole -- and a mis-decode here reads as a passing gate, not as an
 # error.
 FLAG_BIT = {
     "DEGEN_SIGHTING":     1 << 2,
-    "NO_DECODE_CHANNEL":  1 << 5,
     "CELLS_TRUNCATED":    1 << 8,
     "MIXED_POOL":         1 << 15,
 }
@@ -661,11 +609,11 @@ def _parse_case_fields(l):
     unpacks short and fails loudly, which no other consumer of this line does."""
     f = l.split("|")
     (_, name, obs, k, k_eff, k_runs, n_degen, R_usable, tier,
-     flags, R, first_sight, frames) = f
+     flags, R, first_sight, scored) = f
     return name, dict(
         obs=obs, k=int(k), k_eff=int(k_eff), k_runs=int(k_runs),
         n_degen=int(n_degen), R=int(R), R_usable=int(R_usable),
-        first_sight=int(first_sight), frames=int(frames),
+        first_sight=int(first_sight), scored=int(scored),
         tier=tier, flags=int(flags, 16))
 
 
@@ -709,11 +657,8 @@ def phase1(lines, quiet):
         if not l.startswith("MIRROR|"):
             continue
         seen_mirror = True
-        _, td, mc, cr = l.split("|")
+        _, mc, cr = l.split("|")
         for have, want, macro, what in (
-                (int(td), THETA_D, "HET_THETA_DISTINCT",
-                 "the degeneracy guard's floor: the mirror would call cells "
-                 "degenerate that the C does not, or the reverse"),
                 (int(mc), MAX_CELLS, "HET_STATS_MAX_CELLS",
                  "the record-array clamp: the truncation fixture is sized from the "
                  "mirror, so it would stop reaching the truncation path"),
@@ -726,19 +671,18 @@ def phase1(lines, quiet):
                       "constant than the C." % (macro, have, want, what))
                 bad += 1
         if not quiet and not bad:
-            print("      the Python mirrors match the header: THETA_D=%d, "
-                  "MAX_CELLS=%d, CORROB_RUNS=%d" % (int(td), int(mc), int(cr)))
+            print("      the Python mirrors match the header: MAX_CELLS=%d, "
+                  "CORROB_RUNS=%d" % (int(mc), int(cr)))
     if not seen_mirror:
-        print("  *** no MIRROR| line: the header's THETA_D / MAX_CELLS / "
-              "CORROB_RUNS are not being compared to statscheck's Python mirrors "
-              "at all")
+        print("  *** no MIRROR| line: the header's MAX_CELLS / CORROB_RUNS are not "
+              "being compared to statscheck's Python mirrors at all")
         bad += 1
 
     if bad:
         print("\nINPUTS FAILED: %d problem(s).  A stale mirror derives the Python "
               "reference from a different header than the C." % bad)
         return 1
-    print("\nINPUTS OK (the three mirrored knobs are COMPARED to the header, not "
+    print("\nINPUTS OK (both mirrored knobs are COMPARED to the header, not "
           "assumed)")
     return 0
 
@@ -780,7 +724,7 @@ def phase2(lines, quiet):
 
         # (a) The differential: every statistic, independently re-derived.
         for fld in ("obs", "k", "k_eff", "k_runs", "n_degen", "R", "R_usable",
-                    "tier", "first_sight", "frames"):
+                    "tier", "first_sight", "scored"):
             if g[fld] != ref[fld]:
                 errs.append("%s: C %s != py %s" % (fld, g[fld], ref[fld]))
 
@@ -824,8 +768,7 @@ def phase2(lines, quiet):
         print("  *** UNREACHABLE TIER: %s" % ", ".join(sorted(want_tier - seen_tier)))
         bad += 1
 
-    need_flags = {"DEGEN_SIGHTING", "NO_DECODE_CHANNEL", "CELLS_TRUNCATED",
-                  "MIXED_POOL"}
+    need_flags = {"DEGEN_SIGHTING", "CELLS_TRUNCATED", "MIXED_POOL"}
     print("  diagnostic flags    : %d/%d  (%s)"
           % (len(seen_flags & need_flags), len(need_flags),
              ", ".join(sorted(seen_flags))))
@@ -854,8 +797,8 @@ def phase2(lines, quiet):
                  "it does not say the null agrees with no model and refutes none"),
                 ("effort: %d run(s)" % r.get("R", -1),
                  "it does not disclose the effort behind the zero"),
-                ("%d frames examined" % r.get("frames", -1),
-                 "the effort line does not carry the frames this pool examined")):
+                ("%llu scored".replace("%llu", "%d") % r.get("scored", -1),
+                 "the effort line does not carry the iterations this pool scored")):
             if frag not in txt:
                 print("  *** %s reports a Never but %s" % (name, why))
                 bad += 1
@@ -921,7 +864,7 @@ def phase4(tamper=None):
     tests = sorted(t[:-len(".litmus")] for t in os.listdir(HET_DIR)
                    if t.endswith(".litmus"))
     tmp = tempfile.mkdtemp(prefix="statscorpus.")
-    n_sync = n_obs = n_neither = n_stats = n_stop = 0
+    n_scored = n_vary = n_stats = n_stop = 0
     tampered = 0
     bad = 0
     try:
@@ -945,14 +888,16 @@ def phase4(tamper=None):
                 if new != src:
                     tampered += 1
                 src = new
-            s = "_rec.sync_valid = 1;" in src
-            o = "_rec.obs_valid = 1;" in src
-            n_sync += s
-            n_obs += o
-            if not s and not o:
-                n_neither += 1
-                print("  *** %-26s has NEITHER decode channel: its degeneracy guard "
-                      "is blind" % t)
+            if "_rec.iters_scored++;" in src:
+                n_scored += 1
+            else:
+                print("  *** %-26s never fills iters_scored: its effort disclosure "
+                      "is a memset zero" % t)
+            if "_rec.outcomes_vary = 1;" in src:
+                n_vary += 1
+            else:
+                print("  *** %-26s never sets outcomes_vary: its degeneracy guard "
+                      "reads a field the emitter does not write" % t)
             if "het_stats_compute" in src:
                 n_stats += 1
             # Every harness carries the adaptive stop.
@@ -965,9 +910,8 @@ def phase4(tamper=None):
         print("  *** VACUOUS BITE: the corpus injection matched NOTHING")
         return 2
 
-    for what, got, want in (("sync_valid", n_sync, CENSUS_SYNC),
-                            ("obs_valid", n_obs, CENSUS_OBS),
-                            ("NEITHER (blind)", n_neither, CENSUS_NEITHER),
+    for what, got, want in (("iters_scored", n_scored, CENSUS_TESTS),
+                            ("outcomes_vary", n_vary, CENSUS_TESTS),
                             ("stats post-pass", n_stats, CENSUS_TESTS),
                             ("adaptive stop", n_stop, CENSUS_TESTS)):
         mark = "    " if got == want else " ***"
@@ -979,8 +923,8 @@ def phase4(tamper=None):
         print("\nCORPUS FAILED: %d problem(s).  A guard that branches on a field the "
               "emitter never sets is a guard nobody runs." % bad)
         return 1
-    print("\nCORPUS OK (every one of the %d harnesses computes the statistics and has "
-          "a decode channel; 0 are blind)" % len(tests))
+    print("\nCORPUS OK (every one of the %d harnesses fills iters_scored, writes the "
+          "outcomes_vary evidence and computes the statistics)" % len(tests))
     return 0
 
 
@@ -1081,7 +1025,7 @@ def line(obs, k, k_eff, k_runs, degen, first_sight, sighting):
     stub speaking a shape the runtime cannot produce tests a protocol nobody
     implements."""
     print("HetStats %s cpu_only=0 obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d "
-          "degen=%d first_sight=%d sighting=%s N=100000 frames=100000 flags=0x0"
+          "degen=%d first_sight=%d sighting=%s N=100000 scored=100000 flags=0x0"
           % (test, obs, R, R, k, k_eff, k_runs, degen, first_sight, sighting))
 
 
@@ -1703,11 +1647,11 @@ def bite():
                              "obs: C Always != py Sometimes"))
 
         # (1b) The EFFORT priced over the usable cells instead of the runs executed.
-        # The frame total beside it is summed over every stamped cell, so a null with
-        # cold runs in it would print three runs against ten runs of frames -- and
+        # The scored total beside it is summed over every stamped cell, so a null with
+        # cold runs in it would print three runs against ten runs of iterations -- and
         # only a pool whose R and R_usable differ can see that.
         ok &= _bite("the null's effort priced over the usable cells (three runs "
-                    "against ten runs of frames)", hdir,
+                    "against ten runs of iterations)", hdir,
                     lambda s: _subst(s, [("      _s->R_usable, _s->R, "
                                           "(unsigned long long)_s->N,\n",
                                           "      _s->R_usable, _s->R_usable, "
@@ -1819,18 +1763,11 @@ def bite():
                              "flag CELLS_TRUNCATED NOT set"))
 
         # ---- The Python mirrors -------------------------------------------------
-        # (11)-(12) Move a mirrored macro in the header and leave statscheck's Python
-        # copy behind.  The MIRROR| comparison in phase 1 is what names each drift, and
-        # for THETA_DISTINCT it is the ONLY thing that can: every fixture sits far from
-        # that boundary, so each comparison keeps its truth value on both sides of the
-        # move and the differential stays green on a mirror that no longer describes
-        # the header.  MAX_CELLS is not like that -- the truncation fixture is sized
-        # from it, so the differential moves too -- but phase 1 is still where the
-        # drift is named.
-        ok &= _bite("HET_THETA_DISTINCT moved under the Python mirror", hdir,
-                    lambda s: _subst(s, [("#define HET_THETA_DISTINCT 2",
-                                          "#define HET_THETA_DISTINCT 3")]),
-                    ("1",), "MIRROR DRIFT: HET_THETA_DISTINCT is 3 in the header")
+        # (11) Move a mirrored macro in the header and leave statscheck's Python copy
+        # behind.  The MIRROR| comparison in phase 1 is what names the drift.  The
+        # truncation fixture is sized from MAX_CELLS, so the differential moves with
+        # it -- but phase 1 is still where the drift is named.  The other mirrored
+        # knob, HET_CORROB_RUNS, has its own arm above.
         ok &= _bite("HET_STATS_MAX_CELLS moved under the Python mirror", hdir,
                     lambda s: _subst(s, [("#define HET_STATS_MAX_CELLS 128",
                                           "#define HET_STATS_MAX_CELLS 129")]),
@@ -1882,25 +1819,27 @@ def bite():
                 "elif self.runs >= confirm_runs:", 1),
             ("SIGHT-lone", "want stop=UNCONFIRMED-SIGHTING"))
 
-        # (18) The emitter stops tagging the decode channel: the guard would read a
-        # structurally-zero skew_stddev as "degenerate" on the store-only tests and
-        # call every one of their sightings an artefact.  ONLY phase 4 can see this.
+        # (18) The emitter stops writing the evidence the degeneracy guard reads:
+        # every cell then looks like a readout that never varied, and every sighting
+        # in the corpus is called an artefact.  ONLY phase 4 can see this.
         print("\n-- corpus injection --")
-        rc = phase4(tamper=lambda t, s: s.replace("_rec.obs_valid = 1;\n", ""))
+        rc = phase4(tamper=lambda t, s: s.replace(
+            "      else if (memcmp(_first, _o, sizeof _o) != 0) "
+            "_rec.outcomes_vary = 1;\n", ""))
         if rc == 1:
             print("  BITES (gate failed, as it must)   "
-                  "[the emitter stopped tagging the observer decode channel]")
+                  "[the emitter stopped writing the outcomes_vary evidence]")
         else:
-            print("  *** DID NOT BITE (rc=%d)   [obs_valid dropped]" % rc)
+            print("  *** DID NOT BITE (rc=%d)   [outcomes_vary dropped]" % rc)
             ok = False
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: 19/19 injections caught -- denominator 1, effort 1,")
+        print("BITE OK: 18/18 injections caught -- denominator 1, effort 1,")
         print("         decode guard 1, stop rule 6, structural invariants 2,")
-        print("         Python mirrors 2, CPU-only campaign 4, scheduler 1,")
+        print("         Python mirror 1, CPU-only campaign 4, scheduler 1,")
         print("         emitted corpus 1.")
         return 0
     print("BITE FAILED: an injection slipped through -- this gate is decorative")

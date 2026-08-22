@@ -47,11 +47,7 @@ lines.
   1
   $ grep -c 'cudaMalloc(&_scratch_loc' $MP.cu
   1
-  $ grep -c 'cudaMalloc(&_spin_bar' $MP.cu
-  1
   $ grep -c 'gd_alloc_shared((void\*\*)&_scratch' $MP.cu || true
-  0
-  $ grep -c 'gd_alloc_shared((void\*\*)&_spin_bar' $MP.cu || true
   0
   $ grep -c 'hipMalloc(&_scratch, sizeof(uint32_t)\*HET_SCRATCH_SIZE)' $MPH.hip
   1
@@ -67,53 +63,18 @@ coop-launch.t (g), which reads this same render.
   $ grep -c '_stressBlocks = (HET_STRESS_BLOCKS >= 0)' $MP.cu
   1
 
-(d) the device-scope window-opener is SEPARATE from the system-scope rendezvous.
-het_spin aligns the GPU test lanes; gd_bar is the CPU<->GPU start barrier and
-fires once, outside the perpetual loop.  Merging them would put a per-iteration
-cross-device barrier in the loop, which masks the tested order and stalls
-(het_stress.h, het_spin, states it once, with its source).  One spin call per GPU
-test lane; one gd_bar fetch_add per barrier-joining participant.
-
-The per-lane invariant is what is asserted: exactly one spin per GPU test lane,
-and the file-wide count is that same one, so a lane that lost its spin cannot be
-made up for by another gaining two.
-  $ grep -c 'het_spin(_spin_bar' $MP.cu
-  1
-  $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' $MP.cu | grep -c 'het_spin(_spin_bar'
-  1
-
-Every spinning lane spins on the SAME device-scope word, and HET_SPIN_LANES
-counts them.  That is required, not incidental: the barrier's limit is
-_nb*HET_SPIN_LANES, so a lane that joined the spin without being counted in
-HET_SPIN_LANES would make the limit unreachable and every spin would burn the
-1024-iteration deadlock cap.
-  $ grep -c '#define HET_SPIN_LANES 1' $MP.cu
-  1
+(d) the stress layer touches the SCRATCHPAD and nothing else.  A device-scope
+counter on a scratch word adds no ordering edge to the tested locations; a
+scaffolding op on a test location would fabricate the very outcome the row is
+looking for.  The tally words are the scratchpad's, not a test variable's.
+  $ grep -oE 'het_scratch_(bump|max|read)\([^,)]*' $MP.cu | sed 's/.*(//' | sort -u
+  &_stress_tally[HET_TALLY_NOISE]
+  &_stress_tally[HET_TALLY_NOISE_ROUNDS]
+  &_stress_tally[HET_TALLY_TRUNC]
+  _gpu_done
 
 (The cross-device arrivals themselves are pinned in coop-launch.t (b,c), on this
 same render.)
-
-and the barrier is ALL-OR-NONE, with its limit indexed by the barriers taken --
-the adaptation the perpetual loop forces.  Upstream relaunches per iteration, so
-its counter is fresh each time and its toggle is one host-set boolean, uniform
-across the launch: all testing threads spin, or none do ([CudaLitmus]
-litmus.cuh:340).  Our
-counter grows, so the limit must grow with it, and it is only attainable if every
-lane contributes exactly one increment to each barrier.  Hence the roll is drawn
-from a lane-independent stream (keyed by the iteration, not the lane) and the
-limit counts taken barriers (_nb), not iterations -- so every test lane reaches
-the same verdict for iteration _n.
-  $ grep -c 'het_rng_init(_seed ^ 0x9e3779b9u, (uint32_t)_n)' $MP.cu
-  1
-  $ grep -c 'het_spin(_spin_bar, _nb \* HET_SPIN_LANES, _stress_tally)' $MP.cu
-  1
-
-A per-lane roll with an iteration-indexed limit ((_n+1)*lanes) is the defect this
-pins: a lane would increment on only HET_BARRIER_PCT% of iterations while the
-limit rose every iteration, so the counter falls permanently behind and every
-spin burns the full 1024-spin deadlock cap instead of rendezvousing.
-  $ grep -c '(uint32_t)(_n + 1) \* HET_SPIN_LANES' $MP.cu || true
-  0
 
 (e) the ACCESS PATTERN reaches het_do_stress as a runtime kernel argument, never
 as a compile-time constant.  Two defects meet in this one line: upstream passes
@@ -144,18 +105,18 @@ if-chain has no else, so upstream's pattern 57 would silently stress nothing.
 
 (e2) liveness tally: every mechanism in the stress layer is invisible to the
 static faithfulness gate (it is scaffolding, not a tested op), so its health is measured
-at RUN TIME or not at all.  het_spin tallies how each spin ended (rendezvous vs
-the 1024-spin deadlock cap); the stress lanes flag a HET_STRESS_MAX_ROUNDS
-cap-exit, which means stress stopped while the test was still running.  The host
-prints both and carries them into the HetObs record, so the statistics layer can
-disqualify a run and a hardware sweep can be scored on it.
+at RUN TIME or not at all.  The stress lanes flag a HET_STRESS_MAX_ROUNDS
+cap-exit, which means stress stopped while the test was still running, and count
+the rounds one het_do_stress call completed.  The host prints both and carries
+them into the HetObs record, so the statistics layer can disqualify a run and a
+hardware sweep can be scored on it.
   $ grep -c 'het_scratch_bump(&_stress_tally\[HET_TALLY_TRUNC\])' $MP.cu
   1
-  $ grep -c 'HetLitmus stress: spins=%llu rendezvous=%llu cap=%llu' $MP.cu
+  $ grep -c 'HetLitmus stress: do_stress_rounds=%u' $MP.cu
   1
-  $ grep -c 'spin=%llu/%llu stress_trunc=%llu' MP-cg-sys-acqrel-2s/het_verdict.h
+  $ grep -c 'stress_trunc=%llu do_stress_rounds=%llu' MP-cg-sys-acqrel-2s/het_verdict.h
   1
-  $ grep -c 'het_scratch_bump(&tally\[(val >= limit) ? HET_TALLY_RDV : HET_TALLY_CAP\])' MP-cg-sys-acqrel-2s/het_stress.h
+  $ grep -c 'het_scratch_max(&tally\[HET_TALLY_STRESS_ROUNDS\], rounds)' MP-cg-sys-acqrel-2s/het_stress.h
   1
 
 (e3) the two upstream defects are disclosed in the emitted header, not just in a
@@ -184,45 +145,26 @@ lane-independent one checked in (d).
   $ grep -c 'het_rng_t _rng = het_rng_init(_seed, blockIdx.x \* blockDim.x + threadIdx.x)' $MP.cu
   1
 
-(g) on an OBSERVER test (condition names a coherence-final location) the observer
-keeps its reserved grid slot and its pinned trip count, and it does not spin --
-its job is to sample the shared locations densely, and gating it on the test
-lanes would couple two lanes that run at different rates.
-
-S-cg-sys-fence carries an observer, so it runs 2 blocks (GPU proc + observer),
-2 lanes and 1 spin -- the observer does not spin.  SPIN_LANES (1) staying
-strictly below GPU_LANES (2) is the property that matters; hardcode either and
-the system-scope rendezvous releases before the observer arrives.
+(g) a shape whose outcome carries a coherence-final location runs no extra lane
+for it: the location's value is read out of its own slot after the run, so
+S-cg-sys-fence has exactly the lanes its GPU procs ask for -- one block, one
+lane -- and the pre-stress roll sits in it like any other lane's.
 
 Every `unroll 1' pragma survives per lane -- dropping one lets nvcc unroll that
-perpetual loop, and the PTX then carries many times the declared ops, which is
+persistent loop, and the PTX then carries many times the declared ops, which is
 the faithfulness gate's subject.
-  $ grep -E '^#define HET_(TEST_BLOCKS|GPU_LANES|SPIN_LANES)' $S.cu
-  #define HET_TEST_BLOCKS 2
-  #define HET_GPU_LANES 2
-  #define HET_SPIN_LANES 1
-  $ grep -c 'het_spin(_spin_bar' $S.cu
-  1
+  $ grep -E '^#define HET_(TEST_BLOCKS|GPU_LANES)' $S.cu
+  #define HET_TEST_BLOCKS 1
+  #define HET_GPU_LANES 1
   $ grep -c '#pragma unroll 1' $S.cu
-  2
-
-The observer lane is still the one that does NOT spin: its block body carries the
-perpetual loop but no het_spin.  Checked PER LANE by extracting each block body,
-because the file-wide sum below is equally satisfied by the test lane spinning
-twice and the observer once -- which is the exact regression this guards.  The
-blocks are the GPU proc and the observer.
-  $ for b in 0 1; do sed -n "/if (blockIdx.x == $b && threadIdx.x == 0) {/,/^  }$/p" $S.cu | grep -c 'het_spin(_spin_bar'; done
   1
-  0
-  [1]
-  $ grep -c 'het_spin(_spin_bar, _nb \* HET_SPIN_LANES, _stress_tally)' $S.cu
+  $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' $S.cu | grep -c 'het_do_stress(_scratch'
   1
 
 (h) the HIP twin renders the same shape from the same template (per-dialect
-fields, not per-dialect branches), and the header's one divergence -- device-scope
-atomics, which CUDA and HIP genuinely spell differently -- resolves to the HIP
-spelling.
-  $ grep -c 'het_spin(_spin_bar' $SH.hip
-  1
-  $ grep -c '__HIP_MEMORY_SCOPE_AGENT' hip/S-cg-sys-fence-x86_64/het_stress.h
+fields, not per-dialect branches), and the header's one divergence -- the vendor
+runtime header its scratchpad counters need -- resolves to the HIP spelling.
+  $ grep -c 'het_do_stress(_scratch' $SH.hip
   2
+  $ grep -c '#include <hip/hip_runtime.h>' hip/S-cg-sys-fence-x86_64/het_stress.h
+  1

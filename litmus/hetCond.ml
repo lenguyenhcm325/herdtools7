@@ -14,7 +14,7 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: condition classification helpers.  See hetCond.mli for the
+(* HetLitmus: the condition's location set.  See hetCond.mli for the
    contract. *)
 
 (* Collect the Location_global payloads referenced by the condition's atoms.
@@ -35,31 +35,3 @@ let condition_locations p =
       let k = MiscParser.dump_value g in
       if Hashtbl.mem seen k then false else (Hashtbl.add seen k () ; true))
     locs
-
-type mechanism_class = [ `Robust | `Advisory | `Exploratory ]
-
-let perpetual_class p =
-  let nregs = ref 0 and nlocs = ref 0 in
-  ConstrGen.fold_prop
-    (fun atom () ->
-      match atom with
-      | ConstrGen.LV (rloc, _) ->
-         (match ConstrGen.loc_of_rloc rloc with
-          | MiscParser.Location_global _ -> incr nlocs
-          | MiscParser.Location_reg _ | MiscParser.Location_sreg _ -> incr nregs)
-      | ConstrGen.LL _ | ConstrGen.FF _ -> ())
-    p () ;
-  if !nlocs = 0 then `Robust
-  else if !nregs >= 1 && !nlocs = 1 then `Advisory
-  else `Exploratory
-
-(* The reporting tier is not the mechanism tier: R is demoted here and
-   perpetual_class above is left alone.  Why, in hetCond.mli. *)
-let reporting_class ~has_rf_anchor m = match m with
-  | `Advisory when not has_rf_anchor -> `Exploratory
-  | (`Robust | `Advisory | `Exploratory) as c -> c
-
-let confidence_c_name = function
-  | `Robust -> "CONF_ROBUST"
-  | `Advisory -> "CONF_ADVISORY"
-  | `Exploratory -> "CONF_EXPLORATORY"

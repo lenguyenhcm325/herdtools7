@@ -1,5 +1,5 @@
 # Every hetlitmus make gate that runs without a GPU device: the base
-# umbrella (make hetlitmus-test) in one job, the five compile-only
+# umbrella (make hetlitmus-test) in one job, the four compile-only
 # toolchain gates in the other.  Only the second job installs nvcc and
 # hipcc; no job needs a device.  The four device-executing gates
 # (hetlitmus-stress, -selftest, -characterize-hw, -run-hw) probe for real
@@ -121,6 +121,5 @@ jobs:
           opam exec -- make
           hetlitmus-faithful
           hetlitmus-smoke
-          hetlitmus-obs
           hetlitmus-cpustress
           hetlitmus-hipbuild

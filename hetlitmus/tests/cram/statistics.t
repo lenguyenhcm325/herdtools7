@@ -59,40 +59,29 @@ unit-tested from synthetic records.
   $ grep -c 'het_campaign_stop_why(_stop)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
 
-THE TARGET COUNT IS BUMPED ON ONE LINE, UNDER ONE PREDICATE, on both channels
-at once: the exhaustive count and the heuristic one are the same sighting read
-two ways, and a bump that drifted onto its own line under its own condition
-would let the two disagree about a frame while every structural gate stayed
-green.
+THE TARGET COUNT IS BUMPED ONCE PER SCORED ITERATION, UNDER THE DETECTOR ITSELF,
+beside the iters_scored the effort disclosure is summed from.  A bump that
+drifted onto its own condition would let the count and the effort disagree about
+an iteration while every structural gate stayed green.
 
-  $ grep -c 'target_count_exhaustive++; _rec.target_count_heuristic++' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  $ grep -c 'if (_weak) _rec.target_count++;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -c '_rec.iters_scored++;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
 
-THE DEGENERACY GUARD MUST NOT GO CONSTANT ON THE STORE-ONLY SHAPES.
-distinct_decoded_iters and skew_stddev are both written from the same
-synchrony-decode block, so a test with no synchrony read leaves both at their
-memset zero.  Every 2+2W -- store-only, with no reader at all -- sits in exactly
-that position, and a guard reading `skew_stddev == 0' as "the decoder is
-degenerate" would condemn every one of their cells forever, making k_eff a
-constant 0 on them.  0 means NOT MEASURED, never "measured zero", so the emitter
-tags which channel each test actually has and the guard switches channel rather
-than firing blind.
+THE DEGENERACY GUARD READS EVIDENCE THE EMITTER WRITES.  het_cell_degenerate
+asks whether this cell scored anything and whether its outcome vector ever
+varied; both are memset zero unless the readout writes them, and a guard reading
+an unwritten field would call every cell degenerate.  Every shape writes them,
+the store-only ones included -- a location column is read out of its slot like a
+register's, so 2+2W has an outcome vector like any other test.
 
-MP has a reader -> the synchrony channel:
-
-  $ grep -c '_rec.sync_valid = 1;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  $ grep -c '_rec.outcomes_vary = 1;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
-  $ grep -c '_rec.obs_valid = 1;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
-  0
-  [1]
-
-2+2W is store-only -> the OBSERVER channel, and no synchrony channel at all:
-
-  $ grep -c '_rec.obs_valid = 1;' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+  $ grep -c '_rec.outcomes_vary = 1;' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   1
-  $ grep -c '_rec.sync_valid = 1;' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
-  0
-  [1]
+  $ grep -c '_rec.iters_scored++;' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
+  1
 
 THE INSTRUMENTS THEMSELVES ARE IN THE EMITTED HEADER, NOT IN A SCRIPT.  A reader
 who cannot recompute an outcome from the artefact has not been given a result.

@@ -34,9 +34,8 @@ reused code, with its mandatory attributions, in one auditable place — which i
 what the reuse licence condition (citation) actually needs.  The header states
 that condition and carries the citation table; do not restate it here.
 
-Its ONE dialect divergence (the scoped atomics behind `het_spin`) is a
-preprocessor selection, because CUDA and HIP genuinely spell device-scope atomics
-differently and there is no dialect-neutral spelling.
+Its ONE dialect divergence is a preprocessor selection of the vendor runtime
+header its scratchpad counters need, because CUDA and HIP do not share one.
 
 Design: `hetlitmus/docs/00-environment-design.md` sec 3.5.
 

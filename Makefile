@@ -745,24 +745,6 @@ hetlitmus-stats: | build
 	python3 hetlitmus/verify/statscheck.py --bite
 	@ echo "HetLitmus statistics layer: OK (and the gate bites)"
 
-### litmus7's inherited outs histogram: fed exactly once per observation, and
-### never printing a number for a location column no run measures
-### (hetlitmus/verify/histcheck.py).
-hetlitmus-hist: | build
-	@ echo
-	python3 hetlitmus/verify/histcheck.py
-	python3 hetlitmus/verify/histcheck.py --bite
-	@ echo "HetLitmus histogram tally + display: OK (and the gate bites)"
-
-### The emitted CPU observer still reloads once per iteration at clang -O2 on
-### both host ISAs -- it is the only recovery channel the store-only shapes have
-### (hetlitmus/verify/obscheck.py).
-hetlitmus-obs: | build
-	@ echo
-	python3 hetlitmus/verify/obscheck.py
-	python3 hetlitmus/verify/obscheck.py --bite
-	@ echo "HetLitmus observer-liveness gate: OK (and the gate bites)"
-
 ### The emitter/runtime skew tripwire: every field a render writes and every
 ### HET_* define it stamps still binds to litmus/het-runtime/*.h, which nothing
 ### but a compiler otherwise checks (hetlitmus/verify/recfields.py).
@@ -771,15 +753,6 @@ hetlitmus-recfields: | build
 	python3 hetlitmus/verify/recfields.py
 	python3 hetlitmus/verify/recfields.py --bite
 	@ echo "HetLitmus emitter/runtime field + define binding: OK (and the gate bites)"
-
-### The x86-64 CPU thread of a het harness is that test's own program, down to
-### the object file, and a refusal is fail-closed (verify/x86bodycheck.py).  Its
-### input corpus: tests/het/generate-x86.sh, which says why it is not committed.
-hetlitmus-x86body: | build
-	@ echo
-	python3 hetlitmus/verify/x86bodycheck.py
-	python3 hetlitmus/verify/x86bodycheck.py --bite
-	@ echo "HetLitmus x86-64 tagged CPU body gate: OK (and the gate bites)"
 
 ### hetlitmus/tests/het-x86 is still, byte for byte, what its generator emits --
 ### it is the only committed route to the populated (x86_64, hip) pair
@@ -903,8 +876,6 @@ hetlitmus-test:: hetlitmus-hipsrc
 hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-recfields
 hetlitmus-test:: hetlitmus-stats
-hetlitmus-test:: hetlitmus-hist
-hetlitmus-test:: hetlitmus-x86body
 hetlitmus-test:: hetlitmus-x86fixture
 hetlitmus-test:: hetlitmus-cpuonly
 hetlitmus-test:: hetlitmus-run-gate
@@ -916,7 +887,6 @@ hetlitmus-test-toolchain:: | build
 hetlitmus-test-toolchain:: hetlitmus-faithful
 hetlitmus-test-toolchain:: hetlitmus-stress
 hetlitmus-test-toolchain:: hetlitmus-cpustress
-hetlitmus-test-toolchain:: hetlitmus-obs
 hetlitmus-test-toolchain:: hetlitmus-hipbuild
 hetlitmus-test-toolchain:: hetlitmus-characterize-hw
 hetlitmus-test-toolchain:: hetlitmus-run-hw
@@ -939,10 +909,10 @@ hetlitmus-promote: | build
 	@ echo "hetlitmus-promote: review 'git diff' then commit yourself."
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
-.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats hetlitmus-obs
-.PHONY: hetlitmus-hist hetlitmus-dup hetlitmus-verdict hetlitmus-selftest
+.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats
+.PHONY: hetlitmus-dup hetlitmus-verdict hetlitmus-selftest
 .PHONY: hetlitmus-recfields
-.PHONY: hetlitmus-x86body hetlitmus-hipbuild hetlitmus-cpuonly
+.PHONY: hetlitmus-hipbuild hetlitmus-cpuonly
 .PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate hetlitmus-run-hw
 .PHONY: hetlitmus-hipsrc
 .PHONY: hetlitmus-test hetlitmus-test-toolchain hetlitmus-test-nvcc

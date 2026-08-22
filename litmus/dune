@@ -20,6 +20,7 @@
        het-runtime/het_stress.h
        het-runtime/het_cpu_stress.h
        het-runtime/het_verdict.h
+       het-runtime/het_rdv.h
        het-runtime/het_alloc_cuda.inc
        het-runtime/het_noise_cuda.inc
        het-runtime/het_alloc_hip.inc
@@ -44,6 +45,9 @@
     (echo "|het_payload}\n\n")
     (echo "let het_verdict_h = {het_payload|")
     (cat het-runtime/het_verdict.h)
+    (echo "|het_payload}\n\n")
+    (echo "let het_rdv_h = {het_payload|")
+    (cat het-runtime/het_rdv.h)
     (echo "|het_payload}\n\n")
     (echo "let het_alloc_cuda_inc = {het_payload|")
     (cat het-runtime/het_alloc_cuda.inc)

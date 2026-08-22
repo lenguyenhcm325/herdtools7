@@ -49,9 +49,9 @@
  *   The cache primitives are litmus7's own, reused verbatim from
  *     litmus/libdir/_aarch64/_cache.h and _x86_64/_cache.h (CeCILL-B).
  *
- * NOT PORTED: launch randomisation; a per-cell CPU<->GPU barrier (het_spin in
- * het_stress.h says why); and a shared-timebase release, for which no shared clock
- * exists -- Grace's cntvct_el0 and Hopper's %globaltimer have different epochs.
+ * NOT PORTED: launch randomisation; and a shared-timebase release, for which no
+ * shared clock exists -- Grace's cntvct_el0 and Hopper's %globaltimer have
+ * different epochs.
  * ========================================================================= */
 #ifndef HET_CPU_STRESS_H
 #define HET_CPU_STRESS_H

@@ -14,8 +14,8 @@
 #include "het_verdict.h"
 
 /* One row of the fixture: a test name, how many runs it ran, and how many of
-   them (from run 0) saw the outcome.  `live' 0 makes every run COLD by the one
-   disqualifier that needs no stress knob -- the two engines never overlapped. */
+   them (from run 0) saw the outcome.  `live' 0 makes every run COLD through the
+   stress disqualifier that needs no knob -- stress stopped mid-run. */
 typedef struct {
   const char *name;
   int runs;
@@ -59,10 +59,10 @@ static const char *HEADER[] = {
 "# KNOWN GAP: no gate binds this text to the printers.",
 };
 
-/* The record every row is built from: one perpetual het run whose every
-   requested mechanism is measured alive, seeing nothing.  The two decode
-   channels are both tagged and the two lane counts are both nonzero, which is
-   the two-engine harness with a reader that this fixture stands for. */
+/* The record every row is built from: one persistent het run whose every
+   requested mechanism is measured alive, which read every one of its N
+   iterations back and saw nothing.  Its outcome vector varied, which is the
+   readout of a harness whose two engines both ran. */
 static het_obs_record base_record(const row_t *r, int run) {
   het_obs_record rec;
   memset(&rec, 0, sizeof rec);
@@ -70,22 +70,13 @@ static het_obs_record base_record(const row_t *r, int run) {
   rec.test_name = r->name;
   rec.instance_id = 0;
   rec.run_id = run;
-  rec.confidence = CONF_ROBUST;
-  rec.reporting = CONF_ROBUST;
   rec.N = 100000;
-  rec.frames_examined = 100000;
-  rec.exhaustive_valid = 1;
-  rec.interleavings_detected = r->live ? 4096 : 0;
-  rec.distinct_decoded_iters = 64;
-  rec.skew_min = -3; rec.skew_max = 3;
-  rec.skew_mean = 0.200; rec.skew_stddev = 1.500;
-  rec.sync_valid = 1;
-  rec.obs_valid = 1;
+  rec.iters_scored = 100000;
+  rec.outcomes_vary = 1;
+  rec.stress_truncated = r->live ? 0 : 7;
   rec.gpu_lanes = 1;
-  rec.spin_lanes = 1;
-  rec.spin_rendezvous = 4096;
   rec.gpu_stress_rounds = 64;
-  rec.stress_requested = 0x3f;
+  rec.stress_requested = 0x3d;
   rec.cpu_enemies = 4;
   rec.cpu_enemy_rounds = 5000;
   rec.cpu_enemy_accesses = 400000;
@@ -95,10 +86,7 @@ static het_obs_record base_record(const row_t *r, int run) {
   rec.noise_gpu_blocks = 8;
   rec.noise_gpu_rounds = 64;
   rec.noise_ws_mb = 512;
-  if (run < r->hits) {
-    rec.target_count_exhaustive = 1;
-    rec.target_count_heuristic = 1;
-  }
+  if (run < r->hits) rec.target_count = 1;
   return rec;
 }
 

@@ -64,7 +64,7 @@ AARCH64_TESTS = ["MP-cg-sys-acqrel-2s", "MP-cg-sys-acquire", "MP-cg-sys-relaxed"
 # fires: what the scheduler does with it is the phase's subject.
 STUB_STATS = ("HetStats %s cpu_only=0 obs=Never R=10 usable=10 k=0 k_eff=0 "
               "k_runs=0 degen=0 first_sight=0 sighting=none N=100000 "
-              "frames=100000 flags=0x0")
+              "scored=100000 flags=0x0")
 
 # The stand-in compiler: `-c' writes the object, a link writes an executable whose
 # body is @@BODY@@.  It is what lets the chain reach the campaign on a box with no
@@ -125,7 +125,7 @@ MATCHY_RUNNER = r'''#!/usr/bin/env python3
 import os, sys
 d = sys.argv[1]
 print("HetStats %s cpu_only=0 obs=Sometimes R=10 usable=10 k=1 k_eff=1 k_runs=3 "
-      "degen=0 first_sight=1 sighting=CORROBORATED N=100000 frames=100000 "
+      "degen=0 first_sight=1 sighting=CORROBORATED N=100000 scored=100000 "
       "flags=0x0" % os.path.basename(d))
 '''
 
@@ -143,7 +143,7 @@ fired = (inv == 1)
 # one, and a stub ignoring the cap would land on run counts no harness produces.
 R = min(10, int(os.environ.get("HET_RUNS_MAX") or "10"))
 print("HetStats %s cpu_only=0 obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d "
-      "degen=0 first_sight=%d sighting=%s N=100000 frames=100000 flags=0x0"
+      "degen=0 first_sight=%d sighting=%s N=100000 scored=100000 flags=0x0"
       % (os.path.basename(d), "Sometimes" if fired else "Never", R, R,
          fired, fired, fired, 1 if fired else 0,
          "UNCONFIRMED" if fired else "none"))
@@ -1416,7 +1416,10 @@ CH_OBSERVED = [": OBSERVED",
 CH_NULL = ["NOT OBSERVED under this effort",
            "NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL",
            "CHARACTERIZATION, NEVER VALIDATION",
-           "effort:"]
+           "effort:",
+           # The effort a null is entitled to report is the iterations it read
+           # back, so the number has to be on the line beside the sentence.
+           "scored="]
 # What NEITHER arm may carry: a voucher named, a constant standing in for the pair,
 # a build fault reported as a result.  Every entry is planted by an injection
 # below, so this list holds only wording a run can be made to carry; a sentence no
@@ -1483,7 +1486,7 @@ def ch_check(text, k, R, obs, quiet=False):
         if frag in text:
             bad.append("[%s] the printout says %r -- %s" % (tag, frag, why))
 
-    must("A", "HetVerdict %s [" % CH_TEST)
+    must("A", "HetVerdict %s run=" % CH_TEST)
 
     for frag in (CH_OBSERVED if k > 0 else CH_NULL):
         must("D", frag)
@@ -1545,8 +1548,8 @@ CH_INJECTIONS = [
     ("B/C", "het_verdict.h",
      "the verdict banner says something vouched for the run",
      lambda s: _subst(s, [
-         ('  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s\\n",',
-          '  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s'
+         ('  fprintf(_ch, "HetVerdict %s%s run=%d: %s\\n",',
+          '  fprintf(_ch, "HetVerdict %s%s run=%d: %s'
           '  (vouched for by mu(T))\\n",')]),
      "the printout says 'vouched for by'"),
     ("A/D", "het_verdict.h",
@@ -1557,11 +1560,13 @@ CH_INJECTIONS = [
          ("    HET_PAIR_NAME);",
           '    "the target this harness was tagged for");')]),
      "the printout says 'the target this harness was tagged for'"),
-    ("B/C", "het_verdict.h",
-     "the no-decode-channel flag raised on a harness that has one",
+    # The record stamp is what gates every field het_verdict() would read, so a
+    # harness that ships without one prints a build fault where a result belongs
+    # -- on every run, whichever arm it took.
+    ("B/C", CH_TEST + ".cu",
+     "the emitted driver ships an UNSTAMPED record",
      lambda s: _subst(s, [
-         ("    if (!recs[i].sync_valid && !recs[i].obs_valid)\n",
-          "    if (1)\n")]),
+         ("    _rec.rec_magic = HET_REC_MAGIC;\n", "")]),
      "the printout says 'BUILD BUG'"),
 ]
 

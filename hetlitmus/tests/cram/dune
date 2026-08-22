@@ -41,11 +41,12 @@
 ; own behaviour is gated by hetlitmus/verify/statscheck.py (which compiles the real
 ; het_verdict.h and drives it with synthetic record streams); what cram pins is that
 ; the harness actually PRODUCES the inputs that layer consumes.
-; reporting-tier.t pins the two confidence tiers a record carries and which of them
-; the printed label is.
+; slot-readout.t pins the per-iteration slot layout, the one-pass readout that
+; reads iteration n's outcome out of slot n, and the emitter's refusal to write a
+; constant weak-behaviour detector.
 (cram
- (applies_to pfix-cond coop-launch shared-alloc tagged-recover stress cpu-stress
-   reporting-tier statistics)
+ (applies_to pfix-cond coop-launch shared-alloc slot-readout stress cpu-stress
+   statistics)
  (package herdtools7)
  (deps
   %{bin:litmus7}

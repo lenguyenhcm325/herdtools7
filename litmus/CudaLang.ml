@@ -82,36 +82,33 @@ let fence_min_arch ord =
   then "requires sm_90" else "sm_70+"
 
 (* Kernel lvalue for atomic_ref binding.  Memory locations are passed to the
-   kernel as int* parameters (managed memory), so every access dereferences:
-   a global `x' becomes `*x', a register-held address `r0' becomes `*r0'. *)
-let lvalue_of_addr_op ao = sprintf "*%s" (var_of_addr_op ao)
-
-(* Element type of the scoped atomic_ref: uint64_t on the het tag path, so a
-   store value cannot truncate to less than a tag; plain int on the GPU-only
-   path (see GpuLang.tag_ctx). *)
-let ref_elt_type : tag_ctx -> string = function Some _ -> "uint64_t" | None -> "int"
+   kernel as int* parameters, so every access dereferences: on the GPU-only
+   path a global `x' becomes `*x', and on the compound path it becomes iteration
+   [het]'s own slot of x (litmus/het-runtime/het_rdv.h). *)
+let lvalue_of_addr_op ~het ao =
+  let v = var_of_addr_op ao in
+  match het with
+  | Some idx -> sprintf "*(%s + (%s)*HET_SLOT_STRIDE_WORDS)" v idx
+  | None -> sprintf "*%s" v
 
 (* ------------------------------------------------------------------ *)
 (* Instruction translation                                            *)
 (* ------------------------------------------------------------------ *)
 
-let scoped_ref ~tag ind chan var scope =
-  fprintf chan "%scuda::atomic_ref<%s, %s> ref(%s);\n"
-    ind (ref_elt_type tag) (thread_scope scope) var
+let scoped_ref ind chan var scope =
+  fprintf chan "%scuda::atomic_ref<int, %s> ref(%s);\n"
+    ind (thread_scope scope) var
 
 (* dest reg of a load is declared at proc scope; here we just assign.
-   [~tag] selects the tagged/uint64 path (Some) over the standalone GPU-only
-   path (None). *)
-let dump_instr chan ~tag ind i = match i with
+   [~het] selects the slot-addressed compound path (Some) over the standalone
+   GPU-only path (None). *)
+let dump_instr chan ~het ind i = match i with
   | BellBase.Pst (ao, roi, annots) ->
       let var = var_of_addr_op ao in
-      (* GPU-only: the parsed store value; het: the per-iteration tag. *)
-      let v = match tag with
-        | Some (iter,k,mu) -> tagged_value iter k mu
-        | None -> value_of_roi roi in
+      let v = value_of_roi roi in
       let ord, scp = order_scope_of annots in
       fprintf chan "%s{ // w[%s,%s] %s %s\n" ind ord scp var v ;
-      scoped_ref ~tag (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
+      scoped_ref (ind ^ "  ") chan (lvalue_of_addr_op ~het ao) scp ;
       fprintf chan "%s  ref.store(%s, %s);\n" ind v (memory_order ord) ;
       fprintf chan "%s}\n" ind
   | BellBase.Pld (r, ao, annots) ->
@@ -119,7 +116,7 @@ let dump_instr chan ~tag ind i = match i with
       and dst = reg_name r in
       let ord, scp = order_scope_of annots in
       fprintf chan "%s{ // r[%s,%s] %s %s\n" ind ord scp dst var ;
-      scoped_ref ~tag (ind ^ "  ") chan (lvalue_of_addr_op ao) scp ;
+      scoped_ref (ind ^ "  ") chan (lvalue_of_addr_op ~het ao) scp ;
       fprintf chan "%s  %s = ref.load(%s);\n" ind dst (memory_order ord) ;
       fprintf chan "%s}\n" ind
   | BellBase.Pfence (BellBase.Fence (annots, _)) ->

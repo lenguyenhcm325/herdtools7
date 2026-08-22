@@ -95,9 +95,9 @@ LIBDIR = os.path.join(ROOT, "litmus", "libdir")
 
 # The x86_64 rendering is the one an x86_64 host can LINK: its CPU thread is real
 # x86-64 asm, so the uname guard admits it.  MP-cg-sys-acqrel-2s carries a CPU
-# proc with a store, a fence and a load, so its render exercises the whole
-# tagged-body vocabulary.  Its AArch64 twin is host-pair-guard's refusal probe,
-# on that same x86_64 host.
+# proc with a store, a fence and a load, so its render exercises the whole CPU
+# vocabulary this corpus is written in.  Its AArch64 twin is host-pair-guard's
+# refusal probe, on that same x86_64 host.
 X86_TEST = "MP-cg-sys-acqrel-2s-x86_64"
 AARCH64_TEST = "MP-cg-sys-acqrel-2s"
 # The fence-carrying render fence-lowering builds, and the lowering its .hip owes for each

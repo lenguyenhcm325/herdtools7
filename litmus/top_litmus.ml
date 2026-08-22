@@ -656,7 +656,9 @@ end = struct
                         HetEmit.Make(Cfg)(HetOpts)(Cpu)(CpuF)
                           (struct
                             let compile_code doc alloc =
-                              (CpuX.Comp.compile doc alloc).CpuX.Utils.T.code
+                              let c = CpuX.Comp.compile doc alloc in
+                              c.CpuX.Utils.T.globals, c.CpuX.Utils.T.code
+                            let dump_fun = CpuX.Lang.dump_fun
                           end) in
                       H.run
                    | HetArch.IsaX86_64 ->
@@ -683,7 +685,9 @@ end = struct
                         HetEmit.Make(Cfg)(HetOpts)(Cpu)(CpuF)
                           (struct
                             let compile_code doc alloc =
-                              (CpuX.Comp.compile doc alloc).CpuX.Utils.T.code
+                              let c = CpuX.Comp.compile doc alloc in
+                              c.CpuX.Utils.T.globals, c.CpuX.Utils.T.code
+                            let dump_fun = CpuX.Lang.dump_fun
                           end) in
                       H.run in
                  run hash_env name in_chan out_chan splitted

@@ -107,10 +107,6 @@
 #error "HET_MEM_STRESS_PATTERN must be 0..3 (0=st;st 1=st;ld 2=ld;st 3=ld;ld)"
 #endif
 
-#ifndef HET_BARRIER_PCT
-#define HET_BARRIER_PCT 68             /* % of iterations the GPU test lanes
-                                          hit the device-scope window-opener   */
-#endif
 #ifndef HET_SEED
 #define HET_SEED 1                     /* fixed => a run replays from its seed
                                           [GPUHarbor23].  The HET_SEED env var
@@ -135,10 +131,6 @@
  * the co-residency cap squeezed to zero.  A dead one still yields a
  * clean-looking "Never".
  *
- *   RDV / CAP     how each het_spin ended: rendezvous, or the 1024-spin deadlock
- *                 cap.  A mostly-CAP spin is a fixed-length delay loop, not a
- *                 window-opener; the ratio is also the datum HET_BARRIER_PCT is
- *                 tuned against.
  *   TRUNC         stress lanes that hit HET_STRESS_MAX_ROUNDS, i.e. stopped
  *                 stressing while tested lanes were still running.  Such a run is
  *                 not comparable with a fully stressed one.
@@ -154,13 +146,11 @@
  * wraps on a long run, and a wrapped-to-zero tally reads exactly like a mechanism
  * that never ran.
  * ------------------------------------------------------------------------- */
-#define HET_TALLY_RDV           0
-#define HET_TALLY_CAP           1
-#define HET_TALLY_TRUNC         2
-#define HET_TALLY_NOISE         3
-#define HET_TALLY_NOISE_ROUNDS  4
-#define HET_TALLY_STRESS_ROUNDS 5
-#define HET_TALLY_N             6
+#define HET_TALLY_TRUNC         0
+#define HET_TALLY_NOISE         1
+#define HET_TALLY_NOISE_ROUNDS  2
+#define HET_TALLY_STRESS_ROUNDS 3
+#define HET_TALLY_N             4
 
 /* -------------------------------------------------------------------------
  * Seeded Park-Miller (Lehmer minimal-standard) RNG.            [GPUHarbor23 sec 3.4]
@@ -259,65 +249,6 @@ __device__ static void het_do_stress(uint32_t* scratchpad,
     rounds++;
   }
   het_scratch_max(&tally[HET_TALLY_STRESS_ROUNDS], rounds);
-}
-
-/* -------------------------------------------------------------------------
- * het_spin -- the device-scope window-opener.  [CudaLitmus] functions.cu:10
- * (`spin'); thread synchronisation, i.e. atomically increment a counter and
- * busy-wait, taking care to avoid deadlock [Alglave15 sec 4.3.4].
- *
- * It aligns the GPU test lanes of one instance so their critical accesses race.
- * It is NOT the cross-device rendezvous: that is the system-scope gd_bar in the
- * driver, which fires once, outside the perpetual loop.  A per-iteration
- * cross-device barrier would put synchronisation around the tested accesses, and
- * one has been seen to stall for good after 2-3 iterations on integrated
- * CPU-GPU parts [Srivastava24 sec 4.1]; the two therefore stay separate --
- * different scope, variable and lifetime.  This one sits on a scratch word that
- * is not a test location, so it adds no ordering edge.
- *
- * Deadlock guard, verbatim from upstream: the wait is capped at 1024 spins.  GPUs
- * give no forward-progress guarantee across workgroups, so a lane waiting on an
- * unscheduled lane would hang the kernel, and a silent hang is indistinguishable
- * from a genuine non-observation.  A cap exit is a barrier that did not
- * rendezvous, so each exit is tallied by reason (RDV / CAP) and the host prints
- * the ratio; that print is the only way this mechanism can be seen to be alive.
- *
- * CALLER CONTRACT (perpetual loop).  Upstream relaunches per test iteration, so
- * its counter is fresh each time and it waits for `blockDim.x *
- * testing_workgroups' -- the counter reaching the number of threads participating
- * in the test [Alglave15 sec 4.3.4].  This kernel loops inside, so
- * the counter only ever grows.  The caller must therefore (a) pass a limit indexed
- * by the number of barriers TAKEN SO FAR (_nb * lanes), and (b) draw the take/skip
- * roll from a lane-independent stream, seeded by the iteration rather than the
- * lane.  Then every lane takes the same barriers, contributes exactly one
- * increment to each, and the counter reaches _nb*lanes exactly when the last lane
- * arrives.  A per-lane draw makes the limit unreachable from the first skipped
- * roll onward and turns every spin into a full 1024-iteration delay loop that
- * aligns nothing.  Upstream is immune because its toggle is one host-set boolean,
- * uniform across the launch [CudaLitmus litmus.cuh:340].
- * ------------------------------------------------------------------------- */
-__device__ static void het_spin(uint32_t* barrier, uint32_t limit,
-                                uint32_t* tally) {
-#if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_DEVICE_COMPILE__)
-  uint32_t val = __hip_atomic_fetch_add(barrier, 1u, __ATOMIC_RELAXED,
-                                        __HIP_MEMORY_SCOPE_AGENT);
-  int i = 0;
-  while (i < 1024 && val < limit) {
-    val = __hip_atomic_load(barrier, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);
-    i++;
-  }
-#else
-  cuda::atomic_ref<uint32_t, cuda::thread_scope_device> _b(*barrier);
-  uint32_t val = _b.fetch_add(1u, cuda::memory_order_relaxed);
-  int i = 0;
-  while (i < 1024 && val < limit) {
-    val = _b.load(cuda::memory_order_relaxed);
-    i++;
-  }
-#endif
-  /* (val >= limit) is the loop's success exit; anything else means i hit 1024
-     with the counter still short. */
-  het_scratch_bump(&tally[(val >= limit) ? HET_TALLY_RDV : HET_TALLY_CAP]);
 }
 
 /* -------------------------------------------------------------------------

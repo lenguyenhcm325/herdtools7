@@ -94,8 +94,8 @@ A64_STORE = re.compile(r"^\s+str\b")
 # A BACK edge, not any branch: the `switch (a->seq)' arms supply forward branches
 # of their own, and counting those would leave the "still a loop" test unable to
 # fail on the straight-line body it exists to reject.  Direction is decided the
-# way obscheck._loops decides it: the branch target must be a label defined
-# earlier in the same function body.
+# earlier in the same function body: the branch target must be a label defined
+# before the branch.
 A64_LABEL_DEF = re.compile(r"^(\.[\w$.]+):")
 # `b .L', `b.ne .L', `cbz w8, .L', `tbnz w8, #0, .L' -- the target is the LAST
 # operand, so everything before the final comma is skipped.

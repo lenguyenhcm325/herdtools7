@@ -12,10 +12,11 @@ primitive is a compiler-owned source construct, so the annotation survives into
 the source as a constant that can be read back without naming a GPU generation.
 Per proc (gpu-only) or per barrier-joining lane (het) the model ops appear in
 .litmus column order, each as its mapped builtin with the mapped __ATOMIC_* and
-__HIP_MEMORY_SCOPE_* constants, its result store included; the het scaffolding
-around them -- system-scope rendezvous, window-opener spin, observer snoop,
-result stores -- is exactly what the lane plan predicts; the x86_64 CPU column
-is rendered into the _cpu.c asm block mnemonic for mnemonic; and a lane carries
+__HIP_MEMORY_SCOPE_* constants, addressed at this iteration's own slot, its
+result store included; the het scaffolding around them -- system-scope
+rendezvous, result stores -- is exactly what the lane plan predicts; the x86_64
+CPU column is rendered into the _cpu.c asm block mnemonic for mnemonic, operand
+for operand; and a lane carries
 no further memory construct -- atomic, fence, inline asm or volatile.  A het
 lane's ops also sit unguarded in the body of one `#pragma unroll 1' loop over
 SIZE_OF_TEST, which is placement the anchor stream cannot see; the gpu-only
@@ -133,15 +134,22 @@ ORDER_OF_CONST = {v: k for k, v in HIP_ORDER.items()}
 SCOPE_OF_CONST = {v: k for k, v in HIP_SCOPE.items()}
 SCOPE_OF_FENCE_STR = {v: k for k, v in HIP_FENCE_SCOPE.items()}
 
-# The x86-64 CPU-column table, matching litmus/hetCpuBodyX86.ml nodes_of arm
-# for arm, so an instruction the emitter would refuse also hard-fails here.  A
-# MOV is classified by its operand shape, in AT&T order (source first).  The
-# emitted mnemonic is `movq' whatever width the column names: an aligned
-# 8-byte access is one access [IntelSDM 9.1.1].
+# The x86-64 CPU-column vocabulary this lane's corpus is written in
+# (hetlitmus/tests/het/generate-x86.sh).  A MOV is classified by its operand
+# shape, in AT&T order (source first); litmus7's own X86_64 lowering carries the
+# column's mnemonic through unchanged, so the expected mnemonic is the one the
+# column names.  Anything outside this set hard-fails rather than being compared
+# as an opaque string.
 X86_MOV = {"mov", "movb", "movw", "movl", "movq"}
 X86_FENCE = {"mfence", "sfence", "lfence"}
 X86_CONSUMED = {"nop"}
-X86_EMITTED_MOV = "movq"
+# litmus7 names an x86_64 register by its 64-bit name whatever width the column
+# spells (its condition atoms read `0:rax'), and the emitted asm operand carries
+# that name.  The 32-bit views the corpus uses map onto it here.
+X86_REG_64 = {"eax": "rax", "ebx": "rbx", "ecx": "rcx", "edx": "rdx",
+              "esi": "rsi", "edi": "rdi", "ebp": "rbp", "esp": "rsp",
+              "rax": "rax", "rbx": "rbx", "rcx": "rcx", "rdx": "rdx",
+              "rsi": "rsi", "rdi": "rdi", "rbp": "rbp", "rsp": "rsp"}
 
 # Device helpers a het kernel may carry (litmus/het-runtime/het_stress.h).  A
 # helper outside this set hard-fails: an unlisted one is an unmodelled memory
@@ -149,7 +157,7 @@ X86_EMITTED_MOV = "movq"
 DEVICE_HELPERS = {
     "het_rng_t", "het_rng_init", "het_rng_next", "het_rng_pct",
     "het_scratch_read", "het_scratch_bump", "het_scratch_max",
-    "het_do_stress", "het_spin",
+    "het_do_stress",
 }
 
 # Every memory-construct-shaped token, so one appearing outside the modelled
@@ -217,24 +225,33 @@ def gpu_cells_of_column(cells):
     return out
 
 
-# An x86-64 memory operand as the het vocabulary spells it: a bare global.  A
-# register deref is what hetCpuBodyX86 resolves through reg_env, which this has
-# no access to, so it is refused rather than guessed at -- narrower than the
-# emitter, which fails closed on a legal test rather than open on an illegal one.
+# An x86-64 memory operand as this lane's corpus spells it: a bare global.  A
+# register deref would name an address this file cannot resolve, so it is refused
+# rather than guessed at.
 X86_MEM = re.compile(r'^\(([A-Za-z_]\w*)\)$')
 X86_IMM = re.compile(r'^\$-?\d+$')
 X86_REG = re.compile(r'^%\w+$')
 
 
-def x86_ops_of_column(cells):
-    """Ordered (kind, mnemonic, global) for an x86_64 CPU column's cells.
+def x86_reg(name, where):
+    r = X86_REG_64.get(name.lstrip('%').lower())
+    if r is None:
+        raise CompletenessError(
+            "x86_64 register %r in %r is outside the modelled set -- the "
+            "emitted asm names a register by its 64-bit name and this one has "
+            "no mapping" % (name, where))
+    return r
 
-    kind is 'store' | 'load' | 'fence'; the mnemonic is the one the emitted asm
-    block carries, so a MOV widens to movq and a fence keeps its own spelling.
-    An immediate MOV into a register is Consumed -- the tag replaces the value
-    it set, which reaches the asm block as an input operand -- so it is
-    recognized and not compared.  Completeness guard: anything else hard-fails,
-    exactly where hetCpuBodyX86 would refuse to classify it."""
+
+def x86_ops_of_column(cells):
+    """Ordered (kind, mnemonic, global, operand) for an x86_64 CPU column's
+    cells.
+
+    kind is 'store' | 'load' | 'fence'; the mnemonic is the column's own, which
+    is what litmus7's X86_64 lowering emits.  The fourth field is the operand the
+    access carries: the VALUE a store writes and the destination register a load
+    lands in, both taken from the .litmus.  Completeness guard: anything outside
+    the vocabulary hard-fails rather than being compared as an opaque string."""
     ops = []
     for c in cells:
         c = c.strip()
@@ -247,7 +264,7 @@ def x86_ops_of_column(cells):
             if rest:
                 raise CompletenessError(
                     "x86_64 fence %r carries operands in %r" % (mn, c))
-            ops.append(('fence', mn, None))
+            ops.append(('fence', mn, None, None))
             continue
         if mn in X86_CONSUMED and not rest:
             continue
@@ -259,17 +276,17 @@ def x86_ops_of_column(cells):
         if len(parts) != 2:
             raise CompletenessError("x86_64 MOV %r is not `src,dst'" % c)
         src, dst = parts
-        if X86_REG.match(dst) and X86_IMM.match(src):
-            continue                      # folded: the tag replaces this value
         if X86_REG.match(dst) and X86_MEM.match(src):
-            ops.append(('load', X86_EMITTED_MOV, X86_MEM.match(src).group(1)))
-        elif X86_MEM.match(dst) and (X86_IMM.match(src) or X86_REG.match(src)):
-            ops.append(('store', X86_EMITTED_MOV, X86_MEM.match(dst).group(1)))
+            ops.append(('load', mn, X86_MEM.match(src).group(1),
+                        x86_reg(dst, c)))
+        elif X86_MEM.match(dst) and X86_IMM.match(src):
+            ops.append(('store', mn, X86_MEM.match(dst).group(1),
+                        src.lstrip('$')))
         else:
             raise CompletenessError(
                 "x86_64 MOV %r has an operand shape outside the het vocabulary "
-                "(a bare global `(x)' on one side, an immediate or a register "
-                "on the other)" % c)
+                "(a bare global `(x)' on one side, an immediate store value or "
+                "a load destination register on the other)" % c)
     return ops
 
 
@@ -301,8 +318,7 @@ def instance_of(litmus_path):
         else:
             cpu.append((pidx, x86_ops_of_column(cols[col])))
     return dict(name=ptx.litmus_name(text), kind=ptx.litmus_kind(text),
-                gpu=gpu, cpu=cpu, cells=dict(cells),
-                obs=ptx.condition_locations(text))
+                gpu=gpu, cpu=cpu, cells=dict(cells))
 
 
 # ===========================================================================
@@ -433,12 +449,14 @@ C_RELAXED_FENCE = re.compile(
     r'^// f\[(\w+),(\w+)\] \(relaxed fence = no-op; nothing emitted\)$')
 C_RDV_ADD = re.compile(r'^\(void\)__hip_atomic_fetch_add\((.*)\);$')
 C_RDV_SPIN = re.compile(r'^while \(__hip_atomic_load\((.*)\) < NPART\) \{ \}$')
-C_SPIN = re.compile(r'^het_spin\((.*)\);$')
 C_BUMP = re.compile(r'^het_scratch_bump\((.*)\);$')
 C_COMMENT = re.compile(r'^// ([wrf])\[(\w+),(\w+)\](?:\s+(.*))?$')
-C_RESULT = re.compile(r'^(\w+)\[_n\] = \(uint64_t\)(\w+);$')
-C_OBSDST = re.compile(r'^(\w+)\[_n\]$')
+C_RESULT = re.compile(r'^(\w+)\[_n\] = (\w+);$')
 C_OUT = re.compile(r'^__out\[(\d+) \* (\d+) \+ (\d+)\] = (\w+);$')
+# The pointer a het lane hands every tested access: iteration _n's own slot of
+# that location (litmus/het-runtime/het_rdv.h).  A bare pointer here is a lane
+# racing on one word for the whole run, which no readout could pair.
+SLOT_PTR = re.compile(r'^\((\w+) \+ \(_n\)\*HET_SLOT_STRIDE_WORDS\)$')
 # litmus/gpuLang.ml nregs_layout: the result slots one proc owns in __out.
 GPU_OUT_STRIDE = 4
 GPU_REG = re.compile(r'^r(\d+)$')
@@ -454,15 +472,11 @@ LOOP_BOUND = "SIZE_OF_TEST"
 # What one iteration owns.  An op hoisted out of the loop runs once per launch
 # rather than once per iteration, so the window the test needs closes after the
 # first one.
-PER_ITERATION = ('st', 'ld', 'fence', 'spin', 'res', 'obs-ld')
+PER_ITERATION = ('st', 'ld', 'fence', 'res')
 # ...and what the lane owns once.  The rendezvous joins the two devices before
 # the loop opens; a copy inside it is a per-iteration cross-device barrier
 # around every tested access, and the anchor stream alone cannot see the move.
 ONCE_PER_LANE = ('rdv-add', 'rdv-spin', 'bump')
-# The one guard litmus/hetEmit.ml writes around an anchor: the window-opener
-# spin runs on the iterations the barrier roll draws, so `spin' is the ONLY
-# anchor a level deeper than the loop body.
-BARRIER_ROLL = re.compile(r'^if \(het_rng_pct\(&_brng, HET_BARRIER_PCT\)\) \{$')
 # A statement that can guard the line under it without a brace of its own, and
 # a jump that can skip the rest of an iteration: both leave an op's order, its
 # constants and its comment untouched while it stops running per iteration.
@@ -511,8 +525,6 @@ def parse_lane(body, helpers, where):
                 add(Anchor(('orphan-comment', 'f', order, scope), []))
                 continue
             flush()
-            # split(None, 1): on the tagged path the value field is an
-            # expression carrying spaces, so only the first field is a token.
             pending = (kind, order, scope, (tail or '').split(None, 1))
             continue
         m = C_RELAXED_FENCE.match(s)
@@ -566,15 +578,9 @@ def parse_lane(body, helpers, where):
                         % (where, len(args), s))
                 dst = m.group('dst').strip()
                 o, sc = _order(args[1], where), _scope(args[2], where)
-                ob = C_OBSDST.match(dst)
-                if ob:
-                    flush()
-                    a = Anchor(('obs-ld', o, sc), ['__hip_atomic_load'],
-                               buf=ob.group(1), ptr=args[0])
-                else:
-                    a = Anchor(('ld', o, sc), ['__hip_atomic_load'],
-                               dst=dst, ptr=args[0], comment=pending)
-                    pending = None
+                a = Anchor(('ld', o, sc), ['__hip_atomic_load'],
+                           dst=dst, ptr=args[0], comment=pending)
+                pending = None
         if a is None:
             m = C_FENCE.match(s)
             if m:
@@ -606,12 +612,6 @@ def parse_lane(body, helpers, where):
                 flush()
                 a = Anchor(('rdv-add', _order(args[2], where), _scope(args[3], where)),
                            ['__hip_atomic_fetch_add'], ptr=args[0], inc=args[1])
-        if a is None:
-            m = C_SPIN.match(s)
-            if m:
-                flush()
-                a = Anchor(('spin',), ['het_spin'],
-                           bar=split_args(m.group(1))[0])
         if a is None:
             m = C_BUMP.match(s)
             if m:
@@ -653,33 +653,47 @@ def parse_lane(body, helpers, where):
 
 X86_BLOCK = re.compile(r'#if defined\(__x86_64__\)(.*?)(?:^#else|^#endif)',
                        re.S | re.M)
-X86_BODY = re.compile(r'^void het_run_P(\d+)\(', re.M)
-X86_ASM = re.compile(r'asm __volatile__\((.*?)\n\s*:', re.S)
+# litmus7's own body, printed by ASMLang.dump_fun: `static void code<n>(...)'.
+# The non-static het_run_P<n> wrapper that calls it stands OUTSIDE this block,
+# because the portable shim needs the same entry point.
+X86_BODY = re.compile(r'^\s*(?:__attribute__\(\(noinline\)\)\s*)?static void '
+                      r'code(\d+)\(', re.M)
+X86_ASM = re.compile(r'asm __volatile__ ?\((.*?)\n\s*:', re.S)
 ASM_STR = re.compile(r'"([^"\n]*)"')
-A_STORE = re.compile(r'^(\w+)\s+%\[_v(\d+)\],\(%\[(\w+)\]\)$')
-A_LOAD = re.compile(r'^(\w+)\s+\(%\[(\w+)\]\),%\[_t(\d+)\]$')
+# ASMLang interleaves its instructions with `#START _litmus_P<n>' /
+# `#_litmus_P<n>_<i>' / `#END _litmus_P<n>' marker literals; a marker is not an
+# instruction and carries no memory op.
+A_MARKER = re.compile(r'^#(START |END |_litmus_)')
+# The operand shapes litmus7's X86_64 lowering writes: a store's value is an
+# immediate into the location's `=m' operand, a load reads that operand into the
+# destination register's, `%k' selecting its 32-bit view.
+A_STORE = re.compile(r'^(\w+)\s+\$(-?\d+),%\[(\w+)\]$')
+A_LOAD = re.compile(r'^(\w+)\s+%\[(\w+)\],%k?\[(\w+)\]$')
 
 
 def asm_instrs(template, path, who):
     """The instructions of one asm template, in order, one per string literal.
 
-    EVERY literal is read, and each must be one instruction closed by the
-    newline escape, as hetCpuPlan's lowering writes them.  C concatenates
-    adjacent literals, so a literal the parse skipped -- an unterminated one,
-    or a second instruction sharing a line -- is an instruction spliced into a
-    tested body that the op stream never shows: a body that no longer runs the
-    program the .litmus names."""
+    EVERY literal is read, and each must be one line closed by the newline
+    escape, as ASMLang.dump_fun writes them (a marker literal may close with a
+    trailing tab as well).  C concatenates adjacent literals, so a literal the
+    parse skipped -- an unterminated one, or a second instruction sharing a
+    line -- is an instruction spliced into a tested body that the op stream
+    never shows: a body that no longer runs the program the .litmus names."""
     lits = ASM_STR.findall(template)
     if template.count('"') != 2 * len(lits):
         raise CompletenessError(
             "%s: body %s has an unpaired quote in its asm template" % (path, who))
     out = []
     for lit in lits:
-        if not lit.endswith('\\n'):
+        ins = lit
+        if ins.endswith('\\t'):
+            ins = ins[:-2]
+        if not ins.endswith('\\n'):
             raise CompletenessError(
                 "%s: body %s carries the asm literal %r, which no newline escape "
                 "closes -- it concatenates with its neighbour" % (path, who, lit))
-        ins = lit[:-2]
+        ins = ins[:-2]
         if '\\n' in ins:
             raise CompletenessError(
                 "%s: body %s carries %d instructions in one asm literal (%r)"
@@ -689,7 +703,7 @@ def asm_instrs(template, path, who):
 
 
 def x86_bodies(cpu_c_text, path):
-    """Every tagged body in the real x86_64 block, as (proc, [ops]).
+    """Every compiled body in the real x86_64 block, as (proc, [ops]).
 
     finditer over the bodies, not `search': the block holds one per CPU proc
     and every one of them is the tested path."""
@@ -707,39 +721,34 @@ def x86_bodies(cpu_c_text, path):
             asms = X86_ASM.findall(body)
             if not asms:
                 raise CompletenessError(
-                    "%s: body het_run_P%s carries no asm __volatile__ block"
+                    "%s: body code%s carries no asm __volatile__ block"
                     % (path, h.group(1)))
-            ops, si, li = [], 0, 0
-            who = "het_run_P%s" % h.group(1)
+            ops = []
+            who = "code%s" % h.group(1)
             for ins in [i for a in asms for i in asm_instrs(a, path, who)]:
+                if ins == '' or A_MARKER.match(ins):
+                    continue
                 mn = ins.split()[0].lower() if ins else ''
                 if mn in X86_FENCE:
                     if ins.lower() != mn:
                         raise CompletenessError(
                             "%s: fence %r carries operands" % (path, ins))
-                    ops.append(('fence', mn, None))
+                    ops.append(('fence', mn, None, None))
                     continue
                 m = A_STORE.match(ins)
                 if m:
-                    if int(m.group(2)) != si:
-                        raise CompletenessError(
-                            "%s: store %r is bound to _v%s, not to its ordinal "
-                            "_v%d" % (path, ins, m.group(2), si))
-                    si += 1
-                    ops.append(('store', m.group(1).lower(), m.group(3)))
+                    ops.append(('store', m.group(1).lower(), m.group(3),
+                                m.group(2)))
                     continue
                 m = A_LOAD.match(ins)
                 if m:
-                    if int(m.group(3)) != li:
-                        raise CompletenessError(
-                            "%s: load %r is bound to _t%s, not to its ordinal "
-                            "_t%d" % (path, ins, m.group(3), li))
-                    li += 1
-                    ops.append(('load', m.group(1).lower(), m.group(2)))
+                    ops.append(('load', m.group(1).lower(), m.group(2),
+                                x86_reg(m.group(3), ins)))
                     continue
                 raise CompletenessError(
-                    "%s: asm %r is outside the emitted vocabulary (movq store, "
-                    "movq load, MFENCE|SFENCE|LFENCE)" % (path, ins))
+                    "%s: asm %r is outside the emitted vocabulary (an immediate "
+                    "MOV store, a MOV load into a register, "
+                    "MFENCE|SFENCE|LFENCE)" % (path, ins))
             out.append((int(h.group(1)), ops))
     return out
 
@@ -756,15 +765,13 @@ def fmt(sig):
         return "rendezvous.fetch_add[%s,%s]" % (sig[1], sig[2])
     if k == 'rdv-spin':
         return "rendezvous.spin[%s,%s]" % (sig[1], sig[2])
-    if k == 'obs-ld':
-        return "observer.load[%s,%s]" % (sig[1], sig[2])
     if k == 'res':
         return "result_store %s=%s" % (sig[1], sig[2])
     if k == 'out':
         return "__out[%d * %d + %d]=%s" % (sig[1], sig[2], sig[3], sig[4])
     if k == 'orphan-comment':
         return "comment %s[%s,%s] with no call" % (sig[1], sig[2], sig[3])
-    return {'spin': 'het_spin', 'bump': 'het_scratch_bump'}[k]
+    return {'bump': 'het_scratch_bump'}[k]
 
 
 def diff_sequences(expected, actual):
@@ -850,8 +857,7 @@ def check_lane_loop(result, body, anchors, who):
     placement, which no anchor stream can see: an op keeps its order, constants
     and comment whether it is hoisted out of the loop, guarded inside it or
     jumped over, and a rendezvous dragged in becomes a barrier around every
-    tested access.  The window-opener spin is the one anchor litmus/hetEmit.ml
-    guards itself, under the barrier roll."""
+    tested access."""
     chains = guard_chains(body)
     heads = [i for i, ln in enumerate(body) if LOOP_HEAD.match(ln.strip())]
     if len(heads) != 1:
@@ -904,8 +910,7 @@ def check_lane_loop(result, body, anchors, who):
                 result.fail("%s: %s sits OUTSIDE the per-iteration loop -- it "
                             "runs once per launch, not once per iteration"
                             % (who, fmt(a.sig)))
-            elif chain != (h,) and not (a.sig[0] == 'spin' and len(chain) == 2
-                                        and BARRIER_ROLL.match(body[chain[1]].strip())):
+            elif chain != (h,):
                 bad = True
                 result.fail("%s: %s is guarded by `%s' inside the loop, so it "
                             "does not run on every iteration"
@@ -928,30 +933,6 @@ def check_lane_loop(result, body, anchors, who):
                            if chains[a.idx] and chains[a.idx][0] == h)))
 
 
-def tag_value(k, mu):
-    """litmus/gpuLang.ml tagged_value's own spelling of one store tag."""
-    return "((uint64_t)%s * (_n + 1) + %s)" % (k, mu)
-
-
-def tag_plan(inst):
-    """(K, {proc: [mu per store]}) as litmus/hetEmit.ml numbers one harness.
-
-    mu runs over the test's stores -- procs in index order, stores in column
-    order -- and K is one past the last, which is what makes the
-    (location, value) -> mu decode invertible.  The numbering is shared with
-    the CPU column, so a GPU store's mu counts the CPU column's stores too,
-    and K is wrong for the whole harness the moment either side gains one."""
-    counts = [(proc, sum(1 for c in inst['cells'][proc] if c[0] == 'w'))
-              for proc, _ in inst['gpu']]
-    counts += [(proc, sum(1 for o in ops if o[0] == 'store'))
-               for proc, ops in inst['cpu']]
-    mus, nxt = {}, 1
-    for proc, n in sorted(counts):
-        mus[proc] = list(range(nxt, nxt + n))
-        nxt += n
-    return nxt, mus
-
-
 def out_anchors(cells, pidx):
     """The result stores a gpu-only proc ends on: one per read register, into
     the slot litmus/gpuLang.ml dump_test reserves for it.  They are the only
@@ -971,19 +952,30 @@ def out_anchors(cells, pidx):
     return out
 
 
-def check_operands(result, anchors, cells, who, tagged, tags=None):
+def check_operands(result, anchors, cells, who, slotted):
     """Comment, constants and operands must agree with each other and with the
     .litmus cell that produced them.  The constants alone are what the stream
     compare sees, so a comment edited on its own would otherwise be invisible --
-    and the comment is the only thing tying an emitted call back to its column."""
+    and the comment is the only thing tying an emitted call back to its column.
+
+    [slotted]: a het lane addresses iteration _n's own slot of the location, a
+    gpu-only proc the bare pointer."""
     model = [a for a in anchors if a.sig[0] in ('st', 'ld', 'fence')]
     if len(model) != len(cells):
         return                                   # the stream compare said so
-    nst = sum(1 for c in cells if c[0] == 'w')
-    if tagged and (tags is None or len(tags) != nst):
-        raise GateError("%s: %d store tag(s) planned for %d store(s)"
-                        % (who, -1 if tags is None else len(tags), nst))
-    si = 0
+
+    def loc_of(a):
+        """The location an access names, read out of the pointer it was handed."""
+        if not slotted:
+            return a.ptr
+        m = SLOT_PTR.match(a.ptr)
+        if m is None:
+            result.fail("%s: %s is handed %s, not iteration _n's own slot of a "
+                        "location -- the whole run would race on one word"
+                        % (who, fmt(a.sig), a.ptr))
+            return None
+        return m.group(1)
+
     for a, cell in zip(model, cells):
         kind, order, scope, o1, o2 = cell
         if a.sig[0] == 'fence':
@@ -1011,21 +1003,14 @@ def check_operands(result, anchors, cells, who, tagged, tags=None):
             result.fail("%s: comment for %s names %d operand(s), not 2"
                         % (who, fmt(a.sig), len(tail)))
             continue
+        loc = loc_of(a)
         if a.sig[0] == 'st':
-            k, mu = tags[si] if tagged else (None, None)
-            si += 1
-            if tail[0] != o1 or a.ptr != o1:
+            if tail[0] != o1 or (loc is not None and loc != o1):
                 result.fail("%s: store names %r/%r, the .litmus cell stores to %r"
-                            % (who, tail[0], a.ptr, o1))
+                            % (who, tail[0], loc, o1))
             if tail[1] != a.val:
                 result.fail("%s: store comment values %r, the call stores %r"
                             % (who, tail[1], a.val))
-            elif tagged:
-                if a.val != tag_value(k, mu):
-                    result.fail("%s: store carries the tag %s, hetEmit's plan "
-                                "gives it %s -- a wrong K or a "
-                                "repeated mu decodes the wrong writer"
-                                % (who, a.val, tag_value(k, mu)))
             elif a.val != o2:
                 result.fail("%s: store writes %r, the .litmus cell writes %r"
                             % (who, a.val, o2))
@@ -1033,9 +1018,9 @@ def check_operands(result, anchors, cells, who, tagged, tags=None):
             if tail[0] != o1 or a.dst != o1:
                 result.fail("%s: load lands in %r/%r, the .litmus cell loads "
                             "into %r" % (who, tail[0], a.dst, o1))
-            if tail[1] != o2 or a.ptr != o2:
+            if tail[1] != o2 or (loc is not None and loc != o2):
                 result.fail("%s: load reads %r/%r, the .litmus cell reads %r"
-                            % (who, tail[1], a.ptr, o2))
+                            % (who, tail[1], loc, o2))
 
 
 def check_gpu_only(result, inst, lanes, klines):
@@ -1066,56 +1051,40 @@ def check_gpu_only(result, inst, lanes, klines):
         cells = inst['cells'][pidx]
         expected = list(ops) + out_anchors(cells, pidx)
         if check_stream(result, expected, anchors, who):
-            check_operands(result, anchors, cells, who, tagged=False)
+            check_operands(result, anchors, cells, who, slotted=False)
 
 
 def check_het(result, inst, lanes):
     """One guarded block per barrier-joining lane, in emission order: the GPU
-    test lanes in proc order, then the observer lane."""
-    # het_lane_plan reads only gpu/obs/name.
-    plan = ptx.het_lane_plan(dict(gpu=inst['gpu'], obs=inst['obs'],
-                                  name=inst['name']))
-    k, mus = tag_plan(inst)
-    names = ", ".join("%s:%s" % (l[3], "P%d" % l[1] if l[0] == 'test' else "obs")
-                      for l in plan)
+    test lanes, in proc order."""
+    # het_lane_plan reads only gpu/name.
+    plan = ptx.het_lane_plan(dict(gpu=inst['gpu'], name=inst['name']))
+    names = ", ".join("%s:P%d" % (l[3], l[1]) for l in plan)
     if len(lanes) != len(plan):
         result.fail("kernel has %d barrier-joining lane(s), the lane plan has "
                     "%d (%s)" % (len(lanes), len(plan), names))
         return
     result.note("  lane plan (x86_64 het): %d lane(s) -- %s" % (len(plan), names))
-    for idx, ((blk, lane, _hdr, body), (kindl, pidx, payload, iname)) in \
+    for idx, ((blk, lane, _hdr, body), (_kindl, pidx, payload, iname)) in \
             enumerate(zip(lanes, plan)):
-        who = ("%s:P%d" % (iname, pidx)) if kindl == 'test' else ("%s:obs" % iname)
+        who = "%s:P%d" % (iname, pidx)
         if (blk, lane) != (idx, 0):
             result.fail("%s runs in (workgroup %d, lane %d); the lane plan puts "
                         "it in (workgroup %d, lane 0)" % (who, blk, lane, idx))
         anchors = parse_lane(body, DEVICE_HELPERS, who)
         check_lane_loop(result, body, anchors, who)
         rdv = [('rdv-add', 'sc', 'sys'), ('rdv-spin', 'sc', 'sys')]
-        if kindl == 'obs':
-            expected = rdv + [('obs-ld', 'relaxed', 'sys')] * len(payload) + [('bump',)]
-            if check_stream(result, expected, anchors, who):
-                for loc, a in zip(payload, [a for a in anchors if a.sig[0] == 'obs-ld']):
-                    if (a.buf, a.ptr) != ("obsG_" + loc, loc):
-                        result.fail("%s: snoop records %s from %s; the observed "
-                                    "location is %s, recorded into %s"
-                                    % (who, a.buf, a.ptr, loc, "obsG_" + loc))
-        else:
-            cells = inst['cells'][pidx]
-            regs = []
-            for ck, _o, _s, o1, _o2 in cells:
-                if ck == 'r' and o1 not in regs:
-                    regs.append(o1)
-            expected = rdv + [('spin',)] + list(payload) \
-                + [('res', "bufP%d_%d" % (pidx, i), r)
-                   for i, r in enumerate(regs)] + [('bump',)]
-            if check_stream(result, expected, anchors, who):
-                check_operands(result, anchors, cells, who, tagged=True,
-                               tags=[(k, mu) for mu in mus[pidx]])
+        cells = inst['cells'][pidx]
+        regs = []
+        for ck, _o, _s, o1, _o2 in cells:
+            if ck == 'r' and o1 not in regs:
+                regs.append(o1)
+        expected = rdv + list(payload) \
+            + [('res', "bufP%d_%d" % (pidx, i), r)
+               for i, r in enumerate(regs)] + [('bump',)]
+        if check_stream(result, expected, anchors, who):
+            check_operands(result, anchors, cells, who, slotted=True)
         # The scaffolding's operands, which the anchor stream does not carry.
-        # The window-opener aligns the GPU test lanes and the rendezvous joins
-        # the two devices; a spin handed the rendezvous word would put a
-        # cross-device barrier around every tested access.
         for a in anchors:
             if a.sig[0] in ('rdv-add', 'rdv-spin') and a.ptr != '(barrier)':
                 result.fail("%s: the rendezvous counts on %s, not on the shared "
@@ -1123,9 +1092,6 @@ def check_het(result, inst, lanes):
             if a.sig[0] == 'rdv-add' and a.inc != '1':
                 result.fail("%s: the rendezvous arrives by %s, so the lane count "
                             "NPART names no lane population" % (who, a.inc))
-            if a.sig[0] == 'spin' and a.bar != '_spin_bar':
-                result.fail("%s: the window-opener spins on %s, not on the "
-                            "device-scope spin word" % (who, a.bar))
             if a.sig[0] == 'bump' and a.arg != '_gpu_done':
                 result.fail("%s: the lane's completion bump names %s, not "
                             "_gpu_done" % (who, a.arg))
@@ -1150,20 +1116,20 @@ def check_stress_region(result, other, helpers):
 
 
 def check_cpu(result, inst, cpu_c_text, cpu_c_path):
-    """The x86_64 CPU columns, in proc order, against the tagged bodies of the
+    """The x86_64 CPU columns, in proc order, against the compiled bodies of the
     real asm block."""
     expected = [("%s:P%d" % (inst['name'], p), p, ops) for p, ops in inst['cpu']]
     bodies = x86_bodies(cpu_c_text, cpu_c_path)
     if len(bodies) != len(expected):
-        result.fail("_cpu.c carries %d tagged body/bodies, the test has "
+        result.fail("_cpu.c carries %d compiled body/bodies, the test has "
                     "%d CPU column(s) (%s)"
                     % (len(bodies), len(expected),
                        ", ".join(w for w, _, _ in expected)))
         return
     for (bproc, got), (who, proc, ops) in zip(bodies, expected):
         if bproc != proc:
-            result.fail("_cpu.c body het_run_P%d stands where %s's "
-                        "het_run_P%d belongs" % (bproc, who, proc))
+            result.fail("_cpu.c body code%d stands where %s's code%d belongs"
+                        % (bproc, who, proc))
             continue
         if got != ops:
             result.fail("%s CPU memory-op stream differs (.litmus column vs "
@@ -1295,7 +1261,7 @@ def guard_report():
     print("                         other order may be rendered that way")
     print("  gpu-only result store  __out[<proc> * %d + <n>] = r<n>, one per read"
           % GPU_OUT_STRIDE)
-    print("  het store value        %s" % tag_value("K", "mu"))
+    print("  het slot address       %s" % SLOT_PTR.pattern)
     for label, table in (("memory orders", HIP_ORDER), ("access scopes", HIP_SCOPE),
                          ("fence sync scopes", HIP_FENCE_SCOPE)):
         print("\n-- %s --" % label)
@@ -1306,29 +1272,29 @@ def guard_report():
             print("  %-8s -> %s" % (k, ('""' if v == "" else v)))
     print("  (the unnamed fence scope IS system scope; naming one narrows it)")
 
-    print("\n-- x86_64 CPU column -> emitted _cpu.c asm (litmus/hetCpuBodyX86.ml) --")
-    print("  MOV $k,%reg      folded: the per-iteration tag replaces the value")
-    print("  MOV (g),%reg     load    movq (%[g]),%[_t<i>]")
-    print("  MOV $k,(g)       store   movq %[_v<i>],(%[g])")
-    print("  MOV %reg,(g)     store   movq %[_v<i>],(%[g])")
+    print("\n-- x86_64 CPU column -> emitted _cpu.c asm (litmus7 ASMLang.dump_fun) --")
+    print("  MOV (g),%reg     load    <mn> %[g],%k[<reg64>]")
+    print("  MOV $k,(g)       store   <mn> $k,%[g]")
     print("  %s   fence   the bare mnemonic"
           % "|".join(sorted(X86_FENCE)))
     print("  accepted MOV spellings: %s" % ", ".join(sorted(X86_MOV)))
-    if not (X86_MOV and X86_FENCE):
+    print("  register names:         %s"
+          % ", ".join("%s->%s" % (k, v) for k, v in sorted(X86_REG_64.items())
+                      if k != v))
+    if not (X86_MOV and X86_FENCE and X86_REG_64):
         bad += 1
 
     print("\n-- het lane anchors --")
-    for s in (("rdv-add", "sc", "sys"), ("rdv-spin", "sc", "sys"), ("spin",),
-              ("obs-ld", "relaxed", "sys"), ("res", "<buf>", "<reg>"), ("bump",)):
+    for s in (("rdv-add", "sc", "sys"), ("rdv-spin", "sc", "sys"),
+              ("res", "<buf>", "<reg>"), ("bump",)):
         print("  %s" % fmt(s))
     print("\n-- the het lane's iteration loop (litmus/hetEmit.ml) --")
     print("  %s" % LOOP_PRAGMA)
     print("  for (int _n=0; _n<%s; ++_n) {   %s inside, %s outside"
           % (LOOP_BOUND, "/".join(PER_ITERATION), "/".join(ONCE_PER_LANE)))
-    print("  a guard is a place: %s is the one an anchor (het_spin) may sit under"
-          % BARRIER_ROLL.pattern)
-    print("  and no %s reaches into the loop" % LOOP_JUMP.pattern)
-    if 'continue' not in LOOP_JUMP.pattern or 'het_rng_pct' not in BARRIER_ROLL.pattern:
+    print("  no anchor sits under a guard, and no %s reaches into the loop"
+          % LOOP_JUMP.pattern)
+    if 'continue' not in LOOP_JUMP.pattern:
         bad += 1
     print("  (the gpu-only path has no loop: its procs run once)")
 
@@ -1743,21 +1709,15 @@ def bite(tmp):
         sub(w, "    // w[relaxed,sys] x 1\n", line + "    // w[relaxed,sys] x 1\n")
         b.check(label, 2, want, gpu_l, hip=w, orig=g_hip)
 
-    # ---- het: lanes, scaffolding, tags, loop structure ----------------------
+    # ---- het: lanes, scaffolding, slot addressing, loop structure -----------
     print("\n-- het: the lane plan and the scaffolding --")
-    w = b.fresh("obs-lane-gone", h_hip)
+    w = b.fresh("lane-gone", h_hip)
     src = open(w).read()
-    i, j = lane_span(src, 1)
+    i, j = lane_span(src, 0)
     open(w, "w").write(src[:i] + src[j:])
-    b.check("the OBSERVER's whole lane DELETED", 1,
-            "kernel has 1 barrier-joining lane(s), the lane plan has 2",
+    b.check("a whole TEST lane DELETED", 1,
+            "kernel has 0 barrier-joining lane(s), the lane plan has 1",
             het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("obs-narrow", h_hip)
-    sub_lane(w, 1, "__hip_atomic_load(x, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM)",
-             "__hip_atomic_load(x, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT)")
-    b.check("the observer's snoop NARROWED sys -> gpu", 1,
-            "observed observer.load[relaxed,gpu]", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
     w = b.fresh("rdv-narrow", h_hip)
     sub_lane(w, 0, "(void)__hip_atomic_fetch_add((barrier), 1, __ATOMIC_SEQ_CST, "
@@ -1780,12 +1740,6 @@ def bite(tmp):
     b.check("the rendezvous counting on the spin word instead of the barrier", 1,
             "the rendezvous counts on", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
-    w = b.fresh("spin-ptr", h_hip)
-    sub_lane(w, 0, "het_spin(_spin_bar,", "het_spin((uint32_t*)barrier,")
-    b.check("the window-opener handed the RENDEZVOUS word (a cross-device "
-            "barrier around every tested access)", 1,
-            "the window-opener spins on", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
     w = b.fresh("bump-name", h_hip)
     sub_lane(w, 0, "het_scratch_bump(_gpu_done);", "het_scratch_bump(_scratch_loc);")
     b.check("the lane's completion bump RENAMED off _gpu_done (the stress "
@@ -1801,38 +1755,34 @@ def bite(tmp):
             "atomic-or-fence construct(s) outside every lane", het_l, hip=w,
             cpu_c=h_cpu, orig=h_hip)
 
-    w = b.fresh("spin-gone", h_hip)
-    sub_lane(w, 0, "        het_spin(_spin_bar, _nb * HET_SPIN_LANES, "
-                   "_stress_tally);\n", "")
-    b.check("the window-opener het_spin DROPPED", 1, "expected het_spin",
-            het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
     w = b.fresh("store-gone", h_hip)
-    sub_lane(w, 0, "      __hip_atomic_store(x, ((uint64_t)5 * (_n + 1) + 4), "
+    sub_lane(w, 0, "      __hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1, "
                    "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n", "")
     b.check("a store deleted from the test lane (the failure must name it)",
             1, "2+2W-cg-sys-fence-2s-x86_64:P1 anchor stream differs",
             het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
-    w = b.fresh("tag-mu", h_hip)
-    sub_lane(w, 0, "((uint64_t)5 * (_n + 1) + 4)",
-             "((uint64_t)5 * (_n + 1) + 3)", count=2)
-    b.check("two stores sharing a mu (the tag stops decoding a writer)",
-            1, "a wrong K or a repeated mu decodes the wrong writer",
-            het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
+    w = b.fresh("store-value", h_hip)
+    sub_lane(w, 0, "__hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1,",
+             "__hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 7,")
+    b.check("a store writing a value the .litmus does not name", 1,
+            "the call stores '7'", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
-    w = b.fresh("tag-k", h_hip)
-    sub_lane(w, 0, "(uint64_t)5 * (_n + 1)", "(uint64_t)6 * (_n + 1)", count=4)
-    b.check("the harness's K rewritten (its tags stop being invertible)", 1,
-            "a wrong K or a repeated mu decodes the wrong writer",
-            het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
+    # The slot address is what pairs the two sides' iteration n; drop it and the
+    # whole run races on one word, which no readout could take apart.
+    w = b.fresh("slot-gone", h_hip)
+    sub_lane(w, 0, "__hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1,",
+             "__hip_atomic_store(x, 1,")
+    b.check("a tested access DE-SLOTTED (the run races on one word)", 1,
+            "not iteration _n's own slot", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
+
+    w = b.fresh("slot-frozen", h_hip)
+    sub_lane(w, 0, "__hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1,",
+             "__hip_atomic_store((x + (0)*HET_SLOT_STRIDE_WORDS), 1,")
+    b.check("a tested access pinned to slot 0 on every iteration", 1,
+            "not iteration _n's own slot", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
     print("\n-- het: the per-iteration loop structure --")
-    w = b.fresh("loop-obs", h_hip)
-    sub_lane(w, 1, "_n<SIZE_OF_TEST", "_n<1")
-    b.check("the OBSERVER lane's loop bound made a literal", 1,
-            "the iteration loop counts to 1", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
     w = b.fresh("loop-test", h_hip)
     sub_lane(w, 0, "_n<SIZE_OF_TEST", "_n<1")
     b.check("a TEST lane's loop bound made a literal", 1,
@@ -1844,11 +1794,11 @@ def bite(tmp):
             "is not opened by `#pragma unroll 1'", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
     w = b.fresh("loop-hoist", h_hip)
-    snoop = ("      obsG_x[_n] = __hip_atomic_load(x, __ATOMIC_RELAXED, "
-             "__HIP_MEMORY_SCOPE_SYSTEM);\n")
-    sub_lane(w, 1, snoop, "")
-    sub_lane(w, 1, "    #pragma unroll 1\n", snoop + "    #pragma unroll 1\n")
-    b.check("the observer's snoop HOISTED out of the loop (it samples once)", 1,
+    st = ("      __hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1, "
+          "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n")
+    sub_lane(w, 0, st, "")
+    sub_lane(w, 0, "    #pragma unroll 1\n", st + "    #pragma unroll 1\n")
+    b.check("a tested store HOISTED out of the loop (it runs once per launch)", 1,
             "sits OUTSIDE the per-iteration loop", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
     w = b.fresh("loop-rdv", h_hip)
@@ -1861,8 +1811,8 @@ def bite(tmp):
             1, "sits INSIDE the per-iteration loop", het_l, hip=w,
             cpu_c=h_cpu, orig=h_hip)
 
-    ops = ("      // w[relaxed,sys] x ((uint64_t)5 * (_n + 1) + 4)\n"
-           "      __hip_atomic_store(x, ((uint64_t)5 * (_n + 1) + 4), "
+    ops = ("      // w[relaxed,sys] x 1\n"
+           "      __hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1, "
            "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n")
     w = b.fresh("loop-guard", h_hip)
     sub_lane(w, 0, ops, "      if (_n == 0) {\n" + ops + "      }\n")
@@ -1880,26 +1830,26 @@ def bite(tmp):
             cpu_c=h_cpu, orig=h_hip)
 
     w = b.fresh("loop-nest", h_hip)
-    snoop = ("      obsG_y[_n] = __hip_atomic_load(y, __ATOMIC_RELAXED, "
-             "__HIP_MEMORY_SCOPE_SYSTEM);\n")
-    sub_lane(w, 1, snoop, "      for (int _m=0; _m<1; ++_m) {\n" + snoop
+    st2 = ("      __hip_atomic_store((y + (_n)*HET_SLOT_STRIDE_WORDS), 2, "
+           "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n")
+    sub_lane(w, 0, st2, "      for (int _m=0; _m<1; ++_m) {\n" + st2
              + "      }\n")
-    b.check("the observer's snoop NESTED in a one-trip loop inside the loop", 1,
+    b.check("a tested store NESTED in a one-trip loop inside the loop", 1,
             "is guarded by `for (int _m=0; _m<1; ++_m) {' inside the loop",
             het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
     w = b.fresh("loop-wrapped", h_hip)
     sub_lane(w, 0, "    #pragma unroll 1\n",
-             "    if (_nb < 99) {\n    #pragma unroll 1\n")
+             "    if (_seed < 99) {\n    #pragma unroll 1\n")
     sub_lane(w, 0, "    }\n    het_scratch_bump(_gpu_done);\n",
              "    }\n    }\n    het_scratch_bump(_gpu_done);\n")
     b.check("the whole iteration loop WRAPPED in a conditional", 1,
-            "the iteration loop is itself guarded by `if (_nb < 99) {'",
+            "the iteration loop is itself guarded by `if (_seed < 99) {'",
             het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
     w = b.fresh("loop-jump", h_hip)
-    sub_lane(w, 0, "      het_rng_t _brng",
-             "      if (_n == 3) continue;\n      het_rng_t _brng")
+    sub_lane(w, 0, "      // w[relaxed,sys] y 2\n",
+             "      if (_n == 3) continue;\n      // w[relaxed,sys] y 2\n")
     b.check("a `continue' inside the loop (the ops keep their place and stop "
             "running on every iteration)", 1,
             "can skip the rest of an iteration", het_l, hip=w, cpu_c=h_cpu,
@@ -1907,7 +1857,7 @@ def bite(tmp):
 
     w = b.fresh("loop-bump-guard", h_hip)
     sub_lane(w, 0, "    het_scratch_bump(_gpu_done);\n",
-             "    if (_nb > 0) {\n      het_scratch_bump(_gpu_done);\n    }\n")
+             "    if (_seed > 0) {\n      het_scratch_bump(_gpu_done);\n    }\n")
     b.check("the completion bump GUARDED outside the loop", 1,
             "once-per-launch scaffolding may not run at all", het_l, hip=w,
             cpu_c=h_cpu, orig=h_hip)
@@ -1915,37 +1865,49 @@ def bite(tmp):
     # ---- the x86_64 CPU column ---------------------------------------------
     print("\n-- het: the x86_64 CPU column against its _cpu.c asm block --")
     w = b.fresh("mfence", h_cpu)
-    sub(w, '    "mfence\\n"\n', "")
-    b.check("the MFENCE deleted from the tagged body", 1,
+    sub(w, '"mfence\\n"\n', "")
+    b.check("the MFENCE deleted from the compiled body", 1,
             "expected fence mfence", het_l, hip=h_hip, cpu_c=w,
             orig=h_cpu, cur=w)
 
     w = b.fresh("cpu-store", h_cpu)
-    sub(w, '    "movq %[_v1],(%[y])\\n"\n', "")
-    b.check("a CPU store deleted from the tagged body", 1,
-            "expected store movq y", het_l, hip=h_hip, cpu_c=w,
+    sub(w, '"movl $1,%[y]\\n"\n', "")
+    b.check("a CPU store deleted from the compiled body", 1,
+            "expected store movl y 1", het_l, hip=h_hip, cpu_c=w,
+            orig=h_cpu, cur=w)
+
+    w = b.fresh("cpu-store-value", h_cpu)
+    sub(w, '"movl $1,%[y]\\n"', '"movl $9,%[y]\\n"')
+    b.check("a CPU store writing a value the .litmus does not name", 1,
+            "observed store movl y 9", het_l, hip=h_hip, cpu_c=w,
+            orig=h_cpu, cur=w)
+
+    w = b.fresh("cpu-store-loc", h_cpu)
+    sub(w, '"movl $1,%[y]\\n"', '"movl $1,%[x]\\n"')
+    b.check("a CPU store re-pointed at another location", 1,
+            "observed store movl x 1", het_l, hip=h_hip, cpu_c=w,
             orig=h_cpu, cur=w)
 
     w = b.fresh("lock-incl", h_cpu)
-    sub(w, '"mfence\\n"', '"lock incl (%[x])\\n"')
-    b.check("a `lock incl' spliced into a tagged body", 2,
+    sub(w, '"mfence\\n"', '"lock incl %[x]\\n"')
+    b.check("a `lock incl' spliced into a compiled body", 2,
             "outside the emitted vocabulary", het_l, hip=h_hip, cpu_c=w,
             orig=h_cpu, cur=w)
 
     w = b.fresh("asm-two-ins", h_cpu)
-    sub(w, '    "mfence\\n"\n', '    "mfence\\nsfence\\n"\n')
+    sub(w, '"mfence\\n"\n', '"mfence\\nsfence\\n"\n')
     b.check("two instructions in ONE asm literal", 2,
             "carries 2 instructions in one asm literal", het_l, hip=h_hip,
             cpu_c=w, orig=h_cpu, cur=w)
 
     w = b.fresh("asm-quote", h_cpu)
-    sub(w, '    "mfence\\n"\n', '    "mfence\\n\n')
+    sub(w, '"mfence\\n"\n', '"mfence\\n\n')
     b.check("an asm template with an UNPAIRED quote", 2,
             "unpaired quote in its asm template", het_l, hip=h_hip, cpu_c=w,
             orig=h_cpu, cur=w)
 
     w = b.fresh("asm-unterminated", h_cpu)
-    sub(w, '    "mfence\\n"\n', '    "mfence\\n"\n    "sfence"\n')
+    sub(w, '"mfence\\n"\n', '"mfence\\n"\n"sfence"\n')
     b.check("an asm literal no newline escape closes (it concatenates)", 2,
             "no newline escape closes", het_l, hip=h_hip, cpu_c=w,
             orig=h_cpu, cur=w)

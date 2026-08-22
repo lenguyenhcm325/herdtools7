@@ -317,7 +317,7 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
      sub-architecture's pseudo -- the inverse of of_{cpu,gpu}_parsed, one level
      down -- so that processor can be fed to that backend's own
      compiler/emitter (a CPU column to its Compile_litmus and then to
-     HetCpuPlan's tagged body, LISA/Bell to the GPU dialect).  The cross-device
+     ASMLang's body printer, LISA/Bell to the GPU dialect).  The cross-device
      arms are unreachable for a well-formed test, whose every cell the het
      parser tagged with its column's device, and fail loudly. *)
 

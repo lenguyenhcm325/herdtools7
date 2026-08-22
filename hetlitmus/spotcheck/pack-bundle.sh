@@ -128,25 +128,24 @@ if [ "${#WIDE[@]}" -ne 1 ]; then
   echo "      exactly one widest-launch pick, so the geometry claim cannot be checked." >&2
   exit 1
 fi
-# The three launch axes, maximised over the .cu files named; over a single
+# The two launch axes, maximised over the .cu files named; over a single
 # harness that is just its own geometry, so one reader serves both sides.
 axes_max() {
   awk '/^#define NPART /          {if ($3+0 > n) n = $3+0}
        /^#define HET_TEST_BLOCKS /{if ($3+0 > b) b = $3+0}
-       /^#define HET_SPIN_LANES / {if ($3+0 > s) s = $3+0}
-       END {print n+0, b+0, s+0}' "$@"
+       END {print n+0, b+0}' "$@"
 }
-read -r wn wb ws <<<"$(axes_max "$BUNDLE/tests/${WIDE[0]}/${WIDE[0]}.cu")"
-read -r mn mb ms <<<"$(axes_max "$SCRATCH/emit/het-$GPU_TARGET"/*/*.cu)"
-if [ "$wn" != "$mn" ] || [ "$wb" != "$mb" ] || [ "$ws" != "$ms" ]; then
+read -r wn wb <<<"$(axes_max "$BUNDLE/tests/${WIDE[0]}/${WIDE[0]}.cu")"
+read -r mn mb <<<"$(axes_max "$SCRATCH/emit/het-$GPU_TARGET"/*/*.cu)"
+if [ "$wn" != "$mn" ] || [ "$wb" != "$mb" ]; then
   echo "" >&2
-  echo "FAIL: ${WIDE[0]} is npart=$wn blocks=$wb spin_lanes=$ws, but the emitted corpus" >&2
-  echo "      reaches npart=$mn blocks=$mb spin_lanes=$ms." >&2
-  echo "      ladder.sh rung 4 and TESTS.txt call that pick the corpus maximum on all" >&2
-  echo "      three axes; re-pick the row, or re-word the rung, before packing." >&2
+  echo "FAIL: ${WIDE[0]} is npart=$wn blocks=$wb, but the emitted corpus" >&2
+  echo "      reaches npart=$mn blocks=$mb." >&2
+  echo "      ladder.sh rung 4 and TESTS.txt call that pick the corpus maximum on both" >&2
+  echo "      axes; re-pick the row, or re-word the rung, before packing." >&2
   exit 1
 fi
-echo "      widest launch: ${WIDE[0]} npart=$wn blocks=$wb spin_lanes=$ws (corpus maximum)"
+echo "      widest launch: ${WIDE[0]} npart=$wn blocks=$wb (corpus maximum)"
 
 echo "[4/5] adding driver, probe, ladder, stamp"
 cp "$HETL/campaign.py"                 "$BUNDLE/"
@@ -174,7 +173,7 @@ chmod +x "$BUNDLE/probe-cuda.sh" "$BUNDLE/ladder.sh" "$BUNDLE/run-one.sh"
     cu="$BUNDLE/tests/$t/$t.cu"
     echo "subset_test=$t npart=$(sed -n 's/^#define NPART //p' "$cu" | head -1)" \
          "blocks=$(sed -n 's/^#define HET_TEST_BLOCKS //p' "$cu" | head -1)" \
-         "spin_lanes=$(sed -n 's/^#define HET_SPIN_LANES //p' "$cu" | head -1)"
+         "gpu_lanes=$(sed -n 's/^#define HET_GPU_LANES //p' "$cu" | head -1)"
   done
   echo "emitter_sha256=$(sha256sum "$REPO/litmus/hetEmit.ml" | cut -d' ' -f1)"
   # hetDialect.ml carries the per-vendor records the render is built from, so

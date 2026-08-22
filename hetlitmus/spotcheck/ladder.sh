@@ -141,7 +141,7 @@ check_machinery() { # log test -- the LINE SHAPES a rung reads its result off
   # an ERE is a quantifier and matches nothing a harness prints, so the name is
   # compared as a STRING and only the shape is a regex.
   awk -v t="$t" '$1 == "HetVerdict" && $2 == t &&
-                 $0 ~ /^HetVerdict [^ ]+ \[[A-Z]+\]( CPU-ONLY)? run=[0-9]+: [A-Z-]+$/ \
+                 $0 ~ /^HetVerdict [^ ]+( CPU-ONLY)? run=[0-9]+: [A-Z-]+$/ \
                  { found = 1 } END { exit !found }' "$log" \
     || { echo "    MISSING: HetVerdict frame line"; bad=1; }
   grep -q "^HetStats $t cpu_only=" "$log" || { echo "    MISSING: HetStats machine line"; bad=1; }
@@ -301,16 +301,16 @@ fi
 row 3 "two-sided row ($T3)" "$([ $r3 -eq 0 ] && echo PASS || echo FAIL)" "${r3note:-not run}"
 
 # =========================================================================
-# RUNG 4 -- the widest launch in the corpus, and the two rows whose outcome is
-# hardest to decode.  IRIW-gcgc-sys-fence launches NPART=4 across 2 blocks with
-# 2 spin lanes -- the corpus maximum on all three axes, and so the closest any
-# pick comes to a cooperative-launch limit; pack-bundle.sh re-measures that
-# against the whole emitted corpus and refuses to ship a bundle where it has
-# stopped holding.  R needs both decode channels at once and 2+2W is
-# store-only, so between them they cover the two ways a target can fail to
-# arrive.
+# RUNG 4 -- the widest launch in the corpus, and the two rows whose outcome
+# arrives least directly.  IRIW-gcgc-sys-fence launches NPART=4 across 2 GPU
+# blocks -- the corpus maximum on both axes, and so the closest any pick comes
+# to a cooperative-launch limit; pack-bundle.sh re-measures that against the
+# whole emitted corpus and refuses to ship a bundle where it has stopped
+# holding.  R decides on a register AND a location at once and 2+2W on two
+# locations alone, so between them they cover the outcome columns a register
+# read does not supply.
 # =========================================================================
-echo; echo "== rung 4: widest launch + the fragile decodes =="
+echo; echo "== rung 4: widest launch + the location outcomes =="
 r4=0
 for t in IRIW-gcgc-sys-fence R-cg-sys-relaxed 2+2W-cg-sys-relaxed; do
   [ -d "$TESTS_DIR/$t" ] || { echo "  FAIL  $t not in the bundle"; r4=1; continue; }
@@ -322,7 +322,7 @@ for t in IRIW-gcgc-sys-fence R-cg-sys-relaxed 2+2W-cg-sys-relaxed; do
   check_retired "$log" || r4=1
   echo "    $(grep -m1 "^HetVerdict $t " "$log" | cut -c1-140)"
 done
-row 4 "widest launch + fragile decodes" "$([ $r4 -eq 0 ] && echo PASS || echo FAIL)" "3 rows, frames printed"
+row 4 "widest launch + location outcomes" "$([ $r4 -eq 0 ] && echo PASS || echo FAIL)" "3 rows, frames printed"
 
 # =========================================================================
 # RUNG 5 -- the stress knobs, off then on.  Off is a REBUILD, because the

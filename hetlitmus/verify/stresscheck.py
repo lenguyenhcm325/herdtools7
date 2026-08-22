@@ -20,12 +20,14 @@
 # HOW IT ATTRIBUTES OPS TO LANE CLASSES (without parsing PTX control flow)
 #
 # The op signature: a PLAIN (non-inline-asm) `ld.global.u32' / `st.global.u32'.
-# In a het kernel this is the stress layer and nothing else -- every tested
-# location and every read/observer buffer is uint64_t (st.global.u64) and every
-# model op is inline-asm `.b32/.b64' carrying an order token; the scaffolding
-# counters are atom/red, not ld/st.  The scratchpad and its location table are
-# the only uint32_t objects a lane touches with plain accesses.  The `none'
-# variant below PROVES this rather than asserting it (it must count 0).
+# In a het kernel that is the stress layer plus ONE other thing: every model op is
+# inline-asm carrying an order token and the scaffolding counters are atom/red,
+# but a GPU lane also stores each tested load's value into its read buffer, and
+# that buffer is `int'.  Those stores are a fixed, countable population -- one per
+# (GPU proc, load), pinned to one textual copy by `#pragma unroll 1' -- so the
+# `none' variant below measures them and every count after it is the stress
+# traffic ABOVE that baseline.  The anchor PROVES the baseline is exactly the
+# render's own buffer stores rather than asserting it.
 #
 # The attribution then uses the compiler's own dead-code elimination as the
 # isolation tool, so no basic-block or predicate analysis is needed:
@@ -45,7 +47,7 @@
 #
 # (the bracketed name is what `--checks' calls it)
 #
-#   1. isolation is sound            n_none == 0                        [anchor]
+#   1. isolation is sound            n_none == the render's buffer stores [anchor]
 #   2. test lanes carry pre-stress   n_pre  has >= 1 load AND >= 1 store   [pre]
 #   3. stress blocks carry mem-str.  n_mem  has >= 1 load AND >= 1 store   [mem]
 #   4. the shipped default is live   n_both >= max(n_pre, n_mem) > 0   [default]
@@ -84,6 +86,10 @@ NVCC = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
 
 # A plain (non-inline-asm) 32-bit global load/store == a scratchpad access.
 STRESS_OP = re.compile(r'^\s*(ld|st)\.global\.u32\b')
+# The render's own plain-u32 stores: `bufP<p>_<li>[_n] = r<n>;', one per GPU
+# observable.  They share the op signature above and survive every stress toggle,
+# so they are the baseline the anchor pins and the other counts subtract.
+BUF_STORE = re.compile(r'^\s+bufP\d+_\d+\[_n\] = r\d+;', re.M)
 PATTERNS = (0, 1, 2, 3)
 
 # The access pattern each knob falls back to when nothing -D's it, read out of
@@ -157,6 +163,9 @@ class Counts:
     @property
     def total(self):
         return self.ld + self.st
+
+    def __sub__(self, other):
+        return Counts(self.ld - other.ld, self.st - other.st)
 
     def __str__(self):
         return "%d ld + %d st = %d" % (self.ld, self.st, self.total)
@@ -236,19 +245,29 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
 
         tmp = tempfile.mkdtemp(prefix="stresscheck_")
         try:
-            # ---- 1. isolation anchor: with both toggles folded off, NO stress op --
+            # ---- 1. isolation anchor: with both toggles folded off, the ONLY plain
+            # u32 ops left are the render's own read-buffer stores.  Everything
+            # below reads its counts as differences from this baseline, so the
+            # attribution is unsound unless the baseline is exactly that
+            # population -- which is why the anchor pins the number, not merely a
+            # bound.
+            n_buf = len(BUF_STORE.findall(src))
+            base = counts_of(cu_path,
+                             ["-DHET_PRE_STRESS_PCT=0", "-DHET_MEM_STRESS_PCT=0"],
+                             arch, tmp)
             if "anchor" in sel:
-                none = counts_of(cu_path, ["-DHET_PRE_STRESS_PCT=0", "-DHET_MEM_STRESS_PCT=0"],
-                                 arch, tmp)
-                if none.total != 0:
-                    fail("isolation anchor is NOT clean: %s plain scratchpad op(s) survive "
-                         "with both stress toggles compiled off.  Either -DHET_*_PCT=0 no "
-                         "longer folds, or a NON-stress object is being accessed as u32 -- "
-                         "in both cases the per-lane-class attribution below is unsound and "
-                         "this checker must be re-grounded before it is trusted." % none)
+                if (base.ld, base.st) != (0, n_buf):
+                    fail("isolation anchor is NOT clean: %s plain u32 op(s) survive with "
+                         "both stress toggles compiled off, and this render writes %d "
+                         "read-buffer store(s).  Either -DHET_*_PCT=0 no longer folds, or "
+                         "some other NON-stress object is being accessed as u32 -- in both "
+                         "cases the per-lane-class attribution below is unsound and this "
+                         "checker must be re-grounded before it is trusted."
+                         % (base, n_buf))
                     return
-                note("  isolation anchor OK (both toggles off -> 0 scratchpad ops: the u32 "
-                     "signature is pure and -DHET_*_PCT=0 folds)")
+                note("  isolation anchor OK (both toggles off -> exactly the %d read-buffer "
+                     "store(s) this render writes, so the u32 signature is accounted for "
+                     "and -DHET_*_PCT=0 folds)" % n_buf)
 
             # ---- 2/3/5. per lane class, swept over every access pattern ------------
             sweep = {}
@@ -261,7 +280,8 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
                     continue
                 per_pat = sweep[key] = {}
                 for p in PATTERNS:
-                    per_pat[p] = counts_of(cu_path, [pct_off, pat_knob + str(p)], arch, tmp)
+                    per_pat[p] = counts_of(cu_path, [pct_off, pat_knob + str(p)],
+                                           arch, tmp) - base
                 for p in PATTERNS:
                     c = per_pat[p]
                     if c.ld < 1 or c.st < 1:
@@ -304,7 +324,7 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
                          "config nothing ships."
                          % (shipped, list(PATTERNS), SHIPPED_PATTERNS))
                 else:
-                    both = counts_of(cu_path, [], arch, tmp)
+                    both = counts_of(cu_path, [], arch, tmp) - base
                     pre = sweep["pre"][SHIPPED_PATTERNS["HET_PRE_STRESS_PATTERN"]]
                     mem = sweep["mem"][SHIPPED_PATTERNS["HET_MEM_STRESS_PATTERN"]]
                     if both.total < max(pre.total, mem.total) or both.total == 0:

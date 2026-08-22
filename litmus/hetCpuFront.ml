@@ -16,11 +16,10 @@
 
 (* HetLitmus: the per-CPU-ISA column frontend the het emitter is closed over
    (HetEmit.Make's CpuF parameter).  One module per supported CPU ISA, holding
-   the ISA label, the host/cross-compilation tokens, the single-column
-   sub-parser and the two tagged-body hooks.  Nothing here mentions the
-   Arch_litmus/Compile_litmus modules: the litmus7 `Het' dispatch arm pairs one
-   of these with the matching module chain after HetArch.scan_cpu_isa has named
-   the ISA.
+   the ISA label, the host/cross-compilation tokens and the single-column
+   sub-parser.  Nothing here mentions the Arch_litmus/Compile_litmus modules:
+   the litmus7 `Het' dispatch arm pairs one of these with the matching module
+   chain after HetArch.scan_cpu_isa has named the ISA.
 
    No machine lives here: a harness names none.  These modules contribute
    [isa_name], one coordinate of the pair stamped as HET_PAIR_NAME. *)
@@ -36,9 +35,14 @@ module AArch64 (O:Config) = struct
     AArch64Lexer.Make (struct include O let is_morello = false end)
 
   let isa_name = "AArch64"
-  let body_module = "hetCpuBodyA64"
   let host_macro = "__aarch64__"
   let cross = Some ("aarch64-linux-gnu","gnu11")
+  (* LDAPR is RCpc, an ARMv8.3 extension, and litmus7 lowers a `-2s' test's
+     acquire read to it; the base architecture the assembler defaults to does
+     not accept one.  Upstream's own mechanism for that is a compile flag
+     (litmus/libdir/armv8.3.cfg: ccopts = -O2 -march=armv8.3-a), so the emitted
+     build files carry it on every compilation of <t>_cpu.c. *)
+  let cpu_cflags = "-march=armv8.3-a"
 
   let parse_column p txt =
     let lexbuf = Lexing.from_string txt in
@@ -53,25 +57,17 @@ module AArch64 (O:Config) = struct
         Warn.user_error
           "HetLitmus: P%d (cpu, AArch64) lexing error: %s (in column %S)"
           p msg txt)
-
-  (* Cpu.pseudo = AArch64Base.pseudo here, so HetCpuBodyA64 matches directly
-     after peeling. *)
-  let het_analyze ~reg_env pseudos =
-    HetCpuBodyA64.analyze ~reg_env (HetCpuBodyA64.instrs_of_code pseudos)
-  let het_emit_body ch ~proc ~k ~store_mu ~load_buf
-        ~reg_env ~iter ~addr_params ~buf_params pseudos =
-    HetCpuBodyA64.emit_body ch ~proc ~k ~store_mu
-      ~load_buf ~reg_env ~iter ~addr_params ~buf_params
-      (HetCpuBodyA64.instrs_of_code pseudos)
 end
 
 module X86_64 (O:Config) = struct
   module Lexer = X86_64Lexer.Make (O)
 
   let isa_name = "X86_64"
-  let body_module = "hetCpuBodyX86"
   let host_macro = "__x86_64__"
   let cross = None
+  (* The x86_64 vocabulary litmus7 lowers this corpus into is base AMD64, so
+     no extension flag is owed. *)
+  let cpu_cflags = ""
 
   let parse_column p txt =
     let lexbuf = Lexing.from_string txt in
@@ -86,16 +82,4 @@ module X86_64 (O:Config) = struct
         Warn.user_error
           "HetLitmus: P%d (cpu, X86_64) lexing error: %s (in column %S)"
           p msg txt)
-
-  (* Cpu.pseudo = X86_64Base.pseudo here, so HetCpuBodyX86 matches directly
-     after peeling.  A CPU proc that emitted no body would leave the CPU thread
-     untested and most x86 renderings unemittable, because the condition could
-     bind neither a read buffer nor a mu. *)
-  let het_analyze ~reg_env pseudos =
-    HetCpuBodyX86.analyze ~reg_env (HetCpuBodyX86.instrs_of_code pseudos)
-  let het_emit_body ch ~proc ~k ~store_mu ~load_buf
-        ~reg_env ~iter ~addr_params ~buf_params pseudos =
-    HetCpuBodyX86.emit_body ch ~proc ~k ~store_mu
-      ~load_buf ~reg_env ~iter ~addr_params ~buf_params
-      (HetCpuBodyX86.instrs_of_code pseudos)
 end

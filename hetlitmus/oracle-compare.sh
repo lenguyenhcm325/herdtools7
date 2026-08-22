@@ -147,9 +147,9 @@ END {
     printf "=====================================================================\n"
     printf "Each block below is reprinted verbatim from het_stats_print (het_verdict.h),\n"
     printf "under the oracle RESULT from the table above.  The replication unit is the\n"
-    printf "(instance,run) CELL, never the frame: the recovery scan validates N^{T_L}\n"
-    printf "OVERLAPPING frames per N iterations (PerpLE VI-B.1), so the frame count is not\n"
-    printf "a count of independent replicates.\n\n"
+    printf "(instance,run) CELL, never the iteration: within one run the iterations share\n"
+    printf "a phase, a placement and a thermal state, so the scored count is not a count of\n"
+    printf "independent replicates.\n\n"
 
     ndis = 0; ndis_fired = 0; nvoid = 0
     for (si = 0; si < nstats; si++) {

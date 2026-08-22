@@ -78,14 +78,14 @@ choice must be _het_alloc_mode(), and no attribute query may survive in the free
   0
 
 (d) __out is gone and the per-load read buffers sit off the concurrent-race path
--- device memory (cudaMalloc) plus a host mirror for the post-run scan, not
-routed through gd_alloc_shared -- while the shared vars are uint64_t, wide enough
-for the store tags (tagged-recover.t).
+-- device memory (cudaMalloc) plus a host mirror for the post-run readout, not
+routed through gd_alloc_shared -- while a shared var is one int slot per
+iteration (slot-readout.t).
   $ grep -c '__out' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu || true
   0
   $ grep -c 'cudaMalloc(&bufP' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   2
-  $ grep -c 'uint64_t \*x; gd_alloc_shared' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  $ grep -c 'int \*x; gd_alloc_shared' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
 The HIP twin renders from the same template: gd_alloc_shared is fine-grained

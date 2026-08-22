@@ -18,7 +18,7 @@
 #   1. MP-cg-cta-acquire       het one-sided; plain CPU STR/LDR + barrier
 #   2. 2+2W-cg-sys-acqrel-2s   het two-sided; CPU STLR (store-only shape: no load)
 #   3. MP-gc-sys-acqrel-2s     het two-sided GPU->CPU; the only rep emitting a CPU
-#                              load-acquire (LDAPR, RCpc, .arch_extension rcpc)
+#                              load-acquire (LDAPR, RCpc, needs -march=armv8.3-a)
 #   4. 2+2W-cg-sys-fence-2s    het two-sided; CPU DMB.SY fence
 #   5. IRIW-cgcc-cta-relaxed   het 4-proc; largest barrier / scaffolding
 #   6. WRC-ccg-cta-relaxed     het 3-proc; buys down the proc-scaling assumption
@@ -31,7 +31,7 @@
 #                              also the first rep whose test name contains a `.'
 #   9. S-gc-sys-ra.rel-2s      order-pair; the only rep emitting inline
 #                              `fence.release.sys', paired with CPU STLR/LDAPR,
-#                              and an observer lane
+#                              and an outcome column read out of a location
 #  10. MP-cg-sys-st.sc-2s      the CPU `dmb st' form
 #  11. MP-gc-sys-ld.sc-2s      the CPU `dmb ld' form on the GPU->CPU cut (the CPU
 #                              proc reads).
@@ -206,7 +206,7 @@ case "$cmd" in
     smoke_het     2+2W-cg-sys-acqrel-2s "two-sided; CPU STLR (2+2W is store-only: NO load)"
     # MP-gc puts the loads on the CPU, so -2s acqrel emits a real LDAPR; 2+2W
     # above is store-only and no other rep emits one (header, rep 3).
-    smoke_het     MP-gc-sys-acqrel-2s   "two-sided GPU->CPU; CPU LDAPR (RCpc, needs .arch_extension rcpc)"
+    smoke_het     MP-gc-sys-acqrel-2s   "two-sided GPU->CPU; CPU LDAPR (RCpc, needs -march=armv8.3-a)"
     smoke_het     2+2W-cg-sys-fence-2s  "two-sided; CPU DMB.SY fence"
     smoke_het     IRIW-cgcc-cta-relaxed "4-proc; largest barrier / scaffolding"
     smoke_het     WRC-ccg-cta-relaxed   "3-proc; buys down the proc-scaling assumption"

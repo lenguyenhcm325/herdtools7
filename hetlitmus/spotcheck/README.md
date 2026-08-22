@@ -152,9 +152,9 @@ the toolkit version on a fresh instance is one of the things being probed.
 Five harnesses; see `TESTS.txt` for the per-test rationale. They are keyed to
 what the emitted machinery *is*, not to what any model says about them: a
 two-sided row, a one-sided row whose only annotation is a cta-scope GPU acquire,
-the corpus's widest launch (`IRIW-gcgc-sys-fence`: 4 procs, NPART=4, 2 blocks,
-2 spin lanes), and the two rows whose outcome is hardest to decode — one needing
-both decode channels at once (R), one store-only (2+2W).
+the corpus's widest launch (`IRIW-gcgc-sys-fence`: 4 procs, NPART=4, 2 GPU
+blocks), and the two rows whose outcome does not arrive through a register alone
+— one carrying both kinds of outcome column (R), one store-only (2+2W).
 
 ## Known quirks, so nobody rediscovers them at $/hour
 

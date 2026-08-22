@@ -94,19 +94,13 @@ BASE = dict(
     # error here too.  A zeroed record is what an emitter that skipped a field
     # produces, and it must never read as a live one.
     rec_magic="HET_REC_MAGIC",
-    exhaustive_valid=1,
-    target_count_exhaustive=0,
-    target_count_heuristic=0,
-    interleavings_detected=1000,
-    # The decode channel, stated once.  The verdict is channel-aware: the sync
-    # channel's liveness evidence is interleavings_detected, the observer channel's
-    # is observer_unique_count, and a record with NEITHER flag fails closed.  The
-    # baseline is a reader; the store-only 2+2W rows have none and flip to
-    # sync_valid=0, obs_valid=1 below.  (The reader / store-only split is pinned as
-    # statscheck.py's CENSUS_SYNC and histcheck.py's N_STORE_ONLY.)
-    sync_valid=1,
+    N=100000,
+    # The readout: every iteration scored, none of them matching, and the
+    # outcome vector varying across them -- the shape of a live null.
+    iters_scored=100000,
+    target_count=0,
+    outcomes_vary=1,
     stress_truncated=0,
-    spin_rendezvous=900, spin_cap=100,
     gpu_stress_rounds=64,             # het_do_stress actually ran
     cpu_enemy_rounds=1000,
     cpu_preload_ops=1000,
@@ -114,8 +108,8 @@ BASE = dict(
     noise_gpu_blocks=8,
     cpu_aff_failures=0,
     place_failures=0,
-    # every mechanism requested (GPU_STRESS|SPIN|CPU_ENEMY|CPU_PRELOAD|NOISE_CPU|NOISE_GPU)
-    stress_requested=0x3F,
+    # every mechanism requested (GPU_STRESS|CPU_ENEMY|CPU_PRELOAD|NOISE_CPU|NOISE_GPU)
+    stress_requested=0x3D,
 )
 
 
@@ -133,22 +127,13 @@ CASES = [
     # =======================================================================
     case("live-null", "NOT-OBSERVED"),
 
-    case("observed-exhaustive", "OBSERVED", target_count_exhaustive=1),
+    case("observed", "OBSERVED", target_count=1),
 
     # A sighting is believed even on a run we would otherwise DISCARD:
     # falsification is one-sided, so nothing has to vouch for a positive.
     case("observed-beats-every-disqualifier", "OBSERVED",
-         target_count_exhaustive=1,
-         interleavings_detected=0, stress_truncated=99,
+         target_count=1, stress_truncated=99,
          cpu_enemy_rounds=0, noise_cpu_rounds=0, noise_gpu_blocks=0),
-
-    # A windowed hit is a strict subset of the exhaustive scan's under the same
-    # predicate, so it is a genuine recovered cycle; at production N a T_L>=2 shape
-    # never runs the exhaustive scan, so keying the sighting off that field alone
-    # would drop real observations.  Counted, and flagged; the deviation from the
-    # rule as written is in hetlitmus/docs/harness-reporting.md S2.
-    case("observed-heuristic-only", "OBSERVED", cv=["HEURISTIC_SIGHT"],
-         target_count_heuristic=1, target_count_exhaustive=0, exhaustive_valid=0),
 
     # =======================================================================
     # 2. MP-cg-sys-relaxed is the most observable het shape the corpus has, and
@@ -158,33 +143,25 @@ CASES = [
     #    than reported.
     # =======================================================================
     case("MP-cg-sys-relaxed-firing-is-a-plain-sighting", "OBSERVED",
-         test_name="MP-cg-sys-relaxed",
-         target_count_exhaustive=412, target_count_heuristic=412),
+         test_name="MP-cg-sys-relaxed", target_count=412),
 
     case("MP-cg-sys-relaxed-null-is-a-plain-null", "NOT-OBSERVED",
          test_name="MP-cg-sys-relaxed"),
 
-    # The store-only (2+2W) arm: no reader, so interleavings_detected is
-    # structurally 0 and the observer is their ONLY liveness channel.  All three
-    # outcomes stay reachable, or the channel goes constant on those rows.
-    # (a) live observer (>= HET_THETA_DISTINCT distinct GPU store-values), nothing
-    #     seen -> the reportable-null path.
-    case("store-only-observer-live-is-a-null", "NOT-OBSERVED",
-         sync_valid=0, obs_valid=1, observer_unique_count=500,
-         interleavings_detected=0),
-
-    # (b) cold observer (< HET_THETA_DISTINCT) -> COLD-INVALID, and the printout must
-    #     name the OBSERVER channel: "interleavings_detected==0" is meaningless here.
-    case("store-only-observer-cold-is-COLD", "COLD-INVALID", dq=["OBSERVER_COLD"],
-         sync_valid=0, obs_valid=1, observer_unique_count=1,
-         interleavings_detected=0),
-
-    # (c) a store-only SIGHTING is still a sighting: the observer channel must never
-    #     block a recovered outcome.
-    case("store-only-observer-sighting-is-OBSERVED", "OBSERVED",
-         sync_valid=0, obs_valid=1, observer_unique_count=500,
-         interleavings_detected=0,
-         target_count_exhaustive=7, target_count_heuristic=7),
+    # =======================================================================
+    # 3. The readout that never varied.  Every scored iteration read back one
+    #    outcome vector, which is the constant-read artefact -- caveated on both
+    #    outcomes and suppressing neither, because falsification is one-sided.
+    # =======================================================================
+    case("one-outcome-null-caveated", "NOT-OBSERVED", cv=["ONE_OUTCOME"],
+         outcomes_vary=0),
+    case("one-outcome-sighting-caveated", "OBSERVED", cv=["ONE_OUTCOME"],
+         target_count=1, outcomes_vary=0),
+    # ... and a run that scored NOTHING is not a run whose outcome never varied:
+    # the caveat is keyed on iters_scored > 0, so an empty readout stays silent
+    # here and is caught where emptiness belongs.
+    case("nothing-scored-raises-no-one-outcome-caveat", "NOT-OBSERVED",
+         iters_scored=0, outcomes_vary=0),
 
     # =======================================================================
     # 4. An unstamped record fails closed.  het_obs_record is memset(0), so a
@@ -195,7 +172,7 @@ CASES = [
     case("unstamped-record-fails-closed", "COLD-INVALID", dq=["REC_UNSTAMPED"],
          rec_magic=0),
     case("unstamped-record-fails-closed-even-on-a-sighting", "COLD-INVALID",
-         dq=["REC_UNSTAMPED"], rec_magic=0, target_count_exhaustive=99),
+         dq=["REC_UNSTAMPED"], rec_magic=0, target_count=99),
     # ... and the test is EQUALITY, not "nonzero": a record carrying some other
     # stamp is a record written by something that is not this header.
     case("wrong-stamp-fails-closed", "COLD-INVALID", dq=["REC_UNSTAMPED"],
@@ -206,12 +183,8 @@ CASES = [
     #    whose stress was inert is not the same datum as one from a stressed run
     #    (harness-reporting.md S3).
     # =======================================================================
-    case("cold-no-interleaving", "COLD-INVALID", dq=["NO_INTERLEAVING"],
-         interleavings_detected=0),
     case("cold-stress-truncated", "COLD-INVALID", dq=["STRESS_TRUNCATED"],
          stress_truncated=1),
-    case("cold-window-opener-never-spun", "COLD-INVALID", dq=["SPIN_DEAD"],
-         spin_rendezvous=0, spin_cap=0),
     case("cold-cpu-enemy-dead", "COLD-INVALID", dq=["CPU_ENEMY_DEAD"],
          cpu_enemy_rounds=0),
     case("cold-cpu-preload-dead", "COLD-INVALID", dq=["CPU_PRELOAD_DEAD"],
@@ -237,7 +210,7 @@ CASES = [
     # =======================================================================
     case("unstressed-baseline-still-reportable", "NOT-OBSERVED",
          cv=["UNSTRESSED"], stress_requested=0,
-         spin_rendezvous=0, spin_cap=0, cpu_enemy_rounds=0, cpu_preload_ops=0,
+         cpu_enemy_rounds=0, cpu_preload_ops=0,
          noise_cpu_rounds=0, noise_gpu_blocks=0),
 
     # =======================================================================
@@ -247,8 +220,6 @@ CASES = [
          cpu_aff_failures=3),
     case("null-but-placement-refused", "NOT-OBSERVED",
          cv=["PLACE_REFUSED"], place_failures=1),
-    case("null-but-spin-is-a-delay-loop", "NOT-OBSERVED", cv=["SPIN_CAP"],
-         spin_rendezvous=100, spin_cap=900),
 
     # =======================================================================
     # 9. A sighting must carry the stress it was seen under.  Test parameters have
@@ -258,22 +229,12 @@ CASES = [
     #    reproducible.
     # =======================================================================
     case("sighting-carries-its-caveats", "OBSERVED",
-         cv=["AFF_FAILED", "PLACE_REFUSED", "SPIN_CAP"],
-         target_count_exhaustive=1,
-         cpu_aff_failures=3, place_failures=1,
-         spin_rendezvous=100, spin_cap=900),
+         cv=["AFF_FAILED", "PLACE_REFUSED"],
+         target_count=1, cpu_aff_failures=3, place_failures=1),
     case("sighting-on-an-unstressed-run-says-so", "OBSERVED", cv=["UNSTRESSED"],
-         target_count_exhaustive=1, stress_requested=0,
-         spin_rendezvous=0, spin_cap=0, gpu_stress_rounds=0,
+         target_count=1, stress_requested=0, gpu_stress_rounds=0,
          cpu_enemy_rounds=0, cpu_preload_ops=0,
          noise_cpu_rounds=0, noise_gpu_blocks=0),
-
-    # =======================================================================
-    # 11. A windowed zero is NOT a measured zero, and the printout must say so or
-    #     it overstates the effort behind a non-observation.
-    # =======================================================================
-    case("windowed-zero-must-say-so", "NOT-OBSERVED",
-         cv=["NO_EXHAUSTIVE"], exhaustive_valid=0),
 
     # =======================================================================
     # 12. The CPU-only cycle.  The emitter sets cpu_only when every proc carries
@@ -284,19 +245,15 @@ CASES = [
     #     hetlitmus/tests/het/generate-cpuonly.sh.
     # =======================================================================
     case("cpu-only-sighting-names-what-fired", "OBSERVED",
-         cpu_only=1, target_count_exhaustive=3, target_count_heuristic=3),
+         cpu_only=1, target_count=3),
     case("cpu-only-null-probes-the-allocation", "NOT-OBSERVED", cpu_only=1),
 ]
 
-# Cases whose PRINTOUT must disclose that the count came from the window, not the
-# ground-truth scan (phase 2).
-MUST_PRINT_SCAN_CAVEAT = {"windowed-zero-must-say-so"}
-SCAN_CAVEAT_TEXT = "rests on the WINDOWED heuristic"
-
-# A store-only COLD null must NAME the observer channel that failed; the generic
-# "interleavings_detected==0" is meaningless for a shape with no reader.
-MUST_NAME_OBSERVER_CHANNEL = {"store-only-observer-cold-is-COLD"}
-OBSERVER_CHANNEL_TEXT = "OBSERVER channel was COLD"
+# Cases whose PRINTOUT must disclose that every scored iteration read back one
+# outcome vector, and the ones that must not (phase 2, both ways).
+MUST_PRINT_ONE_OUTCOME = {"one-outcome-null-caveated",
+                          "one-outcome-sighting-caveated"}
+ONE_OUTCOME_TEXT = "read back the SAME outcome vector"
 
 
 # The CPU-only sentences, owner case -> the fragment only that case may print.
@@ -697,16 +654,22 @@ def scan_prints(blocks, quiet):
             if not missing and not extra and not quiet:
                 print("      %-26s prints %r" % (label, claim))
 
-    # A windowed zero must SAY it is a windowed zero.
-    for name in sorted(MUST_PRINT_SCAN_CAVEAT):
-        text = blocks.get(name, ("", ""))[1]
-        if SCAN_CAVEAT_TEXT not in text:
-            print("  *** %s did NOT disclose that its zero came from the WINDOW and "
-                  "not from the ground-truth scan -- it overstates the effort behind "
-                  "a non-observation" % name)
+    # A readout that never varied must SAY so, on both outcomes -- and no case
+    # whose readout did vary may say it.
+    for name in sorted(blocks):
+        text = blocks[name][1]
+        owns = name in MUST_PRINT_ONE_OUTCOME
+        if owns and ONE_OUTCOME_TEXT not in text:
+            print("  *** %s scored only ONE distinct outcome vector and never said "
+                  "so -- a constant readout reported as a measurement" % name)
             bad += 1
-        elif not quiet:
-            print("      %-46s discloses its windowed zero (correctly)" % name)
+        if not owns and ONE_OUTCOME_TEXT in text:
+            print("  *** %s printed the one-outcome caveat, but its readout varied"
+                  % name)
+            bad += 1
+    if not quiet:
+        print("      %-46s disclose their one-outcome readout, and only they do"
+              % ("%d case(s)" % len(MUST_PRINT_ONE_OUTCOME)))
 
     # The CPU-only sentences, both ways: the owner prints its own and nobody else
     # prints either (see CPU_ONLY_TEXT).
@@ -747,18 +710,6 @@ def scan_prints(blocks, quiet):
     if not quiet:
         print("      %-46s banner tag and HetObs field agree with the record"
               % ("%d case(s)" % len(blocks)))
-
-    # A store-only COLD null must NAME the observer channel (see
-    # MUST_NAME_OBSERVER_CHANNEL).
-    for name in sorted(MUST_NAME_OBSERVER_CHANNEL):
-        text = blocks.get(name, ("", ""))[1]
-        if OBSERVER_CHANNEL_TEXT not in text:
-            print("  *** %s did NOT name the OBSERVER channel as the cold reason -- a "
-                  "store-only shape has no reader, so a generic interleaving "
-                  "disqualifier misreports why its null was discarded" % name)
-            bad += 1
-        elif not quiet:
-            print("      %-46s names the observer channel (correctly)" % name)
 
     if bad:
         print("\nPRINT FAILED: %d problem(s).  The enum changing is not the "
@@ -864,8 +815,8 @@ def run_rule(header, tmp, quiet):
         print("\nVERDICT FAILED: %d case(s) wrong." % bad)
         return 1, blocks
     print("\nVERDICT OK (%d cases; all %d outcomes reachable; an unstamped record "
-          "fails closed; a windowed zero says so; every disqualifier and caveat "
-          "the header declares is reached)" % (len(CASES), len(VERDICTS)))
+          "fails closed; every disqualifier and caveat the header declares is "
+          "reached)" % (len(CASES), len(VERDICTS)))
     return 0, blocks
 
 
@@ -1042,9 +993,7 @@ def bite():
         ok &= _bite_one(
             "the sighting test forced CONSTANT (every record read as OBSERVED)",
             tmp, header,
-            lambda s: s.replace(
-                "if (r->target_count_exhaustive > 0 || r->target_count_heuristic > 0) {",
-                "if (1) {"),
+            lambda s: s.replace("if (r->target_count > 0) {", "if (1) {"),
             quiet=True)
 
         # (2) The disqualifiers stop deciding the outcome: every COLD record then
@@ -1065,8 +1014,8 @@ def bite():
             "a disqualifier bit the case set never reaches",
             tmp, header,
             lambda s: s.replace(
-                "#define HET_DQ_OBSERVER_COLD    (1u << 11)",
-                "#define HET_DQ_OBSERVER_COLD    (1u << 11)\n"
+                "#define HET_DQ_REC_UNSTAMPED    (1u << 10)",
+                "#define HET_DQ_REC_UNSTAMPED    (1u << 10)\n"
                 "#define HET_DQ_UNREACHED        (1u << 12)"),
             quiet=True,
             expect="UNREACHED DISQUALIFIER: HET_DQ_UNREACHED")
@@ -1080,13 +1029,23 @@ def bite():
                                 "if (0) {"),
             quiet=True)
 
-        # (4) The windowed-zero disclosure dropped: the cv flag is still set, so ONLY
-        # phase 2 can see that the sentence is gone.
+        # (4) The one-outcome disclosure, both ways: the cv flag is still computed
+        # and every case still gets its outcome, so ONLY phase 2 can see the
+        # sentence go missing -- or start printing under every readout alike.
         ok &= _bite_one(
-            "the windowed-zero caveat dropped from every printout",
+            "the one-outcome caveat dropped from every printout",
             tmp, header,
-            lambda s: s.replace("  het_print_scan_caveat(_ch, _r, cv);\n", ""),
-            quiet=True)
+            lambda s: s.replace("  if (cv & HET_CV_ONE_OUTCOME)\n",
+                                "  if (0)\n"),
+            quiet=True,
+            expect="never said so")
+        ok &= _bite_one(
+            "the one-outcome caveat printed under every readout",
+            tmp, header,
+            lambda s: s.replace("  if (cv & HET_CV_ONE_OUTCOME)\n",
+                                "  if (1)\n"),
+            quiet=True,
+            expect="but its readout varied")
 
         # (4b) The cpu_only flag read as a CONSTANT, both ways.  The CPU-only
         # sentences are the only place the printout says that no cross-device path
@@ -1222,8 +1181,8 @@ def bite():
             "the verdict banner tags every run with another pair's name",
             tmp, header,
             mutate=lambda s: s.replace(
-                '  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s\\n",',
-                '  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s'
+                '  fprintf(_ch, "HetVerdict %s%s run=%d: %s\\n",',
+                '  fprintf(_ch, "HetVerdict %s%s run=%d: %s'
                 '  [(AArch64, cuda)]\\n",'),
             expect="printed '(AArch64, cuda)' -- a pair this harness was not "
                    "built for")
@@ -1232,8 +1191,8 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: 17/17 injections caught, each by the diagnostic it named --")
-        print("         rule + printouts 9, reporting paths 2, emitted corpus 1,")
+        print("BITE OK: 18/18 injections caught, each by the diagnostic it named --")
+        print("         rule + printouts 10, reporting paths 2, emitted corpus 1,")
         print("         pair prose 5.")
         return 0
     print("BITE FAILED: an injection slipped through -- this gate is decorative")

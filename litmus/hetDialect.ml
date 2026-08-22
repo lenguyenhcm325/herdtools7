@@ -46,11 +46,11 @@ type gpu_dialect = {
     gd_obj_suffix : string ;    (* GPU object stem suffix: "" | "_hip" *)
     gd_readme_files : string ;  (* this render's entry in README's file list *)
     gd_runtime_include : string ; (* the differing GPU atomics/runtime header *)
-    (* [~tag] selects the tagged/uint64 store path (Some (iter,k,mu)) over the
-       standalone GPU-only path (None); a structural tuple, so this one field
-       unifies across CudaLang and HipLang. *)
+    (* [~het] selects the slot-addressed compound path (Some, the C expression
+       naming the iteration) over the standalone GPU-only path (None); a bare
+       option, so this one field unifies across CudaLang and HipLang. *)
     gd_dump_instr :
-      out_channel -> tag:(string * int * int) option -> string ->
+      out_channel -> het:string option -> string ->
       BellBase.instruction -> unit ;
     gd_device_sync : string ;     (* host-side device-sync statement *)
     gd_free : string -> string ;  (* var -> free statement *)
@@ -91,10 +91,10 @@ type gpu_dialect = {
     gd_attr_smcount : string ;  (* multiprocessor-count attribute enum *)
     gd_occupancy : string ;     (* max-active-blocks-per-SM occupancy query fn *)
     gd_coop_launch : string ;   (* cooperative kernel-launch fn *)
-    (* Read-buffer device-memory tokens.  The per-load read buffers live in
-       DEVICE memory, off the coherent race path -- buffer writes must not add
+    (* Read-buffer device-memory tokens.  The per-observable read buffers live
+       in DEVICE memory, off the coherent race path -- buffer writes must not add
        interconnect traffic that perturbs the tested race -- and are mirrored
-       host-side after the terminal sync for the recovery scan. *)
+       host-side after the terminal sync for the readout. *)
     gd_dev_malloc : string -> string -> string ;   (* var, bytes -> device alloc *)
     gd_memcpy_d2h : string -> string -> string -> string ; (* dst, src, bytes *)
     gd_dev_memset0 : string -> string -> string ;  (* ptr, bytes -> zero device mem *)
@@ -103,10 +103,6 @@ type gpu_dialect = {
        lane).  The scratchpad is device memory -- GPU-only and disjoint from
        every test location -- so it never goes through gd_alloc_shared. *)
     gd_memcpy_h2d : string -> string -> string -> string ; (* dst, src, bytes *)
-    (* A relaxed system-scope uint64 load of a shared var, used by the GPU
-       observer lane to snoop a coherence (ws) location.  Analysis-only, never
-       the tested order; given the global's C pointer name. *)
-    gd_sys_load_u64 : string -> string ;           (* ptr -> load expression *)
   }
 
 let cuda_dialect = {
@@ -160,11 +156,6 @@ let cuda_dialect = {
           dst src bytes) ;
     gd_dev_memset0 =
       (fun p bytes -> Printf.sprintf "cudaMemset(%s, 0, %s);" p bytes) ;
-    gd_sys_load_u64 =
-      (fun ptr ->
-        Printf.sprintf
-          "cuda::atomic_ref<uint64_t, cuda::thread_scope_system>(*%s).load(cuda::memory_order_relaxed)"
-          ptr) ;
   }
 
 let hip_dialect = {
@@ -217,10 +208,6 @@ let hip_dialect = {
           dst src bytes) ;
     gd_dev_memset0 =
       (fun p bytes -> Printf.sprintf "(void)hipMemset(%s, 0, %s);" p bytes) ;
-    gd_sys_load_u64 =
-      (fun ptr ->
-        Printf.sprintf
-          "__hip_atomic_load(%s, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM)" ptr) ;
   }
 
 (* THE DIALECT REGISTRY.  Every per-vendor site -- the renders themselves and

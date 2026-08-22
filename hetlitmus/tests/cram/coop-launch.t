@@ -34,11 +34,13 @@ invariant independently, at the PTX level: one system-scope fetch_add per
 barrier-joining GPU lane.)
 
 MP-cg-sys-acqrel-2s runs one GPU lane and one CPU wrapper.  The invariant is
-per-participant -- one free-running window each, one barrier arrival before each
--- so the totals are 2.  The counts are also scoped to the GPU lane, so 2 cannot
-be satisfied by a lane that lost its barrier while another gained a second loop.
+per-participant -- one persistent window each, one barrier arrival before each --
+so the arrivals total 2 and the loops 3: the host readout walks the slots over a
+loop of its own, after the run rather than inside it.  The counts are also scoped
+to the GPU lane, so the totals cannot be satisfied by a lane that lost its
+barrier while another gained a second loop.
   $ grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
-  2
+  3
   $ grep -c '_bar.fetch_add' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   2
   $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n)'

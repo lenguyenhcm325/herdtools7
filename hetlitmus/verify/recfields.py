@@ -5,7 +5,7 @@ het_obs_record and the HET_* knob defaults live in litmus/het-runtime/*.h; the
 lines that fill them live in litmus/hetEmit.ml.  Nothing but a compiler binds the
 two, so on the CPU-only lanes a rename, a typo'd stamp or a dropped default is
 invisible until an nvcc or hipcc build runs -- which is why this gate exists and
-why it needs no GPU.  Four properties, over real emissions of both pairs:
+why it needs no GPU.  Five properties, over real emissions of both pairs:
 
   A Fields   every `_rec.<name>' the render writes is a member of het_obs_record.
   B Stamp    every render writes `_rec.rec_magic = HET_REC_MAGIC;' exactly once,
@@ -15,6 +15,10 @@ why it needs no GPU.  Four properties, over real emissions of both pairs:
              reads is a stamp whose name drifted.
   D Default  every stamped define that het_verdict.h reads has an `#ifndef'
              default there, so a lane that stamps nothing still compiles.
+  E Resolve  every `HET_*' name a render USES is either stamped by that render or
+             declared by a header the harness dir stages.  A slot stride the
+             render addresses through that no staged header declares is a
+             harness that does not compile.
 
 Usage:  recfields.py [-q]      run the gate
         recfields.py --bite    prove it FAILS when the binding breaks
@@ -37,20 +41,18 @@ BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 # (corpus dir, test, -gpu-target, render extension) -- one shape per decode
 # channel and one per pair, because different shapes write different fields.
 LANES = [
-    (HET_DIR, "MP-cg-sys-fence-2s", "cuda", "cu"),   # the reader channel
-    (HET_DIR, "2+2W-cg-sys-fence", "cuda", "cu"),    # store-only: observer channel
-    (HET_DIR, "S-cg-sys-fence", "cuda", "cu"),       # observer + reader
-    # A T_L>=2 shape: the only one whose scan reads HET_WINDOW and
-    # HET_EXHAUSTIVE_MAX at all, so without it those two stamps look dead.
-    (HET_DIR, "IRIW-cgcg-sys-fence-2s", "cuda", "cu"),
+    (HET_DIR, "MP-cg-sys-fence-2s", "cuda", "cu"),   # register columns only
+    (HET_DIR, "2+2W-cg-sys-fence", "cuda", "cu"),    # location columns only
+    (HET_DIR, "S-cg-sys-fence", "cuda", "cu"),       # both kinds of column
     (X86_DIR, "MP-cg-sys-relaxed-x86_64", "hip", "hip"),   # the (X86_64, hip) pair
 ]
-HEADERS = ["het_verdict.h", "het_stress.h", "het_cpu_stress.h"]
+HEADERS = ["het_verdict.h", "het_stress.h", "het_cpu_stress.h", "het_rdv.h"]
 
 FIELD_RE = re.compile(r"_rec\.([A-Za-z_][A-Za-z0-9_]*)")
 DEFINE_RE = re.compile(r"^#define (HET_[A-Za-z0-9_]+)", re.M)
 IFNDEF_RE = re.compile(r"^#ifndef (HET_[A-Za-z0-9_]+)", re.M)
 STAMP_RE = re.compile(r"_rec\.rec_magic\s*=\s*HET_REC_MAGIC\s*;")
+USE_RE = re.compile(r"\bHET_[A-Za-z0-9_]+\b")
 
 def code_only(text):
     """Drop /*...*/ comments, //-comments and string literals: an identifier that
@@ -124,12 +126,16 @@ def check_lane(d, test, ext, quiet, tamper=None, seen=None,
                    "-- an unstamped record is discarded by het_verdict()" % (test, n))
     # C/D -- the defines.  Collected here, judged over the union of lanes: a knob
     # the emitter stamps unconditionally may be consumed only by the shapes that
-    # need it (HET_WINDOW is read by the windowed scan alone), and calling that
-    # drift would make the check fire on every lane that does not use it.
+    # need it, and calling that drift would make the check fire on every lane
+    # that does not use it.
     stamped = sorted(set(DEFINE_RE.findall(src)))
     guarded = set()
+    declared = set()
     for h in HEADERS:
         guarded |= set(IFNDEF_RE.findall(heads[h]))
+        # Every HET_* the header carries, not only its #defines: the enum
+        # constants of the campaign stop rule are names a render uses too.
+        declared |= set(USE_RE.findall(heads[h]))
     for name in stamped:
         readers = [h for h in HEADERS
                    if re.search(r"\b%s\b" % re.escape(name), heads[h])]
@@ -146,9 +152,20 @@ def check_lane(d, test, ext, quiet, tamper=None, seen=None,
             bad.append("%s stamps #define %s and het_verdict.h READS it, but no "
                        "#ifndef default exists for it -- a lane that stamps nothing "
                        "would not compile" % (test, name))
+    # E -- every HET_* name the render's code uses resolves.  The render defines
+    # its own stamps before including anything, so those count; everything else
+    # must come from a header this harness dir stages beside it.
+    resolvable = set(stamped) | declared
+    for name in sorted(set(USE_RE.findall(code))):
+        if name not in resolvable:
+            bad.append("%s uses %s and neither the render nor any staged runtime "
+                       "header defines it -- the harness does not compile"
+                       % (test, name))
     if not quiet and not bad:
-        print("      %-28s %2d field(s), %2d stamped define(s), stamp x1"
-              % (test, len(set(FIELD_RE.findall(src))), len(stamped)))
+        print("      %-28s %2d field(s), %2d stamped define(s), %2d HET_* use(s), "
+              "stamp x1"
+              % (test, len(set(FIELD_RE.findall(src))), len(stamped),
+                 len(set(USE_RE.findall(code)))))
     return bad
 
 
@@ -191,7 +208,8 @@ def run(quiet, tamper=None, header_tamper=None, silent=False, lanes=None):
               "lanes there is no compiler." % len(bad))
         return 1
     print("\nRECFIELDS OK (%d lane(s): every field is a member, every render stamps "
-          "rec_magic once, every stamped define is read and defaulted)" % len(LANES))
+          "rec_magic once, every stamped define is read and defaulted, every HET_* "
+          "use resolves)" % len(LANES))
     return 0
 
 
@@ -214,6 +232,13 @@ BITES = [
     # rather than the file.
     ("the record stamp field renamed in the header", "_rec.rec_magic,",
      None, lambda s: s.replace("  uint32_t rec_magic;", "  uint32_t rec_stamp;")),
+    # ...and the slot stride the render addresses every location through: rename
+    # it in het_rdv.h and nothing but a compiler would notice.
+    ("the slot stride renamed in het_rdv.h", "uses HET_SLOT_STRIDE_WORDS",
+     None, lambda s: s.replace("#ifndef HET_SLOT_STRIDE_WORDS\n"
+                               "#define HET_SLOT_STRIDE_WORDS 16",
+                               "#ifndef HET_SLOT_STRIDE\n"
+                               "#define HET_SLOT_STRIDE 16")),
 ]
 
 

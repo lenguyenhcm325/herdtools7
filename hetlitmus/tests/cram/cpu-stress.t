@@ -72,26 +72,29 @@ litmus/het-runtime/README.md.
 (b) -2s invariant (ii): nothing is injected inside the tested body.  For a
 two-sided test the CPU issues the ordering instructions under test (STLR/LDAPR/
 DMB.SY) -- they ARE the hypothesis, so a fence or atomic between the two tested
-accesses would change what is being tested.  T's own body must stay exactly its
-two tested stores, with the preload outside it, before the call.
-  $ sed -n '/^void het_run_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE '"(stlr|ldapr|dmb|str|ldr)'
+accesses would change what is being tested.  The body is litmus7's own code0 and
+must stay exactly its two tested stores, with the preload outside it, before the
+call.
+  $ sed -n '/^__attribute__((noinline)) static void code0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE '"(stlr|ldapr|dmb|str|ldr)'
   2
   $ sed -n '/^#if defined(__aarch64__)/,/^#else/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE 'het_cpu_preload|het_cpu_affinity|dc civac|prfm' || true
   0
 
 Both tested stores are the release form this two-sided row is about, and nothing
 weaker stands in for either.
-  $ sed -n '/^void het_run_P0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"stlr '
+  $ sed -n '/^__attribute__((noinline)) static void code0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"stlr '
   2
 
-The preload is called per iteration, before the tested body, on this proc's own
-test variables.  A cache hint changes residency, not program order, so preloading
-the very variables under test is -2s-safe -- and it cannot drift into the tested
-sequence, because het_run_*_P0 is a call into another translation unit and every
-primitive is asm volatile with a "memory" clobber.
+The preload is called per iteration, before the tested body, on the slot of this
+proc's own test variables that the iteration is about to touch -- a hint naming
+another iteration's line would warm the wrong one.  A cache hint changes
+residency, not program order, so preloading the very variables under test is
+-2s-safe -- and it cannot drift into the tested sequence, because het_run_P0 is a
+call into another translation unit and every primitive is asm volatile with a
+"memory" clobber.
   $ sed -n '/^static void\* cpu_thread_P0/,/^}/p' $MP.cu | grep -c 'het_cpu_preload(_pl, 2, &_plrng, HET_CPU_PRELOAD_PCT)'
   1
-  $ sed -n '/^static void\* cpu_thread_P0/,/^}/p' $MP.cu | grep -c 'void\* const _pl\[2\] = { (void\*)a->x, (void\*)a->y }'
+  $ sed -n '/^static void\* cpu_thread_P0/,/^}/p' $MP.cu | grep -c 'void\* const _pl\[2\] = { (void\*)(a->x + _slot), (void\*)(a->y + _slot) }'
   1
 
 and affinity is applied BEFORE the rendezvous, so the thread is already on its
@@ -317,21 +320,19 @@ ours.
   $ grep -c 'an INFERENCE, and a confounded one' MP-cg-sys-acqrel-2s/het_cpu_stress.h
   1
 
-(k) the observer test renders the same shape: the observer is PINNED but not
-preloaded, because its job is to sample the shared locations densely and a cache
-hint per iteration would only thin the sampling (same reason the GPU observer
-lane gets no pre-stress; stress.t (g)).
+(k) a shape whose outcome carries a location column renders the same way: every
+CPU thread it has is a test thread, pinned and preloaded, and there is no second
+kind of CPU thread for the preload to be asymmetric about.
 
-The preload check is a negative (expects 0), and a negative whose anchor matches
-nothing reports 0 and "passes" while checking nothing, so it is paired with a
-positive on the worker thread: the asymmetry (worker preloads, observer does
-not) is the invariant, and pinning one side of it alone can go vacuous
-unnoticed.
-  $ grep -A2 'static void\* cpu_obs_thread' $S.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
+The negative is what says so: no thread of this render is anything but a
+cpu_thread_P<n>, and a negative whose anchor matches nothing reports 0 and
+"passes" while checking nothing, so it is paired with the positive under it.
+  $ grep -cE '^static void\* cpu_[A-Za-z_0-9]+\(void\* _a\)' $S.cu
   1
-  $ grep -A4 'static void\* cpu_obs_thread' $S.cu | grep -c 'het_cpu_preload' || true
-  0
+  $ grep -cE '^static void\* cpu_thread_P[0-9]+\(void\* _a\)' $S.cu
+  1
 
-The worker DOES preload -- so the 0 above is a real absence, not a failed match.
+The worker thread is there and DOES preload -- so the 0 above is a real absence,
+not a failed match.
   $ awk '/^static void\* cpu_thread_P0\(void\* _a\)/,/^}$/' $S.cu | grep -c 'het_cpu_preload'
   1

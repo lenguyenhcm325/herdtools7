@@ -369,7 +369,7 @@ selftest() {
     echo "  *** $ST _cpu.c has no 'dmb st' -- the partial-barrier emitter arm is not firing"
     fails=$((fails+1))
   else
-    echo "  confirmed: $ST _cpu.c contains 'dmb st' ($(grep -ci 'dmb st' "$scpu") block(s): T + mu)"
+    echo "  confirmed: $ST _cpu.c contains 'dmb st' ($(grep -ci 'dmb st' "$scpu") occurrence(s))"
     python3 "$CHECK" "$SL2" --ptx "$sd/st.ptx" --cpu-c "$scpu" -q >/dev/null 2>&1; rc=$?
     _expect "dmb st control (unmodified)" 0 "$rc" || fails=$((fails+1))
     sed 's/\bdmb st\b/dmb sy/g' "$scpu" > "$sd/sy_cpu.c"
@@ -383,16 +383,12 @@ selftest() {
     fi
   fi
 
-  # ---- [6] the GPU stress layer's ops are modelled, and the model bites -------
-  # The stress layer adds ops to the kernel, so ptxcheck carries an expectation
-  # for them; an expectation that cannot fail is worse than none.  The
-  # load-bearing case is the first: widening the device-scope window-opener to
-  # system scope turns it into a per-iteration CROSS-DEVICE barrier, which masks
-  # the order under test (ptxcheck.py check_spin).  The last case guards the
-  # blind spot the stress layer could hide in -- a sys-scope op from a compiler
-  # builtin sits outside the inline-asm markers, where the model-op check cannot
-  # see it.
-  printf '\n[6] GPU stress layer: spin + stray-sys injections must FAIL(1)\n'
+  # ---- [6] the model-op stream's blind spot, and the check that closes it -----
+  # A system-scope op from a compiler builtin sits OUTSIDE the inline-asm markers,
+  # where the model-op comparison cannot see it -- and the stress layer, which
+  # deliberately uses builtins to stay out of that stream, is where one could
+  # hide.  ptxcheck.check_no_stray_sys is the check; this is its bite.
+  printf '\n[6] a builtin sys-scope op outside the inline asm must FAIL(1)\n'
   local B4T=MP-cg-sys-acqrel-2s
   local B4L="$HET_DIR/$B4T.litmus" b4="$sc/b4" b4cpu b4rc
   mkdir -p "$b4"
@@ -402,51 +398,19 @@ selftest() {
   if [ ! -s "$b4/clean.ptx" ] || [ ! -s "$b4cpu" ]; then
     echo "  *** could not emit/compile the stress-bearing het harness for $B4T"
     fails=$((fails+1))
-  elif ! grep -q 'het_spin' "$b4/$B4T/$B4T.cu"; then
-    echo "  *** $B4T.cu has no het_spin -- the stress layer is not emitted"
+  elif ! grep -q 'het_do_stress' "$b4/$B4T/$B4T.cu"; then
+    echo "  *** $B4T.cu has no het_do_stress -- the stress layer is not emitted"
     fails=$((fails+1))
   else
     # control: the unmodified stress-bearing harness must PASS
     python3 "$CHECK" "$B4L" --ptx "$b4/clean.ptx" --cpu-c "$b4cpu" -q >/dev/null 2>&1; b4rc=$?
     _expect "control (stress layer present)" 0 "$b4rc" || fails=$((fails+1))
 
-    # Every bite writes a FRESH artifact path.  A helper that reuses one fixed
-    # path hands the checker the PREVIOUS bite's corrupt artifact whenever its
-    # own injector fails to produce one, and the section then reports a pass for
-    # the wrong reason instead of the vacuous-bite failure it owes.
-    local b4n=0
-    _b4bite() { # label sed-expr
-      local lbl="$1" expr="$2" rc out
-      b4n=$((b4n+1)); out="$b4/bite$b4n.ptx"
-      sed "$expr" "$b4/clean.ptx" > "$out"
-      if [ ! -s "$out" ]; then
-        printf '  *** BITE PRODUCED NO ARTIFACT    [%s]\n' "$lbl"
-        return 1
-      fi
-      if cmp -s "$b4/clean.ptx" "$out"; then
-        printf '  *** VACUOUS BITE: injection changed nothing    [%s]\n' "$lbl"
-        return 1
-      fi
-      python3 "$CHECK" "$B4L" --ptx "$out" --cpu-c "$b4cpu" -q >/dev/null 2>&1; rc=$?
-      _expect "$lbl" 1 "$rc"
-    }
-    _b4bite "spin WIDENED to sys scope (= a per-iteration cross-device barrier)" \
-            's/atom\.add\.relaxed\.gpu/atom.add.relaxed.sys/' || fails=$((fails+1))
-    _b4bite "spin narrowed gpu -> cta" \
-            's/atom\.add\.relaxed\.gpu/atom.add.relaxed.cta/' || fails=$((fails+1))
-    _b4bite "spin strengthened relaxed -> acquire" \
-            's/atom\.add\.relaxed\.gpu/atom.add.acquire.gpu/' || fails=$((fails+1))
-    _b4bite "spin fetch_add dropped" \
-            '/atom\.add\.relaxed\.gpu/d' || fails=$((fails+1))
-    _b4bite "spin busy-wait load dropped" \
-            '/ld\.relaxed\.gpu/d' || fails=$((fails+1))
-
     # a builtin sys-scope op (e.g. __threadfence_system() sneaking into stress
     # code) lands OUTSIDE the inline-asm markers -- invisible to the op-stream
-    # check, which is exactly why check_no_stray_sys exists.  Its own path (not
-    # the _b4bite series') and its exit status is read: the injector reports
-    # `done' and a silent failure must surface as a vacuous bite, not inherit a
-    # neighbouring bite's still-corrupt PTX.
+    # check, which is exactly why check_no_stray_sys exists.  Its exit status is
+    # read: the injector reports `done' and a silent failure must surface as a
+    # vacuous bite rather than pass on an unmodified PTX.
     python3 - "$b4/clean.ptx" "$b4/stray.ptx" <<'PY'
 import sys
 src, dst = sys.argv[1], sys.argv[2]
@@ -655,8 +619,7 @@ PY
     # plus the ldxr/stxr RETRY loops an inlined __atomic_fetch_add lowers to, which
     # are genuine back edges that outlive the stress.  So the check now asks for a
     # back edge that ENCLOSES the traffic it is supposed to be repeating (a
-    # discarded load or a scratchpad store), the way obscheck._loops decides
-    # direction.  The sed is scoped to het_cpu_enemy's body and brace-balanced --
+    # discarded load or a scratchpad store).  The sed is scoped to het_cpu_enemy's body and brace-balanced --
     # `while (go)' -> `if (go)', the index loop -> a plain block -- so the enemy
     # still compiles and still issues its loads and stores; it issues them once.
     _b5bite "enemy LOOPS REMOVED (traffic still there, nothing repeats it)" \
@@ -796,7 +759,12 @@ PY
   # (exit 2).  Both arms read the message, because exit 2 alone does not separate
   # that refusal from a parse that died on an unrecognized cell.
   printf '\n[12] a het proc header with NO device tag must HARD-FAIL(2)\n'
-  local DVT=MP-cg-sys-acqrel-2s
+  # Section [13] reads this harness too, and its injections are spelled as PTX
+  # tokens, so the rep must be a shape whose own model ops carry NEITHER of them:
+  # this one's loads are relaxed and its fence is emitted order-first
+  # (`fence.sc.sys'), leaving `ld.acquire.sys' and `fence.sys.sc' to the
+  # rendezvous alone.
+  local DVT=MP-cg-sys-fence-2s
   local dt="$sc/dt" dtcpu
   rm -rf "$dt"; mkdir -p "$dt"
   litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$dt" "$HET_DIR/$DVT.litmus" >/dev/null 2>&1
@@ -985,9 +953,9 @@ _liveness_report() {
 # stress layer; stresscheck.py proves the scaffolding is there at all (see
 # section [7]).  Three reps, one per GPU-lane shape, because the pre-stress lives
 # in the test lanes and the mem-stress in the pure-stress blocks:
-#   MP-cg-sys-acqrel-2s   1 GPU test lane, no observer
-#   S-cg-sys-fence        1 GPU test lane + the observer lane (which must NOT spin)
-#   IRIW-gcgc-sys-fence   2 GPU test lanes (the shape where the spin has partners)
+#   MP-cg-sys-acqrel-2s   1 GPU test lane, register outcome columns only
+#   S-cg-sys-fence        1 GPU test lane, and a location outcome column
+#   IRIW-gcgc-sys-fence   2 GPU test lanes
 # The device probe -- the RUNTIME tally -- takes its only input from the harness
 # in het_stress.h, and litmus7 writes that file verbatim for every test
 # (hetEmit.ml, `write "het_stress.h"'), so the three reps would drive the same
@@ -1013,7 +981,7 @@ stress_report() {
 # Two reps are enough: the CPU stress layer is per-proc, not per-GPU-lane shape.
 #   MP-cg-sys-acqrel-2s   the -2s shape -- the CPU issues the tested STLRs, so this
 #                         is where injecting stress could corrupt the hypothesis
-#   S-cg-sys-fence        has the observer thread (pinned, but NOT preloaded)
+#   S-cg-sys-fence        a shape whose outcome carries a location column
 cpustress_report() {
   _liveness_report "CPU + INTERCONNECT STRESS LIVENESS: does that layer run?" \
     CPUSTRESS "carry a dead CPU/interconnect stress layer" cpustresscheck.py "" \

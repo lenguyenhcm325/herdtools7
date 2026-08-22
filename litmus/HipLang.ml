@@ -59,33 +59,34 @@ let hip_fence_scope = function
   | s -> Warn.user_error "HipLang: unknown fence scope %S" s
 
 (* The pointer passed to __hip_atomic_*: memory locations are kernel int*
-   parameters, so a global `x' is already the pointer (no `&' / no deref). *)
-let ptr_of_addr_op = var_of_addr_op
+   parameters, so on the GPU-only path a global `x' is already the pointer (no
+   `&' / no deref), and on the compound path it is offset to iteration [het]'s
+   own slot of x (litmus/het-runtime/het_rdv.h). *)
+let ptr_of_addr_op ~het ao =
+  let v = var_of_addr_op ao in
+  match het with
+  | Some idx -> sprintf "(%s + (%s)*HET_SLOT_STRIDE_WORDS)" v idx
+  | None -> v
 
 (* ------------------------------------------------------------------ *)
 (* Instruction translation                                            *)
 (* ------------------------------------------------------------------ *)
 
-(* On the tagged path the store value is a uint64_t; the __hip_atomic_*
-   builtins are type-generic, so widening is carried by the uint64_t* kernel
-   parameters (emitted in hetEmit), not by these builtins. *)
-let dump_instr chan ~tag ind i = match i with
+let dump_instr chan ~het ind i = match i with
   | BellBase.Pst (ao, roi, annots) ->
       let var = var_of_addr_op ao in
-      let v = match tag with
-        | Some (iter,k,mu) -> tagged_value iter k mu
-        | None -> value_of_roi roi in
+      let v = value_of_roi roi in
       let ord, scp = order_scope_of annots in
       fprintf chan "%s// w[%s,%s] %s %s\n" ind ord scp var v ;
       fprintf chan "%s__hip_atomic_store(%s, %s, %s, %s);\n"
-        ind (ptr_of_addr_op ao) v (hip_memory_order ord) (hip_scope scp)
+        ind (ptr_of_addr_op ~het ao) v (hip_memory_order ord) (hip_scope scp)
   | BellBase.Pld (r, ao, annots) ->
       let var = var_of_addr_op ao
       and dst = reg_name r in
       let ord, scp = order_scope_of annots in
       fprintf chan "%s// r[%s,%s] %s %s\n" ind ord scp dst var ;
       fprintf chan "%s%s = __hip_atomic_load(%s, %s, %s);\n"
-        ind dst (ptr_of_addr_op ao) (hip_memory_order ord) (hip_scope scp)
+        ind dst (ptr_of_addr_op ~het ao) (hip_memory_order ord) (hip_scope scp)
   | BellBase.Pfence (BellBase.Fence (annots, _)) ->
       let ord, scp = order_scope_of annots in
       (* A `relaxed' fence is a no-op in the C11/AMDGPU model, and

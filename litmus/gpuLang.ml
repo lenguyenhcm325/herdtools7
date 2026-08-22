@@ -181,21 +181,15 @@ let cond_to_string cond =
   ConstrGen.constraints_to_string pp_atom cond
 
 (* ------------------------------------------------------------------ *)
-(* Store-tagging context (K*iter + mu).                                *)
+(* Slot-addressing context                                             *)
 (* ------------------------------------------------------------------ *)
 
-(* [~tag:(Some (iter,k,mu))] selects the tagged/uint64 path: a store's value
-   becomes the per-iteration tag (uint64_t)(K*iter + mu), mu resolved per
-   store node by the caller.  [~tag:None] is the standalone GPU-only path
-   (int).  A plain tuple rather than a record, so hetEmit's one gd_dump_instr
-   field unifies across both dialects.  Design:
-   hetlitmus/docs/het-emission.md. *)
-type tag_ctx = (string * int * int) option
-
-(* The tagged store value, computed in C: (uint64_t)K*iter + mu.  K is cast
-   first so iter is promoted to 64-bit before the multiply, which is what
-   keeps the tag from overflowing at a large window. *)
-let tagged_value iter k mu = sprintf "((uint64_t)%d * %s + %d)" k iter mu
+(* [~het:(Some idx)] selects the compound-harness path: every access is
+   addressed at iteration [idx]'s own slot of its location, [idx] being the C
+   expression naming the iteration (litmus/het-runtime/het_rdv.h).  [~het:None]
+   is the standalone GPU-only path, whose kernel holds one word per location.
+   Design: hetlitmus/docs/het-emission.md. *)
+type het_ctx = string option
 
 (* ------------------------------------------------------------------ *)
 (* The dialect: what the two renders do NOT share                     *)
@@ -216,7 +210,7 @@ type t = {
                                 (* c-ident, blocks, block dim, args -> launch *)
     gl_sync : string ;          (* host-side device-sync statement *)
     gl_dump_instr :
-      out_channel -> tag:tag_ctx -> string -> BellBase.instruction -> unit ;
+      out_channel -> het:het_ctx -> string -> BellBase.instruction -> unit ;
   }
 
 (* ------------------------------------------------------------------ *)
@@ -274,7 +268,7 @@ let dump_test d chan tname parsed =
       p "  // ---- P%i  (%s %d, lane %d) ----\n" proc d.gl_group blk lane ;
       p "  if (blockIdx.x == %d && threadIdx.x == %d) {\n" blk lane ;
       List.iter (fun n -> p "    int r%i = 0;\n" n) regs ;
-      List.iter (fun i -> d.gl_dump_instr chan ~tag:None "    " i) instrs ;
+      List.iter (fun i -> d.gl_dump_instr chan ~het:None "    " i) instrs ;
       List.iter
         (fun n -> p "    __out[%d * %d + %d] = r%i;\n" proc nregs_layout n n)
         regs ;
