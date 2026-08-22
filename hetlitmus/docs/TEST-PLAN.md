@@ -79,7 +79,7 @@ OCaml build → CUDA → GPU.**
 | **1 Static** | rule-fns as spec (unit); checker discriminating-power (negatives) | dune **cram** | bash/python | anywhere, ms |
 | **2 Generate** | corpus + emission regression golden; parse-smoke; census | **git-diff** + make | `make build` | local/CI, ~10 s |
 | **3 Compile** | PTX faithfulness (all 644); compile-smoke (11 reps) | shell drivers | nvcc+clang, **no GPU** | local / CI-with-CUDA, ~min |
-| **4 Hardware** | behavioral characterization; positive controls; the stationarity gate + the stop rule | `hetlitmus-run.sh` + `campaign.py` | **GH200** | manual, off-CI |
+| **4 Hardware** | behavioral characterization; the liveness disqualifiers; the corroboration tier + the stop rule | `hetlitmus-run.sh` + `campaign.py` | **GH200** | manual, off-CI |
 
 Goal mapping: **regression = Layer 2** (goldens); **works-as-expected = Layers 1,
 3, 4** (spec units, faithfulness, negatives, behavioral).
@@ -150,11 +150,11 @@ our generation is byte-stable so we don't need it.
   declines* must not read like one the CSV does not have at all). Any MISMATCH → exit 1.
   A second fixture (`obs-stats.txt`, carrying `HetStats` lines printed by
   `het_verdict.h` itself) drives the statistics section: that `het_stats_print`'s block
-  arrives verbatim — all four sentences of a null: that no rate is attached to it, which
-  control vouched, that the row is characterization and agrees with no model, and the
-  effort behind the zero — and that the campaign roll-up (negative control, VOID)
-  counts it. Every `ORACLE` column there is read from the CSV — the run log carries no
-  class of its own.
+  arrives verbatim — all four sentences of a null: that no rate and no probability is
+  attached to it, that nothing vouches for the harness, that the row is characterization
+  and agrees with no model, and the effort behind the zero — and that the campaign
+  roll-up (negative control, VOID) counts it. Every `ORACLE` column there is read from
+  the CSV — the run log carries no class of its own.
 - ✓ `ptx-negatives.t` (`0d5940b5e`) — `ptxcheck --ptx <frozen-corrupt.ptx>` → exit 1 (no GPU). A
   thin **byte-freeze** of one corruption; the eyeball gap is already closed in the
   gated `tokens.sh selftest` (`c2e4df4c5`), so this is belt-and-suspenders.
@@ -185,16 +185,16 @@ our generation is byte-stable so we don't need it.
   adds the het CPU side (clang AArch64) + `nvcc -c`/ptxas.
 
 ### Layer 4 — Hardware (GH200; later)
-- ✓ **positive controls**: every row co-runs a control that must fire under stress, else
-  the harness is dead and its "Never" is meaningless — `mu(T)`, the row's own structural
-  twin at the lattice floor, on the 375 rows that have one, and the Layer-B canary on 469
-  (`positive-control.md`).
+- ✓ **the three-outcome rule**: `OBSERVED` / `NOT-OBSERVED` / `COLD-INVALID`, with the
+  liveness disqualifiers that discard a run whose stress, window-opener or decode channel
+  was dead instead of reporting its empty histogram (`harness-reporting.md`).
 - ✓ **run wiring**: `hetlitmus/hetlitmus-run.sh` (the device session) + `campaign.py`
   (cross-invocation pooling and the stop rule), gated CUDA-free by `hetlitmus-run-gate`.
-- ✓ **the statistics**: the `(instance,run)` replication unit, the mandatory KS stationarity
-  gate, `P_rep` on the observed side, and the corroboration stop rule (`het_verdict.h`;
-  `hetlitmus-stats`). A null reports the control that vouched for it and the effort behind
-  it; no rate and no probability is attached to what the harness did not see.
+- ✓ **the aggregate**: the `(instance,run)` replication unit, the denominator `R`, the
+  corroboration tier and the stop rule (`het_verdict.h`; `hetlitmus-stats`). A null reports
+  the effort behind it and the liveness the run measured on its own counters; nothing
+  vouches for it, and no rate and no probability is attached to what the harness did not
+  see.
 - ○ the numbers: every knob in `00-environment-design.md` §6 is measured on the target,
   not settled here.
 - (optional, offline) `oracle-compare.sh` over the collected log, against a verdicts CSV
@@ -220,15 +220,13 @@ mirrors them.
 | 5 | 4-proc het (`IRIW-cgcc-cta-relaxed`) | largest barrier / proc count |
 | 6 | 3-proc het (`WRC-ccg-cta-relaxed`) | 3-proc scaffolding — buys down the proc-scaling assumption |
 | 7 | **HIP** render of `MP-cg-sys-relaxed-x86_64` (`comp.sh hip`) | the AMD/MI300A lane — the only rep here whose render is a `.hip`. `hipbuildcheck.py` compiles and links one too, and `amdisacheck.py` compiles all 644 device-only (`amd-faithfulness.md`). Missing `hipcc` ⇒ **SKIP, loudly**; never a pass |
-| 8 | order pair (`MP-cg-sys-sy.acq-2s`) | the only rep emitting inline `fence.acquire.sys`; carries a compiled-in co-run control (μ = its lattice-floor sibling `MP-cg-sys-relaxed`); first rep whose name contains a `.` |
-| 9 | order pair (`S-gc-sys-ra.rel-2s`) | the only rep emitting inline `fence.release.sys`, paired with CPU STLR/LDAPR; the largest co-run in the corpus (K=4, NPART=10) |
-| 10 | order pair (`MP-cg-sys-st.sc-2s`) | the CPU `dmb st` form; its μ is the floor sibling, so the barrier is T's alone |
-| 11 | order pair (`MP-gc-sys-ld.sc-2s`) | the CPU `dmb ld` form on the `gc` cut (the CPU proc reads); likewise T's alone |
+| 8 | order pair (`MP-cg-sys-sy.acq-2s`) | the only rep emitting inline `fence.acquire.sys`; first rep whose name contains a `.` |
+| 9 | order pair (`S-gc-sys-ra.rel-2s`) | the only rep emitting inline `fence.release.sys`, paired with CPU STLR/LDAPR; an observer-bearing shape, so `K_TAG` is 4 rather than 3 |
+| 10 | order pair (`MP-cg-sys-st.sc-2s`) | the CPU `dmb st` form |
+| 11 | order pair (`MP-gc-sys-ld.sc-2s`) | the CPU `dmb ld` form on the `gc` cut (the CPU proc reads) |
 
-Reps 8–11 are all off the lattice floor, so each also exercises the co-run control
-(`HET_CONTROL_COMPILED_IN = 1`) on that family. Reps 10–11 claim only that the
-three barrier forms **build**; *which* one is emitted is pinned by
-`tokens.sh selftest [5b]`.
+Reps 10–11 claim only that the three barrier forms **build**; *which* one is emitted is
+pinned by `tokens.sh selftest [5b]`.
 
 Tens of seconds total (last timed at the original 6 reps; not re-measured at 11).
 Residual risk (11 reps ≠ proof all 644 build) is accepted once: the same gate
@@ -275,21 +273,25 @@ and the tool claims none: `hetlitmus-oracle`, `-nvroundtrip`, `-amd-oracle`, `-a
 `-amdprov`, `-nvprov`, `-nvanchor`. So was `-noracle`, together with the
 `-allow-no-oracle` flag it gated. All of them live on with the retired
 oracle-derivation lineage, outside this tree. **Four more went with the positive
-control**, which is withdrawn: `hetlitmus-controlmap` and `-amd-controlmap` gated its
+control**, which is withdrawn **whole** — both layers, every component that emitted,
+recorded, gated or described one, and no gate left behind to police the absence
+(`00-environment-design.md` §7): `hetlitmus-controlmap` and `-amd-controlmap` gated its
 map, `-lattice` the ordering-strength lattice its siblings were selected on, and
 `-tuner` the stress autotuner whose objective was its death rate. `hetlitmus-order`
 had become `hetlitmus-lattice` and goes with it. One survivor moved rather than went:
 `hetlitmus-noracle-hw` → `hetlitmus-characterize-hw` (the unregistered-pair
-refusal became a warning, so what the gate reads off a real printout is the control
-sentence, not a refusal).
+refusal became a warning, so what the gate reads off a real printout is whichever
+outcome arm the device took, not a refusal).
 
 **A gate that is not in the build is a script, not a gate — `hetlitmus-stats` is the
 worked example.** `statscheck.py` once sat in the tree with **no Makefile target invoking
 it**: on a build whose `ks_pass` was forced constant the script returned rc=1 while
-`hetlitmus-test-all` returned rc=0, fully green.  Its phase 2 still refuses a stationarity
-gate that only ever says one thing, and that refusal now reaches the build, because the
-target is wired.  When a verify script lands, its target and its `hetlitmus-test` hookup
-land **in the same commit**.
+`hetlitmus-test-all` returned rc=0, fully green.  Its phase 2 still refuses an aggregate
+that only ever says one thing -- every observation class, every corroboration tier and
+every diagnostic flag must be reached by its fixtures, and a null's printed block must
+carry the effort the mirror re-derived -- and that refusal now reaches the build, because
+the target is wired.  When a verify script lands, its target and its `hetlitmus-test`
+hookup land **in the same commit**.
 
 `hetlitmus-faithful` proves the harness carries **exactly the tested ops**; it is blind to
 the **scaffolding** (stress carries no order/scope qualifier, so it is not a model op — by
@@ -359,8 +361,8 @@ Steps 1–4 all run on the dev box (and in CI, Layer 3 with a CUDA-install step)
 ## 10. Open items / pending decisions
 
 - Layer 4 **numbers** — every knob, rate and threshold is measured on GH200/MI300A, not
-  here (`00-environment-design.md` §6). The wiring and the positive-control design are
-  shipped and gated; what is deferred is the measurement.
+  here (`00-environment-design.md` §6). The wiring and the reporting design are shipped
+  and gated; what is deferred is the measurement.
 - Whether to also unit-test `ptxcheck.py` parsers (optional; low priority).
 - Whether to fold `hetlitmus-test` into upstream `test::`.
 

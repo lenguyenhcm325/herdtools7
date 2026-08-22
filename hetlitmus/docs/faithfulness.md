@@ -300,6 +300,36 @@ stress exists rather than which stress it is, and no other gate in this suite ca
 tell those configurations apart — which is why `stresscheck.py`'s invariance
 assertion (5) is the load-bearing one rather than a formality.
 
+## Proving the GPU stress ran, not just that it exists
+
+`stresscheck.py`'s first five checks are **structural**: the scratchpad accesses
+are in the emitted PTX and their count is invariant under the `-D` pattern
+knobs. Nothing static can say the loop ever *executed*.
+
+**The runtime tally is the other half.** `het_stress.h` counts rounds through
+`HET_TALLY_STRESS_ROUNDS` — an `atomicMax` of the rounds any single
+`het_do_stress` call completed, overflow-free like `NOISE_ROUNDS` — the emitted
+driver reads it back into `het_obs_record.gpu_stress_rounds`, and
+`het_verdict()` raises `HET_DQ_GPU_STRESS_DEAD` when the stress was requested
+and that tally is zero (`harness-reporting.md` §3). A counter is evidence only
+if it can be shown to move **and** to stay at zero, so `stresscheck.py`'s
+`device-probe` check drives `het_do_stress` on a real device over every access
+pattern and asserts both directions: nonzero when the loop is asked for, exactly
+zero when it is not.
+
+**The two halves are not redundant.** The tally proves the loop *ran*; the
+structural checks prove it still *contains* its scratchpad accesses and that no
+`-D` can switch them off. The blind spot recorded under "Scope / limits" above —
+a layer present in the source, gone from the emitted PTX, and green on every
+gate — is exactly what neither half alone would have caught.
+
+The tally also watches a failure the compiler is not responsible for. Stress
+blocks fill what the co-residency cap leaves over the test lanes, so the stress
+population is the first thing that cap squeezes to zero: the code present,
+requested, and executed by nobody. The emitted driver warns about that case
+explicitly *before* the run, rather than leaving it to the tally afterwards
+(`litmus/hetEmit.ml`).
+
 ## CPU-side stress liveness
 
 `hetlitmus/verify/cpustresscheck.py` is the CPU/interconnect sibling of

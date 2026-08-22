@@ -19,7 +19,7 @@
    observer-buffer set (condition_locations) and by the recovery/tally
    reporting tiers (perpetual_class + the het_confidence enum).  Side-effect
    free; never touches Skel.ml / ASMLang.ml and emits nothing itself.  The
-   tiers are described in hetlitmus/docs/positive-control.md sec 6. *)
+   tiers are described in hetlitmus/docs/harness-reporting.md sec 6. *)
 
 (* The Location_global atoms of a condition, in source order, de-duplicated
    by printed name.  Each is the observation of one ws/co (write->write
@@ -44,7 +44,7 @@ val perpetual_class : MiscParser.prop -> mechanism_class
 (* Reporting tier -- what a null from this test may be claimed as.  R and S are
    mechanically alike, but only S's read is an rf read that decodes a synchrony
    point, so R is reported at the 2+2W floor
-   (hetlitmus/docs/positive-control.md sec 6); this is NOT the mechanism tier
+   (hetlitmus/docs/harness-reporting.md sec 6); this is NOT the mechanism tier
    and must not be folded back into perpetual_class.
    [has_rf_anchor]: does the condition carry a read atom whose tested value is
    some store's value, an rf edge the recovery scan can decode?  This module

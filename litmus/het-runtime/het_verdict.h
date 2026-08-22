@@ -9,7 +9,7 @@
  * vouches for it: no rate and no probability is attached to one, falsification
  * being one-sided, so what matters is the possibility of a weak behaviour rather
  * than its probability [Alglave15 sec 4.3 p.585].
- * Design: hetlitmus/docs/00-environment-design.md sec 3.7.
+ * Design: hetlitmus/docs/harness-reporting.md.
  * ========================================================================= */
 #ifndef HET_VERDICT_H
 #define HET_VERDICT_H
@@ -62,7 +62,7 @@
 
 /* ---------------------------------------------------------------------------
  * Knobs of the statistics layer (see its banner further down, and
- * hetlitmus/docs/00-environment-design.md sec 3.7).
+ * hetlitmus/docs/harness-reporting.md sec 5).
  *
  * HET_THETA_DISTINCT (theta_d) is the degeneracy guard's floor
  * (het_cell_degenerate).  Deliberately the literal floor -- 2 = "the decode
@@ -173,11 +173,11 @@ typedef struct het_obs_record {
        stress_truncated  lanes that hit HET_STRESS_MAX_ROUNDS, i.e. stopped
                          stressing while the test still ran.  Disqualifying: such
                          a run's non-observations are not a stressed run's.
-       gpu_stress_rounds max rounds any single het_do_stress call completed.  A
-                         co-run harness reserves 3x-5x the test blocks, so the
-                         stress population is the first thing a co-residency cap
-                         squeezes to zero -- code present, requested, run by
-                         nobody. */
+       gpu_stress_rounds max rounds any single het_do_stress call completed.  The
+                         stress blocks fill what the co-residency cap leaves over
+                         the test lanes, so the stress population is the first
+                         thing that cap squeezes to zero -- code present,
+                         requested, run by nobody. */
   uint64_t spin_rendezvous, spin_cap, stress_truncated;
   uint64_t gpu_stress_rounds;
   /* CPU + interconnect liveness.  Same argument, for the two levers the GPU
@@ -310,7 +310,7 @@ static int het_dead(uint32_t req, uint32_t bit, uint64_t rounds) {
   return (req & bit) && rounds == 0;
 }
 
-/* The rule (hetlitmus/docs/00-environment-design.md sec 3.7).  A pure function of
+/* The rule (hetlitmus/docs/harness-reporting.md sec 2).  A pure function of
    the record. */
 static het_verdict_t het_verdict(const het_obs_record *r,
                                  uint32_t *dq_out, uint32_t *cv_out) {
@@ -475,7 +475,7 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
 }
 
 /* ---------------------------------------------------------------------------
- * The reporting contract (hetlitmus/docs/00-environment-design.md sec 3.7): NEVER
+ * The reporting contract (hetlitmus/docs/harness-reporting.md sec 4): NEVER
  * print a bare "Never".  Every null prints paired with the effort it cost and the
  * liveness this run measured, in absolute numbers, so a reader weighs the zero
  * against what was spent instead of taking the harness's word for it.  Nothing
@@ -773,7 +773,7 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
  * because falsification is one-sided and nothing vouches for the harness that did
  * not see it.  What this layer reports of a null is the effort it cost; of a
  * SIGHTING, how many independent RUNS reproduced it.
- * Design: hetlitmus/docs/00-environment-design.md sec 3.7.
+ * Design: hetlitmus/docs/harness-reporting.md sec 5.
  * ========================================================================= */
 
 /* What the campaign SAW, at the (instance,run) unit. */

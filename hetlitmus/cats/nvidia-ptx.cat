@@ -8,16 +8,12 @@
  *   [PTXISA] NVIDIA PTX ISA 9.3, §8.8 "Release and Acquire Patterns",
  *     §9.7.14.4 "membar/fence".
  *
- * It is a SOLVER, not an oracle: it decides no thesis test and no run path
- * consults it; fidelity record: hetlitmus/docs/nvidia-ptx-cat.md.
+ * A solver: it decides no thesis test and no run path consults it.
  *
- * Two departures from Lustig19, in opposite directions.  Frel/Facq admit
- * f[release,*] and f[acquire,*]: Fig 11 maps onto both, but Fig 3c's modelled
- * fence subset is .sem = {.sc, .acq_rel} and excludes them ([PTXISA] §9.7.14.4
- * dates the qualifiers, PTX ISA 8.6 / sm_90; §8.8 gives them the pattern
- * positions used here).  Neither set admits f[acq_rel,*], which Lustig19 has
- * in both; no test carries one.  Fidelity record, with the specialisations
- * vacuous for this vocabulary: hetlitmus/docs/nvidia-ptx-cat.md §3 and §5.
+ * Two departures from Lustig19, in opposite directions: Frel/Facq admit
+ * f[release,*] and f[acquire,*], which Fig 3c's modelled fence subset
+ * excludes, and neither admits f[acq_rel,*], which Lustig19 has in both.
+ * Fidelity record: hetlitmus/docs/nvidia-ptx-cat.md §3 and §5.
  *)
 
 (* ================================================================== *)

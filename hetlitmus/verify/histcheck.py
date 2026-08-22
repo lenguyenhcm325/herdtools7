@@ -8,7 +8,7 @@
       per-run fact added once per frame multiplies one observation by N.
   (2) A coherence-final `[ell]' column never prints a number, because none is
       measured: that atom is decided by the per-run observer `ws' witness and
-      reported through HetObs / HetVerdict (hetlitmus/docs/positive-control.md S6),
+      reported through HetObs / HetVerdict (hetlitmus/docs/harness-reporting.md S7),
       so the slot carries no bits to print.
 
   PHASE 1 -- shape, over every emitted harness.  Exactly one histogram add each,

@@ -188,8 +188,8 @@ emitter: provenance for a reader who has the repo, inert for one who does not.
 **Why there is one binary path per vendor.** Both link paths write `./<t>`, so
 `hetlitmus/spotcheck/run-one.sh` and `hetlitmus/campaign.py` exec `./<test>`,
 read its `HetStats` line and stay vendor-agnostic. The GPU compiler driver pulls
-in its own device runtime; `-lpthread -lm` cover the CPU threads and the
-statistics layer (`het_verdict.h` includes `<math.h>` for the KS statistic).
+in its own device runtime; `-lpthread -lm` cover the CPU threads and the emitted
+render's own `sqrt` (it includes `<cmath>`; `het_verdict.h` calls no math function).
 `<target>-bin` is `.PHONY` and always relinks, so a build can never report
 success while leaving a stale binary in place.
 
@@ -382,6 +382,39 @@ hetgen7 … -cpu-arch x86_64 -cpu "PodWW Rfe PodRR Fre" -gpu "…" -bell ptx.bel
 writes a test whose cpu column carries the `x86_64` tag and holds x86 cells
 (`movl $1,(x)`). With **no** `-cpu-arch` the default is AArch64 and the output is
 byte-identical to before (the cpu column keeps its `cpu` back-compat tag).
+
+## The CPU-only set (`tests/het/generate-cpuonly.sh`)
+
+Six shapes — MP, LB, SB, 2+2W, R, IRIW — rendered as het tests whose *every*
+proc is tagged `cpu`, so they run as pure x86 tests **on the shared allocation**
+instead of on litmus7's own. A plain litmus7 X86 run would allocate `x` and `y`
+itself, and the question this set asks is about *that* allocation; the het
+harness reaches it through `gd_alloc_shared` (`HET_ALLOC` / `hipMallocManaged`),
+runs the same stress and prints the same verdict machinery. The set is generated
+into an OUTDIR and never committed.
+
+* **`SB` and `R` must be observed** — the store buffer is live — which doubles
+  as the write-back probe: a CPU-only sighting on the shared allocation rules
+  the uncacheable mapping out ([APM] Table 7-2). `MP`, `LB`, `2+2W` and `IRIW`
+  must never be.
+* **A sighting of a shape x86-TSO forbids is a finding about this host's TSO
+  conformance, never a refutation of the compound model:** on an all-CPU cycle
+  no compound composition is under test ([Goens23] §4.6). That disambiguation is
+  wired into the verdict rather than left to the reader — `het_verdict.h` keys
+  those sentences off `_rec.cpu_only`, which the emitter sets when every proc of
+  the test is a CPU proc, so nothing depends on the file name saying `cpuonly`.
+
+**The `2+2W` row is unresolved and must not be read as a TSO violation.** It is
+the one store-only shape in the set: with no reader, its cycle is reconstructed
+from an observer, and the emitted `ws` scans test the per-store tag
+`K*(_n+1)+mu` **modulo** `K_TAG` — the store id — never its quotient, the
+iteration (the quotient is read only by the observer-uniqueness blocks beside
+them). Under the perpetual loop the witness therefore matches "`mu_a` seen
+before `mu_b`" *across* iterations, where the coherence order it is meant to
+witness is defined only *within* one, so a sighting is equally consistent with
+the detector over-reporting and with a real property of the allocation. The four
+shapes with a real x86 reader close their cycle through a load, and none of this
+reaches them.
 
 ## Scope / limits
 

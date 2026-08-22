@@ -111,7 +111,7 @@ rule the harness runs.  A re-declared copy in the test would be free to drift
 away from the one that ships — which is how you end up gating a rule nobody
 executes.
 
-Design: `hetlitmus/docs/00-environment-design.md` sec 3.7.
+Design: `hetlitmus/docs/harness-reporting.md`.
 
 ## het_alloc_{cuda,hip}.inc, het_noise_{cuda,hip}.inc — the two allocators
 

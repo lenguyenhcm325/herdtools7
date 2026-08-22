@@ -16,7 +16,7 @@ het_obs_records, and proves:
                   litmus/hetMachine.ml entitles it to, and a harness stamped
                   with no row names none.
 
-The rule and its reporting frames: hetlitmus/docs/positive-control.md S4.
+The rule and its reporting frames: hetlitmus/docs/harness-reporting.md.
 
 Usage:  verdictcheck.py [--header PATH] [-q]   run the gate
         verdictcheck.py --bite                 prove it FAILS on a broken rule
@@ -146,7 +146,7 @@ CASES = [
     # predicate, so it is a genuine recovered cycle; at production N a T_L>=2 shape
     # never runs the exhaustive scan, so keying the sighting off that field alone
     # would drop real observations.  Counted, and flagged; the deviation from the
-    # rule as written is in hetlitmus/docs/positive-control.md S4.
+    # rule as written is in hetlitmus/docs/harness-reporting.md S2.
     case("observed-heuristic-only", "OBSERVED", cv=["HEURISTIC_SIGHT"],
          target_count_heuristic=1, target_count_exhaustive=0, exhaustive_valid=0),
 
@@ -204,7 +204,7 @@ CASES = [
     # =======================================================================
     # 5. Every liveness disqualifier drives the outcome to COLD: a null from a run
     #    whose stress was inert is not the same datum as one from a stressed run
-    #    (positive-control.md S4).
+    #    (harness-reporting.md S3).
     # =======================================================================
     case("cold-no-interleaving", "COLD-INVALID", dq=["NO_INTERLEAVING"],
          interleavings_detected=0),
@@ -233,7 +233,7 @@ CASES = [
     #    unstressed baseline has every stress counter at zero, so disqualifying on
     #    "counter == 0" alone would make every no-stress config COLD forever.  It
     #    stays reportable and carries the unstressed caveat instead
-    #    (positive-control.md S4: requested-but-dead, not merely zero).
+    #    (harness-reporting.md S3: requested-but-dead, not merely zero).
     # =======================================================================
     case("unstressed-baseline-still-reportable", "NOT-OBSERVED",
          cv=["UNSTRESSED"], stress_requested=0,

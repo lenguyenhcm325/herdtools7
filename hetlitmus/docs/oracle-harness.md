@@ -2,11 +2,12 @@
 
 **This is an OPTIONAL, OFFLINE, POST-RUN step, and nothing in the toolchain
 requires it.** The emitted harness holds no prediction: it reports what it
-observed and what vouched for the harness that did not observe it
-(`positive-control.md`), and no verdict enters the emitter, the record or the
-runtime. Comparing a row against expected verdicts is therefore something a
-*reader* chooses to do afterwards, against a CSV **they** supply — and the
-comparison inherits whatever that CSV is worth. This file describes that step.
+observed and what its own liveness counters reached, with nothing vouching for
+a non-observation (`harness-reporting.md`), and no verdict enters the emitter,
+the record or the runtime. Comparing a row against expected verdicts is
+therefore something a *reader* chooses to do afterwards, against a CSV
+**they** supply — and the comparison inherits whatever that CSV is worth. This
+file describes that step.
 
 `hetlitmus/oracle-compare.sh` reads a litmus7 run log and compares each
 observation against a **reference verdict CSV passed explicitly**, emitting one of
@@ -158,12 +159,13 @@ several generations past GCN3 — confirm, don't assume).
 A log from a real het harness also carries `HetStats` lines (`het_verdict.h`,
 `het_stats_line` + `het_stats_print`). When it does, a second section follows the
 table: for each test, its `RESULT` from the table, then **`het_stats_print`'s own
-block reprinted verbatim** — for a null, that the outcome was not observed in the usable
-cells scored, with **no rate and no probability attached to it**, which control vouched,
-that the row is characterization and agrees with no model, and the effort behind the
-zero; for a sighting, its corroboration tier and `P_rep`. The interpretation is written once,
-in C, beside the numbers it belongs to; the harness does not re-derive it, because a
-second implementation of the same decode is what silently drifts from the first.
+block reprinted verbatim** — for a null, that the outcome was not observed in the
+usable cells scored, with **no rate and no probability attached to it**, that
+**nothing vouches for the harness**, that the row is characterization and agrees
+with no model, and the effort behind the zero; for a sighting, its corroboration
+tier. The interpretation is written once, in C, beside the numbers it belongs to;
+the harness does not re-derive it, because a second implementation of the same
+decode is what silently drifts from the first.
 
 What the section adds on top of the reprint is the campaign-level roll-up: the
 negative control over the rows **the supplied CSV** marks `Disallowed` ([Melissaris20 §VII-A] —
@@ -183,4 +185,5 @@ A log without `HetStats` lines prints the table alone. Both paths are pinned by
 | `hetlitmus/oracle-compare.sh` | the harness (awk: load CSV, classify each Observation) |
 | `hetlitmus/tests/cram/obs.txt` + `oracle.csv` | synthesized fixture pair driving every result class (§4) |
 | `hetlitmus/tests/cram/obs-stats.txt` | frozen log carrying real `HetStats` lines, one per reporting path |
+| `hetlitmus/tests/cram/obs-stats-driver.c` | the generator that prints that fixture, header included, so it is reproducible from this repository alone |
 | `hetlitmus/tests/cram/oracle-stats.csv` | the oracle that fixture is compared against |

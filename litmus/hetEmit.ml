@@ -1752,10 +1752,10 @@ end
             (* ---- the statistics post-pass over the aggregated cells --------
                het_verdict() is a pure function of one record, so the aggregate
                reuses it instead of re-deriving liveness, inheriting every stress
-               disqualifier.  That turns "not observed" into "not observed over
-               this much effort, on a harness a live control kept demonstrably
-               hot": no rate and no probability is attached to a null
-               (hetlitmus/docs/00-environment-design.md sec 3.7). *)
+               disqualifier.  What a null carries is the effort behind it and
+               the liveness this run measured on its own counters; no rate and no
+               probability is attached to one
+               (hetlitmus/docs/harness-reporting.md sec 5). *)
             s "  {\n" ;
             s "    het_stats_t _st;\n" ;
             s "    het_stats_compute(_recs, _nrec, &_st);\n" ;

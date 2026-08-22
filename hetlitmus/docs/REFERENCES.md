@@ -38,8 +38,7 @@ Claim(s) this project takes from it:
 * Footnote 7, p. 577 — "In fairness to the authors of [19], we were unable to
   observe weak behaviours using our method on the Nvidia GTX 280 chip they used."
   — is the precedent for reporting a non-observation as one. `het_verdict.h`
-  cites it; the quotation itself lives in
-  `hetlitmus/docs/positive-control.md` sec 6.
+  cites the key and asserts no location; the quotation lives here.
 
 ## [Kirkham20]
 
@@ -308,13 +307,9 @@ Memory Consistency Specifications.* ASPLOS 2023, Volume 2, pp. 473-488.
 DOI 10.1145/3575693.3575750.
 
 Claim(s) this project takes from it:
-* §1.1 (p. 474) states why a non-observation needs a positive control at all:
+* §1.1 (p. 474) states why a non-observation is not self-interpreting:
   "When testing, it is impossible to tell if an unobserved illegal execution is
   not allowed or if it is simply rare and was not exposed by the tests."
-* §1.2 defines the mutant: a litmus test "mutated in such a way that the
-  erroneous behavior that the test was checking is now allowed", killed by
-  observing that behaviour. The Layer-A control mu(T) is such a mutant, which is
-  also why a test already at the lattice floor has none.
 * §4.1's Parallel Test Environment assigns test instances with a permutation
   `(v*P) mod N`, P co-prime to N, chosen to avoid patterns shown ineffective in
   prior work.
