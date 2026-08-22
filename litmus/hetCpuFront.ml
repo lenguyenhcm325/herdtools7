@@ -22,9 +22,8 @@
    of these with the matching module chain after HetArch.scan_cpu_isa has named
    the ISA.
 
-   No machine lives here.  Which silicon a harness may name belongs to the
-   (CPU ISA x GPU dialect) pair (litmus/hetMachine.ml); these modules
-   contribute [isa_name], one coordinate of that key. *)
+   No machine lives here: a harness names none.  These modules contribute
+   [isa_name], one coordinate of the pair stamped as HET_PAIR_NAME. *)
 
 (* Only [debug] is needed: the column sub-parsers drive an ISA lexer, and
    LexUtils.Config is that lexer's whole configuration. *)

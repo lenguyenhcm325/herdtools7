@@ -7,9 +7,9 @@ the ONE dialect -gpu-target names -- and the structural invariants are pinned
 with robust counts.
 
 The `.hip' renders come from ../het-x86, not from ../het: a harness is a
-(CPU ISA x GPU dialect) PAIR, and (x86_64, hip) is the one this project has an
-MI300A row for (litmus/hetMachine.ml).  The CPU column differs; everything these
-sections read is the GPU render and the shared runtime headers.
+(CPU ISA x GPU dialect) PAIR, and a HIP harness is the (x86_64, hip) one.  The
+CPU column differs; everything these sections read is the GPU render and the
+shared runtime headers.
 
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ mkdir hip

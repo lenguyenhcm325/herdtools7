@@ -729,7 +729,7 @@ hetlitmus-dup: | build
 
 ### het_verdict() -- the rule deciding what an observation MEANS -- compiled from
 ### the real emitted header and driven with synthetic records, together with the
-### machine words each pair's printout may name (hetlitmus/verify/verdictcheck.py).
+### pair each printout names (hetlitmus/verify/verdictcheck.py).
 hetlitmus-verdict: | build
 	@ echo
 	python3 hetlitmus/verify/verdictcheck.py
@@ -797,9 +797,8 @@ hetlitmus-x86fixture: | build
 HETCPUONLYOUT := $(CURDIR)/hetlitmus/tests/het/cpuonly-out
 
 ### The GPU dialect these harnesses are rendered for.  litmus7 emits ONE vendor
-### per harness dir, and the machine lives on the pair: this corpus has an x86_64
-### CPU column, so `hip' selects the pair that names the MI300A.  `cuda' is legal
-### but names no machine, so it is a machinery smoke.
+### per harness dir: this corpus has an x86_64 CPU column, so `hip' selects the
+### (x86_64, hip) pair.  `cuda' is legal too and is a machinery smoke.
 HETCPUONLYTARGET ?= hip
 
 ### The negative control for the cpu_only stamp: a corpus test with a GPU proc,
@@ -886,8 +885,8 @@ hetlitmus-run-gate: | build
 	@ echo "HetLitmus device-session wrapper gate: OK (and the gate bites)"
 
 ### The same wrapper on the device with NO stand-in -- real probe, real nvcc,
-### real harness -- so the chain completes and the results dir records only the
-### machine its pair entitles it to name (verify/runcheck.py --hw).  Needs a GPU.
+### real harness -- so the chain completes and the results dir records what the
+### session turned on (verify/runcheck.py --hw).  Needs a GPU.
 hetlitmus-run-hw: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py --hw

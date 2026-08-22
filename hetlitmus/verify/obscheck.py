@@ -37,8 +37,7 @@ HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 # the gate must keep alive.
 STORE_ONLY_TEST = "2+2W-cg-sys-fence.litmus"
 
-# clang -O2 for both target ISAs a campaign runs on: aarch64 is the GH200 CPU,
-# x86-64 the MI300A host.
+# clang -O2 for both target ISAs a campaign runs on.
 TARGETS = [
     ("x86-64",  ["clang", "-O2", "-S"]),
     ("aarch64", ["clang", "--target=aarch64-linux-gnu", "-O2", "-S"]),

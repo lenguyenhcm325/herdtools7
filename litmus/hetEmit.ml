@@ -230,13 +230,6 @@ end
              the parse -- an unregistered target must refuse having written
              nothing. *)
           let dialects = HetDialect.select ~key:(fun d -> d.gd_target) dialects in
-          (* The machine row for this emission, resolved in the same breath: one
-             dialect survives the filter, so the (CPU ISA x GPU dialect) pair is
-             fixed here, and an unregistered pair is worth its one warning before
-             anything is written.  It never refuses -- see litmus/hetMachine.ml. *)
-          let machine, pair_registered =
-            HetMachine.resolve ~verbose:O.verbose ~cpu_isa:CpuF.isa_name
-              ~target:(List.hd dialects).gd_target in
           let parsed = P.parse in_chan splitted in
           close_in in_chan ;
           let tname = splitted.Splitter.name.Name.name in
@@ -256,49 +249,13 @@ end
               (fun ((_,annot,_),_) ->
                 match annot with Some ("cpu"::_) -> true | _ -> false)
               parsed.MiscParser.prog in
-          (* Which machine this harness may name, for the emitted stderr warnings
-             -- the two halves of the interconnect noise and the link between
-             them.  It comes from the machine row (litmus/hetMachine.ml), which is
-             also what stamps the HET_LINK_NAME / HET_HOST_HALF / HET_DEV_HALF
-             defines het_verdict.h prints from, so the driver's wording and the
-             verdict's wording cannot disagree: one record feeds both. *)
-          let mc =
-            match machine with
-            | Some m -> m
-            | None -> HetMachine.generic_machine in
-          let host_half = mc.HetMachine.mc_host_half
-          and dev_half = mc.HetMachine.mc_dev_half
-          and link_name = mc.HetMachine.mc_link_name in
-          (* Every other place this harness names its machine.  The dialect
-             payloads pasted below, this render's README and its comp.sh are
-             written with `@NAME@' holes and filled from the row that resolved,
-             so a sentence written for one part cannot be pasted into a render
-             the pair entitles to none.  [mc_part] is the exception the fill
-             cannot express: a nameless render names no part AT ALL, so the sites
-             that would print one print nothing there. *)
-          let fill = HetMachine.fill mc in
-          let mc_part = HetMachine.word mc "PART" in
-          (* Why this harness names no machine, and [None] where it names one.
-             Two ways to have no machine row and a results tree six months on is
-             where they have to be told apart: a REGISTERED pair is deliberately
-             nameless, a pair in no row was never considered.  Written once, read
-             by the render and by the README. *)
-          let no_machine_why =
-            match machine with
-            | Some _ -> None
-            | None ->
-               Some (if pair_registered then
-                       "no machine row backs this (CPU ISA x GPU dialect) pair"
-                     else
-                       "this (CPU ISA x GPU dialect) pair is in no row of \
-                        litmus/hetMachine.ml") in
-          (* The (CPU ISA x GPU dialect) this harness was BUILT for, as the short
-             name the verdict layer prints where it has to identify the target.
-             A build fact, so every pair stamps it -- unlike [mc], which a pair
-             with no machine row leaves unstamped. *)
+          (* The (CPU ISA x GPU dialect) this harness was BUILT for, stamped as
+             HET_PAIR_NAME and printed wherever the verdict layer identifies the
+             target.  Non-local: hetlitmus/hetlitmus-run.sh spells the same
+             "($ISA_KEY, $GPU_TARGET)" and refuses a render stamping another. *)
           let pair_label =
-            HetMachine.pair_name ~cpu_isa:CpuF.isa_name
-              ~target:(List.hd dialects).gd_target in
+            Printf.sprintf "(%s, %s)"
+              CpuF.isa_name (List.hd dialects).gd_target in
           (* ---- derive the harness shape from the parsed het test ----------
              The decode function and the recovery scan are rendered here, because
              they are pure C over host buffers and need no dialect; that keeps
@@ -1351,16 +1308,8 @@ end
                shapes yielded zero observations without it [Alglave15 Tab. 6].
                The tally would catch that afterwards; warn BEFORE the run. *)
             s "  if (HET_MEM_STRESS_PCT > 0 && _stressBlocks == 0)\n" ;
-            (* That zero is one NVIDIA part's figure and covers lb and sb only --
-               mp and coRR were observed unstressed -- so the sentence below
-               claims it, scoped, for a machine row that carries it and states
-               the gap for one that does not. *)
-            s (Printf.sprintf
-                 "    fprintf(stderr, \"HetLitmus WARNING: the mem-stress population is EMPTY (test=%%d + noise=%%d fills the co-resident cap %%d).  HET_MEM_STRESS_PCT=%%d asks for scratchpad stress and NO block will do any.  %s\\n\",\n\
-               \            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_MEM_STRESS_PCT);\n"
-                 (if mc.HetMachine.mc_alglave_zero
-                  then "On the NVIDIA GTX Titan the inter-CTA lb and sb tests were observed 0 per 100k without memory stress (Alglave ASPLOS'15 Tab. 6)."
-                  else "(Alglave ASPLOS'15 Tab. 6's zero without memory stress is an NVIDIA GTX Titan measurement and is not claimed for this target; no equivalent figure is published for it.)")) ;
+            s "    fprintf(stderr, \"HetLitmus WARNING: the mem-stress population is EMPTY (test=%d + noise=%d fills the co-resident cap %d).  HET_MEM_STRESS_PCT=%d asks for scratchpad stress and NO block will do any.\\n\",\n\
+               \            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_MEM_STRESS_PCT);\n" ;
             s "  uint32_t _pre_pat = (uint32_t)HET_PRE_STRESS_PATTERN;\n" ;
             s "  uint32_t _mem_pat = (uint32_t)HET_MEM_STRESS_PATTERN;\n" ;
             s "  fprintf(stderr, \"HetLitmus: blockDim=%d grid=%d (test=%d stress=%d, co-resident cap=%d) pre_pat=%u mem_pat=%u\\n\",\n\
@@ -1413,38 +1362,28 @@ end
             s "  uint64_t *_noise_ddr = NULL;   /* CPU-homed: the GPU streams it */\n" ;
             s "  uint64_t *_noise_hbm = NULL;   /* GPU-homed: the CPU streams it */\n" ;
             s "  het_cpu_noise_args _na; pthread_t _nth; int _noise_cpu_on = 0;\n" ;
-            (* The threshold is this PAIR's last level where a figure exists for
-               it, and a disclosed fallback where none does -- naming another
-               part's capacity as this one's is the claim this arm refuses. *)
-            s "  if (HET_NOISE_MB < HET_LLC_MB)\n" ;
-            s (match mc.HetMachine.mc_llc_mb with
-               | Some _ ->
-                  Printf.sprintf
-                    "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%%d is BELOW the last-level cache (%%d MB) -- the noise buffers fit in cache, so the reads are served locally and generate NO interconnect traffic.  This run is NOT %s-stressed%s.\\n\",\n\
-                   \            (int)HET_NOISE_MB, (int)HET_LLC_MB);\n"
-                    link_name mc.HetMachine.mc_llc_note
-               | None ->
-                  Printf.sprintf
-                    "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%%d is below the %%d MB threshold -- a FALLBACK figure, measured on another part, not a last-level-cache capacity for this target.  A noise buffer that fits in the last-level cache is served locally and crosses no %s, so this run may not be stressed at all%s.\\n\",\n\
-                   \            (int)HET_NOISE_MB, (int)HET_LLC_MB);\n"
-                    link_name mc.HetMachine.mc_llc_note) ;
+            (* The threshold is a build fact and the default is a fallback
+               measured on another part, so the two arms differ in what they
+               claim: naming that default as this target's capacity is what the
+               fallback arm refuses. *)
+            s "  if (HET_NOISE_MB < HET_LLC_MB) {\n" ;
+            s "#if HET_LLC_MB_IS_FALLBACK\n" ;
+            s "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%d is below the %d MB threshold -- a FALLBACK figure, measured on another part, not a last-level-cache capacity for this target (build with -DHET_LLC_MB=<MB> to supply it).  A noise buffer that fits in the last-level cache is served locally and crosses no %s, so this run may not be stressed at all.\\n\",\n\
+               \            (int)HET_NOISE_MB, (int)HET_LLC_MB, HET_LINK_NAME);\n" ;
+            s "#else\n" ;
+            s "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%d is BELOW the HET_LLC_MB supplied for this build (%d MB) -- the noise buffers fit in the last-level cache, so the reads are served locally and generate NO interconnect traffic.  This run is NOT %s-stressed.\\n\",\n\
+               \            (int)HET_NOISE_MB, (int)HET_LLC_MB, HET_LINK_NAME);\n" ;
+            s "#endif\n" ;
+            s "  }\n" ;
             s "  if (_noiseBlocks > 0) {\n" ;
             s "    int _rc = gd_alloc_noise((void**)&_noise_ddr, (size_t)_noise_words*sizeof(uint64_t), 2);\n" ;
-            s (Printf.sprintf
-                 "    if (_rc < 0) { fprintf(stderr, \"HetLitmus WARNING: could not allocate the %%d MB DDR noise buffer -- %s of the %s noise is DISABLED for this run.\\n\", (int)HET_NOISE_MB); _noise_ddr = NULL; _noise_blocks = 0; }\n"
-                 dev_half link_name) ;
-            s (Printf.sprintf
-                 "    else if (_rc > 0) fprintf(stderr, \"HetLitmus WARNING: the DDR noise buffer could not be homed on the CPU -- this device has no interconnect-stress lever (no ATS/coherent host-device link), so %s of the noise is exercising plumbing, not the %s.\\n\");\n"
-                 dev_half link_name) ;
+            s "    if (_rc < 0) { fprintf(stderr, \"HetLitmus WARNING: could not allocate the %d MB DDR noise buffer -- %s of the %s noise is DISABLED for this run.\\n\", (int)HET_NOISE_MB, HET_DEV_HALF, HET_LINK_NAME); _noise_ddr = NULL; _noise_blocks = 0; }\n" ;
+            s "    else if (_rc > 0) fprintf(stderr, \"HetLitmus WARNING: the DDR noise buffer could not be homed on the CPU -- this device has no interconnect-stress lever (no ATS/coherent host-device link), so %s of the noise is exercising plumbing, not the %s.\\n\", HET_DEV_HALF, HET_LINK_NAME);\n" ;
             s "  }\n" ;
             s "  if (HET_NOISE_CPU) {\n" ;
             s "    int _rc = gd_alloc_noise((void**)&_noise_hbm, (size_t)_noise_words*sizeof(uint64_t), 1);\n" ;
-            s (Printf.sprintf
-                 "    if (_rc < 0) { fprintf(stderr, \"HetLitmus WARNING: could not allocate the %%d MB HBM noise buffer -- %s of the %s noise is DISABLED for this run.\\n\", (int)HET_NOISE_MB); _noise_hbm = NULL; }\n"
-                 host_half link_name) ;
-            s (Printf.sprintf
-                 "    else if (_rc > 0) fprintf(stderr, \"HetLitmus WARNING: the HBM noise buffer could not be homed on the GPU -- %s of the noise is exercising plumbing, not the %s.\\n\");\n"
-                 host_half link_name) ;
+            s "    if (_rc < 0) { fprintf(stderr, \"HetLitmus WARNING: could not allocate the %d MB HBM noise buffer -- %s of the %s noise is DISABLED for this run.\\n\", (int)HET_NOISE_MB, HET_HOST_HALF, HET_LINK_NAME); _noise_hbm = NULL; }\n" ;
+            s "    else if (_rc > 0) fprintf(stderr, \"HetLitmus WARNING: the HBM noise buffer could not be homed on the GPU -- %s of the noise is exercising plumbing, not the %s.\\n\", HET_HOST_HALF, HET_LINK_NAME);\n" ;
             s "  }\n" ;
             s "  fprintf(stderr, \"HetLitmus cpu-stress: cores=%d test=%d enemies=%d spread=%u stride=%d seq=%d preload=%d%% aff=%d | noise: gpu_blocks=%u cpu=%d words=%llu (%d MB) place=%d\\n\",\n\
                \          _ncores, _nCpuTest, _nEnemy, _cpu_spread, (int)HET_CPU_STRIDE,\n\
@@ -1646,9 +1585,7 @@ end
             s "      if (HET_CPU_PRELOAD_PCT > 0 && _pl == 0)\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: HET_CPU_PRELOAD_PCT=%d but ZERO preload hints were issued -- the cache preload is INERT (this host may have no cache primitives; see het_cpu_stress.h HET_CPU_PRELOAD_LIVE).\\n\", (int)HET_CPU_PRELOAD_PCT);\n" ;
             s "      if (_noise_blocks > 0 && _ng == 0)\n" ;
-            s (Printf.sprintf
-                 "        fprintf(stderr, \"HetLitmus WARNING: %%u device-side noise block(s) were launched but NONE completed a round -- %s of the %s noise did NOT run.  This run is not interconnect-stressed.\\n\", _noise_blocks);\n"
-                 dev_half link_name) ;
+            s "        fprintf(stderr, \"HetLitmus WARNING: %u device-side noise block(s) were launched but NONE completed a round -- %s of the %s noise did NOT run.  This run is not interconnect-stressed.\\n\", _noise_blocks, HET_DEV_HALF, HET_LINK_NAME);\n" ;
             s "      if (_ct.aff_failures)\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: %u sched_setaffinity call(s) FAILED -- those threads are wherever the scheduler put them.  The pinning is fiction and the stress topology is not the one being tuned.\\n\", _ct.aff_failures);\n" ;
             s "    }\n" ;
@@ -1818,32 +1755,10 @@ end
             s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
             s "#include <cstring>\n#include <cmath>\n" ;
             s "#include <pthread.h>\n#include <inttypes.h>\n" ;
-            (* What the machine row stamps, ahead of the runtime headers that read
-               it.  The machine words -- the two halves of the interconnect noise,
-               the link between them, this part's last level -- are claims about
-               silicon, so a pair with no machine row stamps NONE of them and the
-               headers' #ifndef defaults name the mechanism instead.  The two
-               build facts below are stamped by every pair, being true of the
-               binary whatever the row says; HET_PLACE_LEVER is separate again,
-               the vendor API call a render contains being a dialect fact. *)
-            (match machine with
-             | Some m ->
-                s (Printf.sprintf "#define HET_LINK_NAME %S\n"
-                     m.HetMachine.mc_link_name) ;
-                s (Printf.sprintf "#define HET_HOST_HALF %S\n"
-                     m.HetMachine.mc_host_half) ;
-                s (Printf.sprintf "#define HET_DEV_HALF %S\n"
-                     m.HetMachine.mc_dev_half) ;
-                (match m.HetMachine.mc_llc_mb with
-                 | Some mb -> s (Printf.sprintf "#define HET_LLC_MB %d\n" mb)
-                 | None -> ()) ;
-                if m.HetMachine.mc_alglave_zero then
-                  s "#define HET_ALGLAVE_ZERO_MEASURED 1\n"
-             | None ->
-                s (Printf.sprintf "/* No machine defines: %s,\n"
-                     (match no_machine_why with Some w -> w | None -> "")) ;
-                s "   so this harness names no silicon and het_verdict.h's generic\n" ;
-                s "   host/device wording stands. */\n") ;
+            (* Two build facts, stamped ahead of the runtime headers that read
+               them.  No machine word is stamped: the headers name the mechanism.
+               HET_PLACE_LEVER is a dialect fact -- the vendor API call this
+               render contains. *)
             s (Printf.sprintf "#define HET_PAIR_NAME %S\n" pair_label) ;
             (match dialect.gd_place_lever with
              | Some lever -> s (Printf.sprintf "#define HET_PLACE_LEVER %S\n" lever)
@@ -2079,12 +1994,12 @@ end
             (* outcome labels + the decoded-outcome dump callback *)
             s it.i_labels ;
             s "/* Placement refusals.  Incremented only where placement EXISTS (the\n\
-               \   CUDA/GH200 render); stays 0 on the HIP/MI300A render, which has a\n\
-               \   single HBM pool and therefore nothing to place. */\n" ;
+               \   CUDA render's cudaMemAdvise); stays 0 on the HIP render, which\n\
+               \   carries no placement code. */\n" ;
             s "static int _het_place_failures = 0;\n\n" ;
-            s (fill dialect.gd_shared_mem_defs) ;
+            s dialect.gd_shared_mem_defs ;
             s "\n" ;
-            s (fill dialect.gd_noise_mem_defs) ;
+            s dialect.gd_noise_mem_defs ;
             s "\n" ;
             dump_gpu_main dialect s in
           (* ---- comp.sh / Makefile / README ---- *)
@@ -2154,9 +2069,7 @@ end
                 let v = var_line d in
                 s (Printf.sprintf "%s%s # %s\n"
                      v (String.make (var_w - String.length v) ' ')
-                     (match mc_part with
-                      | Some p -> Printf.sprintf "%s=%s" p d.gd_arch_default
-                      | None -> "default arch " ^ d.gd_arch_default)))
+                     ("default arch " ^ d.gd_arch_default)))
               dialects ;
             s (Printf.sprintf
                  "HET_HOST_ISA=\"%s\"   # uname -m of this test's CPU ISA (%s)\n"
@@ -2334,7 +2247,7 @@ end
               (fun d ->
                 s (Printf.sprintf "- `%s.%s`%s%s" tname d.gd_ext
                      (String.make (ext_w - String.length d.gd_ext) ' ')
-                     (fill d.gd_readme_files)))
+                     d.gd_readme_files))
               dialects ;
             s (Printf.sprintf "- `%s_cpu.c`  CPU thread(s): real %s inline asm, emitted by %s.\n" tname CpuF.isa_name CpuF.body_module) ;
             s "- `outs.c/.h` litmus7's outcome histogram (verbatim from litmus/libdir).\n" ;
@@ -2354,9 +2267,7 @@ end
                      d.gd_target d.gd_target tname (gpu_obj d tname)) ;
                 s (Printf.sprintf "  (%s: `$%s %s$%s`, %s).\n"
                      d.gd_vendor d.gd_compiler_var d.gd_arch_flag d.gd_arch_var
-                     (match mc_part with
-                      | Some p -> Printf.sprintf "%s = %s" d.gd_arch_default p
-                      | None -> "default " ^ d.gd_arch_default)))
+                     ("default " ^ d.gd_arch_default)))
               dialects ;
             s (Printf.sprintf
                  "%s link paths REFUSE unless `uname -m` is `%s`: elsewhere\n"
@@ -2365,33 +2276,21 @@ end
                  "`%s_cpu_host.o` is the portable shim, not the %s asm, and the binary\n"
                  tname CpuF.isa_name) ;
             s "would test nothing.\n\n" ;
-            (* One line, whatever this harness is: the `Target:' line below is
-               pinned by line number (cram machine-pairs.t). *)
             s (Printf.sprintf
                  "The build knobs and why `make %s` refuses:\n" tname) ;
             s "`hetlitmus/docs/het-emission.md`.\n\n" ;
-            (* What this harness was built for, and the last line a reader of a
-               results tree meets.  A part is named only where the pair's machine
-               row names one; where none does, the pair and the reason stand in
-               its place, because "no target stated" and "the target nobody
-               registered" read alike once the directory is all there is. *)
+            (* The last lines a reader of a results tree meets: the vendor and
+               dialect this harness renders, then the pair it was built for. *)
             s (Printf.sprintf "Target%s: %s.\n" (plural "" "s")
                  (enum
                     (List.map
-                       (fun d ->
-                         match mc_part with
-                         | Some p ->
-                            Printf.sprintf "%s %s (%s)" d.gd_vendor p d.gd_name
-                         | None ->
-                            Printf.sprintf "%s %s" d.gd_vendor d.gd_name)
+                       (fun d -> Printf.sprintf "%s %s" d.gd_vendor d.gd_name)
                        dialects))) ;
-            (match no_machine_why with
-             | None -> ()
-             | Some why ->
-                s (Printf.sprintf
-                     "It names no silicon (%s), so a result from it is filed\nunder \
-                      `%s` and nothing more.\n"
-                     why pair_label)) in
+            s (Printf.sprintf
+                 "Pair: `%s` -- the CPU ISA and GPU dialect this harness was built\n"
+                 pair_label) ;
+            s "for, stamped as HET_PAIR_NAME; results are filed under it, and it names\n" ;
+            s "no machine.\n" in
           write "outs.h" (fun ch -> output_string ch outs_h_content) ;
           write "outs.c" (fun ch -> output_string ch outs_c_content) ;
           write "het_stress.h" (fun ch -> output_string ch het_stress_content) ;

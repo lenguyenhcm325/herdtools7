@@ -132,7 +132,7 @@ checked here on the LB render.
   $ grep -c 'if (_hot || _weak) {' LB-cg-sys-acqrel-2s/LB-cg-sys-acqrel-2s.cu
   1
 
-GATE 6: LDAPR is RCpc (ARMv8.3).  Neither native gcc on Grace nor
+GATE 6: LDAPR is RCpc (ARMv8.3).  Neither native gcc on an AArch64 host nor
 `clang --target=aarch64-linux-gnu' enables it by default, so the tagged body must
 carry the extension itself or every two-sided (-2s) test fails to ASSEMBLE.
   $ grep -c '.arch_extension rcpc' MP-gc-sys-acqrel-2s/MP-gc-sys-acqrel-2s_cpu.c

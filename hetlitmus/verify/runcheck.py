@@ -3,20 +3,18 @@
 end to end on a box with no device.
 
 The wrapper is the one command a hardware session runs, so what it decides -- the
-pair, the machine that pair may name, the architecture the binaries are built for
--- is decided on a machine nobody is watching and is visible afterwards only in
-what it wrote down.  Every phase below drives it with the compiler and the probe
-replaced by the wrapper's documented stand-ins.  The chain phases need a corpus
-whose CPU column is this host's, so `fixture()' picks the committed x86 fixture on
-an x86_64 box and a cut of the committed AArch64 corpus on an aarch64 one, and the
-pairs each phase expects follow that choice: nothing here is x86-only.
+pair and the architecture the binaries are built for -- is decided on a machine
+nobody is watching and is visible afterwards only in what it wrote down.  Every
+phase below drives it with the compiler and the probe replaced by the wrapper's
+documented stand-ins.  The chain phases need a corpus whose CPU column is this
+host's, so `fixture()' picks the committed x86 fixture on an x86_64 box and a cut
+of the committed AArch64 corpus on an aarch64 one, and the pairs each phase
+expects follow that choice: nothing here is x86-only.
 
   PHASE 1  --dry-run prints the plan and does NOT act: no results dir at all.
   PHASE 2  the chain end to end on each dialect this host reaches.
-  PHASE 3  the refusals, each by its own reason -- and the unregistered pair,
-           which is warned about and emits.
+  PHASE 3  the refusals, each by its own reason.
   PHASE 4  campaign.py's stop rule, and the states it may not resume.
-  PHASE 5  the machine-table reader, bounded to the table literal.
   PHASE 6  the fail-closed handlers, each under its own induced condition.
   PHASE 7  a second session into a results dir that already holds one.
   PHASE 8  probe-hip.sh's exit paths.
@@ -45,11 +43,7 @@ WRAPPER = os.path.join(HETL, "hetlitmus-run.sh")
 CAMPAIGN = os.path.join(HETL, "campaign.py")
 RUNONE = os.path.join(HETL, "spotcheck", "run-one.sh")
 PROBE_HIP = os.path.join(HETL, "spotcheck", "probe-hip.sh")
-MACHINE_ML = os.path.join(ROOT, "litmus", "hetMachine.ml")
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
-
-sys.path.insert(0, HERE)
-import brandscan          # noqa: E402  (the tree's own module, next to this one)
 
 # The committed (x86_64, *) fixture, cut verbatim from a generate-x86.sh run and
 # kept that way by hetlitmus-x86fixture.
@@ -231,12 +225,11 @@ def state_notes(path):
 
 
 # ---------------------------------------------------------------------------
-# The fixture this host can drive, and what litmus/hetMachine.ml says about its
-# two dialects.  The emitted link targets refuse a foreign host, so a corpus
-# whose CPU column is not this box's has no chain to drive here.  Every row of
-# every campaign takes the same stop rule whatever the pair: no harness carries a
-# prediction, so the pair changes what a render may CLAIM and nothing about what
-# it does.
+# The fixture this host can drive, and the device arch each of its two dialects
+# is built for.  The emitted link targets refuse a foreign host, so a corpus whose
+# CPU column is not this box's has no chain to drive here.  Every row of every
+# campaign takes the same stop rule whatever the pair: no harness carries a
+# prediction.
 # ---------------------------------------------------------------------------
 _CUT = None
 
@@ -259,17 +252,15 @@ def fixture():
     if m == "x86_64":
         fx = {
             "isa": "x86_64", "key": "X86_64", "dir": X86_DIR, "tests": X86_TESTS,
-            "cuda": {"state": "NO-MACHINE", "machine": "NONE", "arch": "sm_86"},
-            "hip": {"state": "MACHINE", "machine": "mi300a_machine",
-                    "arch": "gfx942"},
+            "cuda": {"arch": "sm_86"},
+            "hip": {"arch": "gfx942"},
         }
     elif m in ("aarch64", "arm64"):
         fx = {
             "isa": "aarch64", "key": "AArch64", "dir": aarch64_corpus(),
             "tests": AARCH64_TESTS,
-            "cuda": {"state": "MACHINE", "machine": "gh200_machine",
-                     "arch": "sm_90"},
-            "hip": {"state": "ABSENT", "machine": "NONE", "arch": "gfx942"},
+            "cuda": {"arch": "sm_90"},
+            "hip": {"arch": "gfx942"},
         }
     else:
         return None
@@ -286,8 +277,8 @@ def no_fixture(phase, quiet):
 
 
 def foreign_case():
-    """(corpus, target) whose CPU lane is NOT this host's, and whose pair IS
-    registered -- so the session reaches the host-ISA refusal, not an earlier one."""
+    """(corpus, target) whose CPU lane is NOT this host's, so the session reaches
+    the host-ISA refusal and not an earlier one."""
     if platform.machine() == "x86_64":
         return aarch64_corpus(), "cuda"
     return X86_DIR, "hip"
@@ -382,23 +373,16 @@ def _e2e(wrapper, tmp, fx, target, arm, quiet):
         bad.append("%s: the summary does not say what the rows are -- it says:\n%s"
                    % (target, summary))
     record = open(os.path.join(out, "run-record.txt")).read()
-    for frag in ("arch=" + arm["arch"], "pair_state=" + arm["state"],
-                 "pair_machine=" + arm["machine"], "seam_probe=STUB",
+    for frag in ("arch=" + arm["arch"], "seam_probe=STUB",
                  "seam_compiler=OVERRIDDEN", "session_status=COMPLETE"):
         if frag not in record:
             bad.append("%s: run-record.txt does not carry %r -- the value the "
                        "session turned on is not a recorded fact" % (target, frag))
     rows = state_rows(os.path.join(out, "campaign-state.csv"))
     bad += state_is_terminal("%s: " % target, rows, fx["tests"])
-    # An unregistered pair is WARNED about, not refused: the session runs, and
-    # the one thing it loses is the machine its renders may name.
-    if arm["state"] == "ABSENT" and "is in no row of litmus/hetMachine.ml" \
-            not in r.stderr:
-        bad.append("%s: the pair is in no row of the machine table and the session "
-                   "never said so -- it said: %s" % (target, r.stderr[-300:]))
     if not quiet and not bad:
-        print("      %-4s -> %-14s %-16s %d row(s)"
-              % (target, arm["state"], arm["machine"], len(rows)))
+        print("      %-4s -> arch %-8s %d row(s)"
+              % (target, arm["arch"], len(rows)))
     return bad, out
 
 
@@ -453,7 +437,7 @@ def phase2_e2e(wrapper, quiet=False):
 def mixed_corpus(tmp):
     """A corpus carrying both CPU lanes.  The preflight has to read EVERY test's
     lane: a preflight reading only the first passes this corpus and lets emission
-    die blaming the pair table."""
+    die on the CPU column instead."""
     d = os.path.join(tmp, "mixed")
     os.makedirs(d, exist_ok=True)
     for f in os.listdir(X86_DIR):
@@ -461,97 +445,6 @@ def mixed_corpus(tmp):
             shutil.copy(os.path.join(X86_DIR, f), d)
     shutil.copy(os.path.join(AARCH64_DIR, AARCH64_TESTS[0] + ".litmus"), d)
     return d
-
-
-# The (AArch64, hip) pair is in no row of the machine table, and a corpus with an
-# AArch64 CPU column is committed, so this is the unregistered case every host can
-# drive THROUGH LITMUS7 -- emission does not care which box it runs on.
-UNREG_PAIR = "(AArch64, hip)"
-UNREG_TEST = "MP-cg-sys-relaxed"
-UNREG_WARN = "is in no row of litmus/hetMachine.ml"
-MACHINE_DEFINE_RE = re.compile(
-    r"^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|ALGLAVE_ZERO_MEASURED)\b",
-    re.M)
-
-
-def unregistered_emits(quiet=False):
-    """An unregistered pair EMITS: exit 0, one warning, and a render that names
-    no machine.  Driven straight through litmus7, so it runs on every host."""
-    bad = []
-    tmp = tempfile.mkdtemp(prefix="runcheck3-unreg.")
-    try:
-        r = sh([os.path.join(BIN, "litmus7"), "-gpu-target", "hip", "-o", tmp,
-                UNREG_TEST + ".litmus"], cwd=AARCH64_DIR)
-        if r.returncode != 0:
-            bad.append("litmus7 exited %d on the unregistered pair %s -- warn, "
-                       "never refuse: %s"
-                       % (r.returncode, UNREG_PAIR, r.stderr.strip()[-300:]))
-            return bad
-        warns = set(l for l in r.stderr.splitlines() if UNREG_WARN in l)
-        if len(warns) != 1:
-            bad.append("emitting %s printed %d distinct warning(s) about the pair, "
-                       "want exactly 1: %s" % (UNREG_PAIR, len(warns), sorted(warns)))
-        elif UNREG_PAIR not in warns.pop():
-            bad.append("the warning does not name %s" % UNREG_PAIR)
-        render = os.path.join(tmp, UNREG_TEST, UNREG_TEST + ".hip")
-        if not os.path.exists(render):
-            bad.append("no .hip render for the unregistered pair")
-            return bad
-        text = open(render).read()
-        if '#define HET_PAIR_NAME "%s"' % UNREG_PAIR not in text:
-            bad.append("the render does not stamp HET_PAIR_NAME %r" % UNREG_PAIR)
-        stamped = MACHINE_DEFINE_RE.findall(text)
-        if stamped:
-            bad.append("the render of an unregistered pair stamps machine "
-                       "define(s) %s -- it is entitled to none" % stamped)
-        # ...and it must not SAY one either, which is the half no define can
-        # decide: the whole harness dir, over the literals its driver prints and
-        # the README and build files a reader opens (brandscan.py).
-        named = brandscan.scan([os.path.join(tmp, UNREG_TEST)], "none")
-        for path, ln, row, w, excerpt in named[:6]:
-            bad.append("the harness of an unregistered pair names %r (the %s row) "
-                       "in %s:%d -- %s"
-                       % (w, row, os.path.basename(path), ln, excerpt[:100]))
-        if len(named) > 6:
-            bad.append("...and %d more machine word(s) in that harness"
-                       % (len(named) - 6))
-        if not quiet and not bad:
-            print("      %-34s emits (rc=0), 1 warning, 0 machine defines, "
-                  "0 machine words" % UNREG_PAIR)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    return bad
-
-
-def unregistered_session(wrapper, fx, env, quiet=False):
-    """...and the WRAPPER does not refuse one either.  On a host whose own CPU
-    lane makes the unregistered pair the session runs; elsewhere the aarch64
-    corpus reaches the warning and then dies of the FOREIGN HOST, not of the
-    pair."""
-    bad = []
-    if fx["hip"]["state"] == "ABSENT":
-        args = ["--gpu-target", "hip", "--corpus", fx["dir"], "--arch",
-                fx["hip"]["arch"], "--dry-run"]
-        want_rc, want_frag = 0, UNREG_WARN
-    else:
-        args = ["--gpu-target", "hip", "--corpus", aarch64_corpus(), "--arch",
-                "gfx942", "--dry-run"]
-        want_rc, want_frag = 2, "uname -m is"
-    r = run_wrapper(wrapper, args, env=env)
-    if r.returncode != want_rc:
-        bad.append("the wrapper exited %d on the unregistered pair, want %d -- an "
-                   "unregistered pair is warned about, not refused: %s"
-                   % (r.returncode, want_rc, (r.stdout + r.stderr).strip()[-300:]))
-    elif UNREG_WARN not in r.stderr:
-        bad.append("the wrapper says nothing about the unregistered pair; its "
-                   "stderr was: %s" % (r.stderr.strip()[-300:] or "(empty)"))
-    elif want_frag not in r.stderr + r.stdout:
-        bad.append("the session did not reach %r; it said: %s"
-                   % (want_frag, (r.stdout + r.stderr).strip()[-300:]))
-    elif not quiet:
-        print("      %-34s warned about, session rc=%d" % ("the wrapper on " +
-                                                          UNREG_PAIR, want_rc))
-    return bad
 
 
 def phase3_refusals(wrapper, quiet=False):
@@ -606,9 +499,6 @@ def phase3_refusals(wrapper, quiet=False):
                            % (name, frag, r.stderr.strip()[-300:]))
             elif not quiet:
                 print("      %-34s rc=2, names it" % name)
-        # ... and the one case that is not a refusal at all.
-        bad += unregistered_emits(quiet)
-        bad += unregistered_session(wrapper, fx, wrapper_env(cc, probe), quiet)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return bad
@@ -757,88 +647,6 @@ def phase4_stoprule(campaign, quiet=False):
                        % r.stdout[-300:])
         elif not quiet:
             print("      a terminal row of its own state is resumed, not re-run")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    return bad
-
-
-# ---------------------------------------------------------------------------
-# PHASE 5 -- the machine-table reader.  A row is a row only INSIDE the table
-# literal: a reader that ran past the closing bracket reads a row-shaped line out
-# of a comment or a doc example as if it were a registered pair.  The doctored
-# copies below are what make that visible -- the committed file happens to survive
-# an unbounded parse, and a file with a row-shaped line after the table does not.
-# ---------------------------------------------------------------------------
-READER_WANT = {("AArch64", "cuda"): "MACHINE gh200_machine",
-               ("X86_64", "hip"): "MACHINE mi300a_machine",
-               ("X86_64", "cuda"): "NO-MACHINE",
-               ("AArch64", "hip"): "ABSENT"}
-LAST_ROW = '\n    ("X86_64", "sycl"), Some generic_machine ;\n'
-TRAILING_DOC = ('\n(* Adding a machine is adding a row:\n'
-                '    ("AArch64", "hip"), Some gh200_machine ;\n'
-                '   and nothing else in the emitter changes. *)\n')
-
-
-def _mkrepo(tmp, name, text):
-    d = os.path.join(tmp, name)
-    os.makedirs(os.path.join(d, "litmus"), exist_ok=True)
-    with open(os.path.join(d, "litmus", "hetMachine.ml"), "w") as fh:
-        fh.write(text)
-    return d
-
-
-def phase5_reader(wrapper, quiet=False):
-    bad = []
-    tmp = tempfile.mkdtemp(prefix="runcheck5.")
-    try:
-        m = re.search(r"^machine_pair\(\) \{.*?^\}", open(wrapper).read(),
-                      re.S | re.M)
-        if m is None:
-            return ["the wrapper has no machine_pair(): the machine table is read "
-                    "by something this phase cannot find, so it checks nothing"]
-        drv = write_exec(os.path.join(tmp, "reader.sh"),
-                         '#!/usr/bin/env bash\nset -euo pipefail\nREPO="$3"\n'
-                         + m.group(0) + '\nmachine_pair "$1" "$2"\n')
-        real = open(MACHINE_ML).read()
-        i = real.find("let table = [")
-        j = real.find("\n  ]\n", i if i >= 0 else 0)
-        if i < 0 or j < 0:
-            return ["litmus/hetMachine.ml has no `let table = [' ... `]' literal: "
-                    "this phase, and the reader it checks, are written for that shape"]
-        want_last = dict(READER_WANT)
-        want_last[("X86_64", "sycl")] = "MACHINE generic_machine"
-        variants = [("the committed table", real, READER_WANT),
-                    ("a machine row placed LAST", real[:j] + LAST_ROW + real[j:],
-                     want_last),
-                    ("a row-shaped line AFTER the table", real + TRAILING_DOC,
-                     READER_WANT)]
-        for n, (what, text, want) in enumerate(variants):
-            if n and text == real:
-                bad.append("%r is byte-identical to the committed table -- this "
-                           "phase proves nothing about it" % what)
-                continue
-            repo = _mkrepo(tmp, "repo%d" % n, text)
-            hits = 0
-            for (isa, tgt), w in sorted(want.items()):
-                got = sh(["bash", drv, isa, tgt, repo]).stdout.strip()
-                if got != w:
-                    bad.append("[%s] (%s, %s) reads %r, want %r -- the reader is "
-                               "not bounded to the table literal"
-                               % (what, isa, tgt, got, w))
-                else:
-                    hits += 1
-            if not quiet and hits == len(want):
-                print("      %-30s %d pair(s) read correctly" % (what, hits))
-        # A file whose table literal moved must fail closed, not report every pair
-        # absent -- which the wrapper would turn into "register the pair first".
-        repo = _mkrepo(tmp, "repo-notable",
-                       real.replace("let table = [", "let t = [", 1))
-        got = sh(["bash", drv, "AArch64", "cuda", repo]).stdout.strip()
-        if got != "NO-TABLE":
-            bad.append("a hetMachine.ml with no `let table = [' reads %r, want "
-                       "NO-TABLE" % got)
-        elif not quiet:
-            print("      a table literal that moved reads NO-TABLE, not ABSENT")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return bad
@@ -1188,11 +996,6 @@ INJECTIONS = [
      lambda s: s.replace('if [ "$DRYRUN" -eq 1 ]; then\n  echo\n',
                          'mkdir -p "$OUT"\nif [ "$DRYRUN" -eq 1 ]; then\n  echo\n', 1),
      phase1_dryrun, "must write nothing"),
-    ("2", "wrapper", "the machine table is not read: every pair is the GH200 row",
-     lambda s: s.replace(
-         'read -r PAIR_STATE PAIR_MACHINE <<<"$(machine_pair "$ISA_KEY" "$GPU_TARGET")"',
-         'PAIR_STATE=MACHINE ; PAIR_MACHINE=gh200_machine', 1),
-     phase2_e2e, "pair_machine"),
     ("2", "wrapper", "the harness transcripts are not kept",
      lambda s: s.replace('export HET_RUN_LOG_DIR="$OUT/hetstats"',
                          'HET_RUN_LOG_DIR=""', 1),
@@ -1214,11 +1017,6 @@ INJECTIONS = [
      lambda s: s.replace('done < <(corpus_cpu_lanes "${CORPUS_PATHS[@]}")',
                          'done < <(corpus_cpu_lanes "${CORPUS_PATHS[0]}")', 1),
      phase3_refusals, "mixed-ISA corpus"),
-    ("3", "wrapper", "an unregistered pair passes without a word",
-     lambda s: s.replace('echo "hetlitmus-run: WARNING -- the pair $PAIR is in no row '
-                         'of litmus/hetMachine.ml',
-                         'echo "hetlitmus-run: (nothing to report)', 1),
-     phase3_refusals, "says nothing about the unregistered pair"),
     ("4", "campaign", "a LONE sighting is banked as if it had reproduced",
      lambda s: s.replace("            if self.k_runs >= CORROB_RUNS:",
                          "            if self.k_eff >= 1:", 1),
@@ -1240,10 +1038,6 @@ INJECTIONS = [
      lambda s: s.replace("            if pstop and pstop not in TERMINAL:",
                          "            if False:", 1),
      phase4_stoprule, "banked by another stop rule"),
-    ("5", "wrapper", "the machine-table reader runs past the table literal",
-     lambda s: s.replace("/^[ \\t]*\\][ \\t]*$/ { intab = 0 ; next }",
-                         "/^[ \\t]*\\][ \\t]*$/ { next }", 1),
-     phase5_reader, "not bounded to the table literal"),
     # Four of the phase-6 handlers are subsumed downstream: with the handler
     # removed the session still stops, elsewhere and saying something else, so
     # each of those four names the substitute the phase reaches instead -- the
@@ -1357,8 +1151,8 @@ def bite():
 # ---------------------------------------------------------------------------
 # --hw -- the same wrapper, on the device.  No stand-ins: the real probe, the
 # real compiler, the real harness.  The pair it reaches is whichever one this
-# host's fixture names, and what is asserted is that the session recorded the
-# machine that pair's table row entitles it to and nothing more.
+# host's fixture names, and what is asserted is that the session recorded what it
+# turned on and nothing more.
 # ---------------------------------------------------------------------------
 # A harness that loses a barrier increment stalls until the runner's timeout
 # kills it (campaign.py then records `runner rc=124').  On a device whose pinned
@@ -1396,7 +1190,6 @@ def hardware(wrapper=WRAPPER, quiet=False):
     if fx is None:
         raise SystemExit("runcheck --hw: no committed corpus carries a %s CPU "
                          "column" % platform.machine())
-    arm = fx["cuda"]
     env = dict(os.environ)
     env.setdefault("HET_ALLOC", "pinned")
     env.setdefault("HET_RUN_TIMEOUT", RUN_TIMEOUT)
@@ -1429,12 +1222,9 @@ def hardware(wrapper=WRAPPER, quiet=False):
             if "CHARACTERIZATION" not in summary:
                 bad.append("the summary does not say what the rows are:\n%s"
                            % summary)
-            for frag in ("pair_state=" + arm["state"],
-                         "pair_machine=" + arm["machine"]):
-                if frag not in record:
-                    bad.append("run-record.txt does not carry %r -- the machine this "
-                               "session was entitled to name is not a recorded fact"
-                               % frag)
+            if "pair=(%s, cuda)" % fx["key"] not in record:
+                bad.append("run-record.txt does not carry the pair this session "
+                           "was built for -- it is not a recorded fact")
             if "session_status=COMPLETE" not in record:
                 bad.append("run-record.txt does not record a completed session")
             for frag in ("seam_probe", "seam_compiler", "seam_litmus7"):
@@ -1460,8 +1250,7 @@ def hardware(wrapper=WRAPPER, quiet=False):
             return 1, bad
         if not quiet:
             print("\nRUNCHECK --hw: PASS (the chain ran on the device, the "
-                  "session named the machine its table row entitles it to, and "
-                  "recorded what it did)")
+                  "session named its pair, and recorded what it did)")
         return 0, []
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1475,7 +1264,13 @@ def hardware_bite():
     tmp = tempfile.mkdtemp(prefix="runcheck-hwbite.")
     bad = 0
     try:
-        _, _, what, mutate, _, _ = INJECTIONS[1]
+        seam = [i for i in INJECTIONS
+                if i[2] == "the harness transcripts are not kept"]
+        if len(seam) != 1:
+            print("  *** no single injection is labelled %r -- this bite has lost "
+                  "its seam" % "the harness transcripts are not kept")
+            return 1
+        _, _, what, mutate, _, _ = seam[0]
         target = copy_wrapper(tmp, mutate)
         if target is None:
             print("  *** the injection changed NOTHING -- this bite proves nothing")
@@ -1483,8 +1278,9 @@ def hardware_bite():
         rc, why = hardware(target, quiet=True)
         # Red for the right reason: a stalled session is red too, and would make
         # this bite pass without the assertion having read anything.  The injection
-        # substitutes the pair's whole machine row, so its name settles it.
-        named = ["pair_machine", "pair_state"]
+        # empties the transcript dir, and a stall reports no missing transcript, so
+        # the word settles which of the two happened.
+        named = ["transcript"]
         if rc == 0:
             print("  *** the device lane stayed GREEN on: %s" % what)
             bad += 1
@@ -1515,9 +1311,6 @@ def hardware_bite():
 # from emitted text; this one builds a harness, runs it on the GPU and reads the
 # printout, which is the only artefact a result is ever read off.
 #
-# The pair is (X86_64, cuda), which has no machine row, so the printout may not
-# carry a word of either row's machine vocabulary.
-#
 # BOTH readings are readings, so both PASS: the outcome is stochastic, the run is
 # re-seeded while it does not fire because a sighting carries strictly more
 # sentences to assert, and a stream of nulls is read as a null rather than as a
@@ -1528,11 +1321,6 @@ CH_TEST = "MP-cg-sys-relaxed-x86_64"
 CH_PAIR = "(X86_64, cuda)"
 CH_SEED_TRIES = 12
 CH_RUN_TIMEOUT = 90          # a healthy run is ~3 s; past this it is stalled
-# Both rows' vocabularies, from the one place that spells them (brandscan.py).
-# The pair here is entitled to neither, so any of them in a PRINTOUT is a finding.
-CH_VENDOR_RE = re.compile("|".join(brandscan.ROWS.values()), re.I)
-
-
 def _ch_env():
     env = dict(os.environ)
     env["PATH"] = BIN + os.pathsep + env["PATH"]
@@ -1702,14 +1490,6 @@ def ch_check(text, k, R, obs, quiet=False):
     for frag, why in CH_NEVER_SAYS:
         never("B/C", frag, why)
 
-    hits = sorted(set(m.group(0) for m in CH_VENDOR_RE.finditer(text)))
-    if hits:
-        bad.append("[E] the printout names %s -- this pair has no machine row "
-                   "and this run was on neither part" % ", ".join(hits))
-    else:
-        say("      [E] no Grace / Hopper / NVLink / C2C / GH200 in stdout or "
-            "stderr")
-
     why, note = ch_class(k, R, obs)
     if why is not None:
         bad.append(why)
@@ -1783,12 +1563,6 @@ CH_INJECTIONS = [
          ("    if (!recs[i].sync_valid && !recs[i].obs_valid)\n",
           "    if (1)\n")]),
      "the printout says 'BUILD BUG'"),
-    ("E", CH_TEST + ".cu",
-     "the driver's noise warning names the GH200 halves again",
-     lambda s: _subst(s, [
-         ("the host half of the host-device interconnect noise",
-          "the Grace half of the NVLink-C2C noise")]),
-     "the printout names C2C, Grace, NVLink"),
 ]
 
 
@@ -1910,12 +1684,10 @@ PHASES = [
     ("1: --dry-run acts on nothing", lambda q: phase1_dryrun(WRAPPER, q)),
     ("2: the chain end to end (stub compiler + stub probe)",
      lambda q: phase2_e2e(WRAPPER, q)),
-    ("3: the refusals by their own reasons; the unregistered pair by its warning",
+    ("3: the refusals by their own reasons",
      lambda q: phase3_refusals(WRAPPER, q)),
     ("4: campaign.py's stop rule and the states it may not resume",
      lambda q: phase4_stoprule(CAMPAIGN, q)),
-    ("5: the machine-table reader is bounded to the table",
-     lambda q: phase5_reader(WRAPPER, q)),
     ("6: the fail-closed handlers, under their own conditions",
      lambda q: phase6_failclosed(WRAPPER, q)),
     ("7: a second session into the same results dir",
@@ -1955,10 +1727,9 @@ def main():
     if rc:
         print("\nRUNCHECK FAILED.")
         return 1
-    print("\nRUNCHECK OK (the plan is a plan; the chain records what it did; the "
-          "pair decides which machine may be named and nothing else; an "
-          "unregistered pair is warned about and emits; every fail-closed handler "
-          "was seen to fire)")
+    print("\nRUNCHECK OK (the plan is a plan; the chain records what it did; "
+          "every refusal named its own reason; every fail-closed handler was seen "
+          "to fire)")
     return 0
 
 

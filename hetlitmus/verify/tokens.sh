@@ -303,7 +303,7 @@ selftest() {
   #   (ii) completeness -- an option that is not modelled must hard-fail(2)
   #        instead of being compared as an opaque string.  `DMB ISH' is the case
   #        that matters: a strictly narrower shareability domain that cannot be
-  #        assumed to reach the GPU across C2C.
+  #        assumed to reach the GPU across the host-device interconnect.
   printf '\n[5b] CPU barrier option: weakened option FAIL(1), unmodelled option HARD-FAIL(2)\n'
   local DT=2+2W-cg-sys-fence-2s DL="$HET_DIR/2+2W-cg-sys-fence-2s.litmus"
   local dd="$sc/dmb" dcpu
@@ -668,7 +668,7 @@ PY
     # (7) driver: the noise working set decoupled from HET_NOISE_MB and shrunk
     # below the LLC -- served from cache, zero interconnect traffic, every
     # counter still moving.  This is what noise-size is for.
-    _b5bite "noise buffer UNDERSIZED (fits in cache => no C2C traffic)" \
+    _b5bite "noise buffer UNDERSIZED (fits in cache => no interconnect traffic)" \
             "$B5T.cu" noise-size \
             's|uint64_t _noise_words = (uint64_t)HET_NOISE_MB \* 1024ull \* 1024ull / sizeof(uint64_t);|uint64_t _noise_words = 4096ull;|' \
             || fails=$((fails+1))
@@ -1004,9 +1004,9 @@ stress_report() {
 # stresscheck.py above covers the GPU scratchpad layer.  The CPU side adds three
 # mechanisms no structural gate can see: the cache preload (host hints -- no
 # order, no scope, not a model op), the CPU enemies (host threads that never
-# enter the PTX at all) and the C2C noise pair.  cpustresscheck.py asks the two
-# questions the structural gates cannot -- did they survive the OPTIMISER (read
-# off the compiled -O2 asm, on both host ISAs), and do they do anything at run
+# enter the PTX at all) and the interconnect noise pair.  cpustresscheck.py asks
+# the two questions the structural gates cannot -- did they survive the OPTIMISER
+# (read off the compiled -O2 asm, on both host ISAs), and do they do anything at run
 # time (a host-side probe, checked live-when-on and zero-when-off, since a tally
 # that cannot go to zero is not evidence of liveness).
 #

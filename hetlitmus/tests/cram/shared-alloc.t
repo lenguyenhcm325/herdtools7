@@ -2,10 +2,11 @@ Shared-memory allocation guard (hetlitmus/docs/00-environment-design.md sec 3.2)
 The shared litmus vars and the rendezvous barrier route through the per-target
 gd_alloc_shared / gd_free_shared allocator, never a hard-coded *MallocManaged.
 That allocator SELECTS THE PROPERTY UNDER TEST -- system malloc/ATS cache-line
-CHI coherence on GH200, fine-grained hipMallocManaged on MI300A,
-cudaMallocManaged only as the dev-box/CI fallback -- so it is correctness, not
-tuning.  One representative MP shape is emitted once per dialect (litmus7
-renders the one -gpu-target names) and checked with scoped counts.
+coherence over the host-device interconnect on the CUDA render, fine-grained
+hipMallocManaged on the HIP one, cudaMallocManaged only as the dev-box/CI
+fallback -- so it is correctness, not tuning.  One representative MP shape is
+emitted once per dialect (litmus7 renders the one -gpu-target names) and checked
+with scoped counts.
 
 Every shared location is allocated on its own, one gd_alloc_shared call each,
 so the free still matches the allocator.  Two shapes are emitted per dialect,
@@ -13,9 +14,9 @@ because a two-sided row and a fully-relaxed one differ in what their CPU column
 does and this file reads the driver both carries.
 
 The `.hip' renders come from ../het-x86, not from ../het: a harness is a
-(CPU ISA x GPU dialect) PAIR, and (x86_64, hip) is the one this project has an
-MI300A row for (litmus/hetMachine.ml).  The CPU column differs; everything these
-sections read is the GPU render and the shared runtime headers.
+(CPU ISA x GPU dialect) PAIR, and a HIP harness is the (x86_64, hip) one.  The
+CPU column differs; everything these sections read is the GPU render and the
+shared runtime headers.
 
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
@@ -37,7 +38,7 @@ sites), and each is freed by the allocator-aware gd_free_shared (3 frees).
   1
 
 (c) CUDA dispatch: query cudaDevAttrPageableMemoryAccess, take the malloc branch
-on a pageable device (GH200) and the cudaMallocManaged fallback otherwise, with a
+on a pageable device and the cudaMallocManaged fallback otherwise, with a
 matching free (free() for malloc, cudaFree for managed -- a mismatched free is UB).
 
 Each grep is SCOPED to one function body rather than counted file-wide, and that
@@ -62,8 +63,8 @@ Three allocators, so three matching frees -- all selected by the one cached mode
 never by a second device query.  Drift between the alloc-time and the free-time
 answer (a forced HET_ALLOC, a second device) would free a malloc'd pointer with
 cudaFree: undefined behaviour that need not fault on the managed dev-box path and
-would first surface on GH200.  So each free must be present, the choice must be
-_het_alloc_mode(), and no attribute query may survive in the free.
+would first surface on a pageable device.  So each free must be present, the
+choice must be _het_alloc_mode(), and no attribute query may survive in the free.
   $ FREE=$(sed -n '/^static void gd_free_shared/,/^}/p' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu)
   $ printf '%s\n' "$FREE" | grep -cE '(^|[^a-zA-Z_])free\(_p\)'
   1
@@ -88,7 +89,7 @@ for the store tags (tagged-recover.t).
   1
 
 The HIP twin renders from the same template: gd_alloc_shared is fine-grained
-hipMallocManaged (no malloc/ATS dispatch -- MI300A's unified HBM pool needs
+hipMallocManaged (no malloc/ATS dispatch -- an APU's unified HBM pool needs
 none), and the read buffers are device hipMalloc, no __out.  Scoped to
 gd_alloc_shared's body for the same reason as (c).
   $ sed -n '/^static void gd_alloc_shared/,/^}/p' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip | grep -c 'hipMallocManaged(_pp'
@@ -159,7 +160,7 @@ on stdout so the run log carries it.
   1
 
 (f) HET_ALLOC on the HIP render: ONE mode, and every other spelling REFUSED.
-MI300A's allocator is its own decision (fine-grained hipMallocManaged,
+The HIP allocator is its own decision (fine-grained hipMallocManaged,
 docs/00-environment-design.md sec 3.2), so the CUDA modes must not leak across
 dialects.  A .hip that did not mention HET_ALLOC at all would leave
 `HET_ALLOC=malloc' on an AMD box silently ignored, allocating managed memory
@@ -200,13 +201,14 @@ shared allocation while the kernel is live.
   $ printf '%s\n' "$HMODE" | grep -c 'hipDeviceAttributeConcurrentManagedAccess=0'
   1
 
-MI300A vs MI300X.  Both parts report gfx942, so gcnArchName cannot tell them
-apart; hipDeviceAttributeIntegrated ("Device is integrated GPU") can.  An APU
-whose CCD and XCD chiplets share one HBM pool is not the same experiment as a
-discrete accelerator over a host interconnect, so the class is stamped into the
-stdout banner -- the run log carries it whether or not anyone reads the source --
-and a discrete part is warned about rather than silently accepted.  It is NOT
-fatal: MI300X is a bring-up target and must be able to run.
+Integrated vs discrete.  MI300A and MI300X both report gfx942, so gcnArchName
+cannot tell them apart; hipDeviceAttributeIntegrated ("Device is integrated GPU")
+can.  An APU whose CCD and XCD chiplets share one HBM pool is not the same
+experiment as a discrete accelerator over a host interconnect, so the class is
+stamped into the stdout banner -- the run log carries it whether or not anyone
+reads the source -- and a discrete part is warned about rather than silently
+accepted.  It is NOT fatal: a discrete part is a bring-up target and must be able
+to run.
 The attribute is QUERIED once and NAMED once, and the two are counted separately:
 a bare count of the word passes for a harness that kept the warning text and lost
 the query, which is a classification that always answers "APU".
@@ -216,9 +218,9 @@ the query, which is a classification that always answers "APU".
   1
   $ printf '%s\n' "$HMODE" | grep -c 'amd_part_class=%s'
   1
-  $ printf '%s\n' "$HMODE" | grep -c 'NOT be reported as an MI300A result'
+  $ printf '%s\n' "$HMODE" | grep -c 'NOT be reported as an integrated-APU result'
   1
-  $ grep -c 'DISCRETE(MI300X-class)' $HREL
+  $ grep -c 'DISCRETE(not-integrated)' $HREL
   1
 
 The banner is on stdout and precedes the guards, so a FATAL is readable next to

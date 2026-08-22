@@ -1,9 +1,9 @@
 # `tests/het-x86` — the committed (x86_64, hip) pair fixture
 
 Het tests with an x86-64 CPU column. It exists so that gates and cram tests
-which need the **(x86_64, hip) pair** (`litmus/hetMachine.ml`) do not have to
-generate the whole x86 corpus first — `tests/het/generate-x86.sh` needs
-`hetgen7` on `$PATH`, which a cram sandbox does not have.
+which need the **(x86_64, hip) pair** do not have to generate the whole x86
+corpus first — `tests/het/generate-x86.sh` needs `hetgen7` on `$PATH`, which a
+cram sandbox does not have.
 
 **`make hetlitmus-x86fixture` keeps it honest.** Everything here is an extract, so
 it can go stale in silence while every gate that reads it keeps passing;

@@ -44,7 +44,7 @@
    normal AMD build is unaffected; with it pinned to 0, `place=0 place_fail=0' is
    a true statement rather than an unfalsifiable one. */
 #if (HET_PLACE) != 0
-# error "HET_PLACE is a CUDA-only lever (cudaMemAdvise); the @HIP_RENDER@ render has no placement code, so a non-zero HET_PLACE would be reported in the banner and the statistics record without anything having been placed.  @NO_PLACE_WHY@ -- use HET_PLACE=0 and drive the interconnect with the noise knobs instead."
+# error "HET_PLACE is a CUDA-only lever (cudaMemAdvise); the HIP render has no placement code, so a non-zero HET_PLACE would be reported in the banner and the statistics record without anything having been placed.  This render has no page-placement API to call -- use HET_PLACE=0 and drive the interconnect with the noise knobs instead."
 #endif
 static int _het_hip_attr(hipDeviceAttribute_t _a){
   int _v = 0;
@@ -62,7 +62,7 @@ static int _het_hip_attr(hipDeviceAttribute_t _a){
    so the log a run leaves behind carries it whether or not anyone reads this
    file. */
 static const char* _het_amd_part_class(int _integrated){
-  return _integrated ? "APU(@APU_CLASS@)" : "DISCRETE(@DGPU_CLASS@)";
+  return _integrated ? "APU(integrated)" : "DISCRETE(not-integrated)";
 }
 static int _het_alloc_mode(void){
   static int _mode = -1;
@@ -129,10 +129,10 @@ static int _het_alloc_mode(void){
   if (!_integrated) {
     fprintf(stderr,
             "HetLitmus WARNING: hipDeviceAttributeIntegrated=0 -- this is a DISCRETE "
-            "AMD GPU (@DGPU_NAME@), not @APU_NAME@.  The APU shares one HBM "
+            "AMD GPU (not integrated), not an integrated APU.  The APU shares one HBM "
             "pool between the CCD and XCD chiplets; a discrete part is reached over "
             "a host interconnect.  This run is valid as machinery bring-up and must "
-            "NOT be reported as @APU_RESULT@.\n");
+            "NOT be reported as an integrated-APU result.\n");
   }
   return _mode;
 }

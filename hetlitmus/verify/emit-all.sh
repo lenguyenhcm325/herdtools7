@@ -17,21 +17,15 @@
 #   diff -r SNAP_BEFORE SNAP_AFTER && echo BYTE-IDENTICAL
 #
 # The lanes are pairs, not vendors.  A compound harness is a CPU ISA and a GPU
-# dialect, and litmus/hetMachine.ml's table says which of those pairs may name a
-# machine.  Every pair emits; the table decides what the render is entitled to
-# claim, so the emission surface is one lane per (corpus x dialect) combination,
-# listed in HET_LANES / GPU_LANES below and nowhere else:
+# dialect, so the emission surface is one lane per (corpus x dialect)
+# combination, listed in HET_LANES / GPU_LANES below and nowhere else:
 #
-#   het-cuda      aarch64 corpus x cuda   GH200 machine words stamped
-#   het-x86-hip   x86     corpus x hip    MI300A machine words stamped
-#   het-x86-cuda  x86     corpus x cuda   registered, no machine row: no stamps
-#   het-hip       aarch64 corpus x hip    unregistered: no stamps, warned
+#   het-cuda      aarch64 corpus x cuda
+#   het-x86-hip   x86     corpus x hip
+#   het-x86-cuda  x86     corpus x cuda
+#   het-hip       aarch64 corpus x hip
 #   gpu-cuda / gpu-hip                    the GPU-only (scoped LISA) arm, which
 #                                         has no CPU column and so no pair
-#
-# The two lanes that stamp nothing carry the landmine, asserted per lane below:
-# a render that names a machine its pair has no row for is the one defect no
-# reader of a results tree could catch afterwards.
 #
 # The x86 corpus is not committed (tests/het/generate-x86.sh says why); it is
 # generated into a scratch dir outside OUTDIR, so `diff -r' of two snapshots
@@ -52,12 +46,9 @@
 #       if litmus7 were to exit 0 with nothing written.  The lane's render is
 #       also required to be the only one: a dir carrying the other vendor's
 #       file too would mean -gpu-target stopped filtering.
-#   (c) mis-tagging -- every harness of a lane must carry that pair's name and
-#       that pair's machine defines, and the lane as a whole must say no other
-#       row's machine words (brandscan.py, over the printed literals and the
-#       README / build files).  A harness built for the wrong pair compiles,
-#       runs and reports; the stamps and the sentences are what say which
-#       machine it was measuring, and a sentence needs no define to name one.
+#   (c) mis-tagging -- every harness of a lane must stamp that lane's pair name
+#       exactly once.  A harness built for the wrong pair compiles, runs and
+#       reports; the stamp is what says which pair it was measuring.
 # Each names the test it failed on and pastes litmus7's own output.
 #
 # Usage:  hetlitmus/verify/emit-all.sh OUTDIR
@@ -90,36 +81,7 @@ lane_selected() {               # <OUTDIR subdir> -> 0 when this run emits it
 # The emission lanes, "<corpus>:<gpu-target>:<render extension>:<OUTDIR subdir>".
 HET_LANES="aarch64:cuda:cu:het-cuda x86:hip:hip:het-x86-hip x86:cuda:cu:het-x86-cuda \
 aarch64:hip:hip:het-hip"
-# The other vendor's words a lane must NOT contain anywhere in its harness dirs
-# -- the landmine: an x86 host with an NVIDIA GPU is neither published part, and
-# "Infinity Fabric" is what the (X86_64, hip) lane stamps one line away from
-# here.  (`MI300A' alone is not a landmine: the CPU stress payload's comments
-# compare the two hosts by name -- see cram machine-pairs.t (f).)
-forbidden_of_lane() {           # <corpus>:<target> -> egrep pattern, or ""
-  case "$1" in
-    x86:cuda) echo 'Infinity Fabric' ;;
-    *)        echo '' ;;
-  esac
-}
-# Whose words each lane may print, for brandscan.py -- which reads the string
-# literals a driver prints and the README / build files a reader opens, and
-# leaves the comparative comments alone (a payload explains its lane by naming
-# the part it was derived for, and de-branding a citation falsifies it).  The
-# defines above say what a render stamps; this says what it prints, and the two
-# are not the same check: the Grace half a harness names in a warning is a claim
-# about the box it ran on whether or not any define produced the word.
-entitled_of_lane() {            # <corpus>:<target> -> the row it may name
-  case "$1" in
-    aarch64:cuda) echo gh200 ;;
-    x86:hip)      echo mi300a ;;
-    *)            echo none ;;
-  esac
-}
-# The pair name each lane's renders must stamp, and the machine define block each
-# is entitled to -- verbatim, in emission order, empty where the pair has no
-# machine row (litmus/hetMachine.ml).  Checked as a whole block rather than by
-# count: a lane that stamped another row's words in the right number would pass a
-# count.
+# The pair name each lane's renders must stamp.
 pair_of_lane() {                # <corpus>:<target> -> the HET_PAIR_NAME value
   case "$1" in
     aarch64:*) echo "(AArch64, ${1#*:})" ;;
@@ -127,34 +89,6 @@ pair_of_lane() {                # <corpus>:<target> -> the HET_PAIR_NAME value
     *) echo "emit-all.sh: unknown lane $1" >&2 ; return 1 ;;
   esac
 }
-machine_of_lane() {             # <corpus>:<target> -> the #define block, or ""
-  case "$1" in
-    aarch64:cuda)
-      printf '%s\n' '#define HET_LINK_NAME "NVLink-C2C"' \
-                    '#define HET_HOST_HALF "the Grace half"' \
-                    '#define HET_DEV_HALF "the Hopper half"' \
-                    '#define HET_LLC_MB 114' \
-                    '#define HET_ALGLAVE_ZERO_MEASURED 1' ;;
-    x86:hip)
-      printf '%s\n' '#define HET_LINK_NAME "Infinity Fabric"' \
-                    '#define HET_HOST_HALF "the x86 half"' \
-                    '#define HET_DEV_HALF "the MI300A device half"' \
-                    '#define HET_LLC_MB 256' ;;
-    *) : ;;
-  esac
-}
-# ...and, where no machine is stamped, which of the two reasons the render gives
-# for it: a REGISTERED pair is deliberately nameless, an unregistered one was
-# never considered.  Only litmus/hetMachine.ml's registered bit tells them apart,
-# and this line is the only place that bit reaches a reader.
-nomachine_note_of_lane() {      # <corpus>:<target> -> the sentence, or ""
-  case "$1" in
-    aarch64:cuda|x86:hip) : ;;
-    aarch64:hip) echo 'is in no' ;;
-    *)           echo 'no machine row backs this' ;;
-  esac
-}
-MACHINE_DEFINE_RE='^#define HET_(LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|ALGLAVE_ZERO_MEASURED)'
 GPU_LANES="cuda:cu:gpu-cuda hip:hip:gpu-hip"
 EXPECT_HET=471          # harness dirs per het lane
 EXPECT_GPU=173          # kernels per gpu-only lane
@@ -219,11 +153,7 @@ for lane in $HET_LANES; do
   ext="${rest%%:*}"; sub="${rest#*:}"
   lane_selected "$sub" || continue
   nhetlanes=$((nhetlanes+1))
-  forbidden="$(forbidden_of_lane "$corpus:$target")"
   want_pair="$(pair_of_lane "$corpus:$target")"
-  want_machine="$(machine_of_lane "$corpus:$target")"
-  want_note="$(nomachine_note_of_lane "$corpus:$target")"
-  want_entitled="$(entitled_of_lane "$corpus:$target")"
   i=$((i+1))
   echo "[$i/$nlanes] $corpus corpus, -gpu-target $target -> $OUTDIR/$sub"
   cdir="$(corpus_dir "$corpus")"
@@ -270,43 +200,16 @@ for lane in $HET_LANES; do
         echo "FAIL: $t in the $corpus/$target lane does not stamp _rec.rec_magic exactly once" >&2
         exit 1
       fi
-      # The pair, and the machine words that pair is entitled to.
+      # The pair this harness was built for.
       if [ "$(grep -cF "#define HET_PAIR_NAME \"$want_pair\"" "$OUTDIR/$sub/$n/$n.$ext")" != 1 ]; then
         echo "FAIL: $t in the $corpus/$target lane does not stamp HET_PAIR_NAME \"$want_pair\" exactly once; it stamps:" >&2
         grep -F '#define HET_PAIR_NAME' "$OUTDIR/$sub/$n/$n.$ext" >&2 \
           || echo "  (no HET_PAIR_NAME at all)" >&2
         exit 1
       fi
-      got_machine="$(grep -E "$MACHINE_DEFINE_RE" "$OUTDIR/$sub/$n/$n.$ext" || true)"
-      if [ "$got_machine" != "$want_machine" ]; then
-        echo "FAIL: $t in the $corpus/$target lane stamps the wrong machine.  It stamps:" >&2
-        printf '%s\n' "${got_machine:-  (nothing)}" | sed 's/^/  /' >&2
-        echo "  and this pair is entitled to:" >&2
-        printf '%s\n' "${want_machine:-  (nothing)}" | sed 's/^/  /' >&2
-        exit 1
-      fi
-      if [ -n "$want_note" ]; then
-        if ! grep -qF "$want_note" "$OUTDIR/$sub/$n/$n.$ext"; then
-          echo "FAIL: $t in the $corpus/$target lane names no machine and does not say WHY (\"$want_note\") -- a registered pair with no machine row and a pair in no row at all read alike" >&2
-          exit 1
-        fi
-      fi
-      if [ -n "$forbidden" ] \
-         && grep -rqE "$forbidden" "$OUTDIR/$sub/$n"; then
-        echo "FAIL: $t in the $corpus/$target lane names a machine its pair has no row for ($forbidden):" >&2
-        grep -rlE "$forbidden" "$OUTDIR/$sub/$n" >&2
-        exit 1
-      fi
     done )
-  # What the lane says, over the lane at once: a whole lane is one scan, and
-  # brandscan.py names the file, the line and the row whose word it found.
-  if ! python3 "$HETL/verify/brandscan.py" --entitled "$want_entitled" --quiet \
-       "$OUTDIR/$sub"; then
-    echo "FAIL: the $corpus/$target lane names a machine its pair is not entitled to (above)" >&2
-    exit 1
-  fi
   nhet="$(find "$OUTDIR/$sub" -mindepth 1 -maxdepth 1 -type d | wc -l)"
-  echo "        $nhet het harness dirs (expect $EXPECT_SEL), each stamping its record and $want_pair once, none naming another pair's machine"
+  echo "        $nhet het harness dirs (expect $EXPECT_SEL), each stamping its record and $want_pair once"
   if [ "$nhet" -ne "$EXPECT_SEL" ]; then
     echo "FAIL: census mismatch in $sub (want $EXPECT_SEL)" >&2
     exit 1

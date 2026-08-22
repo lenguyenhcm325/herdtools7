@@ -22,12 +22,10 @@
 #   4. 2+2W-cg-sys-fence-2s    het two-sided; CPU DMB.SY fence
 #   5. IRIW-cgcc-cta-relaxed   het 4-proc; largest barrier / scaffolding
 #   6. WRC-ccg-cta-relaxed     het 3-proc; buys down the proc-scaling assumption
-#   7. MP-cg-sys-relaxed-x86_64 (HIP)  the AMD/MI300A render -- the only rep here
-#                              that compiles a .hip (hipbuildcheck.py compiles
-#                              and links one too).  It comes from tests/het-x86
-#                              because (x86_64, hip) is the pair with the MI300A
-#                              row, so it is the .hip that names the part
-#                              (litmus/hetMachine.ml).
+#   7. MP-cg-sys-relaxed-x86_64 (HIP)  the AMD render -- the only rep here that
+#                              compiles a .hip (hipbuildcheck.py compiles and
+#                              links one too).  It comes from tests/het-x86
+#                              because a HIP harness is the (x86_64, hip) pair.
 #   8. MP-cg-sys-sy.acq-2s     order-pair; the only rep emitting inline
 #                              `fence.acquire.sys', which needs sm_90 [CCCL];
 #                              also the first rep whose test name contains a `.'
@@ -62,10 +60,9 @@ cd "$REPO"
 export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 
 HET_DIR="$REPO/hetlitmus/tests/het"
-# The committed fixture for the (x86_64, hip) pair.  The HIP rep does
-# not come from $HET_DIR: those tests have an AArch64 CPU column, and
-# (AArch64, hip) is in no row of litmus/hetMachine.ml, so it renders a harness
-# that names no machine -- which is not the .hip this rep is here to compile.
+# The committed fixture for the (x86_64, hip) pair.  The HIP rep does not come
+# from $HET_DIR: those tests have an AArch64 CPU column, so they render the
+# (AArch64, hip) pair, which is not the .hip this rep is here to compile.
 HETX86_DIR="$REPO/hetlitmus/tests/het-x86"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -106,7 +103,7 @@ _smoke_het_rep() { # name dialect tool blurb srcdir
   n=$((n+1))
   printf '\n[%d/%d] %-9s%-22s -- %s\n' "$n" "$NREPS" "$tag" "$name" "$blurb"
   if [ -n "$tool" ] && ! command -v "$tool" >/dev/null 2>&1; then
-    printf '  SKIP %s -- %s NOT FOUND: the AMD/MI300A render is UNVERIFIED by this\n' "$name" "$tool"
+    printf '  SKIP %s -- %s NOT FOUND: the AMD render is UNVERIFIED by this\n' "$name" "$tool"
     printf '       run.  It is a real compile target, not a formality; install ROCm or\n'
     printf '       run this gate where %s exists before trusting the .hip lane.\n' "$tool"
     skips=$((skips+1)); return
@@ -215,7 +212,7 @@ case "$cmd" in
     smoke_het     WRC-ccg-cta-relaxed   "3-proc; buys down the proc-scaling assumption"
     # The only rep whose render is a .hip, so it is where a CUDA/HIP divergence
     # in the shared runtime headers shows up.
-    smoke_het_hip MP-cg-sys-relaxed-x86_64 "the AMD/MI300A render, (x86_64, hip) pair (hipcc -c, gfx942)"
+    smoke_het_hip MP-cg-sys-relaxed-x86_64 "the AMD render, (x86_64, hip) pair (hipcc -c, gfx942)"
     smoke_het     MP-cg-sys-sy.acq-2s   "order-pair; inline fence.acquire.sys"
     smoke_het     S-gc-sys-ra.rel-2s    "order-pair; inline fence.release.sys + CPU STLR/LDAPR"
     smoke_het     MP-cg-sys-st.sc-2s    "order-pair; CPU dmb st + fence.sc.sys"

@@ -170,12 +170,16 @@ extern "C" {
 /* The last-level cache the noise buffer must EXCEED to generate any interconnect
    traffic at all: a buffer that fits in it is served from cache and the noise
    crosses nothing, so the driver warns at run time rather than let a green
-   compile imply a live mechanism.  The figure is per target and the emitter
-   stamps the pair's own (litmus/hetMachine.ml); this default is the GH200 row's
-   max(Grace L3 114 MB, Hopper L2 51 MB) [Bagchi26 Table 1], and the warning that
-   fires against it says so wherever it is not the target's own. */
+   compile imply a live mechanism.  The figure is per target and the build
+   supplies it (NVCC="nvcc -DHET_LLC_MB=<MB>", hetlitmus/docs/het-emission.md);
+   the default is a fallback measured on another part -- max(Grace L3 114 MB,
+   Hopper L2 51 MB) [Bagchi26 Table 1] -- and the warning says so.  Both branches
+   define the flag below: an undefined macro reads as 0 under #if. */
 #ifndef HET_LLC_MB
 #define HET_LLC_MB 114
+#define HET_LLC_MB_IS_FALLBACK 1
+#else
+#define HET_LLC_MB_IS_FALLBACK 0
 #endif
 
 #if (HET_CPU_ENEMY_SEQ) < 0 || (HET_CPU_ENEMY_SEQ) > 3
@@ -202,6 +206,9 @@ extern "C" {
 #endif
 #if (HET_NOISE_MB) < 1
 #error "HET_NOISE_MB must be >= 1"
+#endif
+#if (HET_LLC_MB) < 1
+#error "HET_LLC_MB must be >= 1 (0 silences the below-cache warning for every run)"
 #endif
 
 /* -------------------------------------------------------------------------

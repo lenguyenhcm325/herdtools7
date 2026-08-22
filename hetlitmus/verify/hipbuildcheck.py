@@ -15,15 +15,11 @@ Nine phases, each of which must be seen to fail:
   device-image        comp.sh hip-link and make hip-bin each produce an ELF
                       carrying a real amdgcn gfx942 code object, read out of
                       the bytes rather than inferred from an exit status
-  host-pair-guard     fail-closed on the wrong host: a pair in no row of
-                      litmus/hetMachine.ml is warned about, never refused --
-                      (AArch64, hip) emits, the warning names the pair, and its
-                      render stamps NOT one machine define; a registered pair's
-                      link arms do refuse an AArch64 rendering on an x86_64
-                      host, naming the ISA and leaving no binary (the CPU object
-                      there is the portable shim, so the binary would test
-                      nothing); and the HIP render carries that same guard,
-                      keyed to its own host ISA
+  host-pair-guard     fail-closed on the wrong host: the link arms refuse an
+                      AArch64 rendering on an x86_64 host, naming the ISA and
+                      leaving no binary (the CPU object there is the portable
+                      shim, so the binary would test nothing); and the HIP
+                      render carries that same guard, keyed to its own host ISA
   stale-binary        every vendor writes ./<test> (run-one.sh and campaign.py
                       exec it and are vendor-agnostic), so each link target
                       must always relink -- one reporting "nothing to be done"
@@ -79,12 +75,9 @@ linked binary in the other's directory, a ./<test> newer than the objects and
 carrying the wrong device image, which is the state a results tree reused across
 boxes reaches for real.
 
-And one pair per harness.  A harness is a (CPU ISA x GPU dialect) pair and
-litmus/hetMachine.ml says which of them may name a machine, so the AMD phases run
-on the x86 rendering -- (x86_64, hip) is the pair with the MI300A row -- while
-host-pair-guard's AArch64 half runs on (AArch64, cuda), the AArch64 pair that
-names a machine.  That (AArch64, hip) emits and names none is itself one of that
-phase's assertions.
+And one pair per harness.  A harness is a (CPU ISA x GPU dialect) pair, so the
+AMD phases run on the x86 rendering -- (x86_64, hip) -- while host-pair-guard's
+AArch64 half runs on the (AArch64, cuda) one.
 """
 import argparse
 import os
@@ -162,14 +155,6 @@ def emit(tmp, src, outroot, label, target):
     return d
 
 
-def emit_unregistered(src, outroot, target):
-    """A pair in no row of the machine table.  Returns (exit, output, harness dir)."""
-    os.makedirs(outroot, exist_ok=True)
-    r = run([LITMUS7, "-gpu-target", target, "-set-libdir", LIBDIR, "-o", outroot, src])
-    name = os.path.basename(src)[: -len(".litmus")]
-    return r.returncode, r.stdout + r.stderr, os.path.join(outroot, name)
-
-
 def fresh(tmp, d, tag):
     """A pristine copy of harness dir [d], so bites never contaminate a later phase.
        The copy KEEPS the harness's own basename: test_of() reads it, and a copy
@@ -245,7 +230,7 @@ def phase1(tmp, d):
              "--offload-arch=$(HIP_ARCH) into ./%s" % t)
     tick("build-arms")
     if not re.search(r"HIP_ARCH \?= %s" % HIP_ARCH, mk):
-        fail("build-arms", "Makefile does not default HIP_ARCH to %s (MI300A)" % HIP_ARCH)
+        fail("build-arms", "Makefile does not default HIP_ARCH to %s" % HIP_ARCH)
     # This directory is the HIP render (-gpu-target hip), so the CUDA arms must
     # be ABSENT -- cuda-nonregression reads them in the cuda render's own directory.  A dir that
     # still carried both would mean the target filter stopped filtering.
@@ -368,14 +353,11 @@ def phase3(tmp, d):
 def phase4(tmp, d_aarch64_cuda, d_x86_hip):
     """Fail-closed on the WRONG HOST, at both stages that can catch it.
 
-    Three assertions, which fail closed for different reasons and could regress
+    Two assertions, which fail closed for different reasons and could regress
     alone:
-      (a) an UNREGISTERED pair emits, warns, and stamps not one machine define --
-          (AArch64, hip) is in no row of litmus/hetMachine.ml, and what it loses
-          is the right to name a machine, not the right to be built;
-      (b) a link arm refuses a foreign host -- driven on the (AArch64, cuda)
+      (a) a link arm refuses a foreign host -- driven on the (AArch64, cuda)
           render, whose guard is emitted by the same fold as the HIP one;
-      (c) the x86 HIP render carries that guard too, keyed to its own host ISA
+      (b) the x86 HIP render carries that guard too, keyed to its own host ISA
           (it cannot be RUN into refusal here: this host is x86_64, which is
           exactly the ISA that render is for).
     """
@@ -387,35 +369,7 @@ def phase4(tmp, d_aarch64_cuda, d_x86_hip):
                    "run this gate on a foreign host too")
         return
 
-    # --- (a) the UNREGISTERED pair emits, and names no machine --------------
-    outroot = os.path.join(tmp, "p4-unregistered")
-    st, blob, d_unreg = emit_unregistered(
-        os.path.join(HET_DIR, AARCH64_TEST + ".litmus"), outroot, "hip")
-    tick("host-pair-guard")
-    if st != 0:
-        fail("host-pair-guard", "litmus7 -gpu-target hip on an AArch64 test exited %d, expected 0 "
-                   "-- an unregistered pair is warned about, never refused:\n%s"
-             % (st, blob[-800:]))
-    tick("host-pair-guard")
-    if "is in no row of litmus/hetMachine.ml" not in blob or "(AArch64, hip)" not in blob:
-        fail("host-pair-guard", "the unregistered-pair emission does not warn and name the pair:"
-                   "\n%s" % blob[-800:])
-    render = os.path.join(d_unreg, AARCH64_TEST + ".hip")
-    tick("host-pair-guard")
-    if not os.path.isfile(render):
-        fail("host-pair-guard", "the unregistered pair wrote no .hip render under %r" % d_unreg)
-    else:
-        stamped = re.findall(
-            r"^#define HET_(?:LINK_NAME|HOST_HALF|DEV_HALF|LLC_MB|"
-            r"ALGLAVE_ZERO_MEASURED)\b", open(render).read(), re.M)
-        tick("host-pair-guard")
-        if stamped:
-            fail("host-pair-guard", "the unregistered pair's render stamps %d machine define(s) "
-                       "-- it is entitled to none, and a harness that names the "
-                       "wrong machine runs and reports like one that names the "
-                       "right one" % len(stamped))
-
-    # --- (b) a link arm refuses a foreign host ------------------------------
+    # --- (a) a link arm refuses a foreign host ------------------------------
     for arm, cmd, want in [("comp.sh cuda-link", ["sh", "comp.sh", "cuda-link"], 3),
                            ("make cuda-bin", ["make", "cuda-bin"], 2)]:
         r = run(cmd, cwd=d_aarch64_cuda)
@@ -438,7 +392,7 @@ def phase4(tmp, d_aarch64_cuda, d_x86_hip):
         if os.path.isfile(os.path.join(d_aarch64_cuda, test_of(d_aarch64_cuda))):
             fail("host-pair-guard", "%s refused but a binary exists anyway" % arm)
 
-    # --- (c) the HIP render carries the same guard --------------------------
+    # --- (b) the HIP render carries the same guard --------------------------
     comp = open(os.path.join(d_x86_hip, "comp.sh")).read()
     mk = open(os.path.join(d_x86_hip, "Makefile")).read()
     for what, txt in [("comp.sh", comp), ("Makefile", mk)]:
@@ -667,8 +621,8 @@ def phase6(tmp, d):
     #     and a discrete-part histogram must never be read as an MI300A result.
     r = drv(path, integrated=1)
     tick("hip-allocator")
-    if "amd_part_class=APU(MI300A-class)" not in r.stdout:
-        fail("hip-allocator", "integrated=1 was not classified as the MI300A-class APU "
+    if "amd_part_class=APU(integrated)" not in r.stdout:
+        fail("hip-allocator", "integrated=1 was not classified as an integrated APU "
                               "in the banner:\n%s" % r.stdout)
     r = drv(path, integrated=0)
     tick("hip-allocator")
@@ -677,15 +631,16 @@ def phase6(tmp, d):
                    "is the machinery bring-up target and must be able to run"
              % r.returncode)
     tick("hip-allocator")
-    if "amd_part_class=DISCRETE(MI300X-class)" not in r.stdout:
+    if "amd_part_class=DISCRETE(not-integrated)" not in r.stdout:
         fail("hip-allocator", "integrated=0 was not classified as a discrete part in "
                               "the banner -- a log "
                    "reader could not tell an MI300X run from an MI300A one:\n%s" % r.stdout)
     tick("hip-allocator")
-    if "WARNING" not in r.stderr or "NOT be reported as an MI300A result" not in r.stderr:
+    if "WARNING" not in r.stderr \
+            or "NOT be reported as an integrated-APU result" not in r.stderr:
         fail("hip-allocator",
-             "integrated=0 produced no warning that this is not an MI300A result:\n%s"
-             % r.stderr[-600:])
+             "integrated=0 produced no warning that this is not an integrated-APU "
+             "result:\n%s" % r.stderr[-600:])
 
     # (e) ...and the harness must actually call it.
     # Everything above drives the resolver in isolation: it says NOTHING about
@@ -1048,9 +1003,7 @@ def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda, d_fence, fence_src):
                    lambda: phase3(tmp, w), "left no executable")
 
     # --- host-pair-guard ----------------------------------------------------
-    # (b), the link-arm half, driven on the (AArch64, cuda) render: the
-    # unregistered-pair half (a) is a property of litmus7 and has no file to
-    # corrupt, so it is bitten from the emitter side by machine-pairs.t (d).
+    # The link-arm half, driven on the (AArch64, cuda) render.
     w = W("p4c", d_aa_cuda)
     sub(os.path.join(w, "comp.sh"), '"$(uname -m)" != "$HET_HOST_ISA"',
         '"$(uname -m)" = "$HET_HOST_ISA"')
@@ -1129,10 +1082,10 @@ def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda, d_fence, fence_src):
     w = W("p6x")
     hp = os.path.join(w, test_of(w) + ".hip")
     s = open(hp).read()
-    s = s.replace('return _integrated ? "APU(MI300A-class)" : "DISCRETE(MI300X-class)";',
-                  'return "APU(MI300A-class)";')
+    s = s.replace('return _integrated ? "APU(integrated)" : "DISCRETE(not-integrated)";',
+                  'return "APU(integrated)";')
     open(hp, "w").write(s)
-    ok &= bite_one("MI300X classified as an MI300A APU", "hip-allocator",
+    ok &= bite_one("a discrete part classified as an integrated APU", "hip-allocator",
                    lambda: phase6(tmp, w), "not classified as a discrete part")
     # The inert-mechanism omission.  Everything hip-allocator does above still passes with
     # this deleted -- the resolver is still defined, still correct, and still
@@ -1246,10 +1199,9 @@ def main():
         d_x86 = emit(tmp, src, os.path.join(tmp, "out-x86-hip"), "x86 render", "hip")
         d_x86_cuda = emit(tmp, src, os.path.join(tmp, "out-x86-cuda"),
                           "x86 render", "cuda")
-        # The AArch64 render host-pair-guard drives is the CUDA one: it is the AArch64 pair
-        # that names a machine, and host-pair-guard(a) covers the hip one on its own terms.
-        # The uname guard is emitted by the same per-dialect fold on both, which
-        # is what makes the substitution sound.
+        # The AArch64 render host-pair-guard drives is the CUDA one.  The uname
+        # guard is emitted by the same per-dialect fold on both, which is what
+        # makes the substitution sound.
         d_aa_cuda = emit(tmp, os.path.join(HET_DIR, AARCH64_TEST + ".litmus"),
                          os.path.join(tmp, "out-aa"), "AArch64 render", "cuda")
         # ...and the fence-carrying render, which is a different test: the one

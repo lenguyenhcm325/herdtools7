@@ -333,9 +333,10 @@ explicitly *before* the run, rather than leaving it to the tally afterwards
 ## CPU-side stress liveness
 
 `hetlitmus/verify/cpustresscheck.py` is the CPU/interconnect sibling of
-`stresscheck.py`. The cache preload, the CPU enemy threads and the C2C noise pair are
-invisible to *both* PTX checkers — the preload emits host cache hints (no order, no
-scope, not a model op), the enemies are host code that never reaches the PTX, and
+`stresscheck.py`. The cache preload, the CPU enemy threads and the interconnect
+noise pair are invisible to *both* PTX checkers — the preload emits host cache
+hints (no order, no scope, not a model op), the enemies are host code that
+never reaches the PTX, and
 the noise streams a disjoint buffer — so that layer is unguarded without it. It
 asks two questions the structural gates cannot: did the mechanisms survive the
 optimiser (static, on the **compiled** `-O2` asm), and do they do anything at run

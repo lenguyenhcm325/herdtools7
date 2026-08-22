@@ -52,8 +52,8 @@ static int gd_alloc_noise(void** _pp, size_t _bytes, int _where){
       fprintf(stderr,
               "HetLitmus WARNING: cudaMemPrefetchAsync of the HBM noise buffer FAILED "
               "(%s) -- its pages are still homed where the CPU first touched them "
-              "(DDR), so the @HOST@ noise thread is streaming LOCAL memory and crosses "
-              "no interconnect.  This run is not @LINK@-stressed on the @HOST@ side.\n",
+              "(DDR), so the host noise thread is streaming LOCAL memory and crosses "
+              "no interconnect.  This run is not interconnect-stressed on the host side.\n",
               cudaGetErrorString(_e));
     }
   }

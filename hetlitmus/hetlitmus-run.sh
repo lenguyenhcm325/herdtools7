@@ -3,9 +3,9 @@
 # HetLitmus device session: ONE entry point, one chain, on a real machine.
 # preflight -> probe -> emit -> compile -> campaign -> collect.  Every step
 # fails CLOSED with a named reason, and every value the session turned on --
-# the resolved device arch, the (CPU ISA x GPU dialect) pair, the machine that
-# pair may name -- is written into the results dir as a fact, because a run
-# whose arch or target was decided invisibly cannot be read afterwards.
+# the resolved device arch, the (CPU ISA x GPU dialect) pair -- is written into
+# the results dir as a fact, because a run whose arch or target was decided
+# invisibly cannot be read afterwards.
 #
 # Composition only: probe-cuda.sh / probe-hip.sh probe, litmus7 emits, the
 # emitted comp.sh + Makefile build, campaign.py schedules, run-one.sh invokes.
@@ -98,7 +98,7 @@ done
 
 # --gpu-target is mandatory and is never inferred from what happens to be
 # installed: it names the GPU half of the pair, so a default would pick which
-# machine the renders claim to be running on.
+# pair the renders are built for.
 [ -n "$GPU_TARGET" ] || die "--gpu-target is mandatory (cuda|hip).  It names the \
 GPU dialect AND half of the (CPU ISA x GPU dialect) pair, so there is no defaulting it."
 case "$GPU_TARGET" in
@@ -136,9 +136,9 @@ PROBE_SH="${HET_PROBE_SH:-$PROBE_DEFAULT}"
 # first device tag of the program header that names a CPU ISA (HetArch.scan_cpu_isa,
 # whose tag vocabulary this mirrors).  A test with no CPU column is refused here
 # though the emitter would default it to AArch64 -- defaulting the host ISA of a
-# device session is how a run gets built for the wrong machine.  Sampling one test
-# would let a mixed-ISA corpus pass this step and die at emission instead, blaming
-# the machine table.  The mirror is checked against the emitter's answer after step 3.
+# device session is how a run gets built for the wrong pair.  Sampling one test
+# would let a mixed-ISA corpus pass this step and die at emission instead.  The
+# mirror is checked against the emitter's answer after step 3.
 corpus_cpu_lanes() {            # <file.litmus>... -> "<file> aarch64|x86_64|NONE"
   awk '
     function flush() { if (cur != "") print cur, (isa == "" ? "NONE" : isa) }
@@ -157,39 +157,6 @@ corpus_cpu_lanes() {            # <file.litmus>... -> "<file> aarch64|x86_64|NON
       }
     }
     END { flush() }' "$@"
-}
-
-# The machine table is litmus/hetMachine.ml and this reads that file: a second
-# copy of the table here could drift from the one the emitter obeys, and the
-# drift would show up as a results dir naming a machine the renders do not.  What
-# the emitter decided is checked against this in step 3, off the pair name it
-# stamps into every render.
-# Bounded to the `let table = [' ... `]' literal: a row is a row only inside it,
-# so a parse running past the bracket can read a row-shaped line out of a comment
-# or a doc example.  A file with no such literal fails closed as NO-TABLE.
-machine_pair() {                # <ISA key> <target> -> "MACHINE <row>" | NO-MACHINE | ABSENT
-  awk -v want="(\"$1\", \"$2\")," '
-    !intab {
-      if ($0 ~ /^let table = \[[ \t]*$/) { intab = 1 ; sawtab = 1 }
-      next
-    }
-    /^[ \t]*\][ \t]*$/ { intab = 0 ; next }
-    {
-      line = $0; gsub(/^[ \t]+|[ \t]+$/, "", line)
-      if (index(line, want) != 1) next
-      found = 1
-      rest = substr(line, length(want) + 1)
-      gsub(/^[ \t]+|[ \t;]+$/, "", rest)
-      if (rest == "None") { state = "NO-MACHINE" ; next }
-      if (rest ~ /^Some [A-Za-z0-9_]+$/) { state = "MACHINE" ; mach = substr(rest, 6) }
-    }
-    END {
-      if (!sawtab)               { print "NO-TABLE" ; exit }
-      if (!found)                { print "ABSENT" ; exit }
-      if (state == "NO-MACHINE") { print "NO-MACHINE" ; exit }
-      if (state == "MACHINE" && mach != "") { print "MACHINE " mach ; exit }
-      print "UNPARSED"
-    }' "$REPO/litmus/hetMachine.ml"
 }
 
 [ -x "$LITMUS7" ] || die "litmus7 is not built at $LITMUS7 (run 'make all')"
@@ -220,32 +187,16 @@ pair at all; split it and run one session per lane."
   fi
 done < <(corpus_cpu_lanes "${CORPUS_PATHS[@]}")
 
-# The pair, keyed as litmus/hetMachine.ml keys it (HetCpuFront's isa_name
-# spelling).  Resolved BEFORE the host-ISA check because it is a property of the
-# corpus and the flag alone: an unregistered pair is worth naming on any box,
-# including the ones that could not have run it anyway.
+# The pair, spelled exactly as the emitter stamps it into HET_PAIR_NAME
+# (HetCpuFront's isa_name spelling); check_stamp below compares the two.
+# Resolved BEFORE the host-ISA check because it is a property of the corpus and
+# the flag alone.
 case "$CPU_ISA" in
   aarch64) ISA_KEY=AArch64 ;;
   x86_64)  ISA_KEY=X86_64 ;;
-  *) die "no machine-table key for CPU ISA $CPU_ISA" ;;
+  *) die "no pair key for CPU ISA $CPU_ISA" ;;
 esac
 PAIR="($ISA_KEY, $GPU_TARGET)"
-read -r PAIR_STATE PAIR_MACHINE <<<"$(machine_pair "$ISA_KEY" "$GPU_TARGET")"
-case "$PAIR_STATE" in
-  MACHINE) ;;
-  NO-MACHINE)
-    PAIR_MACHINE="" ;;
-  # Warned, NOT refused: the pair decides which silicon the renders may name,
-  # not whether this box can be measured, and an unregistered one emits generic
-  # harnesses that characterize exactly as well and claim less.
-  ABSENT)
-    PAIR_MACHINE=""
-    echo "hetlitmus-run: WARNING -- the pair $PAIR is in no row of litmus/hetMachine.ml, so every harness in this session NAMES NO MACHINE: nothing it produces claims to be a named part." >&2 ;;
-  *)
-    die "litmus/hetMachine.ml did not yield a state for $PAIR (got \"$PAIR_STATE\") -- \
-the table's shape changed and this wrapper reads it; fix the reader rather than \
-hardcoding the pair here." ;;
-esac
 
 HOST_ISA="$(uname -m)"
 [ "$CPU_ISA" = "$HOST_ISA" ] || die "this corpus carries a $CPU_ISA CPU column and \
@@ -301,10 +252,6 @@ fi
 # =========================================================================
 STAMP="$(date +%Y%m%d-%H%M%S)-$( (hostname -s 2>/dev/null || hostname 2>/dev/null || echo host) | tr -c 'A-Za-z0-9_.-' '_' )"
 [ -n "$OUT" ] || OUT="$HETL/run-out/hetlitmus-run-$STAMP"
-# The machine a session is entitled to name is the ONE thing the pair decides.
-# What it does is fixed: this tool characterizes, so no row of any campaign it
-# schedules agrees or disagrees with a prediction.
-PAIR_LONG="$PAIR -> ${PAIR_MACHINE:-no machine row: the renders name none}"
 RUNONE="$HETL/spotcheck/run-one.sh"
 RUNNER="timeout $HET_RUN_TIMEOUT sh $RUNONE {dir} {test}"
 
@@ -330,7 +277,7 @@ echo "HetLitmus device session"
 echo "  host          $(uname -srm)   $( (hostname 2>/dev/null || echo '?') )"
 echo "  corpus        $CORPUS   (${#CORPUS_TESTS[@]} test(s), $CPU_ISA CPU lane)"
 echo "  gpu-target    $GPU_TARGET   (compiler $COMPILER)"
-echo "  pair          $PAIR_LONG"
+echo "  pair          $PAIR"
 echo "  arch          $ARCH   [$ARCH_SOURCE]   passed to the build as $ARCH_VAR"
 echo "  budget        --budget-runs $BUDGET_RUNS   (every row runs to it or to a stop)"
 echo "  results       $OUT"
@@ -388,8 +335,6 @@ RECORD="$OUT/run-record.txt" ; SUMMARY="$OUT/summary.txt"
   echo "corpus_tests=${#CORPUS_TESTS[@]}"
   echo "gpu_target=$GPU_TARGET"
   echo "pair=$PAIR"
-  echo "pair_state=$PAIR_STATE"
-  echo "pair_machine=${PAIR_MACHINE:-NONE}"
   echo "arch=$ARCH"
   echo "arch_var=$ARCH_VAR"
   echo "arch_source=$ARCH_SOURCE"
@@ -455,10 +400,10 @@ emit_one() {                    # <test> -- emits into $EMIT, fails closed
     die "emission failed on $t"
   fi
 }
-# HET_PAIR_NAME is the EMITTER's answer to the question the pair table was read
-# for above, so the two are compared here: a disagreement means the wrapper and
-# litmus7 resolved different pairs, and the campaign would be run against
-# harnesses built for another machine.
+# HET_PAIR_NAME is the EMITTER's spelling of the pair resolved above, so the two
+# are compared here: a disagreement means the wrapper and litmus7 read different
+# pairs off the same corpus, and the campaign would run harnesses built for the
+# other one.
 check_stamp() {                 # <test>
   local t="$1" f="$EMIT/$t/$t.$RENDER_EXT"
   [ -s "$f" ] || die "no .$RENDER_EXT render for $t under $EMIT"
@@ -469,7 +414,7 @@ check_stamp() {                 # <test>
     echo "hetlitmus-run: $t stamps" >&2
     grep -F '#define HET_PAIR_NAME' "$f" >&2 || echo "  (no HET_PAIR_NAME at all)" >&2
     die "the emitted pair name of $t disagrees with the pair this wrapper resolved \
-($PAIR, $PAIR_STATE) -- one of the two read litmus/hetMachine.ml wrongly"
+($PAIR) -- one of the two read the corpus CPU lane wrongly"
   }
 }
 if [ "$REUSE" -eq 1 ]; then
@@ -553,7 +498,7 @@ count_stop() {                  # <STOP> -> rows of the campaign state carrying 
   echo "HetLitmus session summary"
   echo "  results     $OUT"
   echo "  host        $(uname -srm)   $( (hostname 2>/dev/null || echo '?') )"
-  echo "  pair        $PAIR_LONG"
+  echo "  pair        $PAIR"
   echo "  arch        $ARCH   [$ARCH_SOURCE]"
   echo "  corpus      $CORPUS   (${#CORPUS_TESTS[@]} test(s), $CPU_ISA CPU lane)"
   echo "  probe       $OUT/probe.txt   ($(grep -m1 '^probe_status=' "$OUT/probe.txt" 2>/dev/null | sed 's/^probe_status=//'))"

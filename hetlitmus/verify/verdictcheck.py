@@ -12,9 +12,9 @@ het_obs_records, and proves:
                   from no other, checked both ways.  The enum changing is not
                   the deliverable; the sentence is.
   3 the corpus    every emitted harness stamps rec_magic exactly once.
-  4 the machine   the printout names only the machine the pair's row in
-                  litmus/hetMachine.ml entitles it to, and a harness stamped
-                  with no row names none.
+  4 the pair      the printout names the pair the emitter stamped and no
+                  other, and an unstamped harness prints the header's own
+                  defaults.
 
 The rule and its reporting frames: hetlitmus/docs/harness-reporting.md.
 
@@ -400,24 +400,22 @@ def _env():
 
 
 # ---------------------------------------------------------------------------
-# PHASE 4 -- which machine the printout names.
+# PHASE 4 -- which pair the printout names.
 #
-# Every machine word het_verdict.h prints comes from a define the emitter stamps
-# out of the machine-table row (litmus/hetMachine.ml), with generic defaults when
-# none are stamped.  Three properties, all read off the printout rather than off
-# the defines (the enum changing is not the deliverable, the sentence is): with no
-# defines the frame is the generic one, naming the mechanism and NEVER a vendor;
-# with the (AArch64, cuda) defines it is the GH200 machine; with the (x86_64, hip)
-# defines it is that pair's own machine, carrying no Grace/Hopper/NVLink and none
-# of the NVIDIA-only measurements.  The defines are scraped from real emissions,
-# never typed here, so the phase tests what the emitter stamps.
+# The pair a printout names comes from a define the emitter stamps, with the
+# header's own defaults where nothing is stamped.  Three properties, all read off
+# the printout rather than off the defines (the enum changing is not the
+# deliverable, the sentence is): with no defines the frame is the unstamped one;
+# with the (AArch64, cuda) defines every sentence names that pair and its
+# dialect's placement lever; with the (x86_64, hip) defines that pair and no
+# lever.  The defines are scraped from real emissions, never typed here, so the
+# phase tests what the emitter stamps.
 # ---------------------------------------------------------------------------
-MACHINE_DEFINE_RE = re.compile(
-    r"^#define HET_(?:LINK_NAME|HOST_HALF|DEV_HALF|ALGLAVE_ZERO_MEASURED"
-    r"|PLACE_LEVER|PAIR_NAME)\b.*$", re.M)
+PAIR_DEFINE_RE = re.compile(
+    r"^#define HET_(?:PLACE_LEVER|PAIR_NAME)\b.*$", re.M)
 
 # (label, corpus dir, test, -gpu-target, render extension)
-MACHINE_PAIRS = [
+PAIR_EMISSIONS = [
     ("(AArch64, cuda)", HET_DIR, "MP-cg-sys-fence-2s", "cuda", "cu"),
     ("(x86_64, hip)", os.path.join(ROOT, "hetlitmus", "tests", "het-x86"),
      "MP-cg-sys-relaxed-x86_64", "hip", "hip"),
@@ -430,10 +428,8 @@ GENERIC_MUST = [
     "- the host half of the host-device interconnect noise did NOT run",
     "- the device half of the host-device interconnect noise did NOT run",
     "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
-    "(Alglave ASPLOS'15 Tab. 6's zero without memory stress is an NVIDIA GTX Titan "
-    "measurement and is NOT claimed for this target",
-    # The sentence that has to NAME the target, and the only one carrying BOTH
-    # stamped strings.  Each frame asserts its own name, so a constant fails here.
+    # The sentence that has to NAME the target.  Each frame asserts its own name,
+    # so a constant fails here.
     "Report it as what (unstamped CPU ISA x GPU dialect pair) exhibited under "
     "this harness, this stress and this host-device interconnect path.",
     # ... and the null frame's own, which is the other half of the same pin: a
@@ -441,47 +437,45 @@ GENERIC_MUST = [
     # unattributed.
     "liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.",
 ]
-NVIDIA_MUST = [
-    "- the Grace half of the NVLink-C2C noise did NOT run",
-    "- the Hopper half of the NVLink-C2C noise did NOT run",
+CUDA_PAIR_MUST = [
+    "- the host half of the host-device interconnect noise did NOT run",
+    "- the device half of the host-device interconnect noise did NOT run",
     "CAVEAT: cudaMemAdvise was REFUSED -- HET_PLACE placed nothing.",
-    "On the NVIDIA GTX Titan the inter-CTA lb and sb tests were observed 0 per 100k "
-    "without memory stress, while mp and coRR were observed (Alglave ASPLOS'15 "
-    "Tab. 6)",
     "Report it as what (AArch64, cuda) exhibited under this harness, this stress "
-    "and this NVLink-C2C path.",
+    "and this host-device interconnect path.",
     "liveness (AArch64, cuda) measured on its own counters.",
 ]
-AMD_MUST = [
-    "- the x86 half of the Infinity Fabric noise did NOT run",
-    "- the MI300A device half of the Infinity Fabric noise did NOT run",
-    # No placement lever on this render, and no [Alglave15 Tab. 6] figure covers
-    # this part.
-    "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
-    "(Alglave ASPLOS'15 Tab. 6's zero without memory stress is an NVIDIA GTX Titan "
-    "measurement and is NOT claimed for this target",
+# The pair sentence leads, because a bite that cross-stamps this frame with the
+# other pair's defines is judged on the FIRST diagnostic.
+HIP_PAIR_MUST = [
     "Report it as what (X86_64, hip) exhibited under this harness, this stress "
-    "and this Infinity Fabric path.",
+    "and this host-device interconnect path.",
+    "- the host half of the host-device interconnect noise did NOT run",
+    "- the device half of the host-device interconnect noise did NOT run",
+    # No placement lever on this render, so the mechanism is named instead.
+    "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
     "liveness (X86_64, hip) measured on its own counters.",
 ]
-NVIDIA_WORDS = ["Grace", "Hopper", "NVLink", "cudaMemAdvise",
-                "the inter-CTA lb and sb tests were observed 0 per 100k",
-                "(AArch64, cuda)"]
-AMD_WORDS = ["Infinity Fabric", "MI300A", "the x86 half", "(X86_64, hip)"]
+# The lever is a DIALECT fact, so it is forbidden in the HIP frame beside the
+# CUDA pair's own name.
+CUDA_PAIR_WORDS = ["(AArch64, cuda)", "cudaMemAdvise"]
+HIP_PAIR_WORDS = ["(X86_64, hip)"]
 # Forbidden in EVERY frame: a constant standing in for the pair the binary was
 # built for.  There is no stamp for which it is right.
 BLOB_WORDS = ["the target this harness was tagged for"]
 
-MACHINE_FRAMES = [
-    ("no defines (an unregistered pair)", None,
-     GENERIC_MUST, NVIDIA_WORDS + AMD_WORDS + BLOB_WORDS),
-    ("(AArch64, cuda)", "(AArch64, cuda)", NVIDIA_MUST, AMD_WORDS + BLOB_WORDS),
-    ("(x86_64, hip)", "(x86_64, hip)", AMD_MUST, NVIDIA_WORDS + BLOB_WORDS),
+PAIR_FRAMES = [
+    ("no defines (an unstamped harness)", None,
+     GENERIC_MUST, CUDA_PAIR_WORDS + HIP_PAIR_WORDS + BLOB_WORDS),
+    ("(AArch64, cuda)", "(AArch64, cuda)", CUDA_PAIR_MUST,
+     HIP_PAIR_WORDS + BLOB_WORDS),
+    ("(x86_64, hip)", "(x86_64, hip)", HIP_PAIR_MUST,
+     CUDA_PAIR_WORDS + BLOB_WORDS),
 ]
 
 
-def scrape_machine_defines(tmp, label, corpus, test, target, ext):
-    """The HET_* machine defines the emitter really stamps for one pair."""
+def scrape_pair_defines(tmp, label, corpus, test, target, ext):
+    """The HET_* build defines the emitter really stamps for one pair."""
     out = os.path.join(tmp, "pair-" + target + "-" + os.path.basename(corpus))
     os.makedirs(out, exist_ok=True)
     subprocess.run(["litmus7", "-gpu-target", target,
@@ -494,14 +488,14 @@ def scrape_machine_defines(tmp, label, corpus, test, target, ext):
         raise SystemExit("verdictcheck: no %s emitted for the %s pair"
                          % (os.path.basename(render), label))
     with open(render) as fh:
-        return MACHINE_DEFINE_RE.findall(fh.read())
+        return PAIR_DEFINE_RE.findall(fh.read())
 
 
 def printout_with(header, tmp, defines, tag):
     """Compile the rule with [defines] prepended; return its whole printout."""
-    sub = tempfile.mkdtemp(prefix="verdictmachine.", dir=tmp)
+    sub = tempfile.mkdtemp(prefix="verdictpair.", dir=tmp)
     shutil.copy(header, os.path.join(sub, "het_verdict.h"))
-    pre = os.path.join(sub, "machine.h")
+    pre = os.path.join(sub, "stamped.h")
     with open(pre, "w") as fh:
         fh.write("/* scraped from the %s emission */\n" % tag)
         fh.write("\n".join(defines) + "\n")
@@ -519,22 +513,22 @@ def printout_with(header, tmp, defines, tag):
     return run.stdout, ""
 
 
-def check_machine_prose(header, tmp, quiet, defines_by_pair=None):
+def check_pair_prose(header, tmp, quiet, defines_by_pair=None):
     """defines_by_pair: {label: [define lines]}.  --bite passes a tampered map."""
-    print("\n===== PHASE 4: which MACHINE does the printout name? =====")
+    print("\n===== PHASE 4: which PAIR does the printout name? =====")
     if defines_by_pair is None:
         defines_by_pair = {}
-        for label, corpus, test, target, ext in MACHINE_PAIRS:
+        for label, corpus, test, target, ext in PAIR_EMISSIONS:
             defines_by_pair[label] = \
-                scrape_machine_defines(tmp, label, corpus, test, target, ext)
+                scrape_pair_defines(tmp, label, corpus, test, target, ext)
     for label, defs in sorted(defines_by_pair.items()):
-        print("  %-16s stamps %d machine define(s)" % (label, len(defs)))
+        print("  %-16s stamps %d build define(s)" % (label, len(defs)))
         if not quiet:
             for d in defs:
                 print("      %s" % d)
 
     bad = 0
-    for label, pair, must, forbid in MACHINE_FRAMES:
+    for label, pair, must, forbid in PAIR_FRAMES:
         defs = [] if pair is None else defines_by_pair[pair]
         text, err = printout_with(header, tmp, defs, label)
         if text is None:
@@ -549,16 +543,17 @@ def check_machine_prose(header, tmp, quiet, defines_by_pair=None):
                 print("      %-16s prints %r" % (label, want))
         for banned in forbid:
             if banned in text:
-                print("  *** %-46s printed %r -- a claim about a machine this "
-                      "harness is not" % (label, banned))
+                print("  *** %-46s printed %r -- a pair this harness was not "
+                      "built for, or a word only that pair's frame may use"
+                      % (label, banned))
                 bad += 1
 
     if bad:
-        print("\nMACHINE PROSE FAILED: %d problem(s).  A run that names the wrong "
-              "silicon reports a measurement of a machine that never ran." % bad)
+        print("\nPAIR PROSE FAILED: %d problem(s).  A run that names the wrong "
+              "pair reports a measurement of a build that never ran." % bad)
         return 1
-    print("\nMACHINE PROSE OK (generic without defines; each pair's own machine "
-          "with them; no frame names another pair's)")
+    print("\nPAIR PROSE OK (the header's own defaults without stamps; each pair's "
+          "own name with them; no frame names another's)")
     return 0
 
 
@@ -891,7 +886,7 @@ def main():
         header = a.header or emit_header(tmp)
         rc, blocks = run_rule(header, tmp, a.quiet)
         rc |= scan_prints(blocks, a.quiet)
-        rc |= check_machine_prose(header, tmp, a.quiet)
+        rc |= check_pair_prose(header, tmp, a.quiet)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     rc |= check_corpus()
@@ -900,7 +895,7 @@ def main():
     if rc:
         print("VERDICTCHECK: FAIL")
     else:
-        print("VERDICTCHECK: PASS  (rule + printout + machine prose + emitted corpus)")
+        print("VERDICTCHECK: PASS  (rule + printout + pair prose + emitted corpus)")
     return 1 if rc else 0
 
 
@@ -990,8 +985,8 @@ def _bite_report(label, header, mutate, want):
     return True
 
 
-def _bite_machine(label, tmp, header, mutate=None, defines=None, expect=None):
-    """Break the MACHINE PROSE path; check_machine_prose must fail.
+def _bite_pair(label, tmp, header, mutate=None, defines=None, expect=None):
+    """Break the PAIR PROSE path; check_pair_prose must fail.
 
     Two injection sites, because the prose has two: the header's #ifndef
     defaults (what an unstamped harness prints) and the defines the emitter
@@ -1010,19 +1005,19 @@ def _bite_machine(label, tmp, header, mutate=None, defines=None, expect=None):
         if new == orig:
             print("  *** VACUOUS BITE: the injection changed nothing   [%s]" % label)
             return False
-        hdr = os.path.join(tmp, "machine-bitten.h")
+        hdr = os.path.join(tmp, "pair-bitten.h")
         with open(hdr, "w") as fh:
             fh.write(new)
 
-    sub = tempfile.mkdtemp(prefix="verdictmachinebite.")
+    sub = tempfile.mkdtemp(prefix="verdictpairbite.")
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf):
-            rc = check_machine_prose(hdr, sub, quiet=True, defines_by_pair=defines)
+            rc = check_pair_prose(hdr, sub, quiet=True, defines_by_pair=defines)
     finally:
         shutil.rmtree(sub, ignore_errors=True)
     if not rc:
-        print("  *** DID NOT BITE: the gate PASSED on wrong machine prose   [%s]"
+        print("  *** DID NOT BITE: the gate PASSED on wrong pair prose   [%s]"
               % label)
         return False
     said = [l for l in buf.getvalue().splitlines() if l.startswith("  ***")]
@@ -1169,50 +1164,46 @@ def bite():
                   "[a harness shipped with an unstamped record]" % rc)
             ok = False
 
-        # (9) The fail-safe default made a vendor claim: an unstamped harness --
-        # an unregistered pair, and every future pair before its row exists --
-        # would then print a machine it is not.  The direction matters: a missing
-        # define may ONLY weaken a claim.
-        print("\n-- machine-prose injections --")
-        ok &= _bite_machine(
-            "the #ifndef DEFAULT names a vendor (unstamped => \"NVLink-C2C\")",
+        # (9) The mechanism word the whole printout is written around DRIFTS, and
+        # every sentence carrying it moves with it.  It is the header's own
+        # default, so nothing stamps it back.
+        print("\n-- pair-prose injections --")
+        ok &= _bite_pair(
+            "the link name drifts (\"the tested link\")",
             tmp, header,
             mutate=lambda s: s.replace('#define HET_LINK_NAME "host-device interconnect"',
-                                       '#define HET_LINK_NAME "NVLink-C2C"'),
+                                       '#define HET_LINK_NAME "the tested link"'),
             expect="never printed '- the host half of the host-device "
                    "interconnect noise did NOT run'")
 
-        # (10) One sentence goes back to a literal, which is the defect the stamped
-        # defines exist to stop in its simplest form: a sentence naming Grace
-        # whatever the harness was built for.  The generic frame catches it as a
-        # must it stopped printing, before any frame's forbidden list reaches the
-        # word `Grace' -- so this arm holds the must direction and (13) the other.
-        ok &= _bite_machine(
-            "one sentence hardcodes \"the Grace half\" again",
+        # (10) One sentence goes back to a literal, which is the defect the shared
+        # defines exist to stop in its simplest form: a sentence naming one half
+        # whatever the harness was built for.
+        ok &= _bite_pair(
+            "one sentence hardcodes \"the CPU half\"",
             tmp, header,
             mutate=lambda s: s.replace("              HET_HOST_HALF, HET_LINK_NAME);",
-                                       "              \"the Grace half\", HET_LINK_NAME);"),
+                                       "              \"the CPU half\", HET_LINK_NAME);"),
             expect="never printed '- the host half of the host-device "
                    "interconnect noise did NOT run'")
 
-        # (11) The emitter stamps the wrong pair's machine.  The header is correct
-        # here and the harness lies to it, which is what the pair table exists to
-        # stop; nothing in phases 1-3 looks at a define.
+        # (11) The emitter stamps the other pair's build facts.  The header is
+        # correct here and the harness lies to it; nothing in phases 1-3 looks at
+        # a define.
         real = {}
-        for lbl, corpus, test, target, ext in MACHINE_PAIRS:
-            real[lbl] = scrape_machine_defines(tmp, lbl, corpus, test, target, ext)
+        for lbl, corpus, test, target, ext in PAIR_EMISSIONS:
+            real[lbl] = scrape_pair_defines(tmp, lbl, corpus, test, target, ext)
         crossed = dict(real)
         crossed["(x86_64, hip)"] = list(real["(AArch64, cuda)"])
-        ok &= _bite_machine(
-            "the (x86_64, hip) emission stamps the GH200 machine",
+        ok &= _bite_pair(
+            "the (x86_64, hip) emission stamps the (AArch64, cuda) build facts",
             tmp, header, defines=crossed,
-            expect="never printed '- the x86 half of the Infinity Fabric "
-                   "noise did NOT run'")
+            expect="never printed 'Report it as what (X86_64, hip)")
 
         # (12) The target name goes back to a constant.  The sentence still names
         # something, so ONLY a frame that knows its own pair name can see that it
         # is naming the wrong object; BLOB_WORDS pins that constant's wording.
-        ok &= _bite_machine(
+        ok &= _bite_pair(
             "the report sentence names a constant instead of the pair",
             tmp, header,
             mutate=lambda s: s.replace(
@@ -1221,21 +1212,21 @@ def bite():
             expect="never printed 'Report it as what (unstamped CPU ISA x GPU "
                    "dialect pair)")
 
-        # (13) A sentence names another vendor and every `must' still prints.  The
-        # verdict banner gains an "[Infinity Fabric]" tag, which no frame's must
+        # (13) A sentence names another pair and every `must' still prints.  The
+        # verdict banner gains an "[(AArch64, cuda)]" tag, which no frame's must
         # list mentions and which no parameterised sentence loses, so the ONLY
         # thing that can see it is the forbidden-word list.  Injections (9)-(12)
         # each redden on a must first, so without this arm the forbidden-word
         # direction is unbitten.
-        ok &= _bite_machine(
-            "the verdict banner tags every run with another vendor's fabric",
+        ok &= _bite_pair(
+            "the verdict banner tags every run with another pair's name",
             tmp, header,
             mutate=lambda s: s.replace(
                 '  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s\\n",',
                 '  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s'
-                '  [Infinity Fabric]\\n",'),
-            expect="printed 'Infinity Fabric' -- a claim about a machine this "
-                   "harness is not")
+                '  [(AArch64, cuda)]\\n",'),
+            expect="printed '(AArch64, cuda)' -- a pair this harness was not "
+                   "built for")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1243,7 +1234,7 @@ def bite():
     if ok:
         print("BITE OK: 17/17 injections caught, each by the diagnostic it named --")
         print("         rule + printouts 9, reporting paths 2, emitted corpus 1,")
-        print("         machine prose 5.")
+        print("         pair prose 5.")
         return 0
     print("BITE FAILED: an injection slipped through -- this gate is decorative")
     return 1

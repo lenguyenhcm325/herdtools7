@@ -6,9 +6,10 @@ held by construction, four object classes in four allocators, and the stress
 orchestration in the one order that makes it run at all.
 
 Per-device stress widens the INTRA-DEVICE window, while the heterogeneous weak
-behaviour lives in the cross-device one -- a store in flight across C2C but not
-yet globally visible.  CPU cache stress never crosses the link and GPU scratchpad
-stress never leaves the die, so Half 2 (placement in (g), the noise pair in (h))
+behaviour lives in the cross-device one -- a store in flight across the
+interconnect but not yet globally visible.  CPU cache stress never crosses the
+link and GPU scratchpad stress never leaves the die, so Half 2 (placement in
+(g), the noise pair in (h))
 is the only lever that does.  It is also the methodological addition beyond
 [Bagchi26 sec 4.2], which stresses both devices and carries no link-directed
 component; its efficacy is an inference, not a measurement, so the claim is
@@ -17,9 +18,9 @@ effective than per-device stress" (docs/00-environment-design.md sec 3.6 bounds
 it, and says why it is confounded too).
 
 The `.hip' renders come from ../het-x86, not from ../het: a harness is a
-(CPU ISA x GPU dialect) PAIR, and (x86_64, hip) is the one this project has an
-MI300A row for (litmus/hetMachine.ml).  The CPU column differs; everything these
-sections read is the GPU render and the shared runtime headers.
+(CPU ISA x GPU dialect) PAIR, and a HIP harness is the (x86_64, hip) one.  The
+CPU column differs; everything these sections read is the GPU render and the
+shared runtime headers.
 
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
@@ -184,7 +185,7 @@ double store.
   $ grep -c 'volatile uint64_t \*l = a->scratch' MP-cg-sys-acqrel-2s/het_cpu_stress.h
   1
 
-(g) Half 2a -- placement, at the seam inside gd_alloc_shared's GH200 malloc
+(g) Half 2a -- placement, at the seam inside gd_alloc_shared's system-malloc
 branch.  A cudaMemAdvise that is REFUSED must never be swallowed: a placement
 knob that says "remote" while the pages sat where first touch left them is an
 inert mechanism reporting itself as live.
@@ -205,9 +206,10 @@ it.
   1
 
 The HIP twin has NO placement, and that is a finding rather than an omission:
-MI300A has one HBM pool shared by the CCD and XCD chiplets -- no LPDDR/HBM split,
-nothing to place.  Its analogue is cross-chiplet contention, which the same noise
-pair provides.  The grep matches the API call, not the word: the .hip explains at
+the render has no page-placement API to call, and an APU such as MI300A has one
+HBM pool shared by the CCD and XCD chiplets -- no LPDDR/HBM split, nothing to
+place.  Its analogue is cross-chiplet contention, which the same noise pair
+provides.  The grep matches the API call, not the word: the .hip explains at
 length why there is no cudaMemAdvise here, so a bare `MemAdvise' count would be
 satisfied by the prose that documents its absence.
   $ grep -cE '(cuda|hip)MemAdvise\(' $MPH.hip || true
@@ -219,7 +221,7 @@ satisfied by the prose that documents its absence.
 
 (h) Half 2b -- the noise pair of [Fusco24 sec III-E.1], its construction quoted
 verbatim in het_cpu_stress.h: each processing unit continuously stream-reads the
-OTHER one's memory.  The Hopper half runs as extra blocks of the persistent grid,
+OTHER one's memory.  The device half runs as extra blocks of the persistent grid,
 never as a second __global__, because ptxcheck scans the whole PTX file in flat
 order and slices that one op stream per lane -- a second kernel would drop its
 ops into the middle of the stream being sliced.
@@ -233,13 +235,23 @@ ops into the middle of the stream being sliced.
   1
 
 The working set is the whole point: a buffer that fits in cache is served from
-cache and crosses nothing, and Hopper's L2 caches peer HBM too ([Fusco24 sec
-III-E.1]).  Grace L3 = 114 MB and Hopper L2 = 51 MB ([Bagchi26 Table 1]),
-HET_NOISE_MB is 8 GB per buffer, and a sub-LLC configuration is warned about at
-run time.
+cache and crosses nothing.  HET_NOISE_MB is 8 GB per buffer, HET_LLC_MB is the
+threshold it must exceed, and a sub-LLC configuration is warned about at run
+time.
   $ grep -A1 '#ifndef HET_NOISE_MB' MP-cg-sys-acqrel-2s/het_cpu_stress.h | grep -c '#define HET_NOISE_MB 8192'
   1
   $ grep -c 'HET_NOISE_MB < HET_LLC_MB' $MP.cu
+  1
+
+HET_LLC_MB is supplied per build (NVCC="nvcc -DHET_LLC_MB=<MB>").  Both branches
+of the header define HET_LLC_MB_IS_FALLBACK -- an undefined macro reads as 0
+under #if -- and the driver carries both arms of the warning, the fallback one
+disclosing that the default was measured on another part.
+  $ grep -c '^#define HET_LLC_MB_IS_FALLBACK' MP-cg-sys-acqrel-2s/het_cpu_stress.h
+  2
+  $ grep -c '#if HET_LLC_MB_IS_FALLBACK' $MP.cu
+  1
+  $ grep -c 'a FALLBACK figure, measured on another part' $MP.cu
   1
 
 (h2) and the noise buffer must be real memory.  A malloc'd buffer that has never
@@ -255,10 +267,10 @@ that it works.
   $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MPH.hip
   1
 
-and on GH200 the CPU's first touch homes the pages on DDR, so the buffer that
-must live on HBM -- the one the Grace thread streams, so each read crosses C2C --
-is prefetched across; a refusal is reported, because an "HBM" buffer that is
-really on DDR generates local traffic, not interconnect traffic.
+and on a CUDA render the CPU's first touch homes the pages on DDR, so the buffer
+that must live on HBM -- the one the host thread streams, so each read crosses
+the interconnect -- is prefetched across; a refusal is reported, because an "HBM"
+buffer that is really on DDR generates local traffic, not interconnect traffic.
   $ grep -c 'cudaMemPrefetchAsync(\*_pp, _bytes, 0, 0)' $MP.cu
   1
   $ grep -c 'cudaMemPrefetchAsync of the HBM noise buffer FAILED' $MP.cu
@@ -272,7 +284,7 @@ to die.
   1
   $ grep -c 'ZERO preload hints were issued' $MP.cu
   1
-  $ grep -c 'the Hopper half of the NVLink-C2C noise did NOT run' $MP.cu
+  $ grep -c '%s of the %s noise did NOT run.  This run is not interconnect-stressed' $MP.cu
   1
   $ grep -c 'sched_setaffinity call(s) FAILED' $MP.cu
   1

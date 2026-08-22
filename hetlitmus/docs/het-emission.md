@@ -23,20 +23,14 @@ Two axes are chosen per test rather than hard-wired:
 ## Reproduce
 
 ```
-# AArch64 CPU + GPU (the GH200 pairing). Emits ./MP-het/ with the .cu:
+# AArch64 CPU + CUDA (the (AArch64, cuda) pair). Emits ./MP-het/ with the .cu:
 litmus7 -gpu-target cuda -set-libdir herd/libdir hetlitmus/tests/het/MP-het.litmus
 ( cd MP-het && sh comp.sh )        # CUDA: nvcc -c + gcc -c (+clang aarch64), exit 0
 
-# x86_64 CPU + HIP (the MI300A pairing), from the committed one-test fixture:
+# x86_64 CPU + HIP (the (x86_64, hip) pair), from the committed one-test fixture:
 litmus7 -gpu-target hip -o hip-out -set-libdir herd/libdir \
   hetlitmus/tests/het-x86/MP-cg-sys-relaxed-x86_64.litmus
 ( cd hip-out/MP-cg-sys-relaxed-x86_64 && sh comp.sh )  # hipcc --offload-arch=gfx942 -c
-
-# the AArch64 corpus paired with HIP is in no row of the machine table, so it
-# EMITS and claims less -- a stderr warning, no machine define:
-litmus7 -gpu-target hip -set-libdir herd/libdir hetlitmus/tests/het/MP-het.litmus
-# HetLitmus WARNING: the (CPU ISA x GPU dialect) pair (AArch64, hip) is in no row
-# of litmus/hetMachine.ml, so this harness NAMES NO MACHINE ...            exit 0
 ```
 
 The harness directory is written next to the current directory (or into the
@@ -170,18 +164,18 @@ happily.
 
 ### The emitted `README.md`, and what it points here for
 
-The emitted `README.md` is a page: the file list, the build and link commands,
-and a closing `Target:` line naming the part the pair's machine row entitles it
-to (the machine table below). Everything a reader needs *once* rather than per
-harness lives here instead: emission writes one harness directory per test per
-lane, so a paragraph put there is copied once per test.
+The emitted `README.md` is a page: the file list, the build and link commands, a
+closing `Target:` line naming the vendor and dialect it renders, and a `Pair:`
+line naming the pair it was built for. Everything a reader needs *once* rather
+than per harness lives here instead: emission writes one harness directory per
+test per lane, so a paragraph put there is copied once per test.
 
 **Where an emitted file's repo paths point.** Every repo path an emitted file
-names — `hetlitmus/docs/het-emission.md` in the README, `litmus/hetMachine.ml`
-and `hetlitmus/campaign.py` in the runtime headers — resolves against a
-herdtools7 checkout, never against the harness directory; the headers beside a
-harness are copies of `litmus/het-runtime/*`, so such a path names the original
-rather than the file next to it. A harness travels to a GPU box and comes back
+names — `hetlitmus/docs/het-emission.md` in the README, `hetlitmus/campaign.py`
+in the runtime headers — resolves against a herdtools7 checkout, never against
+the harness directory; the headers beside a harness are copies of
+`litmus/het-runtime/*`, so such a path names the original rather than the file
+next to it. A harness travels to a GPU box and comes back
 as a results tree, and those pointers are that tree's only trail back to the
 emitter: provenance for a reader who has the repo, inert for one who does not.
 
@@ -221,87 +215,45 @@ non-zero value is an `#error` on a render that has none
 (`litmus/het-runtime/het_alloc_hip.inc`) rather than a value reported in the
 banner without anything having been placed.
 
-## The machine table, and the machine a harness may name
+## The pair a harness names
 
 A harness is not "an AArch64 test" or "a HIP test": it is a **(CPU ISA x GPU
-dialect) PAIR**, and the silicon the run *names* belongs to that pair.
-`litmus/hetMachine.ml` is the table:
+dialect) PAIR**. That pair, and no machine, is what a render names.
 
-| pair              | row                    | machine defines stamped        |
-|-------------------|------------------------|--------------------------------|
-| (AArch64, cuda)   | GH200                  | link `NVLink-C2C`, Grace / Hopper halves, LLC 114 MB, Alglave-zero |
-| (x86_64, hip)     | MI300A                 | link `Infinity Fabric`, x86 / MI300A halves, LLC 256 MB |
-| (x86_64, cuda)    | registered, no machine — the dev box | none |
-| (AArch64, hip)    | in no row              | none, plus one stderr warning  |
+* **A render names no machine.** The words its printouts are written around —
+  `HET_LINK_NAME`, `HET_HOST_HALF`, `HET_DEV_HALF` — are plain `#define`s in
+  `litmus/het-runtime/het_verdict.h` naming the *mechanism*: the host-device
+  interconnect and its two halves. The emitter stamps none of them, so no build
+  can turn a printed sentence into a claim about a part. `HET_PLACE_LEVER` is
+  the one word that does vary, and it is a **dialect** fact rather than a
+  machine one (`cudaMemAdvise` on the CUDA render; the HIP render has no
+  placement code and `#error`s on a non-zero `HET_PLACE`).
+* **`Target:` names the vendor and the dialect.** The emitted `README.md` ends
+  with `Target: NVIDIA CUDA.` (or `Target: AMD HIP.`) — what the render *is*,
+  which the render itself decides.
+* **`Pair:` names what it was built for**, from `HET_PAIR_NAME`, which **every**
+  emission stamps because it is true of the binary. It is the short
+  `(ISA, dialect)` label the verdict and statistics layers print where they must
+  identify the target: a harness built for the wrong pair compiles, runs and
+  reports identically, and this define is the only thing that says which pair it
+  was measuring. `hetlitmus/hetlitmus-run.sh` spells the same label and refuses
+  a render that stamps another.
+* **The one target-specific *number* is a build knob.** `HET_LLC_MB` is the
+  last-level cache a noise buffer must exceed to cross the interconnect at all;
+  below it the buffer is served from cache and the noise stresses nothing. It is
+  supplied through the compile-knob channel above, e.g. on an MI300A box, whose
+  last level is the 256 MB MALL / AMD Infinity Cache on the IOD
+  ([Tee25 Table 1], p. 1111 — MI300A: sL1 16 KB, L2 4 MB/XCD, MALL 256 MB):
 
-Three rules make it worth having:
+  ```
+  make hip-bin HIPCC="hipcc -DHET_LLC_MB=256"
+  ```
 
-* **An empty cell is never filled from a neighbour.** Keying the machine on the
-  CPU ISA alone — what this replaced — described an x86+CUDA emission as an
-  MI300A, so its stderr told the reader which Infinity Fabric half had been
-  disabled on a box that has none.
-* **A pair with no row emits anyway, and claims less.** The tool
-  characterizes: an unregistered pair still has a machine somebody can run, and
-  what it loses is the right to name it. Emission warns on stderr and names the
-  registered pairs, stamps no machine define — so `het_verdict.h`'s and
-  `het_cpu_stress.h`'s own `#ifndef` fallbacks stand, and those name the
-  *mechanism* — and the render says in band which of the two nameless states it
-  is in (registered-without-a-row, or in no row at all). Nothing about the pair
-  can refuse an emission: `-allow-no-oracle` and the exit-3 refusal it opted out
-  of are gone with the retired oracle-derivation lineage, which lives outside
-  this tree, and `-gpu-target` remains mandatory as the render selector.
-* **The machine prose keys on the pair, not on the dialect.** The emitter stamps
-  `HET_LINK_NAME` / `HET_HOST_HALF` / `HET_DEV_HALF` / `HET_LLC_MB` (and
-  `HET_ALGLAVE_ZERO_MEASURED`, for the one measurement that is NVIDIA-only) from
-  the pair row; `het_verdict.h` prints from those defines and sniffs nothing. A
-  pair with no machine row stamps none of them and gets the header's generic
-  defaults, which name the *mechanism* — so a missing stamp can only ever weaken
-  a claim. `HET_PLACE_LEVER` is separate: the placement API is a *dialect* fact
-  (`cudaMemAdvise` on the CUDA render; the HIP render has no placement code and
-  `#error`s on a non-zero `HET_PLACE`).
-* **The defines are not the only place a harness names a machine.** The dialect
-  payloads (`litmus/het-runtime/*.inc`) are pasted into the render as *text*, and
-  the emitted `README.md` / `comp.sh` are prose — neither goes through a define,
-  and both once carried the part their sentences were written for onto lanes
-  entitled to none. They are now written with `@NAME@` holes filled from the row
-  that resolved (`HetMachine.mc_words` / `fill`), so an entitled lane prints the
-  words its row owns and a nameless one prints the mechanism; a hole no row has a
-  word for **refuses** the emission. `hetlitmus/verify/brandscan.py` is the
-  independent detector: printed string literals (comments stripped, adjacent
-  literals joined) plus `README.md`/`comp.sh`/`Makefile`, keyed on entitlement
-  because the two lanes with a row legitimately print their own machine's words.
-  `emit-all.sh` runs it once per lane, cram `machine-pairs.t` (e) on all four.
-
-### What the defines close, measured
-
-The machine prose once keyed on a string the harness carried for another purpose
-entirely, and inherited that string's blind spots: on an AMD-tagged harness it
-still called the two halves of the interconnect noise *"the Grace half"* and
-*"the Hopper half"*, and it would have said the same on an x86 host with an
-NVIDIA GPU. Measured 2026-08-03 on a real run of `2+2W-cpuonly-x86_64`, whose
-first two stderr lines were *"the Hopper half of the C2C noise is DISABLED"* and
-*"the Grace half … is DISABLED"*. Neither is a statement about the machine that
-ran. Keying on the **dialect** would have reproduced the same defect one table
-over: the host half is a property of the **pair**, so a dialect-keyed
-`HET_HOST_HALF` stamps *"the Grace half"* on the (x86_64, cuda) emission.
-
-`HET_LLC_MB` is the same rule applied to a *number*. The threshold a noise
-buffer must exceed to cross anything is per target: 114 MB is
-`max(Grace L3, Hopper L2)` ([Bagchi26 Table 1]) and **under-fires** on
-MI300A, whose last level is the 256 MB MALL / AMD Infinity Cache on the IOD
-([Tee25 Table 1], p. 1111 — MI300A: sL1 16 KB, L2 4 MB/XCD, MALL 256 MB). Each
-pair with a row stamps its own; 114 stays as `het_cpu_stress.h`'s `#ifndef`
-default, and where it is *not* the target's own figure the emitted warning says
-so instead of naming it as this machine's cache.
-
-### The build fact every pair stamps
-
-`HET_PAIR_NAME` is stamped from **every** pair, machine row or not, because it
-is true of the binary whatever the table says. It is the short `(ISA, dialect)`
-label the verdict and statistics layers print where they must identify the
-target: a harness built for the wrong pair compiles, runs and reports
-identically, and this define is the only thing that says which machine it was
-measuring.
+  With nothing supplied, `het_cpu_stress.h` defaults to 114 MB —
+  `max(Grace L3, Hopper L2)` ([Bagchi26 Table 1]), a figure measured on another
+  part — and sets `HET_LLC_MB_IS_FALLBACK`, which selects the arm of the
+  driver's warning that discloses it as a fallback rather than naming it as this
+  target's cache.
 
 ## The CPU object: native vs. cross-assembly
 
@@ -349,9 +301,6 @@ All het logic is confined to:
 * `litmus/hetCond.ml` — pure classification of a test's condition: which
   locations an observer buffer has to snoop, and the confidence tier a null
   from that condition shape may be reported at;
-* `litmus/hetMachine.ml` — the (CPU ISA, GPU dialect) pair table: which
-  machine a render may name and the words that fill each `@NAME@` hole of a
-  payload or an emitted sentence, so a pair with no row names no silicon;
 * `litmus/hetCpuFront.ml` — the per-CPU-ISA column frontend (`CpuF`), one
   module per supported CPU ISA;
 * the `` `Het `` dispatch arm in `litmus/top_litmus.ml` — the per-ISA module
@@ -420,9 +369,7 @@ reaches them.
 
 * CPU ISAs wired: **AArch64** and **x86_64** (selected by tag); GPU dialects
   wired: **CUDA** and **HIP** (selected by `-gpu-target`). All four pairings
-  emit; what the machine table decides is which of them may name a machine.
-  GH200 (AArch64+CUDA) and MI300A (x86_64+HIP) are the two science targets,
-  x86_64+CUDA is the dev box, and AArch64+HIP is in no row and names none.
+  emit, and each render stamps the pair it was built for as `HET_PAIR_NAME`.
 * Both CPU ISAs emit a **real tagged body**: store values rebound to
   `K*(_n+1)+mu`, loads recorded into per-iteration buffers, the tested
   mnemonics reproduced verbatim (`str`/`stlr`/`ldr`/`ldar`/`ldapr`/
@@ -440,10 +387,7 @@ reaches them.
   `HetLitmus REFUSED (het|gpu-only|isa-scan) <test>: <why>` on stderr and exits
   **3** (`HetArch.refused`).  litmus7's own batch driver would have reported the
   refusal and still exited 0, which made a missing harness look like success to
-  any caller that redirects stdout. An unregistered **pair** is not such a case
-  — that is a warning (the machine table above). What still refuses here is an
-  emission that would be wrong rather than merely nameless: a machine-word hole
-  no row has a word for.
+  any caller that redirects stdout.
 * The CPU projection supports plain straight-line procs (the het corpus). An
   instruction outside the tagged-body vocabulary is refused by name at
   classification, before any harness directory exists. A structural pseudo is

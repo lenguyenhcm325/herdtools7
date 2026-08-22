@@ -279,9 +279,16 @@ recorded, gated or described one, and no gate left behind to police the absence
 map, `-lattice` the ordering-strength lattice its siblings were selected on, and
 `-tuner` the stress autotuner whose objective was its death rate. `hetlitmus-order`
 had become `hetlitmus-lattice` and goes with it. One survivor moved rather than went:
-`hetlitmus-noracle-hw` → `hetlitmus-characterize-hw` (the unregistered-pair
-refusal became a warning, so what the gate reads off a real printout is whichever
-outcome arm the device took, not a refusal).
+`hetlitmus-noracle-hw` → `hetlitmus-characterize-hw` (what the gate reads off a real
+printout is whichever outcome arm the device took, not a refusal).
+
+**The (CPU ISA x GPU dialect) machine table went the same way** — `litmus/hetMachine.ml`,
+the `@NAME@` payload holes it filled, the entitlement checks in `runcheck.py` /
+`emit-all.sh` / `x86bodycheck.py` / `verdictcheck.py` / `hipbuildcheck.py`, the scanner
+`verify/brandscan.py` and the cram test `machine-pairs.t`. A render names no machine now:
+only the pair it was built for (`HET_PAIR_NAME`) and the mechanism words `het_verdict.h`
+defines. Nothing polices the absence, and the bites those checks carried were re-seated on
+surviving seams rather than dropped.
 
 **A gate that is not in the build is a script, not a gate — `hetlitmus-stats` is the
 worked example.** `statscheck.py` once sat in the tree with **no Makefile target invoking
@@ -310,13 +317,13 @@ Notes:
   (the same wrapper on a device).
 
 Cram stanzas: `hetlitmus/tests/cram/dune` is the authority and is not mirrored here — it
-carries four `(cram (applies_to …))` stanzas rather than one, because the tests split by
+carries three `(cram (applies_to …))` stanzas rather than one, because the tests split by
 the heaviest tool they need. The three Layer-1 tests (`basics`, `oracle-negatives`,
 `ptx-negatives`) declare **no** binary, so they stay toolchain-free; the emitting tests
 need `%{bin:litmus7}` **and the whole `tests/het` corpus**, since naming each test here
 would break silently the moment one of them touched a different row; `gpu-target`
-and `machine-pairs` are separate for reasons the file's own comments give. No stanza names
-`herd7`: cram covers emission, and the `.cat` lane is driven by hand. The `gpu-target`
+is separate for the reason the file's own comment gives. No stanza names `herd7`:
+cram covers emission, and the `.cat` lane is driven by hand. The `gpu-target`
 comment records a trap (`litmus/libdir` cannot be declared as a dep) — read it before
 adding a stanza.
 

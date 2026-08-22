@@ -53,8 +53,7 @@
   ; here would silently break the moment one of them touched a different row.
   (glob_files ../het/*.litmus)
   ; Every .hip render in these tests comes from ../het-x86: a HIP harness is the
-  ; (x86_64, hip) pair, the one this project has an MI300A row for
-  ; (litmus/hetMachine.ml).
+  ; (x86_64, hip) pair.
   (glob_files ../het-x86/*)
   ../gpu-only/MP-sys-acquire.litmus))
 
@@ -72,26 +71,8 @@
  (deps
   %{bin:litmus7}
   (glob_files ../het/*.litmus)
-  ; The HIP half of this test emits from the (x86_64, hip) pair, the one with an
-  ; MI300A row (litmus/hetMachine.ml; machine-pairs.t (b)).  ../het-x86 is the
-  ; committed fixture for that pair -- see its README for why the generated x86
-  ; corpus is not usable here (generate-x86.sh needs hetgen7 on $PATH).
+  ; The HIP half of this test emits from the (x86_64, hip) pair.  ../het-x86 is
+  ; the committed fixture for that pair -- see its README for why the generated
+  ; x86 corpus is not usable here (generate-x86.sh needs hetgen7 on $PATH).
   (glob_files ../het-x86/*)
   ../gpu-only/MP-sys-acquire.litmus))
-
-; machine-pairs.t guards the (CPU ISA x GPU dialect) MACHINE TABLE: which pairs
-; may name a machine, which are registered without one, which are in no row at
-; all -- and, the point of the table, that a pair NEVER inherits a neighbour's
-; machine name.  It reads emitted bytes only, so it needs no toolchain; both
-; corpora are staged because it emits a lane out of each.
-(cram
- (applies_to machine-pairs)
- (package herdtools7)
- (deps
-  %{bin:litmus7}
-  ; What a lane SAYS is a second surface from what it stamps, and one scanner
-  ; owns both rows' vocabularies (verify/brandscan.py); this test drives it on
-  ; all four lanes rather than restating the words.
-  ../../verify/brandscan.py
-  (glob_files ../het/*.litmus)
-  (glob_files ../het-x86/*)))

@@ -20,29 +20,14 @@
 #include <string.h>   /* memset: het_stats_compute zeroes its own aggregate  */
 
 /* ---------------------------------------------------------------------------
- * WHICH MACHINE THIS HARNESS MAY NAME.  Every word below is a claim about
- * silicon, so none of it is derived here: the emitter stamps these defines from
- * the MACHINE TABLE row (litmus/hetMachine.ml), the only place that knows
- * what (CPU ISA x GPU dialect) this harness was built for.  An unregistered pair
- * stamps nothing and these defaults stand; they name the MECHANISM rather than a
- * brand, so a missing stamp can only weaken a claim, never invent one.
- * Rationale and the defect it closes: hetlitmus/docs/het-emission.md.
+ * The words below name the mechanism and NEVER a part: a harness names no
+ * machine, and the pair it was built for is HET_PAIR_NAME.
+ * Design: hetlitmus/docs/het-emission.md.
  * ------------------------------------------------------------------------- */
-#ifndef HET_LINK_NAME       /* no leading article: use sites supply their own */
+/* no leading article: use sites supply their own */
 #define HET_LINK_NAME "host-device interconnect"
-#endif
-#ifndef HET_HOST_HALF
 #define HET_HOST_HALF "the host half"
-#endif
-#ifndef HET_DEV_HALF
 #define HET_DEV_HALF "the device half"
-#endif
-/* "Zero without stress" [Alglave15 sec 4.3.1] is one NVIDIA part's measurement:
-   1 only on an NVIDIA row, which names that part when quoting it, so everywhere
-   else the run is told the gap rather than being handed somebody else's. */
-#ifndef HET_ALGLAVE_ZERO_MEASURED
-#define HET_ALGLAVE_ZERO_MEASURED 0
-#endif
 /* The page-placement lever HET_PLACE drives, by its API name.  A DIALECT fact:
    the CUDA render calls cudaMemAdvise, the HIP render carries no placement code
    at all (and #errors on a non-zero HET_PLACE), so there the mechanism is
@@ -190,8 +175,7 @@ typedef struct het_obs_record {
        noise_cpu_rounds  0 => the host half of the interconnect noise never ran;
        noise_gpu_blocks  0 => the device half never ran.  Either way the run is NOT
                          interconnect-stressed, whatever HET_NOISE_* claimed.
-                         (Both halves are NAMED by HET_HOST_HALF/HET_DEV_HALF,
-                         stamped from the pair row.)
+                         (named by HET_HOST_HALF / HET_DEV_HALF above)
        cpu_aff_failures >0 => sched_setaffinity FAILED: the threads are wherever the
                          scheduler put them and the pinning is fiction.
        place_failures   >0 => HET_PLACE_LEVER was REFUSED: HET_PLACE placed nothing.
@@ -206,8 +190,9 @@ typedef struct het_obs_record {
      noise working set, and it decides whether the noise crosses anything at all:
      below the last-level cache the buffer is served from cache and generates no
      interconnect traffic, so a config that scores well at 8 MB scored a stressor
-     that was not running.  The argument is target-independent; the FIGURE is not,
-     and the emitter stamps the pair's own into HET_LLC_MB. */
+     that was not running.  The argument is target-independent; the FIGURE is not:
+     HET_LLC_MB (het_cpu_stress.h) is supplied per build, and its default is a
+     disclosed fallback. */
   uint32_t noise_ws_mb, place_mode;
   uint32_t stress_requested;    /* HET_REQ_* bitmask -- see above */
 } het_obs_record;
@@ -700,28 +685,10 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       fprintf(_ch, "    - %s of the %s noise did NOT run: this run "
                    "is not interconnect-stressed\n",
               HET_DEV_HALF, HET_LINK_NAME);
-    if (dq & HET_DQ_GPU_STRESS_DEAD) {
+    if (dq & HET_DQ_GPU_STRESS_DEAD)
       fprintf(_ch, "    - the GPU scratchpad stress was requested "
                    "(HET_PRE_STRESS_PCT/HET_MEM_STRESS_PCT) but het_do_stress "
                    "completed ZERO rounds: it never ran\n");
-      /* "Zero without stress" [Alglave15 Tab. 6] is one NVIDIA part's
-         measurement, and it is narrower than "nothing is observed": on that
-         chip mp and coRR WERE observed unstressed.  Printing it as a general
-         fact on an AMD-tagged run would be borrowing somebody else's number,
-         and no equivalent figure is published for that part, so the run is told
-         the gap instead.  Keyed on an explicit stamp, never on the shape of a
-         string: the emitter sets HET_ALGLAVE_ZERO_MEASURED on the NVIDIA rows,
-         which name the measured part when they quote it, and on no others. */
-      if (HET_ALGLAVE_ZERO_MEASURED)
-        fprintf(_ch, "      On the NVIDIA GTX Titan the inter-CTA lb and sb tests "
-                     "were observed 0 per 100k without memory stress, while mp and "
-                     "coRR were observed (Alglave ASPLOS'15 Tab. 6)\n");
-      else
-        fprintf(_ch, "      (Alglave ASPLOS'15 Tab. 6's zero without memory stress "
-                     "is an NVIDIA GTX Titan measurement and is NOT claimed for this "
-                     "target; no equivalent figure is published for it, so the dead "
-                     "mechanism disqualifies this run on its own terms)\n");
-    }
     het_print_caveats(_ch, _r, cv);
     return;
   }

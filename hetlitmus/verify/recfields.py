@@ -14,8 +14,7 @@ why it needs no GPU.  Four properties, over real emissions of both pairs:
              some lane's code or by a staged runtime header.  A stamp nobody
              reads is a stamp whose name drifted.
   D Default  every stamped define that het_verdict.h reads has an `#ifndef'
-             default there, so a lane that stamps nothing still compiles and
-             still prints the mechanism rather than a vendor.
+             default there, so a lane that stamps nothing still compiles.
 
 Usage:  recfields.py [-q]      run the gate
         recfields.py --bite    prove it FAILS when the binding breaks
@@ -205,8 +204,8 @@ BITES = [
     ("the record stamped with a literal instead of the symbol", "0 time(s)",
      lambda s: s.replace("_rec.rec_magic = HET_REC_MAGIC;",
                          "_rec.rec_magic = 0x48455431u;")),
-    ("a machine define stamped under a drifted name", "HET_LINK_NAM ",
-     lambda s: s.replace("#define HET_LINK_NAME", "#define HET_LINK_NAM")),
+    ("a build-fact define stamped under a drifted name", "HET_PLACE_LEVR ",
+     lambda s: s.replace("#define HET_PLACE_LEVER", "#define HET_PLACE_LEVR")),
     ("a knob loses its #ifndef default in het_verdict.h", "no #ifndef default",
      None, lambda s: s.replace("#ifndef HET_PAIR_NAME", "#if 0")),
     # The other direction.  The two sides drift when either moves, so the header

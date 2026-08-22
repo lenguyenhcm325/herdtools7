@@ -117,9 +117,10 @@ let cuda_dialect = {
     gd_arch_flag = "-arch=" ; gd_arch_flag_first = false ;
     gd_obj_suffix = "" ;
     gd_readme_files =
-      "GPU kernel + host driver, CUDA dialect (gd_alloc_shared:\n\
-       \             @MALLOC_SITE@ / cudaMallocManaged fallback for the shared vars +\n\
-       \             barrier, cuda::atomic_ref system-scope barrier, pthread + kernel launch).\n" ;
+      "GPU kernel + host driver, CUDA dialect (gd_alloc_shared: system malloc\n\
+       \             where the GPU reaches pageable memory / cudaMallocManaged\n\
+       \             fallback for the shared vars + barrier, cuda::atomic_ref\n\
+       \             system-scope barrier, pthread + kernel launch).\n" ;
     gd_runtime_include = "#include <cuda/atomic>" ;
     gd_dump_instr = CudaLang.dump_instr ;
     gd_device_sync = "cudaDeviceSynchronize();" ;
@@ -133,10 +134,10 @@ let cuda_dialect = {
           ind ptr ind ind) ;
     gd_place_lever = Some "cudaMemAdvise" ;
     gd_shared_mem_note =
-      "// Shared vars + barrier use gd_alloc_shared: system malloc() on GH200 (ATS =>\n\
-       // cache-line CHI coherence over NVLink-C2C, the real inter-device protocol);\n\
-       // cudaMallocManaged only as the dev-box/CI fallback (managed = 2 MB page\n\
-       // migration on GH200, which masks the race).\n" ;
+      "// Shared vars + barrier use gd_alloc_shared: system malloc() where the device\n\
+       // reaches pageable host memory (ATS: cache-line coherence over the host-device\n\
+       // interconnect, the real inter-device protocol); cudaMallocManaged only as the\n\
+       // dev-box/CI fallback (managed = page migration, which masks the race).\n" ;
     gd_shared_mem_defs = HetPayloads.het_alloc_cuda_inc ;
     gd_noise_mem_defs = HetPayloads.het_noise_cuda_inc ;
     gd_err_t = "cudaError_t" ;
@@ -191,9 +192,9 @@ let hip_dialect = {
        place, and het_alloc_hip.inc turns a non-zero HET_PLACE into an #error. *)
     gd_place_lever = None ;
     gd_shared_mem_note =
-      "// Shared vars + barrier use gd_alloc_shared: fine-grained hipMallocManaged on\n\
-       // MI300A -- the only mode coherent for system-scope CPU<->GPU sync during a\n\
-       // live kernel (coarse-grained is visible only at kernel boundary).\n" ;
+      "// Shared vars + barrier use gd_alloc_shared: fine-grained hipMallocManaged --\n\
+       // the only mode coherent for system-scope CPU<->GPU sync during a live kernel\n\
+       // (coarse-grained is visible only at kernel boundary).\n" ;
     gd_shared_mem_defs = HetPayloads.het_alloc_hip_inc ;
     gd_noise_mem_defs = HetPayloads.het_noise_hip_inc ;
     gd_err_t = "hipError_t" ;

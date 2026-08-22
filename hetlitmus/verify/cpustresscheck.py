@@ -4,8 +4,8 @@
 # stresscheck.py, which does the same job for the GPU scratchpad layer.
 # ---------------------------------------------------------------------------
 # The cache preload (host cache hints: no order, no scope, not a model op), the CPU
-# enemies (host threads that never enter the PTX) and the C2C noise (a disjoint
-# buffer streamed with plain 64-bit loads) are invisible to both PTX gates, so
+# enemies (host threads that never enter the PTX) and the interconnect noise (a
+# disjoint buffer streamed with plain 64-bit loads) are invisible to both PTX gates, so
 # this file is the only thing guarding that layer.  It asks the two questions a
 # structural gate cannot: did the mechanisms survive the optimiser (static, read
 # off the compiled -O2 asm for both host ISAs), and do they do anything at run
@@ -454,7 +454,7 @@ def check(litmus_path, arch="sm_90", harness_dir=None, sel=None):
                  "window, which is where the het weak behaviour lives." % name)
             return ok[0], lines
 
-        # ---- preload-prims-aarch64: they survive -O2 on the GH200 host ISA -
+        # ---- preload-prims-aarch64: they survive -O2 on the AArch64 host ISA
         a64 = (asm_of(cpu_c, cross=True)
                if (want("preload-prims-aarch64") or want("enemy-loop")) else None)
         if want("preload-prims-aarch64"):
@@ -463,19 +463,19 @@ def check(litmus_path, arch="sm_90", harness_dir=None, sel=None):
                 if n < 1:
                     fail("preload-prims-aarch64: no `%s' in the -O2 asm -- litmus7's "
                          "cache preload is exactly these three primitives "
-                         "(libdir/_aarch64/_cache.h), so on the GH200 host ISA it is "
-                         "INERT." % prim)
+                         "(libdir/_aarch64/_cache.h), so on the AArch64 host ISA it "
+                         "is INERT." % prim)
             if ok[0]:
                 note("  preload-prims-aarch64: dc civac, prfm pldl1keep, prfm "
                      "pstl1keep all present in the -O2 asm")
 
-        # ---- preload-prims-x86: and on x86_64 (the MI300A host ISA) --------
+        # ---- preload-prims-x86: and on the x86_64 host ISA -----------------
         if want("preload-prims-x86"):
             x86 = asm_of(cpu_c, cross=False)
             for prim, rx in X86_PRIMS.items():
                 if len(rx.findall(x86)) < 1:
                     fail("preload-prims-x86: no `%s' in the -O2 asm -- the cache "
-                         "preload is INERT on the MI300A host ISA." % prim)
+                         "preload is INERT on the x86_64 host ISA." % prim)
             if ok[0]:
                 note("  preload-prims-x86: clflush and prefetcht0 present in the -O2 asm")
 
@@ -544,31 +544,31 @@ def check(litmus_path, arch="sm_90", harness_dir=None, sel=None):
         # point the enemies at the locations under test.  Both leave every other
         # check green.  (cu_src was read above, and nothing rewrites the .cu.)
 
-        # The noise working set decides whether the C2C noise crosses anything
-        # at all.  Below the last-level cache (Grace L3 is 114 MB
-        # [Bagchi26 Table 1]) the buffer is served from cache and generates NO
-        # interconnect traffic, so a config that "scored well" scored a stressor
-        # that was not running.  The allocation must therefore derive from
-        # HET_NOISE_MB, so that het_obs_record's noise_ws_mb describes the buffer
-        # really allocated, and the below-LLC guard must still be there.
+        # The noise working set decides whether the interconnect noise crosses
+        # anything at all.  Below the last-level cache the buffer is served from
+        # cache and generates NO interconnect traffic, so a config that "scored
+        # well" scored a stressor that was not running.  The allocation must
+        # therefore derive from HET_NOISE_MB, so that het_obs_record's
+        # noise_ws_mb describes the buffer really allocated, and the below-LLC
+        # guard must still be there.
         if want("noise-size"):
             m = re.search(r"_noise_words\s*=\s*([^;]+);", cu_src)
             if not m:
                 fail("noise-size: the driver does not compute _noise_words at all -- "
-                     "the C2C noise buffer is not sized by anything.")
+                     "the interconnect noise buffer is not sized by anything.")
             elif "HET_NOISE_MB" not in m.group(1):
-                fail("noise-size: the C2C noise working set is NOT derived from "
-                     "HET_NOISE_MB (_noise_words = %s), so it is decoupled from the tuned "
-                     "knob and from noise_ws_mb in the record; below the LLC (%s) it is "
-                     "served from cache and stresses NOTHING."
-                     % (m.group(1).strip(), "Grace L3 = 114 MB"))
+                fail("noise-size: the interconnect noise working set is NOT derived "
+                     "from HET_NOISE_MB (_noise_words = %s), so it is decoupled from the "
+                     "tuned knob and from noise_ws_mb in the record; below the LLC (%s) "
+                     "it is served from cache and stresses NOTHING."
+                     % (m.group(1).strip(), "HET_LLC_MB, fallback 114 MB"))
             elif "HET_LLC_MB" not in cu_src:
                 fail("noise-size: the below-last-level-cache guard is gone.  A noise "
                      "buffer that fits in cache generates no interconnect traffic, and "
                      "nothing else in the run would say so.")
             else:
-                note("  noise-size: the C2C noise working set derives from HET_NOISE_MB "
-                     "and the below-LLC guard is present")
+                note("  noise-size: the interconnect noise working set derives from "
+                     "HET_NOISE_MB and the below-LLC guard is present")
 
         # The disjoint-scratchpad invariant [Sorensen16 sec 1].  The enemies
         # must hammer a private buffer.  An enemy pointed at a tested location does
@@ -673,18 +673,18 @@ def check(litmus_path, arch="sm_90", harness_dir=None, sel=None):
                         off["noise_rounds"]))
 
         if want("gpu-noise"):
-            # ---- gpu-noise: the Hopper noise blocks survive nvcc -----------
+            # ---- gpu-noise: the device-side noise blocks survive nvcc ------
             if not os.path.exists(NVCC):
                 note("  gpu-noise SKIPPED (no nvcc): the GPU noise is unchecked here")
             else:
                 n_on = count_noise_ops(ptx_of(cu, [], arch, tmp))
                 if n_on < 1:
                     fail("gpu-noise-live: the emitted PTX carries NO volatile 64-bit "
-                         "global load -- nvcc DELETED the Hopper noise stream.  Its "
-                         "accumulator must be kept alive (volatile reads + a sink).")
+                         "global load -- nvcc DELETED the device-side noise stream.  "
+                         "Its accumulator must be kept alive (volatile reads + a sink).")
                 else:
-                    note("  gpu-noise-live: the Hopper noise survives nvcc (%d volatile "
-                         "64-bit global load(s) in the PTX)" % n_on)
+                    note("  gpu-noise-live: the device-side noise survives nvcc (%d "
+                         "volatile 64-bit global load(s) in the PTX)" % n_on)
                 counts = {b: count_noise_ops(ptx_of(cu, ["-DHET_NOISE_GPU_BLOCKS=%d" % b],
                                                     arch, tmp))
                           for b in (0, 4, 16)}
