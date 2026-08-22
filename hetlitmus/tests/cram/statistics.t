@@ -15,7 +15,7 @@ indistinguishable from one that works.
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
 
 THE RECORDS MUST OUTLIVE THE RUN LOOP.  The statistics are computed over the
-(instance,run) cells, so a single reused _rec would leave nothing to aggregate.
+per-run records, so a single reused _rec would leave nothing to aggregate.
 The loop may stop early (HET_ADAPTIVE), so the records land at _nrec and the
 post-pass scores _nrec -- the cells actually run, never the compiled constant.
 

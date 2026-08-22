@@ -42,7 +42,7 @@ matching free (free() for malloc, cudaFree for managed -- a mismatched free is U
 
 Each grep is SCOPED to one function body rather than counted file-wide, and that
 is the rule everywhere in this file.  A file-wide count cannot discriminate:
-the mode banner in (g) queries cudaDevAttrPageableMemoryAccessUsesHostPageTables
+the mode banner in (e) queries cudaDevAttrPageableMemoryAccessUsesHostPageTables
 -- a different attribute whose name CONTAINS this one -- and the mode resolver's
 FATAL message names the attribute in prose, so raising the expectation to absorb
 them lets the check pass for a harness that has lost the dispatch query entirely.
@@ -222,7 +222,7 @@ the query, which is a classification that always answers "APU".
   1
 
 The banner is on stdout and precedes the guards, so a FATAL is readable next to
-the attributes that caused it -- the same rule as (g).
+the attributes that caused it -- the same rule as (e).
   $ printf '%s\n' "$HMODE" | grep -c 'HetLitmus: shared-mem mode=managed (HET_ALLOC=%s'
   1
 

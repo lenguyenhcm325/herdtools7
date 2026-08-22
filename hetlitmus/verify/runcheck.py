@@ -59,8 +59,8 @@ X86_TESTS = ["CoRR-cg-sys-fence-2s-x86_64", "CoRR-cg-sys-relaxed-x86_64",
              "S-cg-sys-fence-x86_64", "S-cg-sys-relaxed-x86_64"]
 # The (AArch64, *) lane is the committed het corpus, and a session over all of it
 # is not a gate.  The cut below is copied out of it verbatim at run time --
-# the tests plus the map campaign.py reads beside them -- so it is not a second
-# fixture that could go stale; it is the corpus, minus rows.
+# the tests plus the map the wrapper requires beside them -- so it is not a
+# second fixture that could go stale; it is the corpus, minus rows.
 AARCH64_DIR = os.path.join(HETL, "tests", "het")
 AARCH64_TESTS = ["MP-cg-sys-acqrel-2s", "MP-cg-sys-acquire", "MP-cg-sys-relaxed",
                  "S-cg-sys-fence", "S-cg-sys-relaxed"]

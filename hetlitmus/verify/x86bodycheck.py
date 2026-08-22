@@ -210,10 +210,10 @@ def split_bodies(region):
     return bodies
 
 
-def resolve_bodies(cpu_c, splitter=split_bodies):
+def resolve_bodies(cpu_c):
     """[(proc, fname, lines)] for one harness, in proc order."""
-    return [(proc, fname, lines)
-            for (proc, fname), lines in sorted(splitter(host_region(cpu_c)).items())]
+    bodies = split_bodies(host_region(cpu_c))
+    return [(proc, fname, lines) for (proc, fname), lines in sorted(bodies.items())]
 
 
 RE_ASM_ST = re.compile(r'^\s*"movq %\[_v(\d+)\],\(%\[(\w+)\]\)\\n"$')
@@ -317,7 +317,7 @@ def check_fidelity(phase, corpus, name, recs):
     return compared, own
 
 
-def phase2(corpus, good, splitter=split_bodies):
+def phase2(corpus, good):
     print("== body-fidelity: every emitted body IS its own test's column ==")
     # Derived from the CORPUS, not from [good]: a run that emitted nothing must
     # fail the pin instead of passing on zero comparisons.
@@ -331,7 +331,7 @@ def phase2(corpus, good, splitter=split_bodies):
         if "(void)_n;" in region:
             fail("body-fidelity", "%s: the host arm still carries a STUB body ((void)_n)" % name)
             continue
-        recs = resolve_bodies(cpu_c, splitter)
+        recs = resolve_bodies(cpu_c)
         c, own = check_fidelity("body-fidelity", corpus, name, recs)
         compared += c
         for p in sorted(x86procs - own):
@@ -388,13 +388,13 @@ def check_liveness(phase, name, recs):
     return nst, nld
 
 
-def phase3(corpus, good, splitter=split_bodies):
+def phase3(corpus, good):
     print("== tag-liveness: stores tag, loads reach a buffer ==")
     _, want_st, want_ld = corpus_x86_census(corpus)
     own_st = own_ld = 0
     for name, d in sorted(good.items()):
         cpu_c = os.path.join(d, name + "_cpu.c")
-        recs = resolve_bodies(cpu_c, splitter)
+        recs = resolve_bodies(cpu_c)
         a, b = check_liveness("tag-liveness", name, recs)
         own_st += a
         own_ld += b

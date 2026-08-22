@@ -517,10 +517,10 @@ class Gfx942(LoweringProfile):
                  lambda t: _sub_first(t, r'^\tglobal_load_dword '
                                          r'(?![^\n]*sc0)[^\n]* sc1\n', '',
                                       "an agent-scope scaffolding load")),
-        # _sub_all, not _sub_first: this is the whole model block leaving, and
-        # the block match has to report the lane rather than satisfy it with
-        # another block.  The observer's snoops are the only 64-bit
-        # system-scope loads a het render carries.
+        # _sub_all, not _sub_first: the whole model block has to leave, so the
+        # block match reports the lane instead of matching a shortened one.  It
+        # reaches every 64-bit system-scope load in the render, which on the
+        # resolved carrier are the observer's two snoops.
         Mutation("an observer lane's WHOLE snoop pair DELETED",
                  "het-obs", 1, ":obs [",
                  lambda t: _sub_all(t, r'^\tglobal_load_dwordx2 [^\n]* sc0 sc1\n',
@@ -933,10 +933,10 @@ def match_blocks(result, expected, actual, tail_allowed):
 
     The compiler lays blocks in an order of its own, so the match is on
     contents, which makes it a multiset equality: any permutation of the
-    expected sequences across procs, lanes or instances passes, and attributing
-    an op to a lane is the source gate's job (hipsrccheck.py).  With
-    tail_allowed an unmatched block may hold loads -- the interconnect-noise
-    reader and the folded counter reads live in those -- and nothing else."""
+    expected sequences across procs or lanes passes, and attributing an op to a
+    lane is the source gate's job (hipsrccheck.py).  With tail_allowed an
+    unmatched block may hold loads -- the interconnect-noise reader and the
+    folded counter reads live in those -- and nothing else."""
     want = collections.defaultdict(list)
     empty = [lab for lab, toks in expected if not toks]
     for lab, toks in expected:

@@ -405,8 +405,8 @@ end = struct
      CPU+GPU emitter), hetGpuOnly.ml (the `LISA arm), hetCpuFront.ml (the
      per-CPU-ISA column frontend).  What remains here is the seam: HetOpts is
      the slice of Top's scope they need, over which the dispatch arms below
-     close their functors -- the `Het one also over the splitter and Make's
-     compiled-CPU-code extractor -- so none of them depends on this file. *)
+     close their functors -- the `Het one also over Make's compiled-CPU-code
+     extractor -- so none of them depends on this file. *)
   module HetOpts = struct
     let verbose = OT.verbose
     let nocatch = OT.nocatch

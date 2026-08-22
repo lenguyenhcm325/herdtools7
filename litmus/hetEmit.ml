@@ -775,7 +775,7 @@ end
             if is_true weak_expr || is_false weak_expr then
               Warn.fatal
                 "hetlitmus: %s would emit a CONSTANT weak-behaviour detector \
-                 (_weak = %s) -- refusing to emit (SHARED-CHARGE.md)"
+                 (_weak = %s) -- refusing to emit"
                 tname weak_expr ;
             let sync_src =
               List.find_opt
