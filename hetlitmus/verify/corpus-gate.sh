@@ -98,8 +98,8 @@ corpus_regen() {
 }
 
 # What one generator run produces: its tests plus the @all manifest.  Anything
-# else a corpus directory holds (the generators themselves, the control maps) is
-# not generated and is not this check's business.
+# else a corpus directory holds (the generators themselves) is not generated and
+# is not this check's business.
 list_products() {
   ( cd "$1" && ls -1 ) 2>/dev/null | grep -E '\.litmus$|^@all$' | LC_ALL=C sort
 }

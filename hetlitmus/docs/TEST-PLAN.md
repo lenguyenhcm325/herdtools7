@@ -311,8 +311,8 @@ Cram stanzas: `hetlitmus/tests/cram/dune` is the authority and is not mirrored h
 carries four `(cram (applies_to …))` stanzas rather than one, because the tests split by
 the heaviest tool they need. The three Layer-1 tests (`basics`, `oracle-negatives`,
 `ptx-negatives`) declare **no** binary, so they stay toolchain-free; the emitting tests
-need `%{bin:litmus7}` **and the whole `tests/het` corpus plus `control-map.csv`**, since
-an emission co-runs `mu(T)` and the canary and there is no principled subset; `gpu-target`
+need `%{bin:litmus7}` **and the whole `tests/het` corpus**, since naming each test here
+would break silently the moment one of them touched a different row; `gpu-target`
 and `machine-pairs` are separate for reasons the file's own comments give. No stanza names
 `herd7`: cram covers emission, and the `.cat` lane is driven by hand. The `gpu-target`
 comment records a trap (`litmus/libdir` cannot be declared as a dep) — read it before

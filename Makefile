@@ -781,7 +781,7 @@ hetlitmus-x86body: | build
 	python3 hetlitmus/verify/x86bodycheck.py --bite
 	@ echo "HetLitmus x86-64 tagged CPU body gate: OK (and the gate bites)"
 
-### hetlitmus/tests/het-x86 is still, byte for byte, what its generators emit --
+### hetlitmus/tests/het-x86 is still, byte for byte, what its generator emits --
 ### it is the only committed route to the populated (x86_64, hip) pair
 ### (hetlitmus/verify/x86fixturecheck.py).  Re-cut it per its own README.md.
 hetlitmus-x86fixture: | build

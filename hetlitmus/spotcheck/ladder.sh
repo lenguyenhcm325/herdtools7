@@ -3,10 +3,9 @@
 # HetLitmus dev-tier LADDER -- seven rungs, run on the rented instance.
 # =========================================================================
 # WHAT THIS IS.  A machinery spot check: does the emitted harness build, link,
-# launch, rendezvous across the two devices, drive its knobs, keep its co-running
-# controls hot, print a parseable reporting frame, and pool across invocations?
-# Every one of those is a property of the CODE, and every one can be checked on a
-# GPU that is not a GH200.
+# launch, rendezvous across the two devices, drive its knobs, print a parseable
+# reporting frame, and pool across invocations?  Every one of those is a property
+# of the CODE, and every one can be checked on a GPU that is not a GH200.
 #
 # WHAT THIS IS NOT.  An evaluation; its numbers are not results.  A non-GH200 box
 # has no ATS and no NVLink-C2C, so the shared vars do not sit on one cache line
@@ -22,7 +21,7 @@
 #
 # ---- runtime knobs -------------------------------------------------------
 # The harness has exactly six runtime (getenv) knobs.  Everything else --
-# HET_PLACE, the stress percentages, HET_NWIN, SIZE_OF_TEST, NUMBER_OF_RUN -- is
+# HET_PLACE, the stress percentages, SIZE_OF_TEST, NUMBER_OF_RUN -- is
 # compile-time and is set through the compiler, e.g.
 #   make cuda-bin NVCC="nvcc -DHET_MEM_STRESS_PCT=0"
 # (why: het_verdict.h, "RUNTIME knobs" -- a -D the device code can see is how a
@@ -173,37 +172,6 @@ check_retired() { # log
   return 1
 }
 
-# The geometry the rung PICKED this test for, pinned against the harness that
-# arrived: a subset re-emitted from a corpus whose control rule moved would
-# otherwise still run, and quietly stop covering what it was chosen to cover.
-check_geometry() { # test want_control
-  local cu="$TESTS_DIR/$1/$1.cu" bad=0
-  grep -q "^#define HET_CONTROL_COMPILED_IN $2" "$cu" || {
-    echo "    WRONG PICK: $1 was chosen as a HET_CONTROL_COMPILED_IN=$2 row"
-    echo "      but its harness says $(sed -n 's/^#define HET_CONTROL_COMPILED_IN //p' "$cu" | head -1)"; bad=1; }
-  grep -q '^#define HET_CANARY_COMPILED_IN 1' "$cu" || {
-    echo "    MISSING: no canary compiled in"; bad=1; }
-  return $bad
-}
-
-# The calibration channel, both directions.  The harness calibrates off mu(T)
-# when it co-runs one AND that one fired, and off the canary otherwise, so the
-# channel it names is a function of mu_total that holds on any machine -- and a
-# row with no mu(T) can only ever say canary.
-check_control_channel() { # log test has_control
-  local ctrl mu want
-  ctrl="$(statfield "$1" "$2" ctrl)"; mu="$(statfield "$1" "$2" mu_total)"
-  if [ "$3" = 0 ] && [ "${mu:-0}" != 0 ]; then
-    echo "    IMPOSSIBLE: mu_total=$mu on a harness that co-runs no mu(T)"; return 1
-  fi
-  want=canary; [ "${mu:-0}" != 0 ] && want='mu(T)'
-  [ "$ctrl" = "$want" ] || {
-    echo "    CHANNEL: ctrl=${ctrl:-<missing>} with mu_total=${mu:-<missing>} -- want $want"
-    return 1; }
-  echo "    channel: ctrl=$ctrl (mu_total=${mu:-?} can_total=$(statfield "$1" "$2" can_total))"
-  return 0
-}
-
 # =========================================================================
 # RUNG 0 -- build the subset, objects then executable.
 # =========================================================================
@@ -290,9 +258,8 @@ row 1 "HET_ALLOC bites" "$([ $r1 -eq 0 ] && echo PASS || echo FAIL)" "fail-close
 # =========================================================================
 # RUNG 2 -- the ONE-SIDED row, at tiny N: the ordering annotation sits on the
 # GPU proc alone (an acquire at cta scope, the narrowest the corpus emits) and
-# the CPU proc is plain stores.  Its harness still co-runs mu(T) and the canary,
-# so what this rung reads is a three-instance launch's frames and its caveat
-# machinery, not the physics.
+# the CPU proc is plain stores.  What this rung reads is the launch's frames and
+# its caveat machinery, not the physics.
 # =========================================================================
 echo; echo "== rung 2: one-sided row, tiny N =="
 T2="MP-cg-cta-acquire"; r2=0
@@ -302,8 +269,6 @@ if [ -d "$TESTS_DIR/$T2" ]; then
   [ "$rc" -eq 0 ] || { echo "  FAIL  rc=$rc"; r2=1; }
   check_machinery "$log" "$T2" || r2=1
   check_retired "$log" || r2=1
-  check_geometry "$T2" 1 || r2=1
-  check_control_channel "$log" "$T2" 1 || r2=1
   echo "    frame:  $(grep -m1 "^HetVerdict $T2 " "$log" | cut -c1-140)"
   echo "    caveats:$(grep -c '  CAVEAT:' "$log") line(s)"
   grep -m3 '  CAVEAT:' "$log" | sed 's/^/      /'
@@ -314,13 +279,11 @@ row 2 "one-sided row, tiny N ($T2)" "$([ $r2 -eq 0 ] && echo PASS || echo FAIL)"
 
 # =========================================================================
 # RUNG 3 -- the TWO-SIDED row: both halves carry an ordering annotation (CPU
-# DMB SY, GPU fence.sc.sys), and its mu(T) is the fully relaxed sibling, so this
-# one dir holds T + mu(T) + canary in one launch on one padded arena -- 3
-# instances, NPART=6, and the whole co-run stack.  The sighting count k and the
-# two control totals are reported, never adjudicated: no prediction ships with
-# this bundle, so no count here can disagree with one.
+# DMB SY, GPU fence.sc.sys), which is the only way a het cycle is closed from
+# both ends.  The sighting count k is reported, never adjudicated: no prediction
+# ships with this bundle, so no count here can disagree with one.
 # =========================================================================
-echo; echo "== rung 3: two-sided row, mu(T) co-running =="
+echo; echo "== rung 3: two-sided row =="
 T3="MP-cg-sys-fence-2s"; r3=0; r3note=""
 if [ -d "$TESTS_DIR/$T3" ]; then
   invoke "$T3" rung3 HET_RUNS_MAX="$LADDER_RUNS_TINY" HET_SEED="$((LADDER_SEED0+1))"; rc=$?
@@ -328,42 +291,37 @@ if [ -d "$TESTS_DIR/$T3" ]; then
   [ "$rc" -eq 0 ] || { echo "  FAIL  rc=$rc"; r3=1; }
   check_machinery "$log" "$T3" || r3=1
   check_retired "$log" || r3=1
-  check_geometry "$T3" 1 || r3=1
-  check_control_channel "$log" "$T3" 1 || r3=1
   k="$(statfield "$log" "$T3" k)"
   echo "    frame:  $(grep -m1 "^HetVerdict $T3 " "$log" | cut -c1-140)"
   echo "    k=${k:-?} (this test's own count, on ${LADDER_RUNS_TINY} run(s))"
-  r3note="k=${k:-?} mu_total=$(statfield "$log" "$T3" mu_total)"
+  r3note="k=${k:-?}"
 else
   echo "  FAIL  $T3 not in the bundle"; r3=1
 fi
-row 3 "two-sided + mu(T) ($T3)" "$([ $r3 -eq 0 ] && echo PASS || echo FAIL)" "${r3note:-not run}"
+row 3 "two-sided row ($T3)" "$([ $r3 -eq 0 ] && echo PASS || echo FAIL)" "${r3note:-not run}"
 
 # =========================================================================
-# RUNG 4 -- the widest launch in the corpus, and the two rows that co-run no
-# mu(T).  IRIW-gcgc-* is 4 procs of which 2 are GPU procs, so with mu(T) and the
-# canary beside it the launch is NPART=10 across 5 blocks: the corpus maximum on
-# both axes, and so the closest any pick comes to a cooperative-launch limit.
-# R and 2+2W sit at the lattice floor, where no strictly weaker sibling exists to
-# co-run, so their calibration falls to the canary and the harness has to say so
-# on its own machine line.
+# RUNG 4 -- the widest launch in the corpus, and the two rows whose outcome is
+# hardest to decode.  IRIW-gcgc-sys-fence is 4 procs of which 2 are GPU procs,
+# so its launch is NPART=4 across 2 blocks with 2 spin lanes -- the corpus
+# maximum on all three axes, and so the closest any pick comes to a
+# cooperative-launch limit.  R needs both decode channels at once and 2+2W is
+# store-only, so between them they cover the two ways a target can fail to
+# arrive.
 # =========================================================================
-echo; echo "== rung 4: widest launch + the mu(T)-less rows =="
+echo; echo "== rung 4: widest launch + the fragile decodes =="
 r4=0
-for pick in IRIW-gcgc-sys-fence:1 R-cg-sys-relaxed:0 2+2W-cg-sys-relaxed:0; do
-  t="${pick%:*}"; want_ctl="${pick#*:}"
+for t in IRIW-gcgc-sys-fence R-cg-sys-relaxed 2+2W-cg-sys-relaxed; do
   [ -d "$TESTS_DIR/$t" ] || { echo "  FAIL  $t not in the bundle"; r4=1; continue; }
   invoke "$t" rung4 HET_RUNS_MAX="$LADDER_RUNS_MAIN" HET_SEED="$((LADDER_SEED0+2))"; rc=$?
   log="$RESULTS/$t-rung4.log"
-  echo "  $t (mu(T) co-running: $want_ctl)"
+  echo "  $t"
   [ "$rc" -eq 0 ] || { echo "  FAIL  $t rc=$rc"; r4=1; }
   check_machinery "$log" "$t" || r4=1
   check_retired "$log" || r4=1
-  check_geometry "$t" "$want_ctl" || r4=1
-  check_control_channel "$log" "$t" "$want_ctl" || r4=1
   echo "    $(grep -m1 "^HetVerdict $t " "$log" | cut -c1-140)"
 done
-row 4 "widest launch + mu(T)-less rows" "$([ $r4 -eq 0 ] && echo PASS || echo FAIL)" "3 rows, geometry pinned"
+row 4 "widest launch + fragile decodes" "$([ $r4 -eq 0 ] && echo PASS || echo FAIL)" "3 rows, frames printed"
 
 # =========================================================================
 # RUNG 5 -- the stress knobs, off then on.  Off is a REBUILD, because the
@@ -450,7 +408,7 @@ row 5 "stress off -> on ($T5)" "$([ $r5 -eq 0 ] && echo PASS || echo FAIL)" "kno
 # =========================================================================
 echo; echo "== rung 6: campaign pooling =="
 # One stop rule per row, so the only knobs are the budget and the confirmation
-# window: the corpus is the whole schedule (campaign.py reads no map).
+# window: the corpus campaign.py is pointed at is the whole schedule.
 r6=0
 STATE="$RESULTS/campaign-state.csv"
 python3 "$HERE/campaign.py" \

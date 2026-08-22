@@ -104,8 +104,7 @@ The five required pieces, and where each is reused rather than reimplemented:
    `asm __volatile__("str %x[_v0],[%[x]]" ...)` block carrying the tested
    mnemonics verbatim — hand-rolled, and genuine inline asm. `<t>.cu`'s
    `cpu_thread_P<n>` arrives at the barrier and calls the `extern "C"
-   het_run_<prefix>P<n>(...)` that `<t>_cpu.c` defines, one per co-running
-   instance.
+   het_run_P<n>(...)` that `<t>_cpu.c` defines, one per CPU proc.
 
 2. **P(gpu) → a GPU kernel (CUDA *and* HIP).** The arm projects onto the
    Bell/LISA side (`HetArch.to_gpu_pseudo`) and builds the kernel by reusing the
@@ -185,16 +184,6 @@ harness are copies of `litmus/het-runtime/*`, so such a path names the original
 rather than the file next to it. A harness travels to a GPU box and comes back
 as a results tree, and those pointers are that tree's only trail back to the
 emitter: provenance for a reader who has the repo, inert for one who does not.
-
-**Why the co-run layers are in the launch.** A null result is evidence only if
-the harness would have seen a weak behaviour had one occurred. Every instance
-listed in a co-running harness therefore shares one launch, one stress config
-and one interconnect path, on disjoint cache-line-padded locations. *Layer A* is
-the test under study's structural twin at the lattice floor — every ordering
-annotation dropped. *Layer B* is the fixed het canary. Neither carries a
-prediction: their counts say how hot the harness was, and nothing about what the
-test ought to have done. `litmus/het-runtime/het_verdict.h` holds the rule that
-reads them.
 
 **Why there is one binary path per vendor.** Both link paths write `./<t>`, so
 `hetlitmus/spotcheck/run-one.sh` and `hetlitmus/campaign.py` exec `./<test>`,
@@ -305,28 +294,14 @@ pair with a row stamps its own; 114 stays as `het_cpu_stress.h`'s `#ifndef`
 default, and where it is *not* the target's own figure the emitted warning says
 so instead of naming it as this machine's cache.
 
-### Two build facts every pair stamps
+### The build fact every pair stamps
 
-`HET_PAIR_NAME` and `HET_NO_CONTROL_MAP` are stamped from **every** pair,
-machine row or not, because they are true of the binary whatever the table says.
-
-* `HET_PAIR_NAME` is the short `(ISA, dialect)` label the verdict and statistics
-  layers print where they must identify the target. A harness built for the
-  wrong pair compiles, runs and reports identically; this define is the only
-  thing that says which machine it was measuring.
-* `HET_NO_CONTROL_MAP` says the positive-control map was **not beside the
-  test**. The map is keyed on the CPU frontend
-  (`HetCpuFront.control_map_csv`: AArch64 → `control-map.csv`, x86_64 →
-  `control-map-amd.csv`) and looked for on every lane, because `mu(T)` is a
-  weakening on a strength lattice and the lattice is the CPU column's. Where it
-  is missing nothing marks any row the canary, and the statistics layer must not
-  read "co-runs no control" as "it IS the Layer-B canary":
-  `HET_ST_SELF_CONTROL` requires the record to **name itself** its canary, the
-  same test the per-run liveness block makes, and a different sentence is
-  printed for each. The denominator is `R` in both: the selection effect
-  ("usable" is defined by firing where nothing co-runs) is identical, and
-  classifying over the survivors would report ALWAYS for a row that fired in 3
-  runs of 10.
+`HET_PAIR_NAME` is stamped from **every** pair, machine row or not, because it
+is true of the binary whatever the table says. It is the short `(ISA, dialect)`
+label the verdict and statistics layers print where they must identify the
+target: a harness built for the wrong pair compiles, runs and reports
+identically, and this define is the only thing that says which machine it was
+measuring.
 
 ## The CPU object: native vs. cross-assembly
 
@@ -366,12 +341,11 @@ All het logic is confined to:
   Bell/LISA test with no CPU column, parsed once and written out as one bare
   kernel file in the selected dialect (no harness directory, no payloads);
 * `litmus/hetEmit.ml` — the `HetEmit.Make` functor (the dialect-parameterised
-  file emitter), with two of its phases as their own modules:
-  `litmus/hetControlMap.ml` (the positive-control map) and the tagged
-  CPU body, split into `litmus/hetCpuPlan.ml` (the node type, the `cpu_plan`
-  the emitter consumes and the C frame both are rendered into) plus
-  `litmus/hetCpuBodyA64.ml` and `litmus/hetCpuBodyX86.ml` (one classifier and
-  one pair of asm operand shapes per CPU ISA);
+  file emitter), with the tagged CPU body split out into its own modules:
+  `litmus/hetCpuPlan.ml` (the node type, the `cpu_plan` the emitter consumes and
+  the C frame both are rendered into) plus `litmus/hetCpuBodyA64.ml` and
+  `litmus/hetCpuBodyX86.ml` (one classifier and one pair of asm operand shapes
+  per CPU ISA);
 * `litmus/hetCond.ml` — pure classification of a test's condition: which
   locations an observer buffer has to snoop, and the confidence tier a null
   from that condition shape may be reported at;
@@ -427,20 +401,16 @@ byte-identical to before (the cpu column keeps its `cpu` back-compat tag).
   `hetlitmus/tests/het/generate-x86.sh OUTDIR` — never committed, because 94
   of them are byte-identical to a sibling (x86-TSO collapses the four CPU order
   tokens onto two images) and `dupcheck.py` rejects duplicates. Their names are
-  1:1 with the 471-test corpus (`<corpus name>-x86_64`), which is what lets
-  `control-map-amd.csv` stay keyed on the unsuffixed names: `generate-x86.sh`
-  re-keys its five name-valued columns (`Test`, `Mu`, `MuAlt`, `MuRelaxed`,
-  `Canary` — columns 1, 2, 4, 5, 6 of the six-column schema) onto the suffixed
-  renderings and copies nothing else.
+  1:1 with the 471-test corpus (`<corpus name>-x86_64`), which is what lets a
+  gate pin one census against both.
 * A het emission that **cannot** be completed is fail-closed: litmus7 prints
   `HetLitmus REFUSED (het|gpu-only|isa-scan) <test>: <why>` on stderr and exits
   **3** (`HetArch.refused`).  litmus7's own batch driver would have reported the
   refusal and still exited 0, which made a missing harness look like success to
   any caller that redirects stdout. An unregistered **pair** is not such a case
   — that is a warning (the machine table above). What still refuses here is an
-  emission that would be wrong rather than merely nameless: an unresolvable
-  control-map row, a legacy control-map header, or a machine-word hole no row
-  has a word for.
+  emission that would be wrong rather than merely nameless: a machine-word hole
+  no row has a word for.
 * The CPU projection supports plain straight-line procs (the het corpus). An
   instruction outside the tagged-body vocabulary is refused by name at
   classification, before any harness directory exists. A structural pseudo is

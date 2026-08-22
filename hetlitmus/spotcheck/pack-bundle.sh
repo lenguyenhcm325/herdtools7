@@ -14,8 +14,6 @@
 #
 # WHAT IS IN IT
 #   tests/<name>/        the emitted harness dirs named in TESTS.txt
-#   control-map.csv      which mu(T) and canary each test co-runs, and WHY that
-#                        pick -- the reason is nowhere in the harness itself
 #   campaign.py          the cross-invocation pooling driver
 #   probe.cu probe-cuda.sh  what does this machine offer (run FIRST)
 #   ladder.sh run-one.sh the seven rungs, and campaign.py's --runner template
@@ -115,9 +113,8 @@ if [ "${#missing[@]}" -gt 0 ]; then
   exit 1
 fi
 
-echo "[4/5] adding driver, probe, ladder, control map, stamp"
+echo "[4/5] adding driver, probe, ladder, stamp"
 cp "$HETL/campaign.py"                 "$BUNDLE/"
-cp "$HETL/tests/het/control-map.csv"   "$BUNDLE/"
 cp "$HERE/probe.cu" "$HERE/probe-cuda.sh" "$HERE/ladder.sh" "$HERE/run-one.sh" \
    "$HERE/TESTS.txt" "$HERE/README.md" "$BUNDLE/"
 chmod +x "$BUNDLE/probe-cuda.sh" "$BUNDLE/ladder.sh" "$BUNDLE/run-one.sh"
@@ -137,12 +134,12 @@ chmod +x "$BUNDLE/probe-cuda.sh" "$BUNDLE/ladder.sh" "$BUNDLE/run-one.sh"
   echo "subset_count=${#WANT[@]}"
   # The GEOMETRY each pick was made for, read off the harness that actually
   # shipped -- the launch size the ladder's rungs are keyed to, legible before the
-  # instance is even rented.  ladder.sh re-checks the control column per rung.
+  # instance is even rented.
   for t in "${WANT[@]}"; do
     cu="$BUNDLE/tests/$t/$t.cu"
     echo "subset_test=$t npart=$(sed -n 's/^#define NPART //p' "$cu" | head -1)" \
          "blocks=$(sed -n 's/^#define HET_TEST_BLOCKS //p' "$cu" | head -1)" \
-         "control=$(sed -n 's/^#define HET_CONTROL_COMPILED_IN //p' "$cu" | head -1)"
+         "spin_lanes=$(sed -n 's/^#define HET_SPIN_LANES //p' "$cu" | head -1)"
   done
   echo "emitter_sha256=$(sha256sum "$REPO/litmus/hetEmit.ml" | cut -d' ' -f1)"
   # hetDialect.ml carries the per-vendor records the render is built from, so

@@ -4,27 +4,21 @@
 # against a prediction: each rung asks what the emitted harness DOES, never what
 # an outcome ought to have been.  Five harnesses, chosen so that between them
 # they stand at the ends of every axis the emitted machinery is parameterised by
-# -- proc count, GPU lanes, which decode channel carries the outcome, and whether
-# a mu(T) co-runs.  A sixth pick would add procs or annotations, not mechanisms.
-#
-# READ THIS BEFORE ADDING A TEST.  Every selected harness CO-RUNS the canary
-# MP-{cg,gc}-sys-relaxed inside its own launch, so the fully-relaxed het-MP floor
-# -- the single likeliest thing to fire on any machine -- rides along with all
-# five for free.  Adding a relaxed test as a sixth would buy nothing that is not
-# already in the co-run.
+# -- proc count, GPU lanes, scope, which side of the cycle is annotated, and
+# which decode channel carries the outcome.
 #
 # Format: <test> <TAB> <role> <TAB> <rationale>.  pack-bundle.sh reads field 1
-# and FAILS if any name is not an emitted harness dir; ladder.sh pins each pick's
-# HET_CONTROL_COMPILED_IN, so a corpus whose control rule moved reddens a rung
-# rather than silently changing what the rung covers.  Which mu(T) and canary a
-# test co-runs, and why that pick, is tests/het/control-map.csv.
+# and FAILS if any name is not an emitted harness dir; ladder.sh reads field 1
+# too, and names its own picks per rung, so a name changed here without changing
+# ladder.sh leaves a rung reporting that its pick is not in the bundle.
 
-MP-cg-sys-fence-2s	1-two-sided-with-mu	TWO-SIDED: both halves carry an ordering annotation (CPU DMB SY, GPU fence.sc.sys), which is the only way a het cycle is closed from both ends. Co-runs mu(T)=MP-cg-sys-relaxed AND the canary in ONE launch on ONE padded arena, so this single dir exercises the whole co-run stack: 3 instances, NPART=6, HET_CONTROL_COMPILED_IN=1, the mu-map, and the calibration channel switching to mu(T) the moment mu(T) fires.
-MP-cg-cta-acquire	2-one-sided	ONE-SIDED: the only annotation is on the GPU proc, and it is an acquire at cta scope -- the narrowest scope the corpus emits, so the residual weakness sits on a GPU reader whose acquire does not reach the CPU thread. Same 3-instance geometry as the two-sided pick, so the pair isolates the CPU-side annotation as the only difference.
-IRIW-gcgc-sys-fence	3-widest-launch	THE LARGEST LAUNCH IN THE CORPUS: 4 procs of which 2 are GPU procs, so with mu(T) and the canary beside it the harness is NPART=10 across 5 blocks with 5 spin lanes -- the maximum on all three axes. It is the shape whose barrier and scaffolding could outgrow a cooperative launch, and the only one where that would show.
-R-cg-sys-relaxed	4-both-decode-channels-no-mu	BOTH DECODE CHANNELS AT ONCE: its condition is `exists (1:r0=0 /\ [y]=2)', a register outcome AND a final-memory outcome on the same row, so the target can only be recovered if the synchrony decode and the CPU observer are BOTH live -- the only pick where one dead channel cannot be masked by the other. It also sits at the lattice floor, where no strictly weaker sibling exists to co-run, so HET_CONTROL_COMPILED_IN=0 and the calibration falls to the canary -- the exception the machine line has to declare. R is the fragile half of the R/S observer asymmetry, which makes it the honest choice over S.
-2+2W-cg-sys-relaxed	5-store-only-no-mu	STORE-ONLY (both procs write; no tested load), so interleavings_detected is structurally 0 and the CPU observer is the ONLY decode channel the outcome can arrive on. This is the shape whose _hot signal and observer liveness are hardest to keep live and where the exhaustive-scan degeneracy guard has the least to work with. Also at the lattice floor: HET_CONTROL_COMPILED_IN=0, canary calibration.
+MP-cg-sys-fence-2s	1-two-sided	TWO-SIDED: both halves carry an ordering annotation (CPU DMB SY, GPU fence.sc.sys), which is the only way a het cycle is closed from both ends. Its geometry is the subset's smallest -- NPART=2, one block, one spin lane -- so what a rung reads off it is the annotation and not the launch.
+MP-cg-cta-acquire	2-one-sided	ONE-SIDED: the only annotation is on the GPU proc, and it is an acquire at cta scope -- the narrowest scope the corpus emits, so the residual weakness sits on a GPU reader whose acquire does not reach the CPU thread. Same geometry as the two-sided pick (NPART=2, one block, one spin lane), so the pair isolates the CPU-side annotation as the only difference.
+IRIW-gcgc-sys-fence	3-widest-launch	THE LARGEST LAUNCH IN THE CORPUS: 4 procs of which 2 are GPU procs, so the harness is NPART=4 across 2 blocks with 2 spin lanes -- the maximum on all three axes. It is the shape whose barrier and scaffolding could outgrow a cooperative launch, and the only pick here where that would show.
+R-cg-sys-relaxed	4-both-decode-channels	BOTH DECODE CHANNELS AT ONCE: its condition is `exists (1:r0=0 /\ [y]=2)', a register outcome AND a final-memory outcome on the same row, so the target can only be recovered if the synchrony decode and the CPU observer are BOTH live -- the only pick where one dead channel cannot be masked by the other. R is the fragile half of the R/S observer asymmetry, which makes it the honest choice over S.
+2+2W-cg-sys-relaxed	5-store-only	STORE-ONLY (both procs write; no tested load), so interleavings_detected is structurally 0 and the CPU observer is the ONLY decode channel the outcome can arrive on. This is the shape whose _hot signal and observer liveness are hardest to keep live and where the exhaustive-scan degeneracy guard has the least to work with.
 
-# Rung 5 (stress off -> on) reuses MP-cg-sys-fence-2s: it is the pick with the
-# largest co-run stack, so a stress-off rebuild is visible as the controls going
-# COLD (HET_DQ_CONTROLS_COLD) rather than as an unfalsifiable "still saw nothing".
+# Rung 5 (stress off -> on) reuses MP-cg-sys-fence-2s: it rebuilds that dir
+# twice with different -D knobs and compares the two transcripts' HetObs
+# mechanism counters, so the pick has only to be a het harness the subset
+# already builds.

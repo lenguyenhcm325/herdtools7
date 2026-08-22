@@ -1019,7 +1019,6 @@ def check_test(litmus_path, arch, asm_override=None, verbose=True):
     # path, including the one where no compile runs.
     f = None
     if kind == 'Het':
-        hip.load_control_map_amd(litmus_path)
         expected, f = expected_het(profile, inst)
     else:
         expected = expected_gpu_only(profile, inst)
@@ -1465,11 +1464,6 @@ def sweep(gpu_dir, x86_dir, arch, jobs):
         if generated:
             x86_dir = hip.regen_x86(os.path.join(tmp, "corpus"))
         x86_files = hip.corpus_files(x86_dir, "x86_64 het", hip.X86_HET_N)
-        if not os.path.exists(os.path.join(x86_dir, hip.CONTROL_MAP)):
-            raise GateError(
-                "no %s in the x86_64 het corpus %s -- a corpus short of the map "
-                "it is pinned against is refused, never swept"
-                % (hip.CONTROL_MAP, x86_dir))
         print("===== ISA READ-BACK GATE: %d gpu-only + %d x86_64 het renders ====="
               % (hip.GPU_ONLY_N, hip.X86_HET_N))
         print("  %s" % toolchain_banner())
@@ -1749,13 +1743,6 @@ def bite(arch, tmp):
     b.record("an x86_64 het corpus SHORT of its census", 3,
              "holds %d .litmus, expected %d" % (len(few), hip.X86_HET_N),
              *capture(lambda: sweep(hip.GPU_ONLY_DIR, short, arch, 2)))
-
-    names = [os.path.basename(p)[:-len(".litmus")] for p in het_files]
-    nomap = hip.corpus_slice(corpus, os.path.join(b.work, "nomap"), names,
-                             drop_map=True)
-    b.record("a FULL-SIZE x86_64 het corpus carrying no map", 3,
-             "a corpus short of the map it is pinned against",
-             *capture(lambda: sweep(hip.GPU_ONLY_DIR, nomap, arch, 2)))
 
     b.record("a sweep worker KILLED, which breaks the pool without raising", 3,
              "a sweep worker died without raising",

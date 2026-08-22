@@ -10,12 +10,11 @@ probe reads off the machine.
 
 It **can** establish that the code works: that a harness dir builds and links,
 that both devices launch and rendezvous, that `HET_ALLOC` selects a shared-memory
-mode and refuses the illegal ones, that the co-running controls stay hot and the
-machine line names the control channel its stationarity gate read, that every
-reporting frame is printed and parseable, that the stress knobs actually reach
-the build, and that `campaign.py` pools across invocations, so a row is scored
-over more `(instance,run)` cells than one invocation holds. Every one of those is
-a property of the code and is checkable anywhere.
+mode and refuses the illegal ones, that every reporting frame is printed and
+parseable, that the stress knobs actually reach the build, and that `campaign.py`
+pools across invocations, so a row is scored over more `(instance,run)` cells
+than one invocation holds. Every one of those is a property of the code and is
+checkable anywhere.
 
 It **cannot** establish anything about a memory model — and neither can the
 bundle, which ships no prediction to compare a row against. A non-GH200 box also
@@ -72,11 +71,9 @@ MI300X hardware*.
   `hetlitmus/verify/hipbuildcheck.py` phase 5 now pins in both directions.
 
 `pack-bundle.sh` ships whole harness dirs, so the `.hip`, the HIP arms of
-`comp.sh` and the `hip-bin` target travel with every bundle already. It also
-ships `control-map.csv` — the NVIDIA pair's map, which is what says why each
-harness co-runs the companion it does. An AMD bundle needs `control-map-amd.csv`
-*and* x86-rendered harnesses (`generate-x86.sh`); `pack-bundle.sh` does not
-assemble that pairing yet, so it must not be pointed at an AMD run.
+`comp.sh` and the `hip-bin` target travel with every bundle already. An AMD
+bundle needs x86-rendered harnesses (`generate-x86.sh`) as well, which
+`pack-bundle.sh` does not assemble yet, so it must not be pointed at an AMD run.
 
 ## Order of operations
 
@@ -98,12 +95,12 @@ sh ladder.sh         # rungs 0-6
 ## This ladder vs. `hetlitmus/hetlitmus-run.sh`
 
 Two different jobs, deliberately not merged. **This ladder** is the *machinery*
-spot check: seven rungs that ask whether the knobs, the controls and the pooling
-still work on a rented box, driven from an unpacked bundle. **The wrapper** is
-the *session*: preflight → probe → emit → compile → campaign → collect, driven
-from a checkout on the machine under test, and it records the pair, the resolved
-arch and the mode so the results dir can be read afterwards. The wrapper does
-not run the ladder, and the ladder does not emit.
+spot check: seven rungs that ask whether the knobs, the reporting frames and the
+pooling still work on a rented box, driven from an unpacked bundle. **The
+wrapper** is the *session*: preflight → probe → emit → compile → campaign →
+collect, driven from a checkout on the machine under test, and it records the
+pair, the resolved arch and the mode so the results dir can be read afterwards.
+The wrapper does not run the ladder, and the ladder does not emit.
 
 `probe-hip.sh` is the AMD side of `probe-cuda.sh` for the wrapper's
 `--gpu-target hip` lane. It records what `hipcc`, `amdgpu-arch` and `rocminfo`
@@ -154,23 +151,18 @@ the toolkit version on a fresh instance is one of the things being probed.
 
 Five harnesses; see `TESTS.txt` for the per-test rationale. They are keyed to
 what the emitted machinery *is*, not to what any model says about them: a
-two-sided row with `mu(T)` co-running, a one-sided row whose only annotation is
-a cta-scope GPU acquire, the corpus's widest launch (`IRIW-gcgc-*`: 4 procs,
-NPART=10, 5 blocks), and the two lattice-floor rows that have no `mu(T)` to
-co-run — one needing both decode channels at once (R), one store-only (2+2W).
-`ladder.sh` pins each pick's `HET_CONTROL_COMPILED_IN`, so a corpus whose control
-rule moved reddens the rung instead of silently changing what it covers. Every
-one of them co-runs the canary `MP-{cg,gc}-sys-relaxed` inside its own launch, so
-the fully-relaxed het-MP floor — the likeliest thing to fire anywhere — rides
-along with all five.
+two-sided row, a one-sided row whose only annotation is a cta-scope GPU acquire,
+the corpus's widest launch (`IRIW-gcgc-sys-fence`: 4 procs, NPART=4, 2 blocks,
+2 spin lanes), and the two rows whose outcome is hardest to decode — one needing
+both decode channels at once (R), one store-only (2+2W).
 
 ## Known quirks, so nobody rediscovers them at $/hour
 
-* **`campaign.py` reads no map at all.** The corpus is the whole schedule and
-  every row takes one stop rule; the only knobs are `--budget-runs`,
-  `--confirm-runs` and `--rate`. A row that fires once and will not repeat runs
-  for the confirmation window (30 runs by default) **counted from the run it
-  fired in**, which carries it **past** `--budget-runs`, and ends
+* **`campaign.py` schedules the corpus and nothing else.** The corpus is the
+  whole schedule and every row takes one stop rule; the only knobs are
+  `--budget-runs`, `--confirm-runs` and `--rate`. A row that fires once and will
+  not repeat runs for the confirmation window (30 runs by default) **counted from
+  the run it fired in**, which carries it **past** `--budget-runs`, and ends
   `UNCONFIRMED-SIGHTING`. A row firing in its last budgeted run therefore costs
   `--budget-runs + --confirm-runs`: budget your instance time for that, not for
   the budget alone.

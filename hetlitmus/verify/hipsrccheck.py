@@ -71,13 +71,6 @@ LITMUS7 = os.path.join(REPO, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(REPO, "litmus", "libdir")
 PTXCHECK = os.path.join(HERE, "ptxcheck.py")
 
-# The map the generated x86_64 het corpus carries beside its tests
-# (hetlitmus/tests/het/generate-x86.sh writes it).
-CONTROL_MAP = "control-map-amd.csv"
-# Asserted verbatim: the retired 8-column schema binds Mu to a verdict string,
-# so a file that does not open with this line is refused rather than read.
-CONTROL_MAP_HEADER = "Test,Mu,MuRule,MuAlt,MuRelaxed,Canary"
-
 # The corpus, pinned.  ptxcheck.py reads these same gpu-only tests with the
 # AArch64 het rendering; the AMD lane's het half is the x86_64 rendering of the
 # same shapes, which hetlitmus/tests/het/generate-x86.sh writes on demand, and
@@ -278,41 +271,6 @@ def x86_ops_of_column(cells):
                 "(a bare global `(x)' on one side, an immediate or a register "
                 "on the other)" % c)
     return ops
-
-
-def load_control_map_amd(litmus_path):
-    """Assert the corpus beside [litmus_path] is the whole one: CONTROL_MAP is
-    there, under its exact header, with a row for this test.
-
-    The x86_64 corpus is generated on demand, so a short or reschemaed one is a
-    refusal (exit 2) rather than a sweep of whatever happens to be there.  "No
-    row" and "no file" stay two different refusals."""
-    d = os.path.dirname(os.path.abspath(litmus_path))
-    f = os.path.join(d, CONTROL_MAP)
-    if not os.path.exists(f):
-        raise CompletenessError(
-            "no %s beside %s -- the AMD lane reads that map, so a corpus "
-            "without it is not the corpus this gate sweeps" % (CONTROL_MAP, d))
-    name = ptx.litmus_name(ptx.read_litmus(litmus_path))
-    rows, header = [], None
-    with open(f) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or line.startswith('#'):
-                continue
-            if header is None:
-                header = line
-                continue
-            rows.append(line.split(','))
-    if header != CONTROL_MAP_HEADER:
-        raise CompletenessError(
-            "%s header is %r, expected %r" % (f, header, CONTROL_MAP_HEADER))
-    for c in rows:
-        if len(c) == 6 and c[0] == name:
-            return
-    raise CompletenessError(
-        "%s has no row for %s -- a corpus short of the map it is pinned "
-        "against is refused, never swept" % (f, name))
 
 
 def instance_of(litmus_path):
@@ -1231,12 +1189,6 @@ def check_test(litmus_path, hip_override=None, cpu_c_override=None, verbose=True
     result = Result()
     result.note("=== %s [%s, %s corpus] ===" % (name, kind, corpus))
 
-    # The corpus is asserted BEFORE anything is emitted, so a corpus the gate
-    # cannot read is its own refusal on every path -- including --hip-src, where
-    # litmus7 never runs and its refusals never fire.
-    if kind == 'Het':
-        load_control_map_amd(litmus_path)
-
     tmp = tempfile.mkdtemp(prefix="hipsrccheck_")
     try:
         if hip_override is not None:
@@ -1334,9 +1286,6 @@ def guard_report():
         print("  %-38s %s  %s" % (what, p, "" if ok else "*** MISSING ***"))
         if must and not ok:
             bad += 1
-    print("  %-38s %s, beside the .litmus (x86_64 het)"
-          % ("the corpus map, asserted present", CONTROL_MAP))
-    print("  %-38s %r" % ("its header, asserted verbatim", CONTROL_MAP_HEADER))
 
     print("\n-- GPU annotation -> emitted HIP construct (litmus/HipLang.ml) --")
     print("  w[o,s] <var> <value>   __hip_atomic_store(<var>, <value>, <ORDER>, <SCOPE>)")
@@ -1435,8 +1384,7 @@ def regen_x86(dst):
     """The x86_64 het corpus, regenerated into [dst].
 
     It is generated on demand rather than committed (hetlitmus/tests/het/
-    generate-x86.sh says why), so every run rebuilds it, and the map it writes
-    there is control-map-amd.csv alone."""
+    generate-x86.sh says why), so every run rebuilds it."""
     r = subprocess.run(["bash", GEN_X86, dst],
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if r.returncode != 0:
@@ -1511,11 +1459,6 @@ def sweep(gpu_dir, x86_dir, jobs):
             tmp = tempfile.mkdtemp(prefix="hipsrccheck-x86.")
             x86_dir = regen_x86(os.path.join(tmp, "corpus"))
         x86_files = corpus_files(x86_dir, "x86_64 het", X86_HET_N)
-        if not os.path.exists(os.path.join(x86_dir, CONTROL_MAP)):
-            raise GateError(
-                "no %s in the x86_64 het corpus %s -- a corpus short of the map "
-                "it is pinned against is refused, never swept"
-                % (CONTROL_MAP, x86_dir))
         print("===== HIP SOURCE GATE: %d gpu-only + %d x86_64 het renders ====="
               % (GPU_ONLY_N, X86_HET_N))
         print("  gpu-only    %s" % gpu_dir)
@@ -1654,24 +1597,6 @@ class Bites:
                            cur=cur if cur is not None else hip)
 
 
-def reheader(text):
-    """The corpus map under a schema the gate does not assert.
-
-    The header is found the way load_control_map_amd finds it -- the first line
-    that is neither blank nor a comment -- because the file's own preamble
-    quotes the header in a comment, and an injection that rewrote the comment
-    would change the bytes and corrupt nothing."""
-    lines = text.splitlines()
-    for i, l in enumerate(lines):
-        if not l.strip() or l.startswith('#'):
-            continue
-        if l != CONTROL_MAP_HEADER:
-            raise GateError("--bite: %s is not the map header" % l)
-        lines[i] = l + ",Verdict"
-        return "\n".join(lines) + "\n"
-    raise GateError("--bite: the corpus map has no header line to rewrite")
-
-
 def _worker_dies(_litmus_path):
     """A sweep worker that dies without raising, which --bite puts in the pool:
     _sweep_one's handler never sees it, and the pool breaks instead."""
@@ -1693,18 +1618,13 @@ def synth_carrier(d, name):
     return p
 
 
-def corpus_slice(src_dir, dst, names, drop_map=False, edit_map=None):
-    """A corpus directory holding only [names] and the map, which is what a map
-    injection needs: the corpus assertion resolves the map beside the test."""
+def corpus_slice(src_dir, dst, names):
+    """A corpus directory holding only [names], which is what a census injection
+    needs: the sweep asserts the census before it reads a single test."""
     os.makedirs(dst)
     for n in names:
         shutil.copyfile(os.path.join(src_dir, n + ".litmus"),
                         os.path.join(dst, n + ".litmus"))
-    if not drop_map:
-        rows = open(os.path.join(src_dir, CONTROL_MAP)).read()
-        if edit_map is not None:
-            rows = edit_map(rows)
-        open(os.path.join(dst, CONTROL_MAP), "w").write(rows)
     return dst
 
 
@@ -2030,32 +1950,13 @@ def bite(tmp):
             "no newline escape closes", het_l, hip=h_hip, cpu_c=w,
             orig=h_cpu, cur=w)
 
-    # ---- the .litmus side and the corpus map --------------------------------
-    print("\n-- the annotation, and the map the corpus is asserted against --")
+    # ---- the .litmus side ---------------------------------------------------
+    print("\n-- an annotation the mapping tables have no row for --")
     bad_l = os.path.join(b.work, "consume.litmus")
     open(bad_l, "w").write(SYNTH_BODY % ("UNKNOWN-anno", "w[consume,sys] x 1",
                                          "r[acquire,sys] r0 y"))
     b.record("an annotation order nothing maps (w[consume,sys])", 2,
              "unknown memory order 'consume'", *run_check(bad_l))
-
-    trio = [BITE_HET, "2+2W-cg-sys-relaxed-x86_64", "MP-cg-sys-relaxed-x86_64"]
-    d = corpus_slice(corpus, os.path.join(b.work, "map-absent"), trio, drop_map=True)
-    b.record("the corpus map ABSENT (the corpus is not the pinned one)",
-             2, "the AMD lane reads that map",
-             *run_check(os.path.join(d, BITE_HET + ".litmus"), hip=h_hip, cpu_c=h_cpu))
-
-    d = corpus_slice(corpus, os.path.join(b.work, "map-rowless"), trio,
-                     edit_map=lambda s: "\n".join(
-                         l for l in s.splitlines()
-                         if not l.startswith(BITE_HET + ",")) + "\n")
-    b.record("the corpus map carrying NO ROW for the test", 2, "has no row for",
-             *run_check(os.path.join(d, BITE_HET + ".litmus"), hip=h_hip, cpu_c=h_cpu))
-
-    d = corpus_slice(corpus, os.path.join(b.work, "map-reheaded"), trio,
-                     edit_map=reheader)
-    b.record("the corpus map under a DIFFERENT header (the retired schema)", 2,
-             "header is", *run_check(os.path.join(d, BITE_HET + ".litmus"),
-                                     hip=h_hip, cpu_c=h_cpu))
 
     # ---- the two rows no corpus test carries --------------------------------
     print("\n-- the fence rows no corpus test carries, green then bitten --")
@@ -2091,6 +1992,7 @@ def bite(tmp):
              "holds 0 .litmus, expected %d" % GPU_ONLY_N,
              *capture(lambda: sweep(empty, corpus, 2)))
 
+    trio = [BITE_HET, "2+2W-cg-sys-relaxed-x86_64", "MP-cg-sys-relaxed-x86_64"]
     short = corpus_slice(corpus, os.path.join(b.work, "short"), trio)
     b.record("an x86_64 het corpus SHORT of its census", 3,
              "holds 3 .litmus, expected %d" % X86_HET_N,

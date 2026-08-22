@@ -84,20 +84,17 @@ On a het render it further asks, per lane:
 * the **window-opener** `het_spin` on the device-scope spin word,
 * the **model ops** in column order,
 * the **tagged store values**, derived from `hetEmit.ml`'s own plan rather than
-  matched for shape: `mu` runs over the instance's stores (procs in index order,
+  matched for shape: `mu` runs over the test's stores (procs in index order,
   stores in column order) and `K` is one past the last, and the numbering is
   shared with the CPU column, so either side gaining a store moves every later
   tag,
 * the **result stores** (one per read register) and the completion bump on
   `_gpu_done`,
 * an **observer** lane's snoops, one per location it watches, recorded into that
-  location's own buffer,
-* the **per-instance alias binding**: a co-run harness embeds `T`, its `mu(T)`
-  and its canary, and where the map names the same sibling twice the instances
-  are told apart by a label, not by name, so an alias bound to another instance's
-  global fails, and
-* the **lane count** against the lane plan — a missing lane on a control instance
-  means the harness reports a positive control it is not running.
+  location's own buffer, and
+* the **lane count** against the lane plan — a kernel with more or fewer
+  barrier-joining lanes than the plan names is running something other than the
+  test, and every per-lane compare below it would then be against the wrong lane.
 
 The **x86_64 CPU half** is the `.litmus` CPU column's rendering, compared mnemonic
 for mnemonic against the tagged asm bodies of the `_cpu.c` real-asm block: a
@@ -129,8 +126,7 @@ gate has no model for: an unknown annotation, an unmapped `__ATOMIC_*` or
 `__HIP_MEMORY_SCOPE_*` constant, an AMDHSA sync-scope string outside
 `{workgroup, agent, ""}`, an x86_64 mnemonic or operand shape outside
 `hetCpuBodyX86`'s own arms, a kernel guard the lane plan cannot be matched
-against, an atomic-or-fence construct with no model, and a control map that is
-absent, differently headed or has no row for the test. Exit 1 is a *known*
+against, and an atomic-or-fence construct with no model. Exit 1 is a *known*
 construct in the wrong place: an ordered diff of the lane's anchors. Exit 3 is
 a gate error (a corpus that is missing, empty or short of its census; a worker
 that died).
@@ -160,12 +156,12 @@ python3 hetlitmus/verify/hipsrccheck.py --bite
 operand shapes, the het lane anchors, the loop vocabulary, the device-helper
 whitelist, the two stray-construct vocabularies by region, and the exit
 contract. `--bite` emits two pristine renders — a gpu-only shape carrying both
-fences, both kinds of model op and two `__out` slots, and the het co-run carrying
-`T`, `mu(T)`, the canary, two observer lanes and a tagged CPU column with an
-`MFENCE` — runs both clean, then makes each injection on a fresh copy. It
-defends itself three ways, each seen to fire: an injection whose anchor is absent
-hard-exits, one that changes no byte is a vacuous bite, and an assertion nothing
-prints is a wrong reason.
+fences, both kinds of model op and two `__out` slots, and a het shape with two
+observer lanes, a GPU test lane carrying two tagged stores across a fence and a
+tagged CPU column with an `MFENCE` between its stores — runs both clean, then
+makes each injection on a fresh copy. It defends itself three ways, each seen to
+fire: an injection whose anchor is absent hard-exits, one that changes no byte is
+a vacuous bite, and an assertion nothing prints is a wrong reason.
 
 ### What it does not prove
 
@@ -353,10 +349,9 @@ bundle triple, which every AMD generation shares, are machinery.
 
 `--reps` is the fast mode: per `(kind, order, scope)` row present in the corpus
 it takes the first carrier by test name (a gpu-only test preferred), then adds
-one test per fixed het shape — a co-run trio with an observer lane, an IRIW with
-more than one GPU proc, a system-scope seq_cst fence carrier, and the degenerate
-test that is its own canary and runs a single lane. The set is **derived from the
-corpus every run**, never pinned.
+one test per fixed het shape — a test with an observer lane, an IRIW with more
+than one GPU proc, a system-scope seq_cst fence carrier, and a test that runs a
+single lane. The set is **derived from the corpus every run**, never pinned.
 
 "First by name" is not stable under corpus growth, which is why the tripwire
 re-reads the annotation rows **off the files** rather than off the rep builder's
@@ -510,9 +505,8 @@ reddens the repaired check:
 * the completeness guard reached only vector-memory mnemonics, so `image_*`,
   `s_store_*`, `s_barrier` and others would have been dropped with no token and
   no refusal;
-* and two checks — the inlined-stress count law and the sweep's control-map
-  refusal — passed on every input an in-tree path could produce until an
-  injection was written that reaches them.
+* and the inlined-stress count law passed on every input an in-tree path could
+  produce until an injection was written that reaches it.
 
 ## Scope and limits
 
@@ -540,9 +534,8 @@ in one place and kept in the other.
 * **Block matching is a multiset over ALL lanes and procs**
   (`amdisacheck.py:38-47`, `match_blocks` at `:929`). Any permutation of the
   expected sequences passes — not only a swap of two symmetric procs, but an
-  ordering effect moved out of the test instance's lane into its `mu(T)`
-  control's lane. Lane attribution is the source gate's, which compares each
-  lane's ops in order and binds each instance's aliases; a permutation at ISA
+  ordering effect moved out of one lane into another. Lane attribution is the
+  source gate's, which compares each lane's ops in order; a permutation at ISA
   level could only come from one at source level, a compiler having no way to
   move code across mutually exclusive `blockIdx`/`threadIdx` guards. No
   `blockIdx` recovery is attempted.

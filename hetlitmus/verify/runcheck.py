@@ -54,17 +54,14 @@ import brandscan          # noqa: E402  (the tree's own module, next to this one
 # The committed (x86_64, *) fixture, cut verbatim from a generate-x86.sh run and
 # kept that way by hetlitmus-x86fixture.
 X86_DIR = os.path.join(HETL, "tests", "het-x86")
-X86_TESTS = ["CoRR-cg-sys-fence-2s-x86_64", "CoRR-cg-sys-relaxed-x86_64",
-             "MP-cg-sys-acqrel-2s-x86_64", "MP-cg-sys-relaxed-x86_64",
-             "S-cg-sys-fence-x86_64", "S-cg-sys-relaxed-x86_64"]
+X86_TESTS = ["CoRR-cg-sys-fence-2s-x86_64", "MP-cg-sys-acqrel-2s-x86_64",
+             "MP-cg-sys-relaxed-x86_64", "S-cg-sys-fence-x86_64"]
 # The (AArch64, *) lane is the committed het corpus, and a session over all of it
-# is not a gate.  The cut below is copied out of it verbatim at run time --
-# the tests plus the map the wrapper requires beside them -- so it is not a
-# second fixture that could go stale; it is the corpus, minus rows.
+# is not a gate.  The cut below is copied out of it verbatim at run time, so it
+# is not a second fixture that could go stale; it is the corpus, minus rows.
 AARCH64_DIR = os.path.join(HETL, "tests", "het")
 AARCH64_TESTS = ["MP-cg-sys-acqrel-2s", "MP-cg-sys-acquire", "MP-cg-sys-relaxed",
                  "S-cg-sys-fence", "S-cg-sys-relaxed"]
-AARCH64_SIDE = ["control-map.csv"]
 
 # One HetStats machine line, the whole interface between a harness and
 # campaign.py, in the field order and field set het_stats_line prints -- a stub
@@ -250,19 +247,18 @@ def aarch64_corpus():
     if _CUT is None:
         d = tempfile.mkdtemp(prefix="runcheck-aarch64.")
         atexit.register(shutil.rmtree, d, True)
-        for f in [t + ".litmus" for t in AARCH64_TESTS] + AARCH64_SIDE:
-            shutil.copy(os.path.join(AARCH64_DIR, f), d)
+        for t in AARCH64_TESTS:
+            shutil.copy(os.path.join(AARCH64_DIR, t + ".litmus"), d)
         _CUT = d
     return _CUT
 
 
 def fixture():
-    """{isa, key, dir, tests, map, cuda: arm, hip: arm} for this host, or None."""
+    """{isa, key, dir, tests, cuda: arm, hip: arm} for this host, or None."""
     m = platform.machine()
     if m == "x86_64":
         fx = {
             "isa": "x86_64", "key": "X86_64", "dir": X86_DIR, "tests": X86_TESTS,
-            "map": "control-map-amd.csv",
             "cuda": {"state": "NO-MACHINE", "machine": "NONE", "arch": "sm_86"},
             "hip": {"state": "MACHINE", "machine": "mi300a_machine",
                     "arch": "gfx942"},
@@ -270,7 +266,7 @@ def fixture():
     elif m in ("aarch64", "arm64"):
         fx = {
             "isa": "aarch64", "key": "AArch64", "dir": aarch64_corpus(),
-            "tests": AARCH64_TESTS, "map": "control-map.csv",
+            "tests": AARCH64_TESTS,
             "cuda": {"state": "MACHINE", "machine": "gh200_machine",
                      "arch": "sm_90"},
             "hip": {"state": "ABSENT", "machine": "NONE", "arch": "gfx942"},
@@ -387,8 +383,7 @@ def _e2e(wrapper, tmp, fx, target, arm, quiet):
                    % (target, summary))
     record = open(os.path.join(out, "run-record.txt")).read()
     for frag in ("arch=" + arm["arch"], "pair_state=" + arm["state"],
-                 "pair_machine=" + arm["machine"], "control_map=" + fx["map"],
-                 "seam_probe=STUB",
+                 "pair_machine=" + arm["machine"], "seam_probe=STUB",
                  "seam_compiler=OVERRIDDEN", "session_status=COMPLETE"):
         if frag not in record:
             bad.append("%s: run-record.txt does not carry %r -- the value the "
@@ -462,7 +457,7 @@ def mixed_corpus(tmp):
     d = os.path.join(tmp, "mixed")
     os.makedirs(d, exist_ok=True)
     for f in os.listdir(X86_DIR):
-        if f.endswith((".litmus", ".csv")):
+        if f.endswith(".litmus"):
             shutil.copy(os.path.join(X86_DIR, f), d)
     shutil.copy(os.path.join(AARCH64_DIR, AARCH64_TESTS[0] + ".litmus"), d)
     return d
@@ -559,17 +554,6 @@ def unregistered_session(wrapper, fx, env, quiet=False):
     return bad
 
 
-def mapless_corpus(tmp):
-    """This host's fixture, minus the control map the lane reads.  Emission would
-    build no control at all, so the session's nulls would be uninterpretable."""
-    d = os.path.join(tmp, "mapless")
-    os.makedirs(d, exist_ok=True)
-    fx = fixture()
-    for t in fx["tests"]:
-        shutil.copy(os.path.join(fx["dir"], t + ".litmus"), d)
-    return d
-
-
 def phase3_refusals(wrapper, quiet=False):
     fx = fixture()
     if fx is None:
@@ -604,9 +588,6 @@ def phase3_refusals(wrapper, quiet=False):
              ["--gpu-target", "cuda", "--corpus", home, "--arch",
               fx["cuda"]["arch"]],
              {"NVCC": os.path.join(tmp, "no-such-nvcc")}, "is not on PATH"),
-            ("corpus with no control map",
-             ["--gpu-target", "cuda", "--corpus", mapless_corpus(tmp), "--arch",
-              fx["cuda"]["arch"]], {}, "not readable beside the corpus"),
             ("mixed-ISA corpus",
              ["--gpu-target", "cuda", "--corpus", mixed_corpus(tmp), "--arch",
               fx["cuda"]["arch"]], {}, "mixes CPU lanes"),
@@ -1233,10 +1214,6 @@ INJECTIONS = [
      lambda s: s.replace('done < <(corpus_cpu_lanes "${CORPUS_PATHS[@]}")',
                          'done < <(corpus_cpu_lanes "${CORPUS_PATHS[0]}")', 1),
      phase3_refusals, "mixed-ISA corpus"),
-    ("3", "wrapper", "the lane's control map is not required beside the corpus",
-     lambda s: s.replace('[ -r "$CORPUS/$PAIR_MAP" ] || die',
-                         '[ 1 = 1 ] || die', 1),
-     phase3_refusals, "corpus with no control map"),
     ("3", "wrapper", "an unregistered pair passes without a word",
      lambda s: s.replace('echo "hetlitmus-run: WARNING -- the pair $PAIR is in no row '
                          'of litmus/hetMachine.ml',

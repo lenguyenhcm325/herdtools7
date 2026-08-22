@@ -152,9 +152,6 @@ $ litmus7 -gpu-target cuda -o OUT hetlitmus/tests/het/MP-het.litmus
 HetLitmus: emitting CPU+GPU harness for MP-het (2 procs, CPU=AArch64)
   P0 device=cpu -> CPU pthread (AArch64 asm from hetCpuBodyA64)
   P1 device=gpu -> GPU kernel (LISA/PTX via CudaLang/HipLang)
-  co-run mu(T)  MP-cg-sys-relaxed      K=3  +2 part  +1 blk  +1 lane
-  co-run canary MP-cg-sys-relaxed      K=3  +2 part  +1 blk  +1 lane
-  => NPART=6 HET_TEST_BLOCKS=3 HET_GPU_LANES=3 HET_SPIN_LANES=3, HET_CONTROL_COMPILED_IN=1 HET_CANARY_COMPILED_IN=1
   pair: (AArch64, cuda)
 HetLitmus: emitted harness directory OUT/MP-het (MP-het.cu)
 ```

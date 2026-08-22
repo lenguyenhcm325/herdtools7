@@ -4,9 +4,8 @@
 # preflight -> probe -> emit -> compile -> campaign -> collect.  Every step
 # fails CLOSED with a named reason, and every value the session turned on --
 # the resolved device arch, the (CPU ISA x GPU dialect) pair, the machine that
-# pair may name, the control map -- is written into the results dir as a fact,
-# because a run whose arch or target was decided invisibly cannot be read
-# afterwards.
+# pair may name -- is written into the results dir as a fact, because a run
+# whose arch or target was decided invisibly cannot be read afterwards.
 #
 # Composition only: probe-cuda.sh / probe-hip.sh probe, litmus7 emits, the
 # emitted comp.sh + Makefile build, campaign.py schedules, run-one.sh invokes.
@@ -193,17 +192,6 @@ machine_pair() {                # <ISA key> <target> -> "MACHINE <row>" | NO-MAC
     }' "$REPO/litmus/hetMachine.ml"
 }
 
-# The control map this lane reads, mirroring litmus/hetCpuFront.ml: mu(T) is a
-# weakening on a strength lattice and the lattice is the CPU column's, so the map
-# is keyed on the CPU ISA and never on the dialect.
-control_map_of_isa() {          # <ISA key> -> the CSV file name
-  case "$1" in
-    AArch64) echo "control-map.csv" ;;
-    X86_64)  echo "control-map-amd.csv" ;;
-    *) return 1 ;;
-  esac
-}
-
 [ -x "$LITMUS7" ] || die "litmus7 is not built at $LITMUS7 (run 'make all')"
 shopt -s nullglob
 CORPUS_TESTS=() ; CORPUS_PATHS=()
@@ -242,7 +230,6 @@ case "$CPU_ISA" in
   *) die "no machine-table key for CPU ISA $CPU_ISA" ;;
 esac
 PAIR="($ISA_KEY, $GPU_TARGET)"
-PAIR_MAP="$(control_map_of_isa "$ISA_KEY")"
 read -r PAIR_STATE PAIR_MACHINE <<<"$(machine_pair "$ISA_KEY" "$GPU_TARGET")"
 case "$PAIR_STATE" in
   MACHINE) ;;
@@ -259,10 +246,6 @@ case "$PAIR_STATE" in
 the table's shape changed and this wrapper reads it; fix the reader rather than \
 hardcoding the pair here." ;;
 esac
-[ -r "$CORPUS/$PAIR_MAP" ] || die "the $ISA_KEY CPU lane reads its positive-control \
-map from $PAIR_MAP, which is not readable beside the corpus ($CORPUS).  Emission \
-reads it from there, so without it no harness co-runs a control and every null this \
-session produces is uninterpretable."
 
 HOST_ISA="$(uname -m)"
 [ "$CPU_ISA" = "$HOST_ISA" ] || die "this corpus carries a $CPU_ISA CPU column and \
@@ -407,7 +390,6 @@ RECORD="$OUT/run-record.txt" ; SUMMARY="$OUT/summary.txt"
   echo "pair=$PAIR"
   echo "pair_state=$PAIR_STATE"
   echo "pair_machine=${PAIR_MACHINE:-NONE}"
-  echo "control_map=$PAIR_MAP"
   echo "arch=$ARCH"
   echo "arch_var=$ARCH_VAR"
   echo "arch_source=$ARCH_SOURCE"

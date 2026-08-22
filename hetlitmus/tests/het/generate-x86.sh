@@ -4,10 +4,8 @@
 #
 #   usage:  ./generate-x86.sh OUTDIR
 #
-# Why they are not committed: control-map-amd.csv is keyed on the AArch64 test
-# NAMES -- one row per shape x cut x scope x order, whatever ISA the CPU column
-# is rendered in -- and corpus-gate.sh pins the tests/het census while
-# dupcheck.py rejects byte-identical duplicates.  Many x86 renderings are
+# Why they are not committed: corpus-gate.sh pins the tests/het census while
+# dupcheck.py rejects byte-identical duplicates, and many x86 renderings are
 # byte-identical to a sibling (x86-TSO collapses the four CPU order tokens onto
 # two images, see below), so committing them would break both gates for nothing.
 # They are generated on demand instead -- by this script, which is what makes
@@ -23,8 +21,7 @@
 # Sections mirror generate.sh: (A) the two reference tests, (B) the one-sided
 # grid, (D) the matched two-sided family, (E) the two-sided order-pair grid.
 # Every loop lives here rather than being driven through generate.sh, whose (D)
-# and (E) are aarch64-only, and only this script re-keys the control map onto
-# the suffixed names (below).
+# and (E) are aarch64-only.
 set -e
 # OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so
 # a relative path -- what a Makefile caller passes -- is correct.  The same rule
@@ -105,8 +102,7 @@ done
 # gives the two-sided annotation nothing to attach to, so its rendering comes
 # out byte-identical below the 2-line header to the one-sided sibling and is
 # dropped.  Both lanes drop the same names, which is what keeps the x86
-# renderings 1:1 with the committed corpus and lets the control map stay keyed
-# on the unsuffixed names.
+# renderings 1:1 with the committed corpus.
 d=0 dskip=0
 for shape in $SHAPE_ORDER; do
   cyc="${SHAPE_CYCLE[$shape]}"
@@ -155,53 +151,3 @@ done
 n="$(ls "$OUT"/*.litmus | wc -l)"
 echo "generate-x86: (A) $a + (B) $b (skipped $bskip degenerate) + (D) $d (skipped $dskip degenerate) + (E) $e = $n files in $OUT"
 [ "$n" -eq $((a+b+d+e)) ] || { echo "FAIL: $n files on disk but $((a+b+d+e)) counted" >&2; exit 1; }
-
-# --- the AMD lane's control map, re-keyed onto the x86 file names -------------
-# The emitter resolves the control map relative to the .litmus it is given
-# (hetEmit.ml: HetControlMap.load ~dir:src_dir), so without a map beside them
-# every x86 rendering names no mu(T) and no canary, co-runs nothing, and every
-# null it produces is cold-invalid.
-#
-# Re-keyed rather than copied: the committed map is keyed on the AArch64 test
-# names -- one row per shape x cut x scope x order, whatever ISA the CPU column
-# is rendered in -- while these renderings are named `<test>-x86_64'.  The
-# rewrite is mechanical and total, so mu(T) and the canary still resolve to a
-# .litmus that exists in $OUT.
-#
-# The file name is kept (control-map-amd.csv) rather than flattened to
-# control-map.csv: hetCpuFront.X86_64 asks for that name, so a directory
-# carrying the NVIDIA map cannot be mistaken for an AMD lane, and the harness
-# records which of the two it was tagged from.
-#
-# `-' (no alternative), `self' (the test is the canary) and `none' (the row is
-# at the lattice floor) are sentinels, not names, and must NOT be suffixed:
-# suffixed, `none' becomes the test name `none-x86_64' and litmus7 refuses the
-# row.  litmus/hetControlMap.ml knows the same sentinels.
-rekey_names() {                 # rekey_names FILE COL... -- suffix those columns
-  local f="$1"; shift
-  awk -F, -v cols="$*" -v sfx="-x86_64" 'BEGIN{ n=split(cols,C," ") }
-    /^#/ || NF==0 { print; next }
-    { if ($1 == "Test" || $1 == "Litmus") { print; next }
-      for (i = 1; i <= n; i++) { c = C[i]
-        if (c <= NF && $c != "-" && $c != "self" && $c != "none" && $c != "")
-          $c = $c sfx }
-      out = $1; for (i = 2; i <= NF; i++) out = out "," $i; print out }' "$f"
-}
-# control-map-amd.csv: Test,Mu,MuRule,MuAlt,MuRelaxed,Canary
-#   name-valued columns are 1 (Test), 2 (Mu), 4 (MuAlt), 5 (MuRelaxed), 6 (Canary)
-rekey_names "$HETDIR/control-map-amd.csv" 1 2 4 5 6 > "$OUT/control-map-amd.csv"
-
-# The map must cover the corpus EXACTLY, in both directions.  A map row with no
-# test is a stale name; a test with no map row is refused by the emitter, so the
-# whole lane would stop rather than emit a harness co-running nothing.
-m=control-map-amd.csv
-awk -F, '!/^#/ && NF>1 && $1 != "Test" { print $1 }' \
-  "$OUT/$m" | sort > "$OUT/.keys.$m"
-ls "$OUT"/*.litmus | sed 's|.*/||; s|\.litmus$||' | sort > "$OUT/.keys.tests"
-if ! diff -q "$OUT/.keys.$m" "$OUT/.keys.tests" >/dev/null; then
-  echo "FAIL: $m does not key the x86 corpus exactly:" >&2
-  diff "$OUT/.keys.tests" "$OUT/.keys.$m" | head -20 >&2
-  exit 1
-fi
-rm -f "$OUT/.keys.$m" "$OUT/.keys.tests"
-echo "generate-x86: re-keyed control-map-amd.csv onto all $n tests"
