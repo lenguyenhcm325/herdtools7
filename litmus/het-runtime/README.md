@@ -96,8 +96,10 @@ the stress layer holds two invariants, and both hold BY CONSTRUCTION:
 This is the EPISTEMIC CORE of the campaign, not bookkeeping.  Every "Never"
 the harness prints is otherwise uninterpretable: a cold harness and a
 genuinely unreachable behaviour produce the IDENTICAL empty histogram.  The
-rule says whether the outcome was seen and, where it was not, what vouched for
-the harness that did not see it — it holds no prediction and prints none.
+rule says whether the outcome was seen and, where it was not, what this
+harness reached — the effort it spent and the liveness its own counters
+measured, with NOTHING vouching for either.  It holds no prediction and
+prints none.
 
 > "When testing, it is impossible to tell if an unobserved illegal execution
 > is not allowed or if it is simply rare and was not exposed by the tests."
@@ -109,8 +111,7 @@ rule the harness runs.  A re-declared copy in the test would be free to drift
 away from the one that ships — which is how you end up gating a rule nobody
 executes.
 
-Design: `hetlitmus/docs/positive-control.md`, and
-`hetlitmus/docs/00-environment-design.md` sec 3.7 for the statistics layer.
+Design: `hetlitmus/docs/00-environment-design.md` sec 3.7.
 
 ## het_alloc_{cuda,hip}.inc, het_noise_{cuda,hip}.inc — the two allocators
 

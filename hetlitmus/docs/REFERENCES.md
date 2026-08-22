@@ -48,22 +48,23 @@ Empirical Memory Consistency Testing.* Proc. ACM Program. Lang. 4, OOPSLA,
 Article 226 (November 2020), 29 pages. DOI 10.1145/3428294.
 
 Claim(s) this project takes from it:
-* §1.1 (Eqs 1-2, p. 226:3) derives the reproducibility probability
-  `P_rep = 1 - k^N ≈ 1 - e^{-n}`, tied only to `n`, the number of times the
-  relaxed behaviour was observed (`n=1` → 63.21 %, `n=2` → 86.47 %, `n=3` →
-  95.02 %).
-* §4.3 makes the stationarity assumption explicit and supplies the KS precheck
-  the statistics layer runs — the first 20 % of the iterations against the last
-  10 % — and reports its own outcome: "We found 4 combinations (out of 18) that
-  are not stable across iterations" (Table 7, over three GPUs x six tests). That
-  rejection rate is why the precheck is mandatory here rather than advisory.
-  §5.1 supplies the restart-from-instability remedy.
+* §3.1 defines the memory-stress parameter space `litmus/het-runtime/het_stress.h`
+  is built on: `StressLineSize`, `TargetNumber`, `StressAssignment`, the
+  two-instruction `AccessPattern`, `XYStride` and `PretestMemoryStress`.
+* §6.4 reports, of the stress configuration tuned on one Nvidia GPU and run on
+  another, that "parameters for one chip may not be optimal on another chip,
+  even from the same vendor". Every stress numeric in `het_stress.h` and
+  `het_cpu_stress.h` is therefore a seed to be re-tuned on the target rather
+  than a tuning.
+* §4.2 Table 6 gives the minimum and maximum observed relaxed-behaviour rates
+  per chip: SB is the lowest-rate test on two of the three GPUs and the highest
+  on the third, which is why `het_verdict.h`'s stopping rule treats shape
+  difficulty as a property of the part and not of the shape.
 
 Deviation(s):
-* `1 - e^{-n}` is scored at the `(instance,run)` cell, never at a frame of the
-  perpetual harness — the recovery scan validates `N^{T_L}` *overlapping*
-  frames per `N` iterations, so a frame count drives the expression to 1
-  vacuously.
+* The parameter space is realised in CUDA/HIP rather than in the paper's
+  OpenCL, and no configuration of the paper's is carried over: §3.1 supplies
+  the axes, and every numeric here is a seed under §6.4.
 
 ## [Lustig19]
 

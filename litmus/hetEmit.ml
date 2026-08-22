@@ -1455,9 +1455,8 @@ end
             (* The statistics are computed over the (instance,run) cells, so the
                records must OUTLIVE the run loop.  The replication unit is the cell
                and never the frame: the recovery scan validates N^{T_L} overlapping
-               frames per N iterations, so a frame count fed into the 1-e^{-n}
-               reproducibility rate [Kirkham20 sec 1.1] returns ~1 vacuously.
-               Y = 1[target_count >= 1] per cell is the n it takes
+               frames per N iterations, so a frame count is not a count of runs.
+               Y = 1[target_count >= 1] per cell is what is counted
                (hetlitmus/docs/00-environment-design.md sec 3.7). *)
             s "  het_obs_record _recs[NUMBER_OF_RUN];\n" ;
             s "  memset(_recs, 0, sizeof _recs);\n" ;
@@ -1723,11 +1722,6 @@ end
             s "    _rec.place_failures = (uint32_t)_het_place_failures;\n" ;
             s "    _rec.noise_ws_mb = (uint32_t)HET_NOISE_MB;\n" ;
             s "    _rec.place_mode = (uint32_t)HET_PLACE;\n" ;
-            (* The window resolution this run REALISED.  HET_NWIN is swept and the
-               KS stationarity precheck is taken at whatever resolution the run
-               realised, so a record scored at one nwin must never be silently
-               pooled with another. *)
-            s "    _rec.nwin = (uint32_t)HET_NWIN;\n" ;
             s it.i_scan ;
             s "    het_obs_record_print(stdout, &_rec);\n" ;
             (* The interpretation of a count travels with the number, in the

@@ -50,17 +50,13 @@ THE ADAPTIVE STOP IS THE HEADER'S RULE, consulted after every run -- the same
 pure function the campaign scheduler applies across invocations, so there is
 exactly one stopping policy.  The rule stays PURE, so the driver reads its two
 policy knobs and PASSES them; a rule that read its own environment could not be
-unit-tested from synthetic records.  The record also reports the window
-resolution the run realised: HET_NWIN is swept, and a record scored at one nwin
-must never be pooled with another.
+unit-tested from synthetic records.
 
   $ grep -c 'het_campaign_should_stop(_recs, _nrec, _runs_budget, _rate_mode, _confirm_runs)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
   $ grep -c 'HetCampaign MP-cg-sys-fence-2s stop=%s' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
   $ grep -c 'het_campaign_stop_why(_stop)' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
-  1
-  $ grep -c '_rec.nwin = (uint32_t)HET_NWIN;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
 
 THE TARGET COUNT IS BUMPED ON ONE LINE, UNDER ONE PREDICATE, on both channels
@@ -77,10 +73,10 @@ distinct_decoded_iters and skew_stddev are both written from the same
 synchrony-decode block, so a test with no synchrony read leaves both at their
 memset zero.  Every 2+2W -- store-only, with no reader at all -- sits in exactly
 that position, and a guard reading `skew_stddev == 0' as "the decoder is
-degenerate" would condemn every one of their cells forever, making k_eff constant
-0 and P_rep a constant 1 - e^0 = 0 on them.  0 means NOT MEASURED,
-never "measured zero", so the emitter tags which channel each test actually has
-and the guard switches channel rather than firing blind.
+degenerate" would condemn every one of their cells forever, making k_eff a
+constant 0 on them.  0 means NOT MEASURED, never "measured zero", so the emitter
+tags which channel each test actually has and the guard switches channel rather
+than firing blind.
 
 MP has a reader -> the synchrony channel:
 
@@ -101,25 +97,25 @@ MP has a reader -> the synchrony channel:
 THE INSTRUMENTS THEMSELVES ARE IN THE EMITTED HEADER, NOT IN A SCRIPT.  A reader
 who cannot recompute an outcome from the artefact has not been given a result.
 
-  $ grep -c 'static int het_ks2' MP-cg-sys-fence-2s/het_verdict.h
+  $ grep -c 'static void het_stats_compute' MP-cg-sys-fence-2s/het_verdict.h
   1
   $ grep -c 'static int het_cell_degenerate' MP-cg-sys-fence-2s/het_verdict.h
   1
   $ grep -c 'static het_campaign_stop_t het_campaign_should_stop' MP-cg-sys-fence-2s/het_verdict.h
   1
 
-THE KS GATE FAILS CLOSED ON AN EMPTY STREAM, and this is the conjunct that makes
-it: the gate is refused when the pooled control stream is absent, all-zero or
-desynced.  Run anyway, D is 0 against 0, the gate "passes" and P_rep is unlocked
-for a harness in which nothing ever fired -- the one way this layer can claim
-more than it measured.
+THE DENOMINATOR IS R, THE RUNS EXECUTED, and this is the line that makes it:
+nothing co-runs, so a cell is usable partly BECAUSE it fired, and scoring over
+the usable cells would report Always for a row that fired in some of its runs --
+the one way this layer can claim more than it measured.
 
-  $ grep -c 'ks = (st->flags & HET_ST_CTRL_STREAM_EMPTY)' MP-cg-sys-fence-2s/het_verdict.h
+  $ grep -c '{ int denom = st->R;' MP-cg-sys-fence-2s/het_verdict.h
   1
 
 NO RATE AND NO PROBABILITY IS ATTACHED TO A NULL.  What a non-observation reports
-is the effort spent and the control that vouched for it, so the harness carries
-the sentence that says so rather than leaving a reader to infer it.
+is the effort spent and the liveness the run measured on its own counters, so
+both printers carry the sentence that says so rather than leaving a reader to
+infer it: the per-run verdict block and the campaign-level one.
 
   $ grep -c 'NO RATE AND NO PROBABILITY' MP-cg-sys-fence-2s/het_verdict.h
-  1
+  2

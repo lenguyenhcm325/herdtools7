@@ -868,8 +868,8 @@ hetlitmus-amd-faithful: | build
 	@ echo "HetLitmus AMD gfx942 lowering faithfulness (173 gpu-only + 471 x86_64 het): OK (and the gate bites)"
 
 ### What a het harness PRINTS on a device -- the only artefact a result is read
-### off -- so the control state it names is the one it is really in
-### (verify/runcheck.py --characterize-hw).  Needs a GPU.
+### off -- so the reading it gives is the one its own counts support, and it
+### claims nothing beyond them (verify/runcheck.py --characterize-hw).  Needs a GPU.
 hetlitmus-characterize-hw: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py --characterize-hw

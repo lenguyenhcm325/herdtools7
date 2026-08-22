@@ -197,9 +197,9 @@ def run(quiet, tamper=None, header_tamper=None, silent=False, lanes=None):
 
 
 BITES = [
-    ("a field the record does not have", "_rec.nwn",
-     lambda s: s.replace("_rec.nwin = (uint32_t)HET_NWIN;",
-                         "_rec.nwn = (uint32_t)HET_NWIN;")),
+    ("a field the record does not have", "_rec.plce_mode",
+     lambda s: s.replace("_rec.place_mode = (uint32_t)HET_PLACE;",
+                         "_rec.plce_mode = (uint32_t)HET_PLACE;")),
     ("the record stamp dropped", "0 time(s)",
      lambda s: s.replace("    _rec.rec_magic = HET_REC_MAGIC;\n", "")),
     ("the record stamped with a literal instead of the symbol", "0 time(s)",

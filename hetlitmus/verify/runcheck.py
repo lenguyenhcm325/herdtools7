@@ -69,13 +69,11 @@ AARCH64_SIDE = ["control-map.csv"]
 # One HetStats machine line, the whole interface between a harness and
 # campaign.py, in the field order and field set het_stats_line prints -- a stub
 # that speaks a shape the runtime cannot produce is testing a protocol nobody
-# implements.  A null on a live control stream, so the row is reportable and
-# nothing fires: what the scheduler does with it is the phase's subject.
+# implements.  A null on a live run, so the row is reportable and nothing
+# fires: what the scheduler does with it is the phase's subject.
 STUB_STATS = ("HetStats %s cpu_only=0 obs=Never R=10 usable=10 k=0 k_eff=0 "
-              "k_runs=0 degen=0 first_sight=0 ctrl=canary mu_total=0 "
-              "can_total=5000 win_n=1280 nwin=128 P_rep=-1 ks=pass ks_D=0.1 "
-              "ks_Dcrit=0.2 ks_split=-1 sighting=none N=100000 frames=100000 "
-              "flags=0x0")
+              "k_runs=0 degen=0 first_sight=0 sighting=none N=100000 "
+              "frames=100000 flags=0x0")
 
 # The stand-in compiler: `-c' writes the object, a link writes an executable whose
 # body is @@BODY@@.  It is what lets the chain reach the campaign on a box with no
@@ -136,9 +134,7 @@ MATCHY_RUNNER = r'''#!/usr/bin/env python3
 import os, sys
 d = sys.argv[1]
 print("HetStats %s cpu_only=0 obs=Sometimes R=10 usable=10 k=1 k_eff=1 k_runs=3 "
-      "degen=0 first_sight=1 ctrl=canary mu_total=0 can_total=5000 win_n=1280 "
-      "nwin=128 P_rep=0.632 ks=pass ks_D=0.1 "
-      "ks_Dcrit=0.2 ks_split=-1 sighting=CORROBORATED N=100000 frames=100000 "
+      "degen=0 first_sight=1 sighting=CORROBORATED N=100000 frames=100000 "
       "flags=0x0" % os.path.basename(d))
 '''
 
@@ -156,9 +152,7 @@ fired = (inv == 1)
 # one, and a stub ignoring the cap would land on run counts no harness produces.
 R = min(10, int(os.environ.get("HET_RUNS_MAX") or "10"))
 print("HetStats %s cpu_only=0 obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d "
-      "degen=0 first_sight=%d ctrl=canary mu_total=0 can_total=5000 win_n=1280 "
-      "nwin=128 P_rep=-1 ks=pass ks_D=0.1 "
-      "ks_Dcrit=0.2 ks_split=-1 sighting=%s N=100000 frames=100000 flags=0x0"
+      "degen=0 first_sight=%d sighting=%s N=100000 frames=100000 flags=0x0"
       % (os.path.basename(d), "Sometimes" if fired else "Never", R, R,
          fired, fired, fired, 1 if fired else 0,
          "UNCONFIRMED" if fired else "none"))
@@ -1547,9 +1541,11 @@ def hardware_bite():
 # The pair is (X86_64, cuda), which has no machine row, so the printout may not
 # carry a word of either row's machine vocabulary.
 #
-# The outcome is stochastic, so the run is re-seeded until it fires; a pair that
-# cannot fire the most observable het shape in that many runs is itself the
-# finding, and this says so rather than passing vacuously.
+# BOTH readings are readings, so both PASS: the outcome is stochastic, the run is
+# re-seeded while it does not fire because a sighting carries strictly more
+# sentences to assert, and a stream of nulls is read as a null rather than as a
+# failure of this gate.  What neither reading may carry is a sentence saying
+# something certifies the harness.
 # ---------------------------------------------------------------------------
 CH_TEST = "MP-cg-sys-relaxed-x86_64"
 CH_PAIR = "(X86_64, cuda)"
@@ -1601,8 +1597,9 @@ def ch_build(d, arch):
 
 
 def ch_run_until_sighting(d, quiet=False):
-    """Run with fresh seeds until the outcome fires once.  Returns (text, k, R,
-    obs, tries); text is stdout+stderr, the whole printout a reader sees."""
+    """Run with fresh seeds until the outcome fires once, or until the seeds run
+    out -- the last run either way.  Returns (text, k, R, obs, tries); text is
+    stdout+stderr, the whole printout a reader sees."""
     env = dict(os.environ)
     env["HET_ALLOC"] = env.get("HET_ALLOC", "pinned")
     last = None
@@ -1641,63 +1638,65 @@ def ch_run_until_sighting(d, quiet=False):
         if k > 0:
             return last
         if not quiet:
-            print("      seed %d: k=0, retrying (the control sentence, the "
-                  "observation and the denominator all need one sighting)"
-                  % (1000 + i))
+            print("      seed %d: k=0, retrying (a sighting carries the report "
+                  "sentence and the denominator reading as well)" % (1000 + i))
     return last
 
 
-# The control state a harness is in, as the printout states it: the record
-# carries no co-running control, so het_verdict.h's own note for that record is
-# what a reader meets.
-CH_NOCORUN = ["CO-RUNS NO CONTROL, names no canary, and a control map WAS read "
-              "for %s" % CH_PAIR,
-              "that is a BUILD BUG, not a result"]
-# The three control states this harness is NOT in.  Each is a sentence
-# het_verdict.h can still print, and each would tell a reader the null was
-# calibrated by something: a row that names itself the canary, a build that never
-# found the map file, and a pair no registry holds a map for -- a mechanism this
-# tool does not have at all.  Nothing else in the suite reads that wording, and
-# these tuples are reached only through --characterize-hw, which refuses to run
-# without a CUDA device: on a box with no GPU they go unchecked.
-CH_SELF = ["IS the Layer-B canary",
-           "NO CALIBRATION CHANNEL -- nothing independent co-runs whose "
-           "stationarity could be tested -- by construction, not by omission"]
-CH_NOMAP = ["NO POSITIVE-CONTROL MAP WAS READ for %s" % CH_PAIR,
-            "the map is looked for BESIDE THE TEST",
-            "control-map-amd.csv for x86_64), and it was not there",
-            "It has NO CALIBRATION CHANNEL, and that is an OMISSION, not a "
-            "construction",
-            "what was omitted is the map FILE beside this test"]
-CH_RETIRED = ["no map is registered for that pair",
-              "there is none to borrow",
-              "the bootstrap control map for an unregistered pair does not exist yet"]
+# What a run that SAW the outcome must print, and what a run that did not must
+# print instead.  The two arms are exclusive and one of them always applies, so a
+# device that fires and a device that does not are both read.
+CH_OBSERVED = [": OBSERVED",
+               "Report it as what %s exhibited" % CH_PAIR]
+CH_NULL = ["NOT OBSERVED under this effort",
+           "NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL",
+           "CHARACTERIZATION, NEVER VALIDATION",
+           "effort:"]
+# What NEITHER arm may carry: every one of these would tell a reader that
+# something certified this run -- a tier a voucher earned, a voucher named, a
+# calibration channel described, a registry consulted -- or that the harness is
+# reporting a build fault as a result.  Nothing else in the suite reads that
+# wording, and these tuples are reached only through --characterize-hw, which
+# refuses to run without a CUDA device: on a box with no GPU they go unchecked.
+CH_NEVER_SAYS = ["NOT-OBSERVED-MU-HOT",
+                 "NOT-OBSERVED-CANARY-ONLY",
+                 "vouched for by",
+                 "IS the Layer-B canary",
+                 "NO POSITIVE-CONTROL MAP WAS READ",
+                 "NO CALIBRATION CHANNEL",
+                 "no map is registered for that pair",
+                 "BUILD BUG",
+                 "the target this harness was tagged for"]
 
 
 def ch_class(k, R, obs):
     """Judge the observation class against the counts it was read off.  Returns
     (failure, note) with exactly one of the two set.
 
-    This row co-runs nothing, so it is its own denominator and het_verdict.h
-    reads obs=Always off k >= R.  k==R is then the class saying the outcome
-    fired in every run, which is a reading and not the absence of one;
-    obs=Always under k<R would mean the denominator had collapsed onto the
-    usable count instead.
+    The denominator is R, the runs executed, so het_verdict.h reads obs=Always
+    off k >= R and obs=Never off k == 0.  obs=Always under k<R would mean the
+    denominator had collapsed onto the usable count instead, and obs=Never with
+    a sighting in it, or anything else with none, is a class that contradicts
+    the counts beside it.
 
-    No run arrives here with k==0: ch_run_once stops on that first, with its
-    own sentence about an outcome that never fired.  The branch below is the
-    classifier's floor, and the bite's shape table is what drives it."""
+    The bite's shape table is what drives every branch, including the ones a
+    given device never lands in."""
+    if obs == "VOID":
+        return ("[F] obs=VOID on k=%d of R=%d: every run was discarded, so this "
+                "printout reads nothing at all" % (k, R), None)
     if k == 0:
-        return ("[F] k=%d of R=%d -- no sighting, so the class carries no "
-                "information about the denominator" % (k, R), None)
+        if obs == "Never":
+            return (None, "[F] obs=Never on k=0 of R=%d (nothing fired, and that "
+                          "is the class which says so)" % R)
+        return ("[F] obs=%s on k=0 of R=%d: nothing fired and the class does not "
+                "say so" % (obs, R), None)
     if k < R and obs == "Always":
         return ("[F] obs=Always on k=%d of R=%d: the denominator collapsed "
-                "onto the runs that fired, which is every usable cell here"
-                % (k, R), None)
+                "onto the runs that fired" % (k, R), None)
     if k < R:
         return (None, "[F] obs=%s on k=%d of R=%d (denominator is R, not the "
                       "usable count)" % (obs, k, R))
-    if k == R and obs == "Always":
+    if obs == "Always":
         return (None, "[F] obs=Always on k=%d of R=%d (every run fired, and "
                       "that is the class which says so)" % (k, R))
     return ("[F] obs=%s on k=%d of R=%d: every run fired and the class does "
@@ -1720,23 +1719,12 @@ def ch_check(text, k, R, obs, quiet=False):
             bad.append("[%s] the printout says %r -- %s" % (tag, frag, why))
 
     must("A", "HetVerdict %s [" % CH_TEST)
-    must("A", "Report it as what %s exhibited" % CH_PAIR)
 
-    for frag in CH_NOCORUN:
-        must("B/C", frag)
-    for frag in CH_SELF:
-        never("B/C", frag, "nothing co-runs here, so nothing may say this row "
-                           "is its own canary")
-    for frag in CH_NOMAP:
-        never("B/C", frag, "the map was read; a missing map file is a state this "
-                           "build is not in")
-    for frag in CH_RETIRED:
-        never("B/C", frag, "a registry with no row for the pair is a mechanism "
-                           "this tool does not have")
-
-    must("D", ": OBSERVED")
-    never("D", "the target this harness was tagged for",
-          "that sentence once substituted a disclosure blob for the pair name")
+    for frag in (CH_OBSERVED if k > 0 else CH_NULL):
+        must("D", frag)
+    for frag in CH_NEVER_SAYS:
+        never("B/C", frag, "nothing here certifies this run, and the printout "
+                           "may not say that anything does")
 
     hits = sorted(set(m.group(0) for m in CH_VENDOR_RE.finditer(text)))
     if hits:
@@ -1759,11 +1747,9 @@ def ch_run_once(d, quiet=False):
     if got is None:
         return 1, ["the harness produced no run at all"]
     text, k, R, obs, tries = got
-    if k == 0:
-        return 1, ["the outcome never fired in %d x %d runs -- the sighting "
-                   "assertions cannot be read, and a pair that cannot fire the "
-                   "most observable het shape is itself the finding"
-                   % (tries, R)]
+    if k == 0 and not quiet:
+        print("      the outcome never fired in %d x %d runs, so the NULL arm is "
+              "what this device printed and what is read here" % (tries, R))
     bad = ch_check(text, k, R, obs, quiet=quiet)
     return (1 if bad else 0), bad
 
@@ -1780,19 +1766,23 @@ def ch_probe(tmp, arch, quiet=False):
 # from the render itself -- and the failure it must produce, which is the
 # assertion that catches the sentence it PLANTED rather than the one that merely
 # notices a sentence went missing.
+# Each injection lands on a line EVERY run prints, whichever arm it took, so a
+# device that fires and a device that does not both exercise it.
 CH_INJECTIONS = [
     ("B/C", "het_verdict.h",
-     "the no-control note claims the row is its own canary",
+     "the verdict banner says something vouched for the run",
      lambda s: s.replace(
-         "  *** NOTE: this row CO-RUNS NO CONTROL, names no canary, and a control map ",
-         "  *** NOTE: this row CO-RUNS NO CONTROL -- it IS the Layer-B canary, and a "
-         "control map ", 1),
-     "the printout says 'IS the Layer-B canary'"),
+         '  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s\\n",',
+         '  fprintf(_ch, "HetVerdict %s [%s]%s run=%d: %s'
+         '  (vouched for by mu(T))\\n",', 1),
+     "the printout says 'vouched for by'"),
     ("A/D", "het_verdict.h",
-     "the report sentence names a constant instead of the pair",
+     "the pair-naming sentences name a constant instead of the pair",
      lambda s: s.replace(
          "      HET_PAIR_NAME, HET_LINK_NAME);",
-         '      "the target this harness was tagged for", HET_LINK_NAME);', 1),
+         '      "the target this harness was tagged for", HET_LINK_NAME);', 1)
+     .replace("    HET_PAIR_NAME);",
+              '    "the target this harness was tagged for");', 1),
      "the printout says 'the target this harness was tagged for'"),
     ("E", CH_TEST + ".cu",
      "the driver's noise warning names the GH200 halves again",
@@ -1802,12 +1792,14 @@ CH_INJECTIONS = [
 ]
 
 
-# The four (k, obs) shapes ch_class must tell apart.  Which one a run lands in is
+# The six (k, obs) shapes ch_class must tell apart.  Which one a run lands in is
 # the device's to decide and not this gate's, so the classifier and the ch_check
 # call that turns its verdict into a failure are driven directly: (k, R, obs,
 # must the class READ, the fragment its own sentence owes).
 CH_SHAPES = [
-    (0, 10, "Never", False, "no sighting"),
+    (0, 10, "VOID", False, "every run was discarded"),
+    (0, 10, "Sometimes", False, "nothing fired and the class does not say so"),
+    (0, 10, "Never", True, "nothing fired"),
     (4, 10, "Always", False, "the denominator collapsed"),
     (4, 10, "Sometimes", True, "denominator is R"),
     (10, 10, "Always", True, "every run fired"),
@@ -1907,8 +1899,9 @@ def characterize_hw(want_bite=False):
             for m in bad:
                 print("  %s" % m)
             return 1
-        print("\nCHARACTERIZE-HW: PASS (the printout names the test, says "
-              "which control state it is in, and claims no machine)")
+        print("\nCHARACTERIZE-HW: PASS (the printout names the test, reads as "
+              "the arm the run took, claims no machine and says nothing "
+              "vouches for it)")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

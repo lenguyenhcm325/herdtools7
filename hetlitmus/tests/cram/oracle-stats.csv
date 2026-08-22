@@ -7,12 +7,12 @@
 # synthetic.
 # Neither half makes this file an oracle: what a row selects is a reporting path
 # -- an Allowed row, a Disallowed row and a null under each.  The names cannot
-# move, because obs-stats.txt was printed by het_verdict.h's own printers, which
-# stamp the test name into every block.  LB-sys is absent on purpose: absent from
-# the CSV prints UNINTERPRETED with oracle=-, which is what the section pins
-# beside it.
-# Edit with obs-stats.txt and oracle-negatives.t, never alone.  ('#' lines and
-# blanks are skipped -- oracle-compare.sh usage block.)
+# move on their own, because obs-stats.txt is printed by het_verdict.h's own
+# printers over the record streams obs-stats-driver.c names, and they stamp the
+# test name into every block.  LB-sys is absent on purpose: absent from the CSV
+# prints UNINTERPRETED with oracle=-, which is what the section pins beside it.
+# Edit with obs-stats-driver.c, obs-stats.txt and oracle-negatives.t, never
+# alone.  ('#' lines and blanks are skipped -- oracle-compare.sh usage block.)
 Litmus,Expected,Model,Source
 SB-sys,Allowed,PTX,hand-authored fixture
 MP-sys-F,Disallowed,PTX,hand-authored fixture

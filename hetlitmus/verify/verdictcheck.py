@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HetLitmus -- the decision-rule gate for het_verdict() (het_verdict.h).
 
-het_verdict() turns a raw target count into one of four outcomes, and every one
+het_verdict() turns a raw target count into one of three outcomes, and every one
 of them is a shape a constant can impersonate.  So this gate compiles the REAL
 emitted header -- not a copy, which would be free to drift -- feeds it synthetic
 het_obs_records, and proves:
@@ -16,7 +16,7 @@ het_obs_records, and proves:
                   litmus/hetMachine.ml entitles it to, and a harness stamped
                   with no row names none.
 
-The rule and its reporting frames: hetlitmus/docs/positive-control.md S4/S11.
+The rule and its reporting frames: hetlitmus/docs/positive-control.md S4.
 
 Usage:  verdictcheck.py [--header PATH] [-q]   run the gate
         verdictcheck.py --bite                 prove it FAILS on a broken rule
@@ -36,8 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
 
-VERDICTS = ["OBSERVED", "NOT-OBSERVED-MU-HOT", "NOT-OBSERVED-CANARY-ONLY",
-            "COLD-INVALID"]
+VERDICTS = ["OBSERVED", "NOT-OBSERVED", "COLD-INVALID"]
 
 # The census the emitted corpus MUST reproduce: one harness per corpus test.
 CENSUS = {"tests": 471}
@@ -50,24 +49,28 @@ CENSUS = {"tests": 471}
 FRAME_CLAIMS = {
     "OBSERVED": ["the weak outcome was OBSERVED",
                  "Report it as what "],
-    "NOT-OBSERVED-MU-HOT": ["NOT OBSERVED, MU HOT"],
-    "NOT-OBSERVED-CANARY-ONLY": ["NOT OBSERVED, CANARY ONLY"],
+    # A null's whole entitlement, in one frame: what was not seen, that no rate
+    # and no probability rides on it, that nothing certifies the harness, and
+    # that the result is about reach and not about a model.  A discarded run
+    # gets none of these -- saying any of them on one would report a dead
+    # harness as reach.
+    "NOT-OBSERVED": [
+        "NOT OBSERVED under this effort",
+        "NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL",
+        "NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT",
+        "OBSERVABILITY result about this harness",
+        "has precedent: Alglave et al., ASPLOS'15, fn.7, p.577",
+    ],
     "COLD-INVALID": ["DISCARD this null"],
 }
 # Printed by every NON-sighting outcome, the cold one included: a discarded null
 # still says what was not seen.
 NON_SIGHTING_CLAIMS = ["the weak outcome was NOT observed"]
-# Printed by BOTH null tiers and by neither the sighting nor the cold one: a
-# discarded run is not an observability result, and saying so on one would report
-# a dead harness as reach.
-NULL_TIER_CLAIMS = [
-    "OBSERVABILITY result about this harness",
-    "has precedent: Alglave et al., ASPLOS'15, fn.7, p.577",
-]
 
 # ---------------------------------------------------------------------------
-# A "live, hot, credible" baseline: a record whose mu(T) fired.  Every case below
-# is this record with a few fields perturbed, so each isolates ONE reason.
+# A "live, stressed, reportable" baseline: a record every requested mechanism was
+# measured alive in.  Every case below is this record with a few fields perturbed,
+# so each isolates ONE reason.
 BASE = dict(
     # The stamp, written as the SYMBOL so a rename in the header is a compile
     # error here too.  A zeroed record is what an emitter that skipped a field
@@ -84,12 +87,6 @@ BASE = dict(
     # sync_valid=0, obs_valid=1 below.  (The reader / store-only split is pinned as
     # statscheck.py's CENSUS_SYNC and histcheck.py's N_STORE_ONLY.)
     sync_valid=1,
-    control_compiled_in=1,
-    canary_compiled_in=1,
-    control_target_count=30,          # == HET_TAU_HOT
-    canary_target_count=500,
-    control_exhaustive_valid=1,
-    canary_exhaustive_valid=1,
     stress_truncated=0,
     spin_rendezvous=900, spin_cap=100,
     gpu_stress_rounds=64,             # het_do_stress actually ran
@@ -112,17 +109,18 @@ def case(name, verdict, dq=(), cv=(), **kw):
 
 CASES = [
     # =======================================================================
-    # 1. The strong null: mu(T) -- a strictly weaker structural sibling -- fired
-    #    on the same launch, and the ground-truth scan ran.
+    # 1. The null: nothing was seen, on a run whose every requested mechanism
+    #    was measured alive.  It reports the effort and the liveness, and
+    #    nothing certifies either.
     # =======================================================================
-    case("mu-hot-null", "NOT-OBSERVED-MU-HOT"),
+    case("live-null", "NOT-OBSERVED"),
 
     case("observed-exhaustive", "OBSERVED", target_count_exhaustive=1),
 
     # A sighting is believed even on a run we would otherwise DISCARD:
-    # falsification is one-sided, so no control is needed to believe a positive.
+    # falsification is one-sided, so nothing has to vouch for a positive.
     case("observed-beats-every-disqualifier", "OBSERVED",
-         target_count_exhaustive=1, control_compiled_in=0, canary_compiled_in=0,
+         target_count_exhaustive=1,
          interleavings_detected=0, stress_truncated=99,
          cpu_enemy_rounds=0, noise_cpu_rounds=0, noise_gpu_blocks=0),
 
@@ -135,69 +133,40 @@ CASES = [
          target_count_heuristic=1, target_count_exhaustive=0, exhaustive_valid=0),
 
     # =======================================================================
-    # 2. The weaker null: the harness is alive, but not through THIS shape.
+    # 2. MP-cg-sys-relaxed is the most observable het shape the corpus has, and
+    #    het_verdict() reads no field naming the test, so BOTH of its readings
+    #    are the ones every other row gets.  Pinned in both directions, because
+    #    a reader who knows the shape could expect its null to be refused rather
+    #    than reported.
     # =======================================================================
-    case("canary-only-when-mu-is-cold", "NOT-OBSERVED-CANARY-ONLY",
-         cv=["CANARY_ONLY"], control_target_count=0, canary_target_count=500),
-
-    # The rows that co-run no mu at all are the lattice floor, so no strictly
-    # weaker structural sibling of them exists.  Their null is
-    # the weaker tier for a different reason, and CV_CANARY_ONLY -- "Layer B fired,
-    # Layer A did not" -- must NOT be raised where no Layer A was compiled in, or a
-    # real diagnostic becomes boilerplate on every floor row.
-    case("canary-only-when-no-mu-is-compiled-in", "NOT-OBSERVED-CANARY-ONLY",
-         control_compiled_in=0, control_target_count=0, canary_target_count=500),
-
-    case("cold-no-control-built", "COLD-INVALID", dq=["NO_CONTROL_BUILT"],
-         control_compiled_in=0, canary_compiled_in=0,
-         control_target_count=0, canary_target_count=0),
-
-    # ---- exhaustive_valid == 0  =>  NEVER the strong null --------------------
-    # Hot harness, everything live -- but the ground-truth scan did not run, so the
-    # zero is not a measured zero and may never be read as one.
-    case("no-exhaustive-is-never-mu-hot", "NOT-OBSERVED-CANARY-ONLY",
-         cv=["NO_EXHAUSTIVE"], exhaustive_valid=0, control_target_count=500),
-
-    # =======================================================================
-    # 3. The sharpest instance: MP-cg-sys-relaxed is the Layer-B canary for most of
-    #    the corpus, so it co-runs nothing (control-map.csv says `self') and BOTH
-    #    compiled-in flags are 0.  The one test whose whole job is to fire must
-    #    still be readable when it does.
-    # =======================================================================
-    case("the-canary-itself-firing-is-a-plain-sighting", "OBSERVED",
-         control_compiled_in=0, canary_compiled_in=0,
-         control_target_count=0, canary_target_count=0,
+    case("MP-cg-sys-relaxed-firing-is-a-plain-sighting", "OBSERVED",
+         test_name="MP-cg-sys-relaxed",
          target_count_exhaustive=412, target_count_heuristic=412),
+
+    case("MP-cg-sys-relaxed-null-is-a-plain-null", "NOT-OBSERVED",
+         test_name="MP-cg-sys-relaxed"),
 
     # The store-only (2+2W) arm: no reader, so interleavings_detected is
     # structurally 0 and the observer is their ONLY liveness channel.  All three
     # outcomes stay reachable, or the channel goes constant on those rows.
-    # (a) live observer (>= HET_THETA_DISTINCT distinct GPU store-values) + hot
-    #     canary, nothing seen -> the reportable-null path.
-    case("store-only-observer-live-is-a-null", "NOT-OBSERVED-CANARY-ONLY",
-         control_compiled_in=0, control_target_count=0,
+    # (a) live observer (>= HET_THETA_DISTINCT distinct GPU store-values), nothing
+    #     seen -> the reportable-null path.
+    case("store-only-observer-live-is-a-null", "NOT-OBSERVED",
          sync_valid=0, obs_valid=1, observer_unique_count=500,
          interleavings_detected=0),
 
     # (b) cold observer (< HET_THETA_DISTINCT) -> COLD-INVALID, and the printout must
     #     name the OBSERVER channel: "interleavings_detected==0" is meaningless here.
     case("store-only-observer-cold-is-COLD", "COLD-INVALID", dq=["OBSERVER_COLD"],
-         control_compiled_in=0, control_target_count=0,
          sync_valid=0, obs_valid=1, observer_unique_count=1,
          interleavings_detected=0),
 
     # (c) a store-only SIGHTING is still a sighting: the observer channel must never
     #     block a recovered outcome.
     case("store-only-observer-sighting-is-OBSERVED", "OBSERVED",
-         control_compiled_in=0, control_target_count=0,
          sync_valid=0, obs_valid=1, observer_unique_count=500,
          interleavings_detected=0,
          target_count_exhaustive=7, target_count_heuristic=7),
-
-    # ... and with a COLD canary it falls back to COLD-INVALID: "we did not see it"
-    # from a dead harness is not a result.
-    case("cold-canary-with-no-mu-is-COLD", "COLD-INVALID", dq=["CONTROLS_COLD"],
-         control_compiled_in=0, control_target_count=0, canary_target_count=0),
 
     # =======================================================================
     # 4. An unstamped record fails closed.  het_obs_record is memset(0), so a
@@ -221,8 +190,6 @@ CASES = [
     # =======================================================================
     case("cold-no-interleaving", "COLD-INVALID", dq=["NO_INTERLEAVING"],
          interleavings_detected=0),
-    case("cold-controls-below-tau", "COLD-INVALID", dq=["CONTROLS_COLD"],
-         control_target_count=0, canary_target_count=0),
     case("cold-stress-truncated", "COLD-INVALID", dq=["STRESS_TRUNCATED"],
          stress_truncated=1),
     case("cold-window-opener-never-spun", "COLD-INVALID", dq=["SPIN_DEAD"],
@@ -237,16 +204,10 @@ CASES = [
          noise_gpu_blocks=0),
 
     # het_do_stress carries a runtime tally, so "requested and completed zero rounds"
-    # is a check that can fail -- and must be: HET_TEST_BLOCKS is a sum over the
-    # co-run instances, and stressing blocks fill only what the co-residency cap
-    # leaves over (hetlitmus/docs/positive-control.md S9).
+    # is a check that can fail -- and must be: HET_TEST_BLOCKS is the one instance's
+    # block count and stressing blocks fill only what the co-residency cap leaves
+    # over.
     case("cold-gpu-stress-dead", "COLD-INVALID", dq=["GPU_STRESS_DEAD"],
-         gpu_stress_rounds=0),
-
-    # The liveness disqualifiers do not care which tier the null would have been:
-    # a canary-only harness whose stress was inert is not a usable datum either.
-    case("canary-only-goes-cold-when-stress-is-dead", "COLD-INVALID",
-         dq=["GPU_STRESS_DEAD"], control_compiled_in=0, control_target_count=0,
          gpu_stress_rounds=0),
 
     # =======================================================================
@@ -256,34 +217,19 @@ CASES = [
     #    stays reportable and carries the unstressed caveat instead
     #    (positive-control.md S4: requested-but-dead, not merely zero).
     # =======================================================================
-    case("unstressed-baseline-still-reportable", "NOT-OBSERVED-MU-HOT",
+    case("unstressed-baseline-still-reportable", "NOT-OBSERVED",
          cv=["UNSTRESSED"], stress_requested=0,
          spin_rendezvous=0, spin_cap=0, cpu_enemy_rounds=0, cpu_preload_ops=0,
          noise_cpu_rounds=0, noise_gpu_blocks=0),
 
     # =======================================================================
-    # 7. The tau_hot boundary bites exactly at tau_hot.
-    # =======================================================================
-    case("tau-boundary-just-below", "COLD-INVALID", dq=["CONTROLS_COLD"],
-         control_target_count=29, canary_target_count=29),
-    case("tau-boundary-exactly-at", "NOT-OBSERVED-MU-HOT",
-         control_target_count=30, canary_target_count=0),
-
-    # The canary's OWN tau boundary, on a canary-only harness: for every test at the
-    # lattice floor the canary is the only liveness evidence there is.
-    case("canary-tau-just-below", "COLD-INVALID", dq=["CONTROLS_COLD"],
-         control_compiled_in=0, control_target_count=0, canary_target_count=29),
-    case("canary-tau-exactly-at", "NOT-OBSERVED-CANARY-ONLY",
-         control_compiled_in=0, control_target_count=0, canary_target_count=30),
-
-    # =======================================================================
     # 8. Caveats travel with the number, but do not invalidate.
     # =======================================================================
-    case("mu-hot-but-pinning-is-fiction", "NOT-OBSERVED-MU-HOT", cv=["AFF_FAILED"],
+    case("null-but-pinning-is-fiction", "NOT-OBSERVED", cv=["AFF_FAILED"],
          cpu_aff_failures=3),
-    case("mu-hot-but-placement-refused", "NOT-OBSERVED-MU-HOT",
+    case("null-but-placement-refused", "NOT-OBSERVED",
          cv=["PLACE_REFUSED"], place_failures=1),
-    case("mu-hot-but-spin-is-a-delay-loop", "NOT-OBSERVED-MU-HOT", cv=["SPIN_CAP"],
+    case("null-but-spin-is-a-delay-loop", "NOT-OBSERVED", cv=["SPIN_CAP"],
          spin_rendezvous=100, spin_cap=900),
 
     # =======================================================================
@@ -305,24 +251,11 @@ CASES = [
          noise_cpu_rounds=0, noise_gpu_blocks=0),
 
     # =======================================================================
-    # 10. The control's own exhaustive_valid must NOT gate the null.  A mutant can
-    #     itself be a T_L>=2 shape (mu(SB-*-sys-fence-2s) IS SB-*-sys-acqrel-2s), so
-    #     its exhaustive scan does not run at production N and its count comes from
-    #     the windowed detector -- which under-counts but cannot invent a cycle.
-    #     Gating on it would leave those controls structurally cold, and a positive
-    #     control that cannot fire is not a control (positive-control.md S5).  T's
-    #     OWN exhaustive_valid still gates the null; the control's does not.
-    # =======================================================================
-    case("control-count-from-the-window-still-vouches", "NOT-OBSERVED-MU-HOT",
-         control_exhaustive_valid=0, control_target_count=500),
-
-    # =======================================================================
     # 11. A windowed zero is NOT a measured zero, and the printout must say so or
     #     it overstates the effort behind a non-observation.
     # =======================================================================
-    case("windowed-zero-must-say-so", "NOT-OBSERVED-CANARY-ONLY",
-         cv=["NO_EXHAUSTIVE"], exhaustive_valid=0,
-         control_compiled_in=0, control_target_count=0),
+    case("windowed-zero-must-say-so", "NOT-OBSERVED",
+         cv=["NO_EXHAUSTIVE"], exhaustive_valid=0),
 
     # =======================================================================
     # 12. The CPU-only cycle.  The emitter sets cpu_only when every proc carries
@@ -330,20 +263,16 @@ CASES = [
     #     cross-device path carried the cycle, so what a sighting shows is the host
     #     ISA on the shared allocation and what a null probes is that allocation's
     #     memory type.  The set carrying it comes from
-    #     hetlitmus/tests/het/generate-cpuonly.sh, whose map writes `none' in the Mu
-    #     column of every row, so both cases here co-run none either.
+    #     hetlitmus/tests/het/generate-cpuonly.sh.
     # =======================================================================
     case("cpu-only-sighting-names-what-fired", "OBSERVED",
-         cpu_only=1, target_count_exhaustive=3, target_count_heuristic=3,
-         control_compiled_in=0, control_target_count=0),
-    case("cpu-only-null-probes-the-allocation", "NOT-OBSERVED-CANARY-ONLY",
-         cpu_only=1, control_compiled_in=0, control_target_count=0),
+         cpu_only=1, target_count_exhaustive=3, target_count_heuristic=3),
+    case("cpu-only-null-probes-the-allocation", "NOT-OBSERVED", cpu_only=1),
 ]
 
 # Cases whose PRINTOUT must disclose that the count came from the window, not the
 # ground-truth scan (phase 2).
-MUST_PRINT_SCAN_CAVEAT = {"windowed-zero-must-say-so",
-                          "no-exhaustive-is-never-mu-hot"}
+MUST_PRINT_SCAN_CAVEAT = {"windowed-zero-must-say-so"}
 SCAN_CAVEAT_TEXT = "rests on the WINDOWED heuristic"
 
 # A store-only COLD null must NAME the observer channel that failed; the generic
@@ -351,10 +280,6 @@ SCAN_CAVEAT_TEXT = "rests on the WINDOWED heuristic"
 MUST_NAME_OBSERVER_CHANNEL = {"store-only-observer-cold-is-COLD"}
 OBSERVER_CHANNEL_TEXT = "OBSERVER channel was COLD"
 
-# Cases that must NOT carry CV_CANARY_ONLY (checked negatively -- see above).
-NO_CANARY_ONLY_CV = {"canary-only-when-no-mu-is-compiled-in",
-                     "store-only-observer-live-is-a-null",
-                     "canary-tau-exactly-at"}
 
 # The CPU-only sentences, owner case -> the fragment only that case may print.
 # Both are keyed on `_r->cpu_only' in het_verdict.h, and every reader of that
@@ -381,15 +306,13 @@ C_MAIN = r"""
 static int failures = 0;
 
 static void run_case(const char *name, het_obs_record r,
-                     const char *want, uint32_t want_dq, uint32_t want_cv,
-                     uint32_t forbid_cv) {
+                     const char *want, uint32_t want_dq, uint32_t want_cv) {
   uint32_t dq = 0, cv = 0;
   het_verdict_t v = het_verdict(&r, &dq, &cv);
   const char *got = het_verdict_name(v);
   int ok = (strcmp(got, want) == 0)
         && ((dq & want_dq) == want_dq)
-        && ((cv & want_cv) == want_cv)
-        && ((cv & forbid_cv) == 0);
+        && ((cv & want_cv) == want_cv);
   printf("CASE|%s|%s|%s|0x%x|0x%x|%d\n", name, want, got, dq, cv, ok);
   /* Phase 2 reads this: what the harness would ACTUALLY PRINT.  Both lines, in
      the order the emitted driver writes them (hetEmit.ml): the machine-readable
@@ -403,7 +326,7 @@ static void run_case(const char *name, het_obs_record r,
 }
 
 int main(void) {
-  printf("TAU_HOT=%d\n", (int)HET_TAU_HOT);
+  printf("MAX_CELLS=%d\n", (int)HET_STATS_MAX_CELLS);
 __CASES__
   printf("FAILURES=%d\n", failures);
   return failures ? 1 : 0;
@@ -417,7 +340,11 @@ def c_record(r):
         # the constant here would let the gate keep passing if the header changed
         # it, which is the one thing the stamp exists to prevent.
         return v if isinstance(v, str) else str(v)
-    return ("(het_obs_record){ .test_name=\"synthetic\", "
+    # The test name is a field like any other, and a case may set it: nothing in
+    # the rule reads it, and a case that names a real corpus row pins that.
+    r = dict(r)
+    name = r.pop("test_name", "synthetic")
+    return ("(het_obs_record){ .test_name=\"%s\", " % name
             + ", ".join(".%s=%s" % (k, val(k, v)) for k, v in sorted(r.items()))
             + " }")
 
@@ -427,9 +354,8 @@ def build_c():
     for c in CASES:
         dq = " | ".join("HET_DQ_" + d for d in c["dq"]) or "0u"
         cv = " | ".join("HET_CV_" + d for d in c["cv"]) or "0u"
-        forbid = ("HET_CV_CANARY_ONLY" if c["name"] in NO_CANARY_ONLY_CV else "0u")
-        body.append('  run_case("%s", %s, "%s", %s, %s, %s);'
-                    % (c["name"], c_record(c["rec"]), c["verdict"], dq, cv, forbid))
+        body.append('  run_case("%s", %s, "%s", %s, %s);'
+                    % (c["name"], c_record(c["rec"]), c["verdict"], dq, cv))
     return C_MAIN.replace("__CASES__", "\n".join(body))
 
 
@@ -485,8 +411,6 @@ MACHINE_PAIRS = [
 GENERIC_MUST = [
     "- the host half of the host-device interconnect noise did NOT run",
     "- the device half of the host-device interconnect noise did NOT run",
-    "same host-device interconnect path.",
-    "the host-device interconnect path is alive",
     "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
     "(Alglave ASPLOS'15 Tab. 6's zero without memory stress is an NVIDIA GTX Titan "
     "measurement and is NOT claimed for this target",
@@ -494,24 +418,25 @@ GENERIC_MUST = [
     # stamped strings.  Each frame asserts its own name, so a constant fails here.
     "Report it as what (unstamped CPU ISA x GPU dialect pair) exhibited under "
     "this harness, this stress and this host-device interconnect path.",
+    # ... and the null frame's own, which is the other half of the same pin: a
+    # frame that names the pair on a sighting and nowhere else leaves every null
+    # unattributed.
+    "liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.",
 ]
 NVIDIA_MUST = [
     "- the Grace half of the NVLink-C2C noise did NOT run",
     "- the Hopper half of the NVLink-C2C noise did NOT run",
-    "same NVLink-C2C path.",
-    "the NVLink-C2C path is alive",
     "CAVEAT: cudaMemAdvise was REFUSED -- HET_PLACE placed nothing.",
     "On the NVIDIA GTX Titan the inter-CTA lb and sb tests were observed 0 per 100k "
     "without memory stress, while mp and coRR were observed (Alglave ASPLOS'15 "
     "Tab. 6)",
     "Report it as what (AArch64, cuda) exhibited under this harness, this stress "
     "and this NVLink-C2C path.",
+    "liveness (AArch64, cuda) measured on its own counters.",
 ]
 AMD_MUST = [
     "- the x86 half of the Infinity Fabric noise did NOT run",
     "- the MI300A device half of the Infinity Fabric noise did NOT run",
-    "same Infinity Fabric path.",
-    "the Infinity Fabric path is alive",
     # No placement lever on this render, and no [Alglave15 Tab. 6] figure covers
     # this part.
     "CAVEAT: the page-placement lever was REFUSED -- HET_PLACE placed nothing.",
@@ -519,6 +444,7 @@ AMD_MUST = [
     "measurement and is NOT claimed for this target",
     "Report it as what (X86_64, hip) exhibited under this harness, this stress "
     "and this Infinity Fabric path.",
+    "liveness (X86_64, hip) measured on its own counters.",
 ]
 NVIDIA_WORDS = ["Grace", "Hopper", "NVLink", "cudaMemAdvise",
                 "the inter-CTA lb and sb tests were observed 0 per 100k",
@@ -742,11 +668,8 @@ def scan_prints(blocks, quiet):
     # (b) The sentences shared by a GROUP of outcomes, same discipline.
     for claims, want_in, label in (
             (NON_SIGHTING_CLAIMS,
-             {"NOT-OBSERVED-MU-HOT", "NOT-OBSERVED-CANARY-ONLY", "COLD-INVALID"},
-             "every non-sighting outcome"),
-            (NULL_TIER_CLAIMS,
-             {"NOT-OBSERVED-MU-HOT", "NOT-OBSERVED-CANARY-ONLY"},
-             "both null tiers")):
+             {"NOT-OBSERVED", "COLD-INVALID"},
+             "every non-sighting outcome"),):
         for claim in claims:
             saw = set(v for _, (v, t) in blocks.items() if claim in t)
             missing = want_in - saw
@@ -856,18 +779,17 @@ def run_rule(header, tmp, quiet):
     run = subprocess.run([exe], capture_output=True, text=True)
     lines = run.stdout.splitlines()
 
-    # The driver prints TAU_HOT before the first case, so a missing first line
+    # The driver prints MAX_CELLS before the first case, so a missing first line
     # means the binary died before it ran anything.  That is reported, NEVER
     # indexed into: an empty list here raises in place of the diagnostic.
-    m = re.match(r"TAU_HOT=(\d+)", lines[0]) if lines else None
+    m = re.match(r"MAX_CELLS=(\d+)", lines[0]) if lines else None
     if m is None:
         print(run.stdout + run.stderr)
-        print("\nVERDICT FAILED: the compiled rule produced no TAU_HOT line "
+        print("\nVERDICT FAILED: the compiled rule produced no MAX_CELLS line "
               "(exit %d, %d line(s) of stdout) -- it did not reach the first case"
               % (run.returncode, len(lines)))
         return 1, {}
-    tau = int(m.group(1))
-    print("  tau_hot: %d\n" % tau)
+    print("  max_cells: %d\n" % int(m.group(1)))
 
     seen_v, seen_dq, bad = set(), set(), 0
     blocks, cur, buf = {}, None, []
@@ -910,8 +832,8 @@ def run_rule(header, tmp, quiet):
         print("\nVERDICT FAILED: %d case(s) wrong." % bad)
         return 1, blocks
     print("\nVERDICT OK (%d cases; all %d outcomes reachable; an unstamped record "
-          "fails closed; exhaustive_valid==0 is never the strong null; every "
-          "disqualifier bites)" % (len(CASES), len(VERDICTS)))
+          "fails closed; a windowed zero says so; every disqualifier bites)"
+          % (len(CASES), len(VERDICTS)))
     return 0, blocks
 
 
@@ -1093,14 +1015,14 @@ def bite():
                 "if (1) {"),
             quiet=True)
 
-        # (2) The two null tiers collapsed: mu(T)'s own liveness stops selecting the
-        # strong null, so a canary-only harness reports a mu-hot null.  The record
-        # fields are untouched, so only the outcome comparison sees it.
+        # (2) The disqualifiers stop deciding the outcome: every COLD record then
+        # reports its zero as a null.  The dq word is still computed and every
+        # sentence under it still prints, so only the outcome comparison sees it.
         ok &= _bite_one(
-            "the two null tiers collapsed (canary-only reads as MU HOT)",
+            "the disqualifiers stop deciding (a COLD record reports a null)",
             tmp, header,
-            lambda s: s.replace("} else if (hot_control && r->exhaustive_valid) {",
-                                "} else if (1) {"),
+            lambda s: s.replace("  v = dq ? HET_COLD_INVALID : HET_NOT_OBSERVED;",
+                                "  v = HET_NOT_OBSERVED;"),
             quiet=True)
 
         # (3) rec_magic stops failing closed: a memset-zeroed record is read as a
@@ -1169,17 +1091,17 @@ def bite():
                           "{ return @; }\n",
             "VERDICT FAILED: the rule does not compile")
 
-        # (6) The compiled rule prints nothing.  The driver prints TAU_HOT before
+        # (6) The compiled rule prints nothing.  The driver prints MAX_CELLS before
         # the first case, so an empty stdout means the binary died before it ran
         # one -- which the gate must say, NEVER index into.  A constructor that
         # _Exit()s is the shortest way to produce that: it is what a header
         # carrying a broken static initialiser does in the wild, one step earlier.
         ok &= _bite_report(
-            "a compiled rule that produces NO TAU_HOT line must be REPORTED",
+            "a compiled rule that produces NO MAX_CELLS line must be REPORTED",
             header,
             lambda s: s + "\n__attribute__((constructor)) static void "
                           "_het_bite_die_before_main(void) { _Exit(97); }\n",
-            "produced no TAU_HOT line")
+            "produced no MAX_CELLS line")
 
         # (7) A harness ships unstamped: het_verdict() fails closed, but ONLY if it
         # is ever run, so the corpus census is what stops one harness quietly

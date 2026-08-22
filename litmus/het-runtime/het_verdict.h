@@ -1,31 +1,23 @@
 /* =========================================================================
- * het_verdict.h -- HetLitmus observation record + null-credibility rule.
+ * het_verdict.h -- HetLitmus observation record + the reading of a null.
  * litmus7 copies this file verbatim into every emitted harness dir: edit
  * litmus/het-runtime/het_verdict.h, never a harness-dir copy.
  *
  * This harness REPORTS what it observed.  It carries no prediction and never
- * says a result contradicts a model.  A non-observation is evidence only if the
- * harness would have shown a weak behaviour had one occurred, so every null is
- * gated on a positive control that fired in the same launch, on the same
- * interconnect, under the same stress -- and both layers are heterogeneous too,
- * since a GPU-only (or CPU-only) known-weak behaviour vouches for the on-die
- * window, not the interconnect one.
- *   Layer A  mu(T)   a strictly weaker, structurally identical sibling of T,
- *                    co-running on the same launch -- from the control map.
- *   Layer B  canary  a fixed het MP-sys-relaxed instance.
- * A control does not make a null a proof; it makes it credible-not-observed
- * instead of UNINTERPRETABLE.  Falsification is one-sided: what matters is the
- * possibility of a weak behaviour, not its probability [Alglave15 sec 4.3 p.585].
- * Design: hetlitmus/docs/positive-control.md.
+ * says a result contradicts a model.  A null states what this harness reached --
+ * the effort it spent and the liveness its own counters measured -- and NOTHING
+ * vouches for it: no rate and no probability is attached to one, falsification
+ * being one-sided, so what matters is the possibility of a weak behaviour rather
+ * than its probability [Alglave15 sec 4.3 p.585].
+ * Design: hetlitmus/docs/00-environment-design.md sec 3.7.
  * ========================================================================= */
 #ifndef HET_VERDICT_H
 #define HET_VERDICT_H
 
 #include <stdint.h>
 #include <stdio.h>
-#include <stdlib.h>   /* qsort: the two-sample KS stationarity precheck           */
-#include <string.h>   /* strcmp: distinguishing the `self' canary from a missing one */
-#include <math.h>
+#include <stdlib.h>   /* getenv: the run-time campaign knobs                 */
+#include <string.h>   /* memset: het_stats_compute zeroes its own aggregate  */
 
 /* ---------------------------------------------------------------------------
  * WHICH MACHINE THIS HARNESS MAY NAME.  Every word below is a claim about
@@ -60,43 +52,17 @@
 #endif
 
 /* ---------------------------------------------------------------------------
- * TWO BUILD FACTS, also stamped by the emitter and from EVERY pair: what this
- * binary was built for, and whether a positive-control map was read for it.  The
- * map is looked for beside every test, so HET_NO_CONTROL_MAP means it was not
- * there: nothing in such a harness marks any row the Layer-B canary, and its
- * missing calibration channel is a BUILD FAULT rather than a construction.  The
- * defaults below are for the checkers, which compile this header standalone.
+ * THE BUILD FACT, also stamped by the emitter and from EVERY pair: what this
+ * binary was built for.  The default below is for the checkers, which compile
+ * this header standalone.
  * ------------------------------------------------------------------------- */
 #ifndef HET_PAIR_NAME
 #define HET_PAIR_NAME "(unstamped CPU ISA x GPU dialect pair)"
-#endif
-#ifndef HET_NO_CONTROL_MAP
-#define HET_NO_CONTROL_MAP 0
-#endif
-
-/* tau_hot -- how many control sightings make the harness "demonstrably hot".
-   3 is the 95% floor (P_rep = 1 - e^-3 = 95.02%) [Kirkham20 sec 1.1]; 30 makes
-   "hot" comfortable rather than marginal, which is cheap in a perpetual harness.
-   Settling the figure needs hardware, and the arithmetic behind the floor assumes
-   a stationarity that het drift can break -- which is why control_Prep below is a
-   hotness indicator and not a guarantee. */
-#ifndef HET_TAU_HOT
-#define HET_TAU_HOT 30
 #endif
 
 /* ---------------------------------------------------------------------------
  * Knobs of the statistics layer (see its banner further down, and
  * hetlitmus/docs/00-environment-design.md sec 3.7).
- *
- * HET_NWIN.  The recovery scan buckets each run's frames into HET_NWIN windows
- * and sub-tallies the CONTROL channel per window -- the only within-run time
- * series the record carries, and the raw material of the KS stationarity
- * precheck.  It is also a RESOLUTION FLOOR: the window is the finest time-scale
- * the record can see, so a rate change shorter than one window is invisible to
- * that precheck.  128 windows is 781 iterations/window at the default N.  The
- * knob is swept (-DHET_NWIN=...), not tuned here.  Every run reports the value it
- * realised (het_obs_record.nwin, nwin= in the HetStats line), so records scored
- * at different resolutions are never pooled.
  *
  * HET_THETA_DISTINCT (theta_d) is the degeneracy guard's floor
  * (het_cell_degenerate).  Deliberately the literal floor -- 2 = "the decode
@@ -104,9 +70,6 @@
  * the constant-read artefact [Srivastava24 sec 4.1], and rejecting more than that
  * discards genuine sightings, which one-sided falsification forbids.  Raising it
  * is a hardware-calibration decision. */
-#ifndef HET_NWIN
-#define HET_NWIN 128
-#endif
 #ifndef HET_THETA_DISTINCT
 #define HET_THETA_DISTINCT 2
 #endif
@@ -116,8 +79,6 @@
 #ifndef HET_STATS_MAX_CELLS
 #define HET_STATS_MAX_CELLS 128
 #endif
-/* c(0.05) for the asymptotic two-sample Kolmogorov-Smirnov critical value. */
-#define HET_KS_C05 1.358
 
 typedef enum { CONF_ROBUST, CONF_ADVISORY, CONF_EXPLORATORY } het_confidence;
 
@@ -184,9 +145,10 @@ typedef struct het_obs_record {
   /* 0 = the O(N^T_L) ground-truth scan did NOT run at this N (capped by
      HET_EXHAUSTIVE_MAX), so target_count_exhaustive is "not measured", NOT a
      measured zero; reading it as data would manufacture a false "Never".
-     het_verdict() refuses HET_NOT_OBSERVED_MU_HOT when this is 0.  On a T_L<=1 shape
-     (no windowed proc) every frame is decoded exactly, the O(N) scan is the
-     ground truth, and the flag is 1 whatever N is. */
+     het_verdict() raises HET_CV_NO_EXHAUSTIVE when this is 0, and the printout
+     says the zero is not a measured one.  On a T_L<=1 shape (no windowed proc)
+     every frame is decoded exactly, the O(N) scan is the ground truth, and the
+     flag is 1 whatever N is. */
   int exhaustive_valid;
   uint64_t interleavings_detected;
   uint64_t distinct_decoded_iters;
@@ -203,69 +165,6 @@ typedef struct het_obs_record {
      with neither fails closed. */
   int sync_valid;   /* 1 => distinct_decoded_iters + skew_* are populated */
   int obs_valid;    /* 1 => observer_unique_count is populated            */
-  /* The positive control: control_* = Layer A, mu(T) -- THIS test's structural
-     twin at the lattice floor, every ordering annotation dropped; canary_* =
-     Layer B, the universal het MP floor.  Both are tallied by the same recovery
-     scan as target_count, on disjoint cache-line-padded locations, in the same
-     launch under the same stress -- a control that ran at another time under
-     another stress roll certifies nothing about this window, the rate not being
-     stationary even within one run [Kirkham20 sec 4.3]. */
-  uint64_t control_target_count;
-  uint64_t control_frames_examined;
-  uint64_t canary_target_count;
-  uint64_t canary_frames_examined;
-  /* Which kind of count you are reading, per co-running instance: each has its own
-     T_L class, and a T_L>=2 mutant (mu(SB-*-sys-fence-2s) is SB-*-sys-relaxed)
-     is counted by the WINDOWED scan at production N.  Windowed hits are a strict
-     subset of the ground-truth scan's under the same predicate -- it can miss
-     cycles, it cannot invent them -- so the control under-counts, which errs
-     toward COLD.  het_verdict() deliberately does not gate the control on these:
-     a control that cannot fire is not a control
-     (hetlitmus/docs/positive-control.md sec 5). */
-  int control_exhaustive_valid;
-  int canary_exhaustive_valid;
-  /* Per-window sub-tallies of the CONTROL channel: each control sighting is
-     tallied into the window its frame fell in.
-     Every stationarity statement this layer makes is computed from them -- the
-     early-vs-late KS split, and the emptiness test that refuses it.  The control,
-     never the target: the target is far too rare to say anything about a rate
-     from, while the control is a high-rate proxy on the same fabric in the same
-     run under the same stress.
-     They are bumped on the same line, under the same predicate, as
-     control_target_count / canary_target_count, so sum(control_win[]) ==
-     control_target_count is an invariant the aggregate checks on every cell
-     (HET_ST_WIN_DESYNC).  That is the one run-time check on real hardware that
-     these tallies are alive at all: a dead-code-eliminated or mis-indexed bump
-     breaks the sum, and the precheck would otherwise be run on a dead stream. */
-  uint32_t control_win[HET_NWIN];
-  uint32_t canary_win[HET_NWIN];
-  /* 1 - e^{-control_target_count}, the reproducibility score of [Kirkham20 sec
-     1.1], kept only as the hot/cold light het_print_liveness prints.  IT IS NOT A
-     CONFIDENCE: the count is of validated frames, and a run of N iterations has
-     N^{T_L} of them [Melissaris20 sec IV.A], so feeding it to 1 - e^{-n} drives
-     the score to 1 vacuously -- the frame combinatorics inflate n.  The statistics
-     layer below reports P_rep from the (instance,run) cell instead. */
-  double control_Prep;
-  /* 0 => no Layer-A mutant was compiled in, so control_target_count is
-     structurally zero and means nothing.  1 => a real mu(T) is co-running here,
-     same launch, same stress, same interconnect path.  It is 1 on exactly the
-     tests the control map names a strictly weaker structural sibling for; a test
-     already at the lattice floor has none, there being no mutation left that its
-     specification still forbids [MCMutants23 sec 1.2].  Kept separate from the
-     canary flag below on purpose -- "a canary is co-running" and "the mutant OF
-     THIS TEST is co-running" are different claims, and collapsing them would let
-     a canary vouch for a shape it does not share. */
-  int control_compiled_in;
-  /* 0 => no Layer-B canary is co-running, so canary_target_count is structurally
-     zero and means nothing.  1 => a real canary instance is in this launch.  Set
-     from the emitted instance population, not from the map: canary_name is
-     non-NULL even where no canary co-runs, and a name is not a co-run.
-     0 on exactly the tests the control map marks `self', which ARE the canary and
-     so cannot co-run themselves; when one of them does not fire, nothing here can
-     vouch for it and COLD-INVALID is the correct answer, not a gap. */
-  int canary_compiled_in;
-  const char *control_name;   /* mu(T), from the pair's control map */
-  const char *canary_name;    /* the Layer-B canary -- NAMED for every test */
   /* GPU stress liveness.  The stress layer leaves no trace in the tested op
      stream by design, so its health is known only if it is measured at run time.
        spin_rendezvous/spin_cap  how the window-opener's spins ended; a mostly
@@ -310,28 +209,8 @@ typedef struct het_obs_record {
      that was not running.  The argument is target-independent; the FIGURE is not,
      and the emitter stamps the pair's own into HET_LLC_MB. */
   uint32_t noise_ws_mb, place_mode;
-  /* The window resolution this run realised (= HET_NWIN of the binary that
-     produced it).  HET_NWIN is swept and the KS split is taken at whatever
-     resolution the run realised, so records scored at different resolutions must
-     never be pooled -- campaign.py refuses to. */
-  uint32_t nwin;
   uint32_t stress_requested;    /* HET_REQ_* bitmask -- see above */
 } het_obs_record;
-
-/* Frame index -> window bucket, called from the recovery scan on the SAME line as
-   the control's count bump.  Being a function of the frame index, there is nothing
-   here the optimiser can fold away -- unlike a -D knob threaded through an
-   if-chain, which is how the stress layer once got deleted silently.  Clamped
-   rather than asserted: an out-of-range bucket must not corrupt the record, and
-   the sum-vs-total invariant would catch a mis-index anyway. */
-static int het_win_of(long f, long n) {
-  long w;
-  if (n <= 0) return 0;
-  w = (f * (long)HET_NWIN) / n;
-  if (w < 0) w = 0;
-  if (w >= HET_NWIN) w = HET_NWIN - 1;
-  return (int)w;
-}
 
 /* ---------------------------------------------------------------------------
  * RUNTIME knobs: getenv, never a -D the device code can see (nvcc folds a
@@ -368,39 +247,34 @@ static long het_env_long(const char *name, long dflt) {
 }
 
 /* ---------------------------------------------------------------------------
- * THE OUTCOME.  One axis -- was the weak outcome seen, and if not, what vouches
- * for the harness that did not see it.  No prediction enters here and none is
- * printed: "observed" and "not observed" are the whole vocabulary, and what they
- * are worth against any model is settled offline (hetlitmus/oracle-compare.sh).
+ * THE OUTCOME.  One axis -- was the weak outcome seen, and if not, is this run's
+ * zero a datum at all.  No prediction enters here and none is printed: "observed"
+ * and "not observed" are the whole vocabulary, and what they are worth against
+ * any model is settled offline (hetlitmus/oracle-compare.sh).
  *
- *   HET_OBSERVED    seen.  Believed unconditionally -- falsification is one-sided,
- *                   so no control is needed to believe a positive.
- *   HET_NOT_OBSERVED_MU_HOT       not seen, and mu(T) -- a strictly weaker,
- *                   structurally identical sibling on the same launch, stress and
- *                   link path -- fired >= tau_hot while T's own two engines
- *                   provably overlapped, with the ground-truth scan running.
- *   HET_NOT_OBSERVED_CANARY_ONLY  not seen on a harness that is alive but whose
- *                   OWN mu(T) did not confirm it: only the Layer-B canary
- *                   vouches, or no mu co-runs, or the zero came from the windowed
- *                   scan.  Weaker; the printout names which, and reporting a null
- *                   about one's own reach plainly has a precedent
+ *   HET_OBSERVED    seen.  Believed unconditionally -- falsification is one-sided.
+ *   HET_NOT_OBSERVED  not seen, on a run whose every requested mechanism was
+ *                   measured alive.  It reports the effort spent and the liveness
+ *                   measured, and NOTHING vouches for it: a characterization tool
+ *                   states what its harness reached and prices nothing.  Reporting
+ *                   a null about one's own reach plainly has a precedent
  *                   [Alglave15 fn.7 p.577].
- *   HET_COLD_INVALID  not demonstrably hot, or the record is unstamped.  The empty
- *                   histogram carries no information: discard it, never report it
- *                   as "not observed".
+ *   HET_COLD_INVALID  a mechanism this run rests on was dead, or the record is
+ *                   unstamped.  The empty histogram carries no information:
+ *                   discard it, never report it as "not observed".
  * ------------------------------------------------------------------------- */
 typedef enum {
   HET_OBSERVED = 0,
-  HET_NOT_OBSERVED_MU_HOT,
-  HET_NOT_OBSERVED_CANARY_ONLY,
+  HET_NOT_OBSERVED,
   HET_COLD_INVALID
 } het_verdict_t;
 
 /* Why a run was DISQUALIFIED (its null is discarded).  Each names a mechanism
-   that is dead, not merely suboptimal. */
-#define HET_DQ_NO_CONTROL_BUILT (1u << 0)  /* neither layer compiled in           */
+   that is dead, not merely suboptimal.
+   THE BIT NUMBERS ARE STABLE, for the reason spelled out at the HET_ST_ block
+   below: a retired bit is left vacant (0 and 2 today) rather than closed up, so
+   an archived word decodes against this list whatever has since left it. */
 #define HET_DQ_NO_INTERLEAVING  (1u << 1)  /* the two engines never overlapped    */
-#define HET_DQ_CONTROLS_COLD    (1u << 2)  /* neither mu(T) nor the canary fired  */
 #define HET_DQ_STRESS_TRUNCATED (1u << 3)  /* stress stopped mid-run              */
 #define HET_DQ_SPIN_DEAD        (1u << 4)  /* window-opener requested, never spun */
 #define HET_DQ_CPU_ENEMY_DEAD   (1u << 5)
@@ -417,9 +291,9 @@ typedef enum {
    so the printed sentence names the channel that actually failed. */
 #define HET_DQ_OBSERVER_COLD    (1u << 11)
 
-/* Why a null was CAVEATED (still reportable, but weaker than it looks). */
+/* Why a null was CAVEATED (still reportable, but weaker than it looks).  Bit 1 is
+   vacant, and stays vacant, for the reason the two blocks above give. */
 #define HET_CV_NO_EXHAUSTIVE    (1u << 0)  /* ground-truth scan did not run       */
-#define HET_CV_CANARY_ONLY      (1u << 1)  /* Layer B fired, Layer A did not      */
 #define HET_CV_HEURISTIC_SIGHT  (1u << 2)  /* sighting via the windowed heuristic */
 #define HET_CV_AFF_FAILED       (1u << 3)  /* pinning is fiction                  */
 #define HET_CV_PLACE_REFUSED    (1u << 4)  /* HET_PLACE_LEVER placed nothing      */
@@ -436,20 +310,13 @@ static int het_dead(uint32_t req, uint32_t bit, uint64_t rounds) {
   return (req & bit) && rounds == 0;
 }
 
-/* The rule (hetlitmus/docs/positive-control.md sec 4).  A pure function of the
-   record. */
+/* The rule (hetlitmus/docs/00-environment-design.md sec 3.7).  A pure function of
+   the record. */
 static het_verdict_t het_verdict(const het_obs_record *r,
                                  uint32_t *dq_out, uint32_t *cv_out) {
   uint32_t dq = 0, cv = 0;
   uint32_t req = r->stress_requested;
   het_verdict_t v;
-  int hot_control, hot_canary;
-
-  /* Each layer is gated on ITS OWN compiled-in flag: the harnesses at the lattice
-     floor co-run a canary and no mutant, and gating the canary on the mutant's
-     flag would make their liveness evidence invisible. */
-  hot_control = (r->control_compiled_in && r->control_target_count >= HET_TAU_HOT);
-  hot_canary  = (r->canary_compiled_in  && r->canary_target_count  >= HET_TAU_HOT);
 
   /* ---- 0. FAIL CLOSED on an unstamped record, before anything else: every field
      below is then whatever memset left, so every sentence we could print would be
@@ -468,12 +335,6 @@ static het_verdict_t het_verdict(const het_obs_record *r,
      [Alglave15 sec 4.3 Tab.6].  The outcome is unchanged; only its provenance
      travels. */
   if (!r->exhaustive_valid)         cv |= HET_CV_NO_EXHAUSTIVE;
-  /* "Layer B fired, Layer A did not" is a caveat only where a Layer A exists to
-     have not fired.  Without the control_compiled_in guard it would be raised on
-     every test at the lattice floor -- which has no mutant by construction --
-     turning a real diagnostic into boilerplate on every one of them. */
-  if (r->control_compiled_in && !hot_control && hot_canary)
-                                    cv |= HET_CV_CANARY_ONLY;
   if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
   if (r->place_failures > 0)        cv |= HET_CV_PLACE_REFUSED;
   if (req == 0)                     cv |= HET_CV_UNSTRESSED;
@@ -495,8 +356,9 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   { uint64_t spins = r->spin_rendezvous + r->spin_cap;
     if (spins && r->spin_rendezvous * 2 < spins) cv |= HET_CV_SPIN_CAP; }
 
-  /* ---- 2. A SIGHTING, believed unconditionally: no control is needed to believe
-     a positive, and an inert-stress run that saw the outcome still saw it.
+  /* ---- 2. A SIGHTING, believed unconditionally: falsification is one-sided, so
+     nothing has to vouch for a positive, and an inert-stress run that saw the
+     outcome still saw it.
 
      The heuristic tally counts here too, and must: on a T_L>=2 shape at
      production N target_count_exhaustive is 0 by construction
@@ -515,11 +377,7 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   /* ---- 3. Liveness: is this run's null even a datum?  A null from an
      inert-stress run is not the same datum as one from a stressed run, and
      nothing else in the record would say so.
-     Neither layer co-running => no liveness evidence of any kind, whatever the
-     counters say.  True of exactly the two tests that ARE the canary. */
-  if (!r->control_compiled_in && !r->canary_compiled_in)
-                                                  dq |= HET_DQ_NO_CONTROL_BUILT;
-  /* Channel-aware interleaving-liveness, mirroring het_cell_degenerate: the sync
+     Channel-aware interleaving-liveness, mirroring het_cell_degenerate: the sync
      channel's evidence is interleavings_detected (a reader saw the two engines
      overlap), the observer channel's is observer_unique_count.  A store-only shape
      has no reader, so interleavings_detected is structurally 0 there and reading
@@ -552,26 +410,9 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   if (het_dead(req, HET_REQ_NOISE_GPU,   (uint64_t)r->noise_gpu_blocks))
                                                   dq |= HET_DQ_NOISE_GPU_DEAD;
 
-  /* ---- 4. Was the harness hot?  (hot_control / hot_canary were computed at the
-     top, because the caveat block above needs them.) */
-  if (!hot_control && !hot_canary)                dq |= HET_DQ_CONTROLS_COLD;
-
-  /* ---- 5. The outcome.  NOT OBSERVED -- and what vouches for the harness that
-     did not see it is the whole difference between the two null tiers. */
-  if (dq) {
-    v = HET_COLD_INVALID;
-  } else if (hot_control && r->exhaustive_valid) {
-    /* mu(T) fired on the same run, stress and link path, and T's own two engines
-       provably overlapped: the harness produced a cross-device interleaving of
-       T's own shape, and the zero is a ground-truth zero. */
-    v = HET_NOT_OBSERVED_MU_HOT;
-  } else {
-    /* Either no mu co-runs or it did not reach tau_hot, so only the canary
-       vouches -- or the ground-truth scan never ran, so the zero is not a
-       measured zero.  het_verdict_print names which; both are reasons to
-       escalate stress tuning rather than to report. */
-    v = HET_NOT_OBSERVED_CANARY_ONLY;
-  }
+  /* ---- 4. The outcome.  A dead mechanism means this run's zero is not a datum;
+     anything else is a null, which reports the effort behind it and no more. */
+  v = dq ? HET_COLD_INVALID : HET_NOT_OBSERVED;
 
   if (dq_out) *dq_out = dq;
   if (cv_out) *cv_out = cv;
@@ -580,10 +421,9 @@ static het_verdict_t het_verdict(const het_obs_record *r,
 
 static const char *het_verdict_name(het_verdict_t v) {
   switch (v) {
-  case HET_OBSERVED:                  return "OBSERVED";
-  case HET_NOT_OBSERVED_MU_HOT:       return "NOT-OBSERVED-MU-HOT";
-  case HET_NOT_OBSERVED_CANARY_ONLY:  return "NOT-OBSERVED-CANARY-ONLY";
-  default:                            return "COLD-INVALID";
+  case HET_OBSERVED:      return "OBSERVED";
+  case HET_NOT_OBSERVED:  return "NOT-OBSERVED";
+  default:                return "COLD-INVALID";
   }
 }
 
@@ -600,10 +440,10 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     "HetObs %s cpu_only=%d "
     "inst=%d run=%d conf=%d report=%d N=%llu frames=%llu target=%s%llu/%llu "
     "interleavings=%llu distinct_iters=%llu ws_via_obs=%llu obs_unique=%llu "
-    "skew=[%d,%d] mean=%.3f sd=%.3f ctrl=%s%llu/%llu canary=%s%llu/%llu Prep=%.6f built=%d/%d "
+    "skew=[%d,%d] mean=%.3f sd=%.3f "
     "spin=%llu/%llu stress_trunc=%llu do_stress_rounds=%llu req=0x%x "
     "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
-    "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u nwin=%u "
+    "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u "
     "aff_fail=%u place_fail=%u\n",
     _r->test_name,
     _r->cpu_only,
@@ -618,15 +458,6 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     (unsigned long long)_r->ws_edges_via_observer,
     (unsigned long long)_r->observer_unique_count,
     _r->skew_min, _r->skew_max, _r->skew_mean, _r->skew_stddev,
-    /* "NA:" = this count came from the WINDOWED scan, not the ground-truth one.
-       It is still a real count of real recovered cycles -- it just under-counts. */
-    _r->control_exhaustive_valid ? "" : "NA:",
-    (unsigned long long)_r->control_target_count,
-    (unsigned long long)_r->control_frames_examined,
-    _r->canary_exhaustive_valid ? "" : "NA:",
-    (unsigned long long)_r->canary_target_count,
-    (unsigned long long)_r->canary_frames_examined,
-    _r->control_Prep, _r->control_compiled_in, _r->canary_compiled_in,
     (unsigned long long)_r->spin_rendezvous,
     (unsigned long long)_r->spin_cap,
     (unsigned long long)_r->stress_truncated,
@@ -639,23 +470,24 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     (unsigned long long)_r->noise_cpu_rounds,
     (unsigned long long)_r->noise_cpu_words,
     _r->noise_gpu_blocks, _r->noise_gpu_rounds,
-    _r->noise_ws_mb, _r->place_mode, _r->nwin,
+    _r->noise_ws_mb, _r->place_mode,
     _r->cpu_aff_failures, _r->place_failures);
 }
 
 /* ---------------------------------------------------------------------------
- * The reporting contract (hetlitmus/docs/positive-control.md sec 6): NEVER print
- * a bare "Never".  Every null prints paired with the control that vouches for it,
- * in absolute numbers, so a reader can recalibrate the bar instead of taking the
- * harness's word for it.  Where a shape's control cannot be made hot the printout
- * says so plainly and cites the precedent [Alglave15 fn.7 p.577].
+ * The reporting contract (hetlitmus/docs/00-environment-design.md sec 3.7): NEVER
+ * print a bare "Never".  Every null prints paired with the effort it cost and the
+ * liveness this run measured, in absolute numbers, so a reader weighs the zero
+ * against what was spent instead of taking the harness's word for it.  Nothing
+ * vouches for the harness; the precedent for reporting a null as a fact about
+ * one's own reach is [Alglave15 fn.7 p.577].
  * ------------------------------------------------------------------------- */
 /* The stress-provenance caveats, printed for a sighting as well as for a null. */
 static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) {
   if (cv & HET_CV_UNSTRESSED)
     fprintf(_ch, "  CAVEAT: no stress was requested.  Kirkham (6.2) exposed only "
                  "ONE of six mutants with no stress -- an unstressed null is weak "
-                 "evidence whatever the controls say.\n");
+                 "evidence whatever else this record carries.\n");
   if (cv & HET_CV_SPIN_CAP)
     fprintf(_ch, "  CAVEAT: the window-opener released on the deadlock cap in most "
                  "spins -- it is a delay loop, not a rendezvous.\n");
@@ -733,7 +565,11 @@ static void het_print_scan_caveat(FILE *_ch, const het_obs_record *_r, uint32_t 
 }
 
 /* "We did not see it", in the only vocabulary this harness has: the outcome the
-   test's condition names, and the effort behind the zero. */
+   test's condition names, the effort behind the zero, and this run's own liveness
+   counters -- printed under every null of every class, since they are all a null
+   has.  On a store-only shape the observer IS the liveness channel: with no
+   reader, interleavings_detected is structurally 0 and, printed alone, would
+   misread as "nothing raced". */
 static void het_print_notobserved(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
     "  %s: the weak outcome was NOT observed -- 0 / N=%llu frames (%llu examined); "
@@ -741,51 +577,12 @@ static void het_print_notobserved(FILE *_ch, const het_obs_record *_r) {
     _r->test_name, (unsigned long long)_r->N,
     (unsigned long long)_r->frames_examined,
     (unsigned long long)_r->interleavings_detected);
-}
-
-/* How hot the harness was -- printed under every null of every class, because a
-   non-observation is worth exactly what the co-running controls say. */
-static void het_print_liveness(FILE *_ch, const het_obs_record *_r) {
-  if (_r->control_compiled_in)
-    fprintf(_ch,
-      "  companion %s (mu(T), the lattice-floor twin of this test) fired %llu "
-      "time(s), P_rep=%.4f%%, on the same runs under the same stress config "
-      "(tau_hot=%d).\n",
-      _r->control_name ? _r->control_name : "(none)",
-      (unsigned long long)_r->control_target_count,
-      100.0 * _r->control_Prep, (int)HET_TAU_HOT);
-  if (_r->canary_compiled_in)
-    fprintf(_ch,
-      "  canary %s fired %llu time(s) (tau_hot=%d) -- same launch, same stress, "
-      "same %s path.\n",
-      _r->canary_name ? _r->canary_name : "(none)",
-      (unsigned long long)_r->canary_target_count, (int)HET_TAU_HOT,
-      HET_LINK_NAME);
-  /* On a store-only shape the observer IS the liveness channel: with no reader,
-     interleavings_detected is structurally 0 and, printed alone, would misread as
-     "nothing raced". */
   if (_r->obs_valid && !_r->sync_valid)
     fprintf(_ch,
       "  the CPU observer resolved %llu distinct GPU store-value(s) across the "
       "window (this store-only shape has no reader, so the observer -- not "
       "interleavings_detected -- is its liveness channel).\n",
       (unsigned long long)_r->observer_unique_count);
-  if (!_r->control_compiled_in && !_r->canary_compiled_in) {
-    /* The two tests that ARE the canary are supposed to land here; anything else
-       landing here is an emitter bug, and the two must not print one sentence. */
-    if (_r->canary_name && _r->test_name
-        && strcmp(_r->canary_name, _r->test_name) == 0)
-      fprintf(_ch,
-        "  THIS TEST IS THE LAYER-B CANARY (control-map.csv: `self'), so it cannot "
-        "co-run itself and nothing else here can vouch for it.  Its own failure to "
-        "fire is not a gap in the instrumentation -- it IS what \"the harness was "
-        "cold\" MEANS: the most observable het shape we have did not fire.\n");
-    else
-      fprintf(_ch,
-        "  *** NO CONTROL AND NO CANARY ARE CO-RUNNING IN THIS HARNESS *** -- both "
-        "counts are structurally 0 and mean NOTHING.  This result is "
-        "UNINTERPRETABLE.\n");
-  }
 }
 
 static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
@@ -869,15 +666,9 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
 
   /* ===================== NOT OBSERVED.  It NEVER prints alone. ================= */
   het_print_notobserved(_ch, _r);
-  /* Covers all three sub-cases: mutant co-running, canary co-running, and neither
-     -- where it further separates the tests that ARE the canary (designed) from a
-     harness whose control silently went missing (a bug). */
-  het_print_liveness(_ch, _r);
 
   if (v == HET_COLD_INVALID) {
     fprintf(_ch, "  DISCARD this null -- the harness was not demonstrably hot:\n");
-    if (dq & HET_DQ_NO_CONTROL_BUILT)
-      fprintf(_ch, "    - no positive control was compiled in\n");
     if (dq & HET_DQ_NO_INTERLEAVING)
       fprintf(_ch, "    - interleavings_detected == 0: the two engines never "
                    "overlapped; nothing raced, so nothing could have been seen\n");
@@ -889,11 +680,6 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
                    "null is therefore not a datum\n",
               (unsigned long long)_r->observer_unique_count,
               (int)HET_THETA_DISTINCT);
-    if (dq & HET_DQ_CONTROLS_COLD)
-      fprintf(_ch, "    - neither mu(T) nor the canary reached tau_hot=%d: a "
-                   "known-weak behaviour on this very machinery did not fire, so "
-                   "this harness is not shown to expose anything\n",
-              (int)HET_TAU_HOT);
     if (dq & HET_DQ_STRESS_TRUNCATED)
       fprintf(_ch, "    - stress_truncated=%llu: stress STOPPED while tested "
                    "lanes were still running\n",
@@ -939,48 +725,26 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     return;
   }
 
-  if (v == HET_NOT_OBSERVED_MU_HOT)
-    fprintf(_ch,
-      "  NOT OBSERVED, MU HOT: mu(T) -- a strictly weaker, structurally identical "
-      "sibling of this test -- fired reproducibly on the same launch, stress and "
-      "%s path, so the harness demonstrably produced a cross-device interleaving "
-      "of THIS shape and the zero is a ground-truth zero.  Report it as \"not "
-      "observed under this effort\", never as \"cannot happen\".\n",
-      HET_LINK_NAME);
-
-  if (v == HET_NOT_OBSERVED_CANARY_ONLY) {
-    fprintf(_ch, "  NOT OBSERVED, CANARY ONLY -- reportable, but weaker than it "
-                 "looks:\n");
-    if (!_r->control_compiled_in)
-      fprintf(_ch, "    - no mu(T) co-runs: the control map found no strictly "
-                   "weaker sibling of this test, so nothing of its OWN shape "
-                   "vouches for it and only the %s path is shown alive.\n",
-              HET_LINK_NAME);
-    else if (cv & HET_CV_CANARY_ONLY)
-      /* Stated of the mu(T) INSTANCE, not of the shape: where T's floor twin is
-         the canary shape the two co-running instances run the same program, so
-         "this shape was never hit" would be contradicted by the canary that just
-         fired. */
-      fprintf(_ch, "    - only the Layer-B canary fired: the %s path is alive, "
-                   "but the co-running mu(T) instance -- this test's own "
-                   "lattice-floor twin -- did not reach tau_hot.  Escalate "
-                   "stress tuning for it.\n",
-              HET_LINK_NAME);
-    if (cv & HET_CV_NO_EXHAUSTIVE)
-      fprintf(_ch, "    - the O(N^T_L) ground-truth scan did not run at N=%llu, so "
-                   "this is NOT a measured zero (the CAVEAT below says why).\n",
-              (unsigned long long)_r->N);
-  }
-
-  /* One sentence for both tiers, because it is the same statement: a null is a
-     fact about this harness's reach, not about a model.  The precedent is quoted
-     verbatim in hetlitmus/docs/positive-control.md sec 6 [Alglave15 fn.7 p.577];
-     the printout carries the citation, not the quotation. */
+  /* The one null frame.  A null is a fact about this harness's reach, not about a
+     model, and nothing certifies that reach: the numbers above are the whole
+     claim.  The precedent is quoted verbatim in
+     hetlitmus/docs/00-environment-design.md sec 3.7 [Alglave15 fn.7 p.577]; the
+     printout carries the citation, not the quotation. */
   fprintf(_ch,
-    "  Either way this is an OBSERVABILITY result about this harness on this "
-    "hardware and under this stress -- never a model result -- and it feeds the "
-    "stress-tuning priority.  Reporting one that way has precedent: Alglave et "
-    "al., ASPLOS'15, fn.7, p.577.\n");
+    "  NOT OBSERVED under this effort -- never \"cannot happen\".  "
+    "NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES "
+    "FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort "
+    "above and the liveness %s measured on its own counters.\n",
+    HET_PAIR_NAME);
+  if (cv & HET_CV_NO_EXHAUSTIVE)
+    fprintf(_ch, "    - the O(N^T_L) ground-truth scan did not run at N=%llu, so "
+                 "this is NOT a measured zero (the CAVEAT below says why).\n",
+            (unsigned long long)_r->N);
+  fprintf(_ch,
+    "  This is an OBSERVABILITY result about this harness on this hardware and "
+    "under this stress -- never a model result -- and it feeds the stress-tuning "
+    "priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, "
+    "fn.7, p.577.\n");
   if (_r->cpu_only)
     /* The CPU-only null: on such a shape the weak outcome is the host store
        buffer, among the most reproducible relaxations the ISA has, so a null is
@@ -1006,13 +770,9 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
  * frames [Melissaris20 sec IV.A], so the replication unit is the (instance,run)
  * cell and Y = 1[target_count >= 1] is what is counted.  A non-observation is
  * reported as a non-observation: no rate and no probability is attached to one,
- * because falsification is one-sided and what licenses a null here is the control
- * that fired beside it.  What this layer computes is therefore the reproducibility
- * of a SIGHTING -- P_rep from k_eff -- and the one precondition that may not be
- * assumed for it: the stationarity precheck of [Kirkham20 sec 4.3], which already
- * rejects 4 of its own 18 chip/test combinations GPU-only (Tab.7), hence mandatory
- * here.  Its split is the first 20% of a run against the last 10%; the axis here
- * is the window instead, pooled over every usable cell.
+ * because falsification is one-sided and nothing vouches for the harness that did
+ * not see it.  What this layer reports of a null is the effort it cost; of a
+ * SIGHTING, how many independent RUNS reproduced it.
  * Design: hetlitmus/docs/00-environment-design.md sec 3.7.
  * ========================================================================= */
 
@@ -1034,10 +794,10 @@ typedef enum {
    questions, so they get two answers: het_verdict() still returns HET_OBSERVED on
    the first sighting, and this tier layers on top and suppresses nothing.
 
-   HET_CORROB_RUNS is the campaign's corroboration bar, and it is NOT the n = 3 of
-   [Kirkham20 sec 1.1]: three clean runs are that 95% P_rep recipe, while two are
-   what rules out a per-run artefact at all.  The measured P_rep is printed beside
-   the tier, so the bar and the confidence it bought are never conflated. */
+   HET_CORROB_RUNS is the campaign's corroboration bar, and it is a bar and not a
+   confidence: two clean runs are what rules out a per-run artefact, and the tier
+   says that and no more -- how OFTEN a sighting reproduces is a rate, and this
+   layer attaches none. */
 #define HET_CORROB_RUNS 2
 typedef enum {
   HET_SIGHT_NONE = 0,
@@ -1052,26 +812,14 @@ typedef enum {
 
    THE BIT NUMBERS ARE A WIRE FORMAT: every archived flags=0x... -- transcripts,
    frozen fixtures, thesis-facing evidence -- decodes against this list, and none
-   of those numbers can be re-read.  A retired bit is therefore left vacant (3, 4,
-   10, 12, 13, 14 today) rather than closed up, and a bit whose predicate outlived
-   its name keeps its number: bit 0 is that case, so an archived 0x1 is this same
-   empty-stream state under an older name.  Renumbering densely would re-label
-   every archived value in silence.  Add at the top; never renumber. */
-#define HET_ST_CTRL_STREAM_EMPTY (1u << 0) /* no pooled per-window control stream:
-                                              nothing co-ran, or what did never
-                                              fired.  The KS gate refuses on it. */
-#define HET_ST_NONSTATIONARY     (1u << 1) /* KS rejected: P_rep is suppressed   */
+   of those numbers can be re-read.  A retired bit is therefore left vacant (0, 1,
+   3, 4, 6, 7, 9, 10, 11, 12, 13, 14, 16 today) rather than closed up, so an
+   archived value keeps its reading whatever has since left this list.
+   Renumbering densely would re-label every archived value in silence.  Add at the
+   top; never renumber. */
 #define HET_ST_DEGEN_SIGHTING    (1u << 2) /* >=1 sighting failed the decode guard */
 #define HET_ST_NO_DECODE_CHANNEL (1u << 5) /* no sync AND no observer: fail closed */
-#define HET_ST_WIN_DESYNC        (1u << 6) /* sum(win[]) != total: the sub-tallies
-                                              are DEAD or mis-indexed, so the
-                                              stream is not the run's history     */
-#define HET_ST_KS_UNDERPOWERED   (1u << 7) /* too few windows to test stationarity */
 #define HET_ST_CELLS_TRUNCATED   (1u << 8) /* more runs than HET_STATS_MAX_CELLS   */
-#define HET_ST_CTRL_IS_CANARY    (1u << 9) /* stationarity tested on the Layer-B
-                                              canary, not this test's own mu(T)    */
-#define HET_ST_SELF_CONTROL     (1u << 11) /* co-runs no control AND names ITSELF
-                                              the canary: usable == fired       */
 #define HET_ST_MIXED_POOL       (1u << 15) /* the cells pooled here do NOT all
                                               agree on cpu_only.  Cannot happen
                                               from one harness -- one binary, one
@@ -1080,14 +828,6 @@ typedef enum {
                                               Resolved toward the WEAKER claim
                                               about the compound model (cpu_only
                                               wins), never away from it.       */
-#define HET_ST_NO_CONTROL_CORUN (1u << 16) /* co-runs no control and does NOT name
-                                              itself the canary.  Same selection
-                                              effect (usable == fired), a
-                                              different reason: no control map
-                                              was read (HET_NO_CONTROL_MAP), or
-                                              -- if one was -- the emitter built
-                                              a harness that vouches for nothing.
-                                              Which of the two is PRINTED.    */
 
 typedef struct het_stats {
   const char *test_name;
@@ -1097,11 +837,6 @@ typedef struct het_stats {
 
   int R;              /* cells supplied  (= NUMBER_OF_RUN; H is 1 today)          */
   int R_usable;       /* cells whose het_verdict() is not COLD-INVALID            */
-  /* ... of those, the ones het_verdict() scored NOT-OBSERVED-MU-HOT.  WHAT VOUCHED
-     IS A PER-CELL FACT: the channel flag below is chosen from the pooled mu total
-     over every stamped cell, so a pool can be hot while each cell reported here
-     reached only the weaker tier.  A null names the tier its own cells carry. */
-  int n_mu_hot;
   int k;              /* cells with Y = 1[target_count >= 1]                      */
   int k_eff;          /* ... of those, the ones that pass the decode guard        */
   int k_runs;         /* distinct RUNS among them (the most independent draws)    */
@@ -1110,75 +845,10 @@ typedef struct het_stats {
      The price of the sighting, in the unit the campaign spends, and the one
      number a stop rule that watches for a lone sighting needs. */
   int n_at_first_sight;
-  /* What the two control channels totalled over every stamped cell scored here,
-     cold ones included, reported rather than left to be inferred from ctrl= and
-     the per-run lines: which channel the precheck read is a flag, but HOW HOT
-     each layer was is a number, and a campaign roll-up needs it machine-readably. */
-  uint64_t mu_total, can_total;
-
-  int    win_samples;               /* pooled (run,window) control samples -- the
-                                       stream, not what the KS gate ran on: the
-                                       emptiness guard can refuse them all       */
-  double P_rep;                     /* 1 - e^{-k_eff}     (-1 = NOT APPLICABLE)   */
-
-  int    ks_pass, ks_n_early, ks_n_late, ks_split_window;
-  double ks_D, ks_Dcrit;
 
   uint64_t N, frames_examined;      /* the effort disclosure                      */
   uint32_t flags;
 } het_stats_t;
-
-/* ---------------------------------------------------------------------------
- * THE STATIONARITY INSTRUMENTS.  Small, pure, and separately decidable from a
- * synthetic stream. */
-
-static int het_dcmp(const void *a, const void *b) {
-  double x = *(const double *)a, y = *(const double *)b;
-  return (x < y) ? -1 : ((x > y) ? 1 : 0);
-}
-
-/* Two-sample KS.  Returns 1 = stationary (failed to reject), 0 = REJECTED,
-   -1 = underpowered.  Sorts in place.  On discrete counts the test is conservative
-   (ties depress D) and so under-rejects: a pass here is the weaker of the two
-   claims, a split the stronger. */
-static int het_ks2(double *a, int na, double *b, int nb,
-                   double *D_out, double *Dcrit_out) {
-  int i = 0, j = 0;
-  double D = 0.0;
-  *D_out = 0.0; *Dcrit_out = 0.0;
-  if (na < 2 || nb < 2) return -1;
-  qsort(a, (size_t)na, sizeof(double), het_dcmp);
-  qsort(b, (size_t)nb, sizeof(double), het_dcmp);
-  while (i < na && j < nb) {
-    double x = (a[i] < b[j]) ? a[i] : b[j];
-    double d;
-    while (i < na && a[i] <= x) i++;
-    while (j < nb && b[j] <= x) j++;
-    d = fabs((double)i / (double)na - (double)j / (double)nb);
-    if (d > D) D = d;
-  }
-  *D_out = D;
-  *Dcrit_out = HET_KS_C05 * sqrt(((double)na + (double)nb)
-                                 / ((double)na * (double)nb));
-  return (D <= *Dcrit_out) ? 1 : 0;
-}
-
-/* The remedy for a non-stationary run is to SPLIT IT AT THE CHANGE-POINT and
-   restart from the point of instability [Kirkham20 sec 5.1].  This locates it:
-   the window index whose before/after means differ most. */
-static int het_changepoint(const double *prof, int n) {
-  int i, best = -1;
-  double bd = -1.0;
-  for (i = 1; i < n; i++) {
-    double s1 = 0.0, s2 = 0.0, d;
-    int j;
-    for (j = 0; j < i; j++) s1 += prof[j];
-    for (j = i; j < n; j++) s2 += prof[j];
-    d = fabs(s1 / (double)i - s2 / (double)(n - i));
-    if (d > bd) { bd = d; best = i; }
-  }
-  return best;
-}
 
 /* The decode guard: is this cell's decode trustworthy, or could the "sighting" be
    the constant-read artefact?  A ZERO FIELD IS NOT A DEGENERATE DECODE --
@@ -1197,34 +867,16 @@ static int het_cell_degenerate(const het_obs_record *r) {
   return 1;
 }
 
-static const uint32_t *het_ctrl_win(const het_obs_record *r, int use_canary) {
-  return use_canary ? r->canary_win : r->control_win;
-}
-static uint64_t het_ctrl_total(const het_obs_record *r, int use_canary) {
-  return use_canary ? r->canary_target_count : r->control_target_count;
-}
-
 /* ---------------------------------------------------------------------------
  * THE AGGREGATE.  A pure function of the record stream. */
 static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st) {
-  double win[HET_STATS_MAX_CELLS * HET_NWIN];
-  double early[HET_STATS_MAX_CELLS * HET_NWIN];
-  double late[HET_STATS_MAX_CELLS * HET_NWIN];
-  double prof[HET_NWIN];
   int    runs[HET_STATS_MAX_CELLS];
   int    allruns[HET_STATS_MAX_CELLS];
-  int i, w, nwin = 0, ne = 0, nl = 0, nruns = 0, nall = 0, use_canary;
+  int i, nruns = 0, nall = 0;
   int first;                          /* the first STAMPED cell, or n if there is none */
-  int n_early, n_late, ks;
-  uint64_t mu_total = 0;
-  uint64_t ctrl_pooled = 0;
-  int mu_present = 0;
 
   memset(st, 0, sizeof *st);
-  st->P_rep   = -1.0;                 /* -1 = NOT APPLICABLE                     */
-  st->ks_split_window = -1;
-  if (n <= 0) { st->obs = HET_OBS_VOID;
-                st->flags |= HET_ST_CTRL_STREAM_EMPTY; return; }
+  if (n <= 0) { st->obs = HET_OBS_VOID; return; }
   st->R         = n;
   /* THE STAMP GATES EVERY READ IN THIS FUNCTION.  Below rec_magic a record is
      whatever memset left, so the identity of the pool -- its name, its N, whether
@@ -1252,51 +904,26 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS;
                                  st->flags |= HET_ST_CELLS_TRUNCATED; }
 
-  /* ---- 1. Which control channel the stationarity precheck reads.  mu(T) is the
-     shape-matched proxy, so it is preferred where it exists and fired; the canary
-     is the universal floor and is all a test at the lattice floor has.  A precheck
-     run on another shape's stream is a weaker claim, so which one was used is
-     recorded and printed rather than left to the reader to guess.
-     Where T's floor twin IS the canary the two co-running instances run the same
-     program: preferring mu buys a second draw of one channel there rather than a
-     shape-match, and nothing below reads the two as different shapes.  How many
-     rows that is: hetlitmus/docs/positive-control.md sec 11. */
-  for (i = 0; i < n; i++) {
-    /* Residue here would do two things: put a number in the printed mu report that
-       came from nothing, and SELECT the channel below -- a residue mu_total picks
-       mu(T) over a canary that actually fired. */
-    if (recs[i].rec_magic != HET_REC_MAGIC) continue;
-    if (recs[i].control_compiled_in) mu_present = 1;
-    mu_total     += recs[i].control_target_count;
-    st->can_total += recs[i].canary_target_count;
-  }
-  st->mu_total = mu_total;
-  use_canary = (mu_present && mu_total > 0) ? 0 : 1;
-  if (use_canary) st->flags |= HET_ST_CTRL_IS_CANARY;
-
-  /* ---- 2. The cells.  het_verdict() is already a pure function of the record, so
+  /* ---- 1. The cells.  het_verdict() is already a pure function of the record, so
      the aggregate reuses it rather than re-deriving liveness -- inheriting every
      stress disqualifier for free. */
   for (i = 0; i < n; i++) {
     uint32_t dq = 0, cv = 0;
     het_verdict_t v = het_verdict(&recs[i], &dq, &cv);
     int y, deg;
-    uint64_t tot, sum = 0;
 
     /* An UNSTAMPED cell is read by nothing here: het_verdict() stops at rec_magic,
        so every field below it -- the target tallies, the decode channel, the run id,
-       the window arrays, the frame count -- is whatever memset left.  Skipped whole,
-       or the aggregate would let a harness the emitter built wrong corroborate
-       itself and stop.  It is COLD by that same test, so nothing usable is lost. */
+       the frame count -- is whatever memset left.  Skipped whole, or the aggregate
+       would let a harness the emitter built wrong corroborate itself and stop.  It
+       is COLD by that same test, so nothing usable is lost. */
     if (dq & HET_DQ_REC_UNSTAMPED) continue;
     y   = het_reported_count(&recs[i]) >= 1;
     deg = het_cell_degenerate(&recs[i]);
-    tot = het_ctrl_total(&recs[i], use_canary);
 
     /* A SIGHTING is never COLD (het_verdict believes a positive unconditionally),
        so a usable-cell count can never discard one. */
     if (v != HET_COLD_INVALID) st->R_usable++;
-    if (v == HET_NOT_OBSERVED_MU_HOT) st->n_mu_hot++;
 
     if (!recs[i].sync_valid && !recs[i].obs_valid)
       st->flags |= HET_ST_NO_DECODE_CHANNEL;
@@ -1320,112 +947,26 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
       }
     }
 
-    /* The self-proving invariant: the window bump sits on the same line, under the
-       same predicate, as the total, so these must agree.  If they do not, the
-       sub-tallies are dead or mis-indexed and the stream below is not this run's
-       history.  This is the one check that catches a dead-code-eliminated tally on
-       real hardware, where the tally is supposed to be nonzero. */
-    for (w = 0; w < HET_NWIN; w++) sum += het_ctrl_win(&recs[i], use_canary)[w];
-    if (sum != tot) st->flags |= HET_ST_WIN_DESYNC;
-
     st->frames_examined += recs[i].frames_examined;
-
-    /* Only a USABLE cell's control stream may be pooled: the time structure of a
-       dead harness is the time structure of nothing. */
-    if (v == HET_COLD_INVALID) continue;
-    ctrl_pooled += sum;
-    for (w = 0; w < HET_NWIN; w++)
-      win[nwin++] = (double)het_ctrl_win(&recs[i], use_canary)[w];
   }
   st->k_runs = nruns;
 
-  /* ---- 3. The observation class at the (instance,run) unit.
-     THE SELECTION EFFECT: a cell is usable if it fired or if its control was hot,
-     so where nothing co-runs "usable" is defined by firing -- the survivors are
-     tautologically the runs that fired, and classifying over them reports ALWAYS
-     for a row that fired in 3 runs of 10.  The denominator is therefore R, the
-     runs executed, for BOTH rows that co-run nothing; only the reason differs,
-     and the two must not be conflated because only one of them is a canary.
-     A row is the Layer-B canary when it NAMES ITSELF one, which is the same test
-     the per-run liveness block makes; a row that co-runs nothing without naming
-     itself has no control map behind it (or an emitter that built it wrong). */
-  { int denom;
-    for (i = first; i < n; i++)
-      if (recs[i].rec_magic == HET_REC_MAGIC
-          && (recs[i].control_compiled_in || recs[i].canary_compiled_in)) break;
-    if (first < n && i == n) {
-      if (recs[first].canary_name && recs[first].test_name
-          && strcmp(recs[first].canary_name, recs[first].test_name) == 0)
-        st->flags |= HET_ST_SELF_CONTROL;
-      else
-        st->flags |= HET_ST_NO_CONTROL_CORUN;
-    }
-    denom = (st->flags & (HET_ST_SELF_CONTROL | HET_ST_NO_CONTROL_CORUN))
-            ? st->R : st->R_usable;
+  /* ---- 2. The observation class at the (instance,run) unit.
+     THE SELECTION EFFECT: a cell is usable when it fired or when its own liveness
+     counters were alive, and nothing co-runs whose firing would make "usable"
+     outcome-independent.  So the survivors of a row whose liveness rides on the
+     outcome are tautologically the runs that fired, and classifying over them
+     reports ALWAYS for a row that fired in 3 runs of 10.  The denominator is
+     therefore R, the runs EXECUTED, for every row alike.  VOID still turns on
+     R_usable: a pool with no usable cell measured nothing at all. */
+  { int denom = st->R;
     if (st->R_usable == 0)    st->obs = HET_OBS_VOID;
     else if (st->k == 0)      st->obs = HET_OBS_NEVER;
     else if (st->k >= denom)  st->obs = HET_OBS_ALWAYS;
     else                      st->obs = HET_OBS_SOMETIMES;
   }
 
-  /* ---- 4. Is there a control stream to test at all?  Three ways there is not,
-     and they are one flag because the consequence is one: fewer than two pooled
-     windows; a pooled stream that is all zeros, which is what a harness where
-     nothing co-ran or where what did co-run never fired leaves behind; and a
-     stream whose sub-tallies do not sum to their total, which is not this run's
-     history whatever it holds.  Section 5 refuses on it. */
-  st->win_samples = nwin;
-  if (nwin < 2 || ctrl_pooled == 0 || (st->flags & HET_ST_WIN_DESYNC))
-    st->flags |= HET_ST_CTRL_STREAM_EMPTY;
-
-  /* ---- 5. The stationarity gate: MANDATORY, not optional.  The
-     first-20%-vs-last-10% split moved to the window axis: early windows from every
-     usable run against late windows from every usable run -- the axis on which
-     warm-up, thermal/DVFS drift and alignment drift all act. */
-  n_early = (HET_NWIN * 20) / 100; if (n_early < 1) n_early = 1;
-  n_late  = (HET_NWIN * 10) / 100; if (n_late  < 1) n_late  = 1;
-  for (i = 0; i + HET_NWIN <= nwin; i += HET_NWIN) {
-    for (w = 0; w < n_early; w++)          early[ne++] = win[i + w];
-    for (w = HET_NWIN - n_late; w < HET_NWIN; w++) late[nl++] = win[i + w];
-  }
-  st->ks_n_early = ne; st->ks_n_late = nl;
-  /* A KS on an all-zero stream passes for free.  The `self' canary rows co-run no
-     control by construction, so their control stream is structurally empty, as is
-     that of any harness whose control never fired: D would be 0 against 0, the gate
-     would report `pass', and P_rep would be unlocked by a test that never ran.
-     Stationarity that CANNOT be tested must not be reported as tested. */
-  ks = (st->flags & HET_ST_CTRL_STREAM_EMPTY)
-       ? -1
-       : het_ks2(early, ne, late, nl, &st->ks_D, &st->ks_Dcrit);
-  if (ks < 0) {
-    /* Cannot test => cannot claim.  Fail closed: ks_pass stays 0, so P_rep is
-       suppressed below exactly as on a rejection. */
-    st->ks_pass = 0;
-    st->flags |= HET_ST_KS_UNDERPOWERED;
-  } else {
-    st->ks_pass = ks;
-    if (!ks) {
-      st->flags |= HET_ST_NONSTATIONARY;
-      for (w = 0; w < HET_NWIN; w++) {
-        double s = 0.0; int c = 0;
-        for (i = 0; i + HET_NWIN <= nwin; i += HET_NWIN) { s += win[i + w]; c++; }
-        prof[w] = c ? s / (double)c : 0.0;
-      }
-      st->ks_split_window = het_changepoint(prof, HET_NWIN);
-    }
-  }
-
-  /* ---- 6. OBSERVED: P_rep at the (instance,run) unit, from k_eff, never from
-     the frame count; suppressed across a non-stationary boundary.
-     The k_eff > 0 test is LOAD-BEARING, not a division guard: at k_eff = 0 -- every
-     sighting rejected by the decode guard -- the formula returns 1 - e^0 = 0, and
-     "P_rep = 0.00%" reads as "never reproduces" when what happened is that there is
-     no clean cell to estimate from.  No estimate, so none is reported. */
-  if (st->obs == HET_OBS_SOMETIMES || st->obs == HET_OBS_ALWAYS)
-    if (st->ks_pass && st->k_eff > 0)
-      st->P_rep = 1.0 - exp(-(double)st->k_eff);
-
-  /* ---- 7. The corroboration tier, layered ON TOP of het_verdict()'s immediate
+  /* ---- 3. The corroboration tier, layered ON TOP of het_verdict()'s immediate
      HET_OBSERVED and never suppressing one.  Distinct RUNS, not merely distinct
      cells: runs are re-seeded and carry a fresh phase/thermal draw, so they are
      the most independent replicates the harness produces. */
@@ -1453,28 +994,16 @@ static const char *het_sighting_name(het_sighting_tier t) {
 
 /* The machine-readable line.  hetlitmus/oracle-compare.sh parses THIS and layers
    the annotation onto its offline comparison table, augmenting it rather than
-   replacing it; hetlitmus/campaign.py schedules from it.  mu_total/can_total are here
-   because a roll-up must be able to see HOW HOT each control layer was without
-   re-reading the per-run lines. */
+   replacing it; hetlitmus/campaign.py schedules from it. */
 static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
     "HetStats %s cpu_only=%d obs=%s "
     "R=%d usable=%d k=%d k_eff=%d k_runs=%d degen=%d first_sight=%d "
-    "ctrl=%s mu_total=%llu can_total=%llu "
-    "win_n=%d nwin=%d "
-    "P_rep=%.6g ks=%s ks_D=%.4f ks_Dcrit=%.4f ks_split=%d "
     "sighting=%s N=%llu frames=%llu flags=0x%x\n",
     _s->test_name ? _s->test_name : "(none)",
     _s->cpu_only,
     het_obs_class_name(_s->obs), _s->R, _s->R_usable, _s->k, _s->k_eff, _s->k_runs,
     _s->n_degen, _s->n_at_first_sight,
-    (_s->flags & HET_ST_CTRL_IS_CANARY) ? "canary" : "mu(T)",
-    (unsigned long long)_s->mu_total, (unsigned long long)_s->can_total,
-    _s->win_samples, (int)HET_NWIN,
-    _s->P_rep,
-    (_s->flags & HET_ST_KS_UNDERPOWERED) ? "underpowered"
-      : (_s->ks_pass ? "pass" : "SPLIT"),
-    _s->ks_D, _s->ks_Dcrit, _s->ks_split_window,
     het_sighting_name(_s->tier),
     (unsigned long long)_s->N, (unsigned long long)_s->frames_examined,
     _s->flags);
@@ -1501,12 +1030,6 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
                  "so they are treated as DEGENERATE.  This is a BUILD BUG (no emitted "
                  "harness should reach it).\n");
 
-  if (_s->flags & HET_ST_WIN_DESYNC)
-    fprintf(_ch, "  *** THE PER-WINDOW SUB-TALLIES DO NOT SUM TO THE CONTROL TOTAL ***"
-                 "  The window bump is dead or mis-indexed, so the stream is not "
-                 "this run's history: the stationarity precheck cannot be trusted "
-                 "and is refused.  Rebuild; do not report.\n");
-
   if (_s->obs == HET_OBS_VOID) {
     fprintf(_ch, "  VOID -- not one of the %d runs was usable (every cell COLD).  "
                  "There is nothing here to report: an empty histogram from a dead "
@@ -1515,131 +1038,35 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     return;
   }
 
-  /* Which stream the precheck below actually read.  Kept, because a stationarity
-     claim carried by another shape's stream is the weaker of the two. */
-  if (_s->flags & HET_ST_CTRL_IS_CANARY)
-    fprintf(_ch, "  NOTE: the stationarity precheck read the Layer-B canary's "
-                 "stream, not this test's own mu(T).  The canary is the het MP "
-                 "floor, so on any shape but MP that is another shape's time "
-                 "structure -- weaker than a shape-matched precheck; say so when "
-                 "reporting.\n");
-
-  /* ---- stationarity. */
-  if (_s->flags & HET_ST_KS_UNDERPOWERED)
-    fprintf(_ch, "  stationarity: NOT TESTED -- %s.  Fails CLOSED: P_rep is "
-                 "suppressed exactly as it would be on a rejection, because a KS run "
-                 "against an empty stream would `pass' without testing anything.\n",
-            (_s->flags & HET_ST_CTRL_STREAM_EMPTY)
-              ? "this harness has no live control stream to test (either nothing "
-                "co-runs at all, or what does co-run never fired)"
-              : "too few window samples");
-  else if (_s->ks_pass)
-    fprintf(_ch, "  stationarity: KS pass (D = %.4f <= D_crit = %.4f, %d early vs %d "
-                 "late window counts).  On discrete counts the two-sample KS is "
-                 "conservative, so this is the WEAKER of the two possible claims.\n",
-            _s->ks_D, _s->ks_Dcrit, _s->ks_n_early, _s->ks_n_late);
-  else
-    fprintf(_ch,
-      "  stationarity: *** KS REJECTED *** (D = %.4f > D_crit = %.4f).  The control "
-      "rate is NOT stationary across the run: the change-point is near window %d of "
-      "%d.  P_rep is NOT reported across such a boundary.  Re-run split at the "
-      "change-point and score the segments separately -- Kirkham 5.1: "
-      "\"non-stable runs can then be restarted from the point of instability\".\n",
-      _s->ks_D, _s->ks_Dcrit, _s->ks_split_window, (int)HET_NWIN);
-
   /* ---- the headline, by observation class. */
   if (_s->obs == HET_OBS_NEVER) {
     fprintf(_ch,
       "  NOT OBSERVED in any of the %d usable cell(s).  NO RATE AND NO PROBABILITY "
       "IS ATTACHED TO THIS NULL: falsification is one-sided -- \"the possibility, "
       "not probability ... is what matters\" (Alglave et al., ASPLOS'15 4.3, p.585) "
-      "-- so what licenses the null is the positive control that fired beside it, "
-      "never an interval.\n",
-      _s->R_usable);
-    /* Keyed on the per-cell tier count, not on the pooled channel flag: see
-       n_mu_hot. */
-    if (_s->n_mu_hot == _s->R_usable)
-      fprintf(_ch, "  vouched for by this test's own mu(T) lattice-floor twin: all "
-                   "%d of these cells are NOT-OBSERVED-MU-HOT.\n", _s->R_usable);
-    else if (_s->n_mu_hot == 0)
-      fprintf(_ch, "  vouched for by nothing of this test's own shape: all %d of "
-                   "these cells are NOT-OBSERVED-CANARY-ONLY, the weaker tier -- the "
-                   "per-run HetVerdict lines name the reason.\n", _s->R_usable);
-    else
-      fprintf(_ch, "  vouched for by this test's own mu(T) lattice-floor twin on "
-                   "only %d of these cells; the other %d are "
-                   "NOT-OBSERVED-CANARY-ONLY, the weaker tier -- the per-run "
-                   "HetVerdict lines name which.\n",
-              _s->n_mu_hot, _s->R_usable - _s->n_mu_hot);
-    fprintf(_ch,
-      "  control totals over every stamped cell scored here, cold ones included: "
-      "mu(T) %llu sighting(s), the Layer-B canary %llu.\n"
+      "-- so what a null carries is the effort behind it, never an interval.\n"
+      "  NOTHING VOUCHES FOR THIS HARNESS: no control co-runs, so what is reported "
+      "here is the reach this harness demonstrated on its own liveness counters, "
+      "which the per-run HetVerdict lines carry.\n"
       "  CHARACTERIZATION, NEVER VALIDATION: this harness carries no prediction, so "
       "this null agrees with no model and refutes none -- it reports what this "
       "harness reached on this hardware under this stress.\n"
       "  effort: %d run(s) x N=%llu iterations, %llu frames examined.  Grow R, "
       "NOT N.\n",
-      (unsigned long long)_s->mu_total, (unsigned long long)_s->can_total,
-      _s->R_usable, (unsigned long long)_s->N,
+      _s->R_usable, _s->R_usable, (unsigned long long)_s->N,
       (unsigned long long)_s->frames_examined);
     return;
   }
 
-  /* ---- observed.  The denominator is R wherever nothing co-runs and R_usable for
-     everything else -- see the selection effect in het_stats_compute. */
-  { unsigned nocorun = _s->flags & (HET_ST_SELF_CONTROL | HET_ST_NO_CONTROL_CORUN);
-    int denom = nocorun ? _s->R : _s->R_usable;
-    const char *unit = nocorun ? "run" : "usable cell";
-    if (_s->P_rep >= 0.0)
-      fprintf(_ch, "  OBSERVED in %d of %d %s(s).  P_rep = 1 - e^{-k_eff} = "
-                   "%.2f%% that a fresh run reproduces it (k_eff = %d NON-DEGENERATE "
-                   "cells -- Kirkham's n=3 => 95%% recipe, relocated to the "
-                   "(instance,run) unit).\n",
-              _s->k, denom, unit, 100.0 * _s->P_rep, _s->k_eff);
-    else
-      fprintf(_ch, "  OBSERVED in %d of %d %s(s).  P_rep is NOT reported "
-                   "(the process failed the stationarity gate, or no cell survived the "
-                   "decode guard).\n", _s->k, denom, unit);
-
-    if (_s->flags & HET_ST_SELF_CONTROL)
-      fprintf(_ch,
-        "  NOTE: this row CO-RUNS NO CONTROL -- it IS the Layer-B canary (the control "
-        "map names it as its own canary), and a test cannot control itself.  Its "
-        "\"usable cells\" are DEFINED BY firing, so the denominator above is R -- the "
-        "runs executed (%d of %d fired) -- and not that count: scored on the cells\n"
-        "  it fired in, a canary reports ALWAYS, and its rate is what the rest of the "
-        "campaign is calibrated against.  For the same reason this row has NO "
-        "CALIBRATION CHANNEL -- nothing independent co-runs whose stationarity could "
-        "be tested -- by construction, not by omission.\n",
-        _s->k, _s->R);
-    else if (_s->flags & HET_ST_NO_CONTROL_CORUN) {
-      /* The same arithmetic, and it must NOT borrow the sentence above: this row
-         is not a canary, nothing here says it is one, and its missing calibration
-         channel is what a build without the map file leaves behind.  Saying
-         otherwise would report a gap in the instrumentation as a property of the
-         experiment. */
-      if (HET_NO_CONTROL_MAP)
-        fprintf(_ch,
-          "  NOTE: this row CO-RUNS NO CONTROL because NO POSITIVE-CONTROL MAP WAS "
-          "READ for %s -- the map is looked for BESIDE THE TEST, under the name this "
-          "CPU frontend gives it (control-map.csv for AArch64,\n"
-          "  control-map-amd.csv for x86_64), and it was not there.  Put it beside the "
-          "test and re-emit.  Nothing marks this row a canary, so its \"usable cells\" "
-          "are defined by firing and the denominator above is R -- the runs\n"
-          "  executed (%d of %d fired) -- and not that count.  It has NO CALIBRATION "
-          "CHANNEL, and that is an OMISSION, not a "
-          "construction: what was omitted is the map FILE beside this test, not any "
-          "entry in any registry.\n",
-          HET_PAIR_NAME, _s->k, _s->R);
-      else
-        fprintf(_ch,
-          "  *** NOTE: this row CO-RUNS NO CONTROL, names no canary, and a control map "
-          "WAS read for %s.  Nothing in this harness vouches for it and nothing says "
-          "why -- that is a BUILD BUG, not a result.  The denominator above is R (%d "
-          "of %d runs fired); nothing calibrates it.\n",
-          HET_PAIR_NAME, _s->k, _s->R);
-    }
-  }
+  /* ---- observed.  The denominator is R, the runs executed -- see the selection
+     effect in het_stats_compute. */
+  fprintf(_ch,
+    "  OBSERVED in %d of %d run(s), %d of them after the decode guard.  The "
+    "denominator is R, the runs EXECUTED: nothing co-runs to make \"usable\" "
+    "outcome-independent, so scoring over usable cells alone would report ALWAYS "
+    "for a row that fired in only some of them.  NO RATE IS ATTACHED to the "
+    "count.\n",
+    _s->k, _s->R, _s->k_eff);
 
   if (_s->flags & HET_ST_DEGEN_SIGHTING)
     fprintf(_ch,
@@ -1656,21 +1083,13 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
      answers -- the comparison is offline (hetlitmus/oracle-compare.sh). */
   if (_s->tier != HET_SIGHT_NONE) {
     if (_s->tier == HET_SIGHT_CORROBORATED)
-      /* The reproducibility clause follows the number: P_rep is suppressed
-         whenever the stationarity gate did not pass or no cell survived the
-         decode guard, and a tier that quotes a number the block above refused to
-         report is quoting a -1. */
       fprintf(_ch,
         "  ** SIGHTING %s ** -- the weak outcome was observed in %d distinct "
         "non-degenerate RUN(S) (>= HET_CORROB_RUNS = %d).  A decoder artefact does "
         "not reproduce across re-seeded runs, so the SIGHTING IS REAL and not a "
-        "constant-read.  %s\n",
-        het_sighting_name(_s->tier), _s->k_runs, (int)HET_CORROB_RUNS,
-        (_s->P_rep >= 0.0)
-          ? "Its reproducibility is the P_rep above, MEASURED -- Kirkham's n = 3 "
-            "=> 95% recipe is the bar for that number, not this one."
-          : "HOW OFTEN it reproduces is NOT reported: P_rep is suppressed above, "
-            "so this tier is a count of clean runs and nothing more.");
+        "constant-read.  HOW OFTEN it reproduces is NOT reported: this tier is a "
+        "count of clean runs and nothing more.\n",
+        het_sighting_name(_s->tier), _s->k_runs, (int)HET_CORROB_RUNS);
     else
       fprintf(_ch,
         "  ** SIGHTING %s ** -- the weak outcome was observed, but in only %d clean "

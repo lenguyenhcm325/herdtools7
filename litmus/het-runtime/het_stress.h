@@ -11,8 +11,7 @@
  * reuse, so every mechanism keeps its code source and its defining paper:
  *   scratchpad; critical patch size P; access sequence sigma; spread m;
  *   occupancy-scaled stressing-thread count [Sorensen16 sec 1, 3.2-3.4]
- *   the stress-parameter space and the reproducibility bound
- *                                           [Kirkham20 sec 3.1]
+ *   the stress-parameter space          [Kirkham20 sec 3.1]
  *   the four incantations and the busy-wait deadlock guard
  *                                           [Alglave15 sec 4.3]
  *   the co-prime permutation / Parallel Test Environment

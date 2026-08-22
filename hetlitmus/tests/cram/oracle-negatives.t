@@ -45,9 +45,10 @@ that declined to decide a row would have its silence reported as
 
 The STATISTICS section, which the matrix above never reaches: obs.txt carries no
 HetStats lines, so it prints the table alone.  obs-stats.txt does carry them --
-printed by het_verdict.h itself over five synthetic record streams, one per
-reporting path -- and drives the section end to end.  The harness prints no
-verdict class of its own, so every ORACLE column below is read from the CSV.
+printed by het_verdict.h's own printers over the five synthetic record streams
+obs-stats-driver.c builds, one per reporting path -- and drives the section end
+to end.  The harness prints no verdict class of its own, so every ORACLE column
+below is read from the CSV.
 
   $ bash ../../oracle-compare.sh obs-stats.txt oracle-stats.csv > stats.out
   [1]
@@ -74,17 +75,14 @@ the two states that split exists to keep apart.
   5
 
 Reprinting is what keeps this section from drifting away from the harness, and
-what a null now says is what is pinned here: the two NEVER rows carry all four
-sentences of it -- no rate is attached, which control actually vouched, that the
-row is characterization and agrees with no model, and the effort behind the zero
--- so a reprint that dropped any of them would show up as a count of 1 rather
-than 2.  The vouching sentence names the PER-CELL tier, not the pooled channel
-the precheck read, because the two can disagree.
+what a null says is what is pinned here: the two NEVER rows carry all four
+sentences of it -- that no rate and no probability is attached, that nothing
+vouches for the harness that did not see it, that the row is characterization
+and agrees with no model, and the effort behind the zero -- so a reprint that
+dropped any of them would show up as a count of 1 rather than 2.
   $ grep -c 'NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL' stats.out
   2
-  $ grep -c 'vouched for by' stats.out
-  2
-  $ grep -c 'these cells are NOT-OBSERVED-MU-HOT' stats.out
+  $ grep -c 'NOTHING VOUCHES FOR THIS HARNESS' stats.out
   2
   $ grep -c 'CHARACTERIZATION, NEVER VALIDATION' stats.out
   2
