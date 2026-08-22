@@ -745,6 +745,15 @@ hetlitmus-stats: | build
 	python3 hetlitmus/verify/statscheck.py --bite
 	@ echo "HetLitmus statistics layer: OK (and the gate bites)"
 
+### Every iteration of every emitted harness begins at the cross-device
+### rendezvous, ahead of the tested accesses and never between two of them, and
+### the primitive itself orders nothing (hetlitmus/verify/rdvcheck.py).
+hetlitmus-rdv: | build
+	@ echo
+	python3 hetlitmus/verify/rdvcheck.py
+	python3 hetlitmus/verify/rdvcheck.py --bite
+	@ echo "HetLitmus rendezvous placement + primitive: OK (and the gate bites)"
+
 ### The emitter/runtime skew tripwire: every field a render writes and every
 ### HET_* define it stamps still binds to litmus/het-runtime/*.h, which nothing
 ### but a compiler otherwise checks (hetlitmus/verify/recfields.py).
@@ -875,6 +884,7 @@ hetlitmus-test:: hetlitmus-dup
 hetlitmus-test:: hetlitmus-hipsrc
 hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-recfields
+hetlitmus-test:: hetlitmus-rdv
 hetlitmus-test:: hetlitmus-stats
 hetlitmus-test:: hetlitmus-x86fixture
 hetlitmus-test:: hetlitmus-cpuonly
@@ -911,7 +921,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats
 .PHONY: hetlitmus-dup hetlitmus-verdict hetlitmus-selftest
-.PHONY: hetlitmus-recfields
+.PHONY: hetlitmus-recfields hetlitmus-rdv
 .PHONY: hetlitmus-hipbuild hetlitmus-cpuonly
 .PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate hetlitmus-run-hw
 .PHONY: hetlitmus-hipsrc

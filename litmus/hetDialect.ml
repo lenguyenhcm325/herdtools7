@@ -54,9 +54,18 @@ type gpu_dialect = {
       BellBase.instruction -> unit ;
     gd_device_sync : string ;     (* host-side device-sync statement *)
     gd_free : string -> string ;  (* var -> free statement *)
-    gd_bar : string -> string -> string ; (* indent, ptr-expr -> arrive+spin *)
+    (* The forward-progress poke the host half of the rendezvous calls while it
+       waits (litmus/het-runtime/het_rdv.h het_poke_fn).  A CUDA host thread that
+       spins without entering the runtime can starve the grid it is waiting for
+       [CudaGuide "CUDA C++ Execution model"], so the CUDA row supplies a runtime
+       call and the HIP row supplies none.  Only iteration `_n' = 0 is handed it:
+       once the grid is resident the poke buys nothing, and a runtime call inside
+       the tested loop is traffic the tested window does not need.  The two
+       travel together -- an empty definition MUST pair with a "NULL" argument. *)
+    gd_poke_def : string ;        (* file-scope definition, or "" *)
+    gd_poke_arg : string ;        (* the argument expression, over `_n' *)
     (* Per-target allocator for the shared litmus vars + the rendezvous
-       barrier; the banner in [gd_shared_mem_defs] states why the choice is
+       counter; the banner in [gd_shared_mem_defs] states why the choice is
        correctness rather than tuning
        (hetlitmus/docs/00-environment-design.md sec 3.2).
        [gd_shared_mem_defs] emits the file-scope gd_alloc_shared /
@@ -81,8 +90,8 @@ type gpu_dialect = {
     gd_noise_mem_defs : string ;   (* file-scope gd_alloc_noise / gd_free_noise *)
     (* Cooperative-launch API tokens, used only for the co-residency +
        weak-progress guarantee of the persistent kernel; the CPU<->GPU
-       rendezvous stays [gd_bar] (a system-scope atomic), so no grid.sync and
-       no cooperative_groups.h. *)
+       rendezvous is het_rdv.h's relaxed system-scope counter, so no grid.sync
+       and no cooperative_groups.h. *)
     gd_err_t : string ;         (* "cudaError_t"      | "hipError_t" *)
     gd_success : string ;       (* "cudaSuccess"      | "hipSuccess" *)
     gd_errstr : string ;        (* error-code -> message fn *)
@@ -115,25 +124,23 @@ let cuda_dialect = {
     gd_readme_files =
       "GPU kernel + host driver, CUDA dialect (gd_alloc_shared: system malloc\n\
        \             where the GPU reaches pageable memory / cudaMallocManaged\n\
-       \             fallback for the shared vars + barrier, cuda::atomic_ref\n\
-       \             system-scope barrier, pthread + kernel launch).\n" ;
+       \             fallback for the shared vars + rendezvous counter,\n\
+       \             cuda::atomic_ref system-scope rendezvous, pthread + kernel\n\
+       \             launch).\n" ;
     gd_runtime_include = "#include <cuda/atomic>" ;
     gd_dump_instr = CudaLang.dump_instr ;
     gd_device_sync = "cudaDeviceSynchronize();" ;
     gd_free = (fun v -> Printf.sprintf "cudaFree(%s);" v) ;
-    gd_bar =
-      (fun ind ptr ->
-        Printf.sprintf
-          "%scuda::atomic_ref<int, cuda::thread_scope_system> _bar(*(%s));\n\
-           %s_bar.fetch_add(1, cuda::memory_order_seq_cst);\n\
-           %swhile (_bar.load(cuda::memory_order_seq_cst) < NPART) { }\n"
-          ind ptr ind ind) ;
+    gd_poke_def =
+      "static void gd_progress_poke(void) { (void)cudaStreamQuery(0); }\n" ;
+    gd_poke_arg = "(_n == 0) ? gd_progress_poke : NULL" ;
     gd_place_lever = Some "cudaMemAdvise" ;
     gd_shared_mem_note =
-      "// Shared vars + barrier use gd_alloc_shared: system malloc() where the device\n\
-       // reaches pageable host memory (ATS: cache-line coherence over the host-device\n\
-       // interconnect, the real inter-device protocol); cudaMallocManaged only as the\n\
-       // dev-box/CI fallback (managed = page migration, which masks the race).\n" ;
+      "// Shared vars + rendezvous counter use gd_alloc_shared: system malloc() where\n\
+       // the device reaches pageable host memory (ATS: cache-line coherence over the\n\
+       // host-device interconnect, the real inter-device protocol); cudaMallocManaged\n\
+       // only as the dev-box/CI fallback (managed = page migration, which masks the\n\
+       // race).\n" ;
     gd_shared_mem_defs = HetPayloads.het_alloc_cuda_inc ;
     gd_noise_mem_defs = HetPayloads.het_noise_cuda_inc ;
     gd_err_t = "cudaError_t" ;
@@ -173,19 +180,15 @@ let hip_dialect = {
     (* no (void) cast: the driver binds this and checks its status *)
     gd_device_sync = "hipDeviceSynchronize();" ;
     gd_free = (fun v -> Printf.sprintf "(void)hipFree(%s);" v) ;
-    gd_bar =
-      (fun ind ptr ->
-        Printf.sprintf
-          "%s(void)__hip_atomic_fetch_add((%s), 1, __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_SYSTEM);\n\
-           %swhile (__hip_atomic_load((%s), __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_SYSTEM) < NPART) { }\n"
-          ind ptr ind ptr) ;
+    gd_poke_def = "" ;
+    gd_poke_arg = "NULL" ;
     (* No placement lever on this lane: MI300A has one HBM pool and nothing to
        place, and het_alloc_hip.inc turns a non-zero HET_PLACE into an #error. *)
     gd_place_lever = None ;
     gd_shared_mem_note =
-      "// Shared vars + barrier use gd_alloc_shared: fine-grained hipMallocManaged --\n\
-       // the only mode coherent for system-scope CPU<->GPU sync during a live kernel\n\
-       // (coarse-grained is visible only at kernel boundary).\n" ;
+      "// Shared vars + rendezvous counter use gd_alloc_shared: fine-grained\n\
+       // hipMallocManaged -- the only mode coherent for system-scope CPU<->GPU sync\n\
+       // during a live kernel (coarse-grained is visible only at kernel boundary).\n" ;
     gd_shared_mem_defs = HetPayloads.het_alloc_hip_inc ;
     gd_noise_mem_defs = HetPayloads.het_noise_hip_inc ;
     gd_err_t = "hipError_t" ;

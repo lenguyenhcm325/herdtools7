@@ -10,7 +10,7 @@ the memory ops its .litmus annotates, with the annotated kind, order and scope.
 What it proves.  The HIP path carries no inline assembly: every memory
 primitive is a compiler-owned source construct, so the annotation survives into
 the source as a constant that can be read back without naming a GPU generation.
-Per proc (gpu-only) or per barrier-joining lane (het) the model ops appear in
+Per proc (gpu-only) or per rendezvous-joining lane (het) the model ops appear in
 .litmus column order, each as its mapped builtin with the mapped __ATOMIC_* and
 __HIP_MEMORY_SCOPE_* constants, addressed at this iteration's own slot, its
 result store included; the het scaffolding around them -- system-scope
@@ -157,6 +157,7 @@ DEVICE_HELPERS = {
     "het_rng_t", "het_rng_init", "het_rng_next", "het_rng_pct",
     "het_scratch_read", "het_scratch_bump", "het_scratch_max",
     "het_do_stress",
+    "het_rdv_device", "het_rdv_jitter",
 }
 
 # Every memory-construct-shaped token, so one appearing outside the modelled
@@ -446,8 +447,13 @@ C_LOAD = re.compile(r'^(?P<dst>[^=<>!]+?)\s*=\s*__hip_atomic_load\((.*)\);$')
 C_FENCE = re.compile(r'^__builtin_amdgcn_fence\((.*)\);\s*// f\[(\w+),(\w+)\]$')
 C_RELAXED_FENCE = re.compile(
     r'^// f\[(\w+),(\w+)\] \(relaxed fence = no-op; nothing emitted\)$')
-C_RDV_ADD = re.compile(r'^\(void\)__hip_atomic_fetch_add\((.*)\);$')
-C_RDV_SPIN = re.compile(r'^while \(__hip_atomic_load\((.*)\) < NPART\) \{ \}$')
+# The rendezvous, as litmus/hetEmit.ml writes it: the lane records its own
+# arrival for iteration _n, then draws its release delay.  Both bodies are
+# litmus/het-runtime/het_rdv.h's, which is where their orders and scopes are
+# checked (verify/rdvcheck.py); what is read here is that each appears once per
+# iteration, in this order, ahead of every tested access.
+C_RDV = re.compile(r'^(_rdvG_P\d+)\[_n\] = het_rdv_device\((.*)\);$')
+C_JITTER = re.compile(r'^het_rdv_jitter\((.*)\);$')
 C_BUMP = re.compile(r'^het_scratch_bump\((.*)\);$')
 C_COMMENT = re.compile(r'^// ([wrf])\[(\w+),(\w+)\](?:\s+(.*))?$')
 C_RESULT = re.compile(r'^(\w+)\[_n\] = (\w+);$')
@@ -470,12 +476,13 @@ LOOP_HEAD = re.compile(r'^for \(int _n=0; _n<(\S+); \+\+_n\) \{$')
 LOOP_BOUND = "SIZE_OF_TEST"
 # What one iteration owns.  An op hoisted out of the loop runs once per launch
 # rather than once per iteration, so the window the test needs closes after the
-# first one.
-PER_ITERATION = ('st', 'ld', 'fence', 'res')
-# ...and what the lane owns once.  The rendezvous joins the two devices before
-# the loop opens; a copy inside it is a per-iteration cross-device barrier
-# around every tested access, and the anchor stream alone cannot see the move.
-ONCE_PER_LANE = ('rdv-add', 'rdv-spin', 'bump')
+# first one -- and the rendezvous is one of them: it opens EVERY iteration, so a
+# copy lifted out of the loop joins the two devices once and leaves every
+# iteration after the first unsynchronised.
+PER_ITERATION = ('st', 'ld', 'fence', 'res', 'rdv', 'jitter')
+# ...and what the lane owns once: the completion bump, which tells the stress
+# population this lane is done.
+ONCE_PER_LANE = ('bump',)
 # A statement that can guard the line under it without a brace of its own, and
 # a jump that can skip the rest of an iteration: both leave an op's order, its
 # constants and its comment untouched while it stops running per iteration.
@@ -557,16 +564,27 @@ def parse_lane(body, helpers, where):
                        comment=pending)
             pending = None
         if a is None:
-            m = C_RDV_SPIN.match(s)
+            m = C_RDV.match(s)
             if m:
-                args = split_args(m.group(1))
+                args = split_args(m.group(2))
                 if len(args) != 3:
                     raise CompletenessError(
-                        "the rendezvous spin load takes 3 arguments; %s has %d in %r"
+                        "het_rdv_device takes 3 arguments; %s has %d in %r"
                         % (where, len(args), s))
                 flush()
-                a = Anchor(('rdv-spin', _order(args[1], where), _scope(args[2], where)),
-                           ['__hip_atomic_load'], ptr=args[0])
+                a = Anchor(('rdv',), ['het_rdv_device'], flag=m.group(1),
+                           ptr=args[0], target=args[1], cap=args[2])
+        if a is None:
+            m = C_JITTER.match(s)
+            if m:
+                args = split_args(m.group(1))
+                if len(args) != 2:
+                    raise CompletenessError(
+                        "het_rdv_jitter takes 2 arguments; %s has %d in %r"
+                        % (where, len(args), s))
+                flush()
+                a = Anchor(('jitter',), ['het_rdv_jitter'],
+                           rng=args[0], span=args[1])
         if a is None:
             m = C_LOAD.match(s)
             if m:
@@ -600,17 +618,6 @@ def parse_lane(body, helpers, where):
                 a = Anchor(('fence', _order(args[0], where), SCOPE_OF_FENCE_STR[sstr]),
                            ['__builtin_amdgcn_fence'], emitted=True,
                            c_order=m.group(2), c_scope=m.group(3))
-        if a is None:
-            m = C_RDV_ADD.match(s)
-            if m:
-                args = split_args(m.group(1))
-                if len(args) != 4:
-                    raise CompletenessError(
-                        "the rendezvous fetch_add takes 4 arguments; %s has %d in %r"
-                        % (where, len(args), s))
-                flush()
-                a = Anchor(('rdv-add', _order(args[2], where), _scope(args[3], where)),
-                           ['__hip_atomic_fetch_add'], ptr=args[0], inc=args[1])
         if a is None:
             m = C_BUMP.match(s)
             if m:
@@ -760,10 +767,10 @@ def fmt(sig):
     k = sig[0]
     if k in ('st', 'ld', 'fence'):
         return "%s[%s,%s]" % ({'st': 'w', 'ld': 'r', 'fence': 'f'}[k], sig[1], sig[2])
-    if k == 'rdv-add':
-        return "rendezvous.fetch_add[%s,%s]" % (sig[1], sig[2])
-    if k == 'rdv-spin':
-        return "rendezvous.spin[%s,%s]" % (sig[1], sig[2])
+    if k == 'rdv':
+        return "rendezvous(_n)"
+    if k == 'jitter':
+        return "release jitter"
     if k == 'res':
         return "result_store %s=%s" % (sig[1], sig[2])
     if k == 'out':
@@ -855,8 +862,8 @@ def check_lane_loop(result, body, anchors, who):
     emits each proc's ops once -- so this is asked of het lanes ONLY.  It reads
     placement, which no anchor stream can see: an op keeps its order, constants
     and comment whether it is hoisted out of the loop, guarded inside it or
-    jumped over, and a rendezvous dragged in becomes a barrier around every
-    tested access."""
+    jumped over, and a rendezvous lifted out of it joins the two devices once
+    and leaves every later iteration unsynchronised."""
     chains = guard_chains(body)
     heads = [i for i, ln in enumerate(body) if LOOP_HEAD.match(ln.strip())]
     if len(heads) != 1:
@@ -1054,13 +1061,13 @@ def check_gpu_only(result, inst, lanes, klines):
 
 
 def check_het(result, inst, lanes):
-    """One guarded block per barrier-joining lane, in emission order: the GPU
+    """One guarded block per rendezvous-joining lane, in emission order: the GPU
     test lanes, in proc order."""
     # het_lane_plan reads only gpu/name.
     plan = ptx.het_lane_plan(dict(gpu=inst['gpu'], name=inst['name']))
     names = ", ".join("%s:P%d" % (l[3], l[1]) for l in plan)
     if len(lanes) != len(plan):
-        result.fail("kernel has %d barrier-joining lane(s), the lane plan has "
+        result.fail("kernel has %d rendezvous-joining lane(s), the lane plan has "
                     "%d (%s)" % (len(lanes), len(plan), names))
         return
     result.note("  lane plan (x86_64 het): %d lane(s) -- %s" % (len(plan), names))
@@ -1072,7 +1079,7 @@ def check_het(result, inst, lanes):
                         "it in (workgroup %d, lane 0)" % (who, blk, lane, idx))
         anchors = parse_lane(body, DEVICE_HELPERS, who)
         check_lane_loop(result, body, anchors, who)
-        rdv = [('rdv-add', 'sc', 'sys'), ('rdv-spin', 'sc', 'sys')]
+        rdv = [('rdv',), ('jitter',)]
         cells = inst['cells'][pidx]
         regs = []
         for ck, _o, _s, o1, _o2 in cells:
@@ -1085,12 +1092,24 @@ def check_het(result, inst, lanes):
             check_operands(result, anchors, cells, who, slotted=True)
         # The scaffolding's operands, which the anchor stream does not carry.
         for a in anchors:
-            if a.sig[0] in ('rdv-add', 'rdv-spin') and a.ptr != '(barrier)':
-                result.fail("%s: the rendezvous counts on %s, not on the shared "
-                            "barrier" % (who, a.ptr))
-            if a.sig[0] == 'rdv-add' and a.inc != '1':
-                result.fail("%s: the rendezvous arrives by %s, so the lane count "
-                            "NPART names no lane population" % (who, a.inc))
+            if a.sig[0] == 'rdv':
+                if a.flag != "_rdvG_P%d" % pidx:
+                    result.fail("%s: the lane records its arrival in %s, not in "
+                                "its own flag buffer -- the readout reads the "
+                                "wrong lane's rendezvous" % (who, a.flag))
+                if a.ptr != 'barrier':
+                    result.fail("%s: the rendezvous counts on %s, not on the "
+                                "shared counter" % (who, a.ptr))
+                if a.target != '(uint64_t)NPART*(uint64_t)(_n+1)':
+                    result.fail("%s: the rendezvous waits for %s, which is not "
+                                "iteration _n's own target NPART*(_n+1)"
+                                % (who, a.target))
+                if a.cap != '_cap_gpu':
+                    result.fail("%s: the rendezvous waits under %s, not under the "
+                                "run's own cap" % (who, a.cap))
+            if a.sig[0] == 'jitter' and a.span != 'HET_RELEASE_JITTER':
+                result.fail("%s: the release delay spans %s, not "
+                            "HET_RELEASE_JITTER" % (who, a.span))
             if a.sig[0] == 'bump' and a.arg != '_gpu_done':
                 result.fail("%s: the lane's completion bump names %s, not "
                             "_gpu_done" % (who, a.arg))
@@ -1284,7 +1303,7 @@ def guard_report():
         bad += 1
 
     print("\n-- het lane anchors --")
-    for s in (("rdv-add", "sc", "sys"), ("rdv-spin", "sc", "sys"),
+    for s in (("rdv",), ("jitter",),
               ("res", "<buf>", "<reg>"), ("bump",)):
         print("  %s" % fmt(s))
     print("\n-- the het lane's iteration loop (litmus/hetEmit.ml) --")
@@ -1455,6 +1474,14 @@ def sweep(gpu_dir, x86_dir, jobs):
 # MFENCE between its stores.
 BITE_GPU = "MP-sys-fence"
 BITE_HET = "2+2W-cg-sys-fence-2s-x86_64"
+# The two lines of BITE_HET's lane the placement injections move, quoted as
+# litmus/hetEmit.ml writes them: an anchor that has drifted is a hard exit
+# (sub_lane), never a silent no-op.
+RDV_LINE = ("      _rdvG_P1[_n] = het_rdv_device(barrier, "
+            "(uint64_t)NPART*(uint64_t)(_n+1), _cap_gpu);\n")
+ST_Y_LINES = ("      // w[relaxed,sys] y 2\n"
+              "      __hip_atomic_store((y + (_n)*HET_SLOT_STRIDE_WORDS), 2, "
+              "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n")
 # The annotations no corpus test carries (litmus/HipLang.ml maps them, so an
 # injection into a corpus render can never reach their rows).
 SYNTH = {
@@ -1715,29 +1742,40 @@ def bite(tmp):
     i, j = lane_span(src, 0)
     open(w, "w").write(src[:i] + src[j:])
     b.check("a whole TEST lane DELETED", 1,
-            "kernel has 0 barrier-joining lane(s), the lane plan has 1",
+            "kernel has 0 rendezvous-joining lane(s), the lane plan has 1",
             het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
-    w = b.fresh("rdv-narrow", h_hip)
-    sub_lane(w, 0, "(void)__hip_atomic_fetch_add((barrier), 1, __ATOMIC_SEQ_CST, "
-                   "__HIP_MEMORY_SCOPE_SYSTEM)",
-             "(void)__hip_atomic_fetch_add((barrier), 1, __ATOMIC_SEQ_CST, "
-             "__HIP_MEMORY_SCOPE_AGENT)")
-    b.check("the rendezvous arrival NARROWED sys -> gpu", 1,
-            "observed rendezvous.fetch_add[sc,gpu]", het_l, hip=w, cpu_c=h_cpu,
+    # The rendezvous ORDERS AND SCOPES live in litmus/het-runtime/het_rdv.h, so
+    # what a lane can get wrong here is which counter it joins, which iteration
+    # it waits for, which cap it waits under and where it records the arrival.
+    w = b.fresh("rdv-ptr", h_hip)
+    sub_lane(w, 0, "het_rdv_device(barrier,", "het_rdv_device(_scratch_loc,")
+    b.check("the rendezvous counting on the scratch layout instead of the "
+            "shared counter", 1, "the rendezvous counts on", het_l, hip=w,
+            cpu_c=h_cpu, orig=h_hip)
+
+    w = b.fresh("rdv-target", h_hip)
+    sub_lane(w, 0, "(uint64_t)NPART*(uint64_t)(_n+1)", "(uint64_t)NPART")
+    b.check("the rendezvous waiting for iteration 0's target on every iteration",
+            1, "is not iteration _n's own target", het_l, hip=w, cpu_c=h_cpu,
             orig=h_hip)
 
-    w = b.fresh("rdv-by-2", h_hip)
-    sub_lane(w, 0, "__hip_atomic_fetch_add((barrier), 1,",
-             "__hip_atomic_fetch_add((barrier), 2,")
-    b.check("the rendezvous arriving by 2 (NPART then names no lane population)",
-            1, "the rendezvous arrives by 2", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
+    w = b.fresh("rdv-cap", h_hip)
+    sub_lane(w, 0, ", _cap_gpu);", ", 1u);")
+    b.check("the rendezvous cap frozen to a literal (the run-time knob is gone)",
+            1, "waits under 1u", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
-    w = b.fresh("rdv-ptr", h_hip)
-    sub_lane(w, 0, "__hip_atomic_fetch_add((barrier), 1,",
-             "__hip_atomic_fetch_add((_spin_bar), 1,")
-    b.check("the rendezvous counting on the spin word instead of the barrier", 1,
-            "the rendezvous counts on", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
+    w = b.fresh("rdv-flag", h_hip)
+    sub_lane(w, 0, "_rdvG_P1[_n] = het_rdv_device", "_rdvG_P0[_n] = het_rdv_device")
+    b.check("the lane recording its arrival in ANOTHER participant's flag buffer",
+            1, "records its arrival in _rdvG_P0", het_l, hip=w, cpu_c=h_cpu,
+            orig=h_hip)
+
+    w = b.fresh("rdv-jitter", h_hip)
+    sub_lane(w, 0, "het_rdv_jitter(&_rng, HET_RELEASE_JITTER);",
+             "het_rdv_jitter(&_rng, 0u);")
+    b.check("the release delay spanning a literal instead of the knob", 1,
+            "the release delay spans 0u", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
     w = b.fresh("bump-name", h_hip)
     sub_lane(w, 0, "het_scratch_bump(_gpu_done);", "het_scratch_bump(_scratch_loc);")
@@ -1800,15 +1838,24 @@ def bite(tmp):
     b.check("a tested store HOISTED out of the loop (it runs once per launch)", 1,
             "sits OUTSIDE the per-iteration loop", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
+    # The rendezvous is per-ITERATION: lifted out of the loop it joins the two
+    # devices once and every iteration after the first runs unsynchronised, with
+    # every op's order, scope and comment untouched.
     w = b.fresh("loop-rdv", h_hip)
-    rdv = ("    (void)__hip_atomic_fetch_add((barrier), 1, __ATOMIC_SEQ_CST, "
-           "__HIP_MEMORY_SCOPE_SYSTEM);\n")
+    rdv = RDV_LINE
     sub_lane(w, 0, rdv, "")
-    sub_lane(w, 0, "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n",
-             rdv + "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n")
-    b.check("the rendezvous dragged INSIDE the loop (a barrier per tested access)",
-            1, "sits INSIDE the per-iteration loop", het_l, hip=w,
+    sub_lane(w, 0, "    #pragma unroll 1\n", rdv + "    #pragma unroll 1\n")
+    b.check("the rendezvous LIFTED OUT of the loop (the two devices meet once)",
+            1, "sits OUTSIDE the per-iteration loop", het_l, hip=w,
             cpu_c=h_cpu, orig=h_hip)
+
+    # ...and moved BEHIND a tested access, where it no longer opens the window
+    # the iteration races in: the anchor stream is what reads that.
+    w = b.fresh("rdv-moved", h_hip)
+    sub_lane(w, 0, rdv, "")
+    sub_lane(w, 0, ST_Y_LINES, ST_Y_LINES + rdv)
+    b.check("the rendezvous moved BEHIND a tested access", 1,
+            "anchor stream differs", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
 
     ops = ("      // w[relaxed,sys] x 1\n"
            "      __hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1, "

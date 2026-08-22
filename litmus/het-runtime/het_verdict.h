@@ -55,6 +55,15 @@
 #define HET_STATS_MAX_CELLS 128
 #endif
 
+/* How much of a run may be thrown away at the rendezvous before the run itself
+   is thrown away.  Past this share of N the two sides were mostly not running
+   together, so the iterations that did are not a sample of the window the test
+   is about.  The caps that produce the discards live in het_rdv.h; this is the
+   budget the DECISION rule spends, so it lives with the rule. */
+#ifndef HET_RDV_MAX_DISCARD_PCT
+#define HET_RDV_MAX_DISCARD_PCT 50
+#endif
+
 /* ---------------------------------------------------------------------------
  * THE RECORD STAMP.  het_obs_record is memset(0) before the emitted driver fills
  * it, so a zeroed record is exactly what an emitter that skipped a field would
@@ -100,9 +109,26 @@ typedef struct het_obs_record {
   /* THE READOUT.  One iteration, one slot, one outcome vector: iters_scored is
      how many of the N iterations were read back, and target_count how many of
      those matched the test's condition.  Neither is a search: they count
-     iterations, so target_count <= iters_scored <= N always. */
+     iterations, so target_count <= iters_scored <= N always.
+     iters_discarded is the rest -- iterations at least one participant never
+     started, because its rendezvous hit the cap -- so scored + discarded = N on
+     a run whose readout ran at all. */
   uint64_t iters_scored;
+  uint64_t iters_discarded;
   uint64_t target_count;
+  /* THE RENDEZVOUS.  rdv_valid says the readout ran, and is what separates the
+     three counts above from the memset zeros a record carries without it.
+     rdv_cap_cpu / rdv_cap_gpu attribute the discards to the side that timed out,
+     which is the difference between a partner that never arrived and a cap set
+     too short; an iteration both sides missed counts on both.
+     cap_cpu / cap_gpu are the waits this run actually used (het_rdv.h
+     HET_CAP_CPU / HET_CAP_GPU, overridable per run), and cap_calibrated is 0
+     until they have been measured on the target -- a discard count means nothing
+     without the wait it came from. */
+  int rdv_valid;
+  uint64_t rdv_cap_cpu, rdv_cap_gpu;
+  uint32_t cap_cpu, cap_gpu;
+  int cap_calibrated;
   /* 0 = every scored iteration produced the SAME outcome vector.  A decode that
      never varies is the constant-read artefact [Srivastava24 sec 4.1] -- a
      reader stuck on its initial value or on one value -- and a harness that
@@ -225,6 +251,10 @@ typedef enum {
 /* Unstamped record: rec_magic is missing, so the fields below it are whatever the
    emitter left there -- a zeroed record reads as a live one.  Fail closed, loudly. */
 #define HET_DQ_REC_UNSTAMPED    (1u << 10)
+/* The rendezvous never joined the two sides often enough for this run to be one:
+   its readout did not run, nothing was scored, or more than
+   HET_RDV_MAX_DISCARD_PCT of N was discarded at the cap. */
+#define HET_DQ_RDV_DEAD         (1u << 12)
 
 /* Why a null was CAVEATED (still reportable, but weaker than it looks).  Bits 0,
    1, 2 and 5 are vacant, and stay vacant, for the reason the two blocks above
@@ -239,6 +269,9 @@ typedef enum {
                                               stress alone and must say so.     */
 #define HET_CV_ONE_OUTCOME      (1u << 8)  /* every scored iteration read back the
                                               same outcome vector               */
+#define HET_CV_RDV_UNCALIBRATED (1u << 9)  /* the rendezvous caps are het_rdv.h's
+                                              placeholders, not a measurement on
+                                              this target                       */
 
 static int het_dead(uint32_t req, uint32_t bit, uint64_t rounds) {
   return (req & bit) && rounds == 0;
@@ -270,6 +303,7 @@ static het_verdict_t het_verdict(const het_obs_record *r,
      travels. */
   if (r->iters_scored > 0 && !r->outcomes_vary)
                                     cv |= HET_CV_ONE_OUTCOME;
+  if (!r->cap_calibrated)           cv |= HET_CV_RDV_UNCALIBRATED;
   if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
   if (r->place_failures > 0)        cv |= HET_CV_PLACE_REFUSED;
   if (req == 0)                     cv |= HET_CV_UNSTRESSED;
@@ -296,6 +330,13 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   /* ---- 3. Liveness: is this run's null even a datum?  A null from an
      inert-stress run is not the same datum as one from a stressed run, and
      nothing else in the record would say so. */
+  /* THE LIVENESS OF THE PARTNER, which no stress tally covers: a run whose
+     iterations mostly ended at the cap is a run whose two sides mostly did not
+     meet, and its empty histogram is about the rendezvous rather than about the
+     memory model. */
+  if (!r->rdv_valid || r->iters_scored == 0 ||
+      r->iters_discarded * 100 > r->N * HET_RDV_MAX_DISCARD_PCT)
+                                                  dq |= HET_DQ_RDV_DEAD;
   if (r->stress_truncated > 0)                    dq |= HET_DQ_STRESS_TRUNCATED;
   /* The GPU scratchpad stress, evidenced by het_stress.h's round tally
      (HET_TALLY_STRESS_ROUNDS).  This proves the loop RAN; that it still CONTAINS
@@ -333,7 +374,8 @@ static const char *het_verdict_name(het_verdict_t v) {
 static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
     "HetObs %s cpu_only=%d "
-    "inst=%d run=%d N=%llu scored=%llu target=%llu vary=%d "
+    "inst=%d run=%d N=%llu scored=%llu discarded=%llu target=%llu "
+    "cap_cpu=%llu/%u cap_gpu=%llu/%u calibrated=%d vary=%d "
     "stress_trunc=%llu do_stress_rounds=%llu req=0x%x "
     "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
     "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u "
@@ -343,7 +385,11 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     _r->instance_id, _r->run_id,
     (unsigned long long)_r->N,
     (unsigned long long)_r->iters_scored,
+    (unsigned long long)_r->iters_discarded,
     (unsigned long long)_r->target_count,
+    (unsigned long long)_r->rdv_cap_cpu, _r->cap_cpu,
+    (unsigned long long)_r->rdv_cap_gpu, _r->cap_gpu,
+    _r->cap_calibrated,
     _r->outcomes_vary,
     (unsigned long long)_r->stress_truncated,
     (unsigned long long)_r->gpu_stress_rounds,
@@ -382,6 +428,14 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
                  "one thing %llu times.\n",
             (unsigned long long)_r->iters_scored,
             (unsigned long long)_r->iters_scored);
+  if (cv & HET_CV_RDV_UNCALIBRATED)
+    fprintf(_ch, "  CAVEAT: the rendezvous caps are PLACEHOLDERS (cpu=%u, gpu=%u "
+                 "polls), not a measurement on this target, so the %llu discarded "
+                 "iteration(s) price a wait nobody calibrated: a shorter cap "
+                 "discards iterations the two sides would have shared, a longer "
+                 "one spends the run waiting for a partner that is not coming.\n",
+            _r->cap_cpu, _r->cap_gpu,
+            (unsigned long long)_r->iters_discarded);
   if (cv & HET_CV_AFF_FAILED)
     fprintf(_ch, "  CAVEAT: %u sched_setaffinity call(s) FAILED -- the pinning is "
                  "fiction and the stress topology is not the one being tuned.\n",
@@ -420,9 +474,10 @@ static void het_print_config(FILE *_ch, const het_obs_record *_r) {
 static void het_print_notobserved(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
     "  %s: the weak outcome was NOT observed -- 0 / N=%llu iterations "
-    "(%llu scored).\n",
+    "(%llu scored, %llu discarded at the rendezvous).\n",
     _r->test_name, (unsigned long long)_r->N,
-    (unsigned long long)_r->iters_scored);
+    (unsigned long long)_r->iters_scored,
+    (unsigned long long)_r->iters_discarded);
 }
 
 static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
@@ -489,6 +544,20 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
 
   if (v == HET_COLD_INVALID) {
     fprintf(_ch, "  DISCARD this null -- the harness was not demonstrably hot:\n");
+    if (dq & HET_DQ_RDV_DEAD)
+      fprintf(_ch, "    - the RENDEZVOUS: %llu of N=%llu iteration(s) scored, "
+                   "%llu discarded at the cap (cpu %llu, gpu %llu; caps %u/%u, "
+                   "budget %d%%)%s.  A timed-out rendezvous is a DEAD PARTNER or "
+                   "a cap set too short, never a non-observation: the two sides "
+                   "did not run the iteration together, so there was no window "
+                   "for the outcome to appear in\n",
+              (unsigned long long)_r->iters_scored,
+              (unsigned long long)_r->N,
+              (unsigned long long)_r->iters_discarded,
+              (unsigned long long)_r->rdv_cap_cpu,
+              (unsigned long long)_r->rdv_cap_gpu,
+              _r->cap_cpu, _r->cap_gpu, (int)HET_RDV_MAX_DISCARD_PCT,
+              _r->rdv_valid ? "" : " -- and the readout never ran at all");
     if (dq & HET_DQ_STRESS_TRUNCATED)
       fprintf(_ch, "    - stress_truncated=%llu: stress STOPPED while tested "
                    "lanes were still running\n",
@@ -627,19 +696,20 @@ typedef struct het_stats {
      number a stop rule that watches for a lone sighting needs. */
   int n_at_first_sight;
 
-  uint64_t N, iters_scored;         /* the effort disclosure                      */
+  uint64_t N, iters_scored, iters_discarded;   /* the effort disclosure          */
   uint32_t flags;
 } het_stats_t;
 
 /* The decode guard: is this cell's readout trustworthy, or could the "sighting"
    be the constant-read artefact [Srivastava24 sec 4.1]?  One question over one
-   channel now that every column is measured per iteration: a cell that scored
-   nothing read nothing back, and a cell whose every iteration produced the same
-   outcome vector measured one thing N times.  Fail-closed either way -- a
-   sighting nothing can vouch for must not count toward corroboration -- and the
-   sighting itself is still REPORTED, never suppressed. */
+   channel now that every column is measured per iteration: a cell whose readout
+   never ran carries counts nothing wrote, a cell that scored nothing read
+   nothing back, and a cell whose every iteration produced the same outcome
+   vector measured one thing N times.  Fail-closed on all three -- a sighting
+   nothing can vouch for must not count toward corroboration -- and the sighting
+   itself is still REPORTED, never suppressed. */
 static int het_cell_degenerate(const het_obs_record *r) {
-  return (r->iters_scored == 0) || !r->outcomes_vary;
+  return !r->rdv_valid || (r->iters_scored == 0) || !r->outcomes_vary;
 }
 
 /* ---------------------------------------------------------------------------
@@ -720,6 +790,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     }
 
     st->iters_scored += recs[i].iters_scored;
+    st->iters_discarded += recs[i].iters_discarded;
   }
   st->k_runs = nruns;
 
@@ -771,13 +842,14 @@ static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
     "HetStats %s cpu_only=%d obs=%s "
     "R=%d usable=%d k=%d k_eff=%d k_runs=%d degen=%d first_sight=%d "
-    "sighting=%s N=%llu scored=%llu flags=0x%x\n",
+    "sighting=%s N=%llu scored=%llu discarded=%llu flags=0x%x\n",
     _s->test_name ? _s->test_name : "(none)",
     _s->cpu_only,
     het_obs_class_name(_s->obs), _s->R, _s->R_usable, _s->k, _s->k_eff, _s->k_runs,
     _s->n_degen, _s->n_at_first_sight,
     het_sighting_name(_s->tier),
     (unsigned long long)_s->N, (unsigned long long)_s->iters_scored,
+    (unsigned long long)_s->iters_discarded,
     _s->flags);
 }
 
@@ -821,9 +893,11 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
       "  CHARACTERIZATION, NEVER VALIDATION: this harness carries no prediction, so "
       "this null agrees with no model and refutes none -- it reports what this "
       "harness reached on this hardware under this stress.\n"
-      "  effort: %d run(s) x N=%llu iterations, %llu scored.  Grow R, NOT N.\n",
+      "  effort: %d run(s) x N=%llu iterations, %llu scored, %llu discarded at "
+      "the rendezvous.  Grow R, NOT N.\n",
       _s->R_usable, _s->R, (unsigned long long)_s->N,
-      (unsigned long long)_s->iters_scored);
+      (unsigned long long)_s->iters_scored,
+      (unsigned long long)_s->iters_discarded);
     return;
   }
 

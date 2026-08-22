@@ -760,10 +760,10 @@ PY
   # that refusal from a parse that died on an unrecognized cell.
   printf '\n[12] a het proc header with NO device tag must HARD-FAIL(2)\n'
   # Section [13] reads this harness too, and its injections are spelled as PTX
-  # tokens, so the rep must be a shape whose own model ops carry NEITHER of them:
-  # this one's loads are relaxed and its fence is emitted order-first
-  # (`fence.sc.sys'), leaving `ld.acquire.sys' and `fence.sys.sc' to the
-  # rendezvous alone.
+  # tokens, so the rep must be a shape whose own model ops carry none of them.
+  # The rendezvous counter is a uint64_t and every model location an int, so the
+  # rendezvous is the only `.u64'/`.b64' pair in the stream and every injection
+  # below is keyed on that width.
   local DVT=MP-cg-sys-fence-2s
   local dt="$sc/dt" dtcpu
   rm -rf "$dt"; mkdir -p "$dt"
@@ -823,16 +823,18 @@ PY
   fi
 
   # =========================================================================
-  # [13] the CPU-GPU rendezvous barrier's own scope
+  # [13] the CPU-GPU rendezvous: system-scoped, relaxed, fence-free, once a lane
   # =========================================================================
-  # check_barrier_whitelist tests every op of the rendezvous for system scope,
-  # and only the fetch_add is scope-selected upstream: split_het_segments anchors
-  # a segment on a sys-scope atom/red, so a narrowed fetch_add never reaches the
-  # whitelist and the lane count fires instead.  The two seq_cst fences and the
-  # spin load reach it and are tested NOWHERE ELSE -- narrow either and the
-  # rendezvous stops spanning the two devices while every model op still matches,
-  # which is a het harness whose CPU and GPU halves never met.
-  printf '\n[13] the het rendezvous barrier narrowed to device scope must FAIL(1)\n'
+  # check_barrier_whitelist is the only reader of the rendezvous ops, and only
+  # the arrival is scope-selected upstream: split_het_segments anchors a segment
+  # on a sys-scope atom/red, so a narrowed arrival never reaches the whitelist and
+  # the lane count fires instead.  What reaches it and is tested NOWHERE ELSE is
+  # the ORDER of both ops and the absence of a fence between them: strengthen
+  # either and the rendezvous flushes the cache state the tested iteration is
+  # about to race on, while every model op still matches.  Its PLACEMENT is
+  # check_no_pre_barrier_ops's, which is where a rendezvous moved behind a tested
+  # access lands.
+  printf '\n[13] the het rendezvous strengthened, narrowed, doubled or moved must FAIL(1)\n'
   # The harness is the one section [12] emitted and compiled -- the same test,
   # the same emission command -- so its PTX and its CPU render are read here
   # instead of a second copy being built.  [12] writes them inside a conditional
@@ -848,13 +850,13 @@ PY
     python3 "$CHECK" "$RVL" --ptx "$rvptx" --cpu-c "$rvcpu" -q >/dev/null 2>&1; rc=$?
     _expect "rendezvous control (clean het PTX)" 0 "$rc" || fails=$((fails+1))
 
-    # Every failure the run reports must be the barrier-scope one.  A sed that
+    # Every injection must redden through the assertion it targets.  A sed that
     # also caught a model op would redden through the ordered-stream check
     # instead, and this section would report OK for an assertion it never
-    # reached; the counts are compared rather than grepped for that reason.
+    # reached, so the REASON is grepped and printed, never just the exit code.
     local rvn=0
-    _rvbite() { # label sed-expr
-      local lbl="$1" expr="$2" rc out f bad=0 nf ns
+    _rvbite() { # label  sed-expr  want-substring
+      local lbl="$1" expr="$2" want="$3" rc out f bad=0
       rvn=$((rvn+1)); f="$rv/bite$rvn.ptx"
       sed "$expr" "$rvptx" > "$f"
       if [ ! -s "$f" ] || cmp -s "$rvptx" "$f"; then
@@ -863,23 +865,96 @@ PY
       fi
       out="$(python3 "$CHECK" "$RVL" --ptx "$f" --cpu-c "$rvcpu" 2>&1)"; rc=$?
       _expect "$lbl" 1 "$rc" || bad=1
-      nf=$(printf '%s\n' "$out" | grep -c '^FAIL: ')
-      ns=$(printf '%s\n' "$out" | grep -c '^FAIL: barrier op .* NOT system scope')
-      if [ "$ns" -eq 0 ] || [ "$nf" -ne "$ns" ]; then
-        printf '  *** WRONG REASON: %d of %d failures are the barrier-scope one    [%s]\n' \
-               "$ns" "$nf" "$lbl"
+      if printf '%s\n' "$out" | grep -q "^FAIL: .*$want"; then
+        printf '  %s\n' "$(printf '%s\n' "$out" | grep -m1 "^FAIL: .*$want")"
+      else
+        printf '  *** WRONG REASON: no failure names %s    [%s]\n' "$want" "$lbl"
         printf '%s\n' "$out" | grep -E '^FAIL:|^RESULT' | head -3
         bad=1
-      else
-        printf '  %d x %s\n' "$ns" \
-               "$(printf '%s\n' "$out" | grep -m1 '^FAIL: barrier op')"
       fi
       return "$bad"
     }
-    _rvbite "both rendezvous seq_cst fences narrowed sys -> gpu" \
-            's/fence\.sys\.sc/fence.gpu.sc/g' || fails=$((fails+1))
-    _rvbite "the rendezvous spin load narrowed sys -> gpu" \
-            's/ld\.acquire\.sys\.b32/ld.acquire.gpu.b32/g' || fails=$((fails+1))
+    _rvbite "the rendezvous poll STRENGTHENED relaxed -> acquire" \
+            's/ld\.relaxed\.sys\.b64/ld.acquire.sys.b64/g' \
+            'is NOT relaxed' || fails=$((fails+1))
+    _rvbite "a fence.sc.sys planted AHEAD of the rendezvous arrival" \
+            's/^\(\s*\)atom\.add\.relaxed\.sys\.u64\(.*\)$/\1fence.sc.sys;\n\1atom.add.relaxed.sys.u64\2/' \
+            'carries a FENCE' || fails=$((fails+1))
+    _rvbite "the rendezvous arrival NARROWED sys -> gpu" \
+            's/atom\.add\.relaxed\.sys\.u64/atom.add.relaxed.gpu.u64/g' \
+            'has NO rendezvous' || fails=$((fails+1))
+    _rvbite "the rendezvous arrival DUPLICATED (a second sys atom per lane)" \
+            's/^\(\s*\)atom\.add\.relaxed\.sys\.u64\(.*\)$/\1atom.add.relaxed.sys.u64\2\n\1atom.add.relaxed.sys.u64\2/' \
+            'rendezvous arrival per rendezvous-joining GPU lane' || fails=$((fails+1))
+
+    # ...and the PLACEMENT, which no sed expresses: the arrival and its poll are
+    # moved BEHIND the lane's first tested access, each still inside its own
+    # inline-asm block, so nothing about the ops themselves changed and only
+    # where they sit did.
+    printf '  -- and the rendezvous moved BEHIND the first tested access --\n'
+    python3 - "$rvptx" "$rv/moved.ptx" <<'MOVE'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+lines = open(src).read().splitlines()
+blocks, i = [], 0
+while i < len(lines):
+    if lines[i].strip().startswith('// begin inline asm'):
+        j = i
+        while j < len(lines) and not lines[j].strip().startswith('// end inline asm'):
+            j += 1
+        blocks.append((i, j))
+        i = j + 1
+        continue
+    i += 1
+
+
+def body(b):
+    return [l for l in lines[b[0] + 1:b[1]]
+            if l.strip() and not l.strip().startswith('//')]
+
+
+# The arrival, its poll, and the first block behind them that carries an
+# instruction at all -- the release jitter is an EMPTY asm block, so "the next
+# block" is not the tested access.  The two rendezvous blocks are then moved
+# behind that one and nothing about the ops themselves changes.
+k = next((n for n, b in enumerate(blocks)
+          if any('atom.add.relaxed.sys' in l for l in body(b))), None)
+poll = next((n for n in range(k + 1, len(blocks))
+             if any('ld.relaxed.sys' in l for l in body(blocks[n]))), None) \
+    if k is not None else None
+model = next((n for n in range(poll + 1, len(blocks)) if body(blocks[n])), None) \
+    if poll is not None else None
+if model is None:
+    sys.exit(1)
+moved = lines[blocks[k][0]:blocks[k][1] + 1] + lines[blocks[poll][0]:blocks[poll][1] + 1]
+drop = set(range(blocks[k][0], blocks[k][1] + 1))
+drop |= set(range(blocks[poll][0], blocks[poll][1] + 1))
+out = []
+for n, l in enumerate(lines):
+    if n in drop:
+        continue
+    out.append(l)
+    if n == blocks[model][1]:
+        out += moved
+open(dst, 'w').write("\n".join(out) + "\n")
+sys.exit(0)
+MOVE
+    rc=$?
+    if [ "$rc" -ne 0 ] || [ ! -s "$rv/moved.ptx" ] || cmp -s "$rvptx" "$rv/moved.ptx"; then
+      printf '  *** VACUOUS BITE: injection changed nothing    [rendezvous moved behind a tested access]\n'
+      fails=$((fails+1))
+    else
+      out="$(python3 "$CHECK" "$RVL" --ptx "$rv/moved.ptx" --cpu-c "$rvcpu" 2>&1)"; rc=$?
+      _expect "the rendezvous moved BEHIND the first tested access" 1 "$rc" \
+        || fails=$((fails+1))
+      if printf '%s\n' "$out" | grep -q 'BEFORE the first rendezvous barrier'; then
+        printf '  %s\n' "$(printf '%s\n' "$out" | grep -m1 'BEFORE the first rendezvous barrier')"
+      else
+        printf '  *** WRONG REASON: not the pre-rendezvous failure    [rendezvous moved]\n'
+        printf '%s\n' "$out" | grep -E '^FAIL:|^RESULT' | head -3
+        fails=$((fails+1))
+      fi
+    fi
   fi
 
   printf '\n'

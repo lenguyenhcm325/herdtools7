@@ -114,17 +114,19 @@ het_cpu_stress.h).  So no stress object may ever be x, y or barrier.
   1
 
 (d) four object classes, four allocators; confusing any two puts stress traffic
-on a tested cache line.  The shared test vars and the barrier go through
-gd_alloc_shared (coherent -- the property under test); the GPU stress scratchpad
+on a tested cache line.  The shared test vars and the rendezvous counter go
+through gd_alloc_shared (coherent -- the property under test); the GPU scratchpad
 through cudaMalloc (device-only, disjoint); the CPU enemy scratchpad through
 plain host malloc (CPU-only, disjoint); and the noise buffers through
 gd_alloc_noise (homed on the OTHER processing unit).  The first two classes are
 read on this same MP-cg-sys-acqrel-2s render elsewhere -- the shared allocator
 and its matching free in shared-alloc.t (a), the GPU scratchpad in stress.t (b).
-What is pinned here is the barrier's own allocation, which nothing else reads;
-the two CPU-side classes; and the refusal that keeps the enemy scratchpad off
-the coherent allocator.
-  $ grep -c 'int \*barrier; gd_alloc_shared((void\*\*)&barrier, sizeof(int));' $MP.cu
+What is pinned here is the rendezvous counter's own allocation, which nothing
+else reads; the two CPU-side classes; and the refusal that keeps the enemy
+scratchpad off the coherent allocator.  The counter gets a whole slot to itself:
+sharing a line with a test location would put every arrival's traffic on the very
+line under test.
+  $ grep -c 'uint64_t \*barrier; gd_alloc_shared((void\*\*)&barrier, sizeof(int)\*HET_SLOT_STRIDE_WORDS);' $MP.cu
   1
   $ grep -c 'malloc_check(sizeof(uint64_t)\*HET_CPU_SCRATCH_WORDS)' $MP.cu
   1

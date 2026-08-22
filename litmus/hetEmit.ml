@@ -198,6 +198,11 @@ end
 
       (* ---- naming helpers, shared by derive and the emitters ---------------- *)
       let buf_name_of p li = Printf.sprintf "bufP%d_%d" p li
+      (* One byte per iteration per participant: 1 iff that participant's
+         rendezvous reached its target on iteration n.  The readout ANDs them,
+         so a zero on either side discards the iteration. *)
+      let rdv_gpu_name p = Printf.sprintf "_rdvG_P%d" p
+      let rdv_cpu_name p = Printf.sprintf "_rdvC_P%d" p
 
       let run _hash_env src_name in_chan _out_chan splitted =
         try
@@ -518,14 +523,30 @@ end
               Buffer.contents b in
             (* ---------------- the pre-rendered slot readout ------------------
                Iteration n's outcome vector is read from slot n: one pass, no
-               search and no decoding.  Pure C over host buffers, so it needs no
-               dialect. *)
+               search and no decoding.  An iteration only ONE participant started
+               is not an iteration of the test, so the flags are ANDed first and a
+               zero on either side discards it unread.  Pure C over host buffers,
+               so it needs no dialect. *)
             let readout =
               let b = Buffer.create 1024 in
               let s = Buffer.add_string b in
               let nsl = max 1 nslots in
               s (Printf.sprintf "    intmax_t _first[%d]; int _seen_first = 0;\n" nsl) ;
               s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
+              s "      int _ok = 1;\n" ;
+              List.iter
+                (fun (p,dev,_) ->
+                  match dev with
+                  | `Gpu ->
+                     s (Printf.sprintf
+                          "      if (!%s_h[_n]) { _ok = 0; _rec.rdv_cap_gpu++; }\n"
+                          (rdv_gpu_name p))
+                  | `Cpu ->
+                     s (Printf.sprintf
+                          "      if (!%s[_n]) { _ok = 0; _rec.rdv_cap_cpu++; }\n"
+                          (rdv_cpu_name p)))
+                proc_infos ;
+              s "      if (!_ok) { _rec.iters_discarded++; continue; }\n" ;
               s "      _rec.iters_scored++;\n" ;
               s (Printf.sprintf "      intmax_t _o[%d];\n" nsl) ;
               List.iteri
@@ -550,6 +571,9 @@ end
               s "      if (!_seen_first) { memcpy(_first, _o, sizeof _o); _seen_first = 1; }\n" ;
               s "      else if (memcmp(_first, _o, sizeof _o) != 0) _rec.outcomes_vary = 1;\n" ;
               s "    }\n" ;
+              (* The readout ran, so the counts above are measurements rather than
+                 the memset zeros a record carries without it. *)
+              s "    _rec.rdv_valid = 1;\n" ;
               Buffer.contents b in
             let cpus =
               List.map
@@ -674,6 +698,7 @@ end
              every shared global is SIZE_OF_TEST slots wide. *)
           let global_bytes = "sizeof(int)*SIZE_OF_TEST*HET_SLOT_STRIDE_WORDS" in
           let buf_bytes ty = Printf.sprintf "sizeof(%s)*SIZE_OF_TEST" ty in
+          let rdv_bytes = "sizeof(uint8_t)*SIZE_OF_TEST" in
           let gpu_bufs =
             List.filter (fun (_,_,_,dev,_) -> dev = `Gpu) it.i_bufs in
 
@@ -691,7 +716,10 @@ end
                      "  int *%s; gd_alloc_shared((void**)&%s, %s);\n"
                      g g global_bytes))
               it.i_all_globals ;
-            s "  int *barrier; gd_alloc_shared((void**)&barrier, sizeof(int));\n" ;
+            (* The rendezvous counter gets a slot of its own: sharing a line
+               with a test location would put the arrival traffic on the very
+               line under test. *)
+            s "  uint64_t *barrier; gd_alloc_shared((void**)&barrier, sizeof(int)*HET_SLOT_STRIDE_WORDS);\n" ;
             (* read buffers -- OFF the coherent race path. *)
             List.iter
               (fun (_,_,name,dev,ty) ->
@@ -707,6 +735,21 @@ end
                         "  %s *%s = (%s*)malloc_check(%s);\n"
                         ty name ty (buf_bytes ty)))
               it.i_bufs ;
+            (* rendezvous flags -- one byte per iteration per participant, each on
+               the side that writes it. *)
+            List.iter
+              (fun gp ->
+                let g = rdv_gpu_name gp.gp_proc in
+                s (Printf.sprintf "  uint8_t *%s; %s\n" g
+                     (dialect.gd_dev_malloc g rdv_bytes)) ;
+                s (Printf.sprintf "  uint8_t *%s_h = (uint8_t*)malloc_check(%s);\n"
+                     g rdv_bytes))
+              it.i_gpus ;
+            List.iter
+              (fun cp ->
+                s (Printf.sprintf "  uint8_t *%s = (uint8_t*)malloc_check(%s);\n"
+                     (rdv_cpu_name cp.cp_proc) rdv_bytes))
+              it.i_cpus ;
             (* cooperative-launch prelude *)
             s "  int _coop = 0;\n" ;
             s (Printf.sprintf "  (void)%s(&_coop, %s, 0);\n"
@@ -836,6 +879,13 @@ end
             s "  int _rate_mode = (int)het_env_long(\"HET_RATE\", 0);\n" ;
             s "  int _confirm_runs = (int)het_env_long(\"HET_CONFIRM_RUNS\", 30);\n" ;
             s "  uint32_t _seed0 = (uint32_t)het_env_long(\"HET_SEED\", (long)HET_SEED);\n" ;
+            (* The rendezvous caps.  Read here, carried in the record and printed
+               with the run, because the cap is what turns a missing partner into
+               a discarded iteration instead of a hang -- and the shipped pair are
+               placeholders (litmus/het-runtime/het_rdv.h HET_CAP_CALIBRATED). *)
+            s "  long _cap_cpu = het_env_long(\"HET_CAP_CPU\", (long)HET_CAP_CPU);\n" ;
+            s "  uint32_t _cap_gpu = (uint32_t)het_env_long(\"HET_CAP_GPU\", (long)HET_CAP_GPU);\n" ;
+            s "  if (_cap_cpu < 0) _cap_cpu = 0;\n" ;
             s "  int _nrec = 0;\n" ;
             s "  for (int _run=0; _run<_runs_budget; ++_run) {\n" ;
             (* Every slot of every location, not just the first word: the reset
@@ -910,6 +960,16 @@ end
                    s (Printf.sprintf "    memset(%s, 0, %s);\n"
                         name (buf_bytes ty)))
               it.i_bufs ;
+            List.iter
+              (fun gp ->
+                s (Printf.sprintf "    %s\n"
+                     (dialect.gd_dev_memset0 (rdv_gpu_name gp.gp_proc) rdv_bytes)))
+              it.i_gpus ;
+            List.iter
+              (fun cp ->
+                s (Printf.sprintf "    memset(%s, 0, %s);\n"
+                     (rdv_cpu_name cp.cp_proc) rdv_bytes))
+              it.i_cpus ;
             (* spawn the CPU test threads; cores are handed out in emission
                order so no two threads share one. *)
             let ti = ref 0 in
@@ -925,6 +985,7 @@ end
                   String.concat ", "
                     (List.map snd addr
                      @ ["barrier"] @ List.map snd bufs
+                     @ [rdv_cpu_name proc ; "_cap_cpu"]
                      @ [core ; "_seed" ; "&_ct"]) in
                 s (Printf.sprintf "    cpu_args_P%d _ca%d = { %s };\n"
                      proc proc fields) ;
@@ -937,7 +998,8 @@ end
               String.concat ", "
                 (List.map (fun g -> "&" ^ g) kernel_globals
                  @ List.map (fun (_,_,name,_,_) -> "&"^name) gpu_bufs
-                 @ ["&barrier"]
+                 @ List.map (fun gp -> "&" ^ rdv_gpu_name gp.gp_proc) it.i_gpus
+                 @ ["&barrier" ; "&_cap_gpu"]
                  @ ["&_scratch" ; "&_scratch_loc" ; "&_gpu_done" ;
                     "&_stress_tally" ; "&_seed" ; "&_pre_pat" ; "&_mem_pat" ;
                     "&_noise_ddr" ; "&_noise_words" ; "&_noise_blocks" ;
@@ -963,8 +1025,6 @@ end
             s (Printf.sprintf "    %s\n"
                  (dialect.gd_memcpy_d2h "_stress_tally_h" "_stress_tally"
                     "sizeof(uint32_t)*HET_TALLY_N")) ;
-            s "    fprintf(stderr, \"HetLitmus stress: do_stress_rounds=%u\\n\",\n\
-               \            _stress_tally_h[HET_TALLY_STRESS_ROUNDS]);\n" ;
             s "    {\n" ;
             s "      unsigned long long _er = _ct.enemy_rounds;\n" ;
             s "      unsigned long long _pl = _ct.preload_ops;\n" ;
@@ -983,12 +1043,18 @@ end
             s "      if (_ct.aff_failures)\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: %u sched_setaffinity call(s) FAILED -- those threads are wherever the scheduler put them.  The pinning is fiction and the stress topology is not the one being tuned.\\n\", _ct.aff_failures);\n" ;
             s "    }\n" ;
-            (* mirror the GPU device read buffers. *)
+            (* mirror the GPU device read buffers and rendezvous flags. *)
             List.iter
               (fun (_,_,name,_,ty) ->
                 s (Printf.sprintf "    %s\n"
                      (dialect.gd_memcpy_d2h (name^"_h") name (buf_bytes ty))))
               gpu_bufs ;
+            List.iter
+              (fun gp ->
+                let g = rdv_gpu_name gp.gp_proc in
+                s (Printf.sprintf "    %s\n"
+                     (dialect.gd_memcpy_d2h (g^"_h") g rdv_bytes)))
+              it.i_gpus ;
             (* ======== the slot readout ======================================== *)
             s "    het_obs_record _rec; memset(&_rec, 0, sizeof _rec);\n" ;
             s (Printf.sprintf
@@ -1038,7 +1104,24 @@ end
             s "    _rec.place_failures = (uint32_t)_het_place_failures;\n" ;
             s "    _rec.noise_ws_mb = (uint32_t)HET_NOISE_MB;\n" ;
             s "    _rec.place_mode = (uint32_t)HET_PLACE;\n" ;
+            (* The caps this run waited under, and whether they are a measurement
+               at all: a discard count means nothing without the wait it came
+               from (litmus/het-runtime/het_rdv.h). *)
+            s "    _rec.cap_cpu = (uint32_t)_cap_cpu;\n" ;
+            s "    _rec.cap_gpu = _cap_gpu;\n" ;
+            s "    _rec.cap_calibrated = HET_CAP_CALIBRATED;\n" ;
             s it.i_readout ;
+            (* The rendezvous banner, on stderr beside the other liveness banners:
+               how many iterations the two sides actually started together, under
+               which caps, and whether those caps were ever measured. *)
+            s "    fprintf(stderr, \"HetLitmus rendezvous: scored=%llu discarded=%llu (cap_cpu=%llu cap_gpu=%llu) caps=%lu/%u jitter=%d discard_max=%d%% %s\\n\",\n\
+               \            (unsigned long long)_rec.iters_scored,\n\
+               \            (unsigned long long)_rec.iters_discarded,\n\
+               \            (unsigned long long)_rec.rdv_cap_cpu,\n\
+               \            (unsigned long long)_rec.rdv_cap_gpu,\n\
+               \            (unsigned long)_cap_cpu, _cap_gpu, (int)HET_RELEASE_JITTER,\n\
+               \            (int)HET_RDV_MAX_DISCARD_PCT,\n\
+               \            HET_CAP_CALIBRATED ? \"caps calibrated\" : \"caps UNCALIBRATED\");\n" ;
             s "    het_obs_record_print(stdout, &_rec);\n" ;
             (* The interpretation of a count travels with the number, in the
                harness's own output: het_verdict_print says what this run's
@@ -1094,6 +1177,15 @@ end
                         (dialect.gd_free name) name)
                 | `Cpu -> s (Printf.sprintf "  free(%s);\n" name))
               it.i_bufs ;
+            List.iter
+              (fun gp ->
+                let g = rdv_gpu_name gp.gp_proc in
+                s (Printf.sprintf "  %s free(%s_h);\n" (dialect.gd_free g) g))
+              it.i_gpus ;
+            List.iter
+              (fun cp ->
+                s (Printf.sprintf "  free(%s);\n" (rdv_cpu_name cp.cp_proc)))
+              it.i_cpus ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch")) ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch_loc")) ;
             s (Printf.sprintf "  %s\n" (dialect.gd_free "_gpu_done")) ;
@@ -1118,7 +1210,7 @@ end
             s "// records its loads at index _n; the post-run readout reads the\n" ;
             s "// outcome of iteration _n out of slot _n into a het_obs_record.\n" ;
             s dialect.gd_shared_mem_note ;
-            s "// a system-scope atomic barrier rendezvouses both sides.\n" ;
+            s "// every iteration begins at a relaxed system-scope counter rendezvous.\n" ;
             s (Printf.sprintf
                  "// Compile-only by default (%s -c); comp.sh %s-link / make %s-bin\n"
                  dialect.gd_compiler dialect.gd_target dialect.gd_target) ;
@@ -1168,7 +1260,10 @@ end
                  @ List.map
                      (fun (_,_,name,_,ty) -> Printf.sprintf "%s* %s" ty name)
                      gpu_bufs
-                 @ ["int* barrier"]
+                 @ List.map
+                     (fun gp -> Printf.sprintf "uint8_t* %s" (rdv_gpu_name gp.gp_proc))
+                     it.i_gpus
+                 @ ["uint64_t* barrier" ; "uint32_t _cap_gpu"]
                  @ ["uint32_t* _scratch" ; "uint32_t* _scratch_loc" ;
                     "uint32_t* _gpu_done" ;
                     "uint32_t* _stress_tally" ;
@@ -1183,7 +1278,6 @@ end
               (fun gp ->
                 s (Printf.sprintf "  if (blockIdx.x == %d && threadIdx.x == %d) {\n"
                      gp.gp_blk gp.gp_lane) ;
-                s (dialect.gd_bar "    " "barrier") ;
                 List.iter (fun n -> s (Printf.sprintf "    int r%d = 0;\n" n))
                   gp.gp_regs ;
                 (* Do NOT remove: SIZE_OF_TEST is a compile-time constant, so
@@ -1195,6 +1289,14 @@ end
                 s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
                 s "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n" ;
                 s "        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally);\n" ;
+                (* The rendezvous sits AROUND the tested group and never between
+                   two of its accesses: it opens the iteration, the jitter closes
+                   it, and everything after is the program the .litmus names
+                   (litmus/het-runtime/README.md invariant (ii)). *)
+                s (Printf.sprintf
+                     "      %s[_n] = het_rdv_device(barrier, (uint64_t)NPART*(uint64_t)(_n+1), _cap_gpu);\n"
+                     (rdv_gpu_name gp.gp_proc)) ;
+                s "      het_rdv_jitter(&_rng, HET_RELEASE_JITTER);\n" ;
                 List.iter
                   (fun instr -> dialect.gd_dump_instr ch ~het:(Some "_n") "      " instr)
                   gp.gp_instrs ;
@@ -1246,15 +1348,19 @@ end
                The body is litmus7's own and addresses a bare pointer, so THIS is
                where iteration _n's slot is chosen: the thread hands het_run_P<n>
                the slot address of every location and the index-_n entry of every
-               read buffer. *)
+               read buffer.  The rendezvous stays HERE, around the call, for the
+               same reason (litmus/het-runtime/README.md invariant (ii)). *)
+            s dialect.gd_poke_def ;
+            let cpu_ord = ref 0 in
             List.iter
               (fun cp ->
                 let proc = cp.cp_proc in
                 let addr = cp.cp_addrs and bufs = cpu_bufs cp in
                 s (Printf.sprintf "struct cpu_args_P%d {\n" proc) ;
                 List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) addr ;
-                s "  int* barrier;\n" ;
+                s "  uint64_t* barrier;\n" ;
                 List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) bufs ;
+                s "  uint8_t* _rdv; long _cap;\n" ;
                 s "  int _core; uint32_t _seed; het_cpu_tally* _tally;\n" ;
                 s "};\n" ;
                 s (Printf.sprintf "static void* cpu_thread_P%d(void* _a) {\n" proc) ;
@@ -1266,7 +1372,14 @@ end
                        "  uint32_t _plrng = het_cpu_rng_init(a->_seed, %du);\n" proc) ;
                   s "  uint64_t _plops = 0;\n"
                 end ;
-                s (dialect.gd_bar "  " "a->barrier") ;
+                (* A jitter stream of its own: drawing the same delays as a GPU
+                   lane would shift both sides together and leave the relative
+                   phase exactly where it started.  The lane numbers past
+                   HET_TEST_BLOCKS*HET_BLOCK_DIM belong to no test lane. *)
+                s (Printf.sprintf
+                     "  het_rng_t _jrng = het_rng_init(a->_seed, (uint32_t)(HET_TEST_BLOCKS*HET_BLOCK_DIM + %d));\n"
+                     !cpu_ord) ;
+                incr cpu_ord ;
                 let call_args =
                   String.concat ","
                     (List.map (fun (_,a) -> Printf.sprintf "a->%s + _slot" a) addr
@@ -1285,6 +1398,10 @@ end
                        "    _plops += het_cpu_preload(_pl, %d, &_plrng, HET_CPU_PRELOAD_PCT);\n"
                        npl)
                 end ;
+                s (Printf.sprintf
+                     "    a->_rdv[_n] = het_rdv_host(a->barrier, (uint64_t)NPART*(uint64_t)(_n+1), a->_cap, %s);\n"
+                     dialect.gd_poke_arg) ;
+                s "    het_rdv_jitter(&_jrng, HET_RELEASE_JITTER);\n" ;
                 s (Printf.sprintf "    het_run_P%d(%s);\n" proc call_args) ;
                 s "  }\n" ;
                 if npl > 0 then
@@ -1484,7 +1601,13 @@ end
                  "# uname -m of this test's CPU ISA (%s); the %s-bin guard compares it.\n"
                  CpuF.isa_name d0.gd_target) ;
             s (Printf.sprintf "HET_HOST_ISA ?= %s\n" host_uname) ;
-            s "HET_HOST_CFLAGS := $(if $(filter $(HET_HOST_ISA),$(shell uname -m)),$(HET_CPU_CFLAGS))\n\n" ;
+            (* Keyed on the render's OWN uname word, never on the overridable
+               HET_HOST_ISA: that variable exists to relax the link guard on a
+               foreign host, where the host object is the portable shim, and one
+               ISA's -march is not another host compiler's to take. *)
+            s (Printf.sprintf
+                 "HET_HOST_CFLAGS := $(if $(filter %s,$(shell uname -m)),$(HET_CPU_CFLAGS))\n\n"
+                 host_uname) ;
             s (Printf.sprintf "all: %s\n\n" d0.gd_target) ;
             List.iter
               (fun d ->

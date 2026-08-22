@@ -75,7 +75,13 @@ BASE = dict(
     place_failures=0,
     stress_requested=0x3D,
     N=100000,
+    # The readout ran, every iteration was scored and none was discarded at the
+    # rendezvous, and the caps it waited under are a measurement -- so no fixture
+    # below is COLD for a reason it did not set.
+    rdv_valid=1,
     iters_scored=100000,
+    iters_discarded=0,
+    cap_calibrated=1,
     run_id=0,
 )
 
@@ -414,10 +420,12 @@ def py_reference(cells_):
     cpu_only = 1 if any(c.get("cpu_only", 0) for c in pool if stamped(c)) else 0
 
     def degenerate(c):
-        # Mirrors het_cell_degenerate: a cell that scored nothing read nothing back,
-        # and one whose every iteration produced the same outcome vector measured
-        # one thing N times.
-        return (c["iters_scored"] == 0) or not c["outcomes_vary"]
+        # Mirrors het_cell_degenerate: a cell whose readout never ran carries counts
+        # nothing wrote, one that scored nothing read nothing back, and one whose
+        # every iteration produced the same outcome vector measured one thing N
+        # times.
+        return (not c.get("rdv_valid", 0) or c["iters_scored"] == 0
+                or not c["outcomes_vary"])
 
     def usable(c):
         # Mirrors het_verdict()'s COLD-INVALID: an unstamped record is cold at step 0;

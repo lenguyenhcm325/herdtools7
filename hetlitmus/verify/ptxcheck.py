@@ -244,8 +244,8 @@ def instance_of(litmus_path):
 
 
 def het_lane_plan(inst):
-    """The barrier-joining GPU lanes, in the order dump_gpu_file emits them: the
-    GPU test lanes, in proc order.
+    """The rendezvous-joining GPU lanes, in the order dump_gpu_file emits them:
+    the GPU test lanes, in proc order.
 
     Returns a list of ('test', proc, ops, name)."""
     return [('test', pidx, ops, inst['name']) for pidx, ops in inst['gpu']]
@@ -514,32 +514,37 @@ def check_gpu(result, expected_per_proc, observed, label):
 
 
 def split_het_segments(observed, n_gpu_procs):
-    """Separate barrier ops from GPU model ops in a het kernel.
+    """Separate rendezvous ops from GPU model ops in a het kernel.
 
-    One barrier instance per GPU proc, not a single prologue: each proc is
-    emitted as its own guarded block `{ barrier; model... }' (faithfulness.md, "Het
-    barrier/model separation").  Segment the stream at each barrier fetch_add and
-    strip the fixed template [fence.sc][atom.sys][spin fence.sc][spin ld.sys]
-    from the front of each segment; what remains is that proc's model ops.
+    One rendezvous instance per GPU proc, not a single prologue: each proc is
+    emitted as its own guarded block whose iteration loop opens with the
+    rendezvous and then runs the model ops (faithfulness.md, "Het barrier/model
+    separation").  Segment the stream at each arrival and strip the template
+    [atom.relaxed.sys arrive][ld.relaxed.sys poll] from the front of each
+    segment; what remains is that proc's model ops.  A fence adjacent to either
+    op is absorbed as well -- there is none to absorb, and
+    check_barrier_whitelist is what says so by name.
 
     The anchor is a SYSTEM-SCOPE atom/red.  The corpus model (ptx.bell declares
     R/W/F only) has no RMW, so every atom/red is scaffolding, and the rendezvous
     fetch_add is the system-scoped one.  Anchoring on scope is the check, not a
     bypass -- a device-scope scaffolding atom that became system-scoped would be
-    counted here as a barrier fetch_add and blow the per-lane count in
+    counted here as a rendezvous arrival and blow the per-lane count in
     check_barrier_whitelist.
 
     Returns (pre_ops, barrier_ops, model_per_segment): the model ops emitted
     BEFORE the first rendezvous (see check_no_pre_barrier_ops), then one list per
-    barrier-joining GPU lane in emission order."""
+    rendezvous-joining GPU lane in emission order."""
     atom_idx = [i for i, op in enumerate(observed)
                 if op[0] in ('atom', 'red') and op[2] == 'sys']
     if not atom_idx:
         return [], [], [observed]   # no fetch_add -> barrier check fails separately
-    # segment start = the atom's leading seq_cst fence if present, else the atom.
+    # segment start = a fence immediately ahead of the arrival if there is one,
+    # so that fence reaches the whitelist and is named there rather than silently
+    # counted as a model op of the lane before.
     starts = []
     for i in atom_idx:
-        if i - 1 >= 0 and observed[i - 1][0] == 'fence' and observed[i - 1][1] == 'sc':
+        if i - 1 >= 0 and observed[i - 1][0] == 'fence':
             starts.append(i - 1)
         else:
             starts.append(i)
@@ -549,13 +554,13 @@ def split_het_segments(observed, n_gpu_procs):
         end = starts[k + 1] if k + 1 < len(starts) else len(observed)
         seg = observed[s:end]
         bi = 0
-        if bi < len(seg) and seg[bi][0] == 'fence':              # leading fence.sc
+        if bi < len(seg) and seg[bi][0] == 'fence':              # a fence ahead of it
             barrier_ops.append(seg[bi]); bi += 1
-        if bi < len(seg) and seg[bi][0] in ('atom', 'red'):      # the fetch_add
+        if bi < len(seg) and seg[bi][0] in ('atom', 'red'):      # the arrival
             barrier_ops.append(seg[bi]); bi += 1
-        if bi < len(seg) and seg[bi][0] == 'fence':              # spin leading fence.sc
+        if bi < len(seg) and seg[bi][0] == 'fence':              # a fence behind it
             barrier_ops.append(seg[bi]); bi += 1
-        if bi < len(seg) and seg[bi][0] == 'ld':                 # spin seq_cst load
+        if bi < len(seg) and seg[bi][0] == 'ld':                 # the poll
             barrier_ops.append(seg[bi]); bi += 1
         model_per_segment.append(seg[bi:])
     return observed[:starts[0]], barrier_ops, model_per_segment
@@ -564,7 +569,7 @@ def split_het_segments(observed, n_gpu_procs):
 def check_no_pre_barrier_ops(result, pre_ops):
     """Nothing may be emitted before the FIRST rendezvous.
 
-    The segmentation above is anchored on the barrier fetch_adds, so everything
+    The segmentation above is anchored on the rendezvous arrivals, so everything
     ahead of the first one falls outside every segment: it reaches neither
     barrier_ops nor model_per_segment, and so is compared against nothing.  The
     hole is one-sided -- an op BETWEEN two rendezvous lands in the previous
@@ -573,10 +578,11 @@ def check_no_pre_barrier_ops(result, pre_ops):
     check_no_stray_sys cannot see it either (it inspects only text OUTSIDE the
     inline-asm markers, and this op is inside them).
 
-    The shipped emitter puts each proc in its own guarded `{ barrier; model... }'
-    block, and the stress/noise layers use builtins or plain volatile accesses
-    that carry no order qualifier, so nothing enters `observed' ahead of lane 0's
-    fetch_add: the assertion costs nothing and closes the hole."""
+    The shipped emitter opens each proc's iteration loop with the rendezvous and
+    runs the model ops after it, and the stress/noise layers use builtins or plain
+    volatile accesses that carry no order qualifier, so nothing enters `observed'
+    ahead of lane 0's arrival: the assertion costs nothing, closes the hole, and
+    is what fires when a rendezvous is moved BEHIND a tested access."""
     if pre_ops:
         result.fail("%d model op(s) emitted BEFORE the first rendezvous barrier -- "
                     "they sit outside every lane segment and are compared against "
@@ -588,29 +594,44 @@ def check_no_pre_barrier_ops(result, pre_ops):
 
 
 def check_barrier_whitelist(result, barrier_ops, n_lanes):
-    """The het sys-scope rendezvous barrier(s) must stay strong: every barrier op
-    system-scoped (not narrowed), one fetch_add (atom/red) per barrier-joining
-    GPU lane, and a seq_cst fence present.
+    """The het sys-scope rendezvous must span both devices and ORDER NOTHING:
+    every op system-scoped (not narrowed), every op RELAXED, NO fence anywhere in
+    it, and one arrival (atom/red) per rendezvous-joining GPU lane.
 
-    n_lanes = the number of GPU procs: each one rendezvouses once."""
+    Relaxed and fence-free is a correctness property, not a preference: an
+    acquire poll self-invalidates the GPU L1 [Bagchi26 sec 5.3] and a fence.sc.sys
+    flushes it, so a strengthened rendezvous erases the cache state the tested
+    iteration is about to race on -- while every model op still matches.
+
+    n_lanes = the number of GPU procs: each one rendezvouses once per iteration,
+    and the loop is emitted once, so one arrival per lane is what the text
+    carries."""
     if not barrier_ops:
-        result.fail("het kernel has NO barrier (expected sys-scope rendezvous)")
+        result.fail("het kernel has NO rendezvous (expected a sys-scope relaxed atom)")
         return
-    # The only scope test the two seq_cst fences and the spin load get.  The
-    # fetch_adds pass it by construction: split_het_segments anchors a segment on
-    # a SYSTEM-SCOPE atom/red, so a narrowed fetch_add never enters barrier_ops
-    # at all -- its segment disappears and the lane count below is what fires.
+    # The only scope test the poll gets.  The arrivals pass it by construction:
+    # split_het_segments anchors a segment on a SYSTEM-SCOPE atom/red, so a
+    # narrowed arrival never enters barrier_ops at all -- its segment disappears
+    # and the lane count below is what fires.
     for op in barrier_ops:
         if op[2] != 'sys':
-            result.fail("barrier op %s is NOT system scope (weakened/narrowed)" % fmt(op))
+            result.fail("rendezvous op %s is NOT system scope (weakened/narrowed)"
+                        % fmt(op))
     fences = [o for o in barrier_ops if o[0] == 'fence']
     atoms = [o for o in barrier_ops if o[0] in ('atom', 'red')]
-    if not any(o[1] == 'sc' for o in fences):
-        result.fail("barrier has no seq_cst fence (fence.sc.sys) -- weakened")
+    for op in fences:
+        result.fail("the rendezvous carries a FENCE (%s) -- it must order nothing, "
+                    "and a system-scope fence flushes the cache state the tested "
+                    "iteration races on" % fmt(op))
+    for op in barrier_ops:
+        if op[0] != 'fence' and op[1] != 'relaxed':
+            result.fail("rendezvous op %s is NOT relaxed -- an acquire or seq_cst "
+                        "arrival/poll orders the tested accesses behind it" % fmt(op))
     if len(atoms) != n_lanes:
-        result.fail("expected one barrier fetch_add per barrier-joining GPU lane (%d); found %d"
-                    % (n_lanes, len(atoms)))
-    result.note("  barrier whitelist OK (%d ops, %d fetch_add for %d lane(s), all sys, seq_cst fence)"
+        result.fail("expected one rendezvous arrival per rendezvous-joining GPU lane "
+                    "(%d); found %d" % (n_lanes, len(atoms)))
+    result.note("  rendezvous whitelist OK (%d ops, %d arrival(s) for %d lane(s), "
+                "all sys, all relaxed, no fence)"
                 % (len(barrier_ops), len(atoms), n_lanes))
 
 
@@ -718,14 +739,14 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
         if kind == 'Het':
             lanes = het_lane_plan(inst)
             n_lanes = len(lanes)
-            # One barrier instance per barrier-joining GPU lane; segment on the
+            # One rendezvous per rendezvous-joining GPU lane; segment on the
             # fetch_add anchor and strip the barrier template, leaving each lane's
             # model ops.
             pre_ops, barrier_ops, model_per_seg = split_het_segments(observed, n_lanes)
             check_no_pre_barrier_ops(result, pre_ops)
             check_barrier_whitelist(result, barrier_ops, n_lanes)
             if len(model_per_seg) != n_lanes:
-                result.fail("expected %d barrier-joining GPU lane(s) (%s); found %d"
+                result.fail("expected %d rendezvous-joining GPU lane(s) (%s); found %d"
                             % (n_lanes,
                                ", ".join("%s:P%d" % (l[3], l[1]) for l in lanes),
                                len(model_per_seg)))

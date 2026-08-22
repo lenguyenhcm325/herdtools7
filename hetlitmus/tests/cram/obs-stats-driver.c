@@ -60,9 +60,12 @@ static const char *HEADER[] = {
 };
 
 /* The record every row is built from: one persistent het run whose every
-   requested mechanism is measured alive, which read every one of its N
-   iterations back and saw nothing.  Its outcome vector varied, which is the
-   readout of a harness whose two engines both ran. */
+   requested mechanism is measured alive, whose every iteration began at the
+   rendezvous, and which read every one of its N iterations back and saw
+   nothing.  Its outcome vector varied, which is the readout of a harness whose
+   two engines both ran.  The caps are stamped CALIBRATED, which no shipped
+   harness is: this fixture isolates the reporting paths, and a caveat every row
+   carried would say nothing about any of them. */
 static het_obs_record base_record(const row_t *r, int run) {
   het_obs_record rec;
   memset(&rec, 0, sizeof rec);
@@ -71,7 +74,12 @@ static het_obs_record base_record(const row_t *r, int run) {
   rec.instance_id = 0;
   rec.run_id = run;
   rec.N = 100000;
+  rec.rdv_valid = 1;
   rec.iters_scored = 100000;
+  rec.iters_discarded = 0;
+  rec.cap_cpu = 262144;
+  rec.cap_gpu = 4096;
+  rec.cap_calibrated = 1;
   rec.outcomes_vary = 1;
   rec.stress_truncated = r->live ? 0 : 7;
   rec.gpu_lanes = 1;

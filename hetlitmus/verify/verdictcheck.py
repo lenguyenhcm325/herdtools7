@@ -98,8 +98,19 @@ BASE = dict(
     # The readout: every iteration scored, none of them matching, and the
     # outcome vector varying across them -- the shape of a live null.
     iters_scored=100000,
+    iters_discarded=0,
     target_count=0,
     outcomes_vary=1,
+    # The rendezvous: it ran, it lost nothing, and its caps are a measurement --
+    # so every case below isolates ONE reason there too.  The SHIPPED caps are
+    # uncalibrated; a baseline that carried that would put the caveat on every
+    # case and leave the sentence owned by nobody.
+    rdv_valid=1,
+    rdv_cap_cpu=0,
+    rdv_cap_gpu=0,
+    cap_cpu=262144,
+    cap_gpu=4096,
+    cap_calibrated=1,
     stress_truncated=0,
     gpu_stress_rounds=64,             # het_do_stress actually ran
     cpu_enemy_rounds=1000,
@@ -159,9 +170,11 @@ CASES = [
          target_count=1, outcomes_vary=0),
     # ... and a run that scored NOTHING is not a run whose outcome never varied:
     # the caveat is keyed on iters_scored > 0, so an empty readout stays silent
-    # here and is caught where emptiness belongs.
-    case("nothing-scored-raises-no-one-outcome-caveat", "NOT-OBSERVED",
-         iters_scored=0, outcomes_vary=0),
+    # here and is caught where emptiness belongs -- at the rendezvous, which is
+    # what an empty readout means.
+    case("nothing-scored-raises-no-one-outcome-caveat", "COLD-INVALID",
+         dq=["RDV_DEAD"], iters_scored=0, iters_discarded=100000,
+         rdv_cap_cpu=100000, rdv_cap_gpu=100000, outcomes_vary=0),
 
     # =======================================================================
     # 4. An unstamped record fails closed.  het_obs_record is memset(0), so a
@@ -200,6 +213,36 @@ CASES = [
     # over.
     case("cold-gpu-stress-dead", "COLD-INVALID", dq=["GPU_STRESS_DEAD"],
          gpu_stress_rounds=0),
+
+    # =======================================================================
+    # 5b. The rendezvous, which no stress tally covers.  A run whose iterations
+    #     mostly ended at the cap is a run whose two sides mostly did not meet:
+    #     its empty histogram is about the rendezvous, not about the memory
+    #     model, so it is DISCARDED rather than reported as reach.
+    # =======================================================================
+    case("rdv-dead-by-rate", "COLD-INVALID", dq=["RDV_DEAD"],
+         iters_scored=40000, iters_discarded=60000,
+         rdv_cap_cpu=60000, rdv_cap_gpu=1),
+    case("rdv-dead-zero-scored", "COLD-INVALID", dq=["RDV_DEAD"],
+         iters_scored=0, iters_discarded=100000,
+         rdv_cap_cpu=100000, rdv_cap_gpu=100000),
+    # The readout never ran, so the three counts above are memset zeros rather
+    # than measurements -- the same fail-closed shape as the record stamp, one
+    # level down.
+    case("rdv-unstamped", "COLD-INVALID", dq=["RDV_DEAD"], rdv_valid=0),
+    # ... and the budget is a THRESHOLD, not "any discard at all": a run that
+    # spent exactly its budget is still a run.
+    case("rdv-discards-within-budget-still-reportable", "NOT-OBSERVED",
+         iters_scored=50000, iters_discarded=50000, rdv_cap_gpu=50000),
+
+    # =======================================================================
+    # 5c. The caps those discards were priced against.  The shipped pair are
+    #     placeholders, so a run under them says so on every outcome: a shorter
+    #     cap discards iterations the two sides would have shared, a longer one
+    #     spends the run waiting for a partner that is not coming.
+    # =======================================================================
+    case("uncalibrated-cap-caveat", "NOT-OBSERVED", cv=["RDV_UNCALIBRATED"],
+         cap_calibrated=0),
 
     # =======================================================================
     # 6. A mechanism that was not requested must NOT disqualify.  A deliberately
@@ -254,6 +297,17 @@ CASES = [
 MUST_PRINT_ONE_OUTCOME = {"one-outcome-null-caveated",
                           "one-outcome-sighting-caveated"}
 ONE_OUTCOME_TEXT = "read back the SAME outcome vector"
+
+# A sentence a FLAG owns: printed by exactly the cases whose expected flag word
+# carries it, and by no other.  The owner set is read off CASES rather than kept
+# by hand, so a case that acquires the flag without the sentence is caught here
+# instead of needing a second list to be remembered.
+FLAG_SENTENCES = [
+    ("dq", "RDV_DEAD", "A timed-out rendezvous is a DEAD PARTNER",
+     "a run whose two sides did not meet, reported as reach"),
+    ("cv", "RDV_UNCALIBRATED", "the rendezvous caps are PLACEHOLDERS",
+     "a discard count priced against a wait nobody measured"),
+]
 
 
 # The CPU-only sentences, owner case -> the fragment only that case may print.
@@ -671,6 +725,28 @@ def scan_prints(blocks, quiet):
         print("      %-46s disclose their one-outcome readout, and only they do"
               % ("%d case(s)" % len(MUST_PRINT_ONE_OUTCOME)))
 
+    # The flag-owned sentences, both ways: exactly the cases whose flag word
+    # carries the bit print it.
+    for key, flag, text, why in FLAG_SENTENCES:
+        owners = set(c["name"] for c in CASES if flag in c[key])
+        if not owners:
+            print("  *** no case expects HET_%s_%s, so its sentence is checked "
+                  "against nothing" % (key.upper(), flag))
+            bad += 1
+        for name in sorted(blocks):
+            has = text in blocks[name][1]
+            if name in owners and not has:
+                print("  *** %s carries HET_%s_%s and never printed %r -- %s"
+                      % (name, key.upper(), flag, text, why))
+                bad += 1
+            if name not in owners and has:
+                print("  *** %s printed %r, which belongs to HET_%s_%s"
+                      % (name, text, key.upper(), flag))
+                bad += 1
+        if not quiet and owners:
+            print("      %-46s print %r, and only they do"
+                  % ("%d case(s)" % len(owners), text))
+
     # The CPU-only sentences, both ways: the owner prints its own and nobody else
     # prints either (see CPU_ONLY_TEXT).
     for owner, text in sorted(CPU_ONLY_TEXT.items()):
@@ -1016,7 +1092,7 @@ def bite():
             lambda s: s.replace(
                 "#define HET_DQ_REC_UNSTAMPED    (1u << 10)",
                 "#define HET_DQ_REC_UNSTAMPED    (1u << 10)\n"
-                "#define HET_DQ_UNREACHED        (1u << 12)"),
+                "#define HET_DQ_UNREACHED        (1u << 13)"),
             quiet=True,
             expect="UNREACHED DISQUALIFIER: HET_DQ_UNREACHED")
 
@@ -1046,6 +1122,54 @@ def bite():
                                 "  if (1)\n"),
             quiet=True,
             expect="but its readout varied")
+
+        # (4c) The rendezvous disqualifier and its sentence, on the same
+        # discipline: the outcome, the sentence going missing, and the sentence
+        # printed under every discarded run alike.
+        ok &= _bite_one(
+            "the rendezvous disqualifier stops firing (a dead rendezvous "
+            "reports its zero as reach)",
+            tmp, header,
+            lambda s: s.replace("                                                  "
+                                "dq |= HET_DQ_RDV_DEAD;",
+                                "                                                  "
+                                "dq |= 0u;"),
+            quiet=True)
+        ok &= _bite_one(
+            "the discard budget raised to 100% (no rate can disqualify a run)",
+            tmp, header,
+            lambda s: s.replace(
+                "r->iters_discarded * 100 > r->N * HET_RDV_MAX_DISCARD_PCT",
+                "r->iters_discarded * 100 > r->N * 100"),
+            quiet=True)
+        ok &= _bite_one(
+            "the rendezvous sentence dropped from every printout",
+            tmp, header,
+            lambda s: s.replace("    if (dq & HET_DQ_RDV_DEAD)\n",
+                                "    if (0)\n"),
+            quiet=True,
+            expect="never printed 'A timed-out rendezvous is a DEAD PARTNER'")
+        ok &= _bite_one(
+            "the rendezvous sentence printed under every discarded run",
+            tmp, header,
+            lambda s: s.replace("    if (dq & HET_DQ_RDV_DEAD)\n",
+                                "    if (1)\n"),
+            quiet=True,
+            expect="which belongs to HET_DQ_RDV_DEAD")
+        ok &= _bite_one(
+            "the uncalibrated-cap caveat dropped from every printout",
+            tmp, header,
+            lambda s: s.replace("  if (cv & HET_CV_RDV_UNCALIBRATED)\n",
+                                "  if (0)\n"),
+            quiet=True,
+            expect="never printed 'the rendezvous caps are PLACEHOLDERS'")
+        ok &= _bite_one(
+            "the uncalibrated-cap caveat printed under every run",
+            tmp, header,
+            lambda s: s.replace("  if (cv & HET_CV_RDV_UNCALIBRATED)\n",
+                                "  if (1)\n"),
+            quiet=True,
+            expect="which belongs to HET_CV_RDV_UNCALIBRATED")
 
         # (4b) The cpu_only flag read as a CONSTANT, both ways.  The CPU-only
         # sentences are the only place the printout says that no cross-device path

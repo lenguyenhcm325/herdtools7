@@ -4,8 +4,9 @@ _n's outcome back out of slot _n -- one pass, no search.  The standalone GPU-onl
 path is unchanged: one word per location, no slots and no record.
 
 The slot layout ships with the harness and is what every address is offset by.
+One 128 B line per slot, so two iterations share neither a word nor a line.
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
-  $ grep -c '#define HET_SLOT_STRIDE_WORDS 16' MP-cg-sys-relaxed/het_rdv.h
+  $ grep -c '#define HET_SLOT_STRIDE_WORDS 32' MP-cg-sys-relaxed/het_rdv.h
   1
   $ grep -c '#include "het_rdv.h"' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
@@ -79,6 +80,38 @@ itself: without it every cell would look like a constant read.
   $ grep -c '_rec.outcomes_vary = 1;' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
+Slot _n only pairs the two sides while both are RUNNING iteration _n, so every
+iteration opens at the shared counter and each participant records for itself
+whether it got there.  One flag buffer per participant, one byte per iteration,
+each written by the side that owns it and the GPU's mirrored back for the
+readout.
+  $ grep -c 'uint8_t \*_rdvG_P1; cudaMalloc(&_rdvG_P1, sizeof(uint8_t)\*SIZE_OF_TEST);' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  1
+  $ grep -c 'uint8_t \*_rdvC_P0 = (uint8_t\*)malloc_check(sizeof(uint8_t)\*SIZE_OF_TEST);' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  1
+  $ grep -c 'cudaMemcpy(_rdvG_P1_h, _rdvG_P1, sizeof(uint8_t)\*SIZE_OF_TEST, cudaMemcpyDeviceToHost);' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  1
+
+The readout ANDs them before it reads a single slot: an iteration only one side
+started is DISCARDED, never scored, and the side that timed out is counted so a
+dead partner and a cap set too short can be told apart.  rdv_valid says the
+readout ran at all, without which every count below it is a memset zero.
+  $ sed -n '/for (int _n=0; _n<SIZE_OF_TEST; ++_n) {/,/^    }$/p' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu | sed -n '/int _ok = 1;/,/_rec.iters_scored++;/p'
+        int _ok = 1;
+        if (!_rdvC_P0[_n]) { _ok = 0; _rec.rdv_cap_cpu++; }
+        if (!_rdvG_P1_h[_n]) { _ok = 0; _rec.rdv_cap_gpu++; }
+        if (!_ok) { _rec.iters_discarded++; continue; }
+        _rec.iters_scored++;
+  $ grep -c '_rec.rdv_valid = 1;' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  1
+
+...and the run says on stderr what the rendezvous cost it, beside the caps it
+waited under and whether those caps are a measurement at all.
+  $ grep -c 'HetLitmus rendezvous: scored=%llu discarded=%llu (cap_cpu=%llu cap_gpu=%llu) caps=%lu/%u jitter=%d discard_max=%d%% %s' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  1
+  $ grep -c 'HET_CAP_CALIBRATED ? "caps calibrated" : "caps UNCALIBRATED"' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  1
+
 The same readout on the shapes that used to need a frame search: SB (two reads,
 neither an rf anchor) and R (an fr-against-init read plus a location).  One pass
 each, and one histogram call each.
@@ -111,10 +144,13 @@ flag on EVERY compilation of <t>_cpu.c or every -2s test fails to ASSEMBLE.
 
 ...and the HOST object takes them only on a native host: elsewhere gcc compiles
 the portable shim, and another ISA's flags are not its to take -- a compile-only
-build of an AArch64 harness has to succeed on an x86_64 box.
+build of an AArch64 harness has to succeed on an x86_64 box.  The make rule reads
+`uname -m' against this render's OWN ISA word, never against HET_HOST_ISA: that
+variable is the link guard's, and overriding it to link the shim on a foreign
+host must not hand that host another ISA's -march.
   $ grep -c 'if \[ "$(uname -m)" = "$HET_HOST_ISA" \]; then HET_HOST_CFLAGS="$HET_CPU_CFLAGS"; fi' CoRR-cg-sys-acqrel-2s/comp.sh
   1
-  $ grep -c 'HET_HOST_CFLAGS := $(if $(filter $(HET_HOST_ISA),$(shell uname -m)),$(HET_CPU_CFLAGS))' CoRR-cg-sys-acqrel-2s/Makefile
+  $ grep -c 'HET_HOST_CFLAGS := $(if $(filter aarch64,$(shell uname -m)),$(HET_CPU_CFLAGS))' CoRR-cg-sys-acqrel-2s/Makefile
   1
 
 The x86_64 pair owes no extension flag, and the variable is still there: an empty

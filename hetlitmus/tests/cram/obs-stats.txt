@@ -21,37 +21,37 @@
 #   "$d/drv" > hetlitmus/tests/cram/obs-stats.txt
 #
 # KNOWN GAP: no gate binds this text to the printers.
-HetObs SB-sys cpu_only=0 inst=0 run=0 N=100000 scored=100000 target=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys cpu_only=0 inst=0 run=0 N=100000 scored=100000 discarded=0 target=1 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys run=0: OBSERVED
   ** SB-sys: the weak outcome was OBSERVED in 1 of the 100000 scored iteration(s) of N=100000 (0.0010%).
   Report it as what (unstamped CPU ISA x GPU dialect pair) exhibited under this harness, this stress and this host-device interconnect path.  It is an OBSERVATION: this harness carries no prediction, so nothing here confirms or contradicts any model.  Comparing it against a verdicts file is an offline step (hetlitmus/oracle-compare.sh).
   config: stress_requested=0x3d do_stress_rounds=64 enemies=4 enemy_rounds=5000 preload=250 noise=120/8 (512 MB) place=0
-HetObs SB-sys cpu_only=0 inst=0 run=1 N=100000 scored=100000 target=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys cpu_only=0 inst=0 run=1 N=100000 scored=100000 discarded=0 target=1 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys run=1: OBSERVED
   ** SB-sys: the weak outcome was OBSERVED in 1 of the 100000 scored iteration(s) of N=100000 (0.0010%).
   Report it as what (unstamped CPU ISA x GPU dialect pair) exhibited under this harness, this stress and this host-device interconnect path.  It is an OBSERVATION: this harness carries no prediction, so nothing here confirms or contradicts any model.  Comparing it against a verdicts file is an offline step (hetlitmus/oracle-compare.sh).
   config: stress_requested=0x3d do_stress_rounds=64 enemies=4 enemy_rounds=5000 preload=250 noise=120/8 (512 MB) place=0
-HetObs SB-sys cpu_only=0 inst=0 run=2 N=100000 scored=100000 target=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys cpu_only=0 inst=0 run=2 N=100000 scored=100000 discarded=0 target=1 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys run=2: OBSERVED
   ** SB-sys: the weak outcome was OBSERVED in 1 of the 100000 scored iteration(s) of N=100000 (0.0010%).
   Report it as what (unstamped CPU ISA x GPU dialect pair) exhibited under this harness, this stress and this host-device interconnect path.  It is an OBSERVATION: this harness carries no prediction, so nothing here confirms or contradicts any model.  Comparing it against a verdicts file is an offline step (hetlitmus/oracle-compare.sh).
   config: stress_requested=0x3d do_stress_rounds=64 enemies=4 enemy_rounds=5000 preload=250 noise=120/8 (512 MB) place=0
-HetObs SB-sys cpu_only=0 inst=0 run=3 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys cpu_only=0 inst=0 run=3 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys run=3: NOT-OBSERVED
-  SB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  SB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs SB-sys cpu_only=0 inst=0 run=4 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys cpu_only=0 inst=0 run=4 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys run=4: NOT-OBSERVED
-  SB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  SB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs SB-sys cpu_only=0 inst=0 run=5 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys cpu_only=0 inst=0 run=5 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys run=5: NOT-OBSERVED
-  SB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  SB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetStats SB-sys cpu_only=0 obs=Sometimes R=6 usable=6 k=3 k_eff=3 k_runs=3 degen=0 first_sight=1 sighting=CORROBORATED N=100000 scored=600000 flags=0x0
+HetStats SB-sys cpu_only=0 obs=Sometimes R=6 usable=6 k=3 k_eff=3 k_runs=3 degen=0 first_sight=1 sighting=CORROBORATED N=100000 scored=600000 discarded=0 flags=0x0
 HetStats SB-sys: 6 cell(s) [(instance,run)], 6 usable, observed in 3 (3 after the decode guard, across 3 distinct run(s)).
   OBSERVED in 3 of 6 run(s), 3 of them after the decode guard.  The denominator is R, the runs EXECUTED: nothing co-runs to make "usable" outcome-independent, so scoring over usable cells alone would report ALWAYS for a row that fired in only some of them.  NO RATE IS ATTACHED to the count.
   ** SIGHTING CORROBORATED ** -- the weak outcome was observed in 3 distinct non-degenerate RUN(S) (>= HET_CORROB_RUNS = 2).  A decoder artefact does not reproduce across re-seeded runs, so the SIGHTING IS REAL and not a constant-read.  HOW OFTEN it reproduces is NOT reported: this tier is a count of clean runs and nothing more.
@@ -61,37 +61,37 @@ Histogram (1 states)
 Condition exists (1:r0=1 /\ 1:r1=0) is validated
 Observation SB-sys Sometimes 3 6000
 
-HetObs MP-sys-F cpu_only=0 inst=0 run=0 N=100000 scored=100000 target=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs MP-sys-F cpu_only=0 inst=0 run=0 N=100000 scored=100000 discarded=0 target=1 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict MP-sys-F run=0: OBSERVED
   ** MP-sys-F: the weak outcome was OBSERVED in 1 of the 100000 scored iteration(s) of N=100000 (0.0010%).
   Report it as what (unstamped CPU ISA x GPU dialect pair) exhibited under this harness, this stress and this host-device interconnect path.  It is an OBSERVATION: this harness carries no prediction, so nothing here confirms or contradicts any model.  Comparing it against a verdicts file is an offline step (hetlitmus/oracle-compare.sh).
   config: stress_requested=0x3d do_stress_rounds=64 enemies=4 enemy_rounds=5000 preload=250 noise=120/8 (512 MB) place=0
-HetObs MP-sys-F cpu_only=0 inst=0 run=1 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs MP-sys-F cpu_only=0 inst=0 run=1 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict MP-sys-F run=1: NOT-OBSERVED
-  MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs MP-sys-F cpu_only=0 inst=0 run=2 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs MP-sys-F cpu_only=0 inst=0 run=2 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict MP-sys-F run=2: NOT-OBSERVED
-  MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs MP-sys-F cpu_only=0 inst=0 run=3 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs MP-sys-F cpu_only=0 inst=0 run=3 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict MP-sys-F run=3: NOT-OBSERVED
-  MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs MP-sys-F cpu_only=0 inst=0 run=4 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs MP-sys-F cpu_only=0 inst=0 run=4 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict MP-sys-F run=4: NOT-OBSERVED
-  MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs MP-sys-F cpu_only=0 inst=0 run=5 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs MP-sys-F cpu_only=0 inst=0 run=5 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict MP-sys-F run=5: NOT-OBSERVED
-  MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  MP-sys-F: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetStats MP-sys-F cpu_only=0 obs=Sometimes R=6 usable=6 k=1 k_eff=1 k_runs=1 degen=0 first_sight=1 sighting=UNCONFIRMED N=100000 scored=600000 flags=0x0
+HetStats MP-sys-F cpu_only=0 obs=Sometimes R=6 usable=6 k=1 k_eff=1 k_runs=1 degen=0 first_sight=1 sighting=UNCONFIRMED N=100000 scored=600000 discarded=0 flags=0x0
 HetStats MP-sys-F: 6 cell(s) [(instance,run)], 6 usable, observed in 1 (1 after the decode guard, across 1 distinct run(s)).
   OBSERVED in 1 of 6 run(s), 1 of them after the decode guard.  The denominator is R, the runs EXECUTED: nothing co-runs to make "usable" outcome-independent, so scoring over usable cells alone would report ALWAYS for a row that fired in only some of them.  NO RATE IS ATTACHED to the count.
   ** SIGHTING UNCONFIRMED ** -- the weak outcome was observed, but in only 1 clean run(s) (< HET_CORROB_RUNS = 2).  BELIEVE IT AND REPORT IT: falsification is one-sided, so one sighting stands on its own and is NOT suppressed.  But a sighting that does not reproduce is the most damaging thing this campaign can write down, so REPRODUCE IT before it is written up.
@@ -101,99 +101,99 @@ Histogram (1 states)
 Condition exists (1:r0=1 /\ 1:r1=0) is validated
 Observation MP-sys-F Sometimes 1 6000
 
-HetObs SB-sys-2s cpu_only=0 inst=0 run=0 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys-2s cpu_only=0 inst=0 run=0 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s run=0: NOT-OBSERVED
-  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs SB-sys-2s cpu_only=0 inst=0 run=1 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys-2s cpu_only=0 inst=0 run=1 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s run=1: NOT-OBSERVED
-  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs SB-sys-2s cpu_only=0 inst=0 run=2 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys-2s cpu_only=0 inst=0 run=2 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s run=2: NOT-OBSERVED
-  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs SB-sys-2s cpu_only=0 inst=0 run=3 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys-2s cpu_only=0 inst=0 run=3 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s run=3: NOT-OBSERVED
-  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs SB-sys-2s cpu_only=0 inst=0 run=4 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys-2s cpu_only=0 inst=0 run=4 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s run=4: NOT-OBSERVED
-  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs SB-sys-2s cpu_only=0 inst=0 run=5 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys-2s cpu_only=0 inst=0 run=5 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s run=5: NOT-OBSERVED
-  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs SB-sys-2s cpu_only=0 inst=0 run=6 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys-2s cpu_only=0 inst=0 run=6 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s run=6: NOT-OBSERVED
-  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs SB-sys-2s cpu_only=0 inst=0 run=7 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs SB-sys-2s cpu_only=0 inst=0 run=7 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict SB-sys-2s run=7: NOT-OBSERVED
-  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  SB-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetStats SB-sys-2s cpu_only=0 obs=Never R=8 usable=8 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 sighting=none N=100000 scored=800000 flags=0x0
+HetStats SB-sys-2s cpu_only=0 obs=Never R=8 usable=8 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 sighting=none N=100000 scored=800000 discarded=0 flags=0x0
 HetStats SB-sys-2s: 8 cell(s) [(instance,run)], 8 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
   NOT OBSERVED in any of the 8 usable cell(s).  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL: falsification is one-sided -- "the possibility, not probability ... is what matters" (Alglave et al., ASPLOS'15 4.3, p.585) -- so what a null carries is the effort behind it, never an interval.
   NOTHING VOUCHES FOR THIS HARNESS: what is reported here is the reach it demonstrated on its own liveness counters, which the per-run HetVerdict lines carry.
   CHARACTERIZATION, NEVER VALIDATION: this harness carries no prediction, so this null agrees with no model and refutes none -- it reports what this harness reached on this hardware under this stress.
-  effort: 8 run(s) x N=100000 iterations, 800000 scored.  Grow R, NOT N.
+  effort: 8 run(s) x N=100000 iterations, 800000 scored, 0 discarded at the rendezvous.  Grow R, NOT N.
 Test SB-sys-2s
 Histogram (1 states)
 Condition exists (1:r0=1 /\ 1:r1=0) is validated
 Observation SB-sys-2s Never 0 6000
 
-HetObs MP-sys-2s cpu_only=0 inst=0 run=0 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs MP-sys-2s cpu_only=0 inst=0 run=0 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict MP-sys-2s run=0: NOT-OBSERVED
-  MP-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  MP-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetObs MP-sys-2s cpu_only=0 inst=0 run=1 N=100000 scored=100000 target=0 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs MP-sys-2s cpu_only=0 inst=0 run=1 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=0 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict MP-sys-2s run=1: NOT-OBSERVED
-  MP-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  MP-sys-2s: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   NOT OBSERVED under this effort -- never "cannot happen".  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort above and the liveness (unstamped CPU ISA x GPU dialect pair) measured on its own counters.
   This is an OBSERVABILITY result about this harness on this hardware and under this stress -- never a model result -- and it feeds the stress-tuning priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, fn.7, p.577.
-HetStats MP-sys-2s cpu_only=0 obs=Never R=2 usable=2 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 sighting=none N=100000 scored=200000 flags=0x0
+HetStats MP-sys-2s cpu_only=0 obs=Never R=2 usable=2 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 sighting=none N=100000 scored=200000 discarded=0 flags=0x0
 HetStats MP-sys-2s: 2 cell(s) [(instance,run)], 2 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
   NOT OBSERVED in any of the 2 usable cell(s).  NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL: falsification is one-sided -- "the possibility, not probability ... is what matters" (Alglave et al., ASPLOS'15 4.3, p.585) -- so what a null carries is the effort behind it, never an interval.
   NOTHING VOUCHES FOR THIS HARNESS: what is reported here is the reach it demonstrated on its own liveness counters, which the per-run HetVerdict lines carry.
   CHARACTERIZATION, NEVER VALIDATION: this harness carries no prediction, so this null agrees with no model and refutes none -- it reports what this harness reached on this hardware under this stress.
-  effort: 2 run(s) x N=100000 iterations, 200000 scored.  Grow R, NOT N.
+  effort: 2 run(s) x N=100000 iterations, 200000 scored, 0 discarded at the rendezvous.  Grow R, NOT N.
 Test MP-sys-2s
 Histogram (1 states)
 Condition exists (1:r0=1 /\ 1:r1=0) is validated
 Observation MP-sys-2s Never 0 6000
 
-HetObs LB-sys cpu_only=0 inst=0 run=0 N=100000 scored=100000 target=0 vary=1 stress_trunc=7 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs LB-sys cpu_only=0 inst=0 run=0 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=7 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict LB-sys run=0: COLD-INVALID
-  LB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  LB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   DISCARD this null -- the harness was not demonstrably hot:
     - stress_truncated=7: stress STOPPED while tested lanes were still running
-HetObs LB-sys cpu_only=0 inst=0 run=1 N=100000 scored=100000 target=0 vary=1 stress_trunc=7 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs LB-sys cpu_only=0 inst=0 run=1 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=7 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict LB-sys run=1: COLD-INVALID
-  LB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  LB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   DISCARD this null -- the harness was not demonstrably hot:
     - stress_truncated=7: stress STOPPED while tested lanes were still running
-HetObs LB-sys cpu_only=0 inst=0 run=2 N=100000 scored=100000 target=0 vary=1 stress_trunc=7 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs LB-sys cpu_only=0 inst=0 run=2 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=7 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict LB-sys run=2: COLD-INVALID
-  LB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  LB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   DISCARD this null -- the harness was not demonstrably hot:
     - stress_truncated=7: stress STOPPED while tested lanes were still running
-HetObs LB-sys cpu_only=0 inst=0 run=3 N=100000 scored=100000 target=0 vary=1 stress_trunc=7 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
+HetObs LB-sys cpu_only=0 inst=0 run=3 N=100000 scored=100000 discarded=0 target=0 cap_cpu=0/262144 cap_gpu=0/4096 calibrated=1 vary=1 stress_trunc=7 do_stress_rounds=64 req=0x3d enemies=4 enemy_rounds=5000 enemy_acc=400000 preload=250 noise_cpu=120/1048576w noise_gpu=8/64 noise_ws=512MB place=0 aff_fail=0 place_fail=0
 HetVerdict LB-sys run=3: COLD-INVALID
-  LB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored).
+  LB-sys: the weak outcome was NOT observed -- 0 / N=100000 iterations (100000 scored, 0 discarded at the rendezvous).
   DISCARD this null -- the harness was not demonstrably hot:
     - stress_truncated=7: stress STOPPED while tested lanes were still running
-HetStats LB-sys cpu_only=0 obs=VOID R=4 usable=0 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 sighting=none N=100000 scored=400000 flags=0x0
+HetStats LB-sys cpu_only=0 obs=VOID R=4 usable=0 k=0 k_eff=0 k_runs=0 degen=0 first_sight=0 sighting=none N=100000 scored=400000 discarded=0 flags=0x0
 HetStats LB-sys: 4 cell(s) [(instance,run)], 0 usable, observed in 0 (0 after the decode guard, across 0 distinct run(s)).
   VOID -- not one of the 4 runs was usable (every cell COLD).  There is nothing here to report: an empty histogram from a dead harness is not a non-observation, it is an absence of data.  See the per-run HetVerdict lines for which mechanism was dead.
 Test LB-sys

@@ -17,8 +17,10 @@ why it needs no GPU.  Five properties, over real emissions of both pairs:
              default there, so a lane that stamps nothing still compiles.
   E Resolve  every `HET_*' name a render USES is either stamped by that render or
              declared by a header the harness dir stages.  A slot stride the
-             render addresses through that no staged header declares is a
-             harness that does not compile.
+             render addresses through, or a rendezvous cap it waits under, that
+             no staged header declares is a harness that does not compile.  Both
+             sides are read through code_only(), so a name that survives only in
+             a header's prose resolves nothing.
 
 Usage:  recfields.py [-q]      run the gate
         recfields.py --bite    prove it FAILS when the binding breaks
@@ -233,13 +235,28 @@ BITES = [
     # rather than the file.
     ("the record stamp field renamed in the header", "_rec.rec_magic,",
      None, lambda s: s.replace("  uint32_t rec_magic;", "  uint32_t rec_stamp;")),
-    # ...and the slot stride the render addresses every location through: rename
-    # it in het_rdv.h and nothing but a compiler would notice.
+    # ...and the two het_rdv.h knobs a render cannot compile without: the slot
+    # stride it addresses every location through, and the cap its GPU lane waits
+    # under.  Rename either and nothing but a compiler would notice.
     ("the slot stride renamed in het_rdv.h", "uses HET_SLOT_STRIDE_WORDS",
      None, lambda s: s.replace("#ifndef HET_SLOT_STRIDE_WORDS\n"
-                               "#define HET_SLOT_STRIDE_WORDS 16",
+                               "#define HET_SLOT_STRIDE_WORDS 32",
                                "#ifndef HET_SLOT_STRIDE\n"
-                               "#define HET_SLOT_STRIDE 16")),
+                               "#define HET_SLOT_STRIDE 32")),
+    ("the GPU rendezvous cap renamed in het_rdv.h", "uses HET_CAP_GPU",
+     None, lambda s: s.replace("#ifndef HET_CAP_GPU\n"
+                               "#define HET_CAP_GPU 4096",
+                               "#ifndef HET_CAP\n"
+                               "#define HET_CAP 4096")),
+    # ... and the same knob left standing in PROSE alone.  Both sides of property
+    # E go through code_only(), so a header that only NAMES a knob declares
+    # nothing -- without which this gate would go green the moment a comment
+    # happened to spell the name.
+    ("a knob left in a header COMMENT and defined nowhere", "uses HET_CAP_GPU",
+     None, lambda s: s.replace("#ifndef HET_CAP_GPU\n"
+                               "#define HET_CAP_GPU 4096\n"
+                               "#endif",
+                               "/* HET_CAP_GPU: named here, defined nowhere. */")),
 ]
 
 

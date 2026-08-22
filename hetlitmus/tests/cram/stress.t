@@ -107,12 +107,10 @@ if-chain has no else, so upstream's pattern 57 would silently stress nothing.
 static faithfulness gate (it is scaffolding, not a tested op), so its health is measured
 at RUN TIME or not at all.  The stress lanes flag a HET_STRESS_MAX_ROUNDS
 cap-exit, which means stress stopped while the test was still running, and count
-the rounds one het_do_stress call completed.  The host prints both and carries
-them into the HetObs record, so the statistics layer can disqualify a run and a
-hardware sweep can be scored on it.
+the rounds one het_do_stress call completed.  The host carries both into the
+HetObs record, which is where they are printed, so the statistics layer can
+disqualify a run and a hardware sweep can be scored on it.
   $ grep -c 'het_scratch_bump(&_stress_tally\[HET_TALLY_TRUNC\])' $MP.cu
-  1
-  $ grep -c 'HetLitmus stress: do_stress_rounds=%u' $MP.cu
   1
   $ grep -c 'stress_trunc=%llu do_stress_rounds=%llu' MP-cg-sys-acqrel-2s/het_verdict.h
   1

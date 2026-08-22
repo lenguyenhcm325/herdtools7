@@ -42,11 +42,14 @@ LADDER_BUDGET="${LADDER_BUDGET:-16}"          # rung 6; > NUMBER_OF_RUN (10) so
                                               # a null row MUST take >= 2
                                               # invocations and pooling engages
 LADDER_SEED0="${LADDER_SEED0:-20260731}"
-LADDER_TIMEOUT="${LADDER_TIMEOUT:-300}"       # seconds per harness invocation.
-                                              # Not optional: HET_ALLOC=pinned
-                                              # on a device without native host
-                                              # atomics can hang at the barrier
-                                              # (the harness warns about it).
+LADDER_TIMEOUT="${LADDER_TIMEOUT:-900}"       # seconds per harness invocation.
+                                              # Every iteration now waits for
+                                              # the other device up to its cap,
+                                              # so a box that loses rendezvous
+                                              # increments (HET_ALLOC=pinned
+                                              # without native host atomics)
+                                              # spends the cap N times over and
+                                              # is slow rather than hung.
 # =========================================================================
 # This script needs bash (arrays, mapfile, pipefail).  `sh ladder.sh' would run
 # it under dash on Debian/Ubuntu and die on the first line of real work, so
@@ -270,6 +273,10 @@ if [ -d "$TESTS_DIR/$T2" ]; then
   check_machinery "$log" "$T2" || r2=1
   check_retired "$log" || r2=1
   echo "    frame:  $(grep -m1 "^HetVerdict $T2 " "$log" | cut -c1-140)"
+  # What the rendezvous cost this launch, which is what decides whether the
+  # frame above is a reading at all: an iteration only one side started was
+  # discarded, and past the discard budget the whole run is.
+  echo "    rdv:    scored=$(statfield "$log" "$T2" scored) discarded=$(statfield "$log" "$T2" discarded)"
   echo "    caveats:$(grep -c '  CAVEAT:' "$log") line(s)"
   grep -m3 '  CAVEAT:' "$log" | sed 's/^/      /'
 else

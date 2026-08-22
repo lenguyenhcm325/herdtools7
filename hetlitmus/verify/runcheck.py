@@ -64,7 +64,7 @@ AARCH64_TESTS = ["MP-cg-sys-acqrel-2s", "MP-cg-sys-acquire", "MP-cg-sys-relaxed"
 # fires: what the scheduler does with it is the phase's subject.
 STUB_STATS = ("HetStats %s cpu_only=0 obs=Never R=10 usable=10 k=0 k_eff=0 "
               "k_runs=0 degen=0 first_sight=0 sighting=none N=100000 "
-              "scored=100000 flags=0x0")
+              "scored=100000 discarded=0 flags=0x0")
 
 # The stand-in compiler: `-c' writes the object, a link writes an executable whose
 # body is @@BODY@@.  It is what lets the chain reach the campaign on a box with no
@@ -126,7 +126,7 @@ import os, sys
 d = sys.argv[1]
 print("HetStats %s cpu_only=0 obs=Sometimes R=10 usable=10 k=1 k_eff=1 k_runs=3 "
       "degen=0 first_sight=1 sighting=CORROBORATED N=100000 scored=100000 "
-      "flags=0x0" % os.path.basename(d))
+      "discarded=0 flags=0x0" % os.path.basename(d))
 '''
 
 # ... and one that fires ONCE and then goes quiet: the row it drives is held open by
@@ -143,7 +143,8 @@ fired = (inv == 1)
 # one, and a stub ignoring the cap would land on run counts no harness produces.
 R = min(10, int(os.environ.get("HET_RUNS_MAX") or "10"))
 print("HetStats %s cpu_only=0 obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d "
-      "degen=0 first_sight=%d sighting=%s N=100000 scored=100000 flags=0x0"
+      "degen=0 first_sight=%d sighting=%s N=100000 scored=100000 discarded=0 "
+      "flags=0x0"
       % (os.path.basename(d), "Sometimes" if fired else "Never", R, R,
          fired, fired, fired, 1 if fired else 0,
          "UNCONFIRMED" if fired else "none"))
@@ -1160,7 +1161,19 @@ def bite():
 # measures -- that is a property of the box and not of the session, so it is
 # retried and ONLY an all-stall is reported.
 STALL_TRIES = 3
-RUN_TIMEOUT = "90"
+RUN_TIMEOUT = "900"
+# The HOST rendezvous cap these device lanes run under.  A DISCARDED iteration
+# costs its cap, so on a box whose two sides do meet this never binds and a
+# session costs what it always did -- while on one that loses arrivals (mapped
+# pinned memory with no host-native atomics) every iteration pays the shipped
+# placeholder, which is a millisecond of host polling.  What these gates read is
+# the SESSION and the PRINTOUT and never the outcome, so the host wait is
+# shortened here to keep a session inside its runner timeout, and the value
+# travels in the record where a reader sees what the run waited under.
+# The DEVICE cap is left alone: shortening it too makes a clean run rare enough
+# that a sighting stops reproducing, and a campaign that ends every row
+# UNCONFIRMED is measuring the cap rather than the chain.
+HW_CAP_CPU = "4096"
 
 
 def _stalled(out):
@@ -1193,6 +1206,7 @@ def hardware(wrapper=WRAPPER, quiet=False):
     env = dict(os.environ)
     env.setdefault("HET_ALLOC", "pinned")
     env.setdefault("HET_RUN_TIMEOUT", RUN_TIMEOUT)
+    env.setdefault("HET_CAP_CPU", HW_CAP_CPU)
     tmp = tempfile.mkdtemp(prefix="runcheck-hw.")
     try:
         if not quiet:
@@ -1311,16 +1325,31 @@ def hardware_bite():
 # from emitted text; this one builds a harness, runs it on the GPU and reads the
 # printout, which is the only artefact a result is ever read off.
 #
-# BOTH readings are readings, so both PASS: the outcome is stochastic, the run is
-# re-seeded while it does not fire because a sighting carries strictly more
-# sentences to assert, and a stream of nulls is read as a null rather than as a
-# failure of this gate.  What neither reading may carry is a sentence saying
-# something certifies the harness.
+# EVERY reading is a reading, so all three PASS: the outcome is stochastic, the
+# run is re-seeded while it does not fire because a sighting carries strictly
+# more sentences to assert, and a stream of nulls -- or a DISCARDED run, which is
+# what a box whose rendezvous cannot complete legitimately produces -- is read as
+# what it is rather than as a failure of this gate.  What no reading may carry is
+# a sentence saying something certifies the harness.
+#
+# Then a SECOND run of the same binary under caps of one poll, where the
+# rendezvous cannot complete by construction: that run must be discarded and must
+# name the rendezvous.  It is the disqualifier's bite, and it is here rather than
+# under --bite because it needs no injection at all -- a run-time knob produces
+# the condition the rule exists to catch.
 # ---------------------------------------------------------------------------
 CH_TEST = "MP-cg-sys-relaxed-x86_64"
 CH_PAIR = "(X86_64, cuda)"
 CH_SEED_TRIES = 12
-CH_RUN_TIMEOUT = 90          # a healthy run is ~3 s; past this it is stalled
+# Every iteration now waits for the other device, so a run costs what N
+# rendezvous cost rather than what N free-running iterations did.  The gate reads
+# the PRINTOUT, and the printout's shape does not depend on how many runs stand
+# behind it, so the runs are curtailed here and the timeout is what a curtailed
+# run may take before it is called stalled.
+CH_RUNS = "2"
+CH_RUN_TIMEOUT = 600
+
+
 def _ch_env():
     env = dict(os.environ)
     env["PATH"] = BIN + os.pathsep + env["PATH"]
@@ -1361,12 +1390,24 @@ def ch_build(d, arch):
                          + (r.stdout + r.stderr)[-2000:])
 
 
+def ch_env(**kw):
+    env = dict(os.environ)
+    env["HET_ALLOC"] = env.get("HET_ALLOC", "pinned")
+    env["HET_RUNS_MAX"] = env.get("HET_RUNS_MAX", CH_RUNS)
+    env["HET_CAP_CPU"] = env.get("HET_CAP_CPU", HW_CAP_CPU)
+    env.update(kw)
+    return env
+
+
 def ch_run_until_sighting(d, quiet=False):
     """Run with fresh seeds until the outcome fires once, or until the seeds run
     out -- the last run either way.  Returns (text, k, R, obs, tries); text is
-    stdout+stderr, the whole printout a reader sees."""
-    env = dict(os.environ)
-    env["HET_ALLOC"] = env.get("HET_ALLOC", "pinned")
+    stdout+stderr, the whole printout a reader sees.
+
+    A DISCARDED run ends the loop on the spot: a fresh seed draws a fresh phase,
+    not a partner that arrives, so re-seeding a box whose rendezvous cannot
+    complete only spends its runs."""
+    env = ch_env()
     last = None
     hangs = 0
     for i in range(1, CH_SEED_TRIES + 1):
@@ -1392,15 +1433,21 @@ def ch_run_until_sighting(d, quiet=False):
                     "can." % (hangs, env["HET_ALLOC"]))
             continue
         text = r.stdout + "\n" + r.stderr
-        m = re.search(r"^HetStats \S+ cpu_only=\d+ obs=(\S+) R=(\d+) usable=\d+ "
+        m = re.search(r"^HetStats \S+ cpu_only=\d+ obs=(\S+) R=(\d+) usable=(\d+) "
                       r"k=(\d+) ", r.stdout, re.M)
         if not m:
             raise SystemExit("runcheck --characterize-hw: the run printed no "
                              "HetStats line (rc=%d)\n%s" % (r.returncode,
                                                             text[-2000:]))
-        obs, R, k = m.group(1), int(m.group(2)), int(m.group(3))
-        last = (text, k, R, obs, i)
+        obs, R, usable, k = (m.group(1), int(m.group(2)), int(m.group(3)),
+                             int(m.group(4)))
+        last = (text, k, R, obs, usable, i)
         if k > 0:
+            return last
+        if "COLD-INVALID" in text:
+            if not quiet:
+                print("      seed %d: the run was DISCARDED, which no fresh seed "
+                      "undoes -- read as the arm this box printed" % (1000 + i))
             return last
         if not quiet:
             print("      seed %d: k=0, retrying (a sighting carries the report "
@@ -1409,8 +1456,9 @@ def ch_run_until_sighting(d, quiet=False):
 
 
 # What a run that SAW the outcome must print, and what a run that did not must
-# print instead.  The two arms are exclusive and one of them always applies, so a
-# device that fires and a device that does not are both read.
+# print instead.  The arms are exclusive and one of them always applies, so a
+# device that fires, one that does not and one whose rendezvous never completes
+# are all read.
 CH_OBSERVED = [": OBSERVED",
                "Report it as what %s exhibited" % CH_PAIR]
 CH_NULL = ["NOT OBSERVED under this effort",
@@ -1420,6 +1468,20 @@ CH_NULL = ["NOT OBSERVED under this effort",
            # The effort a null is entitled to report is the iterations it read
            # back, so the number has to be on the line beside the sentence.
            "scored="]
+# ... and what a run every cell of which was DISCARDED must print instead.  A box
+# whose rendezvous cannot complete produces this arm legitimately -- mapped
+# pinned memory with no host-native atomics loses increments -- so it is read as
+# the arm it is, and what it may NOT do is read as reach.
+CH_COLD = ["DISCARD this null -- the harness was not demonstrably hot",
+           "the weak outcome was NOT observed",
+           "VOID -- not one of",
+           "scored="]
+# The second run: caps of one poll, where the rendezvous cannot complete.  No
+# injection produces this -- a run-time knob does -- so the disqualifier's own
+# bite is a run rather than a mutation.
+CH_CAP1 = ["COLD-INVALID",
+           "DISCARD this null -- the harness was not demonstrably hot",
+           "A timed-out rendezvous is a DEAD PARTNER"]
 # What NEITHER arm may carry: a voucher named, a constant standing in for the pair,
 # a build fault reported as a result.  Every entry is planted by an injection
 # below, so this list holds only wording a run can be made to carry; a sentence no
@@ -1437,21 +1499,32 @@ CH_NEVER_SAYS = [
 ]
 
 
-def ch_class(k, R, obs):
+def ch_class(k, R, obs, usable):
     """Judge the observation class against the counts it was read off.  Returns
     (failure, note) with exactly one of the two set.
 
-    The denominator is R, the runs executed, so het_verdict.h reads obs=Always
-    off k >= R and obs=Never off k == 0.  obs=Always under k<R would mean the
-    denominator had collapsed onto the usable count instead, and obs=Never with
-    a sighting in it, or anything else with none, is a class that contradicts
-    the counts beside it.
+    VOID is a READING, not a failure: a run whose every cell was discarded --
+    which a box whose rendezvous cannot complete legitimately produces -- has
+    measured nothing, and VOID is the class that says so.  What is refused is a
+    class that contradicts the counts beside it, in either direction.
+
+    Below that, the denominator is R, the runs executed, so het_verdict.h reads
+    obs=Always off k >= R and obs=Never off k == 0.  obs=Always under k<R would
+    mean the denominator had collapsed onto the usable count instead, and
+    obs=Never with a sighting in it, or anything else with none, is a class that
+    contradicts the counts beside it.
 
     The bite's shape table is what drives every branch, including the ones a
     given device never lands in."""
+    if usable == 0:
+        if obs == "VOID":
+            return (None, "[F] obs=VOID on 0 usable cell(s) of R=%d (every run "
+                          "was discarded, and that is the class which says so)" % R)
+        return ("[F] obs=%s on 0 usable cell(s) of R=%d: nothing was measured "
+                "and the class does not say so" % (obs, R), None)
     if obs == "VOID":
-        return ("[F] obs=VOID on k=%d of R=%d: every run was discarded, so this "
-                "printout reads nothing at all" % (k, R), None)
+        return ("[F] obs=VOID on %d usable cell(s) of R=%d: a pool with a usable "
+                "cell measured something" % (usable, R), None)
     if k == 0:
         if obs == "Never":
             return (None, "[F] obs=Never on k=0 of R=%d (nothing fired, and that "
@@ -1471,7 +1544,7 @@ def ch_class(k, R, obs):
             "not say so" % (obs, k, R), None)
 
 
-def ch_check(text, k, R, obs, quiet=False):
+def ch_check(text, k, R, obs, usable, quiet=False):
     """Every assertion is on the PRINTOUT.  Returns a list of failures."""
     bad = []
     say = (lambda *_: None) if quiet else print
@@ -1488,12 +1561,24 @@ def ch_check(text, k, R, obs, quiet=False):
 
     must("A", "HetVerdict %s run=" % CH_TEST)
 
-    for frag in (CH_OBSERVED if k > 0 else CH_NULL):
+    # Which arm this box printed.  A sighting outranks everything; otherwise a
+    # printout whose every run was discarded is the COLD arm and one with a
+    # usable run is the null arm.
+    classes = set(re.findall(r"^HetVerdict \S+(?: CPU-ONLY)? run=\d+: (\S+)$",
+                             text, re.M))
+    if k > 0:
+        arm, frags = "OBSERVED", CH_OBSERVED
+    elif classes == {"COLD-INVALID"}:
+        arm, frags = "COLD-INVALID", CH_COLD
+    else:
+        arm, frags = "NOT-OBSERVED", CH_NULL
+    say("      [D] the %s arm (%s)" % (arm, ", ".join(sorted(classes)) or "none"))
+    for frag in frags:
         must("D", frag)
     for frag, why in CH_NEVER_SAYS:
         never("B/C", frag, why)
 
-    why, note = ch_class(k, R, obs)
+    why, note = ch_class(k, R, obs, usable)
     if why is not None:
         bad.append(why)
     else:
@@ -1505,18 +1590,56 @@ def ch_run_once(d, quiet=False):
     got = ch_run_until_sighting(d, quiet=quiet)
     if got is None:
         return 1, ["the harness produced no run at all"]
-    text, k, R, obs, tries = got
+    text, k, R, obs, usable, tries = got
     if k == 0 and not quiet:
-        print("      the outcome never fired in %d x %d runs, so the NULL arm is "
-              "what this device printed and what is read here" % (tries, R))
-    bad = ch_check(text, k, R, obs, quiet=quiet)
+        print("      the outcome never fired in %d x %d runs, so a non-sighting "
+              "arm is what this device printed and what is read here"
+              % (tries, R))
+    bad = ch_check(text, k, R, obs, usable, quiet=quiet)
     return (1 if bad else 0), bad
+
+
+def ch_cap_run(d, quiet=False):
+    """The rendezvous disqualifier, driven by a knob instead of an injection.
+
+    Under caps of ONE poll a participant that does not find its partner already
+    arrived gives up at once, so nearly every iteration is discarded and the run
+    must be thrown away NAMING the rendezvous.  A box on which most iterations
+    still complete inside a single poll would be a box where the two devices need
+    no rendezvous at all, which is worth knowing and is not this arm passing."""
+    say = (lambda *_: None) if quiet else print
+    env = ch_env(HET_CAP_CPU="1", HET_CAP_GPU="1", HET_RUNS_MAX="1",
+                 HET_SEED="1")
+    try:
+        r = subprocess.run([os.path.join(d, CH_TEST)], cwd=d, env=env,
+                           capture_output=True, text=True, timeout=CH_RUN_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return ["[R] the caps=1 run STALLED after %ds -- a one-poll cap is the "
+                "one wait that cannot stall" % CH_RUN_TIMEOUT]
+    text = r.stdout + "\n" + r.stderr
+    bad = []
+    for frag in CH_CAP1:
+        if frag not in text:
+            bad.append("[R] under HET_CAP_CPU=1 HET_CAP_GPU=1 the printout never "
+                       "says %r -- a rendezvous that cannot complete must be "
+                       "discarded, and must say which mechanism was dead" % frag)
+        else:
+            say("      [R] %s" % frag[:88])
+    if "NOT OBSERVED under this effort" in text:
+        bad.append("[R] under HET_CAP_CPU=1 HET_CAP_GPU=1 the printout reports "
+                   "reach: a run whose two sides never met is not a "
+                   "non-observation")
+    return bad
 
 
 def ch_probe(tmp, arch, quiet=False):
     d = ch_emit(tmp)
     ch_build(d, arch)
-    return ch_run_once(d, quiet=quiet)
+    rc, bad = ch_run_once(d, quiet=quiet)
+    if not quiet:
+        print("===== the same binary under caps of one poll =====")
+    bad = bad + ch_cap_run(d, quiet=quiet)
+    return (1 if bad else 0), bad
 
 
 def _subst(s, pairs):
@@ -1552,13 +1675,20 @@ CH_INJECTIONS = [
           '  fprintf(_ch, "HetVerdict %s%s run=%d: %s'
           '  (vouched for by mu(T))\\n",')]),
      "the printout says 'vouched for by'"),
+    # The two pair-naming sentences belong to the sighting and null frames, and a
+    # DISCARDED run prints neither -- so the constant is planted on the verdict
+    # banner as well, which every arm prints.  That the two frames name the pair
+    # is verdictcheck's, over synthetic records where no box can withhold an arm.
     ("A/D", "het_verdict.h",
      "the pair-naming sentences name a constant instead of the pair",
      lambda s: _subst(s, [
          ("      HET_PAIR_NAME, HET_LINK_NAME);",
           '      "the target this harness was tagged for", HET_LINK_NAME);'),
          ("    HET_PAIR_NAME);",
-          '    "the target this harness was tagged for");')]),
+          '    "the target this harness was tagged for");'),
+         ('  fprintf(_ch, "HetVerdict %s%s run=%d: %s\\n",',
+          '  fprintf(_ch, "HetVerdict %s%s run=%d: %s'
+          '  (the target this harness was tagged for)\\n",')]),
      "the printout says 'the target this harness was tagged for'"),
     # The record stamp is what gates every field het_verdict() would read, so a
     # harness that ships without one prints a build fault where a result belongs
@@ -1571,17 +1701,19 @@ CH_INJECTIONS = [
 ]
 
 
-# The six (k, obs) shapes ch_class must tell apart.  Which one a run lands in is
-# the device's to decide and not this gate's, so the classifier and the ch_check
-# call that turns its verdict into a failure are driven directly: (k, R, obs,
-# must the class READ, the fragment its own sentence owes).
+# The (k, usable, obs) shapes ch_class must tell apart.  Which one a run lands in
+# is the device's to decide and not this gate's, so the classifier and the
+# ch_check call that turns its verdict into a failure are driven directly:
+# (k, R, usable, obs, must the class READ, the fragment its own sentence owes).
 CH_SHAPES = [
-    (0, 10, "VOID", False, "every run was discarded"),
-    (0, 10, "Sometimes", False, "nothing fired and the class does not say so"),
-    (0, 10, "Never", True, "nothing fired"),
-    (4, 10, "Always", False, "the denominator collapsed"),
-    (4, 10, "Sometimes", True, "denominator is R"),
-    (10, 10, "Always", True, "every run fired"),
+    (0, 10, 0, "VOID", True, "every run was discarded"),
+    (0, 10, 0, "Never", False, "nothing was measured and the class does not say so"),
+    (0, 10, 10, "VOID", False, "a pool with a usable cell measured something"),
+    (0, 10, 10, "Sometimes", False, "nothing fired and the class does not say so"),
+    (0, 10, 10, "Never", True, "nothing fired"),
+    (4, 10, 10, "Always", False, "the denominator collapsed"),
+    (4, 10, 10, "Sometimes", True, "denominator is R"),
+    (10, 10, 10, "Always", True, "every run fired"),
 ]
 
 
@@ -1594,30 +1726,32 @@ def characterize_hw_bite(tmp, arch):
     as bites."""
     print("===== BITE: does this gate read the PRINTOUT? =====")
     bad = 0
-    for k, R, obs, want_read, frag in CH_SHAPES:
-        why, note = ch_class(k, R, obs)
+    for k, R, usable, obs, want_read, frag in CH_SHAPES:
+        why, note = ch_class(k, R, obs, usable)
         got = note if why is None else why
         # A class only counts once ch_check has carried it into the failures a
         # run is judged on: a refusal must arrive there and a reading must leave
         # nothing behind.  The printout handed over is empty, because ch_check's
         # assertions on a printout are what the injections below drive, on the
         # device; the class is the one verdict it reaches without one.
-        carried = [m for m in ch_check("", k, R, obs, quiet=True)
+        carried = [m for m in ch_check("", k, R, obs, usable, quiet=True)
                    if m.startswith("[F]")]
         if (why is None) != want_read:
-            print("  *** [F] k=%d of R=%d obs=%s: the class is %s and must be %s "
-                  "-- %s" % (k, R, obs, "read" if why is None else "refused",
-                             "read" if want_read else "refused", got))
+            print("  *** [F] k=%d of R=%d (usable=%d) obs=%s: the class is %s and "
+                  "must be %s -- %s"
+                  % (k, R, usable, obs, "read" if why is None else "refused",
+                     "read" if want_read else "refused", got))
             bad += 1
         elif frag not in got:
-            print("  *** [F] k=%d of R=%d obs=%s: judged, but not by its own "
-                  "sentence (%r is not in it) -- %s" % (k, R, obs, frag, got))
+            print("  *** [F] k=%d of R=%d (usable=%d) obs=%s: judged, but not by "
+                  "its own sentence (%r is not in it) -- %s"
+                  % (k, R, usable, obs, frag, got))
             bad += 1
         elif carried != ([] if want_read else [why]):
-            print("  *** [F] k=%d of R=%d obs=%s: the class is %s, and ch_check "
-                  "returns %s -- a run is judged on that list, so it carries the "
-                  "refusal or it carries nothing"
-                  % (k, R, obs, "read" if want_read else "refused",
+            print("  *** [F] k=%d of R=%d (usable=%d) obs=%s: the class is %s, and "
+                  "ch_check returns %s -- a run is judged on that list, so it "
+                  "carries the refusal or it carries nothing"
+                  % (k, R, usable, obs, "read" if want_read else "refused",
                      ", ".join(carried) or "no class failure at all"))
             bad += 1
         else:
@@ -1679,7 +1813,8 @@ def characterize_hw(want_bite=False):
                 print("  %s" % m)
             return 1
         print("\nCHARACTERIZE-HW: PASS (the printout names the test, reads as "
-              "the arm the run took, claims no machine and names no voucher)")
+              "the arm the run took, claims no machine and names no voucher; and "
+              "a rendezvous that cannot complete is DISCARDED naming itself)")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

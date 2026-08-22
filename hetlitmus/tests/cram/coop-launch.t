@@ -1,5 +1,5 @@
-Perpetual-loop guard (hetlitmus/docs/00-environment-design.md sec 3.3).  The emitted
-het GPU driver is a persistent, launch-once perpetual loop whose forward progress
+Persistent-loop guard (hetlitmus/docs/00-environment-design.md sec 3.3).  The
+emitted het GPU driver is a persistent, launch-once loop whose forward progress
 is guaranteed by cudaLaunchCooperativeKernel (HIP: hipLaunchCooperativeKernel),
 never a per-iteration <<<>>> relaunch.  The representative MP shape is emitted
 once per GPU dialect -- het emission needs no -set-libdir, and litmus7 renders
@@ -21,31 +21,33 @@ shared runtime headers.
   $ grep -c '<<<' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu || true
   0
 
-(b,c) the inner free-running window: one for(_n<SIZE_OF_TEST) in the kernel and
-one in the CPU wrapper, each with gd_bar fired once before it -- 2 loops and 2
-arrivals.
+(b,c) the inner window: one for(_n<SIZE_OF_TEST) in the kernel and one in the
+CPU wrapper, and INSIDE each of them the participant's own rendezvous, so every
+iteration begins with both sides at the same iteration number.  A rendezvous
+lifted out of a loop would join the two devices once and leave every iteration
+after the first unsynchronised, which is why the counts below are scoped to the
+loop and not to the file.
 
-The arrival count is matched on `_bar.fetch_add', the barrier's OWN atomic, and
-not on a bare `fetch_add': the CPU stress tally is an atomic RMW in this file
-too, which a bare count would sweep up, and bumping the expectation to absorb it
-would leave the check satisfiable by a genuine third barrier arrival -- exactly
-the regression it exists to catch.  (ptxcheck's barrier whitelist guards the same
-invariant independently, at the PTX level: one system-scope fetch_add per
-barrier-joining GPU lane.)
+The two calls are named apart -- het_rdv_device on the GPU lane, het_rdv_host on
+the CPU wrapper -- so a lane that lost its own and gained the other's cannot
+satisfy a total.  (rdvcheck.py guards the same invariant over the whole corpus,
+and ptxcheck's rendezvous whitelist guards it again at the PTX level: one
+system-scope arrival per rendezvous-joining GPU lane.)
 
-MP-cg-sys-acqrel-2s runs one GPU lane and one CPU wrapper.  The invariant is
-per-participant -- one persistent window each, one barrier arrival before each --
-so the arrivals total 2 and the loops 3: the host readout walks the slots over a
-loop of its own, after the run rather than inside it.  The counts are also scoped
-to the GPU lane, so the totals cannot be satisfied by a lane that lost its
-barrier while another gained a second loop.
+MP-cg-sys-acqrel-2s runs one GPU lane and one CPU wrapper, so each call appears
+once and the loops total 3: the host readout walks the slots over a loop of its
+own, after the run rather than inside it.
   $ grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n)' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
   3
-  $ grep -c '_bar.fetch_add' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
-  2
+  $ grep -c 'het_rdv_device(' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  1
+  $ grep -c 'het_rdv_host(' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu
+  1
   $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n)'
   1
-  $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c '_bar.fetch_add'
+  $ sed -n '/for (int _n=0; _n<SIZE_OF_TEST; ++_n) {/,/^    }$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | grep -c 'het_rdv_device('
+  1
+  $ sed -n '/static void\* cpu_thread_P0/,/^}$/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu | sed -n '/for (int _n=0; _n<SIZE_OF_TEST; ++_n) {/,/^  }$/p' | grep -c 'het_rdv_host('
   1
 
 and NPART counts them, so the rendezvous waits for both.
