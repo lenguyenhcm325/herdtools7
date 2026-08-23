@@ -31,7 +31,7 @@
 #
 # No expected outcome is attached to any of these tests: this branch predicts
 # none, and comparing a run against a verdict CSV is an optional offline step
-# over a file the reader supplies (docs/oracle-harness.md).
+# for which the reader supplies both the comparator and the file.
 
 set -e
 # OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so

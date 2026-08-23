@@ -772,8 +772,7 @@ def scan_prints(blocks, quiet):
     # ... and the same flag's two readers that print no sentence at all, each
     # against the case's own record rather than a list of names.  A constant in
     # either is invisible to the sentences above: the banner tag is what a reader
-    # files the whole row under, and the HetObs field is what campaign.py and
-    # oracle-compare.sh parse.
+    # files the whole row under, and the HetObs field is what campaign.py parses.
     want_flag = {c["name"]: int(c["rec"].get("cpu_only", 0)) for c in CASES}
     for name in sorted(blocks):
         lines = blocks[name][1].splitlines()

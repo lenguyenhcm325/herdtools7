@@ -28,8 +28,8 @@ COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell"
 # shape | nprocs | cycle
 #
 # The harnesses carry no verdict, and this script supplies none: comparing an
-# observation against an oracle is the offline step (hetlitmus/oracle-compare.sh),
-# over a CSV the caller brings.  Whatever a run shows, it is not a compound-model
+# observation against an oracle is the offline step, and the caller brings both
+# the comparator and the CSV.  Whatever a run shows, it is not a compound-model
 # result: the CPU-only branch of het_verdict.h outranks the ordinary sentence,
 # because on an all-CPU cycle the compound model is not under test.
 CPUONLY_ROWS="

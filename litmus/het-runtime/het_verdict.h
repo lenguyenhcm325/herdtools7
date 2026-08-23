@@ -219,7 +219,7 @@ static long het_env_long(const char *name, long dflt) {
  * THE OUTCOME.  One axis -- was the weak outcome seen, and if not, is this run's
  * zero a datum at all.  No prediction enters here and none is printed: "observed"
  * and "not observed" are the whole vocabulary, and what they are worth against
- * any model is settled offline (hetlitmus/oracle-compare.sh).
+ * any model is settled offline.
  *
  *   HET_OBSERVED    seen.  Believed unconditionally -- falsification is one-sided.
  *   HET_NOT_OBSERVED  not seen, on a run whose every requested mechanism was
@@ -515,7 +515,7 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       "  Report it as what %s exhibited under this harness, this stress and this "
       "%s path.  It is an OBSERVATION: this harness carries no prediction, so "
       "nothing here confirms or contradicts any model.  Comparing it against a "
-      "verdicts file is an offline step (hetlitmus/oracle-compare.sh).\n",
+      "verdicts file the reader supplies is an offline step.\n",
       _r->test_name, _hits,
       (unsigned long long)_r->iters_scored, _n, _pct,
       HET_PAIR_NAME, HET_LINK_NAME);
@@ -841,9 +841,7 @@ static const char *het_sighting_name(het_sighting_tier t) {
   }
 }
 
-/* The machine-readable line.  hetlitmus/oracle-compare.sh parses THIS and layers
-   the annotation onto its offline comparison table, augmenting it rather than
-   replacing it; hetlitmus/campaign.py schedules from it. */
+/* The machine-readable line.  hetlitmus/campaign.py schedules from it. */
 static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
     "HetStats %s cpu_only=%d obs=%s "
@@ -928,7 +926,7 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
 
   /* THE SIGHTING TIER: how many independent runs reproduced it, and nothing else.
      Whether the outcome should have been seen is not a question this harness
-     answers -- the comparison is offline (hetlitmus/oracle-compare.sh). */
+     answers -- the comparison is offline. */
   if (_s->tier != HET_SIGHT_NONE) {
     if (_s->tier == HET_SIGHT_CORROBORATED)
       fprintf(_ch,
@@ -1019,7 +1017,7 @@ static const char *het_campaign_stop_name(het_campaign_stop_t s) {
 /* UNCONFIRMED-SIGHTING is the one stop whose name is not its meaning, so it is the
    one that carries a sentence -- and the sentence says what happened and stops
    there.  Whether the outcome should have been seen is not a question this harness
-   answers (the comparison is offline, hetlitmus/oracle-compare.sh). */
+   answers (the comparison is offline). */
 static const char *het_campaign_stop_why(het_campaign_stop_t s) {
   return (s == HET_CAMPAIGN_STOP_UNCONFIRMED)
     ? "the confirmation window closed on a lone clean sighting that did not reproduce"

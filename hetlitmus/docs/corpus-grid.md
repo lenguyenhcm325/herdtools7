@@ -155,9 +155,9 @@ PTX renders this as `fence.sc.<scope>`.
 
 What bounds the column is **provenance, not expressiveness**. There is no fence
 and no `sc` operation anywhere in the PLDI'23 artifact, so its verdicts reach the
-original 8 and no part-(B) grid test: an offline `oracle-compare.sh` pass of a
-grid row against a CSV built from that artifact reports UNINTERPRETED rather than
-a verdict.
+original 8 and no part-(B) grid test: a CSV built from that artifact has no row
+for a grid test at all, so an offline comparison the reader assembles decides
+none of them.
 
 ### 2. The `CPU_ARCHS` knob (het corpus)
 

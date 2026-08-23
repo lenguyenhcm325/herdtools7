@@ -70,7 +70,7 @@ document specifies the environment that makes a "Never" mean something.
 
 **The pipeline ends at the observation.** The harness carries no prediction and prints none;
 comparing a row against a verdicts file the reader supplies is an **offline post-run step**
-(`hetlitmus/oracle-compare.sh`, `oracle-harness.md`), outside the loop above.
+outside the loop above, for which this tree ships no comparator either.
 
 The design is overwhelmingly **reuse + adapt**, with original code confined to the genuine gap
 (cross-device orchestration + the het-aware reporting layer). Lineage: PerpLE [Melissaris20] (launch-once
@@ -287,7 +287,7 @@ het_obs_record {
 This separates **did we see it** (`target_count`) from **how much of the run was a joint experiment at
 all** (`iters_scored` against `N`). It is the input to the liveness gate and the stop rule
 (`harness-reporting.md` §3, §5). The `outs_t` histogram is retained (fed once per scored iteration) so an
-offline `oracle-compare.sh` pass over the log keeps working.
+offline pass over the log the reader writes has the per-outcome counts to read.
 
 `rdv_cap_cpu` and `rdv_cap_gpu` say which side timed out, which separates a partner that never arrived
 from a cap set too short. They are **not** the two halves of `iters_discarded`: a test has one
@@ -317,7 +317,7 @@ GH200/MI300A** (§6).
 | **Slots + readout** | One slot per iteration per location (`HET_SLOT_STRIDE_WORDS`), stores carrying the `.litmus` values, one O(N) pass that ANDs the flags, discards or scores, and feeds the histogram once (§3.4). Replaces the per-iteration `_cond` check *and* any post-hoc pairing. |
 | **GPU stress** | Port cuda-litmus `do_stress`/`StressParams` (fix the `MEM_STRESS` bug; cite); scratchpad in `cudaMalloc`; launch widened to stress workgroups; **asymmetric instances**. |
 | **CPU + interconnect stress** | CPU recipes at two sites on both ISAs + remote-pinning and noise kernels; the `-2s` invariants enforced by construction. |
-| **Non-observation reporting** | `(instance,run)` replication unit, the three-outcome rule and its liveness disqualifiers, the corroboration tier and the stop rule; the offline `oracle-compare.sh` pass augmented with each test's own block. |
+| **Non-observation reporting** | `(instance,run)` replication unit, the three-outcome rule and its liveness disqualifiers, the corroboration tier and the stop rule; each test's own interpretation block, printed beside its numbers so an offline pass reprints rather than re-derives it. |
 
 ---
 
@@ -477,9 +477,9 @@ GH200/CMCM (Bagchi has that).
   full citation, the claim this project takes from it, and any deviation from it.
 - **The mechanisms in full:** `harness-reporting.md` (what a printout means — the three-outcome rule,
   the liveness disqualifiers and caveats, the aggregate and the stop rule), `faithfulness.md` (what the
-  static checkers can and cannot see), `het-emission.md` (how a harness is built), `oracle-harness.md`
-  (the offline comparison), `TEST-PLAN.md` (which gate proves what),
-  `litmus/het-runtime/README.md` (what each emitted runtime header is for).
+  static checkers can and cannot see), `het-emission.md` (how a harness is built),
+  `TEST-PLAN.md` (which gate proves what), `litmus/het-runtime/README.md` (what each
+  emitted runtime header is for).
 - **What actually ships:** the runtime headers under `litmus/het-runtime/` — `het_rdv.h` for the
   rendezvous and the slot layout, and `het_verdict.h` above all,
   which is the normative source for the outcome vocabulary, the liveness disqualifiers and every

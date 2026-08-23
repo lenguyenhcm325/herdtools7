@@ -47,8 +47,6 @@ All verified on the dev box (has `dune`/`ocaml`, `herd7`/`litmus7`/`hetgen7`/
   a one-token corruption (`st.release.sys`→`st.acq_rel.sys`) → `RESULT: FAIL`
   (exit 1) with an exact diff. Its `--ptx`/`--cpu-c` self-test seam means the
   **negative controls run with no GPU** (feed a frozen corrupted PTX).
-- **`oracle-compare.sh` is a pure text function** (obs file + oracle CSV → table +
-  exit 0/1). Trivially testable on frozen fixtures; no toolchain.
 - **`_grid_lib.sh` is pure functions** (`render_cycle`, `render_cpu_cycle`,
   `cut_tag`, `scope_tree`, `arm_ord`, …) — unit-testable, and they encode the
   load-bearing model decisions (release→writes, acquire→reads, LDAPR=RCpc
@@ -63,8 +61,7 @@ All verified on the dev box (has `dune`/`ocaml`, `herd7`/`litmus7`/`hetgen7`/
   `GUARD OK` sentinels. The eyeball gap is closed in the shell; the Layer-1 cram
   `ptx-negatives.t` now only **byte-freezes** that output (belt-and-suspenders), it
   is no longer the sole gate.
-- Missing entirely: Layer-1 unit tests, `oracle-compare` negatives, Layer-2
-  golden gate.
+- Missing entirely: Layer-1 unit tests, Layer-2 golden gate.
 
 ---
 
@@ -105,8 +102,9 @@ The rule functions (`render_cycle`, …) get exhaustive coverage *transitively* 
 corpus **is** their output across the full grid, so the Layer-2 golden pins every
 good-case result. **The cram is therefore a curated sample, not a matrix:** it
 documents the rules readably (`basics.t`, ~10 lines, one per rule branch) and pins
-the checkers' discriminating power (`*-negatives.t`). The only cram file worth making
-exhaustive is `oracle-negatives.t`, whose decision logic no golden covers.
+the checkers' discriminating power (`*-negatives.t`). No cram file is worth making
+exhaustive: every decision procedure the cram would have to enumerate is either
+covered transitively by the golden or gated by a `verify/` checker of its own.
 
 ---
 
@@ -143,18 +141,6 @@ our generation is byte-stable so we don't need it.
   fence→`DMB.SYd*`), `cut_tag` (2- and 3-proc), `scope_tree` (2- and 3-proc). Exact
   list + real outputs in Appendix B. (Optional +2: unit `arm_ord R/W acqrel`→`Q`/`L`
   to pin the atom mapping directly.)
-- ✓ `oracle-negatives.t` (`0d5940b5e`) — the **offline** `oracle-compare.sh` on frozen
-  fixtures. This one is **exhaustive**: the full decision matrix **{MATCH, MISMATCH,
-  NO-ORACLE, UNINTERPRETED} × {exists, forall}** in one run (no golden covers this
-  logic; the `forall` quantifier inversion is subtle, and a test the CSV *has and
-  declines* must not read like one the CSV does not have at all). Any MISMATCH → exit 1.
-  A second fixture (`obs-stats.txt`, carrying `HetStats` lines printed by
-  `het_verdict.h` itself) drives the statistics section: that `het_stats_print`'s block
-  arrives verbatim — all four sentences of a null: that no rate and no probability is
-  attached to it, that nothing vouches for the harness, that the row is characterization
-  and agrees with no model, and the effort behind the zero — and that the campaign
-  roll-up (negative control, VOID) counts it. Every `ORACLE` column there is read from
-  the CSV — the run log carries no class of its own.
 - ✓ `ptx-negatives.t` (`0d5940b5e`) — `ptxcheck --ptx <frozen-corrupt.ptx>` → exit 1 (no GPU). A
   thin **byte-freeze** of one corruption; the eyeball gap is already closed in the
   gated `tokens.sh selftest` (`c2e4df4c5`), so this is belt-and-suspenders.
@@ -198,8 +184,9 @@ our generation is byte-stable so we don't need it.
   see.
 - ○ the numbers: every knob in `00-environment-design.md` §6 is measured on the target,
   not settled here.
-- (optional, offline) `oracle-compare.sh` over the collected log, against a verdicts CSV
-  the reader supplies. Not part of a run, and not required for one.
+- (optional, offline) a comparison of the collected log against a verdicts CSV, both the
+  CSV and the comparator supplied by the reader. Not part of a run, and not required for
+  one.
 
 ---
 
@@ -296,6 +283,15 @@ The seven with no seam left went with the checks they bit: `x86bodycheck`'s
 `machine-short`, `no-note` and `brand-readme`, three `runcheck` injections and its `[E]`
 vendor-word scan.
 
+**The offline oracle-comparison harness went the same way** — `oracle-compare.sh`, its
+`docs/oracle-harness.md` spec, the Layer-1 cram test `oracle-negatives.t` and the six
+fixtures plus the generator that fed it. It keyed on litmus7's `Observation` lines, which
+only the CPU skeletons print (`litmus/skelUtil.ml`, `litmus/KSkel.ml`); a het run prints
+`HetVerdict`/`HetStats`/`HetCampaign` instead, so on a real transcript the comparison
+table was empty and its exit-1 mismatch arm was unreachable. No comparator ships now: the
+comparison is an offline step for which the reader supplies both the verdicts file and
+the tool. Nothing polices the absence.
+
 **The AMD ISA read-back gate went the same way** — `hetlitmus-amd-faithful` and
 `verify/amdisacheck.py`, which compiled every `.hip` with `hipcc -S` and matched the
 gfx942 cache-control sequences against a hand-derived per-generation lowering profile.
@@ -347,8 +343,8 @@ Notes:
 
 Cram stanzas: `hetlitmus/tests/cram/dune` is the authority and is not mirrored here — it
 carries three `(cram (applies_to …))` stanzas rather than one, because the tests split by
-the heaviest tool they need. The three Layer-1 tests (`basics`, `oracle-negatives`,
-`ptx-negatives`) declare **no** binary, so they stay toolchain-free; the emitting tests
+the heaviest tool they need. The two Layer-1 tests (`basics`, `ptx-negatives`) declare
+**no** binary, so they stay toolchain-free; the emitting tests
 need `%{bin:litmus7}` **and the whole `tests/het` corpus**, since naming each test here
 would break silently the moment one of them touched a different row; `gpu-target`
 is separate for the reason the file's own comment gives. No stanza names `herd7`:
@@ -370,7 +366,7 @@ either** (promote blindly enshrines current output, bugs and all):
 
 ## 8. Build order (highest ROI first)
 
-1. ✓ **Layer 1 cram** (`0d5940b5e`) — `basics.t`, `oracle-negatives.t`, `ptx-negatives.t` + fixtures + `dune`.
+1. ✓ **Layer 1 cram** (`0d5940b5e`) — `basics.t`, `ptx-negatives.t` + fixtures + `dune`.
 2. ✓ **`hetlitmus-corpus`** (`6e92f2657`) — corpus + emission golden gate.
 3. ✓ **`smoke.sh`** (landed at 6 reps, `fa2adc9db`; **11 today** — see §5) — reuses `comp.sh`.
 4. ✓ **Makefile targets wired** (`68d102ef5`).
@@ -386,7 +382,6 @@ Steps 1–4 all run on the dev box (and in CI, Layer 3 with a CUDA-install step)
 |---|---|
 | compile-smoke | ✓ `comp.sh` (emitted per test) |
 | PTX faithfulness | ✓ `ptxcheck.py` + `tokens.sh` |
-| oracle comparison | ✓ `oracle-compare.sh` |
 | annotation rules under test | ✓ `_grid_lib.sh` functions |
 | corpus golden store + promote | ✓ git (`commit` / `checkout`) + regenerate-and-diff |
 | cram runner + promote | ✓ dune (`(cram enable)` already in `dune-project`; `dune promote`) |
@@ -439,15 +434,6 @@ actual output rather than trusting these bytes):
   (sys (gpu (cta 0) (cta 1) (cta 2)))
 ```
 Optional atom-mapping units: `arm_ord R acqrel`→`Q` (LDAPR), `arm_ord W acqrel`→`L` (STLR).
-
-`oracle-negatives.t` (Layer 1) is **not** reproduced here: it has outgrown a sample and
-the committed `.t` is the authority. It drives the offline `oracle-compare.sh` over three
-fixture pairs — `obs.txt`/`oracle.csv` (the full class × quantifier matrix in one run),
-`obs-stats.txt`/`oracle-stats.csv` (the statistics section, whose blocks come verbatim from
-`het_verdict.h`), and `obs-amd.txt`/`oracle-amd.csv` (the same decision logic over a
-differently shaped CSV, pinning the mismatch sentence as unconditional across three
-different `Source` cells). Read the file; `dune promote` the actual output rather than any
-bytes quoted in a doc.
 
 `ptx-negatives.t` (Layer 1; frozen corrupted PTX, no GPU):
 ```

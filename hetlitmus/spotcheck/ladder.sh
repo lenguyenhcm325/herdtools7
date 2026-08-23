@@ -14,7 +14,8 @@
 # count below describes this box under this stress config and is compared against
 # nothing.  A sighting is an observation about this machine; a null is an
 # observation about the window this machine gave us.  Comparing a row against a
-# verdicts file is a separate offline step (hetlitmus/oracle-compare.sh).
+# verdicts file the reader supplies is a separate offline step, and this tree
+# ships no comparator for it.
 #
 # Results land in results-devtier-<date>-<host>/ and MUST NOT be merged with
 # GH200 evaluation data.  See README.md.
@@ -161,9 +162,7 @@ statfield() { # log test field
 # The verdict vocabulary an emitted harness no longer has: it carries no
 # prediction, so a transcript naming a class, a mismatch or a refutation was
 # printed by something that is not this build -- a stale binary left in the
-# bundle being the likely one.  `oracle-compare.sh' is deliberately absent: the
-# harness prints that pointer on every sighting, as the name of the offline step
-# where a comparison would happen.
+# bundle being the likely one.
 RETIRED_ANYCASE='mismatch|disallowed|refut|forbidden|cmcm|no-oracle|oracle_'
 RETIRED_EXACT='oracle=|ALLOWED|EXPECTED result|validation claim|compound model'
 check_retired() { # log

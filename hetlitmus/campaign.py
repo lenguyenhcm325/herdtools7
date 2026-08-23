@@ -413,8 +413,9 @@ def run_campaign(a, work):
 def report_campaign(states, errors, unconfirmed):
     corrob = [s for s in states if s.stop == "CORROBORATED"]
     print("\ncampaign: %d row(s) ended CORROBORATED -- the weak outcome was observed "
-          "and reproduced.  What that is worth against any model is settled offline "
-          "(hetlitmus/oracle-compare.sh); nothing here says." % len(corrob))
+          "and reproduced.  What that is worth against any model is settled offline, "
+          "against a verdicts file the reader supplies; nothing here says."
+          % len(corrob))
     for s in corrob:
         print("            %-28s k_runs=%d cpu_only=%d" % (s.name, s.k_runs,
                                                            s.cpu_only))

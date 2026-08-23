@@ -26,9 +26,9 @@
 # Reference verdicts: only the part-(A) tests carry an external one, from the
 # [Goens23] artifact's own expected.csv (AMD GCN3 + x86).  The part-(B) grid
 # reaches past that artifact -- which has no fence and no `sc' operation
-# anywhere -- so an offline oracle-compare.sh pass of a grid row against a CSV
-# built from it reports UNINTERPRETED rather than a verdict.  Provenance and
-# vendor scope: hetlitmus/docs/{gpu-only-corpus,corpus-grid}.md.
+# anywhere -- so a grid row is outside what a CSV built from it can decide.  A
+# reader who compares one offline brings both the comparator and the CSV.
+# Provenance and vendor scope: hetlitmus/docs/{gpu-only-corpus,corpus-grid}.md.
 
 set -e
 # OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so

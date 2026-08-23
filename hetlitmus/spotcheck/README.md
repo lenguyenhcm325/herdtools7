@@ -27,8 +27,8 @@ they migrate, or they cross PCIe. So:
   different window;
 * a **sighting** here is an observation about *this* box under *this* stress
   config, and the ladder reports it as one. Comparing any row against a verdicts
-  file is a separate offline step (`hetlitmus/oracle-compare.sh`), never part of
-  a run.
+  file the reader supplies is a separate offline step, never part of a run, and
+  this tree ships no comparator for it.
 
 Results go to `results-devtier-<date>-<host>/` and **must never be merged with
 GH200 evaluation data**.

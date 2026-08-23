@@ -6,8 +6,9 @@ The compound pseudo-arch made a hand-written compound test *representable,
 parseable, and routable*; the generator described here *emits* such tests
 automatically from a per-processor `{device, scope}` assignment.
 
-The hardware/gem5 *execution* of these tests is **out of scope**; the matching
-oracle-comparison half is `oracle-harness.md`.
+The hardware/gem5 *execution* of these tests is **out of scope**, and so is the
+matching oracle-comparison half: the tests carry no expected outcome, and a
+reader who wants one brings both the verdicts file and the comparator.
 
 ## 1. The problem: the generator is monomorphic in one architecture
 

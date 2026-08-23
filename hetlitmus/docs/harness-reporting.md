@@ -6,8 +6,9 @@ disagree, the header is what ships (`00-environment-design.md` §9). The design 
 and its record are `00-environment-design.md` §3.7.
 
 **Status:** characterization-only. The harness reports what it observed and carries no
-prediction; comparing a row against a verdicts file is an offline post-run step
-(`hetlitmus/oracle-compare.sh`, `oracle-harness.md`), never part of a run.
+prediction; comparing a row against a verdicts file is an offline post-run step, never
+part of a run. This tree ships neither the verdicts nor a comparator: a reader who wants
+the comparison supplies both.
 
 ## 1. The problem a null poses
 
@@ -127,8 +128,9 @@ at the rendezvous) and this run's own liveness counters, and it says in words:
   draws where a longer window does not.
 
 The interpretation is written in C, beside the numbers it belongs to, so it travels with
-the number instead of living in a note in the thesis; `oracle-compare.sh` reprints that
-block verbatim rather than re-deriving it (`oracle-harness.md` §5).
+the number instead of living in a note in the thesis. Any offline reader assembling a
+comparison should reprint that block rather than re-derive it: a second implementation of
+the same decode is what silently drifts from the first.
 
 Reporting a non-observation plainly, as a fact about one's own reach, has a precedent: the
 GTX 280 footnote of [Alglave15 fn. 7] p. 577, whose quotation lives in `REFERENCES.md`.
@@ -137,7 +139,7 @@ The runtime carries the citation, not the quotation.
 The harness stops at the observation. A two-sided reading — a not-observed row bounding
 one direction and an observed row the other, as [Iorga21 §6] reads a CPU/FPGA campaign —
 is a claim about a model, and this harness holds none, so it is assembled **offline**
-against a verdicts file the reader supplies (`oracle-harness.md`).
+against a verdicts file the reader supplies, with a comparator the reader also supplies.
 
 ## 5. The aggregate — what a campaign reports over its runs
 
