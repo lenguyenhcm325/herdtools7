@@ -100,10 +100,14 @@ The five required pieces, and where each is reused rather than reimplemented:
    asm addresses a bare pointer as litmus7 writes it, so `<t>.cu`'s
    `cpu_thread_P<n>` passes `<g> + _n*HET_SLOT_STRIDE_WORDS` for each address and
    `bufP<n>_<i> + _n` for each output register. One tested mnemonic needs a build
-   flag rather than a rewrite: LDAPR is ARMv8.3 RCpc, so the emitted `comp.sh`
-   and `Makefile` compile the AArch64 `_cpu.c` with `-march=armv8.3-a`
-   (upstream's own mechanism — `litmus/libdir/armv8.3.cfg`), on a native host
-   only, since another ISA's flags are not the shim's to take.
+   flag rather than a rewrite: LDAPR is ARMv8.3 RCpc, so `-march=armv8.3-a`
+   (upstream's own mechanism — `litmus/libdir/armv8.3.cfg`) rides every
+   compilation that assembles the real AArch64 body. `comp.sh`'s
+   `clang --target=aarch64-linux-gnu` cross line carries it whatever the build
+   host is; the host `gcc` line — `comp.sh`'s and the emitted `Makefile`'s alike,
+   and the only rule the `Makefile` has for `_cpu.c` — carries it only where
+   `uname -m` is this test's ISA, because everywhere else that object is the
+   portable shim and another ISA's flags are not the shim's to take.
 
 2. **P(gpu) → a GPU kernel (CUDA *and* HIP).** The arm projects onto the
    Bell/LISA side (`HetArch.to_gpu_pseudo`) and builds the kernel by reusing the

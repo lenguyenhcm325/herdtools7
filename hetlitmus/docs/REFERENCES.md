@@ -224,7 +224,7 @@ Claim(s) this project takes from it:
 * Table 1 ("Grace CPU and Hopper GPU Hardware") gives the GH200 cache figures a
   noise buffer is sized against: Grace L3 114 MB and Hopper L2 51 MB.
 * §5.3 is why the cross-device rendezvous polls RELAXED and carries no fence:
-  "results strongly suggest that an acquire operation on the Hopper GPU with a
+  "results strongly suggests that an acquire operation on the Hopper GPU with a
   scope of gpu or higher triggers a self-invalidation of the local L1 cache."
   An acquire poll inside the loop would therefore throw away the L1 state the
   tested iteration is about to race on, while every ordering annotation under
@@ -556,6 +556,10 @@ Claim(s) this project takes from it:
   mechanism of CPU/GPU coherence: 1 is hardware, 0 is software." The allocator
   banner prints it so a hardware-coherent run and a software-coherent one are not
   read as the same experiment.
+* Section "Coherency and Concurrency" is why `concurrentManagedAccess` is fatal
+  rather than advisory: without it "the GPU has exclusive access to all managed
+  data and the CPU is not permitted to access it, while any kernel operation is
+  executing", and a concurrent CPU access is a segmentation fault.
 * Section "CUDA C++ Execution model" is why the host half of the rendezvous
   calls into the runtime while it waits. Its example `Execution.Model.API.2`
   carries the outcome "eventually, no thread makes progress" for a host thread
@@ -571,17 +575,6 @@ Claim(s) this project takes from it:
   the window does not need. The HIP render passes no such call.
 
 Deviation(s):
-* The execution-model section above was read in the **Release 13.3** edition
-  cited at the head of this entry. The toolchain this project pins is CUDA 12.x,
-  and whether the 12.x edition states the same guarantee in the same words is a
-  bring-up check rather than something verified here
-  (`00-environment-design.md` §6).
-* Section "Coherency and Concurrency" is why `concurrentManagedAccess` is fatal
-  rather than advisory: without it "the GPU has exclusive access to all managed
-  data and the CPU is not permitted to access it, while any kernel operation is
-  executing", and a concurrent CPU access is a segmentation fault.
-
-Deviation(s):
 * Release 12.x titles this document "CUDA C++ Programming Guide" and states the
   mapped-pointer rule conditionally, as the unified-addressing exception in
   section "Mapped Memory"; 13.3 states it unconditionally for `cudaMallocHost`
@@ -590,6 +583,11 @@ Deviation(s):
 * The 16-byte case of the naturally-aligned allowance carries a footnote that it
   needs platform support which no CUDA API can query when
   `hostNativeAtomicSupported` is 0. Nothing here relies on a 16-byte access.
+* The execution-model section above was read in the **Release 13.3** edition
+  cited at the head of this entry. The toolchain this project pins is CUDA 12.x,
+  and whether the 12.x edition states the same guarantee in the same words is a
+  bring-up check rather than something verified here
+  (`00-environment-design.md` §6).
 
 ## [HipRuntimeApi]
 
