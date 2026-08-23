@@ -181,15 +181,10 @@ ls hetlitmus/tests/gpu-only/*.litmus | wc -l                     # 173
 ls hetlitmus/tests/het/*.litmus      | wc -l                     # 471
 ls hetlitmus/tests/het/*.litmus | grep -vc -- '-2s\.litmus'      # 299 one-sided
 
-# 2. herd7 prints one Observation per GPU-only test
-cd hetlitmus/tests/gpu-only
-herd7 -set-libdir ../../../herd/libdir -bell ../../bells/ptx.bell \
-      -cat ../../cats/nvidia-ptx.cat @all | grep -c '^Observation'   # 173
-
-# 3. every het test parses + routes through litmus7
-cd ../het
+# 2. every het test parses + routes through litmus7
+cd hetlitmus/tests/het
 while read f; do litmus7 -gpu-target cuda -set-libdir ../../../litmus/libdir -o /tmp/r "$f"; done < @all
 
-# 4. no regression
+# 3. no regression
 dune build                                           # exit 0
 ```

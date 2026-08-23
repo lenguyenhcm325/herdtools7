@@ -110,7 +110,10 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
   was *emitted and assembled exit 0* by `nvcc -std=c++17 -arch=sm_86/90 --ptx`:
   `ld.relaxed.sys`, `st.release.sys`, `ld.acquire.gpu`, `st.relaxed.cta`,
   `fence.sc.sys`, `atom.add.acquire.sys`. An assembler that accepts and lowers a
-  token is the ground truth for what that token is and means.
+  token is the ground truth for what that token is and means — but not for the
+  floors it needs: `ptxas` 12.9 accepts `fence.release.sys` at `.version 6.0` /
+  `.target sm_70`, enforcing neither, so for ISA-version and SM-target floors
+  the spec is authoritative and the assembler is not.
 * **Fence availability** (`fence.{acq_rel,sc}` PTX ISA 6.0/SM_70;
   `fence.{acquire,release}` 8.6/SM_90) is already grounded
   in [`cuda-emitter.md`](cuda-emitter.md) against the cccl headers

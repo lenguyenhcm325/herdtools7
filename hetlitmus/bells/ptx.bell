@@ -52,4 +52,4 @@ instructions F[{'acquire,'release,'acq_rel,'sc}, scopes]
    or cat that uses it fails to load with "unbound var: tag2set"). The Bell
    only needs to declare the annotation vocabulary (the enums + `instructions`
    lines above); herd then exposes one event set per tag, which the .cat
-   retrieves with `tag2events('<tag>)`. See hetlitmus/cats/nvidia-ptx.cat. *)
+   retrieves with `tag2events('<tag>)`. *)

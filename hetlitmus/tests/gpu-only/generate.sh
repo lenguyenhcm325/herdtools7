@@ -109,7 +109,7 @@ done
 
 # ---------------------------------------------------------------------------
 # @all manifest (herd7/litmus7 list-file: one .litmus per line, relative to
-# this dir; lib/misc.ml is_list).  Drives the end-state herd7 sweep.
+# this dir; lib/misc.ml is_list).
 # ---------------------------------------------------------------------------
 ls *.litmus | LC_ALL=C sort > @all
 echo "Done. $(wc -l < @all) tests in $(pwd) (grid: $grid_count generated, $skip_count degenerate skipped); manifest @all written."

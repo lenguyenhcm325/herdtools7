@@ -348,9 +348,9 @@ the heaviest tool they need. The two Layer-1 tests (`basics`, `ptx-negatives`) d
 need `%{bin:litmus7}` **and the whole `tests/het` corpus**, since naming each test here
 would break silently the moment one of them touched a different row; `gpu-target`
 is separate for the reason the file's own comment gives. No stanza names `herd7`:
-cram covers emission, and the `.cat` lane is driven by hand. The `gpu-target`
-comment records a trap (`litmus/libdir` cannot be declared as a dep) — read it before
-adding a stanza.
+cram covers emission, and HetLitmus ships no `.cat` for herd7 to solve under. The
+`gpu-target` comment records a trap (`litmus/libdir` cannot be declared as a dep) — read
+it before adding a stanza.
 
 ---
 

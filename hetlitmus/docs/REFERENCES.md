@@ -83,16 +83,23 @@ Daniel Lustig, Sameer Sahasrabuddhe, Olivier Giroux. *A Formal Analysis of the
 NVIDIA PTX Memory Consistency Model.* ASPLOS 2019, pp. 257-270.
 DOI 10.1145/3297858.3304043.
 
-Claim(s) this project takes from it:
-* The first formal axiomatic model of the official PTX memory consistency
-  model, adapted from the public PTX documentation.
-* `hetlitmus/cats/nvidia-ptx.cat` transcribes that model into herd7's cat
-  language over `hetlitmus/bells/ptx.bell`.
-
-Deviation(s):
-* The transcription's fidelity record, including where it departs from the
-  paper and where it extends it from the PTX ISA manual, is
-  `hetlitmus/docs/nvidia-ptx-cat.md`, which is the authority on that question.
+Withdrawn claim(s):
+* That the paper gives the first formal axiomatic model of the official PTX
+  memory consistency model, adapted from the public PTX documentation, and that
+  `hetlitmus/cats/nvidia-ptx.cat` transcribes that model into herd7's cat
+  language over `hetlitmus/bells/ptx.bell`. Withdrawn because the transcription
+  is deleted: it decided no test, no run path consulted it, and nothing
+  executed, parsed or declared it as a dependency, so no site in this tree
+  rests on the paper any more. The paper's model is untouched by that; this
+  project simply transcribes nothing from it.
+* The deviation that travelled with the transcription -- that its fidelity
+  record, including where it departs from the paper and where it extends it
+  from the PTX ISA manual, is `hetlitmus/docs/nvidia-ptx-cat.md`, the authority
+  on that question -- is withdrawn with its subject: that record is deleted
+  too, so there is no departure and no extension left to disclose. The two
+  keys it defined locally for the extension, `[PTXISA]` and `[PTXISA60]`, were
+  never registry keys and end with it. `hetlitmus/bells/ptx.bell` survives, but
+  on the sources named in its own header, never on this one.
 
 ## [Goens23]
 

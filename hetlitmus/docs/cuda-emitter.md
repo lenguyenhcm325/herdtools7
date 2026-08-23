@@ -61,8 +61,9 @@ with `ref.store(v, order)` / `ref.load(order)`. Memory locations are kernel
 | scope `sys`     | `cuda::thread_scope_system` |
 
 **No cluster scope.** PTX `.cluster` (`sm_90`) is NVIDIA-only — HIP source has no
-`__HIP_MEMORY_SCOPE_CLUSTER` — and the transcribed PTX model's scope tags are
-`.cta`/`.gpu`/`.sys` ([`nvidia-ptx-cat.md`](nvidia-ptx-cat.md)).
+`__HIP_MEMORY_SCOPE_CLUSTER` — and the annotation vocabulary the corpus is
+generated over declares only `.cta`/`.gpu`/`.sys`
+([`../bells/ptx.bell`](../bells/ptx.bell), `enum scopes`).
 
 CTA layout: a *block* = a maximal subtree rooted at a `cta` node in the scope
 tree; CTAs numbered in DFS order, procs guarded by
