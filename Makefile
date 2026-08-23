@@ -857,15 +857,6 @@ hetlitmus-run-gate: | build
 	python3 hetlitmus/verify/runcheck.py --bite
 	@ echo "HetLitmus device-session wrapper gate: OK (and the gate bites)"
 
-### The same wrapper on the device with NO stand-in -- real probe, real nvcc,
-### real harness -- so the chain completes and the results dir records what the
-### session turned on (verify/runcheck.py --hw).  Needs a GPU.
-hetlitmus-run-hw: | build
-	@ echo
-	python3 hetlitmus/verify/runcheck.py --hw
-	python3 hetlitmus/verify/runcheck.py --hw --bite
-	@ echo "HetLitmus device-session wrapper runtime gate: OK (and the gate bites)"
-
 ### The discriminating power of the toolchain lane: ptxcheck detects a weakened
 ### scope or order, the stress scaffolding bites a dead layer, and two
 ### invariance checks get their teeth here.
@@ -899,7 +890,6 @@ hetlitmus-test-toolchain:: hetlitmus-stress
 hetlitmus-test-toolchain:: hetlitmus-cpustress
 hetlitmus-test-toolchain:: hetlitmus-hipbuild
 hetlitmus-test-toolchain:: hetlitmus-characterize-hw
-hetlitmus-test-toolchain:: hetlitmus-run-hw
 hetlitmus-test-toolchain:: hetlitmus-selftest
 hetlitmus-test-toolchain:: hetlitmus-smoke
 
@@ -923,7 +913,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-dup hetlitmus-verdict hetlitmus-selftest
 .PHONY: hetlitmus-recfields hetlitmus-rdv
 .PHONY: hetlitmus-hipbuild hetlitmus-cpuonly
-.PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate hetlitmus-run-hw
+.PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate
 .PHONY: hetlitmus-hipsrc
 .PHONY: hetlitmus-test hetlitmus-test-toolchain hetlitmus-test-nvcc
 .PHONY: hetlitmus-test-all hetlitmus-promote

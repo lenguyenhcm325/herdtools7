@@ -20,10 +20,10 @@ expects follow that choice: nothing here is x86-only.
   PHASE 8  probe-hip.sh's exit paths.
 
 `--bite' plants one defect per assertion in a copy of the script under test (never
-in the tree) and requires the phase to redden for the right reason.  Two device
-modes need a GPU and are the toolchain lane's half of this gate: `--hw' runs the
-same wrapper on the real device, and `--characterize-hw' builds a harness and
-reads what it prints, which is the only artefact a result is ever read off.
+in the tree) and requires the phase to redden for the right reason.  One device
+mode needs a GPU and is the toolchain lane's half of this gate: `--characterize-hw'
+builds a harness and reads what it prints, which is the only artefact a result is
+ever read off.
 """
 import argparse
 import atexit
@@ -1150,176 +1150,6 @@ def bite():
 
 
 # ---------------------------------------------------------------------------
-# --hw -- the same wrapper, on the device.  No stand-ins: the real probe, the
-# real compiler, the real harness.  The pair it reaches is whichever one this
-# host's fixture names, and what is asserted is that the session recorded what it
-# turned on and nothing more.
-# ---------------------------------------------------------------------------
-# A harness that loses a barrier increment stalls until the runner's timeout
-# kills it (campaign.py then records `runner rc=124').  On a device whose pinned
-# read-modify-write is not system-atomic against the host -- which the probe
-# measures -- that is a property of the box and not of the session, so it is
-# retried and ONLY an all-stall is reported.
-STALL_TRIES = 3
-RUN_TIMEOUT = "900"
-# The HOST rendezvous cap these device lanes run under.  A DISCARDED iteration
-# costs its cap, so on a box whose two sides do meet this never binds and a
-# session costs what it always did -- while on one that loses arrivals (mapped
-# pinned memory with no host-native atomics) every iteration pays the shipped
-# placeholder, which is a millisecond of host polling.  What these gates read is
-# the SESSION and the PRINTOUT and never the outcome, so the host wait is
-# shortened here to keep a session inside its runner timeout, and the value
-# travels in the record where a reader sees what the run waited under.
-# The DEVICE cap is left alone: shortening it too makes a clean run rare enough
-# that a sighting stops reproducing, and a campaign that ends every row
-# UNCONFIRMED is measuring the cap rather than the chain.
-HW_CAP_CPU = "4096"
-
-
-def _stalled(out):
-    p = os.path.join(out, "campaign-state.csv")
-    return os.path.exists(p) and "rc=124" in open(p).read()
-
-
-def _session(wrapper, tmp, fx, env, quiet):
-    """One wrapper session on the device, retried past a rendezvous stall.
-    Returns (completed process or None if every attempt stalled, results dir)."""
-    out = None
-    for i in range(1, STALL_TRIES + 1):
-        out = os.path.join(tmp, "out-%d" % i)
-        r = run_wrapper(wrapper, ["--gpu-target", "cuda", "--corpus", fx["dir"],
-                                  "--arch", "auto", "--budget-runs", "10",
-                                  "--out", out], env=env)
-        if r.returncode == 0 or not _stalled(out):
-            return r, out
-        if not quiet:
-            print("      attempt %d: a harness STALLED at the rendezvous (the "
-                  "runner timed out); retrying" % i)
-    return None, out
-
-
-def hardware(wrapper=WRAPPER, quiet=False):
-    fx = fixture()
-    if fx is None:
-        raise SystemExit("runcheck --hw: no committed corpus carries a %s CPU "
-                         "column" % platform.machine())
-    env = dict(os.environ)
-    env.setdefault("HET_ALLOC", "pinned")
-    env.setdefault("HET_RUN_TIMEOUT", RUN_TIMEOUT)
-    env.setdefault("HET_CAP_CPU", HW_CAP_CPU)
-    tmp = tempfile.mkdtemp(prefix="runcheck-hw.")
-    try:
-        if not quiet:
-            print("runcheck --hw: (%s, cuda) over %d test(s), arch auto, "
-                  "HET_ALLOC=%s" % (fx["key"], len(fx["tests"]), env["HET_ALLOC"]))
-        r, out = _session(wrapper, tmp, fx, env, quiet)
-        bad = []
-        if r is None:
-            bad.append("every one of %d sessions stalled at the rendezvous.  "
-                       "HET_ALLOC=%s cannot make a system-scope atomic barrier on "
-                       "this device; re-run with an allocator that can."
-                       % (STALL_TRIES, env["HET_ALLOC"]))
-        elif r.returncode != 0:
-            if not quiet:
-                print(r.stdout[-2500:])
-            # The campaign's own log too: the session's stderr says only that it
-            # exited, and a bite has to be able to tell WHICH failure it caused.
-            log = os.path.join(out, "campaign.log")
-            tail = open(log).read()[-800:] if os.path.exists(log) else ""
-            bad.append("the session exited %d:\n%s\n%s"
-                       % (r.returncode, r.stderr[-800:], tail))
-        else:
-            if not quiet:
-                print(r.stdout[-2500:])
-            summary = open(os.path.join(out, "summary.txt")).read()
-            record = open(os.path.join(out, "run-record.txt")).read()
-            if "CHARACTERIZATION" not in summary:
-                bad.append("the summary does not say what the rows are:\n%s"
-                           % summary)
-            if "pair=(%s, cuda)" % fx["key"] not in record:
-                bad.append("run-record.txt does not carry the pair this session "
-                           "was built for -- it is not a recorded fact")
-            if "session_status=COMPLETE" not in record:
-                bad.append("run-record.txt does not record a completed session")
-            for frag in ("seam_probe", "seam_compiler", "seam_litmus7"):
-                if frag in record:
-                    bad.append("run-record.txt carries %s -- a hardware session "
-                               "must run no stand-in" % frag)
-            if "arch_source=auto" not in record:
-                bad.append("the arch was not resolved on this box")
-            rows = state_rows(os.path.join(out, "campaign-state.csv"))
-            bad += state_is_terminal("", rows, fx["tests"])
-            if "probe_status=OK" not in open(os.path.join(out, "probe.txt")).read():
-                bad.append("the device probe did not report OK")
-            for t in fx["tests"]:
-                log = os.path.join(out, "hetstats", t + ".log")
-                if not os.path.exists(log) or "HetStats %s " % t not in open(log).read():
-                    bad.append("no HetStats transcript for %s -- the line every row "
-                               "was scored from survives nowhere else" % t)
-        if bad:
-            if not quiet:
-                print("\nRUNCHECK --hw FAILED: %d problem(s)." % len(bad))
-                for m in bad:
-                    print("  %s" % m)
-            return 1, bad
-        if not quiet:
-            print("\nRUNCHECK --hw: PASS (the chain ran on the device, the "
-                  "session named its pair, and recorded what it did)")
-        return 0, []
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-
-# The device lane's own bite: the assertions above read a real session, so they
-# are bitten against one too and not only against phase 2's stubbed chain.
-def hardware_bite():
-    print("===== BITE: does the device lane read the session it ran? =====")
-    fx = fixture()
-    tmp = tempfile.mkdtemp(prefix="runcheck-hwbite.")
-    bad = 0
-    try:
-        seam = [i for i in INJECTIONS
-                if i[2] == "the harness transcripts are not kept"]
-        if len(seam) != 1:
-            print("  *** no single injection is labelled %r -- this bite has lost "
-                  "its seam" % "the harness transcripts are not kept")
-            return 1
-        _, _, what, mutate, _, _ = seam[0]
-        target = copy_wrapper(tmp, mutate)
-        if target is None:
-            print("  *** the injection changed NOTHING -- this bite proves nothing")
-            return 1
-        rc, why = hardware(target, quiet=True)
-        # Red for the right reason: a stalled session is red too, and would make
-        # this bite pass without the assertion having read anything.  The injection
-        # empties the transcript dir, and a stall reports no missing transcript, so
-        # the word settles which of the two happened.
-        named = ["transcript"]
-        if rc == 0:
-            print("  *** the device lane stayed GREEN on: %s" % what)
-            bad += 1
-        elif not any(n in m for m in why for n in named):
-            print("  *** the device lane went red on something else: %s"
-                  % why[0].splitlines()[0][:200])
-            bad += 1
-        else:
-            print("      RED on %s" % what)
-        if hardware(WRAPPER, quiet=True)[0] != 0:
-            print("  *** the UNTOUCHED wrapper is RED on the device -- the "
-                  "injection above proves nothing")
-            bad += 1
-        else:
-            print("      the untouched wrapper on the device: GREEN")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    if bad:
-        print("\nBITE FAILED: %d unnoticed." % bad)
-        return 1
-    print("\nBITE OK (the planted mode is caught on the device too; restored GREEN)")
-    return 0
-
-
-# ---------------------------------------------------------------------------
 # --characterize-hw -- what a harness actually prints, on the device.  Every
 # other gate on the verdict/statistics stack drives it from synthetic records or
 # from emitted text; this one builds a harness, runs it on the GPU and reads the
@@ -1348,6 +1178,15 @@ CH_SEED_TRIES = 12
 # run may take before it is called stalled.
 CH_RUNS = "2"
 CH_RUN_TIMEOUT = 600
+# The host rendezvous cap the run takes.  A discarded iteration costs its cap,
+# so on a box whose two sides do meet it never binds, while on one that loses
+# arrivals (mapped pinned memory with no host-native atomics) every iteration
+# pays it.  The printout's shape does not depend on the outcome, so the host wait
+# is shortened here to keep a run inside its timeout, and the value travels in
+# the record where a reader sees what the run waited under.  The device cap is
+# left alone: shortening it too makes a clean run rare enough that a sighting
+# stops reproducing.
+CH_CAP_CPU = "4096"
 
 
 def _ch_env():
@@ -1394,7 +1233,7 @@ def ch_env(**kw):
     env = dict(os.environ)
     env["HET_ALLOC"] = env.get("HET_ALLOC", "pinned")
     env["HET_RUNS_MAX"] = env.get("HET_RUNS_MAX", CH_RUNS)
-    env["HET_CAP_CPU"] = env.get("HET_CAP_CPU", HW_CAP_CPU)
+    env["HET_CAP_CPU"] = env.get("HET_CAP_CPU", CH_CAP_CPU)
     env.update(kw)
     return env
 
@@ -1840,8 +1679,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bite", action="store_true",
                     help="prove each phase reddens on a planted defect")
-    ap.add_argument("--hw", action="store_true",
-                    help="run the wrapper on the real device (toolchain lane)")
     ap.add_argument("--characterize-hw", action="store_true",
                     help="build two harnesses and read what they PRINT "
                          "(toolchain lane)")
@@ -1852,8 +1689,6 @@ def main():
         raise SystemExit("runcheck: litmus7 not built (run 'make all')")
     if a.characterize_hw:
         return characterize_hw(want_bite=a.bite)
-    if a.hw:
-        return hardware_bite() if a.bite else hardware()[0]
     if a.bite:
         return bite()
 

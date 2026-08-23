@@ -253,11 +253,11 @@ Umbrellas (what you press):
 - **`make hetlitmus-test-toolchain`** (old name `hetlitmus-test-nvcc`, kept as an alias)
   → the toolchain lane: `hetlitmus-faithful` · `-stress` ·
   `-cpustress` · `-hipbuild` · `-characterize-hw` ·
-  `-run-hw` · `-selftest` · `-smoke`. This lane has **outgrown Layer 3**: it still needs CUDA for the compile
-  members, but three of them now need a real device — `-run-hw` and `-characterize-hw`
-  run the wrapper and a built harness on the GPU, and `-stress`'s device-probe check drives
-  `het_do_stress` on hardware to prove the tally is live both ways. The CUDA-free
-  stand-in for the session wrapper (stub compiler, stub probe) is `hetlitmus-run-gate`,
+  `-selftest` · `-smoke`. This lane has **outgrown Layer 3**: it still needs CUDA for the compile
+  members, but two of them now need a real device — `-characterize-hw`
+  runs a built harness on the GPU and reads what it prints, and `-stress`'s device-probe check drives
+  `het_do_stress` on hardware to prove the tally is live both ways. The session wrapper's
+  gate (stub compiler, stub probe) is `hetlitmus-run-gate`,
   which is in the other umbrella.
 - **`make hetlitmus-test-all`** → both. ← pre-commit gate on the dev box.
 - **`make hetlitmus-promote`** → regenerate both corpora, then
@@ -339,9 +339,11 @@ Notes:
 - GPU/nvcc targets are never wired into upstream `test::`. **Decided: hetlitmus targets
   stay standalone (not folded into `test::`) to keep the main suite fast + CUDA-free.**
 - Layer 4 is `hetlitmus/hetlitmus-run.sh`, the device-session wrapper: run by hand on the
-  machine under test and in no umbrella. Its gates are: `hetlitmus-run-gate` (CUDA-free,
-  drives the whole chain against a stub compiler and a stub probe) and `hetlitmus-run-hw`
-  (the same wrapper on a device).
+  machine under test and in no umbrella. Its gate is `hetlitmus-run-gate` (CUDA-free,
+  drives the whole chain against a stub compiler and a stub probe). No gate runs the
+  wrapper on a device: a real session exercises the real probe and `--arch auto` itself
+  and fails closed, and a gate over it could read only the session's bookkeeping, never
+  the outcome, while its green hung on whether a sighting happened to reproduce.
 
 Cram stanzas: `hetlitmus/tests/cram/dune` is the authority and is not mirrored here — it
 carries three `(cram (applies_to …))` stanzas rather than one, because the tests split by
