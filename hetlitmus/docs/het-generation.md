@@ -173,7 +173,7 @@ single-arch break.
 $ hetgen7 ... -name MP-het -cpu "PodWW Rfe PodRR Fre" -gpu "PodWW…ReleaseSys …" > MP-het.litmus
 $ litmus7 -gpu-target cuda -o OUT hetlitmus/tests/het/MP-het.litmus
 HetLitmus: emitting CPU+GPU harness for MP-het (2 procs, CPU=AArch64)
-  P0 device=cpu -> CPU pthread (AArch64 asm from hetCpuBodyA64)
+  P0 device=cpu -> CPU pthread (litmus7 AArch64 asm)
   P1 device=gpu -> GPU kernel (LISA/PTX via CudaLang/HipLang)
   pair: (AArch64, cuda)
 HetLitmus: emitted harness directory OUT/MP-het (MP-het.cu)
@@ -208,5 +208,5 @@ without error.
   (MI300A) would add one builder wiring here and one dispatch arm in
   `litmus/top_litmus.ml`.
 - Generation produces the **test**; cross-device harness *emission* (asymmetric
-  launch, coherent allocation, rendezvous barrier, readback) is
+  launch, coherent allocation, per-iteration rendezvous, readback) is
   `het-emission.md`'s job, and *execution* is hardware-only.

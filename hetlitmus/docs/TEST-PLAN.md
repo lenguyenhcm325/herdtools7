@@ -186,8 +186,9 @@ our generation is byte-stable so we don't need it.
 
 ### Layer 4 — Hardware (GH200; later)
 - ✓ **the three-outcome rule**: `OBSERVED` / `NOT-OBSERVED` / `COLD-INVALID`, with the
-  liveness disqualifiers that discard a run whose stress, window-opener or decode channel
-  was dead instead of reporting its empty histogram (`harness-reporting.md`).
+  liveness disqualifiers that discard a run whose stress was dead, or whose two sides
+  mostly never met at the rendezvous, instead of reporting its empty histogram
+  (`harness-reporting.md`).
 - ✓ **run wiring**: `hetlitmus/hetlitmus-run.sh` (the device session) + `campaign.py`
   (cross-invocation pooling and the stop rule), gated CUDA-free by `hetlitmus-run-gate`.
 - ✓ **the aggregate**: the `(instance,run)` replication unit, the denominator `R`, the
@@ -215,13 +216,13 @@ mirrors them.
 |---|---|---|
 | 1 | het one-sided (`MP-cg-cta-acquire`) | plain CPU STR/LDR + barrier + `nvcc -c` |
 | 2 | `*-acqrel-2s` (`2+2W-cg-sys-acqrel-2s`) | two-sided; CPU STLR (store-only shape: **no** load) |
-| 3 | `*-acqrel-2s`, gc cut (`MP-gc-sys-acqrel-2s`) | the only rep emitting a CPU load-acquire (LDAPR, RCpc, `.arch_extension rcpc`) |
+| 3 | `*-acqrel-2s`, gc cut (`MP-gc-sys-acqrel-2s`) | the only rep emitting a CPU load-acquire (LDAPR, RCpc, needs `-march=armv8.3-a`) |
 | 4 | `*-fence-2s` (`2+2W-cg-sys-fence-2s`) | CPU `DMB.SY` |
-| 5 | 4-proc het (`IRIW-cgcc-cta-relaxed`) | largest barrier / proc count |
+| 5 | 4-proc het (`IRIW-cgcc-cta-relaxed`) | largest rendezvous / proc count |
 | 6 | 3-proc het (`WRC-ccg-cta-relaxed`) | 3-proc scaffolding — buys down the proc-scaling assumption |
 | 7 | **HIP** render of `MP-cg-sys-relaxed-x86_64` (`comp.sh hip`) | the AMD/MI300A lane — the only rep here whose render is a `.hip`. `hipbuildcheck.py` compiles and links one too; no gate compiles the corpus, and what `hipcc` makes of the emitted constants is unverified (`amd-faithfulness.md`). Missing `hipcc` ⇒ **SKIP, loudly**; never a pass |
 | 8 | order pair (`MP-cg-sys-sy.acq-2s`) | the only rep emitting inline `fence.acquire.sys`; first rep whose name contains a `.` |
-| 9 | order pair (`S-gc-sys-ra.rel-2s`) | the only rep emitting inline `fence.release.sys`, paired with CPU STLR/LDAPR, and an observer lane |
+| 9 | order pair (`S-gc-sys-ra.rel-2s`) | the only rep emitting inline `fence.release.sys`, paired with CPU STLR/LDAPR, and an outcome column read out of a location |
 | 10 | order pair (`MP-cg-sys-st.sc-2s`) | the CPU `dmb st` form |
 | 11 | order pair (`MP-gc-sys-ld.sc-2s`) | the CPU `dmb ld` form on the `gc` cut (the CPU proc reads) |
 
@@ -247,11 +248,11 @@ device this box may not have, three of its members needing a real GPU (see below
 
 Umbrellas (what you press):
 - **`make hetlitmus-test`** → the CUDA-free lane: `hetlitmus-cram` · `-corpus` ·
-  `-dup` · `-hipsrc` · `-verdict` · `-recfields` · `-stats` · `-hist` ·
-  `-x86body` · `-x86fixture` · `-cpuonly` · `-run-gate`.
+  `-dup` · `-hipsrc` · `-verdict` · `-recfields` · `-rdv` · `-stats` ·
+  `-x86fixture` · `-cpuonly` · `-run-gate`.
 - **`make hetlitmus-test-toolchain`** (old name `hetlitmus-test-nvcc`, kept as an alias)
   → the toolchain lane: `hetlitmus-faithful` · `-stress` ·
-  `-cpustress` · `-obs` · `-hipbuild` · `-characterize-hw` ·
+  `-cpustress` · `-hipbuild` · `-characterize-hw` ·
   `-run-hw` · `-selftest` · `-smoke`. This lane has **outgrown Layer 3**: it still needs CUDA for the compile
   members, but three of them now need a real device — `-run-hw` and `-characterize-hw`
   run the wrapper and a built harness on the GPU, and `-stress`'s device-probe check drives
@@ -303,6 +304,18 @@ once per GPU generation, so such a gate is only as generic as its profile data.
 `hipsrccheck.py` (`hetlitmus-hipsrc`, base lane) is the sole AMD faithfulness gate now,
 and what `hipcc` makes of the emitted constants is stated as unverified rather than
 checked (`amd-faithfulness.md`). Nothing polices the absence.
+
+**Three more went with the loop.** `hetlitmus-obs` gated the observer lane,
+`hetlitmus-hist` the frame-scan histogram guard and `hetlitmus-x86body` the
+bespoke x86 CPU body; all three subjects were deleted when the harness moved to
+per-iteration slots, so their scripts and targets went with them rather than
+being kept to police an absence (`x86bodycheck`'s re-seated `magic-twice` bite
+goes with its script; the property it bit — `rec_magic` stamped exactly once —
+is still asserted per harness by `emit-all.sh` and `verdictcheck` phase 3).
+`hetlitmus-rdv` (`verify/rdvcheck.py`) is the
+one target the move added: it reads every emitted render and the `het_rdv.h`
+each stages, and asserts that every iteration opens at the rendezvous, ahead of
+every tested access, relaxed, system-scoped and fence-free.
 
 **A gate that is not in the build is a script, not a gate — `hetlitmus-stats` is the
 worked example.** `statscheck.py` once sat in the tree with **no Makefile target invoking

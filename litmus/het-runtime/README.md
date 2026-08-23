@@ -89,6 +89,45 @@ the stress layer holds two invariants, and both hold BY CONSTRUCTION:
        it).  A cache HINT changes residency, not program order, so preloading
        the test variables before the body is `-2s`-safe.
 
+## het_rdv.h — the cross-device rendezvous and the slot layout
+
+Emitted verbatim into every het harness directory and `#include`'d by the
+`.cu`/`.hip` render alone — both sides of the rendezvous are compiled there,
+since `cpu_thread_P<n>` lives in that translation unit and `<test>_cpu.c` holds
+only the tested body.  It carries `het_rdv_device` (a `cuda::atomic_ref` pair on
+the CUDA side, `__hip_atomic_fetch_add`/`_load` with
+`__builtin_amdgcn_s_sleep(1)` on the HIP side), `het_rdv_host` (GCC `__atomic_*`
+plus an optional poke into the vendor runtime) and `het_rdv_jitter`.
+
+TWO PROPERTIES THAT LOOK LIKE STYLE AND ARE NOT.
+
+* **The rendezvous orders nothing.**  Arrival and poll are `relaxed`, at
+  **system** scope, with no fence anywhere between or behind them.  An acquire
+  poll self-invalidates the GPU L1 [Bagchi26 sec 5.3] and a system-scope fence
+  flushes it, so a strengthened rendezvous would erase the cache state the
+  tested iteration is about to race on while every model op still matched.
+  Narrowing it is the opposite failure: a device- or agent-scope counter is not
+  the object the host half increments, so the two sides would never meet.
+  `hetlitmus/verify/rdvcheck.py` reads this header for both.
+* **It sits AROUND the tested group, never between two of its accesses** —
+  invariant (ii) above, applied to the rendezvous rather than to the stress.
+  The loop is `rendezvous; release jitter; tested accesses; record`, and the
+  jitter draws `0..HET_RELEASE_JITTER` empty spins so the iterations sweep the
+  relative phase of the two devices instead of repeating one alignment.
+
+A participant that does not reach the target within its cap (`HET_CAP_CPU`,
+`HET_CAP_GPU`, both env-overridable and both placeholders until a target
+measures them — `HET_CAP_CALIBRATED`) gives up on that iteration and records a
+0 in its own arrival flag; the host readout ANDs the flags and discards the
+iteration unread.  That is what a missing partner costs: an iteration, never
+the session.
+
+`HET_SLOT_STRIDE_WORDS` is the other half of the file — the distance between
+one iteration's slot and the next in the shared arrays, 32 `int`s so that a slot
+is a 128 B line and two iterations share neither a word nor a line.
+
+Design: `hetlitmus/docs/00-environment-design.md` sec 3.3 and sec 3.4.
+
 ## het_verdict.h — `het_obs_record` + the outcome rule
 
 This is the EPISTEMIC CORE of the campaign, not bookkeeping.  Every "Never"
@@ -116,7 +155,7 @@ Design: `hetlitmus/docs/harness-reporting.md`.
 The `gd_shared_mem_defs` and `gd_noise_mem_defs` fields of `gpu_dialect`
 (`litmus/hetDialect.ml`).  Each pair is one object class in one dialect:
 
-* `het_alloc_*` — the shared litmus vars + the rendezvous barrier
+* `het_alloc_*` — the shared litmus vars + the rendezvous counter
   (`gd_alloc_shared` / `gd_free_shared`).  The allocator selects the property
   under test, so the banner inside the CUDA file states the modes and the
   fail-closed guards; design: `hetlitmus/docs/00-environment-design.md` sec 3.2.

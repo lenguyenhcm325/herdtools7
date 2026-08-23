@@ -10,6 +10,13 @@ a source cites `[Key + locator]` and states its own claim where it stands.
 Locators follow the citation rule in `COMMENT-RULES.md` (rule 9): papers get a
 fixed `§`/Fig./Table locator, living documents get the section *name*.
 
+Append-only applies to withdrawal too. When the code stops resting on a claim —
+the site it grounded is deleted, or the claim itself turns out not to describe
+what the code does — the claim moves to a `Withdrawn claim(s):` block in its own
+entry, restated with the reason. It is never silently deleted: an archived
+transcript or a thesis draft may still quote it, and a reader who goes looking
+for it deserves to find what happened to it rather than a gap.
+
 ## [Alglave15]
 
 Jade Alglave, Mark Batty, Alastair F. Donaldson, Ganesh Gopalakrishnan, Jeroen
@@ -107,12 +114,23 @@ Deviation(s):
 
 ## [AMDGPUUsage]
 
-LLVM Project. *User Guide for AMDGPU Backend*, section "Memory Scopes", table
-"AMDHSA LLVM Sync Scopes". Living document,
-`https://llvm.org/docs/AMDGPUUsage.html`.
+LLVM Project. *User Guide for AMDGPU Backend*. Living document,
+`https://llvm.org/docs/AMDGPUUsage.html`; each claim below names its own section
+and table, which is the locator a living document gets.
 
 Claim(s) this project takes from it:
-* The sync scopes an AMDGPU fence may name are `agent`, `cluster`, `workgroup`,
+* Section "Memory Model GFX942", table **"AMDHSA Memory Model Code Sequences
+  GFX942"**, gives the sequences the rendezvous is read back against on gfx942:
+  an `atomicrmw monotonic` at `system` scope on global/generic memory is
+  `buffer/global/flat_atomic` with `sc1=1`, and a `load atomic monotonic` at
+  `system` scope is `buffer/global/flat_load` with `sc0=1 sc1=1`. Neither carries
+  a writeback or an invalidate, which is what "the rendezvous orders nothing"
+  rests on for the HIP arm of `litmus/het-runtime/het_rdv.h`: a `wbl2` or a
+  `buffer_inv` beside either would be a strengthened rendezvous. No gate reads
+  the lowering back (`amd-faithfulness.md`, "Scope and limits"), so this is a
+  design ground, cited from `00-environment-design.md` sec 3.3, and not a check.
+* Section "Memory Scopes", table "AMDHSA LLVM Sync Scopes": the sync scopes an
+  AMDGPU fence may name are `agent`, `cluster`, `workgroup`,
   `wavefront`, `singlethread` and their `-one-as` variants. The row whose LLVM
   sync scope is *none* reads "The default: `system`", so system scope is the
   absence of a syncscope name — the empty string — which is what
@@ -184,16 +202,17 @@ Intel Corporation. *Intel 64 and IA-32 Architectures Software Developer's
 Manual, Volume 3A: System Programming Guide, Part 1.* Order Number
 253668-082US, December 2023.
 
-Claim(s) this project takes from it:
-* §9.1.1 "Guaranteed Atomic Operations": on the Pentium and newer processors,
-  "Reading or writing a quadword aligned on a 64-bit boundary" is always
-  carried out atomically. Widening a tested 4-byte access to `movq` therefore
-  keeps it one access.
-* §9.2.2 "Memory Ordering in P6 and More Recent Processor Families" states the
-  ordering principles over reads and writes ("Reads are not reordered with
-  other reads", "Writes are not reordered with older reads", …) with no
-  qualification by access width, so the widened access is ordered exactly as
-  the 4-byte one was.
+Withdrawn claim(s):
+* §9.1.1 "Guaranteed Atomic Operations" ("Reading or writing a quadword aligned
+  on a 64-bit boundary" is always carried out atomically) was cited to license
+  widening a tested 4-byte x86 access to `movq`, and §9.2.2 "Memory Ordering in
+  P6 and More Recent Processor Families" was cited to license reading the widened
+  access as ordered exactly as the 4-byte one. Both are withdrawn because nothing
+  widens anything any more: the CPU body is litmus7's own lowering of the column
+  and the emitted store is `movl $1,%[x]` on an `int` slot. The widening existed
+  only to carry a 64-bit store tag, and the tag went with the slot layout. The
+  quoted sentences remain true of the architecture; this project simply no longer
+  rests on them.
 
 ## [Bagchi26]
 
@@ -204,6 +223,21 @@ Superchip.* ISMM '26, June 16, 2026, Boulder, CO, USA. ACM.
 Claim(s) this project takes from it:
 * Table 1 ("Grace CPU and Hopper GPU Hardware") gives the GH200 cache figures a
   noise buffer is sized against: Grace L3 114 MB and Hopper L2 51 MB.
+* §5.3 is why the cross-device rendezvous polls RELAXED and carries no fence:
+  "results strongly suggest that an acquire operation on the Hopper GPU with a
+  scope of gpu or higher triggers a self-invalidation of the local L1 cache."
+  An acquire poll inside the loop would therefore throw away the L1 state the
+  tested iteration is about to race on, while every ordering annotation under
+  test still matched. Cited at `litmus/het-runtime/het_rdv.h`, and by the gates
+  that refuse a non-relaxed rendezvous op (`verify/rdvcheck.py`,
+  `verify/ptxcheck.py`).
+
+Deviation(s):
+* §5.3's sentence is an inference the authors draw from a visibility experiment
+  and its read latencies ("strongly suggests"), not a vendor statement and not a
+  direct observation of an invalidation. It is also Hopper's: the parallel
+  gfx942 statement comes from [AMDGPUUsage] instead, and nothing here carries one
+  part's mechanism onto the other.
 
 ## [Fusco24]
 
@@ -356,13 +390,25 @@ Improving the Speed and Effectiveness of Memory Consistency Testing.* MICRO
 2020, pp. 329-341. DOI 10.1109/MICRO50266.2020.00037.
 
 Claim(s) this project takes from it:
-* §IV.A defines the *frame* -- "a tuple of TL iterations, one per
-  load-performing thread, where iteration indices need not be the same" -- and
-  states that "examining all frames therefore has time complexity N^TL for a run
-  of N iterations". That is why the frame is not the replication unit here: the
-  (instance,run) cell is.
-* §IV.B's linear-complexity `COUNT_H` is the precedent for scoring a windowed
-  heuristic alongside the exhaustive scan.
+* §VIII states what a persistent loop costs a harness that does not pay for it:
+  "Litmus7's different synchronization modes may allow for some of the same
+  orderings, but that tool does not have the logging to see cross-iteration
+  interleavings." The per-iteration slot layout is this project's answer to that
+  -- iteration n's outcome is addressed rather than reconstructed -- and it is
+  the ground the build strategy states for not driving the harness from
+  `Skel.ml` (`00-environment-design.md` §3.1).
+
+Withdrawn claim(s):
+* §IV.A's *frame* -- "a tuple of TL iterations, one per load-performing thread,
+  where iteration indices need not be the same", with "time complexity N^TL for
+  a run of N iterations" -- was the ground for scoring at the (instance,run)
+  cell rather than per frame. Withdrawn because the harness no longer examines
+  frames at all: it scores at most one outcome per iteration, read out of that
+  iteration's own slot. The (instance,run) cell is still the replication unit,
+  on a different ground (within-run correlation, `harness-reporting.md` §5).
+* §IV.B's linear-complexity `COUNT_H` was the precedent for scoring a windowed
+  heuristic beside an exhaustive scan. Withdrawn with both: there is one
+  detector now, an exact per-iteration comparison, and no window.
 
 ## [Schieffer24]
 
@@ -428,18 +474,39 @@ Claim(s) this project takes from it:
   iterations." Both poles are there -- a reader pinned to the initial value 0
   gives a spurious 0%, one pinned to a value satisfying the predicate gives a
   spurious 100%.
+* p.93 is the tail-sensitivity result the persistent loop is kept for: under the
+  relaunch-per-trial ("single instance") harness "we were not able to observe any
+  weak behaviors with a threadfence between instructions on the GPU thread.
+  However, with the perpetual instance approach, we are able to observe weak
+  memory behavior with a threadfence in the Message Passing and Store Buffer
+  litmus tests." Throughput therefore decides which rows are answerable at all,
+  which is one of the three grounds `00-environment-design.md` §3.1 gives for not
+  driving the harness from litmus7's per-cell `Skel.ml`.
 * §4.1 also reports a per-iteration, both-sided CPU-GPU spin barrier stalling for
   good: "we could get up to 2- 3 iterations ahead in some runs on both devices,
   but the loop was getting stuck after that, and the CPU could not observe the
-  increment made by the GPU."
+  increment made by the GPU." This harness now runs exactly such a barrier every
+  iteration, so the stall is the failure mode its cap and its discard rule exist
+  to survive, and confirming it does not occur is a bring-up probe
+  (`00-environment-design.md` §6).
 
 Deviation(s):
 * The stall was observed on two integrated parts (an AMD Ryzen 7 5700G and an
   Intel i7-12700K with their integrated GPUs) and the thesis reads it as
-  CPU-GPU shared-memory visibility failing, not as a property of per-trial
-  barriers. It says nothing about a barrier masking the order under test; that
-  reason for keeping the cross-device rendezvous outside the perpetual loop is
-  this project's own.
+  CPU-GPU shared-memory visibility failing, not as a property of per-iteration
+  barriers. Nothing in it says a per-iteration rendezvous is anti-correct, and
+  this project does not claim it either: the rendezvous here sits AROUND the
+  tested group and never between two of its accesses, which is a different
+  construct from a barrier placed between them.
+
+Withdrawn claim(s):
+* That the §4.1 stall is a reason to keep the cross-device rendezvous *outside*
+  the loop. Withdrawn: it was this project's own reading, the thesis attributes
+  the stall to broken integrated-GPU coherence on consumer parts rather than to
+  the barrier, and a rendezvous around the tested group adds no ordering to it.
+  The masking argument that travelled with it -- that a barrier between the
+  tested accesses orders them -- still holds, and is why the rendezvous is placed
+  where it is rather than why it is absent.
 
 ## [APM]
 
@@ -489,6 +556,26 @@ Claim(s) this project takes from it:
   mechanism of CPU/GPU coherence: 1 is hardware, 0 is software." The allocator
   banner prints it so a hardware-coherent run and a software-coherent one are not
   read as the same experiment.
+* Section "CUDA C++ Execution model" is why the host half of the rendezvous
+  calls into the runtime while it waits. Its example `Execution.Model.API.2`
+  carries the outcome "eventually, no thread makes progress" for a host thread
+  spinning on a flag a device thread sets, with the rationale that "CUDA only
+  guarantees that `producer` device thread eventually starts if the
+  synchronization API is called. Therefore, the host thread may never be
+  unblocked from the flag spin-loop"; `Execution.Model.API.4` terminates because
+  it "repeatedly calls a CUDA query API in within the flag spin-loop, which
+  guarantees that the device thread eventually makes progress". The CUDA render
+  therefore calls `cudaStreamQuery(0)` once per poll on iteration 0, where the
+  grid may not yet be resident (`het_rdv.h`, `litmus/hetDialect.ml`); past that
+  it does not, because a vendor runtime call inside the tested loop is traffic
+  the window does not need. The HIP render passes no such call.
+
+Deviation(s):
+* The execution-model section above was read in the **Release 13.3** edition
+  cited at the head of this entry. The toolchain this project pins is CUDA 12.x,
+  and whether the 12.x edition states the same guarantee in the same words is a
+  bring-up check rather than something verified here
+  (`00-environment-design.md` §6).
 * Section "Coherency and Concurrency" is why `concurrentManagedAccess` is fatal
   rather than advisory: without it "the GPU has exclusive access to all managed
   data and the CPU is not permitted to access it, while any kernel operation is

@@ -94,7 +94,7 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
 | `LDAPR`       | load-acquire (RCpc)  | stays `LDAPR`, never `LDR` |
 | `DMB SY`      | full system barrier  | stays `DMB SY`, never dropped/narrowed (e.g. `DMB ISH`) |
 | `STR`/`LDR`   | plain store/load     | — |
-| `MOV`         | absorbed by the tagged-body classifier; the value reaches the asm block as an input operand (not a memory op) | — |
+| `MOV`         | neither a memory nor an ordering op; litmus7's lowering emits it to materialise a store value in a register | — |
 
 ## Sources
 
@@ -122,8 +122,11 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
   FEAT_LRCPC; DMB SY = full-system Data Memory Barrier. [Bagchi26 Fig. 1] is cited for
   what it depicts, and for that alone: an unscoped ARM release store (`STLR`) pairing
   with a system-scoped PTX acquire load (`ld.acquire.sys.b32`) — the compound question
-  the het column poses. The RCpc(`LDAPR`) choice is the one the emitter makes
-  (`litmus/hetCpuBodyA64.ml`).
+  the het column poses. The RCpc (`LDAPR`) choice is the **corpus generator's**, not the
+  emitter's: `hetgen7`'s two-sided acquire CPU token is upstream's `ReadAcqPc`, which
+  `gen/AArch64Compile_gen.ml` emits as `LDAPR`, and it is already spelled that way in the
+  committed `.litmus`. litmus7 then reproduces it verbatim, which is why the emitted build
+  files compile `<t>_cpu.c` with `-march=armv8.3-a` (`litmus/hetCpuFront.ml`).
 
 ## What is checked, for every op, both directions
 
@@ -143,26 +146,33 @@ For each test the checker builds the **expected profile** from the `.litmus` and
    adds is the instance and proc a mismatch sits in, which a flat index diff
    cannot name — so it runs only after item 1 has failed, and only reports
    (`ptxcheck.py:604-620`).
-3. **(het) barrier whitelist** — the system-scope rendezvous barrier(s) must
-   stay strong: every barrier op `sys`-scoped (never narrowed), one `fetch_add`
-   (`atom`/`red`) **per GPU proc** at `sys`, and a seq_cst fence present.
+3. **(het) rendezvous whitelist** — the system-scope rendezvous must span both
+   devices and **order nothing**: every op `sys`-scoped (never narrowed), every
+   op **relaxed**, **no fence anywhere in it**, and one arrival (`atom`/`red`)
+   **per GPU proc**. Relaxed and fence-free is a correctness property rather
+   than a preference: an acquire poll self-invalidates the GPU L1
+   [Bagchi26 §5.3] and a `fence.sc.sys` flushes it, so a strengthened rendezvous
+   erases the cache state the tested iteration is about to race on — while every
+   model op still matches.
 4. **(het) CPU column** — the ordered memory/ordering mnemonics of the `.litmus`
    CPU column must reproduce in the emitted `_cpu.c` real-asm block (under
    `#if defined(__aarch64__)`), catching `STLR`→`STR`, `LDAPR`→`LDR`,
-   `DMB SY` drop/narrowing.
+   `DMB SY` drop/narrowing. The block is litmus7's own
+   (`#START _litmus_P<n>` … `#END`), so the reader skips those markers and reads
+   `%w[x0]`/`%[x]`-style operands.
 
-### Het barrier/model separation
+### Het rendezvous/model separation
 
-Each GPU proc is emitted as its own guarded block `{ barrier; model… }` (every
-GPU thread must rendezvous), so the barrier is **not** a single prologue — there
-is one barrier instance per GPU proc. The barrier's `fetch_add` is the unique
-anchor: the corpus model has **no** `atom`/`red`, so every `atom`/`red` in the
-kernel is a barrier fetch_add. The checker segments the op stream at each fetch_add and
-strips the fixed barrier template
-`[leading fence.sc][atom.sys][spin fence.sc][spin ld.sys]` from each segment's
-front; the remainder is that proc's model ops, in proc order. This correctly
-keeps a *model* `fence.sc.sys` (`f[sc,sys]`) distinct from the barrier's seq_cst
-fences.
+Each GPU proc is emitted as its own guarded block whose iteration loop runs
+`{ rendezvous; release jitter; model… }`, so the rendezvous is **not** a single
+prologue — there is one arrival per GPU proc, and it recurs every iteration
+while the text carries it once. The arrival is the unique anchor: the corpus
+model has **no** `atom`/`red`, so every system-scoped `atom`/`red` in the kernel
+is a rendezvous arrival. The checker segments the op stream at each arrival and
+strips the fixed template `[atom.relaxed.sys][ld.relaxed.sys]` from each
+segment's front; the remainder is that proc's model ops, in proc order. Because
+the template carries no fence, a *model* `fence.sc.sys` (`f[sc,sys]`) can only
+be a model op, and a fence appearing inside the template is a finding by name.
 
 ## Completeness guard (never silently skip)
 
@@ -237,10 +247,9 @@ faithful across the whole corpus.
   Runtime reordering by ptxas/hardware is the *behaviour under test* on real
   hardware, not a concern of this check.
 * It is hardware-free: `nvcc --ptx`/`-c` and reading text only; no kernel runs.
-* `MOV` is absorbed by the tagged-body classifier (`HetCpuPlan.Consumed`) — the
-  store value it set is replaced by the runtime tag, which reaches the asm block
-  as an input operand — so it is intentionally excluded from the CPU comparison;
-  only memory/ordering mnemonics are compared.
+* `MOV` is neither a memory nor an ordering op — litmus7's lowering emits it to
+  materialise a store value in a register — so it is intentionally excluded from
+  the CPU comparison; only memory/ordering mnemonics are compared.
 * No `acq_rel`/RMW/`sc`-on-access appears in the 173+471 corpus; the
   mapping covers them so the guard recognizes (never skips) them if added.
 * **ptxcheck is BLIND to the stress layer, by design — and that blind spot has
@@ -276,7 +285,7 @@ the tally. The bookkeeping survives; the stress does not.
 
 Measured on the emitted PTX (`nvcc -std=c++17 -arch=sm_90 --ptx`), plain
 `ld/st.global.u32` — stresscheck's own signature — inside one test lane's
-perpetual loop:
+iteration loop:
 
 | how the pattern reaches `het_do_stress` | pattern | scratchpad ops |
 |---|---|---|
@@ -287,6 +296,18 @@ perpetual loop:
 | compile-time constant | 0 = `st;st` | 228 |
 | runtime kernel argument (the shipped shape) | dispatched at run time | 49 |
 | compile-time constant, `volatile` scratchpad | 3 | 1, plus 8 `ld.volatile.global.u32` |
+
+Those rows are a record of the folding experiment, and reproducing one needs the
+source variant its first column names — the shipped pattern is a runtime kernel
+argument, so a `-D` cannot fold it any more. What the shipped shape costs is
+re-measurable directly, and on `MP-cg-sys-relaxed` at `-arch=sm_90` it is **100**
+plain-u32 scratchpad ops (66 `ld`, 34 `st`), **invariant** under
+`-DHET_PRE_STRESS_PATTERN=0..3` and `-DHET_MEM_STRESS_PATTERN=0..3`, over an
+isolation baseline of exactly the **2** read-buffer stores that render writes
+(`-DHET_PRE_STRESS_PCT=0 -DHET_MEM_STRESS_PCT=0`). Those two stores are plain u32
+because a model location is an `int`, which is why `stresscheck.py` pins the
+baseline and reads every stress count as a difference from it rather than as an
+absolute.
 
 Asking harder does not help: the count stays at 2 with `HET_PRE_STRESS_PCT=100`,
 because raising how *often* a lane calls a hoisted loop adds nothing. `volatile`

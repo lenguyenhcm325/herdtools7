@@ -27,7 +27,7 @@
 #define HET_LINK_NAME "host-device interconnect"  /* no leading article: sites add it */
 #define HET_HOST_HALF "the host half"
 #define HET_DEV_HALF "the device half"
-/* The page-placement lever HET_PLACE drives, by its API name.  A DIALECT fact:
+/* The page-placement lever HET_PLACE drives, by its API name.  A dialect fact:
    the CUDA render calls cudaMemAdvise, the HIP render carries no placement code
    at all (and #errors on a non-zero HET_PLACE), so there the mechanism is
    named and no API is claimed. */
@@ -59,7 +59,7 @@
    is thrown away.  Past this share of N the two sides were mostly not running
    together, so the iterations that did are not a sample of the window the test
    is about.  The caps that produce the discards live in het_rdv.h; this is the
-   budget the DECISION rule spends, so it lives with the rule. */
+   budget the decision rule spends, so it lives with the rule. */
 #ifndef HET_RDV_MAX_DISCARD_PCT
 #define HET_RDV_MAX_DISCARD_PCT 50
 #endif
@@ -74,7 +74,7 @@
  * mis-read.  The field names are grepped by recfields. */
 #define HET_REC_MAGIC 0x48455431u
 
-/* Which stress mechanisms this BUILD asked for.  A mechanism that produced zero
+/* Which stress mechanisms this build asked for.  A mechanism that produced zero
    work is dead only if it was requested: a deliberately disabled one is not a
    bug, and without the distinction a no-stress baseline run would be COLD
    forever.  The emitter fills this from the compile-time knobs, which is what
@@ -98,12 +98,12 @@ typedef struct het_obs_record {
      shared allocation -- so what its sighting is about is not what a het cycle's
      is, and the printout says so. */
   int cpu_only;
-  /* THE BUILD FACT the "structurally absent stress" caveat asserts, carried
+  /* The build fact the "structurally absent stress" caveat asserts, carried
      rather than inferred.  HET_GPU_LANES guards het_do_stress's round loop
      (`_gpu_done < HET_GPU_LANES'); at 0 the loop exits before its body runs
-     once, which is why the emitter withholds that stress REQUEST there.
-     It is NOT a synonym for cpu_only: cpu_only is a property of the CYCLE and
-     this of the BUILD.  Key the caveat on this count, never on cpu_only. */
+     once, which is why the emitter withholds that stress request there.
+     It is NOT a synonym for cpu_only: cpu_only is a property of the cycle and
+     this of the build.  Key the caveat on this count, never on cpu_only. */
   int gpu_lanes;
   uint64_t N;
   /* THE READOUT.  One iteration, one slot, one outcome vector: iters_scored is
@@ -118,9 +118,11 @@ typedef struct het_obs_record {
   uint64_t target_count;
   /* THE RENDEZVOUS.  rdv_valid says the readout ran, and is what separates the
      three counts above from the memset zeros a record carries without it.
-     rdv_cap_cpu / rdv_cap_gpu attribute the discards to the side that timed out,
-     which is the difference between a partner that never arrived and a cap set
-     too short; an iteration both sides missed counts on both.
+     rdv_cap_cpu / rdv_cap_gpu count cap expiries per participant per iteration
+     -- one host-side tally, one device-side -- which separates a partner that
+     never arrived from a cap set too short.  They do NOT partition
+     iters_discarded: an iteration nobody reached raises every participant's
+     tally, so their sum can exceed it.
      cap_cpu / cap_gpu are the waits this run actually used (het_rdv.h
      HET_CAP_CPU / HET_CAP_GPU, overridable per run), and cap_calibrated is 0
      until they have been measured on the target -- a discard count means nothing
@@ -312,8 +314,8 @@ static het_verdict_t het_verdict(const het_obs_record *r,
      dead.  Withholding a request silently would be the "bump the threshold to
      get green" move, so it is CAVEATED here instead.
      KEYED ON THE LANE COUNT THE EMITTER ACTUALLY WROTE, not on cpu_only.
-     cpu_only is a property of the CYCLE (every proc is a CPU proc), the lane
-     count of the BUILD.  A harness that merely FORGOT to request a reachable
+     cpu_only is a property of the cycle (every proc is a CPU proc), the lane
+     count of the build.  A harness that merely FORGOT to request a reachable
      mechanism cannot borrow this excuse: a nonzero lane count does not raise the
      flag, and het_dead() disqualifies it. */
   if (r->gpu_lanes == 0)            cv |= HET_CV_NO_GPU_LANES;
@@ -546,18 +548,22 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     fprintf(_ch, "  DISCARD this null -- the harness was not demonstrably hot:\n");
     if (dq & HET_DQ_RDV_DEAD)
       fprintf(_ch, "    - the RENDEZVOUS: %llu of N=%llu iteration(s) scored, "
-                   "%llu discarded at the cap (cpu %llu, gpu %llu; caps %u/%u, "
-                   "budget %d%%)%s.  A timed-out rendezvous is a DEAD PARTNER or "
+                   "%llu discarded at the cap (caps %u/%u polls, budget "
+                   "%d%%)%s.  The cap expired %llu time(s) on a CPU participant "
+                   "and %llu time(s) on a GPU lane, counted per participant per "
+                   "iteration: an iteration no side reached counts on every one "
+                   "of them, so the two neither partition nor bound the "
+                   "discards.  A timed-out rendezvous is a DEAD PARTNER or "
                    "a cap set too short, never a non-observation: the two sides "
                    "did not run the iteration together, so there was no window "
                    "for the outcome to appear in\n",
               (unsigned long long)_r->iters_scored,
               (unsigned long long)_r->N,
               (unsigned long long)_r->iters_discarded,
-              (unsigned long long)_r->rdv_cap_cpu,
-              (unsigned long long)_r->rdv_cap_gpu,
               _r->cap_cpu, _r->cap_gpu, (int)HET_RDV_MAX_DISCARD_PCT,
-              _r->rdv_valid ? "" : " -- and the readout never ran at all");
+              _r->rdv_valid ? "" : " -- and the readout never ran at all",
+              (unsigned long long)_r->rdv_cap_cpu,
+              (unsigned long long)_r->rdv_cap_gpu);
     if (dq & HET_DQ_STRESS_TRUNCATED)
       fprintf(_ch, "    - stress_truncated=%llu: stress STOPPED while tested "
                    "lanes were still running\n",

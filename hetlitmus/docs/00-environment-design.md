@@ -11,7 +11,7 @@ the sibling docs in this directory carry the mechanisms in full. §9 names the a
 a document and the shipped header disagree.
 
 **Provenance / corrections folded in** (see §7): the "~0.2 % relaxed-MP" figure is a *GPU-only* rate, not
-het ([Bagchi26 §5.1]); the per-frame tally is lifted to the `(instance,run)` unit;
+het ([Bagchi26 §5.1]); the replication unit is the `(instance,run)` cell;
 the cuda-litmus `MEM_STRESS` macro ships a bug; the cuda-litmus reuse is **supervisor-approved for thesis
 (academic) use with citation required** (Anatole, 2026-07-06 — to be captured in writing; the upstream repo
 carries **NO license**, so an explicit grant from Levine is needed before any public artifact, see §7); the
@@ -51,21 +51,21 @@ document specifies the environment that makes a "Never" mean something.
 
 ```
                   ONE cooperative kernel launch  +  few persistent pinned CPU pthreads
-                                   │  (sync-once, system-scope start barrier, in malloc memory)
+                                   │  (launched once, over shared coherent memory)
         ┌──────────────────────────┴───────────────────────────┐
-        │  PERPETUAL free-running loop (no relaunch, no per-trial cross-device barrier) │
+        │  PERSISTENT loop; every iteration opens at ONE cross-device rendezvous │
         │                                                        │
    CPU test thread(s)  ⋈  GPU test lane(s)      +   GPU stress workgroups   +  CPU enemy threads
    (few: ≤ ~72 Grace cores)  over shared         (many: fill the grid,        (disjoint scratchpad)
    malloc() cache-line-coherent locations         co-residency-capped)         + REMOTE-PINNED pages
-        │   stores tagged  value = K·n + μ                                        → C2C noise (interconnect stress)
+        │   iteration n touches SLOT n, on both sides                             → C2C noise (interconnect stress)
         ▼
-   per-load N-buffers  ──►  post-hoc recovery  (COUNT exact / COUNTH synchrony-point)
-        │                        │  writes ──►  het_obs_record  {target, interleavings, liveness, skew, …}
+   per-participant arrival flags  ──►  readout: AND them, then score or discard slot n
+        │                        │  writes ──►  het_obs_record  {scored, discarded, target, caps, liveness, …}
         ▼                        ▼
    outs_t histogram        liveness disqualifiers  ──►  OBSERVED / NOT-OBSERVED /
-   (fed per valid frame)   (het_verdict.h)                COLD-INVALID
-                           corroboration tier + stop rule  ──►  on the OBSERVED side only
+   (one call per scored     (het_verdict.h)                COLD-INVALID
+    iteration)             corroboration tier + stop rule  ──►  on the OBSERVED side only
 ```
 
 **The pipeline ends at the observation.** The harness carries no prediction and prints none;
@@ -73,8 +73,9 @@ comparing a row against a verdicts file the reader supplies is an **offline post
 (`hetlitmus/oracle-compare.sh`, `oracle-harness.md`), outside the loop above.
 
 The design is overwhelmingly **reuse + adapt**, with original code confined to the genuine gap
-(cross-device orchestration + the het-aware reporting layer). Lineage: PerpLE [Melissaris20] (perpetual
-instances), cuda-litmus / S&D / Kirkham / MC-Mutants (stress + parallelism + reproducibility), litmus7 (CPU
+(cross-device orchestration + the het-aware reporting layer). Lineage: PerpLE [Melissaris20] (launch-once
+instances, and the observation that a harness without per-iteration logging cannot attribute an outcome
+to an iteration), cuda-litmus / S&D / Kirkham / MC-Mutants (stress + parallelism + reproducibility), litmus7 (CPU
 harness + histogram + asm bodies), Fusco (C2C placement/noise), Goens/Lustig (the memory models an offline
 comparison would be made against).
 
@@ -86,13 +87,27 @@ comparison would be made against).
 Keep the bespoke `.cu`/`.hip` translation unit as the outer spine; **reuse litmus7's *parts*** (CPU
 inline-asm bodies via `ASMLang.dump_fun`, the `_outs.c` histogram, CPU stress *recipes*, `-size`/`-nruns`
 param plumbing, diy7 generation) **without making `Skel.ml` the driver**. `Skel.ml` is single-arch and
-pthread-shaped, and has no slot for a co-running kernel. Its per-cell CPU↔GPU barrier is refused on two
-grounds of different provenance: it *hangs* — on integrated CPU↔GPU parts a per-iteration, both-sided
-CPU↔GPU spin barrier has been seen to get no further than 2–3 iterations before sticking for good
-[Srivastava24 §4.1] — and it *masks the tested order*, which no source states and which is this project's
-own reasoning, that a barrier between the tested accesses adds ordering the test does not have. No prior
-work routes GPU/het through litmus7's CPU harness (Bagchi *stitches*).
-*[The `ASMLang.dump_fun` item is superseded — see §7; the rest of the reuse list stands.]*
+pthread-shaped, and has no slot for a co-running kernel. What is refused is its **per-cell relaunch**,
+not synchronisation as such — the harness now opens *every* iteration at a cross-device rendezvous
+(§3.3) — and it is refused on three grounds:
+
+- **Relaunch cost.** `Skel.ml` creates and joins the participants per cell. A launch is orders of
+  magnitude longer than the ns-scale race window (§1), so the window is dominated by launch jitter
+  rather than by the tested race.
+- **Tail sensitivity.** The behaviours worth having are the ones a low-throughput loop never reaches:
+  [Srivastava24 p.93] observed *no* weak behaviour with a `threadfence` between the GPU instructions
+  under the relaunch-per-trial ("single instance") harness, and did observe it — in `MP` and `SB` —
+  once the same tests ran as persistent instances. Throughput is not a convenience here; it decides
+  which rows are answerable at all.
+- **Attribution.** litmus7's own harness has no record of *which* iteration an access belonged to:
+  "Litmus7's different synchronization modes may allow for some of the same orderings, but that tool
+  does not have the logging to see cross-iteration interleavings" [Melissaris20 §VIII]. The slot
+  layout (§3.4) is this harness's answer, and it is what makes a per-iteration outcome readable.
+
+The rendezvous sits **around** the tested group and never between two of its accesses — the same
+invariant (ii) the stress layer holds (`litmus/het-runtime/README.md`) — so it decides *when* the two
+sides start an iteration and adds no ordering to what they then execute.
+No prior work routes GPU/het through litmus7's CPU harness (Bagchi *stitches*).
 
 ### 3.2 Memory & allocation — per-target knob
 **The allocator selects the property under test.** Emit a per-target allocator:
@@ -106,28 +121,72 @@ work routes GPU/het through litmus7's CPU harness (Bagchi *stitches*).
 - **Placement is a knob** (§3.6): first-touch / `cudaMemAdvise` remote-pinning is the interconnect-stress
   lever. `__out` may stay in ordinary host memory (off the race path).
 
-### 3.3 Run-loop & alignment — perpetual-instance, buy alignment
-Launch the GPU kernel **once** and the CPU pthreads **once**; loop *inside*; rendezvous with **one**
-system-scope start barrier; then free-run. Guard GPU forward progress with **occupancy-bounded or
-cooperative launch** (`cudaLaunchCooperativeKernel` + `grid.sync()`; HIP equivalents). Do **not** add a
-per-trial cross-device barrier. There is no shared clock and no ordering-free side channel, so alignment is
-**bought**: volume + both-side stress (window-widener) + phase drift, and recovered post-hoc (§3.4). Bagchi
-never precisely aligned. *Optional research spike:* a calibrated `cntvct_el0`↔`%globaltimer`
-cross-device timebase (both 1 GHz/32 ns, different epochs) — novel, do only after the basics work.
+### 3.3 Run-loop & alignment — persistent instances, one rendezvous per iteration
+Launch the GPU kernel **once** and the CPU pthreads **once**; loop *inside*. Every iteration then opens
+at a **cross-device rendezvous** on a shared counter (`litmus/het-runtime/het_rdv.h`): each participant
+adds 1 with a relaxed atomic — **system-scoped** on the device side, where scope is a choice — then polls
+the counter relaxed until it reaches `NPART*(n+1)`, and records for itself whether it got there.
 
-### 3.4 Instance structure & recovery — asymmetric + clock-independent
+**The rendezvous orders nothing, and that is a correctness property.** Arrival and poll are relaxed and
+there is no fence between them or behind them. An acquire poll self-invalidates the GPU L1
+[Bagchi26 §5.3]; a system-scope fence flushes it ([AMDGPUUsage "AMDHSA Memory Model Code Sequences
+GFX942"] spells the gfx942 sequence). Either would erase the cache state the tested iteration is about
+to race on while every ordering annotation under test still matched, so the rendezvous decides *when*
+the sides start and contributes nothing to *what* they then observe. Narrowing the scope is the opposite
+failure: a device- or agent-scope counter is not the object the host half increments.
+
+**A cap, not a hang.** A participant that has not seen the target after `HET_CAP_CPU` (host) or
+`HET_CAP_GPU` (device) polls abandons *that iteration* and records a 0; the readout discards it (§3.4).
+So a partner that never arrives costs iterations, never the session — and what it costs is stated in §6,
+because there is no early bail. Both caps are `#define`s overridable per run, both are **placeholders**
+until a target measures them (`HET_CAP_CALIBRATED = 0`), and every null produced under them carries
+`HET_CV_RDV_UNCALIBRATED`.
+
+**Forward progress on the host side is a documented requirement, not a precaution.** A CUDA host thread
+that spins on a device-set flag without entering the runtime may never be unblocked
+[CudaGuide "CUDA C++ Execution model"], so the CUDA render calls `cudaStreamQuery(0)` once per poll —
+on iteration 0 alone, where the grid may not yet be resident, and on no other, because a vendor runtime
+call inside the tested loop is traffic the window does not need. The HIP render passes no such call. On
+the device side, forward progress is guarded by **occupancy-bounded or cooperative launch**
+(`cudaLaunchCooperativeKernel`; HIP equivalents) — every test block has to be resident, since every GPU
+proc is a participant. Each is one block of one thread (`HET_BLOCK_DIM = 1`), so the rendezvous needs no
+intra-block barrier and no assumption about progress *within* a warp.
+
+**Alignment is still bought, not measured.** There is no shared clock and no ordering-free side channel.
+What the rendezvous buys is a common *start*; the residual skew is swept by a per-participant release
+delay of `0..HET_RELEASE_JITTER` empty spins drawn per iteration, so the run samples relative phases
+instead of repeating one alignment, and by both-side stress (§3.5, §3.6). Bagchi never precisely aligned.
+
+### 3.4 Instance structure & readout — asymmetric instances, one slot per iteration
 - **Asymmetric instances:** a *few* genuinely-het pairs (H ≤ reserved Grace cores, ~1–8; 1 pinned CPU
   pthread ⋈ 1 GPU lane, on cache-line-padded private `malloc` locations) + *many* GPU-only stress
-  instances filling the co-residency-capped grid. **Het volume comes from the perpetual inner loop, not the
-  instance count.** MC-Mutants' co-prime PTE is GPU-only → reuse it for the GPU stress instances, not the
-  het pairs.
-- **Recovery is clock-independent:** tag every store `value = K·n + μ_w` (`v mod K` decodes device/store,
-  `v div K` decodes iteration). Record per-load N-sized `uint64` buffers off the race path. After the run,
-  **COUNT** (exact; O(N) for MP-het) + **COUNTH** synchrony-point heuristic (for SB/IRIW) replace the
-  per-iteration `_cond`/`add_outcome_outs` check. Because the iteration is decoded exactly, recovery
-  **sidesteps the no-shared-clock problem entirely.**
-- **Loop nesting:** `RUNS (=Cfg.runs) × [one launch; one start barrier; inner for n<N]`; the old `100000`
-  becomes `N = Cfg.size` = the free-running window (drivable to millions).
+  instances filling the co-residency-capped grid. **Het volume comes from the persistent inner loop, not
+  the instance count.** MC-Mutants' co-prime PTE is GPU-only → reuse it for the GPU stress instances, not
+  the het pairs.
+- **The pairing is addressed, not recovered.** Every shared location is `SIZE_OF_TEST` slots wide and
+  iteration `n` touches slot `n` on both sides, so there is nothing to decode and nothing to search: the
+  stores carry the values the `.litmus` writes and the loads record what they read. `HET_SLOT_STRIDE_WORDS`
+  is 32 `int`s, one 128 B line per slot, so two iterations share neither a word nor a line. The budget is
+  the price of that: at `N = 100000` a location costs 12.8 MB, at `N = 10^6` 128 MB, and a test pays it per
+  location. The per-run `memset` that clears the slots is also what first-touches those pages.
+- **The readout is one pass over the slots.** For each `n` the host ANDs the participants' arrival flags:
+  an iteration at least one participant never started is **discarded** and never read; the rest are
+  **scored** — outcome vector assembled from the register buffers and the location slots, compared against
+  the test's condition, and handed to litmus7's `add_outcome_outs` at the single call site. So
+  `target_count ≤ iters_scored ≤ N`, and `scored + discarded = N` on a run whose readout ran at all.
+- **Loop nesting:** `RUNS (=Cfg.runs) × [one launch; inner for n<N, each iteration opening at the
+  rendezvous]`; the old `100000` becomes `N = Cfg.size`. Growing `N` costs slot memory linearly, and a
+  run whose partner is missing costs wall clock linearly too (§6), so millions of iterations is a
+  target-side decision rather than a free knob.
+- **A disclosed limit of the condition compiler.** The emitter refuses to emit a test whose condition
+  names an unobservable register, observes a location no proc touches, carries a non-integer value, is
+  not of the form `loc=v`, or compiles to a constant detector — the five refusals are listed with their
+  messages in `het-emission.md` ("Scope / limits"). It does **not** check that some store in the
+  program ever writes the value an atom asks for: that check lived in the store-tag map and went with
+  it. A mis-specified condition therefore compiles to a detector that is permanently false and is
+  reported as a null — caveated `HET_CV_ONE_OUTCOME` when every scored iteration read the same vector,
+  and excluded from corroboration by `het_cell_degenerate`, but not refused. Stated here as a limit, not
+  a guarantee.
 
 ### 3.5 GPU-side stress — reuse cuda-litmus
 Port cuda-litmus `do_stress` + `StressParams` (`functions.cu`, `params/stress_params.txt`) into the emitted
@@ -182,11 +241,13 @@ implements is written down: the three outcomes, the liveness disqualifiers and c
 the corroboration tier and the stop rule, and every sentence a verdict prints. What this section carries
 is the decision and the reasoning that fixed it.
 
-**The frame is not the trial, and that correction is load-bearing.** The recovery scan validates
-`N^{T_L}` *overlapping* frames per `N` iterations [Melissaris20 §IV.A], so raw frame counts are neither
-independent nor Bernoulli and the replication unit is the `(instance,run)` cell instead. That *refines*
-§3.4's per-frame tally rather than replacing it — the `outs_t` histogram is still fed once per validated
-frame — and no reproducibility number is computed from the unit (`harness-reporting.md` §5).
+**The iteration is not the trial, and that is why the unit is the run.** The readout scores at most one
+outcome per iteration (§3.4), so the count is not inflated — but the iterations of one run are not
+independent draws either: they share a seed, a thermal and DVFS state, a page placement, one stress
+configuration and one alignment regime, so a run is a single experimental condition sampled `N` times.
+The replication unit is therefore the `(instance,run)` cell, `Y = 1[target_count ≥ 1]`, and runs are
+re-seeded so that two of them are two draws. No reproducibility number is computed from the unit
+(`harness-reporting.md` §5).
 
 **The scheduler has no parallelism axis, deliberately.** Running `H > 1` het pairs at once is real
 emitter work, and the pairs would share the one interconnect under test, so the gain is not the pair
@@ -212,46 +273,48 @@ Per `(instance, run)` (the statistical unit from §3.7):
 
 ```
 het_obs_record {
-  N                      // free-running window length (= Cfg.size)
-  frames_examined
-  target_count           // exhaustive COUNT + heuristic COUNTH: "did we see the weak behaviour"
-  interleavings_detected // "could we have" — CPU/GPU iterations that provably overlapped
-  distinct_decoded_iters // decoder soundness / coverage
-  skew_min/max/mean/stddev  // alignment drift diagnostic; skew_stddev is the synchrony
-                            // channel's decode guard (a decode that never varied)
+  N                      // iterations per run (= Cfg.size)
+  iters_scored           // iterations both sides started, and the readout read back
+  iters_discarded        // the rest: a rendezvous that hit the cap.  scored + discarded = N
+  target_count           // of the scored ones, how many matched the condition
+  rdv_cap_cpu/rdv_cap_gpu  // cap expiries, counted PER PARTICIPANT per iteration
+  cap_cpu/cap_gpu, cap_calibrated  // the waits this run used, and whether they were ever measured
+  outcomes_vary          // 0 = every scored iteration read back the same outcome vector
+  rdv_valid              // the readout ran; without it the three counts are memset zeros
 }
 ```
 
-This cleanly separates **did we see it** (`target_count`) from **could we have** (`interleavings_detected`
-+ skew). It is the input to the liveness gate and the stop rule (`harness-reporting.md` §3, §5). The
-`outs_t` histogram is retained (fed once per validated frame) so an offline `oracle-compare.sh` pass over
-the log keeps working.
+This separates **did we see it** (`target_count`) from **how much of the run was a joint experiment at
+all** (`iters_scored` against `N`). It is the input to the liveness gate and the stop rule
+(`harness-reporting.md` §3, §5). The `outs_t` histogram is retained (fed once per scored iteration) so an
+offline `oracle-compare.sh` pass over the log keeps working.
+
+`rdv_cap_cpu` and `rdv_cap_gpu` say which side timed out, which separates a partner that never arrived
+from a cap set too short. They are **not** the two halves of `iters_discarded`: a test has one
+participant per proc, each raises its own tally, and an iteration nobody reached raises all of them — so
+their sum can exceed the discard count. The printed sentence says so beside the numbers.
 
 *(The block above is the illustrative core; the **shipped** `het_obs_record` — normative in `het_verdict.h`
-— carries a good deal more: `rec_magic` (an unstamped record is refused before any other field is read), the
-`sync_valid`/`obs_valid` channel flags plus `observer_unique_count` for the store-only channel, the
-`gpu_lanes`/`spin_lanes` build facts the structural-absence caveat asserts, and the per-mechanism
-stress-liveness counters the disqualifiers read (`harness-reporting.md` §3).)*
+— carries a good deal more: `rec_magic` (an unstamped record is refused before any other field is read),
+the `gpu_lanes` build fact the structural-absence caveat asserts, and the per-mechanism stress-liveness
+counters the disqualifiers read (`harness-reporting.md` §3).)*
 
 ---
 
 ## 5. Build order (implementation roadmap)
 
-Every component below is shipped. Dependencies flow top-down: the corpus audit and the
-allocator knob have no prerequisites, and everything from store-tagging onwards needs the
-perpetual-instance loop. One of them *reads* the audit rather than merely following it
-(`litmus/hetCond.ml` computes its shape rule): store-tagging + recovery emits an observer channel
-exactly on the shapes it marks, and a harness's block and lane counts follow from that.
+Every component below is shipped. Dependencies flow top-down: the allocator knob has no
+prerequisites, and everything from the slot layout onwards needs the persistent loop.
 Everything is dev-box compile/CI-testable except the **science + tuning, which need
 GH200/MI300A** (§6).
 
 | component | what it carries |
 |---|---|
-| **Corpus audit** | Which het tests carry **un-convertible `[x]=N`** final-value conditions (they don't fit the recovery scheme). Audited at 281 tests; the rule is per *shape*, so it still holds on the 471-test corpus — 159 tests (2+2W, R, S, CoWR, CoRW2) carry an observer channel. |
-| **Free-running window** | `100000` → `Cfg.size` + a `Cfg.runs` outer loop, surfaced as `SIZE_OF_TEST`/`NUMBER_OF_RUN` + argv. Not a standalone step: the semantics change to a window, so it lands with the perpetual-instance loop. |
+| **Iteration window** | `100000` → `Cfg.size` + a `Cfg.runs` outer loop, surfaced as `SIZE_OF_TEST`/`NUMBER_OF_RUN` + argv. Not a standalone step: the semantics change to a window, so it lands with the persistent loop. |
 | **Allocator knob** | Per target: `malloc`/GH200, fine-grained/MI300A, managed = CI fallback; `cudaMemAdvise` placement hooks. Replaces `gd_malloc_managed`. |
-| **Perpetual-instance loop** | Launch once, loop inside, sync-once start barrier, occupancy-bounded/cooperative launch; no per-iteration relaunch and no `cudaDeviceSynchronize`. The biggest single change. |
-| **Store-tagging + recovery** | **`K·n+μ` store-tagging** (planned to touch `ASMLang` for CPU store operands *[superseded, §7]*) + per-load N-buffers + **COUNT/COUNTH recovery** + the emitted `het_obs_record` tally. Replaces the per-iteration `_cond` check. |
+| **Persistent loop** | Launch once, loop inside, occupancy-bounded/cooperative launch; no per-iteration relaunch and no `cudaDeviceSynchronize`. The biggest single change. |
+| **Cross-device rendezvous** | `het_rdv.h`: relaxed system-scope counter arrival + poll under a cap, per-participant arrival flags, per-participant release jitter, host-side runtime poke on iteration 0. Every iteration opens at it (§3.3). |
+| **Slots + readout** | One slot per iteration per location (`HET_SLOT_STRIDE_WORDS`), stores carrying the `.litmus` values, one O(N) pass that ANDs the flags, discards or scores, and feeds the histogram once (§3.4). Replaces the per-iteration `_cond` check *and* any post-hoc pairing. |
 | **GPU stress** | Port cuda-litmus `do_stress`/`StressParams` (fix the `MEM_STRESS` bug; cite); scratchpad in `cudaMalloc`; launch widened to stress workgroups; **asymmetric instances**. |
 | **CPU + interconnect stress** | CPU recipes at two sites on both ISAs + remote-pinning and noise kernels; the `-2s` invariants enforced by construction. |
 | **Non-observation reporting** | `(instance,run)` replication unit, the three-outcome rule and its liveness disqualifiers, the corroboration tier and the stop rule; the offline `oracle-compare.sh` pass augmented with each test's own block. |
@@ -262,44 +325,95 @@ GH200/MI300A** (§6).
 
 Everything below is unmeasurable on the dev box (wrong substrate, §3.2). **First bring-up measurement:**
 
-1. **The liveness counters' time structure** — `interleavings_detected`, `observer_unique_count` and
-   the spin and stress tallies each say a mechanism was alive over a *whole* run; whether that liveness
-   holds *across* one — through occupancy warm-up, thermal/DVFS drift and alignment drift — is a
-   question none of them answers, and what it decides is whether a long run is one experiment or
-   several. Nothing in the harness prices a null, so no gate rests on the answer. *Measure this first.*
+1. **The liveness counters' time structure** — `iters_scored` and the stress tallies each say a
+   mechanism was alive over a *whole* run; whether that liveness holds *across* one — through occupancy
+   warm-up, thermal/DVFS drift and alignment drift — is a question none of them answers, and what it
+   decides is whether a long run is one experiment or several (§3.7 makes the run the unit on exactly
+   that reasoning). Nothing in the harness prices a null, so no gate rests on the answer.
+   *Measure this first.*
 2. The **het weak-behaviour hit-rate** — genuinely unknown (the 0.2 % was GPU-only, §7). Nothing the
    harness reports rests on it; what it settles is how much effort a row is worth before its null is
    banked, i.e. what `--budget-runs` should be. Grow R, not N.
-3. Whether the **perpetual rendezvous sustains** on GH200 without the Srivastava-style 2–3-iteration stall.
-4. Whether **interconnect stress raises yield** vs per-device (currently an inference from bandwidth).
-5. The **`cntvct_el0`↔`%globaltimer` drift-stability** (the cross-device timebase spike, §3.3).
-6. **All MI300A specifics** — coherent rendezvous, XNACK, `s_memtime`↔`rdtsc`, per-shape observability.
-7. Site-specific attributes: `concurrentManagedAccess`, `pageableMemoryAccess`, access-counter-migration
+3. **CAP calibration**, and it gates the reading of every null. `HET_CAP_CPU = 262144` and
+   `HET_CAP_GPU = 4096` are placeholders on any target: nothing has measured how many polls a *met*
+   rendezvous actually costs there, so `HET_CAP_CALIBRATED` is 0 and `HET_CV_RDV_UNCALIBRATED` caveats
+   every outcome. Measure the distribution of polls-to-target on a run whose two sides do meet, set each
+   cap above its tail, and stamp `HET_CAP_CALIBRATED = 1`. Too short a cap manufactures discards; too
+   long a one buys wall clock (item 5).
+4. **MI300A rendezvous forward progress, and `fetch_add` integrity with it.** What is established there
+   is one half: ROCm's hardware-atomics table gives MI300A `Native` for the 32/64-bit system-scope
+   integer RMWs on **fine-grained** memory, and AMD's own ISCA'24 Fig. 15(a) shows a CPU spin-loop on
+   flags a *running* kernel writes. What is **not** established on either AMD part is that a GPU
+   wavefront spinning on a system-scope load makes progress while a CPU thread arrives — the published
+   evidence runs the other direction. So one probe, two assertions, before any campaign: (i) integrity —
+   concurrent CPU and GPU arrivals must sum to exactly `NPART × K`; (ii) bounded release — the wave must
+   observe the CPU's arrival within a stated wall-clock bound, failing closed if it does not. The failure
+   modes are a hang or a silently device-scoped rendezvous, and both look like a clean non-observation.
+   Coarse-grained memory downgrades a system-scope atomic silently and `hipMalloc` is coarse-grained by
+   default, so the counter is refused there by the allocator's own guard rather than by this probe.
+5. **The wall-clock cost of a dead partner, and whether the harness should bail early.** A discarded
+   iteration still costs the *live* side its whole cap, and nothing stops a run early: once the discards
+   pass `HET_RDV_MAX_DISCARD_PCT` the run is disqualified whatever the rest does, and it still pays a cap
+   for every remaining iteration. So a run against a partner that never arrives costs about `N × cap`
+   polls rather than the seconds a met rendezvous costs, which is why the device-side drivers are bounded
+   against it instead: `hetlitmus/hetlitmus-run.sh` and `verify/runcheck.py`'s `--hw` lane allow 900 s per
+   invocation, `--characterize-hw` 600 s and two runs, and `spotcheck/ladder.sh` 900 s. **Open design
+   question, deliberately not implemented:** an early bail once the discard count has already passed the
+   budget would fix the cost everywhere instead of per driver — at the price of a run whose `N` no longer
+   means what a scored run's does. Decide it on the target, with item 3's numbers in hand.
+6. Whether the **rendezvous sustains** on GH200 without the Srivastava-style 2-3-iteration stall — and if
+   it does not, **which hypothesis the stall belongs to**. The two are separable on the target: co-run a
+   GPU-only cooperative test of the same geometry beside the het one. A stall that appears in both is the
+   launch/occupancy hypothesis (the grid never became co-resident); a stall only the het pair shows is the
+   cross-device visibility hypothesis, which is what [Srivastava24 §4.1] measured on integrated consumer
+   parts.
+7. Whether **interconnect stress raises yield** vs per-device (currently an inference from bandwidth).
+8. **The CUDA execution-model edition the host poke rests on.** The forward-progress requirement behind
+   `cudaStreamQuery(0)` (§3.3) is read off the *Release 13.3* programming guide; the toolchain this
+   project pins is CUDA 12.x. Confirm the same guarantee is stated in the 12.x edition on the box that
+   runs the campaign, or record the difference.
+9. **All MI300A specifics** — XNACK, per-shape observability, and the compute-partitioning mode
+   (SPX/TPX/CPX) the scope words are interpreted under.
+10. Site-specific attributes: `concurrentManagedAccess`, `pageableMemoryAccess`, access-counter-migration
    disable mechanism.
-8. Per-target **stress tuning** (all numeric knob values).
-9. **Which shapes are observable at all** on the part — this decides which nulls are even
+11. Per-target **stress tuning** (all numeric knob values).
+12. **Which shapes are observable at all** on the part — this decides which nulls are even
    interpretable, and shape difficulty does **not** transfer between parts: `SB` carries the lowest
    observed relaxed-behaviour rate on two of [Kirkham20 §4.2 Tab.6]'s three GPUs and the **highest**
    on the third.
-10. The **launch geometry against the device's co-residency cap** — `HET_TEST_BLOCKS` and
+13. The **launch geometry against the device's co-residency cap** — `HET_TEST_BLOCKS` and
    `HET_NOISE_GPU_BLOCKS` against the cap the emitted driver computes at start-up
    (`*OccupancyMaxActiveBlocksPerMultiprocessor` x the SM count), taken on the target *before* a
    campaign. The stress blocks fill only what that cap leaves over, so an over-large test geometry
    squeezes the stress population to zero — which the driver warns about *before* the run rather than
    leaving to the tally afterwards (`faithfulness.md`), but only the target says which geometries do it.
+14. **Post-rendezvous skew on GH200.** The rendezvous fixes a common start, not a common instant: what
+   remains is the spread between the two sides' first tested access, and it is what the release jitter is
+   sized against. `HET_RELEASE_JITTER = 64` is a placeholder like the caps. Measure the spread, then size
+   the jitter to sweep it rather than to a round number.
 
-**`HET_WINDOW` calibration is a precondition for nearly half the corpus.** A `T_L ≥ 2` shape's exhaustive
-`O(N^T_L)` scan is capped at production `N` (`HET_EXHAUSTIVE_MAX = 4096`) → `exhaustive_valid = 0`, so such
-a row's zero is **not a measured zero** — the printout says so, keyed on `HET_CV_NO_EXHAUSTIVE` — and its
-only detector is the uncalibrated `[c−8, c+8]` window (`HET_WINDOW = 8`). That is **215 of the 471 tests**
-(`SB` 29, `WRC3` 47, `IRIW` 37, `ISA2` 36, `RWC` 33, `WRC` 33), re-derivable from the `exists` conditions.
-So measure `skew_*` and calibrate `HET_WINDOW` against `HET_EXHAUSTIVE_MAX` at bring-up, before any
-campaign.
+**Cold slots are a new regime, and this is where it is measured.** Every iteration now touches a line in
+neither cache (§3.4), where the previous loop reused one word. Whether that helps (a fresh line is a
+longer window) or hurts (the miss dominates the race) is unmeasured; the levers are
+`HET_SLOT_STRIDE_WORDS` and the CPU preload, and the discriminator is a run at stride 1 beside a run at
+32.
 
 ---
 
 ## 7. Cross-cutting corrections folded in
 
+- **The free-running loop is replaced by a barriered persistent one** (2026-08-23). Launch-once
+  survives; "sync once, then free-run" does not. Withdrawn with it, each having had no consumer left
+  once the pairing became an address rather than an inference: the `K·n+μ` store tags and their decode,
+  the frame scan with its pins, windows and synchrony points (`HET_WINDOW`, `HET_EXHAUSTIVE_MAX`) and
+  the exhaustive-vs-heuristic split, the observer lane and the observer pthread, the device-scope window
+  opener `het_spin`, the three confidence tiers, and the bespoke CPU body the tag seam forced. What
+  replaced them is §3.3 and §3.4. The refusal this **reverses** is §3.1's: a per-iteration cross-device
+  rendezvous is not anti-correct — a rendezvous *between* the tested accesses orders them and one
+  *around* the tested group does not, and the sources cited against it said something narrower than the
+  sentence they were cited for (`REFERENCES.md`, `[Srivastava24]` and `[Melissaris20]`). No gate polices
+  the absence, and the pre-removal tree is preserved on branch `hetlitmus-perpetual-loop`
+  (`b61d75aca`).
 - **The positive control is withdrawn** (2026-08-21), both layers: the lattice-floor structural twin
   `mu(T)` and the `MP-{cg,gc}-sys-relaxed` canary. A harness runs its test alone. Withdrawn with it,
   each having had no input or no consumer left: the KS stationarity gate and `P_rep`, whose only stream
@@ -313,14 +427,16 @@ campaign.
 - **The "~0.2 %" is GPU-only, not het** — [Bagchi26 §5.1] quotes it back from §4.1, where it is the
   inter-CTA GPU-only result. Bagchi gives no numeric het rate → the het hit-rate is hardware-only. The
   earlier reading of it as a het rate is a mis-attribution, corrected here.
-- **The per-frame tally → `(instance,run)` unit**: raw frame counts are combinatorially inflated and
-  break the statistics; the record is consumed at the instance-run level.
-- **The store-tagging does not touch `ASMLang`** (supersedes §3.1's reuse item and §5's store-tagging
-  row) — litmus7's own lowering bakes a store's value in as an immediate, leaving no runtime seam for
-  the `K·n+μ` tag, so the CPU thread body is written by `litmus/hetCpuPlan.ml` +
-  `litmus/hetCpuBody{A64,X86}.ml` and `ASMLang.dump_fun` is never reached. What the het arm still
-  takes from litmus7's CPU compile pipeline is the address parameters
-  and the final registers (`hetlitmus/docs/het-emission.md`).
+- **The `(instance,run)` cell is the replication unit**, and the reason for it has changed with the
+  loop: it is no longer that a frame scan inflates the count (there is no scan — §3.4 scores at most one
+  outcome per iteration), it is that the iterations of one run share a seed, a thermal state, a placement
+  and one stress configuration, so a run is one condition sampled `N` times (§3.7).
+- **The CPU body is litmus7's own again.** The store-tagging that once forced a bespoke body is gone
+  with the slot layout, so `ASMLang.dump_fun` is reached: the het arm hands litmus7's compiled template
+  to litmus7's own printer, wraps it in `het_run_P<n>`, and does the slot arithmetic in the caller
+  (`hetlitmus/docs/het-emission.md`). §3.1's reuse item therefore stands as written. Two consequences
+  travel with it: the emitted x86 store is the column's own `movl` on an `int` slot rather than a widened
+  `movq`, and LDAPR needs `-march=armv8.3-a`, which the emitted `comp.sh` and `Makefile` carry.
 - **cuda-litmus `MEM_STRESS` bug** — fix on port, don't inherit.
 - **Licence** — cuda-litmus reuse is **supervisor-approved for thesis (academic) use** (Anatole, 2026-07-06
   — a supervision decision, *to be captured in writing*; not itself a copyright grant). The upstream repo
@@ -341,9 +457,11 @@ campaign.
 
 The environment is mostly reuse; the defensible new contributions are:
 1. **A native, open, `herdtools7`-integrated** heterogeneous run pipeline (vs Bagchi's unreleased stitch).
-2. **Non-observation reporting at the right replication unit** — scoring at the `(instance,run)` cell
-   rather than the combinatorially inflated frame count [Melissaris20 §IV.A], with the effort spent and
-   the run's own liveness counters disclosed beside the zero rather than a confidence bound.
+2. **A disclosure discipline for non-observation** — the null names the effort it cost and the liveness
+   the run's own counters measured, says in words that nothing vouches for it, and attaches no rate and
+   no probability; a run whose two sides did not meet is discarded rather than reported as a zero. The
+   claim is the discipline and the replication unit it is stated at (the `(instance,run)` cell), not a
+   confidence bound.
 3. **Explicit interconnect stress** (placement + noise kernels) — a lever no single-die prior work had.
 4. The **scope axis** — the generated corpus crosses scope with ordering strength, a dimension
    MC-Mutants' po/sw mutators do not have.
@@ -358,10 +476,12 @@ GH200/CMCM (Bagchi has that).
 - **External sources:** every `[Key]` above resolves in `hetlitmus/docs/REFERENCES.md`, which holds the
   full citation, the claim this project takes from it, and any deviation from it.
 - **The mechanisms in full:** `harness-reporting.md` (what a printout means — the three-outcome rule,
-  the liveness disqualifiers and caveats, the reporting tiers), `faithfulness.md` (what the static checkers
-  can and cannot see), `het-emission.md` (how a harness is built), `oracle-harness.md` (the offline
-  comparison), `TEST-PLAN.md` (which gate proves what).
-- **What actually ships:** the runtime headers under `litmus/het-runtime/` — `het_verdict.h` above all,
+  the liveness disqualifiers and caveats, the aggregate and the stop rule), `faithfulness.md` (what the
+  static checkers can and cannot see), `het-emission.md` (how a harness is built), `oracle-harness.md`
+  (the offline comparison), `TEST-PLAN.md` (which gate proves what),
+  `litmus/het-runtime/README.md` (what each emitted runtime header is for).
+- **What actually ships:** the runtime headers under `litmus/het-runtime/` — `het_rdv.h` for the
+  rendezvous and the slot layout, and `het_verdict.h` above all,
   which is the normative source for the outcome vocabulary, the liveness disqualifiers and every
   sentence a verdict prints (the allocator, stress and noise layers print their own).
   **Where a design document and `het_verdict.h` disagree, the header is what ships**: a document can

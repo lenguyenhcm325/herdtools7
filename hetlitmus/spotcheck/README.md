@@ -9,8 +9,9 @@ probe reads off the machine.
 ## What this can and cannot establish
 
 It **can** establish that the code works: that a harness dir builds and links,
-that both devices launch and rendezvous, that `HET_ALLOC` selects a shared-memory
-mode and refuses the illegal ones, that every reporting frame is printed and
+that both devices launch and rendezvous at every iteration, that `HET_ALLOC`
+selects a shared-memory mode and refuses the illegal ones, that every reporting
+frame is printed and
 parseable, that the stress knobs actually reach the build, and that `campaign.py`
 pools across invocations, so a row is scored over more `(instance,run)` cells
 than one invocation holds. Every one of those is a property of the code and is
@@ -116,12 +117,12 @@ blind, and there is no AMD GPU here to write it against.
 | `pageableMemoryAccess` | `1` ⇒ `HET_ALLOC=auto` picks `malloc`. |
 | `usesHostPageTables` | **which machine this is**: `1` = hardware coherence (ATS: GH200, Spark), `0` = software (HMM). A box can report `pageableMemoryAccess=1` through HMM and take the same `malloc` branch as GH200 while being a different experiment. |
 | `concurrentManagedAccess` | `0` ⇒ `managed` is FATAL; use `HET_ALLOC=pinned`. |
-| `hostNativeAtomicSupported` | `0` ⇒ `pinned`'s barrier `fetch_add` is not system-atomic; the harness warns, and the run may hang. |
+| `hostNativeAtomicSupported` | `0` ⇒ the `fetch_add` of `pinned`'s rendezvous counter is not system-atomic; the harness warns, increments are lost, and each iteration that loses one costs its cap and is discarded. |
 | `sysatomic_*` | a **short** total is decisive: that mode's RMW is not atomic against the CPU. A matching total is weak evidence (the kernel may have finished before the host loop began). |
 
 These are the conditions the CUDA C++ Memory Model states for a
 `cuda::thread_scope_system` atomic to actually be atomic — one per mode. Every
-tested access here, and the rendezvous barrier, is such an atomic, so a mode
+tested access here, and the rendezvous counter, is such an atomic, so a mode
 whose condition fails is not a weaker experiment, it is undefined. That is why
 `HET_ALLOC` fails closed rather than falling back.
 
@@ -174,11 +175,14 @@ blocks), and the two rows whose outcome does not arrive through a register alone
 * **`SIZE_OF_TEST` and `NUMBER_OF_RUN` are emitted as unguarded `#define`s**, so
   unlike the other compile-time knobs they cannot be lowered with `-D`. The only
   runtime lever on run count is `HET_RUNS_MAX` (clamped to `NUMBER_OF_RUN`).
-* **`pinned` really can lose barrier increments.** Measured on a WSL2 RTX 3060
+* **`pinned` really can lose rendezvous increments.** Measured on a WSL2 RTX 3060
   (`hostNativeAtomicSupported=0`): a device/host system-scope `fetch_add` race
-  landed **201665 of 400000** increments. That is the documented behaviour, it is
-  what the harness warns about, and it is why `ladder.sh` wraps every invocation
-  in `timeout`.
+  landed **201665 of 400000** increments. That is the documented behaviour and it
+  is what the harness warns about. A lost increment does not hang the run: the
+  iteration that lost it ends at the cap and is discarded, and the run is thrown
+  away only once the discards pass `HET_RDV_MAX_DISCARD_PCT` of `N`. What it
+  costs is **wall clock** — a whole cap per unmet iteration, with no early bail —
+  which is why `ladder.sh` wraps every invocation in a 900 s `timeout`.
 
 ## Files
 
@@ -192,6 +196,7 @@ blocks), and the two rows whose outcome does not arrive through a register alone
 | `STAMP` (in the bundle) | git revision, date, census, per-test geometry, emitter + dialect SHA-256 |
 
 The emitted harness dirs are self-contained — `outs.c/h`, `het_stress.h`,
-`het_cpu_stress.h` and `het_verdict.h` are written into every dir at emission —
+`het_cpu_stress.h`, `het_rdv.h` and `het_verdict.h` are written into every dir at
+emission —
 so the instance needs no repo, no OCaml and no `litmus7`: just `nvcc`, `gcc`,
 `make` and `python3`.

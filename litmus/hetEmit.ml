@@ -882,10 +882,26 @@ end
             (* The rendezvous caps.  Read here, carried in the record and printed
                with the run, because the cap is what turns a missing partner into
                a discarded iteration instead of a hang -- and the shipped pair are
-               placeholders (litmus/het-runtime/het_rdv.h HET_CAP_CALIBRATED). *)
+               placeholders (litmus/het-runtime/het_rdv.h HET_CAP_CALIBRATED).
+               The device cap is a uint32_t kernel argument and both record fields
+               are uint32_t, so an env value is clamped into that range before the
+               cast: unclamped, a negative one wraps to billions of polls and one
+               past 2^32-1 lands as its own low half. *)
             s "  long _cap_cpu = het_env_long(\"HET_CAP_CPU\", (long)HET_CAP_CPU);\n" ;
-            s "  uint32_t _cap_gpu = (uint32_t)het_env_long(\"HET_CAP_GPU\", (long)HET_CAP_GPU);\n" ;
+            s "  long _cap_gpu_env = het_env_long(\"HET_CAP_GPU\", (long)HET_CAP_GPU);\n" ;
             s "  if (_cap_cpu < 0) _cap_cpu = 0;\n" ;
+            s "  if (_cap_gpu_env < 0) _cap_gpu_env = 0;\n" ;
+            s "  unsigned long _cap_cpu_u = (unsigned long)_cap_cpu;\n" ;
+            s "  unsigned long _cap_gpu_u = (unsigned long)_cap_gpu_env;\n" ;
+            s "  if (_cap_cpu_u > 0xffffffffUL) {\n" ;
+            s "    fprintf(stderr, \"HetLitmus WARNING: HET_CAP_CPU=%lu exceeds the %lu polls the record can carry -- clamped.\\n\", _cap_cpu_u, 0xffffffffUL);\n" ;
+            s "    _cap_cpu_u = 0xffffffffUL; _cap_cpu = (long)_cap_cpu_u;\n" ;
+            s "  }\n" ;
+            s "  if (_cap_gpu_u > 0xffffffffUL) {\n" ;
+            s "    fprintf(stderr, \"HetLitmus WARNING: HET_CAP_GPU=%lu exceeds the %lu polls a lane can carry -- clamped.\\n\", _cap_gpu_u, 0xffffffffUL);\n" ;
+            s "    _cap_gpu_u = 0xffffffffUL;\n" ;
+            s "  }\n" ;
+            s "  uint32_t _cap_gpu = (uint32_t)_cap_gpu_u;\n" ;
             s "  int _nrec = 0;\n" ;
             s "  for (int _run=0; _run<_runs_budget; ++_run) {\n" ;
             (* Every slot of every location, not just the first word: the reset

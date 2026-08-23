@@ -157,9 +157,9 @@
  *
  * Adaptation: [CudaLitmus] re-rolls its probabilistic toggles on the HOST and
  * cudaMemcpy's a fresh KernelParams before every relaunch.  This kernel is
- * perpetual -- launched once, looping inside -- so there is no per-iteration host
- * round-trip and the toggles are decided device-side.  Seeding per (lane, run)
- * from a fixed seed keeps a run replayable.
+ * launched once and loops inside, so there is no per-iteration host round-trip
+ * and the toggles are decided device-side.  Seeding per (lane, run) from a
+ * fixed seed keeps a run replayable.
  * ------------------------------------------------------------------------- */
 typedef struct { uint32_t s; } het_rng_t;
 

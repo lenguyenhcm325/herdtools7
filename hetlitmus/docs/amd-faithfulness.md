@@ -56,7 +56,7 @@ __HIP_MEMORY_SCOPE_{WORKGROUP,AGENT,SYSTEM}` [`HipAtomicHeader`]; and, for
 "agent"`, `sys → ""`, where the *unnamed* scope is system scope and naming one
 there would narrow the fence ([`AMDGPUUsage` "Memory Scopes"]).
 
-Per proc (gpu-only) or per barrier-joining lane (het), the ops must appear in
+Per proc (gpu-only) or per rendezvous-joining lane (het), the ops must appear in
 `.litmus` column order, each as its mapped builtin, and each agreeing **three
 ways** — with its constants, with its traceability comment, and with the
 `.litmus` cell's own operands. The comment matters because a stream built from
@@ -72,40 +72,34 @@ it. There are three comment shapes:
 
 On a het render it further asks, per lane:
 
-* the **rendezvous** arrive (`__hip_atomic_fetch_add`, `sc`, `sys`, on the shared
-  barrier word, incrementing by 1) and its spin, then
-* the **window-opener** `het_spin` on the device-scope spin word,
-* the **model ops** in column order,
-* the **tagged store values**, derived from `hetEmit.ml`'s own plan rather than
-  matched for shape: `mu` runs over the test's stores (procs in index order,
-  stores in column order) and `K` is one past the last, and the numbering is
-  shared with the CPU column, so either side gaining a store moves every later
-  tag,
-* the **result stores** (one per read register) and the completion bump on
-  `_gpu_done`,
-* an **observer** lane's snoops, one per location it watches, recorded into that
-  location's own buffer, and
+* the **rendezvous arrival** — `_rdvG_P<n>[_n] = het_rdv_device(barrier, …, _cap_gpu)`,
+  one per lane, whose own relaxed system-scope `__hip_atomic_fetch_add`/`__hip_atomic_load`
+  live in `het_rdv.h` — followed by the **release jitter** `het_rdv_jitter`, then
+* the **model ops** in column order, carrying the store values the `.litmus` writes,
+* the **result stores** (one per read register, into iteration `_n`'s own buffer slot)
+  and the completion bump on `_gpu_done`, and
 * the **lane count** against the lane plan — a kernel with more or fewer
-  barrier-joining lanes than the plan names is running something other than the
+  rendezvous-joining lanes than the plan names is running something other than the
   test, and every per-lane compare below it would then be against the wrong lane.
 
 The **x86_64 CPU half** is the `.litmus` CPU column's rendering, compared mnemonic
-for mnemonic against the tagged asm bodies of the `_cpu.c` real-asm block: a
-`MOV` is classified by its operand shape and widens to the emitted `movq` (an
-aligned 8-byte access is one access, [`IntelSDM`]), `MFENCE`/`SFENCE`/`LFENCE`
+for mnemonic against the `_cpu.c` real-asm block that litmus7's own
+`ASMLang.dump_fun` prints: the block is read between its `#START _litmus_P<n>` and
+`#END` markers, operands are read in litmus7's `%[x]` / `%w[x0]` spelling, a store
+is the `movl` the column lowers to on an `int` location, `MFENCE`/`SFENCE`/`LFENCE`
 keep their own spelling, and an immediate `MOV` into a register is *consumed* —
-the runtime tag replaces the value it set. Every asm string literal is read and
-each must be one instruction closed by the newline escape, so an instruction
-spliced into a tested body as its own literal cannot hide.
+it materialises a value rather than touching memory. Every asm string literal is
+read and each must be one instruction closed by the newline escape, so an
+instruction spliced into a tested body as its own literal cannot hide.
 
 The **loop structure** is checked because it is placement no anchor stream can
 see: a het lane's ops must sit *unguarded* in the body of one `#pragma unroll 1`
 loop over `SIZE_OF_TEST` (`litmus/hetEmit.ml`), with no `break`/`continue`/
-`goto`/`return` able to skip them; the rendezvous and the completion bump must
-sit *outside* it, since a rendezvous dragged in is a cross-device barrier around
-every tested access. Only the window-opener spin may be guarded, and only by the
-barrier roll the emitter writes around it. The gpu-only path has no such loop by
-design (`litmus/gpuLang.ml` `dump_test` emits each proc's ops once).
+`goto`/`return` able to skip them — and the rendezvous and its jitter must sit
+*inside* it, ahead of every tested op, because a copy lifted out of the loop joins
+the two devices once and leaves every iteration after the first unsynchronised.
+What is emitted once per lane is the completion bump alone. The gpu-only path has
+no such loop by design (`litmus/gpuLang.ml` `dump_test` emits each proc's ops once).
 
 Finally the **stray rule**: inside a lane every access is accounted for by an
 anchor, so any further atomic-, fence- or asm-shaped token — `asm`/`__asm__`
@@ -117,9 +111,9 @@ every lane only the whitelisted device helpers of
 **Exit 2 vs exit 1.** Exit 2 is the completeness code and fires on anything the
 gate has no model for: an unknown annotation, an unmapped `__ATOMIC_*` or
 `__HIP_MEMORY_SCOPE_*` constant, an AMDHSA sync-scope string outside
-`{workgroup, agent, ""}`, an x86_64 mnemonic or operand shape outside
-`hetCpuBodyX86`'s own arms, a kernel guard the lane plan cannot be matched
-against, and an atomic-or-fence construct with no model. Exit 1 is a *known*
+`{workgroup, agent, ""}`, an x86_64 mnemonic or operand shape outside the table this
+gate carries for litmus7's own X86_64 lowering, a kernel guard the lane plan
+cannot be matched against, and an atomic-or-fence construct with no model. Exit 1 is a *known*
 construct in the wrong place: an ordered diff of the lane's anchors. Exit 3 is
 a gate error (a corpus that is missing, empty or short of its census; a worker
 that died).
@@ -149,9 +143,9 @@ python3 hetlitmus/verify/hipsrccheck.py --bite
 operand shapes, the het lane anchors, the loop vocabulary, the device-helper
 whitelist, the two stray-construct vocabularies by region, and the exit
 contract. `--bite` emits two pristine renders — a gpu-only shape carrying both
-fences, both kinds of model op and two `__out` slots, and a het shape with two
-observer lanes, a GPU test lane carrying two tagged stores across a fence and a
-tagged CPU column with an `MFENCE` between its stores — runs both clean, then
+fences, both kinds of model op and two `__out` slots, and a het shape whose GPU
+test lane carries two stores across a fence and whose x86 CPU column carries an
+`MFENCE` between its stores — runs both clean, then
 makes each injection on a fresh copy. It defends itself three ways, each seen to
 fire: an injection whose anchor is absent hard-exits, one that changes no byte is
 a vacuous bite, and an assertion nothing prints is a wrong reason.
@@ -160,9 +154,9 @@ a vacuous bite, and an assertion nothing prints is a wrong reason.
 
 Nothing about what a compiler makes of those constructs: no ISA is read, no code
 is generated, no kernel runs. It is also a parser of the `.litmus` CPU column's
-*rendering* only — the per-iteration `clflush`/`prefetcht0` preload and the CPU
-observer's plain volatile read touch the same locations and are outside its
-vocabulary by design (`litmus/het-runtime/het_cpu_stress.h`).
+*rendering* only — the per-iteration `clflush`/`prefetcht0` preload touches the
+same locations and is outside its vocabulary by design
+(`litmus/het-runtime/het_cpu_stress.h`).
 
 ## Results
 
@@ -176,11 +170,11 @@ TALLY gpu-only: 173/173 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
 TALLY x86_64 het: 471/471 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
 HIP SOURCE GATE: PASS -- gpu-only 173/173, x86_64 het 471/471 (the x86_64
   rendering of the het corpus, not the AArch64 one)
-HIP SOURCE GATE BITE OK: 54 injections, each reddening its own assertion,
+HIP SOURCE GATE BITE OK: 56 injections, each reddening its own assertion,
   0 for a wrong reason; 4 clean control(s) green
 ```
 
-The sweep runs 12 workers; the bite makes 58 assertions — 54 injections, each
+The sweep runs 12 workers; the bite makes 60 assertions — 56 injections, each
 reddening its own assertion, and 4 clean controls green first.
 
 ### Triage log
@@ -200,9 +194,6 @@ repaired check:
   instruction spliced in as its own unterminated literal was dropped silently;
 * "the HIP path carries no inline assembly" was the premise of the whole
   source-level read and nothing asserted it;
-* a tagged store's value was checked for shape only, so a wrong `K` or a `mu`
-  collision passed — the plan is derived from `hetEmit.ml` now, and all 1,080
-  tagged GPU stores over the 471 het renders agree value for value;
 * the gpu-only result stores were discarded unchecked, while `__out` is the only
   channel by which a gpu-only read reaches an outcome;
 * the loop check asked textual span membership, which a guarded op walks straight

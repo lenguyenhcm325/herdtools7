@@ -36,9 +36,9 @@
 #endif
 
 /* How long a participant waits for the others, in polls, before it gives up on
-   this iteration.  PLACEHOLDERS: no target has been measured, so a run prints
-   them with HET_CAP_CALIBRATED and every null they produce says uncalibrated.
-   Both are overridden at run time by HET_CAP_GPU / HET_CAP_CPU. */
+   this iteration.  Both are placeholders: no target has been measured, so a run
+   prints them with HET_CAP_CALIBRATED and every null they produce says
+   uncalibrated.  Both are overridden at run time by HET_CAP_GPU / HET_CAP_CPU. */
 #ifndef HET_CAP_GPU
 #define HET_CAP_GPU 4096
 #endif

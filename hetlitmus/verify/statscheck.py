@@ -675,8 +675,8 @@ def phase1(lines, quiet):
     # --- The mirror pins.  statscheck re-derives every statistic in Python, and the
     # header's knobs are hard-coded there rather than read from it.  No fixture
     # straddles their boundaries, so a differential CANNOT notice the drift: move
-    # HET_THETA_DISTINCT by one and every decode count in this file keeps its truth
-    # value on both sides while the gate stays green on a stale mirror.
+    # HET_CORROB_RUNS by one and every fixture in this file keeps its tier on both
+    # sides while the gate stays green on a stale mirror.
     seen_mirror = False
     for l in lines:
         if not l.startswith("MIRROR|"):

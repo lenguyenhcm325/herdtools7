@@ -5,7 +5,7 @@ CPU-GPU tests and how it is implemented in litmus7 via the **compound
 pseudo-architecture** (design fork (a)). It is the *single-arch break*: it
 makes a single test whose processors span a CPU ISA and a GPU ISA
 *representable, parseable, and dispatchable* inside herdtools7. Cross-device
-code **emission** (asymmetric launch, coherent allocation, rendezvous barrier,
+code **emission** (asymmetric launch, coherent allocation, per-iteration rendezvous,
 result readback) is `het-emission.md`'s job and deliberately out of scope here.
 
 ## 1. The problem (the blocker)
@@ -150,15 +150,16 @@ harness emission was built on top of that routing
 ```
 $ litmus7 -gpu-target cuda -o OUT hetlitmus/tests/het/MP-het.litmus
 HetLitmus: emitting CPU+GPU harness for MP-het (2 procs, CPU=AArch64)
-  P0 device=cpu -> CPU pthread (AArch64 asm from hetCpuBodyA64)
+  P0 device=cpu -> CPU pthread (litmus7 AArch64 asm)
   P1 device=gpu -> GPU kernel (LISA/PTX via CudaLang/HipLang)
   pair: (AArch64, cuda)
 HetLitmus: emitted harness directory OUT/MP-het (MP-het.cu)
 ```
 
-The CPU column's asm is written by `HetCpuBodyA64`/`HetCpuBodyX86` over
-`HetCpuPlan`, not by `ASMLang.dump_fun`; what the arm takes from litmus7's own
-CPU compile pipeline is the address parameters and the final registers.
+The CPU column's asm is litmus7's own: the arm runs the genuine CPU compile
+pipeline over the projected column and prints the body with
+`ASMLang.dump_fun`, wrapping it in a `het_run_P<n>` whose caller supplies
+iteration `n`'s slot address for every location.
 
 **Left to emission, and inert here** (the record of what the single-arch break
 itself shipped; emission has since closed the first item):

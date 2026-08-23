@@ -13,10 +13,13 @@ Five properties, over every emitted het render of both pairs and over the
 runtime header they all stage:
 
   1 Primitive  het_rdv.h's three rendezvous bodies arrive and poll RELAXED and
-               carry no acquire, release, seq_cst or fence of any kind.  An
-               acquire poll self-invalidates the GPU L1 [Bagchi26 sec 5.3] and a
-               system-scope fence flushes it, so a strengthened rendezvous erases
-               the cache state the tested iteration is about to race on.
+               at SYSTEM scope, and neither they nor the release delay beside
+               them carries an acquire, a release, a seq_cst or a fence of any
+               kind.  An acquire poll self-invalidates the GPU L1 [Bagchi26 sec
+               5.3] and a system-scope fence flushes it, so a strengthened
+               rendezvous erases the cache state the tested iteration is about
+               to race on; a device or agent scope is the opposite failure, a
+               counter the host participant cannot see at all.
   2 GPU lane   one het_rdv_device() per GPU lane, INSIDE that lane's iteration
                loop, ahead of every tested access and never between two of them
                (litmus/het-runtime/README.md invariant (ii)); the release jitter
@@ -77,13 +80,38 @@ LANES = [("aarch64 het x cuda", HET_DIR, "cuda", "cu", HET_N),
 # The functions whose bodies are read: two device definitions (one per vendor,
 # behind the __HIP_PLATFORM_AMD__ split) and the host one.  The header read is
 # the one the harness dir STAGES, never a copy of its text.
-RDV_BODIES = ("het_rdv_device", "het_rdv_host")
+# het_rdv_jitter is read with them: it runs INSIDE the window the rendezvous
+# opens, between the release and the first tested access, so an ordering
+# construct there would sit in the tested group even though no rendezvous op
+# does.
+RDV_BODIES = ("het_rdv_device", "het_rdv_host", "het_rdv_jitter")
+# The two the counter is arrived at and polled with; the jitter carries no
+# atomic and is read for the forbidden tokens alone.
+RDV_ATOMIC_BODIES = ("het_rdv_device", "het_rdv_host")
 # An order token that is not `relaxed', and every construct that carries an
 # ordering effect of its own.  Matched case-insensitively so __ATOMIC_ACQUIRE and
 # cuda::memory_order_acquire are the same finding.
 FORBIDDEN = ("acquire", "release", "acq_rel", "seq_cst", "consume",
              "fence", "syncthreads", "s_barrier", "threadfence")
 RELAXED = ("__ATOMIC_RELAXED", "cuda::memory_order_relaxed")
+# The scope of the device arms, which no other check in this gate reads and
+# which the order tokens above say nothing about: a relaxed atomic at device or
+# agent scope is invisible to the CPU participant, so the counter it arrives at
+# is not the one the host is polling and the two sides never meet.  One entry
+# per vendor: the system spelling its arm must carry, and the narrower spellings
+# that must appear in neither.
+DEV_SCOPES = (
+    ("CUDA", "cuda::thread_scope_system",
+     ("cuda::thread_scope_device", "cuda::thread_scope_block",
+      "cuda::thread_scope_thread")),
+    ("HIP", "__HIP_MEMORY_SCOPE_SYSTEM",
+     ("__HIP_MEMORY_SCOPE_AGENT", "__HIP_MEMORY_SCOPE_WORKGROUP",
+      "__HIP_MEMORY_SCOPE_WAVEFRONT", "__HIP_MEMORY_SCOPE_SINGLETHREAD")),
+)
+# The release delay spins on nothing: an empty asm template costs no memory
+# operation, and a spin that touched memory would add traffic to the very window
+# the delay exists to sweep.
+JITTER_ASM = re.compile(r'__asm__\s+__volatile__\(\s*""')
 # What the caller must be able to reach, and what a harness that stages this
 # header must therefore find in it.
 KNOBS = ("HET_SLOT_STRIDE_WORDS", "HET_CAP_GPU", "HET_CAP_CPU",
@@ -141,12 +169,46 @@ def check_primitive(path):
                         "%s carries %r: the rendezvous must ORDER NOTHING, and an "
                         "acquire, a release or a fence in it erases the cache "
                         "state the tested iteration is about to race on" % (who, tok))
+            if name not in RDV_ATOMIC_BODIES:
+                if JITTER_ASM.search(joined) is None:
+                    bad.append(
+                        "%s does not spin on an EMPTY asm template: the release "
+                        "delay must issue no instruction and touch no memory, or "
+                        "it adds traffic to the window it exists to sweep" % who)
+                continue
             n_relaxed = sum(joined.count(t) for t in RELAXED)
             if n_relaxed < 2:
                 bad.append(
                     "%s spells %d relaxed memory order(s), not the arrival and "
                     "the poll -- the gate cannot see what order its two accesses "
                     "carry" % (who, n_relaxed))
+    # The device arms' scope, one definition per vendor: each must spell its own
+    # system scope and no narrower one, and between them both vendors must be
+    # covered -- an arm that lost its dialect is an arm nothing here reads.
+    dev = bodies.get("het_rdv_device", [])
+    covered = set()
+    for k, body in enumerate(dev):
+        who = "het_rdv_device (definition %d)" % (k + 1)
+        joined = "\n".join(body)
+        mine = [v for v, sysscope, _ in DEV_SCOPES if sysscope in joined]
+        for vendor, sysscope, narrower in DEV_SCOPES:
+            for tok in narrower:
+                if tok in joined:
+                    bad.append(
+                        "%s arrives or polls at %s: the counter is shared with a "
+                        "CPU participant, so a rendezvous narrower than %s is one "
+                        "the host half cannot see" % (who, tok, sysscope))
+        if not mine:
+            bad.append(
+                "%s names no system memory scope at all (neither %s): a scopeless "
+                "device atomic is not a cross-device rendezvous"
+                % (who, " nor ".join(s for _, s, _ in DEV_SCOPES)))
+        covered.update(mine)
+    for vendor, sysscope, _ in DEV_SCOPES:
+        if vendor not in covered:
+            bad.append("no het_rdv_device definition spells %s, so the %s lane "
+                       "stages a header whose rendezvous this gate never read"
+                       % (sysscope, vendor))
     return bad
 
 
@@ -474,6 +536,35 @@ def _drop_discard_count(text):
     return text.replace(line[0] + "\n", "", 1)
 
 
+def _narrow_cuda_scope(text):
+    """(f) The CUDA arm's counter narrowed to device scope.
+
+    Still an atomic, still relaxed, still on the shared counter -- but a device
+    -scope atomic is not the object the host's __atomic_fetch_add touches, so
+    the two halves increment two different counters and neither ever arrives."""
+    out = text.replace("cuda::thread_scope_system", "cuda::thread_scope_device")
+    if out == text:
+        raise GateError("bite (f): the header carries no CUDA system scope to narrow")
+    return out
+
+
+def _narrow_hip_scope(text):
+    """(g) The HIP arm's counter narrowed to agent scope."""
+    out = text.replace("__HIP_MEMORY_SCOPE_SYSTEM", "__HIP_MEMORY_SCOPE_AGENT")
+    if out == text:
+        raise GateError("bite (g): the header carries no HIP system scope to narrow")
+    return out
+
+
+def _jitter_spins_on_an_instruction(text):
+    """(h) The release delay given a non-empty asm template."""
+    out = text.replace('__asm__ __volatile__("" ::: "memory")',
+                       '__asm__ __volatile__("nop" ::: "memory")')
+    if out == text:
+        raise GateError("bite (h): the header carries no empty-template spin")
+    return out
+
+
 BITES = [
     ("(a) the rendezvous moved BEHIND the tested accesses",
      "sits AFTER a tested access", _move_rdv_after_tested_ops, None),
@@ -485,6 +576,13 @@ BITES = [
      "a thread that never arrives", _drop_cpu_rendezvous, None),
     ("(e) the readout stops counting the iterations it discarded",
      "discard site(s), not one", _drop_discard_count, None),
+    ("(f) the CUDA arm narrowed to cuda::thread_scope_device",
+     "arrives or polls at cuda::thread_scope_device", None, _narrow_cuda_scope),
+    ("(g) the HIP arm narrowed to __HIP_MEMORY_SCOPE_AGENT",
+     "arrives or polls at __HIP_MEMORY_SCOPE_AGENT", None, _narrow_hip_scope),
+    ("(h) the release delay spins on a non-empty asm template",
+     "does not spin on an EMPTY asm template", None,
+     _jitter_spins_on_an_instruction),
 ]
 
 

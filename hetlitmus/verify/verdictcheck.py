@@ -305,6 +305,12 @@ ONE_OUTCOME_TEXT = "read back the SAME outcome vector"
 FLAG_SENTENCES = [
     ("dq", "RDV_DEAD", "A timed-out rendezvous is a DEAD PARTNER",
      "a run whose two sides did not meet, reported as reach"),
+    # The same sentence's second half: rdv_cap_cpu/rdv_cap_gpu are per-participant
+    # cap expiries, so a reader who takes them for the two halves of
+    # iters_discarded reads a number that can exceed it.
+    ("dq", "RDV_DEAD", "counted per participant per iteration",
+     "two tallies that neither partition nor bound the discards, printed as if "
+     "they did"),
     ("cv", "RDV_UNCALIBRATED", "the rendezvous caps are PLACEHOLDERS",
      "a discard count priced against a wait nobody measured"),
 ]
@@ -931,12 +937,18 @@ def main():
 # one thing this gate claims to guard, is verified to have actually CHANGED the file
 # (one that matched nothing would pass for free), and must drive the gate nonzero.
 # ---------------------------------------------------------------------------
+# Every injection this gate fires, appended by the helper that fires it, so the
+# summary counts what ran instead of a number somebody kept by hand.
+SHOTS = []
+
+
 def _bite_one(label, tmp, header, mutate, quiet, expect=None):
     """mutate: str -> str.  Returns True if the gate correctly FAILED.
 
     [expect] is a fragment of a diagnostic the run must produce.  Without it a
     nonzero return counts as a bite whatever reddened, which on a rule with
     several readers is not the same claim as "this injection was caught"."""
+    SHOTS.append(label)
     with open(header) as fh:
         orig = fh.read()
     new = mutate(orig)
@@ -981,6 +993,7 @@ def _bite_report(label, header, mutate, want):
     exception, rc == 1, and `want' in what the gate printed.  Each bite gets a
     fresh scratch dir, so a write that failed cannot hand run_rule a previous
     bite's header."""
+    SHOTS.append(label)
     with open(header) as fh:
         orig = fh.read()
     new = mutate(orig)
@@ -1024,6 +1037,7 @@ def _bite_pair(label, tmp, header, mutate=None, defines=None, expect=None):
     a forbidden word that started.  Without it a rc of 1 counts as a bite
     whatever reddened, and a whole direction can go unbitten while every arm
     reports a bite."""
+    SHOTS.append(label)
     hdr = header
     if mutate is not None:
         with open(header) as fh:
@@ -1150,6 +1164,12 @@ def bite():
             quiet=True,
             expect="never printed 'A timed-out rendezvous is a DEAD PARTNER'")
         ok &= _bite_one(
+            "the per-participant reading of rdv_cap_cpu/rdv_cap_gpu dropped",
+            tmp, header,
+            lambda s: s.replace("counted per participant per ", "counted per "),
+            quiet=True,
+            expect="never printed 'counted per participant per iteration'")
+        ok &= _bite_one(
             "the rendezvous sentence printed under every discarded run",
             tmp, header,
             lambda s: s.replace("    if (dq & HET_DQ_RDV_DEAD)\n",
@@ -1236,6 +1256,7 @@ def bite():
         # is ever run, so the corpus census is what stops one harness quietly
         # discarding every run it will ever make.
         print("\n-- corpus injections --")
+        SHOTS.append("a harness shipped with an unstamped record")
         rc = check_corpus(tamper=lambda t, s: (
             s.replace("_rec.rec_magic = HET_REC_MAGIC;", "_rec.rec_magic = 0;")
             if t == "S-cg-sys-fence" else s))
@@ -1315,9 +1336,8 @@ def bite():
 
     print("\n" + "=" * 70)
     if ok:
-        print("BITE OK: 18/18 injections caught, each by the diagnostic it named --")
-        print("         rule + printouts 10, reporting paths 2, emitted corpus 1,")
-        print("         pair prose 5.")
+        print("BITE OK: %d/%d injections caught, each by the diagnostic it named."
+              % (len(SHOTS), len(SHOTS)))
         return 0
     print("BITE FAILED: an injection slipped through -- this gate is decorative")
     return 1
