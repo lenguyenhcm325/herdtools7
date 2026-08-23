@@ -28,7 +28,7 @@
 ; drives het_cpu_stress.h's mechanisms with its own flag and never exercises the
 ; emitted driver's orchestration.  Confirmed by bite test -- moving the stress_go
 ; raise after the joins passes cpustresscheck and fails here.
-; Scoped so the three Layer-1 tests above stay toolchain-free.  litmus7 het emission
+; Scoped so the Layer-1 tests above stay toolchain-free.  litmus7 het emission
 ; needs no -set-libdir, so only the binary + the .litmus inputs are required.
 ; statistics.t guards the EMITTER half of the statistics layer.  The estimator's
 ; own behaviour is gated by hetlitmus/verify/statscheck.py (which compiles the real

@@ -329,7 +329,7 @@ CPU_ONLY_TEXT = {
         "SHARED-ALLOCATION PROBE: this is a CPU-ONLY shape",
 }
 # The two other readers of the same flag, which say nothing in prose: the verdict
-# banner's tag and the machine-readable field hetlitmus/campaign.py schedules off.
+# banner's tag and the field on the machine-readable HetObs record.
 CPU_ONLY_BANNER = " CPU-ONLY"
 CPU_ONLY_FIELD = "cpu_only=%d"
 
@@ -772,7 +772,8 @@ def scan_prints(blocks, quiet):
     # ... and the same flag's two readers that print no sentence at all, each
     # against the case's own record rather than a list of names.  A constant in
     # either is invisible to the sentences above: the banner tag is what a reader
-    # files the whole row under, and the HetObs field is what campaign.py parses.
+    # files the whole row under, and the HetObs field is the same flag on the
+    # machine-readable per-run record.
     want_flag = {c["name"]: int(c["rec"].get("cpu_only", 0)) for c in CASES}
     for name in sorted(blocks):
         lines = blocks[name][1].splitlines()
