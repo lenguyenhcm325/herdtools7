@@ -15,39 +15,18 @@
 (****************************************************************************)
 
 (* HetLitmus: the compound (CPU+GPU) harness emitter.
-
-   One `Het' test becomes one self-contained harness directory: the CPU
-   proc(s) as litmus7's own compiled asm bodies, the GPU procs as a single
-   driver template rendered in the one dialect `-gpu-target' names, plus the
-   runtime headers and a build script.  Every shared location is an array of
-   per-iteration slots, so iteration n's outcome is read back from slot n
-   (litmus/het-runtime/het_rdv.h).  The seam back to Top's scope is two functor
-   parameters ([O] an options slice and [CpuKit] the CPU compile pipeline closed
-   at the dispatch site), so this file does not depend on top_litmus.ml.
    Design: hetlitmus/docs/het-emission.md. *)
 
 open Answer
 
-(* [gd_*] field reads throughout the emitter below resolve here: the GPU
-   dialect registry and the `-gpu-target' selector (litmus/hetDialect.ml). *)
 open HetDialect
 
-(* The slice of top_litmus's Config this emitter needs: GenParser.Config for
-   the het GenParser instance, plus the run-loop geometry (size = N, the
-   iterations one run spends, runs = the outer instance loop; see
-   hetlitmus/docs/00-environment-design.md sec 3.4).  top_litmus's full Config
-   satisfies it structurally. *)
 module type Config = sig
   include GenParser.Config
   val size : int
   val runs : int
 end
 
-  (* A functor over the CPU module chain (Arch_litmus + Compile_litmus + a
-     column frontend), applied at AArch64 or X86_64 by the `Het' dispatch arm,
-     which pre-scans the per-column device tag.  The GPU side is fixed
-     (LISA/Bell -> CudaLang/HipLang), and every CPU reference below goes through
-     the [Cpu]/[CpuF] parameters, so the body is ISA-agnostic. *)
   module Make
       (Cfg : Config)
       (O : sig
@@ -59,26 +38,15 @@ end
        end)
       (Cpu : Arch_litmus.S)
       (CpuF : sig
-         (* lex+parse ONE processor column's ';'-free instruction text with the
-            matching ISA sub-parser (errors name the proc + ISA + column) *)
          val parse_column : int -> string -> Cpu.parsedPseudo list
-         val isa_name : string         (* human label, e.g. "AArch64" *)
+         val isa_name : string
          val host_macro : string       (* CPP macro true on the CPU host ISA *)
          (* (clang triple, -std) to cross-assemble the real CPU asm on a foreign
             dev host; None when the build host already IS this ISA (native gcc) *)
          val cross : (string * string) option
-         (* Compiler flags every compilation of <t>_cpu.c carries, native or
-            cross: the ISA extensions litmus7's own lowering reaches for.  Empty
-            where the base architecture already covers them. *)
          val cpu_cflags : string
        end)
       (CpuKit : sig
-         (* The CPU backend seam: litmus7's own compile pipeline for the CPU
-            ISA (top_litmus.Make -> Compile.Make), driven on a CPU-only
-            projection of the het test.  [compile_code] returns the compiled
-            test's global type environment and its per-proc templates;
-            [dump_fun] is that same pipeline's ASMLang printer, so a het
-            harness's CPU thread bodies are litmus7's own. *)
          val compile_code :
            Name.t ->
            (Cpu.location, Cpu.V.v, Cpu.pseudo, Cpu.FaultType.t) MiscParser.r3 ->
@@ -95,8 +63,6 @@ end
       module GpuV = Int64Constant.Make(GpuInstr)
       module Gpu = LISAArch_litmus.Make(GpuV)
       module Arch' = HetArch.Make(Cpu)(Gpu)
-      (* the debuglexer/check_rename slice of Top's LexConfig, rebuilt from
-         the O seam so this file does not depend on top_litmus.ml *)
       module LexConfig = struct
         let debug = O.verbose > 2
         let check_rename = O.check_rename
@@ -139,32 +105,20 @@ end
 
       let outs_h_content = HetPayloads.outs_h
       let outs_c_content = HetPayloads.outs_c
-      (* the GPU memory-stress layer, emitted verbatim into every het harness
-         dir and #include'd by both the .cu and the .hip render; the sources it
-         reuses and the citation condition of that reuse are stated in
-         litmus/het-runtime/het_stress.h. *)
+      (* see litmus/het-runtime/het_stress.h *)
       let het_stress_content = HetPayloads.het_stress_h
-      (* the CPU-side + interconnect stress layer.  A separate header from
-         het_stress.h because it is the only place host-ISA asm may live: the
-         .cu is nvcc's translation unit, and the preload primitives are AArch64
-         (dc civac / prfm) or x86 (clflush / prefetcht0) inline asm.  Only
-         <test>_cpu.c -- compiled by gcc, and cross-assembled by
-         `clang --target=aarch64-linux-gnu' -- defines HET_CPU_STRESS_IMPL and so
-         compiles the bodies; the .cu gets the knobs, the arg structs and the
-         declarations, and NO host ISA at all. *)
+      (* the CPU-side + interconnect stress layer.
+         see litmus/het-runtime/het_cpu_stress.h *)
       let het_cpu_stress_content = HetPayloads.het_cpu_stress_h
-      (* het_obs_record + the null-credibility decision rule.  Edits belong in
-         litmus/het-runtime/het_verdict.h, which litmus/dune wraps into
-         HetPayloads at build time. *)
+      (* see litmus/het-runtime/het_verdict.h *)
       let het_verdict_content = HetPayloads.het_verdict_h
       (* The per-iteration slot layout both sides address. *)
       let het_rdv_content = HetPayloads.het_rdv_h
 
       type dev = [ `Cpu | `Gpu ]
 
-      (* One CPU proc, pre-digested so the record carries no arch-polymorphic
-         type: the two ASMLang parameter lists as (declaration, name) pairs,
-         and the closure printing litmus7's own body for it. *)
+      (* One CPU proc as plain strings and a body printer, so the record
+         carries no arch-polymorphic type. *)
       type cpu_proc = {
           cp_proc : int ;
           cp_addrs : (string * string) list ;  (* address params, ASMLang order *)
@@ -206,41 +160,23 @@ end
 
       let run _hash_env src_name in_chan _out_chan splitted =
         try
-          (* The dialect list for this emission: `-gpu-target' filtered, so every
-             per-vendor fold below renders and names one vendor.  Resolved before
-             the parse -- an unregistered target must refuse having written
-             nothing. *)
           let dialects = HetDialect.select ~key:(fun d -> d.gd_target) dialects in
           let parsed = P.parse in_chan splitted in
           close_in in_chan ;
           let tname = splitted.Splitter.name.Name.name in
           let doc = splitted.Splitter.name in
           let nprocs_total = List.length parsed.MiscParser.prog in
-          (* Is the cycle of the test under study CPU-only?  Derived from the
-             per-column device tags, never from the name -- a name-based rule
-             would silently mis-classify anything renamed.  Such a test has
-             threads of a single architecture, so it is no compound-model
-             experiment [Goens23 sec 4.6]: what a sighting of a forbidden
-             outcome indicts is the host ISA and the memory type of the shared
-             allocation.  litmus/het-runtime/het_verdict.h writes that sentence;
-             this flag is what lets it be written. *)
           let cpu_only =
             parsed.MiscParser.prog <> [] &&
             List.for_all
               (fun ((_,annot,_),_) ->
                 match annot with Some ("cpu"::_) -> true | _ -> false)
               parsed.MiscParser.prog in
-          (* The (CPU ISA x GPU dialect) this harness was BUILT for, stamped as
-             HET_PAIR_NAME and printed wherever the verdict layer identifies the
-             target.  Non-local: hetlitmus/hetlitmus-run.sh spells the same
-             "($ISA_KEY, $GPU_TARGET)" and refuses a render stamping another. *)
+          (* The (CPU ISA x GPU dialect) this harness was BUILT for. *)
           let pair_label =
             Printf.sprintf "(%s, %s)"
               CpuF.isa_name (List.hd dialects).gd_target in
-          (* ---- derive the harness shape from the parsed het test ----------
-             The per-iteration readout is rendered here, because it is pure C
-             over host buffers and needs no dialect; that keeps the record small
-             and both render passes readable. *)
+          (* ---- derive the harness shape from the parsed het test ---------- *)
           let it =
             (* ---- classify processors by device tag ---- *)
             let dev_of_proc p =
@@ -304,10 +240,7 @@ end
                     | _ -> t in
                   loc,t)
                 cpu_globals in
-            (* One CPU proc's ASMLang address parameters, in ASMLang's own
-               order, as (declaration, name).  The lists here are what the body,
-               the .cu extern declaration, the args struct and the driver call
-               all read, so the four cannot drift apart. *)
+
             let cpu_addr_params out =
               let addrs,_ptes = Cpu.Out.get_addrs out in
               List.map
@@ -316,10 +249,9 @@ end
                     try List.assoc a global_env with Not_found -> Compile.base in
                   (Printf.sprintf "%s *%s" (SkelUtil.dump_global_type a ty) a, a))
                 addrs in
-            (* ...and its output-register parameters: (declaration, name, the
-               register as a CONDITION spells it, element type).  The element
-               type is also the read buffer's, that buffer being where the
-               caller points the parameter. *)
+
+            (* output-register parameters: (declaration, name, the
+               register as a CONDITION spells it, element type). *)
             let cpu_out_infos out proc =
               List.map
                 (fun reg ->
@@ -369,6 +301,7 @@ end
                 (List.sort
                    (fun ((a,_,_),_) ((b,_,_),_) -> compare a b)
                    parsed.MiscParser.prog) in
+
             (* Read buffers: one per observable column, size N. *)
             let read_buffers =
               List.concat_map
@@ -388,10 +321,8 @@ end
                 (fun g -> if Hashtbl.mem seen g then false
                           else (Hashtbl.add seen g () ; true))
                 (cpu_addrs @ gpu_globals) in
-            (* ---- the outcome columns.  One per observable register, then one
-                   per location the condition names -- a location column is that
-                   location's own slot n, so it is a measured column like any
-                   other and the histogram prints a number in it. ---- *)
+            (* ---- the outcome columns: registers first, then the locations
+                   the condition names, read from their own slot n ---- *)
             let dev_slots want =
               List.concat_map
                 (fun (p,dev,obs) ->
@@ -414,6 +345,7 @@ end
                   if List.mem name all_globals then Some name else None)
                 (HetCond.condition_locations (prop_of parsed.MiscParser.condition)) in
             let nslots = n_reg + List.length loc_slots in
+
             (* ---- condition -> C predicate over the outcome vector ---- *)
             let cval v = ParsedConstant.pp_v v in
             let cint v = int_of_string_opt (ParsedConstant.pp_v v) in
@@ -443,11 +375,7 @@ end
                 | g::rest -> if g=name then Some (n_reg+i) else f (i+1) rest
                 | [] -> None in
               f 0 loc_slots in
-            (* Every atom is one outcome column against one value, and the
-               predicate reads the very vector the histogram is fed, so a printed
-               outcome and the `_weak' beside it cannot disagree.  An atom no
-               column carries is REFUSED, never approximated: dropping one would
-               weaken the detector this whole harness exists to evaluate. *)
+
             let rec c_slot_of_prop p =
               let open ConstrGen in
               match p with
@@ -487,16 +415,15 @@ end
               | Implies (a,b) ->
                  Printf.sprintf "(!(%s) || %s)"
                    (c_slot_of_prop a) (c_slot_of_prop b) in
-            (* The emitted weak-behaviour detector may NEVER be a constant.  A
-               constant-true one reports the weak behaviour on every run; a
-               constant-false one reports "Never" on every run, and a spurious
-               "Never" is an observation nothing produced. *)
+
+            (* The emitted weak-behaviour detector may NEVER be a constant. *)
             let weak_expr = c_slot_of_prop (prop_of parsed.MiscParser.condition) in
             if is_true weak_expr || is_false weak_expr then
               Warn.fatal
                 "hetlitmus: %s would emit a CONSTANT weak-behaviour detector \
                  (_weak = %s) -- refusing to emit"
                 tname weak_expr ;
+
             (* ---------------- the pre-rendered _labels / _dump_one ------------ *)
             let labels =
               let b = Buffer.create 256 in
@@ -522,11 +449,9 @@ end
 |ocaml} ;
               Buffer.contents b in
             (* ---------------- the pre-rendered slot readout ------------------
-               Iteration n's outcome vector is read from slot n: one pass, no
-               search and no decoding.  An iteration only ONE participant started
-               is not an iteration of the test, so the flags are ANDed first and a
-               zero on either side discards it unread.  Pure C over host buffers,
-               so it needs no dialect. *)
+               Iteration n's outcome vector is read from slot n. An iteration only 
+               ONE participant started is not an iteration of the test, so the
+               flags are ANDed first and a zero on either side discards it unread. *)
             let readout =
               let b = Buffer.create 1024 in
               let s = Buffer.add_string b in
@@ -564,10 +489,8 @@ end
               s "      if (_weak) _rec.target_count++;\n" ;
               s (Printf.sprintf
                    "      hist = add_outcome_outs(hist, _o, %d, 1, _weak);\n" nslots) ;
-              (* The one-outcome guard's evidence: whether ANY two iterations
-                 differed.  A decode that never varies is the constant-read
-                 artefact [Srivastava24 sec 4.1], and a harness reporting one
-                 value N times has measured one thing N times. *)
+
+              (* outcomes_vary = 0 iff every scored iteration read the same vector. *)
               s "      if (!_seen_first) { memcpy(_first, _o, sizeof _o); _seen_first = 1; }\n" ;
               s "      else if (memcmp(_first, _o, sizeof _o) != 0) _rec.outcomes_vary = 1;\n" ;
               s "    }\n" ;
@@ -625,6 +548,7 @@ end
               (if cpu_only then "  [CPU-only cycle]" else "")
           end ;
           let id = CudaLang.c_ident tname in
+
           (* ================= file emission ================= *)
           let base =
             if O.is_out && (try Sys.is_directory O.tarname with _ -> false)
@@ -633,10 +557,9 @@ end
           if not (Sys.file_exists dir) then Sys.mkdir dir 0o755 ;
           let write fname f =
             Misc.output_protect f (Filename.concat dir fname) in
-          (* het_run_P<p>'s signature is litmus7's own code<p> signature, so
-             the .cu extern declaration, the args struct and the driver call all
-             read the same two lists the body was printed from.  The read buffers
-             are one per output-register parameter, in the same order. *)
+
+          (* het_run_P<p> wraps code<p>; its declaration, args struct, call and read
+            buffers are all generated from cp_addrs @ cp_outs, in that order. *)
           let cpu_bufs cp =
             List.filter_map
               (fun (p,_,name,dev,ty) ->
@@ -656,25 +579,23 @@ end
                   non-static entry point its caller hands iteration n's slot\n   \
                   address for every location.  DO NOT EDIT. */\n"
                  tname CpuF.isa_name) ;
+
             (* _GNU_SOURCE must precede EVERY libc header: het_cpu_stress.h needs
                cpu_set_t / sched_setaffinity for thread pinning, and glibc hides
                both behind it.  After <stdint.h> would already be too late. *)
             s "#define _GNU_SOURCE\n" ;
             s "#include <stdint.h>\n\n" ;
-            (* THIS translation unit -- and only this one -- compiles the CPU stress
+            (* THIS translation unit compiles the CPU stress
                bodies.  It is built by gcc for the host, and cross-assembled by clang
-               for a foreign CPU ISA, so it is the one place the host-ISA cache
-               primitives may live; nvcc compiles the .cu and must never see them. *)
+               for a foreign CPU ISA. *)
             s "#define HET_CPU_STRESS_IMPL\n" ;
             s "#include \"het_cpu_stress.h\"\n\n" ;
             s (Printf.sprintf "#if defined(%s)\n" CpuF.host_macro) ;
             List.iter (fun cp -> cp.cp_dump ch) it.i_cpus ;
             s "#else\n" ;
             s (Printf.sprintf
-                 "/* Portable shim so the harness also compiles on a host whose\n   \
-                  ISA is not %s.  NOT the tested path -- the %s asm above\n   \
-                  is the real CPU thread; build on %s (or cross-assemble). */\n"
-                 CpuF.isa_name CpuF.isa_name CpuF.isa_name) ;
+                 "/* Stub for a non-%s host; the tested body is the asm above. */\n"
+                 CpuF.isa_name) ;
             List.iter
               (fun cp ->
                 s (Printf.sprintf "static void code%d(%s) {\n"
@@ -686,6 +607,7 @@ end
                 s "}\n")
               it.i_cpus ;
             s "#endif\n\n" ;
+
             (* The non-static entry points the GPU-side driver calls. *)
             List.iter
               (fun cp ->
@@ -694,6 +616,7 @@ end
                 s (Printf.sprintf "void het_run_P%d(%s) { code%d(%s); }\n"
                      cp.cp_proc (cpu_sig cp) cp.cp_proc args))
               it.i_cpus in
+
           (* One iteration's slot of a location, and the bytes a location costs:
              every shared global is SIZE_OF_TEST slots wide. *)
           let global_bytes = "sizeof(int)*SIZE_OF_TEST*HET_SLOT_STRIDE_WORDS" in
@@ -707,18 +630,15 @@ end
           let dump_gpu_main dialect s =
             s "int main(void){\n" ;
             (* Shared litmus vars + barrier, always through gd_alloc_shared: one
-               allocation per location, so the free still matches the allocator.
-               A location is SIZE_OF_TEST slots wide, iteration n touching slot n
-               alone (het_rdv.h). *)
+               allocation per location, so the free still matches the allocator. *)
             List.iter
               (fun g ->
                 s (Printf.sprintf
                      "  int *%s; gd_alloc_shared((void**)&%s, %s);\n"
                      g g global_bytes))
               it.i_all_globals ;
-            (* The rendezvous counter gets a slot of its own: sharing a line
-               with a test location would put the arrival traffic on the very
-               line under test. *)
+
+            (* The rendezvous counter gets a slot of its own *)
             s "  uint64_t *barrier; gd_alloc_shared((void**)&barrier, sizeof(int)*HET_SLOT_STRIDE_WORDS);\n" ;
             (* read buffers -- OFF the coherent race path. *)
             List.iter
@@ -750,6 +670,7 @@ end
                 s (Printf.sprintf "  uint8_t *%s = (uint8_t*)malloc_check(%s);\n"
                      (rdv_cpu_name cp.cp_proc) rdv_bytes))
               it.i_cpus ;
+
             (* cooperative-launch prelude *)
             s "  int _coop = 0;\n" ;
             s (Printf.sprintf "  (void)%s(&_coop, %s, 0);\n"
@@ -770,10 +691,7 @@ end
             s "  if (_stressBlocks < 0) _stressBlocks = 0;\n" ;
             s "  int _grid = _testBlocks + _noiseBlocks + _stressBlocks;\n" ;
             s "  if (_grid > _maxGrid) { fprintf(stderr, \"grid %d exceeds co-resident cap %d\\n\", _grid, _maxGrid); return 2; }\n" ;
-            (* An empty stress population is a run with no memory stress at all,
-               and on the NVIDIA part measured there the inter-CTA lb and sb
-               shapes yielded zero observations without it [Alglave15 Tab. 6].
-               The tally would catch that afterwards; warn BEFORE the run. *)
+            (* An empty stress population is a run with no memory stress at all, [Alglave15 Tab. 6] *)
             s "  if (HET_MEM_STRESS_PCT > 0 && _stressBlocks == 0)\n" ;
             s "    fprintf(stderr, \"HetLitmus WARNING: the mem-stress population is EMPTY (test=%d + noise=%d fills the co-resident cap %d).  HET_MEM_STRESS_PCT=%d asks for scratchpad stress and NO block will do any.\\n\",\n\
                \            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_MEM_STRESS_PCT);\n" ;
@@ -826,10 +744,7 @@ end
             s "  uint64_t *_noise_ddr = NULL;   /* CPU-homed: the GPU streams it */\n" ;
             s "  uint64_t *_noise_hbm = NULL;   /* GPU-homed: the CPU streams it */\n" ;
             s "  het_cpu_noise_args _na; pthread_t _nth; int _noise_cpu_on = 0;\n" ;
-            (* The threshold is a build fact and the default is a fallback
-               measured on another part, so the two arms differ in what they
-               claim: naming that default as this target's capacity is what the
-               fallback arm refuses. *)
+
             s "  if (HET_NOISE_MB < HET_LLC_MB) {\n" ;
             s "#if HET_LLC_MB_IS_FALLBACK\n" ;
             s "    fprintf(stderr, \"HetLitmus WARNING: HET_NOISE_MB=%d is below the %d MB threshold -- a FALLBACK figure, measured on another part, not a last-level-cache capacity for this target (build with -DHET_LLC_MB=<MB> to supply it).  A noise buffer that fits in the last-level cache is served locally and crosses no %s, so this run may not be stressed at all.\\n\",\n\
@@ -855,20 +770,12 @@ end
                \          _noise_blocks, (int)HET_NOISE_CPU,\n\
                \          (unsigned long long)_noise_words, (int)HET_NOISE_MB, (int)HET_PLACE);\n" ;
             s "  outs_t* hist = NULL;\n" ;
-            (* The statistics are computed over the (instance,run) cells, so the
-               records must OUTLIVE the run loop.  The replication unit is the
-               cell and never the iteration: Y = 1[target_count >= 1] per cell is
-               what is counted (hetlitmus/docs/harness-reporting.md sec 5). *)
+
+            (* One counter per run (hetlitmus/docs/harness-reporting.md sec 5). *)
             s "  het_obs_record _recs[NUMBER_OF_RUN];\n" ;
             s "  memset(_recs, 0, sizeof _recs);\n" ;
-            (* The campaign knobs are read at run time (getenv), never -D: the
-               scheduler retunes them per invocation without a rebuild, and a
-               compile-time knob threaded through an if-chain is what lets a whole
-               mechanism be folded away.  Unset envs leave the compiled defaults.
-               HET_RUNS_MAX can only CURTAIL within one invocation, the record
-               array being compiled at NUMBER_OF_RUN; growing R is the scheduler's
-               job, one fresh-HET_SEED invocation at a time -- replayed seeds draw
-               no fresh phase, so pooling them counts one draw twice. *)
+            (* Campaign knobs: getenv, never -D, so a retune needs no rebuild and
+               no branch can be folded away.  See: het_verdict.h. *)
             s "  int _runs_budget = (int)het_env_long(\"HET_RUNS_MAX\", NUMBER_OF_RUN);\n" ;
             s "  if (_runs_budget > NUMBER_OF_RUN) {\n" ;
             s "    fprintf(stderr, \"HetLitmus WARNING: HET_RUNS_MAX=%d exceeds the compiled NUMBER_OF_RUN=%d -- clamped.  Grow R by re-invoking with a FRESH HET_SEED (hetlitmus/campaign.py), never by replaying the same seeds.\\n\", _runs_budget, (int)NUMBER_OF_RUN);\n" ;
@@ -879,14 +786,8 @@ end
             s "  int _rate_mode = (int)het_env_long(\"HET_RATE\", 0);\n" ;
             s "  int _confirm_runs = (int)het_env_long(\"HET_CONFIRM_RUNS\", 30);\n" ;
             s "  uint32_t _seed0 = (uint32_t)het_env_long(\"HET_SEED\", (long)HET_SEED);\n" ;
-            (* The rendezvous caps.  Read here, carried in the record and printed
-               with the run, because the cap is what turns a missing partner into
-               a discarded iteration instead of a hang -- and the shipped pair are
-               placeholders (litmus/het-runtime/het_rdv.h HET_CAP_CALIBRATED).
-               The device cap is a uint32_t kernel argument and both record fields
-               are uint32_t, so an env value is clamped into that range before the
-               cast: unclamped, a negative one wraps to billions of polls and one
-               past 2^32-1 lands as its own low half. *)
+
+            (* The rendezvous spin caps. *)
             s "  long _cap_cpu = het_env_long(\"HET_CAP_CPU\", (long)HET_CAP_CPU);\n" ;
             s "  long _cap_gpu_env = het_env_long(\"HET_CAP_GPU\", (long)HET_CAP_GPU);\n" ;
             s "  if (_cap_cpu < 0) _cap_cpu = 0;\n" ;
@@ -904,8 +805,8 @@ end
             s "  uint32_t _cap_gpu = (uint32_t)_cap_gpu_u;\n" ;
             s "  int _nrec = 0;\n" ;
             s "  for (int _run=0; _run<_runs_budget; ++_run) {\n" ;
-            (* Every slot of every location, not just the first word: the reset
-               is also what FIRST-TOUCHES the pages a run is about to race on. *)
+
+            (* At the start of each run, every shared location is memset to 0 over its whole extent. *)
             List.iter
               (fun g ->
                 s (Printf.sprintf "    memset(%s, 0, %s);\n" g global_bytes))
@@ -914,15 +815,14 @@ end
             s "    uint32_t _seed = _seed0 + (uint32_t)_run;\n" ;
             s "    srand((unsigned int)_seed);\n" ;
             s "    het_set_scratch_locations(_scratch_loc_h, _grid);\n" ;
+
             (* ---- the CPU stress population, spawned BEFORE the test threads. *)
             s "    memset(&_ct, 0, sizeof _ct);\n" ;
-            (* The CPU-preload liveness flag must be WRITTEN, not just read: on a
-               host with no cache primitives het_cpu_preload issues zero hints, and
+
+            (* On a host with no cache primitives het_cpu_preload issues zero hints, and
                a stress_requested that still claimed the preload would disqualify
                every null on that host as dead -- the false COLD the guard exists to
-               prevent.  het_cpu_preload_live() is the accessor because
-               HET_CPU_PRELOAD_LIVE is host-only, and this translation unit is the
-               one nvcc parses. *)
+               prevent. *)
             s "    _ct.preload_inert = !het_cpu_preload_live();\n" ;
             s "    het_cpu_shuffle(_cpu_idx, _cpu_nregions);   /* reshuffled per run, off the run seed */\n" ;
             s "    __atomic_store_n(&_stress_go, 1, __ATOMIC_RELAXED);\n" ;
@@ -1009,6 +909,7 @@ end
                      "    pthread_t _th%d; pthread_create(&_th%d, NULL, cpu_thread_P%d, &_ca%d);\n"
                      proc proc proc proc))
               it.i_cpus ;
+
             (* args[] in kernel-parameter order. *)
             let args_addrs =
               String.concat ", "
@@ -1059,6 +960,7 @@ end
             s "      if (_ct.aff_failures)\n" ;
             s "        fprintf(stderr, \"HetLitmus WARNING: %u sched_setaffinity call(s) FAILED -- those threads are wherever the scheduler put them.  The pinning is fiction and the stress topology is not the one being tuned.\\n\", _ct.aff_failures);\n" ;
             s "    }\n" ;
+
             (* mirror the GPU device read buffers and rendezvous flags. *)
             List.iter
               (fun (_,_,name,_,ty) ->
@@ -1077,29 +979,19 @@ end
                  "    _rec.test_name = \"%s\"; _rec.instance_id = 0; _rec.run_id = _run;\n"
                  tname) ;
             s "    _rec.N = SIZE_OF_TEST;\n" ;
-            (* The record stamp, written as the SYMBOL so a rename in
-               het_verdict.h is a compile error here rather than a silent
-               mis-read.  het_verdict() reads no field of an unstamped record:
-               the record is memset(0) just above, so without this line every
-               count and liveness tally it reports would be a memset zero
-               indistinguishable from a run that saw nothing. *)
+            (* The stamp het_verdict() requires before reading any field: an
+               unfilled record is all zeros, which is a plausible null. *)
             s "    _rec.rec_magic = HET_REC_MAGIC;\n" ;
             s (Printf.sprintf
                  "    _rec.cpu_only = %d;  /* 1 iff EVERY proc is a CPU proc */\n"
                  (if cpu_only then 1 else 0)) ;
-            (* The build fact behind the "structurally absent stress" caveat,
-               taken from the constant that actually guards the loop rather than
-               re-derived in het_verdict.h.  cpu_only is NOT a proxy for it: they
-               are properties of different things, the CYCLE and the BUILD. *)
+
+            (* A build fact, NOT cpu_only (a cycle fact): het_verdict keys the
+               absent-GPU-stress caveat on it. *)
             s "    _rec.gpu_lanes = HET_GPU_LANES;\n" ;
-            (* The GPU scratchpad stress is requested ONLY where it can run:
-               het_do_stress's loop guard is `_gpu_done < HET_GPU_LANES', so at 0
-               lanes the loop exits before its body runs once and a request left
-               standing would make het_dead() disqualify every run of that
-               harness.  That is a structurally absent mechanism, not a dead one,
-               which is the distinction stress_requested draws; het_verdict()
-               still raises HET_CV_NO_GPU_LANES to say the null rests on
-               CPU-side stress alone. *)
+
+            (* A mechanism is requested only where it can run; at 0 lanes the
+               stress loop never enters, and a standing request would read as dead. *)
             s "    _rec.stress_requested =\n\
                \        ((HET_GPU_LANES > 0 && (HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0)) ? HET_REQ_GPU_STRESS : 0u)\n\
                \      | ((_nEnemy > 0) ? HET_REQ_CPU_ENEMY : 0u)\n\
@@ -1120,16 +1012,13 @@ end
             s "    _rec.place_failures = (uint32_t)_het_place_failures;\n" ;
             s "    _rec.noise_ws_mb = (uint32_t)HET_NOISE_MB;\n" ;
             s "    _rec.place_mode = (uint32_t)HET_PLACE;\n" ;
-            (* The caps this run waited under, and whether they are a measurement
-               at all: a discard count means nothing without the wait it came
-               from (litmus/het-runtime/het_rdv.h). *)
+
             s "    _rec.cap_cpu = (uint32_t)_cap_cpu;\n" ;
             s "    _rec.cap_gpu = _cap_gpu;\n" ;
             s "    _rec.cap_calibrated = HET_CAP_CALIBRATED;\n" ;
             s it.i_readout ;
-            (* The rendezvous banner, on stderr beside the other liveness banners:
-               how many iterations the two sides actually started together, under
-               which caps, and whether those caps were ever measured. *)
+
+            (* The rendezvous banner. *)
             s "    fprintf(stderr, \"HetLitmus rendezvous: scored=%llu discarded=%llu (cap_cpu=%llu cap_gpu=%llu) caps=%lu/%u jitter=%d discard_max=%d%% %s\\n\",\n\
                \            (unsigned long long)_rec.iters_scored,\n\
                \            (unsigned long long)_rec.iters_discarded,\n\
@@ -1139,18 +1028,12 @@ end
                \            (int)HET_RDV_MAX_DISCARD_PCT,\n\
                \            HET_CAP_CALIBRATED ? \"caps calibrated\" : \"caps UNCALIBRATED\");\n" ;
             s "    het_obs_record_print(stdout, &_rec);\n" ;
-            (* The interpretation of a count travels with the number, in the
-               harness's own output: het_verdict_print says what this run's
-               liveness evidence licenses the count to be read as. *)
+
             s "    het_verdict_print(stdout, &_rec);\n" ;
             s "    _recs[_nrec++] = _rec;\n" ;
-            (* The in-binary adaptive loop.  het_campaign_should_stop() is a pure
-               function of the records accumulated so far, inheriting every
-               statistic already computed, so consulting it after each run gives the
-               campaign scheduler its per-test early stop with no new decision
-               machinery.  With HET_ADAPTIVE unset the loop simply runs to
-               _runs_budget.  The rule stays pure, so the two policy knobs it takes
-               (HET_RATE, HET_CONFIRM_RUNS) are read here and passed in. *)
+
+            (* Early stop after each run, decided from the records so far
+               (het_verdict.h); with HET_ADAPTIVE unset the loop runs to budget. *)
             s "    if (_adaptive) {\n" ;
             s "      het_campaign_stop_t _stop = het_campaign_should_stop(_recs, _nrec, _runs_budget, _rate_mode, _confirm_runs);\n" ;
             s "      if (_stop != HET_CAMPAIGN_CONTINUE) {\n" ;
@@ -1164,13 +1047,9 @@ end
             s "      }\n" ;
             s "    }\n" ;
             s "  }\n" ;
-            (* ---- the statistics post-pass over the aggregated cells --------
-               het_verdict() is a pure function of one record, so the aggregate
-               reuses it instead of re-deriving liveness, inheriting every stress
-               disqualifier.  What a null carries is the effort behind it and
-               the liveness this run measured on its own counters; no rate and no
-               probability is attached to one
-               (hetlitmus/docs/harness-reporting.md sec 5). *)
+
+            (* The per-test aggregate over the R records; it reuses het_verdict()
+              per record, so it inherits every disqualifier (harness-reporting.md sec 5). *)
             s "  {\n" ;
             s "    het_stats_t _st;\n" ;
             s "    het_stats_compute(_recs, _nrec, &_st);\n" ;
@@ -1215,7 +1094,7 @@ end
             s "  gd_free_noise(_noise_hbm);\n" ;
             s "  return 0;\n}\n" in
 
-          (* ---- <tname>.{cu,hip} : GPU kernel + driver (per dialect) ---- *)
+          (* ---- <tname>.{cu,hip} : GPU kernel + driver ---- *)
           let dump_gpu_file dialect ch =
             let s = output_string ch in
             s (Printf.sprintf
@@ -1235,10 +1114,7 @@ end
             s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
             s "#include <cstring>\n#include <cmath>\n" ;
             s "#include <pthread.h>\n#include <inttypes.h>\n" ;
-            (* Two build facts, stamped ahead of the runtime headers that read
-               them.  No machine word is stamped: the headers name the mechanism.
-               HET_PLACE_LEVER is a dialect fact -- the vendor API call this
-               render contains. *)
+
             s (Printf.sprintf "#define HET_PAIR_NAME %S\n" pair_label) ;
             (match dialect.gd_place_lever with
              | Some lever -> s (Printf.sprintf "#define HET_PLACE_LEVER %S\n" lever)
@@ -1289,6 +1165,7 @@ end
                     "uint32_t _noise_stride"]) in
             s (Printf.sprintf "__global__ void litmus_%s(%s) {\n" id kparams) ;
             s "  het_rng_t _rng = het_rng_init(_seed, blockIdx.x * blockDim.x + threadIdx.x);\n" ;
+
             (* the GPU test lanes *)
             List.iter
               (fun gp ->
@@ -1305,10 +1182,9 @@ end
                 s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
                 s "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n" ;
                 s "        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally);\n" ;
-                (* The rendezvous sits AROUND the tested group and never between
-                   two of its accesses: it opens the iteration, the jitter closes
-                   it, and everything after is the program the .litmus names
-                   (litmus/het-runtime/README.md invariant (ii)). *)
+
+                (* Rendezvous, then jitter, then the tested ops: nothing is ever
+                   placed between two tested accesses (het-runtime/README.md). *)
                 s (Printf.sprintf
                      "      %s[_n] = het_rdv_device(barrier, (uint64_t)NPART*(uint64_t)(_n+1), _cap_gpu);\n"
                      (rdv_gpu_name gp.gp_proc)) ;
@@ -1325,6 +1201,7 @@ end
                 s "    het_scratch_bump(_gpu_done);\n" ;
                 s "  }\n")
               it.i_gpus ;
+
             (* =============== the pure stressing workgroups =================== *)
             s "  if (blockIdx.x >= HET_TEST_BLOCKS) {\n" ;
             s "    if (_noise_ddr != NULL && blockIdx.x < HET_TEST_BLOCKS + _noise_blocks) {\n" ;
@@ -1360,12 +1237,8 @@ end
             s "    }\n" ;
             s "  }\n" ;
             s "}\n\n" ;
-            (* ---------------- the CPU pthread wrappers ------------------------
-               The body is litmus7's own and addresses a bare pointer, so THIS is
-               where iteration _n's slot is chosen: the thread hands het_run_P<n>
-               the slot address of every location and the index-_n entry of every
-               read buffer.  The rendezvous stays HERE, around the call, for the
-               same reason (litmus/het-runtime/README.md invariant (ii)). *)
+
+            (* ---------------- the CPU pthread wrappers ------------------------ *)
             s dialect.gd_poke_def ;
             let cpu_ord = ref 0 in
             List.iter
@@ -1402,6 +1275,7 @@ end
                      @ List.map (fun (_,b) -> Printf.sprintf "a->%s + _n" b) bufs) in
                 s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
                 s "    size_t _slot = (size_t)_n * HET_SLOT_STRIDE_WORDS;\n" ;
+
                 if npl > 0 then begin
                   (* The preload hint must name the line this iteration is about
                      to touch, so the array is rebuilt per iteration. *)
@@ -1435,17 +1309,16 @@ end
             s dialect.gd_noise_mem_defs ;
             s "\n" ;
             dump_gpu_main dialect s in
+
           (* ---- comp.sh / Makefile / README ---- *)
-          (* `uname -m' of the CPU ISA this harness was rendered for.  The link
-             targets below refuse on any other host, where <test>_cpu_host.o is the
-             portable shim from dump_cpu_file's #else arm -- an executable built
-             from it runs, prints a histogram and tests nothing.  An unknown
-             host_macro maps to itself, which no `uname -m' can equal: fail
-             closed. *)
+          (* `uname -m' of the rendered CPU ISA; the Makefile refuses to link on
+             any other host (the stub would run and test nothing).  Unknown ->
+             itself, which no uname matches: fail closed. *)
           let host_uname = match CpuF.host_macro with
             | "__aarch64__" -> "aarch64"
             | "__x86_64__" -> "x86_64"
             | m -> m in
+
           (* The build files' per-vendor vocabulary, all of it folded over the
              (filtered) [dialects]; [d0] is the head, which they default to. *)
           let d0 = List.hd dialects in
@@ -1453,10 +1326,7 @@ end
           let comp_args =
             String.concat "|"
               (targets @ List.map (fun t -> t ^ "-link") targets) in
-          (* Count-sensitive words for the prose below.  A harness carries ONE
-             dialect (`-gpu-target'), so the sentences must read in the singular
-             -- and still read at any registry size, which is why no count word
-             is written out by hand. *)
+
           let n_d = List.length dialects in
           let plural sing plur = if n_d = 1 then sing else plur in
           let enum l = match List.rev l with
@@ -1466,12 +1336,9 @@ end
           let count_word = function
             | 1 -> "The one" | 2 -> "Both" | 3 -> "All three" | 4 -> "All four"
             | k -> Printf.sprintf "All %d" k in
+
           let dump_comp ch =
             let s = output_string ch in
-            (* The header says what this script does and what its argument may
-               be.  The guard, the ./<test> path and the build knobs are one
-               idea each, stated once in the doc it points at rather than in
-               every harness directory the corpus emits. *)
             s "#!/bin/sh\n" ;
             s (Printf.sprintf
                  "# Compile-only check for HetLitmus harness '%s' (%s render).\n"
@@ -1489,7 +1356,8 @@ end
             s "# knobs: hetlitmus/docs/het-emission.md\n" ;
             s "set -e\n" ;
             s (Printf.sprintf "TARGET=\"${1:-%s}\"\n" d0.gd_target) ;
-            (* one `compiler ; arch' line per dialect, their arch notes aligned *)
+
+            (* one `compiler ; arch' line per dialect *)
             let var_line d =
               Printf.sprintf "%s=\"${%s:-%s}\" ; %s=\"${%s:-%s}\""
                 d.gd_compiler_var d.gd_compiler_var d.gd_compiler
@@ -1507,11 +1375,9 @@ end
             s (Printf.sprintf
                  "HET_HOST_ISA=\"%s\"   # uname -m of this test's CPU ISA (%s)\n"
                  host_uname CpuF.isa_name) ;
-            (* The ISA extensions litmus7's own lowering reaches for, carried by
-               every compilation that assembles the REAL body: the cross line
-               below, which names the target itself, and the host line only where
-               the host IS this ISA.  Elsewhere gcc compiles the portable shim,
-               and another ISA's flags are not its to take. *)
+
+            (* The ISA flags litmus7's lowering needs (e.g. rcpc): the cross
+               line always, the host line only when the host IS this ISA. *)
             s (Printf.sprintf
                  "HET_CPU_CFLAGS=\"${HET_CPU_CFLAGS:-%s}\"\n" CpuF.cpu_cflags) ;
             s "HET_HOST_CFLAGS=\"\"\n" ;
@@ -1570,11 +1436,7 @@ end
                      cc d.gd_arch_flag arch obj tname tname) ;
                 s "    fi ;;\n")
               dialects ;
-            (* An unmatched $TARGET means an argument was GIVEN (no argument
-               takes d0 above), so the refusal quotes it back: one vendor per
-               harness means the other vendor's target name is the likely
-               mistake, and a bare usage line leaves the reader to spot that
-               their own word is missing from it. *)
+ 
             s (Printf.sprintf
                  "  *) echo \"comp.sh: unknown target \\\"$TARGET\\\" -- this directory is %s-only (accepted: %s)\" >&2 ; exit 2 ;;\n"
                  (String.concat "/" targets) comp_args) ;
@@ -1606,21 +1468,13 @@ end
                      d.gd_arch_var d.gd_arch_default))
               dialects ;
             s "CC ?= gcc\n" ;
-            (* The ISA extensions litmus7's own lowering reaches for; see comp.sh
-               for why the host object takes them only on a native host. *)
             s (Printf.sprintf "HET_CPU_CFLAGS ?= %s\n" CpuF.cpu_cflags) ;
-            (* The comment gets its OWN line: `VAR ?= val   # note' keeps the trailing
-               blanks in the make variable, so the uname -m test below would compare
-               "aarch64" against "aarch64   " and refuse on the very host it exists to
-               admit -- a guard that is inert in the other direction. *)
             s (Printf.sprintf
                  "# uname -m of this test's CPU ISA (%s); the %s-bin guard compares it.\n"
                  CpuF.isa_name d0.gd_target) ;
             s (Printf.sprintf "HET_HOST_ISA ?= %s\n" host_uname) ;
-            (* Keyed on the render's OWN uname word, never on the overridable
-               HET_HOST_ISA: that variable exists to relax the link guard on a
-               foreign host, where the host object is the portable shim, and one
-               ISA's -march is not another host compiler's to take. *)
+            (* Keyed on the literal uname word, not on HET_HOST_ISA: overriding
+               that to link on a foreign host must not hand its gcc this -march. *)
             s (Printf.sprintf
                  "HET_HOST_CFLAGS := $(if $(filter %s,$(shell uname -m)),$(HET_CPU_CFLAGS))\n\n"
                  host_uname) ;
@@ -1641,14 +1495,6 @@ end
             s (Printf.sprintf
                  "%s_cpu_host.o: %s_cpu.c\n\t$(CC) $(HET_HOST_CFLAGS) -c $< -o $@\n\n"
                  tname tname) ;
-            (* A link target is a .PHONY recipe, NOT a file rule.  Every vendor's
-               render links to the same ./<test> (run-one.sh and campaign.py stay
-               vendor-agnostic), and make cannot carry two file rules for one
-               target.  A file rule is also skipped when ./<test> is newer than
-               its objects, the state another vendor's link leaves: the build
-               would report success on a stale binary.  It links unconditionally,
-               guarded like comp.sh's *-link arms: on a foreign host the CPU
-               object is the shim. *)
             List.iter
               (fun d ->
                 s (Printf.sprintf "%s-bin: %s outs.o %s_cpu_host.o\n"
@@ -1659,14 +1505,6 @@ end
                 s (Printf.sprintf "\t$(%s) %s$(%s) $^ -o %s -lpthread -lm\n\n"
                      d.gd_compiler_var d.gd_arch_flag d.gd_arch_var tname))
               dialects ;
-            (* ...and `make <test>' must not build anything either.  With every
-               link target phony, no rule names ./<test>, so GNU make falls
-               through to its built-in `%: %.o' rule, linking <test>.o with $(CC)
-               past the uname -m guard.  `.SUFFIXES:' kills that fall-through
-               here (every object rule the harness emits is explicit), and
-               ./<test> gets a rule naming the target to use instead.  It is
-               .PHONY too: a plain rule whose target exists is "up to date", so
-               make would exit 0 and hand back whichever binary was there. *)
             s ".SUFFIXES:\n\n" ;
             s (Printf.sprintf "%s:\n" tname) ;
             s (Printf.sprintf
@@ -1694,7 +1532,6 @@ end
                        (fun d -> Printf.sprintf "%s (`.%s`)" d.gd_name d.gd_ext)
                        dialects))) ;
             s "Files:\n" ;
-            (* the renders first, their descriptions started at a common column *)
             let ext_w =
               List.fold_left
                 (fun w d -> max w (String.length d.gd_ext)) 0 dialects + 4 in
@@ -1736,8 +1573,6 @@ end
             s (Printf.sprintf
                  "The build knobs and why `make %s` refuses:\n" tname) ;
             s "`hetlitmus/docs/het-emission.md`.\n\n" ;
-            (* The last lines a reader of a results tree meets: the vendor and
-               dialect this harness renders, then the pair it was built for. *)
             s (Printf.sprintf "Target%s: %s.\n" (plural "" "s")
                  (enum
                     (List.map
@@ -1771,9 +1606,6 @@ end
               "HetLitmus: emitted harness directory %s (%s)\n%!"
               dir (String.concat " + " renders) ;
           Absent
-        (* Fail closed: the emitted harness directory is this function's ONLY
-           deliverable, so a refusal must not be reported as success.  See
-           HetArch.refused. *)
         with e ->
           if O.nocatch then raise e ;
           HetArch.refused "het" src_name e
