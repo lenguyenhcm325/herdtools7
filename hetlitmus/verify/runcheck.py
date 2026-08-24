@@ -14,7 +14,7 @@ expects follow that choice: nothing here is x86-only.
   PHASE 1  --dry-run prints the plan and does NOT act: no results dir at all.
   PHASE 2  the chain end to end on each dialect this host reaches.
   PHASE 3  the refusals, each by its own reason.
-  PHASE 4  campaign.py's stop rule, and the states it may not resume.
+  PHASE 4  campaign.py's stop rule, and the state file it refuses to start on.
   PHASE 6  the fail-closed handlers, each under its own induced condition.
   PHASE 7  a second session into a results dir that already holds one.
   PHASE 8  probe-hip.sh's exit paths.
@@ -405,7 +405,7 @@ def phase2_e2e(wrapper, quiet=False):
             return bad
         # --reuse-emitted: the same results dir, no emission, same answers.  The
         # first session's campaign state is moved aside, which is the remedy the
-        # second-session refusal names (phase 7 asserts that refusal).
+        # second-session refusal names (campaign.py's; phase 7 asserts it).
         out, target = chained
         cc, probe = make_stubs(tmp)
         before = open(os.path.join(out, "emit.log")).read()
@@ -506,7 +506,7 @@ def phase3_refusals(wrapper, quiet=False):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 4 -- campaign.py's stop rule, and the states it may not resume.
+# PHASE 4 -- campaign.py's stop rule, and the state file it refuses to start on.
 # ---------------------------------------------------------------------------
 CHAR_TESTS = ["CH-one", "CH-two"]
 STATE_COLS = ["test", "stop", "invocations", "runs", "usable", "k", "k_eff",
@@ -619,35 +619,31 @@ def phase4_stoprule(campaign, quiet=False):
         if not quiet and not bad:
             print("      --rate: the same rows run to BUDGET (%d runs)" % CHAR_BUDGET)
 
-        # A state file carries terminal stops and a resumed row inherits them, so a
-        # row banked under a stop name this rule cannot write (OBSERVED, CONFIRMED)
-        # must fail closed rather than be inherited: nothing else stands between a
-        # stop written by another rule and a session that reports it as its own.
-        legacy = os.path.join(tmp, "legacy.csv")
-        with open(legacy, "w", newline="") as fh:
-            w = csv.writer(fh)
-            w.writerow(STATE_COLS)
-            for t, stop in (("CH-one", "OBSERVED"), ("CH-two", "CONFIRMED")):
-                w.writerow([t, stop, 1, 10, 10, 1, 1, 3, 1, 0,
-                            "banked by another rule"])
-        r = _campaign(campaign, corpus, runner, legacy, [])
+        # A campaign is never continued, so a --state that already exists is refused
+        # before any work.  The file's BYTES are the second half of the assertion: a
+        # refusal arriving after the first save_state would have overwritten the very
+        # rows it exists to protect.  campaign.py is invoked directly here, so its
+        # refusal is on stderr.
+        preexist = os.path.join(tmp, "preexist.csv")
+        with open(preexist, "w", newline="") as fh:
+            csv.writer(fh).writerow(STATE_COLS)
+        with open(preexist, "rb") as fh:
+            held = fh.read()
+        r = _campaign(campaign, corpus, runner, preexist, [])
         if r.returncode != 2:
-            bad.append("resuming a state banked by another stop rule exited %d, want "
-                       "2: the row would have inherited an OBSERVED or CONFIRMED no "
-                       "harness here can produce" % r.returncode)
-        elif "cannot write" not in r.stderr:
-            bad.append("the legacy state was refused for another reason: %s"
+            bad.append("a campaign started on an existing --state exited %d, want 2: "
+                       "it would have re-run every row and written its own numbers "
+                       "over the ones that file holds" % r.returncode)
+        elif "already exists and a campaign is never resumed" not in r.stderr:
+            bad.append("the existing --state was refused for another reason: %s"
                        % r.stderr.strip()[-200:])
+        elif open(preexist, "rb").read() != held:
+            bad.append("the existing --state was refused and its bytes CHANGED: the "
+                       "refusal lands after a save_state, so the rows it protects are "
+                       "already gone by the time it fires")
         elif not quiet:
-            print("      a state banked by another stop rule is not resumable (rc=2)")
-
-        # ... and a row this rule DID write is resumed rather than re-run.
-        r = _campaign(campaign, corpus, runner, st_c, [])
-        if "skip  " not in r.stdout:
-            bad.append("a terminal row of this rule's own state was not resumed: %s"
-                       % r.stdout[-300:])
-        elif not quiet:
-            print("      a terminal row of its own state is resumed, not re-run")
+            print("      a --state that already exists is refused, byte for byte "
+                  "untouched (rc=2)")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return bad
@@ -801,8 +797,8 @@ def phase6_failclosed(wrapper, quiet=False, only=None):
 
 # ---------------------------------------------------------------------------
 # PHASE 7 -- a second session into a results dir that already holds one.
-# campaign.py resumes every terminal row it is handed, so without an explicit
-# --resume a repeat session measures nothing and still reads as complete.
+# campaign.py refuses to start on the state file the first session left, so the
+# second session ends carrying that refusal instead of overwriting those rows.
 # ---------------------------------------------------------------------------
 def _invocations(out, fx):
     """Harness invocations recorded in the session's transcripts."""
@@ -830,53 +826,52 @@ def phase7_second_session(wrapper, quiet=False):
         base = ["--gpu-target", "cuda", "--corpus", fx["dir"], "--arch",
                 arm["arch"], "--out", out, "--reuse-emitted"]
         invocations = _invocations(out, fx)
+        state = os.path.join(out, "campaign-state.csv")
+        with open(state, "rb") as fh:
+            held = fh.read()
 
+        # The refusal is campaign.py's and reaches the session at step 6, so the
+        # wrapper runs its whole chain first and ends carrying the campaign's exit.
+        # That refusal goes to campaign.log (the wrapper redirects the campaign's
+        # stderr there and echoes a tail of it), NEVER to the wrapper's own stderr:
+        # a check on r.stderr would pass on an empty stream.
         r = run_wrapper(wrapper, base + ["--budget-runs", "10"], env=env)
+        said = r.stdout + open(os.path.join(out, "campaign.log")).read()
+        record = open(os.path.join(out, "run-record.txt")).read()
         if r.returncode != 2:
-            bad.append("a second session without --resume exited %d, want 2: it "
-                       "would have inherited every terminal row and reported a "
-                       "complete session having invoked no harness" % r.returncode)
-        elif "already carries" not in r.stderr:
-            bad.append("the second session was refused for another reason: %s"
-                       % r.stderr.strip()[-300:])
+            bad.append("a second session into a dir that already holds a campaign "
+                       "state exited %d, want 2: it would have re-run every row and "
+                       "written its own numbers over the ones that state holds"
+                       % r.returncode)
+        elif "already exists and a campaign is never resumed" not in said:
+            bad.append("the second session stopped for another reason -- neither the "
+                       "wrapper's stdout nor campaign.log carries the refusal: %s"
+                       % said.strip()[-300:])
+        elif "session_status=COMPLETE" not in record:
+            bad.append("the second session ran its chain to the end and does not "
+                       "record COMPLETE: %s"
+                       % [l for l in record.splitlines() if "status" in l])
+        elif "the campaign refused (exit 2)" not in \
+                open(os.path.join(out, "summary.txt")).read():
+            bad.append("this session's summary does not carry the campaign's "
+                       "refusal, so the dir reads as a session that measured "
+                       "something: %s"
+                       % open(os.path.join(out, "summary.txt")).read()[-300:])
+        elif open(state, "rb").read() != held:
+            bad.append("the second session CHANGED the campaign state it refused to "
+                       "run over -- the rows it exists to protect are gone")
+        elif _invocations(out, fx) != invocations:
+            bad.append("the second session invoked a harness before the refusal: the "
+                       "transcripts grew from %d to %d"
+                       % (invocations, _invocations(out, fx)))
         elif not quiet:
-            print("      a second session into the same dir is refused (rc=2)")
-
-        r = run_wrapper(wrapper, base + ["--budget-runs", "500", "--resume"],
-                        env=env)
-        if r.returncode != 2:
-            bad.append("--resume with a budget above what the resumed rows spent "
-                       "exited %d, want 2: those rows are never re-run, so the "
-                       "raised budget would go silently unspent" % r.returncode)
-        elif "is above what these row(s) spent" not in r.stderr:
-            bad.append("the raised-budget resume was refused for another reason: %s"
-                       % r.stderr.strip()[-300:])
-        elif not quiet:
-            print("      --resume with a raised budget is refused (rc=2)")
-
-        r = run_wrapper(wrapper, base + ["--budget-runs", "10", "--resume"],
-                        env=env)
-        note = "row(s) (not measured in this session)"
-        if r.returncode != 0:
-            bad.append("--resume exited %d: %s"
-                       % (r.returncode, (r.stdout + r.stderr)[-400:]))
-        else:
-            for f in ("summary.txt", "run-record.txt"):
-                if note not in open(os.path.join(out, f)).read():
-                    bad.append("%s does not disclose the resumed rows (%r) -- a "
-                               "session that measured nothing must say so"
-                               % (f, note))
-            after = _invocations(out, fx)
-            if after != invocations:
-                bad.append("--resume re-invoked a harness: the transcripts grew "
-                           "from %d to %d" % (invocations, after))
-            elif not quiet:
-                print("      --resume runs no harness and discloses the inherited "
-                      "row(s)")
+            print("      a second session into the same dir is refused by the "
+                  "campaign (rc=2), state untouched, no harness invoked")
 
         # A refused session must NOT leave the previous one's summary beside its own
-        # record: one dir would then describe two different sessions.
-        os.remove(os.path.join(out, "campaign-state.csv"))
+        # record: one dir would then describe two different sessions.  The summary
+        # standing here is the refusal summary the run above wrote, and this
+        # assertion is indifferent to which session wrote the one it must not find.
         bp = write_exec(os.path.join(tmp, "bad-probe.sh"), BAD_PROBE)
         r = run_wrapper(wrapper, base + ["--budget-runs", "10"],
                         env=wrapper_env(cc, bp))
@@ -1035,10 +1030,9 @@ INJECTIONS = [
      lambda s: s.replace("        if self.k_eff > 0 and not rate_mode:",
                          "        if self.k_eff > 0:", 1),
      phase4_stoprule, "rate mode turns the sighting stop off"),
-    ("4", "campaign", "a row banked by another stop rule is resumed anyway",
-     lambda s: s.replace("            if pstop and pstop not in TERMINAL:",
-                         "            if False:", 1),
-     phase4_stoprule, "banked by another stop rule"),
+    ("4", "campaign", "a campaign starts on a --state that already exists",
+     lambda s: s.replace("if os.path.exists(a.state):", "if False:", 1),
+     phase4_stoprule, "started on an existing --state exited 0"),
     # Four of the phase-6 handlers are subsumed downstream: with the handler
     # removed the session still stops, elsewhere and saying something else, so
     # each of those four names the substitute the phase reaches instead -- the
@@ -1083,14 +1077,12 @@ INJECTIONS = [
      lambda s: s.replace('[ ! -e "$EMIT/$t/$t.$OTHER_EXT" ] \\\n    || die',
                          '[ 1 = 1 ] \\\n    || die', 1),
      _p6("stray-render"), "stray-render"),
-    ("7", "wrapper", "a second session silently resumes every terminal row",
-     lambda s: s.replace('if [ "$RESUMABLE" -gt 0 ] && [ "$RESUME" -eq 0 ]; then',
-                         'if false; then', 1),
-     phase7_second_session, "without --resume"),
-    ("7", "wrapper", "a raised budget is swallowed by the resumed rows",
-     lambda s: s.replace('if [ "$RESUME" -eq 1 ] && [ -n "$RESUMABLE_SHORT" ]; then',
-                         'if false; then', 1),
-     phase7_second_session, "budget above what the resumed rows spent"),
+    # The campaign's refusal reaches the session as an exit code and nothing else,
+    # so this is the injection that proves phase 7 reads the propagated one.  The
+    # anchor is shared with the phase-6 entry above; each mutates its own copy.
+    ("7", "wrapper", "the campaign's refusal is not the session's exit",
+     lambda s: s.replace('exit "$camp_rc"', 'exit 0', 1),
+     phase7_second_session, "already holds a campaign state exited 0, want 2"),
     ("7", "wrapper", "a refused session leaves the previous summary in place",
      lambda s: s.replace('[ ! -e "$SUMMARY" ] || mv -f "$SUMMARY" '
                          '"$OUT/summary-superseded-$STAMP.txt"', ':', 1),
@@ -1665,7 +1657,7 @@ PHASES = [
      lambda q: phase2_e2e(WRAPPER, q)),
     ("3: the refusals by their own reasons",
      lambda q: phase3_refusals(WRAPPER, q)),
-    ("4: campaign.py's stop rule and the states it may not resume",
+    ("4: campaign.py's stop rule and the state file it refuses to start on",
      lambda q: phase4_stoprule(CAMPAIGN, q)),
     ("6: the fail-closed handlers, under their own conditions",
      lambda q: phase6_failclosed(WRAPPER, q)),

@@ -47,7 +47,6 @@ usage: hetlitmus-run.sh --gpu-target cuda|hip --corpus DIR [options]
   --budget-runs N            max runs per row (default 100)
   --out DIR                  results dir (default hetlitmus/run-out/<stamp>)
   --reuse-emitted            reuse <out>/emit instead of emitting again
-  --resume                   continue the campaign state already in <out>
   --dry-run                  print the plan and do nothing else
 EOF
 }
@@ -84,7 +83,7 @@ need_val() {                    # <flag> <remaining argc>
 }
 
 GPU_TARGET="" ; CORPUS="" ; ARCH="auto" ; BUDGET_RUNS=100
-OUT="" ; REUSE=0 ; DRYRUN=0 ; RESUME=0
+OUT="" ; REUSE=0 ; DRYRUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --gpu-target)    need_val "$1" $# ; GPU_TARGET="$2" ; shift 2 ;;
@@ -93,7 +92,6 @@ while [ $# -gt 0 ]; do
     --budget-runs)   need_val "$1" $# ; BUDGET_RUNS="$2" ; shift 2 ;;
     --out)           need_val "$1" $# ; OUT="$2" ; shift 2 ;;
     --reuse-emitted) REUSE=1 ; shift ;;
-    --resume)        RESUME=1 ; shift ;;
     --dry-run)       DRYRUN=1 ; shift ;;
     -h|--help)       usage ; exit 0 ;;
     *) usage >&2 ; die "unknown argument \"$1\"" ;;
@@ -259,23 +257,6 @@ STAMP="$(date +%Y%m%d-%H%M%S)-$( (hostname -s 2>/dev/null || hostname 2>/dev/nul
 RUNONE="$HETL/spotcheck/run-one.sh"
 RUNNER="timeout $HET_RUN_TIMEOUT sh $RUNONE {dir} {test}"
 
-# What a second session into this dir would inherit: campaign.py resumes every
-# terminal row it finds in --state rather than re-running it, so without an
-# explicit --resume a repeat session invokes no harness at all and still reports a
-# complete one.  The short list is the subset that would also silently swallow a
-# raised --budget-runs: rows stopped BY budget, which a resume can only leave at
-# the budget they were measured with.  Column 2 is the stop, column 4 the runs.
-STATE="$OUT/campaign-state.csv"
-RESUMABLE=0 ; RESUMABLE_SHORT=""
-if [ -r "$STATE" ]; then
-  RESUMABLE="$(awk -F, 'NR > 1 && ($2 == "CORROBORATED" ||
-      $2 == "UNCONFIRMED-SIGHTING" || $2 == "BUDGET" ||
-      $2 == "ERROR")' "$STATE" | wc -l)"
-  RESUMABLE_SHORT="$(awk -F, -v b="$BUDGET_RUNS" \
-    'NR > 1 && $2 == "BUDGET" && $4 + 0 < b + 0 \
-     { printf "%s(%s runs) ", $1, $4 }' "$STATE")"
-fi
-
 echo "=========================================================================="
 echo "HetLitmus device session"
 echo "  host          $(uname -srm)   $( (hostname 2>/dev/null || echo '?') )"
@@ -299,22 +280,6 @@ echo "  step 4  compile     comp.sh $GPU_TARGET + make $GPU_TARGET-bin, $ARCH_VA
 echo "  step 5  smoke rungs NOT IN THIS CHAIN (spotcheck/ladder.sh is driven separately)"
 echo "  step 6  campaign    campaign.py (characterization: one stop rule per row)"
 echo "  step 7  collect     probe, build logs, harness transcripts, campaign state, summary -> $OUT"
-if [ "$RESUMABLE" -gt 0 ]; then
-  echo "  resume      $RESUMABLE terminal row(s) already in $STATE"
-fi
-if [ "$RESUMABLE" -gt 0 ] && [ "$RESUME" -eq 0 ]; then
-  die "$STATE already carries $RESUMABLE terminal row(s), and campaign.py resumes \
-each of them instead of re-running it: this session would invoke no harness and \
-still report a complete one.  Pass --resume to continue that campaign (the inherited \
-rows are then disclosed as not measured here), or move $STATE aside to measure \
-again into this dir."
-fi
-if [ "$RESUME" -eq 1 ] && [ -n "$RESUMABLE_SHORT" ]; then
-  die "--resume, but --budget-runs $BUDGET_RUNS is above what these row(s) spent, \
-and a resumed row is never re-run: $RESUMABLE_SHORT.  Each stopped at the budget it \
-was given, so inheriting them under this one would credit the session with runs \
-nobody spent; re-run at their budget, or move $STATE aside."
-fi
 if [ "$DRYRUN" -eq 1 ]; then
   echo
   echo "hetlitmus-run: --dry-run -- nothing was emitted, built, run or written."
@@ -348,11 +313,6 @@ RECORD="$OUT/run-record.txt" ; SUMMARY="$OUT/summary.txt"
   echo "runner=$RUNNER"
   echo "probe_cmd=$PROBE_SH"
   echo "reuse_emitted=$REUSE"
-  echo "resume=$RESUME"
-  echo "resumed_rows=$RESUMABLE"
-  if [ "$RESUME" -eq 1 ] && [ "$RESUMABLE" -gt 0 ]; then
-    echo "resumed_note=resumed $RESUMABLE row(s) (not measured in this session)"
-  fi
   echo "het_alloc=${HET_ALLOC:-<unset: the harness resolves it>}"
   echo "litmus7=$LITMUS7"
   echo "git_rev=$(cd "$REPO" && git rev-parse HEAD 2>/dev/null || echo nogit)"
@@ -508,9 +468,6 @@ count_stop() {                  # <STOP> -> rows of the campaign state carrying 
   echo "  probe       $OUT/probe.txt   ($(grep -m1 '^probe_status=' "$OUT/probe.txt" 2>/dev/null | sed 's/^probe_status=//'))"
   echo "  build       ${#CORPUS_TESTS[@]} built, $nfail failed   (logs in $OUT/build/)"
   echo "  campaign    exit $camp_rc   (log $OUT/campaign.log, state $STATE)"
-  if [ "$RESUME" -eq 1 ] && [ "$RESUMABLE" -gt 0 ]; then
-    echo "  resumed     $RESUMABLE row(s) (not measured in this session)"
-  fi
   echo "  transcripts $OUT/hetstats/   ($(find "$OUT/hetstats" -name '*.log' 2>/dev/null | wc -l) harness log(s))"
   for s in CORROBORATED UNCONFIRMED-SIGHTING BUDGET ERROR; do
     n="$(count_stop "$s")"

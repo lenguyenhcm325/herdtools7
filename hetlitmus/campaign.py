@@ -247,15 +247,6 @@ class TestState(object):
         return self.stop
 
 
-def load_state(path):
-    rows = {}
-    if path and os.path.exists(path):
-        with open(path) as fh:
-            for r in csv.DictReader(fh):
-                rows[r["test"]] = r
-    return rows
-
-
 def save_state(path, states):
     cols = ["test", "stop", "invocations", "runs", "usable", "k", "k_eff",
             "k_runs", "first_sight", "cpu_only", "note"]
@@ -294,6 +285,15 @@ def parse_args():
     if a.budget_runs < 1:
         die("--budget-runs %d names no bound, and this driver loops until one is "
             "reached" % a.budget_runs)
+    # save_state rewrites --state whole after every test, so a campaign started on a
+    # file that already holds rows overwrites measurements nothing here re-ran.  The
+    # bar is existence, NOT terminality: a half-written state left by a campaign that
+    # lost its box is a reading too.  Checked before any work, so nothing is spent
+    # before the refusal.
+    if os.path.exists(a.state):
+        die("--state %s already exists and a campaign is never resumed: running on "
+            "would silently overwrite the rows it holds. Move it aside, or point "
+            "--state at a fresh path." % a.state)
     return a
 
 
@@ -372,41 +372,22 @@ def report_test(st):
 
 
 def run_campaign(a, work):
-    """Drive every test in order and return (states, errors, unconfirmed).  A row
-    already terminal in --state is resumed, not re-run, and the state is written after
-    every test so the campaign survives losing the box."""
-    prior = load_state(a.state)
+    """Drive every test in order and return (states, errors, unconfirmed).  The state
+    is written after every test, so a campaign that loses the box leaves the rows it
+    did measure as a readable file -- a deliverable, and not a campaign to continue:
+    parse_args refuses to start on a --state that exists, so the recovery is to move
+    that file aside and run the remaining tests into a fresh one."""
     states, errors, unconfirmed = [], 0, 0
     for t in work:
         st = TestState(t)
         states.append(st)
-        # A row may be resumed ONLY by the stop rule that wrote it.  The stop name is
-        # the rule's signature, so a stop this policy cannot write came from another
-        # policy, and resuming it would bank an adjudication no harness here makes.
-        if t in prior:
-            pstop = (prior[t].get("stop") or "").strip()
-            if pstop and pstop not in TERMINAL:
-                die("%s carries stop=%r in %s, which this stop rule cannot write: the "
-                    "row was banked by another policy and is not resumable by this one"
-                    % (t, pstop, a.state))
-        if t in prior and prior[t].get("stop") in TERMINAL:
-            st.stop = prior[t]["stop"]
-            st.note = "resumed: terminal in %s" % a.state
-            print("skip  %-28s %s (from state)" % (t, st.stop))
-            # A resumed row still counts: a banked flagged row that nobody counted
-            # would let a resuming campaign exit 0 over it.
-            if st.stop == "ERROR":
-                errors += 1
-            if st.stop == "UNCONFIRMED-SIGHTING":
-                unconfirmed += 1
-            continue
         drive_test(a, st, a.budget_runs)
         report_test(st)
         if st.stop == "ERROR":
             errors += 1
         if st.stop == "UNCONFIRMED-SIGHTING":
             unconfirmed += 1
-        save_state(a.state, states)   # after every test: the campaign is resumable
+        save_state(a.state, states)   # after every test: what ran is on disk
     return states, errors, unconfirmed
 
 
