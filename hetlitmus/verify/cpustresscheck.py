@@ -38,33 +38,6 @@ NVCC = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
 AARCH64_TRIPLE = "aarch64-linux-gnu"
 SEQS = (0, 1, 2, 3)
 
-# ---------------------------------------------------------------------------
-# The check selection.  Each block below is named for what it asserts, and
-# `--checks' runs only the ones named; `runtime-probe', `gpu-noise' and
-# `preload-guard' each cover a block of two or three.  A negative control that
-# can reach exactly one of them says so, so its run is evidence about that check
-# rather than about "something went nonzero".
-# ---------------------------------------------------------------------------
-CHECKS = ("preload-prims-aarch64", "preload-prims-x86", "enemy-loop",
-          "enemy-seq-runtime", "noise-size", "scratch-disjoint",
-          "runtime-probe", "gpu-noise", "preload-guard")
-
-
-def select_checks(spec):
-    sel = set()
-    for w in spec.split(","):
-        w = w.strip()
-        if w == "all":
-            sel.update(CHECKS)
-        elif w in CHECKS:
-            sel.add(w)
-        else:
-            raise SystemExit("cpustresscheck: unknown check %r (have: all, %s)"
-                             % (w, ", ".join(CHECKS)))
-    if not sel:
-        raise SystemExit("cpustresscheck: --checks selected nothing to run")
-    return sel
-
 # The cache primitives, per ISA.  These are litmus7's own (libdir/_aarch64/
 # _cache.h, libdir/_x86_64/_cache.h) and they are the whole of the preload
 # incantation -- if they are not in the object, the preload is inert.
@@ -302,19 +275,9 @@ def harness_paths(d, name):
     return d, cpu_c, cu, hdr
 
 
-def emit_harness(litmus_path, outdir, harness_dir=None):
-    """Emit the harness -- or, when [harness_dir] is given, check the one already
-    sitting there.
-
-    The second mode exists so this checker can be BITTEN.  Without it a negative
-    control cannot exist at all: the checker re-emits from source on every run, so
-    a mutation has nothing to land on and the gate itself would be untestable --
-    and this is the one gate able to catch a regression that preserves the source
-    text while killing the compiled mechanism.
-    See tokens.sh selftest section [8]. """
+def emit_harness(litmus_path, outdir):
+    """litmus7-emit the harness; return its (dir, _cpu.c, .cu, het_cpu_stress.h)."""
     name = os.path.splitext(os.path.basename(litmus_path))[0]
-    if harness_dir:
-        return harness_paths(harness_dir, name)
     r = run([LITMUS7, "-gpu-target", "cuda", "-set-libdir", LIBDIR, "-o", outdir,
              os.path.abspath(litmus_path)])
     if r.returncode != 0:
@@ -423,9 +386,8 @@ def count_noise_ops(ptx_text):
     return sum(1 for ln in ptx_text.splitlines() if NOISE_OP.match(ln))
 
 
-def check(litmus_path, arch="sm_90", harness_dir=None, sel=None):
+def check(litmus_path, arch="sm_90"):
     lines, ok = [], [True]
-    sel = set(CHECKS) if sel is None else sel
 
     def fail(msg):
         ok[0] = False
@@ -434,16 +396,12 @@ def check(litmus_path, arch="sm_90", harness_dir=None, sel=None):
     def note(msg):
         lines.append(msg)
 
-    def want(k):
-        return k in sel
-
     name = os.path.basename(litmus_path)
-    note("=== cpu+interconnect stress liveness: %s checks=%s ==="
-         % (name, ",".join(c for c in CHECKS if c in sel)))
+    note("=== cpu+interconnect stress liveness: %s ===" % name)
 
     tmp = tempfile.mkdtemp(prefix="cpustresscheck_")
     try:
-        d, cpu_c, cu, hdr = emit_harness(litmus_path, tmp, harness_dir)
+        d, cpu_c, cu, hdr = emit_harness(litmus_path, tmp)
 
         # Never pass vacuously on a harness with no CPU stress layer at all.
         with open(cu) as f:
@@ -455,86 +413,74 @@ def check(litmus_path, arch="sm_90", harness_dir=None, sel=None):
             return ok[0], lines
 
         # ---- preload-prims-aarch64: they survive -O2 on the AArch64 host ISA
-        a64 = (asm_of(cpu_c, cross=True)
-               if (want("preload-prims-aarch64") or want("enemy-loop")) else None)
-        if want("preload-prims-aarch64"):
-            for prim, rx in AARCH64_PRIMS.items():
-                n = len(rx.findall(a64))
-                if n < 1:
-                    fail("preload-prims-aarch64: no `%s' in the -O2 asm -- litmus7's "
-                         "cache preload is exactly these three primitives "
-                         "(libdir/_aarch64/_cache.h), so on the AArch64 host ISA it "
-                         "is INERT." % prim)
-            if ok[0]:
-                note("  preload-prims-aarch64: dc civac, prfm pldl1keep, prfm "
-                     "pstl1keep all present in the -O2 asm")
+        a64 = asm_of(cpu_c, cross=True)
+        for prim, rx in AARCH64_PRIMS.items():
+            n = len(rx.findall(a64))
+            if n < 1:
+                fail("preload-prims-aarch64: no `%s' in the -O2 asm -- litmus7's "
+                     "cache preload is exactly these three primitives "
+                     "(libdir/_aarch64/_cache.h), so on the AArch64 host ISA it "
+                     "is INERT." % prim)
+        if ok[0]:
+            note("  preload-prims-aarch64: dc civac, prfm pldl1keep, prfm "
+                 "pstl1keep all present in the -O2 asm")
 
         # ---- preload-prims-x86: and on the x86_64 host ISA -----------------
-        if want("preload-prims-x86"):
-            x86 = asm_of(cpu_c, cross=False)
-            for prim, rx in X86_PRIMS.items():
-                if len(rx.findall(x86)) < 1:
-                    fail("preload-prims-x86: no `%s' in the -O2 asm -- the cache "
-                         "preload is INERT on the x86_64 host ISA." % prim)
-            if ok[0]:
-                note("  preload-prims-x86: clflush and prefetcht0 present in the -O2 asm")
+        x86 = asm_of(cpu_c, cross=False)
+        for prim, rx in X86_PRIMS.items():
+            if len(rx.findall(x86)) < 1:
+                fail("preload-prims-x86: no `%s' in the -O2 asm -- the cache "
+                     "preload is INERT on the x86_64 host ISA." % prim)
+        if ok[0]:
+            note("  preload-prims-x86: clflush and prefetcht0 present in the -O2 asm")
 
         # ---- enemy-loop: it survived the optimiser -------------------------
-        if want("enemy-loop"):
-            got = count_enemy_ops(a64)
-            if got is None:
-                fail("enemy-loop: het_cpu_enemy is not in the compiled AArch64 object "
-                     "at all")
-                return ok[0], lines
-            ld, st, br = got
-            if ld < 1:
-                fail("enemy-loop: het_cpu_enemy's -O2 body performs NO discarded load "
-                     "(no `ldr xzr'), so the read side of every access pattern was "
-                     "optimised away.  Restore `volatile' on het_cpu_enemy_args.scratch "
-                     "and on the local pointer.")
-            if st < MIN_ENEMY_STORES:
-                fail("enemy-loop: het_cpu_enemy's -O2 body carries only %d store(s), "
-                     "expected at least %d (the four sigma branches declare 2+1+1+0).  The "
-                     "scratchpad must be both READ and WRITTEN: measured on seven Nvidia "
-                     "GPUs, every most-effective access sequence mixes loads and stores, "
-                     "and for most of those chips the lowest-ranked sequences are stores "
-                     "only [Sorensen16 sec 3.3]."
-                     % (st, MIN_ENEMY_STORES))
-            if br < 1:
-                fail("enemy-loop: het_cpu_enemy's -O2 body has "
-                     "NO back edge around its scratchpad traffic"
-                     " -- the loads and stores run once.  An enemy that touches the "
-                     "scratchpad once is not a stressor.")
-            if ok[0]:
-                note("  enemy-loop: het_cpu_enemy survives -O2 -- %d discarded load(s), "
-                     "%d store(s), %d traffic loop(s)" % (ld, st, br))
+        got = count_enemy_ops(a64)
+        if got is None:
+            fail("enemy-loop: het_cpu_enemy is not in the compiled AArch64 object "
+                 "at all")
+            return ok[0], lines
+        ld, st, br = got
+        if ld < 1:
+            fail("enemy-loop: het_cpu_enemy's -O2 body performs NO discarded load "
+                 "(no `ldr xzr'), so the read side of every access pattern was "
+                 "optimised away.  Restore `volatile' on het_cpu_enemy_args.scratch "
+                 "and on the local pointer.")
+        if st < MIN_ENEMY_STORES:
+            fail("enemy-loop: het_cpu_enemy's -O2 body carries only %d store(s), "
+                 "expected at least %d (the four sigma branches declare 2+1+1+0).  The "
+                 "scratchpad must be both READ and WRITTEN: measured on seven Nvidia "
+                 "GPUs, every most-effective access sequence mixes loads and stores, "
+                 "and for most of those chips the lowest-ranked sequences are stores "
+                 "only [Sorensen16 sec 3.3]."
+                 % (st, MIN_ENEMY_STORES))
+        if br < 1:
+            fail("enemy-loop: het_cpu_enemy's -O2 body has "
+                 "NO back edge around its scratchpad traffic"
+                 " -- the loads and stores run once.  An enemy that touches the "
+                 "scratchpad once is not a stressor.")
+        if ok[0]:
+            note("  enemy-loop: het_cpu_enemy survives -O2 -- %d discarded load(s), "
+                 "%d store(s), %d traffic loop(s)" % (ld, st, br))
 
         # ---- enemy-seq-runtime: sigma is never a compile-time constant -----
-        if want("enemy-seq-runtime"):
-            per_seq = {}
-            for q in SEQS:
-                a = asm_of(cpu_c, cross=True, extra=["-DHET_CPU_ENEMY_SEQ=%d" % q])
-                per_seq[q] = count_enemy_ops(a)
-            # enemy-loop's enemy-is-there anchor, restated because this check can
-            # be selected alone, and enemy-loop does not run then.  Its sentence
-            # differs so a scoped negative control can tell the two apart.
-            if any(per_seq[q] is None for q in SEQS):
-                fail("enemy-seq-runtime: het_cpu_enemy is not in the compiled AArch64 "
-                     "object at all: every per-sigma count is None, and "
-                     "a set of one None is not invariance")
-            elif len({per_seq[q] for q in SEQS}) != 1:
-                fail("enemy-seq-runtime: het_cpu_enemy's "
-                     "op count MOVES with -DHET_CPU_ENEMY_SEQ"
-                     " %s.  A compile-time sigma lets the optimiser "
-                     "fold the switch to one branch, so the object carries only the "
-                     "pattern that -D named -- and on the non-volatile GPU twin, that "
-                     "is how a write-free branch loses its loads.  It must "
-                     "arrive in het_cpu_enemy_args as a RUNTIME field."
-                     % {q: per_seq[q] for q in SEQS})
-            else:
-                note("  enemy-seq-runtime: het_cpu_enemy's op count is INVARIANT over "
-                     "-DHET_CPU_ENEMY_SEQ=0..3 (%d ld + %d st)"
-                     % (per_seq[0][0], per_seq[0][1]))
+        per_seq = {}
+        for q in SEQS:
+            a = asm_of(cpu_c, cross=True, extra=["-DHET_CPU_ENEMY_SEQ=%d" % q])
+            per_seq[q] = count_enemy_ops(a)
+        if len({per_seq[q] for q in SEQS}) != 1:
+            fail("enemy-seq-runtime: het_cpu_enemy's "
+                 "op count MOVES with -DHET_CPU_ENEMY_SEQ"
+                 " %s.  A compile-time sigma lets the optimiser "
+                 "fold the switch to one branch, so the object carries only the "
+                 "pattern that -D named -- and on the non-volatile GPU twin, that "
+                 "is how a write-free branch loses its loads.  It must "
+                 "arrive in het_cpu_enemy_args as a RUNTIME field."
+                 % {q: per_seq[q] for q in SEQS})
+        else:
+            note("  enemy-seq-runtime: het_cpu_enemy's op count is INVARIANT over "
+                 "-DHET_CPU_ENEMY_SEQ=0..3 (%d ld + %d st)"
+                 % (per_seq[0][0], per_seq[0][1]))
 
         # ---- noise-size/scratch-disjoint: the DRIVER's two invariants ------
         # Every check above exercises het_cpu_stress.h -- the header -- because the
@@ -551,207 +497,202 @@ def check(litmus_path, arch="sm_90", harness_dir=None, sel=None):
         # therefore derive from HET_NOISE_MB, so that het_obs_record's
         # noise_ws_mb describes the buffer really allocated, and the below-LLC
         # guard must still be there.
-        if want("noise-size"):
-            m = re.search(r"_noise_words\s*=\s*([^;]+);", cu_src)
-            if not m:
-                fail("noise-size: the driver does not compute _noise_words at all -- "
-                     "the interconnect noise buffer is not sized by anything.")
-            elif "HET_NOISE_MB" not in m.group(1):
-                fail("noise-size: the interconnect noise working set is NOT derived "
-                     "from HET_NOISE_MB (_noise_words = %s), so it is decoupled from the "
-                     "tuned knob and from noise_ws_mb in the record; below the LLC (%s) "
-                     "it is served from cache and stresses NOTHING."
-                     % (m.group(1).strip(), "HET_LLC_MB, fallback 114 MB"))
-            elif "HET_LLC_MB" not in cu_src:
-                fail("noise-size: the below-last-level-cache guard is gone.  A noise "
-                     "buffer that fits in cache generates no interconnect traffic, and "
-                     "nothing else in the run would say so.")
-            else:
-                note("  noise-size: the interconnect noise working set derives from "
-                     "HET_NOISE_MB and the below-LLC guard is present")
+        m = re.search(r"_noise_words\s*=\s*([^;]+);", cu_src)
+        if not m:
+            fail("noise-size: the driver does not compute _noise_words at all -- "
+                 "the interconnect noise buffer is not sized by anything.")
+        elif "HET_NOISE_MB" not in m.group(1):
+            fail("noise-size: the interconnect noise working set is NOT derived "
+                 "from HET_NOISE_MB (_noise_words = %s), so it is decoupled from the "
+                 "tuned knob and from noise_ws_mb in the record; below the LLC (%s) "
+                 "it is served from cache and stresses NOTHING."
+                 % (m.group(1).strip(), "HET_LLC_MB, fallback 114 MB"))
+        elif "HET_LLC_MB" not in cu_src:
+            fail("noise-size: the below-last-level-cache guard is gone.  A noise "
+                 "buffer that fits in cache generates no interconnect traffic, and "
+                 "nothing else in the run would say so.")
+        else:
+            note("  noise-size: the interconnect noise working set derives from "
+                 "HET_NOISE_MB and the below-LLC guard is present")
 
         # The disjoint-scratchpad invariant [Sorensen16 sec 1].  The enemies
         # must hammer a private buffer.  An enemy pointed at a tested location does
         # not merely add noise -- it writes the variable under test, so it can
         # MANUFACTURE the weak behaviour the run is trying to observe, or destroy
         # it.  That is not a weaker experiment, it is a fabricated one.
-        if want("scratch-disjoint"):
-            scratch_assigns = re.findall(r"\.scratch\s*=\s*([A-Za-z_]\w*)", cu_src)
-            if not scratch_assigns:
-                fail("scratch-disjoint: no enemy .scratch assignment found in the "
-                     "driver -- the enemies have no scratchpad.")
-            elif any(v != "_cpu_scratch" for v in scratch_assigns):
-                fail("scratch-disjoint: an enemy scratchpad is assigned from %s, not "
-                     "the private _cpu_scratch.  The enemies must hammer a buffer "
-                     "DISJOINT from the test variables [Sorensen16 sec 1]: an enemy "
-                     "writing a tested location can manufacture or destroy the weak "
-                     "behaviour outright."
-                     % sorted({v for v in scratch_assigns if v != "_cpu_scratch"}))
-            else:
-                note("  scratch-disjoint: the enemy scratchpad is the private "
-                     "_cpu_scratch, disjoint from every test variable (%d enemy arg(s))"
-                     % len(scratch_assigns))
+        scratch_assigns = re.findall(r"\.scratch\s*=\s*([A-Za-z_]\w*)", cu_src)
+        if not scratch_assigns:
+            fail("scratch-disjoint: no enemy .scratch assignment found in the "
+                 "driver -- the enemies have no scratchpad.")
+        elif any(v != "_cpu_scratch" for v in scratch_assigns):
+            fail("scratch-disjoint: an enemy scratchpad is assigned from %s, not "
+                 "the private _cpu_scratch.  The enemies must hammer a buffer "
+                 "DISJOINT from the test variables [Sorensen16 sec 1]: an enemy "
+                 "writing a tested location can manufacture or destroy the weak "
+                 "behaviour outright."
+                 % sorted({v for v in scratch_assigns if v != "_cpu_scratch"}))
+        else:
+            note("  scratch-disjoint: the enemy scratchpad is the private "
+                 "_cpu_scratch, disjoint from every test variable (%d enemy arg(s))"
+                 % len(scratch_assigns))
 
-        if want("runtime-probe"):
-            # ---- stress-live/stress-off-zero: it runs, and stops when switched off --
-            probe_c = os.path.join(d, "_probe.c")
-            with open(probe_c, "w") as f:
-                f.write(PROBE_C)
-            probe_bin = os.path.join(d, "_probe")
-            r = run(["gcc", "-std=gnu11", "-O2", "-pthread",
-                     os.path.basename(probe_c), "-o", os.path.basename(probe_bin)],
-                    cwd=d)
+        # ---- stress-live/stress-off-zero: it runs, and stops when switched off --
+        probe_c = os.path.join(d, "_probe.c")
+        with open(probe_c, "w") as f:
+            f.write(PROBE_C)
+        probe_bin = os.path.join(d, "_probe")
+        r = run(["gcc", "-std=gnu11", "-O2", "-pthread",
+                 os.path.basename(probe_c), "-o", os.path.basename(probe_bin)],
+                cwd=d)
+        if r.returncode != 0:
+            fail("could not build the liveness probe:\n" + r.stdout)
+            return ok[0], lines
+
+        def probe(on):
+            r = run([probe_bin, "1" if on else "0"], cwd=d)
             if r.returncode != 0:
-                fail("could not build the liveness probe:\n" + r.stdout)
-                return ok[0], lines
+                raise RuntimeError("probe failed:\n" + r.stdout)
+            out = {}
+            for line in r.stdout.strip().splitlines():
+                out.update(dict(kv.split("=") for kv in line.split()))
+            return out
 
-            def probe(on):
-                r = run([probe_bin, "1" if on else "0"], cwd=d)
-                if r.returncode != 0:
-                    raise RuntimeError("probe failed:\n" + r.stdout)
-                out = {}
-                for line in r.stdout.strip().splitlines():
-                    out.update(dict(kv.split("=") for kv in line.split()))
-                return out
+        on = probe(True)
+        off = probe(False)
 
-            on = probe(True)
-            off = probe(False)
+        # ---- first-touch: the noise buffer is REAL memory, not the zero page ---
+        # An unwritten malloc'd buffer is backed by ONE shared zero page, so a noise
+        # thread reading it crosses nothing however large it is -- see the
+        # het_cpu_first_touch declaration in het_cpu_stress.h for why.  gd_alloc_noise
+        # therefore calls het_cpu_first_touch, and this asserts BOTH halves through
+        # RSS: reading alone must NOT back the pages (so the hazard is real on this
+        # host, and the check is not vacuous), and first-touching must back
+        # essentially all of them (so the fix works).
+        ft_bytes = int(on["ft_bytes"])
+        ft_read = int(on["ft_rss_after_read"])
+        ft_touch = int(on["ft_rss_after_touch"])
+        want_kb = ft_bytes // 1024
+        if ft_read < 0 or ft_touch < 0:
+            note("  first-touch SKIPPED (no /proc/self/statm on this host)")
+        elif ft_touch < (want_kb * 9) // 10:
+            fail("first-touch: het_cpu_first_touch grew RSS by only %d KB for a %d "
+                 "KB buffer.  It is NOT faulting the pages in, so a noise buffer "
+                 "stays on the shared zero page -- one cache line, served from L1, "
+                 "generating NO interconnect traffic however large it is."
+                 % (ft_touch, want_kb))
+        elif ft_read > want_kb // 10:
+            note("  first-touch works (RSS +%d KB / %d KB), though on this host "
+                 "reading alone already backed %d KB, so the zero-page hazard may be "
+                 "absent here (huge pages? pre-faulted allocator?)"
+                 % (ft_touch, want_kb, ft_read))
+        else:
+            note("  first-touch: the noise buffer is REAL memory -- reading %d KB "
+                 "of it backs only %d KB (the shared zero page), while "
+                 "het_cpu_first_touch backs %d KB"
+                 % (want_kb, ft_read, ft_touch))
 
-            # ---- first-touch: the noise buffer is REAL memory, not the zero page ---
-            # An unwritten malloc'd buffer is backed by ONE shared zero page, so a noise
-            # thread reading it crosses nothing however large it is -- see the
-            # het_cpu_first_touch declaration in het_cpu_stress.h for why.  gd_alloc_noise
-            # therefore calls het_cpu_first_touch, and this asserts BOTH halves through
-            # RSS: reading alone must NOT back the pages (so the hazard is real on this
-            # host, and the check is not vacuous), and first-touching must back
-            # essentially all of them (so the fix works).
-            ft_bytes = int(on["ft_bytes"])
-            ft_read = int(on["ft_rss_after_read"])
-            ft_touch = int(on["ft_rss_after_touch"])
-            want_kb = ft_bytes // 1024
-            if ft_read < 0 or ft_touch < 0:
-                note("  first-touch SKIPPED (no /proc/self/statm on this host)")
-            elif ft_touch < (want_kb * 9) // 10:
-                fail("first-touch: het_cpu_first_touch grew RSS by only %d KB for a %d "
-                     "KB buffer.  It is NOT faulting the pages in, so a noise buffer "
-                     "stays on the shared zero page -- one cache line, served from L1, "
-                     "generating NO interconnect traffic however large it is."
-                     % (ft_touch, want_kb))
-            elif ft_read > want_kb // 10:
-                note("  first-touch works (RSS +%d KB / %d KB), though on this host "
-                     "reading alone already backed %d KB, so the zero-page hazard may be "
-                     "absent here (huge pages? pre-faulted allocator?)"
-                     % (ft_touch, want_kb, ft_read))
+        live = ("enemy_rounds", "enemy_accesses", "preload_ops", "noise_rounds")
+        for k in live:
+            if int(on[k]) <= 0:
+                fail("stress-live: with the CPU stress ON, %s is %s.  The mechanism "
+                     "compiled, linked, and did NOTHING at run time." % (k, on[k]))
+        for k in live:
+            if int(off[k]) != 0:
+                fail("stress-off-zero: with the CPU stress OFF, %s is %s, not 0.  "
+                     "The counter is wired to something unconditional, so its nonzero "
+                     "value under stress-live proves nothing.  A tally that cannot go "
+                     "to zero is not evidence of liveness." % (k, off[k]))
+        if int(on.get("preload_live", "0")) != 1:
+            fail("stress-live: HET_CPU_PRELOAD_LIVE is 0 on this host -- the cache "
+                 "preload has no primitives here and is a no-op.")
+        if ok[0]:
+            note("  stress-live    (on) : enemy_rounds=%s accesses=%s "
+                 "preload_hints=%s noise_rounds=%s (enemies realised: %s)"
+                 % (on["enemy_rounds"], on["enemy_accesses"], on["preload_ops"],
+                    on["noise_rounds"], on["enemies"]))
+            note("  stress-off-zero(off): enemy_rounds=%s accesses=%s "
+                 "preload_hints=%s noise_rounds=%s"
+                 % (off["enemy_rounds"], off["enemy_accesses"], off["preload_ops"],
+                    off["noise_rounds"]))
+
+        # ---- gpu-noise: the device-side noise blocks survive nvcc ------
+        if not os.path.exists(NVCC):
+            note("  gpu-noise SKIPPED (no nvcc): the GPU noise is unchecked here")
+        else:
+            n_on = count_noise_ops(ptx_of(cu, [], arch, tmp))
+            if n_on < 1:
+                fail("gpu-noise-live: the emitted PTX carries NO volatile 64-bit "
+                     "global load -- nvcc DELETED the device-side noise stream.  "
+                     "Its accumulator must be kept alive (volatile reads + a sink).")
             else:
-                note("  first-touch: the noise buffer is REAL memory -- reading %d KB "
-                     "of it backs only %d KB (the shared zero page), while "
-                     "het_cpu_first_touch backs %d KB"
-                     % (want_kb, ft_read, ft_touch))
-
-            live = ("enemy_rounds", "enemy_accesses", "preload_ops", "noise_rounds")
-            for k in live:
-                if int(on[k]) <= 0:
-                    fail("stress-live: with the CPU stress ON, %s is %s.  The mechanism "
-                         "compiled, linked, and did NOTHING at run time." % (k, on[k]))
-            for k in live:
-                if int(off[k]) != 0:
-                    fail("stress-off-zero: with the CPU stress OFF, %s is %s, not 0.  "
-                         "The counter is wired to something unconditional, so its nonzero "
-                         "value under stress-live proves nothing.  A tally that cannot go "
-                         "to zero is not evidence of liveness." % (k, off[k]))
-            if int(on.get("preload_live", "0")) != 1:
-                fail("stress-live: HET_CPU_PRELOAD_LIVE is 0 on this host -- the cache "
-                     "preload has no primitives here and is a no-op.")
-            if ok[0]:
-                note("  stress-live    (on) : enemy_rounds=%s accesses=%s "
-                     "preload_hints=%s noise_rounds=%s (enemies realised: %s)"
-                     % (on["enemy_rounds"], on["enemy_accesses"], on["preload_ops"],
-                        on["noise_rounds"], on["enemies"]))
-                note("  stress-off-zero(off): enemy_rounds=%s accesses=%s "
-                     "preload_hints=%s noise_rounds=%s"
-                     % (off["enemy_rounds"], off["enemy_accesses"], off["preload_ops"],
-                        off["noise_rounds"]))
-
-        if want("gpu-noise"):
-            # ---- gpu-noise: the device-side noise blocks survive nvcc ------
-            if not os.path.exists(NVCC):
-                note("  gpu-noise SKIPPED (no nvcc): the GPU noise is unchecked here")
+                note("  gpu-noise-live: the device-side noise survives nvcc (%d "
+                     "volatile 64-bit global load(s) in the PTX)" % n_on)
+            counts = {b: count_noise_ops(ptx_of(cu, ["-DHET_NOISE_GPU_BLOCKS=%d" % b],
+                                                arch, tmp))
+                      for b in (0, 4, 16)}
+            if len({n_on, *counts.values()}) != 1:
+                fail("gpu-noise-runtime: the noise-op count MOVES with "
+                     "-DHET_NOISE_GPU_BLOCKS (%s vs %d by default).  A compile-time "
+                     "block count lets nvcc delete the noise for a config a sweep "
+                     "may pick; it must be a RUNTIME kernel argument."
+                     % (counts, n_on))
             else:
-                n_on = count_noise_ops(ptx_of(cu, [], arch, tmp))
-                if n_on < 1:
-                    fail("gpu-noise-live: the emitted PTX carries NO volatile 64-bit "
-                         "global load -- nvcc DELETED the device-side noise stream.  "
-                         "Its accumulator must be kept alive (volatile reads + a sink).")
-                else:
-                    note("  gpu-noise-live: the device-side noise survives nvcc (%d "
-                         "volatile 64-bit global load(s) in the PTX)" % n_on)
-                counts = {b: count_noise_ops(ptx_of(cu, ["-DHET_NOISE_GPU_BLOCKS=%d" % b],
-                                                    arch, tmp))
-                          for b in (0, 4, 16)}
-                if len({n_on, *counts.values()}) != 1:
-                    fail("gpu-noise-runtime: the noise-op count MOVES with "
-                         "-DHET_NOISE_GPU_BLOCKS (%s vs %d by default).  A compile-time "
-                         "block count lets nvcc delete the noise for a config a sweep "
-                         "may pick; it must be a RUNTIME kernel argument."
-                         % (counts, n_on))
-                else:
-                    note("  gpu-noise-runtime: the PTX op count is INVARIANT over "
-                         "-DHET_NOISE_GPU_BLOCKS=0/4/16")
+                note("  gpu-noise-runtime: the PTX op count is INVARIANT over "
+                     "-DHET_NOISE_GPU_BLOCKS=0/4/16")
 
-        if want("preload-guard"):
-            # ---- preload-guard: the CPU-preload liveness guard is a live field ---
-            # preload_inert is read by stress_requested (`!_ct.preload_inert').  Left
-            # unwritten it stays memset-0 (= live) even on a host with NO cache
-            # primitives (HET_CPU_PRELOAD_LIVE==0), where het_cpu_preload issues zero
-            # hints: HET_REQ_CPU_PRELOAD would then be raised for a mechanism that
-            # cannot run, het_dead() would fire, and every null would go COLD-INVALID.
-            # Structural: the emitted driver writes the field, read from the
-            # artifact.  It calls het_cpu_preload_live() rather than naming
-            # HET_CPU_PRELOAD_LIVE, which is host-only (#ifdef HET_CPU_STRESS_IMPL) and
-            # so undefined in the .cu that nvcc parses.
-            if "_ct.preload_inert = !het_cpu_preload_live();" not in cu_src:
-                fail("preload-guard-field: the emitted driver does NOT write "
-                     "`_ct.preload_inert = !het_cpu_preload_live();'.  On a no-primitive "
-                     "host the preload request is then raised for a mechanism that issues "
-                     "zero hints, and every null goes COLD-INVALID.")
+        # ---- preload-guard: the CPU-preload liveness guard is a live field ---
+        # preload_inert is read by stress_requested (`!_ct.preload_inert').  Left
+        # unwritten it stays memset-0 (= live) even on a host with NO cache
+        # primitives (HET_CPU_PRELOAD_LIVE==0), where het_cpu_preload issues zero
+        # hints: HET_REQ_CPU_PRELOAD would then be raised for a mechanism that
+        # cannot run, het_dead() would fire, and every null would go COLD-INVALID.
+        # Structural: the emitted driver writes the field, read from the
+        # artifact.  It calls het_cpu_preload_live() rather than naming
+        # HET_CPU_PRELOAD_LIVE, which is host-only (#ifdef HET_CPU_STRESS_IMPL) and
+        # so undefined in the .cu that nvcc parses.
+        if "_ct.preload_inert = !het_cpu_preload_live();" not in cu_src:
+            fail("preload-guard-field: the emitted driver does NOT write "
+                 "`_ct.preload_inert = !het_cpu_preload_live();'.  On a no-primitive "
+                 "host the preload request is then raised for a mechanism that issues "
+                 "zero hints, and every null goes COLD-INVALID.")
+        else:
+            note("  preload-guard-field: the driver writes _ct.preload_inert = "
+                 "!het_cpu_preload_live()")
+        # Behavioural: the request is DROPPED when LIVE=0 and HET_DQ_CPU_PRELOAD_
+        # DEAD does not false-fire -- proved against the REAL het_dead() /
+        # HET_REQ_CPU_PRELOAD, for the guarded form (preload_inert = !live) AND, as
+        # the non-vacuous contrast, the unwritten field (0) that still false-COLDs a
+        # host with no cache primitives.
+        p2c = os.path.join(tmp, "preload_inert.c")
+        with open(p2c, "w") as fh:
+            fh.write(PRELOAD_INERT_TU)
+        rb = run(["gcc", "-std=gnu11", "-O2", "-I", d, os.path.basename(p2c),
+                  "-o", "preload_inert", "-lm"], cwd=tmp)
+        if rb.returncode != 0:
+            fail("preload-guard-drops: the preload-inert probe did not compile:\n"
+                 + rb.stdout)
+        else:
+            rr = run([os.path.join(tmp, "preload_inert")], cwd=tmp)
+            res = dict(kv.split("=") for kv in rr.stdout.split())
+            if res.get("fix_req_live1") != "1":
+                fail("preload-guard-drops: with HET_CPU_PRELOAD_LIVE=1 the preload "
+                     "request is NOT raised (fix_req_live1=%s) -- the live path "
+                     "regressed." % res.get("fix_req_live1"))
+            elif res.get("fix_req_live0") != "0" or res.get("fix_dead_live0") != "0":
+                fail("preload-guard-drops: with HET_CPU_PRELOAD_LIVE=0 the request "
+                     "is still raised (fix_req_live0=%s) or het_dead still fires "
+                     "(fix_dead_live0=%s), so a no-primitive host false-COLDs every "
+                     "null."
+                     % (res.get("fix_req_live0"), res.get("fix_dead_live0")))
+            elif res.get("old_dead_live0") != "1":
+                fail("preload-guard-drops: an unwritten preload_inert does NOT "
+                     "false-fire HET_DQ_CPU_PRELOAD_DEAD at LIVE=0 (old_dead_live0=%s) "
+                     "-- the contrast is vacuous, so this check would pass even on a "
+                     "dead guard." % res.get("old_dead_live0"))
             else:
-                note("  preload-guard-field: the driver writes _ct.preload_inert = "
-                     "!het_cpu_preload_live()")
-            # Behavioural: the request is DROPPED when LIVE=0 and HET_DQ_CPU_PRELOAD_
-            # DEAD does not false-fire -- proved against the REAL het_dead() /
-            # HET_REQ_CPU_PRELOAD, for the guarded form (preload_inert = !live) AND, as
-            # the non-vacuous contrast, the unwritten field (0) that still false-COLDs a
-            # host with no cache primitives.
-            p2c = os.path.join(tmp, "preload_inert.c")
-            with open(p2c, "w") as fh:
-                fh.write(PRELOAD_INERT_TU)
-            rb = run(["gcc", "-std=gnu11", "-O2", "-I", d, os.path.basename(p2c),
-                      "-o", "preload_inert", "-lm"], cwd=tmp)
-            if rb.returncode != 0:
-                fail("preload-guard-drops: the preload-inert probe did not compile:\n"
-                     + rb.stdout)
-            else:
-                rr = run([os.path.join(tmp, "preload_inert")], cwd=tmp)
-                res = dict(kv.split("=") for kv in rr.stdout.split())
-                if res.get("fix_req_live1") != "1":
-                    fail("preload-guard-drops: with HET_CPU_PRELOAD_LIVE=1 the preload "
-                         "request is NOT raised (fix_req_live1=%s) -- the live path "
-                         "regressed." % res.get("fix_req_live1"))
-                elif res.get("fix_req_live0") != "0" or res.get("fix_dead_live0") != "0":
-                    fail("preload-guard-drops: with HET_CPU_PRELOAD_LIVE=0 the request "
-                         "is still raised (fix_req_live0=%s) or het_dead still fires "
-                         "(fix_dead_live0=%s), so a no-primitive host false-COLDs every "
-                         "null."
-                         % (res.get("fix_req_live0"), res.get("fix_dead_live0")))
-                elif res.get("old_dead_live0") != "1":
-                    fail("preload-guard-drops: an unwritten preload_inert does NOT "
-                         "false-fire HET_DQ_CPU_PRELOAD_DEAD at LIVE=0 (old_dead_live0=%s) "
-                         "-- the contrast is vacuous, so this check would pass even on a "
-                         "dead guard." % res.get("old_dead_live0"))
-                else:
-                    note("  preload-guard-drops: LIVE=1 raises the request; LIVE=0 "
-                         "drops it with het_dead() silent, where an unwritten field would "
-                         "have false-COLDed (het_dead=1)")
+                note("  preload-guard-drops: LIVE=1 raises the request; LIVE=0 "
+                     "drops it with het_dead() silent, where an unwritten field would "
+                     "have false-COLDed (het_dead=1)")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -762,15 +703,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("litmus", nargs="+")
     ap.add_argument("--arch", default="sm_90")
-    ap.add_argument("--harness-dir", default=None,
-                    help="check an ALREADY-emitted (possibly mutated) harness "
-                         "dir instead of emitting a fresh one -- this is what "
-                         "lets the gate be bitten (tokens.sh selftest [8])")
-    ap.add_argument("--checks", default="all",
-                    help="which checks to run: `all', or a comma list of %s "
-                         "(default all)" % ", ".join(CHECKS))
     a = ap.parse_args()
-    sel = select_checks(a.checks)
 
     if not os.path.exists(LITMUS7):
         print("error: litmus7 not built (%s)" % LITMUS7, file=sys.stderr)
@@ -779,7 +712,7 @@ def main():
     allok = True
     for p in a.litmus:
         try:
-            ok, lines = check(p, arch=a.arch, harness_dir=a.harness_dir, sel=sel)
+            ok, lines = check(p, arch=a.arch)
         except Exception as e:                                 # toolchain problems
             print("ERROR on %s: %s" % (p, e), file=sys.stderr)
             return 2

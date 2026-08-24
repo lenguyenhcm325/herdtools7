@@ -699,8 +699,7 @@ def check_cpu(result, expected_per_proc, cpu_c_text):
 # 7. DRIVER
 # ===========================================================================
 
-def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
-               arch=None, verbose=True):
+def check_test(litmus_path, ptx_override=None, arch=None, verbose=True):
     # instance_of parses, transposes and classifies the columns, so the
     # completeness guard fires here too, on the same two column parsers.  The Het
     # branch below rebuilds the GPU profile lane by lane; ONLY the gpu-only branch
@@ -713,13 +712,13 @@ def check_test(litmus_path, ptx_override=None, cpu_c_override=None,
     result = Result()
     result.note("=== %s [%s] ===" % (name, kind))
 
-    # ---- emit + compile (unless a PTX override is supplied for self-test) ----
+    # ---- emit + compile, unless --ptx supplies the PTX text ------------------
     tmp = tempfile.mkdtemp(prefix="ptxcheck_")
     try:
         if ptx_override is not None:
             with open(ptx_override) as f:
                 ptx_text = f.read()
-            cpu_c_text = open(cpu_c_override).read() if cpu_c_override else None
+            cpu_c_text = None
         else:
             cu_path, cpu_c_path = emit_harness(litmus_path, tmp)
             # sm_90 matches the run harness: the emitted Makefile/comp.sh compile
@@ -784,13 +783,13 @@ def main():
     ap = argparse.ArgumentParser(
         description="HetLitmus static token check: PTX/asm faithfulness")
     ap.add_argument("litmus", help=".litmus test path")
-    ap.add_argument("--ptx", help="use this PTX file instead of emitting+nvcc (self-test)")
-    ap.add_argument("--cpu-c", help="use this _cpu.c instead of emitting (self-test)")
+    ap.add_argument("--ptx", help="read this PTX instead of emitting+nvcc "
+                                  "(hetlitmus/tests/cram/ptx-negatives.t)")
     ap.add_argument("--arch", help="override nvcc -arch (default sm_90, matching the litmus7 run harness CUDA_ARCH)")
     ap.add_argument("-q", "--quiet", action="store_true")
     args = ap.parse_args()
     try:
-        ok = check_test(args.litmus, ptx_override=args.ptx, cpu_c_override=args.cpu_c,
+        ok = check_test(args.litmus, ptx_override=args.ptx,
                         arch=args.arch, verbose=not args.quiet)
     except CompletenessError as e:
         print("COMPLETENESS HARD-FAIL: %s" % e)

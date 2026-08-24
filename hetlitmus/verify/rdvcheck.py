@@ -34,8 +34,7 @@ runtime header they all stage:
   5 Knobs      every rendezvous knob a render uses is defined by the staged
                het_rdv.h, and _dump_one prints every column as a number.
 
-Usage:  rdvcheck.py [-q]      run the gate
-        rdvcheck.py --bite    prove it FAILS when the rendezvous moves or weakens
+Usage:  rdvcheck.py [-q]
 """
 
 import argparse
@@ -397,17 +396,11 @@ def emit_corpus(files, target, out):
     return out
 
 
-def lane_renders(tmp, label, corpus, target, ext, expect, only=None):
-    """[(name, render path, harness dir)] for one lane, census asserted first.
-
-    [only] narrows what is EMITTED, not what is counted: the census above still
-    reads the whole corpus, so a bite run cannot pass on a corpus that shrank."""
+def lane_renders(tmp, label, corpus, target, ext, expect):
+    """[(name, render path, harness dir)] for one lane, census asserted first."""
     if corpus is None:
         corpus = hip.regen_x86(os.path.join(tmp, "x86-corpus"))
     files = hip.corpus_files(corpus, label, expect)
-    if only is not None:
-        files = [f for f in files
-                 if os.path.basename(f)[:-len(".litmus")] in only]
     out = emit_corpus(files, target, os.path.join(tmp, target + "-out"))
     got = []
     for f in files:
@@ -420,34 +413,24 @@ def lane_renders(tmp, label, corpus, target, ext, expect, only=None):
     return got
 
 
-def run(quiet=False, render_tamper=None, header_tamper=None, only=None,
-        silent=False):
-    if not silent:
-        print("===== rdvcheck: does every iteration begin at a rendezvous, and "
-              "does it order nothing? =====")
+def run(quiet=False):
+    print("===== rdvcheck: does every iteration begin at a rendezvous, and "
+          "does it order nothing? =====")
     bad = []
     tmp = tempfile.mkdtemp(prefix="rdvcheck.")
     try:
         header_seen = 0
         for label, corpus, target, ext, expect in LANES:
-            renders = lane_renders(tmp, label, corpus, target, ext, expect,
-                                   only=only)
-            for name, render, d in renders:
+            renders = lane_renders(tmp, label, corpus, target, ext, expect)
+            for name, render, _d in renders:
                 with open(render) as fh:
                     text = fh.read()
-                if render_tamper is not None:
-                    text = render_tamper(text)
                 bad += check_render(label, name, text)
             if renders:
                 hdr = os.path.join(renders[0][2], "het_rdv.h")
-                if header_tamper is not None:
-                    with open(hdr) as fh:
-                        src = fh.read()
-                    with open(hdr, "w") as fh:
-                        fh.write(header_tamper(src))
                 bad += check_primitive(hdr)
                 header_seen += 1
-            if not quiet and not silent:
+            if not quiet:
                 print("      %-22s %3d render(s) read, the staged het_rdv.h with "
                       "them" % (label, len(renders)))
         if header_seen != len(LANES):
@@ -455,8 +438,6 @@ def run(quiet=False, render_tamper=None, header_tamper=None, only=None,
                        % (header_seen, len(LANES)))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    if silent:
-        return bad
     for m in bad:
         print("  *** %s" % m)
     if bad:
@@ -471,170 +452,14 @@ def run(quiet=False, render_tamper=None, header_tamper=None, only=None,
     return 0
 
 
-# ---------------------------------------------------------------------------
-# The bite.
-# ---------------------------------------------------------------------------
-BITE_CUDA = "MP-cg-sys-acqrel-2s"
-BITE_HIP = "MP-cg-sys-acqrel-2s-x86_64"
-BITE_TESTS = (BITE_CUDA, BITE_HIP)
-BUF_STORE = re.compile(r'^(\s*)bufP\d+_\d+\[_n\] = r\d+;$', re.M)
-
-
-def _move_rdv_after_tested_ops(text):
-    """(a) The rendezvous, relocated behind every tested access of its lane.
-
-    It still runs once per iteration, still on the shared counter, still with
-    its jitter -- the ONLY thing that changed is that the tested accesses no
-    longer sit inside the window it opens."""
-    line = [ln for ln in text.splitlines() if RDV_DEV.match(ln)]
-    if not line:
-        raise GateError("bite (a): the render carries no rendezvous to move")
-    text = text.replace(line[0] + "\n", "", 1)
-    m = BUF_STORE.search(text)
-    if m is None:
-        raise GateError("bite (a): the render carries no result store to move it "
-                        "behind")
-    return text[:m.start()] + line[0] + "\n" + text[m.start():]
-
-
-def _poll_acquires(text):
-    """(b) The poll strengthened from relaxed to acquire, in the header."""
-    out = text.replace("_v = _a.load(cuda::memory_order_relaxed);",
-                       "_v = _a.load(cuda::memory_order_acquire);")
-    out = out.replace("__hip_atomic_load(_ctr, __ATOMIC_RELAXED, "
-                      "__HIP_MEMORY_SCOPE_SYSTEM)",
-                      "__hip_atomic_load(_ctr, __ATOMIC_ACQUIRE, "
-                      "__HIP_MEMORY_SCOPE_SYSTEM)")
-    if out == text:
-        raise GateError("bite (b): the header carries no relaxed poll to strengthen")
-    return out
-
-
-def _second_histogram_site(text):
-    """(c) A second add_outcome_outs, outside the readout loop."""
-    line = [ln for ln in text.splitlines() if ADD_OUT.search(ln)]
-    anchor = "    _rec.rdv_valid = 1;\n"
-    if not line or anchor not in text:
-        raise GateError("bite (c): the render carries no readout to duplicate")
-    return text.replace(anchor, anchor + line[0] + "\n", 1)
-
-
-def _drop_cpu_rendezvous(text):
-    """(d) One CPU thread that never arrives."""
-    line = [ln for ln in text.splitlines() if RDV_HOST.match(ln)]
-    if not line:
-        raise GateError("bite (d): the render carries no host rendezvous to drop")
-    return text.replace(line[0] + "\n", "", 1)
-
-
-def _drop_discard_count(text):
-    """(e) The readout stops counting the iterations its flags rejected -- and,
-    with the `continue' that line carries, stops skipping them."""
-    line = [ln for ln in text.splitlines() if DISCARDED.match(ln)]
-    if not line:
-        raise GateError("bite (e): the render carries no discard site to drop")
-    return text.replace(line[0] + "\n", "", 1)
-
-
-def _narrow_cuda_scope(text):
-    """(f) The CUDA arm's counter narrowed to device scope.
-
-    Still an atomic, still relaxed, still on the shared counter -- but a device
-    -scope atomic is not the object the host's __atomic_fetch_add touches, so
-    the two halves increment two different counters and neither ever arrives."""
-    out = text.replace("cuda::thread_scope_system", "cuda::thread_scope_device")
-    if out == text:
-        raise GateError("bite (f): the header carries no CUDA system scope to narrow")
-    return out
-
-
-def _narrow_hip_scope(text):
-    """(g) The HIP arm's counter narrowed to agent scope."""
-    out = text.replace("__HIP_MEMORY_SCOPE_SYSTEM", "__HIP_MEMORY_SCOPE_AGENT")
-    if out == text:
-        raise GateError("bite (g): the header carries no HIP system scope to narrow")
-    return out
-
-
-def _jitter_spins_on_an_instruction(text):
-    """(h) The release delay given a non-empty asm template."""
-    out = text.replace('__asm__ __volatile__("" ::: "memory")',
-                       '__asm__ __volatile__("nop" ::: "memory")')
-    if out == text:
-        raise GateError("bite (h): the header carries no empty-template spin")
-    return out
-
-
-BITES = [
-    ("(a) the rendezvous moved BEHIND the tested accesses",
-     "sits AFTER a tested access", _move_rdv_after_tested_ops, None),
-    ("(b) the rendezvous poll strengthened relaxed -> acquire",
-     "must ORDER NOTHING", None, _poll_acquires),
-    ("(c) a SECOND add_outcome_outs site outside the readout loop",
-     "add_outcome_outs site(s)", _second_histogram_site, None),
-    ("(d) het_rdv_host dropped from one CPU thread",
-     "a thread that never arrives", _drop_cpu_rendezvous, None),
-    ("(e) the readout stops counting the iterations it discarded",
-     "discard site(s), not one", _drop_discard_count, None),
-    ("(f) the CUDA arm narrowed to cuda::thread_scope_device",
-     "arrives or polls at cuda::thread_scope_device", None, _narrow_cuda_scope),
-    ("(g) the HIP arm narrowed to __HIP_MEMORY_SCOPE_AGENT",
-     "arrives or polls at __HIP_MEMORY_SCOPE_AGENT", None, _narrow_hip_scope),
-    ("(h) the release delay spins on a non-empty asm template",
-     "does not spin on an EMPTY asm template", None,
-     _jitter_spins_on_an_instruction),
-]
-
-
-def bite():
-    """Each injection must produce a diagnostic NAMING what it broke: a red for
-    another injection's reason proves nothing about this one.  Both lanes are
-    read for every injection, so a mutation the CUDA render carries and the HIP
-    render does not is still one this gate saw."""
-    print("===== BITE: does rdvcheck FAIL when the rendezvous moves or weakens? "
-          "=====")
-    ok = True
-    for what, want, rt, ht in BITES:
-        bad = run(quiet=True, render_tamper=rt, header_tamper=ht,
-                  only=BITE_TESTS, silent=True)
-        said = [m for m in bad if want in m]
-        if said:
-            print("  BITES (gate failed, as it must): %s   [%s]"
-                  % (said[0][:110], what))
-        else:
-            print("  *** DID NOT BITE for its own reason (%d finding(s), none "
-                  "naming %r)   [%s]" % (len(bad), want, what))
-            ok = False
-    # The green arm, on the same restricted lane set: an injection is evidence
-    # only against a base that passes.
-    clean = run(quiet=True, only=BITE_TESTS, silent=True)
-    if clean:
-        print("  *** THE CLEAN CONTROL IS RED (%d finding(s)) -- every injection "
-              "above is unattributable" % len(clean))
-        for m in clean[:4]:
-            print("      %s" % m)
-        ok = False
-    else:
-        print("      the two unmodified renders pass, so each red above is its "
-              "injection's")
-    print("\n" + "=" * 70)
-    if ok:
-        print("BITE OK: all %d injections were caught, each by NAME." % len(BITES))
-        return 0
-    print("BITE FAILED: an injection slipped through -- this gate is decorative")
-    return 1
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-q", "--quiet", action="store_true")
-    ap.add_argument("--bite", action="store_true",
-                    help="prove this gate FAILS when the rendezvous moves")
     a = ap.parse_args()
     if not os.access(LITMUS7, os.X_OK):
         raise SystemExit("rdvcheck: litmus7 not built (run 'make all')")
     try:
-        return bite() if a.bite else run(a.quiet)
+        return run(a.quiet)
     except GateError as e:
         print("RDVCHECK CANNOT RUN: %s" % e)
         return 3

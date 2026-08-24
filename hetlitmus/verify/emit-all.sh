@@ -52,31 +52,11 @@
 # Each names the test it failed on and pastes litmus7's own output.
 #
 # Usage:  hetlitmus/verify/emit-all.sh OUTDIR
-#         HET_LANES_ONLY / HET_TESTS_ONLY restrict what is emitted (see below).
-# Exit:   0 = every selected lane complete; non-zero otherwise (fail-fast).
+# Exit:   0 = every lane complete; non-zero otherwise (fail-fast).
 set -euo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/../paths.sh"
-# Bite seam: point this at a stand-in litmus7 to prove the detectors below
-# actually fire.  A detector that has never been seen to fail is not evidence.
-LITMUS7="${HET_LITMUS7:-$LITMUS7}"
 [ -x "$LITMUS7" ] || { echo "error: $LITMUS7 not built (run 'make all')" >&2; exit 2; }
-
-# Subset seams, empty = everything.  A stand-in litmus7 corrupts one artefact of
-# one lane, so the detector that owns it needs that lane and that test and no
-# others.  HET_LANES below is NOT narrowed by either: the -gpu-target filter-leak
-# loop and the run.sh cleanup range over every lane whatever is selected here, so
-# a leak into a lane this run did not emit is still caught.  A run with either
-# seam set emits a subset and says so -- see the snapshot guard below.
-LANES_ONLY="${HET_LANES_ONLY:-}"        # OUTDIR subdirs to emit
-TESTS_ONLY="${HET_TESTS_ONLY:-}"        # test basenames, per het lane's corpus
-lane_selected() {               # <OUTDIR subdir> -> 0 when this run emits it
-  if [ -z "$LANES_ONLY" ]; then return 0; fi
-  for s in $LANES_ONLY; do
-    if [ "$s" = "$1" ]; then return 0; fi
-  done
-  return 1
-}
 
 # The emission lanes, "<corpus>:<gpu-target>:<render extension>:<OUTDIR subdir>".
 HET_LANES="aarch64:cuda:cu:het-cuda x86:hip:hip:het-x86-hip x86:cuda:cu:het-x86-cuda \
@@ -96,26 +76,6 @@ EXPECT_GPU=173          # kernels per gpu-only lane
 OUTDIR="${1:?usage: emit-all.sh OUTDIR}"
 mkdir -p "$OUTDIR"
 OUTDIR="$(cd "$OUTDIR" && pwd)"
-
-# The snapshot guard.  A seam-restricted run emits a subset, so `diff -r' against
-# a full snapshot would report the missing lanes and tests as emitter changes.
-# The marker is a dotfile, and `diff -r' compares dotfiles, so the instrument that
-# reads snapshots cannot take a subset for one.  It carries a per-run nonce as
-# well as the selection, because two subsets taken at two revisions with the
-# same seams would otherwise diff clean and read as "byte-identical" over
-# whatever fraction of the corpus they hold.  pack-bundle.sh refuses on the
-# seams themselves, before it creates anything.
-SNAP_MARKER="$OUTDIR/.het-partial-snapshot"
-EXPECT_SEL="$EXPECT_HET"        # harness dirs a het lane owes THIS run
-if [ -n "$LANES_ONLY$TESTS_ONLY" ]; then
-  if [ -n "$TESTS_ONLY" ]; then EXPECT_SEL="$(echo $TESTS_ONLY | wc -w)"; fi
-  echo "PARTIAL SNAPSHOT: lanes='${LANES_ONLY:-<all>}' tests='${TESTS_ONLY:-<all>}'"
-  echo "        a subset, not a snapshot: not comparable with diff -r, not packable"
-  printf 'lanes=%s\ntests=%s\nrun=%s\n' "${LANES_ONLY:-<all>}" \
-    "${TESTS_ONLY:-<all>}" "$$-$RANDOM$RANDOM" > "$SNAP_MARKER"
-else
-  rm -f "$SNAP_MARKER"
-fi
 
 # Outside OUTDIR: a snapshot is byte-diffed with `diff -r', which compares
 # dotfiles too, so no scratch file may land in it.
@@ -143,15 +103,12 @@ i=0
 nlanes=0
 nhetlanes=0
 ngpulanes=0
-for lane in $HET_LANES $GPU_LANES; do
-  if lane_selected "${lane##*:}"; then nlanes=$((nlanes+1)); fi
-done
+for lane in $HET_LANES $GPU_LANES; do nlanes=$((nlanes+1)); done
 
 for lane in $HET_LANES; do
   corpus="${lane%%:*}"; rest="${lane#*:}"
   target="${rest%%:*}"; rest="${rest#*:}"
   ext="${rest%%:*}"; sub="${rest#*:}"
-  lane_selected "$sub" || continue
   nhetlanes=$((nhetlanes+1))
   want_pair="$(pair_of_lane "$corpus:$target")"
   i=$((i+1))
@@ -159,13 +116,7 @@ for lane in $HET_LANES; do
   cdir="$(corpus_dir "$corpus")"
   mkdir -p "$OUTDIR/$sub"
   ( cd "$cdir"
-    if [ -n "$TESTS_ONLY" ]; then
-      set --
-      for n in $TESTS_ONLY; do set -- "$@" "$n.litmus"; done
-    else
-      set -- *.litmus
-    fi
-    for t in "$@"; do
+    for t in *.litmus; do
       n="${t%.litmus}"
       st=0
       "$LITMUS7" -gpu-target "$target" -o "$OUTDIR/$sub" "$t" >"$LOG" 2>&1 || st=$?
@@ -209,16 +160,15 @@ for lane in $HET_LANES; do
       fi
     done )
   nhet="$(find "$OUTDIR/$sub" -mindepth 1 -maxdepth 1 -type d | wc -l)"
-  echo "        $nhet het harness dirs (expect $EXPECT_SEL), each stamping its record and $want_pair once"
-  if [ "$nhet" -ne "$EXPECT_SEL" ]; then
-    echo "FAIL: census mismatch in $sub (want $EXPECT_SEL)" >&2
+  echo "        $nhet het harness dirs (expect $EXPECT_HET), each stamping its record and $want_pair once"
+  if [ "$nhet" -ne "$EXPECT_HET" ]; then
+    echo "FAIL: census mismatch in $sub (want $EXPECT_HET)" >&2
     exit 1
   fi
 done
 
 for lane in $GPU_LANES; do
   target="${lane%%:*}"; rest="${lane#*:}"; ext="${rest%%:*}"; sub="${rest#*:}"
-  lane_selected "$sub" || continue
   ngpulanes=$((ngpulanes+1))
   i=$((i+1))
   echo "[$i/$nlanes] gpu-only corpus, -gpu-target $target -> $OUTDIR/$sub"
@@ -253,5 +203,5 @@ for lane in $HET_LANES $GPU_LANES; do
   rm -f "$OUTDIR/${lane##*:}/run.sh"
 done
 
-echo "emitted: $nhetlanes x $EXPECT_SEL het harness dirs, \
+echo "emitted: $nhetlanes x $EXPECT_HET het harness dirs, \
 $ngpulanes x $EXPECT_GPU gpu-only kernels"

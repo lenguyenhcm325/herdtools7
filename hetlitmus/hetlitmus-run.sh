@@ -23,11 +23,6 @@ set -euo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/paths.sh"
 
-# Bite seams, the same idiom as emit-all.sh's HET_LITMUS7: a gate points these at
-# stand-ins to drive the chain on a box with no device.  Each is RECORDED in the
-# results dir when it is not the default, so a bundle can never pass a stub probe
-# or a stub compiler off as the real one.
-LITMUS7="${HET_LITMUS7:-$LITMUS7}"
 # Seconds per harness invocation -- campaign.py has no timeout of its own.  An
 # invocation is up to NUMBER_OF_RUN runs, and on a box that loses rendezvous
 # arrivals (the shared-memory banner names the allocators that can) every
@@ -317,10 +312,9 @@ RECORD="$OUT/run-record.txt" ; SUMMARY="$OUT/summary.txt"
   echo "litmus7=$LITMUS7"
   echo "git_rev=$(cd "$REPO" && git rev-parse HEAD 2>/dev/null || echo nogit)"
   echo "git_dirty=$( [ -z "$(cd "$REPO" && git status --porcelain -- litmus hetlitmus 2>/dev/null)" ] && echo no || echo YES )"
-  # Loud when a seam is in use: a stub probe or a stand-in litmus7 makes this
+  # Loud when a stand-in is in use (HET_PROBE_SH, NVCC, HIPCC): it makes this
   # results dir a machinery artefact and not a reading of the machine.
   if [ -n "${HET_PROBE_SH:-}" ]; then echo "seam_probe=STUB($HET_PROBE_SH)"; fi
-  if [ -n "${HET_LITMUS7:-}" ]; then echo "seam_litmus7=STUB($HET_LITMUS7)"; fi
   if [ "$COMPILER" != nvcc ] && [ "$COMPILER" != hipcc ]; then
     echo "seam_compiler=OVERRIDDEN($COMPILER)"
   fi

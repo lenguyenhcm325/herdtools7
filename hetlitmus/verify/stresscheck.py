@@ -126,11 +126,10 @@ def header_digest(hdir):
 
 # ---------------------------------------------------------------------------
 # THE CHECK SELECTION.  Each check below is named, and `--checks' runs only the
-# ones named.  A negative control that can reach exactly one of them says so, so
-# the nvcc compiles the others need are not run for a mutation that cannot move
-# them -- and the run is then evidence about the named check and nothing else,
-# which a bare exit code never was.  `all' is every check; `structural' is every
-# one but the device probe, which asks a question no compile can.
+# ones named.  `all' is every check; `structural' is every one but the device
+# probe, which asks a question no compile can -- a caller with several tests
+# built against the same het_stress.h pays for that probe once and runs the
+# structural set on the rest.
 # ---------------------------------------------------------------------------
 CHECKS = ("anchor", "pre", "mem", "default", "device-probe")
 CHECK_GROUPS = {"all": CHECKS, "structural": ("anchor", "pre", "mem", "default")}
@@ -485,9 +484,7 @@ def emit_cu(litmus_path):
 
 def main():
     ap = argparse.ArgumentParser(description="HetLitmus stress-liveness checker")
-    ap.add_argument("litmus", nargs="?", help="het .litmus test to emit and check")
-    ap.add_argument("--cu", help="check this already-emitted .cu (used by the "
-                                 "bite tests, which mutate a copy)")
+    ap.add_argument("litmus", help="het .litmus test to emit and check")
     ap.add_argument("--arch", default="sm_90",
                     help="nvcc -arch (default sm_90, matching the run harness)")
     ap.add_argument("--checks", default="all",
@@ -498,13 +495,9 @@ def main():
     args = ap.parse_args()
     sel = select_checks(args.checks)
 
-    if not args.cu and not args.litmus:
-        ap.error("give a .litmus test or --cu <file>")
     tmp = None
     try:
-        cu = args.cu
-        if cu is None:
-            cu, tmp = emit_cu(args.litmus)
+        cu, tmp = emit_cu(args.litmus)
         ok, _ = check_cu(cu, arch=args.arch, verbose=not args.quiet, sel=sel)
     except Exception as e:
         print("ERROR: %s" % e)

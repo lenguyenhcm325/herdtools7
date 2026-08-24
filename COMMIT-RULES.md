@@ -70,8 +70,6 @@ upstream style.
     paragraph wearing a key.
     - `Verified:` — commands run and their result. Include it whenever the
       commit changes behavior; it is what makes the claim checkable later.
-    - `Bitten:` — the injection that reddened a gate, what it named, green
-      after.
     - `Closes-review:` — `<sha>` of the reviewed commit. Required by rule 6.
       The body says what was fixed.
     - `Co-Authored-By:` — any form.

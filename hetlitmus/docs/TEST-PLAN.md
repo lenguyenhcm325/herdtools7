@@ -45,8 +45,8 @@ All verified on the dev box (has `dune`/`ocaml`, `herd7`/`litmus7`/`hetgen7`/
   → compile-smoke needs *no new build code*, just a driver that runs `comp.sh`.
 - **`ptxcheck.py` has discriminating power.** Honest PTX → `RESULT: PASS` (exit 0);
   a one-token corruption (`st.release.sys`→`st.acq_rel.sys`) → `RESULT: FAIL`
-  (exit 1) with an exact diff. Its `--ptx`/`--cpu-c` self-test seam means the
-  **negative controls run with no GPU** (feed a frozen corrupted PTX).
+  (exit 1) with an exact diff. Its `--ptx` seam means the **negative control runs
+  with no GPU** (feed a frozen corrupted PTX).
 - **`_grid_lib.sh` is pure functions** (`render_cycle`, `render_cpu_cycle`,
   `cut_tag`, `scope_tree`, `arm_ord`, …) — unit-testable, and they encode the
   load-bearing model decisions (release→writes, acquire→reads, LDAPR=RCpc
@@ -55,13 +55,12 @@ All verified on the dev box (has `dune`/`ocaml`, `herd7`/`litmus7`/`hetgen7`/
 ### Current state of `hetlitmus/verify/` against this plan
 - **Layer 3 faithfulness: ✓ and gated.** `tokens.sh all` sweeps all 644 via
   `nvcc --ptx` + `ptxcheck`, returning nonzero on any FAIL.
-- **Layer 1 negatives: now gated (`c2e4df4c5`).** `tokens.sh selftest` (weaken
-  order/scope, miscount, CPU STLR→STR) and `guard` (unknown-token → exit 2) are real
-  injections that now **aggregate and return nonzero**, printing `SELFTEST OK` /
-  `GUARD OK` sentinels. The eyeball gap is closed in the shell; the Layer-1 cram
-  `ptx-negatives.t` now only **byte-freezes** that output (belt-and-suspenders), it
-  is no longer the sole gate.
-- Missing entirely: Layer-1 unit tests, Layer-2 golden gate.
+- **Layer 1 negative: `ptx-negatives.t`.** The one place `ptxcheck.py` is required
+  to reject: the frozen `corrupt-strengthen.ptx` (`MP-sys-F` with its one
+  `ld.relaxed.sys` strengthened to `ld.acquire.sys`) fed through `--ptx` must exit 1.
+  The completeness guard has no lane of its own: an unmapped token exits 2 inside
+  the sweep, which `tokens.sh`'s `run_one` scores `GUARD-FAIL` and `run_dir` turns
+  into a nonzero exit.
 
 ---
 
@@ -75,7 +74,7 @@ OCaml build → CUDA → GPU.**
 |---|---|---|---|---|
 | **1 Static** | rule-fns as spec (unit); checker discriminating-power (negatives) | dune **cram** | bash/python | anywhere, ms |
 | **2 Generate** | corpus + emission regression golden; parse-smoke; census | **git-diff** + make | `make build` | local/CI, ~10 s |
-| **3 Compile** | PTX faithfulness (all 644); compile-smoke (11 reps) | shell drivers | nvcc+clang, **no GPU** | local / CI-with-CUDA, ~min |
+| **3 Compile** | PTX faithfulness (all 644); compile-smoke (12 reps) | shell drivers | nvcc+clang, **no GPU** | local / CI-with-CUDA, ~min |
 | **4 Hardware** | behavioral characterization; the liveness disqualifiers; the corroboration tier + the stop rule | `hetlitmus-run.sh` + `campaign.py` | **GH200** | manual, off-CI |
 
 Goal mapping: **regression = Layer 2** (goldens); **works-as-expected = Layers 1,
@@ -102,9 +101,27 @@ The rule functions (`render_cycle`, …) get exhaustive coverage *transitively* 
 corpus **is** their output across the full grid, so the Layer-2 golden pins every
 good-case result. **The cram is therefore a curated sample, not a matrix:** it
 documents the rules readably (`basics.t`, ~10 lines, one per rule branch) and pins
-the checkers' discriminating power (`*-negatives.t`). No cram file is worth making
+`ptxcheck.py`'s discriminating power (`ptx-negatives.t`). No cram file is worth making
 exhaustive: every decision procedure the cram would have to enumerate is either
 covered transitively by the golden or gated by a `verify/` checker of its own.
+
+Anti-vacuity is carried by the positive checks themselves: every sweep asserts a
+pinned census and fails closed on an empty input (`corpus-gate.sh` and `tokens.sh`
+173/471, `hipsrccheck.py` 173/471 + 2 carriers, `smoke.sh` `NREPS`), and a gate that
+counts its assertions refuses a phase that made none (`hipbuildcheck.py`). Negative
+controls exist only where they are the sole coverage of a product behaviour. The
+gate-planted ones are: `ptx-negatives.t` (`ptxcheck.py` must reject); `smoke.sh` rep 12
+and `hipbuildcheck.py`'s `hip-compile` counterfactual (`comp.sh` must fail on a source
+that does not compile — its closing `HetLitmus: compile OK` echo is unconditional,
+guarded only by `set -e`); `hipbuildcheck.py`'s `fence-lowering` arm (`hipcc` must
+refuse a fence scope spelt `"system"`); `statscheck.py`'s mirror-rejection (`VACUOUS
+MIRROR CONTROL` when the injection matched nothing), out-of-reach-header and `GHOST`
+arms; `stresscheck.py`'s `-DHET_*_STRESS_PATTERN` sweep and the `iters=0` half of its
+device probe; `cpustresscheck.py`'s `stress-off-zero`, `first-touch` and
+`preload-guard-drops` contrasts; `runcheck.py`'s one-poll-cap run. The remaining
+refusal arms (`hipbuildcheck.py`'s `build-arms`, `host-pair-guard`, `hip-allocator` and
+`place-refusal`; `runcheck.py`'s phases) exercise a refusal the product itself ships.
+There is no self-test lane.
 
 ---
 
@@ -142,16 +159,15 @@ our generation is byte-stable so we don't need it.
   list + real outputs in Appendix B. (Optional +2: unit `arm_ord R/W acqrel`→`Q`/`L`
   to pin the atom mapping directly.)
 - ✓ `ptx-negatives.t` (`0d5940b5e`) — `ptxcheck --ptx <frozen-corrupt.ptx>` → exit 1 (no GPU). A
-  thin **byte-freeze** of one corruption; the eyeball gap is already closed in the
-  gated `tokens.sh selftest` (`c2e4df4c5`), so this is belt-and-suspenders.
+  **byte-freeze** of one corruption, and the one place the checker is required to
+  reject, so a checker that passed everything is caught here.
 - (optional, lower priority) unit-test `ptxcheck.py` parsers (`classify_ptx_op`, …).
 
 ### Layer 2 — Generate (git-diff + make; OCaml build)
 - ✓ `generate.sh` (both dirs), byte-stable.
 - ✓ **golden gate** (`verify/corpus-gate.sh`, `6e92f2657`): regenerate into a temp
   tree (`generate.sh OUTDIR`), then fail on any name-set or byte difference against the
-  committed corpus — added, removed and modified files are each named. `--bite` reddens it
-  with a generator that writes nothing and with one tampered byte.
+  committed corpus — added, removed and modified files are each named.
 - ✓ emission golden (in `corpus-gate.sh`): 10 `cuda-out/*.cu` **and** 10 `hip-out/*.hip`
   samples are committed; `emit-cuda.sh` and `emit-hip.sh` each emit all 173 to a
   **temp dir** and each sample is diffed against its own lane — emitter drift = nonzero
@@ -166,9 +182,9 @@ our generation is byte-stable so we don't need it.
 ### Layer 3 — Compile (shell drivers; nvcc+clang, no GPU)
 - ✓ faithfulness: `verify/tokens.sh all` (already gated).
 - ✓ `comp.sh` per test (verified compiles no-GPU).
-- ✓ `smoke.sh` (built, `fa2adc9db`): emit + compile the 11 reps (§5), fail on any
-  nonzero. `nvcc --ptx` from faithfulness already covers gpu-only/het `.cu`, so smoke
-  adds the het CPU side (clang AArch64) + `nvcc -c`/ptxas.
+- ✓ `smoke.sh` (built, `fa2adc9db`): the 12 reps of §5 — 11 emitted and compiled, one
+  counterfactual — failing on any rep. `nvcc --ptx` from faithfulness already covers
+  gpu-only/het `.cu`, so smoke adds the het CPU side (clang AArch64) + `nvcc -c`/ptxas.
 
 ### Layer 4 — Hardware (GH200; later)
 - ✓ **the three-outcome rule**: `OBSERVED` / `NOT-OBSERVED` / `COLD-INVALID`, with the
@@ -195,9 +211,9 @@ our generation is byte-stable so we don't need it.
 Single "before every commit" run — **no tiers, no nightly**. **Not all 644**
 (gpu-only `.cu` already gets `nvcc --ptx` from faithfulness). Emit + compile **11
 representatives** — 10 het via their `comp.sh cuda` and 1 het via `comp.sh hip` —
-chosen to hit each distinct compile path once. `verify/smoke.sh` is the
-authority: `NREPS` and the rep list in its header are the spec, and this table
-mirrors them.
+chosen to hit each distinct compile path once, plus one counterfactual (**12 reps**
+in all). `verify/smoke.sh` is the authority: `NREPS` and the rep list in its header
+are the spec, and this table mirrors them.
 
 | # | Rep | Covers |
 |---|---|---|
@@ -212,12 +228,14 @@ mirrors them.
 | 9 | order pair (`S-gc-sys-ra.rel-2s`) | the only rep emitting inline `fence.release.sys`, paired with CPU STLR/LDAPR, and an outcome column read out of a location |
 | 10 | order pair (`MP-cg-sys-st.sc-2s`) | the CPU `dmb st` form |
 | 11 | order pair (`MP-gc-sys-ld.sc-2s`) | the CPU `dmb ld` form on the `gc` cut (the CPU proc reads) |
+| 12 | counterfactual (`MP-cg-cta-acquire`, scratch copy) | a syntax error appended to the emitted `_cpu.c` must break `comp.sh cuda`: nonzero exit, no `HetLitmus: compile OK` line, and the compiler's error must name `HETLITMUS_NOT_C` — the closing `compile OK` echo is unconditional, guarded only by `set -e` |
 
 Reps 10–11 claim only that the three barrier forms **build**; *which* one is emitted is
-pinned by `tokens.sh selftest [5b]`.
+pinned by `tokens.sh all` (`ptxcheck.check_cpu` compares the CPU column against the
+emitted `_cpu.c` mnemonic for mnemonic, barrier option included).
 
-Tens of seconds total (last timed at the original 6 reps; not re-measured at 11).
-Residual risk (11 reps ≠ proof all 644 build) is accepted once: the same gate
+Tens of seconds total (last timed at the original 6 reps; not re-measured at 12).
+Residual risk (11 compiled reps ≠ proof all 644 build) is accepted once: the same gate
 `nvcc --ptx`-compiles every one of the 644 via faithfulness, and the stages smoke
 adds (ptxas / CPU clang / link) are near-constant across tests.
 
@@ -227,7 +245,7 @@ adds (ptxas / CPU clang / link) are near-constant across tests.
 
 Mirror herdtools7's `::` accumulation + `| build` order-only prereq + `@ echo OK`.
 The second lane is `-toolchain`: a target joins it when it needs a compiler or a
-device this box may not have, three of its members needing a real GPU (see below).
+device this box may not have, two of its members needing a real GPU (see below).
 **✓ All targets wired into the top-level Makefile (`68d102ef5`).**
 
 **The Makefile is the roster; this table mirrors it.** Re-read it with
@@ -239,8 +257,8 @@ Umbrellas (what you press):
   `-x86fixture` · `-cpuonly` · `-run-gate`.
 - **`make hetlitmus-test-toolchain`** (old name `hetlitmus-test-nvcc`, kept as an alias)
   → the toolchain lane: `hetlitmus-faithful` · `-stress` ·
-  `-cpustress` · `-hipbuild` · `-characterize-hw` ·
-  `-selftest` · `-smoke`. This lane has **outgrown Layer 3**: it still needs CUDA for the compile
+  `-cpustress` · `-hipbuild` · `-characterize-hw` · `-smoke`.
+  This lane has **outgrown Layer 3**: it still needs CUDA for the compile
   members, but two of them now need a real device — `-characterize-hw`
   runs a built harness on the GPU and reads what it prints, and `-stress`'s device-probe check drives
   `het_do_stress` on hardware to prove the tally is live both ways. The session wrapper's
@@ -275,13 +293,7 @@ the `@NAME@` payload holes it filled, the entitlement checks in `runcheck.py` /
 `emit-all.sh` / `x86bodycheck.py` / `verdictcheck.py` / `hipbuildcheck.py`, the scanner
 `verify/brandscan.py` and the cram test `machine-pairs.t`. A render names no machine now:
 only the pair it was built for (`HET_PAIR_NAME`) and the mechanism words `het_verdict.h`
-defines. Nothing polices the absence. Four bites were re-seated rather than left vacuous:
-`x86bodycheck`'s unseamed full-corpus arm now stamps `_rec.rec_magic` twice, `recfields`'
-drift bite renames `HET_PLACE_LEVER`, `runcheck`'s device-lane bite picks its injection
-by label, and `hipbuildcheck`'s allocator bite reads the integrated/discrete literals.
-The seven with no seam left went with the checks they bit: `x86bodycheck`'s
-`machine-short`, `no-note` and `brand-readme`, three `runcheck` injections and its `[E]`
-vendor-word scan.
+defines. Nothing polices the absence.
 
 **The offline oracle-comparison harness went the same way** — `oracle-compare.sh`, its
 `docs/oracle-harness.md` spec, the Layer-1 cram test `oracle-negatives.t` and the six
@@ -305,9 +317,9 @@ checked (`amd-faithfulness.md`). Nothing polices the absence.
 `hetlitmus-hist` the frame-scan histogram guard and `hetlitmus-x86body` the
 bespoke x86 CPU body; all three subjects were deleted when the harness moved to
 per-iteration slots, so their scripts and targets went with them rather than
-being kept to police an absence (`x86bodycheck`'s re-seated `magic-twice` bite
-goes with its script; the property it bit — `rec_magic` stamped exactly once —
-is still asserted per harness by `emit-all.sh` and `verdictcheck` phase 3).
+being kept to police an absence (the property `x86bodycheck` asserted —
+`rec_magic` stamped exactly once — is still asserted per harness by `emit-all.sh`
+and `verdictcheck` phase 3).
 `hetlitmus-rdv` (`verify/rdvcheck.py`) is the
 one target the move added: it reads every emitted render and the `het_rdv.h`
 each stages, and asserts that every iteration opens at the rendezvous, ahead of
@@ -362,13 +374,28 @@ either** (promote blindly enshrines current output, bugs and all):
 - committed corpus files → `git commit` (after regenerate).
 - `hetlitmus-promote` bundles both, but leaves the corpus staged for you to review + commit.
 
+`corpus-gate.sh` is non-destructive: the regeneration and the emission both go to a
+temp dir (auto-cleaned), so the working tree is untouched whether the gate passes or
+fails. Out of tree is what makes the comparison mean something — an in-place
+regeneration followed by a `git status --porcelain` assertion cannot tell drift from a
+generator that wrote nothing (both leave an empty porcelain) and clobbers a hand-edited
+`.litmus` before it is looked at, and an in-place emission would leave the 163
+uncommitted kernels of each lane as untracked files (the C-runtime boilerplate beside
+them is `.gitignore`'d).
+
+Promote, when a change to the tools is intended — review `git diff` first, then:
+- corpus: regenerate (`generate.sh` in both corpus dirs, or `hetlitmus-promote`) and
+  `git commit` the new `.litmus`;
+- emission: re-emit the samples into `cuda-out/` + `hip-out/` (`emit-cuda.sh`,
+  `emit-hip.sh`) and `git commit`.
+
 ---
 
 ## 8. Build order (highest ROI first)
 
 1. ✓ **Layer 1 cram** (`0d5940b5e`) — `basics.t`, `ptx-negatives.t` + fixtures + `dune`.
 2. ✓ **`hetlitmus-corpus`** (`6e92f2657`) — corpus + emission golden gate.
-3. ✓ **`smoke.sh`** (landed at 6 reps, `fa2adc9db`; **11 today** — see §5) — reuses `comp.sh`.
+3. ✓ **`smoke.sh`** (landed at 6 reps, `fa2adc9db`; **12 today** — see §5) — reuses `comp.sh`.
 4. ✓ **Makefile targets wired** (`68d102ef5`).
 5. ○ **Layer 4** — later, on the GH200.
 
@@ -403,7 +430,9 @@ Steps 1–4 all run on the dev box (and in CI, Layer 3 with a CUDA-install step)
 
 `verify/tokens.sh` checks *static, hardware-free token faithfulness* — that is
 **Layer 3** here, NOT Layer 1, even though it needs no device. Its make target is
-`hetlitmus-faithful`; its discriminating-power lane is `hetlitmus-selftest`.
+`hetlitmus-faithful`. The one rejection it is required to make is frozen in the
+Layer-1 `ptx-negatives.t`; an unmapped token fails inside the sweep itself (exit 2,
+scored `GUARD-FAIL`).
 
 ## Appendix B — ready-to-use cram examples (real captured output)
 

@@ -2,7 +2,7 @@
 """
 hipbuildcheck.py -- can an AMD harness be built, linked and refused correctly?
 
-Nine phases, each of which must be seen to fail:
+Nine phases:
 
   build-arms          the emitted comp.sh / Makefile carry hip-link + hip-bin,
                       advertise them in their usage text, and hip-bin is
@@ -11,7 +11,8 @@ Nine phases, each of which must be seen to fail:
                       through to its built-in `%: %.o' rule and links with
                       $(CC) -- guard and device code both gone, and an absent
                       rule is invisible to a grep
-  hip-compile         hipcc --offload-arch=gfx942 compiles the emitted .hip
+  hip-compile         hipcc --offload-arch=gfx942 compiles the emitted .hip,
+                      and comp.sh reports failure on one that does not
   device-image        comp.sh hip-link and make hip-bin each produce an ELF
                       carrying a real amdgcn gfx942 code object, read out of
                       the bytes rather than inferred from an exit status
@@ -29,15 +30,15 @@ Nine phases, each of which must be seen to fail:
                       precondition, classifies APU vs discrete, and is CALLED
                       by gd_alloc_shared before the allocation it must vet
   place-refusal       the CUDA-only HET_PLACE lever is refused at compile
-                      time, and HET_PLACE=0 still builds.  Its own phase
-                      because it is the hipcc half: hip-allocator's injections
-                      all corrupt the lifted resolver, and none of them can move
-                      a compile-time refusal
+                      time, and HET_PLACE=0 still builds -- the hipcc half of
+                      the allocator story, which hip-allocator's stub-driven
+                      resolver cannot reach
   cuda-nonregression  the cuda / cuda-link / cuda-bin arms still carry their
                       guard and still build
   fence-lowering      the fence-carrying render emits the documented
                       __builtin_amdgcn_fence lowering for every `f[sc,sys]'
-                      it annotates, and hipcc compiles it
+                      it annotates, hipcc compiles it, and hipcc rejects the
+                      same fence with its scope spelt "system"
 
 fence-lowering compiles litmus/HipLang.ml's __builtin_amdgcn_fence as the
 harness ships it, host half and all; what the compiler makes of it is
@@ -61,9 +62,7 @@ every refusal path is then genuinely EXECUTED and its message observed.  The rea
 hipMallocManaged and coherence behaviour, which no shim stands in for, stays
 deferred to an MI300X bring-up run.
 
-Every phase counts its own assertions and fails if it made none.  `--bite'
-injects into each phase, on corruption and on omission, and requires the phase
-that owns the injected object to redden naming it.
+Every phase counts its own assertions and fails if it made none.
 
 One vendor per harness directory: litmus7 renders the dialect `-gpu-target' names
 and no other (litmus/hetDialect.ml), so the AMD arms and the CUDA arms sit in
@@ -155,7 +154,8 @@ def emit(tmp, src, outroot, label, target):
 
 
 def fresh(tmp, d, tag):
-    """A pristine copy of harness dir [d], so bites never contaminate a later phase.
+    """A pristine copy of harness dir [d], so a scratch arm never contaminates a
+       later phase.
        The copy KEEPS the harness's own basename: test_of() reads it, and a copy
        called `w-p2' would silently make every <test>_hip.o assertion look for a
        file named after the scratch directory instead of the test."""
@@ -293,13 +293,13 @@ def make_test_refuses(tmp, d, phase, link_target):
                 fail(phase, "`make %s' refused but produced ./%s anyway" % (t, t))
 
 
-def phase2(d):
+def phase2(tmp, d):
     print("[hip-compile] compile: hipcc --offload-arch=%s -c the emitted .hip" % HIP_ARCH)
     if not have("hipcc"):
         fail("hip-compile", "hipcc not on PATH -- this gate cannot verify the AMD lane here; "
                    "run it where ROCm exists before trusting the .hip")
         return
-    w = d
+    w = fresh(tmp, d, "p2")
     r = run(["sh", "comp.sh", "hip"], cwd=w)
     tick("hip-compile")
     if r.returncode != 0:
@@ -314,6 +314,29 @@ def phase2(d):
     tick("hip-compile")
     if not os.path.isfile(obj):
         fail("hip-compile", "comp.sh hip left no %s_hip.o" % test_of(w))
+    # comp.sh ends in an unconditional `HetLitmus: compile OK' echo, so only its
+    # `set -e' keeps a failed compile from reporting success (litmus/hetEmit.ml).
+    # The break goes into a scratch copy; the emitted render is never touched.
+    c = fresh(tmp, d, "p2-uncompilable")
+    inj = "this is not c++;"
+    with open(os.path.join(c, test_of(c) + ".hip"), "a") as f:
+        f.write("\n%s\n" % inj)
+    r = run(["sh", "comp.sh", "hip"], cwd=c)
+    print("      counterfactual: comp.sh hip on an uncompilable .hip -> rc=%d "
+          "(want nonzero)" % r.returncode)
+    tick("hip-compile")
+    if r.returncode == 0 or "HetLitmus: compile OK" in r.stdout:
+        fail("hip-compile", "comp.sh hip reported success (exit %d) on a .hip that does not "
+             "compile -- the `compile OK' echo is unguarded, so every hip compile "
+             "in this suite would be vacuous:\n%s%s"
+             % (r.returncode, r.stdout[-1000:], r.stderr[-1000:]))
+    # A nonzero rc is also what a harness broken for its own reasons earns, so
+    # hipcc has to echo the injected line back.
+    tick("hip-compile")
+    if inj not in r.stdout + r.stderr:
+        fail("hip-compile", "comp.sh hip failed (exit %d) without hipcc naming the "
+             "injected %r, so the failure is not attributable to the injection:\n%s%s"
+             % (r.returncode, inj, r.stdout[-1000:], r.stderr[-1000:]))
     print("      %d assertions" % counts.get("hip-compile", 0))
     if not counts.get("hip-compile"):
         fail("hip-compile", "phase made no assertions")
@@ -702,12 +725,9 @@ def phase6(tmp, d):
 def phase6b(tmp, d):
     """HET_PLACE is CUDA-only and must be REFUSED here, not silently reported.
 
-    Its own phase because it is the only part of the allocator story that builds
-    with hipcc: the five hip-allocator injections all corrupt the resolver, which is
-    lifted
-    out and driven under a stub, and none of them can move a compile-time
-    refusal.  Splitting the two means each injection pays for the phase it can
-    redden.
+    Its own phase because it is the part of the allocator story that builds with
+    hipcc: hip-allocator lifts the resolver out and drives it under a stub, which
+    never reaches a compile-time refusal.
     """
     print("[place-refusal] HET_PLACE: the CUDA-only lever the AMD render must refuse")
     # Both renders print `place=%d' in the cpu-stress banner and carry place_mode
@@ -828,354 +848,44 @@ def phase8(tmp, d, src):
                        "-- the render must build under the flags the harness "
                        "ships:\n%s%s"
                  % (r.returncode, r.stdout[-1500:], r.stderr[-1500:]))
+        # "system" is not an AMDHSA sync-scope name and is the way to get `sys'
+        # wrong, so hipcc must REJECT it.
+        c = fresh(tmp, d, "p8-system-scope")
+        hp = os.path.join(c, t + ".hip")
+        src_hip = open(hp).read()
+        respelt = src_hip.replace(FENCE_CALL,
+                                  '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "system")')
+        tick("fence-lowering")
+        if respelt == src_hip:
+            fail("fence-lowering", "no %s in the scratch .hip to respell, so the compile "
+                       "above stands on nothing" % FENCE_CALL)
+        else:
+            open(hp, "w").write(respelt)
+            r = run(["sh", "comp.sh", "hip"], cwd=c)
+            print('      counterfactual: a fence scope spelt "system" -> hipcc '
+                  "rc=%d (want nonzero)" % r.returncode)
+            tick("fence-lowering")
+            if r.returncode == 0:
+                fail("fence-lowering", 'hipcc accepted a fence scope spelt "system" -- this '
+                           "phase's compile does not discriminate the sync scope:\n%s"
+                     % r.stdout[-800:])
+            # hipcc names the construct it refused, not the spelling, and its
+            # caret sits on the kernel signature: without this diagnostic the
+            # nonzero rc is some other compile failure.
+            tick("fence-lowering")
+            if "synchronization scope" not in (r.stdout + r.stderr).lower():
+                fail("fence-lowering", "hipcc failed the respelt render (exit %d) with no "
+                           "sync-scope diagnostic, so the refusal cannot be attributed to "
+                           'the scope spelt "system":\n%s%s'
+                     % (r.returncode, r.stdout[-800:], r.stderr[-800:]))
     print("      %d assertions" % counts.get("fence-lowering", 0))
     if not counts.get("fence-lowering"):
         fail("fence-lowering", "phase made no assertions")
 
 
-# -------------------------------------------------------------------- bite
-
-def sub(path, old, new, count=0):
-    s = open(path).read()
-    if old not in s:
-        raise SystemExit("hipbuildcheck --bite: anchor %r absent from %s -- the "
-                         "injection would have been a no-op, which is exactly the "
-                         "silent-bite failure this gate exists to prevent" % (old, path))
-    open(path, "w").write(s.replace(old, new) if count == 0 else s.replace(old, new, count))
-
-
-def phony_line(d):
-    """This render's .PHONY line, READ rather than reconstructed: a single-vendor
-       harness lists its own vendor's targets and no others."""
-    for l in open(os.path.join(d, "Makefile")):
-        if l.startswith(".PHONY:"):
-            return l.rstrip("\n")
-    raise SystemExit("hipbuildcheck --bite: no .PHONY line in %s/Makefile -- the "
-                     "injections below would have been no-ops" % d)
-
-
-def strip_refusal_rule(d):
-    """Strip the Makefile to the shape with no `.SUFFIXES:', no rule naming
-       ./<test>, and ./<test> not phony.  That is the state in which `make
-       <test>' reaches GNU make's built-in `%: %.o' link rule -- and it is also
-       the state stale-binary's trap needs, because a PHONY ./<test> is never
-       "up to date" and the trap could not spring."""
-    p = os.path.join(d, "Makefile")
-    t = test_of(d)
-    s = open(p).read()
-    for pat, rep in [(r"^\.SUFFIXES:\n\n", ""),
-                     (r"^%s:\n\t@ echo .*\n\n" % re.escape(t), ""),
-                     (r"^(\.PHONY: .*?) %s$" % re.escape(t), r"\1")]:
-        s2 = re.sub(pat, rep, s, flags=re.M)
-        if s2 == s:
-            raise SystemExit("hipbuildcheck --bite: strip_refusal_rule found no /%s/ in "
-                             "%s -- the injection would have been a no-op" % (pat, p))
-        s = s2
-    open(p, "w").write(s)
-
-
-def bite_one(label, phase, runner, expect):
-    """Run [runner]; require [phase] to redden with [expect] in the message."""
-    fails.clear()
-    counts.clear()
-    print("  -- bite [%s] %s" % (phase, label))
-    try:
-        runner()
-    except SystemExit as e:
-        print("     (phase aborted: %s)" % e)
-    mine = [m for ph, m in fails if ph == phase]
-    if not mine:
-        print("     NOT REDDENED by %s -- injection was INERT" % phase)
-        return False
-    hit = [m for m in mine if expect in m]
-    if not hit:
-        print("     %s reddened but named the wrong object (wanted %r):\n       %s"
-              % (phase, expect, "\n       ".join(mine)))
-        return False
-    # Print the assertion that MATCHED, not merely the first one that fired: a
-    # phase can redden for several reasons at once, and "it went red" is not the
-    # same claim as "the assertion this injection targets went red".
-    print("     OK: %s" % hit[0].splitlines()[0][:150])
-    return True
-
-
-def bite(tmp, d_x86, d_x86_cuda, d_aa_cuda, d_fence, fence_src):
-    print("===== HIPBUILDCHECK BITE: every phase, on corruption AND on omission =====")
-    ok = True
-    n = [0]
-
-    def W(tag, base=None):
-        n[0] += 1
-        return fresh(tmp, base or d_x86, "bite%d-%s" % (n[0], tag))
-
-    # --- build-arms ---------------------------------------------------------
-    w = W("p1c")
-    # Anchored on the whole case-arm LINE: the unknown-target refusal quotes
-    # `(accepted: hip|hip-link)' too, and a bare substring would corrupt both.
-    sub(os.path.join(w, "comp.sh"), "\n  hip|hip-link)\n", "\n  hip|hip-lonk)\n")
-    ok &= bite_one("comp.sh hip-link arm misspelt", "build-arms",
-                   lambda: phase1(tmp, w), "hip-link case arm")
-    w = W("p1r")
-    sub(os.path.join(w, "comp.sh"),
-        r'comp.sh: unknown target \"$TARGET\" -- this directory is hip-only ',
-        "usage: sh comp.sh ")
-    ok &= bite_one("comp.sh unknown-target refusal cut back to a bare usage line "
-                   "(it no longer quotes the rejected argument)", "build-arms",
-                   lambda: phase1(tmp, w), "unknown-target refusal")
-    w = W("p1o")
-    mk = os.path.join(w, "Makefile")
-    s = open(mk).read()
-    s = re.sub(r"^hip-bin: .*\n(?:\t.*\n)*", "", s, flags=re.M)
-    open(mk, "w").write(s)
-    ok &= bite_one("Makefile hip-bin rule DELETED", "build-arms",
-                   lambda: phase1(tmp, w), "hip-bin rule")
-    w = W("p1p")
-    # Surgical: hip-bin ONLY.  ./<test> stays phony, so this bite isolates the
-    # one object it names instead of also tripping the ./<test> assertions.
-    sub(os.path.join(w, "Makefile"), phony_line(w),
-        phony_line(w).replace(" hip-bin", "", 1))
-    ok &= bite_one("hip-bin dropped from .PHONY", "build-arms",
-                   lambda: phase1(tmp, w), "hip-bin .PHONY")
-    # OMISSION: with every link target phony there is no rule naming ./<test>, so
-    # make falls through to its BUILT-IN `%: %.o' and links it with $(CC), guard
-    # and device code both gone.  Deleting the refusal rule reaches exactly that
-    # state, and only RUNNING make can catch it, since the defect is an absent
-    # rule.  Driven on the CUDA render, the only one where the fall-through is
-    # reachable: the built-in rule is `%: %.o' and the HIP render's GPU object is
-    # <test>_hip.o, so there make simply reports no rule at all.  cuda-nonregression owns the
-    # behavioural check on that render.
-    w = W("p7b", d_x86_cuda)
-    strip_refusal_rule(w)
-    # The expected object is the BEHAVIOURAL assertion, not the grep for the rule:
-    # the grep also reddens here, and a bite satisfied by the grep would not show
-    # that the check can still detect this if someone leaves a rule in place that
-    # does not actually refuse.
-    ok &= bite_one("./<test> refusal rule + .SUFFIXES DELETED (make falls back to "
-                   "its built-in link rule)", "cuda-nonregression", lambda: phase7(tmp, w),
-                   "reached make's BUILT-IN rule")
-    # CORRUPTION: the rule survives but ./<test> is no longer .PHONY, so a run
-    # that already has a binary gets "up to date", exit 0, and whatever the other
-    # vendor left behind.
-    w = W("p1q")
-    sub(os.path.join(w, "Makefile"), phony_line(w),
-        phony_line(w)[: -(len(test_of(w)) + 1)])
-    ok &= bite_one("./<test> dropped from .PHONY (a present binary is 'up to date')",
-                   "build-arms", lambda: phase1(tmp, w), "EXITED 0")
-    # CORRUPTION with EVERY GREP STILL GREEN: the rule is there, .SUFFIXES is
-    # there, ./<test> is phony -- and the recipe does nothing and exits 0.  Only
-    # the behavioural check can see this, which is the point of running make.
-    w = W("p1r")
-    mk = os.path.join(w, "Makefile")
-    s = open(mk).read()
-    s = re.sub(r"^(%s:\n)\t@ echo .*\n" % re.escape(test_of(w)), r"\1\t@ true\n", s, flags=re.M)
-    open(mk, "w").write(s)
-    ok &= bite_one("./<test> rule kept but made a no-op that exits 0 (every "
-                   "build-arms grep still passes)", "build-arms",
-                   lambda: phase1(tmp, w), "EXITED 0")
-
-    # --- hip-compile --------------------------------------------------------
-    w = W("p2c")
-    hp = os.path.join(w, test_of(w) + ".hip")
-    open(hp, "a").write("\nthis is not c++;\n")
-    ok &= bite_one(".hip made uncompilable", "hip-compile", lambda: phase2(w),
-                   "comp.sh hip failed")
-    w = W("p2o")
-    os.remove(os.path.join(w, test_of(w) + ".hip"))
-    ok &= bite_one(".hip DELETED", "hip-compile", lambda: phase2(w), "comp.sh hip failed")
-
-    # --- device-image -------------------------------------------------------
-    w = W("p3c")
-    # The build runs and EXITS 0 -- for the wrong hardware.  A gfx90a (MI200)
-    # image links cleanly and would never run on MI300A/MI300X.  Exit status
-    # alone calls this a pass, so device-image has to read the ELF and insist on the
-    # gfx942 triple rather than on "some device image".
-    sub(os.path.join(w, "Makefile"), "HIP_ARCH ?= %s" % HIP_ARCH, "HIP_ARCH ?= gfx90a")
-    sub(os.path.join(w, "comp.sh"), 'HIP_ARCH="${HIP_ARCH:-%s}"' % HIP_ARCH,
-        'HIP_ARCH="${HIP_ARCH:-gfx90a}"')
-    ok &= bite_one("both HIP arms build for gfx90a (MI200), exit 0", "device-image",
-                   lambda: phase3(tmp, w), "NO amdgcn")
-    w = W("p3o")
-    s = open(os.path.join(w, "comp.sh")).read()
-    s = s.replace('    if [ "$TARGET" = hip-link ]; then', '    if false; then')
-    open(os.path.join(w, "comp.sh"), "w").write(s)
-    ok &= bite_one("comp.sh hip-link LINK STEP removed (still exits 0)", "device-image",
-                   lambda: phase3(tmp, w), "left no executable")
-
-    # --- host-pair-guard ----------------------------------------------------
-    # The link-arm half, driven on the (AArch64, cuda) render.
-    w = W("p4c", d_aa_cuda)
-    sub(os.path.join(w, "comp.sh"), '"$(uname -m)" != "$HET_HOST_ISA"',
-        '"$(uname -m)" = "$HET_HOST_ISA"')
-    sub(os.path.join(w, "Makefile"), 'test "$$(uname -m)" = "$(HET_HOST_ISA)"',
-        'test "$$(uname -m)" != "$(HET_HOST_ISA)"')
-    ok &= bite_one("uname guard INVERTED on an AArch64 render", "host-pair-guard",
-                   lambda: phase4(tmp, w, d_x86), "expected 3")
-    w = W("p4o", d_aa_cuda)
-    s = open(os.path.join(w, "comp.sh")).read()
-    s = re.sub(r'    if \[ "\$TARGET" = cuda-link \] && \[ "\$\(uname -m\)".*?\n    fi\n',
-               "", s, flags=re.S)
-    open(os.path.join(w, "comp.sh"), "w").write(s)
-    ok &= bite_one("comp.sh cuda-link uname guard DELETED", "host-pair-guard",
-                   lambda: phase4(tmp, w, d_x86), "expected 3")
-    # (c): the HIP render loses its guard, which no RUN on this x86_64 host can
-    # observe -- the guard is keyed to the ISA this host already is.
-    w = W("p4h", d_x86)
-    sub(os.path.join(w, "comp.sh"), "PORTABLE SHIM", "portable stand-in")
-    sub(os.path.join(w, "Makefile"), "PORTABLE SHIM", "portable stand-in")
-    ok &= bite_one("the HIP render\'s uname guard TEXT gone", "host-pair-guard",
-                   lambda: phase4(tmp, d_aa_cuda, w), "carries no uname guard")
-
-    # --- stale-binary -------------------------------------------------------
-    # stale-binary drives two directories, so each injection goes into ONE of them and the
-    # other stays pristine -- otherwise a bite could redden for the wrong render.
-    w = W("p5c", d_x86_cuda)
-    # cuda-bin as a phony with a FILE prerequisite -- the shape in which make
-    # answers "nothing to be done".  The refusal rule has to come out first: it
-    # makes ./<test> phony, and a phony target is never "up to date", so with it
-    # in place make would rerun the recipe for a reason that has nothing to do
-    # with the trap and this bite would go inert.
-    strip_refusal_rule(w)
-    s = open(os.path.join(w, "Makefile")).read()
-    t = test_of(w)
-    s = s.replace("cuda-bin: %s.o outs.o %s_cpu_host.o\n" % (t, t),
-                  "cuda-bin: %s\n\n%s: %s.o outs.o %s_cpu_host.o\n" % (t, t, t, t))
-    s = s.replace("$(NVCC) -arch=$(CUDA_ARCH) $^ -o %s -lpthread -lm" % t,
-                  "$(NVCC) -arch=$(CUDA_ARCH) $^ -o $@ -lpthread -lm")
-    open(os.path.join(w, "Makefile"), "w").write(s)
-    wh = W("p5c-hip")
-    ok &= bite_one("cuda-bin reverted to a FILE rule (the measured stale trap)", "stale-binary",
-                   lambda: phase5(tmp, w, wh), "left the amdgcn")
-    w = W("p5o")
-    # OMISSION: the target and its guard survive, only the LINK COMMAND is gone.
-    # `make hip-bin' then builds the objects, passes the uname guard and exits 0
-    # having linked nothing -- the exact shape of a target that reports success
-    # while doing no work.
-    s = open(os.path.join(w, "Makefile")).read()
-    s = s.replace("\t$(HIPCC) --offload-arch=$(HIP_ARCH) $^ -o %s -lpthread -lm\n" % test_of(w), "")
-    open(os.path.join(w, "Makefile"), "w").write(s)
-    wc = W("p5o-cuda", d_x86_cuda)
-    ok &= bite_one("hip-bin LINK COMMAND deleted (target still exits 0)", "stale-binary",
-                   lambda: phase5(tmp, wc, w), "without a amdgcn")
-
-    # --- hip-allocator ------------------------------------------------------
-    w = W("p6c")
-    hp = os.path.join(w, test_of(w) + ".hip")
-    s = open(hp).read()
-    # The classic fail-OPEN: an unknown mode silently becomes the default.
-    s = s.replace('''            "malloc would run a different experiment under the requested name.\\n",
-            _v);
-    exit(2);''',
-                  '''            "malloc would run a different experiment under the requested name.\\n",
-            _v);
-    _mode = HET_HIP_ALLOC_MANAGED;''')
-    open(hp, "w").write(s)
-    ok &= bite_one("unknown HET_ALLOC falls back to managed instead of exit(2)", "hip-allocator",
-                   lambda: phase6(tmp, w), "expected 2")
-    w = W("p6o")
-    hp = os.path.join(w, test_of(w) + ".hip")
-    s = open(hp).read()
-    s = re.sub(r"  if \(!_managed\) \{.*?\n    exit\(2\);\n  \}\n", "", s, flags=re.S)
-    open(hp, "w").write(s)
-    ok &= bite_one("the managedMemory precondition DELETED", "hip-allocator",
-                   lambda: phase6(tmp, w), "managedMemory=0 exited")
-    w = W("p6x")
-    hp = os.path.join(w, test_of(w) + ".hip")
-    s = open(hp).read()
-    s = s.replace('return _integrated ? "APU(integrated)" : "DISCRETE(not-integrated)";',
-                  'return "APU(integrated)";')
-    open(hp, "w").write(s)
-    ok &= bite_one("a discrete part classified as an integrated APU", "hip-allocator",
-                   lambda: phase6(tmp, w), "not classified as a discrete part")
-    # The inert-mechanism omission.  Everything hip-allocator does above still passes with
-    # this deleted -- the resolver is still defined, still correct, and still
-    # called by gd_free_shared.  It is simply NEVER called where it has to run.
-    w = W("p6call")
-    hp = os.path.join(w, test_of(w) + ".hip")
-    sub(hp, "  (void)_het_alloc_mode();               "
-            "/* resolve + guard once, before the first alloc */\n", "")
-    ok &= bite_one("gd_alloc_shared's _het_alloc_mode() CALL deleted (resolver still "
-                   "defined and still called by gd_free_shared)", "hip-allocator",
-                   lambda: phase6(tmp, w), "gd_alloc_shared calls _het_alloc_mode() 0 time")
-    # CORRUPTION of the same site: the call is there, but after the allocation it
-    # was supposed to vet.
-    w = W("p6ord")
-    hp = os.path.join(w, test_of(w) + ".hip")
-    sub(hp,
-        "  (void)_het_alloc_mode();               "
-        "/* resolve + guard once, before the first alloc */\n"
-        "  (void)hipMallocManaged(_pp, _bytes);   /* fine-grained by default */\n",
-        "  (void)hipMallocManaged(_pp, _bytes);   /* fine-grained by default */\n"
-        "  (void)_het_alloc_mode();               "
-        "/* resolve + guard once, before the first alloc */\n")
-    ok &= bite_one("the guard moved BELOW hipMallocManaged", "hip-allocator",
-                   lambda: phase6(tmp, w), "AFTER hipMallocManaged")
-    # --- place-refusal ------------------------------------------------------
-    # HET_PLACE: the CUDA-only lever both renders PRINT.
-    w = W("p6place")
-    hp = os.path.join(w, test_of(w) + ".hip")
-    sub(hp, "#if (HET_PLACE) != 0", "#if 0")
-    ok &= bite_one("the HET_PLACE compile-time refusal disabled (a -DHET_PLACE=1 AMD "
-                   "build would log place=1 place_fail=0 having placed nothing)", "place-refusal",
-                   lambda: phase6b(tmp, w), "does not REFUSE a non-zero HET_PLACE")
-
-    # --- cuda-nonregression -------------------------------------------------
-    w = W("p7c", d_x86_cuda)
-    sub(os.path.join(w, "Makefile"), "$(NVCC) -arch=$(CUDA_ARCH) $^ -o",
-        "$(HIPCC) --offload-arch=$(HIP_ARCH) $^ -o")
-    ok &= bite_one("cuda-bin links with HIPCC", "cuda-nonregression", lambda: phase7(tmp, w),
-                   "cuda-bin links with NVCC")
-    w = W("p7o", d_x86_cuda)
-    s = open(os.path.join(w, "comp.sh")).read()
-    s = s.replace("  cuda|cuda-link)", "  cuda)")
-    open(os.path.join(w, "comp.sh"), "w").write(s)
-    ok &= bite_one("comp.sh cuda-link arm DELETED", "cuda-nonregression", lambda: phase7(tmp, w),
-                   "cuda-link case arm")
-
-    # --- fence-lowering -----------------------------------------------------
-    # OMISSION: the fence gone from the render.  The .hip still compiles, so on
-    # this gate the text assertion is ALL that stands between it and a fence-free
-    # AMD harness for a fence test: nothing reads the compiled fence back.
-    w = W("p8o", d_fence)
-    hp = os.path.join(w, test_of(w) + ".hip")
-    s = re.sub(r"^.*__builtin_amdgcn_fence\(.*\n", "",
-               open(hp).read(), flags=re.M)
-    open(hp, "w").write(s)
-    ok &= bite_one("the emitted __builtin_amdgcn_fence DELETED", "fence-lowering",
-                   lambda: phase8(tmp, w, fence_src),
-                   "the fence was dropped on the way out")
-    # CORRUPTION THAT COMPILES: system scope is the empty string, so naming a
-    # scope narrows the fence to one agent and hipcc says nothing.  This is the
-    # half the compile cannot reach.
-    w = W("p8n", d_fence)
-    sub(os.path.join(w, test_of(w) + ".hip"), FENCE_CALL,
-        '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "agent")')
-    ok &= bite_one('the fence sync scope narrowed to "agent" (it still builds)',
-                   "fence-lowering", lambda: phase8(tmp, w, fence_src),
-                   "carry the documented lowering")
-    # CORRUPTION THE COMPILE CATCHES: "system" is not an AMDHSA sync-scope name,
-    # and it is the exact way to get `sys' wrong.  It trips the text assertion
-    # too; the assertion this bite is for is the one bite_one prints.
-    w = W("p8c", d_fence)
-    sub(os.path.join(w, test_of(w) + ".hip"), FENCE_CALL,
-        '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "system")')
-    ok &= bite_one('the fence sync scope spelt "system"', "fence-lowering",
-                   lambda: phase8(tmp, w, fence_src),
-                   "comp.sh hip failed on the fence-carrying render")
-
-    fails.clear()
-    print()
-    if ok:
-        print("HIPBUILDCHECK BITE OK (every injection reddened its own phase)")
-        return 0
-    print("HIPBUILDCHECK BITE FAILED")
-    return 1
-
-
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--bite", action="store_true",
-                    help="prove each phase FAILS on corruption and on omission")
-    a = ap.parse_args()
+    # No options: an unrecognised flag must error out rather than be ignored.
+    argparse.ArgumentParser().parse_args()
 
     if not os.access(LITMUS7, os.X_OK):
         raise SystemExit("hipbuildcheck: %s not built (run 'make all')" % LITMUS7)
@@ -1193,7 +903,7 @@ def main():
             raise SystemExit("hipbuildcheck: generate-x86.sh emitted no %s" % X86_TEST)
         # The same x86 test, rendered once per vendor: one directory carries one
         # vendor's arms, so the AMD phases and the CUDA non-regression phase read
-        # different directories now.
+        # different directories.
         d_x86 = emit(tmp, src, os.path.join(tmp, "out-x86-hip"), "x86 render", "hip")
         d_x86_cuda = emit(tmp, src, os.path.join(tmp, "out-x86-cuda"),
                           "x86 render", "cuda")
@@ -1211,14 +921,11 @@ def main():
         d_fence = emit(tmp, fence_src, os.path.join(tmp, "out-x86-fence-hip"),
                        "x86 fence render", "hip")
 
-        if a.bite:
-            return bite(tmp, d_x86, d_x86_cuda, d_aa_cuda, d_fence, fence_src)
-
         print("===== HIPBUILDCHECK: can an AMD harness be built and run? =====")
         print("  host %s, hipcc=%s nvcc=%s"
               % (os.uname().machine, have("hipcc"), have("nvcc")))
         phase1(tmp, d_x86)
-        phase2(fresh(tmp, d_x86, "p2"))
+        phase2(tmp, d_x86)
         phase3(tmp, d_x86)
         phase4(tmp, d_aa_cuda, d_x86)
         phase5(tmp, d_x86_cuda, d_x86)

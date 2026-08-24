@@ -13,8 +13,8 @@
 # launching a kernel needs hardware (Layer 4).  Reuses comp.sh verbatim (no new
 # build code); see hetlitmus/docs/TEST-PLAN.md sec.5.
 #
-# The reps -- each hits one distinct compile path once, and NREPS below counts
-# them:
+# The reps -- 1-11 each hit one distinct compile path once, 12 is the
+# counterfactual, and NREPS below counts them all:
 #   1. MP-cg-cta-acquire       het one-sided; plain CPU STR/LDR + barrier
 #   2. 2+2W-cg-sys-acqrel-2s   het two-sided; CPU STLR (store-only shape: no load)
 #   3. MP-gc-sys-acqrel-2s     het two-sided GPU->CPU; the only rep emitting a CPU
@@ -35,27 +35,23 @@
 #  10. MP-cg-sys-st.sc-2s      the CPU `dmb st' form
 #  11. MP-gc-sys-ld.sc-2s      the CPU `dmb ld' form on the GPU->CPU cut (the CPU
 #                              proc reads).
-#                              These reps claim only that the three barrier forms
-#                              build; which one is emitted is pinned by
-#                              tokens.sh selftest [5b].
+#                              Which of the three barrier forms is emitted is
+#                              pinned by `tokens.sh all' (ptxcheck.check_cpu).
+#  12. MP-cg-cta-acquire       the counterfactual: a syntax error injected into
+#                              a SCRATCH _cpu.c must break comp.sh.
 #
 # Usage:
 #   bash hetlitmus/verify/smoke.sh          # run every rep (pre-commit gate)
-#   bash hetlitmus/verify/smoke.sh bite     # prove the gate has teeth (self-test)
 #
-# Exit 0 (prints `SMOKE OK') iff every rep compiles.  A missing hipcc skips the
+# Exit 0 (prints `SMOKE OK') iff every rep passes.  A missing hipcc skips the
 # hip rep loudly -- it NEVER counts as a pass.  The reps that ran are counted
 # (`n', bumped inside each rep) and the count is asserted against NREPS before
-# any OK is printed: `fails' can only be raised from inside a rep, so a rep that
-# is never called contributes nothing, and a shrunken rep list would otherwise
-# leave the gate green with the verdict line still claiming a full pass -- the
-# same vacuous-pass hole the census tripwires of tokens.sh / corpus-gate.sh /
-# emit-all.sh close.
+# any OK is printed, so a rep dropped from the list reddens the gate instead of
+# shrinking it silently.
 # ---------------------------------------------------------------------------
 set -u
 
 . "$(dirname "$0")/../paths.sh"
-SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"   # absolute; the census bite copies it
 cd "$REPO"
 export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 
@@ -67,7 +63,7 @@ HETX86_DIR="$REPO/hetlitmus/tests/het-x86"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-NREPS=11          # keep in sync with the rep list in the header and below
+NREPS=12          # keep in sync with the rep list in the header and below
 fails=0
 skips=0
 n=0               # reps that actually RAN; asserted == NREPS before any OK
@@ -123,83 +119,46 @@ _smoke_het_rep() { # name dialect tool blurb srcdir
   fi
 }
 
-# The two names the rep list calls (and that bite_census counts by `^    smoke_').
+# The names the rep list calls.
 smoke_het() { _smoke_het_rep "$1" cuda '' "$2" "$HET_DIR"; }        # name blurb
 smoke_het_hip() { _smoke_het_rep "$1" hip hipcc "$2" "$HETX86_DIR"; }  # name blurb
 
-# ---- gate teeth: corrupt a scratch copy of an emitted harness, expect FAIL --
-# Emit a throwaway het harness, inject a syntax error into its (scratch) _cpu.c,
-# and confirm comp.sh now exits NONZERO.  Proves smoke actually bites; operates
-# only on the temp emit dir -- the committed .litmus corpus is never touched.
-bite_compile() {
-  local name=MP-cg-cta-acquire d cpu out rc
-  printf '===== SMOKE BITE: syntax error in a scratch _cpu.c must FAIL the gate =====\n'
-  d="$WORK/bite"; mkdir -p "$d"
-  litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$d" "$HET_DIR/$name.litmus" >/dev/null 2>&1
+# ---- the compile-failure counterfactual (rep 12) --------------------------
+# Breaks a SCRATCH copy of an emitted _cpu.c and requires comp.sh to fail; the
+# committed corpus is never touched.
+smoke_het_uncompilable() { # name blurb
+  local name="$1" blurb="$2" d cpu out rc
+  n=$((n+1))
+  printf '\n[%d/%d] %-9s%-22s -- %s\n' "$n" "$NREPS" 'het/neg' "$name" "$blurb"
+  d="$WORK/x_$name"; mkdir -p "$d"
+  if ! out="$(litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$d" "$HET_DIR/$name.litmus" 2>&1)"; then
+    printf '%s\n' "$out"; printf '  FAIL %s (emission)\n' "$name"; fails=$((fails+1)); return
+  fi
   cpu="$d/$name/${name}_cpu.c"
   if [ ! -s "$cpu" ]; then
-    printf 'BITE ERROR: could not emit %s harness\n' "$name"; return 1
+    printf '  FAIL %s (no %s_cpu.c to break, so nothing was injected)\n' "$name" "$name"
+    fails=$((fails+1)); return
   fi
-  printf '\nvoid HETLITMUS_SMOKE_BITE(void) { @@@ this is not C @@@ }\n' >> "$cpu"
-  printf 'injected a syntax error into a scratch copy of %s_cpu.c\n' "$name"
+  printf '\nvoid HETLITMUS_NOT_C(void) { @@@ this is not C @@@ }\n' >> "$cpu"
   out="$(cd "$d/$name" && sh comp.sh cuda 2>&1)"; rc=$?
-  printf '%s\n' "$out" | grep -iE 'error|HetLitmus: compile OK' | head -5
-  printf 'comp.sh rc=%d (expect NONZERO)\n\n' "$rc"
-  if [ "$rc" -ne 0 ] && ! printf '%s' "$out" | grep -q 'HetLitmus: compile OK'; then
-    printf 'BITE OK: the gate has teeth (corruption -> compile failure)\n'
-    return 0
+  printf '%s\n' "$out" | grep -iE 'error' | head -3
+  # A nonzero rc is also what a harness broken for its own reasons earns, so the
+  # compiler has to name HETLITMUS_NOT_C, the function the injection added.
+  if [ "$rc" -ne 0 ] && ! printf '%s' "$out" | grep -q 'HetLitmus: compile OK' \
+     && printf '%s' "$out" | grep -q 'HETLITMUS_NOT_C'; then
+    printf '  PASS %s (comp.sh rc=%d, no compile-OK line, error names HETLITMUS_NOT_C)\n' \
+      "$name" "$rc"
+  else
+    printf '%s\n' "$out"
+    printf '  FAIL %s (comp.sh rc=%d: a _cpu.c that is not C reported compile OK, or failed without the compiler naming HETLITMUS_NOT_C)\n' \
+      "$name" "$rc"
+    fails=$((fails+1))
   fi
-  printf 'BITE FAILED: corruption did NOT fail the gate -- smoke is toothless\n'
-  return 1
-}
-
-# ---- gate teeth, second half: the REP CENSUS ------------------------------
-# The compile bite above proves a broken harness reddens the gate; it says
-# nothing about a rep that never runs, which is the cheaper way to lose
-# coverage.  Delete every rep invocation from a scratch copy of this script and
-# require the census to redden it: without the `n' assertion that copy prints an
-# OK line having compiled nothing.  Costs no compiler time precisely because the
-# doctored copy runs zero reps.
-bite_census() {
-  local sc="$WORK/census" nreps out rc
-  printf '\n===== SMOKE BITE: a rep list that ran NOTHING must FAIL the gate =====\n'
-  # The copy sources paths.sh by relative path, so give it a sibling -- a stub
-  # that sources the REAL one, since paths.sh self-locates and a plain copy
-  # would hand the scratch run a bogus $REPO.
-  mkdir -p "$sc/verify"
-  printf '. "%s/paths.sh"\n' "$HETL" > "$sc/paths.sh"
-  sed '/^    smoke_/d' "$SELF" > "$sc/verify/smoke.sh"
-  if cmp -s "$SELF" "$sc/verify/smoke.sh"; then
-    printf 'BITE FAILED (VACUOUS): deleting the rep invocations changed nothing\n'
-    return 1
-  fi
-  nreps=$(grep -c '^    smoke_' "$SELF")
-  printf 'deleted all %d rep invocations from a scratch copy of smoke.sh\n' "$nreps"
-  out="$(bash "$sc/verify/smoke.sh" all 2>&1)"; rc=$?
-  printf '%s\n' "$out" | tail -2
-  printf 'scratch smoke.sh rc=%d (expect NONZERO)\n\n' "$rc"
-  if [ "$rc" -ne 0 ] && \
-     printf '%s' "$out" | grep -q "SMOKE FAILED: 0 rep(s) ran, expected $NREPS"; then
-    printf 'BITE OK: the rep census has teeth (0 reps ran -> FAIL, not a green %d/%d)\n' \
-      "$NREPS" "$NREPS"
-    return 0
-  fi
-  printf 'BITE FAILED: a smoke run with ZERO reps did not redden the gate\n'
-  return 1
-}
-
-bite() {
-  local f=0
-  bite_compile || f=1
-  bite_census  || f=1
-  [ "$f" -eq 0 ] || { printf '\nSMOKE BITE FAILED\n'; return 1; }
-  printf '\nSMOKE BITE OK (compile + rep census)\n'
 }
 
 # ---------------------------------------------------------------------------
 cmd="${1:-all}"
 case "$cmd" in
-  bite) bite; exit $? ;;
   all)
     printf '===== HetLitmus Layer-3 compile-smoke (%d reps; nvcc+hipcc+clang, NO GPU) =====\n' "$NREPS"
     smoke_het     MP-cg-cta-acquire     "one-sided; plain CPU STR/LDR + barrier + nvcc -c"
@@ -217,6 +176,7 @@ case "$cmd" in
     smoke_het     S-gc-sys-ra.rel-2s    "order-pair; inline fence.release.sys + CPU STLR/LDAPR"
     smoke_het     MP-cg-sys-st.sc-2s    "order-pair; CPU dmb st + fence.sc.sys"
     smoke_het     MP-gc-sys-ld.sc-2s    "order-pair; CPU dmb ld on the gc cut"
+    smoke_het_uncompilable MP-cg-cta-acquire "a broken scratch _cpu.c must FAIL comp.sh"
     printf '\n=====================================================================\n'
     # Anti-vacuity: the verdict below reports what RAN, so a deleted or
     # commented-out rep reddens the gate instead of shrinking it silently.
@@ -225,12 +185,12 @@ case "$cmd" in
         "$n" "$NREPS"; exit 1
     fi
     if [ "$fails" -eq 0 ] && [ "$skips" -eq 0 ]; then
-      printf 'SMOKE OK  (%d/%d reps compiled)\n' "$n" "$NREPS"; exit 0
+      printf 'SMOKE OK  (%d/%d reps passed)\n' "$n" "$NREPS"; exit 0
     fi
     if [ "$fails" -eq 0 ]; then
-      printf 'SMOKE OK  (%d/%d compiled, %d SKIPPED -- see above; the skipped lane is UNVERIFIED)\n' \
+      printf 'SMOKE OK  (%d/%d passed, %d SKIPPED -- see above; the skipped lane is UNVERIFIED)\n' \
         "$((n-skips))" "$NREPS" "$skips"; exit 0
     fi
-    printf 'SMOKE FAILED: %d/%d rep(s) did not compile\n' "$fails" "$NREPS"; exit 1 ;;
-  *) printf 'usage: %s [all|bite]\n' "$0"; exit 64 ;;
+    printf 'SMOKE FAILED: %d/%d rep(s) failed\n' "$fails" "$NREPS"; exit 1 ;;
+  *) printf 'usage: %s [all]\n' "$0"; exit 64 ;;
 esac

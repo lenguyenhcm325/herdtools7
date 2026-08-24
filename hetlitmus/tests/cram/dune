@@ -14,30 +14,14 @@
   corrupt-strengthen.ptx
   (glob_files ../gpu-only/*.litmus)))
 
-; pfix-cond.t, coop-launch.t and shared-alloc.t are the exceptions that DO need the
-; OCaml build: they emit representative het tests through litmus7 and read the
-; generated driver.  pfix-cond guards the condition compiler on location atoms;
-; coop-launch guards the perpetual-loop + cooperative-launch driver shape;
-; shared-alloc guards the per-target gd_alloc_shared / gd_free_shared allocator;
-; stress guards the GPU memory-stress layer (device-memory scratchpad, pure-stress
-; workgroups, and every scaffolding op confined to that scratchpad); cpu-stress
-; guards the CPU + interconnect layer -- the host ISA kept out of the nvcc TU, the
-; -2s invariants, the four object classes, and above all the stress_go ORDERING,
-; which is the one property of that layer the liveness gate
-; (hetlitmus/verify/cpustresscheck.py) structurally cannot see: its dynamic probe
-; drives het_cpu_stress.h's mechanisms with its own flag and never exercises the
-; emitted driver's orchestration.  Confirmed by bite test -- moving the stress_go
-; raise after the joins passes cpustresscheck and fails here.
-; Scoped so the Layer-1 tests above stay toolchain-free.  litmus7 het emission
-; needs no -set-libdir, so only the binary + the .litmus inputs are required.
-; statistics.t guards the EMITTER half of the statistics layer.  The estimator's
-; own behaviour is gated by hetlitmus/verify/statscheck.py (which compiles the real
-; het_verdict.h and drives it with synthetic record streams); what cram pins is that
-; the harness actually PRODUCES the inputs that layer consumes.
-; slot-readout.t pins the per-iteration slot layout, the one-pass readout that
-; reads iteration n's outcome out of slot n, and the condition compiler's two
-; refusals -- an atom no outcome column backs, and a constant weak-behaviour
-; detector -- each matched on the words only it prints.
+; These emit representative het tests through litmus7 and read the generated
+; driver, so they need the OCaml build; each test's own header says what it
+; pins.  cpu-stress.t is the only check of the stress_go ordering: the liveness
+; gate (hetlitmus/verify/cpustresscheck.py) drives het_cpu_stress.h with its
+; own flag and never the emitted driver's orchestration, so a stress_go raise
+; after the joins passes that gate and fails here.  Scoped apart so the Layer-1
+; tests above stay toolchain-free; het emission needs no -set-libdir, so only
+; the binary and the .litmus inputs are deps.
 (cram
  (applies_to pfix-cond coop-launch shared-alloc slot-readout stress cpu-stress
    statistics)

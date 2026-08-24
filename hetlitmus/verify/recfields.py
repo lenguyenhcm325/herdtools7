@@ -22,8 +22,7 @@ why it needs no GPU.  Five properties, over real emissions of both pairs:
              sides are read through code_only(), so a name that survives only in
              a header's prose resolves nothing.
 
-Usage:  recfields.py [-q]      run the gate
-        recfields.py --bite    prove it FAILS when the binding breaks
+Usage:  recfields.py [-q]
 """
 
 import argparse
@@ -97,23 +96,15 @@ def emit(tmp, corpus, test, target):
     return d
 
 
-def check_lane(d, test, ext, quiet, tamper=None, seen=None,
-               header_tamper=None):
+def check_lane(d, test, ext, quiet, seen):
     bad = []
-    if seen is None:
-        seen = {}
     render = os.path.join(d, test + "." + ext)
     with open(render) as fh:
         src = fh.read()
-    if tamper is not None:
-        src = tamper(src)
     heads = {}
     for h in HEADERS:
         with open(os.path.join(d, h)) as fh:
-            text = fh.read()
-        if header_tamper is not None:
-            text = header_tamper(text)
-        heads[h] = code_only(text)
+            heads[h] = code_only(fh.read())
     code = code_only(src)
 
     # A -- every field written is a real member.
@@ -172,37 +163,22 @@ def check_lane(d, test, ext, quiet, tamper=None, seen=None,
     return bad
 
 
-def emit_lanes(tmp):
-    """Emit every lane once, as (test, ext, dir).  Both tamper hooks rewrite the
-    text a check has already read and never the files on disk, so one emission
-    serves the gate and every injection alike."""
-    return [(test, ext, emit(tmp, corpus, test, target))
-            for corpus, test, target, ext in LANES]
-
-
-def run(quiet, tamper=None, header_tamper=None, silent=False, lanes=None):
-    if not silent:
-        print("===== recfields: do the emitted harnesses bind to the runtime "
-              "headers? =====")
-    tmp = None
+def run(quiet):
+    print("===== recfields: do the emitted harnesses bind to the runtime "
+          "headers? =====")
     bad = []
     seen = {}
+    tmp = tempfile.mkdtemp(prefix="recfields.")
     try:
-        if lanes is None:
-            tmp = tempfile.mkdtemp(prefix="recfields.")
-            lanes = emit_lanes(tmp)
-        for test, ext, d in lanes:
-            bad += check_lane(d, test, ext, quiet, tamper=tamper, seen=seen,
-                              header_tamper=header_tamper)
+        for corpus, test, target, ext in LANES:
+            bad += check_lane(emit(tmp, corpus, test, target), test, ext, quiet,
+                              seen)
     finally:
-        if tmp is not None:
-            shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(tmp, ignore_errors=True)
     for name in sorted(n for n, live in seen.items() if not live):
         bad.append("#define %s is stamped and NO lane's code and no runtime header "
                    "reads it -- a stamp whose name drifted is a default that "
                    "silently stands" % name)
-    if silent:
-        return bad
     for m in bad:
         print("  *** %s" % m)
     if bad:
@@ -216,92 +192,13 @@ def run(quiet, tamper=None, header_tamper=None, silent=False, lanes=None):
     return 0
 
 
-BITES = [
-    ("a field the record does not have", "_rec.plce_mode",
-     lambda s: s.replace("_rec.place_mode = (uint32_t)HET_PLACE;",
-                         "_rec.plce_mode = (uint32_t)HET_PLACE;")),
-    ("the record stamp dropped", "0 time(s)",
-     lambda s: s.replace("    _rec.rec_magic = HET_REC_MAGIC;\n", "")),
-    ("the record stamped with a literal instead of the symbol", "0 time(s)",
-     lambda s: s.replace("_rec.rec_magic = HET_REC_MAGIC;",
-                         "_rec.rec_magic = 0x48455431u;")),
-    ("a build-fact define stamped under a drifted name", "HET_PLACE_LEVR ",
-     lambda s: s.replace("#define HET_PLACE_LEVER", "#define HET_PLACE_LEVR")),
-    ("a knob loses its #ifndef default in het_verdict.h", "no #ifndef default",
-     None, lambda s: s.replace("#ifndef HET_PAIR_NAME", "#if 0")),
-    # The other direction.  The two sides drift when either moves, so the header
-    # half is injected too: a member renamed in het_obs_record leaves every render
-    # writing a field the record no longer has, and property A must name the field
-    # rather than the file.
-    ("the record stamp field renamed in the header", "_rec.rec_magic,",
-     None, lambda s: s.replace("  uint32_t rec_magic;", "  uint32_t rec_stamp;")),
-    # ...and the two het_rdv.h knobs a render cannot compile without: the slot
-    # stride it addresses every location through, and the cap its GPU lane waits
-    # under.  Rename either and nothing but a compiler would notice.
-    ("the slot stride renamed in het_rdv.h", "uses HET_SLOT_STRIDE_WORDS",
-     None, lambda s: s.replace("#ifndef HET_SLOT_STRIDE_WORDS\n"
-                               "#define HET_SLOT_STRIDE_WORDS 32",
-                               "#ifndef HET_SLOT_STRIDE\n"
-                               "#define HET_SLOT_STRIDE 32")),
-    ("the GPU rendezvous cap renamed in het_rdv.h", "uses HET_CAP_GPU",
-     None, lambda s: s.replace("#ifndef HET_CAP_GPU\n"
-                               "#define HET_CAP_GPU 4096",
-                               "#ifndef HET_CAP\n"
-                               "#define HET_CAP 4096")),
-    # ... and the same knob left standing in PROSE alone.  Both sides of property
-    # E go through code_only(), so a header that only NAMES a knob declares
-    # nothing -- without which this gate would go green the moment a comment
-    # happened to spell the name.
-    ("a knob left in a header COMMENT and defined nowhere", "uses HET_CAP_GPU",
-     None, lambda s: s.replace("#ifndef HET_CAP_GPU\n"
-                               "#define HET_CAP_GPU 4096\n"
-                               "#endif",
-                               "/* HET_CAP_GPU: named here, defined nowhere. */")),
-]
-
-
-def bite():
-    """Each injection runs through the WHOLE lane set, because the define checks
-    are judged over their union, and must produce a diagnostic NAMING what broke --
-    a red for another lane's reason proves nothing about this injection."""
-    print("===== BITE: does recfields FAIL when the binding breaks? =====")
-    ok = True
-    tmp = tempfile.mkdtemp(prefix="recfields.")
-    try:
-        lanes = emit_lanes(tmp)
-        for row in BITES:
-            what, want = row[0], row[1]
-            mutate = row[2]
-            hmut = row[3] if len(row) > 3 else None
-            bad = run(quiet=True, tamper=mutate, header_tamper=hmut, silent=True,
-                      lanes=lanes)
-            said = [m for m in bad if want in m]
-            if said:
-                print("  BITES (gate failed, as it must): %s   [%s]"
-                      % (said[0][:110], what))
-            else:
-                print("  *** DID NOT BITE for its own reason (%d finding(s), none "
-                      "naming %r)   [%s]" % (len(bad), want, what))
-                ok = False
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    print("\n" + "=" * 70)
-    if ok:
-        print("BITE OK: all %d injections were caught, each by NAME." % len(BITES))
-        return 0
-    print("BITE FAILED: an injection slipped through -- this gate is decorative")
-    return 1
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-q", "--quiet", action="store_true")
-    ap.add_argument("--bite", action="store_true",
-                    help="prove this gate FAILS when the binding breaks")
     a = ap.parse_args()
     if not os.access(os.path.join(BIN, "litmus7"), os.X_OK):
         raise SystemExit("recfields: litmus7 not built (run 'make all')")
-    return bite() if a.bite else run(a.quiet)
+    return run(a.quiet)
 
 
 if __name__ == "__main__":

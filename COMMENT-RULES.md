@@ -26,8 +26,8 @@ measurements), the gate script (verification story), `hetlitmus/docs/`
    "measured, not assumed", "confirmed by" never appear. State the fact, cite
    the source.
 5. **Product code does not narrate its tests.** Which gate compiles/greps a
-   construct, what `--bite` injects, which check exercises it — none of it in
-   emitter/runtime source. If an artifact is load-bearing for a gate (grepped,
+   construct, which counterfactual a gate plants, which check exercises it —
+   none of it in emitter/runtime source. If an artifact is load-bearing for a gate (grepped,
    byte-pinned), mark it with one line ("grepped by verdictcheck"), not the
    story.
 6. **No free-prose inventory numbers.** Corpus/file/proc counts appear only as

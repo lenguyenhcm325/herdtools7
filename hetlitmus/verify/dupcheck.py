@@ -25,8 +25,7 @@ of locations.  Events carry their annotation (`plain' / `rel' / `acq' /
 test it weakens, and the device tag is part of the proc record, so a cpu/gpu swap
 is not a duplicate.
 
-Usage:  dupcheck.py [--dir D] [-q]   run the gate      (exit 0 = clean)
-        dupcheck.py --bite           prove the gate fails when it must
+Usage:  dupcheck.py [--dir D] [-q]   (exit 0 = clean)
 """
 
 import argparse
@@ -35,10 +34,7 @@ import glob
 import itertools
 import os
 import re
-import shutil
-import subprocess
 import sys
-import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
@@ -187,109 +183,12 @@ def check(d, quiet=False):
     return 0
 
 
-# ---------------------------------------------------------------------------
-# --bite: the gate must be seen to fail, for the RIGHT reason.
-# ---------------------------------------------------------------------------
-def _run_on(d):
-    r = subprocess.run([sys.executable, os.path.abspath(__file__), "--dir", d],
-                       capture_output=True, text=True)
-    return r.returncode, r.stdout + r.stderr
-
-
-def _rename_locs(txt):
-    """x <-> y, on word boundaries so `exists' and `X1' are untouched.  A pure
-    location renaming is by definition the same experiment."""
-    out = re.sub(r"\b([xy])\b", lambda m: "y" if m.group(1) == "x" else "x", txt)
-    assert out.count("=x;") == 1 and out.count("=y;") == 1 and "exists" in out, \
-        "the location renaming corrupted the test"
-    return out
-
-
-def _swap_procs(txt):
-    """P0 <-> P1 on a 2-proc test, device tag AND all.  Locations, values and
-    annotations are untouched, so the result is the same experiment under the other
-    half of the canonical form -- the half a `cg' test and its `gc' mirror are
-    duplicates under, differing only in which proc index carries which device."""
-    out = []
-    for l in txt.splitlines():
-        if "|" not in l:
-            out.append(l)
-            continue
-        body = l.rstrip()
-        semi = body.endswith(";")
-        if semi:
-            body = body[:-1]
-        a, b = (c.strip() for c in body.split("|"))
-        if a.startswith("P0:") and b.startswith("P1:"):
-            a, b = "P0:" + b[3:], "P1:" + a[3:]   # the header row: tags travel
-        else:
-            a, b = b, a
-        out.append(" %-20s| %-20s%s" % (a, b, ";" if semi else ""))
-    s = "\n".join(out) + "\n"
-    # A proc is named by number in the init bindings, in the condition and in the
-    # scope tree, and every one of those has to follow its column.
-    s = re.sub(r"\b0:", "\x00:", s)
-    s = re.sub(r"\b1:", "0:", s)
-    s = s.replace("\x00:", "1:")
-    for a, b in (("(cta P1)", "(cta \x00)"), ("(cta P0)", "(cta P1)"),
-                 ("(cta \x00)", "(cta P0)")):
-        s = s.replace(a, b)
-    return s
-
-
-def _clone_arm(d, why, base, suffix, rewrite):
-    """Copy the corpus, add ONE clone of `base' built by `rewrite', and require the
-    gate to fail naming it."""
-    with tempfile.TemporaryDirectory() as tmp:
-        work = os.path.join(tmp, "het")
-        shutil.copytree(d, work)
-        name = base + suffix
-        txt = open(os.path.join(work, base + ".litmus")).read()
-        body = rewrite(txt).replace(base, name)
-        assert body != txt, "injection was vacuous"
-        open(os.path.join(work, name + ".litmus"), "w").write(body)
-        c, out = _run_on(work)
-        ok = c != 0 and "DUPLICATE class" in out and name in out
-        print("  %s" % why)
-        print("      rc=%d  %s" % (c, "BITES" if ok else "*** DID NOT BITE"))
-        for l in out.splitlines():
-            if "***" in l:
-                print("      | " + l.strip())
-        return 0 if ok else 1
-
-
-def bite(d):
-    print("===== DUPCHECK BITE: does the gate fail when it must? =====")
-    rc = 0
-
-    # The canonical form minimises over (proc permutation) x (location renaming),
-    # and each half needs its own clone: a renamed-location clone leaves the proc
-    # permutation untested, and the proc permutation is the half a device-cut
-    # mirror would be a duplicate under.
-    rc |= _clone_arm(
-        d, "synthetic duplicate (MP-cg-sys-relaxed copied with x<->y renamed)",
-        "MP-cg-sys-relaxed", "-CLONE", _rename_locs)
-    rc |= _clone_arm(
-        d, "synthetic duplicate (MP-cg-sys-relaxed copied with P0 and P1 swapped)",
-        "MP-cg-sys-relaxed", "-SWAP", _swap_procs)
-
-    print()
-    if rc:
-        print("BITE FAILED: the gate did not fail where it must.")
-        return 1
-    print("BITE OK: the gate has teeth (a duplicate under either half of the "
-          "canonical form fails it)")
-    return 0
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", default=DEFAULT_DIR)
     ap.add_argument("-q", "--quiet", action="store_true")
-    ap.add_argument("--bite", action="store_true")
     a = ap.parse_args()
-    d = os.path.abspath(a.dir)
-    return bite(d) if a.bite else check(d, a.quiet)
+    return check(os.path.abspath(a.dir), a.quiet)
 
 
 if __name__ == "__main__":

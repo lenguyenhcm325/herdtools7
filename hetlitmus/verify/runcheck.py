@@ -19,9 +19,7 @@ expects follow that choice: nothing here is x86-only.
   PHASE 7  a second session into a results dir that already holds one.
   PHASE 8  probe-hip.sh's exit paths.
 
-`--bite' plants one defect per assertion in a copy of the script under test (never
-in the tree) and requires the phase to redden for the right reason.  One device
-mode needs a GPU and is the toolchain lane's half of this gate: `--characterize-hw'
+`--characterize-hw' needs a GPU and is the toolchain lane's half of this gate: it
 builds a harness and reads what it prints, which is the only artefact a result is
 ever read off.
 """
@@ -149,9 +147,6 @@ print("HetStats %s cpu_only=0 obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d "
          fired, fired, fired, 1 if fired else 0,
          "UNCONFIRMED" if fired else "none"))
 '''
-
-PATHS_SHIM = ('HETL="%s"\nREPO="%s"\nBIN="%s"\nLITMUS7="%s"\nLIBDIR="%s"\n'
-              'HERDLIB="%s"\n')
 
 
 def sh(cmd, **kw):
@@ -387,6 +382,25 @@ def _e2e(wrapper, tmp, fx, target, arm, quiet):
     return bad, out
 
 
+def _runone_nolog(tmp, quiet=False):
+    """run-one.sh with HET_RUN_LOG_DIR unset -- the branch ladder.sh takes: the
+    two streams stay apart and the harness's own status is the exit code."""
+    d = os.path.join(tmp, "runone-nolog")
+    os.makedirs(d, exist_ok=True)
+    write_exec(os.path.join(d, "h"), ERR_HARNESS)
+    env = {k: v for k, v in os.environ.items() if k != "HET_RUN_LOG_DIR"}
+    r = sh(["sh", RUNONE, d, "h"], env=env)
+    if (r.returncode != 7 or "mode=stub" not in r.stdout
+            or HARNESS_STDERR not in r.stderr):
+        return ["run-one.sh with no HET_RUN_LOG_DIR exited %d, stdout %r, stderr "
+                "%r: want the harness's own 7, its stdout and its stderr each "
+                "forwarded on the stream it arrived on"
+                % (r.returncode, r.stdout[-120:], r.stderr[-120:])]
+    if not quiet:
+        print("      run-one.sh with no log dir: rc=7, the two streams apart")
+    return []
+
+
 def phase2_e2e(wrapper, quiet=False):
     fx = fixture()
     if fx is None:
@@ -394,6 +408,7 @@ def phase2_e2e(wrapper, quiet=False):
     bad = []
     tmp = tempfile.mkdtemp(prefix="runcheck2.")
     try:
+        bad += _runone_nolog(tmp, quiet)
         chained = None
         for target in ("cuda", "hip"):
             arm = fx[target]
@@ -656,7 +671,6 @@ def phase4_stoprule(campaign, quiet=False):
 # ---------------------------------------------------------------------------
 P6_CASES = ["build", "probe", "ambiguity", "campaign-rc", "emitted-isa", "stamp",
             "reuse-missing", "reuse-partial", "stray-render"]
-DOCTORED = ("emitted-isa", "stamp", "reuse-partial", "stray-render")
 
 
 def _twocap_path(tmp):
@@ -668,25 +682,22 @@ def _twocap_path(tmp):
     return d + os.pathsep + os.environ["PATH"]
 
 
-def phase6_failclosed(wrapper, quiet=False, only=None):
+def phase6_failclosed(wrapper, quiet=False):
     fx = fixture()
     if fx is None:
         return no_fixture("6", quiet)
     arm = fx["cuda"]
-    cases = [only] if only else P6_CASES
     bad = []
     tmp = tempfile.mkdtemp(prefix="runcheck6.")
     try:
         base = ["--gpu-target", "cuda", "--corpus", fx["dir"], "--arch",
                 arm["arch"], "--budget-runs", "10"]
         cc, probe = make_stubs(tmp)
-        emit0 = None
-        if any(c in DOCTORED for c in cases):
-            # ONE clean chain, whose emission every doctoring case starts from.
-            b, out0 = _e2e(wrapper, tmp, fx, "cuda", arm, True)
-            if b:
-                return ["phase 6 could not build its base emission: %s" % b[0]]
-            emit0 = os.path.join(out0, "emit")
+        # ONE clean chain, whose emission every doctoring case starts from.
+        b, out0 = _e2e(wrapper, tmp, fx, "cuda", arm, True)
+        if b:
+            return ["phase 6 could not build its base emission: %s" % b[0]]
+        emit0 = os.path.join(out0, "emit")
 
         def doctored_out(name, break_it):
             """A results dir holding a COPY of the clean emission, then broken."""
@@ -733,7 +744,7 @@ def phase6_failclosed(wrapper, quiet=False, only=None):
             shutil.copy(os.path.join(e, t, t + ".cu"),
                         os.path.join(e, t, t + ".hip"))
 
-        for case in cases:
+        for case in P6_CASES:
             if case == "build":
                 bad_cc = write_exec(os.path.join(tmp, "bad-cc"), BAD_CC)
                 expect("build", base + ["--out", os.path.join(tmp, "o-build")],
@@ -945,221 +956,20 @@ def phase8_probe_hip(probe, quiet=False):
 
 
 # ---------------------------------------------------------------------------
-# The bites.  One planted defect per assertion, in a copy of the script under
-# test.  Each names the failure it must produce: a phase that reddens for some
-# other reason has not been shown to read what the injection broke.
-# ---------------------------------------------------------------------------
-def copy_wrapper(tmp, mutate=None, runone_mutate=None):
-    """A hetlitmus-run.sh in its own dir, beside a paths.sh that points back at
-    the real tree.  `runone_mutate' additionally shadows HETL, so the wrapper
-    picks up a mutated spotcheck/run-one.sh.  The tree is never written to."""
-    d = tempfile.mkdtemp(dir=tmp)
-    src = open(WRAPPER).read()
-    new = mutate(src) if mutate else src
-    if mutate and new == src:
-        return None
-    hetl = HETL
-    if runone_mutate:
-        hetl = os.path.join(d, "hetlitmus")
-        os.makedirs(os.path.join(hetl, "spotcheck"))
-        os.symlink(CAMPAIGN, os.path.join(hetl, "campaign.py"))
-        rsrc = open(RUNONE).read()
-        rnew = runone_mutate(rsrc)
-        if rnew == rsrc:
-            return None
-        write_exec(os.path.join(hetl, "spotcheck", "run-one.sh"), rnew)
-    with open(os.path.join(d, "paths.sh"), "w") as fh:
-        fh.write(PATHS_SHIM % (hetl, ROOT, BIN, os.path.join(BIN, "litmus7"),
-                               os.path.join(ROOT, "litmus", "libdir"),
-                               os.path.join(ROOT, "herd", "libdir")))
-    return write_exec(os.path.join(d, "hetlitmus-run.sh"), new)
-
-
-def copy_file(tmp, path, mutate):
-    d = tempfile.mkdtemp(dir=tmp)
-    src = open(path).read()
-    new = mutate(src)
-    if new == src:
-        return None
-    return write_exec(os.path.join(d, os.path.basename(path)), new)
-
-
-def _p6(case):
-    return lambda w, quiet=False: phase6_failclosed(w, quiet, only=case)
-
-
-INJECTIONS = [
-    ("1", "wrapper", "--dry-run creates the results dir anyway",
-     lambda s: s.replace('if [ "$DRYRUN" -eq 1 ]; then\n  echo\n',
-                         'mkdir -p "$OUT"\nif [ "$DRYRUN" -eq 1 ]; then\n  echo\n', 1),
-     phase1_dryrun, "must write nothing"),
-    ("2", "wrapper", "the harness transcripts are not kept",
-     lambda s: s.replace('export HET_RUN_LOG_DIR="$OUT/hetstats"',
-                         'HET_RUN_LOG_DIR=""', 1),
-     phase2_e2e, "transcript"),
-    ("3", "wrapper", "--gpu-target quietly defaults to cuda",
-     lambda s: s.replace('[ -n "$GPU_TARGET" ] || die "--gpu-target is mandatory',
-                         'GPU_TARGET="${GPU_TARGET:-cuda}"\n'
-                         '[ -n "$GPU_TARGET" ] || die "--gpu-target is mandatory', 1),
-     phase3_refusals, "no --gpu-target"),
-    ("3", "wrapper", "the host-ISA check is dropped",
-     lambda s: s.replace('[ "$CPU_ISA" = "$HOST_ISA" ] || die',
-                         '[ 1 = 1 ] || die', 1),
-     phase3_refusals, "host-ISA mismatch"),
-    ("3", "wrapper", "a valued flag with no value shifts off the end",
-     lambda s: s.replace('--corpus)        need_val "$1" $# ; CORPUS="$2" ; shift 2 ;;',
-                         '--corpus)        CORPUS="${2:-}" ; shift 2 ;;', 1),
-     phase3_refusals, "a valued flag with no value"),
-    ("3", "wrapper", "only the first test's CPU lane is read",
-     lambda s: s.replace('done < <(corpus_cpu_lanes "${CORPUS_PATHS[@]}")',
-                         'done < <(corpus_cpu_lanes "${CORPUS_PATHS[0]}")', 1),
-     phase3_refusals, "mixed-ISA corpus"),
-    ("4", "campaign", "a LONE sighting is banked as if it had reproduced",
-     lambda s: s.replace("            if self.k_runs >= CORROB_RUNS:",
-                         "            if self.k_eff >= 1:", 1),
-     phase4_stoprule, "UNCONFIRMED-SIGHTING"),
-    ("4", "campaign", "the budget ends a lone sighting before the window does",
-     lambda s: s.replace("            return self.stop            # outranks the "
-                         "budget stop below", "            pass", 1),
-     phase4_stoprule, "outranks the budget stop"),
-    ("4", "campaign", "the confirmation window is measured from run 0",
-     lambda s: s.replace(
-         "            elif self.runs - self.runs_at_first_sight >= confirm_runs:",
-         "            elif self.runs >= confirm_runs:", 1),
-     phase4_stoprule, "a window that opened before it"),
-    ("4", "campaign", "--rate is read but never applied",
-     lambda s: s.replace("        if self.k_eff > 0 and not rate_mode:",
-                         "        if self.k_eff > 0:", 1),
-     phase4_stoprule, "rate mode turns the sighting stop off"),
-    ("4", "campaign", "a campaign starts on a --state that already exists",
-     lambda s: s.replace("if os.path.exists(a.state):", "if False:", 1),
-     phase4_stoprule, "started on an existing --state exited 0"),
-    # Four of the phase-6 handlers are subsumed downstream: with the handler
-    # removed the session still stops, elsewhere and saying something else, so
-    # each of those four names the substitute the phase reaches instead -- the
-    # campaign's errored-row exit (1, not 2) for `build', the emitted harness's
-    # own host-ISA guard for `emitted-isa', the per-render check for
-    # `reuse-missing', the pair stamp for `reuse-partial'.  What their injections
-    # prove is that the phase notices its handler is gone, NOT that nothing else
-    # would have stopped the session.
-    ("6", "wrapper", "a harness that did not build does not stop the session",
-     lambda s: s.replace('if [ "$nfail" -ne 0 ]; then', 'if false; then', 1),
-     _p6("build"), "[build] exited 1, want 2"),
-    ("6", "wrapper", "a probe that did not complete does not stop the session",
-     lambda s: s.replace('if [ "$probe_rc" -ne 0 ]; then', 'if false; then', 1),
-     _p6("probe"), "probe"),
-    ("6", "wrapper", "--arch auto picks one of two devices",
-     lambda s: s.replace('elif [ "${#FOUND[@]}" -gt 1 ]; then', 'elif false; then', 1),
-     _p6("ambiguity"), "ambiguity"),
-    ("6", "wrapper", "the campaign's exit code is not the session's",
-     lambda s: s.replace('exit "$camp_rc"', 'exit 0', 1),
-     _p6("campaign-rc"), "campaign-rc"),
-    ("6", "runone", "the harness's stderr is merged into its stdout",
-     lambda s: s.replace('"./$2" > "$o" 2> "$e" || rc=$?',
-                         '"./$2" > "$o" 2>&1 || rc=$?', 1),
-     _p6("campaign-rc"), "merged stderr into stdout"),
-    ("6", "wrapper", "the emitted CPU lane is not mirrored against the corpus",
-     lambda s: s.replace('[ "$EMITTED_ISA" = "$CPU_ISA" ] || die',
-                         '[ 1 = 1 ] || die', 1),
-     _p6("emitted-isa"), "harness(es) did not build"),
-    ("6", "wrapper", "the emitted pair name is not cross-checked",
-     lambda s: s.replace('grep -qF "#define HET_PAIR_NAME \\"$PAIR\\"" "$f" || {',
-                         'true || {', 1),
-     _p6("stamp"), "stamp"),
-    ("6", "wrapper", "--reuse-emitted accepts a missing emission",
-     lambda s: s.replace('[ -d "$EMIT" ] || die "--reuse-emitted, but there is no',
-                         '[ 1 = 1 ] || die "--reuse-emitted, but there is no', 1),
-     _p6("reuse-missing"), "REFUSING -- no .cu render for"),
-    ("6", "wrapper", "a missing render is not noticed on reuse",
-     lambda s: s.replace('[ -s "$f" ] || die "no .$RENDER_EXT render for $t under $EMIT"',
-                         ': || die "no .$RENDER_EXT render for $t under $EMIT"', 1),
-     _p6("reuse-partial"), "REFUSING -- the emitted pair name of"),
-    ("6", "wrapper", "an other-vendor render beside the render is not noticed",
-     lambda s: s.replace('[ ! -e "$EMIT/$t/$t.$OTHER_EXT" ] \\\n    || die',
-                         '[ 1 = 1 ] \\\n    || die', 1),
-     _p6("stray-render"), "stray-render"),
-    # The campaign's refusal reaches the session as an exit code and nothing else,
-    # so this is the injection that proves phase 7 reads the propagated one.  The
-    # anchor is shared with the phase-6 entry above; each mutates its own copy.
-    ("7", "wrapper", "the campaign's refusal is not the session's exit",
-     lambda s: s.replace('exit "$camp_rc"', 'exit 0', 1),
-     phase7_second_session, "already holds a campaign state exited 0, want 2"),
-    ("7", "wrapper", "a refused session leaves the previous summary in place",
-     lambda s: s.replace('[ ! -e "$SUMMARY" ] || mv -f "$SUMMARY" '
-                         '"$OUT/summary-superseded-$STAMP.txt"', ':', 1),
-     phase7_second_session, "stale summary"),
-    ("8", "probehip", "the two-device answer is dropped",
-     lambda s: s.replace('if [ "$n" -gt 1 ]; then', 'if false; then', 1),
-     phase8_probe_hip, "two gfx agents"),
-]
-
-
-def _target_for(tmp, which, mutate):
-    if which == "wrapper":
-        return copy_wrapper(tmp, mutate)
-    if which == "runone":
-        return copy_wrapper(tmp, runone_mutate=mutate)
-    if which == "campaign":
-        return copy_file(tmp, CAMPAIGN, mutate)
-    return copy_file(tmp, PROBE_HIP, mutate)
-
-
-def bite():
-    """Each injection runs a phase against a COPY of one script, made in a scratch
-    dir, and is judged on a failure carrying its own reason string -- so a green
-    arm is the gate's own run (`runcheck.py' with no flag), not a re-run here."""
-    print("===== BITE: does each assertion read what it claims to? =====")
-    tmp = tempfile.mkdtemp(prefix="runcheck-bite.")
-    bad = 0
-    try:
-        for tag, which, what, mutate, phase, expect in INJECTIONS:
-            target = _target_for(tmp, which, mutate)
-            if target is None:
-                print("  *** [phase %s] %s: the injection changed NOTHING -- this "
-                      "bite proves nothing" % (tag, what))
-                bad += 1
-                continue
-            failures = phase(target, quiet=True)
-            joined = "\n".join(failures)
-            if not failures:
-                print("  *** [phase %s] %s: the phase stayed GREEN" % (tag, what))
-                bad += 1
-            elif expect and expect not in joined:
-                print("  *** [phase %s] %s: RED, but for another reason (%r is in "
-                      "no failure): %s"
-                      % (tag, what, expect, failures[0].splitlines()[0][:150]))
-                bad += 1
-            else:
-                print("      [phase %s] RED on %s" % (tag, what))
-                print("          %s" % failures[0].splitlines()[0][:150])
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    if bad:
-        print("\nBITE FAILED: %d injection(s) went unnoticed." % bad)
-        return 1
-    print("\nBITE OK (%d injections, each RED naming its own reason)"
-          % len(INJECTIONS))
-    return 0
-
-
-# ---------------------------------------------------------------------------
 # --characterize-hw -- what a harness actually prints, on the device.  Every
 # other gate on the verdict/statistics stack drives it from synthetic records or
 # from emitted text; this one builds a harness, runs it on the GPU and reads the
 # printout, which is the only artefact a result is ever read off.
 #
-# EVERY reading is a reading, so all three PASS: the outcome is stochastic, the
-# run is re-seeded while it does not fire because a sighting carries strictly
-# more sentences to assert, and a stream of nulls -- or a DISCARDED run, which is
-# what a box whose rendezvous cannot complete legitimately produces -- is read as
-# what it is rather than as a failure of this gate.  What no reading may carry is
-# a sentence saying something certifies the harness.
+# EVERY reading is a reading, so all three PASS: a sighting, a stream of nulls,
+# and a DISCARDED run -- which a box whose rendezvous cannot complete
+# legitimately produces.  The run is re-seeded while it does not fire, because a
+# sighting carries strictly more sentences to assert.  What no reading may carry
+# is a sentence saying something certifies the harness.
 #
 # Then a SECOND run of the same binary under caps of one poll, where the
-# rendezvous cannot complete by construction: that run must be discarded and must
-# name the rendezvous.  It is the disqualifier's bite, and it is here rather than
-# under --bite because it needs no injection at all -- a run-time knob produces
-# the condition the rule exists to catch.
+# rendezvous cannot complete by construction: that run must be discarded and
+# must name the rendezvous.
 # ---------------------------------------------------------------------------
 CH_TEST = "MP-cg-sys-relaxed-x86_64"
 CH_PAIR = "(X86_64, cuda)"
@@ -1308,18 +1118,14 @@ CH_COLD = ["DISCARD this null -- the harness was not demonstrably hot",
            "the weak outcome was NOT observed",
            "VOID -- not one of",
            "scored="]
-# The second run: caps of one poll, where the rendezvous cannot complete.  No
-# injection produces this -- a run-time knob does -- so the disqualifier's own
-# bite is a run rather than a mutation.
+# The second run: caps of one poll, where the rendezvous cannot complete.
 CH_CAP1 = ["COLD-INVALID",
            "DISCARD this null -- the harness was not demonstrably hot",
            "A timed-out rendezvous is a DEAD PARTNER"]
-# What NEITHER arm may carry: a voucher named, a constant standing in for the pair,
-# a build fault reported as a result.  Every entry is planted by an injection
-# below, so this list holds only wording a run can be made to carry; a sentence no
-# code produces would be looked for here forever and catch nothing.  These tuples
-# are reached only through --characterize-hw, which refuses to run without a CUDA
-# device: on a box with no GPU they go unchecked.
+# What NEITHER arm may carry: a voucher named, a constant standing in for the
+# pair, a build fault reported as a result.  Reached only through
+# --characterize-hw, which refuses to run without a CUDA device: on a box with no
+# GPU they go unchecked.
 CH_NEVER_SAYS = [
     ("vouched for by",
      "nothing here certifies this run, and the printout may not say that "
@@ -1344,10 +1150,7 @@ def ch_class(k, R, obs, usable):
     obs=Always off k >= R and obs=Never off k == 0.  obs=Always under k<R would
     mean the denominator had collapsed onto the usable count instead, and
     obs=Never with a sighting in it, or anything else with none, is a class that
-    contradicts the counts beside it.
-
-    The bite's shape table is what drives every branch, including the ones a
-    given device never lands in."""
+    contradicts the counts beside it."""
     if usable == 0:
         if obs == "VOID":
             return (None, "[F] obs=VOID on 0 usable cell(s) of R=%d (every run "
@@ -1432,7 +1235,7 @@ def ch_run_once(d, quiet=False):
 
 
 def ch_cap_run(d, quiet=False):
-    """The rendezvous disqualifier, driven by a knob instead of an injection.
+    """The rendezvous disqualifier, driven by a run-time knob.
 
     Under caps of ONE poll a participant that does not find its partner already
     arrived gives up at once, so nearly every iteration is discarded and the run
@@ -1474,155 +1277,7 @@ def ch_probe(tmp, arch, quiet=False):
     return (1 if bad else 0), bad
 
 
-def _subst(s, pairs):
-    """Apply (find, replace) pairs, failing loudly if any `find' matched nothing.
-
-    characterize_hw_bite checks only that the file changed OVERALL, which a
-    two-fragment injection satisfies with one fragment matched and the other
-    silently dropped -- half an injection that still reports RED for its own
-    reason.  One `find' per site, replaced once."""
-    for a, b in pairs:
-        if a not in s:
-            raise SystemExit("runcheck --characterize-hw bite: injection fragment "
-                             "not found in the emitted harness -- the file moved "
-                             "under the bite: %r" % a[:70])
-        s = s.replace(a, b, 1)
-    return s
-
-
-# Each injection rewrites one file of the emitted harness (never the source tree)
-# and names both that file -- the two halves of the printout come from two places,
-# the verdict/statistics prose from het_verdict.h and the driver's own warnings
-# from the render itself -- and the failure it must produce, which is the
-# assertion that catches the sentence it planted rather than the one that merely
-# notices a sentence went missing.
-# Each injection lands on a line EVERY run prints, whichever arm it took, so a
-# device that fires and a device that does not both exercise it.  Between them
-# they plant every entry of CH_NEVER_SAYS.
-CH_INJECTIONS = [
-    ("B/C", "het_verdict.h",
-     "the verdict banner says something vouched for the run",
-     lambda s: _subst(s, [
-         ('  fprintf(_ch, "HetVerdict %s%s run=%d: %s\\n",',
-          '  fprintf(_ch, "HetVerdict %s%s run=%d: %s'
-          '  (vouched for by mu(T))\\n",')]),
-     "the printout says 'vouched for by'"),
-    # The two pair-naming sentences belong to the sighting and null frames, and a
-    # DISCARDED run prints neither -- so the constant is planted on the verdict
-    # banner as well, which every arm prints.  That the two frames name the pair
-    # is verdictcheck's, over synthetic records where no box can withhold an arm.
-    ("A/D", "het_verdict.h",
-     "the pair-naming sentences name a constant instead of the pair",
-     lambda s: _subst(s, [
-         ("      HET_PAIR_NAME, HET_LINK_NAME);",
-          '      "the target this harness was tagged for", HET_LINK_NAME);'),
-         ("    HET_PAIR_NAME);",
-          '    "the target this harness was tagged for");'),
-         ('  fprintf(_ch, "HetVerdict %s%s run=%d: %s\\n",',
-          '  fprintf(_ch, "HetVerdict %s%s run=%d: %s'
-          '  (the target this harness was tagged for)\\n",')]),
-     "the printout says 'the target this harness was tagged for'"),
-    # The record stamp is what gates every field het_verdict() would read, so a
-    # harness that ships without one prints a build fault where a result belongs
-    # -- on every run, whichever arm it took.
-    ("B/C", CH_TEST + ".cu",
-     "the emitted driver ships an UNSTAMPED record",
-     lambda s: _subst(s, [
-         ("    _rec.rec_magic = HET_REC_MAGIC;\n", "")]),
-     "the printout says 'BUILD BUG'"),
-]
-
-
-# The (k, usable, obs) shapes ch_class must tell apart.  Which one a run lands in
-# is the device's to decide and not this gate's, so the classifier and the
-# ch_check call that turns its verdict into a failure are driven directly:
-# (k, R, usable, obs, must the class READ, the fragment its own sentence owes).
-CH_SHAPES = [
-    (0, 10, 0, "VOID", True, "every run was discarded"),
-    (0, 10, 0, "Never", False, "nothing was measured and the class does not say so"),
-    (0, 10, 10, "VOID", False, "a pool with a usable cell measured something"),
-    (0, 10, 10, "Sometimes", False, "nothing fired and the class does not say so"),
-    (0, 10, 10, "Never", True, "nothing fired"),
-    (4, 10, 10, "Always", False, "the denominator collapsed"),
-    (4, 10, 10, "Sometimes", True, "denominator is R"),
-    (10, 10, 10, "Always", True, "every run fired"),
-]
-
-
-def characterize_hw_bite(tmp, arch):
-    """Every injection is judged on a failure carrying its own reason string, so
-    the green arm is the gate's own run -- `--characterize-hw' with no flag,
-    which the Makefile runs first -- and not a re-run here.  A box on which the
-    outcome stopped firing reddens every injection with the no-sighting sentence,
-    which is no injection's reason, and is reported as the box rather than banked
-    as bites."""
-    print("===== BITE: does this gate read the PRINTOUT? =====")
-    bad = 0
-    for k, R, usable, obs, want_read, frag in CH_SHAPES:
-        why, note = ch_class(k, R, obs, usable)
-        got = note if why is None else why
-        # A class only counts once ch_check has carried it into the failures a
-        # run is judged on: a refusal must arrive there and a reading must leave
-        # nothing behind.  The printout handed over is empty, because ch_check's
-        # assertions on a printout are what the injections below drive, on the
-        # device; the class is the one verdict it reaches without one.
-        carried = [m for m in ch_check("", k, R, obs, usable, quiet=True)
-                   if m.startswith("[F]")]
-        if (why is None) != want_read:
-            print("  *** [F] k=%d of R=%d (usable=%d) obs=%s: the class is %s and "
-                  "must be %s -- %s"
-                  % (k, R, usable, obs, "read" if why is None else "refused",
-                     "read" if want_read else "refused", got))
-            bad += 1
-        elif frag not in got:
-            print("  *** [F] k=%d of R=%d (usable=%d) obs=%s: judged, but not by "
-                  "its own sentence (%r is not in it) -- %s"
-                  % (k, R, usable, obs, frag, got))
-            bad += 1
-        elif carried != ([] if want_read else [why]):
-            print("  *** [F] k=%d of R=%d (usable=%d) obs=%s: the class is %s, and "
-                  "ch_check returns %s -- a run is judged on that list, so it "
-                  "carries the refusal or it carries nothing"
-                  % (k, R, usable, obs, "read" if want_read else "refused",
-                     ", ".join(carried) or "no class failure at all"))
-            bad += 1
-        else:
-            print("      %s" % got)
-    for tag, fname, what, mutate, expect in CH_INJECTIONS:
-        d = ch_emit(tmp)
-        hdr = os.path.join(d, fname)
-        src = open(hdr).read()
-        new = mutate(src)
-        if new == src:
-            print("  *** [%s] %s: the injection changed NOTHING -- this bite "
-                  "proves nothing" % (tag, what))
-            bad += 1
-            continue
-        open(hdr, "w").write(new)
-        ch_build(d, arch)
-        rc, why = ch_run_once(d, quiet=True)
-        hit = [m for m in why if expect in m]
-        if rc == 0:
-            print("  *** [%s] %s: the gate stayed GREEN" % (tag, what))
-            bad += 1
-        elif not hit:
-            # A run that never fired the outcome reddens too, and says so; it is
-            # the box that failed, not the injection that was seen.
-            print("  *** [%s] %s: RED, but for another reason (%r is in no "
-                  "failure): %s" % (tag, what, expect, why[0][:150]))
-            bad += 1
-        else:
-            print("      [%s] RED on %s" % (tag, what))
-            print("          %s" % hit[0][:150])
-    if bad:
-        print("\nBITE FAILED: %d injection(s) went unnoticed." % bad)
-        return 1
-    print("\nBITE OK (%d injections, each RED for its own reason; %d observation "
-          "classes told apart)" % (len(CH_INJECTIONS), len(CH_SHAPES)))
-    return 0
-
-
-def characterize_hw(want_bite=False):
+def characterize_hw():
     arch = ch_arch()
     if arch is None:
         # NOT a skip.  This mode BUILDS AND RUNS a harness on the device;
@@ -1635,8 +1290,6 @@ def characterize_hw(want_bite=False):
           % (CH_PAIR, arch, os.environ.get("HET_ALLOC", "pinned")))
     tmp = tempfile.mkdtemp(prefix="runcheck-chhw.")
     try:
-        if want_bite:
-            return characterize_hw_bite(tmp, arch)
         print("===== the printout of a run =====")
         bad = ch_probe(tmp, arch)[1]
         if bad:
@@ -1670,10 +1323,8 @@ PHASES = [
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--bite", action="store_true",
-                    help="prove each phase reddens on a planted defect")
     ap.add_argument("--characterize-hw", action="store_true",
-                    help="build two harnesses and read what they PRINT "
+                    help="build a harness and read what it PRINTS "
                          "(toolchain lane)")
     ap.add_argument("--quiet", action="store_true")
     a = ap.parse_args()
@@ -1681,9 +1332,7 @@ def main():
     if not os.access(os.path.join(BIN, "litmus7"), os.X_OK):
         raise SystemExit("runcheck: litmus7 not built (run 'make all')")
     if a.characterize_hw:
-        return characterize_hw(want_bite=a.bite)
-    if a.bite:
-        return bite()
+        return characterize_hw()
 
     rc = 0
     for name, phase in PHASES:

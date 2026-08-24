@@ -60,17 +60,6 @@ GPU_TARGET="${GPU_TARGET:-cuda}"
   echo "       probe is future work." >&2
   exit 2 ; }
 
-# emit-all.sh's subset seams make it emit a PARTIAL snapshot, and this bundle is
-# pruned out of that snapshot: with either seam set the prune below would either
-# refuse on a name TESTS.txt chose, or ship whatever subset the seam happened to
-# leave.  Checked here, with GPU_TARGET, so a refusal creates nothing.
-if [ -n "${HET_LANES_ONLY:-}${HET_TESTS_ONLY:-}" ]; then
-  echo "error: HET_LANES_ONLY / HET_TESTS_ONLY are set, so emit-all.sh would emit" >&2
-  echo "       a subset of the corpus and this bundle would ship a subset nobody" >&2
-  echo "       chose.  Unset them and pack again." >&2
-  exit 2
-fi
-
 OUTDIR="${1:-$HERE/bundle-out}"
 mkdir -p "$OUTDIR"
 OUTDIR="$(cd "$OUTDIR" && pwd)"

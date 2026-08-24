@@ -60,8 +60,9 @@ synchronised verdicts hold") — but the corpus is not fence-free: the
 `-fence` families carry `f[order,scope]` in **42 of the 173** gpu-only and
 **180 of the 471** het `.litmus`. Every one of those renderings is read under a
 *gate*: `make hetlitmus-hipsrc` checks all 644 of the AMD lane's renders (173
-gpu-only + 471 x86_64 het) against their annotations at source level
-([`amd-faithfulness.md`](amd-faithfulness.md)), and `make hetlitmus-hipbuild`'s
+gpu-only + 471 x86_64 het), plus two synthetic carriers for the fence annotations
+the corpus lacks (`f[acq_rel,sys]`, `f[relaxed,sys]`), against their annotations
+at source level ([`amd-faithfulness.md`](amd-faithfulness.md)), and `make hetlitmus-hipbuild`'s
 `fence-lowering` phase compiles one of them as the harness itself ships it,
 failing outright where `hipcc` is absent. What each settles is *Compile status*
 below.
@@ -116,23 +117,26 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
   under the `hetlitmus-test-toolchain` umbrella:
   - `make hetlitmus-hipbuild` (`verify/hipbuildcheck.py`) compiles, links and
     re-builds one emitted x86 harness, `MP-cg-sys-acqrel-2s-x86_64`, and
-    **fails** when `hipcc` is absent; its `fence-lowering` phase renders the
-    fence-carrying `MP-cg-sys-fence-x86_64` and builds it through the harness's
-    own `comp.sh hip` (`litmus/HipLang.ml`, `hip_fence_scope`).
+    **fails** when `hipcc` is absent; its `hip-compile` phase also requires
+    `comp.sh hip` to fail on a scratch copy that does not compile, since the
+    script's closing `HetLitmus: compile OK` echo is unconditional and only its
+    `set -e` guards it. Its `fence-lowering` phase renders the fence-carrying
+    `MP-cg-sys-fence-x86_64`, builds it through the harness's own `comp.sh hip`
+    (`litmus/HipLang.ml`, `hip_fence_scope`), and requires `hipcc` to refuse the
+    same fence with its scope spelt `"system"`.
   - `make hetlitmus-smoke` (`verify/smoke.sh` rep 7,
     `MP-cg-sys-relaxed-x86_64`, `hipcc -c` only) **skips with exit 0** when
     `hipcc` is absent — never a pass.
 
   `compile-hip.sh` sits beside them as a manual convenience: no make target and
   no gate invokes it, and its default INDIR is `hip-out/`, the 10 committed
-  goldens — all fence-free. The `10/10` and `173/173` figures above are a
-  hand-run of that script, which links a host binary per render. CUDA has no
-  `compile-cuda.sh` twin; neither that absence nor this script's presence is a
+  goldens — all fence-free. CUDA has no `compile-cuda.sh` twin; neither that absence nor this script's presence is a
   coverage claim either way.
 - **What reads the emission without a compiler.** `make hetlitmus-hipsrc`
   (`verify/hipsrccheck.py`), on the CUDA-free lane: it checks the same 644
-  renders at source level — each model op's builtin, order-constant,
-  scope-constant, traceability comment and operands against its `.litmus` cell,
+  renders, plus the two synthetic fence carriers, at source level — each model
+  op's builtin, order-constant, scope-constant, traceability comment and
+  operands against its `.litmus` cell,
   the het scaffolding and loop structure, and the x86_64 CPU column's asm block
   ([`amd-faithfulness.md`](amd-faithfulness.md)).
 - **Hardware runs (deferred):** MI300A runs + stressing + tallying `__out`

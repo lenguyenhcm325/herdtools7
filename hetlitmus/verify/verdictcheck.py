@@ -18,13 +18,10 @@ het_obs_records, and proves:
 
 The rule and its reporting frames: hetlitmus/docs/harness-reporting.md.
 
-Usage:  verdictcheck.py [--header PATH] [-q]   run the gate
-        verdictcheck.py --bite                 prove it FAILS on a broken rule
+Usage:  verdictcheck.py [-q]
 """
 
 import argparse
-import contextlib
-import io
 import os
 import re
 import shutil
@@ -462,8 +459,6 @@ CUDA_PAIR_MUST = [
     "and this host-device interconnect path.",
     "liveness (AArch64, cuda) measured on its own counters.",
 ]
-# The pair sentence leads, because a bite that cross-stamps this frame with the
-# other pair's defines is judged on the FIRST diagnostic.
 HIP_PAIR_MUST = [
     "Report it as what (X86_64, hip) exhibited under this harness, this stress "
     "and this host-device interconnect path.",
@@ -530,14 +525,12 @@ def printout_with(header, tmp, defines, tag):
     return run.stdout, ""
 
 
-def check_pair_prose(header, tmp, quiet, defines_by_pair=None):
-    """defines_by_pair: {label: [define lines]}.  --bite passes a tampered map."""
+def check_pair_prose(header, tmp, quiet):
     print("\n===== PHASE 4: which PAIR does the printout name? =====")
-    if defines_by_pair is None:
-        defines_by_pair = {}
-        for label, corpus, test, target, ext in PAIR_EMISSIONS:
-            defines_by_pair[label] = \
-                scrape_pair_defines(tmp, label, corpus, test, target, ext)
+    defines_by_pair = {}
+    for label, corpus, test, target, ext in PAIR_EMISSIONS:
+        defines_by_pair[label] = \
+            scrape_pair_defines(tmp, label, corpus, test, target, ext)
     for label, defs in sorted(defines_by_pair.items()):
         print("  %-16s stamps %d build define(s)" % (label, len(defs)))
         if not quiet:
@@ -580,51 +573,40 @@ def check_pair_prose(header, tmp, quiet, defines_by_pair=None):
 MAGIC_RE = re.compile(r"_rec\.rec_magic\s*=\s*HET_REC_MAGIC\s*;")
 
 
-_CORPUS = None
-
-
 def emit_corpus(tests):
     """{test: .cu source, or None if the harness did not appear}, from ONE litmus7
-    invocation over the whole corpus, held for the life of the process.  An
-    injection rewrites the source it is handed and never the file, so the same
-    emission serves the phase and every corpus bite; the scratch dir is dropped as
-    soon as it has been read.  None on an emitter failure, already reported."""
-    global _CORPUS
-    if _CORPUS is None:
-        tmp = tempfile.mkdtemp(prefix="verdictcorpus.")
-        try:
-            r = subprocess.run(
-                ["litmus7", "-gpu-target", "cuda",
-                 "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
-                 "-o", tmp] + [os.path.join(HET_DIR, t + ".litmus") for t in tests],
-                cwd=ROOT, env=_env(), capture_output=True, text=True)
-            if r.returncode != 0:
-                print("  *** litmus7 failed to emit the corpus:\n" + r.stderr[-2000:])
-                return None
-            out = {}
-            for t in tests:
-                cu = os.path.join(tmp, t, t + ".cu")
-                if not os.path.exists(cu):
-                    out[t] = None
-                    continue
-                with open(cu) as fh:
-                    out[t] = fh.read()
-            _CORPUS = out
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-    return _CORPUS
+    invocation over the whole corpus; the scratch dir is dropped as soon as it has
+    been read.  None on an emitter failure, already reported."""
+    tmp = tempfile.mkdtemp(prefix="verdictcorpus.")
+    try:
+        r = subprocess.run(
+            ["litmus7", "-gpu-target", "cuda",
+             "-set-libdir", os.path.join(ROOT, "litmus", "libdir"),
+             "-o", tmp] + [os.path.join(HET_DIR, t + ".litmus") for t in tests],
+            cwd=ROOT, env=_env(), capture_output=True, text=True)
+        if r.returncode != 0:
+            print("  *** litmus7 failed to emit the corpus:\n" + r.stderr[-2000:])
+            return None
+        out = {}
+        for t in tests:
+            cu = os.path.join(tmp, t, t + ".cu")
+            if not os.path.exists(cu):
+                out[t] = None
+                continue
+            with open(cu) as fh:
+                out[t] = fh.read()
+        return out
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
-def check_corpus(tamper=None):
-    """tamper: (test, src) -> src.  Used ONLY by --bite, to prove this phase FAILS
-    when an emitted harness loses its stamp."""
+def check_corpus():
     print("\n===== PHASE 3: does the EMITTED CORPUS stamp its record? =====")
     tests = sorted(t[:-len(".litmus")] for t in os.listdir(HET_DIR)
                    if t.endswith(".litmus"))
     print("  het corpus  : %d .litmus" % len(tests))
 
     bad = 0
-    tampered = 0
     sources = emit_corpus(tests)
     if sources is None:
         return 1
@@ -634,11 +616,6 @@ def check_corpus(tamper=None):
             print("  *** %-26s no .cu emitted" % t)
             bad += 1
             continue
-        if tamper is not None:
-            new = tamper(t, src)
-            if new != src:            # cmp: the injection must really have hit
-                tampered += 1
-            src = new
         # (a) The stamp, exactly once and by its symbol.  het_verdict() reads no
         # field of an unstamped record, so a harness that lost this line reports
         # a build bug for every run it will ever make.
@@ -647,11 +624,6 @@ def check_corpus(tamper=None):
             print("  *** %-26s stamps rec_magic %d time(s) (want exactly 1)"
                   % (t, n_magic))
             bad += 1
-
-    if tamper is not None and tampered == 0:
-        # An injection that matched nothing would "pass" for free.
-        print("  *** VACUOUS BITE: the corpus injection matched NOTHING")
-        return 2
 
     print()
     for label, seen, expect in (("harnesses", len(tests), CENSUS["tests"]),):
@@ -814,9 +786,9 @@ def run_rule(header, tmp, quiet):
         ["gcc", "-std=c99", "-O2", "-Wall", "-Wno-unused-function",
          "-I", tmp, src, "-o", exe, "-lm"],
         capture_output=True, text=True)
-    # Every exit from here returns the (rc, blocks) pair both call sites unpack: a
+    # Every exit from here returns the (rc, blocks) pair its caller unpacks: a
     # bare int turns a non-compiling header into a TypeError traceback in place of
-    # the diagnostic, which under --bite abandons every injection after it.
+    # the diagnostic.
     if cc.returncode != 0:
         print(cc.stdout + cc.stderr)
         print("\nVERDICT FAILED: the rule does not compile")
@@ -904,19 +876,13 @@ def run_rule(header, tmp, quiet):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--header", default=None)
     ap.add_argument("-q", "--quiet", action="store_true")
-    ap.add_argument("--bite", action="store_true",
-                    help="prove this gate FAILS when the mechanism it guards breaks")
     a = ap.parse_args()
-
-    if a.bite:
-        return bite()
 
     print("===== PHASE 1: is het_verdict() actually a decision? =====")
     tmp = tempfile.mkdtemp(prefix="verdictcheck.")
     try:
-        header = a.header or emit_header(tmp)
+        header = emit_header(tmp)
         rc, blocks = run_rule(header, tmp, a.quiet)
         rc |= scan_prints(blocks, a.quiet)
         rc |= check_pair_prose(header, tmp, a.quiet)
@@ -930,417 +896,6 @@ def main():
     else:
         print("VERDICTCHECK: PASS  (rule + printout + pair prose + emitted corpus)")
     return 1 if rc else 0
-
-
-# ---------------------------------------------------------------------------
-# --bite: a gate never seen to FAIL is not evidence.  Each injection breaks exactly
-# one thing this gate claims to guard, is verified to have actually CHANGED the file
-# (one that matched nothing would pass for free), and must drive the gate nonzero.
-# ---------------------------------------------------------------------------
-# Every injection this gate fires, appended by the helper that fires it, so the
-# summary counts what ran instead of a number somebody kept by hand.
-SHOTS = []
-
-
-def _bite_one(label, tmp, header, mutate, quiet, expect=None):
-    """mutate: str -> str.  Returns True if the gate correctly FAILED.
-
-    [expect] is a fragment of a diagnostic the run must produce.  Without it a
-    nonzero return counts as a bite whatever reddened, which on a rule with
-    several readers is not the same claim as "this injection was caught"."""
-    SHOTS.append(label)
-    with open(header) as fh:
-        orig = fh.read()
-    new = mutate(orig)
-    if new == orig:
-        print("  *** VACUOUS BITE: the injection changed nothing   [%s]" % label)
-        return False
-    mut = os.path.join(tmp, "bitten.h")
-    with open(mut, "w") as fh:
-        fh.write(new)
-
-    sub = tempfile.mkdtemp(prefix="verdictbite.")
-    buf = io.StringIO()
-    try:
-        with contextlib.redirect_stdout(buf):
-            rc, blocks = run_rule(mut, sub, quiet=True)
-            rc |= scan_prints(blocks, quiet=True)
-    finally:
-        shutil.rmtree(sub, ignore_errors=True)
-
-    said = [l for l in buf.getvalue().splitlines() if l.startswith("  ***")]
-    if not rc:
-        print("  *** DID NOT BITE: the gate PASSED on a broken rule   [%s]" % label)
-        return False
-    if expect is not None and not any(expect in l for l in said):
-        print("  *** WRONG DIAGNOSTIC: nothing said %r   [%s]" % (expect, label))
-        for l in said[:5]:
-            print("      %s" % l.strip())
-        return False
-    print("  BITES (gate failed, as it must)%s   [%s]"
-          % ("" if expect is None else ": " + expect, label))
-    return True
-
-
-def _bite_report(label, header, mutate, want):
-    """A bite on a REPORTING path: the gate must SAY what went wrong.
-
-    Distinct from _bite_one, which reads the exit status alone.  The two paths
-    bitten through this helper cannot be checked that way, because a run_rule that
-    raises -- on a header that does not compile, or on a binary that printed
-    nothing -- exits nonzero too, with a traceback in place of the sentence.  The
-    sentence is the deliverable, so the sentence is what is asserted: no
-    exception, rc == 1, and `want' in what the gate printed.  Each bite gets a
-    fresh scratch dir, so a write that failed cannot hand run_rule a previous
-    bite's header."""
-    SHOTS.append(label)
-    with open(header) as fh:
-        orig = fh.read()
-    new = mutate(orig)
-    if new == orig:
-        print("  *** VACUOUS BITE: the injection changed nothing   [%s]" % label)
-        return False
-
-    sub = tempfile.mkdtemp(prefix="verdictbite.")
-    mut = os.path.join(sub, "bitten.h")
-    with open(mut, "w") as fh:
-        fh.write(new)
-    buf = io.StringIO()
-    try:
-        with contextlib.redirect_stdout(buf):
-            rc, _ = run_rule(mut, sub, quiet=True)
-    except Exception as e:
-        print("  *** DID NOT REPORT: run_rule RAISED %s (%s) instead of returning a "
-              "diagnostic   [%s]" % (type(e).__name__, e, label))
-        return False
-    finally:
-        shutil.rmtree(sub, ignore_errors=True)
-
-    said = [l for l in buf.getvalue().splitlines() if want in l]
-    if rc != 1 or not said:
-        print("  *** DID NOT BITE: rc=%r and the gate never printed %r   [%s]"
-              % (rc, want, label))
-        return False
-    print("  BITES (reported, as it must): %s   [%s]" % (said[0].strip(), label))
-    return True
-
-
-def _bite_pair(label, tmp, header, mutate=None, defines=None, expect=None):
-    """Break the PAIR PROSE path; check_pair_prose must fail.
-
-    Two injection sites, because the prose has two: the header's #ifndef
-    defaults (what an unstamped harness prints) and the defines the emitter
-    stamps (what a stamped one prints).  [defines] injects at the second.
-
-    [expect] is a fragment of the first diagnostic, which is what says which of
-    the two directions caught the injection -- a `must' that stopped printing or
-    a forbidden word that started.  Without it a rc of 1 counts as a bite
-    whatever reddened, and a whole direction can go unbitten while every arm
-    reports a bite."""
-    SHOTS.append(label)
-    hdr = header
-    if mutate is not None:
-        with open(header) as fh:
-            orig = fh.read()
-        new = mutate(orig)
-        if new == orig:
-            print("  *** VACUOUS BITE: the injection changed nothing   [%s]" % label)
-            return False
-        hdr = os.path.join(tmp, "pair-bitten.h")
-        with open(hdr, "w") as fh:
-            fh.write(new)
-
-    sub = tempfile.mkdtemp(prefix="verdictpairbite.")
-    buf = io.StringIO()
-    try:
-        with contextlib.redirect_stdout(buf):
-            rc = check_pair_prose(hdr, sub, quiet=True, defines_by_pair=defines)
-    finally:
-        shutil.rmtree(sub, ignore_errors=True)
-    if not rc:
-        print("  *** DID NOT BITE: the gate PASSED on wrong pair prose   [%s]"
-              % label)
-        return False
-    said = [l for l in buf.getvalue().splitlines() if l.startswith("  ***")]
-    first = said[0].strip() if said else "(no diagnostic)"
-    if expect is not None and expect not in first:
-        print("  *** WRONG DIAGNOSTIC: %s\n      wanted %r first   [%s]"
-              % (first, expect, label))
-        return False
-    print("  BITES (gate failed, as it must): %s   [%s]" % (first, label))
-    return True
-
-
-def bite():
-    print("===== BITE TEST: does this gate actually FAIL when the rule breaks? ====")
-    tmp = tempfile.mkdtemp(prefix="verdictbite.")
-    ok = True
-    try:
-        header = emit_header(tmp)
-
-        # (1) The sighting branch made CONSTANT: every record reads as OBSERVED, so
-        # every null case takes the sighting frame.
-        ok &= _bite_one(
-            "the sighting test forced CONSTANT (every record read as OBSERVED)",
-            tmp, header,
-            lambda s: s.replace("if (r->target_count > 0) {", "if (1) {"),
-            quiet=True)
-
-        # (2) The disqualifiers stop deciding the outcome: every COLD record then
-        # reports its zero as a null.  The dq word is still computed and every
-        # sentence under it still prints, so only the outcome comparison sees it.
-        ok &= _bite_one(
-            "the disqualifiers stop deciding (a COLD record reports a null)",
-            tmp, header,
-            lambda s: s.replace("  v = dq ? HET_COLD_INVALID : HET_NOT_OBSERVED;",
-                                "  v = HET_NOT_OBSERVED;"),
-            quiet=True)
-
-        # (2b) A disqualifier bit no case reaches.  Every case carries the dq word
-        # it expects, so a bit ADDED to the header arrives with nothing setting it
-        # and every per-case comparison stays green; only the coverage assertion
-        # can see a branch this gate never drives.
-        ok &= _bite_one(
-            "a disqualifier bit the case set never reaches",
-            tmp, header,
-            lambda s: s.replace(
-                "#define HET_DQ_REC_UNSTAMPED    (1u << 10)",
-                "#define HET_DQ_REC_UNSTAMPED    (1u << 10)\n"
-                "#define HET_DQ_UNREACHED        (1u << 13)"),
-            quiet=True,
-            expect="UNREACHED DISQUALIFIER: HET_DQ_UNREACHED")
-
-        # (3) rec_magic stops failing closed: a memset-zeroed record is read as a
-        # live one, which is the whole property the stamp exists for.
-        ok &= _bite_one(
-            "rec_magic no longer fails closed (an unstamped record is read)",
-            tmp, header,
-            lambda s: s.replace("if (r->rec_magic != HET_REC_MAGIC) {",
-                                "if (0) {"),
-            quiet=True)
-
-        # (4) The one-outcome disclosure, both ways: the cv flag is still computed
-        # and every case still gets its outcome, so ONLY phase 2 can see the
-        # sentence go missing -- or start printing under every readout alike.
-        ok &= _bite_one(
-            "the one-outcome caveat dropped from every printout",
-            tmp, header,
-            lambda s: s.replace("  if (cv & HET_CV_ONE_OUTCOME)\n",
-                                "  if (0)\n"),
-            quiet=True,
-            expect="never said so")
-        ok &= _bite_one(
-            "the one-outcome caveat printed under every readout",
-            tmp, header,
-            lambda s: s.replace("  if (cv & HET_CV_ONE_OUTCOME)\n",
-                                "  if (1)\n"),
-            quiet=True,
-            expect="but its readout varied")
-
-        # (4c) The rendezvous disqualifier and its sentence, on the same
-        # discipline: the outcome, the sentence going missing, and the sentence
-        # printed under every discarded run alike.
-        ok &= _bite_one(
-            "the rendezvous disqualifier stops firing (a dead rendezvous "
-            "reports its zero as reach)",
-            tmp, header,
-            lambda s: s.replace("                                                  "
-                                "dq |= HET_DQ_RDV_DEAD;",
-                                "                                                  "
-                                "dq |= 0u;"),
-            quiet=True)
-        ok &= _bite_one(
-            "the discard budget raised to 100% (no rate can disqualify a run)",
-            tmp, header,
-            lambda s: s.replace(
-                "r->iters_discarded * 100 > r->N * HET_RDV_MAX_DISCARD_PCT",
-                "r->iters_discarded * 100 > r->N * 100"),
-            quiet=True)
-        ok &= _bite_one(
-            "the rendezvous sentence dropped from every printout",
-            tmp, header,
-            lambda s: s.replace("    if (dq & HET_DQ_RDV_DEAD)\n",
-                                "    if (0)\n"),
-            quiet=True,
-            expect="never printed 'A timed-out rendezvous is a DEAD PARTNER'")
-        ok &= _bite_one(
-            "the per-participant reading of rdv_cap_cpu/rdv_cap_gpu dropped",
-            tmp, header,
-            lambda s: s.replace("counted per participant per ", "counted per "),
-            quiet=True,
-            expect="never printed 'counted per participant per iteration'")
-        ok &= _bite_one(
-            "the rendezvous sentence printed under every discarded run",
-            tmp, header,
-            lambda s: s.replace("    if (dq & HET_DQ_RDV_DEAD)\n",
-                                "    if (1)\n"),
-            quiet=True,
-            expect="which belongs to HET_DQ_RDV_DEAD")
-        ok &= _bite_one(
-            "the uncalibrated-cap caveat dropped from every printout",
-            tmp, header,
-            lambda s: s.replace("  if (cv & HET_CV_RDV_UNCALIBRATED)\n",
-                                "  if (0)\n"),
-            quiet=True,
-            expect="never printed 'the rendezvous caps are PLACEHOLDERS'")
-        ok &= _bite_one(
-            "the uncalibrated-cap caveat printed under every run",
-            tmp, header,
-            lambda s: s.replace("  if (cv & HET_CV_RDV_UNCALIBRATED)\n",
-                                "  if (1)\n"),
-            quiet=True,
-            expect="which belongs to HET_CV_RDV_UNCALIBRATED")
-
-        # (4b) The cpu_only flag read as a CONSTANT, both ways.  The CPU-only
-        # sentences are the only place the printout says that no cross-device path
-        # carried the cycle, so a frozen flag either hides that on the CPU-only set
-        # or claims it about every het test in the corpus.
-        ok &= _bite_one(
-            "the cpu_only branches forced OFF (no CPU-only sentence anywhere)",
-            tmp, header,
-            lambda s: s.replace("if (_r->cpu_only)", "if (0)"),
-            quiet=True,
-            expect="never printed its CPU-only sentence")
-        ok &= _bite_one(
-            "the cpu_only branches forced ON (every cycle claims to be CPU-only)",
-            tmp, header,
-            lambda s: s.replace("if (_r->cpu_only)", "if (1)"),
-            quiet=True,
-            expect="which belongs to a CPU-only cycle")
-
-        # (4c) ... and the same flag's two silent readers, one injection each,
-        # keyed on its negation so one arm drives both halves of its assertion.
-        # Neither prints a sentence, so the two arms above cannot see either of
-        # them freeze: the tag rides the banner line and the field rides the
-        # machine-readable one.
-        ok &= _bite_one(
-            "the banner's CPU-ONLY tag keyed on the negation of the flag",
-            tmp, header,
-            lambda s: s.replace('_r->cpu_only ? " CPU-ONLY" : ""',
-                                '!_r->cpu_only ? " CPU-ONLY" : ""'),
-            quiet=True,
-            expect="its verdict banner")
-        ok &= _bite_one(
-            "the HetObs line's cpu_only field keyed on the negation of the flag",
-            tmp, header,
-            lambda s: s.replace("    _r->cpu_only,\n", "    !_r->cpu_only,\n"),
-            quiet=True,
-            expect="its HetObs line does not say so")
-
-        # (5) The header does not compile.  Not a broken rule -- a broken report of
-        # one.  A gate that answers a non-compiling header with a traceback has
-        # stopped saying which part of what it guards is wrong, and under --bite it
-        # stops running at all.  The flavour of the syntax error carries no
-        # meaning; `@' is simply not a C token.
-        print("\n-- reporting-path injections --")
-        ok &= _bite_report(
-            "a header that DOES NOT COMPILE must be REPORTED, not raised",
-            header,
-            lambda s: s + "\nstatic int _het_bite_does_not_compile(void) "
-                          "{ return @; }\n",
-            "VERDICT FAILED: the rule does not compile")
-
-        # (6) The compiled rule prints nothing.  The driver prints MAX_CELLS before
-        # the first case, so an empty stdout means the binary died before it ran
-        # one -- which the gate must say, NEVER index into.  A constructor that
-        # _Exit()s is the shortest way to produce that: it is what a header
-        # carrying a broken static initialiser does in the wild, one step earlier.
-        ok &= _bite_report(
-            "a compiled rule that produces NO MAX_CELLS line must be REPORTED",
-            header,
-            lambda s: s + "\n__attribute__((constructor)) static void "
-                          "_het_bite_die_before_main(void) { _Exit(97); }\n",
-            "produced no MAX_CELLS line")
-
-        # (7) A harness ships unstamped: het_verdict() fails closed, but ONLY if it
-        # is ever run, so the corpus census is what stops one harness quietly
-        # discarding every run it will ever make.
-        print("\n-- corpus injections --")
-        SHOTS.append("a harness shipped with an unstamped record")
-        rc = check_corpus(tamper=lambda t, s: (
-            s.replace("_rec.rec_magic = HET_REC_MAGIC;", "_rec.rec_magic = 0;")
-            if t == "S-cg-sys-fence" else s))
-        if rc == 1:
-            print("  BITES (gate failed, as it must)   "
-                  "[a harness shipped with an unstamped record]")
-        else:
-            print("  *** DID NOT BITE (rc=%d)   "
-                  "[a harness shipped with an unstamped record]" % rc)
-            ok = False
-
-        # (9) The mechanism word the whole printout is written around DRIFTS, and
-        # every sentence carrying it moves with it.  It is the header's own
-        # default, so nothing stamps it back.
-        print("\n-- pair-prose injections --")
-        ok &= _bite_pair(
-            "the link name drifts (\"the tested link\")",
-            tmp, header,
-            mutate=lambda s: s.replace('#define HET_LINK_NAME "host-device interconnect"',
-                                       '#define HET_LINK_NAME "the tested link"'),
-            expect="never printed '- the host half of the host-device "
-                   "interconnect noise did NOT run'")
-
-        # (10) One sentence goes back to a literal, which is the defect the shared
-        # defines exist to stop in its simplest form: a sentence naming one half
-        # whatever the harness was built for.
-        ok &= _bite_pair(
-            "one sentence hardcodes \"the CPU half\"",
-            tmp, header,
-            mutate=lambda s: s.replace("              HET_HOST_HALF, HET_LINK_NAME);",
-                                       "              \"the CPU half\", HET_LINK_NAME);"),
-            expect="never printed '- the host half of the host-device "
-                   "interconnect noise did NOT run'")
-
-        # (11) The emitter stamps the other pair's build facts.  The header is
-        # correct here and the harness lies to it; nothing in phases 1-3 looks at
-        # a define.
-        real = {}
-        for lbl, corpus, test, target, ext in PAIR_EMISSIONS:
-            real[lbl] = scrape_pair_defines(tmp, lbl, corpus, test, target, ext)
-        crossed = dict(real)
-        crossed["(x86_64, hip)"] = list(real["(AArch64, cuda)"])
-        ok &= _bite_pair(
-            "the (x86_64, hip) emission stamps the (AArch64, cuda) build facts",
-            tmp, header, defines=crossed,
-            expect="never printed 'Report it as what (X86_64, hip)")
-
-        # (12) The target name goes back to a constant.  The sentence still names
-        # something, so ONLY a frame that knows its own pair name can see that it
-        # is naming the wrong object; BLOB_WORDS pins that constant's wording.
-        ok &= _bite_pair(
-            "the report sentence names a constant instead of the pair",
-            tmp, header,
-            mutate=lambda s: s.replace(
-                "      HET_PAIR_NAME, HET_LINK_NAME);",
-                '      "the target this harness was tagged for", HET_LINK_NAME);'),
-            expect="never printed 'Report it as what (unstamped CPU ISA x GPU "
-                   "dialect pair)")
-
-        # (13) A sentence names another pair and every `must' still prints.  The
-        # verdict banner gains an "[(AArch64, cuda)]" tag, which no frame's must
-        # list mentions and which no parameterised sentence loses, so the ONLY
-        # thing that can see it is the forbidden-word list.  Injections (9)-(12)
-        # each redden on a must first, so without this arm the forbidden-word
-        # direction is unbitten.
-        ok &= _bite_pair(
-            "the verdict banner tags every run with another pair's name",
-            tmp, header,
-            mutate=lambda s: s.replace(
-                '  fprintf(_ch, "HetVerdict %s%s run=%d: %s\\n",',
-                '  fprintf(_ch, "HetVerdict %s%s run=%d: %s'
-                '  [(AArch64, cuda)]\\n",'),
-            expect="printed '(AArch64, cuda)' -- a pair this harness was not "
-                   "built for")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-    print("\n" + "=" * 70)
-    if ok:
-        print("BITE OK: %d/%d injections caught, each by the diagnostic it named."
-              % (len(SHOTS), len(SHOTS)))
-        return 0
-    print("BITE FAILED: an injection slipped through -- this gate is decorative")
-    return 1
 
 
 if __name__ == "__main__":

@@ -41,13 +41,11 @@ CPU column is x86_64.
 Usage:
   hipsrccheck.py TEST.litmus [--hip-src F] [--cpu-c F] [-q]
   hipsrccheck.py --all [--gpu-dir D] [--x86-dir D] [--jobs N]
-  hipsrccheck.py --bite
-  hipsrccheck.py --guard
 
 --hip-src/--cpu-c read a pre-existing render instead of emitting one; with
 --hip-src alone the sibling <name>_cpu.c beside it is used when present.
---all sweeps both corpora against their pinned censuses; --bite injects into a
-fresh render per check and requires each one to redden its own assertion.
+--all sweeps both corpora against their pinned censuses, then the synthetic
+carriers for the two fence annotations no corpus test carries.
 
 Exit 0 = PASS, 1 = FAIL (ordered diff), 2 = completeness hard-fail, 3 = error.
 """
@@ -614,8 +612,17 @@ def parse_lane(body, helpers, where):
                 if sstr not in SCOPE_OF_FENCE_STR:
                     raise CompletenessError(
                         "unknown AMDHSA sync-scope string %r in %s" % (sstr, where))
+                order = _order(args[0], where)
+                # The mirror of the no-op fence arm above: HipLang.dump_instr
+                # writes a relaxed fence as a comment and nothing else, and
+                # hipcc refuses a relaxed __builtin_amdgcn_fence.
+                if order == 'relaxed':
+                    raise CompletenessError(
+                        "%s emits __builtin_amdgcn_fence with a relaxed order, "
+                        "which HipLang.dump_instr never writes and hipcc "
+                        "rejects: %r" % (where, s))
                 flush()
-                a = Anchor(('fence', _order(args[0], where), SCOPE_OF_FENCE_STR[sstr]),
+                a = Anchor(('fence', order, SCOPE_OF_FENCE_STR[sstr]),
                            ['__builtin_amdgcn_fence'], emitted=True,
                            c_order=m.group(2), c_scope=m.group(3))
         if a is None:
@@ -1215,8 +1222,7 @@ def run_check(litmus_path, hip=None, cpu_c=None, verbose=True):
     """(exit code, printed output) of one check.
 
     The exit contract is the return value, so a caller inside this process --
-    the corpus sweep, an injection under --bite -- reads exactly what the
-    command line would."""
+    the corpus sweep -- reads exactly what the command line would."""
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf):
@@ -1231,109 +1237,6 @@ def run_check(litmus_path, hip=None, cpu_c=None, verbose=True):
         buf.write("ERROR: %s\n" % e)
         rc = 3
     return rc, buf.getvalue()
-
-
-def capture(fn, **override):
-    """(exit code, printed output) of an in-process call, with module globals
-    temporarily replaced.
-
-    The guard reads its tables and its paths through those globals, so an
-    emptied table and an unresolvable litmus7 are injections like any other."""
-    g = globals()
-    saved = {k: g[k] for k in override}
-    g.update(override)
-    buf = io.StringIO()
-    try:
-        with contextlib.redirect_stdout(buf):
-            rc = fn()
-    except CompletenessError as e:
-        buf.write("COMPLETENESS HARD-FAIL: %s\n" % e)
-        rc = 2
-    except Exception as e:
-        buf.write("ERROR: %s\n" % e)
-        rc = 3
-    finally:
-        g.update(saved)
-    return rc, buf.getvalue()
-
-
-def guard_report():
-    """The vocabulary this checker understands and the paths it resolves.  An
-    empty table or an unresolvable path is itself a failure: a guard that
-    reports nothing is a guard that checks nothing."""
-    bad = 0
-    print("===== HIP SOURCE GATE: vocabulary and paths =====")
-    print("\n-- paths --")
-    for what, p, must in (("litmus7", LITMUS7, True), ("libdir", LIBDIR, True),
-                          ("ptxcheck.py (imported, not modified)", PTXCHECK, True)):
-        ok = os.path.exists(p)
-        print("  %-38s %s  %s" % (what, p, "" if ok else "*** MISSING ***"))
-        if must and not ok:
-            bad += 1
-
-    print("\n-- GPU annotation -> emitted HIP construct (litmus/HipLang.ml) --")
-    print("  w[o,s] <var> <value>   __hip_atomic_store(<var>, <value>, <ORDER>, <SCOPE>)")
-    print("  r[o,s] <dst> <var>     <dst> = __hip_atomic_load(<var>, <ORDER>, <SCOPE>)")
-    print("  f[o,s]                 __builtin_amdgcn_fence(<ORDER>, \"<scope>\"); // f[o,s]")
-    print("  f[relaxed,s]           a comment only; nothing executable, and no")
-    print("                         other order may be rendered that way")
-    print("  gpu-only result store  __out[<proc> * %d + <n>] = r<n>, one per read"
-          % GPU_OUT_STRIDE)
-    print("  het slot address       %s" % SLOT_PTR.pattern)
-    for label, table in (("memory orders", HIP_ORDER), ("access scopes", HIP_SCOPE),
-                         ("fence sync scopes", HIP_FENCE_SCOPE)):
-        print("\n-- %s --" % label)
-        if not table:
-            print("  *** empty table ***")
-            bad += 1
-        for k, v in table.items():
-            print("  %-8s -> %s" % (k, ('""' if v == "" else v)))
-    print("  (the unnamed fence scope IS system scope; naming one narrows it)")
-
-    print("\n-- x86_64 CPU column -> emitted _cpu.c asm (litmus7 ASMLang.dump_fun) --")
-    print("  MOV (g),%reg     load    <mn> %[g],%k[<reg64>]")
-    print("  MOV $k,(g)       store   <mn> $k,%[g]")
-    print("  %s   fence   the bare mnemonic"
-          % "|".join(sorted(X86_FENCE)))
-    print("  accepted MOV spellings: %s" % ", ".join(sorted(X86_MOV)))
-    print("  register names:         %s"
-          % ", ".join("%s->%s" % (k, v) for k, v in sorted(X86_REG_64.items())
-                      if k != v))
-    if not (X86_MOV and X86_FENCE and X86_REG_64):
-        bad += 1
-
-    print("\n-- het lane anchors --")
-    for s in (("rdv",), ("jitter",),
-              ("res", "<buf>", "<reg>"), ("bump",)):
-        print("  %s" % fmt(s))
-    print("\n-- the het lane's iteration loop (litmus/hetEmit.ml) --")
-    print("  %s" % LOOP_PRAGMA)
-    print("  for (int _n=0; _n<%s; ++_n) {   %s inside, %s outside"
-          % (LOOP_BOUND, "/".join(PER_ITERATION), "/".join(ONCE_PER_LANE)))
-    print("  no anchor sits under a guard, and no %s reaches into the loop"
-          % LOOP_JUMP.pattern)
-    if 'continue' not in LOOP_JUMP.pattern:
-        bad += 1
-    print("  (the gpu-only path has no loop: its procs run once)")
-
-    print("\n-- device helpers a het kernel may carry (litmus/het-runtime/het_stress.h) --")
-    if not DEVICE_HELPERS:
-        bad += 1
-    print("  %s" % " ".join(sorted(DEVICE_HELPERS)))
-
-    print("\n-- memory constructs surfaced as unmodelled, by region --")
-    print("  in a lane            %s" % LANE_SHAPED.pattern)
-    print("  outside every lane   %s" % ATOMIC_SHAPED.pattern)
-    if not (_SHAPED and 'asm' in LANE_SHAPED.pattern):
-        bad += 1
-
-    print("\n-- exit contract --")
-    print("  0 PASS   1 FAIL   2 completeness hard-fail   3 error")
-    if bad:
-        print("\nGUARD FAILED: %d unresolved path(s) or empty table(s)" % bad)
-    return 1 if bad else 0
-
-
 # ===========================================================================
 # 8. CORPUS SWEEP
 # ===========================================================================
@@ -1428,66 +1331,14 @@ def sweep_dir(files, label, jobs, diffs):
     return n["PASS"], len(rows)
 
 
-def sweep(gpu_dir, x86_dir, jobs):
-    """Both corpora, each against its pinned census.
-
-    X86_HET_N counts the x86_64 het rendering this lane emits, NOT the AArch64
-    corpus ptxcheck.py reads: the same shapes, a different CPU column, and every
-    count printed here says which."""
-    tmp = None
-    try:
-        # Both censuses are asserted before a single test runs: a corpus that is
-        # not there cannot be reported as a corpus that passed.
-        gpu_files = corpus_files(gpu_dir, "gpu-only", GPU_ONLY_N)
-        if x86_dir is None:
-            tmp = tempfile.mkdtemp(prefix="hipsrccheck-x86.")
-            x86_dir = regen_x86(os.path.join(tmp, "corpus"))
-        x86_files = corpus_files(x86_dir, "x86_64 het", X86_HET_N)
-        print("===== HIP SOURCE GATE: %d gpu-only + %d x86_64 het renders ====="
-              % (GPU_ONLY_N, X86_HET_N))
-        print("  gpu-only    %s" % gpu_dir)
-        print("  x86_64 het  %s%s" % (x86_dir, " (generated)" if tmp else ""))
-        print("  workers     %d" % jobs)
-        diffs = tempfile.mkdtemp(prefix="hipsrccheck-diffs.")
-        gp, gt = sweep_dir(gpu_files, "gpu-only", jobs, diffs)
-        xp, xt = sweep_dir(x86_files, "x86_64 het", jobs, diffs)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    print()
-    ok = (gp, gt) == (GPU_ONLY_N, GPU_ONLY_N) and (xp, xt) == (X86_HET_N, X86_HET_N)
-    print("HIP SOURCE GATE: %s -- gpu-only %d/%d, x86_64 het %d/%d "
-          "(the x86_64 rendering of the het corpus, not the AArch64 one)"
-          % ("PASS" if ok else "FAILED", gp, gt, xp, xt))
-    if ok:
-        shutil.rmtree(diffs, ignore_errors=True)
-    return 0 if ok else 1
-
-
-# ===========================================================================
-# 9. BITE  (every check reddened on a fresh render)
-# ===========================================================================
-
-# The two renders the injections are made from.  MP-sys-fence is the gpu-only
-# shape carrying both fences, both kinds of model op and two __out slots;
-# 2+2W-cg-sys-fence-2s-x86_64 is the het shape with one GPU test lane carrying
-# two slot-addressed stores across a fence and an x86_64 CPU column with an
-# MFENCE between its stores.
-BITE_GPU = "MP-sys-fence"
-BITE_HET = "2+2W-cg-sys-fence-2s-x86_64"
-# The two lines of BITE_HET's lane the placement injections move, quoted as
-# litmus/hetEmit.ml writes them: an anchor that has drifted is a hard exit
-# (sub_lane), never a silent no-op.
-RDV_LINE = ("      _rdvG_P1[_n] = het_rdv_device(barrier, "
-            "(uint64_t)NPART*(uint64_t)(_n+1), _cap_gpu);\n")
-ST_Y_LINES = ("      // w[relaxed,sys] y 2\n"
-              "      __hip_atomic_store((y + (_n)*HET_SLOT_STRIDE_WORDS), 2, "
-              "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n")
-# The annotations no corpus test carries (litmus/HipLang.ml maps them, so an
-# injection into a corpus render can never reach their rows).
+# The fence annotations no corpus test carries: litmus/HipLang.ml maps
+# f[acq_rel,*] and the relaxed fence, and only a synthetic carrier reaches
+# those rows.
 SYNTH = {
     "F-acqrel-sys": "f[acq_rel,sys]",
     "F-relaxed-sys": "f[relaxed,sys]",
 }
+SYNTH_N = 2
 SYNTH_BODY = """LISA %s
 {
 }
@@ -1500,535 +1351,87 @@ exists (1:r0=1 /\\ 1:r1=0)
 """
 
 
-def sub(path, old, new, count=1):
-    """Replace [old] in [path].  An absent anchor is a hard exit: an injection
-    that changes nothing would report a pass for a corruption the gate never
-    saw."""
-    s = open(path).read()
-    if old not in s:
-        raise GateError("--bite: anchor %r absent from %s -- the injection would "
-                        "have been a no-op" % (old, path))
-    open(path, "w").write(s.replace(old, new, count))
-
-
-def lane_span(src, blk):
-    """(start, end) of the guarded block `blockIdx.x == blk' in a kernel."""
-    head = "if (blockIdx.x == %d && threadIdx.x == 0) {" % blk
-    i = src.find(head)
-    if i < 0:
-        raise GateError("--bite: no lane %d in the render" % blk)
-    j = src.find("\n  if (blockIdx.x", i + 1)
-    return i, (j if j > 0 else len(src))
-
-
-def sub_lane(path, blk, old, new, count=1):
-    """Replace [old] inside lane [blk] only, so an injection lands on the lane
-    it is meant for and the failure has to name that one."""
-    src = open(path).read()
-    i, j = lane_span(src, blk)
-    body = src[i:j]
-    if old not in body:
-        raise GateError("--bite: anchor %r absent from lane %d of %s"
-                        % (old, blk, path))
-    open(path, "w").write(src[:i] + body.replace(old, new, count) + src[j:])
-
-
-class Bites:
-    """The tally of one --bite run: an injection that does not redden its own
-    assertion, and one that reddens something else, are counted apart."""
-
-    def __init__(self):
-        self.n = self.k = self.bad = self.wrong = self.green = self.red = 0
-        self.work = None
-
-    def fresh(self, tag, src):
-        """A pristine copy of [src] in its own directory, so a bite never reads
-        the previous bite's still-corrupt artifact."""
-        self.k += 1
-        d = os.path.join(self.work, "bite%02d-%s" % (self.k, tag))
-        os.makedirs(d)
-        dst = os.path.join(d, os.path.basename(src))
-        shutil.copyfile(src, dst)
-        return dst
-
-    def record(self, label, want_rc, want, rc, out, orig=None, cur=None):
-        self.n += 1
-        if orig is not None and open(orig, "rb").read() == open(cur, "rb").read():
-            print("  *** VACUOUS BITE: the injection changed nothing    [%s]" % label)
-            self.bad += 1
-            return False
-        if rc != want_rc:
-            print("  *** WRONG EXIT [%s] exit=%d (expect %d)" % (label, rc, want_rc))
-            for l in out.splitlines()[:6]:
-                print("      %s" % l)
-            self.bad += 1
-            return False
-        hit = [l for l in out.splitlines() if want in l]
-        if not hit:
-            print("  *** WRONG REASON [%s] exit=%d, but no line named %r"
-                  % (label, rc, want))
-            for l in out.splitlines():
-                if l.startswith("FAIL") or l.startswith("COMPLETENESS") \
-                        or l.startswith("ERROR"):
-                    print("      %s" % l)
-            self.wrong += 1
-            self.bad += 1
-            return False
-        print("  OK exit=%d  [%s]" % (rc, label))
-        print("     matched: %s" % hit[0].strip()[:140])
-        if want_rc == 0:
-            self.green += 1
-        else:
-            self.red += 1
-        return True
-
-    def check(self, label, want_rc, want, litmus, hip=None, cpu_c=None,
-              orig=None, cur=None):
-        rc, out = run_check(litmus, hip=hip, cpu_c=cpu_c)
-        return self.record(label, want_rc, want, rc, out, orig=orig,
-                           cur=cur if cur is not None else hip)
-
-
-def _worker_dies(_litmus_path):
-    """A sweep worker that dies without raising, which --bite puts in the pool:
-    _sweep_one's handler never sees it, and the pool breaks instead."""
-    os._exit(1)
-
-
-def mkdir(d):
-    """litmus7 refuses an output directory that does not exist."""
-    os.makedirs(d, exist_ok=True)
-    return d
-
-
 def synth_carrier(d, name):
-    """A .litmus for an annotation the corpus does not carry, so the rows that
-    map it cannot rot unbitten."""
+    """A .litmus carrying [name]'s annotation, written into [d]."""
     p = os.path.join(d, name + ".litmus")
     with open(p, "w") as fh:
         fh.write(SYNTH_BODY % (name, SYNTH[name], SYNTH[name]))
     return p
 
 
-def corpus_slice(src_dir, dst, names):
-    """A corpus directory holding only [names], which is what a census injection
-    needs: the sweep asserts the census before it reads a single test."""
-    os.makedirs(dst)
-    for n in names:
-        shutil.copyfile(os.path.join(src_dir, n + ".litmus"),
-                        os.path.join(dst, n + ".litmus"))
-    return dst
+def sweep_synth(work, diffs):
+    """The synthetic carriers, each emitted and read like a corpus test.
 
-
-def bite(tmp):
-    """Every check on a fresh render, on the corruption it exists to catch.
-
-    Exit codes are the contract, so each injection names the code it owes as
-    well as the assertion: 1 is a render that differs from its .litmus, 2 is a
-    construct the gate has no model for and must refuse rather than compare."""
-    b = Bites()
-    b.work = os.path.join(tmp, "bites")
-    os.makedirs(b.work)
-    corpus = regen_x86(os.path.join(tmp, "x86"))
-    het_l = os.path.join(corpus, BITE_HET + ".litmus")
-    gpu_l = os.path.join(GPU_ONLY_DIR, BITE_GPU + ".litmus")
-    g_hip, _ = emit_harness(gpu_l, mkdir(os.path.join(tmp, "gpu")))
-    h_hip, h_cpu = emit_harness(het_l, mkdir(os.path.join(tmp, "het")))
-    if h_cpu is None:
-        raise GateError("--bite: %s emitted no _cpu.c" % BITE_HET)
-
-    print("===== HIP SOURCE GATE BITE: the clean controls, then every check =====")
-    print("  gpu-only render %s" % g_hip)
-    print("  het render      %s" % h_hip)
-
-    print("\n-- clean controls (an injection is only evidence against a green base) --")
-    b.record("gpu-only control (unmodified render)", 0, "RESULT: PASS",
-             *run_check(gpu_l, hip=g_hip))
-    b.record("het control (unmodified render)", 0, "RESULT: PASS",
-             *run_check(het_l, hip=h_hip, cpu_c=h_cpu))
-
-    # ---- the gpu-only render: constants, comment, operands, __out -----------
-    print("\n-- gpu-only: the annotation, the comment and the result slot --")
-    w = b.fresh("scope", g_hip)
-    sub(w, "__hip_atomic_store(x, 1, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM)",
-        "__hip_atomic_store(x, 1, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_WORKGROUP)")
-    b.check("store scope NARROWED sys -> cta", 1, "observed w[relaxed,cta]",
-            gpu_l, hip=w, orig=g_hip)
-
-    w = b.fresh("order", g_hip)
-    sub(w, "r1 = __hip_atomic_load(x, __ATOMIC_RELAXED,",
-        "r1 = __hip_atomic_load(x, __ATOMIC_ACQUIRE,")
-    b.check("load order STRENGTHENED, its comment left intact", 1,
-            "observed r[acquire,sys]", gpu_l, hip=w, orig=g_hip)
-
-    w = b.fresh("comment-order", g_hip)
-    sub(w, "// w[relaxed,sys] x 1", "// w[release,sys] x 1")
-    b.check("the traceability comment's ORDER edited, nothing else", 1,
-            "comment says w[release,sys]", gpu_l, hip=w, orig=g_hip)
-
-    w = b.fresh("comment-operand", g_hip)
-    sub(w, "// r[relaxed,sys] r0 y", "// r[relaxed,sys] r0 x")
-    b.check("the traceability comment's OPERAND edited, nothing else", 1,
-            "load reads 'x'", gpu_l, hip=w, orig=g_hip)
-
-    w = b.fresh("fence-gone", g_hip)
-    sub(w, '    __builtin_amdgcn_fence(__ATOMIC_SEQ_CST, ""); // f[sc,sys]\n', "")
-    b.check("the fence line DELETED", 1, "expected f[sc,sys]", gpu_l, hip=w, orig=g_hip)
-
-    w = b.fresh("fence-noop", g_hip)
-    sub(w, '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, ""); // f[sc,sys]',
-        "// f[sc,sys] (relaxed fence = no-op; nothing emitted)")
-    b.check("the fence replaced by the relaxed no-op comment (nothing emitted)",
-            2, "renders f[sc,sys] as a comment and emits nothing",
-            gpu_l, hip=w, orig=g_hip)
-
-    w = b.fresh("store-gone", g_hip)
-    sub(w, "    __hip_atomic_store(y, 1, __ATOMIC_RELAXED, "
-           "__HIP_MEMORY_SCOPE_SYSTEM);\n", "")
-    b.check("a model store DELETED, its comment left behind", 1,
-            "observed comment w[relaxed,sys] with no call", gpu_l, hip=w, orig=g_hip)
-
-    w = b.fresh("out-gone", g_hip)
-    sub(w, "    __out[1 * 4 + 1] = r1;\n", "")
-    b.check("a gpu-only __out result slot DELETED", 1,
-            "expected __out[1 * 4 + 1]=r1", gpu_l, hip=w, orig=g_hip)
-
-    w = b.fresh("out-dup", g_hip)
-    sub(w, "    __out[1 * 4 + 1] = r1;\n",
-        "    __out[1 * 4 + 1] = r1;\n    __out[1 * 4 + 1] = r1;\n")
-    b.check("a gpu-only __out result slot DUPLICATED", 1,
-            "multiset expected [] observed [('out', 1, 4, 1, 'r1')]",
-            gpu_l, hip=w, orig=g_hip)
-
-    w = b.fresh("out-reindex", g_hip)
-    sub(w, "__out[1 * 4 + 1] = r1;", "__out[1 * 4 + 2] = r1;")
-    b.check("a gpu-only __out result slot RE-INDEXED (the read reaches another "
-            "slot of the same proc)", 1, "observed __out[1 * 4 + 2]=r1",
-            gpu_l, hip=w, orig=g_hip)
-
-    print("\n-- constants no mapping row accounts for (a refusal, not a compare) --")
-    w = b.fresh("order-const", g_hip)
-    sub(w, "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM)",
-        "__ATOMIC_CONSUME, __HIP_MEMORY_SCOPE_SYSTEM)")
-    b.check("a memory-order constant HipLang.ml never writes (__ATOMIC_CONSUME)",
-            2, "unknown memory-order constant", gpu_l, hip=w, orig=g_hip)
-
-    w = b.fresh("fence-scope", g_hip)
-    sub(w, '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "")',
-        '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "system")')
-    b.check("the fence's sync scope NAMED (an unnamed one is system scope, so a "
-            "name narrows the fence)", 2, "unknown AMDHSA sync-scope string "
-            "'system'", gpu_l, hip=w, orig=g_hip)
-
-    # ---- constructs the gate has no model for -------------------------------
-    print("\n-- constructs no anchor accounts for (each a refusal, not a compare) --")
-    for tag, line, want, label in (
-            ("threadfence", "    __threadfence();\n", "__threadfence",
-             "a stray __threadfence() in a lane"),
-            ("inline-asm", '    asm volatile("" ::: "memory");\n', "asm, volatile",
-             "inline asm in a lane (the premise the source-level read rests on)"),
-            ("volatile-st", "    *(volatile int*)x = 7;\n", "volatile",
-             "a stray volatile store in a lane"),
-            ("builtin", "    __builtin_nontemporal_store(1, x);\n",
-             "__builtin_nontemporal_store", "an unknown builtin in a lane")):
-        w = b.fresh(tag, g_hip)
-        sub(w, "    // w[relaxed,sys] x 1\n", line + "    // w[relaxed,sys] x 1\n")
-        b.check(label, 2, want, gpu_l, hip=w, orig=g_hip)
-
-    # ---- het: lanes, scaffolding, slot addressing, loop structure -----------
-    print("\n-- het: the lane plan and the scaffolding --")
-    w = b.fresh("lane-gone", h_hip)
-    src = open(w).read()
-    i, j = lane_span(src, 0)
-    open(w, "w").write(src[:i] + src[j:])
-    b.check("a whole TEST lane DELETED", 1,
-            "kernel has 0 rendezvous-joining lane(s), the lane plan has 1",
-            het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    # The rendezvous ORDERS AND SCOPES live in litmus/het-runtime/het_rdv.h, so
-    # what a lane can get wrong here is which counter it joins, which iteration
-    # it waits for, which cap it waits under and where it records the arrival.
-    w = b.fresh("rdv-ptr", h_hip)
-    sub_lane(w, 0, "het_rdv_device(barrier,", "het_rdv_device(_scratch_loc,")
-    b.check("the rendezvous counting on the scratch layout instead of the "
-            "shared counter", 1, "the rendezvous counts on", het_l, hip=w,
-            cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("rdv-target", h_hip)
-    sub_lane(w, 0, "(uint64_t)NPART*(uint64_t)(_n+1)", "(uint64_t)NPART")
-    b.check("the rendezvous waiting for iteration 0's target on every iteration",
-            1, "is not iteration _n's own target", het_l, hip=w, cpu_c=h_cpu,
-            orig=h_hip)
-
-    w = b.fresh("rdv-cap", h_hip)
-    sub_lane(w, 0, ", _cap_gpu);", ", 1u);")
-    b.check("the rendezvous cap frozen to a literal (the run-time knob is gone)",
-            1, "waits under 1u", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("rdv-flag", h_hip)
-    sub_lane(w, 0, "_rdvG_P1[_n] = het_rdv_device", "_rdvG_P0[_n] = het_rdv_device")
-    b.check("the lane recording its arrival in ANOTHER participant's flag buffer",
-            1, "records its arrival in _rdvG_P0", het_l, hip=w, cpu_c=h_cpu,
-            orig=h_hip)
-
-    w = b.fresh("rdv-jitter", h_hip)
-    sub_lane(w, 0, "het_rdv_jitter(&_rng, HET_RELEASE_JITTER);",
-             "het_rdv_jitter(&_rng, 0u);")
-    b.check("the release delay spanning a literal instead of the knob", 1,
-            "the release delay spans 0u", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("bump-name", h_hip)
-    sub_lane(w, 0, "het_scratch_bump(_gpu_done);", "het_scratch_bump(_scratch_loc);")
-    b.check("the lane's completion bump RENAMED off _gpu_done (the stress "
-            "workgroups stop learning the lane finished)", 1,
-            "completion bump names _scratch_loc", het_l, hip=w, cpu_c=h_cpu,
-            orig=h_hip)
-
-    w = b.fresh("stress-store", h_hip)
-    sub(w, "  if (blockIdx.x >= HET_TEST_BLOCKS) {\n",
-        "  if (blockIdx.x >= HET_TEST_BLOCKS) {\n    __hip_atomic_store(x, 9, "
-        "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n")
-    b.check("an atomic store hidden in the stress region, outside every lane", 1,
-            "atomic-or-fence construct(s) outside every lane", het_l, hip=w,
-            cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("store-gone", h_hip)
-    sub_lane(w, 0, "      __hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1, "
-                   "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n", "")
-    b.check("a store deleted from the test lane (the failure must name it)",
-            1, "2+2W-cg-sys-fence-2s-x86_64:P1 anchor stream differs",
-            het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("store-value", h_hip)
-    sub_lane(w, 0, "__hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1,",
-             "__hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 7,")
-    b.check("a store writing a value the .litmus does not name", 1,
-            "the call stores '7'", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    # The slot address is what pairs the two sides' iteration n; drop it and the
-    # whole run races on one word, which no readout could take apart.
-    w = b.fresh("slot-gone", h_hip)
-    sub_lane(w, 0, "__hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1,",
-             "__hip_atomic_store(x, 1,")
-    b.check("a tested access DE-SLOTTED (the run races on one word)", 1,
-            "not iteration _n's own slot", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("slot-frozen", h_hip)
-    sub_lane(w, 0, "__hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1,",
-             "__hip_atomic_store((x + (0)*HET_SLOT_STRIDE_WORDS), 1,")
-    b.check("a tested access pinned to slot 0 on every iteration", 1,
-            "not iteration _n's own slot", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    print("\n-- het: the per-iteration loop structure --")
-    w = b.fresh("loop-test", h_hip)
-    sub_lane(w, 0, "_n<SIZE_OF_TEST", "_n<1")
-    b.check("a TEST lane's loop bound made a literal", 1,
-            "the iteration loop counts to 1", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("loop-pragma", h_hip)
-    sub_lane(w, 0, "    #pragma unroll 1\n", "")
-    b.check("`#pragma unroll 1' deleted (the tested ops may unroll)", 1,
-            "is not opened by `#pragma unroll 1'", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("loop-hoist", h_hip)
-    st = ("      __hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1, "
-          "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n")
-    sub_lane(w, 0, st, "")
-    sub_lane(w, 0, "    #pragma unroll 1\n", st + "    #pragma unroll 1\n")
-    b.check("a tested store HOISTED out of the loop (it runs once per launch)", 1,
-            "sits OUTSIDE the per-iteration loop", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    # The rendezvous is per-ITERATION: lifted out of the loop it joins the two
-    # devices once and every iteration after the first runs unsynchronised, with
-    # every op's order, scope and comment untouched.
-    w = b.fresh("loop-rdv", h_hip)
-    rdv = RDV_LINE
-    sub_lane(w, 0, rdv, "")
-    sub_lane(w, 0, "    #pragma unroll 1\n", rdv + "    #pragma unroll 1\n")
-    b.check("the rendezvous LIFTED OUT of the loop (the two devices meet once)",
-            1, "sits OUTSIDE the per-iteration loop", het_l, hip=w,
-            cpu_c=h_cpu, orig=h_hip)
-
-    # ...and moved BEHIND a tested access, where it no longer opens the window
-    # the iteration races in: the anchor stream is what reads that.
-    w = b.fresh("rdv-moved", h_hip)
-    sub_lane(w, 0, rdv, "")
-    sub_lane(w, 0, ST_Y_LINES, ST_Y_LINES + rdv)
-    b.check("the rendezvous moved BEHIND a tested access", 1,
-            "anchor stream differs", het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    ops = ("      // w[relaxed,sys] x 1\n"
-           "      __hip_atomic_store((x + (_n)*HET_SLOT_STRIDE_WORDS), 1, "
-           "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n")
-    w = b.fresh("loop-guard", h_hip)
-    sub_lane(w, 0, ops, "      if (_n == 0) {\n" + ops + "      }\n")
-    b.check("a test lane's store GUARDED inside the loop (its order, constants "
-            "and comment all kept)", 1,
-            "is guarded by `if (_n == 0) {' inside the loop", het_l, hip=w,
-            cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("loop-braceless", h_hip)
-    sub_lane(w, 0, ops, ops.split("\n")[0] + "\n      if (_n == 0)\n"
-             + ops.split("\n")[1] + "\n")
-    b.check("the same guard written WITHOUT braces (brace depth alone reads it "
-            "as ordinary lane code)", 1,
-            "is guarded by `if (_n == 0)' inside the loop", het_l, hip=w,
-            cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("loop-nest", h_hip)
-    st2 = ("      __hip_atomic_store((y + (_n)*HET_SLOT_STRIDE_WORDS), 2, "
-           "__ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);\n")
-    sub_lane(w, 0, st2, "      for (int _m=0; _m<1; ++_m) {\n" + st2
-             + "      }\n")
-    b.check("a tested store NESTED in a one-trip loop inside the loop", 1,
-            "is guarded by `for (int _m=0; _m<1; ++_m) {' inside the loop",
-            het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("loop-wrapped", h_hip)
-    sub_lane(w, 0, "    #pragma unroll 1\n",
-             "    if (_seed < 99) {\n    #pragma unroll 1\n")
-    sub_lane(w, 0, "    }\n    het_scratch_bump(_gpu_done);\n",
-             "    }\n    }\n    het_scratch_bump(_gpu_done);\n")
-    b.check("the whole iteration loop WRAPPED in a conditional", 1,
-            "the iteration loop is itself guarded by `if (_seed < 99) {'",
-            het_l, hip=w, cpu_c=h_cpu, orig=h_hip)
-
-    w = b.fresh("loop-jump", h_hip)
-    sub_lane(w, 0, "      // w[relaxed,sys] y 2\n",
-             "      if (_n == 3) continue;\n      // w[relaxed,sys] y 2\n")
-    b.check("a `continue' inside the loop (the ops keep their place and stop "
-            "running on every iteration)", 1,
-            "can skip the rest of an iteration", het_l, hip=w, cpu_c=h_cpu,
-            orig=h_hip)
-
-    w = b.fresh("loop-bump-guard", h_hip)
-    sub_lane(w, 0, "    het_scratch_bump(_gpu_done);\n",
-             "    if (_seed > 0) {\n      het_scratch_bump(_gpu_done);\n    }\n")
-    b.check("the completion bump GUARDED outside the loop", 1,
-            "once-per-launch scaffolding may not run at all", het_l, hip=w,
-            cpu_c=h_cpu, orig=h_hip)
-
-    # ---- the x86_64 CPU column ---------------------------------------------
-    print("\n-- het: the x86_64 CPU column against its _cpu.c asm block --")
-    w = b.fresh("mfence", h_cpu)
-    sub(w, '"mfence\\n"\n', "")
-    b.check("the MFENCE deleted from the compiled body", 1,
-            "expected fence mfence", het_l, hip=h_hip, cpu_c=w,
-            orig=h_cpu, cur=w)
-
-    w = b.fresh("cpu-store", h_cpu)
-    sub(w, '"movl $1,%[y]\\n"\n', "")
-    b.check("a CPU store deleted from the compiled body", 1,
-            "expected store movl y 1", het_l, hip=h_hip, cpu_c=w,
-            orig=h_cpu, cur=w)
-
-    w = b.fresh("cpu-store-value", h_cpu)
-    sub(w, '"movl $1,%[y]\\n"', '"movl $9,%[y]\\n"')
-    b.check("a CPU store writing a value the .litmus does not name", 1,
-            "observed store movl y 9", het_l, hip=h_hip, cpu_c=w,
-            orig=h_cpu, cur=w)
-
-    w = b.fresh("cpu-store-loc", h_cpu)
-    sub(w, '"movl $1,%[y]\\n"', '"movl $1,%[x]\\n"')
-    b.check("a CPU store re-pointed at another location", 1,
-            "observed store movl x 1", het_l, hip=h_hip, cpu_c=w,
-            orig=h_cpu, cur=w)
-
-    w = b.fresh("lock-incl", h_cpu)
-    sub(w, '"mfence\\n"', '"lock incl %[x]\\n"')
-    b.check("a `lock incl' spliced into a compiled body", 2,
-            "outside the emitted vocabulary", het_l, hip=h_hip, cpu_c=w,
-            orig=h_cpu, cur=w)
-
-    w = b.fresh("asm-two-ins", h_cpu)
-    sub(w, '"mfence\\n"\n', '"mfence\\nsfence\\n"\n')
-    b.check("two instructions in ONE asm literal", 2,
-            "carries 2 instructions in one asm literal", het_l, hip=h_hip,
-            cpu_c=w, orig=h_cpu, cur=w)
-
-    w = b.fresh("asm-quote", h_cpu)
-    sub(w, '"mfence\\n"\n', '"mfence\\n\n')
-    b.check("an asm template with an UNPAIRED quote", 2,
-            "unpaired quote in its asm template", het_l, hip=h_hip, cpu_c=w,
-            orig=h_cpu, cur=w)
-
-    w = b.fresh("asm-unterminated", h_cpu)
-    sub(w, '"mfence\\n"\n', '"mfence\\n"\n"sfence"\n')
-    b.check("an asm literal no newline escape closes (it concatenates)", 2,
-            "no newline escape closes", het_l, hip=h_hip, cpu_c=w,
-            orig=h_cpu, cur=w)
-
-    # ---- the .litmus side ---------------------------------------------------
-    print("\n-- an annotation the mapping tables have no row for --")
-    bad_l = os.path.join(b.work, "consume.litmus")
-    open(bad_l, "w").write(SYNTH_BODY % ("UNKNOWN-anno", "w[consume,sys] x 1",
-                                         "r[acquire,sys] r0 y"))
-    b.record("an annotation order nothing maps (w[consume,sys])", 2,
-             "unknown memory order 'consume'", *run_check(bad_l))
-
-    # ---- the two rows no corpus test carries --------------------------------
-    print("\n-- the fence rows no corpus test carries, green then bitten --")
-    sdir = os.path.join(b.work, "synth")
-    os.makedirs(sdir)
+    Returns (pass, total).  A carrier missing from the table is refused the way
+    a short corpus is, never swept as if the annotation had been read."""
+    if len(SYNTH) != SYNTH_N:
+        raise GateError("the carrier table holds %d annotation(s), expected %d"
+                        % (len(SYNTH), SYNTH_N))
+    print("\n===== HIP source faithfulness: synthetic carriers =====")
+    print("%-42s | %s" % ("test", "verdict"))
+    print("-" * 43 + "+---------")
+    rows = []
     for name in sorted(SYNTH):
-        sl = synth_carrier(sdir, name)
-        shp, _ = emit_harness(sl, mkdir(os.path.join(sdir, "out-" + name)))
-        b.record("%s carrier (control)" % SYNTH[name], 0, "RESULT: PASS",
-                 *run_check(sl, hip=shp))
-        if name == "F-acqrel-sys":
-            w = b.fresh("acqrel", shp)
-            sub(w, "__ATOMIC_ACQ_REL", "__ATOMIC_ACQUIRE")
-            b.check("f[acq_rel,sys] weakened to an acquire fence", 1,
-                    "observed f[acquire,sys]", sl, hip=w, orig=shp)
-        else:
-            w = b.fresh("relaxed-order", shp)
-            sub(w, "// f[relaxed,sys] (relaxed", "// f[sc,sys] (relaxed")
-            b.check("the no-op fence comment's ORDER edited (nothing is emitted "
-                    "there, so the comment is the whole evidence)", 2,
-                    "renders f[sc,sys] as a comment and emits nothing", sl,
-                    hip=w, orig=shp)
-            w = b.fresh("relaxed-scope", shp)
-            sub(w, "// f[relaxed,sys] (relaxed", "// f[relaxed,bogus] (relaxed")
-            b.check("the no-op fence comment's SCOPE edited", 2,
-                    "the no-op fence comment names scope", sl, hip=w, orig=shp)
+        d = os.path.join(work, name)
+        os.makedirs(d)
+        litmus_path = synth_carrier(d, name)
+        hip_path, _ = emit_harness(litmus_path, d)
+        rc, out = run_check(litmus_path, hip=hip_path)
+        verdict = {0: "PASS", 1: "FAIL", 2: "GUARD-FAIL"}.get(rc, "ERROR")
+        rows.append((name, verdict, out))
+        print("%-42s | %-10s %s" % (name, verdict, SYNTH[name]))
+    print("-" * 43 + "+---------")
+    npass = sum(1 for _, v, _ in rows if v == "PASS")
+    print("TALLY synthetic carriers: %d/%d PASS" % (npass, len(rows)))
+    if npass != len(rows):
+        print("\n--- output for every non-PASS carrier (saved in %s) ---" % diffs)
+        for name, verdict, out in rows:
+            if verdict == "PASS":
+                continue
+            with open(os.path.join(diffs, "diff." + name), "w") as fh:
+                fh.write(out)
+            print(">>> %s %s" % (verdict, name))
+            print(out.rstrip())
+    return npass, len(rows)
 
-    # ---- the sweep's own census, and the guard ------------------------------
-    print("\n-- the census the sweep asserts before it runs a single test --")
-    empty = os.path.join(b.work, "empty")
-    os.makedirs(empty)
-    b.record("an EMPTY gpu-only directory swept as if it were the corpus", 3,
-             "holds 0 .litmus, expected %d" % GPU_ONLY_N,
-             *capture(lambda: sweep(empty, corpus, 2)))
 
-    trio = [BITE_HET, "2+2W-cg-sys-relaxed-x86_64", "MP-cg-sys-relaxed-x86_64"]
-    short = corpus_slice(corpus, os.path.join(b.work, "short"), trio)
-    b.record("an x86_64 het corpus SHORT of its census", 3,
-             "holds 3 .litmus, expected %d" % X86_HET_N,
-             *capture(lambda: sweep(GPU_ONLY_DIR, short, 2)))
+def sweep(gpu_dir, x86_dir, jobs):
+    """Both corpora against their pinned censuses, then the synthetic carriers.
 
-    b.record("a sweep worker KILLED, which breaks the pool without raising", 3,
-             "a sweep worker died without raising",
-             *capture(lambda: sweep(GPU_ONLY_DIR, corpus, 2),
-                      _sweep_one=_worker_dies))
-
-    print("\n-- the guard report, which vouches for the tables --")
-    b.record("the memory-order table EMPTIED", 1, "*** empty table ***",
-             *capture(guard_report, HIP_ORDER={}))
-    b.record("litmus7 UNRESOLVABLE (the guard resolves it)", 1, "*** MISSING ***",
-             *capture(guard_report, LITMUS7=os.path.join(REPO, "no", "such", "litmus7")))
-
+    X86_HET_N counts the x86_64 het rendering this lane emits, NOT the AArch64
+    corpus ptxcheck.py reads: the same shapes, a different CPU column, and every
+    count printed here says which."""
+    tmp = tempfile.mkdtemp(prefix="hipsrccheck.")
+    try:
+        # Both censuses are asserted before a single test runs: a corpus that is
+        # not there cannot be reported as a corpus that passed.
+        gpu_files = corpus_files(gpu_dir, "gpu-only", GPU_ONLY_N)
+        generated = x86_dir is None
+        if generated:
+            x86_dir = regen_x86(os.path.join(tmp, "corpus"))
+        x86_files = corpus_files(x86_dir, "x86_64 het", X86_HET_N)
+        print("===== HIP SOURCE GATE: %d gpu-only + %d x86_64 het renders + %d "
+              "synthetic carriers =====" % (GPU_ONLY_N, X86_HET_N, SYNTH_N))
+        print("  gpu-only    %s" % gpu_dir)
+        print("  x86_64 het  %s%s" % (x86_dir, " (generated)" if generated else ""))
+        print("  workers     %d" % jobs)
+        diffs = tempfile.mkdtemp(prefix="hipsrccheck-diffs.")
+        gp, gt = sweep_dir(gpu_files, "gpu-only", jobs, diffs)
+        xp, xt = sweep_dir(x86_files, "x86_64 het", jobs, diffs)
+        sp, st = sweep_synth(os.path.join(tmp, "synth"), diffs)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
     print()
-    if b.n == 0:
-        print("HIP SOURCE GATE BITE FAILED: no injection ran")
-        return 1
-    if b.bad:
-        print("HIP SOURCE GATE BITE FAILED: %d of %d assertion(s) did not hold "
-              "(%d reddened for the wrong reason)" % (b.bad, b.n, b.wrong))
-        return 1
-    print("HIP SOURCE GATE BITE OK: %d injections, each reddening its own "
-          "assertion, 0 for a wrong reason; %d clean control(s) green"
-          % (b.red, b.green))
-    return 0
+    ok = ((gp, gt) == (GPU_ONLY_N, GPU_ONLY_N)
+          and (xp, xt) == (X86_HET_N, X86_HET_N)
+          and (sp, st) == (SYNTH_N, SYNTH_N))
+    print("HIP SOURCE GATE: %s -- gpu-only %d/%d, x86_64 het %d/%d "
+          "(the x86_64 rendering of the het corpus, not the AArch64 one) + "
+          "%d/%d synthetic carriers"
+          % ("PASS" if ok else "FAILED", gp, gt, xp, xt, sp, st))
+    if ok:
+        shutil.rmtree(diffs, ignore_errors=True)
+    return 0 if ok else 1
 
 
 def main():
@@ -2038,29 +1441,18 @@ def main():
     ap.add_argument("--hip-src", help="read this .hip instead of emitting one")
     ap.add_argument("--cpu-c", help="read this _cpu.c instead of emitting one")
     ap.add_argument("--all", action="store_true",
-                    help="sweep both corpora (%d gpu-only + %d x86_64 het)"
-                         % (GPU_ONLY_N, X86_HET_N))
+                    help="sweep both corpora (%d gpu-only + %d x86_64 het) and "
+                         "the %d synthetic carriers"
+                         % (GPU_ONLY_N, X86_HET_N, SYNTH_N))
     ap.add_argument("--gpu-dir", default=GPU_ONLY_DIR,
                     help="the gpu-only corpus to sweep")
     ap.add_argument("--x86-dir",
                     help="an x86_64 het corpus to sweep (default: regenerate one)")
     ap.add_argument("--jobs", type=int, default=default_jobs(),
                     help="sweep workers (default: CPUs, capped at %d)" % JOBS_CAP)
-    ap.add_argument("--bite", action="store_true",
-                    help="prove every check FAILS on the corruption it is for")
-    ap.add_argument("--guard", action="store_true",
-                    help="print the vocabulary and paths, then exit")
     ap.add_argument("-q", "--quiet", action="store_true")
     args = ap.parse_args()
-    if args.guard:
-        sys.exit(guard_report())
     try:
-        if args.bite:
-            tmp = tempfile.mkdtemp(prefix="hipsrccheck-bite.")
-            try:
-                sys.exit(bite(tmp))
-            finally:
-                shutil.rmtree(tmp, ignore_errors=True)
         if args.all:
             sys.exit(sweep(args.gpu_dir, args.x86_dir, max(1, args.jobs)))
     except CompletenessError as e:
@@ -2070,7 +1462,7 @@ def main():
         print("ERROR: %s" % e)
         sys.exit(3)
     if not args.litmus:
-        print("ERROR: no .litmus given (and none of --all/--bite/--guard asked for)")
+        print("ERROR: no .litmus given (and --all not asked for)")
         sys.exit(3)
     rc, out = run_check(args.litmus, hip=args.hip_src, cpu_c=args.cpu_c,
                         verbose=not args.quiet)

@@ -1,9 +1,9 @@
 # Every hetlitmus make gate that runs without a GPU device: the base
 # umbrella (make hetlitmus-test) in one job, the four compile-only
 # toolchain gates in the other.  Only the second job installs nvcc and
-# hipcc; no job needs a device.  The three device-executing gates
-# (hetlitmus-stress, -selftest, -characterize-hw) probe for real
-# hardware and fail closed on a hosted runner; they run on a GPU box only
+# hipcc; no job needs a device.  The two device-executing gates
+# (hetlitmus-stress, -characterize-hw) probe for real hardware and fail
+# closed on a hosted runner; they run on a GPU box only
 # (hetlitmus/docs/TEST-PLAN.md).
 name: hetlitmus
 

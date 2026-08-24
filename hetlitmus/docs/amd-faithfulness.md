@@ -37,7 +37,10 @@ the failure surface in two, and only the first half is gated:
 
 The source gate sweeps all 644 renders — 173 gpu-only + 471 x86_64 het — because
 its defect class is per test: a right builtin in one render says nothing about
-the next.
+the next. It then sweeps two synthetic carriers, `F-acqrel-sys` (`f[acq_rel,sys]`)
+and `F-relaxed-sys` (`f[relaxed,sys]`): no corpus test carries either fence
+annotation, so they are the only renders through which `HipLang.ml`'s `acq_rel`
+row and its relaxed-fence arm are read.
 
 > Every count in this document names its corpus. The het half of the AMD lane is
 > the **x86_64** rendering that `hetlitmus/tests/het/generate-x86.sh` writes on
@@ -68,7 +71,7 @@ it. There are three comment shapes:
 |---|---|---|
 | leading `// w[o,s] <var> <value>` / `// r[o,s] <dst> <var>` | a store or a load | `// w[release,sys] x 1` |
 | trailing `// f[o,s]` on the call | an emitted fence | `__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, ""); // f[sc,sys]` |
-| `// f[relaxed,s] (relaxed fence = no-op; nothing emitted)` | a relaxed fence | nothing executable is emitted, so the comment is both the claim and the whole evidence — the gate accepts that form for `relaxed` and **for no other order** |
+| `// f[relaxed,s] (relaxed fence = no-op; nothing emitted)` | a relaxed fence | nothing executable is emitted, so the comment is both the claim and the whole evidence — the gate accepts that form for `relaxed` and **for no other order**; the converse, an executable `__builtin_amdgcn_fence` with a relaxed order, is a completeness hard-fail (exit 2), since `HipLang` never writes one and `hipcc` rejects it |
 
 On a het render it further asks, per lane:
 
@@ -121,34 +124,18 @@ that died).
 ### How to run
 
 ```
-# both corpora (173 gpu-only + 471 x86_64 het), per-test table + a TALLY per corpus
+# both corpora (173 gpu-only + 471 x86_64 het) + the 2 synthetic carriers; per-test table + a TALLY each
 python3 hetlitmus/verify/hipsrccheck.py --all [--jobs N] [--gpu-dir D] [--x86-dir D]
 
 # one test (emits the render itself), or a render already on disk
 python3 hetlitmus/verify/hipsrccheck.py hetlitmus/tests/gpu-only/MP-sys-fence.litmus
 python3 hetlitmus/verify/hipsrccheck.py TEST.litmus --hip-src F [--cpu-c F]
 
-# the vocabulary and the paths it resolves; an empty table or a missing path fails
-python3 hetlitmus/verify/hipsrccheck.py --guard
-
-# every check reddened on a fresh render
-python3 hetlitmus/verify/hipsrccheck.py --bite
 ```
 
-`make hetlitmus-hipsrc` runs `--all` then `--bite`. It is on the **base lane**
+`make hetlitmus-hipsrc` runs `--all`. It is on the **base lane**
 (`hetlitmus-test`): it emits with `litmus7` and reads text, so it needs neither
 `hipcc` nor a device.
-
-`--guard` prints both mapping tables, the three comment shapes, the x86_64
-operand shapes, the het lane anchors, the loop vocabulary, the device-helper
-whitelist, the two stray-construct vocabularies by region, and the exit
-contract. `--bite` emits two pristine renders — a gpu-only shape carrying both
-fences, both kinds of model op and two `__out` slots, and a het shape whose GPU
-test lane carries two stores across a fence and whose x86 CPU column carries an
-`MFENCE` between its stores — runs both clean, then
-makes each injection on a fresh copy. It defends itself three ways, each seen to
-fire: an injection whose anchor is absent hard-exits, one that changes no byte is
-a vacuous bite, and an assertion nothing prints is a wrong reason.
 
 ### What it does not prove
 
@@ -168,14 +155,12 @@ toolchain version.
 ```
 TALLY gpu-only: 173/173 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
 TALLY x86_64 het: 471/471 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
-HIP SOURCE GATE: PASS -- gpu-only 173/173, x86_64 het 471/471 (the x86_64
-  rendering of the het corpus, not the AArch64 one)
-HIP SOURCE GATE BITE OK: 56 injections, each reddening its own assertion,
-  0 for a wrong reason; 4 clean control(s) green
+TALLY synthetic carriers: 2/2 PASS
+HIP SOURCE GATE: PASS -- gpu-only 173/173, x86_64 het 471/471 (the x86_64 rendering of the het corpus, not the AArch64 one) + 2/2 synthetic carriers
 ```
 
-The sweep runs 12 workers; the bite makes 60 assertions — 56 injections, each
-reddening its own assertion, and 4 clean controls green first.
+The sweep runs up to 12 workers (`--jobs`; the default is the CPU count, capped
+at 12).
 
 ### Triage log
 
@@ -184,8 +169,7 @@ recorded on this branch has reported an emitter mismatch. There is therefore no
 red here that was an emitter finding, and none that had to be explained away.
 
 What *was* found, by reviewing the checker rather than by running it, were
-defects in the checker itself — each closed with an injection that reddens the
-repaired check:
+defects in the checker itself, each since repaired:
 
 * a comment-only fence arm took its order and its scope from the comment and
   never asserted the order was relaxed, so a render whose real fence had been
@@ -213,11 +197,11 @@ in one place and kept in the other.
   which says which builtin, order and scope the emitter wrote — never what the
   compiler lowered them to.
 * **The source gate's loop check is a source-level read**
-  (`hipsrccheck.py:935-948`). What it establishes is that a lane's ops sit
+  (`hipsrccheck.check_lane_loop`). What it establishes is that a lane's ops sit
   unguarded in the loop body with no jump able to skip them — not that they
   "run once per iteration", which no source-level read can establish.
 * **An unknown construct is exit 2; a known construct in the wrong place is exit
-  1** (`hipsrccheck.py:54`). Completeness and correctness are different verdicts
+  1** (the exit contract in `hipsrccheck.py`'s module docstring). Completeness and correctness are different verdicts
   on purpose: a gate that skipped what it did not recognize would be green on
   exactly the change that most needs a reader.
 
@@ -236,5 +220,5 @@ localizer wherever an ordered comparison already covers the same stream**, and
 both gates are written that way. An order-blind multiset test is strictly weaker
 than an ordered one, so on a green stream it can detect nothing — which is why
 `ptxcheck.py`'s per-proc `Counter` comparison runs only after the ordered check
-has failed (`ptxcheck.py:604-620`, `faithfulness.md` item 2) and so does the
-source gate's (`hipsrccheck.py:885-903`).
+has failed (`ptxcheck.check_gpu`'s post-failure localizer, `faithfulness.md` item 2)
+and so does the source gate's (`hipsrccheck.check_stream`).

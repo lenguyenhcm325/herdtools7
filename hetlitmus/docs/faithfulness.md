@@ -21,7 +21,8 @@ The AMD lane's twin of this document is
 assembly, so its one gate reads the emitted source rather than generated code
 (`hipsrccheck.py`, `make hetlitmus-hipsrc`, base lane), over its own 644
 renders — the 173 gpu-only plus the **x86_64** het 471, not the AArch64 471 read
-here. What `hipcc` lowers that source to is unverified.
+here — and two synthetic fence carriers. What `hipcc` lowers that source to is
+unverified.
 
 ## Why this is the right guard
 
@@ -148,7 +149,7 @@ For each test the checker builds the **expected profile** from the `.litmus` and
    observed stream by the expected per-proc op counts and comparing `Counter`s
    adds is the instance and proc a mismatch sits in, which a flat index diff
    cannot name — so it runs only after item 1 has failed, and only reports
-   (`ptxcheck.py:604-620`).
+   (`ptxcheck.check_gpu`'s post-failure localizer).
 3. **(het) rendezvous whitelist** — the system-scope rendezvous must span both
    devices and **order nothing**: every op `sys`-scoped (never narrowed), every
    op **relaxed**, **no fence anywhere in it**, and one arrival (`atom`/`red`)
@@ -182,11 +183,11 @@ be a model op, and a fence appearing inside the template is a finding by name.
 The mapping table **is** the guard. Building the expected profile looks up every
 order, scope, op-kind, and CPU mnemonic in the table; a token that is not a key
 raises `CompletenessError`, which **hard-fails the test with exit 2** — it is
-never skipped. `tokens.sh guard` enumerates every *distinct* annotation in the
-corpus, confirms each is `MAPPED`, and then feeds a deliberately-unknown
-annotation (`w[consume,sys]`) to show the hard-fail.
+never skipped. Inside `tokens.sh all` that exit is scored `GUARD-FAIL` by `run_one`
+and turns `run_dir`'s exit nonzero, so an unmapped token anywhere in the 644 fails
+the gate rather than being skipped.
 
-Distinct annotations in the corpus (all MAPPED):
+Distinct annotations in the corpus (every one a table key):
 
 ```
 GPU: w/r[relaxed,{cta,gpu,sys}]  w[release,{cta,gpu,sys}]  r[acquire,{cta,gpu,sys}]
@@ -202,14 +203,13 @@ JOBS=8 bash hetlitmus/verify/tokens.sh            # both
 JOBS=8 bash hetlitmus/verify/tokens.sh gpu-only   # 173
 JOBS=8 bash hetlitmus/verify/tokens.sh het        # 471
 
-# completeness-guard report (distinct annotations + unknown hard-fail)
-bash hetlitmus/verify/tokens.sh guard
-
-# weaken/strengthen self-test on a copied PTX
-bash hetlitmus/verify/tokens.sh selftest
-
 # a single test (full pipeline: emit -> nvcc --ptx -> check)
 python3 hetlitmus/verify/ptxcheck.py hetlitmus/tests/gpu-only/MP-sys-F.litmus
+
+# the one required rejection: a frozen corrupted PTX, no nvcc (pinned in
+# hetlitmus/tests/cram/ptx-negatives.t)
+python3 hetlitmus/verify/ptxcheck.py hetlitmus/tests/gpu-only/MP-sys-F.litmus \
+        --ptx hetlitmus/tests/cram/corrupt-strengthen.ptx
 ```
 
 `ptxcheck.py` exits **0 = PASS**, **1 = FAIL** (with an exact per-position diff),
@@ -224,12 +224,12 @@ TALLY gpu-only: 173/173 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
 TALLY het: 471/471 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
 ```
 
-* **Self-test:** a copied `MP-sys-F.ptx` mutated `st.release.sys`→`st.relaxed.sys`
-  (weakening) and `ld.relaxed.sys`→`ld.acquire.sys` (strengthening) each FAIL
-  with an exact `[idx] expected … observed …` diff (exit 1); the unmutated
-  control PASSes. Scope-narrowing (`.sys`→`.cta`) also FAILs.
-* **Completeness:** all 17 distinct GPU annotations + 6 CPU mnemonics MAPPED; an
-  unknown `w[consume,sys]` hard-fails (exit 2).
+* **Rejection:** the frozen `corrupt-strengthen.ptx` — `MP-sys-F` with its one
+  `ld.relaxed.sys` strengthened to `ld.acquire.sys` — fed through `--ptx` FAILs
+  (exit 1; without `-q`, with the exact `[idx] expected … observed …` diff),
+  pinned byte for byte in `hetlitmus/tests/cram/ptx-negatives.t`.
+* **Completeness:** the 17 distinct GPU annotations + 6 CPU mnemonics above are
+  all table keys; an annotation that is not raises `CompletenessError` (exit 2).
 
 ### Triage log (every FAIL accounted for)
 
@@ -268,9 +268,9 @@ faithful across the whole corpus.
   The other half of the static check is therefore **`hetlitmus/verify/stresscheck.py`**
   (`make hetlitmus-stress`), which counts scratchpad ops in the emitted PTX per
   lane class and asserts the count is *invariant* under `-DHET_*_PATTERN` — i.e.
-  that no stress configuration can silently switch it off. Bite-tested in
-  `tokens.sh selftest` section [7]. **A mechanism no gate can observe must be
-  assumed dead**: if you add scaffolding here, add the gate that watches it.
+  that no stress configuration can silently switch it off. **A mechanism no gate
+  can observe must be assumed dead**: if you add scaffolding here, add the gate
+  that watches it.
 
 ### What a compile-time access pattern costs
 
@@ -384,8 +384,3 @@ through, and a count of *all* `ldr` stays comfortably nonzero from the
 `a->scratch` / `a->idx` / `a->nidx` argument-struct loads alone. `MIN_ENEMY_STORES`
 = 4 for the same reason: the four sigma branches declare 2+1+1+0 scratchpad stores
 between them, and a non-volatile build lands well under that.
-
-Bite-tested in `tokens.sh selftest` section [8], which is why the checker takes
-`--harness-dir`: it re-emits from source on every normal run, so a negative control
-has nothing to land on unless it can be pointed at an already-emitted (mutated)
-harness dir.

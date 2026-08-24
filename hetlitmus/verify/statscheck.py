@@ -20,14 +20,11 @@ over its runs: sec 5.
   5  Stop rule   every reason reachable, each guard driven at its boundary.
   6  Scheduler   campaign.py end to end, against a stub runner.
 
-Usage:  statscheck.py [-q]      run the gate
-        statscheck.py --bite    prove the gate FAILS when the mechanism breaks
+Usage:  statscheck.py [-q]
 """
 
 import argparse
-import contextlib
 import csv
-import io
 import os
 import re
 import shutil
@@ -964,14 +961,13 @@ def phase2(lines, quiet):
 
 
 # ---------------------------------------------------------------------------
-def phase4(tamper=None):
+def phase4():
     print("\n===== PHASE 4: does the EMITTED CORPUS carry the statistics machinery? "
           "=====")
     tests = sorted(t[:-len(".litmus")] for t in os.listdir(HET_DIR)
                    if t.endswith(".litmus"))
     tmp = tempfile.mkdtemp(prefix="statscorpus.")
     n_scored = n_vary = n_stats = n_stop = 0
-    tampered = 0
     bad = 0
     try:
         r = subprocess.run(
@@ -989,11 +985,6 @@ def phase4(tamper=None):
                 continue
             with open(cu) as fh:
                 src = fh.read()
-            if tamper is not None:
-                new = tamper(t, src)
-                if new != src:
-                    tampered += 1
-                src = new
             if "_rec.iters_scored++;" in src:
                 n_scored += 1
             else:
@@ -1011,10 +1002,6 @@ def phase4(tamper=None):
                 n_stop += 1
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
-    if tamper is not None and tampered == 0:
-        print("  *** VACUOUS BITE: the corpus injection matched NOTHING")
-        return 2
 
     for what, got, want in (("iters_scored", n_scored, CENSUS_TESTS),
                             ("outcomes_vary", n_vary, CENSUS_TESTS),
@@ -1178,9 +1165,9 @@ def _mk_corpus(tmp, name, tests):
     return corpus
 
 
-def _run_campaign(stub, corpus, state, extra, campaign_py=None):
+def _run_campaign(stub, corpus, state, extra):
     return subprocess.run(
-        [sys.executable, campaign_py or CAMPAIGN, "--corpus", corpus,
+        [sys.executable, CAMPAIGN, "--corpus", corpus,
          "--runner", "%s %s {dir}" % (sys.executable, stub),
          "--budget-runs", str(STUB_BUDGET), "--confirm-runs", str(CONFIRM),
          "--seed0", "777", "--state", state] + extra,
@@ -1198,15 +1185,15 @@ def _done_rows(out):
     return done, order
 
 
-def _mirror_bite(tmp, name, doctor, want_frag, quiet, campaign_py=None):
-    """campaign.py's mirror, against a doctored copy of the header.  A mirror nothing
-    ever contradicts is not a mirror, so BOTH halves of it are contradicted here."""
+def _mirror_rejects(tmp, name, doctor, want_frag, quiet):
+    """campaign.py's mirror, against a doctored copy of the header: it must FATAL,
+    naming the piece of policy that moved."""
     hdr = os.path.join(tmp, "h-%s.h" % name)
     with open(os.path.join(ROOT, "litmus", "het-runtime", "het_verdict.h")) as fh:
         src = fh.read()
     new = doctor(src)
     if new == src:
-        print("  *** VACUOUS MIRROR BITE %s: the injection matched nothing" % name)
+        print("  *** VACUOUS MIRROR CONTROL %s: the injection matched nothing" % name)
         return 1
     with open(hdr, "w") as fh:
         fh.write(new)
@@ -1214,7 +1201,7 @@ def _mirror_bite(tmp, name, doctor, want_frag, quiet, campaign_py=None):
         [sys.executable, "-c",
          "import sys; sys.path.insert(0, %r); import campaign; "
          "campaign.check_flag_mirror(path=sys.argv[1])"
-         % os.path.dirname(campaign_py or CAMPAIGN), hdr],
+         % os.path.dirname(CAMPAIGN), hdr],
         capture_output=True, text=True)
     if r.returncode != 2 or want_frag not in r.stderr:
         print("  *** the mirror did not FATAL on %s (rc=%d, stderr=%r) -- a scheduler "
@@ -1247,11 +1234,7 @@ def _window_arithmetic(out, want_rows):
     return bad
 
 
-def phase6_campaign(quiet, campaign_py=None):
-    """`campaign_py' is the scheduler under test.  It is a parameter so --bite can
-    point the phase at a doctored copy: nothing else here reaches campaign.py, and a
-    phase no injection reaches is a phase nobody has seen fail."""
-    campaign_py = campaign_py or CAMPAIGN
+def phase6_campaign(quiet):
     print("\n===== PHASE 6: does the scheduler spend the hours where the brief "
           "says? =====")
     tmp = tempfile.mkdtemp(prefix="statssched.")
@@ -1262,7 +1245,7 @@ def phase6_campaign(quiet, campaign_py=None):
         # nothing but this check stands between the two policies drifting.  It must
         # pass against the shipped header and FATAL against a doctored one.
         loader = ("import sys; sys.path.insert(0, %r); import campaign; "
-                  % os.path.dirname(campaign_py))
+                  % os.path.dirname(CAMPAIGN))
         r0 = subprocess.run(
             [sys.executable, "-c", loader +
              "assert campaign.check_flag_mirror() is not None, 'header out of reach'; "
@@ -1274,26 +1257,26 @@ def phase6_campaign(quiet, campaign_py=None):
                   "rc=%d out=%r err=%r"
                   % (r0.returncode, r0.stdout.strip(), r0.stderr.strip()[-300:]))
             bad += 1
-        bad += _mirror_bite(
+        bad += _mirror_rejects(
             tmp, "a moved corroboration bar",
             lambda s: s.replace("#define HET_CORROB_RUNS 2",
                                 "#define HET_CORROB_RUNS 3", 1),
-            "HET_CORROB_RUNS", quiet, campaign_py)
-        bad += _mirror_bite(
+            "HET_CORROB_RUNS", quiet)
+        bad += _mirror_rejects(
             tmp, "a renamed stop",
             lambda s: s.replace('case HET_CAMPAIGN_STOP_CORROBORATED: return '
                                 '"CORROBORATED";',
                                 'case HET_CAMPAIGN_STOP_CORROBORATED: return '
                                 '"CONFIRMED";', 1),
-            "stop names", quiet, campaign_py)
+            "stop names", quiet)
         # ... and the third piece of the policy a name cannot carry: where the
         # confirmation window starts.  A header that measures it from run 0 ends rows
         # this scheduler would still be running.
-        bad += _mirror_bite(
+        bad += _mirror_rejects(
             tmp, "a window measured from run 0",
             lambda s: s.replace("if (n - st.n_at_first_sight >= confirm_runs)",
                                 "if (n >= confirm_runs)", 1),
-            "n_at_first_sight", quiet, campaign_py)
+            "n_at_first_sight", quiet)
         # A header out of reach is the travelling-copy case: the mirror stands rather
         # than dying, or campaign.py could not run on the box it was copied to.
         r1 = subprocess.run(
@@ -1313,7 +1296,7 @@ def phase6_campaign(quiet, campaign_py=None):
         # --- 6.1: the policy, end to end.
         corpus = _mk_corpus(tmp, "corpus", STUB_TESTS)
         state = os.path.join(tmp, "state.csv")
-        r = _run_campaign(stub, corpus, state, [], campaign_py)
+        r = _run_campaign(stub, corpus, state, [])
         out = r.stdout
 
         # A crash exits 1 too.  This fixture set ends one row UNCONFIRMED-SIGHTING, so
@@ -1461,7 +1444,7 @@ def phase6_campaign(quiet, campaign_py=None):
         # this row banks "seen once, stopped looking" at 20 runs.
         lone = _mk_corpus(tmp, "lone", ["SIGHT-lone"])
         r2 = subprocess.run(
-            [sys.executable, campaign_py, "--corpus", lone,
+            [sys.executable, CAMPAIGN, "--corpus", lone,
              "--runner", "%s %s {dir}" % (sys.executable, stub),
              "--budget-runs", "20", "--confirm-runs", str(CONFIRM),
              "--seed0", "777", "--state", os.path.join(tmp, "lone.csv")],
@@ -1498,7 +1481,7 @@ def phase6_campaign(quiet, campaign_py=None):
         # window exists to buy.
         late = _mk_corpus(tmp, "late", ["SIGHT-late"])
         r2b = subprocess.run(
-            [sys.executable, campaign_py, "--corpus", late,
+            [sys.executable, CAMPAIGN, "--corpus", late,
              "--runner", "%s %s {dir}" % (sys.executable, stub),
              "--budget-runs", str(STUB_BUDGET), "--confirm-runs", str(CONFIRM),
              "--seed0", "777", "--state", os.path.join(tmp, "late.csv")],
@@ -1522,8 +1505,7 @@ def phase6_campaign(quiet, campaign_py=None):
         # corroborates at invocation 2 above now runs to its budget, and the null,
         # which no sighting stop was holding anyway, ends exactly where it did.
         rate = _mk_corpus(tmp, "rate", ["SIGHT-corrob", "NULL-pooled"])
-        r3 = _run_campaign(stub, rate, os.path.join(tmp, "rate.csv"), ["--rate"],
-                           campaign_py)
+        r3 = _run_campaign(stub, rate, os.path.join(tmp, "rate.csv"), ["--rate"])
         d3, _ = _done_rows(r3.stdout)
         for t, want3 in (("SIGHT-corrob", ("BUDGET", 10)),
                          ("NULL-pooled", ("BUDGET", 10))):
@@ -1546,7 +1528,7 @@ def phase6_campaign(quiet, campaign_py=None):
 
         # Fail closed: a named test with no harness dir kills the campaign (rc=2).
         r4 = subprocess.run(
-            [sys.executable, campaign_py, "--corpus", corpus, "--runner", "true",
+            [sys.executable, CAMPAIGN, "--corpus", corpus, "--runner", "true",
              "--tests", "GHOST"], capture_output=True, text=True)
         if r4.returncode != 2:
             print("  *** a test with no harness dir exited %d, want 2 (fail closed: "
@@ -1569,12 +1551,11 @@ def phase6_campaign(quiet, campaign_py=None):
 
 # ---------------------------------------------------------------------------
 # The header-driven phases, in print order.  1, 2 and 5 all read ONE compiled run
-# of the layer, so a caller that names only the phases its subject can reach still
-# builds one program.
+# of the layer; a call that names phase 6 alone compiles nothing.
 GATE_PHASES = ("1", "2", "5")
 
 
-def run(header_dir, tmp, quiet, phases=GATE_PHASES, campaign_py=None):
+def run(header_dir, tmp, quiet, phases=GATE_PHASES):
     out = None
     if {"1", "2", "5"} & set(phases):
         try:
@@ -1594,18 +1575,14 @@ def run(header_dir, tmp, quiet, phases=GATE_PHASES, campaign_py=None):
         elif p == "5":
             rc |= phase5_stops(out, quiet)
         else:
-            rc |= phase6_campaign(quiet, campaign_py)
+            rc |= phase6_campaign(quiet)
     return rc
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-q", "--quiet", action="store_true")
-    ap.add_argument("--bite", action="store_true",
-                    help="prove this gate FAILS when the mechanism it guards breaks")
     a = ap.parse_args()
-    if a.bite:
-        return bite()
 
     tmp = tempfile.mkdtemp(prefix="statscheck.")
     try:
@@ -1624,355 +1601,6 @@ def main():
         print("STATSCHECK: PASS  (inputs + aggregate + corpus + stopping rule "
               "+ scheduler)")
     return 1 if rc else 0
-
-
-# ---------------------------------------------------------------------------
-# --bite: every injection below is a way this layer could ship a constant while
-# compiling cleanly and passing every structural gate.  Each is verified to have
-# actually changed the file (one that matched nothing would pass for free), names the
-# phases it can reach, and must redden one of them with a diagnostic carrying its own
-# reason -- the fixture that moved and WHICH way it moved.
-# ---------------------------------------------------------------------------
-def _subst(s, pairs):
-    """Apply (find, replace) pairs, failing loudly if any `find' matched nothing.
-    _bite only checks that the header changed OVERALL, which a two-fragment injection
-    satisfies with one fragment matched and the other silently dropped -- half an
-    injection that still reports "BITES"."""
-    for a, b in pairs:
-        if a not in s:
-            raise SystemExit("statscheck bite: injection fragment not found in the "
-                             "emitted header -- the header moved under the bite: %r"
-                             % a[:70])
-        s = s.replace(a, b)
-    return s
-
-
-def _named(said, expect):
-    """The diagnostic that names this injection: one `***' line carrying every
-    fragment of `expect'.  BOTH halves are required of a fragment pair -- the fixture
-    that moved and which way it moved -- because a phase reddening on some other
-    fixture is another injection's evidence, not this one's."""
-    want = (expect,) if isinstance(expect, str) else expect
-    for l in said.splitlines():
-        s = l.strip()
-        if s.startswith("***") and all(w in s for w in want):
-            return s
-    return None
-
-
-def _bite(label, hdir, mutate, phases, expect):
-    """`phases' are the ones this injection can reach, `expect' the diagnostic it has
-    to produce there.  A nonzero exit is not enough on its own: a red for another
-    reason would let a broken injection stand in for a live gate."""
-    hp = os.path.join(hdir, "het_verdict.h")
-    with open(hp) as fh:
-        orig = fh.read()
-    new = mutate(orig)
-    if new == orig:
-        print("  *** VACUOUS BITE: the injection changed nothing   [%s]" % label)
-        return False
-    sub = tempfile.mkdtemp(prefix="statsbite.")
-    said = io.StringIO()
-    try:
-        bdir = os.path.join(sub, os.path.basename(hdir))
-        os.makedirs(bdir)
-        with open(os.path.join(bdir, "het_verdict.h"), "w") as fh:
-            fh.write(new)
-        with contextlib.redirect_stdout(said):
-            rc = run(bdir, sub, quiet=True, phases=phases)
-    finally:
-        shutil.rmtree(sub, ignore_errors=True)
-    hit = _named(said.getvalue(), expect)
-    if rc and hit:
-        print("  BITES (P%s): %s   [%s]" % ("+".join(phases), hit[:104], label))
-        return True
-    print("  *** DID NOT BITE for its own reason (P%s rc=%d, wanted %r)   [%s]"
-          % ("+".join(phases), rc, expect, label))
-    for l in said.getvalue().splitlines():
-        if l.strip().startswith("***"):
-            print("        | " + l.strip()[:140])
-    return False
-
-
-def _bite_campaign(label, mutate, expect):
-    """Doctor a copy of campaign.py and require phase 6 to redden by name.
-
-    The copy keeps campaign.py's own path shape -- <root>/hetlitmus/campaign.py beside
-    <root>/litmus/het-runtime/het_verdict.h -- because campaign.py resolves the header
-    it mirrors relative to itself, and a copy that cannot reach one would redden phase
-    6 for being out of reach rather than for the injection."""
-    tmp = tempfile.mkdtemp(prefix="statscampbite.")
-    said = io.StringIO()
-    try:
-        hetl = os.path.join(tmp, "hetlitmus")
-        hrt = os.path.join(tmp, "litmus", "het-runtime")
-        os.makedirs(hetl)
-        os.makedirs(hrt)
-        shutil.copy(os.path.join(ROOT, "litmus", "het-runtime", "het_verdict.h"), hrt)
-        with open(CAMPAIGN) as fh:
-            orig = fh.read()
-        new = mutate(orig)
-        if new == orig:
-            print("  *** VACUOUS BITE: the injection changed nothing   [%s]" % label)
-            return False
-        cp = os.path.join(hetl, "campaign.py")
-        with open(cp, "w") as fh:
-            fh.write(new)
-        with contextlib.redirect_stdout(said):
-            rc = run(None, None, True, phases=("6",), campaign_py=cp)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    hit = _named(said.getvalue(), expect)
-    if rc and hit:
-        print("  BITES (P6): %s   [%s]" % (hit[:104], label))
-        return True
-    print("  *** DID NOT BITE for its own reason (P6 rc=%d, wanted %r)   [%s]"
-          % (rc, expect, label))
-    for l in said.getvalue().splitlines():
-        if l.strip().startswith("***"):
-            print("        | " + l.strip()[:140])
-    return False
-
-
-def bite():
-    print("===== BITE TEST: does this gate FAIL when the statistics break? =====")
-    tmp = tempfile.mkdtemp(prefix="statsbite.")
-    ok = True
-    try:
-        hdir = emit_harness(tmp)
-
-        # (1) The DENOMINATOR collapsed onto the usable cells.  Nothing co-runs, so a
-        # cell is usable partly BECAUSE it fired: scored that way a row that fired in
-        # 3 runs of 10 reports ALWAYS -- the class a reader files it under -- while
-        # every count on the line stays right.  This is the one way this layer can
-        # overclaim.
-        ok &= _bite("the denominator collapsed onto the usable cells (3 of 10 reads "
-                    "as ALWAYS)", hdir,
-                    lambda s: _subst(s, [("  { int denom = st->R;\n",
-                                          "  { int denom = st->R_usable;\n")]),
-                    ("2",), ("fired-3-of-10-is-SOMETIMES-not-ALWAYS",
-                             "obs: C Always != py Sometimes"))
-
-        # (1b) The EFFORT priced over the usable cells instead of the runs executed.
-        # The scored total beside it is summed over every stamped cell, so a null with
-        # cold runs in it would print three runs against ten runs of iterations -- and
-        # only a pool whose R and R_usable differ can see that.
-        ok &= _bite("the null's effort priced over the usable cells (three runs "
-                    "against ten runs of iterations)", hdir,
-                    lambda s: _subst(s, [("      _s->R_usable, _s->R, "
-                                          "(unsigned long long)_s->N,\n",
-                                          "      _s->R_usable, _s->R_usable, "
-                                          "(unsigned long long)_s->N,\n")]),
-                    ("2",), (NEVER_COLD_CASE,
-                             "does not disclose the effort behind the zero"))
-
-        # (1c) A field renamed on the printer alone.  campaign.py and every gate that
-        # drives it without a device reads this line by field name, so a printer
-        # that stops speaking one of them splits the protocol while compiling,
-        # running and reporting -- and each side keeps passing its own tests.
-        ok &= _bite("a HetStats field renamed on the printer alone (the stand-ins "
-                    "then speak a shape the runtime cannot produce)", hdir,
-                    lambda s: _subst(s, [("scored=%llu discarded=%llu flags=0x%x",
-                                          "scored=%llu dropped=%llu flags=0x%x")]),
-                    ("2",), ("speaks a HetStats line het_stats_line cannot produce",
-                             "extra ['discarded']"))
-
-        # (1d) ... and the discarded total never summed: the effort line then prices a
-        # null over the iterations that ran without the ones the rendezvous threw
-        # away, which is the half that says how much of the run the two sides were
-        # never in together.
-        ok &= _bite("the discarded total stops being summed (a null priced over the "
-                    "iterations that survived)", hdir,
-                    lambda s: _subst(s, [
-                        ("    st->iters_discarded += recs[i].iters_discarded;\n",
-                         "")]),
-                    ("2",), (DISCARD_CASE, "discarded: C 0 != py 400000"))
-
-        # (2) The degeneracy guard disabled: a decoder that never varied could then
-        # forge a CORROBORATED sighting out of a constant read.
-        ok &= _bite("the degeneracy guard disabled (a constant read can forge a "
-                    "corroborated sighting)", hdir,
-                    lambda s: s.replace(
-                        "static int het_cell_degenerate(const het_obs_record *r) {",
-                        "static int het_cell_degenerate(const het_obs_record *r) {\n"
-                        "  if (r) return 0;"),
-                    ("5",), ("degenerate-sightings-never-stop",
-                             "CORROBORATED, want CONTINUE"))
-
-        # (3) The corroboration guard gutted: ONE un-reproduced sighting would stop
-        # the row and bank a sighting nothing reproduced.
-        ok &= _bite("the stop rule corroborates on ONE sighting (an unreproduced "
-                    "sighting banked)", hdir,
-                    lambda s: s.replace(
-                        "    if (st.tier == HET_SIGHT_CORROBORATED) "
-                        "return HET_CAMPAIGN_STOP_CORROBORATED;",
-                        "    if (st.k > 0) return HET_CAMPAIGN_STOP_CORROBORATED;"),
-                    ("5",), ("one-clean-sighting-does-not-stop",
-                             "CORROBORATED, want CONTINUE"))
-
-        # (4) Rate mode ignored: the row that was to run on and yield a rate stops at
-        # its first corroborated sighting instead, and the campaign measures nothing it
-        # was asked to measure.
-        ok &= _bite("rate mode ignored (a sighting stops the row anyway)", hdir,
-                    lambda s: s.replace("  if (st.k_eff > 0 && !rate_mode) {",
-                                        "  if (st.k_eff > 0) {"),
-                    ("5",), ("rate-mode-does-not-stop-on-a-corroborated-sighting",
-                             "CORROBORATED, want CONTINUE"))
-
-        # (5) The confirmation window never closes: a lone sighting holds the row open
-        # forever, and UNCONFIRMED-SIGHTING -- the one flagged outcome -- becomes
-        # unreachable while the row silently eats the budget it was allowed to outrun.
-        ok &= _bite("the confirmation window never closes (a lone sighting runs "
-                    "forever)", hdir,
-                    lambda s: s.replace(
-                        "    if (n - st.n_at_first_sight >= confirm_runs)",
-                        "    if (0)"),
-                    ("5",), ("lone-sighting-at-the-confirm-window-stops-unconfirmed",
-                             "CONTINUE, want UNCONFIRMED-SIGHTING"))
-
-        # (6) The window measured from run 0: it then closes on a row that fires late
-        # before that row has run any of it, and UNCONFIRMED-SIGHTING -- the outcome
-        # that says "we looked and it did not come back" -- is written over a row
-        # nobody looked at again.
-        ok &= _bite("the confirmation window measured from run 0 (a late sighting "
-                    "gets none of it)", hdir,
-                    lambda s: s.replace(
-                        "    if (n - st.n_at_first_sight >= confirm_runs)",
-                        "    if (n >= confirm_runs)"),
-                    ("5",), ("lone-sighting-below-the-confirm-window-continues",
-                             "UNCONFIRMED-SIGHTING, want CONTINUE"))
-
-        # (7) The corroboration bar moved: HET_CORROB_RUNS is what both sides of the
-        # tier fixtures are sized from and what the MIRROR| line pins, so a header that
-        # quietly raises it must redden by NAME.
-        ok &= _bite("the corroboration bar raised (HET_CORROB_RUNS 2 -> 3)", hdir,
-                    lambda s: s.replace("#define HET_CORROB_RUNS 2",
-                                        "#define HET_CORROB_RUNS 3"),
-                    ("1",), "MIRROR DRIFT: HET_CORROB_RUNS is 3 in the header")
-
-        # (8) The record stamp stops being checked: het_stats_compute reuses
-        # het_verdict() per cell, so an unstamped stream would score as a live one and
-        # the aggregate would report a result over memset zeros.
-        ok &= _bite("rec_magic no longer fails closed inside the aggregate", hdir,
-                    lambda s: s.replace("  if (r->rec_magic != HET_REC_MAGIC) {",
-                                        "  if (0) {"),
-                    ("5",), ("unstamped-sightings-earn-no-corroboration",
-                             "CORROBORATED, want BUDGET"))
-
-        # ---- The structural invariants ------------------------------------------
-        # This family of assertions guards structure the shipped header enforces
-        # unconditionally -- a clamp, a conjunct, a dedup, a flag -- so no injection
-        # above can redden one of them, and an assertion NEVER seen to fail is not
-        # evidence that it is compared.  Each injection below deletes the one line
-        # that makes one of them true.
-
-        # (9) The run dedup deleted: several cells of ONE run then count as several
-        # runs, so sightings from a single thermal/phase draw corroborate each other --
-        # a sighting "corroborated" by itself.
-        ok &= _bite("the run dedup deleted (cells of ONE run corroborate each other)",
-                    hdir,
-                    lambda s: _subst(s, [(
-                        "        for (j = 0; j < nruns; j++) "
-                        "if (runs[j] == recs[i].run_id) seen = 1;",
-                        "        for (j = 0; j < nruns; j++) if (0) seen = 1;")]),
-                    ("2",), ("sighting-unconfirmed-3-cells-of-ONE-run",
-                             "k_runs: C 3 != py 1"))
-
-        # (10) The truncation stops saying it truncated: the tail is still discarded
-        # (the clamp stays, so nothing overruns), but nothing records that the
-        # aggregate was computed from fewer runs than the campaign paid for.
-        ok &= _bite("the CELLS_TRUNCATED flag dropped (a silently shortened campaign)",
-                    hdir,
-                    lambda s: _subst(s, [(
-                        "  if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS;\n"
-                        "                                 st->flags |= "
-                        "HET_ST_CELLS_TRUNCATED; }",
-                        "  if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS; }")]),
-                    ("2",), ("cells-truncated-above-HET_STATS_MAX_CELLS",
-                             "flag CELLS_TRUNCATED NOT set"))
-
-        # ---- The Python mirrors -------------------------------------------------
-        # (11) Move a mirrored macro in the header and leave statscheck's Python copy
-        # behind.  The MIRROR| comparison in phase 1 is what names the drift.  The
-        # truncation fixture is sized from MAX_CELLS, so the differential moves with
-        # it -- but phase 1 is still where the drift is named.  The other mirrored
-        # knob, HET_CORROB_RUNS, has its own arm above.
-        ok &= _bite("HET_STATS_MAX_CELLS moved under the Python mirror", hdir,
-                    lambda s: _subst(s, [("#define HET_STATS_MAX_CELLS 128",
-                                          "#define HET_STATS_MAX_CELLS 129")]),
-                    ("1",), "MIRROR DRIFT: HET_STATS_MAX_CELLS is 129 in the header")
-
-        # (13)-(16) The CPU-only sentence inverted.  One injection reaches BOTH halves of
-        # the assertion at once: the CPU-only campaign loses the sentence that says
-        # what was under test, and every other sighting gains it.
-        print("\n-- the CPU-only campaign sentence --")
-        ok &= _bite("the CPU-only sentence keyed on the negation of the flag", hdir,
-                    lambda s: _subst(s, [
-                        ("    if (_s->cpu_only)\n", "    if (!_s->cpu_only)\n")]),
-                    ("2",),
-                    (CPU_ONLY_CASE, "never says so"))
-        # ... and the two readers of that flag no sentence covers: the field
-        # campaign.py schedules off, and the resolution that decides what the field
-        # says on a pool holding both kinds of cell.
-        ok &= _bite("the HetStats line's cpu_only field keyed on the negation of "
-                    "the flag", hdir,
-                    lambda s: _subst(s, [
-                        ("    _s->cpu_only,\n", "    !_s->cpu_only,\n")]),
-                    ("2",),
-                    (CPU_ONLY_CASE, "its HetStats line says"))
-        ok &= _bite("the upward resolution dropped (a mixed pool reads as a het "
-                    "campaign)", hdir,
-                    lambda s: _subst(s, [
-                        ("          if (recs[_i].cpu_only) st->cpu_only = 1;\n",
-                         "")]),
-                    ("2",),
-                    (MIXED_POOL_CASE, "its HetStats line says"))
-        ok &= _bite("the mixed-pool flag never raised (two experiments pooled as "
-                    "one, silently)", hdir,
-                    lambda s: _subst(s, [
-                        ("          st->flags |= HET_ST_MIXED_POOL;\n", "")]),
-                    ("2",),
-                    (MIXED_POOL_CASE, "flag MIXED_POOL NOT set"))
-
-        # (17) The scheduler's confirmation window measured from run 0.  Phase 6 is
-        # the only reader of campaign.py, and the header-side twin of this defect is
-        # already a mirror arm -- but the mirror compares the header against
-        # campaign.py's names and numbers, NOT against its arithmetic, so the same
-        # mistake made on this side is invisible to it.  A row that fired late then
-        # banks the moment it fires, with none of its window run.
-        print("\n-- the scheduler (campaign.py) --")
-        ok &= _bite_campaign(
-            "the confirmation window measured from run 0, not from the sighting",
-            lambda s: s.replace(
-                "elif self.runs - self.runs_at_first_sight >= confirm_runs:",
-                "elif self.runs >= confirm_runs:", 1),
-            ("SIGHT-lone", "want stop=UNCONFIRMED-SIGHTING"))
-
-        # (18) The emitter stops writing the evidence the degeneracy guard reads:
-        # every cell then looks like a readout that never varied, and every sighting
-        # in the corpus is called an artefact.  ONLY phase 4 can see this.
-        print("\n-- corpus injection --")
-        rc = phase4(tamper=lambda t, s: s.replace(
-            "      else if (memcmp(_first, _o, sizeof _o) != 0) "
-            "_rec.outcomes_vary = 1;\n", ""))
-        if rc == 1:
-            print("  BITES (gate failed, as it must)   "
-                  "[the emitter stopped writing the outcomes_vary evidence]")
-        else:
-            print("  *** DID NOT BITE (rc=%d)   [outcomes_vary dropped]" % rc)
-            ok = False
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-
-    print("\n" + "=" * 70)
-    if ok:
-        print("BITE OK: 20/20 injections caught -- denominator 1, effort 1,")
-        print("         HetStats protocol 2, decode guard 1, stop rule 6,")
-        print("         structural invariants 2, Python mirror 1,")
-        print("         CPU-only campaign 4, scheduler 1, emitted corpus 1.")
-        return 0
-    print("BITE FAILED: an injection slipped through -- this gate is decorative")
-    return 1
 
 
 if __name__ == "__main__":

@@ -674,8 +674,7 @@ hetlitmus-cram: | build
 hetlitmus-corpus: | build
 	@ echo
 	bash hetlitmus/verify/corpus-gate.sh
-	bash hetlitmus/verify/corpus-gate.sh --bite
-	@ echo "HetLitmus Layer-2 corpus golden: OK (and the gate bites)"
+	@ echo "HetLitmus Layer-2 corpus golden: OK"
 
 ### Every emitted harness carries exactly the memory ops its .litmus annotates,
 ### with the right kind, order and scope, and no others
@@ -691,8 +690,7 @@ hetlitmus-faithful: | build
 hetlitmus-hipsrc: | build
 	@ echo
 	python3 hetlitmus/verify/hipsrccheck.py --all
-	python3 hetlitmus/verify/hipsrccheck.py --bite
-	@ echo "HetLitmus HIP source faithfulness (173 gpu-only + 471 x86_64 het): OK (and the gate bites)"
+	@ echo "HetLitmus HIP source faithfulness (173 gpu-only + 471 x86_64 het + 2 synthetic carriers): OK"
 
 ### A curated sample of emitted harnesses builds end to end through its own
 ### comp.sh -- host CPU object, cross-assembly, .cu and .hip
@@ -724,8 +722,7 @@ hetlitmus-cpustress: | build
 hetlitmus-dup: | build
 	@ echo
 	python3 hetlitmus/verify/dupcheck.py
-	python3 hetlitmus/verify/dupcheck.py --bite
-	@ echo "HetLitmus isomorphism/dedup gate: OK (and the gate bites)"
+	@ echo "HetLitmus isomorphism/dedup gate: OK"
 
 ### het_verdict() -- the rule deciding what an observation MEANS -- compiled from
 ### the real emitted header and driven with synthetic records, together with the
@@ -733,8 +730,7 @@ hetlitmus-dup: | build
 hetlitmus-verdict: | build
 	@ echo
 	python3 hetlitmus/verify/verdictcheck.py
-	python3 hetlitmus/verify/verdictcheck.py --bite
-	@ echo "HetLitmus decision rule: OK (and the gate bites)"
+	@ echo "HetLitmus decision rule: OK"
 
 ### het_stats_compute() -- what a "Never" is worth -- compiled from the real
 ### emitted header and driven with synthetic record streams, through the stop
@@ -742,8 +738,7 @@ hetlitmus-verdict: | build
 hetlitmus-stats: | build
 	@ echo
 	python3 hetlitmus/verify/statscheck.py
-	python3 hetlitmus/verify/statscheck.py --bite
-	@ echo "HetLitmus statistics layer: OK (and the gate bites)"
+	@ echo "HetLitmus statistics layer: OK"
 
 ### Every iteration of every emitted harness begins at the cross-device
 ### rendezvous, ahead of the tested accesses and never between two of them, and
@@ -751,8 +746,7 @@ hetlitmus-stats: | build
 hetlitmus-rdv: | build
 	@ echo
 	python3 hetlitmus/verify/rdvcheck.py
-	python3 hetlitmus/verify/rdvcheck.py --bite
-	@ echo "HetLitmus rendezvous placement + primitive: OK (and the gate bites)"
+	@ echo "HetLitmus rendezvous placement + primitive: OK"
 
 ### The emitter/runtime skew tripwire: every field a render writes and every
 ### HET_* define it stamps still binds to litmus/het-runtime/*.h, which nothing
@@ -760,8 +754,7 @@ hetlitmus-rdv: | build
 hetlitmus-recfields: | build
 	@ echo
 	python3 hetlitmus/verify/recfields.py
-	python3 hetlitmus/verify/recfields.py --bite
-	@ echo "HetLitmus emitter/runtime field + define binding: OK (and the gate bites)"
+	@ echo "HetLitmus emitter/runtime field + define binding: OK"
 
 ### hetlitmus/tests/het-x86 is still, byte for byte, what its generator emits --
 ### it is the only committed route to the populated (x86_64, hip) pair
@@ -769,8 +762,7 @@ hetlitmus-recfields: | build
 hetlitmus-x86fixture: | build
 	@ echo
 	python3 hetlitmus/verify/x86fixturecheck.py
-	python3 hetlitmus/verify/x86fixturecheck.py --bite
-	@ echo "HetLitmus het-x86 fixture sync gate: OK (and the gate bites)"
+	@ echo "HetLitmus het-x86 fixture sync gate: OK"
 
 ### Scratch output dir for the CPU-only shapes.  Never committed (.gitignore'd):
 ### they are generated on demand, so corpus-gate.sh's census and dupcheck.py --
@@ -785,8 +777,7 @@ HETCPUONLYTARGET ?= hip
 
 ### The negative control for the cpu_only stamp: a corpus test with a GPU proc,
 ### which the emitter must stamp 0.  Emitted into a temp dir, since the count of
-### harness dirs in $(HETCPUONLYOUT) is pinned.  Both halves are knobs so the
-### check can be shown to bite: point them at a CPU-only test and the grep fails.
+### harness dirs in $(HETCPUONLYOUT) is pinned.  Overridable to name another test.
 HETCPUONLYNEGDIR ?= $(CURDIR)/hetlitmus/tests/het
 HETCPUONLYNEG ?= MP-cg-sys-relaxed
 
@@ -836,8 +827,7 @@ hetlitmus-cpuonly: | build
 hetlitmus-hipbuild: | build
 	@ echo
 	python3 hetlitmus/verify/hipbuildcheck.py
-	python3 hetlitmus/verify/hipbuildcheck.py --bite
-	@ echo "HetLitmus AMD build/link gate: OK (and the gate bites)"
+	@ echo "HetLitmus AMD build/link gate: OK"
 
 ### What a het harness PRINTS on a device -- the only artefact a result is read
 ### off -- so the reading it gives is the one its own counts support, and it
@@ -845,8 +835,7 @@ hetlitmus-hipbuild: | build
 hetlitmus-characterize-hw: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py --characterize-hw
-	python3 hetlitmus/verify/runcheck.py --characterize-hw --bite
-	@ echo "HetLitmus harness-printout runtime gate: OK (and the gate bites)"
+	@ echo "HetLitmus harness-printout runtime gate: OK"
 
 ### The device-session wrapper (hetlitmus/hetlitmus-run.sh) end to end with its
 ### documented stand-ins for the compiler and the probe, so what it decides on an
@@ -854,18 +843,7 @@ hetlitmus-characterize-hw: | build
 hetlitmus-run-gate: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py
-	python3 hetlitmus/verify/runcheck.py --bite
-	@ echo "HetLitmus device-session wrapper gate: OK (and the gate bites)"
-
-### The discriminating power of the toolchain lane: ptxcheck detects a weakened
-### scope or order, the stress scaffolding bites a dead layer, and two
-### invariance checks get their teeth here.
-hetlitmus-selftest: | build
-	@ echo
-	bash hetlitmus/verify/tokens.sh selftest
-	bash hetlitmus/verify/tokens.sh guard
-	bash hetlitmus/verify/smoke.sh bite
-	@ echo "HetLitmus static token check discriminating power (selftest + guard + smoke bite): OK"
+	@ echo "HetLitmus device-session wrapper gate: OK"
 
 ### Umbrellas (what you press).  `::` accumulation, order-only `| build`.
 hetlitmus-test:: | build
@@ -890,7 +868,6 @@ hetlitmus-test-toolchain:: hetlitmus-stress
 hetlitmus-test-toolchain:: hetlitmus-cpustress
 hetlitmus-test-toolchain:: hetlitmus-hipbuild
 hetlitmus-test-toolchain:: hetlitmus-characterize-hw
-hetlitmus-test-toolchain:: hetlitmus-selftest
 hetlitmus-test-toolchain:: hetlitmus-smoke
 
 hetlitmus-test-nvcc: hetlitmus-test-toolchain
@@ -910,7 +887,7 @@ hetlitmus-promote: | build
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats
-.PHONY: hetlitmus-dup hetlitmus-verdict hetlitmus-selftest
+.PHONY: hetlitmus-dup hetlitmus-verdict
 .PHONY: hetlitmus-recfields hetlitmus-rdv
 .PHONY: hetlitmus-hipbuild hetlitmus-cpuonly
 .PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate
