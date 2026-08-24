@@ -833,8 +833,9 @@ def phase7_second_session(wrapper, quiet=False):
         # The refusal is campaign.py's and reaches the session at step 6, so the
         # wrapper runs its whole chain first and ends carrying the campaign's exit.
         # That refusal goes to campaign.log (the wrapper redirects the campaign's
-        # stderr there and echoes a tail of it), NEVER to the wrapper's own stderr:
-        # a check on r.stderr would pass on an empty stream.
+        # stderr there and echoes a tail of it), NEVER to the wrapper's own stderr,
+        # which is empty on this path: a check against r.stderr would redden this
+        # case on a refusal that did arrive.
         r = run_wrapper(wrapper, base + ["--budget-runs", "10"], env=env)
         said = r.stdout + open(os.path.join(out, "campaign.log")).read()
         record = open(os.path.join(out, "run-record.txt")).read()
