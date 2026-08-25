@@ -57,8 +57,7 @@ upstream style.
    mechanical fix ≤ 15; a change to behavior or emitted bytes 30–80; a
    change that moves a census, an oracle or a verdict surface may use it
    all. A commit carrying several changes takes the budget of its largest
-   part; the 100-line cap still holds. Surplus goes to the brief in
-   `env-research/`, named in the body.
+   part; the 100-line cap still holds.
    Past ~60 lines the body must be scannable: ALL-CAPS paragraph leads
    (`THE FAIL-CLOSED REPLACEMENT.`) or `F1.`/`F2.` numbering.
 9. **Wrap at 76, hard limit 80**, exempting a line held long by an

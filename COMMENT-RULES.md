@@ -63,10 +63,9 @@ measurements), the gate script (verification story), `hetlitmus/docs/`
    run, how to regenerate); `hetlitmus/docs/README-tests.md` points at the
    script, it does not re-describe it.
 8. **Pointers resolve in-repo or in print.** Point only at (a) repo files or
-   (b) `[Key]`s from REFERENCES.md. Never `env-research/`, "memo N", plan
-   files, or Claude memory/session artifacts. A fact whose only home is
-   outside the repo moves into `hetlitmus/docs/` in the same change, then gets
-   pointed at.
+   (b) `[Key]`s from REFERENCES.md. Never "memo N", plan files, or Claude
+   memory/session artifacts. A fact whose only home is outside the repo
+   moves into `hetlitmus/docs/` in the same change, then gets pointed at.
 9. **Cite at the home, point from the site.** External sources appear as
    `[Key]` resolved in `hetlitmus/docs/REFERENCES.md`, which holds the full
    citation, the claim this project takes from it, and any deviation. The claim

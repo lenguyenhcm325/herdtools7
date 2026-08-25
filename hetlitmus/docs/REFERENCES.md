@@ -2,20 +2,21 @@
 
 A `[Key]` in a HetLitmus comment resolves here. Each entry holds the full
 citation, the claim(s) this project takes from the source — one bullet per
-claim — and any deviation from it, one bullet per deviation. Append-only: keys
-never change spelling once used, and an entry is edited only to correct it. An
-entry is not widened to cover a new site: a site that takes a further claim from
-a source cites `[Key + locator]` and states its own claim where it stands.
+claim — and any deviation from it, one bullet per deviation. Append-only: a
+key, once used, is never respelled or removed, and a claim, once taken, is never
+removed — only corrected or withdrawn (below). An entry is not widened to cover
+a new site: a site that takes a further claim from a source cites
+`[Key + locator]` and states its own claim where it stands.
 
 Locators follow the citation rule in `COMMENT-RULES.md` (rule 9): papers get a
 fixed `§`/Fig./Table locator, living documents get the section *name*.
 
-Append-only applies to withdrawal too. When the code stops resting on a claim —
-the site it grounded is deleted, or the claim itself turns out not to describe
-what the code does — the claim moves to a `Withdrawn claim(s):` block in its own
-entry, restated with the reason. It is never silently deleted: an archived
-transcript or a thesis draft may still quote it, and a reader who goes looking
-for it deserves to find what happened to it rather than a gap.
+Withdrawal. When the code stops resting on a claim — the site it grounded is
+deleted, or the claim itself turns out not to describe what the code does — the
+claim moves to a `Withdrawn claim(s):` block in its own entry, restated with the
+reason. It is never silently deleted: an archived transcript or a thesis draft
+may still quote it, and a reader who goes looking for it deserves to find what
+happened to it rather than a gap.
 
 ## [Alglave15]
 
