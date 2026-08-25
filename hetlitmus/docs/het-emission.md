@@ -27,7 +27,7 @@ Two axes are chosen per test rather than hard-wired:
 litmus7 -gpu-target cuda -set-libdir herd/libdir hetlitmus/tests/het/MP-het.litmus
 ( cd MP-het && sh comp.sh )        # CUDA: nvcc -c + gcc -c (+clang aarch64), exit 0
 
-# x86_64 CPU + HIP (the (x86_64, hip) pair), from the committed one-test fixture:
+# x86_64 CPU + HIP (the (x86_64, hip) pair), from a committed x86_64 rendering (tests/het-x86):
 litmus7 -gpu-target hip -o hip-out -set-libdir herd/libdir \
   hetlitmus/tests/het-x86/MP-cg-sys-relaxed-x86_64.litmus
 ( cd hip-out/MP-cg-sys-relaxed-x86_64 && sh comp.sh )  # hipcc --offload-arch=gfx942 -c
@@ -41,9 +41,7 @@ libdir — which is why `-set-libdir herd/libdir` is fine even though those file
 live under `litmus/libdir`).
 
 Emission is deterministic: the same `.litmus` and the same `-gpu-target` yield
-byte-identical output, which is what the emission golden
-(`hetlitmus/verify/corpus-gate.sh`) and the byte-identical refactor proof
-(`hetlitmus/verify/emit-all.sh`) rest on.
+byte-identical output.
 
 ## CPU ISA from the device tag (a functor, not a flag)
 
@@ -199,8 +197,8 @@ as a results tree, and those pointers are that tree's only trail back to the
 emitter: provenance for a reader who has the repo, inert for one who does not.
 
 **Why there is one binary path per vendor.** Both link paths write `./<t>`, so
-`hetlitmus/spotcheck/run-one.sh` and `hetlitmus/campaign.py` exec `./<test>`,
-read its `HetStats` line and stay vendor-agnostic. The GPU compiler driver pulls
+`hetlitmus/campaign.py` runs `./<test>` through its runner, reads its `HetStats`
+line and stays vendor-agnostic. The GPU compiler driver pulls
 in its own device runtime; `-lpthread -lm` cover the CPU threads and the emitted
 render's own `sqrt` (it includes `<cmath>`; `het_verdict.h` calls no math function).
 `<target>-bin` is `.PHONY` and always relinks, so a build can never report
@@ -258,8 +256,8 @@ dialect) PAIR**. That pair, and no machine, is what a render names.
   was measuring. `hetlitmus/hetlitmus-run.sh` spells the same label and refuses
   a render that stamps another. `pair_label` in `litmus/hetEmit.ml` is the one
   derivation of that label for both dialects — the `pair:` line litmus7 prints,
-  the `HET_PAIR_NAME` stamp and the README's `Pair:` line all take it — so a
-  printout verified on one stamped frame is verified for the other.
+  the `HET_PAIR_NAME` stamp and the README's `Pair:` line all take it — so the
+  two stamped frames cannot print different labels.
 * **The one target-specific *number* is a build knob.** `HET_LLC_MB` is the
   last-level cache a noise buffer must exceed to cross the interconnect at all;
   below it the buffer is served from cache and the noise stresses nothing. It is
@@ -364,12 +362,9 @@ prints the same verdict machinery. The set is generated into an OUTDIR and
 never committed.
 
 `generate-cpuonly.sh OUTDIR [GPU-TARGET]` (default `hip`, the (x86_64, hip)
-pair; `cuda` is a machinery smoke) generates, emits and reads the set back for
-the `_rec.cpu_only = 1;` stamp against the negative control
-`MP-cg-sys-relaxed`, which must stamp 0 — a constant flag would vouch for
-nothing. It does not run them: the run and the `hetlitmus/campaign.py`
-invocation are the target box's step. `make hetlitmus-cpuonly` runs it over
-`hetlitmus/tests/het/cpuonly-out`.
+pair; `cuda` is accepted too and renders the (x86_64, cuda) pair) generates and
+emits the set. It does not run them: the run and the `hetlitmus/campaign.py`
+invocation are the target box's step.
 
 * **`SB` and `R` must be observed** — the store buffer is live — which doubles
   as the write-back probe: a CPU-only sighting on the shared allocation rules
@@ -399,10 +394,9 @@ invocation are the target box's step. `make hetlitmus-cpuonly` runs it over
   `movl $1,%[x]` on an `int` slot. The renderings themselves are produced on demand by
   `hetlitmus/tests/het/generate-x86.sh OUTDIR` — never committed, because many
   of them are byte-identical to a sibling below their two-line name header
-  (the x86-TSO collapse: `corpus-grid.md`, "Census rationale") and
-  `dupcheck.py` rejects duplicates. Their names are name-for-name with the
-  committed corpus (`<corpus name>-x86_64`), which is why `verify/census.py`'s
-  `HET` pins both renderings.
+  (the x86-TSO collapse: `corpus-grid.md`, "Census rationale") and the corpus
+  admits no duplicate experiment. Their names are name-for-name with the
+  committed corpus (`<corpus name>-x86_64`).
 * A het emission that **cannot** be completed is fail-closed: litmus7 prints
   `HetLitmus REFUSED (het|gpu-only|isa-scan) <test>: <why>` on stderr and exits
   **3** (`HetArch.refused`).  litmus7's own batch driver would have reported the
@@ -412,12 +406,12 @@ invocation are the target box's step. `make hetlitmus-cpuonly` runs it over
   instruction vocabulary is litmus7's own — whatever `AArch64Compile_litmus`
   / `X86_64Compile_litmus` accept and `ASMLang.dump_fun` prints — so there is no
   het-side classifier to refuse an instruction by name, and the CPU half's
-  faithfulness rests on litmus7's lowering plus the checks that read the emitted
-  text (`faithfulness.md`); the projection hands litmus7's own compile pipeline
-  whatever the column parsed. On the GPU column a structural pseudo is dropped
-  rather than refused: `instrs_of_pseudo` (`litmus/gpuLang.ml`) peels a `Label`
-  and drops a `Macro`/`Symbolic`/`Pagealign`/`Skip`, so a LISA proc carrying one
-  emits a straight-line body with it silently removed.
+  faithfulness rests on litmus7's lowering (`faithfulness.md`); the projection
+  hands litmus7's own compile pipeline whatever the column parsed. On the GPU
+  column a structural pseudo is dropped rather than refused: `instrs_of_pseudo`
+  (`litmus/gpuLang.ml`) peels a `Label` and drops a
+  `Macro`/`Symbolic`/`Pagealign`/`Skip`, so a LISA proc carrying one emits a
+  straight-line body with it silently removed.
 * **What the condition compiler refuses, and the one thing it does not check.**
   A test is refused (`HetLitmus REFUSED`, exit 3) when its condition names a
   register no proc makes observable, when it observes a location no proc of the

@@ -59,7 +59,7 @@ exists (1:r0=1 /\ 1:r1=0)
 ```
 
 This is the committed `MP-het.litmus`, generated in place (with `SB-het.litmus`)
-by `tests/het/generate.sh` section (A) and pinned by `verify/corpus-gate.sh`.
+by `tests/het/generate.sh` section (A).
 
 ### Why the merge is sound
 
@@ -164,24 +164,7 @@ the CPU/GPU emission does not consume it. Emitting a herd-parseable tree is the
 deliverable; making herd *read* it for a het test remains future work behind the
 single-arch break.
 
-## 5. End-to-end check
-
-```
-$ hetgen7 ... -name MP-het -cpu "PodWW Rfe PodRR Fre" -gpu "PodWW…ReleaseSys …" > MP-het.litmus
-$ litmus7 -gpu-target cuda -o OUT hetlitmus/tests/het/MP-het.litmus
-HetLitmus: emitting CPU+GPU harness for MP-het (2 procs, CPU=AArch64)
-  P0 device=cpu -> CPU pthread (litmus7 AArch64 asm)
-  P1 device=gpu -> GPU kernel (LISA/PTX via CudaLang/HipLang)
-  pair: (AArch64, cuda)
-HetLitmus: emitted harness directory OUT/MP-het (MP-het.cu)
-```
-
-`tests/het/generate.sh` generates `SB-het.litmus` and `MP-het.litmus` (its
-section (A)) and the grid families (B), (D) and (E) (`corpus-grid.md`);
-`verify/corpus-gate.sh` proves the committed files are its output. Every
-generated test parses and routes through litmus7's `Het` arm without error.
-
-## 6. Files
+## 5. Files
 
 | File | Role |
 |------|------|
@@ -190,10 +173,10 @@ generated test parses and routes through litmus7's `Het` arm without error.
 | `gen/builder.mli`, `gen/top_gen.ml` | the `Builder.S.het_cells` accessor (real impl) |
 | `gen/CCompile_gen.ml` | `het_cells` stub (C/C++ is never a het column) |
 | `gen/dune` | build `hetGen` / install `hetgen7` |
-| `hetlitmus/tests/het/generate.sh` | generate the het corpus (reference tests (A) + the grid (B), (D), (E)) |
+| `hetlitmus/tests/het/generate.sh` | generate the het corpus (reference tests (A) + the grid (B), (D), (E); `corpus-grid.md`) |
 | `hetlitmus/tests/het/MP-het.litmus`, `SB-het.litmus` | the generated reference tests (A) |
 
-## 7. Limitations (generation scope)
+## 6. Limitations (generation scope)
 
 - The two `-cpu` / `-gpu` cycles must describe the **same logical shape** (same
   proc count and per-proc roles); the driver checks proc counts but not deeper

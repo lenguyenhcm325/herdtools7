@@ -284,7 +284,7 @@ het_obs_record {
 ```
 
 This separates **did we see it** (`target_count`) from **how much of the run was a joint experiment at
-all** (`iters_scored` against `N`). It is the input to the liveness gate and the stop rule
+all** (`iters_scored` against `N`). It is the input to the liveness disqualifiers and the stop rule
 (`harness-reporting.md` §3, §5). The `outs_t` histogram is retained (fed once per scored iteration) so an
 offline pass over the log the reader writes has the per-outcome counts to read.
 
@@ -304,7 +304,7 @@ counters the disqualifiers read (`harness-reporting.md` §3).)*
 
 Every component below is shipped. Dependencies flow top-down: the allocator knob has no
 prerequisites, and everything from the slot layout onwards needs the persistent loop.
-Everything compiles and is CI-testable on any build host except the **science + tuning, which need
+Everything compiles on any build host except the **science + tuning, which need
 GH200/MI300A** (§6).
 
 | component | what it carries |
@@ -328,12 +328,12 @@ Everything below is unmeasurable off the target part (wrong substrate, §3.2). *
    mechanism was alive over a *whole* run; whether that liveness holds *across* one — through occupancy
    warm-up, thermal/DVFS drift and alignment drift — is a question none of them answers, and what it
    decides is whether a long run is one experiment or several (§3.7 makes the run the unit on exactly
-   that reasoning). Nothing in the harness prices a null, so no gate rests on the answer.
+   that reasoning). Nothing in the harness prices a null, so nothing the harness decides rests on the answer.
    *Measure this first.*
 2. The **het weak-behaviour hit-rate** — genuinely unknown (the 0.2 % was GPU-only, §7). Nothing the
    harness reports rests on it; what it settles is how much effort a row is worth before its null is
    banked, i.e. what `--budget-runs` should be. Grow R, not N.
-3. **CAP calibration**, and it gates the reading of every null. `HET_CAP_CPU = 262144` and
+3. **CAP calibration**, and every null is read under it. `HET_CAP_CPU = 262144` and
    `HET_CAP_GPU = 4096` are placeholders on any target: nothing has measured how many polls a *met*
    rendezvous actually costs there, so `HET_CAP_CALIBRATED` is 0 and `HET_CV_RDV_UNCALIBRATED` caveats
    every outcome. Measure the distribution of polls-to-target on a run whose two sides do meet, set each
@@ -354,14 +354,9 @@ Everything below is unmeasurable off the target part (wrong substrate, §3.2). *
    iteration still costs the *live* side its whole cap, and nothing stops a run early: once the discards
    pass `HET_RDV_MAX_DISCARD_PCT` the run is disqualified whatever the rest does, and it still pays a cap
    for every remaining iteration. So a run against a partner that never arrives costs about `N × cap`
-   polls rather than the seconds a met rendezvous costs, which is why the device-side drivers are bounded
+   polls rather than the seconds a met rendezvous costs, which is why the device-side driver is bounded
    against it instead: `hetlitmus/hetlitmus-run.sh` runs every harness under `timeout` (`HET_RUN_TIMEOUT`,
-   900 s by default; `campaign.py` has no timeout of its own), `verify/runcheck.py --characterize-hw`
-   allows 600 s per run (`CH_RUN_TIMEOUT`) and curtails the harness to two runs (`CH_RUNS`) under a
-   shortened host cap (`CH_CAP_CPU = 4096`, the device cap untouched), and `spotcheck/ladder.sh` 900 s
-   (`LADDER_TIMEOUT`). That characterization run retries fresh seeds (`CH_SEED_TRIES = 12`) until the
-   outcome fires once, and a run the rule discards (`COLD-INVALID`) is read as the arm this box printed
-   and never retried — no fresh seed undoes a discard. **Open design
+   900 s by default; `campaign.py` has no timeout of its own). **Open design
    question, deliberately not implemented:** an early bail once the discard count has already passed the
    budget would fix the cost everywhere instead of per driver — at the price of a run whose `N` no longer
    means what a scored run's does. Decide it on the target, with item 3's numbers in hand.
@@ -415,18 +410,18 @@ longer window) or hurts (the miss dominates the race) is unmeasured; the levers 
   replaced them is §3.3 and §3.4. The refusal this **reverses** is §3.1's: a per-iteration cross-device
   rendezvous is not anti-correct — a rendezvous *between* the tested accesses orders them and one
   *around* the tested group does not, and the sources cited against it said something narrower than the
-  sentence they were cited for (`REFERENCES.md`, `[Srivastava24]` and `[Melissaris20]`). No gate polices
-  the absence, and the pre-removal tree is preserved on branch `hetlitmus-perpetual-loop`.
+  sentence they were cited for (`REFERENCES.md`, `[Srivastava24]` and `[Melissaris20]`). The pre-removal
+  tree is preserved on branch `hetlitmus-perpetual-loop`.
 - **The positive control is withdrawn**, both layers: the lattice-floor structural twin
   `mu(T)` and the `MP-{cg,gc}-sys-relaxed` canary. A harness runs its test alone. Withdrawn with it,
-  each having had no input or no consumer left: the KS stationarity gate and `P_rep`, whose only stream
+  each having had no input or no consumer left: the KS stationarity check and `P_rep`, whose only stream
   was the control's per-window sub-tallies; the ordering-strength lattice the twin was selected on; and
   the stress autotuner, whose objective was the control's death rate (§3.8, §3.9). The rationale is the
   one §3.7 now stands on alone — a characterization tool reports what its harness reached and prices
   nothing, and a co-running control is an attempt to price a null in evidence about the harness. This
   **reverses** §3.7's earlier "what licenses a null is … the two-layer positive control that fired
-  beside it": nothing licenses a null, and the printout says so in those words. No gate polices the
-  absence; the pre-removal tree is preserved on branch `hetlitmus-positive-control`.
+  beside it": nothing licenses a null, and the printout says so in those words. The pre-removal tree is
+  preserved on branch `hetlitmus-positive-control`.
 - **The "~0.2 %" is GPU-only, not het** — [Bagchi26 §5.1] quotes it back from §4.1, where it is the
   inter-CTA GPU-only result. Bagchi gives no numeric het rate → the het hit-rate is hardware-only. The
   earlier reading of it as a het rate is a mis-attribution, corrected here.
@@ -480,9 +475,8 @@ GH200/CMCM (Bagchi has that).
   full citation, the claim this project takes from it, and any deviation from it.
 - **The mechanisms in full:** `harness-reporting.md` (what a printout means — the three-outcome rule,
   the liveness disqualifiers and caveats, the aggregate and the stop rule), `faithfulness.md` (what the
-  static checkers can and cannot see), `het-emission.md` (how a harness is built),
-  `README-tests.md` (the gate roster: which target proves what and what it needs),
-  `litmus/het-runtime/README.md` (what each
+  emitted code carries of its `.litmus` annotation, and the disclosed limits of that), `het-emission.md`
+  (how a harness is built), `litmus/het-runtime/README.md` (what each
   emitted runtime header is for).
 - **What actually ships:** the runtime headers under `litmus/het-runtime/` — `het_rdv.h` for the
   rendezvous and the slot layout, and `het_verdict.h` above all,

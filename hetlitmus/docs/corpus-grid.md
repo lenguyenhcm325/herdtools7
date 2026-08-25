@@ -16,15 +16,15 @@ and harness emission).
 
 ## The corpora
 
-| corpus    | census                          | manifest              |
-|-----------|---------------------------------|-----------------------|
-| gpu-only  | `verify/census.py` `GPU_ONLY`   | `tests/gpu-only/@all` |
-| het       | `verify/census.py` `HET`        | `tests/het/@all`      |
+| corpus    | manifest              |
+|-----------|-----------------------|
+| gpu-only  | `tests/gpu-only/@all` |
+| het       | `tests/het/@all`      |
 
 Both corpora are driven from committed scripts that also write an `@all`
 list-file (herd7/litmus7 read `@all` as "one test path per line",
 `lib/misc.ml` `is_list`). Re-running either `generate.sh` reproduces its
-corpus; `verify/corpus-gate.sh` pins that.
+corpus.
 
 **Scope of *this* note.** It specifies the **one-sided** scope × order grid (B)
 — the het tests whose GPU procs are annotated and whose CPU procs are plain
@@ -35,8 +35,7 @@ ARMv9 — and the two two-sided families (D) and (E), which the same
 `MP-het` and `SB-het`, whose cycles sit in `generate.sh` itself. The current
 split of the het corpus by family is re-derivable at any time from
 `hetlitmus/tests/het/*.litmus` (the two-sided families carry the `-2s`
-suffix), and `verify/dupcheck.py` reports how many of them are distinct
-experiments (`<n> file(s), <m> distinct experiment(s)`).
+suffix).
 
 ## The shape catalogue
 
@@ -127,8 +126,7 @@ symmetry-reduced rule (NOT 2ⁿ subsets), recorded per shape in `SHAPE_HET_CUTS`
 - **2-proc** shapes: both directions — `cpu,gpu` and `gpu,cpu` — except `SB`, `LB`
   and `2+2W`, which emit `cpu,gpu` only: their cycle is invariant under
   rotation-by-two, which swaps P0/P1, and the annotation follows the device rather
-  than the proc index, so `gpu,cpu` would be `cpu,gpu` with the labels exchanged
-  (`verify/dupcheck.py` holds that honest).
+  than the proc index, so `gpu,cpu` would be `cpu,gpu` with the labels exchanged.
 - **3-proc** shapes (each proc a distinct role): each proc, in turn, is the sole
   GPU participant — `gpu,cpu,cpu`, `cpu,gpu,cpu`, `cpu,cpu,gpu`.
 - **IRIW** (2 symmetric writers + 2 symmetric readers): the four symmetry-class
@@ -208,9 +206,8 @@ sits in a standalone `Fence<o>Sys<L><XY>` edge, as the `fence` column does.
 
 **Diagonal identities.** `ra.ra` ≡ `-sys-acqrel-2s` and `sy.sc` ≡
 `-sys-fence-2s`: `render_2s_cpu ra` reproduces `render_cpu_cycle acqrel` and
-`render_2s_gpu sc` reproduces `render_cycle sys fence` token for token
-(`tests/cram/basics.t` pins both), so (E) skips those two cells and each
-cut-class emits 4 × 4 − 2 = 14 tests.
+`render_2s_gpu sc` reproduces `render_cycle sys fence` token for token, so (E)
+skips those two cells and each cut-class emits 4 × 4 − 2 = 14 tests.
 
 **Shapes and cuts** (`TWO_SIDED_PAIR_SHAPES`, `SHAPE_2S_PAIR_CUTS`): `MP SB LB
 R S`, with MP, R and S in both directions and SB, LB as `cpu,gpu` only. The
@@ -221,23 +218,21 @@ for the rotation reason under "Heterogeneous device cuts"; a `Pos` shape stays
 out, only one of its procs carrying a pair.
 
 `f[acq_rel,sys]` is unavailable to the generator: `FenceAcq_relSys` does not
-lex as a diy edge (`diyone7` stops with `lexing: empty token`). That is why
-`acq_rel` reaches the AMD source gate only through `hipsrccheck.py`'s
-synthetic carrier (`amd-faithfulness.md`).
+lex as a diy edge (`diyone7` stops with `lexing: empty token`), so no corpus
+test carries it.
 
 ### Census rationale
 
-The pins in `verify/census.py` (`GPU_ONLY`, `HET`) are what the grid arithmetic
-gives (how they are gated: `README-tests.md`, Notice 10):
+The grid arithmetic gives each corpus's size:
 
 - gpu-only: 14 shapes × 3 scopes × 4 orders = 168, +8 fixed-name originals =
-  176, −3 degenerate columns = 173 (`GPU_ONLY`).
+  176, −3 degenerate columns = 173.
 - het (A) + (B): 32 cut-classes (`SHAPE_HET_CUTS`) × 3 × 4 = 384, −87
   degenerate columns = 297, +`MP-het`/`SB-het` = 299 one-sided — every name
   without `-2s`.
 - het (D): 32 cut-classes × 2 orders = 64, −4 degenerate `fence` cells = 60.
 - het (E): 8 cut-classes × 14 cells = 112.
-- 299 + 60 + 112 = 471 (`HET`).
+- 299 + 60 + 112 = 471.
 
 `generate-x86.sh` prints exactly that breakdown as it runs (`(A) 2 + (B) 297
 (skipped 87 degenerate) + (D) 60 (skipped 4 degenerate) + (E) 112 = 471`);
@@ -280,23 +275,4 @@ AArch64 ones with no code edit. Sections (A), (D) and (E) of `generate.sh` are
 AArch64 only, and `CPU_ARCHS` defaults to `aarch64`, so the committed corpus
 carries no x86_64 file. The x86_64 rendering of all four sections is
 `generate-x86.sh OUTDIR` (why it is not committed: `het-emission.md`,
-"Scope / limits"); `tests/het-x86` holds fixtures cut from those renderings
-(`tests/het-x86/README.md`).
-
-## End-state checks (reproduce)
-
-```sh
-# 1. counts -- the expected values are verify/census.py's GPU_ONLY and HET; the
-#    het total splits as in "Census rationale" (one-sided = every name without -2s)
-ls hetlitmus/tests/gpu-only/*.litmus | wc -l                     # GPU_ONLY
-ls hetlitmus/tests/het/*.litmus      | wc -l                     # HET
-ls hetlitmus/tests/het/*.litmus | grep -vc -- '-2s\.litmus'      # (A) + (B)
-bash hetlitmus/verify/corpus-gate.sh                             # the same, gated
-
-# 2. every het test parses + routes through litmus7
-cd hetlitmus/tests/het && mkdir -p /tmp/r
-while read f; do litmus7 -gpu-target cuda -set-libdir ../../../litmus/libdir -o /tmp/r "$f"; done < @all
-
-# 3. no regression
-dune build                                           # exit 0
-```
+"Scope / limits").

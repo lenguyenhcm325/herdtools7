@@ -49,9 +49,8 @@ the whole vocabulary.
    otherwise                         -> HET_NOT_OBSERVED
 ```
 
-`het_verdict()` is a **pure function of one `het_obs_record`**, which is what makes it
-decidable from a synthetic record and therefore gateable with no hardware at all
-(`make hetlitmus-verdict`).
+`het_verdict()` is a **pure function of one `het_obs_record`**, so it is decidable from the
+record alone, with no hardware at all.
 
 **Step 2 reads one number, and it is a count of iterations.** The readout scores at most one
 outcome per iteration and compares it against the condition there
@@ -90,11 +89,6 @@ scored iteration read back the same vector, which is the constant-read artefact
 [Srivastava24 §4.1] and yields a spurious 0 % or 100 %), an unstressed run (one of six
 mutants was exposed with no stress at all, [Kirkham20 §6.2 Tab.10]), and a zero GPU lane
 count.
-
-Coverage is asserted rather than assumed: `verify/verdictcheck.py` accumulates the
-disqualifier and caveat words its cases reach and compares them against the `HET_DQ_` /
-`HET_CV_` `#define`s read off the header itself: every bit the header declares must be
-reached by a case, so a bit added there without a case fails the gate.
 
 **Requested-but-dead, not merely zero.** A deliberately disabled mechanism is not a bug,
 and treating "counter == 0" as disqualifying on its own would make an intentional
@@ -185,11 +179,11 @@ replicate.
 A coherence-final `[ell]=v` atom is an ordinary outcome column: iteration `n`'s slot
 for `ell` holds what that iteration left there, so the readout reads it beside the register
 atoms, `_dump_one` prints it as a number, and the condition compiler compares it like any
-other. There is no `?` column and no separate witness. `verify/rdvcheck.py` asserts over
-every emitted render one `add_outcome_outs` site and one discard site
+other. There is no `?` column and no separate witness: every emitted render has one
+`add_outcome_outs` site and one discard site
 (`if (!_ok) { _rec.iters_discarded++; continue; }`) inside the readout loop, the discard
-ahead of the score; `hetlitmus/tests/cram/slot-readout.t` pins that `_dump_one` prints
-every column as a number on the shape whose every column is a location.
+ahead of the score, and `_dump_one` prints every column as a number even on the shape
+whose every column is a location.
 
 What the emitter still refuses at compile time, because a condition it cannot compile is a
 detector that would silently never fire, is listed in `het-emission.md`; the one thing it
@@ -198,18 +192,16 @@ condition asks for.
 
 ## 7. The flag words are a wire format
 
-`flags=0x…` on a `HetStats` line is read by archived transcripts, frozen fixtures and
-thesis-facing evidence, and none of those numbers can be re-read later. A retired bit is
+`flags=0x…` on a `HetStats` line is read by archived transcripts and thesis-facing
+evidence, and none of those numbers can be re-read later. A retired bit is
 therefore left **vacant** rather than closed up, and each `#define` block in
 `het_verdict.h` states its own vacancies beside the bits it still uses. Add at the top;
 never renumber.
 
 The `HetStats` machine line's field set, and the order it prints them in, are a wire
 format too: `hetlitmus/campaign.py` reads it by key (`fnum(kv, …)`: `cpu_only`, `R`,
-`usable`, `k`, `k_eff`, `k_runs`, `first_sight`) and `spotcheck/ladder.sh` reads fields
-by name (`statfield`), so a field a consumer reads must be one `het_stats_line` prints.
-The `HetObs` record line is parsed downstream as well (`ladder.sh`'s `obsfield`:
-`do_stress_rounds`, `enemy_rounds`, `preload`, `req`).
+`usable`, `k`, `k_eff`, `k_runs`, `first_sight`), so a field a consumer reads must be one
+`het_stats_line` prints.
 
 ## 8. What this file does not settle
 

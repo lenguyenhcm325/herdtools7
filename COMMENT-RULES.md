@@ -2,8 +2,8 @@
 
 Scope: every HetLitmus-added line a human reads beside code — comments in
 OCaml/C/CUDA/HIP/shell/Python, Python docstrings, cram `.t` prose, Makefile
-target headers, `litmus/het-runtime/README.md`. Upstream herdtools7 files keep
-upstream style.
+target headers, `litmus/het-runtime/README.md` — and `hetlitmus/docs/`, the
+home those sites point into. Upstream herdtools7 files keep upstream style.
 
 A comment's job: state what the code cannot say about itself — the invariant,
 the hazard, the non-local constraint — for a reader who has only this repo.
@@ -40,6 +40,11 @@ measurements), the gate script (verification story), `hetlitmus/docs/`
    WHAT is pinned and what a miss means, never why the design is shaped as it
    is: a cram block gets one sentence naming the property, a gate docstring
    lists its checks, and the design is a pointer.
+   Docs must not mention tests either: a `hetlitmus/docs/` file documents
+   the mechanism and its rationale, never the gate, cram file or QA step that
+   pins it. The verification story is the gate's own;
+   `hetlitmus/docs/README-tests.md` is the one index of tests, and no other
+   docs file names them.
 6. **No free-prose inventory numbers.** Corpus/file/proc counts appear only as
    pinned constants cross-checked at runtime, never in prose ("33 of the 137")
    where they silently rot.
@@ -93,10 +98,10 @@ measurements), the gate script (verification story), `hetlitmus/docs/`
     the budget, and maintainer notes live in `litmus/het-runtime/README.md`
     only — never in both the README and the header it describes.
 13. **Tests get two lines.** In a gate script, cram file or Makefile target,
-    every comment is ≤ 2 lines; the script's top docstring is governed by
-    rule 7 instead. A cram block gets one sentence; a cram file opens with
-    nothing but a pointer. Why the pinned property holds is the docs' to say
-    and is not re-derived beside the check that pins it.
+    every comment is ≤ 2 lines; the script's top docstring and the target
+    header are governed by rule 7 instead. A cram block gets one sentence; a
+    cram file opens with nothing but a pointer. Why the pinned property holds
+    is the docs' to say and is not re-derived beside the check that pins it.
 14. **Caps are hazard words only.** ALL-CAPS marks a word whose misreading
     inverts a correctness property (NOT, NEVER, ONLY, BOTH), ≤ 1 per comment.
     Never topic sentences, never nouns. A principle is stated once per file,

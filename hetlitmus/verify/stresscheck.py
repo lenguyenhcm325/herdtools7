@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """HetLitmus -- the GPU stress-liveness gate (hetlitmus/docs/faithfulness.md,
-"Proving the GPU stress ran, not just that it exists").  A miss means a null was
+"GPU stress liveness at run time").  A miss means a null was
 scored on a stress layer nvcc folded away or the device never ran.
 
   anchor        both PCT toggles off leaves exactly the render's buffer stores

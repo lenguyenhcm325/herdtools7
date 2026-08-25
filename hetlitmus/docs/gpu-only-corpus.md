@@ -2,7 +2,7 @@
 
 Inventory of the GPU-only test family the HetLitmus frontend must be able to
 express and generate. Derived by inspecting the PLDI'23 Compound Memory Models
-artifact (gem5 + HIP litmus tests), cross-checked against the in-tree PTX `.cat`.
+artifact (gem5 + HIP litmus tests).
 
 ## Verdict provenance & vendor scope (read this first)
 The Allowed/Disallowed verdicts quoted below come from the artifact's gem5 build

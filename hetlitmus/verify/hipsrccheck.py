@@ -703,7 +703,7 @@ class Result:
 
 def check_stream(result, expected, anchors, who):
     """Ordered compare of one lane; the multiset below is a post-failure
-    localizer ONLY (hetlitmus/docs/amd-faithfulness.md)."""
+    localizer ONLY."""
     got = [a.sig for a in anchors]
     if got == expected:
         result.note("  %s stream OK (%d anchors)" % (who, len(expected)))

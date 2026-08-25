@@ -133,9 +133,9 @@ Claim(s) this project takes from it:
   `system` scope is `buffer/global/flat_load` with `sc0=1 sc1=1`. Neither carries
   a writeback or an invalidate, which is what "the rendezvous orders nothing"
   rests on for the HIP arm of `litmus/het-runtime/het_rdv.h`: a `wbl2` or a
-  `buffer_inv` beside either would be a strengthened rendezvous. No gate reads
-  the lowering back (`amd-faithfulness.md`, "Scope and limits"), so this is a
-  design ground, cited from `00-environment-design.md` sec 3.3, and not a check.
+  `buffer_inv` beside either would be a strengthened rendezvous. The lowering
+  is not read back from `hipcc` (`amd-faithfulness.md`, "Scope and limits"), so
+  this is a design ground, cited from `00-environment-design.md` sec 3.3.
 * Section "Memory Scopes", table "AMDHSA LLVM Sync Scopes": the sync scopes an
   AMDGPU fence may name are `agent`, `cluster`, `workgroup`,
   `wavefront`, `singlethread` and their `-one-as` variants. The row whose LLVM
@@ -235,9 +235,7 @@ Claim(s) this project takes from it:
   scope of gpu or higher triggers a self-invalidation of the local L1 cache."
   An acquire poll inside the loop would therefore throw away the L1 state the
   tested iteration is about to race on, while every ordering annotation under
-  test still matched. Cited at `litmus/het-runtime/het_rdv.h`;
-  `verify/rdvcheck.py` and `verify/ptxcheck.py` refuse a non-relaxed
-  rendezvous op on this ground.
+  test still matched. Cited at `litmus/het-runtime/het_rdv.h`.
 
 Deviation(s):
 * §5.3's sentence is an inference the authors draw from a visibility experiment
@@ -330,12 +328,12 @@ Claim(s) this project takes from it:
   §3.4 the *spread* m ("stressing is applied to m distinct critical patch-sized
   regions"). `HET_STRESS_LINE_SIZE`, `HET_*_STRESS_PATTERN` and
   `HET_STRESS_TARGETS` are those three knobs.
-* §3.3 also ranks the sequences by measured effectiveness, which is why both
-  stress gates require a load AND a store: "We observe that all of the *most
-  effective* sequences involve a combination of loads and stores", while "for
-  most chips, the lowest ranked sigmas consist exclusively of stores" (Tab. 2
-  gives the per-chip winners, Tab. 3 the Titan ranking). Store traffic alone is
-  the *least* effective sequence measured, not the strongest stressor.
+* §3.3 also ranks the sequences by measured effectiveness: "We observe that
+  all of the *most effective* sequences involve a combination of loads and
+  stores", while "for most chips, the lowest ranked sigmas consist exclusively
+  of stores" (Tab. 2 gives the per-chip winners, Tab. 3 the Titan ranking).
+  Store traffic alone is the *least* effective sequence measured, not the
+  strongest stressor.
 
 Deviation(s):
 * §3.3 tests access sequences up to five instructions; both `het_do_stress` and

@@ -51,7 +51,7 @@ needs. Nothing here runs the device session (`hetlitmus/hetlitmus-run.sh`, by ha
     code); `make hetlitmus-test-all`, both.
   + `make hetlitmus-promote`: regenerates both corpora in place, re-cuts the `tests/het-x86`
     fixture, re-emits the `cuda-out`/`hip-out` samples, promotes the cram goldens; commits nothing,
-    read `git diff` first. Not the faithfulness cover (`faithfulness.md`, "The cover").
+    read `git diff` first. Not the faithfulness cover (`verify/covercheck.py --extend`).
   + CI (`.github/workflows/hetlitmus-ci.yml`): one job runs `make -k hetlitmus-test` with
     `DUNE_CACHE: disabled`; the other installs clang, nvcc and hipcc and runs `make -k
     hetlitmus-faithful hetlitmus-smoke hetlitmus-stress-static hetlitmus-cpustress hetlitmus-hipbuild`.
@@ -80,4 +80,8 @@ Notice:
   9. A verify script that is not in the build is a script, not a gate: its target and its umbrella
      hookup land in the same change.
   10. `verify/emit-all.sh` is invoked by no target or CI step: it is the refactor instrument (emit
-      both corpora over every lane, `diff -r` two snapshots).
+      both corpora over every lane, `diff -r` two snapshots). `hetlitmus/compile-hip.sh` is likewise
+      invoked by no target (`hip-emitter.md`, "Compile status").
+  11. No target compiles a HIP render whose x86_64 CPU column carries `mfence`: `hetlitmus-hipbuild`'s
+      render and `hetlitmus-smoke`'s HIP reps have plain `movl` columns, and `hipsrccheck.py` reads
+      `mfence` at source level only.
