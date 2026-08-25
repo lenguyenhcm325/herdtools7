@@ -2,9 +2,9 @@
 
 This document specifies how `diy7` is extended to **generate** heterogeneous
 CPU-GPU litmus tests in the compound `Het` format (see `het-litmus-format.md`).
-The compound pseudo-arch made a hand-written compound test *representable,
-parseable, and routable*; the generator described here *emits* such tests
-automatically from a per-processor `{device, scope}` assignment.
+The compound pseudo-arch makes a compound test *representable, parseable,
+and routable*; the generator described here *emits* such tests automatically
+from a per-processor `{device, scope}` assignment.
 
 The hardware/gem5 *execution* of these tests is **out of scope**, and so is the
 matching oracle-comparison half: the tests carry no expected outcome, and a
@@ -16,7 +16,7 @@ The diy cycle engine (`gen/top_gen.ml`) compiles **one** critical cycle of
 annotated edges into a test whose every processor is encoded in **one**
 architecture: `diyone7 -arch AArch64` emits AArch64 on every proc, `diyone7
 -bell ptx.bell -arch LISA` emits LISA on every proc. This is the gen-side mirror
-of the litmus7 single-arch blocker that `HetArch` solved. A single
+of the litmus7 single-arch blocker that `HetArch` solves. A single
 engine run therefore cannot produce a test whose `P0` is an AArch64 CPU thread
 and whose `P1` is a scoped LISA/PTX GPU thread.
 
@@ -33,7 +33,9 @@ hetgen7 -set-libdir herd/libdir -bell ptx.bell -devices cpu,gpu -name MP-het \
   -gpu "PodWWRelaxedSysReleaseSys RfeReleaseSysAcquireSys PodRRAcquireSysRelaxedSys FreRelaxedSysRelaxedSys"
 ```
 
-- the **`-cpu`** cycle is generated with the AArch64 builder (plain accesses);
+- the **`-cpu`** cycle is generated with the CPU builder `-cpu-arch` selects
+  (`AArch64Compile_gen` by default, `X86_64Compile_gen` for `x86_64`; plain
+  accesses here);
 - the **`-gpu`** cycle is generated with the LISA/Bell builder (scoped
   acquire/release accesses);
 - **`-devices cpu,gpu`** assigns `P0 -> cpu`, `P1 -> gpu`.
@@ -56,9 +58,8 @@ Het MP-het
 exists (1:r0=1 /\ 1:r1=0)
 ```
 
-This is byte-for-byte (modulo table whitespace) the hand-written
-`MP-het.litmus`; `tests/het/generate.sh` regenerates it and checks the
-reproduction with `diff -w`.
+This is the committed `MP-het.litmus`, generated in place (with `SB-het.litmus`)
+by `tests/het/generate.sh` section (A) and pinned by `verify/corpus-gate.sh`.
 
 ### Why the merge is sound
 
@@ -83,10 +84,10 @@ the same processor count as the `-devices` list (`gen/hetGen.ml`,
 
 ## 3. The cross-architecture boundary: `HetCells.t` (strings)
 
-The AArch64 and LISA builders are **different `Arch` modules**, so their `test`
+The CPU (AArch64 or x86_64) and LISA builders are **different `Arch` modules**, so their `test`
 records have **different OCaml types** and cannot be held side by side. The
 boundary that lets them be combined is a small **string** record,
-`HetCells.t` (`gen/hetCells.ml`), exposed by every builder via a new
+`HetCells.t` (`gen/hetCells.ml`), exposed by every builder via the
 `Builder.S.het_cells` method (`gen/builder.mli`, implemented in `gen/top_gen.ml`;
 the C/C++ backend, which is never a het column, stubs it in
 `gen/CCompile_gen.ml`):
@@ -125,7 +126,7 @@ annotations themselves (`ReleaseSys`, `AcquireCta`, … — order+scope per acce
 exactly as in the GPU-only corpus, `bells/ptx.bell`). These inline per-access
 scope tags are what carry into the GPU column.
 
-In addition, hetgen7 now emits a **parseable nested `scopes:` body tree** (the
+In addition, hetgen7 emits a **parseable nested `scopes:` body tree** (the
 grammar is `lib/scopeRules.mly`; diy's `Scopes=` header info field is *not*
 herd-parseable, so we follow the GPU-only `generate.sh` precedent of writing the
 tree into the test body). Each GPU-owned proc nests in its own CTA under the GPU
@@ -136,23 +137,18 @@ node either all-procs or all-subtrees, so a CPU proc could not share the `sys`
 node with the `gpu` subtree in any case). With no GPU proc the tree degenerates
 to `scopes: (sys)`.
 
-That GPU-only precedent is worth spelling out, because it took two repairs to
-**upstream** files before diy could produce a herd-parseable `scopes:` section
-at all — until they landed, `tests/gpu-only/generate.sh` had to append the line
-with `awk`. Both are live in this tree:
+That GPU-only precedent rests on two HetLitmus changes to **upstream** files,
+without which diy cannot write a herd-parseable `scopes:` section at all:
 
-* **The dumper discarded the tree it was handed.** `diyone7` already builds the
-  structured scope tree and passes it down as `MiscParser.BellExtra`
-  (`gen/top_gen.ml`), but `lib/coreDumper.ml`'s `do_dump` printed info, init,
-  program and condition and dropped `extra_data`. It now prints the tree through
-  `BellInfo.pp` ahead of the condition, guarded so it stays inert for a test that
-  carries no scope tree. herd's parser already *read* `scopes:`; the dumper now
-  *writes* it.
-* **The literal `-scopes "(tree)"` path could not lex.** `lib/scopeParser.mly`
-  starts at `main: top_scope_tree EOF`, but `lib/scopeLexer.mll` had no `eof`
-  rule, so end of input fell through to the error case (*"Lex error Scope
-  lexer"*) and every nested literal tree was rejected. `| eof { EOF }` supplies
-  the token the grammar requires.
+* **The dumper prints the tree it is handed.** `diyone7` builds the structured
+  scope tree and passes it down as `MiscParser.BellExtra` (`gen/top_gen.ml`);
+  `lib/coreDumper.ml`'s `do_dump` prints it through `BellInfo.pp` ahead of the
+  condition, guarded so it stays inert for a test whose `extra_data` carries no
+  scope tree. herd's parser *reads* `scopes:`; the dumper *writes* it.
+* **The literal `-scopes "(tree)"` path lexes to the end.** `lib/scopeParser.mly`
+  starts at `main: top_scope_tree EOF`, and `lib/scopeLexer.mll`'s
+  `| eof { EOF }` rule supplies that token, so a nested literal tree parses
+  instead of falling through to the lexer's error case.
 
 With both in place, `diyone7 … -scopes "(sys (gpu (cta P0) …))"` writes the
 `scopes:` line itself (`hetlitmus/tests/gpu-only/generate.sh`), with no shell
@@ -180,21 +176,22 @@ HetLitmus: emitting CPU+GPU harness for MP-het (2 procs, CPU=AArch64)
 HetLitmus: emitted harness directory OUT/MP-het (MP-het.cu)
 ```
 
-`tests/het/generate.sh` produces `SB-het.litmus` and verifies the `MP-het`
-reproduction; both generated tests parse and route through litmus7's `Het` arm
-without error.
+`tests/het/generate.sh` generates `SB-het.litmus` and `MP-het.litmus` (its
+section (A)) and the grid families (B), (D) and (E) (`corpus-grid.md`);
+`verify/corpus-gate.sh` proves the committed files are its output. Every
+generated test parses and routes through litmus7's `Het` arm without error.
 
 ## 6. Files
 
-| File | Change |
-|------|--------|
-| `gen/hetGen.ml` | new `hetgen7` driver: per-device runs + column/init/condition merge |
-| `gen/hetCells.ml` | new string record `HetCells.t` (cross-arch boundary) |
-| `gen/builder.mli`, `gen/top_gen.ml` | new `Builder.S.het_cells` accessor (real impl) |
+| File | Role |
+|------|------|
+| `gen/hetGen.ml` | the `hetgen7` driver: per-device runs + column/init/condition merge |
+| `gen/hetCells.ml` | the string record `HetCells.t` (cross-arch boundary) |
+| `gen/builder.mli`, `gen/top_gen.ml` | the `Builder.S.het_cells` accessor (real impl) |
 | `gen/CCompile_gen.ml` | `het_cells` stub (C/C++ is never a het column) |
 | `gen/dune` | build `hetGen` / install `hetgen7` |
-| `hetlitmus/tests/het/generate.sh` | generate the het corpus (`SB-het`, reproduce `MP-het`) |
-| `hetlitmus/tests/het/SB-het.litmus` | generated het store-buffering test |
+| `hetlitmus/tests/het/generate.sh` | generate the het corpus (reference tests (A) + the grid (B), (D), (E)) |
+| `hetlitmus/tests/het/MP-het.litmus`, `SB-het.litmus` | the generated reference tests (A) |
 
 ## 7. Limitations (generation scope)
 
@@ -204,10 +201,11 @@ without error.
 - The condition merge assumes **conjunctive** `exists`/`forall` conditions
   (`a /\ b /\ …`), which the MP/SB/LB/IRIW corpus uses; disjunctions are not
   split.
-- Device pairing is fixed to **AArch64 (cpu) + LISA/PTX (gpu)** (the GH200
-  target), matching the single compound dispatch arm. A second `+ HIP` pairing
-  (MI300A) would add one builder wiring here and one dispatch arm in
-  `litmus/top_litmus.ml`.
+- The CPU side is selected by `-cpu-arch` — **AArch64** (the default, the GH200
+  target) or **x86_64** — each a single-arch `*Compile_gen` builder; the GPU
+  column is LISA/Bell for either GPU dialect, CUDA vs HIP being litmus7's
+  `-gpu-target`, chosen at emission and not a generator arm (`het-emission.md`,
+  "Generating het tests for a CPU ISA" and "CPU ISA from the device tag").
 - Generation produces the **test**; cross-device harness *emission* (asymmetric
   launch, coherent allocation, per-iteration rendezvous, readback) is
   `het-emission.md`'s job, and *execution* is hardware-only.

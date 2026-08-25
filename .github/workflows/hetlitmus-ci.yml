@@ -1,10 +1,10 @@
 # Every hetlitmus make gate that runs without a GPU device: the base
-# umbrella (make hetlitmus-test) in one job, the four compile-only
+# umbrella (make hetlitmus-test) in one job, the deviceless
 # toolchain gates in the other.  Only the second job installs nvcc and
 # hipcc; no job needs a device.  The two device-executing gates
 # (hetlitmus-stress, -characterize-hw) probe for real hardware and fail
 # closed on a hosted runner; they run on a GPU box only
-# (hetlitmus/docs/TEST-PLAN.md).
+# (hetlitmus/docs/README-tests.md).
 name: hetlitmus
 
 on:
@@ -20,8 +20,8 @@ concurrency:
 jobs:
   base-lane:
     name: base gates (make hetlitmus-test)
-    # x86_64 (the x86-body gate asserts over native gcc + objdump output);
-    # jammy, matching the suite of the ROCm apt line below.
+    # jammy x86_64: the image the toolchain job's ROCm apt line needs, so both
+    # jobs run the suite on one host ISA.
     runs-on: ubuntu-22.04
 
     steps:
@@ -34,14 +34,10 @@ jobs:
           ocaml-compiler: "5.1"
           dune-cache: true
 
-      - name: Install clang
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang
-
+      # verdictcheck and statscheck compile the emitted runtime header.
       - name: Preflight toolchain assertion
         run: |
-          for t in clang gcc g++ objdump python3; do
+          for t in gcc python3; do
             command -v "$t" || { echo "missing: $t"; exit 1; }
           done
 
@@ -58,10 +54,10 @@ jobs:
         # as executed with it off.
         env:
           DUNE_CACHE: disabled
-        run: opam exec -- make hetlitmus-test
+        run: opam exec -- make -k hetlitmus-test
 
   toolchain-lane:
-    name: toolchain gates (compile-only, no device)
+    name: toolchain gates (no device)
     # jammy: must match the suite of the ROCm apt line below.
     runs-on: ubuntu-22.04
 
@@ -100,11 +96,11 @@ jobs:
           sudo apt-get install -y hipcc hip-dev hip-runtime-amd rocm-device-libs
           echo /opt/rocm/bin >> "$GITHUB_PATH"
 
-      # smoke and cpustress degrade to SKIP without hipcc or nvcc; a missing
-      # tool must fail here instead.
+      # A missing tool must fail here: without hipcc smoke.sh SKIPs its .hip
+      # rep and still exits 0.
       - name: Preflight toolchain assertion
         run: |
-          for t in nvcc hipcc clang gcc g++ objdump python3; do
+          for t in nvcc hipcc clang gcc g++ python3; do
             command -v "$t" || { echo "missing: $t"; exit 1; }
           done
           nvcc --version | tail -1
@@ -116,10 +112,12 @@ jobs:
       - name: Build
         run: opam exec -- make build
 
+      # -k: one red gate must not hide the others.
       - name: Run the toolchain gates
         run: >-
-          opam exec -- make
+          opam exec -- make -k
           hetlitmus-faithful
           hetlitmus-smoke
+          hetlitmus-stress-static
           hetlitmus-cpustress
           hetlitmus-hipbuild

@@ -3,22 +3,12 @@
 #
 #   campaign.py --runner "sh run-one.sh {dir} {test}" ...
 #
-# campaign.py shlex-splits the template, so it must stay a plain argv -- hence a
-# script rather than an inline `sh -c'.  The harness reads its per-invocation
-# knobs (HET_SEED, HET_ADAPTIVE, HET_RUNS_MAX, HET_RATE, HET_CONFIRM_RUNS) from
-# the environment campaign.py sets, and prints the HetStats machine line on
-# stdout, which is the whole interface.  Nothing is filtered here: campaign.py
-# parses the LAST machine line and ignores everything else, including the
-# shared-mem banner.
-#
-# HET_RUN_LOG_DIR (optional) also APPENDS each invocation's transcript to
-# <dir>/<test>.log, so a session keeps the HetStats lines campaign.py only
-# parses.  It is a copy, never a filter: both streams are forwarded on the
-# stream they arrived on and the harness's own exit status is what this script
-# exits with.  THE TWO STREAMS STAY SEPARATE -- campaign.py builds an errored
-# row's note from the runner's stderr, so merging them leaves that note blank on
-# exactly the invocations that failed, and a non-zero status a pipeline swallowed
-# would turn a dead harness into a silent one.
+# campaign.py shlex-splits the template, so it must stay a plain argv, and it
+# parses the HetStats line the harness prints on stdout: nothing is filtered
+# here.  With HET_RUN_LOG_DIR set the transcript is also appended to
+# $HET_RUN_LOG_DIR/<test>.log.  The two streams stay SEPARATE and the harness's own status
+# is this script's exit: campaign.py builds an errored row's note from the
+# runner's stderr, and a merged stream leaves that note blank.
 set -eu
 cd "$1" || exit 2
 [ -n "${HET_RUN_LOG_DIR:-}" ] || exec "./$2"

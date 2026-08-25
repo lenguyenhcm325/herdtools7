@@ -40,11 +40,15 @@ run harness (and therefore needs no `_show.awk`/`cache.h` runtime from the
 libdir — which is why `-set-libdir herd/libdir` is fine even though those files
 live under `litmus/libdir`).
 
+Emission is deterministic: the same `.litmus` and the same `-gpu-target` yield
+byte-identical output, which is what the emission golden
+(`hetlitmus/verify/corpus-gate.sh`) and the byte-identical refactor proof
+(`hetlitmus/verify/emit-all.sh`) rest on.
+
 ## CPU ISA from the device tag (a functor, not a flag)
 
-The harness body used to be AArch64-specific. It is now a **functor over the CPU
-module chain**, `HetEmit.Make` in `litmus/hetEmit.ml` (extracted from
-`top_litmus.ml`; the seam back to `Top`'s scope is the options slice, the
+The harness body is a **functor over the CPU module chain**, `HetEmit.Make` in
+`litmus/hetEmit.ml` (the seam back to `Top`'s scope is the options slice, the
 splitter, and `Make`'s compiled-CPU-code extractor, closed at the dispatch
 site), instantiated by the `` `Het `` dispatch arm at the ISA
 the header asks for:
@@ -58,7 +62,7 @@ the header asks for:
    `X86_64Compile_litmus` + `X86_64Parser`) and passed to `HetEmit`;
 3. `CpuF` bundles the per-column sub-parser (`parse_column`), the human ISA
    label, the host CPP macro (`__aarch64__` / `__x86_64__`), and an optional
-   `(clang-triple, -std)` for cross-assembly (`None` when the dev host already
+   `(clang-triple, -std)` for cross-assembly (`None` when the build host already
    *is* this ISA, e.g. x86_64 → native `gcc`).
 
 `X86_64Parser.mly` gained the single-column `instr_option_seq` start rule
@@ -112,11 +116,11 @@ The five required pieces, and where each is reused rather than reimplemented:
 2. **P(gpu) → a GPU kernel (CUDA *and* HIP).** The arm projects onto the
    Bell/LISA side (`HetArch.to_gpu_pseudo`) and builds the kernel by reusing the
    GPU dialect's scoped-atomic translation. The layout/globals/result-register
-   analysis is **identical** for both dialects (`CudaLang.collect_globals`,
-   `result_regs`, `layout_of_scopes`, `instrs_of_code` — byte-for-byte the same
-   as HipLang's), so only `dump_instr` is parameterised: CUDA →
-   `cuda::atomic_ref<int, thread_scope_*>`, HIP → `__hip_atomic_*`. Only the
-   het-specific scaffold (the barrier + per-proc guard) is new.
+   analysis is shared by both dialects (`litmus/gpuLang.ml`: `collect_globals`,
+   `result_regs`, `layout_of_scopes`, `instrs_of_code`), so only `dump_instr`
+   is per dialect: CUDA → `cuda::atomic_ref<int, thread_scope_*>`, HIP →
+   `__hip_atomic_*`. Only the het-specific scaffold (the barrier + per-proc
+   guard) is new.
 
 3. **Shared vars in `{cuda,hip}MallocManaged`.** Every shared location (the
    union of the CPU thread's addresses and the kernel's globals) is allocated in
@@ -252,7 +256,10 @@ dialect) PAIR**. That pair, and no machine, is what a render names.
   identify the target: a harness built for the wrong pair compiles, runs and
   reports identically, and this define is the only thing that says which pair it
   was measuring. `hetlitmus/hetlitmus-run.sh` spells the same label and refuses
-  a render that stamps another.
+  a render that stamps another. `pair_label` in `litmus/hetEmit.ml` is the one
+  derivation of that label for both dialects — the `pair:` line litmus7 prints,
+  the `HET_PAIR_NAME` stamp and the README's `Pair:` line all take it — so a
+  printout verified on one stamped frame is verified for the other.
 * **The one target-specific *number* is a build knob.** `HET_LLC_MB` is the
   last-level cache a noise buffer must exceed to cross the interconnect at all;
   below it the buffer is served from cache and the noise stresses nothing. It is
@@ -276,10 +283,10 @@ dialect) PAIR**. That pair, and no machine, is what a render names.
 with a clearly-marked portable **shim** in the `#else` branch so `gcc -c` always
 succeeds. Whether a *real* asm object is also produced depends on `CpuF.cross`:
 
-* **x86_64 CPU on an x86_64 dev box** (`cross = None`): the host macro
+* **x86_64 CPU on an x86_64 build host** (`cross = None`): the host macro
   `__x86_64__` is already defined, so the `gcc -c` above assembles the **real**
   x86 asm directly — no extra step.
-* **AArch64 CPU on an x86_64 dev box** (`cross = Some ("aarch64-linux-gnu",
+* **AArch64 CPU on an x86_64 build host** (`cross = Some ("aarch64-linux-gnu",
   "gnu11")`): the host `gcc` takes the shim; `comp.sh` additionally runs
   `clang --target=aarch64-linux-gnu -std=gnu11 -c <t>_cpu.c` when `clang` is
   present — clang's integrated assembler emits a genuine `ELF aarch64` object
@@ -328,7 +335,7 @@ also what writes the het CPU body (piece 1 above).
 `CudaLang`/`HipLang` are reused for the GPU lowering (their shared half is
 `litmus/gpuLang.ml`). One general (non-het) robustness fix lives in
 `litmus/dumpRun.ml`: when no test compiled to a C run harness (e.g. an
-all-`Het` invocation), litmus7 no longer copies the run-harness runtime from the
+all-`Het` invocation), litmus7 does not copy the run-harness runtime from the
 libdir (nothing to run), so the command exits cleanly.
 
 ## Generating het tests for a CPU ISA (`hetgen7 -cpu-arch`)
@@ -341,18 +348,28 @@ hetgen7 … -cpu-arch x86_64 -cpu "PodWW Rfe PodRR Fre" -gpu "…" -bell ptx.bel
 ```
 
 writes a test whose cpu column carries the `x86_64` tag and holds x86 cells
-(`movl $1,(x)`). With **no** `-cpu-arch` the default is AArch64 and the output is
-byte-identical to before (the cpu column keeps its `cpu` back-compat tag).
+(`movl $1,(x)`). With **no** `-cpu-arch` the default is AArch64 (the cpu column
+keeps its `cpu` back-compat tag).
 
 ## The CPU-only set (`tests/het/generate-cpuonly.sh`)
 
-Six shapes — MP, LB, SB, 2+2W, R, IRIW — rendered as het tests whose *every*
-proc is tagged `cpu`, so they run as pure x86 tests **on the shared allocation**
-instead of on litmus7's own. A plain litmus7 X86 run would allocate `x` and `y`
-itself, and the question this set asks is about *that* allocation; the het
-harness reaches it through `gd_alloc_shared` (`HET_ALLOC` / `hipMallocManaged`),
-runs the same stress and prints the same verdict machinery. The set is generated
-into an OUTDIR and never committed.
+Six shapes — MP, LB, SB, 2+2W, R, IRIW — rendered as het tests whose every
+proc is a CPU proc (`-devices` names `cpu` for each proc, under
+`-cpu-arch x86_64`, so every column carries the `x86_64` tag), so they run as
+pure x86 tests **on the shared allocation** instead of on litmus7's own. A plain
+litmus7 X86 run would allocate `x` and `y` itself, and the question this set
+asks is about *that* allocation; the het harness reaches it through
+`gd_alloc_shared` (`HET_ALLOC` / `hipMallocManaged`), runs the same stress and
+prints the same verdict machinery. The set is generated into an OUTDIR and
+never committed.
+
+`generate-cpuonly.sh OUTDIR [GPU-TARGET]` (default `hip`, the (x86_64, hip)
+pair; `cuda` is a machinery smoke) generates, emits and reads the set back for
+the `_rec.cpu_only = 1;` stamp against the negative control
+`MP-cg-sys-relaxed`, which must stamp 0 — a constant flag would vouch for
+nothing. It does not run them: the run and the `hetlitmus/campaign.py`
+invocation are the target box's step. `make hetlitmus-cpuonly` runs it over
+`hetlitmus/tests/het/cpuonly-out`.
 
 * **`SB` and `R` must be observed** — the store buffer is live — which doubles
   as the write-back probe: a CPU-only sighting on the shared allocation rules
@@ -366,10 +383,8 @@ into an OUTDIR and never committed.
   the test is a CPU proc, so nothing depends on the file name saying `cpuonly`.
 * **`2+2W` is read like every other row.** It is the one store-only shape in the
   set, and its condition names locations rather than registers; those are ordinary
-  outcome columns now, read out of iteration `n`'s own slot after the run, so the
+  outcome columns, read out of iteration `n`'s own slot after the run, so the
   coherence order it asks about is the one that happened *within* that iteration.
-  The reconstruction that used to stand in for it, and the caveat that went with
-  it, are gone.
 
 ## Scope / limits
 
@@ -382,26 +397,27 @@ into an OUTDIR and never committed.
   `.litmus` writes and the loads recorded into per-iteration buffers by the
   wrapper's caller. Nothing is widened: the x86 store is the column's own
   `movl $1,%[x]` on an `int` slot. The renderings themselves are produced on demand by
-  `hetlitmus/tests/het/generate-x86.sh OUTDIR` — never committed, because 94
+  `hetlitmus/tests/het/generate-x86.sh OUTDIR` — never committed, because many
   of them are byte-identical to a sibling below their two-line name header
-  (x86-TSO collapses the four CPU order tokens onto two images) and
-  `dupcheck.py` rejects duplicates. Their names are
-  1:1 with the 471-test corpus (`<corpus name>-x86_64`), which is what lets a
-  gate pin one census against both.
+  (the x86-TSO collapse: `corpus-grid.md`, "Census rationale") and
+  `dupcheck.py` rejects duplicates. Their names are name-for-name with the
+  committed corpus (`<corpus name>-x86_64`), which is why `verify/census.py`'s
+  `HET` pins both renderings.
 * A het emission that **cannot** be completed is fail-closed: litmus7 prints
   `HetLitmus REFUSED (het|gpu-only|isa-scan) <test>: <why>` on stderr and exits
   **3** (`HetArch.refused`).  litmus7's own batch driver would have reported the
   refusal and still exited 0, which made a missing harness look like success to
   any caller that redirects stdout.
 * The CPU projection supports plain straight-line procs (the het corpus). The
-  instruction vocabulary is now litmus7's own — whatever `AArch64Compile_litmus`
+  instruction vocabulary is litmus7's own — whatever `AArch64Compile_litmus`
   / `X86_64Compile_litmus` accept and `ASMLang.dump_fun` prints — so there is no
   het-side classifier to refuse an instruction by name, and the CPU half's
   faithfulness rests on litmus7's lowering plus the checks that read the emitted
-  text (`faithfulness.md`). A structural pseudo is still dropped rather than
-  refused: `instrs_of_pseudo` peels a `Label` and drops a `Macro`/`Pagealign`/
-  `Symbolic`, so a proc carrying one emits a straight-line body with it silently
-  removed.
+  text (`faithfulness.md`); the projection hands litmus7's own compile pipeline
+  whatever the column parsed. On the GPU column a structural pseudo is dropped
+  rather than refused: `instrs_of_pseudo` (`litmus/gpuLang.ml`) peels a `Label`
+  and drops a `Macro`/`Symbolic`/`Pagealign`/`Skip`, so a LISA proc carrying one
+  emits a straight-line body with it silently removed.
 * **What the condition compiler refuses, and the one thing it does not check.**
   A test is refused (`HetLitmus REFUSED`, exit 3) when its condition names a
   register no proc makes observable, when it observes a location no proc of the
@@ -409,8 +425,7 @@ into an OUTDIR and never committed.
   an atom is not of the form `loc=v`, or when the whole predicate compiles to a
   constant — a constant-true detector reports the weak behaviour every run and a
   constant-false one reports "Never" every run. It does **not** check that some
-  store in the program ever writes the value an atom asks for: that check lived
-  in the store-tag map and went with it. A condition asking for a value nothing
+  store in the program ever writes the value an atom asks for. A condition asking for a value nothing
   writes therefore compiles to a detector that is permanently false, which the
   run reports as a null — caveated `HET_CV_ONE_OUTCOME` when every scored
   iteration read the same vector, and excluded from corroboration by

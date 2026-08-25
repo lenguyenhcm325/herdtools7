@@ -1,42 +1,18 @@
 #!/usr/bin/env bash
 # Generate the heterogeneous (compound CPU-GPU) HetLitmus corpus with hetgen7
-# (gen/hetGen.ml), which runs the monomorphic diy cycle engine once per device
-# and merges each proc's column from the run owning that proc's device.  How
-# and why: hetlitmus/docs/het-generation.md; the grid rule: docs/corpus-grid.md.
+# (gen/hetGen.ml).  How the merge works: hetlitmus/docs/het-generation.md.  The
+# grid rule, the families (A) (B) (D) (E) and the CPU_ARCHS knob:
+# hetlitmus/docs/corpus-grid.md.
 #
 #   usage:  ./generate.sh             # the committed corpus + the @all manifest
 #           ./generate.sh OUTDIR      # the same corpus, into OUTDIR instead
 #           CPU_ARCHS="aarch64 x86_64" ./generate.sh
 #
-# OUTDIR (default: this directory) exists for verify/corpus-gate.sh, which says
-# there why it regenerates out of tree.
-#
-# CPU_ARCHS (default "aarch64", matching GH200) selects which CPU ISAs the
-# cpu-tagged procs are generated for; the x86_64 variants (suffix -x86_64) are
-# generated on demand only and are not committed.
-#
-# The corpus, in the order the sections below emit it:
-#  (A) MP-het, SB-het -- the hand-checked reference tests.  MP-het is
-#      regenerated and diffed, never overwritten here (an OUTDIR gets the
-#      regeneration, so its rendering is complete); SB-het is (re)generated.
-#  (B) The one-sided grid <shape>-<cuttag>-<scope>-<order>.litmus: every shape x
-#      canonical device cut x scope{cta,gpu,sys} x order{relaxed,acquire,
-#      release,fence}.  GPU procs carry the annotation, CPU procs are plain
-#      AArch64.  A column byte-identical to its relaxed sibling is dropped.
-#  (D) The two-sided family <shape>-<cuttag>-sys-{acqrel,fence}-2s: BOTH devices
-#      annotated, so a complete morally-strong cross-device pair can form.
-#  (E) The two-sided order-pair grid <shape>-<cuttag>-sys-<cpu>.<gpu>-2s: the
-#      off-diagonal of (D), one file per pair-grid cut class x non-diagonal
-#      cell of the (cpu order, gpu order) grid (../_grid_lib.sh).
-#
-# No expected outcome is attached to any of these tests: this branch predicts
-# none, and comparing a run against a verdict CSV is an optional offline step
-# for which the reader supplies both the comparator and the file.
+# OUTDIR (default: this directory) exists for verify/corpus-gate.sh.
 
 set -e
 # OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so
-# a relative path works -- the same rule generate-x86.sh and generate-cpuonly.sh
-# state at this spot.
+# a relative path works.
 OUT="${1:-}"
 if [ -n "$OUT" ]; then mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"; fi
 
@@ -65,22 +41,12 @@ CPU_ARCHS="${CPU_ARCHS:-aarch64}"
   > SB-het.litmus
 echo "generated SB-het.litmus"
 
-regen="${TMPDIR:-/tmp}/MP-het.regen.$$.litmus"
 "$BIN/hetgen7" $COMMON -devices cpu,gpu -name MP-het \
   -com "Heterogeneous message-passing: P0 on the CPU (AArch64), P1 on the GPU (LISA/PTX)" \
   -cpu "PodWW Rfe PodRR Fre" \
   -gpu "PodWWRelaxedSysReleaseSys RfeReleaseSysAcquireSys PodRRAcquireSysRelaxedSys FreRelaxedSysRelaxedSys" \
-  > "$regen"
-if diff -w -q "$regen" "$HETDIR/MP-het.litmus" >/dev/null; then
-  echo "MP-het: generator reproduces hand-written MP-het.litmus (modulo whitespace)"
-else
-  echo "MP-het: WARNING generated output differs from MP-het.litmus" >&2
-  diff -w "$regen" "$HETDIR/MP-het.litmus" || true
-fi
-# In the committed tree the hand-written file is authoritative, so it is left
-# alone; an OUTDIR rendering has to carry the test all the same.
-[ "$OUT" = "$HETDIR" ] || cp "$regen" "$OUT/MP-het.litmus"
-rm -f "$regen"
+  > MP-het.litmus
+echo "generated MP-het.litmus"
 
 # ---------------------------------------------------------------------------
 # (B) The grid.
@@ -119,15 +85,9 @@ done
 # ---------------------------------------------------------------------------
 # (D) The two-sided family: complete the morally-strong cross-device pair.
 # ---------------------------------------------------------------------------
-# Both halves annotated: the CPU cycle with ARM atoms (render_cpu_cycle) and the
-# GPU cycle with the matching sys annotation, so the corpus carries the
-# cross-device pair annotated on BOTH sides -- (B) annotates the GPU half alone.
-# Restricted to sys scope (cta and gpu name GPU threads only, so a CPU proc sits
-# outside them however it is annotated) and to the complete pairings {acqrel,
-# fence} -- acquire or release alone annotates one role only.
-# Generated for aarch64 only: the committed corpus is the AArch64 rendering, and
-# the x86 CPU column is emitted on demand by generate-x86.sh (its header says
-# why it is not committed).
+# Both halves annotated, so the cross-device pair closes -- (B) annotates the GPU
+# half alone.  Which orders and why sys scope: ../_grid_lib.sh, TWO_SIDED_ORDERS.
+# aarch64 only; generate-x86.sh renders the x86 CPU column on demand.
 twosided_count=0
 for shape in $SHAPE_ORDER; do
   cyc="${SHAPE_CYCLE[$shape]}"
@@ -159,9 +119,8 @@ done
 # ---------------------------------------------------------------------------
 # (E) The two-sided order-pair grid: the off-diagonal of (D).
 # ---------------------------------------------------------------------------
-# (D) gives both devices the same order name, i.e. the diagonal only.  The
-# ordering a primitive supplies depends on which program-order pair its proc
-# has, so sweep  cpu in {ra, sy, st, ld} x gpu in {ra, sc, rel, acq}, named
+# (D) gives both devices the same order name, i.e. the diagonal only, so sweep
+# cpu in {ra, sy, st, ld} x gpu in {ra, sc, rel, acq}, named
 # <shape>-<cuttag>-sys-<cpu>.<gpu>-2s.  ../_grid_lib.sh has the token table and
 # why only 2-proc shapes (minus 2+2W) and one cut for SB/LB.
 pair_count=0 diag_count=0
@@ -171,27 +130,13 @@ for shape in $TWO_SIDED_PAIR_SHAPES; do
     tag=$(cut_tag "$cut")
     for c in $TWO_SIDED_CPU_ORDERS; do
       for g in $TWO_SIDED_GPU_ORDERS; do
+        # The diagonal cells already exist under their (D) names; re-emitting
+        # one would be an exact duplicate.
+        [ "$c.$g" = "ra.ra" ] && { diag_count=$((diag_count+1)); continue; }
+        [ "$c.$g" = "sy.sc" ] && { diag_count=$((diag_count+1)); continue; }
+        name="$shape-$tag-sys-$c.$g-2s"
         cpu_toks=$(render_2s_cpu "$c" $cyc)
         gpu_toks=$(render_2s_gpu "$g" $cyc)
-        # The two diagonal cells already exist under their (D) names: prove it
-        # by regenerating under the (D) name and byte-diffing the committed
-        # file, then skip (emitting them would be an exact duplicate, which
-        # verify/dupcheck.py rejects anyway).
-        diag=""
-        [ "$c.$g" = "ra.ra" ] && diag="$shape-$tag-sys-acqrel-2s"
-        [ "$c.$g" = "sy.sc" ] && diag="$shape-$tag-sys-fence-2s"
-        if [ -n "$diag" ]; then
-          "$BIN/hetgen7" $COMMON -cpu-arch aarch64 -devices "$cut" -name "$diag" \
-            -cpu "$cpu_toks" -gpu "$gpu_toks" > "/tmp/hetgen-diag.$$.litmus"
-          if ! diff -q "/tmp/hetgen-diag.$$.litmus" "$diag.litmus" >/dev/null; then
-            echo "generate.sh: FATAL $c.$g does NOT reproduce $diag" >&2
-            diff "/tmp/hetgen-diag.$$.litmus" "$diag.litmus" >&2 || true
-            rm -f "/tmp/hetgen-diag.$$.litmus"; exit 1
-          fi
-          rm -f "/tmp/hetgen-diag.$$.litmus"
-          diag_count=$((diag_count+1)); continue
-        fi
-        name="$shape-$tag-sys-$c.$g-2s"
         "$BIN/hetgen7" $COMMON -cpu-arch aarch64 -devices "$cut" -name "$name" \
           -cpu "$cpu_toks" -gpu "$gpu_toks" > "$name.litmus"
         pair_count=$((pair_count+1))

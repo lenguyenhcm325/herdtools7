@@ -93,8 +93,8 @@ count.
 
 Coverage is asserted rather than assumed: `verify/verdictcheck.py` accumulates the
 disqualifier and caveat words its cases reach and compares them against the `HET_DQ_` /
-`HET_CV_` `#define`s read off the header itself, so a bit added there is named rather than
-shipped uncovered.
+`HET_CV_` `#define`s read off the header itself: every bit the header declares must be
+reached by a case, so a bit added there without a case fails the gate.
 
 **Requested-but-dead, not merely zero.** A deliberately disabled mechanism is not a bug,
 and treating "counter == 0" as disqualifying on its own would make an intentional
@@ -102,9 +102,10 @@ no-stress baseline COLD forever — which is just another way of building a rule
 says the same thing. The emitter fills `stress_requested` from the compile-time knobs, so
 the distinction is carried in the record rather than inferred from it.
 
-**A zero lane count is structural, not dead.** `het_do_stress`'s round loop is guarded by
-`_gpu_done < HET_GPU_LANES`, which is false at 0 before the body runs once, so at zero
-lanes the mechanism cannot report a round however hard the run tries — and a tally of 0 is
+**A zero lane count is structural, not dead.** The emitted stress block's round loop
+(`litmus/hetEmit.ml`) runs only while `het_scratch_read(_gpu_done) < HET_GPU_LANES`, which
+is false at 0 before `het_do_stress` is called once, so at zero lanes the mechanism cannot
+report a round however hard the run tries — and a tally of 0 is
 therefore not evidence of anything. The emitter withholds `HET_REQ_GPU_STRESS` from
 `stress_requested` exactly there (`litmus/hetEmit.ml`), so the mechanism is caveated rather
 than disqualified, and the caveat prints the lane count so the claim is checkable against
@@ -171,19 +172,24 @@ prediction to schedule against: a sighting stops it once it reproduces; a *lone*
 sighting holds the row open for `HET_CONFIRM_RUNS` runs measured **from the run it fired
 in** — outranking the budget stop, since ending there would bank "seen once, stopped
 looking" — and then stops `UNCONFIRMED-SIGHTING`, which is neither a null nor a
-corroboration; a row that never fires stops when its budget is spent. `HET_RATE=1` turns
-the sighting stop off. `hetlitmus/campaign.py` applies the same rule across invocations,
+corroboration; a row that never fires stops when its budget is spent. The confirmation
+window (`HET_CONFIRM_RUNS`, counted from the run that fired) and the budget are distinct
+stops, and with the window shorter than the budget the two are told apart by the run
+count alone. `HET_RATE=1` turns the sighting stop off. `hetlitmus/campaign.py` applies
+the same rule across invocations,
 each with a fresh seed base — replaying a seed adds no new phase draw and is not a
 replicate.
 
 ## 6. Every atom of the condition is a histogram column
 
-A coherence-final `[ell]=v` atom is an ordinary outcome column now: iteration `n`'s slot
+A coherence-final `[ell]=v` atom is an ordinary outcome column: iteration `n`'s slot
 for `ell` holds what that iteration left there, so the readout reads it beside the register
 atoms, `_dump_one` prints it as a number, and the condition compiler compares it like any
-other. There is no `?` column and no separate witness, and `verify/rdvcheck.py` asserts
-that over every emitted render: one `add_outcome_outs` site, inside the readout loop, and
-no `=?` anywhere in `_dump_one`.
+other. There is no `?` column and no separate witness. `verify/rdvcheck.py` asserts over
+every emitted render one `add_outcome_outs` site and one discard site
+(`if (!_ok) { _rec.iters_discarded++; continue; }`) inside the readout loop, the discard
+ahead of the score; `hetlitmus/tests/cram/slot-readout.t` pins that `_dump_one` prints
+every column as a number on the shape whose every column is a location.
 
 What the emitter still refuses at compile time, because a condition it cannot compile is a
 detector that would silently never fire, is listed in `het-emission.md`; the one thing it
@@ -197,6 +203,13 @@ thesis-facing evidence, and none of those numbers can be re-read later. A retire
 therefore left **vacant** rather than closed up, and each `#define` block in
 `het_verdict.h` states its own vacancies beside the bits it still uses. Add at the top;
 never renumber.
+
+The `HetStats` machine line's field set, and the order it prints them in, are a wire
+format too: `hetlitmus/campaign.py` reads it by key (`fnum(kv, …)`: `cpu_only`, `R`,
+`usable`, `k`, `k_eff`, `k_runs`, `first_sight`) and `spotcheck/ladder.sh` reads fields
+by name (`statfield`), so a field a consumer reads must be one `het_stats_line` prints.
+The `HetObs` record line is parsed downstream as well (`ladder.sh`'s `obsfield`:
+`do_stress_rounds`, `enemy_rounds`, `preload`, `req`).
 
 ## 8. What this file does not settle
 

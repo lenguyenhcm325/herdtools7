@@ -1,38 +1,18 @@
 #!/bin/bash
-# Generate the GPU-only HetLitmus litmus corpus as scoped LISA tests.
+# Generate the GPU-only HetLitmus corpus as scoped LISA tests: (A) the tests
+# anchored on the [Goens23] artifact, which keep the artifact's own names, and
+# (B) the systematic shape x scope x order grid.  Provenance, the grid rule and
+# the vendor scope: hetlitmus/docs/{gpu-only-corpus,corpus-grid}.md.
 #
 #   usage:  ./generate.sh             # this directory + the @all manifest
 #           ./generate.sh OUTDIR      # the same corpus, into OUTDIR instead
 #
-# OUTDIR (default: this directory) exists for verify/corpus-gate.sh, which says
-# there why it regenerates out of tree.
-#
-# Two parts:
-#  (A) The tests anchored on the [Goens23] artifact (MP/LB/SB/IRIW, the relaxed
-#      + "-F" release/acquire variants, plus MP-cta-F).  These keep their
-#      original names because that is how the artifact names them.  Generated
-#      verbatim.
-#  (B) The systematic grid: every standard shape
-#         MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3 CoRR CoWR CoRW2
-#      swept over  scope in {cta,gpu,sys}  x  order in {relaxed,acquire,release,
-#      fence}, named <shape>-<scope>-<order>.litmus.
-#
-# Each test is a closed critical cycle of annotated edges; diy7 attaches one
-# memory-order tag and one scope tag per access (vocabulary in
-# hetlitmus/bells/ptx.bell).  Edge token = <base-edge><atom(src)><atom(dst)>,
-# atom rendered <Order><Scope> (gen/common/edge.ml pp_edge_compat).  The grid
-# annotation rule + the fence column are defined in ../_grid_lib.sh.
-#
-# Reference verdicts: only the part-(A) tests carry an external one, from the
-# [Goens23] artifact's own expected.csv (AMD GCN3 + x86).  The part-(B) grid
-# reaches past that artifact -- which has no fence and no `sc' operation
-# anywhere -- so a grid row is outside what a CSV built from it can decide.  A
-# reader who compares one offline brings both the comparator and the CSV.
-# Provenance and vendor scope: hetlitmus/docs/{gpu-only-corpus,corpus-grid}.md.
+# Edge token = <base-edge><atom(src)><atom(dst)>, the atom rendered <Order><Scope>
+# (gen/common/edge.ml pp_edge_compat); the vocabulary is hetlitmus/bells/ptx.bell.
 
 set -e
 # OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so
-# a relative path works -- the same rule generate-x86.sh states at this spot.
+# a relative path works.
 OUT="${1:-}"
 if [ -n "$OUT" ]; then mkdir -p "$OUT"; OUT="$(cd "$OUT" && pwd)"; fi
 
@@ -49,7 +29,7 @@ source ../_grid_lib.sh
 cd "$OUT"
 
 # ---------------------------------------------------------------------------
-# (A) Artifact-anchored tests (oracle set) -- generated verbatim, names fixed.
+# (A) Artifact-anchored tests -- generated verbatim, names fixed.
 # ---------------------------------------------------------------------------
 TREE2="(sys (gpu (cta P0) (cta P1)))"
 TREE4="(sys (gpu (cta P0) (cta P1) (cta P2) (cta P3)))"

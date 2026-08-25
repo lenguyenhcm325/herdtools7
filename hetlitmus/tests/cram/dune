@@ -1,11 +1,8 @@
-; HetLitmus Layer-1 (Static) cram tests -- see hetlitmus/docs/TEST-PLAN.md sec 4.
-; Pure bash/python, no toolchain, no GPU: they exercise the rule functions of
-; _grid_lib.sh (basics.t) and ptxcheck.py's discriminating power on a frozen
-; corrupt PTX (ptx-negatives.t).  Adapted from TEST-PLAN sec 6: the scripts under
-; test live in parent dirs, so they are depended on by their real relative paths
-; (the cram sandbox reconstructs the workspace tree and runs with cwd = this dir).
-; The binaries (%{bin:...}) are intentionally omitted -- Layer 1 needs no OCaml
-; build.
+; HetLitmus cram tests (hetlitmus/docs/README-tests.md).  The sandbox
+; reconstructs the workspace tree, so deps are the scripts' real relative paths.
+
+; Toolchain-free: pure bash/python, no GPU -- and no %{bin:...}, hence no
+; OCaml build.
 (cram
  (applies_to basics ptx-negatives)
  (deps
@@ -14,44 +11,29 @@
   corrupt-strengthen.ptx
   (glob_files ../gpu-only/*.litmus)))
 
-; These emit representative het tests through litmus7 and read the generated
-; driver, so they need the OCaml build; each test's own header says what it
-; pins.  cpu-stress.t is the only check of the stress_go ordering: the liveness
-; gate (hetlitmus/verify/cpustresscheck.py) drives het_cpu_stress.h with its
-; own flag and never the emitted driver's orchestration, so a stress_go raise
-; after the joins passes that gate and fails here.  Scoped apart so the Layer-1
-; tests above stay toolchain-free; het emission needs no -set-libdir, so only
-; the binary and the .litmus inputs are deps.
+; These emit through litmus7 and read the generated driver.  cpu-stress.t is the
+; ONLY check of the stress_go ordering: no gate reads the driver's orchestration.
 (cram
  (applies_to pfix-cond coop-launch shared-alloc slot-readout stress cpu-stress
    statistics)
  (package herdtools7)
  (deps
   %{bin:litmus7}
-  ; The whole corpus is staged: these tests emit from it, and naming each test
-  ; here would silently break the moment one of them touched a different row.
+  ; The whole corpus is staged: naming each test here would silently break the
+  ; moment one of them read a different row.
   (glob_files ../het/*.litmus)
-  ; Every .hip render in these tests comes from ../het-x86: a HIP harness is the
-  ; (x86_64, hip) pair.
+  ; Every .hip render comes from ../het-x86 -- a HIP harness is (x86_64, hip).
   (glob_files ../het-x86/*)
   ../gpu-only/MP-sys-acquire.litmus))
 
-; gpu-target.t is separate because it is the only cram test that emits a PLAIN
-; CPU-only test -- the boundary check that `-gpu-target' did not become a
-; condition on upstream litmus7 usage.  That path needs litmus7's libdir, and the
-; libdir cannot be a declared dep: its per-arch subdirectories are named
-; `_aarch64', `_x86_64', ... and dune ignores directories starting with `_', so
-; (source_tree ../../../litmus/libdir) stages the top level and NONE of the arch
-; files -- silently, which is worse than an error.  So this test walks up from cwd
-; to the source libdir instead, and the stanza above stays as it was.
+; gpu-target.t walks up to the source litmus/libdir: dune ignores `_'-prefixed
+; dirs, so (source_tree) would stage the top level and NO arch file -- silently.
 (cram
  (applies_to gpu-target)
  (package herdtools7)
  (deps
+  (universe)   ; that libdir walk is outside the declared deps
   %{bin:litmus7}
   (glob_files ../het/*.litmus)
-  ; The HIP half of this test emits from the (x86_64, hip) pair.  ../het-x86 is
-  ; the committed fixture for that pair -- see its README for why the generated
-  ; x86 corpus is not usable here (generate-x86.sh needs hetgen7 on $PATH).
   (glob_files ../het-x86/*)
   ../gpu-only/MP-sys-acquire.litmus))

@@ -653,36 +653,35 @@ RUN_TESTS?=false
 $(V).SILENT:
 $(V)SILENTOPT=-s
 
-### HetLitmus test targets.  Each gate's contract lives in the script it runs;
-### the headers below carry only what a target proves and how to regenerate what
-### it pins.  Roster and lane split: hetlitmus/docs/TEST-PLAN.md sec.6.
-### Deliberately NOT wired into upstream `test::`, so the main suite stays fast
-### and CUDA-free; sec.10 holds that decision open.  Upstream idiom: `| build`
-### order-only prereq + `@ echo OK`.  The verify scripts export their own PATH
-### (`_build/install/default/bin`, plus `/usr/local/cuda/bin` on the toolchain
-### lane), so leaf targets just invoke them.
+### HetLitmus test targets.  Each gate's contract lives in the script it runs,
+### which resolves its own tool paths; the header says what the target proves.
+### Roster and lane split: hetlitmus/docs/README-tests.md.  No target here is a
+### `test::' prerequisite, but upstream `dune runtest' still runs
+### hetlitmus/tests/cram.
 
 ### Building blocks (run solo while iterating).
+### The corpus rule functions and the emitted drivers, read statically; the
+### dune shared cache is off, so they run.  Promote: `make hetlitmus-promote'.
 hetlitmus-cram: | build
 	@ echo
-	dune runtest hetlitmus/tests/cram
-	@ echo "HetLitmus Layer-1 cram: OK"
+	DUNE_CACHE=disabled dune runtest --profile=$(DUNE_PROFILE) hetlitmus/tests/cram
+	@ echo "HetLitmus cram: OK"
 
-### The committed corpora and the pinned gpu-only samples are still what the
-### generators and the emitter produce (hetlitmus/verify/corpus-gate.sh).
-### Regenerate both corpora with `make hetlitmus-promote`.
+### The committed corpora, the het-x86 fixture and the pinned gpu-only samples
+### are still what the generators and the emitter produce
+### (hetlitmus/verify/corpus-gate.sh).  Regenerate: `make hetlitmus-promote'.
 hetlitmus-corpus: | build
 	@ echo
 	bash hetlitmus/verify/corpus-gate.sh
-	@ echo "HetLitmus Layer-2 corpus golden: OK"
+	@ echo "HetLitmus corpus golden: OK"
 
 ### Every emitted harness carries exactly the memory ops its .litmus annotates,
-### with the right kind, order and scope, and no others
-### (hetlitmus/verify/ptxcheck.py; hetlitmus/docs/faithfulness.md).
+### with the right kind, order and scope, and no others -- over a feature cover;
+### `tokens.sh full' sweeps both corpora (hetlitmus/docs/faithfulness.md).
 hetlitmus-faithful: | build
 	@ echo
 	bash hetlitmus/verify/tokens.sh all
-	@ echo "HetLitmus Layer-3 PTX faithfulness (644): OK"
+	@ echo "HetLitmus PTX faithfulness: OK"
 
 ### Every emitted HIP kernel and x86_64 CPU body carries exactly the memory ops,
 ### orders, scopes and loop structure its .litmus annotates -- source-level, so
@@ -690,41 +689,45 @@ hetlitmus-faithful: | build
 hetlitmus-hipsrc: | build
 	@ echo
 	python3 hetlitmus/verify/hipsrccheck.py --all
-	@ echo "HetLitmus HIP source faithfulness (173 gpu-only + 471 x86_64 het + 2 synthetic carriers): OK"
+	@ echo "HetLitmus HIP source faithfulness: OK"
 
 ### A curated sample of emitted harnesses builds end to end through its own
-### comp.sh -- host CPU object, cross-assembly, .cu and .hip
-### (hetlitmus/verify/smoke.sh).  Needs nvcc, hipcc and clang.
+### comp.sh (hetlitmus/verify/smoke.sh).  Needs nvcc, hipcc and clang.
 hetlitmus-smoke: | build
 	@ echo
 	bash hetlitmus/verify/smoke.sh
-	@ echo "HetLitmus Layer-3 compile-smoke: OK"
+	@ echo "HetLitmus compile-smoke: OK"
 
-### The GPU scratchpad stress layer is present in the emitted PTX rather than
-### folded away, which the faithfulness gate is blind to by design -- stress is
-### scaffolding, not a model op (hetlitmus/verify/stresscheck.py).
+### The GPU scratchpad stress layer is in the emitted PTX and its round tally
+### moves at run time (hetlitmus/verify/stresscheck.py).  Needs nvcc and a GPU.
 hetlitmus-stress: | build
 	@ echo
 	bash hetlitmus/verify/tokens.sh stress
-	@ echo "HetLitmus Layer-3 stress liveness: OK"
+	@ echo "HetLitmus stress liveness: OK"
 
-### The CPU-side and interconnect stress mechanisms -- invisible to both PTX
-### gates -- survive -O2 on both host ISAs and do work at run time, live when on
-### and zero when off (hetlitmus/verify/cpustresscheck.py).
+### The deviceless half of the gate above: the GPU stress and noise streams are
+### in the emitted PTX and pattern-invariant.  Needs nvcc, no GPU.
+hetlitmus-stress-static: | build
+	@ echo
+	bash hetlitmus/verify/tokens.sh stress-static
+	@ echo "HetLitmus stress PTX survival: OK"
+
+### The CPU-side and interconnect stress mechanisms survive -O2 on both host ISAs
+### and do work at run time, live when on and zero when off
+### (hetlitmus/verify/cpustresscheck.py).
 hetlitmus-cpustress: | build
 	@ echo
 	bash hetlitmus/verify/tokens.sh cpustress
-	@ echo "HetLitmus Layer-3 CPU+interconnect stress liveness: OK"
+	@ echo "HetLitmus CPU+interconnect stress liveness: OK"
 
-### The isomorphism gate: no two corpus tests are the same experiment up to
-### (proc permutation x location renaming), which is the duplicate class the
-### generators' byte-comparison cannot see (hetlitmus/verify/dupcheck.py).
+### No two het corpus tests are the same experiment up to (proc permutation x
+### location renaming) (hetlitmus/verify/dupcheck.py).
 hetlitmus-dup: | build
 	@ echo
 	python3 hetlitmus/verify/dupcheck.py
 	@ echo "HetLitmus isomorphism/dedup gate: OK"
 
-### het_verdict() -- the rule deciding what an observation MEANS -- compiled from
+### het_verdict() -- the rule deciding what an observation means -- compiled from
 ### the real emitted header and driven with synthetic records, together with the
 ### pair each printout names (hetlitmus/verify/verdictcheck.py).
 hetlitmus-verdict: | build
@@ -748,104 +751,49 @@ hetlitmus-rdv: | build
 	python3 hetlitmus/verify/rdvcheck.py
 	@ echo "HetLitmus rendezvous placement + primitive: OK"
 
-### The emitter/runtime skew tripwire: every field a render writes and every
-### HET_* define it stamps still binds to litmus/het-runtime/*.h, which nothing
-### but a compiler otherwise checks (hetlitmus/verify/recfields.py).
+### Every field a render writes and every HET_* define it stamps still binds to
+### litmus/het-runtime/*.h (hetlitmus/verify/recfields.py).
 hetlitmus-recfields: | build
 	@ echo
 	python3 hetlitmus/verify/recfields.py
 	@ echo "HetLitmus emitter/runtime field + define binding: OK"
 
-### hetlitmus/tests/het-x86 is still, byte for byte, what its generator emits --
-### it is the only committed route to the populated (x86_64, hip) pair
-### (hetlitmus/verify/x86fixturecheck.py).  Re-cut it per its own README.md.
-hetlitmus-x86fixture: | build
-	@ echo
-	python3 hetlitmus/verify/x86fixturecheck.py
-	@ echo "HetLitmus het-x86 fixture sync gate: OK"
-
-### Scratch output dir for the CPU-only shapes.  Never committed (.gitignore'd):
-### they are generated on demand, so corpus-gate.sh's census and dupcheck.py --
-### both of which scan hetlitmus/tests/het non-recursively -- stay meaningful.
-### Absolute, because the generator and the recipe below both cd elsewhere.
+### Scratch output dir for the CPU-only shapes.  Never committed (.gitignore'd),
+### so corpus-gate.sh's census and dupcheck.py -- both of which scan
+### hetlitmus/tests/het non-recursively -- stay meaningful.
 HETCPUONLYOUT := $(CURDIR)/hetlitmus/tests/het/cpuonly-out
 
-### The GPU dialect these harnesses are rendered for.  litmus7 emits ONE vendor
-### per harness dir: this corpus has an x86_64 CPU column, so `hip' selects the
-### (x86_64, hip) pair.  `cuda' is legal too and is a machinery smoke.
-HETCPUONLYTARGET ?= hip
-
-### The negative control for the cpu_only stamp: a corpus test with a GPU proc,
-### which the emitter must stamp 0.  Emitted into a temp dir, since the count of
-### harness dirs in $(HETCPUONLYOUT) is pinned.  Overridable to name another test.
-HETCPUONLYNEGDIR ?= $(CURDIR)/hetlitmus/tests/het
-HETCPUONLYNEG ?= MP-cg-sys-relaxed
-
-### The CPU-only shapes as a campaign item: generate, emit, read every render for
-### the `_rec.cpu_only = 1' stamp against a negative control that stamps 0, print
-### the campaign command.  It does NOT run them: only the target box's would count.
+### The CPU-only shapes as a campaign item: generate, emit, and read every render
+### for the `_rec.cpu_only = 1' stamp against a negative control that stamps 0
+### (hetlitmus/tests/het/generate-cpuonly.sh).  It does NOT run them.
 hetlitmus-cpuonly: | build
 	@ echo
-	rm -rf $(HETCPUONLYOUT)
-	hetlitmus/tests/het/generate-cpuonly.sh $(HETCPUONLYOUT)
-	@ set -e ; cd $(HETCPUONLYOUT) ; for t in *.litmus ; do \
-	    $(CURDIR)/_build/install/default/bin/litmus7 \
-	      -gpu-target $(HETCPUONLYTARGET) \
-	      -set-libdir $(CURDIR)/litmus/libdir \
-	      -o . "$$t" 2>&1 | grep -E 'pair:|REFUSED' ; done
-	@ set -e ; n=$$(ls -d $(HETCPUONLYOUT)/*/ 2>/dev/null | wc -l) ; \
-	  test "$$n" -eq 6 || { echo "hetlitmus-cpuonly: emitted $$n harness dir(s), expected 6" ; exit 1 ; }
-	@ set -e ; n=0 ; for d in $(HETCPUONLYOUT)/*/ ; do \
-	    r=$$(ls $$d*.hip $$d*.cu 2>/dev/null | head -1) ; \
-	    test -n "$$r" || { echo "hetlitmus-cpuonly: $$d carries no render" ; exit 1 ; } ; \
-	    grep -q '_rec\.cpu_only = 1;' "$$r" || { \
-	      echo "hetlitmus-cpuonly: $$r does not stamp _rec.cpu_only = 1 -- a CPU-only" ; \
-	      echo "  cycle whose harness does not say so is reported as a compound-model row" ; \
-	      exit 1 ; } ; \
-	    n=$$((n+1)) ; done ; \
-	  echo "hetlitmus-cpuonly: $$n/6 renders stamp _rec.cpu_only = 1"
-	@ set -e ; t=$$(mktemp -d) ; \
-	  $(CURDIR)/_build/install/default/bin/litmus7 -gpu-target cuda \
-	    -set-libdir $(CURDIR)/litmus/libdir -o "$$t" \
-	    $(HETCPUONLYNEGDIR)/$(HETCPUONLYNEG).litmus >"$$t/emit.log" 2>&1 \
-	    || { cat "$$t/emit.log" ; rm -rf "$$t" ; exit 1 ; } ; \
-	  r="$$t/$(HETCPUONLYNEG)/$(HETCPUONLYNEG).cu" ; \
-	  grep -q '_rec\.cpu_only = 0;' "$$r" \
-	    || { echo "hetlitmus-cpuonly: the negative control $(HETCPUONLYNEG) does not stamp" ; \
-	         echo "  _rec.cpu_only = 0 -- the flag is a constant, so the six 1s above" ; \
-	         echo "  vouch for nothing" ; rm -rf "$$t" ; exit 1 ; } ; \
-	  rm -rf "$$t" ; \
-	  echo "hetlitmus-cpuonly: the negative control $(HETCPUONLYNEG) stamps _rec.cpu_only = 0"
-	@ echo
-	@ echo "CPU-only harnesses in $(HETCPUONLYOUT), rendered for $(HETCPUONLYTARGET).  On the target box:"
-	@ echo "    cd <test> && sh comp.sh $(HETCPUONLYTARGET)-link && ./<test>    # SB and R must FIRE"
-	@ echo "    python3 hetlitmus/campaign.py --corpus $(HETCPUONLYOUT) --runner 'sh hetlitmus/spotcheck/run-one.sh {dir} {test}'"
+	bash hetlitmus/tests/het/generate-cpuonly.sh $(HETCPUONLYOUT)
+	@ echo "HetLitmus CPU-only stamp gate: OK"
 
 ### An AMD harness builds and links into an ELF carrying real gfx942 code, its
 ### allocator and placement refusals execute under a stub, and the CUDA lane does
-### not regress (verify/hipbuildcheck.py).  Needs hipcc AND nvcc, but no device.
+### not regress.  Needs hipcc AND nvcc, but no device.
 hetlitmus-hipbuild: | build
 	@ echo
 	python3 hetlitmus/verify/hipbuildcheck.py
 	@ echo "HetLitmus AMD build/link gate: OK"
 
-### What a het harness PRINTS on a device -- the only artefact a result is read
-### off -- so the reading it gives is the one its own counts support, and it
-### claims nothing beyond them (verify/runcheck.py --characterize-hw).  Needs a GPU.
+### What a het harness prints on a device -- the only artefact a result is read
+### off, so its reading is the one its own counts support.  Needs a GPU.
 hetlitmus-characterize-hw: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py --characterize-hw
 	@ echo "HetLitmus harness-printout runtime gate: OK"
 
 ### The device-session wrapper (hetlitmus/hetlitmus-run.sh) end to end with its
-### documented stand-ins for the compiler and the probe, so what it decides on an
-### unwatched machine is decided here (verify/runcheck.py).  Host-adaptive.
+### documented stand-ins for the compiler and the probe.
 hetlitmus-run-gate: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py
 	@ echo "HetLitmus device-session wrapper gate: OK"
 
-### Umbrellas (what you press).  `::` accumulation, order-only `| build`.
+### Umbrellas (what you press).  `::' accumulation, order-only `| build'.
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
 hetlitmus-test:: hetlitmus-corpus
@@ -855,13 +803,11 @@ hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-recfields
 hetlitmus-test:: hetlitmus-rdv
 hetlitmus-test:: hetlitmus-stats
-hetlitmus-test:: hetlitmus-x86fixture
 hetlitmus-test:: hetlitmus-cpuonly
 hetlitmus-test:: hetlitmus-run-gate
 
 ### The second umbrella takes a target when it needs a toolchain or a device this
-### box may not have, and NOT when it merely concerns GPU code: the targets that
-### read emitted GPU renders belong to the CUDA-free lane.
+### box may not have, and NOT when it merely concerns GPU code.
 hetlitmus-test-toolchain:: | build
 hetlitmus-test-toolchain:: hetlitmus-faithful
 hetlitmus-test-toolchain:: hetlitmus-stress
@@ -870,29 +816,49 @@ hetlitmus-test-toolchain:: hetlitmus-hipbuild
 hetlitmus-test-toolchain:: hetlitmus-characterize-hw
 hetlitmus-test-toolchain:: hetlitmus-smoke
 
-hetlitmus-test-nvcc: hetlitmus-test-toolchain
-
 hetlitmus-test-all:: | build
 hetlitmus-test-all:: hetlitmus-test
 hetlitmus-test-all:: hetlitmus-test-toolchain
 
-### Regenerate both corpora in place + promote cram goldens.  Does NOT commit.
+### Regenerate the golden sets: both corpora, the het-x86 fixture, the sampled
+### cuda-out/hip-out renders, the cram goldens.  NOT the faithfulness cover,
+### whose route is hetlitmus/verify/covercheck.py --extend.  Does not commit.
 hetlitmus-promote: | build
 	@ echo
-	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/gpu-only/generate.sh
-	PATH="$(PWD)/_build/install/default/bin:$$PATH" bash hetlitmus/tests/het/generate.sh
-	dune test hetlitmus/tests/cram --auto-promote
-	@ echo "hetlitmus-promote: corpora regenerated + cram goldens promoted (NOT committed)."
-	@ echo "hetlitmus-promote: review 'git diff' then commit yourself."
+	bash hetlitmus/tests/gpu-only/generate.sh
+	bash hetlitmus/tests/het/generate.sh
+	@ set -e ; t=$$(mktemp -d) ; n=0 ; \
+	  bash hetlitmus/tests/het/generate-x86.sh "$$t" >"$$t.log" 2>&1 \
+	    || { cat "$$t.log" ; rm -rf "$$t" "$$t.log" ; exit 1 ; } ; rm -f "$$t.log" ; \
+	  for f in $$(git ls-files 'hetlitmus/tests/het-x86/*.litmus') ; do \
+	    cp "$$t/$$(basename $$f)" "$$f" ; n=$$((n+1)) ; done ; \
+	  rm -rf "$$t" ; \
+	  test "$$n" -gt 0 \
+	    || { echo "hetlitmus-promote: git ls-files matched nothing -- nothing promoted" ; exit 1 ; } ; \
+	  echo "hetlitmus-promote: het-x86 fixture re-cut"
+	@ set -e ; t=$$(mktemp -d) ; nc=0 ; nh=0 ; \
+	  bash hetlitmus/emit-cuda.sh "$$t/cuda" >"$$t/emit.log" 2>&1 \
+	    && bash hetlitmus/emit-hip.sh "$$t/hip" >>"$$t/emit.log" 2>&1 \
+	    || { cat "$$t/emit.log" ; rm -rf "$$t" ; exit 1 ; } ; \
+	  for f in $$(git ls-files 'hetlitmus/cuda-out/*.cu') ; do \
+	    cp "$$t/cuda/$$(basename $$f)" "$$f" ; nc=$$((nc+1)) ; done ; \
+	  for f in $$(git ls-files 'hetlitmus/hip-out/*.hip') ; do \
+	    cp "$$t/hip/$$(basename $$f)" "$$f" ; nh=$$((nh+1)) ; done ; \
+	  rm -rf "$$t" ; \
+	  test "$$nc" -gt 0 && test "$$nh" -gt 0 \
+	    || { echo "hetlitmus-promote: git ls-files matched nothing -- nothing promoted" ; exit 1 ; } ; \
+	  echo "hetlitmus-promote: cuda-out/hip-out samples re-emitted"
+	dune test --profile=$(DUNE_PROFILE) hetlitmus/tests/cram --auto-promote
+	@ echo "hetlitmus-promote: goldens regenerated (NOT committed); review 'git diff'."
 
 .PHONY: hetlitmus-cram hetlitmus-corpus hetlitmus-faithful hetlitmus-smoke
-.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats
+.PHONY: hetlitmus-stress hetlitmus-stress-static hetlitmus-cpustress hetlitmus-stats
 .PHONY: hetlitmus-dup hetlitmus-verdict
 .PHONY: hetlitmus-recfields hetlitmus-rdv
 .PHONY: hetlitmus-hipbuild hetlitmus-cpuonly
-.PHONY: hetlitmus-x86fixture hetlitmus-characterize-hw hetlitmus-run-gate
+.PHONY: hetlitmus-characterize-hw hetlitmus-run-gate
 .PHONY: hetlitmus-hipsrc
-.PHONY: hetlitmus-test hetlitmus-test-toolchain hetlitmus-test-nvcc
+.PHONY: hetlitmus-test hetlitmus-test-toolchain
 .PHONY: hetlitmus-test-all hetlitmus-promote
 
 include Makefile.x86_64

@@ -42,11 +42,14 @@ type barrier            = CPUbar  of Cpu.barrier            | GPUbar  of Gpu.bar
 ```
 
 The CPU-vs-GPU split is hidden **inside this one module**, so the rest of
-litmus7 stays single-arch-typed. Each `{cpu} × {gpu}` pairing is then exactly
-**one dispatch arm** in `litmus/top_litmus.ml` (functors are compile-time, the
-arch tag is runtime, so supported pairings are enumerated as match arms — the
-same as every existing single arch). The GH200 pairing is **AArch64 (CPU) +
-LISA/PTX (GPU)**; MI300A (`+ HIP`) would be a second arm.
+litmus7 stays single-arch-typed. Functors are compile-time and the arch tag is
+runtime, so the `` `Het `` dispatch arm in `litmus/top_litmus.ml` builds one
+CPU module chain per ISA it supports — **AArch64** or **x86_64**, chosen by
+`HetArch.scan_cpu_isa` from the test's device tags (§3) — and drives
+`HetEmit.Make` (`litmus/hetEmit.ml`) over it, which applies this functor with
+LISA/Bell as the GPU side in both cases. The GPU *dialect*, CUDA or HIP, is not
+an arm at all: it is litmus7's `-gpu-target`, chosen at emission
+(`het-emission.md`, "CPU ISA from the device tag").
 
 `HetArch.Make` is *unsealed*. Its result is used at two interfaces: `ArchBase.S`,
 which is what the het `GenParser` instance requires (and what the build checks
@@ -60,14 +63,17 @@ A heterogeneous test differs from a normal `.litmus` in exactly two places:
 
 1. **Compound-arch header.** The first-line arch token is `Het`. It is parsed
    by the splitter through the ordinary `Archs.parse` path (no splitter grammar
-   change) into the single value `` `Het ``. The sub-architecture *pairing*
-   (AArch64 + LISA) is fixed by the chosen dispatch arm, not by the
-   header.
+   change) into the single value `` `Het ``. The header names neither
+   sub-architecture: the CPU ISA comes from the per-processor device tags
+   (next), the GPU dialect from `-gpu-target`.
 
 2. **Per-processor device tag.** Each processor in the program header carries a
    `:`-suffixed device tag, e.g. `P0:cpu | P1:gpu`. This is the compound test's
-   only extra syntax. Recognised tags (case-insensitive):
-   - CPU side: `cpu`, `aarch64`, `arm`
+   only extra syntax. Recognised tags (case-insensitive; `HetArch.cpu_isa_of_tag`
+   for the CPU side, `parse_device` for the GPU side):
+   - CPU side — AArch64: `cpu`, `aarch64`, `arm`; x86_64: `x86_64`, `x86-64`,
+     `amd64`, `x64`. The tag names the CPU ISA, `cpu` being the AArch64 alias;
+     the corpora use `cpu`, `x86_64` and `gpu` only.
    - GPU side: `gpu`, `lisa`, `ptx`, `hip`
 
    This models the existing per-test info-field convention (e.g. `Scopes=`),
@@ -78,8 +84,8 @@ A heterogeneous test differs from a normal `.litmus` in exactly two places:
 
 Everything else — the init block, the `|`/`;` program table, the `exists`
 condition — is standard. Each processor's cells are written in **that
-processor's native ISA**: AArch64 assembly for `cpu` procs, LISA/Bell scoped
-syntax for `gpu` procs.
+processor's native ISA**: the tagged CPU ISA's assembly (AArch64 or x86-64) for
+CPU procs, LISA/Bell scoped syntax for `gpu` procs.
 
 ### Example (`hetlitmus/tests/het/MP-het.litmus`)
 
@@ -117,16 +123,17 @@ one grammar/lexer, so the het arm parses **per column**:
    cells and transposed into **columns**.
 3. Each column's cells are re-joined with `;` and parsed by the **right
    sub-architecture's `instr_option_seq` start symbol** with that arch's lexer
-   (`AArch64Parser.instr_option_seq` + `AArch64Lexer`, or
-   `LISAParser.instr_option_seq` + `BellLexer`), then lifted into the compound
+   — a CPU column by `AArch64Parser` + `AArch64Lexer` or `X86_64Parser` +
+   `X86_64Lexer` (`litmus/hetCpuFront.ml`, `parse_column`), a GPU column by
+   `LISAParser.instr_option_seq` + `BellLexer` — then lifted into the compound
    parsed pseudo via `of_cpu_parsed` / `of_gpu_parsed`.
 4. The per-proc columns are transposed back into rows and returned as the
    `(proc list, rows, extra_data)` triple `genParser` expects (genParser
    transposes rows→columns again internally; the two transposes cancel).
 
 Because each column is genuinely fed to its sub-arch parser, a malformed cell on
-either side is rejected (verified: a bogus AArch64 mnemonic and a bogus LISA
-cell each produce a parse error), so a successful parse is not vacuous.
+either side is rejected (a bogus AArch64 mnemonic and a bogus LISA cell each
+produce a parse error), so a successful parse is not vacuous.
 
 The `ArchBase.S` obligations needed by the parse path are all delegated
 **faithfully** to the sub-architectures' exposed `Pseudo.S` output — there are
@@ -142,10 +149,10 @@ no placeholders on the parse path:
 
 **What the compound format itself ships:** the `Het` format, the `` `Het ``
 `Archs` variant, the `HetArch` functor satisfying `ArchBase.S`, the per-column
-parser, the AArch64+LISA dispatch arm, and a clean `make all`. End-to-end,
-litmus7 parses the test and routes each column to its device — and, since
-harness emission was built on top of that routing
-(`hetlitmus/docs/het-emission.md`), emits the harness too:
+parser, the `` `Het `` dispatch arm, and a clean `make all`. End-to-end,
+litmus7 parses the test and routes each column to its device — and, through
+the emitter that rides on that routing (`hetlitmus/docs/het-emission.md`),
+emits the harness too:
 
 ```
 $ litmus7 -gpu-target cuda -o OUT hetlitmus/tests/het/MP-het.litmus
@@ -161,34 +168,31 @@ pipeline over the projected column and prints the body with
 `ASMLang.dump_fun`, wrapping it in a `het_run_P<n>` whose caller supplies
 iteration `n`'s slot address for every location.
 
-**Left to emission, and inert here** (the record of what the single-arch break
-itself shipped; emission has since closed the first item):
-- The dispatch arm stops after parse + per-proc routing report; it does not
-  emit a harness.
-- `nop` / `mk_imm_branch` are `None` (no device-agnostic compound form);
-  `get_macro` errors (the corpus uses no macros); `symb_reg` and the
-  cross-device arms of `map_regs` default harmlessly (registers never cross
-  devices). None of these are on the parse path.
+**Inert in the compound module** (none of it on the parse path): `nop` /
+`mk_imm_branch` are `None` (no device-agnostic compound form); `get_macro`
+errors (the corpus uses no macros); `symb_reg` and the cross-device arms of
+`map_regs` default harmlessly (registers never cross devices).
 
-**Lexical limitations of the per-column splitter** (documented, safe for
-the hand-written corpus): the program body must not contain `;` or `|` *inside*
+**Lexical limitations of the per-column splitter** (safe for the generated
+corpus): the program body must not contain `;` or `|` *inside*
 an instruction cell, and must not contain comments — these characters are
 treated purely as table delimiters. `map_labels` is **not** a placeholder: it
 delegates per constructor to each sub-architecture's `map_labels_base` (see §4),
 so labels and branch targets *within* a processor are renamed faithfully. The
 only structural caveat is that a label cannot cross devices — each processor's
 column is parsed independently — but a cross-device branch is meaningless
-anyway. The het corpus happens to use no branch targets, so this path is
-currently unexercised in practice.
+anyway. The het corpus uses no branch targets, so this path is unexercised in
+practice.
 
 ## 6. Files
 
-| File | Change |
-|------|--------|
-| `lib/Archs.ml`, `lib/Archs.mli` | new `` `Het `` arch variant + `parse`/`pp`/`tags` |
+| File | Role |
+|------|------|
+| `lib/Archs.ml`, `lib/Archs.mli` | the `` `Het `` arch variant + `parse`/`pp`/`tags` |
 | `lib/splitter.mli`, `lib/splitter.mll` | documentation of why the single `arch` field is unchanged under fork (a) |
 | `litmus/HetArch.ml` | the `HetArch` functor (sum-type `ArchBase.S`) + per-column parser helpers |
 | `litmus/hetSlurp.mll` | section-slurp lexer used by the het parser |
-| `litmus/top_litmus.ml` | the `` `Het `` dispatch arm (AArch64+LISA pairing, per-proc sub-parser routing) |
+| `litmus/top_litmus.ml` | the `` `Het `` dispatch arm (CPU ISA from `HetArch.scan_cpu_isa`, per-proc sub-parser routing) |
+| `litmus/hetCpuFront.ml` | the per-CPU-ISA column frontend (`parse_column` for AArch64 and x86_64) |
 | `litmus/option.ml`, `gen/autoOpt.ml` | `` `Het `` arms for exhaustiveness |
-| `hetlitmus/tests/het/MP-het.litmus` | the sample heterogeneous MP test |
+| `hetlitmus/tests/het/MP-het.litmus` | the reference heterogeneous MP test (generated; `het-generation.md`) |

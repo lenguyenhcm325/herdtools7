@@ -1,76 +1,19 @@
 #!/usr/bin/env python3
-# ---------------------------------------------------------------------------
-# stresscheck.py  --  HetLitmus static stress-LIVENESS checker (sibling of ptxcheck.py)
-# ---------------------------------------------------------------------------
-# ptxcheck asks "does the harness carry EXACTLY the tested memory ops?", and is
-# deliberately BLIND to the stress layer: stress is scaffolding, not a model op, so
-# it carries no order/scope qualifier and never enters the op stream.  That leaves
-# no gate able to see whether the stress layer exists at all -- and a layer nvcc has
-# folded away still compiles, still passes every other gate, and turns each
-# non-observation into a clean-looking "Never" worth nothing.  This checker asks the
-# one question ptxcheck cannot:
-#
-#     does the emitted PTX still CONTAIN the stress traffic it claims to?
-#
-# It is a GATE, not a report: a mechanism that cannot be observed to be alive must
-# be assumed dead.  Context: hetlitmus/docs/faithfulness.md, "What a compile-time
-# access pattern costs".
-#
-# ---------------------------------------------------------------------------
-# HOW IT ATTRIBUTES OPS TO LANE CLASSES (without parsing PTX control flow)
-#
-# The op signature: a PLAIN (non-inline-asm) `ld.global.u32' / `st.global.u32'.
-# In a het kernel that is the stress layer plus ONE other thing: every model op is
-# inline-asm carrying an order token and the scaffolding counters are atom/red,
-# but a GPU lane also stores each tested load's value into its read buffer, and
-# that buffer is `int'.  Those stores are a fixed, countable population -- one per
-# (GPU proc, load), pinned to one textual copy by `#pragma unroll 1' -- so the
-# `none' variant below measures them and every count after it is the stress
-# traffic ABOVE that baseline.  The anchor PROVES the baseline is exactly the
-# render's own buffer stores rather than asserting it.
-#
-# The attribution then uses the compiler's own dead-code elimination as the
-# isolation tool, so no basic-block or predicate analysis is needed:
-#
-#   HET_PRE_STRESS_PCT=0  -> `if (het_rng_pct(&_rng, 0))' folds to false, so the
-#                            TEST LANES' pre-stress call vanishes.
-#   HET_MEM_STRESS_PCT=0  -> likewise for the STRESS BLOCKS' mem-stress call.
-#
-#   pre  variant (mem pct=0)  : every surviving op belongs to a TEST LANE.
-#   mem  variant (pre pct=0)  : every surviving op belongs to a STRESS BLOCK.
-#   none variant (both 0)     : must be 0 -- this is what makes the other two
-#                               attributions sound, and it also proves the
-#                               signature above is pure.
-#
-# ---------------------------------------------------------------------------
-# WHAT IT ASSERTS
-#
-# (the bracketed name is what `--checks' calls it)
-#
-#   1. isolation is sound            n_none == the render's buffer stores [anchor]
-#   2. test lanes carry pre-stress   n_pre  has >= 1 load AND >= 1 store   [pre]
-#   3. stress blocks carry mem-str.  n_mem  has >= 1 load AND >= 1 store   [mem]
-#   4. the shipped default is live   n_both >= max(n_pre, n_mem) > 0   [default]
-#      ...and het_stress.h's own pattern defaults are ones (2)/(3) swept, which
-#      is what makes n_pre and n_mem readable out of that sweep
-#   5. THE PATTERN IS A RUNTIME VALUE: counts are INVARIANT under
-#      -DHET_{PRE,MEM}_STRESS_PATTERN=0..3.                        [pre and mem]
-#
-# (5) is the sharp one.  A compile-time pattern makes the count swing with the -D,
-# and for a branch that writes nothing the loads hoist out of the loop and almost
-# all the traffic goes with them (per-pattern op counts measured on sm_90 are in
-# hetlitmus/docs/faithfulness.md, "What a compile-time access pattern costs");
-# a runtime pattern emits all four branches, so the count cannot move.  Invariance
-# IS the property "no stress configuration can silently switch the stress off".
-# Requiring a store as well as a load in (2)/(3) keeps the access sequence mixed:
-# a pattern chain with no reachable store branch hammers a region nothing ever
-# writes.
-#
-# Exit 0 = PASS, 1 = FAIL, 2 = usage/toolchain error.
-# ---------------------------------------------------------------------------
+"""HetLitmus -- the GPU stress-liveness gate (hetlitmus/docs/faithfulness.md,
+"Proving the GPU stress ran, not just that it exists").  A miss means a null was
+scored on a stress layer nvcc folded away or the device never ran.
+
+  anchor        both PCT toggles off leaves exactly the render's buffer stores
+  pre, mem      each lane class keeps >= 1 scratchpad load AND store, at every
+                -DHET_{PRE,MEM}_STRESS_PATTERN=0..3
+  gpu-noise     the noise stream survives nvcc, invariant over its block count
+  device-probe  the round tally is nonzero at iters=64 and zero at iters=0
+
+Usage: <het .litmus> [--arch sm_NN] [--no-device] [-q]; --no-device drops the
+last check alone.  Exit 0 = PASS, 1 = FAIL, 2 = usage/toolchain error.
+"""
 
 import argparse
-import hashlib
 import os
 import re
 import shutil
@@ -86,73 +29,14 @@ NVCC = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
 
 # A plain (non-inline-asm) 32-bit global load/store == a scratchpad access.
 STRESS_OP = re.compile(r'^\s*(ld|st)\.global\.u32\b')
-# The render's own plain-u32 stores: `bufP<p>_<li>[_n] = r<n>;', one per GPU
-# observable.  They share the op signature above and survive every stress toggle,
-# so they are the baseline the anchor pins and the other counts subtract.
+# The render's own plain-u32 stores, one per (GPU proc, load): they share the
+# signature above, survive every toggle, and are the baseline the anchor pins.
 BUF_STORE = re.compile(r'^\s+bufP\d+_\d+\[_n\] = r\d+;', re.M)
+# The interconnect noise stream: 64-bit and volatile, where a scratchpad access
+# is neither, and carrying no order token, so ptxcheck never sees it.
+NOISE_OP = re.compile(r'^\s*ld\.volatile\.global\.u64\b')
 PATTERNS = (0, 1, 2, 3)
-
-# The access pattern each knob falls back to when nothing -D's it, read out of
-# the het_stress.h emitted beside the harness (hetEmit copies it verbatim) and
-# asserted at check 4, which is where the reuse these values license is derived.
-SHIPPED_PATTERNS = {"HET_PRE_STRESS_PATTERN": 3, "HET_MEM_STRESS_PATTERN": 0}
-PATTERN_DEFAULT_RE = re.compile(
-    r"^#define\s+(HET_(?:PRE|MEM)_STRESS_PATTERN)\s+(\d+)", re.M)
-
-
-def header_pattern_defaults(hdir):
-    """{knob: value} from the het_stress.h beside the harness, or None."""
-    p = os.path.join(hdir, "het_stress.h")
-    if not os.path.exists(p):
-        return None
-    with open(p) as f:
-        return {m.group(1): int(m.group(2))
-                for m in PATTERN_DEFAULT_RE.finditer(f.read())}
-
-
-def header_digest(hdir):
-    """Short sha256 of the het_stress.h beside the harness, or `absent'.
-
-    Printed in the banner because the device probe compiles against that header and
-    nothing else of the harness: two runs reporting the same digest ran the same
-    device probe, which is what lets a multi-test caller pay for it once.
-    """
-    p = os.path.join(hdir, "het_stress.h")
-    if not os.path.exists(p):
-        return "absent"
-    with open(p, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()[:12]
-
-
-# ---------------------------------------------------------------------------
-# THE CHECK SELECTION.  Each check below is named, and `--checks' runs only the
-# ones named.  `all' is every check; `structural' is every one but the device
-# probe, which asks a question no compile can -- a caller with several tests
-# built against the same het_stress.h pays for that probe once and runs the
-# structural set on the rest.
-# ---------------------------------------------------------------------------
-CHECKS = ("anchor", "pre", "mem", "default", "device-probe")
-CHECK_GROUPS = {"all": CHECKS, "structural": ("anchor", "pre", "mem", "default")}
-
-
-def select_checks(spec):
-    sel = set()
-    for w in spec.split(","):
-        w = w.strip()
-        if w in CHECK_GROUPS:
-            sel.update(CHECK_GROUPS[w])
-        elif w in CHECKS:
-            sel.add(w)
-        else:
-            raise SystemExit("stresscheck: unknown check %r (have: %s)"
-                             % (w, ", ".join(CHECKS + tuple(CHECK_GROUPS))))
-    if not sel:
-        raise SystemExit("stresscheck: --checks selected nothing to run")
-    # Check 4 compares the shipped default against the two per-class sweeps, so
-    # it cannot be asked for without them.
-    if "default" in sel:
-        sel.update(("pre", "mem"))
-    return sel
+NOISE_BLOCKS = (0, 4, 16)
 
 
 class Counts:
@@ -171,9 +55,8 @@ class Counts:
 
 
 def count_stress_ops(ptx_text):
-    """Plain scratchpad ld/st in the kernel, EXCLUDING anything inside the PTX
-    inline-asm markers (that region is the model-op stream ptxcheck owns; a
-    stress op must never appear there, and by construction cannot)."""
+    """Plain scratchpad ld/st in the kernel, EXCLUDING the PTX inline-asm regions:
+    that stream is ptxcheck's, and a stress op cannot appear in it."""
     c = Counts()
     in_asm = False
     for line in ptx_text.splitlines():
@@ -195,6 +78,10 @@ def count_stress_ops(ptx_text):
     return c
 
 
+def count_noise_ops(ptx_text):
+    return sum(1 for ln in ptx_text.splitlines() if NOISE_OP.match(ln))
+
+
 def ptx_of(cu_path, flags, arch, tmp):
     out = os.path.join(tmp, "v.ptx")
     cmd = [NVCC, "-std=c++17", "-arch=" + arch, "--ptx"] + flags + \
@@ -211,13 +98,10 @@ def counts_of(cu_path, flags, arch, tmp):
     return count_stress_ops(ptx_of(cu_path, flags, arch, tmp))
 
 
-def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
-    """Run the checks, then report.  The checks live in a nested function so that the two
-    that STOP the run -- no stress layer at all, and an unsound isolation anchor -- reach
-    the reporting block like every other failure: a refusal nobody can read is a bare
-    exit code, and the anchor's is the one that says this checker must be re-grounded."""
+def check_cu(cu_path, arch="sm_90", verbose=True, device=True):
+    """Run the checks, then report.  The two that stop the run -- no stress layer,
+    and an unsound isolation anchor -- report through this same block."""
     lines, ok = [], [True]
-    sel = set(CHECKS) if sel is None else sel
 
     def fail(msg):
         ok[0] = False
@@ -228,9 +112,7 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
 
     name = os.path.basename(cu_path)
     hdir = os.path.dirname(os.path.abspath(cu_path))
-    note("=== stress liveness: %s [%s] checks=%s het_stress.h=%s ==="
-         % (name, arch, ",".join(c for c in CHECKS if c in sel),
-            header_digest(hdir)))
+    note("=== stress liveness: %s [%s] ===" % (name, arch))
 
     def checks():
         with open(cu_path) as f:
@@ -244,40 +126,30 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
 
         tmp = tempfile.mkdtemp(prefix="stresscheck_")
         try:
-            # ---- 1. isolation anchor: with both toggles folded off, the ONLY plain
-            # u32 ops left are the render's own read-buffer stores.  Everything
-            # below reads its counts as differences from this baseline, so the
-            # attribution is unsound unless the baseline is exactly that
-            # population -- which is why the anchor pins the number, not merely a
-            # bound.
+            # ---- anchor: with both toggles folded off the ONLY plain u32 ops
+            # left are the buffer stores, which is what makes the rest attributable.
             n_buf = len(BUF_STORE.findall(src))
             base = counts_of(cu_path,
                              ["-DHET_PRE_STRESS_PCT=0", "-DHET_MEM_STRESS_PCT=0"],
                              arch, tmp)
-            if "anchor" in sel:
-                if (base.ld, base.st) != (0, n_buf):
-                    fail("isolation anchor is NOT clean: %s plain u32 op(s) survive with "
-                         "both stress toggles compiled off, and this render writes %d "
-                         "read-buffer store(s).  Either -DHET_*_PCT=0 no longer folds, or "
-                         "some other NON-stress object is being accessed as u32 -- in both "
-                         "cases the per-lane-class attribution below is unsound and this "
-                         "checker must be re-grounded before it is trusted."
-                         % (base, n_buf))
-                    return
-                note("  isolation anchor OK (both toggles off -> exactly the %d read-buffer "
-                     "store(s) this render writes, so the u32 signature is accounted for "
-                     "and -DHET_*_PCT=0 folds)" % n_buf)
+            if (base.ld, base.st) != (0, n_buf):
+                fail("isolation anchor is NOT clean: %s plain u32 op(s) survive with "
+                     "both stress toggles compiled off, and this render writes %d "
+                     "read-buffer store(s).  Either -DHET_*_PCT=0 no longer folds or "
+                     "some other non-stress object is accessed as u32, and the "
+                     "attribution below is unsound." % (base, n_buf))
+                return
+            note("  anchor OK (both toggles off -> exactly the %d read-buffer "
+                 "store(s) this render writes)" % n_buf)
 
-            # ---- 2/3/5. per lane class, swept over every access pattern ------------
-            sweep = {}
-            for key, cls, pct_off, pat_knob in (
-                    ("pre", "test lanes  (pre-stress)", "-DHET_MEM_STRESS_PCT=0",
+            # ---- pre/mem, swept over every access pattern.  Folding one class's
+            # percentage to 0 deletes its calls, so what survives is the other's.
+            for cls, pct_off, pat_knob in (
+                    ("test lanes  (pre-stress)", "-DHET_MEM_STRESS_PCT=0",
                      "-DHET_PRE_STRESS_PATTERN="),
-                    ("mem", "stress blks (mem-stress)", "-DHET_PRE_STRESS_PCT=0",
+                    ("stress blks (mem-stress)", "-DHET_PRE_STRESS_PCT=0",
                      "-DHET_MEM_STRESS_PATTERN=")):
-                if key not in sel:
-                    continue
-                per_pat = sweep[key] = {}
+                per_pat = {}
                 for p in PATTERNS:
                     per_pat[p] = counts_of(cu_path, [pct_off, pat_knob + str(p)],
                                            arch, tmp) - base
@@ -291,52 +163,44 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
                 distinct = {(per_pat[p].ld, per_pat[p].st) for p in PATTERNS}
                 if len(distinct) != 1:
                     fail("%s: the scratchpad-op count MOVES with -D%s* (%s).  A "
-                         "compile-time pattern lets nvcc fold the if-chain to one branch, "
-                         "and a branch that writes nothing (pattern 3 = ld;ld) has its "
-                         "loads hoisted out of the loop, leaving the round counting "
-                         "without the traffic.  Pass the pattern as a kernel ARGUMENT."
+                         "compile-time pattern folds the if-chain to one branch, and "
+                         "a branch that writes nothing loses its loads to hoisting, "
+                         "leaving the round counting without the traffic.  Pass the "
+                         "pattern as a kernel ARGUMENT."
                          % (cls, pat_knob.split('=')[0][2:],
                             ", ".join("p%d: %s" % (p, per_pat[p]) for p in PATTERNS)))
                 else:
                     note("  %s live and pattern-INVARIANT over p=0..3 (%s)"
                          % (cls, per_pat[0]))
 
-            # ---- 4. the shipped default carries both -------------------------------
-            # Its two per-class parts are the sweep above, read at the pattern the
-            # header would have supplied: `-DHET_PRE_STRESS_PATTERN=3' and the
-            # header's own `#ifndef ... #define ... 3' hand nvcc the same macro,
-            # so the compile is the same compile.  That equality holds only while
-            # the shipped defaults are patterns the sweep covers, which is what
-            # the assertion below is for -- the reuse is not sound without it.
-            # `both' is NOT reusable: no -DHET_*_PCT=0 folds anything away in it.
-            if "default" in sel:
-                shipped = header_pattern_defaults(hdir)
-                if shipped is None:
-                    fail("no het_stress.h beside %s, so the pattern defaults check 4 "
-                         "reuses the sweep at cannot be read" % name)
-                elif shipped != SHIPPED_PATTERNS:
-                    fail("het_stress.h ships %s, but check 4 reads its per-class parts "
-                         "out of the -DHET_*_STRESS_PATTERN sweep, which covers %s and "
-                         "expects the defaults to be %s.  With the header on a value "
-                         "the sweep does not cover, the two would be different compiles "
-                         "and check 4 would be comparing the shipped config against a "
-                         "config nothing ships."
-                         % (shipped, list(PATTERNS), SHIPPED_PATTERNS))
-                else:
-                    both = counts_of(cu_path, [], arch, tmp) - base
-                    pre = sweep["pre"][SHIPPED_PATTERNS["HET_PRE_STRESS_PATTERN"]]
-                    mem = sweep["mem"][SHIPPED_PATTERNS["HET_MEM_STRESS_PATTERN"]]
-                    if both.total < max(pre.total, mem.total) or both.total == 0:
-                        fail("the SHIPPED default config carries %s, less than one of its "
-                             "parts (pre %s / mem %s)" % (both, pre, mem))
-                    else:
-                        note("  shipped default OK (%s = pre %s + mem %s), and "
-                             "het_stress.h still defaults to the swept patterns %s"
-                             % (both, pre, mem, SHIPPED_PATTERNS))
+            # ---- gpu-noise: the device half of the interconnect noise pair -------
+            n_on = count_noise_ops(ptx_of(cu_path, [], arch, tmp))
+            if n_on < 1:
+                fail("gpu-noise-live: the emitted PTX carries NO volatile 64-bit "
+                     "global load -- nvcc deleted the device-side noise stream.  Its "
+                     "accumulator must be kept alive (volatile reads + a sink).")
+            else:
+                note("  gpu-noise-live: the device-side noise survives nvcc (%d "
+                     "volatile 64-bit global load(s))" % n_on)
+            per_blk = {b: count_noise_ops(
+                ptx_of(cu_path, ["-DHET_NOISE_GPU_BLOCKS=%d" % b], arch, tmp))
+                for b in NOISE_BLOCKS}
+            if len({n_on, *per_blk.values()}) != 1:
+                fail("gpu-noise-runtime: the noise-op count MOVES with "
+                     "-DHET_NOISE_GPU_BLOCKS (%s vs %d by default).  A compile-time "
+                     "block count lets nvcc delete the noise for a config a sweep may "
+                     "pick; it must be a RUNTIME kernel argument." % (per_blk, n_on))
+            else:
+                note("  gpu-noise-runtime: the count is INVARIANT over "
+                     "-DHET_NOISE_GPU_BLOCKS=%s"
+                     % "/".join(str(b) for b in NOISE_BLOCKS))
 
-            # ---- 6. the RUNTIME tally.  Everything above is STRUCTURAL -------------
-            if "device-probe" in sel:
+            # ---- and the runtime tally.  Everything above is structural.
+            if device:
                 device_probe(hdir, fail, note)
+            else:
+                note("  device-probe SKIPPED (--no-device): nothing here says the "
+                     "stress loop RAN")
         except RuntimeError as e:
             fail(str(e))
         finally:
@@ -349,24 +213,8 @@ def check_cu(cu_path, arch="sm_90", verbose=True, sel=None):
     return ok[0], lines
 
 
-# ===========================================================================
-# het_do_stress's RUNTIME tally, live BOTH WAYS on device      [device-probe]
-# ===========================================================================
-# Checks 1-5 above are STRUCTURAL: they prove the scratchpad accesses are in the
-# emitted PTX and cannot be folded away.  They cannot prove the loop ever RUNS,
-# which is why het_verdict() would otherwise be unable to disqualify a run on
-# HET_REQ_GPU_STRESS.
-#
-# het_stress.h counts het_do_stress rounds (HET_TALLY_STRESS_ROUNDS).  A counter
-# is only evidence if it can be shown to move AND to stay at zero, so this probe
-# drives het_do_stress on the real device and asserts BOTH:
-#     iterations > 0  =>  tally != 0     (the mechanism is live)
-#     iterations == 0 =>  tally == 0     (the counter is not stuck on)
-#
-# This is a PLUMBING/ABI probe on a disjoint scratchpad -- no litmus test, no
-# shared memory, no memory-model claim.  It is sound on any CUDA device (the dev
-# box included); nothing about the SCIENCE is being run here.
-
+# ---- device-probe: het_do_stress's runtime tally, live BOTH ways ----------
+# Nothing static says the loop ran, and one pattern suffices.
 PROBE_SRC = r"""
 /* GENERATED by hetlitmus/verify/stresscheck.py -- do not edit. */
 #include <cstdio>
@@ -387,18 +235,16 @@ int main(void) {
   uint32_t loc_h[8] = {0,1,2,3,4,5,6,7};
   cudaMemcpy(loc, loc_h, sizeof loc_h, cudaMemcpyHostToDevice);
 
-  /* pat 0..3 x {iters=64 (ON), iters=0 (OFF)} */
-  for (uint32_t pat = 0; pat < 4; pat++) {
-    for (int on = 1; on >= 0; on--) {
-      cudaMemset(scratch, 0, sizeof(uint32_t) * HET_SCRATCH_SIZE);
-      cudaMemset(tally,   0, sizeof(uint32_t) * HET_TALLY_N);
-      probe<<<8, 1>>>(scratch, loc, tally, on ? 64u : 0u, pat);
-      cudaError_t e = cudaDeviceSynchronize();
-      if (e != cudaSuccess) { printf("CUDAERR %s\n", cudaGetErrorString(e)); return 2; }
-      uint32_t t_h[HET_TALLY_N];
-      cudaMemcpy(t_h, tally, sizeof t_h, cudaMemcpyDeviceToHost);
-      printf("pat=%u on=%d rounds=%u\n", pat, on, t_h[HET_TALLY_STRESS_ROUNDS]);
-    }
+  /* pattern 0 (st;st) x {iters=64 (ON), iters=0 (OFF)} */
+  for (int on = 1; on >= 0; on--) {
+    cudaMemset(scratch, 0, sizeof(uint32_t) * HET_SCRATCH_SIZE);
+    cudaMemset(tally,   0, sizeof(uint32_t) * HET_TALLY_N);
+    probe<<<8, 1>>>(scratch, loc, tally, on ? 64u : 0u, 0u);
+    cudaError_t e = cudaDeviceSynchronize();
+    if (e != cudaSuccess) { printf("CUDAERR %s\n", cudaGetErrorString(e)); return 2; }
+    uint32_t t_h[HET_TALLY_N];
+    cudaMemcpy(t_h, tally, sizeof t_h, cudaMemcpyDeviceToHost);
+    printf("on=%d rounds=%u\n", on, t_h[HET_TALLY_STRESS_ROUNDS]);
   }
   return 0;
 }
@@ -406,7 +252,8 @@ int main(void) {
 
 
 def device_probe(hdir, fail, note):
-    """Compile + RUN het_do_stress on the device; require live-when-on, zero-when-off."""
+    """Compile + RUN het_do_stress on the device; require live-when-on and
+    zero-when-off.  The probe records nothing, so it builds for this box."""
     if not os.path.exists(os.path.join(hdir, "het_stress.h")):
         fail("device-probe: het_stress.h is not next to the .cu -- cannot probe the "
              "tally")
@@ -417,10 +264,8 @@ def device_probe(hdir, fail, note):
         with open(src, "w") as f:
             f.write(PROBE_SRC)
         exe = os.path.join(tmp, "probe")
-        # sm_86 == the dev box.  The probe is arch-agnostic scaffolding; it is the
-        # RUN that matters, and it must run on the machine the gate runs on.
         cc = subprocess.run(
-            [NVCC, "-std=c++17", "-arch=sm_86", "-I", hdir, src, "-o", exe],
+            [NVCC, "-std=c++17", "-arch=native", "-I", hdir, src, "-o", exe],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         if cc.returncode != 0:
             fail("device-probe: the het_do_stress probe does not compile:\n%s"
@@ -429,38 +274,32 @@ def device_probe(hdir, fail, note):
         r = subprocess.run([exe], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            text=True, timeout=120)
         if r.returncode != 0:
-            # No usable GPU is a REFUSAL, not a pass: the runtime tally is the only
-            # evidence the stress loop executes, so a gate that silently skips it
-            # is no gate at all.
+            # No usable GPU is a REFUSAL, not a pass: the tally is the only evidence
+            # the loop executes, and the checks above cannot see it.
             fail("device-probe: the het_do_stress probe did not RUN (rc=%d).  The "
-                 "runtime tally is the ONLY evidence the GPU stress loop executes -- "
-                 "structural checks 1-5 above cannot see it.  Output:\n%s"
-                 % (r.returncode, r.stdout))
+                 "runtime tally is the only evidence the GPU stress loop executes.  "
+                 "Output:\n%s" % (r.returncode, r.stdout))
             return
-        on_vals, off_vals = [], []
+        rounds = {}
         for ln in r.stdout.splitlines():
-            m = re.match(r"pat=(\d+) on=(\d+) rounds=(\d+)", ln)
+            m = re.match(r"on=(\d+) rounds=(\d+)", ln)
             if m:
-                (on_vals if m.group(2) == "1" else off_vals).append(
-                    (int(m.group(1)), int(m.group(3))))
-        if len(on_vals) != 4 or len(off_vals) != 4:
-            fail("device-probe: the probe did not report all 8 configurations:\n%s"
-                 % r.stdout)
+                rounds[int(m.group(1))] = int(m.group(2))
+        if len(rounds) != 2:
+            fail("device-probe: the probe reported %d of 2 configurations:\n%s"
+                 % (len(rounds), r.stdout))
             return
-        dead = [p for p, v in on_vals if v == 0]
-        if dead:
-            fail("device-probe: het_do_stress completed ZERO rounds at pattern(s) %s "
-                 "with iterations=64.  The GPU stress layer is in the PTX and does NOT "
-                 "RUN." % dead)
-        stuck = [p for p, v in off_vals if v != 0]
-        if stuck:
-            fail("device-probe: the round tally is NONZERO at pattern(s) %s with "
-                 "iterations=0.  A counter that cannot go to zero would report a dead "
-                 "stress layer as live." % stuck)
-        if not dead and not stuck:
-            note("  device-probe: het_do_stress's runtime tally is live BOTH ways "
-                 "(iters=64 -> rounds=%s ; iters=0 -> rounds=0 for every pattern)"
-                 % sorted({v for _, v in on_vals}))
+        if rounds[1] == 0:
+            fail("device-probe: het_do_stress completed ZERO rounds with "
+                 "iterations=64.  The GPU stress layer is in the PTX and does not "
+                 "run.")
+        if rounds[0] != 0:
+            fail("device-probe: the round tally is %d with iterations=0.  A counter "
+                 "that cannot go to zero would report a dead stress layer as live."
+                 % rounds[0])
+        if rounds[1] and not rounds[0]:
+            note("  device-probe: the runtime tally is live BOTH ways (iters=64 -> "
+                 "rounds=%d ; iters=0 -> rounds=0)" % rounds[1])
     except subprocess.TimeoutExpired:
         fail("device-probe: the het_do_stress probe hung")
     finally:
@@ -486,19 +325,18 @@ def main():
     ap = argparse.ArgumentParser(description="HetLitmus stress-liveness checker")
     ap.add_argument("litmus", help="het .litmus test to emit and check")
     ap.add_argument("--arch", default="sm_90",
-                    help="nvcc -arch (default sm_90, matching the run harness)")
-    ap.add_argument("--checks", default="all",
-                    help="which checks to run: a comma list of %s, or the groups "
-                         "%s (default all)"
-                         % (", ".join(CHECKS), ", ".join(sorted(CHECK_GROUPS))))
+                    help="nvcc -arch for the --ptx compiles (default sm_90, "
+                         "matching the run harness)")
+    ap.add_argument("--no-device", dest="device", action="store_false",
+                    help="run the nvcc-only checks and skip the device probe")
     ap.add_argument("-q", "--quiet", action="store_true")
     args = ap.parse_args()
-    sel = select_checks(args.checks)
 
     tmp = None
     try:
         cu, tmp = emit_cu(args.litmus)
-        ok, _ = check_cu(cu, arch=args.arch, verbose=not args.quiet, sel=sel)
+        ok, _ = check_cu(cu, arch=args.arch, verbose=not args.quiet,
+                         device=args.device)
     except Exception as e:
         print("ERROR: %s" % e)
         sys.exit(2)

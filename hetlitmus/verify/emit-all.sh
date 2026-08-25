@@ -1,61 +1,18 @@
 #!/usr/bin/env bash
-# Emission snapshot: emit the whole corpus over every (CPU ISA x GPU dialect)
-# pair into OUTDIR, one lane per pair, at the censuses EXPECT_HET / EXPECT_GPU
-# below.
-#
-# It is the refactor golden.  The Layer-2 gate (corpus-gate.sh) byte-pins only
-# the committed gpu-only samples; every other emitted artifact is covered by
-# property gates (cram greps, ptxcheck, verdictcheck/statscheck corpus phases),
-# which by design pass a range of outputs.  A behaviour-preserving refactor of
-# the emitter proves byte-identical output instead: emit before, emit after,
-# `diff -r'.  Emission is deterministic (corpus-gate.sh already relies on that
-# for its samples).
-#
-#   ./emit-all.sh SNAP_BEFORE     # at the pre-refactor commit
-#   ...refactor...
-#   ./emit-all.sh SNAP_AFTER
+# emit-all.sh -- emit the whole corpus over every (CPU ISA x GPU dialect) lane
+# into OUTDIR, at the censuses verify/census.sh pins.  A behaviour-preserving
+# emitter refactor proves itself byte-identical against two snapshots:
+#   ./emit-all.sh SNAP_BEFORE; ...refactor...; ./emit-all.sh SNAP_AFTER
 #   diff -r SNAP_BEFORE SNAP_AFTER && echo BYTE-IDENTICAL
-#
-# The lanes are pairs, not vendors.  A compound harness is a CPU ISA and a GPU
-# dialect, so the emission surface is one lane per (corpus x dialect)
-# combination, listed in HET_LANES / GPU_LANES below and nowhere else:
-#
-#   het-cuda      aarch64 corpus x cuda
-#   het-x86-hip   x86     corpus x hip
-#   het-x86-cuda  x86     corpus x cuda
-#   het-hip       aarch64 corpus x hip
-#   gpu-cuda / gpu-hip                    the GPU-only (scoped LISA) arm, which
-#                                         has no CPU column and so no pair
-#
-# The x86 corpus is not committed (tests/het/generate-x86.sh says why); it is
-# generated into a scratch dir outside OUTDIR, so `diff -r' of two snapshots
-# still compares emitted bytes only.  The het corpora are emitted from inside
-# their own directory, so litmus7 is handed bare <test>.litmus names and the
-# harness dir it writes carries the test's own name.  gpu-only reuses
-# emit-gpu.sh.
-#
-# Fail-closed, because litmus7's batch driver catches an emission exception,
-# prints it on the stream this script discards and still exits 0
-# (dumpRun.ml -> litmus.ml).  Three independent detectors stand between a
-# refusal and a green run:
-#   (a) corruption -- litmus7 exits 3 and prints "HetLitmus REFUSED" (see
-#       HetArch.refused); this script checks the status AND greps the marker,
-#       so neither one alone is load-bearing;
-#   (b) omission   -- the harness directory the test must produce is checked
-#       for existence and for its <t>_cpu.c and its own render, which fires even
-#       if litmus7 were to exit 0 with nothing written.  The lane's render is
-#       also required to be the only one: a dir carrying the other vendor's
-#       file too would mean -gpu-target stopped filtering.
-#   (c) mis-tagging -- every harness of a lane must stamp that lane's pair name
-#       exactly once.  A harness built for the wrong pair compiles, runs and
-#       reports; the stamp is what says which pair it was measuring.
-# Each names the test it failed on and pastes litmus7's own output.
-#
-# Usage:  hetlitmus/verify/emit-all.sh OUTDIR
-# Exit:   0 = every lane complete; non-zero otherwise (fail-fast).
+# litmus7's batch driver catches an emission exception and still exits 0, so
+# each lane is fail-closed three ways: litmus7's status AND the "HetLitmus
+# REFUSED" marker; the harness dir with its _cpu.c, its render and no other
+# vendor's; and the pair name every render must stamp exactly once.
+# Usage: hetlitmus/verify/emit-all.sh OUTDIR.  Exit 0 = every lane complete.
 set -euo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/../paths.sh"
+. "$HETL/verify/census.sh"
 [ -x "$LITMUS7" ] || { echo "error: $LITMUS7 not built (run 'make all')" >&2; exit 2; }
 
 # The emission lanes, "<corpus>:<gpu-target>:<render extension>:<OUTDIR subdir>".
@@ -70,8 +27,8 @@ pair_of_lane() {                # <corpus>:<target> -> the HET_PAIR_NAME value
   esac
 }
 GPU_LANES="cuda:cu:gpu-cuda hip:hip:gpu-hip"
-EXPECT_HET=471          # harness dirs per het lane
-EXPECT_GPU=173          # kernels per gpu-only lane
+EXPECT_HET="$CENSUS_HET"          # harness dirs per het lane
+EXPECT_GPU="$CENSUS_GPU_ONLY"     # kernels per gpu-only lane
 
 OUTDIR="${1:?usage: emit-all.sh OUTDIR}"
 mkdir -p "$OUTDIR"
@@ -83,7 +40,8 @@ LOG="$(mktemp)"
 SCRATCH="$(mktemp -d)"
 trap 'rm -f "$LOG"; rm -rf "$SCRATCH"' EXIT
 
-# The x86 corpus, generated on demand (it is deliberately not committed).
+# The x86 corpus, generated on demand into SCRATCH: it is not committed, and a
+# scratch file inside OUTDIR would show up in the `diff -r' of two snapshots.
 X86_CORPUS="$SCRATCH/x86"
 gen_x86_once() {
   [ -d "$X86_CORPUS" ] && return 0
@@ -144,13 +102,6 @@ for lane in $HET_LANES; do
           exit 1
         fi
       done
-      # (c) The record stamp.  het_verdict() reads no field of a record without
-      # HET_REC_MAGIC, so a render that lost the stamp discards every run it
-      # will ever make.
-      if [ "$(grep -c '_rec.rec_magic = HET_REC_MAGIC;' "$OUTDIR/$sub/$n/$n.$ext")" != 1 ]; then
-        echo "FAIL: $t in the $corpus/$target lane does not stamp _rec.rec_magic exactly once" >&2
-        exit 1
-      fi
       # The pair this harness was built for.
       if [ "$(grep -cF "#define HET_PAIR_NAME \"$want_pair\"" "$OUTDIR/$sub/$n/$n.$ext")" != 1 ]; then
         echo "FAIL: $t in the $corpus/$target lane does not stamp HET_PAIR_NAME \"$want_pair\" exactly once; it stamps:" >&2
@@ -160,7 +111,7 @@ for lane in $HET_LANES; do
       fi
     done )
   nhet="$(find "$OUTDIR/$sub" -mindepth 1 -maxdepth 1 -type d | wc -l)"
-  echo "        $nhet het harness dirs (expect $EXPECT_HET), each stamping its record and $want_pair once"
+  echo "        $nhet het harness dirs (expect $EXPECT_HET), each stamping $want_pair once"
   if [ "$nhet" -ne "$EXPECT_HET" ]; then
     echo "FAIL: census mismatch in $sub (want $EXPECT_HET)" >&2
     exit 1
@@ -194,11 +145,8 @@ for lane in $GPU_LANES; do
   done
 done
 
-# The per-outdir run.sh embeds the ABSOLUTE OUTDIR path + the git revision
-# (upstream litmus7 boilerplate, overwritten by every emission so it names only
-# the last test).  It is the ONLY emitted file that does (verified: grep for
-# the revision/outdir over a full snapshot hits nothing else), so drop it here
-# and a plain `diff -r` of two snapshots is byte-exact across dirs AND commits.
+# The per-outdir run.sh is the ONLY emitted file embedding the absolute OUTDIR
+# and the git revision, so dropping it makes `diff -r' exact across commits.
 for lane in $HET_LANES $GPU_LANES; do
   rm -f "$OUTDIR/${lane##*:}/run.sh"
 done

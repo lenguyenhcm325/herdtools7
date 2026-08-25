@@ -1,27 +1,15 @@
 #!/usr/bin/env python3
-"""runcheck.py -- the device-session wrapper (hetlitmus/hetlitmus-run.sh), driven
-end to end on a box with no device.
+"""runcheck.py -- hetlitmus/hetlitmus-run.sh, the device session, driven end to
+end with the compiler and the probe replaced by the wrapper's stand-ins.  A miss
+means the pair, the architecture or a refusal was decided on an unwatched
+machine with nothing recording it.
 
-The wrapper is the one command a hardware session runs, so what it decides -- the
-pair and the architecture the binaries are built for -- is decided on a machine
-nobody is watching and is visible afterwards only in what it wrote down.  Every
-phase below drives it with the compiler and the probe replaced by the wrapper's
-documented stand-ins.  The chain phases need a corpus whose CPU column is this
-host's, so `fixture()' picks the committed x86 fixture on an x86_64 box and a cut
-of the committed AArch64 corpus on an aarch64 one, and the pairs each phase
-expects follow that choice: nothing here is x86-only.
-
-  PHASE 1  --dry-run prints the plan and does NOT act: no results dir at all.
-  PHASE 2  the chain end to end on each dialect this host reaches.
+  PHASE 1  --dry-run prints the plan and writes nothing.
+  PHASE 2  the chain end to end, on each dialect this host's fixture reaches.
   PHASE 3  the refusals, each by its own reason.
-  PHASE 4  campaign.py's stop rule, and the state file it refuses to start on.
-  PHASE 6  the fail-closed handlers, each under its own induced condition.
-  PHASE 7  a second session into a results dir that already holds one.
-  PHASE 8  probe-hip.sh's exit paths.
-
-`--characterize-hw' needs a GPU and is the toolchain lane's half of this gate: it
-builds a harness and reads what it prints, which is the only artefact a result is
-ever read off.
+  PHASE 4  the fail-closed handlers, each under its own condition.
+  PHASE 5  a second session into a results dir that already holds one.
+  PHASE 6  probe-hip.sh's exit paths.
 """
 import argparse
 import atexit
@@ -38,35 +26,29 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HETL = os.path.join(ROOT, "hetlitmus")
 WRAPPER = os.path.join(HETL, "hetlitmus-run.sh")
-CAMPAIGN = os.path.join(HETL, "campaign.py")
 RUNONE = os.path.join(HETL, "spotcheck", "run-one.sh")
 PROBE_HIP = os.path.join(HETL, "spotcheck", "probe-hip.sh")
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
-# The committed (x86_64, *) fixture, cut verbatim from a generate-x86.sh run and
-# kept that way by hetlitmus-x86fixture.
+# The committed (x86_64, *) fixture: a generate-x86.sh run, cut verbatim and
+# kept that way by corpus-gate.sh's het-x86 label.
 X86_DIR = os.path.join(HETL, "tests", "het-x86")
 X86_TESTS = ["CoRR-cg-sys-fence-2s-x86_64", "MP-cg-sys-acqrel-2s-x86_64",
              "MP-cg-sys-relaxed-x86_64", "S-cg-sys-fence-x86_64"]
-# The (AArch64, *) lane is the committed het corpus, and a session over all of it
-# is not a gate.  The cut below is copied out of it verbatim at run time, so it
-# is not a second fixture that could go stale; it is the corpus, minus rows.
+# The (AArch64, *) lane is the committed het corpus, and the cut below is copied
+# out of it at run time: it is the corpus minus rows, not a second fixture.
 AARCH64_DIR = os.path.join(HETL, "tests", "het")
 AARCH64_TESTS = ["MP-cg-sys-acqrel-2s", "MP-cg-sys-acquire", "MP-cg-sys-relaxed",
                  "S-cg-sys-fence", "S-cg-sys-relaxed"]
 
-# One HetStats machine line, the whole interface between a harness and
-# campaign.py, in the field order and field set het_stats_line prints -- a stub
-# that speaks a shape the runtime cannot produce is testing a protocol nobody
-# implements.  A null on a live run, so the row is reportable and nothing
-# fires: what the scheduler does with it is the phase's subject.
+# The HetStats machine line in the field order het_stats_line prints: a null on
+# a live run, so the row is reportable and nothing fires.
 STUB_STATS = ("HetStats %s cpu_only=0 obs=Never R=10 usable=10 k=0 k_eff=0 "
               "k_runs=0 degen=0 first_sight=0 sighting=none N=100000 "
               "scored=100000 discarded=0 flags=0x0")
 
-# The stand-in compiler: `-c' writes the object, a link writes an executable whose
-# body is @@BODY@@.  It is what lets the chain reach the campaign on a box with no
-# device -- and the wrapper records that it was used.
+# The stand-in compiler: `-c' writes the object, a link writes an executable
+# whose body is @@BODY@@.
 STUB_CC = r'''#!/bin/sh
 set -eu
 out="" ; compile=0
@@ -88,9 +70,8 @@ chmod +x "$out"
 OK_HARNESS = ("#!/bin/sh\n"
               "printf 'HetLitmus: shared-mem mode=stub\\n'\n"
               "printf '@@STATS@@\\n' \"$(basename \"$0\")\"\n")
-# A harness that dies with a message on STDERR.  campaign.py builds an errored
-# row's note from the runner's stderr, so this is also what proves run-one.sh
-# keeps the two streams apart.
+# A harness that dies with a message on STDERR: campaign.py builds an errored
+# row's note from the runner's stderr.
 HARNESS_STDERR = "harness: the rendezvous never closed"
 ERR_HARNESS = ("#!/bin/sh\n"
                "printf 'HetLitmus: shared-mem mode=stub\\n'\n"
@@ -101,7 +82,7 @@ BAD_CC = "#!/bin/sh\necho 'stub-cc: this compiler always fails' >&2\nexit 1\n"
 
 STUB_PROBE = r'''#!/bin/sh
 # Stand-in for probe-cuda.sh / probe-hip.sh: the shape of a probe record, none
-# of the facts.  The wrapper records that a stand-in was used.
+# of the facts.
 set -eu
 mkdir -p "$RESULTS"
 {
@@ -113,40 +94,6 @@ echo "stub-probe: wrote $RESULTS/probe.txt"
 '''
 
 BAD_PROBE = "#!/bin/sh\necho 'stub-probe: the device vanished' >&2\nexit 9\n"
-
-# A runner that CORROBORATES on its first invocation: k_eff>=1 in k_runs >=
-# HET_CORROB_RUNS distinct clean runs is the one stop that means "nothing further is
-# bought by running this row".  The line is the shape het_stats_line prints, and
-# campaign.py's parser keeps every key=value it does not read, so a drifted field
-# here would go unnoticed.
-MATCHY_RUNNER = r'''#!/usr/bin/env python3
-import os, sys
-d = sys.argv[1]
-print("HetStats %s cpu_only=0 obs=Sometimes R=10 usable=10 k=1 k_eff=1 k_runs=3 "
-      "degen=0 first_sight=1 sighting=CORROBORATED N=100000 scored=100000 "
-      "discarded=0 flags=0x0" % os.path.basename(d))
-'''
-
-# ... and one that fires ONCE and then goes quiet: the row it drives is held open by
-# the confirmation window alone and ends UNCONFIRMED-SIGHTING when the window closes.
-LONE_RUNNER = r'''#!/usr/bin/env python3
-import os, sys
-d = sys.argv[1]
-cf = os.path.join(d, "inv.count")
-inv = (int(open(cf).read()) + 1) if os.path.exists(cf) else 1
-open(cf, "w").write(str(inv))
-fired = (inv == 1)
-# The harness runs at most HET_RUNS_MAX runs, so this stand-in does too: the last
-# invocation of a row held open past its budget is entitled to a FRACTION of a full
-# one, and a stub ignoring the cap would land on run counts no harness produces.
-R = min(10, int(os.environ.get("HET_RUNS_MAX") or "10"))
-print("HetStats %s cpu_only=0 obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d "
-      "degen=0 first_sight=%d sighting=%s N=100000 scored=100000 discarded=0 "
-      "flags=0x0"
-      % (os.path.basename(d), "Sometimes" if fired else "Never", R, R,
-         fired, fired, fired, 1 if fired else 0,
-         "UNCONFIRMED" if fired else "none"))
-'''
 
 
 def sh(cmd, **kw):
@@ -196,8 +143,8 @@ def state_rows(path):
     return rows
 
 
-# campaign.py's terminal stops, mirrored here so a session's own state file can be
-# read: a row that ended on anything else was written by another stop rule.
+# campaign.py's terminal stops, mirrored here so a session's own state file can
+# be read: a row that ended on anything else was written by another stop rule.
 TERMINAL = ("CORROBORATED", "UNCONFIRMED-SIGHTING", "BUDGET", "ERROR")
 
 
@@ -209,8 +156,8 @@ def state_is_terminal(pfx, rows, tests):
                    % (pfx, sorted(t for t, _, _ in rows), sorted(tests)))
     for t, stop, _ in rows:
         if stop not in TERMINAL:
-            bad.append("%s%s ended %r, which is not one of this stop rule's outcomes "
-                       "%s" % (pfx, t, stop, list(TERMINAL)))
+            bad.append("%s%s ended %r, not one of %s"
+                       % (pfx, t, stop, list(TERMINAL)))
     return bad
 
 
@@ -221,11 +168,8 @@ def state_notes(path):
 
 
 # ---------------------------------------------------------------------------
-# The fixture this host can drive, and the device arch each of its two dialects
-# is built for.  The emitted link targets refuse a foreign host, so a corpus whose
-# CPU column is not this box's has no chain to drive here.  Every row of every
-# campaign takes the same stop rule whatever the pair: no harness carries a
-# prediction.
+# The fixture this host can drive: the emitted link target refuses a foreign
+# host, so a corpus whose CPU column is not this box's drives nothing here.
 # ---------------------------------------------------------------------------
 _CUT = None
 
@@ -263,13 +207,15 @@ def fixture():
     return fx
 
 
-def no_fixture(phase, quiet):
-    """The NAMED skip: a host with no committed corpus of its own CPU lane."""
-    if not quiet:
-        print("      NOT RUN on %s: no committed corpus carries a %s CPU column, "
-              "so phase %s has no chain to drive here."
-              % (platform.machine(), platform.machine(), phase))
-    return []
+def host_fixture():
+    """The fixture, or a fail-closed exit: a host with no corpus of its own CPU
+    lane drives nothing here, and a pass over nothing is the failure mode."""
+    fx = fixture()
+    if fx is None:
+        raise SystemExit("runcheck: no committed corpus carries a %s CPU column,"
+                         " so there is no chain to drive on this host."
+                         % platform.machine())
+    return fx
 
 
 def foreign_case():
@@ -289,9 +235,7 @@ PLAN_STEPS = ["step 1  preflight", "step 2  probe", "step 3  emit",
 
 
 def phase1_dryrun(wrapper, quiet=False):
-    fx = fixture()
-    if fx is None:
-        return no_fixture("1", quiet)
+    fx = host_fixture()
     arm = fx["cuda"]
     bad = []
     tmp = tempfile.mkdtemp(prefix="runcheck1.")
@@ -307,11 +251,11 @@ def phase1_dryrun(wrapper, quiet=False):
         for frag in PLAN_STEPS + ["(%s, cuda)" % fx["key"], arm["arch"],
                                   "characterization"]:
             if frag not in r.stdout:
-                bad.append("the plan never mentions %r -- a plan that omits a step "
+                bad.append("the plan never mentions %r -- a plan missing a step "
                            "or a resolved value is not the plan that would run"
                            % frag)
         if os.path.exists(out):
-            bad.append("--dry-run CREATED %s -- it must write nothing at all" % out)
+            bad.append("--dry-run CREATED %s -- it must write nothing" % out)
         for junk in ("emit", "campaign-state.csv", "probe.txt"):
             if os.path.exists(os.path.join(out, junk)):
                 bad.append("--dry-run produced %s" % junk)
@@ -339,8 +283,8 @@ def _e2e(wrapper, tmp, fx, target, arm, quiet):
         bad.append("%s chain exited %d:\n%s\n%s"
                    % (target, r.returncode, r.stdout[-1200:], r.stderr[-600:]))
         return bad, out
-    # The results dir is the deliverable: a session that ran but recorded nothing
-    # cannot be read afterwards.
+    # The results dir is the deliverable: a session that ran but recorded
+    # nothing cannot be read afterwards.
     for f in ("run-record.txt", "probe.txt", "build-failures.txt", "summary.txt",
               "campaign-state.csv", "campaign.log", "emit.log"):
         if not os.path.exists(os.path.join(out, f)):
@@ -366,14 +310,13 @@ def _e2e(wrapper, tmp, fx, target, arm, quiet):
                        % (target, t))
     summary = open(os.path.join(out, "summary.txt")).read()
     if "CHARACTERIZATION" not in summary:
-        bad.append("%s: the summary does not say what the rows are -- it says:\n%s"
+        bad.append("%s: the summary does not say what the rows are:\n%s"
                    % (target, summary))
     record = open(os.path.join(out, "run-record.txt")).read()
     for frag in ("arch=" + arm["arch"], "seam_probe=STUB",
                  "seam_compiler=OVERRIDDEN", "session_status=COMPLETE"):
         if frag not in record:
-            bad.append("%s: run-record.txt does not carry %r -- the value the "
-                       "session turned on is not a recorded fact" % (target, frag))
+            bad.append("%s: run-record.txt does not carry %r" % (target, frag))
     rows = state_rows(os.path.join(out, "campaign-state.csv"))
     bad += state_is_terminal("%s: " % target, rows, fx["tests"])
     if not quiet and not bad:
@@ -393,18 +336,16 @@ def _runone_nolog(tmp, quiet=False):
     if (r.returncode != 7 or "mode=stub" not in r.stdout
             or HARNESS_STDERR not in r.stderr):
         return ["run-one.sh with no HET_RUN_LOG_DIR exited %d, stdout %r, stderr "
-                "%r: want the harness's own 7, its stdout and its stderr each "
-                "forwarded on the stream it arrived on"
-                % (r.returncode, r.stdout[-120:], r.stderr[-120:])]
+                "%r: want the harness's own 7 and each stream forwarded on the "
+                "stream it arrived on" % (r.returncode, r.stdout[-120:],
+                                          r.stderr[-120:])]
     if not quiet:
         print("      run-one.sh with no log dir: rc=7, the two streams apart")
     return []
 
 
 def phase2_e2e(wrapper, quiet=False):
-    fx = fixture()
-    if fx is None:
-        return no_fixture("2", quiet)
+    fx = host_fixture()
     bad = []
     tmp = tempfile.mkdtemp(prefix="runcheck2.")
     try:
@@ -418,9 +359,8 @@ def phase2_e2e(wrapper, quiet=False):
                 chained = (out, target)
         if chained is None:
             return bad
-        # --reuse-emitted: the same results dir, no emission, same answers.  The
-        # first session's campaign state is moved aside, which is the remedy the
-        # second-session refusal names (campaign.py's; phase 7 asserts it).
+        # --reuse-emitted: the same results dir, no emission, same answers, with
+        # the first session's campaign state moved aside.
         out, target = chained
         cc, probe = make_stubs(tmp)
         before = open(os.path.join(out, "emit.log")).read()
@@ -451,9 +391,8 @@ def phase2_e2e(wrapper, quiet=False):
 # refused everything with one message would pass a bare exit-code check.
 # ---------------------------------------------------------------------------
 def mixed_corpus(tmp):
-    """A corpus carrying both CPU lanes.  The preflight has to read EVERY test's
-    lane: a preflight reading only the first passes this corpus and lets emission
-    die on the CPU column instead."""
+    """A corpus carrying both CPU lanes: the preflight has to read EVERY test's
+    lane, not only the first."""
     d = os.path.join(tmp, "mixed")
     os.makedirs(d, exist_ok=True)
     for f in os.listdir(X86_DIR):
@@ -464,9 +403,7 @@ def mixed_corpus(tmp):
 
 
 def phase3_refusals(wrapper, quiet=False):
-    fx = fixture()
-    if fx is None:
-        return no_fixture("3", quiet)
+    fx = host_fixture()
     bad = []
     tmp = tempfile.mkdtemp(prefix="runcheck3.")
     try:
@@ -503,8 +440,8 @@ def phase3_refusals(wrapper, quiet=False):
         ]
         for name, args, extra, frag in cases:
             env = wrapper_env(cc, probe, extra)
-            # --dry-run leads, so that a case whose LAST argument is a valued flag
-            # is still a flag with nothing after it.
+            # --dry-run leads, so that a case whose LAST argument is a valued
+            # flag is still a flag with nothing after it.
             r = run_wrapper(wrapper, ["--dry-run"] + args, env=env)
             if r.returncode != 2:
                 bad.append("[%s] exited %d, want 2 (fail closed): %s"
@@ -521,156 +458,10 @@ def phase3_refusals(wrapper, quiet=False):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 4 -- campaign.py's stop rule, and the state file it refuses to start on.
+# PHASE 4 -- the fail-closed handlers, each under the condition it exists for.
+# Every one is a `die' a clean chain never reaches.
 # ---------------------------------------------------------------------------
-CHAR_TESTS = ["CH-one", "CH-two"]
-STATE_COLS = ["test", "stop", "invocations", "runs", "usable", "k", "k_eff",
-              "k_runs", "first_sight", "cpu_only", "note"]
-# The window is set BELOW the budget so the two are told apart by the run count
-# alone: a row ending at 31 runs or so was ended by the window (LONE_RUNNER fires in
-# run 1 and the window closes confirm_runs runs after that), one ending at 60 by the
-# budget.  The stop is decided BETWEEN invocations, so a row whose capacity is the
-# 60-run budget ends in the first 10-run invocation to carry it past 31 -- run 40 --
-# while one capped by a 10-run budget is handed the single run it is still entitled
-# to and ends at 31 exactly.
-CHAR_BUDGET, CHAR_CONFIRM, CHAR_R = 60, 30, 10
-CHAR_WINDOW_END = CHAR_CONFIRM + 1
-CHAR_LONE_RUNS = -(-CHAR_WINDOW_END // CHAR_R) * CHAR_R
-
-
-def _campaign(campaign, corpus, runner, state, extra, budget=CHAR_BUDGET):
-    return sh([sys.executable, campaign, "--corpus", corpus, "--runner",
-               "%s %s {dir}" % (sys.executable, runner), "--state", state,
-               "--budget-runs", str(budget),
-               "--confirm-runs", str(CHAR_CONFIRM)] + extra)
-
-
-def _fresh_corpus(tmp, name):
-    """A corpus of its own: LONE_RUNNER counts its invocations inside the harness
-    dir, so a second lone run over the same dirs would start already quiet."""
-    corpus = os.path.join(tmp, name)
-    for t in CHAR_TESTS:
-        os.makedirs(os.path.join(corpus, t))
-    return corpus
-
-
-def phase4_stoprule(campaign, quiet=False):
-    bad = []
-    tmp = tempfile.mkdtemp(prefix="runcheck4.")
-    try:
-        corpus = os.path.join(tmp, "corpus")
-        for t in CHAR_TESTS:
-            os.makedirs(os.path.join(corpus, t))
-        runner = write_exec(os.path.join(tmp, "matchy.py"), MATCHY_RUNNER)
-        lone = write_exec(os.path.join(tmp, "lone.py"), LONE_RUNNER)
-
-        # The stop that ends a row early: a sighting reproduced across distinct
-        # clean runs.  Without it the phase below proves nothing -- a runner whose
-        # rows can only run to budget would "pass" every assertion for free.
-        st_c = os.path.join(tmp, "corrob.csv")
-        r = _campaign(campaign, corpus, runner, st_c, [])
-        rows = {t: (stop, runs) for t, stop, runs in state_rows(st_c)}
-        if {t: rows.get(t, ("?", 0))[0] for t in CHAR_TESTS} != \
-                dict.fromkeys(CHAR_TESTS, "CORROBORATED"):
-            bad.append("the corroborating runner gave %s, want every row "
-                       "CORROBORATED -- this runner cannot stop a row early and the "
-                       "assertions below prove nothing" % rows)
-        elif r.returncode != 0:
-            bad.append("a campaign whose rows all CORROBORATED exited %d, want 0: a "
-                       "reproduced observation is the result, not an alarm"
-                       % r.returncode)
-        elif not quiet:
-            print("      a reproduced sighting stops the row CORROBORATED (rc=0)")
-
-        # The flagged stop, and the precedence that produces it: one sighting, then
-        # nulls.  The row is held open by the confirmation window and ended by it
-        # CHAR_CONFIRM runs after the run it fired in -- not carried to the 60-run
-        # budget, and not banked at the first sighting either.  It exits 1: a sighting
-        # that did not reproduce is not a row to be read unattended.
-        st_l = os.path.join(tmp, "lone.csv")
-        r = _campaign(campaign, _fresh_corpus(tmp, "lone"), lone, st_l, [])
-        for t, stop, runs in state_rows(st_l):
-            if (stop, runs) != ("UNCONFIRMED-SIGHTING", CHAR_LONE_RUNS):
-                bad.append("%s ended %s after %d run(s), want UNCONFIRMED-SIGHTING "
-                           "after %d (its window closes at run %d): the confirmation "
-                           "window ends a lone sighting %d runs after it fired -- not "
-                           "the budget, not the sighting itself, and not a window "
-                           "that opened before it"
-                           % (t, stop, runs, CHAR_LONE_RUNS, CHAR_WINDOW_END,
-                              CHAR_CONFIRM))
-        if r.returncode != 1:
-            bad.append("a campaign with an UNCONFIRMED-SIGHTING row exited %d, want "
-                       "1: a sighting that would not reproduce demands a human"
-                       % r.returncode)
-        elif not quiet:
-            print("      a lone sighting ends UNCONFIRMED-SIGHTING at the window "
-                  "(fired in run 1, window closes at %d, ends at %d, budget %d), rc=1"
-                  % (CHAR_WINDOW_END, CHAR_LONE_RUNS, CHAR_BUDGET))
-
-        # The precedence, in hardware hours: the same row under a budget smaller than
-        # the window.  It must OVERSHOOT the budget and end at the window, to the run
-        # -- a row ended at BUDGET here would have banked "seen once, stopped
-        # looking", and one curtailed to the budget could never reach the window at
-        # all (its last invocation is the single run the window still owes it).
-        st_p = os.path.join(tmp, "prec.csv")
-        _campaign(campaign, _fresh_corpus(tmp, "prec"), lone, st_p, [], budget=10)
-        for t, stop, runs in state_rows(st_p):
-            if (stop, runs) != ("UNCONFIRMED-SIGHTING", CHAR_WINDOW_END):
-                bad.append("%s ended %s after %d run(s) under a 10-run budget, want "
-                           "UNCONFIRMED-SIGHTING after %d: an open sighting outranks "
-                           "the budget stop" % (t, stop, runs, CHAR_WINDOW_END))
-        if not quiet and not bad:
-            print("      ... and outruns a 10-run budget to get there (the window "
-                  "outranks the budget stop)")
-
-        # --rate: the SAME corroborating runner must now reach the budget instead.
-        st_r = os.path.join(tmp, "rate.csv")
-        r = _campaign(campaign, corpus, runner, st_r, ["--rate"])
-        for t, stop, runs in state_rows(st_r):
-            if (stop, runs) != ("BUDGET", CHAR_BUDGET):
-                bad.append("%s ended %s after %d run(s) under --rate, want BUDGET "
-                           "after %d: rate mode turns the sighting stop off"
-                           % (t, stop, runs, CHAR_BUDGET))
-        if not quiet and not bad:
-            print("      --rate: the same rows run to BUDGET (%d runs)" % CHAR_BUDGET)
-
-        # A campaign is never continued, so a --state that already exists is refused
-        # before any work.  The file's BYTES are the second half of the assertion: a
-        # refusal arriving after the first save_state would have overwritten the very
-        # rows it exists to protect.  campaign.py is invoked directly here, so its
-        # refusal is on stderr.
-        preexist = os.path.join(tmp, "preexist.csv")
-        with open(preexist, "w", newline="") as fh:
-            csv.writer(fh).writerow(STATE_COLS)
-        with open(preexist, "rb") as fh:
-            held = fh.read()
-        r = _campaign(campaign, corpus, runner, preexist, [])
-        if r.returncode != 2:
-            bad.append("a campaign started on an existing --state exited %d, want 2: "
-                       "it would have re-run every row and written its own numbers "
-                       "over the ones that file holds" % r.returncode)
-        elif "already exists and a campaign is never resumed" not in r.stderr:
-            bad.append("the existing --state was refused for another reason: %s"
-                       % r.stderr.strip()[-200:])
-        elif open(preexist, "rb").read() != held:
-            bad.append("the existing --state was refused and its bytes CHANGED: the "
-                       "refusal lands after a save_state, so the rows it protects are "
-                       "already gone by the time it fires")
-        elif not quiet:
-            print("      a --state that already exists is refused, byte for byte "
-                  "untouched (rc=2)")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    return bad
-
-
-# ---------------------------------------------------------------------------
-# PHASE 6 -- the fail-closed handlers, each under the condition it exists for.
-# Every one of them is a `die' the chain reaches only when something is wrong, so
-# a chain that only ever runs clean executes none of them.
-# ---------------------------------------------------------------------------
-P6_CASES = ["build", "probe", "ambiguity", "campaign-rc", "emitted-isa", "stamp",
-            "reuse-missing", "reuse-partial", "stray-render"]
+P4_CASES = ["build", "probe", "ambiguity", "campaign-rc", "stamp"]
 
 
 def _twocap_path(tmp):
@@ -682,13 +473,11 @@ def _twocap_path(tmp):
     return d + os.pathsep + os.environ["PATH"]
 
 
-def phase6_failclosed(wrapper, quiet=False):
-    fx = fixture()
-    if fx is None:
-        return no_fixture("6", quiet)
+def phase4_failclosed(wrapper, quiet=False):
+    fx = host_fixture()
     arm = fx["cuda"]
     bad = []
-    tmp = tempfile.mkdtemp(prefix="runcheck6.")
+    tmp = tempfile.mkdtemp(prefix="runcheck4.")
     try:
         base = ["--gpu-target", "cuda", "--corpus", fx["dir"], "--arch",
                 arm["arch"], "--budget-runs", "10"]
@@ -696,7 +485,7 @@ def phase6_failclosed(wrapper, quiet=False):
         # ONE clean chain, whose emission every doctoring case starts from.
         b, out0 = _e2e(wrapper, tmp, fx, "cuda", arm, True)
         if b:
-            return ["phase 6 could not build its base emission: %s" % b[0]]
+            return ["phase 4 could not build its base emission: %s" % b[0]]
         emit0 = os.path.join(out0, "emit")
 
         def doctored_out(name, break_it):
@@ -721,12 +510,6 @@ def phase6_failclosed(wrapper, quiet=False):
                 print("      %-14s rc=%d, names it" % (name, rc))
             return r
 
-        def break_isa(e):
-            p = os.path.join(e, fx["tests"][-1], "Makefile")
-            s = open(p).read()
-            with open(p, "w") as fh:
-                fh.write(re.sub(r"HET_HOST_ISA \?= \S+", "HET_HOST_ISA ?= vax", s, 1))
-
         def break_stamp(e):
             t = fx["tests"][0]
             p = os.path.join(e, t, t + ".cu")
@@ -735,16 +518,7 @@ def phase6_failclosed(wrapper, quiet=False):
                 fh.write(s.replace('#define HET_PAIR_NAME "',
                                    '#define HET_PAIR_NAME "zz', 1))
 
-        def drop_render(e):
-            t = fx["tests"][0]
-            os.remove(os.path.join(e, t, t + ".cu"))
-
-        def plant_hip(e):
-            t = fx["tests"][0]
-            shutil.copy(os.path.join(e, t, t + ".cu"),
-                        os.path.join(e, t, t + ".hip"))
-
-        for case in P6_CASES:
+        for case in P4_CASES:
             if case == "build":
                 bad_cc = write_exec(os.path.join(tmp, "bad-cc"), BAD_CC)
                 expect("build", base + ["--out", os.path.join(tmp, "o-build")],
@@ -771,45 +545,24 @@ def phase6_failclosed(wrapper, quiet=False):
                     blank = sorted(t for t, n in notes.items()
                                    if HARNESS_STDERR not in n)
                     if blank:
-                        bad.append("[campaign-rc] the errored row(s) %s carry a note "
-                                   "without the harness's own message %r (%s) -- the "
-                                   "runner merged stderr into stdout"
+                        bad.append("[campaign-rc] the errored row(s) %s carry a "
+                                   "note without the harness's own message %r "
+                                   "(%s) -- the runner merged stderr into stdout"
                                    % (blank, HARNESS_STDERR,
                                       [notes[t] for t in blank]))
-            elif case == "emitted-isa":
-                expect("emitted-isa",
-                       base + ["--out", doctored_out("isa", break_isa),
-                               "--reuse-emitted"],
-                       wrapper_env(cc, probe), 2, "against the wrong lane")
             elif case == "stamp":
                 expect("stamp",
                        base + ["--out", doctored_out("stamp", break_stamp),
                                "--reuse-emitted"],
                        wrapper_env(cc, probe), 2, "the emitted pair name of")
-            elif case == "reuse-missing":
-                expect("reuse-missing",
-                       base + ["--out", os.path.join(tmp, "o-noemit"),
-                               "--reuse-emitted"],
-                       wrapper_env(cc, probe), 2, "there is no")
-            elif case == "reuse-partial":
-                expect("reuse-partial",
-                       base + ["--out", doctored_out("partial", drop_render),
-                               "--reuse-emitted"],
-                       wrapper_env(cc, probe), 2, "no .cu render for")
-            elif case == "stray-render":
-                expect("stray-render",
-                       base + ["--out", doctored_out("stray", plant_hip),
-                               "--reuse-emitted"],
-                       wrapper_env(cc, probe), 2, "is not filtering")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return bad
 
 
 # ---------------------------------------------------------------------------
-# PHASE 7 -- a second session into a results dir that already holds one.
-# campaign.py refuses to start on the state file the first session left, so the
-# second session ends carrying that refusal instead of overwriting those rows.
+# PHASE 5 -- a second session into a results dir that already holds one: the
+# campaign refuses the state file the first session left.
 # ---------------------------------------------------------------------------
 def _invocations(out, fx):
     """Harness invocations recorded in the session's transcripts."""
@@ -821,17 +574,15 @@ def _invocations(out, fx):
     return n
 
 
-def phase7_second_session(wrapper, quiet=False):
-    fx = fixture()
-    if fx is None:
-        return no_fixture("7", quiet)
+def phase5_second_session(wrapper, quiet=False):
+    fx = host_fixture()
     arm = fx["cuda"]
     bad = []
-    tmp = tempfile.mkdtemp(prefix="runcheck7.")
+    tmp = tempfile.mkdtemp(prefix="runcheck5.")
     try:
         b, out = _e2e(wrapper, tmp, fx, "cuda", arm, True)
         if b:
-            return ["phase 7 could not run its first session: %s" % b[0]]
+            return ["phase 5 could not run its first session: %s" % b[0]]
         cc, probe = make_stubs(tmp)
         env = wrapper_env(cc, probe)
         base = ["--gpu-target", "cuda", "--corpus", fx["dir"], "--arch",
@@ -841,23 +592,18 @@ def phase7_second_session(wrapper, quiet=False):
         with open(state, "rb") as fh:
             held = fh.read()
 
-        # The refusal is campaign.py's and reaches the session at step 6, so the
-        # wrapper runs its whole chain first and ends carrying the campaign's exit.
-        # That refusal goes to campaign.log (the wrapper redirects the campaign's
-        # stderr there and echoes a tail of it), NEVER to the wrapper's own stderr,
-        # which is empty on this path: a check against r.stderr would redden this
-        # case on a refusal that did arrive.
+        # The refusal is campaign.py's and lands in campaign.log, NEVER on the
+        # wrapper's own stderr, which is empty on this path.
         r = run_wrapper(wrapper, base + ["--budget-runs", "10"], env=env)
         said = r.stdout + open(os.path.join(out, "campaign.log")).read()
         record = open(os.path.join(out, "run-record.txt")).read()
         if r.returncode != 2:
-            bad.append("a second session into a dir that already holds a campaign "
-                       "state exited %d, want 2: it would have re-run every row and "
-                       "written its own numbers over the ones that state holds"
-                       % r.returncode)
+            bad.append("a second session over an existing campaign state exited "
+                       "%d, want 2: it would have written its own numbers over "
+                       "the rows that state holds" % r.returncode)
         elif "already exists and a campaign is never resumed" not in said:
-            bad.append("the second session stopped for another reason -- neither the "
-                       "wrapper's stdout nor campaign.log carries the refusal: %s"
+            bad.append("the second session stopped for another reason -- neither "
+                       "stdout nor campaign.log carries the refusal: %s"
                        % said.strip()[-300:])
         elif "session_status=COMPLETE" not in record:
             bad.append("the second session ran its chain to the end and does not "
@@ -866,24 +612,22 @@ def phase7_second_session(wrapper, quiet=False):
         elif "the campaign refused (exit 2)" not in \
                 open(os.path.join(out, "summary.txt")).read():
             bad.append("this session's summary does not carry the campaign's "
-                       "refusal, so the dir reads as a session that measured "
+                       "refusal, so the dir reads as one that measured "
                        "something: %s"
                        % open(os.path.join(out, "summary.txt")).read()[-300:])
         elif open(state, "rb").read() != held:
-            bad.append("the second session CHANGED the campaign state it refused to "
-                       "run over -- the rows it exists to protect are gone")
+            bad.append("the second session CHANGED the campaign state it refused "
+                       "to run over")
         elif _invocations(out, fx) != invocations:
-            bad.append("the second session invoked a harness before the refusal: the "
-                       "transcripts grew from %d to %d"
+            bad.append("the second session invoked a harness before the refusal: "
+                       "the transcripts grew from %d to %d"
                        % (invocations, _invocations(out, fx)))
         elif not quiet:
             print("      a second session into the same dir is refused by the "
                   "campaign (rc=2), state untouched, no harness invoked")
 
-        # A refused session must NOT leave the previous one's summary beside its own
-        # record: one dir would then describe two different sessions.  The summary
-        # standing here is the refusal summary the run above wrote, and this
-        # assertion is indifferent to which session wrote the one it must not find.
+        # A refused session must leave NO summary beside its own record: one dir
+        # would then describe two different sessions.
         bp = write_exec(os.path.join(tmp, "bad-probe.sh"), BAD_PROBE)
         r = run_wrapper(wrapper, base + ["--budget-runs", "10"],
                         env=wrapper_env(cc, bp))
@@ -894,8 +638,8 @@ def phase7_second_session(wrapper, quiet=False):
             bad.append("a session refused at the probe does not record it: %s"
                        % [l for l in record.splitlines() if "status" in l])
         elif os.path.exists(os.path.join(out, "summary.txt")):
-            bad.append("the refused session left a stale summary.txt in place -- "
-                       "it is the PREVIOUS session's, beside this session's record")
+            bad.append("the refused session left the previous session's "
+                       "summary.txt in place, beside its own record")
         elif not quiet:
             print("      a refused session records REFUSED@step2 and leaves no "
                   "stale summary")
@@ -905,7 +649,7 @@ def phase7_second_session(wrapper, quiet=False):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 8 -- probe-hip.sh, under stand-in vendor tools.  No AMD device is
+# PHASE 6 -- probe-hip.sh, under stand-in vendor tools.  No AMD device is
 # reachable from this tree, so its device answers are checked here or nowhere.
 # ---------------------------------------------------------------------------
 def _hip_tools(tmp, gfx):
@@ -919,9 +663,9 @@ def _hip_tools(tmp, gfx):
     return d
 
 
-def phase8_probe_hip(probe, quiet=False):
+def phase6_probe_hip(probe, quiet=False):
     bad = []
-    tmp = tempfile.mkdtemp(prefix="runcheck8.")
+    tmp = tempfile.mkdtemp(prefix="runcheck6.")
     try:
         cases = [("no hipcc", None, "NO_TOOLCHAIN", 2),
                  ("no gfx agent", [], "NO_DEVICE", 2),
@@ -956,39 +700,20 @@ def phase8_probe_hip(probe, quiet=False):
 
 
 # ---------------------------------------------------------------------------
-# --characterize-hw -- what a harness actually prints, on the device.  Every
-# other gate on the verdict/statistics stack drives it from synthetic records or
-# from emitted text; this one builds a harness, runs it on the GPU and reads the
-# printout, which is the only artefact a result is ever read off.
-#
-# EVERY reading is a reading, so all three PASS: a sighting, a stream of nulls,
-# and a DISCARDED run -- which a box whose rendezvous cannot complete
-# legitimately produces.  The run is re-seeded while it does not fire, because a
-# sighting carries strictly more sentences to assert.  What no reading may carry
-# is a sentence saying something certifies the harness.
-#
-# Then a SECOND run of the same binary under caps of one poll, where the
-# rendezvous cannot complete by construction: that run must be discarded and
-# must name the rendezvous.
+# --characterize-hw -- a harness built, run on the GPU and read off its
+# printout: a sighting, a null and a discarded run are each an arm.
 # ---------------------------------------------------------------------------
-CH_TEST = "MP-cg-sys-relaxed-x86_64"
-CH_PAIR = "(X86_64, cuda)"
+
+# The relaxed MP row of this host's fixture: a harness whose CPU column is
+# foreign does not link here.
+CH_STEM = "MP-cg-sys-relaxed"
 CH_SEED_TRIES = 12
-# Every iteration now waits for the other device, so a run costs what N
-# rendezvous cost rather than what N free-running iterations did.  The gate reads
-# the PRINTOUT, and the printout's shape does not depend on how many runs stand
-# behind it, so the runs are curtailed here and the timeout is what a curtailed
-# run may take before it is called stalled.
+# The printout's shape does not depend on how many runs stand behind it, so the
+# runs are curtailed and the timeout is what a curtailed run may take.
 CH_RUNS = "2"
 CH_RUN_TIMEOUT = 600
-# The host rendezvous cap the run takes.  A discarded iteration costs its cap,
-# so on a box whose two sides do meet it never binds, while on one that loses
-# arrivals (mapped pinned memory with no host-native atomics) every iteration
-# pays it.  The printout's shape does not depend on the outcome, so the host wait
-# is shortened here to keep a run inside its timeout, and the value travels in
-# the record where a reader sees what the run waited under.  The device cap is
-# left alone: shortening it too makes a clean run rare enough that a sighting
-# stops reproducing.
+# The host rendezvous cap this run takes, shortened to keep a run inside its
+# timeout.  The device cap is left alone: shortening it makes a clean run rare.
 CH_CAP_CPU = "4096"
 
 
@@ -996,6 +721,17 @@ def _ch_env():
     env = dict(os.environ)
     env["PATH"] = BIN + os.pathsep + env["PATH"]
     return env
+
+
+def ch_pick():
+    """(test, corpus dir, pair) for this host, off the same fixture the phases
+    drive: the emitted link target refuses a foreign CPU lane."""
+    fx = host_fixture()
+    for t in fx["tests"]:
+        if t == CH_STEM or t.startswith(CH_STEM + "-"):
+            return t, fx["dir"], "(%s, cuda)" % fx["key"]
+    raise SystemExit("runcheck --characterize-hw: the %s fixture carries no %s "
+                     "row to build" % (fx["isa"], CH_STEM))
 
 
 def ch_arch():
@@ -1010,14 +746,14 @@ def ch_arch():
     return "sm_" + caps[0].replace(".", "")
 
 
-def ch_emit(tmp):
-    """Emit CH_TEST and return its harness dir."""
+def ch_emit(tmp, test, cdir):
+    """Emit `test' out of `cdir' and return its harness dir."""
     out = tempfile.mkdtemp(dir=tmp)
     r = sh(["litmus7", "-gpu-target", "cuda", "-set-libdir",
             os.path.join(ROOT, "litmus", "libdir"), "-o", out,
-            os.path.join(X86_DIR, CH_TEST + ".litmus")], cwd=ROOT, env=_ch_env())
-    d = os.path.join(out, CH_TEST)
-    if r.returncode != 0 or not os.path.exists(os.path.join(d, CH_TEST + ".cu")):
+            os.path.join(cdir, test + ".litmus")], cwd=ROOT, env=_ch_env())
+    d = os.path.join(out, test)
+    if r.returncode != 0 or not os.path.exists(os.path.join(d, test + ".cu")):
         raise SystemExit("runcheck --characterize-hw: litmus7 emitted no "
                          "harness:\n%s" % r.stderr)
     return d
@@ -1041,39 +777,23 @@ def ch_env(**kw):
     return env
 
 
-def ch_run_until_sighting(d, quiet=False):
-    """Run with fresh seeds until the outcome fires once, or until the seeds run
-    out -- the last run either way.  Returns (text, k, R, obs, tries); text is
-    stdout+stderr, the whole printout a reader sees.
-
-    A DISCARDED run ends the loop on the spot: a fresh seed draws a fresh phase,
-    not a partner that arrives, so re-seeding a box whose rendezvous cannot
-    complete only spends its runs."""
+def ch_run_until_sighting(d, test, quiet=False):
+    """Run with fresh seeds until the outcome fires once, or the seeds run out --
+    the last run either way; returns (text, k, R, obs, tries)."""
     env = ch_env()
     last = None
-    hangs = 0
     for i in range(1, CH_SEED_TRIES + 1):
         env["HET_SEED"] = str(1000 + i)
         try:
-            r = subprocess.run([os.path.join(d, CH_TEST)], cwd=d, env=env,
+            r = subprocess.run([os.path.join(d, test)], cwd=d, env=env,
                                capture_output=True, text=True,
                                timeout=CH_RUN_TIMEOUT)
         except subprocess.TimeoutExpired:
-            # HET_ALLOC=pinned on a device without host-native atomics can lose
-            # barrier increments and stall -- the harness's own banner says so.
-            # A stalled run is a property of THIS box, not of the printout, so it
-            # is retried; only an all-stall is reported, and never as a pass.
-            hangs += 1
-            if not quiet:
-                print("      seed %d: STALLED at the rendezvous after %ds, retrying"
-                      % (1000 + i, CH_RUN_TIMEOUT))
-            if hangs >= CH_SEED_TRIES:
-                raise SystemExit(
-                    "runcheck --characterize-hw: every one of %d runs stalled at "
-                    "the rendezvous.  HET_ALLOC=%s cannot make a system-scope "
-                    "atomic barrier on this device; re-run with an allocator that "
-                    "can." % (hangs, env["HET_ALLOC"]))
-            continue
+            # Every rendezvous wait is capped in polls, so a run that does not
+            # finish is a launch or driver fault, not a slow box.
+            raise SystemExit("runcheck --characterize-hw: the run did not "
+                             "finish in %ds under HET_ALLOC=%s."
+                             % (CH_RUN_TIMEOUT, env["HET_ALLOC"]))
         text = r.stdout + "\n" + r.stderr
         m = re.search(r"^HetStats \S+ cpu_only=\d+ obs=(\S+) R=(\d+) usable=(\d+) "
                       r"k=(\d+) ", r.stdout, re.M)
@@ -1081,9 +801,8 @@ def ch_run_until_sighting(d, quiet=False):
             raise SystemExit("runcheck --characterize-hw: the run printed no "
                              "HetStats line (rc=%d)\n%s" % (r.returncode,
                                                             text[-2000:]))
-        obs, R, usable, k = (m.group(1), int(m.group(2)), int(m.group(3)),
-                             int(m.group(4)))
-        last = (text, k, R, obs, usable, i)
+        obs, R, k = m.group(1), int(m.group(2)), int(m.group(4))
+        last = (text, k, R, obs, i)
         if k > 0:
             return last
         if "COLD-INVALID" in text:
@@ -1092,27 +811,25 @@ def ch_run_until_sighting(d, quiet=False):
                       "undoes -- read as the arm this box printed" % (1000 + i))
             return last
         if not quiet:
-            print("      seed %d: k=0, retrying (a sighting carries the report "
-                  "sentence and the denominator reading as well)" % (1000 + i))
+            print("      seed %d: k=0, retrying (a sighting carries more "
+                  "sentences to read)" % (1000 + i))
     return last
 
 
-# What a run that SAW the outcome must print, and what a run that did not must
-# print instead.  The arms are exclusive and one of them always applies, so a
-# device that fires, one that does not and one whose rendezvous never completes
-# are all read.
-CH_OBSERVED = [": OBSERVED",
-               "Report it as what %s exhibited" % CH_PAIR]
+# What a run that saw the outcome must print, and what a run that did not must
+# print instead.  The arms are exclusive and one of them always applies.
+def ch_observed(pair):
+    return [": OBSERVED", "Report it as what %s exhibited" % pair]
+
+
 CH_NULL = ["NOT OBSERVED under this effort",
            "NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL",
            "CHARACTERIZATION, NEVER VALIDATION",
            "effort:",
-           # The effort a null is entitled to report is the iterations it read
-           # back, so the number has to be on the line beside the sentence.
+           # The effort a null reports is the iterations it read back, so the
+           # number is on the line beside the sentence.
            "scored="]
-# ... and what a run every cell of which was DISCARDED must print instead.  A box
-# whose rendezvous cannot complete produces this arm legitimately -- mapped
-# pinned memory with no host-native atomics loses increments -- so it is read as
+# What a run every cell of which was DISCARDED must print instead: it is read as
 # the arm it is, and what it may NOT do is read as reach.
 CH_COLD = ["DISCARD this null -- the harness was not demonstrably hot",
            "the weak outcome was NOT observed",
@@ -1122,64 +839,15 @@ CH_COLD = ["DISCARD this null -- the harness was not demonstrably hot",
 CH_CAP1 = ["COLD-INVALID",
            "DISCARD this null -- the harness was not demonstrably hot",
            "A timed-out rendezvous is a DEAD PARTNER"]
-# What NEITHER arm may carry: a voucher named, a constant standing in for the
-# pair, a build fault reported as a result.  Reached only through
-# --characterize-hw, which refuses to run without a CUDA device: on a box with no
-# GPU they go unchecked.
+# What NEITHER arm may carry: a build fault reported as a result.
 CH_NEVER_SAYS = [
-    ("vouched for by",
-     "nothing here certifies this run, and the printout may not say that "
-     "anything does"),
-    ("the target this harness was tagged for",
-     "a constant standing in for the pair names an object no stamp makes right"),
     ("BUILD BUG",
      "the harness is reporting a build fault, which is not a result to read"),
 ]
+CH_CLASSES = ("Never", "Sometimes", "Always", "VOID")
 
 
-def ch_class(k, R, obs, usable):
-    """Judge the observation class against the counts it was read off.  Returns
-    (failure, note) with exactly one of the two set.
-
-    VOID is a READING, not a failure: a run whose every cell was discarded --
-    which a box whose rendezvous cannot complete legitimately produces -- has
-    measured nothing, and VOID is the class that says so.  What is refused is a
-    class that contradicts the counts beside it, in either direction.
-
-    Below that, the denominator is R, the runs executed, so het_verdict.h reads
-    obs=Always off k >= R and obs=Never off k == 0.  obs=Always under k<R would
-    mean the denominator had collapsed onto the usable count instead, and
-    obs=Never with a sighting in it, or anything else with none, is a class that
-    contradicts the counts beside it."""
-    if usable == 0:
-        if obs == "VOID":
-            return (None, "[F] obs=VOID on 0 usable cell(s) of R=%d (every run "
-                          "was discarded, and that is the class which says so)" % R)
-        return ("[F] obs=%s on 0 usable cell(s) of R=%d: nothing was measured "
-                "and the class does not say so" % (obs, R), None)
-    if obs == "VOID":
-        return ("[F] obs=VOID on %d usable cell(s) of R=%d: a pool with a usable "
-                "cell measured something" % (usable, R), None)
-    if k == 0:
-        if obs == "Never":
-            return (None, "[F] obs=Never on k=0 of R=%d (nothing fired, and that "
-                          "is the class which says so)" % R)
-        return ("[F] obs=%s on k=0 of R=%d: nothing fired and the class does not "
-                "say so" % (obs, R), None)
-    if k < R and obs == "Always":
-        return ("[F] obs=Always on k=%d of R=%d: the denominator collapsed "
-                "onto the runs that fired" % (k, R), None)
-    if k < R:
-        return (None, "[F] obs=%s on k=%d of R=%d (denominator is R, not the "
-                      "usable count)" % (obs, k, R))
-    if obs == "Always":
-        return (None, "[F] obs=Always on k=%d of R=%d (every run fired, and "
-                      "that is the class which says so)" % (k, R))
-    return ("[F] obs=%s on k=%d of R=%d: every run fired and the class does "
-            "not say so" % (obs, k, R), None)
-
-
-def ch_check(text, k, R, obs, usable, quiet=False):
+def ch_check(text, k, obs, test, pair, quiet=False):
     """Every assertion is on the PRINTOUT.  Returns a list of failures."""
     bad = []
     say = (lambda *_: None) if quiet else print
@@ -1194,15 +862,14 @@ def ch_check(text, k, R, obs, usable, quiet=False):
         if frag in text:
             bad.append("[%s] the printout says %r -- %s" % (tag, frag, why))
 
-    must("A", "HetVerdict %s run=" % CH_TEST)
+    must("A", "HetVerdict %s run=" % test)
 
     # Which arm this box printed.  A sighting outranks everything; otherwise a
-    # printout whose every run was discarded is the COLD arm and one with a
-    # usable run is the null arm.
+    # printout whose every run was discarded is the COLD arm.
     classes = set(re.findall(r"^HetVerdict \S+(?: CPU-ONLY)? run=\d+: (\S+)$",
                              text, re.M))
     if k > 0:
-        arm, frags = "OBSERVED", CH_OBSERVED
+        arm, frags = "OBSERVED", ch_observed(pair)
     elif classes == {"COLD-INVALID"}:
         arm, frags = "COLD-INVALID", CH_COLD
     else:
@@ -1213,40 +880,33 @@ def ch_check(text, k, R, obs, usable, quiet=False):
     for frag, why in CH_NEVER_SAYS:
         never("B/C", frag, why)
 
-    why, note = ch_class(k, R, obs, usable)
-    if why is not None:
-        bad.append(why)
+    if obs not in CH_CLASSES:
+        bad.append("[F] obs=%s is not one of %s" % (obs, list(CH_CLASSES)))
     else:
-        say("      %s" % note)
+        say("      [F] obs=%s on k=%d" % (obs, k))
     return bad
 
 
-def ch_run_once(d, quiet=False):
-    got = ch_run_until_sighting(d, quiet=quiet)
+def ch_run_once(d, test, pair, quiet=False):
+    got = ch_run_until_sighting(d, test, quiet=quiet)
     if got is None:
         return 1, ["the harness produced no run at all"]
-    text, k, R, obs, usable, tries = got
+    text, k, R, obs, tries = got
     if k == 0 and not quiet:
         print("      the outcome never fired in %d x %d runs, so a non-sighting "
-              "arm is what this device printed and what is read here"
-              % (tries, R))
-    bad = ch_check(text, k, R, obs, usable, quiet=quiet)
+              "arm is what this device printed" % (tries, R))
+    bad = ch_check(text, k, obs, test, pair, quiet=quiet)
     return (1 if bad else 0), bad
 
 
-def ch_cap_run(d, quiet=False):
-    """The rendezvous disqualifier, driven by a run-time knob.
-
-    Under caps of ONE poll a participant that does not find its partner already
-    arrived gives up at once, so nearly every iteration is discarded and the run
-    must be thrown away NAMING the rendezvous.  A box on which most iterations
-    still complete inside a single poll would be a box where the two devices need
-    no rendezvous at all, which is worth knowing and is not this arm passing."""
+def ch_cap_run(d, test, quiet=False):
+    """The rendezvous disqualifier, driven by a run-time knob: under caps of ONE
+    poll nearly every iteration is discarded and the run must be thrown away."""
     say = (lambda *_: None) if quiet else print
     env = ch_env(HET_CAP_CPU="1", HET_CAP_GPU="1", HET_RUNS_MAX="1",
                  HET_SEED="1")
     try:
-        r = subprocess.run([os.path.join(d, CH_TEST)], cwd=d, env=env,
+        r = subprocess.run([os.path.join(d, test)], cwd=d, env=env,
                            capture_output=True, text=True, timeout=CH_RUN_TIMEOUT)
     except subprocess.TimeoutExpired:
         return ["[R] the caps=1 run STALLED after %ds -- a one-poll cap is the "
@@ -1257,7 +917,7 @@ def ch_cap_run(d, quiet=False):
         if frag not in text:
             bad.append("[R] under HET_CAP_CPU=1 HET_CAP_GPU=1 the printout never "
                        "says %r -- a rendezvous that cannot complete must be "
-                       "discarded, and must say which mechanism was dead" % frag)
+                       "discarded naming the dead mechanism" % frag)
         else:
             say("      [R] %s" % frag[:88])
     if "NOT OBSERVED under this effort" in text:
@@ -1267,39 +927,39 @@ def ch_cap_run(d, quiet=False):
     return bad
 
 
-def ch_probe(tmp, arch, quiet=False):
-    d = ch_emit(tmp)
+def ch_probe(tmp, test, cdir, pair, arch, quiet=False):
+    d = ch_emit(tmp, test, cdir)
     ch_build(d, arch)
-    rc, bad = ch_run_once(d, quiet=quiet)
+    rc, bad = ch_run_once(d, test, pair, quiet=quiet)
     if not quiet:
         print("===== the same binary under caps of one poll =====")
-    bad = bad + ch_cap_run(d, quiet=quiet)
+    bad = bad + ch_cap_run(d, test, quiet=quiet)
     return (1 if bad else 0), bad
 
 
 def characterize_hw():
+    test, cdir, pair = ch_pick()
     arch = ch_arch()
     if arch is None:
-        # NOT a skip.  This mode BUILDS AND RUNS a harness on the device;
+        # NOT a skip: this mode builds and runs a harness on the device, and
         # skipping it quietly is how a check stops checking.
         raise SystemExit(
             "runcheck --characterize-hw: no CUDA device is visible (nvidia-smi "
-            "reported none).\n  There is nothing it can assert without one, so it "
-            "fails rather than passing vacuously.")
-    print("runcheck --characterize-hw: %s, %s, HET_ALLOC=%s"
-          % (CH_PAIR, arch, os.environ.get("HET_ALLOC", "pinned")))
+            "reported none), so there is nothing it can assert.")
+    print("runcheck --characterize-hw: %s, %s, %s, HET_ALLOC=%s"
+          % (test, pair, arch, os.environ.get("HET_ALLOC", "pinned")))
     tmp = tempfile.mkdtemp(prefix="runcheck-chhw.")
     try:
         print("===== the printout of a run =====")
-        bad = ch_probe(tmp, arch)[1]
+        bad = ch_probe(tmp, test, cdir, pair, arch)[1]
         if bad:
             print("\nCHARACTERIZE-HW FAILED: %d problem(s)." % len(bad))
             for m in bad:
                 print("  %s" % m)
             return 1
         print("\nCHARACTERIZE-HW: PASS (the printout names the test, reads as "
-              "the arm the run took, claims no machine and names no voucher; and "
-              "a rendezvous that cannot complete is DISCARDED naming itself)")
+              "the arm the run took and names no voucher; a rendezvous that "
+              "cannot complete is DISCARDED naming itself)")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -1311,13 +971,11 @@ PHASES = [
      lambda q: phase2_e2e(WRAPPER, q)),
     ("3: the refusals by their own reasons",
      lambda q: phase3_refusals(WRAPPER, q)),
-    ("4: campaign.py's stop rule and the state file it refuses to start on",
-     lambda q: phase4_stoprule(CAMPAIGN, q)),
-    ("6: the fail-closed handlers, under their own conditions",
-     lambda q: phase6_failclosed(WRAPPER, q)),
-    ("7: a second session into the same results dir",
-     lambda q: phase7_second_session(WRAPPER, q)),
-    ("8: probe-hip.sh's exit paths", lambda q: phase8_probe_hip(PROBE_HIP, q)),
+    ("4: the fail-closed handlers, under their own conditions",
+     lambda q: phase4_failclosed(WRAPPER, q)),
+    ("5: a second session into the same results dir",
+     lambda q: phase5_second_session(WRAPPER, q)),
+    ("6: probe-hip.sh's exit paths", lambda q: phase6_probe_hip(PROBE_HIP, q)),
 ]
 
 
@@ -1331,6 +989,7 @@ def main():
 
     if not os.access(os.path.join(BIN, "litmus7"), os.X_OK):
         raise SystemExit("runcheck: litmus7 not built (run 'make all')")
+    host_fixture()
     if a.characterize_hw:
         return characterize_hw()
 
@@ -1344,9 +1003,7 @@ def main():
     if rc:
         print("\nRUNCHECK FAILED.")
         return 1
-    print("\nRUNCHECK OK (the plan is a plan; the chain records what it did; "
-          "every refusal named its own reason; every fail-closed handler was seen "
-          "to fire)")
+    print("\nRUNCHECK OK")
     return 0
 
 

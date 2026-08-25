@@ -1,42 +1,13 @@
 #!/usr/bin/env bash
-# =========================================================================
-# HetLitmus dev-tier SPOT-CHECK BUNDLE -- built on the dev box, shipped whole.
+# Pack the dev-tier spot-check bundle: emit the corpus, prune it to TESTS.txt's
+# subset, add the driver, the probe and the ladder, stamp it and tar it.
 #
 #   hetlitmus/spotcheck/pack-bundle.sh [OUTDIR]
 #   -> OUTDIR/hetlitmus-spotcheck-<rev>.tar.gz
 #
-# WHY A BUNDLE AND NOT A CHECKOUT.  An emitted harness dir is SELF-CONTAINED:
-# litmus7 writes outs.c/h, het_stress.h, het_cpu_stress.h and het_verdict.h
-# into every dir at emission time.  So the rented instance needs no repo, no
-# OCaml, no dune and no litmus7 -- just nvcc, gcc, make and python3.  That also
-# pins the experiment: the bundle carries the git revision it was emitted from,
-# and nothing on the instance can drift from it.
-#
-# WHAT IS IN IT
-#   tests/<name>/        the emitted harness dirs named in TESTS.txt
-#   campaign.py          the cross-invocation pooling driver
-#   probe.cu probe-cuda.sh  what does this machine offer (run FIRST)
-#   ladder.sh run-one.sh the seven rungs, and campaign.py's --runner template
-#   TESTS.txt README.md  the subset + its rationale, and how to drive it
-#   STAMP                revision, date, census, per-test geometry, emitter
-#                        fingerprint
-#
-# NO VERDICTS TRAVEL.  The harnesses carry no prediction and neither does the
-# bundle: nothing in here says what an outcome ought to have been, so a session
-# on the instance can report what it saw and nothing else.
-#
-# FAIL-LOUD.  Every name in TESTS.txt must resolve to an emitted dir.  A typo
-# there would otherwise ship a bundle that is quietly one test short, and the
-# instance session would run the ladder against a subset nobody chose.  The
-# widest-launch row is re-measured against the whole emitted corpus too, so no
-# bundle ships a rung-4 claim the corpus has outgrown.
-#
-# CUDA BUNDLE.  probe.cu and ladder.sh's `comp.sh cuda && make cuda-bin' make
-# this the NVIDIA dev-tier bundle, so it ships the emission lane to match and
-# GPU_TARGET below REFUSES any other vendor: an AMD bundle wants an AMD probe and
-# an AMD ladder too, and a bundle whose harness dirs alone were AMD would die at
-# rung 0 on the remote box, hours after packing.
-# =========================================================================
+# It refuses to ship a bundle that is short of the chosen subset, or whose
+# widest-launch pick the corpus has outgrown.  A harness dir is self-contained,
+# so the instance needs no repo; what travels and why: README.md beside this.
 # Needs bash (arrays, mapfile); re-exec rather than fail obscurely under dash.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -euo pipefail
@@ -48,16 +19,12 @@ REPO="$(cd "$HETL/.." && pwd)"
 LITMUS7="$REPO/_build/install/default/bin/litmus7"
 [ -x "$LITMUS7" ] || { echo "error: $LITMUS7 not built (run 'make all')" >&2; exit 2; }
 
-# The emission lane this bundle ships (litmus7 -gpu-target): one vendor per
-# harness dir, and the ladder in here builds the CUDA one.  Checked before
-# anything is created, so a refusal leaves no half-made output directory.
+# The emission lane this bundle ships (litmus7 -gpu-target): the ladder in here
+# builds the CUDA one, so any other vendor is refused before anything is made.
 GPU_TARGET="${GPU_TARGET:-cuda}"
 [ "$GPU_TARGET" = cuda ] || {
-  echo "error: GPU_TARGET=$GPU_TARGET -- only cuda is packable: this bundle's" >&2
-  echo "       ladder.sh (comp.sh cuda / make cuda-bin) and probe.cu are" >&2
-  echo "       CUDA-only, so a $GPU_TARGET bundle would ship harness dirs its" >&2
-  echo "       own driver cannot build.  Parameterising the ladder and the" >&2
-  echo "       probe is future work." >&2
+  echo "error: GPU_TARGET=$GPU_TARGET -- ladder.sh and probe.cu are CUDA-only," >&2
+  echo "       so this would ship harness dirs its own driver cannot build." >&2
   exit 2 ; }
 
 OUTDIR="${1:-$HERE/bundle-out}"
@@ -74,13 +41,20 @@ echo "[1/5] subset: ${#WANT[@]} tests -- ${WANT[*]}"
 SCRATCH="$(mktemp -d)"
 trap 'rm -rf "$SCRATCH"' EXIT
 
-echo "[2/5] emitting the full corpus into scratch (emit-all.sh is the instrument)"
-if ! "$HETL/verify/emit-all.sh" "$SCRATCH/emit" > "$SCRATCH/emit.log" 2>&1; then
-  echo "FAIL: emit-all.sh did not complete; last 20 lines:" >&2
+echo "[2/5] emitting the het corpus into scratch"
+EMIT="$SCRATCH/emit/het-$GPU_TARGET"
+mkdir -p "$EMIT"
+st=0
+"$LITMUS7" -gpu-target "$GPU_TARGET" -set-libdir "$REPO/litmus/libdir" \
+  -o "$EMIT" "$HETL"/tests/het/*.litmus > "$SCRATCH/emit.log" 2>&1 || st=$?
+# litmus7's batch driver catches an emission exception and still exits 0, so the
+# refusal marker is read as well as the status.
+if [ "$st" -ne 0 ] || grep -q 'HetLitmus REFUSED' "$SCRATCH/emit.log"; then
+  echo "FAIL: emission exited $st or refused; last 20 lines:" >&2
   tail -20 "$SCRATCH/emit.log" >&2
   exit 1
 fi
-tail -1 "$SCRATCH/emit.log"
+echo "      $(find "$EMIT" -mindepth 1 -maxdepth 1 -type d | wc -l) harness dirs"
 
 REV="$(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null || echo nogit)"
 BUNDLE="$SCRATCH/hetlitmus-spotcheck-$REV"
@@ -89,8 +63,8 @@ mkdir -p "$BUNDLE/tests"
 echo "[3/5] pruning to the subset (a name that does not resolve is fatal)"
 missing=()
 for t in "${WANT[@]}"; do
-  if [ -d "$SCRATCH/emit/het-$GPU_TARGET/$t" ]; then
-    cp -r "$SCRATCH/emit/het-$GPU_TARGET/$t" "$BUNDLE/tests/$t"
+  if [ -d "$EMIT/$t" ]; then
+    cp -r "$EMIT/$t" "$BUNDLE/tests/$t"
   else
     missing+=("$t")
   fi
@@ -99,39 +73,34 @@ if [ "${#missing[@]}" -gt 0 ]; then
   echo "" >&2
   echo "FAIL: $TESTS_FILE names ${#missing[@]} test(s) with no emitted harness dir:" >&2
   for m in "${missing[@]}"; do echo "        $m" >&2; done
-  echo "      The corpus emitted $(find "$SCRATCH/emit/het-$GPU_TARGET" -mindepth 1 -maxdepth 1 -type d | wc -l) dirs." >&2
-  echo "      Refusing to ship a bundle that is silently short of the chosen subset." >&2
+  echo "      The corpus emitted $(find "$EMIT" -mindepth 1 -maxdepth 1 -type d | wc -l) dirs." >&2
   exit 1
 fi
 
 # The widest-launch row is the one subset choice that is a claim about the rest
-# of the corpus: ladder.sh's rung 4 runs it as the maximum on all three launch
-# axes.  The whole corpus is on disk here and nowhere on the instance, so the
-# claim is re-measured here or not at all.
+# of the corpus, so it is re-measured here or not at all.
 WIDEST_ROLE=3-widest-launch
 mapfile -t WIDE < <(grep -vE '^[[:space:]]*(#|$)' "$TESTS_FILE" \
                     | awk -F'\t' -v r="$WIDEST_ROLE" '$2 == r {print $1}')
 if [ "${#WIDE[@]}" -ne 1 ]; then
   echo "" >&2
-  echo "FAIL: $TESTS_FILE has ${#WIDE[@]} row(s) with role '$WIDEST_ROLE'; rung 4 runs" >&2
-  echo "      exactly one widest-launch pick, so the geometry claim cannot be checked." >&2
+  echo "FAIL: $TESTS_FILE has ${#WIDE[@]} row(s) with role '$WIDEST_ROLE'; the ladder" >&2
+  echo "      runs exactly one widest-launch pick, so the claim cannot be checked." >&2
   exit 1
 fi
-# The two launch axes, maximised over the .cu files named; over a single
-# harness that is just its own geometry, so one reader serves both sides.
+# The two launch axes, maximised over the .cu files named; over a single harness
+# that is just its own geometry, so one reader serves both sides.
 axes_max() {
   awk '/^#define NPART /          {if ($3+0 > n) n = $3+0}
        /^#define HET_TEST_BLOCKS /{if ($3+0 > b) b = $3+0}
        END {print n+0, b+0}' "$@"
 }
 read -r wn wb <<<"$(axes_max "$BUNDLE/tests/${WIDE[0]}/${WIDE[0]}.cu")"
-read -r mn mb <<<"$(axes_max "$SCRATCH/emit/het-$GPU_TARGET"/*/*.cu)"
+read -r mn mb <<<"$(axes_max "$EMIT"/*/*.cu)"
 if [ "$wn" != "$mn" ] || [ "$wb" != "$mb" ]; then
   echo "" >&2
-  echo "FAIL: ${WIDE[0]} is npart=$wn blocks=$wb, but the emitted corpus" >&2
-  echo "      reaches npart=$mn blocks=$mb." >&2
-  echo "      ladder.sh rung 4 and TESTS.txt call that pick the corpus maximum on both" >&2
-  echo "      axes; re-pick the row, or re-word the rung, before packing." >&2
+  echo "FAIL: ${WIDE[0]} is npart=$wn blocks=$wb, but the corpus reaches" >&2
+  echo "      npart=$mn blocks=$mb; re-pick the row before packing." >&2
   exit 1
 fi
 echo "      widest launch: ${WIDE[0]} npart=$wn blocks=$wb (corpus maximum)"
@@ -148,16 +117,14 @@ chmod +x "$BUNDLE/probe-cuda.sh" "$BUNDLE/ladder.sh" "$BUNDLE/run-one.sh"
   echo "git_rev_short=$REV"
   echo "git_branch=$(cd "$REPO" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo nogit)"
   # Dirty = ANY uncommitted change under litmus/ or hetlitmus/, untracked files
-  # included: a bundle whose scripts exist only in someone's working tree is not
-  # reproducible from git_rev, and the STAMP must not imply that it is.
+  # included: such a bundle is not reproducible from git_rev.
   echo "git_dirty=$( [ -z "$(cd "$REPO" && git status --porcelain -- litmus hetlitmus 2>/dev/null)" ] && echo no || echo YES )"
   echo "packed_date=$(date -Is 2>/dev/null || date)"
   echo "packed_host=$(uname -sm)"
-  echo "corpus_emitted=$(find "$SCRATCH/emit/het-$GPU_TARGET" -mindepth 1 -maxdepth 1 -type d | wc -l)"
+  echo "corpus_emitted=$(find "$EMIT" -mindepth 1 -maxdepth 1 -type d | wc -l)"
   echo "subset_count=${#WANT[@]}"
-  # The GEOMETRY each pick was made for, read off the harness that actually
-  # shipped -- the launch size the ladder's rungs are keyed to, legible before the
-  # instance is even rented.
+  # The geometry each pick was made for, read off the harness that shipped: the
+  # launch size the rungs are keyed to, legible before the instance is rented.
   for t in "${WANT[@]}"; do
     cu="$BUNDLE/tests/$t/$t.cu"
     echo "subset_test=$t npart=$(sed -n 's/^#define NPART //p' "$cu" | head -1)" \
@@ -166,7 +133,7 @@ chmod +x "$BUNDLE/probe-cuda.sh" "$BUNDLE/ladder.sh" "$BUNDLE/run-one.sh"
   done
   echo "emitter_sha256=$(sha256sum "$REPO/litmus/hetEmit.ml" | cut -d' ' -f1)"
   # hetDialect.ml carries the per-vendor records the render is built from, so
-  # the emitter hash alone does not cover what a .cu actually contains.
+  # the emitter hash alone does not cover what a .cu contains.
   echo "dialect_sha256=$(sha256sum "$REPO/litmus/hetDialect.ml" | cut -d' ' -f1)"
   echo "verdict_h_sha256=$(sha256sum "$REPO/litmus/het-runtime/het_verdict.h" | cut -d' ' -f1)"
   echo "# Dev-tier bundle.  Results from it are MACHINERY evidence only and must"

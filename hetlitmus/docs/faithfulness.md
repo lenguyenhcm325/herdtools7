@@ -19,21 +19,20 @@ token-level lowering faithfulness of the chain
 The AMD lane's twin of this document is
 [`amd-faithfulness.md`](amd-faithfulness.md). The HIP path carries no inline
 assembly, so its one gate reads the emitted source rather than generated code
-(`hipsrccheck.py`, `make hetlitmus-hipsrc`, base lane), over its own 644
-renders — the 173 gpu-only plus the **x86_64** het 471, not the AArch64 471 read
-here — and two synthetic fence carriers. What `hipcc` lowers that source to is
+(`hipsrccheck.py`, `make hetlitmus-hipsrc`, base lane), over its own two
+corpora — the gpu-only corpus plus the **x86_64** rendering of the het corpus,
+not the AArch64 rendering read here — and two synthetic fence carriers; the
+censuses are `verify/census.py`'s. What `hipcc` lowers that source to is
 unverified.
 
 ## Why this is the right guard
 
-The bug this exists to catch is real and documented in
-[`cuda-emitter.md`](cuda-emitter.md) ("Fence lowering"): libcu++'s
-`cuda::atomic_thread_fence` **collapses** `acquire`/`release` →
-`fence.acq_rel`, *losing the order*. `CudaLang` therefore bypasses it and emits
-faithful inline PTX. This check proves that faithfulness **end-to-end through
-nvcc**, and
-would FAIL the day a collapse/weakening/narrowing returns — whether introduced
-by `CudaLang`, by a libcu++ upgrade, or by a toolkit change.
+libcu++'s `cuda::atomic_thread_fence` cannot express a release-only or
+acquire-only fence [CCCL], so `CudaLang` emits faithful inline PTX instead
+([`cuda-emitter.md`](cuda-emitter.md), "Fence lowering"). This check proves
+that faithfulness **end-to-end through nvcc**, and FAILs the day a
+collapse/weakening/narrowing returns — whether introduced by `CudaLang`, by a
+libcu++ upgrade, or by a toolkit change.
 
 ## Why inspecting `nvcc --ptx` is sound (not luck)
 
@@ -80,11 +79,14 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
 | `w` (store)   | `st`       |
 | `r` (load)    | `ld`       |
 | `f` (fence)   | `fence`    |
-| RMW           | `atom` (returns old value) / `red` (no-return reduction) |
 
-> The corpus (`ptx.bell` declares only `R`/`W`/`F`) contains **no** RMW and no
-> `acq_rel`/`sc`-on-access. Those rows are kept so the completeness
-> guard *recognizes* such a token rather than skipping it.
+> These three are the table's keys (`GPU_KIND`) and the corpus vocabulary
+> (`ptx.bell` declares only `R`/`W`/`F`). An RMW cell is a completeness
+> hard-fail, not a table row: `GPU_CELL` accepts only a `w`/`r`/`f` cell and
+> refuses any other as `unrecognized GPU cell` (exit 2). An `rmw` row would
+> first need `GPU_CELL` extended, and `atom`/`red` are two opcodes the compared
+> `(kind, order, scope)` tuple cannot express. The `acq_rel`/`sc` orders stay
+> table keys (`GPU_ORDER`) though no corpus access carries them.
 
 ### CPU (AArch64) — het column
 
@@ -93,75 +95,98 @@ nvcc emits the order **before** the scope (`ld.relaxed.gpu`, `fence.sc.cta`).
 | `STLR`        | store-release        | stays `STLR`, never `STR` |
 | `LDAR`        | load-acquire (RCsc)  | stays `LDAR`, never `LDR` |
 | `LDAPR`       | load-acquire (RCpc)  | stays `LDAPR`, never `LDR` |
-| `DMB SY`      | full system barrier  | stays `DMB SY`, never dropped/narrowed (e.g. `DMB ISH`) |
+| `DMB SY`      | full barrier, orders {WW,RR,WR,RW} | stays `DMB SY`, never dropped or narrowed |
+| `DMB ST`      | store barrier, orders {WW}         | stays `DMB ST` |
+| `DMB LD`      | load barrier, orders {RR,RW}       | stays `DMB LD` |
 | `STR`/`LDR`   | plain store/load     | — |
 | `MOV`         | neither a memory nor an ordering op; litmus7's lowering emits it to materialise a store value in a register | — |
 
+`DMB SY`, `DMB ST` and `DMB LD` are three distinct instructions (encodings
+`d5033fbf` / `d5033ebf` / `d5033dbf`), and a barrier's ordered-pair set lives
+in its option, so the compared CPU tuple is (mnemonic, barrier option):
+`CPU_BARRIER_OPTION` maps `sy` → the full barrier, `st` → {WW}, `ld` →
+{RR,RW}. `DMB ST` where `DMB SY` is expected is therefore a positional
+mismatch, and an option outside that table (`ish`, say) or a `DMB` with no
+option is a completeness hard-fail (`barrier_option`). All three reach the
+corpus: the generator's `st`/`ld` order-pair tokens render an intra-proc edge
+as `DMB ST`/`DMB LD` (`_grid_lib.sh`, `render_cpu_cycle` with
+`fence-st`/`fence-ld`).
+
 ## Sources
 
-* **NVIDIA PTX ISA** (the toolkit nvcc here is CUDA **12.9**, which emits
-  `.version 8.8`): `ld` §9.7.9.8, `st` §9.7.9.11, `membar`/`fence` §9.7.14.4,
-  `atom` §9.7.14.5, `red` §9.7.14.6 —
+* **NVIDIA PTX ISA** (CUDA **12.9** nvcc, the toolkit version CI pins in
+  `hetlitmus-ci.yml`, emits `.version 8.8`): `ld` §9.7.9.8, `st` §9.7.9.11,
+  `membar`/`fence` §9.7.14.4, `atom` §9.7.14.5, `red` §9.7.14.6 —
   <https://docs.nvidia.com/cuda/parallel-thread-execution/index.html>.
   These ground the qualifier vocabulary: `ld{.relaxed,.acquire}`,
   `st{.relaxed,.release}`, `fence{.sc,.acq_rel,.acquire,.release}`, scope
   `{.cta,.gpu,.sys}`, sem-before-scope; `atom` is an RMW returning the
-  old value, `red` a reduction with no return.
-* **The strongest primary evidence is nvcc itself.** Every token in the table
-  was *emitted and assembled exit 0* by `nvcc -std=c++17 -arch=sm_86/90 --ptx`:
-  `ld.relaxed.sys`, `st.release.sys`, `ld.acquire.gpu`, `st.relaxed.cta`,
-  `fence.sc.sys`, `atom.add.acquire.sys`. An assembler that accepts and lowers a
-  token is the ground truth for what that token is and means — but not for the
-  floors it needs: `ptxas` 12.9 accepts `fence.release.sys` at `.version 6.0` /
+  old value, `red` a reduction with no return. The ISA lets a `fence` elide
+  its order (`fence{.sem}.scope`, `.acq_rel` assumed) and spells the legacy
+  form `membar.level`; the emitter writes neither — every fence it emits is
+  `fence.<order>.<scope>` — and `classify_ptx_op` reads a `fence` or `membar`
+  line with no order token as scaffolding, so either form in a model fence's
+  place surfaces as a missing op. The qualifiers are read order-agnostically
+  (`CudaLang` emits `fence.<order>.<scope>`, libcu++ `fence.<scope>.<order>`).
+* **nvcc itself is the strongest primary evidence.** Every token in the table
+  assembles exit 0 under `nvcc -std=c++17 -arch=sm_90` (`--ptx`, and `-c`
+  through `ptxas`): `ld.relaxed.sys`, `st.release.sys`, `ld.acquire.gpu`,
+  `st.relaxed.cta`, `fence.sc.sys`, `fence.acquire.sys`, `fence.release.sys`,
+  `atom.add.acquire.sys`. An assembler that accepts and lowers a token is the
+  ground truth for what that token is and means — but not for the floors it
+  needs: `ptxas` 12.9 accepts `fence.release.sys` at `.version 6.0` /
   `.target sm_70`, enforcing neither, so for ISA-version and SM-target floors
   the spec is authoritative and the assembler is not.
-* **Fence availability** (`fence.{acq_rel,sc}` PTX ISA 6.0/SM_70;
-  `fence.{acquire,release}` 8.6/SM_90) is already grounded
-  in [`cuda-emitter.md`](cuda-emitter.md) against the cccl headers
-  (`__ptx/instructions/generated/fence.h`).
+* **Fence availability:** [CCCL], stated in [`cuda-emitter.md`](cuda-emitter.md)
+  ("Fence lowering").
 * **Annotation vocabulary:** [`../bells/ptx.bell`](../bells/ptx.bell)
   (`enum memory_order`, `enum scopes`, `instructions R/W/F`).
 * **CPU mapping:** the *Arm Architecture Reference Manual* is the source of the whole
   map — STLR = Store-Release; LDAR = Load-Acquire RCsc; LDAPR = Load-AcquirePC RCpc,
-  FEAT_LRCPC; DMB SY = full-system Data Memory Barrier. [Bagchi26 Fig. 1] is cited for
-  what it depicts, and for that alone: an unscoped ARM release store (`STLR`) pairing
-  with a system-scoped PTX acquire load (`ld.acquire.sys.b32`) — the compound question
-  the het column poses. The RCpc (`LDAPR`) choice is the **corpus generator's**, not the
-  emitter's: `hetgen7`'s two-sided acquire CPU token is upstream's `ReadAcqPc`, which
-  `gen/AArch64Compile_gen.ml` emits as `LDAPR`, and it is already spelled that way in the
-  committed `.litmus`. litmus7 then reproduces it verbatim, which is why the emitted build
-  files compile `<t>_cpu.c` with `-march=armv8.3-a` (`litmus/hetCpuFront.ml`).
+  FEAT_LRCPC; DMB SY/ST/LD = Data Memory Barrier, full / store / load. [Bagchi26 Fig. 1]
+  is cited for what it depicts, and for that alone: an unscoped ARM release store
+  (`STLR`) pairing with a system-scoped PTX acquire load (`ld.acquire.sys.b32`) — the
+  compound question the het column poses. The RCpc (`LDAPR`) choice is the **corpus
+  generator's**, not the emitter's: `hetgen7`'s two-sided acquire CPU token is
+  upstream's `ReadAcqPc`, which `gen/AArch64Compile_gen.ml` emits as `LDAPR`, and it is
+  already spelled that way in the committed `.litmus`. litmus7 then reproduces it
+  verbatim, which is why the emitted build files compile `<t>_cpu.c` with
+  `-march=armv8.3-a` (`litmus/hetCpuFront.ml`).
 
 ## What is checked, for every op, both directions
 
 For each test the checker builds the **expected profile** from the `.litmus` and the
 **observed profile** from the PTX (and `_cpu.c`), then asserts:
 
-1. **ORDERED equality** of the model-op streams — element-wise
-   `(kind, order, scope)` equality. This subsumes order/scope/kind exactness
-   **and placement** (a fence between the right accesses; load/store order
-   preserved). A strengthening (`relaxed`→`acquire`) or weakening
-   (`release`→`relaxed`) shows up as a positional mismatch.
-2. **PER-PROC localization** — a diagnostic, **not** a second detector. An
-   order-blind multiset test is strictly weaker than item 1: if the ordered
-   comparison passes the two streams are identical, so no multiset test could
-   differ and a global one would detect nothing at all. What slicing the
-   observed stream by the expected per-proc op counts and comparing `Counter`s
-   adds is the instance and proc a mismatch sits in, which a flat index diff
-   cannot name — so it runs only after item 1 has failed, and only reports
-   (`ptxcheck.check_gpu`'s post-failure localizer).
-3. **(het) rendezvous whitelist** — the system-scope rendezvous must span both
-   devices and **order nothing**: every op `sys`-scoped (never narrowed), every
-   op **relaxed**, **no fence anywhere in it**, and one arrival (`atom`/`red`)
-   **per GPU proc**. Relaxed and fence-free is a correctness property rather
-   than a preference: an acquire poll self-invalidates the GPU L1
-   [Bagchi26 §5.3] and a `fence.sc.sys` flushes it, so a strengthened rendezvous
-   erases the cache state the tested iteration is about to race on — while every
-   model op still matches.
-4. **(het) CPU column** — the ordered memory/ordering mnemonics of the `.litmus`
-   CPU column must reproduce in the emitted `_cpu.c` real-asm block (under
-   `#if defined(__aarch64__)`), catching `STLR`→`STR`, `LDAPR`→`LDR`,
-   `DMB SY` drop/narrowing. The block is litmus7's own
+1. **ORDERED equality** of the model-op streams (`check_gpu`) — element-wise
+   `(kind, order, scope)` equality. The one compare subsumes kind, order,
+   scope, multiplicity **and placement** (a fence between the right accesses;
+   load/store order preserved; a missing or extra op shifts every position
+   after it). A strengthening (`relaxed`→`acquire`) or weakening
+   (`release`→`relaxed`) shows up as a positional mismatch, printed as
+   `[i] expected … observed …`.
+2. **(het) nothing ahead of the rendezvous** (`check_no_pre_barrier_ops`) — no
+   model op may precede the first rendezvous arrival: an op ahead of it sits
+   outside every lane segment and would be compared against nothing, so it is
+   a FAIL in its own right.
+3. **(het) rendezvous whitelist** (`check_barrier_whitelist`) — the
+   system-scope rendezvous must span both devices and **order nothing**: every
+   op `sys`-scoped (never narrowed), every op **relaxed**, **no fence anywhere
+   in it**, and one arrival (`atom`/`red`) per joining GPU lane. Relaxed and
+   fence-free is a correctness property, not a preference:
+   `00-environment-design.md` §3.3 ([Bagchi26 §5.3]).
+4. **No stray system-scope op** (`check_no_stray_sys`) — no `sys`-scoped op
+   outside the inline-asm markers, where the model-op compare cannot see it (a
+   builtin sys-scope op is invisible to it). This is the only text the checker
+   reads outside the markers, so a builtin op of narrower scope there is not
+   seen — which is why the stress layer is built from builtins and plain
+   accesses that never enter the model-op stream (`het_stress.h`'s scaffolding
+   counters lower to bare `atom.global.*` with no order token).
+5. **(het) CPU column** (`check_cpu`) — the ordered memory/ordering mnemonics
+   of the `.litmus` CPU column, barrier option included, must reproduce in the
+   emitted `_cpu.c` real-asm block (under `#if defined(__aarch64__)`), catching
+   `STLR`→`STR`, `LDAPR`→`LDR`, a `DMB` dropped, and `DMB ST` for `DMB SY` as
+   a positional mismatch. The block is litmus7's own
    (`#START _litmus_P<n>` … `#END`), so the reader skips those markers and reads
    `%w[x0]`/`%[x]`-style operands.
 
@@ -172,38 +197,51 @@ Each GPU proc is emitted as its own guarded block whose iteration loop runs
 prologue — there is one arrival per GPU proc, and it recurs every iteration
 while the text carries it once. The arrival is the unique anchor: the corpus
 model has **no** `atom`/`red`, so every system-scoped `atom`/`red` in the kernel
-is a rendezvous arrival. The checker segments the op stream at each arrival and
-strips the fixed template `[atom.relaxed.sys][ld.relaxed.sys]` from each
-segment's front; the remainder is that proc's model ops, in proc order. Because
-the template carries no fence, a *model* `fence.sc.sys` (`f[sc,sys]`) can only
-be a model op, and a fence appearing inside the template is a finding by name.
+is a rendezvous arrival. `split_het_segments` cuts the op stream at each
+arrival and takes the template `[arrival][optional fence][poll]` off each
+segment's front; the remainder is that lane's model ops, in lane order. A
+fence directly after an arrival belongs to the template — it is scored into
+the whitelist and named there as a finding — while a fence after the poll is a
+model op, so a lane whose column begins or ends in a fence (`f[sc,sys]`, say)
+is compared, not refused.
 
 ## Completeness guard (never silently skip)
 
 The mapping table **is** the guard. Building the expected profile looks up every
-order, scope, op-kind, and CPU mnemonic in the table; a token that is not a key
-raises `CompletenessError`, which **hard-fails the test with exit 2** — it is
-never skipped. Inside `tokens.sh all` that exit is scored `GUARD-FAIL` by `run_one`
-and turns `run_dir`'s exit nonzero, so an unmapped token anywhere in the 644 fails
-the gate rather than being skipped.
+order, scope, op-kind, CPU mnemonic and barrier option in the table; a token
+that is not a key raises `CompletenessError`, which **hard-fails the test with
+exit 2** — it is never skipped. `tokens.sh` scores that exit as `GUARD-FAIL` in
+`run_one`, and `run_paths` turns it into a nonzero exit, in `all` (the cover)
+and `full` (both corpora) alike.
+
+A het column with no device tag (`P<n>` without `:cpu`/`:gpu`) is the same
+hard-fail, in `parse_body`, never defaulted to gpu: defaulting would send a CPU
+column through `gpu_ops_of_column` and compare AArch64 mnemonics against PTX —
+a wrong answer rather than a refusal. A gpu-only (`LISA`) test omits the tag,
+and its columns are gpu.
 
 Distinct annotations in the corpus (every one a table key):
 
 ```
 GPU: w/r[relaxed,{cta,gpu,sys}]  w[release,{cta,gpu,sys}]  r[acquire,{cta,gpu,sys}]
      f[sc,{cta,gpu,sys}]  f[release,sys]  f[acquire,sys]
-CPU: MOV STR LDR STLR LDAPR DMB
+CPU: MOV STR LDR STLR LDAPR DMB{SY,ST,LD}
 ```
 
 ## How to run
 
 ```
-# full corpus: per-test PASS/FAIL table + tally (173 gpu-only, 471 het)
-JOBS=8 bash hetlitmus/verify/tokens.sh            # both
-JOBS=8 bash hetlitmus/verify/tokens.sh gpu-only   # 173
-JOBS=8 bash hetlitmus/verify/tokens.sh het        # 471
+# the gate (= make hetlitmus-faithful): covercheck.py, then ptxcheck.py over
+# every test verify/faithful-cover.txt lists
+bash hetlitmus/verify/tokens.sh all
 
-# a single test (full pipeline: emit -> nvcc --ptx -> check)
+# both corpora entire, or one of them
+bash hetlitmus/verify/tokens.sh full
+bash hetlitmus/verify/tokens.sh gpu-only
+bash hetlitmus/verify/tokens.sh het
+JOBS=4 bash hetlitmus/verify/tokens.sh full   # worker count; default nproc, capped at 12
+
+# a single test (full pipeline: emit -> nvcc --ptx -> check); -q drops the per-check lines
 python3 hetlitmus/verify/ptxcheck.py hetlitmus/tests/gpu-only/MP-sys-F.litmus
 
 # the one required rejection: a frozen corrupted PTX, no nvcc (pinned in
@@ -215,33 +253,40 @@ python3 hetlitmus/verify/ptxcheck.py hetlitmus/tests/gpu-only/MP-sys-F.litmus \
 `ptxcheck.py` exits **0 = PASS**, **1 = FAIL** (with an exact per-position diff),
 **2 = completeness hard-fail**, **3 = tool/emit error**. Requirements: `litmus7`
 built in `_build` (`make all` at the repo root) and `nvcc` on `PATH`
-(`/usr/local/cuda/bin`; CUDA 12.9). Default arch `sm_90`.
+(`tokens.sh` prepends `/usr/local/cuda/bin`). It compiles at `sm_90`, the arch
+the emitted `Makefile`/`comp.sh` build the same `.cu` with
+(`litmus/hetDialect.ml`, `gd_arch_default`); it takes no arch flag.
+
+**The cover.** `faithful-cover.txt` is a repo-relative list of tests drawn from
+both corpora, `census.COVER` long. `covercheck.py` recomputes every feature of
+both corpora with ptxcheck's own parsers (its docstring is the feature list of
+record) and fails if a feature reaches no listed test, if a listed test is not
+in the corpus, or if the list length is not `census.COVER`. `--extend` adds
+tests greedily and never drops one; afterwards `COVER` in `census.py` and
+`CENSUS_COVER` in `census.sh` are hand-edited (`README-tests.md`, Notice 10).
 
 ## Result
 
+`tokens.sh all` prints, with the pins of `census.py`/`census.sh` in place of the
+angle brackets:
+
 ```
-TALLY gpu-only: 173/173 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
-TALLY het: 471/471 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
+COVER OK: <COVER> tests cover all <n> features of the <GPU_ONLY+HET>-test corpus
+TALLY cover: <COVER>/<COVER> PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
 ```
+
+`tokens.sh full` prints `TALLY gpu-only: <GPU_ONLY>/<GPU_ONLY> PASS …` and
+`TALLY het: <HET>/<HET> PASS …` instead, each sweep censused against
+`census.sh`'s pin in `run_paths`, so an empty or misnamed corpus directory is a
+`CENSUS FAIL`, not a vacuous pass.
 
 * **Rejection:** the frozen `corrupt-strengthen.ptx` — `MP-sys-F` with its one
   `ld.relaxed.sys` strengthened to `ld.acquire.sys` — fed through `--ptx` FAILs
-  (exit 1; without `-q`, with the exact `[idx] expected … observed …` diff),
-  pinned byte for byte in `hetlitmus/tests/cram/ptx-negatives.t`.
-* **Completeness:** the 17 distinct GPU annotations + 6 CPU mnemonics above are
-  all table keys; an annotation that is not raises `CompletenessError` (exit 2).
-
-### Triage log (every FAIL accounted for)
-
-The first full het run reported **18 FAIL** — all the multi-GPU-proc IRIW het
-tests (`IRIW-cgcg-*`, `IRIW-gcgc-*`). Root cause was a **checker bug**, not an
-emitter mismatch: the het barrier/model separator assumed a single barrier
-*prologue*, but a kernel with two GPU procs correctly emits **one barrier per GPU
-proc guard block** (`[barrier][model]` × 2). The fix (segment on the fetch_add
-anchor, strip the barrier template per segment) was applied **in the checker
-only**; the emitter, `.litmus` corpus, and `ptx.bell` were not touched. After the
-fix, every het test PASSed. No emitter mismatch was found — the lowering is
-faithful across the whole corpus.
+  (exit 1, with the exact `[idx] expected … observed …` diff), pinned byte for
+  byte in `hetlitmus/tests/cram/ptx-negatives.t`.
+* **Completeness:** every annotation listed above, every CPU mnemonic and every
+  barrier option is a table key; one that is not raises `CompletenessError`
+  (exit 2).
 
 ## Scope / limits
 
@@ -249,28 +294,26 @@ faithful across the whole corpus.
   token).
   Runtime reordering by ptxas/hardware is the *behaviour under test* on real
   hardware, not a concern of this check.
-* It is hardware-free: `nvcc --ptx`/`-c` and reading text only; no kernel runs.
+* It is hardware-free: `nvcc --ptx` and reading text only; no kernel runs.
 * `MOV` is neither a memory nor an ordering op — litmus7's lowering emits it to
   materialise a store value in a register — so it is intentionally excluded from
   the CPU comparison; only memory/ordering mnemonics are compared.
-* No `acq_rel`/RMW/`sc`-on-access appears in the 173+471 corpus; the
-  mapping covers them so the guard recognizes (never skips) them if added.
-* **ptxcheck is BLIND to the stress layer, by design — and that blind spot has
-  already cost us.** Stress is scaffolding, not a tested op: it carries no
-  order/scope qualifier and sits outside the inline-asm markers, so it can never
-  enter the op stream this checker compares. Correct — but it means *no gate here
-  can tell whether the stress layer exists at all*. The pre-stress incantation
-  once shipped in a form whose traffic nvcc had **hoisted away** (a compile-time
-  access pattern folds `do_stress`'s if-chain to `ld;ld`, whose loads feed only a
-  `break` and so leave the loop — measured under "What a compile-time access
-  pattern costs" below), beside a device-scope window-opener that released on
-  its deadlock cap 99.6% of the time. Both passed every gate in this suite.
-  The other half of the static check is therefore **`hetlitmus/verify/stresscheck.py`**
-  (`make hetlitmus-stress`), which counts scratchpad ops in the emitted PTX per
-  lane class and asserts the count is *invariant* under `-DHET_*_PATTERN` — i.e.
-  that no stress configuration can silently switch it off. **A mechanism no gate
-  can observe must be assumed dead**: if you add scaffolding here, add the gate
-  that watches it.
+* No `acq_rel`/RMW/`sc`-on-access appears in the corpus (what an RMW cell does
+  to the guard: the op-kind table's note above).
+* **ptxcheck is BLIND to the stress layer, by design.** Stress is scaffolding,
+  not a tested op: it carries no order/scope qualifier and sits outside the
+  inline-asm markers, so it never enters the op stream this checker compares —
+  correct, but it means *no check here can tell whether the stress layer exists
+  at all*. The hazard is concrete: a compile-time access pattern lets nvcc fold
+  `het_do_stress`'s if-chain and hoist its loads while every check here stays
+  green (measured under "What a compile-time access pattern costs" below); the
+  shipped pattern is a runtime kernel argument. The other half of the static
+  check is therefore **`hetlitmus/verify/stresscheck.py`** (`make
+  hetlitmus-stress`), which counts scratchpad ops in the emitted PTX per lane
+  class and asserts the count is *invariant* under `-DHET_*_PATTERN` — i.e.
+  that no stress configuration can silently switch it off. **A mechanism no
+  gate can observe must be assumed dead**: if you add scaffolding here, add the
+  gate that watches it.
 
 ### What a compile-time access pattern costs
 
@@ -321,14 +364,19 @@ source). The same fold reaches mem-stress, where a stress block's 49 ops become
 16, 13, 12 or 2 as the compile-time pattern moves 0 → 1 → 2 → 3. That is what a
 sweep over `pattern ∈ {0,1,2,3}` would be scoring — a knob deciding how much
 stress exists rather than which stress it is, and no other gate in this suite can
-tell those configurations apart — which is why `stresscheck.py`'s invariance
-assertion (5) is the load-bearing one rather than a formality.
+tell those configurations apart — which is why `stresscheck.py`'s `pre`/`mem`
+pattern-invariance checks (each lane class keeps ≥ 1 scratchpad load **and**
+store at every `-DHET_{PRE,MEM}_STRESS_PATTERN=0..3`, and the count does not
+move) are the load-bearing ones rather than a formality.
 
 ## Proving the GPU stress ran, not just that it exists
 
-`stresscheck.py`'s first five checks are **structural**: the scratchpad accesses
-are in the emitted PTX and their count is invariant under the `-D` pattern
-knobs. Nothing static can say the loop ever *executed*.
+`stresscheck.py`'s static checks — `anchor`, `pre`, `mem`, `gpu-noise-live`,
+`gpu-noise-runtime` — read the emitted PTX: the scratchpad accesses are there
+and their count is invariant under the `-D` pattern knobs, and the device half
+of the interconnect noise pair survives too (the volatile 64-bit noise loads
+outlive nvcc, and their count is invariant over `-DHET_NOISE_GPU_BLOCKS`).
+Nothing static can say the loop ever *executed*.
 
 **The runtime tally is the other half.** `het_stress.h` counts rounds through
 `HET_TALLY_STRESS_ROUNDS` — an `atomicMax` of the rounds any single
@@ -337,15 +385,20 @@ driver reads it back into `het_obs_record.gpu_stress_rounds`, and
 `het_verdict()` raises `HET_DQ_GPU_STRESS_DEAD` when the stress was requested
 and that tally is zero (`harness-reporting.md` §3). A counter is evidence only
 if it can be shown to move **and** to stay at zero, so `stresscheck.py`'s
-`device-probe` check drives `het_do_stress` on a real device over every access
-pattern and asserts both directions: nonzero when the loop is asked for, exactly
-zero when it is not.
+`device-probe` check drives `het_do_stress` on the device present (compiled
+`-arch=native`) at one access pattern, pattern 0, × {iters=64, iters=0} and
+asserts both directions: nonzero when the loop is asked for, exactly zero when
+it is not. One pattern suffices because `rounds++` sits after the pattern
+if-chain in `het_do_stress` (`het_stress.h`), inside the loop and outside every
+branch, so the tally counts rounds whichever branch runs. `--no-device` (`make
+hetlitmus-stress-static`) drops that check alone, and the gate prints that it
+did (`device-probe SKIPPED`).
 
 **The two halves are not redundant.** The tally proves the loop *ran*; the
 structural checks prove it still *contains* its scratchpad accesses and that no
 `-D` can switch them off. The blind spot recorded under "Scope / limits" above —
 a layer present in the source, gone from the emitted PTX, and green on every
-gate — is exactly what neither half alone would have caught.
+gate — is exactly what neither half alone catches.
 
 The tally also watches a failure the compiler is not responsible for. Stress
 blocks fill what the co-residency cap leaves over the test lanes, so the stress
@@ -357,14 +410,23 @@ explicitly *before* the run, rather than leaving it to the tally afterwards
 ## CPU-side stress liveness
 
 `hetlitmus/verify/cpustresscheck.py` is the CPU/interconnect sibling of
-`stresscheck.py`. The cache preload, the CPU enemy threads and the interconnect
-noise pair are invisible to *both* PTX checkers — the preload emits host cache
-hints (no order, no scope, not a model op), the enemies are host code that
-never reaches the PTX, and
-the noise streams a disjoint buffer — so that layer is unguarded without it. It
+`stresscheck.py`, and needs no nvcc. The cache preload, the CPU enemy threads
+and the CPU half of the interconnect noise pair are invisible to *both* PTX
+checkers — the preload emits host cache hints (no order, no scope, not a model
+op), the enemies are host code that never reaches the PTX, and the noise
+streams a disjoint buffer — so that layer is unguarded without it (the pair's
+device half is `stresscheck.py`'s `gpu-noise-live`/`gpu-noise-runtime`). It
 asks two questions the structural gates cannot: did the mechanisms survive the
-optimiser (static, on the **compiled** `-O2` asm), and do they do anything at run
-time (dynamic, proved live *both* ways: nonzero when on, exactly zero when off)?
+optimiser (static, on the **compiled** `-O2` asm), and do they do anything at
+run time (dynamic, proved live *both* ways: nonzero when on, exactly zero when
+off)? Its checks: static, off the `-O2` asm of both host ISAs —
+`preload-prims-aarch64`, `enemy-loop` and `enemy-seq-runtime` on the AArch64
+asm, `preload-prims-x86` on the x86_64 asm (each through
+`clang --target=<triple>`, so the x86 arm reads x86 asm on any host); dynamic,
+on the host running the gate (`gcc`) — `stress-live`, `stress-off-zero`,
+`first-touch` (a host without `/proc/self/statm` is a FAIL, not a skip);
+structural, on the emitted driver — `preload-guard-field`,
+`preload-guard-term`.
 
 **The grep must be scoped: count `ldr xzr` / `ldr wzr`, never every `ldr`.** The
 enemy's read half is `(void)*l`, a load whose value is discarded. `volatile` forces

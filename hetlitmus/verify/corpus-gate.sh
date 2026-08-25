@@ -1,17 +1,13 @@
 #!/usr/bin/env bash
-# The Layer-2 golden gate: corpus + emission regression, needing no nvcc and no
-# GPU.  Layer map and promote model: hetlitmus/docs/TEST-PLAN.md ("Coverage
-# map", "Layer 2 - Generate", "Golden & promote model").
-#
-# 0 only if all three checks are clean:
-#   1. Corpus -- regenerate both corpora into a temp tree and compare with the
-#      committed one by name set and by bytes.  A `git status --porcelain'
-#      assertion cannot: an empty porcelain is also what a generator that wrote
-#      nothing leaves behind.
-#   2. Census -- the .litmus counts against EXPECT_GPU / EXPECT_HET below.
-#   3. Emission -- re-emit gpu-only once per GPU target and byte-diff the
-#      committed samples; one emission renders one vendor (litmus/hetDialect.ml).
-# Nothing writes inside the repo; both stages go to a temp dir.
+# The corpus + emission golden gate: no nvcc, no GPU, nothing written inside the
+# repo (hetlitmus/docs/README-tests.md).  0 only if:
+#   1. Corpus -- gpu-only, het and the tests/het-x86 fixture regenerate into a
+#      temp tree with the same name set (the fixture as a SUBSET) and same bytes.
+#   2. Census -- the .litmus counts match verify/census.sh's pins.
+#   3. Emission -- the committed cuda-out/*.cu and hip-out/*.hip re-emit byte for
+#      byte, one lane per dialect.
+# A miss means a committed artefact is no longer what the tools produce; `make
+# hetlitmus-promote' regenerates every set this gate pins.
 #
 # Usage:  corpus-gate.sh (no arguments).  Exit: 0 = PASS, 1 = drift, 2 = infra.
 
@@ -24,17 +20,36 @@ fi
 
 # --- locate repo (hetlitmus/verify/ -> hetlitmus/ -> repo root) --------------
 . "$(dirname "${BASH_SOURCE[0]}")/../paths.sh"
+. "$HETL/verify/census.sh"
 cd "$REPO"
+
+# The census has two homes, one per language, and a gate reading one of them
+# says nothing about the corpus the other language's gates sweep.
+want_census="$CENSUS_GPU_ONLY $CENSUS_HET $CENSUS_SYNTHETIC $CENSUS_COVER"
+py_census="$(cd "$HETL/verify" &&
+  python3 -c 'import census; print(census.GPU_ONLY, census.HET, census.SYNTHETIC, census.COVER)')"
+if [ "$py_census" != "$want_census" ]; then
+  echo "FATAL: census.py answers '$py_census', census.sh '$want_census'" >&2
+  exit 2
+fi
 
 export PATH="$BIN:$PATH"          # generate.sh resolves tools via $REPO/_build,
                                   # but keep PATH set for any bare-name callers.
 
 GPU_DIR="hetlitmus/tests/gpu-only"
 HET_DIR="hetlitmus/tests/het"
+X86_DIR="hetlitmus/tests/het-x86"
 CUDA_OUT="hetlitmus/cuda-out"
 HIP_OUT="hetlitmus/hip-out"
-EXPECT_GPU=173
-EXPECT_HET=471
+EXPECT_GPU="$CENSUS_GPU_ONLY"
+EXPECT_HET="$CENSUS_HET"
+
+# The fixture's tests, named rather than globbed so that a file deleted from it
+# is a failure and NOT an empty loop; the glob arm below rejects a fifth file.
+X86_TESTS=(MP-cg-sys-relaxed-x86_64
+           MP-cg-sys-acqrel-2s-x86_64
+           S-cg-sys-fence-x86_64
+           CoRR-cg-sys-fence-2s-x86_64)
 
 fail=0
 
@@ -55,33 +70,65 @@ trap cleanup EXIT
 # 1. CORPUS REGRESSION  (regenerate out of tree; compare names + bytes)
 # ---------------------------------------------------------------------------
 
-# corpus_regen SRCDIR OUTDIR -- run SRCDIR's generator so it writes into OUTDIR.
-corpus_regen() {
-  bash "$1/generate.sh" "$2"
-}
-
 # What one generator run produces: its tests plus the @all manifest.  Anything
-# else a corpus directory holds (the generators themselves) is not generated and
-# is not this check's business.
+# else a corpus directory holds is not generated.
 list_products() {
   ( cd "$1" && ls -1 ) 2>/dev/null | grep -E '\.litmus$|^@all$' | LC_ALL=C sort
 }
 
-# corpus_check WORKROOT -- regenerate both corpora under WORKROOT and compare
-# each against its committed directory.  0 = clean, 1 = drift, 2 = infra error.
+# fixture_drift OUTDIR -- the het-x86 label: the fixture carries four of
+# generate-x86.sh's renderings, so the name set is compared one way only.
+fixture_drift() {
+  local out="$1" drift=0 t n=0 f base
+  for t in "${X86_TESTS[@]}"; do
+    if [ ! -f "$X86_DIR/$t.litmus" ]; then
+      echo "  DRIFT: $X86_DIR/$t.litmus is committed nowhere -- the fixture lost it"
+      drift=1; continue
+    fi
+    if [ ! -f "$out/$t.litmus" ]; then
+      echo "  DRIFT: generate-x86.sh no longer emits $t.litmus"
+      drift=1; continue
+    fi
+    n=$((n + 1))
+    cmp -s "$X86_DIR/$t.litmus" "$out/$t.litmus" && continue
+    echo "  DRIFT: $X86_DIR/$t.litmus differs from its regeneration"
+    diff -u "$X86_DIR/$t.litmus" "$out/$t.litmus" | head -20 | sed 's/^/        /'
+    drift=1
+  done
+  for f in "$X86_DIR"/*.litmus; do
+    base="$(basename "$f" .litmus)"
+    case " ${X86_TESTS[*]} " in *" $base "*) continue ;; esac
+    echo "  DRIFT: $f sits in the fixture and no check compares it"
+    drift=1
+  done
+  if [ "$n" -ne "${#X86_TESTS[@]}" ]; then
+    echo "  DRIFT: compared $n of ${#X86_TESTS[@]} fixtures -- a comparison that did not happen is not a pass"
+    drift=1
+  fi
+  echo "        $X86_DIR: $n of ${#X86_TESTS[@]} fixture(s) compared against generate-x86.sh"
+  return $drift
+}
+
+# corpus_check WORKROOT -- regenerate each corpus under WORKROOT and compare it
+# against its committed directory.  0 = clean, 1 = drift, 2 = infra error.
 corpus_check() {
-  local root="$1" drift=0 label src out f
-  for label in gpu het; do
+  local root="$1" drift=0 label src gen out f
+  for label in gpu het x86; do
     case "$label" in
-      gpu) src="$GPU_DIR" ;;
-      het) src="$HET_DIR" ;;
+      gpu) src="$GPU_DIR" ; gen="$GPU_DIR/generate.sh" ;;
+      het) src="$HET_DIR" ; gen="$HET_DIR/generate.sh" ;;
+      x86) src="$X86_DIR" ; gen="$HET_DIR/generate-x86.sh" ;;
     esac
     out="$root/$label"
     mkdir -p "$out"
-    if ! corpus_regen "$src" "$out" >"$root/$label.gen.log" 2>&1; then
-      echo "FATAL: the generator for $src failed:" >&2
+    if ! bash "$gen" "$out" >"$root/$label.gen.log" 2>&1; then
+      echo "FATAL: the generator $gen failed:" >&2
       cat "$root/$label.gen.log" >&2
       return 2
+    fi
+    if [ "$label" = x86 ]; then
+      fixture_drift "$out" || drift=1
+      continue
     fi
     list_products "$src" >"$root/$label.committed"
     list_products "$out" >"$root/$label.fresh"
@@ -107,16 +154,16 @@ corpus_check() {
   return $drift
 }
 
-echo "HetLitmus Layer-2 golden gate  (repo: $REPO)"
+echo "HetLitmus corpus golden gate  (repo: $REPO)"
 echo "=================================================================="
 
 echo "[1/3] Corpus regression (regenerate out of tree + byte-diff the committed one)"
 corpus_check "$EMITTMP/regen"
 case "$?" in
-  0) echo "  PASS: both corpora regenerate byte-identical to the committed tree" ;;
-  1) echo "  FAIL: the regeneration diverged from the committed corpus -- tool"
-     echo "        drift, or a hand-edited .litmus.  Review the paths above, then"
-     echo "        commit the new corpus if the change was intended."
+  0) echo "  PASS: both corpora and the het-x86 fixture regenerate byte-identical" ;;
+  1) echo "  FAIL: the regeneration diverged from the committed tree -- tool drift,"
+     echo "        or a hand-edited .litmus.  Review the paths above, then"
+     echo "        'make hetlitmus-promote' if the change was intended."
      fail=1 ;;
   *) exit 2 ;;
 esac

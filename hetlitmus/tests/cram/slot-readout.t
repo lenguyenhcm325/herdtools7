@@ -1,10 +1,8 @@
-Slot + readout guard.  Every shared location of a het harness is SIZE_OF_TEST
-slots wide, iteration _n touches slot _n alone, and the readout reads iteration
-_n's outcome back out of slot _n -- one pass, no search.  The standalone GPU-only
-path is unchanged: one word per location, no slots and no record.
+Slot + readout guard (hetlitmus/docs/00-environment-design.md sec 3.3;
+hetlitmus/docs/het-emission.md).
 
-The slot layout ships with the harness and is what every address is offset by.
-One 128 B line per slot, so two iterations share neither a word nor a line.
+The slot layout ships with the harness and is what every address is offset by:
+one 128 B line per slot, so two iterations share neither a word nor a line.
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
   $ grep -c '#define HET_SLOT_STRIDE_WORDS 32' MP-cg-sys-relaxed/het_rdv.h
   1
@@ -14,14 +12,12 @@ One 128 B line per slot, so two iterations share neither a word nor a line.
   1
 
 The per-run reset clears every slot, which is also what first-touches the pages
-the run is about to race on; clearing the first word alone would leave iteration
-1 onwards reading whatever the last run left.
+the run is about to race on.
   $ grep -c 'memset(x, 0, sizeof(int)\*SIZE_OF_TEST\*HET_SLOT_STRIDE_WORDS);' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
-NPART counts the participants and nothing else: this test's 2 procs, one GPU
-lane and one CPU thread.  Pin the total and the two lane counts beside it, so a
-wrong participant count cannot hide inside a plausible number.
+NPART counts the participants and nothing else, so the total is pinned beside
+the two lane counts a wrong participant count could hide inside.
   $ grep -c '#define NPART 2' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
   $ grep -E '^#define HET_(TEST_BLOCKS|GPU_LANES)' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
@@ -30,8 +26,8 @@ wrong participant count cannot hide inside a plausible number.
   $ grep -cE '^static void\* cpu_[A-Za-z_0-9]+\(void\* _a\)' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
-The GPU lane addresses iteration _n's own slot; the CPU body is litmus7's own and
-addresses a bare pointer, so its CALLER does the addressing.
+The GPU lane addresses iteration _n's own slot; the CPU body is litmus7's own
+and addresses a bare pointer, so its CALLER does the addressing.
   $ grep -c 'cuda::atomic_ref<int, cuda::thread_scope_system> ref(\*(y + (_n)\*HET_SLOT_STRIDE_WORDS));' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
   $ grep -c 'size_t _slot = (size_t)_n \* HET_SLOT_STRIDE_WORDS;' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
@@ -41,9 +37,8 @@ addresses a bare pointer, so its CALLER does the addressing.
   $ grep -c '#START _litmus_P0' MP-cg-sys-relaxed/MP-cg-sys-relaxed_cpu.c
   1
 
-The readout: one pass over the slots, every iteration scored, the outcome vector
-read from slot _n and fed to the histogram exactly once.  A second
-add_outcome_outs call site would count one observation twice.
+The readout is one pass over the slots: every iteration scored, the outcome
+vector read from slot _n and fed to the histogram exactly once.
   $ grep -c '_rec.iters_scored++;' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
   $ grep -c 'add_outcome_outs(' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
@@ -51,10 +46,8 @@ add_outcome_outs call site would count one observation twice.
   $ sed -n '/for (int _n=0; _n<SIZE_OF_TEST; ++_n) {/,/^    }$/p' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu | grep -c 'add_outcome_outs('
   1
 
-EVERY outcome column prints a NUMBER, in ONE loop over all of them: a location's
-value is read out of its slot like any register's, so the printer has one arm and
-no column it prints a placeholder for.  The whole callback is pinned, on the
-shape whose every column is a location.
+Every outcome column prints a NUMBER, in one loop over all of them, pinned here
+on the shape whose every column is a location.
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -hE 'static const char\* _labels' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   static const char* _labels[2] = { "[x]", "[y]" };
@@ -67,24 +60,20 @@ shape whose every column is a location.
   $ grep -c '_o\[0\] = (intmax_t)x\[(size_t)_n\*HET_SLOT_STRIDE_WORDS\];' 2+2W-cg-sys-fence/2+2W-cg-sys-fence.cu
   1
 
-A register column is its read buffer at _n, and the buffer carries the value the
-load returned -- no decoding, so a condition value is compared as the .litmus
-writes it.
+A register column is its read buffer at _n, carrying the value the load
+returned, so a condition value is compared as the .litmus writes it.
   $ grep -c 'int _weak = ((_o\[0\] == 1) && (_o\[1\] == 0));' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
   $ grep -c '_o\[0\] = (intmax_t)bufP1_0_h\[_n\];' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
 The one-outcome evidence the degeneracy guard reads is written by the readout
-itself: without it every cell would look like a constant read.
+itself.
   $ grep -c '_rec.outcomes_vary = 1;' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
-Slot _n only pairs the two sides while both are RUNNING iteration _n, so every
-iteration opens at the shared counter and each participant records for itself
-whether it got there.  One flag buffer per participant, one byte per iteration,
-each written by the side that owns it and the GPU's mirrored back for the
-readout.
+One flag buffer per participant, one byte per iteration, each written by the
+side that owns it and the GPU's mirrored back for the readout.
   $ grep -c 'uint8_t \*_rdvG_P1; cudaMalloc(&_rdvG_P1, sizeof(uint8_t)\*SIZE_OF_TEST);' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
   $ grep -c 'uint8_t \*_rdvC_P0 = (uint8_t\*)malloc_check(sizeof(uint8_t)\*SIZE_OF_TEST);' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
@@ -92,10 +81,8 @@ readout.
   $ grep -c 'cudaMemcpy(_rdvG_P1_h, _rdvG_P1, sizeof(uint8_t)\*SIZE_OF_TEST, cudaMemcpyDeviceToHost);' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
-The readout ANDs them before it reads a single slot: an iteration only one side
-started is DISCARDED, never scored, and the side that timed out is counted so a
-dead partner and a cap set too short can be told apart.  rdv_valid says the
-readout ran at all, without which every count below it is a memset zero.
+The readout ANDs the flags before it reads a single slot: an iteration only one
+side started is DISCARDED, and rdv_valid says the readout ran at all.
   $ sed -n '/for (int _n=0; _n<SIZE_OF_TEST; ++_n) {/,/^    }$/p' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu | sed -n '/int _ok = 1;/,/_rec.iters_scored++;/p'
         int _ok = 1;
         if (!_rdvC_P0[_n]) { _ok = 0; _rec.rdv_cap_cpu++; }
@@ -112,24 +99,20 @@ waited under and whether those caps are a measurement at all.
   $ grep -c 'HET_CAP_CALIBRATED ? "caps calibrated" : "caps UNCALIBRATED"' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
-The same readout on the shapes that used to need a frame search: SB (two reads,
-neither an rf anchor) and R (an fr-against-init read plus a location).  One pass
-each, and one histogram call each.
-  $ litmus7 -gpu-target cuda -o . ../het/SB-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ grep -c 'add_outcome_outs(' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
+Both caps are read from the environment at run time, so a box is re-capped
+without a rebuild.
+  $ grep -c 'het_env_long("HET_CAP_CPU", (long)HET_CAP_CPU)' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
-  $ grep -c 'for (int _n=0; _n<SIZE_OF_TEST; ++_n) {' SB-cg-sys-acqrel-2s/SB-cg-sys-acqrel-2s.cu
-  3
+  $ grep -c 'het_env_long("HET_CAP_GPU", (long)HET_CAP_GPU)' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  1
+
+A label column names a register and a location in the same vector.
   $ litmus7 -gpu-target cuda -o . ../het/R-cg-sys-fence.litmus >/dev/null 2>&1
   $ grep -hE 'static const char\* _labels' R-cg-sys-fence/R-cg-sys-fence.cu
   static const char* _labels[2] = { "1:r0", "[y]" };
-  $ grep -c 'add_outcome_outs(' R-cg-sys-fence/R-cg-sys-fence.cu
-  1
 
-LDAPR is RCpc (ARMv8.3), and litmus7 lowers a two-sided test's acquire read to
-it.  Neither native gcc on the host nor `clang --target=aarch64-linux-gnu'
-accepts one at the default architecture, so the emitted build files carry the
-flag on EVERY compilation of <t>_cpu.c or every -2s test fails to ASSEMBLE.
+LDAPR is RCpc (ARMv8.3), so the emitted build files carry the flag on every
+compilation of <t>_cpu.c or every -2s test fails to ASSEMBLE.
   $ litmus7 -gpu-target cuda -o . ../het/CoRR-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
   $ grep -c 'ldapr ' CoRR-cg-sys-acqrel-2s/CoRR-cg-sys-acqrel-2s_cpu.c
   2
@@ -142,31 +125,19 @@ flag on EVERY compilation of <t>_cpu.c or every -2s test fails to ASSEMBLE.
   $ grep -c '$(CC) $(HET_HOST_CFLAGS) -c $< -o $@' CoRR-cg-sys-acqrel-2s/Makefile
   1
 
-...and the HOST object takes them only on a native host: elsewhere gcc compiles
-the portable shim, and another ISA's flags are not its to take -- a compile-only
-build of an AArch64 harness has to succeed on an x86_64 box.  The make rule reads
-`uname -m' against this render's OWN ISA word, never against HET_HOST_ISA: that
-variable is the link guard's, and overriding it to link the shim on a foreign
-host must not hand that host another ISA's -march.
-  $ grep -c 'if \[ "$(uname -m)" = "$HET_HOST_ISA" \]; then HET_HOST_CFLAGS="$HET_CPU_CFLAGS"; fi' CoRR-cg-sys-acqrel-2s/comp.sh
-  1
+The Makefile hands those flags to the host object only on a native host, so a
+compile-only build of an AArch64 harness succeeds on an x86_64 box.
   $ grep -c 'HET_HOST_CFLAGS := $(if $(filter aarch64,$(shell uname -m)),$(HET_CPU_CFLAGS))' CoRR-cg-sys-acqrel-2s/Makefile
   1
 
-The x86_64 pair owes no extension flag, and the variable is still there: an empty
-default is a flag list, not a missing one.
+The x86_64 pair owes no extension flag, and the variable is still there: an
+empty default is a flag list, not a missing one.
   $ litmus7 -gpu-target hip -o . ../het-x86/MP-cg-sys-relaxed-x86_64.litmus >/dev/null 2>&1
   $ grep -c 'HET_CPU_CFLAGS="${HET_CPU_CFLAGS:-}"' MP-cg-sys-relaxed-x86_64/comp.sh
   1
 
-The condition compiler has two refusals, and they are separate rows here because
-one generic "REFUSED" grep cannot tell them apart: each is matched on the words
-only it prints.
-
-REFUSAL (a): an atom no outcome column backs.  Every atom is one column of the
-vector the readout builds, so an atom naming a location no proc of the test
-touches has no slot to read; dropping it would weaken the detector the harness
-exists to evaluate, so the emitter refuses -- exit 3, with nothing written.
+REFUSAL (a): an atom no outcome column backs has no slot to read, so the
+emitter refuses -- exit 3, with nothing written.
   $ cat > unbacked-loc.litmus <<'EOF'
   > Het UNBACKED-LOC
   > "a condition naming a location no proc touches"
@@ -186,13 +157,8 @@ exists to evaluate, so the emitter refuses -- exit 3, with nothing written.
   $ test -d UNBACKED-LOC && echo "a refusal left a harness behind" || echo "nothing written"
   nothing written
 
-REFUSAL (b): the emitted weak-behaviour detector may never be a constant.  A
-constant-true one reports the weak behaviour on every run and a constant-false
-one reports "Never" on every run, so the emitter refuses rather than emit one.
-The fixtures are `true' and `false' because those are the ONLY conditions that
-reach this guard: the grammar folds them to an empty conjunction and an empty
-disjunction (lib/stateParser.mly), and every other parsable atom compiles to an
-outcome-column comparison or is refused by (a).
+REFUSAL (b): a constant weak-behaviour detector reports the same verdict on
+every run, so the emitter refuses that too, matched on the words only it prints.
   $ cat > const-true.litmus <<'EOF'
   > Het CONST-TRUE
   > "a condition that decides nothing, always true"

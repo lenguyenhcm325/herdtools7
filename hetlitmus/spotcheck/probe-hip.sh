@@ -1,23 +1,14 @@
 #!/bin/sh
-# =========================================================================
-# HetLitmus device probe, AMD side -- the sibling of probe-cuda.sh (NVIDIA).
+# The AMD probe, sibling of probe-cuda.sh: it records what the vendor tools
+# report and stamps probe_status, and it runs NO device-attribute kernel -- a
+# HIP twin of probe.cu asks a different runtime different questions and there is
+# no AMD device here to write it against (README.md beside this script).
 #
 #   sh probe-hip.sh                 # results-devtier-<date>-<host>/probe.txt
 #   RESULTS=... sh probe-hip.sh     # somewhere else
 #
-# NO DEVICE-ATTRIBUTE KERNEL.  probe-cuda.sh compiles and runs probe.cu, which
-# asks the driver what the device offers (managed memory, host page tables,
-# system atomics).  Its HIP twin has to ask different questions of a different
-# runtime and cannot be written blind: there is no AMD GPU on the dev box, so
-# not one of its answers could be observed here (spotcheck/README.md).  This
-# script records what the VENDOR TOOLS report and stamps probe_status so the
-# results dir says which probe it got -- it does not stand in for the kernel.
-#
-# The host-half keys are spelled exactly as probe-cuda.sh spells them, so a
-# probe.txt from either vendor diffs against one from the other.
-#
-# Everything is key=value, one per line.  Nothing here is a litmus result.
-# =========================================================================
+# The host-half keys are spelled as probe-cuda.sh spells them, so the two
+# probe.txt files diff.  Everything is key=value; none of it is a litmus result.
 set -eu
 
 HIPCC="${HIPCC:-hipcc}"
@@ -59,10 +50,8 @@ else
 fi
 emit "rocm_path=${ROCM_PATH:-$(dirname "$(dirname "$(command -v "$HIPCC")")")}"
 
-# The gfx architectures visible to this host, one per line from amdgpu-arch and
-# from rocminfo's agent list.  Both are consulted because either can be absent
-# from a given ROCm install, and a disagreement between them is a fact about the
-# box that the operator should see rather than a tie this script breaks.
+# The gfx architectures visible here, from amdgpu-arch and from rocminfo's agent
+# list: either tool can be absent, and a disagreement is the operator's to read.
 archs=""
 if command -v amdgpu-arch >/dev/null 2>&1; then
   archs="$(amdgpu-arch 2>/dev/null | tr -d ' \r' | grep -c . || true)"
@@ -78,8 +67,7 @@ else
 fi
 
 # The suggested arch is the single distinct gfx name the tools agree on.  Two
-# distinct names is not a probe failure -- it is a machine this harness cannot be
-# built for without the operator naming which device is under test.
+# names is a box the operator must choose a device on, not a probe failure.
 uniq_archs="$( { amdgpu-arch 2>/dev/null || true ; \
                  rocminfo 2>/dev/null | sed -n 's/.*Name: *\(gfx[0-9a-f]*\).*/\1/p' || true ; } \
                | tr -d ' \r' | grep -E '^gfx[0-9a-f]+$' | sort -u )"
@@ -98,7 +86,7 @@ if [ "$n" -gt 1 ]; then
 fi
 emit "suggested_hip_arch=$uniq_archs"
 emit "device_count=$n"
-emit "probe_status=HOST_ONLY (vendor-tool facts only; no device-attribute kernel exists for HIP -- see the header)"
+emit "probe_status=HOST_ONLY (vendor-tool facts only; no device-attribute kernel for HIP)"
 
 echo "probe-hip: wrote $OUT"
 grep -E '^(hipcc|amdgpu_arch_agents|rocminfo_gfx_list|suggested_hip_arch|device_count|probe_status)=' "$OUT" || true

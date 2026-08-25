@@ -1,39 +1,24 @@
 #!/usr/bin/env bash
-# Render the het corpus with an x86-64 CPU column, into OUTDIR.  Never writes
-# into the repo: the x86 renderings are NOT part of the committed corpus.
+# Render the het corpus with an x86-64 CPU column, into OUTDIR.  These renderings
+# are NOT committed and are generated on demand, which is what makes the x86 lane
+# reproducible (hetlitmus/docs/het-emission.md, "Scope / limits").
 #
 #   usage:  ./generate-x86.sh OUTDIR
 #
-# Why they are not committed: corpus-gate.sh pins the tests/het census while
-# dupcheck.py rejects byte-identical duplicates, and many x86 renderings are
-# byte-identical to a sibling (x86-TSO collapses the four CPU order tokens onto
-# two images, see below), so committing them would break both gates for nothing.
-# They are generated on demand instead -- by this script, which is what makes
-# the x86 lane reproducible (hetlitmus/docs/het-emission.md, "Scope / limits").
-#
-# The CPU rendering is the TSO collapse implemented by render_x86_cpu below:
-#     ra -> plain MOV (no instruction added)   st -> plain MOV (fence dropped)
-#     ld -> plain MOV (fence dropped)          sy -> MOV + MFENCE
-# so the four two-sided CPU order tokens collapse onto two x86 images
-# {plain, mfence}.  (E)'s off-diagonal sweep therefore emits many programs that
-# differ only in their GPU column, which is exactly the point of the sweep.
-#
-# Sections mirror generate.sh: (A) the two reference tests, (B) the one-sided
-# grid, (D) the matched two-sided family, (E) the two-sided order-pair grid.
-# Every loop lives here rather than being driven through generate.sh, whose (D)
-# and (E) are aarch64-only.
+# Sections mirror generate.sh -- (A) reference tests, (B) the one-sided grid,
+# (D) matched two-sided, (E) the order-pair grid -- with every loop here, since
+# generate.sh's (D) and (E) are aarch64-only.
+
 set -e
 # OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so
-# a relative path -- what a Makefile caller passes -- is correct.  The same rule
-# generate.sh and generate-cpuonly.sh state at this spot.
+# a relative path -- what a Makefile caller passes -- is correct.
 OUT="${1:?usage: generate-x86.sh OUTDIR}"
 mkdir -p "$OUT"
 OUT="$(cd "$OUT" && pwd)"
 
 cd "$(dirname "$0")"
-# Captured AFTER the cd, so it is absolute and independent of how we were
-# invoked -- `dirname "$0"' is relative to the ORIGINAL cwd and is already stale
-# by this line.
+# Captured AFTER the cd, so it is absolute: `dirname "$0"' is relative to the
+# original cwd and is already stale by this line.
 HETDIR="$(pwd)"
 # shellcheck source=../../paths.sh
 source ../../paths.sh
@@ -43,9 +28,8 @@ source ../_grid_lib.sh
 
 [ "$OUT" != "$HETDIR" ] || { echo "refusing to write into the committed corpus" >&2; exit 2; }
 
-# render_x86_cpu <cpu-tok> <base-edge>...  -> x86-64 diy edge token list.
-#   plain image  : the bare base cycle (an x86 MOV is already rel/acq under TSO)
-#   mfence image : each intra-proc Po<L><XY> becomes MFence<L><XY>
+# render_x86_cpu <cpu-tok> <base-edge>...  -> x86-64 diy edge token list; the
+# x86-TSO collapse of the four tokens: corpus-grid.md, "Census rationale".
 render_x86_cpu() {
   local t="$1"; shift
   case "$t" in
@@ -97,11 +81,9 @@ for shape in $SHAPE_ORDER; do
 done
 
 # --- (D) matched two-sided ----------------------------------------------------
-# Same loop as generate.sh section (D), including the degenerate two-sided drop
-# that section makes: a cut whose CPU procs are all single writers (IRIW-gcgc)
-# gives the two-sided annotation nothing to attach to, so its rendering comes
-# out byte-identical below the 2-line header to the one-sided sibling and is
-# dropped.  Both lanes drop the same names, which is what keeps the x86
+# Same loop as generate.sh section (D), including its degenerate two-sided drop:
+# a cut whose CPU procs are all single writers has nothing for the annotation to
+# attach to.  BOTH lanes drop the same names, which is what keeps the x86
 # renderings 1:1 with the committed corpus.
 d=0 dskip=0
 for shape in $SHAPE_ORDER; do

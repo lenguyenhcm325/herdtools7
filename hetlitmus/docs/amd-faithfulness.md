@@ -35,17 +35,20 @@ the failure surface in two, and only the first half is gated:
   UNVERIFIED.** "Scope and limits" below states what that costs and why no gate
   is kept for it.
 
-The source gate sweeps all 644 renders — 173 gpu-only + 471 x86_64 het — because
-its defect class is per test: a right builtin in one render says nothing about
-the next. It then sweeps two synthetic carriers, `F-acqrel-sys` (`f[acq_rel,sys]`)
-and `F-relaxed-sys` (`f[relaxed,sys]`): no corpus test carries either fence
-annotation, so they are the only renders through which `HipLang.ml`'s `acq_rel`
-row and its relaxed-fence arm are read.
+The source gate sweeps both corpora entire — the gpu-only corpus and the het
+corpus in its x86_64 rendering, at `verify/census.py`'s pins (`GPU_ONLY`,
+`HET`) — because its defect class is per test: a right builtin in one render
+says nothing about the next. It then sweeps the synthetic carriers
+(`census.SYNTHETIC`), `F-acqrel-sys` (`f[acq_rel,sys]`) and `F-relaxed-sys`
+(`f[relaxed,sys]`): no corpus test carries either fence annotation, so they are
+the only renders through which `HipLang.ml`'s `acq_rel` row and its
+relaxed-fence arm are read.
 
 > Every count in this document names its corpus. The het half of the AMD lane is
-> the **x86_64** rendering that `hetlitmus/tests/het/generate-x86.sh` writes on
-> demand, not the AArch64 471 `ptxcheck.py` reads: same 471 shapes, different CPU
-> column. It is deliberately not committed, so every run regenerates it.
+> the **x86_64** rendering that `hetlitmus/tests/het/generate-x86.sh` writes into
+> a temporary directory on every run (why its names match the committed corpus:
+> `corpus-grid.md`, "(D) Matched two-sided") — not the AArch64 rendering
+> `ptxcheck.py` reads: the same shapes, a different CPU column.
 
 ## The HIP source gate (`hetlitmus/verify/hipsrccheck.py`)
 
@@ -53,11 +56,11 @@ row and its relaxed-fence arm are read.
 
 The **mapping table is `HipLang.ml`'s own**, restated as the expected side rather
 than re-derived: `relaxed/acquire/release/acq_rel/sc → __ATOMIC_*`
-[`HipAtomicHeader`], [`D75917`]; `cta/gpu/sys →
-__HIP_MEMORY_SCOPE_{WORKGROUP,AGENT,SYSTEM}` [`HipAtomicHeader`]; and, for
+[HipAtomicHeader], [D75917]; `cta/gpu/sys →
+__HIP_MEMORY_SCOPE_{WORKGROUP,AGENT,SYSTEM}` [HipAtomicHeader]; and, for
 `__builtin_amdgcn_fence`'s second argument, `cta → "workgroup"`, `gpu →
-"agent"`, `sys → ""`, where the *unnamed* scope is system scope and naming one
-there would narrow the fence ([`AMDGPUUsage` "Memory Scopes"]).
+"agent"`, `sys → ""` — why the empty string, and why `"system"` is refused, is
+stated once in [`hip-emitter.md`](hip-emitter.md) ("Fences").
 
 Per proc (gpu-only) or per rendezvous-joining lane (het), the ops must appear in
 `.litmus` column order, each as its mapped builtin, and each agreeing **three
@@ -88,12 +91,22 @@ On a het render it further asks, per lane:
 The **x86_64 CPU half** is the `.litmus` CPU column's rendering, compared mnemonic
 for mnemonic against the `_cpu.c` real-asm block that litmus7's own
 `ASMLang.dump_fun` prints: the block is read between its `#START _litmus_P<n>` and
-`#END` markers, operands are read in litmus7's `%[x]` / `%w[x0]` spelling, a store
-is the `movl` the column lowers to on an `int` location, `MFENCE`/`SFENCE`/`LFENCE`
-keep their own spelling, and an immediate `MOV` into a register is *consumed* —
-it materialises a value rather than touching memory. Every asm string literal is
-read and each must be one instruction closed by the newline escape, so an
+`#END` markers, operands are read in litmus7's `%[x]` / `%k[r]` spelling, a store
+is the `movl` the column lowers to on an `int` location, and
+`MFENCE`/`SFENCE`/`LFENCE` keep their own spelling. The vocabulary is closed on
+both sides. The `.litmus` parser (`x86_ops_of_column`) accepts `MOV <imm>,(loc)`
+as a store, `MOV (loc),<reg>` as a load, a bare fence mnemonic, and the bare `nop`
+that `X86_CONSUMED` names as the one consumed mnemonic; the asm reader
+(`x86_bodies`) accepts the `A_STORE` / `A_LOAD` shapes and the three fences.
+Anything else on either side — an immediate `MOV` into a register included — is
+a completeness hard-fail (exit 2), never a skipped cell. Every asm string literal
+is read and each must be one instruction closed by the newline escape, so an
 instruction spliced into a tested body as its own literal cannot hide.
+
+The x86_64 column parser is this gate's own because `ptxcheck.cpu_ops_of_column`
+reads the AArch64 mnemonics of the committed corpus; `ptxcheck.py` is imported
+unmodified for everything else the two gates share — the `.litmus` body parser,
+the GPU mapping table and the lane plan.
 
 The **loop structure** is checked because it is placement no anchor stream can
 see: a het lane's ops must sit *unguarded* in the body of one `#pragma unroll 1`
@@ -108,23 +121,26 @@ Finally the **stray rule**: inside a lane every access is accounted for by an
 anchor, so any further atomic-, fence- or asm-shaped token — `asm`/`__asm__`
 included, since "the HIP path carries no inline assembly" is the premise the
 whole source-level read rests on — and any `volatile` access is refused. Outside
-every lane only the whitelisted device helpers of
-`litmus/het-runtime/het_stress.h` may appear.
+every lane only the whitelisted device helpers (`hipsrccheck.py`'s
+`DEVICE_HELPERS`: `litmus/het-runtime/het_stress.h`'s scaffolding plus
+`het_rdv.h`'s `het_rdv_device`/`het_rdv_jitter`) may appear.
 
 **Exit 2 vs exit 1.** Exit 2 is the completeness code and fires on anything the
 gate has no model for: an unknown annotation, an unmapped `__ATOMIC_*` or
 `__HIP_MEMORY_SCOPE_*` constant, an AMDHSA sync-scope string outside
 `{workgroup, agent, ""}`, an x86_64 mnemonic or operand shape outside the table this
 gate carries for litmus7's own X86_64 lowering, a kernel guard the lane plan
-cannot be matched against, and an atomic-or-fence construct with no model. Exit 1 is a *known*
-construct in the wrong place: an ordered diff of the lane's anchors. Exit 3 is
-a gate error (a corpus that is missing, empty or short of its census; a worker
-that died).
+cannot be matched against, and an atomic-or-fence construct with no model. Exit 1
+is a *known* construct in the wrong place: an ordered diff of the lane's anchors.
+Exit 3 is a gate error: a corpus directory that is missing or short of its
+census, a generator or an emission that failed. Inside a sweep a test whose own
+check raised is the `ERROR` column of its TALLY, and the gate exits 1 on it.
 
 ### How to run
 
 ```
-# both corpora (173 gpu-only + 471 x86_64 het) + the 2 synthetic carriers; per-test table + a TALLY each
+# both corpora at verify/census.py's pins (the het half regenerated by generate-x86.sh
+# into a temporary directory) + the synthetic carriers; per-test table + a TALLY each
 python3 hetlitmus/verify/hipsrccheck.py --all [--jobs N] [--gpu-dir D] [--x86-dir D]
 
 # one test (emits the render itself), or a render already on disk
@@ -132,6 +148,12 @@ python3 hetlitmus/verify/hipsrccheck.py hetlitmus/tests/gpu-only/MP-sys-fence.li
 python3 hetlitmus/verify/hipsrccheck.py TEST.litmus --hip-src F [--cpu-c F]
 
 ```
+
+`--all` asserts both censuses before a single test runs — a corpus that is
+missing or short is refused (exit 3), never swept as if it were the whole one —
+and `--x86-dir` names an x86_64 corpus to sweep in place of regenerating one.
+`--hip-src F` reads a render on disk instead of emitting one; without `--cpu-c`,
+the `<name>_cpu.c` beside it is read when present.
 
 `make hetlitmus-hipsrc` runs `--all`. It is on the **base lane**
 (`hetlitmus-test`): it emits with `litmus7` and reads text, so it needs neither
@@ -150,38 +172,27 @@ same locations and is outside its vocabulary by design
 The gate reads text and runs no compiler, so nothing below is pinned to a
 toolchain version.
 
-**HIP source gate** (`make hetlitmus-hipsrc`, base lane, no toolchain):
+**HIP source gate** (`make hetlitmus-hipsrc`, base lane, no toolchain), with
+`<GPU_ONLY>`, `<HET>` and `<SYNTHETIC>` standing for `verify/census.py`'s pins:
 
 ```
-TALLY gpu-only: 173/173 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
-TALLY x86_64 het: 471/471 PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
-TALLY synthetic carriers: 2/2 PASS
-HIP SOURCE GATE: PASS -- gpu-only 173/173, x86_64 het 471/471 (the x86_64 rendering of the het corpus, not the AArch64 one) + 2/2 synthetic carriers
+===== HIP SOURCE GATE: <GPU_ONLY> gpu-only + <HET> x86_64 het renders + <SYNTHETIC> synthetic carriers =====
+...
+TALLY gpu-only: <GPU_ONLY>/<GPU_ONLY> PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
+...
+TALLY x86_64 het: <HET>/<HET> PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
+...
+TALLY synthetic carriers: <SYNTHETIC>/<SYNTHETIC> PASS  (FAIL=0  GUARD-FAIL=0  ERROR=0)
+
+HIP SOURCE GATE: PASS -- gpu-only <GPU_ONLY>/<GPU_ONLY>, x86_64 het <HET>/<HET> (the x86_64 rendering of the het corpus, not the AArch64 one) + <SYNTHETIC>/<SYNTHETIC> synthetic carriers
 ```
 
-The sweep runs up to 12 workers (`--jobs`; the default is the CPU count, capped
-at 12).
+Each corpus and the carriers print as one `sweep_dir` table (`===== HIP source
+faithfulness: <label> =====`, one row per test) closed by its TALLY line; every
+non-PASS row's output is echoed and saved.
 
-### Triage log
-
-**The gate was 644/644 with zero reds on its first full run**, and no full run
-recorded on this branch has reported an emitter mismatch. There is therefore no
-red here that was an emitter finding, and none that had to be explained away.
-
-What *was* found, by reviewing the checker rather than by running it, were
-defects in the checker itself, each since repaired:
-
-* a comment-only fence arm took its order and its scope from the comment and
-  never asserted the order was relaxed, so a render whose real fence had been
-  replaced by the no-op comment passed;
-* an asm-literal parse matched only literals closed by a newline escape, so an
-  instruction spliced in as its own unterminated literal was dropped silently;
-* "the HIP path carries no inline assembly" was the premise of the whole
-  source-level read and nothing asserted it;
-* the gpu-only result stores were discarded unchecked, while `__out` is the only
-  channel by which a gpu-only read reaches an outcome;
-* the loop check asked textual span membership, which a guarded op walks straight
-  through — it reads each line's guard chain now.
+The sweep runs up to 12 workers (`JOBS_CAP`; `--jobs` overrides, and the default
+is the CPU count capped there).
 
 ## Scope and limits
 
@@ -193,7 +204,7 @@ in one place and kept in the other.
   once per GPU generation: six separate "Memory Model GFX*" sections with a
   code-sequence table each. A gate that read the generated code back against
   those tables would be only as generic as its per-generation lowering profile,
-  and none is kept here. All 644 renders therefore rest on the source gate,
+  and none is kept here. Every render therefore rests on the source gate,
   which says which builtin, order and scope the emitter wrote — never what the
   compiler lowered them to.
 * **The source gate's loop check is a source-level read**
@@ -201,24 +212,28 @@ in one place and kept in the other.
   unguarded in the loop body with no jump able to skip them — not that they
   "run once per iteration", which no source-level read can establish.
 * **An unknown construct is exit 2; a known construct in the wrong place is exit
-  1** (the exit contract in `hipsrccheck.py`'s module docstring). Completeness and correctness are different verdicts
-  on purpose: a gate that skipped what it did not recognize would be green on
-  exactly the change that most needs a reader.
+  1** (the exit contract in `hipsrccheck.py`'s module docstring). Completeness
+  and correctness are different verdicts on purpose: a gate that skipped what it
+  did not recognize would be green on exactly the change that most needs a
+  reader.
 
 ## Relation to the NVIDIA gate
 
 [`faithfulness.md`](faithfulness.md) documents the NVIDIA pair (`ptxcheck.py`
-via `tokens.sh`, `make hetlitmus-faithful`) over its own 644 renders — 173
-gpu-only plus the **AArch64** het 471. The AMD lane's het 471 is the x86_64
-rendering of the same shapes, so the two "471"s are different corpora and every
-count on either side says which. `hipsrccheck.py` imports `ptxcheck.py` and
-never modifies it: its `.litmus` parsers, its GPU mapping table and its lane
-plan are the expected side here too.
+via `tokens.sh`, `make hetlitmus-faithful`) over its own renders: the gpu-only
+corpus and the **AArch64** rendering of the het corpus. The AMD lane's het half
+is the x86_64 rendering of the same shapes, so the two het censuses are the same
+number (`census.HET`) over two different renderings, and every count on either
+side says which. `hipsrccheck.py` imports `ptxcheck.py` and never modifies it:
+its `.litmus` body parser, its GPU mapping table and its lane plan are the
+expected side here too; only the CPU-column parser is this gate's own ("What it
+checks").
 
 One heads-up for a reader moving between the two documents: **a multiset is a
-localizer wherever an ordered comparison already covers the same stream**, and
-both gates are written that way. An order-blind multiset test is strictly weaker
-than an ordered one, so on a green stream it can detect nothing — which is why
-`ptxcheck.py`'s per-proc `Counter` comparison runs only after the ordered check
-has failed (`ptxcheck.check_gpu`'s post-failure localizer, `faithfulness.md` item 2)
-and so does the source gate's (`hipsrccheck.check_stream`).
+localizer wherever an ordered comparison already covers the same stream.** An
+order-blind multiset test is strictly weaker than an ordered one, so on a green
+stream it can detect nothing. `hipsrccheck.check_stream` keeps one as a
+post-failure localizer — it runs only after the ordered compare has failed, and
+says whether the lane carries the right anchors in the wrong order or which
+anchors the two multisets differ by — while `ptxcheck.check_gpu` prints the
+positional diff alone.

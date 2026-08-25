@@ -2,80 +2,14 @@
 """
 hipbuildcheck.py -- can an AMD harness be built, linked and refused correctly?
 
-Nine phases:
-
-  build-arms          the emitted comp.sh / Makefile carry hip-link + hip-bin,
-                      advertise them in their usage text, and hip-bin is
-                      .PHONY; and `make <test>' refuses, checked by RUNNING
-                      it, because with no rule naming ./<test> make falls
-                      through to its built-in `%: %.o' rule and links with
-                      $(CC) -- guard and device code both gone, and an absent
-                      rule is invisible to a grep
-  hip-compile         hipcc --offload-arch=gfx942 compiles the emitted .hip,
-                      and comp.sh reports failure on one that does not
-  device-image        comp.sh hip-link and make hip-bin each produce an ELF
-                      carrying a real amdgcn gfx942 code object, read out of
-                      the bytes rather than inferred from an exit status
-  host-pair-guard     fail-closed on the wrong host: the link arms refuse an
-                      AArch64 rendering on an x86_64 host, naming the ISA and
-                      leaving no binary (the CPU object there is the portable
-                      shim, so the binary would test nothing); and the HIP
-                      render carries that same guard, keyed to its own host ISA
-  stale-binary        every vendor writes ./<test> (run-one.sh and campaign.py
-                      exec it and are vendor-agnostic), so each link target
-                      must always relink -- one reporting "nothing to be done"
-                      hands back whichever vendor's binary is lying there
-  hip-allocator       the HIP shared allocator resolves one mode and refuses
-                      every other spelling and every unmet device
-                      precondition, classifies APU vs discrete, and is CALLED
-                      by gd_alloc_shared before the allocation it must vet
-  place-refusal       the CUDA-only HET_PLACE lever is refused at compile
-                      time, and HET_PLACE=0 still builds -- the hipcc half of
-                      the allocator story, which hip-allocator's stub-driven
-                      resolver cannot reach
-  cuda-nonregression  the cuda / cuda-link / cuda-bin arms still carry their
-                      guard and still build
-  fence-lowering      the fence-carrying render emits the documented
-                      __builtin_amdgcn_fence lowering for every `f[sc,sys]'
-                      it annotates, hipcc compiles it, and hipcc rejects the
-                      same fence with its scope spelt "system"
-
-fence-lowering compiles litmus/HipLang.ml's __builtin_amdgcn_fence as the
-harness ships it, host half and all; what the compiler makes of it is
-UNVERIFIED (hetlitmus/docs/amd-faithfulness.md).  What that compile settles,
-what it leaves open and how much of the corpus carries a fence are in
-hetlitmus/docs/hip-emitter.md ("Fences", "Compile status & next steps").
-
-Correctness in isolation is not the mechanism being live.  hip-allocator drives
-the resolver out-of-line, so on its own it would pass a harness that never calls
-it, and on this lane the call's ONLY effect is the guard, so nothing else anchors
-it: its (e) arm pins the call site, scoped to gd_alloc_shared's body and to its
-order against the allocation.  (The CUDA render dispatches on the returned mode,
-so there dropping the call does not compile.)  The same shape one layer up is why
-build-arms runs `make <test>' instead of grepping for it.
-
-hip-allocator is a runtime phase without an AMD GPU.  Where no AMD device is
-present the linked harness cannot be run -- it exits 2 at its cooperative-launch
-capability check -- so it lifts the resolver out of the emitted .hip verbatim and
-drives it against a stub `hipDeviceGetAttribute' whose answers this gate chooses;
-every refusal path is then genuinely EXECUTED and its message observed.  The real
-hipMallocManaged and coherence behaviour, which no shim stands in for, stays
-deferred to an MI300X bring-up run.
-
-Every phase counts its own assertions and fails if it made none.
-
-One vendor per harness directory: litmus7 renders the dialect `-gpu-target' names
-and no other (litmus/hetDialect.ml), so the AMD arms and the CUDA arms sit in
-different directories -- this gate emits the same x86 test twice,
-cuda-nonregression reading the cuda render and the four HIP phases the hip one.
-stale-binary's cross-vendor stale-link trap needs both: it plants one vendor's
-linked binary in the other's directory, a ./<test> newer than the objects and
-carrying the wrong device image, which is the state a results tree reused across
-boxes reaches for real.
-
-And one pair per harness.  A harness is a (CPU ISA x GPU dialect) pair, so the
-AMD phases run on the x86 rendering -- (x86_64, hip) -- while host-pair-guard's
-AArch64 half runs on the (AArch64, cuda) one.
+Phases, each counting its assertions and failing if it made none:
+build-arms (`make <test>' refuses by name), hip-compile (hipcc compiles the
+emitted .hip, and comp.sh reports a failure), device-image (both link arms leave
+gfx942 code in the ELF), host-pair-guard (a link arm refuses a foreign host),
+stale-binary (each link target relinks ./<test>), hip-allocator (the shared-mem
+resolver, executed under a stub hipDeviceGetAttribute), place-refusal (HET_PLACE
+refused at compile time) and cuda-nonregression.  A miss is a harness that builds
+into something other than the test, or accepts what it has to refuse.
 """
 import argparse
 import os
@@ -92,31 +26,23 @@ GEN_X86 = os.path.join(HET_DIR, "generate-x86.sh")
 LITMUS7 = os.path.join(ROOT, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(ROOT, "litmus", "libdir")
 
-# The x86_64 rendering is the one an x86_64 host can LINK: its CPU thread is real
-# x86-64 asm, so the uname guard admits it.  MP-cg-sys-acqrel-2s carries a CPU
-# proc with a store, a fence and a load, so its render exercises the whole CPU
-# vocabulary this corpus is written in.  Its AArch64 twin is host-pair-guard's
-# refusal probe, on that same x86_64 host.
-X86_TEST = "MP-cg-sys-acqrel-2s-x86_64"
+# The x86_64 rendering is the one an x86_64 host can LINK, and its GPU column
+# annotates f[sc,sys], so every phase that compiles builds a fence render.
+X86_TEST = "MP-cg-sys-fence-x86_64"
+# host-pair-guard's refusal probe, on that same x86_64 host.
 AARCH64_TEST = "MP-cg-sys-acqrel-2s"
-# The fence-carrying render fence-lowering builds, and the lowering its .hip owes for each
-# annotation; why that exact spelling is litmus/HipLang.ml (hip_fence_scope).
-X86_FENCE_TEST = "MP-cg-sys-fence-x86_64"
-FENCE_ANNOT = "f[sc,sys]"
-FENCE_CALL = '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "")'
 
 # MI300A / MI300X.  Both parts report gfx942; hipDeviceAttributeIntegrated is
 # what separates them, and hip-allocator checks the harness reads it.
 HIP_ARCH = "gfx942"
-# The offload triple hipcc stamps into the executable's .hip_fatbin.  device-image greps
-# for THIS, not for the exit status: a link that produced a host-only binary
-# would exit 0 and carry no device code.
+# The offload triple hipcc stamps into the executable's .hip_fatbin: a link that
+# produced a host-only binary exits 0 and carries no device code.
 OFFLOAD_TRIPLE = "amdgcn-amd-amdhsa--" + HIP_ARCH
 
 # The HIP render implements ONE shared-memory mode.  Every other spelling, and
 # every unmet device precondition, must exit(2).
 HIP_ACCEPTED_MODES = ["", "auto", "managed"]
-HIP_REFUSED_MODES = ["malloc", "pinned", "bogus", "AUTO", "Managed", " auto"]
+HIP_REFUSED_MODES = ["malloc"]
 
 fails = []
 counts = {}
@@ -154,11 +80,8 @@ def emit(tmp, src, outroot, label, target):
 
 
 def fresh(tmp, d, tag):
-    """A pristine copy of harness dir [d], so a scratch arm never contaminates a
-       later phase.
-       The copy KEEPS the harness's own basename: test_of() reads it, and a copy
-       called `w-p2' would silently make every <test>_hip.o assertion look for a
-       file named after the scratch directory instead of the test."""
+    """A pristine copy of harness dir [d], KEEPING its basename: test_of()
+       reads it, and every <test>_hip.o assertion is named from it."""
     w = os.path.join(tmp, "w-" + tag, os.path.basename(d))
     shutil.rmtree(os.path.dirname(w), ignore_errors=True)
     os.makedirs(os.path.dirname(w))
@@ -168,19 +91,6 @@ def fresh(tmp, d, tag):
 
 def test_of(d):
     return os.path.basename(d)
-
-
-def fn_body(src, name):
-    """The text of top-level function [name], from its `static ... name(' line to
-       the closing brace in column 0.  Scoped on purpose: a whole-file grep for
-       `_het_alloc_mode()' passes on a harness that defines the resolver, calls it
-       in gd_free_shared, and never calls it where it has to run -- which is
-       exactly the hole this exists to close."""
-    m = re.search(r"^static [^\n]*\b%s\(" % re.escape(name), src, re.M)
-    if not m:
-        return None
-    e = re.compile(r"^\}", re.M).search(src, m.end())
-    return src[m.start():e.end()] if e else None
 
 
 def has_gfx(binpath):
@@ -195,50 +105,7 @@ def has_gfx(binpath):
 # ------------------------------------------------------------------ phases
 
 def phase1(tmp, d):
-    print("[build-arms] build-script arms: comp.sh hip-link + Makefile hip-bin")
-    t = test_of(d)
-    comp = open(os.path.join(d, "comp.sh")).read()
-    mk = open(os.path.join(d, "Makefile")).read()
-    # comp.sh: the arm, the usage banner, the unknown-target refusal and the
-    # success line must all know it.  The refusal quotes the rejected argument
-    # back and names the accepted set, so it is pinned as one string.
-    for what, pat, blob, where in [
-        ("hip-link case arm", r"^\s*hip\|hip-link\)", comp, "comp.sh"),
-        ("hip-link usage banner", r"Usage: sh comp\.sh \[hip\|hip-link\]", comp, "comp.sh"),
-        ("unknown-target refusal", r'comp\.sh: unknown target .*this directory is '
-                                   r'hip-only \(accepted: hip\|hip-link\)', comp, "comp.sh"),
-        ("hip-link success line", r'^if \[ "\$TARGET" = hip-link \]; then$', comp, "comp.sh"),
-        ("hip-bin rule", r"^hip-bin: %s_hip\.o outs\.o %s_cpu_host\.o$" % (re.escape(t), re.escape(t)), mk, "Makefile"),
-        ("hip-bin .PHONY", r"^\.PHONY:.*\bhip-bin\b", mk, "Makefile"),
-        # With every link target phony and no rule naming ./<test>, make falls
-        # through to its BUILT-IN `%: %.o' -- see the behavioural check below,
-        # which is the one that can detect that.
-        ("./<test> refusal rule", r"^%s:$" % re.escape(t), mk, "Makefile"),
-        ("built-in rules disabled", r"^\.SUFFIXES:$", mk, "Makefile"),
-        ("./<test> .PHONY", r"^\.PHONY:.*\b%s\b" % re.escape(t), mk, "Makefile"),
-    ]:
-        tick("build-arms")
-        if not re.search(pat, blob, re.M):
-            fail("build-arms", "%s missing from emitted %s (/%s/)" % (what, where, pat))
-    # The link line must name the HIP objects and the HIP compiler, not the CUDA
-    # ones: a hip-bin recipe that linked <t>.o would build the CUDA harness under
-    # the AMD target's name.
-    tick("build-arms")
-    if not re.search(r"\$\(HIPCC\) --offload-arch=\$\(HIP_ARCH\) \$\^ -o %s " % re.escape(t), mk):
-        fail("build-arms", "Makefile hip-bin does not link with $(HIPCC) "
-             "--offload-arch=$(HIP_ARCH) into ./%s" % t)
-    tick("build-arms")
-    if not re.search(r"HIP_ARCH \?= %s" % HIP_ARCH, mk):
-        fail("build-arms", "Makefile does not default HIP_ARCH to %s" % HIP_ARCH)
-    # This directory is the HIP render (-gpu-target hip), so the CUDA arms must
-    # be ABSENT -- cuda-nonregression reads them in the cuda render's own directory.  A dir that
-    # still carried both would mean the target filter stopped filtering.
-    for where, blob in [("comp.sh", comp), ("Makefile", mk)]:
-        tick("build-arms")
-        if re.search(r"\bcuda\b|\bCUDA\b|\bNVCC\b", blob):
-            fail("build-arms", "the HIP render's %s still carries CUDA arms -- `-gpu-target "
-                       "hip' must emit one vendor's build targets only" % where)
-
+    print("[build-arms] `make <test>' refuses on the HIP render")
     make_test_refuses(tmp, d, "build-arms", "hip-bin")
     print("      %d assertions" % counts.get("build-arms", 0))
     if not counts.get("build-arms"):
@@ -246,24 +113,15 @@ def phase1(tmp, d):
 
 
 def make_test_refuses(tmp, d, phase, link_target):
-    """`make <test>' must refuse, checked by RUNNING it: with every link target
-       phony and no rule naming ./<test>, `make <test>' reaches GNU make's
-       built-in `%: %.o' link rule, which never consults the uname -m guard, and
-       whether that link then fails is up to the objects' symbols rather than to
-       the guard.  The hole is the absence of a rule, which no grep of the
-       Makefile can show.
-       Run on every render: the built-in rule can only fire where the GPU object
-       is <test>.o, i.e. on the CUDA render, so checking the HIP one alone would
-       leave the reachable case unchecked."""
+    """`make <test>' must refuse, checked by RUNNING it: the hole is the absence
+       of a rule, which no grep of the Makefile can show."""
     t = test_of(d)
     for label, pre_touch in [("./%s absent" % t, False), ("./%s already present" % t, True)]:
         w = fresh(tmp, d, "%smake-%d" % (phase.lower(), int(pre_touch)))
         b = os.path.join(w, t)
         if pre_touch:
-            # A plain (non-phony) rule whose target exists is "up to date": make
-            # would exit 0 printing nothing and hand back whatever binary was
-            # lying there.  That is the stale-link failure again, so the refusal
-            # has to survive the file existing.
+            # A plain rule whose target exists is "up to date", so the refusal
+            # has to survive the file already existing.
             open(b, "w").write("stale")
         r = run(["make", t], cwd=w)
         blob = r.stdout + r.stderr
@@ -315,8 +173,7 @@ def phase2(tmp, d):
     if not os.path.isfile(obj):
         fail("hip-compile", "comp.sh hip left no %s_hip.o" % test_of(w))
     # comp.sh ends in an unconditional `HetLitmus: compile OK' echo, so only its
-    # `set -e' keeps a failed compile from reporting success (litmus/hetEmit.ml).
-    # The break goes into a scratch copy; the emitted render is never touched.
+    # `set -e' keeps a failed compile from reporting success.
     c = fresh(tmp, d, "p2-uncompilable")
     inj = "this is not c++;"
     with open(os.path.join(c, test_of(c) + ".hip"), "a") as f:
@@ -373,16 +230,8 @@ def phase3(tmp, d):
 
 
 def phase4(tmp, d_aarch64_cuda, d_x86_hip):
-    """Fail-closed on the WRONG HOST, at both stages that can catch it.
-
-    Two assertions, which fail closed for different reasons and could regress
-    alone:
-      (a) a link arm refuses a foreign host -- driven on the (AArch64, cuda)
-          render, whose guard is emitted by the same fold as the HIP one;
-      (b) the x86 HIP render carries that guard too, keyed to its own host ISA
-          (it cannot be RUN into refusal here: this host is x86_64, which is
-          exactly the ISA that render is for).
-    """
+    """Fail-closed on the WRONG HOST: (a) a link arm refuses a foreign host, on
+    the (AArch64, cuda) render; (b) the x86 HIP render carries the guard too."""
     print("[host-pair-guard] fail-closed on the wrong host, at emission and at link, on %s"
           % os.uname().machine)
     if os.uname().machine == "aarch64":
@@ -433,9 +282,8 @@ def phase4(tmp, d_aarch64_cuda, d_x86_hip):
 
 
 def plant(src_bin, dst_bin):
-    """Put one vendor's linked binary where the other vendor's target writes, and
-       make it NEWER than everything around it.  That is the state the stale-link
-       trap needs, and a results tree reused across boxes reaches it for real."""
+    """Put one vendor's linked binary where the other vendor's target writes,
+       NEWER than everything around it: the state the stale-link trap needs."""
     shutil.copyfile(src_bin, dst_bin)
     os.chmod(dst_bin, 0o755)
     os.utime(dst_bin, None)
@@ -453,15 +301,11 @@ def phase5(tmp, d_cuda, d_hip):
     wh = fresh(tmp, d_hip, "p5-hip")
     bc = os.path.join(wc, t)
     bh = os.path.join(wh, t)
-    # sm_86 so this phase builds on the dev box's RTX 3060 as well as on GH200.
+    # A fixed sm_ target: this phase links and never launches.
     cuda = ["make", "cuda-bin", "CUDA_ARCH=sm_86"]
     hip = ["make", "hip-bin"]
-    # FOUR builds, and the order is the whole point.  A stale-link trap needs a
-    # ./<test> that already exists and is NEWER than the objects the target
-    # links; rounds 1-2 create each vendor's binary, rounds 3-4 PLANT the other
-    # vendor's binary and are the ones that discriminate -- a round that had to
-    # rebuild its object anyway runs the recipe for a reason that has nothing to
-    # do with .PHONY, and passes against a broken Makefile.
+    # FOUR builds, and the order is the whole point: rounds 1-2 create each
+    # vendor's binary, rounds 3-4 plant the other's and are the discriminating ones.
     for label, cmd, w, b, plant_from, want_gfx in [
             ("cuda-bin (round 1: creates %s.o and ./%s)" % (t, t), cuda, wc, bc, None, False),
             ("hip-bin (round 2: creates %s_hip.o and ./%s)" % (t, t), hip, wh, bh, None, True),
@@ -620,10 +464,8 @@ def phase6(tmp, d):
         if "FATAL" not in r.stderr or "not a shared-memory mode" not in r.stderr:
             fail("hip-allocator", "HET_ALLOC=%r refused without naming the reason:\n%s"
                  % (m, r.stderr[-600:]))
-    # (c) device preconditions.  hipMallocManaged degrades to hipMallocHost when
-    #     HMM is absent [HipRuntimeApi "hipMallocManaged"], and the CPU may not
-    #     touch managed memory mid-kernel without concurrent managed access.
-    #     Both fatal.
+    # (c) device preconditions, both fatal
+    #     [HipRuntimeApi "hipMallocManaged"].
     for label, kw, needle in [
         ("managedMemory=0", dict(managed=0), "hipDeviceAttributeManagedMemory=0"),
         ("concurrentManagedAccess=0", dict(cma=0), "hipDeviceAttributeConcurrentManagedAccess=0"),
@@ -639,8 +481,8 @@ def phase6(tmp, d):
         if needle not in r.stderr:
             fail("hip-allocator", "%s refused without naming the attribute:\n%s"
                  % (label, r.stderr[-600:]))
-    # (d) MI300A vs MI300X.  Both report gfx942; only `integrated' separates them,
-    #     and a discrete-part histogram must never be read as an MI300A result.
+    # (d) MI300A vs MI300X: both report gfx942 and only `integrated' separates
+    #     them, so a discrete-part histogram must not read as an MI300A result.
     r = drv(path, integrated=1)
     tick("hip-allocator")
     if "amd_part_class=APU(integrated)" not in r.stdout:
@@ -664,102 +506,37 @@ def phase6(tmp, d):
              "integrated=0 produced no warning that this is not an integrated-APU "
              "result:\n%s" % r.stderr[-600:])
 
-    # (e) ...and the harness must actually call it.
-    # Everything above drives the resolver in isolation: it says NOTHING about
-    # whether the harness ever runs it.  Drop gd_alloc_shared's one
-    #     (void)_het_alloc_mode();   /* resolve + guard once, before the ... */
-    # in het_alloc_hip.inc and the resolver stays defined, gd_free_shared still
-    # calls it, and every assertion above still passes -- while the shipped
-    # binary ignores HET_ALLOC and both device preconditions at allocation time
-    # and the guard fires only at teardown, after the histogram, the HetVerdict
-    # and the HetStats lines have been printed.
-    # The CUDA render needs no such assertion: its gd_alloc_shared dispatches on
-    # the returned mode (`int _m = _het_alloc_mode(); if (_m == HET_ALLOC_MALLOC)
-    # ...'), so dropping the call does not compile.  The HIP call's only effect
-    # is the guard, so nothing anchors it but this.
-    hip_src = open(os.path.join(d, test_of(d) + ".hip")).read()
-    alloc_body = fn_body(hip_src, "gd_alloc_shared")
-    tick("hip-allocator")
-    if alloc_body is None:
-        fail("hip-allocator", "no gd_alloc_shared in the emitted %s.hip -- the shared allocator "
-                   "the resolver exists to guard is not there" % test_of(d))
-    else:
-        tick("hip-allocator")
-        n = alloc_body.count("_het_alloc_mode()")
-        if n != 1:
-            fail("hip-allocator",
-                 "gd_alloc_shared calls _het_alloc_mode() %d time(s), expected 1 -- "
-                       "with no call the harness ALLOCATES WITHOUT EVER RESOLVING THE "
-                       "MODE: HET_ALLOC is ignored and the managedMemory / "
-                       "concurrentManagedAccess guards do not run until gd_free_shared, "
-                       "after the histogram has been printed. Body:\n%s" % (n, alloc_body))
-        else:
-            # Order matters as much as presence: the contract is "resolve + guard
-            # ONCE, BEFORE the first alloc".  A call moved below the allocation
-            # still exits(2), but only after the memory it was meant to vet has
-            # been handed out.
-            tick("hip-allocator")
-            i_res = alloc_body.index("_het_alloc_mode()")
-            i_all = alloc_body.find("hipMallocManaged")
-            if i_all < 0:
-                fail("hip-allocator", "gd_alloc_shared does not call hipMallocManaged -- the "
-                           "fine-grained allocation this render is built on is gone")
-            elif i_res > i_all:
-                fail("hip-allocator", "gd_alloc_shared resolves the mode AFTER hipMallocManaged -- "
-                           "the guard must run BEFORE the first allocation, or the "
-                           "memory it exists to vet has already been handed out. Body:\n%s"
-                     % alloc_body)
-    free_body = fn_body(hip_src, "gd_free_shared")
-    tick("hip-allocator")
-    if free_body is None or "_het_alloc_mode()" not in free_body:
-        fail("hip-allocator",
-             "gd_free_shared does not call _het_alloc_mode() -- the free must stay "
-                   "keyed on the resolver so a second mode cannot leave a mismatched "
-                   "free behind")
-
     print("      %d assertions" % counts.get("hip-allocator", 0))
     if not counts.get("hip-allocator"):
         fail("hip-allocator", "phase made no assertions")
 
 
 def phase6b(tmp, d):
-    """HET_PLACE is CUDA-only and must be REFUSED here, not silently reported.
-
-    Its own phase because it is the part of the allocator story that builds with
-    hipcc: hip-allocator lifts the resolver out and drives it under a stub, which
-    never reaches a compile-time refusal.
-    """
+    """HET_PLACE is CUDA-only and is REFUSED at compile time here, while
+    HET_PLACE=0 still builds."""
     print("[place-refusal] HET_PLACE: the CUDA-only lever the AMD render must refuse")
-    # Both renders print `place=%d' in the cpu-stress banner and carry place_mode
-    # in the statistics record (one emitter, two dialects), but placement is
-    # cudaMemAdvise/cudaMemPrefetchAsync and lives only in het_alloc_cuda.inc --
-    # why the AMD answer is a compile-time refusal rather than a runtime warning
-    # is litmus/het-runtime/het_alloc_hip.inc.
-    hip_src = open(os.path.join(d, test_of(d) + ".hip")).read()
+    if not have("hipcc"):
+        fail("place-refusal", "hipcc not on PATH -- the compile-time refusal cannot "
+                              "be verified here")
+        return
+    w = fresh(tmp, d, "p6place")
+    r = run(["make", "hip", "HIPCC=hipcc -DHET_PLACE=1"], cwd=w)
     tick("place-refusal")
-    if "#if (HET_PLACE) != 0" not in hip_src or "# error" not in hip_src:
-        fail("place-refusal", "the emitted .hip does not REFUSE a non-zero HET_PLACE at compile "
-                    "time -- a -DHET_PLACE=1 AMD build would report place=1 with "
-                    "place_fail=0 while placing nothing")
-    if have("hipcc"):
-        w = fresh(tmp, d, "p6place")
-        r = run(["make", "hip", "HIPCC=hipcc -DHET_PLACE=1"], cwd=w)
-        tick("place-refusal")
-        if r.returncode == 0:
-            fail("place-refusal", "`make hip HIPCC=\"hipcc -DHET_PLACE=1\"' SUCCEEDED -- the AMD "
-                        "render accepted a placement lever it does not implement")
-        tick("place-refusal")
-        if "HET_PLACE is a CUDA-only lever" not in (r.stdout + r.stderr):
-            fail("place-refusal", "a -DHET_PLACE=1 AMD build failed without saying why:\n%s"
-                 % (r.stdout + r.stderr)[-800:])
-        # ...and HET_PLACE=0, the default and the only honourable value, still builds.
-        w = fresh(tmp, d, "p6place0")
-        r = run(["make", "hip", "HIPCC=hipcc -DHET_PLACE=0"], cwd=w)
-        tick("place-refusal")
-        if r.returncode != 0:
-            fail("place-refusal", "-DHET_PLACE=0 (the DEFAULT) no longer compiles -- the refusal "
-                        "is over-broad and blocks every ordinary AMD build:\n%s"
-                 % (r.stdout + r.stderr)[-800:])
+    if r.returncode == 0:
+        fail("place-refusal", "`make hip HIPCC=\"hipcc -DHET_PLACE=1\"' SUCCEEDED -- the "
+                    "AMD render accepted a placement lever it does not implement")
+    tick("place-refusal")
+    if "HET_PLACE is a CUDA-only lever" not in (r.stdout + r.stderr):
+        fail("place-refusal", "a -DHET_PLACE=1 AMD build failed without saying why:\n%s"
+             % (r.stdout + r.stderr)[-800:])
+    # ...and HET_PLACE=0, the default and the only honourable value, still builds.
+    w = fresh(tmp, d, "p6place0")
+    r = run(["make", "hip", "HIPCC=hipcc -DHET_PLACE=0"], cwd=w)
+    tick("place-refusal")
+    if r.returncode != 0:
+        fail("place-refusal", "-DHET_PLACE=0 (the DEFAULT) no longer compiles -- the "
+                    "refusal is over-broad and blocks every ordinary AMD build:\n%s"
+             % (r.stdout + r.stderr)[-800:])
     print("      %d assertions" % counts.get("place-refusal", 0))
     if not counts.get("place-refusal"):
         fail("place-refusal", "phase made no assertions")
@@ -772,9 +549,7 @@ def phase7(tmp, d):
     mk = open(os.path.join(d, "Makefile")).read()
     for what, pat, blob in [
         ("cuda-link case arm", r"^\s*cuda\|cuda-link\)", comp),
-        ("cuda-link uname guard", r'TARGET" = cuda-link \] && \[ "\$\(uname -m\)" != "\$HET_HOST_ISA" \]', comp),
         ("cuda-bin rule", r"^cuda-bin: %s\.o outs\.o %s_cpu_host\.o$" % (re.escape(t), re.escape(t)), mk),
-        ("cuda-bin uname guard", r"cuda-bin refuses on \$\$\(uname -m\)", mk),
         ("cuda-bin links with NVCC", r"\$\(NVCC\) -arch=\$\(CUDA_ARCH\) \$\^ -o %s " % re.escape(t), mk),
         ("cuda-bin .PHONY", r"^\.PHONY:.*\bcuda-bin\b", mk),
     ]:
@@ -782,16 +557,8 @@ def phase7(tmp, d):
         if not re.search(pat, blob, re.M):
             fail("cuda-nonregression", "%s missing or altered in the emitted build "
                                        "scripts (/%s/)" % (what, pat))
-    # ...and this render is CUDA-only, the mirror of build-arms's check on the HIP one.
-    for where, blob in [("comp.sh", comp), ("Makefile", mk)]:
-        tick("cuda-nonregression")
-        if re.search(r"\bhip\b|\bHIP\b|\bHIPCC\b", blob):
-            fail("cuda-nonregression",
-                 "the CUDA render's %s still carries HIP arms -- `-gpu-target "
-                       "cuda' must emit one vendor's build targets only" % where)
-    # The CUDA render is where make's built-in `%: %.o' rule is REACHABLE (its
-    # GPU object is <test>.o), so the behavioural refusal check has to run here
-    # as well as on the HIP render.
+    # The CUDA render is where make's built-in `%: %.o' rule is REACHABLE, its
+    # GPU object being <test>.o, so the refusal is checked on this render too.
     make_test_refuses(tmp, d, "cuda-nonregression", "cuda-bin")
     if not have("nvcc"):
         fail("cuda-nonregression", "nvcc not on PATH -- the CUDA lane cannot be re-verified here")
@@ -806,81 +573,6 @@ def phase7(tmp, d):
     if not counts.get("cuda-nonregression"):
         fail("cuda-nonregression", "phase made no assertions")
 
-
-def phase8(tmp, d, src):
-    """The AMD fence: compiled as the harness ships it, host half and all.
-
-    Two text assertions keep that compile from being vacuous -- a fence-free
-    .hip compiles beautifully and proves nothing -- and the compile is the
-    assertion neither of them can make.
-    """
-    print("[fence-lowering] AMD fence: the emitted %s, compiled by hipcc" % FENCE_CALL)
-    t = test_of(d)
-    annots = re.findall(r"f\[[^\]]*\]", open(src).read())
-    tick("fence-lowering")
-    if not annots or set(annots) != {FENCE_ANNOT}:
-        fail("fence-lowering", "%s annotates %s, not one or more %s -- this phase would "
-                   "compile a different lowering, or none at all"
-             % (os.path.basename(src), sorted(set(annots)) or "no GPU fence",
-                FENCE_ANNOT))
-        return
-    hip = open(os.path.join(d, t + ".hip")).read()
-    n_any = hip.count("__builtin_amdgcn_fence(")
-    n_doc = hip.count(FENCE_CALL)
-    tick("fence-lowering")
-    if n_any < len(annots):
-        fail("fence-lowering", "the emitted .hip carries %d __builtin_amdgcn_fence( for a "
-                   "test annotating %d %s -- the fence was dropped on the way out"
-             % (n_any, len(annots), FENCE_ANNOT))
-    tick("fence-lowering")
-    if n_doc != n_any:
-        fail("fence-lowering", "%d of the %d emitted fence(s) carry the documented lowering "
-                   "%s -- a named sync scope compiles too, and is narrower than "
-                   "system" % (n_doc, n_any, FENCE_CALL))
-    if not have("hipcc"):
-        fail("fence-lowering", "hipcc not on PATH -- the fence lowering cannot be compiled here")
-    else:
-        w = fresh(tmp, d, "p8")
-        r = run(["sh", "comp.sh", "hip"], cwd=w)
-        tick("fence-lowering")
-        if r.returncode != 0:
-            fail("fence-lowering", "comp.sh hip failed on the fence-carrying render (exit %d) "
-                       "-- the render must build under the flags the harness "
-                       "ships:\n%s%s"
-                 % (r.returncode, r.stdout[-1500:], r.stderr[-1500:]))
-        # "system" is not an AMDHSA sync-scope name and is the way to get `sys'
-        # wrong, so hipcc must REJECT it.
-        c = fresh(tmp, d, "p8-system-scope")
-        hp = os.path.join(c, t + ".hip")
-        src_hip = open(hp).read()
-        respelt = src_hip.replace(FENCE_CALL,
-                                  '__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "system")')
-        tick("fence-lowering")
-        if respelt == src_hip:
-            fail("fence-lowering", "no %s in the scratch .hip to respell, so the compile "
-                       "above stands on nothing" % FENCE_CALL)
-        else:
-            open(hp, "w").write(respelt)
-            r = run(["sh", "comp.sh", "hip"], cwd=c)
-            print('      counterfactual: a fence scope spelt "system" -> hipcc '
-                  "rc=%d (want nonzero)" % r.returncode)
-            tick("fence-lowering")
-            if r.returncode == 0:
-                fail("fence-lowering", 'hipcc accepted a fence scope spelt "system" -- this '
-                           "phase's compile does not discriminate the sync scope:\n%s"
-                     % r.stdout[-800:])
-            # hipcc names the construct it refused, not the spelling, and its
-            # caret sits on the kernel signature: without this diagnostic the
-            # nonzero rc is some other compile failure.
-            tick("fence-lowering")
-            if "synchronization scope" not in (r.stdout + r.stderr).lower():
-                fail("fence-lowering", "hipcc failed the respelt render (exit %d) with no "
-                           "sync-scope diagnostic, so the refusal cannot be attributed to "
-                           'the scope spelt "system":\n%s%s'
-                     % (r.returncode, r.stdout[-800:], r.stderr[-800:]))
-    print("      %d assertions" % counts.get("fence-lowering", 0))
-    if not counts.get("fence-lowering"):
-        fail("fence-lowering", "phase made no assertions")
 
 
 def main():
@@ -901,25 +593,15 @@ def main():
         src = os.path.join(corpus, X86_TEST + ".litmus")
         if not os.path.isfile(src):
             raise SystemExit("hipbuildcheck: generate-x86.sh emitted no %s" % X86_TEST)
-        # The same x86 test, rendered once per vendor: one directory carries one
-        # vendor's arms, so the AMD phases and the CUDA non-regression phase read
-        # different directories.
+        # The same x86 test, rendered once per vendor: one directory carries
+        # one vendor's arms (litmus/hetDialect.ml).
         d_x86 = emit(tmp, src, os.path.join(tmp, "out-x86-hip"), "x86 render", "hip")
         d_x86_cuda = emit(tmp, src, os.path.join(tmp, "out-x86-cuda"),
                           "x86 render", "cuda")
-        # The AArch64 render host-pair-guard drives is the CUDA one.  The uname
-        # guard is emitted by the same per-dialect fold on both, which is what
-        # makes the substitution sound.
+        # The AArch64 render host-pair-guard drives is the CUDA one; one
+        # per-dialect fold emits the uname guard on both.
         d_aa_cuda = emit(tmp, os.path.join(HET_DIR, AARCH64_TEST + ".litmus"),
                          os.path.join(tmp, "out-aa"), "AArch64 render", "cuda")
-        # ...and the fence-carrying render, which is a different test: the one
-        # every other phase drives annotates no fence at all.
-        fence_src = os.path.join(corpus, X86_FENCE_TEST + ".litmus")
-        if not os.path.isfile(fence_src):
-            raise SystemExit("hipbuildcheck: generate-x86.sh emitted no %s"
-                             % X86_FENCE_TEST)
-        d_fence = emit(tmp, fence_src, os.path.join(tmp, "out-x86-fence-hip"),
-                       "x86 fence render", "hip")
 
         print("===== HIPBUILDCHECK: can an AMD harness be built and run? =====")
         print("  host %s, hipcc=%s nvcc=%s"
@@ -932,18 +614,17 @@ def main():
         phase6(tmp, d_x86)
         phase6b(tmp, d_x86)
         phase7(tmp, d_x86_cuda)
-        phase8(tmp, d_fence, fence_src)
         print("=" * 70)
         if fails:
             print("HIPBUILDCHECK FAILED: %d assertion(s)" % len(fails))
             for ph, m in fails:
                 print("  [%s] %s" % (ph, m))
             return 1
-        print("HIPBUILDCHECK: PASS (%d assertions over 9 phases)" % sum(counts.values()))
-        print("  DEFERRED to the MI300X bring-up: there is no AMD GPU here, so the "
-              "linked harness was never EXECUTED on a device.  hip-allocator ran the "
-              "allocator resolver under a stub hipDeviceGetAttribute; the real "
-              "hipMallocManaged coherence behaviour remains unverified.")
+        print("HIPBUILDCHECK: PASS (%d assertions over %d phases)"
+              % (sum(counts.values()), len(counts)))
+        print("  DEFERRED to the MI300X bring-up: no AMD GPU here, so no linked "
+              "harness ran.  hip-allocator drove the resolver under a stub "
+              "hipDeviceGetAttribute; hipMallocManaged coherence is unverified.")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

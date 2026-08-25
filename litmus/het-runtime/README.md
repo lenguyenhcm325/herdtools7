@@ -15,8 +15,9 @@ histogram, reused to tally the merged CPU+GPU register readback) are cat'ed
 straight from `litmus/libdir/_outs.{h,c}` by the same rule, so "byte-identical to
 libdir" holds by construction rather than by anyone remembering it.  They are
 embedded (rather than copied from a libdir at run time) so a het harness
-directory is self-contained: the repro command uses `-set-libdir herd/libdir`,
-which ships the herd `.cat` models, not litmus7's C runtime.
+directory is self-contained: the emission takes whatever `-set-libdir` the
+caller names (`hetlitmus/docs/het-emission.md` shows `herd/libdir`, the gates
+pass `litmus/libdir`), and neither has to carry litmus7's C runtime.
 
 These notes are for the **maintainer** of these files, and they live here rather
 than inside the `.h` payloads because the payload bytes land in every emitted
@@ -64,9 +65,10 @@ This is not tidiness; it is forced, and getting it wrong breaks a gate:
   -c`, but `<pthread.h>` does NOT — it reaches x86 glibc's
   `bits/pthreadtypes-arch.h`, whose `__cleanup_fct_attribute` is
   `__attribute__((__regparm__(1)))`, and regparm "is not valid on this platform"
-  for AArch64.  That cross-assembly step is `comp.sh`'s, and
-  `hetlitmus/verify/smoke.sh` gates on it, so a stray `#include <pthread.h>`
-  there fails the smoke gate on every het test in the corpus.  The thread bodies
+  for AArch64.  That cross-assembly step is `comp.sh`'s;
+  `hetlitmus/verify/smoke.sh` runs it on every AArch64 rep and fails a rep that
+  skipped it, so a stray `#include <pthread.h>` here reddens the smoke gate.
+  The thread bodies
   need only the pthread entry-point signature (a void-pointer function of one
   void pointer), never a pthread primitive; `pthread_create` is called from the
   `.cu`, which is compiled for the native host and already includes
@@ -102,18 +104,17 @@ plus an optional poke into the vendor runtime) and `het_rdv_jitter`.
 TWO PROPERTIES THAT LOOK LIKE STYLE AND ARE NOT.
 
 * **The rendezvous orders nothing.**  Arrival and poll are `relaxed`, at
-  **system** scope, with no fence anywhere between or behind them.  An acquire
-  poll self-invalidates the GPU L1 [Bagchi26 sec 5.3] and a system-scope fence
-  flushes it, so a strengthened rendezvous would erase the cache state the
-  tested iteration is about to race on while every model op still matched.
-  Narrowing it is the opposite failure: a device- or agent-scope counter is not
-  the object the host half increments, so the two sides would never meet.
-  `hetlitmus/verify/rdvcheck.py` reads this header for both.
+  **system** scope, with no fence anywhere between or behind them, and
+  narrowing the scope is as wrong as strengthening the order; why is sec 3.3
+  of the design note below.
 * **It sits AROUND the tested group, never between two of its accesses** —
   invariant (ii) above, applied to the rendezvous rather than to the stress.
   The loop is `rendezvous; release jitter; tested accesses; record`, and the
   jitter draws `0..HET_RELEASE_JITTER` empty spins so the iterations sweep the
   relative phase of the two devices instead of repeating one alignment.
+
+`hetlitmus/verify/rdvcheck.py` pins both, reading this header for the first
+and every emitted render of both het renderings for the second.
 
 A participant that does not reach the target within its cap (`HET_CAP_CPU`,
 `HET_CAP_GPU`, both env-overridable and both placeholders until a target

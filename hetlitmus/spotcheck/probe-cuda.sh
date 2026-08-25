@@ -1,24 +1,12 @@
 #!/bin/sh
-# =========================================================================
-# HetLitmus dev-tier probe driver.  Compiles + runs probe.cu and adds the
-# host-side facts it cannot see from CUDA, into <results>/probe.txt.
+# The CUDA probe driver: run probe.cu, add the host facts CUDA cannot see, and
+# write <results>/probe.txt as key=value lines.  None of it is a litmus result.
 #
 #   sh probe-cuda.sh                 # results-devtier-<date>-<host>/probe.txt
 #   RESULTS=... sh probe-cuda.sh     # somewhere else
 #
-# PTX-ONLY BUILD.  probe.cu is compiled to compute_75 PTX and JIT-ed at load, so
-# one command works on sm_75 (T4G), sm_90 (GH200) and sm_121 (GB10) without
-# knowing the arch first -- which is the point, since the arch is one of the
-# things being probed.  It is deliberately NOT `-arch=native': that flag only
-# exists from CUDA 11.5 update 1, and the whole job here is to work on a box
-# whose toolkit version has not been established yet.
-# compute_75, not compute_60: CUDA 13 REMOVED pre-Turing targets, so compute_60
-# is `nvcc fatal: Unsupported gpu architecture' there (hit on the first real
-# box, GB10 + CUDA 13.2, 2026-07-31).  compute_75 needs only CUDA 10, and every
-# device CUDA 13 can still target is sm_75+ -- so it excludes nothing anywhere.
-#
-# Everything is key=value, one per line.  Nothing here is a litmus result.
-# =========================================================================
+# Builds compute_75 PTX and JITs at load, so one command works before the arch
+# is known; NEVER `-arch=native' (why, and not compute_60: spotcheck/README.md).
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -38,11 +26,8 @@ emit "host_uname_r=$(uname -r)"
 emit "host_uname_s=$(uname -s)"
 emit "host_nproc=$( (nproc 2>/dev/null || echo -1) )"
 
-# AArch64 feature flags that decide whether the CPU side can carry the tested
-# ops at all: `lrcpc' is LDAPR (the RCpc acquire the -2s CPU cycles use) and
-# `atomics' is LSE.  Absent lrcpc, the CPU half of a -2s test cannot issue the
-# acquire its .litmus names.  x86 hosts have no such line; the
-# key is emitted as `n/a' rather than omitted, so a diff across boxes lines up.
+# AArch64 flags the CPU side needs: `lrcpc' is LDAPR and `atomics' is LSE.  An
+# x86 host has no such line, so the keys read 0 and either box's probe.txt diffs.
 if [ -r /proc/cpuinfo ]; then
   feats="$(grep -m1 -E '^(Features|flags)' /proc/cpuinfo 2>/dev/null | cut -d: -f2- || true)"
 else

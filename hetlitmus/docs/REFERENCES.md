@@ -235,9 +235,9 @@ Claim(s) this project takes from it:
   scope of gpu or higher triggers a self-invalidation of the local L1 cache."
   An acquire poll inside the loop would therefore throw away the L1 state the
   tested iteration is about to race on, while every ordering annotation under
-  test still matched. Cited at `litmus/het-runtime/het_rdv.h`, and by the gates
-  that refuse a non-relaxed rendezvous op (`verify/rdvcheck.py`,
-  `verify/ptxcheck.py`).
+  test still matched. Cited at `litmus/het-runtime/het_rdv.h`;
+  `verify/rdvcheck.py` and `verify/ptxcheck.py` refuse a non-relaxed
+  rendezvous op on this ground.
 
 Deviation(s):
 * §5.3's sentence is an inference the authors draw from a visibility experiment

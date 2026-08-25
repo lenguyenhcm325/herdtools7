@@ -1,29 +1,11 @@
 #!/usr/bin/env python3
-"""dupcheck.py -- the isomorphism (duplicate-test) gate.
+"""dupcheck.py -- the isomorphism gate over hetlitmus/tests/het.
 
-`hetlitmus/tests/het/generate.sh' loops shape x device-cut x scope x order and
-dedups only by byte-comparing a variant against one designated sibling.  That
-filter cannot see duplicates of the second kind: two different names whose
-programs are the same experiment up to (permutation of procs) x (renaming of
-locations), device tag travelling with the proc.  The `cg'/`gc' mirror pair of a
-rotation-invariant shape (SB / LB / 2+2W) is that kind -- swapping P0 and P1
-gives back the same cycle with the labels exchanged -- and a mirror is not an
-independent sample.  The corpus keeps them out at the root: `tests/_grid_lib.sh'
-gives those three shapes the `cpu,gpu' cut alone (SHAPE_HET_CUTS), and the
-order-pair sweep does the same for the two of them it covers
-(SHAPE_2S_PAIR_CUTS; hetlitmus/docs/corpus-grid.md, "Heterogeneous device cuts").
-
-So the gate is one check with no exceptions: any duplicate class in the corpus
-fails it.  That is what makes widening the variant vocabulary safe -- a new
-annotation axis multiplies across device cuts, so new duplicates are the expected
-failure mode and they break the build.
-
-The canonical form: parse the Het test into (proc -> ordered event list,
-condition atoms), then minimise over every permutation of procs x every renaming
-of locations.  Events carry their annotation (`plain' / `rel' / `acq' /
-`dmb sy' / `release,sys' / ...), so a weakening is never canonically equal to the
-test it weakens, and the device tag is part of the proc record, so a cpu/gpu swap
-is not a duplicate.
+  duplicate  no two tests are the same experiment up to (proc permutation x
+             location renaming) -- the class a generator's byte-comparison
+             against one sibling cannot see (hetlitmus/docs/corpus-grid.md,
+             "Heterogeneous device cuts").
+  empty      an empty --dir is a refusal, not a clean corpus.
 
 Usage:  dupcheck.py [--dir D] [-q]   (exit 0 = clean)
 """
@@ -40,9 +22,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
 
 
-# ---------------------------------------------------------------------------
-# Canonical form.
-# ---------------------------------------------------------------------------
+# Canonical form: procs (with their device tag) x ordered annotated events,
+# minimised over permutation of procs x renaming of locations.
+
 def _rk(r):
     """W0 and X0 are the same AArch64 register -- key by the number."""
     m = re.match(r"[WXwx](\d+)$", r)
@@ -144,18 +126,16 @@ def canonical(path):
     return best
 
 
-# ---------------------------------------------------------------------------
-def classes(d):
-    """-> (n_files, {canonical -> [names...]})"""
-    groups = collections.defaultdict(list)
+def check(d, quiet=False):
     files = sorted(glob.glob(os.path.join(d, "*.litmus")))
+    if not files:
+        print("DUPCHECK FAILED: no .litmus file in %s -- an empty directory is "
+              "not a clean corpus" % d)
+        return 1
+    groups = collections.defaultdict(list)
     for f in files:
         groups[canonical(f)].append(os.path.basename(f)[: -len(".litmus")])
-    return len(files), groups
-
-
-def check(d, quiet=False):
-    n_files, groups = classes(d)
+    n_files = len(files)
     found = sorted(tuple(sorted(v)) for v in groups.values() if len(v) > 1)
     redundant = sum(len(c) - 1 for c in found)
 

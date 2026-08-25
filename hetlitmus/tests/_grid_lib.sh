@@ -1,25 +1,16 @@
 # shellcheck shell=bash
-# HetLitmus corpus grid library -- shared by tests/gpu-only/generate.sh and
-# tests/het/generate.sh.  Pure bash (associative arrays => needs bash >= 4).
-#
-# Defines the litmus shape catalogue (closed critical cycles in diy's
-# architecture-agnostic edge vocabulary), the canonical heterogeneous device
-# cuts per shape, and the renderers that turn a base cycle into the annotated
-# edge cycle diyone7/hetgen7 consume -- LISA/Bell for GPU procs, AArch64 for
-# CPU procs.  The GPU annotation grid is scope in {cta,gpu,sys} x order in
-# {relaxed,acquire,release,fence}.
-#
-# The grid rule and its rationale: hetlitmus/docs/corpus-grid.md.
+# HetLitmus corpus grid library -- shared by tests/gpu-only/generate.sh,
+# tests/het/generate.sh and tests/het/generate-x86.sh.  Pure bash (associative
+# arrays => needs bash >= 4).  It holds the shape catalogue, the canonical
+# device cuts per shape, and the renderers that turn a base cycle into the
+# annotated edge cycle diyone7/hetgen7 consume: LISA/Bell for GPU procs,
+# AArch64 for CPU procs.  The one-sided scope x order grid and its rationale:
+# hetlitmus/docs/corpus-grid.md; the two-sided families are specified here,
+# beside the knob that drives each.
 
 # --- shape catalogue: cycle (base edges) + proc count -----------------------
-# Base-edge vocabulary used here, with L the location letter (d = different
-# location, s = same location):
-#   Po<L><XY>  intra-proc program order, X->Y  (X,Y in {W,R})
-#   Rfe        read-from external          (W -> R)
-#   Fre        from-read external          (R -> W)
-#   Coe        coherence-order external    (W -> W)
-# A cycle whose program-order edges are all `Pos' touches one location, which
-# diy refuses unless the driver passes `-oneloc'.
+# Base-edge vocabulary (Po<L><XY>, Rfe, Fre, Coe) and the `-oneloc' rule an
+# all-`Pos' cycle needs: hetlitmus/docs/corpus-grid.md, "The shape catalogue".
 declare -A SHAPE_CYCLE=(
   [MP]="PodWW Rfe PodRR Fre"
   [SB]="PodWR Fre PodWR Fre"
@@ -46,15 +37,9 @@ declare -A SHAPE_NPROCS=(
 SHAPE_ORDER="MP SB LB 2+2W R S WRC RWC ISA2 IRIW WRC3 CoRR CoWR CoRW2"
 
 # --- heterogeneous device cuts ----------------------------------------------
-# Role-based and symmetry-reduced, NOT 2^n.  2-proc shapes take both directions
-# except SB / LB / 2+2W, whose cycle is invariant under rotation-by-two (it
-# swaps P0/P1, and the annotation follows the device rather than the proc
-# index), so those emit one cut and verify/dupcheck.py holds that honest.
-# 3-proc shapes (distinct roles) put each proc in turn on the GPU; IRIW (2
-# symmetric writers + 2 symmetric readers) takes four of its eight symmetry
-# classes {one writer, one reader, both writers, both readers}; WRC3 (4-stage
-# causal chain) puts each chain stage in turn on the GPU.  The rule and its
-# rationale: hetlitmus/docs/corpus-grid.md, "Heterogeneous device cuts".
+# Role-based and symmetry-reduced, NOT 2^n; SB / LB / 2+2W emit one cut because
+# their cycle is invariant under rotation-by-two, which swaps P0/P1.  The rule
+# per shape: hetlitmus/docs/corpus-grid.md, "Heterogeneous device cuts".
 declare -A SHAPE_HET_CUTS=(
   [MP]="cpu,gpu gpu,cpu"
   [SB]="cpu,gpu"
@@ -89,10 +74,9 @@ scope_cc() { case "$1" in cta) echo Cta;; gpu) echo Gpu;; sys) echo Sys;;
 
 # edge_src_dst <base-edge>  -> sets globals SRC,DST (each W or R), IS_PO (0/1)
 # and, for an intra-proc edge, its location letter PO_LOC (d|s) plus access
-# suffix PO_XY.  A fence edge is spelled <fence><PO_LOC><PO_XY>, so the letter
-# travels with the edge instead of being fixed at each call site.  PO_LOC and
-# PO_XY are cleared before the case, so a caller that reads them without
-# checking IS_PO cannot pick up the previous edge's letters.
+# suffix PO_XY -- a fence edge is spelled <fence><PO_LOC><PO_XY>.  PO_LOC/PO_XY
+# are cleared first, so a caller that reads them without checking IS_PO cannot
+# pick up the PREVIOUS edge's letters.
 edge_src_dst() {
   PO_LOC=""; PO_XY=""
   case "$1" in
@@ -106,12 +90,10 @@ edge_src_dst() {
 }
 
 # ord_for <dir W|R> <order>  ->  CamelCase order token for that access
-#   relaxed/fence : everything relaxed (fence supplies ordering via a fence event)
-#   acquire       : reads -> Acquire, writes -> Relaxed
-#   release       : writes -> Release, reads -> Relaxed
-#   acqrel        : reads -> Acquire, writes -> Release -- the complete
-#                   release/acquire pair, used only by the two-sided variants
-#                   (which apply it to both devices; cf. render_cpu_cycle)
+#   relaxed/fence : everything relaxed (a fence event supplies the ordering)
+#   acquire : reads -> Acquire ; release : writes -> Release
+#   acqrel  : reads -> Acquire AND writes -> Release, the complete pair, used
+#             only by the two-sided variants (cf. render_cpu_cycle)
 ord_for() {
   case "$2" in
     relaxed|fence) echo Relaxed;;
@@ -143,19 +125,12 @@ render_cycle() {
   echo "${out# }"
 }
 
-# --- CPU (AArch64) annotator: the other half of the morally-strong pair -------
-# hetgen7's `-cpu <edges>' is parsed verbatim by the AArch64 builder.  Passing
-# the plain base cycle (the one-sided default) leaves every CPU proc a plain
-# ARMv9 ld/st, so a GPU sys release/acquire can never close a morally-strong
-# pair: the GH200 CPU is ARMv9, not x86, and supplies no implicit
-# acquire/release.  The two-sided variants pass an annotated CPU cycle instead.
-#
-# Instruction mapping: release -> STLR, acquire -> LDAPR (RCpc, not RCsc),
-# fence -> DMB.SY.  ARM ops are scope-free -- unscoped is treated as system
-# scope -- so no scope token is appended, unlike the GPU/Bell side.
-#
-# diy atom letters (`diyone7 -arch AArch64 -show annotations'):
-#   L = release (STLR) ; Q = LDAPR (RCpc acquire) ; A = LDAR (RCsc, unused).
+# -----------------------------------------------------------------------------
+# CPU (AArch64) annotator, the other half of the morally-strong pair.  hetgen7's
+# `-cpu <edges>' is parsed verbatim, so the one-sided default leaves every CPU
+# proc a plain ARMv9 ld/st and closes no cross-device pair.  ARM ops are
+# scope-free, so no scope token is appended.  Mapping: hetlitmus/docs/faithfulness.md.
+# diy atom letters: L = release (STLR), Q = LDAPR (RCpc acquire), A = LDAR.
 
 # arm_ord <dir W|R> <order>  ->  AArch64 diy atom letter for that access
 #   acqrel : reads -> Q (LDAPR) , writes -> L (STLR)   [the complete pair]
@@ -167,15 +142,10 @@ arm_ord() {
 }
 
 # render_cpu_cycle <order> <base-edge>...  ->  annotated AArch64 edge token list
-# (the CPU-side mirror of render_cycle, but with ARM atoms and NO scope).
-#   acqrel   : every read -> LDAPR (Q), every write -> STLR (L)  (atom per end)
-#   fence    : every access plain; each intra-proc Po<L><XY> becomes the
-#              full-barrier edge `DMB.SY<L><XY>'.  External edges (Rfe/Fre/Coe)
-#              stay bare: their plain ends agree with the adjacent atoms.
-#   fence-st : the same with the partial barriers `DMB.ST<L><XY>' (orders
-#   fence-ld   store->store only) and `DMB.LD<L><XY>' (load->load and
-#              load->store only) -- the CPU one-role halves, used only by the
-#              order-pair grid (the two-sided family stays on acqrel/fence).
+#   acqrel            : every read -> Q, every write -> L
+#   fence             : accesses plain, each intra-proc Po<L><XY> becomes
+#                       `DMB.SY<L><XY>', external edges bare
+#   fence-st/fence-ld : the same with `DMB.ST' / `DMB.LD'
 render_cpu_cycle() {
   local order="$1"; shift
   local out="" e as ad base fb=""
@@ -198,35 +168,14 @@ render_cpu_cycle() {
   echo "${out# }"
 }
 
-# --- the two-sided order-pair grid (off-diagonal) ---------------------------
-# TWO_SIDED_ORDERS above gives each device the same order name, i.e. only the
-# two diagonal cells of a pairing grid.  The ordering a primitive supplies
-# depends on which program-order pair its proc has -- a release fence on a
-# load;load consumer orders nothing, RCpc STLR->LDAPR never orders store->load
-# -- so the off-diagonal is swept too.  Name token `<cpu>.<gpu>':
-#
-#   cpu  ra -> STLR / LDAPR atoms      sy -> DMB SY
-#        st -> DMB ST                  ld -> DMB LD
-#   gpu  ra -> w[release,sys] / r[acquire,sys] atoms
-#        sc -> f[sc,sys]   rel -> f[release,sys]   acq -> f[acquire,sys]
-#
-# 4 x 4 = 16 cells per cut class, of which 2 are the diagonal (`ra.ra' IS
-# <shape>-<cut>-sys-acqrel-2s, `sy.sc' is <shape>-<cut>-sys-fence-2s) -> 14
-# emitted; generate.sh byte-diffs the two rather than assuming the identity.
-#
-# `f[acq_rel,sys]' is unavailable: `FenceAcq_relSys' does not lex as a diy edge
-# name (the underscore breaks the edge lexer).
+# -----------------------------------------------------------------------------
+# The two-sided order-pair grid (off-diagonal), named `<cpu>.<gpu>'; the token
+# table and the exclusions: hetlitmus/docs/corpus-grid.md, "The two-sided families".
 TWO_SIDED_CPU_ORDERS="ra sy st ld"
 TWO_SIDED_GPU_ORDERS="ra sc rel acq"
 
-# Shapes + cuts for the off-diagonal sweep.  What it has to cover is the
-# (primitive, program-order pair) product, since the pair a proc carries decides
-# what its primitive orders (note above).  These 2-proc shapes realise all four
-# Pod kinds -- WW RR WR RW -- on each side, so no further shape widens it; two
-# procs also keep a cell legible: one cpu and one gpu token per test, which a 3-
-# or 4-proc cut would spread over several.  SB and LB emit one cut, for the
-# rotation-by-two reason at SHAPE_HET_CUTS above.  The product is over Pod
-# pairs: a `Pos' shape stays out, only one of its procs carrying a pair.
+# Shapes + cuts for the off-diagonal sweep, one cpu and one gpu token per test
+# (why these shapes and cuts: corpus-grid.md, "The two-sided families").
 TWO_SIDED_PAIR_SHAPES="MP SB LB R S"
 declare -A SHAPE_2S_PAIR_CUTS=(
   [MP]="cpu,gpu gpu,cpu"

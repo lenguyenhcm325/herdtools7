@@ -2,8 +2,8 @@
 
 The HetLitmus GPU code generator. Turns the GPU‑only LISA/Bell scoped
 corpus (`hetlitmus/tests/gpu-only/*.litmus`) into CUDA C++ (`.cu`) litmus
-kernels, one per test. **Route B** of the frontend decision (reuse the Bell/LISA
-scoped IR; no native PTX architecture).
+kernels, one per test, reusing the Bell/LISA scoped IR as the frontend (no
+native PTX architecture).
 
 ## What ships
 - **`litmus/CudaLang.ml`** — the emitter. Translates parsed `BellBase` scoped
@@ -13,12 +13,12 @@ scoped IR; no native PTX architecture).
   annotation vocabulary, the `BellBase` accessors, the launch layout and the
   whole-test driver, parameterised by a `GpuLang.t` dialect record.
 - **`litmus/hetGpuOnly.ml`** — the wiring. The `\`LISA` arm of the arch dispatch
-  in `top_litmus.ml`'s `aux` (previously `assert false`) closes this functor,
-  which parses the scoped LISA test (`BellLexer`/`LISAParser` →
-  `LISAArch_litmus`) and calls `CudaLang.dump`, writing `<name>.cu` via
-  `Tar.outname`.
-- **`litmus/option.ml`** — `Option.get_default \`LISA` returned `assert false`
-  (a dead path); now returns `copt` so the LISA test can reach the dispatch.
+  in `top_litmus.ml`'s `aux` closes this functor, which parses the scoped LISA
+  test (`BellLexer`/`LISAParser` → `LISAArch_litmus`) and calls the selected
+  dialect's `dump` (`CudaLang.dump` or `HipLang.dump`), writing `<name>.cu` or
+  `<name>.hip` via `Tar.outname`.
+- **`litmus/option.ml`** — `Option.get_default \`LISA` returns `copt`, so the
+  LISA test reaches the dispatch.
 - **`hetlitmus/emit-cuda.sh`** — regenerates all `.cu` from the corpus; the
   CUDA-side entry point of `hetlitmus/emit-gpu.sh`, which it calls with
   `-gpu-target cuda` (one vendor per pass; `litmus/hetDialect.ml`).
@@ -27,11 +27,11 @@ Build: `make all` in the repo root. Emit:
 `./hetlitmus/emit-cuda.sh [OUTDIR]` (default `hetlitmus/cuda-out/`).
 
 ## How it works (and why this shape)
-litmus7 had **no** LISA path at all (the `\`LISA` arm was `assert false`; LISA is
-handled only by *klitmus7*, `top_klitmus.ml`). We reuse litmus7's existing LISA
-**parser** but not its C‑harness emission: the standard `Skel` pipeline wraps
-per‑thread code in a pthread C harness, which is the wrong shape for a readable,
-eyeball‑able CUDA kernel.
+Upstream litmus7 has **no** LISA path — its `\`LISA` arm is `assert false`, and
+LISA is handled only by *klitmus7* (`top_klitmus.ml`). HetLitmus reuses
+litmus7's existing LISA **parser** but not its C‑harness emission: the standard
+`Skel` pipeline wraps per‑thread code in a pthread C harness, which is the wrong
+shape for a readable, eyeball‑able CUDA kernel.
 
 The emitter consumes the **parsed** program (`A.pseudo MiscParser.t`), not the
 litmus7 `Out` template. The template flattens a scoped load/store into an opaque
@@ -45,8 +45,8 @@ parsed test we read three things:
 The LISA arm returns `Absent` so `DumpRun` does **not** try to C‑compile/tar the
 output as a litmus binary; the `.cu` is written directly to the `-o` dir.
 
-## Mappings (grounded)
-Scoped‑atomic syntax grounded against libcu++ (NVIDIA/cccl): header
+## Mappings
+Scoped‑atomic syntax is libcu++'s (NVIDIA/cccl): header
 `<cuda/atomic>`, `cuda::atomic_ref<int, cuda::thread_scope_*> ref(lvalue);`
 with `ref.store(v, order)` / `ref.load(order)`. Memory locations are kernel
 `int*` parameters (managed memory), so each access binds `*x`.
@@ -72,9 +72,9 @@ proc in its **own** CTA — so the two MP threads sit in *distinct* CTAs, which 
 exactly what makes `MP-cta-F` (block‑scope rel/acq across distinct CTAs) the
 moral‑strength / scope‑mismatch demonstration.
 
-## Eyeball checklist (10/10)
-Each emitted kernel checked against the MP, LB and SB shapes of
-[Alglave15 Tab. 6], against the standard IRIW and 3‑proc write‑read‑causality
+## Eyeball checklist
+Each committed `cuda-out/*.cu` sample, checked against the MP, LB and SB shapes
+of [Alglave15 Tab. 6], against the standard IRIW and 3‑proc write‑read‑causality
 WRC shapes — for which that paper reports no result — and against the scope
 mapping above.
 
@@ -95,48 +95,44 @@ mapping above.
 carrying its annotated order+scope (relaxed data included), so the kernels are
 data‑race‑free under the C++/CUDA model rather than relying on plain accesses.
 
-² `MP-gpu-release` and `WRC-sys-relaxed` were added to sample the last two
-un‑eyeballed codegen branches: `MP-gpu-release` is the only **device‑scope** kernel
+² `MP-gpu-release` and `WRC-sys-relaxed` sample the two codegen branches the
+other samples do not reach: `MP-gpu-release` is the only **device‑scope** kernel
 (`gpu → thread_scope_device`; all other samples are sys/cta), and `WRC-sys-relaxed`
 is the only **3‑proc** launch geometry (`<<<3,1>>>`, three distinct CTAs).
 
 ## nvcc compile
-Done on this WSL box (CUDA Toolkit **12.9**, `nvcc /usr/local/cuda/bin/nvcc`;
-`export PATH=/usr/local/cuda/bin:$PATH`; the first such pass ran on 12.2 — see
-the fence-lowering note below for what the upgrade changed). Every emitted
-kernel assembles **exit 0**.
+Every gpu-only render assembles under `nvcc -std=c++17 -arch=sm_90 --ptx` in
+`tokens.sh full` (`ptxcheck.py` over both corpora entire); `make
+hetlitmus-faithful` runs `tokens.sh all`, the feature cover
+(`verify/faithful-cover.txt`, asserted complete against the corpus by
+`covercheck.py`). `sm_90` is also the arch the emitted Makefile/`comp.sh` build
+with (`hetDialect.ml`, `gd_arch_default`). The committed `cuda-out/*.cu`
+samples are the emission golden `corpus-gate.sh` re-emits byte for byte; none of
+them carries a fence.
 
-- **Corpus (cta/sys/gpu), Ampere** — each of the 10 `cuda-out/*.cu`:
+**Fence lowering (faithful inline PTX).** The emitter lowers a fence at every
+scope to inline PTX — `fence.<order>.<scope>`, `<order> ∈
+{acquire,release,acq_rel,sc}`, `<scope> ∈ {cta,gpu,sys}` (`CudaLang.ml`,
+`ptx_fence_sem`, `ptx_scope`) — bypassing `cuda::atomic_thread_fence`, which
+collapses acquire/release → `fence.acq_rel` and so cannot express the order the
+annotation carries [CCCL `cuda/std/__atomic/functions/cuda_ptx_generated.h`].
+Availability [CCCL `cuda/__ptx/instructions/generated/fence.h`]:
+`fence.{acq_rel,sc}` from PTX ISA 6.0 / SM_70, `fence.{acquire,release}` from
+PTX ISA 8.6 / SM_90 — a floor on the toolkit and the target, not an absence in
+the ISA — so a fence-bearing test assembles only for sm_90 (the target the
+emitted build uses; each emitted fence carries a trailing `// requires sm_90` or
+`// sm_70+` comment, `fence_min_arch`). The committed samples carry no fence, so
+their `.cu` stay byte-stable. Load/store mapping is unaffected: rel/acq on ops
+map exactly (`st.release.<scope>` / `ld.acquire.<scope>`); only standalone
+fences need the inline form. A `relaxed` fence has no PTX form and the
+annotation vocabulary declares none (`ptx.bell`,
+`F[{'acquire,'release,'acq_rel,'sc}, scopes]`), so the emitter refuses one
+loudly.
 
-  ```
-  nvcc -std=c++17 -arch=sm_86 <test>.cu -o /tmp/<test>
-  ```
-
-  All 10 (MP/LB/SB/IRIW × relaxed/-F, MP-cta-F, plus MP-gpu-release and
-  WRC-sys-relaxed) compile exit 0. `sm_86` = this box's RTX 3060 Laptop
-  (Ampere), so the corpus can also smoke *run* here.
-
-**Fence lowering (faithful inline PTX).** `fence.acquire`/`fence.release` are
-real instructions added in **PTX ISA 8.6 (SM_90)**; a ptxas implementing an
-earlier ISA rejects them (CUDA 12.2's, at PTX ISA 8.2, does), which is a
-*toolkit-version* limit and not a PTX-ISA one. They assemble on this box's
-current **CUDA 12.9** (`nvcc -std=c++17 -arch=sm_90`). The emitter lowers fences
-**faithfully** at every scope via inline PTX — `fence.<order>.<scope>`, `<order>
-∈ {acquire,release,acq_rel,sc}`, `<scope> ∈ {cta,gpu,sys}` — bypassing
-`cuda::atomic_thread_fence`, which (verified in CUDA 12.9
-`cuda/std/__atomic/functions/cuda_ptx_generated.h`) **still** collapses
-acquire/release → `fence.acq_rel`. Availability: `fence.{acq_rel,sc}` work on
-SM_70+; `fence.{acquire,release}` need SM_90 — so a fence-bearing test assembles
-only for sm_90 (fine for the GH200 target; the 10 samples above carry no fence,
-so their `.cu` stay byte-stable). Load/store mapping is unchanged: rel/acq on ops
-already map exactly (`st.release.<scope>` / `ld.acquire.<scope>`); only
-standalone fences are affected.
-
-## Out of scope / next steps
-- **Hardware runs (deferred):** GH200 / MI300A runs + stressing + tallying
-  `__out` against the `condition` line.
-- The host harness currently has no result tally and no stress (timing jitter,
-  memory pressure). Stressing is essential for non‑observations to be meaningful
-  (see thesis principles); that lands with those runs.
+## Limits
+- The gpu-only host `main()` tallies nothing and runs no stress: it launches the
+  kernel in a loop and leaves `__out` unread (`gpuLang.ml`, `dump_test`). Result
+  tallying, the per-iteration rendezvous and the stress layers live on the
+  heterogeneous path (`het-emission.md`, `00-environment-design.md`).
 - Reference verdicts: no external reference covers GH200, and this project
   derives none of its own.

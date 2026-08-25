@@ -1,26 +1,16 @@
 #!/usr/bin/env python3
 """HetLitmus -- the emitter/runtime skew tripwire.
 
-het_obs_record and the HET_* knob defaults live in litmus/het-runtime/*.h; the
-lines that fill them live in litmus/hetEmit.ml.  Nothing but a compiler binds the
-two, so on the CPU-only lanes a rename, a typo'd stamp or a dropped default is
-invisible until an nvcc or hipcc build runs -- which is why this gate exists and
-why it needs no GPU.  Five properties, over real emissions of both pairs:
+Nothing but a compiler binds litmus/hetEmit.ml's `_rec.<name>' writes and
+`#define HET_*' stamps to litmus/het-runtime/*.h.  Over real emissions of both pairs:
 
-  A Fields   every `_rec.<name>' the render writes is a member of het_obs_record.
-  B Stamp    every render writes `_rec.rec_magic = HET_REC_MAGIC;' exactly once,
-             by the symbol: het_verdict() reads no field of a record without it.
-  C Live     every `#define HET_*' the renders stamp is read somewhere -- by
-             some lane's code or by a staged runtime header.  A stamp nobody
-             reads is a stamp whose name drifted.
-  D Default  every stamped define that het_verdict.h reads has an `#ifndef'
-             default there, so a lane that stamps nothing still compiles.
-  E Resolve  every `HET_*' name a render USES is either stamped by that render or
-             declared by a header the harness dir stages.  A slot stride the
-             render addresses through, or a rendezvous cap it waits under, that
-             no staged header declares is a harness that does not compile.  Both
-             sides are read through code_only(), so a name that survives only in
-             a header's prose resolves nothing.
+  A Fields   every `_rec.<name>' a render writes is a member of het_obs_record.
+  B Stamp    every render writes `_rec.rec_magic = HET_REC_MAGIC;' exactly once.
+  C Live     every stamped `#define HET_*' is read by a lane or a staged header.
+  D Default  every stamped define het_verdict.h reads has an `#ifndef' default.
+  E Resolve  every `HET_*' a render's code USES is stamped or header-declared.
+
+A miss is a harness that does not compile, or a record het_verdict() discards.
 
 Usage:  recfields.py [-q]
 """
@@ -40,8 +30,7 @@ X86_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het-x86")
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
 # (corpus dir, test, -gpu-target, render extension) -- one shape per kind of
-# outcome column and one per pair, because different shapes write different
-# fields.
+# outcome column and one per pair: different shapes write different fields.
 LANES = [
     (HET_DIR, "MP-cg-sys-fence-2s", "cuda", "cu"),   # register columns only
     (HET_DIR, "2+2W-cg-sys-fence", "cuda", "cu"),    # location columns only
@@ -57,10 +46,8 @@ STAMP_RE = re.compile(r"_rec\.rec_magic\s*=\s*HET_REC_MAGIC\s*;")
 USE_RE = re.compile(r"\bHET_[A-Za-z0-9_]+\b")
 
 def code_only(text):
-    """Drop /*...*/ comments, //-comments and string literals: an identifier that
-    survives is one the preprocessor or the compiler actually sees.  het_verdict.h
-    names many of these knobs in its prose and in its printf strings, and reading
-    those as uses would call every one of them read."""
+    """Drop comments and string literals, so a surviving identifier is one the
+    compiler sees -- het_verdict.h names many knobs in prose and printf text."""
     text = re.sub(r"/\*.*?\*/", " ", text, flags=re.S)
     text = re.sub(r"//[^\n]*", " ", text)
     return re.sub(r'"(?:\\.|[^"\\])*"', ' "" ', text)
@@ -118,10 +105,8 @@ def check_lane(d, test, ext, quiet, seen):
     if n != 1:
         bad.append("%s stamps `_rec.rec_magic = HET_REC_MAGIC;' %d time(s), want 1 "
                    "-- an unstamped record is discarded by het_verdict()" % (test, n))
-    # C/D -- the defines.  Collected here, judged over the union of lanes: a knob
-    # the emitter stamps unconditionally may be consumed only by the shapes that
-    # need it, and calling that drift would make the check fire on every lane
-    # that does not use it.
+    # C/D -- the defines, judged over the UNION of lanes: a knob stamped
+    # unconditionally may be consumed only by the shapes that need it.
     stamped = sorted(set(DEFINE_RE.findall(src)))
     guarded = set()
     declared = set()
@@ -133,9 +118,8 @@ def check_lane(d, test, ext, quiet, seen):
     for name in stamped:
         readers = [h for h in HEADERS
                    if re.search(r"\b%s\b" % re.escape(name), heads[h])]
-        # The render defines it before including the headers, so a define the
-        # render itself uses is read even if no header names it.  The #define line
-        # and any #ifndef guard of the same name are not uses.
+        # A define the render itself uses is read even if no header names it;
+        # its #define/#ifndef/#undef lines are not uses.
         uses_here = len(re.findall(r"\b%s\b" % re.escape(name), code)) \
             - len(re.findall(r"^\s*#\s*(?:define|ifndef|undef)\s+%s\b"
                              % re.escape(name), code, re.M))
@@ -146,9 +130,8 @@ def check_lane(d, test, ext, quiet, seen):
             bad.append("%s stamps #define %s and het_verdict.h READS it, but no "
                        "#ifndef default exists for it -- a lane that stamps nothing "
                        "would not compile" % (test, name))
-    # E -- every HET_* name the render's code uses resolves.  The render defines
-    # its own stamps before including anything, so those count; everything else
-    # must come from a header this harness dir stages beside it.
+    # E -- every HET_* the render's code uses resolves: its own stamps count,
+    # everything else must come from a header staged in the harness dir.
     resolvable = set(stamped) | declared
     for name in sorted(set(USE_RE.findall(code))):
         if name not in resolvable:
@@ -182,13 +165,10 @@ def run(quiet):
     for m in bad:
         print("  *** %s" % m)
     if bad:
-        print("\nRECFIELDS FAILED: %d problem(s).  The emitter and the runtime "
-              "headers are bound by nothing but a compiler, and on the CPU-only "
-              "lanes there is no compiler." % len(bad))
+        print("\nRECFIELDS FAILED: %d problem(s)." % len(bad))
         return 1
-    print("\nRECFIELDS OK (%d lane(s): every field is a member, every render stamps "
-          "rec_magic once, every stamped define is read and defaulted, every HET_* "
-          "use resolves)" % len(LANES))
+    print("\nRECFIELDS OK (%d lane(s): A fields, B stamp, C live, D default, "
+          "E resolve)" % len(LANES))
     return 0
 
 

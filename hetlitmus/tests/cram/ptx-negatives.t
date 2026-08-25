@@ -1,11 +1,11 @@
-Layer-1 byte-freeze of ptxcheck.py's discriminating power: the one place the
-checker is required to reject, so a checker that passed everything would be
-caught here.  corrupt-strengthen.ptx is a committed, frozen PTX in which the
-single relaxed load of MP-sys-F (`ld.relaxed.sys') was strengthened to
-`ld.acquire.sys'.  Fed back through --ptx, the checker must catch the one-token
-deviation and FAIL (exit 1) -- with NO GPU and NO nvcc, because --ptx reads the
-frozen text directly.
+hetlitmus/docs/faithfulness.md
 
-  $ python3 ../../verify/ptxcheck.py ../gpu-only/MP-sys-F.litmus --ptx corrupt-strengthen.ptx -q
+The one place ptxcheck.py must reject: MP-sys-F's frozen PTX with its single
+`ld.relaxed.sys' strengthened to `ld.acquire.sys', read back with no nvcc.
+  $ python3 ../../verify/ptxcheck.py ../gpu-only/MP-sys-F.litmus --ptx corrupt-strengthen.ptx
+  === MP-sys-F [LISA] ===
+  FAIL: GPU ordered model-op stream differs
+    [3] expected ld.relaxed.sys         observed ld.acquire.sys           <<< MISMATCH
+    no stray system-scope ops outside the model-op stream
   RESULT: FAIL
   [1]

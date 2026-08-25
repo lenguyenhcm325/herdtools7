@@ -1,34 +1,10 @@
-/* =========================================================================
- * HetLitmus dev-tier PROBE -- what does this machine actually offer?
- * =========================================================================
- * Run FIRST on any rented instance, before building a single harness.  The
- * het harness makes four hard demands, and each of them is a runtime property
- * of the box, not of the code:
- *
- *   1. cooperative launch.  The driver returns 2 immediately without it
- *      (`cooperative launch unsupported on this device'), so a box that lacks
- *      it runs NOTHING and there is no point building anything.
- *   2. a shared-memory mode whose system-scope atomics are actually atomic.
- *      The CUDA C++ Memory Model gives one condition per mode: system-allocated
- *      memory needs pageableMemoryAccess=1, managed memory needs
- *      concurrentManagedAccess=1, mapped memory needs
- *      hostNativeAtomicSupported=1 (plus the separate allowance for plain
- *      naturally-aligned loads/stores of 1/2/4/8/16 bytes on mapped memory).
- *      HET_ALLOC picks the mode; this probe says which ones are legal here.
- *   3. usesHostPageTables, to know WHICH machine this is.  The guide defines
- *      that attribute as the mechanism of CPU/GPU coherence: 1 is hardware
- *      (ATS -- GH200, DGX Spark), 0 is software (HMM).  An x86 or PCIe box on a
- *      recent driver can report pageableMemoryAccess=1 through HMM and take the
- *      very same malloc branch as GH200 while being a different experiment.
- *   4. a GPU that can be launched on at all, at this compute capability.
- *
- * Everything is printed as key=value, one per line, so probe.txt is greppable
- * and diffable across boxes.  Compile with PTX only (see probe-cuda.sh) -- this
- * file must load on sm_60 through sm_121+ without knowing the arch in advance.
- *
- * SCOPE: this is a machine probe.  It makes no memory-model claim and its
- * output is never a litmus result.
- * ========================================================================= */
+/* The machine probe: what this box offers, printed as key=value lines for
+ * probe.txt.  Run it FIRST on a rented instance -- cooperative launch, which
+ * shared-memory modes are legal, and the coherence mechanism behind them are
+ * runtime properties of the box that the harness demands and the code cannot
+ * settle.  Which key decides what: README.md beside this file.  Compile to PTX
+ * only (probe-cuda.sh): this file must load without knowing the arch first.  It
+ * makes no memory-model claim and its output is never a litmus result. */
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>
@@ -38,10 +14,9 @@ __global__ void probe_write(unsigned long long *p, unsigned long long v) {
   if (threadIdx.x == 0 && blockIdx.x == 0) *p = v;
 }
 
-/* One thread, `iters' system-scope increments.  The host does the same count
-   concurrently; a short total is decisive evidence that a system-scope RMW is
-   not atomic against the CPU in this mode.  (A matching total is only WEAK
-   evidence the other way -- see the note printed with the result.) */
+/* One thread, `iters' system-scope increments, raced against the same count on
+   the host: a short total is decisive that this mode's read-modify-write is not
+   atomic against the CPU, a matching one only weak evidence the other way. */
 __global__ void probe_sysadd(unsigned long long *p, int iters) {
   if (threadIdx.x == 0 && blockIdx.x == 0)
     for (int i = 0; i < iters; i++) atomicAdd_system(p, 1ull);
@@ -55,17 +30,11 @@ static int iattr(cudaDeviceAttr a) {
 
 #define SYS_ITERS 200000
 
-/* Exercise one HET_ALLOC mode: allocate, have the device write through the
-   pointer, read it back on the host, then race a system-scope fetch_add against
-   the host.
-   NEVER EXERCISE A MODE THE DEVICE CANNOT REACH.  An illegal access does not
-   just fail -- cudaErrorIllegalAddress is STICKY and poisons the whole context,
-   so every later probe returns the same error and the report reads as if the
-   machine offered nothing.  (Measured: probing malloc on a
-   pageableMemoryAccess=0 box turned managed and pinned into ALLOC_FAIL too.)
-   `reachable' gates the whole mode; `concurrent_ok' gates only the race, because
-   at concurrentManagedAccess=0 managed memory is perfectly usable in the
-   launch-sync-read pattern and only CONCURRENT CPU access faults. */
+/* Exercise one HET_ALLOC mode: allocate, write through the pointer on the
+   device, read it back on the host, then race a system-scope fetch_add.
+   NEVER exercise a mode the device cannot reach: cudaErrorIllegalAddress is
+   sticky and poisons the context.  `reachable' gates the whole mode;
+   `concurrent_ok' gates only the race. */
 static int poisoned = 0;
 
 static void exercise(const char *mode, int reachable, const char *why_not,
@@ -151,8 +120,7 @@ int main(void) {
   printf("global_mem_mb=%llu\n",
          (unsigned long long)(prop.totalGlobalMem / (1024ull * 1024ull)));
 
-  /* The four attributes the shared allocator turns on, plus the two the driver
-     and the barrier turn on. */
+  /* The attributes the shared allocator, the driver and the barrier turn on. */
   int pg   = iattr(cudaDevAttrPageableMemoryAccess);
   int ht   = iattr(cudaDevAttrPageableMemoryAccessUsesHostPageTables);
   int cma  = iattr(cudaDevAttrConcurrentManagedAccess);
