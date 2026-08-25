@@ -179,6 +179,13 @@ replicate. The two are separate units — the header decides over the records on
 invocation holds, the driver over the pooled runs — so on one row they need not reach
 the same arm; only the stop names and counts `check_flag_mirror` pins have to agree.
 
+**What a schedule costs, and when pooling engages at all.** A row that fires in its last
+budgeted run is owed the whole window after it, so it costs `--budget-runs +
+--confirm-runs`: budget instance time for that, not for the budget alone. And a
+`--budget-runs` at or below the compiled `NUMBER_OF_RUN` finishes a null row inside one
+invocation, so the cross-invocation pooling above never engages — a schedule meant to
+exercise it has to budget above `NUMBER_OF_RUN`.
+
 ## 6. Every atom of the condition is a histogram column
 
 A coherence-final `[ell]=v` atom is an ordinary outcome column: iteration `n`'s slot

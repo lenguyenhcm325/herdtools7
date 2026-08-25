@@ -3,9 +3,10 @@
 
 One policy for every row -- het_verdict.h's, no harness carrying a prediction: pooled
 here, per-invocation in the harness (HET_ADAPTIVE=1); `check_flag_mirror' pins what must
-agree.  hetlitmus/docs/harness-reporting.md sec 5; knobs, hetlitmus/spotcheck/README.md.
-`--runner' is a template (`{test}', `{dir}') running ONE invocation of `./<test>' -- not
-litmus7's `./run.exe' -- and forwarding its stdout.
+agree.  hetlitmus/docs/harness-reporting.md sec 5; the four steps a results dir is
+built by, hetlitmus/docs/het-emission.md "From a corpus to a results dir".
+One invocation is `./<test>' run in its own harness dir under `--timeout'; the
+HetStats line it prints on stdout is the whole interface.
 Exit: 0 = completed; 2 = configuration/corpus error; 1 = a test errored or ended
 UNCONFIRMED-SIGHTING, which demands a human before anything is written up.
 """
@@ -14,9 +15,9 @@ import argparse
 import csv
 import os
 import re
-import shlex
 import subprocess
 import sys
+import time
 
 # A prime stride far above any plausible NUMBER_OF_RUN: the harness consumes
 # base + run, so bases never collide across invocations of one test.
@@ -78,27 +79,28 @@ def fnum(kv, key, dflt=0.0):
         return dflt
 
 
-# This file also travels without the repo (hetlitmus/spotcheck/pack-bundle.sh), so the
-# cross-check is conditional: header present means it must agree, out of reach means
-# the mirror stands.
+# The header the harness compiles its own stopping rule from.  The mirror below is
+# the only thing pinning this driver's copy of that rule to it, so a header out of
+# reach is fatal rather than tolerated.
 _VERDICT_H = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
                           "litmus", "het-runtime", "het_verdict.h")
 
 
 def check_flag_mirror(path=_VERDICT_H, corrob=CORROB_RUNS, stops=None):
-    """Every stop-name string as `path` defines it, or None when the header is out of
-    reach.  HET_CORROB_RUNS is checked against `corrob`, not returned."""
+    """Every stop-name string as `path` defines it.  HET_CORROB_RUNS is checked
+    against `corrob`, not returned."""
     stops = STOP_NAMES if stops is None else stops
-    # This driver's own consistency, checked with or without the header: a stop it can
-    # write but never treats as terminal loops forever.
+    # This driver's own consistency, checked before the header is opened: a stop it
+    # can write but never treats as terminal loops forever.
     if set(TERMINAL) != set(stops.values()) | {"ERROR"}:
         die("TERMINAL %s does not match the stop names %s plus ERROR"
             % (sorted(TERMINAL), sorted(stops.values())))
     try:
         with open(path) as fh:
             text = fh.read()
-    except (IOError, OSError):
-        return None
+    except (IOError, OSError) as e:
+        die("%s cannot be read (%s) -- the stopping rule this scheduler applies "
+            "cannot be checked against the one the harness compiled" % (path, e))
     mc = re.search(r"^#define[ \t]+HET_CORROB_RUNS[ \t]+(\d+)", text, re.M)
     if mc is None:
         die("%s no longer defines HET_CORROB_RUNS -- the corroboration bar this "
@@ -221,8 +223,6 @@ def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--corpus", required=True,
                     help="directory holding one emitted harness dir per test")
-    ap.add_argument("--runner", required=True,
-                    help="command template; {test} and {dir} are substituted")
     ap.add_argument("--budget-runs", type=int, default=100,
                     help="max runs per row")
     ap.add_argument("--rate", action="store_true",
@@ -232,12 +232,21 @@ def parse_args():
                     help="HET_CONFIRM_RUNS: runs a LONE clean sighting may hold a row "
                          "open for before it ends UNCONFIRMED-SIGHTING")
     ap.add_argument("--seed0", type=int, default=20260714)
-    ap.add_argument("--state", default="campaign-state.csv")
+    ap.add_argument("--state", required=True,
+                    help="the state CSV, rewritten after every test; it must not "
+                         "exist yet")
     ap.add_argument("--tests", default="",
-                    help="comma-separated subset (default: every harness dir in "
-                         "--corpus)")
+                    help="comma-separated subset, or a file with one name per line "
+                         "(default: every harness dir in --corpus)")
+    ap.add_argument("--timeout", type=int, default=900,
+                    help="seconds one invocation may take before its row ends ERROR")
+    ap.add_argument("--log-dir", default="",
+                    help="append each invocation's transcript to DIR/<test>.log")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
+    # Absolute, so an errored row's note names a path a reader can open from
+    # anywhere and the harness cwd does not depend on this process's.
+    a.corpus = os.path.abspath(a.corpus)
     # A budget of 0 or less is "no budget" to het_verdict.h's rule, which the harness
     # can afford (its run loop is bounded by the record array) and this loop cannot.
     if a.budget_runs < 1:
@@ -245,19 +254,36 @@ def parse_args():
             "reached" % a.budget_runs)
     # save_state rewrites --state whole after every test, so starting on a file that
     # holds rows overwrites measurements nothing here re-ran.  The bar is existence,
-    # NOT terminality: a half-written state is a reading too.
-    if os.path.exists(a.state):
+    # NOT terminality: a half-written state is a reading too.  A --dry-run writes
+    # nothing, so it is free to plan against a state that already exists.
+    if not a.dry_run and os.path.exists(a.state):
         die("--state %s already exists and a campaign is never resumed: running on "
             "would silently overwrite the rows it holds. Move it aside, or point "
             "--state at a fresh path." % a.state)
     return a
 
 
+def named_tests(spec):
+    """--tests, as a comma list or as a path to a file with one name per line: the
+    first field of a line, `#' and blanks ignored."""
+    if not spec:
+        return []
+    if not os.path.isfile(spec):
+        return [t for t in spec.split(",") if t]
+    out = []
+    with open(spec) as fh:
+        for line in fh:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                out.append(line.split()[0])
+    return out
+
+
 def select_work(a, tests):
     """Those named by --tests, else the whole corpus.  A named test with no harness dir
     is FAIL CLOSED, not a skip."""
     known = set(tests)
-    subset = [t for t in a.tests.split(",") if t] or list(tests)
+    subset = named_tests(a.tests) or list(tests)
     missing = [t for t in subset if t not in known]
     if missing:
         die("no harness dir under %s for: %s -- fail closed, nothing to schedule"
@@ -268,9 +294,8 @@ def select_work(a, tests):
 def plan_schedule(a, work):
     """`work` in run order, plus what the schedule costs.  One policy, so one order and
     one budget: a row stops early because its sighting corroborated."""
-    # The worst case carries the window: a sighting in the last budgeted run is
-    # entitled to confirm_runs after it, so a row can cost budget + confirm_runs.
-    # --rate turns the sighting stop off and caps at the budget.
+    # A worst case, not a schedule: budget and window can stack on one row.
+    # hetlitmus/docs/harness-reporting.md sec 5.
     per_row = a.budget_runs + (0 if a.rate else a.confirm_runs)
     print("campaign: %d test(s), one stop rule each: corroborated sighting, lone "
           "sighting %d run(s) after it fires, or %d run(s) spent.  Worst case %d runs."
@@ -281,10 +306,37 @@ def plan_schedule(a, work):
     return work
 
 
+def _text(stream):
+    """A TimeoutExpired carries its partial streams as bytes even under text=True."""
+    if stream is None:
+        return ""
+    return stream if isinstance(stream, str) else stream.decode("utf-8", "replace")
+
+
+def log_invocation(log_dir, name, rc, env, secs, out, err):
+    """One invocation's transcript, which nothing else keeps: stdout then stderr,
+    each on the stream it arrived on, under a header naming the run."""
+    os.makedirs(log_dir, exist_ok=True)
+    with open(os.path.join(log_dir, name + ".log"), "a") as fh:
+        fh.write("### %s rc=%s seed=%s runs_max=%s secs=%.1f\n"
+                 % (name, rc, env.get("HET_SEED"), env.get("HET_RUNS_MAX"), secs))
+        fh.write(out)
+        if err:
+            fh.write("### stderr\n")
+            fh.write(err)
+
+
 def drive_test(a, st, budget):
-    """Invoke one test's runner until its stop rule fires, pooling each HetStats line.
+    """Invoke one test's harness until its stop rule fires, pooling each HetStats line.
     Every failure mode ends the test as ERROR rather than looping on it."""
+    d = os.path.join(a.corpus, st.name)
+    exe = os.path.join(d, st.name)
     while not st.decide(budget, a.rate, a.confirm_runs):
+        if not os.path.isfile(exe) or not os.access(exe, os.X_OK):
+            # The dir exists (corpus_tests listed it) and the binary does not: the
+            # build did not reach this row, which is not a reading of anything.
+            st.stop, st.note = "ERROR", "no executable harness at %s" % exe
+            return
         env = dict(os.environ)
         env["HET_SEED"] = str(a.seed0 + st.invocations * SEED_STRIDE)
         env["HET_ADAPTIVE"] = "1"
@@ -294,17 +346,28 @@ def drive_test(a, st, budget):
             1, st.target_runs(budget, a.rate, a.confirm_runs) - st.runs))
         env["HET_RATE"] = "1" if a.rate else "0"
         env["HET_CONFIRM_RUNS"] = str(a.confirm_runs)
-        cmd = a.runner.replace("{test}", st.name).replace(
-            "{dir}", os.path.join(a.corpus, st.name))
-        r = subprocess.run(cmd if os.name == "nt" else shlex.split(cmd),
-                           env=env, capture_output=True, text=True)
-        if r.returncode != 0:
-            st.stop, st.note = "ERROR", ("runner rc=%d: %s" % (
-                r.returncode, r.stderr.strip()[-200:]))
+        t0 = time.time()
+        timed_out = False
+        try:
+            r = subprocess.run([exe], cwd=d, env=env, capture_output=True,
+                               text=True, timeout=a.timeout)
+            rc, out, err = r.returncode, r.stdout, r.stderr
+        except subprocess.TimeoutExpired as e:
+            timed_out, rc = True, "TIMEOUT"
+            out, err = _text(e.stdout), _text(e.stderr)
+        secs = time.time() - t0
+        if a.log_dir:
+            log_invocation(a.log_dir, st.name, rc, env, secs, out, err)
+        if timed_out:
+            st.stop, st.note = "ERROR", "timeout after %d s" % a.timeout
             return
-        got = parse_hetstats(r.stdout)
+        if rc != 0:
+            st.stop, st.note = "ERROR", ("harness rc=%d: %s" % (
+                rc, err.strip()[-200:]))
+            return
+        got = parse_hetstats(out)
         if got is None:
-            st.stop, st.note = "ERROR", "no HetStats machine line in runner output"
+            st.stop, st.note = "ERROR", "no HetStats machine line in harness output"
             return
         _, kv = got
         before = st.runs
@@ -341,7 +404,7 @@ def run_campaign(a, work):
     return states, errors, unconfirmed
 
 
-def report_campaign(states, errors, unconfirmed):
+def report_campaign(states, errors, unconfirmed, secs):
     corrob = [s for s in states if s.stop == "CORROBORATED"]
     print("\ncampaign: %d row(s) ended CORROBORATED -- the weak outcome was observed "
           "and reproduced.  What that is worth against any model is settled offline, "
@@ -395,6 +458,9 @@ def report_campaign(states, errors, unconfirmed):
                   "the CPU-only shapes that stay silent do that."
                   % ", ".join(s.name for s in fired))
 
+    print("\ncampaign: total wall clock %.1f s over %d row(s)."
+          % (secs, len(states)))
+
 
 def main():
     a = parse_args()
@@ -403,8 +469,9 @@ def main():
         for t in work:
             print("  plan %s" % t)
         return 0
+    t0 = time.time()
     states, errors, unconfirmed = run_campaign(a, work)
-    report_campaign(states, errors, unconfirmed)
+    report_campaign(states, errors, unconfirmed, time.time() - t0)
     return 1 if (errors or unconfirmed) else 0
 
 

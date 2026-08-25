@@ -177,7 +177,12 @@ The `Makefile` mirrors this with the render's own object target (`all: <target>`
 plus `<target>-bin`, which links. Name the GPU arch explicitly
 (`CUDA_ARCH=sm_90 make cuda-bin`): `-arch=native` only exists from CUDA 11.5
 update 1 onwards, and a build for the wrong arch links and exits 0 just as
-happily.
+happily. `CUDA_ARCH` is `sm_75` on a T4G, `sm_90` on a GH200 and `sm_121` on a
+GB10; `hetlitmus/probe-cuda.sh` reads the box's own value into `probe.txt` as
+`suggested_cuda_arch`, and `hetlitmus/build.sh` takes it from there. The probe
+itself is compiled to `compute_75` PTX and JITs at load, so the one command runs
+before any arch is known — and not to `compute_60`, which CUDA 13 drops with the
+rest of pre-Turing.
 
 ### The emitted `README.md`, and what it points here for
 
@@ -197,7 +202,7 @@ as a results tree, and those pointers are that tree's only trail back to the
 emitter: provenance for a reader who has the repo, inert for one who does not.
 
 **Why there is one binary path per vendor.** Both link paths write `./<t>`, so
-`hetlitmus/campaign.py` runs `./<test>` through its runner, reads its `HetStats`
+`hetlitmus/campaign.py` runs `./<test>` directly, reads its `HetStats`
 line and stays vendor-agnostic. The GPU compiler driver pulls
 in its own device runtime; `-lpthread -lm` cover the CPU threads and the emitted
 render's own `sqrt` (it includes `<cmath>`; `het_verdict.h` calls no math function).
@@ -226,7 +231,10 @@ its own, which refuses by name and points at `<target>-bin`. That rule is
 the directory.
 
 **Compile-time knobs** go through the compiler variable, e.g.
-`make cuda-bin NVCC="nvcc -DHET_MEM_STRESS_PCT=0"`. `HET_PLACE` is the exception:
+`make cuda-bin NVCC="nvcc -DHET_MEM_STRESS_PCT=0"`. `SIZE_OF_TEST` and
+`NUMBER_OF_RUN` are the two that cannot: they are emitted as unguarded
+`#define`s, so `-D` cannot lower them, and `HET_RUNS_MAX` (clamped to
+`NUMBER_OF_RUN`) is the only lever on the run count. `HET_PLACE` is the exception:
 page placement exists only on a render whose runtime has a placement API, and a
 non-zero value is an `#error` on a render that has none
 (`litmus/het-runtime/het_alloc_hip.inc`) rather than a value reported in the
@@ -255,8 +263,7 @@ dialect) PAIR**. That pair, and no machine, is what a render names.
   `(ISA, dialect)` label the verdict and statistics layers print where they must
   identify the target: a harness built for the wrong pair compiles, runs and
   reports identically, and this define is the only thing that says which pair it
-  was measuring. `hetlitmus/hetlitmus-run.sh` spells the same label and refuses
-  a render that stamps another. `pair_label` in `litmus/hetEmit.ml` is the one
+  was measuring. `pair_label` in `litmus/hetEmit.ml` is the one
   derivation of that label for both dialects — the `pair:` line litmus7 prints,
   the `HET_PAIR_NAME` stamp and the README's `Pair:` line all take it — so the
   two stamped frames cannot print different labels.
@@ -433,3 +440,45 @@ invocation are the target box's step.
 * COMPILE-ONLY: no GPU is launched. Stress/observability tuning (making the CPU
   and GPU ops actually race) and on-hardware runs are hardware-only work
   (`00-environment-design.md` §6).
+
+## From a corpus to a results dir
+
+A corpus becomes a results dir in four steps, run in a checkout on the machine
+under test. `RESULTS` is the results dir (env; default
+`hetlitmus/run-out/<date>-<host>`, the one ignored root), and every step writes
+into it.
+
+| step | command | writes |
+| --- | --- | --- |
+| probe | `RESULTS=… sh hetlitmus/probe-cuda.sh` (or `probe-hip.sh`) | `$RESULTS/probe.txt` |
+| emit | `hetlitmus/emit-het.sh --gpu-target cuda\|hip CORPUS [--tests LIST\|FILE] [-o EMIT]` | `EMIT/<t>/…` (default `$RESULTS/emit`), `$RESULTS/emit.log` |
+| build | `hetlitmus/build.sh EMIT [--tests LIST\|FILE] [--arch A] [-j N]` | `EMIT/<t>/<t>`, `$RESULTS/build.txt`, `$RESULTS/build/<t>.log` |
+| execute | `python3 hetlitmus/campaign.py --corpus EMIT --budget-runs N --state $RESULTS/campaign-<tag>.csv [--log-dir $RESULTS/runlogs-<tag>] [--tests LIST\|FILE] [--timeout S]` | the state CSV, the transcripts, the final report |
+
+`--tests` everywhere takes a comma list or a path to a file with one name per
+line (`#` and blanks ignored, the first field of a line is the name); with no
+`--tests`, build and campaign take the whole corpus. The arch is `probe.txt`'s
+`suggested_cuda_arch` / `suggested_hip_arch` unless `--arch` names one, and
+nothing else detects it.
+
+**What the probe decides.** These are the conditions under which a
+`cuda::thread_scope_system` atomic is atomic at all [CudaGuide "Atomicity"], and
+every tested access and the rendezvous counter is such an atomic, so a mode whose
+condition fails is not a weaker experiment but an undefined one.
+
+* `cooperativeLaunch=0` — the harness returns 2 and nothing runs.
+* `usesHostPageTables` — which coherence mechanism is behind a shared page: 1 is
+  hardware, 0 is software, and the two are different experiments
+  [CudaGuide "Unified Memory Paradigms"].
+* `concurrentManagedAccess=0` — `HET_ALLOC=managed` is fatal, not degraded
+  [CudaGuide "Coherency and Concurrency"].
+* `hostNativeAtomicSupported=0` — `pinned`'s rendezvous counter loses
+  increments; each iteration that loses one costs its whole cap and is discarded.
+* `sysatomic_*` — a **short** total is decisive that the mode's read-modify-write
+  is not atomic against the CPU; a matching one is weak evidence the other way.
+
+The run-time knobs a campaign retunes per invocation are listed at
+`litmus/het-runtime/het_verdict.h`'s knob block; `HET_ALLOC` is the allocator's
+(`litmus/het-runtime/het_alloc_cuda.inc`) and `HET_CAP_CPU`/`HET_CAP_GPU` are the
+rendezvous's (`litmus/het-runtime/het_rdv.h`). Everything else is compile-time
+and goes through the compiler variable, the `-D` route above.

@@ -2,9 +2,9 @@
 # The AMD probe, sibling of probe-cuda.sh: it records what the vendor tools
 # report and stamps probe_status, and it runs NO device-attribute kernel -- a
 # HIP twin of probe.cu asks a different runtime different questions and there is
-# no AMD device here to write it against (README.md beside this script).
+# no AMD device here to write it against.
 #
-#   sh probe-hip.sh                 # results-devtier-<date>-<host>/probe.txt
+#   sh probe-hip.sh                 # run-out/<date>-<host>/probe.txt
 #   RESULTS=... sh probe-hip.sh     # somewhere else
 #
 # The host-half keys are spelled as probe-cuda.sh spells them, so the two
@@ -12,7 +12,7 @@
 set -eu
 
 HIPCC="${HIPCC:-hipcc}"
-RESULTS="${RESULTS:-$(cd "$(dirname "$0")" && pwd)/results-devtier-$(date +%Y%m%d)-$( (hostname -s 2>/dev/null || hostname 2>/dev/null || echo host) | tr -c 'A-Za-z0-9_.-' '_' )}"
+RESULTS="${RESULTS:-$(cd "$(dirname "$0")" && pwd)/run-out/$(date +%Y%m%d)-$( (hostname -s 2>/dev/null || hostname 2>/dev/null || echo host) | tr -c 'A-Za-z0-9_.-' '_' )}"
 
 mkdir -p "$RESULTS"
 OUT="$RESULTS/probe.txt"

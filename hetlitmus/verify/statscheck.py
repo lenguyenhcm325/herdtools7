@@ -7,7 +7,7 @@ Compiles the REAL emitted header and drives it with synthetic record streams:
                 tier and flag reachable; the fields campaign.py reads are fields
                 the machine line prints.
   5  Stop rule  every reason reachable, each guard driven at its boundary.
-  6  Scheduler  campaign.py end to end, against a stub runner.
+  6  Scheduler  campaign.py end to end, against a stub harness.
 A miss means the layer answers the same thing whatever it is handed.
 What a null is worth: hetlitmus/docs/harness-reporting.md sec 4-5.  Usage: [-q]
 """
@@ -898,12 +898,14 @@ def phase5_stops(lines, quiet):
 
 
 # ---------------------------------------------------------------------------
-# PHASE 6 -- the scheduler, end to end, against a stub runner: the HetStats line
+# PHASE 6 -- the scheduler, end to end, against a stub harness: the HetStats line
 # is campaign.py's whole interface, and the stub emits deterministic lines.
 # ---------------------------------------------------------------------------
-STUB_RUNNER = r'''#!/usr/bin/env python3
+# The stand-in campaign.py runs as ./<test> from <corpus>/<test>, so it locates
+# its own dir from its path and takes no argument.
+STUB_HARNESS = r'''#!/usr/bin/env python3
 import os, sys
-d = sys.argv[1]
+d = os.path.dirname(os.path.abspath(__file__))
 test = os.path.basename(d)
 cf = os.path.join(d, "inv.count")
 inv = (int(open(cf).read()) + 1) if os.path.exists(cf) else 1
@@ -951,6 +953,14 @@ else:
     sys.exit(3)
 '''
 
+# A stand-in that outlives its timeout, having flushed a line first: the row
+# must end ERROR and the partial transcript must still be logged.
+STUB_SLEEPER = ("#!/usr/bin/env python3\n"
+                "import sys, time\n"
+                "sys.stdout.write('HetLitmus: shared-mem mode=stub\\n')\n"
+                "sys.stdout.flush()\n"
+                "time.sleep(30)\n")
+
 SEED_STRIDE = 100003     # must match campaign.py
 # The budget phase 6 drives the campaign with, the confirmation window it passes,
 # and the R every stub line reports: the HET_RUNS_MAX assertion is derived from them.
@@ -958,20 +968,32 @@ STUB_BUDGET, CONFIRM, STUB_R = 100, 30, 10
 STUB_TESTS = ["NULL-pooled", "SIGHT-corrob", "SIGHT-degen", "SIGHT-lone"]
 
 
-def _mk_corpus(tmp, name, tests):
+def _mk_corpus(tmp, name, tests, body=STUB_HARNESS):
+    """One harness dir per test, each holding the stand-in at <t>/<t>: that path
+    is what campaign.py runs.  `body=None' leaves the dir with no binary at all."""
     corpus = os.path.join(tmp, name)
     for t in tests:
-        os.makedirs(os.path.join(corpus, t))
+        d = os.path.join(corpus, t)
+        os.makedirs(d)
+        if body is not None:
+            with open(os.path.join(d, t), "w") as fh:
+                fh.write(body)
+            os.chmod(os.path.join(d, t), 0o755)
     return corpus
 
 
-def _run_campaign(stub, corpus, state, extra):
+def _run_campaign(corpus, state, extra):
     return subprocess.run(
         [sys.executable, CAMPAIGN, "--corpus", corpus,
-         "--runner", "%s %s {dir}" % (sys.executable, stub),
          "--budget-runs", str(STUB_BUDGET), "--confirm-runs", str(CONFIRM),
          "--seed0", "777", "--state", state] + extra,
         capture_output=True, text=True)
+
+
+def _state_notes(path):
+    """test -> the note column, which is where an errored row's reason lands."""
+    with open(path) as fh:
+        return {r["test"]: (r.get("note") or "") for r in csv.DictReader(fh)}
 
 
 def _done_rows(out):
@@ -1053,26 +1075,26 @@ def phase6_campaign(quiet):
             lambda s: s.replace("if (n - st.n_at_first_sight >= confirm_runs)",
                                 "if (n >= confirm_runs)", 1),
             "n_at_first_sight", quiet)
-        # A header out of reach is the travelling-copy case: the mirror stands rather
-        # than dying, or campaign.py could not run on the box it was copied to.
+        # A header out of reach is FATAL: the mirror is the only thing holding
+        # this driver's copy of the stopping rule to the one the harness compiled.
         r1 = subprocess.run(
             [sys.executable, "-c", loader +
-             "assert campaign.check_flag_mirror(path='/nonexistent/het_verdict.h') "
-             "is None; print('ok')"], capture_output=True, text=True)
-        if r1.returncode != 0 or r1.stdout.strip() != "ok":
-            print("  *** the mirror does not tolerate an out-of-reach header, so "
-                  "campaign.py cannot run from the standalone bundle (rc=%d err=%r)"
+             "campaign.check_flag_mirror(path='/nonexistent/het_verdict.h')"],
+            capture_output=True, text=True)
+        if r1.returncode != 2 or "cannot be read" not in r1.stderr:
+            print("  *** an unreadable header did not FATAL (rc=%d err=%r) -- a "
+                  "scheduler applying an unverifiable copy of the harness's policy "
+                  "is the drift the mirror exists to stop"
                   % (r1.returncode, r1.stderr.strip()[-300:]))
             bad += 1
-
-        stub = os.path.join(tmp, "stub.py")
-        with open(stub, "w") as fh:
-            fh.write(STUB_RUNNER)
+        elif not quiet:
+            print("      mirror rejects %-26s naming %s"
+                  % ("an unreadable header", "cannot be read"))
 
         # --- 6.1: the policy, end to end.
         corpus = _mk_corpus(tmp, "corpus", STUB_TESTS)
         state = os.path.join(tmp, "state.csv")
-        r = _run_campaign(stub, corpus, state, [])
+        r = _run_campaign(corpus, state, [])
         out = r.stdout
 
         # A crash exits 1 too, and this fixture set is expected to exit 1 (one row
@@ -1184,7 +1206,6 @@ def phase6_campaign(quiet):
         lone = _mk_corpus(tmp, "lone", ["SIGHT-lone"])
         r2 = subprocess.run(
             [sys.executable, CAMPAIGN, "--corpus", lone,
-             "--runner", "%s %s {dir}" % (sys.executable, stub),
              "--budget-runs", "20", "--confirm-runs", str(CONFIRM),
              "--seed0", "777", "--state", os.path.join(tmp, "lone.csv")],
             capture_output=True, text=True)
@@ -1215,7 +1236,6 @@ def phase6_campaign(quiet):
         late = _mk_corpus(tmp, "late", ["SIGHT-late"])
         r2b = subprocess.run(
             [sys.executable, CAMPAIGN, "--corpus", late,
-             "--runner", "%s %s {dir}" % (sys.executable, stub),
              "--budget-runs", str(STUB_BUDGET), "--confirm-runs", str(CONFIRM),
              "--seed0", "777", "--state", os.path.join(tmp, "late.csv")],
             capture_output=True, text=True)
@@ -1236,7 +1256,7 @@ def phase6_campaign(quiet):
         # --rate disables the sighting stop and NOTHING else: the row that
         # corroborated at invocation 2 now runs to budget, the null is unmoved.
         rate = _mk_corpus(tmp, "rate", ["SIGHT-corrob", "NULL-pooled"])
-        r3 = _run_campaign(stub, rate, os.path.join(tmp, "rate.csv"), ["--rate"])
+        r3 = _run_campaign(rate, os.path.join(tmp, "rate.csv"), ["--rate"])
         d3, _ = _done_rows(r3.stdout)
         for t, want3 in (("SIGHT-corrob", ("BUDGET", 10)),
                          ("NULL-pooled", ("BUDGET", 10))):
@@ -1256,14 +1276,56 @@ def phase6_campaign(quiet):
 
         # Fail closed: a named test with no harness dir kills the campaign (rc=2).
         r4 = subprocess.run(
-            [sys.executable, CAMPAIGN, "--corpus", corpus, "--runner", "true",
-             "--tests", "GHOST"], capture_output=True, text=True)
+            [sys.executable, CAMPAIGN, "--corpus", corpus, "--tests", "GHOST",
+             "--state", os.path.join(tmp, "ghost.csv")],
+            capture_output=True, text=True)
         if r4.returncode != 2:
             print("  *** a test with no harness dir exited %d, want 2 (fail closed: "
                   "there is nothing to run)" % r4.returncode)
             bad += 1
         elif not quiet:
             print("      a test with no harness dir fails the campaign closed (rc=2)")
+
+        # A harness dir the build never reached: the row ends ERROR naming the
+        # path it looked for, and the driver does NOT raise.
+        noexe = _mk_corpus(tmp, "noexe", ["UNBUILT"], body=None)
+        st5 = os.path.join(tmp, "noexe.csv")
+        r5 = _run_campaign(noexe, st5, [])
+        want_path = os.path.join(noexe, "UNBUILT", "UNBUILT")
+        note5 = _state_notes(st5).get("UNBUILT", "") if os.path.exists(st5) else ""
+        if "Traceback" in r5.stderr:
+            print("  *** a dir with no harness binary CRASHED the campaign:\n%s"
+                  % r5.stderr[-800:])
+            bad += 1
+        elif r5.returncode != 1 or want_path not in note5:
+            print("  *** a dir with no harness binary exited %d with note %r, want "
+                  "1 and a note naming %s -- a row nothing ran is an ERROR row, not "
+                  "a reading" % (r5.returncode, note5, want_path))
+            bad += 1
+        elif not quiet:
+            print("      a dir with no harness binary ends ERROR naming the path")
+
+        # A harness that outlives --timeout: the row ends ERROR saying so, and the
+        # partial transcript is still in the log dir.
+        slow = _mk_corpus(tmp, "slow", ["SLOW"], body=STUB_SLEEPER)
+        st6 = os.path.join(tmp, "slow.csv")
+        logs = os.path.join(tmp, "slow-logs")
+        r6 = _run_campaign(slow, st6, ["--timeout", "1", "--log-dir", logs])
+        note6 = _state_notes(st6).get("SLOW", "") if os.path.exists(st6) else ""
+        tr = os.path.join(logs, "SLOW.log")
+        got_tr = open(tr).read() if os.path.exists(tr) else ""
+        if r6.returncode != 1 or "timeout after 1 s" not in note6:
+            print("  *** the harness that outlived --timeout 1 exited %d with note "
+                  "%r, want 1 and 'timeout after 1 s'" % (r6.returncode, note6))
+            bad += 1
+        elif "mode=stub" not in got_tr:
+            print("  *** the timed-out invocation left no partial transcript in %s: "
+                  "%r -- what the harness DID print before the kill is the only "
+                  "evidence of how far it got" % (tr, got_tr[-200:]))
+            bad += 1
+        elif not quiet:
+            print("      a harness outliving --timeout ends ERROR, partial "
+                  "transcript kept")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -1272,8 +1334,9 @@ def phase6_campaign(quiet):
         return 1
     print("\nSCHEDULER OK -- campaign.py applies het_verdict.h's rule at the pooled "
           "scale, the confirmation window outranks the budget, --rate disables the "
-          "sighting stop alone, and the mirror rejects a moved bar, a renamed stop or "
-          "a moved window origin.")
+          "sighting stop alone, a row nothing ran ends ERROR, and the mirror rejects "
+          "a moved bar, a renamed stop, a moved window origin or an unreadable "
+          "header.")
     return 0
 
 

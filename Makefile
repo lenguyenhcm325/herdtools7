@@ -786,12 +786,12 @@ hetlitmus-characterize-hw: | build
 	python3 hetlitmus/verify/runcheck.py --characterize-hw
 	@ echo "HetLitmus harness-printout runtime gate: OK"
 
-### The device-session wrapper (hetlitmus/hetlitmus-run.sh) end to end with its
-### documented stand-ins for the compiler and the probe.
-hetlitmus-run-gate: | build
+### probe-hip.sh's four exit paths under stand-in vendor tools: no hipcc, no gfx
+### agent, one agent, two agents.  Needs no AMD device.
+hetlitmus-probe-hip: | build
 	@ echo
 	python3 hetlitmus/verify/runcheck.py
-	@ echo "HetLitmus device-session wrapper gate: OK"
+	@ echo "HetLitmus AMD probe gate: OK"
 
 ### Umbrellas (what you press).  `::' accumulation, order-only `| build'.
 hetlitmus-test:: | build
@@ -804,7 +804,7 @@ hetlitmus-test:: hetlitmus-recfields
 hetlitmus-test:: hetlitmus-rdv
 hetlitmus-test:: hetlitmus-stats
 hetlitmus-test:: hetlitmus-cpuonly
-hetlitmus-test:: hetlitmus-run-gate
+hetlitmus-test:: hetlitmus-probe-hip
 
 ### The second umbrella takes a target when it needs a toolchain or a device this
 ### box may not have, and NOT when it merely concerns GPU code.
@@ -856,7 +856,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-dup hetlitmus-verdict
 .PHONY: hetlitmus-recfields hetlitmus-rdv
 .PHONY: hetlitmus-hipbuild hetlitmus-cpuonly
-.PHONY: hetlitmus-characterize-hw hetlitmus-run-gate
+.PHONY: hetlitmus-characterize-hw hetlitmus-probe-hip
 .PHONY: hetlitmus-hipsrc
 .PHONY: hetlitmus-test hetlitmus-test-toolchain
 .PHONY: hetlitmus-test-all hetlitmus-promote

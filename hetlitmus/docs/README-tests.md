@@ -2,7 +2,8 @@
 
 The roster is the Makefile: `grep -E '^hetlitmus-[a-z0-9-]+:' Makefile`. Each gate's
 contract lives in the script its target runs; a bullet says what a target proves and
-needs. Nothing here runs the device session (`hetlitmus/hetlitmus-run.sh`, by hand).
+needs. No target runs a campaign on a device: the four steps that turn a corpus into a
+results dir are run by hand (`het-emission.md`, "From a corpus to a results dir").
 
 ## Base lane — `make hetlitmus-test` (OCaml build, gcc, python3; no GPU compiler, no device)
   + `make hetlitmus-cram`, `dune runtest hetlitmus/tests/cram`: the corpus rule functions and
@@ -21,11 +22,11 @@ needs. Nothing here runs the device session (`hetlitmus/hetlitmus-run.sh`, by ha
   + `make hetlitmus-rdv`, `verify/rdvcheck.py`: every iteration begins at the rendezvous, ahead
     of the tested accesses, and the primitive orders nothing; both het renderings are swept.
   + `make hetlitmus-stats`, `verify/statscheck.py`: `het_stats_compute()` from the real header,
-    the stop rule, and `campaign.py` end to end against a stub runner.
+    the stop rule, and `campaign.py` end to end against a stub harness.
   + `make hetlitmus-cpuonly`, `tests/het/generate-cpuonly.sh`: the all-CPU shapes are generated,
     emitted and read for the `_rec.cpu_only = 1` stamp against a negative control; nothing runs.
-  + `make hetlitmus-run-gate`, `verify/runcheck.py`: the device-session wrapper end to end against
-    a stand-in compiler and probe (dry-run, chain, refusals, fail-closed handlers, second session).
+  + `make hetlitmus-probe-hip`, `verify/runcheck.py`: `probe-hip.sh`'s four exit paths under
+    stand-in vendor tools — no hipcc, no gfx agent, one agent, two agents — each by its `probe_status`.
 
 ## Toolchain lane — `make hetlitmus-test-toolchain` (nvcc, hipcc, clang; two members need a device)
   + `make hetlitmus-faithful`, `verify/tokens.sh all`: `covercheck.py` proves the committed
@@ -42,8 +43,9 @@ needs. Nothing here runs the device session (`hetlitmus/hetlitmus-run.sh`, by ha
   + `make hetlitmus-hipbuild`, `verify/hipbuildcheck.py`: an AMD harness links into a gfx942 ELF,
     its allocator and placement refusals execute under a stub, and the CUDA lane does not regress.
   + `make hetlitmus-characterize-hw`, `verify/runcheck.py --characterize-hw`: this host's
-    relaxed-MP row is built, run on the GPU (`HET_ALLOC=pinned` unless set) and read off its
-    printout; a sighting, a null and a discarded run are each an arm. Needs a CUDA device.
+    relaxed-MP row is built through `hetlitmus/build.sh`, run on the GPU (`HET_ALLOC=pinned` unless
+    set) and read off its printout; a sighting, a null and a discarded run are each an arm. Needs a
+    CUDA device.
 
 ## Umbrellas, promote, CI
   + `make hetlitmus-test`, the base lane; `make hetlitmus-test-toolchain`, the toolchain lane (a
@@ -68,20 +70,20 @@ Notice:
      regenerate and `git commit`. `hetlitmus-promote` presses both.
   5. `corpus-gate.sh` compares out of tree (a temp dir), so the working tree is untouched pass or
      fail and drift is told apart from a generator that wrote nothing; it byte-pins `@all` too.
-  6. No gate runs the device-session wrapper on a device: a gate over it could read only the
-     session's bookkeeping, never the outcome.
-  7. `hetlitmus/tests/cram/dune` is the authority for the stanzas and carries the `litmus/libdir`
+  6. `hetlitmus/tests/cram/dune` is the authority for the stanzas and carries the `litmus/libdir`
      trap: a cram run re-runs only when a declared dep changes (`--force` re-runs only the diff),
      and `gpu-target.t` reads `litmus/libdir`, which no dep can name, hence its `(universe)` dep.
      `DUNE_CACHE=disabled` keeps a fresh build tree from replaying a run from the shared cache.
-  8. Anti-vacuity: every sweep asserts a pinned census (`verify/census.py`, mirrored in
+  7. Anti-vacuity: every sweep asserts a pinned census (`verify/census.py`, mirrored in
      `verify/census.sh`, the two compared by `corpus-gate.sh`) and fails closed on an empty input;
      `hipbuildcheck.py` refuses a phase that made no assertions; `smoke.sh` pins `NREPS`.
-  9. A verify script that is not in the build is a script, not a gate: its target and its umbrella
+  8. A verify script that is not in the build is a script, not a gate: its target and its umbrella
      hookup land in the same change.
-  10. `verify/emit-all.sh` is invoked by no target or CI step: it is the refactor instrument (emit
-      both corpora over every lane, `diff -r` two snapshots). `hetlitmus/compile-hip.sh` is likewise
-      invoked by no target (`hip-emitter.md`, "Compile status").
-  11. No target compiles a HIP render whose x86_64 CPU column carries `mfence`: `hetlitmus-hipbuild`'s
+  9. `verify/emit-all.sh` is invoked by no target or CI step: it is the refactor instrument (emit
+     both corpora over every lane, `diff -r` two snapshots). `hetlitmus/compile-hip.sh` and
+     `hetlitmus/emit-het.sh` are likewise invoked by no target (`hip-emitter.md`, "Compile status";
+     `het-emission.md`, "From a corpus to a results dir"). `hetlitmus/build.sh` is reached by one:
+     `hetlitmus-characterize-hw` builds its harness through it.
+  10. No target compiles a HIP render whose x86_64 CPU column carries `mfence`: `hetlitmus-hipbuild`'s
       render and `hetlitmus-smoke`'s HIP reps have plain `movl` columns, and `hipsrccheck.py` reads
       `mfence` at source level only.

@@ -361,8 +361,8 @@ Everything below is unmeasurable off the target part (wrong substrate, §3.2). *
    pass `HET_RDV_MAX_DISCARD_PCT` the run is disqualified whatever the rest does, and it still pays a cap
    for every remaining iteration. So a run against a partner that never arrives costs about `N × cap`
    polls rather than the seconds a met rendezvous costs, which is why the device-side driver is bounded
-   against it instead: `hetlitmus/hetlitmus-run.sh` runs every harness under `timeout` (`HET_RUN_TIMEOUT`,
-   900 s by default; `campaign.py` has no timeout of its own). **Open design
+   against it instead: `hetlitmus/campaign.py` runs every harness under its `--timeout` (900 s by
+   default) and ends the row `ERROR` rather than waiting on it. **Open design
    question, deliberately not implemented:** an early bail once the discard count has already passed the
    budget would fix the cost everywhere instead of per driver — at the price of a run whose `N` no longer
    means what a scored run's does. Decide it on the target, with item 3's numbers in hand.

@@ -108,5 +108,5 @@ echo "generate-cpuonly: the negative control $NEG stamps _rec.cpu_only = 0"
 
 echo
 echo "CPU-only harnesses in $OUT, rendered for $TARGET.  On the target box:"
-echo "    cd <test> && sh comp.sh $TARGET-link && ./<test>    # SB and R must FIRE"
-echo "    python3 hetlitmus/campaign.py --corpus $OUT --runner 'sh hetlitmus/spotcheck/run-one.sh {dir} {test}'"
+echo "    hetlitmus/build.sh $OUT --arch <arch>"
+echo "    python3 hetlitmus/campaign.py --corpus $OUT --state campaign-cpuonly.csv"

@@ -2,9 +2,10 @@
  * probe.txt.  Run it FIRST on a rented instance -- cooperative launch, which
  * shared-memory modes are legal, and the coherence mechanism behind them are
  * runtime properties of the box that the harness demands and the code cannot
- * settle.  Which key decides what: README.md beside this file.  Compile to PTX
- * only (probe-cuda.sh): this file must load without knowing the arch first.  It
- * makes no memory-model claim and its output is never a litmus result. */
+ * settle.  Which key decides what: hetlitmus/docs/het-emission.md, "From a
+ * corpus to a results dir".  Compile to PTX only (probe-cuda.sh): this file
+ * must load without knowing the arch first.  It makes no memory-model claim and
+ * its output is never a litmus result. */
 #include <cstdio>
 #include <cstdlib>
 #include <cstdint>

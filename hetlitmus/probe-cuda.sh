@@ -2,17 +2,18 @@
 # The CUDA probe driver: run probe.cu, add the host facts CUDA cannot see, and
 # write <results>/probe.txt as key=value lines.  None of it is a litmus result.
 #
-#   sh probe-cuda.sh                 # results-devtier-<date>-<host>/probe.txt
+#   sh probe-cuda.sh                 # run-out/<date>-<host>/probe.txt
 #   RESULTS=... sh probe-cuda.sh     # somewhere else
 #
 # Builds compute_75 PTX and JITs at load, so one command works before the arch
-# is known; NEVER `-arch=native' (why, and not compute_60: spotcheck/README.md).
+# is known; NEVER `-arch=native' (hetlitmus/docs/het-emission.md, the CUDA_ARCH
+# paragraph).
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 NVCC="${NVCC:-nvcc}"
 PROBE_GENCODE="${PROBE_GENCODE:--gencode arch=compute_75,code=compute_75}"
-RESULTS="${RESULTS:-$HERE/results-devtier-$(date +%Y%m%d)-$( (hostname -s 2>/dev/null || hostname 2>/dev/null || echo host) | tr -c 'A-Za-z0-9_.-' '_' )}"
+RESULTS="${RESULTS:-$HERE/run-out/$(date +%Y%m%d)-$( (hostname -s 2>/dev/null || hostname 2>/dev/null || echo host) | tr -c 'A-Za-z0-9_.-' '_' )}"
 
 mkdir -p "$RESULTS"
 OUT="$RESULTS/probe.txt"
