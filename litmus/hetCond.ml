@@ -14,12 +14,10 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the condition's location set.  See hetCond.mli for the
-   contract. *)
+(* HetLitmus: the condition's location set; contract in hetCond.mli. *)
 
-(* Collect the Location_global payloads referenced by the condition's atoms.
-   fold_prop uses List.fold_right over And/Or children, so prepending yields
-   source order; de-dup afterwards keeps the first occurrence of each name. *)
+(* fold_prop folds right over And/Or children, so prepending yields source
+   order; the de-dup afterwards keeps each name's first occurrence. *)
 let condition_locations p =
   let add atom acc =
     match atom with

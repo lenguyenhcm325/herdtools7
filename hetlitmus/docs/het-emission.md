@@ -244,7 +244,9 @@ dialect) PAIR**. That pair, and no machine, is what a render names.
   can turn a printed sentence into a claim about a part. `HET_PLACE_LEVER` is
   the one word that does vary, and it is a **dialect** fact rather than a
   machine one (`cudaMemAdvise` on the CUDA render; the HIP render has no
-  placement code and `#error`s on a non-zero `HET_PLACE`).
+  placement code and `#error`s on a non-zero `HET_PLACE`); a dialect that
+  supplies no lever gets no `#define` at all, and `het_verdict.h`'s own
+  `"the page-placement lever"` default names the mechanism instead.
 * **`Target:` names the vendor and the dialect.** The emitted `README.md` ends
   with `Target: NVIDIA CUDA.` (or `Target: AMD HIP.`) — what the render *is*,
   which the render itself decides.
@@ -399,9 +401,13 @@ invocation are the target box's step.
   committed corpus (`<corpus name>-x86_64`).
 * A het emission that **cannot** be completed is fail-closed: litmus7 prints
   `HetLitmus REFUSED (het|gpu-only|isa-scan) <test>: <why>` on stderr and exits
-  **3** (`HetArch.refused`).  litmus7's own batch driver would have reported the
-  refusal and still exited 0, which made a missing harness look like success to
-  any caller that redirects stdout.
+  **3** (`HetArch.refused`) — distinct from litmus7's own exit **2** (usage and
+  lex-rename errors, `litmus/litmus.ml`), so a wrapper can tell the two apart.
+  Every het emission boundary routes through `HetArch.refused`: `HetEmit.run`,
+  `HetGpuOnly.compile`, and the `` `Het `` dispatch arm, which owns the
+  pre-parse ISA scan. litmus7's own batch driver (`Answer.Interrupted`,
+  `litmus/dumpRun.ml`) would have reported the refusal and still exited 0, which
+  made a missing harness look like success to any caller that redirects stdout.
 * The CPU projection supports plain straight-line procs (the het corpus). The
   instruction vocabulary is litmus7's own — whatever `AArch64Compile_litmus`
   / `X86_64Compile_litmus` accept and `ASMLang.dump_fun` prints — so there is no

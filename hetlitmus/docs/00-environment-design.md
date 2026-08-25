@@ -105,7 +105,7 @@ not synchronisation as such — the harness opens *every* iteration at a cross-d
   layout (§3.4) is this harness's answer, and it is what makes a per-iteration outcome readable.
 
 The rendezvous sits **around** the tested group and never between two of its accesses — the same
-invariant (ii) the stress layer holds (`litmus/het-runtime/README.md`) — so it decides *when* the two
+invariant (ii) the stress layer holds (§3.6) — so it decides *when* the two
 sides start an iteration and adds no ordering to what they then execute.
 No prior work routes GPU/het through litmus7's CPU harness (Bagchi *stitches*).
 
@@ -196,7 +196,9 @@ the committed config; don't inherit it). The scratchpad lives in **`cudaMalloc` 
 from the `malloc` shared het vars of §3.2). cuda-litmus ships only *one* committed tuned config (Hopper
 device-scope) → it is a starting seed, not a preset library; re-tune on the target (§6). **Assumption-transfer caveat:**
 GPU scratchpad stress loads the *on-die* coherence protocol, **not** the C2C path the het weak behaviour
-needs — so it must be paired with §3.6.
+needs — so it must be paired with §3.6. The whole layer rests on the **window-widening
+hypothesis**: a memory system under heavy stress is likelier to transfer data out of order
+[Alglave15 §4.3.1].
 
 ### 3.6 CPU-side + interconnect stress
 - **CPU stress = litmus7 recipes** ported into the emitted CPU thread at two sites (preload before the
@@ -220,8 +222,12 @@ needs — so it must be paired with §3.6.
   the whole loop, so there are fewer rendezvous per second, and `sightings = yield × rate`. What the
   interconnect lever supports is that it is **additive** with per-device stress and is the lever most
   **specific** to the cross-device window — never that it beats per-device stress. Do not upgrade that
-  without hardware evidence. The same bound is restated at the head of `het_cpu_stress.h`, which is the
-  copy that travels to a GPU box.
+  without hardware evidence.
+- **Two litmus7 incantations are not ported.** *Launch randomisation* has no analogue here: the GPU
+  kernel and the CPU threads are launched once and loop inside (§3.3), so there is no per-iteration launch to
+  randomise, and the phase sweep is bought by the release jitter instead. A *shared-timebase release* —
+  both sides released at one absolute time — needs a clock both can read, and no register is known to
+  give the two sides a common epoch (Grace `cntvct_el0`, Hopper `%globaltimer`).
 
 ### 3.7 What a non-observation reports — no rate, no probability
 **A null carries no rate and no probability.** The harness reports that the outcome was **not observed**

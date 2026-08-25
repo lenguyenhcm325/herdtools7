@@ -24,8 +24,8 @@ type info = string * string
 
 type result =
   {
-    (* HetLitmus: a heterogeneous test also has exactly one arch, the compound
-       [`Het] (lib/Archs.ml); Archs.parse reads it below, no grammar change. *)
+    (* HetLitmus: a het test also has exactly one arch, [`Het] (lib/Archs.ml);
+       Archs.parse reads it below, no grammar change. *)
     arch : Archs.t ;
     name : Name.t ;
     info : info list ;

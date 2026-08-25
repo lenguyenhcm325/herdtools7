@@ -1,35 +1,24 @@
 #!/usr/bin/env bash
-# =========================================================================
-# HetLitmus device session: ONE entry point, one chain, on a real machine.
-# preflight -> probe -> emit -> compile -> campaign -> collect.  Every step
-# fails CLOSED with a named reason, and every value the session turned on --
-# the resolved device arch, the (CPU ISA x GPU dialect) pair -- is written into
-# the results dir as a fact, because a run whose arch or target was decided
-# invisibly cannot be read afterwards.
-#
-# Composition only: probe-cuda.sh / probe-hip.sh probe, litmus7 emits, the
-# emitted comp.sh + Makefile build, campaign.py schedules, run-one.sh invokes.
-# What is new here is the ORDER, the refusals and the record.
-#
-# There is no smoke-ladder step between compile and campaign: spotcheck/
-# ladder.sh is that, driven separately, and this wrapper does not wrap it.
+# HetLitmus device session: ONE entry point, one chain, on a real machine --
+# preflight, probe, emit, compile, campaign, collect.  Every step fails closed
+# with a named reason, and the values the session turned on (the resolved device
+# arch, the (CPU ISA x GPU dialect) pair) go into the results dir.  How it
+# differs from the spot-check ladder it does not wrap:
+# hetlitmus/spotcheck/README.md "This ladder vs. hetlitmus/hetlitmus-run.sh".
 #
 # Usage: --help.  Exit: 0 = session complete; 2 = refused (configuration or
-# machine); 1 = the campaign errored a row or corroborated a sighting.
-# =========================================================================
+# machine); 1 = the campaign errored a row or banked an unconfirmed sighting.
+
 # Needs bash (arrays, mapfile); `sh hetlitmus-run.sh' would run it under dash.
 [ -n "${BASH_VERSION:-}" ] || exec bash "$0" "$@"
 set -euo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/paths.sh"
 
-# Seconds per harness invocation -- campaign.py has no timeout of its own.  An
-# invocation is up to NUMBER_OF_RUN runs, and on a box that loses rendezvous
-# arrivals (the shared-memory banner names the allocators that can) every
-# iteration spends its whole cap before it is discarded: such a run is slow
-# rather than hung, and killing it here reaches campaign.py as `runner
-# rc=124', which it records as an ERROR row -- a dead partner read as a
-# tooling failure, which is what the discard rule exists to prevent.
+# Seconds per harness invocation; campaign.py has no timeout of its own.  A run
+# whose partner never arrives is slow rather than hung -- it pays a rendezvous
+# cap per iteration -- and a kill reaches campaign.py as `runner rc=124', an
+# ERROR row.  hetlitmus/docs/00-environment-design.md sec 6 item 5.
 HET_RUN_TIMEOUT="${HET_RUN_TIMEOUT:-900}"
 
 usage() {
@@ -46,10 +35,9 @@ usage: hetlitmus-run.sh --gpu-target cuda|hip --corpus DIR [options]
 EOF
 }
 
-# The session status, written into the results dir and kept true at every exit:
-# RUNNING while the chain is in flight, COMPLETE at step 7, REFUSED@step<N> when a
-# step fails closed, ABORTED@step<N> if the shell died some other way.  Without it
-# a refused session and a finished one leave results dirs that read alike.
+# The session status in the results dir, kept true at every exit: RUNNING while
+# the chain is in flight, COMPLETE at step 7, REFUSED@step<N> when a step fails
+# closed, ABORTED@step<N> if the shell died some other way.
 STEP=1 ; RECORD="" ; SUMMARY=""
 mark_status() {                 # <status>
   [ -n "$RECORD" ] && [ -f "$RECORD" ] || return 0
@@ -70,9 +58,8 @@ die() {
   exit 2
 }
 
-# A valued flag given no value would `shift 2' off the end of the argument list,
-# which under set -e exits 1 -- the code that means the campaign errored a row --
-# with nothing printed at all.
+# A valued flag with no value would `shift 2' off the end of the argument list,
+# which under set -e exits 1 -- the campaign's own code -- with nothing printed.
 need_val() {                    # <flag> <remaining argc>
   [ "$2" -ge 2 ] || { usage >&2 ; die "$1 needs a value"; }
 }
@@ -93,9 +80,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# --gpu-target is mandatory and is never inferred from what happens to be
-# installed: it names the GPU half of the pair, so a default would pick which
-# pair the renders are built for.
+# Never inferred from what happens to be installed.
 [ -n "$GPU_TARGET" ] || die "--gpu-target is mandatory (cuda|hip).  It names the \
 GPU dialect AND half of the (CPU ISA x GPU dialect) pair, so there is no defaulting it."
 case "$GPU_TARGET" in
@@ -106,8 +91,8 @@ esac
 which is the other half of the pair"
 [ -d "$CORPUS" ] || die "--corpus $CORPUS is not a directory"
 CORPUS="$(cd "$CORPUS" && pwd)"
-# The budget is checked HERE and not by campaign.py's argparse: that runs after a
-# whole corpus has been emitted and built, which on a real session is an hour.
+# Checked here, not by campaign.py's argparse: that one runs only after the
+# emit and the build, which on a real session is an hour.
 echo "$BUDGET_RUNS" | grep -qE '^[1-9][0-9]*$' \
   || die "--budget-runs \"$BUDGET_RUNS\" is not a positive integer"
 
@@ -124,18 +109,14 @@ else
 fi
 PROBE_SH="${HET_PROBE_SH:-$PROBE_DEFAULT}"
 
-# =========================================================================
-# STEP 1 -- PREFLIGHT.  Nothing is written and nothing is built until the box,
-# the toolchain and the corpus agree with each other.
-# =========================================================================
+# ======================= STEP 1 -- PREFLIGHT =============================
+# Nothing is written or built until the box, the toolchain and the corpus agree.
 
-# The CPU lane of a corpus, read off EVERY test the way litmus7 reads it: the
-# first device tag of the program header that names a CPU ISA (HetArch.scan_cpu_isa,
-# whose tag vocabulary this mirrors).  A test with no CPU column is refused here
-# though the emitter would default it to AArch64 -- defaulting the host ISA of a
-# device session is how a run gets built for the wrong pair.  Sampling one test
-# would let a mixed-ISA corpus pass this step and die at emission instead.  The
-# mirror is checked against the emitter's answer after step 3.
+# The CPU lane of a corpus, read off EVERY test the way litmus7 does: the first
+# device tag of the program header naming a CPU ISA (a mirror of
+# HetArch.scan_cpu_isa's tag vocabulary).  A test with no CPU column is refused
+# here though the emitter would default it to AArch64: defaulting the host ISA
+# of a device session builds the run for the wrong pair.
 corpus_cpu_lanes() {            # <file.litmus>... -> "<file> aarch64|x86_64|NONE"
   awk '
     function flush() { if (cur != "") print cur, (isa == "" ? "NONE" : isa) }
@@ -184,10 +165,9 @@ pair at all; split it and run one session per lane."
   fi
 done < <(corpus_cpu_lanes "${CORPUS_PATHS[@]}")
 
-# The pair, spelled exactly as the emitter stamps it into HET_PAIR_NAME
-# (HetCpuFront's isa_name spelling); check_stamp below compares the two.
-# Resolved BEFORE the host-ISA check because it is a property of the corpus and
-# the flag alone.
+# The pair, spelled as the emitter stamps it into HET_PAIR_NAME (HetCpuFront's
+# isa_name); check_stamp compares the two.  Resolved before the host-ISA check
+# because it is a property of the corpus and the flag alone.
 case "$CPU_ISA" in
   aarch64) ISA_KEY=AArch64 ;;
   x86_64)  ISA_KEY=X86_64 ;;
@@ -200,11 +180,8 @@ HOST_ISA="$(uname -m)"
 uname -m is $HOST_ISA.  On a foreign host the CPU object is the portable shim, so \
 the binary would test nothing (the emitted link targets refuse for the same reason)."
 
-# =========================================================================
-# ARCH RESOLUTION.  Never -arch=native: the value a session was built for has to
-# be a recorded fact, so it is resolved here, printed, written down, and passed
-# to every compiler invocation explicitly.
-# =========================================================================
+# ====================== ARCH RESOLUTION ==================================
+# Resolved here, written into the record, and passed to each compile explicitly.
 detect_archs() {                # -> one arch per line (unfiltered, unsorted)
   if [ "$GPU_TARGET" = cuda ]; then
     if command -v nvidia-smi >/dev/null 2>&1; then
@@ -244,9 +221,8 @@ was built for must be a recorded value, and 'native' records nothing"
   ARCH_SOURCE="explicit (--arch)"
 fi
 
-# =========================================================================
-# THE PLAN.  Printed on every run, and it is the whole of a --dry-run.
-# =========================================================================
+# ========================== THE PLAN =====================================
+# Printed on every run, and it is the whole of a --dry-run.
 STAMP="$(date +%Y%m%d-%H%M%S)-$( (hostname -s 2>/dev/null || hostname 2>/dev/null || echo host) | tr -c 'A-Za-z0-9_.-' '_' )"
 [ -n "$OUT" ] || OUT="$HETL/run-out/hetlitmus-run-$STAMP"
 RUNONE="$HETL/spotcheck/run-one.sh"
@@ -285,8 +261,7 @@ mkdir -p "$OUT" "$OUT/build"
 OUT="$(cd "$OUT" && pwd)"
 EMIT="$OUT/emit" ; STATE="$OUT/campaign-state.csv"
 RECORD="$OUT/run-record.txt" ; SUMMARY="$OUT/summary.txt"
-# A summary from an earlier session into this dir would otherwise sit beside this
-# session's record and describe a different run.
+# An earlier session's summary in this dir would describe a different run.
 [ ! -e "$SUMMARY" ] || mv -f "$SUMMARY" "$OUT/summary-superseded-$STAMP.txt"
 {
   echo "session_status=RUNNING"
@@ -312,8 +287,8 @@ RECORD="$OUT/run-record.txt" ; SUMMARY="$OUT/summary.txt"
   echo "litmus7=$LITMUS7"
   echo "git_rev=$(cd "$REPO" && git rev-parse HEAD 2>/dev/null || echo nogit)"
   echo "git_dirty=$( [ -z "$(cd "$REPO" && git status --porcelain -- litmus hetlitmus 2>/dev/null)" ] && echo no || echo YES )"
-  # Loud when a stand-in is in use (HET_PROBE_SH, NVCC, HIPCC): it makes this
-  # results dir a machinery artefact and not a reading of the machine.
+  # Loud when a stand-in is in use: it makes this results dir a machinery
+  # artefact rather than a reading of the machine.
   if [ -n "${HET_PROBE_SH:-}" ]; then echo "seam_probe=STUB($HET_PROBE_SH)"; fi
   if [ "$COMPILER" != nvcc ] && [ "$COMPILER" != hipcc ]; then
     echo "seam_compiler=OVERRIDDEN($COMPILER)"
@@ -321,10 +296,8 @@ RECORD="$OUT/run-record.txt" ; SUMMARY="$OUT/summary.txt"
 } > "$RECORD"
 trap finish EXIT
 
-# =========================================================================
-# STEP 2 -- PROBE.  What this machine offers, recorded before anything is
-# built for it.
-# =========================================================================
+# ========================= STEP 2 -- PROBE ===============================
+# What this machine offers, recorded before anything is built for it.
 echo
 echo "== step 2/7: probe =="
 STEP=2
@@ -338,11 +311,9 @@ measures, so a session without it produces numbers nobody can attribute."
 fi
 head -20 "$OUT/probe.log" | sed 's/^/    /'
 
-# =========================================================================
-# STEP 3 -- EMIT.  One test at a time and each one checked, because litmus7's
-# batch driver reports a refusal on the discarded stream and still exits 0
-# (verify/emit-all.sh carries that measurement).
-# =========================================================================
+# ========================= STEP 3 -- EMIT ================================
+# One test at a time, each checked: a batch emission would exit 0 on a refusal
+# (hetlitmus/docs/het-emission.md "Scope / limits").
 echo
 echo "== step 3/7: emit =="
 STEP=3
@@ -358,10 +329,8 @@ emit_one() {                    # <test> -- emits into $EMIT, fails closed
     die "emission failed on $t"
   fi
 }
-# HET_PAIR_NAME is the EMITTER's spelling of the pair resolved above, so the two
-# are compared here: a disagreement means the wrapper and litmus7 read different
-# pairs off the same corpus, and the campaign would run harnesses built for the
-# other one.
+# A disagreement between the emitter's HET_PAIR_NAME and the pair resolved above
+# means the campaign would run harnesses built for the other pair.
 check_stamp() {                 # <test>
   local t="$1" f="$EMIT/$t/$t.$RENDER_EXT"
   [ -s "$f" ] || die "no .$RENDER_EXT render for $t under $EMIT"
@@ -387,9 +356,8 @@ else
   for t in "${CORPUS_TESTS[@]}"; do emit_one "$t" ; check_stamp "$t" ; done
   echo "    emitted ${#CORPUS_TESTS[@]} harness dir(s) into $EMIT"
 fi
-# The mirror check: the emitted build files carry the EMITTER's reading of the
-# CPU lane, and the host-ISA refusal above rests on this wrapper's.  Every test,
-# for the reason the preflight reads every test.
+# The emitted build files carry the emitter's reading of the CPU lane; the
+# host-ISA refusal above rests on this wrapper's.  Every test, as in preflight.
 for t in "${CORPUS_TESTS[@]}"; do
   EMITTED_ISA="$(sed -n 's/^HET_HOST_ISA *?*= *//p' "$EMIT/$t/Makefile" | head -1)"
   [ "$EMITTED_ISA" = "$CPU_ISA" ] || die "the emitted harness of $t carries CPU ISA \
@@ -397,10 +365,9 @@ for t in "${CORPUS_TESTS[@]}"; do
 check was made against the wrong lane"
 done
 
-# =========================================================================
-# STEP 4 -- COMPILE.  Objects then binary, with the resolved arch passed
-# explicitly.  Every failure goes in the table; one failure stops the session.
-# =========================================================================
+# ======================= STEP 4 -- COMPILE ===============================
+# Objects then binary, arch passed explicitly.  Every failure goes in the table;
+# one failure stops the session.
 echo
 echo "== step 4/7: compile ($ARCH_VAR=$ARCH) =="
 STEP=4
@@ -426,15 +393,13 @@ if [ "$nfail" -ne 0 ]; then
 fi
 echo "    built ${#CORPUS_TESTS[@]} harness binaries (the failure table $FAILTAB is empty)"
 
-# =========================================================================
-# STEP 6 -- CAMPAIGN.  Step 5, a smoke ladder between build and campaign, is not
-# part of this chain (see the header).
-# =========================================================================
+# ====================== STEP 6 -- CAMPAIGN ===============================
+# There is no step 5 here; the printed plan says where the smoke rungs live.
 echo
 echo "== step 6/7: campaign (characterization) =="
 STEP=6
-# campaign.py parses the HetStats line and keeps none of it; run-one.sh copies
-# each transcript here so the session keeps the lines its rows were scored from.
+# campaign.py keeps none of the HetStats lines it parses, so run-one.sh copies
+# each transcript here.
 export HET_RUN_LOG_DIR="$OUT/hetstats"
 TESTS_CSV="$(IFS=, ; echo "${CORPUS_TESTS[*]}")"
 CAMPAIGN_ARGS=(--corpus "$EMIT" --runner "$RUNNER" --tests "$TESTS_CSV"
@@ -443,9 +408,8 @@ camp_rc=0
 python3 "$HETL/campaign.py" "${CAMPAIGN_ARGS[@]}" > "$OUT/campaign.log" 2>&1 || camp_rc=$?
 tail -40 "$OUT/campaign.log" | sed 's/^/    /'
 
-# =========================================================================
-# STEP 7 -- COLLECT.  One screen, and the results dir holds the rest.
-# =========================================================================
+# ======================= STEP 7 -- COLLECT ===============================
+# One screen; the results dir holds the rest.
 STEP=7
 count_stop() {                  # <STOP> -> rows of the campaign state carrying it
   if [ ! -r "$STATE" ]; then echo 0 ; return ; fi

@@ -1,33 +1,17 @@
 "PTX/HRF scoped Bell annotations (HetLitmus)"
 
 (*
- * Bell annotation vocabulary for scoped GPU litmus tests, used by diy7 to
- * generate scoped LISA tests and by herd7, via -bell, to read them back.
- *
- * Design = the C11 memory-order Bell + the GPU scope Bell, combined so that a
- * single load/store/fence carries BOTH a memory order AND a scope (PTX-style
- * `ld.acquire.gpu`, `st.release.cta`, ...). Bell instruction declarations take
- * a comma-separated list of annotation groups (lib/modelParser.mly `argsN`),
- * so `instructions W[<orders>, scopes]` attaches one tag from each group.
- *
- * Sources:
- *  - Memory-order tags and R/W/F structure: herd/libdir/c11.bell (C11 model).
- *  - Scope hierarchy cta < gpu < system and narrower/wider:
- *    catalogue/tutorial/bells/jaguar.bell.
- *  - Scope semantics (membar.cta < membar.gl < membar.sys):
- *    catalogue/demo/cats/ptx.cat (Alglave et al., "GPU Concurrency: Weak
- *    Behaviours and Programming Assumptions", ASPLOS 2015).
- *  - Vocabulary scoped to what the corpus exercises (relaxed / release /
- *    acquire at cta and sys scope): PLDI'23 Compound Memory Models artifact
- *    GPU-only tests (see hetlitmus/docs/gpu-only-corpus.md).
+ * Bell annotation vocabulary for scoped GPU litmus tests: diy7 generates
+ * scoped LISA tests over it, herd7 reads them back via -bell.  Every access
+ * carries BOTH a memory order and a scope.
+ * Provenance, and the corpus the vocabulary is scoped to:
+ * hetlitmus/docs/gpu-only-corpus.md, "Minimum vocabulary the frontend must
+ * express" and "Sources".
  *)
 
-(* Memory orders. acq_rel and sc are retained for completeness; the PLDI'23
-   GPU-only corpus uses only relaxed (plain), release and acquire. *)
 enum memory_order = 'relaxed || 'acquire || 'release || 'acq_rel || 'sc
 
-(* Scope hierarchy: cta (PTX .cta / HIP workgroup) is narrower than gpu
-   (.gpu / agent), narrower than sys (.sys / system). Names follow PTX. *)
+(* Scope names follow PTX; the hierarchy is cta < gpu < sys. *)
 enum scopes = 'cta || 'gpu || 'sys
 
 let narrower(s) = match s with
@@ -40,15 +24,10 @@ let wider(s) = match s with
   || 'cta -> 'gpu
 end
 
-(* Each memory operation carries one memory-order tag and one scope tag.
-   Reads cannot be 'release; writes cannot be 'acquire (as in c11.bell). *)
 instructions R[{'relaxed,'acquire,'sc}, scopes]
 instructions W[{'relaxed,'release,'sc}, scopes]
 instructions F[{'acquire,'release,'acq_rel,'sc}, scopes]
 
-(* This Bell declares the annotation vocabulary only (the enums +
-   `instructions` lines above) and defines no memory-order / scope
-   convenience sets: herd exposes one event set per tag, which a model
-   retrieves with `tag2events('<tag>)`. `tag2set` is interpreter-internal
-   and is NOT exposed in either Bell or cat scope (a bell or cat that uses
-   it fails to load with "unbound var: tag2set"). *)
+(* Vocabulary only, no convenience sets: a model retrieves one event set per
+   tag with `tag2events`.  `tag2set` is interpreter-internal and is NOT bound
+   in Bell or cat scope. *)

@@ -14,24 +14,15 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: emit an AMD HIP C++ (.hip) litmus kernel from a parsed
-   LISA/Bell scoped test.  The HIP half of gpuLang: this file holds the
-   lowering into the HIP scoped-atomic builtins __hip_atomic_load/store and
-   into the Clang builtin __builtin_amdgcn_fence, plus the emitted HIP
-   tokens; gpuLang holds the shared vocabulary, the accessors, the launch
-   layout and the whole-test driver.  Design:
-   hetlitmus/docs/hip-emitter.md. *)
+(* HetLitmus: emit an AMD HIP C++ (.hip) litmus kernel from a parsed LISA/Bell
+   scoped test -- the lowering into __hip_atomic_load/store and
+   __builtin_amdgcn_fence, plus the emitted HIP tokens; gpuLang holds
+   everything shared with CudaLang.  Design: hetlitmus/docs/hip-emitter.md. *)
 
 open Printf
 include GpuLang
 
-(* ------------------------------------------------------------------ *)
-(* Order / scope vocabulary  (.litmus annotation  ->  HIP token)      *)
-(* The scope ladder is __HIP_MEMORY_SCOPE_{SINGLETHREAD=1,WAVEFRONT=2, *)
-(* WORKGROUP=3,AGENT=4,SYSTEM=5} [HipAtomicHeader]; the vendor rungs   *)
-(* cta<->workgroup, gpu<->agent, sys<->system are stated in            *)
-(* hetlitmus/docs/hip-emitter.md.                                      *)
-(* ------------------------------------------------------------------ *)
+(* Annotation -> HIP token [HipAtomicHeader]. *)
 
 let hip_memory_order = function
   | "relaxed" -> "__ATOMIC_RELAXED"
@@ -47,30 +38,23 @@ let hip_scope = function
   | "sys"     -> "__HIP_MEMORY_SCOPE_SYSTEM"
   | s -> Warn.user_error "HipLang: unknown scope %S" s
 
-(* __builtin_amdgcn_fence(<order>, "<scope-string>") carries BOTH the memory
-   order and the sync scope [D75917], which is what lets a fence keep the order
-   its annotation names.  The scope map mirrors hip_scope. *)
+(* The sync-scope string a fence carries beside its order [D75917]. *)
 let hip_fence_scope = function
   | "cta"     -> "workgroup"
   | "gpu"     -> "agent"
-  (* `sys' is the default sync scope, whose name is the empty string; naming
-     a scope here instead would NARROW it [AMDGPUUsage "Memory Scopes"]. *)
+  (* `sys' is the unnamed default sync scope; naming one here would NARROW it
+     [AMDGPUUsage "Memory Scopes"]. *)
   | "sys"     -> ""
   | s -> Warn.user_error "HipLang: unknown fence scope %S" s
 
-(* The pointer passed to __hip_atomic_*: memory locations are kernel int*
-   parameters, so on the GPU-only path a global `x' is already the pointer (no
-   `&' / no deref), and on the compound path it is offset to iteration [het]'s
-   own slot of x (litmus/het-runtime/het_rdv.h). *)
+(* Locations are kernel int* parameters, so `x' is already the pointer. *)
 let ptr_of_addr_op ~het ao =
   let v = var_of_addr_op ao in
   match het with
   | Some idx -> sprintf "(%s + (%s)*HET_SLOT_STRIDE_WORDS)" v idx
   | None -> v
 
-(* ------------------------------------------------------------------ *)
-(* Instruction translation                                            *)
-(* ------------------------------------------------------------------ *)
+(* Instruction translation *)
 
 let dump_instr chan ~het ind i = match i with
   | BellBase.Pst (ao, roi, annots) ->
@@ -89,9 +73,8 @@ let dump_instr chan ~het ind i = match i with
         ind dst (ptr_of_addr_op ~het ao) (hip_memory_order ord) (hip_scope scp)
   | BellBase.Pfence (BellBase.Fence (annots, _)) ->
       let ord, scp = order_scope_of annots in
-      (* A `relaxed' fence is a no-op in the C11/AMDGPU model, and
-         __builtin_amdgcn_fence accepts only acquire/release/acq_rel/seq_cst,
-         so nothing executable is emitted for it. *)
+      (* __builtin_amdgcn_fence takes only acquire/release/acq_rel/seq_cst,
+         and a relaxed fence is a no-op: emit nothing executable. *)
       if ord = "relaxed" then
         fprintf chan "%s// f[%s,%s] (relaxed fence = no-op; nothing emitted)\n"
           ind ord scp
@@ -102,9 +85,7 @@ let dump_instr chan ~het ind i = match i with
   | _ ->
       fprintf chan "%s// UNSUPPORTED: %s\n" ind (BellBase.dump_instruction i)
 
-(* ------------------------------------------------------------------ *)
-(* Whole-test emission                                                *)
-(* ------------------------------------------------------------------ *)
+(* Whole-test emission *)
 
 let dialect = {
     gl_kind = "HIP" ;
@@ -112,8 +93,6 @@ let dialect = {
     gl_emit_script = "hetlitmus/emit-hip.sh" ;
     gl_group = "workgroup" ;
     gl_include = "#include <hip/hip_runtime.h>" ;
-    gl_harness_note =
-      "// ---- host harness (illustrative; hetlitmus/verify/hipsrccheck.py checks this file's device half at source level, no compile) ----" ;
     gl_alloc =
       (fun p bytes -> sprintf "(void)hipMallocManaged(%s, %s);" p bytes) ;
     gl_launch =

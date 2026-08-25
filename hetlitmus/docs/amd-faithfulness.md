@@ -86,6 +86,9 @@ In a het render a lane's ops sit *unguarded* in the body of one `#pragma unroll
 `goto`/`return` able to skip them — and the rendezvous and its jitter sit
 *inside* it, ahead of every tested op, because a copy lifted out of the loop joins
 the two devices once and leaves every iteration after the first unsynchronised.
+`SIZE_OF_TEST` is a compile-time constant, so without the pragma the compiler
+unrolls the loop and the lane body carries many copies of the tested
+instructions — not the program the `.litmus` names.
 What is emitted once per lane is the completion bump alone. The gpu-only path has
 no such loop by design (`litmus/gpuLang.ml` `dump_test` emits each proc's ops once).
 

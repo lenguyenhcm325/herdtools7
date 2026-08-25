@@ -294,12 +294,10 @@ let run_tests names flags out_chan =
   let utils =
     match one_arch with
     | None ->
-        (* No test compiled to a C run-harness: a HetLitmus `Het' test emits
-           its own self-contained CPU+GPU harness directory and answers Absent,
-           as does a batch whose tests are all excluded.  With nothing to run,
-           the run-harness runtime (cache.h, show.awk, ...) must not be copied
-           from the libdir; a libdir carrying no litmus7 C runtime
-           (-set-libdir herd/libdir) would abort the command. *)
+        (* Nothing compiled to a C run-harness: a HetLitmus `Het' test emits
+           its own harness directory and answers Absent, as does an all-excluded
+           batch.  The run-harness runtime must NOT be copied then -- a libdir
+           carrying none (-set-libdir herd/libdir) would abort the command. *)
         []
     | Some _ ->
         let module O = struct

@@ -15,17 +15,13 @@
 (****************************************************************************)
 
 (* HetLitmus: the per-CPU-ISA column frontend the het emitter is closed over
-   (HetEmit.Make's CpuF parameter).  One module per supported CPU ISA, holding
-   the ISA label, the host/cross-compilation tokens and the single-column
-   sub-parser.  Nothing here mentions the Arch_litmus/Compile_litmus modules:
-   the litmus7 `Het' dispatch arm pairs one of these with the matching module
-   chain after HetArch.scan_cpu_isa has named the ISA.
+   (HetEmit.Make's CpuF parameter) -- the ISA label, the host/cross-compilation
+   tokens and the single-column sub-parser, one module per ISA.  Nothing here
+   names an Arch_litmus/Compile_litmus module: the litmus7 `Het' arm pairs one
+   of these with the matching chain once scan_cpu_isa has named the ISA.
+   hetlitmus/docs/het-emission.md, "CPU ISA from the device tag". *)
 
-   No machine lives here: a harness names none.  These modules contribute
-   [isa_name], one coordinate of the pair stamped as HET_PAIR_NAME. *)
-
-(* Only [debug] is needed: the column sub-parsers drive an ISA lexer, and
-   LexUtils.Config is that lexer's whole configuration. *)
+(* The column sub-parsers drive an ISA lexer, whose whole config is [debug]. *)
 module type Config = sig
   val debug : bool
 end
@@ -37,11 +33,9 @@ module AArch64 (O:Config) = struct
   let isa_name = "AArch64"
   let host_macro = "__aarch64__"
   let cross = Some ("aarch64-linux-gnu","gnu11")
-  (* LDAPR is RCpc, an ARMv8.3 extension, and litmus7 lowers a `-2s' test's
-     acquire read to it; the base architecture the assembler defaults to does
-     not accept one.  Upstream's own mechanism for that is a compile flag
-     (litmus/libdir/armv8.3.cfg: ccopts = -O2 -march=armv8.3-a), so the emitted
-     build files carry it on every compilation of <t>_cpu.c. *)
+  (* litmus7 lowers a two-sided test's acquire read to LDAPR, which is ARMv8.3
+     RCpc and the assembler's default base architecture rejects; upstream's
+     mechanism is a compile flag (litmus/libdir/armv8.3.cfg). *)
   let cpu_cflags = "-march=armv8.3-a"
 
   let parse_column p txt =
@@ -65,8 +59,7 @@ module X86_64 (O:Config) = struct
   let isa_name = "X86_64"
   let host_macro = "__x86_64__"
   let cross = None
-  (* The x86_64 vocabulary litmus7 lowers this corpus into is base AMD64, so
-     no extension flag is owed. *)
+  (* litmus7 lowers this corpus into base AMD64; no extension flag is owed. *)
   let cpu_cflags = ""
 
   let parse_column p txt =

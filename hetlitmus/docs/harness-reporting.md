@@ -14,7 +14,7 @@ the comparison supplies both.
 
 A litmus campaign reports **nulls** — outcomes it did *not* see. A cold harness and a
 genuinely unreachable behaviour produce the **identical empty histogram**
-([MCMutants23 §1.1] p. 474; the sentence is quoted in `litmus/het-runtime/README.md`).
+([MCMutants23 §1.1] p. 474, quoted in `REFERENCES.md`).
 Falsification is one-sided — what matters is the *possibility*, not the probability, of a
 weak behaviour ([Alglave15 §4.3] p. 585, quoted in `REFERENCES.md`) — so a sighting stands
 on its own and a null does not.
@@ -169,10 +169,15 @@ looking" — and then stops `UNCONFIRMED-SIGHTING`, which is neither a null nor 
 corroboration; a row that never fires stops when its budget is spent. The confirmation
 window (`HET_CONFIRM_RUNS`, counted from the run that fired) and the budget are distinct
 stops, and with the window shorter than the budget the two are told apart by the run
-count alone. `HET_RATE=1` turns the sighting stop off. `hetlitmus/campaign.py` applies
+count alone. `HET_RATE=1` turns the sighting stop off. The window outranks the budget
+stop but not the caller's run capacity: with a budget below the window the loop ends at
+its own limit while the rule still says `CONTINUE`, leaving the row for the scheduler to
+grow with a fresh seed. `hetlitmus/campaign.py` applies
 the same rule across invocations,
 each with a fresh seed base — replaying a seed adds no new phase draw and is not a
-replicate.
+replicate. The two are separate units — the header decides over the records one
+invocation holds, the driver over the pooled runs — so on one row they need not reach
+the same arm; only the stop names and counts `check_flag_mirror` pins have to agree.
 
 ## 6. Every atom of the condition is a histogram column
 

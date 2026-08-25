@@ -14,12 +14,10 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the GPU-only (`LISA) dispatch arm of litmus7.  A scoped
-   LISA/Bell test is parsed once and rendered in the one dialect
-   `-gpu-target' names, as a CUDA .cu (CudaLang) or a HIP .hip (HipLang)
-   kernel.  This is a divergence: upstream litmus7 has no LISA emission path
-   (its `LISA dispatch arm is `assert false', and LISA reaches only
-   klitmus7).  Design: hetlitmus/docs/cuda-emitter.md. *)
+(* HetLitmus: the GPU-only (`LISA) dispatch arm.  One parse of a scoped
+   LISA/Bell test, rendered in the one dialect `-gpu-target' names.  Upstream
+   litmus7 has no LISA emission path at all -- its arm is `assert false' and
+   LISA reaches only klitmus7.  hetlitmus/docs/cuda-emitter.md. *)
 
 module Make
     (Cfg : GenParser.Config)
@@ -42,10 +40,9 @@ module Make
       end
     module P = GenParser.Make(Cfg)(Arch')(LexParse)
 
-    (* The GPU-only registry: one (hetDialect row, banner word, renderer) per
-       vendor, rendered from the one parse.  Emission folds over it, so a vendor
-       is an entry -- and the row is hetDialect's own, so the extension and the
-       `-gpu-target' word are the SAME facts the compound emitter uses. *)
+    (* One (hetDialect row, banner word, renderer) per vendor.  The row is
+       hetDialect's own, so the extension and the `-gpu-target' word have one
+       definition, shared with the compound emitter. *)
     let dialects = [
         HetDialect.cuda_dialect, CudaLang.dialect.GpuLang.gl_kind, CudaLang.dump ;
         HetDialect.hip_dialect,  HipLang.dialect.GpuLang.gl_kind,  HipLang.dump ;
@@ -68,9 +65,8 @@ module Make
               Printf.eprintf "HetLitmus: emitted %s %s\n%!" kind outname)
           dialects ;
         Answer.Absent
-      (* FAIL-CLOSED: the emitted .cu/.hip pair is this function's ONLY
-         deliverable, so a refusal must not be reported as success.  See
-         HetArch.refused. *)
+      (* The render is this function's ONLY deliverable, so a refusal must not
+         be reported as success (HetArch.refused). *)
       with e ->
         if O.nocatch then raise e ;
         HetArch.refused "gpu-only" name e

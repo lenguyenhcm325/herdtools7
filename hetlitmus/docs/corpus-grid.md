@@ -75,6 +75,10 @@ touches one location, which diy refuses unless the driver passes `-oneloc`; the
 three scripts that drive this catalogue — `tests/gpu-only/generate.sh`,
 `tests/het/generate.sh` and `tests/het/generate-x86.sh` — all pass it.
 
+Each `Coe` edge in a cycle puts one location in the test's condition — 2+2W's
+two give `[x]` and `[y]`, R/S/CoWR/CoRW2's one gives a single location column —
+and a cycle with no `Coe` names none.
+
 ## The scope × order grid
 
 Every shape is swept over **scope ∈ {cta, gpu, sys}** × **order ∈ {relaxed,

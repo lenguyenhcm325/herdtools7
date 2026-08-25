@@ -1,48 +1,19 @@
-/* Shared litmus vars + barrier use fine-grained coherent memory.
-   hipMallocManaged is fine-grained BY DEFAULT on MI300A -- the only coherence mode
-   usable for system-scope CPU<->GPU synchronisation *while the kernel is live*
-   (coarse-grained memory becomes visible only at a kernel-boundary sync, which
-   would void every heterogeneous test).  Which allocator runs decides what
-   property the harness tests, so this is correctness rather than tuning; see
-   hetlitmus/docs/00-environment-design.md sec 3.2.  MI300A's unified HBM pool
-   needs no page migration, so no dispatch is required for correctness, and the
-   free matches (hipFree).  A malloc plus HSA_XNACK=1 variant is a runtime-env
-   choice, not a codegen one.  The read buffers are not routed here -- device
-   memory (hipMalloc), off the coherent race path.
-
-   Fine-grain is the runtime's own documented default memory model, the one that
-   allows coherent host-device operations while kernels execute; coarse-grain is
-   for data that need only be coherent at dispatch boundaries
-   [HipRuntimeApi "hipMemAdviseSetCoarseGrain"].  Nothing here advises coarse
-   grain.
-
-   ONE MODE, AND IT SAYS SO.  The CUDA render dispatches over three HET_ALLOC
-   modes; this one implements exactly one, so every other spelling is REFUSED
-   rather than quietly ignored.  A HET_ALLOC=malloc that silently allocated
-   fine-grained managed memory would run a different experiment from the one
-   asked for and report it under the asked-for name -- the same class of defect
-   as a stress knob that is read but never applied.  There is deliberately no
-   fallback: see the FATAL below. */
+/* Shared litmus vars + barrier use fine-grained coherent memory: hipMallocManaged
+   is fine-grained by default [HipRuntimeApi "hipMemAdviseSetCoarseGrain"], the
+   only coherence mode usable for system-scope CPU<->GPU synchronisation while the
+   kernel is live.  Which allocator runs decides what property the harness tests,
+   so this is correctness rather than tuning
+   (hetlitmus/docs/00-environment-design.md sec 3.2).  MI300A's unified HBM pool
+   needs no page migration, so no dispatch is required: this render implements
+   exactly ONE mode, refuses every other spelling of HET_ALLOC rather than
+   substituting for it, and frees with the matching hipFree.  The read buffers are
+   device memory (hipMalloc), off the coherent race path. */
 #define HET_HIP_ALLOC_MANAGED 1
-/* HET_PLACE IS REFUSED HERE, FOR THE SAME REASON AS HET_ALLOC=malloc.  The
-   placement lever is CUDA API (cudaMemAdvise / cudaMemPrefetchAsync) and lives
-   in het_alloc_cuda.inc; this render has no placement code at all.  But
-   HET_PLACE is an #ifndef knob, it is swept on hardware, and BOTH renders print
-   it -- `place=%d' in the cpu-stress banner and `place_mode' in the per-run
-   statistics record -- because those two lines are emitted once for both
-   dialects.  So `make hip-bin HIPCC="hipcc -DHET_PLACE=1"' would have produced a
-   log reading `place=1 ... place_fail=0': prefer-HBM placement requested, no
-   refusals recorded.  Both halves false -- nothing was placed and nothing could
-   have been refused, because _het_place_failures has no writer on this lane.
-   That is a knob read into the log and never applied, with a companion counter
-   that is constant-0 so no reader can tell.
-   Refused at COMPILE time rather than warned about at run time -- the opposite
-   of the CUDA render's _het_place_inert -- because there the mode is chosen at
-   run time by HET_ALLOC and placement genuinely exists in one of the three
-   modes, whereas here the answer is already known when the .hip is compiled.
-   HET_PLACE=0 is the default and the only value this lane can honour, so a
-   normal AMD build is unaffected; with it pinned to 0, `place=0 place_fail=0' is
-   a true statement rather than an unfalsifiable one. */
+/* HET_PLACE is a CUDA-only lever, but both renders print it, so a non-zero value
+   here would reach the banner and the statistics record with nothing placed.
+   Refused at compile time, where the answer is already known; 0 is the default and
+   the only value this lane can honour.  The AMD analogue of the interconnect lever
+   is CONTENTION, not placement (hetlitmus/docs/het-emission.md). */
 #if (HET_PLACE) != 0
 # error "HET_PLACE is a CUDA-only lever (cudaMemAdvise); the HIP render has no placement code, so a non-zero HET_PLACE would be reported in the banner and the statistics record without anything having been placed.  This render has no page-placement API to call -- use HET_PLACE=0 and drive the interconnect with the noise knobs instead."
 #endif
@@ -51,16 +22,11 @@ static int _het_hip_attr(hipDeviceAttribute_t _a){
   (void)hipDeviceGetAttribute(&_v, _a, 0);
   return _v;
 }
-/* APU (MI300A) vs discrete (MI300X): hipDeviceAttributeIntegrated is the runtime's
-   own integrated-GPU flag, mirrored by hipDeviceProp_t::integrated
-   [HipRuntimeApi "hipDeviceAttributeIntegrated"].  gcnArchName cannot make this
-   call -- both parts report gfx942 -- and the distinction is not cosmetic: MI300A
-   is an APU whose CCD and XCD chiplets share ONE HBM pool, while MI300X is a
-   discrete accelerator reached over a host interconnect.  Their coherence
-   behaviour is not the same experiment and an MI300X sighting must never be
-   reported as an MI300A result.  The class is therefore stamped into the banner,
-   so the log a run leaves behind carries it whether or not anyone reads this
-   file. */
+/* APU (MI300A) vs discrete (MI300X): hipDeviceAttributeIntegrated is the only
+   runtime query that separates them, since both report gfx942 [HipRuntimeApi
+   "hipDeviceAttributeIntegrated"].  The APU's CCD and XCD chiplets share one HBM
+   pool; a discrete part is reached over a host interconnect, so a discrete-part
+   sighting is NOT an MI300A result.  The class is stamped into the banner. */
 static const char* _het_amd_part_class(int _integrated){
   return _integrated ? "APU(integrated)" : "DISCRETE(not-integrated)";
 }
@@ -88,7 +54,7 @@ static int _het_alloc_mode(void){
             _v);
     exit(2);
   }
-  /* The banner precedes the guards ON PURPOSE -- a FATAL below is only actionable
+  /* The banner precedes the guards on purpose: a fatal below is actionable only
      if the attributes that caused it are already in the log. */
   printf("HetLitmus: shared-mem mode=managed (HET_ALLOC=%s amd_part_class=%s "
          "integrated=%d managedMemory=%d concurrentManagedAccess=%d "
@@ -96,12 +62,10 @@ static int _het_alloc_mode(void){
          (_v != NULL && *_v != '\0') ? _v : "unset",
          _het_amd_part_class(_integrated), _integrated, _managed, _cma, _pg);
   fflush(stdout);
-  /* hipMallocManaged DEGRADES SILENTLY, and the degradation is exactly the thing
-     under test: without HMM support it behaves as hipMallocHost, and the runtime
-     asks for the capability check by name [HipRuntimeApi "hipMallocManaged"].
-     hipMallocHost is pinned host memory, not fine-grained device-coherent memory,
-     so the harness would keep running and quietly stop testing the coherence
-     path.  Fatal, never a warning. */
+  /* hipMallocManaged degrades silently: without HMM it behaves as hipMallocHost
+     [HipRuntimeApi "hipMallocManaged"], which is pinned host memory off the
+     coherent path, so the harness would keep running and stop testing the very
+     thing under test.  Fatal, never a warning. */
   if (!_managed) {
     fprintf(stderr,
             "HetLitmus FATAL: this device reports hipDeviceAttributeManagedMemory=0, "
@@ -111,8 +75,8 @@ static int _het_alloc_mode(void){
             "histogram would mean nothing.  There is no other mode on this render.\n");
     exit(2);
   }
-  /* Same precondition the CUDA render enforces, for the same reason: every het
-     test has the CPU touching the shared allocation WHILE the kernel is live. */
+  /* The precondition the CUDA render enforces too: every het test has the CPU
+     touching the shared allocation while the kernel is live. */
   if (!_cma) {
     fprintf(stderr,
             "HetLitmus FATAL: this device reports "
@@ -122,10 +86,9 @@ static int _het_alloc_mode(void){
             "so there is nothing to salvage.\n");
     exit(2);
   }
-  /* Not fatal: a discrete part is a valid machinery bring-up target and must be
-     able to run.  It is announced on stderr AND stamped in the banner above so
-     that no discrete-part histogram can later be read as an MI300A result by
-     someone holding only the log. */
+  /* Not fatal: a discrete part is a valid bring-up target.  Announced on stderr
+     and stamped in the banner, so no discrete-part histogram reads as an APU
+     result. */
   if (!_integrated) {
     fprintf(stderr,
             "HetLitmus WARNING: hipDeviceAttributeIntegrated=0 -- this is a DISCRETE "
@@ -139,15 +102,14 @@ static int _het_alloc_mode(void){
 static void gd_alloc_shared(void** _pp, size_t _bytes){
   (void)_het_alloc_mode();               /* resolve + guard once, before the first alloc */
   (void)hipMallocManaged(_pp, _bytes);   /* fine-grained by default */
-  /* There is no placement lever on MI300A: one HBM pool shared by the CCD (CPU)
-     and XCD (GPU) chiplets means no LPDDR/HBM split, no first-touch home to
-     choose and nothing to pin.  Its analogue of the interconnect lever is
-     CONTENTION, which the noise pair below supplies when both sides stream the
-     same coherent pool (hetlitmus/docs/00-environment-design.md sec 3.6). */
+  /* No placement lever on MI300A: one HBM pool shared by the CCD (CPU) and XCD
+     (GPU) chiplets leaves no first-touch home to choose.  Its analogue is
+     contention, which the noise pair supplies
+     (hetlitmus/docs/00-environment-design.md sec 3.6). */
 }
 static void gd_free_shared(void* _p){
-  /* Cached mode, NOT a re-query -- one mode here, but the free stays keyed on the
-     resolver so that adding a second mode cannot leave a mismatched free behind. */
+  /* Cached mode, NOT a re-query: one mode here, but the free stays keyed on the
+     resolver so a second mode cannot leave a mismatched free behind. */
   (void)_het_alloc_mode();
   (void)hipFree(_p);
 }

@@ -15,20 +15,14 @@
 (****************************************************************************)
 
 (* HetLitmus: emit a CUDA C++ (.cu) litmus kernel from a parsed LISA/Bell
-   scoped test.  The CUDA half of gpuLang: this file holds the libcu++ /
-   inline-PTX lowering and the emitted CUDA tokens; gpuLang holds the shared
-   vocabulary, the accessors, the launch layout and the whole-test driver.
+   scoped test -- the libcu++ / inline-PTX lowering and the emitted CUDA
+   tokens; gpuLang holds everything shared with HipLang.
    Design: hetlitmus/docs/cuda-emitter.md. *)
 
 open Printf
 include GpuLang
 
-(* ------------------------------------------------------------------ *)
-(* Order / scope vocabulary  (.litmus annotation  ->  libcu++ token)  *)
-(* An access is a cuda::atomic_ref<T, cuda::thread_scope_*> over      *)
-(* <cuda/atomic> [CCCL]; the scope map cta<->block, gpu<->device,     *)
-(* sys<->system is stated in hetlitmus/docs/cuda-emitter.md.          *)
-(* ------------------------------------------------------------------ *)
+(* Annotation -> libcu++ token [CCCL]. *)
 
 let memory_order = function
   | "relaxed" -> "cuda::memory_order_relaxed"
@@ -44,21 +38,9 @@ let thread_scope = function
   | "sys"     -> "cuda::thread_scope_system"
   | s -> Warn.user_error "CudaLang: unknown scope %S" s
 
-(* ------------------------------------------------------------------ *)
-(* Inline-PTX fences.  cuda::atomic_thread_fence maps acquire, release and
-   acq_rel alike onto fence.<scope>.acq_rel
-   [CCCL "cuda/std/__atomic/functions/cuda_ptx_generated.h"], which loses the
-   release-vs-acquire distinction the annotation carries, so a fence is
-   emitted as inline PTX instead, at every scope.  Availability
-   [CCCL "cuda/__ptx/instructions/generated/fence.h"]: fence.{acq_rel,sc}
-   from PTX ISA 6.0 / SM_70, fence.{acquire,release} from PTX ISA 8.6 /
-   SM_90 -- a floor on the toolkit, NOT an absence in the ISA. *)
-(* ------------------------------------------------------------------ *)
-
-(* Each annotated order maps to its own PTX fence rather than to the collapsed
-   fence.acq_rel above.  A relaxed fence is a no-op with no PTX form; the
-   corpus never emits one (hetlitmus/bells/ptx.bell declares
-   F[{acquire,release,acq_rel,sc}]), so fail loudly. *)
+(* One inline PTX fence per annotated order, rather than the collapsed
+   cuda::atomic_thread_fence (hetlitmus/docs/cuda-emitter.md, "nvcc compile").
+   hetlitmus/bells/ptx.bell declares no relaxed fence, so refuse one. *)
 let ptx_fence_sem = function
   | "acquire" -> "acquire"
   | "release" -> "release"
@@ -68,40 +50,30 @@ let ptx_fence_sem = function
       "CudaLang: a relaxed fence has no PTX form (relaxed fence is a no-op)"
   | s -> Warn.user_error "CudaLang: unknown fence order %S" s
 
-(* PTX scope suffix for inline fences.  The LISA scope names coincide with
-   the PTX scope tokens (.cta/.gpu/.sys). *)
+(* PTX fence scope suffix: the LISA scope names coincide with .cta/.gpu/.sys. *)
 let ptx_scope = function
   | "cta" -> "cta" | "gpu" -> "gpu" | "sys" -> "sys"
   | s -> Warn.user_error "CudaLang: unknown fence scope %S" s
 
-(* Minimum SM target for a fence order (availability above): acquire/release
-   need SM_90, acq_rel/sc work on SM_70+.  Emitted as a trailing comment for
-   the reader. *)
+(* SM floor per fence order [CCCL "cuda/__ptx/instructions/generated/fence.h"]. *)
 let fence_min_arch ord =
   if ord = "acquire" || ord = "release"
   then "requires sm_90" else "sm_70+"
 
-(* Kernel lvalue for atomic_ref binding.  Memory locations are passed to the
-   kernel as int* parameters, so every access dereferences: on the GPU-only
-   path a global `x' becomes `*x', and on the compound path it becomes iteration
-   [het]'s own slot of x (litmus/het-runtime/het_rdv.h). *)
+(* Locations are kernel int* parameters, so an access dereferences. *)
 let lvalue_of_addr_op ~het ao =
   let v = var_of_addr_op ao in
   match het with
   | Some idx -> sprintf "*(%s + (%s)*HET_SLOT_STRIDE_WORDS)" v idx
   | None -> sprintf "*%s" v
 
-(* ------------------------------------------------------------------ *)
-(* Instruction translation                                            *)
-(* ------------------------------------------------------------------ *)
+(* Instruction translation *)
 
 let scoped_ref ind chan var scope =
   fprintf chan "%scuda::atomic_ref<int, %s> ref(%s);\n"
     ind (thread_scope scope) var
 
-(* dest reg of a load is declared at proc scope; here we just assign.
-   [~het] selects the slot-addressed compound path (Some) over the standalone
-   GPU-only path (None). *)
+(* A load's dest reg is declared at proc scope; here it is only assigned. *)
 let dump_instr chan ~het ind i = match i with
   | BellBase.Pst (ao, roi, annots) ->
       let var = var_of_addr_op ao in
@@ -121,17 +93,13 @@ let dump_instr chan ~het ind i = match i with
       fprintf chan "%s}\n" ind
   | BellBase.Pfence (BellBase.Fence (annots, _)) ->
       let ord, scp = order_scope_of annots in
-      (* The annotated order, as inline PTX at its scope; see the note above
-         this file's ptx_fence_sem. *)
       fprintf chan "%sasm volatile(\"fence.%s.%s;\" ::: \"memory\"); // %s\n"
         ind (ptx_fence_sem ord) (ptx_scope scp) (fence_min_arch ord)
   | BellBase.Pnop -> ()
   | _ ->
       fprintf chan "%s// UNSUPPORTED: %s\n" ind (BellBase.dump_instruction i)
 
-(* ------------------------------------------------------------------ *)
-(* Whole-test emission                                                *)
-(* ------------------------------------------------------------------ *)
+(* Whole-test emission *)
 
 let dialect = {
     gl_kind = "CUDA" ;
@@ -139,8 +107,6 @@ let dialect = {
     gl_emit_script = "hetlitmus/emit-cuda.sh" ;
     gl_group = "CTA" ;
     gl_include = "#include <cuda/atomic>" ;
-    gl_harness_note =
-      "// ---- host harness (illustrative; hetlitmus/verify/ptxcheck.py compiles it for sm_90 with nvcc --ptx) ----" ;
     gl_alloc =
       (fun p bytes -> sprintf "cudaMallocManaged(%s, %s);" p bytes) ;
     gl_launch =

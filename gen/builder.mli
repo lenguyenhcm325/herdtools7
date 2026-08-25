@@ -56,9 +56,8 @@ module type S = sig
 (* Dump the given test *)
   val dump_test_channel : out_channel -> test -> unit
 
-(* HetLitmus: render a test as device-neutral string fragments so a
-   heterogeneous driver can merge per-proc columns from two single-arch runs
-   (one per device) into one `Het` test. See gen/hetCells.ml. *)
+(* HetLitmus: the test as device-neutral string fragments, for merging
+   per-proc columns from two single-arch runs.  See gen/hetCells.ml. *)
   val het_cells : test -> HetCells.t
 
 end

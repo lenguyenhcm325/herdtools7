@@ -8,12 +8,9 @@
  (copy ../Version.ml Version.ml))
 
 ; HetLitmus: wrap the C/CUDA runtime payloads a harness carries into the
-; generated HetPayloads module, read by hetEmit.ml and hetDialect.ml.  Why they
-; are real source files rather than OCaml literals: the foot of
-; litmus/HetArch.ml.  outs.{h,c} are cat'ed from libdir/_outs.{h,c}, so a
-; harness histogram is litmus7's own rather than a copy of it.  A payload
-; containing the raw-string delimiter `|het_payload}' makes the generated
-; module fail to compile.
+; generated HetPayloads module, read by hetEmit.ml and hetDialect.ml.  What the
+; payloads are, and the `|het_payload}' delimiter constraint on their content:
+; litmus/het-runtime/README.md.
 (rule
  (targets hetPayloads.ml)
  (deps libdir/_outs.h libdir/_outs.c

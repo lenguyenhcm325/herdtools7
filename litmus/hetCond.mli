@@ -14,14 +14,12 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the condition's location set.  One pure function over a
-   MiscParser condition proposition, consumed by the emitter to decide which
-   locations a harness reads back per iteration.  Side-effect free; never
-   touches Skel.ml / ASMLang.ml and emits nothing itself. *)
+(* HetLitmus: the condition's location set -- one pure function over a
+   MiscParser proposition, telling the emitter which locations a harness reads
+   back per iteration. *)
 
-(* The Location_global atoms of a condition, in source order, de-duplicated
-   by printed name -- the locations whose per-iteration value the harness must
-   read back, one outcome column each.  Register atoms are ignored.  A shape's
-   cycle contributes one entry per `Coe' edge, so 2+2W's two give [x; y] and a
-   cycle carrying none gives []. *)
+(* The Location_global atoms of a condition, in source order, de-duplicated by
+   printed name: one outcome column each.  Register atoms are ignored, so a
+   cycle whose condition names no location gives []
+   (hetlitmus/docs/corpus-grid.md, "The shape catalogue"). *)
 val condition_locations : MiscParser.prop -> MiscParser.maybev list

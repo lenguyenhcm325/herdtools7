@@ -1,33 +1,13 @@
 #!/usr/bin/env python3
 """The campaign scheduler: where the hardware hours are spent, or saved.
 
-No harness carries a prediction, so there is no class to schedule against and every row
-takes one policy: run it until its sighting is corroborated, until a lone sighting
-outlives the confirmation window, or until its budget is gone.  That policy is
-litmus/het-runtime/het_verdict.h's, applied here over POOLED runs rather than over the
-records one invocation holds, while inside an invocation the harness applies the
-header's rule itself (HET_ADAPTIVE=1); two units, so the two scales need not reach the
-same arm on the same row.  `check_flag_mirror' pins the part that must agree.  The rule:
-hetlitmus/docs/harness-reporting.md sec 5; the knob table: hetlitmus/spotcheck/README.md.
-
-RUNNER CONTRACT: --runner is a command template with '{test}' and '{dir}' substituted.
-It must execute ONE invocation of the test's harness binary and forward the harness
-stdout -- the HetStats line is the whole interface.  Per invocation this driver sets
-HET_SEED (a fresh base), HET_ADAPTIVE=1, HET_RUNS_MAX, HET_RATE and HET_CONFIRM_RUNS.
-The harness binary is ./<test>, which both vendors' link targets write and which is not
-upstream litmus7's ./run.exe; this driver therefore names no GPU dialect, and a
---target axis would be a knob with nothing behind it
-(hetlitmus/spotcheck/run-one.sh, hetlitmus/spotcheck/README.md).
-
-Usage:
-  campaign.py --corpus <dir of emitted harness dirs>
-              --runner CMD [--budget-runs N] [--rate]
-              [--confirm-runs N] [--state campaign.csv] [--seed0 N] [--dry-run]
-              [--tests A,B,...]
-Exit: 0 = campaign completed; 2 = configuration/corpus error (fail closed);
-      1 = completed but >=1 test errored or ended UNCONFIRMED-SIGHTING (a row that
-          is not a result, and a sighting that would not reproduce: both demand a
-          human before anything is written up).
+One policy for every row -- het_verdict.h's, no harness carrying a prediction: pooled
+here, per-invocation in the harness (HET_ADAPTIVE=1); `check_flag_mirror' pins what must
+agree.  hetlitmus/docs/harness-reporting.md sec 5; knobs, hetlitmus/spotcheck/README.md.
+`--runner' is a template (`{test}', `{dir}') running ONE invocation of `./<test>' -- not
+litmus7's `./run.exe' -- and forwarding its stdout.
+Exit: 0 = completed; 2 = configuration/corpus error; 1 = a test errored or ended
+UNCONFIRMED-SIGHTING, which demands a human before anything is written up.
 """
 
 import argparse
@@ -38,14 +18,12 @@ import shlex
 import subprocess
 import sys
 
-# A prime stride far above any plausible NUMBER_OF_RUN: invocation i of a test uses
-# seed base seed0 + i*SEED_STRIDE, and the harness consumes seed base + run for
-# run < NUMBER_OF_RUN, so bases never collide across invocations of one test.
+# A prime stride far above any plausible NUMBER_OF_RUN: the harness consumes
+# base + run, so bases never collide across invocations of one test.
 SEED_STRIDE = 100003
 
-# The mirrored half of het_verdict.h's stopping rule.  Every name and number here is
-# pinned against the header by check_flag_mirror() below, so a change on one side and
-# not the other is fatal rather than silent.
+# The mirrored half of het_verdict.h's stopping rule; check_flag_mirror() below pins
+# every name and number here against the header.
 CORROB_RUNS = 2                      # HET_CORROB_RUNS
 CONFIRM_RUNS = 30                    # the driver's HET_CONFIRM_RUNS default
 STOP_NAMES = {
@@ -53,8 +31,7 @@ STOP_NAMES = {
     "HET_CAMPAIGN_STOP_UNCONFIRMED":  "UNCONFIRMED-SIGHTING",
     "HET_CAMPAIGN_STOP_BUDGET":       "BUDGET",
 }
-# ERROR is this driver's own: the harness produced no readable row, which the C rule
-# never sees because it only ever reads records it was handed.
+# ERROR is this driver's own: no readable row, which the C rule never sees.
 TERMINAL = tuple(sorted(STOP_NAMES.values())) + ("ERROR",)
 
 
@@ -64,9 +41,7 @@ def die(msg):
 
 
 def corpus_tests(corpus):
-    """The tests to schedule: one row per emitted harness dir.  The corpus IS the
-    source -- a harness is what a row of this campaign runs, so a name with no harness
-    is not a row."""
+    """The tests to schedule: one row per emitted harness dir."""
     if not os.path.isdir(corpus):
         die("--corpus %s is not a directory" % corpus)
     tests = sorted(d for d in os.listdir(corpus)
@@ -103,23 +78,19 @@ def fnum(kv, key, dflt=0.0):
         return dflt
 
 
-# CORROB_RUNS and STOP_NAMES are hand-mirrors of the header's, and a stale hand-mirror
-# would have this scheduler corroborate at a different run count from the harness, or
-# write into its state file a stop name the header no longer returns.  This file also
-# travels on its own, without the repo (hetlitmus/spotcheck/pack-bundle.sh), so the
-# cross-check is conditional on the header being reachable at its in-repo path: present
-# means it must agree, out of reach means the mirror stands.
+# This file also travels without the repo (hetlitmus/spotcheck/pack-bundle.sh), so the
+# cross-check is conditional: header present means it must agree, out of reach means
+# the mirror stands.
 _VERDICT_H = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
                           "litmus", "het-runtime", "het_verdict.h")
 
 
 def check_flag_mirror(path=_VERDICT_H, corrob=CORROB_RUNS, stops=None):
-    """Every stop-name string as `path` defines it -- or None when the header is out of
-    reach.  HET_CORROB_RUNS is checked against `corrob`, not returned.  Any disagreement
-    is fatal, and so is a header that no longer defines one of them."""
+    """Every stop-name string as `path` defines it, or None when the header is out of
+    reach.  HET_CORROB_RUNS is checked against `corrob`, not returned."""
     stops = STOP_NAMES if stops is None else stops
-    # The terminal set is this driver's own consistency, checked with or without the
-    # header: a stop the scheduler can write but never treats as terminal loops forever.
+    # This driver's own consistency, checked with or without the header: a stop it can
+    # write but never treats as terminal loops forever.
     if set(TERMINAL) != set(stops.values()) | {"ERROR"}:
         die("TERMINAL %s does not match the stop names %s plus ERROR"
             % (sorted(TERMINAL), sorted(stops.values())))
@@ -146,9 +117,8 @@ def check_flag_mirror(path=_VERDICT_H, corrob=CORROB_RUNS, stops=None):
     if not re.search(r'default:[ \t]*return[ \t]+"CONTINUE";', text):
         die("%s no longer returns \"CONTINUE\" for a non-stop -- the scheduler treats "
             "every name it does not know as terminal" % path)
-    # Where the confirmation window starts is policy too, and the one part of it a name
-    # cannot carry: a header measuring the window from run 0 instead of from the
-    # sighting ends rows this scheduler would still be running.
+    # Where the window starts is policy a name cannot carry: a header measuring it from
+    # run 0 rather than from the sighting ends rows this scheduler would still run.
     if not re.search(r"n[ \t]*-[ \t]*st\.n_at_first_sight[ \t]*>=[ \t]*confirm_runs",
                      text):
         die("%s no longer measures the confirmation window from n_at_first_sight -- "
@@ -168,24 +138,19 @@ class TestState(object):
         self.runs = 0            # records actually scored (sum of R)
         self.usable = 0
         self.k = self.k_eff = self.k_runs = 0
-        # Pooled runs spent when the first CLEAN sighting landed; 0 = none has.  The
-        # price of a sighting in the unit the campaign spends, carried so a row that
-        # ends UNCONFIRMED can say how long ago the one sighting was.
+        # Pooled runs spent when the first clean sighting landed; 0 = none has, and a
+        # row ending UNCONFIRMED reports how long ago the one sighting was.
         self.runs_at_first_sight = 0
         self.stop = ""
         self.note = ""
-        # The HetStats line carries `cpu_only=<0|1>', and it caps what a sighting on
-        # this row licenses: on an all-CPU cycle no cross-device path carried the
-        # cycle [Goens23 sec 4.6].  Read rather than assumed, and 0 until a line says
-        # otherwise.
+        # From the HetStats line, 0 until a line says otherwise: it caps what a
+        # sighting on this row licenses [Goens23 sec 4.6].
         self.cpu_only = 0
 
     def absorb(self, kv):
         self.invocations += 1
-        # cpu_only resolves upward across invocations, the direction
-        # het_stats_compute resolves it in: the CPU-only sentence is the weaker claim
-        # about the compound model, so ONE such invocation in the pool withholds the
-        # compound reading from the whole row.
+        # Resolves upward across the pool, as het_stats_compute resolves it: ONE
+        # CPU-only invocation withholds the compound reading from the whole row.
         if int(fnum(kv, "cpu_only")):
             self.cpu_only = 1
         before = self.runs
@@ -197,26 +162,20 @@ class TestState(object):
         self.k_runs += int(fnum(kv, "k_runs"))
         if self.runs_at_first_sight == 0 and k_eff > 0:
             # first_sight is the runs THIS invocation spent before its first clean
-            # sighting; the pooled price adds the runs spent before it started.  An
-            # invocation that reported none falls back to its whole run count, which
-            # can only over-state the price.
+            # sighting; the pooled price adds the runs before it started.  One that
+            # reported none falls back to its whole R, which can only over-state.
             fs = int(fnum(kv, "first_sight"))
             self.runs_at_first_sight = before + (fs if fs > 0 else int(fnum(kv, "R")))
 
     def sighting_open(self, rate_mode):
-        """A clean sighting this row has not corroborated yet -- the state that holds a
-        row open past its budget.  k_eff, NEVER k: a sighting the decode guard rejected
-        can neither stop a row nor keep one alive."""
+        """A clean sighting not yet corroborated -- what holds a row open past its
+        budget.  k_eff, NEVER k: a rejected sighting neither stops a row nor holds one."""
         return (not rate_mode) and self.k_eff > 0 and self.k_runs < CORROB_RUNS
 
     def target_runs(self, budget, rate_mode, confirm_runs):
         """The runs this row is still entitled to.  An open sighting holds it past the
-        budget as far as the confirmation window -- which ends confirm_runs runs after
-        the run it fired in, so the entitlement moves with the sighting -- and the
-        invocation has to be told that: HET_RUNS_MAX derived from the budget alone
-        would hand the harness a curtailment this scheduler has already overruled.
-        A row that fires in its last budgeted run therefore costs at most
-        budget + confirm_runs runs, which is the worst case a schedule must price."""
+        budget as far as the confirmation window, which moves with the sighting; the
+        invocation is told, or HET_RUNS_MAX would curtail what this scheduler overruled."""
         if self.sighting_open(rate_mode):
             return max(budget, self.runs_at_first_sight + max(confirm_runs, 1))
         return budget
@@ -234,9 +193,8 @@ class TestState(object):
                     "the weak outcome reproduced in %d distinct clean run(s)"
                     % self.k_runs)
             elif self.runs - self.runs_at_first_sight >= confirm_runs:
-                # The window elapses FROM the sighting (het_verdict.h's rule): against
-                # the pooled run count alone, a row firing past run confirm_runs is
-                # banked here the moment it fires, with none of its window run.
+                # The window elapses FROM the sighting (het_verdict.h's rule): read
+                # off the pooled count alone, a late sighting is banked unrun.
                 self.stop, self.note = "UNCONFIRMED-SIGHTING", (
                     "the confirmation window (%d runs) closed on a lone clean sighting "
                     "that did not reproduce; it first fired at run %d"
@@ -285,11 +243,9 @@ def parse_args():
     if a.budget_runs < 1:
         die("--budget-runs %d names no bound, and this driver loops until one is "
             "reached" % a.budget_runs)
-    # save_state rewrites --state whole after every test, so a campaign started on a
-    # file that already holds rows overwrites measurements nothing here re-ran.  The
-    # bar is existence, NOT terminality: a half-written state left by a campaign that
-    # lost its box is a reading too.  Checked before any work, so nothing is spent
-    # before the refusal.
+    # save_state rewrites --state whole after every test, so starting on a file that
+    # holds rows overwrites measurements nothing here re-ran.  The bar is existence,
+    # NOT terminality: a half-written state is a reading too.
     if os.path.exists(a.state):
         die("--state %s already exists and a campaign is never resumed: running on "
             "would silently overwrite the rows it holds. Move it aside, or point "
@@ -310,13 +266,11 @@ def select_work(a, tests):
 
 
 def plan_schedule(a, work):
-    """`work` in run order, plus what the schedule costs at the budgets passed.  One
-    policy, so one order and one budget: the row that stops early is the one whose
-    sighting corroborates, not the one whose class was cheap."""
-    # The worst case carries the window: a row whose one sighting lands in its last
-    # budgeted run is entitled to confirm_runs runs after it, so a row can cost
-    # budget + confirm_runs.  --rate, which turns the sighting stop off, caps at the
-    # budget.
+    """`work` in run order, plus what the schedule costs.  One policy, so one order and
+    one budget: a row stops early because its sighting corroborated."""
+    # The worst case carries the window: a sighting in the last budgeted run is
+    # entitled to confirm_runs after it, so a row can cost budget + confirm_runs.
+    # --rate turns the sighting stop off and caps at the budget.
     per_row = a.budget_runs + (0 if a.rate else a.confirm_runs)
     print("campaign: %d test(s), one stop rule each: corroborated sighting, lone "
           "sighting %d run(s) after it fires, or %d run(s) spent.  Worst case %d runs."
@@ -334,9 +288,8 @@ def drive_test(a, st, budget):
         env = dict(os.environ)
         env["HET_SEED"] = str(a.seed0 + st.invocations * SEED_STRIDE)
         env["HET_ADAPTIVE"] = "1"
-        # The harness applies the SAME rule inside the invocation, so it is handed the
-        # same knobs -- including the run count this row is entitled to, which an open
-        # sighting can raise above the budget.
+        # The harness applies the SAME rule inside the invocation, so it gets the same
+        # knobs -- including an entitlement an open sighting can raise above the budget.
         env["HET_RUNS_MAX"] = str(max(
             1, st.target_runs(budget, a.rate, a.confirm_runs) - st.runs))
         env["HET_RATE"] = "1" if a.rate else "0"
@@ -357,8 +310,7 @@ def drive_test(a, st, budget):
         before = st.runs
         st.absorb(kv)
         if st.runs == before:
-            # An invocation that scored zero runs makes no progress, and looping on
-            # it would poll the same dead harness forever.
+            # Zero scored runs is no progress; looping would poll a dead harness.
             st.stop, st.note = "ERROR", "invocation reported R=0 runs"
             return
 
@@ -372,11 +324,9 @@ def report_test(st):
 
 
 def run_campaign(a, work):
-    """Drive every test in order and return (states, errors, unconfirmed).  The state
-    is written after every test, so a campaign that loses the box leaves the rows it
-    did measure as a readable file -- a deliverable, and not a campaign to continue:
-    parse_args refuses to start on a --state that exists, so the recovery is to move
-    that file aside and run the remaining tests into a fresh one."""
+    """Drive every test in order; return (states, errors, unconfirmed).  The state is
+    written after every test, so a campaign that loses its box leaves the rows it did
+    measure -- not a campaign to continue: parse_args refuses an existing --state."""
     states, errors, unconfirmed = [], 0, 0
     for t in work:
         st = TestState(t)
@@ -387,7 +337,7 @@ def run_campaign(a, work):
             errors += 1
         if st.stop == "UNCONFIRMED-SIGHTING":
             unconfirmed += 1
-        save_state(a.state, states)   # after every test: what ran is on disk
+        save_state(a.state, states)
     return states, errors, unconfirmed
 
 
@@ -417,15 +367,13 @@ def report_campaign(states, errors, unconfirmed):
             print("            %-28s first fired at run %d of %d  cpu_only=%d"
                   % (s.name, s.runs_at_first_sight, s.runs, s.cpu_only))
 
-    # The CPU-only rows are a PRECONDITION on the campaign, not results of it: a
-    # sighting on an all-CPU cycle is what rules an uncacheable mapping out for this
-    # allocator, and until one lands the memory type of the shared allocation is
-    # unestablished and every null above rests on an assumption about it.  What such a
-    # sighting does and does not settle: litmus/het-runtime/het_verdict.h, [APM sec 7.2].
+    # A precondition on the campaign, not a result of it: until a CPU-only row fires,
+    # the memory type of the shared allocation is unestablished and every null above
+    # rests on it.  hetlitmus/docs/het-emission.md "The CPU-only set", [APM Table 7-2].
     cpu_only_rows = [s for s in states if s.cpu_only]
     if not cpu_only_rows:
-        # The normal campaign -- the het corpus alone -- holds no CPU-only row, so the
-        # absent case has to print: silence here reads as a satisfied precondition.
+        # The het corpus alone holds no CPU-only row, so the absent case has to
+        # print: silence here would read as a satisfied precondition.
         print("\ncampaign write-back probe (CPU-only positive control): *** NOT RUN.  "
               "No CPU-only row was in this campaign, so the probe did NOT pass: the "
               "memory type of the shared allocation stays UNRESOLVED and every null "

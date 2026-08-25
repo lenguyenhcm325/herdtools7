@@ -108,6 +108,17 @@ in filenames/ReadMe text).
 - **Operations**: scoped load (acquire/relaxed), scoped store (release/relaxed).
   No RMW required for MP/LB/SB/IRIW.
 
+### How `bells/ptx.bell` declares it
+The Bell combines two upstream idioms: the memory-order enum and `R`/`W`/`F`
+structure of `herd/libdir/c11.bell` (retagged in PTX spelling; a read is never
+`'release`, a write never `'acquire`), and the scope hierarchy with its `narrower`/`wider` functions from
+`catalogue/tutorial/bells/jaguar.bell`. A Bell `instructions` declaration takes a
+comma-separated list of annotation groups (`lib/modelParser.mly`, `argsN`), so
+`instructions W[<orders>, scopes]` attaches one tag from each group and a single
+access carries both an order and a scope (PTX `st.release.cta`). The scope
+semantics are those of `catalogue/demo/cats/ptx.cat`, cited under "Sources"
+above.
+
 ## Scope-name mapping (for the emitter, later)
 | Bell (`ptx.bell`) | PTX (NVIDIA) | HIP/ROCm (AMD) | gem5 source term |
 |-------------------|--------------|----------------|------------------|

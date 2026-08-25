@@ -14,33 +14,20 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus hetgen7 -- generate a single heterogeneous (compound) litmus test
-   in the `Het` format (hetlitmus/docs/het-litmus-format.md).
+(* HetLitmus hetgen7 -- generate one heterogeneous (compound) litmus test in
+   the `Het` format (hetlitmus/docs/het-litmus-format.md).
 
-   The diy cycle engine is monomorphic in one architecture, so a het test
-   cannot be produced by a single run.  This driver runs the engine once per
-   device, on a device-appropriate edge cycle of the same logical shape, then
-   keeps for each processor the column produced by the run that owns that
-   processor's device (`-devices cpu,gpu`) and merges the columns, the init
-   atoms and the condition atoms into one test.  The runs differ only in
-   instruction encoding -- locations and the event graph are the same -- which
-   is what makes the merge well defined.
-
-   The gen-side analogue of litmus/HetArch.ml, with strings as the cross-arch
-   erasure boundary (HetCells.t).  Design:
-   hetlitmus/docs/het-generation.md. *)
+   The cycle engine is monomorphic in one architecture, so this driver runs it
+   once per device on the same cycle shape and merges the columns, the init
+   atoms and the condition atoms.  hetlitmus/docs/het-generation.md. *)
 
 open Printf
 
-(* --- extra command-line flags (the rest are reused from Config.diyone_spec) --- *)
+(* Extra flags; the rest are reused from Config.diyone_spec. *)
 let cpu_edges = ref ""
 let gpu_edges = ref ""
 let devices = ref "cpu,gpu"
 let comment = ref None
-(* The CPU ISA the cpu-tagged procs are generated for.  The emitted device tag
-   names this ISA so litmus7's `Het' arm can pick the matching CPU
-   sub-parser/compiler; the default AArch64 emits the `cpu' back-compat
-   alias. *)
 let cpu_arch = ref `AArch64
 
 let myspec =
@@ -70,7 +57,7 @@ let () =
     (fun _ -> () (* het cycles arrive via -cpu/-gpu; ignore positionals *)) ;
   Config.validate_variant ()
 
-(* --- small string helpers (kept dependency-free: no Str) --- *)
+(* Small string helpers; no Str dependency. *)
 
 let split_tokens s =
   List.filter (fun x -> x <> "")
@@ -80,7 +67,7 @@ let split_comma s =
   List.filter (fun x -> x <> "")
     (List.map String.trim (String.split_on_char ',' s))
 
-(* split a condition body on the 2-char and-connective (slash backslash) *)
+(* split a condition body on the 2-char and-connective /\ *)
 let split_and s =
   let sep = "/\\" in
   let n = String.length s and m = String.length sep in
@@ -91,8 +78,8 @@ let split_and s =
     else go start (i+1) acc in
   if n = 0 then [] else go 0 0 []
 
-(* the proc that a state/condition atom belongs to: the digits before its
-   first ':' (e.g. "1:r0=1" -> Some 1); a global atom ("x=0") -> None *)
+(* the proc owning a state/condition atom: the digits before its first ':'
+   (1:r0=1 -> Some 1); a global atom (x=0) -> None *)
 let proc_of_atom a =
   match String.index_opt a ':' with
   | Some k when k > 0
@@ -148,16 +135,15 @@ let () =
     let variant = !Config.variant
     let wildcard = false
   end in
-  (* The GPU builder is fixed (LISA/Bell); the CPU builder is dispatched by
-     -cpu-arch below.  Both instantiated exactly as in diyone.ml. *)
+  (* GPU builder fixed (LISA/Bell); CPU builder dispatched by -cpu-arch below.
+     Both instantiated as in diyone.ml. *)
   let module BellConfig = Config.ToLisa(Config) in
   let module Mgpu = Top_gen.Make(Co)(BellCompile.Make(C)(BellConfig)) in
 
   let name = match !Config.name with Some n -> n | None -> "HET" in
 
-  (* One device's run: parse its -cpu / -gpu edge list into the single cycle
-     the merge assumes, build the test, erase it to cells.  [opt] names the
-     flag the edges came from, so the arity error points at the right one. *)
+  (* One device's run: parse its edge list into the single cycle the merge
+     assumes, build the test, erase to cells.  [opt] labels the arity error. *)
   let module HetRun (M:Builder.S) = struct
     let cells opt edges =
       let cy =
@@ -175,9 +161,8 @@ let () =
   if !Config.bell = None then
     Warn.fatal "missing -bell <ptx.bell> (the GPU side needs a Bell model)" ;
 
-  (* CPU side: dispatch the single-arch Compile_gen module by -cpu-arch, exactly
-     as diyone.ml dispatches by -arch.  het_cells erases the arch to strings, so
-     ccpu's type is ISA-independent regardless of which branch builds it. *)
+  (* CPU side: dispatch the single-arch Compile_gen by -cpu-arch.  het_cells
+     erases the arch to strings, so both branches give ccpu the same type. *)
   let ccpu =
     match !cpu_arch with
     | `AArch64 ->
@@ -194,8 +179,7 @@ let () =
     | "cpu" -> ccpu
     | "gpu" -> cgpu
     | d -> Warn.fatal "unknown device '%s' (expected cpu|gpu)" d in
-  (* Both runs must agree on the proc count, else the cycles are not the same
-     shape and the column merge would be unsound. *)
+  (* Both runs must agree on the proc count: the merge's shape precondition. *)
   List.iter
     (fun (who,hc) ->
       if List.length hc.HetCells.hc_cols <> nprocs then
@@ -204,9 +188,9 @@ let () =
           nprocs who (List.length hc.HetCells.hc_cols))
     ["cpu",ccpu; "gpu",cgpu] ;
 
-  (* The emitted header tag for a cpu proc names its ISA: AArch64 emits the
-     back-compat `cpu' alias, x86_64 names itself.  gpu procs keep their `gpu'
-     tag.  (run_of still keys on the device class cpu|gpu.) *)
+  (* The header tag names the CPU ISA (AArch64 keeps the `cpu' alias) so
+     litmus7's Het arm picks the matching sub-parser; run_of still keys on the
+     device class.  hetlitmus/docs/het-litmus-format.md sec 3. *)
   let cpu_tag = match !cpu_arch with `AArch64 -> "cpu" | `X86_64 -> "x86_64" in
   let header_tag = function "cpu" -> cpu_tag | other -> other in
 
@@ -241,10 +225,8 @@ let () =
   let init_lines = global_init @ per_proc_init in
 
   (* Condition: each proc's atoms from its owner; global atoms (proc = None)
-     unioned across BOTH runs and de-duplicated, mirroring [global_init] above.
-     Taking globals from the cpu run alone silently weakens the merged
-     condition, by dropping a global atom only the gpu run carries (e.g. a
-     location condition [x]=N on the GPU column). *)
+     unioned across BOTH runs, as [global_init] above -- taking them from the
+     cpu run alone drops a global atom only the gpu run carries. *)
   let merged_cond =
     let quant,_ = parse_cond ccpu.HetCells.hc_cond in
     let per_proc =
@@ -262,20 +244,14 @@ let () =
         (fun acc s -> if List.mem s acc then acc else acc @ [s])
         [] (cond_globals_of ccpu @ cond_globals_of cgpu) in
     let atoms = per_proc @ globals in
-    (* Guard: an empty atom list would emit a malformed "exists ()".  herd and
-       litmus spell the trivially-true condition "<quant> (true)" (the grammar
-       reduces prop: TRUE -> And [], i.e. ConstrGen.constr_true). *)
+    (* Empty atom list: emit <quant> (true), the trivially-true condition
+       (ConstrGen.constr_true); <quant> () would be malformed. *)
     if atoms = [] then sprintf "%s (true)" quant
     else sprintf "%s (%s)" quant (String.concat " /\\ " atoms) in
 
-  (* A parseable nested `scopes:' body tree (grammar lib/scopeRules.mly).
-     diy's `Scopes=' header info field is NOT herd-parseable, so the tree goes
-     into the test body instead, as the gpu-only generate.sh does.  Each
-     GPU-owned proc nests in its own CTA under the GPU device:
-     (sys (gpu (cta P<i>) ...)).  CPU procs are system-scope and omitted,
-     sitting at the sys root by default -- the scope grammar makes a node
-     either all-procs or all-subtrees, so a CPU proc could not share the sys
-     node with the gpu subtree.  With no GPU proc the tree is (sys). *)
+  (* A parseable nested `scopes:' body tree (grammar lib/scopeRules.mly): each
+     GPU proc nests in its own CTA, CPU procs sit at the sys root by default.
+     hetlitmus/docs/het-generation.md sec 4. *)
   let gpu_procs =
     Misc.filter_map (fun (i,dev) -> if dev = "gpu" then Some i else None)
       (List.mapi (fun i dev -> (i,dev)) devs) in

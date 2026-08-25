@@ -1,24 +1,11 @@
 #!/usr/bin/env bash
-# Emit the GPU-only litmus kernels from the scoped LISA corpus.
-#
-# Drives the litmus7 binary over every tests/gpu-only/*.litmus test.  litmus7's
-# `LISA arch branch parses the scoped Bell IR once per test and renders the ONE
-# dialect `-gpu-target' names: CudaLang writes the .cu (cuda::atomic_ref scoped
-# atomics, CTA layout from the scope tree), HipLang the .hip (__hip_atomic_*
-# scoped atomics, workgroup layout).  One vendor per pass, so covering both
-# means two passes -- which is what the TARGET OUTDIR pairs are for.
-# See litmus/{CudaLang,HipLang,hetGpuOnly,hetDialect}.ml.
-#
-# litmus7 also drops its C-runtime boilerplate next to the kernels; each output
-# directory's .gitignore keeps only its own dialect.  `make hetlitmus-faithful'
-# compiles the .cu renders; no gate compiles the .hip ones, which `make
-# hetlitmus-hipsrc' reads at source level.  ./compile-hip.sh builds the .hip into
-# host binaries by hand; running a kernel needs a device.
-#
-# Usage:  ./emit-gpu.sh TARGET OUTDIR [TARGET OUTDIR]...
-#           e.g. ./emit-gpu.sh cuda ./cuda-out hip ./hip-out
-#         The vendor is always spelled out: litmus7 has no default target, and
-#         neither has this script.
+# Emit the GPU-only litmus kernels from the scoped LISA corpus
+# (hetlitmus/tests/gpu-only).  litmus7 parses the scoped Bell IR and renders the
+# ONE dialect `-gpu-target' names, .cu (CudaLang) or .hip (HipLang), so covering
+# both vendors takes two passes -- what the TARGET OUTDIR pairs are for.  litmus7
+# has no default target, and neither has this script.  It also drops its
+# C-runtime boilerplate beside the kernels; each output dir's .gitignore keeps
+# only its own dialect.  hetlitmus/docs/{cuda,hip}-emitter.md.
 set -euo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/paths.sh"
@@ -44,7 +31,6 @@ while [ "$#" -gt 0 ]; do
     "$LITMUS7" -gpu-target "$TARGET" -set-libdir "$LIBDIR" -o "$OUTDIR" "$t" >/dev/null
   done
   echo "Emitted:"
-  # whichever extension this vendor renders; the map lives in the emitter, not
-  # here, so both are listed and the absent one is not an error
+  # the vendor->extension map lives in the emitter, so the absent one is no error
   ls -1 "$OUTDIR"/*.cu "$OUTDIR"/*.hip 2>/dev/null || true
 done

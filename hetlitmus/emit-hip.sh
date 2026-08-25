@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# Emit AMD HIP (.hip) litmus kernels from the GPU-only LISA corpus.
-#
-# The HIP-side entry point named in every emitted .hip banner (litmus/HipLang.ml).
-# The work lives in ./emit-gpu.sh; this names the vendor, so everything lands in
-# OUTDIR, whose .gitignore keeps only the .hip.  No gate compiles the .hip
-# renders; `make hetlitmus-hipsrc' reads them at source level.  ./compile-hip.sh
-# builds them into host binaries by hand; running a kernel needs an AMD device.
+# Emit AMD HIP (.hip) litmus kernels from the GPU-only LISA corpus: the vendor
+# name for ./emit-gpu.sh, which does the work.  Everything lands in OUTDIR,
+# whose .gitignore keeps only the .hip.  Every emitted .hip banner names this
+# path (litmus/HipLang.ml).  ./compile-hip.sh compile-checks the renders;
+# running a kernel needs an AMD device.  hetlitmus/docs/hip-emitter.md.
 #
 # Usage:  ./emit-hip.sh [OUTDIR]      (default OUTDIR=./hip-out)
 set -euo pipefail

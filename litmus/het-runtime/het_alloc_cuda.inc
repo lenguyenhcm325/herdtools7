@@ -1,52 +1,23 @@
-/* Shared litmus vars + rendezvous barrier.  THE ALLOCATOR SELECTS THE
-   PROPERTY UNDER TEST: it decides whether the two sides touch one physical
-   line over the machine's real coherence protocol, so it is correctness, not
-   tuning.  Design: hetlitmus/docs/00-environment-design.md sec 3.2.
-
-   HET_ALLOC picks the mode, resolved once per process; the free must match it:
-
-     auto     pageableMemoryAccess ? malloc : managed  (default; unset = auto)
-     malloc   system malloc()       -- GH200/Spark: ATS gives CPU and GPU one
-                                      page table, so both touch the same cache
-                                      line in place over NVLink-C2C via
-                                      hardware CHI coherence.  This is the mode
-                                      [Bagchi26] used.
-     managed  cudaMallocManaged     -- dev-box/CI fallback only; on GH200 it
-                                      2 MB-page-migrates under the concurrent
-                                      race and masks the weak behaviour.
-     pinned   cudaHostAlloc(Mapped) -- for a device that can do neither.
-
-   The guards below are fatal, with deliberately no fallback to auto: each mode
-   is a system-scope atomic only under a condition the memory model states
-   outright -- system memory needs pageableMemoryAccess, managed needs
-   concurrentManagedAccess, mapped needs hostNativeAtomicSupported, with a
-   separate allowance for plain naturally-aligned 1/2/4/8/16-byte loads and
-   stores on mapped memory [CudaGuide "Atomicity"].  Every tested access here,
-   and the barrier, is such an atomic, so an unsupported mode is not slower or
-   less faithful but undefined, and the histogram it produces means nothing.
-   The banner also reports usesHostPageTables, which is the runtime's own
-   hardware-vs-software coherence indicator [CudaGuide "Unified Memory
-   Paradigms"]: it separates GH200 ATS (1) from an x86 box on HMM (0), both of
-   which take the malloc branch and are not the same experiment.
-
-   This knob moves this object class only.  gd_alloc_noise keeps its own
-   dispatch and its own matching free, so forcing a mode here stays a contrast
-   experiment about the tested memory instead of also disarming the
-   interconnect stressor.  The read buffers are not routed here -- device
-   memory, off the race path. */
+/* Shared litmus vars + rendezvous barrier.  The allocator selects the property
+   under test -- whether the two sides touch one physical line over the machine's
+   real coherence protocol -- so it is correctness, not tuning; the per-target
+   choice is hetlitmus/docs/00-environment-design.md sec 3.2.
+   HET_ALLOC (auto | malloc | managed | pinned; unset = auto) picks the mode once
+   per process, and gd_free_shared must match it.  Each mode is a system-scope
+   atomic ONLY under a condition of [CudaGuide "Atomicity"], which is why the
+   guards below are fatal and none of them falls back to auto.
+   This knob moves this object class only: gd_alloc_noise keeps its own dispatch
+   and its own free, and the read buffers are device memory, off the race path. */
 static int _shared_pageable(void){
   int _p = 0;
   (void)cudaDeviceGetAttribute(&_p, cudaDevAttrPageableMemoryAccess, 0);
   return _p;
 }
-/* The three shared-memory modes, resolved ONCE.  The cache is not an
-   optimisation: it is what guarantees gd_free_shared frees with the allocator
-   that actually ran.  Re-querying the device could answer differently (a forced
-   mode, a second device) and free a malloc'd pointer with cudaFree -- undefined
-   behaviour that need not fault on the managed dev-box path and would first
-   surface on GH200.  One resolution, one banner, one free rule.  Resolved on the
-   first gd_alloc_shared, which main calls before creating any thread, so the
-   lazy static needs no lock. */
+/* Resolved ONCE and cached, because gd_free_shared must free with the allocator
+   that actually ran: a re-query could answer differently (a forced mode, a second
+   device) and hand a malloc'd pointer to cudaFree.  Resolution happens on the
+   first gd_alloc_shared, which main calls before creating any thread, so the lazy
+   static needs no lock. */
 #define HET_ALLOC_MALLOC  0
 #define HET_ALLOC_MANAGED 1
 #define HET_ALLOC_PINNED  2
@@ -66,6 +37,8 @@ static int _het_alloc_mode(void){
   if (_mode >= 0) return _mode;
   _v = getenv("HET_ALLOC");
   _pg  = _shared_pageable();
+  /* hardware (1) vs software (0) CPU/GPU coherence: both take the malloc branch
+     and are NOT the same experiment [CudaGuide "Unified Memory Paradigms"] */
   _ht  = _het_dev_attr(cudaDevAttrPageableMemoryAccessUsesHostPageTables);
   _cma = _het_dev_attr(cudaDevAttrConcurrentManagedAccess);
   if (_v == NULL || *_v == '\0' || strcmp(_v, "auto") == 0) {
@@ -84,7 +57,7 @@ static int _het_alloc_mode(void){
             "would silently select a different experiment.\n", _v);
     exit(2);
   }
-  /* The banner precedes the guards ON PURPOSE -- a FATAL below is only actionable
+  /* The banner precedes the guards on purpose: a fatal below is actionable only
      if the attributes that caused it are already in the log. */
   printf("HetLitmus: shared-mem mode=%s (HET_ALLOC=%s pageableMemoryAccess=%d "
          "usesHostPageTables=%d concurrentManagedAccess=%d)\n",
@@ -127,7 +100,7 @@ static int _het_alloc_mode(void){
   return _mode;
 }
 /* A placement request the selected mode cannot honour is announced, never
-   swallowed -- same rule as the refused cudaMemAdvise below. */
+   swallowed. */
 static void _het_place_inert(int _m){
   static int _said = 0;
   if (HET_PLACE == 0 || _said) return;
@@ -138,34 +111,11 @@ static void _het_place_inert(int _m){
           "for this run and the shared pages are wherever the runtime put them.\n",
           (int)HET_PLACE, _het_alloc_name(_m));
 }
-/* PLACEMENT -- the first of the two interconnect-stress levers.  Pin the shared
-   pages away from the participant that will read them, so the tested accesses
-   cross NVLink-C2C instead of hitting a local copy.
-   (hetlitmus/docs/00-environment-design.md sec 3.6.)
-
-   Placement alone does NOT stress the interconnect, and shipping it alone would
-   misreport a run as C2C-stressed: Hopper's L2 caches peer HBM as well as local
-   HBM, so a remote-pinned line that stays L2-resident crosses nothing
-   [Fusco24 sec III-E.1].  Sustained C2C traffic comes from the noise pair below
-   and from the test's own coherence race; placement tunes the home and the
-   first-touch latency.  Ship both.
-
-   SetPreferredLocation on its own can be undone by the driver's access counters,
-   which migrate a hot page local and silence exactly the traffic this creates, so
-   SetAccessedBy is set on both participants to hold the mapping.  Whether that
-   suffices on a given driver is a hardware question, so the pin is never assumed
-   to have held -- hence the failure counter below.
-
-   HET_PLACE defaults to 0 (first-touch): that is [Bagchi26]'s baseline, and the
-   net effect of pinning is confounded -- it widens the window but slows the loop,
-   and sightings = yield x rate is unmeasured.  Do not promote a non-zero default
-   without hardware evidence.
-
-   A refused cudaMemAdvise is counted, never swallowed: a placement knob that
-   reports "remote" while the pages sat where first touch left them is an inert
-   mechanism claiming to be live.  The counter is declared by the SHARED driver
-   template rather than here, because both renders report it and only the
-   mechanism that bumps it is CUDA-specific. */
+/* Placement -- an interconnect-stress lever: pin the shared pages away from the
+   participant that reads them so the tested accesses cross the host-device link.
+   Default 0 = first-touch.  A remote-pinned line that stays L2-resident crosses
+   nothing [Fusco24 sec III-E.1], so placement ships with the noise pair and a
+   refused advise is counted.  hetlitmus/docs/00-environment-design.md sec 3.6. */
 static void _het_place(void* _p, size_t _bytes, int _where){
   if (_where == 0) return;                  /* first-touch: nothing to advise */
   int _dev = 0;
@@ -188,20 +138,17 @@ static void gd_alloc_shared(void** _pp, size_t _bytes){
   int _m = _het_alloc_mode();
   if (_m == HET_ALLOC_MALLOC) {
     *_pp = malloc(_bytes);   /* GH200: ATS, in-place cache-line CHI coherence */
-    _het_place(*_pp, _bytes, HET_PLACE);   /* the placement lever -- see above */
+    _het_place(*_pp, _bytes, HET_PLACE);
   } else if (_m == HET_ALLOC_MANAGED) {
-    cudaMallocManaged(_pp, _bytes);   /* dev-box / CI fallback only */
-    /* No placement here BY DESIGN: without pageable-memory access there is no ATS,
-       no C2C and no placement lever at all -- managed memory just page-migrates over
-       PCIe.  Advising it would be a no-op that looked like a knob. */
+    cudaMallocManaged(_pp, _bytes);   /* machinery fallback only */
+    /* No placement here: without pageable-memory access there is no ATS and no
+       placement lever, so advising would be a no-op that looked like a knob. */
     _het_place_inert(_m);
   } else {
-    /* Mapped page-locked host memory.  cudaHostAllocMapped puts it in the CUDA
-       address space and the pointer the kernel uses IS the host pointer
-       [CudaGuide "cudaMallocHost and cudaHostAlloc"], so there is no
-       cudaHostGetDevicePointer and no second pointer for the driver to thread
-       through.  Portable so the mapping survives a second context.  Freed with
-       cudaFreeHost, never free(). */
+    /* Mapped page-locked host memory: the pointer the kernel uses is the host
+       pointer itself [CudaGuide "cudaMallocHost and cudaHostAlloc"], so there is
+       no second pointer to thread through.  Portable, so the mapping survives a
+       second context; freed with cudaFreeHost, NEVER free(). */
     cudaError_t _e = cudaHostAlloc(_pp, _bytes,
                                    cudaHostAllocMapped | cudaHostAllocPortable);
     if (_e != cudaSuccess || *_pp == NULL) {

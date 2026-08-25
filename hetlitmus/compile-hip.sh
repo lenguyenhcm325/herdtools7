@@ -1,18 +1,11 @@
 #!/usr/bin/env bash
-# Compile-check the emitted AMD HIP (.hip) litmus kernels with hipcc/amdclang,
-# cross-compiling for the MI300A ISA (gfx942).
+# Compile-check the emitted .hip litmus kernels with hipcc/amdclang for gfx942
+# (MI300A).  Nothing is launched; what a clean compile does and does NOT
+# establish, and why the HIP-Clang stack rather than HIP-over-CUDA:
+# hetlitmus/docs/hip-emitter.md "Compile status".
 #
-# Compile only, and no kernel is launched: a clean compile says the
-# __hip_atomic_* / scope lowering is valid for the target ISA and says NOTHING
-# about memory-model behaviour, which needs an AMD device.  amdclang++
-# (HIP-Clang) accepts the __hip_atomic_* builtins the emitter produces and nvcc
-# does not, so the HIP-Clang stack is required here rather than HIP-over-CUDA.
-# See litmus/HipLang.ml + hetlitmus/docs/hip-emitter.md.
-#
-# Usage:  ./compile-hip.sh [INDIR] [OUTDIR]
-#   INDIR   dir of emitted .hip   (default ./hip-out)
-#   OUTDIR  dir for binaries+logs (default $INDIR/bin)
-#   ARCH=<gfxNNN>  offload-arch override (default gfx942 = MI300A / CDNA3)
+# Usage:  ./compile-hip.sh [INDIR] [OUTDIR]   (default ./hip-out, $INDIR/bin)
+#         ARCH=<gfxNNN>  offload-arch override (default gfx942)
 set -euo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/paths.sh"
@@ -20,7 +13,6 @@ ARCH="${ARCH:-gfx942}"
 INDIR="${1:-$HETL/hip-out}"
 OUTDIR="${2:-$INDIR/bin}"
 
-# Locate hipcc (PATH, else the default ROCm prefix).
 HIPCC="$(command -v hipcc || true)"
 if [ -z "$HIPCC" ] && [ -x /opt/rocm/bin/hipcc ]; then HIPCC=/opt/rocm/bin/hipcc; fi
 if [ -z "$HIPCC" ]; then

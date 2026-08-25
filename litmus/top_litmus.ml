@@ -399,14 +399,10 @@ end = struct
 
   module SP = Splitter.Make(LexConfig)
 
-  (* ===================== HetLitmus ==========================================
-     The het-only code lives in its own modules: hetDialect.ml (the GPU
-     back-end dialect registry and `-gpu-target'), hetEmit.ml (the compound
-     CPU+GPU emitter), hetGpuOnly.ml (the `LISA arm), hetCpuFront.ml (the
-     per-CPU-ISA column frontend).  What remains here is the seam: HetOpts is
-     the slice of Top's scope they need, over which the dispatch arms below
-     close their functors -- the `Het one also over Make's compiled-CPU-code
-     extractor -- so none of them depends on this file. *)
+  (* HetLitmus: the seam for the het-only modules (hetDialect, hetEmit,
+     hetGpuOnly, hetCpuFront).  HetOpts is the slice of Top's scope the
+     dispatch arms below close their functors over, so none of those modules
+     depends on this file.  hetlitmus/docs/het-emission.md. *)
   module HetOpts = struct
     let verbose = OT.verbose
     let nocatch = OT.nocatch
@@ -628,10 +624,9 @@ end = struct
              G.compile
           | `Het ->
              (* HetArch.scan_cpu_isa names the CPU ISA before any parser
-                exists; this arm pairs it with the matching module chain
-                (Arch_litmus + Compile_litmus + a HetCpuFront column frontend)
-                and drives the shared HetEmit functor over it.  The GPU side
-                stays LISA/Bell.  See hetlitmus/docs/het-emission.md. *)
+                exists; this arm hand-builds the matching module chain and
+                drives HetEmit over it, the GPU side staying LISA/Bell.
+                hetlitmus/docs/het-emission.md. *)
              (fun _compileonly hash_env name in_chan out_chan splitted ->
                try
                  let prog_text = HetArch.prog_section_text splitted name in
@@ -691,8 +686,9 @@ end = struct
                           end) in
                       H.run in
                  run hash_env name in_chan out_chan splitted
-               (* This arm owns the pre-parse ISA scan, so it is a het emission
-                  boundary and refuses through HetArch.refused. *)
+               (* This arm is an emission boundary: refuse through
+                  HetArch.refused (hetlitmus/docs/het-emission.md,
+                  "Scope / limits"). *)
                with e ->
                  if OT.nocatch then raise e ;
                  HetArch.refused "isa-scan" name e)

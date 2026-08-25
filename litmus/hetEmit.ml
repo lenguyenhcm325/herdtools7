@@ -41,8 +41,9 @@ end
          val parse_column : int -> string -> Cpu.parsedPseudo list
          val isa_name : string
          val host_macro : string       (* CPP macro true on the CPU host ISA *)
-         (* (clang triple, -std) to cross-assemble the real CPU asm on a foreign
-            dev host; None when the build host already IS this ISA (native gcc) *)
+         (* (clang triple, -std) cross-assembling the CPU asm; None for
+            x86_64 (hetlitmus/docs/het-emission.md,
+            "The CPU object: native vs. cross-assembly"). *)
          val cross : (string * string) option
          val cpu_cflags : string
        end)
@@ -103,22 +104,17 @@ end
         end
       module AllocCpu = SymbReg.Make(AllocArchCpu)
 
+      (* Verbatim payloads: litmus/libdir/_outs.{h,c} and litmus/het-runtime/*.h. *)
       let outs_h_content = HetPayloads.outs_h
       let outs_c_content = HetPayloads.outs_c
-      (* see litmus/het-runtime/het_stress.h *)
       let het_stress_content = HetPayloads.het_stress_h
-      (* the CPU-side + interconnect stress layer.
-         see litmus/het-runtime/het_cpu_stress.h *)
       let het_cpu_stress_content = HetPayloads.het_cpu_stress_h
-      (* see litmus/het-runtime/het_verdict.h *)
       let het_verdict_content = HetPayloads.het_verdict_h
-      (* The per-iteration slot layout both sides address. *)
       let het_rdv_content = HetPayloads.het_rdv_h
 
       type dev = [ `Cpu | `Gpu ]
 
-      (* One CPU proc as plain strings and a body printer, so the record
-         carries no arch-polymorphic type. *)
+      (* Plain strings and a printer: no arch-polymorphic type in the record. *)
       type cpu_proc = {
           cp_proc : int ;
           cp_addrs : (string * string) list ;  (* address params, ASMLang order *)
@@ -126,7 +122,7 @@ end
           cp_dump : out_channel -> unit ;
         }
 
-      (* One GPU proc.  [gp_blk] is its block index in the launched grid. *)
+      (* [gp_blk] is the proc's block index in the launched grid. *)
       type gpu_proc = {
           gp_proc : int ;
           gp_blk : int ; gp_lane : int ;
@@ -150,11 +146,9 @@ end
           i_nslots : int ;
         }
 
-      (* ---- naming helpers, shared by derive and the emitters ---------------- *)
+      (* Naming helpers, shared by derive and the emitters *)
       let buf_name_of p li = Printf.sprintf "bufP%d_%d" p li
-      (* One byte per iteration per participant: 1 iff that participant's
-         rendezvous reached its target on iteration n.  The readout ANDs them,
-         so a zero on either side discards the iteration. *)
+      (* 1 iff that participant's rendezvous reached its target on iteration n. *)
       let rdv_gpu_name p = Printf.sprintf "_rdvG_P%d" p
       let rdv_cpu_name p = Printf.sprintf "_rdvC_P%d" p
 
@@ -172,13 +166,13 @@ end
               (fun ((_,annot,_),_) ->
                 match annot with Some ("cpu"::_) -> true | _ -> false)
               parsed.MiscParser.prog in
-          (* The (CPU ISA x GPU dialect) this harness was BUILT for. *)
+          (* The (CPU ISA x GPU dialect) pair this harness is built for. *)
           let pair_label =
             Printf.sprintf "(%s, %s)"
               CpuF.isa_name (List.hd dialects).gd_target in
-          (* ---- derive the harness shape from the parsed het test ---------- *)
+          (* Derive the harness shape from the parsed het test *)
           let it =
-            (* ---- classify processors by device tag ---- *)
+            (* Classify processors by device tag *)
             let dev_of_proc p =
               let rec find = function
                 | ((q,annot,_),_)::_ when q=p ->
@@ -187,7 +181,7 @@ end
                 | [] -> "?" in
               find parsed.MiscParser.prog in
             let is_cpu p = dev_of_proc p = "cpu" in
-            (* ---- CPU-only projection -> compile -> templates ---- *)
+            (* CPU-only projection -> compile -> templates *)
             let cpu_prog =
               List.filter_map
                 (fun ((p,annot,f),code) -> match annot with
@@ -230,8 +224,7 @@ end
                 extra_data = MiscParser.empty_extra ; } in
             let cpu_allocated = AllocCpu.allocate_regs cpu_parsed in
             let cpu_globals, cpu_code = CpuKit.compile_code doc cpu_allocated in
-            (* The compiled test's global types, as ASMLang.dump_fun takes them:
-               an array global is passed by its element type. *)
+            (* As ASMLang.dump_fun takes them: an array global by element type. *)
             let global_env =
               List.map
                 (fun (loc,t) ->
@@ -250,8 +243,7 @@ end
                   (Printf.sprintf "%s *%s" (SkelUtil.dump_global_type a ty) a, a))
                 addrs in
 
-            (* output-register parameters: (declaration, name, the
-               register as a CONDITION spells it, element type). *)
+            (* (declaration, name, the register as a condition spells it, type) *)
             let cpu_out_infos out proc =
               List.map
                 (fun reg ->
@@ -265,7 +257,7 @@ end
               List.map
                 (fun (proc,(out,(_outregs,envV))) -> (proc, out, envV))
                 cpu_code in
-            (* ---- GPU-only projection (reuse CudaLang translation) ---- *)
+            (* GPU-only projection (reuse CudaLang translation) *)
             let gpu_prog =
               List.filter_map
                 (fun ((p,annot,f),code) -> match annot with
@@ -277,10 +269,10 @@ end
             let gpu_procs = List.map (fun ((p,_,_),_) -> p) gpu_prog in
             let layout,n_blocks,block_dim =
               CudaLang.layout_of_scopes None gpu_procs in
-            (* ---- what each proc makes observable, in outcome-column order:
-                   a CPU proc's compiled final registers (litmus7 keeps exactly
-                   the ones the condition names), a GPU proc's load
-                   destinations.  One read buffer of N entries per column. ---- *)
+            (* What each proc makes observable, in outcome-column order: a CPU
+               proc's `Out.final' registers -- those the synthesized CPU
+               condition names, and only those -- and a GPU proc's load
+               destinations. *)
             let proc_infos =
               List.filter_map
                 (fun ((p,annot,_),code) -> match annot with
@@ -310,7 +302,7 @@ end
                     (fun li (_,ty) -> (p, li, buf_name_of p li, dev, ty))
                     obs)
                 proc_infos in
-            (* ---- shared globals (allocated once, coherent to both) ---- *)
+            (* Shared globals (allocated once, coherent to both) *)
             let cpu_addrs =
               List.concat_map
                 (fun (_,out,_) -> List.map snd (cpu_addr_params out))
@@ -321,8 +313,7 @@ end
                 (fun g -> if Hashtbl.mem seen g then false
                           else (Hashtbl.add seen g () ; true))
                 (cpu_addrs @ gpu_globals) in
-            (* ---- the outcome columns: registers first, then the locations
-                   the condition names, read from their own slot n ---- *)
+            (* Outcome columns: registers, then the condition's locations. *)
             let dev_slots want =
               List.concat_map
                 (fun (p,dev,obs) ->
@@ -346,7 +337,7 @@ end
                 (HetCond.condition_locations (prop_of parsed.MiscParser.condition)) in
             let nslots = n_reg + List.length loc_slots in
 
-            (* ---- condition -> C predicate over the outcome vector ---- *)
+            (* Condition -> C predicate over the outcome vector *)
             let cval v = ParsedConstant.pp_v v in
             let cint v = int_of_string_opt (ParsedConstant.pp_v v) in
             let is_true s =
@@ -416,7 +407,6 @@ end
                  Printf.sprintf "(!(%s) || %s)"
                    (c_slot_of_prop a) (c_slot_of_prop b) in
 
-            (* The emitted weak-behaviour detector may NEVER be a constant. *)
             let weak_expr = c_slot_of_prop (prop_of parsed.MiscParser.condition) in
             if is_true weak_expr || is_false weak_expr then
               Warn.fatal
@@ -424,7 +414,7 @@ end
                  (_weak = %s) -- refusing to emit"
                 tname weak_expr ;
 
-            (* ---------------- the pre-rendered _labels / _dump_one ------------ *)
+            (* The pre-rendered _labels / _dump_one *)
             let labels =
               let b = Buffer.create 256 in
               let s = Buffer.add_string b in
@@ -448,10 +438,9 @@ end
 
 |ocaml} ;
               Buffer.contents b in
-            (* ---------------- the pre-rendered slot readout ------------------
-               Iteration n's outcome vector is read from slot n. An iteration only 
-               ONE participant started is not an iteration of the test, so the
-               flags are ANDed first and a zero on either side discards it unread. *)
+            (* The pre-rendered slot readout: iteration n's vector comes
+               from slot n, and the arrival flags are ANDed first, so an
+               iteration ONLY one side started is discarded unread. *)
             let readout =
               let b = Buffer.create 1024 in
               let s = Buffer.add_string b in
@@ -494,8 +483,8 @@ end
               s "      if (!_seen_first) { memcpy(_first, _o, sizeof _o); _seen_first = 1; }\n" ;
               s "      else if (memcmp(_first, _o, sizeof _o) != 0) _rec.outcomes_vary = 1;\n" ;
               s "    }\n" ;
-              (* The readout ran, so the counts above are measurements rather than
-                 the memset zeros a record carries without it. *)
+              (* Marks the readout as having run
+                 (hetlitmus/docs/00-environment-design.md sec 4). *)
               s "    _rec.rdv_valid = 1;\n" ;
               Buffer.contents b in
             let cpus =
@@ -558,8 +547,8 @@ end
           let write fname f =
             Misc.output_protect f (Filename.concat dir fname) in
 
-          (* het_run_P<p> wraps code<p>; its declaration, args struct, call and read
-            buffers are all generated from cp_addrs @ cp_outs, in that order. *)
+          (* het_run_P<p> wraps code<p>: its declaration, args struct, call
+             and read buffers all come from cp_addrs @ cp_outs, in that order. *)
           let cpu_bufs cp =
             List.filter_map
               (fun (p,_,name,dev,ty) ->
@@ -569,7 +558,7 @@ end
           let cpu_sig cp =
             String.concat "," (List.map fst (cp.cp_addrs @ cp.cp_outs)) in
           let kernel_globals = it.i_gpu_globals in
-          (* ---- <tname>_cpu.c : the CPU threads (litmus7's own asm) ---- *)
+          (* <tname>_cpu.c : the CPU threads (litmus7's own asm) *)
           let dump_cpu_file ch =
             let s = output_string ch in
             s (Printf.sprintf
@@ -580,14 +569,11 @@ end
                   address for every location.  DO NOT EDIT. */\n"
                  tname CpuF.isa_name) ;
 
-            (* _GNU_SOURCE must precede EVERY libc header: het_cpu_stress.h needs
-               cpu_set_t / sched_setaffinity for thread pinning, and glibc hides
-               both behind it.  After <stdint.h> would already be too late. *)
+            (* _GNU_SOURCE before EVERY libc header: glibc hides the cpu_set_t
+               and sched_setaffinity that het_cpu_stress.h needs. *)
             s "#define _GNU_SOURCE\n" ;
             s "#include <stdint.h>\n\n" ;
-            (* THIS translation unit compiles the CPU stress
-               bodies.  It is built by gcc for the host, and cross-assembled by clang
-               for a foreign CPU ISA. *)
+            (* HET_CPU_STRESS_IMPL: the CPU stress bodies land in this file. *)
             s "#define HET_CPU_STRESS_IMPL\n" ;
             s "#include \"het_cpu_stress.h\"\n\n" ;
             s (Printf.sprintf "#if defined(%s)\n" CpuF.host_macro) ;
@@ -617,20 +603,18 @@ end
                      cp.cp_proc (cpu_sig cp) cp.cp_proc args))
               it.i_cpus in
 
-          (* One iteration's slot of a location, and the bytes a location costs:
-             every shared global is SIZE_OF_TEST slots wide. *)
+          (* Every shared global is SIZE_OF_TEST slots wide, one per iteration. *)
           let global_bytes = "sizeof(int)*SIZE_OF_TEST*HET_SLOT_STRIDE_WORDS" in
           let buf_bytes ty = Printf.sprintf "sizeof(%s)*SIZE_OF_TEST" ty in
           let rdv_bytes = "sizeof(uint8_t)*SIZE_OF_TEST" in
           let gpu_bufs =
             List.filter (fun (_,_,_,dev,_) -> dev = `Gpu) it.i_bufs in
 
-          (* ---- the emitted main(): allocation, launch, the run loop,
-                 the slot readout and teardown ---- *)
+          (* The emitted main(): allocation, launch, the run loop,
+                 the slot readout and teardown *)
           let dump_gpu_main dialect s =
             s "int main(void){\n" ;
-            (* Shared litmus vars + barrier, always through gd_alloc_shared: one
-               allocation per location, so the free still matches the allocator. *)
+            (* One gd_alloc_shared per location, so the free matches it. *)
             List.iter
               (fun g ->
                 s (Printf.sprintf
@@ -655,8 +639,7 @@ end
                         "  %s *%s = (%s*)malloc_check(%s);\n"
                         ty name ty (buf_bytes ty)))
               it.i_bufs ;
-            (* rendezvous flags -- one byte per iteration per participant, each on
-               the side that writes it. *)
+            (* rendezvous flags, each on the side that writes it. *)
             List.iter
               (fun gp ->
                 let g = rdv_gpu_name gp.gp_proc in
@@ -691,7 +674,7 @@ end
             s "  if (_stressBlocks < 0) _stressBlocks = 0;\n" ;
             s "  int _grid = _testBlocks + _noiseBlocks + _stressBlocks;\n" ;
             s "  if (_grid > _maxGrid) { fprintf(stderr, \"grid %d exceeds co-resident cap %d\\n\", _grid, _maxGrid); return 2; }\n" ;
-            (* An empty stress population is a run with no memory stress at all, [Alglave15 Tab. 6] *)
+            (* [Alglave15 sec 4.3.1 Tab. 6] *)
             s "  if (HET_MEM_STRESS_PCT > 0 && _stressBlocks == 0)\n" ;
             s "    fprintf(stderr, \"HetLitmus WARNING: the mem-stress population is EMPTY (test=%d + noise=%d fills the co-resident cap %d).  HET_MEM_STRESS_PCT=%d asks for scratchpad stress and NO block will do any.\\n\",\n\
                \            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_MEM_STRESS_PCT);\n" ;
@@ -711,7 +694,7 @@ end
                     "sizeof(uint32_t)*HET_TALLY_N")) ;
             s "  uint32_t _stress_tally_h[HET_TALLY_N];\n" ;
             s "  uint32_t *_scratch_loc_h = (uint32_t*)malloc_check(sizeof(uint32_t)*_grid);\n" ;
-            (* ------------------- the CPU stress population -------------------- *)
+            (* The CPU stress population *)
             let n_cpu_threads = List.length it.i_cpus in
             s "  int _ncores = het_cpu_ncores();\n" ;
             s "  int _aff = HET_CPU_AFFINITY;\n" ;
@@ -774,8 +757,8 @@ end
             (* One counter per run (hetlitmus/docs/harness-reporting.md sec 5). *)
             s "  het_obs_record _recs[NUMBER_OF_RUN];\n" ;
             s "  memset(_recs, 0, sizeof _recs);\n" ;
-            (* Campaign knobs: getenv, never -D, so a retune needs no rebuild and
-               no branch can be folded away.  See: het_verdict.h. *)
+            (* Campaign knobs read through getenv, never -D: a retune needs
+               no rebuild and no branch folds away.  See het_verdict.h. *)
             s "  int _runs_budget = (int)het_env_long(\"HET_RUNS_MAX\", NUMBER_OF_RUN);\n" ;
             s "  if (_runs_budget > NUMBER_OF_RUN) {\n" ;
             s "    fprintf(stderr, \"HetLitmus WARNING: HET_RUNS_MAX=%d exceeds the compiled NUMBER_OF_RUN=%d -- clamped.  Grow R by re-invoking with a FRESH HET_SEED (hetlitmus/campaign.py), never by replaying the same seeds.\\n\", _runs_budget, (int)NUMBER_OF_RUN);\n" ;
@@ -806,7 +789,7 @@ end
             s "  int _nrec = 0;\n" ;
             s "  for (int _run=0; _run<_runs_budget; ++_run) {\n" ;
 
-            (* At the start of each run, every shared location is memset to 0 over its whole extent. *)
+            (* Every shared location is zeroed over all its slots, once per run. *)
             List.iter
               (fun g ->
                 s (Printf.sprintf "    memset(%s, 0, %s);\n" g global_bytes))
@@ -816,13 +799,10 @@ end
             s "    srand((unsigned int)_seed);\n" ;
             s "    het_set_scratch_locations(_scratch_loc_h, _grid);\n" ;
 
-            (* ---- the CPU stress population, spawned BEFORE the test threads. *)
+            (* The CPU stress population, spawned BEFORE the test threads. *)
             s "    memset(&_ct, 0, sizeof _ct);\n" ;
 
-            (* On a host with no cache primitives het_cpu_preload issues zero hints, and
-               a stress_requested that still claimed the preload would disqualify
-               every null on that host as dead -- the false COLD the guard exists to
-               prevent. *)
+            (* A host with no cache primitives issues zero preload hints. *)
             s "    _ct.preload_inert = !het_cpu_preload_live();\n" ;
             s "    het_cpu_shuffle(_cpu_idx, _cpu_nregions);   /* reshuffled per run, off the run seed */\n" ;
             s "    __atomic_store_n(&_stress_go, 1, __ATOMIC_RELAXED);\n" ;
@@ -886,8 +866,7 @@ end
                 s (Printf.sprintf "    memset(%s, 0, %s);\n"
                      (rdv_cpu_name cp.cp_proc) rdv_bytes))
               it.i_cpus ;
-            (* spawn the CPU test threads; cores are handed out in emission
-               order so no two threads share one. *)
+            (* Cores go out in emission order, so no two test threads share one. *)
             let ti = ref 0 in
             List.iter
               (fun cp ->
@@ -961,7 +940,6 @@ end
             s "        fprintf(stderr, \"HetLitmus WARNING: %u sched_setaffinity call(s) FAILED -- those threads are wherever the scheduler put them.  The pinning is fiction and the stress topology is not the one being tuned.\\n\", _ct.aff_failures);\n" ;
             s "    }\n" ;
 
-            (* mirror the GPU device read buffers and rendezvous flags. *)
             List.iter
               (fun (_,_,name,_,ty) ->
                 s (Printf.sprintf "    %s\n"
@@ -979,19 +957,20 @@ end
                  "    _rec.test_name = \"%s\"; _rec.instance_id = 0; _rec.run_id = _run;\n"
                  tname) ;
             s "    _rec.N = SIZE_OF_TEST;\n" ;
-            (* The stamp het_verdict() requires before reading any field: an
-               unfilled record is all zeros, which is a plausible null. *)
+            (* het_verdict() refuses an unstamped record
+               (hetlitmus/docs/harness-reporting.md sec 2). *)
             s "    _rec.rec_magic = HET_REC_MAGIC;\n" ;
             s (Printf.sprintf
                  "    _rec.cpu_only = %d;  /* 1 iff EVERY proc is a CPU proc */\n"
                  (if cpu_only then 1 else 0)) ;
 
-            (* A build fact, NOT cpu_only (a cycle fact): het_verdict keys the
-               absent-GPU-stress caveat on it. *)
+            (* gpu_lanes is a build fact, NOT cpu_only's cycle fact; het_verdict
+               keys the absent-GPU-stress caveat on it. *)
             s "    _rec.gpu_lanes = HET_GPU_LANES;\n" ;
 
-            (* A mechanism is requested only where it can run; at 0 lanes the
-               stress loop never enters, and a standing request would read as dead. *)
+            (* A mechanism is requested ONLY where it can run: a standing
+               request that nothing performs reads as dead
+               (hetlitmus/docs/harness-reporting.md sec 3). *)
             s "    _rec.stress_requested =\n\
                \        ((HET_GPU_LANES > 0 && (HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0)) ? HET_REQ_GPU_STRESS : 0u)\n\
                \      | ((_nEnemy > 0) ? HET_REQ_CPU_ENEMY : 0u)\n\
@@ -1018,7 +997,6 @@ end
             s "    _rec.cap_calibrated = HET_CAP_CALIBRATED;\n" ;
             s it.i_readout ;
 
-            (* The rendezvous banner. *)
             s "    fprintf(stderr, \"HetLitmus rendezvous: scored=%llu discarded=%llu (cap_cpu=%llu cap_gpu=%llu) caps=%lu/%u jitter=%d discard_max=%d%% %s\\n\",\n\
                \            (unsigned long long)_rec.iters_scored,\n\
                \            (unsigned long long)_rec.iters_discarded,\n\
@@ -1048,8 +1026,8 @@ end
             s "    }\n" ;
             s "  }\n" ;
 
-            (* The per-test aggregate over the R records; it reuses het_verdict()
-              per record, so it inherits every disqualifier (harness-reporting.md sec 5). *)
+            (* The aggregate reuses het_verdict() per record, so it inherits
+               every disqualifier (hetlitmus/docs/harness-reporting.md sec 5). *)
             s "  {\n" ;
             s "    het_stats_t _st;\n" ;
             s "    het_stats_compute(_recs, _nrec, &_st);\n" ;
@@ -1094,7 +1072,7 @@ end
             s "  gd_free_noise(_noise_hbm);\n" ;
             s "  return 0;\n}\n" in
 
-          (* ---- <tname>.{cu,hip} : GPU kernel + driver ---- *)
+          (* <tname>.{cu,hip} : GPU kernel + driver *)
           let dump_gpu_file dialect ch =
             let s = output_string ch in
             s (Printf.sprintf
@@ -1145,7 +1123,7 @@ end
                  (max 1 it.i_bdim)) ;
             s (Printf.sprintf "#define HET_TEST_BLOCKS %d\n" it.i_blocks) ;
             s (Printf.sprintf "#define HET_GPU_LANES %d\n\n" it.i_lanes) ;
-            (* ---------------------------- the kernel ------------------------- *)
+            (* The kernel *)
             let kparams =
               String.concat ", "
                 (List.map (fun g -> Printf.sprintf "int* %s" g) kernel_globals
@@ -1173,18 +1151,16 @@ end
                      gp.gp_blk gp.gp_lane) ;
                 List.iter (fun n -> s (Printf.sprintf "    int r%d = 0;\n" n))
                   gp.gp_regs ;
-                (* Do NOT remove: SIZE_OF_TEST is a compile-time constant, so
-                   without this pragma nvcc unrolls the loop and the emitted PTX
-                   carries many copies of the tested instructions -- a different
-                   program microarchitecturally, and not the one the .litmus
-                   names. *)
+                (* #pragma unroll 1 -- hetlitmus/docs/amd-faithfulness.md,
+                   "The mapping". *)
                 s "    #pragma unroll 1\n" ;
                 s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
                 s "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n" ;
                 s "        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally);\n" ;
 
-                (* Rendezvous, then jitter, then the tested ops: nothing is ever
-                   placed between two tested accesses (het-runtime/README.md). *)
+                (* Rendezvous, jitter, then the tested ops; nothing is placed
+                   between two tested accesses
+                   (hetlitmus/docs/00-environment-design.md sec 3.6). *)
                 s (Printf.sprintf
                      "      %s[_n] = het_rdv_device(barrier, (uint64_t)NPART*(uint64_t)(_n+1), _cap_gpu);\n"
                      (rdv_gpu_name gp.gp_proc)) ;
@@ -1238,7 +1214,7 @@ end
             s "  }\n" ;
             s "}\n\n" ;
 
-            (* ---------------- the CPU pthread wrappers ------------------------ *)
+            (* The CPU pthread wrappers *)
             s dialect.gd_poke_def ;
             let cpu_ord = ref 0 in
             List.iter
@@ -1261,10 +1237,9 @@ end
                        "  uint32_t _plrng = het_cpu_rng_init(a->_seed, %du);\n" proc) ;
                   s "  uint64_t _plops = 0;\n"
                 end ;
-                (* A jitter stream of its own: drawing the same delays as a GPU
-                   lane would shift both sides together and leave the relative
-                   phase exactly where it started.  The lane numbers past
-                   HET_TEST_BLOCKS*HET_BLOCK_DIM belong to no test lane. *)
+                (* Its own jitter stream: a GPU lane's delays would shift both
+                   sides together, leaving the relative phase unchanged.  Lanes
+                   past HET_TEST_BLOCKS*HET_BLOCK_DIM are no test lane's. *)
                 s (Printf.sprintf
                      "  het_rng_t _jrng = het_rng_init(a->_seed, (uint32_t)(HET_TEST_BLOCKS*HET_BLOCK_DIM + %d));\n"
                      !cpu_ord) ;
@@ -1277,8 +1252,8 @@ end
                 s "    size_t _slot = (size_t)_n * HET_SLOT_STRIDE_WORDS;\n" ;
 
                 if npl > 0 then begin
-                  (* The preload hint must name the line this iteration is about
-                     to touch, so the array is rebuilt per iteration. *)
+                  (* The hint must name the line this iteration touches, so
+                     the array is rebuilt per iteration. *)
                   s (Printf.sprintf "    void* const _pl[%d] = { %s };\n" npl
                        (String.concat ", "
                           (List.map
@@ -1298,7 +1273,6 @@ end
                   s "  __atomic_fetch_add(&a->_tally->preload_ops, _plops, __ATOMIC_RELAXED);\n" ;
                 s "  return NULL;\n}\n\n")
               it.i_cpus ;
-            (* outcome labels + the outcome dump callback *)
             s it.i_labels ;
             s "/* Placement refusals.  Incremented only where placement EXISTS (the\n\
                \   CUDA render's cudaMemAdvise); stays 0 on the HIP render, which\n\
@@ -1310,17 +1284,18 @@ end
             s "\n" ;
             dump_gpu_main dialect s in
 
-          (* ---- comp.sh / Makefile / README ---- *)
-          (* `uname -m' of the rendered CPU ISA; the Makefile refuses to link on
-             any other host (the stub would run and test nothing).  Unknown ->
-             itself, which no uname matches: fail closed. *)
+          (* comp.sh / Makefile / README *)
+          (* `uname -m' of the rendered CPU ISA; an unknown macro maps to
+             itself, which no uname matches: fail closed
+             (hetlitmus/docs/het-emission.md,
+             "Why both link paths refuse a foreign host"). *)
           let host_uname = match CpuF.host_macro with
             | "__aarch64__" -> "aarch64"
             | "__x86_64__" -> "x86_64"
             | m -> m in
 
-          (* The build files' per-vendor vocabulary, all of it folded over the
-             (filtered) [dialects]; [d0] is the head, which they default to. *)
+          (* The build files' per-vendor vocabulary, folded over the filtered
+             [dialects]; [d0] is the head they default to. *)
           let d0 = List.hd dialects in
           let targets = List.map (fun d -> d.gd_target) dialects in
           let comp_args =
