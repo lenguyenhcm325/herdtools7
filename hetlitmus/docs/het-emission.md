@@ -58,10 +58,12 @@ the header asks for:
 2. the matching CPU modules are built (`AArch64Arch_litmus` +
    `AArch64Compile_litmus` + `AArch64Parser`, **or** `X86_64Arch_litmus` +
    `X86_64Compile_litmus` + `X86_64Parser`) and passed to `HetEmit`;
-3. `CpuF` bundles the per-column sub-parser (`parse_column`), the human ISA
-   label, the host CPP macro (`__aarch64__` / `__x86_64__`), and an optional
-   `(clang-triple, -std)` for cross-assembly (`None` when the build host already
-   *is* this ISA, e.g. x86_64 → native `gcc`).
+3. `CpuF` supplies the per-column sub-parser (`parse_column`) and one
+   `HetCpuFront.toolchain` the ISA module itself defines: the human ISA label,
+   the host CPP macro (`__aarch64__` / `__x86_64__`), the `uname -m` word its
+   link guards compare, an optional `(clang-triple, -std)` for cross-assembly
+   (`None` when the build host already *is* this ISA, e.g. x86_64 → native
+   `gcc`) and the CPU compile flags.
 
 `X86_64Parser.mly` gained the single-column `instr_option_seq` start rule
 (ARM/AArch64/PPC/RISCV already exposed it); since `X86_64Base.parsedInstruction =
@@ -331,7 +333,9 @@ All het logic is confined to:
   test, derives the harness and writes the directory; every refusal fires
   there, before the directory exists;
 * `litmus/hetHarness.ml` — that harness as data: the per-proc records, the read
-  buffers, the outcome slots, and the naming every emitter below shares;
+  buffers, the outcome slots, the memory-object table whose two families
+  (race surface, observation record) the driver's allocation, per-run reset,
+  readback and free each fold over, and the naming every emitter below shares;
 * `litmus/hetCpuFile.ml` — the `<t>_cpu.c` render: the CPU threads litmus7's
   own asm printer writes, and the entry points the driver calls;
 * `litmus/hetGpuFile.ml` — the `.cu`/`.hip` render: the prelude, the kernel
@@ -347,7 +351,8 @@ All het logic is confined to:
   locations need an outcome column, and its compilation to the C predicate that
   scores one iteration;
 * `litmus/hetCpuFront.ml` — the per-CPU-ISA column frontend (`CpuF`), one
-  module per supported CPU ISA;
+  module per supported CPU ISA, each providing its own toolchain record (ISA
+  label, host-detection tokens, cross-assembly pair, CPU compile flags);
 * the `` `Het `` dispatch arm in `litmus/top_litmus.ml` — the per-ISA module
   instantiation, closing `HetEmit.Make`'s seam over `Top`'s scope.
 

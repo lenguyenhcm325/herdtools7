@@ -99,7 +99,7 @@ let kernel_parameters memory procs =
 
 (* One GPU proc, guarded to its (block, lane) and looping over the
    iterations; it takes the channel because gd_dump_instr writes to it. *)
-let dump_test_lane dialect ch gp =
+let dump_test_lane dialect gp ch =
   let s = output_string ch in
   s (Printf.sprintf "  if (blockIdx.x == %d && threadIdx.x == %d) {\n"
        gp.gp_blk gp.gp_lane) ;
@@ -174,7 +174,7 @@ let dump_kernel dialect identity memory procs ch =
   s (Printf.sprintf "__global__ void litmus_%s(%s) {\n"
        identity.id_ident (kernel_parameters memory procs)) ;
   s "  het_rng_t _rng = het_rng_init(_seed, blockIdx.x * blockDim.x + threadIdx.x);\n" ;
-  List.iter (dump_test_lane dialect ch) procs.pr_gpus ;
+  List.iter (fun gp -> dump_test_lane dialect gp ch) procs.pr_gpus ;
   dump_stress_workgroups ch ;
   s "}\n\n"
 

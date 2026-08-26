@@ -42,13 +42,7 @@ end
       (Cpu : Arch_litmus.S)
       (CpuF : sig
          val parse_column : int -> string -> Cpu.parsedPseudo list
-         val isa_name : string
-         val host_macro : string       (* CPP macro true on the CPU host ISA *)
-         (* (clang triple, -std) cross-assembling the CPU asm; None for
-            x86_64 (hetlitmus/docs/het-emission.md,
-            "The CPU object: native vs. cross-assembly"). *)
-         val cross : (string * string) option
-         val cpu_cflags : string
+         val toolchain : HetCpuFront.toolchain
        end)
       (CpuKit : sig
          val compile_code :
@@ -284,8 +278,7 @@ end
             (fun (p,dev,obs) ->
               List.mapi
                 (fun li (_,ty) ->
-                  { rb_proc = p ; rb_index = li ;
-                    rb_name = buf_name_of p li ;
+                  { rb_proc = p ; rb_name = buf_name_of p li ;
                     rb_dev = dev ; rb_type = ty })
                 obs)
             proc_infos in
@@ -337,19 +330,6 @@ end
         { oc_reg_columns = slots ; oc_loc_columns = loc_slots ;
           oc_weak_expr = weak_expr }
 
-      (* `uname -m' of the rendered CPU ISA; an unknown macro maps to itself,
-         which no uname matches: fail closed
-         (hetlitmus/docs/het-emission.md,
-         "Why both link paths refuse a foreign host"). *)
-      let cpu_toolchain () =
-        let host_uname = match CpuF.host_macro with
-          | "__aarch64__" -> "aarch64"
-          | "__x86_64__" -> "x86_64"
-          | m -> m in
-        { HetCpuFront.isa_name = CpuF.isa_name ;
-          host_macro = CpuF.host_macro ; host_uname ;
-          cross = CpuF.cross ; cpu_cflags = CpuF.cpu_cflags }
-
       (* The names every rendered file stamps, including the (CPU ISA x GPU
          dialect) pair this harness is built for. *)
       let harness_identity parsed tname dialects =
@@ -357,7 +337,8 @@ end
           id_ident = CudaLang.c_ident tname ;
           id_pair_label =
             Printf.sprintf "(%s, %s)"
-              CpuF.isa_name (List.hd dialects).gd_target ;
+              CpuF.toolchain.HetCpuFront.isa_name
+              (List.hd dialects).gd_target ;
           id_cpu_only =
             parsed.MiscParser.prog <> [] &&
             List.for_all
@@ -387,14 +368,15 @@ end
                 List.map (fun (p,dev,_) -> (p,dev)) proc_infos } ;
           h_memory = memory ;
           h_outcome = outcome ;
-          h_toolchain = cpu_toolchain () ;
+          h_toolchain = CpuF.toolchain ;
           h_dialects = dialects }
 
       (* The plan litmus7 prints before anything is written. *)
       let report_plan parsed identity =
         Printf.eprintf
           "HetLitmus: emitting CPU+GPU harness for %s (%d procs, CPU=%s)\n%!"
-          identity.id_name (List.length parsed.MiscParser.prog) CpuF.isa_name ;
+          identity.id_name (List.length parsed.MiscParser.prog)
+          CpuF.toolchain.HetCpuFront.isa_name ;
         List.iter
           (fun ((p,annot,_),_code) ->
             let dev = match annot with Some (d::_) -> d | _ -> "?" in
@@ -402,7 +384,7 @@ end
               (match dev with
                | "cpu" ->
                   Printf.sprintf "CPU pthread (litmus7 %s asm)"
-                    CpuF.isa_name
+                    CpuF.toolchain.HetCpuFront.isa_name
                | "gpu" -> "GPU kernel (LISA/PTX via CudaLang/HipLang)"
                | _ -> "unknown"))
           parsed.MiscParser.prog ;

@@ -22,13 +22,16 @@
    hetlitmus/docs/het-emission.md, "CPU ISA from the device tag". *)
 
 (* The CPU toolchain facts an emitted harness carries: the ISA label, the two
-   host-detection tokens (the CPP macro its asm is guarded by, the `uname -m'
-   word its link guards compare) and the CPU compile flags.  HetEmit.Make
-   packs one from its CpuF parameter; the file emitters read it. *)
+   host-detection tokens, the cross-assembly pair and the CPU compile flags.
+   Each ISA module below provides one; the file emitters read it. *)
 type toolchain = {
     isa_name : string ;
-    host_macro : string ;
-    host_uname : string ;
+    host_macro : string ;          (* CPP macro true on the CPU host ISA *)
+    host_uname : string ;          (* what a link guard compares `uname -m'
+                                      against *)
+    (* (clang triple, -std) cross-assembling the CPU asm; None for x86_64
+       (hetlitmus/docs/het-emission.md,
+       "The CPU object: native vs. cross-assembly"). *)
     cross : (string * string) option ;
     cpu_cflags : string ;
   }
@@ -42,13 +45,16 @@ module AArch64 (O:Config) = struct
   module Lexer =
     AArch64Lexer.Make (struct include O let is_morello = false end)
 
-  let isa_name = "AArch64"
-  let host_macro = "__aarch64__"
-  let cross = Some ("aarch64-linux-gnu","gnu11")
-  (* litmus7 lowers a two-sided test's acquire read to LDAPR, which is ARMv8.3
-     RCpc and the assembler's default base architecture rejects; upstream's
-     mechanism is a compile flag (litmus/libdir/armv8.3.cfg). *)
-  let cpu_cflags = "-march=armv8.3-a"
+  let toolchain = {
+      isa_name = "AArch64" ;
+      host_macro = "__aarch64__" ;
+      host_uname = "aarch64" ;
+      cross = Some ("aarch64-linux-gnu","gnu11") ;
+      (* litmus7 lowers a two-sided test's acquire read to LDAPR, which is
+         ARMv8.3 RCpc and the assembler's default base architecture rejects;
+         upstream's mechanism is a compile flag (litmus/libdir/armv8.3.cfg). *)
+      cpu_cflags = "-march=armv8.3-a" ;
+    }
 
   let parse_column p txt =
     let lexbuf = Lexing.from_string txt in
@@ -68,11 +74,15 @@ end
 module X86_64 (O:Config) = struct
   module Lexer = X86_64Lexer.Make (O)
 
-  let isa_name = "X86_64"
-  let host_macro = "__x86_64__"
-  let cross = None
-  (* litmus7 lowers this corpus into base AMD64; no extension flag is owed. *)
-  let cpu_cflags = ""
+  let toolchain = {
+      isa_name = "X86_64" ;
+      host_macro = "__x86_64__" ;
+      host_uname = "x86_64" ;
+      cross = None ;
+      (* litmus7 lowers this corpus into base AMD64; no extension flag is
+         owed. *)
+      cpu_cflags = "" ;
+    }
 
   let parse_column p txt =
     let lexbuf = Lexing.from_string txt in

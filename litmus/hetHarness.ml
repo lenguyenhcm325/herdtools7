@@ -37,10 +37,9 @@ type gpu_proc = {
   }
 
 (* One observable column's read buffer, SIZE_OF_TEST wide and off the race
-   path; [rb_index] is the column's position among its proc's. *)
+   path. *)
 type read_buffer = {
     rb_proc : int ;
-    rb_index : int ;
     rb_name : string ;
     rb_dev : dev ;
     rb_type : string ;             (* C element type *)
@@ -113,6 +112,60 @@ let gpu_read_buffers memory =
   List.filter (fun rb -> rb.rb_dev = `Gpu) memory.me_bufs
 let n_columns outcome =
   List.length outcome.oc_reg_columns + List.length outcome.oc_loc_columns
+
+(* Every shared global is SIZE_OF_TEST slots wide, one per iteration. *)
+let global_bytes = "sizeof(int)*SIZE_OF_TEST*HET_SLOT_STRIDE_WORDS"
+let buf_bytes ty = Printf.sprintf "sizeof(%s)*SIZE_OF_TEST" ty
+let rdv_bytes = "sizeof(uint8_t)*SIZE_OF_TEST"
+
+(* One object main() manages.  Residence decides its allocation, readback and
+   free text; the reset kind separates the barrier counter from the arrays. *)
+type residence = Shared | Device | Host
+type reset = Memset | Store_zero
+type mem_object = {
+    mo_name : string ;
+    mo_type : string ;             (* C element type *)
+    mo_bytes : string ;            (* C byte count *)
+    mo_where : residence ;
+    mo_reset : reset ;
+  }
+
+(* The two families main() allocates, resets, reads back and frees, in that
+   lifecycle order: the race surface -- every shared global, then the barrier
+   counter -- reset BEFORE the stress spawn; then the observation record --
+   the read buffers in column order, then one arrival flag per proc on the
+   side that writes it -- reset after it. *)
+let race_surface memory =
+  List.map
+    (fun g ->
+      { mo_name = g ; mo_type = "int" ; mo_bytes = global_bytes ;
+        mo_where = Shared ; mo_reset = Memset })
+    memory.me_all_globals
+  @ [ { mo_name = "barrier" ; mo_type = "uint64_t" ;
+        mo_bytes = "sizeof(int)*HET_SLOT_STRIDE_WORDS" ;
+        mo_where = Shared ; mo_reset = Store_zero } ]
+
+let observation_record memory procs =
+  List.map
+    (fun rb ->
+      { mo_name = rb.rb_name ; mo_type = rb.rb_type ;
+        mo_bytes = buf_bytes rb.rb_type ;
+        mo_where = (match rb.rb_dev with `Gpu -> Device | `Cpu -> Host) ;
+        mo_reset = Memset })
+    memory.me_bufs
+  @ List.map
+      (fun gp ->
+        { mo_name = rdv_gpu_name gp.gp_proc ; mo_type = "uint8_t" ;
+          mo_bytes = rdv_bytes ; mo_where = Device ; mo_reset = Memset })
+      procs.pr_gpus
+  @ List.map
+      (fun cp ->
+        { mo_name = rdv_cpu_name cp.cp_proc ; mo_type = "uint8_t" ;
+          mo_bytes = rdv_bytes ; mo_where = Host ; mo_reset = Memset })
+      procs.pr_cpus
+
+let memory_objects memory procs =
+  race_surface memory @ observation_record memory procs
 
 (* One emission's harness: the shape above, the identity every rendered file
    stamps, and the toolchain and dialect facts the build files fold over. *)

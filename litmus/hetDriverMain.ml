@@ -21,53 +21,21 @@ open HetDialect
 
 open HetHarness
 
-(* Every shared global is SIZE_OF_TEST slots wide, one per iteration. *)
-let global_bytes = "sizeof(int)*SIZE_OF_TEST*HET_SLOT_STRIDE_WORDS"
-let buf_bytes ty = Printf.sprintf "sizeof(%s)*SIZE_OF_TEST" ty
-let rdv_bytes = "sizeof(uint8_t)*SIZE_OF_TEST"
-
 let dump_test_state_alloc dialect memory procs ch =
   let s = output_string ch in
-  (* One gd_alloc_shared per location, so the free matches it. *)
   List.iter
-    (fun g ->
-      s (Printf.sprintf
-           "  int *%s; gd_alloc_shared((void**)&%s, %s);\n"
-           g g global_bytes))
-    memory.me_all_globals ;
-
-  (* The rendezvous counter gets a slot of its own *)
-  s "  uint64_t *barrier; gd_alloc_shared((void**)&barrier, sizeof(int)*HET_SLOT_STRIDE_WORDS);\n" ;
-  (* read buffers -- OFF the coherent race path. *)
-  List.iter
-    (fun rb ->
-      let name = rb.rb_name and ty = rb.rb_type in
-      match rb.rb_dev with
-      | `Gpu ->
-         s (Printf.sprintf "  %s *%s; %s\n" ty name
-              (dialect.gd_dev_malloc name (buf_bytes ty))) ;
-         s (Printf.sprintf
-              "  %s *%s_h = (%s*)malloc_check(%s);\n"
-              ty name ty (buf_bytes ty))
-      | `Cpu ->
-         s (Printf.sprintf
-              "  %s *%s = (%s*)malloc_check(%s);\n"
-              ty name ty (buf_bytes ty)))
-    memory.me_bufs ;
-  (* rendezvous flags, each on the side that writes it. *)
-  List.iter
-    (fun gp ->
-      let g = rdv_gpu_name gp.gp_proc in
-      s (Printf.sprintf "  uint8_t *%s; %s\n" g
-           (dialect.gd_dev_malloc g rdv_bytes)) ;
-      s (Printf.sprintf "  uint8_t *%s_h = (uint8_t*)malloc_check(%s);\n"
-           g rdv_bytes))
-    procs.pr_gpus ;
-  List.iter
-    (fun cp ->
-      s (Printf.sprintf "  uint8_t *%s = (uint8_t*)malloc_check(%s);\n"
-           (rdv_cpu_name cp.cp_proc) rdv_bytes))
-    procs.pr_cpus
+    (fun o ->
+      let n = o.mo_name and ty = o.mo_type and b = o.mo_bytes in
+      match o.mo_where with
+      | Shared ->
+         s (Printf.sprintf "  %s *%s; gd_alloc_shared((void**)&%s, %s);\n"
+              ty n n b)
+      | Device ->
+         s (Printf.sprintf "  %s *%s; %s\n" ty n (dialect.gd_dev_malloc n b)) ;
+         s (Printf.sprintf "  %s *%s_h = (%s*)malloc_check(%s);\n" ty n ty b)
+      | Host ->
+         s (Printf.sprintf "  %s *%s = (%s*)malloc_check(%s);\n" ty n ty b))
+    (memory_objects memory procs)
 
 let dump_launch_geometry dialect identity ch =
   let s = output_string ch in
@@ -218,14 +186,15 @@ let dump_campaign_knobs ch =
   s "  uint32_t _cap_gpu = (uint32_t)_cap_gpu_u;\n" ;
   s "  int _nrec = 0;\n"
 
+let host_reset o = match o.mo_reset with
+  | Memset -> Printf.sprintf "memset(%s, 0, %s);" o.mo_name o.mo_bytes
+  | Store_zero -> Printf.sprintf "*%s = 0;" o.mo_name
+
 let dump_run_reset_race_surface memory ch =
   let s = output_string ch in
-  (* Every shared location is zeroed over all its slots, once per run. *)
   List.iter
-    (fun g ->
-      s (Printf.sprintf "    memset(%s, 0, %s);\n" g global_bytes))
-    memory.me_all_globals ;
-  s "    *barrier = 0;\n" ;
+    (fun o -> s (Printf.sprintf "    %s\n" (host_reset o)))
+    (race_surface memory) ;
   s "    uint32_t _seed = _seed0 + (uint32_t)_run;\n" ;
   s "    srand((unsigned int)_seed);\n" ;
   s "    het_set_scratch_locations(_scratch_loc_h, _grid);\n"
@@ -283,26 +252,13 @@ let dump_run_reset_observation dialect memory procs ch =
        (dialect.gd_dev_memset0 "_stress_tally"
           "sizeof(uint32_t)*HET_TALLY_N")) ;
   List.iter
-    (fun rb ->
-      let name = rb.rb_name and ty = rb.rb_type in
-      match rb.rb_dev with
-      | `Gpu ->
+    (fun o ->
+      match o.mo_where with
+      | Device ->
          s (Printf.sprintf "    %s\n"
-              (dialect.gd_dev_memset0 name (buf_bytes ty)))
-      | `Cpu ->
-         s (Printf.sprintf "    memset(%s, 0, %s);\n"
-              name (buf_bytes ty)))
-    memory.me_bufs ;
-  List.iter
-    (fun gp ->
-      s (Printf.sprintf "    %s\n"
-           (dialect.gd_dev_memset0 (rdv_gpu_name gp.gp_proc) rdv_bytes)))
-    procs.pr_gpus ;
-  List.iter
-    (fun cp ->
-      s (Printf.sprintf "    memset(%s, 0, %s);\n"
-           (rdv_cpu_name cp.cp_proc) rdv_bytes))
-    procs.pr_cpus
+              (dialect.gd_dev_memset0 o.mo_name o.mo_bytes))
+      | Shared | Host -> s (Printf.sprintf "    %s\n" (host_reset o)))
+    (observation_record memory procs)
 
 let dump_run_spawn_cpu_threads procs memory ch =
   let s = output_string ch in
@@ -394,18 +350,13 @@ let dump_run_stress_report dialect ch =
 let dump_run_readback dialect memory procs ch =
   let s = output_string ch in
   List.iter
-    (fun rb ->
-      let name = rb.rb_name in
-      s (Printf.sprintf "    %s\n"
-           (dialect.gd_memcpy_d2h (name^"_h") name
-              (buf_bytes rb.rb_type))))
-    (gpu_read_buffers memory) ;
-  List.iter
-    (fun gp ->
-      let g = rdv_gpu_name gp.gp_proc in
-      s (Printf.sprintf "    %s\n"
-           (dialect.gd_memcpy_d2h (g^"_h") g rdv_bytes)))
-    procs.pr_gpus
+    (fun o ->
+      match o.mo_where with
+      | Device ->
+         s (Printf.sprintf "    %s\n"
+              (dialect.gd_memcpy_d2h (o.mo_name^"_h") o.mo_name o.mo_bytes))
+      | Shared | Host -> ())
+    (observation_record memory procs)
 
 let dump_run_record_stamp identity ch =
   let s = output_string ch in
@@ -557,27 +508,13 @@ let dump_aggregate identity outcome ch =
 let dump_free dialect memory procs ch =
   let s = output_string ch in
   List.iter
-    (fun g -> s (Printf.sprintf "  gd_free_shared(%s);\n" g))
-    memory.me_all_globals ;
-  s "  gd_free_shared(barrier);\n" ;
-  List.iter
-    (fun rb ->
-      let name = rb.rb_name in
-      match rb.rb_dev with
-      | `Gpu ->
-         s (Printf.sprintf "  %s free(%s_h);\n"
-              (dialect.gd_free name) name)
-      | `Cpu -> s (Printf.sprintf "  free(%s);\n" name))
-    memory.me_bufs ;
-  List.iter
-    (fun gp ->
-      let g = rdv_gpu_name gp.gp_proc in
-      s (Printf.sprintf "  %s free(%s_h);\n" (dialect.gd_free g) g))
-    procs.pr_gpus ;
-  List.iter
-    (fun cp ->
-      s (Printf.sprintf "  free(%s);\n" (rdv_cpu_name cp.cp_proc)))
-    procs.pr_cpus ;
+    (fun o ->
+      let n = o.mo_name in
+      match o.mo_where with
+      | Shared -> s (Printf.sprintf "  gd_free_shared(%s);\n" n)
+      | Device -> s (Printf.sprintf "  %s free(%s_h);\n" (dialect.gd_free n) n)
+      | Host -> s (Printf.sprintf "  free(%s);\n" n))
+    (memory_objects memory procs) ;
   s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch")) ;
   s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch_loc")) ;
   s (Printf.sprintf "  %s\n" (dialect.gd_free "_gpu_done")) ;
