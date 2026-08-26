@@ -36,20 +36,60 @@ type gpu_proc = {
     gp_regs : int list ;
   }
 
-type inst = {
-    i_cpus : cpu_proc list ;
-    i_gpus : gpu_proc list ;
-    i_gpu_globals : string list ;
-    i_all_globals : string list ;
-    i_bdim : int ;
-    i_npart : int ;                (* cpu procs + gpu procs *)
-    i_blocks : int ;               (* GPU test blocks *)
-    i_lanes : int ;                (* GPU test lanes *)
-    (* read buffers: (proc, index, name, device, element type) *)
-    i_bufs : (int * int * string * dev * string) list ;
-    i_readout : string ;           (* the whole pre-rendered slot readout *)
-    i_labels : string ;            (* _labels + _dump_one *)
-    i_nslots : int ;
+(* One observable column's read buffer, SIZE_OF_TEST wide and off the race
+   path; [rb_index] is the column's position among its proc's. *)
+type read_buffer = {
+    rb_proc : int ;
+    rb_index : int ;
+    rb_name : string ;
+    rb_dev : dev ;
+    rb_type : string ;             (* C element type *)
+  }
+
+(* The sub-records below are grouped by what reads them: a phase function
+   takes only the ones it needs. *)
+
+(* What every rendered file stamps to say which test, and which pair, it is. *)
+type identity = {
+    id_name : string ;
+    id_ident : string ;            (* CudaLang.c_ident of it, for C symbols *)
+    id_pair_label : string ;
+    id_cpu_only : bool ;
+  }
+
+(* The counts the render turns into #defines and the launch is sized by. *)
+type geometry = {
+    ge_size : int ;                (* SIZE_OF_TEST *)
+    ge_runs : int ;                (* NUMBER_OF_RUN *)
+    ge_bdim : int ;
+    ge_npart : int ;               (* cpu procs + gpu procs *)
+    ge_blocks : int ;              (* GPU test blocks *)
+    ge_lanes : int ;               (* GPU test lanes *)
+  }
+
+(* [pr_participants] is every proc in proc order, which is the order the
+   readout ANDs the arrival flags in -- NOT the CPUs followed by the GPUs. *)
+type procs = {
+    pr_cpus : cpu_proc list ;
+    pr_gpus : gpu_proc list ;
+    pr_participants : (int * dev) list ;
+  }
+
+(* The objects main() allocates, resets per run, reads back and frees. *)
+type memory = {
+    me_gpu_globals : string list ;
+    me_all_globals : string list ;
+    me_bufs : read_buffer list ;
+  }
+
+(* The outcome vector as columns: what the labels name, what the readout
+   reads into `_o[]', and the condition compiled against those indices. *)
+type outcome = {
+    oc_reg_columns : ((int * string) * string) list ;
+                                   (* ((proc, reg as the condition spells it),
+                                      host array holding the column) *)
+    oc_loc_columns : string list ; (* shared locations read at slot _n *)
+    oc_weak_expr : string ;        (* the condition as C over _o[] *)
   }
 
 (* Naming helpers, shared by derive and the emitters *)
@@ -60,27 +100,28 @@ let rdv_cpu_name p = Printf.sprintf "_rdvC_P%d" p
 
 (* het_run_P<p> wraps code<p>: its declaration, args struct, call
    and read buffers all come from cp_addrs @ cp_outs, in that order. *)
-let cpu_bufs it cp =
+let cpu_read_buffers memory cp =
   List.filter_map
-    (fun (p,_,name,dev,ty) ->
-      if p = cp.cp_proc && dev = `Cpu
-      then Some (Printf.sprintf "%s *%s" ty name, name) else None)
-    it.i_bufs
-let cpu_sig cp =
+    (fun rb ->
+      if rb.rb_proc = cp.cp_proc && rb.rb_dev = `Cpu
+      then Some (Printf.sprintf "%s *%s" rb.rb_type rb.rb_name, rb.rb_name)
+      else None)
+    memory.me_bufs
+let cpu_signature cp =
   String.concat "," (List.map fst (cp.cp_addrs @ cp.cp_outs))
-let gpu_bufs it =
-  List.filter (fun (_,_,_,dev,_) -> dev = `Gpu) it.i_bufs
+let gpu_read_buffers memory =
+  List.filter (fun rb -> rb.rb_dev = `Gpu) memory.me_bufs
+let n_columns outcome =
+  List.length outcome.oc_reg_columns + List.length outcome.oc_loc_columns
 
 (* One emission's harness: the shape above, the identity every rendered file
    stamps, and the toolchain and dialect facts the build files fold over. *)
 type t = {
-    h_name : string ;
-    h_ident : string ;             (* CudaLang.c_ident of h_name, for C symbols *)
-    h_pair_label : string ;
-    h_cpu_only : bool ;
-    h_shape : inst ;
-    h_size : int ;                 (* SIZE_OF_TEST *)
-    h_runs : int ;                 (* NUMBER_OF_RUN *)
+    h_identity : identity ;
+    h_geometry : geometry ;
+    h_procs : procs ;
+    h_memory : memory ;
+    h_outcome : outcome ;
     h_toolchain : HetCpuFront.toolchain ;
     h_dialects : HetDialect.gpu_dialect list ;
   }

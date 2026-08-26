@@ -193,9 +193,9 @@ def instance_of(litmus_path):
 
 
 def het_lane_plan(inst):
-    """The rendezvous-joining GPU lanes as (proc, ops, name) in HetGpuFile.dump's
-    lane order (the harness's GPU procs in program order); hipsrccheck.check_het
-    unpacks the tuple positionally."""
+    """The rendezvous-joining GPU lanes as (proc, ops, name) in the lane order
+    of dump_kernel (litmus/hetGpuFile.ml): the harness's GPU procs in program
+    order.  hipsrccheck.check_het unpacks the tuple positionally."""
     return [(pidx, ops, inst['name']) for pidx, ops in inst['gpu']]
 
 

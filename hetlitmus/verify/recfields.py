@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """HetLitmus -- the emitter/runtime skew tripwire.
 
-Nothing but a compiler binds the `_rec.<name>' writes (litmus/hetDriverMain.ml,
-and the slot readout rendered in litmus/hetEmit.ml) and `#define HET_*' stamps
-(litmus/hetGpuFile.ml) to litmus/het-runtime/*.h.  Over real emissions of both
-pairs:
+Nothing but a compiler binds the `_rec.<name>' writes (litmus/hetDriverMain.ml)
+and the `#define HET_*' stamps (litmus/hetGpuFile.ml) to
+litmus/het-runtime/*.h.  Over real emissions of both pairs:
 
   A Fields   every `_rec.<name>' a render writes is a member of het_obs_record.
   B Stamp    every render writes `_rec.rec_magic = HET_REC_MAGIC;' exactly once.

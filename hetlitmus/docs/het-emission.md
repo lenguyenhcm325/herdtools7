@@ -269,11 +269,10 @@ dialect) PAIR**. That pair, and no machine, is what a render names.
   `(ISA, dialect)` label the verdict and statistics layers print where they must
   identify the target: a harness built for the wrong pair compiles, runs and
   reports identically, and this define is the only thing that says which pair it
-  was measuring. `pair_label` is derived once in `litmus/hetEmit.ml` and
-  carried to every emitter as the harness record's `h_pair_label` — the
-  `pair:` line litmus7 prints,
-  the `HET_PAIR_NAME` stamp and the README's `Pair:` line all take it — so the
-  two stamped frames cannot print different labels.
+  was measuring. The label is derived once in `litmus/hetEmit.ml` and carried
+  to every emitter in the harness record's identity — the `pair:` line litmus7
+  prints, the `HET_PAIR_NAME` stamp and the README's `Pair:` line all take it —
+  so the two stamped frames cannot print different labels.
 * **The one target-specific *number* is a build knob.** `HET_LLC_MB` is the
   last-level cache a noise buffer must exceed to cross the interconnect at all;
   below it the buffer is served from cache and the noise stresses nothing. It is
@@ -343,9 +342,10 @@ All het logic is confined to:
   teardown;
 * `litmus/hetBuildFiles.ml` — `comp.sh`, the `Makefile` and the `README.md`,
   each folding over the selected dialects;
-* `litmus/hetCond.ml` — pure classification of a test's condition: which shared
-  locations its atoms name, so the emitter knows which locations need an outcome
-  column;
+* `litmus/hetCond.ml` — a test's condition, as pure functions over the parsed
+  proposition: which shared locations its atoms name, so the emitter knows which
+  locations need an outcome column, and its compilation to the C predicate that
+  scores one iteration;
 * `litmus/hetCpuFront.ml` — the per-CPU-ISA column frontend (`CpuF`), one
   module per supported CPU ISA;
 * the `` `Het `` dispatch arm in `litmus/top_litmus.ml` — the per-ISA module
@@ -445,7 +445,8 @@ invocation are the target box's step.
   (`litmus/gpuLang.ml`) peels a `Label` and drops a
   `Macro`/`Symbolic`/`Pagealign`/`Skip`, so a LISA proc carrying one emits a
   straight-line body with it silently removed.
-* **What the condition compiler refuses, and the one thing it does not check.**
+* **What the condition compiler (`litmus/hetCond.ml`) refuses, and the one
+  thing it does not check.**
   A test is refused (`HetLitmus REFUSED`, exit 3) when its condition names a
   register no proc makes observable, when it observes a location no proc of the
   test touches (no slot backs it), when an atom's value is not an integer, when

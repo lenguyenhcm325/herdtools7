@@ -14,7 +14,8 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the condition's location set; contract in hetCond.mli. *)
+(* HetLitmus: the condition's location set and its compilation to a C
+   predicate; contract in hetCond.mli. *)
 
 (* fold_prop folds right over And/Or children, so prepending yields source
    order; the de-dup afterwards keeps each name's first occurrence. *)
@@ -33,3 +34,81 @@ let condition_locations p =
       let k = MiscParser.dump_value g in
       if Hashtbl.mem seen k then false else (Hashtbl.add seen k () ; true))
     locs
+
+(* A value as C spells it, and as an int when it is one. *)
+let cval v = ParsedConstant.pp_v v
+let cint v = int_of_string_opt (ParsedConstant.pp_v v)
+
+(* Folding And/Or over constant parts keeps the emitted predicate readable,
+   and is what lets a whole condition collapse to "0" or "1". *)
+let is_true s =
+  s = "1" || (String.length s >= 2 && s.[0]='1' && s.[1]=' ')
+let is_false s =
+  s = "0" || (String.length s >= 2 && s.[0]='0' && s.[1]=' ')
+let mk_and parts =
+  if List.exists is_false parts then "0"
+  else match List.filter (fun p -> not (is_true p)) parts with
+  | [] -> "1"
+  | [p] -> p
+  | ps -> "(" ^ String.concat " && " ps ^ ")"
+let mk_or parts =
+  if List.exists is_true parts then "1"
+  else match List.filter (fun p -> not (is_false p)) parts with
+    | [] -> "0"
+    | [p] -> p
+    | ps -> "(" ^ String.concat " || " ps ^ ")"
+
+let predicate_is_constant e = is_true e || is_false e
+
+let c_predicate ~reg_slots ~loc_slots p =
+  let n_reg = List.length reg_slots in
+  let slot_of_reg pr r =
+    let rec f i = function
+      | (p,rr)::rest -> if p=pr && rr=r then Some i else f (i+1) rest
+      | [] -> None in
+    f 0 reg_slots in
+  let slot_of_loc name =
+    let rec f i = function
+      | g::rest -> if g=name then Some (n_reg+i) else f (i+1) rest
+      | [] -> None in
+    f 0 loc_slots in
+  let rec c_slot_of_prop p =
+    let open ConstrGen in
+    match p with
+    | Atom (LV (Loc (MiscParser.Location_reg (pr,r)),v)) ->
+       let i = match slot_of_reg pr r with
+         | Some i -> i
+         | None ->
+            Warn.fatal
+              "hetlitmus: condition names %d:%s but proc %d makes no \
+               such value observable (no read buffer to bind)" pr r pr in
+       (match cint v with
+        | Some n -> Printf.sprintf "(_o[%d] == %d)" i n
+        | None ->
+           Warn.fatal
+             "hetlitmus: condition value for %d:%s is not an integer"
+             pr r)
+    | Atom (LV (Loc (MiscParser.Location_global g),v)) ->
+       let name = MiscParser.dump_value g in
+       let i = match slot_of_loc name with
+         | Some i -> i
+         | None ->
+            Warn.fatal
+              "hetlitmus: condition observes [%s]=%s but no proc of \
+               this test touches that location (no slot backs it)"
+              name (cval v) in
+       (match cint v with
+        | Some n -> Printf.sprintf "(_o[%d] == %d)" i n
+        | None ->
+           Warn.fatal
+             "hetlitmus: condition value for [%s] is not an integer"
+             name)
+    | Atom _ ->
+       Warn.fatal "hetlitmus: unsupported condition atom (not loc=v)"
+    | Not q -> Printf.sprintf "(!%s)" (c_slot_of_prop q)
+    | And ps -> mk_and (List.map c_slot_of_prop ps)
+    | Or ps -> mk_or (List.map c_slot_of_prop ps)
+    | Implies (a,b) ->
+       Printf.sprintf "(!(%s) || %s)"
+         (c_slot_of_prop a) (c_slot_of_prop b) in
+  c_slot_of_prop p

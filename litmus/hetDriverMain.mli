@@ -14,25 +14,10 @@
 (* "http://www.cecill.info". We also give a copy in LICENSE.txt.            *)
 (****************************************************************************)
 
-(* HetLitmus: the condition read two ways -- which locations a harness reads
-   back per iteration, and the C predicate over its outcome vector that scores
-   one.  Pure functions over a MiscParser proposition: nothing here knows the
-   harness, and nothing here writes a file. *)
+(* HetLitmus: the emitted driver's main() -- allocation, launch, the run loop,
+   the slot readout and teardown -- written in one GPU dialect.
+   Design: hetlitmus/docs/het-emission.md. *)
 
-(* The Location_global atoms of a condition, in source order, de-duplicated by
-   printed name: one outcome column each.  Register atoms are ignored, so a
-   cycle whose condition names no location gives []
-   (hetlitmus/docs/corpus-grid.md, "The shape catalogue"). *)
-val condition_locations : MiscParser.prop -> MiscParser.maybev list
-
-(* The condition as a C expression over the outcome vector `_o[]': column i of
-   [reg_slots] is `_o[i]', column j of [loc_slots] is `_o[|reg_slots|+j]'.
-   Constant parts fold, so a whole condition can compile to "0" or "1".
-   Warn.fatal on an atom no column backs, a non-integer value, or an atom that
-   is not loc=v. *)
-val c_predicate :
-  reg_slots:(int * string) list -> loc_slots:string list ->
-  MiscParser.prop -> string
-
-(* Whether c_predicate folded the whole condition to a constant. *)
-val predicate_is_constant : string -> bool
+(* Write the main() that closes a render, in that render's dialect.  The phase
+   functions the run loop is sequenced from are the file's own. *)
+val dump : HetHarness.t -> HetDialect.gpu_dialect -> out_channel -> unit
