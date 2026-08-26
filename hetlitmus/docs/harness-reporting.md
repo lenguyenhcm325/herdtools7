@@ -97,11 +97,11 @@ says the same thing. The emitter fills `stress_requested` from the compile-time 
 the distinction is carried in the record rather than inferred from it.
 
 **A zero lane count is structural, not dead.** The emitted stress block's round loop
-(`litmus/hetEmit.ml`) runs only while `het_scratch_read(_gpu_done) < HET_GPU_LANES`, which
+(`litmus/hetGpuFile.ml`) runs only while `het_scratch_read(_gpu_done) < HET_GPU_LANES`, which
 is false at 0 before `het_do_stress` is called once, so at zero lanes the mechanism cannot
 report a round however hard the run tries — and a tally of 0 is
 therefore not evidence of anything. The emitter withholds `HET_REQ_GPU_STRESS` from
-`stress_requested` exactly there (`litmus/hetEmit.ml`), so the mechanism is caveated rather
+`stress_requested` exactly there (`litmus/hetDriverMain.ml`), so the mechanism is caveated rather
 than disqualified, and the caveat prints the lane count so the claim is checkable against
 the harness's own `#define`s rather than taken on trust. The lane count is a property of
 the **build**; `cpu_only` is a property of the **cycle**, and they differ — so the caveat

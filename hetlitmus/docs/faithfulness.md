@@ -237,7 +237,7 @@ begins or ends in a fence (`f[sc,sys]`, say) is unambiguous.
 
 `het_do_stress` takes its access pattern as a **runtime kernel argument**: the
 emitter reads `HET_PRE_STRESS_PATTERN` / `HET_MEM_STRESS_PATTERN` into host
-variables and passes them in (`litmus/hetEmit.ml`), so the if-chain lowers to a
+variables and passes them in (`litmus/hetDriverMain.ml`), so the if-chain lowers to a
 four-way dispatch and the scratchpad traffic survives whatever the `-D` says.
 Hand the same body a compile-time constant instead and nvcc folds the chain to
 the one named branch. The loop is not deleted outright — its round count reaches
@@ -313,7 +313,7 @@ blocks fill what the co-residency cap leaves over the test lanes, so the stress
 population is the first thing that cap squeezes to zero: the code present,
 requested, and executed by nobody. The emitted driver warns about that case
 explicitly *before* the run, rather than leaving it to the tally afterwards
-(`litmus/hetEmit.ml`).
+(`litmus/hetDriverMain.ml`).
 
 ## CPU-side stress liveness
 

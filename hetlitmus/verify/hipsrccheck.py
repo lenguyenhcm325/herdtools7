@@ -281,7 +281,7 @@ def emit_harness(litmus_path, outdir):
 
 KERNEL_OPEN = re.compile(r'^__global__ void litmus_(\w+)\(')
 # The one guard shape the emitters write (litmus/gpuLang.ml dump_test,
-# litmus/hetEmit.ml); another one is a geometry the lane plan cannot match.
+# litmus/hetGpuFile.ml); another one is a geometry the lane plan cannot match.
 LANE_GUARD = re.compile(r'^if \(blockIdx\.x == (\d+) && threadIdx\.x == (\d+)\) \{$')
 STRESS_GUARD = re.compile(r'^if \(blockIdx\.x >= HET_TEST_BLOCKS\) \{$')
 PROC_BANNER = re.compile(r'^// ---- P(\d+)\s+\(workgroup (\d+), lane (\d+)\) ----$')
@@ -386,7 +386,7 @@ C_LOAD = re.compile(r'^(?P<dst>[^=<>!]+?)\s*=\s*__hip_atomic_load\((.*)\);$')
 C_FENCE = re.compile(r'^__builtin_amdgcn_fence\((.*)\);\s*// f\[(\w+),(\w+)\]$')
 C_RELAXED_FENCE = re.compile(
     r'^// f\[(\w+),(\w+)\] \(relaxed fence = no-op; nothing emitted\)$')
-# The rendezvous, as litmus/hetEmit.ml writes it: arrival for iteration _n,
+# The rendezvous, as litmus/hetGpuFile.ml writes it: arrival for iteration _n,
 # then the release delay.  Their bodies are verify/rdvcheck.py's subject.
 C_RDV = re.compile(r'^(_rdvG_P\d+)\[_n\] = het_rdv_device\((.*)\);$')
 C_JITTER = re.compile(r'^het_rdv_jitter\((.*)\);$')
@@ -401,7 +401,7 @@ SLOT_PTR = re.compile(r'^\((\w+) \+ \(_n\)\*HET_SLOT_STRIDE_WORDS\)$')
 GPU_OUT_STRIDE = 4
 GPU_REG = re.compile(r'^r(\d+)$')
 
-# The two lines litmus/hetEmit.ml opens every het lane's iteration loop with,
+# The two lines litmus/hetGpuFile.ml opens every het lane's iteration loop with,
 # in this order, and the bound it counts to.
 LOOP_PRAGMA = "#pragma unroll 1"
 LOOP_HEAD = re.compile(r'^for \(int _n=0; _n<(\S+); \+\+_n\) \{$')

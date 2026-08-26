@@ -45,10 +45,10 @@ byte-identical output.
 
 ## CPU ISA from the device tag (a functor, not a flag)
 
-The harness body is a **functor over the CPU module chain**, `HetEmit.Make` in
-`litmus/hetEmit.ml` (the seam back to `Top`'s scope is the options slice, the
-splitter, and `Make`'s compiled-CPU-code extractor, closed at the dispatch
-site), instantiated by the `` `Het `` dispatch arm at the ISA
+The harness **derivation** is a functor over the CPU module chain,
+`HetEmit.Make` in `litmus/hetEmit.ml` (the seam back to `Top`'s scope is the
+options slice, the splitter, and `Make`'s compiled-CPU-code extractor, closed at
+the dispatch site), instantiated by the `` `Het `` dispatch arm at the ISA
 the header asks for:
 
 1. the arm reads the program section and calls `HetArch.scan_cpu_isa` on its
@@ -67,6 +67,11 @@ the header asks for:
 (ARM/AArch64/PPC/RISCV already exposed it); since `X86_64Base.parsedInstruction =
 instruction`, it returns exactly the `Cpu.parsedPseudo list` the het column
 parser consumes. The GPU side is fixed (LISA/Bell) inside the functor.
+
+What the functor derives is a `HetHarness.t` — the harness as data — and every
+file in the directory is then rendered by a plain module over that record
+(`HetCpuFile`, `HetGpuFile` with `HetDriverMain`, `HetBuildFiles`), none of them
+parameterised by the CPU module chain.
 
 ## What the `Het` dispatch arm emits
 
@@ -157,9 +162,10 @@ The five required pieces, and where each is reused rather than reimplemented:
 One LISA parse, one GPU file per emission. The driver template is rendered from
 a `gpu_dialect` record; the registry `dialects = [cuda_dialect; hip_dialect]`
 (`litmus/hetDialect.ml`) holds one record per vendor and `-gpu-target` filters it,
-so every per-vendor site — the render, the comp.sh arms, the Makefile rules, the
-README — folds over the selected list and a third vendor is an entry rather than
-an edit at each site. CUDA and HIP differ only in those record fields; the kernel
+so every per-vendor site — the render (`litmus/hetGpuFile.ml`), the comp.sh
+arms, the Makefile rules and the README (`litmus/hetBuildFiles.ml`) — folds over
+the selected list and a third vendor is an entry rather than an edit at each
+site. CUDA and HIP differ only in those record fields; the kernel
 guards, the pthread wrappers, the outcome histogram, and the `<<<…>>>` launch
 (hipcc accepts triple-chevron) are shared verbatim.
 
@@ -263,8 +269,9 @@ dialect) PAIR**. That pair, and no machine, is what a render names.
   `(ISA, dialect)` label the verdict and statistics layers print where they must
   identify the target: a harness built for the wrong pair compiles, runs and
   reports identically, and this define is the only thing that says which pair it
-  was measuring. `pair_label` in `litmus/hetEmit.ml` is the one
-  derivation of that label for both dialects — the `pair:` line litmus7 prints,
+  was measuring. `pair_label` is derived once in `litmus/hetEmit.ml` and
+  carried to every emitter as the harness record's `h_pair_label` — the
+  `pair:` line litmus7 prints,
   the `HET_PAIR_NAME` stamp and the README's `Pair:` line all take it — so the
   two stamped frames cannot print different labels.
 * **The one target-specific *number* is a build knob.** `HET_LLC_MB` is the
@@ -321,9 +328,21 @@ All het logic is confined to:
 * `litmus/hetGpuOnly.ml` — the other GPU-emitting arm, `` `LISA ``: a scoped
   Bell/LISA test with no CPU column, parsed once and written out as one bare
   kernel file in the selected dialect (no harness directory, no payloads);
-* `litmus/hetEmit.ml` — the `HetEmit.Make` functor (the dialect-parameterised
-  file emitter): the kernel, the driver, the CPU thread wrappers, the slot
-  arithmetic and the readout;
+* `litmus/hetEmit.ml` — the `HetEmit.Make` functor: it parses the compound
+  test, derives the harness and writes the directory; every refusal fires
+  there, before the directory exists;
+* `litmus/hetHarness.ml` — that harness as data: the per-proc records, the read
+  buffers, the outcome slots, and the naming every emitter below shares;
+* `litmus/hetCpuFile.ml` — the `<t>_cpu.c` render: the CPU threads litmus7's
+  own asm printer writes, and the entry points the driver calls;
+* `litmus/hetGpuFile.ml` — the `.cu`/`.hip` render: the prelude, the kernel
+  (test lanes and stressing workgroups), the CPU pthread wrappers and the
+  outcome labels;
+* `litmus/hetDriverMain.ml` — the driver's `main()`: allocation, launch
+  geometry, the stress populations, the run loop, the slot readout and
+  teardown;
+* `litmus/hetBuildFiles.ml` — `comp.sh`, the `Makefile` and the `README.md`,
+  each folding over the selected dialects;
 * `litmus/hetCond.ml` — pure classification of a test's condition: which shared
   locations its atoms name, so the emitter knows which locations need an outcome
   column;
@@ -412,7 +431,8 @@ invocation are the target box's step.
   lex-rename errors, `litmus/litmus.ml`), so a wrapper can tell the two apart.
   Every het emission boundary routes through `HetArch.refused`: `HetEmit.run`,
   `HetGpuOnly.compile`, and the `` `Het `` dispatch arm, which owns the
-  pre-parse ISA scan. litmus7's own batch driver (`Answer.Interrupted`,
+  pre-parse ISA scan. The file emitters run inside `HetEmit.run`'s boundary, so
+  a failure in any of them is reported the same way. litmus7's own batch driver (`Answer.Interrupted`,
   `litmus/dumpRun.ml`) would have reported the refusal and still exited 0, which
   made a missing harness look like success to any caller that redirects stdout.
 * The CPU projection supports plain straight-line procs (the het corpus). The

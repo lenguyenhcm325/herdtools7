@@ -58,7 +58,8 @@ A64_BRANCH = re.compile(r"^\s+(b|b\.[a-z]+|cbn?z|tbn?z)\s+(?:.*,\s*)?(\.[\w$.]+)
 # non-volatile build lands under that (faithfulness.md, "CPU-side stress liveness").
 MIN_ENEMY_STORES = 4
 
-# The preload term of the emitted driver's stress_requested word (hetEmit.ml).
+# The preload term of the emitted driver's stress_requested word
+# (hetDriverMain.ml).
 PRELOAD_REQ_TERM = ("((HET_CPU_PRELOAD_PCT > 0 && !_ct.preload_inert) "
                     "? HET_REQ_CPU_PRELOAD : 0u)")
 

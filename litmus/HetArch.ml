@@ -18,7 +18,8 @@
    test, so this functor sums the two backends' instruction types (CPUins /
    GPUins) and delegates per constructor, keeping the rest of the pipeline
    single-arch-typed.  Scope here is representation + parse; cross-device
-   emission is litmus/hetEmit.ml.  hetlitmus/docs/het-litmus-format.md. *)
+   emission is litmus/hetEmit.ml and the file emitters it drives.
+   hetlitmus/docs/het-litmus-format.md. *)
 
 (* The CPU-ISA tag vocabulary (hetlitmus/docs/het-litmus-format.md sec 3).
    Top-level, outside the functor: the litmus7 `Het' arm picks the CPU ISA --

@@ -24,7 +24,7 @@ payload headers themselves, and the design rationale is in `hetlitmus/docs/`.
 ## het_stress.h — the GPU memory-stress layer
 
 `#include`'d by BOTH renders, as one shared C header rather than a per-dialect
-fragment: `dump_gpu_file` then still emits test-specific code through
+fragment: `HetGpuFile.dump` then still emits test-specific code through
 `gpu_dialect` fields alone, and every line of reused code keeps its attribution
 in one place, which is what the reuse licence condition needs.  Its one dialect
 divergence is a preprocessor selection of the vendor runtime header its

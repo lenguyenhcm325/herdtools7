@@ -21,6 +21,18 @@
    of these with the matching chain once scan_cpu_isa has named the ISA.
    hetlitmus/docs/het-emission.md, "CPU ISA from the device tag". *)
 
+(* The CPU toolchain facts an emitted harness carries: the ISA label, the two
+   host-detection tokens (the CPP macro its asm is guarded by, the `uname -m'
+   word its link guards compare) and the CPU compile flags.  HetEmit.Make
+   packs one from its CpuF parameter; the file emitters read it. *)
+type toolchain = {
+    isa_name : string ;
+    host_macro : string ;
+    host_uname : string ;
+    cross : (string * string) option ;
+    cpu_cflags : string ;
+  }
+
 (* The column sub-parsers drive an ISA lexer, whose whole config is [debug]. *)
 module type Config = sig
   val debug : bool

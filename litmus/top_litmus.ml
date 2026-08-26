@@ -399,10 +399,10 @@ end = struct
 
   module SP = Splitter.Make(LexConfig)
 
-  (* HetLitmus: the seam for the het-only modules (hetDialect, hetEmit,
-     hetGpuOnly, hetCpuFront).  HetOpts is the slice of Top's scope the
-     dispatch arms below close their functors over, so none of those modules
-     depends on this file.  hetlitmus/docs/het-emission.md. *)
+  (* HetLitmus: the seam for the het-only modules
+     (hetlitmus/docs/het-emission.md, "Where the code lives").  HetOpts is the
+     slice of Top's scope the dispatch arms below close their functors over, so
+     none of those modules depends on this file. *)
   module HetOpts = struct
     let verbose = OT.verbose
     let nocatch = OT.nocatch

@@ -82,7 +82,7 @@ mnemonic a fence. Every asm string literal is one instruction closed by the
 newline escape.
 
 In a het render a lane's ops sit *unguarded* in the body of one `#pragma unroll
-1` loop over `SIZE_OF_TEST` (`litmus/hetEmit.ml`), with no `break`/`continue`/
+1` loop over `SIZE_OF_TEST` (`litmus/hetGpuFile.ml`), with no `break`/`continue`/
 `goto`/`return` able to skip them — and the rendezvous and its jitter sit
 *inside* it, ahead of every tested op, because a copy lifted out of the loop joins
 the two devices once and leaves every iteration after the first unsynchronised.
