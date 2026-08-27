@@ -52,9 +52,10 @@ the dispatch site), instantiated by the `` `Het `` dispatch arm at the ISA
 the header asks for:
 
 1. the arm reads the program section and calls `HetArch.scan_cpu_isa` on its
-   header row (`P0:… | P1:… ;`), which maps the first CPU column's tag to
+   header row (`P0:… | P1:… ;`), which maps every CPU column's tag to
    `IsaAArch64` / `IsaX86_64` (`cpu`/`aarch64`/`arm` → AArch64; `x86_64`/`amd64`
-   → X86_64); no CPU column ⇒ AArch64 default;
+   → X86_64); no CPU column ⇒ AArch64 default, and a header whose CPU columns
+   name two ISAs is refused — a harness is derived over **one** CPU backend;
 2. the matching CPU modules are built (`AArch64Arch_litmus` +
    `AArch64Compile_litmus` + `AArch64Parser`, **or** `X86_64Arch_litmus` +
    `X86_64Compile_litmus` + `X86_64Parser`) and passed to `HetEmit`;
@@ -404,8 +405,13 @@ keeps its `cpu` back-compat tag).
   lex-rename errors, `litmus/litmus.ml`), so a wrapper can tell the two apart.
   Every het emission boundary routes through `HetArch.refused`: `HetEmit.run`,
   `HetGpuOnly.compile`, and the `` `Het `` dispatch arm, which owns the
-  pre-parse ISA scan. The file emitters run inside `HetEmit.run`'s boundary, so
-  a failure in any of them is reported the same way. litmus7's own batch driver (`Answer.Interrupted`,
+  pre-parse ISA scan, where a header naming two CPU ISAs is refused. The file
+  emitters run inside `HetEmit.run`'s boundary, so a failure in any of them is
+  reported the same way. A refusal leaves nothing on disk: the boundary removes
+  the files that invocation wrote and the harness directory it created (never a
+  directory it found already there), and litmus7's compile-only pass derives the
+  harness without writing it, so a test that will be refused is refused before
+  the suite driver writes anything of its own. litmus7's own batch driver (`Answer.Interrupted`,
   `litmus/dumpRun.ml`) would have reported the refusal and still exited 0, which
   made a missing harness look like success to any caller that redirects stdout.
 * **A het test has at least one `gpu` proc.** An all-CPU `Het` test is refused
@@ -413,6 +419,21 @@ keeps its `cpu` back-compat tag).
   naming no `gpu`. A test whose threads are all of one architecture exercises no
   compound composition ([Goens23] §4.6), and an all-CPU cycle is litmus7's own
   X86_64/AArch64 path.
+* **The GPU column admits exactly what `hetlitmus/bells/ptx.bell` declares.**
+  `GpuLang.check_program` runs over every GPU proc before any file is written
+  and gives the same answer under `-gpu-target cuda` and `hip`:
+  - loads, stores and fences are rendered; `mov`, a branch, an `rmw` and
+    a `call` are **refused**, not lowered and not commented out;
+  - an access or fence carries one order from its own set (`R` takes
+    `relaxed`/`acquire`/`sc`, `W` takes `relaxed`/`release`/`sc`, `F` takes
+    `acquire`/`release`/`acq_rel`/`sc`) and then one scope (`cta`/`gpu`/`sys`),
+    in that order, because a Bell annotation group is positional and herd7
+    matches it position by position (`lib/BellModel.ml`, `check_event`). An
+    order-less `w[] x 1`, an `f[sys]`, an `r[release,sys]`, a scope-first
+    `w[sys,relaxed]` and a relaxed fence (a form neither vendor has) are all
+    refused;
+  - registers are the numbered `rN`: no register allocator runs over this
+    column, so a symbolic `%T1` is refused.
 * The CPU projection supports plain straight-line procs (the het corpus). The
   instruction vocabulary is litmus7's own — whatever `AArch64Compile_litmus`
   / `X86_64Compile_litmus` accept and `ASMLang.dump_fun` prints — so there is no

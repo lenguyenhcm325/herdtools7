@@ -24,24 +24,21 @@
 
 open Printf
 
-(* Order / scope vocabulary: which Bell annotations name what. *)
+(* Order / scope vocabulary, one table per instruction kind; the vocabulary's
+   home is hetlitmus/bells/ptx.bell. *)
 
-let is_order = function
-  | "relaxed" | "acquire" | "release" | "acq_rel" | "sc" -> true
-  | _ -> false
+let load_orders = ["relaxed" ; "acquire" ; "sc"]
+let store_orders = ["relaxed" ; "release" ; "sc"]
+let fence_orders = ["acquire" ; "release" ; "acq_rel" ; "sc"]
+let scope_names = ["cta" ; "gpu" ; "sys"]
 
-let is_scope = function
-  | "cta" | "gpu" | "sys" -> true
-  | _ -> false
+let is_scope a = List.mem a scope_names
 
-(* Bell annotation list -> (order, scope); a default fills a dimension the
-   list does not name. *)
-let order_scope_of annots =
-  let ord =
-    try List.find is_order annots with Not_found -> "relaxed"
-  and scp =
-    try List.find is_scope annots with Not_found -> "sys" in
-  ord, scp
+(* Bell annotation list -> (order, scope), total on an admitted instruction:
+   check_program refuses every other annotation list. *)
+let order_scope_of = function
+  | [ord ; scp] -> ord, scp
+  | _ -> assert false
 
 (* BellBase accessors *)
 
@@ -53,7 +50,7 @@ let c_ident s =
 
 let reg_name = function
   | BellBase.GPRreg i -> sprintf "r%i" i
-  | BellBase.Symbolic_reg s -> s (* should not survive register allocation *)
+  | BellBase.Symbolic_reg _ -> assert false
 
 let var_of_reg_or_addr = function
   | BellBase.Abs s -> s
@@ -76,6 +73,62 @@ let rec instrs_of_pseudo = function
   | BellBase.Pagealign | BellBase.Skip _ -> []
 
 let instrs_of_code code = List.concat_map instrs_of_pseudo code
+
+(* GPU-column admissibility: the vocabulary hetlitmus/bells/ptx.bell declares,
+   checked over a whole program BEFORE anything is written.
+   hetlitmus/docs/het-emission.md, "Scope / limits". *)
+
+let symbolic_reg = function
+  | BellBase.Symbolic_reg _ -> true
+  | BellBase.GPRreg _ -> false
+
+let symbolic_roa = function
+  | BellBase.Rega r -> symbolic_reg r
+  | BellBase.Abs _ -> false
+
+let symbolic_roi = function
+  | BellBase.Regi r -> symbolic_reg r
+  | BellBase.Imm _ -> false
+
+let symbolic_addr_op = function
+  | BellBase.Addr_op_atom roa -> symbolic_roa roa
+  | BellBase.Addr_op_add (roa, roi) -> symbolic_roa roa || symbolic_roi roi
+
+(* One order from this instruction's own set, THEN one scope: a Bell annotation
+   group is positional. *)
+let annots_admitted orders = function
+  | [ord ; scp] -> List.mem ord orders && is_scope scp
+  | _ -> false
+
+let check_instr p i =
+  let refuse why =
+    Warn.user_error "HetLitmus: P%d (gpu) %s -- %s"
+      p (BellBase.dump_instruction i) why in
+  let check_annots kind orders annots =
+    if not (annots_admitted orders annots) then
+      refuse
+        (sprintf "a %s takes one order from {%s} then one scope from {%s}"
+           kind (String.concat "," orders) (String.concat "," scope_names)) in
+  let check_regs symbolic =
+    if symbolic then
+      refuse "the GPU column takes numbered registers r0, r1, ..." in
+  match i with
+  | BellBase.Pnop -> ()
+  | BellBase.Pld (r, ao, annots) ->
+      check_annots "load" load_orders annots ;
+      check_regs (symbolic_reg r || symbolic_addr_op ao)
+  | BellBase.Pst (ao, roi, annots) ->
+      check_annots "store" store_orders annots ;
+      check_regs (symbolic_addr_op ao || symbolic_roi roi)
+  | BellBase.Pfence (BellBase.Fence (annots, _)) ->
+      check_annots "fence" fence_orders annots
+  | BellBase.Pcall _ | BellBase.Prmw _ | BellBase.Pbranch _ | BellBase.Pmov _ ->
+      refuse "the GPU column admits loads, stores and fences only"
+
+let check_program prog =
+  List.iter
+    (fun ((p, _, _), code) -> List.iter (check_instr p) (instrs_of_code code))
+    prog
 
 (* Globals and per-proc result registers *)
 

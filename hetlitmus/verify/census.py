@@ -9,5 +9,5 @@ HET against the tree and the two homes against each other.
 
 GPU_ONLY = 173
 HET = 471
-SYNTHETIC = 2
+SYNTHETIC = 1
 COVER = 48

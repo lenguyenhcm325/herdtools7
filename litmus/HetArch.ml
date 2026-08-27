@@ -34,28 +34,46 @@ let cpu_isa_of_tag s = match String.lowercase_ascii (String.trim s) with
 
 let cpu_isa_tag = function IsaAArch64 -> "aarch64" | IsaX86_64 -> "x86_64"
 
-(* Pre-scan the program header for the ONE CPU ISA its CPU columns share: the
-   first CPU column's, AArch64 where the test has no CPU column. *)
+(* Is this program row the scope tree rather than a table row?  Shared with
+   het_parser, whose row filter this scan must agree with. *)
+let is_scopes_row s =
+  let t = String.trim s in
+  String.length t >= 7 && String.sub t 0 7 = "scopes:"
+
+(* Pre-scan the program header for the ONE CPU ISA its CPU columns share.  A
+   header naming two is refused: one harness is derived over one CPU backend.
+   AArch64 where the test has no CPU column. *)
 let scan_cpu_isa prog_text =
   let is_blank s = String.trim s = "" in
   let rows =
-    List.filter (fun r -> not (is_blank r))
+    List.filter (fun r -> not (is_blank r) && not (is_scopes_row r))
       (String.split_on_char ';' prog_text) in
   match rows with
   | [] -> IsaAArch64
   | header :: _ ->
      let cells = String.split_on_char '|' header in
-     let tag_of cell =
+     let cpu_of cell =
        match String.split_on_char ':' (String.trim cell) with
-       | [_;d] -> String.trim d
-       | _ -> "" in
-     let rec first = function
-       | [] -> IsaAArch64
-       | cell :: rest ->
-          (match cpu_isa_of_tag (tag_of cell) with
-           | Some isa -> isa
-           | None -> first rest) in
-     first cells
+       | [p;d] ->
+          let p = String.trim p and d = String.trim d in
+          begin match cpu_isa_of_tag d with
+          | Some isa -> Some (p,d,isa)
+          | None -> None
+          end
+       | _ -> None in
+     begin match List.filter_map cpu_of cells with
+     | [] -> IsaAArch64
+     | (p0,d0,isa0) :: rest ->
+        List.iter
+          (fun (p,d,isa) ->
+            if isa <> isa0 then
+              Warn.user_error
+                "HetLitmus: %s is %s and %s is %s; every CPU proc of a \
+                 heterogeneous test names one CPU ISA"
+                p0 d0 p d)
+          rest ;
+        isa0
+     end
 
 (* The pre-scan's input.  The splitter reports only the section's byte span, so
    re-read it from the file: the scan runs before any parser exists. *)
@@ -353,11 +371,8 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
     (* A `scopes:' tree sits in the program section and HetSlurp pulls it in;
        carrying no `;', it would survive as a spurious trailing row.  Drop it:
        nothing here consumes it (hetlitmus/docs/het-generation.md sec 4). *)
-    let is_scopes s =
-      let t = String.trim s in
-      String.length t >= 7 && String.sub t 0 7 = "scopes:" in
     let rows =
-      List.filter (fun r -> not (is_blank r) && not (is_scopes r))
+      List.filter (fun r -> not (is_blank r) && not (is_scopes_row r))
         (String.split_on_char ';' text) in
     match rows with
     | [] -> Warn.user_error "HetArch: empty heterogeneous program"

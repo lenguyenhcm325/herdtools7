@@ -73,17 +73,10 @@ let dump_instr chan ~het ind i = match i with
         ind dst (ptr_of_addr_op ~het ao) (hip_memory_order ord) (hip_scope scp)
   | BellBase.Pfence (BellBase.Fence (annots, _)) ->
       let ord, scp = order_scope_of annots in
-      (* __builtin_amdgcn_fence takes only acquire/release/acq_rel/seq_cst,
-         and a relaxed fence is a no-op: emit nothing executable. *)
-      if ord = "relaxed" then
-        fprintf chan "%s// f[%s,%s] (relaxed fence = no-op; nothing emitted)\n"
-          ind ord scp
-      else
-        fprintf chan "%s__builtin_amdgcn_fence(%s, %S); // f[%s,%s]\n"
-          ind (hip_memory_order ord) (hip_fence_scope scp) ord scp
+      fprintf chan "%s__builtin_amdgcn_fence(%s, %S); // f[%s,%s]\n"
+        ind (hip_memory_order ord) (hip_fence_scope scp) ord scp
   | BellBase.Pnop -> ()
-  | _ ->
-      fprintf chan "%s// UNSUPPORTED: %s\n" ind (BellBase.dump_instruction i)
+  | _ -> assert false
 
 (* Whole-test emission *)
 

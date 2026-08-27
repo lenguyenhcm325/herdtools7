@@ -39,15 +39,12 @@ let thread_scope = function
   | s -> Warn.user_error "CudaLang: unknown scope %S" s
 
 (* One inline PTX fence per annotated order, rather than the collapsed
-   cuda::atomic_thread_fence (hetlitmus/docs/cuda-emitter.md, "nvcc compile").
-   hetlitmus/bells/ptx.bell declares no relaxed fence, so refuse one. *)
+   cuda::atomic_thread_fence (hetlitmus/docs/cuda-emitter.md, "nvcc compile"). *)
 let ptx_fence_sem = function
   | "acquire" -> "acquire"
   | "release" -> "release"
   | "acq_rel" -> "acq_rel"
   | "sc"      -> "sc"
-  | "relaxed" -> Warn.user_error
-      "CudaLang: a relaxed fence has no PTX form (relaxed fence is a no-op)"
   | s -> Warn.user_error "CudaLang: unknown fence order %S" s
 
 (* PTX fence scope suffix: the LISA scope names coincide with .cta/.gpu/.sys. *)
@@ -96,8 +93,7 @@ let dump_instr chan ~het ind i = match i with
       fprintf chan "%sasm volatile(\"fence.%s.%s;\" ::: \"memory\"); // %s\n"
         ind (ptx_fence_sem ord) (ptx_scope scp) (fence_min_arch ord)
   | BellBase.Pnop -> ()
-  | _ ->
-      fprintf chan "%s// UNSUPPORTED: %s\n" ind (BellBase.dump_instruction i)
+  | _ -> assert false
 
 (* Whole-test emission *)
 

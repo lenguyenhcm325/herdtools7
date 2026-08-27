@@ -55,13 +55,12 @@ Per proc (gpu-only) or per rendezvous-joining lane (het), the ops appear in
 `.litmus` column order, each as its mapped builtin, and each agreeing **three
 ways** — with its constants, with its traceability comment, and with the
 `.litmus` cell's own operands. The comment is the only thing tying an emitted
-call back to the column that produced it. There are three comment shapes:
+call back to the column that produced it. There are two comment shapes:
 
 | shape | written for | example |
 |---|---|---|
 | leading `// w[o,s] <var> <value>` / `// r[o,s] <dst> <var>` | a store or a load | `// w[release,sys] x 1` |
 | trailing `// f[o,s]` on the call | an emitted fence | `__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, ""); // f[sc,sys]` |
-| `// f[relaxed,s] (relaxed fence = no-op; nothing emitted)` | a relaxed fence | nothing executable is emitted, so the comment is both the claim and the whole evidence — this form is written for `relaxed` and **for no other order**; the converse, an executable `__builtin_amdgcn_fence` with a relaxed order, is something `HipLang` never writes and `hipcc` rejects |
 
 On a het render each lane carries, in this order:
 
@@ -116,9 +115,10 @@ appear: `litmus/het-runtime/het_stress.h`'s scaffolding plus `het_rdv.h`'s
 * **The CPU half is the `.litmus` CPU column's rendering only.** The
   per-iteration `clflush`/`prefetcht0` preload touches the same locations and is
   outside that column by design (`litmus/het-runtime/het_cpu_stress.h`).
-* **No corpus test carries an `f[acq_rel,·]` or an `f[relaxed,·]` annotation**,
-  so `HipLang.ml`'s `acq_rel` row and its relaxed-fence arm are reached by no
-  corpus render.
+* **No corpus test carries an `f[acq_rel,·]` annotation**, so `HipLang.ml`'s
+  `acq_rel` row is reached by no corpus render. An `f[relaxed,·]` is not a gap
+  in the corpus but a form litmus7 refuses
+  ([`het-emission.md`](het-emission.md), "Scope / limits").
 
 ## Relation to the NVIDIA mapping
 

@@ -384,8 +384,6 @@ def _args(m, n, name, where, group=1):
 C_STORE = re.compile(r'^__hip_atomic_store\((.*)\);$')
 C_LOAD = re.compile(r'^(?P<dst>[^=<>!]+?)\s*=\s*__hip_atomic_load\((.*)\);$')
 C_FENCE = re.compile(r'^__builtin_amdgcn_fence\((.*)\);\s*// f\[(\w+),(\w+)\]$')
-C_RELAXED_FENCE = re.compile(
-    r'^// f\[(\w+),(\w+)\] \(relaxed fence = no-op; nothing emitted\)$')
 # The rendezvous, as litmus/hetGpuFile.ml writes it: arrival for iteration _n,
 # then the release delay.  Their bodies are verify/rdvcheck.py's subject.
 C_RDV = re.compile(r'^(_rdvG_P\d+)\[_n\] = het_rdv_device\((.*)\);$')
@@ -445,7 +443,7 @@ def parse_lane(body, helpers, where):
         s = raw.strip()
         a = None
         m = C_COMMENT.match(s)
-        if m and C_RELAXED_FENCE.match(s) is None:
+        if m:
             kind, order, scope, tail = m.group(1), m.group(2), m.group(3), m.group(4)
             if kind == 'f':
                 # A fence's annotation trails its own call on the same line, so a
@@ -455,23 +453,6 @@ def parse_lane(body, helpers, where):
                 continue
             flush()
             pending = (kind, order, scope, (tail or '').split(None, 1))
-            continue
-        m = C_RELAXED_FENCE.match(s)
-        if m:
-            order, scope = m.group(1), m.group(2)
-            if scope not in HIP_SCOPE:
-                raise CompletenessError(
-                    "%s: the no-op fence comment names scope %r: %r"
-                    % (where, scope, s))
-            # Nothing executable is emitted here, so the annotation is both the
-            # claim and the whole evidence.
-            if order != 'relaxed':
-                raise CompletenessError(
-                    "%s renders f[%s,%s] as a comment and emits nothing, and "
-                    "HipLang.dump_instr writes that form only for a relaxed "
-                    "fence: %r" % (where, order, scope, s))
-            flush()
-            add(Anchor(('fence', order, scope), [], emitted=False))
             continue
         m = C_STORE.match(s)
         if m:
@@ -516,7 +497,6 @@ def parse_lane(body, helpers, where):
                     raise CompletenessError(
                         "unknown AMDHSA sync-scope string %r in %s" % (sstr, where))
                 order = _order(args[0], where)
-                # The mirror of the no-op fence arm above.
                 if order == 'relaxed':
                     raise CompletenessError(
                         "%s emits __builtin_amdgcn_fence with a relaxed order, "
@@ -524,7 +504,7 @@ def parse_lane(body, helpers, where):
                         "rejects: %r" % (where, s))
                 flush()
                 a = Anchor(('fence', order, SCOPE_OF_FENCE_STR[sstr]),
-                           ['__builtin_amdgcn_fence'], emitted=True,
+                           ['__builtin_amdgcn_fence'],
                            c_order=m.group(2), c_scope=m.group(3))
         if a is None:
             m = C_BUMP.match(s)
@@ -861,10 +841,6 @@ def check_operands(result, anchors, cells, who, slotted):
     for a, cell in zip(model, cells):
         kind, order, scope, o1, o2 = cell
         if a.sig[0] == 'fence':
-            if not getattr(a, 'emitted', True):
-                # A relaxed fence emits nothing, so its annotation is the
-                # whole construct and parse_lane has already bound it.
-                continue
             if (a.c_order, a.c_scope) != (order, scope):
                 result.fail("%s: fence comment says f[%s,%s], its call says "
                             "f[%s,%s]" % (who, a.c_order, a.c_scope, order, scope))
@@ -1166,11 +1142,10 @@ def sweep_dir(files, label, jobs, diffs):
     return n["PASS"], len(rows)
 
 
-# The fence annotations no corpus test carries: only a synthetic carrier reads
-# litmus/HipLang.ml's f[acq_rel,*] row and its relaxed-fence arm.
+# The fence annotation no corpus test carries: only a synthetic carrier reads
+# litmus/HipLang.ml's f[acq_rel,*] row.
 SYNTH = {
     "F-acqrel-sys": "f[acq_rel,sys]",
-    "F-relaxed-sys": "f[relaxed,sys]",
 }
 SYNTH_BODY = """LISA %s
 {

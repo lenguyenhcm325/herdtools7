@@ -2,5 +2,5 @@
 # corpus-gate.sh compares the two homes over.  Sourced, never executed.
 CENSUS_GPU_ONLY=173
 CENSUS_HET=471
-CENSUS_SYNTHETIC=2
+CENSUS_SYNTHETIC=1
 CENSUS_COVER=48

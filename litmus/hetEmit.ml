@@ -231,6 +231,7 @@ end
                  Some ((p,annot,f),List.map Arch'.to_gpu_pseudo code)
               | _ -> None)
             parsed.MiscParser.prog in
+        GpuLang.check_program gpu_prog ;
         let gpu_globals = CudaLang.collect_globals gpu_prog in
         let layout,n_blocks,block_dim =
           CudaLang.layout_of_scopes None
@@ -395,7 +396,11 @@ end
           parsed.MiscParser.prog ;
         Printf.eprintf "  pair: %s\n%!" identity.id_pair_label
 
-      let run _hash_env src_name in_chan _out_chan splitted =
+      (* A compile-only pass derives the harness -- so it takes every refusal
+         this emitter can raise -- and writes nothing. *)
+      let run compileonly _hash_env src_name in_chan _out_chan splitted =
+        (* What this invocation put on disk, so a refusal can take it back. *)
+        let created = ref None and written = ref [] in
         try
           let dialects = HetDialect.select ~key:(fun d -> d.gd_target) dialects in
           let parsed = P.parse in_chan splitted in
@@ -404,41 +409,54 @@ end
           let identity = harness_identity parsed tname dialects in
           let h =
             derive_harness splitted.Splitter.name parsed identity dialects in
-          if O.verbose >= 0 then report_plan parsed identity ;
+          if compileonly then Absent
+          else begin
+            if O.verbose >= 0 then report_plan parsed identity ;
 
-          (* ================= file emission ================= *)
-          let base =
-            if O.is_out && (try Sys.is_directory O.tarname with _ -> false)
-            then O.tarname else Sys.getcwd () in
-          let dir = Filename.concat base tname in
-          if not (Sys.file_exists dir) then Sys.mkdir dir 0o755 ;
-          let write fname f =
-            Misc.output_protect f (Filename.concat dir fname) in
+            (* ================= file emission ================= *)
+            let base =
+              if O.is_out && (try Sys.is_directory O.tarname with _ -> false)
+              then O.tarname else Sys.getcwd () in
+            let dir = Filename.concat base tname in
+            if not (Sys.file_exists dir) then begin
+              Sys.mkdir dir 0o755 ; created := Some dir
+            end ;
+            let write fname f =
+              let path = Filename.concat dir fname in
+              written := path :: !written ;
+              Misc.output_protect f path in
 
-          write "outs.h" (fun ch -> output_string ch outs_h_content) ;
-          write "outs.c" (fun ch -> output_string ch outs_c_content) ;
-          write "het_stress.h" (fun ch -> output_string ch het_stress_content) ;
-          write "het_cpu_stress.h"
-            (fun ch -> output_string ch het_cpu_stress_content) ;
-          write "het_verdict.h"
-            (fun ch -> output_string ch het_verdict_content) ;
-          write "het_rdv.h" (fun ch -> output_string ch het_rdv_content) ;
-          write (tname ^ "_cpu.c") (HetCpuFile.dump h) ;
-          let renders =
-            List.map (fun d -> Printf.sprintf "%s.%s" tname d.gd_ext) dialects in
-          List.iter
-            (fun d -> write (Printf.sprintf "%s.%s" tname d.gd_ext)
-                        (HetGpuFile.dump h d))
-            dialects ;
-          write "comp.sh" (HetBuildFiles.dump_comp h) ;
-          write "Makefile" (HetBuildFiles.dump_makefile h) ;
-          write "README.md" (HetBuildFiles.dump_readme h) ;
-          if O.verbose >= 0 then
-            Printf.eprintf
-              "HetLitmus: emitted harness directory %s (%s)\n%!"
-              dir (String.concat " + " renders) ;
-          Absent
+            write "outs.h" (fun ch -> output_string ch outs_h_content) ;
+            write "outs.c" (fun ch -> output_string ch outs_c_content) ;
+            write "het_stress.h" (fun ch -> output_string ch het_stress_content) ;
+            write "het_cpu_stress.h"
+              (fun ch -> output_string ch het_cpu_stress_content) ;
+            write "het_verdict.h"
+              (fun ch -> output_string ch het_verdict_content) ;
+            write "het_rdv.h" (fun ch -> output_string ch het_rdv_content) ;
+            write (tname ^ "_cpu.c") (HetCpuFile.dump h) ;
+            let renders =
+              List.map (fun d -> Printf.sprintf "%s.%s" tname d.gd_ext) dialects in
+            List.iter
+              (fun d -> write (Printf.sprintf "%s.%s" tname d.gd_ext)
+                          (HetGpuFile.dump h d))
+              dialects ;
+            write "comp.sh" (HetBuildFiles.dump_comp h) ;
+            write "Makefile" (HetBuildFiles.dump_makefile h) ;
+            write "README.md" (HetBuildFiles.dump_readme h) ;
+            if O.verbose >= 0 then
+              Printf.eprintf
+                "HetLitmus: emitted harness directory %s (%s)\n%!"
+                dir (String.concat " + " renders) ;
+            Absent
+          end
         with e ->
+          (* A refusal leaves nothing behind: this invocation's own files, and
+             the harness directory ONLY if this invocation created it. *)
+          List.iter (fun f -> try Sys.remove f with Sys_error _ -> ()) !written ;
+          (match !created with
+           | Some d -> (try Sys.rmdir d with Sys_error _ -> ())
+           | None -> ()) ;
           if O.nocatch then raise e ;
           HetArch.refused "het" src_name e
     end

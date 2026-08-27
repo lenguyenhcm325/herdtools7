@@ -64,6 +64,10 @@ Every access is an `atomic_ref` op carrying its annotated order+scope (relaxed
 data included), so the kernels are data‑race‑free under the C++/CUDA model
 rather than relying on plain accesses.
 
+The fence vocabulary is [`../bells/ptx.bell`](../bells/ptx.bell)'s —
+`acquire`/`release`/`acq_rel`/`sc` — and a relaxed fence is refused before
+rendering ([`het-emission.md`](het-emission.md), "Scope / limits").
+
 **No cluster scope.** PTX `.cluster` (`sm_90`) is NVIDIA-only — HIP source has no
 `__HIP_MEMORY_SCOPE_CLUSTER` — and the annotation vocabulary the corpus is
 generated over declares only `.cta`/`.gpu`/`.sys`

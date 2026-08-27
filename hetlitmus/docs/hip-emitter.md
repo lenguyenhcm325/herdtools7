@@ -87,10 +87,11 @@ empty string:** the sync scopes a fence may name are `workgroup`, `agent`,
 unnamed default is system scope [AMDGPUUsage "Memory Scopes"] — `"system"` is
 not a sync-scope name, and `hipcc` rejects a fence whose scope is spelt that
 way. Naming a scope for `sys` would silently *narrow* it, so the `""` is
-load-bearing. A `relaxed` fence is meaningless (a no-op in the C11/AMDGPU model;
-`__builtin_amdgcn_fence` accepts only acquire/release/acq_rel/seq_cst), so HipLang
-emits **nothing executable** for it, only a `// f[relaxed,scope] (relaxed fence =
-no-op; ...)` comment. Each emitted fence keeps a trailing `// f[order,scope]`
+load-bearing. The fence vocabulary is
+[`../bells/ptx.bell`](../bells/ptx.bell)'s — `acquire`/`release`/`acq_rel`/`sc`,
+which is also all `__builtin_amdgcn_fence` accepts — and a relaxed fence is
+refused before rendering ([`het-emission.md`](het-emission.md),
+"Scope / limits"). Each emitted fence keeps a trailing `// f[order,scope]`
 traceability comment.
 
 ## Launch geometry

@@ -38,6 +38,12 @@
   (glob_files ../het-x86/*)
   ../gpu-only/MP-sys-acquire.litmus))
 
+; refusals.t writes every test it reads, so litmus7 is its whole toolchain.
+(cram
+ (applies_to refusals)
+ (package herdtools7)
+ (deps %{bin:litmus7}))
+
 ; no-gpu-proc.t drives hetgen7 as well, which loads its Bell model against herd's
 ; libdir (stdlib.cat) before it reads -devices.
 (cram

@@ -48,26 +48,35 @@ module Make
         HetDialect.hip_dialect,  HipLang.dialect.GpuLang.gl_kind,  HipLang.dump ;
       ]
 
-    let compile _compileonly _hash_env name in_chan _out_chan splitted =
+    (* A compile-only pass parses and checks the test -- so it takes every
+       refusal this arm can raise -- and renders nothing. *)
+    let compile compileonly _hash_env name in_chan _out_chan splitted =
+      let written = ref [] in
       try
         (* `-gpu-target' filtered: one emission, one dialect (hetDialect.ml). *)
         let dialects =
           HetDialect.select ~key:(fun (d,_,_) -> d.HetDialect.gd_target) dialects in
         let parsed = P.parse in_chan splitted in
         close_in in_chan ;
-        let tname = splitted.Splitter.name.Name.name in
-        List.iter
-          (fun (d,kind,dump) ->
-            let ext = "." ^ d.HetDialect.gd_ext in
-            let outname = Tar.outname (MyName.outname name ext) in
-            Misc.output_protect (fun chan -> dump chan tname parsed) outname ;
-            if O.verbose >= 0 then
-              Printf.eprintf "HetLitmus: emitted %s %s\n%!" kind outname)
-          dialects ;
-        Answer.Absent
-      (* The render is this function's ONLY deliverable, so a refusal must not
-         be reported as success (HetArch.refused). *)
+        GpuLang.check_program parsed.MiscParser.prog ;
+        if compileonly then Answer.Absent
+        else begin
+          let tname = splitted.Splitter.name.Name.name in
+          List.iter
+            (fun (d,kind,dump) ->
+              let ext = "." ^ d.HetDialect.gd_ext in
+              let outname = Tar.outname (MyName.outname name ext) in
+              written := outname :: !written ;
+              Misc.output_protect (fun chan -> dump chan tname parsed) outname ;
+              if O.verbose >= 0 then
+                Printf.eprintf "HetLitmus: emitted %s %s\n%!" kind outname)
+            dialects ;
+          Answer.Absent
+        end
+      (* The render is this function's ONLY deliverable, so a refusal must
+         neither be reported as success (HetArch.refused) nor leave a render. *)
       with e ->
+        List.iter (fun f -> try Sys.remove f with Sys_error _ -> ()) !written ;
         if O.nocatch then raise e ;
         HetArch.refused "gpu-only" name e
   end

@@ -73,7 +73,9 @@ A heterogeneous test differs from a normal `.litmus` in exactly two places:
    for the CPU side, `parse_device` for the GPU side):
    - CPU side — AArch64: `cpu`, `aarch64`, `arm`; x86_64: `x86_64`, `x86-64`,
      `amd64`, `x64`. The tag names the CPU ISA, `cpu` being the AArch64 alias;
-     the corpora use `cpu`, `x86_64` and `gpu` only.
+     the corpora use `cpu`, `x86_64` and `gpu` only. All CPU procs of one test
+     name **one** CPU ISA — the `cpu` alias counting as `aarch64` — and a header
+     naming two is refused.
    - GPU side: `gpu`, `lisa`, `ptx`, `hip`
 
    This models the existing per-test info-field convention (e.g. `Scopes=`),
@@ -85,7 +87,9 @@ A heterogeneous test differs from a normal `.litmus` in exactly two places:
 Everything else — the init block, the `|`/`;` program table, the `exists`
 condition — is standard. Each processor's cells are written in **that
 processor's native ISA**: the tagged CPU ISA's assembly (AArch64 or x86-64) for
-CPU procs, LISA/Bell scoped syntax for `gpu` procs.
+CPU procs, LISA/Bell scoped syntax for `gpu` procs. A `gpu` proc's registers are
+the numbered `rN`, and its cells carry the scoped-access vocabulary only
+(`het-emission.md`, "Scope / limits").
 
 ### Example (`hetlitmus/tests/het/MP-het.litmus`)
 

@@ -627,7 +627,7 @@ end = struct
                 exists; this arm hand-builds the matching module chain and
                 drives HetEmit over it, the GPU side staying LISA/Bell.
                 hetlitmus/docs/het-emission.md. *)
-             (fun _compileonly hash_env name in_chan out_chan splitted ->
+             (fun compileonly hash_env name in_chan out_chan splitted ->
                try
                  let prog_text = HetArch.prog_section_text splitted name in
                  let run =
@@ -685,7 +685,7 @@ end = struct
                             let dump_fun = CpuX.Lang.dump_fun
                           end) in
                       H.run in
-                 run hash_env name in_chan out_chan splitted
+                 run compileonly hash_env name in_chan out_chan splitted
                (* This arm is an emission boundary: refuse through
                   HetArch.refused (hetlitmus/docs/het-emission.md,
                   "Scope / limits"). *)
