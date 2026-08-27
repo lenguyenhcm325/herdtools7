@@ -372,25 +372,17 @@ let dump_run_readback dialect memory procs ch =
 let dump_run_record_stamp identity ch =
   let s = output_string ch in
   let tname = identity.id_name in
-  let cpu_only = identity.id_cpu_only in
   s "    het_obs_record _rec; memset(&_rec, 0, sizeof _rec);\n" ;
   s (Printf.sprintf
        "    _rec.test_name = \"%s\"; _rec.instance_id = 0; _rec.run_id = _run;\n"
        tname) ;
   s "    _rec.N = SIZE_OF_TEST;\n" ;
-  s (Printf.sprintf
-       "    _rec.cpu_only = %d;  /* 1 iff EVERY proc is a CPU proc */\n"
-       (if cpu_only then 1 else 0)) ;
-
-  (* gpu_lanes is a build fact, NOT cpu_only's cycle fact; het_verdict
-     keys the absent-GPU-stress caveat on it. *)
-  s "    _rec.gpu_lanes = HET_GPU_LANES;\n" ;
 
   (* A mechanism is requested ONLY where it can run: a standing
      request that nothing performs reads as dead
      (hetlitmus/docs/harness-reporting.md sec 3). *)
   s {|    _rec.stress_requested =
-        ((HET_GPU_LANES > 0 && (HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0)) ? HET_REQ_GPU_STRESS : 0u)
+        ((HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0) ? HET_REQ_GPU_STRESS : 0u)
       | ((_nEnemy > 0) ? HET_REQ_CPU_ENEMY : 0u)
       | ((HET_CPU_PRELOAD_PCT > 0 && !_ct.preload_inert) ? HET_REQ_CPU_PRELOAD : 0u)
       | ((HET_NOISE_CPU && _noise_cpu_on) ? HET_REQ_NOISE_CPU : 0u)

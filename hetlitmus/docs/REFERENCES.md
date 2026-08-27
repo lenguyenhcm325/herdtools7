@@ -112,7 +112,8 @@ Claim(s) this project takes from it:
   different architectures — "by the LOST principle, the behavior of a thread
   does not depend on the architecture of other threads".
 * A test whose threads are all of one architecture therefore exercises no
-  compound composition, which is what the CPU-only-cycle flag records.
+  compound composition, which is why a het test names at least one GPU proc and
+  is refused otherwise.
 
 Deviation(s):
 * Only the general framework of §§3-4 is used. The x86TSO/PTX instantiation of
@@ -525,19 +526,18 @@ Claim(s) this project takes from it:
   boundaries to WB memory."
 * §7.4.2 "Memory Barrier Interaction with Memory Types": "Memory types other than
   WB may allow weaker ordering in certain respects."
-* Table 7-2 "Memory Access by Memory Type" (p. 199) has every reordering row at
-  "no" for the UC/CD column, and "yes" for WC in the Write/Out-of-Order row where
-  WP, WT and WB are "no". A CPU-only sighting on the shared allocation therefore
-  rules the uncacheable mapping out.
 
-Deviation(s):
-* Table 7-2 is a per-type permission matrix, not the ordering matrix: the
-  first-op-by-second-op rules live in Table 7-4 "Memory Access Ordering Rules"
-  (p. 202). In particular load-load reordering is not distinguished by Table 7-2
-  (its Read/Out-of-Order row is "yes" for WC, WP, WT and WB alike); Table 7-4
-  rule b is where a later WC/WC+ load may pass an earlier load.
-* "UC reorders nothing" is one-sided: a UC access never passes an earlier access
-  (Table 7-4 rule f), but a later non-UC access may pass an earlier
+Withdrawn claim(s):
+* That Table 7-2 "Memory Access by Memory Type" (p. 199), whose reordering rows
+  are all "no" for the UC/CD column and "yes" for WC in the Write/Out-of-Order
+  row where WP, WT and WB are "no", lets a CPU-only sighting on the shared
+  allocation rule the uncacheable mapping out. Withdrawn: the site was the
+  all-CPU het route, and a het test now names at least one GPU proc, so no
+  all-CPU cycle runs on the shared allocation and nothing probes its memory
+  type. The two deviations that qualified it go with it -- that Table 7-2 is a
+  per-type permission matrix rather than the first-op-by-second-op rules of
+  Table 7-4 "Memory Access Ordering Rules" (p. 202), and that "UC reorders
+  nothing" is one-sided, since a later non-UC access may pass an earlier
   non-conflicting UC one (§7.4, Uncacheable bullet; Table 7-4 rule i).
 
 ## [CudaGuide]

@@ -245,7 +245,7 @@ def ch_run_until_sighting(d, test, quiet=False):
                              "finish in %ds under HET_ALLOC=%s."
                              % (CH_RUN_TIMEOUT, env["HET_ALLOC"]))
         text = r.stdout + "\n" + r.stderr
-        m = re.search(r"^HetStats \S+ cpu_only=\d+ obs=(\S+) R=(\d+) usable=(\d+) "
+        m = re.search(r"^HetStats \S+ obs=(\S+) R=(\d+) usable=(\d+) "
                       r"k=(\d+) ", r.stdout, re.M)
         if not m:
             raise SystemExit("runcheck --characterize-hw: the run printed no "
@@ -305,7 +305,7 @@ def ch_check(text, k, obs, test, pair, quiet=False):
 
     # Which arm this box printed.  A sighting outranks everything; otherwise a
     # printout whose every run was discarded is the COLD arm.
-    classes = set(re.findall(r"^HetVerdict \S+(?: CPU-ONLY)? run=\d+: (\S+)$",
+    classes = set(re.findall(r"^HetVerdict \S+ run=\d+: (\S+)$",
                              text, re.M))
     if k > 0:
         arm, frags = "OBSERVED", ch_observed(pair)

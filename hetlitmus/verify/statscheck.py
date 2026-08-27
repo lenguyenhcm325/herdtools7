@@ -156,26 +156,7 @@ case("sighting-unconfirmed-one-run-short",
      observed(stream(CELLS), CORROB_RUNS - 1),
      obs="Sometimes", tier="UNCONFIRMED", k_runs=CORROB_RUNS - 1)
 
-# The CPU-only campaign: het_stats_print says, inside the sighting tier and nowhere
-# else, that no cross-device path carried the cycle [Goens23 sec 4.6].
-CPU_ONLY_CASE = "cpu-only-sighting-says-what-was-under-test"
-CPU_ONLY_TEXT = "CPU-ONLY CYCLE: every proc of this test is a CPU proc"
-# The same fact machine-readably, on het_stats_line rather than in the tier block.
-CPU_ONLY_LINE = re.compile(r"HetStats \S+ cpu_only=\d+ ")
-case(CPU_ONLY_CASE,
-     observed(stream(CELLS, cpu_only=1), CORROB_RUNS),
-     obs="Sometimes", tier="CORROBORATED", k_runs=CORROB_RUNS)
-
-# ... and a pool whose cells disagree, the only fixture that runs the upward
-# resolution.  The disagreeing cell is not the first, which the rest are read against.
-MIXED_POOL_CASE = "mixed-pool-resolves-cpu-only-upward"
-_mixed = observed(stream(CELLS), CORROB_RUNS)
-_mixed[CORROB_RUNS]["cpu_only"] = 1
-case(MIXED_POOL_CASE, _mixed,
-     obs="Sometimes", tier="CORROBORATED", k_runs=CORROB_RUNS,
-     flags_any=["MIXED_POOL"])
-
-# ... and the rule is about runs, NOT cells.  The only fixture where k_runs <
+# The rule is about runs, NOT cells.  The only fixture where k_runs <
 # k_eff, so the only one that runs the run-dedup loop.
 case("sighting-unconfirmed-3-cells-of-ONE-run",
      observed(stream_runs([0, 0, 0] + list(range(1, 8))), 3),
@@ -301,13 +282,8 @@ def py_reference(cells_):
     # The record array is clamped at HET_STATS_MAX_CELLS and the tail is dropped
     # from every statistic; R keeps the pre-clamp count so the discard is visible.
     R = len(cells_)
-    pool = cells_
     cells_ = cells_[:MAX_CELLS]
     n = len(cells_)
-
-    # The pool's identity, read before the clamp and resolved upward: ONE CPU-only
-    # cell names the narrower experiment, so a het reading may not absorb it.
-    cpu_only = 1 if any(c.get("cpu_only", 0) for c in pool) else 0
 
     def degenerate(c):
         # Mirrors het_cell_degenerate: a readout that never ran, a cell that
@@ -363,7 +339,7 @@ def py_reference(cells_):
                 first_sight=first_sight,
                 scored=sum(c["iters_scored"] for c in cells_),
                 discarded=sum(c["iters_discarded"] for c in cells_),
-                R=R, R_usable=R_usable, tier=tier, cpu_only=cpu_only)
+                R=R, R_usable=R_usable, tier=tier)
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +453,6 @@ def emit_harness(tmp):
 FLAG_BIT = {
     "DEGEN_SIGHTING":     1 << 2,
     "CELLS_TRUNCATED":    1 << 8,
-    "MIXED_POOL":         1 << 15,
 }
 FLAGS = sorted(FLAG_BIT, key=FLAG_BIT.get)
 
@@ -562,9 +537,12 @@ def phase1(lines, quiet):
 # campaign.py reads it by key, and fnum() reads a missing key as 0.0.
 CONSUMER_KEY_RE = re.compile(r'fnum\(\s*kv\s*,\s*"(\w+)"')
 LINE_KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=")
+# The machine line, told from the human block that shares its prefix by the first
+# key following the test name.
+STATS_LINE = re.compile(r"HetStats \S+ obs=\S+ ")
 # A reformat that hid call sites from the pattern would narrow this check instead
 # of reddening it, so the count is pinned as well as the keys.
-EXPECT_CONSUMER_KEYS = 7
+EXPECT_CONSUMER_KEYS = 6
 
 
 def _consumer_keys():
@@ -575,12 +553,12 @@ def _consumer_keys():
 
 def _stats_key_list(seg):
     """The ordered field names of one HetStats line -- printed, or a producer's
-    format string unquoted -- or None: a real line runs cpu_only .. flags."""
+    format string unquoted -- or None: a real line runs obs .. flags."""
     keys = []
     for k in LINE_KEY_RE.findall(seg):
         keys.append(k)
         if k == "flags":
-            return keys if keys[0] == "cpu_only" else None
+            return keys if keys[0] == "obs" else None
     return None
 
 
@@ -691,7 +669,7 @@ def phase2(lines, quiet):
         print("  *** UNREACHABLE TIER: %s" % ", ".join(sorted(want_tier - seen_tier)))
         bad += 1
 
-    need_flags = {"DEGEN_SIGHTING", "CELLS_TRUNCATED", "MIXED_POOL"}
+    need_flags = {"DEGEN_SIGHTING", "CELLS_TRUNCATED"}
     print("  diagnostic flags    : %d/%d  (%s)"
           % (len(seen_flags & need_flags), len(need_flags),
              ", ".join(sorted(seen_flags))))
@@ -719,36 +697,10 @@ def phase2(lines, quiet):
                 print("  *** %s reports a Never but %s" % (name, why))
                 bad += 1
 
-    # The CPU-only sentence, BOTH ways: het_stats_print carries it inside the
-    # sighting tier and nowhere else, keyed on the mirror rather than on a name.
-    for name in sorted(refs):
-        owed = bool(refs[name]["cpu_only"] and refs[name]["tier"] != "none")
-        said = CPU_ONLY_TEXT in blocks.get(name, "")
-        if owed and not said:
-            print("  *** %s is a CPU-only campaign but its printout never says so"
-                  % name)
-            bad += 1
-        elif said and not owed:
-            print("  *** %s printed the CPU-only sentence, which belongs to a cycle "
-                  "whose every proc is a CPU proc" % name)
-            bad += 1
-
-    # ... and its machine-readable twin, which prints on every campaign: on a
-    # mixed pool the field is the ONLY reader of the upward resolution.
-    for name in sorted(refs):
-        line = next((l for l in blocks.get(name, "").splitlines()
-                     if CPU_ONLY_LINE.match(l)), "")
-        want = "cpu_only=%d" % refs[name]["cpu_only"]
-        if want not in line:
-            print("  *** %s pools %s, but its HetStats line says %r"
-                  % (name, "a CPU-only cell" if refs[name]["cpu_only"]
-                     else "no CPU-only cell", line[:64]))
-            bad += 1
-
-    # ... and the fields campaign.py reads, against the line the header just
+    # The fields campaign.py reads, against the line the header just
     # printed: a key the printer never prints reads back 0 and schedules on it.
     real = next((l for b in sorted(blocks) for l in blocks[b].splitlines()
-                 if CPU_ONLY_LINE.match(l)), None)
+                 if STATS_LINE.match(l)), None)
     keys = _consumer_keys()
     if real is None:
         print("  *** no HetStats line was printed at all, so the fields campaign.py "
@@ -873,7 +825,7 @@ R = min(10, int(os.environ.get("HET_RUNS_MAX") or "10"))
 
 def line(obs, k, k_eff, k_runs, degen, first_sight, sighting):
     """One HetStats machine line, in het_stats_line's field ORDER and field SET."""
-    print("HetStats %s cpu_only=0 obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d "
+    print("HetStats %s obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d "
           "degen=%d first_sight=%d sighting=%s N=100000 scored=100000 discarded=0 "
           "flags=0x0"
           % (test, obs, R, R, k, k_eff, k_runs, degen, first_sight, sighting))
@@ -1088,13 +1040,6 @@ def phase6_campaign(quiet):
             elif not quiet:
                 print("      %-12s stop=%-20s after %d invocation(s)"
                       % (t, g["stop"], g["inv"]))
-
-        # The CPU-only precondition is louder when it did not run than when it
-        # failed: this corpus holds no CPU-only row, so the probe must say so.
-        if "write-back probe: *** NOT RUN" not in out:
-            print("  *** the CPU-only write-back probe is silently absent -- a "
-                  "precondition nobody sees is a precondition nobody checked")
-            bad += 1
 
         # The pooled null banks every run its budget bought, read by column name
         # so it pins the columns; `usable' does not discriminate (usable == R).

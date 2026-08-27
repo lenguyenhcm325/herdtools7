@@ -119,6 +119,9 @@ No prior work routes GPU/het through litmus7's CPU harness (Bagchi *stitches*).
   fallback only**: it validates codegen and plumbing, never the property under test.
 - **Placement is a knob** (§3.6): first-touch / `cudaMemAdvise` remote-pinning is the interconnect-stress
   lever. `__out` may stay in ordinary host memory (off the race path).
+- **The CPU-side ordering rules are specified for write-back memory** ([APM] §7.2, §7.4.2). The memory
+  type of the shared allocation is a platform fact this tool does not measure, so every CPU-proc outcome
+  read off that allocation is read under an unmeasured precondition (§6).
 
 ### 3.3 Run-loop & alignment — persistent instances, one rendezvous per iteration
 Launch the GPU kernel **once** and the CPU pthreads **once**; loop *inside*. Every iteration then opens
@@ -301,8 +304,8 @@ participant per proc, each raises its own tally, and an iteration nobody reached
 their sum can exceed the discard count. The printed sentence says so beside the numbers.
 
 *(The block above is the illustrative core; the **shipped** `het_obs_record` — normative in `het_verdict.h`
-— carries a good deal more: the `gpu_lanes` build fact the structural-absence caveat asserts, and the
-per-mechanism stress-liveness counters the disqualifiers read (`harness-reporting.md` §3).)*
+— carries a good deal more: the per-mechanism stress-liveness counters the disqualifiers read
+(`harness-reporting.md` §3).)*
 
 ---
 
@@ -396,6 +399,9 @@ Everything below is unmeasurable off the target part (wrong substrate, §3.2). *
    remains is the spread between the two sides' first tested access, and it is what the release jitter is
    sized against. `HET_RELEASE_JITTER = 64` is a placeholder like the caps. Measure the spread, then size
    the jitter to sweep it rather than to a round number.
+15. **The memory type of the shared allocation on the target** (§3.2) — what the allocator actually
+   mapped is what the CPU-side ordering rules are conditioned on, and nothing in the harness reads it
+   back. Take it from the platform (PAT/MTRR and `/proc/self/smaps` for this allocator on x86_64).
 
 **Cold slots are unmeasured, and this is where they are measured.** Every iteration touches a line in
 neither cache (§3.4), where the previous loop reused one word. Whether that helps (a fresh line is a
@@ -428,6 +434,11 @@ longer window) or hurts (the miss dominates the race) is unmeasured; the levers 
   **reverses** §3.7's earlier "what licenses a null is … the two-layer positive control that fired
   beside it": nothing licenses a null, and the printout says so in those words. The pre-removal tree is
   preserved on branch `hetlitmus-positive-control`.
+- **The CPU-only route is gone.** A het test names at least one GPU proc: an all-CPU `Het` test and a
+  `-devices` list naming no `gpu` are both refused (`het-emission.md`, "Scope / limits"). Of what that
+  route carried, the positive control is withdrawn (above), the memory type of the shared allocation is
+  an unmeasured precondition (§3.2, §6), and the compound-vs-host-ISA disambiguation is the refusal
+  itself.
 - **The "~0.2 %" is GPU-only, not het** — [Bagchi26 §5.1] quotes it back from §4.1, where it is the
   inter-CTA GPU-only result. Bagchi gives no numeric het rate → the het hit-rate is hardware-only. The
   earlier reading of it as a het rate is a mis-attribution, corrected here.

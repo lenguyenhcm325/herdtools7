@@ -38,7 +38,8 @@ hetgen7 -set-libdir herd/libdir -bell ptx.bell -devices cpu,gpu -name MP-het \
   accesses here);
 - the **`-gpu`** cycle is generated with the LISA/Bell builder (scoped
   acquire/release accesses);
-- **`-devices cpu,gpu`** assigns `P0 -> cpu`, `P1 -> gpu`.
+- **`-devices cpu,gpu`** assigns `P0 -> cpu`, `P1 -> gpu`; a list naming no
+  `gpu` is refused (`het-emission.md`, "Scope / limits").
 
 For `MP-het`, `P0` (the writer column) is taken from the AArch64 run and `P1`
 (the reader column) from the LISA run; the merged test is:
@@ -134,8 +135,7 @@ device, e.g. `scopes: (sys (gpu (cta P1)))` for `-devices cpu,gpu`. CPU procs ar
 system-scope and are therefore *omitted* from the tree — a proc absent from every
 sub-scope group sits at the `sys` root by default (and the scope grammar makes a
 node either all-procs or all-subtrees, so a CPU proc could not share the `sys`
-node with the `gpu` subtree in any case). With no GPU proc the tree degenerates
-to `scopes: (sys)`.
+node with the `gpu` subtree in any case).
 
 That GPU-only precedent rests on two HetLitmus changes to **upstream** files,
 without which diy cannot write a herd-parseable `scopes:` section at all:

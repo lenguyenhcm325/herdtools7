@@ -23,8 +23,6 @@ results dir are run by hand (`het-emission.md`, "From a corpus to a results dir"
     of the tested accesses, and the primitive orders nothing; both het renderings are swept.
   + `make hetlitmus-stats`, `verify/statscheck.py`: `het_stats_compute()` from the real header,
     the stop rule, and `campaign.py` end to end against a stub harness.
-  + `make hetlitmus-cpuonly`, `tests/het/generate-cpuonly.sh`: the all-CPU shapes are generated,
-    emitted and read for the `_rec.cpu_only = 1` stamp against a negative control; nothing runs.
   + `make hetlitmus-probe-hip`, `verify/runcheck.py`: `probe-hip.sh`'s four exit paths under
     stand-in vendor tools — no hipcc, no gfx agent, one agent, two agents — each by its `probe_status`.
 

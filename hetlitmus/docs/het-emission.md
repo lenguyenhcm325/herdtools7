@@ -382,38 +382,6 @@ writes a test whose cpu column carries the `x86_64` tag and holds x86 cells
 (`movl $1,(x)`). With **no** `-cpu-arch` the default is AArch64 (the cpu column
 keeps its `cpu` back-compat tag).
 
-## The CPU-only set (`tests/het/generate-cpuonly.sh`)
-
-Six shapes — MP, LB, SB, 2+2W, R, IRIW — rendered as het tests whose every
-proc is a CPU proc (`-devices` names `cpu` for each proc, under
-`-cpu-arch x86_64`, so every column carries the `x86_64` tag), so they run as
-pure x86 tests **on the shared allocation** instead of on litmus7's own. A plain
-litmus7 X86 run would allocate `x` and `y` itself, and the question this set
-asks is about *that* allocation; the het harness reaches it through
-`gd_alloc_shared` (`HET_ALLOC` / `hipMallocManaged`), runs the same stress and
-prints the same verdict machinery. The set is generated into an OUTDIR and
-never committed.
-
-`generate-cpuonly.sh OUTDIR [GPU-TARGET]` (default `hip`, the (x86_64, hip)
-pair; `cuda` is accepted too and renders the (x86_64, cuda) pair) generates and
-emits the set. It does not run them: the run and the `hetlitmus/campaign.py`
-invocation are the target box's step.
-
-* **`SB` and `R` must be observed** — the store buffer is live — which doubles
-  as the write-back probe: a CPU-only sighting on the shared allocation rules
-  the uncacheable mapping out ([APM] Table 7-2). `MP`, `LB`, `2+2W` and `IRIW`
-  must never be.
-* **A sighting of a shape x86-TSO forbids is a finding about this host's TSO
-  conformance, never a refutation of the compound model:** on an all-CPU cycle
-  no compound composition is under test ([Goens23] §4.6). That disambiguation is
-  wired into the verdict rather than left to the reader — `het_verdict.h` keys
-  those sentences off `_rec.cpu_only`, which the emitter sets when every proc of
-  the test is a CPU proc, so nothing depends on the file name saying `cpuonly`.
-* **`2+2W` is read like every other row.** It is the one store-only shape in the
-  set, and its condition names locations rather than registers; those are ordinary
-  outcome columns, read out of iteration `n`'s own slot after the run, so the
-  coherence order it asks about is the one that happened *within* that iteration.
-
 ## Scope / limits
 
 * CPU ISAs wired: **AArch64** and **x86_64** (selected by tag); GPU dialects
@@ -440,6 +408,11 @@ invocation are the target box's step.
   a failure in any of them is reported the same way. litmus7's own batch driver (`Answer.Interrupted`,
   `litmus/dumpRun.ml`) would have reported the refusal and still exited 0, which
   made a missing harness look like success to any caller that redirects stdout.
+* **A het test has at least one `gpu` proc.** An all-CPU `Het` test is refused
+  (`HetLitmus REFUSED (het)`, exit 3), and `hetgen7` refuses a `-devices` list
+  naming no `gpu`. A test whose threads are all of one architecture exercises no
+  compound composition ([Goens23] §4.6), and an all-CPU cycle is litmus7's own
+  X86_64/AArch64 path.
 * The CPU projection supports plain straight-line procs (the het corpus). The
   instruction vocabulary is litmus7's own — whatever `AArch64Compile_litmus`
   / `X86_64Compile_litmus` accept and `ASMLang.dump_fun` prints — so there is no

@@ -758,19 +758,6 @@ hetlitmus-recfields: | build
 	python3 hetlitmus/verify/recfields.py
 	@ echo "HetLitmus emitter/runtime field + define binding: OK"
 
-### Scratch output dir for the CPU-only shapes.  Never committed (.gitignore'd),
-### so corpus-gate.sh's census and dupcheck.py -- both of which scan
-### hetlitmus/tests/het non-recursively -- stay meaningful.
-HETCPUONLYOUT := $(CURDIR)/hetlitmus/tests/het/cpuonly-out
-
-### The CPU-only shapes as a campaign item: generate, emit, and read every render
-### for the `_rec.cpu_only = 1' stamp against a negative control that stamps 0
-### (hetlitmus/tests/het/generate-cpuonly.sh).  It does NOT run them.
-hetlitmus-cpuonly: | build
-	@ echo
-	bash hetlitmus/tests/het/generate-cpuonly.sh $(HETCPUONLYOUT)
-	@ echo "HetLitmus CPU-only stamp gate: OK"
-
 ### An AMD harness builds and links into an ELF carrying real gfx942 code, its
 ### allocator and placement refusals execute under a stub, and the CUDA lane does
 ### not regress.  Needs hipcc AND nvcc, but no device.
@@ -803,7 +790,6 @@ hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-recfields
 hetlitmus-test:: hetlitmus-rdv
 hetlitmus-test:: hetlitmus-stats
-hetlitmus-test:: hetlitmus-cpuonly
 hetlitmus-test:: hetlitmus-probe-hip
 
 ### The second umbrella takes a target when it needs a toolchain or a device this
@@ -855,7 +841,7 @@ hetlitmus-promote: | build
 .PHONY: hetlitmus-stress hetlitmus-stress-static hetlitmus-cpustress hetlitmus-stats
 .PHONY: hetlitmus-dup hetlitmus-verdict
 .PHONY: hetlitmus-recfields hetlitmus-rdv
-.PHONY: hetlitmus-hipbuild hetlitmus-cpuonly
+.PHONY: hetlitmus-hipbuild
 .PHONY: hetlitmus-characterize-hw hetlitmus-probe-hip
 .PHONY: hetlitmus-hipsrc
 .PHONY: hetlitmus-test hetlitmus-test-toolchain

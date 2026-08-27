@@ -81,26 +81,14 @@ page-placement lever was refused), **uncalibrated caps** (`HET_CV_RDV_UNCALIBRAT
 caps that produced the discards are `het_rdv.h`'s placeholders, and a discard count means
 nothing without the wait it came from), **one outcome** (`HET_CV_ONE_OUTCOME` — every
 scored iteration read back the same vector, which is the constant-read artefact
-[Srivastava24 §4.1] and yields a spurious 0 % or 100 %), an unstressed run (one of six
-mutants was exposed with no stress at all, [Kirkham20 §6.2 Tab.10]), and a zero GPU lane
-count.
+[Srivastava24 §4.1] and yields a spurious 0 % or 100 %), and an unstressed run (one of six
+mutants was exposed with no stress at all, [Kirkham20 §6.2 Tab.10]).
 
 **Requested-but-dead, not merely zero.** A deliberately disabled mechanism is not a bug,
 and treating "counter == 0" as disqualifying on its own would make an intentional
 no-stress baseline COLD forever — which is just another way of building a rule that always
 says the same thing. The emitter fills `stress_requested` from the compile-time knobs, so
 the distinction is carried in the record rather than inferred from it.
-
-**A zero lane count is structural, not dead.** The emitted stress block's round loop
-(`litmus/hetGpuFile.ml`) runs only while `het_scratch_read(_gpu_done) < HET_GPU_LANES`, which
-is false at 0 before `het_do_stress` is called once, so at zero lanes the mechanism cannot
-report a round however hard the run tries — and a tally of 0 is
-therefore not evidence of anything. The emitter withholds `HET_REQ_GPU_STRESS` from
-`stress_requested` exactly there (`litmus/hetDriverMain.ml`), so the mechanism is caveated rather
-than disqualified, and the caveat prints the lane count so the claim is checkable against
-the harness's own `#define`s rather than taken on trust. The lane count is a property of
-the **build**; `cpu_only` is a property of the **cycle**, and they differ — so the caveat
-is keyed on the count and never on `cpu_only`.
 
 ## 4. The null contract
 
@@ -207,8 +195,8 @@ therefore left **vacant** rather than closed up, and each `#define` block in
 never renumber.
 
 The `HetStats` machine line's field set, and the order it prints them in, are a wire
-format too: `hetlitmus/campaign.py` reads it by key (`fnum(kv, …)`: `cpu_only`, `R`,
-`usable`, `k`, `k_eff`, `k_runs`, `first_sight`), so a field a consumer reads must be one
+format too: `hetlitmus/campaign.py` reads it by key (`fnum(kv, …)`: `R`, `usable`, `k`,
+`k_eff`, `k_runs`, `first_sight`), so a field a consumer reads must be one
 `het_stats_line` prints.
 
 ## 8. What this file does not settle

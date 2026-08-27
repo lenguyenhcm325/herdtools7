@@ -174,6 +174,12 @@ let () =
   let cgpu = let module R = HetRun(Mgpu) in R.cells "-gpu" !gpu_edges in
 
   let devs = split_comma !devices in
+  (* A het test has at least one gpu proc. *)
+  if not (List.mem "gpu" devs) then
+    Warn.fatal
+      "-devices %s names no gpu proc; a het test needs at least one, and an \
+       all-CPU cycle is diyone7's own -arch X86_64/AArch64"
+      !devices ;
   let nprocs = List.length devs in
   let run_of = function
     | "cpu" -> ccpu
@@ -256,11 +262,9 @@ let () =
     Misc.filter_map (fun (i,dev) -> if dev = "gpu" then Some i else None)
       (List.mapi (fun i dev -> (i,dev)) devs) in
   let scopes_line =
-    match gpu_procs with
-    | [] -> "scopes: (sys)"
-    | ps ->
-        sprintf "scopes: (sys (gpu %s))"
-          (String.concat " " (List.map (fun i -> sprintf "(cta P%d)" i) ps)) in
+    sprintf "scopes: (sys (gpu %s))"
+      (String.concat " "
+         (List.map (fun i -> sprintf "(cta P%d)" i) gpu_procs)) in
 
   let buf = Buffer.create 512 in
   bprintf buf "Het %s\n" name ;

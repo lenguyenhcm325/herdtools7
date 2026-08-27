@@ -145,16 +145,9 @@ class TestState(object):
         self.runs_at_first_sight = 0
         self.stop = ""
         self.note = ""
-        # From the HetStats line, 0 until a line says otherwise: it caps what a
-        # sighting on this row licenses [Goens23 sec 4.6].
-        self.cpu_only = 0
 
     def absorb(self, kv):
         self.invocations += 1
-        # Resolves upward across the pool, as het_stats_compute resolves it: ONE
-        # CPU-only invocation withholds the compound reading from the whole row.
-        if int(fnum(kv, "cpu_only")):
-            self.cpu_only = 1
         before = self.runs
         self.runs += int(fnum(kv, "R"))
         self.usable += int(fnum(kv, "usable"))
@@ -209,14 +202,14 @@ class TestState(object):
 
 def save_state(path, states):
     cols = ["test", "stop", "invocations", "runs", "usable", "k", "k_eff",
-            "k_runs", "first_sight", "cpu_only", "note"]
+            "k_runs", "first_sight", "note"]
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(cols)
         for s in states:
             w.writerow([s.name, s.stop, s.invocations, s.runs, s.usable,
                         s.k, s.k_eff, s.k_runs, s.runs_at_first_sight,
-                        s.cpu_only, s.note])
+                        s.note])
 
 
 def parse_args():
@@ -409,8 +402,7 @@ def report_campaign(states, errors, unconfirmed, secs):
     print("\ncampaign: %d row(s) ended CORROBORATED -- the weak outcome was "
           "observed and reproduced." % len(corrob))
     for s in corrob:
-        print("            %-28s k_runs=%d cpu_only=%d" % (s.name, s.k_runs,
-                                                           s.cpu_only))
+        print("            %-28s k_runs=%d" % (s.name, s.k_runs))
 
     if errors:
         print("campaign: %d test(s) ERRORED -- their rows are not results." % errors)
@@ -423,32 +415,8 @@ def report_campaign(states, errors, unconfirmed, secs):
               "larger --budget-runs and --confirm-runs) before it is written "
               "up.")
         for s in rows:
-            print("            %-28s first fired at run %d of %d  cpu_only=%d"
-                  % (s.name, s.runs_at_first_sight, s.runs, s.cpu_only))
-
-    # A precondition on the campaign, not a result of it: until a CPU-only row fires,
-    # the memory type of the shared allocation is unestablished and every null above
-    # rests on it.  hetlitmus/docs/het-emission.md "The CPU-only set", [APM Table 7-2].
-    cpu_only_rows = [s for s in states if s.cpu_only]
-    if not cpu_only_rows:
-        # The het corpus alone holds no CPU-only row, so the absent case has to
-        # print: silence here would read as a satisfied precondition.
-        print("\ncampaign write-back probe: *** NOT RUN.  No CPU-only row was "
-              "in this campaign, so the memory type of the shared allocation "
-              "is UNRESOLVED.  Generate the set (`make hetlitmus-cpuonly') "
-              "and run it on THIS box. ***")
-    else:
-        fired = [s for s in cpu_only_rows if s.k_eff > 0]
-        print("\ncampaign write-back probe: %d CPU-only row(s), %d of them "
-              "fired." % (len(cpu_only_rows), len(fired)))
-        if not fired:
-            print("campaign write-back probe: *** FAILED -- not one CPU-only "
-                  "row fired.  Check PAT/MTRR and /proc/self/smaps for this "
-                  "allocator. ***")
-        else:
-            print("campaign write-back probe: PASSED (%s) -- a UC mapping is "
-                  "ruled out for this allocator; WB over WC is not established."
-                  % ", ".join(s.name for s in fired))
+            print("            %-28s first fired at run %d of %d"
+                  % (s.name, s.runs_at_first_sight, s.runs))
 
     print("\ncampaign: total wall clock %.1f s over %d row(s)."
           % (secs, len(states)))

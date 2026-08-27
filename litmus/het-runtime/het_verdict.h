@@ -56,13 +56,6 @@
 
 typedef struct het_obs_record {
   const char *test_name; int instance_id; int run_id;
-  /* 1 when every proc of this test is a CPU proc: no cross-device path carries
-     the cycle, and the printout says so. */
-  int cpu_only;
-  /* GPU test lanes in this build.  At 0 the stress round loop exits before its
-     body runs once, so the mechanism is structurally absent; that caveat is
-     keyed here and NOT on cpu_only, which is a property of the cycle. */
-  int gpu_lanes;
   uint64_t N;
   /* One iteration scores one outcome vector, so target_count <= iters_scored
      <= N, and discarded (a participant did not start it) + scored = N once the
@@ -150,12 +143,10 @@ typedef enum {
 #define HET_DQ_RDV_DEAD         (1u << 12)
 
 /* Why a null was CAVEATED (reportable, but weaker than it looks).  Vacant
-   bits: 0, 1, 2, 5. */
+   bits: 0, 1, 2, 5, 7. */
 #define HET_CV_AFF_FAILED       (1u << 3)  /* a sched_setaffinity call failed     */
 #define HET_CV_PLACE_REFUSED    (1u << 4)  /* HET_PLACE_LEVER placed nothing      */
 #define HET_CV_UNSTRESSED       (1u << 6)  /* no stress requested at all          */
-#define HET_CV_NO_GPU_LANES     (1u << 7)  /* no GPU test lane: the scratchpad
-                                              stress is structurally absent    */
 #define HET_CV_ONE_OUTCOME      (1u << 8)  /* every scored iteration read back the
                                               same outcome vector               */
 #define HET_CV_RDV_UNCALIBRATED (1u << 9)  /* the rendezvous caps are het_rdv.h's
@@ -181,12 +172,6 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
   if (r->place_failures > 0)        cv |= HET_CV_PLACE_REFUSED;
   if (req == 0)                     cv |= HET_CV_UNSTRESSED;
-  /* The emitter withholds HET_REQ_GPU_STRESS at 0 lanes, where the mechanism
-     is unreachable rather than dead, so it is caveated here instead -- keyed
-     on the lane count, NOT on cpu_only: a harness that merely forgot to
-     request a reachable mechanism keeps its lane count and het_dead()
-     disqualifies it. */
-  if (r->gpu_lanes == 0)            cv |= HET_CV_NO_GPU_LANES;
 
   /* ---- 2. A sighting is believed unconditionally: an inert-stress run that
      saw the outcome still saw it. */
@@ -235,15 +220,13 @@ static const char *het_verdict_name(het_verdict_t v) {
 
 static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
-    "HetObs %s cpu_only=%d "
-    "inst=%d run=%d N=%llu scored=%llu discarded=%llu target=%llu "
+    "HetObs %s inst=%d run=%d N=%llu scored=%llu discarded=%llu target=%llu "
     "cap_cpu=%llu/%u cap_gpu=%llu/%u calibrated=%d vary=%d "
     "stress_trunc=%llu do_stress_rounds=%llu req=0x%x "
     "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
     "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u "
     "aff_fail=%u place_fail=%u\n",
     _r->test_name,
-    _r->cpu_only,
     _r->instance_id, _r->run_id,
     (unsigned long long)_r->N,
     (unsigned long long)_r->iters_scored,
@@ -294,12 +277,6 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
   if (cv & HET_CV_PLACE_REFUSED)
     fprintf(_ch, "  CAVEAT: %s was REFUSED -- HET_PLACE placed nothing.\n",
             HET_PLACE_LEVER);
-  if (cv & HET_CV_NO_GPU_LANES)
-    fprintf(_ch,
-      "  CAVEAT: HET_GPU_LANES=%d.  A mechanism with 0 lanes is STRUCTURALLY "
-      "ABSENT, not dead, so the GPU scratchpad stress is not counted as "
-      "requested and its zero tally disqualifies nothing.\n",
-      _r->gpu_lanes);
 }
 
 /* The stress incantations, travelling with every reported outcome. */
@@ -335,10 +312,8 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
   double _pct = _r->iters_scored
     ? (100.0 * (double)_hits / (double)_r->iters_scored) : 0.0;
 
-  fprintf(_ch, "HetVerdict %s%s run=%d: %s\n",
-          _r->test_name,
-          _r->cpu_only ? " CPU-ONLY" : "",
-          _r->run_id, het_verdict_name(v));
+  fprintf(_ch, "HetVerdict %s run=%d: %s\n",
+          _r->test_name, _r->run_id, het_verdict_name(v));
 
   /* ---- The sighting, believed unconditionally. */
   if (v == HET_OBSERVED) {
@@ -349,13 +324,6 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       _r->test_name, _hits,
       (unsigned long long)_r->iters_scored, _n, _pct,
       HET_PAIR_NAME);
-    if (_r->cpu_only) {   /* [APM Table 7-2] */
-      fprintf(_ch,
-        "  ** CPU-ONLY CYCLE: every proc of this test is a CPU proc, so no "
-        "cross-device path carried it: what fired is the host ISA on the "
-        "shared allocation, which rules a UC mapping out but does not "
-        "establish WB over WC.\n");
-    }
     het_print_config(_ch, _r);
     het_print_caveats(_ch, _r, cv);
     return;
@@ -409,13 +377,6 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     "  NOT OBSERVED under this effort on %s; the counts above are this run's "
     "reach.\n",
     HET_PAIR_NAME);
-  if (_r->cpu_only)   /* [APM Table 7-2] */
-    fprintf(_ch,
-      "  *** SHARED-ALLOCATION PROBE: this is a CPU-only shape, so a null here "
-      "is about the memory type of the shared allocation, not about a "
-      "cross-device window; it stays unresolved until the mapping is known to "
-      "be WB (check PAT/MTRR and /proc/self/smaps for this allocator).\n");
-
   het_print_caveats(_ch, _r, cv);
 }
 
@@ -444,15 +405,12 @@ typedef enum {
 } het_sighting_tier;
 
 /* Why a statistic is missing or weakened -- each is a way this layer could go
-   silently constant, so each is printed.  Vacant bits: 0, 1, 3-7, 9-14, 16. */
+   silently constant, so each is printed.  Vacant bits: 0, 1, 3-7, 9-16. */
 #define HET_ST_DEGEN_SIGHTING    (1u << 2) /* >=1 sighting failed the decode guard */
 #define HET_ST_CELLS_TRUNCATED   (1u << 8) /* more runs than HET_STATS_MAX_CELLS   */
-#define HET_ST_MIXED_POOL       (1u << 15) /* pooled cells do NOT agree on
-                                              cpu_only; the weaker one wins    */
 
 typedef struct het_stats {
   const char *test_name;
-  int cpu_only;
   het_obs_class obs;
   het_sighting_tier tier;
 
@@ -490,17 +448,6 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   st->R         = n;
   st->test_name = recs[0].test_name;
   st->N         = recs[0].N;
-  /* Cells that do not agree on cpu_only are not one campaign. */
-  st->cpu_only  = recs[0].cpu_only;
-  { int _i;
-    for (_i = 1; _i < n; _i++)
-      if (recs[_i].cpu_only != recs[0].cpu_only) {
-        st->flags |= HET_ST_MIXED_POOL;
-        /* cpu_only resolves upward: it names the narrower experiment, and a het
-           reading must not absorb it silently. */
-        if (recs[_i].cpu_only) st->cpu_only = 1;
-      }
-  }
   if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS;
                                  st->flags |= HET_ST_CELLS_TRUNCATED; }
 
@@ -575,11 +522,10 @@ static const char *het_sighting_name(het_sighting_tier t) {
 /* The machine-readable line.  hetlitmus/campaign.py schedules from it. */
 static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
-    "HetStats %s cpu_only=%d obs=%s "
+    "HetStats %s obs=%s "
     "R=%d usable=%d k=%d k_eff=%d k_runs=%d degen=%d first_sight=%d "
     "sighting=%s N=%llu scored=%llu discarded=%llu flags=0x%x\n",
     _s->test_name ? _s->test_name : "(none)",
-    _s->cpu_only,
     het_obs_class_name(_s->obs), _s->R, _s->R_usable, _s->k, _s->k_eff, _s->k_runs,
     _s->n_degen, _s->n_at_first_sight,
     het_sighting_name(_s->tier),
@@ -653,11 +599,6 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
         "  It first fired after %d of the %d run(s) supplied: budget a fresh "
         "campaign for that; grow R, not N.\n",
         _s->n_at_first_sight, _s->R);
-    if (_s->cpu_only)
-      fprintf(_ch,
-        "  ** CPU-ONLY CYCLE: every proc of this test is a CPU proc, so no "
-        "cross-device path carried it: what fired is the host ISA on the "
-        "shared allocation.\n");
   }
 }
 

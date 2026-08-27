@@ -331,20 +331,25 @@ end
           oc_weak_expr = weak_expr }
 
       (* The names every rendered file stamps, including the (CPU ISA x GPU
-         dialect) pair this harness is built for. *)
+         dialect) pair this harness is built for.  A het test has at least one
+         gpu proc. *)
       let harness_identity parsed tname dialects =
+        let has_gpu =
+          List.exists
+            (fun ((_,annot,_),_) ->
+              match annot with Some ("gpu"::_) -> true | _ -> false)
+            parsed.MiscParser.prog in
+        if not has_gpu then
+          Warn.fatal
+            "hetlitmus: %s has no gpu proc; a het test needs at least one, \
+             and an all-CPU test is litmus7's own %s path"
+            tname CpuF.toolchain.HetCpuFront.isa_name ;
         { id_name = tname ;
           id_ident = CudaLang.c_ident tname ;
           id_pair_label =
             Printf.sprintf "(%s, %s)"
               CpuF.toolchain.HetCpuFront.isa_name
-              (List.hd dialects).gd_target ;
-          id_cpu_only =
-            parsed.MiscParser.prog <> [] &&
-            List.for_all
-              (fun ((_,annot,_),_) ->
-                match annot with Some ("cpu"::_) -> true | _ -> false)
-              parsed.MiscParser.prog }
+              (List.hd dialects).gd_target }
 
       (* The file emitters' whole input: none of them reads the functor.  This
          is the one step holding every intermediate at once. *)
@@ -388,9 +393,7 @@ end
                | "gpu" -> "GPU kernel (LISA/PTX via CudaLang/HipLang)"
                | _ -> "unknown"))
           parsed.MiscParser.prog ;
-        Printf.eprintf
-          "  pair: %s%s\n%!" identity.id_pair_label
-          (if identity.id_cpu_only then "  [CPU-only cycle]" else "")
+        Printf.eprintf "  pair: %s\n%!" identity.id_pair_label
 
       let run _hash_env src_name in_chan _out_chan splitted =
         try

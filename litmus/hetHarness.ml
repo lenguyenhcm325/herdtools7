@@ -53,7 +53,6 @@ type identity = {
     id_name : string ;
     id_ident : string ;            (* CudaLang.c_ident of it, for C symbols *)
     id_pair_label : string ;
-    id_cpu_only : bool ;
   }
 
 (* The counts the render turns into #defines and the launch is sized by. *)
