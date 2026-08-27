@@ -33,12 +33,18 @@ litmus7 -gpu-target hip -o hip-out -set-libdir herd/libdir \
 ( cd hip-out/MP-cg-sys-relaxed-x86_64 && sh comp.sh )  # hipcc --offload-arch=gfx942 -c
 ```
 
-The harness directory is written next to the current directory (or into the
-`-o <dir>` directory if one is given). The command exits 0: a `Het` test
-compiles to its own self-contained harness, so litmus7 builds **no** suite-level
-run harness (and therefore needs no `_show.awk`/`cache.h` runtime from the
-libdir — which is why `-set-libdir herd/libdir` is fine even though those files
-live under `litmus/libdir`).
+Where the harness directory lands is what `-o` names: the current directory
+with no `-o` at all, the named directory for `-o <dir>`, and the archive itself
+for `-o <name>.tar` / `-o <name>.tgz`, which is packed from a staging directory
+at the end of the run (upstream decides directory-vs-archive by extension,
+`lib/tar.ml`). The command exits 0, and — under litmus7's default shell driver, the one every
+het flow uses — the `-o` target holds the harness directories and **nothing
+else**: no test in an all-`Het` (or all-`LISA`) batch
+compiles to a C run harness, so litmus7 writes no suite-level `run.sh`,
+`comp.sh`, `README.txt` or `Makefile` beside them, and needs no
+`_show.awk`/`cache.h` runtime from the libdir either — which is why
+`-set-libdir herd/libdir` is fine even though those files live under
+`litmus/libdir`.
 
 Emission is deterministic: the same `.litmus` and the same `-gpu-target` yield
 byte-identical output.
@@ -365,10 +371,12 @@ require: `lib/X86_64Parser.mly` (the `instr_option_seq` start rule),
 never edits it, litmus7's own CPU-only runs still instantiate it, and it is
 also what writes the het CPU body (piece 1 above).
 `CudaLang`/`HipLang` are reused for the GPU lowering (their shared half is
-`litmus/gpuLang.ml`). One general (non-het) robustness fix lives in
-`litmus/dumpRun.ml`: when no test compiled to a C run harness (e.g. an
-all-`Het` invocation), litmus7 does not copy the run-harness runtime from the
-libdir (nothing to run), so the command exits cleanly.
+`litmus/gpuLang.ml`). Two general (non-het) repairs live in
+`litmus/dumpRun.ml`, both on the case where no test compiled to a C run harness
+(e.g. an all-`Het` invocation): litmus7 copies no run-harness runtime from the
+libdir, so the command exits cleanly with a libdir carrying none, and, under the
+shell driver, it writes no suite wrap-up — `run.sh` is composed beside its own name and installed only
+once a test has compiled, so the `-o` root never holds one.
 
 ## Generating het tests for a CPU ISA (`hetgen7 -cpu-arch`)
 
@@ -434,6 +442,14 @@ keeps its `cpu` back-compat tag).
     refused;
   - registers are the numbered `rN`: no register allocator runs over this
     column, so a symbolic `%T1` is refused.
+* **The launch geometry is the test's own `scopes:` tree.** Both arms read the
+  tree through `GpuLang.scopes_of` and derive the block layout from it
+  (`cuda-emitter.md`, "Mappings"), so two GPU procs in one `cta` are one block
+  of two lanes and in two `cta`s two blocks of one. A tree that does not parse,
+  that places a proc which is not a `gpu` proc, or that leaves a `gpu` proc out
+  is refused before anything is written; with no `scopes:` row at all every GPU
+  proc gets a block of its own, and so does a `gpu` proc a tree places under no
+  `cta` node.
 * The CPU projection supports plain straight-line procs (the het corpus). The
   instruction vocabulary is litmus7's own — whatever `AArch64Compile_litmus`
   / `X86_64Compile_litmus` accept and `ASMLang.dump_fun` prints — so there is no

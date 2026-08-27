@@ -97,8 +97,9 @@ traceability comment.
 ## Launch geometry
 Same as CudaLang: a *workgroup* (block) = a maximal subtree rooted at a `cta`
 node in the scope tree, numbered in DFS order; each proc is guarded by
-`if (blockIdx.x == B && threadIdx.x == L)`. Every corpus test places each proc in
-its own workgroup, so `MP-cta-F` puts the two threads in *distinct* workgroups —
+`if (blockIdx.x == B && threadIdx.x == L)`. The compound (CPU+GPU) harness is
+laid out from the same tree. Every corpus test places each proc in its own
+workgroup, so `MP-cta-F` puts the two threads in *distinct* workgroups —
 the moral-strength / scope-mismatch demonstration. Host launch uses
 `hipLaunchKernelGGL(litmus_X, dim3(nblocks), dim3(blockdim), 0, 0, ...)`.
 

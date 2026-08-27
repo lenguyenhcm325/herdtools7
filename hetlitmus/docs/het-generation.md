@@ -156,13 +156,15 @@ post-processing. `hetgen7` does **not** route through that path — it composes
 its own `scopes:` line into the test buffer directly (`gen/hetGen.ml`) — but it
 emits the same grammar, so both corpora carry the tree in one form.
 
-The het tests are **not** herd-ingested (the single-arch assumption blocks that),
-so the tree is documentary rather than load-bearing: litmus7's `Het` arm parser
-(`HetArch.het_parser`) explicitly **skips** the `scopes:` line — it carries no
-`;` and would otherwise survive HetSlurp as a spurious trailing program row — and
-the CPU/GPU emission does not consume it. Emitting a herd-parseable tree is the
-deliverable; making herd *read* it for a het test remains future work behind the
-single-arch break.
+The het tests are **not** herd-ingested (the single-arch assumption blocks
+that), but the tree is load-bearing all the same. litmus7's `Het` arm parser
+(`HetArch.het_parser`) cuts the `scopes:` line out of the program section
+*before* the `;` split — it carries no `;` and would otherwise be read as a
+table row — reads it with the same scope grammar herd7 uses, and hands it on as
+`MiscParser.BellExtra`. The emitter takes the launch geometry from there
+(`het-emission.md`, `cuda-emitter.md`), so a test placing its GPU procs in one
+CTA and one placing them in two emit different harnesses. Making herd *read* a
+het test remains future work behind the single-arch break.
 
 ## 5. Files
 

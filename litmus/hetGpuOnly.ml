@@ -59,6 +59,9 @@ module Make
         let parsed = P.parse in_chan splitted in
         close_in in_chan ;
         GpuLang.check_program parsed.MiscParser.prog ;
+        GpuLang.check_scopes
+          (GpuLang.scopes_of parsed.MiscParser.extra_data)
+          (List.map (fun ((p,_,_),_) -> p) parsed.MiscParser.prog) ;
         if compileonly then Answer.Absent
         else begin
           let tname = splitted.Splitter.name.Name.name in

@@ -43,3 +43,31 @@ when the stress layer raises _grid toward the cap.
 The HIP twin renders the same shape from the same template.
   $ grep -c hipLaunchCooperativeKernel hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64.hip
   1
+
+(h) the launch geometry is the test's own scope tree: two GPU procs in one cta
+are one block of two lanes, in two ctas two blocks of one.
+  $ cat > tree.litmus <<'EOF'
+  > Het tree
+  > {
+  > 0:X1=x;
+  > 0:X3=y;
+  > }
+  >  P0:cpu      | P1:gpu              | P2:gpu              ;
+  >  MOV W0,#1   | r[acquire,sys] r0 y | r[relaxed,cta] r0 x ;
+  >  STR W0,[X1] | r[relaxed,sys] r1 x |                     ;
+  > scopes: TREE
+  > exists (1:r0=1)
+  > EOF
+  $ geo () { sed "s|TREE|$1|" tree.litmus > "$2.litmus"; mkdir "$2"; litmus7 -gpu-target cuda -o "$2" "$2.litmus" >/dev/null 2>&1; grep -E '#define HET_(BLOCK_DIM|TEST_BLOCKS) ' "$2/tree/tree.cu"; }
+  $ geo '(sys (gpu (cta P1 P2)))' onecta
+  #define HET_BLOCK_DIM 2
+  #define HET_TEST_BLOCKS 1
+  $ geo '(sys (gpu (cta P1) (cta P2)))' twoctas
+  #define HET_BLOCK_DIM 1
+  #define HET_TEST_BLOCKS 2
+
+The two-cta launch guards its lanes by block, the one-cta launch by lane.
+  $ grep -c 'blockIdx.x == 1 && threadIdx.x == 0' twoctas/tree/tree.cu
+  1
+  $ grep -c 'blockIdx.x == 0 && threadIdx.x == 1' onecta/tree/tree.cu
+  1

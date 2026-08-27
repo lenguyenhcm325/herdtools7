@@ -407,7 +407,6 @@ end = struct
     let verbose = OT.verbose
     let nocatch = OT.nocatch
     let is_out = OT.is_out
-    let tarname = OT.tarname
     let check_rename = OT.check_rename
   end
 
@@ -648,7 +647,7 @@ end = struct
                         end in
                       let module CpuX = Make(Cfg)(Cpu)(CpuLP)(CpuComp) in
                       let module H =
-                        HetEmit.Make(Cfg)(HetOpts)(Cpu)(CpuF)
+                        HetEmit.Make(Cfg)(HetOpts)(Tar)(Cpu)(CpuF)
                           (struct
                             let compile_code doc alloc =
                               let c = CpuX.Comp.compile doc alloc in
@@ -677,7 +676,7 @@ end = struct
                         end in
                       let module CpuX = Make(Cfg)(Cpu)(CpuLP)(CpuComp) in
                       let module H =
-                        HetEmit.Make(Cfg)(HetOpts)(Cpu)(CpuF)
+                        HetEmit.Make(Cfg)(HetOpts)(Tar)(Cpu)(CpuF)
                           (struct
                             let compile_code doc alloc =
                               let c = CpuX.Comp.compile doc alloc in

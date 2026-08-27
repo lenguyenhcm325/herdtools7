@@ -112,10 +112,11 @@ let gpu_read_buffers memory =
 let n_columns outcome =
   List.length outcome.oc_reg_columns + List.length outcome.oc_loc_columns
 
-(* Every shared global is SIZE_OF_TEST slots wide, one per iteration. *)
-let global_bytes = "sizeof(int)*SIZE_OF_TEST*HET_SLOT_STRIDE_WORDS"
-let buf_bytes ty = Printf.sprintf "sizeof(%s)*SIZE_OF_TEST" ty
-let rdv_bytes = "sizeof(uint8_t)*SIZE_OF_TEST"
+(* A shared global is SIZE_OF_TEST slots wide, one per iteration and
+   HET_SLOT_STRIDE_WORDS apart; a read buffer and an arrival flag hold one
+   element per iteration. *)
+let global_elts = "SIZE_OF_TEST*HET_SLOT_STRIDE_WORDS"
+let iteration_elts = "SIZE_OF_TEST"
 
 (* One object main() manages.  Residence decides its allocation, readback and
    free text; the reset kind separates the barrier counter from the arrays. *)
@@ -129,6 +130,13 @@ type mem_object = {
     mo_reset : reset ;
   }
 
+(* An object's byte count is its own element type's size times its element
+   count: the two cannot drift apart. *)
+let mem_object ~name ~ty ~elts ~where ~reset =
+  { mo_name = name ; mo_type = ty ;
+    mo_bytes = Printf.sprintf "sizeof(%s)*%s" ty elts ;
+    mo_where = where ; mo_reset = reset }
+
 (* The two families main() allocates, resets, reads back and frees, in that
    lifecycle order: the race surface -- every shared global, then the barrier
    counter -- reset BEFORE the stress spawn; then the observation record --
@@ -137,30 +145,28 @@ type mem_object = {
 let race_surface memory =
   List.map
     (fun g ->
-      { mo_name = g ; mo_type = "int" ; mo_bytes = global_bytes ;
-        mo_where = Shared ; mo_reset = Memset })
+      mem_object ~name:g ~ty:"int" ~elts:global_elts
+        ~where:Shared ~reset:Memset)
     memory.me_all_globals
-  @ [ { mo_name = "barrier" ; mo_type = "uint64_t" ;
-        mo_bytes = "sizeof(int)*HET_SLOT_STRIDE_WORDS" ;
-        mo_where = Shared ; mo_reset = Store_zero } ]
+  @ [ mem_object ~name:"barrier" ~ty:"uint64_t"
+        ~elts:"HET_SLOT_STRIDE_WORDS" ~where:Shared ~reset:Store_zero ]
 
 let observation_record memory procs =
   List.map
     (fun rb ->
-      { mo_name = rb.rb_name ; mo_type = rb.rb_type ;
-        mo_bytes = buf_bytes rb.rb_type ;
-        mo_where = (match rb.rb_dev with `Gpu -> Device | `Cpu -> Host) ;
-        mo_reset = Memset })
+      mem_object ~name:rb.rb_name ~ty:rb.rb_type ~elts:iteration_elts
+        ~where:(match rb.rb_dev with `Gpu -> Device | `Cpu -> Host)
+        ~reset:Memset)
     memory.me_bufs
   @ List.map
       (fun gp ->
-        { mo_name = rdv_gpu_name gp.gp_proc ; mo_type = "uint8_t" ;
-          mo_bytes = rdv_bytes ; mo_where = Device ; mo_reset = Memset })
+        mem_object ~name:(rdv_gpu_name gp.gp_proc) ~ty:"uint8_t"
+          ~elts:iteration_elts ~where:Device ~reset:Memset)
       procs.pr_gpus
   @ List.map
       (fun cp ->
-        { mo_name = rdv_cpu_name cp.cp_proc ; mo_type = "uint8_t" ;
-          mo_bytes = rdv_bytes ; mo_where = Host ; mo_reset = Memset })
+        mem_object ~name:(rdv_cpu_name cp.cp_proc) ~ty:"uint8_t"
+          ~elts:iteration_elts ~where:Host ~reset:Memset)
       procs.pr_cpus
 
 let memory_objects memory procs =

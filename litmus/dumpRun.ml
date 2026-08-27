@@ -361,9 +361,21 @@ let dump_c_shell_kvm flags e =
       dump_shell_postfix out_chan)
     (Tar.outname (MyName.outname "run" ".sh"))
 
+(* HetLitmus: the suite wrap-up -- run.sh, comp.sh, README.txt, Makefile --
+   describes the C run harnesses of this batch.  A batch that compiled none,
+   as an all-`Het'/all-`LISA' invocation does (every answer is Absent), gets
+   none of them: they would name a default architecture no test has, compile
+   an empty SRC list and run nothing. *)
+let some_test_compiled = function [] -> false | _::_ -> true
+
 let dump_shell names =
   let flags = collect_flags names in
-  Misc.output_protect
+  (* HetLitmus: what the batch compiled is known only once the tests have
+     answered, and run.sh is written while they run; compose it beside its own
+     name, so the `-o' root NEVER holds one for a batch that compiled none. *)
+  let run_sh = Tar.outname (MyName.outname "run" ".sh") in
+  let tmp_sh = run_sh ^ ".tmp" in
+  let (_,sources,_,_) as answer = Misc.output_protect
     (fun out_chan ->
       dump_shell_prefix out_chan ;
       begin match Cfg.crossrun with
@@ -415,7 +427,14 @@ let dump_shell names =
        end ;
       dump_shell_postfix out_chan ;
       arch,sources,utils,flags)
-    (Tar.outname (MyName.outname "run" ".sh"))
+    tmp_sh in
+  (* HetLitmus: Misc.output_protect writes to /dev/null when it cannot open its
+     target, so an unwritable `-o' directory leaves no tmp file to install. *)
+  let discard () = try Sys.remove tmp_sh with Sys_error _ -> () in
+  if some_test_compiled sources then
+    (try Sys.rename tmp_sh run_sh with Sys_error _ -> discard ())
+  else discard () ;
+  answer
 
 let dump_shell_cont arch flags sources utils =
   let sources = List.map Filename.basename  sources in
@@ -855,7 +874,11 @@ let from_files =
         match Cfg.driver with
         | Driver.Shell ->
             let arch,sources,utils,flags = dump_shell names in
-            dump_shell_cont arch flags sources utils ;
+            (* HetLitmus: no run harness to wrap up, but an archive target is
+               still packed -- it carries the harness directories. *)
+            if some_test_compiled sources then
+              dump_shell_cont arch flags sources utils
+            else Tar.tar () ;
             arch
         | Driver.C|Driver.XCode as d ->
             let xcode = match d with

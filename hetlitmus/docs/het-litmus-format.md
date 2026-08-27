@@ -59,7 +59,7 @@ at that application), and the parser helpers past it that the emitter drives
 
 ## 3. The file format
 
-A heterogeneous test differs from a normal `.litmus` in exactly two places:
+A heterogeneous test differs from a normal `.litmus` in exactly three places:
 
 1. **Compound-arch header.** The first-line arch token is `Het`. It is parsed
    by the splitter through the ordinary `Archs.parse` path (no splitter grammar
@@ -84,6 +84,14 @@ A heterogeneous test differs from a normal `.litmus` in exactly two places:
    `MiscParser.proc`'s annotation slot (`(p, Some ["cpu"], Main)`), so the
    dispatch arm can report each proc's backend after parsing.
 
+3. **A `scopes:` row.** One line of the program section holding the scope tree
+   the GPU procs are launched in, in the grammar herd7 reads
+   (`lib/scopeRules.mly`): `scopes: (sys (gpu (cta P1)))`. It is cut out of the
+   section before the table is split on `;`, so its position among the rows
+   does not matter, and it is what the emitted launch geometry is derived from
+   (`cuda-emitter.md`, "Mappings"). The row is optional; what a tree must
+   satisfy to be accepted is `het-emission.md`, "Scope / limits".
+
 Everything else — the init block, the `|`/`;` program table, the `exists`
 condition — is standard. Each processor's cells are written in **that
 processor's native ISA**: the tagged CPU ISA's assembly (AArch64 or x86-64) for
@@ -105,6 +113,7 @@ Het MP-het
  STR W0,[X1]   | r[relaxed,sys] r1 x  ;
  MOV W2,#1     |                      ;
  STR W2,[X3]   |                      ;
+scopes: (sys (gpu (cta P1)))
 exists (1:r0=1 /\ 1:r1=0)
 ```
 
@@ -162,7 +171,7 @@ emits the harness too:
 $ litmus7 -gpu-target cuda -o OUT hetlitmus/tests/het/MP-het.litmus
 HetLitmus: emitting CPU+GPU harness for MP-het (2 procs, CPU=AArch64)
   P0 device=cpu -> CPU pthread (litmus7 AArch64 asm)
-  P1 device=gpu -> GPU kernel (LISA/PTX via CudaLang/HipLang)
+  P1 device=gpu -> GPU kernel (LISA column, cuda render)
   pair: (AArch64, cuda)
 HetLitmus: emitted harness directory OUT/MP-het (MP-het.cu)
 ```

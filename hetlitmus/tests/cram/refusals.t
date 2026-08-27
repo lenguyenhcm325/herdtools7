@@ -96,3 +96,43 @@ What litmus7 refuses before it renders, and that it renders once
   exit 0
   $ grep -c 'HetLitmus: emitted CUDA' lisa.txt
   1
+
+(g) a scopes: tree litmus7 cannot read, one naming a proc that is not a gpu
+proc, and one leaving a gpu proc out.
+  $ mk badtree 'r[relaxed,sys] r1 x'
+  $ sed -i 's|scopes:.*|scopes: (sys (gpu (cta P1)|' badtree.litmus
+  $ litmus7 -gpu-target cuda -o out-badtree badtree.litmus 2>badtree.err >/dev/null; echo "exit $?"
+  exit 3
+  $ grep -c 'HetLitmus: cannot read the scopes tree "(sys (gpu (cta P1)"' badtree.err
+  1
+  $ ls out-badtree
+  $ mk straytree 'r[relaxed,sys] r1 x'
+  $ sed -i 's|scopes:.*|scopes: (sys (gpu (cta P0)))|' straytree.litmus
+  $ litmus7 -gpu-target cuda -o out-straytree straytree.litmus 2>&1 >/dev/null; echo "exit $?"
+  HetLitmus REFUSED (het) straytree.litmus: HetLitmus: the scopes tree places P0, which is not a gpu proc
+  exit 3
+  $ ls out-straytree
+  $ cat > omits.litmus <<'EOF'
+  > Het omits
+  > {
+  > 0:X1=x;
+  > }
+  >  P0:cpu      | P1:gpu              | P2:gpu              ;
+  >  MOV W0,#1   | r[acquire,sys] r0 y | r[relaxed,cta] r0 x ;
+  >  STR W0,[X1] |                     |                     ;
+  > scopes: (sys (gpu (cta P1)))
+  > exists (1:r0=1)
+  > EOF
+  $ mkdir out-omits
+  $ litmus7 -gpu-target cuda -o out-omits omits.litmus 2>&1 >/dev/null; echo "exit $?"
+  HetLitmus REFUSED (het) omits.litmus: HetLitmus: the scopes tree places no P2; a declared tree places every gpu proc
+  exit 3
+  $ ls out-omits
+
+(h) a second scopes: row.
+  $ mk tworows 'r[relaxed,sys] r1 x'
+  $ sed -i 's|^exists|scopes: (sys (gpu (cta P1)))\nexists|' tworows.litmus
+  $ litmus7 -gpu-target cuda -o out-tworows tworows.litmus 2>&1 >/dev/null; echo "exit $?"
+  HetLitmus REFUSED (isa-scan) tworows.litmus: HetLitmus: a heterogeneous test carries at most one scopes: row
+  exit 3
+  $ ls out-tworows

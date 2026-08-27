@@ -7,10 +7,11 @@ results dir are run by hand (`het-emission.md`, "From a corpus to a results dir"
 
 ## Base lane — `make hetlitmus-test` (OCaml build, gcc, python3; no GPU compiler, no device)
   + `make hetlitmus-cram`, `dune runtest hetlitmus/tests/cram`: the corpus rule functions and
-    the emitted drivers, read statically; what litmus7 refuses before it renders — the GPU
-    column's vocabulary, a symbolic register, two CPU ISAs — each leaving the `-o` directory
-    empty, and that an accepted test is announced and emitted once; every `.t` but `basics`
-    and `ptx-negatives` needs `litmus7`.
+    the emitted drivers, read statically; the launch geometry a `scopes:` tree derives; what
+    litmus7 refuses before it renders — the GPU column's vocabulary, a symbolic register, two
+    CPU ISAs, a tree it cannot place — each leaving the `-o` directory empty; that an accepted
+    test is announced and emitted once; and that an `-o` target holds the harness and nothing
+    else, a `.tar` one included; every `.t` but `basics` and `ptx-negatives` needs `litmus7`.
   + `make hetlitmus-corpus`, `verify/corpus-gate.sh`: the committed corpora, the `tests/het-x86`
     fixture and the `cuda-out`/`hip-out` samples are what the generators and the emitter produce,
     plus the census against `verify/census.sh`. Exit 0 pass, 1 drift, 2 infrastructure.

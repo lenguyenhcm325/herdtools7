@@ -180,6 +180,42 @@ let rec collect_ctas (BellInfo.Tree (name, _, ch) as t) =
   if name = "cta" then [t]
   else List.concat_map collect_ctas ch
 
+(* The tree the test declared, [None] where it carries no `scopes:' row
+   (hetlitmus/docs/het-litmus-format.md sec 3).  Both dispatch arms read it
+   from here, so one launch geometry serves both. *)
+let scopes_of extra_data =
+  let rec find = function
+    | MiscParser.BellExtra bi :: _ -> bi.BellInfo.scopes
+    | _ :: rest -> find rest
+    | [] -> None in
+  find extra_data
+
+(* A declared tree places the GPU procs and ONLY them: a proc it leaves out
+   would be laid out by the no-tree fallback instead, and a proc it names
+   twice would keep whichever placement came last. *)
+let check_scopes scopes procs = match scopes with
+  | None -> ()
+  | Some tree ->
+      let named = subtree_procs tree in
+      let count p = List.length (List.filter (fun q -> q = p) named) in
+      List.iter
+        (fun p ->
+          if not (List.mem p procs) then
+            Warn.user_error
+              "HetLitmus: the scopes tree places P%d, which is not a gpu proc"
+              p ;
+          if count p > 1 then
+            Warn.user_error
+              "HetLitmus: the scopes tree places P%d %d times" p (count p))
+        named ;
+      List.iter
+        (fun p ->
+          if not (List.mem p named) then
+            Warn.user_error
+              "HetLitmus: the scopes tree places no P%d; a declared tree \
+               places every gpu proc" p)
+        procs
+
 (* returns (layout : (proc -> block*lane), n_blocks, block_dim) *)
 let layout_of_scopes scopes procs =
   let blocks =
@@ -244,12 +280,7 @@ let dump_test d chan tname parsed =
   let procs = List.map (fun ((p, _, _), _) -> p) prog in
   let nprocs = List.length procs in
   let globals = collect_globals prog in
-  let scopes =
-    let rec find = function
-      | MiscParser.BellExtra bi :: _ -> bi.BellInfo.scopes
-      | _ :: rest -> find rest
-      | [] -> None in
-    find parsed.MiscParser.extra_data in
+  let scopes = scopes_of parsed.MiscParser.extra_data in
   let layout, n_blocks, block_dim = layout_of_scopes scopes procs in
   let p fmt = fprintf chan fmt in
   (* Banner *)

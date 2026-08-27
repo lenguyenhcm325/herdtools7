@@ -75,8 +75,11 @@ generated over declares only `.cta`/`.gpu`/`.sys`
 
 CTA layout: a *block* = a maximal subtree rooted at a `cta` node in the scope
 tree; CTAs numbered in DFS order, procs guarded by
-`if (blockIdx.x == B && threadIdx.x == L)`. Every test in this corpus places each
-proc in its **own** CTA — so the two MP threads sit in *distinct* CTAs, which is
+`if (blockIdx.x == B && threadIdx.x == L)`. Both dispatch arms lay a test out
+this way — the compound emitter reads the same tree through the same
+`GpuLang.scopes_of` (`het-emission.md`, "Scope / limits"). Every test in this
+corpus places each proc in its **own** CTA — so the two MP threads sit in
+*distinct* CTAs, which is
 exactly what makes `MP-cta-F` (block‑scope rel/acq across distinct CTAs) the
 moral‑strength / scope‑mismatch demonstration.
 

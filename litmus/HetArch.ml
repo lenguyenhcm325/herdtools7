@@ -34,20 +34,44 @@ let cpu_isa_of_tag s = match String.lowercase_ascii (String.trim s) with
 
 let cpu_isa_tag = function IsaAArch64 -> "aarch64" | IsaX86_64 -> "x86_64"
 
-(* Is this program row the scope tree rather than a table row?  Shared with
-   het_parser, whose row filter this scan must agree with. *)
-let is_scopes_row s =
-  let t = String.trim s in
-  String.length t >= 7 && String.sub t 0 7 = "scopes:"
+(* The `scopes:' tree is a line of the program section rather than a table
+   row: it carries no `;', so leaving it in would make a row of it and, ahead
+   of the header, swallow the header.  Cut it out before the `;' split and
+   hand its body to the scope grammar
+   (hetlitmus/docs/het-litmus-format.md sec 3). *)
+let cut_scopes_row text =
+  let is_scopes l =
+    let t = String.trim l in
+    String.length t >= 7 && String.sub t 0 7 = "scopes:" in
+  let scopes,rest =
+    List.partition is_scopes (String.split_on_char '\n' text) in
+  let body l = let t = String.trim l in String.sub t 7 (String.length t - 7) in
+  let rest = String.concat "\n" rest in
+  match scopes with
+  | [] -> None,rest
+  | [l] -> Some (body l),rest
+  | _ ->
+     Warn.user_error
+       "HetLitmus: a heterogeneous test carries at most one scopes: row"
+
+(* The tree itself, through the grammar herd7 reads it with
+   (lib/scopeRules.mly): a malformed tree is diagnosed here. *)
+let parse_scopes body =
+  let module Lexer = ScopeLexer.Make(LexUtils.Default) in
+  let lexbuf = Lexing.from_string body in
+  try GenParserUtils.call_parser "scopes" lexbuf Lexer.token ScopeParser.main
+  with Misc.UserError _ ->
+    Warn.user_error
+      "HetLitmus: cannot read the scopes tree %S" (String.trim body)
 
 (* Pre-scan the program header for the ONE CPU ISA its CPU columns share.  A
    header naming two is refused: one harness is derived over one CPU backend.
    AArch64 where the test has no CPU column. *)
 let scan_cpu_isa prog_text =
   let is_blank s = String.trim s = "" in
+  let _,table = cut_scopes_row prog_text in
   let rows =
-    List.filter (fun r -> not (is_blank r) && not (is_scopes_row r))
-      (String.split_on_char ';' prog_text) in
+    List.filter (fun r -> not (is_blank r)) (String.split_on_char ';' table) in
   match rows with
   | [] -> IsaAArch64
   | header :: _ ->
@@ -368,12 +392,9 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
   let het_parser ~cpu ~gpu _lexer lexbuf =
     let text = HetSlurp.slurp (Buffer.create 256) lexbuf in
     let is_blank s = String.trim s = "" in
-    (* A `scopes:' tree sits in the program section and HetSlurp pulls it in;
-       carrying no `;', it would survive as a spurious trailing row.  Drop it:
-       nothing here consumes it (hetlitmus/docs/het-generation.md sec 4). *)
+    let scopes,table = cut_scopes_row text in
     let rows =
-      List.filter (fun r -> not (is_blank r) && not (is_scopes_row r))
-        (String.split_on_char ';' text) in
+      List.filter (fun r -> not (is_blank r)) (String.split_on_char ';' table) in
     match rows with
     | [] -> Warn.user_error "HetArch: empty heterogeneous program"
     | header::instr_rows ->
@@ -406,5 +427,14 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
          List.map
            (fun (p,dev) -> (p,Some [device_tag dev],MiscParser.Main))
            procs_dev in
-       (procs,prog_rows,MiscParser.empty_extra)
+       (* The tree rides on to the emitter as the launch geometry
+          (hetlitmus/docs/het-generation.md sec 4). *)
+       let extra = match scopes with
+         | None -> MiscParser.empty_extra
+         | Some body ->
+            [MiscParser.BellExtra
+               { BellInfo.regions = None ;
+                 scopes = Some (parse_scopes body) ;
+                 levels = None }] in
+       (procs,prog_rows,extra)
 end

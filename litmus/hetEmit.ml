@@ -36,9 +36,9 @@ end
          val verbose : int
          val nocatch : bool
          val is_out : bool
-         val tarname : string
          val check_rename : string -> string option
        end)
+      (Tar : Tar.S)
       (Cpu : Arch_litmus.S)
       (CpuF : sig
          val parse_column : int -> string -> Cpu.parsedPseudo list
@@ -232,17 +232,19 @@ end
               | _ -> None)
             parsed.MiscParser.prog in
         GpuLang.check_program gpu_prog ;
-        let gpu_globals = CudaLang.collect_globals gpu_prog in
+        let gpu_procs = List.map (fun ((p,_,_),_) -> p) gpu_prog in
+        let scopes = GpuLang.scopes_of parsed.MiscParser.extra_data in
+        GpuLang.check_scopes scopes gpu_procs ;
+        let gpu_globals = GpuLang.collect_globals gpu_prog in
         let layout,n_blocks,block_dim =
-          CudaLang.layout_of_scopes None
-            (List.map (fun ((p,_,_),_) -> p) gpu_prog) in
+          GpuLang.layout_of_scopes scopes gpu_procs in
         let gpus =
           List.map
             (fun ((p,_,_),code) ->
               let blk,lane = layout p in
               { gp_proc = p ; gp_blk = blk ; gp_lane = lane ;
-                gp_instrs = CudaLang.instrs_of_code code ;
-                gp_regs = CudaLang.result_regs code })
+                gp_instrs = GpuLang.instrs_of_code code ;
+                gp_regs = GpuLang.result_regs code })
             gpu_prog in
         gpus, gpu_globals, n_blocks, block_dim
 
@@ -264,7 +266,7 @@ end
                Some (p, `Gpu,
                      List.map
                        (fun n -> (Printf.sprintf "r%d" n, "int"))
-                       (CudaLang.result_regs code))
+                       (GpuLang.result_regs code))
             | _ -> None)
           (List.sort
              (fun ((a,_,_),_) ((b,_,_),_) -> compare a b)
@@ -346,7 +348,7 @@ end
              and an all-CPU test is litmus7's own %s path"
             tname CpuF.toolchain.HetCpuFront.isa_name ;
         { id_name = tname ;
-          id_ident = CudaLang.c_ident tname ;
+          id_ident = GpuLang.c_ident tname ;
           id_pair_label =
             Printf.sprintf "(%s, %s)"
               CpuF.toolchain.HetCpuFront.isa_name
@@ -377,8 +379,9 @@ end
           h_toolchain = CpuF.toolchain ;
           h_dialects = dialects }
 
-      (* The plan litmus7 prints before anything is written. *)
-      let report_plan parsed identity =
+      (* The plan litmus7 prints before anything is written; [target] is the
+         GPU dialect this invocation renders. *)
+      let report_plan parsed identity target =
         Printf.eprintf
           "HetLitmus: emitting CPU+GPU harness for %s (%d procs, CPU=%s)\n%!"
           identity.id_name (List.length parsed.MiscParser.prog)
@@ -391,7 +394,8 @@ end
                | "cpu" ->
                   Printf.sprintf "CPU pthread (litmus7 %s asm)"
                     CpuF.toolchain.HetCpuFront.isa_name
-               | "gpu" -> "GPU kernel (LISA/PTX via CudaLang/HipLang)"
+               | "gpu" ->
+                  Printf.sprintf "GPU kernel (LISA column, %s render)" target
                | _ -> "unknown"))
           parsed.MiscParser.prog ;
         Printf.eprintf "  pair: %s\n%!" identity.id_pair_label
@@ -411,13 +415,18 @@ end
             derive_harness splitted.Splitter.name parsed identity dialects in
           if compileonly then Absent
           else begin
-            if O.verbose >= 0 then report_plan parsed identity ;
+            if O.verbose >= 0 then
+              report_plan parsed identity (List.hd dialects).gd_target ;
 
             (* ================= file emission ================= *)
-            let base =
-              if O.is_out && (try Sys.is_directory O.tarname with _ -> false)
-              then O.tarname else Sys.getcwd () in
-            let dir = Filename.concat base tname in
+            (* Tar.outname places a file under the `-o' target: the directory
+               itself, or the staging directory a `.tar'/`.tgz' target is
+               packed from at the end of the run.  Without `-o' that directory
+               is a temporary one litmus7 deletes at exit, so the harness goes
+               to the cwd instead (hetlitmus/docs/het-emission.md). *)
+            let dir =
+              if O.is_out then Tar.outname tname
+              else Filename.concat (Sys.getcwd ()) tname in
             if not (Sys.file_exists dir) then begin
               Sys.mkdir dir 0o755 ; created := Some dir
             end ;

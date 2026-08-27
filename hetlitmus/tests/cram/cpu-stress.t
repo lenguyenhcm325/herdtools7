@@ -63,7 +63,7 @@ ever x, y or barrier [Sorensen16 sec 1].
 
 (d) four object classes, four allocators: a slot for the rendezvous counter,
 malloc for the CPU scratchpad, gd_alloc_noise for the noise buffers.
-  $ grep -c 'uint64_t \*barrier; gd_alloc_shared((void\*\*)&barrier, sizeof(int)\*HET_SLOT_STRIDE_WORDS);' $MP.cu
+  $ grep -c 'uint64_t \*barrier; gd_alloc_shared((void\*\*)&barrier, sizeof(uint64_t)\*HET_SLOT_STRIDE_WORDS);' $MP.cu
   1
   $ grep -c 'malloc_check(sizeof(uint64_t)\*HET_CPU_SCRATCH_WORDS)' $MP.cu
   1

@@ -145,11 +145,5 @@ for lane in $GPU_LANES; do
   done
 done
 
-# The per-outdir run.sh is the ONLY emitted file embedding the absolute OUTDIR
-# and the git revision, so dropping it makes `diff -r' exact across commits.
-for lane in $HET_LANES $GPU_LANES; do
-  rm -f "$OUTDIR/${lane##*:}/run.sh"
-done
-
 echo "emitted: $nhetlanes x $EXPECT_HET het harness dirs, \
 $ngpulanes x $EXPECT_GPU gpu-only kernels"

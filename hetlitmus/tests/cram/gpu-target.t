@@ -80,7 +80,24 @@ object and no binary; GNU make's `make:' prefix follows MAKELEVEL, so it is unre
   HetLitmus REFUSED (gpu-only) ../gpu-only/MP-sys-acquire.litmus: -gpu-target <cuda|hip> is required: an emission renders ONE GPU dialect, and the harness it writes carries only that vendor's render and build targets
   exit 3
 
-(i) a plain CPU-only litmus7 run neither needs the flag nor is changed by it.
+(i) an emission leaves the `-o' root holding its harness and nothing else, on
+both dispatch arms.
+  $ mkdir root
+  $ litmus7 -gpu-target cuda -o root ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1
+  $ ls root
+  MP-cg-sys-relaxed
+  $ ls gpu
+  MP-sys-acquire.cu
+
+(j) a `.tar' target is packed rather than written beside itself.
+  $ litmus7 -gpu-target cuda -o packed.tar ../het/MP-cg-sys-relaxed.litmus >/dev/null 2>&1; echo "exit $?"
+  exit 0
+  $ tar tf packed.tar | sed 's|^\./||' | grep -c '^MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu$'
+  1
+  $ tar tf packed.tar | sed 's|^\./||' | grep -cE '^(README.txt|Makefile|comp.sh|run.sh)$' || true
+  0
+
+(k) a plain CPU-only litmus7 run neither needs the flag nor is changed by it.
 The libdir is walked up from cwd because it cannot be a dune dep (see ./dune).
   $ LIB=$(d=.; while [ ! -f "$d/litmus/libdir/_aarch64/mbar.c" ] && [ "$(cd "$d" && pwd)" != / ]; do d=$d/..; done; echo "$d/litmus/libdir")
   $ test -f "$LIB/header.txt" && echo libdir-found
