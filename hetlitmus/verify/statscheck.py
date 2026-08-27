@@ -38,8 +38,6 @@ MAX_CELLS = 128             # must match HET_STATS_MAX_CELLS  (pinned via MIRROR
 # ---------------------------------------------------------------------------
 BASE = dict(
     test_name='"synthetic"',
-    # The stamp, by symbol: het_verdict() reads no field of a record without it.
-    rec_magic="HET_REC_MAGIC",
     target_count=0,
     outcomes_vary=1,
     stress_truncated=0,
@@ -197,26 +195,11 @@ case("first-sight-counts-the-runs-spent-through-the-sighting",
      obs="Sometimes", k=1, k_eff=1, k_runs=1, tier="UNCONFIRMED",
      first_sight=5)
 
-# Ten stamped null cells plus two whose every field is memset residue.  Nothing
-# below rec_magic may be read; R keeps them, because the discard stays visible.
-MIXED_STAMP_CELLS = stream(CELLS) + stream_runs([10, 11], rec_magic=0)
-case("unstamped-cells-are-read-by-nothing",
-     MIXED_STAMP_CELLS,
-     obs="Never", R=CELLS + 2, R_usable=CELLS, scored=CELLS * 100000)
-
 # The selection effect: the three that fired are usable BECAUSE they fired, so
 # scoring over usable cells would report Always here.  The denominator is R.
 case("fired-3-of-10-is-SOMETIMES-not-ALWAYS",
      observed(stream(CELLS, stress_truncated=1), 3),
      obs="Sometimes", k=3, k_eff=3, R=CELLS, R_usable=3, scored=CELLS * 100000)
-
-# ... and one unstamped cell must NOT undo it: counted into R alone, it moves the
-# denominator and nothing else.  Same class and same scored total is the assertion.
-case("plus-one-unstamped-cell-is-still-SOMETIMES",
-     observed(stream(CELLS, stress_truncated=1), 3)
-     + stream_runs([10], rec_magic=0),
-     obs="Sometimes", k=3, k_eff=3, R=CELLS + 1, R_usable=3,
-     scored=CELLS * 100000)
 
 # ... and the same effect on a NULL, where a null's two numbers are told apart: the
 # scoring statement is over the three usable cells, the effort over the ten runs.
@@ -309,22 +292,6 @@ stop("rate-mode-runs-a-lone-sighting-to-budget",
 stop("cold-row-runs-to-budget",
      stream(CELLS),
      10, "BUDGET")
-# An unstamped record earns no early stop: every cell is COLD-INVALID, so there is
-# nothing to corroborate and the row spends its budget.
-stop("unstamped-records-fail-closed-to-budget",
-     stream(CELLS, rec_magic=0),
-     10, "BUDGET")
-# ... and the same when the unstamped stream is full of sightings in distinct runs:
-# read, the residue would corroborate a harness the emitter built wrong.
-stop("unstamped-sightings-earn-no-corroboration",
-     observed(stream(CELLS, rec_magic=0), CORROB_RUNS),
-     10, "BUDGET")
-# A mixed stream decides from its stamped half ALONE: the two unstamped sightings
-# would stop the row, the stamped ten are nulls, so the row spends its budget.
-stop("mixed-stream-is-decided-by-its-stamped-half",
-     (stream(CELLS)
-      + observed(stream_runs([10, 11], rec_magic=0), 2)),
-     12, "BUDGET")
 
 
 # ---------------------------------------------------------------------------
@@ -338,14 +305,9 @@ def py_reference(cells_):
     cells_ = cells_[:MAX_CELLS]
     n = len(cells_)
 
-    def stamped(c):
-        # het_verdict() reads no field of a record without the stamp, so neither
-        # does anything derived from one.
-        return c["rec_magic"] == "HET_REC_MAGIC"
-
     # The pool's identity, read before the clamp and resolved upward: ONE CPU-only
     # cell names the narrower experiment, so a het reading may not absorb it.
-    cpu_only = 1 if any(c.get("cpu_only", 0) for c in pool if stamped(c)) else 0
+    cpu_only = 1 if any(c.get("cpu_only", 0) for c in pool) else 0
 
     def degenerate(c):
         # Mirrors het_cell_degenerate: a readout that never ran, a cell that
@@ -356,8 +318,6 @@ def py_reference(cells_):
     def usable(c):
         # Mirrors het_verdict()'s COLD-INVALID.  Only stress_truncated is
         # perturbed here; the other disqualifiers are verdictcheck.py's subject.
-        if not stamped(c):
-            return False
         if c["target_count"] > 0:
             return True
         return c["stress_truncated"] == 0
@@ -365,15 +325,11 @@ def py_reference(cells_):
     k = k_eff = n_degen = R_usable = first_sight = 0
     runs, allruns = [], []
     for c in cells_:
-        # The stamp gates every read: NEITHER the run tally, nor the window sums,
-        # nor the scored total may see residue.
-        if not stamped(c):
-            continue
         if usable(c):
             R_usable += 1
         y = c["target_count"] > 0
-        # Runs consumed so far, over EVERY stamped cell: first_sight is a price in
-        # runs, so the denominator is the runs that were actually spent.
+        # Runs consumed so far, over EVERY cell: first_sight is a price in runs,
+        # so the denominator is the runs that were actually spent.
         if c["run_id"] not in allruns:
             allruns.append(c["run_id"])
         if y:
@@ -405,8 +361,8 @@ def py_reference(cells_):
 
     return dict(obs=obs, k=k, k_eff=k_eff, k_runs=len(runs), n_degen=n_degen,
                 first_sight=first_sight,
-                scored=sum(c["iters_scored"] for c in cells_ if stamped(c)),
-                discarded=sum(c["iters_discarded"] for c in cells_ if stamped(c)),
+                scored=sum(c["iters_scored"] for c in cells_),
+                discarded=sum(c["iters_discarded"] for c in cells_),
                 R=R, R_usable=R_usable, tier=tier, cpu_only=cpu_only)
 
 

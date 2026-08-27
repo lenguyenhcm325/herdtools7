@@ -31,10 +31,6 @@ datum at all. No prediction enters and none is printed — "observed" and "not o
 the whole vocabulary.
 
 ```
-0. rec_magic != HET_REC_MAGIC        -> HET_COLD_INVALID  (HET_DQ_REC_UNSTAMPED; every
-                                            field below it is whatever memset left, so
-                                            nothing here was measured.  Claim nothing.)
-
 1. caveats computed FIRST            (they travel with a sighting too, not only
                                       with a null: a weak behaviour observed under
                                       a stress config nobody recorded is not
@@ -65,11 +61,10 @@ and nothing else in the record would say so. A **disqualifier** discards the run
 (`COLD-INVALID`); a **caveat** leaves it reportable and travels with the number, on a
 sighting as well as on a null.
 
-**Disqualifying:** an unstamped record; a **dead rendezvous** (`HET_DQ_RDV_DEAD` — the
-readout never ran, or nothing was scored, or more than `HET_RDV_MAX_DISCARD_PCT` of `N`
-was thrown away at the cap); a nonzero `stress_truncated`; and *requested-but-dead* on
-each of the GPU scratchpad stress, the CPU enemies, the cache preload and either half of
-the interconnect noise.
+**Disqualifying:** a **dead rendezvous** (`HET_DQ_RDV_DEAD` — the readout never ran, or
+nothing was scored, or more than `HET_RDV_MAX_DISCARD_PCT` of `N` was thrown away at the
+cap); a nonzero `stress_truncated`; and *requested-but-dead* on each of the GPU scratchpad
+stress, the CPU enemies, the cache preload and either half of the interconnect noise.
 
 **The rendezvous disqualifier is the one that is about the experiment rather than about
 the stress.** An iteration only one side started is not an iteration of the test: the two

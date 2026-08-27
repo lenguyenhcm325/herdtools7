@@ -3,8 +3,8 @@
 
 Compiles the REAL emitted header with synthetic het_obs_records and pins:
   1 the rule      every outcome and every dq/cv bit the header declares is
-                  reached, each case's word EXACTLY, an unstamped record fails
-                  closed -- a miss means the rule stopped deciding.
+                  reached, each case's word EXACTLY, a memset-zeroed record
+                  fails closed -- a miss means the rule stopped deciding.
   2 the printout  each outcome's sentences print from that outcome and from no
                   other, and each frame names the pair the emitter stamped -- a
                   miss means a sentence reports what nothing measured.
@@ -81,9 +81,6 @@ NON_SIGHTING_CLAIMS = ["the weak outcome was NOT observed"]
 # A "live, stressed, reportable" baseline: every case below is this record with a
 # few fields perturbed, so each isolates ONE reason.
 BASE = dict(
-    # The stamp, written as the SYMBOL so a rename in the header is a compile
-    # error here too; a zeroed record must never read as a live one.
-    rec_magic="HET_REC_MAGIC",
     N=100000,
     # The readout: every iteration scored, none of them matching, and the
     # outcome vector varying across them -- the shape of a live null.
@@ -144,14 +141,11 @@ CASES = [
          dq=["RDV_DEAD"], iters_scored=0, iters_discarded=100000,
          rdv_cap_cpu=100000, rdv_cap_gpu=100000, outcomes_vary=0),
 
-    # An unstamped record claims NOTHING, not even on a sighting: every field the
-    # rule would read below the stamp is a memset zero.
-    case("unstamped-record-fails-closed-even-on-a-sighting", "COLD-INVALID",
-         dq=["REC_UNSTAMPED"], rec_magic=0, target_count=99),
-    # ... and the test is EQUALITY, not "nonzero": another stamp is a record
-    # written by something that is not this header.
-    case("wrong-stamp-fails-closed", "COLD-INVALID", dq=["REC_UNSTAMPED"],
-         rec_magic=0x48455432),
+    # Memset residue is NEVER read as a run that looked and saw nothing: the
+    # liveness step reads rdv_valid and iters_scored, both zero here.
+    case("zeroed-record-fails-closed", "COLD-INVALID", dq=["RDV_DEAD"],
+         cv=["RDV_UNCALIBRATED", "UNSTRESSED", "NO_GPU_LANES"],
+         **{k: 0 for k in BASE}),
 
     # Every liveness disqualifier drives the outcome to COLD: a null from a run
     # whose stress was inert is not a stressed run's null.
@@ -180,8 +174,8 @@ CASES = [
     case("rdv-dead-zero-scored", "COLD-INVALID", dq=["RDV_DEAD"],
          iters_scored=0, iters_discarded=0),
     # The readout never ran, so the three counts above are memset zeros rather
-    # than measurements -- the record stamp's shape, one level down.
-    case("rdv-unstamped", "COLD-INVALID", dq=["RDV_DEAD"], rdv_valid=0),
+    # than measurements.
+    case("rdv-readout-never-ran", "COLD-INVALID", dq=["RDV_DEAD"], rdv_valid=0),
     # ... and the budget is a THRESHOLD, not "any discard at all": a run that
     # spent exactly its budget is still a run.
     case("rdv-discards-within-budget-still-reportable", "NOT-OBSERVED",
@@ -291,8 +285,7 @@ __CASES__
 
 
 def c_record(r):
-    # rec_magic is emitted as the SYMBOL, and the rule reads no field naming the
-    # test, so the name is a constant here.
+    # The rule reads no field naming the test, so the name is a constant here.
     r = dict(r)
     r.pop("test_name", None)
     return ("(het_obs_record){ .test_name=\"synthetic\", "
@@ -444,9 +437,9 @@ def run_rule(header, text, quiet):
     if bad:
         print("\nVERDICT FAILED: %d case(s) wrong." % bad)
         return 1
-    print("\nVERDICT OK (%d cases; all %d outcomes reachable; an unstamped record "
-          "fails closed; every disqualifier and caveat the header declares is "
-          "reached)" % (len(CASES), len(VERDICTS)))
+    print("\nVERDICT OK (%d cases; all %d outcomes reachable; a memset-zeroed "
+          "record fails closed; every disqualifier and caveat the header declares "
+          "is reached)" % (len(CASES), len(VERDICTS)))
     return 0
 
 

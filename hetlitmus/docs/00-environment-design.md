@@ -300,9 +300,8 @@ participant per proc, each raises its own tally, and an iteration nobody reached
 their sum can exceed the discard count. The printed sentence says so beside the numbers.
 
 *(The block above is the illustrative core; the **shipped** `het_obs_record` — normative in `het_verdict.h`
-— carries a good deal more: `rec_magic` (an unstamped record is refused before any other field is read),
-the `gpu_lanes` build fact the structural-absence caveat asserts, and the per-mechanism stress-liveness
-counters the disqualifiers read (`harness-reporting.md` §3).)*
+— carries a good deal more: the `gpu_lanes` build fact the structural-absence caveat asserts, and the
+per-mechanism stress-liveness counters the disqualifiers read (`harness-reporting.md` §3).)*
 
 ---
 

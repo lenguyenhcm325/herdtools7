@@ -6,12 +6,11 @@ and the `#define HET_*' stamps (litmus/hetGpuFile.ml) to
 litmus/het-runtime/*.h.  Over real emissions of both pairs:
 
   A Fields   every `_rec.<name>' a render writes is a member of het_obs_record.
-  B Stamp    every render writes `_rec.rec_magic = HET_REC_MAGIC;' exactly once.
   C Live     every stamped `#define HET_*' is read by a lane or a staged header.
   D Default  every stamped define het_verdict.h reads has an `#ifndef' default.
   E Resolve  every `HET_*' a render's code USES is stamped or header-declared.
 
-A miss is a harness that does not compile, or a record het_verdict() discards.
+A miss is a harness that does not compile.
 
 Usage:  recfields.py [-q]
 """
@@ -43,7 +42,6 @@ HEADERS = ["het_verdict.h", "het_stress.h", "het_cpu_stress.h", "het_rdv.h"]
 FIELD_RE = re.compile(r"_rec\.([A-Za-z_][A-Za-z0-9_]*)")
 DEFINE_RE = re.compile(r"^#define (HET_[A-Za-z0-9_]+)", re.M)
 IFNDEF_RE = re.compile(r"^#ifndef (HET_[A-Za-z0-9_]+)", re.M)
-STAMP_RE = re.compile(r"_rec\.rec_magic\s*=\s*HET_REC_MAGIC\s*;")
 USE_RE = re.compile(r"\bHET_[A-Za-z0-9_]+\b")
 
 def code_only(text):
@@ -101,11 +99,6 @@ def check_lane(d, test, ext, quiet, seen):
         if f not in known:
             bad.append("%s writes _rec.%s, which het_obs_record has no member of"
                        % (test, f))
-    # B -- the stamp, exactly once and by symbol.
-    n = len(STAMP_RE.findall(src))
-    if n != 1:
-        bad.append("%s stamps `_rec.rec_magic = HET_REC_MAGIC;' %d time(s), want 1 "
-                   "-- an unstamped record is discarded by het_verdict()" % (test, n))
     # C/D -- the defines, judged over the UNION of lanes: a knob stamped
     # unconditionally may be consumed only by the shapes that need it.
     stamped = sorted(set(DEFINE_RE.findall(src)))
@@ -140,8 +133,7 @@ def check_lane(d, test, ext, quiet, seen):
                        "header defines it -- the harness does not compile"
                        % (test, name))
     if not quiet and not bad:
-        print("      %-28s %2d field(s), %2d stamped define(s), %2d HET_* use(s), "
-              "stamp x1"
+        print("      %-28s %2d field(s), %2d stamped define(s), %2d HET_* use(s)"
               % (test, len(set(FIELD_RE.findall(src))), len(stamped),
                  len(set(USE_RE.findall(code)))))
     return bad
@@ -168,8 +160,8 @@ def run(quiet):
     if bad:
         print("\nRECFIELDS FAILED: %d problem(s)." % len(bad))
         return 1
-    print("\nRECFIELDS OK (%d lane(s): A fields, B stamp, C live, D default, "
-          "E resolve)" % len(LANES))
+    print("\nRECFIELDS OK (%d lane(s): A fields, C live, D default, E resolve)"
+          % len(LANES))
     return 0
 
 

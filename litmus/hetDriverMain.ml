@@ -378,9 +378,6 @@ let dump_run_record_stamp identity ch =
        "    _rec.test_name = \"%s\"; _rec.instance_id = 0; _rec.run_id = _run;\n"
        tname) ;
   s "    _rec.N = SIZE_OF_TEST;\n" ;
-  (* het_verdict() refuses an unstamped record
-     (hetlitmus/docs/harness-reporting.md sec 2). *)
-  s "    _rec.rec_magic = HET_REC_MAGIC;\n" ;
   s (Printf.sprintf
        "    _rec.cpu_only = %d;  /* 1 iff EVERY proc is a CPU proc */\n"
        (if cpu_only then 1 else 0)) ;

@@ -289,11 +289,6 @@ CH_COLD = ["DISCARD this null -- the harness was not demonstrably hot",
 CH_CAP1 = ["COLD-INVALID",
            "DISCARD this null -- the harness was not demonstrably hot",
            "A timed-out rendezvous is a DEAD PARTNER"]
-# What NEITHER arm may carry: a build fault reported as a result.
-CH_NEVER_SAYS = [
-    ("BUILD BUG",
-     "the harness is reporting a build fault, which is not a result to read"),
-]
 CH_CLASSES = ("Never", "Sometimes", "Always", "VOID")
 
 
@@ -307,10 +302,6 @@ def ch_check(text, k, obs, test, pair, quiet=False):
             bad.append("[%s] the printout never says %r" % (tag, frag))
         else:
             say("      [%s] %s" % (tag, frag[:88]))
-
-    def never(tag, frag, why):
-        if frag in text:
-            bad.append("[%s] the printout says %r -- %s" % (tag, frag, why))
 
     must("A", "HetVerdict %s run=" % test)
 
@@ -327,8 +318,6 @@ def ch_check(text, k, obs, test, pair, quiet=False):
     say("      [D] the %s arm (%s)" % (arm, ", ".join(sorted(classes)) or "none"))
     for frag in frags:
         must("D", frag)
-    for frag, why in CH_NEVER_SAYS:
-        never("B/C", frag, why)
 
     if obs not in CH_CLASSES:
         bad.append("[F] obs=%s is not one of %s" % (obs, list(CH_CLASSES)))

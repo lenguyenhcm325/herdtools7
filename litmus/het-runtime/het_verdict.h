@@ -49,12 +49,6 @@
 #define HET_RDV_MAX_DISCARD_PCT 50
 #endif
 
-/* het_obs_record is memset(0) before the driver fills it, so rec_magic is the one
-   field a zeroed record cannot forge: het_verdict() refuses a record without it,
-   and a harness whose stamp went missing reports a build bug, not a result.  The
-   emitter writes the symbol, so a divergence is a compile error. */
-#define HET_REC_MAGIC 0x48455431u
-
 /* Which stress mechanisms this build asked for: a zero tally is dead only where
    the mechanism was requested, or a no-stress baseline would be COLD forever.
    Bit numbers are a wire format, vacancies (1) and all -- add at the top,
@@ -66,8 +60,6 @@
 #define HET_REQ_NOISE_GPU   (1u << 5)   /* HET_NOISE_GPU_BLOCKS                    */
 
 typedef struct het_obs_record {
-  /* HET_REC_MAGIC, or this record is not read at all. */
-  uint32_t rec_magic;
   const char *test_name; int instance_id; int run_id;
   /* 1 when EVERY proc of this test is a CPU proc: no cross-device path carries
      the cycle, so what a sighting is about is the host ISA on the shared
@@ -145,8 +137,8 @@ static long het_env_long(const char *name, long dflt) {
 }
 
 /* The outcome: one axis -- was the weak outcome seen, and if not, is this run's
- * zero a datum at all.  A dead mechanism or an unstamped record makes it
- * HET_COLD_INVALID, NEVER "not observed".
+ * zero a datum at all.  A dead mechanism makes it HET_COLD_INVALID, NEVER
+ * "not observed".
  * hetlitmus/docs/harness-reporting.md sec 2. */
 typedef enum {
   HET_OBSERVED = 0,
@@ -155,15 +147,13 @@ typedef enum {
 } het_verdict_t;
 
 /* Why a run was DISQUALIFIED (its null is discarded): each names a mechanism
-   that is dead, not merely suboptimal.  Vacant bits: 0, 1, 2, 4, 11. */
+   that is dead, not merely suboptimal.  Vacant bits: 0, 1, 2, 4, 10, 11. */
 #define HET_DQ_STRESS_TRUNCATED (1u << 3)  /* stress stopped mid-run              */
 #define HET_DQ_CPU_ENEMY_DEAD   (1u << 5)
 #define HET_DQ_CPU_PRELOAD_DEAD (1u << 6)
 #define HET_DQ_NOISE_CPU_DEAD   (1u << 7)  /* NOT interconnect-stressed           */
 #define HET_DQ_NOISE_GPU_DEAD   (1u << 8)
 #define HET_DQ_GPU_STRESS_DEAD  (1u << 9)  /* het_do_stress requested, never ran  */
-/* No rec_magic, so a zeroed record reads as a live one: fail closed, loudly. */
-#define HET_DQ_REC_UNSTAMPED    (1u << 10)
 /* The readout did not run, nothing was scored, or more than
    HET_RDV_MAX_DISCARD_PCT of N was discarded at the cap. */
 #define HET_DQ_RDV_DEAD         (1u << 12)
@@ -191,14 +181,6 @@ static het_verdict_t het_verdict(const het_obs_record *r,
   uint32_t dq = 0, cv = 0;
   uint32_t req = r->stress_requested;
   het_verdict_t v;
-
-  /* ---- 0. FAIL CLOSED on an unstamped record, before anything else: every field
-     below rec_magic is then whatever memset left. */
-  if (r->rec_magic != HET_REC_MAGIC) {
-    if (dq_out) *dq_out = HET_DQ_REC_UNSTAMPED;
-    if (cv_out) *cv_out = 0;
-    return HET_COLD_INVALID;
-  }
 
   /* ---- 1. Caveats FIRST, because a sighting needs them too: a weak behaviour
      observed under a stress config nobody recorded is not reproducible.  Only
@@ -375,17 +357,6 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
           _r->cpu_only ? " CPU-ONLY" : "",
           _r->run_id, het_verdict_name(v));
 
-  /* ---- 0. Unstamped: nothing below rec_magic was measured.  Say only that. */
-  if (dq & HET_DQ_REC_UNSTAMPED) {
-    fprintf(_ch,
-      "  *** THIS RECORD CARRIES NO STAMP (rec_magic != HET_REC_MAGIC) ***\n"
-      "  The emitted driver did not stamp it, so every count, flag and liveness "
-      "tally read here is a memset zero rather than a measurement, and a zeroed "
-      "record is indistinguishable from a harness that ran and saw nothing.  This "
-      "is a BUILD BUG, not a result.  Rebuild; do not report.\n");
-    return;
-  }
-
   /* ---- The sighting, believed unconditionally. */
   if (v == HET_OBSERVED) {
     fprintf(_ch,
@@ -547,29 +518,22 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   int    runs[HET_STATS_MAX_CELLS];
   int    allruns[HET_STATS_MAX_CELLS];
   int i, nruns = 0, nall = 0;
-  int first;                          /* the first STAMPED cell, or n if there is none */
 
   memset(st, 0, sizeof *st);
   if (n <= 0) { st->obs = HET_OBS_VOID; return; }
   st->R         = n;
-  /* The stamp gates every read here: the pool's identity comes from the first
-     STAMPED cell, and an unstamped one contributes only its place in R. */
-  for (first = 0; first < n && recs[first].rec_magic != HET_REC_MAGIC; first++) ;
-  if (first < n) {
-    st->test_name = recs[first].test_name;
-    st->N         = recs[first].N;
-    /* Cells that do not agree on cpu_only are not one campaign. */
-    st->cpu_only  = recs[first].cpu_only;
-    { int _i;
-      for (_i = first + 1; _i < n; _i++)
-        if (recs[_i].rec_magic == HET_REC_MAGIC
-            && recs[_i].cpu_only != recs[first].cpu_only) {
-          st->flags |= HET_ST_MIXED_POOL;
-          /* cpu_only resolves upward: it names the NARROWER experiment, and a het
-             reading must not absorb it silently. */
-          if (recs[_i].cpu_only) st->cpu_only = 1;
-        }
-    }
+  st->test_name = recs[0].test_name;
+  st->N         = recs[0].N;
+  /* Cells that do not agree on cpu_only are not one campaign. */
+  st->cpu_only  = recs[0].cpu_only;
+  { int _i;
+    for (_i = 1; _i < n; _i++)
+      if (recs[_i].cpu_only != recs[0].cpu_only) {
+        st->flags |= HET_ST_MIXED_POOL;
+        /* cpu_only resolves upward: it names the NARROWER experiment, and a het
+           reading must not absorb it silently. */
+        if (recs[_i].cpu_only) st->cpu_only = 1;
+      }
   }
   if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS;
                                  st->flags |= HET_ST_CELLS_TRUNCATED; }
@@ -577,16 +541,9 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   /* ---- 1. The cells, scored through het_verdict() rather than by re-deriving
      liveness, so every stress disqualifier is inherited. */
   for (i = 0; i < n; i++) {
-    uint32_t dq = 0, cv = 0;
-    het_verdict_t v = het_verdict(&recs[i], &dq, &cv);
-    int y, deg;
-
-    /* An UNSTAMPED cell is skipped whole: every field below rec_magic is whatever
-       memset left, and reading it would let a mis-built harness corroborate
-       itself and stop.  It is cold anyway, so nothing usable is lost. */
-    if (dq & HET_DQ_REC_UNSTAMPED) continue;
-    y   = recs[i].target_count >= 1;
-    deg = het_cell_degenerate(&recs[i]);
+    het_verdict_t v = het_verdict(&recs[i], NULL, NULL);
+    int y   = recs[i].target_count >= 1;
+    int deg = het_cell_degenerate(&recs[i]);
 
     /* A sighting is never COLD, so this count can never discard one. */
     if (v != HET_COLD_INVALID) st->R_usable++;
