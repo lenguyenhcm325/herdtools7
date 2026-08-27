@@ -106,7 +106,9 @@ is keyed on the count and never on `cpu_only`.
 
 **Never a bare "Never".** A null prints the outcome that was not seen, the effort behind
 the zero (runs × `N` iterations, how many of them were scored and how many were discarded
-at the rendezvous) and this run's own liveness counters, and it says in words:
+at the rendezvous), this run's own liveness counters and the pair the binary was built
+for — numbers and caveats, no interpretation. How those numbers are read is settled here,
+once:
 
 - **no rate and no probability is attached to it** — falsification is one-sided, so what a
   null carries is the effort behind it, never an interval;
@@ -115,16 +117,15 @@ at the rendezvous) and this run's own liveness counters, and it says in words:
 - **characterization, never validation** — the harness carries no prediction, so the null
   agrees with no model and refutes none;
 - **grow R, not N** — the replication unit is the run (§5), so more runs buy independent
-  draws where a longer window does not.
+  draws where a longer window does not; this is the one instruction the aggregate prints,
+  because it is what the reader does next.
 
-The interpretation is written in C, beside the numbers it belongs to, so it travels with
-the number instead of living in a note in the thesis. Any offline reader assembling a
-comparison should reprint that block rather than re-derive it: a second implementation of
-the same decode is what silently drifts from the first.
+An offline reader assembling a comparison should take the printed numbers as they are
+rather than re-derive the decode: a second implementation of the same decode is what
+silently drifts from the first.
 
 Reporting a non-observation plainly, as a fact about one's own reach, has a precedent: the
 GTX 280 footnote of [Alglave15 fn. 7] p. 577, whose quotation lives in `REFERENCES.md`.
-The runtime carries the citation, not the quotation.
 
 The harness stops at the observation. A two-sided reading — a not-observed row bounding
 one direction and an observed row the other, as [Iorga21 §6] reads a CPU/FPGA campaign —

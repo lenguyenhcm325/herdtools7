@@ -45,9 +45,8 @@ Claim(s) this project takes from it:
   reporting stance takes.
 * Footnote 7, p. 577 — "In fairness to the authors of [19], we were unable to
   observe weak behaviours using our method on the Nvidia GTX 280 chip they used."
-  — is the precedent for reporting a non-observation as one. `het_verdict.h`
-  cites it with that locator and prints the citation, not the quotation; the
-  quotation lives here.
+  — is the precedent for reporting a non-observation as one; `harness-reporting.md`
+  §4 rests on it, and the quotation lives here.
 
 ## [Kirkham20]
 

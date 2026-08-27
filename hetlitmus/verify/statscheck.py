@@ -708,12 +708,6 @@ def phase2(lines, quiet):
             continue
         r = refs.get(name, {})
         for frag, why in (
-                ("NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL",
-                 "it does not say that nothing is attached to the null"),
-                ("NOTHING VOUCHES FOR THIS HARNESS",
-                 "it does not say that nothing certifies the reach it reports"),
-                ("CHARACTERIZATION, NEVER VALIDATION",
-                 "it does not say the null agrees with no model and refutes none"),
                 ("effort: %d run(s)" % r.get("R", -1),
                  "it does not disclose the effort behind the zero"),
                 ("%llu scored".replace("%llu", "%d") % r.get("scored", -1),

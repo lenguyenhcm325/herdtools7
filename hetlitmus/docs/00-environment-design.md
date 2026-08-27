@@ -232,9 +232,10 @@ hypothesis**: a memory system under heavy stress is likelier to transfer data ou
 ### 3.7 What a non-observation reports — no rate, no probability
 **A null carries no rate and no probability.** The harness reports that the outcome was **not observed**
 in the `(instance,run)` cells it scored, discloses the effort the run spent and the liveness the run's
-own counters measured, says outright that **nothing vouches for the harness that did not see it**, and
-says that this is characterization — the null agrees with no model and refutes none — and stops there.
-Falsification is one-sided:
+own counters measured, and stops there. That **nothing vouches for the harness that did not see it**,
+and that this is characterization — the null agrees with no model and refutes none — is how
+`harness-reporting.md` §4 reads those numbers, not a sentence the run prints. Falsification is
+one-sided:
 
 > "we emphasise that for correct GPU programming the possibility, not probability of weak
 > behaviours is what matters." — [Alglave15 §4.3], p. 585.
@@ -461,8 +462,8 @@ longer window) or hurts (the miss dominates the race) is unmeasured; the levers 
 The environment is mostly reuse; the defensible new contributions are:
 1. **A native, open, `herdtools7`-integrated** heterogeneous run pipeline (vs Bagchi's unreleased stitch).
 2. **A disclosure discipline for non-observation** — the null names the effort it cost and the liveness
-   the run's own counters measured, says in words that nothing vouches for it, and attaches no rate and
-   no probability; a run whose two sides did not meet is discarded rather than reported as a zero. The
+   the run's own counters measured, nothing vouches for it, and no rate and no probability attaches to
+   it; a run whose two sides did not meet is discarded rather than reported as a zero. The
    claim is the discipline and the replication unit it is stated at (the `(instance,run)` cell), not a
    confidence bound.
 3. **Explicit interconnect stress** (placement + noise kernels) — a lever no single-die prior work had.

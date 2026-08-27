@@ -273,8 +273,6 @@ def ch_observed(pair):
 
 
 CH_NULL = ["NOT OBSERVED under this effort",
-           "NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL",
-           "CHARACTERIZATION, NEVER VALIDATION",
            "effort:",
            # The effort a null reports is the iterations it read back, so the
            # number is on the line beside the sentence.

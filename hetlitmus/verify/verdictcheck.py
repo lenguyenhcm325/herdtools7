@@ -59,17 +59,12 @@ FRAMES = [DEFAULT_FRAME, CUDA_FRAME, HIP_FRAME]
 # from that outcome, and printed by no other.  {pair} is filled from the frame.
 FRAME_CLAIMS = {
     "OBSERVED": ["the weak outcome was OBSERVED",
-                 "Report it as what {pair} exhibited under this harness, this "
-                 "stress and this host-device interconnect path."],
-    # A null's whole entitlement, in one frame: what was not seen, that nothing
-    # rides on it or vouches for it, and whose reach it was.
+                 "Report it as what {pair} exhibited under this harness and this "
+                 "stress."],
+    # A null's frame: what was not seen, and whose reach it was.
     "NOT-OBSERVED": [
-        "NOT OBSERVED under this effort",
-        "NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL",
-        "NOTHING VOUCHES FOR THE HARNESS THAT DID NOT SEE IT",
-        "OBSERVABILITY result about this harness",
-        "has precedent: Alglave et al., ASPLOS'15, fn.7, p.577",
-        "liveness {pair} measured on its own counters.",
+        "NOT OBSERVED under this effort on {pair}; the counts above are this "
+        "run's reach.",
     ],
     "COLD-INVALID": ["DISCARD this null"],
 }
@@ -248,7 +243,7 @@ CPU_ONLY_TEXT = {
     "cpu-only-sighting-names-what-fired":
         "CPU-ONLY CYCLE: every proc of this test is a CPU proc",
     "cpu-only-null-probes-the-allocation":
-        "SHARED-ALLOCATION PROBE: this is a CPU-ONLY shape",
+        "SHARED-ALLOCATION PROBE: this is a CPU-only shape",
 }
 
 C_MAIN = r"""

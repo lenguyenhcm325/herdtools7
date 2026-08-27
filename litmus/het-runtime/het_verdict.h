@@ -1,12 +1,9 @@
 /* =========================================================================
- * het_verdict.h -- the observation record and the outcome rule.
- * Emitted verbatim into every harness dir; edit litmus/het-runtime/het_verdict.h,
- * never a harness-dir copy.
- * This harness reports what it observed: it carries no prediction and never says
- * a result contradicts a model.  A null states the effort the run spent and the
- * liveness its own counters measured, and NOTHING vouches for it -- no rate and
- * no probability attaches to one [Alglave15 sec 4.3 p.585].
- * The rule and every sentence it prints: hetlitmus/docs/harness-reporting.md.
+ * het_verdict.h -- the observation record, the outcome rule and the campaign
+ * aggregate.  Emitted verbatim into every harness dir: edit this file, not a
+ * harness-dir copy.  A null reports the effort the run spent and the liveness
+ * its own counters measured; the rule and the sentences it prints are
+ * hetlitmus/docs/harness-reporting.md.
  * ========================================================================= */
 #ifndef HET_VERDICT_H
 #define HET_VERDICT_H
@@ -16,13 +13,12 @@
 #include <stdlib.h>   /* getenv: the run-time campaign knobs                 */
 #include <string.h>   /* memset: het_stats_compute zeroes its own aggregate  */
 
-/* These name the mechanism and NEVER a part; the pair is HET_PAIR_NAME.
-   hetlitmus/docs/het-emission.md "The pair a harness names". */
+/* Mechanism names, not part names; the pair is HET_PAIR_NAME
+   (hetlitmus/docs/het-emission.md "The pair a harness names"). */
 #define HET_LINK_NAME "host-device interconnect"  /* no leading article: sites add it */
 #define HET_HOST_HALF "the host half"
 #define HET_DEV_HALF "the device half"
-/* Default when the dialect stamps no lever
-   (hetlitmus/docs/het-emission.md, "The pair a harness names"). */
+/* Default when the dialect stamps no lever (same section). */
 #ifndef HET_PLACE_LEVER
 #define HET_PLACE_LEVER "the page-placement lever"
 #endif
@@ -33,26 +29,25 @@
 #define HET_PAIR_NAME "(unstamped CPU ISA x GPU dialect pair)"
 #endif
 
-/* Cells (instance,run) the aggregate can hold.  A campaign with more runs than
-   this is truncated and flags HET_ST_CELLS_TRUNCATED rather than silently
-   scoring a subset. */
+/* Cells (instance,run) the aggregate can hold.  A campaign with more runs is
+   truncated and flags HET_ST_CELLS_TRUNCATED rather than silently scoring a
+   subset. */
 #ifndef HET_STATS_MAX_CELLS
 #define HET_STATS_MAX_CELLS 128
 #endif
 
-/* Share of N that may be discarded at the rendezvous before the run itself is
-   discarded: past it the two sides mostly did not run together, so the
-   iterations that did are not a sample of the window the test is about.  The
-   caps producing the discards are het_rdv.h's; this is the budget the rule
-   spends. */
+/* Share of N the rendezvous may discard before the run itself is discarded:
+   past it the two sides mostly did not run together, so the iterations that
+   did are not a sample of the window the test is about.  het_rdv.h's caps
+   produce the discards; this is the budget the rule spends. */
 #ifndef HET_RDV_MAX_DISCARD_PCT
 #define HET_RDV_MAX_DISCARD_PCT 50
 #endif
 
 /* Which stress mechanisms this build asked for: a zero tally is dead only where
    the mechanism was requested, or a no-stress baseline would be COLD forever.
-   Bit numbers are a wire format, vacancies (1) and all -- add at the top,
-   never renumber (hetlitmus/docs/harness-reporting.md sec 7). */
+   Bit numbers are a wire format, vacancies (1) included: add at the top, do not
+   renumber (hetlitmus/docs/harness-reporting.md sec 7). */
 #define HET_REQ_GPU_STRESS  (1u << 0)   /* HET_PRE_STRESS_PCT | HET_MEM_STRESS_PCT */
 #define HET_REQ_CPU_ENEMY   (1u << 2)   /* HET_CPU_ENEMIES                         */
 #define HET_REQ_CPU_PRELOAD (1u << 3)   /* HET_CPU_PRELOAD_PCT && _PRELOAD_LIVE    */
@@ -61,71 +56,68 @@
 
 typedef struct het_obs_record {
   const char *test_name; int instance_id; int run_id;
-  /* 1 when EVERY proc of this test is a CPU proc: no cross-device path carries
-     the cycle, so what a sighting is about is the host ISA on the shared
-     allocation, and the printout says so. */
+  /* 1 when every proc of this test is a CPU proc: no cross-device path carries
+     the cycle, and the printout says so. */
   int cpu_only;
   /* GPU test lanes in this build.  At 0 the stress round loop exits before its
-     body runs once, so the mechanism is structurally absent; key that caveat
-     here and NEVER on cpu_only, which is a property of the cycle. */
+     body runs once, so the mechanism is structurally absent; that caveat is
+     keyed here and NOT on cpu_only, which is a property of the cycle. */
   int gpu_lanes;
   uint64_t N;
-  /* The readout counts iterations, never searches: one iteration, one slot, one
-     outcome vector, so target_count <= iters_scored <= N, and discarded (a
-     participant never started it) + scored = N once the readout ran. */
+  /* One iteration scores one outcome vector, so target_count <= iters_scored
+     <= N, and discarded (a participant did not start it) + scored = N once the
+     readout ran. */
   uint64_t iters_scored;
   uint64_t iters_discarded;
   uint64_t target_count;
-  /* rdv_valid says the readout ran, which separates the counts above from
-     memset zeros.  rdv_cap_cpu / rdv_cap_gpu count cap expiries per participant
-     per iteration, so they neither partition nor bound iters_discarded.
-     cap_cpu / cap_gpu are the waits this run used, and cap_calibrated is 0
-     until they are measured on the target. */
+  /* rdv_valid says the readout ran, separating the counts above from memset
+     zeros.  rdv_cap_cpu / rdv_cap_gpu count cap expiries per participant per
+     iteration, so they neither partition nor bound iters_discarded.  cap_cpu /
+     cap_gpu are the waits this run used; cap_calibrated is 0 until they are
+     measured on the target. */
   int rdv_valid;
   uint64_t rdv_cap_cpu, rdv_cap_gpu;
   uint32_t cap_cpu, cap_gpu;
   int cap_calibrated;
-  /* 0 = every scored iteration read back the SAME outcome vector, which is the
-     constant-read artefact [Srivastava24 sec 4.1].  Caveated, never suppressed. */
+  /* 0 = every scored iteration read back the same outcome vector, the
+     constant-read artefact [Srivastava24 sec 4.1]: a caveat, not a discard. */
   int outcomes_vary;
-  /* GPU stress liveness -- the ONLY run-time evidence the layer ran, since it
-     leaves no trace in the tested op stream.  stress_truncated: lanes that
-     stopped stressing while the test still ran.  gpu_stress_rounds: max rounds
-     one het_do_stress call completed; stress blocks fill what the co-residency
-     cap leaves over the test lanes, so that cap squeezes them to zero first. */
+  /* GPU stress liveness, the only run-time evidence the layer ran (it leaves no
+     trace in the tested op stream).  stress_truncated: lanes that stopped
+     stressing while the test still ran.  gpu_stress_rounds: max rounds one
+     het_do_stress call completed; stress blocks fill what the co-residency cap
+     leaves over the test lanes, so that cap squeezes them to zero first. */
   uint64_t stress_truncated;
   uint64_t gpu_stress_rounds;
-  /* CPU + interconnect liveness, same argument, for the levers the GPU tallies
-     do not cover.  A zero rounds/ops field means the mechanism never ran; a
-     nonzero *_failures field means a pin or a placement was refused rather than
-     applied, so the topology is not the one being tuned. */
+  /* CPU + interconnect liveness, for the levers the GPU tallies do not cover.
+     A zero rounds/ops field means the mechanism did not run; a nonzero
+     *_failures field means a pin or a placement was refused, so the topology
+     is not the one being tuned. */
   uint64_t cpu_enemy_rounds, cpu_enemy_accesses, cpu_preload_ops;
   uint64_t noise_cpu_rounds, noise_cpu_words;
   uint32_t noise_gpu_blocks, noise_gpu_rounds;
   uint32_t cpu_enemies, cpu_aff_failures, place_failures;
-  /* What the run REALISED, not what it asked for.  A noise working set below the
-     last-level cache is served from cache and crosses nothing, so a config that
-     scores well at 8 MB scored a stressor that was not running (HET_LLC_MB,
+  /* What the run realised, not what it asked for: a noise working set below the
+     last-level cache is served from cache and crosses nothing (HET_LLC_MB,
      het_cpu_stress.h). */
   uint32_t noise_ws_mb, place_mode;
   uint32_t stress_requested;    /* HET_REQ_* bitmask -- see above */
 } het_obs_record;
 
 /* ---------------------------------------------------------------------------
- * Run-time knobs: getenv, never a -D the device code can see (nvcc folds a
- * compile-time knob and removes the only branch with side effects).
- * hetlitmus/campaign.py retunes them per invocation without a rebuild; unset
- * means the compiled default.
+ * Run-time knobs, read with getenv rather than -D (nvcc folds a compile-time
+ * knob and deletes the only branch with side effects); hetlitmus/campaign.py
+ * retunes them per invocation without a rebuild, and unset means the compiled
+ * default.
  *   HET_RUNS_MAX      runs this invocation, clamped to the compiled
- *                     NUMBER_OF_RUN (the record array is that size); R grows by
- *                     re-invoking with a fresh HET_SEED
+ *                     NUMBER_OF_RUN; R grows by re-invoking with a fresh
+ *                     HET_SEED
  *   HET_ADAPTIVE      1 => consult het_campaign_should_stop() after every run
  *   HET_RATE          1 => run to budget even after a sighting, for a rate
  *   HET_CONFIRM_RUNS  runs a lone clean sighting may hold the row open for,
  *                     counted from the run it fired in (default 30, floor 1)
- *   HET_SEED          the seed base.  VARY IT per invocation: replaying seeds
- *                     draws no fresh phase, so pooling two such invocations
- *                     counts one draw twice
+ *   HET_SEED          the seed base; vary it per invocation, since a replayed
+ *                     seed draws no fresh phase and pools as one draw twice
  * ------------------------------------------------------------------------- */
 static long het_env_long(const char *name, long dflt) {
   const char *v = getenv(name);
@@ -137,9 +129,8 @@ static long het_env_long(const char *name, long dflt) {
 }
 
 /* The outcome: one axis -- was the weak outcome seen, and if not, is this run's
- * zero a datum at all.  A dead mechanism makes it HET_COLD_INVALID, NEVER
- * "not observed".
- * hetlitmus/docs/harness-reporting.md sec 2. */
+ * zero a datum at all.  A dead mechanism yields HET_COLD_INVALID, not "not
+ * observed" (hetlitmus/docs/harness-reporting.md sec 2). */
 typedef enum {
   HET_OBSERVED = 0,
   HET_NOT_OBSERVED,
@@ -153,7 +144,7 @@ typedef enum {
 #define HET_DQ_CPU_PRELOAD_DEAD (1u << 6)
 #define HET_DQ_NOISE_CPU_DEAD   (1u << 7)  /* NOT interconnect-stressed           */
 #define HET_DQ_NOISE_GPU_DEAD   (1u << 8)
-#define HET_DQ_GPU_STRESS_DEAD  (1u << 9)  /* het_do_stress requested, never ran  */
+#define HET_DQ_GPU_STRESS_DEAD  (1u << 9)  /* het_do_stress requested, no round   */
 /* The readout did not run, nothing was scored, or more than
    HET_RDV_MAX_DISCARD_PCT of N was discarded at the cap. */
 #define HET_DQ_RDV_DEAD         (1u << 12)
@@ -174,49 +165,47 @@ static int het_dead(uint32_t req, uint32_t bit, uint64_t rounds) {
   return (req & bit) && rounds == 0;
 }
 
-/* The rule (hetlitmus/docs/harness-reporting.md sec 2).  A pure function of
-   the record. */
+/* The rule (hetlitmus/docs/harness-reporting.md sec 2): a pure function of the
+   record. */
 static het_verdict_t het_verdict(const het_obs_record *r,
                                  uint32_t *dq_out, uint32_t *cv_out) {
   uint32_t dq = 0, cv = 0;
   uint32_t req = r->stress_requested;
   het_verdict_t v;
 
-  /* ---- 1. Caveats FIRST, because a sighting needs them too: a weak behaviour
-     observed under a stress config nobody recorded is not reproducible.  Only
-     the provenance travels; the outcome is unchanged. */
+  /* ---- 1. Caveats first, since a sighting needs them too: only the provenance
+     travels, the outcome is unchanged. */
   if (r->iters_scored > 0 && !r->outcomes_vary)
                                     cv |= HET_CV_ONE_OUTCOME;
   if (!r->cap_calibrated)           cv |= HET_CV_RDV_UNCALIBRATED;
   if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
   if (r->place_failures > 0)        cv |= HET_CV_PLACE_REFUSED;
   if (req == 0)                     cv |= HET_CV_UNSTRESSED;
-  /* The emitter withholds HET_REQ_GPU_STRESS at 0 lanes, where the mechanism is
-     structurally unreachable rather than dead, so it is caveated here instead.
-     Keyed on the lane count the emitter wrote, NEVER on cpu_only: a harness that
-     merely forgot to request a reachable mechanism keeps its lane count and is
-     disqualified by het_dead(). */
+  /* The emitter withholds HET_REQ_GPU_STRESS at 0 lanes, where the mechanism
+     is unreachable rather than dead, so it is caveated here instead -- keyed
+     on the lane count, NOT on cpu_only: a harness that merely forgot to
+     request a reachable mechanism keeps its lane count and het_dead()
+     disqualifies it. */
   if (r->gpu_lanes == 0)            cv |= HET_CV_NO_GPU_LANES;
 
-  /* ---- 2. A SIGHTING, believed unconditionally: an inert-stress run that saw
-     the outcome still saw it. */
+  /* ---- 2. A sighting is believed unconditionally: an inert-stress run that
+     saw the outcome still saw it. */
   if (r->target_count > 0) {
     if (dq_out) *dq_out = 0;
     if (cv_out) *cv_out = cv;
     return HET_OBSERVED;
   }
 
-  /* ---- 3. Liveness: is this run's null even a datum?  Starting with the
-     partner's, which no stress tally covers -- a run whose iterations mostly
-     ended at the cap has an empty histogram about the rendezvous rather than
-     about the memory model. */
+  /* ---- 3. Liveness: is this run's null a datum at all?  The partner's first,
+     which no stress tally covers: a run whose iterations mostly ended at the
+     cap has an empty histogram about the rendezvous, not the memory model. */
   if (!r->rdv_valid || r->iters_scored == 0 ||
       r->iters_discarded * 100 > r->N * HET_RDV_MAX_DISCARD_PCT)
                                                   dq |= HET_DQ_RDV_DEAD;
   if (r->stress_truncated > 0)                    dq |= HET_DQ_STRESS_TRUNCATED;
-  /* het_stress.h's round tally says the loop RAN.  Whether it still contains its
+  /* het_stress.h's round tally says the loop ran; whether it still contains its
      scratchpad accesses is a static question, and neither answer subsumes the
-     other: a layer can be in the source and gone from the emitted GPU code. */
+     other. */
   if (het_dead(req, HET_REQ_GPU_STRESS,  r->gpu_stress_rounds))
                                                   dq |= HET_DQ_GPU_STRESS_DEAD;
   if (het_dead(req, HET_REQ_CPU_ENEMY,   r->cpu_enemy_rounds))
@@ -278,30 +267,24 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     _r->cpu_aff_failures, _r->place_failures);
 }
 
-/* The reporting contract: NEVER a bare "Never".  Every null prints paired with
-   the effort it cost and the liveness this run measured, in absolute numbers.
-   hetlitmus/docs/harness-reporting.md sec 4. */
-/* The stress-provenance caveats, printed for a sighting as well as for a null. */
+/* Every null prints beside the effort it cost and the liveness this run
+   measured, in absolute numbers (hetlitmus/docs/harness-reporting.md sec 4). */
+
+/* Provenance caveats, printed for a sighting and for a null alike. */
 static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) {
-  if (cv & HET_CV_UNSTRESSED)
-    fprintf(_ch, "  CAVEAT: no stress was requested.  Kirkham et al., OOPSLA'20, "
-                 "sec 6.2 exposed only ONE of six mutants with no stress -- an "
-                 "unstressed null is weak evidence whatever else this record "
-                 "carries.\n");
+  if (cv & HET_CV_UNSTRESSED)   /* [Kirkham20 sec 6.2 Tab.10] */
+    fprintf(_ch, "  CAVEAT: no stress was requested; an unstressed null is "
+                 "weak evidence.\n");
   if (cv & HET_CV_ONE_OUTCOME)
-    fprintf(_ch, "  CAVEAT: every one of the %llu scored iteration(s) read back "
-                 "the SAME outcome vector.  A decode that never varies is the "
-                 "constant-read artefact Srivastava et al. observed (sec 4.1) -- "
-                 "a reader stuck on init or on one value -- so this run measured "
-                 "one thing %llu times.\n",
+    fprintf(_ch, "  CAVEAT: all %llu scored iteration(s) read back the SAME "
+                 "outcome vector -- a reader stuck on one value -- so this run "
+                 "measured one thing %llu times.\n",
             (unsigned long long)_r->iters_scored,
             (unsigned long long)_r->iters_scored);
   if (cv & HET_CV_RDV_UNCALIBRATED)
     fprintf(_ch, "  CAVEAT: the rendezvous caps are PLACEHOLDERS (cpu=%u, gpu=%u "
                  "polls), not a measurement on this target, so the %llu discarded "
-                 "iteration(s) price a wait nobody calibrated: a shorter cap "
-                 "discards iterations the two sides would have shared, a longer "
-                 "one spends the run waiting for a partner that is not coming.\n",
+                 "iteration(s) price an uncalibrated wait.\n",
             _r->cap_cpu, _r->cap_gpu,
             (unsigned long long)_r->iters_discarded);
   if (cv & HET_CV_AFF_FAILED)
@@ -362,27 +345,23 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     fprintf(_ch,
       "  ** %s: the weak outcome was OBSERVED in %llu of the %llu scored "
       "iteration(s) of N=%llu (%.4f%%).\n"
-      "  Report it as what %s exhibited under this harness, this stress and this "
-      "%s path.  It is an OBSERVATION: this harness carries no prediction, so "
-      "nothing here confirms or contradicts any model.  Comparing it against a "
-      "verdicts file the reader supplies is an offline step.\n",
+      "  Report it as what %s exhibited under this harness and this stress.\n",
       _r->test_name, _hits,
       (unsigned long long)_r->iters_scored, _n, _pct,
-      HET_PAIR_NAME, HET_LINK_NAME);
-    if (_r->cpu_only) {
+      HET_PAIR_NAME);
+    if (_r->cpu_only) {   /* [APM Table 7-2] */
       fprintf(_ch,
-        "  ** CPU-ONLY CYCLE: every proc of this test is a CPU proc, so NO "
-        "CROSS-DEVICE PATH CARRIED THIS CYCLE -- what fired is the host ISA on the "
-        "SHARED ALLOCATION, whose memory TYPE is part of what this row measures: "
-        "the sighting rules out an uncacheable (UC) mapping ([APM] Table 7-2) but "
-        "does not establish WB over WC.\n");
+        "  ** CPU-ONLY CYCLE: every proc of this test is a CPU proc, so no "
+        "cross-device path carried it: what fired is the host ISA on the "
+        "shared allocation, which rules a UC mapping out but does not "
+        "establish WB over WC.\n");
     }
     het_print_config(_ch, _r);
     het_print_caveats(_ch, _r, cv);
     return;
   }
 
-  /* ---- Not observed.  It NEVER prints alone. */
+  /* ---- Not observed: the counts print first, under both null arms. */
   het_print_notobserved(_ch, _r);
 
   if (v == HET_COLD_INVALID) {
@@ -390,19 +369,15 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     if (dq & HET_DQ_RDV_DEAD)
       fprintf(_ch, "    - the RENDEZVOUS: %llu of N=%llu iteration(s) scored, "
                    "%llu discarded at the cap (caps %u/%u polls, budget "
-                   "%d%%)%s.  The cap expired %llu time(s) on a CPU participant "
-                   "and %llu time(s) on a GPU lane, counted per participant per "
-                   "iteration: an iteration no side reached counts on every one "
-                   "of them, so the two neither partition nor bound the "
-                   "discards.  A timed-out rendezvous is a DEAD PARTNER or "
-                   "a cap set too short, never a non-observation: the two sides "
-                   "did not run the iteration together, so there was no window "
-                   "for the outcome to appear in\n",
+                   "%d%%)%s; the cap expired %llu time(s) on a CPU participant "
+                   "and %llu on a GPU lane, counted per participant per "
+                   "iteration.  A timed-out rendezvous is a DEAD PARTNER or a "
+                   "cap set too short, not a non-observation\n",
               (unsigned long long)_r->iters_scored,
               (unsigned long long)_r->N,
               (unsigned long long)_r->iters_discarded,
               _r->cap_cpu, _r->cap_gpu, (int)HET_RDV_MAX_DISCARD_PCT,
-              _r->rdv_valid ? "" : " -- and the readout never ran at all",
+              _r->rdv_valid ? "" : " -- and the readout did not run at all",
               (unsigned long long)_r->rdv_cap_cpu,
               (unsigned long long)_r->rdv_cap_gpu);
     if (dq & HET_DQ_STRESS_TRUNCATED)
@@ -422,43 +397,34 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
                    "is not interconnect-stressed\n",
               HET_DEV_HALF, HET_LINK_NAME);
     if (dq & HET_DQ_GPU_STRESS_DEAD)
-      fprintf(_ch, "    - the GPU scratchpad stress was requested "
-                   "(HET_PRE_STRESS_PCT/HET_MEM_STRESS_PCT) but het_do_stress "
-                   "completed ZERO rounds: it never ran\n");
+      fprintf(_ch, "    - the GPU scratchpad stress (HET_PRE_STRESS_PCT/"
+                   "HET_MEM_STRESS_PCT) was requested but completed ZERO "
+                   "rounds\n");
     het_print_caveats(_ch, _r, cv);
     return;
   }
 
-  /* The one null frame. */
+  /* ---- The null frame. */
   fprintf(_ch,
-    "  NOT OBSERVED under this effort -- never \"cannot happen\".  "
-    "NO RATE AND NO PROBABILITY IS ATTACHED TO THIS NULL, and NOTHING VOUCHES "
-    "FOR THE HARNESS THAT DID NOT SEE IT: what this run carries is the effort "
-    "above and the liveness %s measured on its own counters.\n",
+    "  NOT OBSERVED under this effort on %s; the counts above are this run's "
+    "reach.\n",
     HET_PAIR_NAME);
-  fprintf(_ch,
-    "  This is an OBSERVABILITY result about this harness on this hardware and "
-    "under this stress -- never a model result -- and it feeds the stress-tuning "
-    "priority.  Reporting one that way has precedent: Alglave et al., ASPLOS'15, "
-    "fn.7, p.577.\n");
-  if (_r->cpu_only)
+  if (_r->cpu_only)   /* [APM Table 7-2] */
     fprintf(_ch,
-      "  *** SHARED-ALLOCATION PROBE: this is a CPU-ONLY shape, and its weak "
-      "outcome is the host STORE BUFFER -- among the most reproducible relaxations "
-      "the ISA has.  A null here is evidence about the SHARED ALLOCATION, not a "
-      "narrow window: read it as unresolved until the mapping is known to be WB "
-      "(write-back cacheable).  Check PAT/MTRR and /proc/self/smaps for this "
-      "allocator before running anything else.\n");
+      "  *** SHARED-ALLOCATION PROBE: this is a CPU-only shape, so a null here "
+      "is about the memory type of the shared allocation, not about a "
+      "cross-device window; it stays unresolved until the mapping is known to "
+      "be WB (check PAT/MTRR and /proc/self/smaps for this allocator).\n");
 
   het_print_caveats(_ch, _r, cv);
 }
 
-/* The statistics layer -- a pure function of an array of het_obs_records, run
- * host-side after the campaign.  The iteration is not the trial: the replication
- * unit is the (instance,run) cell and Y = 1[target_count >= 1] is counted.
- * hetlitmus/docs/harness-reporting.md sec 5. */
+/* The aggregate, a pure function of an array of het_obs_records, run host-side
+ * after the campaign.  The iteration is not the trial: the replication unit is
+ * the (instance,run) cell and Y = 1[target_count >= 1] is what is counted
+ * (hetlitmus/docs/harness-reporting.md sec 5). */
 
-/* What the campaign SAW, at the (instance,run) unit. */
+/* What the campaign saw, at the (instance,run) unit. */
 typedef enum {
   HET_OBS_VOID = 0,   /* not one usable cell: nothing here was measured           */
   HET_OBS_NEVER,      /* k = 0 usable cells observed it                            */
@@ -466,10 +432,9 @@ typedef enum {
   HET_OBS_ALWAYS
 } het_obs_class;
 
-/* Corroboration layers ON TOP of het_verdict()'s HET_OBSERVED and suppresses
-   nothing: HET_CORROB_RUNS is a bar in clean runs, not a confidence, and a
-   constant-read artefact forges a sighting [Srivastava24 sec 4.1].
-   hetlitmus/docs/harness-reporting.md sec 5. */
+/* Corroboration layers on top of het_verdict()'s HET_OBSERVED and suppresses
+   nothing: HET_CORROB_RUNS is a bar in clean runs, not a confidence, since a
+   constant-read artefact forges a sighting [Srivastava24 sec 4.1]. */
 #define HET_CORROB_RUNS 2
 typedef enum {
   HET_SIGHT_NONE = 0,
@@ -496,8 +461,8 @@ typedef struct het_stats {
   int k;              /* cells with Y = 1[target_count >= 1]                      */
   int k_eff;          /* ... of those, the ones that pass the decode guard        */
   int k_runs;         /* distinct RUNS among them (the most independent draws)    */
-  int n_degen;        /* sightings REJECTED by the guard (reported, never hidden) */
-  /* Distinct runs consumed when the FIRST clean sighting landed; 0 = none did.
+  int n_degen;        /* sightings the guard rejected (reported, not counted) */
+  /* Distinct runs consumed when the first clean sighting landed; 0 = none did.
      The price of the sighting, in the unit the campaign spends. */
   int n_at_first_sight;
 
@@ -506,9 +471,10 @@ typedef struct het_stats {
 } het_stats_t;
 
 /* The decode guard: could this cell's sighting be the constant-read artefact
-   [Srivastava24 sec 4.1]?  A readout that never ran, a cell that scored nothing
-   and one whose every iteration read back the same vector all fail closed.  The
-   sighting is still REPORTED; it just does not count toward corroboration. */
+   [Srivastava24 sec 4.1]?  A readout that did not run, a cell that scored
+   nothing and one whose every iteration read back the same vector all fail
+   closed.  The sighting is still reported; it does not count toward
+   corroboration. */
 static int het_cell_degenerate(const het_obs_record *r) {
   return !r->rdv_valid || (r->iters_scored == 0) || !r->outcomes_vary;
 }
@@ -530,7 +496,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     for (_i = 1; _i < n; _i++)
       if (recs[_i].cpu_only != recs[0].cpu_only) {
         st->flags |= HET_ST_MIXED_POOL;
-        /* cpu_only resolves upward: it names the NARROWER experiment, and a het
+        /* cpu_only resolves upward: it names the narrower experiment, and a het
            reading must not absorb it silently. */
         if (recs[_i].cpu_only) st->cpu_only = 1;
       }
@@ -545,10 +511,10 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     int y   = recs[i].target_count >= 1;
     int deg = het_cell_degenerate(&recs[i]);
 
-    /* A sighting is never COLD, so this count can never discard one. */
+    /* A sighting is not COLD, so this count discards none. */
     if (v != HET_COLD_INVALID) st->R_usable++;
 
-    /* Runs consumed so far, over EVERY cell and not only the sighting ones:
+    /* Runs consumed so far, over every cell and not only the sighting ones:
        n_at_first_sight is a price in runs actually spent. */
     { int j, seen = 0;
       for (j = 0; j < nall; j++) if (allruns[j] == recs[i].run_id) seen = 1;
@@ -571,11 +537,10 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   }
   st->k_runs = nruns;
 
-  /* ---- 2. The observation class.  The denominator is R, the runs EXECUTED: a
+  /* ---- 2. The observation class.  The denominator is R, the runs executed: a
      cell is usable when it fired or when its own liveness counters were alive,
-     and nothing co-runs to make "usable" outcome-independent, so scoring over
-     usable cells alone would report Always for a row that fired in 3 of 10.
-     Void still turns on R_usable: such a pool measured nothing at all. */
+     so scoring over usable cells alone would report Always for a row that fired
+     in 3 of 10.  Void alone turns on R_usable: such a pool measured nothing. */
   { int denom = st->R;
     if (st->R_usable == 0)    st->obs = HET_OBS_VOID;
     else if (st->k == 0)      st->obs = HET_OBS_NEVER;
@@ -583,7 +548,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     else                      st->obs = HET_OBS_SOMETIMES;
   }
 
-  /* ---- 3. The corroboration tier.  Distinct RUNS, not merely distinct cells:
+  /* ---- 3. The corroboration tier.  Distinct runs, not merely distinct cells:
      runs are re-seeded and carry a fresh phase/thermal draw. */
   if (st->k > 0)
     st->tier = (st->k_runs >= HET_CORROB_RUNS) ? HET_SIGHT_CORROBORATED
@@ -623,7 +588,7 @@ static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
     _s->flags);
 }
 
-/* The human block: the interpretation travels with the number. */
+/* The human block: the numbers, and the one instruction a reader acts on. */
 static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
   het_stats_line(_ch, _s);
 
@@ -638,30 +603,20 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
             (int)HET_STATS_MAX_CELLS);
 
   if (_s->obs == HET_OBS_VOID) {
-    fprintf(_ch, "  VOID -- not one of the %d runs was usable (every cell COLD).  "
-                 "There is nothing here to report: an empty histogram from a dead "
-                 "harness is not a non-observation, it is an absence of data.  See "
-                 "the per-run HetVerdict lines for which mechanism was dead.\n", _s->R);
+    fprintf(_ch, "  VOID -- not one of the %d run(s) was usable (every cell "
+                 "COLD): nothing was measured.  The per-run HetVerdict lines "
+                 "name the dead mechanism.\n", _s->R);
     return;
   }
 
-  /* ---- the headline, by observation class.  A null's two numbers come from two
-     pools: the scoring statement is over the usable cells, the effort over the
-     runs executed -- a discarded run still spent its iterations. */
+  /* ---- the headline, by observation class.  The scoring statement is over
+     the usable cells, the effort over the runs executed: a discarded run still
+     spent its iterations. */
   if (_s->obs == HET_OBS_NEVER) {
     fprintf(_ch,
-      "  NOT OBSERVED in any of the %d usable cell(s).  NO RATE AND NO PROBABILITY "
-      "IS ATTACHED TO THIS NULL: falsification is one-sided -- \"the possibility, "
-      "not probability ... is what matters\" (Alglave et al., ASPLOS'15 4.3, p.585) "
-      "-- so what a null carries is the effort behind it, never an interval.\n"
-      "  NOTHING VOUCHES FOR THIS HARNESS: what is reported here is the reach it "
-      "demonstrated on its own liveness counters, which the per-run HetVerdict "
-      "lines carry.\n"
-      "  CHARACTERIZATION, NEVER VALIDATION: this harness carries no prediction, so "
-      "this null agrees with no model and refutes none -- it reports what this "
-      "harness reached on this hardware under this stress.\n"
+      "  NOT OBSERVED in any of the %d usable cell(s).\n"
       "  effort: %d run(s) x N=%llu iterations, %llu scored, %llu discarded at "
-      "the rendezvous.  Grow R, NOT N.\n",
+      "the rendezvous.  Grow R, not N.\n",
       _s->R_usable, _s->R, (unsigned long long)_s->N,
       (unsigned long long)_s->iters_scored,
       (unsigned long long)_s->iters_discarded);
@@ -670,55 +625,45 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
 
   /* ---- observed. */
   fprintf(_ch,
-    "  OBSERVED in %d of %d run(s), %d of them after the decode guard.  The "
-    "denominator is R, the runs EXECUTED: nothing co-runs to make \"usable\" "
-    "outcome-independent, so scoring over usable cells alone would report ALWAYS "
-    "for a row that fired in only some of them.  NO RATE IS ATTACHED to the "
-    "count.\n",
+    "  OBSERVED in %d of %d run(s), %d of them after the decode guard.\n",
     _s->k, _s->R, _s->k_eff);
 
   if (_s->flags & HET_ST_DEGEN_SIGHTING)
     fprintf(_ch,
-      "  *** %d SIGHTING(S) CAME FROM A DEGENERATE CELL *** (nothing scored, or a "
-      "readout that never varied).  Srivastava observed exactly this artefact -- "
-      "a reader stuck on init or on one value yields a spurious 100%%/0%%.\n"
-      "  They are REPORTED, not discarded: falsification is one-sided and a genuine "
-      "sighting stands.  They just do not COUNT toward corroboration.\n",
+      "  *** %d sighting(s) came from a DEGENERATE cell (nothing scored, or a "
+      "readout that did not vary): reported, but not counted toward "
+      "corroboration.\n",
       _s->n_degen);
 
   if (_s->tier != HET_SIGHT_NONE) {
     if (_s->tier == HET_SIGHT_CORROBORATED)
       fprintf(_ch,
-        "  ** SIGHTING %s ** -- the weak outcome was observed in %d distinct "
-        "non-degenerate RUN(S) (>= HET_CORROB_RUNS = %d).  A decoder artefact does "
-        "not reproduce across re-seeded runs, so the SIGHTING IS REAL and not a "
-        "constant-read.  HOW OFTEN it reproduces is NOT reported: this tier is a "
-        "count of clean runs and nothing more.\n",
+        "  ** SIGHTING %s ** -- reproduced in %d distinct clean run(s) "
+        "(>= HET_CORROB_RUNS = %d), which a constant-read artefact does not.  "
+        "How often it reproduces is not reported.\n",
         het_sighting_name(_s->tier), _s->k_runs, (int)HET_CORROB_RUNS);
     else
       fprintf(_ch,
-        "  ** SIGHTING %s ** -- the weak outcome was observed, but in only %d clean "
-        "run(s) (< HET_CORROB_RUNS = %d).  BELIEVE IT AND REPORT IT: falsification "
-        "is one-sided, so one sighting stands on its own and is NOT suppressed.  But "
-        "a sighting that does not reproduce is the most damaging thing this campaign "
-        "can write down, so REPRODUCE IT before it is written up.\n",
+        "  ** SIGHTING %s ** -- seen in only %d clean run(s) "
+        "(< HET_CORROB_RUNS = %d).  It stands as a sighting; reproduce it "
+        "before it is written up.\n",
         het_sighting_name(_s->tier), _s->k_runs, (int)HET_CORROB_RUNS);
     if (_s->n_at_first_sight > 0)
       fprintf(_ch,
-        "  It first fired after %d run(s) of the %d supplied, which is what a fresh "
-        "campaign should budget for it: grow R, not N.\n",
+        "  It first fired after %d of the %d run(s) supplied: budget a fresh "
+        "campaign for that; grow R, not N.\n",
         _s->n_at_first_sight, _s->R);
     if (_s->cpu_only)
       fprintf(_ch,
         "  ** CPU-ONLY CYCLE: every proc of this test is a CPU proc, so no "
-        "cross-device path carried this cycle -- what fired is the host ISA on the "
-        "shared allocation, whose memory type is part of what it measures.\n");
+        "cross-device path carried it: what fired is the host ISA on the "
+        "shared allocation.\n");
   }
 }
 
 /* The campaign stopping rule: one rule for every test, and a pure function of
  * the record stream, so the in-binary loop and hetlitmus/campaign.py apply the
- * SAME policy.  Which shape is stubborn is a property of the part, not of the
+ * same policy.  Which shape is stubborn is a property of the part, not of the
  * shape [Kirkham20 sec 4.2 Tab.6].
  * hetlitmus/docs/harness-reporting.md sec 5. */
 typedef enum {
@@ -757,14 +702,14 @@ static het_campaign_stop_t het_campaign_should_stop(const het_obs_record *recs,
   het_stats_compute(recs, n, &st);
   /* A window shorter than one run is not a window. */
   if (confirm_runs < 1) confirm_runs = 1;
-  /* k_eff counts sightings that PASSED the decode guard, so an artefact neither
+  /* k_eff counts sightings that passed the decode guard, so an artefact neither
      stops a row nor holds one open: a degenerate-only sighting leaves k_eff at 0
      and takes the null arm below (st.tier would not -- it is set by k). */
   if (st.k_eff > 0 && !rate_mode) {
     if (st.tier == HET_SIGHT_CORROBORATED) return HET_CAMPAIGN_STOP_CORROBORATED;
-    /* The window elapses FROM the sighting: n_at_first_sight is one-based and > 0
-       whenever k_eff > 0, so this is the runs spent since it.  Against n alone a
-       row firing late would be banked with no runs to reproduce in. */
+    /* The window elapses from the sighting: n_at_first_sight is one-based and
+       > 0 whenever k_eff > 0, so this is the runs spent since it.  Against n
+       alone a row firing late would be banked with no runs to reproduce in. */
     if (n - st.n_at_first_sight >= confirm_runs)
       return HET_CAMPAIGN_STOP_UNCONFIRMED;
     return HET_CAMPAIGN_CONTINUE;               /* outranks the budget stop below */
