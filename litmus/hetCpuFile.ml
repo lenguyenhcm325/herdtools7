@@ -36,11 +36,15 @@ let dump h ch =
 
   (* _GNU_SOURCE before EVERY libc header: glibc hides the cpu_set_t
      and sched_setaffinity that het_cpu_stress.h needs. *)
-  s "#define _GNU_SOURCE\n" ;
-  s "#include <stdint.h>\n\n" ;
+  s {|#define _GNU_SOURCE
+#include <stdint.h>
+
+|} ;
   (* HET_CPU_STRESS_IMPL: the CPU stress bodies land in this file. *)
-  s "#define HET_CPU_STRESS_IMPL\n" ;
-  s "#include \"het_cpu_stress.h\"\n\n" ;
+  s {|#define HET_CPU_STRESS_IMPL
+#include "het_cpu_stress.h"
+
+|} ;
   s (Printf.sprintf "#if defined(%s)\n" tc.host_macro) ;
   List.iter (fun cp -> cp.cp_dump ch) procs.pr_cpus ;
   s "#else\n" ;

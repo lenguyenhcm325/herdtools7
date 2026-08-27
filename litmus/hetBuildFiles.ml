@@ -88,9 +88,11 @@ let dump_comp h ch =
      line always, the host line only when the host IS this ISA. *)
   s (Printf.sprintf
        "HET_CPU_CFLAGS=\"${HET_CPU_CFLAGS:-%s}\"\n" tc.cpu_cflags) ;
-  s "HET_HOST_CFLAGS=\"\"\n" ;
-  s "if [ \"$(uname -m)\" = \"$HET_HOST_ISA\" ]; then HET_HOST_CFLAGS=\"$HET_CPU_CFLAGS\"; fi\n" ;
-  s "echo \"+ gcc -c outs.c\"\ngcc -c outs.c -o outs.o\n" ;
+  s {|HET_HOST_CFLAGS=""
+if [ "$(uname -m)" = "$HET_HOST_ISA" ]; then HET_HOST_CFLAGS="$HET_CPU_CFLAGS"; fi
+echo "+ gcc -c outs.c"
+gcc -c outs.c -o outs.o
+|} ;
   s (Printf.sprintf
        "echo \"+ gcc $HET_HOST_CFLAGS -c %s_cpu.c  (host build; %s asm under #if defined(%s))\"\n"
        tname tc.isa_name tc.host_macro) ;
@@ -155,9 +157,10 @@ let dump_comp h ch =
              (fun t -> Printf.sprintf "[ \"$TARGET\" = %s-link ]" t)
              targets))) ;
   s (Printf.sprintf "  echo \"HetLitmus: link OK -> ./%s\"\n" tname) ;
-  s "else\n" ;
-  s "  echo 'HetLitmus: compile OK'\n" ;
-  s "fi\n"
+  s {|else
+  echo 'HetLitmus: compile OK'
+fi
+|}
 
 let dump_makefile h ch =
   let s = output_string ch in
@@ -205,7 +208,10 @@ let dump_makefile h ch =
            (gpu_obj d tname) tname d.gd_ext d.gd_compiler_var
            (gpu_cflags d (Printf.sprintf "$(%s)" d.gd_arch_var))))
     dialects ;
-  s "outs.o: outs.c\n\t$(CC) -c $< -o $@\n\n" ;
+  s {|outs.o: outs.c
+	$(CC) -c $< -o $@
+
+|} ;
   s (Printf.sprintf
        "%s_cpu_host.o: %s_cpu.c\n\t$(CC) $(HET_HOST_CFLAGS) -c $< -o $@\n\n"
        tname tname) ;

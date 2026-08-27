@@ -30,10 +30,11 @@ let dump_prelude dialect identity geometry procs ch =
   s (Printf.sprintf
        "// HetLitmus GPU kernel + driver for %s (%s dialect).\n"
        tname dialect.gd_name) ;
-  s "// P(gpu) run as a GPU kernel; P(cpu) as a pthread (see _cpu.c).\n" ;
-  s "// Iteration _n of both sides touches slot _n of every location and\n" ;
-  s "// records its loads at index _n; the post-run readout reads the\n" ;
-  s "// outcome of iteration _n out of slot _n into a het_obs_record.\n" ;
+  s {|// P(gpu) run as a GPU kernel; P(cpu) as a pthread (see _cpu.c).
+// Iteration _n of both sides touches slot _n of every location and
+// records its loads at index _n; the post-run readout reads the
+// outcome of iteration _n out of slot _n into a het_obs_record.
+|} ;
   s dialect.gd_shared_mem_note ;
   s "// every iteration begins at a relaxed system-scope counter rendezvous.\n" ;
   s (Printf.sprintf
@@ -41,32 +42,38 @@ let dump_prelude dialect identity geometry procs ch =
        dialect.gd_compiler dialect.gd_target dialect.gd_target) ;
   s "// link the runnable binary, guarded by uname -m.  DO NOT EDIT.\n" ;
   s (dialect.gd_runtime_include ^ "\n") ;
-  s "#include <cstdio>\n#include <cstdint>\n#include <cstdlib>\n" ;
-  s "#include <cstring>\n#include <cmath>\n" ;
-  s "#include <pthread.h>\n#include <inttypes.h>\n" ;
+  s {|#include <cstdio>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <cmath>
+#include <pthread.h>
+#include <inttypes.h>
+|} ;
 
   s (Printf.sprintf "#define HET_PAIR_NAME %S\n" pair_label) ;
   (match dialect.gd_place_lever with
    | Some lever -> s (Printf.sprintf "#define HET_PLACE_LEVER %S\n" lever)
    | None -> ()) ;
-  s "#include \"het_stress.h\"\n" ;
-  s "#include \"het_cpu_stress.h\"\n" ;
-  s "#include \"het_verdict.h\"\n" ;
-  s "#include \"het_rdv.h\"\n" ;
-  s "extern \"C\" {\n" ;
-  s "#include \"outs.h\"\n" ;
+  s {|#include "het_stress.h"
+#include "het_cpu_stress.h"
+#include "het_verdict.h"
+#include "het_rdv.h"
+extern "C" {
+#include "outs.h"
+|} ;
   List.iter
     (fun cp ->
       s (Printf.sprintf "  void het_run_P%d(%s);\n"
            cp.cp_proc (cpu_signature cp)))
     procs.pr_cpus ;
   s "}\n" ;
-  s {ocaml|extern "C" void *malloc_check(size_t sz){
+  s {|extern "C" void *malloc_check(size_t sz){
   void *p = malloc(sz);
   if (p == NULL) { fprintf(stderr,"out of memory\n"); exit(2); }
   return p;
 }
-|ocaml} ;
+|} ;
   s (Printf.sprintf "\n#define NPART %d\n" geometry.ge_npart) ;
   s (Printf.sprintf "#define SIZE_OF_TEST %d\n" geometry.ge_size) ;
   s (Printf.sprintf "#define NUMBER_OF_RUN %d\n" geometry.ge_runs) ;
@@ -107,10 +114,11 @@ let dump_test_lane dialect gp ch =
     gp.gp_regs ;
   (* #pragma unroll 1 -- hetlitmus/docs/amd-faithfulness.md,
      "The mapping". *)
-  s "    #pragma unroll 1\n" ;
-  s "    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
-  s "      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))\n" ;
-  s "        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally);\n" ;
+  s {|    #pragma unroll 1
+    for (int _n=0; _n<SIZE_OF_TEST; ++_n) {
+      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))
+        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally);
+|} ;
 
   (* Rendezvous, jitter, then the tested ops; nothing is placed
      between two tested accesses
@@ -127,47 +135,49 @@ let dump_test_lane dialect gp ch =
       s (Printf.sprintf "      %s[_n] = r%d;\n"
            (buf_name_of gp.gp_proc li) n))
     gp.gp_regs ;
-  s "    }\n" ;
-  s "    het_scratch_bump(_gpu_done);\n" ;
-  s "  }\n"
+  s {|    }
+    het_scratch_bump(_gpu_done);
+  }
+|}
 
 (* The blocks past the test lanes: interconnect noise readers first, then
    the scratchpad stressers, both spinning until the lanes are done. *)
 let dump_stress_workgroups ch =
   let s = output_string ch in
-  s "  if (blockIdx.x >= HET_TEST_BLOCKS) {\n" ;
-  s "    if (_noise_ddr != NULL && blockIdx.x < HET_TEST_BLOCKS + _noise_blocks) {\n" ;
-  s "      volatile const uint64_t* _nb = (volatile const uint64_t*)_noise_ddr;\n" ;
-  s "      uint64_t _t = (uint64_t)(blockIdx.x - HET_TEST_BLOCKS) * blockDim.x + threadIdx.x;\n" ;
-  s "      uint64_t _step = (uint64_t)_noise_blocks * blockDim.x * _noise_stride;\n" ;
-  s "      uint64_t _i = (_noise_words > 0) ? (_t % _noise_words) : 0;\n" ;
-  s "      uint64_t _acc = 0;\n" ;
-  s "      uint32_t _r = 0;\n" ;
-  s "      for (;\n\
-     \           _r < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;\n\
-     \           ++_r) {\n" ;
-  s "        for (uint32_t _c = 0; _c < _noise_chunk; ++_c) {\n" ;
-  s "          _acc += _nb[_i];\n" ;
-  s "          _i += _step;\n" ;
-  s "          if (_i >= _noise_words) _i = (_noise_words > 0) ? (_i % _noise_words) : 0;\n" ;
-  s "        }\n" ;
-  s "      }\n" ;
-  s "      if (_r > 0) het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);\n" ;
-  s "      het_scratch_max(&_stress_tally[HET_TALLY_NOISE_ROUNDS], _r);\n" ;
-  s "      if (_acc == 0xFFFFFFFFFFFFFFFFull)\n" ;
-  s "        het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);  /* sink: force _acc to escape */\n" ;
-  s "    } else {\n" ;
-  s "    uint32_t _s = 0;\n" ;
-  s "    for (;\n\
-     \         _s < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;\n\
-     \         ++_s) {\n" ;
-  s "      if (het_rng_pct(&_rng, HET_MEM_STRESS_PCT))\n" ;
-  s "        het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally);\n" ;
-  s "    }\n" ;
-  s "    if (_s >= HET_STRESS_MAX_ROUNDS)\n" ;
-  s "      het_scratch_bump(&_stress_tally[HET_TALLY_TRUNC]);\n" ;
-  s "    }\n" ;
-  s "  }\n"
+  s {|  if (blockIdx.x >= HET_TEST_BLOCKS) {
+    if (_noise_ddr != NULL && blockIdx.x < HET_TEST_BLOCKS + _noise_blocks) {
+      volatile const uint64_t* _nb = (volatile const uint64_t*)_noise_ddr;
+      uint64_t _t = (uint64_t)(blockIdx.x - HET_TEST_BLOCKS) * blockDim.x + threadIdx.x;
+      uint64_t _step = (uint64_t)_noise_blocks * blockDim.x * _noise_stride;
+      uint64_t _i = (_noise_words > 0) ? (_t % _noise_words) : 0;
+      uint64_t _acc = 0;
+      uint32_t _r = 0;
+      for (;
+           _r < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;
+           ++_r) {
+        for (uint32_t _c = 0; _c < _noise_chunk; ++_c) {
+          _acc += _nb[_i];
+          _i += _step;
+          if (_i >= _noise_words) _i = (_noise_words > 0) ? (_i % _noise_words) : 0;
+        }
+      }
+      if (_r > 0) het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);
+      het_scratch_max(&_stress_tally[HET_TALLY_NOISE_ROUNDS], _r);
+      if (_acc == 0xFFFFFFFFFFFFFFFFull)
+        het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);  /* sink: force _acc to escape */
+    } else {
+    uint32_t _s = 0;
+    for (;
+         _s < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;
+         ++_s) {
+      if (het_rng_pct(&_rng, HET_MEM_STRESS_PCT))
+        het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally);
+    }
+    if (_s >= HET_STRESS_MAX_ROUNDS)
+      het_scratch_bump(&_stress_tally[HET_TALLY_TRUNC]);
+    }
+  }
+|}
 
 let dump_kernel dialect identity memory procs ch =
   let s = output_string ch in
@@ -193,9 +203,10 @@ let dump_cpu_thread_wrappers dialect procs memory ch =
       List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) addr ;
       s "  uint64_t* barrier;\n" ;
       List.iter (fun (decl,_) -> s (Printf.sprintf "  %s;\n" decl)) bufs ;
-      s "  uint8_t* _rdv; long _cap;\n" ;
-      s "  int _core; uint32_t _seed; het_cpu_tally* _tally;\n" ;
-      s "};\n" ;
+      s {|  uint8_t* _rdv; long _cap;
+  int _core; uint32_t _seed; het_cpu_tally* _tally;
+};
+|} ;
       s (Printf.sprintf "static void* cpu_thread_P%d(void* _a) {\n" proc) ;
       s (Printf.sprintf "  cpu_args_P%d* a = (cpu_args_P%d*)_a;\n" proc proc) ;
       s "  het_cpu_affinity(a->_core, a->_tally);\n" ;
@@ -239,7 +250,10 @@ let dump_cpu_thread_wrappers dialect procs memory ch =
       s "  }\n" ;
       if npl > 0 then
         s "  __atomic_fetch_add(&a->_tally->preload_ops, _plops, __ATOMIC_RELAXED);\n" ;
-      s "  return NULL;\n}\n\n")
+      s {|  return NULL;
+}
+
+|})
     procs.pr_cpus
 
 (* The outcome vector's column labels, and the histogram printer that walks
@@ -254,27 +268,29 @@ let dump_outcome_labels outcome ch =
        @ List.map (Printf.sprintf "\"[%s]\"") outcome.oc_loc_columns) in
   s (Printf.sprintf "static const char* _labels[%d] = { %s };\n"
        (max 1 nslots) labelstr) ;
-  s {ocaml|static void _dump_one(FILE* _ch, intmax_t* o, count_t c, int show){
+  s {|static void _dump_one(FILE* _ch, intmax_t* o, count_t c, int show){
   fprintf(_ch, "%-8" PRIu64 "%c> ", c, show ? '*' : ' ');
-|ocaml} ;
+|} ;
   if nslots = 0 then s "  (void)o;\n"
   else begin
     s (Printf.sprintf "  for (int i=0;i<%d;i++)" nslots) ;
-    s {ocaml| fprintf(_ch, "%s=%" PRIdMAX "; ", _labels[i], o[i]);
-|ocaml}
+    s {| fprintf(_ch, "%s=%" PRIdMAX "; ", _labels[i], o[i]);
+|}
   end ;
-  s {ocaml|  fprintf(_ch, "\n");
+  s {|  fprintf(_ch, "\n");
 }
 
-|ocaml}
+|}
 
 (* The file-scope definitions the driver below closes over. *)
 let dump_file_scope_defs dialect ch =
   let s = output_string ch in
-  s "/* Placement refusals.  Incremented only where placement EXISTS (the\n\
-     \   CUDA render's cudaMemAdvise); stays 0 on the HIP render, which\n\
-     \   carries no placement code. */\n" ;
-  s "static int _het_place_failures = 0;\n\n" ;
+  s {|/* Placement refusals.  Incremented only where placement EXISTS (the
+   CUDA render's cudaMemAdvise); stays 0 on the HIP render, which
+   carries no placement code. */
+static int _het_place_failures = 0;
+
+|} ;
   s dialect.gd_shared_mem_defs ;
   s "\n" ;
   s dialect.gd_noise_mem_defs ;
