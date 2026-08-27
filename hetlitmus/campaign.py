@@ -406,10 +406,8 @@ def run_campaign(a, work):
 
 def report_campaign(states, errors, unconfirmed, secs):
     corrob = [s for s in states if s.stop == "CORROBORATED"]
-    print("\ncampaign: %d row(s) ended CORROBORATED -- the weak outcome was observed "
-          "and reproduced.  What that is worth against any model is settled offline, "
-          "against a verdicts file the reader supplies; nothing here says."
-          % len(corrob))
+    print("\ncampaign: %d row(s) ended CORROBORATED -- the weak outcome was "
+          "observed and reproduced." % len(corrob))
     for s in corrob:
         print("            %-28s k_runs=%d cpu_only=%d" % (s.name, s.k_runs,
                                                            s.cpu_only))
@@ -421,11 +419,9 @@ def report_campaign(states, errors, unconfirmed, secs):
         print("campaign: ** %d row(s) ended UNCONFIRMED-SIGHTING: the confirmation "
               "window closed on a lone clean sighting that did not reproduce. **"
               % unconfirmed)
-        print("campaign:    The sighting STANDS -- falsification is one-sided and a "
-              "positive needs no control -- but a sighting that does not reproduce is "
-              "the most damaging thing a campaign can write down, so reproduce it "
-              "(--rate, or a larger --budget-runs and --confirm-runs) before it is "
-              "written up.")
+        print("campaign:    The sighting stands; reproduce it (--rate, or a "
+              "larger --budget-runs and --confirm-runs) before it is written "
+              "up.")
         for s in rows:
             print("            %-28s first fired at run %d of %d  cpu_only=%d"
                   % (s.name, s.runs_at_first_sight, s.runs, s.cpu_only))
@@ -437,25 +433,21 @@ def report_campaign(states, errors, unconfirmed, secs):
     if not cpu_only_rows:
         # The het corpus alone holds no CPU-only row, so the absent case has to
         # print: silence here would read as a satisfied precondition.
-        print("\ncampaign write-back probe (CPU-only positive control): *** NOT RUN.  "
-              "No CPU-only row was in this campaign, so the probe did NOT pass: the "
-              "memory type of the shared allocation stays UNRESOLVED and every null "
-              "above rests on it.  Generate the set (`make hetlitmus-cpuonly') and "
-              "run it on THIS box -- a reading from another machine is not one. ***")
+        print("\ncampaign write-back probe: *** NOT RUN.  No CPU-only row was "
+              "in this campaign, so the memory type of the shared allocation "
+              "is UNRESOLVED.  Generate the set (`make hetlitmus-cpuonly') "
+              "and run it on THIS box. ***")
     else:
         fired = [s for s in cpu_only_rows if s.k_eff > 0]
-        print("\ncampaign write-back probe (CPU-only positive control): %d CPU-only "
-              "row(s), %d of them fired." % (len(cpu_only_rows), len(fired)))
+        print("\ncampaign write-back probe: %d CPU-only row(s), %d of them "
+              "fired." % (len(cpu_only_rows), len(fired)))
         if not fired:
-            print("campaign write-back probe: *** FAILED -- not one CPU-only row "
-                  "fired.  The x86 store buffer is the most reproducible relaxation "
-                  "the ISA has, so this is evidence about the SHARED ALLOCATION and "
-                  "not about the window: check PAT/MTRR and /proc/self/smaps for this "
-                  "allocator before reporting anything. ***")
+            print("campaign write-back probe: *** FAILED -- not one CPU-only "
+                  "row fired.  Check PAT/MTRR and /proc/self/smaps for this "
+                  "allocator. ***")
         else:
-            print("campaign write-back probe: PASSED (%s) -- a UC mapping is ruled "
-                  "out for this allocator.  It does NOT establish WB over WC; only "
-                  "the CPU-only shapes that stay silent do that."
+            print("campaign write-back probe: PASSED (%s) -- a UC mapping is "
+                  "ruled out for this allocator; WB over WC is not established."
                   % ", ".join(s.name for s in fired))
 
     print("\ncampaign: total wall clock %.1f s over %d row(s)."

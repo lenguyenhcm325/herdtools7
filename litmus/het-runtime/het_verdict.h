@@ -92,7 +92,7 @@ typedef struct het_obs_record {
   /* CPU + interconnect liveness, for the levers the GPU tallies do not cover.
      A zero rounds/ops field means the mechanism did not run; a nonzero
      *_failures field means a pin or a placement was refused, so the topology
-     is not the one being tuned. */
+     is not the configured one. */
   uint64_t cpu_enemy_rounds, cpu_enemy_accesses, cpu_preload_ops;
   uint64_t noise_cpu_rounds, noise_cpu_words;
   uint32_t noise_gpu_blocks, noise_gpu_rounds;
@@ -151,7 +151,7 @@ typedef enum {
 
 /* Why a null was CAVEATED (reportable, but weaker than it looks).  Vacant
    bits: 0, 1, 2, 5. */
-#define HET_CV_AFF_FAILED       (1u << 3)  /* pinning is fiction                  */
+#define HET_CV_AFF_FAILED       (1u << 3)  /* a sched_setaffinity call failed     */
 #define HET_CV_PLACE_REFUSED    (1u << 4)  /* HET_PLACE_LEVER placed nothing      */
 #define HET_CV_UNSTRESSED       (1u << 6)  /* no stress requested at all          */
 #define HET_CV_NO_GPU_LANES     (1u << 7)  /* no GPU test lane: the scratchpad
@@ -288,8 +288,8 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
             _r->cap_cpu, _r->cap_gpu,
             (unsigned long long)_r->iters_discarded);
   if (cv & HET_CV_AFF_FAILED)
-    fprintf(_ch, "  CAVEAT: %u sched_setaffinity call(s) FAILED -- the pinning is "
-                 "fiction and the stress topology is not the one being tuned.\n",
+    fprintf(_ch, "  CAVEAT: %u sched_setaffinity call(s) FAILED -- those "
+                 "threads ran wherever the scheduler put them.\n",
             _r->cpu_aff_failures);
   if (cv & HET_CV_PLACE_REFUSED)
     fprintf(_ch, "  CAVEAT: %s was REFUSED -- HET_PLACE placed nothing.\n",

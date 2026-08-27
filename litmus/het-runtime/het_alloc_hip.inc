@@ -15,7 +15,7 @@
    the only value this lane can honour.  The AMD analogue of the interconnect lever
    is CONTENTION, not placement (hetlitmus/docs/het-emission.md). */
 #if (HET_PLACE) != 0
-# error "HET_PLACE is a CUDA-only lever (cudaMemAdvise); the HIP render has no placement code, so a non-zero HET_PLACE would be reported in the banner and the statistics record without anything having been placed.  This render has no page-placement API to call -- use HET_PLACE=0 and drive the interconnect with the noise knobs instead."
+# error "HET_PLACE is a CUDA-only lever (cudaMemAdvise); the HIP render has no placement code.  Use HET_PLACE=0 and drive the interconnect with the noise knobs."
 #endif
 static int _het_hip_attr(hipDeviceAttribute_t _a){
   int _v = 0;
@@ -46,11 +46,8 @@ static int _het_alloc_mode(void){
   } else {
     fprintf(stderr,
             "HetLitmus FATAL: HET_ALLOC=\"%s\" is not a shared-memory mode of the "
-            "HIP render.  This render implements ONE mode -- fine-grained "
-            "hipMallocManaged -- so use auto (or unset) or managed.  malloc and "
-            "pinned exist on the CUDA render only; there is deliberately NO "
-            "fallback here, because silently substituting managed for a requested "
-            "malloc would run a different experiment under the requested name.\n",
+            "HIP render, which implements ONE mode, fine-grained "
+            "hipMallocManaged: use auto (or unset) or managed.\n",
             _v);
     exit(2);
   }
@@ -70,9 +67,8 @@ static int _het_alloc_mode(void){
     fprintf(stderr,
             "HetLitmus FATAL: this device reports hipDeviceAttributeManagedMemory=0, "
             "so hipMallocManaged falls back to hipMallocHost (pinned host memory) "
-            "instead of fine-grained managed memory.  The shared vars and the "
-            "rendezvous barrier would then sit off the coherent path and the "
-            "histogram would mean nothing.  There is no other mode on this render.\n");
+            "instead of fine-grained managed memory: the shared vars and the "
+            "rendezvous barrier would sit off the coherent path.\n");
     exit(2);
   }
   /* The precondition the CUDA render enforces too: every het test has the CPU
@@ -82,8 +78,7 @@ static int _het_alloc_mode(void){
             "HetLitmus FATAL: this device reports "
             "hipDeviceAttributeConcurrentManagedAccess=0: the CPU may not touch a "
             "managed allocation while the kernel is live, and a system-scope atomic "
-            "on it is not atomic.  EVERY heterogeneous test here does exactly that, "
-            "so there is nothing to salvage.\n");
+            "on it is not atomic.\n");
     exit(2);
   }
   /* Not fatal: a discrete part is a valid bring-up target.  Announced on stderr
@@ -91,11 +86,9 @@ static int _het_alloc_mode(void){
      result. */
   if (!_integrated) {
     fprintf(stderr,
-            "HetLitmus WARNING: hipDeviceAttributeIntegrated=0 -- this is a DISCRETE "
-            "AMD GPU (not integrated), not an integrated APU.  The APU shares one HBM "
-            "pool between the CCD and XCD chiplets; a discrete part is reached over "
-            "a host interconnect.  This run is valid as machinery bring-up and must "
-            "NOT be reported as an integrated-APU result.\n");
+            "HetLitmus WARNING: hipDeviceAttributeIntegrated=0 -- a discrete AMD "
+            "GPU, not an integrated APU: machinery bring-up, not an "
+            "integrated-APU result.\n");
   }
   return _mode;
 }

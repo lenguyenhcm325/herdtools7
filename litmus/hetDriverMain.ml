@@ -129,22 +129,22 @@ let dump_noise_setup ch =
   het_cpu_noise_args _na; pthread_t _nth; int _noise_cpu_on = 0;
   if (HET_NOISE_MB < HET_LLC_MB) {
 #if HET_LLC_MB_IS_FALLBACK
-    fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is below the %d MB threshold -- a FALLBACK figure, measured on another part, not a last-level-cache capacity for this target (build with -DHET_LLC_MB=<MB> to supply it).  A noise buffer that fits in the last-level cache is served locally and crosses no %s, so this run may not be stressed at all.\n",
+    fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is below the %d MB threshold -- a FALLBACK figure, not this target's last-level cache size, so this run may not be %s-stressed.  Build with -DHET_LLC_MB=<MB> to supply it.\n",
             (int)HET_NOISE_MB, (int)HET_LLC_MB, HET_LINK_NAME);
 #else
-    fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is BELOW the HET_LLC_MB supplied for this build (%d MB) -- the noise buffers fit in the last-level cache, so the reads are served locally and generate NO interconnect traffic.  This run is NOT %s-stressed.\n",
+    fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is below HET_LLC_MB=%d MB -- the noise buffers fit in the last-level cache, so this run is NOT %s-stressed.\n",
             (int)HET_NOISE_MB, (int)HET_LLC_MB, HET_LINK_NAME);
 #endif
   }
   if (_noiseBlocks > 0) {
     int _rc = gd_alloc_noise((void**)&_noise_ddr, (size_t)_noise_words*sizeof(uint64_t), 2);
     if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: could not allocate the %d MB DDR noise buffer -- %s of the %s noise is DISABLED for this run.\n", (int)HET_NOISE_MB, HET_DEV_HALF, HET_LINK_NAME); _noise_ddr = NULL; _noise_blocks = 0; }
-    else if (_rc > 0) fprintf(stderr, "HetLitmus WARNING: the DDR noise buffer could not be homed on the CPU -- this device has no interconnect-stress lever (no ATS/coherent host-device link), so %s of the noise is exercising plumbing, not the %s.\n", HET_DEV_HALF, HET_LINK_NAME);
+    else if (_rc > 0) fprintf(stderr, "HetLitmus WARNING: the DDR noise buffer could not be homed on the CPU (no ATS/coherent host-device link) -- %s of the noise crosses no %s.\n", HET_DEV_HALF, HET_LINK_NAME);
   }
   if (HET_NOISE_CPU) {
     int _rc = gd_alloc_noise((void**)&_noise_hbm, (size_t)_noise_words*sizeof(uint64_t), 1);
     if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: could not allocate the %d MB HBM noise buffer -- %s of the %s noise is DISABLED for this run.\n", (int)HET_NOISE_MB, HET_HOST_HALF, HET_LINK_NAME); _noise_hbm = NULL; }
-    else if (_rc > 0) fprintf(stderr, "HetLitmus WARNING: the HBM noise buffer could not be homed on the GPU -- %s of the noise is exercising plumbing, not the %s.\n", HET_HOST_HALF, HET_LINK_NAME);
+    else if (_rc > 0) fprintf(stderr, "HetLitmus WARNING: the HBM noise buffer could not be homed on the GPU -- %s of the noise crosses no %s.\n", HET_HOST_HALF, HET_LINK_NAME);
   }
   fprintf(stderr, "HetLitmus cpu-stress: cores=%d test=%d enemies=%d spread=%u stride=%d seq=%d preload=%d%% aff=%d | noise: gpu_blocks=%u cpu=%d words=%llu (%d MB) place=%d\n",
           _ncores, _nCpuTest, _nEnemy, _cpu_spread, (int)HET_CPU_STRIDE,
@@ -164,7 +164,7 @@ let dump_campaign_knobs ch =
      no rebuild and no branch folds away.  See het_verdict.h. *)
   s {|  int _runs_budget = (int)het_env_long("HET_RUNS_MAX", NUMBER_OF_RUN);
   if (_runs_budget > NUMBER_OF_RUN) {
-    fprintf(stderr, "HetLitmus WARNING: HET_RUNS_MAX=%d exceeds the compiled NUMBER_OF_RUN=%d -- clamped.  Grow R by re-invoking with a FRESH HET_SEED (hetlitmus/campaign.py), never by replaying the same seeds.\n", _runs_budget, (int)NUMBER_OF_RUN);
+    fprintf(stderr, "HetLitmus WARNING: HET_RUNS_MAX=%d exceeds the compiled NUMBER_OF_RUN=%d -- clamped.  Grow R with a fresh HET_SEED (hetlitmus/campaign.py).\n", _runs_budget, (int)NUMBER_OF_RUN);
     _runs_budget = NUMBER_OF_RUN;
   }
   if (_runs_budget < 1) _runs_budget = 1;
@@ -218,7 +218,7 @@ let dump_run_spawn_stress ch =
     __atomic_store_n(&_stress_go, 1, __ATOMIC_RELAXED);
     int _ecore0 = HET_CPU_TEST_CORE0 + _nCpuTest + (HET_NOISE_CPU ? 1 : 0);
     if (_aff && _ecore0 + _nEnemy > _ncores)
-      fprintf(stderr, "HetLitmus WARNING: %d enemy thread(s) from core %d exceed %d core(s) -- enemy pins WRAP onto the test threads' cores, so the test threads no longer have a core to themselves and the stress topology is not the one being tuned.\n",
+      fprintf(stderr, "HetLitmus WARNING: %d enemy thread(s) from core %d exceed %d core(s) -- enemy pins WRAP onto the test threads' cores, so the test threads no longer have a core to themselves.\n",
               _nEnemy, _ecore0, _ncores);
     for (int _e = 0; _e < _nEnemy; ++_e) {
       uint32_t _off = (_cpu_nregions > _cpu_spread)
@@ -348,13 +348,13 @@ let dump_run_stress_report dialect ch =
               _pl, _nc, _ng, _stress_tally_h[HET_TALLY_NOISE_ROUNDS],
               _ct.aff_failures, _het_place_failures);
       if (_nEnemy > 0 && _er == 0)
-        fprintf(stderr, "HetLitmus WARNING: %d CPU enemy thread(s) were spawned but completed ZERO rounds -- the CPU-side stress did NOT run.  Its non-observations are not those of a CPU-stressed run.\n", _nEnemy);
+        fprintf(stderr, "HetLitmus WARNING: %d CPU enemy thread(s) were spawned but completed ZERO rounds -- the CPU-side stress did NOT run.\n", _nEnemy);
       if (HET_CPU_PRELOAD_PCT > 0 && _pl == 0)
-        fprintf(stderr, "HetLitmus WARNING: HET_CPU_PRELOAD_PCT=%d but ZERO preload hints were issued -- the cache preload is INERT (this host may have no cache primitives; see het_cpu_stress.h HET_CPU_PRELOAD_LIVE).\n", (int)HET_CPU_PRELOAD_PCT);
+        fprintf(stderr, "HetLitmus WARNING: HET_CPU_PRELOAD_PCT=%d but ZERO preload hints were issued -- the cache preload is INERT (HET_CPU_PRELOAD_LIVE in het_cpu_stress.h).\n", (int)HET_CPU_PRELOAD_PCT);
       if (_noise_blocks > 0 && _ng == 0)
         fprintf(stderr, "HetLitmus WARNING: %u device-side noise block(s) were launched but NONE completed a round -- %s of the %s noise did NOT run.  This run is not interconnect-stressed.\n", _noise_blocks, HET_DEV_HALF, HET_LINK_NAME);
       if (_ct.aff_failures)
-        fprintf(stderr, "HetLitmus WARNING: %u sched_setaffinity call(s) FAILED -- those threads are wherever the scheduler put them.  The pinning is fiction and the stress topology is not the one being tuned.\n", _ct.aff_failures);
+        fprintf(stderr, "HetLitmus WARNING: %u sched_setaffinity call(s) FAILED -- those threads ran wherever the scheduler put them.\n", _ct.aff_failures);
     }
 |}
 

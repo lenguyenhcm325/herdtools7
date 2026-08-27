@@ -1091,7 +1091,7 @@ def phase6_campaign(quiet):
 
         # The CPU-only precondition is louder when it did not run than when it
         # failed: this corpus holds no CPU-only row, so the probe must say so.
-        if "write-back probe (CPU-only positive control): *** NOT RUN" not in out:
+        if "write-back probe: *** NOT RUN" not in out:
             print("  *** the CPU-only write-back probe is silently absent -- a "
                   "precondition nobody sees is a precondition nobody checked")
             bad += 1

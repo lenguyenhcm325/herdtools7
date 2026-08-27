@@ -169,7 +169,7 @@ __device__ static void het_do_stress(uint32_t* scratchpad,
  * (strategy 0 round-robin, 1 chunking).  Divergence from [CudaLitmus]: the dedup
  * here is real, so it can exhaust the region pool -- hence the break. */
 #if HET_STRESS_TARGETS < 1
-#error "HET_STRESS_TARGETS must be >= 1 (it is the spread m of [Sorensen16 sec 3.4])"
+#error "HET_STRESS_TARGETS must be >= 1 (the spread m)"
 #endif
 /* The realised spread can be smaller than the knob, silently: chunking gives
    per == 0 when the grid is smaller than HET_STRESS_TARGETS, and the tail case
@@ -187,9 +187,8 @@ __host__ static void het_report_spread(const uint32_t* locations, int num_workgr
     fprintf(stderr,
             "HetLitmus WARNING: realised stress spread is %d line(s), not "
             "HET_STRESS_TARGETS=%d -- %d stressing workgroup(s) cannot cover %d "
-            "lines (the spread m of [Sorensen16 sec 3.4]).  The stress is weaker "
-            "than the configuration says; raise the grid or lower "
-            "HET_STRESS_TARGETS.\n",
+            "lines.  The stress is weaker than the configuration says; raise "
+            "the grid or lower HET_STRESS_TARGETS.\n",
             distinct, (int)HET_STRESS_TARGETS, num_workgroups,
             (int)HET_STRESS_TARGETS);
   }

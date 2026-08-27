@@ -52,9 +52,7 @@ static int _het_alloc_mode(void){
   } else {
     fprintf(stderr,
             "HetLitmus FATAL: HET_ALLOC=\"%s\" is not a shared-memory mode.  Use "
-            "auto (or unset), malloc, managed or pinned.  There is deliberately NO "
-            "fallback to auto: a typo that silently selected a different allocator "
-            "would silently select a different experiment.\n", _v);
+            "auto (or unset), malloc, managed or pinned.\n", _v);
     exit(2);
   }
   /* The banner precedes the guards on purpose: a fatal below is actionable only
@@ -68,19 +66,17 @@ static int _het_alloc_mode(void){
     fprintf(stderr,
             "HetLitmus FATAL: HET_ALLOC=malloc but this device reports "
             "cudaDevAttrPageableMemoryAccess=0, so it cannot address a system "
-            "malloc() pointer at all, and a system-scope atomic on one is not "
-            "atomic.  Use HET_ALLOC=managed (needs concurrentManagedAccess=1) or "
-            "HET_ALLOC=pinned.\n");
+            "malloc() pointer.  Use HET_ALLOC=managed (needs "
+            "concurrentManagedAccess=1) or HET_ALLOC=pinned.\n");
     exit(2);
   }
   if (_mode == HET_ALLOC_MANAGED && !_cma) {
     fprintf(stderr,
             "HetLitmus FATAL: this run would use managed memory, but the device "
             "reports cudaDevAttrConcurrentManagedAccess=0: the CPU may not touch a "
-            "managed allocation while the kernel is live (the access faults), and "
-            "EVERY heterogeneous test here does exactly that.  Rerun with "
-            "HET_ALLOC=pinned, or on a device that supports concurrent managed "
-            "access.\n");
+            "managed allocation while the kernel is live (the access faults).  "
+            "Rerun with HET_ALLOC=pinned, or on a device that supports concurrent "
+            "managed access.\n");
     exit(2);
   }
   if (_mode == HET_ALLOC_PINNED &&
@@ -90,12 +86,9 @@ static int _het_alloc_mode(void){
             "cudaDevAttrHostNativeAtomicSupported=0.  On mapped memory only plain "
             "naturally-aligned loads/stores of 1/2/4/8/16 bytes are system-scope "
             "atomic; a read-modify-write is NOT.  The tested accesses are plain "
-            "loads and stores and stand, but the rendezvous counter is a fetch_add "
-            "shared with the CPU, so an increment can be lost -- and an iteration "
-            "whose partner never arrives spends its whole cap and is discarded, so "
-            "the run is slow rather than hung and is thrown away once the discards "
-            "pass their budget.  Do not read this mode as evidence about hardware "
-            "atomicity.\n");
+            "loads and stores, but the rendezvous counter is a fetch_add shared "
+            "with the CPU, so a lost increment discards that iteration at its "
+            "cap.\n");
   }
   return _mode;
 }
@@ -127,9 +120,8 @@ static void _het_place(void* _p, size_t _bytes, int _where){
     _het_place_failures++;
     fprintf(stderr,
             "HetLitmus WARNING: cudaMemAdvise REFUSED (%s / %s / %s) -- HET_PLACE=%d "
-            "did NOT place these pages; they are wherever first touch put them, so "
-            "the tested accesses may never cross the interconnect.  This run is NOT "
-            "placement-stressed.\n",
+            "placed nothing; these pages are wherever first touch put them, so "
+            "this run is NOT placement-stressed.\n",
             cudaGetErrorString(_e1), cudaGetErrorString(_e2), cudaGetErrorString(_e3),
             _where);
   }

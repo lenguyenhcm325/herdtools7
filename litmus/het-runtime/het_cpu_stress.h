@@ -118,7 +118,7 @@ extern "C" {
 #error "HET_PLACE must be 0 (first-touch), 1 (prefer HBM) or 2 (prefer DDR)"
 #endif
 #if (HET_CPU_SPREAD) < 1
-#error "HET_CPU_SPREAD must be >= 1 (it is the spread m of [Sorensen16 sec 3.4])"
+#error "HET_CPU_SPREAD must be >= 1 (the spread m)"
 #endif
 #if (HET_CPU_STRIDE) < 1
 #error "HET_CPU_STRIDE must be >= 1"

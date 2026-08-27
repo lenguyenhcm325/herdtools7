@@ -87,7 +87,7 @@ sound, and the pinned mode says what it cannot promise.
   1
   $ printf '%s\n' "$MODE" | grep -c 'if (_mode >= 0) return _mode;'
   1
-  $ printf '%s\n' "$MODE" | grep -c 'slow rather than hung'
+  $ printf '%s\n' "$MODE" | grep -c 'a lost increment discards that iteration'
   1
 
 (e3) the banner carries the ATS-vs-HMM discriminator, queried as well as printed,

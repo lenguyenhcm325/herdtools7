@@ -501,7 +501,7 @@ def phase6(tmp, d):
                    "reader could not tell an MI300X run from an MI300A one:\n%s" % r.stdout)
     tick("hip-allocator")
     if "WARNING" not in r.stderr \
-            or "NOT be reported as an integrated-APU result" not in r.stderr:
+            or "not an integrated-APU result" not in r.stderr:
         fail("hip-allocator",
              "integrated=0 produced no warning that this is not an integrated-APU "
              "result:\n%s" % r.stderr[-600:])

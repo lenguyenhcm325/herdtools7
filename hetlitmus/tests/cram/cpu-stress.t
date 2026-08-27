@@ -142,7 +142,7 @@ cache: below it the buffer is served from cache and crosses nothing.
   1
   $ grep -c '#if HET_LLC_MB_IS_FALLBACK' $MP.cu
   1
-  $ grep -c 'a FALLBACK figure, measured on another part' $MP.cu
+  $ grep -c 'a FALLBACK figure, not this target' $MP.cu
   1
 
 (h2) both renders fault the noise pages in, and on a CUDA render the HBM buffer
