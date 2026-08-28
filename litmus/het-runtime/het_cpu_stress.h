@@ -149,7 +149,6 @@ typedef struct het_cpu_tally {
   uint64_t preload_ops;       /* preload cache hints actually issued             */
   uint64_t noise_cpu_rounds;  /* host noise thread: streaming rounds             */
   uint64_t noise_cpu_words;   /* host noise thread: words read                   */
-  uint64_t noise_sink;        /* the streamed values, forced to escape (below)   */
   uint32_t enemies_realised;  /* enemy threads that actually entered their loop  */
   uint32_t aff_failures;      /* sched_setaffinity failures -- never silent      */
   uint32_t place_failures;    /* cudaMemAdvise failures (filled by the .cu)      */
@@ -356,16 +355,15 @@ void *het_cpu_enemy(void *_a) {
 /* The host noise thread: the noise-kernel construction of [Fusco24 sec III-E.1]
  * -- stream-read a buffer homed on the other unit's memory, so every read that
  * misses cache crosses the interconnect.  The buffer is disjoint from every test
- * location.  `buf' must stay volatile and the accumulator must escape into the
- * tally, or -O2 deletes the whole stream as dead. */
+ * location.  `buf' is volatile, so the stream is issued with no value escaping. */
 void *het_cpu_noise(void *_a) {
   het_cpu_noise_args *a = (het_cpu_noise_args *)_a;
   het_cpu_affinity(a->core, a->tally);
 
-  uint64_t rounds = 0, words = 0, acc = 0, i = 0;
+  uint64_t rounds = 0, words = 0, i = 0;
   while (__atomic_load_n(a->go, __ATOMIC_RELAXED)) {
     for (uint32_t c = 0; c < a->chunk; c++) {
-      acc += a->buf[i];
+      (void)a->buf[i];
       i += a->stride;
       if (i >= a->words) i = 0;    /* wrap: keep the whole working set streaming */
     }
@@ -374,7 +372,6 @@ void *het_cpu_noise(void *_a) {
   }
   __atomic_fetch_add(&a->tally->noise_cpu_rounds, rounds, __ATOMIC_RELAXED);
   __atomic_fetch_add(&a->tally->noise_cpu_words, words, __ATOMIC_RELAXED);
-  __atomic_fetch_add(&a->tally->noise_sink, acc, __ATOMIC_RELAXED);
   return NULL;
 }
 
