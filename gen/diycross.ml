@@ -183,6 +183,7 @@ let () =
     | `Het -> Warn.fatal "Het arch in diycross (generated via hetgen7)"
     end pp_es
         with
-        | Misc.Exit -> ()
+        | Misc.Exit -> exit 2
         | (Misc.Fatal msg|Misc.UserError msg) ->
-            eprintf "%s: Fatal error: %s\n" Config.prog msg
+            eprintf "%s: Fatal error: %s\n" Config.prog msg ;
+            exit 2

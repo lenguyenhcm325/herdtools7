@@ -468,11 +468,13 @@ keeps its `cpu` back-compat tag).
   test touches (no slot backs it), when an atom's value is not an integer, when
   an atom is not of the form `loc=v`, or when the whole predicate compiles to a
   constant — a constant-true detector reports the weak behaviour every run and a
-  constant-false one reports "Never" every run. It does **not** check that some
-  store in the program ever writes the value an atom asks for. A condition asking for a value nothing
-  writes therefore compiles to a detector that is permanently false, which the
-  run reports as a null — caveated `HET_CV_ONE_OUTCOME` when every scored
-  iteration read the same vector, and excluded from corroboration by
+  constant-false one reports "Never" every run. Every connective (`/\`, `\/`,
+  `not`, `=>`) folds over constant operands, so the refusal reads that collapse
+  whatever spelling produced it. It does **not** check that some store in the
+  program ever writes the value an atom asks for. A condition asking for a value
+  nothing writes therefore compiles to a detector that is permanently false,
+  which the run reports as a null — caveated `HET_CV_ONE_OUTCOME` when every
+  scored iteration read the same vector, and excluded from corroboration by
   `het_cell_degenerate`, but not refused. A disclosed limit, not a guarantee.
 * COMPILE-ONLY: no GPU is launched. Stress/observability tuning (making the CPU
   and GPU ops actually race) and on-hardware runs are hardware-only work

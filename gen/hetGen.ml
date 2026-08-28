@@ -50,12 +50,18 @@ let myspec =
    "<text> documentation comment line for the test";
   ]
 
-let () =
-  Util.parse_cmdline
-    ~usage_suffix:Config.diyone_parser_syntax_doc
-    (myspec @ Config.diyone_spec ())
-    (fun _ -> () (* het cycles arrive via -cpu/-gpu; ignore positionals *)) ;
-  Config.validate_variant ()
+(* The generator takes one condition style, so the shared spec's -cond doc is
+   narrowed here and its -unicond alias dropped. *)
+let spec () =
+  myspec @
+  List.filter_map
+    (fun (key,act,doc) -> match key with
+     | "-unicond" -> None
+     | "-cond" ->
+        Some (key,act,"<cycle> style of final condition, the only style the \
+                       het merge takes")
+     | _ -> Some (key,act,doc))
+    (Config.diyone_spec ())
 
 (* Small string helpers; no Str dependency. *)
 
@@ -97,7 +103,16 @@ let parse_cond s =
       let body = String.sub s (i+1) (j-i-1) in
       (quant, List.map String.trim (split_and body))
 
-let () =
+let generate () =
+  (* The merge splices per-proc atoms out of a flat conjunction of the two runs'
+     conditions, which only -cond cycle produces.
+     hetlitmus/docs/het-generation.md sec 6. *)
+  (match !Config.cond with
+   | Config.Cycle -> ()
+   | Config.Unicond | Config.Observe ->
+      Warn.fatal
+        "-cond unicond/observe is unsupported: the het merge splices a flat \
+         conjunction of per-proc atoms, which only -cond cycle produces") ;
   (* Top_gen configuration, mirroring diyone's (DumpAll fields not needed). *)
   let module Co = struct
     let verbose = !Config.verbose
@@ -283,3 +298,20 @@ let () =
   bprintf buf "%s\n" scopes_line ;
   bprintf buf "%s\n" merged_cond ;
   print_string (Buffer.contents buf)
+
+(* A refusal leaves as diy7's and diyone7's do: `<prog>: Fatal error: <msg>'
+   on stderr, exit 2.  An option action refuses too, so the command line is
+   parsed inside the handler. *)
+let () =
+  try
+    Util.parse_cmdline
+      ~usage_suffix:Config.diyone_parser_syntax_doc
+      (spec ())
+      (fun _ -> () (* het cycles arrive via -cpu/-gpu; ignore positionals *)) ;
+    Config.validate_variant () ;
+    generate ()
+  with
+  | Misc.Exit -> exit 2
+  | Misc.Fatal msg | Misc.UserError msg ->
+      eprintf "%s: Fatal error: %s\n" Config.prog msg ;
+      exit 2

@@ -92,7 +92,7 @@ for shape in $SHAPE_ORDER; do
     tag=$(cut_tag "$cut")
     for order in $TWO_SIDED_ORDERS; do
       name="$shape-$tag-sys-$order-2s-x86_64"
-      case "$order" in acqrel) ctok=ra;; fence) ctok=sy;; esac
+      ctok=$(two_sided_cpu_tok "$order") || exit 2
       cpu_toks=$(render_x86_cpu "$ctok" $cyc)
       gpu_toks=$(render_cycle sys "$order" $cyc)
       "$BIN/hetgen7" $COMMON -cpu-arch x86_64 -devices "$cut" -name "$name" \

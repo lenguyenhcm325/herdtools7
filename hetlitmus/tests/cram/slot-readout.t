@@ -191,7 +191,25 @@ every run, so the emitter refuses that too, matched on the words only it prints.
   1
   $ litmus7 -gpu-target cuda -o . const-false.litmus >/dev/null 2>&1
   [3]
-  $ ls -d CONST-TRUE CONST-FALSE 2>/dev/null | wc -l
+
+The fold runs under `not' and `=>' as well, so a constant reached through either
+is refused with the same two values.
+  $ sed 's/CONST-TRUE/NOT-TRUE/; s/exists (true)/exists (not (true))/' const-true.litmus > not-true.litmus
+  $ litmus7 -gpu-target cuda -o . not-true.litmus 2>&1 | grep -c 'would emit a CONSTANT weak-behaviour detector (_weak = 0)'
+  1
+  $ litmus7 -gpu-target cuda -o . not-true.litmus >/dev/null 2>&1
+  [3]
+  $ sed 's/CONST-FALSE/NOT-FALSE/; s/exists (false)/exists (not (false))/' const-false.litmus > not-false.litmus
+  $ litmus7 -gpu-target cuda -o . not-false.litmus 2>&1 | grep -c 'would emit a CONSTANT weak-behaviour detector (_weak = 1)'
+  1
+  $ litmus7 -gpu-target cuda -o . not-false.litmus >/dev/null 2>&1
+  [3]
+  $ sed 's/CONST-TRUE/IMPL-CONST/; s/exists (true)/exists (true => false)/' const-true.litmus > impl-const.litmus
+  $ litmus7 -gpu-target cuda -o . impl-const.litmus 2>&1 | grep -c 'would emit a CONSTANT weak-behaviour detector (_weak = 0)'
+  1
+  $ litmus7 -gpu-target cuda -o . impl-const.litmus >/dev/null 2>&1
+  [3]
+  $ ls -d CONST-TRUE CONST-FALSE NOT-TRUE NOT-FALSE IMPL-CONST 2>/dev/null | wc -l
   0
 
 The standalone GPU-only path is untouched by any of it: plain int atomic_ref on

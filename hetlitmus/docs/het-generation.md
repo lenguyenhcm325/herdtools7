@@ -186,6 +186,12 @@ het test remains future work behind the single-arch break.
 - The condition merge assumes **conjunctive** `exists`/`forall` conditions
   (`a /\ b /\ …`), which the MP/SB/LB/IRIW corpus uses; disjunctions are not
   split.
+- Only **`-cond cycle`** is supported, and hetgen7 refuses the other two.
+  `-cond unicond` enumerates one architecture's joint final states, which is not
+  per-proc separable, and `-cond observe` puts its payload in `t.obs`, which
+  `het_cells` does not carry — neither yields the flat conjunction of per-proc
+  atoms the merge splices. Typed atoms in `HetCells.t` would carry both; that
+  remains future work.
 - The CPU side is selected by `-cpu-arch` — **AArch64** (the default, the GH200
   target) or **x86_64** — each a single-arch `*Compile_gen` builder; the GPU
   column is LISA/Bell for either GPU dialect, CUDA vs HIP being litmus7's

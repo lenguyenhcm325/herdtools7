@@ -1,4 +1,4 @@
-The gpu-proc requirement (litmus/hetEmit.ml, gen/hetGen.ml).
+What the het emitter and hetgen7 refuse (litmus/hetEmit.ml, gen/hetGen.ml).
 
 (a) an all-CPU `Het' test is refused, and no harness directory is written.
   $ cat > SB-cpu-only.litmus <<'EOF'
@@ -19,5 +19,23 @@ The gpu-proc requirement (litmus/hetEmit.ml, gen/hetGen.ml).
 
 (b) so is a hetgen7 `-devices' list naming no gpu proc, on hetgen7's own fatal path.
   $ hetgen7 -set-libdir ../../../herd/libdir -bell ../../bells/ptx.bell -cpu-arch x86_64 -devices cpu,cpu -name SB -cpu 'PodWR Fre PodWR Fre' -gpu 'PodWR Fre PodWR Fre' 2>&1 >/dev/null; echo "exit $?"
-  Fatal error: exception Misc.Fatal("-devices cpu,cpu names no gpu proc; a het test needs at least one, and an all-CPU cycle is diyone7's own -arch X86_64/AArch64")
+  hetgen7: Fatal error: -devices cpu,cpu names no gpu proc; a het test needs at least one, and an all-CPU cycle is diyone7's own -arch X86_64/AArch64
   exit 2
+
+(c) so are `-cond unicond' and `-cond observe', which the condition merge
+cannot splice.
+  $ hetgen7 -set-libdir ../../../herd/libdir -bell ../../bells/ptx.bell -cond unicond -cpu-arch x86_64 -devices cpu,gpu -name SB -cpu 'PodWR Fre PodWR Fre' -gpu 'PodWR Fre PodWR Fre' 2>&1 >/dev/null; echo "exit $?"
+  hetgen7: Fatal error: -cond unicond/observe is unsupported: the het merge splices a flat conjunction of per-proc atoms, which only -cond cycle produces
+  exit 2
+  $ hetgen7 -set-libdir ../../../herd/libdir -bell ../../bells/ptx.bell -cond observe -cpu-arch x86_64 -devices cpu,gpu -name SB -cpu 'PodWR Fre PodWR Fre' -gpu 'PodWR Fre PodWR Fre' 2>&1 >/dev/null; echo "exit $?"
+  hetgen7: Fatal error: -cond unicond/observe is unsupported: the het merge splices a flat conjunction of per-proc atoms, which only -cond cycle produces
+  exit 2
+
+(d) an option action's refusal takes the same fatal path.
+  $ hetgen7 -set-libdir ../../../herd/libdir -bell ../../bells/ptx.bell -cpu-arch riscv -devices cpu,gpu -name SB -cpu 'PodWR Fre PodWR Fre' -gpu 'PodWR Fre PodWR Fre' 2>&1 >/dev/null; echo "exit $?"
+  hetgen7: Fatal error: -cpu-arch: unknown ISA "riscv" (use aarch64|x86_64)
+  exit 2
+
+(e) the usage names the one condition style the merge takes.
+  $ hetgen7 -help | grep -- -cond
+    -cond <cycle> style of final condition, the only style the het merge takes

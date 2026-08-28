@@ -39,8 +39,10 @@ let condition_locations p =
 let cval v = ParsedConstant.pp_v v
 let cint v = int_of_string_opt (ParsedConstant.pp_v v)
 
-(* Folding And/Or over constant parts keeps the emitted predicate readable,
-   and is what lets a whole condition collapse to "0" or "1". *)
+(* Folding every connective over constant parts keeps the emitted predicate
+   readable, and is what lets a whole condition collapse to "0" or "1".  The
+   emitter refuses a constant predicate (hetEmit.ml) by reading that collapse,
+   so a connective that does NOT fold hides a constant detector from it. *)
 let is_true s =
   s = "1" || (String.length s >= 2 && s.[0]='1' && s.[1]=' ')
 let is_false s =
@@ -57,6 +59,13 @@ let mk_or parts =
     | [] -> "0"
     | [p] -> p
     | ps -> "(" ^ String.concat " || " ps ^ ")"
+let mk_not e =
+  if is_true e then "0" else if is_false e then "1"
+  else Printf.sprintf "(!%s)" e
+let mk_implies a b =
+  if is_false a || is_true b then "1"
+  else if is_true a then b
+  else Printf.sprintf "(!(%s) || %s)" a b
 
 let predicate_is_constant e = is_true e || is_false e
 
@@ -105,10 +114,8 @@ let c_predicate ~reg_slots ~loc_slots p =
              name)
     | Atom _ ->
        Warn.fatal "hetlitmus: unsupported condition atom (not loc=v)"
-    | Not q -> Printf.sprintf "(!%s)" (c_slot_of_prop q)
+    | Not q -> mk_not (c_slot_of_prop q)
     | And ps -> mk_and (List.map c_slot_of_prop ps)
     | Or ps -> mk_or (List.map c_slot_of_prop ps)
-    | Implies (a,b) ->
-       Printf.sprintf "(!(%s) || %s)"
-         (c_slot_of_prop a) (c_slot_of_prop b) in
+    | Implies (a,b) -> mk_implies (c_slot_of_prop a) (c_slot_of_prop b) in
   c_slot_of_prop p

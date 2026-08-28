@@ -66,6 +66,17 @@ GRID_ORDERS="relaxed acquire release fence"
 #   fence  : DMB.SY (CPU) + fence.sc.sys (GPU)
 TWO_SIDED_ORDERS="acqrel fence"
 
+# two_sided_cpu_tok <two-sided order>  ->  the CPU token render_x86_cpu takes,
+# the inverse of render_2s_cpu's `ra'/`sy' rows; it lives beside the list above
+# so an added order has ONE place to fail closed.
+two_sided_cpu_tok() {
+  case "$1" in
+    acqrel) echo ra;;
+    fence)  echo sy;;
+    *) echo "unknown two-sided order: $1" >&2; return 1;;
+  esac
+}
+
 # --- helpers ----------------------------------------------------------------
 
 # scope_cc <scope>  ->  CamelCase scope token used inside edge names
