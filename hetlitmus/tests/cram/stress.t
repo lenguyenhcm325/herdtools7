@@ -23,13 +23,13 @@ that dir's render, carrying the [CudaLitmus] citation its reuse is conditioned o
 
 (b) the scratchpad is DEVICE memory, never gd_alloc_shared, the coherent
 allocator that selects the property under test (shared-alloc.t).
-  $ grep -c 'cudaMalloc(&_scratch, sizeof(uint32_t)\*HET_SCRATCH_SIZE)' $MP.cu
+  $ grep -c 'gd_alloc_dev((void\*\*)&_scratch, sizeof(uint32_t)\*HET_SCRATCH_SIZE' $MP.cu
   1
-  $ grep -c 'cudaMalloc(&_scratch_loc' $MP.cu
+  $ grep -c 'gd_alloc_dev((void\*\*)&_scratch_loc' $MP.cu
   1
   $ grep -c 'gd_alloc_shared((void\*\*)&_scratch' $MP.cu || true
   0
-  $ grep -c 'hipMalloc(&_scratch, sizeof(uint32_t)\*HET_SCRATCH_SIZE)' $MPH.hip
+  $ grep -c 'gd_alloc_dev((void\*\*)&_scratch, sizeof(uint32_t)\*HET_SCRATCH_SIZE' $MPH.hip
   1
 
 (c) every block above the test blocks hammers the scratchpad, and the grid is

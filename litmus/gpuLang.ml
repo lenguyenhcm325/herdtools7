@@ -263,7 +263,8 @@ type t = {
     gl_emit_script : string ;   (* the regeneration script named in the banner *)
     gl_group : string ;         (* thread-block word: "CTA" | "workgroup" *)
     gl_include : string ;       (* the differing GPU runtime header *)
-    gl_alloc : string -> string -> string ;  (* &var, bytes -> alloc statement *)
+    gl_alloc : string -> string -> string ;  (* var, bytes -> checked alloc statement *)
+    gl_alloc_def : string ;     (* file-scope allocator the host harness calls *)
     gl_launch : string -> int -> int -> string -> string ;
                                 (* c-ident, blocks, block dim, args -> launch *)
     gl_sync : string ;          (* host-side device-sync statement *)
@@ -304,7 +305,7 @@ let dump_test d chan tname parsed =
     n_blocks block_dim n_blocks d.gl_group block_dim d.gl_group ;
   p "// ======================================================================\n\n" ;
   p "%s\n" d.gl_include ;
-  p "#include <cstdio>\n\n" ;
+  p "#include <cstdio>\n#include <cstdlib>\n\n" ;
   (* Kernel *)
   let params =
     String.concat ", "
@@ -331,13 +332,14 @@ let dump_test d chan tname parsed =
   p "// Result buffer layout: __out[proc * %d + regIndex].\n" nregs_layout ;
   p "// Reset all globals to 0 before each launch; the weak outcome under\n" ;
   p "// test is exactly the `condition' line above.\n" ;
+  p "%s\n\n" d.gl_alloc_def ;
   p "int main(void) {\n" ;
   List.iter
-    (fun g -> p "  int *%s;   %s\n" g (d.gl_alloc ("&" ^ g) "sizeof(int)"))
+    (fun g -> p "  int *%s;   %s\n" g (d.gl_alloc g "sizeof(int)"))
     globals ;
   p "  int *__out; %s\n"
-    (d.gl_alloc "&__out" (sprintf "sizeof(int) * %d * %d"
-                            (max 1 nprocs) nregs_layout)) ;
+    (d.gl_alloc "__out" (sprintf "sizeof(int) * %d * %d"
+                           (max 1 nprocs) nregs_layout)) ;
   p "  for (int it = 0; it < 100000; ++it) {\n" ;
   List.iter (fun g -> p "    *%s = 0;\n" g) globals ;
   p "    %s\n"

@@ -104,7 +104,16 @@ let dialect = {
     gl_group = "CTA" ;
     gl_include = "#include <cuda/atomic>" ;
     gl_alloc =
-      (fun p bytes -> sprintf "cudaMallocManaged(%s, %s);" p bytes) ;
+      (fun v bytes -> sprintf "alloc_checked((void**)&%s, %s, \"%s\");" v bytes v) ;
+    gl_alloc_def = {|static void alloc_checked(void** p, size_t bytes, const char* what) {
+  *p = NULL;
+  cudaError_t e = cudaMallocManaged(p, bytes);
+  if (e != cudaSuccess || *p == NULL) {
+    fprintf(stderr, "HetLitmus FATAL: cudaMallocManaged of %llu bytes for %s failed (%s)\n",
+            (unsigned long long)bytes, what, cudaGetErrorString(e));
+    exit(2);
+  }
+}|} ;
     gl_launch =
       (fun id nb bd args -> sprintf "litmus_%s<<<%d, %d>>>(%s);" id nb bd args) ;
     gl_sync = "cudaDeviceSynchronize();" ;

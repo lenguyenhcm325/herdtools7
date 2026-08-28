@@ -74,7 +74,7 @@ itself.
 
 One flag buffer per participant, one byte per iteration, each written by the
 side that owns it and the GPU's mirrored back for the readout.
-  $ grep -c 'uint8_t \*_rdvG_P1; cudaMalloc(&_rdvG_P1, sizeof(uint8_t)\*SIZE_OF_TEST);' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  $ grep -c 'uint8_t \*_rdvG_P1; gd_alloc_dev((void\*\*)&_rdvG_P1, sizeof(uint8_t)\*SIZE_OF_TEST, "_rdvG_P1");' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
   $ grep -c 'uint8_t \*_rdvC_P0 = (uint8_t\*)malloc_check(sizeof(uint8_t)\*SIZE_OF_TEST);' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1

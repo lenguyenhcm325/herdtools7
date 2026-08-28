@@ -116,8 +116,10 @@ loudly.
 
 ## Limits
 - The gpu-only host `main()` tallies nothing and runs no stress: it launches the
-  kernel in a loop and leaves `__out` unread (`gpuLang.ml`, `dump_test`). Result
-  tallying, the per-iteration rendezvous and the stress layers live on the
-  heterogeneous path (`het-emission.md`, `00-environment-design.md`).
+  kernel in a loop and leaves `__out` unread (`gpuLang.ml`, `dump_test`); its
+  allocations go through `alloc_checked`, so a refused `cudaMallocManaged`
+  prints `HetLitmus FATAL: ... failed` and exits 2. Result tallying, the
+  per-iteration rendezvous and the stress layers live on the heterogeneous
+  path (`het-emission.md`, `00-environment-design.md`).
 - Reference verdicts: no external reference covers GH200, and this project
   derives none of its own.

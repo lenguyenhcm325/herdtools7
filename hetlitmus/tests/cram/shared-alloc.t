@@ -46,13 +46,20 @@ each allocator has its matching free, every grep SCOPED to one function body.
 and a shared var is one int slot per iteration (slot-readout.t).
   $ grep -c '__out' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu || true
   0
-  $ grep -c 'cudaMalloc(&bufP' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  $ grep -c 'gd_alloc_dev((void\*\*)&bufP' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   2
   $ grep -c 'int \*x; gd_alloc_shared' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 
+(d2) every device allocation is checked: the one bare cudaMalloc is gd_alloc_dev's
+own, and the HIP twin's one bare hipMalloc likewise.
+  $ grep -c 'cudaMalloc(' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  1
+  $ grep -c 'hipMalloc(' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
+  1
+
 The HIP twin renders from the same template: fine-grained hipMallocManaged, no
-CUDA-side allocator leaking across the dialects, device hipMalloc, no __out.
+CUDA-side allocator leaking across the dialects, device gd_alloc_dev, no __out.
   $ sed -n '/^static void gd_alloc_shared/,/^}/p' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip | grep -c 'hipMallocManaged(_pp'
   1
   $ grep -cE '_shared_pageable|\*_pp = malloc|hipHostMalloc|HET_ALLOC_PINNED' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip || true
@@ -61,7 +68,7 @@ CUDA-side allocator leaking across the dialects, device hipMalloc, no __out.
   3
   $ grep -c '__out' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip || true
   0
-  $ grep -c '(void)hipMalloc(&bufP' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
+  $ grep -c 'gd_alloc_dev((void\*\*)&bufP' hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   2
 
 (e) HET_ALLOC on the CUDA render: the knob is read, unset is (c)'s dispatch, and

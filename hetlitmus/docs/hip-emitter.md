@@ -114,7 +114,8 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
   requires the HIP-Clang stack, not HIP-over-CUDA). A clean build proves the
   scope/order lowering is valid for the target ISA; it does NOT validate
   memory-model behaviour. The host `main()` is illustrative scaffolding (launch
-  geometry + result-buffer layout), as on the CUDA side.
+  geometry + result-buffer layout), as on the CUDA side, with the same checked
+  allocations (`alloc_checked`: a refused `hipMallocManaged` exits 2).
 - **Reference verdicts:** the PLDI'23 artifact's are AMD GCN3; MI300A is CDNA3,
   several generations past GCN3, so they do not transfer, no CDNA3 reference
   replaces them, and this project derives none of its own.

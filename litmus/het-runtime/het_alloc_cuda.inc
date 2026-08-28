@@ -178,3 +178,16 @@ static void gd_free_shared(void* _p){
   else if (_m == HET_ALLOC_MANAGED) { cudaFree(_p); }
   else { cudaFreeHost(_p); }
 }
+/* Device memory the harness keeps to itself (read buffers, scratchpad, tally):
+   a NULL here would reach the launch, so a refused allocation ends the run. */
+static void gd_alloc_dev(void** _pp, size_t _bytes, const char* _what){
+  *_pp = NULL;
+  cudaError_t _e = cudaMalloc(_pp, _bytes);
+  if (_e != cudaSuccess || *_pp == NULL) {
+    fprintf(stderr,
+            "HetLitmus FATAL: cudaMalloc of %llu bytes for %s failed (%s) -- "
+            "the harness has no device memory for it.\n",
+            (unsigned long long)_bytes, _what, cudaGetErrorString(_e));
+    exit(2);
+  }
+}

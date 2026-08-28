@@ -115,3 +115,16 @@ static void gd_free_shared(void* _p){
   (void)_het_alloc_mode();
   (void)hipFree(_p);
 }
+/* Device memory the harness keeps to itself (read buffers, scratchpad, tally):
+   a NULL here would reach the launch, so a refused allocation ends the run. */
+static void gd_alloc_dev(void** _pp, size_t _bytes, const char* _what){
+  *_pp = NULL;
+  hipError_t _e = hipMalloc(_pp, _bytes);
+  if (_e != hipSuccess || *_pp == NULL) {
+    fprintf(stderr,
+            "HetLitmus FATAL: hipMalloc of %llu bytes for %s failed (%s) -- "
+            "the harness has no device memory for it.\n",
+            (unsigned long long)_bytes, _what, hipGetErrorString(_e));
+    exit(2);
+  }
+}

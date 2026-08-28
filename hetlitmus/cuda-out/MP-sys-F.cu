@@ -15,6 +15,7 @@
 
 #include <cuda/atomic>
 #include <cstdio>
+#include <cstdlib>
 
 __global__ void litmus_MP_sys_F(int* x, int* y, int* __out) {
   // ---- P0  (CTA 0, lane 0) ----
@@ -50,10 +51,20 @@ __global__ void litmus_MP_sys_F(int* x, int* y, int* __out) {
 // Result buffer layout: __out[proc * 4 + regIndex].
 // Reset all globals to 0 before each launch; the weak outcome under
 // test is exactly the `condition' line above.
+static void alloc_checked(void** p, size_t bytes, const char* what) {
+  *p = NULL;
+  cudaError_t e = cudaMallocManaged(p, bytes);
+  if (e != cudaSuccess || *p == NULL) {
+    fprintf(stderr, "HetLitmus FATAL: cudaMallocManaged of %llu bytes for %s failed (%s)\n",
+            (unsigned long long)bytes, what, cudaGetErrorString(e));
+    exit(2);
+  }
+}
+
 int main(void) {
-  int *x;   cudaMallocManaged(&x, sizeof(int));
-  int *y;   cudaMallocManaged(&y, sizeof(int));
-  int *__out; cudaMallocManaged(&__out, sizeof(int) * 2 * 4);
+  int *x;   alloc_checked((void**)&x, sizeof(int), "x");
+  int *y;   alloc_checked((void**)&y, sizeof(int), "y");
+  int *__out; alloc_checked((void**)&__out, sizeof(int) * 2 * 4, "__out");
   for (int it = 0; it < 100000; ++it) {
     *x = 0;
     *y = 0;

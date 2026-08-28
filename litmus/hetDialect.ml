@@ -79,7 +79,7 @@ type gpu_dialect = {
     gd_coop_launch : string ;   (* cooperative kernel-launch fn *)
     (* Read-buffer tokens.  The read buffers live in device memory, off the
        coherent race path, and are mirrored host-side after the terminal sync. *)
-    gd_dev_malloc : string -> string -> string ;   (* var, bytes -> device alloc *)
+    gd_dev_malloc : string -> string -> string ;   (* var, bytes -> checked device alloc *)
     gd_memcpy_d2h : string -> string -> string -> string ; (* dst, src, bytes *)
     gd_dev_memset0 : string -> string -> string ;  (* ptr, bytes -> zero device mem *)
     (* Host->device copy for the per-run stress scratch-location layout.  The
@@ -126,7 +126,8 @@ let cuda_dialect = {
     gd_occupancy = "cudaOccupancyMaxActiveBlocksPerMultiprocessor" ;
     gd_coop_launch = "cudaLaunchCooperativeKernel" ;
     gd_dev_malloc =
-      (fun v bytes -> Printf.sprintf "cudaMalloc(&%s, %s);" v bytes) ;
+      (fun v bytes ->
+        Printf.sprintf "gd_alloc_dev((void**)&%s, %s, \"%s\");" v bytes v) ;
     gd_memcpy_d2h =
       (fun dst src bytes ->
         Printf.sprintf "cudaMemcpy(%s, %s, %s, cudaMemcpyDeviceToHost);"
@@ -174,7 +175,8 @@ let hip_dialect = {
     gd_occupancy = "hipOccupancyMaxActiveBlocksPerMultiprocessor" ;
     gd_coop_launch = "hipLaunchCooperativeKernel" ;
     gd_dev_malloc =
-      (fun v bytes -> Printf.sprintf "(void)hipMalloc(&%s, %s);" v bytes) ;
+      (fun v bytes ->
+        Printf.sprintf "gd_alloc_dev((void**)&%s, %s, \"%s\");" v bytes v) ;
     gd_memcpy_d2h =
       (fun dst src bytes ->
         Printf.sprintf "(void)hipMemcpy(%s, %s, %s, hipMemcpyDeviceToHost);"

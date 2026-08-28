@@ -349,9 +349,11 @@ All het logic is confined to:
 * `litmus/hetGpuFile.ml` — the `.cu`/`.hip` render: the prelude, the kernel
   (test lanes and stressing workgroups), the CPU pthread wrappers and the
   outcome labels;
-* `litmus/hetDriverMain.ml` — the driver's `main()`: allocation, launch
-  geometry, the stress populations, the run loop, the slot readout and
-  teardown;
+* `litmus/hetDriverMain.ml` — the driver's `main()`: allocation (every
+  object checked — `gd_alloc_shared`, `gd_alloc_dev` and `malloc_check` each
+  print `HetLitmus FATAL: <api> of <n> bytes ... failed` and exit 2 on a
+  refusal, before any launch), launch geometry, the stress populations, the
+  run loop, the slot readout and teardown;
 * `litmus/hetBuildFiles.ml` — `comp.sh`, the `Makefile` and the `README.md`,
   each folding over the selected dialects;
 * `litmus/hetCond.ml` — a test's condition, as pure functions over the parsed

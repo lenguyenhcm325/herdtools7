@@ -87,7 +87,8 @@ The `gd_shared_mem_defs` and `gd_noise_mem_defs` fields of `gpu_dialect`
 (`litmus/hetDialect.ml`).  Each pair is one object class in one dialect:
 
 * `het_alloc_*` — the shared litmus vars + the rendezvous counter
-  (`gd_alloc_shared` / `gd_free_shared`).
+  (`gd_alloc_shared` / `gd_free_shared`) and the harness's own device memory
+  (`gd_alloc_dev`).
   Design: `hetlitmus/docs/00-environment-design.md` sec 3.2.
 * `het_noise_*` — the interconnect-stress buffers (`gd_alloc_noise` /
   `gd_free_noise`).  Design: `hetlitmus/docs/00-environment-design.md` sec 3.6.

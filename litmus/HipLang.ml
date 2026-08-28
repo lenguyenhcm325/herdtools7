@@ -87,7 +87,16 @@ let dialect = {
     gl_group = "workgroup" ;
     gl_include = "#include <hip/hip_runtime.h>" ;
     gl_alloc =
-      (fun p bytes -> sprintf "(void)hipMallocManaged(%s, %s);" p bytes) ;
+      (fun v bytes -> sprintf "alloc_checked((void**)&%s, %s, \"%s\");" v bytes v) ;
+    gl_alloc_def = {|static void alloc_checked(void** p, size_t bytes, const char* what) {
+  *p = NULL;
+  hipError_t e = hipMallocManaged(p, bytes);
+  if (e != hipSuccess || *p == NULL) {
+    fprintf(stderr, "HetLitmus FATAL: hipMallocManaged of %llu bytes for %s failed (%s)\n",
+            (unsigned long long)bytes, what, hipGetErrorString(e));
+    exit(2);
+  }
+}|} ;
     gl_launch =
       (fun id nb bd args ->
         sprintf "hipLaunchKernelGGL(litmus_%s, dim3(%d), dim3(%d), 0, 0, %s);"
