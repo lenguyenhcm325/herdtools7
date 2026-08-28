@@ -129,13 +129,34 @@ at a **cross-device rendezvous** on a shared counter (`litmus/het-runtime/het_rd
 adds 1 with a relaxed atomic — **system-scoped** on the device side, where scope is a choice — then polls
 the counter relaxed until it reaches `NPART*(n+1)`, and records for itself whether it got there.
 
-**The rendezvous orders nothing, and that is a correctness property.** Arrival and poll are relaxed and
-there is no fence between them or behind them. An acquire poll self-invalidates the GPU L1
+**The rendezvous writes no ordering, and that is a correctness property.** Arrival and poll are relaxed
+and no fence is written between them or behind them. An acquire poll self-invalidates the GPU L1
 [Bagchi26 §5.3]; a system-scope fence flushes it ([AMDGPUUsage "AMDHSA Memory Model Code Sequences
 GFX942"] spells the gfx942 sequence). Either would erase the cache state the tested iteration is about
 to race on while every ordering annotation under test still matched, so the rendezvous decides *when*
-the sides start and contributes nothing to *what* they then observe. Narrowing the scope is the opposite
-failure: a device- or agent-scope counter is not the object the host half increments.
+the sides start and — with the one exception the next paragraph states for the x86_64 host arm —
+contributes nothing to *what* they then observe. Narrowing the scope is the opposite failure: a
+device- or agent-scope counter is not the object the host half increments.
+
+**Three of the four arms lower fence-free; the x86_64 host arm does not.** `nvcc` emits
+`atom.add.relaxed.sys.u64` for the arrival and `ld.relaxed.sys.b64` for the poll; `hipcc` for gfx942
+emits a `global_atomic_add_x2` and a `global_load_dwordx2`, both `sc0 sc1`, with no `buffer_inv` and no
+`buffer_wbl2`; `clang` for AArch64 emits `ldadd` under `+lse` and an `ldxr`/`stxr` pair without it,
+neither acquire nor release, and no `dmb`. `gcc -O2` for x86_64 emits `lock xaddq`, and a locked
+instruction is a full barrier ([IntelSDM "Loads and Stores Are Not Reordered with Locked Instructions"]).
+It orders none of the tested accesses that follow it inside the same iteration — the tested store enters
+an empty store buffer and can still pass the tested load — but it drains the *previous* iteration's
+tested stores, and since a participant may arrive for iteration `n+1` while its partner is still inside
+iteration `n`, it drains them while that partner may still be reading iteration `n`'s slot. The claim is
+over what the source writes and what these compilers emit for it: another compiler, `-march` or host ISA
+may lower the arrival differently, and nothing in the harness reads the lowering back at run time.
+
+**A per-participant arrival, registered and not adopted.** Each participant storing `n+1` into a slot of
+its own and polling the others' is a plain `str`/`mov` on every host, so it would carry no locked
+instruction to drain the previous iteration with, and, being no read-modify-write, none of the
+lost-increment exposure that `HET_ALLOC=pinned` warns about on a device without native host atomics
+(§3.2). It costs NPART polled locations per iteration in place of one counter and a poll that reads
+them all. The choice belongs to the author; nothing here implements it.
 
 **A cap, not a hang.** A participant that has not seen the target after `HET_CAP_CPU` (host) or
 `HET_CAP_GPU` (device) polls abandons *that iteration* and records a 0; the readout discards it (§3.4).

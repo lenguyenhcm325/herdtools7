@@ -94,7 +94,16 @@ static int _het_alloc_mode(void){
 }
 static void gd_alloc_shared(void** _pp, size_t _bytes){
   (void)_het_alloc_mode();               /* resolve + guard once, before the first alloc */
-  (void)hipMallocManaged(_pp, _bytes);   /* fine-grained by default */
+  *_pp = NULL;   /* the check below must not read the caller's uninitialised pointer */
+  hipError_t _e = hipMallocManaged(_pp, _bytes);   /* fine-grained by default */
+  if (_e != hipSuccess || *_pp == NULL) {
+    fprintf(stderr,
+            "HetLitmus FATAL: hipMallocManaged of %llu bytes failed (%s) -- the "
+            "shared vars and the rendezvous barrier have no fine-grained memory "
+            "to test on.\n",
+            (unsigned long long)_bytes, hipGetErrorString(_e));
+    exit(2);
+  }
   /* No placement lever on MI300A: one HBM pool shared by the CCD (CPU) and XCD
      (GPU) chiplets leaves no first-touch home to choose.  Its analogue is
      contention, which the noise pair supplies

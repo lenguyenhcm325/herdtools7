@@ -60,11 +60,11 @@
    runtime call and the HIP render hands it NULL. */
 typedef void (*het_poke_fn)(void);
 
-/* Arrive, then poll: relaxed, with NO fence anywhere.  An acquire poll would
-   self-invalidate the GPU L1 [Bagchi26 sec 5.3] / emit buffer_inv on gfx942 and
-   destroy the cache state the tested iteration races on, so this orders nothing.
-   Each participant adds 1 per iteration to a monotone counter, so iteration n's
-   target is NPART*(n+1); 1 = saw it, 0 discards the caller's iteration. */
+/* Arrive, then poll: relaxed [Bagchi26 sec 5.3], no fence written and none
+   emitted on AArch64 or either GPU side; x86_64's arrival is a locked RMW, a
+   full barrier that drains the previous iteration's tested stores
+   (hetlitmus/docs/00-environment-design.md sec 3.3).  Each caller adds 1 per
+   iteration to a monotone counter; 1 = saw it, 0 discards its iteration. */
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_DEVICE_COMPILE__)
 __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
                                             uint32_t _cap) {

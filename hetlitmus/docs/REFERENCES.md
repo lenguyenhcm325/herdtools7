@@ -132,9 +132,9 @@ Claim(s) this project takes from it:
   an `atomicrmw monotonic` at `system` scope on global/generic memory is
   `buffer/global/flat_atomic` with `sc1=1`, and a `load atomic monotonic` at
   `system` scope is `buffer/global/flat_load` with `sc0=1 sc1=1`. Neither carries
-  a writeback or an invalidate, which is what "the rendezvous orders nothing"
-  rests on for the HIP arm of `litmus/het-runtime/het_rdv.h`: a `wbl2` or a
-  `buffer_inv` beside either would be a strengthened rendezvous. The lowering
+  a writeback or an invalidate, which is what the fence-free lowering of the HIP
+  arm of `litmus/het-runtime/het_rdv.h` rests on: a `wbl2` or a `buffer_inv`
+  beside either would be a strengthened rendezvous. The lowering
   is not read back from `hipcc` (`amd-faithfulness.md`, "Scope and limits"), so
   this is a design ground, cited from `00-environment-design.md` sec 3.3.
 * Section "Memory Scopes", table "AMDHSA LLVM Sync Scopes": the sync scopes an

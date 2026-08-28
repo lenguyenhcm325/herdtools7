@@ -743,9 +743,9 @@ hetlitmus-stats: | build
 	python3 hetlitmus/verify/statscheck.py
 	@ echo "HetLitmus statistics layer: OK"
 
-### Every iteration of every emitted harness begins at the cross-device
-### rendezvous, ahead of the tested accesses and never between two of them, and
-### the primitive itself orders nothing (hetlitmus/verify/rdvcheck.py).
+### Every emitted harness opens each iteration at the cross-device rendezvous,
+### ahead of the tested accesses and never between two of them; the primitive's
+### source carries a relaxed order and no fence (hetlitmus/verify/rdvcheck.py).
 hetlitmus-rdv: | build
 	@ echo
 	python3 hetlitmus/verify/rdvcheck.py

@@ -440,7 +440,7 @@ def check_no_pre_barrier_ops(result, pre_ops):
 
 
 def check_barrier_whitelist(result, barrier_ops, n_lanes):
-    """The het rendezvous spans both devices and orders NOTHING: every op
+    """The het rendezvous adds no ordering on the GPU side: every op
     system-scoped and relaxed, no fence, one arrival per joining GPU lane."""
     if not barrier_ops:
         result.fail("het kernel has NO rendezvous (expected a sys-scope relaxed atom)")
@@ -454,8 +454,8 @@ def check_barrier_whitelist(result, barrier_ops, n_lanes):
     fences = [o for o in barrier_ops if o[0] == 'fence']
     atoms = [o for o in barrier_ops if o[0] in ('atom', 'red')]
     for op in fences:
-        result.fail("the rendezvous carries a FENCE (%s) -- it must order nothing "
-                    "[Bagchi26 sec 5.3]" % fmt(op))
+        result.fail("the rendezvous carries a FENCE (%s) -- its GPU arm must add "
+                    "no ordering [Bagchi26 sec 5.3]" % fmt(op))
     for op in barrier_ops:
         if op[0] != 'fence' and op[1] != 'relaxed':
             result.fail("rendezvous op %s is NOT relaxed -- an acquire or seq_cst "

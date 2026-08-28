@@ -68,9 +68,10 @@ and `<test>_cpu.c` holds only the tested body.  It carries `het_rdv_device` (a
 plus an optional poke into the vendor runtime), `het_rdv_jitter` and
 `HET_SLOT_STRIDE_WORDS`.
 
-Design — why the rendezvous orders nothing and sits around the tested group
-rather than between two of its accesses, what an iteration whose partner misses
-its cap costs, and how the slot stride is sized:
+Design — why the rendezvous writes no ordering and sits around the tested group
+rather than between two of its accesses, what each arm's arrival lowers to, what
+an iteration whose partner misses its cap costs, and how the slot stride is
+sized:
 `hetlitmus/docs/00-environment-design.md` sec 3.3 and sec 3.4.
 
 ## het_verdict.h — `het_obs_record` + the outcome rule

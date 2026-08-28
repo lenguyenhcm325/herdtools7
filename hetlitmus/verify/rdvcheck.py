@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """HetLitmus -- the rendezvous gate (hetlitmus/docs/00-environment-design.md sec
-3.3): every iteration begins at one and it orders nothing.  A miss means a slot
-pairs an outcome to an iteration the two sides were not running together.
+3.3): every iteration begins at one, and the primitive's source carries a relaxed
+order and no fence.  A miss means a slot pairs an outcome to an iteration the two
+sides were not running together.
 
   1 Primitive   het_rdv.h's three bodies arrive and poll RELAXED at SYSTEM scope
   2 GPU lane    one het_rdv_device() per lane, in its loop, ahead of every
@@ -118,9 +119,9 @@ def check_primitive(path):
             for tok in FORBIDDEN:
                 if tok in low:
                     bad.append(
-                        "%s carries %r: the rendezvous must ORDER NOTHING, and a "
-                        "strengthened one erases the cache state the tested "
-                        "iteration is about to race on" % (who, tok))
+                        "%s carries %r: the rendezvous source must carry no order "
+                        "but relaxed, and a strengthened one erases the cache state "
+                        "the tested iteration is about to race on" % (who, tok))
             if name not in RDV_ATOMIC_BODIES:
                 if JITTER_ASM.search(joined) is None:
                     bad.append(
@@ -356,8 +357,8 @@ def lane_renders(tmp, label, corpus, target, ext, expect):
 
 
 def run(quiet=False):
-    print("===== rdvcheck: does every iteration begin at a rendezvous, and "
-          "does it order nothing? =====")
+    print("===== rdvcheck: does every iteration begin at a rendezvous, and does "
+          "its source carry a relaxed order and no fence? =====")
     bad = []
     tmp = tempfile.mkdtemp(prefix="rdvcheck.")
     try:
@@ -388,8 +389,9 @@ def run(quiet=False):
               % len(bad))
         return 1
     print("\nRDVCHECK OK (%d + %d render(s): one rendezvous per participant per "
-          "iteration, ahead of every tested access, ordering nothing, and one "
-          "histogram site and one discard site inside the readout)"
+          "iteration, ahead of every tested access, its source relaxed and "
+          "fence-free, and one histogram site and one discard site inside the "
+          "readout)"
           % (HET_N, hip.X86_HET_N))
     return 0
 

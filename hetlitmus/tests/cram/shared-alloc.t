@@ -87,7 +87,7 @@ sound, and the pinned mode says what it cannot promise.
   1
   $ printf '%s\n' "$MODE" | grep -c 'if (_mode >= 0) return _mode;'
   1
-  $ printf '%s\n' "$MODE" | grep -c 'a lost increment discards that iteration'
+  $ printf '%s\n' "$MODE" | grep -c 'a single lost increment leaves it one short of EVERY'
   1
 
 (e3) the banner carries the ATS-vs-HMM discriminator, queried as well as printed,
@@ -99,8 +99,17 @@ so a render that kept the text and lost the query is not read as the same box.
   $ printf '%s\n' "$MODE" | grep -c 'cudaDevAttrPageableMemoryAccessUsesHostPageTables'
   1
 
+(f) every branch of the CUDA gd_alloc_shared checks its allocation: the pointer
+starts NULL and each of the three failures is a sized FATAL and an exit(2).
+  $ printf '%s\n' "$ALLOC" | grep -c '\*_pp = NULL;'
+  1
+  $ printf '%s\n' "$ALLOC" | grep -c 'HetLitmus FATAL:'
+  3
+  $ printf '%s\n' "$ALLOC" | grep -c 'exit(2);'
+  3
+
 (g) the HIP harness calls it: gd_alloc_shared resolves the mode BEFORE the
-allocation it exists to vet, and the free stays keyed on the resolver.
+allocation it then checks, and the free stays keyed on the resolver.
   $ HREL=hip/MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64.hip
   $ HALLOC=$(sed -n '/^static void gd_alloc_shared/,/^}/p' $HREL)
   $ printf '%s\n' "$HALLOC" | grep -c '_het_alloc_mode()'
@@ -112,5 +121,11 @@ allocation it exists to vet, and the free stays keyed on the resolver.
   >   elif [ "$R" -lt "$A" ]; then echo 'guard-before-alloc'
   >   else echo 'ALLOCATES BEFORE GUARDING' ; fi
   guard-before-alloc
+  $ printf '%s\n' "$HALLOC" | grep -c '\*_pp = NULL;'
+  1
+  $ printf '%s\n' "$HALLOC" | grep -c 'HetLitmus FATAL:'
+  1
+  $ printf '%s\n' "$HALLOC" | grep -c 'exit(2);'
+  1
   $ sed -n '/^static void gd_free_shared/,/^}/p' $HREL | grep -c '_het_alloc_mode()'
   1

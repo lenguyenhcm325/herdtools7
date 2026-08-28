@@ -87,8 +87,11 @@ static int _het_alloc_mode(void){
             "naturally-aligned loads/stores of 1/2/4/8/16 bytes are system-scope "
             "atomic; a read-modify-write is NOT.  The tested accesses are plain "
             "loads and stores, but the rendezvous counter is a fetch_add shared "
-            "with the CPU, so a lost increment discards that iteration at its "
-            "cap.\n");
+            "with the CPU, and it is monotone with iteration n's target "
+            "NPART*(n+1): a single lost increment leaves it one short of EVERY "
+            "later target, so that iteration and every iteration after it is "
+            "discarded at its cap, and the run is COLD-INVALID once the discards "
+            "pass HET_RDV_MAX_DISCARD_PCT of N.\n");
   }
   return _mode;
 }
@@ -128,11 +131,26 @@ static void _het_place(void* _p, size_t _bytes, int _where){
 }
 static void gd_alloc_shared(void** _pp, size_t _bytes){
   int _m = _het_alloc_mode();
+  *_pp = NULL;   /* the checks below must not read the caller's uninitialised pointer */
   if (_m == HET_ALLOC_MALLOC) {
     *_pp = malloc(_bytes);   /* GH200: ATS, in-place cache-line CHI coherence */
+    if (*_pp == NULL) {
+      fprintf(stderr,
+              "HetLitmus FATAL: malloc of %llu bytes failed -- HET_ALLOC=malloc "
+              "has no shared memory to test on.\n",
+              (unsigned long long)_bytes);
+      exit(2);
+    }
     _het_place(*_pp, _bytes, HET_PLACE);
   } else if (_m == HET_ALLOC_MANAGED) {
-    cudaMallocManaged(_pp, _bytes);   /* machinery fallback only */
+    cudaError_t _e = cudaMallocManaged(_pp, _bytes);   /* machinery fallback only */
+    if (_e != cudaSuccess || *_pp == NULL) {
+      fprintf(stderr,
+              "HetLitmus FATAL: cudaMallocManaged of %llu bytes failed (%s) -- "
+              "HET_ALLOC=managed has no shared memory to test on.\n",
+              (unsigned long long)_bytes, cudaGetErrorString(_e));
+      exit(2);
+    }
     /* No placement here: without pageable-memory access there is no ATS and no
        placement lever, so advising would be a no-op that looked like a knob. */
     _het_place_inert(_m);

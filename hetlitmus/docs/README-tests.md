@@ -24,7 +24,8 @@ results dir are run by hand (`het-emission.md`, "From a corpus to a results dir"
   + `make hetlitmus-recfields`, `verify/recfields.py`: every `_rec.<field>` a render writes and
     every `HET_*` define it stamps binds to `litmus/het-runtime/*.h`, over both pairs.
   + `make hetlitmus-rdv`, `verify/rdvcheck.py`: every iteration begins at the rendezvous, ahead
-    of the tested accesses, and the primitive orders nothing; both het renderings are swept.
+    of the tested accesses, and the primitive's source carries a relaxed order and no fence;
+    both het renderings are swept.
   + `make hetlitmus-stats`, `verify/statscheck.py`: `het_stats_compute()` from the real header,
     the stop rule, and `campaign.py` end to end against a stub harness.
   + `make hetlitmus-probe-hip`, `verify/runcheck.py`: `probe-hip.sh`'s four exit paths under

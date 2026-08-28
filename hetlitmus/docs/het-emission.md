@@ -148,10 +148,11 @@ The five required pieces, and where each is reused rather than reimplemented:
    __HIP_MEMORY_SCOPE_SYSTEM)` (HIP). Iteration `n` opens when every participant
    has added 1 and seen the counter reach `NPART*(n+1)`; `NPART` = #CPU pthreads
    + #GPU test lanes. Both operations are **relaxed** and no fence stands between
-   or behind them: the rendezvous decides *when* an iteration starts and adds no
-   ordering to what it then executes, which is why strengthening it would erase
-   the cache state under test (`litmus/het-runtime/het_rdv.h`,
-   `00-environment-design.md` §3.3). The counter is reset once per run, not per
+   or behind them: the rendezvous decides *when* an iteration starts and writes
+   no ordering into what it then executes, which is why strengthening it would
+   erase the cache state under test. What the arrival's own lowering carries on
+   an x86_64 host is `00-environment-design.md` §3.3
+   (`litmus/het-runtime/het_rdv.h`). The counter is reset once per run, not per
    iteration, and the participants are never joined and relaunched in between.
    A participant that hits its cap records a 0 in its own arrival flag and the
    iteration is discarded.

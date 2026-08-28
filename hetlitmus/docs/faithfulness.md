@@ -175,12 +175,13 @@ tests, `_cpu.c`) carries an **observed** one. The harness is faithful when:
 2. **(het) Nothing ahead of the rendezvous** — no model op precedes the first
    rendezvous arrival: an op ahead of it sits outside every lane segment and
    belongs to no lane.
-3. **(het) The rendezvous orders nothing** — the system-scope rendezvous spans
-   both devices and **orders nothing**: every op `sys`-scoped (never narrowed),
-   every op **relaxed**, **no fence anywhere in it**, and one arrival
-   (`atom`/`red`) per joining GPU lane. Relaxed and fence-free is a correctness
-   property, not a preference: `00-environment-design.md` §3.3
-   ([Bagchi26 §5.3]).
+3. **(het) The rendezvous adds no ordering on the GPU side** — the GPU arm of
+   the system-scope rendezvous **orders nothing** in the emitted PTX: every op
+   `sys`-scoped (never narrowed), every op **relaxed**, **no fence anywhere in
+   it**, and one arrival (`atom`/`red`) per joining GPU lane. Relaxed and
+   fence-free is a correctness property, not a preference:
+   `00-environment-design.md` §3.3 ([Bagchi26 §5.3]), which also states what the
+   host arm's arrival lowers to.
 4. **No stray system-scope op** — no `sys`-scoped op outside the inline-asm
    markers, where it would sit outside the model-op stream. A builtin op of
    narrower scope outside the markers is outside the property altogether,
