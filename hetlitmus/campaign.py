@@ -15,6 +15,7 @@ import argparse
 import csv
 import os
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -27,6 +28,7 @@ SEED_STRIDE = 100003
 # every name and number here against the header.
 CORROB_RUNS = 2                      # HET_CORROB_RUNS
 CONFIRM_RUNS = 30                    # the driver's HET_CONFIRM_RUNS default
+ST_CELLS_TRUNCATED = 1 << 8          # HET_ST_CELLS_TRUNCATED
 STOP_NAMES = {
     "HET_CAMPAIGN_STOP_CORROBORATED": "CORROBORATED",
     "HET_CAMPAIGN_STOP_UNCONFIRMED":  "UNCONFIRMED-SIGHTING",
@@ -79,6 +81,14 @@ def fnum(kv, key, dflt=0.0):
         return dflt
 
 
+def fhex(kv, key):
+    """A 0x-printed field; a missing or unreadable one reads as 0, like fnum."""
+    try:
+        return int(kv.get(key, "0"), 0)
+    except ValueError:
+        return 0
+
+
 # The header the harness compiles its own stopping rule from.  The mirror below is
 # the only thing pinning this driver's copy of that rule to it, so a header out of
 # reach is fatal rather than tolerated.
@@ -86,9 +96,10 @@ _VERDICT_H = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
                           "litmus", "het-runtime", "het_verdict.h")
 
 
-def check_flag_mirror(path=_VERDICT_H, corrob=CORROB_RUNS, stops=None):
+def check_flag_mirror(path=_VERDICT_H, corrob=CORROB_RUNS,
+                      trunc=ST_CELLS_TRUNCATED, stops=None):
     """Every stop-name string as `path` defines it.  HET_CORROB_RUNS is checked
-    against `corrob`, not returned."""
+    against `corrob` and HET_ST_CELLS_TRUNCATED against `trunc`, neither returned."""
     stops = STOP_NAMES if stops is None else stops
     # This driver's own consistency, checked before the header is opened: a stop it
     # can write but never treats as terminal loops forever.
@@ -110,6 +121,15 @@ def check_flag_mirror(path=_VERDICT_H, corrob=CORROB_RUNS, stops=None):
         die("%s drifted: HET_CORROB_RUNS is %s there, %d here -- the scheduler and "
             "the harness would corroborate a sighting at different run counts"
             % (path, mc.group(1), corrob))
+    mb = re.search(r"^#define[ \t]+HET_ST_CELLS_TRUNCATED[ \t]+"
+                   r"\(1u[ \t]*<<[ \t]*(\d+)\)", text, re.M)
+    if mb is None:
+        die("%s no longer defines HET_ST_CELLS_TRUNCATED -- this scheduler ends a "
+            "row on that bit and cannot check which bit the harness raises" % path)
+    if (1 << int(mb.group(1))) != trunc:
+        die("%s drifted: HET_ST_CELLS_TRUNCATED is 1u << %s there, 0x%x here -- the "
+            "scheduler would end rows on a bit the harness raises for something "
+            "else, or never end them" % (path, mb.group(1), trunc))
     got = dict(re.findall(r"case[ \t]+(HET_CAMPAIGN_STOP_\w+):[ \t]*"
                           r'return[ \t]+"([^"]*)";', text))
     if got != stops:
@@ -143,6 +163,9 @@ class TestState(object):
         # Pooled runs spent when the first clean sighting landed; 0 = none has, and a
         # row ending UNCONFIRMED reports how long ago the one sighting was.
         self.runs_at_first_sight = 0
+        # The effort behind the row, and every diagnostic bit any invocation raised.
+        self.scored = self.discarded = 0
+        self.flags = 0
         self.stop = ""
         self.note = ""
 
@@ -155,6 +178,9 @@ class TestState(object):
         k_eff = int(fnum(kv, "k_eff"))
         self.k_eff += k_eff
         self.k_runs += int(fnum(kv, "k_runs"))
+        self.scored += int(fnum(kv, "scored"))
+        self.discarded += int(fnum(kv, "discarded"))
+        self.flags |= fhex(kv, "flags")
         if self.runs_at_first_sight == 0 and k_eff > 0:
             # first_sight is the runs THIS invocation spent before its first clean
             # sighting; the pooled price adds the runs before it started.  One that
@@ -200,15 +226,16 @@ class TestState(object):
         return self.stop
 
 
-def save_state(path, states):
-    cols = ["test", "stop", "invocations", "runs", "usable", "k", "k_eff",
-            "k_runs", "first_sight", "note"]
+def save_state(path, states, seed0):
+    cols = ["test", "stop", "invocations", "seed0", "runs", "usable", "k", "k_eff",
+            "k_runs", "first_sight", "scored", "discarded", "flags", "note"]
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(cols)
         for s in states:
-            w.writerow([s.name, s.stop, s.invocations, s.runs, s.usable,
+            w.writerow([s.name, s.stop, s.invocations, seed0, s.runs, s.usable,
                         s.k, s.k_eff, s.k_runs, s.runs_at_first_sight,
+                        s.scored, s.discarded, "0x%x" % s.flags,
                         s.note])
 
 
@@ -224,7 +251,11 @@ def parse_args():
     ap.add_argument("--confirm-runs", type=int, default=CONFIRM_RUNS,
                     help="HET_CONFIRM_RUNS: runs a LONE clean sighting may hold a row "
                          "open for before it ends UNCONFIRMED-SIGHTING")
-    ap.add_argument("--seed0", type=int, default=20260714)
+    ap.add_argument("--seed0", type=int, default=None,
+                    help="the seed base: invocation i of a row runs at seed0 + "
+                         "i*%d, counting from 0.  The default is a fresh random "
+                         "base per campaign, printed and banked in the state CSV; "
+                         "pass it back to replay those bases" % SEED_STRIDE)
     ap.add_argument("--state", required=True,
                     help="the state CSV, rewritten after every test; it must not "
                          "exist yet")
@@ -234,7 +265,9 @@ def parse_args():
     ap.add_argument("--timeout", type=int, default=900,
                     help="seconds one invocation may take before its row ends ERROR")
     ap.add_argument("--log-dir", default="",
-                    help="append each invocation's transcript to DIR/<test>.log")
+                    help="append each invocation's transcript to DIR/<test>.log; "
+                         "the default is --state's path without its extension, "
+                         "plus -logs")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     # Absolute, so an errored row's note names a path a reader can open from
@@ -253,6 +286,25 @@ def parse_args():
         die("--state %s already exists and a campaign is never resumed: running on "
             "would silently overwrite the rows it holds. Move it aside, or point "
             "--state at a fresh path." % a.state)
+    if not a.log_dir:
+        a.log_dir = os.path.splitext(a.state)[0] + "-logs"
+    # log_invocation APPENDS, so a dir holding anything would interleave two
+    # campaigns' transcripts under one name.
+    if not a.dry_run and os.path.exists(a.log_dir) and (
+            not os.path.isdir(a.log_dir) or os.listdir(a.log_dir)):
+        die("--log-dir %s exists and is not an empty directory, and every "
+            "transcript is appended: running on would mix this campaign's "
+            "transcripts with what is there. Move it aside, or point --log-dir "
+            "at a fresh path." % a.log_dir)
+    if a.seed0 is None:
+        a.seed0 = secrets.randbits(31)
+    # Every invocation adds at least one run and target_runs bounds the entitlement,
+    # so both a row's invocations and the runs inside one are under this span.
+    span = a.budget_runs + max(a.confirm_runs, 1)
+    if a.seed0 < 0 or a.seed0 + span * (SEED_STRIDE + 1) >= 2 ** 32:
+        die("--seed0 %d with --budget-runs %d and --confirm-runs %d reaches past "
+            "2^32-1, the width the harness reads a seed at"
+            % (a.seed0, a.budget_runs, a.confirm_runs))
     return a
 
 
@@ -277,11 +329,15 @@ def select_work(a, tests):
     is FAIL CLOSED, not a skip."""
     known = set(tests)
     subset = named_tests(a.tests) or list(tests)
-    missing = [t for t in subset if t not in known]
+    uniq = list(dict.fromkeys(subset))
+    if len(uniq) != len(subset):
+        print("campaign: --tests names %s more than once; one row each."
+              % ", ".join(sorted(t for t in uniq if subset.count(t) > 1)))
+    missing = [t for t in uniq if t not in known]
     if missing:
         die("no harness dir under %s for: %s -- fail closed, nothing to schedule"
             % (a.corpus, ", ".join(missing[:5])))
-    return sorted(subset)
+    return sorted(uniq)
 
 
 def plan_schedule(a, work):
@@ -349,8 +405,7 @@ def drive_test(a, st, budget):
             timed_out, rc = True, "TIMEOUT"
             out, err = _text(e.stdout), _text(e.stderr)
         secs = time.time() - t0
-        if a.log_dir:
-            log_invocation(a.log_dir, st.name, rc, env, secs, out, err)
+        log_invocation(a.log_dir, st.name, rc, env, secs, out, err)
         if timed_out:
             st.stop, st.note = "ERROR", "timeout after %d s" % a.timeout
             return
@@ -369,11 +424,24 @@ def drive_test(a, st, budget):
             # Zero scored runs is no progress; looping would poll a dead harness.
             st.stop, st.note = "ERROR", "invocation reported R=0 runs"
             return
+        if st.flags & ST_CELLS_TRUNCATED:
+            # The harness scored a prefix of its cells
+            # (hetlitmus/docs/harness-reporting.md sec 7).
+            st.stop, st.note = "ERROR", ("harness flags=0x%x: more runs than it "
+                                         "scores, the aggregate is not reportable"
+                                         % st.flags)
+            return
+        if st.usable == 0:
+            # A pool with no usable run measured nothing
+            # (hetlitmus/docs/harness-reporting.md sec 5).
+            st.stop, st.note = "ERROR", ("usable=0 of R=%d: nothing was measured"
+                                         % st.runs)
+            return
 
 
 def report_test(st):
-    print("done  %-28s %-20s inv=%d runs=%d k=%d k_eff=%d k_runs=%d%s"
-          % (st.name, st.stop, st.invocations, st.runs, st.k, st.k_eff,
+    print("done  %-28s %-20s inv=%d runs=%d usable=%d k=%d k_eff=%d k_runs=%d%s"
+          % (st.name, st.stop, st.invocations, st.runs, st.usable, st.k, st.k_eff,
              st.k_runs,
              ("  ** " + st.note + " **")
              if st.stop == "UNCONFIRMED-SIGHTING" else ""))
@@ -384,6 +452,8 @@ def run_campaign(a, work):
     written after every test, so a campaign that loses its box leaves the rows it did
     measure -- not a campaign to continue: parse_args refuses an existing --state."""
     states, errors, unconfirmed = [], 0, 0
+    print("campaign: seed0=%d -- pass --seed0 %d to replay these seed bases."
+          % (a.seed0, a.seed0))
     for t in work:
         st = TestState(t)
         states.append(st)
@@ -393,19 +463,27 @@ def run_campaign(a, work):
             errors += 1
         if st.stop == "UNCONFIRMED-SIGHTING":
             unconfirmed += 1
-        save_state(a.state, states)
+        save_state(a.state, states, a.seed0)
     return states, errors, unconfirmed
 
 
 def report_campaign(states, errors, unconfirmed, secs):
     corrob = [s for s in states if s.stop == "CORROBORATED"]
-    print("\ncampaign: %d row(s) ended CORROBORATED -- the weak outcome was "
-          "observed and reproduced." % len(corrob))
-    for s in corrob:
-        print("            %-28s k_runs=%d" % (s.name, s.k_runs))
+    if corrob:
+        print("\ncampaign: %d row(s) ended CORROBORATED -- the weak outcome was "
+              "observed and reproduced." % len(corrob))
+        for s in corrob:
+            print("            %-28s k_runs=%d" % (s.name, s.k_runs))
+    else:
+        print("\ncampaign: no row ended CORROBORATED.")
 
     if errors:
         print("campaign: %d test(s) ERRORED -- their rows are not results." % errors)
+    flagged = [s for s in states if s.flags]
+    if flagged:
+        print("campaign: %d row(s) carry harness flags:" % len(flagged))
+        for s in flagged:
+            print("            %-28s flags=0x%x" % (s.name, s.flags))
     if unconfirmed:
         rows = [s for s in states if s.stop == "UNCONFIRMED-SIGHTING"]
         print("campaign: ** %d row(s) ended UNCONFIRMED-SIGHTING: the confirmation "

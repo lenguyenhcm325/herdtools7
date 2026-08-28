@@ -494,13 +494,14 @@ into it.
 | probe | `RESULTS=… sh hetlitmus/probe-cuda.sh` (or `probe-hip.sh`) | `$RESULTS/probe.txt` |
 | emit | `hetlitmus/emit-het.sh --gpu-target cuda\|hip CORPUS [--tests LIST\|FILE] [-o EMIT]` | `EMIT/<t>/…` (default `$RESULTS/emit`), `$RESULTS/emit.log` |
 | build | `hetlitmus/build.sh EMIT [--tests LIST\|FILE] [--arch A] [-j N]` | `EMIT/<t>/<t>`, `$RESULTS/build.txt`, `$RESULTS/build/<t>.log` |
-| execute | `python3 hetlitmus/campaign.py --corpus EMIT --budget-runs N --state $RESULTS/campaign-<tag>.csv [--log-dir $RESULTS/runlogs-<tag>] [--tests LIST\|FILE] [--timeout S]` | the state CSV, the transcripts, the final report |
+| execute | `python3 hetlitmus/campaign.py --corpus EMIT --budget-runs N --state $RESULTS/campaign-<tag>.csv [--log-dir DIR, default $RESULTS/campaign-<tag>-logs] [--tests LIST\|FILE] [--timeout S]` | the state CSV, the transcripts, the final report |
 
 `--tests` everywhere takes a comma list or a path to a file with one name per
 line (`#` and blanks ignored, the first field of a line is the name); with no
 `--tests`, build and campaign take the whole corpus. The arch is `probe.txt`'s
 `suggested_cuda_arch` / `suggested_hip_arch` unless `--arch` names one, and
-nothing else detects it.
+nothing else detects it. The campaign draws a fresh seed base for itself, prints
+it at the start and banks it in every state row; `--seed0` replays that base.
 
 **What the probe decides.** These are the conditions under which a
 `cuda::thread_scope_system` atomic is atomic at all [CudaGuide "Atomicity"], and

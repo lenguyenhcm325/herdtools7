@@ -176,7 +176,9 @@ the same rule across invocations,
 each with a fresh seed base — replaying a seed adds no new phase draw and is not a
 replicate. The two are separate units — the header decides over the records one
 invocation holds, the driver over the pooled runs — so on one row they need not reach
-the same arm; only the stop names and counts `check_flag_mirror` pins have to agree.
+the same arm; only the stop names and counts `check_flag_mirror` pins have to agree. A
+row whose pooled `usable` is 0 ends `ERROR` in the scheduler rather than at a stop — the
+`VOID` case above, at the pooled scale.
 
 **What a schedule costs, and when pooling engages at all.** A row that fires in its last
 budgeted run is owed the whole window after it, so it costs `--budget-runs +
@@ -210,9 +212,12 @@ therefore left **vacant** rather than closed up, and each `#define` block in
 never renumber.
 
 The `HetStats` machine line's field set, and the order it prints them in, are a wire
-format too: `hetlitmus/campaign.py` reads it by key (`fnum(kv, …)`: `R`, `usable`, `k`,
-`k_eff`, `k_runs`, `first_sight`), so a field a consumer reads must be one
-`het_stats_line` prints.
+format too: `hetlitmus/campaign.py` reads it by key (`R`, `usable`, `k`, `k_eff`,
+`k_runs`, `first_sight`, `scored`, `discarded`, `flags`), so a field a consumer reads
+must be one `het_stats_line` prints. It ORs the flag words across a row's invocations
+and ends the row `ERROR` on `HET_ST_CELLS_TRUNCATED`, the bit with which the harness
+disowns its own aggregate; that bit is pinned against the header there, as
+`HET_CORROB_RUNS` is.
 
 ## 8. What this file does not settle
 

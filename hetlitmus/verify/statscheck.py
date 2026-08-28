@@ -534,16 +534,16 @@ def phase1(lines, quiet):
     return 0
 
 
-# The HetStats line is the whole interface between a harness and its readers.
-# campaign.py reads it by key, and fnum() reads a missing key as 0.0.
-CONSUMER_KEY_RE = re.compile(r'fnum\(\s*kv\s*,\s*"(\w+)"')
+# The HetStats line is the whole interface between a harness and its readers, and
+# campaign.py reads it by key: fnum() and fhex() both read a missing one as 0.
+CONSUMER_KEY_RE = re.compile(r'\bf(?:num|hex)\(\s*kv\s*,\s*"(\w+)"')
 LINE_KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=")
 # The machine line, told from the human block that shares its prefix by the first
 # key following the test name.
 STATS_LINE = re.compile(r"HetStats \S+ obs=\S+ ")
 # A reformat that hid call sites from the pattern would narrow this check instead
 # of reddening it, so the count is pinned as well as the keys.
-EXPECT_CONSUMER_KEYS = 6
+EXPECT_CONSUMER_KEYS = 9
 
 
 def _consumer_keys():
@@ -824,15 +824,18 @@ with open(os.path.join(d, "seeds.log"), "a") as fh:
 R = min(10, int(os.environ.get("HET_RUNS_MAX") or "10"))
 
 
-def line(obs, k, k_eff, k_runs, degen, first_sight, sighting):
+def line(obs, k, k_eff, k_runs, degen, first_sight, sighting, usable=None,
+         flags=0):
     """One HetStats machine line, in het_stats_line's field ORDER and field SET."""
     print("HetStats %s obs=%s R=%d usable=%d k=%d k_eff=%d k_runs=%d "
-          "degen=%d first_sight=%d sighting=%s N=100000 scored=100000 discarded=0 "
-          "flags=0x0"
-          % (test, obs, R, R, k, k_eff, k_runs, degen, first_sight, sighting))
+          "degen=%d first_sight=%d sighting=%s N=100000 scored=100000 discarded=250 "
+          "flags=0x%x"
+          % (test, obs, R, R if usable is None else usable, k, k_eff, k_runs,
+             degen, first_sight, sighting, flags))
 
 
 NULL = ("Never", 0, 0, 0, 0, 0, "none")
+DEAD = ("VOID", 0, 0, 0, 0, 0, "none", 0)
 FIRED = ("Sometimes", 1, 1, 1, 0, 1, "UNCONFIRMED")
 if test == "NULL-pooled":
     line(*NULL)
@@ -852,6 +855,18 @@ elif test == "SIGHT-degen":
     # A sighting the decode guard REJECTED (k=1, k_eff=0): it corroborates nothing
     # and holds nothing open, so the row runs to its budget.
     line("Sometimes", 1, 0, 0, 1, 0, "UNCONFIRMED")
+elif test == "VOID-dead":
+    # Every cell COLD in every invocation: the pool measured nothing at all.
+    line(*DEAD)
+elif test == "VOID-late":
+    # Measures in its first invocation and goes dead after.
+    if inv == 1:
+        line(*NULL)
+    else:
+        line(*DEAD)
+elif test == "FLAG-trunc":
+    # The truncation bit: more runs than the harness scores.
+    line("Never", 0, 0, 0, 0, 0, "none", flags=0x100)
 else:
     sys.exit(3)
 '''
@@ -868,7 +883,12 @@ SEED_STRIDE = 100003     # must match campaign.py
 # The budget phase 6 drives the campaign with, the confirmation window it passes,
 # and the R every stub line reports: the HET_RUNS_MAX assertion is derived from them.
 STUB_BUDGET, CONFIRM, STUB_R = 100, 30, 10
-STUB_TESTS = ["NULL-pooled", "SIGHT-corrob", "SIGHT-degen", "SIGHT-lone"]
+STUB_SCORED = 100000     # the iterations one stub line reports scored
+# ... and the iterations it reports discarded: NOT zero, or the pooled total
+# is zero however the driver pools it.
+STUB_DISCARDED = 250
+STUB_TESTS = ["NULL-pooled", "SIGHT-corrob", "SIGHT-degen", "SIGHT-lone",
+              "VOID-dead", "VOID-late", "FLAG-trunc"]
 
 
 def _mk_corpus(tmp, name, tests, body=STUB_HARNESS):
@@ -905,7 +925,8 @@ def _done_rows(out):
         if l.startswith("done  "):
             f = l.split()
             done[f[1]] = dict(stop=f[2], inv=int(f[3].split("=")[1]),
-                              runs=int(f[4].split("=")[1]))
+                              runs=int(f[4].split("=")[1]),
+                              usable=int(f[5].split("=")[1]))
             order.append(f[1])
     return done, order
 
@@ -971,6 +992,11 @@ def phase6_campaign(quiet):
                                 'case HET_CAMPAIGN_STOP_CORROBORATED: return '
                                 '"CONFIRMED";', 1),
             "stop names", quiet)
+        bad += _mirror_rejects(
+            tmp, "a moved truncation bit",
+            lambda s: s.replace("#define HET_ST_CELLS_TRUNCATED   (1u << 8)",
+                                "#define HET_ST_CELLS_TRUNCATED   (1u << 9)", 1),
+            "HET_ST_CELLS_TRUNCATED", quiet)
         # ... and the policy a name cannot carry: a header measuring the window
         # from run 0 ends rows this scheduler would still be running.
         bad += _mirror_rejects(
@@ -1028,6 +1054,13 @@ def phase6_campaign(quiet):
             "SIGHT-lone": ("UNCONFIRMED-SIGHTING", 4),
             # a rejected sighting stops nothing, so the row runs to its budget.
             "SIGHT-degen": ("BUDGET", 10),
+            # no usable cell in any invocation: the row ends after the first.
+            "VOID-dead": ("ERROR", 1),
+            # usable in invocation 1 and dead after: pooled, the row keeps what it
+            # measured and runs on to its own stop.
+            "VOID-late": ("BUDGET", 10),
+            # the truncation bit, raised in invocation 1: the row ends there.
+            "FLAG-trunc": ("ERROR", 1),
         }
         for t, (stop, inv) in want.items():
             g = done.get(t)
@@ -1042,10 +1075,42 @@ def phase6_campaign(quiet):
                 print("      %-12s stop=%-20s after %d invocation(s)"
                       % (t, g["stop"], g["inv"]))
 
+        # An ERROR row says what it failed to measure: the stop name alone does
+        # not tell a dead pool from a disowned aggregate.
+        notes61 = _state_notes(state) if os.path.exists(state) else {}
+        for t, frag in (("VOID-dead", "usable=0 of R=%d: nothing was measured"
+                         % STUB_R),
+                        ("FLAG-trunc", "flags=0x100")):
+            if frag not in notes61.get(t, ""):
+                print("  *** %s banked the note %r, want one carrying %r"
+                      % (t, notes61.get(t, ""), frag))
+                bad += 1
+
+        # usable is pooled and independent of the stop: 0 is "nothing was
+        # measured", and a row that went dead late keeps the runs it did measure.
+        for t, want_u in (("VOID-dead", 0), ("VOID-late", STUB_R),
+                          ("NULL-pooled", STUB_BUDGET)):
+            g = done.get(t) or {}
+            if g.get("usable") != want_u:
+                print("  *** %-12s done line says usable=%s, want %d -- the runs a "
+                      "row measured on are what its stop is read against"
+                      % (t, g.get("usable"), want_u))
+                bad += 1
+
+        # The corroboration headline is a fact at zero: exactly one row here
+        # reproduced its outcome.
+        if "1 row(s) ended CORROBORATED" not in out:
+            print("  *** the campaign report does not say 1 row(s) ended "
+                  "CORROBORATED:\n%s" % out[-800:])
+            bad += 1
+
         # The pooled null banks every run its budget bought, read by column name
         # so it pins the columns; `usable' does not discriminate (usable == R).
         want_bank = {"stop": "BUDGET", "invocations": "10",
-                     "runs": str(STUB_BUDGET), "usable": str(STUB_BUDGET), "k": "0"}
+                     "runs": str(STUB_BUDGET), "usable": str(STUB_BUDGET), "k": "0",
+                     "scored": str(STUB_BUDGET // STUB_R * STUB_SCORED),
+                     "discarded": str(STUB_BUDGET // STUB_R * STUB_DISCARDED),
+                     "flags": "0x0"}
         banked = {}
         if os.path.exists(state):
             with open(state) as fh:
@@ -1063,6 +1128,24 @@ def phase6_campaign(quiet):
         elif not quiet:
             print("      NULL-pooled  banks 10 invocation(s) / %d run(s) at BUDGET"
                   % STUB_BUDGET)
+
+        # The pooled semantics, banked: usable counts the runs that measured, runs
+        # counts every run the budget bought, and they part company on this row.
+        want_late = {"stop": "BUDGET", "runs": str(STUB_BUDGET),
+                     "usable": str(STUB_R)}
+        late_bank = banked.get("VOID-late")
+        if late_bank is None:
+            print("  *** VOID-late has no row in the campaign state at all")
+            bad += 1
+        elif {c: late_bank.get(c) for c in want_late} != want_late:
+            print("  *** the row that went dead after its first invocation banked "
+                  "%s, want %s: a row that measured something is not turned into "
+                  "an ERROR row by losing its harness later"
+                  % ({c: late_bank.get(c) for c in want_late}, want_late))
+            bad += 1
+        elif not quiet:
+            print("      VOID-late    measures %d run(s), then goes dead: still "
+                  "BUDGET at %d run(s)" % (STUB_R, STUB_BUDGET))
 
         # Every invocation carries a fresh seed base and the run count the row is
         # ENTITLED to; the harness gets HET_RATE and HET_CONFIRM_RUNS with it.
@@ -1095,6 +1178,26 @@ def phase6_campaign(quiet):
                   % (STUB_BUDGET, STUB_BUDGET - STUB_R, STUB_BUDGET - 2 * STUB_R))
         if not os.path.exists(state):
             print("  *** no campaign state written")
+            bad += 1
+
+        # The transcripts are kept without being asked for, under a dir derived
+        # from --state: nothing else holds what an invocation printed.
+        deflog = os.path.join(tmp, "state-logs", "NULL-pooled.log")
+        got_log = open(deflog).read() if os.path.exists(deflog) else ""
+        if got_log.count("### NULL-pooled") != 10:
+            print("  *** %s holds %d transcript header(s), want 10 -- a campaign "
+                  "given no --log-dir still keeps one per invocation"
+                  % (deflog, got_log.count("### NULL-pooled")))
+            bad += 1
+        elif not quiet:
+            print("      the transcripts land in %s with no --log-dir asked for"
+                  % os.path.basename(os.path.dirname(deflog)))
+        r7 = _run_campaign(corpus, os.path.join(tmp, "state2.csv"),
+                           ["--log-dir", os.path.join(tmp, "state-logs")])
+        if r7.returncode != 2:
+            print("  *** a campaign pointed at a log dir that already holds "
+                  "transcripts exited %d, want 2: every transcript is appended, so "
+                  "it would mix two campaigns under one name" % r7.returncode)
             bad += 1
 
         # The lone-sighting row under a budget smaller than its window must NEITHER
@@ -1169,6 +1272,111 @@ def phase6_campaign(quiet):
         elif not quiet:
             print("      --rate       SIGHT-corrob runs to BUDGET, NULL-pooled ends "
                   "where it did")
+        # --rate never reaches the CORROBORATED stop, so the headline must be a
+        # stop-name fact rather than a count of what reproduced.
+        if ("no row ended CORROBORATED." not in r3.stdout
+                or "0 row(s) ended CORROBORATED" in r3.stdout):
+            print("  *** the --rate report says %r -- the row DID reproduce its "
+                  "outcome there, and only the stop is absent"
+                  % [l for l in r3.stdout.splitlines() if "CORROBORATED" in l])
+            bad += 1
+
+        # The seed base: fresh per campaign, printed (the harness prints none) and
+        # banked, so the seeds every invocation ran under are derivable.
+        seedc = _mk_corpus(tmp, "seedbase", ["NULL-pooled"])
+        st8 = os.path.join(tmp, "seedbase.csv")
+        r8 = subprocess.run(
+            [sys.executable, CAMPAIGN, "--corpus", seedc, "--budget-runs",
+             str(STUB_BUDGET), "--confirm-runs", str(CONFIRM), "--state", st8],
+            capture_output=True, text=True)
+        m8 = re.search(r"^campaign: seed0=(\d+) ", r8.stdout, re.M)
+        slog = os.path.join(seedc, "NULL-pooled", "seeds.log")
+        seeds8 = ([int(l.split()[1]) for l in open(slog)]
+                  if os.path.exists(slog) else [])
+        banked8 = {}
+        if os.path.exists(st8):
+            with open(st8) as fh:
+                banked8 = {row["test"]: row for row in csv.DictReader(fh)}
+        if m8 is None:
+            print("  *** a campaign given no --seed0 printed no seed base:\n%s"
+                  % r8.stdout[:600])
+            bad += 1
+        elif not 0 <= int(m8.group(1)) < 2 ** 31:
+            print("  *** the drawn seed base is %s, outside [0, 2^31)"
+                  % m8.group(1))
+            bad += 1
+        elif (banked8.get("NULL-pooled", {}).get("seed0") != m8.group(1)
+              or seeds8[:2] != [int(m8.group(1)),
+                                int(m8.group(1)) + SEED_STRIDE]):
+            print("  *** the base printed (%s), the base banked (%s) and the first "
+                  "two bases run (%s) disagree -- a base nothing records is a "
+                  "campaign nobody can replay"
+                  % (m8.group(1), banked8.get("NULL-pooled", {}).get("seed0"),
+                     seeds8[:2]))
+            bad += 1
+        elif not quiet:
+            print("      the seed base is drawn, printed, banked and stridden by "
+                  "%d per invocation" % SEED_STRIDE)
+        # The base is drawn per campaign: a second campaign must not replay the
+        # first's seeds (an equal pair is 2^-31 of the space).
+        seedc2 = _mk_corpus(tmp, "seedbase2", ["NULL-pooled"])
+        r8b = subprocess.run(
+            [sys.executable, CAMPAIGN, "--corpus", seedc2, "--budget-runs",
+             str(STUB_R), "--confirm-runs", str(CONFIRM),
+             "--state", os.path.join(tmp, "seedbase2.csv")],
+            capture_output=True, text=True)
+        m8b = re.search(r"^campaign: seed0=(\d+) ", r8b.stdout, re.M)
+        if m8 is None or m8b is None or m8.group(1) == m8b.group(1):
+            print("  *** two campaigns given no --seed0 ran under the bases %s and "
+                  "%s -- a base that does not move makes the second campaign a "
+                  "replay of the first, not a second sample"
+                  % (m8 and m8.group(1), m8b and m8b.group(1)))
+            bad += 1
+        elif not quiet:
+            print("      a second campaign given no --seed0 draws a different base")
+        # A base the harness cannot read at its own width is refused, not truncated.
+        r9 = subprocess.run(
+            [sys.executable, CAMPAIGN, "--corpus", seedc, "--budget-runs",
+             str(STUB_BUDGET), "--seed0", str(2 ** 32 - 1),
+             "--state", os.path.join(tmp, "wide.csv")],
+            capture_output=True, text=True)
+        if r9.returncode != 2 or "2^32-1" not in r9.stderr:
+            print("  *** --seed0 %d exited %d (%r), want 2: the seeds it would hand "
+                  "the harness do not fit the width one is read at"
+                  % (2 ** 32 - 1, r9.returncode, r9.stderr.strip()[-200:]))
+            bad += 1
+        elif not quiet:
+            print("      a seed base whose strides overflow a uint32 is refused")
+
+        # A test named twice is one row, and a --dry-run runs nothing: it draws
+        # and prints no base.
+        r10 = subprocess.run(
+            [sys.executable, CAMPAIGN, "--corpus", corpus, "--tests",
+             "NULL-pooled,NULL-pooled", "--dry-run",
+             "--state", os.path.join(tmp, "dry.csv")],
+            capture_output=True, text=True)
+        plans = [l for l in r10.stdout.splitlines() if l == "  plan NULL-pooled"]
+        if len(plans) != 1 or "more than once; one row each." not in r10.stdout:
+            print("  *** --tests NULL-pooled,NULL-pooled planned %d row(s) and said "
+                  "%r -- one name is one row, and the collapse is announced"
+                  % (len(plans), r10.stdout.strip()[-300:]))
+            bad += 1
+        elif "seed0=" in r10.stdout:
+            print("  *** a --dry-run printed a seed base: it runs nothing, so the "
+                  "base it printed was never used")
+            bad += 1
+        elif not quiet:
+            print("      a test named twice is scheduled once; a --dry-run draws "
+                  "no base")
+        r11 = subprocess.run(
+            [sys.executable, CAMPAIGN, "--corpus", corpus, "--tests", "GHOST,GHOST",
+             "--state", os.path.join(tmp, "ghost2.csv")],
+            capture_output=True, text=True)
+        if r11.returncode != 2 or r11.stderr.count("GHOST") != 1:
+            print("  *** --tests GHOST,GHOST exited %d naming GHOST %d time(s), want "
+                  "2 and once: the duplicate is collapsed before the corpus is "
+                  "checked" % (r11.returncode, r11.stderr.count("GHOST")))
+            bad += 1
 
         # Fail closed: a named test with no harness dir kills the campaign (rc=2).
         r4 = subprocess.run(
@@ -1230,9 +1438,11 @@ def phase6_campaign(quiet):
         return 1
     print("\nSCHEDULER OK -- campaign.py applies het_verdict.h's rule at the pooled "
           "scale, the confirmation window outranks the budget, --rate disables the "
-          "sighting stop alone, a row nothing ran ends ERROR, and the mirror rejects "
-          "a moved bar, a renamed stop, a moved window origin or an unreadable "
-          "header.")
+          "sighting stop alone, a row nothing ran and a row that measured nothing "
+          "both end ERROR, a base drawn afresh per campaign and the transcripts "
+          "are kept without being asked for, and the mirror rejects a moved bar, "
+          "a renamed stop, a moved window origin, a moved truncation bit or an "
+          "unreadable header.")
     return 0
 
 
