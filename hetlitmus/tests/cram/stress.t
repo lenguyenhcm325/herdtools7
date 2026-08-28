@@ -47,6 +47,13 @@ test location.
   &_stress_tally[HET_TALLY_TRUNC]
   _gpu_done
 
+(d2) the noise tally counts blocks, not threads: thread 0 alone bumps it, and that
+guarded bump is the only bump of that tally.
+  $ grep -c 'if (_r > 0 && threadIdx.x == 0) het_scratch_bump(&_stress_tally\[HET_TALLY_NOISE\]);' $MP.cu
+  1
+  $ grep -c 'het_scratch_bump(&_stress_tally\[HET_TALLY_NOISE\]);' $MP.cu
+  1
+
 (e) the access pattern reaches het_do_stress as a runtime kernel argument, and
 the pre-stress runs in every test lane.
   $ grep -c 'het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally)' $MP.cu

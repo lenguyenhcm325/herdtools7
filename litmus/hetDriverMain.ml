@@ -127,6 +127,7 @@ let dump_noise_setup ch =
   uint64_t *_noise_ddr = NULL;   /* CPU-homed: the GPU streams it */
   uint64_t *_noise_hbm = NULL;   /* GPU-homed: the CPU streams it */
   het_cpu_noise_args _na; pthread_t _nth; int _noise_cpu_on = 0;
+  uint32_t _noise_inert = 0;     /* the halves gd_alloc_noise reported degraded */
   if (HET_NOISE_MB < HET_LLC_MB) {
 #if HET_LLC_MB_IS_FALLBACK
     fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is below the %d MB threshold -- a FALLBACK figure, not this target's last-level cache size, so this run may not be %s-stressed.  Build with -DHET_LLC_MB=<MB> to supply it.\n",
@@ -139,12 +140,12 @@ let dump_noise_setup ch =
   if (_noiseBlocks > 0) {
     int _rc = gd_alloc_noise((void**)&_noise_ddr, (size_t)_noise_words*sizeof(uint64_t), 2);
     if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: could not allocate the %d MB DDR noise buffer -- %s of the %s noise is DISABLED for this run.\n", (int)HET_NOISE_MB, HET_DEV_HALF, HET_LINK_NAME); _noise_ddr = NULL; _noise_blocks = 0; }
-    else if (_rc > 0) fprintf(stderr, "HetLitmus WARNING: the DDR noise buffer could not be homed on the CPU (no ATS/coherent host-device link) -- %s of the noise crosses no %s.\n", HET_DEV_HALF, HET_LINK_NAME);
+    else if (_rc > 0) { _noise_inert |= 2u; fprintf(stderr, "HetLitmus WARNING: the DDR noise buffer could not be homed on the CPU (no ATS/coherent host-device link) -- %s of the noise crosses no %s.\n", HET_DEV_HALF, HET_LINK_NAME); }
   }
   if (HET_NOISE_CPU) {
     int _rc = gd_alloc_noise((void**)&_noise_hbm, (size_t)_noise_words*sizeof(uint64_t), 1);
-    if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: could not allocate the %d MB HBM noise buffer -- %s of the %s noise is DISABLED for this run.\n", (int)HET_NOISE_MB, HET_HOST_HALF, HET_LINK_NAME); _noise_hbm = NULL; }
-    else if (_rc > 0) fprintf(stderr, "HetLitmus WARNING: the HBM noise buffer could not be homed on the GPU -- %s of the noise crosses no %s.\n", HET_HOST_HALF, HET_LINK_NAME);
+    if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: no usable %d MB HBM noise buffer -- %s of the %s noise is DISABLED for this run.\n", (int)HET_NOISE_MB, HET_HOST_HALF, HET_LINK_NAME); _noise_hbm = NULL; }
+    else if (_rc > 0) { _noise_inert |= 1u; fprintf(stderr, "HetLitmus WARNING: the HBM noise buffer could not be homed on the GPU -- %s of the noise crosses no %s.\n", HET_HOST_HALF, HET_LINK_NAME); }
   }
   fprintf(stderr, "HetLitmus cpu-stress: cores=%d test=%d enemies=%d spread=%u stride=%d seq=%d preload=%d%% aff=%d | noise: gpu_blocks=%u cpu=%d words=%llu (%d MB) place=%d\n",
           _ncores, _nCpuTest, _nEnemy, _cpu_spread, (int)HET_CPU_STRIDE,
@@ -343,9 +344,9 @@ let dump_run_stress_report dialect ch =
       unsigned long long _pl = _ct.preload_ops;
       unsigned long long _nc = _ct.noise_cpu_rounds;
       uint32_t _ng = _stress_tally_h[HET_TALLY_NOISE];
-      fprintf(stderr, "HetLitmus cpu-stress: enemies=%u rounds=%llu accesses=%llu preload_hints=%llu | noise: cpu_rounds=%llu gpu_blocks=%u (max %u rounds) | aff_fail=%u place_fail=%d\n",
+      fprintf(stderr, "HetLitmus cpu-stress: enemies=%u rounds=%llu accesses=%llu preload_hints=%llu | noise: cpu_rounds=%llu gpu_blocks=%u/%u (max %u rounds) | aff_fail=%u place_fail=%d\n",
               _ct.enemies_realised, _er, (unsigned long long)_ct.enemy_accesses,
-              _pl, _nc, _ng, _stress_tally_h[HET_TALLY_NOISE_ROUNDS],
+              _pl, _nc, _ng, _noise_blocks, _stress_tally_h[HET_TALLY_NOISE_ROUNDS],
               _ct.aff_failures, _het_place_failures);
       if (_nEnemy > 0 && _er == 0)
         fprintf(stderr, "HetLitmus WARNING: %d CPU enemy thread(s) were spawned but completed ZERO rounds -- the CPU-side stress did NOT run.\n", _nEnemy);
@@ -378,15 +379,16 @@ let dump_run_record_stamp identity ch =
        tname) ;
   s "    _rec.N = SIZE_OF_TEST;\n" ;
 
-  (* A mechanism is requested ONLY where it can run: a standing
-     request that nothing performs reads as dead
+  (* The GPU stress, the enemies and the preload are requested where the
+     layout gives them a place to run; the two noise halves are requested by
+     their knobs alone, so a half the allocator refuses reads as dead
      (hetlitmus/docs/harness-reporting.md sec 3). *)
   s {|    _rec.stress_requested =
         ((HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0) ? HET_REQ_GPU_STRESS : 0u)
       | ((_nEnemy > 0) ? HET_REQ_CPU_ENEMY : 0u)
       | ((HET_CPU_PRELOAD_PCT > 0 && !_ct.preload_inert) ? HET_REQ_CPU_PRELOAD : 0u)
-      | ((HET_NOISE_CPU && _noise_cpu_on) ? HET_REQ_NOISE_CPU : 0u)
-      | ((_noise_blocks > 0) ? HET_REQ_NOISE_GPU : 0u);
+      | (HET_NOISE_CPU ? HET_REQ_NOISE_CPU : 0u)
+      | ((_noiseBlocks > 0) ? HET_REQ_NOISE_GPU : 0u);
     _rec.stress_truncated = _stress_tally_h[HET_TALLY_TRUNC];
     _rec.gpu_stress_rounds = _stress_tally_h[HET_TALLY_STRESS_ROUNDS];
     _rec.cpu_enemies = _ct.enemies_realised;
@@ -397,6 +399,7 @@ let dump_run_record_stamp identity ch =
     _rec.noise_cpu_words = _ct.noise_cpu_words;
     _rec.noise_gpu_blocks = _stress_tally_h[HET_TALLY_NOISE];
     _rec.noise_gpu_rounds = _stress_tally_h[HET_TALLY_NOISE_ROUNDS];
+    _rec.noise_inert = _noise_inert;
     _rec.cpu_aff_failures = _ct.aff_failures;
     _rec.place_failures = (uint32_t)_het_place_failures;
     _rec.noise_ws_mb = (uint32_t)HET_NOISE_MB;

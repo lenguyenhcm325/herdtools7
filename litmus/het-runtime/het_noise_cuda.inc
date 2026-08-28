@@ -14,6 +14,12 @@ static int gd_alloc_noise(void** _pp, size_t _bytes, int _where){
        code is what makes the driver say so. */
     *_pp = NULL;
     if (cudaMallocManaged(_pp, _bytes) != cudaSuccess || *_pp == NULL) return -1;
+    /* Without concurrent managed access the host may not touch a managed buffer
+       while a kernel is live (hetlitmus/docs/00-environment-design.md sec 3.6). */
+    if (_where == 1 && !_het_dev_attr(cudaDevAttrConcurrentManagedAccess)) {
+      cudaFree(*_pp); *_pp = NULL;
+      return -1;
+    }
     het_cpu_first_touch(*_pp, _bytes);   /* managed memory is lazily populated too */
     return 1;
   }

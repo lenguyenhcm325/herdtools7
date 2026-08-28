@@ -64,7 +64,10 @@ sighting as well as on a null.
 **Disqualifying:** a **dead rendezvous** (`HET_DQ_RDV_DEAD` — the readout never ran, or
 nothing was scored, or more than `HET_RDV_MAX_DISCARD_PCT` of `N` was thrown away at the
 cap); a nonzero `stress_truncated`; and *requested-but-dead* on each of the GPU scratchpad
-stress, the CPU enemies, the cache preload and either half of the interconnect noise.
+stress, the CPU enemies, the cache preload and either half of the interconnect noise —
+*requested-but-inert* on a noise half counting the same, since a half whose buffer was
+allocated but crosses no link (`noise_inert`) stresses nothing while its round and block
+counters stay healthy.
 
 **The rendezvous disqualifier is the one that is about the experiment rather than about
 the stress.** An iteration only one side started is not an iteration of the test: the two
@@ -89,6 +92,18 @@ and treating "counter == 0" as disqualifying on its own would make an intentiona
 no-stress baseline COLD forever — which is just another way of building a rule that always
 says the same thing. The emitter fills `stress_requested` from the compile-time knobs, so
 the distinction is carried in the record rather than inferred from it.
+
+**On a box that homes neither noise buffer across the link, that costs every noise-requested
+run.** Where the CUDA render can place neither one (`00-environment-design.md` §3.6) the
+device half is allocated but inert and the host half is refused; `stress_requested` carries
+both knobs regardless, so the inert half disqualifies through `noise_inert` and the refused
+half as requested-but-dead (zero rounds), and any run requesting either is `COLD-INVALID`.
+The baseline that stays reportable there is `HET_NOISE_CPU=0
+HET_NOISE_GPU_BLOCKS=0`: it requests no noise, so neither noise disqualifier can fire, but
+it still requests the GPU scratchpad stress, the CPU enemies and the preload, so it is not
+an unstressed run. `HET_CV_UNSTRESSED` needs `stress_requested == 0` —
+`HET_PRE_STRESS_PCT=0 HET_MEM_STRESS_PCT=0 HET_CPU_ENEMIES=0 HET_CPU_PRELOAD_PCT=0` as
+well.
 
 ## 4. The null contract
 

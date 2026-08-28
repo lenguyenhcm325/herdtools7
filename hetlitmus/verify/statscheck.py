@@ -46,6 +46,7 @@ BASE = dict(
     cpu_preload_ops=1000,
     noise_cpu_rounds=1000,
     noise_gpu_blocks=8,
+    noise_inert=0,
     cpu_aff_failures=0,
     place_failures=0,
     stress_requested=0x3D,

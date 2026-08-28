@@ -226,6 +226,12 @@ hypothesis**: a memory system under heavy stress is likelier to transfer data ou
   interconnect lever supports is that it is **additive** with per-device stress and is the lever most
   **specific** to the cross-device window — never that it beats per-device stress. Do not upgrade that
   without hardware evidence.
+- **The host-streamed noise half needs concurrent managed access.** Where the CUDA render finds
+  no pageable-memory access, both noise buffers fall back to `cudaMallocManaged`, and the host
+  noise thread would stream one of them while the kernel is live. A device reporting
+  `cudaDevAttrConcurrentManagedAccess=0` faults on that access, so that buffer is freed at
+  allocation time and the host half is disabled for the run. The device half stays on the
+  managed path: the host touches it only at allocation and free.
 - **Two litmus7 incantations are not ported.** *Launch randomisation* has no analogue here: the GPU
   kernel and the CPU threads are launched once and loop inside (§3.3), so there is no per-iteration launch to
   randomise, and the phase sweep is bought by the release jitter instead. A *shared-timebase release* —

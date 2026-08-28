@@ -90,6 +90,9 @@ typedef struct het_obs_record {
   uint64_t noise_cpu_rounds, noise_cpu_words;
   uint32_t noise_gpu_blocks, noise_gpu_rounds;
   uint32_t cpu_enemies, cpu_aff_failures, place_failures;
+  /* Noise halves allocated but crossing no link: bit 0 = the host half, bit 1 =
+     the device half. */
+  uint32_t noise_inert;
   /* What the run realised, not what it asked for: a noise working set below the
      last-level cache is served from cache and crosses nothing (HET_LLC_MB,
      het_cpu_stress.h). */
@@ -197,9 +200,12 @@ static het_verdict_t het_verdict(const het_obs_record *r,
                                                   dq |= HET_DQ_CPU_ENEMY_DEAD;
   if (het_dead(req, HET_REQ_CPU_PRELOAD, r->cpu_preload_ops))
                                                   dq |= HET_DQ_CPU_PRELOAD_DEAD;
-  if (het_dead(req, HET_REQ_NOISE_CPU,   r->noise_cpu_rounds))
+  /* An inert half disqualifies too: only noise_inert separates it from a live one. */
+  if (het_dead(req, HET_REQ_NOISE_CPU,   r->noise_cpu_rounds) ||
+      ((req & HET_REQ_NOISE_CPU) && (r->noise_inert & 1u)))
                                                   dq |= HET_DQ_NOISE_CPU_DEAD;
-  if (het_dead(req, HET_REQ_NOISE_GPU,   (uint64_t)r->noise_gpu_blocks))
+  if (het_dead(req, HET_REQ_NOISE_GPU,   (uint64_t)r->noise_gpu_blocks) ||
+      ((req & HET_REQ_NOISE_GPU) && (r->noise_inert & 2u)))
                                                   dq |= HET_DQ_NOISE_GPU_DEAD;
 
   /* ---- 4. A dead mechanism means this run's zero is not a datum. */
@@ -225,7 +231,7 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     "stress_trunc=%llu do_stress_rounds=%llu req=0x%x "
     "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
     "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u "
-    "aff_fail=%u place_fail=%u\n",
+    "aff_fail=%u place_fail=%u noise_inert=%u\n",
     _r->test_name,
     _r->instance_id, _r->run_id,
     (unsigned long long)_r->N,
@@ -247,7 +253,7 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     (unsigned long long)_r->noise_cpu_words,
     _r->noise_gpu_blocks, _r->noise_gpu_rounds,
     _r->noise_ws_mb, _r->place_mode,
-    _r->cpu_aff_failures, _r->place_failures);
+    _r->cpu_aff_failures, _r->place_failures, _r->noise_inert);
 }
 
 /* Every null prints beside the effort it cost and the liveness this run
@@ -357,13 +363,16 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     if (dq & HET_DQ_CPU_PRELOAD_DEAD)
       fprintf(_ch, "    - the cache preload was requested but issued ZERO hints\n");
     if (dq & HET_DQ_NOISE_CPU_DEAD)
-      fprintf(_ch, "    - %s of the %s noise did NOT run: this run "
+      fprintf(_ch, "    - %s of the %s noise completed %llu round(s)%s: this run "
                    "is not interconnect-stressed\n",
-              HET_HOST_HALF, HET_LINK_NAME);
+              HET_HOST_HALF, HET_LINK_NAME,
+              (unsigned long long)_r->noise_cpu_rounds,
+              (_r->noise_inert & 1u) ? " on a buffer that crosses no link" : "");
     if (dq & HET_DQ_NOISE_GPU_DEAD)
-      fprintf(_ch, "    - %s of the %s noise did NOT run: this run "
+      fprintf(_ch, "    - %s of the %s noise ran in %u block(s)%s: this run "
                    "is not interconnect-stressed\n",
-              HET_DEV_HALF, HET_LINK_NAME);
+              HET_DEV_HALF, HET_LINK_NAME, _r->noise_gpu_blocks,
+              (_r->noise_inert & 2u) ? " on a buffer that crosses no link" : "");
     if (dq & HET_DQ_GPU_STRESS_DEAD)
       fprintf(_ch, "    - the GPU scratchpad stress (HET_PRE_STRESS_PCT/"
                    "HET_MEM_STRESS_PCT) was requested but completed ZERO "

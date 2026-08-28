@@ -9,6 +9,8 @@
    there is no home to select.  Returns 0 (no placement step can fail) or -1. */
 static int gd_alloc_noise(void** _pp, size_t _bytes, int _where){
   (void)_where;
+  /* No concurrent-managed-access test here: _het_alloc_mode (het_alloc_hip.inc)
+     exits on that attribute before the first allocation of any class. */
   *_pp = NULL;
   if (hipMallocManaged(_pp, _bytes) != hipSuccess || *_pp == NULL) return -1;
   /* Fault the pages in: an untouched managed buffer generates no coherence

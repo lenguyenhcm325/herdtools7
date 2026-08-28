@@ -178,7 +178,8 @@ def check_cu(cu_path, arch="sm_90", verbose=True, device=True):
             if n_on < 1:
                 fail("gpu-noise-live: the emitted PTX carries NO volatile 64-bit "
                      "global load -- nvcc deleted the device-side noise stream.  Its "
-                     "accumulator must be kept alive (volatile reads + a sink).")
+                     "reads are volatile so the stream is issued with no value "
+                     "escaping.")
             else:
                 note("  gpu-noise-live: the device-side noise survives nvcc (%d "
                      "volatile 64-bit global load(s))" % n_on)

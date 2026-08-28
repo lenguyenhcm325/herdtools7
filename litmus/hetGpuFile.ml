@@ -150,21 +150,20 @@ let dump_stress_workgroups ch =
       uint64_t _t = (uint64_t)(blockIdx.x - HET_TEST_BLOCKS) * blockDim.x + threadIdx.x;
       uint64_t _step = (uint64_t)_noise_blocks * blockDim.x * _noise_stride;
       uint64_t _i = (_noise_words > 0) ? (_t % _noise_words) : 0;
-      uint64_t _acc = 0;
+      /* The reads are volatile, so the stream is issued with no value escaping;
+         the tally below counts blocks whose thread 0 completed a round. */
       uint32_t _r = 0;
       for (;
            _r < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;
            ++_r) {
         for (uint32_t _c = 0; _c < _noise_chunk; ++_c) {
-          _acc += _nb[_i];
+          (void)_nb[_i];
           _i += _step;
           if (_i >= _noise_words) _i = (_noise_words > 0) ? (_i % _noise_words) : 0;
         }
       }
-      if (_r > 0) het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);
+      if (_r > 0 && threadIdx.x == 0) het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);
       het_scratch_max(&_stress_tally[HET_TALLY_NOISE_ROUNDS], _r);
-      if (_acc == 0xFFFFFFFFFFFFFFFFull)
-        het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);  /* sink: force _acc to escape */
     } else {
     uint32_t _s = 0;
     for (;

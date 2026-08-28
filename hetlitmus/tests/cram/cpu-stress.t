@@ -156,6 +156,11 @@ is prefetched across, a refusal being reported rather than swallowed.
   $ grep -c 'cudaMemPrefetchAsync of the HBM noise buffer FAILED' $MP.cu
   1
 
+(h3) the host-streamed buffer is refused inside the non-pageable branch on a
+device that reports no concurrent managed access.
+  $ sed -n '/^  if (!_shared_pageable()) {/,/^  }$/p' $MP.cu | grep -c '_where == 1 && !_het_dev_attr(cudaDevAttrConcurrentManagedAccess)'
+  1
+
 (i) every counter of this layer is REPORTED, because a mechanism that has
 silently stopped working looks exactly like one that is working.
   $ grep -c 'HetLitmus WARNING: %d CPU enemy thread(s) were spawned but completed ZERO rounds' $MP.cu
@@ -167,6 +172,13 @@ silently stopped working looks exactly like one that is working.
   $ grep -c 'sched_setaffinity call(s) FAILED' $MP.cu
   1
   $ grep -c '_rec.noise_ws_mb = (uint32_t)HET_NOISE_MB' $MP.cu
+  1
+
+(i2) the two noise halves are requested by their knobs, not by what survived
+allocation, so a refused half reads as requested-but-dead.
+  $ grep -c '| (HET_NOISE_CPU ? HET_REQ_NOISE_CPU : 0u)' $MP.cu
+  1
+  $ grep -c '| ((_noiseBlocks > 0) ? HET_REQ_NOISE_GPU : 0u);' $MP.cu
   1
 
 (k) a shape whose outcome carries a location column has one kind of CPU thread
