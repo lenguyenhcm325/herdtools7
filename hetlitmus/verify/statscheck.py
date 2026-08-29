@@ -997,6 +997,17 @@ def phase6_campaign(quiet):
             lambda s: s.replace("#define HET_ST_CELLS_TRUNCATED   (1u << 8)",
                                 "#define HET_ST_CELLS_TRUNCATED   (1u << 9)", 1),
             "HET_ST_CELLS_TRUNCATED", quiet)
+        # A define that is gone is its own arm: the regex finds nothing to compare.
+        bad += _mirror_rejects(
+            tmp, "a dropped corroboration bar",
+            lambda s: re.sub(r"^#define[ \t]+HET_CORROB_RUNS[ \t].*\n", "", s,
+                             count=1, flags=re.M),
+            "no longer defines HET_CORROB_RUNS", quiet)
+        bad += _mirror_rejects(
+            tmp, "a dropped truncation bit",
+            lambda s: re.sub(r"^#define[ \t]+HET_ST_CELLS_TRUNCATED[ \t].*\n", "", s,
+                             count=1, flags=re.M),
+            "no longer defines HET_ST_CELLS_TRUNCATED", quiet)
         # ... and the policy a name cannot carry: a header measuring the window
         # from run 0 ends rows this scheduler would still be running.
         bad += _mirror_rejects(
@@ -1441,8 +1452,8 @@ def phase6_campaign(quiet):
           "sighting stop alone, a row nothing ran and a row that measured nothing "
           "both end ERROR, a base drawn afresh per campaign and the transcripts "
           "are kept without being asked for, and the mirror rejects a moved bar, "
-          "a renamed stop, a moved window origin, a moved truncation bit or an "
-          "unreadable header.")
+          "a renamed stop, a moved window origin, a moved truncation bit, a "
+          "dropped define or an unreadable header.")
     return 0
 
 
