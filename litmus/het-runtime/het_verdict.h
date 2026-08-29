@@ -29,13 +29,6 @@
 #define HET_PAIR_NAME "(unstamped CPU ISA x GPU dialect pair)"
 #endif
 
-/* Cells (instance,run) the aggregate can hold.  A campaign with more runs is
-   truncated and flags HET_ST_CELLS_TRUNCATED rather than silently scoring a
-   subset. */
-#ifndef HET_STATS_MAX_CELLS
-#define HET_STATS_MAX_CELLS 128
-#endif
-
 /* Share of N the rendezvous may discard before the run itself is discarded:
    past it the two sides mostly did not run together, so the iterations that
    did are not a sample of the window the test is about.  het_rdv.h's caps
@@ -55,7 +48,7 @@
 #define HET_REQ_NOISE_GPU   (1u << 5)   /* HET_NOISE_GPU_BLOCKS                    */
 
 typedef struct het_obs_record {
-  const char *test_name; int instance_id; int run_id;
+  const char *test_name; int run_id;
   uint64_t N;
   /* One iteration scores one outcome vector, so target_count <= iters_scored
      <= N, and discarded (a participant did not start it) + scored = N once the
@@ -228,14 +221,14 @@ static const char *het_verdict_name(het_verdict_t v) {
 
 static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
-    "HetObs %s inst=%d run=%d N=%llu scored=%llu discarded=%llu target=%llu "
+    "HetObs %s run=%d N=%llu scored=%llu discarded=%llu target=%llu "
     "cap_cpu=%llu/%u cap_gpu=%llu/%u calibrated=%d vary=%d "
     "stress_trunc=%llu do_stress_rounds=%llu req=0x%x "
     "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
     "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u "
     "aff_fail=%u place_fail=%u noise_inert=%u\n",
     _r->test_name,
-    _r->instance_id, _r->run_id,
+    _r->run_id,
     (unsigned long long)_r->N,
     (unsigned long long)_r->iters_scored,
     (unsigned long long)_r->iters_discarded,
@@ -393,13 +386,13 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
 
 /* The aggregate, a pure function of an array of het_obs_records, run host-side
  * after the campaign.  The iteration is not the trial: the replication unit is
- * the (instance,run) cell and Y = 1[target_count >= 1] is what is counted
+ * the run and Y = 1[target_count >= 1] is what is counted
  * (hetlitmus/docs/harness-reporting.md sec 5). */
 
-/* What the campaign saw, at the (instance,run) unit. */
+/* What the campaign saw, per run. */
 typedef enum {
-  HET_OBS_VOID = 0,   /* not one usable cell: nothing here was measured           */
-  HET_OBS_NEVER,      /* k = 0 usable cells observed it                            */
+  HET_OBS_VOID = 0,   /* not one usable run: nothing here was measured            */
+  HET_OBS_NEVER,      /* k = 0 usable runs observed it                             */
   HET_OBS_SOMETIMES,
   HET_OBS_ALWAYS
 } het_obs_class;
@@ -411,93 +404,79 @@ typedef enum {
 typedef enum {
   HET_SIGHT_NONE = 0,
   HET_SIGHT_UNCONFIRMED,   /* seen in fewer than HET_CORROB_RUNS clean runs, or
-                              only in degenerate cells: reproduce it. */
-  HET_SIGHT_CORROBORATED   /* >= HET_CORROB_RUNS distinct non-degenerate RUNS */
+                              only in degenerate runs: reproduce it. */
+  HET_SIGHT_CORROBORATED   /* >= HET_CORROB_RUNS clean runs saw it */
 } het_sighting_tier;
 
 /* Why a statistic is missing or weakened -- each is a way this layer could go
-   silently constant, so each is printed.  Vacant bits: 0, 1, 3-7, 9-16. */
+   silently constant, so each is printed.  Vacant bits: 0, 1, 3-16. */
 #define HET_ST_DEGEN_SIGHTING    (1u << 2) /* >=1 sighting failed the decode guard */
-#define HET_ST_CELLS_TRUNCATED   (1u << 8) /* more runs than HET_STATS_MAX_CELLS   */
 
 typedef struct het_stats {
   const char *test_name;
   het_obs_class obs;
   het_sighting_tier tier;
 
-  int R;              /* cells supplied (= NUMBER_OF_RUN; one instance/binary)    */
-  int R_usable;       /* cells whose het_verdict() is not COLD-INVALID            */
-  int k;              /* cells with Y = 1[target_count >= 1]                      */
+  int R;              /* runs supplied (= NUMBER_OF_RUN)                          */
+  int R_usable;       /* runs whose het_verdict() is not COLD-INVALID             */
+  int k;              /* runs with Y = 1[target_count >= 1]                       */
   int k_eff;          /* ... of those, the ones that pass the decode guard        */
-  int k_runs;         /* distinct RUNS among them (the most independent draws)    */
   int n_degen;        /* sightings the guard rejected (reported, not counted) */
-  /* Distinct runs consumed when the first clean sighting landed; 0 = none did.
-     The price of the sighting, in the unit the campaign spends. */
+  /* Runs consumed when the first clean sighting landed, one-based; 0 = none
+     did.  The price of the sighting, in the unit the campaign spends. */
   int n_at_first_sight;
 
   uint64_t N, iters_scored, iters_discarded;   /* the effort disclosure          */
   uint32_t flags;
 } het_stats_t;
 
-/* The decode guard: could this cell's sighting be the constant-read artefact
-   [Srivastava24 sec 4.1]?  A readout that did not run, a cell that scored
+/* The decode guard: could this run's sighting be the constant-read artefact
+   [Srivastava24 sec 4.1]?  A readout that did not run, a run that scored
    nothing and one whose every iteration read back the same vector all fail
    closed.  The sighting is still reported; it does not count toward
    corroboration. */
-static int het_cell_degenerate(const het_obs_record *r) {
+static int het_run_degenerate(const het_obs_record *r) {
   return !r->rdv_valid || (r->iters_scored == 0) || !r->outcomes_vary;
 }
 
 /* The aggregate: a pure function of the record stream. */
 static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st) {
-  int    runs[HET_STATS_MAX_CELLS];
-  int    allruns[HET_STATS_MAX_CELLS];
-  int i, nruns = 0, nall = 0;
+  int i;
 
   memset(st, 0, sizeof *st);
   if (n <= 0) { st->obs = HET_OBS_VOID; return; }
   st->R         = n;
   st->test_name = recs[0].test_name;
   st->N         = recs[0].N;
-  if (n > HET_STATS_MAX_CELLS) { n = HET_STATS_MAX_CELLS;
-                                 st->flags |= HET_ST_CELLS_TRUNCATED; }
 
-  /* ---- 1. The cells, scored through het_verdict() rather than by re-deriving
+  /* ---- 1. The runs, scored through het_verdict() rather than by re-deriving
      liveness, so every stress disqualifier is inherited. */
   for (i = 0; i < n; i++) {
     het_verdict_t v = het_verdict(&recs[i], NULL, NULL);
     int y   = recs[i].target_count >= 1;
-    int deg = het_cell_degenerate(&recs[i]);
+    int deg = het_run_degenerate(&recs[i]);
 
     /* A sighting is not COLD, so this count discards none. */
     if (v != HET_COLD_INVALID) st->R_usable++;
-
-    /* Runs consumed so far, over every cell and not only the sighting ones:
-       n_at_first_sight is a price in runs actually spent. */
-    { int j, seen = 0;
-      for (j = 0; j < nall; j++) if (allruns[j] == recs[i].run_id) seen = 1;
-      if (!seen) allruns[nall++] = recs[i].run_id; }
 
     if (y) {
       st->k++;
       if (deg) { st->n_degen++; st->flags |= HET_ST_DEGEN_SIGHTING; }
       else {
-        int j, seen = 0;
         st->k_eff++;
-        for (j = 0; j < nruns; j++) if (runs[j] == recs[i].run_id) seen = 1;
-        if (!seen) runs[nruns++] = recs[i].run_id;
-        if (st->n_at_first_sight == 0) st->n_at_first_sight = nall;
+        /* A price in runs actually spent, one-based: the sighting's own run
+           counts, and so does every run before it. */
+        if (st->n_at_first_sight == 0) st->n_at_first_sight = i + 1;
       }
     }
 
     st->iters_scored += recs[i].iters_scored;
     st->iters_discarded += recs[i].iters_discarded;
   }
-  st->k_runs = nruns;
 
   /* ---- 2. The observation class.  The denominator is R, the runs executed: a
-     cell is usable when it fired or when its own liveness counters were alive,
-     so scoring over usable cells alone would report Always for a row that fired
+     run is usable when it fired or when its own liveness counters were alive,
+     so scoring over usable runs alone would report Always for a row that fired
      in 3 of 10.  Void alone turns on R_usable: such a pool measured nothing. */
   { int denom = st->R;
     if (st->R_usable == 0)    st->obs = HET_OBS_VOID;
@@ -506,11 +485,11 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     else                      st->obs = HET_OBS_SOMETIMES;
   }
 
-  /* ---- 3. The corroboration tier.  Distinct runs, not merely distinct cells:
-     runs are re-seeded and carry a fresh phase/thermal draw. */
+  /* ---- 3. The corroboration tier, in clean runs: runs are re-seeded and
+     carry a fresh phase/thermal draw. */
   if (st->k > 0)
-    st->tier = (st->k_runs >= HET_CORROB_RUNS) ? HET_SIGHT_CORROBORATED
-                                               : HET_SIGHT_UNCONFIRMED;
+    st->tier = (st->k_eff >= HET_CORROB_RUNS) ? HET_SIGHT_CORROBORATED
+                                              : HET_SIGHT_UNCONFIRMED;
 }
 
 static const char *het_obs_class_name(het_obs_class c) {
@@ -534,10 +513,10 @@ static const char *het_sighting_name(het_sighting_tier t) {
 static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
     "HetStats %s obs=%s "
-    "R=%d usable=%d k=%d k_eff=%d k_runs=%d degen=%d first_sight=%d "
+    "R=%d usable=%d k=%d k_eff=%d degen=%d first_sight=%d "
     "sighting=%s N=%llu scored=%llu discarded=%llu flags=0x%x\n",
     _s->test_name ? _s->test_name : "(none)",
-    het_obs_class_name(_s->obs), _s->R, _s->R_usable, _s->k, _s->k_eff, _s->k_runs,
+    het_obs_class_name(_s->obs), _s->R, _s->R_usable, _s->k, _s->k_eff,
     _s->n_degen, _s->n_at_first_sight,
     het_sighting_name(_s->tier),
     (unsigned long long)_s->N, (unsigned long long)_s->iters_scored,
@@ -549,29 +528,24 @@ static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
 static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
   het_stats_line(_ch, _s);
 
-  fprintf(_ch, "HetStats %s: %d cell(s) [(instance,run)], %d usable, observed in %d "
-               "(%d after the decode guard, across %d distinct run(s)).\n",
+  fprintf(_ch, "HetStats %s: %d run(s), %d usable, observed in %d "
+               "(%d after the decode guard).\n",
           _s->test_name ? _s->test_name : "(none)",
-          _s->R, _s->R_usable, _s->k, _s->k_eff, _s->k_runs);
-
-  if (_s->flags & HET_ST_CELLS_TRUNCATED)
-    fprintf(_ch, "  *** MORE RUNS THAN HET_STATS_MAX_CELLS (%d): the tail was NOT "
-                 "scored.  Raise the cap; do not report this aggregate.\n",
-            (int)HET_STATS_MAX_CELLS);
+          _s->R, _s->R_usable, _s->k, _s->k_eff);
 
   if (_s->obs == HET_OBS_VOID) {
-    fprintf(_ch, "  VOID -- not one of the %d run(s) was usable (every cell "
+    fprintf(_ch, "  VOID -- not one of the %d run(s) was usable (every run "
                  "COLD): nothing was measured.  The per-run HetVerdict lines "
                  "name the dead mechanism.\n", _s->R);
     return;
   }
 
   /* ---- the headline, by observation class.  The scoring statement is over
-     the usable cells, the effort over the runs executed: a discarded run still
+     the usable runs, the effort over the runs executed: a discarded run still
      spent its iterations. */
   if (_s->obs == HET_OBS_NEVER) {
     fprintf(_ch,
-      "  NOT OBSERVED in any of the %d usable cell(s).\n"
+      "  NOT OBSERVED in any of the %d usable run(s).\n"
       "  effort: %d run(s) x N=%llu iterations, %llu scored, %llu discarded at "
       "the rendezvous.  Grow R, not N.\n",
       _s->R_usable, _s->R, (unsigned long long)_s->N,
@@ -587,7 +561,7 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
 
   if (_s->flags & HET_ST_DEGEN_SIGHTING)
     fprintf(_ch,
-      "  *** %d sighting(s) came from a DEGENERATE cell (nothing scored, or a "
+      "  *** %d sighting(s) came from a DEGENERATE run (nothing scored, or a "
       "readout that did not vary): reported, but not counted toward "
       "corroboration.\n",
       _s->n_degen);
@@ -595,16 +569,16 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
   if (_s->tier != HET_SIGHT_NONE) {
     if (_s->tier == HET_SIGHT_CORROBORATED)
       fprintf(_ch,
-        "  ** SIGHTING %s ** -- reproduced in %d distinct clean run(s) "
+        "  ** SIGHTING %s ** -- reproduced in %d clean run(s) "
         "(>= HET_CORROB_RUNS = %d), which a constant-read artefact does not.  "
         "How often it reproduces is not reported.\n",
-        het_sighting_name(_s->tier), _s->k_runs, (int)HET_CORROB_RUNS);
+        het_sighting_name(_s->tier), _s->k_eff, (int)HET_CORROB_RUNS);
     else
       fprintf(_ch,
         "  ** SIGHTING %s ** -- seen in only %d clean run(s) "
         "(< HET_CORROB_RUNS = %d).  It stands as a sighting; reproduce it "
         "before it is written up.\n",
-        het_sighting_name(_s->tier), _s->k_runs, (int)HET_CORROB_RUNS);
+        het_sighting_name(_s->tier), _s->k_eff, (int)HET_CORROB_RUNS);
     if (_s->n_at_first_sight > 0)
       fprintf(_ch,
         "  It first fired after %d of the %d run(s) supplied: budget a fresh "

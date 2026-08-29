@@ -495,7 +495,7 @@ keeps its `cpu` back-compat tag).
   nothing writes therefore compiles to a detector that is permanently false,
   which the run reports as a null — caveated `HET_CV_ONE_OUTCOME` when every
   scored iteration read the same vector, and excluded from corroboration by
-  `het_cell_degenerate`, but not refused. A disclosed limit, not a guarantee.
+  `het_run_degenerate`, but not refused. A disclosed limit, not a guarantee.
 * COMPILE-ONLY: no GPU is launched. Stress/observability tuning (making the CPU
   and GPU ops actually race) and on-hardware runs are hardware-only work
   (`00-environment-design.md` §6).

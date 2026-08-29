@@ -10,7 +10,7 @@ the sibling docs in this directory carry the mechanisms in full. §9 names the a
 a document and the shipped header disagree.
 
 **Provenance / corrections folded in** (see §7): the "~0.2 % relaxed-MP" figure is a *GPU-only* rate, not
-het ([Bagchi26 §5.1]); the replication unit is the `(instance,run)` cell;
+het ([Bagchi26 §5.1]); the replication unit is the run;
 the cuda-litmus `MEM_STRESS` macro ships a bug; the cuda-litmus reuse is **supervisor-approved for thesis
 (academic) use with citation required** (to be captured in writing; the upstream repo
 carries **NO license**, so an explicit grant from Levine is needed before any public artifact, see §7); the
@@ -209,12 +209,12 @@ compiled default, which the printed line names; the base is 31 bits, so `_seed0 
 another invocation's range. The seed fixes no timing, no thermal state and no relative phase: re-running
 at one seed repeats the schedule, never the run.
 
-### 3.4 Instance structure & readout — asymmetric instances, one slot per iteration
-- **Asymmetric instances:** a *few* genuinely-het pairs (H ≤ reserved Grace cores, ~1–8; 1 pinned CPU
-  pthread ⋈ 1 GPU lane, on cache-line-padded private `malloc` locations) + *many* GPU-only stress
-  instances filling the co-residency-capped grid. **Het volume comes from the persistent inner loop, not
-  the instance count.** MC-Mutants' co-prime PTE is GPU-only → reuse it for the GPU stress instances, not
-  the het pairs.
+### 3.4 Launch structure & readout — one test instance beside the stress workgroups, one slot per iteration
+- **One test instance beside the stress workgroups:** one het pair (the test's pinned CPU pthreads ⋈ its
+  GPU lanes, on cache-line-padded private `malloc` locations; `H = 1`, §3.7) + *many* GPU-only stress
+  workgroups filling the co-residency-capped grid. **Het volume comes from the persistent inner loop, not
+  from replicating the test.** MC-Mutants' co-prime PTE is GPU-only → reuse it for the stress workgroups,
+  not the het pair.
 - **The pairing is addressed, not recovered.** Every shared location is `SIZE_OF_TEST` slots wide and
   iteration `n` touches slot `n` on both sides, so there is nothing to decode and nothing to search: the
   stores carry the values the `.litmus` writes and the loads record what they read. `HET_SLOT_STRIDE_WORDS`
@@ -237,7 +237,7 @@ at one seed repeats the schedule, never the run.
   writes the value an atom asks for. A mis-specified condition therefore compiles to a detector that
   is permanently false and is
   reported as a null — caveated `HET_CV_ONE_OUTCOME` when every scored iteration read the same vector,
-  and excluded from corroboration by `het_cell_degenerate`, but not refused. Stated here as a limit, not
+  and excluded from corroboration by `het_run_degenerate`, but not refused. Stated here as a limit, not
   a guarantee.
 
 ### 3.5 GPU-side stress — reuse cuda-litmus
@@ -293,7 +293,7 @@ quiet one — that key's deviation records what still runs.
 
 ### 3.7 What a non-observation reports — no rate, no probability
 **A null carries no rate and no probability.** The harness reports that the outcome was **not observed**
-in the `(instance,run)` cells it scored, discloses the effort the run spent and the liveness the run's
+in the runs it scored, discloses the effort the run spent and the liveness the run's
 own counters measured, and stops there. That **nothing vouches for the harness that did not see it**,
 and that this is characterization — the null agrees with no model and refutes none — is how
 `harness-reporting.md` §4 reads those numbers, not a sentence the run prints. Falsification is
@@ -313,7 +313,7 @@ is the decision and the reasoning that fixed it.
 outcome per iteration (§3.4), so the count is not inflated — but the iterations of one run are not
 independent draws either: they share a seed, a thermal and DVFS state, a page placement, one stress
 configuration and one alignment regime, so a run is a single experimental condition sampled `N` times.
-The replication unit is therefore the `(instance,run)` cell, `Y = 1[target_count ≥ 1]`, and runs are
+The replication unit is therefore the run, `Y = 1[target_count ≥ 1]`, and runs are
 re-seeded so that two of them are two draws. No reproducibility number is computed from the unit
 (`harness-reporting.md` §5).
 
@@ -337,7 +337,7 @@ Withdrawn with the positive control; see §7.
 
 ## 4. The `het_obs_record` — the interface that ties it together
 
-Per `(instance, run)` (the statistical unit from §3.7):
+Per run (the statistical unit from §3.7):
 
 ```
 het_obs_record {
@@ -382,9 +382,9 @@ GH200/MI300A** (§6).
 | **Persistent loop** | Launch once, loop inside, occupancy-bounded/cooperative launch; no per-iteration relaunch and no `cudaDeviceSynchronize`. The biggest single change. |
 | **Cross-device rendezvous** | `het_rdv.h`: relaxed system-scope counter arrival + poll under a cap, per-participant arrival flags, per-participant release jitter, host-side runtime poke on iteration 0. Every iteration opens at it (§3.3). |
 | **Slots + readout** | One slot per iteration per location (`HET_SLOT_STRIDE_WORDS`), stores carrying the `.litmus` values, one O(N) pass that ANDs the flags, discards or scores, and feeds the histogram once (§3.4). Replaces the per-iteration `_cond` check *and* any post-hoc pairing. |
-| **GPU stress** | Port cuda-litmus `do_stress`/`StressParams` (fix the `MEM_STRESS` bug; cite); scratchpad in `cudaMalloc`; launch widened to stress workgroups; **asymmetric instances**. |
+| **GPU stress** | Port cuda-litmus `do_stress`/`StressParams` (fix the `MEM_STRESS` bug; cite); scratchpad in `cudaMalloc`; launch widened to stress workgroups; one test instance beside them. |
 | **CPU + interconnect stress** | CPU recipes at two sites on both ISAs + remote-pinning and noise kernels; the `-2s` invariants enforced by construction. |
-| **Non-observation reporting** | `(instance,run)` replication unit, the three-outcome rule and its liveness disqualifiers, the corroboration tier and the stop rule; each test's own interpretation block, printed beside its numbers so an offline pass reprints rather than re-derives it. |
+| **Non-observation reporting** | the run as replication unit, the three-outcome rule and its liveness disqualifiers, the corroboration tier and the stop rule; each test's own interpretation block, printed beside its numbers so an offline pass reprints rather than re-derives it. |
 
 ---
 
@@ -501,7 +501,7 @@ longer window) or hurts (the miss dominates the race) is unmeasured; the levers 
 - **The "~0.2 %" is GPU-only, not het** — [Bagchi26 §5.1] quotes it back from §4.1, where it is the
   inter-CTA GPU-only result. Bagchi gives no numeric het rate → the het hit-rate is hardware-only. The
   earlier reading of it as a het rate is a mis-attribution, corrected here.
-- **The `(instance,run)` cell is the replication unit**, and the reason for it has changed with the
+- **The run is the replication unit**, and the reason for it has changed with the
   loop: it is no longer that a frame scan inflates the count (there is no scan — §3.4 scores at most one
   outcome per iteration), it is that the iterations of one run share a seed, a thermal state, a placement
   and one stress configuration, so a run is one condition sampled `N` times (§3.7).
@@ -534,7 +534,7 @@ The environment is mostly reuse; the defensible new contributions are:
 2. **A disclosure discipline for non-observation** — the null names the effort it cost and the liveness
    the run's own counters measured, nothing vouches for it, and no rate and no probability attaches to
    it; a run whose two sides did not meet is discarded rather than reported as a zero. The
-   claim is the discipline and the replication unit it is stated at (the `(instance,run)` cell), not a
+   claim is the discipline and the replication unit it is stated at (the run), not a
    confidence bound.
 3. **Explicit interconnect stress** (placement + noise kernels) — a lever no single-die prior work had.
 4. The **scope axis** — the generated corpus crosses scope with ordering strength, a dimension

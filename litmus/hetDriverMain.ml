@@ -396,7 +396,7 @@ let dump_run_record_stamp identity ch =
   let tname = identity.id_name in
   s "    het_obs_record _rec; memset(&_rec, 0, sizeof _rec);\n" ;
   s (Printf.sprintf
-       "    _rec.test_name = \"%s\"; _rec.instance_id = 0; _rec.run_id = _run;\n"
+       "    _rec.test_name = \"%s\"; _rec.run_id = _run;\n"
        tname) ;
   s "    _rec.N = SIZE_OF_TEST;\n" ;
 

@@ -277,8 +277,8 @@ CH_NULL = ["NOT OBSERVED under this effort",
            # The effort a null reports is the iterations it read back, so the
            # number is on the line beside the sentence.
            "scored="]
-# What a run every cell of which was DISCARDED must print instead: it is read as
-# the arm it is, and what it may NOT do is read as reach.
+# What an invocation whose every run was DISCARDED must print instead: it is
+# read as the arm it is, and what it may NOT do is read as reach.
 CH_COLD = ["DISCARD this null -- the harness was not demonstrably hot",
            "the weak outcome was NOT observed",
            "VOID -- not one of",

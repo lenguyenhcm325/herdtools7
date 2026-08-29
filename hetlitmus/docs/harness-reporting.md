@@ -140,22 +140,22 @@ against a verdicts file the reader supplies, with a comparator the reader also s
 The **iteration is not the trial**: the readout scores at most one outcome per iteration, so
 no count is inflated, but the `N` iterations of one run share a seed, a thermal and DVFS
 state, a page placement, one stress configuration and one alignment regime — one condition
-sampled `N` times. The replication unit is therefore the `(instance,run)` cell and
+sampled `N` times. The replication unit is therefore the run and
 `Y = 1[target_count ≥ 1]` is what is counted; runs are re-seeded, so two runs are two draws
 (`00-environment-design.md` §3.7).
 
 **The denominator is `R`, the runs executed, uniformly.** "Usable" is outcome-dependent
-unless something co-running makes it outcome-independent, and nothing does: a cell is
+unless something co-running makes it outcome-independent, and nothing does: a run is
 usable when it fired *or* when its own liveness counters were alive, so scoring over usable
-cells would report `Always` for a row that fired in only some of its runs. `VOID` is the
-one class read off `R_usable` instead — a pool with no usable cell measured nothing at all,
+runs would report `Always` for a row that fired in only some of its runs. `VOID` is the
+one class read off `R_usable` instead — a pool with no usable run measured nothing at all,
 and an empty histogram from a dead harness is an absence of data rather than a
 non-observation.
 
 **The corroboration tier layers on top and suppresses nothing.** `het_verdict()` still
 returns `HET_OBSERVED` on the first sighting; the tier says only how many independent
 **runs** reproduced it (`HET_CORROB_RUNS`), because runs are re-seeded and carry a fresh
-phase/thermal draw. A sighting from a degenerate cell — a reader stuck on its initial value
+phase/thermal draw. A sighting from a degenerate run — a reader stuck on its initial value
 or on one value yields a spurious 100 %/0 % [Srivastava24 §4.1] — is reported, never
 discarded, and simply does not count toward corroboration. *Is the sighting real?* and *is
 it reproducible?* are two questions and get two answers.
@@ -213,11 +213,9 @@ never renumber.
 
 The `HetStats` machine line's field set, and the order it prints them in, are a wire
 format too: `hetlitmus/campaign.py` reads it by key (`R`, `usable`, `k`, `k_eff`,
-`k_runs`, `first_sight`, `scored`, `discarded`, `flags`), so a field a consumer reads
-must be one `het_stats_line` prints. It ORs the flag words across a row's invocations
-and ends the row `ERROR` on `HET_ST_CELLS_TRUNCATED`, the bit with which the harness
-disowns its own aggregate; that bit is pinned against the header there, as
-`HET_CORROB_RUNS` is.
+`first_sight`, `scored`, `discarded`, `flags`), so a field a consumer reads must be one
+`het_stats_line` prints. It ORs the flag words across a row's invocations, and
+`HET_CORROB_RUNS` is pinned against the header there.
 
 ## 8. What this file does not settle
 

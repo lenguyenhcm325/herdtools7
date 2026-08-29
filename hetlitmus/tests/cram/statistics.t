@@ -3,7 +3,7 @@ Statistics-layer inputs: hetlitmus/docs/harness-reporting.md sec 5.
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-fence-2s.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-fence.litmus >/dev/null 2>&1
 
-The records outlive the run loop, and the post-pass scores the cells actually run
+The records outlive the run loop, and the post-pass scores the runs actually banked
 (_nrec) rather than the compiled constant.
 
   $ grep -c 'het_obs_record _recs\[NUMBER_OF_RUN\];' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu

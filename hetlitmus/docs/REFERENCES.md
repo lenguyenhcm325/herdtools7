@@ -428,10 +428,10 @@ Claim(s) this project takes from it:
 Withdrawn claim(s):
 * §IV.A's *frame* -- "a tuple of TL iterations, one per load-performing thread,
   where iteration indices need not be the same", with "time complexity N^TL for
-  a run of N iterations" -- was the ground for scoring at the (instance,run)
-  cell rather than per frame. Withdrawn because the harness no longer examines
-  frames at all: it scores at most one outcome per iteration, read out of that
-  iteration's own slot. The (instance,run) cell is still the replication unit,
+  a run of N iterations" -- was the ground for scoring per run rather than
+  per frame. Withdrawn because the harness no longer examines frames at all:
+  it scores at most one outcome per iteration, read out of that iteration's
+  own slot. The run is still the replication unit,
   on a different ground (within-run correlation, `harness-reporting.md` §5).
 * §IV.B's linear-complexity `COUNT_H` was the precedent for scoring a windowed
   heuristic beside an exhaustive scan. Withdrawn with both: there is one
