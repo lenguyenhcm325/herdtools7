@@ -40,6 +40,11 @@ window — a store in flight across the interconnect but not yet globally visibl
 — and this file is what loads that path.  Design:
 `hetlitmus/docs/00-environment-design.md` sec 3.6.
 
+It also holds `het_draw`, the one stress-schedule draw, because it is the only
+header both the plain-C `<test>_cpu.c` and the device renders include —
+`het_stress.h` reaches it by including this file, so there is one definition and
+no fifth payload to plumb through `litmus/dune` and the emitter.
+
 Two constraints force it into a header of its own instead of into the `.cu`:
 
 * The preload primitives are host-ISA inline asm the nvcc translation unit must

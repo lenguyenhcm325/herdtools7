@@ -174,7 +174,8 @@ RDV_DEV = re.compile(r'^\s*(_rdvG_P\d+)\[_n\] = het_rdv_device\(barrier, '
                      r'\(uint64_t\)NPART\*\(uint64_t\)\(_n\+1\), _cap_gpu\);$')
 RDV_HOST = re.compile(r'^\s*a->_rdv\[_n\] = het_rdv_host\(a->barrier, '
                       r'\(uint64_t\)NPART\*\(uint64_t\)\(_n\+1\), a->_cap, .+\);$')
-JITTER = re.compile(r'^\s*het_rdv_jitter\(&\w+, HET_RELEASE_JITTER\);$')
+JITTER = re.compile(r'^\s*het_rdv_jitter\(het_draw\(.+\), '
+                    r'HET_RELEASE_JITTER\);$')
 # The traceability comment both dialects write ahead of every tested access
 # (litmus/CudaLang.ml, litmus/HipLang.ml): the ONE vendor-independent anchor.
 MODEL_OP = re.compile(r'//\s*[wrf]\[')

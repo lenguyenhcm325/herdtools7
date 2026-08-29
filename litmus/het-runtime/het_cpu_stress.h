@@ -178,14 +178,43 @@ typedef struct het_cpu_noise_args {
   het_cpu_tally *tally;
 } het_cpu_noise_args;
 
+/* The stress schedule.  One draw, host and device: splitmix64 [Vigna15]
+   evaluated at index k -- draw k of the stream owned by (seed, who) is
+   mix(x0 + k*gamma) with x0 = seed<<32 | who, so no stream is ever advanced and
+   the value is the same wherever it is computed.
+   Design: hetlitmus/docs/00-environment-design.md sec 3.3. */
+#if defined(__CUDACC__) || defined(__HIP_PLATFORM_AMD__) || \
+    defined(__HIP_DEVICE_COMPILE__)
+#define HET_DRAW_ATTR __host__ __device__ static inline
+#else
+#define HET_DRAW_ATTR static inline
+#endif
+HET_DRAW_ATTR uint32_t het_draw(uint32_t seed, uint32_t who, uint64_t k) {
+  uint64_t z = (((uint64_t)seed << 32) | (uint64_t)who)
+             + k * 0x9E3779B97F4A7C15ull;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+  return (uint32_t)(z ^ (z >> 31));
+}
+/* Every (who, k) is drawn ONCE, by one participant for one decision.  The ids
+   are pairwise distinct: a GPU thread is its global thread id, which an
+   occupancy-bounded grid keeps below 2^31, and these lie above it. */
+#define HET_WHO_CPU(c)   (0x80000000u | (uint32_t)(c))
+#define HET_WHO_SCRATCH  0xFFFFFFFEu
+#define HET_WHO_SHUFFLE  0xFFFFFFFFu
+/* k, per participant: a GPU test lane draws 2*n and 2*n+1 at iteration n (its
+   pre-stress toggle, its release jitter), a GPU stress thread its round
+   counter, a CPU test thread 1+2*nvars per iteration (jitter, then a toggle and
+   a kind per test variable), and each id above counts its own draws from 0. */
+
 /* API.  Bodies are compiled ONLY into <test>_cpu.c (HET_CPU_STRESS_IMPL). */
 int      het_cpu_affinity(int core, het_cpu_tally *t);  /* 0 = pinned, -1 = failed */
 int      het_cpu_ncores(void);
-uint32_t het_cpu_rng_init(uint32_t seed, uint32_t lane);
 /* Returns the hints issued, so the caller accumulates locally and flushes once:
    an atomic bump per hint would put scaffolding contention inside the tested
    loop, the one place it must NOT be. */
-uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t *rng, int pct);
+uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t seed,
+                         uint32_t who, uint64_t k0, int pct);
 /* Exposes HET_CPU_PRELOAD_LIVE to the .cu driver, which cannot read the macro
    (defined only under HET_CPU_STRESS_IMPL).  The driver uses it so a host with
    no cache primitives does not request a preload that can only no-op, which
@@ -199,14 +228,13 @@ void    *het_cpu_noise(void *a);   /* pthread body; the host half of the noise p
    decides the page's NUMA home on GH200, so the caller advises the preferred
    location before this call and prefetches after it. */
 void     het_cpu_first_touch(void *p, size_t bytes);
-/* Host-side, seeded from srand() by the driver, so a run replays from its seed
-   [GPUHarbor23 sec 3.4]. */
-void     het_cpu_shuffle(uint32_t *idx, uint32_t n);
+/* Host-side; the driver hands it the run's seed, so the permutation is a
+   function of that seed (hetlitmus/docs/00-environment-design.md sec 3.3). */
+void     het_cpu_shuffle(uint32_t *idx, uint32_t n, uint32_t seed);
 
 #ifdef HET_CPU_STRESS_IMPL
 /* Implementation. */
 #include <stdio.h>
-#include <stdlib.h>
 #include <sched.h>
 #include <unistd.h>
 
@@ -248,20 +276,6 @@ static inline void het_cache_touch(void *p) { (void)p; }
 static inline void het_cache_touch_store(void *p) { (void)p; }
 #endif
 
-/* ---- seeded Park-Miller (host twin of het_stress.h's) ------------------ */
-static inline uint32_t het_cpu_rng_next(uint32_t *s) {
-  *s = (uint32_t)(((uint64_t)*s * 16807ull) % 2147483647ull);
-  return *s;
-}
-static inline int het_cpu_rng_pct(uint32_t *s, int pct) {
-  return (int)(het_cpu_rng_next(s) % 100u) < pct;
-}
-uint32_t het_cpu_rng_init(uint32_t seed, uint32_t lane) {
-  uint32_t s = (seed ^ (lane * 2654435761u)) % 2147483647u;
-  if (s == 0u) s = 1u;              /* Park-Miller degenerates at 0 */
-  return s;
-}
-
 int het_cpu_ncores(void) {
   long n = sysconf(_SC_NPROCESSORS_ONLN);
   return (n < 1) ? 1 : (int)n;
@@ -290,17 +304,19 @@ int het_cpu_affinity(int core, het_cpu_tally *t) {
  * sequence. */
 int het_cpu_preload_live(void) { return HET_CPU_PRELOAD_LIVE; }
 
-uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t *rng, int pct) {
+uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t seed,
+                         uint32_t who, uint64_t k0, int pct) {
 #if HET_CPU_PRELOAD_LIVE == 0
-  (void)vars; (void)nvars; (void)rng; (void)pct;
+  (void)vars; (void)nvars; (void)seed; (void)who; (void)k0; (void)pct;
   return 0u;                        /* inert -- the driver reports it, see above */
 #else
   uint32_t n = 0u;
   for (int i = 0; i < nvars; i++) {
-    if (!het_cpu_rng_pct(rng, pct)) continue;
+    /* [CudaLitmus runner.cu:106] */
+    if ((int)(het_draw(seed, who, k0 + 2u*(uint64_t)i) % 100u) >= pct) continue;
     /* litmus7's RandomPL: flush / touch / touch-for-store, drawn per variable
-       per iteration off the thread's own stream. */
-    switch (het_cpu_rng_next(rng) % 3u) {
+       per iteration. */
+    switch (het_draw(seed, who, k0 + 2u*(uint64_t)i + 1u) % 3u) {
     case 0:  het_cache_flush(vars[i]);       break;
     case 1:  het_cache_touch(vars[i]);       break;
     default: het_cache_touch_store(vars[i]); break;
@@ -384,12 +400,13 @@ void het_cpu_first_touch(void *p, size_t bytes) {
   if (bytes > 0) b[bytes - 1] = 1u;      /* the tail page, if bytes is not a multiple */
 }
 
-/* The shuffle behind the indirection: Fisher-Yates over rand(), which the driver
-   seeds per run from (seed0 + run). */
-void het_cpu_shuffle(uint32_t *idx, uint32_t n) {
+/* The shuffle behind the indirection: Fisher-Yates over het_draw, at the run's
+   own seed (seed0 + run). */
+void het_cpu_shuffle(uint32_t *idx, uint32_t n, uint32_t seed) {
+  uint64_t k = 0;
   for (uint32_t i = 0; i < n; i++) idx[i] = i;
   for (uint32_t i = n; i > 1; i--) {
-    uint32_t j = (uint32_t)(rand() % (int)i);
+    uint32_t j = het_draw(seed, HET_WHO_SHUFFLE, k++) % i;
     uint32_t t = idx[i - 1]; idx[i - 1] = idx[j]; idx[j] = t;
   }
 }

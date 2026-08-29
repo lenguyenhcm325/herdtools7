@@ -180,6 +180,25 @@ What the rendezvous buys is a common *start*; the residual skew is swept by a pe
 delay of `0..HET_RELEASE_JITTER` empty spins drawn per iteration, so the run samples relative phases
 instead of repeating one alignment, and by both-side stress (§3.5, §3.6). Bagchi never precisely aligned.
 
+**One stress schedule, computed the same way on both sides.** Every probabilistic decision the run
+environment makes — the release delay above, a test lane's pre-stress toggle, a stress thread's
+per-round toggle, a CPU thread's cache preload, the scratchpad targets, the enemy's index permutation
+— is one call to `het_draw(seed, who, k)` (`litmus/het-runtime/het_cpu_stress.h`), which evaluates
+splitmix64 [Vigna15] *at* index `k` of the stream `(seed, who)` names instead of advancing a
+per-participant state. Three things follow. **It is the same function on both sides.** The host and the
+device compute the same value for the same (participant, index), which no library on offer gives:
+cuRAND's device API carries 48–64 B of state per thread and exists only device-side, ROCm 7.2.4 installs no
+rocRAND device header, `std::minstd_rand` does not compile in device code — and the CPU
+preload and the host setup have to draw from the same seed as the kernel. **It partitions.** Participant
+ids are pairwise distinct and each participant's indices are its own, so no two decisions ever share a
+draw and a CPU thread's delays never track a GPU lane's; the ids and the per-participant index layout
+are written where `het_draw` is defined. **The seed fixes the schedule and nothing else.** `HET_SEED`
+(varied per run as `_seed0 + _run`, and per invocation by `hetlitmus/campaign.py`, which draws its base
+from entropy, prints it and banks it in every state row) decides which iterations are stressed and how,
+which is what makes two runs and two devices comparable under one configuration [GPUHarbor23 §3.4]. It
+fixes no timing, no thermal state and no relative phase: re-running at one seed repeats the schedule,
+never the run.
+
 ### 3.4 Instance structure & readout — asymmetric instances, one slot per iteration
 - **Asymmetric instances:** a *few* genuinely-het pairs (H ≤ reserved Grace cores, ~1–8; 1 pinned CPU
   pthread ⋈ 1 GPU lane, on cache-line-padded private `malloc` locations) + *many* GPU-only stress

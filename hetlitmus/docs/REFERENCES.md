@@ -309,6 +309,9 @@ Deviation(s):
   needs an exhaustion break the dead guard did not.
 * `het_do_stress` adds a tally parameter and one `atomicMax` after the loop; the
   stress traffic itself is unchanged.
+* The toggles are drawn device-side here, by the thread the decision belongs to,
+  rather than re-rolled on the host between relaunches: this kernel is launched
+  once and loops inside, so there is no relaunch to re-roll at.
 
 ## [Sorensen16]
 
@@ -362,11 +365,25 @@ Testing GPU Memory Consistency at Large (Experience Paper).* ISSTA 2023,
 pp. 779-791. DOI 10.1145/3597926.3598095.
 
 Claim(s) this project takes from it:
-* §3.4 makes a stress configuration replayable by seeding it: "We ensure this by
+* §3.4 uses one seed to make the stress configurations identical across the
+  devices a campaign compares: "While system stress configurations are generated
+  randomly, we would like to ensure that the configurations run on different
+  devices are the same for data analysis purposes. ... We ensure this by
   integrating a seedable Park-Miller random number generator [39] into both the
   web interface and the Android app and using the same seed when running all of
-  our tuning experiments." `het_rng_*`, `het_cpu_rng_*` and `HET_SEED` follow
-  that discipline.
+  our tuning experiments." That comparability is what `HET_SEED` is for here:
+  `het_draw` makes the whole stress schedule a function of the seed, so two runs
+  and two devices can be read against one configuration.
+
+Withdrawn claim(s):
+* That §3.4 "makes a stress configuration replayable by seeding it", which
+  `het_rng_*`, `het_cpu_rng_*` and `HET_SEED` were said to follow. Withdrawn as
+  an over-read on both sides. Of the source: §3.4 seeds the *tuning*
+  configurations so that the same ones run on every device, and says nothing
+  about replaying a run at all. Of the code: the seed fixes the stress schedule
+  alone, while the timing, the thermal state and the relative phase a het
+  outcome depends on are unseeded, so no run replays. The two functions named
+  are also gone; `het_draw` replaces them.
 
 ## [Alglave11]
 
@@ -628,3 +645,35 @@ Claim(s) this project takes from it:
   did not appear, the other by what did. `harness-reporting.md` §4 cites it for
   the shape of that reading only. This harness holds no model, so it stops at
   the observation and the pairing is an offline step.
+
+## [Vigna15]
+
+Sebastiano Vigna. `splitmix64.c`, 2015. `https://prng.di.unimi.it/splitmix64.c`
+(byte-identical copy at `https://xoshiro.di.unimi.it/splitmix64.c`). Public
+domain, in the file's own words: "To the extent possible under law, the author
+has dedicated all copyright and related and neighboring rights to this software
+to the public domain worldwide. Permission to use, copy, modify, and/or
+distribute this software for any purpose with or without fee is hereby granted."
+
+Claim(s) this project takes from it:
+* The mixer, its two multipliers, its three shifts and its increment, verbatim
+  from the file: `z = (x += 0x9e3779b97f4a7c15); z = (z ^ (z >> 30)) *
+  0xbf58476d1ce4e5b9; z = (z ^ (z >> 27)) * 0x94d049bb133111eb; return z ^ (z >>
+  31);`. The increment is fixed, so value `k` of the stream a state `x0` starts
+  is the mixer applied to `x0 + k * 0x9e3779b97f4a7c15` and needs no iteration.
+  `het_draw` (`litmus/het-runtime/het_cpu_stress.h`) is exactly that function.
+* Its provenance, as the file states it: "This is a fixed-increment version of
+  Java 8's SplittableRandom generator", citing DOI 10.1145/2714064.2660195
+  (Guy L. Steele Jr., Doug Lea, Christine H. Flood, *Fast Splittable
+  Pseudorandom Number Generators*, OOPSLA 2014).
+
+Deviation(s):
+* The generator is evaluated at an index, never advanced: no state is stored and
+  nothing is seeded once, so the value for a (participant, index) is the same
+  whoever computes it and whenever. The file's claim that the generator passes
+  BigCrush is about its output sequence, and is neither taken nor needed here:
+  what the stress layer needs is that one participant's decisions do not repeat
+  and that two participants do not make the same ones.
+* A fixed increment makes every stream one cycle entered at a different point,
+  so distinct `(seed, who)` pairs are offsets into a single sequence rather
+  than independent streams.

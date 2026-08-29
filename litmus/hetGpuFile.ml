@@ -116,7 +116,7 @@ let dump_test_lane dialect gp ch =
      "The mapping". *)
   s {|    #pragma unroll 1
     for (int _n=0; _n<SIZE_OF_TEST; ++_n) {
-      if (het_rng_pct(&_rng, HET_PRE_STRESS_PCT))
+      if ((int)(het_draw(_seed, _who, 2u*(uint64_t)_n) % 100u) < HET_PRE_STRESS_PCT)
         het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally);
 |} ;
 
@@ -126,7 +126,7 @@ let dump_test_lane dialect gp ch =
   s (Printf.sprintf
        "      %s[_n] = het_rdv_device(barrier, (uint64_t)NPART*(uint64_t)(_n+1), _cap_gpu);\n"
        (rdv_gpu_name gp.gp_proc)) ;
-  s "      het_rdv_jitter(&_rng, HET_RELEASE_JITTER);\n" ;
+  s "      het_rdv_jitter(het_draw(_seed, _who, 2u*(uint64_t)_n + 1u), HET_RELEASE_JITTER);\n" ;
   List.iter
     (fun instr -> dialect.gd_dump_instr ch ~het:(Some "_n") "      " instr)
     gp.gp_instrs ;
@@ -169,7 +169,7 @@ let dump_stress_workgroups ch =
     for (;
          _s < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;
          ++_s) {
-      if (het_rng_pct(&_rng, HET_MEM_STRESS_PCT))
+      if ((int)(het_draw(_seed, _who, _s) % 100u) < HET_MEM_STRESS_PCT)
         het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally);
     }
     if (_s >= HET_STRESS_MAX_ROUNDS)
@@ -182,13 +182,13 @@ let dump_kernel dialect identity memory procs ch =
   let s = output_string ch in
   s (Printf.sprintf "__global__ void litmus_%s(%s) {\n"
        identity.id_ident (kernel_parameters memory procs)) ;
-  s "  het_rng_t _rng = het_rng_init(_seed, blockIdx.x * blockDim.x + threadIdx.x);\n" ;
+  s "  const uint32_t _who = blockIdx.x * blockDim.x + threadIdx.x;\n" ;
   List.iter (fun gp -> dump_test_lane dialect gp ch) procs.pr_gpus ;
   dump_stress_workgroups ch ;
   s "}\n\n"
 
-(* One pthread wrapper per CPU proc: its argument struct, its own jitter
-   stream, and the loop calling het_run_P<p> on iteration n. *)
+(* One pthread wrapper per CPU proc: its argument struct, the participant id
+   its draws are made under, and the loop calling het_run_P<p> on iteration n. *)
 let dump_cpu_thread_wrappers dialect procs memory ch =
   let s = output_string ch in
   s dialect.gd_poke_def ;
@@ -210,17 +210,10 @@ let dump_cpu_thread_wrappers dialect procs memory ch =
       s (Printf.sprintf "  cpu_args_P%d* a = (cpu_args_P%d*)_a;\n" proc proc) ;
       s "  het_cpu_affinity(a->_core, a->_tally);\n" ;
       let npl = List.length addr in
-      if npl > 0 then begin
-        s (Printf.sprintf
-             "  uint32_t _plrng = het_cpu_rng_init(a->_seed, %du);\n" proc) ;
-        s "  uint64_t _plops = 0;\n"
-      end ;
-      (* Its own jitter stream: a GPU lane's delays would shift both
-         sides together, leaving the relative phase unchanged.  Lanes
-         past HET_TEST_BLOCKS*HET_BLOCK_DIM are no test lane's. *)
-      s (Printf.sprintf
-           "  het_rng_t _jrng = het_rng_init(a->_seed, (uint32_t)(HET_TEST_BLOCKS*HET_BLOCK_DIM + %d));\n"
-           !cpu_ord) ;
+      if npl > 0 then s "  uint64_t _plops = 0;\n" ;
+      (* Its own draws: a GPU lane's delays would shift both sides
+         together, leaving the relative phase unchanged. *)
+      s (Printf.sprintf "  const uint32_t _who = HET_WHO_CPU(%du);\n" !cpu_ord) ;
       incr cpu_ord ;
       let call_args =
         String.concat ","
@@ -228,6 +221,8 @@ let dump_cpu_thread_wrappers dialect procs memory ch =
            @ List.map (fun (_,b) -> Printf.sprintf "a->%s + _n" b) bufs) in
       s "  for (int _n=0; _n<SIZE_OF_TEST; ++_n) {\n" ;
       s "    size_t _slot = (size_t)_n * HET_SLOT_STRIDE_WORDS;\n" ;
+      s (Printf.sprintf "    const uint64_t _kn = (uint64_t)_n * %du;\n"
+           (1 + 2 * npl)) ;
 
       if npl > 0 then begin
         (* The hint must name the line this iteration touches, so
@@ -238,13 +233,13 @@ let dump_cpu_thread_wrappers dialect procs memory ch =
                    (fun (_,n) -> Printf.sprintf "(void*)(a->%s + _slot)" n)
                    addr))) ;
         s (Printf.sprintf
-             "    _plops += het_cpu_preload(_pl, %d, &_plrng, HET_CPU_PRELOAD_PCT);\n"
+             "    _plops += het_cpu_preload(_pl, %d, a->_seed, _who, _kn + 1u, HET_CPU_PRELOAD_PCT);\n"
              npl)
       end ;
       s (Printf.sprintf
            "    a->_rdv[_n] = het_rdv_host(a->barrier, (uint64_t)NPART*(uint64_t)(_n+1), a->_cap, %s);\n"
            dialect.gd_poke_arg) ;
-      s "    het_rdv_jitter(&_jrng, HET_RELEASE_JITTER);\n" ;
+      s "    het_rdv_jitter(het_draw(a->_seed, _who, _kn), HET_RELEASE_JITTER);\n" ;
       s (Printf.sprintf "    het_run_P%d(%s);\n" proc call_args) ;
       s "  }\n" ;
       if npl > 0 then

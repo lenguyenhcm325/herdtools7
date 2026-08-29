@@ -12,6 +12,7 @@
 
 #include <stdint.h>
 #include <stdio.h>      /* het_report_spread */
+#include "het_cpu_stress.h"   /* het_draw: the stress schedule, host and device */
 
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_DEVICE_COMPILE__)
 #include <hip/hip_runtime.h>
@@ -69,8 +70,10 @@
 #endif
 
 #ifndef HET_SEED
-#define HET_SEED 1        /* a run replays from its seed [GPUHarbor23 sec 3.4];
-                             the HET_SEED env var varies it without a rebuild */
+#define HET_SEED 1        /* the stress schedule is a function of the seed
+                             [GPUHarbor23 sec 3.4]; hardware timing is not, so a
+                             run does not repeat.  The HET_SEED env var varies
+                             the seed without a rebuild */
 #endif
 #ifndef HET_STRESS_BLOCKS
 #define HET_STRESS_BLOCKS (-1)         /* -1 = auto: fill the co-resident grid */
@@ -90,28 +93,6 @@
 #define HET_TALLY_NOISE_ROUNDS  2
 #define HET_TALLY_STRESS_ROUNDS 3
 #define HET_TALLY_N             4
-
-/* Seeded Park-Miller (Lehmer minimal-standard) RNG [GPUHarbor23 sec 3.4].
- * Divergence from [CudaLitmus]: its toggles are re-rolled on the host between
- * relaunches; this kernel is launched once and loops inside, so the toggles are
- * drawn device-side, seeded per (lane, run). */
-typedef struct { uint32_t s; } het_rng_t;
-
-__device__ __host__ static inline het_rng_t het_rng_init(uint32_t seed, uint32_t lane) {
-  het_rng_t r;
-  uint32_t s = (seed ^ (lane * 2654435761u)) % 2147483647u;
-  if (s == 0u) s = 1u;             /* Park-Miller degenerates at 0 */
-  r.s = s;
-  return r;
-}
-__device__ __host__ static inline uint32_t het_rng_next(het_rng_t* r) {
-  r->s = (uint32_t)(((uint64_t)r->s * 16807ull) % 2147483647ull);
-  return r->s;
-}
-/* [CudaLitmus]'s percentageCheck (runner.cu:106), moved device-side. */
-__device__ __host__ static inline int het_rng_pct(het_rng_t* r, int pct) {
-  return (int)(het_rng_next(r) % 100u) < pct;
-}
 
 /* Scaffolding counters -- compiler builtins, NOT scoped atomics: a builtin
  * lowers to a bare `atom.global.*' with no memory-order qualifier, so this
@@ -193,10 +174,13 @@ __host__ static void het_report_spread(const uint32_t* locations, int num_workgr
             (int)HET_STRESS_TARGETS);
   }
 }
-__host__ static void het_set_scratch_locations(uint32_t* locations, int num_workgroups) {
+__host__ static void het_set_scratch_locations(uint32_t* locations,
+                                              int num_workgroups,
+                                              uint32_t seed) {
   int num_regions = HET_SCRATCH_SIZE / HET_STRESS_LINE_SIZE;
   int used[HET_STRESS_TARGETS];
   int n_used = 0;
+  uint64_t k = 0;
   /* Zero first, then fill: a stress lane indexes scratchpad[locations[blockIdx.x]],
      so an unwritten entry is an out-of-bounds device write. */
   for (int j = 0; j < num_workgroups; j++) { locations[j] = 0u; }
@@ -206,12 +190,13 @@ __host__ static void het_set_scratch_locations(uint32_t* locations, int num_work
        targets already drawn are a valid, smaller spread. */
     if (n_used >= num_regions) { break; }
     do {
-      region = rand() % num_regions;
+      region = (int)(het_draw(seed, HET_WHO_SCRATCH, k++) % (uint32_t)num_regions);
       dup = 0;
       for (int u = 0; u < n_used; u++) { if (used[u] == region) { dup = 1; break; } }
     } while (dup);
     used[n_used++] = region;
-    int loc_in_region = rand() % HET_STRESS_LINE_SIZE;
+    int loc_in_region = (int)(het_draw(seed, HET_WHO_SCRATCH, k++)
+                              % (uint32_t)HET_STRESS_LINE_SIZE);
     uint32_t target = (uint32_t)(region * HET_STRESS_LINE_SIZE + loc_in_region);
 #if HET_STRESS_ASSIGN == 0
     for (int j = i; j < num_workgroups; j += HET_STRESS_TARGETS) {

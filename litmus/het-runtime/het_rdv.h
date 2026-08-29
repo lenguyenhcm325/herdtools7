@@ -24,7 +24,7 @@
 #ifndef HET_RDV_H
 #define HET_RDV_H
 
-#include "het_stress.h"   /* het_rng_t: the jitter draws from the lane's RNG */
+#include "het_stress.h"   /* the vendor runtime header the arrival atomics need */
 
 /* Distance between one iteration's slot and the next, in elements of the shared
    arrays (int).  32 ints = 128 B, one cache line per slot, so two iterations
@@ -107,12 +107,12 @@ static inline int het_rdv_host(uint64_t *_ctr, uint64_t _target, long _cap,
   return _v >= _target;
 }
 
-/* The delay above, drawn per participant per iteration.  The body is an EMPTY
-   volatile asm: a spin that touched memory would add traffic to the window the
-   delay exists to sweep. */
-__device__ __host__ static inline void het_rdv_jitter(het_rng_t *_rng,
+/* The delay above, its draw made per participant per iteration by the caller.
+   The body is an EMPTY volatile asm: a spin that touched memory would add
+   traffic to the window the delay exists to sweep. */
+__device__ __host__ static inline void het_rdv_jitter(uint32_t _draw,
                                                       uint32_t _max) {
-  uint32_t _k = (_max > 0u) ? (het_rng_next(_rng) % (_max + 1u)) : 0u;
+  uint32_t _k = (_max > 0u) ? (_draw % (_max + 1u)) : 0u;
   while (_k > 0u) { _k--; __asm__ __volatile__("" ::: "memory"); }
 }
 

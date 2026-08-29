@@ -204,8 +204,7 @@ let dump_run_reset_race_surface memory ch =
     (fun o -> s (Printf.sprintf "    %s\n" (host_reset o)))
     (race_surface memory) ;
   s {|    uint32_t _seed = _seed0 + (uint32_t)_run;
-    srand((unsigned int)_seed);
-    het_set_scratch_locations(_scratch_loc_h, _grid);
+    het_set_scratch_locations(_scratch_loc_h, _grid, _seed);
 |}
 
 let dump_run_spawn_stress ch =
@@ -215,7 +214,7 @@ let dump_run_spawn_stress ch =
 
   (* A host with no cache primitives issues zero preload hints. *)
   s {|    _ct.preload_inert = !het_cpu_preload_live();
-    het_cpu_shuffle(_cpu_idx, _cpu_nregions);   /* reshuffled per run, off the run seed */
+    het_cpu_shuffle(_cpu_idx, _cpu_nregions, _seed);   /* reshuffled per run */
     __atomic_store_n(&_stress_go, 1, __ATOMIC_RELAXED);
     int _ecore0 = HET_CPU_TEST_CORE0 + _nCpuTest + (HET_NOISE_CPU ? 1 : 0);
     if (_aff && _ecore0 + _nEnemy > _ncores)

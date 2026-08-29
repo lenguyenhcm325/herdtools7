@@ -45,7 +45,7 @@ its two tested stores in the release form this two-sided row is about.
 
 The preload runs per iteration, before the tested body, on the slot of this
 proc's own test variables, and the affinity call precedes the rendezvous.
-  $ sed -n '/^static void\* cpu_thread_P0/,/^}/p' $MP.cu | grep -c 'het_cpu_preload(_pl, 2, &_plrng, HET_CPU_PRELOAD_PCT)'
+  $ sed -n '/^static void\* cpu_thread_P0/,/^}/p' $MP.cu | grep -c 'het_cpu_preload(_pl, 2, a->_seed, _who, _kn + 1u, HET_CPU_PRELOAD_PCT)'
   1
   $ sed -n '/^static void\* cpu_thread_P0/,/^}/p' $MP.cu | grep -c 'void\* const _pl\[2\] = { (void\*)(a->x + _slot), (void\*)(a->y + _slot) }'
   1

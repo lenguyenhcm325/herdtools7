@@ -77,9 +77,13 @@ writer, so a drift would leave it reading and never writing.
   $ grep -c '#define HET_MEM_STRESS_PATTERN 0' MP-cg-sys-acqrel-2s/het_stress.h
   1
 
-(f) the stress toggles are drawn device-side from a seeded per-lane stream, so a
-run replays from its seed with no host round-trip.
-  $ grep -c 'het_rng_t _rng = het_rng_init(_seed, blockIdx.x \* blockDim.x + threadIdx.x)' $MP.cu
+(f) the stress toggles are drawn device-side, each a function of the seed, the
+drawing thread and the index alone, with no host round-trip and no stream state.
+  $ grep -c 'const uint32_t _who = blockIdx.x \* blockDim.x + threadIdx.x;' $MP.cu
+  1
+  $ grep -c '(int)(het_draw(_seed, _who, 2u\*(uint64_t)_n) % 100u) < HET_PRE_STRESS_PCT' $MP.cu
+  1
+  $ grep -c '(int)(het_draw(_seed, _who, _s) % 100u) < HET_MEM_STRESS_PCT' $MP.cu
   1
 
 (g) a shape whose outcome carries a location column runs no extra lane for it,

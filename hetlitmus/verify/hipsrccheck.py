@@ -104,10 +104,10 @@ X86_REG_64 = {"eax": "rax", "ebx": "rbx", "ecx": "rcx", "edx": "rdx",
               "rax": "rax", "rbx": "rbx", "rcx": "rcx", "rdx": "rdx",
               "rsi": "rsi", "rdi": "rdi", "rbp": "rbp", "rsp": "rsp"}
 
-# Device helpers a het kernel may carry (litmus/het-runtime/het_stress.h); one
-# outside this set is an unmodelled memory primitive and hard-fails.
+# Device helpers a het kernel may carry (litmus/het-runtime/het_stress.h and
+# het_cpu_stress.h); one outside this set hard-fails as an unmodelled primitive.
 DEVICE_HELPERS = {
-    "het_rng_t", "het_rng_init", "het_rng_next", "het_rng_pct",
+    "het_draw",
     "het_scratch_read", "het_scratch_bump", "het_scratch_max",
     "het_do_stress",
     "het_rdv_device", "het_rdv_jitter",
@@ -474,7 +474,7 @@ def parse_lane(body, helpers, where):
                 args = _args(m, 2, 'het_rdv_jitter', where)
                 flush()
                 a = Anchor(('jitter',), ['het_rdv_jitter'],
-                           rng=args[0], span=args[1])
+                           draw=args[0], span=args[1])
         if a is None:
             m = C_LOAD.match(s)
             if m:

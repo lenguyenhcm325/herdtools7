@@ -110,8 +110,7 @@ int main(int argc, char** argv) {
   uint32_t* idx = (uint32_t*)malloc(nreg * sizeof(uint32_t));
   uint64_t* nbuf = (uint64_t*)calloc(PROBE_WORDS, sizeof(uint64_t));
   if (!scratch || !idx || !nbuf) return 3;
-  srand(1);
-  het_cpu_shuffle(idx, nreg);
+  het_cpu_shuffle(idx, nreg, 1u);
 
   het_cpu_enemy_args ea[PROBE_ENEMIES];
   pthread_t eth[PROBE_ENEMIES];
@@ -149,9 +148,10 @@ int main(int argc, char** argv) {
   {
     uint64_t x = 0, y = 0;
     void* const pl[2] = { (void*)&x, (void*)&y };
-    uint32_t rng = het_cpu_rng_init(1u, 0u);
     uint64_t ops = 0;
-    for (int i = 0; i < 10000; i++) ops += het_cpu_preload(pl, 2, &rng, pct);
+    for (int i = 0; i < 10000; i++)
+      ops += het_cpu_preload(pl, 2, 1u, HET_WHO_CPU(0), (uint64_t)i * 5u + 1u,
+                             pct);
     __atomic_fetch_add(&t.preload_ops, ops, __ATOMIC_RELAXED);
   }
 
