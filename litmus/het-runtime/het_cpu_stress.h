@@ -204,9 +204,7 @@ void     het_cpu_first_touch(void *p, size_t bytes);
 void     het_cpu_shuffle(uint32_t *idx, uint32_t n);
 
 #ifdef HET_CPU_STRESS_IMPL
-/* Implementation -- compiled ONLY in the <test>_cpu.c translation unit (gcc for
- * the build host, clang --target=aarch64-linux-gnu for real AArch64 asm); nvcc
- * never sees it. */
+/* Implementation. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <sched.h>

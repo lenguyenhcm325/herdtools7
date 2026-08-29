@@ -27,12 +27,11 @@
 type toolchain = {
     isa_name : string ;
     host_macro : string ;          (* CPP macro true on the CPU host ISA *)
-    host_uname : string ;          (* what a link guard compares `uname -m'
-                                      against *)
-    (* (clang triple, -std) cross-assembling the CPU asm; None for x86_64
+    host_uname : string ;          (* `uname -m' on a host of this ISA *)
+    (* (clang triple, -std) cross-assembling the CPU asm off that host
        (hetlitmus/docs/het-emission.md,
        "The CPU object: native vs. cross-assembly"). *)
-    cross : (string * string) option ;
+    cross : string * string ;
     cpu_cflags : string ;
   }
 
@@ -49,7 +48,7 @@ module AArch64 (O:Config) = struct
       isa_name = "AArch64" ;
       host_macro = "__aarch64__" ;
       host_uname = "aarch64" ;
-      cross = Some ("aarch64-linux-gnu","gnu11") ;
+      cross = ("aarch64-linux-gnu","gnu11") ;
       (* litmus7 lowers a two-sided test's acquire read to LDAPR, which is
          ARMv8.3 RCpc and the assembler's default base architecture rejects;
          upstream's mechanism is a compile flag (litmus/libdir/armv8.3.cfg). *)
@@ -78,7 +77,7 @@ module X86_64 (O:Config) = struct
       isa_name = "X86_64" ;
       host_macro = "__x86_64__" ;
       host_uname = "x86_64" ;
-      cross = None ;
+      cross = ("x86_64-linux-gnu","gnu11") ;
       (* litmus7 lowers this corpus into base AMD64; no extension flag is
          owed. *)
       cpu_cflags = "" ;

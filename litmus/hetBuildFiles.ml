@@ -36,9 +36,6 @@ let enum l = match List.rev l with
   | [] -> ""
   | [x] -> x
   | x :: rest -> String.concat ", " (List.rev rest) ^ " and " ^ x
-let count_word = function
-  | 1 -> "The one" | 2 -> "Both" | 3 -> "All three" | 4 -> "All four"
-  | k -> Printf.sprintf "All %d" k
 
 let dump_comp h ch =
   let s = output_string ch in
@@ -59,7 +56,7 @@ let dump_comp h ch =
   s (Printf.sprintf "# Usage: sh comp.sh [%s]   (default %s)\n"
        comp_args d0.gd_target) ;
   s (Printf.sprintf
-       "# Why the link is guarded, why every render writes ./%s, and the build\n"
+       "# Why every render writes ./%s, and the build\n"
        tname) ;
   s "# knobs: hetlitmus/docs/het-emission.md\n" ;
   s "set -e\n" ;
@@ -81,39 +78,33 @@ let dump_comp h ch =
            ("default arch " ^ d.gd_arch_default)))
     dialects ;
   s (Printf.sprintf
-       "HET_HOST_ISA=\"%s\"   # uname -m of this test's CPU ISA (%s)\n"
-       host_uname tc.isa_name) ;
-
-  (* The ISA flags litmus7's lowering needs (e.g. rcpc): the cross
-     line always, the host line only when the host IS this ISA. *)
-  s (Printf.sprintf
        "HET_CPU_CFLAGS=\"${HET_CPU_CFLAGS:-%s}\"\n" tc.cpu_cflags) ;
-  s {|HET_HOST_CFLAGS=""
-if [ "$(uname -m)" = "$HET_HOST_ISA" ]; then HET_HOST_CFLAGS="$HET_CPU_CFLAGS"; fi
-echo "+ gcc -c outs.c"
+  s {|echo "+ gcc -c outs.c"
 gcc -c outs.c -o outs.o
 |} ;
+  (* ONLY the native branch writes the object a link path names
+     (hetlitmus/docs/het-emission.md, "The CPU object: native vs. cross-assembly"). *)
+  let triple,std = tc.cross in
+  s (Printf.sprintf "if [ \"$(uname -m)\" = \"%s\" ]; then\n" host_uname) ;
   s (Printf.sprintf
-       "echo \"+ gcc $HET_HOST_CFLAGS -c %s_cpu.c  (host build; %s asm under #if defined(%s))\"\n"
-       tname tc.isa_name tc.host_macro) ;
-  s (Printf.sprintf "gcc $HET_HOST_CFLAGS -c %s_cpu.c -o %s_cpu_host.o\n"
+       "  echo \"+ gcc $HET_CPU_CFLAGS -c %s_cpu.c  (%s asm, native)\"\n"
+       tname tc.isa_name) ;
+  s (Printf.sprintf "  gcc $HET_CPU_CFLAGS -c %s_cpu.c -o %s_cpu_host.o\n"
        tname tname) ;
-  (match tc.cross with
-   | Some (triple,std) ->
-      s "if command -v clang >/dev/null 2>&1; then\n" ;
-      s (Printf.sprintf
-           "  echo \"+ clang --target=%s $HET_CPU_CFLAGS -c %s_cpu.c  (real %s asm)\"\n"
-           triple tname tc.isa_name) ;
-      s (Printf.sprintf
-           "  clang --target=%s -std=%s $HET_CPU_CFLAGS -c %s_cpu.c -o %s_cpu.o\n"
-           triple std tname tname) ;
-      s (Printf.sprintf
-           "else\n  echo \"(no clang: skipped %s cross-assembly of %s_cpu.c)\"\nfi\n"
-           tc.isa_name tname)
-   | None ->
-      s (Printf.sprintf
-           "# (%s host == build host: the gcc -c above already assembled the real %s asm)\n"
-           tc.isa_name tc.isa_name)) ;
+  s "else\n" ;
+  s (Printf.sprintf
+       "  command -v clang >/dev/null 2>&1 || { echo \"error: clang not found: \
+        %s_cpu.c carries %s asm, which this $(uname -m) host can only \
+        cross-assemble\" >&2 ; exit 1 ; }\n"
+       tname tc.isa_name) ;
+  s (Printf.sprintf
+       "  echo \"+ clang --target=%s $HET_CPU_CFLAGS -c %s_cpu.c  (%s asm, \
+        cross-assembled)\"\n"
+       triple tname tc.isa_name) ;
+  s (Printf.sprintf
+       "  clang --target=%s -std=%s $HET_CPU_CFLAGS -c %s_cpu.c -o %s_cpu.o\n"
+       triple std tname tname) ;
+  s "fi\n" ;
   s "case \"$TARGET\" in\n" ;
   List.iter
     (fun d ->
@@ -121,14 +112,6 @@ gcc -c outs.c -o outs.o
       and arch = "$" ^ d.gd_arch_var
       and obj = gpu_obj d tname in
       s (Printf.sprintf "  %s|%s-link)\n" d.gd_target d.gd_target) ;
-      s (Printf.sprintf
-           "    if [ \"$TARGET\" = %s-link ] && [ \"$(uname -m)\" != \"$HET_HOST_ISA\" ]; then\n"
-           d.gd_target) ;
-      s (Printf.sprintf
-           "      echo \"error: comp.sh %s-link refuses on $(uname -m): %s_cpu_host.o here is the PORTABLE SHIM, not %s asm, so the binary would test nothing -- link on a $HET_HOST_ISA host\" >&2\n"
-           d.gd_target tname tc.isa_name) ;
-      s "      exit 3\n" ;
-      s "    fi\n" ;
       s (Printf.sprintf
            "    command -v \"%s\" >/dev/null 2>&1 || { echo \"error: %s not found (%s toolchain absent)\" >&2 ; exit 1 ; }\n"
            cc cc d.gd_toolchain) ;
@@ -173,7 +156,7 @@ let dump_makefile h ch =
        "# HetLitmus harness '%s' -- objects by default (`make %s');\n"
        tname d0.gd_target) ;
   s (Printf.sprintf
-       "# %s %s ./%s, guarded by uname -m.\n"
+       "# %s %s ./%s.\n"
        (String.concat " / "
           (List.map (fun t -> Printf.sprintf "`make %s-bin'" t)
              targets))
@@ -186,12 +169,7 @@ let dump_makefile h ch =
     dialects ;
   s "CC ?= gcc\n" ;
   s (Printf.sprintf "HET_CPU_CFLAGS ?= %s\n" tc.cpu_cflags) ;
-  s (Printf.sprintf
-       "# uname -m of this test's CPU ISA (%s); the %s-bin guard compares it.\n"
-       tc.isa_name d0.gd_target) ;
-  s (Printf.sprintf "HET_HOST_ISA ?= %s\n" host_uname) ;
-  (* Keyed on the literal uname word, not on HET_HOST_ISA: overriding
-     that to link on a foreign host must not hand its gcc this -march. *)
+  (* A gcc of another ISA rejects a foreign -march before preprocessing. *)
   s (Printf.sprintf
        "HET_HOST_CFLAGS := $(if $(filter %s,$(shell uname -m)),$(HET_CPU_CFLAGS))\n\n"
        host_uname) ;
@@ -219,23 +197,19 @@ let dump_makefile h ch =
     (fun d ->
       s (Printf.sprintf "%s-bin: %s outs.o %s_cpu_host.o\n"
            d.gd_target (gpu_obj d tname) tname) ;
-      s (Printf.sprintf
-           "\t@ test \"$$(uname -m)\" = \"$(HET_HOST_ISA)\" || { echo \"error: %s-bin refuses on $$(uname -m): %s_cpu_host.o here is the PORTABLE SHIM, not %s asm, so the binary would test nothing -- link on a $(HET_HOST_ISA) host\" >&2 ; exit 3 ; }\n"
-           d.gd_target tname tc.isa_name) ;
       s (Printf.sprintf "\t$(%s) %s$(%s) $^ -o %s -lpthread -lm\n\n"
            d.gd_compiler_var d.gd_arch_flag d.gd_arch_var tname))
     dialects ;
   s ".SUFFIXES:\n\n" ;
   s (Printf.sprintf "%s:\n" tname) ;
   s (Printf.sprintf
-       "\t@ echo \"error: \\`make %s' is not a build target: it would bypass the uname -m guard.  Link it with %s, %s uname -m first.\" >&2 ; exit 3\n\n"
-       tname
+       "\t@ echo \"error: \\`make %s' is not a build target: it would hand back a stale ./%s.  Link it with %s.\" >&2 ; exit 3\n\n"
+       tname tname
        (String.concat " or "
           (List.map
              (fun d -> Printf.sprintf "\\`make %s-bin' (%s)"
                          d.gd_target d.gd_vendor)
-             dialects))
-       (plural "which checks" "which all check")) ;
+             dialects))) ;
   s (Printf.sprintf
        ".PHONY: all %s clean %s\nclean:\n\trm -f *.o %s\n"
        (String.concat " "
@@ -249,7 +223,6 @@ let dump_readme h ch =
   let host_uname = tc.host_uname in
   let pair_label = h.h_identity.id_pair_label in
   let dialects = h.h_dialects in
-  let n_d = List.length dialects in
   let d0 = List.hd dialects in
   let targets = targets h and plural = plural h in
   s (Printf.sprintf "# HetLitmus heterogeneous harness: %s\n\n" tname) ;
@@ -274,7 +247,7 @@ let dump_readme h ch =
        tname tc.isa_name) ;
   s "- `outs.c/.h` litmus7's outcome histogram (verbatim from litmus/libdir).\n" ;
   s (Printf.sprintf
-       "- `comp.sh` / `Makefile`  compile-only build, plus %s guarded link target%s.\n\n"
+       "- `comp.sh` / `Makefile`  compile-only build, plus %s link target%s.\n\n"
        (plural "the" "the two") (plural "" "s")) ;
   s (Printf.sprintf
        "Build (compile-only, no GPU): `sh comp.sh [%s]` (default %s), or %s.\n"
@@ -292,12 +265,12 @@ let dump_readme h ch =
            ("default " ^ d.gd_arch_default)))
     dialects ;
   s (Printf.sprintf
-       "%s link paths REFUSE unless `uname -m` is `%s`: elsewhere\n"
-       (count_word (2 * n_d)) host_uname) ;
+       "`%s_cpu.c` compiles only where `uname -m` is `%s` -- its `#else` is\n"
+       tname host_uname) ;
   s (Printf.sprintf
-       "`%s_cpu_host.o` is the portable shim, not the %s asm, and the binary\n"
-       tname tc.isa_name) ;
-  s "would test nothing.\n\n" ;
+       "an `#error` -- so elsewhere `comp.sh` cross-assembles it with\n\
+        `clang --target=%s` and no link path can write `./%s`.\n\n"
+       (fst tc.cross) tname) ;
   s (Printf.sprintf
        "The build knobs and why `make %s` refuses:\n" tname) ;
   s "`hetlitmus/docs/het-emission.md`.\n\n" ;

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # smoke.sh -- a curated rep sample of emitted harnesses compiles end to end
-# through its own comp.sh: gcc host object, clang cross-assembly of the real
-# AArch64 body, nvcc -c, hipcc -c (hetlitmus/docs/README-tests.md).  Needs
-# nvcc, hipcc and clang but NO GPU -- `-arch' is a compile target.  Each rep
-# prints the compile path it covers.
-# Exit 1 on a rep that fails, on a rep list that shrank below NREPS, and on a
-# cross-assembly comp.sh skipped for want of clang.  A missing hipcc SKIPS the
-# .hip rep loudly and NEVER counts as a pass.
+# through its own comp.sh: gcc for outs.c, gcc or a clang --target= cross
+# assembly for the CPU body as the host decides, nvcc -c and hipcc -c
+# (hetlitmus/docs/README-tests.md).  Needs nvcc, hipcc and clang but NO GPU --
+# `-arch' is a compile target.  Each rep prints the compile path it covers.
+# Exit 1 on a rep that fails and on a rep list that shrank below NREPS; a
+# missing clang is comp.sh's own error exit, which the rep's rc check catches.
+# A missing hipcc SKIPS the .hip rep loudly and never counts as a pass.
 set -u
 
 . "$(dirname "$0")/../paths.sh"
@@ -47,13 +47,6 @@ _smoke_het_rep() { # name dialect tool blurb srcdir
     printf '%s\n' "$out"; printf '  FAIL %s (emission)\n' "$name"; fails=$((fails+1)); return
   fi
   out="$(cd "$d/$name" && sh comp.sh "$dialect" 2>&1)"; rc=$?
-  # comp.sh skips the cross-assembly when clang is absent and still exits 0, so
-  # the only assembly of the emitted CPU body would be silently missing.
-  if printf '%s' "$out" | grep -q 'no clang: skipped'; then
-    printf '%s\n' "$out" | grep 'no clang: skipped'
-    printf '  FAIL %s (comp.sh skipped the cross-assembly; install clang)\n' "$name"
-    fails=$((fails+1)); return
-  fi
   if [ "$rc" -eq 0 ] && printf '%s' "$out" | grep -q 'HetLitmus: compile OK'; then
     printf '%s\n' "$out" | grep -E "$filter|HetLitmus: compile OK"
     printf '  PASS %s\n' "$name"

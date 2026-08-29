@@ -25,7 +25,7 @@ Two axes are chosen per test rather than hard-wired:
 ```
 # AArch64 CPU + CUDA (the (AArch64, cuda) pair). Emits ./MP-het/ with the .cu:
 litmus7 -gpu-target cuda -set-libdir herd/libdir hetlitmus/tests/het/MP-het.litmus
-( cd MP-het && sh comp.sh )        # CUDA: nvcc -c + gcc -c (+clang aarch64), exit 0
+( cd MP-het && sh comp.sh )        # CUDA: nvcc -c, gcc -c outs.c, gcc or clang for the body
 
 # x86_64 CPU + HIP (the (x86_64, hip) pair), from a committed x86_64 rendering (tests/het-x86):
 litmus7 -gpu-target hip -o hip-out -set-libdir herd/libdir \
@@ -67,10 +67,10 @@ the header asks for:
    `X86_64Compile_litmus` + `X86_64Parser`) and passed to `HetEmit`;
 3. `CpuF` supplies the per-column sub-parser (`parse_column`) and one
    `HetCpuFront.toolchain` the ISA module itself defines: the human ISA label,
-   the host CPP macro (`__aarch64__` / `__x86_64__`), the `uname -m` word its
-   link guards compare, an optional `(clang-triple, -std)` for cross-assembly
-   (`None` when the build host already *is* this ISA, e.g. x86_64 → native
-   `gcc`) and the CPU compile flags.
+   the host CPP macro (`__aarch64__` / `__x86_64__`), the `uname -m` word a
+   host of this ISA reports, the `(clang-triple, -std)` that cross-assembles
+   the body off such a host — every ISA has one, it is not optional — and the
+   CPU compile flags.
 
 `X86_64Parser.mly` gained the single-column `instr_option_seq` start rule
 (ARM/AArch64/PPC/RISCV already exposed it); since `X86_64Base.parsedInstruction =
@@ -92,7 +92,7 @@ ones `-gpu-target` named, and no other vendor's. `<v>` below is that target word
 | file            | role                                                         | compiled by |
 |-----------------|--------------------------------------------------------------|-------------|
 | `<t>.cu` **or** `<t>.hip` | GPU kernel + host driver in the selected dialect (alloc, barrier, launch, readback) — one of the two, never both | `nvcc -c` / `hipcc -c` |
-| `<t>_cpu.c`     | CPU thread(s): real `<ISA>` inline asm, printed by litmus7's own `ASMLang.dump_fun` | `gcc -c` (native or `#else` shim) **and**, for a foreign-ISA host, `clang --target=<triple> -c` (real asm) |
+| `<t>_cpu.c`     | CPU thread(s): real `<ISA>` inline asm, printed by litmus7's own `ASMLang.dump_fun` | `gcc -c` where `uname -m` is this ISA, `clang --target=<triple> -c` everywhere else; its `#else` is an `#error` |
 | `outs.c`/`.h`   | litmus7's own outcome histogram, embedded verbatim           | `gcc -c`    |
 | `comp.sh`       | compile-only driver, `sh comp.sh [<v>\|<v>-link]` (default `<v>`); the absent vendor's word is refused by name | —           |
 | `Makefile`      | same; `make <v>` / `make <v>-bin` targets                    | —           |
@@ -111,8 +111,10 @@ The five required pieces, and where each is reused rather than reimplemented:
    comments and all (`#START _litmus_P<n>` … `#END`), with no het vocabulary in
    between. Around it the emitter writes one non-static wrapper per CPU proc,
    `void het_run_P<n>(<addr params>, <int* out params>)`, whose parameter lists
-   come from `Cpu.Out.get_addrs` and `Cpu.Out.final`, plus a portable `#else`
-   shim for a host of another ISA. **The slot arithmetic is the caller's**: the
+   come from `Cpu.Out.get_addrs` and `Cpu.Out.final`. The `#else` branch of that
+   `#if` is an `#error` naming the ISA and the triple that assembles it, so a
+   compiler that does not define the host macro stops there rather than
+   producing an object. **The slot arithmetic is the caller's**: the
    asm addresses a bare pointer as litmus7 writes it, so `<t>.cu`'s
    `cpu_thread_P<n>` passes `<g> + _n*HET_SLOT_STRIDE_WORDS` for each address and
    `bufP<n>_<i> + _n` for each output register. One tested mnemonic needs a build
@@ -122,8 +124,11 @@ The five required pieces, and where each is reused rather than reimplemented:
    `clang --target=aarch64-linux-gnu` cross line carries it whatever the build
    host is; the host `gcc` line — `comp.sh`'s and the emitted `Makefile`'s alike,
    and the only rule the `Makefile` has for `_cpu.c` — carries it only where
-   `uname -m` is this test's ISA, because everywhere else that object is the
-   portable shim and another ISA's flags are not the shim's to take.
+   `uname -m` is this test's ISA. `gcc` rejects a foreign `-march` *before* it
+   preprocesses, so handing it to a host `gcc` of another ISA would replace the
+   `#error` naming the ISA with a complaint about the flag. The `Makefile`'s
+   `HET_HOST_CFLAGS` is therefore a flag selector, not a fence: overriding it
+   can only produce something that does not link.
 
 2. **P(gpu) → a GPU kernel (CUDA *and* HIP).** The arm projects onto the
    Bell/LISA side (`HetArch.to_gpu_pseudo`) and builds the kernel by reusing the
@@ -182,8 +187,10 @@ guards, the pthread wrappers, the outcome histogram, and the `<<<…>>>` launch
 `comp.sh` takes one argument, this render's target (the default) or
 `<target>-link`:
 
-* the **shared CPU steps** run first — `gcc -c outs.c`, `gcc -c <t>_cpu.c`, and
-  (for a foreign-ISA host) the clang cross-assembly below;
+* the **shared CPU steps** run first — `gcc -c outs.c`, then exactly one
+  compilation of `<t>_cpu.c`: the host `gcc` where `uname -m` is this ISA, the
+  clang cross-assembly below everywhere else, and a host without `clang` is an
+  error exit rather than a skip;
 * the **GPU step branches** on the target and **hard-fails if the toolchain is
   absent** (`command -v "$NVCC"`/`"$HIPCC"` … || exit 1): `cuda` →
   `nvcc -std=c++17 -arch=$CUDA_ARCH -c <t>.cu`; `hip` →
@@ -225,23 +232,30 @@ render's own `sqrt` (it includes `<cmath>`; `het_verdict.h` calls no math functi
 `<target>-bin` is `.PHONY` and always relinks, so a build can never report
 success while leaving a stale binary in place.
 
-**Why both link paths refuse a foreign host.** `<t>_cpu.c` carries the tested asm
-under `#if defined(<host_macro>)` and a portable shim in the `#else` branch, so
-`gcc -c` succeeds anywhere. Linking elsewhere therefore produces a binary that
-runs, prints a histogram and tests nothing, and both `comp.sh <target>-link` and
-`make <target>-bin` compare `uname -m` against the render's ISA and refuse
-instead (`comp.sh` exits 3; the make recipe exits 3, which `make` reports as its
-own exit 2). `make <t>` refuses too, and the refusal rule is not by itself what
-makes that hold. With every link target phony no rule names `./<t>`, and on a
-CUDA render the GPU object *is* `<t>.o` — exactly what GNU make's built-in
-`%: %.o` rule wants, so make would link past the guard with `$(CC)`.
+**Why no foreign host can link.** `<t>_cpu.c` carries the tested asm under
+`#if defined(<host_macro>)` and an `#error` in the `#else` branch, so a compiler
+that does not define that macro produces no object at all — there is no variable
+to set and no check to pass. The only object either link path names is
+`<t>_cpu_host.o`, and a foreign host writes none — by two different routes.
+`make <target>` and `make <target>-bin` both take it as a prerequisite, so make
+runs its `$(CC)` rule first and that compile stops at the `#error`; the link is
+never reached. `comp.sh <target>-link` does reach its link, its foreign branch
+having written `<t>_cpu.o` instead, and the GPU compiler driver dies on an input
+file that is not there. Neither leaves a `./<t>` behind, and `comp.sh <target>`
+alone still succeeds: `<t>_cpu.o` is the real asm, in an object no link path
+names.
+
+`make <t>` refuses as well, for a reason of its own. With every link target
+phony no rule names `./<t>`, and on a CUDA render the GPU object *is* `<t>.o` —
+exactly what GNU make's built-in `%: %.o` rule wants, so make would link it with
+`$(CC)`.
 `.SUFFIXES:` is what removes that rule: the built-in link rules are
 suffix-derived, so clearing the suffix list drops `%: %.o` and `%: %.c`
 together, and every object rule the harness emits is explicit. Reached, the
 built-in rule would not even leave a wrong binary behind — `$(CC)` links no
 device runtime, so the link dies on undefined `cudaLaunchKernel` — but that
-failure is incidental rather than the guard's, so `./<t>` also gets a rule of
-its own, which refuses by name and points at `<target>-bin`. That rule is
+failure is incidental, so `./<t>` also gets a rule of its own, which refuses by
+name and points at `<target>-bin`. That rule is
 `.PHONY` as well: a plain rule whose target already exists is "up to date", so
 `make <t>` would otherwise exit 0 and hand back whichever binary was lying in
 the directory.
@@ -302,20 +316,23 @@ dialect) PAIR**. That pair, and no machine, is what a render names.
 
 ## The CPU object: native vs. cross-assembly
 
-`<t>_cpu.c` holds the real `<ISA>` inline asm under `#if defined(<host_macro>)`,
-with a clearly-marked portable **shim** in the `#else` branch so `gcc -c` always
-succeeds. Whether a *real* asm object is also produced depends on `CpuF.cross`:
+`<t>_cpu.c` holds the real `<ISA>` inline asm under `#if defined(<host_macro>)`
+and an `#error` in the `#else` branch, so there is exactly one compiler that can
+turn it into an object and `comp.sh` picks it on the `uname -m` word alone:
 
-* **x86_64 CPU on an x86_64 build host** (`cross = None`): the host macro
-  `__x86_64__` is already defined, so the `gcc -c` above assembles the **real**
-  x86 asm directly — no extra step.
-* **AArch64 CPU on an x86_64 build host** (`cross = Some ("aarch64-linux-gnu",
-  "gnu11")`): the host `gcc` takes the shim; `comp.sh` additionally runs
-  `clang --target=aarch64-linux-gnu -std=gnu11 -c <t>_cpu.c` when `clang` is
-  present — clang's integrated assembler emits a genuine `ELF aarch64` object
-  from the real asm, no cross-binutils needed. On the GH200 itself (`aarch64`
-  host) `gcc`/`nvcc`'s host compiler assembles it natively and the clang step is
-  redundant.
+* **native** (`uname -m` is the render's ISA): `gcc $HET_CPU_CFLAGS -c` writes
+  `<t>_cpu_host.o`, the object both link paths name. This is the GH200 for an
+  AArch64 render and any x86_64 box for an x86_64 one.
+* **foreign** (anything else): `clang --target=<triple> -std=<std> -c` writes
+  `<t>_cpu.o` and nothing else. `CpuF.cross` carries that pair for **every** ISA
+  — `("aarch64-linux-gnu","gnu11")` and `("x86_64-linux-gnu","gnu11")` — because
+  each is foreign to the other's host; clang's integrated assembler emits a
+  genuine ELF of the target machine from the real asm, no cross-binutils needed.
+  A foreign host with no `clang` is an error exit, never a skip: the alternative
+  is a directory that reports success having assembled nothing.
+
+Only the native branch writes `<t>_cpu_host.o`, which is why `comp.sh <target>`
+succeeds on a foreign host and `comp.sh <target>-link` cannot.
 
 ## Where the code lives (and what is *not* touched)
 
@@ -362,7 +379,8 @@ All het logic is confined to:
   scores one iteration;
 * `litmus/hetCpuFront.ml` — the per-CPU-ISA column frontend (`CpuF`), one
   module per supported CPU ISA, each providing its own toolchain record (ISA
-  label, host-detection tokens, cross-assembly pair, CPU compile flags);
+  label, host-detection tokens, the mandatory cross-assembly pair, CPU compile
+  flags);
 * the `` `Het `` dispatch arm in `litmus/top_litmus.ml` — the per-ISA module
   instantiation, closing `HetEmit.Make`'s seam over `Top`'s scope.
 

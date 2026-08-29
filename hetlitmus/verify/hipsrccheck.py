@@ -594,8 +594,8 @@ def x86_bodies(cpu_c_text, path):
     blocks = X86_BLOCK.findall(cpu_c_text)
     if not blocks:
         raise CompletenessError(
-            "%s carries no `#if defined(__x86_64__)' block -- the portable shim "
-            "is not the tested path" % path)
+            "%s carries no `#if defined(__x86_64__)' block, so it holds no "
+            "compiled x86 body to read" % path)
     for blk in blocks:
         heads = list(X86_BODY.finditer(blk))
         for k, h in enumerate(heads):

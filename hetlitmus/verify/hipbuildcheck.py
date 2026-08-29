@@ -5,7 +5,9 @@ hipbuildcheck.py -- can an AMD harness be built, linked and refused correctly?
 Phases, each counting its assertions and failing if it made none:
 build-arms (`make <test>' refuses by name), hip-compile (hipcc compiles the
 emitted .hip, and comp.sh reports a failure), device-image (both link arms leave
-gfx942 code in the ELF), host-pair-guard (a link arm refuses a foreign host),
+gfx942 code in the ELF), foreign-host (on a host of the other CPU ISA every make
+path stops at the CPU file's #error and no link arm writes ./<test>, while
+comp.sh cross-assembles that file into an object of the rendered ISA),
 stale-binary (each link target relinks ./<test>), hip-allocator (the shared-mem
 resolver, executed under a stub hipDeviceGetAttribute), place-refusal (HET_PLACE
 refused at compile time) and cuda-nonregression.  A miss is a harness that builds
@@ -29,8 +31,13 @@ LIBDIR = os.path.join(ROOT, "litmus", "libdir")
 # The x86_64 rendering is the one an x86_64 host can LINK, and its GPU column
 # annotates f[sc,sys], so every phase that compiles builds a fence render.
 X86_TEST = "MP-cg-sys-fence-x86_64"
-# host-pair-guard's refusal probe, on that same x86_64 host.
+# The other CPU ISA: foreign-host drives whichever of the two renders is
+# foreign to the host it runs on.
 AARCH64_TEST = "MP-cg-sys-acqrel-2s"
+
+# ELF e_machine (bytes 18-19, little-endian) per `uname -m' word: what a
+# cross-assembled CPU object must report.
+E_MACHINE = {"aarch64": 183, "x86_64": 62}
 
 # MI300A / MI300X.  Both parts report gfx942; hipDeviceAttributeIntegrated is
 # what separates them, and hip-allocator checks the harness reads it.
@@ -127,14 +134,15 @@ def make_test_refuses(tmp, d, phase, link_target):
         blob = r.stdout + r.stderr
         tick(phase)
         if r.returncode == 0:
-            fail(phase, "`make %s' (%s) EXITED 0 -- it must refuse: linking ./%s "
-                        "directly bypasses the uname -m guard the real link "
-                        "target applies (make said: %r)" % (t, label, t, blob.strip()[-300:]))
+            fail(phase, "`make %s' (%s) EXITED 0 -- it must refuse: with no rule "
+                        "of its own ./%s is relinked by make's built-in rule, or "
+                        "reported up to date when it already exists "
+                        "(make said: %r)" % (t, label, t, blob.strip()[-300:]))
             continue
         tick(phase)
         if "is not a build target" not in blob:
             fail(phase, "`make %s' (%s) failed without refusing by name -- if this is "
-                        "make's built-in `%%: %%.o' rule firing, the guard is bypassed "
+                        "make's built-in `%%: %%.o' rule firing, the refusal never ran "
                         "and the failure is incidental:\n%s" % (t, label, blob[-800:]))
         tick(phase)
         if link_target not in blob:
@@ -229,56 +237,191 @@ def phase3(tmp, d):
         fail("device-image", "phase made no assertions")
 
 
-def phase4(tmp, d_aarch64_cuda, d_x86_hip):
-    """Fail-closed on the WRONG HOST: (a) a link arm refuses a foreign host, on
-    the (AArch64, cuda) render; (b) the x86 HIP render carries the guard too."""
-    print("[host-pair-guard] fail-closed on the wrong host, at emission and at link, on %s"
-          % os.uname().machine)
-    if os.uname().machine == "aarch64":
-        fail("host-pair-guard", "this host IS aarch64, so the AArch64 refusal cannot "
-                                "be observed here; "
-                   "run this gate on a foreign host too")
+def e_machine_of(path):
+    """The ELF e_machine an object reports, or None if it is not an ELF."""
+    with open(path, "rb") as f:
+        head = f.read(20)
+    if len(head) < 20 or head[:4] != b"\x7fELF":
+        return None
+    return head[18] | (head[19] << 8)
+
+
+# What comp.sh reaches for besides clang.  /usr/bin carries clang too, so the
+# counterfactual PATH is built up from these rather than filtered down.
+NO_CLANG_TOOLS = ["sh", "uname", "gcc", "as", "ld", "nvcc", "hipcc"]
+
+
+def path_without_clang(tmp):
+    """A PATH holding every tool comp.sh needs EXCEPT clang, as a directory of
+       symlinks.  Returns it, or None with a reason if it lost a needed tool."""
+    w = os.path.join(tmp, "no-clang-bin")
+    shutil.rmtree(w, ignore_errors=True)
+    os.makedirs(w)
+    for t in NO_CLANG_TOOLS:
+        real = shutil.which(t)
+        if real:
+            os.symlink(real, os.path.join(w, t))
+    if shutil.which("clang", path=w) is not None:
+        return None, "the counterfactual PATH still resolves clang"
+    for t in ["sh", "gcc"]:
+        if shutil.which(t, path=w) is None:
+            return None, "the counterfactual PATH lost %s, so a failure under it " \
+                         "would not be attributable to clang" % t
+    return w, None
+
+
+def phase4(tmp, d_aa_cuda, d_x86_cuda):
+    """The CPU file compiles for its own ISA ONLY: on a host of the other ISA
+    every make path stops at its #error and no link arm writes ./<test>, while
+    comp.sh cross-assembles it into an object of the rendered ISA."""
+    m = os.uname().machine
+    print("[foreign-host] the foreign render stops at its #error and "
+          "cross-assembles instead, on %s" % m)
+    renders = {"x86_64": (d_aa_cuda, d_x86_cuda),
+               "aarch64": (d_x86_cuda, d_aa_cuda)}.get(m)
+    if renders is None:
+        fail("foreign-host", "no render here is foreign to a %s host: this gate "
+                             "emits an AArch64 and an x86_64 one, so the #error "
+                             "cannot be reached.  Run it on x86_64 or aarch64" % m)
         return
+    if not have("nvcc"):
+        fail("foreign-host", "nvcc not on PATH -- both make arms and comp.sh build "
+                             "the CUDA object on the way to the CPU file, so the "
+                             "#error cannot be observed here")
+        return
+    d_foreign, d_native = renders
+    t = test_of(d_foreign)
+    tn = test_of(d_native)
+    # The host word decides which render is foreign, which ISA label its file
+    # must name and which triple assembles it; each is then asserted, not assumed.
+    label = {"aarch64": "AArch64", "x86_64": "X86_64"}
+    foreign_uname = {"x86_64": "aarch64", "aarch64": "x86_64"}[m]
+    isa, native_isa = label[foreign_uname], label[m]
+    triple = foreign_uname + "-linux-gnu"
+    want_machine = E_MACHINE[foreign_uname]
 
-    # --- (a) a link arm refuses a foreign host ------------------------------
-    for arm, cmd, want in [("comp.sh cuda-link", ["sh", "comp.sh", "cuda-link"], 3),
-                           ("make cuda-bin", ["make", "cuda-bin"], 2)]:
-        r = run(cmd, cwd=d_aarch64_cuda)
+    # --- (a),(b) every make path stops at the #error ------------------------
+    for arm in ["cuda-bin", "cuda"]:
+        w = fresh(tmp, d_foreign, "p4-make-" + arm)
+        r = run(["make", arm], cwd=w)
         blob = r.stdout + r.stderr
-        tick("host-pair-guard")
-        if r.returncode != want:
-            fail("host-pair-guard", "%s on an AArch64 render exited %d, expected %d -- a link that "
-                       "succeeds here links the PORTABLE SHIM"
-                 % (arm, r.returncode, want))
-        tick("host-pair-guard")
-        if "refuses on" not in blob or "PORTABLE SHIM" not in blob:
-            fail("host-pair-guard", "%s refused without saying why (no 'refuses on' / "
-                                    "'PORTABLE SHIM'):\n%s"
-                 % (arm, blob[-800:]))
-        tick("host-pair-guard")
-        if "AArch64 asm" not in blob:
-            fail("host-pair-guard", "%s refusal does not name the CPU ISA it was rendered for:\n%s"
-                 % (arm, blob[-800:]))
-        tick("host-pair-guard")
-        if os.path.isfile(os.path.join(d_aarch64_cuda, test_of(d_aarch64_cuda))):
-            fail("host-pair-guard", "%s refused but a binary exists anyway" % arm)
+        tick("foreign-host")
+        if r.returncode == 0:
+            fail("foreign-host", "`make %s' on the %s render SUCCEEDED on this %s "
+                 "host -- the CPU object it built is not %s asm"
+                 % (arm, isa, m, isa))
+            continue
+        tick("foreign-host")
+        if "#error" not in blob:
+            fail("foreign-host", "`make %s' on the %s render failed without reaching "
+                 "the CPU file's #error, so the failure is incidental:\n%s"
+                 % (arm, isa, blob[-800:]))
+        tick("foreign-host")
+        if isa not in blob:
+            fail("foreign-host", "`make %s' on the %s render failed without naming "
+                 "the ISA the file was rendered for:\n%s" % (arm, isa, blob[-800:]))
+        tick("foreign-host")
+        if os.path.isfile(os.path.join(w, t + "_cpu_host.o")):
+            fail("foreign-host", "`make %s' on the %s render left a %s_cpu_host.o -- "
+                 "the host gcc compiled the CPU file after all" % (arm, isa, t))
+        tick("foreign-host")
+        if os.path.isfile(os.path.join(w, t)):
+            fail("foreign-host", "`make %s' on the %s render failed but produced "
+                 "./%s anyway" % (arm, isa, t))
 
-    # --- (b) the HIP render carries the same guard --------------------------
-    comp = open(os.path.join(d_x86_hip, "comp.sh")).read()
-    mk = open(os.path.join(d_x86_hip, "Makefile")).read()
-    for what, txt in [("comp.sh", comp), ("Makefile", mk)]:
-        tick("host-pair-guard")
-        if 'HET_HOST_ISA="x86_64"' not in txt and "HET_HOST_ISA ?= x86_64" not in txt:
-            fail("host-pair-guard", "the HIP render's %s does not record its host ISA, so its link "
-                       "arm has nothing to guard on:\n%s" % (what, txt[:400]))
-        tick("host-pair-guard")
-        if "PORTABLE SHIM" not in txt:
-            fail("host-pair-guard", "the HIP render's %s carries no uname guard on its link arm "
-                       "-- linking it on a foreign host would test nothing" % what)
+    # --- (c) comp.sh cross-assembles the real asm instead -------------------
+    w = fresh(tmp, d_foreign, "p4-comp")
+    r = run(["sh", "comp.sh", "cuda"], cwd=w)
+    tick("foreign-host")
+    if r.returncode != 0:
+        fail("foreign-host", "comp.sh cuda on the %s render failed (exit %d) -- a "
+             "foreign host must still be able to compile it:\n%s%s"
+             % (isa, r.returncode, r.stdout[-1500:], r.stderr[-1500:]))
+    else:
+        tick("foreign-host")
+        if "+ clang --target=%s" % triple not in r.stdout:
+            fail("foreign-host", "comp.sh cuda on the %s render did not report a "
+                 "clang --target=%s step:\n%s" % (isa, triple, r.stdout))
+        obj = os.path.join(w, t + "_cpu.o")
+        tick("foreign-host")
+        if not os.path.isfile(obj):
+            fail("foreign-host", "comp.sh cuda on the %s render left no %s_cpu.o"
+                 % (isa, t))
+        else:
+            tick("foreign-host")
+            got = e_machine_of(obj)
+            if got != want_machine:
+                fail("foreign-host", "%s_cpu.o reports e_machine %r, expected %d -- "
+                     "the cross-assembly did not produce %s code"
+                     % (t, got, want_machine, isa))
+        tick("foreign-host")
+        if os.path.isfile(os.path.join(w, t + "_cpu_host.o")):
+            fail("foreign-host", "comp.sh cuda on the %s render also wrote a "
+                 "%s_cpu_host.o, which a link arm here would happily take"
+                 % (isa, t))
 
-    print("      %d assertions" % counts.get("host-pair-guard", 0))
-    if not counts.get("host-pair-guard"):
-        fail("host-pair-guard", "phase made no assertions")
+    # --- (d) and the link arm therefore produces nothing --------------------
+    w = fresh(tmp, d_foreign, "p4-link")
+    r = run(["sh", "comp.sh", "cuda-link"], cwd=w)
+    tick("foreign-host")
+    if r.returncode == 0:
+        fail("foreign-host", "comp.sh cuda-link on the %s render exited 0 on this %s "
+             "host -- it linked something that is not %s asm" % (isa, m, isa))
+    tick("foreign-host")
+    if os.path.isfile(os.path.join(w, t)):
+        fail("foreign-host", "comp.sh cuda-link on the %s render left ./%s behind"
+             % (isa, t))
+
+    # --- (e) counterfactual: no clang is an error exit, never a skip --------
+    nc, why = path_without_clang(tmp)
+    if nc is None:
+        tick("foreign-host")
+        fail("foreign-host", why)
+    else:
+        w = fresh(tmp, d_foreign, "p4-noclang")
+        e = dict(os.environ)
+        e["PATH"] = nc
+        r = subprocess.run(["sh", "comp.sh", "cuda"], capture_output=True, text=True,
+                           cwd=w, env=e)
+        blob = r.stdout + r.stderr
+        tick("foreign-host")
+        if r.returncode == 0:
+            fail("foreign-host", "comp.sh cuda on the %s render exited 0 with no "
+                 "clang on PATH -- the cross-assembly was skipped instead of "
+                 "refused:\n%s" % (isa, blob[-800:]))
+        tick("foreign-host")
+        if "clang" not in blob:
+            fail("foreign-host", "comp.sh cuda failed without naming clang, so the "
+                 "user is not told what is missing:\n%s" % blob[-800:])
+        tick("foreign-host")
+        if not os.path.isfile(os.path.join(w, "outs.o")):
+            fail("foreign-host", "comp.sh cuda got no further than outs.c under the "
+                 "counterfactual PATH, so its failure is not clang's:\n%s"
+                 % blob[-800:])
+        tick("foreign-host")
+        if os.path.isfile(os.path.join(w, t + "_cpu.o")):
+            fail("foreign-host", "comp.sh cuda wrote %s_cpu.o with no clang on PATH"
+                 % t)
+
+    # --- (f) the OTHER ISA's render carries the same error ------------------
+    w = fresh(tmp, d_native, "p4-native")
+    r = run(["clang", "--target=" + triple, "-c", tn + "_cpu.c", "-o", "cross.o"],
+            cwd=w)
+    blob = r.stdout + r.stderr
+    tick("foreign-host")
+    if r.returncode == 0:
+        fail("foreign-host", "the %s render's %s_cpu.c compiled for %s -- only one "
+             "of the two ISAs stops a compiler aimed at the other"
+             % (native_isa, tn, triple))
+    tick("foreign-host")
+    if "#error" not in blob or native_isa not in blob:
+        fail("foreign-host", "the %s render's %s_cpu.c failed for %s without its "
+             "#error naming %s:\n%s"
+             % (native_isa, tn, triple, native_isa, blob[-800:]))
+
+    print("      %d assertions" % counts.get("foreign-host", 0))
+    if not counts.get("foreign-host"):
+        fail("foreign-host", "phase made no assertions")
 
 
 def plant(src_bin, dst_bin):
@@ -598,8 +741,8 @@ def main():
         d_x86 = emit(tmp, src, os.path.join(tmp, "out-x86-hip"), "x86 render", "hip")
         d_x86_cuda = emit(tmp, src, os.path.join(tmp, "out-x86-cuda"),
                           "x86 render", "cuda")
-        # The AArch64 render host-pair-guard drives is the CUDA one; one
-        # per-dialect fold emits the uname guard on both.
+        # The AArch64 render, emitted CUDA so foreign-host has one render per
+        # CPU ISA in the same dialect.
         d_aa_cuda = emit(tmp, os.path.join(HET_DIR, AARCH64_TEST + ".litmus"),
                          os.path.join(tmp, "out-aa"), "AArch64 render", "cuda")
 
@@ -609,7 +752,7 @@ def main():
         phase1(tmp, d_x86)
         phase2(tmp, d_x86)
         phase3(tmp, d_x86)
-        phase4(tmp, d_aa_cuda, d_x86)
+        phase4(tmp, d_aa_cuda, d_x86_cuda)
         phase5(tmp, d_x86_cuda, d_x86)
         phase6(tmp, d_x86)
         phase6b(tmp, d_x86)

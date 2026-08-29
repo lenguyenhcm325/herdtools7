@@ -49,18 +49,9 @@ let dump h ch =
   List.iter (fun cp -> cp.cp_dump ch) procs.pr_cpus ;
   s "#else\n" ;
   s (Printf.sprintf
-       "/* Stub for a non-%s host; the tested body is the asm above. */\n"
-       tc.isa_name) ;
-  List.iter
-    (fun cp ->
-      s (Printf.sprintf "static void code%d(%s) {\n"
-           cp.cp_proc (cpu_signature cp)) ;
-      List.iter (fun (_,n) -> s (Printf.sprintf "  (void)%s;\n" n))
-        cp.cp_addrs ;
-      List.iter (fun (_,n) -> s (Printf.sprintf "  *%s = 0;\n" n))
-        cp.cp_outs ;
-      s "}\n")
-    procs.pr_cpus ;
+       "#error \"%s_cpu.c carries %s asm and compiles only where uname -m is \
+        %s; cross-assemble it elsewhere with clang --target=%s\"\n"
+       tname tc.isa_name tc.host_uname (fst tc.cross)) ;
   s "#endif\n\n" ;
 
   (* The non-static entry points the GPU-side driver calls. *)

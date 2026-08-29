@@ -40,7 +40,7 @@ let dump_prelude dialect identity geometry procs ch =
   s (Printf.sprintf
        "// Compile-only by default (%s -c); comp.sh %s-link / make %s-bin\n"
        dialect.gd_compiler dialect.gd_target dialect.gd_target) ;
-  s "// link the runnable binary, guarded by uname -m.  DO NOT EDIT.\n" ;
+  s "// link the runnable binary.  DO NOT EDIT.\n" ;
   s (dialect.gd_runtime_include ^ "\n") ;
   s {|#include <cstdio>
 #include <cstdint>

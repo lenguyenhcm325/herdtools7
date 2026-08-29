@@ -3,8 +3,10 @@
 stresscheck.py (hetlitmus/docs/faithfulness.md, "CPU-side stress liveness").
 The cache preload, the CPU enemies and the interconnect noise reach no PTX, so a
 miss here means a null was scored on a layer the optimiser removed or that never
-ran.  Static, off the -O2 asm of both host ISAs: preload-prims-aarch64,
-preload-prims-x86, enemy-loop, enemy-seq-runtime.  Dynamic, on this host:
+ran.  Static, off the -O2 asm of each host ISA's own rendering of the rep:
+preload-prims-aarch64, preload-prims-x86, enemy-loop, enemy-seq-runtime.  A rep
+with no x86_64 rendering FAILS rather than skipping its arm.  Dynamic, on this
+host:
 stress-live, stress-off-zero, first-touch.  Structural, on the emitted driver:
 preload-guard-field and preload-guard-term.
 
@@ -24,10 +26,11 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))       # herdtools7
 LITMUS7 = os.path.join(REPO, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(REPO, "litmus", "libdir")
 
-# Both host ISAs are read through a cross-compiler, so which one the gate runs on
-# decides nothing: a native `gcc' would read the host's own asm as the x86 one.
+# Each arm reads, through clang --target, a render of its OWN ISA: a <t>_cpu.c
+# stops at an #error for any other, so the x86 arm takes HETX86_DIR's rendering.
 AARCH64_TRIPLE = "aarch64-linux-gnu"
 X86_TRIPLE = "x86_64-linux-gnu"
+HETX86_DIR = os.path.join(REPO, "hetlitmus", "tests", "het-x86")
 SEQS = (0, 1, 2, 3)
 
 # The cache primitives, per ISA: litmus7's own (libdir/_<isa>/_cache.h) and the
@@ -209,6 +212,12 @@ def harness_paths(d, name):
     return d, cpu_c, cu, hdr
 
 
+def x86_rep_for(litmus_path):
+    """The committed x86_64 rendering of this rep, whose _cpu.c the x86 arm reads."""
+    name = os.path.splitext(os.path.basename(litmus_path))[0]
+    return os.path.join(HETX86_DIR, name + "-x86_64.litmus")
+
+
 def emit_harness(litmus_path, outdir):
     """litmus7-emit the harness; return its (dir, _cpu.c, .cu, het_cpu_stress.h)."""
     name = os.path.splitext(os.path.basename(litmus_path))[0]
@@ -325,13 +334,21 @@ def check(litmus_path):
                  "pstl1keep all present in the -O2 asm")
 
         # ---- preload-prims-x86: and on the x86_64 host ISA -----------------
-        x86 = asm_of(cpu_c, X86_TRIPLE)
+        x86_litmus = x86_rep_for(litmus_path)
+        if not os.path.exists(x86_litmus):
+            fail("preload-prims-x86: no %s, so this rep has no x86_64 rendering "
+                 "whose _cpu.c an x86_64 compiler can read"
+                 % os.path.relpath(x86_litmus, REPO))
+            return ok[0], lines
+        _, x86_cpu_c, _, _ = emit_harness(x86_litmus, tmp)
+        x86 = asm_of(x86_cpu_c, X86_TRIPLE)
         for prim, rx in X86_PRIMS.items():
             if len(rx.findall(x86)) < 1:
                 fail("preload-prims-x86: no `%s' in the -O2 asm -- the cache "
                      "preload is INERT on the x86_64 host ISA." % prim)
         if ok[0]:
-            note("  preload-prims-x86: clflush and prefetcht0 present in the -O2 asm")
+            note("  preload-prims-x86: clflush and prefetcht0 present in the -O2 "
+                 "asm of the x86_64 rendering")
 
         # ---- enemy-loop: it survived the optimiser -------------------------
         got = count_enemy_ops(a64)

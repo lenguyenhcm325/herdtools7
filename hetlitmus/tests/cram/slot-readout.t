@@ -125,15 +125,24 @@ compilation of <t>_cpu.c or every -2s test fails to ASSEMBLE.
   $ grep -c '$(CC) $(HET_HOST_CFLAGS) -c $< -o $@' CoRR-cg-sys-acqrel-2s/Makefile
   1
 
-The Makefile hands those flags to the host object only on a native host, so a
-compile-only build of an AArch64 harness succeeds on an x86_64 box.
+The Makefile hands those flags to the host object only where `uname -m` is this
+render's own ISA.
   $ grep -c 'HET_HOST_CFLAGS := $(if $(filter aarch64,$(shell uname -m)),$(HET_CPU_CFLAGS))' CoRR-cg-sys-acqrel-2s/Makefile
+  1
+
+Each render's CPU file compiles for its own ISA only: the #else branch is an
+#error naming that ISA, and off its host comp.sh cross-assembles the file.
+  $ grep -c '#error "CoRR-cg-sys-acqrel-2s_cpu.c carries AArch64 asm and compiles only where uname -m is aarch64; cross-assemble it elsewhere with clang --target=aarch64-linux-gnu"' CoRR-cg-sys-acqrel-2s/CoRR-cg-sys-acqrel-2s_cpu.c
   1
 
 The x86_64 pair owes no extension flag, and the variable is still there: an
 empty default is a flag list, not a missing one.
   $ litmus7 -gpu-target hip -o . ../het-x86/MP-cg-sys-relaxed-x86_64.litmus >/dev/null 2>&1
   $ grep -c 'HET_CPU_CFLAGS="${HET_CPU_CFLAGS:-}"' MP-cg-sys-relaxed-x86_64/comp.sh
+  1
+  $ grep -c '#error "MP-cg-sys-relaxed-x86_64_cpu.c carries X86_64 asm and compiles only where uname -m is x86_64; cross-assemble it elsewhere with clang --target=x86_64-linux-gnu"' MP-cg-sys-relaxed-x86_64/MP-cg-sys-relaxed-x86_64_cpu.c
+  1
+  $ grep -c 'clang --target=x86_64-linux-gnu -std=gnu11 $HET_CPU_CFLAGS -c' MP-cg-sys-relaxed-x86_64/comp.sh
   1
 
 REFUSAL (a): an atom no outcome column backs has no slot to read, so the
