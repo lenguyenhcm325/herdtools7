@@ -105,11 +105,14 @@ the moral-strength / scope-mismatch demonstration. Host launch uses
 
 ## Compile status
 - **HIP compile.** `hetlitmus/compile-hip.sh [INDIR] [OUTDIR]` cross-compiles
-  every `.hip` in INDIR for the MI300A ISA (`gfx942`) with `hipcc
-  --offload-arch=gfx942 -std=c++17 <test>.hip -o <test>`, a by-hand build of
-  one host binary per render; its default INDIR is `hip-out/`, the committed
-  `hip-out/*.hip` samples — all fence-free. CUDA has no `compile-cuda.sh`
-  twin. `amdclang++` accepts the
+  every `.hip` in INDIR with `$HIPCC --offload-arch=$HIP_ARCH -std=c++17
+  <test>.hip -o <test>`, a by-hand build of one host binary per render;
+  `HIP_ARCH` defaults to `gfx942`, the MI300A ISA, and `HIPCC` to `hipcc` on
+  `PATH`, else `/opt/rocm/bin/hipcc`. Its default INDIR is `hip-out/`, the
+  committed `hip-out/*.hip` samples — all fence-free, and its default OUTDIR is
+  `$RESULTS/hip-compile`, in the results dir that
+  [`het-emission.md`](het-emission.md), "From a corpus to a results dir",
+  defines. CUDA has no `compile-cuda.sh` twin. `amdclang++` accepts the
   `__hip_atomic_*` / `__HIP_MEMORY_SCOPE_*` builtins (nvcc does **not**, so this
   requires the HIP-Clang stack, not HIP-over-CUDA). A clean build proves the
   scope/order lowering is valid for the target ISA; it does NOT validate
