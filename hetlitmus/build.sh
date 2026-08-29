@@ -47,7 +47,11 @@ name_list() {                   # <LIST|FILE>
   fi
 }
 if [ -n "$TESTS" ]; then
-  LIST="$(name_list "$TESTS")"
+  # A name listed twice would be two workers running make clean in one dir.
+  RAW="$(name_list "$TESTS")"
+  LIST="$(printf '%s\n' "$RAW" | awk '!seen[$0]++')"
+  DUP="$(printf '%s\n' "$RAW" | sort | uniq -d | paste -sd ' ')"
+  [ -z "$DUP" ] || echo "build: --tests names $DUP more than once; one build each"
 else
   LIST="$(cd "$EMIT" && ls -1d ./*/ 2>/dev/null | sed 's|^\./||; s|/$||' || true)"
 fi
@@ -84,8 +88,9 @@ fi
 # The compiler variable may carry flags (`NVCC="nvcc -DHET_LLC_MB=256"'), which
 # make expands into the command line: only its first word is a program name.
 CBIN="${COMPILER%% *}"
-command -v "$CBIN" >/dev/null 2>&1 \
-  || refuse "$CBIN is not on PATH, and the $VENDOR harnesses are built with it"
+# command -v alone resolves a builtin or function, which compiles nothing.
+[ -x "$(command -v "$CBIN" 2>/dev/null || true)" ] \
+  || refuse "$CBIN does not resolve to an executable, and the $VENDOR harnesses are built with it"
 
 # The probe is the ONLY other source of an arch, and it writes literal NONE and
 # AMBIGUOUS(...) values, which the shape check below rejects like any other.

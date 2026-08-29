@@ -40,12 +40,13 @@ for f in lrcpc lrcpc2 atomics asimd sve; do
 done
 emit "cpu_model=$(grep -m1 -E '^(model name|CPU part|Model)' /proc/cpuinfo 2>/dev/null | cut -d: -f2- | sed 's/^ *//' || echo unknown)"
 
-if command -v "$HIPCC" >/dev/null 2>&1; then
+# command -v alone resolves a builtin or function, which is no toolchain.
+if [ -x "$(command -v "$HIPCC" 2>/dev/null || true)" ]; then
   emit "hipcc=$($HIPCC --version 2>/dev/null | grep -m1 -E 'HIP version|clang version' || echo unknown)"
 else
   emit "hipcc=ABSENT"
   emit "probe_status=NO_TOOLCHAIN"
-  echo "probe-hip: $HIPCC not found -- wrote $OUT" >&2
+  echo "probe-hip: $HIPCC does not resolve to an executable -- wrote $OUT" >&2
   exit 2
 fi
 emit "rocm_path=${ROCM_PATH:-$(dirname "$(dirname "$(command -v "$HIPCC")")")}"

@@ -59,7 +59,10 @@ name_list() {                   # <LIST|FILE>
   fi
 }
 if [ -n "$TESTS" ]; then
-  LIST="$(name_list "$TESTS")"
+  RAW="$(name_list "$TESTS")"
+  LIST="$(printf '%s\n' "$RAW" | awk '!seen[$0]++')"
+  DUP="$(printf '%s\n' "$RAW" | sort | uniq -d | paste -sd ' ')"
+  [ -z "$DUP" ] || echo "emit-het: --tests names $DUP more than once; one emission each"
 else
   LIST="$(cd "$CORPUS" && ls -1 ./*.litmus 2>/dev/null | sed 's|^\./||; s|\.litmus$||' || true)"
 fi

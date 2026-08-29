@@ -497,7 +497,8 @@ into it.
 | execute | `python3 hetlitmus/campaign.py --corpus EMIT --budget-runs N --state $RESULTS/campaign-<tag>.csv [--log-dir DIR, default $RESULTS/campaign-<tag>-logs] [--tests LIST\|FILE] [--timeout S]` | the state CSV, the transcripts, the final report |
 
 `--tests` everywhere takes a comma list or a path to a file with one name per
-line (`#` and blanks ignored, the first field of a line is the name); with no
+line (`#` and blanks ignored, the first field of a line is the name), and a
+name listed more than once is taken once, which the step says; with no
 `--tests`, build and campaign take the whole corpus. The arch is `probe.txt`'s
 `suggested_cuda_arch` / `suggested_hip_arch` unless `--arch` names one, and
 nothing else detects it. The campaign draws a fresh seed base for itself, prints
