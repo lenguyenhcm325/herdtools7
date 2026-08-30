@@ -117,7 +117,7 @@ No prior work routes GPU/het through litmus7's CPU harness (Bagchi *stitches*).
   never coarse-grained (invisible mid-kernel).
 - **A box without hardware CPU-GPU coherence → `cudaMallocManaged` (`HET_ALLOC=managed`) as a machinery
   fallback only**: it validates codegen and plumbing, never the property under test.
-- **Placement is a knob** (§3.6): first-touch / `cudaMemAdvise` remote-pinning is the interconnect-stress
+- **Placement is a knob** (§3.6): first-touch / NUMA-bound remote-pinning is the interconnect-stress
   lever. `__out` may stay in ordinary host memory (off the race path).
 - **The CPU-side ordering rules are specified for write-back memory** ([APM] §7.2, §7.4.2). The memory
   type of the shared allocation is a platform fact this tool does not measure, so every CPU-proc outcome
@@ -264,8 +264,11 @@ quiet one — that key's deviation records what still runs.
   X/Y/barrier); preload sits *outside* the opaque compiled tested-order unit (never between the tested
   STLR/LDAPR/DMB).
 - **Interconnect stress (the genuine novelty):** remote-pin a shared page to the *consumer's* far memory
-  (`cudaMemAdvise` + defeat access-counter migration) so every access crosses NVLink-C2C, and/or run **Fusco
-  "noise kernels"** (each side stream-reads the other's memory → C2C bandwidth to 17 %/65 %). GPU-only /
+  (bind it to the far NUMA node with `mbind(MPOL_BIND)` — a strict policy that also blocks access-counter
+  migration — then read the page home back with `move_pages`, counting any page left off-node; system
+  `malloc` pages are otherwise first-touch placed and stay migratable, and `cudaMemAdvise` only advises,
+  it never moves a resident page [Fusco24 "Unified Memory"]) so every access crosses NVLink-C2C, and/or
+  run **Fusco "noise kernels"** (each side stream-reads the other's memory → C2C bandwidth to 17 %/65 %). GPU-only /
   CPU-local stress *cannot* reach the C2C window. Bagchi did per-device stress only,
   no link-directed component → this is a modest, honest addition. **"More effective" is an inference**
   (Fusco measured bandwidth, not weak-behaviour yield) → hardware-only. MI300A analogue = contention on the
@@ -378,7 +381,7 @@ GH200/MI300A** (§6).
 | component | what it carries |
 |---|---|
 | **Iteration window** | `100000` → `Cfg.size` + a `Cfg.runs` outer loop, surfaced as `SIZE_OF_TEST`/`NUMBER_OF_RUN` + argv. Not a standalone step: the semantics change to a window, so it lands with the persistent loop. |
-| **Allocator knob** | Per target: `malloc`/GH200, fine-grained/MI300A, managed = machinery fallback; `cudaMemAdvise` placement hooks. One entry point, `gd_alloc_shared`, selected by `HET_ALLOC`. |
+| **Allocator knob** | Per target: `malloc`/GH200, fine-grained/MI300A, managed = machinery fallback; NUMA-binding placement hooks. One entry point, `gd_alloc_shared`, selected by `HET_ALLOC`. |
 | **Persistent loop** | Launch once, loop inside, occupancy-bounded/cooperative launch; no per-iteration relaunch and no `cudaDeviceSynchronize`. The biggest single change. |
 | **Cross-device rendezvous** | `het_rdv.h`: relaxed system-scope counter arrival + poll under a cap, per-participant arrival flags, per-participant release jitter, host-side runtime poke on iteration 0. Every iteration opens at it (§3.3). |
 | **Slots + readout** | One slot per iteration per location (`HET_SLOT_STRIDE_WORDS`), stores carrying the `.litmus` values, one O(N) pass that ANDs the flags, discards or scores, and feeds the histogram once (§3.4). Replaces the per-iteration `_cond` check *and* any post-hoc pairing. |

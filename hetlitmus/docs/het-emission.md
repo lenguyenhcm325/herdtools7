@@ -265,10 +265,11 @@ the directory.
 `NUMBER_OF_RUN` are the two that cannot: they are emitted as unguarded
 `#define`s, so `-D` cannot lower them, and `HET_RUNS_MAX` (clamped to
 `NUMBER_OF_RUN`) is the only lever on the run count. `HET_PLACE` is the exception:
-page placement exists only on a render whose runtime has a placement API, and a
-non-zero value is an `#error` on a render that has none
-(`litmus/het-runtime/het_alloc_hip.inc`) rather than a value reported in the
-banner without anything having been placed.
+page placement exists only on a render whose target has distinct memory pools to
+bind a page between (the CUDA render's GH200 has separate HBM and DDR NUMA nodes),
+and a non-zero value is an `#error` on a render whose target is one pool
+(`litmus/het-runtime/het_alloc_hip.inc`: MI300A) rather than a value reported in
+the banner without anything having been placed.
 
 ## The pair a harness names
 
@@ -281,7 +282,7 @@ dialect) PAIR**. That pair, and no machine, is what a render names.
   interconnect and its two halves. The emitter stamps none of them, so no build
   can turn a printed sentence into a claim about a part. `HET_PLACE_LEVER` is
   the one word that does vary, and it is a **dialect** fact rather than a
-  machine one (`cudaMemAdvise` on the CUDA render; the HIP render has no
+  machine one (`mbind(MPOL_BIND)` on the CUDA render; the HIP render has no
   placement code and `#error`s on a non-zero `HET_PLACE`); a dialect that
   supplies no lever gets no `#define` at all, and `het_verdict.h`'s own
   `"the page-placement lever"` default names the mechanism instead.

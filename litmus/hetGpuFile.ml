@@ -283,8 +283,8 @@ let dump_outcome_labels outcome ch =
 (* The file-scope definitions the driver below closes over. *)
 let dump_file_scope_defs dialect ch =
   let s = output_string ch in
-  s {|/* Placement refusals.  Incremented only where placement EXISTS (the
-   CUDA render's cudaMemAdvise); stays 0 on the HIP render, which
+  s {|/* Placement refusals.  Raised where a placement was requested but not
+   achieved (CUDA render only); stays 0 on the HIP render, which
    carries no placement code. */
 static int _het_place_failures = 0;
 

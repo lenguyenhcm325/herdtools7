@@ -151,7 +151,7 @@ typedef struct het_cpu_tally {
   uint64_t noise_cpu_words;   /* host noise thread: words read                   */
   uint32_t enemies_realised;  /* enemy threads that actually entered their loop  */
   uint32_t aff_failures;      /* sched_setaffinity failures -- never silent      */
-  uint32_t place_failures;    /* cudaMemAdvise failures (filled by the .cu)      */
+  uint32_t place_failures;    /* placement failures (filled by the .cu)         */
   uint32_t preload_inert;     /* 1 => this host has NO cache primitives at all   */
 } het_cpu_tally;
 

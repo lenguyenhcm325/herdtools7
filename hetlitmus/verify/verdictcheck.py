@@ -49,7 +49,7 @@ DEFAULT_FRAME = ("no defines (an unstamped harness)",
                  "(unstamped CPU ISA x GPU dialect pair)",
                  "the page-placement lever")
 CUDA_FRAME = ("the scraped (AArch64, cuda) defines", "(AArch64, cuda)",
-              "cudaMemAdvise")
+              "mbind(MPOL_BIND)")
 HIP_FRAME = ("the scraped (X86_64, hip) defines", "(X86_64, hip)",
              "the page-placement lever")
 FRAMES = [DEFAULT_FRAME, CUDA_FRAME, HIP_FRAME]

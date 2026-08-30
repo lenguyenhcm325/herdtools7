@@ -52,8 +52,8 @@ type gpu_dialect = {
        together -- an empty definition MUST pair with a NULL argument. *)
     gd_poke_def : string ;        (* file-scope definition, or "" *)
     gd_poke_arg : string ;        (* the argument expression, over `_n' *)
-    (* The page-placement API HET_PLACE drives, by name -- a dialect fact, not
-       a machine one (hetlitmus/docs/het-emission.md, "The pair a harness
+    (* The page-placement mechanism HET_PLACE drives, by name -- a dialect fact,
+       not a machine one (hetlitmus/docs/het-emission.md, "The pair a harness
        names").  None where the render carries no placement code. *)
     gd_place_lever : string option ;
     (* Per-target allocator for the shared vars + the rendezvous counter
@@ -108,7 +108,7 @@ let cuda_dialect = {
     gd_poke_def =
       "static void gd_progress_poke(void) { (void)cudaStreamQuery(0); }\n" ;
     gd_poke_arg = "(_n == 0) ? gd_progress_poke : NULL" ;
-    gd_place_lever = Some "cudaMemAdvise" ;
+    gd_place_lever = Some "mbind(MPOL_BIND)" ;
     gd_shared_mem_note =
       "// Shared vars + rendezvous counter use gd_alloc_shared: system malloc() where\n\
        // the device reaches pageable host memory (ATS: cache-line coherence over the\n\

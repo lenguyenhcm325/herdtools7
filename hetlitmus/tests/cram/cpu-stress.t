@@ -99,24 +99,26 @@ the compiler to fold.
   $ grep -c '_ea\[_e\].seq     = (uint32_t)HET_CPU_ENEMY_SEQ;' $MP.cu
   1
 
-(g) a cudaMemAdvise that is REFUSED is never swallowed: the placement knob
-reports its own failures.
-  $ grep -c 'cudaMemAdviseSetPreferredLocation' $MP.cu
+(g) placement binds the shared pages to a NUMA node and reads the home back, so a
+page left off-node is never swallowed.
+  $ grep -c '_het_place_shared(\*_pp, _bytes, HET_PLACE)' $MP.cu
   1
-  $ grep -q 'cudaMemAdviseSetAccessedBy' $MP.cu && echo present
+  $ grep -q 'syscall(SYS_mbind' $MP.cu && echo present
   present
-  $ grep -c '_het_place(\*_pp, _bytes, HET_PLACE)' $MP.cu
-  1
+  $ grep -q 'MPOL_BIND' $MP.cu && echo present
+  present
+  $ grep -q 'syscall(SYS_move_pages' $MP.cu && echo present
+  present
   $ grep -q '_het_place_failures++' $MP.cu && echo present
   present
   $ grep -A1 '#ifndef HET_PLACE' MP-cg-sys-acqrel-2s/het_cpu_stress.h | grep -c '#define HET_PLACE 0'
   1
 
-The HIP twin has no placement API to call and says so in prose, so the grep
-matches the call and not the word; its analogue is cross-chiplet contention.
-  $ grep -cE '(cuda|hip)MemAdvise\(' $MPH.hip || true
+The HIP twin binds nothing: MI300A's one HBM pool makes a non-zero HET_PLACE a
+compile error, so the render carries no mbind and its analogue is contention.
+  $ grep -c 'SYS_mbind' $MPH.hip || true
   0
-  $ grep -qE '(cuda|hip)MemAdvise\(' $MP.cu && echo present
+  $ grep -q 'SYS_mbind' $MP.cu && echo present
   present
   $ grep -q 'CONTENTION' $MPH.hip && echo present
   present

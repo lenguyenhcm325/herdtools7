@@ -15,7 +15,7 @@
    the only value this lane can honour.  The AMD analogue of the interconnect lever
    is CONTENTION, not placement (hetlitmus/docs/het-emission.md). */
 #if (HET_PLACE) != 0
-# error "HET_PLACE is a CUDA-only lever (cudaMemAdvise); the HIP render has no placement code.  Use HET_PLACE=0 and drive the interconnect with the noise knobs."
+# error "HET_PLACE is a CUDA-only lever (NUMA page binding); the HIP render has no placement code.  Use HET_PLACE=0 and drive the interconnect with the noise knobs."
 #endif
 static int _het_hip_attr(hipDeviceAttribute_t _a){
   int _v = 0;

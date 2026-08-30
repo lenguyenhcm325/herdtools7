@@ -95,15 +95,17 @@ static int _het_alloc_mode(void){
   }
   return _mode;
 }
-/* A placement request the selected mode cannot honour is announced, never
-   swallowed. */
+/* A placement request the selected mode cannot honour is announced on stderr and
+   carried in the record, never swallowed. */
 static void _het_place_inert(int _m){
   static int _said = 0;
-  if (HET_PLACE == 0 || _said) return;
+  if (HET_PLACE == 0) return;
+  _het_place_failures++;   /* the machine-readable record carries the caveat too */
+  if (_said) return;
   _said = 1;
   fprintf(stderr,
           "HetLitmus WARNING: HET_PLACE=%d but the shared allocator is in %s mode, "
-          "where cudaMemAdvise has no page to advise -- the placement lever is INERT "
+          "which exposes no separable page to place -- the placement lever is INERT "
           "for this run and the shared pages are wherever the runtime put them.\n",
           (int)HET_PLACE, _het_alloc_name(_m));
 }
@@ -129,19 +131,99 @@ static void _het_place(void* _p, size_t _bytes, int _where){
             _where);
   }
 }
+#if HET_PLACE != 0
+/* The race surface needs a VERIFIED home, not the best-effort advice the noise
+   buffers take: a system malloc page is first-touch placed and stays migratable
+   [Fusco24 "Unified Memory"], so it is bound to the far NUMA node under a strict
+   policy -- which also stops later migration -- and the home is read straight
+   back.  hetlitmus/docs/00-environment-design.md sec 3.6. */
+#include <unistd.h>
+#include <sys/syscall.h>
+#ifndef MPOL_BIND
+#define MPOL_BIND 2               /* <linux/mempolicy.h>: the strict bind policy */
+#endif
+#ifndef MPOL_MF_MOVE
+#define MPOL_MF_MOVE (1 << 1)     /* relocate pages that are already resident */
+#endif
+#define HET_NODEMASK_LONGS 8      /* 512 NUMA nodes -- more than any GH200/GB200 */
+/* The far NUMA node the lever targets, from the launch device (dev 0): HBM is a
+   placeable node ONLY when the GPU memory is one [CudaGuide "cudaDeviceNumaConfig"],
+   else -1 = nothing to bind. */
+static int _het_place_node(int _where){
+  if (_where == 2) return _het_dev_attr(cudaDevAttrHostNumaId);   /* DDR: host node */
+  if (_het_dev_attr(cudaDevAttrNumaConfig) != cudaDeviceNumaConfigNumaNode) return -1;
+  return _het_dev_attr(cudaDevAttrNumaId);                        /* HBM: GPU node */
+}
+/* Read the pages' real home back: move_pages with a NULL node array queries, it
+   never relocates.  Returns pages NOT on _node -- all of them if the query fails. */
+static long _het_pages_off_node(void* _p, size_t _np, long _ps, int _node){
+  void** _pg = (void**)malloc(_np * sizeof *_pg);
+  int*   _st = (int*)  malloc(_np * sizeof *_st);
+  if (_pg == NULL || _st == NULL) { free(_pg); free(_st); return (long)_np; }
+  for (size_t _i = 0; _i < _np; _i++) _pg[_i] = (char*)_p + _i * (size_t)_ps;
+  long _off;
+  if (syscall(SYS_move_pages, 0, _np, _pg, NULL, _st, 0) != 0) _off = (long)_np;
+  else { _off = 0; for (size_t _i = 0; _i < _np; _i++) if (_st[_i] != _node) _off++; }
+  free(_pg); free(_st);
+  return _off;
+}
+static void _het_place_shared(void* _p, size_t _bytes, int _where){
+  if (_where == 0) return;
+  int _node = _het_place_node(_where);
+  if (_node < 0 || _node >= (int)(HET_NODEMASK_LONGS * 8 * sizeof(unsigned long))) {
+    _het_place_failures++;
+    fprintf(stderr,
+            "HetLitmus WARNING: HET_PLACE=%d but this device exposes no target NUMA "
+            "node -- the placement lever is INERT, this run is NOT placement-"
+            "stressed.\n", _where);
+    return;
+  }
+  long _ps = sysconf(_SC_PAGESIZE); if (_ps < 1) _ps = 4096;
+  size_t _np = (_bytes + (size_t)_ps - 1) / (size_t)_ps;
+  size_t _bits = 8 * sizeof(unsigned long);
+  unsigned long _mask[HET_NODEMASK_LONGS];
+  memset(_mask, 0, sizeof _mask);
+  _mask[(size_t)_node / _bits] |= 1UL << ((size_t)_node % _bits);
+  long _rc = syscall(SYS_mbind, _p, _np * (size_t)_ps, MPOL_BIND,
+                     _mask, (unsigned long)(8 * sizeof _mask), MPOL_MF_MOVE);
+  het_cpu_first_touch(_p, _bytes);          /* fault the pages so they have a home */
+  long _off = _het_pages_off_node(_p, _np, _ps, _node);
+  if (_rc != 0 || _off > 0) {               /* CDMM mode, or the node refused a page */
+    _het_place_failures++;
+    fprintf(stderr,
+            "HetLitmus WARNING: HET_PLACE=%d left %ld of %zu page(s) off node %d "
+            "-- this run is NOT placement-stressed.\n", _where, _off, _np, _node);
+  }
+}
+/* Whole page-aligned pages so mbind moves ONLY ours; posix_memalign memory frees
+   with free(), so gd_free_shared stays as it is. */
+static void* _het_place_alloc(size_t _bytes){
+  long _ps = sysconf(_SC_PAGESIZE); if (_ps < 1) _ps = 4096;
+  size_t _rounded = ((_bytes + (size_t)_ps - 1) / (size_t)_ps) * (size_t)_ps;
+  void* _p = NULL;
+  if (posix_memalign(&_p, (size_t)_ps, _rounded) != 0) return NULL;
+  return _p;
+}
+#endif
 static void gd_alloc_shared(void** _pp, size_t _bytes){
   int _m = _het_alloc_mode();
   *_pp = NULL;   /* the checks below must not read the caller's uninitialised pointer */
   if (_m == HET_ALLOC_MALLOC) {
+#if HET_PLACE != 0
+    *_pp = _het_place_alloc(_bytes);   /* page-aligned whole pages, so mbind moves ours */
+#else
     *_pp = malloc(_bytes);   /* GH200: ATS, in-place cache-line CHI coherence */
+#endif
     if (*_pp == NULL) {
       fprintf(stderr,
-              "HetLitmus FATAL: malloc of %llu bytes failed -- HET_ALLOC=malloc "
-              "has no shared memory to test on.\n",
+              "HetLitmus FATAL: the shared allocation of %llu bytes failed -- "
+              "HET_ALLOC=malloc has no shared memory to test on.\n",
               (unsigned long long)_bytes);
       exit(2);
     }
-    _het_place(*_pp, _bytes, HET_PLACE);
+#if HET_PLACE != 0
+    _het_place_shared(*_pp, _bytes, HET_PLACE);
+#endif
   } else if (_m == HET_ALLOC_MANAGED) {
     cudaError_t _e = cudaMallocManaged(_pp, _bytes);   /* machinery fallback only */
     if (_e != cudaSuccess || *_pp == NULL) {
