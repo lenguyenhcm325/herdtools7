@@ -1292,8 +1292,8 @@ def phase6_campaign(quiet):
                   % [l for l in r3.stdout.splitlines() if "CORROBORATED" in l])
             bad += 1
 
-        # The seed base: fresh per campaign, printed (the harness prints none) and
-        # banked, so the seeds every invocation ran under are derivable.
+        # The seed base: fresh per campaign, printed and banked, so the seeds
+        # every invocation ran under are derivable.
         seedc = _mk_corpus(tmp, "seedbase", ["NULL-pooled"])
         st8 = os.path.join(tmp, "seedbase.csv")
         r8 = subprocess.run(

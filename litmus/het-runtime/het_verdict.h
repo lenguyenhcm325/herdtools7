@@ -104,7 +104,7 @@ typedef struct het_obs_record {
  * Run-time knobs, read with getenv rather than -D (nvcc folds a compile-time
  * knob and deletes the only branch with side effects); hetlitmus/campaign.py
  * retunes them per invocation without a rebuild, and unset means the compiled
- * default.
+ * default -- except HET_SEED, below.
  *   HET_RUNS_MAX      runs this invocation, clamped to the compiled
  *                     NUMBER_OF_RUN; R grows by re-invoking with a fresh
  *                     HET_SEED
@@ -113,7 +113,9 @@ typedef struct het_obs_record {
  *   HET_CONFIRM_RUNS  runs a lone clean sighting may hold the row open for,
  *                     counted from the run it fired in (default 30, floor 1)
  *   HET_SEED          the seed base; vary it per invocation, since a replayed
- *                     seed draws no fresh phase and pools as one draw twice
+ *                     seed draws no fresh phase and pools as one draw twice.
+ *                     Only a value that parses pins it; the driver otherwise
+ *                     draws from entropy and prints what it drew
  * ------------------------------------------------------------------------- */
 static long het_env_long(const char *name, long dflt) {
   const char *v = getenv(name);

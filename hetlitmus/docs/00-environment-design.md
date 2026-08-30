@@ -197,9 +197,17 @@ recomputes the one answer instead of each rolling its own. The ids and the per-p
 are written where `het_draw` is defined. **The seed fixes the schedule and nothing else.** `HET_SEED`
 (varied per run as `_seed0 + _run`, and per invocation by `hetlitmus/campaign.py`, which draws its base
 from entropy, prints it and banks it in every state row) decides which iterations are stressed and how,
-which is what makes two runs and two devices comparable under one configuration [GPUHarbor23 §3.4]. It
-fixes no timing, no thermal state and no relative phase: re-running at one seed repeats the schedule,
-never the run.
+which is what makes two runs and two devices comparable under one configuration [GPUHarbor23 §3.4] —
+and that comparability is bought by *passing* the base. `HET_SEED` pins the base only when it parses as
+a number; unset, empty or unparseable, the binary draws its own, prints it and names the source, so an
+unpinned run explores a fresh schedule rather than the compiled default. The draw is
+`getrandom(&s, 4, GRND_NONBLOCK)`: a urandom request of ≤ 256 B is all-or-nothing and cannot fail with
+`EINTR`, so there is nothing to retry, and the flag turns the one case that would otherwise block — a
+boot-time pool not yet initialised — into an `EAGAIN` the caller reports. (`getentropy` is that same
+call without the flag, and blocks there uninterruptibly.) A failed draw warns and falls back to the
+compiled default, which the printed line names; the base is 31 bits, so `_seed0 + _run` cannot wrap into
+another invocation's range. The seed fixes no timing, no thermal state and no relative phase: re-running
+at one seed repeats the schedule, never the run.
 
 ### 3.4 Instance structure & readout — asymmetric instances, one slot per iteration
 - **Asymmetric instances:** a *few* genuinely-het pairs (H ≤ reserved Grace cores, ~1–8; 1 pinned CPU

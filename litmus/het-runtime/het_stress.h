@@ -74,8 +74,9 @@
 #ifndef HET_SEED
 #define HET_SEED 1        /* the stress schedule is a function of the seed
                              [GPUHarbor23 sec 3.4]; hardware timing is not, so a
-                             run does not repeat.  The HET_SEED env var varies
-                             the seed without a rebuild */
+                             run does not repeat.  A run that pins no HET_SEED
+                             draws its base from entropy instead; this default is
+                             what is left when no draw is available */
 #endif
 #ifndef HET_STRESS_BLOCKS
 #define HET_STRESS_BLOCKS (-1)         /* -1 = auto: fill the co-resident grid */

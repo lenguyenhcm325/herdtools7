@@ -520,7 +520,9 @@ name listed more than once is taken once, which the step says; with no
 `--tests`, build and campaign take the whole corpus. The arch is `probe.txt`'s
 `suggested_cuda_arch` / `suggested_hip_arch` unless `--arch` names one, and
 nothing else detects it. The campaign draws a fresh seed base for itself, prints
-it at the start and banks it in every state row; `--seed0` replays that base.
+it at the start and banks it in every state row; `--seed0` replays that base. A
+harness run outside a campaign draws and prints its own base unless `HET_SEED`
+pins one.
 
 **What the probe decides.** These are the conditions under which a
 `cuda::thread_scope_system` atomic is atomic at all [CudaGuide "Atomicity"], and

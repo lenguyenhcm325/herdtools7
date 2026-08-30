@@ -223,6 +223,9 @@ uint32_t het_cpu_preload(void *const *vars, int nvars, uint32_t seed,
    no cache primitives does not request a preload that can only no-op, which
    would disqualify the run and turn every null cold. */
 int      het_cpu_preload_live(void);
+/* The seed base of a run that pins no HET_SEED: 0 = drawn, -1 = none available,
+   which the caller must report rather than pass off as a fresh draw. */
+int      het_seed_entropy(uint32_t *out);
 void    *het_cpu_enemy(void *a);   /* pthread body; NOT a pthread dependency       */
 void    *het_cpu_noise(void *a);   /* pthread body; the host half of the noise pair*/
 /* First touch, one write per page.  Linux maps every untouched anonymous page to
@@ -240,6 +243,17 @@ void     het_cpu_shuffle(uint32_t *idx, uint32_t n, uint32_t seed);
 #include <stdio.h>
 #include <sched.h>
 #include <unistd.h>
+#include <sys/random.h>
+
+/* 31 bits, so _seed0 + _run cannot wrap into another invocation's seed range;
+   hetlitmus/campaign.py draws its own base at the same width.  Why the flag,
+   and why not getentropy: hetlitmus/docs/00-environment-design.md sec 3.3. */
+int het_seed_entropy(uint32_t *out) {
+  uint32_t s;
+  if (getrandom(&s, sizeof s, GRND_NONBLOCK) != (ssize_t)sizeof s) return -1;
+  *out = s & 0x7fffffffu;
+  return 0;
+}
 
 /* Cache primitives, reused from litmus7's litmus/libdir/_aarch64/_cache.h and
  * _x86_64/_cache.h (CeCILL-B, as the rest of the tree).  On AArch64 `dc civac'

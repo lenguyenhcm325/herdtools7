@@ -172,7 +172,29 @@ let dump_campaign_knobs ch =
   int _adaptive = (int)het_env_long("HET_ADAPTIVE", 0);
   int _rate_mode = (int)het_env_long("HET_RATE", 0);
   int _confirm_runs = (int)het_env_long("HET_CONFIRM_RUNS", 30);
-  uint32_t _seed0 = (uint32_t)het_env_long("HET_SEED", (long)HET_SEED);
+|} ;
+
+  (* het_env_long returns its default for unset, empty and unparseable alike,
+     so the seed base reads getenv and parses it here: only a value strtol
+     consumes pins the base, anything else draws one. *)
+  s {|  const char *_seed_env = getenv("HET_SEED");
+  const char *_seed_src = "env";
+  char *_seed_end = NULL;
+  uint32_t _seed0 = (uint32_t)HET_SEED;
+  if (_seed_env != NULL && *_seed_env != '\0') {
+    (void)strtol(_seed_env, &_seed_end, 0);
+    if (_seed_end == _seed_env)
+      fprintf(stderr, "HetLitmus WARNING: HET_SEED=\"%s\" is not a number -- it pins nothing, and the base is drawn instead.\n", _seed_env);
+  }
+  if (_seed_end != NULL && _seed_end != _seed_env) {
+    _seed0 = (uint32_t)het_env_long("HET_SEED", (long)HET_SEED);
+  } else if (het_seed_entropy(&_seed0) == 0) {
+    _seed_src = "entropy";
+  } else {
+    _seed_src = "compiled-default";
+    fprintf(stderr, "HetLitmus WARNING: getrandom() drew nothing -- the seed base is the compiled HET_SEED=%d, so every run that pins none repeats ONE stress schedule.\n", (int)HET_SEED);
+  }
+  fprintf(stderr, "HetLitmus: seed0=%u source=%s -- HET_SEED=%u repeats this stress schedule.\n", _seed0, _seed_src, _seed0);
 |} ;
 
   (* The rendezvous spin caps. *)

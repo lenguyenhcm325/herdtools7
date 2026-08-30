@@ -29,6 +29,20 @@ derives from the seed base.
   $ grep -c 'uint32_t _seed = _seed0 + (uint32_t)_run;' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
   1
 
+An unset, empty or unparseable HET_SEED pins nothing, so the base is drawn from
+entropy, and the run prints the base it used either way.
+
+  $ grep -c '_seed_env = getenv("HET_SEED")' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -cF "_seed_env != NULL && *_seed_env != '\0'" MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -c '_seed_end != NULL && _seed_end != _seed_env' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -c 'het_seed_entropy(&_seed0) == 0' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+  $ grep -c 'HetLitmus: seed0=%u source=%s' MP-cg-sys-fence-2s/MP-cg-sys-fence-2s.cu
+  1
+
 The adaptive stop is the header's rule, consulted after every run and passed the
 two policy knobs it decides on.
 

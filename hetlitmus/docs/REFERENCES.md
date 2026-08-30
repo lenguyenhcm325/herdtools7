@@ -376,7 +376,8 @@ Claim(s) this project takes from it:
   web interface and the Android app and using the same seed when running all of
   our tuning experiments." That comparability is what `HET_SEED` is for here:
   `het_draw` makes the whole stress schedule a function of the seed, so two runs
-  and two devices can be read against one configuration.
+  and two devices can be read against one configuration. It is bought by setting
+  the variable, a base nothing pins being drawn from entropy per run.
 
 Withdrawn claim(s):
 * That §3.4 "makes a stress configuration replayable by seeding it", which

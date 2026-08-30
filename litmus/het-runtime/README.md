@@ -51,9 +51,9 @@ Two constraints force it into a header of its own instead of into the `.cu`:
   never meet, so they sit behind `HET_CPU_STRESS_IMPL`; the split, and the units
   on either side of it, are stated in `het_cpu_stress.h` itself.
 * NO `<pthread.h>` in that file.  `<sched.h>`, `<stdio.h>`, `<stdlib.h>`,
-  `<string.h>` and `<unistd.h>` all survive `clang --target=aarch64-linux-gnu
-  -c`; `<pthread.h>` does not, because it reaches x86 glibc's
-  `bits/pthreadtypes-arch.h`, whose `__cleanup_fct_attribute` is
+  `<string.h>`, `<sys/random.h>` and `<unistd.h>` all survive `clang
+  --target=aarch64-linux-gnu -c`; `<pthread.h>` does not, because it reaches
+  x86 glibc's `bits/pthreadtypes-arch.h`, whose `__cleanup_fct_attribute` is
   `__attribute__((__regparm__(1)))`, and regparm is not valid for AArch64.  The
   thread bodies need only the pthread entry-point signature (a void-pointer
   function of one void pointer), never a pthread primitive; `pthread_create` is
