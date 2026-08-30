@@ -37,10 +37,10 @@
    this iteration.  Both are PLACEHOLDERS -- no target has been measured -- so
    every null they produce says uncalibrated.  Both are overridable per run. */
 #ifndef HET_CAP_GPU
-#define HET_CAP_GPU 4096
+#define HET_CAP_GPU 16384
 #endif
 #ifndef HET_CAP_CPU
-#define HET_CAP_CPU 262144
+#define HET_CAP_CPU 524288
 #endif
 /* 1 once the two caps above are measured on this harness's target. */
 #ifndef HET_CAP_CALIBRATED

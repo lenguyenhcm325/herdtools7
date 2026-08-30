@@ -401,8 +401,8 @@ Everything below is unmeasurable off the target part (wrong substrate, §3.2). *
 2. The **het weak-behaviour hit-rate** — genuinely unknown (the 0.2 % was GPU-only, §7). Nothing the
    harness reports rests on it; what it settles is how much effort a row is worth before its null is
    banked, i.e. what `--budget-runs` should be. Grow R, not N.
-3. **CAP calibration**, and every null is read under it. `HET_CAP_CPU = 262144` and
-   `HET_CAP_GPU = 4096` are placeholders on any target: nothing has measured how many polls a *met*
+3. **CAP calibration**, and every null is read under it. `HET_CAP_CPU = 524288` and
+   `HET_CAP_GPU = 16384` are placeholders on any target: nothing has measured how many polls a *met*
    rendezvous actually costs there, so `HET_CAP_CALIBRATED` is 0 and `HET_CV_RDV_UNCALIBRATED` caveats
    every outcome. Measure the distribution of polls-to-target on a run whose two sides do meet, set each
    cap above its tail, and stamp `HET_CAP_CALIBRATED = 1`. Too short a cap manufactures discards; too
