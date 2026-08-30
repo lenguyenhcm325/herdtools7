@@ -181,8 +181,8 @@ delay of `0..HET_RELEASE_JITTER` empty spins drawn per iteration, so the run sam
 instead of repeating one alignment, and by both-side stress (§3.5, §3.6). Bagchi never precisely aligned.
 
 **One stress schedule, computed the same way on both sides.** Every probabilistic decision the run
-environment makes — the release delay above, a test lane's pre-stress toggle, a stress thread's
-per-round toggle, a CPU thread's cache preload, the scratchpad targets, the enemy's index permutation
+environment makes — the release delay above, a test lane's pre-stress toggle, the grid's mem-stress
+toggle for an iteration, a CPU thread's cache preload, the scratchpad targets, the enemy's index permutation
 — is one call to `het_draw(seed, who, k)` (`litmus/het-runtime/het_cpu_stress.h`), which evaluates
 splitmix64 [Vigna15] *at* index `k` of the stream `(seed, who)` names instead of advancing a
 per-participant state. Three things follow. **It is the same function on both sides.** The host and the
@@ -190,8 +190,10 @@ device compute the same value for the same (participant, index), which no librar
 cuRAND's device API carries 48–64 B of state per thread and exists only device-side, ROCm 7.2.4 installs no
 rocRAND device header, `std::minstd_rand` does not compile in device code — and the CPU
 preload and the host setup have to draw from the same seed as the kernel. **It partitions.** Participant
-ids are pairwise distinct and each participant's indices are its own, so no two decisions ever share a
-draw and a CPU thread's delays never track a GPU lane's; the ids and the per-participant index layout
+ids are pairwise distinct and each participant's indices are its own, so a `(who, k)` is one decision and
+a CPU thread's delays never track a GPU lane's. A decision may still be read by many threads: the
+mem-stress toggle for iteration `n` is drawn under the grid's own id at index `n`, so every stress block
+recomputes the one answer instead of each rolling its own. The ids and the per-participant index layout
 are written where `het_draw` is defined. **The seed fixes the schedule and nothing else.** `HET_SEED`
 (varied per run as `_seed0 + _run`, and per invocation by `hetlitmus/campaign.py`, which draws its base
 from entropy, prints it and banks it in every state row) decides which iterations are stressed and how,
@@ -241,7 +243,10 @@ device-scope) → it is a starting seed, not a preset library; re-tune on the ta
 GPU scratchpad stress loads the *on-die* coherence protocol, **not** the C2C path the het weak behaviour
 needs — so it must be paired with §3.6. The whole layer rests on the **window-widening
 hypothesis**: a memory system under heavy stress is likelier to transfer data out of order
-[Alglave15 §4.3.1].
+[Alglave15 §4.3.1]. **`HET_MEM_STRESS_PCT` is a percentage of test *iterations*, decided grid-wide**
+[WebGPULitmus]: one draw per iteration says whether the scratchpad stress blocks hammer for it, so at
+20 they hammer in one iteration in five and idle through the other four. An off-iteration is not a
+quiet one — that key's deviation records what still runs.
 
 ### 3.6 CPU-side + interconnect stress
 - **CPU stress = litmus7 recipes** ported into the emitted CPU thread at two sites (preload before the

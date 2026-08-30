@@ -37,7 +37,9 @@
 #define HET_STRESS_ASSIGN 1            /* 0 = round-robin, 1 = chunking        */
 #endif
 #ifndef HET_MEM_STRESS_PCT
-#define HET_MEM_STRESS_PCT 20          /* % of rounds a stress lane hammers    */
+#define HET_MEM_STRESS_PCT 20          /* % of test ITERATIONS the scratchpad is
+                                          hammered in; one draw per iteration,
+                                          read by every stress block         */
 #endif
 #ifndef HET_MEM_STRESS_ITER
 #define HET_MEM_STRESS_ITER 445
@@ -79,8 +81,11 @@
 #define HET_STRESS_BLOCKS (-1)         /* -1 = auto: fill the co-resident grid */
 #endif
 #ifndef HET_STRESS_MAX_ROUNDS
-#define HET_STRESS_MAX_ROUNDS 1000000000u  /* safety net, NOT a knob: a stress
-                                              lane must not spin for ever */
+#define HET_STRESS_MAX_ROUNDS 10000000u    /* safety net, NOT a knob: a stress
+                                              lane must not spin for ever.  A
+                                              round is one het_do_stress call or
+                                              one het_idle, both microseconds,
+                                              so this is a wall-time budget */
 #endif
 
 /* Liveness tally -- device counters the host reads back: TRUNC = stress lanes
@@ -99,7 +104,9 @@
  * bookkeeping stays out of the tested op stream
  * (hetlitmus/docs/faithfulness.md). */
 __device__ static inline uint32_t het_scratch_read(uint32_t* p) {
-  return atomicAdd(p, 0u);   /* RMW read: resolves in L2, so no L1 question */
+  /* Device-scope on both vendors, so the poll crosses blocks: HIP folds the
+     idempotent RMW to an agent-scope load. */
+  return atomicAdd(p, 0u);
 }
 __device__ static inline void het_scratch_bump(uint32_t* p) {
   (void)atomicAdd(p, 1u);
@@ -108,6 +115,16 @@ __device__ static inline void het_scratch_bump(uint32_t* p) {
    wrapped-to-zero tally reads exactly like a mechanism that never ran. */
 __device__ static inline void het_scratch_max(uint32_t* p, uint32_t v) {
   (void)atomicMax(p, v);
+}
+/* An unstressed iteration's wait: it must touch no memory at all. */
+__device__ static inline void het_idle(void) {
+#if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_DEVICE_COMPILE__)
+  __builtin_amdgcn_s_sleep(127);
+#elif defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
+  __nanosleep(1000u);
+#else
+  __asm__ __volatile__("");
+#endif
 }
 
 /* het_do_stress -- [CudaLitmus] functions.cu:19; the two-instruction access

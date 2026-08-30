@@ -62,7 +62,6 @@ type geometry = {
     ge_bdim : int ;
     ge_npart : int ;               (* cpu procs + gpu procs *)
     ge_blocks : int ;              (* GPU test blocks *)
-    ge_lanes : int ;               (* GPU test lanes *)
   }
 
 (* [pr_participants] is every proc in proc order, which is the order the

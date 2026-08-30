@@ -80,8 +80,7 @@ extern "C" {
   s "\n" ;
   s (Printf.sprintf "#ifndef HET_BLOCK_DIM\n#define HET_BLOCK_DIM %d\n#endif\n"
        (max 1 geometry.ge_bdim)) ;
-  s (Printf.sprintf "#define HET_TEST_BLOCKS %d\n" geometry.ge_blocks) ;
-  s (Printf.sprintf "#define HET_GPU_LANES %d\n\n" geometry.ge_lanes)
+  s (Printf.sprintf "#define HET_TEST_BLOCKS %d\n\n" geometry.ge_blocks)
 
 (* The kernel signature: the shared globals, then the GPU read buffers and
    arrival flags, then the stress and noise arguments every lane shares. *)
@@ -97,7 +96,7 @@ let kernel_parameters memory procs =
          procs.pr_gpus
      @ ["uint64_t* barrier" ; "uint32_t _cap_gpu"]
      @ ["uint32_t* _scratch" ; "uint32_t* _scratch_loc" ;
-        "uint32_t* _gpu_done" ;
+        "uint32_t* _gpu_iter" ;
         "uint32_t* _stress_tally" ;
         "uint32_t _seed" ; "uint32_t _pre_pat" ; "uint32_t _mem_pat" ;
         "uint64_t* _noise_ddr" ; "uint64_t _noise_words" ;
@@ -135,13 +134,16 @@ let dump_test_lane dialect gp ch =
       s (Printf.sprintf "      %s[_n] = r%d;\n"
            (buf_name_of gp.gp_proc li) n))
     gp.gp_regs ;
+  (* The iteration clock the stress blocks poll: ONE lane publishes it, so the
+     mem-stress percentage is decided per iteration and grid-wide. *)
+  if gp.gp_blk = 0 && gp.gp_lane = 0 then
+    s "      het_scratch_bump(_gpu_iter);\n" ;
   s {|    }
-    het_scratch_bump(_gpu_done);
   }
 |}
 
 (* The blocks past the test lanes: interconnect noise readers first, then
-   the scratchpad stressers, both spinning until the lanes are done. *)
+   the scratchpad stressers, both spinning on the iteration clock. *)
 let dump_stress_workgroups ch =
   let s = output_string ch in
   s {|  if (blockIdx.x >= HET_TEST_BLOCKS) {
@@ -154,7 +156,7 @@ let dump_stress_workgroups ch =
          the tally below counts blocks whose thread 0 completed a round. */
       uint32_t _r = 0;
       for (;
-           _r < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;
+           _r < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_iter) < (uint32_t)SIZE_OF_TEST;
            ++_r) {
         for (uint32_t _c = 0; _c < _noise_chunk; ++_c) {
           (void)_nb[_i];
@@ -165,14 +167,16 @@ let dump_stress_workgroups ch =
       if (_r > 0 && threadIdx.x == 0) het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);
       het_scratch_max(&_stress_tally[HET_TALLY_NOISE_ROUNDS], _r);
     } else {
-    uint32_t _s = 0;
-    for (;
-         _s < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_done) < HET_GPU_LANES;
-         ++_s) {
-      if ((int)(het_draw(_seed, _who, _s) % 100u) < HET_MEM_STRESS_PCT)
+    uint32_t _polls = 0;
+    for (uint32_t _v = het_scratch_read(_gpu_iter);
+         _v < (uint32_t)SIZE_OF_TEST && _polls < HET_STRESS_MAX_ROUNDS;
+         _v = het_scratch_read(_gpu_iter), ++_polls) {
+      if ((int)(het_draw(_seed, HET_WHO_GRID, _v) % 100u) < HET_MEM_STRESS_PCT)
         het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally);
+      else
+        het_idle();
     }
-    if (_s >= HET_STRESS_MAX_ROUNDS)
+    if (_polls >= HET_STRESS_MAX_ROUNDS)
       het_scratch_bump(&_stress_tally[HET_TALLY_TRUNC]);
     }
   }

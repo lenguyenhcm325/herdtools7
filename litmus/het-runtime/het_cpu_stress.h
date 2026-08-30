@@ -196,16 +196,19 @@ HET_DRAW_ATTR uint32_t het_draw(uint32_t seed, uint32_t who, uint64_t k) {
   z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
   return (uint32_t)(z ^ (z >> 31));
 }
-/* Every (who, k) is drawn ONCE, by one participant for one decision.  The ids
+/* Every (who, k) is ONE decision, drawn by whoever the decision belongs to; a
+   grid-wide decision is drawn by every block and comes out the same.  The ids
    are pairwise distinct: a GPU thread is its global thread id, which an
    occupancy-bounded grid keeps below 2^31, and these lie above it. */
 #define HET_WHO_CPU(c)   (0x80000000u | (uint32_t)(c))
+#define HET_WHO_GRID     0xFFFFFFFDu
 #define HET_WHO_SCRATCH  0xFFFFFFFEu
 #define HET_WHO_SHUFFLE  0xFFFFFFFFu
 /* k, per participant: a GPU test lane draws 2*n and 2*n+1 at iteration n (its
-   pre-stress toggle, its release jitter), a GPU stress thread its round
-   counter, a CPU test thread 1+2*nvars per iteration (jitter, then a toggle and
-   a kind per test variable), and each id above counts its own draws from 0. */
+   pre-stress toggle, its release jitter), the grid its mem-stress toggle at the
+   iteration index, a CPU test thread 1+2*nvars per iteration (jitter, then a
+   toggle and a kind per test variable), and each id above counts its own draws
+   from 0. */
 
 /* API.  Bodies are compiled ONLY into <test>_cpu.c (HET_CPU_STRESS_IMPL). */
 int      het_cpu_affinity(int core, het_cpu_tally *t);  /* 0 = pinned, -1 = failed */

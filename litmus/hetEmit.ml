@@ -368,8 +368,7 @@ end
             { ge_size = Cfg.size ; ge_runs = Cfg.runs ;
               ge_bdim = block_dim ;
               ge_npart = List.length params + List.length gpus ;
-              ge_blocks = n_blocks ;
-              ge_lanes = List.length gpus } ;
+              ge_blocks = n_blocks } ;
           h_procs =
             { pr_cpus = cpu_procs global_env params ; pr_gpus = gpus ;
               pr_participants =

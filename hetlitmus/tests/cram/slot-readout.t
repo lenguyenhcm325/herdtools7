@@ -20,9 +20,8 @@ NPART counts the participants and nothing else, so the total is pinned beside
 the two lane counts a wrong participant count could hide inside.
   $ grep -c '#define NPART 2' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
-  $ grep -E '^#define HET_(TEST_BLOCKS|GPU_LANES)' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
+  $ grep -E '^#define HET_TEST_BLOCKS' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   #define HET_TEST_BLOCKS 1
-  #define HET_GPU_LANES 1
   $ grep -cE '^static void\* cpu_[A-Za-z_0-9]+\(void\* _a\)' MP-cg-sys-relaxed/MP-cg-sys-relaxed.cu
   1
 

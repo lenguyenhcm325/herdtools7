@@ -71,3 +71,10 @@ The two-cta launch guards its lanes by block, the one-cta launch by lane.
   1
   $ grep -c 'blockIdx.x == 0 && threadIdx.x == 1' onecta/tree/tree.cu
   1
+
+Either way exactly ONE lane -- the one at (0,0) -- publishes the iteration count
+the stress population polls.
+  $ grep -c 'het_scratch_bump(_gpu_iter);' onecta/tree/tree.cu
+  1
+  $ grep -c 'het_scratch_bump(_gpu_iter);' twoctas/tree/tree.cu
+  1

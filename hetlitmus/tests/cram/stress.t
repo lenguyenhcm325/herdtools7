@@ -32,8 +32,8 @@ allocator that selects the property under test (shared-alloc.t).
   $ grep -c 'gd_alloc_dev((void\*\*)&_scratch, sizeof(uint32_t)\*HET_SCRATCH_SIZE' $MPH.hip
   1
 
-(c) every block above the test blocks hammers the scratchpad, and the grid is
-raised toward the co-resident cap (the launch guard is in coop-launch.t (g)).
+(c) the blocks above the test blocks split into DDR-noise readers and scratchpad
+stressers; the grid is raised toward the co-resident cap (coop-launch.t (g)).
   $ grep -c 'blockIdx.x >= HET_TEST_BLOCKS' $MP.cu
   1
   $ grep -c '_stressBlocks = (HET_STRESS_BLOCKS >= 0)' $MP.cu
@@ -45,7 +45,7 @@ test location.
   &_stress_tally[HET_TALLY_NOISE]
   &_stress_tally[HET_TALLY_NOISE_ROUNDS]
   &_stress_tally[HET_TALLY_TRUNC]
-  _gpu_done
+  _gpu_iter
 
 (d2) the noise tally counts blocks, not threads: thread 0 alone bumps it, and that
 guarded bump is the only bump of that tally.
@@ -78,19 +78,34 @@ writer, so a drift would leave it reading and never writing.
   1
 
 (f) the stress toggles are drawn device-side, each a function of the seed, the
-drawing thread and the index alone, with no host round-trip and no stream state.
+participant the decision belongs to and the index alone.
   $ grep -c 'const uint32_t _who = blockIdx.x \* blockDim.x + threadIdx.x;' $MP.cu
   1
   $ grep -c '(int)(het_draw(_seed, _who, 2u\*(uint64_t)_n) % 100u) < HET_PRE_STRESS_PCT' $MP.cu
   1
-  $ grep -c '(int)(het_draw(_seed, _who, _s) % 100u) < HET_MEM_STRESS_PCT' $MP.cu
+  $ grep -c '(int)(het_draw(_seed, HET_WHO_GRID, _v) % 100u) < HET_MEM_STRESS_PCT' $MP.cu
+  1
+
+(f2) the mem-stress toggle is one draw per test ITERATION, so the poll sits in
+the loop header and an off-iteration idles instead of hammering.
+  $ grep -c 'for (uint32_t _v = het_scratch_read(_gpu_iter);' $MP.cu
+  1
+  $ grep -c '_v = het_scratch_read(_gpu_iter), ++_polls) {' $MP.cu
+  1
+  $ grep -c 'het_idle();' $MP.cu
+  1
+
+(f3) that iteration count is published by exactly ONE test lane, from inside the
+loop it counts.
+  $ grep -c 'het_scratch_bump(_gpu_iter);' $MP.cu
+  1
+  $ sed -n '/#pragma unroll 1/,/^    }$/p' $MP.cu | grep -c 'het_scratch_bump(_gpu_iter);'
   1
 
 (g) a shape whose outcome carries a location column runs no extra lane for it,
 and every `unroll 1' pragma survives per lane.
-  $ grep -E '^#define HET_(TEST_BLOCKS|GPU_LANES)' $S.cu
+  $ grep -E '^#define HET_TEST_BLOCKS' $S.cu
   #define HET_TEST_BLOCKS 1
-  #define HET_GPU_LANES 1
   $ grep -c '#pragma unroll 1' $S.cu
   1
   $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' $S.cu | grep -c 'het_do_stress(_scratch'

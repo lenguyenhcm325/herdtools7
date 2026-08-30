@@ -129,6 +129,15 @@ proc, and one leaving a gpu proc out.
   exit 3
   $ ls out-omits
 
+(g2) a cta placing no proc: it would leave the block indices past it with no
+lane at (0,0), and nothing to publish the iteration count.
+  $ mk emptycta 'r[relaxed,sys] r1 x'
+  $ sed -i 's|scopes:.*|scopes: (sys (gpu (cta) (cta P1)))|' emptycta.litmus
+  $ litmus7 -gpu-target cuda -o out-emptycta emptycta.litmus 2>&1 >/dev/null; echo "exit $?"
+  HetLitmus REFUSED (het) emptycta.litmus: HetLitmus: the scopes tree declares a cta with no proc; a declared cta places at least one gpu proc
+  exit 3
+  $ ls out-emptycta
+
 (h) a second scopes: row.
   $ mk tworows 'r[relaxed,sys] r1 x'
   $ sed -i 's|^exists|scopes: (sys (gpu (cta P1)))\nexists|' tworows.litmus

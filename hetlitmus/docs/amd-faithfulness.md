@@ -68,8 +68,9 @@ On a het render each lane carries, in this order:
   one per lane, whose own relaxed system-scope `__hip_atomic_fetch_add`/`__hip_atomic_load`
   live in `het_rdv.h` — followed by the **release jitter** `het_rdv_jitter`, then
 * the **model ops** in column order, carrying the store values the `.litmus` writes,
-* the **result stores** (one per read register, into iteration `_n`'s own buffer slot)
-  and the completion bump on `_gpu_done`.
+* the **result stores** (one per read register, into iteration `_n`'s own buffer slot),
+  and in the lane at `(0,0)` alone a bump of `_gpu_iter`, the iteration clock the
+  stress population polls.
 
 The **x86_64 CPU half** is the `.litmus` CPU column's rendering: the `_cpu.c`
 real-asm block that litmus7's own `ASMLang.dump_fun` prints between its
@@ -88,8 +89,9 @@ the two devices once and leaves every iteration after the first unsynchronised.
 `SIZE_OF_TEST` is a compile-time constant, so without the pragma the compiler
 unrolls the loop and the lane body carries many copies of the tested
 instructions — not the program the `.litmus` names.
-What is emitted once per lane is the completion bump alone. The gpu-only path has
-no such loop by design (`litmus/gpuLang.ml` `dump_test` emits each proc's ops once).
+Nothing is emitted once per lane: every construct a lane carries sits inside that
+loop, the `_gpu_iter` bump included. The gpu-only path has no such loop by design
+(`litmus/gpuLang.ml` `dump_test` emits each proc's ops once).
 
 Inside a lane every access is one of the above: the emission carries no further
 atomic-, fence- or asm-shaped token — `asm`/`__asm__` included, since "the HIP

@@ -111,6 +111,7 @@ DEVICE_HELPERS = {
     "het_scratch_read", "het_scratch_bump", "het_scratch_max",
     "het_do_stress",
     "het_rdv_device", "het_rdv_jitter",
+    "het_idle",
 }
 
 # Every memory-construct-shaped token, `asm' included: a source-level read
@@ -404,11 +405,9 @@ GPU_REG = re.compile(r'^r(\d+)$')
 LOOP_PRAGMA = "#pragma unroll 1"
 LOOP_HEAD = re.compile(r'^for \(int _n=0; _n<(\S+); \+\+_n\) \{$')
 LOOP_BOUND = "SIZE_OF_TEST"
-# What one iteration owns, the rendezvous and its jitter included.
-PER_ITERATION = ('st', 'ld', 'fence', 'res', 'rdv', 'jitter')
-# ...and what the lane owns once: the completion bump, which tells the stress
-# population this lane is done.
-ONCE_PER_LANE = ('bump',)
+# What one iteration owns, the rendezvous and its jitter included; the bump is
+# the iteration clock the stress population polls, and only one lane carries it.
+PER_ITERATION = ('st', 'ld', 'fence', 'res', 'rdv', 'jitter', 'bump')
 # A statement that can guard the line under it without a brace of its own, and
 # a jump that can skip the rest of an iteration.
 CTRL_HEAD = re.compile(r'^(if|for|while|else)\b')
@@ -782,17 +781,6 @@ def check_lane_loop(result, body, anchors, who):
                 result.fail("%s: %s is guarded by `%s' inside the loop, so it "
                             "does not run on every iteration"
                             % (who, fmt(a.sig), body[chain[-1]].strip()))
-        elif a.sig[0] in ONCE_PER_LANE:
-            if inside:
-                bad = True
-                result.fail("%s: %s sits INSIDE the per-iteration loop -- it is "
-                            "the lane's once-per-launch scaffolding"
-                            % (who, fmt(a.sig)))
-            elif chain:
-                bad = True
-                result.fail("%s: %s is guarded by `%s', so the lane's "
-                            "once-per-launch scaffolding may not run at all"
-                            % (who, fmt(a.sig), body[chain[-1]].strip()))
     if not bad:
         result.note("  %s loop structure OK (%s over %s, %d anchor(s) inside)"
                     % (who, LOOP_PRAGMA, LOOP_BOUND,
@@ -938,7 +926,9 @@ def check_het(result, inst, lanes):
                 regs.append(o1)
         expected = rdv + list(payload) \
             + [('res', "bufP%d_%d" % (pidx, i), r)
-               for i, r in enumerate(regs)] + [('bump',)]
+               for i, r in enumerate(regs)]
+        if (blk, lane) == (0, 0):
+            expected += [('bump',)]
         if check_stream(result, expected, anchors, who):
             check_operands(result, anchors, cells, who, slotted=True)
         # The two scaffolding operands the anchor stream does not carry and
@@ -948,9 +938,9 @@ def check_het(result, inst, lanes):
                 result.fail("%s: the lane records its arrival in %s, not in its "
                             "own flag buffer -- the readout would read the wrong "
                             "lane's rendezvous" % (who, a.flag))
-            if a.sig[0] == 'bump' and a.arg != '_gpu_done':
-                result.fail("%s: the lane's completion bump names %s, not "
-                            "_gpu_done" % (who, a.arg))
+            if a.sig[0] == 'bump' and a.arg != '_gpu_iter':
+                result.fail("%s: the iteration-clock bump names %s, not "
+                            "_gpu_iter" % (who, a.arg))
 
 
 def check_stress_region(result, other, helpers):

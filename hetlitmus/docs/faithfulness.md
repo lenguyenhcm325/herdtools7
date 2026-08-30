@@ -221,6 +221,16 @@ begins or ends in a fence (`f[sc,sys]`, say) is unambiguous.
   memory/ordering mnemonics are.
 * No `acq_rel`/RMW/`sc`-on-access appears in the corpus (the op-kind table's
   note above).
+* **One scaffolding write sits inside the tested loop.** The GPU lane at
+  `(0,0)` bumps `_gpu_iter` once per iteration, after its readout stores and
+  outside every tested access; it lowers to a bare `atom.global.add.u32` with no
+  order and no scope token, so it enters no model-op stream (property 4) and the
+  stress population reads the iteration index off it. It buys traffic isolation:
+  the rendezvous counter already carries the iteration
+  (`litmus/het-runtime/het_rdv.h`), but it is a `Shared` allocation in the race
+  surface and the word whose latency sets cross-device alignment, so aiming every
+  stress poll at it would load the one word the alignment depends on. `_gpu_iter`
+  is device-only and touched by nothing else.
 * **The property is BLIND to the stress layer, by design.** Stress is
   scaffolding, not a tested op: it carries no order/scope qualifier and sits
   outside the inline-asm markers, so it never enters the model-op stream —

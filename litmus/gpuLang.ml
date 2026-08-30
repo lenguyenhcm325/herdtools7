@@ -214,7 +214,16 @@ let check_scopes scopes procs = match scopes with
             Warn.user_error
               "HetLitmus: the scopes tree places no P%d; a declared tree \
                places every gpu proc" p)
-        procs
+        procs ;
+      (* An empty cta is a block with no lane, so the block indices past it
+         slide and no lane sits at (0,0). *)
+      List.iter
+        (fun cta ->
+          if subtree_procs cta = [] then
+            Warn.user_error
+              "HetLitmus: the scopes tree declares a cta with no proc; a \
+               declared cta places at least one gpu proc")
+        (collect_ctas tree)
 
 (* returns (layout : (proc -> block*lane), n_blocks, block_dim) *)
 let layout_of_scopes scopes procs =

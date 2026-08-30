@@ -80,8 +80,8 @@ let dump_gpu_stress_alloc dialect ch =
        (dialect.gd_dev_malloc "_scratch" "sizeof(uint32_t)*HET_SCRATCH_SIZE")) ;
   s (Printf.sprintf "  uint32_t *_scratch_loc; %s\n"
        (dialect.gd_dev_malloc "_scratch_loc" "sizeof(uint32_t)*_grid")) ;
-  s (Printf.sprintf "  uint32_t *_gpu_done; %s\n"
-       (dialect.gd_dev_malloc "_gpu_done" "sizeof(uint32_t)")) ;
+  s (Printf.sprintf "  uint32_t *_gpu_iter; %s\n"
+       (dialect.gd_dev_malloc "_gpu_iter" "sizeof(uint32_t)")) ;
   s (Printf.sprintf "  uint32_t *_stress_tally; %s\n"
        (dialect.gd_dev_malloc "_stress_tally"
           "sizeof(uint32_t)*HET_TALLY_N")) ;
@@ -256,7 +256,7 @@ let dump_run_reset_observation dialect memory procs ch =
   s (Printf.sprintf "    %s\n"
        (dialect.gd_dev_memset0 "_scratch" "sizeof(uint32_t)*HET_SCRATCH_SIZE")) ;
   s (Printf.sprintf "    %s\n"
-       (dialect.gd_dev_memset0 "_gpu_done" "sizeof(uint32_t)")) ;
+       (dialect.gd_dev_memset0 "_gpu_iter" "sizeof(uint32_t)")) ;
   s (Printf.sprintf "    %s\n"
        (dialect.gd_dev_memset0 "_stress_tally"
           "sizeof(uint32_t)*HET_TALLY_N")) ;
@@ -306,7 +306,7 @@ let dump_run_launch_kernel dialect identity memory procs ch =
            (gpu_read_buffers memory)
        @ List.map (fun gp -> "&" ^ rdv_gpu_name gp.gp_proc) procs.pr_gpus
        @ ["&barrier" ; "&_cap_gpu"]
-       @ ["&_scratch" ; "&_scratch_loc" ; "&_gpu_done" ;
+       @ ["&_scratch" ; "&_scratch_loc" ; "&_gpu_iter" ;
           "&_stress_tally" ; "&_seed" ; "&_pre_pat" ; "&_mem_pat" ;
           "&_noise_ddr" ; "&_noise_words" ; "&_noise_blocks" ;
           "&_noise_chunk" ; "&_noise_stride"]) in
@@ -523,7 +523,7 @@ let dump_free dialect memory procs ch =
     (memory_objects memory procs) ;
   s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch")) ;
   s (Printf.sprintf "  %s\n" (dialect.gd_free "_scratch_loc")) ;
-  s (Printf.sprintf "  %s\n" (dialect.gd_free "_gpu_done")) ;
+  s (Printf.sprintf "  %s\n" (dialect.gd_free "_gpu_iter")) ;
   s (Printf.sprintf "  %s\n" (dialect.gd_free "_stress_tally")) ;
   s {|  free(_scratch_loc_h);
   free(_cpu_scratch);

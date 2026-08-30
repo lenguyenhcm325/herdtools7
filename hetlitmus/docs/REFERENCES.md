@@ -309,9 +309,12 @@ Deviation(s):
   needs an exhaustion break the dead guard did not.
 * `het_do_stress` adds a tally parameter and one `atomicMax` after the loop; the
   stress traffic itself is unchanged.
-* The toggles are drawn device-side here, by the thread the decision belongs to,
-  rather than re-rolled on the host between relaunches: this kernel is launched
-  once and loops inside, so there is no relaunch to re-roll at.
+* The toggles are drawn device-side here rather than re-rolled on the host
+  between relaunches: this kernel is launched once and loops inside, so there is
+  no relaunch to re-roll at. The pre-stress toggle is drawn by the test lane it
+  belongs to; the mem-stress toggle is one grid-wide draw indexed by the
+  iteration, recomputed by every stress block ([WebGPULitmus] is the origin of
+  that reading).
 
 ## [Sorensen16]
 
@@ -677,3 +680,34 @@ Deviation(s):
 * A fixed increment makes every stream one cycle entered at a different point,
   so distinct `(seed, who)` pairs are offsets into a single sequence rather
   than independent streams.
+
+## [WebGPULitmus]
+
+Reese Levine. *webgpu-litmus*, `https://github.com/reeselevine/webgpu-litmus`,
+default branch `main`, read at commit
+`c7234af7cefd90f7206152b9255eee3e58ff989c`. Apache-2.0 (LICENSE file present).
+
+Claim(s) this project takes from it:
+* `components/stressPanel.js:225` states what the memory-stress percentage
+  means: "The percentage of iterations in which all non-testing threads
+  repeatedly access the scratch memory to cause memory stress (values should be
+  between 0 and 100)". `setStressParams` (`components/litmus-setup.js:176`)
+  realises it at `:184-188` --
+  `if (getRandomInt(100) < testParams.memStressPct) { stressParamsArray[1] = 1; }`
+  -- one roll writing ONE grid-wide flag that every non-testing workgroup reads,
+  called at `:394` from `runTestIteration` (`:364`), which `runLitmusTest` runs
+  once per iteration of its `for (let i = 0; i < iterations; i++)` loop
+  (`:579-585`). `HET_MEM_STRESS_PCT` is that knob: one draw per test iteration,
+  grid-wide.
+
+Deviation(s):
+* The draw is device-side and stateless: every stress block recomputes
+  `het_draw(seed, HET_WHO_GRID, n)` for the iteration `n` it reads off
+  `_gpu_iter`, where the source rolls once on the host and copies a flag into a
+  buffer. One launch spans every iteration here, so there is no per-iteration
+  host step to roll at.
+* Only the scratchpad stress blocks obey the percentage. The GPU DDR-noise
+  blocks, the CPU enemy threads and the test lanes' own pre-stress
+  (`HET_PRE_STRESS_PCT`, on the same scratchpad) run whatever the draw says, so
+  an off-iteration is one the stress blocks sit out, not one in which the
+  scratchpad is quiet.
