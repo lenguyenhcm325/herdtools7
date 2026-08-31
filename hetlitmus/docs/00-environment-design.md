@@ -356,9 +356,45 @@ characterization tool reports what its harness reached and attaches no probabili
 ### 3.8 Positive control / liveness — withdrawn
 Withdrawn with the positive control; see §7.
 
-### 3.9 Tuning methodology — withdrawn
-- **Withdrawn with the positive control (see §7):** the objective was the control's
-  het-mutant death rate, and with no control there is no such rate to tune against.
+### 3.9 Tuning methodology — a seeded random search over the stress environment
+**What the tuner is.** `hetlitmus/tune_stress.py` draws stress configurations at random, rebuilds the
+tuning set under each with the knobs on the compiler variable (the `-D` route of `het-emission.md`), runs
+each row once, and appends one JSONL line per (configuration, row) to a log that is its whole state; a
+second pass ranks that log offline and writes the winners out. The set is emitted once per target
+at the length the search runs at, `SIZE_OF_TEST` being fixed at emission and out of `-D`'s reach. It
+reports what the harness reached under each configuration and vouches for nothing else. Method basis: [CudaLitmus]'s `tune.sh`, which
+draws every stress knob together in one `random_config` call. Two deltas follow from this design — the
+knobs here are compile-time, so a configuration costs a rebuild rather than a parameter file, and the
+co-resident persistent grid (§3.4) adds a launch-time validity check upstream has no analogue for.
+
+**The draw.** One configuration is one joint, uniform draw of every knob of §3.5 and §3.6, from
+splitmix64 at (base seed, configuration index, knob index) — the harness's own draw machinery (§3.3), so
+an index regenerates its whole vector anywhere. `HET_BLOCK_DIM` is drawn with the rest, even and no
+narrower than the lanes the test's scope tree places in one block ([CudaLitmus] tunes the block width
+jointly with the knobs beside it); `HET_SCRATCH_SIZE` is derived from the patch size and the spread, never
+drawn. Out of the space by design: the reserve-core, affinity, noise-chunk and slot-stride knobs, which
+fix identity or protocol rather than pressure; the rendezvous caps and the release jitter, calibrated once
+per target; and `HET_ALLOC` / `HET_PLACE`, which are conditions under test.
+
+**Validity, in three layers.** *Draw-time*: a vector asking for more regions than its scratchpad holds,
+for more threads than the machine has cores, or for a noise working set inside the last-level cache is
+redrawn, and a redraw costs no configuration index. *Launch-time*: the driver prints the realised geometry
+before the first iteration, and a configuration whose mem-stress population is empty, or whose grid
+exceeds the co-resident cap, is killed there and logged as invalid geometry — what ran is not what was
+drawn, so the label would be wrong. *Score-time*: a run `het_verdict.h` finds COLD-INVALID, or one that
+spends more than the rendezvous discard budget, is logged and excluded from the ranking, so the search
+cannot win by killing the rendezvous or a stress mechanism.
+
+**The objective** is weak iterations per wall-clock second, per row, under `HET_RATE=1` — a row that fires
+runs to its budget and yields a rate instead of stopping. Selection is per-row argmax on that rate, beside
+a coverage view: which rows each configuration revealed at all, and which configurations add rows the
+leader misses. A winner's `-D` vector is written out stamped with the target, the base seed and the
+configuration index, which regenerate it.
+
+**Per target.** The search is re-run on each machine and nothing transfers: a configuration tuned on one
+chip need not be good on another, even from the same vendor [Kirkham20 §6.4]. The draw stream is shared,
+so configuration *k* is the same request on every target [GPUHarbor23 §3.4]; which part of the stream is
+*valid* is a property of the target, and the log records it per configuration.
 
 ---
 
