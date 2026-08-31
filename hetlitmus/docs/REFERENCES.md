@@ -289,7 +289,8 @@ Claim(s) this project takes from it:
   `stressTargetLines=9`, `stressAssignmentStrategy=1`, `memStressPct=20`,
   `memStressIterations=445`, `memStressPattern=0`, `preStressPct=65`,
   `preStressIterations=57`, `preStressPattern=3`, `barrierPct=68`), which the
-  `HET_*` knob defaults seed from. `tune.sh` draws every one of them together
+  `HET_*` knob defaults seed from — `HET_MEM_STRESS_PCT` excepted, see
+  Deviation(s). `tune.sh` draws every one of them together
   in one `random_config` call (`tune.sh:29-57`, `workgroupSize` at `:39`,
   rounded even out of 1..256), and `runner.cu:261` launches
   `litmus_test<<<numWorkgroups, workgroupSize>>>`, so the block width is tuned
@@ -311,7 +312,8 @@ Deviation(s):
   `pre_stress_pattern`. The if-chain has no `else`, so under the committed
   configuration the mem-stress loop matches no branch and `memStressPattern` is
   never read. HetLitmus passes the pattern as the pattern, which is why that
-  configuration is not a valid tuning seed here.
+  configuration is not a valid tuning seed here. `HET_MEM_STRESS_PCT` therefore
+  defaults to [WebGPULitmus]'s all-stress 100.
 * `setScratchLocations` declares `std::set<int> usedRegions` (`runner.cu:131`)
   and guards its draw with it (`runner.cu:135`) but never inserts into it, so the
   dedup never fires and the realised spread can be smaller than
@@ -710,6 +712,11 @@ Claim(s) this project takes from it:
   once per iteration of its `for (let i = 0; i < iterations; i++)` loop
   (`:579-585`). `HET_MEM_STRESS_PCT` is that knob: one draw per test iteration,
   grid-wide.
+* `components/stressPanel.js:185-203` defines the UI's presets; the "Stress"
+  one (`allStressConfig`) sets `memStressPct: 100` and `preStressPct: 100`
+  (`:190`, `:197`) — the tool's own stressed environment stresses every
+  iteration, and no preset carries an intermediate percentage.
+  `HET_MEM_STRESS_PCT` defaults to that 100.
 
 Deviation(s):
 * The draw is device-side and stateless: every stress block recomputes

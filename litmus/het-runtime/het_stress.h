@@ -20,10 +20,10 @@
 #include <cuda/atomic>
 #endif
 
-/* Stress knobs -- a seed, NOT a tuning.  The values are [CudaLitmus]'s committed
- * params/stress_params.txt: one chip, device scope, GPU-only.  Re-tune on the
- * target hardware [Kirkham20 sec 6.4]; every knob is -D-overridable, so a sweep
- * needs no re-emission. */
+/* Stress knobs -- a seed, NOT a tuning.  All but HET_MEM_STRESS_PCT are
+ * [CudaLitmus]'s committed params/stress_params.txt: one chip, device scope,
+ * GPU-only.  Re-tune on the target hardware [Kirkham20 sec 6.4]; every knob is
+ * -D-overridable, so a sweep needs no re-emission. */
 #ifndef HET_SCRATCH_SIZE
 #define HET_SCRATCH_SIZE 4608          /* scratchpad size, in uint32 words     */
 #endif
@@ -37,9 +37,10 @@
 #define HET_STRESS_ASSIGN 1            /* 0 = round-robin, 1 = chunking        */
 #endif
 #ifndef HET_MEM_STRESS_PCT
-#define HET_MEM_STRESS_PCT 20          /* % of test ITERATIONS the scratchpad is
+#define HET_MEM_STRESS_PCT 100         /* % of test ITERATIONS the scratchpad is
                                           hammered in; one draw per iteration,
-                                          read by every stress block         */
+                                          read by every stress block.  100 is
+                                          [WebGPULitmus]'s all-stress preset */
 #endif
 #ifndef HET_MEM_STRESS_ITER
 #define HET_MEM_STRESS_ITER 445

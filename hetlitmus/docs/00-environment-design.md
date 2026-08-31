@@ -273,9 +273,12 @@ GPU scratchpad stress loads the *on-die* coherence protocol, **not** the C2C pat
 needs — so it must be paired with §3.6. The whole layer rests on the **window-widening
 hypothesis**: a memory system under heavy stress is likelier to transfer data out of order
 [Alglave15 §4.3.1]. **`HET_MEM_STRESS_PCT` is a percentage of test *iterations*, decided grid-wide**
-[WebGPULitmus]: one draw per iteration says whether the scratchpad stress blocks hammer for it, so at
-20 they hammer in one iteration in five and idle through the other four. An off-iteration is not a
-quiet one — that key's deviation records what still runs.
+[WebGPULitmus]: one draw per iteration says whether the scratchpad stress blocks hammer for it. The
+default is **100** — [WebGPULitmus]'s all-stress preset (`stressPanel.js:185`), matching the on/off
+literature where "on" stresses every iteration [Kirkham20 Table 3] — not the committed file's
+`memStressPct=20`, a value its tuner could only feel through the dead loop the `MEM_STRESS` bug left
+it (the [CudaLitmus] deviations). Below 100, an off-iteration is not a quiet one — that key's
+deviation records what still runs.
 
 ### 3.6 CPU-side + interconnect stress
 - **CPU stress = litmus7 recipes** ported into the emitted CPU thread at two sites (preload before the
