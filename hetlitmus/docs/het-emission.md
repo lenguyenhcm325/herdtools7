@@ -466,8 +466,11 @@ keeps its `cpu` back-compat tag).
     column, so a symbolic `%T1` is refused.
 * **The launch geometry is the test's own `scopes:` tree.** Both arms read the
   tree through `GpuLang.scopes_of` and derive the block layout from it
-  (`cuda-emitter.md`, "Mappings"), so two GPU procs in one `cta` are one block
-  of two lanes and in two `cta`s two blocks of one. A tree that does not parse,
+  (`cuda-emitter.md`, "Mappings"), so two GPU procs in one `cta` sit at two lanes
+  of one block and in two `cta`s at lane 0 of each of two blocks. The tree fixes
+  which `(block, lane)` a proc holds and how many test blocks there are; the
+  block *width* is `HET_BLOCK_DIM`, under which the tree only sets a floor
+  (`00-environment-design.md` §3.3). A tree that does not parse,
   that places a proc which is not a `gpu` proc, or that leaves a `gpu` proc out
   is refused before anything is written; with no `scopes:` row at all every GPU
   proc gets a block of its own, and so does a `gpu` proc a tree places under no

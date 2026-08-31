@@ -78,8 +78,19 @@ extern "C" {
   s (Printf.sprintf "#define SIZE_OF_TEST %d\n" geometry.ge_size) ;
   s (Printf.sprintf "#define NUMBER_OF_RUN %d\n" geometry.ge_runs) ;
   s "\n" ;
+  let lanes = max 1 geometry.ge_bdim in
+  (* The floor is the block width het_stress.h's knobs were tuned jointly with
+     [CudaLitmus params/stress_params.txt]. *)
   s (Printf.sprintf "#ifndef HET_BLOCK_DIM\n#define HET_BLOCK_DIM %d\n#endif\n"
-       (max 1 geometry.ge_bdim)) ;
+       (max 128 lanes)) ;
+  (* #error expands no macro, so the scope tree's width is baked in as text. *)
+  s (Printf.sprintf
+       "#if HET_BLOCK_DIM < %d\n\
+        #error \"HET_BLOCK_DIM is below the %d lane(s) this test's scope tree \
+        places in one block; the missing lane would never run and every \
+        iteration would be discarded at the rendezvous\"\n\
+        #endif\n"
+       lanes lanes) ;
   s (Printf.sprintf "#define HET_TEST_BLOCKS %d\n\n" geometry.ge_blocks)
 
 (* The kernel signature: the shared globals, then the GPU read buffers and
@@ -147,6 +158,11 @@ let dump_test_lane dialect gp ch =
 let dump_stress_workgroups ch =
   let s = output_string ch in
   s {|  if (blockIdx.x >= HET_TEST_BLOCKS) {
+    /* Lane 0 reads the iteration clock for the whole block and broadcasts it:
+       one device-scope RMW per block per round, whatever HET_BLOCK_DIM is.  The
+       two branches below are block-uniform, so a __syncthreads is reached by
+       every lane of its block and by NO test block. */
+    __shared__ uint32_t _clk;
     if (_noise_ddr != NULL && blockIdx.x < HET_TEST_BLOCKS + _noise_blocks) {
       volatile const uint64_t* _nb = (volatile const uint64_t*)_noise_ddr;
       uint64_t _t = (uint64_t)(blockIdx.x - HET_TEST_BLOCKS) * blockDim.x + threadIdx.x;
@@ -155,29 +171,40 @@ let dump_stress_workgroups ch =
       /* The reads are volatile, so the stream is issued with no value escaping;
          the tally below counts blocks whose thread 0 completed a round. */
       uint32_t _r = 0;
-      for (;
-           _r < HET_STRESS_MAX_ROUNDS && het_scratch_read(_gpu_iter) < (uint32_t)SIZE_OF_TEST;
-           ++_r) {
+      for (;;) {
+        if (threadIdx.x == 0) _clk = het_scratch_read(_gpu_iter);
+        __syncthreads();
+        uint32_t _v = _clk;
+        /* Every lane has taken its copy, so lane 0 may overwrite _clk. */
+        __syncthreads();
+        if (_v >= (uint32_t)SIZE_OF_TEST || _r >= HET_STRESS_MAX_ROUNDS) break;
         for (uint32_t _c = 0; _c < _noise_chunk; ++_c) {
           (void)_nb[_i];
           _i += _step;
           if (_i >= _noise_words) _i = (_noise_words > 0) ? (_i % _noise_words) : 0;
         }
+        ++_r;
       }
       if (_r > 0 && threadIdx.x == 0) het_scratch_bump(&_stress_tally[HET_TALLY_NOISE]);
-      het_scratch_max(&_stress_tally[HET_TALLY_NOISE_ROUNDS], _r);
+      if (threadIdx.x == 0) het_scratch_max(&_stress_tally[HET_TALLY_NOISE_ROUNDS], _r);
     } else {
-    uint32_t _polls = 0;
-    for (uint32_t _v = het_scratch_read(_gpu_iter);
-         _v < (uint32_t)SIZE_OF_TEST && _polls < HET_STRESS_MAX_ROUNDS;
-         _v = het_scratch_read(_gpu_iter), ++_polls) {
-      if ((int)(het_draw(_seed, HET_WHO_GRID, _v) % 100u) < HET_MEM_STRESS_PCT)
-        het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally);
-      else
-        het_idle();
-    }
-    if (_polls >= HET_STRESS_MAX_ROUNDS)
-      het_scratch_bump(&_stress_tally[HET_TALLY_TRUNC]);
+      uint32_t _polls = 0;
+      for (;;) {
+        if (threadIdx.x == 0) _clk = het_scratch_read(_gpu_iter);
+        __syncthreads();
+        uint32_t _v = _clk;
+        __syncthreads();
+        if (_v >= (uint32_t)SIZE_OF_TEST || _polls >= HET_STRESS_MAX_ROUNDS) break;
+        /* _v is the same in every lane, so the draw is one decision the block
+           recomputes rather than one roll per lane. */
+        if ((int)(het_draw(_seed, HET_WHO_GRID, _v) % 100u) < HET_MEM_STRESS_PCT)
+          het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally);
+        else
+          het_idle();
+        ++_polls;
+      }
+      if (_polls >= HET_STRESS_MAX_ROUNDS && threadIdx.x == 0)
+        het_scratch_bump(&_stress_tally[HET_TALLY_TRUNC]);
     }
   }
 |}

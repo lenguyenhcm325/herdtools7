@@ -97,8 +97,12 @@ Inside a lane every access is one of the above: the emission carries no further
 atomic-, fence- or asm-shaped token — `asm`/`__asm__` included, since "the HIP
 path carries no inline assembly" is the premise the whole source-level statement
 rests on — and no `volatile` access. Outside every lane only the device helpers
-appear: `litmus/het-runtime/het_stress.h`'s scaffolding plus `het_rdv.h`'s
-`het_rdv_device`/`het_rdv_jitter`.
+appear: `litmus/het-runtime/het_stress.h`'s scaffolding, `het_rdv.h`'s
+`het_rdv_device`/`het_rdv_jitter`, and the `__syncthreads()` the stress and noise
+blocks broadcast the iteration clock across
+(`hetlitmus/docs/00-environment-design.md` §3.3). A `__syncthreads()` inside a
+lane would be a barrier a test block reaches, and the source read rejects it
+there.
 
 ## Scope and limits
 

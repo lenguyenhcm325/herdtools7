@@ -65,9 +65,11 @@ the pre-stress runs in every test lane.
   $ grep -c 'uint32_t _mem_pat = (uint32_t)HET_MEM_STRESS_PATTERN;' $MP.cu
   1
 
-(e2) the lane flags a cap-exit, so stress that stopped while the test was still
-running reaches the record.
+(e2) the block flags a cap-exit through lane 0, so stress that stopped while the
+test was still running reaches the record once per block.
   $ grep -c 'het_scratch_bump(&_stress_tally\[HET_TALLY_TRUNC\])' $MP.cu
+  1
+  $ grep -c 'if (_polls >= HET_STRESS_MAX_ROUNDS && threadIdx.x == 0)' $MP.cu
   1
 
 (e3) and the shipped defaults: pattern 0 is the memory stress's only pure
@@ -86,14 +88,25 @@ participant the decision belongs to and the index alone.
   $ grep -c '(int)(het_draw(_seed, HET_WHO_GRID, _v) % 100u) < HET_MEM_STRESS_PCT' $MP.cu
   1
 
-(f2) the mem-stress toggle is one draw per test ITERATION, so the poll sits in
-the loop header and an off-iteration idles instead of hammering.
-  $ grep -c 'for (uint32_t _v = het_scratch_read(_gpu_iter);' $MP.cu
-  1
-  $ grep -c '_v = het_scratch_read(_gpu_iter), ++_polls) {' $MP.cu
-  1
+(f2) the mem-stress toggle is one draw per test ITERATION: lane 0 alone polls the
+clock and broadcasts it, and an off-iteration idles instead of hammering.
+  $ grep -c 'if (threadIdx.x == 0) _clk = het_scratch_read(_gpu_iter);' $MP.cu
+  2
+  $ grep -c 'het_scratch_read(_gpu_iter)' $MP.cu
+  2
+  $ grep -c 'uint32_t _v = _clk;' $MP.cu
+  2
   $ grep -c 'het_idle();' $MP.cu
   1
+
+(f2b) every intra-block barrier sits inside the stress region, so a test block
+reaches NONE of them.
+  $ grep -c '__shared__ uint32_t _clk;' $MP.cu
+  1
+  $ grep -c '__syncthreads();' $MP.cu
+  4
+  $ sed -n '/if (blockIdx.x >= HET_TEST_BLOCKS) {/,$p' $MP.cu | grep -c '__syncthreads();'
+  4
 
 (f3) that iteration count is published by exactly ONE test lane, from inside the
 loop it counts.

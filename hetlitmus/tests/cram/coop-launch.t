@@ -45,7 +45,7 @@ The HIP twin renders the same shape from the same template.
   1
 
 (h) the launch geometry is the test's own scope tree: two GPU procs in one cta
-are one block of two lanes, in two ctas two blocks of one.
+need two lanes of one block, in two ctas one lane of each of two blocks.
   $ cat > tree.litmus <<'EOF'
   > Het tree
   > {
@@ -58,12 +58,14 @@ are one block of two lanes, in two ctas two blocks of one.
   > scopes: TREE
   > exists (1:r0=1)
   > EOF
-  $ geo () { sed "s|TREE|$1|" tree.litmus > "$2.litmus"; mkdir "$2"; litmus7 -gpu-target cuda -o "$2" "$2.litmus" >/dev/null 2>&1; grep -E '#define HET_(BLOCK_DIM|TEST_BLOCKS) ' "$2/tree/tree.cu"; }
+  $ geo () { sed "s|TREE|$1|" tree.litmus > "$2.litmus"; mkdir "$2"; litmus7 -gpu-target cuda -o "$2" "$2.litmus" >/dev/null 2>&1; grep -E '#define HET_(BLOCK_DIM|TEST_BLOCKS) |^#if HET_BLOCK_DIM < ' "$2/tree/tree.cu"; }
   $ geo '(sys (gpu (cta P1 P2)))' onecta
-  #define HET_BLOCK_DIM 2
+  #define HET_BLOCK_DIM 128
+  #if HET_BLOCK_DIM < 2
   #define HET_TEST_BLOCKS 1
   $ geo '(sys (gpu (cta P1) (cta P2)))' twoctas
-  #define HET_BLOCK_DIM 1
+  #define HET_BLOCK_DIM 128
+  #if HET_BLOCK_DIM < 1
   #define HET_TEST_BLOCKS 2
 
 The two-cta launch guards its lanes by block, the one-cta launch by lane.

@@ -285,11 +285,21 @@ Claim(s) this project takes from it:
   `litmus/het-runtime/het_stress.h` ports the stress layer from these, and
   citation is the condition of that reuse.
 * `params/stress_params.txt` is the one committed tuned configuration
-  (`scratchMemorySize=4608`, `stressLineSize=16`, `stressTargetLines=9`,
-  `stressAssignmentStrategy=1`, `memStressPct=20`, `memStressIterations=445`,
-  `memStressPattern=0`, `preStressPct=65`, `preStressIterations=57`,
-  `preStressPattern=3`, `barrierPct=68`), which the `HET_*` knob defaults seed
-  from.
+  (`workgroupSize=128`, `scratchMemorySize=4608`, `stressLineSize=16`,
+  `stressTargetLines=9`, `stressAssignmentStrategy=1`, `memStressPct=20`,
+  `memStressIterations=445`, `memStressPattern=0`, `preStressPct=65`,
+  `preStressIterations=57`, `preStressPattern=3`, `barrierPct=68`), which the
+  `HET_*` knob defaults seed from. `tune.sh` draws every one of them together
+  in one `random_config` call (`tune.sh:29-57`, `workgroupSize` at `:39`,
+  rounded even out of 1..256), and `runner.cu:261` launches
+  `litmus_test<<<numWorkgroups, workgroupSize>>>`, so the block width is tuned
+  jointly with the knobs beside it; `HET_BLOCK_DIM` defaults to it
+  (`hetlitmus/docs/00-environment-design.md` §3.3).
+* `MEM_STRESS()` (`litmus.cuh:344`) is the `else` arm of the kernel's
+  testing-workgroup guard, written at kernel scope (e.g. `kernels/mp.cu`), so
+  *every thread* of a non-testing workgroup calls `do_stress` on
+  `scratch_locations[blockIdx.x]`: the stress volume a grid carries is per
+  thread, not per workgroup.
 * Its probabilistic toggles are re-rolled on the host and copied to the device
   before every relaunch (`setDynamicKernelParams`, `runner.cu:160`, and the
   `cudaMemcpy` at `runner.cu:259`), and the barrier toggle is one host-set
@@ -313,8 +323,8 @@ Deviation(s):
   between relaunches: this kernel is launched once and loops inside, so there is
   no relaunch to re-roll at. The pre-stress toggle is drawn by the test lane it
   belongs to; the mem-stress toggle is one grid-wide draw indexed by the
-  iteration, recomputed by every stress block ([WebGPULitmus] is the origin of
-  that reading).
+  iteration, which lane 0 of each stress block reads off the device clock and
+  broadcasts to its block ([WebGPULitmus] is the origin of that reading).
 
 ## [Sorensen16]
 

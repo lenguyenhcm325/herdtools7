@@ -83,17 +83,17 @@
 #endif
 #ifndef HET_STRESS_MAX_ROUNDS
 #define HET_STRESS_MAX_ROUNDS 10000000u    /* safety net, NOT a knob: a stress
-                                              lane must not spin for ever.  A
+                                              block must not spin for ever.  A
                                               round is one het_do_stress call or
                                               one het_idle, both microseconds,
                                               so this is a wall-time budget */
 #endif
 
-/* Liveness tally -- device counters the host reads back: TRUNC = stress lanes
- * that hit HET_STRESS_MAX_ROUNDS, NOISE / NOISE_ROUNDS = noise blocks that
- * completed a streaming round and the max any one completed, STRESS_ROUNDS = max
- * rounds any one het_do_stress completed.  Nothing here enters the tested op
- * stream, so only a runtime counter tells a live layer from a folded-away one. */
+/* Liveness tally -- device counters the host reads back: TRUNC = stress blocks
+ * that hit HET_STRESS_MAX_ROUNDS, NOISE / NOISE_ROUNDS = noise blocks that ran a
+ * streaming round and the max any one ran; lane 0 bumps those three, so they
+ * count blocks.  STRESS_ROUNDS = max rounds one lane's het_do_stress ran.  None
+ * of it enters the tested op stream, so only a counter tells live from folded. */
 #define HET_TALLY_TRUNC         0
 #define HET_TALLY_NOISE         1
 #define HET_TALLY_NOISE_ROUNDS  2

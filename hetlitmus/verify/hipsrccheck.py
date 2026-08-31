@@ -104,7 +104,7 @@ X86_REG_64 = {"eax": "rax", "ebx": "rbx", "ecx": "rcx", "edx": "rdx",
               "rax": "rax", "rbx": "rbx", "rcx": "rcx", "rdx": "rdx",
               "rsi": "rsi", "rdi": "rdi", "rbp": "rbp", "rsp": "rsp"}
 
-# Device helpers a het kernel may carry (litmus/het-runtime/het_stress.h and
+# Device helpers a het lane may carry (litmus/het-runtime/het_stress.h and
 # het_cpu_stress.h); one outside this set hard-fails as an unmodelled primitive.
 DEVICE_HELPERS = {
     "het_draw",
@@ -113,11 +113,14 @@ DEVICE_HELPERS = {
     "het_rdv_device", "het_rdv_jitter",
     "het_idle",
 }
+# The stress region's clock broadcast adds a barrier; it is NOT in the set
+# above, since a barrier inside a lane is one a test block reaches.
+STRESS_REGION_HELPERS = DEVICE_HELPERS | {"__syncthreads"}
 
-# Every memory-construct-shaped token, `asm' included: a source-level read
-# stands for the whole memory behaviour ONLY over a path with no inline asm.
+# Every memory-construct-shaped token, `asm' and `__syncthreads' included: a
+# source-level read stands for the whole memory behaviour ONLY with no inline asm.
 _SHAPED = (r'__hip_atomic_\w+|__builtin_\w+|__threadfence\w*|__atomic_\w+'
-           r'|__sync_\w+|\batomic[A-Za-z_]\w*|\bhet_[a-z]\w*'
+           r'|__sync_\w+|__syncthreads|\batomic[A-Za-z_]\w*|\bhet_[a-z]\w*'
            r'|\basm\b|__asm__')
 ATOMIC_SHAPED = re.compile(r'(%s)' % _SHAPED)
 # Inside a lane every access is accounted for by an anchor, so a volatile one
@@ -1018,7 +1021,7 @@ def check_test(litmus_path, hip_override=None, cpu_c_override=None, verbose=True
 
         if kind == 'Het':
             check_het(result, inst, lanes)
-            check_stress_region(result, other, DEVICE_HELPERS)
+            check_stress_region(result, other, STRESS_REGION_HELPERS)
             if cpu_c_path is None:
                 result.fail("het test has CPU columns but no _cpu.c to read")
             else:

@@ -69,7 +69,7 @@ typedef struct het_obs_record {
      constant-read artefact [Srivastava24 sec 4.1]: a caveat, not a discard. */
   int outcomes_vary;
   /* GPU stress liveness, the only run-time evidence the layer ran (it leaves no
-     trace in the tested op stream).  stress_truncated: lanes that stopped
+     trace in the tested op stream).  stress_truncated: blocks that stopped
      stressing while the test still ran.  gpu_stress_rounds: max rounds one
      het_do_stress call completed; stress blocks fill what the co-residency cap
      leaves over the test lanes, so that cap squeezes them to zero first. */

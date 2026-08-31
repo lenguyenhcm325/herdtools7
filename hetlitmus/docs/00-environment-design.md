@@ -172,8 +172,29 @@ on iteration 0 alone, where the grid may not yet be resident, and on no other, b
 call inside the tested loop is traffic the window does not need. The HIP render passes no such call. On
 the device side, forward progress is guarded by **occupancy-bounded or cooperative launch**
 (`cudaLaunchCooperativeKernel`; HIP equivalents) — every test block has to be resident, since every GPU
-proc is a participant. Each is one block of one thread (`HET_BLOCK_DIM = 1`), so the rendezvous needs no
-intra-block barrier and no assumption about progress *within* a warp.
+proc is a participant. Each GPU proc is one **lane**; a block is `HET_BLOCK_DIM` lanes wide, and the
+emitter defaults that to `max(128, widest cta of the scope tree)`, so a test block is at least 128
+lanes wide however few procs the tree puts in it. 128 is `workgroupSize` in the one committed
+[CudaLitmus] configuration every other stress knob of §3.5
+is seeded from, and that project's tuner draws it in the same call as the knobs beside it: the width is
+a member of that vector, not a free parameter that can be set to 1 while the rest of it stands. A test
+block's lanes past the ones the tree places match no proc guard and exit at launch, so the rendezvous
+still needs no intra-block barrier and still assumes nothing about progress *within* a warp. The stress
+and noise blocks do take one: lane 0 alone polls the iteration clock and broadcasts it to its block
+between two `__syncthreads()`, which keeps the poll at one device-scope read-modify-write per block per
+round whatever the width is, and keeps the mem-stress decision one per iteration for the whole block.
+Those blocks hold no rendezvous participant, and both branches they split into are block-uniform, so the
+guarantee above is untouched by the barrier. The emitter also stamps a `#if HET_BLOCK_DIM < <lanes>`
+`#error` beside the default, so a run that overrides the width below what the tree needs fails to
+compile instead of silently dropping a proc.
+
+**The width is also a stress-volume lever.** Every lane of a stress block calls `het_do_stress` on that
+block's scratchpad word, so the scratchpad traffic a grid carries is proportional to `HET_BLOCK_DIM` —
+which is the [CudaLitmus] dispatch, where every thread of a non-testing workgroup stresses, and is why
+§3.5's per-thread knob values belong with a per-thread width rather than beside a width of 1. What that
+volume costs the *rendezvous* is not settled here: it is a wall-clock question about a particular
+device, and the only instrument for it is a target's own cap calibration (above), which is why an
+uncalibrated cap is a caveat on every null it produces rather than a detail.
 
 **Alignment is still bought, not measured.** There is no shared clock and no ordering-free side channel.
 What the rendezvous buys is a common *start*; the residual skew is swept by a per-participant release
