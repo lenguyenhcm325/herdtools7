@@ -466,10 +466,11 @@ def parse_lane(body, helpers, where):
         if a is None:
             m = C_RDV.match(s)
             if m:
-                args = _args(m, 3, 'het_rdv_device', where, group=2)
+                args = _args(m, 4, 'het_rdv_device', where, group=2)
                 flush()
                 a = Anchor(('rdv',), ['het_rdv_device'], flag=m.group(1),
-                           ptr=args[0], target=args[1], cap=args[2])
+                           ptr=args[0], target=args[1], npart=args[2],
+                           cap=args[3])
         if a is None:
             m = C_JITTER.match(s)
             if m:

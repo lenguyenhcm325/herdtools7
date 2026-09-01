@@ -74,9 +74,9 @@ plus an optional poke into the vendor runtime), `het_rdv_jitter` and
 `HET_SLOT_STRIDE_WORDS`.
 
 Design — why the rendezvous writes no ordering and sits around the tested group
-rather than between two of its accesses, what each arm's arrival lowers to, what
-an iteration whose partner misses its cap costs, and how the slot stride is
-sized:
+rather than between two of its accesses, why a drain gate precedes each arrival,
+what each arm's arrival lowers to, what an iteration whose partner misses its
+cap costs, and how the slot stride is sized:
 `hetlitmus/docs/00-environment-design.md` sec 3.3 and sec 3.4.
 
 ## het_verdict.h — `het_obs_record` + the outcome rule

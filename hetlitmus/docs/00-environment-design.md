@@ -126,8 +126,21 @@ No prior work routes GPU/het through litmus7's CPU harness (Bagchi *stitches*).
 ### 3.3 Run-loop & alignment — persistent instances, one rendezvous per iteration
 Launch the GPU kernel **once** and the CPU pthreads **once**; loop *inside*. Every iteration then opens
 at a **cross-device rendezvous** on a shared counter (`litmus/het-runtime/het_rdv.h`): each participant
-adds 1 with a relaxed atomic — **system-scoped** on the device side, where scope is a choice — then polls
-the counter relaxed until it reaches `NPART*(n+1)`, and records for itself whether it got there.
+first holds at a **drain gate** — a relaxed poll until the counter shows every participant arrived for
+the previous iteration (`NPART*n`) — then adds 1 with a relaxed atomic — **system-scoped** on the device
+side, where scope is a choice — then polls the counter relaxed until it reaches `NPART*(n+1)`, and
+records for itself whether it got there.
+
+**The drain gate is what keeps one missed rendezvous from costing the run.** An expired participant
+that adds for `n+1` while its partner is still inside `n` pre-meets every target the partner will ever
+poll for — the partner never waits again, and one early expiry desynchronises the rest of the run. The
+gate holds that add back until the counter shows the previous iteration fully drained, so a recovering
+partner finds targets it must still meet and mutual waiting returns; discards become monotone in the
+cap. A synced iteration pays one relaxed load (its own previous poll already saw `NPART*n`).
+Expiry fails toward **discard**: the participant still adds exactly once, skips the poll, records a 0.
+A counter that is *wrong* rather than *late* is beyond any gate: one lost increment (the
+`HET_ALLOC=pinned` warning, §3.2) puts every later target out of reach; only the per-participant
+arrival registered below has no increment to lose.
 
 **The rendezvous writes no ordering, and that is a correctness property.** Arrival and poll are relaxed
 and no fence is written between them or behind them. An acquire poll self-invalidates the GPU L1
@@ -139,7 +152,8 @@ contributes nothing to *what* they then observe. Narrowing the scope is the oppo
 device- or agent-scope counter is not the object the host half increments.
 
 **Three of the four arms lower fence-free; the x86_64 host arm does not.** `nvcc` emits
-`atom.add.relaxed.sys.u64` for the arrival and `ld.relaxed.sys.b64` for the poll; `hipcc` for gfx942
+`atom.add.relaxed.sys.u64` for the arrival and `ld.relaxed.sys.b64` for the poll (the gate polls with
+the same load); `hipcc` for gfx942
 emits a `global_atomic_add_x2` and a `global_load_dwordx2`, both `sc0 sc1`, with no `buffer_inv` and no
 `buffer_wbl2`; `clang` for AArch64 emits `ldadd` under `+lse` and an `ldxr`/`stxr` pair without it,
 neither acquire nor release, and no `dmb`. `gcc -O2` for x86_64 emits `lock xaddq`, and a locked
@@ -158,8 +172,9 @@ lost-increment exposure that `HET_ALLOC=pinned` warns about on a device without 
 (§3.2). It costs NPART polled locations per iteration in place of one counter and a poll that reads
 them all. The choice belongs to the author; nothing here implements it.
 
-**A cap, not a hang.** A participant that has not seen the target after `HET_CAP_CPU` (host) or
-`HET_CAP_GPU` (device) polls abandons *that iteration* and records a 0; the readout discards it (§3.4).
+**A cap, not a hang.** The drain gate and the poll spend one budget between them: a participant that
+has not passed both after `HET_CAP_CPU` (host) or `HET_CAP_GPU` (device) polls abandons *that
+iteration* and records a 0; the readout discards it (§3.4).
 So a partner that never arrives costs iterations, never the session — and what it costs is stated in §6,
 because there is no early bail. Both caps are `#define`s overridable per run, both are **placeholders**
 until a target measures them (`HET_CAP_CALIBRATED = 0`), and every null produced under them carries
@@ -167,9 +182,11 @@ until a target measures them (`HET_CAP_CALIBRATED = 0`), and every null produced
 
 **Forward progress on the host side is a documented requirement, not a precaution.** A CUDA host thread
 that spins on a device-set flag without entering the runtime may never be unblocked
-[CudaGuide "CUDA C++ Execution model"], so the CUDA render calls `cudaStreamQuery(0)` once per poll —
-on iteration 0 alone, where the grid may not yet be resident, and on no other, because a vendor runtime
-call inside the tested loop is traffic the window does not need. The HIP render passes no such call. On
+[CudaGuide "CUDA C++ Execution model"], so the CUDA render calls `cudaStreamQuery(0)` once per
+`HET_RDV_POKE_EVERY` polls (a runtime call costs hundreds of plain polls) — on iteration 0 and on any
+iteration whose predecessor failed, where the grid may not (yet) be resident, and on no other, because
+a vendor runtime call inside the tested loop is traffic the window does not need. The HIP render
+passes no such call. On
 the device side, forward progress is guarded by **occupancy-bounded or cooperative launch**
 (`cudaLaunchCooperativeKernel`; HIP equivalents) — every test block has to be resident, since every GPU
 proc is a participant. Each GPU proc is one **lane**; a block is `HET_BLOCK_DIM` lanes wide, and the
@@ -443,7 +460,7 @@ GH200/MI300A** (§6).
 | **Iteration window** | `100000` → `Cfg.size` + a `Cfg.runs` outer loop, surfaced as `SIZE_OF_TEST`/`NUMBER_OF_RUN` + argv. Not a standalone step: the semantics change to a window, so it lands with the persistent loop. |
 | **Allocator knob** | Per target: `malloc`/GH200, fine-grained/MI300A, managed = machinery fallback; NUMA-binding placement hooks. One entry point, `gd_alloc_shared`, selected by `HET_ALLOC`. |
 | **Persistent loop** | Launch once, loop inside, occupancy-bounded/cooperative launch; no per-iteration relaunch and no `cudaDeviceSynchronize`. The biggest single change. |
-| **Cross-device rendezvous** | `het_rdv.h`: relaxed system-scope counter arrival + poll under a cap, per-participant arrival flags, per-participant release jitter, host-side runtime poke on iteration 0. Every iteration opens at it (§3.3). |
+| **Cross-device rendezvous** | `het_rdv.h`: relaxed system-scope drain gate + counter arrival + poll under one cap, per-participant arrival flags, per-participant release jitter, host-side runtime poke on iteration 0 and after a failed iteration. Every iteration opens at it (§3.3). |
 | **Slots + readout** | One slot per iteration per location (`HET_SLOT_STRIDE_WORDS`), stores carrying the `.litmus` values, one O(N) pass that ANDs the flags, discards or scores, and feeds the histogram once (§3.4). Replaces the per-iteration `_cond` check *and* any post-hoc pairing. |
 | **GPU stress** | Port cuda-litmus `do_stress`/`StressParams` (fix the `MEM_STRESS` bug; cite); scratchpad in `cudaMalloc`; launch widened to stress workgroups; one test instance beside them. |
 | **CPU + interconnect stress** | CPU recipes at two sites on both ISAs + remote-pinning and noise kernels; the `-2s` invariants enforced by construction. |
