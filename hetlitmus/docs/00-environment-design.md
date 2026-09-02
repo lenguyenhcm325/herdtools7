@@ -299,8 +299,9 @@ launch-time validity layer upstream has no analogue for.
   pressure (reserve cores, affinity, noise chunk, slot stride); the caps and the jitter,
   calibrated once per target; and `HET_ALLOC` / `HET_PLACE`, which are conditions under test.
 - **Validity, three layers.** Draw-time: a vector asking for more regions than its scratchpad
-  holds, more threads than the machine has cores, or a noise working set below twice the
-  last-level cache is redrawn at fresh sub-indices and costs no configuration index; a
+  holds, more threads than the machine has cores, a noise working set below twice the
+  last-level cache, or scratchpad stress with an explicit zero stress-block population is
+  redrawn at fresh sub-indices and costs no configuration index; a
   configuration whose every redraw is invalid ends the search. Launch-time: a configuration
   whose mem-stress population is empty or whose grid exceeds the co-resident cap is killed at
   the driver's geometry print and logged as invalid geometry, because what ran is not what was

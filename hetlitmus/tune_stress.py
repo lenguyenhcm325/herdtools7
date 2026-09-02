@@ -74,7 +74,7 @@ K_RUN_SEED = 1000000
 MAX_ATTEMPTS = 16
 
 STRESS_BLOCK_SET = (0, 1, 2, 4, 8, 16, 32, 64)
-CPU_STRIDE_SET = (8, 16, 32, 64, 128)
+CPU_STRIDE_SET = (8, 16, 32, 64, 128, 256)
 NOISE_BLOCK_SET = (0, 1, 2, 4, 8, 16)
 NOISE_STRIDE_SET = (1, 8, 32)
 ENEMIES_MAX = 12
@@ -142,6 +142,9 @@ def violated(k, env):
     compiler or a device is spent on it."""
     if k["HET_CPU_SPREAD"] * k["HET_CPU_STRIDE"] > k["HET_CPU_SCRATCH_WORDS"]:
         return "spread x stride exceeds the enemy scratchpad"
+    # An auto (-1) population that realizes empty is the launch-time layer's to kill.
+    if k["HET_STRESS_BLOCKS"] == 0 and k["HET_MEM_STRESS_PCT"] > 0:
+        return "mem-stress asked for with an explicit zero stress-block population"
     n = k["HET_CPU_ENEMIES"]
     if n < 0:
         n = max(0, env.ncores - env.cpu_test - k["HET_NOISE_CPU"] - env.reserve)
@@ -270,8 +273,7 @@ def probe(a, tests):
     # Two noise buffers are requested per run and either may be served from host
     # memory, so half of what is available is the ceiling one may ask for.
     cap = max(1, mem_available_mb() // 2)
-    wanted = sorted(set([2 * env.llc_mb, 4 * env.llc_mb, 8 * env.llc_mb,
-                         8192, 16384]))
+    wanted = sorted(set([2 * env.llc_mb, 4 * env.llc_mb, 8 * env.llc_mb, 8192]))
     env.noise_mb_set = tuple(v for v in wanted if v <= cap)
     if not env.noise_mb_set:
         die("no noise working set above 2 x %d MB fits the %d MB this machine "
