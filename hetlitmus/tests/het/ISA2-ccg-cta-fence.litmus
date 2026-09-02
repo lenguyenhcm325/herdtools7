@@ -1,5 +1,5 @@
 Het ISA2-ccg-cta-fence
-"Heterogeneous ISA2-ccg-cta-fence: per-proc device assignment cpu,cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous ISA2-ccg-cta-fence: per-proc device assignment cpu,cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X1=x;
 0:X3=y;

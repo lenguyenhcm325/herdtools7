@@ -1,5 +1,5 @@
 Het IRIW-gccc-gpu-fence
-"Heterogeneous IRIW-gccc-gpu-fence: per-proc device assignment gpu,cpu,cpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous IRIW-gccc-gpu-fence: per-proc device assignment gpu,cpu,cpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 1:X2=y;
 2:X0=x;

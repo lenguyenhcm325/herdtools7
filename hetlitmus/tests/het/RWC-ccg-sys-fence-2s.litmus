@@ -1,5 +1,5 @@
 Het RWC-ccg-sys-fence-2s
-"Heterogeneous RWC-ccg-sys-fence-2s: per-proc device assignment cpu,cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous RWC-ccg-sys-fence-2s: per-proc device assignment cpu,cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X0=x;
 0:X2=y;

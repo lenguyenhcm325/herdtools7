@@ -1,4 +1,4 @@
-"PTX/HRF scoped Bell annotations (HetLitmus)"
+"Scoped GPU Bell annotations (HetLitmus)"
 
 (*
  * Bell annotation vocabulary for scoped GPU litmus tests: diy7 generates

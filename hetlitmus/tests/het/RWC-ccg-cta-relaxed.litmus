@@ -1,5 +1,5 @@
 Het RWC-ccg-cta-relaxed
-"Heterogeneous RWC-ccg-cta-relaxed: per-proc device assignment cpu,cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous RWC-ccg-cta-relaxed: per-proc device assignment cpu,cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X0=x;
 0:X2=y;

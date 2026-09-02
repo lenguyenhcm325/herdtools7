@@ -1,5 +1,5 @@
 Het CoRR-cg-sys-fence-2s-x86_64
-"Heterogeneous CoRR-cg-sys-fence-2s-x86_64: per-proc device assignment cpu,gpu (cpu=x86_64, gpu=LISA/PTX)"
+"Heterogeneous CoRR-cg-sys-fence-2s-x86_64: per-proc device assignment cpu,gpu (cpu=x86_64, gpu=LISA)"
 {
 }
  P0:x86_64     | P1:gpu             ;

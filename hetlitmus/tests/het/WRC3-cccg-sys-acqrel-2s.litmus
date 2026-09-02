@@ -1,5 +1,5 @@
 Het WRC3-cccg-sys-acqrel-2s
-"Heterogeneous WRC3-cccg-sys-acqrel-2s: per-proc device assignment cpu,cpu,cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous WRC3-cccg-sys-acqrel-2s: per-proc device assignment cpu,cpu,cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X0=x;
 0:X3=y;

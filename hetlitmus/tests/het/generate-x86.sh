@@ -22,7 +22,7 @@ cd "$(dirname "$0")"
 HETDIR="$(pwd)"
 # shellcheck source=../../paths.sh
 source ../../paths.sh
-COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell -oneloc"
+COMMON="-set-libdir $HERDLIB -bell $HETL/bells/gpu.bell -oneloc"
 # shellcheck source=../_grid_lib.sh
 source ../_grid_lib.sh
 

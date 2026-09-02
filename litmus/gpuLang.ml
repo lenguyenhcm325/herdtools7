@@ -25,7 +25,7 @@
 open Printf
 
 (* Order / scope vocabulary, one table per instruction kind; the vocabulary's
-   home is hetlitmus/bells/ptx.bell. *)
+   home is hetlitmus/bells/gpu.bell. *)
 
 let load_orders = ["relaxed" ; "acquire" ; "sc"]
 let store_orders = ["relaxed" ; "release" ; "sc"]
@@ -74,7 +74,7 @@ let rec instrs_of_pseudo = function
 
 let instrs_of_code code = List.concat_map instrs_of_pseudo code
 
-(* GPU-column admissibility: the vocabulary hetlitmus/bells/ptx.bell declares,
+(* GPU-column admissibility: the vocabulary hetlitmus/bells/gpu.bell declares,
    checked over a whole program BEFORE anything is written.
    hetlitmus/docs/het-emission.md, "Scope / limits". *)
 

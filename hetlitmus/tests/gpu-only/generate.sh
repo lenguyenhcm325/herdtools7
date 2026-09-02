@@ -8,7 +8,7 @@
 #           ./generate.sh OUTDIR      # the same corpus, into OUTDIR instead
 #
 # Edge token = <base-edge><atom(src)><atom(dst)>, the atom rendered <Order><Scope>
-# (gen/common/edge.ml pp_edge_compat); the vocabulary is hetlitmus/bells/ptx.bell.
+# (gen/common/edge.ml pp_edge_compat); the vocabulary is hetlitmus/bells/gpu.bell.
 
 set -e
 # OUTDIR is resolved against the caller's cwd BEFORE the `cd' below moves us, so
@@ -20,7 +20,7 @@ cd "$(dirname "$0")"
 : "${OUT:=$(pwd)}"
 # shellcheck source=../../paths.sh
 source ../../paths.sh
-COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell -arch LISA -oneloc"
+COMMON="-set-libdir $HERDLIB -bell $HETL/bells/gpu.bell -arch LISA -oneloc"
 # shellcheck source=../_grid_lib.sh
 source ../_grid_lib.sh
 

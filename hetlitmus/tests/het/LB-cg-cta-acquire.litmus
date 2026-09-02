@@ -1,5 +1,5 @@
 Het LB-cg-cta-acquire
-"Heterogeneous LB-cg-cta-acquire: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous LB-cg-cta-acquire: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X0=x;
 0:X3=y;

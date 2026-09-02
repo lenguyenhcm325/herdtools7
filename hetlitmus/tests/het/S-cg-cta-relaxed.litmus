@@ -1,5 +1,5 @@
 Het S-cg-cta-relaxed
-"Heterogeneous S-cg-cta-relaxed: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous S-cg-cta-relaxed: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X1=x;
 0:X3=y;

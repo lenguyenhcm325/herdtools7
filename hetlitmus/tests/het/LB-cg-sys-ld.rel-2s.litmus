@@ -1,5 +1,5 @@
 Het LB-cg-sys-ld.rel-2s
-"Heterogeneous LB-cg-sys-ld.rel-2s: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous LB-cg-sys-ld.rel-2s: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X0=x;
 0:X3=y;

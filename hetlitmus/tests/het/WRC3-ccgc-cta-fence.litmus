@@ -1,5 +1,5 @@
 Het WRC3-ccgc-cta-fence
-"Heterogeneous WRC3-ccgc-cta-fence: per-proc device assignment cpu,cpu,gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous WRC3-ccgc-cta-fence: per-proc device assignment cpu,cpu,gpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 0:X0=x;
 0:X3=y;

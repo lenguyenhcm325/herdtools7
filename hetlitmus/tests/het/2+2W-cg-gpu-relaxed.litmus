@@ -1,5 +1,5 @@
 Het 2+2W-cg-gpu-relaxed
-"Heterogeneous 2+2W-cg-gpu-relaxed: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous 2+2W-cg-gpu-relaxed: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X1=x;
 0:X3=y;

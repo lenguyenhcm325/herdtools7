@@ -19,7 +19,7 @@ cycle of the same logical shape, and keeps for each processor the column of
 the run that owns that processor's device:
 
 ```
-hetgen7 -set-libdir herd/libdir -bell ptx.bell -devices cpu,gpu -name MP-het \
+hetgen7 -set-libdir herd/libdir -bell gpu.bell -devices cpu,gpu -name MP-het \
   -cpu "PodWW Rfe PodRR Fre" \
   -gpu "PodWWRelaxedSysReleaseSys RfeReleaseSysAcquireSys PodRRAcquireSysRelaxedSys FreRelaxedSysRelaxedSys"
 ```
@@ -53,7 +53,7 @@ both runs.
 
 `-devices` carries the device axis; the scope axis rides on the GPU edge
 annotations (`ReleaseSys`, `AcquireCta`, ...: order and scope per access, as
-in the GPU-only corpus and `hetlitmus/bells/ptx.bell`), which carry into the
+in the GPU-only corpus and `hetlitmus/bells/gpu.bell`), which carry into the
 GPU column as-is.
 
 `hetgen7` also writes a `scopes:` body tree (grammar `lib/scopeRules.mly`),

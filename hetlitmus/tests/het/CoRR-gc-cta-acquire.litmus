@@ -1,5 +1,5 @@
 Het CoRR-gc-cta-acquire
-"Heterogeneous CoRR-gc-cta-acquire: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous CoRR-gc-cta-acquire: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 1:X0=x;
 }

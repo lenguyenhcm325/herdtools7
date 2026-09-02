@@ -21,7 +21,7 @@ HETDIR="$(pwd)"
 : "${OUT:=$HETDIR}"
 # shellcheck source=../../paths.sh
 source ../../paths.sh
-COMMON="-set-libdir $HERDLIB -bell $HETL/bells/ptx.bell -oneloc"
+COMMON="-set-libdir $HERDLIB -bell $HETL/bells/gpu.bell -oneloc"
 # shellcheck source=../_grid_lib.sh
 source ../_grid_lib.sh
 
@@ -35,14 +35,14 @@ CPU_ARCHS="${CPU_ARCHS:-aarch64}"
 # (A) Reference tests.
 # ---------------------------------------------------------------------------
 "$BIN/hetgen7" $COMMON -devices cpu,gpu -name SB-het \
-  -com "Heterogeneous store-buffering: P0 on the CPU (AArch64), P1 on the GPU (LISA/PTX)" \
+  -com "Heterogeneous store-buffering: P0 on the CPU (AArch64), P1 on the GPU (LISA)" \
   -cpu "PodWR Fre PodWR Fre" \
   -gpu "PodWRReleaseSysAcquireSys FreAcquireSysReleaseSys PodWRReleaseSysAcquireSys FreAcquireSysReleaseSys" \
   > SB-het.litmus
 echo "generated SB-het.litmus"
 
 "$BIN/hetgen7" $COMMON -devices cpu,gpu -name MP-het \
-  -com "Heterogeneous message-passing: P0 on the CPU (AArch64), P1 on the GPU (LISA/PTX)" \
+  -com "Heterogeneous message-passing: P0 on the CPU (AArch64), P1 on the GPU (LISA)" \
   -cpu "PodWW Rfe PodRR Fre" \
   -gpu "PodWWRelaxedSysReleaseSys RfeReleaseSysAcquireSys PodRRAcquireSysRelaxedSys FreRelaxedSysRelaxedSys" \
   > MP-het.litmus

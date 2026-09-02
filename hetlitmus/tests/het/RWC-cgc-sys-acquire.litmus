@@ -1,5 +1,5 @@
 Het RWC-cgc-sys-acquire
-"Heterogeneous RWC-cgc-sys-acquire: per-proc device assignment cpu,gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous RWC-cgc-sys-acquire: per-proc device assignment cpu,gpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 0:X0=x;
 0:X2=y;

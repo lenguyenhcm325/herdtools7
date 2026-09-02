@@ -1,5 +1,5 @@
 Het MP-cg-sys-relaxed-x86_64
-"Heterogeneous MP-cg-sys-relaxed-x86_64: per-proc device assignment cpu,gpu (cpu=x86_64, gpu=LISA/PTX)"
+"Heterogeneous MP-cg-sys-relaxed-x86_64: per-proc device assignment cpu,gpu (cpu=x86_64, gpu=LISA)"
 {
 }
  P0:x86_64   | P1:gpu              ;

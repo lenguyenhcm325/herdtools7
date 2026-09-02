@@ -1,7 +1,7 @@
 # The artifact-anchored GPU-only corpus
 
 The GPU-only corpus is anchored on the GPU litmus tests of the [Goens23]
-artifact, which are the frontend's target: what `hetlitmus/bells/ptx.bell`
+artifact, which are the frontend's target: what `hetlitmus/bells/gpu.bell`
 must express is what those tests use. The systematic grid over the same
 vocabulary is `corpus-grid.md`.
 
@@ -69,7 +69,7 @@ and stores and no RMW. `sc` serves the fence families of `corpus-grid.md`;
 `acq_rel` is declared but no generated test carries it (`corpus-grid.md`, "The
 shape catalogue").
 
-### How `bells/ptx.bell` declares it
+### How `bells/gpu.bell` declares it
 
 Two upstream idioms combined: the memory-order enum and `R`/`W`/`F`
 instruction sets of `herd/libdir/c11.bell`, retagged in PTX spelling, and the

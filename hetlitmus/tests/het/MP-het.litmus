@@ -1,5 +1,5 @@
 Het MP-het
-"Heterogeneous message-passing: P0 on the CPU (AArch64), P1 on the GPU (LISA/PTX)"
+"Heterogeneous message-passing: P0 on the CPU (AArch64), P1 on the GPU (LISA)"
 {
 0:X1=x;
 0:X3=y;

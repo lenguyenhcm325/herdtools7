@@ -1,5 +1,5 @@
 Het MP-gc-sys-st.sc-2s
-"Heterogeneous MP-gc-sys-st.sc-2s: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous MP-gc-sys-st.sc-2s: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 1:X1=x;
 1:X3=y;

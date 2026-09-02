@@ -1,5 +1,5 @@
 Het MP-cg-sys-ra.acq-2s
-"Heterogeneous MP-cg-sys-ra.acq-2s: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous MP-cg-sys-ra.acq-2s: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X1=x;
 0:X3=y;

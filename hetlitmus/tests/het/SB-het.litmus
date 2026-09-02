@@ -1,5 +1,5 @@
 Het SB-het
-"Heterogeneous store-buffering: P0 on the CPU (AArch64), P1 on the GPU (LISA/PTX)"
+"Heterogeneous store-buffering: P0 on the CPU (AArch64), P1 on the GPU (LISA)"
 {
 0:X1=x;
 0:X2=y;

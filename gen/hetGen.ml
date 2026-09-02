@@ -174,7 +174,7 @@ let generate () =
   if !cpu_edges = "" then Warn.fatal "missing -cpu <edges>" ;
   if !gpu_edges = "" then Warn.fatal "missing -gpu <edges>" ;
   if !Config.bell = None then
-    Warn.fatal "missing -bell <ptx.bell> (the GPU side needs a Bell model)" ;
+    Warn.fatal "missing -bell <gpu.bell> (the GPU side needs a Bell model)" ;
 
   (* CPU side: dispatch the single-arch Compile_gen by -cpu-arch.  het_cells
      erases the arch to strings, so both branches give ccpu the same type. *)
@@ -289,7 +289,7 @@ let generate () =
        let cpu_arch_name =
          match !cpu_arch with `AArch64 -> "AArch64" | `X86_64 -> "x86_64" in
        bprintf buf
-         "\"Heterogeneous %s: per-proc device assignment %s (cpu=%s, gpu=LISA/PTX)\"\n"
+         "\"Heterogeneous %s: per-proc device assignment %s (cpu=%s, gpu=LISA)\"\n"
          name !devices cpu_arch_name) ;
   bprintf buf "{\n" ;
   List.iter (fun l -> bprintf buf "%s;\n" l) init_lines ;

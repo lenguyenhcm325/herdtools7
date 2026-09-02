@@ -1,5 +1,5 @@
 Het CoWR-cg-sys-release
-"Heterogeneous CoWR-cg-sys-release: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous CoWR-cg-sys-release: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X1=x;
 }

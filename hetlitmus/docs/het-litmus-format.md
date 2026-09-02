@@ -57,7 +57,7 @@ A heterogeneous test differs from a single-arch `.litmus` in three places;
 Everything else is standard. Each processor's cells are in that processor's
 own ISA: the tagged CPU ISA's assembly for CPU procs, LISA/Bell scoped syntax
 for GPU procs, whose registers are `rN` and whose cells carry the vocabulary
-of `hetlitmus/bells/ptx.bell` only (`het-emission.md`, "Scope / limits").
+of `hetlitmus/bells/gpu.bell` only (`het-emission.md`, "Scope / limits").
 
 ## 4. Parsing: one column at a time
 
@@ -82,6 +82,6 @@ through its `pseudo_parsed_tr`.
   cells and comments included.
 - Labels are per column, so a branch target cannot cross devices.
 - A test with no `gpu` proc, a header naming two CPU ISAs, and a GPU cell
-  outside the `ptx.bell` vocabulary are refused with exit 3
+  outside the `gpu.bell` vocabulary are refused with exit 3
   (`het-emission.md`, "Scope / limits").
 - herd7 does not read a `Het` test.

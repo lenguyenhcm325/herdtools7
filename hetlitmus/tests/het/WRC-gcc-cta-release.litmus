@@ -1,5 +1,5 @@
 Het WRC-gcc-cta-release
-"Heterogeneous WRC-gcc-cta-release: per-proc device assignment gpu,cpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous WRC-gcc-cta-release: per-proc device assignment gpu,cpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 1:X0=x;
 1:X3=y;

@@ -1,5 +1,5 @@
 Het 2+2W-cg-gpu-fence
-"Heterogeneous 2+2W-cg-gpu-fence: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous 2+2W-cg-gpu-fence: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X1=x;
 0:X3=y;

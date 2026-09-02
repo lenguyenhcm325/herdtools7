@@ -201,7 +201,7 @@ A harness is a **(CPU ISA × GPU dialect) pair**, not a machine.
   refused, and `hetgen7` refuses a `-devices` list naming no `gpu`: threads
   all of one architecture exercise no compound composition ([Goens23] §4.6),
   and an all-CPU cycle is litmus7's own path.
-* **The GPU column admits what `hetlitmus/bells/ptx.bell` declares**
+* **The GPU column admits what `hetlitmus/bells/gpu.bell` declares**
   (`GpuLang.check_program`, before any file is written, the same under either
   target): loads, stores and fences; `mov`, a branch, `rmw` and `call` are
   refused. An access or fence carries one order from its own set (`R`:

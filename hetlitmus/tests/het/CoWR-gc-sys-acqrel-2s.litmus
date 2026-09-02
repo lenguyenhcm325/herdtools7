@@ -1,5 +1,5 @@
 Het CoWR-gc-sys-acqrel-2s
-"Heterogeneous CoWR-gc-sys-acqrel-2s: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous CoWR-gc-sys-acqrel-2s: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 1:X1=x;
 }

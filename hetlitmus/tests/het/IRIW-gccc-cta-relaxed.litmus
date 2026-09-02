@@ -1,5 +1,5 @@
 Het IRIW-gccc-cta-relaxed
-"Heterogeneous IRIW-gccc-cta-relaxed: per-proc device assignment gpu,cpu,cpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous IRIW-gccc-cta-relaxed: per-proc device assignment gpu,cpu,cpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 1:X2=y;
 2:X0=x;

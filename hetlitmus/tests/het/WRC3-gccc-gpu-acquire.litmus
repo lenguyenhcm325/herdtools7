@@ -1,5 +1,5 @@
 Het WRC3-gccc-gpu-acquire
-"Heterogeneous WRC3-gccc-gpu-acquire: per-proc device assignment gpu,cpu,cpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous WRC3-gccc-gpu-acquire: per-proc device assignment gpu,cpu,cpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 1:X3=y;
 1:X4=z;

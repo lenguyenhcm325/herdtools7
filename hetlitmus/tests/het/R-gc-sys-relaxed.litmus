@@ -1,5 +1,5 @@
 Het R-gc-sys-relaxed
-"Heterogeneous R-gc-sys-relaxed: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous R-gc-sys-relaxed: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 1:X1=x;
 1:X3=y;

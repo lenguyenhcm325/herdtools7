@@ -1,5 +1,5 @@
 Het ISA2-cgc-sys-release
-"Heterogeneous ISA2-cgc-sys-release: per-proc device assignment cpu,gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous ISA2-cgc-sys-release: per-proc device assignment cpu,gpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 0:X1=x;
 0:X3=y;

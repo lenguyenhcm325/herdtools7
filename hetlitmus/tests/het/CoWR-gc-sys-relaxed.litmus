@@ -1,5 +1,5 @@
 Het CoWR-gc-sys-relaxed
-"Heterogeneous CoWR-gc-sys-relaxed: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous CoWR-gc-sys-relaxed: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 1:X1=x;
 }

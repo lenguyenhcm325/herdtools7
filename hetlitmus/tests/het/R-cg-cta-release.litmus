@@ -1,5 +1,5 @@
 Het R-cg-cta-release
-"Heterogeneous R-cg-cta-release: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous R-cg-cta-release: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X1=x;
 0:X3=y;

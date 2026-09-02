@@ -1,5 +1,5 @@
 Het S-gc-sys-acqrel-2s
-"Heterogeneous S-gc-sys-acqrel-2s: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous S-gc-sys-acqrel-2s: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 1:X1=x;
 1:X3=y;

@@ -1,5 +1,5 @@
 Het SB-cg-cta-release
-"Heterogeneous SB-cg-cta-release: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous SB-cg-cta-release: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X1=x;
 0:X2=y;

@@ -1,5 +1,5 @@
 Het CoRR-gc-sys-acqrel-2s
-"Heterogeneous CoRR-gc-sys-acqrel-2s: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous CoRR-gc-sys-acqrel-2s: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 1:X0=x;
 }

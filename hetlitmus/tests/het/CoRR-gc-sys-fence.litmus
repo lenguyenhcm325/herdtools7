@@ -1,5 +1,5 @@
 Het CoRR-gc-sys-fence
-"Heterogeneous CoRR-gc-sys-fence: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous CoRR-gc-sys-fence: per-proc device assignment gpu,cpu (cpu=AArch64, gpu=LISA)"
 {
 1:X0=x;
 }

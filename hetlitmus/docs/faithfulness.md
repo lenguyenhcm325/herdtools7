@@ -61,7 +61,7 @@ PTX spells order and scope as the LISA/Bell tag does, order before scope
 | `r` | `ld` |
 | `f` | `fence` |
 
-`ptx.bell` declares `R`/`W`/`F` only and the GPU column refuses an RMW
+`gpu.bell` declares `R`/`W`/`F` only and the GPU column refuses an RMW
 ([`het-emission.md`](het-emission.md), "Scope / limits"), so `atom`/`red`
 have no row. An `sc` access is admitted by the vocabulary but lowers in
 libcu++ to a `fence.sc` followed by an acquire load or a relaxed store

@@ -52,5 +52,5 @@
  (deps
   %{bin:litmus7}
   %{bin:hetgen7}
-  ../../bells/ptx.bell
+  ../../bells/gpu.bell
   (source_tree ../../../herd/libdir)))

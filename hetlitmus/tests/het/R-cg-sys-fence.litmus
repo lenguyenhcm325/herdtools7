@@ -1,5 +1,5 @@
 Het R-cg-sys-fence
-"Heterogeneous R-cg-sys-fence: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA/PTX)"
+"Heterogeneous R-cg-sys-fence: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
 {
 0:X1=x;
 0:X3=y;
