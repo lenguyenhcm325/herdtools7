@@ -70,7 +70,6 @@ int main(void) {
     *y = 0;
     litmus_MP_cta_F<<<2, 1>>>(x, y, __out);
     cudaDeviceSynchronize();
-    // TODO(hardware): tally __out against the condition.
   }
   return 0;
 }

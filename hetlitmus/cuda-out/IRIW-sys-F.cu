@@ -92,7 +92,6 @@ int main(void) {
     *y = 0;
     litmus_IRIW_sys_F<<<4, 1>>>(x, y, __out);
     cudaDeviceSynchronize();
-    // TODO(hardware): tally __out against the condition.
   }
   return 0;
 }

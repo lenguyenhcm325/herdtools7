@@ -62,7 +62,6 @@ int main(void) {
     *y = 0;
     hipLaunchKernelGGL(litmus_SB_sys, dim3(2), dim3(1), 0, 0, x, y, __out);
     (void)hipDeviceSynchronize();
-    // TODO(hardware): tally __out against the condition.
   }
   return 0;
 }

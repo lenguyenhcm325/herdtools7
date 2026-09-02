@@ -81,7 +81,6 @@ int main(void) {
     *y = 0;
     litmus_WRC_sys_relaxed<<<3, 1>>>(x, y, __out);
     cudaDeviceSynchronize();
-    // TODO(hardware): tally __out against the condition.
   }
   return 0;
 }
