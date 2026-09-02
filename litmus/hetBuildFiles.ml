@@ -122,10 +122,10 @@ gcc -c outs.c -o outs.o
       s (Printf.sprintf "    if [ \"$TARGET\" = %s-link ]; then\n"
            d.gd_target) ;
       s (Printf.sprintf
-           "      echo \"+ %s %s%s %s outs.o %s_cpu_host.o -o %s -lpthread -lm\"\n"
+           "      echo \"+ %s %s%s %s outs.o %s_cpu_host.o -o %s -lpthread\"\n"
            cc d.gd_arch_flag arch obj tname tname) ;
       s (Printf.sprintf
-           "      %s %s%s %s outs.o %s_cpu_host.o -o %s -lpthread -lm\n"
+           "      %s %s%s %s outs.o %s_cpu_host.o -o %s -lpthread\n"
            cc d.gd_arch_flag arch obj tname tname) ;
       s "    fi ;;\n")
     dialects ;
@@ -197,7 +197,7 @@ let dump_makefile h ch =
     (fun d ->
       s (Printf.sprintf "%s-bin: %s outs.o %s_cpu_host.o\n"
            d.gd_target (gpu_obj d tname) tname) ;
-      s (Printf.sprintf "\t$(%s) %s$(%s) $^ -o %s -lpthread -lm\n\n"
+      s (Printf.sprintf "\t$(%s) %s$(%s) $^ -o %s -lpthread\n\n"
            d.gd_compiler_var d.gd_arch_flag d.gd_arch_var tname))
     dialects ;
   s ".SUFFIXES:\n\n" ;

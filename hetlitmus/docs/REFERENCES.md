@@ -291,3 +291,16 @@ Reese Levine. *webgpu-litmus*, `https://github.com/reeselevine/webgpu-litmus`, r
   stress block, `n` from `_gpu_iter`); the source rolls on the host and copies a flag.
 * Deviation: only the scratchpad stress blocks obey the percentage; noise blocks, CPU enemies
   and pre-stress run regardless, so an off-iteration is not quiet.
+
+## [ArmA64ISA]
+Arm Limited. *Arm A-profile A64 Instruction Set Architecture* (DDI 0602). Living document,
+`https://developer.arm.com/documentation/ddi0602/`; read as Arm's machine-readable release
+`ISA_A64_xml_A_profile-2022-12` (`ldapr.xml`, `stlr.xml`, `dmb.xml`).
+* "LDAPR", Load-Acquire RCpc Register: the ordering of Load-AcquirePC — "There is no ordering
+  requirement, separate from the requirements of a Load-AcquirePC or a Store-Release, created by
+  having a Store-Release followed by a Load-AcquirePC instruction"; FEAT_LRCPC, Armv8.3.
+* "STLR", Store-Release Register: "memory ordering semantics as described in Load-Acquire,
+  Store-Release".
+* "DMB", the `<option>` table: `SY` orders reads and writes before the barrier against reads
+  and writes after; `ST` writes before against writes after; `LD` reads before against reads
+  and writes after.

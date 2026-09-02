@@ -73,15 +73,15 @@ litmus7 reproduces the column's mnemonics verbatim in the `_cpu.c` asm block
 (`#START _litmus_P<n>` … `#END`, under `#if defined(__aarch64__)`). A CPU
 op's identity is the pair (mnemonic, barrier option): `DMB SY` orders reads
 and writes on both sides, `DMB ST` writes before against writes after,
-`DMB LD` reads before against reads and writes after, so `DMB ST` in
-`DMB SY`'s place is a different instruction, not a spelling variant, and a
-`DMB` with another option or none has no row. `MOV` materialises a store
-value in a register and is not a memory or ordering op.
+`DMB LD` reads before against reads and writes after [ArmA64ISA "DMB"], so
+`DMB ST` in `DMB SY`'s place is a different instruction, not a spelling
+variant, and a `DMB` with another option or none has no row. `MOV`
+materialises a store value in a register and is not a memory or ordering op.
 
 | mnemonic | semantics |
 |---|---|
-| `STLR` | store-release |
-| `LDAPR` | load-acquire, RCpc (FEAT_LRCPC) |
+| `STLR` | store-release [ArmA64ISA "STLR"] |
+| `LDAPR` | load-acquire, RCpc (FEAT_LRCPC, Armv8.3) [ArmA64ISA "LDAPR"] |
 | `DMB SY` / `DMB ST` / `DMB LD` | barrier; the option names the access types it orders |
 | `STR` / `LDR` | plain store / load |
 

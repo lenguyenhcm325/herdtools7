@@ -46,7 +46,6 @@ let dump_prelude dialect identity geometry procs ch =
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <cmath>
 #include <pthread.h>
 #include <inttypes.h>
 |} ;
