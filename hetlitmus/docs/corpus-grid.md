@@ -132,10 +132,10 @@ above; a `Pos` shape stays out, only one of its procs carrying a pair.
 
 `generate-x86.sh OUTDIR` renders all four families with an x86_64 CPU column,
 name-for-name with the corpus but not experiment-for-experiment: under x86-TSO
-the four CPU tokens collapse onto two images, `ra`/`st`/`ld` → the bare cycle
-(plain `movl`) and `sy` → `MFence<L><XY>` (`mfence`), in `render_x86_cpu`.
-What follows for the x86 lane, and why the rendering is produced on demand:
-`het-emission.md`, "Scope / limits".
+[Sewell10 §3.1] the four CPU tokens collapse onto two images, `ra`/`st`/`ld` →
+the bare cycle (plain `movl`) and `sy` → `MFence<L><XY>` (`mfence`), in
+`render_x86_cpu`. What follows for the x86 lane, and why the rendering is
+produced on demand: `het-emission.md`, "Scope / limits".
 
 ## The `CPU_ARCHS` knob
 

@@ -143,6 +143,8 @@ built for must be a recorded value, and `native` records nothing.
 `probe.txt` as `suggested_cuda_arch` (`suggested_hip_arch`) and
 `hetlitmus/build.sh` takes it from there. The probe itself is built as
 `compute_75` PTX and JIT-compiled at load, so it runs before any arch is known.
+A render that contains a one-sided fence refuses any CUDA target below sm_90 at
+compile time (`cuda-emitter.md`, "nvcc compile").
 
 Repo paths an emitted file names (`hetlitmus/docs/het-emission.md` in the
 README, `hetlitmus/campaign.py` in the runtime headers) resolve against a

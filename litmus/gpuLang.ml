@@ -279,6 +279,8 @@ type t = {
     gl_sync : string ;          (* host-side device-sync statement *)
     gl_dump_instr :
       out_channel -> het:het_ctx -> string -> BellBase.instruction -> unit ;
+    gl_fence_floor_guard : BellBase.instruction list -> string ;
+                                (* target-floor #error the fences demand, or "" *)
   }
 
 (* Whole-test emission *)
@@ -315,6 +317,9 @@ let dump_test d chan tname parsed =
   p "// ======================================================================\n\n" ;
   p "%s\n" d.gl_include ;
   p "#include <cstdio>\n#include <cstdlib>\n\n" ;
+  p "%s"
+    (d.gl_fence_floor_guard
+       (List.concat_map (fun (_, code) -> instrs_of_code code) prog)) ;
   (* Kernel *)
   let params =
     String.concat ", "

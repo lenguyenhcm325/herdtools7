@@ -60,13 +60,16 @@ the PTX, not the source: `faithfulness.md`.
 
 ## nvcc compile
 A render compiles with `nvcc -std=c++17 -arch=sm_90`; `sm_90` is also the
-default of the emitted build files (`hetDialect.ml`, `gd_arch_default`). PTX
-floors [CCCL `cuda/__ptx/instructions/generated/fence.h`]: `fence.{sc,acq_rel}`
-need PTX ISA 6.0 / sm_70, `fence.{acquire,release}` PTX ISA 8.6 / sm_90.
-`ptxas` (CUDA 12.9) accepts both kinds at sm_70 and enforces neither floor, so
-the floor is carried by the target the build names and by the trailing
-`// requires sm_90` / `// sm_70+` comment on each emitted fence
-(`fence_min_arch`), not by a compile error.
+default of the emitted build files (`hetDialect.ml`, `gd_arch_default`). Fence
+floors [PtxISA "membar/fence"; CCCL `cuda/__ptx/instructions/generated/fence.h`]:
+`fence.{sc,acq_rel}` need PTX ISA 6.0 and sm_70, `fence.{acquire,release}` PTX
+ISA 8.6 (CUDA 12.7) and sm_90. The sm_90 floor is a hardware one: `ptxas`
+assembles a one-sided fence for any sm_70+ target, and a device below sm_90
+then faults at launch with an illegal instruction, which the harness reports as
+its device-sync error (exit 2). A render that contains a one-sided fence
+therefore refuses to compile for a target below sm_90 (`fence_floor_guard`, an
+`#error` under `__CUDA_ARCH__ < 900`); each emitted fence also carries its floor
+as a trailing `// requires sm_90` / `// sm_70+` comment (`fence_min_arch`).
 
 ## Limits
 - The gpu-only host `main()` launches the kernel in a loop and tallies nothing;

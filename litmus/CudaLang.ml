@@ -52,10 +52,26 @@ let ptx_scope = function
   | "cta" -> "cta" | "gpu" -> "gpu" | "sys" -> "sys"
   | s -> Warn.user_error "CudaLang: unknown fence scope %S" s
 
-(* SM floor per fence order [CCCL "cuda/__ptx/instructions/generated/fence.h"]. *)
+(* Target floor per fence order [PtxISA "membar/fence"]
+   [CCCL "cuda/__ptx/instructions/generated/fence.h"]. *)
+let one_sided ord = ord = "acquire" || ord = "release"
+
 let fence_min_arch ord =
-  if ord = "acquire" || ord = "release"
-  then "requires sm_90" else "sm_70+"
+  if one_sided ord then "requires sm_90" else "sm_70+"
+
+(* The sm_90 floor of a one-sided fence [PtxISA "membar/fence"] is enforced
+   here, ptxas assembling it for any sm_70+ target
+   (hetlitmus/docs/cuda-emitter.md, "nvcc compile"). *)
+let fence_floor_guard instrs =
+  let needs_sm90 = function
+    | BellBase.Pfence (BellBase.Fence (annots, _)) ->
+        one_sided (fst (order_scope_of annots))
+    | _ -> false in
+  if List.exists needs_sm90 instrs then
+    "#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 900\n\
+     #error \"fence.acquire / fence.release in this test need sm_90 or higher\"\n\
+     #endif\n\n"
+  else ""
 
 (* Locations are kernel int* parameters, so an access dereferences. *)
 let lvalue_of_addr_op ~het ao =
@@ -118,6 +134,7 @@ let dialect = {
       (fun id nb bd args -> sprintf "litmus_%s<<<%d, %d>>>(%s);" id nb bd args) ;
     gl_sync = "cudaDeviceSynchronize();" ;
     gl_dump_instr = dump_instr ;
+    gl_fence_floor_guard = fence_floor_guard ;
   }
 
 let dump chan tname parsed = dump_test dialect chan tname parsed

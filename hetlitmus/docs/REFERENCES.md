@@ -304,3 +304,25 @@ Arm Limited. *Arm A-profile A64 Instruction Set Architecture* (DDI 0602). Living
 * "DMB", the `<option>` table: `SY` orders reads and writes before the barrier against reads
   and writes after; `ST` writes before against writes after; `LD` reads before against reads
   and writes after.
+
+## [Sewell10]
+Peter Sewell, Susmit Sarkar, Scott Owens, Francesco Zappa Nardelli, Magnus O. Myreen. *x86-TSO:
+A Rigorous and Usable Programmer's Model for x86 Multiprocessors.* Commun. ACM 53(7), July 2010,
+pp. 89–97. DOI 10.1145/1785414.1785443.
+* §1 (p. 90): the model's scope is "coherent write-back memory" without non-temporal operations.
+* §3.1 (p. 93): store/load pairs are "the only reorderings allowed in x86-TSO"; "An MFENCE
+  instruction flushes the store buffer of that thread"; LFENCE and SFENCE are treated as no-ops
+  on that ground.
+* §3.2 (p. 94): Examples 8-1 (stores keep their order), 8-2 (a store never passes an older
+  load), 8-3 (a load may pass an older store to another location) and 8-10 (MFENCE forbids the
+  outcome of 8-3).
+
+## [PtxISA]
+NVIDIA. *Parallel Thread Execution ISA*, Version 8.8 (CUDA Toolkit 12.9),
+`https://docs.nvidia.com/cuda/archive/12.9.0/parallel-thread-execution/`.
+* "Parallel Synchronization and Communication Instructions: membar/fence", PTX ISA Notes:
+  "fence introduced in PTX ISA version 6.0"; ".acquire and .release qualifiers for fence
+  instruction introduced in PTX ISA version 8.6".
+* Same section, Target ISA Notes: "fence requires sm_70 or higher"; ".acquire and .release
+  qualifiers for fence instruction require sm_90 or higher".
+* "Release Notes", the version table: PTX ISA 8.6 is the CUDA 12.7 release.

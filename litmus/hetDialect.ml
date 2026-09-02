@@ -44,6 +44,8 @@ type gpu_dialect = {
     gd_dump_instr :
       out_channel -> het:string option -> string ->
       BellBase.instruction -> unit ;
+    gd_fence_floor_guard : BellBase.instruction list -> string ;
+                                (* target-floor #error the fences demand, or "" *)
     gd_device_sync : string ;     (* host-side device-sync statement *)
     gd_free : string -> string ;  (* var -> free statement *)
     (* The forward-progress poke the host half of the rendezvous calls while it
@@ -103,6 +105,7 @@ let cuda_dialect = {
        \             launch).\n" ;
     gd_runtime_include = "#include <cuda/atomic>" ;
     gd_dump_instr = CudaLang.dump_instr ;
+    gd_fence_floor_guard = CudaLang.fence_floor_guard ;
     gd_device_sync = "cudaDeviceSynchronize();" ;
     gd_free = (fun v -> Printf.sprintf "cudaFree(%s);" v) ;
     gd_poke_def =
@@ -152,6 +155,7 @@ let hip_dialect = {
        \             hipMallocManaged, __hip_atomic_*).\n" ;
     gd_runtime_include = "#include <hip/hip_runtime.h>" ;
     gd_dump_instr = HipLang.dump_instr ;
+    gd_fence_floor_guard = (fun _ -> "") ;
     (* no (void) cast: the driver binds this and checks its status *)
     gd_device_sync = "hipDeviceSynchronize();" ;
     gd_free = (fun v -> Printf.sprintf "(void)hipFree(%s);" v) ;

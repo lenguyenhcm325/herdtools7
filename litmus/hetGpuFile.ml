@@ -50,6 +50,8 @@ let dump_prelude dialect identity geometry procs ch =
 #include <inttypes.h>
 |} ;
 
+  s (dialect.gd_fence_floor_guard
+       (List.concat_map (fun gp -> gp.gp_instrs) procs.pr_gpus)) ;
   s (Printf.sprintf "#define HET_PAIR_NAME %S\n" pair_label) ;
   (match dialect.gd_place_lever with
    | Some lever -> s (Printf.sprintf "#define HET_PLACE_LEVER %S\n" lever)

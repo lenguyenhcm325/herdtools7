@@ -103,6 +103,7 @@ let dialect = {
           id nb bd args) ;
     gl_sync = "(void)hipDeviceSynchronize();" ;
     gl_dump_instr = dump_instr ;
+    gl_fence_floor_guard = (fun _ -> "") ;
   }
 
 let dump chan tname parsed = dump_test dialect chan tname parsed
