@@ -134,7 +134,7 @@ let dump_test_lane dialect gp ch =
      between two tested accesses
      (hetlitmus/docs/00-environment-design.md sec 3.6). *)
   s (Printf.sprintf
-       "      %s[_n] = het_rdv_device(barrier, (uint64_t)NPART*(uint64_t)(_n+1), (uint64_t)NPART, _cap_gpu);\n"
+       "      %s[_n] = het_rdv_device(barrier, (uint64_t)NPART*(uint64_t)(_n+1), _cap_gpu);\n"
        (rdv_gpu_name gp.gp_proc)) ;
   s "      het_rdv_jitter(het_draw(_seed, _who, 2u*(uint64_t)_n + 1u), HET_RELEASE_JITTER);\n" ;
   List.iter
@@ -268,7 +268,7 @@ let dump_cpu_thread_wrappers dialect procs memory ch =
              npl)
       end ;
       s (Printf.sprintf
-           "    a->_rdv[_n] = het_rdv_host(a->barrier, (uint64_t)NPART*(uint64_t)(_n+1), (uint64_t)NPART, a->_cap, %s);\n"
+           "    a->_rdv[_n] = het_rdv_host(a->barrier, (uint64_t)NPART*(uint64_t)(_n+1), a->_cap, %s);\n"
            dialect.gd_poke_arg) ;
       s "    het_rdv_jitter(het_draw(a->_seed, _who, _kn), HET_RELEASE_JITTER);\n" ;
       s (Printf.sprintf "    het_run_P%d(%s);\n" proc call_args) ;

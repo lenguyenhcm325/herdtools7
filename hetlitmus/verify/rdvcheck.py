@@ -4,8 +4,7 @@
 order and no fence.  A miss means a slot pairs an outcome to an iteration the two
 sides were not running together.
 
-  1 Primitive   het_rdv.h's three bodies gate, arrive and poll RELAXED at
-                SYSTEM scope
+  1 Primitive   het_rdv.h's three bodies arrive and poll RELAXED at SYSTEM scope
   2 GPU lane    one het_rdv_device() per lane, in its loop, ahead of every
                 tested access, the release jitter between them
   3 CPU thread  one het_rdv_host() per cpu_thread_P<n>, in its loop, ahead of
@@ -131,11 +130,11 @@ def check_primitive(path):
                         "window it exists to sweep" % who)
                 continue
             n_relaxed = sum(joined.count(t) for t in RELAXED)
-            if n_relaxed < 4:
+            if n_relaxed < 2:
                 bad.append(
-                    "%s spells %d relaxed memory order(s), not the drain gate's "
-                    "two loads, the arrival and the poll -- this check cannot "
-                    "see what order its accesses carry" % (who, n_relaxed))
+                    "%s spells %d relaxed memory order(s), not the arrival and "
+                    "the poll -- the gate cannot see what order its two accesses "
+                    "carry" % (who, n_relaxed))
     # One definition per vendor, each spelling its own system scope and no
     # narrower one; between them BOTH vendors are covered.
     dev = bodies.get("het_rdv_device", [])
@@ -172,11 +171,9 @@ LANE_HEAD = re.compile(r'^  if \(blockIdx\.x == \d+ && threadIdx\.x == \d+\) \{$
 CPU_HEAD = re.compile(r'^static void\* cpu_thread_P(\d+)\(void\* _a\) \{$')
 LOOP_HEAD = re.compile(r'^\s*for \(int _n=0; _n<SIZE_OF_TEST; \+\+_n\) \{$')
 RDV_DEV = re.compile(r'^\s*(_rdvG_P\d+)\[_n\] = het_rdv_device\(barrier, '
-                     r'\(uint64_t\)NPART\*\(uint64_t\)\(_n\+1\), '
-                     r'\(uint64_t\)NPART, _cap_gpu\);$')
+                     r'\(uint64_t\)NPART\*\(uint64_t\)\(_n\+1\), _cap_gpu\);$')
 RDV_HOST = re.compile(r'^\s*a->_rdv\[_n\] = het_rdv_host\(a->barrier, '
-                      r'\(uint64_t\)NPART\*\(uint64_t\)\(_n\+1\), '
-                      r'\(uint64_t\)NPART, a->_cap, .+\);$')
+                      r'\(uint64_t\)NPART\*\(uint64_t\)\(_n\+1\), a->_cap, .+\);$')
 JITTER = re.compile(r'^\s*het_rdv_jitter\(het_draw\(.+\), '
                     r'HET_RELEASE_JITTER\);$')
 # The traceability comment both dialects write ahead of every tested access

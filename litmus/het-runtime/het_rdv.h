@@ -59,27 +59,26 @@
    model"]; CUDA passes one where the grid may not be resident, HIP NULL. */
 typedef void (*het_poke_fn)(void);
 
+/* Host polls between two runtime pokes; a power of two
+   (hetlitmus/docs/00-environment-design.md sec 3.3). */
 #ifndef HET_RDV_POKE_EVERY
 #define HET_RDV_POKE_EVERY 1024
 #endif
+#if (HET_RDV_POKE_EVERY & (HET_RDV_POKE_EVERY - 1)) != 0
+#error "HET_RDV_POKE_EVERY must be a power of two"
+#endif
 
-/* Gate until the previous iteration is fully arrived, add 1, then poll -- all
-   relaxed [Bagchi26 sec 5.3]; x86_64's arrival alone is a locked RMW draining
-   the prior tested stores.  The gate and the poll spend ONE _cap between
-   them; a gate expiry still adds exactly once, skips the poll and records
-   the 0 that discards (hetlitmus/docs/00-environment-design.md sec 3.3). */
+/* Arrive, then poll: relaxed [Bagchi26 sec 5.3], no fence written and none
+   emitted on AArch64 or either GPU side; x86_64's arrival is a locked RMW, a
+   full barrier that drains the previous iteration's tested stores
+   (hetlitmus/docs/00-environment-design.md sec 3.3).  Each caller adds 1 per
+   iteration to a monotone counter; 1 = saw it, 0 discards its iteration. */
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_DEVICE_COMPILE__)
 __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
-                                            uint64_t _npart, uint32_t _cap) {
-  uint64_t _v = __hip_atomic_load(_ctr, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);
+                                            uint32_t _cap) {
+  uint64_t _v = __hip_atomic_fetch_add(_ctr, 1ull, __ATOMIC_RELAXED,
+                                       __HIP_MEMORY_SCOPE_SYSTEM) + 1ull;
   uint32_t _i = 0;
-  while (_v + _npart < _target && _i < _cap) {
-    _i++;
-    __builtin_amdgcn_s_sleep(1);
-    _v = __hip_atomic_load(_ctr, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);
-  }
-  _v = __hip_atomic_fetch_add(_ctr, 1ull, __ATOMIC_RELAXED,
-                              __HIP_MEMORY_SCOPE_SYSTEM) + 1ull;
   while (_v < _target && _i < _cap) {
     _i++;
     __builtin_amdgcn_s_sleep(1);
@@ -89,15 +88,10 @@ __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
 }
 #else
 __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
-                                            uint64_t _npart, uint32_t _cap) {
+                                            uint32_t _cap) {
   cuda::atomic_ref<uint64_t, cuda::thread_scope_system> _a(*_ctr);
-  uint64_t _v = _a.load(cuda::memory_order_relaxed);
+  uint64_t _v = _a.fetch_add(1ull, cuda::memory_order_relaxed) + 1ull;
   uint32_t _i = 0;
-  while (_v + _npart < _target && _i < _cap) {
-    _i++;
-    _v = _a.load(cuda::memory_order_relaxed);
-  }
-  _v = _a.fetch_add(1ull, cuda::memory_order_relaxed) + 1ull;
   while (_v < _target && _i < _cap) {
     _i++;
     _v = _a.load(cuda::memory_order_relaxed);
@@ -106,17 +100,12 @@ __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
 }
 #endif
 
-/* The host half.  [_poke] paces the gate and the poll alike. */
-static inline int het_rdv_host(uint64_t *_ctr, uint64_t _target, uint64_t _npart,
-                               long _cap, het_poke_fn _poke) {
-  uint64_t _v = __atomic_load_n(_ctr, __ATOMIC_RELAXED);
+/* The host half.  [_poke], when not NULL, runs once per HET_RDV_POKE_EVERY
+   polls. */
+static inline int het_rdv_host(uint64_t *_ctr, uint64_t _target, long _cap,
+                               het_poke_fn _poke) {
+  uint64_t _v = __atomic_fetch_add(_ctr, 1ull, __ATOMIC_RELAXED) + 1ull;
   long _i = 0;
-  while (_v + _npart < _target && _i < _cap) {
-    _i++;
-    if (_poke != NULL && (_i & (HET_RDV_POKE_EVERY - 1)) == 0) _poke();
-    _v = __atomic_load_n(_ctr, __ATOMIC_RELAXED);
-  }
-  _v = __atomic_fetch_add(_ctr, 1ull, __ATOMIC_RELAXED) + 1ull;
   while (_v < _target && _i < _cap) {
     _i++;
     if (_poke != NULL && (_i & (HET_RDV_POKE_EVERY - 1)) == 0) _poke();

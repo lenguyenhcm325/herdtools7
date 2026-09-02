@@ -607,10 +607,11 @@ Claim(s) this project takes from it:
   unblocked from the flag spin-loop"; `Execution.Model.API.4` terminates because
   it "repeatedly calls a CUDA query API in within the flag spin-loop, which
   guarantees that the device thread eventually makes progress". The CUDA render
-  therefore calls `cudaStreamQuery(0)` once per poll on iteration 0, where the
-  grid may not yet be resident (`het_rdv.h`, `litmus/hetDialect.ml`); past that
-  it does not, because a vendor runtime call inside the tested loop is traffic
-  the window does not need. The HIP render passes no such call.
+  therefore calls `cudaStreamQuery(0)` once per `HET_RDV_POKE_EVERY` polls on
+  iteration 0 and on any iteration whose predecessor failed, where the grid may
+  not be resident (`het_rdv.h`, `litmus/hetDialect.ml`); on no other, because a
+  vendor runtime call inside the tested loop is traffic the window does not
+  need. The HIP render passes no such call.
 
 Deviation(s):
 * Release 12.x titles this document "CUDA C++ Programming Guide" and states the
