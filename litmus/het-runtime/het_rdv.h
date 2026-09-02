@@ -59,8 +59,7 @@
    model"]; CUDA passes one where the grid may not be resident, HIP NULL. */
 typedef void (*het_poke_fn)(void);
 
-/* Host polls between two runtime pokes; a power of two
-   (hetlitmus/docs/00-environment-design.md sec 3.3). */
+/* Host polls between two runtime pokes; a power of two (used as a mask). */
 #ifndef HET_RDV_POKE_EVERY
 #define HET_RDV_POKE_EVERY 1024
 #endif

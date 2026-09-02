@@ -400,7 +400,7 @@ end = struct
   module SP = Splitter.Make(LexConfig)
 
   (* HetLitmus: the seam for the het-only modules
-     (hetlitmus/docs/het-emission.md, "Where the code lives").  HetOpts is the
+     (hetlitmus/docs/het-emission.md, "CPU ISA from the device tag").  HetOpts is the
      slice of Top's scope the dispatch arms below close their functors over, so
      none of those modules depends on this file. *)
   module HetOpts = struct

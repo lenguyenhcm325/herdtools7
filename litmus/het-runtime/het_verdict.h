@@ -385,8 +385,7 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
 }
 
 /* The aggregate, a pure function of an array of het_obs_records, run host-side
- * after the campaign.  The iteration is not the trial: the replication unit is
- * the run and Y = 1[target_count >= 1] is what is counted
+ * after the campaign; the run is the replication unit
  * (hetlitmus/docs/harness-reporting.md sec 5). */
 
 /* What the campaign saw, per run. */

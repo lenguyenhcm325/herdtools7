@@ -134,7 +134,7 @@ static void _het_place(void* _p, size_t _bytes, int _where){
 #if HET_PLACE != 0
 /* The race surface needs a VERIFIED home, not the best-effort advice the noise
    buffers take: a system malloc page is first-touch placed and stays migratable
-   [Fusco24 "Unified Memory"], so it is bound to the far NUMA node under a strict
+   [Fusco24 Tab. II], so it is bound to the far NUMA node under a strict
    policy -- which also stops later migration -- and the home is read straight
    back.  hetlitmus/docs/00-environment-design.md sec 3.6. */
 #include <unistd.h>
@@ -147,8 +147,9 @@ static void _het_place(void* _p, size_t _bytes, int _where){
 #endif
 #define HET_NODEMASK_LONGS 8      /* 512 NUMA nodes -- more than any GH200/GB200 */
 /* The far NUMA node the lever targets, from the launch device (dev 0): HBM is a
-   placeable node ONLY when the GPU memory is one [CudaGuide "cudaDeviceNumaConfig"],
-   else -1 = nothing to bind. */
+   placeable node ONLY when the GPU memory is one
+   [CudaGuide "Overview of Memory Allocators for Unified Memory"], else -1 =
+   nothing to bind. */
 static int _het_place_node(int _where){
   if (_where == 2) return _het_dev_attr(cudaDevAttrHostNumaId);   /* DDR: host node */
   if (_het_dev_attr(cudaDevAttrNumaConfig) != cudaDeviceNumaConfigNumaNode) return -1;

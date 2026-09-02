@@ -83,7 +83,7 @@ for cpu_arch in $CPU_ARCHS; do
 done
 
 # ---------------------------------------------------------------------------
-# (D) The two-sided family: complete the morally-strong cross-device pair.
+# (D) The two-sided family: annotate both halves of the cross-device pair.
 # ---------------------------------------------------------------------------
 # Both halves annotated, so the cross-device pair closes -- (B) annotates the GPU
 # half alone.  Which orders and why sys scope: ../_grid_lib.sh, TWO_SIDED_ORDERS.
@@ -99,11 +99,8 @@ for shape in $SHAPE_ORDER; do
       gpu_toks=$(render_cycle sys "$order" $cyc)
       "$BIN/hetgen7" $COMMON -cpu-arch aarch64 -devices "$cut" -name "$name" \
         -cpu "$cpu_toks" -gpu "$gpu_toks" > "$name.litmus"
-      # Drop a two-sided test that does not actually differ from its one-sided
-      # sibling: when every CPU proc of the cut is single-access the annotation
-      # has nothing to attach to (IRIW-gcgc fence -- both CPU procs are single
-      # writers).  Only `fence' can bite here; the grid emits no
-      # <shape>-<tag>-sys-acqrel sibling to compare against.
+      # Drop a two-sided test byte-identical below its header to its one-sided
+      # sibling (hetlitmus/docs/corpus-grid.md, "(D) Matched two-sided").
       onesided="$shape-$tag-sys-$order.litmus"
       if [ -f "$onesided" ] \
          && diff -q <(tail -n +3 "$onesided") <(tail -n +3 "$name.litmus") >/dev/null; then

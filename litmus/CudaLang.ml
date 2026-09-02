@@ -39,7 +39,7 @@ let thread_scope = function
   | s -> Warn.user_error "CudaLang: unknown scope %S" s
 
 (* One inline PTX fence per annotated order, rather than the collapsed
-   cuda::atomic_thread_fence (hetlitmus/docs/cuda-emitter.md, "nvcc compile"). *)
+   cuda::atomic_thread_fence (hetlitmus/docs/cuda-emitter.md, "Fence lowering"). *)
 let ptx_fence_sem = function
   | "acquire" -> "acquire"
   | "release" -> "release"

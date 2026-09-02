@@ -106,7 +106,7 @@ let parse_cond s =
 let generate () =
   (* The merge splices per-proc atoms out of a flat conjunction of the two runs'
      conditions, which only -cond cycle produces.
-     hetlitmus/docs/het-generation.md sec 6. *)
+     hetlitmus/docs/het-generation.md sec 5. *)
   (match !Config.cond with
    | Config.Cycle -> ()
    | Config.Unicond | Config.Observe ->

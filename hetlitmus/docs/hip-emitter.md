@@ -1,132 +1,69 @@
-# HipLang — the AMD HIP emitter
+# HIP emitter (HipLang)
 
-`litmus/HipLang.ml` is the AMD sibling of `CudaLang` (see `cuda-emitter.md`). It
-turns the GPU-only LISA/Bell scoped corpus (`hetlitmus/tests/gpu-only/*.litmus`)
-into AMD **HIP** C++ (`.hip`) litmus kernels, one per test, reusing the Bell/LISA
-scoped IR as the frontend (no native arch). The `.litmus` layer is
-vendor-neutral, so the same corpus feeds both vendors; the vendor difference
-lives only in the emitter, and `-gpu-target` is what picks one
+`litmus/HipLang.ml` is the AMD sibling of `CudaLang` (`cuda-emitter.md`): the
+same scoped LISA/Bell corpus rendered as HIP C++ (`.hip`) kernels over Clang's
+`__hip_atomic_*` builtins and `__builtin_amdgcn_fence`. The `.litmus` layer is
+vendor-neutral; the vendor lives in the emitter, and `-gpu-target` picks one
 (`litmus/hetDialect.ml`).
 
 ## What ships
-- **`litmus/HipLang.ml`** — the emitter. Consumes the *parsed* `BellBase`
-  scoped program (not the litmus7 `Out` template, which would flatten the
-  order+scope annotation into an opaque `memo`), exactly as CudaLang does. The
-  `BellBase` accessors, the launch layout and the whole-test driver come from
-  `litmus/gpuLang.ml`, which both emitters instantiate; this file holds the HIP
-  lowering and the emitted HIP tokens.
-- **`litmus/hetGpuOnly.ml`** — the `` `LISA `` arm emits the render
-  `-gpu-target` names, `.hip` (HipLang) or `.cu` (CudaLang), from the parsed
-  test, then returns `Absent` (DumpRun does not try to compile/tar it).
-- **`hetlitmus/emit-hip.sh`** — regenerates all `.hip` from the corpus into
-  `hetlitmus/hip-out/` (`hip-out/.gitignore` keeps only `*.hip`). It is the
-  HIP-side entry point of `hetlitmus/emit-gpu.sh`, which it calls with
-  `-gpu-target hip`: one vendor per pass, so filling both trees is two passes.
-
-Build: `make all` in the repo root. Emit: `./hetlitmus/emit-hip.sh`.
+- `litmus/HipLang.ml` — the HIP lowering and the emitted tokens; it consumes
+  the parsed `BellBase` program, not the `Out` template (`cuda-emitter.md`,
+  "How it works (and why this shape)"), and everything else is
+  `litmus/gpuLang.ml`'s.
+- `litmus/hetGpuOnly.ml` — the `` `LISA `` dispatch arm; under
+  `-gpu-target hip` it writes `<name>.hip` and returns `Absent`.
+- `hetlitmus/emit-hip.sh [OUTDIR]` — renders the corpus (default
+  `hetlitmus/hip-out/`) through `hetlitmus/emit-gpu.sh hip OUTDIR`.
+- `hetlitmus/compile-hip.sh [INDIR] [OUTDIR]` — compiles every render
+  ("Compile status" below).
 
 ## Mappings
-HIP scoped atomics are Clang builtins. Memory locations are kernel `int*`
-parameters, so the pointer is passed directly (no `&`/deref). As the ROCm HIP
-header spells them [HipAtomicHeader]:
-
-```
-__hip_atomic_store(ptr, val, memorder, scope);
-v = __hip_atomic_load(ptr, memorder, scope);
-// also __hip_atomic_exchange / _compare_exchange_strong / _fetch_add ...
-```
+HIP scoped atomics are Clang builtins over a kernel `int*` parameter passed as
+is: `__hip_atomic_store(ptr, val, order, scope)`,
+`v = __hip_atomic_load(ptr, order, scope)` [HipAtomicHeader].
 
 | LISA annotation | HIP token |
 |-----------------|-----------|
-| order `relaxed` | `__ATOMIC_RELAXED` |
-| order `acquire` | `__ATOMIC_ACQUIRE` |
-| order `release` | `__ATOMIC_RELEASE` |
-| order `acq_rel` | `__ATOMIC_ACQ_REL` |
-| order `sc`      | `__ATOMIC_SEQ_CST` |
-| scope `cta`     | `__HIP_MEMORY_SCOPE_WORKGROUP` (=3) |
-| scope `gpu`     | `__HIP_MEMORY_SCOPE_AGENT` (=4) |
-| scope `sys`     | `__HIP_MEMORY_SCOPE_SYSTEM` (=5) |
+| order `relaxed` / `acquire` / `release` / `acq_rel` / `sc` | `__ATOMIC_RELAXED` / `_ACQUIRE` / `_RELEASE` / `_ACQ_REL` / `_SEQ_CST` |
+| scope `cta` / `gpu` / `sys` | `__HIP_MEMORY_SCOPE_WORKGROUP` (3) / `_AGENT` (4) / `_SYSTEM` (5) |
 
-The `__HIP_MEMORY_SCOPE_*` ladder is `SINGLETHREAD=1, WAVEFRONT=2, WORKGROUP=3,
-AGENT=4, SYSTEM=5` [HipAtomicHeader]. The cta/gpu/sys ↔ workgroup/agent/system
-mapping is the AMD half of the vendor ladder cta↔workgroup, gpu↔agent,
-sys↔system.
+The `__HIP_MEMORY_SCOPE_*` ladder is `SINGLETHREAD 1` … `SYSTEM 5`
+[HipAtomicHeader]. Why these tokens are the faithful ones:
+`amd-faithfulness.md`, "The mapping". Launch geometry is `gpuLang.ml`'s, as
+for CUDA (`cuda-emitter.md`, "Mappings"), launched with `hipLaunchKernelGGL`.
 
-### Fences
+## Fences
+A fence lowers to `__builtin_amdgcn_fence(<order>, "<sync scope>")`, which
+carries both the order and the scope [D75917] — the AMD counterpart of
+CudaLang's `fence.<order>.<scope>`; `__threadfence{,_block,_system}` takes no
+order and is not used. The order reuses the atomics' `__ATOMIC_*` map; the
+scope string is the AMDHSA LLVM sync-scope name, `cta → "workgroup"`,
+`gpu → "agent"`, `sys → ""` (`hip_fence_scope`).
 
-**Fences carry order + scope.**
-The `-F` variants do synchronise with release/acquire *atomics*, not fences —
-their sources carry no fence intrinsic at all (`gpu-only-corpus.md`, "Why the
-synchronised verdicts hold") — but the corpus is not fence-free: the `-fence`
-families and the order-pair grid's `acq`/`rel`/`sc` GPU tokens carry
-`f[order,scope]`. The level at which AMD faithfulness is stated for those
-renderings, and what that leaves open, is
-[`amd-faithfulness.md`](amd-faithfulness.md); what `hipcc` compiles is *Compile
-status* below.
-
-HipLang lowers a fence to the Clang builtin
-**`__builtin_amdgcn_fence(<order>, "<scope-string>")`**, which carries **BOTH**
-the memory order and the sync scope [D75917] — the AMD counterpart of CudaLang's
-faithful inline-PTX `fence.<order>.<scope>`. `__threadfence{,_block,_system}` is
-not used: it carries only the *scope* and is always a full fence, so it would
-drop the annotated order (a `release` fence would become a full fence) and
-over-synchronise.
-
-| LISA fence annotation | HIP emission |
-|-----------------------|--------------|
-| `f[release,sys]`  | `__builtin_amdgcn_fence(__ATOMIC_RELEASE, "");`        |
-| `f[acquire,cta]`  | `__builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "workgroup");` |
-| `f[acq_rel,gpu]`  | `__builtin_amdgcn_fence(__ATOMIC_ACQ_REL, "agent");`  |
-| `f[sc,sys]`       | `__builtin_amdgcn_fence(__ATOMIC_SEQ_CST, "");`       |
-
-The **order** reuses the same `__ATOMIC_*` mapping as the atomics. The **scope
-string** is the AMDHSA LLVM sync-scope name: `cta → "workgroup"`, `gpu →
-"agent"`, and `sys → ""` (`HipLang.hip_fence_scope`). **System scope is the
-empty string:** the sync scopes a fence may name are `workgroup`, `agent`,
-`wavefront`, `singlethread`, `cluster` and their `-one-as` variants, and the
-unnamed default is system scope [AMDGPUUsage "Memory Scopes"] — `"system"` is
-not a sync-scope name, and `hipcc` rejects a fence whose scope is spelt that
-way. Naming a scope for `sys` would silently *narrow* it, so the `""` is
-load-bearing. The fence vocabulary is
-[`../bells/ptx.bell`](../bells/ptx.bell)'s — `acquire`/`release`/`acq_rel`/`sc`,
-which is also all `__builtin_amdgcn_fence` accepts — and a relaxed fence is
-refused before rendering ([`het-emission.md`](het-emission.md),
-"Scope / limits"). Each emitted fence keeps a trailing `// f[order,scope]`
-traceability comment.
-
-## Launch geometry
-Same as CudaLang: a *workgroup* (block) = a maximal subtree rooted at a `cta`
-node in the scope tree, numbered in DFS order; each proc is guarded by
-`if (blockIdx.x == B && threadIdx.x == L)`. The compound (CPU+GPU) harness is
-laid out from the same tree. Every corpus test places each proc in its own
-workgroup, so `MP-cta-F` puts the two threads in *distinct* workgroups —
-the moral-strength / scope-mismatch demonstration. Host launch uses
-`hipLaunchKernelGGL(litmus_X, dim3(nblocks), dim3(blockdim), 0, 0, ...)`.
+**System scope is the empty string**: the nameable sync scopes are `agent`,
+`cluster`, `workgroup`, `wavefront`, `singlethread` and their `-one-as`
+variants, and the unnamed default is system [AMDGPUUsage "Memory Scopes"].
+`"system"` is not a sync-scope name and `hipcc` rejects it ("Unsupported atomic
+synchronization scope"); `"agent"` in its place would compile and silently
+NARROW the fence. A relaxed fence is refused before rendering
+(`het-emission.md`, "Scope / limits"). Each emitted fence carries a trailing
+`// f[order,scope]` comment, the tie back to its `.litmus` column that
+`amd-faithfulness.md` reads.
 
 ## Compile status
-- **HIP compile.** `hetlitmus/compile-hip.sh [INDIR] [OUTDIR]` cross-compiles
-  every `.hip` in INDIR with `$HIPCC --offload-arch=$HIP_ARCH -std=c++17
-  <test>.hip -o <test>`, a by-hand build of one host binary per render;
-  `HIP_ARCH` defaults to `gfx942`, the MI300A ISA, and `HIPCC` to `hipcc` on
-  `PATH`, else `/opt/rocm/bin/hipcc`. Its default INDIR is `hip-out/`, the
-  committed `hip-out/*.hip` samples — all fence-free, and its default OUTDIR is
-  `$RESULTS/hip-compile`, in the results dir that
-  [`het-emission.md`](het-emission.md), "From a corpus to a results dir",
-  defines. CUDA has no `compile-cuda.sh` twin. `amdclang++` accepts the
-  `__hip_atomic_*` / `__HIP_MEMORY_SCOPE_*` builtins (nvcc does **not**, so this
-  requires the HIP-Clang stack, not HIP-over-CUDA). A clean build proves the
-  scope/order lowering is valid for the target ISA; it does NOT validate
-  memory-model behaviour. The host `main()` is illustrative scaffolding (launch
-  geometry + result-buffer layout), as on the CUDA side, with the same checked
-  allocations (`alloc_checked`: a refused `hipMallocManaged` exits 2).
-- **Reference verdicts:** the PLDI'23 artifact's are AMD GCN3; MI300A is CDNA3,
-  several generations past GCN3, so they do not transfer, no CDNA3 reference
-  replaces them, and this project derives none of its own.
+`hetlitmus/compile-hip.sh` compiles each `.hip` in INDIR (default `hip-out/`)
+with `$HIPCC --offload-arch=$HIP_ARCH -std=c++17` into OUTDIR (default
+`$RESULTS/hip-compile`; `het-emission.md`, "From a corpus to a results dir"),
+`HIP_ARCH` defaulting to `gfx942`, the MI300A ISA. The render needs the
+HIP-Clang stack: `__hip_atomic_*` and `__builtin_amdgcn_fence` are Clang
+builtins, absent from HIP over nvcc. Nothing is launched; running a kernel needs
+an AMD device.
 
-## Sources
-- The `__hip_atomic_*` builtins and the `__HIP_MEMORY_SCOPE_*` ladder:
-  [HipAtomicHeader].
-- `__builtin_amdgcn_fence(<order>, "<scope-string>")`, a C11 order constant
-  first and an AMDHSA sync-scope string second: [D75917].
-- The AMDHSA sync-scope names and the unnamed system default:
-  [AMDGPUUsage "Memory Scopes"].
+A clean compile establishes that the builtin, order and scope the emitter wrote
+are accepted for the target ISA — not what `hipcc` lowers them to, and not
+memory-model behaviour (`amd-faithfulness.md`, "Scope and limits"). The host
+`main()` is the same scaffolding as the CUDA render's (`cuda-emitter.md`,
+"Limits"). No expected verdicts: the artifact's are AMD GCN3
+(`gpu-only-corpus.md`, "Vendor scope") and do not transfer
+to CDNA3 (MI300A); this project derives none.

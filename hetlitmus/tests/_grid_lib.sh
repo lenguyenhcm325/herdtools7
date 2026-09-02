@@ -60,7 +60,7 @@ declare -A SHAPE_HET_CUTS=(
 GRID_SCOPES="cta gpu sys"
 GRID_ORDERS="relaxed acquire release fence"
 
-# Two-sided het orders: the complete morally-strong pairings, applied to BOTH
+# Two-sided het orders: the order pairings applied to BOTH
 # devices at sys scope so the cross-device pair closes.
 #   acqrel : reads -> acquire, writes -> release
 #   fence  : DMB.SY (CPU) + fence.sc.sys (GPU)
@@ -137,7 +137,7 @@ render_cycle() {
 }
 
 # -----------------------------------------------------------------------------
-# CPU (AArch64) annotator, the other half of the morally-strong pair.  hetgen7's
+# CPU (AArch64) annotator, the other half of the two-sided pair.  hetgen7's
 # `-cpu <edges>' is parsed verbatim, so the one-sided default leaves every CPU
 # proc a plain ARMv9 ld/st and closes no cross-device pair.  ARM ops are
 # scope-free, so no scope token is appended.  Mapping: hetlitmus/docs/faithfulness.md.

@@ -74,7 +74,7 @@ measurements), the gate script (verification story), `hetlitmus/docs/`
    the scope, the constant), as a bare `[Key locator]` with no restatement of
    what the source says. Add a locator when the source is long enough that the
    key alone doesn't land the reader on the claim: papers get fixed locators
-   (`[Lustig19 §5.2]`, `Fig.10`, `Table 3`); living documents get the section
+   (`[Kirkham20 §3.1]`, `Fig.10`, `Table 3`); living documents get the section
    *name*, whose anchors outlive renumbering (`[AMDGPUUsage "Memory
    Scopes"]`). Short sources (a review ID, a man page) need none. No quotes,
    no derivations at the site.

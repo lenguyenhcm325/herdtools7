@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Render the het corpus with an x86-64 CPU column, into OUTDIR.  These renderings
-# are NOT committed and are generated on demand, which is what makes the x86 lane
-# reproducible (hetlitmus/docs/het-emission.md, "Scope / limits").
+# Render the het corpus with an x86-64 CPU column, into OUTDIR.  The renderings
+# are generated on demand and not committed as a corpus; hetlitmus/tests/het-x86
+# holds a fixture extract (hetlitmus/docs/het-emission.md, "Scope / limits").
 #
 #   usage:  ./generate-x86.sh OUTDIR
 #
@@ -29,7 +29,7 @@ source ../_grid_lib.sh
 [ "$OUT" != "$HETDIR" ] || { echo "refusing to write into the committed corpus" >&2; exit 2; }
 
 # render_x86_cpu <cpu-tok> <base-edge>...  -> x86-64 diy edge token list; the
-# x86-TSO collapse of the four tokens: corpus-grid.md, "Census rationale".
+# x86-TSO collapse of the four tokens: corpus-grid.md, "The x86_64 rendering".
 render_x86_cpu() {
   local t="$1"; shift
   case "$t" in

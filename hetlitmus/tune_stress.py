@@ -8,7 +8,7 @@ appends the result to an append-only JSONL log.  That log is the whole state:
 `rank' reads it offline and writes the winner params files.  The
 score is weak iterations per wall-clock second, per row; the draw, the three
 validity layers and the objective are hetlitmus/docs/00-environment-design.md
-sec 3.9.  Exit: 0 = the pass ran; 2 = configuration/environment error.
+sec 3.8.  Exit: 0 = the pass ran; 2 = configuration/environment error.
 """
 
 import argparse
