@@ -158,9 +158,11 @@ is prefetched across, a refusal being reported rather than swallowed.
   $ grep -c 'cudaMemPrefetchAsync of the HBM noise buffer FAILED' $MP.cu
   1
 
-(h3) the host-streamed buffer is refused inside the non-pageable branch on a
-device that reports no concurrent managed access.
-  $ sed -n '/^  if (!_shared_pageable()) {/,/^  }$/p' $MP.cu | grep -c '_where == 1 && !_het_dev_attr(cudaDevAttrConcurrentManagedAccess)'
+(h3) without pageable-memory access the noise buffers are refused, and a
+placed one is a system malloc.
+  $ sed -n '/^  if (!_shared_pageable()) {/,/^  }$/p' $MP.cu | grep -c 'return -1'
+  1
+  $ sed -n '/^static int gd_alloc_noise/,/^}$/p' $MP.cu | grep -c '\*_pp = malloc(_bytes);'
   1
 
 (i) every counter of this layer is REPORTED, because a mechanism that has

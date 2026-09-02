@@ -44,9 +44,7 @@ sighting as on a null.
   most of them has an empty histogram about the rendezvous, not the memory model. A timed-out
   rendezvous is a dead partner or a cap set too short, never a non-observation.
 - `HET_DQ_*_DEAD`, one per mechanism (GPU scratchpad stress, CPU enemies, cache preload, each
-  half of the interconnect noise) — requested, and its round tally is zero. A noise half is
-  dead as well when its buffer crosses no link (`noise_inert`): its round and block counters
-  stay healthy while it stresses nothing, so only that field separates it from a live half.
+  half of the interconnect noise) — requested, and its round tally is zero.
 
 Caveats: a refused pin or placement (`HET_CV_AFF_FAILED`, `HET_CV_PLACE_REFUSED`: the topology
 is not the configured one); placeholder rendezvous caps (`HET_CV_RDV_UNCALIBRATED`: a discard
@@ -59,8 +57,8 @@ exposed without stress [Kirkham20 §6.2 Tab.10]).
 "counter == 0" as a disqualifier on its own would make a no-stress baseline `COLD-INVALID`
 forever; the driver stamps `stress_requested` from what the build asked for, so the
 distinction is carried in the record. On a box that can home neither noise buffer across the
-link (`00-environment-design.md` §3.6) each half is allocated inert or refused, and either
-way a run requesting it is `COLD-INVALID`; the reportable baseline there is
+link (`00-environment-design.md` §3.6) each half is refused, so a run requesting it is
+`COLD-INVALID`; the reportable baseline there is
 `HET_NOISE_CPU=0 HET_NOISE_GPU_BLOCKS=0`, which still requests the GPU scratchpad stress, the
 CPU enemies and the preload and so is not `HET_CV_UNSTRESSED` (every stress knob at zero).
 

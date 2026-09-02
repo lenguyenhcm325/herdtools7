@@ -245,12 +245,11 @@ pre-stress, the enemies and the noise still run.
   beats per-device stress: Fusco measured bandwidth, not weak-behaviour yield.
 - **A noise buffer must exceed the last-level cache on its path** (`HET_LLC_MB`): a remote line
   resident in Hopper L2 crosses nothing [Fusco24 §III-E.1].
-- **The host-streamed noise half needs concurrent managed access.** Where the CUDA render
-  finds no pageable-memory access the noise buffers fall back to `cudaMallocManaged`, and a
-  device without concurrent managed access faults on a host access to a managed buffer while
-  the kernel is live ([CudaGuide "Coherency and Concurrency"]), so that half is disabled; a
-  half that crosses no link is reported inert, and `harness-reporting.md` states what that
-  costs a run.
+- **A noise buffer is homed on the other unit or refused.** Where the CUDA render finds no
+  pageable-memory access there is no ATS and no home to select, and a refused advise or
+  prefetch leaves the pages where first touch put them; either way the buffer would generate
+  local traffic, not interconnect traffic, so the half is refused rather than run, and a run
+  requesting it is `COLD-INVALID` (`harness-reporting.md` §3).
 - **MI300A:** one HBM pool, so no placement (a non-zero `HET_PLACE` is a compile error on the
   HIP render). The analogue is contention on the shared pool, measurable on this part as CPU
   throughput falling to 11–25 % of baseline once thousands of GPU threads share a contended

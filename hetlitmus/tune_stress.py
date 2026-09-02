@@ -421,8 +421,7 @@ def score(lines, max_discard_pct):
             weak += inum(kv, "target")
             live = {n: kv.get(n, "") for n in
                     ("req", "do_stress_rounds", "stress_trunc", "enemies",
-                     "enemy_rounds", "preload", "noise_cpu", "noise_gpu",
-                     "noise_inert")}
+                     "enemy_rounds", "preload", "noise_cpu", "noise_gpu")}
     if hs is None:
         return None, {"status": "error", "weak": 0,
                       "why": "no HetStats machine line"}

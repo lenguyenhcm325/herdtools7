@@ -109,28 +109,6 @@ static void _het_place_inert(int _m){
           "for this run and the shared pages are wherever the runtime put them.\n",
           (int)HET_PLACE, _het_alloc_name(_m));
 }
-/* Placement -- an interconnect-stress lever: pin the shared pages away from the
-   participant that reads them so the tested accesses cross the host-device link.
-   Default 0 = first-touch.  A remote-pinned line that stays L2-resident crosses
-   nothing [Fusco24 sec III-E.1], so placement ships with the noise pair and a
-   refused advise is counted.  hetlitmus/docs/00-environment-design.md sec 3.6. */
-static void _het_place(void* _p, size_t _bytes, int _where){
-  if (_where == 0) return;                  /* first-touch: nothing to advise */
-  int _dev = 0;
-  int _home = (_where == 1) ? _dev : cudaCpuDeviceId;   /* 1 = HBM, 2 = DDR */
-  cudaError_t _e1 = cudaMemAdvise(_p, _bytes, cudaMemAdviseSetPreferredLocation, _home);
-  cudaError_t _e2 = cudaMemAdvise(_p, _bytes, cudaMemAdviseSetAccessedBy, _dev);
-  cudaError_t _e3 = cudaMemAdvise(_p, _bytes, cudaMemAdviseSetAccessedBy, cudaCpuDeviceId);
-  if (_e1 != cudaSuccess || _e2 != cudaSuccess || _e3 != cudaSuccess) {
-    _het_place_failures++;
-    fprintf(stderr,
-            "HetLitmus WARNING: cudaMemAdvise REFUSED (%s / %s / %s) -- HET_PLACE=%d "
-            "placed nothing; these pages are wherever first touch put them, so "
-            "this run is NOT placement-stressed.\n",
-            cudaGetErrorString(_e1), cudaGetErrorString(_e2), cudaGetErrorString(_e3),
-            _where);
-  }
-}
 #if HET_PLACE != 0
 /* The race surface needs a VERIFIED home, not the best-effort advice the noise
    buffers take: a system malloc page is first-touch placed and stays migratable

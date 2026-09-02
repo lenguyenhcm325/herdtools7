@@ -97,7 +97,6 @@ BASE = dict(
     cpu_preload_ops=1000,
     noise_cpu_rounds=1000,
     noise_gpu_blocks=8,
-    noise_inert=0,
     cpu_aff_failures=0,
     place_failures=0,
     # every mechanism requested (GPU_STRESS|CPU_ENEMY|CPU_PRELOAD|NOISE_CPU|NOISE_GPU)
@@ -152,11 +151,6 @@ CASES = [
          noise_cpu_rounds=0),
     case("cold-noise-gpu-dead", "COLD-INVALID", dq=["NOISE_GPU_DEAD"],
          noise_gpu_blocks=0),
-    # An inert half's own counter is healthy, so only noise_inert disqualifies it.
-    case("cold-noise-cpu-inert", "COLD-INVALID", dq=["NOISE_CPU_DEAD"],
-         noise_inert=1),
-    case("cold-noise-gpu-inert", "COLD-INVALID", dq=["NOISE_GPU_DEAD"],
-         noise_inert=2),
     # The stress blocks fill what the co-residency cap leaves over the test lanes,
     # so a requested layer that completed zero rounds is a layer nobody ran.
     case("cold-gpu-stress-dead", "COLD-INVALID", dq=["GPU_STRESS_DEAD"],
