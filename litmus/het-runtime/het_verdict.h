@@ -13,12 +13,8 @@
 #include <stdlib.h>   /* getenv: the run-time campaign knobs                 */
 #include <string.h>   /* memset: het_stats_compute zeroes its own aggregate  */
 
-/* Mechanism names, not part names; the pair is HET_PAIR_NAME
+/* Default when the dialect stamps no lever
    (hetlitmus/docs/het-emission.md "The pair a harness names"). */
-#define HET_LINK_NAME "host-device interconnect"  /* no leading article: sites add it */
-#define HET_HOST_HALF "the host half"
-#define HET_DEV_HALF "the device half"
-/* Default when the dialect stamps no lever (same section). */
 #ifndef HET_PLACE_LEVER
 #define HET_PLACE_LEVER "the page-placement lever"
 #endif
@@ -352,14 +348,14 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
     if (dq & HET_DQ_CPU_PRELOAD_DEAD)
       fprintf(_ch, "    - the cache preload was requested but issued ZERO hints\n");
     if (dq & HET_DQ_NOISE_CPU_DEAD)
-      fprintf(_ch, "    - %s of the %s noise completed %llu round(s): this run "
-                   "is not interconnect-stressed\n",
-              HET_HOST_HALF, HET_LINK_NAME,
+      fprintf(_ch, "    - the host half of the host-device interconnect noise "
+                   "completed %llu round(s): this run is not "
+                   "interconnect-stressed\n",
               (unsigned long long)_r->noise_cpu_rounds);
     if (dq & HET_DQ_NOISE_GPU_DEAD)
-      fprintf(_ch, "    - %s of the %s noise ran in %u block(s): this run "
-                   "is not interconnect-stressed\n",
-              HET_DEV_HALF, HET_LINK_NAME, _r->noise_gpu_blocks);
+      fprintf(_ch, "    - the device half of the host-device interconnect noise "
+                   "ran in %u block(s): this run is not interconnect-stressed\n",
+              _r->noise_gpu_blocks);
     if (dq & HET_DQ_GPU_STRESS_DEAD)
       fprintf(_ch, "    - the GPU scratchpad stress (HET_PRE_STRESS_PCT/"
                    "HET_MEM_STRESS_PCT) was requested but completed ZERO "

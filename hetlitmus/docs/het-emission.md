@@ -155,10 +155,10 @@ are copies of `litmus/het-runtime/*`.
 
 A harness is a **(CPU ISA × GPU dialect) pair**, not a machine.
 
-* **Printouts name mechanisms.** `HET_LINK_NAME`, `HET_HOST_HALF` and
-  `HET_DEV_HALF` are fixed `#define`s in `litmus/het-runtime/het_verdict.h`
-  ("host-device interconnect" and its halves); the emitter stamps none of
-  them, so no build turns a printed sentence into a claim about a part.
+* **Printouts name mechanisms.** The noise sentences in the emitted driver
+  and in `litmus/het-runtime/het_verdict.h` say "host-device interconnect"
+  and its halves as literal text; the emitter stamps none of it, so no build
+  turns a printed sentence into a claim about a part.
   `HET_PLACE_LEVER` is the one stamped word, and it is a dialect fact:
   `mbind(MPOL_BIND)` on the CUDA render, none on HIP, where `het_verdict.h`'s
   default names the mechanism.

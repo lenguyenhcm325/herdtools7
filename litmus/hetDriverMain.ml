@@ -132,20 +132,20 @@ let dump_noise_setup ch =
   uint64_t _noise_slice = HET_NOISE_CPU_THREADS > 0 ? _noise_words / HET_NOISE_CPU_THREADS : 0;
   if (HET_NOISE_MB < HET_LLC_MB) {
 #if HET_LLC_MB_IS_FALLBACK
-    fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is below the %d MB threshold -- a FALLBACK figure, not this target's last-level cache size, so this run may not be %s-stressed.  Build with -DHET_LLC_MB=<MB> to supply it.\n",
-            (int)HET_NOISE_MB, (int)HET_LLC_MB, HET_LINK_NAME);
+    fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is below the %d MB threshold -- a FALLBACK figure, not this target's last-level cache size, so this run may not be host-device interconnect-stressed.  Build with -DHET_LLC_MB=<MB> to supply it.\n",
+            (int)HET_NOISE_MB, (int)HET_LLC_MB);
 #else
-    fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is below HET_LLC_MB=%d MB -- the noise buffers fit in the last-level cache, so this run is NOT %s-stressed.\n",
-            (int)HET_NOISE_MB, (int)HET_LLC_MB, HET_LINK_NAME);
+    fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is below HET_LLC_MB=%d MB -- the noise buffers fit in the last-level cache, so this run is NOT host-device interconnect-stressed.\n",
+            (int)HET_NOISE_MB, (int)HET_LLC_MB);
 #endif
   }
   if (_noiseBlocks > 0) {
     int _rc = gd_alloc_noise((void**)&_noise_ddr, (size_t)_noise_words*sizeof(uint64_t), 2);
-    if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: no usable %d MB DDR noise buffer -- %s of the %s noise is DISABLED for this run.\n", (int)HET_NOISE_MB, HET_DEV_HALF, HET_LINK_NAME); _noise_ddr = NULL; _noise_blocks = 0; }
+    if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: no usable %d MB DDR noise buffer -- the device half of the host-device interconnect noise is DISABLED for this run.\n", (int)HET_NOISE_MB); _noise_ddr = NULL; _noise_blocks = 0; }
   }
   if (HET_NOISE_CPU_THREADS > 0) {
     int _rc = gd_alloc_noise((void**)&_noise_hbm, (size_t)_noise_words*sizeof(uint64_t), 1);
-    if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: no usable %d MB HBM noise buffer -- %s of the %s noise is DISABLED for this run.\n", (int)HET_NOISE_MB, HET_HOST_HALF, HET_LINK_NAME); _noise_hbm = NULL; }
+    if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: no usable %d MB HBM noise buffer -- the host half of the host-device interconnect noise is DISABLED for this run.\n", (int)HET_NOISE_MB); _noise_hbm = NULL; }
   }
   fprintf(stderr, "HetLitmus cpu-stress: cores=%d test=%d enemies=%d spread=%u stride=%d seq=%d preload=%d%% aff=%d | noise: gpu_blocks=%u cpu_threads=%d words=%llu (%d MB) place=%d\n",
           _ncores, _nCpuTest, _nEnemy, _cpu_spread, (int)HET_CPU_STRIDE,
@@ -378,11 +378,11 @@ let dump_run_stress_report dialect ch =
       if (_nEnemy > 0 && _er == 0)
         fprintf(stderr, "HetLitmus WARNING: %d CPU enemy thread(s) were spawned but completed ZERO rounds -- the CPU-side stress did NOT run.\n", _nEnemy);
       if (_noise_cpu_n > 0 && _nc == 0)
-        fprintf(stderr, "HetLitmus WARNING: %d host noise thread(s) were spawned but completed ZERO rounds -- %s of the %s noise did NOT run.  This run is not interconnect-stressed.\n", _noise_cpu_n, HET_HOST_HALF, HET_LINK_NAME);
+        fprintf(stderr, "HetLitmus WARNING: %d host noise thread(s) were spawned but completed ZERO rounds -- the host half of the host-device interconnect noise did NOT run.  This run is not interconnect-stressed.\n", _noise_cpu_n);
       if (HET_CPU_PRELOAD_PCT > 0 && _pl == 0)
         fprintf(stderr, "HetLitmus WARNING: HET_CPU_PRELOAD_PCT=%d but ZERO preload hints were issued -- the cache preload is INERT (HET_CPU_PRELOAD_LIVE in het_cpu_stress.h).\n", (int)HET_CPU_PRELOAD_PCT);
       if (_noise_blocks > 0 && _ng == 0)
-        fprintf(stderr, "HetLitmus WARNING: %u device-side noise block(s) were launched but NONE completed a round -- %s of the %s noise did NOT run.  This run is not interconnect-stressed.\n", _noise_blocks, HET_DEV_HALF, HET_LINK_NAME);
+        fprintf(stderr, "HetLitmus WARNING: %u device-side noise block(s) were launched but NONE completed a round -- the device half of the host-device interconnect noise did NOT run.  This run is not interconnect-stressed.\n", _noise_blocks);
       if (_ct.aff_failures)
         fprintf(stderr, "HetLitmus WARNING: %u sched_setaffinity call(s) FAILED -- those threads ran wherever the scheduler put them.\n", _ct.aff_failures);
     }

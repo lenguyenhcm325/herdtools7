@@ -184,7 +184,7 @@ silently stopped working looks exactly like one that is working.
   1
   $ grep -c 'ZERO preload hints were issued' $MP.cu
   1
-  $ grep -c '%s of the %s noise did NOT run.  This run is not interconnect-stressed' $MP.cu
+  $ grep -c 'of the host-device interconnect noise did NOT run.  This run is not interconnect-stressed' $MP.cu
   2
   $ grep -c 'host noise thread(s) were spawned but completed ZERO rounds' $MP.cu
   1
