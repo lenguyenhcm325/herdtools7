@@ -184,11 +184,11 @@ A harness is a **(CPU ISA × GPU dialect) pair**, not a machine.
 
 * CPU ISAs: AArch64 and x86_64 (by tag); GPU dialects: CUDA and HIP (by
   `-gpu-target`); all four pairs emit. The x86_64 rendering of the corpus is
-  produced on demand by `hetlitmus/tests/het/generate-x86.sh OUTDIR` and is not
-  committed as a corpus: under x86-TSO the CPU tokens collapse
-  (`corpus-grid.md`, "The x86_64 rendering"), so distinct names render the same
-  experiment, and the corpus admits no duplicate experiment. Names are
-  name-for-name with the committed corpus (`<name>-x86_64`).
+  produced on demand by `hetlitmus/tests/het/generate.sh --cpu-arch x86_64
+  OUTDIR` and is not committed as a corpus: under x86-TSO the CPU tokens
+  collapse (`corpus-grid.md`, "The CPU ISA of a rendering"), so distinct names
+  render the same experiment, and the corpus admits no duplicate experiment.
+  Names are name-for-name with the committed corpus (`<name>-x86_64`).
 * **Refusal is fail-closed.** litmus7 prints
   `HetLitmus REFUSED (het|gpu-only|isa-scan) <test>: <why>` on stderr and
   exits **3** (`HetArch.refused`), distinct from litmus7's own exit 2 (usage,
@@ -255,7 +255,7 @@ x86_64 CPU + HIP (the corpus is rendered first):
 ```
 export RESULTS=hetlitmus/run-out/<tag>
 sh hetlitmus/probe-hip.sh
-hetlitmus/tests/het/generate-x86.sh $RESULTS/corpus-x86
+hetlitmus/tests/het/generate.sh --cpu-arch x86_64 $RESULTS/corpus-x86
 hetlitmus/emit-het.sh --gpu-target hip $RESULTS/corpus-x86
 hetlitmus/build.sh $RESULTS/emit
 python3 hetlitmus/campaign.py --corpus $RESULTS/emit \

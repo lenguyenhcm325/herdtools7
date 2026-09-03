@@ -24,7 +24,8 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
-GEN_X86 = os.path.join(HET_DIR, "generate-x86.sh")
+GEN_HET = os.path.join(HET_DIR, "generate.sh")
+GEN_X86_ARGS = ["--cpu-arch", "x86_64"]
 LITMUS7 = os.path.join(ROOT, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(ROOT, "litmus", "libdir")
 
@@ -727,15 +728,15 @@ def main():
 
     tmp = tempfile.mkdtemp(prefix="hipbuildcheck.")
     try:
-        # The x86 renderings are generated on demand -- they are deliberately not
-        # committed (generate-x86.sh explains why).
+        # The x86_64 rendering is generated on demand, not committed
+        # (hetlitmus/docs/corpus-grid.md, "The CPU ISA of a rendering").
         corpus = os.path.join(tmp, "x86")
-        r = run(["bash", GEN_X86, corpus])
+        r = run(["bash", GEN_HET] + GEN_X86_ARGS + [corpus])
         if r.returncode != 0:
-            raise SystemExit("hipbuildcheck: generate-x86.sh failed:\n" + r.stderr)
+            raise SystemExit("hipbuildcheck: generate.sh --cpu-arch x86_64 failed:\n" + r.stderr)
         src = os.path.join(corpus, X86_TEST + ".litmus")
         if not os.path.isfile(src):
-            raise SystemExit("hipbuildcheck: generate-x86.sh emitted no %s" % X86_TEST)
+            raise SystemExit("hipbuildcheck: generate.sh --cpu-arch x86_64 emitted no %s" % X86_TEST)
         # The same x86 test, rendered once per vendor: one directory carries
         # one vendor's arms (litmus/hetDialect.ml).
         d_x86 = emit(tmp, src, os.path.join(tmp, "out-x86-hip"), "x86 render", "hip")

@@ -26,8 +26,8 @@ PROBE_HIP = os.path.join(HETL, "probe-hip.sh")
 BUILD_SH = os.path.join(HETL, "build.sh")
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
-# The committed (x86_64, *) fixture: a generate-x86.sh run, cut verbatim and
-# kept that way by corpus-gate.sh's het-x86 label.
+# The committed (x86_64, *) fixture: a `generate.sh --cpu-arch x86_64' run, cut
+# verbatim and kept that way by corpus-gate.sh's het-x86 label.
 X86_DIR = os.path.join(HETL, "tests", "het-x86")
 X86_TESTS = ["CoRR-cg-sys-fence-2s-x86_64", "MP-cg-sys-acqrel-2s-x86_64",
              "MP-cg-sys-relaxed-x86_64", "S-cg-sys-fence-x86_64"]

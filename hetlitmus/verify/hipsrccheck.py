@@ -36,11 +36,12 @@ LITMUS7 = os.path.join(REPO, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(REPO, "litmus", "libdir")
 PTXCHECK = os.path.join(HERE, "ptxcheck.py")
 
-# The corpus, pinned.  The het half is the x86_64 rendering generate-x86.sh
-# writes on demand, not the AArch64 one ptxcheck.py reads.
+# The corpus, pinned.  The het half is the x86_64 rendering generate.sh writes
+# on demand, not the AArch64 one ptxcheck.py reads.
 GPU_ONLY_DIR = os.path.join(REPO, "hetlitmus", "tests", "gpu-only")
 GPU_ONLY_N = census.GPU_ONLY
-GEN_X86 = os.path.join(REPO, "hetlitmus", "tests", "het", "generate-x86.sh")
+GEN_HET = os.path.join(REPO, "hetlitmus", "tests", "het", "generate.sh")
+GEN_X86_ARGS = ["--cpu-arch", "x86_64"]
 X86_HET_N = census.HET
 
 
@@ -1087,11 +1088,12 @@ def corpus_files(d, label, expect):
 
 def regen_x86(dst):
     """The x86_64 het corpus, regenerated into [dst]: it is generated on demand
-    rather than committed (hetlitmus/tests/het/generate-x86.sh says why)."""
-    r = subprocess.run(["bash", GEN_X86, dst],
+    rather than committed (hetlitmus/docs/corpus-grid.md, "The CPU ISA of a
+    rendering")."""
+    r = subprocess.run(["bash", GEN_HET] + GEN_X86_ARGS + [dst],
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     if r.returncode != 0:
-        raise GateError("generate-x86.sh failed:\n%s" % r.stdout)
+        raise GateError("generate.sh --cpu-arch x86_64 failed:\n%s" % r.stdout)
     return dst
 
 

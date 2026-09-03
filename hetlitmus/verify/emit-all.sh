@@ -45,9 +45,9 @@ trap 'rm -f "$LOG"; rm -rf "$SCRATCH"' EXIT
 X86_CORPUS="$SCRATCH/x86"
 gen_x86_once() {
   [ -d "$X86_CORPUS" ] && return 0
-  echo "        generating the x86 corpus (not committed; tests/het/generate-x86.sh)"
-  PATH="$BIN:$PATH" bash "$HETL/tests/het/generate-x86.sh" "$X86_CORPUS" >"$LOG" 2>&1 || {
-    echo "FAIL: generate-x86.sh failed; its output:" >&2 ; cat "$LOG" >&2 ; exit 1 ; }
+  echo "        generating the x86 corpus (not committed; tests/het/generate.sh --cpu-arch x86_64)"
+  PATH="$BIN:$PATH" bash "$HETL/tests/het/generate.sh" --cpu-arch x86_64 "$X86_CORPUS" >"$LOG" 2>&1 || {
+    echo "FAIL: generate.sh --cpu-arch x86_64 failed; its output:" >&2 ; cat "$LOG" >&2 ; exit 1 ; }
 }
 corpus_dir() {                  # <corpus> -> the directory to emit from
   case "$1" in

@@ -76,8 +76,8 @@ list_products() {
   ( cd "$1" && ls -1 ) 2>/dev/null | grep -E '\.litmus$|^@all$' | LC_ALL=C sort
 }
 
-# fixture_drift OUTDIR -- the het-x86 label: the fixture carries four of
-# generate-x86.sh's renderings, so the name set is compared one way only.
+# fixture_drift OUTDIR -- the het-x86 label: the fixture carries four of the
+# x86_64 rendering's tests, so the name set is compared one way only.
 fixture_drift() {
   local out="$1" drift=0 t n=0 f base
   for t in "${X86_TESTS[@]}"; do
@@ -86,7 +86,7 @@ fixture_drift() {
       drift=1; continue
     fi
     if [ ! -f "$out/$t.litmus" ]; then
-      echo "  DRIFT: generate-x86.sh no longer emits $t.litmus"
+      echo "  DRIFT: the x86_64 rendering no longer carries $t.litmus"
       drift=1; continue
     fi
     n=$((n + 1))
@@ -105,24 +105,24 @@ fixture_drift() {
     echo "  DRIFT: compared $n of ${#X86_TESTS[@]} fixtures -- a comparison that did not happen is not a pass"
     drift=1
   fi
-  echo "        $X86_DIR: $n of ${#X86_TESTS[@]} fixture(s) compared against generate-x86.sh"
+  echo "        $X86_DIR: $n of ${#X86_TESTS[@]} fixture(s) compared against the x86_64 rendering"
   return $drift
 }
 
 # corpus_check WORKROOT -- regenerate each corpus under WORKROOT and compare it
 # against its committed directory.  0 = clean, 1 = drift, 2 = infra error.
 corpus_check() {
-  local root="$1" drift=0 label src gen out f
+  local root="$1" drift=0 label src gen args out f
   for label in gpu het x86; do
     case "$label" in
-      gpu) src="$GPU_DIR" ; gen="$GPU_DIR/generate.sh" ;;
-      het) src="$HET_DIR" ; gen="$HET_DIR/generate.sh" ;;
-      x86) src="$X86_DIR" ; gen="$HET_DIR/generate-x86.sh" ;;
+      gpu) src="$GPU_DIR" ; gen="$GPU_DIR/generate.sh" ; args="" ;;
+      het) src="$HET_DIR" ; gen="$HET_DIR/generate.sh" ; args="" ;;
+      x86) src="$X86_DIR" ; gen="$HET_DIR/generate.sh" ; args="--cpu-arch x86_64" ;;
     esac
     out="$root/$label"
     mkdir -p "$out"
-    if ! bash "$gen" "$out" >"$root/$label.gen.log" 2>&1; then
-      echo "FATAL: the generator $gen failed:" >&2
+    if ! bash "$gen" $args "$out" >"$root/$label.gen.log" 2>&1; then
+      echo "FATAL: the generator $gen $args failed:" >&2
       cat "$root/$label.gen.log" >&2
       return 2
     fi

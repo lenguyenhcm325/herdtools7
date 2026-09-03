@@ -36,16 +36,30 @@ fence: each intra-proc Pod<XY> becomes the full-barrier edge DMB.SYd<XY>.
 The same letter reaches the CPU barrier edge: a same-location pair gives DMB.SYs<XY>.
   $ bash -c 'source ../_grid_lib.sh; render_cpu_cycle fence PosWR Fre Coe'
   DMB.SYsWR Fre Coe
-render_2s_cpu -- the two-sided order-pair dispatcher, the ONLY caller of
-render_cpu_cycle's partial-barrier branches; `ra' reproduces acqrel token for token.
-  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu ra PodWR Fre PodWR Fre'
+render_2s_cpu -- the CPU renderer by ISA.  aarch64 is the two-sided order-pair
+dispatcher, the ONLY caller of render_cpu_cycle's partial-barrier branches; `ra'
+reproduces acqrel token for token.
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu aarch64 ra PodWR Fre PodWR Fre'
   PodWRLQ FreQL PodWRLQ FreQL
-  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu sy PodWR Fre PodWR Fre'
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu aarch64 sy PodWR Fre PodWR Fre'
   DMB.SYdWR Fre DMB.SYdWR Fre
-  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu st PodWR Fre PodWR Fre'
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu aarch64 st PodWR Fre PodWR Fre'
   DMB.STdWR Fre DMB.STdWR Fre
-  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu ld PodWR Fre PodWR Fre'
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu aarch64 ld PodWR Fre PodWR Fre'
   DMB.LDdWR Fre DMB.LDdWR Fre
+x86_64: `sy' is MFence on each intra-proc edge; `ra'/`st'/`ld' are the bare cycle.
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu x86_64 sy PodWR Fre PodWR Fre'
+  MFencedWR Fre MFencedWR Fre
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu x86_64 sy PosWR Fre Coe'
+  MFencesWR Fre Coe
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu x86_64 ra PodWR Fre PodWR Fre'
+  PodWR Fre PodWR Fre
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu x86_64 ld PodWR Fre PodWR Fre'
+  PodWR Fre PodWR Fre
+An ISA with no profile is refused, not rendered bare.
+  $ bash -c 'source ../_grid_lib.sh; render_2s_cpu riscv sy PodWR Fre PodWR Fre; echo "exit $?"'
+  unknown cpu arch: riscv (one of: aarch64 x86_64)
+  exit 1
 render_2s_gpu -- the GPU half of the same grid: `ra' delegates to render_cycle sys
 acqrel; sc/rel/acq/acqrel keep accesses Relaxed and spell a standalone fence edge.
   $ bash -c 'source ../_grid_lib.sh; render_2s_gpu ra PodWR Fre PodWR Fre'

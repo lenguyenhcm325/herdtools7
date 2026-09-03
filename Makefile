@@ -814,7 +814,7 @@ hetlitmus-promote: | build
 	bash hetlitmus/tests/gpu-only/generate.sh
 	bash hetlitmus/tests/het/generate.sh
 	@ set -e ; t=$$(mktemp -d) ; n=0 ; \
-	  bash hetlitmus/tests/het/generate-x86.sh "$$t" >"$$t.log" 2>&1 \
+	  bash hetlitmus/tests/het/generate.sh --cpu-arch x86_64 "$$t" >"$$t.log" 2>&1 \
 	    || { cat "$$t.log" ; rm -rf "$$t" "$$t.log" ; exit 1 ; } ; rm -f "$$t.log" ; \
 	  for f in $$(git ls-files 'hetlitmus/tests/het-x86/*.litmus') ; do \
 	    cp "$$t/$$(basename $$f)" "$$f" ; n=$$((n+1)) ; done ; \

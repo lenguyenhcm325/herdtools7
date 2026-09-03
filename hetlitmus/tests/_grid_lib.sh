@@ -1,12 +1,12 @@
 # shellcheck shell=bash
-# HetLitmus corpus grid library -- shared by tests/gpu-only/generate.sh,
-# tests/het/generate.sh and tests/het/generate-x86.sh.  Pure bash (associative
-# arrays => needs bash >= 4).  It holds the shape catalogue, the canonical
-# device cuts per shape, and the renderers that turn a base cycle into the
-# annotated edge cycle diyone7/hetgen7 consume: LISA/Bell for GPU procs,
-# AArch64 for CPU procs.  The one-sided scope x order grid and its rationale:
-# hetlitmus/docs/corpus-grid.md; the two-sided families are specified here,
-# beside the knob that drives each.
+# HetLitmus corpus grid library -- shared by tests/gpu-only/generate.sh and
+# tests/het/generate.sh.  Pure bash (associative arrays => needs bash >= 4).
+# It holds the shape catalogue, the canonical device cuts per shape, and the
+# renderers that turn a base cycle into the annotated edge cycle
+# diyone7/hetgen7 consume: LISA/Bell for GPU procs, one renderer per CPU ISA
+# for CPU procs, selected by `render_2s_cpu'.  The one-sided scope x order grid
+# and its rationale: hetlitmus/docs/corpus-grid.md; the two-sided families are
+# specified here, beside the knob that drives each.
 
 # --- shape catalogue: cycle (base edges) + proc count -----------------------
 # Base-edge vocabulary (Po<L><XY>, Rfe, Fre, Coe) and the `-oneloc' rule an
@@ -66,9 +66,9 @@ GRID_ORDERS="relaxed acquire release fence"
 #   fence  : DMB.SY (CPU) + fence.sc.sys (GPU)
 TWO_SIDED_ORDERS="acqrel fence"
 
-# two_sided_cpu_tok <two-sided order>  ->  the CPU token render_x86_cpu takes,
-# the inverse of render_2s_cpu's `ra'/`sy' rows; it lives beside the list above
-# so an added order has ONE place to fail closed.
+# two_sided_cpu_tok <two-sided order>  ->  the CPU token render_2s_cpu takes, the
+# inverse of render_2s_aarch64's `ra'/`sy' rows; it lives beside the list
+# above so an added order has ONE place to fail closed.
 two_sided_cpu_tok() {
   case "$1" in
     acqrel) echo ra;;
@@ -196,14 +196,30 @@ declare -A SHAPE_2S_PAIR_CUTS=(
   [S]="cpu,gpu gpu,cpu"
 )
 
-# render_2s_cpu <cpu-tok> <base-edge>...  ->  AArch64 edge token list
-render_2s_cpu() {
+# render_2s_aarch64 <cpu-tok> <base-edge>...  ->  AArch64 edge token list
+render_2s_aarch64() {
   local t="$1"; shift
   case "$t" in
     ra) render_cpu_cycle acqrel   "$@";;
     sy) render_cpu_cycle fence    "$@";;
     st) render_cpu_cycle fence-st "$@";;
     ld) render_cpu_cycle fence-ld "$@";;
+    *) echo "bad two-sided cpu order: $t" >&2; return 1;;
+  esac
+}
+
+# render_2s_x86_64 <cpu-tok> <base-edge>...  ->  x86-64 edge token list; the
+# x86-TSO collapse of the four tokens: corpus-grid.md, "The CPU ISA of a rendering".
+render_2s_x86_64() {
+  local t="$1"; shift
+  case "$t" in
+    ra|st|ld) echo "$*";;
+    sy) local out="" e
+        for e in "$@"; do
+          edge_src_dst "$e" || return 1
+          if [ "$IS_PO" = 1 ]; then out="$out MFence${PO_LOC}${PO_XY}"; else out="$out $e"; fi
+        done
+        echo "${out# }";;
     *) echo "bad two-sided cpu order: $t" >&2; return 1;;
   esac
 }
@@ -231,6 +247,35 @@ render_2s_gpu() {
     out="$out ${base}RelaxedSysRelaxedSys"
   done
   echo "${out# }"
+}
+
+# -----------------------------------------------------------------------------
+# The CPU ISAs a rendering can take.  The grid, the loops and the GPU renderer
+# are ISA-free; an ISA is one row in each table below, one renderer and one
+# arm of render_2s_cpu, beside the arms the tools need (corpus-grid.md, "The CPU
+# ISA of a rendering").
+CPU_ARCHS="aarch64 x86_64"
+declare -A CPU_ARCH_NAME=([aarch64]=AArch64 [x86_64]=x86_64)  # spelled in the test comment
+declare -A CPU_ARCH_SFX=([aarch64]="" [x86_64]="-x86_64")     # name suffix; the default ISA has none
+
+# cpu_arch_check <isa>  ->  0 for a listed ISA with both rows, else a message and 1
+cpu_arch_check() {
+  case " $CPU_ARCHS " in
+    *" $1 "*) ;;
+    *) echo "unknown cpu arch: $1 (one of: $CPU_ARCHS)" >&2; return 1;;
+  esac
+  [ -n "${CPU_ARCH_NAME[$1]+x}" ] && [ -n "${CPU_ARCH_SFX[$1]+x}" ] && return 0
+  echo "cpu arch $1 is listed but has no CPU_ARCH_NAME/CPU_ARCH_SFX row" >&2; return 1
+}
+
+# render_2s_cpu <isa> <cpu-tok> <base-edge>...  ->  that ISA's CPU edge token list
+render_2s_cpu() {
+  local isa="$1"; shift
+  case "$isa" in
+    aarch64) render_2s_aarch64 "$@";;
+    x86_64)  render_2s_x86_64 "$@";;
+    *) cpu_arch_check "$isa";;
+  esac
 }
 
 # scope_tree <nprocs>  ->  parseable `scopes:' tree, each proc in its own CTA

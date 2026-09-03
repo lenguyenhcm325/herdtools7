@@ -95,8 +95,8 @@ Why the CPU acquire is the RCpc `LDAPR` rather than `LDAR`: `faithfulness.md`,
 one-sided `-sys-<order>` sibling is dropped, as the grid drops a degenerate
 column. Only `fence` can be — (B) emits no `-sys-acqrel` sibling — and it is
 where every CPU proc of the cut is a single access with nothing for a barrier
-to sit between. `generate.sh` and `generate-x86.sh` drop the same names, which
-keeps the x86_64 rendering name-for-name with the corpus.
+to sit between. That condition is the same in every CPU ISA, so a rendering in
+another ISA drops the same names and stays name-for-name with the corpus.
 
 ### (E) Two-sided order pairs
 
@@ -113,20 +113,25 @@ kinds — WW, RR, WR, RW — on each side while two procs keep a cell legible, o
 CPU and one GPU token per test. SB and LB take one cut for the rotation reason
 above; a `Pos` shape stays out, only one of its procs carrying a pair.
 
-## The x86_64 rendering
+## The CPU ISA of a rendering
 
-`generate-x86.sh OUTDIR` renders all four families with an x86_64 CPU column,
-name-for-name with the corpus but not experiment-for-experiment: under x86-TSO
-[Sewell10 §3.1] the four CPU tokens collapse onto two images, `ra`/`st`/`ld` →
-the bare cycle (plain `movl`) and `sy` → `MFence<L><XY>` (`mfence`), in
-`render_x86_cpu`. What follows for the x86 lane, and why the rendering is
-produced on demand: `het-emission.md`, "Scope / limits".
+`generate.sh` renders all four families for one CPU ISA per run, named by
+`--cpu-arch`: `aarch64` is the default and the committed corpus; `x86_64` goes
+to an OUTDIR of the caller's, since a rendering in a non-default ISA is
+refused into `tests/het`. Each test's name is the corpus name plus the ISA
+suffix (`<name>-x86_64`), and the drop rules of (B) and (D) fire on the same
+names in every ISA, so a rendering is name-for-name with the corpus. It is not
+experiment-for-experiment with it: under x86-TSO [Sewell10 §3.1] the four CPU
+tokens collapse onto two images, `ra`/`st`/`ld` → the bare cycle (plain
+`movl`) and `sy` → `MFence<L><XY>` (`mfence`), in `render_2s_x86_64`. What
+follows for the x86 lane, and why the rendering is produced on demand:
+`het-emission.md`, "Scope / limits".
 
-## The `CPU_ARCHS` knob
-
-Het CPU procs default to AArch64. `hetgen7 -cpu-arch` selects `aarch64` or
-`x86_64`, and `generate.sh` exposes it over family (B) as an environment knob,
-`CPU_ARCHS="aarch64 x86_64" ./generate.sh`, which emits `-x86_64` variants of
-the one-sided grid beside the AArch64 ones without a code edit. (A), (D) and
-(E) are AArch64-only in `generate.sh`, and the default `aarch64` keeps every
-x86_64 file out of `tests/het`.
+The grid, the cuts, the four loops and the GPU renderer are ISA-free. A CPU
+ISA is a profile in `_grid_lib.sh` — one `render_2s_<isa>` renderer, one arm
+of `render_2s_cpu`, one entry in `CPU_ARCHS` and one row each in `CPU_ARCH_NAME`
+and `CPU_ARCH_SFX` — beside
+what the tools need to accept it: a `-cpu-arch` arm in `gen/hetGen.ml` over a
+diy backend (`gen/<Isa>Compile_gen.ml`), and in litmus7 a device tag and a
+`HetCpuFront` module (`het-litmus-format.md` sec 3; `het-emission.md`, "CPU
+ISA from the device tag").
