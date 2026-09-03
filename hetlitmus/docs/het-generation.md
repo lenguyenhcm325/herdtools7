@@ -36,8 +36,12 @@ instruction encoding of each access is architecture-specific. Two runs over
 the same edge sequence therefore agree on everything but spelling
 (`STR W0,[X1]` vs `w[release,sys] x 1`), and a per-processor splice of
 columns, init atoms and condition atoms yields one consistent test. The
-driver checks that both runs report the `-devices` proc count and nothing
-deeper: cycles of different shape are user error.
+driver checks that both runs report the `-devices` proc count and that the
+two cycles have the same shape: edge for edge, the kind without annotations
+(a fenced program-order edge reads as plain program order), the
+same-or-different location, the internal-or-external flag and the source and
+target directions. Dependency, standalone-fence and read-modify-write edges
+carry an architecture-typed kind, so they are refused rather than compared.
 
 ## 3. The cross-architecture boundary: `HetCells.t`
 
@@ -77,8 +81,7 @@ harnesses.
 
 ## 5. Limitations
 
-- Both cycles must have the same logical shape; only the proc count is
-  checked.
+- Both cycles must have the same shape, checked edge for edge (section 2).
 - The condition merge splices per-proc atoms out of a flat conjunction, so
   `-cond cycle` is the only condition style: `-cond unicond` and `-cond
   observe` are refused, and a disjunction is not split.

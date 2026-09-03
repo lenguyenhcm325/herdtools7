@@ -39,3 +39,16 @@ cannot splice.
 (e) the usage names the one condition style the merge takes.
   $ hetgen7 -help | grep -- -cond
     -cond <cycle> style of final condition, the only style the het merge takes
+
+(f) so are two cycles of equal proc count but different shape, an MP against an SB.
+  $ hetgen7 -set-libdir ../../../herd/libdir -bell ../../bells/gpu.bell -devices cpu,gpu -name MP -cpu 'PodWW Rfe PodRR Fre' -gpu 'PodWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys PodWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys' 2>&1 >/dev/null; echo "exit $?"
+  hetgen7: Fatal error: -cpu and -gpu cycles differ in shape at edge 1 (cpu Po:di:W>W, gpu Po:di:W>R): cpu [Po:di:W>W Rf:se:W>R Po:di:R>R Fr:se:R>W], gpu [Po:di:W>R Fr:se:R>W Po:di:W>R Fr:se:R>W]
+  exit 2
+
+(g) a fenced GPU edge and a plain CPU `Po' edge are the same shape.
+  $ hetgen7 -set-libdir ../../../herd/libdir -bell ../../bells/gpu.bell -oneloc -devices cpu,gpu -name MP-cg-sys-fence -cpu 'PodWW Rfe PodRR Fre' -gpu 'FenceScSysdWWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys FenceScSysdRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys' > MP-cg-sys-fence.litmus; echo "exit $?"
+  exit 0
+  $ sed -n '7,9p' MP-cg-sys-fence.litmus
+   P0:cpu      | P1:gpu              ;
+   MOV W0,#1   | r[relaxed,sys] r0 y ;
+   STR W0,[X1] | f[sc,sys]           ;

@@ -160,6 +160,30 @@ let generate () =
   (* One device's run: parse its edge list into the single cycle the merge
      assumes, build the test, erase to cells.  [opt] labels the arity error. *)
   let module HetRun (M:Builder.S) = struct
+    (* Per-edge value the two cycles are compared on.
+       hetlitmus/docs/het-generation.md sec 2. *)
+    let skeleton opt i e =
+      let refuse what =
+        Warn.fatal
+          "%s edge %d is %s, whose kind is an architecture-specific payload \
+           the shape check cannot compare across the two runs"
+          opt (i+1) what in
+      let kind = match e.M.E.edge with
+      | M.E.Po _|M.E.Fenced _ -> "Po"
+      | M.E.Communication (c,_) -> Code.pp_com c
+      | M.E.Leave c -> Code.pp_com c ^ "Leave"
+      | M.E.Back c -> Code.pp_com c ^ "Back"
+      | M.E.Hat -> "Hat"
+      | M.E.Id -> "Id"
+      | M.E.Store -> "Store"
+      | M.E.Node _ -> "Node"
+      | M.E.Dp _ -> refuse "a dependency"
+      | M.E.Insert _ -> refuse "a standalone fence"
+      | M.E.Rmw _ -> refuse "a read-modify-write" in
+      sprintf "%s:%s%s:%s>%s" kind
+        (Code.pp_sd (M.E.loc_sd e)) (Code.pp_ie (M.E.get_ie e))
+        (Code.pp_extr (M.E.dir_src e)) (Code.pp_extr (M.E.dir_tgt e))
+
     let cells opt edges =
       let cy =
         match
@@ -168,7 +192,10 @@ let generate () =
         with
         | [x] -> x
         | _ -> Warn.fatal "%s must specify exactly one cycle" opt in
-      M.het_cells (M.make_test name cy)
+      (* Not inlined into the tuple: tuples evaluate right to left, so a
+         refused edge would fail under the engine's message, not its own. *)
+      let shape = List.mapi (skeleton opt) cy in
+      (shape, M.het_cells (M.make_test name cy))
   end in
 
   if !cpu_edges = "" then Warn.fatal "missing -cpu <edges>" ;
@@ -178,7 +205,7 @@ let generate () =
 
   (* CPU side: dispatch the single-arch Compile_gen by -cpu-arch.  het_cells
      erases the arch to strings, so both branches give ccpu the same type. *)
-  let ccpu =
+  let cpu_shape,ccpu =
     match !cpu_arch with
     | `AArch64 ->
        let module R = HetRun(Top_gen.Make(Co)(AArch64Compile_gen.Make(C))) in
@@ -186,7 +213,24 @@ let generate () =
     | `X86_64 ->
        let module R = HetRun(Top_gen.Make(Co)(X86_64Compile_gen.Make(C))) in
        R.cells "-cpu" !cpu_edges in
-  let cgpu = let module R = HetRun(Mgpu) in R.cells "-gpu" !gpu_edges in
+  let gpu_shape,cgpu = let module R = HetRun(Mgpu) in R.cells "-gpu" !gpu_edges in
+
+  (* An equal proc count is not an equal shape: MP against SB splices into a
+     test that is neither. *)
+  let rec first_diff i cs gs = match cs,gs with
+  | [],[] -> None
+  | c::cs,g::gs ->
+      if String.equal c g then first_diff (i+1) cs gs else Some (i,c,g)
+  | c::_,[] -> Some (i,c,"none")
+  | [],g::_ -> Some (i,"none",g) in
+  (match first_diff 1 cpu_shape gpu_shape with
+   | None -> ()
+   | Some (i,c,g) ->
+      Warn.fatal
+        "-cpu and -gpu cycles differ in shape at edge %d (cpu %s, gpu %s): \
+         cpu [%s], gpu [%s]"
+        i c g
+        (String.concat " " cpu_shape) (String.concat " " gpu_shape)) ;
 
   let devs = split_comma !devices in
   (* A het test has at least one gpu proc. *)
