@@ -183,7 +183,7 @@ render_cpu_cycle() {
 # The two-sided order-pair grid (off-diagonal), named `<cpu>.<gpu>'; the token
 # table and the exclusions: hetlitmus/docs/corpus-grid.md, "The two-sided families".
 TWO_SIDED_CPU_ORDERS="ra sy st ld"
-TWO_SIDED_GPU_ORDERS="ra sc rel acq"
+TWO_SIDED_GPU_ORDERS="ra sc rel acq acqrel"
 
 # Shapes + cuts for the off-diagonal sweep, one cpu and one gpu token per test
 # (why these shapes and cuts: corpus-grid.md, "The two-sided families").
@@ -209,9 +209,9 @@ render_2s_cpu() {
 }
 
 # render_2s_gpu <gpu-tok> <base-edge>...  ->  Bell/LISA edge token list.
-# `sc|rel|acq' keep every access relaxed at sys scope and put the ordering in a
-# standalone `Fence<o>Sys<L><XY>' event, as the `fence' column does; `sc'
-# reproduces `render_cycle sys fence' token for token.
+# `sc|rel|acq|acqrel' keep every access relaxed at sys scope and put the
+# ordering in a standalone `Fence<o>Sys<L><XY>' event, as the `fence' column
+# does; `sc' reproduces `render_cycle sys fence' token for token.
 render_2s_gpu() {
   local t="$1"; shift
   local o
@@ -220,6 +220,7 @@ render_2s_gpu() {
     sc)  o=Sc;;
     rel) o=Release;;
     acq) o=Acquire;;
+    acqrel) o=Acqrel;;
     *) echo "bad two-sided gpu order: $t" >&2; return 1;;
   esac
   local out="" e base

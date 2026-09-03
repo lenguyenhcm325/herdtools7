@@ -25,9 +25,9 @@ cd "$REPO"
 
 # The census has two homes, one per language, and a gate reading one of them
 # says nothing about the corpus the other language's gates sweep.
-want_census="$CENSUS_GPU_ONLY $CENSUS_HET $CENSUS_SYNTHETIC $CENSUS_COVER"
+want_census="$CENSUS_GPU_ONLY $CENSUS_HET $CENSUS_COVER"
 py_census="$(cd "$HETL/verify" &&
-  python3 -c 'import census; print(census.GPU_ONLY, census.HET, census.SYNTHETIC, census.COVER)')"
+  python3 -c 'import census; print(census.GPU_ONLY, census.HET, census.COVER)')"
 if [ "$py_census" != "$want_census" ]; then
   echo "FATAL: census.py answers '$py_census', census.sh '$want_census'" >&2
   exit 2

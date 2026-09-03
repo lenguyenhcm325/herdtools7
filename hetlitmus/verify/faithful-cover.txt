@@ -30,6 +30,7 @@ hetlitmus/tests/het/ISA2-ccg-cta-acquire.litmus
 hetlitmus/tests/het/LB-cg-sys-st.acq-2s.litmus
 hetlitmus/tests/het/MP-cg-sys-ld.acq-2s.litmus
 hetlitmus/tests/het/MP-cg-sys-ra.rel-2s.litmus
+hetlitmus/tests/het/MP-cg-sys-sy.acqrel-2s.litmus
 hetlitmus/tests/het/MP-gc-sys-ld.sc-2s.litmus
 hetlitmus/tests/het/MP-gc-sys-st.ra-2s.litmus
 hetlitmus/tests/het/R-cg-sys-ld.acq-2s.litmus
@@ -39,8 +40,11 @@ hetlitmus/tests/het/R-gc-sys-ra.acq-2s.litmus
 hetlitmus/tests/het/R-gc-sys-st.rel-2s.litmus
 hetlitmus/tests/het/RWC-cgc-sys-fence.litmus
 hetlitmus/tests/het/RWC-gcc-sys-fence-2s.litmus
+hetlitmus/tests/het/S-cg-sys-sy.acqrel-2s.litmus
 hetlitmus/tests/het/S-cg-sys-sy.rel-2s.litmus
 hetlitmus/tests/het/S-gc-sys-ld.ra-2s.litmus
+hetlitmus/tests/het/S-gc-sys-sy.acqrel-2s.litmus
+hetlitmus/tests/het/SB-cg-sys-sy.acqrel-2s.litmus
 hetlitmus/tests/het/SB-het.litmus
 hetlitmus/tests/het/WRC3-cccg-cta-relaxed.litmus
 hetlitmus/tests/het/WRC3-ccgc-cta-fence.litmus

@@ -47,11 +47,11 @@ What litmus7 refuses before it renders, and that it renders once
   $ mk fence 'f[relaxed,sys]'
   $ mkdir out-fence-hip
   $ litmus7 -gpu-target cuda -o out-fence fence.litmus 2>&1 >/dev/null; echo "exit $?"
-  HetLitmus REFUSED (het) fence.litmus: HetLitmus: P1 (gpu) f[relaxed,sys] -- a fence takes one order from {acquire,release,acq_rel,sc} then one scope from {cta,gpu,sys}
+  HetLitmus REFUSED (het) fence.litmus: HetLitmus: P1 (gpu) f[relaxed,sys] -- a fence takes one order from {acquire,release,acqrel,sc} then one scope from {cta,gpu,sys}
   exit 3
   $ ls out-fence
   $ litmus7 -gpu-target hip -o out-fence-hip fence.litmus 2>&1 >/dev/null; echo "exit $?"
-  HetLitmus REFUSED (het) fence.litmus: HetLitmus: P1 (gpu) f[relaxed,sys] -- a fence takes one order from {acquire,release,acq_rel,sc} then one scope from {cta,gpu,sys}
+  HetLitmus REFUSED (het) fence.litmus: HetLitmus: P1 (gpu) f[relaxed,sys] -- a fence takes one order from {acquire,release,acqrel,sc} then one scope from {cta,gpu,sys}
   exit 3
   $ ls out-fence-hip
 

@@ -1,0 +1,13 @@
+Het SB-cg-sys-st.acqrel-2s
+"Heterogeneous SB-cg-sys-st.acqrel-2s: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
+{
+0:X1=x;
+0:X2=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#1   | w[relaxed,sys] y 1  ;
+ STR W0,[X1] | f[acqrel,sys]       ;
+ DMB ST      | r[relaxed,sys] r0 x ;
+ LDR W3,[X2] |                     ;
+scopes: (sys (gpu (cta P1)))
+exists (0:X3=0 /\ 1:r0=0)

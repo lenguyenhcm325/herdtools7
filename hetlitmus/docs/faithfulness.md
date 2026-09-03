@@ -36,38 +36,7 @@ The `nvcc --ptx` text is a witness of the emitted order because:
 * `CudaLang` emits procs in column order and cells in row order, so the
   flattened PTX op stream corresponds cell for cell to the `.litmus`.
 
-## The mapping
-
-PTX spells order and scope as the LISA/Bell tag does, order before scope
-(`ld.relaxed.gpu`, `fence.sc.cta`).
-
-| annotation | PTX | emitted on |
-|---|---|---|
-| `relaxed` | `.relaxed` | ld, st |
-| `acquire` | `.acquire` | ld, fence |
-| `release` | `.release` | st, fence |
-| `acq_rel` | `.acq_rel` | fence |
-| `sc` | `.sc` | fence |
-
-| scope | PTX | `thread_scope` |
-|---|---|---|
-| `cta` | `.cta` | `thread_scope_block` |
-| `gpu` | `.gpu` | `thread_scope_device` |
-| `sys` | `.sys` | `thread_scope_system` |
-
-| LISA mnemonic | PTX opcode |
-|---|---|
-| `w` | `st` |
-| `r` | `ld` |
-| `f` | `fence` |
-
-`gpu.bell` declares `R`/`W`/`F` only and the GPU column refuses an RMW
-([`het-emission.md`](het-emission.md), "Scope / limits"), so `atom`/`red`
-have no row. An `sc` access is admitted by the vocabulary but lowers in
-libcu++ to a `fence.sc` followed by an acquire load or a relaxed store
-[CCCL]; no corpus test carries one.
-
-### CPU column (AArch64)
+## CPU column (AArch64)
 
 litmus7 reproduces the column's mnemonics verbatim in the `_cpu.c` asm block
 (`#START _litmus_P<n>` … `#END`, under `#if defined(__aarch64__)`). A CPU
@@ -130,7 +99,7 @@ column begins or ends in a fence is unambiguous.
 
 * Static lowering only. Reordering by `ptxas` or the hardware is the
   behaviour under test, not part of this property.
-* No `acq_rel`, no RMW and no `sc` on an access appears in the corpus.
+* No RMW and no `sc` on an access appears in the corpus.
 * **One scaffolding write sits inside the tested loop.** The lane at `(0,0)`
   bumps `_gpu_iter` once per iteration, after its readout stores; it lowers
   to a bare `atom.global.add.u32` (property 4) and the stress population

@@ -28,12 +28,12 @@ NVCC = shutil.which("nvcc") or "/usr/local/cuda/bin/nvcc"
 # ---- 1. the mapping table: annotation -> expected PTX / AArch64 profile ----
 # It is also the completeness guard: a token that is not a key here hard-fails.
 
-# GPU memory order: LISA/Bell tag -> PTX token, the same spelling either side.
+# GPU memory order: LISA/Bell tag -> PTX token.
 GPU_ORDER = {
     "relaxed": "relaxed",
     "acquire": "acquire",
     "release": "release",
-    "acq_rel": "acq_rel",
+    "acqrel":  "acq_rel",
     "sc":      "sc",
 }
 

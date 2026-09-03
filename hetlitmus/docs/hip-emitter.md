@@ -21,17 +21,10 @@ vendor-neutral; the vendor lives in the emitter, and `-gpu-target` picks one
 ## Mappings
 HIP scoped atomics are Clang builtins over a kernel `int*` parameter passed as
 is: `__hip_atomic_store(ptr, val, order, scope)`,
-`v = __hip_atomic_load(ptr, order, scope)` [HipAtomicHeader].
-
-| LISA annotation | HIP token |
-|-----------------|-----------|
-| order `relaxed` / `acquire` / `release` / `acq_rel` / `sc` | `__ATOMIC_RELAXED` / `_ACQUIRE` / `_RELEASE` / `_ACQ_REL` / `_SEQ_CST` |
-| scope `cta` / `gpu` / `sys` | `__HIP_MEMORY_SCOPE_WORKGROUP` (3) / `_AGENT` (4) / `_SYSTEM` (5) |
-
-The `__HIP_MEMORY_SCOPE_*` ladder is `SINGLETHREAD 1` … `SYSTEM 5`
-[HipAtomicHeader]. Why these tokens are the faithful ones:
-`amd-faithfulness.md`, "The mapping". Launch geometry is `gpuLang.ml`'s, as
-for CUDA (`cuda-emitter.md`, "Mappings"), launched with `hipLaunchKernelGGL`.
+`v = __hip_atomic_load(ptr, order, scope)` [HipAtomicHeader]; the
+`__HIP_MEMORY_SCOPE_*` ladder is `SINGLETHREAD 1` … `SYSTEM 5`
+[HipAtomicHeader]. Launch geometry is `gpuLang.ml`'s, as for CUDA
+(`cuda-emitter.md`, "Mappings"), launched with `hipLaunchKernelGGL`.
 
 ## Fences
 A fence lowers to `__builtin_amdgcn_fence(<order>, "<sync scope>")`, which

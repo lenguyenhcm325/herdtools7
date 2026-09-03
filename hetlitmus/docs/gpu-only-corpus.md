@@ -65,15 +65,13 @@ The GPU sources use `__ATOMIC_ACQUIRE` and `__ATOMIC_RELEASE` only — no
 frontend therefore needs orders `relaxed`, `release` (stores) and `acquire`
 (loads); scopes `cta` and `sys`, plus the intermediate `gpu` (device / HIP
 agent), which the artifact's tests do not use and the grid sweeps; scoped loads
-and stores and no RMW. `sc` serves the fence families of `corpus-grid.md`;
-`acq_rel` is declared but no generated test carries it (`corpus-grid.md`, "The
-shape catalogue").
+and stores and no RMW.
 
 ### How `bells/gpu.bell` declares it
 
 Two upstream idioms combined: the memory-order enum and `R`/`W`/`F`
-instruction sets of `herd/libdir/c11.bell`, retagged in PTX spelling, and the
-scope hierarchy with its `narrower`/`wider` functions from
+instruction sets of `herd/libdir/c11.bell`, and the scope hierarchy with its
+`narrower`/`wider` functions from
 `catalogue/tutorial/bells/jaguar.bell`. A Bell `instructions` declaration takes
 a comma-separated list of annotation groups, so `W[<orders>, scopes]` attaches
 one tag from each group and a single access carries both an order and a scope

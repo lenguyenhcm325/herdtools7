@@ -28,7 +28,7 @@ let memory_order = function
   | "relaxed" -> "cuda::memory_order_relaxed"
   | "acquire" -> "cuda::memory_order_acquire"
   | "release" -> "cuda::memory_order_release"
-  | "acq_rel" -> "cuda::memory_order_acq_rel"
+  | "acqrel"  -> "cuda::memory_order_acq_rel"
   | "sc"      -> "cuda::memory_order_seq_cst"
   | s -> Warn.user_error "CudaLang: unknown memory order %S" s
 
@@ -43,7 +43,7 @@ let thread_scope = function
 let ptx_fence_sem = function
   | "acquire" -> "acquire"
   | "release" -> "release"
-  | "acq_rel" -> "acq_rel"
+  | "acqrel"  -> "acq_rel"
   | "sc"      -> "sc"
   | s -> Warn.user_error "CudaLang: unknown fence order %S" s
 

@@ -69,7 +69,7 @@ HIP_ORDER = {
     "relaxed": "__ATOMIC_RELAXED",
     "acquire": "__ATOMIC_ACQUIRE",
     "release": "__ATOMIC_RELEASE",
-    "acq_rel": "__ATOMIC_ACQ_REL",
+    "acqrel":  "__ATOMIC_ACQ_REL",
     "sc":      "__ATOMIC_SEQ_CST",
 }
 
@@ -247,11 +247,13 @@ def instance_of(litmus_path):
             raw = gpu_cells_of_column(cols[col])
             # The two parsers walk the same cells; a disagreement means this
             # file's operand parser has drifted from ptxcheck's mapping table.
-            if [(ptx.GPU_KIND[k], o, s) for k, o, s, _, _ in raw] != ops:
+            tag_ops = [(ptx.GPU_KIND[k], o, s) for k, o, s, _, _ in raw]
+            if [(k, ptx.GPU_ORDER[o], ptx.GPU_SCOPE[s])
+                    for k, o, s in tag_ops] != ops:
                 raise GateError(
                     "operand parser disagrees with ptxcheck.gpu_ops_of_column on "
                     "proc P%d of %s" % (pidx, litmus_path))
-            gpu.append((pidx, ops))
+            gpu.append((pidx, tag_ops))
             cells.append((pidx, raw))
         else:
             cpu.append((pidx, x86_ops_of_column(cols[col])))
@@ -1135,43 +1137,8 @@ def sweep_dir(files, label, jobs, diffs):
     return n["PASS"], len(rows)
 
 
-# The fence annotation no corpus test carries: only a synthetic carrier reads
-# litmus/HipLang.ml's f[acq_rel,*] row.
-SYNTH = {
-    "F-acqrel-sys": "f[acq_rel,sys]",
-}
-SYNTH_BODY = """LISA %s
-{
-}
- P0                 | P1                  ;
- w[relaxed,sys] x 1 | r[relaxed,sys] r0 y ;
- %-18s | %-19s;
- w[relaxed,sys] y 1 | r[relaxed,sys] r1 x ;
-scopes: (sys (gpu (cta 0) (cta 1)))
-exists (1:r0=1 /\\ 1:r1=0)
-"""
-
-
-def synth_carrier(d, name):
-    """A .litmus carrying [name]'s annotation, written into [d]."""
-    p = os.path.join(d, name + ".litmus")
-    with open(p, "w") as fh:
-        fh.write(SYNTH_BODY % (name, SYNTH[name], SYNTH[name]))
-    return p
-
-
-def sweep_synth(work, diffs):
-    """The synthetic carriers, written out and then swept like a corpus: a
-    carrier missing from the table is refused the way a short corpus is."""
-    os.makedirs(work)
-    for name in SYNTH:
-        synth_carrier(work, name)
-    files = corpus_files(work, "synthetic carriers", census.SYNTHETIC)
-    return sweep_dir(files, "synthetic carriers", 1, diffs)
-
-
 def sweep(gpu_dir, x86_dir, jobs):
-    """Both corpora against their pinned censuses, then the synthetic carriers.
+    """Both corpora against their pinned censuses.
     X86_HET_N counts this lane's x86_64 rendering, NOT ptxcheck's AArch64 one."""
     tmp = tempfile.mkdtemp(prefix="hipsrccheck.")
     try:
@@ -1182,25 +1149,22 @@ def sweep(gpu_dir, x86_dir, jobs):
         if generated:
             x86_dir = regen_x86(os.path.join(tmp, "corpus"))
         x86_files = corpus_files(x86_dir, "x86_64 het", X86_HET_N)
-        print("===== HIP SOURCE GATE: %d gpu-only + %d x86_64 het renders + %d "
-              "synthetic carriers =====" % (GPU_ONLY_N, X86_HET_N, census.SYNTHETIC))
+        print("===== HIP SOURCE GATE: %d gpu-only + %d x86_64 het renders ====="
+              % (GPU_ONLY_N, X86_HET_N))
         print("  gpu-only    %s" % gpu_dir)
         print("  x86_64 het  %s%s" % (x86_dir, " (generated)" if generated else ""))
         print("  workers     %d" % jobs)
         diffs = tempfile.mkdtemp(prefix="hipsrccheck-diffs.")
         gp, gt = sweep_dir(gpu_files, "gpu-only", jobs, diffs)
         xp, xt = sweep_dir(x86_files, "x86_64 het", jobs, diffs)
-        sp, st = sweep_synth(os.path.join(tmp, "synth"), diffs)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     print()
     ok = ((gp, gt) == (GPU_ONLY_N, GPU_ONLY_N)
-          and (xp, xt) == (X86_HET_N, X86_HET_N)
-          and (sp, st) == (census.SYNTHETIC, census.SYNTHETIC))
+          and (xp, xt) == (X86_HET_N, X86_HET_N))
     print("HIP SOURCE GATE: %s -- gpu-only %d/%d, x86_64 het %d/%d "
-          "(the x86_64 rendering of the het corpus, not the AArch64 one) + "
-          "%d/%d synthetic carriers"
-          % ("PASS" if ok else "FAILED", gp, gt, xp, xt, sp, st))
+          "(the x86_64 rendering of the het corpus, not the AArch64 one)"
+          % ("PASS" if ok else "FAILED", gp, gt, xp, xt))
     if ok:
         shutil.rmtree(diffs, ignore_errors=True)
     return 0 if ok else 1
@@ -1213,9 +1177,8 @@ def main():
     ap.add_argument("--hip-src", help="read this .hip instead of emitting one")
     ap.add_argument("--cpu-c", help="read this _cpu.c instead of emitting one")
     ap.add_argument("--all", action="store_true",
-                    help="sweep both corpora (%d gpu-only + %d x86_64 het) and "
-                         "the %d synthetic carriers"
-                         % (GPU_ONLY_N, X86_HET_N, census.SYNTHETIC))
+                    help="sweep both corpora (%d gpu-only + %d x86_64 het)"
+                         % (GPU_ONLY_N, X86_HET_N))
     ap.add_argument("--gpu-dir", default=GPU_ONLY_DIR,
                     help="the gpu-only corpus to sweep")
     ap.add_argument("--x86-dir",

@@ -30,17 +30,10 @@ Scoped atomics are libcu++'s [CCCL]: `<cuda/atomic>`,
 `cuda::atomic_ref<int, cuda::thread_scope_*> ref(*x)` with `ref.store(v, order)`
 / `ref.load(order)` over kernel `int*` parameters. Every access, relaxed data
 included, is an `atomic_ref` op carrying its annotated order and scope, so the
-kernel is data-race-free under the CUDA C++ model.
-
-| LISA annotation | libcu++ token |
-|-----------------|---------------|
-| order `relaxed` / `acquire` / `release` / `acq_rel` / `sc` | `cuda::memory_order_relaxed` / `_acquire` / `_release` / `_acq_rel` / `_seq_cst` |
-| scope `cta` / `gpu` / `sys` | `cuda::thread_scope_block` / `_device` / `_system` |
-
-Which orders each op kind admits is `hetlitmus/bells/gpu.bell`'s
-(`het-emission.md`, "Scope / limits"); why each token is the faithful one is
-`faithfulness.md`, "The mapping". No cluster scope: the vocabulary
-declares `cta`/`gpu`/`sys` only, and PTX `.cluster` has no HIP scope.
+kernel is data-race-free under the CUDA C++ model. Which orders each op kind
+admits is `hetlitmus/bells/gpu.bell`'s (`het-emission.md`, "Scope / limits").
+No cluster scope: the vocabulary declares `cta`/`gpu`/`sys` only, and PTX
+`.cluster` has no HIP scope.
 
 Launch layout: a block is a maximal subtree rooted at a `cta` node of the scope
 tree, numbered in DFS order. Both dispatch arms read the tree through

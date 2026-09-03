@@ -204,13 +204,11 @@ A harness is a **(CPU ISA × GPU dialect) pair**, not a machine.
 * **The GPU column admits what `hetlitmus/bells/gpu.bell` declares**
   (`GpuLang.check_program`, before any file is written, the same under either
   target): loads, stores and fences; `mov`, a branch, `rmw` and `call` are
-  refused. An access or fence carries one order from its own set (`R`:
-  `relaxed|acquire|sc`; `W`: `relaxed|release|sc`; `F`:
-  `acquire|release|acq_rel|sc`), then one scope (`cta|gpu|sys`), in that
-  order — a Bell annotation group is positional (`lib/BellModel.ml`,
-  `check_event`) — so an order-less access, a scope-first pair and a relaxed
-  fence are refused. Registers are the numbered `rN`; no allocator runs over
-  this column, so a symbolic `%T1` is refused.
+  refused. An access or fence carries one order from its own set, then one
+  scope, in that order — a Bell annotation group is positional
+  (`lib/BellModel.ml`, `check_event`) — so an order-less access, a scope-first
+  pair and a relaxed fence are refused. Registers are the numbered `rN`; no
+  allocator runs over this column, so a symbolic `%T1` is refused.
 * **The launch geometry is the test's `scopes:` tree** (`GpuLang.scopes_of`,
   read by both arms; a block is a maximal subtree under a `cta` node,
   `cuda-emitter.md`, "Mappings"). A tree that does not parse, places a

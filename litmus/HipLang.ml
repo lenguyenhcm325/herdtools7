@@ -28,7 +28,7 @@ let hip_memory_order = function
   | "relaxed" -> "__ATOMIC_RELAXED"
   | "acquire" -> "__ATOMIC_ACQUIRE"
   | "release" -> "__ATOMIC_RELEASE"
-  | "acq_rel" -> "__ATOMIC_ACQ_REL"
+  | "acqrel"  -> "__ATOMIC_ACQ_REL"
   | "sc"      -> "__ATOMIC_SEQ_CST"
   | s -> Warn.user_error "HipLang: unknown memory order %S" s
 

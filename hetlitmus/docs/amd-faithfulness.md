@@ -29,13 +29,6 @@ names match the committed corpus: `corpus-grid.md`, "(D) Matched two-sided").
 
 ## The mapping
 
-`HipLang.ml`'s own: `relaxed/acquire/release/acq_rel/sc → __ATOMIC_*`
-[HipAtomicHeader], [D75917]; `cta/gpu/sys →
-__HIP_MEMORY_SCOPE_{WORKGROUP,AGENT,SYSTEM}` [HipAtomicHeader]; and, for
-`__builtin_amdgcn_fence`'s scope string, `cta → "workgroup"`, `gpu →
-"agent"`, `sys → ""` (why the empty string: [`hip-emitter.md`](hip-emitter.md),
-"Fences").
-
 Each op appears in `.litmus` column order as its mapped builtin, agreeing
 with its constants, its comment and the cell's operands. The comment is the
 only tie from an emitted call back to the column that produced it: a store
@@ -79,6 +72,5 @@ spelling): `MOV <imm>,(loc)` is a store, `movl` on an `int` location,
 * **The CPU half is the column's rendering only.** The per-iteration
   `clflush`/`prefetcht0` preload touches the same locations outside the
   column (`litmus/het-runtime/het_cpu_stress.h`).
-* **No corpus test carries `f[acq_rel,·]`**, so `HipLang.ml`'s `acq_rel` row
-  is reached by no render. An `f[relaxed,·]` is refused before rendering
+* An `f[relaxed,·]` is refused before rendering
   ([`het-emission.md`](het-emission.md), "Scope / limits").

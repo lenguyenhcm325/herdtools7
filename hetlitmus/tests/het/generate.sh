@@ -117,7 +117,7 @@ done
 # (E) The two-sided order-pair grid: the off-diagonal of (D).
 # ---------------------------------------------------------------------------
 # (D) gives both devices the same order name, i.e. the diagonal only, so sweep
-# cpu in {ra, sy, st, ld} x gpu in {ra, sc, rel, acq}, named
+# cpu in {ra, sy, st, ld} x gpu in {ra, sc, rel, acq, acqrel}, named
 # <shape>-<cuttag>-sys-<cpu>.<gpu>-2s.  ../_grid_lib.sh has the token table and
 # why only 2-proc shapes (minus 2+2W) and one cut for SB/LB.
 pair_count=0 diag_count=0

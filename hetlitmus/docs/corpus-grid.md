@@ -35,8 +35,8 @@ What diy fixes about the catalogue:
 - Each `Coe` edge puts one location in the condition (`[x]`, `[y]`); a cycle
   with no `Coe` names none, the case `HetCond.condition_locations` answers
   with an empty list.
-- `f[acq_rel,<scope>]` is unavailable to the generator: `FenceAcq_relSys`
-  does not lex as a diy edge, so no generated test carries it.
+- A diy edge token admits no underscore (`gen/common/lexUtil.mll`), so the
+  acquire-release fence tag is `acqrel`, not PTX's `acq_rel`.
 
 ## The scope × order grid
 
@@ -88,12 +88,7 @@ half is rendered at `sys` so the pair it closes is the cross-device one.
 ### (D) Matched two-sided
 
 `TWO_SIDED_ORDERS`, each applied to both devices over every shape and cut of
-`SHAPE_HET_CUTS`:
-
-| order    | CPU (`render_cpu_cycle`)                          | GPU (`render_cycle sys`)                              |
-|----------|---------------------------------------------------|-------------------------------------------------------|
-| `acqrel` | reads `LDAPR` (diy atom `Q`), writes `STLR` (`L`) | reads `acquire`, writes `release`                     |
-| `fence`  | accesses plain, `DMB SY` between each proc's pair | accesses relaxed, `f[sc,sys]` between each proc's pair |
+`SHAPE_HET_CUTS`.
 
 Why the CPU acquire is the RCpc `LDAPR` rather than `LDAR`: `faithfulness.md`,
 "CPU column (AArch64)". A two-sided test byte-identical below its name header to its
@@ -108,17 +103,7 @@ keeps the x86_64 rendering name-for-name with the corpus.
 (D) gives both devices the same order name — the diagonal of a CPU-order ×
 GPU-order product — and what a primitive orders depends on its proc's
 program-order pair. (E) sweeps the off-diagonal, `TWO_SIDED_CPU_ORDERS` ×
-`TWO_SIDED_GPU_ORDERS`, named `<shape>-<cuttag>-sys-<cpu>.<gpu>-2s`:
-
-| CPU token | cells            | GPU token | cells                               |
-|-----------|------------------|-----------|-------------------------------------|
-| `ra`      | `LDAPR` / `STLR` | `ra`      | `r[acquire,sys]` / `w[release,sys]` |
-| `sy`      | `DMB SY`         | `sc`      | `f[sc,sys]`                         |
-| `st`      | `DMB ST`         | `rel`     | `f[release,sys]`                    |
-| `ld`      | `DMB LD`         | `acq`     | `f[acquire,sys]`                    |
-
-A barrier token spells the intra-proc edge `DMB.<opt><L><XY>` or
-`Fence<o>Sys<L><XY>`, accesses plain or relaxed, external edges bare. The two
+`TWO_SIDED_GPU_ORDERS`, named `<shape>-<cuttag>-sys-<cpu>.<gpu>-2s`. The two
 cells that reproduce (D) token for token — `ra.ra` = `-sys-acqrel-2s`, `sy.sc`
 = `-sys-fence-2s` — are skipped.
 

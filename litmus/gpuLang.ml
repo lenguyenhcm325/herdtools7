@@ -29,7 +29,7 @@ open Printf
 
 let load_orders = ["relaxed" ; "acquire" ; "sc"]
 let store_orders = ["relaxed" ; "release" ; "sc"]
-let fence_orders = ["acquire" ; "release" ; "acq_rel" ; "sc"]
+let fence_orders = ["acquire" ; "release" ; "acqrel" ; "sc"]
 let scope_names = ["cta" ; "gpu" ; "sys"]
 
 let is_scope a = List.mem a scope_names

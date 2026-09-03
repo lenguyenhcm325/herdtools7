@@ -9,7 +9,7 @@
  * express" and "Sources".
  *)
 
-enum memory_order = 'relaxed || 'acquire || 'release || 'acq_rel || 'sc
+enum memory_order = 'relaxed || 'acquire || 'release || 'acqrel || 'sc
 
 (* Scope names follow PTX; the hierarchy is cta < gpu < sys. *)
 enum scopes = 'cta || 'gpu || 'sys
@@ -26,7 +26,7 @@ end
 
 instructions R[{'relaxed,'acquire,'sc}, scopes]
 instructions W[{'relaxed,'release,'sc}, scopes]
-instructions F[{'acquire,'release,'acq_rel,'sc}, scopes]
+instructions F[{'acquire,'release,'acqrel,'sc}, scopes]
 
 (* Vocabulary only, no convenience sets: a model retrieves one event set per
    tag with `tag2events`.  `tag2set` is interpreter-internal and is NOT bound

@@ -46,8 +46,8 @@ render_cpu_cycle's partial-barrier branches; `ra' reproduces acqrel token for to
   DMB.STdWR Fre DMB.STdWR Fre
   $ bash -c 'source ../_grid_lib.sh; render_2s_cpu ld PodWR Fre PodWR Fre'
   DMB.LDdWR Fre DMB.LDdWR Fre
-render_2s_gpu -- the GPU half of the same grid: `ra' delegates to render_cycle
-sys acqrel; sc/rel/acq keep accesses Relaxed and spell a standalone fence edge.
+render_2s_gpu -- the GPU half of the same grid: `ra' delegates to render_cycle sys
+acqrel; sc/rel/acq/acqrel keep accesses Relaxed and spell a standalone fence edge.
   $ bash -c 'source ../_grid_lib.sh; render_2s_gpu ra PodWR Fre PodWR Fre'
   PodWRReleaseSysAcquireSys FreAcquireSysReleaseSys PodWRReleaseSysAcquireSys FreAcquireSysReleaseSys
   $ bash -c 'source ../_grid_lib.sh; render_2s_gpu sc PodWR Fre PodWR Fre'
@@ -59,6 +59,8 @@ sys acqrel; sc/rel/acq keep accesses Relaxed and spell a standalone fence edge.
   FenceReleaseSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys FenceReleaseSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
   $ bash -c 'source ../_grid_lib.sh; render_2s_gpu acq PodWR Fre PodWR Fre'
   FenceAcquireSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys FenceAcquireSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
+  $ bash -c 'source ../_grid_lib.sh; render_2s_gpu acqrel PodWR Fre PodWR Fre'
+  FenceAcqrelSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys FenceAcqrelSysdWRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
 That loop spells its own fence edge, so the location letter is pinned here too.
   $ bash -c 'source ../_grid_lib.sh; render_2s_gpu sc Rfe PosRR Fre'
   RfeRelaxedSysRelaxedSys FenceScSyssRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys
