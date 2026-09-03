@@ -80,9 +80,10 @@ extern "C" {
                                      path or the reads hit cache and cross
                                      nothing -- see HET_LLC_MB.                 */
 #endif
-#ifndef HET_NOISE_CPU
-#define HET_NOISE_CPU 1           /* the host half: a CPU thread stream-reading a
-                                     buffer homed on device memory              */
+#ifndef HET_NOISE_CPU_THREADS
+#define HET_NOISE_CPU_THREADS 1   /* the host half: CPU threads, each streaming
+                                     its own slice of a device-homed buffer.
+                                     hetlitmus/docs/00-environment-design.md 3.6 */
 #endif
 #ifndef HET_NOISE_GPU_BLOCKS
 #define HET_NOISE_GPU_BLOCKS 8    /* the device half: extra blocks of the
@@ -135,6 +136,17 @@ extern "C" {
 #if (HET_NOISE_MB) < 1
 #error "HET_NOISE_MB must be >= 1"
 #endif
+#if (HET_NOISE_CPU_THREADS) < 0
+#error "HET_NOISE_CPU_THREADS must be >= 0 (0 = the host half off)"
+#endif
+#if (HET_NOISE_CPU_THREADS) > 1024
+#error "HET_NOISE_CPU_THREADS above 1024 overflows the driver's stack arrays"
+#endif
+/* A slice shorter than one chunk re-reads its few words for ever. */
+#if (HET_NOISE_CPU_THREADS) > 0 && \
+    (HET_NOISE_MB) * 131072 < (HET_NOISE_CPU_THREADS) * (HET_NOISE_CHUNK)
+#error "HET_NOISE_CPU_THREADS slices HET_NOISE_MB below one HET_NOISE_CHUNK per thread"
+#endif
 #if (HET_LLC_MB) < 1
 #error "HET_LLC_MB must be >= 1 (0 silences the below-cache warning for every run)"
 #endif
@@ -147,8 +159,8 @@ typedef struct het_cpu_tally {
   uint64_t enemy_rounds;      /* enemy loop iterations, summed over enemies      */
   uint64_t enemy_accesses;    /* scratchpad accesses issued by the enemies       */
   uint64_t preload_ops;       /* preload cache hints actually issued             */
-  uint64_t noise_cpu_rounds;  /* host noise thread: streaming rounds             */
-  uint64_t noise_cpu_words;   /* host noise thread: words read                   */
+  uint64_t noise_cpu_rounds;  /* host noise threads: streaming rounds, summed    */
+  uint64_t noise_cpu_words;   /* host noise threads: words read, summed          */
   uint32_t enemies_realised;  /* enemy threads that actually entered their loop  */
   uint32_t aff_failures;      /* sched_setaffinity failures -- never silent      */
   uint32_t place_failures;    /* placement failures (filled by the .cu)         */
@@ -167,7 +179,8 @@ typedef struct het_cpu_enemy_args {
   het_cpu_tally *tally;
 } het_cpu_enemy_args;
 
-/* Host-side noise arguments.  `buf' is the OTHER unit's memory. */
+/* Host-side noise arguments.  `buf' is the OTHER unit's memory: this thread's
+   slice of the buffer, `words' long, disjoint from every other thread's. */
 typedef struct het_cpu_noise_args {
   volatile const uint64_t *buf;  /* device-homed: every read crosses the link    */
   uint64_t words;
@@ -383,10 +396,11 @@ void *het_cpu_enemy(void *_a) {
   return NULL;
 }
 
-/* The host noise thread: the noise-kernel construction of [Fusco24 sec III-E.1]
- * -- stream-read a buffer homed on the other unit's memory, so every read that
- * misses cache crosses the interconnect.  The buffer is disjoint from every test
- * location.  `buf' is volatile, so the stream is issued with no value escaping. */
+/* A host noise thread: [Fusco24 sec III-E.1]'s noise kernel over its own slice
+ * of the buffer, the threads dividing it as [Fusco24 sec III-B.2]'s do --
+ * stream-read memory homed on the other unit, so every read that misses cache
+ * crosses the interconnect.  The buffer is disjoint from every test location.
+ * `buf' is volatile: the stream is issued with no value escaping. */
 void *het_cpu_noise(void *_a) {
   het_cpu_noise_args *a = (het_cpu_noise_args *)_a;
   het_cpu_affinity(a->core, a->tally);

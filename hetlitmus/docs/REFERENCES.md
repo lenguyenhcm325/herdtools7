@@ -107,8 +107,12 @@ Study with the Grace Hopper Superchip.* arXiv:2408.11556v2 [cs.DC], 26 August 20
   level".
 * Tab. II: system-allocated (`malloc`) memory is first-touch placed, ATS-translated and
   migratable (CUDA ≥ 12.4); `cudaMallocManaged` memory is first-touch placed and migrates.
+* §III-B.2: multi-threaded Grace benchmarks pin one thread per core and divide the buffer
+  equally among the threads into non-overlapping sequential slices.
 * §III-C: a Grace and a Hopper noise kernel each stream an 8 GB buffer homed on the other
   unit's memory; under them writes to HBM fall to 17 % (Grace) and 65 % (Hopper) of peak.
+* Fig. 8, Grace Read, HBM curve: about 10 GB/s at one thread, rising to the 238 GB/s of
+  Fig. 7 (0.53 of peak) by about 32 threads and flat from there to 72.
 * §III-E.1: the L2 "can cache data that is physically allocated on HBM, both local and peer".
 
 ## [Tee25]
@@ -197,6 +201,10 @@ Gabin Schieffer, Ruimin Shi, Stefano Markidis, Andreas Herten, Jennifer Faj, Ivy
 Jacob Wahlgren, Gabin Schieffer, Ruimin Shi, Edgar A. Leon, Roger Pearce, Maya B. Gokhale, Ivy
 Peng. *Dissecting CPU-GPU Unified Physical Memory on AMD MI300A APUs.* IISWC 2025, pp.
 368–380. DOI 10.1109/IISWC66894.2025.00038. Read as arXiv:2508.12743v1 [cs.DC].
+* §4.2: CPU STREAM TRIAD over 1–24 threads: the 208 GB/s peak with HIP allocators, and with
+  GPU-first-touched `malloc`, needs all 24 cores; with CPU-first-touched `malloc` (and
+  `hipMallocManaged` under XNACK) the peak (about 180 GB/s) is reached at 9 threads and
+  falls to 173–176 GB/s with all cores.
 * §4.4 (Fig. 5): CPU and GPU threads incrementing a shared 1K-element array with system-scope
   atomics — "with 3328 GPU threads or more the relative CPU performance is only between
   11%–25%", GPU throughput falling only to 79 %.

@@ -58,7 +58,7 @@ ever x, y or barrier [Sorensen16 sec 1].
   2
   $ grep -cE '_ea\[_e\]\.(scratch|idx) *= *(x|y|barrier)' $MP.cu || true
   0
-  $ grep -cE '_na\.buf *= *\(volatile const uint64_t\*\)_noise_hbm' $MP.cu
+  $ grep -cE '_na\[_t\]\.buf *= *\(volatile const uint64_t\*\)_noise_hbm \+ \(uint64_t\)_t \* _noise_slice' $MP.cu
   1
 
 (d) four object classes, four allocators: a slot for the rendezvous counter,
@@ -131,7 +131,20 @@ persistent grid, never as a second __global__.
   1
   $ grep -c 'volatile const uint64_t\* _nb = (volatile const uint64_t\*)_noise_ddr' $MP.cu
   1
-  $ grep -c 'pthread_create(&_nth, NULL, het_cpu_noise, &_na)' $MP.cu
+  $ grep -c 'if (pthread_create(&_nth\[_t\], NULL, het_cpu_noise, &_na\[_t\]) == 0) _noise_cpu_n++;' $MP.cu
+  1
+
+The host half is HET_NOISE_CPU_THREADS threads over equal disjoint slices, each
+one subtracted from the enemy budget.
+  $ grep -c '_nEnemy = _ncores - _nCpuTest - HET_NOISE_CPU_THREADS - HET_CPU_RESERVE_CORES;' $MP.cu
+  1
+  $ grep -c 'int _ecore0 = HET_CPU_TEST_CORE0 + _nCpuTest + HET_NOISE_CPU_THREADS;' $MP.cu
+  1
+  $ grep -c '_noise_slice = HET_NOISE_CPU_THREADS > 0 ? _noise_words / HET_NOISE_CPU_THREADS : 0;' $MP.cu
+  1
+  $ grep -c 'for (int _t = 0; _t < HET_NOISE_CPU_THREADS; ++_t) {' $MP.cu
+  1
+  $ grep -A1 '#ifndef HET_NOISE_CPU_THREADS' MP-cg-sys-acqrel-2s/het_cpu_stress.h | grep -c '#define HET_NOISE_CPU_THREADS 1'
   1
 
 The working set is derived from HET_NOISE_MB and guarded against the last-level
@@ -172,6 +185,8 @@ silently stopped working looks exactly like one that is working.
   $ grep -c 'ZERO preload hints were issued' $MP.cu
   1
   $ grep -c '%s of the %s noise did NOT run.  This run is not interconnect-stressed' $MP.cu
+  2
+  $ grep -c 'host noise thread(s) were spawned but completed ZERO rounds' $MP.cu
   1
   $ grep -c 'sched_setaffinity call(s) FAILED' $MP.cu
   1
@@ -180,7 +195,7 @@ silently stopped working looks exactly like one that is working.
 
 (i2) the two noise halves are requested by their knobs, not by what survived
 allocation, so a refused half reads as requested-but-dead.
-  $ grep -c '| (HET_NOISE_CPU ? HET_REQ_NOISE_CPU : 0u)' $MP.cu
+  $ grep -c '| ((HET_NOISE_CPU_THREADS > 0) ? HET_REQ_NOISE_CPU : 0u)' $MP.cu
   1
   $ grep -c '| ((_noiseBlocks > 0) ? HET_REQ_NOISE_GPU : 0u);' $MP.cu
   1

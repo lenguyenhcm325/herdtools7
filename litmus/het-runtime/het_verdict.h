@@ -44,7 +44,7 @@
 #define HET_REQ_GPU_STRESS  (1u << 0)   /* HET_PRE_STRESS_PCT | HET_MEM_STRESS_PCT */
 #define HET_REQ_CPU_ENEMY   (1u << 2)   /* HET_CPU_ENEMIES                         */
 #define HET_REQ_CPU_PRELOAD (1u << 3)   /* HET_CPU_PRELOAD_PCT && _PRELOAD_LIVE    */
-#define HET_REQ_NOISE_CPU   (1u << 4)   /* HET_NOISE_CPU                           */
+#define HET_REQ_NOISE_CPU   (1u << 4)   /* HET_NOISE_CPU_THREADS > 0               */
 #define HET_REQ_NOISE_GPU   (1u << 5)   /* HET_NOISE_GPU_BLOCKS                    */
 
 typedef struct het_obs_record {

@@ -58,9 +58,9 @@ exposed without stress [Kirkham20 §6.2 Tab.10]).
 forever; the driver stamps `stress_requested` from what the build asked for, so the
 distinction is carried in the record. On a box that can home neither noise buffer across the
 link (`00-environment-design.md` §3.6) each half is refused, so a run requesting it is
-`COLD-INVALID`; the reportable baseline there is
-`HET_NOISE_CPU=0 HET_NOISE_GPU_BLOCKS=0`, which still requests the GPU scratchpad stress, the
-CPU enemies and the preload and so is not `HET_CV_UNSTRESSED` (every stress knob at zero).
+`COLD-INVALID`; the reportable baseline there is `HET_NOISE_CPU_THREADS=0
+HET_NOISE_GPU_BLOCKS=0`, which still requests the GPU scratchpad stress, the CPU
+enemies and the preload and so is not `HET_CV_UNSTRESSED` (every stress knob at zero).
 
 ## 4. The null contract
 

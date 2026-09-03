@@ -236,15 +236,23 @@ pre-stress, the enemies and the noise still run.
   left off-node; a system-malloc page is otherwise first-touch placed and migratable
   ([Fusco24 Tab. II]); (b) noise kernels — each side stream-reads a buffer homed on the other
   unit's memory, the construction under which [Fusco24 §III-C] measured Grace and Hopper write
-  bandwidth to HBM at 17 % and 65 % of peak. GPU-only and CPU-local stress cannot reach the
-  host-device window. Bagchi's campaign stressed per device on both devices [Bagchi26 §4.2],
-  with no link-directed component.
+  bandwidth to HBM at 17 % and 65 % of peak. The host half is `HET_NOISE_CPU_THREADS` threads,
+  the buffer divided equally among them into disjoint sequential slices [Fusco24 §III-B.2];
+  every thread is one core the enemies do not get. One Grace thread reads HBM at about
+  10 GB/s and the curve is flat from about 32 threads at 238 GB/s [Fusco24 Fig. 8]; a
+  CPU-first-touched `malloc` stream on the MI300A CPU peaks at 9 threads and loses bandwidth
+  beyond it [Wahlgren25 §4.2]. The count is the tune's to set per target (§3.8). GPU-only
+  and CPU-local stress cannot reach the host-device window. Bagchi's campaign stressed per
+  device on both devices [Bagchi26 §4.2], with no link-directed component.
 - **The claim for the lever is bounded.** Placement and noise slow the loop, so there are fewer
   rendezvous per second, and sightings = yield × rate. What is claimed is that the lever is
   additive with per-device stress and specific to the cross-device window — never that it
   beats per-device stress: Fusco measured bandwidth, not weak-behaviour yield.
 - **A noise buffer must exceed the last-level cache on its path** (`HET_LLC_MB`): a remote line
-  resident in Hopper L2 crosses nothing [Fusco24 §III-E.1].
+  resident in Hopper L2 crosses nothing [Fusco24 §III-E.1]. The host half's slices share that
+  cache, so the guard bounds their union; a single slice must still exceed a core's private
+  cache, which the tune's floor of twice `HET_LLC_MB` over at most 32 threads keeps it above
+  on both targets.
 - **A noise buffer is homed on the other unit or refused.** Where the CUDA render finds no
   pageable-memory access there is no ATS and no home to select, and a refused advise or
   prefetch leaves the pages where first touch put them; either way the buffer would generate
@@ -294,8 +302,12 @@ launch-time validity layer upstream has no analogue for.
 - **The draw** is one joint uniform draw of the knobs of §3.5 and §3.6 from `het_draw` at
   (base seed, configuration index, knob index), so an index regenerates its vector anywhere.
   `HET_BLOCK_DIM` is drawn even and no narrower than the tree's floor; `HET_SCRATCH_SIZE` is
-  derived, never drawn. Out of the space: the knobs that fix identity or protocol rather than
-  pressure (reserve cores, affinity, noise chunk, slot stride); the caps and the jitter,
+  derived, never drawn. `HET_NOISE_CPU_THREADS` draws from {0, 1, 2, 4, 8, 16, 32}, no entry
+  above the spare cores: log-spaced like the device half's block set because bandwidth per
+  thread saturates, with the top entry at the Grace plateau and past the MI300A `malloc` peak
+  ([Fusco24 Fig. 8], [Wahlgren25 §4.2]). Out of the space: the knobs that fix identity or
+  protocol rather than pressure (reserve cores, affinity, noise chunk, slot stride); the caps
+  and the jitter,
   calibrated once per target; and `HET_ALLOC` / `HET_PLACE`, which are conditions under test.
 - **Validity, three layers.** Draw-time: a vector asking for more regions than its scratchpad
   holds, more threads than the machine has cores, a noise working set below twice the

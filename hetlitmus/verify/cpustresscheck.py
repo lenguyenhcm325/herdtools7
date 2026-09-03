@@ -82,6 +82,7 @@ PROBE_C = r"""
 
 #define PROBE_WORDS (1u << 16)
 #define PROBE_ENEMIES 2
+#define PROBE_NOISE_THREADS 4
 #define PROBE_NOISE_BYTES (256ull * 1024ull * 1024ull)   /* 256 MiB */
 
 /* resident set size, in KB (/proc/self/statm field 2 = resident pages) */
@@ -98,7 +99,7 @@ int main(int argc, char** argv) {
   int on = (argc > 1 && argv[1][0] == '1');
   int nEnemy = on ? PROBE_ENEMIES : 0;
   int pct    = on ? 100 : 0;
-  int noise  = on ? 1 : 0;
+  int noise  = on ? PROBE_NOISE_THREADS : 0;
 
   het_cpu_tally t;
   memset(&t, 0, sizeof t);
@@ -114,8 +115,8 @@ int main(int argc, char** argv) {
 
   het_cpu_enemy_args ea[PROBE_ENEMIES];
   pthread_t eth[PROBE_ENEMIES];
-  het_cpu_noise_args na;
-  pthread_t nth;
+  het_cpu_noise_args na[PROBE_NOISE_THREADS];
+  pthread_t nth[PROBE_NOISE_THREADS];
 
   /* Raise the flag BEFORE spawning -- the emitted driver does the same, and the
      opposite order is one of the ways an enemy population never runs. */
@@ -132,15 +133,16 @@ int main(int argc, char** argv) {
     ea[e].tally   = &t;
     pthread_create(&eth[e], NULL, het_cpu_enemy, &ea[e]);
   }
-  if (noise) {
-    na.buf    = (volatile const uint64_t*)nbuf;
-    na.words  = PROBE_WORDS;
-    na.chunk  = 256;
-    na.stride = 1;
-    na.core   = -1;
-    na.go     = &go;
-    na.tally  = &t;
-    pthread_create(&nth, NULL, het_cpu_noise, &na);
+  for (int n = 0; n < noise; n++) {
+    na[n].buf    = (volatile const uint64_t*)nbuf
+                 + (uint64_t)n * (PROBE_WORDS / PROBE_NOISE_THREADS);
+    na[n].words  = PROBE_WORDS / PROBE_NOISE_THREADS;
+    na[n].chunk  = 256;
+    na[n].stride = 1;
+    na[n].core   = -1;
+    na[n].go     = &go;
+    na[n].tally  = &t;
+    pthread_create(&nth[n], NULL, het_cpu_noise, &na[n]);
   }
 
   /* The preload, driven as cpu_thread_P<n> drives it: this thread's own test
@@ -160,7 +162,7 @@ int main(int argc, char** argv) {
 
   __atomic_store_n(&go, 0, __ATOMIC_RELAXED);
   for (int e = 0; e < nEnemy; e++) pthread_join(eth[e], NULL);
-  if (noise) pthread_join(nth, NULL);
+  for (int n = 0; n < noise; n++) pthread_join(nth[n], NULL);
 
   /* First-touch, both halves through RSS: reading the buffer leaves it on the
      shared ZERO page, het_cpu_first_touch faults it in (het_cpu_stress.h). */

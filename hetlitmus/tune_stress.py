@@ -76,6 +76,7 @@ MAX_ATTEMPTS = 16
 STRESS_BLOCK_SET = (0, 1, 2, 4, 8, 16, 32, 64)
 CPU_STRIDE_SET = (8, 16, 32, 64, 128, 256)
 NOISE_BLOCK_SET = (0, 1, 2, 4, 8, 16)
+NOISE_CPU_THREAD_SET = (0, 1, 2, 4, 8, 16, 32)   # 00-environment-design.md sec 3.8
 NOISE_STRIDE_SET = (1, 8, 32)
 ENEMIES_MAX = 12
 
@@ -87,7 +88,7 @@ KNOBS = ("HET_MEM_STRESS_PCT", "HET_MEM_STRESS_ITER", "HET_MEM_STRESS_PATTERN",
          "HET_BLOCK_DIM", "HET_STRESS_BLOCKS",
          "HET_CPU_ENEMIES", "HET_CPU_SCRATCH_WORDS", "HET_CPU_SPREAD",
          "HET_CPU_STRIDE", "HET_CPU_ENEMY_SEQ", "HET_CPU_PRELOAD_PCT",
-         "HET_NOISE_GPU_BLOCKS", "HET_NOISE_CPU", "HET_NOISE_MB",
+         "HET_NOISE_GPU_BLOCKS", "HET_NOISE_CPU_THREADS", "HET_NOISE_MB",
          "HET_NOISE_STRIDE",
          "HET_SCRATCH_SIZE")           # derived, never drawn
 
@@ -105,8 +106,10 @@ def draw_knobs(seed, i, env, attempt):
     lo = env.block_dim_lo
     bdim = lo + 2 * (d(18) % ((256 - lo) // 2 + 1))
     blocks = -1 if d(20) % 2 == 0 else STRESS_BLOCK_SET[d(21) % len(STRESS_BLOCK_SET)]
+    nt_set = [n for n in NOISE_CPU_THREAD_SET if n <= max(0, env.spare_cores)]
+    noise_threads = nt_set[d(36) % len(nt_set)]
     # -1 = auto and 0 = none are distinct requests, so both sit in the one set.
-    e_hi = min(ENEMIES_MAX, max(0, env.spare_cores))
+    e_hi = min(ENEMIES_MAX, max(0, env.spare_cores - noise_threads))
     e_pick = d(22) % (e_hi + 2)
     enemies = -1 if e_pick == 0 else e_pick - 1
     k = {
@@ -128,7 +131,7 @@ def draw_knobs(seed, i, env, attempt):
         "HET_CPU_ENEMY_SEQ": d(30) % 4,
         "HET_CPU_PRELOAD_PCT": d(32) % 101,
         "HET_NOISE_GPU_BLOCKS": NOISE_BLOCK_SET[d(34) % len(NOISE_BLOCK_SET)],
-        "HET_NOISE_CPU": d(36) % 2,
+        "HET_NOISE_CPU_THREADS": noise_threads,
         "HET_NOISE_MB": env.noise_mb_set[d(38) % len(env.noise_mb_set)],
         "HET_NOISE_STRIDE": NOISE_STRIDE_SET[d(40) % len(NOISE_STRIDE_SET)],
         # [CudaLitmus] derivation
@@ -147,9 +150,9 @@ def violated(k, env):
         return "mem-stress asked for with an explicit zero stress-block population"
     n = k["HET_CPU_ENEMIES"]
     if n < 0:
-        n = max(0, env.ncores - env.cpu_test - k["HET_NOISE_CPU"] - env.reserve)
-    if n + k["HET_NOISE_CPU"] + env.cpu_test + env.reserve > env.ncores:
-        return "enemies + noise + test threads + reserve exceed %d core(s)" % env.ncores
+        n = max(0, env.ncores - env.cpu_test - k["HET_NOISE_CPU_THREADS"] - env.reserve)
+    if n + k["HET_NOISE_CPU_THREADS"] + env.cpu_test + env.reserve > env.ncores:
+        return "enemies + noise threads + test threads + reserve exceed %d core(s)" % env.ncores
     if k["HET_NOISE_MB"] < 2 * env.llc_mb:
         return "noise working set is below 2 x the last-level cache"
     return None
@@ -268,7 +271,7 @@ def probe(a, tests):
             "spans" % lanes)
 
     env.ncores = os.cpu_count() or 1
-    env.spare_cores = env.ncores - env.reserve - 1 - env.cpu_test
+    env.spare_cores = env.ncores - env.reserve - env.cpu_test
     env.llc_mb = a.llc_mb if a.llc_mb else header_define(CPU_STRESS_H, "HET_LLC_MB")
     # Two noise buffers are requested per run and either may be served from host
     # memory, so half of what is available is the ceiling one may ask for.
@@ -313,7 +316,7 @@ def build(a, env, k, timeout):
 GEOM_RE = re.compile(r"^HetLitmus: blockDim=(\d+) grid=(\d+) \(test=(\d+) "
                      r"stress=(\d+), co-resident cap=(\d+)\)")
 CPUCFG_RE = re.compile(r"^HetLitmus cpu-stress: cores=(\d+) test=(\d+) "
-                       r"enemies=(-?\d+) .*\| noise: gpu_blocks=(\d+) cpu=(\d+)")
+                       r"enemies=(-?\d+) .*\| noise: gpu_blocks=(\d+) cpu_threads=(\d+)")
 EMPTY_RE = re.compile(r"^HetLitmus WARNING: the mem-stress population is EMPTY")
 OVERCAP_RE = re.compile(r"^grid (\d+) exceeds co-resident cap (\d+)")
 
@@ -660,6 +663,12 @@ def rank(a):
 
     drawn = {r["i"]: r["drawn"] for r in rows
              if r.get("type") == "config" and "drawn" in r}
+    for i in sorted(wins):
+        missing = [n for n in KNOBS if n not in drawn.get(i, {})]
+        if missing:
+            die("%s: configuration %d was drawn without %s -- a log from another "
+                "knob set; rank it with the tune_stress.py that wrote it"
+                % (os.path.join(a.out, LOG_NAME), i, ", ".join(missing)))
     for i in sorted(wins):
         out = os.path.join(a.out, "winner-%d.params" % i)
         with open(out, "w") as fh:
