@@ -40,7 +40,7 @@ one cross-device rendezvous per iteration with a per-iteration record of who too
   looping over `N` iterations inside; every iteration opens at a cross-device rendezvous.
 - One test instance — the test's CPU threads and GPU lanes over shared locations from the
   per-target allocator (§3.2) — beside GPU stress workgroups that fill the rest of the
-  co-resident grid, CPU enemy threads on a disjoint scratchpad, and a noise pair loading the
+  co-resident grid, CPU stress threads on a disjoint scratchpad, and a noise pair loading the
   interconnect (§3.5, §3.6).
 - Iteration `n` touches slot `n` of every location on both sides, and each participant records
   per iteration whether it started it (§3.3, §3.4).
@@ -157,21 +157,21 @@ Every lane of a stress block stresses, so scratchpad traffic scales with the wid
 
 **Alignment is bought, not measured.** There is no shared clock and no ordering-free side
 channel. The rendezvous buys a common start; the residual skew is swept by a per-participant
-release delay of `0..HET_RELEASE_JITTER` empty spins drawn per iteration, so the run samples
-relative phases instead of repeating one alignment, and by both-side stress. The jitter is a
-placeholder like the caps (§5).
+release delay of `0..HET_RELEASE_JITTER_SPINS` empty spins drawn per iteration, so the run
+samples relative phases instead of repeating one alignment, and by both-side stress. The jitter
+is a placeholder like the caps (§5).
 
 **One stress schedule, computed the same way on both sides.** Every probabilistic decision of
 the run environment — the release delay, a lane's pre-stress toggle, the grid's mem-stress
-toggle, a CPU thread's preload, the scratchpad targets, the enemy index permutation — is one
-call to `het_draw(seed, who, k)` (`litmus/het-runtime/het_cpu_stress.h`): splitmix64 [Vigna15]
-evaluated at index `k` of the stream `(seed, who)`, never advanced. The host and the device
-therefore compute the same value for the same (participant, index), which they must, since the
-host setup and the kernel draw from one seed. Participant ids are pairwise distinct and each
-participant's indices are its own, so a `(who, k)` is one decision and a CPU thread's delays
-never track a GPU lane's. The seed fixes the schedule and nothing else: `HET_SEED` — varied
-per run as `_seed0 + _run`, and per invocation by `hetlitmus/campaign.py` from a base it draws
-and records — makes two runs or two devices comparable under one configuration
+toggle, a CPU thread's preload, the scratchpad targets, the stress-thread index permutation —
+is one call to `het_draw(seed, who, k)` (`litmus/het-runtime/het_cpu_stress.h`): splitmix64
+[Vigna15] evaluated at index `k` of the stream `(seed, who)`, never advanced. The host and the
+device therefore compute the same value for the same (participant, index), which they must,
+since the host setup and the kernel draw from one seed. Participant ids are pairwise distinct
+and each participant's indices are its own, so a `(who, k)` is one decision and a CPU thread's
+delays never track a GPU lane's. The seed fixes the schedule and nothing else: `HET_SEED` —
+varied per run as `_seed0 + _run`, and per invocation by `hetlitmus/campaign.py` from a base it
+draws and records — makes two runs or two devices comparable under one configuration
 [GPUHarbor23 §3.4]; timing, thermal state and relative phase are unseeded, so a run does not
 repeat. A base nobody pins is drawn with `getrandom(&s, 4, GRND_NONBLOCK)`: a request that
 small is all-or-nothing, and the flag turns an entropy pool not yet initialised into an error
@@ -216,30 +216,30 @@ The knob defaults are the one committed tuned configuration (one chip, device sc
 re-tuned per target (§3.8). Two deviations: upstream's `MEM_STRESS` macro passes an iteration
 count in `do_stress`'s pattern slot, so its mem-stress loop matches no branch and its
 `memStressPct=20` was tuned through a dead loop — here the pattern is passed as the pattern;
-and `HET_MEM_STRESS_PCT` is a percentage of test *iterations* decided grid-wide, one draw per
-iteration [WebGPULitmus], defaulting to that tool's all-stress 100, which is the on/off
+and `HET_GPU_MEM_STRESS_PCT` is a percentage of test *iterations* decided grid-wide, one draw
+per iteration [WebGPULitmus], defaulting to that tool's all-stress 100, which is the on/off
 literature's "on" [Kirkham20 Tab. 3]. Below 100 an off-iteration is not a quiet one: the
-pre-stress, the enemies and the noise still run.
+pre-stress, the CPU stress threads and the noise still run.
 
 ### 3.6 CPU-side and interconnect stress
 
 - **CPU stress is litmus7's recipes at two sites** (`litmus/het-runtime/het_cpu_stress.h`): a
-  cache preload of the test variables before the tested body, and disjoint-scratchpad enemy
-  threads with affinity, on both host ISAs. Two invariants hold by construction: the enemies
-  touch only a scratchpad disjoint from every test location and the barrier, and the preload
-  sits outside the compiled tested body, never between two tested accesses. Test repetition is
-  ported as enemy threads rather than as concurrent copies of the whole test, which do not
-  compose with a persistent kernel.
+  cache preload of the test variables before the tested body, and disjoint-scratchpad CPU
+  stress threads with affinity, on both host ISAs. Two invariants hold by construction: the
+  CPU stress threads touch only a scratchpad disjoint from every test location and the
+  barrier, and the preload sits outside the compiled tested body, never between two tested
+  accesses. Test repetition is ported as CPU stress threads rather than as concurrent copies
+  of the whole test, which do not compose with a persistent kernel.
 - **Interconnect stress**, the lever no single-die harness has: (a) placement — bind the shared
   page to the NUMA node far from its consumer with `mbind(MPOL_BIND)`, a strict policy that
   also blocks later migration, then read the home back with `move_pages` and count any page
   left off-node; a system-malloc page is otherwise first-touch placed and migratable
   ([Fusco24 Tab. II]); (b) noise kernels — each side stream-reads a buffer homed on the other
   unit's memory, the construction under which [Fusco24 §III-C] measured Grace and Hopper write
-  bandwidth to HBM at 17 % and 65 % of peak. The host half is `HET_NOISE_CPU_THREADS` threads,
+  bandwidth to HBM at 17 % and 65 % of peak. The host half is `HET_CPU_NOISE_THREADS` threads,
   the buffer divided equally among them into disjoint sequential slices [Fusco24 §III-B.2];
-  every thread is one core the enemies do not get. One Grace thread reads HBM at about
-  10 GB/s and the curve is flat from about 32 threads at 238 GB/s [Fusco24 Fig. 8]; a
+  every thread is one core the CPU stress threads do not get. One Grace thread reads HBM at
+  about 10 GB/s and the curve is flat from about 32 threads at 238 GB/s [Fusco24 Fig. 8]; a
   CPU-first-touched `malloc` stream on the MI300A CPU peaks at 9 threads and loses bandwidth
   beyond it [Wahlgren25 §4.2]. The count is the tune's to set per target (§3.8). GPU-only
   and CPU-local stress cannot reach the host-device window. Bagchi's campaign stressed per
@@ -301,13 +301,13 @@ launch-time validity layer upstream has no analogue for.
 
 - **The draw** is one joint uniform draw of the knobs of §3.5 and §3.6 from `het_draw` at
   (base seed, configuration index, knob index), so an index regenerates its vector anywhere.
-  `HET_BLOCK_DIM` is drawn even and no narrower than the tree's floor; `HET_SCRATCH_SIZE` is
-  derived, never drawn. `HET_NOISE_CPU_THREADS` draws from {0, 1, 2, 4, 8, 16, 32}, no entry
+  `HET_BLOCK_DIM` is drawn even and no narrower than the tree's floor; `HET_GPU_SCRATCH_WORDS`
+  is derived, never drawn. `HET_CPU_NOISE_THREADS` draws from {0, 1, 2, 4, 8, 16, 32}, no entry
   above the spare cores: log-spaced like the device half's block set because bandwidth per
   thread saturates, with the top entry at the Grace plateau and past the MI300A `malloc` peak
   ([Fusco24 Fig. 8], [Wahlgren25 §4.2]). Out of the space: the knobs that fix identity or
-  protocol rather than pressure (reserve cores, affinity, noise chunk, slot stride); the caps
-  and the jitter,
+  protocol rather than pressure (reserve cores, affinity, noise words per round, slot stride);
+  the caps and the jitter,
   calibrated once per target; and `HET_ALLOC` / `HET_PLACE`, which are conditions under test.
 - **Validity, three layers.** Draw-time: a vector asking for more regions than its scratchpad
   holds, more threads than the machine has cores, a noise working set below twice the
@@ -371,8 +371,8 @@ Unmeasurable off the target part; each shapes what a run means.
    `HET_RDV_MAX_DISCARD_PCT`. `hetlitmus/campaign.py` bounds it with `--timeout` and ends the
    row `ERROR`. An early bail is not implemented: a run whose `N` was cut short would not mean
    what a scored run's `N` does.
-3. **Post-rendezvous skew.** `HET_RELEASE_JITTER` is a placeholder: measure the spread between
-   the two sides' first tested access and size the jitter to sweep it.
+3. **Post-rendezvous skew.** `HET_RELEASE_JITTER_SPINS` is a placeholder: measure the spread
+   between the two sides' first tested access and size the jitter to sweep it.
 4. **Whether the rendezvous sustains**, or stalls as a per-iteration both-sided CPU–GPU spin
    barrier did on integrated consumer parts [Srivastava24 §4.1]; the cap and the discard rule
    exist to survive that. A stall shared with a GPU-only cooperative test of the same geometry
@@ -389,7 +389,7 @@ Unmeasurable off the target part; each shapes what a run means.
    rate on two of the three GPUs of [Kirkham20 §4.2 Tab. 6] and the highest on the third. This
    decides which nulls are interpretable, and it does not transfer between parts.
 8. **Launch geometry against the co-residency cap.** The stress population is what the cap
-   leaves after `HET_TEST_BLOCKS` and `HET_NOISE_GPU_BLOCKS`; an over-large test geometry
+   leaves after `HET_TEST_BLOCKS` and `HET_GPU_NOISE_BLOCKS`; an over-large test geometry
    empties it, and only the target says which geometries do.
 9. **The memory type of the shared allocation** (§3.2): read it from the platform (PAT/MTRR,
    `/proc/self/smaps`) for this allocator.

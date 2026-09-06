@@ -96,13 +96,13 @@ BASE = dict(
     cap_calibrated=1,
     stress_truncated=0,
     gpu_stress_rounds=64,             # het_do_stress actually ran
-    cpu_enemy_rounds=1000,
+    cpu_stress_rounds=1000,
     cpu_preload_ops=1000,
-    noise_cpu_rounds=1000,
-    noise_gpu_blocks=8,
+    cpu_noise_rounds=1000,
+    gpu_noise_blocks=8,
     cpu_aff_failures=0,
     place_failures=0,
-    # every mechanism requested (GPU_STRESS|CPU_ENEMY|CPU_PRELOAD|NOISE_CPU|NOISE_GPU)
+    # every mechanism requested (GPU_STRESS|CPU_STRESS|CPU_PRELOAD|CPU_NOISE|GPU_NOISE)
     stress_requested=0x3D,
 )
 
@@ -122,7 +122,7 @@ CASES = [
     # falsification is one-sided, so nothing has to vouch for a positive.
     case("observed-beats-every-disqualifier", "OBSERVED",
          target_count=1, stress_truncated=99,
-         cpu_enemy_rounds=0, noise_cpu_rounds=0, noise_gpu_blocks=0),
+         cpu_stress_rounds=0, cpu_noise_rounds=0, gpu_noise_blocks=0),
 
     # The constant-read artefact, caveated on both outcomes and suppressing
     # neither, because falsification is one-sided.
@@ -146,14 +146,14 @@ CASES = [
     # whose stress was inert is not a stressed run's null.
     case("cold-stress-truncated", "COLD-INVALID", dq=["STRESS_TRUNCATED"],
          stress_truncated=1),
-    case("cold-cpu-enemy-dead", "COLD-INVALID", dq=["CPU_ENEMY_DEAD"],
-         cpu_enemy_rounds=0),
+    case("cold-cpu-stress-dead", "COLD-INVALID", dq=["CPU_STRESS_DEAD"],
+         cpu_stress_rounds=0),
     case("cold-cpu-preload-dead", "COLD-INVALID", dq=["CPU_PRELOAD_DEAD"],
          cpu_preload_ops=0),
-    case("cold-noise-cpu-dead", "COLD-INVALID", dq=["NOISE_CPU_DEAD"],
-         noise_cpu_rounds=0),
-    case("cold-noise-gpu-dead", "COLD-INVALID", dq=["NOISE_GPU_DEAD"],
-         noise_gpu_blocks=0),
+    case("cold-cpu-noise-dead", "COLD-INVALID", dq=["CPU_NOISE_DEAD"],
+         cpu_noise_rounds=0),
+    case("cold-gpu-noise-dead", "COLD-INVALID", dq=["GPU_NOISE_DEAD"],
+         gpu_noise_blocks=0),
     # The stress blocks fill what the co-residency cap leaves over the test lanes,
     # so a requested layer that completed zero rounds is a layer nobody ran.
     case("cold-gpu-stress-dead", "COLD-INVALID", dq=["GPU_STRESS_DEAD"],
@@ -185,8 +185,8 @@ CASES = [
     # baseline is COLD forever (harness-reporting.md sec 3).
     case("unstressed-baseline-still-reportable", "NOT-OBSERVED",
          cv=["UNSTRESSED"], stress_requested=0,
-         cpu_enemy_rounds=0, cpu_preload_ops=0,
-         noise_cpu_rounds=0, noise_gpu_blocks=0),
+         cpu_stress_rounds=0, cpu_preload_ops=0,
+         cpu_noise_rounds=0, gpu_noise_blocks=0),
 
     # Caveats travel with the number, but do not invalidate.
     case("null-but-pinning-is-fiction", "NOT-OBSERVED", cv=["AFF_FAILED"],
@@ -201,8 +201,8 @@ CASES = [
          target_count=1, cpu_aff_failures=3, place_failures=1),
     case("sighting-on-an-unstressed-run-says-so", "OBSERVED", cv=["UNSTRESSED"],
          target_count=1, stress_requested=0, gpu_stress_rounds=0,
-         cpu_enemy_rounds=0, cpu_preload_ops=0,
-         noise_cpu_rounds=0, noise_gpu_blocks=0),
+         cpu_stress_rounds=0, cpu_preload_ops=0,
+         cpu_noise_rounds=0, gpu_noise_blocks=0),
 ]
 
 # A sentence a FLAG owns, printed by exactly the cases whose expected flag word

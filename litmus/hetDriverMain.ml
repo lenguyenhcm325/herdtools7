@@ -55,20 +55,20 @@ let dump_launch_geometry dialect identity ch =
      start at column 0, since an indent would be emitted too. *)
   s {|  int _maxGrid = _bpsm * _nsm;
   int _testBlocks = HET_TEST_BLOCKS;
-  int _noiseBlocks = HET_NOISE_GPU_BLOCKS;
+  int _noiseBlocks = HET_GPU_NOISE_BLOCKS;
   if (_noiseBlocks < 0) _noiseBlocks = 0;
-  int _stressBlocks = (HET_STRESS_BLOCKS >= 0) ? HET_STRESS_BLOCKS
+  int _stressBlocks = (HET_GPU_STRESS_BLOCKS >= 0) ? HET_GPU_STRESS_BLOCKS
                                               : (_maxGrid - _testBlocks - _noiseBlocks);
   if (_stressBlocks < 0) _stressBlocks = 0;
   int _grid = _testBlocks + _noiseBlocks + _stressBlocks;
   if (_grid > _maxGrid) { fprintf(stderr, "grid %d exceeds co-resident cap %d\n", _grid, _maxGrid); return 2; }
 |} ;
   (* [Alglave15 sec 4.3.1 Tab. 6] *)
-  s {|  if (HET_MEM_STRESS_PCT > 0 && _stressBlocks == 0)
-    fprintf(stderr, "HetLitmus WARNING: the mem-stress population is EMPTY (test=%d + noise=%d fills the co-resident cap %d).  HET_MEM_STRESS_PCT=%d asks for scratchpad stress and NO block will do any.\n",
-            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_MEM_STRESS_PCT);
-  uint32_t _pre_pat = (uint32_t)HET_PRE_STRESS_PATTERN;
-  uint32_t _mem_pat = (uint32_t)HET_MEM_STRESS_PATTERN;
+  s {|  if (HET_GPU_MEM_STRESS_PCT > 0 && _stressBlocks == 0)
+    fprintf(stderr, "HetLitmus WARNING: the mem-stress population is EMPTY (test=%d + noise=%d fills the co-resident cap %d).  HET_GPU_MEM_STRESS_PCT=%d asks for scratchpad stress and NO block will do any.\n",
+            _testBlocks, _noiseBlocks, _maxGrid, (int)HET_GPU_MEM_STRESS_PCT);
+  uint32_t _pre_pat = (uint32_t)HET_GPU_PRE_STRESS_PATTERN;
+  uint32_t _mem_pat = (uint32_t)HET_GPU_MEM_STRESS_PATTERN;
   fprintf(stderr, "HetLitmus: blockDim=%d grid=%d (test=%d stress=%d, co-resident cap=%d) pre_pat=%u mem_pat=%u\n",
           (int)HET_BLOCK_DIM, _grid, _testBlocks, _stressBlocks, _maxGrid,
           _pre_pat, _mem_pat);
@@ -77,7 +77,7 @@ let dump_launch_geometry dialect identity ch =
 let dump_gpu_stress_alloc dialect ch =
   let s = output_string ch in
   s (Printf.sprintf "  uint32_t *_scratch; %s\n"
-       (dialect.gd_dev_malloc "_scratch" "sizeof(uint32_t)*HET_SCRATCH_SIZE")) ;
+       (dialect.gd_dev_malloc "_scratch" "sizeof(uint32_t)*HET_GPU_SCRATCH_WORDS")) ;
   s (Printf.sprintf "  uint32_t *_scratch_loc; %s\n"
        (dialect.gd_dev_malloc "_scratch_loc" "sizeof(uint32_t)*_grid")) ;
   s (Printf.sprintf "  uint32_t *_gpu_iter; %s\n"
@@ -95,41 +95,41 @@ let dump_cpu_stress_setup procs ch =
   s "  int _ncores = het_cpu_ncores();\n" ;
   s "  int _aff = HET_CPU_AFFINITY;\n" ;
   s (Printf.sprintf "  int _nCpuTest = %d;\n" n_cpu_threads) ;
-  s {|  int _nEnemy = HET_CPU_ENEMIES;
-  if (_nEnemy < 0) {
-    _nEnemy = _ncores - _nCpuTest - HET_NOISE_CPU_THREADS - HET_CPU_RESERVE_CORES;
-    if (_nEnemy < 0) _nEnemy = 0;
+  s {|  int _nCpuStress = HET_CPU_STRESS_THREADS;
+  if (_nCpuStress < 0) {
+    _nCpuStress = _ncores - _nCpuTest - HET_CPU_NOISE_THREADS - HET_CPU_RESERVE_CORES;
+    if (_nCpuStress < 0) _nCpuStress = 0;
   }
   het_cpu_tally _ct;
   int _stress_go = 0;
   uint64_t *_cpu_scratch =
     (uint64_t*)malloc_check(sizeof(uint64_t)*HET_CPU_SCRATCH_WORDS);
   memset(_cpu_scratch, 0, sizeof(uint64_t)*HET_CPU_SCRATCH_WORDS);
-  uint32_t _cpu_nregions = (uint32_t)(HET_CPU_SCRATCH_WORDS / HET_CPU_STRIDE);
+  uint32_t _cpu_nregions = (uint32_t)(HET_CPU_SCRATCH_WORDS / HET_CPU_WORDS_PER_REGION);
   if (_cpu_nregions < 1) _cpu_nregions = 1;
   uint32_t _cpu_spread = HET_CPU_SPREAD;
   if (_cpu_spread > _cpu_nregions) {
-    fprintf(stderr, "HetLitmus WARNING: realised CPU stress spread is %u region(s), not HET_CPU_SPREAD=%d -- the enemy scratchpad (HET_CPU_SCRATCH_WORDS/HET_CPU_STRIDE) holds only %u.  The CPU stress is weaker than the configuration says.\n",
+    fprintf(stderr, "HetLitmus WARNING: realised CPU stress spread is %u region(s), not HET_CPU_SPREAD=%d -- the CPU stress scratchpad (HET_CPU_SCRATCH_WORDS/HET_CPU_WORDS_PER_REGION) holds only %u.  The CPU stress is weaker than the configuration says.\n",
             _cpu_nregions, (int)HET_CPU_SPREAD, _cpu_nregions);
     _cpu_spread = _cpu_nregions;
   }
   uint32_t *_cpu_idx = (uint32_t*)malloc_check(sizeof(uint32_t)*_cpu_nregions);
-  het_cpu_enemy_args *_ea = (het_cpu_enemy_args*)malloc_check(sizeof(het_cpu_enemy_args)*(_nEnemy>0?_nEnemy:1));
-  pthread_t *_eth = (pthread_t*)malloc_check(sizeof(pthread_t)*(_nEnemy>0?_nEnemy:1));
+  het_cpu_stress_args *_sa = (het_cpu_stress_args*)malloc_check(sizeof(het_cpu_stress_args)*(_nCpuStress>0?_nCpuStress:1));
+  pthread_t *_sth = (pthread_t*)malloc_check(sizeof(pthread_t)*(_nCpuStress>0?_nCpuStress:1));
 |}
 
 let dump_noise_setup ch =
   let s = output_string ch in
   s {|  uint64_t _noise_words = (uint64_t)HET_NOISE_MB * 1024ull * 1024ull / sizeof(uint64_t);
   uint32_t _noise_blocks = (uint32_t)_noiseBlocks;
-  uint32_t _noise_chunk = (uint32_t)HET_NOISE_CHUNK;
+  uint32_t _noise_words_per_round = (uint32_t)HET_NOISE_WORDS_PER_ROUND;
   uint32_t _noise_stride = (uint32_t)HET_NOISE_STRIDE;
   uint64_t *_noise_ddr = NULL;   /* CPU-homed: the GPU streams it */
   uint64_t *_noise_hbm = NULL;   /* GPU-homed: the CPU streams it */
-  het_cpu_noise_args _na[HET_NOISE_CPU_THREADS > 0 ? HET_NOISE_CPU_THREADS : 1];
-  pthread_t _nth[HET_NOISE_CPU_THREADS > 0 ? HET_NOISE_CPU_THREADS : 1];
-  int _noise_cpu_n = 0;
-  uint64_t _noise_slice = HET_NOISE_CPU_THREADS > 0 ? _noise_words / HET_NOISE_CPU_THREADS : 0;
+  het_cpu_noise_args _na[HET_CPU_NOISE_THREADS > 0 ? HET_CPU_NOISE_THREADS : 1];
+  pthread_t _nth[HET_CPU_NOISE_THREADS > 0 ? HET_CPU_NOISE_THREADS : 1];
+  int _cpu_noise_n = 0;
+  uint64_t _noise_slice = HET_CPU_NOISE_THREADS > 0 ? _noise_words / HET_CPU_NOISE_THREADS : 0;
   if (HET_NOISE_MB < HET_LLC_MB) {
 #if HET_LLC_MB_IS_FALLBACK
     fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is below the %d MB threshold -- a FALLBACK figure, not this target's last-level cache size, so this run may not be host-device interconnect-stressed.  Build with -DHET_LLC_MB=<MB> to supply it.\n",
@@ -143,14 +143,14 @@ let dump_noise_setup ch =
     int _rc = gd_alloc_noise((void**)&_noise_ddr, (size_t)_noise_words*sizeof(uint64_t), 2);
     if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: no usable %d MB DDR noise buffer -- the device half of the host-device interconnect noise is DISABLED for this run.\n", (int)HET_NOISE_MB); _noise_ddr = NULL; _noise_blocks = 0; }
   }
-  if (HET_NOISE_CPU_THREADS > 0) {
+  if (HET_CPU_NOISE_THREADS > 0) {
     int _rc = gd_alloc_noise((void**)&_noise_hbm, (size_t)_noise_words*sizeof(uint64_t), 1);
     if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: no usable %d MB HBM noise buffer -- the host half of the host-device interconnect noise is DISABLED for this run.\n", (int)HET_NOISE_MB); _noise_hbm = NULL; }
   }
-  fprintf(stderr, "HetLitmus cpu-stress: cores=%d test=%d enemies=%d spread=%u stride=%d seq=%d preload=%d%% aff=%d | noise: gpu_blocks=%u cpu_threads=%d words=%llu (%d MB) place=%d\n",
-          _ncores, _nCpuTest, _nEnemy, _cpu_spread, (int)HET_CPU_STRIDE,
-          (int)HET_CPU_ENEMY_SEQ, (int)HET_CPU_PRELOAD_PCT, _aff,
-          _noise_blocks, (int)HET_NOISE_CPU_THREADS,
+  fprintf(stderr, "HetLitmus cpu-stress: cores=%d test=%d stress_threads=%d spread=%u words_per_region=%d pattern=%d preload=%d%% aff=%d | noise: gpu_blocks=%u cpu_threads=%d words=%llu (%d MB) place=%d\n",
+          _ncores, _nCpuTest, _nCpuStress, _cpu_spread, (int)HET_CPU_WORDS_PER_REGION,
+          (int)HET_CPU_STRESS_PATTERN, (int)HET_CPU_PRELOAD_PCT, _aff,
+          _noise_blocks, (int)HET_CPU_NOISE_THREADS,
           (unsigned long long)_noise_words, (int)HET_NOISE_MB, (int)HET_PLACE);
 |}
 
@@ -238,39 +238,39 @@ let dump_run_spawn_stress ch =
   s {|    _ct.preload_inert = !het_cpu_preload_live();
     het_cpu_shuffle(_cpu_idx, _cpu_nregions, _seed);   /* reshuffled per run */
     __atomic_store_n(&_stress_go, 1, __ATOMIC_RELAXED);
-    int _ecore0 = HET_CPU_TEST_CORE0 + _nCpuTest + HET_NOISE_CPU_THREADS;
-    if (_aff && _ecore0 + _nEnemy > _ncores)
-      fprintf(stderr, "HetLitmus WARNING: %d enemy thread(s) from core %d exceed %d core(s) -- enemy pins WRAP onto the test threads' cores, so the test threads no longer have a core to themselves.\n",
-              _nEnemy, _ecore0, _ncores);
-    for (int _e = 0; _e < _nEnemy; ++_e) {
+    int _stress_core0 = HET_CPU_FIRST_CORE + _nCpuTest + HET_CPU_NOISE_THREADS;
+    if (_aff && _stress_core0 + _nCpuStress > _ncores)
+      fprintf(stderr, "HetLitmus WARNING: %d stress thread(s) from core %d exceed %d core(s) -- stress-thread pins WRAP onto the test threads' cores, so the test threads no longer have a core to themselves.\n",
+              _nCpuStress, _stress_core0, _ncores);
+    for (int _e = 0; _e < _nCpuStress; ++_e) {
       uint32_t _off = (_cpu_nregions > _cpu_spread)
                     ? ((uint32_t)_e * _cpu_spread) % (_cpu_nregions - _cpu_spread + 1)
                     : 0u;
-      _ea[_e].scratch = _cpu_scratch;
-      _ea[_e].idx     = _cpu_idx + _off;
-      _ea[_e].nidx    = _cpu_spread;
-      _ea[_e].stride  = (uint32_t)HET_CPU_STRIDE;
-      _ea[_e].seq     = (uint32_t)HET_CPU_ENEMY_SEQ;
-      _ea[_e].core    = _aff ? ((_ecore0 + _e) % _ncores) : -1;
-      _ea[_e].go      = &_stress_go;
-      _ea[_e].tally   = &_ct;
-      pthread_create(&_eth[_e], NULL, het_cpu_enemy, &_ea[_e]);
+      _sa[_e].scratch          = _cpu_scratch;
+      _sa[_e].idx              = _cpu_idx + _off;
+      _sa[_e].nidx             = _cpu_spread;
+      _sa[_e].words_per_region = (uint32_t)HET_CPU_WORDS_PER_REGION;
+      _sa[_e].pattern          = (uint32_t)HET_CPU_STRESS_PATTERN;
+      _sa[_e].core             = _aff ? ((_stress_core0 + _e) % _ncores) : -1;
+      _sa[_e].go               = &_stress_go;
+      _sa[_e].tally            = &_ct;
+      pthread_create(&_sth[_e], NULL, het_cpu_stress, &_sa[_e]);
     }
-    _noise_cpu_n = 0;
+    _cpu_noise_n = 0;
     if (_noise_hbm != NULL) {
-      int _ncore0 = HET_CPU_TEST_CORE0 + _nCpuTest;
-      if (_aff && _ncore0 + HET_NOISE_CPU_THREADS > _ncores)
+      int _ncore0 = HET_CPU_FIRST_CORE + _nCpuTest;
+      if (_aff && _ncore0 + HET_CPU_NOISE_THREADS > _ncores)
         fprintf(stderr, "HetLitmus WARNING: %d host noise thread(s) from core %d exceed %d core(s) -- noise pins WRAP onto the test threads' cores, so the test threads no longer have a core to themselves.\n",
-                (int)HET_NOISE_CPU_THREADS, _ncore0, _ncores);
-      for (int _t = 0; _t < HET_NOISE_CPU_THREADS; ++_t) {
-        _na[_t].buf    = (volatile const uint64_t*)_noise_hbm + (uint64_t)_t * _noise_slice;
-        _na[_t].words  = _noise_slice;
-        _na[_t].chunk  = _noise_chunk;
-        _na[_t].stride = _noise_stride;
-        _na[_t].core   = _aff ? ((_ncore0 + _t) % _ncores) : -1;
-        _na[_t].go     = &_stress_go;
-        _na[_t].tally  = &_ct;
-        if (pthread_create(&_nth[_t], NULL, het_cpu_noise, &_na[_t]) == 0) _noise_cpu_n++;
+                (int)HET_CPU_NOISE_THREADS, _ncore0, _ncores);
+      for (int _t = 0; _t < HET_CPU_NOISE_THREADS; ++_t) {
+        _na[_t].buf             = (volatile const uint64_t*)_noise_hbm + (uint64_t)_t * _noise_slice;
+        _na[_t].words           = _noise_slice;
+        _na[_t].words_per_round = _noise_words_per_round;
+        _na[_t].stride          = _noise_stride;
+        _na[_t].core            = _aff ? ((_ncore0 + _t) % _ncores) : -1;
+        _na[_t].go              = &_stress_go;
+        _na[_t].tally           = &_ct;
+        if (pthread_create(&_nth[_t], NULL, het_cpu_noise, &_na[_t]) == 0) _cpu_noise_n++;
       }
     }
 |}
@@ -281,7 +281,7 @@ let dump_run_reset_observation dialect memory procs ch =
        (dialect.gd_memcpy_h2d "_scratch_loc" "_scratch_loc_h"
           "sizeof(uint32_t)*_grid")) ;
   s (Printf.sprintf "    %s\n"
-       (dialect.gd_dev_memset0 "_scratch" "sizeof(uint32_t)*HET_SCRATCH_SIZE")) ;
+       (dialect.gd_dev_memset0 "_scratch" "sizeof(uint32_t)*HET_GPU_SCRATCH_WORDS")) ;
   s (Printf.sprintf "    %s\n"
        (dialect.gd_dev_memset0 "_gpu_iter" "sizeof(uint32_t)")) ;
   s (Printf.sprintf "    %s\n"
@@ -307,7 +307,7 @@ let dump_run_spawn_cpu_threads procs memory ch =
       and bufs = cpu_read_buffers memory cp in
       let core =
         Printf.sprintf
-          "(_aff ? ((HET_CPU_TEST_CORE0 + %d) %% _ncores) : -1)" !ti in
+          "(_aff ? ((HET_CPU_FIRST_CORE + %d) %% _ncores) : -1)" !ti in
       incr ti ;
       let fields =
         String.concat ", "
@@ -336,7 +336,7 @@ let dump_run_launch_kernel dialect identity memory procs ch =
        @ ["&_scratch" ; "&_scratch_loc" ; "&_gpu_iter" ;
           "&_stress_tally" ; "&_seed" ; "&_pre_pat" ; "&_mem_pat" ;
           "&_noise_ddr" ; "&_noise_words" ; "&_noise_blocks" ;
-          "&_noise_chunk" ; "&_noise_stride"]) in
+          "&_noise_words_per_round" ; "&_noise_stride"]) in
   s (Printf.sprintf "    void* _args[] = { %s };\n" args_addrs) ;
   s (Printf.sprintf
        "    %s _e = %s((void*)litmus_%s, dim3(_grid), dim3(HET_BLOCK_DIM), _args, 0, 0);\n"
@@ -356,8 +356,8 @@ let dump_run_join dialect procs ch =
        "    if (_s != %s) { fprintf(stderr, \"sync: %%s\\n\", %s(_s)); return 2; }\n"
        dialect.gd_success dialect.gd_errstr) ;
   s {|    __atomic_store_n(&_stress_go, 0, __ATOMIC_RELAXED);
-    for (int _e = 0; _e < _nEnemy; ++_e) pthread_join(_eth[_e], NULL);
-    for (int _t = 0; _t < _noise_cpu_n; ++_t) pthread_join(_nth[_t], NULL);
+    for (int _e = 0; _e < _nCpuStress; ++_e) pthread_join(_sth[_e], NULL);
+    for (int _t = 0; _t < _cpu_noise_n; ++_t) pthread_join(_nth[_t], NULL);
 |}
 
 let dump_run_stress_report dialect ch =
@@ -366,19 +366,19 @@ let dump_run_stress_report dialect ch =
        (dialect.gd_memcpy_d2h "_stress_tally_h" "_stress_tally"
           "sizeof(uint32_t)*HET_TALLY_N")) ;
   s {|    {
-      unsigned long long _er = _ct.enemy_rounds;
+      unsigned long long _sr = _ct.stress_rounds;
       unsigned long long _pl = _ct.preload_ops;
-      unsigned long long _nc = _ct.noise_cpu_rounds;
+      unsigned long long _nc = _ct.cpu_noise_rounds;
       uint32_t _ng = _stress_tally_h[HET_TALLY_NOISE];
-      fprintf(stderr, "HetLitmus cpu-stress: enemies=%u rounds=%llu accesses=%llu preload_hints=%llu | noise: cpu_threads=%d cpu_rounds=%llu gpu_blocks=%u/%u (max %u rounds) | aff_fail=%u place_fail=%d\n",
-              _ct.enemies_realised, _er, (unsigned long long)_ct.enemy_accesses,
-              _pl, _noise_cpu_n, _nc, _ng, _noise_blocks,
+      fprintf(stderr, "HetLitmus cpu-stress: stress_threads=%u rounds=%llu accesses=%llu preload_hints=%llu | noise: cpu_threads=%d cpu_rounds=%llu gpu_blocks=%u/%u (max %u rounds) | aff_fail=%u place_fail=%d\n",
+              _ct.stress_threads_realised, _sr, (unsigned long long)_ct.stress_accesses,
+              _pl, _cpu_noise_n, _nc, _ng, _noise_blocks,
               _stress_tally_h[HET_TALLY_NOISE_ROUNDS],
               _ct.aff_failures, _het_place_failures);
-      if (_nEnemy > 0 && _er == 0)
-        fprintf(stderr, "HetLitmus WARNING: %d CPU enemy thread(s) were spawned but completed ZERO rounds -- the CPU-side stress did NOT run.\n", _nEnemy);
-      if (_noise_cpu_n > 0 && _nc == 0)
-        fprintf(stderr, "HetLitmus WARNING: %d host noise thread(s) were spawned but completed ZERO rounds -- the host half of the host-device interconnect noise did NOT run.  This run is not interconnect-stressed.\n", _noise_cpu_n);
+      if (_nCpuStress > 0 && _sr == 0)
+        fprintf(stderr, "HetLitmus WARNING: %d CPU stress thread(s) were spawned but completed ZERO rounds -- the CPU-side stress did NOT run.\n", _nCpuStress);
+      if (_cpu_noise_n > 0 && _nc == 0)
+        fprintf(stderr, "HetLitmus WARNING: %d host noise thread(s) were spawned but completed ZERO rounds -- the host half of the host-device interconnect noise did NOT run.  This run is not interconnect-stressed.\n", _cpu_noise_n);
       if (HET_CPU_PRELOAD_PCT > 0 && _pl == 0)
         fprintf(stderr, "HetLitmus WARNING: HET_CPU_PRELOAD_PCT=%d but ZERO preload hints were issued -- the cache preload is INERT (HET_CPU_PRELOAD_LIVE in het_cpu_stress.h).\n", (int)HET_CPU_PRELOAD_PCT);
       if (_noise_blocks > 0 && _ng == 0)
@@ -408,26 +408,26 @@ let dump_run_record_stamp identity ch =
        tname) ;
   s "    _rec.N = SIZE_OF_TEST;\n" ;
 
-  (* The GPU stress, the enemies and the preload are requested where the
+  (* The GPU stress, the stress threads and the preload are requested where the
      layout gives them a place to run; the two noise halves are requested by
      their knobs alone, so a half the allocator refuses reads as dead
      (hetlitmus/docs/harness-reporting.md sec 3). *)
   s {|    _rec.stress_requested =
-        ((HET_PRE_STRESS_PCT > 0 || HET_MEM_STRESS_PCT > 0) ? HET_REQ_GPU_STRESS : 0u)
-      | ((_nEnemy > 0) ? HET_REQ_CPU_ENEMY : 0u)
+        ((HET_GPU_PRE_STRESS_PCT > 0 || HET_GPU_MEM_STRESS_PCT > 0) ? HET_REQ_GPU_STRESS : 0u)
+      | ((_nCpuStress > 0) ? HET_REQ_CPU_STRESS : 0u)
       | ((HET_CPU_PRELOAD_PCT > 0 && !_ct.preload_inert) ? HET_REQ_CPU_PRELOAD : 0u)
-      | ((HET_NOISE_CPU_THREADS > 0) ? HET_REQ_NOISE_CPU : 0u)
-      | ((_noiseBlocks > 0) ? HET_REQ_NOISE_GPU : 0u);
+      | ((HET_CPU_NOISE_THREADS > 0) ? HET_REQ_CPU_NOISE : 0u)
+      | ((_noiseBlocks > 0) ? HET_REQ_GPU_NOISE : 0u);
     _rec.stress_truncated = _stress_tally_h[HET_TALLY_TRUNC];
     _rec.gpu_stress_rounds = _stress_tally_h[HET_TALLY_STRESS_ROUNDS];
-    _rec.cpu_enemies = _ct.enemies_realised;
-    _rec.cpu_enemy_rounds = _ct.enemy_rounds;
-    _rec.cpu_enemy_accesses = _ct.enemy_accesses;
+    _rec.cpu_stress_threads = _ct.stress_threads_realised;
+    _rec.cpu_stress_rounds = _ct.stress_rounds;
+    _rec.cpu_stress_accesses = _ct.stress_accesses;
     _rec.cpu_preload_ops = _ct.preload_ops;
-    _rec.noise_cpu_rounds = _ct.noise_cpu_rounds;
-    _rec.noise_cpu_words = _ct.noise_cpu_words;
-    _rec.noise_gpu_blocks = _stress_tally_h[HET_TALLY_NOISE];
-    _rec.noise_gpu_rounds = _stress_tally_h[HET_TALLY_NOISE_ROUNDS];
+    _rec.cpu_noise_rounds = _ct.cpu_noise_rounds;
+    _rec.cpu_noise_words = _ct.cpu_noise_words;
+    _rec.gpu_noise_blocks = _stress_tally_h[HET_TALLY_NOISE];
+    _rec.gpu_noise_rounds = _stress_tally_h[HET_TALLY_NOISE_ROUNDS];
     _rec.cpu_aff_failures = _ct.aff_failures;
     _rec.place_failures = (uint32_t)_het_place_failures;
     _rec.noise_ws_mb = (uint32_t)HET_NOISE_MB;
@@ -494,7 +494,7 @@ let dump_run_report ch =
             (unsigned long long)_rec.iters_discarded,
             (unsigned long long)_rec.rdv_cap_cpu,
             (unsigned long long)_rec.rdv_cap_gpu,
-            (unsigned long)_cap_cpu, _cap_gpu, (int)HET_RELEASE_JITTER,
+            (unsigned long)_cap_cpu, _cap_gpu, (int)HET_RELEASE_JITTER_SPINS,
             (int)HET_RDV_MAX_DISCARD_PCT,
             HET_CAP_CALIBRATED ? "caps calibrated" : "caps UNCALIBRATED");
     het_obs_record_print(stdout, &_rec);
@@ -557,8 +557,8 @@ let dump_free dialect memory procs ch =
   s {|  free(_scratch_loc_h);
   free(_cpu_scratch);
   free(_cpu_idx);
-  free(_ea);
-  free(_eth);
+  free(_sa);
+  free(_sth);
   gd_free_noise(_noise_ddr);
   gd_free_noise(_noise_hbm);
 |}

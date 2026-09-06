@@ -131,7 +131,7 @@ stress_static_report() {
 }
 
 # ---- CPU + interconnect stress liveness (cpustresscheck.py) ---------------
-# The preload, the CPU enemies and the noise pair never enter the PTX.
+# The preload, the CPU stress threads and the noise pair never enter the PTX.
 cpustress_report() {
   _liveness_report "CPU + INTERCONNECT STRESS LIVENESS: does that layer run?" \
     CPUSTRESS "carry a dead CPU/interconnect stress layer" cpustresscheck.py "" \

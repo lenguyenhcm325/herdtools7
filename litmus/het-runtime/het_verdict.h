@@ -37,11 +37,11 @@
    the mechanism was requested, or a no-stress baseline would be COLD forever.
    Bit numbers are a wire format, vacancies (1) included: add at the top, do not
    renumber (hetlitmus/docs/harness-reporting.md sec 7). */
-#define HET_REQ_GPU_STRESS  (1u << 0)   /* HET_PRE_STRESS_PCT | HET_MEM_STRESS_PCT */
-#define HET_REQ_CPU_ENEMY   (1u << 2)   /* HET_CPU_ENEMIES                         */
+#define HET_REQ_GPU_STRESS  (1u << 0)   /* HET_GPU_PRE_STRESS_PCT | HET_GPU_MEM_STRESS_PCT */
+#define HET_REQ_CPU_STRESS  (1u << 2)   /* HET_CPU_STRESS_THREADS                  */
 #define HET_REQ_CPU_PRELOAD (1u << 3)   /* HET_CPU_PRELOAD_PCT && _PRELOAD_LIVE    */
-#define HET_REQ_NOISE_CPU   (1u << 4)   /* HET_NOISE_CPU_THREADS > 0               */
-#define HET_REQ_NOISE_GPU   (1u << 5)   /* HET_NOISE_GPU_BLOCKS                    */
+#define HET_REQ_CPU_NOISE   (1u << 4)   /* HET_CPU_NOISE_THREADS > 0               */
+#define HET_REQ_GPU_NOISE   (1u << 5)   /* HET_GPU_NOISE_BLOCKS                    */
 
 typedef struct het_obs_record {
   const char *test_name; int run_id;
@@ -75,10 +75,10 @@ typedef struct het_obs_record {
      A zero rounds/ops field means the mechanism did not run; a nonzero
      *_failures field means a pin or a placement was refused, so the topology
      is not the configured one. */
-  uint64_t cpu_enemy_rounds, cpu_enemy_accesses, cpu_preload_ops;
-  uint64_t noise_cpu_rounds, noise_cpu_words;
-  uint32_t noise_gpu_blocks, noise_gpu_rounds;
-  uint32_t cpu_enemies, cpu_aff_failures, place_failures;
+  uint64_t cpu_stress_rounds, cpu_stress_accesses, cpu_preload_ops;
+  uint64_t cpu_noise_rounds, cpu_noise_words;
+  uint32_t gpu_noise_blocks, gpu_noise_rounds;
+  uint32_t cpu_stress_threads, cpu_aff_failures, place_failures;
   /* What the run realised, not what it asked for: a noise working set below the
      last-level cache is served from cache and crosses nothing (HET_LLC_MB,
      het_cpu_stress.h). */
@@ -124,10 +124,10 @@ typedef enum {
 /* Why a run was DISQUALIFIED (its null is discarded): each names a mechanism
    that is dead, not merely suboptimal.  Vacant bits: 0, 1, 2, 4, 10, 11. */
 #define HET_DQ_STRESS_TRUNCATED (1u << 3)  /* stress stopped mid-run              */
-#define HET_DQ_CPU_ENEMY_DEAD   (1u << 5)
+#define HET_DQ_CPU_STRESS_DEAD  (1u << 5)
 #define HET_DQ_CPU_PRELOAD_DEAD (1u << 6)
-#define HET_DQ_NOISE_CPU_DEAD   (1u << 7)  /* NOT interconnect-stressed           */
-#define HET_DQ_NOISE_GPU_DEAD   (1u << 8)
+#define HET_DQ_CPU_NOISE_DEAD   (1u << 7)  /* NOT interconnect-stressed           */
+#define HET_DQ_GPU_NOISE_DEAD   (1u << 8)
 #define HET_DQ_GPU_STRESS_DEAD  (1u << 9)  /* het_do_stress requested, no round   */
 /* The readout did not run, nothing was scored, or more than
    HET_RDV_MAX_DISCARD_PCT of N was discarded at the cap. */
@@ -184,14 +184,14 @@ static het_verdict_t het_verdict(const het_obs_record *r,
      other. */
   if (het_dead(req, HET_REQ_GPU_STRESS,  r->gpu_stress_rounds))
                                                   dq |= HET_DQ_GPU_STRESS_DEAD;
-  if (het_dead(req, HET_REQ_CPU_ENEMY,   r->cpu_enemy_rounds))
-                                                  dq |= HET_DQ_CPU_ENEMY_DEAD;
+  if (het_dead(req, HET_REQ_CPU_STRESS,  r->cpu_stress_rounds))
+                                                  dq |= HET_DQ_CPU_STRESS_DEAD;
   if (het_dead(req, HET_REQ_CPU_PRELOAD, r->cpu_preload_ops))
                                                   dq |= HET_DQ_CPU_PRELOAD_DEAD;
-  if (het_dead(req, HET_REQ_NOISE_CPU,   r->noise_cpu_rounds))
-                                                  dq |= HET_DQ_NOISE_CPU_DEAD;
-  if (het_dead(req, HET_REQ_NOISE_GPU,   (uint64_t)r->noise_gpu_blocks))
-                                                  dq |= HET_DQ_NOISE_GPU_DEAD;
+  if (het_dead(req, HET_REQ_CPU_NOISE,   r->cpu_noise_rounds))
+                                                  dq |= HET_DQ_CPU_NOISE_DEAD;
+  if (het_dead(req, HET_REQ_GPU_NOISE,   (uint64_t)r->gpu_noise_blocks))
+                                                  dq |= HET_DQ_GPU_NOISE_DEAD;
 
   /* ---- 4. A dead mechanism means this run's zero is not a datum. */
   v = dq ? HET_COLD_INVALID : HET_NOT_OBSERVED;
@@ -214,8 +214,8 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     "HetObs %s run=%d N=%llu scored=%llu discarded=%llu target=%llu "
     "cap_cpu=%llu/%u cap_gpu=%llu/%u calibrated=%d vary=%d "
     "stress_trunc=%llu do_stress_rounds=%llu req=0x%x "
-    "enemies=%u enemy_rounds=%llu enemy_acc=%llu preload=%llu "
-    "noise_cpu=%llu/%lluw noise_gpu=%u/%u noise_ws=%uMB place=%u "
+    "stress_threads=%u stress_rounds=%llu stress_acc=%llu preload=%llu "
+    "cpu_noise=%llu/%lluw gpu_noise=%u/%u noise_ws=%uMB place=%u "
     "aff_fail=%u place_fail=%u\n",
     _r->test_name,
     _r->run_id,
@@ -230,13 +230,13 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     (unsigned long long)_r->stress_truncated,
     (unsigned long long)_r->gpu_stress_rounds,
     _r->stress_requested,
-    _r->cpu_enemies,
-    (unsigned long long)_r->cpu_enemy_rounds,
-    (unsigned long long)_r->cpu_enemy_accesses,
+    _r->cpu_stress_threads,
+    (unsigned long long)_r->cpu_stress_rounds,
+    (unsigned long long)_r->cpu_stress_accesses,
     (unsigned long long)_r->cpu_preload_ops,
-    (unsigned long long)_r->noise_cpu_rounds,
-    (unsigned long long)_r->noise_cpu_words,
-    _r->noise_gpu_blocks, _r->noise_gpu_rounds,
+    (unsigned long long)_r->cpu_noise_rounds,
+    (unsigned long long)_r->cpu_noise_words,
+    _r->gpu_noise_blocks, _r->gpu_noise_rounds,
     _r->noise_ws_mb, _r->place_mode,
     _r->cpu_aff_failures, _r->place_failures);
 }
@@ -274,13 +274,13 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
 static void het_print_config(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
     "  config: stress_requested=0x%x do_stress_rounds=%llu "
-    "enemies=%u enemy_rounds=%llu preload=%llu noise=%llu/%u (%u MB) place=%u\n",
+    "stress_threads=%u stress_rounds=%llu preload=%llu noise=%llu/%u (%u MB) place=%u\n",
     _r->stress_requested,
     (unsigned long long)_r->gpu_stress_rounds,
-    _r->cpu_enemies,
-    (unsigned long long)_r->cpu_enemy_rounds,
+    _r->cpu_stress_threads,
+    (unsigned long long)_r->cpu_stress_rounds,
     (unsigned long long)_r->cpu_preload_ops,
-    (unsigned long long)_r->noise_cpu_rounds, _r->noise_gpu_blocks,
+    (unsigned long long)_r->cpu_noise_rounds, _r->gpu_noise_blocks,
     _r->noise_ws_mb, _r->place_mode);
 }
 
@@ -343,22 +343,22 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       fprintf(_ch, "    - stress_truncated=%llu: stress STOPPED while tested "
                    "lanes were still running\n",
               (unsigned long long)_r->stress_truncated);
-    if (dq & HET_DQ_CPU_ENEMY_DEAD)
-      fprintf(_ch, "    - the CPU enemies were requested but completed ZERO rounds\n");
+    if (dq & HET_DQ_CPU_STRESS_DEAD)
+      fprintf(_ch, "    - the CPU stress threads were requested but completed ZERO rounds\n");
     if (dq & HET_DQ_CPU_PRELOAD_DEAD)
       fprintf(_ch, "    - the cache preload was requested but issued ZERO hints\n");
-    if (dq & HET_DQ_NOISE_CPU_DEAD)
+    if (dq & HET_DQ_CPU_NOISE_DEAD)
       fprintf(_ch, "    - the host half of the host-device interconnect noise "
                    "completed %llu round(s): this run is not "
                    "interconnect-stressed\n",
-              (unsigned long long)_r->noise_cpu_rounds);
-    if (dq & HET_DQ_NOISE_GPU_DEAD)
+              (unsigned long long)_r->cpu_noise_rounds);
+    if (dq & HET_DQ_GPU_NOISE_DEAD)
       fprintf(_ch, "    - the device half of the host-device interconnect noise "
                    "ran in %u block(s): this run is not interconnect-stressed\n",
-              _r->noise_gpu_blocks);
+              _r->gpu_noise_blocks);
     if (dq & HET_DQ_GPU_STRESS_DEAD)
-      fprintf(_ch, "    - the GPU scratchpad stress (HET_PRE_STRESS_PCT/"
-                   "HET_MEM_STRESS_PCT) was requested but completed ZERO "
+      fprintf(_ch, "    - the GPU scratchpad stress (HET_GPU_PRE_STRESS_PCT/"
+                   "HET_GPU_MEM_STRESS_PCT) was requested but completed ZERO "
                    "rounds\n");
     het_print_caveats(_ch, _r, cv);
     return;

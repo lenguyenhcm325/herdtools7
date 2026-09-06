@@ -118,17 +118,17 @@ column begins or ends in a fence is unambiguous.
 ### What a compile-time access pattern costs
 
 `het_do_stress` takes its access pattern as a runtime kernel argument: the
-driver reads `HET_PRE_STRESS_PATTERN`/`HET_MEM_STRESS_PATTERN` into host
-variables and passes them in (`litmus/hetDriverMain.ml`). Handed a
+driver reads `HET_GPU_PRE_STRESS_PATTERN`/`HET_GPU_MEM_STRESS_PATTERN` into
+host variables and passes them in (`litmus/hetDriverMain.ml`). Handed a
 compile-time constant instead, nvcc folds the if-chain to the one named
 branch, and for `ld;ld` (the pre-stress default) both loads are
 loop-invariant: nvcc hoists them, leaving one peeled pair of loads and an
 empty counting loop that still feeds the round tally. The bookkeeping
-survives; the traffic does not. Raising `HET_PRE_STRESS_PCT` adds nothing,
-since calling a hoisted loop more often issues no more loads, and `volatile`
-is not the fix, since the stress is meant to be plain cacheable traffic
-(`litmus/het-runtime/het_stress.h`). The runtime argument keeps each lane
-class's scratchpad load and store in the emitted PTX at every pattern.
+survives; the traffic does not. Raising `HET_GPU_PRE_STRESS_PCT` adds
+nothing, since calling a hoisted loop more often issues no more loads, and
+`volatile` is not the fix, since the stress is meant to be plain cacheable
+traffic (`litmus/het-runtime/het_stress.h`). The runtime argument keeps each
+lane class's scratchpad load and store in the emitted PTX at every pattern.
 
 ## GPU stress liveness at run time
 
@@ -147,17 +147,17 @@ the driver warns before the run (`litmus/hetDriverMain.ml`).
 
 ## CPU-side stress liveness
 
-The cache preload, the CPU enemy threads and the host half of the
+The cache preload, the CPU stress threads and the host half of the
 interconnect noise pair reach no PTX: the preload issues cache hints, the
-enemies are host code, the noise streams a disjoint buffer. Their liveness
-is two host-side properties: the mechanisms survive `-O2` on both host ISAs
-(static), and the CPU tally is nonzero when a mechanism is on and zero when
-it is off (dynamic).
+CPU stress threads are host code, the noise streams a disjoint buffer.
+Their liveness is two host-side properties: the mechanisms survive `-O2` on
+both host ISAs (static), and the CPU tally is nonzero when a mechanism is on
+and zero when it is off (dynamic).
 
-`volatile` on the enemy's discarded load `(void)*l` is load-bearing. It
-lowers to a load into the zero register; without it the load is deleted,
+`volatile` on the stress thread's discarded load `(void)*l` is load-bearing.
+It lowers to a load into the zero register; without it the load is deleted,
 `ld;ld` becomes a no-op, `st;ld` and `ld;st` lose their read half and
 `st;st` collapses to one store, while the loop and the argument-struct
-`ldr`s remain. The enemy's read traffic is therefore its `ldr xzr` /
+`ldr`s remain. The stress thread's read traffic is therefore its `ldr xzr` /
 `ldr wzr` loads and nothing else, and the four sigma branches declare
 2+1+1+0 scratchpad stores between them.

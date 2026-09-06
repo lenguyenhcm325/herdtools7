@@ -52,11 +52,11 @@ proc's own test variables, and the affinity call precedes the rendezvous.
   $ grep -A2 'static void\* cpu_thread_P0' $MP.cu | grep -c 'het_cpu_affinity(a->_core, a->_tally)'
   1
 
-(c) the enemy and noise traffic is disjoint from the test: no stress object is
+(c) the stress-thread and noise traffic is disjoint from the test: no stress object is
 ever x, y or barrier [Sorensen16 sec 1].
-  $ grep -cE '_ea\[_e\]\.(scratch|idx) *= *(_cpu_scratch|_cpu_idx)' $MP.cu
+  $ grep -cE '_sa\[_e\]\.(scratch|idx) *= *(_cpu_scratch|_cpu_idx)' $MP.cu
   2
-  $ grep -cE '_ea\[_e\]\.(scratch|idx) *= *(x|y|barrier)' $MP.cu || true
+  $ grep -cE '_sa\[_e\]\.(scratch|idx) *= *(x|y|barrier)' $MP.cu || true
   0
   $ grep -cE '_na\[_t\]\.buf *= *\(volatile const uint64_t\*\)_noise_hbm \+ \(uint64_t\)_t \* _noise_slice' $MP.cu
   1
@@ -75,28 +75,28 @@ malloc for the CPU scratchpad, gd_alloc_noise for the noise buffers.
   0
 
 (e) the stress orchestration order, which no gate script reads: raise stress_go,
-then spawn the enemies and the noise, then the test threads and the kernel.
+then spawn the stress threads and the noise, then the test threads and the kernel.
   $ GO=$(grep -n '__atomic_store_n(&_stress_go, 1' $MP.cu | cut -d: -f1)
-  $ EN=$(grep -n 'pthread_create(&_eth' $MP.cu | cut -d: -f1)
+  $ EN=$(grep -n 'pthread_create(&_sth' $MP.cu | cut -d: -f1)
   $ TH=$(grep -n ', cpu_thread_' $MP.cu | head -1 | cut -d: -f1)
   $ TZ=$(grep -n ', cpu_thread_' $MP.cu | tail -1 | cut -d: -f1)
   $ LA=$(grep -n 'cudaLaunchCooperativeKernel' $MP.cu | cut -d: -f1)
   $ [ -n "$TH" ] && [ -n "$TZ" ] && echo 'test-thread spawns found'
   test-thread spawns found
-  $ [ "$GO" -lt "$EN" ] && [ "$EN" -lt "$TH" ] && [ "$TZ" -lt "$LA" ] && echo 'go < enemies < test threads (all) < launch'
-  go < enemies < test threads (all) < launch
+  $ [ "$GO" -lt "$EN" ] && [ "$EN" -lt "$TH" ] && [ "$TZ" -lt "$LA" ] && echo 'go < stress threads < test threads (all) < launch'
+  go < stress threads < test threads (all) < launch
 
 and the flag comes down only after the TERMINAL sync -- not gd_alloc_noise's own
 one-shot sync -- so the stress covers the whole tested window and no more.
   $ SY=$(grep -n '_s = cudaDeviceSynchronize' $MP.cu | cut -d: -f1)
   $ OFF=$(grep -n '__atomic_store_n(&_stress_go, 0' $MP.cu | cut -d: -f1)
-  $ JN=$(grep -n 'pthread_join(_eth' $MP.cu | cut -d: -f1)
-  $ [ "$SY" -lt "$OFF" ] && [ "$OFF" -lt "$JN" ] && echo 'device sync < lower go < join enemies'
-  device sync < lower go < join enemies
+  $ JN=$(grep -n 'pthread_join(_sth' $MP.cu | cut -d: -f1)
+  $ [ "$SY" -lt "$OFF" ] && [ "$OFF" -lt "$JN" ] && echo 'device sync < lower go < join stress threads'
+  device sync < lower go < join stress threads
 
 (f) sigma is read host-side and handed over as a runtime field, never left for
 the compiler to fold.
-  $ grep -c '_ea\[_e\].seq     = (uint32_t)HET_CPU_ENEMY_SEQ;' $MP.cu
+  $ grep -c '_sa\[_e\].pattern          = (uint32_t)HET_CPU_STRESS_PATTERN;' $MP.cu
   1
 
 (g) placement binds the shared pages to a NUMA node and reads the home back, so a
@@ -131,20 +131,20 @@ persistent grid, never as a second __global__.
   1
   $ grep -c 'volatile const uint64_t\* _nb = (volatile const uint64_t\*)_noise_ddr' $MP.cu
   1
-  $ grep -c 'if (pthread_create(&_nth\[_t\], NULL, het_cpu_noise, &_na\[_t\]) == 0) _noise_cpu_n++;' $MP.cu
+  $ grep -c 'if (pthread_create(&_nth\[_t\], NULL, het_cpu_noise, &_na\[_t\]) == 0) _cpu_noise_n++;' $MP.cu
   1
 
-The host half is HET_NOISE_CPU_THREADS threads over equal disjoint slices, each
-one subtracted from the enemy budget.
-  $ grep -c '_nEnemy = _ncores - _nCpuTest - HET_NOISE_CPU_THREADS - HET_CPU_RESERVE_CORES;' $MP.cu
+The host half is HET_CPU_NOISE_THREADS threads over equal disjoint slices, each
+one subtracted from the stress-thread budget.
+  $ grep -c '_nCpuStress = _ncores - _nCpuTest - HET_CPU_NOISE_THREADS - HET_CPU_RESERVE_CORES;' $MP.cu
   1
-  $ grep -c 'int _ecore0 = HET_CPU_TEST_CORE0 + _nCpuTest + HET_NOISE_CPU_THREADS;' $MP.cu
+  $ grep -c 'int _stress_core0 = HET_CPU_FIRST_CORE + _nCpuTest + HET_CPU_NOISE_THREADS;' $MP.cu
   1
-  $ grep -c '_noise_slice = HET_NOISE_CPU_THREADS > 0 ? _noise_words / HET_NOISE_CPU_THREADS : 0;' $MP.cu
+  $ grep -c '_noise_slice = HET_CPU_NOISE_THREADS > 0 ? _noise_words / HET_CPU_NOISE_THREADS : 0;' $MP.cu
   1
-  $ grep -c 'for (int _t = 0; _t < HET_NOISE_CPU_THREADS; ++_t) {' $MP.cu
+  $ grep -c 'for (int _t = 0; _t < HET_CPU_NOISE_THREADS; ++_t) {' $MP.cu
   1
-  $ grep -A1 '#ifndef HET_NOISE_CPU_THREADS' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_NOISE_CPU_THREADS 1'
+  $ grep -A1 '#ifndef HET_CPU_NOISE_THREADS' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_CPU_NOISE_THREADS 1'
   1
 
 The working set is derived from HET_NOISE_MB and guarded against the last-level
@@ -180,7 +180,7 @@ placed one is a system malloc.
 
 (i) every counter of this layer is REPORTED, because a mechanism that has
 silently stopped working looks exactly like one that is working.
-  $ grep -c 'HetLitmus WARNING: %d CPU enemy thread(s) were spawned but completed ZERO rounds' $MP.cu
+  $ grep -c 'HetLitmus WARNING: %d CPU stress thread(s) were spawned but completed ZERO rounds' $MP.cu
   1
   $ grep -c 'ZERO preload hints were issued' $MP.cu
   1
@@ -195,9 +195,9 @@ silently stopped working looks exactly like one that is working.
 
 (i2) the two noise halves are requested by their knobs, not by what survived
 allocation, so a refused half reads as requested-but-dead.
-  $ grep -c '| ((HET_NOISE_CPU_THREADS > 0) ? HET_REQ_NOISE_CPU : 0u)' $MP.cu
+  $ grep -c '| ((HET_CPU_NOISE_THREADS > 0) ? HET_REQ_CPU_NOISE : 0u)' $MP.cu
   1
-  $ grep -c '| ((_noiseBlocks > 0) ? HET_REQ_NOISE_GPU : 0u);' $MP.cu
+  $ grep -c '| ((_noiseBlocks > 0) ? HET_REQ_GPU_NOISE : 0u);' $MP.cu
   1
 
 (k) a shape whose outcome carries a location column has one kind of CPU thread

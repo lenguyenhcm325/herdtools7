@@ -74,23 +74,23 @@ K_RUN_SEED = 1000000
 MAX_ATTEMPTS = 16
 
 STRESS_BLOCK_SET = (0, 1, 2, 4, 8, 16, 32, 64)
-CPU_STRIDE_SET = (8, 16, 32, 64, 128, 256)
+CPU_WORDS_PER_REGION_SET = (8, 16, 32, 64, 128, 256)
 NOISE_BLOCK_SET = (0, 1, 2, 4, 8, 16)
-NOISE_CPU_THREAD_SET = (0, 1, 2, 4, 8, 16, 32)   # 00-environment-design.md sec 3.8
+CPU_NOISE_THREAD_SET = (0, 1, 2, 4, 8, 16, 32)   # 00-environment-design.md sec 3.8
 NOISE_STRIDE_SET = (1, 8, 32)
-ENEMIES_MAX = 12
+CPU_STRESS_THREADS_MAX = 12
 
 # Every knob the search turns, in one joint draw.  Order is the stream: a knob
 # inserted above another redraws it into a different value.
-KNOBS = ("HET_MEM_STRESS_PCT", "HET_MEM_STRESS_ITER", "HET_MEM_STRESS_PATTERN",
-         "HET_PRE_STRESS_PCT", "HET_PRE_STRESS_ITER", "HET_PRE_STRESS_PATTERN",
-         "HET_STRESS_LINE_SIZE", "HET_STRESS_TARGETS", "HET_STRESS_ASSIGN",
-         "HET_BLOCK_DIM", "HET_STRESS_BLOCKS",
-         "HET_CPU_ENEMIES", "HET_CPU_SCRATCH_WORDS", "HET_CPU_SPREAD",
-         "HET_CPU_STRIDE", "HET_CPU_ENEMY_SEQ", "HET_CPU_PRELOAD_PCT",
-         "HET_NOISE_GPU_BLOCKS", "HET_NOISE_CPU_THREADS", "HET_NOISE_MB",
+KNOBS = ("HET_GPU_MEM_STRESS_PCT", "HET_GPU_MEM_STRESS_ROUNDS", "HET_GPU_MEM_STRESS_PATTERN",
+         "HET_GPU_PRE_STRESS_PCT", "HET_GPU_PRE_STRESS_ROUNDS", "HET_GPU_PRE_STRESS_PATTERN",
+         "HET_GPU_WORDS_PER_REGION", "HET_GPU_SPREAD", "HET_GPU_STRESS_ASSIGN",
+         "HET_BLOCK_DIM", "HET_GPU_STRESS_BLOCKS",
+         "HET_CPU_STRESS_THREADS", "HET_CPU_SCRATCH_WORDS", "HET_CPU_SPREAD",
+         "HET_CPU_WORDS_PER_REGION", "HET_CPU_STRESS_PATTERN", "HET_CPU_PRELOAD_PCT",
+         "HET_GPU_NOISE_BLOCKS", "HET_CPU_NOISE_THREADS", "HET_NOISE_MB",
          "HET_NOISE_STRIDE",
-         "HET_SCRATCH_SIZE")           # derived, never drawn
+         "HET_GPU_SCRATCH_WORDS")           # derived, never drawn
 
 
 def draw_knobs(seed, i, env, attempt):
@@ -106,36 +106,36 @@ def draw_knobs(seed, i, env, attempt):
     lo = env.block_dim_lo
     bdim = lo + 2 * (d(18) % ((256 - lo) // 2 + 1))
     blocks = -1 if d(20) % 2 == 0 else STRESS_BLOCK_SET[d(21) % len(STRESS_BLOCK_SET)]
-    nt_set = [n for n in NOISE_CPU_THREAD_SET if n <= max(0, env.spare_cores)]
+    nt_set = [n for n in CPU_NOISE_THREAD_SET if n <= max(0, env.spare_cores)]
     noise_threads = nt_set[d(36) % len(nt_set)]
     # -1 = auto and 0 = none are distinct requests, so both sit in the one set.
-    e_hi = min(ENEMIES_MAX, max(0, env.spare_cores - noise_threads))
+    e_hi = min(CPU_STRESS_THREADS_MAX, max(0, env.spare_cores - noise_threads))
     e_pick = d(22) % (e_hi + 2)
-    enemies = -1 if e_pick == 0 else e_pick - 1
+    stress_threads = -1 if e_pick == 0 else e_pick - 1
     k = {
-        "HET_MEM_STRESS_PCT": d(0) % 101,
-        "HET_MEM_STRESS_ITER": d(2) % 1025,
-        "HET_MEM_STRESS_PATTERN": d(4) % 4,
-        "HET_PRE_STRESS_PCT": d(6) % 101,
-        "HET_PRE_STRESS_ITER": d(8) % 129,
-        "HET_PRE_STRESS_PATTERN": d(10) % 4,
-        "HET_STRESS_LINE_SIZE": line,
-        "HET_STRESS_TARGETS": targets,
-        "HET_STRESS_ASSIGN": d(16) % 2,
+        "HET_GPU_MEM_STRESS_PCT": d(0) % 101,
+        "HET_GPU_MEM_STRESS_ROUNDS": d(2) % 1025,
+        "HET_GPU_MEM_STRESS_PATTERN": d(4) % 4,
+        "HET_GPU_PRE_STRESS_PCT": d(6) % 101,
+        "HET_GPU_PRE_STRESS_ROUNDS": d(8) % 129,
+        "HET_GPU_PRE_STRESS_PATTERN": d(10) % 4,
+        "HET_GPU_WORDS_PER_REGION": line,
+        "HET_GPU_SPREAD": targets,
+        "HET_GPU_STRESS_ASSIGN": d(16) % 2,
         "HET_BLOCK_DIM": bdim,
-        "HET_STRESS_BLOCKS": blocks,
-        "HET_CPU_ENEMIES": enemies,
+        "HET_GPU_STRESS_BLOCKS": blocks,
+        "HET_CPU_STRESS_THREADS": stress_threads,
         "HET_CPU_SCRATCH_WORDS": 1 << (15 + d(24) % 7),
         "HET_CPU_SPREAD": 1 + d(26) % 16,
-        "HET_CPU_STRIDE": CPU_STRIDE_SET[d(28) % len(CPU_STRIDE_SET)],
-        "HET_CPU_ENEMY_SEQ": d(30) % 4,
+        "HET_CPU_WORDS_PER_REGION": CPU_WORDS_PER_REGION_SET[d(28) % len(CPU_WORDS_PER_REGION_SET)],
+        "HET_CPU_STRESS_PATTERN": d(30) % 4,
         "HET_CPU_PRELOAD_PCT": d(32) % 101,
-        "HET_NOISE_GPU_BLOCKS": NOISE_BLOCK_SET[d(34) % len(NOISE_BLOCK_SET)],
-        "HET_NOISE_CPU_THREADS": noise_threads,
+        "HET_GPU_NOISE_BLOCKS": NOISE_BLOCK_SET[d(34) % len(NOISE_BLOCK_SET)],
+        "HET_CPU_NOISE_THREADS": noise_threads,
         "HET_NOISE_MB": env.noise_mb_set[d(38) % len(env.noise_mb_set)],
         "HET_NOISE_STRIDE": NOISE_STRIDE_SET[d(40) % len(NOISE_STRIDE_SET)],
         # [CudaLitmus] derivation
-        "HET_SCRATCH_SIZE": 32 * line * targets,
+        "HET_GPU_SCRATCH_WORDS": 32 * line * targets,
     }
     return k
 
@@ -143,16 +143,16 @@ def draw_knobs(seed, i, env, attempt):
 def violated(k, env):
     """The draw-time layer: what a configuration cannot ask for, before a
     compiler or a device is spent on it."""
-    if k["HET_CPU_SPREAD"] * k["HET_CPU_STRIDE"] > k["HET_CPU_SCRATCH_WORDS"]:
-        return "spread x stride exceeds the enemy scratchpad"
+    if k["HET_CPU_SPREAD"] * k["HET_CPU_WORDS_PER_REGION"] > k["HET_CPU_SCRATCH_WORDS"]:
+        return "spread x words per region exceeds the CPU stress scratchpad"
     # An auto (-1) population that realizes empty is the launch-time layer's to kill.
-    if k["HET_STRESS_BLOCKS"] == 0 and k["HET_MEM_STRESS_PCT"] > 0:
+    if k["HET_GPU_STRESS_BLOCKS"] == 0 and k["HET_GPU_MEM_STRESS_PCT"] > 0:
         return "mem-stress asked for with an explicit zero stress-block population"
-    n = k["HET_CPU_ENEMIES"]
+    n = k["HET_CPU_STRESS_THREADS"]
     if n < 0:
-        n = max(0, env.ncores - env.cpu_test - k["HET_NOISE_CPU_THREADS"] - env.reserve)
-    if n + k["HET_NOISE_CPU_THREADS"] + env.cpu_test + env.reserve > env.ncores:
-        return "enemies + noise threads + test threads + reserve exceed %d core(s)" % env.ncores
+        n = max(0, env.ncores - env.cpu_test - k["HET_CPU_NOISE_THREADS"] - env.reserve)
+    if n + k["HET_CPU_NOISE_THREADS"] + env.cpu_test + env.reserve > env.ncores:
+        return "stress threads + noise threads + test threads + reserve exceed %d core(s)" % env.ncores
     if k["HET_NOISE_MB"] < 2 * env.llc_mb:
         return "noise working set is below 2 x the last-level cache"
     return None
@@ -316,7 +316,7 @@ def build(a, env, k, timeout):
 GEOM_RE = re.compile(r"^HetLitmus: blockDim=(\d+) grid=(\d+) \(test=(\d+) "
                      r"stress=(\d+), co-resident cap=(\d+)\)")
 CPUCFG_RE = re.compile(r"^HetLitmus cpu-stress: cores=(\d+) test=(\d+) "
-                       r"enemies=(-?\d+) .*\| noise: gpu_blocks=(\d+) cpu_threads=(\d+)")
+                       r"stress_threads=(-?\d+) .*\| noise: gpu_blocks=(\d+) cpu_threads=(\d+)")
 EMPTY_RE = re.compile(r"^HetLitmus WARNING: the mem-stress population is EMPTY")
 OVERCAP_RE = re.compile(r"^grid (\d+) exceeds co-resident cap (\d+)")
 
@@ -345,9 +345,9 @@ def realized(lines):
         m = CPUCFG_RE.match(line)
         if m:
             out.update(cores=int(m.group(1)), cpu_test=int(m.group(2)),
-                       enemies=int(m.group(3)),
-                       noise_gpu_blocks=int(m.group(4)),
-                       noise_cpu=int(m.group(5)))
+                       stress_threads=int(m.group(3)),
+                       gpu_noise_blocks=int(m.group(4)),
+                       cpu_noise_threads=int(m.group(5)))
     return out
 
 
@@ -423,8 +423,8 @@ def score(lines, max_discard_pct):
         if kv is not None:
             weak += inum(kv, "target")
             live = {n: kv.get(n, "") for n in
-                    ("req", "do_stress_rounds", "stress_trunc", "enemies",
-                     "enemy_rounds", "preload", "noise_cpu", "noise_gpu")}
+                    ("req", "do_stress_rounds", "stress_trunc", "stress_threads",
+                     "stress_rounds", "preload", "cpu_noise", "gpu_noise")}
     if hs is None:
         return None, {"status": "error", "weak": 0,
                       "why": "no HetStats machine line"}

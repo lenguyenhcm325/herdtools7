@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """HetLitmus -- the CPU + interconnect stress-liveness gate, sibling of
 stresscheck.py (hetlitmus/docs/faithfulness.md, "CPU-side stress liveness").
-The cache preload, the CPU enemies and the interconnect noise reach no PTX, so a
-miss here means a null was scored on a layer the optimiser removed or that never
-ran.  Static, off the -O2 asm of each host ISA's own rendering of the rep:
-preload-prims-aarch64, preload-prims-x86, enemy-loop, enemy-seq-runtime.  A rep
-with no x86_64 rendering FAILS rather than skipping its arm.  Dynamic, on this
-host:
+The cache preload, the CPU stress threads and the interconnect noise reach no
+PTX, so a miss here means a null was scored on a layer the optimiser removed or
+that never ran.  Static, off the -O2 asm of each host ISA's own rendering of the
+rep: preload-prims-aarch64, preload-prims-x86, stress-loop,
+stress-pattern-runtime.  A rep with no x86_64 rendering FAILS rather than
+skipping its arm.  Dynamic, on this host:
 stress-live, stress-off-zero, first-touch.  Structural, on the emitted driver:
 preload-guard-field and preload-guard-term.
 
@@ -35,7 +35,7 @@ AARCH64_TRIPLE = "aarch64-linux-gnu"
 X86_TRIPLE = "x86_64-linux-gnu"
 HETX86_DIR = census.X86_DIR
 X86_REPS = {"MP-cg-sys-ra.acq": "MP-cg-sys-plain.acq-x86_64"}
-SEQS = (0, 1, 2, 3)
+PATTERNS = (0, 1, 2, 3)
 
 # The cache primitives, per ISA: litmus7's own (libdir/_<isa>/_cache.h) and the
 # whole of the preload -- absent from the object, the preload is inert.
@@ -49,7 +49,7 @@ X86_PRIMS = {
     "prefetcht0": re.compile(r"\bprefetcht0\b"),
 }
 
-# The enemy's discarded loads ONLY (`(void)*l' lowers to a zero-register load);
+# The stress thread's discarded loads ONLY (`(void)*l' lowers to a zero-register load);
 # every `ldr' stays nonzero from the argument struct (faithfulness.md).
 A64_DISCARD_LOAD = re.compile(r"^\s+ldr\s+(xzr|wzr)\s*,")
 A64_STORE = re.compile(r"^\s+str\b")
@@ -63,7 +63,7 @@ A64_BRANCH = re.compile(r"^\s+(b|b\.[a-z]+|cbn?z|tbn?z)\s+(?:.*,\s*)?(\.[\w$.]+)
 
 # The four sigma branches declare 2+1+1+0 scratchpad stores between them; a
 # non-volatile build lands under that (faithfulness.md, "CPU-side stress liveness").
-MIN_ENEMY_STORES = 4
+MIN_STRESS_STORES = 4
 
 # The preload term of the emitted driver's stress_requested word
 # (hetDriverMain.ml).
@@ -85,7 +85,7 @@ PROBE_C = r"""
 #include "het_cpu_stress.h"
 
 #define PROBE_WORDS (1u << 16)
-#define PROBE_ENEMIES 2
+#define PROBE_STRESS_THREADS 2
 #define PROBE_NOISE_THREADS 4
 #define PROBE_NOISE_BYTES (256ull * 1024ull * 1024ull)   /* 256 MiB */
 
@@ -101,7 +101,7 @@ static long probe_rss_kb(void) {
 
 int main(int argc, char** argv) {
   int on = (argc > 1 && argv[1][0] == '1');
-  int nEnemy = on ? PROBE_ENEMIES : 0;
+  int nStress = on ? PROBE_STRESS_THREADS : 0;
   int pct    = on ? 100 : 0;
   int noise  = on ? PROBE_NOISE_THREADS : 0;
 
@@ -109,7 +109,7 @@ int main(int argc, char** argv) {
   memset(&t, 0, sizeof t);
   int go = 0;
 
-  uint32_t nreg = PROBE_WORDS / HET_CPU_STRIDE;
+  uint32_t nreg = PROBE_WORDS / HET_CPU_WORDS_PER_REGION;
   uint32_t spread = (HET_CPU_SPREAD < nreg) ? (uint32_t)HET_CPU_SPREAD : nreg;
   uint64_t* scratch = (uint64_t*)calloc(PROBE_WORDS, sizeof(uint64_t));
   uint32_t* idx = (uint32_t*)malloc(nreg * sizeof(uint32_t));
@@ -117,35 +117,36 @@ int main(int argc, char** argv) {
   if (!scratch || !idx || !nbuf) return 3;
   het_cpu_shuffle(idx, nreg, 1u);
 
-  het_cpu_enemy_args ea[PROBE_ENEMIES];
-  pthread_t eth[PROBE_ENEMIES];
+  het_cpu_stress_args sa[PROBE_STRESS_THREADS];
+  pthread_t sth[PROBE_STRESS_THREADS];
   het_cpu_noise_args na[PROBE_NOISE_THREADS];
   pthread_t nth[PROBE_NOISE_THREADS];
 
   /* Raise the flag BEFORE spawning -- the emitted driver does the same, and the
-     opposite order is one of the ways an enemy population never runs. */
+     opposite order is one of the ways a stress-thread population never runs. */
   __atomic_store_n(&go, 1, __ATOMIC_RELAXED);
-  for (int e = 0; e < nEnemy; e++) {
-    ea[e].scratch = scratch;
-    ea[e].idx     = idx;
-    ea[e].nidx    = spread;
-    ea[e].stride  = (uint32_t)HET_CPU_STRIDE;
-    ea[e].seq     = (uint32_t)HET_CPU_ENEMY_SEQ;
-    ea[e].core    = -1;   /* the probe does NOT pin: a cgroup may forbid it, and a
-                             refused pin says nothing about liveness */
-    ea[e].go      = &go;
-    ea[e].tally   = &t;
-    pthread_create(&eth[e], NULL, het_cpu_enemy, &ea[e]);
+  for (int e = 0; e < nStress; e++) {
+    sa[e].scratch          = scratch;
+    sa[e].idx              = idx;
+    sa[e].nidx             = spread;
+    sa[e].words_per_region = (uint32_t)HET_CPU_WORDS_PER_REGION;
+    sa[e].pattern          = (uint32_t)HET_CPU_STRESS_PATTERN;
+    sa[e].core             = -1;   /* the probe does NOT pin: a cgroup may forbid
+                                      it, and a refused pin says nothing about
+                                      liveness */
+    sa[e].go               = &go;
+    sa[e].tally            = &t;
+    pthread_create(&sth[e], NULL, het_cpu_stress, &sa[e]);
   }
   for (int n = 0; n < noise; n++) {
-    na[n].buf    = (volatile const uint64_t*)nbuf
+    na[n].buf             = (volatile const uint64_t*)nbuf
                  + (uint64_t)n * (PROBE_WORDS / PROBE_NOISE_THREADS);
-    na[n].words  = PROBE_WORDS / PROBE_NOISE_THREADS;
-    na[n].chunk  = 256;
-    na[n].stride = 1;
-    na[n].core   = -1;
-    na[n].go     = &go;
-    na[n].tally  = &t;
+    na[n].words           = PROBE_WORDS / PROBE_NOISE_THREADS;
+    na[n].words_per_round = 256;
+    na[n].stride          = 1;
+    na[n].core            = -1;
+    na[n].go              = &go;
+    na[n].tally           = &t;
     pthread_create(&nth[n], NULL, het_cpu_noise, &na[n]);
   }
 
@@ -165,7 +166,7 @@ int main(int argc, char** argv) {
   nanosleep(&ts, NULL);
 
   __atomic_store_n(&go, 0, __ATOMIC_RELAXED);
-  for (int e = 0; e < nEnemy; e++) pthread_join(eth[e], NULL);
+  for (int e = 0; e < nStress; e++) pthread_join(sth[e], NULL);
   for (int n = 0; n < noise; n++) pthread_join(nth[n], NULL);
 
   /* First-touch, both halves through RSS: reading the buffer leaves it on the
@@ -188,14 +189,14 @@ int main(int argc, char** argv) {
            a2);
   }
 
-  printf("enemy_rounds=%llu enemy_accesses=%llu preload_ops=%llu "
-         "noise_rounds=%llu noise_words=%llu enemies=%u preload_live=%d\n",
-         (unsigned long long)t.enemy_rounds,
-         (unsigned long long)t.enemy_accesses,
+  printf("stress_rounds=%llu stress_accesses=%llu preload_ops=%llu "
+         "noise_rounds=%llu noise_words=%llu stress_threads=%u preload_live=%d\n",
+         (unsigned long long)t.stress_rounds,
+         (unsigned long long)t.stress_accesses,
          (unsigned long long)t.preload_ops,
-         (unsigned long long)t.noise_cpu_rounds,
-         (unsigned long long)t.noise_cpu_words,
-         t.enemies_realised,
+         (unsigned long long)t.cpu_noise_rounds,
+         (unsigned long long)t.cpu_noise_words,
+         t.stress_threads_realised,
          (int)HET_CPU_PRELOAD_LIVE);
   free(scratch); free(idx); free(nbuf);
   return 0;
@@ -249,19 +250,19 @@ def asm_of(cpu_c, triple, extra=()):
     return r.stdout
 
 
-def enemy_body(asm_text):
-    """The assembly of het_cpu_enemy only: a load elsewhere in the file must not
-    make a deleted enemy loop look alive."""
+def stress_body(asm_text):
+    """The assembly of het_cpu_stress only: a load elsewhere in the file must not
+    make a deleted stress loop look alive."""
     lines = asm_text.splitlines()
     start = None
     for i, ln in enumerate(lines):
-        if re.match(r"^het_cpu_enemy:", ln):
+        if re.match(r"^het_cpu_stress:", ln):
             start = i
             break
     if start is None:
         return None
     for j in range(start + 1, len(lines)):
-        if re.match(r"^\s*\.size\s+het_cpu_enemy", lines[j]):
+        if re.match(r"^\s*\.size\s+het_cpu_stress", lines[j]):
             return lines[start:j]
         # a following global label ends the body on toolchains without .size
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*:", lines[j]) and \
@@ -292,10 +293,10 @@ def count_traffic_loops(body):
     return n
 
 
-def count_enemy_ops(asm_text):
-    """(discarded loads, stores, traffic loops) in het_cpu_enemy's compiled body;
+def count_stress_ops(asm_text):
+    """(discarded loads, stores, traffic loops) in het_cpu_stress's compiled body;
     see A64_DISCARD_LOAD and count_traffic_loops for what each counts."""
-    body = enemy_body(asm_text)
+    body = stress_body(asm_text)
     if body is None:
         return None
     ld = sum(1 for ln in body if A64_DISCARD_LOAD.match(ln))
@@ -324,8 +325,8 @@ def check(litmus_path):
         # Never pass vacuously on a harness with no CPU stress layer at all.
         with open(cu) as f:
             cu_src = f.read()
-        if "het_cpu_preload" not in cu_src or "het_cpu_enemy" not in cu_src:
-            fail("%s carries NO CPU stress layer (no het_cpu_preload / het_cpu_enemy "
+        if "het_cpu_preload" not in cu_src or "het_cpu_stress," not in cu_src:
+            fail("%s carries NO CPU stress layer (no het_cpu_preload / het_cpu_stress "
                  "call): per-device stress alone does not widen the CROSS-device "
                  "window the het weak behaviour lives in." % name)
             return ok[0], lines
@@ -359,47 +360,47 @@ def check(litmus_path):
             note("  preload-prims-x86: clflush and prefetcht0 present in the -O2 "
                  "asm of the x86_64 rendering")
 
-        # ---- enemy-loop: it survived the optimiser -------------------------
-        got = count_enemy_ops(a64)
+        # ---- stress-loop: it survived the optimiser -------------------------
+        got = count_stress_ops(a64)
         if got is None:
-            fail("enemy-loop: het_cpu_enemy is not in the compiled AArch64 object "
+            fail("stress-loop: het_cpu_stress is not in the compiled AArch64 object "
                  "at all")
             return ok[0], lines
         ld, st, br = got
         if ld < 1:
-            fail("enemy-loop: het_cpu_enemy's -O2 body performs NO discarded load "
+            fail("stress-loop: het_cpu_stress's -O2 body performs NO discarded load "
                  "(no `ldr xzr'), so the read side of every access pattern was "
-                 "optimised away.  Restore `volatile' on het_cpu_enemy_args.scratch "
+                 "optimised away.  Restore `volatile' on het_cpu_stress_args.scratch "
                  "and on the local pointer.")
-        if st < MIN_ENEMY_STORES:
-            fail("enemy-loop: het_cpu_enemy's -O2 body carries only %d store(s), "
+        if st < MIN_STRESS_STORES:
+            fail("stress-loop: het_cpu_stress's -O2 body carries only %d store(s), "
                  "expected at least %d (the sigma branches declare 2+1+1+0).  The "
                  "scratchpad must be both READ and WRITTEN: the most effective "
                  "access sequences mix loads and stores [Sorensen16 sec 3.3]."
-                 % (st, MIN_ENEMY_STORES))
+                 % (st, MIN_STRESS_STORES))
         if br < 1:
-            fail("enemy-loop: het_cpu_enemy's -O2 body has NO back edge around its "
-                 "scratchpad traffic -- an enemy that touches the scratchpad once is "
+            fail("stress-loop: het_cpu_stress's -O2 body has NO back edge around its "
+                 "scratchpad traffic -- a stress thread that touches the scratchpad once is "
                  "not a stressor.")
         if ok[0]:
-            note("  enemy-loop: het_cpu_enemy survives -O2 -- %d discarded load(s), "
+            note("  stress-loop: het_cpu_stress survives -O2 -- %d discarded load(s), "
                  "%d store(s), %d traffic loop(s)" % (ld, st, br))
 
-        # ---- enemy-seq-runtime: sigma is never a compile-time constant -----
-        per_seq = {}
-        for q in SEQS:
+        # ---- stress-pattern-runtime: sigma is never a compile-time constant -----
+        per_pat = {}
+        for q in PATTERNS:
             a = asm_of(cpu_c, AARCH64_TRIPLE,
-                       extra=["-DHET_CPU_ENEMY_SEQ=%d" % q])
-            per_seq[q] = count_enemy_ops(a)
-        if len({per_seq[q] for q in SEQS}) != 1:
-            fail("enemy-seq-runtime: het_cpu_enemy's op count MOVES with "
-                 "-DHET_CPU_ENEMY_SEQ %s.  A compile-time sigma folds the switch to "
-                 "the one branch -D named; it must arrive in het_cpu_enemy_args as a "
-                 "RUNTIME field." % {q: per_seq[q] for q in SEQS})
+                       extra=["-DHET_CPU_STRESS_PATTERN=%d" % q])
+            per_pat[q] = count_stress_ops(a)
+        if len({per_pat[q] for q in PATTERNS}) != 1:
+            fail("stress-pattern-runtime: het_cpu_stress's op count MOVES with "
+                 "-DHET_CPU_STRESS_PATTERN %s.  A compile-time sigma folds the switch to "
+                 "the one branch -D named; it must arrive in het_cpu_stress_args as a "
+                 "RUNTIME field." % {q: per_pat[q] for q in PATTERNS})
         else:
-            note("  enemy-seq-runtime: het_cpu_enemy's op count is INVARIANT over "
-                 "-DHET_CPU_ENEMY_SEQ=0..3 (%d ld + %d st)"
-                 % (per_seq[0][0], per_seq[0][1]))
+            note("  stress-pattern-runtime: het_cpu_stress's op count is INVARIANT over "
+                 "-DHET_CPU_STRESS_PATTERN=0..3 (%d ld + %d st)"
+                 % (per_pat[0][0], per_pat[0][1]))
 
         # ---- stress-live/stress-off-zero: it runs, and stops when switched off --
         probe_c = os.path.join(d, "_probe.c")
@@ -451,7 +452,7 @@ def check(litmus_path):
                  "het_cpu_first_touch backs %d KB"
                  % (want_kb, ft_read, ft_touch))
 
-        live = ("enemy_rounds", "enemy_accesses", "preload_ops", "noise_rounds")
+        live = ("stress_rounds", "stress_accesses", "preload_ops", "noise_rounds")
         for k in live:
             if int(on[k]) <= 0:
                 fail("stress-live: with the CPU stress ON, %s is %s.  The mechanism "
@@ -465,13 +466,13 @@ def check(litmus_path):
             fail("stress-live: HET_CPU_PRELOAD_LIVE is 0 on this host -- the cache "
                  "preload has no primitives here and is a no-op.")
         if ok[0]:
-            note("  stress-live    (on) : enemy_rounds=%s accesses=%s "
-                 "preload_hints=%s noise_rounds=%s (enemies realised: %s)"
-                 % (on["enemy_rounds"], on["enemy_accesses"], on["preload_ops"],
-                    on["noise_rounds"], on["enemies"]))
-            note("  stress-off-zero(off): enemy_rounds=%s accesses=%s "
+            note("  stress-live    (on) : stress_rounds=%s accesses=%s "
+                 "preload_hints=%s noise_rounds=%s (stress threads realised: %s)"
+                 % (on["stress_rounds"], on["stress_accesses"], on["preload_ops"],
+                    on["noise_rounds"], on["stress_threads"]))
+            note("  stress-off-zero(off): stress_rounds=%s accesses=%s "
                  "preload_hints=%s noise_rounds=%s"
-                 % (off["enemy_rounds"], off["enemy_accesses"], off["preload_ops"],
+                 % (off["stress_rounds"], off["stress_accesses"], off["preload_ops"],
                     off["noise_rounds"]))
 
         # Left unwritten, preload_inert stays memset-0 (= live) on a host with NO

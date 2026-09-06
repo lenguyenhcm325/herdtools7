@@ -131,7 +131,7 @@ Reese Levine. *cuda-litmus*, `https://github.com/reeselevine/cuda-litmus`, read 
 * `functions.cu:19` `do_stress`, `runner.cu:130` `setScratchLocations`, `runner.cu:106`
   `percentageCheck`, `litmus.cuh:336-346` `PRE_STRESS`/`MEM_STRESS`: the ported stress layer.
 * `params/stress_params.txt`, the one committed configuration (`workgroupSize=128` among its
-  values): the `HET_*` seeds, `HET_MEM_STRESS_PCT` excepted.
+  values): the `HET_*` seeds, `HET_GPU_MEM_STRESS_PCT` excepted.
 * `tune.sh:29-57` `random_config` draws every knob together — `workgroupSize` (`:39`)
   included, `scratchMemorySize` as `32 × stressLineSize × stressTargetLines` — and
   `runner.cu:261` launches at that width: the block width is a member of the tuned vector.
@@ -139,7 +139,7 @@ Reese Levine. *cuda-litmus*, `https://github.com/reeselevine/cuda-litmus`, read 
   (`kernels/mp.cu:45`): every thread of a non-testing workgroup stresses.
 * Deviation: `litmus.cuh:346` passes `pre_stress_iterations` as the pattern, so under the
   committed configuration no branch matches and `memStressPattern` is never read; here the
-  pattern is the pattern, and `HET_MEM_STRESS_PCT` seeds from [WebGPULitmus] instead.
+  pattern is the pattern, and `HET_GPU_MEM_STRESS_PCT` seeds from [WebGPULitmus] instead.
 * Deviation: `runner.cu:131-135` guards the region draw with a `usedRegions` set nothing
   inserts into; `het_set_scratch_locations` dedups for real, hence its exhaustion break.
 * Deviation: the toggles are re-rolled on the host per relaunch (`runner.cu:160`, `:259`);
@@ -152,12 +152,13 @@ Applications.* PLDI 2016, pp. 100–113. DOI 10.1145/2908080.2908114.
 * §1: "Because the stressing threads and memory are disjoint from application threads and
   data, the set of possible behaviours a program can exhibit remains the same."
 * §1: `cbe-dot` errs in 0 of 1000 runs on a Tesla K20 unstressed and in 102 of 1000 stressed.
-* §3.2 critical patch size P, §3.3 access sequence σ, §3.4 spread m — `HET_STRESS_LINE_SIZE`,
-  `HET_*_STRESS_PATTERN` / `HET_CPU_ENEMY_SEQ`, `HET_STRESS_TARGETS` / `HET_CPU_SPREAD`.
+* §3.2 critical patch size P, §3.3 access sequence σ, §3.4 spread m —
+  `HET_GPU_WORDS_PER_REGION`, `HET_GPU_*_STRESS_PATTERN` / `HET_CPU_STRESS_PATTERN`,
+  `HET_GPU_SPREAD` / `HET_CPU_SPREAD`.
 * §3.3: "all of the most effective sequences involve a combination of loads and stores"; for
   most chips the lowest-ranked σs consist exclusively of stores.
-* Deviation: §3.3 tests sequences up to five instructions; `het_do_stress` and the CPU enemy
-  implement the two-instruction case only.
+* Deviation: §3.3 tests sequences up to five instructions; `het_do_stress` and the CPU
+  scratchpad stress implement the two-instruction case only.
 
 ## [MCMutants23]
 Reese Levine, Tianhao Guo, Mingun Cho, Alan Baker, Raph Levien, David Neto, Andrew Quinn,
@@ -180,8 +181,8 @@ Hardware.* TACAS 2011, pp. 41–44. DOI 10.1007/978-3-642-19835-9_5.
   is accessed by a shuffled array of pointers"), preload, synchronisation, affinity.
 * §4: "we generally find such combinations of parameters remain good on the same testbed, even
   for different tests".
-* Deviation: repetition is ported as disjoint-scratchpad enemy threads; whole-test copies do
-  not compose with a persistent GPU kernel.
+* Deviation: repetition is ported as disjoint-scratchpad CPU stress threads; whole-test copies
+  do not compose with a persistent GPU kernel.
 
 ## [Melissaris20]
 Themis Melissaris, Markos Markakis, Kelly Shaw, Margaret Martonosi. *PerpLE: Improving the
@@ -299,8 +300,8 @@ Reese Levine. *webgpu-litmus*, `https://github.com/reeselevine/webgpu-litmus`, r
   `preStressPct: 100`, and no preset carries an intermediate percentage.
 * Deviation: the draw is device-side and stateless (`het_draw(seed, HET_WHO_GRID, n)` per
   stress block, `n` from `_gpu_iter`); the source rolls on the host and copies a flag.
-* Deviation: only the scratchpad stress blocks obey the percentage; noise blocks, CPU enemies
-  and pre-stress run regardless, so an off-iteration is not quiet.
+* Deviation: only the scratchpad stress blocks obey the percentage; noise blocks, CPU stress
+  threads and pre-stress run regardless, so an off-iteration is not quiet.
 
 ## [ArmA64ISA]
 Arm Limited. *Arm A-profile A64 Instruction Set Architecture* (DDI 0602). Living document,

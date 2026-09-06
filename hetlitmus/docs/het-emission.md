@@ -126,7 +126,7 @@ object is `<t>.o`, which GNU make's built-in `%: %.o` rule would link with
 is `.PHONY` so that an existing binary is never "up to date".
 
 Compile-time knobs go through the compiler variable, the `-D` route:
-`make cuda-bin NVCC="nvcc -DHET_MEM_STRESS_PCT=0"`. A `-D` knob changes no
+`make cuda-bin NVCC="nvcc -DHET_GPU_MEM_STRESS_PCT=0"`. A `-D` knob changes no
 source, so rebuild with `make clean` first (`hetlitmus/build.sh` does).
 `SIZE_OF_TEST` and `NUMBER_OF_RUN` are emitted as unguarded `#define`s and
 cannot be lowered this way; `HET_RUNS_MAX` (clamped to `NUMBER_OF_RUN`) is the

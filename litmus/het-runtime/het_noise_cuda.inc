@@ -1,6 +1,6 @@
 /* The noise buffers -- a fourth object class, disjoint from the shared test vars
    and barrier (gd_alloc_shared), the GPU stress scratchpad (cudaMalloc) and the
-   CPU enemy scratchpad (host malloc).  Both are system memory and differ only in
+   CPU stress scratchpad (host malloc).  Both are system memory and differ only in
    where their pages are homed, which is what `_where' selects, so each side
    stream-reads the other unit's memory and crosses the link
    [Fusco24 sec III-E.1].  Returns 0 = homed on the other unit, -1 = refused: a

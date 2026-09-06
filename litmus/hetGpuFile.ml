@@ -112,7 +112,7 @@ let kernel_parameters memory procs =
         "uint32_t* _stress_tally" ;
         "uint32_t _seed" ; "uint32_t _pre_pat" ; "uint32_t _mem_pat" ;
         "uint64_t* _noise_ddr" ; "uint64_t _noise_words" ;
-        "uint32_t _noise_blocks" ; "uint32_t _noise_chunk" ;
+        "uint32_t _noise_blocks" ; "uint32_t _noise_words_per_round" ;
         "uint32_t _noise_stride"])
 
 (* One GPU proc, guarded to its (block, lane) and looping over the
@@ -127,8 +127,8 @@ let dump_test_lane dialect gp ch =
      "The mapping". *)
   s {|    #pragma unroll 1
     for (int _n=0; _n<SIZE_OF_TEST; ++_n) {
-      if ((int)(het_draw(_seed, _who, 2u*(uint64_t)_n) % 100u) < HET_PRE_STRESS_PCT)
-        het_do_stress(_scratch, _scratch_loc, HET_PRE_STRESS_ITER, _pre_pat, _stress_tally);
+      if ((int)(het_draw(_seed, _who, 2u*(uint64_t)_n) % 100u) < HET_GPU_PRE_STRESS_PCT)
+        het_do_stress(_scratch, _scratch_loc, HET_GPU_PRE_STRESS_ROUNDS, _pre_pat, _stress_tally);
 |} ;
 
   (* Rendezvous, jitter, then the tested ops; nothing is placed
@@ -137,7 +137,7 @@ let dump_test_lane dialect gp ch =
   s (Printf.sprintf
        "      %s[_n] = het_rdv_device(barrier, (uint64_t)NPART*(uint64_t)(_n+1), _cap_gpu);\n"
        (rdv_gpu_name gp.gp_proc)) ;
-  s "      het_rdv_jitter(het_draw(_seed, _who, 2u*(uint64_t)_n + 1u), HET_RELEASE_JITTER);\n" ;
+  s "      het_rdv_jitter(het_draw(_seed, _who, 2u*(uint64_t)_n + 1u), HET_RELEASE_JITTER_SPINS);\n" ;
   List.iter
     (fun instr -> dialect.gd_dump_instr ch ~het:(Some "_n") "      " instr)
     gp.gp_instrs ;
@@ -178,8 +178,8 @@ let dump_stress_workgroups ch =
         uint32_t _v = _clk;
         /* Every lane has taken its copy, so lane 0 may overwrite _clk. */
         __syncthreads();
-        if (_v >= (uint32_t)SIZE_OF_TEST || _r >= HET_STRESS_MAX_ROUNDS) break;
-        for (uint32_t _c = 0; _c < _noise_chunk; ++_c) {
+        if (_v >= (uint32_t)SIZE_OF_TEST || _r >= HET_GPU_STRESS_MAX_POLLS) break;
+        for (uint32_t _c = 0; _c < _noise_words_per_round; ++_c) {
           (void)_nb[_i];
           _i += _step;
           if (_i >= _noise_words) _i = (_noise_words > 0) ? (_i % _noise_words) : 0;
@@ -195,16 +195,16 @@ let dump_stress_workgroups ch =
         __syncthreads();
         uint32_t _v = _clk;
         __syncthreads();
-        if (_v >= (uint32_t)SIZE_OF_TEST || _polls >= HET_STRESS_MAX_ROUNDS) break;
+        if (_v >= (uint32_t)SIZE_OF_TEST || _polls >= HET_GPU_STRESS_MAX_POLLS) break;
         /* _v is the same in every lane, so the draw is one decision the block
            recomputes rather than one roll per lane. */
-        if ((int)(het_draw(_seed, HET_WHO_GRID, _v) % 100u) < HET_MEM_STRESS_PCT)
-          het_do_stress(_scratch, _scratch_loc, HET_MEM_STRESS_ITER, _mem_pat, _stress_tally);
+        if ((int)(het_draw(_seed, HET_WHO_GRID, _v) % 100u) < HET_GPU_MEM_STRESS_PCT)
+          het_do_stress(_scratch, _scratch_loc, HET_GPU_MEM_STRESS_ROUNDS, _mem_pat, _stress_tally);
         else
           het_idle();
         ++_polls;
       }
-      if (_polls >= HET_STRESS_MAX_ROUNDS && threadIdx.x == 0)
+      if (_polls >= HET_GPU_STRESS_MAX_POLLS && threadIdx.x == 0)
         het_scratch_bump(&_stress_tally[HET_TALLY_TRUNC]);
     }
   }
@@ -271,7 +271,7 @@ let dump_cpu_thread_wrappers dialect procs memory ch =
       s (Printf.sprintf
            "    a->_rdv[_n] = het_rdv_host(a->barrier, (uint64_t)NPART*(uint64_t)(_n+1), a->_cap, %s);\n"
            dialect.gd_poke_arg) ;
-      s "    het_rdv_jitter(het_draw(a->_seed, _who, _kn), HET_RELEASE_JITTER);\n" ;
+      s "    het_rdv_jitter(het_draw(a->_seed, _who, _kn), HET_RELEASE_JITTER_SPINS);\n" ;
       s (Printf.sprintf "    het_run_P%d(%s);\n" proc call_args) ;
       s "  }\n" ;
       if npl > 0 then

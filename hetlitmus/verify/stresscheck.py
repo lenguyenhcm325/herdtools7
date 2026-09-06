@@ -130,7 +130,7 @@ def check_cu(cu_path, arch="sm_90", verbose=True, device=True):
             # left are the buffer stores, which is what makes the rest attributable.
             n_buf = len(BUF_STORE.findall(src))
             base = counts_of(cu_path,
-                             ["-DHET_PRE_STRESS_PCT=0", "-DHET_MEM_STRESS_PCT=0"],
+                             ["-DHET_GPU_PRE_STRESS_PCT=0", "-DHET_GPU_MEM_STRESS_PCT=0"],
                              arch, tmp)
             if (base.ld, base.st) != (0, n_buf):
                 fail("isolation anchor is NOT clean: %s plain u32 op(s) survive with "
@@ -145,10 +145,10 @@ def check_cu(cu_path, arch="sm_90", verbose=True, device=True):
             # ---- pre/mem, swept over every access pattern.  Folding one class's
             # percentage to 0 deletes its calls, so what survives is the other's.
             for cls, pct_off, pat_knob in (
-                    ("test lanes  (pre-stress)", "-DHET_MEM_STRESS_PCT=0",
-                     "-DHET_PRE_STRESS_PATTERN="),
-                    ("stress blks (mem-stress)", "-DHET_PRE_STRESS_PCT=0",
-                     "-DHET_MEM_STRESS_PATTERN=")):
+                    ("test lanes  (pre-stress)", "-DHET_GPU_MEM_STRESS_PCT=0",
+                     "-DHET_GPU_PRE_STRESS_PATTERN="),
+                    ("stress blks (mem-stress)", "-DHET_GPU_PRE_STRESS_PCT=0",
+                     "-DHET_GPU_MEM_STRESS_PATTERN=")):
                 per_pat = {}
                 for p in PATTERNS:
                     per_pat[p] = counts_of(cu_path, [pct_off, pat_knob + str(p)],
@@ -184,16 +184,16 @@ def check_cu(cu_path, arch="sm_90", verbose=True, device=True):
                 note("  gpu-noise-live: the device-side noise survives nvcc (%d "
                      "volatile 64-bit global load(s))" % n_on)
             per_blk = {b: count_noise_ops(
-                ptx_of(cu_path, ["-DHET_NOISE_GPU_BLOCKS=%d" % b], arch, tmp))
+                ptx_of(cu_path, ["-DHET_GPU_NOISE_BLOCKS=%d" % b], arch, tmp))
                 for b in NOISE_BLOCKS}
             if len({n_on, *per_blk.values()}) != 1:
                 fail("gpu-noise-runtime: the noise-op count MOVES with "
-                     "-DHET_NOISE_GPU_BLOCKS (%s vs %d by default).  A compile-time "
+                     "-DHET_GPU_NOISE_BLOCKS (%s vs %d by default).  A compile-time "
                      "block count lets nvcc delete the noise for a config a sweep may "
                      "pick; it must be a RUNTIME kernel argument." % (per_blk, n_on))
             else:
                 note("  gpu-noise-runtime: the count is INVARIANT over "
-                     "-DHET_NOISE_GPU_BLOCKS=%s"
+                     "-DHET_GPU_NOISE_BLOCKS=%s"
                      % "/".join(str(b) for b in NOISE_BLOCKS))
 
             # ---- and the runtime tally.  Everything above is structural.
@@ -230,7 +230,7 @@ __global__ void probe(uint32_t* scratch, uint32_t* loc, uint32_t* tally,
 
 int main(void) {
   uint32_t *scratch, *loc, *tally;
-  cudaMalloc(&scratch, sizeof(uint32_t) * HET_SCRATCH_SIZE);
+  cudaMalloc(&scratch, sizeof(uint32_t) * HET_GPU_SCRATCH_WORDS);
   cudaMalloc(&loc,     sizeof(uint32_t) * 8);
   cudaMalloc(&tally,   sizeof(uint32_t) * HET_TALLY_N);
   uint32_t loc_h[8] = {0,1,2,3,4,5,6,7};
@@ -238,7 +238,7 @@ int main(void) {
 
   /* pattern 0 (st;st) x {iters=64 (ON), iters=0 (OFF)} */
   for (int on = 1; on >= 0; on--) {
-    cudaMemset(scratch, 0, sizeof(uint32_t) * HET_SCRATCH_SIZE);
+    cudaMemset(scratch, 0, sizeof(uint32_t) * HET_GPU_SCRATCH_WORDS);
     cudaMemset(tally,   0, sizeof(uint32_t) * HET_TALLY_N);
     probe<<<8, 1>>>(scratch, loc, tally, on ? 64u : 0u, 0u);
     cudaError_t e = cudaDeviceSynchronize();

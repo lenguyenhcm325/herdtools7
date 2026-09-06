@@ -50,8 +50,8 @@
 /* The post-release delay, in spins: each participant leaves after 0..this many
    spins of its own, so the iterations sweep the relative phase of the two
    devices instead of repeating one alignment. */
-#ifndef HET_RELEASE_JITTER
-#define HET_RELEASE_JITTER 64
+#ifndef HET_RELEASE_JITTER_SPINS
+#define HET_RELEASE_JITTER_SPINS 64
 #endif
 
 /* Called while the host waits, or NULL.  A host spin that never enters the
