@@ -193,20 +193,21 @@ let dump_campaign_knobs ch =
 |} ;
 
   (* The rendezvous spin caps. *)
-  s {|  long _cap_cpu = het_env_long("HET_CAP_CPU", (long)HET_CAP_CPU);
+  s {|  long _cap_cpu_env = het_env_long("HET_CAP_CPU", (long)HET_CAP_CPU);
   long _cap_gpu_env = het_env_long("HET_CAP_GPU", (long)HET_CAP_GPU);
-  if (_cap_cpu < 0) _cap_cpu = 0;
+  if (_cap_cpu_env < 0) _cap_cpu_env = 0;
   if (_cap_gpu_env < 0) _cap_gpu_env = 0;
-  unsigned long _cap_cpu_u = (unsigned long)_cap_cpu;
+  unsigned long _cap_cpu_u = (unsigned long)_cap_cpu_env;
   unsigned long _cap_gpu_u = (unsigned long)_cap_gpu_env;
   if (_cap_cpu_u > 0xffffffffUL) {
     fprintf(stderr, "HetLitmus WARNING: HET_CAP_CPU=%lu exceeds the %lu polls the record can carry -- clamped.\n", _cap_cpu_u, 0xffffffffUL);
-    _cap_cpu_u = 0xffffffffUL; _cap_cpu = (long)_cap_cpu_u;
+    _cap_cpu_u = 0xffffffffUL;
   }
   if (_cap_gpu_u > 0xffffffffUL) {
     fprintf(stderr, "HetLitmus WARNING: HET_CAP_GPU=%lu exceeds the %lu polls a lane can carry -- clamped.\n", _cap_gpu_u, 0xffffffffUL);
     _cap_gpu_u = 0xffffffffUL;
   }
+  long _cap_cpu = (long)_cap_cpu_u;
   uint32_t _cap_gpu = (uint32_t)_cap_gpu_u;
   int _nrec = 0;
 |}
