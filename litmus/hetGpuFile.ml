@@ -312,8 +312,7 @@ let dump_outcome_labels outcome ch =
 let dump_file_scope_defs dialect ch =
   let s = output_string ch in
   s {|/* Placement refusals.  Raised where a placement was requested but not
-   achieved (CUDA render only); stays 0 on the HIP render, which
-   carries no placement code. */
+   achieved. */
 static int _het_place_failures = 0;
 
 |} ;

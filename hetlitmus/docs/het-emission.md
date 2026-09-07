@@ -130,11 +130,8 @@ Compile-time knobs go through the compiler variable, the `-D` route:
 source, so rebuild with `make clean` first (`hetlitmus/build.sh` does).
 `SIZE_OF_TEST` and `NUMBER_OF_RUN` are emitted as unguarded `#define`s and
 cannot be lowered this way; `HET_RUNS_MAX` (clamped to `NUMBER_OF_RUN`) is the
-only run-count lever. `HET_PLACE` exists only on a render whose target has two
-memory pools to bind a page between: the HIP render (MI300A, one HBM pool) has
-no placement code and `#error`s on a non-zero value (`het_alloc_hip.inc`)
-rather than printing a placement it did not perform; on that render the
-interconnect is driven by the noise knobs instead.
+only run-count lever. `HET_PLACE` is honoured by both renders and refused at
+run time by the machine (`00-environment-design.md` §3.6).
 
 **`CUDA_ARCH` / `HIP_ARCH`.** Name the device arch explicitly
 (`CUDA_ARCH=sm_90 make cuda-bin`), never `-arch=native`: the arch a binary was
@@ -159,9 +156,9 @@ A harness is a **(CPU ISA × GPU dialect) pair**, not a machine.
   and in `litmus/het-runtime/het_verdict.h` say "host-device interconnect"
   and its halves as literal text; the emitter stamps none of it, so no build
   turns a printed sentence into a claim about a part.
-  `HET_PLACE_LEVER` is the one stamped word, and it is a dialect fact:
-  `mbind(MPOL_BIND)` on the CUDA render, none on HIP, where `het_verdict.h`'s
-  default names the mechanism.
+  `HET_PLACE_LEVER` is the one stamped word, `mbind(MPOL_BIND)` on both
+  renders; `het_verdict.h`'s default names the mechanism where nothing is
+  stamped.
 * **`HET_PAIR_NAME`** is stamped by every emission and is the only thing that
   says which pair a binary measured: a harness built for the wrong pair
   compiles, runs and reports identically. The label is derived once

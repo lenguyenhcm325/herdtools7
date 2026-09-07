@@ -54,7 +54,7 @@ DEFAULT_FRAME = ("no defines (an unstamped harness)",
 CUDA_FRAME = ("the scraped (AArch64, cuda) defines", "(AArch64, cuda)",
               "mbind(MPOL_BIND)")
 HIP_FRAME = ("the scraped (X86_64, hip) defines", "(X86_64, hip)",
-             "the page-placement lever")
+             "mbind(MPOL_BIND)")
 FRAMES = [DEFAULT_FRAME, CUDA_FRAME, HIP_FRAME]
 
 # ---------------------------------------------------------------------------

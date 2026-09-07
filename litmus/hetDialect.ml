@@ -54,8 +54,8 @@ type gpu_dialect = {
        together -- an empty definition MUST pair with a NULL argument. *)
     gd_poke_def : string ;        (* file-scope definition, or "" *)
     gd_poke_arg : string ;        (* the expression, over `_n' and `a->_rdv' *)
-    (* The page-placement mechanism HET_PLACE drives, by name -- a dialect fact,
-       not a machine one (hetlitmus/docs/het-emission.md, "The pair a harness
+    (* The page-placement mechanism HET_PLACE drives, by name, stamped as
+       HET_PLACE_LEVER (hetlitmus/docs/het-emission.md, "The pair a harness
        names").  None where the render carries no placement code. *)
     gd_place_lever : string option ;
     (* Per-target allocator for the shared vars + the rendezvous counter
@@ -161,9 +161,7 @@ let hip_dialect = {
     gd_free = (fun v -> Printf.sprintf "(void)hipFree(%s);" v) ;
     gd_poke_def = "" ;
     gd_poke_arg = "NULL" ;
-    (* MI300A has one HBM pool and nothing to place; het_alloc_hip.inc turns a
-       non-zero HET_PLACE into an #error. *)
-    gd_place_lever = None ;
+    gd_place_lever = Some "mbind(MPOL_BIND)" ;
     gd_shared_mem_note =
       "// Shared vars + rendezvous counter use gd_alloc_shared: fine-grained\n\
        // hipMallocManaged -- the only mode coherent for system-scope CPU<->GPU sync\n\

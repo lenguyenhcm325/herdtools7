@@ -101,26 +101,26 @@ the compiler to fold.
 
 (g) placement binds the shared pages to a NUMA node and reads the home back, so a
 page left off-node is never swallowed.
-  $ grep -c '_het_place_shared(\*_pp, _bytes, HET_PLACE)' $MP.cu
+  $ grep -c 'het_place_shared(\*_pp, _bytes, HET_PLACE, _het_place_node(1), _het_place_node(2))' $MP.cu
   1
-  $ grep -q 'syscall(SYS_mbind' $MP.cu && echo present
+  $ grep -q 'syscall(SYS_mbind' MP-cg-sys-ra.acq/het_cpu_stress.h && echo present
   present
-  $ grep -q 'MPOL_BIND' $MP.cu && echo present
+  $ grep -q 'MPOL_BIND' MP-cg-sys-ra.acq/het_cpu_stress.h && echo present
   present
-  $ grep -q 'syscall(SYS_move_pages' $MP.cu && echo present
+  $ grep -q 'syscall(SYS_move_pages' MP-cg-sys-ra.acq/het_cpu_stress.h && echo present
   present
   $ grep -q '_het_place_failures++' $MP.cu && echo present
   present
   $ grep -A1 '#ifndef HET_PLACE' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_PLACE 0'
   1
 
-The HIP twin binds nothing: MI300A's one HBM pool makes a non-zero HET_PLACE a
-compile error, so the render carries no mbind and its analogue is contention.
-  $ grep -c 'SYS_mbind' $MPH.hip || true
-  0
-  $ grep -q 'SYS_mbind' $MP.cu && echo present
-  present
-  $ grep -q 'CONTENTION' $MPH.hip && echo present
+The HIP twin carries the same call under HET_PLACE, with its own node resolver.
+  $ grep -c 'het_place_shared(\*_pp, _bytes, HET_PLACE, _het_place_node(1), _het_place_node(2))' $MPH.hip
+  1
+  $ grep -c '^static int _het_place_node(int _where){' $MPH.hip $MP.cu
+  hip/MP-cg-sys-plain.acq-x86_64/MP-cg-sys-plain.acq-x86_64.hip:1
+  MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu:1
+  $ grep -q '_het_place_failures++' $MPH.hip && echo present
   present
 
 (h) the noise pair of [Fusco24 sec III-E.1] runs as extra blocks of the

@@ -267,6 +267,10 @@ AMD ROCm. `hip_runtime_api.h`, as shipped with ROCm 7.2.4
 * `hipMallocManaged`: without HMM it "behaves the same as hipMallocHost".
 * `hipDeviceAttributeIntegrated` ("Device is integrated GPU"; `hipDeviceProp_t::integrated`,
   "APU vs dGPU"): the one runtime query separating MI300A from MI300X, both `gfx942`.
+* `hipDeviceAttributeHostNumaId`: "NUMA ID of the cpu node closest to the device, or -1 when
+  NUMA isn't supported"; `hipDeviceGetPCIBusId`: "Returns a PCI Bus Id string for the device".
+* Deviation: the host node is read from sysfs by that PCI id, not from
+  `hipDeviceAttributeHostNumaId`, which the runtime serves as an index ([RocmClr "setupCpuAgent"]).
 
 ## [Iorga21]
 Dan Iorga, Alastair F. Donaldson, Tyler Sorensen, John Wickerson. *The Semantics of Shared
@@ -337,3 +341,51 @@ NVIDIA. *Parallel Thread Execution ISA*, Version 8.8 (CUDA Toolkit 12.9),
 * Same section, Target ISA Notes: "fence requires sm_70 or higher"; ".acquire and .release
   qualifiers for fence instruction require sm_90 or higher".
 * "Release Notes", the version table: PTX ISA 8.6 is the CUDA 12.7 release.
+
+## [AmdMi300aPartitioning]
+AMD. *MI300A GPU partitioning overview.* AMD Instinct documentation, living document,
+`https://instinct.docs.amd.com/projects/amdgpu-docs/en/latest/gpu-partitioning/mi300a/overview.html`.
+* "GPU Architecture Summary": "8 x 16GB HBM3 stacks per socket - 128GB of total unified HBM
+  capacity"; "Unlike MI300X, MI300A does not support discrete DDR DIMM access, and all system
+  memory is resident within the 128GB HBM."
+* "Partitioning Concepts": "In MI300A only NPS1 (NUMA Per Socket) is available, where all HBM
+  stacks are uniformly interleaved."; "The MI300A platform operates exclusively in NPS1 mode";
+  the compute partition modes are SPX and CPX, with TPX described.
+
+## [RocmClr]
+ROCm. *clr* (the HIP runtime over ROCclr), branch `develop`, commit
+`50f79bbaefa7e265493881cb2ff9c8da6476d44c`, `https://github.com/ROCm/clr`.
+* `hipamd/src/hip_hmm.cpp` "ihipMallocManaged": `SvmBuffer::malloc` with
+  `CL_MEM_SVM_FINE_GRAIN_BUFFER | CL_MEM_ALLOC_HOST_PTR`.
+* `rocclr/device/rocm/rocmemory.cpp` "roc::Buffer::create": under `hmmSupported_`, "AMD HMM
+  path. ROCr allocates system memory and KFD will manage it" — `deviceMemory_ =
+  dev().reserveMemory(size(), pageSize)`, then `SvmAllocInit` (`SetAccessedBy`; a prefetch only
+  under `ROC_HMM_FLAGS`, whose default in `rocclr/device/rocm/rocsettings.cpp` is 0).
+* `rocclr/device/rocm/rocdevice.cpp` "Device::reserveMemory":
+  `hsa_amd_vmem_address_reserve_align(..., HSA_AMD_VMEM_ADDRESS_NO_REGISTER)`.
+* `hipamd/src/hip_device.cpp`: `managedMemory` and `concurrentManagedAccess` are both
+  `info.hmmSupported_`, which `rocdevice.cpp` sets from `HSA_AMD_SYSTEM_INFO_SVM_SUPPORTED`.
+* `rocclr/device/rocm/rocdevice.cpp` "Device::setupCpuAgent": `preferred_numa_node_` is the
+  index into `cpu_agents_` of the agent with the least HSA link distance;
+  `getPreferredNumaNode()` returns it, and it is what `hipDeviceAttributeHostNumaId` reads.
+
+## [RocrRuntime]
+ROCm. *ROCR-Runtime*, branch `amd-staging`, commit `1559d101f2716ed3d4f30beb33200e91f1af024b`,
+`https://github.com/ROCm/ROCR-Runtime`.
+* `runtime/hsa-runtime/core/runtime/runtime.cpp` "Runtime::VMemoryAddressReserve": under
+  `HSA_AMD_VMEM_ADDRESS_NO_REGISTER` the range is `mmap(addr, requested, PROT_READ | PROT_WRITE,
+  MAP_ANONYMOUS | MAP_PRIVATE | MAP_NORESERVE, -1, 0)`, with `madvise(MADV_HUGEPAGE)` from 2 MiB.
+
+## [LinuxAmdgpu]
+Linux kernel, `drivers/gpu/drm/amd/`, `torvalds/linux` master at
+`df2908090cda368b01ff43709f51890076c56157`, `https://github.com/torvalds/linux`.
+* `amdgpu/amdgpu_ttm.c` "amdgpu_ttm_init": `if (adev->flags & AMD_IS_APU) { if
+  (adev->gmc.real_vram_size < gtt_size) adev->apu_prefer_gtt = true; }`.
+* `amdkfd/kfd_svm.c` "svm_range_best_prefetch_location": `if (node->adev->apu_prefer_gtt)
+  return 0;`; "svm_range_best_restore_location": `if (bo_node->adev->apu_prefer_gtt) { best_loc
+  = 0; goto out; }` — 0 is system memory, so no managed page migrates to VRAM on the APU.
+* `amdgpu/gmc_v9_0.c` "gmc_v9_0_override_vm_pte_flags": a page whose `pfn_to_nid` is the
+  partition's local node is upgraded from `MTYPE_NC` to `MTYPE_RW`, a remote-node page keeps
+  `MTYPE_NC`; enabled by `adev->gmc.override_pte = adev->gmc.is_app_apu &&
+  num_possible_nodes() > 1 && GC 9.4.3 && adev->ram_is_direct_mapped`, with `is_app_apu =
+  (pkg_type == AMDGPU_PKG_TYPE_APU && !pci_resource_len(adev->pdev, 0))`.

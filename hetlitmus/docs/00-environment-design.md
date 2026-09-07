@@ -89,8 +89,7 @@ protocol is decided by the allocator, so it is correctness rather than tuning:
   (`HET_ALLOC=managed`) is a machinery fallback for a box without pageable-memory access: it
   validates codegen and plumbing, never the property under test.
 - **MI300A: fine-grained `hipMallocManaged`**, the default [HipRuntimeApi]; coarse-grained memory
-  is coherent only at kernel boundaries and is never used. One HBM pool, so no placement lever
-  exists there.
+  is coherent only at kernel boundaries and is never used.
 - Each CUDA mode is system-scope atomic only under a condition of [CudaGuide "Atomicity"]; the
   allocator's guards are fatal and never fall back, and a placement request the selected mode
   cannot honour is counted and printed rather than swallowed.
@@ -258,11 +257,26 @@ pre-stress, the CPU stress threads and the noise still run.
   prefetch leaves the pages where first touch put them; either way the buffer would generate
   local traffic, not interconnect traffic, so the half is refused rather than run, and a run
   requesting it is `COLD-INVALID` (`harness-reporting.md` §3).
-- **MI300A:** one HBM pool, so no placement (a non-zero `HET_PLACE` is a compile error on the
-  HIP render). The analogue is contention on the shared pool, measurable on this part as CPU
+- **AMD: the same lever, decided at run time.** `HET_PLACE=1` names the GPU memory's NUMA node
+  and `HET_PLACE=2` the host node nearest the device; the render resolves the two with its
+  vendor API and the bind, fault-in and read-back are the same Linux calls on both renders. A
+  single MI300A is NPS1-only — one NUMA node per socket, its eight HBM stacks interleaved
+  [AmdMi300aPartitioning] — so both values name the one node and the lever is refused as placing
+  nothing. The analogue there is contention on the shared pool, measurable on this part as CPU
   throughput falling to 11–25 % of baseline once thousands of GPU threads share a contended
   array [Wahlgren25 §4.4]; that this is chiplet-crossing traffic is an inference
-  ([Schieffer24 §II.C]).
+  ([Schieffer24 §II.C]). A `hipMallocManaged` range is an anonymous private mapping
+  ([RocrRuntime "VMemoryAddressReserve"], [RocmClr "roc::Buffer::create"]) kept in system memory
+  on the APU ([LinuxAmdgpu "svm_range_best_restore_location"]), so `mbind` applies to it as to a
+  `malloc` page. On a multi-socket node, or a discrete part on a multi-node host, the host node
+  nearest the device is a real target; on the APU a page's node also selects the GPU's cache
+  type for it ([LinuxAmdgpu "gmc_v9_0_override_vm_pte_flags"]). The host node is read from sysfs
+  by PCI address, because `hipDeviceAttributeHostNumaId` is an index into the runtime's CPU-agent
+  list ([RocmClr "setupCpuAgent"]); a discrete part's HBM is no Linux node, so `HET_PLACE=1`
+  is unresolved there.
+- **Run-time refusals, both renders.** The lever is refused — counted and printed, never
+  swallowed — when the value's node is unresolved, when the two candidate nodes are one node,
+  when fewer than two NUMA nodes are online, or when the read-back finds a page off node.
 - **Not ported from litmus7:** launch randomisation (nothing is relaunched; the phase sweep is
   the release jitter, §3.3) and a shared-timebase release (it needs a clock both sides read
   against one epoch; none is used).

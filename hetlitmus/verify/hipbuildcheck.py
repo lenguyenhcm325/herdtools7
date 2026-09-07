@@ -9,9 +9,12 @@ gfx942 code in the ELF), foreign-host (on a host of the other CPU ISA every make
 path stops at the CPU file's #error and no link arm writes ./<test>, while
 comp.sh cross-assembles that file into an object of the rendered ISA),
 stale-binary (each link target relinks ./<test>), hip-allocator (the shared-mem
-resolver, executed under a stub hipDeviceGetAttribute), place-refusal (HET_PLACE
-refused at compile time) and cuda-nonregression.  A miss is a harness that builds
-into something other than the test, or accepts what it has to refuse.
+resolver, executed under a stub hipDeviceGetAttribute), place-build
+(-DHET_PLACE=1 and =2 build, =1 references het_place_shared and =0 does not,
+=3 stops at the range error), place-resolver (the .hip's _het_place_node and
+the emitted het_place_target, executed under a stub HIP and a stub sysfs) and
+cuda-nonregression.  A miss is a harness that builds into something other than
+the test, or accepts what it has to refuse.
 """
 import argparse
 import os
@@ -655,35 +658,194 @@ def phase6(tmp, d):
         fail("hip-allocator", "phase made no assertions")
 
 
+def undefined_symbols(obj):
+    """The symbol names `nm -u' lists for [obj]; empty when nm cannot read it."""
+    r = run(["nm", "-u", obj])
+    if r.returncode != 0:
+        return set()
+    return {ln.split()[-1] for ln in r.stdout.splitlines() if ln.split()}
+
+
 def phase6b(tmp, d):
-    """HET_PLACE is CUDA-only and is REFUSED at compile time here, while
-    HET_PLACE=0 still builds."""
-    print("[place-refusal] HET_PLACE: the CUDA-only lever the AMD render must refuse")
+    """-DHET_PLACE=1 and =2 build; the .hip object references het_place_shared
+    under =1 and not under =0; =3 stops at the header's range error."""
+    print("[place-build] HET_PLACE: 1 and 2 build and bind, 0 binds nothing, 3 is refused")
     if not have("hipcc"):
-        fail("place-refusal", "hipcc not on PATH -- the compile-time refusal cannot "
-                              "be verified here")
+        fail("place-build", "hipcc not on PATH -- the HET_PLACE builds cannot be "
+                            "verified here")
         return
-    w = fresh(tmp, d, "p6place")
-    r = run(["make", "hip", "HIPCC=hipcc -DHET_PLACE=1"], cwd=w)
-    tick("place-refusal")
-    if r.returncode == 0:
-        fail("place-refusal", "`make hip HIPCC=\"hipcc -DHET_PLACE=1\"' SUCCEEDED -- the "
-                    "AMD render accepted a placement lever it does not implement")
-    tick("place-refusal")
-    if "HET_PLACE is a CUDA-only lever" not in (r.stdout + r.stderr):
-        fail("place-refusal", "a -DHET_PLACE=1 AMD build failed without saying why:\n%s"
-             % (r.stdout + r.stderr)[-800:])
-    # ...and HET_PLACE=0, the default and the only honourable value, still builds.
+    t = test_of(d)
+    for v in (1, 2):
+        w = fresh(tmp, d, "p6place%d" % v)
+        r = run(["make", "hip", "HIPCC=hipcc -DHET_PLACE=%d" % v], cwd=w)
+        tick("place-build")
+        if r.returncode != 0:
+            fail("place-build", "`make hip HIPCC=\"hipcc -DHET_PLACE=%d\"' failed:\n%s"
+                 % (v, (r.stdout + r.stderr)[-800:]))
+            continue
+        if v == 1:
+            tick("place-build")
+            if "het_place_shared" not in undefined_symbols(os.path.join(w, t + "_hip.o")):
+                fail("place-build", "under -DHET_PLACE=1 %s_hip.o references no "
+                     "het_place_shared -- the HIP render binds nothing" % t)
     w = fresh(tmp, d, "p6place0")
     r = run(["make", "hip", "HIPCC=hipcc -DHET_PLACE=0"], cwd=w)
-    tick("place-refusal")
+    tick("place-build")
     if r.returncode != 0:
-        fail("place-refusal", "-DHET_PLACE=0 (the DEFAULT) no longer compiles -- the "
-                    "refusal is over-broad and blocks every ordinary AMD build:\n%s"
+        fail("place-build", "-DHET_PLACE=0 (the DEFAULT) no longer compiles:\n%s"
              % (r.stdout + r.stderr)[-800:])
-    print("      %d assertions" % counts.get("place-refusal", 0))
-    if not counts.get("place-refusal"):
-        fail("place-refusal", "phase made no assertions")
+    else:
+        tick("place-build")
+        if "het_place_shared" in undefined_symbols(os.path.join(w, t + "_hip.o")):
+            fail("place-build", "under -DHET_PLACE=0 %s_hip.o references "
+                 "het_place_shared -- the bind is not behind the knob" % t)
+    w = fresh(tmp, d, "p6place3")
+    r = run(["make", "hip", "HIPCC=hipcc -DHET_PLACE=3"], cwd=w)
+    blob = r.stdout + r.stderr
+    tick("place-build")
+    if r.returncode == 0:
+        fail("place-build", "`make hip HIPCC=\"hipcc -DHET_PLACE=3\"' SUCCEEDED -- "
+                            "het_cpu_stress.h no longer refuses a value out of range")
+    tick("place-build")
+    if "HET_PLACE must be 0" not in blob:
+        fail("place-build", "a -DHET_PLACE=3 build failed without the range error:\n%s"
+             % blob[-800:])
+    print("      %d assertions" % counts.get("place-build", 0))
+    if not counts.get("place-build"):
+        fail("place-build", "phase made no assertions")
+
+
+# --- place-resolver: _het_place_node + het_place_target under stubs ---------
+
+PLACE_SHIM_H = r"""
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+typedef enum { hipSuccess = 0, hipErrorInvalidDevice } hipError_t;
+typedef enum { hipDeviceAttributeIntegrated = 1 } hipDeviceAttribute_t;
+static int SHIM_INT = 1, SHIM_PCI_OK = 1, SHIM_HOST = 0;
+static int hipDeviceGetAttribute(int *p, hipDeviceAttribute_t, int) {
+  *p = SHIM_INT;
+  return 0;
+}
+static hipError_t hipDeviceGetPCIBusId(char *s, int len, int) {
+  if (!SHIM_PCI_OK) return hipErrorInvalidDevice;
+  snprintf(s, (size_t)len, "0000:C1:00.0");
+  return hipSuccess;
+}
+extern "C" int shim_numa_node_of_pci(const char *bdf) {
+  return strcmp(bdf, "0000:C1:00.0") == 0 ? SHIM_HOST : -99;
+}
+"""
+
+# The sysfs reader is renamed BEFORE the header declares it, so the lifted
+# resolver calls the stub and the real one, linked from impl.o, goes unused.
+PLACE_MAIN = r"""
+#include "shim.h"
+#define het_numa_node_of_pci shim_numa_node_of_pci
+#include "het_cpu_stress.h"
+#include "resolver.inc"
+int main(int argc, char **argv) {
+  if (argc == 5 && strcmp(argv[1], "node") == 0) {
+    SHIM_INT = atoi(argv[2]); SHIM_PCI_OK = atoi(argv[3]); SHIM_HOST = atoi(argv[4]);
+    printf("node1=%d node2=%d\n", _het_place_node(1), _het_place_node(2));
+    return 0;
+  }
+  if (argc == 6 && strcmp(argv[1], "target") == 0) {
+    printf("target=%d\n", het_place_target(atoi(argv[2]), atoi(argv[3]),
+                                           atoi(argv[4]), atoi(argv[5])));
+    return 0;
+  }
+  return 64;
+}
+"""
+
+PLACE_IMPL_C = "#define _GNU_SOURCE\n#define HET_CPU_STRESS_IMPL\n#include \"het_cpu_stress.h\"\n"
+
+ATTR_BEGIN = re.compile(r"^static int _het_hip_attr\(hipDeviceAttribute_t _a\)\{$", re.M)
+NODE_BEGIN = re.compile(r"^static int _het_place_node\(int _where\)\{$", re.M)
+FN_END = re.compile(r"^\}$", re.M)
+
+
+def lift(src, begin, what, name):
+    """The function [what] of [name].hip, from its [begin] line to its closing
+       brace, or None with a reason."""
+    b = begin.search(src)
+    if not b:
+        return None, "no `%s' in %s.hip" % (what, name)
+    e = FN_END.search(src, b.end())
+    if not e:
+        return None, "no closing brace after `%s' in %s.hip" % (what, name)
+    return src[b.start():e.end()] + "\n", None
+
+
+def build_place_resolver(tmp, d):
+    """Lift _het_hip_attr and _het_place_node out of the emitted .hip, compile
+       the harness's own het_cpu_stress.h bodies, and link both against
+       PLACE_SHIM_H.  Returns the driver path, or None with a reason."""
+    name = test_of(d)
+    src = open(os.path.join(d, name + ".hip")).read()
+    body = ""
+    for begin, what in ((ATTR_BEGIN, "_het_hip_attr"), (NODE_BEGIN, "_het_place_node")):
+        piece, why = lift(src, begin, what, name)
+        if piece is None:
+            return None, why
+        body += piece
+    w = os.path.join(tmp, "place-shim-" + name)
+    shutil.rmtree(w, ignore_errors=True)
+    os.makedirs(w)
+    shutil.copy(os.path.join(d, "het_cpu_stress.h"), w)
+    open(os.path.join(w, "shim.h"), "w").write(PLACE_SHIM_H)
+    open(os.path.join(w, "resolver.inc"), "w").write(body)
+    open(os.path.join(w, "drv.cpp"), "w").write(PLACE_MAIN)
+    open(os.path.join(w, "impl.c"), "w").write(PLACE_IMPL_C)
+    r = run(["gcc", "-std=gnu11", "-c", "impl.c", "-o", "impl.o"], cwd=w)
+    if r.returncode != 0:
+        return None, "the emitted het_cpu_stress.h bodies do not compile:\n%s" \
+                     % r.stderr[-2000:]
+    r = run(["g++", "-std=c++17", "-o", "drv", "drv.cpp", "impl.o"], cwd=w)
+    if r.returncode != 0:
+        return None, "the lifted placement resolver does not compile:\n%s" % r.stderr[-2000:]
+    return os.path.join(w, "drv"), None
+
+
+def phase6c(tmp, d):
+    """Which node each HET_PLACE value names on an integrated part, a discrete
+    part and a device with no PCI id; which (where, node_gpu, node_host,
+    nodes_online) het_place_target places and which it refuses on stderr."""
+    print("[place-resolver] _het_place_node + het_place_target under a stub HIP and sysfs")
+    path, why = build_place_resolver(tmp, d)
+    if path is None:
+        tick("place-resolver")
+        fail("place-resolver", why)
+        return
+    for label, args, want in [
+            ("integrated=1", ["1", "1", "3"], "node1=3 node2=3"),
+            ("integrated=0", ["0", "1", "3"], "node1=-1 node2=3"),
+            ("hipDeviceGetPCIBusId failing", ["1", "0", "3"], "node1=-1 node2=-1")]:
+        r = subprocess.run([path, "node"] + args, capture_output=True, text=True)
+        tick("place-resolver")
+        if r.returncode != 0 or want not in r.stdout:
+            fail("place-resolver", "%s: expected `%s', got exit %d:\n%s%s"
+                 % (label, want, r.returncode, r.stdout, r.stderr[-400:]))
+    for args, want in [(("1", "1", "0", "2"), 1), (("2", "1", "0", "2"), 0),
+                       (("1", "0", "0", "4"), -1), (("2", "-1", "0", "1"), -1),
+                       (("1", "-1", "0", "2"), -1)]:
+        r = subprocess.run([path, "target"] + list(args), capture_output=True, text=True)
+        tick("place-resolver")
+        if r.returncode != 0 or ("target=%d\n" % want) not in r.stdout:
+            fail("place-resolver", "het_place_target%s: expected %d, got exit %d:\n%s%s"
+                 % (args, want, r.returncode, r.stdout, r.stderr[-400:]))
+            continue
+        tick("place-resolver")
+        if ("NOT placement-stressed" in r.stderr) != (want < 0):
+            fail("place-resolver", "het_place_target%s -> %d %s:\n%s"
+                 % (args, want,
+                    "printed no refusal" if want < 0 else "printed a refusal",
+                    r.stderr[-400:]))
+    print("      %d assertions" % counts.get("place-resolver", 0))
+    if not counts.get("place-resolver"):
+        fail("place-resolver", "phase made no assertions")
 
 
 def phase7(tmp, d):
@@ -751,6 +913,7 @@ def main():
         phase5(tmp, d_x86_cuda, d_x86)
         phase6(tmp, d_x86)
         phase6b(tmp, d_x86)
+        phase6c(tmp, d_x86)
         phase7(tmp, d_x86_cuda)
         print("=" * 70)
         if fails:
