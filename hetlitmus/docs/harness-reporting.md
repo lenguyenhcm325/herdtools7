@@ -101,8 +101,8 @@ sighting is an observation, and nothing above the per-run guard vouches for it.
 **One stop rule for every row**, because no row carries a prediction to schedule against and
 which shape is stubborn is a property of the part, not of the shape [Kirkham20 §4.2 Tab.6].
 The policy in it: a clean sighting ends the row `OBSERVED`, outranking the budget stop, and a
-row that never fires ends at its budget; `HET_RATE=1` turns the sighting stop off, so a row
-that fires yields a rate.
+row that never fires ends at its budget; `--rate` (`HET_STOP_AT_SIGHTING=0` in the harness)
+turns the sighting stop off, so a row that fires yields a rate.
 
 One invocation's loop is bounded by the compiled `NUMBER_OF_RUN`; `hetlitmus/campaign.py`
 applies the same rule over a row's pooled runs, re-invoking with a fresh seed base each time (a
@@ -118,11 +118,10 @@ alike; there is no separate witness, and the discard precedes the score, so a di
 iteration feeds neither the histogram nor `target_count`. What the condition compiler refuses,
 and the one thing it does not check, is `het-emission.md`, "Scope / limits".
 
-## 7. The flag words are a wire format
+## 7. The printed words are a wire format
 
-`flags=0x…` on a `HetStats` line is read back from transcripts that cannot be re-decoded
-later, so a retired bit is left vacant rather than closed up: add at the top, never renumber.
-The `HetStats` machine line's field set is a wire format too: `hetlitmus/campaign.py` reads
-it by key (`R`, `usable`, `k`, `k_eff`, `scored`, `discarded`, `flags`) and
-ORs the flag words across a row's invocations, so a field a consumer reads must be one
-`het_stats_line` prints.
+`req=0x…` on a `HetObs` line is read back from transcripts that cannot be re-decoded later,
+so a retired bit is left vacant rather than closed up: add at the top, never renumber. The
+`HetStats` machine line's field set is a wire format too: `hetlitmus/campaign.py` reads it by
+key (`R`, `usable`, `k`, `k_eff`, `scored`, `discarded`) and sums them across a row's
+invocations, so a field a consumer reads must be one `het_stats_line` prints.

@@ -88,8 +88,8 @@ typedef struct het_obs_record {
  *   HET_RUNS_MAX      runs this invocation, clamped to the compiled
  *                     NUMBER_OF_RUN; R grows by re-invoking with a fresh
  *                     HET_SEED
- *   HET_ADAPTIVE      1 => consult het_campaign_should_stop() after every run
- *   HET_RATE          1 => run to budget even after a sighting, for a rate
+ *   HET_STOP_AT_SIGHTING  1 => the run loop ends at the first clean sighting;
+ *                     unset, every run executes, for a rate
  *   HET_SEED          the seed base; vary it per invocation, since a replayed
  *                     seed draws no fresh phase and pools as one draw twice.
  *                     Only a value that parses pins it; the driver otherwise
@@ -255,20 +255,6 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
             _r->cpu_aff_failures);
 }
 
-/* The stress incantations, travelling with every reported outcome. */
-static void het_print_config(FILE *_ch, const het_obs_record *_r) {
-  fprintf(_ch,
-    "  config: stress_requested=0x%x do_stress_rounds=%llu "
-    "stress_threads=%u stress_rounds=%llu preload=%llu noise=%llu/%u (%u MB)\n",
-    _r->stress_requested,
-    (unsigned long long)_r->gpu_stress_rounds,
-    _r->cpu_stress_threads,
-    (unsigned long long)_r->cpu_stress_rounds,
-    (unsigned long long)_r->cpu_preload_ops,
-    (unsigned long long)_r->cpu_noise_rounds, _r->gpu_noise_blocks,
-    _r->noise_ws_mb);
-}
-
 /* The outcome the condition names and the effort behind the zero, under every
    null of every class. */
 static void het_print_notobserved(FILE *_ch, const het_obs_record *_r) {
@@ -300,7 +286,6 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
       _r->test_name, _hits,
       (unsigned long long)_r->iters_scored, _n, _pct,
       HET_PAIR_NAME);
-    het_print_config(_ch, _r);
     het_print_caveats(_ch, _r, cv);
     return;
   }
@@ -369,10 +354,6 @@ typedef enum {
   HET_OBS_ALWAYS
 } het_obs_class;
 
-/* Why a statistic is missing or weakened -- each is a way this layer could go
-   silently constant, so each is printed.  Vacant bits: 0, 1, 3-16. */
-#define HET_ST_DEGEN_SIGHTING    (1u << 2) /* >=1 sighting failed the decode guard */
-
 typedef struct het_stats {
   const char *test_name;
   het_obs_class obs;
@@ -384,7 +365,6 @@ typedef struct het_stats {
   int n_degen;        /* sightings the guard rejected (reported, not counted) */
 
   uint64_t N, iters_scored, iters_discarded;   /* the effort disclosure          */
-  uint32_t flags;
 } het_stats_t;
 
 /* The decode guard: could this run's sighting be the constant-read artefact
@@ -417,7 +397,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
 
     if (y) {
       st->k++;
-      if (deg) { st->n_degen++; st->flags |= HET_ST_DEGEN_SIGHTING; }
+      if (deg) st->n_degen++;
       else st->k_eff++;
     }
 
@@ -451,13 +431,12 @@ static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
     "HetStats %s obs=%s "
     "R=%d usable=%d k=%d k_eff=%d degen=%d "
-    "N=%llu scored=%llu discarded=%llu flags=0x%x\n",
+    "N=%llu scored=%llu discarded=%llu\n",
     _s->test_name ? _s->test_name : "(none)",
     het_obs_class_name(_s->obs), _s->R, _s->R_usable, _s->k, _s->k_eff,
     _s->n_degen,
     (unsigned long long)_s->N, (unsigned long long)_s->iters_scored,
-    (unsigned long long)_s->iters_discarded,
-    _s->flags);
+    (unsigned long long)_s->iters_discarded);
 }
 
 /* The human block: the numbers, and the one instruction a reader acts on. */
@@ -495,44 +474,12 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
     "  OBSERVED in %d of %d run(s), %d of them after the decode guard.\n",
     _s->k, _s->R, _s->k_eff);
 
-  if (_s->flags & HET_ST_DEGEN_SIGHTING)
+  if (_s->n_degen > 0)
     fprintf(_ch,
       "  *** %d sighting(s) came from a DEGENERATE run (nothing scored, or a "
       "readout that did not vary): reported, and not counted among the clean "
       "ones.\n",
       _s->n_degen);
-}
-
-/* The campaign stopping rule: one rule for every test, and a pure function of
- * the record stream, so the in-binary loop and hetlitmus/campaign.py apply the
- * same policy.  hetlitmus/docs/harness-reporting.md sec 5. */
-typedef enum {
-  HET_CAMPAIGN_CONTINUE = 0,
-  HET_CAMPAIGN_STOP_OBSERVED,   /* a clean run saw the weak outcome           */
-  HET_CAMPAIGN_STOP_BUDGET      /* budget exhausted, with nothing to show      */
-} het_campaign_stop_t;
-
-/* hetlitmus/campaign.py reads these strings back out of its state file, so they
-   are an interface and not a printout. */
-static const char *het_campaign_stop_name(het_campaign_stop_t s) {
-  switch (s) {
-  case HET_CAMPAIGN_STOP_OBSERVED: return "OBSERVED";
-  case HET_CAMPAIGN_STOP_BUDGET:   return "BUDGET";
-  default:                         return "CONTINUE";
-  }
-}
-
-static het_campaign_stop_t het_campaign_should_stop(const het_obs_record *recs,
-                                                    int n, int budget,
-                                                    int rate_mode) {
-  het_stats_t st;
-  if (n <= 0) return HET_CAMPAIGN_CONTINUE;
-  het_stats_compute(recs, n, &st);
-  /* k_eff, NOT k: a sighting the decode guard rejected stops nothing, and a
-     row that fired is banked OBSERVED whatever its budget says. */
-  if (st.k_eff > 0 && !rate_mode) return HET_CAMPAIGN_STOP_OBSERVED;
-  if (budget > 0 && n >= budget) return HET_CAMPAIGN_STOP_BUDGET;
-  return HET_CAMPAIGN_CONTINUE;
 }
 
 #endif /* HET_VERDICT_H */

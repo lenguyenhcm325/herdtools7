@@ -26,7 +26,7 @@ Needs the OCaml build (`litmus7`, `hetgen7`, `diyone7`), gcc, python3; no GPU co
 | `hetlitmus-verdict` | `verify/verdictcheck.py` | `het_verdict()`, compiled from the real emitted header, stopped deciding, or a printout sentence reports what nothing measured |
 | `hetlitmus-recfields` | `verify/recfields.py` | a `_rec.<field>` or stamped `HET_*` define no longer binds to `litmus/het-runtime/*.h`: a harness that does not compile |
 | `hetlitmus-rdv` | `verify/rdvcheck.py` | an iteration does not begin at the rendezvous, or the primitive carries an order or a fence: a slot pairs an outcome to an iteration the two sides did not share (both het renderings) |
-| `hetlitmus-stats` | `verify/statscheck.py` | `het_stats_compute()`, the stop rule or `campaign.py` (end to end, stub harness) answers the same whatever it is handed |
+| `hetlitmus-stats` | `verify/statscheck.py` | `het_stats_compute()` or `campaign.py` (end to end, stub harness) answers the same whatever it is handed |
 | `hetlitmus-probe-hip` | `verify/runcheck.py` | one of `probe-hip.sh`'s exit paths under stand-in vendor tools (no hipcc, no gfx agent, one agent, two agents) lost its `probe_status` |
 
 ## Toolchain lane — `make hetlitmus-test-toolchain`

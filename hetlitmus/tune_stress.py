@@ -432,8 +432,7 @@ def score(lines, max_discard_pct):
     n, disc = inum(hs, "N"), inum(hs, "discarded")
     rec = {"weak": weak, "R": R, "usable": usable, "k": inum(hs, "k"),
            "k_eff": inum(hs, "k_eff"), "N": n,
-           "iters_scored": inum(hs, "scored"), "discarded": disc,
-           "flags": hs.get("flags", ""), "live": live}
+           "iters_scored": inum(hs, "scored"), "discarded": disc, "live": live}
     if R < 1:
         rec.update(status="error", why="the harness scored no run")
     elif usable == 0:
@@ -475,8 +474,6 @@ def run_config(a, env, log, i, k):
         e = dict(os.environ)
         seed = run_seed(a.seed, i, row_ix)
         e["HET_SEED"] = str(seed)
-        e["HET_RATE"] = "1"
-        e["HET_ADAPTIVE"] = "0"
         e["HET_RUNS_MAX"] = "1"
         if a.cap_cpu:
             e["HET_CAP_CPU"] = str(a.cap_cpu)

@@ -309,7 +309,7 @@ launch-time validity layer upstream has no analogue for.
   drawn. Score-time: a run `het_verdict.h` finds `COLD-INVALID`, or one over the rendezvous
   discard budget, is excluded from the ranking, so the search cannot win by killing a
   mechanism.
-- **The objective** is weak iterations per wall-clock second per row under `HET_RATE=1`.
+- **The objective** is weak iterations per wall-clock second per row, over one run per row.
   Selection is a per-row argmax on that rate, beside a coverage view of which rows each
   configuration revealed and which add rows the leader misses. Winners are stamped from
   one-shot readings; there is no confirmation pass.

@@ -164,8 +164,7 @@ let dump_campaign_knobs ch =
     _runs_budget = NUMBER_OF_RUN;
   }
   if (_runs_budget < 1) _runs_budget = 1;
-  int _adaptive = (int)het_env_long("HET_ADAPTIVE", 0);
-  int _rate_mode = (int)het_env_long("HET_RATE", 0);
+  int _stop_at_sighting = (int)het_env_long("HET_STOP_AT_SIGHTING", 0);
 |} ;
 
   (* het_env_long returns its default for unset, empty and unparseable alike,
@@ -491,21 +490,13 @@ let dump_run_report ch =
     _recs[_nrec++] = _rec;
 |}
 
-let dump_run_early_stop identity ch =
+let dump_run_early_stop ch =
   let s = output_string ch in
-  let tname = identity.id_name in
-  (* Early stop after each run, decided from the records so far
-     (het_verdict.h); with HET_ADAPTIVE unset the loop runs to budget. *)
-  s {|    if (_adaptive) {
-      het_campaign_stop_t _stop = het_campaign_should_stop(_recs, _nrec, _runs_budget, _rate_mode);
-      if (_stop != HET_CAMPAIGN_CONTINUE) {
-|} ;
-  s (Printf.sprintf
-       "        printf(\"HetCampaign %s stop=%%s runs=%%d budget=%%d\\n\",\n\
-        \               het_campaign_stop_name(_stop), _nrec, _runs_budget);\n"
-       tname) ;
-  s {|        break;
-      }
+  (* A clean sighting answers the row; a degenerate one (het_run_degenerate)
+     ends nothing, and with the knob unset every run executes. *)
+  s {|    if (_stop_at_sighting && _rec.target_count > 0 && !het_run_degenerate(&_rec)) {
+      printf("HetLitmus: run loop ended after run %d of %d on a clean sighting\n", _nrec, _runs_budget);
+      break;
     }
 |}
 
@@ -573,7 +564,7 @@ let dump h dialect ch =
   dump_run_record_stamp identity ch ;
   dump_run_readout procs outcome ch ;
   dump_run_report ch ;
-  dump_run_early_stop identity ch ;
+  dump_run_early_stop ch ;
   s "  }\n" ;
   dump_aggregate identity outcome ch ;
   dump_free dialect memory procs ch ;

@@ -744,8 +744,8 @@ hetlitmus-verdict: hetlitmus-corpus-gen | build
 	@ echo "HetLitmus decision rule: OK"
 
 ### het_stats_compute() -- what a "Never" is worth -- compiled from the real
-### emitted header and driven with synthetic record streams, through the stop
-### rule and campaign.py's scheduler (hetlitmus/verify/statscheck.py).
+### emitted header and driven with synthetic record streams, then campaign.py's
+### scheduler against a stub harness (hetlitmus/verify/statscheck.py).
 hetlitmus-stats: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/statscheck.py

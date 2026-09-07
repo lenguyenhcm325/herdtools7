@@ -18,11 +18,9 @@ derives from the seed base.
 
   $ grep -c 'het_env_long("HET_RUNS_MAX", NUMBER_OF_RUN)' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
-  $ grep -c 'het_env_long("HET_ADAPTIVE", 0)' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
+  $ grep -c 'het_env_long("HET_STOP_AT_SIGHTING", 0)' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
   $ grep -c 'het_env_long("HET_SEED", (long)HET_SEED)' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
-  1
-  $ grep -c 'het_env_long("HET_RATE", 0)' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
   $ grep -c 'uint32_t _seed = _seed0 + (uint32_t)_run;' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
@@ -41,12 +39,11 @@ entropy, and the run prints the base it used either way.
   $ grep -c 'HetLitmus: seed0=%u source=%s' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
 
-The adaptive stop is the header's rule, consulted after every run and passed the
-two policy knobs it decides on.
+The run loop ends at the first clean sighting only when asked, and says so.
 
-  $ grep -c 'het_campaign_should_stop(_recs, _nrec, _runs_budget, _rate_mode)' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
+  $ grep -c 'if (_stop_at_sighting && _rec.target_count > 0 && !het_run_degenerate(&_rec)) {' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
-  $ grep -c 'HetCampaign MP-cg-sys-sy.fsc stop=%s' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
+  $ grep -c 'HetLitmus: run loop ended after run %d of %d on a clean sighting' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
 
 The target count is bumped once per scored iteration, under the detector itself,
