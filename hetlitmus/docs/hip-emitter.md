@@ -13,8 +13,8 @@ vendor-neutral; the vendor lives in the emitter, and `-gpu-target` picks one
   `litmus/gpuLang.ml`'s.
 - `litmus/hetGpuOnly.ml` — the `` `LISA `` dispatch arm; under
   `-gpu-target hip` it writes `<name>.hip` and returns `Absent`.
-- `hetlitmus/emit-hip.sh [OUTDIR]` — renders the corpus (default
-  `hetlitmus/hip-out/`) through `hetlitmus/emit-gpu.sh hip OUTDIR`.
+- `hetlitmus/emit-hip.sh [OUTDIR]` — renders the built gpu-only tree (default
+  OUTDIR `hetlitmus/hip-out/`) through `hetlitmus/emit-gpu.sh hip OUTDIR`.
 - `hetlitmus/compile-hip.sh [INDIR] [OUTDIR]` — compiles every render
   ("Compile status" below).
 

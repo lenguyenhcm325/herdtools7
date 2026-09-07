@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """faithful-cover.txt covers the corpus: every feature the corpus carries also
-appears in the list `tokens.sh all' sweeps.  Features, read with ptxcheck's own
-parser: every GPU (kind,order,scope) token, every CPU (mnemonic,option), test
-kind, proc count, device-lane pattern, name class, per-column length, first and
-last op kind, adjacent-op pair, store-only and load-only CPU columns, and every
-distinct GPU and CPU column program.  A miss names the uncovered feature: it is
-a shape the short sweep would never compile (hetlitmus/docs/faithfulness.md).
+appears in the list `tokens.sh all' sweeps, each entry <tree>/<name>.litmus
+relative to the built corpus root (census.CORPUS).  Features, read with
+ptxcheck's own parser: every GPU (kind,order,scope) token, every CPU
+(mnemonic,option), test kind, proc count, device-lane pattern, name class,
+per-column length, first and last op kind, adjacent-op pair, store-only and
+load-only CPU columns, and every distinct GPU and CPU column program.  A miss
+names the uncovered feature: it is a shape the short sweep would never compile
+(hetlitmus/docs/faithfulness.md).
 Exit 0 = covered, 1 = uncovered, 2 = error.  --extend adds tests to the list.
 """
 
@@ -21,8 +23,8 @@ import census
 
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 COVER = os.path.join(HERE, "faithful-cover.txt")
-GPU_DIR = os.path.join(REPO, "hetlitmus", "tests", "gpu-only")
-HET_DIR = os.path.join(REPO, "hetlitmus", "tests", "het")
+GPU_DIR = census.GPU_DIR
+HET_DIR = census.HET_DIR
 EXPECT_CORPUS = census.GPU_ONLY + census.HET
 EXPECT_COVER = census.COVER
 
@@ -39,7 +41,8 @@ ptx = _load_ptxcheck()
 
 
 def corpus():
-    """Every .litmus of both corpora, repo-relative, at the pinned census.
+    """Every .litmus of both CUDA-lane corpora, relative to census.CORPUS, at
+    the pinned census.
 
     Vacuity guard: a cover is trivially valid against an empty corpus."""
     tests = sorted(glob.glob(os.path.join(GPU_DIR, "*.litmus"))) + \
@@ -47,12 +50,12 @@ def corpus():
     if len(tests) != EXPECT_CORPUS:
         raise RuntimeError("corpus census: %d .litmus found, expected %d"
                            % (len(tests), EXPECT_CORPUS))
-    return [os.path.relpath(t, REPO) for t in tests]
+    return [os.path.relpath(t, census.CORPUS) for t in tests]
 
 
 def features(rel):
     """The feature set of one test (see the module docstring)."""
-    path = os.path.join(REPO, rel)
+    path = os.path.join(census.CORPUS, rel)
     text = ptx.read_litmus(path)
     procs, _rows = ptx.parse_body(text)
     inst = ptx.instance_of(path)
@@ -60,9 +63,7 @@ def features(rel):
     pattern = ",".join(devs)
     name = os.path.basename(rel)[:-len(".litmus")]
     f = {("kind", inst['kind']), ("nprocs", len(procs)), ("pattern", pattern),
-         ("n_gpu_lanes", devs.count('gpu')),
-         ("name_dot", '.' in name), ("name_plus", '+' in name),
-         ("name_2s", name.endswith('-2s'))}
+         ("n_gpu_lanes", devs.count('gpu')), ("name_plus", '+' in name)}
     gpu_by_idx, cpu_by_idx = dict(inst['gpu']), dict(inst['cpu'])
     for pidx, dev in procs:
         gpu = ptx.device_class(dev) == 'gpu'

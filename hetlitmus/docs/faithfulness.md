@@ -54,12 +54,12 @@ materialises a store value in a register and is not a memory or ordering op.
 | `DMB SY` / `DMB ST` / `DMB LD` | barrier; the option names the access types it orders |
 | `STR` / `LDR` | plain store / load |
 
-The RCpc choice is the corpus generator's: the two-sided acquire atom `Q` is
-upstream's `ReadAcqPc` (`gen/common/AArch64Arch_gen.ml`), which
+The RCpc choice is the corpus generator's: the CPU `ra` order's read atom `Q`
+is upstream's `ReadAcqPc` (`gen/common/AArch64Arch_gen.ml`), which
 `gen/AArch64Compile_gen.ml` lowers to `LDAPR`, so the emitted build compiles
 `<t>_cpu.c` with `-march=armv8.3-a` (`litmus/hetCpuFront.ml`). `DMB ST` and
-`DMB LD` come from the `st`/`ld` order-pair tokens (`_grid_lib.sh`,
-`render_cpu_cycle`).
+`DMB LD` come from the `st`/`ld` CPU orders (the AArch64 profile of
+`hetlitmus/tests/grid.py`, `render_cpu_aarch64`).
 
 ## The property, op by op
 
@@ -67,9 +67,10 @@ The `.litmus` fixes an expected profile; the emitted PTX (and, for het
 tests, `_cpu.c`) carries an observed one. The harness is faithful when:
 
 1. **The model-op streams are equal in order**: element-wise `(kind, order,
-   scope)` equality of the flattened streams. Ordered equality subsumes
-   multiplicity and placement, and reads a strengthening or a weakening as a
-   positional difference.
+   scope)` equality of the flattened streams, an `sc` access expected as the
+   two ops libcu++ lowers it to (`cuda-emitter.md`, "Mappings"). Ordered
+   equality subsumes multiplicity and placement, and reads a strengthening or
+   a weakening as a positional difference.
 2. **(het) No model op precedes the first rendezvous arrival**: an op ahead
    of it belongs to no lane.
 3. **(het) The GPU arm of the rendezvous orders nothing**: every op
@@ -99,7 +100,7 @@ column begins or ends in a fence is unambiguous.
 
 * Static lowering only. Reordering by `ptxas` or the hardware is the
   behaviour under test, not part of this property.
-* No RMW and no `sc` on an access appears in the corpus.
+* No RMW appears in the corpus; `sc` accesses do (the `sc` GPU order).
 * **One scaffolding write sits inside the tested loop.** The lane at `(0,0)`
   bumps `_gpu_iter` once per iteration, after its readout stores; it lowers
   to a bare `atom.global.add.u32` (property 4) and the stress population

@@ -22,19 +22,19 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import census
+
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
-GEN_HET = os.path.join(HET_DIR, "generate.sh")
-GEN_X86_ARGS = ["--cpu-arch", "x86_64"]
 LITMUS7 = os.path.join(ROOT, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(ROOT, "litmus", "libdir")
 
 # The x86_64 rendering is the one an x86_64 host can LINK, and its GPU column
 # annotates f[sc,sys], so every phase that compiles builds a fence render.
-X86_TEST = "MP-cg-sys-fence-x86_64"
+X86_TEST = "MP-cg-sys-plain.fsc-x86_64"
 # The other CPU ISA: foreign-host drives whichever of the two renders is
 # foreign to the host it runs on.
-AARCH64_TEST = "MP-cg-sys-acqrel-2s"
+AARCH64_TEST = "MP-cg-sys-ra.acq"
 
 # ELF e_machine (bytes 18-19, little-endian) per `uname -m' word: what a
 # cross-assembled CPU object must report.
@@ -728,15 +728,9 @@ def main():
 
     tmp = tempfile.mkdtemp(prefix="hipbuildcheck.")
     try:
-        # The x86_64 rendering is generated on demand, not committed
-        # (hetlitmus/docs/corpus-grid.md, "The CPU ISA of a rendering").
-        corpus = os.path.join(tmp, "x86")
-        r = run(["bash", GEN_HET] + GEN_X86_ARGS + [corpus])
-        if r.returncode != 0:
-            raise SystemExit("hipbuildcheck: generate.sh --cpu-arch x86_64 failed:\n" + r.stderr)
-        src = os.path.join(corpus, X86_TEST + ".litmus")
+        src = os.path.join(census.X86_DIR, X86_TEST + ".litmus")
         if not os.path.isfile(src):
-            raise SystemExit("hipbuildcheck: generate.sh --cpu-arch x86_64 emitted no %s" % X86_TEST)
+            raise SystemExit("hipbuildcheck: no %s (run 'make hetlitmus-corpus-gen')" % src)
         # The same x86 test, rendered once per vendor: one directory carries
         # one vendor's arms (litmus/hetDialect.ml).
         d_x86 = emit(tmp, src, os.path.join(tmp, "out-x86-hip"), "x86 render", "hip")
@@ -744,7 +738,7 @@ def main():
                           "x86 render", "cuda")
         # The AArch64 render, emitted CUDA so foreign-host has one render per
         # CPU ISA in the same dialect.
-        d_aa_cuda = emit(tmp, os.path.join(HET_DIR, AARCH64_TEST + ".litmus"),
+        d_aa_cuda = emit(tmp, os.path.join(census.HET_DIR, AARCH64_TEST + ".litmus"),
                          os.path.join(tmp, "out-aa"), "AArch64 render", "cuda")
 
         print("===== HIPBUILDCHECK: can an AMD harness be built and run? =====")

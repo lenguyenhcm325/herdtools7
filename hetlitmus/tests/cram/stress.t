@@ -1,24 +1,24 @@
 GPU memory-stress guard (hetlitmus/docs/00-environment-design.md sec 3.5;
 hetlitmus/docs/het-emission.md, "The pair a harness names").
 
-  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-ra.acq.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-plain.fsc.litmus >/dev/null 2>&1
   $ mkdir hip
-  $ litmus7 -gpu-target hip -o hip ../het-x86/MP-cg-sys-acqrel-2s-x86_64.litmus >/dev/null 2>&1
-  $ litmus7 -gpu-target hip -o hip ../het-x86/S-cg-sys-fence-x86_64.litmus >/dev/null 2>&1
-  $ MP=MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
-  $ S=S-cg-sys-fence/S-cg-sys-fence
-  $ MPH=hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64
-  $ SH=hip/S-cg-sys-fence-x86_64/S-cg-sys-fence-x86_64
+  $ litmus7 -gpu-target hip -o hip ../het-x86_64/MP-cg-sys-plain.acq-x86_64.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target hip -o hip ../het-x86_64/S-cg-sys-plain.fsc-x86_64.litmus >/dev/null 2>&1
+  $ MP=MP-cg-sys-ra.acq/MP-cg-sys-ra.acq
+  $ S=S-cg-sys-plain.fsc/S-cg-sys-plain.fsc
+  $ MPH=hip/MP-cg-sys-plain.acq-x86_64/MP-cg-sys-plain.acq-x86_64
+  $ SH=hip/S-cg-sys-plain.fsc-x86_64/S-cg-sys-plain.fsc-x86_64
 
 (a) the ported stress layer is one shared header per harness dir, included by
 that dir's render, carrying the [CudaLitmus] citation its reuse is conditioned on.
-  $ test -f MP-cg-sys-acqrel-2s/het_stress.h && echo present
+  $ test -f MP-cg-sys-ra.acq/het_stress.h && echo present
   present
   $ grep -c '#include "het_stress.h"' $MP.cu $MPH.hip
-  MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu:1
-  hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64.hip:1
-  $ grep -c 'cuda-litmus' MP-cg-sys-acqrel-2s/het_stress.h > /dev/null && echo cited
+  MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu:1
+  hip/MP-cg-sys-plain.acq-x86_64/MP-cg-sys-plain.acq-x86_64.hip:1
+  $ grep -c 'cuda-litmus' MP-cg-sys-ra.acq/het_stress.h > /dev/null && echo cited
   cited
 
 (b) the scratchpad is DEVICE memory, never gd_alloc_shared, the coherent
@@ -74,9 +74,9 @@ test was still running reaches the record once per block.
 
 (e3) and the shipped defaults: pattern 0 is the memory stress's only pure
 writer, so a drift would leave it reading and never writing.
-  $ grep -c '#define HET_PRE_STRESS_PATTERN 3' MP-cg-sys-acqrel-2s/het_stress.h
+  $ grep -c '#define HET_PRE_STRESS_PATTERN 3' MP-cg-sys-ra.acq/het_stress.h
   1
-  $ grep -c '#define HET_MEM_STRESS_PATTERN 0' MP-cg-sys-acqrel-2s/het_stress.h
+  $ grep -c '#define HET_MEM_STRESS_PATTERN 0' MP-cg-sys-ra.acq/het_stress.h
   1
 
 (f) the stress toggles are drawn device-side, each a function of the seed, the

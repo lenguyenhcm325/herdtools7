@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# emit-all.sh -- emit the whole corpus over every (CPU ISA x GPU dialect) lane
-# into OUTDIR, at the censuses verify/census.sh pins.  A behaviour-preserving
+# emit-all.sh -- emit the built corpus trees (paths.sh) over every (CPU ISA x
+# GPU dialect) lane into OUTDIR, at the censuses verify/census.sh pins.  A
+# behaviour-preserving
 # emitter refactor proves itself byte-identical against two snapshots:
 #   ./emit-all.sh SNAP_BEFORE; ...refactor...; ./emit-all.sh SNAP_AFTER
 #   diff -r SNAP_BEFORE SNAP_AFTER && echo BYTE-IDENTICAL
@@ -16,7 +17,7 @@ set -euo pipefail
 [ -x "$LITMUS7" ] || { echo "error: $LITMUS7 not built (run 'make all')" >&2; exit 2; }
 
 # The emission lanes, "<corpus>:<gpu-target>:<render extension>:<OUTDIR subdir>".
-HET_LANES="aarch64:cuda:cu:het-cuda x86:hip:hip:het-x86-hip x86:cuda:cu:het-x86-cuda \
+HET_LANES="aarch64:cuda:cu:het-cuda x86:hip:hip:het-x86_64-hip x86:cuda:cu:het-x86_64-cuda \
 aarch64:hip:hip:het-hip"
 # The pair name each lane's renders must stamp.
 pair_of_lane() {                # <corpus>:<target> -> the HET_PAIR_NAME value
@@ -27,8 +28,14 @@ pair_of_lane() {                # <corpus>:<target> -> the HET_PAIR_NAME value
   esac
 }
 GPU_LANES="cuda:cu:gpu-cuda hip:hip:gpu-hip"
-EXPECT_HET="$CENSUS_HET"          # harness dirs per het lane
 EXPECT_GPU="$CENSUS_GPU_ONLY"     # kernels per gpu-only lane
+expect_of_corpus() {            # <corpus> -> harness dirs per het lane
+  case "$1" in
+    aarch64) echo "$CENSUS_HET" ;;
+    x86)     echo "$CENSUS_HET_X86" ;;
+    *) echo "emit-all.sh: unknown corpus $1" >&2 ; return 1 ;;
+  esac
+}
 
 OUTDIR="${1:?usage: emit-all.sh OUTDIR}"
 mkdir -p "$OUTDIR"
@@ -37,38 +44,31 @@ OUTDIR="$(cd "$OUTDIR" && pwd)"
 # Outside OUTDIR: a snapshot is byte-diffed with `diff -r', which compares
 # dotfiles too, so no scratch file may land in it.
 LOG="$(mktemp)"
-SCRATCH="$(mktemp -d)"
-trap 'rm -f "$LOG"; rm -rf "$SCRATCH"' EXIT
+trap 'rm -f "$LOG"' EXIT
 
-# The x86 corpus, generated on demand into SCRATCH: it is not committed, and a
-# scratch file inside OUTDIR would show up in the `diff -r' of two snapshots.
-X86_CORPUS="$SCRATCH/x86"
-gen_x86_once() {
-  [ -d "$X86_CORPUS" ] && return 0
-  echo "        generating the x86 corpus (not committed; tests/het/generate.sh --cpu-arch x86_64)"
-  PATH="$BIN:$PATH" bash "$HETL/tests/het/generate.sh" --cpu-arch x86_64 "$X86_CORPUS" >"$LOG" 2>&1 || {
-    echo "FAIL: generate.sh --cpu-arch x86_64 failed; its output:" >&2 ; cat "$LOG" >&2 ; exit 1 ; }
-}
-corpus_dir() {                  # <corpus> -> the directory to emit from
+corpus_dir() {                  # <corpus> -> the built tree to emit from
   case "$1" in
-    aarch64) echo "$HETL/tests/het" ;;
-    x86)     gen_x86_once >&2 ; echo "$X86_CORPUS" ;;
+    aarch64) echo "$HET_CORPUS" ;;
+    x86)     echo "$X86_CORPUS" ;;
     *) echo "emit-all.sh: unknown corpus $1" >&2 ; return 1 ;;
   esac
 }
+for d in "$HET_CORPUS" "$X86_CORPUS" "$GPU_CORPUS"; do
+  [ -d "$d" ] || { echo "error: $d not built (run 'make hetlitmus-corpus-gen')" >&2; exit 2; }
+done
 
 i=0
 nlanes=0
-nhetlanes=0
 ngpulanes=0
+nhet_total=0
 for lane in $HET_LANES $GPU_LANES; do nlanes=$((nlanes+1)); done
 
 for lane in $HET_LANES; do
   corpus="${lane%%:*}"; rest="${lane#*:}"
   target="${rest%%:*}"; rest="${rest#*:}"
   ext="${rest%%:*}"; sub="${rest#*:}"
-  nhetlanes=$((nhetlanes+1))
   want_pair="$(pair_of_lane "$corpus:$target")"
+  expect_het="$(expect_of_corpus "$corpus")"
   i=$((i+1))
   echo "[$i/$nlanes] $corpus corpus, -gpu-target $target -> $OUTDIR/$sub"
   cdir="$(corpus_dir "$corpus")"
@@ -111,11 +111,12 @@ for lane in $HET_LANES; do
       fi
     done )
   nhet="$(find "$OUTDIR/$sub" -mindepth 1 -maxdepth 1 -type d | wc -l)"
-  echo "        $nhet het harness dirs (expect $EXPECT_HET), each stamping $want_pair once"
-  if [ "$nhet" -ne "$EXPECT_HET" ]; then
-    echo "FAIL: census mismatch in $sub (want $EXPECT_HET)" >&2
+  echo "        $nhet het harness dirs (expect $expect_het), each stamping $want_pair once"
+  if [ "$nhet" -ne "$expect_het" ]; then
+    echo "FAIL: census mismatch in $sub (want $expect_het)" >&2
     exit 1
   fi
+  nhet_total=$((nhet_total+nhet))
 done
 
 for lane in $GPU_LANES; do
@@ -145,5 +146,5 @@ for lane in $GPU_LANES; do
   done
 done
 
-echo "emitted: $nhetlanes x $EXPECT_HET het harness dirs, \
+echo "emitted: $nhet_total het harness dirs over $((nlanes-ngpulanes)) lanes, \
 $ngpulanes x $EXPECT_GPU gpu-only kernels"

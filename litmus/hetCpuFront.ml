@@ -49,7 +49,7 @@ module AArch64 (O:Config) = struct
       host_macro = "__aarch64__" ;
       host_uname = "aarch64" ;
       cross = ("aarch64-linux-gnu","gnu11") ;
-      (* litmus7 lowers a two-sided test's acquire read to LDAPR, which is
+      (* litmus7 lowers the CPU `ra' order's acquire read to LDAPR, which is
          ARMv8.3 RCpc and the assembler's default base architecture rejects;
          upstream's mechanism is a compile flag (litmus/libdir/armv8.3.cfg). *)
       cpu_cflags = "-march=armv8.3-a" ;

@@ -22,8 +22,11 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import census
+
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
+HET_DIR = census.HET_DIR
 CAMPAIGN = os.path.join(ROOT, "hetlitmus", "campaign.py")
 
 # The Python mirror of the header's knob.  No fixture straddles its boundary, so
@@ -393,7 +396,7 @@ def _env():
 
 def emit_harness(tmp):
     """Emit a REAL harness and return its directory (the header comes from it)."""
-    test = "MP-cg-sys-fence-2s"
+    test = "MP-cg-sys-sy.fsc"
     out = os.path.join(tmp, "emit")
     os.makedirs(out, exist_ok=True)
     subprocess.run(["litmus7", "-gpu-target", "cuda",

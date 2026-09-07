@@ -20,9 +20,12 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import census
+
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
-X86_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het-x86")
+HET_DIR = census.HET_DIR
+X86_DIR = census.X86_DIR
 
 VERDICTS = ["OBSERVED", "NOT-OBSERVED", "COLD-INVALID"]
 
@@ -303,12 +306,12 @@ def _emit_pair(tmp, sub, target, src_dir, test, ext):
 def emit(tmp):
     """The REAL het_verdict.h litmus7 writes into a harness, and the pair defines
     each dialect stamps -- all from live emissions, never typed here."""
-    d, cuda = _emit_pair(tmp, "emit", "cuda", HET_DIR, "MP-cg-sys-fence-2s", ".cu")
+    d, cuda = _emit_pair(tmp, "emit", "cuda", HET_DIR, "MP-cg-sys-sy.fsc", ".cu")
     h = os.path.join(d, "het_verdict.h")
     if not os.path.exists(h):
         raise SystemExit("verdictcheck: the cuda harness carries no het_verdict.h")
     _, hip = _emit_pair(tmp, "emit-hip", "hip", X86_DIR,
-                        "MP-cg-sys-relaxed-x86_64", ".hip")
+                        "MP-cg-sys-plain.rlx-x86_64", ".hip")
     return h, cuda, hip
 
 

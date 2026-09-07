@@ -5,7 +5,7 @@
  * scoped LISA tests over it, herd7 reads them back via -bell.  Every access
  * carries BOTH a memory order and a scope.
  * Provenance, and the corpus the vocabulary is scoped to:
- * hetlitmus/docs/gpu-only-corpus.md, "Minimum vocabulary the frontend must
+ * hetlitmus/docs/gpu-only-corpus.md, "The vocabulary the frontend must
  * express" and "Sources".
  *)
 

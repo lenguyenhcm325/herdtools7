@@ -18,8 +18,8 @@ export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 CHECK="$REPO/hetlitmus/verify/ptxcheck.py"
 COVERCHECK="$REPO/hetlitmus/verify/covercheck.py"
 COVER="$REPO/hetlitmus/verify/faithful-cover.txt"
-GPU_DIR="$REPO/hetlitmus/tests/gpu-only"
-HET_DIR="$REPO/hetlitmus/tests/het"
+GPU_DIR="$GPU_CORPUS"            # the built trees (paths.sh)
+HET_DIR="$HET_CORPUS"
 EXPECT_COVER="$CENSUS_COVER"
 # `nproc' honours this process's affinity mask but NOT a cgroup CPU quota, so
 # the cap is what keeps an uncapped default from oversubscribing a container.
@@ -85,11 +85,12 @@ run_paths() {
 
 run_dir() { ls "$1"/*.litmus 2>/dev/null | run_paths "$2" "$3"; }
 
-# The committed cover: covercheck.py asserts it reaches every feature of the
-# full corpus, so this sweep misses no shape `full' would compile.
+# The cover, relative to $CORPUS: covercheck.py asserts it reaches every
+# feature of the full corpus, so this sweep misses no shape `full' compiles.
 run_cover() {
   python3 "$COVERCHECK" || return 1
-  grep -vE '^[[:space:]]*(#|$)' "$COVER" | run_paths cover "$EXPECT_COVER"
+  grep -vE '^[[:space:]]*(#|$)' "$COVER" | sed "s|^|$CORPUS/|" \
+    | run_paths cover "$EXPECT_COVER"
 }
 
 # ---- $1 banner, $2 tag, $3 what-failed, $4 checker, $5 flags, $6.. reps ----
@@ -119,14 +120,14 @@ _liveness_report() {
 stress_report() {
   _liveness_report "STRESS LIVENESS: is the GPU scratchpad layer in the PTX?" \
     STRESS "carry a dead stress layer" stresscheck.py "" \
-    MP-cg-sys-acqrel-2s
+    MP-cg-sys-ra.acq
 }
 
 # The same checker minus its device probe, for a box with nvcc and no GPU.
 stress_static_report() {
   _liveness_report "STRESS PTX SURVIVAL: does the layer survive nvcc?" \
     STRESS-STATIC "carry a stress layer nvcc folded away" stresscheck.py --no-device \
-    MP-cg-sys-acqrel-2s
+    MP-cg-sys-ra.acq
 }
 
 # ---- CPU + interconnect stress liveness (cpustresscheck.py) ---------------
@@ -134,7 +135,7 @@ stress_static_report() {
 cpustress_report() {
   _liveness_report "CPU + INTERCONNECT STRESS LIVENESS: does that layer run?" \
     CPUSTRESS "carry a dead CPU/interconnect stress layer" cpustresscheck.py "" \
-    MP-cg-sys-acqrel-2s
+    MP-cg-sys-ra.acq
 }
 
 # ---------------------------------------------------------------------------

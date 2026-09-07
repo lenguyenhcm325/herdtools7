@@ -36,7 +36,23 @@ The GPU dialect, CUDA or HIP, is not an arm: it is litmus7's `-gpu-target`
 ## 3. The file format
 
 A heterogeneous test differs from a single-arch `.litmus` in three places;
-`hetlitmus/tests/het/MP-het.litmus` shows all three.
+`MP-cg-sys-plain.acq` of the het corpus shows all three:
+
+```
+Het MP-cg-sys-plain.acq
+"Heterogeneous MP-cg-sys-plain.acq: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
+{
+0:X1=x;
+0:X3=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#1   | r[acquire,sys] r0 y ;
+ STR W0,[X1] | r[acquire,sys] r1 x ;
+ MOV W2,#1   |                     ;
+ STR W2,[X3] |                     ;
+scopes: (sys (gpu (cta P1)))
+exists (1:r0=1 /\ 1:r1=0)
+```
 
 1. **Arch token `Het`.** Read by the splitter through `Archs.parse` with no
    grammar change. The header names neither sub-architecture: the CPU ISA

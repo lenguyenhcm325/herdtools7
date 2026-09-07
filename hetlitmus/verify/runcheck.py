@@ -20,22 +20,23 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import census
+
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HETL = os.path.join(ROOT, "hetlitmus")
 PROBE_HIP = os.path.join(HETL, "probe-hip.sh")
 BUILD_SH = os.path.join(HETL, "build.sh")
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
-# The committed (x86_64, *) fixture: a `generate.sh --cpu-arch x86_64' run, cut
-# verbatim and kept that way by corpus-gate.sh's het-x86 label.
-X86_DIR = os.path.join(HETL, "tests", "het-x86")
-X86_TESTS = ["CoRR-cg-sys-fence-2s-x86_64", "MP-cg-sys-acqrel-2s-x86_64",
-             "MP-cg-sys-relaxed-x86_64", "S-cg-sys-fence-x86_64"]
-# The (AArch64, *) lane is the committed het corpus, and the cut below is copied
-# out of it at run time: it is the corpus minus rows, not a second fixture.
-AARCH64_DIR = os.path.join(HETL, "tests", "het")
-AARCH64_TESTS = ["MP-cg-sys-acqrel-2s", "MP-cg-sys-acquire", "MP-cg-sys-relaxed",
-                 "S-cg-sys-fence", "S-cg-sys-relaxed"]
+# The (x86_64, *) rows, read out of the built x86_64 tree.
+X86_DIR = census.X86_DIR
+X86_TESTS = ["CoRR-cg-sys-mf.rlx-x86_64", "MP-cg-sys-plain.acq-x86_64",
+             "MP-cg-sys-plain.rlx-x86_64", "S-cg-sys-plain.fsc-x86_64"]
+# The (AArch64, *) rows, copied out of the built AArch64 tree at run time.
+AARCH64_DIR = census.HET_DIR
+AARCH64_TESTS = ["MP-cg-sys-ra.acq", "MP-cg-sys-plain.acq", "MP-cg-sys-plain.rlx",
+                 "S-cg-sys-plain.fsc", "S-cg-sys-plain.rlx"]
 
 
 def sh(cmd, **kw):
@@ -57,7 +58,7 @@ _CUT = None
 
 
 def aarch64_corpus():
-    """The AArch64 cut, copied verbatim out of the committed corpus on demand."""
+    """The AArch64 cut, copied verbatim out of the built tree on demand."""
     global _CUT
     if _CUT is None:
         d = tempfile.mkdtemp(prefix="runcheck-aarch64.")
@@ -87,7 +88,7 @@ def host_fixture():
     lane drives nothing here, and a pass over nothing is the failure mode."""
     fx = fixture()
     if fx is None:
-        raise SystemExit("runcheck: no committed corpus carries a %s CPU column,"
+        raise SystemExit("runcheck: no built corpus carries a %s CPU column,"
                          " so there is no chain to drive on this host."
                          % platform.machine())
     return fx
@@ -151,7 +152,7 @@ def phase6_probe_hip(probe, quiet=False):
 
 # The relaxed MP row of this host's fixture: a harness whose CPU column is
 # foreign does not link here.
-CH_STEM = "MP-cg-sys-relaxed"
+CH_STEM = "MP-cg-sys-plain.rlx"
 CH_SEED_TRIES = 12
 # The printout's shape does not depend on how many runs stand behind it, so the
 # runs are curtailed and the timeout is what a curtailed run may take.

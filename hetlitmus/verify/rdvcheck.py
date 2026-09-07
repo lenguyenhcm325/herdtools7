@@ -43,12 +43,12 @@ def _load(name, path):
 hip = _load("hipsrccheck", HIPSRCCHECK)
 GateError = hip.GateError
 
-# (label, corpus dir or None to generate, -gpu-target, render extension, census).
+# (label, built corpus dir, -gpu-target, render extension, census).
 # BOTH pairs: the primitive is written once per dialect and can drift apart.
-HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
+HET_DIR = census.HET_DIR
 HET_N = census.HET
 LANES = [("aarch64 het x cuda", HET_DIR, "cuda", "cu", HET_N),
-         ("x86_64 het x hip", None, "hip", "hip", hip.X86_HET_N)]
+         ("x86_64 het x hip", census.X86_DIR, "hip", "hip", census.HET_X86)]
 
 # ---------------------------------------------------------------------------
 # 1. The primitive (litmus/het-runtime/het_rdv.h): two device definitions and
@@ -342,8 +342,6 @@ def emit_corpus(files, target, out):
 
 def lane_renders(tmp, label, corpus, target, ext, expect):
     """[(name, render path, harness dir)] for one lane, census asserted first."""
-    if corpus is None:
-        corpus = hip.regen_x86(os.path.join(tmp, "x86-corpus"))
     files = hip.corpus_files(corpus, label, expect)
     out = emit_corpus(files, target, os.path.join(tmp, target + "-out"))
     got = []
@@ -393,7 +391,7 @@ def run(quiet=False):
           "iteration, ahead of every tested access, its source relaxed and "
           "fence-free, and one histogram site and one discard site inside the "
           "readout)"
-          % (HET_N, hip.X86_HET_N))
+          % (HET_N, census.HET_X86))
     return 0
 
 

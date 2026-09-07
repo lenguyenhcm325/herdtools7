@@ -1,0 +1,29 @@
+; The corpora are build products of grid.py, one directory target each, so a
+; tree is regenerated only when a generator input changes; no .litmus is
+; committed (hetlitmus/docs/corpus-grid.md).  hetgen7 and diyone7 load the
+; Bell model against herd's libdir (stdlib.cat).
+
+(rule
+ (targets (dir het))
+ (deps grid.py ../bells/gpu.bell %{bin:hetgen7} (source_tree ../../herd/libdir))
+ (action
+  (run python3 %{dep:grid.py} --corpus het --cpu-arch aarch64 --out het
+   --bell ../bells/gpu.bell --libdir ../../herd/libdir --hetgen7 %{bin:hetgen7})))
+
+(rule
+ (targets (dir het-x86_64))
+ (deps grid.py ../bells/gpu.bell %{bin:hetgen7} (source_tree ../../herd/libdir))
+ (action
+  (run python3 %{dep:grid.py} --corpus het --cpu-arch x86_64 --out het-x86_64
+   --bell ../bells/gpu.bell --libdir ../../herd/libdir --hetgen7 %{bin:hetgen7})))
+
+(rule
+ (targets (dir gpu-only))
+ (deps grid.py ../bells/gpu.bell %{bin:diyone7} (source_tree ../../herd/libdir))
+ (action
+  (run python3 %{dep:grid.py} --corpus gpu-only --out gpu-only
+   --bell ../bells/gpu.bell --libdir ../../herd/libdir --diyone7 %{bin:diyone7})))
+
+(alias
+ (name corpus)
+ (deps het het-x86_64 gpu-only))

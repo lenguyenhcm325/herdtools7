@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""dupcheck.py -- the isomorphism gate over hetlitmus/tests/het.
+"""dupcheck.py -- the isomorphism gate over the built het tree (census.HET_DIR).
 
   duplicate  no two tests are the same experiment up to (proc permutation x
-             location renaming) -- the class a generator's byte-comparison
-             against one sibling cannot see (hetlitmus/docs/corpus-grid.md,
-             "Heterogeneous device cuts").
+             location renaming): the cut reduction by the cycle's symmetry
+             kept no two isomorphic tests, the class the generator's byte-dedup
+             cannot see (hetlitmus/docs/corpus-grid.md).
   empty      an empty --dir is a refusal, not a clean corpus.
 
 Usage:  dupcheck.py [--dir D] [-q]   (exit 0 = clean)
@@ -19,7 +19,10 @@ import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_DIR = os.path.join(HERE, "..", "tests", "het")
+sys.path.insert(0, HERE)
+import census
+
+DEFAULT_DIR = census.HET_DIR
 
 
 # Canonical form: procs (with their device tag) x ordered annotated events,

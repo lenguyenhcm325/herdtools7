@@ -108,8 +108,8 @@ Only the native branch writes `<t>_cpu_host.o`, which is why `comp.sh
 `make <target>-bin` stops at the `#error` in its `$(CC)` rule, and `comp.sh
 <target>-link` dies on the missing object. Neither leaves a `./<t>`.
 
-`HET_CPU_CFLAGS` carries `-march=armv8.3-a` on an AArch64 render: litmus7
-lowers a two-sided acquire read to LDAPR (ARMv8.3 RCpc), which the assembler's
+`HET_CPU_CFLAGS` carries `-march=armv8.3-a` on an AArch64 render: the CPU
+`ra` order's acquire read is LDAPR (ARMv8.3 RCpc), which the assembler's
 default base rejects; `litmus/libdir/armv8.3.cfg` is upstream's spelling of
 the same flag. The `Makefile` applies it only where `uname -m` matches
 (`HET_HOST_CFLAGS`), because `gcc` rejects a foreign `-march` before
@@ -183,12 +183,11 @@ A harness is a **(CPU ISA × GPU dialect) pair**, not a machine.
 ## Scope / limits
 
 * CPU ISAs: AArch64 and x86_64 (by tag); GPU dialects: CUDA and HIP (by
-  `-gpu-target`); all four pairs emit. The x86_64 rendering of the corpus is
-  produced on demand by `hetlitmus/tests/het/generate.sh --cpu-arch x86_64
-  OUTDIR` and is not committed as a corpus: under x86-TSO the CPU tokens
-  collapse (`corpus-grid.md`, "The CPU ISA of a rendering"), so distinct names
-  render the same experiment, and the corpus admits no duplicate experiment.
-  Names are name-for-name with the committed corpus (`<name>-x86_64`).
+  `-gpu-target`); all four pairs emit. Neither CPU rendering of the het corpus
+  is committed: both are build products (`corpus-grid.md`). The x86_64
+  rendering's CPU orders are `plain` and `mf`, the two x86-TSO leaves distinct
+  (`corpus-grid.md`, "The CPU ISA of a rendering"); its names carry the
+  `-x86_64` suffix and are not name-for-name with the AArch64 rendering.
 * **Refusal is fail-closed.** litmus7 prints
   `HetLitmus REFUSED (het|gpu-only|isa-scan) <test>: <why>` on stderr and
   exits **3** (`HetArch.refused`), distinct from litmus7's own exit 2 (usage,
@@ -235,28 +234,28 @@ A harness is a **(CPU ISA × GPU dialect) pair**, not a machine.
 
 ## From a corpus to a results dir
 
-Four steps, run in a checkout on the machine under test. `RESULTS` (env;
-default `hetlitmus/run-out/<date>-<host>`, git-ignored) is shared by all four,
-so every artefact of one run sits in one directory.
+Four steps, run in a checkout on the machine under test, over the built corpus
+tree of the host's CPU ISA (`make hetlitmus-corpus-gen`, `corpus-grid.md`).
+`RESULTS` (env; default `hetlitmus/run-out/<date>-<host>`, git-ignored) is
+shared by all four, so every artefact of one run sits in one directory.
 
 AArch64 CPU + CUDA:
 
 ```
 export RESULTS=hetlitmus/run-out/<tag>
 sh hetlitmus/probe-cuda.sh                                  # $RESULTS/probe.txt
-hetlitmus/emit-het.sh --gpu-target cuda hetlitmus/tests/het  # $RESULTS/emit/<t>/, $RESULTS/emit.log
+hetlitmus/emit-het.sh --gpu-target cuda _build/default/hetlitmus/tests/het  # $RESULTS/emit/<t>/, $RESULTS/emit.log
 hetlitmus/build.sh $RESULTS/emit                             # $RESULTS/emit/<t>/<t>, build.txt, build/<t>.log
 python3 hetlitmus/campaign.py --corpus $RESULTS/emit \
     --budget-runs 100 --state $RESULTS/campaign.csv          # the state CSV, campaign-logs/, the report
 ```
 
-x86_64 CPU + HIP (the corpus is rendered first):
+x86_64 CPU + HIP:
 
 ```
 export RESULTS=hetlitmus/run-out/<tag>
 sh hetlitmus/probe-hip.sh
-hetlitmus/tests/het/generate.sh --cpu-arch x86_64 $RESULTS/corpus-x86
-hetlitmus/emit-het.sh --gpu-target hip $RESULTS/corpus-x86
+hetlitmus/emit-het.sh --gpu-target hip _build/default/hetlitmus/tests/het-x86_64
 hetlitmus/build.sh $RESULTS/emit
 python3 hetlitmus/campaign.py --corpus $RESULTS/emit \
     --budget-runs 100 --state $RESULTS/campaign.csv

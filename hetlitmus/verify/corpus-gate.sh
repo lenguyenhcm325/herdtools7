@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # The corpus + emission golden gate: no nvcc, no GPU, nothing written inside the
 # repo (hetlitmus/docs/README-tests.md).  0 only if:
-#   1. Corpus -- gpu-only, het and the tests/het-x86 fixture regenerate into a
-#      temp tree with the same name set (the fixture as a SUBSET) and same bytes.
-#   2. Census -- the .litmus counts match verify/census.sh's pins.
+#   1. Corpus -- grid.py, run afresh into a temp tree, reproduces each built
+#      tree (het, het-x86_64, gpu-only) file for file and byte for byte.
+#   2. Census -- the .litmus counts of the built trees match verify/census.sh's
+#      pins.
 #   3. Emission -- the committed cuda-out/*.cu and hip-out/*.hip re-emit byte for
-#      byte, one lane per dialect.
-# A miss means a committed artefact is no longer what the tools produce; `make
-# hetlitmus-promote' regenerates every set this gate pins.
+#      byte from the built gpu-only tree, one lane per dialect.
+# A miss means a built tree is not what the generator produces now, or a
+# committed sample is no longer what the emitter produces; `make
+# hetlitmus-corpus-gen' rebuilds the trees, `make hetlitmus-promote' the samples.
 #
 # Usage:  corpus-gate.sh (no arguments).  Exit: 0 = PASS, 1 = drift, 2 = infra.
 
@@ -23,33 +25,20 @@ fi
 . "$HETL/verify/census.sh"
 cd "$REPO"
 
-# The census has two homes, one per language, and a gate reading one of them
+# Census and tree paths have two homes, one per language; a gate reading one
 # says nothing about the corpus the other language's gates sweep.
-want_census="$CENSUS_GPU_ONLY $CENSUS_HET $CENSUS_COVER"
-py_census="$(cd "$HETL/verify" &&
-  python3 -c 'import census; print(census.GPU_ONLY, census.HET, census.COVER)')"
-if [ "$py_census" != "$want_census" ]; then
-  echo "FATAL: census.py answers '$py_census', census.sh '$want_census'" >&2
+want_homes="$CENSUS_GPU_ONLY $CENSUS_HET $CENSUS_HET_X86 $CENSUS_COVER $GPU_CORPUS $HET_CORPUS $X86_CORPUS"
+py_homes="$(cd "$HETL/verify" &&
+  python3 -c 'import census; print(census.GPU_ONLY, census.HET, census.HET_X86, census.COVER, census.GPU_DIR, census.HET_DIR, census.X86_DIR)')"
+if [ "$py_homes" != "$want_homes" ]; then
+  echo "FATAL: census.py answers '$py_homes', census.sh + paths.sh '$want_homes'" >&2
   exit 2
 fi
 
-export PATH="$BIN:$PATH"          # generate.sh resolves tools via $REPO/_build,
-                                  # but keep PATH set for any bare-name callers.
-
-GPU_DIR="hetlitmus/tests/gpu-only"
-HET_DIR="hetlitmus/tests/het"
-X86_DIR="hetlitmus/tests/het-x86"
+GRID="$HETL/tests/grid.py"
+BELL="$HETL/bells/gpu.bell"
 CUDA_OUT="hetlitmus/cuda-out"
 HIP_OUT="hetlitmus/hip-out"
-EXPECT_GPU="$CENSUS_GPU_ONLY"
-EXPECT_HET="$CENSUS_HET"
-
-# The fixture's tests, named rather than globbed so that a file deleted from it
-# is a failure and NOT an empty loop; the glob arm below rejects a fifth file.
-X86_TESTS=(MP-cg-sys-relaxed-x86_64
-           MP-cg-sys-acqrel-2s-x86_64
-           S-cg-sys-fence-x86_64
-           CoRR-cg-sys-fence-2s-x86_64)
 
 fail=0
 
@@ -60,6 +49,12 @@ for b in diyone7 hetgen7 litmus7; do
     exit 2
   fi
 done
+for d in "$HET_CORPUS" "$X86_CORPUS" "$GPU_CORPUS"; do
+  if [ ! -d "$d" ]; then
+    echo "FATAL: $d not built -- run 'make hetlitmus-corpus-gen' in $REPO" >&2
+    exit 2
+  fi
+done
 
 # --- scratch (auto-cleaned so the tree stays pristine) -----------------------
 EMITTMP="$(mktemp -d "${TMPDIR:-/tmp}/hetlitmus-gate.XXXXXX")"
@@ -67,89 +62,43 @@ cleanup() { rm -rf "$EMITTMP"; }
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# 1. CORPUS REGRESSION  (regenerate out of tree; compare names + bytes)
+# 1. CORPUS REGRESSION  (run the generator afresh; diff -r against the built
+#    tree, both ways: a file only one side holds is drift too)
 # ---------------------------------------------------------------------------
 
-# What one generator run produces: its tests plus the @all manifest.  Anything
-# else a corpus directory holds is not generated.
-list_products() {
-  ( cd "$1" && ls -1 ) 2>/dev/null | grep -E '\.litmus$|^@all$' | LC_ALL=C sort
-}
-
-# fixture_drift OUTDIR -- the het-x86 label: the fixture carries four of the
-# x86_64 rendering's tests, so the name set is compared one way only.
-fixture_drift() {
-  local out="$1" drift=0 t n=0 f base
-  for t in "${X86_TESTS[@]}"; do
-    if [ ! -f "$X86_DIR/$t.litmus" ]; then
-      echo "  DRIFT: $X86_DIR/$t.litmus is committed nowhere -- the fixture lost it"
-      drift=1; continue
-    fi
-    if [ ! -f "$out/$t.litmus" ]; then
-      echo "  DRIFT: the x86_64 rendering no longer carries $t.litmus"
-      drift=1; continue
-    fi
-    n=$((n + 1))
-    cmp -s "$X86_DIR/$t.litmus" "$out/$t.litmus" && continue
-    echo "  DRIFT: $X86_DIR/$t.litmus differs from its regeneration"
-    diff -u "$X86_DIR/$t.litmus" "$out/$t.litmus" | head -20 | sed 's/^/        /'
-    drift=1
-  done
-  for f in "$X86_DIR"/*.litmus; do
-    base="$(basename "$f" .litmus)"
-    case " ${X86_TESTS[*]} " in *" $base "*) continue ;; esac
-    echo "  DRIFT: $f sits in the fixture and no check compares it"
-    drift=1
-  done
-  if [ "$n" -ne "${#X86_TESTS[@]}" ]; then
-    echo "  DRIFT: compared $n of ${#X86_TESTS[@]} fixtures -- a comparison that did not happen is not a pass"
-    drift=1
-  fi
-  echo "        $X86_DIR: $n of ${#X86_TESTS[@]} fixture(s) compared against the x86_64 rendering"
-  return $drift
-}
-
-# corpus_check WORKROOT -- regenerate each corpus under WORKROOT and compare it
-# against its committed directory.  0 = clean, 1 = drift, 2 = infra error.
-corpus_check() {
-  local root="$1" drift=0 label src gen args out f
-  for label in gpu het x86; do
+# regen_check WORKROOT -- 0 = every tree reproduced, 1 = drift, 2 = infra.
+regen_check() {
+  local root="$1" drift=0 label built args out n
+  for label in het het-x86_64 gpu-only; do
     case "$label" in
-      gpu) src="$GPU_DIR" ; gen="$GPU_DIR/generate.sh" ; args="" ;;
-      het) src="$HET_DIR" ; gen="$HET_DIR/generate.sh" ; args="" ;;
-      x86) src="$X86_DIR" ; gen="$HET_DIR/generate.sh" ; args="--cpu-arch x86_64" ;;
+      het)        built="$HET_CORPUS"
+                  args="--corpus het --cpu-arch aarch64 --hetgen7 $BIN/hetgen7" ;;
+      het-x86_64) built="$X86_CORPUS"
+                  args="--corpus het --cpu-arch x86_64 --hetgen7 $BIN/hetgen7" ;;
+      gpu-only)   built="$GPU_CORPUS"
+                  args="--corpus gpu-only --diyone7 $BIN/diyone7" ;;
     esac
     out="$root/$label"
     mkdir -p "$out"
-    if ! bash "$gen" $args "$out" >"$root/$label.gen.log" 2>&1; then
-      echo "FATAL: the generator $gen $args failed:" >&2
+    if ! python3 "$GRID" $args --out "$out" --bell "$BELL" --libdir "$HERDLIB" \
+         >"$root/$label.gen.log" 2>&1; then
+      echo "FATAL: grid.py $args failed:" >&2
       cat "$root/$label.gen.log" >&2
       return 2
     fi
-    if [ "$label" = x86 ]; then
-      fixture_drift "$out" || drift=1
-      continue
+    n="$(find "$out" -maxdepth 1 -name '*.litmus' | wc -l | tr -d ' ')"
+    if [ "$n" -eq 0 ]; then
+      echo "FATAL: grid.py $args wrote no .litmus into $out" >&2
+      return 2
     fi
-    list_products "$src" >"$root/$label.committed"
-    list_products "$out" >"$root/$label.fresh"
-    while read -r f; do
-      [ -n "$f" ] || continue
-      echo "  DRIFT: $src/$f is committed but the generator did not produce it"
+    echo "        $(tail -n 1 "$root/$label.gen.log")"
+    if diff -r "$built" "$out" >"$root/$label.diff" 2>&1; then
+      echo "        $built: $n .litmus + @all, byte-identical to the fresh run"
+    else
+      echo "  DRIFT: $built differs from a fresh grid.py run:"
+      head -n 40 "$root/$label.diff" | sed 's/^/        /'
       drift=1
-    done < <(comm -23 "$root/$label.committed" "$root/$label.fresh")
-    while read -r f; do
-      [ -n "$f" ] || continue
-      echo "  DRIFT: the generator produced $f, which $src does not carry"
-      drift=1
-    done < <(comm -13 "$root/$label.committed" "$root/$label.fresh")
-    while read -r f; do
-      [ -n "$f" ] || continue
-      cmp -s "$src/$f" "$out/$f" && continue
-      echo "  DRIFT: $src/$f differs from its regeneration"
-      diff -u "$src/$f" "$out/$f" | head -20 | sed 's/^/        /'
-      drift=1
-    done < <(comm -12 "$root/$label.committed" "$root/$label.fresh")
-    echo "        $src: $(wc -l <"$root/$label.committed" | tr -d ' ') committed / $(wc -l <"$root/$label.fresh" | tr -d ' ') regenerated"
+    fi
   done
   return $drift
 }
@@ -157,13 +106,13 @@ corpus_check() {
 echo "HetLitmus corpus golden gate  (repo: $REPO)"
 echo "=================================================================="
 
-echo "[1/3] Corpus regression (regenerate out of tree + byte-diff the committed one)"
-corpus_check "$EMITTMP/regen"
+echo "[1/3] Corpus regression (grid.py afresh + diff -r against the built trees)"
+regen_check "$EMITTMP/regen"
 case "$?" in
-  0) echo "  PASS: both corpora and the het-x86 fixture regenerate byte-identical" ;;
-  1) echo "  FAIL: the regeneration diverged from the committed tree -- tool drift,"
-     echo "        or a hand-edited .litmus.  Review the paths above, then"
-     echo "        'make hetlitmus-promote' if the change was intended."
+  0) echo "  PASS: the three built trees are what grid.py produces now" ;;
+  1) echo "  FAIL: a built tree diverged from a fresh generation -- a stale tree, or"
+     echo "        a generator input dune does not track.  'make hetlitmus-corpus-gen'"
+     echo "        rebuilds the trees."
      fail=1 ;;
   *) exit 2 ;;
 esac
@@ -171,15 +120,18 @@ esac
 # ---------------------------------------------------------------------------
 # 2. CENSUS  (the grid did not silently change size)
 # ---------------------------------------------------------------------------
-echo "[2/3] Census (.litmus counts)"
-n_gpu=$(find "$GPU_DIR" -maxdepth 1 -name '*.litmus' | wc -l | tr -d ' ')
-n_het=$(find "$HET_DIR" -maxdepth 1 -name '*.litmus' | wc -l | tr -d ' ')
-echo "        gpu-only: $n_gpu .litmus (expect $EXPECT_GPU)"
-echo "        het:      $n_het .litmus (expect $EXPECT_HET)"
-if [ "$n_gpu" = "$EXPECT_GPU" ] && [ "$n_het" = "$EXPECT_HET" ]; then
-  echo "  PASS: census $EXPECT_GPU + $EXPECT_HET"
+echo "[2/3] Census (.litmus counts of the built trees)"
+n_gpu=$(find "$GPU_CORPUS" -maxdepth 1 -name '*.litmus' | wc -l | tr -d ' ')
+n_het=$(find "$HET_CORPUS" -maxdepth 1 -name '*.litmus' | wc -l | tr -d ' ')
+n_x86=$(find "$X86_CORPUS" -maxdepth 1 -name '*.litmus' | wc -l | tr -d ' ')
+echo "        gpu-only:   $n_gpu .litmus (expect $CENSUS_GPU_ONLY)"
+echo "        het:        $n_het .litmus (expect $CENSUS_HET)"
+echo "        het-x86_64: $n_x86 .litmus (expect $CENSUS_HET_X86)"
+if [ "$n_gpu" = "$CENSUS_GPU_ONLY" ] && [ "$n_het" = "$CENSUS_HET" ] \
+   && [ "$n_x86" = "$CENSUS_HET_X86" ]; then
+  echo "  PASS: census $CENSUS_GPU_ONLY + $CENSUS_HET + $CENSUS_HET_X86"
 else
-  echo "  FAIL: census mismatch (expected $EXPECT_GPU + $EXPECT_HET)"
+  echo "  FAIL: census mismatch (expected $CENSUS_GPU_ONLY + $CENSUS_HET + $CENSUS_HET_X86)"
   fail=1
 fi
 
@@ -238,7 +190,7 @@ fi
 # ---------------------------------------------------------------------------
 echo "=================================================================="
 if [ "$fail" -eq 0 ]; then
-  echo "GATE: PASS  (corpus clean, census $n_gpu+$n_het, emission $match/$total)"
+  echo "GATE: PASS  (trees reproduced, census $n_gpu+$n_het+$n_x86, emission $match/$total)"
   exit 0
 else
   echo "GATE: FAIL  (see the offending paths/diffs above)"

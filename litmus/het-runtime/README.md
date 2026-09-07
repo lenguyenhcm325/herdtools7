@@ -60,7 +60,7 @@ Two constraints force it into a header of its own instead of into the `.cu`:
   called from the `.cu`, which is compiled for the native host and already
   includes `<pthread.h>`.
 
-The two-sided (`-2s`) invariants the stress layer holds by construction are in
+The two invariants the stress layer holds by construction are in
 `hetlitmus/docs/00-environment-design.md` sec 3.6.
 
 ## het_rdv.h — the cross-device rendezvous and the slot layout

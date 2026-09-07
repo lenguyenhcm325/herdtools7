@@ -23,10 +23,8 @@ the first half is visible in this tree:
   `hipcc` makes of the emitted constants is UNVERIFIED ("Scope and limits").
 
 Because the defect class is per test, the property is stated over the whole
-AMD lane: the gpu-only corpus, and the het corpus in the x86_64 rendering
-that `hetlitmus/tests/het/generate.sh --cpu-arch x86_64 OUTDIR` writes on
-demand (its names match the committed corpus: `corpus-grid.md`, "The CPU ISA
-of a rendering").
+AMD lane: the gpu-only corpus, and the x86_64 rendering of the het corpus,
+both build products (`corpus-grid.md`, "The CPU ISA of a rendering").
 
 ## The mapping
 

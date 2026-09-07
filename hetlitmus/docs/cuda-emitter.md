@@ -1,7 +1,7 @@
 # CUDA emitter (CudaLang)
 
-`litmus/CudaLang.ml` renders a scoped LISA/Bell test
-(`hetlitmus/tests/gpu-only/*.litmus`) as one CUDA C++ kernel (`.cu`) over
+`litmus/CudaLang.ml` renders a scoped LISA/Bell test (the gpu-only corpus,
+`corpus-grid.md`) as one CUDA C++ kernel (`.cu`) over
 libcu++ scoped atomics and inline-PTX fences. The Bell/LISA scoped IR is the
 GPU frontend; there is no native PTX architecture.
 
@@ -13,8 +13,8 @@ GPU frontend; there is no native PTX architecture.
   arch dispatch: renders the one dialect `-gpu-target` names
   (`litmus/hetDialect.ml`) into the `-o` directory and returns `Absent`, so
   `DumpRun` neither C-compiles nor tars the output.
-- `hetlitmus/emit-cuda.sh [OUTDIR]` — renders the corpus (default
-  `hetlitmus/cuda-out/`) through `hetlitmus/emit-gpu.sh`.
+- `hetlitmus/emit-cuda.sh [OUTDIR]` — renders the built gpu-only tree (default
+  OUTDIR `hetlitmus/cuda-out/`) through `hetlitmus/emit-gpu.sh`.
 
 ## How it works (and why this shape)
 Upstream litmus7 has no LISA emission: its `` `LISA `` arm is `assert false`,
@@ -32,6 +32,10 @@ Scoped atomics are libcu++'s [CCCL]: `<cuda/atomic>`,
 included, is an `atomic_ref` op carrying its annotated order and scope, so the
 kernel is data-race-free under the CUDA C++ model. Which orders each op kind
 admits is `hetlitmus/bells/gpu.bell`'s (`het-emission.md`, "Scope / limits").
+An `sc` access is `cuda::memory_order_seq_cst`, which libcu++ lowers to the
+scope's `fence.sc` ahead of a relaxed store or an acquire load [CCCL
+`cuda_ptx_generated.h`]: PTX has no `.sc` qualifier on `ld`/`st`, so an `sc`
+access is two PTX ops.
 No cluster scope: the vocabulary declares `cta`/`gpu`/`sys` only, and PTX
 `.cluster` has no HIP scope.
 
@@ -39,7 +43,7 @@ Launch layout: a block is a maximal subtree rooted at a `cta` node of the scope
 tree, numbered in DFS order. Both dispatch arms read the tree through
 `GpuLang.scopes_of`, so the compound harness has the same geometry
 (`het-emission.md`, "Scope / limits"). Every gpu-only corpus test places each
-proc in its own `cta`, so a `cta`-scope release/acquire pair such as `MP-cta-F`
+proc in its own `cta`, so a `cta`-scope release/acquire pair such as `MP-cta-ra`
 spans two CTAs: a scope-mismatch test, not a same-CTA one.
 
 ## Fence lowering

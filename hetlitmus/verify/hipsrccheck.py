@@ -36,13 +36,12 @@ LITMUS7 = os.path.join(REPO, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(REPO, "litmus", "libdir")
 PTXCHECK = os.path.join(HERE, "ptxcheck.py")
 
-# The corpus, pinned.  The het half is the x86_64 rendering generate.sh writes
-# on demand, not the AArch64 one ptxcheck.py reads.
-GPU_ONLY_DIR = os.path.join(REPO, "hetlitmus", "tests", "gpu-only")
+# The corpus, pinned.  The het half is the built x86_64 tree, not the AArch64
+# one ptxcheck.py reads.
+GPU_ONLY_DIR = census.GPU_DIR
 GPU_ONLY_N = census.GPU_ONLY
-GEN_HET = os.path.join(REPO, "hetlitmus", "tests", "het", "generate.sh")
-GEN_X86_ARGS = ["--cpu-arch", "x86_64"]
-X86_HET_N = census.HET
+X86_DIR = census.X86_DIR
+X86_HET_N = census.HET_X86
 
 
 def _load_ptxcheck():
@@ -1086,17 +1085,6 @@ def corpus_files(d, label, expect):
     return [os.path.join(d, f) for f in files]
 
 
-def regen_x86(dst):
-    """The x86_64 het corpus, regenerated into [dst]: it is generated on demand
-    rather than committed (hetlitmus/docs/corpus-grid.md, "The CPU ISA of a
-    rendering")."""
-    r = subprocess.run(["bash", GEN_HET] + GEN_X86_ARGS + [dst],
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    if r.returncode != 0:
-        raise GateError("generate.sh --cpu-arch x86_64 failed:\n%s" % r.stdout)
-    return dst
-
-
 def _sweep_one(litmus_path):
     """One test, as (verdict, name, output).  A worker that raises is reported as
     that test's error verdict; nothing here can turn an exception into a pass."""
@@ -1142,25 +1130,18 @@ def sweep_dir(files, label, jobs, diffs):
 def sweep(gpu_dir, x86_dir, jobs):
     """Both corpora against their pinned censuses.
     X86_HET_N counts this lane's x86_64 rendering, NOT ptxcheck's AArch64 one."""
-    tmp = tempfile.mkdtemp(prefix="hipsrccheck.")
-    try:
-        # Both censuses are asserted before a single test runs: a corpus that is
-        # not there cannot be reported as a corpus that passed.
-        gpu_files = corpus_files(gpu_dir, "gpu-only", GPU_ONLY_N)
-        generated = x86_dir is None
-        if generated:
-            x86_dir = regen_x86(os.path.join(tmp, "corpus"))
-        x86_files = corpus_files(x86_dir, "x86_64 het", X86_HET_N)
-        print("===== HIP SOURCE GATE: %d gpu-only + %d x86_64 het renders ====="
-              % (GPU_ONLY_N, X86_HET_N))
-        print("  gpu-only    %s" % gpu_dir)
-        print("  x86_64 het  %s%s" % (x86_dir, " (generated)" if generated else ""))
-        print("  workers     %d" % jobs)
-        diffs = tempfile.mkdtemp(prefix="hipsrccheck-diffs.")
-        gp, gt = sweep_dir(gpu_files, "gpu-only", jobs, diffs)
-        xp, xt = sweep_dir(x86_files, "x86_64 het", jobs, diffs)
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    # Both censuses are asserted before a single test runs: a corpus that is
+    # not there cannot be reported as a corpus that passed.
+    gpu_files = corpus_files(gpu_dir, "gpu-only", GPU_ONLY_N)
+    x86_files = corpus_files(x86_dir, "x86_64 het", X86_HET_N)
+    print("===== HIP SOURCE GATE: %d gpu-only + %d x86_64 het renders ====="
+          % (GPU_ONLY_N, X86_HET_N))
+    print("  gpu-only    %s" % gpu_dir)
+    print("  x86_64 het  %s" % x86_dir)
+    print("  workers     %d" % jobs)
+    diffs = tempfile.mkdtemp(prefix="hipsrccheck-diffs.")
+    gp, gt = sweep_dir(gpu_files, "gpu-only", jobs, diffs)
+    xp, xt = sweep_dir(x86_files, "x86_64 het", jobs, diffs)
     print()
     ok = ((gp, gt) == (GPU_ONLY_N, GPU_ONLY_N)
           and (xp, xt) == (X86_HET_N, X86_HET_N))
@@ -1183,8 +1164,8 @@ def main():
                          % (GPU_ONLY_N, X86_HET_N))
     ap.add_argument("--gpu-dir", default=GPU_ONLY_DIR,
                     help="the gpu-only corpus to sweep")
-    ap.add_argument("--x86-dir",
-                    help="an x86_64 het corpus to sweep (default: regenerate one)")
+    ap.add_argument("--x86-dir", default=X86_DIR,
+                    help="the x86_64 het corpus to sweep")
     ap.add_argument("--jobs", type=int, default=default_jobs(),
                     help="sweep workers (default: CPUs, capped at %d)" % JOBS_CAP)
     ap.add_argument("-q", "--quiet", action="store_true")

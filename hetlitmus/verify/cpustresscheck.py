@@ -22,15 +22,19 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))            # hetlitmus/verify
+sys.path.insert(0, HERE)
+import census
+
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))       # herdtools7
 LITMUS7 = os.path.join(REPO, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(REPO, "litmus", "libdir")
 
-# Each arm reads, through clang --target, a render of its OWN ISA: a <t>_cpu.c
-# stops at an #error for any other, so the x86 arm takes HETX86_DIR's rendering.
+# Each arm reads, through clang --target, a render of its OWN ISA (a <t>_cpu.c
+# stops at an #error for any other); X86_REPS maps a rep to its x86_64 test.
 AARCH64_TRIPLE = "aarch64-linux-gnu"
 X86_TRIPLE = "x86_64-linux-gnu"
-HETX86_DIR = os.path.join(REPO, "hetlitmus", "tests", "het-x86")
+HETX86_DIR = census.X86_DIR
+X86_REPS = {"MP-cg-sys-ra.acq": "MP-cg-sys-plain.acq-x86_64"}
 SEQS = (0, 1, 2, 3)
 
 # The cache primitives, per ISA: litmus7's own (libdir/_<isa>/_cache.h) and the
@@ -215,9 +219,12 @@ def harness_paths(d, name):
 
 
 def x86_rep_for(litmus_path):
-    """The committed x86_64 rendering of this rep, whose _cpu.c the x86 arm reads."""
+    """The built x86_64 rendering of this rep, whose _cpu.c the x86 arm reads;
+    None for a rep X86_REPS does not pair."""
     name = os.path.splitext(os.path.basename(litmus_path))[0]
-    return os.path.join(HETX86_DIR, name + "-x86_64.litmus")
+    if name not in X86_REPS:
+        return None
+    return os.path.join(HETX86_DIR, X86_REPS[name] + ".litmus")
 
 
 def emit_harness(litmus_path, outdir):
@@ -337,10 +344,10 @@ def check(litmus_path):
 
         # ---- preload-prims-x86: and on the x86_64 host ISA -----------------
         x86_litmus = x86_rep_for(litmus_path)
-        if not os.path.exists(x86_litmus):
-            fail("preload-prims-x86: no %s, so this rep has no x86_64 rendering "
-                 "whose _cpu.c an x86_64 compiler can read"
-                 % os.path.relpath(x86_litmus, REPO))
+        if x86_litmus is None or not os.path.exists(x86_litmus):
+            fail("preload-prims-x86: no x86_64 rendering paired with %s, so this "
+                 "rep has no _cpu.c an x86_64 compiler can read"
+                 % os.path.basename(litmus_path))
             return ok[0], lines
         _, x86_cpu_c, _, _ = emit_harness(x86_litmus, tmp)
         x86 = asm_of(x86_cpu_c, X86_TRIPLE)

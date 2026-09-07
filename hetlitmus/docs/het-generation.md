@@ -19,14 +19,14 @@ cycle of the same logical shape, and keeps for each processor the column of
 the run that owns that processor's device:
 
 ```
-hetgen7 -set-libdir herd/libdir -bell gpu.bell -devices cpu,gpu -name MP-het \
+hetgen7 -set-libdir herd/libdir -bell gpu.bell -devices cpu,gpu -name MP-cg-sys-plain.acq \
   -cpu "PodWW Rfe PodRR Fre" \
-  -gpu "PodWWRelaxedSysReleaseSys RfeReleaseSysAcquireSys PodRRAcquireSysRelaxedSys FreRelaxedSysRelaxedSys"
+  -gpu "PodWWRelaxedSysRelaxedSys RfeRelaxedSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysRelaxedSys"
 ```
 
 `-cpu` is built by the CPU builder `-cpu-arch` selects (AArch64 by default,
 x86_64 on request), `-gpu` by the LISA/Bell builder; `-devices` assigns
-`P0 -> cpu`, `P1 -> gpu`. `hetlitmus/tests/het/generate.sh` is the corpus's
+`P0 -> cpu`, `P1 -> gpu`. `hetlitmus/tests/grid.py` is the corpus's
 invocation (`corpus-grid.md`).
 
 The merge is well-formed because a diy test is determined by its cycle: the

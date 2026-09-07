@@ -24,18 +24,21 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import census
+
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-HET_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het")
-X86_DIR = os.path.join(ROOT, "hetlitmus", "tests", "het-x86")
+HET_DIR = census.HET_DIR
+X86_DIR = census.X86_DIR
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
 # (corpus dir, test, -gpu-target, render extension) -- one shape per kind of
 # outcome column and one per pair: different shapes write different fields.
 LANES = [
-    (HET_DIR, "MP-cg-sys-fence-2s", "cuda", "cu"),   # register columns only
-    (HET_DIR, "2+2W-cg-sys-fence", "cuda", "cu"),    # location columns only
-    (HET_DIR, "S-cg-sys-fence", "cuda", "cu"),       # both kinds of column
-    (X86_DIR, "MP-cg-sys-relaxed-x86_64", "hip", "hip"),   # the (X86_64, hip) pair
+    (HET_DIR, "MP-cg-sys-sy.fsc", "cuda", "cu"),         # register columns only
+    (HET_DIR, "2+2W-cg-sys-plain.fsc", "cuda", "cu"),    # location columns only
+    (HET_DIR, "S-cg-sys-plain.fsc", "cuda", "cu"),       # both kinds of column
+    (X86_DIR, "MP-cg-sys-plain.rlx-x86_64", "hip", "hip"),   # the (X86_64, hip) pair
 ]
 HEADERS = ["het_verdict.h", "het_stress.h", "het_cpu_stress.h", "het_rdv.h"]
 

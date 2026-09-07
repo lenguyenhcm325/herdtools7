@@ -1,46 +1,46 @@
 CPU-side + interconnect stress guard (hetlitmus/docs/00-environment-design.md
 sec 3.6; hetlitmus/docs/het-emission.md, "The pair a harness names").
 
-  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-acqrel-2s.litmus >/dev/null 2>&1
-  $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-fence.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-ra.acq.litmus >/dev/null 2>&1
+  $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-plain.fsc.litmus >/dev/null 2>&1
   $ mkdir hip
-  $ litmus7 -gpu-target hip -o hip ../het-x86/MP-cg-sys-acqrel-2s-x86_64.litmus >/dev/null 2>&1
-  $ MP=MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s
-  $ MPH=hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64
-  $ S=S-cg-sys-fence/S-cg-sys-fence
+  $ litmus7 -gpu-target hip -o hip ../het-x86_64/MP-cg-sys-plain.acq-x86_64.litmus >/dev/null 2>&1
+  $ MP=MP-cg-sys-ra.acq/MP-cg-sys-ra.acq
+  $ MPH=hip/MP-cg-sys-plain.acq-x86_64/MP-cg-sys-plain.acq-x86_64
+  $ S=S-cg-sys-plain.fsc/S-cg-sys-plain.fsc
 
 Counts that a wrong site could satisfy are SCOPED to one function body, never
 raised to a file-wide total.
 
 (a) the host ISA reaches no nvcc translation unit: the preload primitives live
 in het_cpu_stress.h behind HET_CPU_STRESS_IMPL, which only <test>_cpu.c defines.
-  $ test -f MP-cg-sys-acqrel-2s/het_cpu_stress.h && echo present
+  $ test -f MP-cg-sys-ra.acq/het_cpu_stress.h && echo present
   present
-  $ grep -c '#define HET_CPU_STRESS_IMPL' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
+  $ grep -c '#define HET_CPU_STRESS_IMPL' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq_cpu.c
   1
   $ grep -c '#define HET_CPU_STRESS_IMPL' $MP.cu || true
   0
-  $ grep -c '#include "het_cpu_stress.h"' $MP.cu $MPH.hip MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c
-  MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s.cu:1
-  hip/MP-cg-sys-acqrel-2s-x86_64/MP-cg-sys-acqrel-2s-x86_64.hip:1
-  MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c:1
+  $ grep -c '#include "het_cpu_stress.h"' $MP.cu $MPH.hip MP-cg-sys-ra.acq/MP-cg-sys-ra.acq_cpu.c
+  MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu:1
+  hip/MP-cg-sys-plain.acq-x86_64/MP-cg-sys-plain.acq-x86_64.hip:1
+  MP-cg-sys-ra.acq/MP-cg-sys-ra.acq_cpu.c:1
   $ grep -cE 'dc civac|prfm |clflush|prefetcht0' $MP.cu || true
   0
 
 (a2) het_cpu_stress.h includes no <pthread.h>, which would not cross-assemble
 for AArch64; the .cu, built for the native host, is where pthread_create lives.
-  $ grep -c '#include <pthread.h>' MP-cg-sys-acqrel-2s/het_cpu_stress.h || true
+  $ grep -c '#include <pthread.h>' MP-cg-sys-ra.acq/het_cpu_stress.h || true
   0
   $ grep -c '#include <pthread.h>' $MP.cu
   1
 
 (b) nothing is injected inside the tested body: it stays litmus7's own code0,
-its two tested stores in the release form this two-sided row is about.
-  $ sed -n '/^__attribute__((noinline)) static void code0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE '"(stlr|ldapr|dmb|str|ldr)'
+its two tested stores in the release form this row's CPU `ra' order is about.
+  $ sed -n '/^__attribute__((noinline)) static void code0/,/^}/p' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq_cpu.c | grep -cE '"(stlr|ldapr|dmb|str|ldr)'
   2
-  $ sed -n '/^#if defined(__aarch64__)/,/^#else/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -cE 'het_cpu_preload|het_cpu_affinity|dc civac|prfm' || true
+  $ sed -n '/^#if defined(__aarch64__)/,/^#else/p' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq_cpu.c | grep -cE 'het_cpu_preload|het_cpu_affinity|dc civac|prfm' || true
   0
-  $ sed -n '/^__attribute__((noinline)) static void code0/,/^}/p' MP-cg-sys-acqrel-2s/MP-cg-sys-acqrel-2s_cpu.c | grep -coE '"stlr '
+  $ sed -n '/^__attribute__((noinline)) static void code0/,/^}/p' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq_cpu.c | grep -coE '"stlr '
   2
 
 The preload runs per iteration, before the tested body, on the slot of this
@@ -111,7 +111,7 @@ page left off-node is never swallowed.
   present
   $ grep -q '_het_place_failures++' $MP.cu && echo present
   present
-  $ grep -A1 '#ifndef HET_PLACE' MP-cg-sys-acqrel-2s/het_cpu_stress.h | grep -c '#define HET_PLACE 0'
+  $ grep -A1 '#ifndef HET_PLACE' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_PLACE 0'
   1
 
 The HIP twin binds nothing: MI300A's one HBM pool makes a non-zero HET_PLACE a
@@ -144,14 +144,14 @@ one subtracted from the enemy budget.
   1
   $ grep -c 'for (int _t = 0; _t < HET_NOISE_CPU_THREADS; ++_t) {' $MP.cu
   1
-  $ grep -A1 '#ifndef HET_NOISE_CPU_THREADS' MP-cg-sys-acqrel-2s/het_cpu_stress.h | grep -c '#define HET_NOISE_CPU_THREADS 1'
+  $ grep -A1 '#ifndef HET_NOISE_CPU_THREADS' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_NOISE_CPU_THREADS 1'
   1
 
 The working set is derived from HET_NOISE_MB and guarded against the last-level
 cache: below it the buffer is served from cache and crosses nothing.
   $ grep -c 'uint64_t _noise_words = (uint64_t)HET_NOISE_MB \* 1024ull \* 1024ull / sizeof(uint64_t);' $MP.cu
   1
-  $ grep -A1 '#ifndef HET_NOISE_MB' MP-cg-sys-acqrel-2s/het_cpu_stress.h | grep -c '#define HET_NOISE_MB 8192'
+  $ grep -A1 '#ifndef HET_NOISE_MB' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_NOISE_MB 8192'
   1
   $ grep -c 'HET_NOISE_MB < HET_LLC_MB' $MP.cu
   1

@@ -80,6 +80,9 @@ NVIDIA. *CUDA C++ Core Libraries (libcu++)*, as shipped with CUDA Toolkit 12.9:
   to `fence.<scope>.acq_rel`, so `cuda::atomic_thread_fence` cannot express a one-sided fence.
 * `cuda_ptx_generated.h`: every scoped access (`cuda::atomic_ref<T, cuda::thread_scope_*>`,
   `<cuda/atomic>`) is `asm volatile(... ::: "memory")`.
+* `cuda_ptx_generated.h`, `__cuda_atomic_load_memory_order_dispatch` and
+  `__cuda_atomic_store_memory_order_dispatch`: the `__ATOMIC_SEQ_CST` case emits the scope's
+  `fence.<scope>.sc` and falls through to the acquire load or the relaxed store.
 * `fence.h`: `fence.{sc,acq_rel}` is marked "PTX ISA 60, SM_70", `fence.{acquire,release}`
   "PTX ISA 86, SM_90".
 

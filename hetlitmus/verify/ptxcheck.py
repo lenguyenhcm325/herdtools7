@@ -85,6 +85,10 @@ def barrier_option(mn, tokens, where):
             "set is not in CPU_BARRIER_OPTION" % (opt, mn, where))
     return opt
 
+# The PTX profile of an sc access: the scope's fence.sc, then the access
+# [CCCL cuda_ptx_generated.h] (hetlitmus/docs/cuda-emitter.md, "Mappings").
+SC_ACCESS = {"st": "relaxed", "ld": "acquire"}
+
 PTX_ORDERS = set(GPU_ORDER.values())          # {relaxed,acquire,release,acq_rel,sc}
 PTX_SCOPES = set(GPU_SCOPE.values())          # {cta,gpu,sys}
 
@@ -190,6 +194,19 @@ def instance_of(litmus_path):
             cpu.append((pidx, cpu_ops_of_column(cols[col])))
     return dict(name=litmus_name(text), kind=litmus_kind(text),
                 gpu=gpu, cpu=cpu)
+
+
+def ptx_profile(ops):
+    """The (kind, order, scope) stream the PTX is expected to carry for a
+    column's ops: each op its own token, an sc access its fence + access."""
+    out = []
+    for kind, order, scope in ops:
+        if order == "sc" and kind in SC_ACCESS:
+            out.append(("fence", "sc", scope))
+            out.append((kind, SC_ACCESS[kind], scope))
+        else:
+            out.append((kind, order, scope))
+    return out
 
 
 def het_lane_plan(inst):
@@ -525,7 +542,8 @@ def check_test(litmus_path, ptx_override=None, verbose=True):
     # gpu-only branch consumes gpu_expected as computed here.
     inst = instance_of(litmus_path)
     kind, name = inst['kind'], inst['name']
-    gpu_expected = inst['gpu']   # list of (proc_idx, [ (kind,order,scope) ])
+    # list of (proc_idx, [ (kind,order,scope) ]) as the PTX should carry them
+    gpu_expected = [(p, ptx_profile(ops)) for p, ops in inst['gpu']]
 
     result = Result()
     result.note("=== %s [%s] ===" % (name, kind))
@@ -564,7 +582,7 @@ def check_test(litmus_path, ptx_override=None, verbose=True):
                 gpu_expected = []
                 model_ops = []
                 for (pidx, payload, iname), seg in zip(lanes, model_per_seg):
-                    gpu_expected.append(("%s:P%d" % (iname, pidx), payload))
+                    gpu_expected.append(("%s:P%d" % (iname, pidx), ptx_profile(payload)))
                     model_ops.extend(seg)
                 check_gpu(result, gpu_expected, model_ops, "GPU")
             check_no_stray_sys(result, ptx_text)

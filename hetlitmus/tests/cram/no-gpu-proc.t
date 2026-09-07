@@ -46,9 +46,9 @@ cannot splice.
   exit 2
 
 (g) a fenced GPU edge and a plain CPU `Po' edge are the same shape.
-  $ hetgen7 -set-libdir ../../../herd/libdir -bell ../../bells/gpu.bell -oneloc -devices cpu,gpu -name MP-cg-sys-fence -cpu 'PodWW Rfe PodRR Fre' -gpu 'FenceScSysdWWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys FenceScSysdRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys' > MP-cg-sys-fence.litmus; echo "exit $?"
+  $ hetgen7 -set-libdir ../../../herd/libdir -bell ../../bells/gpu.bell -oneloc -devices cpu,gpu -name MP-cg-sys-plain.fsc -cpu 'PodWW Rfe PodRR Fre' -gpu 'FenceScSysdWWRelaxedSysRelaxedSys RfeRelaxedSysRelaxedSys FenceScSysdRRRelaxedSysRelaxedSys FreRelaxedSysRelaxedSys' > MP-cg-sys-plain.fsc.litmus; echo "exit $?"
   exit 0
-  $ sed -n '7,9p' MP-cg-sys-fence.litmus
+  $ sed -n '7,9p' MP-cg-sys-plain.fsc.litmus
    P0:cpu      | P1:gpu              ;
    MOV W0,#1   | r[relaxed,sys] r0 y ;
    STR W0,[X1] | f[sc,sys]           ;

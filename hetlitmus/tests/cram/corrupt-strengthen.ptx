@@ -1,5 +1,5 @@
 // HetLitmus cram fixture, NEVER regenerated: real nvcc output for
-// tests/gpu-only/MP-sys-F.litmus, hand-corrupted afterwards, so regenerating it
+// MP-sys-F.litmus beside it, hand-corrupted afterwards, so regenerating it
 // makes the rejection it pins pass silently.
 // P1 is `r[acquire,sys] r0 y ; r[relaxed,sys] r1 x' and P0's stores fix
 // %rd1 = x / %rd2 = y, so the first inline-asm load (%r6,[%rd2]) is legitimately

@@ -13,10 +13,10 @@ set -u
 cd "$REPO"
 export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 
-HET_DIR="$REPO/hetlitmus/tests/het"
-# The HIP rep's fixture: $HET_DIR's tests have an AArch64 CPU column, so they
-# render the (AArch64, hip) pair, not the (x86_64, hip) one this rep compiles.
-HETX86_DIR="$REPO/hetlitmus/tests/het-x86"
+HET_DIR="$HET_CORPUS"
+# The HIP reps read the x86_64 tree: $HET_DIR's AArch64 CPU columns render the
+# (AArch64, hip) pair, not the (x86_64, hip) one those reps compile.
+HETX86_DIR="$X86_CORPUS"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -96,17 +96,17 @@ cmd="${1:-all}"
 case "$cmd" in
   all)
     printf '===== HetLitmus compile-smoke (%d reps; nvcc+hipcc+clang, NO GPU) =====\n' "$NREPS"
-    smoke_het     2+2W-cg-sys-acqrel-2s "two-sided; CPU STLR (2+2W is store-only: NO load)"
-    smoke_het     IRIW-cgcc-cta-relaxed "4-proc; largest rendezvous / scaffolding"
+    smoke_het     2+2W-cg-sys-ra.rel    "CPU STLR (2+2W is store-only: NO load)"
+    smoke_het     IRIW-cccg-cta-plain.rlx "4-proc; largest rendezvous / scaffolding"
     # The two .hip reps: where a CUDA/HIP divergence in the shared runtime
-    # headers shows up, relaxed-only and with acquire/release atomics.
-    smoke_het_hip MP-cg-sys-relaxed-x86_64 "the AMD render, (x86_64, hip) pair (hipcc -c, gfx942)"
-    smoke_het_hip MP-cg-sys-acqrel-2s-x86_64 "the AMD render's acquire/release atomics through hipcc"
-    smoke_het     MP-cg-sys-sy.acq-2s   "order-pair; inline fence.acquire.sys, sm_90 [CCCL]"
-    smoke_het     S-gc-sys-ra.rel-2s    "order-pair; inline fence.release.sys + CPU STLR/LDAPR"
-    smoke_het     MP-cg-sys-st.sc-2s    "order-pair; CPU dmb st + fence.sc.sys"
-    smoke_het     MP-gc-sys-ld.sc-2s    "order-pair; CPU dmb ld on the gc cut"
-    smoke_het_uncompilable MP-cg-cta-acquire "a broken scratch _cpu.c must FAIL comp.sh"
+    # headers shows up, relaxed-only and with acquire atomics.
+    smoke_het_hip MP-cg-sys-plain.rlx-x86_64 "the AMD render, (x86_64, hip) pair (hipcc -c, gfx942)"
+    smoke_het_hip MP-cg-sys-plain.acq-x86_64 "the AMD render's acquire atomics through hipcc"
+    smoke_het     MP-cg-sys-sy.facq     "CPU dmb sy + inline fence.acquire.sys, sm_90 [CCCL]"
+    smoke_het     S-gc-sys-ra.frel      "CPU STLR/LDAPR + inline fence.release.sys"
+    smoke_het     MP-cg-sys-st.fsc      "CPU dmb st + fence.sc.sys"
+    smoke_het     MP-gc-sys-ld.fsc      "CPU dmb ld + fence.sc.sys on the gc cut"
+    smoke_het_uncompilable MP-cg-cta-plain.acq "a broken scratch _cpu.c must FAIL comp.sh"
     printf '\n=====================================================================\n'
     # Anti-vacuity: a deleted or commented-out rep reddens the gate instead of
     # shrinking it silently.

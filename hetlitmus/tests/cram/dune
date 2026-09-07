@@ -1,15 +1,29 @@
 ; HetLitmus cram tests (hetlitmus/docs/README-tests.md).  The sandbox
-; reconstructs the workspace tree, so deps are the scripts' real relative paths.
+; reconstructs the workspace tree, so deps are the scripts' real relative paths;
+; ../het, ../het-x86_64 and ../gpu-only are grid.py's build products (../dune),
+; built on demand.
 
-; Toolchain-free: pure bash/python, no GPU -- and no %{bin:...}, hence no
-; OCaml build.
+; Toolchain-free: pure python, no GPU -- and no %{bin:...}, hence no OCaml
+; build and no corpus tree; MP-sys-F.litmus is a frozen fixture, not a corpus
+; member.
 (cram
  (applies_to basics ptx-negatives)
  (deps
-  ../_grid_lib.sh
+  ../grid.py
   ../../verify/ptxcheck.py
   corrupt-strengthen.ptx
-  (glob_files ../gpu-only/*.litmus)))
+  MP-sys-F.litmus))
+
+; corpus.t reads generated tests verbatim, one per tree and token family.
+(cram
+ (applies_to corpus)
+ (package herdtools7)
+ (deps
+  ../gpu-only/MP-sys-rlx.litmus
+  ../het/MP-cg-sys-sy.fsc.litmus
+  ../het/IRIW-cggc-sys-ra.ra.litmus
+  ../het/MP-cg-sys-plain.sc.litmus
+  ../het-x86_64/CoRR-cg-sys-mf.rlx-x86_64.litmus))
 
 ; These emit through litmus7 and read the generated driver.  cpu-stress.t is the
 ; ONLY check of the stress_go ordering: no gate reads the driver's orchestration.
@@ -22,9 +36,9 @@
   ; The whole corpus is staged: naming each test here would silently break the
   ; moment one of them read a different row.
   (glob_files ../het/*.litmus)
-  ; Every .hip render comes from ../het-x86 -- a HIP harness is (x86_64, hip).
-  (glob_files ../het-x86/*)
-  ../gpu-only/MP-sys-acquire.litmus))
+  ; Every .hip render comes from ../het-x86_64 -- a HIP harness is (x86_64, hip).
+  (glob_files ../het-x86_64/*.litmus)
+  ../gpu-only/MP-sys-acq.litmus))
 
 ; gpu-target.t walks up to the source litmus/libdir: dune ignores `_'-prefixed
 ; dirs, so (source_tree) would stage the top level and NO arch file -- silently.
@@ -35,8 +49,8 @@
   (universe)   ; that libdir walk is outside the declared deps
   %{bin:litmus7}
   (glob_files ../het/*.litmus)
-  (glob_files ../het-x86/*)
-  ../gpu-only/MP-sys-acquire.litmus))
+  (glob_files ../het-x86_64/*.litmus)
+  ../gpu-only/MP-sys-acq.litmus))
 
 ; refusals.t writes every test it reads, so litmus7 is its whole toolchain.
 (cram

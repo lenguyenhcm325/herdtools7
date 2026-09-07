@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Emit the GPU-only litmus kernels from the scoped LISA corpus
-# (hetlitmus/tests/gpu-only).  litmus7 parses the scoped Bell IR and renders the
+# Emit the GPU-only litmus kernels from the scoped LISA corpus (the built tree
+# $GPU_CORPUS, paths.sh).  litmus7 parses the scoped Bell IR and renders the
 # ONE dialect `-gpu-target' names, .cu (CudaLang) or .hip (HipLang), so covering
 # both vendors takes two passes -- what the TARGET OUTDIR pairs are for.  litmus7
 # has no default target, and neither has this script.  It also drops its
@@ -10,7 +10,7 @@ set -euo pipefail
 
 . "$(dirname "${BASH_SOURCE[0]}")/paths.sh"
 
-TESTS="$HETL/tests/gpu-only"
+TESTS="$GPU_CORPUS"
 
 if [ "$#" -eq 0 ] || [ $(( $# % 2 )) -ne 0 ]; then
   echo "usage: emit-gpu.sh TARGET OUTDIR [TARGET OUTDIR]...  (e.g. cuda ./cuda-out)" >&2
@@ -19,6 +19,10 @@ fi
 
 if [ ! -x "$LITMUS7" ]; then
   echo "error: litmus7 not built at $LITMUS7 (run 'make all' in $REPO)" >&2
+  exit 1
+fi
+if [ ! -d "$TESTS" ]; then
+  echo "error: gpu-only corpus not built at $TESTS (run 'make hetlitmus-corpus-gen' in $REPO)" >&2
   exit 1
 fi
 
