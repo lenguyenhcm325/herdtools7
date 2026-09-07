@@ -272,8 +272,8 @@ decisions behind them.
   `Y = 1[target_count ≥ 1]` per run, runs are re-seeded so that two are two draws, and effort
   is grown as `R`, not `N`.
 - **No parallelism axis.** `H > 1` het pairs would share the one interconnect under test, so
-  the gain is not the pair count. The policy levers are `--budget-runs`, `--confirm-runs` and
-  `--rate` (`hetlitmus/campaign.py`).
+  the gain is not the pair count. The policy levers are `--budget-runs` and `--rate`
+  (`hetlitmus/campaign.py`).
 - **Nothing prices what the harness missed.** No bound on the rate of a never-observed outcome
   is computed: a characterization tool attaches no probability to what its harness did not
   reach.

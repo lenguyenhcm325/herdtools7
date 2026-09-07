@@ -166,7 +166,6 @@ let dump_campaign_knobs ch =
   if (_runs_budget < 1) _runs_budget = 1;
   int _adaptive = (int)het_env_long("HET_ADAPTIVE", 0);
   int _rate_mode = (int)het_env_long("HET_RATE", 0);
-  int _confirm_runs = (int)het_env_long("HET_CONFIRM_RUNS", 30);
 |} ;
 
   (* het_env_long returns its default for unset, empty and unparseable alike,
@@ -498,16 +497,14 @@ let dump_run_early_stop identity ch =
   (* Early stop after each run, decided from the records so far
      (het_verdict.h); with HET_ADAPTIVE unset the loop runs to budget. *)
   s {|    if (_adaptive) {
-      het_campaign_stop_t _stop = het_campaign_should_stop(_recs, _nrec, _runs_budget, _rate_mode, _confirm_runs);
+      het_campaign_stop_t _stop = het_campaign_should_stop(_recs, _nrec, _runs_budget, _rate_mode);
       if (_stop != HET_CAMPAIGN_CONTINUE) {
 |} ;
   s (Printf.sprintf
        "        printf(\"HetCampaign %s stop=%%s runs=%%d budget=%%d\\n\",\n\
         \               het_campaign_stop_name(_stop), _nrec, _runs_budget);\n"
        tname) ;
-  s {|        { const char *_why = het_campaign_stop_why(_stop);
-          if (*_why) printf("  %s.\n", _why); }
-        break;
+  s {|        break;
       }
     }
 |}

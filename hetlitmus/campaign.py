@@ -7,8 +7,7 @@ agree.  hetlitmus/docs/harness-reporting.md sec 5; the four steps a results dir 
 built by, hetlitmus/docs/het-emission.md "From a corpus to a results dir".
 One invocation is `./<test>' run in its own harness dir under `--timeout'; the
 HetStats line it prints on stdout is the whole interface.
-Exit: 0 = completed; 2 = configuration/corpus error; 1 = a test errored or ended
-UNCONFIRMED-SIGHTING, which demands a human before anything is written up.
+Exit: 0 = completed; 2 = configuration/corpus error; 1 = a test errored.
 """
 
 import argparse
@@ -25,13 +24,10 @@ import time
 SEED_STRIDE = 100003
 
 # The mirrored half of het_verdict.h's stopping rule; check_flag_mirror() below pins
-# every name and number here against the header.
-CORROB_RUNS = 2                      # HET_CORROB_RUNS
-CONFIRM_RUNS = 30                    # the driver's HET_CONFIRM_RUNS default
+# every name here against the header.
 STOP_NAMES = {
-    "HET_CAMPAIGN_STOP_CORROBORATED": "CORROBORATED",
-    "HET_CAMPAIGN_STOP_UNCONFIRMED":  "UNCONFIRMED-SIGHTING",
-    "HET_CAMPAIGN_STOP_BUDGET":       "BUDGET",
+    "HET_CAMPAIGN_STOP_OBSERVED": "OBSERVED",
+    "HET_CAMPAIGN_STOP_BUDGET":   "BUDGET",
 }
 # ERROR is this driver's own: no readable row, which the C rule never sees.
 TERMINAL = tuple(sorted(STOP_NAMES.values())) + ("ERROR",)
@@ -95,9 +91,8 @@ _VERDICT_H = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir,
                           "litmus", "het-runtime", "het_verdict.h")
 
 
-def check_flag_mirror(path=_VERDICT_H, corrob=CORROB_RUNS, stops=None):
-    """Every stop-name string as `path` defines it.  HET_CORROB_RUNS is checked
-    against `corrob`, not returned."""
+def check_flag_mirror(path=_VERDICT_H, stops=None):
+    """Every stop-name string as `path` defines it."""
     stops = STOP_NAMES if stops is None else stops
     # This driver's own consistency, checked before the header is opened: a stop it
     # can write but never treats as terminal loops forever.
@@ -110,15 +105,6 @@ def check_flag_mirror(path=_VERDICT_H, corrob=CORROB_RUNS, stops=None):
     except (IOError, OSError) as e:
         die("%s cannot be read (%s) -- the stopping rule this scheduler applies "
             "cannot be checked against the one the harness compiled" % (path, e))
-    mc = re.search(r"^#define[ \t]+HET_CORROB_RUNS[ \t]+(\d+)", text, re.M)
-    if mc is None:
-        die("%s no longer defines HET_CORROB_RUNS -- the corroboration bar this "
-            "scheduler applies cannot be verified against the one the harness does"
-            % path)
-    if int(mc.group(1)) != corrob:
-        die("%s drifted: HET_CORROB_RUNS is %s there, %d here -- the scheduler and "
-            "the harness would corroborate a sighting at different run counts"
-            % (path, mc.group(1), corrob))
     got = dict(re.findall(r"case[ \t]+(HET_CAMPAIGN_STOP_\w+):[ \t]*"
                           r'return[ \t]+"([^"]*)";', text))
     if got != stops:
@@ -128,14 +114,6 @@ def check_flag_mirror(path=_VERDICT_H, corrob=CORROB_RUNS, stops=None):
     if not re.search(r'default:[ \t]*return[ \t]+"CONTINUE";', text):
         die("%s no longer returns \"CONTINUE\" for a non-stop -- the scheduler treats "
             "every name it does not know as terminal" % path)
-    # Where the window starts is policy a name cannot carry: a header measuring it from
-    # run 0 rather than from the sighting ends rows this scheduler would still run.
-    if not re.search(r"n[ \t]*-[ \t]*st\.n_at_first_sight[ \t]*>=[ \t]*confirm_runs",
-                     text):
-        die("%s no longer measures the confirmation window from n_at_first_sight -- "
-            "the harness and this scheduler would close a lone sighting's window at "
-            "different runs, and a late sighting would be banked with none of it run"
-            % path)
     return got
 
 
@@ -149,9 +127,6 @@ class TestState(object):
         self.runs = 0            # records actually scored (sum of R)
         self.usable = 0
         self.k = self.k_eff = 0
-        # Pooled runs spent when the first clean sighting landed; 0 = none has, and a
-        # row ending UNCONFIRMED reports how long ago the one sighting was.
-        self.runs_at_first_sight = 0
         # The effort behind the row, and every diagnostic bit any invocation raised.
         self.scored = self.discarded = 0
         self.flags = 0
@@ -160,68 +135,37 @@ class TestState(object):
 
     def absorb(self, kv):
         self.invocations += 1
-        before = self.runs
         self.runs += int(fnum(kv, "R"))
         self.usable += int(fnum(kv, "usable"))
         self.k += int(fnum(kv, "k"))
-        k_eff = int(fnum(kv, "k_eff"))
-        self.k_eff += k_eff
+        self.k_eff += int(fnum(kv, "k_eff"))
         self.scored += int(fnum(kv, "scored"))
         self.discarded += int(fnum(kv, "discarded"))
         self.flags |= fhex(kv, "flags")
-        if self.runs_at_first_sight == 0 and k_eff > 0:
-            # first_sight is the runs THIS invocation spent before its first clean
-            # sighting; the pooled price adds the runs before it started.  One that
-            # reported none falls back to its whole R, which can only over-state.
-            fs = int(fnum(kv, "first_sight"))
-            self.runs_at_first_sight = before + (fs if fs > 0 else int(fnum(kv, "R")))
 
-    def sighting_open(self, rate_mode):
-        """A clean sighting not yet corroborated -- what holds a row open past its
-        budget.  k_eff, NEVER k: a rejected sighting neither stops a row nor holds one."""
-        return (not rate_mode) and self.k_eff > 0 and self.k_eff < CORROB_RUNS
-
-    def target_runs(self, budget, rate_mode, confirm_runs):
-        """The runs this row is still entitled to.  An open sighting holds it past the
-        budget as far as the confirmation window, which moves with the sighting; the
-        invocation is told, or HET_RUNS_MAX would curtail what this scheduler overruled."""
-        if self.sighting_open(rate_mode):
-            return max(budget, self.runs_at_first_sight + max(confirm_runs, 1))
-        return budget
-
-    def decide(self, budget, rate_mode, confirm_runs):
+    def decide(self, budget, rate_mode):
         """het_campaign_should_stop(), at the pooled scale: `runs' here is what `n' is
         there.  The order of the arms is the policy and must NOT be rearranged."""
         if self.stop:
             return self.stop
-        if confirm_runs < 1:
-            confirm_runs = 1
+        # k_eff, NEVER k: a sighting the decode guard rejected stops nothing.
         if self.k_eff > 0 and not rate_mode:
-            if self.k_eff >= CORROB_RUNS:
-                self.stop, self.note = "CORROBORATED", (
-                    "the weak outcome reproduced in %d clean run(s)" % self.k_eff)
-            elif self.runs - self.runs_at_first_sight >= confirm_runs:
-                # The window elapses FROM the sighting (het_verdict.h's rule): read
-                # off the pooled count alone, a late sighting is banked unrun.
-                self.stop, self.note = "UNCONFIRMED-SIGHTING", (
-                    "the confirmation window (%d runs) closed on a lone clean sighting "
-                    "that did not reproduce; it first fired at run %d"
-                    % (confirm_runs, self.runs_at_first_sight))
-            return self.stop            # outranks the budget stop below
-        if budget > 0 and self.runs >= budget:
+            self.stop, self.note = "OBSERVED", (
+                "the weak outcome was seen in %d clean run(s)" % self.k_eff)
+        elif budget > 0 and self.runs >= budget:
             self.stop = "BUDGET"
         return self.stop
 
 
 def save_state(path, states, seed0):
     cols = ["test", "stop", "invocations", "seed0", "runs", "usable", "k", "k_eff",
-            "first_sight", "scored", "discarded", "flags", "note"]
+            "scored", "discarded", "flags", "note"]
     with open(path, "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(cols)
         for s in states:
             w.writerow([s.name, s.stop, s.invocations, seed0, s.runs, s.usable,
-                        s.k, s.k_eff, s.runs_at_first_sight,
+                        s.k, s.k_eff,
                         s.scored, s.discarded, "0x%x" % s.flags,
                         s.note])
 
@@ -234,10 +178,7 @@ def parse_args():
                     help="max runs per row")
     ap.add_argument("--rate", action="store_true",
                     help="HET_RATE: run to budget even after the outcome is seen, so "
-                         "a row that fires yields a rate (sightings stop nothing)")
-    ap.add_argument("--confirm-runs", type=int, default=CONFIRM_RUNS,
-                    help="HET_CONFIRM_RUNS: runs a LONE clean sighting may hold a row "
-                         "open for before it ends UNCONFIRMED-SIGHTING")
+                         "a row that fires yields a rate (a sighting stops nothing)")
     ap.add_argument("--seed0", type=int, default=None,
                     help="the seed base: invocation i of a row runs at seed0 + "
                          "i*%d, counting from 0.  The default is a fresh random "
@@ -285,13 +226,11 @@ def parse_args():
             "at a fresh path." % a.log_dir)
     if a.seed0 is None:
         a.seed0 = secrets.randbits(31)
-    # Every invocation adds at least one run and target_runs bounds the entitlement,
-    # so both a row's invocations and the runs inside one are under this span.
-    span = a.budget_runs + max(a.confirm_runs, 1)
-    if a.seed0 < 0 or a.seed0 + span * (SEED_STRIDE + 1) >= 2 ** 32:
-        die("--seed0 %d with --budget-runs %d and --confirm-runs %d reaches past "
-            "2^32-1, the width the harness reads a seed at"
-            % (a.seed0, a.budget_runs, a.confirm_runs))
+    # Every invocation adds at least one run and the budget bounds a row, so both a
+    # row's invocations and the runs inside one are under it.
+    if a.seed0 < 0 or a.seed0 + a.budget_runs * (SEED_STRIDE + 1) >= 2 ** 32:
+        die("--seed0 %d with --budget-runs %d reaches past 2^32-1, the width the "
+            "harness reads a seed at" % (a.seed0, a.budget_runs))
     return a
 
 
@@ -329,13 +268,11 @@ def select_work(a, tests):
 
 def plan_schedule(a, work):
     """`work` in run order, plus what the schedule costs.  One policy, so one order and
-    one budget: a row stops early because its sighting corroborated."""
-    # A worst case, not a schedule: budget and window can stack on one row.
-    # hetlitmus/docs/harness-reporting.md sec 5.
-    per_row = a.budget_runs + (0 if a.rate else a.confirm_runs)
-    print("campaign: %d test(s), one stop rule each: corroborated sighting, lone "
-          "sighting %d run(s) after it fires, or %d run(s) spent.  Worst case %d runs."
-          % (len(work), a.confirm_runs, a.budget_runs, len(work) * per_row))
+    one budget: a row stops early because a clean run saw the outcome."""
+    # A worst case, not a schedule (hetlitmus/docs/harness-reporting.md sec 5).
+    print("campaign: %d test(s), one stop rule each: a clean sighting, or %d run(s) "
+          "spent.  Worst case %d runs."
+          % (len(work), a.budget_runs, len(work) * a.budget_runs))
     if a.rate:
         print("campaign: --rate: a sighting stops NOTHING; every row runs to its "
               "budget, so a row that fires yields a rate.")
@@ -367,7 +304,7 @@ def drive_test(a, st, budget):
     Every failure mode ends the test as ERROR rather than looping on it."""
     d = os.path.join(a.corpus, st.name)
     exe = os.path.join(d, st.name)
-    while not st.decide(budget, a.rate, a.confirm_runs):
+    while not st.decide(budget, a.rate):
         if not os.path.isfile(exe) or not os.access(exe, os.X_OK):
             # The dir exists (corpus_tests listed it) and the binary does not: the
             # build did not reach this row, which is not a reading of anything.
@@ -377,11 +314,9 @@ def drive_test(a, st, budget):
         env["HET_SEED"] = str(a.seed0 + st.invocations * SEED_STRIDE)
         env["HET_ADAPTIVE"] = "1"
         # The harness applies the SAME rule inside the invocation, so it gets the same
-        # knobs -- including an entitlement an open sighting can raise above the budget.
-        env["HET_RUNS_MAX"] = str(max(
-            1, st.target_runs(budget, a.rate, a.confirm_runs) - st.runs))
+        # knobs, and no more runs than the row has left.
+        env["HET_RUNS_MAX"] = str(max(1, budget - st.runs))
         env["HET_RATE"] = "1" if a.rate else "0"
-        env["HET_CONFIRM_RUNS"] = str(a.confirm_runs)
         t0 = time.time()
         timed_out = False
         try:
@@ -420,17 +355,15 @@ def drive_test(a, st, budget):
 
 
 def report_test(st):
-    print("done  %-28s %-20s inv=%d runs=%d usable=%d k=%d k_eff=%d%s"
-          % (st.name, st.stop, st.invocations, st.runs, st.usable, st.k, st.k_eff,
-             ("  ** " + st.note + " **")
-             if st.stop == "UNCONFIRMED-SIGHTING" else ""))
+    print("done  %-28s %-20s inv=%d runs=%d usable=%d k=%d k_eff=%d"
+          % (st.name, st.stop, st.invocations, st.runs, st.usable, st.k, st.k_eff))
 
 
 def run_campaign(a, work):
-    """Drive every test in order; return (states, errors, unconfirmed).  The state is
-    written after every test, so a campaign that loses its box leaves the rows it did
+    """Drive every test in order; return (states, errors).  The state is written
+    after every test, so a campaign that loses its box leaves the rows it did
     measure -- not a campaign to continue: parse_args refuses an existing --state."""
-    states, errors, unconfirmed = [], 0, 0
+    states, errors = [], 0
     print("campaign: seed0=%d -- pass --seed0 %d to replay these seed bases."
           % (a.seed0, a.seed0))
     for t in work:
@@ -440,21 +373,19 @@ def run_campaign(a, work):
         report_test(st)
         if st.stop == "ERROR":
             errors += 1
-        if st.stop == "UNCONFIRMED-SIGHTING":
-            unconfirmed += 1
         save_state(a.state, states, a.seed0)
-    return states, errors, unconfirmed
+    return states, errors
 
 
-def report_campaign(states, errors, unconfirmed, secs):
-    corrob = [s for s in states if s.stop == "CORROBORATED"]
-    if corrob:
-        print("\ncampaign: %d row(s) ended CORROBORATED -- the weak outcome was "
-              "observed and reproduced." % len(corrob))
-        for s in corrob:
+def report_campaign(states, errors, secs):
+    seen = [s for s in states if s.stop == "OBSERVED"]
+    if seen:
+        print("\ncampaign: %d row(s) ended OBSERVED -- a clean run saw the weak "
+              "outcome." % len(seen))
+        for s in seen:
             print("            %-28s k_eff=%d" % (s.name, s.k_eff))
     else:
-        print("\ncampaign: no row ended CORROBORATED.")
+        print("\ncampaign: no row ended OBSERVED.")
 
     if errors:
         print("campaign: %d test(s) ERRORED -- their rows are not results." % errors)
@@ -463,17 +394,6 @@ def report_campaign(states, errors, unconfirmed, secs):
         print("campaign: %d row(s) carry harness flags:" % len(flagged))
         for s in flagged:
             print("            %-28s flags=0x%x" % (s.name, s.flags))
-    if unconfirmed:
-        rows = [s for s in states if s.stop == "UNCONFIRMED-SIGHTING"]
-        print("campaign: ** %d row(s) ended UNCONFIRMED-SIGHTING: the confirmation "
-              "window closed on a lone clean sighting that did not reproduce. **"
-              % unconfirmed)
-        print("campaign:    The sighting stands; reproduce it (--rate, or a "
-              "larger --budget-runs and --confirm-runs) before it is written "
-              "up.")
-        for s in rows:
-            print("            %-28s first fired at run %d of %d"
-                  % (s.name, s.runs_at_first_sight, s.runs))
 
     print("\ncampaign: total wall clock %.1f s over %d row(s)."
           % (secs, len(states)))
@@ -487,9 +407,9 @@ def main():
             print("  plan %s" % t)
         return 0
     t0 = time.time()
-    states, errors, unconfirmed = run_campaign(a, work)
-    report_campaign(states, errors, unconfirmed, time.time() - t0)
-    return 1 if (errors or unconfirmed) else 0
+    states, errors = run_campaign(a, work)
+    report_campaign(states, errors, time.time() - t0)
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":

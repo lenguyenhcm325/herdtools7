@@ -221,8 +221,8 @@ A harness is a **(CPU ISA × GPU dialect) pair**, not a machine.
   never; every connective folds over constant operands). It does **not** check
   that some store writes the value an atom asks for: such a condition compiles
   to a permanently false detector reported as a null — caveated
-  `HET_CV_ONE_OUTCOME` and excluded from corroboration by
-  `het_run_degenerate` — not refused.
+  `HET_CV_ONE_OUTCOME` and left out of `k_eff` by `het_run_degenerate` — not
+  refused.
 * Emission stops at a harness that compiles; nothing is launched.
 
 ## From a corpus to a results dir

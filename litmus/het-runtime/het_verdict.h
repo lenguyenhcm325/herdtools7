@@ -90,8 +90,6 @@ typedef struct het_obs_record {
  *                     HET_SEED
  *   HET_ADAPTIVE      1 => consult het_campaign_should_stop() after every run
  *   HET_RATE          1 => run to budget even after a sighting, for a rate
- *   HET_CONFIRM_RUNS  runs a lone clean sighting may hold the row open for,
- *                     counted from the run it fired in (default 30, floor 1)
  *   HET_SEED          the seed base; vary it per invocation, since a replayed
  *                     seed draws no fresh phase and pools as one draw twice.
  *                     Only a value that parses pins it; the driver otherwise
@@ -371,17 +369,6 @@ typedef enum {
   HET_OBS_ALWAYS
 } het_obs_class;
 
-/* Corroboration layers on top of het_verdict()'s HET_OBSERVED and suppresses
-   nothing: HET_CORROB_RUNS is a bar in clean runs, not a confidence, since a
-   constant-read artefact forges a sighting [Srivastava24 sec 4.1]. */
-#define HET_CORROB_RUNS 2
-typedef enum {
-  HET_SIGHT_NONE = 0,
-  HET_SIGHT_UNCONFIRMED,   /* seen in fewer than HET_CORROB_RUNS clean runs, or
-                              only in degenerate runs: reproduce it. */
-  HET_SIGHT_CORROBORATED   /* >= HET_CORROB_RUNS clean runs saw it */
-} het_sighting_tier;
-
 /* Why a statistic is missing or weakened -- each is a way this layer could go
    silently constant, so each is printed.  Vacant bits: 0, 1, 3-16. */
 #define HET_ST_DEGEN_SIGHTING    (1u << 2) /* >=1 sighting failed the decode guard */
@@ -389,16 +376,12 @@ typedef enum {
 typedef struct het_stats {
   const char *test_name;
   het_obs_class obs;
-  het_sighting_tier tier;
 
   int R;              /* runs supplied (= NUMBER_OF_RUN)                          */
   int R_usable;       /* runs whose het_verdict() is not COLD-INVALID             */
   int k;              /* runs with Y = 1[target_count >= 1]                       */
   int k_eff;          /* ... of those, the ones that pass the decode guard        */
   int n_degen;        /* sightings the guard rejected (reported, not counted) */
-  /* Runs consumed when the first clean sighting landed, one-based; 0 = none
-     did.  The price of the sighting, in the unit the campaign spends. */
-  int n_at_first_sight;
 
   uint64_t N, iters_scored, iters_discarded;   /* the effort disclosure          */
   uint32_t flags;
@@ -407,8 +390,7 @@ typedef struct het_stats {
 /* The decode guard: could this run's sighting be the constant-read artefact
    [Srivastava24 sec 4.1]?  A readout that did not run, a run that scored
    nothing and one whose every iteration read back the same vector all fail
-   closed.  The sighting is still reported; it does not count toward
-   corroboration. */
+   closed.  The sighting is still reported, outside k_eff. */
 static int het_run_degenerate(const het_obs_record *r) {
   return !r->rdv_valid || (r->iters_scored == 0) || !r->outcomes_vary;
 }
@@ -436,12 +418,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     if (y) {
       st->k++;
       if (deg) { st->n_degen++; st->flags |= HET_ST_DEGEN_SIGHTING; }
-      else {
-        st->k_eff++;
-        /* A price in runs actually spent, one-based: the sighting's own run
-           counts, and so does every run before it. */
-        if (st->n_at_first_sight == 0) st->n_at_first_sight = i + 1;
-      }
+      else st->k_eff++;
     }
 
     st->iters_scored += recs[i].iters_scored;
@@ -458,12 +435,6 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
     else if (st->k >= denom)  st->obs = HET_OBS_ALWAYS;
     else                      st->obs = HET_OBS_SOMETIMES;
   }
-
-  /* ---- 3. The corroboration tier, in clean runs: runs are re-seeded and
-     carry a fresh phase/thermal draw. */
-  if (st->k > 0)
-    st->tier = (st->k_eff >= HET_CORROB_RUNS) ? HET_SIGHT_CORROBORATED
-                                              : HET_SIGHT_UNCONFIRMED;
 }
 
 static const char *het_obs_class_name(het_obs_class c) {
@@ -475,24 +446,15 @@ static const char *het_obs_class_name(het_obs_class c) {
   }
 }
 
-static const char *het_sighting_name(het_sighting_tier t) {
-  switch (t) {
-  case HET_SIGHT_CORROBORATED: return "CORROBORATED";
-  case HET_SIGHT_UNCONFIRMED:  return "UNCONFIRMED";
-  default:                     return "none";
-  }
-}
-
 /* The machine-readable line.  hetlitmus/campaign.py schedules from it. */
 static void het_stats_line(FILE *_ch, const het_stats_t *_s) {
   fprintf(_ch,
     "HetStats %s obs=%s "
-    "R=%d usable=%d k=%d k_eff=%d degen=%d first_sight=%d "
-    "sighting=%s N=%llu scored=%llu discarded=%llu flags=0x%x\n",
+    "R=%d usable=%d k=%d k_eff=%d degen=%d "
+    "N=%llu scored=%llu discarded=%llu flags=0x%x\n",
     _s->test_name ? _s->test_name : "(none)",
     het_obs_class_name(_s->obs), _s->R, _s->R_usable, _s->k, _s->k_eff,
-    _s->n_degen, _s->n_at_first_sight,
-    het_sighting_name(_s->tier),
+    _s->n_degen,
     (unsigned long long)_s->N, (unsigned long long)_s->iters_scored,
     (unsigned long long)_s->iters_discarded,
     _s->flags);
@@ -536,84 +498,39 @@ static void het_stats_print(FILE *_ch, const het_stats_t *_s) {
   if (_s->flags & HET_ST_DEGEN_SIGHTING)
     fprintf(_ch,
       "  *** %d sighting(s) came from a DEGENERATE run (nothing scored, or a "
-      "readout that did not vary): reported, but not counted toward "
-      "corroboration.\n",
+      "readout that did not vary): reported, and not counted among the clean "
+      "ones.\n",
       _s->n_degen);
-
-  if (_s->tier != HET_SIGHT_NONE) {
-    if (_s->tier == HET_SIGHT_CORROBORATED)
-      fprintf(_ch,
-        "  ** SIGHTING %s ** -- reproduced in %d clean run(s) "
-        "(>= HET_CORROB_RUNS = %d), which a constant-read artefact does not.  "
-        "How often it reproduces is not reported.\n",
-        het_sighting_name(_s->tier), _s->k_eff, (int)HET_CORROB_RUNS);
-    else
-      fprintf(_ch,
-        "  ** SIGHTING %s ** -- seen in only %d clean run(s) "
-        "(< HET_CORROB_RUNS = %d).  It stands as a sighting; reproduce it "
-        "before it is written up.\n",
-        het_sighting_name(_s->tier), _s->k_eff, (int)HET_CORROB_RUNS);
-    if (_s->n_at_first_sight > 0)
-      fprintf(_ch,
-        "  It first fired after %d of the %d run(s) supplied: budget a fresh "
-        "campaign for that; grow R, not N.\n",
-        _s->n_at_first_sight, _s->R);
-  }
 }
 
 /* The campaign stopping rule: one rule for every test, and a pure function of
  * the record stream, so the in-binary loop and hetlitmus/campaign.py apply the
- * same policy.  Which shape is stubborn is a property of the part, not of the
- * shape [Kirkham20 sec 4.2 Tab.6].
- * hetlitmus/docs/harness-reporting.md sec 5. */
+ * same policy.  hetlitmus/docs/harness-reporting.md sec 5. */
 typedef enum {
   HET_CAMPAIGN_CONTINUE = 0,
-  HET_CAMPAIGN_STOP_CORROBORATED, /* sighting reproduced in HET_CORROB_RUNS runs  */
-  HET_CAMPAIGN_STOP_UNCONFIRMED,  /* a LONE clean sighting the confirmation window
-                                     closed on without corroborating it           */
-  HET_CAMPAIGN_STOP_BUDGET        /* budget exhausted, with nothing to show        */
+  HET_CAMPAIGN_STOP_OBSERVED,   /* a clean run saw the weak outcome           */
+  HET_CAMPAIGN_STOP_BUDGET      /* budget exhausted, with nothing to show      */
 } het_campaign_stop_t;
 
 /* hetlitmus/campaign.py reads these strings back out of its state file, so they
    are an interface and not a printout. */
 static const char *het_campaign_stop_name(het_campaign_stop_t s) {
   switch (s) {
-  case HET_CAMPAIGN_STOP_CORROBORATED: return "CORROBORATED";
-  case HET_CAMPAIGN_STOP_UNCONFIRMED:  return "UNCONFIRMED-SIGHTING";
-  case HET_CAMPAIGN_STOP_BUDGET:       return "BUDGET";
-  default:                             return "CONTINUE";
+  case HET_CAMPAIGN_STOP_OBSERVED: return "OBSERVED";
+  case HET_CAMPAIGN_STOP_BUDGET:   return "BUDGET";
+  default:                         return "CONTINUE";
   }
-}
-
-/* UNCONFIRMED-SIGHTING is the one stop whose name is not its meaning, so it is
-   the one that carries a sentence. */
-static const char *het_campaign_stop_why(het_campaign_stop_t s) {
-  return (s == HET_CAMPAIGN_STOP_UNCONFIRMED)
-    ? "the confirmation window closed on a lone clean sighting that did not reproduce"
-    : "";
 }
 
 static het_campaign_stop_t het_campaign_should_stop(const het_obs_record *recs,
                                                     int n, int budget,
-                                                    int rate_mode,
-                                                    int confirm_runs) {
+                                                    int rate_mode) {
   het_stats_t st;
   if (n <= 0) return HET_CAMPAIGN_CONTINUE;
   het_stats_compute(recs, n, &st);
-  /* A window shorter than one run is not a window. */
-  if (confirm_runs < 1) confirm_runs = 1;
-  /* k_eff counts sightings that passed the decode guard, so an artefact neither
-     stops a row nor holds one open: a degenerate-only sighting leaves k_eff at 0
-     and takes the null arm below (st.tier would not -- it is set by k). */
-  if (st.k_eff > 0 && !rate_mode) {
-    if (st.tier == HET_SIGHT_CORROBORATED) return HET_CAMPAIGN_STOP_CORROBORATED;
-    /* The window elapses from the sighting: n_at_first_sight is one-based and
-       > 0 whenever k_eff > 0, so this is the runs spent since it.  Against n
-       alone a row firing late would be banked with no runs to reproduce in. */
-    if (n - st.n_at_first_sight >= confirm_runs)
-      return HET_CAMPAIGN_STOP_UNCONFIRMED;
-    return HET_CAMPAIGN_CONTINUE;               /* outranks the budget stop below */
-  }
+  /* k_eff, NOT k: a sighting the decode guard rejected stops nothing, and a
+     row that fired is banked OBSERVED whatever its budget says. */
+  if (st.k_eff > 0 && !rate_mode) return HET_CAMPAIGN_STOP_OBSERVED;
   if (budget > 0 && n >= budget) return HET_CAMPAIGN_STOP_BUDGET;
   return HET_CAMPAIGN_CONTINUE;
 }

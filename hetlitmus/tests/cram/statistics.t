@@ -24,8 +24,6 @@ derives from the seed base.
   1
   $ grep -c 'het_env_long("HET_RATE", 0)' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
-  $ grep -c 'het_env_long("HET_CONFIRM_RUNS", 30)' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
-  1
   $ grep -c 'uint32_t _seed = _seed0 + (uint32_t)_run;' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
 
@@ -46,11 +44,9 @@ entropy, and the run prints the base it used either way.
 The adaptive stop is the header's rule, consulted after every run and passed the
 two policy knobs it decides on.
 
-  $ grep -c 'het_campaign_should_stop(_recs, _nrec, _runs_budget, _rate_mode, _confirm_runs)' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
+  $ grep -c 'het_campaign_should_stop(_recs, _nrec, _runs_budget, _rate_mode)' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
   $ grep -c 'HetCampaign MP-cg-sys-sy.fsc stop=%s' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
-  1
-  $ grep -c 'het_campaign_stop_why(_stop)' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
 
 The target count is bumped once per scored iteration, under the detector itself,

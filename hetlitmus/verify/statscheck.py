@@ -2,10 +2,9 @@
 """HetLitmus -- the statistics gate for het_stats_compute() (het_verdict.h).
 
 Compiles the REAL emitted header and drives it with synthetic record streams:
-  1  Inputs     the Python mirror of the header's knob is COMPARED to it.
-  2  Aggregate  every statistic re-derived independently in Python; every class,
-                tier and flag reachable; the fields campaign.py reads are fields
-                the machine line prints.
+  2  Aggregate  every statistic re-derived independently in Python; every class
+                and flag reachable; the fields campaign.py reads are fields the
+                machine line prints.
   5  Stop rule  every reason reachable, each guard driven at its boundary.
   6  Scheduler  campaign.py end to end, against a stub harness.
 A miss means the layer answers the same thing whatever it is handed.
@@ -28,10 +27,6 @@ import census
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HET_DIR = census.HET_DIR
 CAMPAIGN = os.path.join(ROOT, "hetlitmus", "campaign.py")
-
-# The Python mirror of the header's knob.  No fixture straddles its boundary, so
-# a differential cannot notice drift: it is COMPARED in phase 1.
-CORROB_RUNS = 2             # must match HET_CORROB_RUNS      (pinned via MIRROR|)
 
 
 # ---------------------------------------------------------------------------
@@ -85,13 +80,6 @@ def observed(recs, k, clean=True):
     return recs
 
 
-def observed_at(recs, idx):
-    """Make the run at idx -- and ONLY it -- see the target, cleanly.  The
-    confirmation window is measured from where the sighting lands."""
-    observed(recs[idx:idx + 1], 1)
-    return recs
-
-
 CASES = []
 
 
@@ -116,18 +104,18 @@ case("void-when-every-run-is-cold",
      obs="VOID", R=RUNS, R_usable=0)
 
 # The decode guard, on each of its three disjuncts.  A constant decode
-# [Srivastava24 sec 4.1] is reported (k=3) and corroborates nothing (k_eff=0).
+# [Srivastava24 sec 4.1] is reported (k=3) and counted clean nowhere (k_eff=0).
 case("degenerate-sightings-rejected-but-reported",
      observed(stream(RUNS), 3, clean=False),
      obs="Sometimes", k=3, k_eff=0, n_degen=3,
-     flags_any=["DEGEN_SIGHTING"], tier="UNCONFIRMED")
+     flags_any=["DEGEN_SIGHTING"])
 
 # ... and a sighting from a run whose readout NEVER ran: its counts are memset
-# zeros, so it is reported and counts toward no corroboration.
+# zeros, so it is reported and not counted clean.
 _dead_rdv = observed(stream(RUNS), 1)
 _dead_rdv[0]["rdv_valid"] = 0
 case("sighting-from-a-readout-that-never-ran-is-degenerate", _dead_rdv,
-     obs="Sometimes", k=1, k_eff=0, n_degen=1, tier="UNCONFIRMED",
+     obs="Sometimes", k=1, k_eff=0, n_degen=1,
      flags_any=["DEGEN_SIGHTING"])
 
 # ... and one from a run that scored NOTHING: it read nothing back, so what the
@@ -135,25 +123,8 @@ case("sighting-from-a-readout-that-never-ran-is-degenerate", _dead_rdv,
 _none_scored = observed(stream(RUNS), 1)
 _none_scored[0]["iters_scored"] = 0
 case("sighting-from-a-run-that-scored-nothing-is-degenerate", _none_scored,
-     obs="Sometimes", k=1, k_eff=0, n_degen=1, tier="UNCONFIRMED",
+     obs="Sometimes", k=1, k_eff=0, n_degen=1,
      flags_any=["DEGEN_SIGHTING"])
-
-# The corroboration bar is on RUNS and both sides of it are driven: one run short
-# is UNCONFIRMED, at the bar it is CORROBORATED.
-case("sighting-corroborated-at-the-bar",
-     observed(stream(RUNS), CORROB_RUNS),
-     obs="Sometimes", tier="CORROBORATED", k_eff=CORROB_RUNS)
-
-case("sighting-unconfirmed-one-run-short",
-     observed(stream(RUNS), CORROB_RUNS - 1),
-     obs="Sometimes", tier="UNCONFIRMED", k_eff=CORROB_RUNS - 1)
-
-# n_at_first_sight is a price in RUNS: the fifth run of ten fires, so the price
-# is 5 -- one-based, NEITHER the four spent before it nor a run id.
-case("first-sight-counts-the-runs-spent-through-the-sighting",
-     observed_at(stream(RUNS), 4),
-     obs="Sometimes", k=1, k_eff=1, tier="UNCONFIRMED",
-     first_sight=5)
 
 # The selection effect: the three that fired are usable BECAUSE they fired, so
 # scoring over usable runs would report Always here.  The denominator is R.
@@ -180,69 +151,39 @@ case(DISCARD_CASE,
 
 # PHASE 5 -- every reason het_campaign_should_stop() gives is reachable, each
 # guard driven at its boundary on synthetic records.
-CONFIRM_RUNS = 30           # must match the driver's HET_CONFIRM_RUNS default
 STOPS = []
 
 
-def stop(name, recs, budget, want, rate=0, confirm=CONFIRM_RUNS):
-    STOPS.append(dict(name=name, recs=recs, budget=budget,
-                      want=want, rate=rate, confirm=confirm))
+def stop(name, recs, budget, want, rate=0):
+    STOPS.append(dict(name=name, recs=recs, budget=budget, want=want, rate=rate))
 
 
-# A lone clean sighting does NOT stop: one run cannot rule out a per-run artefact.
-stop("one-clean-sighting-does-not-stop",
+# One clean sighting stops the row.
+stop("one-clean-sighting-stops",
      observed(stream(RUNS), 1),
-     20, "CONTINUE")
-# ... and neither does a degenerate one, at any count: the branch is on k_eff, not
-# on the tier, and an artefact must never de-schedule a test.
+     20, "OBSERVED")
+# ... and a degenerate one never does, at any count: the branch is on k_eff, and
+# an artefact must never de-schedule a test.
 stop("degenerate-sightings-never-stop",
      observed(stream(RUNS), 3, clean=False),
      20, "CONTINUE")
-# The bar is HET_CORROB_RUNS clean runs, and it is reached exactly there.
-stop("sighting-corroborated-stops",
-     observed(stream(RUNS), CORROB_RUNS),
-     20, "CORROBORATED")
-# The confirmation window at its boundary: the same lone sighting in the first of
-# ten runs continues one run short of the window and stops at it.
-stop("lone-sighting-below-the-confirm-window-continues",
+# The precedence: a row that fired with its budget spent is banked OBSERVED, NOT
+# BUDGET.
+stop("a-sighting-outranks-the-budget-stop",
      observed(stream(RUNS), 1),
-     20, "CONTINUE", confirm=10)
-stop("lone-sighting-at-the-confirm-window-stops-unconfirmed",
-     observed(stream(RUNS), 1),
-     20, "UNCONFIRMED-SIGHTING", confirm=9)
-# The precedence, both ways: the budget is spent in both and NEITHER answers BUDGET,
-# because a row ended there would bank "seen once, stopped looking".
-stop("lone-sighting-outranks-the-budget-stop",
-     observed(stream(RUNS), 1),
-     5, "CONTINUE")
-stop("the-window-not-the-budget-ends-a-lone-sighting",
-     observed(stream(RUNS), 1),
-     5, "UNCONFIRMED-SIGHTING", confirm=9)
-# The window is measured from the sighting: a row that fired in its LAST run has
-# spent none of it, and a sighting at run 5 of ten drives the boundary both ways.
-stop("a-sighting-in-the-last-run-gets-its-window",
-     observed_at(stream(RUNS), 9),
-     20, "CONTINUE", confirm=5)
-stop("late-sighting-inside-its-window-continues",
-     observed_at(stream(RUNS), 4),
-     20, "CONTINUE", confirm=6)
-stop("late-sighting-past-its-window-stops-unconfirmed",
-     observed_at(stream(RUNS), 4),
-     20, "UNCONFIRMED-SIGHTING", confirm=5)
+     5, "OBSERVED")
 # Rate mode disables the sighting stop and NOTHING else: the row runs on to measure
 # a rate, and its budget still stops it.
-stop("rate-mode-does-not-stop-on-a-corroborated-sighting",
-     observed(stream(RUNS), CORROB_RUNS),
+stop("rate-mode-does-not-stop-on-a-sighting",
+     observed(stream(RUNS), 1),
      20, "CONTINUE", rate=1)
 stop("rate-mode-still-stops-at-budget",
-     observed(stream(RUNS), CORROB_RUNS),
-     10, "BUDGET", rate=1)
-# ... and rate mode is the operator's answer to an UNCONFIRMED row, so it must not
-# be able to produce one: a lone sighting reaches its budget and is never banked.
-stop("rate-mode-runs-a-lone-sighting-to-budget",
      observed(stream(RUNS), 1),
      10, "BUDGET", rate=1)
-stop("cold-row-runs-to-budget",
+stop("null-below-budget-continues",
+     stream(RUNS),
+     20, "CONTINUE")
+stop("null-row-runs-to-budget",
      stream(RUNS),
      10, "BUDGET")
 
@@ -266,20 +207,16 @@ def py_reference(recs):
             return True
         return c["stress_truncated"] == 0
 
-    k = k_eff = n_degen = R_usable = first_sight = 0
-    for i, c in enumerate(recs):
+    k = k_eff = n_degen = R_usable = 0
+    for c in recs:
         if usable(c):
             R_usable += 1
-        y = c["target_count"] > 0
-        if y:
+        if c["target_count"] > 0:
             k += 1
             if degenerate(c):
                 n_degen += 1
             else:
                 k_eff += 1
-                # first_sight is a price in runs: every run spent through this one.
-                if first_sight == 0:
-                    first_sight = i + 1
 
     # Nothing co-runs, so "usable" is defined partly by firing: the denominator is
     # R, the records SUPPLIED, as in the C.
@@ -293,15 +230,10 @@ def py_reference(recs):
     else:
         obs = "Sometimes"
 
-    tier = "none"
-    if k > 0:
-        tier = ("CORROBORATED" if k_eff >= CORROB_RUNS else "UNCONFIRMED")
-
     return dict(obs=obs, k=k, k_eff=k_eff, n_degen=n_degen,
-                first_sight=first_sight,
                 scored=sum(c["iters_scored"] for c in recs),
                 discarded=sum(c["iters_discarded"] for c in recs),
-                R=R, R_usable=R_usable, tier=tier)
+                R=R, R_usable=R_usable)
 
 
 # ---------------------------------------------------------------------------
@@ -314,11 +246,11 @@ C_MAIN = r"""
 static void run_case(const char *name, const het_obs_record *recs, int n) {
   het_stats_t st;
   het_stats_compute(recs, n, &st);
-  printf("CASE|%s|%s|%d|%d|%d|%d|%s|0x%x|%d|%d|%llu|%llu\n",
+  printf("CASE|%s|%s|%d|%d|%d|%d|0x%x|%d|%llu|%llu\n",
          name, het_obs_class_name(st.obs), st.k, st.k_eff, st.n_degen,
-         st.R_usable, het_sighting_name(st.tier), st.flags,
+         st.R_usable, st.flags,
          /* st.R is the record count: R > R_usable means cold runs. */
-         st.R, st.n_at_first_sight,
+         st.R,
          /* the effort totals: the iterations the readout scored, and the ones the
             rendezvous threw away before it could */
          (unsigned long long)st.iters_scored,
@@ -330,21 +262,12 @@ static void run_case(const char *name, const het_obs_record *recs, int n) {
 
 /* PHASE 5 -- the campaign stopping rule, from the same synthetic records. */
 static void stop_case(const char *name, const het_obs_record *recs, int n,
-                      int budget, int rate_mode, int confirm_runs) {
-  het_campaign_stop_t s = het_campaign_should_stop(recs, n, budget,
-                                                   rate_mode, confirm_runs);
-  printf("STOP|%s|%s|%s\n", name, het_campaign_stop_name(s),
-         het_campaign_stop_why(s));
-}
-
-/* PHASE 1 -- the constant the Python reference is derived from, emitted so it
-   can be COMPARED: every fixture sits far from its boundary. */
-static void anchors(void) {
-  printf("MIRROR|%d\n", (int)HET_CORROB_RUNS);
+                      int budget, int rate_mode) {
+  het_campaign_stop_t s = het_campaign_should_stop(recs, n, budget, rate_mode);
+  printf("STOP|%s|%s\n", name, het_campaign_stop_name(s));
 }
 
 int main(void) {
-  anchors();
 __CASES__
   return 0;
 }
@@ -379,9 +302,8 @@ def build_c():
     for i, s in enumerate(STOPS):
         body.append("  {")
         body.append(c_recs("stopr%d" % i, s["recs"]))
-        body.append('    stop_case("%s", stopr%d, %d, %d, %d, %d);'
-                    % (s["name"], i, len(s["recs"]), s["budget"],
-                       s["rate"], s["confirm"]))
+        body.append('    stop_case("%s", stopr%d, %d, %d, %d);'
+                    % (s["name"], i, len(s["recs"]), s["budget"], s["rate"]))
         body.append("  }")
     return C_MAIN.replace("__CASES__", "\n".join(body))
 
@@ -421,13 +343,11 @@ def _parse_case_fields(l):
     """Parse one CASE| line into (name, stats-dict).  The tuple width is the
     assertion: a column added in the C without a change here unpacks short."""
     f = l.split("|")
-    (_, name, obs, k, k_eff, n_degen, R_usable, tier,
-     flags, R, first_sight, scored, discarded) = f
+    (_, name, obs, k, k_eff, n_degen, R_usable, flags, R, scored, discarded) = f
     return name, dict(
         obs=obs, k=int(k), k_eff=int(k_eff),
         n_degen=int(n_degen), R=int(R), R_usable=int(R_usable),
-        first_sight=int(first_sight), scored=int(scored),
-        discarded=int(discarded), tier=tier, flags=int(flags, 16))
+        scored=int(scored), discarded=int(discarded), flags=int(flags, 16))
 
 
 class _CompileFailed(Exception):
@@ -456,37 +376,6 @@ def _compile_and_run(header_dir, workdir):
     return subprocess.run([exe], capture_output=True, text=True).stdout.splitlines()
 
 
-def phase1(lines, quiet):
-    print("===== PHASE 1: does the mirrored constant hold? =====")
-    bad = 0
-    # A differential CANNOT notice this drift: move HET_CORROB_RUNS by one and
-    # every fixture keeps its tier on both sides while the mirror goes stale.
-    seen_mirror = False
-    for l in lines:
-        if not l.startswith("MIRROR|"):
-            continue
-        seen_mirror = True
-        _, cr = l.split("|")
-        if int(cr) != CORROB_RUNS:
-            print("  *** MIRROR DRIFT: HET_CORROB_RUNS is %d in the header, %d here "
-                  "-- the tier fixtures are sized from the mirror, so both sides "
-                  "of the bar would move with it" % (int(cr), CORROB_RUNS))
-            bad += 1
-        elif not quiet:
-            print("      the Python mirror matches the header: CORROB_RUNS=%d"
-                  % int(cr))
-    if not seen_mirror:
-        print("  *** no MIRROR| line: the header's knob is compared to nothing")
-        bad += 1
-
-    if bad:
-        print("\nINPUTS FAILED: %d problem(s).  A stale mirror derives the Python "
-              "reference from a different header than the C." % bad)
-        return 1
-    print("\nINPUTS OK (the mirrored knob is COMPARED to the header)")
-    return 0
-
-
 # The HetStats line is the whole interface between a harness and its readers, and
 # campaign.py reads it by key: fnum() and fhex() both read a missing one as 0.
 CONSUMER_KEY_RE = re.compile(r'\bf(?:num|hex)\(\s*kv\s*,\s*"(\w+)"')
@@ -496,7 +385,7 @@ LINE_KEY_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_]*)=")
 STATS_LINE = re.compile(r"HetStats \S+ obs=\S+ ")
 # A reformat that hid call sites from the pattern would narrow this check instead
 # of reddening it, so the count is pinned as well as the keys.
-EXPECT_CONSUMER_KEYS = 8
+EXPECT_CONSUMER_KEYS = 7
 
 
 def _consumer_keys():
@@ -545,7 +434,7 @@ def _keydiff(got, want):
 def phase2(lines, quiet):
     print("\n===== PHASE 2: is het_stats_compute() a statistic, or a constant? =====")
     bad = 0
-    seen_obs, seen_flags, seen_tier = set(), set(), set()
+    seen_obs, seen_flags = set(), set()
     blocks, cur, buf = {}, None, []
     got = {}
 
@@ -554,7 +443,6 @@ def phase2(lines, quiet):
             name, rec = _parse_case_fields(l)
             got[name] = rec
             seen_obs.add(rec["obs"])
-            seen_tier.add(rec["tier"])
             for fl, bit in FLAG_BIT.items():
                 if rec["flags"] & bit:
                     seen_flags.add(fl)
@@ -579,7 +467,7 @@ def phase2(lines, quiet):
 
         # (a) The differential: every statistic, independently re-derived.
         for fld in ("obs", "k", "k_eff", "n_degen", "R", "R_usable",
-                    "tier", "first_sight", "scored", "discarded"):
+                    "scored", "discarded"):
             if g[fld] != ref[fld]:
                 errs.append("%s: C %s != py %s" % (fld, g[fld], ref[fld]))
 
@@ -601,8 +489,8 @@ def phase2(lines, quiet):
             bad += 1
             print("  *** %-48s %s" % (name, "; ".join(errs)))
         elif not quiet:
-            print("      %-48s obs=%-9s k=%d/%d tier=%-12s %s"
-                  % (name, g["obs"], g["k"], g["R"], g["tier"],
+            print("      %-48s obs=%-9s k=%d/%d %s"
+                  % (name, g["obs"], g["k"], g["R"],
                      ",".join(f for f in FLAGS if g["flags"] & FLAG_BIT[f])))
 
     # ---- The anti-constant assertions --------------------------------------
@@ -614,13 +502,6 @@ def phase2(lines, quiet):
     if miss:
         print("  *** UNREACHABLE: %s -- the class is a constant on this input space"
               % ", ".join(sorted(miss)))
-        bad += 1
-
-    want_tier = {"none", "UNCONFIRMED", "CORROBORATED"}
-    print("  corroboration tiers : %d/%d  (%s)"
-          % (len(seen_tier), len(want_tier), ", ".join(sorted(seen_tier))))
-    if want_tier - seen_tier:
-        print("  *** UNREACHABLE TIER: %s" % ", ".join(sorted(want_tier - seen_tier)))
         bad += 1
 
     need_flags = {"DEGEN_SIGHTING"}
@@ -710,7 +591,7 @@ def phase2(lines, quiet):
         print("\nAGGREGATE FAILED: %d problem(s)." % bad)
         return 1
     print("\nAGGREGATE OK (%d cases; every statistic matches an independent Python "
-          "re-derivation; every class, tier and flag reachable)" % len(CASES))
+          "re-derivation; every class and flag reachable)" % len(CASES))
     return 0
 
 
@@ -722,7 +603,7 @@ def phase5_stops(lines, quiet):
     got = {}
     for l in lines:
         if l.startswith("STOP|"):
-            _, name, verdict, _why = l.split("|")
+            _, name, verdict = l.split("|")
             got[name] = verdict
     seen = set(got.values())
     for s in STOPS:
@@ -735,7 +616,7 @@ def phase5_stops(lines, quiet):
             bad += 1
         elif not quiet:
             print("      %-52s -> %s" % (s["name"], have))
-    want_all = {"CONTINUE", "CORROBORATED", "UNCONFIRMED-SIGHTING", "BUDGET"}
+    want_all = {"CONTINUE", "OBSERVED", "BUDGET"}
     miss = want_all - seen
     print("  stop reasons reachable: %d/%d  (%s)"
           % (len(seen & want_all), len(want_all), ", ".join(sorted(seen))))
@@ -746,9 +627,8 @@ def phase5_stops(lines, quiet):
     if bad:
         print("\nSTOPPING RULE FAILED: %d problem(s)." % bad)
         return 1
-    print("\nSTOPPING RULE OK (every reason reachable; a lone clean sighting holds "
-          "the row open for the confirmation window MEASURED FROM THE RUN IT FIRED "
-          "IN, and no further; a degenerate one holds nothing open; rate mode "
+    print("\nSTOPPING RULE OK (every reason reachable; a clean sighting stops the "
+          "row and outranks the budget; a degenerate one stops nothing; rate mode "
           "disables the sighting stop and nothing else)")
     return 0
 
@@ -767,46 +647,37 @@ cf = os.path.join(d, "inv.count")
 inv = (int(open(cf).read()) + 1) if os.path.exists(cf) else 1
 open(cf, "w").write(str(inv))
 with open(os.path.join(d, "seeds.log"), "a") as fh:
-    fh.write("%d %s %s %s %s %s\n" % (inv, os.environ.get("HET_SEED"),
-                                      os.environ.get("HET_ADAPTIVE"),
-                                      os.environ.get("HET_RUNS_MAX"),
-                                      os.environ.get("HET_RATE"),
-                                      os.environ.get("HET_CONFIRM_RUNS")))
+    fh.write("%d %s %s %s %s\n" % (inv, os.environ.get("HET_SEED"),
+                                   os.environ.get("HET_ADAPTIVE"),
+                                   os.environ.get("HET_RUNS_MAX"),
+                                   os.environ.get("HET_RATE")))
 # The real harness runs at most HET_RUNS_MAX runs, so the stub does too: a stub
 # that ignored the cap would land on run counts no harness can produce.
 R = min(10, int(os.environ.get("HET_RUNS_MAX") or "10"))
 
 
-def line(obs, k, k_eff, degen, first_sight, sighting, usable=None, flags=0):
+def line(obs, k, k_eff, degen, usable=None, flags=0):
     """One HetStats machine line, in het_stats_line's field ORDER and field SET."""
     print("HetStats %s obs=%s R=%d usable=%d k=%d k_eff=%d "
-          "degen=%d first_sight=%d sighting=%s N=100000 scored=100000 discarded=250 "
-          "flags=0x%x"
-          % (test, obs, R, R if usable is None else usable, k, k_eff,
-             degen, first_sight, sighting, flags))
+          "degen=%d N=100000 scored=100000 discarded=250 flags=0x%x"
+          % (test, obs, R, R if usable is None else usable, k, k_eff, degen, flags))
 
 
-NULL = ("Never", 0, 0, 0, 0, "none")
-DEAD = ("VOID", 0, 0, 0, 0, "none", 0)
-FIRED = ("Sometimes", 1, 1, 0, 1, "UNCONFIRMED")
+NULL = ("Never", 0, 0, 0)
+DEAD = ("VOID", 0, 0, 0, 0)
+FIRED = ("Sometimes", 1, 1, 0)
 if test == "NULL-pooled":
     line(*NULL)
-elif test == "SIGHT-corrob":
-    # One clean sighting EVERY invocation: the pooled k_eff reaches
-    # HET_CORROB_RUNS at invocation 2.
+elif test == "SIGHT-clean":
+    # One clean sighting in the first invocation: the row ends there.
     line(*FIRED)
-elif test == "SIGHT-lone":
-    # Fires ONCE, in the first invocation: the row is held open by the confirmation
-    # window and by nothing else.
-    line(*(FIRED if inv == 1 else NULL))
 elif test == "SIGHT-late":
-    # Fires ONCE, at the fifth invocation: its window opens 40 runs into a 100-run
-    # budget, and what it is owed from there is a whole window.
+    # Fires ONCE, at the fifth invocation: nulls until then, OBSERVED there.
     line(*(FIRED if inv == 5 else NULL))
 elif test == "SIGHT-degen":
-    # A sighting the decode guard REJECTED (k=1, k_eff=0): it corroborates nothing
-    # and holds nothing open, so the row runs to its budget.
-    line("Sometimes", 1, 0, 1, 0, "UNCONFIRMED")
+    # A sighting the decode guard REJECTED (k=1, k_eff=0): it stops nothing, so
+    # the row runs to its budget.
+    line("Sometimes", 1, 0, 1)
 elif test == "VOID-dead":
     # Every run COLD in every invocation: the pool measured nothing at all.
     line(*DEAD)
@@ -829,14 +700,14 @@ STUB_SLEEPER = ("#!/usr/bin/env python3\n"
                 "time.sleep(30)\n")
 
 SEED_STRIDE = 100003     # must match campaign.py
-# The budget phase 6 drives the campaign with, the confirmation window it passes,
-# and the R every stub line reports: the HET_RUNS_MAX assertion is derived from them.
-STUB_BUDGET, CONFIRM, STUB_R = 100, 30, 10
+# The budget phase 6 drives the campaign with and the R every stub line reports:
+# the HET_RUNS_MAX assertion is derived from them.
+STUB_BUDGET, STUB_R = 100, 10
 STUB_SCORED = 100000     # the iterations one stub line reports scored
 # ... and the iterations it reports discarded: NOT zero, or the pooled total
 # is zero however the driver pools it.
 STUB_DISCARDED = 250
-STUB_TESTS = ["NULL-pooled", "SIGHT-corrob", "SIGHT-degen", "SIGHT-lone",
+STUB_TESTS = ["NULL-pooled", "SIGHT-clean", "SIGHT-degen", "SIGHT-late",
               "VOID-dead", "VOID-late"]
 
 
@@ -857,7 +728,7 @@ def _mk_corpus(tmp, name, tests, body=STUB_HARNESS):
 def _run_campaign(corpus, state, extra):
     return subprocess.run(
         [sys.executable, CAMPAIGN, "--corpus", corpus,
-         "--budget-runs", str(STUB_BUDGET), "--confirm-runs", str(CONFIRM),
+         "--budget-runs", str(STUB_BUDGET),
          "--seed0", "777", "--state", state] + extra,
         capture_output=True, text=True)
 
@@ -914,15 +785,14 @@ def phase6_campaign(quiet):
     tmp = tempfile.mkdtemp(prefix="statssched.")
     bad = 0
     try:
-        # --- 6.0: the mirror.  campaign.py carries its own copy of the
-        # corroboration bar and of every stop name, and it travels without the repo.
+        # --- 6.0: the mirror.  campaign.py carries its own copy of every stop
+        # name, and it travels without the repo.
         loader = ("import sys; sys.path.insert(0, %r); import campaign; "
                   % os.path.dirname(CAMPAIGN))
         r0 = subprocess.run(
             [sys.executable, "-c", loader +
              "assert campaign.check_flag_mirror() is not None, 'header out of reach'; "
-             "assert campaign.CORROB_RUNS == %d, campaign.CORROB_RUNS; "
-             "print('ok')" % CORROB_RUNS],
+             "print('ok')"],
             capture_output=True, text=True)
         if r0.returncode != 0 or r0.stdout.strip() != "ok":
             print("  *** campaign.py's mirror does not agree with the shipped header: "
@@ -930,30 +800,12 @@ def phase6_campaign(quiet):
                   % (r0.returncode, r0.stdout.strip(), r0.stderr.strip()[-300:]))
             bad += 1
         bad += _mirror_rejects(
-            tmp, "a moved corroboration bar",
-            lambda s: s.replace("#define HET_CORROB_RUNS 2",
-                                "#define HET_CORROB_RUNS 3", 1),
-            "HET_CORROB_RUNS", quiet)
-        bad += _mirror_rejects(
             tmp, "a renamed stop",
-            lambda s: s.replace('case HET_CAMPAIGN_STOP_CORROBORATED: return '
-                                '"CORROBORATED";',
-                                'case HET_CAMPAIGN_STOP_CORROBORATED: return '
-                                '"CONFIRMED";', 1),
+            lambda s: s.replace('case HET_CAMPAIGN_STOP_OBSERVED: return '
+                                '"OBSERVED";',
+                                'case HET_CAMPAIGN_STOP_OBSERVED: return '
+                                '"SEEN";', 1),
             "stop names", quiet)
-        # A define that is gone is its own arm: the regex finds nothing to compare.
-        bad += _mirror_rejects(
-            tmp, "a dropped corroboration bar",
-            lambda s: re.sub(r"^#define[ \t]+HET_CORROB_RUNS[ \t].*\n", "", s,
-                             count=1, flags=re.M),
-            "no longer defines HET_CORROB_RUNS", quiet)
-        # ... and the policy a name cannot carry: a header measuring the window
-        # from run 0 ends rows this scheduler would still be running.
-        bad += _mirror_rejects(
-            tmp, "a window measured from run 0",
-            lambda s: s.replace("if (n - st.n_at_first_sight >= confirm_runs)",
-                                "if (n >= confirm_runs)", 1),
-            "n_at_first_sight", quiet)
         # A header out of reach is FATAL: the mirror is the only thing holding
         # this driver's copy of the stopping rule to the one the harness compiled.
         r1 = subprocess.run(
@@ -977,14 +829,13 @@ def phase6_campaign(quiet):
         out = r.stdout
 
         # A crash exits 1 too, and this fixture set is expected to exit 1 (one row
-        # ends UNCONFIRMED-SIGHTING), so the rc check alone would pass for free.
+        # ends ERROR), so the rc check alone would pass for free.
         if "Traceback" in r.stderr:
             print("  *** the campaign CRASHED (its exit code 1 is indistinguishable "
-                  "from the expected flagged exit):\n%s" % r.stderr[-800:])
+                  "from the expected errored exit):\n%s" % r.stderr[-800:])
             bad += 1
         if r.returncode != 1:
-            print("  *** campaign exited %d (want 1: a row ended UNCONFIRMED-SIGHTING, "
-                  "which is not a result to be read unattended)\n%s%s"
+            print("  *** campaign exited %d (want 1: a row ended ERROR)\n%s%s"
                   % (r.returncode, out[-1500:], r.stderr[-500:]))
             bad += 1
 
@@ -997,11 +848,10 @@ def phase6_campaign(quiet):
             # A null is ended by the budget and by NOTHING else: STUB_R runs an
             # invocation, so the budget lands in the tenth.
             "NULL-pooled": ("BUDGET", 10),
-            # clean sightings pool to k_eff >= HET_CORROB_RUNS at invocation 2.
-            "SIGHT-corrob": ("CORROBORATED", 2),
-            # one sighting in the first run, then nulls: held open by the window
-            # (through run 31) and ended by it in the fourth invocation.
-            "SIGHT-lone": ("UNCONFIRMED-SIGHTING", 4),
+            # a clean sighting in the first invocation ends the row there.
+            "SIGHT-clean": ("OBSERVED", 1),
+            # nulls until the fifth invocation, whose sighting ends the row.
+            "SIGHT-late": ("OBSERVED", 5),
             # a rejected sighting stops nothing, so the row runs to its budget.
             "SIGHT-degen": ("BUDGET", 10),
             # no usable run in any invocation: the row ends after the first.
@@ -1043,11 +893,19 @@ def phase6_campaign(quiet):
                       % (t, g.get("usable"), want_u))
                 bad += 1
 
-        # The corroboration headline is a fact at zero: exactly one row here
-        # reproduced its outcome.
-        if "1 row(s) ended CORROBORATED" not in out:
-            print("  *** the campaign report does not say 1 row(s) ended "
-                  "CORROBORATED:\n%s" % out[-800:])
+        # A late sighting is banked with every run before it: 40 nulls and the
+        # fifth invocation's 10, NOT curtailed to the run that fired.
+        g_late = done.get("SIGHT-late") or {}
+        if g_late.get("runs") != 5 * STUB_R:
+            print("  *** SIGHT-late banked %s run(s), want %d: the row ends in the "
+                  "invocation that saw the outcome, keeping the runs before it"
+                  % (g_late.get("runs"), 5 * STUB_R))
+            bad += 1
+
+        # The observed headline is a count: exactly two rows here saw their outcome.
+        if "2 row(s) ended OBSERVED" not in out:
+            print("  *** the campaign report does not say 2 row(s) ended "
+                  "OBSERVED:\n%s" % out[-800:])
             bad += 1
 
         # The pooled null banks every run its budget bought, read by column name
@@ -1093,23 +951,22 @@ def phase6_campaign(quiet):
             print("      VOID-late    measures %d run(s), then goes dead: still "
                   "BUDGET at %d run(s)" % (STUB_R, STUB_BUDGET))
 
-        # Every invocation carries a fresh seed base and the run count the row is
-        # ENTITLED to; the harness gets HET_RATE and HET_CONFIRM_RUNS with it.
+        # Every invocation carries a fresh seed base and the runs the row has left;
+        # the harness gets HET_RATE with it.
         for t in STUB_TESTS:
             log = os.path.join(corpus, t, "seeds.log")
             with open(log) as fh:
                 for line in fh:
-                    inv, seed, adaptive, runs_max, rate, confirm = line.split()
+                    inv, seed, adaptive, runs_max, rate = line.split()
                     want_seed = 777 + (int(inv) - 1) * SEED_STRIDE
                     if int(seed) != want_seed or adaptive != "1":
                         print("  *** %s invocation %s: HET_SEED=%s (want %d), "
                               "HET_ADAPTIVE=%s" % (t, inv, seed, want_seed, adaptive))
                         bad += 1
-                    if rate != "0" or int(confirm) != CONFIRM:
-                        print("  *** %s invocation %s: HET_RATE=%s HET_CONFIRM_RUNS=%s "
-                              "-- the harness applies the rule inside the invocation, "
-                              "on the two policy knobs this driver hands it"
-                              % (t, inv, rate, confirm))
+                    if rate != "0":
+                        print("  *** %s invocation %s: HET_RATE=%s -- the harness "
+                              "applies the rule inside the invocation, on the policy "
+                              "knob this driver hands it" % (t, inv, rate))
                         bad += 1
                     want_max = STUB_BUDGET - STUB_R * (int(inv) - 1)
                     if int(runs_max) != want_max:
@@ -1120,7 +977,7 @@ def phase6_campaign(quiet):
                         bad += 1
         if not quiet:
             print("      HET_RUNS_MAX curtails each invocation to the REMAINING "
-                  "budget (%d, %d, %d, ...); HET_RATE/HET_CONFIRM_RUNS ride along"
+                  "budget (%d, %d, %d, ...); HET_RATE rides along"
                   % (STUB_BUDGET, STUB_BUDGET - STUB_R, STUB_BUDGET - 2 * STUB_R))
         if not os.path.exists(state):
             print("  *** no campaign state written")
@@ -1146,64 +1003,12 @@ def phase6_campaign(quiet):
                   "it would mix two campaigns under one name" % r7.returncode)
             bad += 1
 
-        # The lone-sighting row under a budget smaller than its window must NEITHER
-        # stop at BUDGET nor be curtailed to it: the window outranks the budget.
-        lone = _mk_corpus(tmp, "lone", ["SIGHT-lone"])
-        r2 = subprocess.run(
-            [sys.executable, CAMPAIGN, "--corpus", lone,
-             "--budget-runs", "20", "--confirm-runs", str(CONFIRM),
-             "--seed0", "777", "--state", os.path.join(tmp, "lone.csv")],
-            capture_output=True, text=True)
-        d2, _ = _done_rows(r2.stdout)
-        g2 = d2.get("SIGHT-lone", {})
-        if (g2.get("stop"), g2.get("runs")) != ("UNCONFIRMED-SIGHTING", 31):
-            print("  *** the lone sighting under a 20-run budget ended %s after %s "
-                  "run(s), want UNCONFIRMED-SIGHTING after 31 (it fired in run 1, so "
-                  "its window closes at 31)"
-                  % (g2.get("stop"), g2.get("runs")))
-            bad += 1
-        else:
-            maxes = [int(l.split()[3])
-                     for l in open(os.path.join(lone, "SIGHT-lone", "seeds.log"))]
-            # 21 is the assertion: the entitlement is the window's end (run 31), NOT
-            # the budget (20), and the harness is told so run by run.
-            if maxes != [20, 21, 11, 1]:
-                print("  *** HET_RUNS_MAX over the overshoot was %s, want "
-                      "[20, 21, 11, 1] -- the harness must be told the runs the row "
-                      "is ENTITLED to" % maxes)
-                bad += 1
-            elif not quiet:
-                print("      SIGHT-lone   budget 20 < window (fired at run 1, closes "
-                      "at 31) -> runs 31 (HET_RUNS_MAX 20, 21, 11, 1)")
-
-        # A late sighting gets a WHOLE window: it fires at run 41, so its window
-        # closes at run 71 and the row ends in the eighth invocation.
-        late = _mk_corpus(tmp, "late", ["SIGHT-late"])
-        r2b = subprocess.run(
-            [sys.executable, CAMPAIGN, "--corpus", late,
-             "--budget-runs", str(STUB_BUDGET), "--confirm-runs", str(CONFIRM),
-             "--seed0", "777", "--state", os.path.join(tmp, "late.csv")],
-            capture_output=True, text=True)
-        d2b, _ = _done_rows(r2b.stdout)
-        g2b = d2b.get("SIGHT-late", {})
-        want2b = ("UNCONFIRMED-SIGHTING", 8, 80)
-        if (g2b.get("stop"), g2b.get("inv"), g2b.get("runs")) != want2b:
-            print("  *** the row that fired at run 41 ended %s after %s invocation(s) "
-                  "/ %s run(s), want %s: the window is measured from the SIGHTING, so "
-                  "this row is owed %d runs after run 41"
-                  % (g2b.get("stop"), g2b.get("inv"), g2b.get("runs"), want2b,
-                     CONFIRM))
-            bad += 1
-        elif not quiet:
-            print("      SIGHT-late   fires at run 41 -> window closes at 71 -> ends "
-                  "UNCONFIRMED-SIGHTING at run 80 (invocation 8)")
-
-        # --rate disables the sighting stop and NOTHING else: the row that
-        # corroborated at invocation 2 now runs to budget, the null is unmoved.
-        rate = _mk_corpus(tmp, "rate", ["SIGHT-corrob", "NULL-pooled"])
+        # --rate disables the sighting stop and NOTHING else: the row that ended
+        # OBSERVED at invocation 1 now runs to budget, the null is unmoved.
+        rate = _mk_corpus(tmp, "rate", ["SIGHT-clean", "NULL-pooled"])
         r3 = _run_campaign(rate, os.path.join(tmp, "rate.csv"), ["--rate"])
         d3, _ = _done_rows(r3.stdout)
-        for t, want3 in (("SIGHT-corrob", ("BUDGET", 10)),
+        for t, want3 in (("SIGHT-clean", ("BUDGET", 10)),
                          ("NULL-pooled", ("BUDGET", 10))):
             g3 = d3.get(t, {})
             if (g3.get("stop"), g3.get("inv")) != want3:
@@ -1216,15 +1021,15 @@ def phase6_campaign(quiet):
                   "was flagged)" % r3.returncode)
             bad += 1
         elif not quiet:
-            print("      --rate       SIGHT-corrob runs to BUDGET, NULL-pooled ends "
+            print("      --rate       SIGHT-clean runs to BUDGET, NULL-pooled ends "
                   "where it did")
-        # --rate never reaches the CORROBORATED stop, so the headline must be a
-        # stop-name fact rather than a count of what reproduced.
-        if ("no row ended CORROBORATED." not in r3.stdout
-                or "0 row(s) ended CORROBORATED" in r3.stdout):
-            print("  *** the --rate report says %r -- the row DID reproduce its "
-                  "outcome there, and only the stop is absent"
-                  % [l for l in r3.stdout.splitlines() if "CORROBORATED" in l])
+        # --rate never reaches the OBSERVED stop, so the headline must be a
+        # stop-name fact rather than a count of what fired.
+        if ("no row ended OBSERVED." not in r3.stdout
+                or "0 row(s) ended OBSERVED" in r3.stdout):
+            print("  *** the --rate report says %r -- the row DID see its outcome "
+                  "there, and only the stop is absent"
+                  % [l for l in r3.stdout.splitlines() if "OBSERVED" in l])
             bad += 1
 
         # The seed base: fresh per campaign, printed and banked, so the seeds
@@ -1233,7 +1038,7 @@ def phase6_campaign(quiet):
         st8 = os.path.join(tmp, "seedbase.csv")
         r8 = subprocess.run(
             [sys.executable, CAMPAIGN, "--corpus", seedc, "--budget-runs",
-             str(STUB_BUDGET), "--confirm-runs", str(CONFIRM), "--state", st8],
+             str(STUB_BUDGET), "--state", st8],
             capture_output=True, text=True)
         m8 = re.search(r"^campaign: seed0=(\d+) ", r8.stdout, re.M)
         slog = os.path.join(seedc, "NULL-pooled", "seeds.log")
@@ -1268,8 +1073,7 @@ def phase6_campaign(quiet):
         seedc2 = _mk_corpus(tmp, "seedbase2", ["NULL-pooled"])
         r8b = subprocess.run(
             [sys.executable, CAMPAIGN, "--corpus", seedc2, "--budget-runs",
-             str(STUB_R), "--confirm-runs", str(CONFIRM),
-             "--state", os.path.join(tmp, "seedbase2.csv")],
+             str(STUB_R), "--state", os.path.join(tmp, "seedbase2.csv")],
             capture_output=True, text=True)
         m8b = re.search(r"^campaign: seed0=(\d+) ", r8b.stdout, re.M)
         if m8 is None or m8b is None or m8.group(1) == m8b.group(1):
@@ -1383,23 +1187,22 @@ def phase6_campaign(quiet):
         print("\nSCHEDULER FAILED: %d problem(s)." % bad)
         return 1
     print("\nSCHEDULER OK -- campaign.py applies het_verdict.h's rule at the pooled "
-          "scale, the confirmation window outranks the budget, --rate disables the "
+          "scale, a clean sighting outranks the budget, --rate disables the "
           "sighting stop alone, a row nothing ran and a row that measured nothing "
           "both end ERROR, a base drawn afresh per campaign and the transcripts "
-          "are kept without being asked for, and the mirror rejects a moved bar, "
-          "a renamed stop, a moved window origin, a "
-          "dropped define or an unreadable header.")
+          "are kept without being asked for, and the mirror rejects a renamed "
+          "stop or an unreadable header.")
     return 0
 
 
 # The header-driven phases read ONE compiled run of the layer; phase 6 compiles
 # nothing.
-GATE_PHASES = ("1", "2", "5")
+GATE_PHASES = ("2", "5")
 
 
 def run(header_dir, tmp, quiet, phases=GATE_PHASES):
     out = None
-    if {"1", "2", "5"} & set(phases):
+    if {"2", "5"} & set(phases):
         try:
             out = _compile_and_run(header_dir, tmp)
         except _CompileFailed as e:
@@ -1407,12 +1210,10 @@ def run(header_dir, tmp, quiet, phases=GATE_PHASES):
             print("\nSTATSCHECK FAILED: the statistics layer does not compile")
             return 1
     rc = 0
-    for p in ("1", "2", "5", "6"):
+    for p in ("2", "5", "6"):
         if p not in phases:
             continue
-        if p == "1":
-            rc |= phase1(out, quiet)
-        elif p == "2":
+        if p == "2":
             rc |= phase2(out, quiet)
         elif p == "5":
             rc |= phase5_stops(out, quiet)
@@ -1439,7 +1240,7 @@ def main():
     if rc:
         print("STATSCHECK: FAIL")
     else:
-        print("STATSCHECK: PASS  (inputs + aggregate + stopping rule + scheduler)")
+        print("STATSCHECK: PASS  (aggregate + stopping rule + scheduler)")
     return 1 if rc else 0
 
 

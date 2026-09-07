@@ -93,27 +93,22 @@ denominator would report `Always` for a row that fired in only some runs, while 
 no usable run measured nothing at all: an absence of data, not a non-observation. `R_usable`
 is scored through `het_verdict()`, so every disqualifier of §3 is inherited.
 
-**Corroboration layers on top and suppresses nothing.** `het_verdict()` still returns
-`OBSERVED` on the first sighting; the tier says only in how many independent runs it
-reproduced (`HET_CORROB_RUNS`), not how often. A sighting from a degenerate run
-(`het_run_degenerate`: nothing scored, or a readout that did not vary [Srivastava24 §4.1]) is
-reported and does not count toward corroboration: *is the sighting real?* and *is it
-reproducible?* are two questions with two answers.
+**A sighting from a degenerate run** (`het_run_degenerate`: nothing scored, or a readout that
+did not vary [Srivastava24 §4.1]) is reported and left out of `k_eff`. The aggregate says in how
+many runs the outcome was seen (`k`, and `k_eff` of them clean) and attaches no rate; one clean
+sighting is an observation, and nothing above the per-run guard vouches for it.
 
 **One stop rule for every row**, because no row carries a prediction to schedule against and
 which shape is stubborn is a property of the part, not of the shape [Kirkham20 §4.2 Tab.6].
-The policy in it: a lone clean sighting holds the row open for `HET_CONFIRM_RUNS` runs counted
-from the run it fired in — outranking the budget stop, since ending at the budget would bank
-"seen once, stopped looking" — and then stops `UNCONFIRMED-SIGHTING`, neither a null nor a
-corroboration; `HET_RATE=1` turns the sighting stop off, so a row that fires yields a rate.
+The policy in it: a clean sighting ends the row `OBSERVED`, outranking the budget stop, and a
+row that never fires ends at its budget; `HET_RATE=1` turns the sighting stop off, so a row
+that fires yields a rate.
 
-One invocation's loop is bounded by the compiled `NUMBER_OF_RUN`, so a window past it ends the
-loop while the rule still says `CONTINUE`; `hetlitmus/campaign.py` applies the same rule over
-a row's pooled runs, re-invoking with a fresh seed base each time (a replayed seed adds no new
-draw and is not a replicate), and ends a row whose pooled `usable` is 0 `ERROR` — the `VOID`
-case at the pooled scale. Budget and window stack on one row, so a row costs up to
-`--budget-runs + --confirm-runs`; a `--budget-runs` at or below `NUMBER_OF_RUN` finishes a
-null row inside one invocation, so pooling engages only above it.
+One invocation's loop is bounded by the compiled `NUMBER_OF_RUN`; `hetlitmus/campaign.py`
+applies the same rule over a row's pooled runs, re-invoking with a fresh seed base each time (a
+replayed seed adds no new draw and is not a replicate), and ends a row whose pooled `usable` is
+0 `ERROR` — the `VOID` case at the pooled scale. A `--budget-runs` at or below `NUMBER_OF_RUN`
+finishes a null row inside one invocation, so pooling engages only above it.
 
 ## 6. Every atom of the condition is a histogram column
 
@@ -128,6 +123,6 @@ and the one thing it does not check, is `het-emission.md`, "Scope / limits".
 `flags=0x…` on a `HetStats` line is read back from transcripts that cannot be re-decoded
 later, so a retired bit is left vacant rather than closed up: add at the top, never renumber.
 The `HetStats` machine line's field set is a wire format too: `hetlitmus/campaign.py` reads
-it by key (`R`, `usable`, `k`, `k_eff`, `first_sight`, `scored`, `discarded`, `flags`) and
+it by key (`R`, `usable`, `k`, `k_eff`, `scored`, `discarded`, `flags`) and
 ORs the flag words across a row's invocations, so a field a consumer reads must be one
 `het_stats_line` prints.
