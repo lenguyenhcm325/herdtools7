@@ -6,7 +6,7 @@
    per process, and gd_free_shared must match it.  Each mode is a system-scope
    atomic ONLY under a condition of [CudaGuide "Atomicity"], which is why the
    guards below are fatal and none of them falls back to auto.
-   This knob moves this object class only: gd_alloc_noise keeps its own dispatch
+   This knob moves this object class only: gd_alloc_noise keeps its own allocator
    and its own free, and the read buffers are device memory, off the race path. */
 static int _shared_pageable(void){
   int _p = 0;
@@ -95,55 +95,11 @@ static int _het_alloc_mode(void){
   }
   return _mode;
 }
-/* A placement request the selected mode cannot honour is announced on stderr and
-   carried in the record, never swallowed. */
-static void _het_place_inert(int _m){
-  static int _said = 0;
-  if (HET_PLACE == 0) return;
-  _het_place_failures++;   /* the machine-readable record carries the caveat too */
-  if (_said) return;
-  _said = 1;
-  fprintf(stderr,
-          "HetLitmus WARNING: HET_PLACE=%d but the shared allocator is in %s mode, "
-          "which exposes no separable page to place -- the placement lever is INERT "
-          "for this run and the shared pages are wherever the runtime put them.\n",
-          (int)HET_PLACE, _het_alloc_name(_m));
-}
-#if HET_PLACE != 0
-/* The race surface needs a VERIFIED home, not the best-effort advice the noise
-   buffers take: a system malloc page is first-touch placed and stays migratable
-   [Fusco24 Tab. II], so it is bound to the far NUMA node under a strict
-   policy -- which also stops later migration -- and the home is read straight
-   back.  hetlitmus/docs/00-environment-design.md sec 3.6. */
-#include <unistd.h>                /* sysconf: _het_place_alloc's page size */
-/* The far NUMA node the lever targets, from the launch device (dev 0): HBM is a
-   placeable node ONLY when the GPU memory is one
-   [CudaGuide "Overview of Memory Allocators for Unified Memory"], else -1 =
-   nothing to bind. */
-static int _het_place_node(int _where){
-  if (_where == 2) return _het_dev_attr(cudaDevAttrHostNumaId);   /* DDR: host node */
-  if (_het_dev_attr(cudaDevAttrNumaConfig) != cudaDeviceNumaConfigNumaNode) return -1;
-  return _het_dev_attr(cudaDevAttrNumaId);                        /* HBM: GPU node */
-}
-/* Whole page-aligned pages so mbind moves ONLY ours; posix_memalign memory frees
-   with free(), so gd_free_shared stays as it is. */
-static void* _het_place_alloc(size_t _bytes){
-  long _ps = sysconf(_SC_PAGESIZE); if (_ps < 1) _ps = 4096;
-  size_t _rounded = ((_bytes + (size_t)_ps - 1) / (size_t)_ps) * (size_t)_ps;
-  void* _p = NULL;
-  if (posix_memalign(&_p, (size_t)_ps, _rounded) != 0) return NULL;
-  return _p;
-}
-#endif
 static void gd_alloc_shared(void** _pp, size_t _bytes){
   int _m = _het_alloc_mode();
   *_pp = NULL;   /* the checks below must not read the caller's uninitialised pointer */
   if (_m == HET_ALLOC_MALLOC) {
-#if HET_PLACE != 0
-    *_pp = _het_place_alloc(_bytes);   /* page-aligned whole pages, so mbind moves ours */
-#else
     *_pp = malloc(_bytes);   /* GH200: ATS, in-place cache-line CHI coherence */
-#endif
     if (*_pp == NULL) {
       fprintf(stderr,
               "HetLitmus FATAL: the shared allocation of %llu bytes failed -- "
@@ -151,10 +107,6 @@ static void gd_alloc_shared(void** _pp, size_t _bytes){
               (unsigned long long)_bytes);
       exit(2);
     }
-#if HET_PLACE != 0
-    if (het_place_shared(*_pp, _bytes, HET_PLACE, _het_place_node(1), _het_place_node(2)) != 0)
-      _het_place_failures++;
-#endif
   } else if (_m == HET_ALLOC_MANAGED) {
     cudaError_t _e = cudaMallocManaged(_pp, _bytes);   /* machinery fallback only */
     if (_e != cudaSuccess || *_pp == NULL) {
@@ -164,9 +116,6 @@ static void gd_alloc_shared(void** _pp, size_t _bytes){
               (unsigned long long)_bytes, cudaGetErrorString(_e));
       exit(2);
     }
-    /* No placement here: without pageable-memory access there is no ATS and no
-       placement lever, so advising would be a no-op that looked like a knob. */
-    _het_place_inert(_m);
   } else {
     /* Mapped page-locked host memory: the pointer the kernel uses is the host
        pointer itself [CudaGuide "cudaMallocHost and cudaHostAlloc"], so there is
@@ -181,7 +130,6 @@ static void gd_alloc_shared(void** _pp, size_t _bytes){
               (unsigned long long)_bytes, cudaGetErrorString(_e));
       exit(2);
     }
-    _het_place_inert(_m);
   }
 }
 static void gd_free_shared(void* _p){

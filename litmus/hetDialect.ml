@@ -54,18 +54,13 @@ type gpu_dialect = {
        together -- an empty definition MUST pair with a NULL argument. *)
     gd_poke_def : string ;        (* file-scope definition, or "" *)
     gd_poke_arg : string ;        (* the expression, over `_n' and `a->_rdv' *)
-    (* The page-placement mechanism HET_PLACE drives, by name, stamped as
-       HET_PLACE_LEVER (hetlitmus/docs/het-emission.md, "The pair a harness
-       names").  None where the render carries no placement code. *)
-    gd_place_lever : string option ;
     (* Per-target allocator for the shared vars + the rendezvous counter
        (hetlitmus/docs/00-environment-design.md sec 3.2).  Call sites stay
        dialect-agnostic C; __out is NOT routed through it. *)
     gd_shared_mem_note : string ;  (* "shared vars" banner comment *)
     gd_shared_mem_defs : string ;  (* file-scope gd_alloc_shared / gd_free_shared defs *)
-    (* The interconnect-stress allocator: large system buffers homed on the
-       OTHER processing unit, so stream-reading them crosses the interconnect.
-       A field because the targets differ in kind
+    (* The interconnect-stress allocator: one large system buffer both noise
+       halves stream-read.  A field because the targets differ in kind
        (hetlitmus/docs/00-environment-design.md sec 3.6). *)
     gd_noise_mem_defs : string ;   (* file-scope gd_alloc_noise / gd_free_noise *)
     (* Cooperative-launch tokens: co-residency and weak progress for the
@@ -111,7 +106,6 @@ let cuda_dialect = {
     gd_poke_def =
       "static void gd_progress_poke(void) { (void)cudaStreamQuery(0); }\n" ;
     gd_poke_arg = "(_n == 0 || !a->_rdv[_n-1]) ? gd_progress_poke : NULL" ;
-    gd_place_lever = Some "mbind(MPOL_BIND)" ;
     gd_shared_mem_note =
       "// Shared vars + rendezvous counter use gd_alloc_shared: system malloc() where\n\
        // the device reaches pageable host memory (ATS: cache-line coherence over the\n\
@@ -161,7 +155,6 @@ let hip_dialect = {
     gd_free = (fun v -> Printf.sprintf "(void)hipFree(%s);" v) ;
     gd_poke_def = "" ;
     gd_poke_arg = "NULL" ;
-    gd_place_lever = Some "mbind(MPOL_BIND)" ;
     gd_shared_mem_note =
       "// Shared vars + rendezvous counter use gd_alloc_shared: fine-grained\n\
        // hipMallocManaged -- the only mode coherent for system-scope CPU<->GPU sync\n\

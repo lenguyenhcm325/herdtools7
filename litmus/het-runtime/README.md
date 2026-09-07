@@ -50,17 +50,14 @@ Two constraints force it into a header of its own instead of into the `.cu`:
 * The preload primitives are host-ISA inline asm the nvcc translation unit must
   never meet, so they sit behind `HET_CPU_STRESS_IMPL`; the split, and the units
   on either side of it, are stated in `het_cpu_stress.h` itself.
-* NO `<pthread.h>` in that file.  `<sched.h>`, `<stdio.h>`, `<stdlib.h>`,
-  `<string.h>`, `<sys/random.h>`, `<sys/syscall.h>` and `<unistd.h>` all survive
-  `clang --target=aarch64-linux-gnu -c`; `<pthread.h>` does not, because it reaches
-  x86 glibc's `bits/pthreadtypes-arch.h`, whose `__cleanup_fct_attribute` is
-  `__attribute__((__regparm__(1)))`, and regparm is not valid for AArch64.  The
-  thread bodies need only the pthread entry-point signature (a void-pointer
-  function of one void pointer), never a pthread primitive; `pthread_create` is
-  called from the `.cu`, which is compiled for the native host and already
-  includes `<pthread.h>`.  `<sys/syscall.h>` survives with the HOST's syscall
-  numbers (`SYS_mbind`, `SYS_move_pages`), so a cross-assembled `_cpu.o` is a
-  check object, never a link input.
+* NO `<pthread.h>` in that file.  `<sched.h>`, `<sys/random.h>` and
+  `<unistd.h>` all survive `clang --target=aarch64-linux-gnu -c`; `<pthread.h>`
+  does not, because it reaches x86 glibc's `bits/pthreadtypes-arch.h`, whose
+  `__cleanup_fct_attribute` is `__attribute__((__regparm__(1)))`, and regparm
+  is not valid for AArch64.  The thread bodies need only the pthread
+  entry-point signature (a void-pointer function of one void pointer), never a
+  pthread primitive; `pthread_create` is called from the `.cu`, which is
+  compiled for the native host and already includes `<pthread.h>`.
 
 The two invariants the stress layer holds by construction are in
 `hetlitmus/docs/00-environment-design.md` sec 3.6.
@@ -97,13 +94,14 @@ The `gd_shared_mem_defs` and `gd_noise_mem_defs` fields of `gpu_dialect`
   (`gd_alloc_shared` / `gd_free_shared`) and the harness's own device memory
   (`gd_alloc_dev`).
   Design: `hetlitmus/docs/00-environment-design.md` sec 3.2.
-* `het_noise_*` — the interconnect-stress buffers (`gd_alloc_noise` /
+* `het_noise_*` — the interconnect-stress buffer (`gd_alloc_noise` /
   `gd_free_noise`).  Design: `hetlitmus/docs/00-environment-design.md` sec 3.6.
 
 They are per-dialect because the two targets differ in kind, not in spelling
-(`hetlitmus/docs/00-environment-design.md` sec 3.6).  Each is a fragment pasted
-into the render, not a header: the surrounding `.cu` / `.hip` supplies
-`HET_PLACE`, `_het_place_failures`, `het_place_shared` and `het_cpu_first_touch`.
+(`hetlitmus/docs/00-environment-design.md` sec 3.6): the CUDA render's noise
+buffer is a `malloc` under ATS, the HIP render's a `hipMallocManaged`.  Each is
+a fragment pasted into the render, not a header: the surrounding `.cu` / `.hip`
+supplies `het_cpu_first_touch`.
 
 External sources cited by these payloads resolve in
 `hetlitmus/docs/REFERENCES.md`.

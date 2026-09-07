@@ -53,9 +53,6 @@ let dump_prelude dialect identity geometry procs ch =
   s (dialect.gd_fence_floor_guard
        (List.concat_map (fun gp -> gp.gp_instrs) procs.pr_gpus)) ;
   s (Printf.sprintf "#define HET_PAIR_NAME %S\n" pair_label) ;
-  (match dialect.gd_place_lever with
-   | Some lever -> s (Printf.sprintf "#define HET_PLACE_LEVER %S\n" lever)
-   | None -> ()) ;
   s {|#include "het_stress.h"
 #include "het_cpu_stress.h"
 #include "het_verdict.h"
@@ -111,7 +108,7 @@ let kernel_parameters memory procs =
         "uint32_t* _gpu_iter" ;
         "uint32_t* _stress_tally" ;
         "uint32_t _seed" ; "uint32_t _pre_pat" ; "uint32_t _mem_pat" ;
-        "uint64_t* _noise_ddr" ; "uint64_t _noise_words" ;
+        "uint64_t* _noise" ; "uint64_t _noise_words" ;
         "uint32_t _noise_blocks" ; "uint32_t _noise_words_per_round" ;
         "uint32_t _noise_stride"])
 
@@ -164,8 +161,8 @@ let dump_stress_workgroups ch =
        two branches below are block-uniform, so a __syncthreads is reached by
        every lane of its block and by NO test block. */
     __shared__ uint32_t _clk;
-    if (_noise_ddr != NULL && blockIdx.x < HET_TEST_BLOCKS + _noise_blocks) {
-      volatile const uint64_t* _nb = (volatile const uint64_t*)_noise_ddr;
+    if (_noise != NULL && blockIdx.x < HET_TEST_BLOCKS + _noise_blocks) {
+      volatile const uint64_t* _nb = (volatile const uint64_t*)_noise;
       uint64_t _t = (uint64_t)(blockIdx.x - HET_TEST_BLOCKS) * blockDim.x + threadIdx.x;
       uint64_t _step = (uint64_t)_noise_blocks * blockDim.x * _noise_stride;
       uint64_t _i = (_noise_words > 0) ? (_t % _noise_words) : 0;
@@ -311,11 +308,6 @@ let dump_outcome_labels outcome ch =
 (* The file-scope definitions the driver below closes over. *)
 let dump_file_scope_defs dialect ch =
   let s = output_string ch in
-  s {|/* Placement refusals.  Raised where a placement was requested but not
-   achieved. */
-static int _het_place_failures = 0;
-
-|} ;
   s dialect.gd_shared_mem_defs ;
   s "\n" ;
   s dialect.gd_noise_mem_defs ;

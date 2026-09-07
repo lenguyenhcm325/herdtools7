@@ -39,8 +39,8 @@ A target joins this lane when it needs a toolchain or a device, not because it c
 | `hetlitmus-smoke` | `verify/smoke.sh` | a rep's own `comp.sh` fails, or the rep list shrank below `NREPS`; no hipcc skips the `.hip` reps loudly, no clang fails | nvcc, hipcc, clang, gcc |
 | `hetlitmus-stress` | `verify/tokens.sh stress` (`stresscheck.py`) | a null was scored on a GPU scratchpad stress layer nvcc folded away, or the device never ran it | nvcc, CUDA device |
 | `hetlitmus-stress-static` | `verify/tokens.sh stress-static` | the deviceless half of the above; in no umbrella, CI runs it by name | nvcc |
-| `hetlitmus-cpustress` | `verify/tokens.sh cpustress` (`cpustresscheck.py`) | the CPU-side or interconnect stress is removed by `-O2` on either host ISA or does no work at run time, or the placement choice accepts one node for both candidates | clang (cross), gcc |
-| `hetlitmus-hipbuild` | `verify/hipbuildcheck.py` | an AMD harness builds into something other than the test, its ELF carries no gfx942 code, its shared-memory resolver misbehaves under a stub `hipDeviceGetAttribute`, a `-DHET_PLACE` build fails or its node resolver and `het_place_target` misbehave under stubs, or the CUDA lane regresses | hipcc and nvcc, no device |
+| `hetlitmus-cpustress` | `verify/tokens.sh cpustress` (`cpustresscheck.py`) | the CPU-side or interconnect stress is removed by `-O2` on either host ISA or does no work at run time | clang (cross), gcc |
+| `hetlitmus-hipbuild` | `verify/hipbuildcheck.py` | an AMD harness builds into something other than the test, its ELF carries no gfx942 code, its shared-memory resolver misbehaves under a stub `hipDeviceGetAttribute`, or the CUDA lane regresses | hipcc and nvcc, no device |
 | `hetlitmus-characterize-hw` | `verify/runcheck.py --characterize-hw` | this host's relaxed-MP row, built through `hetlitmus/build.sh` and run under `HET_ALLOC` (default `pinned`), prints an arm — sighting, null, discarded — that nothing recorded | nvcc, CUDA device |
 
 ## Umbrellas, promote, CI

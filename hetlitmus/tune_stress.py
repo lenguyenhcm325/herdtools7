@@ -273,9 +273,9 @@ def probe(a, tests):
     env.ncores = os.cpu_count() or 1
     env.spare_cores = env.ncores - env.reserve - env.cpu_test
     env.llc_mb = a.llc_mb if a.llc_mb else header_define(CPU_STRESS_H, "HET_LLC_MB")
-    # Two noise buffers are requested per run and either may be served from host
-    # memory, so half of what is available is the ceiling one may ask for.
-    cap = max(1, mem_available_mb() // 2)
+    # One noise buffer per run, in system memory: what is available is the
+    # ceiling one may ask for.
+    cap = max(1, mem_available_mb())
     wanted = sorted(set([2 * env.llc_mb, 4 * env.llc_mb, 8 * env.llc_mb, 8192]))
     env.noise_mb_set = tuple(v for v in wanted if v <= cap)
     if not env.noise_mb_set:

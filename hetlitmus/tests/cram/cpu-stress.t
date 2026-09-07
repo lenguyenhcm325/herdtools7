@@ -58,18 +58,16 @@ ever x, y or barrier [Sorensen16 sec 1].
   2
   $ grep -cE '_sa\[_e\]\.(scratch|idx) *= *(x|y|barrier)' $MP.cu || true
   0
-  $ grep -cE '_na\[_t\]\.buf *= *\(volatile const uint64_t\*\)_noise_hbm \+ \(uint64_t\)_t \* _noise_slice' $MP.cu
+  $ grep -cE '_na\[_t\]\.buf *= *\(volatile const uint64_t\*\)_noise \+ \(uint64_t\)_t \* _noise_slice' $MP.cu
   1
 
 (d) four object classes, four allocators: a slot for the rendezvous counter,
-malloc for the CPU scratchpad, gd_alloc_noise for the noise buffers.
+malloc for the CPU scratchpad, gd_alloc_noise for the noise buffer.
   $ grep -c 'uint64_t \*barrier; gd_alloc_shared((void\*\*)&barrier, sizeof(uint64_t)\*HET_SLOT_STRIDE_WORDS);' $MP.cu
   1
   $ grep -c 'malloc_check(sizeof(uint64_t)\*HET_CPU_SCRATCH_WORDS)' $MP.cu
   1
-  $ grep -c 'gd_alloc_noise((void\*\*)&_noise_ddr' $MP.cu
-  1
-  $ grep -c 'gd_alloc_noise((void\*\*)&_noise_hbm' $MP.cu
+  $ grep -c 'gd_alloc_noise((void\*\*)&_noise,' $MP.cu
   1
   $ grep -c 'gd_alloc_shared((void\*\*)&_cpu_scratch' $MP.cu || true
   0
@@ -86,8 +84,8 @@ then spawn the stress threads and the noise, then the test threads and the kerne
   $ [ "$GO" -lt "$EN" ] && [ "$EN" -lt "$TH" ] && [ "$TZ" -lt "$LA" ] && echo 'go < stress threads < test threads (all) < launch'
   go < stress threads < test threads (all) < launch
 
-and the flag comes down only after the TERMINAL sync -- not gd_alloc_noise's own
-one-shot sync -- so the stress covers the whole tested window and no more.
+and the flag comes down only after the TERMINAL sync, so the stress covers the
+whole tested window and no more.
   $ SY=$(grep -n '_s = cudaDeviceSynchronize' $MP.cu | cut -d: -f1)
   $ OFF=$(grep -n '__atomic_store_n(&_stress_go, 0' $MP.cu | cut -d: -f1)
   $ JN=$(grep -n 'pthread_join(_sth' $MP.cu | cut -d: -f1)
@@ -99,37 +97,13 @@ the compiler to fold.
   $ grep -c '_sa\[_e\].pattern          = (uint32_t)HET_CPU_STRESS_PATTERN;' $MP.cu
   1
 
-(g) placement binds the shared pages to a NUMA node and reads the home back, so a
-page left off-node is never swallowed.
-  $ grep -c 'het_place_shared(\*_pp, _bytes, HET_PLACE, _het_place_node(1), _het_place_node(2))' $MP.cu
-  1
-  $ grep -q 'syscall(SYS_mbind' MP-cg-sys-ra.acq/het_cpu_stress.h && echo present
-  present
-  $ grep -q 'MPOL_BIND' MP-cg-sys-ra.acq/het_cpu_stress.h && echo present
-  present
-  $ grep -q 'syscall(SYS_move_pages' MP-cg-sys-ra.acq/het_cpu_stress.h && echo present
-  present
-  $ grep -q '_het_place_failures++' $MP.cu && echo present
-  present
-  $ grep -A1 '#ifndef HET_PLACE' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_PLACE 0'
-  1
-
-The HIP twin carries the same call under HET_PLACE, with its own node resolver.
-  $ grep -c 'het_place_shared(\*_pp, _bytes, HET_PLACE, _het_place_node(1), _het_place_node(2))' $MPH.hip
-  1
-  $ grep -c '^static int _het_place_node(int _where){' $MPH.hip $MP.cu
-  hip/MP-cg-sys-plain.acq-x86_64/MP-cg-sys-plain.acq-x86_64.hip:1
-  MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu:1
-  $ grep -q '_het_place_failures++' $MPH.hip && echo present
-  present
-
-(h) the noise pair of [Fusco24 sec III-E.1] runs as extra blocks of the
-persistent grid, never as a second __global__.
+(h) the device half of the noise runs as extra blocks of the persistent grid,
+never as a second __global__.
   $ grep -c '__global__' $MP.cu
   1
   $ grep -c 'blockIdx.x < HET_TEST_BLOCKS + _noise_blocks' $MP.cu
   1
-  $ grep -c 'volatile const uint64_t\* _nb = (volatile const uint64_t\*)_noise_ddr' $MP.cu
+  $ grep -c 'volatile const uint64_t\* _nb = (volatile const uint64_t\*)_noise;' $MP.cu
   1
   $ grep -c 'if (pthread_create(&_nth\[_t\], NULL, het_cpu_noise, &_na\[_t\]) == 0) _cpu_noise_n++;' $MP.cu
   1
@@ -160,19 +134,14 @@ cache: below it the buffer is served from cache and crosses nothing.
   $ grep -c 'a FALLBACK figure, not this target' $MP.cu
   1
 
-(h2) both renders fault the noise pages in, and on a CUDA render the HBM buffer
-is prefetched across, a refusal being reported rather than swallowed.
+(h2) both renders fault the noise pages in.
   $ grep -q 'het_cpu_first_touch(\*_pp, _bytes)' $MP.cu && echo present
   present
   $ grep -c 'het_cpu_first_touch(\*_pp, _bytes)' $MPH.hip
   1
-  $ grep -c 'cudaMemPrefetchAsync(\*_pp, _bytes, 0, 0)' $MP.cu
-  1
-  $ grep -c 'cudaMemPrefetchAsync of the HBM noise buffer FAILED' $MP.cu
-  1
 
-(h3) without pageable-memory access the noise buffers are refused, and a
-placed one is a system malloc.
+(h3) without pageable-memory access the noise buffer is refused, and an accepted
+one is a system malloc.
   $ sed -n '/^  if (!_shared_pageable()) {/,/^  }$/p' $MP.cu | grep -c 'return -1'
   1
   $ sed -n '/^static int gd_alloc_noise/,/^}$/p' $MP.cu | grep -c '\*_pp = malloc(_bytes);'

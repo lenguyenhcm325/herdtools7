@@ -6,9 +6,9 @@ PTX, so a miss here means a null was scored on a layer the optimiser removed or
 that never ran.  Static, off the -O2 asm of each host ISA's own rendering of the
 rep: preload-prims-aarch64, preload-prims-x86, stress-loop,
 stress-pattern-runtime.  A rep with no x86_64 rendering FAILS rather than
-skipping its arm.  Dynamic, on this host:
-stress-live, stress-off-zero, first-touch, place-target.  Structural, on the
-emitted driver: preload-guard-field and preload-guard-term.
+skipping its arm.  Dynamic, on this host: stress-live, stress-off-zero,
+first-touch.  Structural, on the emitted driver: preload-guard-field and
+preload-guard-term.
 
 Exit 0 = PASS, 1 = FAIL, 2 = usage/toolchain error.
 """
@@ -188,11 +188,6 @@ int main(int argc, char** argv) {
            (r2 >= 0 && r1 >= 0) ? (r2 - r1) : -1,
            a2);
   }
-
-  /* The placement choice on this host: its online node count, and one node for
-     both candidates refused (het_place_target prints the refusal to stderr). */
-  printf("numa_online=%d place_same_node=%d\n", het_numa_online_nodes(),
-         het_place_target(1, 0, 0, 4));
 
   printf("stress_rounds=%llu stress_accesses=%llu preload_ops=%llu "
          "noise_rounds=%llu noise_words=%llu stress_threads=%u preload_live=%d\n",
@@ -425,8 +420,6 @@ def check(litmus_path):
                 raise RuntimeError("probe failed:\n" + r.stdout)
             out = {}
             for line in r.stdout.strip().splitlines():
-                if line.startswith("HetLitmus"):     # het_place_target's refusal
-                    continue
                 out.update(dict(kv.split("=") for kv in line.split()))
             return out
 
@@ -473,17 +466,6 @@ def check(litmus_path):
             fail("stress-live: HET_CPU_PRELOAD_LIVE is 0 on this host -- the cache "
                  "preload has no primitives here and is a no-op.")
 
-        # ---- place-target: the node count reads, one node for both refuses ---
-        if int(on["numa_online"]) < 1:
-            fail("place-target: het_numa_online_nodes() read %s online NUMA node(s) "
-                 "on this host, which has at least one." % on["numa_online"])
-        if int(on["place_same_node"]) != -1:
-            fail("place-target: het_place_target(1, 0, 0, 4) returned %s, not -1 -- "
-                 "one node for both candidates binds to where the pages already are."
-                 % on["place_same_node"])
-        if ok[0]:
-            note("  place-target: %s online NUMA node(s); one node for both "
-                 "candidates is refused" % on["numa_online"])
         if ok[0]:
             note("  stress-live    (on) : stress_rounds=%s accesses=%s "
                  "preload_hints=%s noise_rounds=%s (stress threads realised: %s)"

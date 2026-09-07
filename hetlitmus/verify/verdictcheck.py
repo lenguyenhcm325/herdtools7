@@ -33,7 +33,7 @@ VERDICTS = ["OBSERVED", "NOT-OBSERVED", "COLD-INVALID"]
 # a bit added there arrives with no case setting it.  A retired bit carries none.
 FLAG_DEFINE_RE = re.compile(r"^#define (HET_(?:DQ|CV)_\w+)\s+\(1u << (\d+)\)", re.M)
 # The build defines the emitter stamps for one (CPU ISA x GPU dialect) pair.
-PAIR_DEFINE_RE = re.compile(r"^#define HET_(?:PLACE_LEVER|PAIR_NAME)\b.*$", re.M)
+PAIR_DEFINE_RE = re.compile(r"^#define HET_PAIR_NAME\b.*$", re.M)
 
 
 def flag_bits(header):
@@ -46,15 +46,12 @@ def flag_bits(header):
     return out
 
 
-# The frames the printout is read in, as (tag, HET_PAIR_NAME, HET_PLACE_LEVER):
-# the header's own defaults with nothing stamped, then a real cuda emission's.
+# The frames the printout is read in, as (tag, HET_PAIR_NAME): the header's own
+# default with nothing stamped, then a real cuda emission's.
 DEFAULT_FRAME = ("no defines (an unstamped harness)",
-                 "(unstamped CPU ISA x GPU dialect pair)",
-                 "the page-placement lever")
-CUDA_FRAME = ("the scraped (AArch64, cuda) defines", "(AArch64, cuda)",
-              "mbind(MPOL_BIND)")
-HIP_FRAME = ("the scraped (X86_64, hip) defines", "(X86_64, hip)",
-             "mbind(MPOL_BIND)")
+                 "(unstamped CPU ISA x GPU dialect pair)")
+CUDA_FRAME = ("the scraped (AArch64, cuda) defines", "(AArch64, cuda)")
+HIP_FRAME = ("the scraped (X86_64, hip) defines", "(X86_64, hip)")
 FRAMES = [DEFAULT_FRAME, CUDA_FRAME, HIP_FRAME]
 
 # ---------------------------------------------------------------------------
@@ -101,7 +98,6 @@ BASE = dict(
     cpu_noise_rounds=1000,
     gpu_noise_blocks=8,
     cpu_aff_failures=0,
-    place_failures=0,
     # every mechanism requested (GPU_STRESS|CPU_STRESS|CPU_PRELOAD|CPU_NOISE|GPU_NOISE)
     stress_requested=0x3D,
 )
@@ -191,14 +187,11 @@ CASES = [
     # Caveats travel with the number, but do not invalidate.
     case("null-but-pinning-is-fiction", "NOT-OBSERVED", cv=["AFF_FAILED"],
          cpu_aff_failures=3),
-    case("null-but-placement-refused", "NOT-OBSERVED",
-         cv=["PLACE_REFUSED"], place_failures=1),
 
     # A sighting carries the stress it was seen under: the observed frequency is
     # sensitive to the machine and its parameters [Alglave11 sec 4].
     case("sighting-carries-its-caveats", "OBSERVED",
-         cv=["AFF_FAILED", "PLACE_REFUSED"],
-         target_count=1, cpu_aff_failures=3, place_failures=1),
+         cv=["AFF_FAILED"], target_count=1, cpu_aff_failures=3),
     case("sighting-on-an-unstressed-run-says-so", "OBSERVED", cv=["UNSTRESSED"],
          target_count=1, stress_requested=0, gpu_stress_rounds=0,
          cpu_stress_rounds=0, cpu_preload_ops=0,
@@ -218,9 +211,6 @@ FLAG_SENTENCES = [
      "a discard count priced against a wait nobody measured"),
     ("cv", "ONE_OUTCOME", "read back the SAME outcome vector",
      "a constant readout reported as a measurement"),
-    # The lever is a DIALECT fact, so the sentence is filled from the frame.
-    ("cv", "PLACE_REFUSED", "{lever} was REFUSED -- HET_PLACE placed nothing.",
-     "a placement lever this build does not drive"),
 ]
 
 C_MAIN = r"""
@@ -417,10 +407,10 @@ def run_rule(header, text, quiet):
 
 def scan_prints(blocks, frame, quiet):
     """PHASE 2 -- each outcome's sentences and the pair they name, both ways."""
-    tag, pair, lever = frame
+    tag, pair = frame
 
     def fill(s):
-        return s.replace("{pair}", pair).replace("{lever}", lever)
+        return s.replace("{pair}", pair)
 
     print("\n===== PHASE 2 (%s): does each outcome print ITS OWN sentences, and "
           "only those? =====" % tag)
@@ -490,7 +480,7 @@ def scan_prints(blocks, frame, quiet):
 
     # (d) Every OTHER frame's pair name is forbidden here: a printout naming a pair
     # this binary was not built for reports a build that never ran.
-    for _, other, _ in FRAMES:
+    for _, other in FRAMES:
         if other == pair:
             continue
         for name in sorted(blocks):

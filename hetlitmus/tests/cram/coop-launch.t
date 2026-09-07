@@ -19,12 +19,12 @@ NPART counts both participants, so the rendezvous waits for both.
   $ grep -c '#define NPART 2' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu
   1
 
-(d) exactly ONE terminal device sync per run, scoped to the run loop:
-gd_alloc_noise holds a second, for the start-up prefetch before any run.
+(d) exactly ONE terminal device sync per run, scoped to the run loop, and none
+in gd_alloc_noise.
   $ sed -n '/for (int _run=0; _run<_runs_budget/,/^  }$/p' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu | grep -c 'cudaDeviceSynchronize'
   1
-  $ sed -n '/^static int gd_alloc_noise/,/^}$/p' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu | grep -c 'cudaDeviceSynchronize'
-  1
+  $ sed -n '/^static int gd_alloc_noise/,/^}$/p' MP-cg-sys-ra.acq/MP-cg-sys-ra.acq.cu | grep -c 'cudaDeviceSynchronize' || true
+  0
 
 (e) cooperative launch is used ONLY for co-residency: no cooperative_groups.h, no
 grid.sync().

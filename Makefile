@@ -767,8 +767,8 @@ hetlitmus-recfields: hetlitmus-corpus-gen | build
 	@ echo "HetLitmus emitter/runtime field + define binding: OK"
 
 ### An AMD harness builds and links into an ELF carrying real gfx942 code, its
-### allocator and placement refusals execute under a stub, and the CUDA lane does
-### not regress.  Needs hipcc AND nvcc, but no device.
+### allocator refusals execute under a stub, and the CUDA lane does not regress.
+### Needs hipcc AND nvcc, but no device.
 hetlitmus-hipbuild: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/hipbuildcheck.py

@@ -32,7 +32,7 @@ allocator that selects the property under test (shared-alloc.t).
   $ grep -c 'gd_alloc_dev((void\*\*)&_scratch, sizeof(uint32_t)\*HET_GPU_SCRATCH_WORDS' $MPH.hip
   1
 
-(c) the blocks above the test blocks split into DDR-noise readers and scratchpad
+(c) the blocks above the test blocks split into noise readers and scratchpad
 stressers; the grid is raised toward the co-resident cap (coop-launch.t (g)).
   $ grep -c 'blockIdx.x >= HET_TEST_BLOCKS' $MP.cu
   1

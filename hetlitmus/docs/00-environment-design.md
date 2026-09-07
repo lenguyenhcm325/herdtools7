@@ -91,10 +91,8 @@ protocol is decided by the allocator, so it is correctness rather than tuning:
 - **MI300A: fine-grained `hipMallocManaged`**, the default [HipRuntimeApi]; coarse-grained memory
   is coherent only at kernel boundaries and is never used.
 - Each CUDA mode is system-scope atomic only under a condition of [CudaGuide "Atomicity"]; the
-  allocator's guards are fatal and never fall back, and a placement request the selected mode
-  cannot honour is counted and printed rather than swallowed.
-- Placement (`HET_PLACE`) is the interconnect-stress lever (§3.6). The read buffers are device
-  memory, off the race path.
+  allocator's guards are fatal and never fall back.
+- The read buffers are device memory, off the race path.
 - The x86 ordering rules are specified for write-back memory ([APM §7.2, §7.4.2]). The memory
   type of the shared allocation is a platform fact the harness does not read back, so every
   CPU-proc outcome on that allocation is read under an unmeasured precondition (§5).
@@ -229,54 +227,42 @@ pre-stress, the CPU stress threads and the noise still run.
   barrier, and the preload sits outside the compiled tested body, never between two tested
   accesses. Test repetition is ported as CPU stress threads rather than as concurrent copies
   of the whole test, which do not compose with a persistent kernel.
-- **Interconnect stress**, the lever no single-die harness has: (a) placement — bind the shared
-  page to the NUMA node far from its consumer with `mbind(MPOL_BIND)`, a strict policy that
-  also blocks later migration, then read the home back with `move_pages` and count any page
-  left off-node; a system-malloc page is otherwise first-touch placed and migratable
-  ([Fusco24 Tab. II]); (b) noise kernels — each side stream-reads a buffer homed on the other
-  unit's memory, the construction under which [Fusco24 §III-C] measured Grace and Hopper write
-  bandwidth to HBM at 17 % and 65 % of peak. The host half is `HET_CPU_NOISE_THREADS` threads,
-  the buffer divided equally among them into disjoint sequential slices [Fusco24 §III-B.2];
-  every thread is one core the CPU stress threads do not get. One Grace thread reads HBM at
-  about 10 GB/s and the curve is flat from about 32 threads at 238 GB/s [Fusco24 Fig. 8]; a
-  CPU-first-touched `malloc` stream on the MI300A CPU peaks at 9 threads and loses bandwidth
-  beyond it [Wahlgren25 §4.2]. The count is the tune's to set per target (§3.8). GPU-only
-  and CPU-local stress cannot reach the host-device window. Bagchi's campaign stressed per
-  device on both devices [Bagchi26 §4.2], with no link-directed component.
-- **The claim for the lever is bounded.** Placement and noise slow the loop, so there are fewer
+- **Interconnect stress**, the lever no single-die harness has: two noise readers on one system
+  buffer. The device half is `HET_GPU_NOISE_BLOCKS` extra blocks of the persistent grid, the
+  host half `HET_CPU_NOISE_THREADS` threads; both stream-read the same `HET_NOISE_MB` buffer,
+  allocated once and first-touched by the CPU, nothing more. A page has one home, so with two
+  readers one reader is remote at every moment; which reader, and so the load level, is not
+  measured. The driver and the kernel may move the pages — a `malloc` page is first-touch
+  placed and migratable ([Fusco24 Tab. II]) — and a move only changes which side crosses. The
+  construction needs both halves. It departs from [Fusco24 §III-C], where each side streams
+  its own 8 GB buffer homed on the other unit's memory and writes to HBM fell to 17 % (Grace)
+  and 65 % (Hopper) of peak; the default `HET_NOISE_MB` is that 8 GB. The host half's threads
+  divide the buffer equally into disjoint sequential slices [Fusco24 §III-B.2]; every thread is
+  one core the CPU stress threads do not get. One Grace thread reads HBM at about 10 GB/s and
+  the curve is flat from about 32 threads at 238 GB/s [Fusco24 Fig. 8], the host half's
+  crossing bandwidth while the buffer sits in GPU memory; a CPU-first-touched `malloc` stream
+  on the MI300A CPU peaks at 9 threads and loses bandwidth beyond it [Wahlgren25 §4.2]. The
+  count is the tune's to set per target (§3.8). GPU-only and CPU-local stress cannot reach the
+  host-device window. Bagchi's campaign stressed per device on both devices [Bagchi26 §4.2],
+  with no link-directed component.
+- **The claim for the lever is bounded.** Noise slows the loop, so there are fewer
   rendezvous per second, and sightings = yield × rate. What is claimed is that the lever is
   additive with per-device stress and specific to the cross-device window — never that it
   beats per-device stress: Fusco measured bandwidth, not weak-behaviour yield.
-- **A noise buffer must exceed the last-level cache on its path** (`HET_LLC_MB`): a remote line
+- **The noise buffer must exceed the last-level cache on its path** (`HET_LLC_MB`): a remote line
   resident in Hopper L2 crosses nothing [Fusco24 §III-E.1]. The host half's slices share that
   cache, so the guard bounds their union; a single slice must still exceed a core's private
   cache, which the tune's floor of twice `HET_LLC_MB` over at most 32 threads keeps it above
   on both targets.
-- **A noise buffer is homed on the other unit or refused.** Where the CUDA render finds no
-  pageable-memory access there is no ATS and no home to select, and a refused advise or
-  prefetch leaves the pages where first touch put them; either way the buffer would generate
-  local traffic, not interconnect traffic, so the half is refused rather than run, and a run
-  requesting it is `COLD-INVALID` (`harness-reporting.md` §3).
-- **AMD: the same lever, decided at run time.** `HET_PLACE=1` names the GPU memory's NUMA node
-  and `HET_PLACE=2` the host node nearest the device; the render resolves the two with its
-  vendor API and the bind, fault-in and read-back are the same Linux calls on both renders. A
-  single MI300A is NPS1-only — one NUMA node per socket, its eight HBM stacks interleaved
-  [AmdMi300aPartitioning] — so both values name the one node and the lever is refused as placing
-  nothing. The analogue there is contention on the shared pool, measurable on this part as CPU
-  throughput falling to 11–25 % of baseline once thousands of GPU threads share a contended
-  array [Wahlgren25 §4.4]; that this is chiplet-crossing traffic is an inference
-  ([Schieffer24 §II.C]). A `hipMallocManaged` range is an anonymous private mapping
-  ([RocrRuntime "VMemoryAddressReserve"], [RocmClr "roc::Buffer::create"]) kept in system memory
-  on the APU ([LinuxAmdgpu "svm_range_best_restore_location"]), so `mbind` applies to it as to a
-  `malloc` page. On a multi-socket node, or a discrete part on a multi-node host, the host node
-  nearest the device is a real target; on the APU a page's node also selects the GPU's cache
-  type for it ([LinuxAmdgpu "gmc_v9_0_override_vm_pte_flags"]). The host node is read from sysfs
-  by PCI address, because `hipDeviceAttributeHostNumaId` is an index into the runtime's CPU-agent
-  list ([RocmClr "setupCpuAgent"]); a discrete part's HBM is no Linux node, so `HET_PLACE=1`
-  is unresolved there.
-- **Run-time refusals, both renders.** The lever is refused — counted and printed, never
-  swallowed — when the value's node is unresolved, when the two candidate nodes are one node,
-  when fewer than two NUMA nodes are online, or when the read-back finds a page off node.
+- **The noise buffer is a system buffer both units can read, or refused.** Where the CUDA
+  render finds no pageable-memory access the GPU cannot read a system buffer, and a stream only
+  the CPU reads crosses nothing, so the buffer is refused rather than run and both halves with
+  it; a run requesting either half is `COLD-INVALID` (`harness-reporting.md` §3).
+- **MI300A: one pool, so contention rather than a crossing.** The APU's HBM is the one memory
+  of both units, so the buffer has one home for both readers and the traffic is contention on
+  the shared coherent pool, measurable on this part as CPU throughput falling to 11–25 % of
+  baseline once thousands of GPU threads share a contended array [Wahlgren25 §4.4]; that this
+  is chiplet-crossing traffic is an inference ([Schieffer24 §II.C]).
 - **Not ported from litmus7:** launch randomisation (nothing is relaunched; the phase sweep is
   the release jitter, §3.3) and a shared-timebase release (it needs a clock both sides read
   against one epoch; none is used).
@@ -318,11 +304,11 @@ launch-time validity layer upstream has no analogue for.
   `HET_BLOCK_DIM` is drawn even and no narrower than the tree's floor; `HET_GPU_SCRATCH_WORDS`
   is derived, never drawn. `HET_CPU_NOISE_THREADS` draws from {0, 1, 2, 4, 8, 16, 32}, no entry
   above the spare cores: log-spaced like the device half's block set because bandwidth per
-  thread saturates, with the top entry at the Grace plateau and past the MI300A `malloc` peak
-  ([Fusco24 Fig. 8], [Wahlgren25 §4.2]). Out of the space: the knobs that fix identity or
-  protocol rather than pressure (reserve cores, affinity, noise words per round, slot stride);
-  the caps and the jitter,
-  calibrated once per target; and `HET_ALLOC` / `HET_PLACE`, which are conditions under test.
+  thread saturates, with the top entry at the plateau of the host half as the crossing reader
+  and past the MI300A `malloc` peak ([Fusco24 Fig. 8], [Wahlgren25 §4.2]). Out of the space:
+  the knobs that fix identity or protocol rather than pressure (reserve cores, affinity, noise
+  words per round, slot stride); the caps and the jitter,
+  calibrated once per target; and `HET_ALLOC`, which is a condition under test.
 - **Validity, three layers.** Draw-time: a vector asking for more regions than its scratchpad
   holds, more threads than the machine has cores, a noise working set below twice the
   last-level cache, or scratchpad stress with an explicit zero stress-block population is

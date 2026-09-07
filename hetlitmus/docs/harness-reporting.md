@@ -46,21 +46,21 @@ sighting as on a null.
 - `HET_DQ_*_DEAD`, one per mechanism (GPU scratchpad stress, CPU scratchpad stress, cache
   preload, each half of the interconnect noise) — requested, and its round tally is zero.
 
-Caveats: a refused pin or placement (`HET_CV_AFF_FAILED`, `HET_CV_PLACE_REFUSED`: the topology
-is not the configured one); placeholder rendezvous caps (`HET_CV_RDV_UNCALIBRATED`: a discard
-count prices a wait nobody measured); one outcome vector across every scored iteration
-(`HET_CV_ONE_OUTCOME`: the constant-read artefact, a spurious 0 % or 100 %
-[Srivastava24 §4.1]); no stress requested (`HET_CV_UNSTRESSED`: only one of six mutants was
-exposed without stress [Kirkham20 §6.2 Tab.10]).
+Caveats: a refused pin (`HET_CV_AFF_FAILED`: the topology is not the configured one); placeholder
+rendezvous caps (`HET_CV_RDV_UNCALIBRATED`: a discard count prices a wait nobody measured); one
+outcome vector across every scored iteration (`HET_CV_ONE_OUTCOME`: the constant-read artefact, a
+spurious 0 % or 100 % [Srivastava24 §4.1]); no stress requested (`HET_CV_UNSTRESSED`: only one of
+six mutants was exposed without stress [Kirkham20 §6.2 Tab.10]).
 
 **Requested-but-dead, not merely zero.** A deliberately disabled mechanism is not a bug, and
 "counter == 0" as a disqualifier on its own would make a no-stress baseline `COLD-INVALID`
 forever; the driver stamps `stress_requested` from what the build asked for, so the
-distinction is carried in the record. On a box that can home neither noise buffer across the
-link (`00-environment-design.md` §3.6) each half is refused, so a run requesting it is
-`COLD-INVALID`; the reportable baseline there is `HET_CPU_NOISE_THREADS=0
-HET_GPU_NOISE_BLOCKS=0`, which still requests the GPU scratchpad stress, the CPU scratchpad
-stress and the preload and so is not `HET_CV_UNSTRESSED` (every stress knob at zero).
+distinction is carried in the record. On a box whose GPU cannot read a system buffer (no
+pageable-memory access, `00-environment-design.md` §3.6) the noise buffer is refused and both
+halves with it, so a run requesting either half is `COLD-INVALID`; the reportable baseline
+there is `HET_CPU_NOISE_THREADS=0 HET_GPU_NOISE_BLOCKS=0`, which still requests the GPU
+scratchpad stress, the CPU scratchpad stress and the preload and so is not `HET_CV_UNSTRESSED`
+(every stress knob at zero).
 
 ## 4. The null contract
 

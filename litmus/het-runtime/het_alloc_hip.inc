@@ -14,19 +14,6 @@ static int _het_hip_attr(hipDeviceAttribute_t _a){
   (void)hipDeviceGetAttribute(&_v, _a, 0);
   return _v;
 }
-#if HET_PLACE != 0
-/* An integrated part's GPU memory is its host node; a discrete part's HBM is
-   no Linux node.  The host node comes from sysfs by PCI address:
-   hipDeviceAttributeHostNumaId is an index into the runtime's CPU-agent list
-   [RocmClr "setupCpuAgent"]. */
-static int _het_place_node(int _where){
-  char _bdf[32];
-  if (hipDeviceGetPCIBusId(_bdf, (int)sizeof _bdf, 0) != hipSuccess) return -1;
-  int _host = het_numa_node_of_pci(_bdf);
-  if (_where == 2) return _host;
-  return _het_hip_attr(hipDeviceAttributeIntegrated) ? _host : -1;
-}
-#endif
 /* APU (MI300A) vs discrete (MI300X): hipDeviceAttributeIntegrated is the only
    runtime query that separates them, since both report gfx942 [HipRuntimeApi
    "hipDeviceAttributeIntegrated"].  The APU's CCD and XCD chiplets share one HBM
@@ -109,12 +96,6 @@ static void gd_alloc_shared(void** _pp, size_t _bytes){
             (unsigned long long)_bytes, hipGetErrorString(_e));
     exit(2);
   }
-#if HET_PLACE != 0
-  /* Bound and read back as a malloc page is
-     (hetlitmus/docs/00-environment-design.md sec 3.6). */
-  if (het_place_shared(*_pp, _bytes, HET_PLACE, _het_place_node(1), _het_place_node(2)) != 0)
-    _het_place_failures++;
-#endif
 }
 static void gd_free_shared(void* _p){
   /* Cached mode, NOT a re-query: one mode here, but the free stays keyed on the

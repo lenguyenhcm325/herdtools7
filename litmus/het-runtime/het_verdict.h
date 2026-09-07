@@ -13,12 +13,6 @@
 #include <stdlib.h>   /* getenv: the run-time campaign knobs                 */
 #include <string.h>   /* memset: het_stats_compute zeroes its own aggregate  */
 
-/* Default when the dialect stamps no lever
-   (hetlitmus/docs/het-emission.md "The pair a harness names"). */
-#ifndef HET_PLACE_LEVER
-#define HET_PLACE_LEVER "the page-placement lever"
-#endif
-
 /* What this binary was built for; the emitter stamps it from every pair.  The
    default serves a standalone compile of this header. */
 #ifndef HET_PAIR_NAME
@@ -73,16 +67,16 @@ typedef struct het_obs_record {
   uint64_t gpu_stress_rounds;
   /* CPU + interconnect liveness, for the levers the GPU tallies do not cover.
      A zero rounds/ops field means the mechanism did not run; a nonzero
-     *_failures field means a pin or a placement was refused, so the topology
-     is not the configured one. */
+     cpu_aff_failures means a pin was refused, so the topology is not the
+     configured one. */
   uint64_t cpu_stress_rounds, cpu_stress_accesses, cpu_preload_ops;
   uint64_t cpu_noise_rounds, cpu_noise_words;
   uint32_t gpu_noise_blocks, gpu_noise_rounds;
-  uint32_t cpu_stress_threads, cpu_aff_failures, place_failures;
+  uint32_t cpu_stress_threads, cpu_aff_failures;
   /* What the run realised, not what it asked for: a noise working set below the
      last-level cache is served from cache and crosses nothing (HET_LLC_MB,
      het_cpu_stress.h). */
-  uint32_t noise_ws_mb, place_mode;
+  uint32_t noise_ws_mb;
   uint32_t stress_requested;    /* HET_REQ_* bitmask -- see above */
 } het_obs_record;
 
@@ -134,9 +128,8 @@ typedef enum {
 #define HET_DQ_RDV_DEAD         (1u << 12)
 
 /* Why a null was CAVEATED (reportable, but weaker than it looks).  Vacant
-   bits: 0, 1, 2, 5, 7. */
+   bits: 0, 1, 2, 4, 5, 7. */
 #define HET_CV_AFF_FAILED       (1u << 3)  /* a sched_setaffinity call failed     */
-#define HET_CV_PLACE_REFUSED    (1u << 4)  /* HET_PLACE_LEVER placed nothing      */
 #define HET_CV_UNSTRESSED       (1u << 6)  /* no stress requested at all          */
 #define HET_CV_ONE_OUTCOME      (1u << 8)  /* every scored iteration read back the
                                               same outcome vector               */
@@ -161,7 +154,6 @@ static het_verdict_t het_verdict(const het_obs_record *r,
                                     cv |= HET_CV_ONE_OUTCOME;
   if (!r->cap_calibrated)           cv |= HET_CV_RDV_UNCALIBRATED;
   if (r->cpu_aff_failures > 0)      cv |= HET_CV_AFF_FAILED;
-  if (r->place_failures > 0)        cv |= HET_CV_PLACE_REFUSED;
   if (req == 0)                     cv |= HET_CV_UNSTRESSED;
 
   /* ---- 2. A sighting is believed unconditionally: an inert-stress run that
@@ -215,8 +207,7 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     "cap_cpu=%llu/%u cap_gpu=%llu/%u calibrated=%d vary=%d "
     "stress_trunc=%llu do_stress_rounds=%llu req=0x%x "
     "stress_threads=%u stress_rounds=%llu stress_acc=%llu preload=%llu "
-    "cpu_noise=%llu/%lluw gpu_noise=%u/%u noise_ws=%uMB place=%u "
-    "aff_fail=%u place_fail=%u\n",
+    "cpu_noise=%llu/%lluw gpu_noise=%u/%u noise_ws=%uMB aff_fail=%u\n",
     _r->test_name,
     _r->run_id,
     (unsigned long long)_r->N,
@@ -237,8 +228,7 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
     (unsigned long long)_r->cpu_noise_rounds,
     (unsigned long long)_r->cpu_noise_words,
     _r->gpu_noise_blocks, _r->gpu_noise_rounds,
-    _r->noise_ws_mb, _r->place_mode,
-    _r->cpu_aff_failures, _r->place_failures);
+    _r->noise_ws_mb, _r->cpu_aff_failures);
 }
 
 /* Every null prints beside the effort it cost and the liveness this run
@@ -265,23 +255,20 @@ static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) 
     fprintf(_ch, "  CAVEAT: %u sched_setaffinity call(s) FAILED -- those "
                  "threads ran wherever the scheduler put them.\n",
             _r->cpu_aff_failures);
-  if (cv & HET_CV_PLACE_REFUSED)
-    fprintf(_ch, "  CAVEAT: %s was REFUSED -- HET_PLACE placed nothing.\n",
-            HET_PLACE_LEVER);
 }
 
 /* The stress incantations, travelling with every reported outcome. */
 static void het_print_config(FILE *_ch, const het_obs_record *_r) {
   fprintf(_ch,
     "  config: stress_requested=0x%x do_stress_rounds=%llu "
-    "stress_threads=%u stress_rounds=%llu preload=%llu noise=%llu/%u (%u MB) place=%u\n",
+    "stress_threads=%u stress_rounds=%llu preload=%llu noise=%llu/%u (%u MB)\n",
     _r->stress_requested,
     (unsigned long long)_r->gpu_stress_rounds,
     _r->cpu_stress_threads,
     (unsigned long long)_r->cpu_stress_rounds,
     (unsigned long long)_r->cpu_preload_ops,
     (unsigned long long)_r->cpu_noise_rounds, _r->gpu_noise_blocks,
-    _r->noise_ws_mb, _r->place_mode);
+    _r->noise_ws_mb);
 }
 
 /* The outcome the condition names and the effort behind the zero, under every

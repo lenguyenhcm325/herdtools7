@@ -67,30 +67,21 @@ extern "C" {
                                      they are live.                             */
 #endif
 
-/* Half 2 knobs -- interconnect.  HET_PLACE is consumed in the .cu / .hip (the
- * node resolution is vendor API; the bind is het_place_shared below, host C);
- * the noise knobs are consumed on both sides. */
-#ifndef HET_PLACE
-#define HET_PLACE 0               /* shared-var placement: 0 = first touch
-                                     decides, 1 = the GPU memory's NUMA node,
-                                     2 = the host node nearest the device.  Do
-                                     NOT promote a non-zero default without
-                                     hardware evidence. */
-#endif
+/* Half 2 knobs -- interconnect: the noise knobs, consumed on both sides. */
 #ifndef HET_NOISE_MB
-#define HET_NOISE_MB 8192         /* per noise buffer, matching [Fusco24]'s 8 GB.
-                                     It must EXCEED the last-level cache on the
-                                     path or the reads hit cache and cross
+#define HET_NOISE_MB 8192         /* the noise buffer, matching [Fusco24 sec III-C]'s
+                                     8 GB.  It must EXCEED the last-level cache on
+                                     the path or the reads hit cache and cross
                                      nothing -- see HET_LLC_MB.                 */
 #endif
 #ifndef HET_CPU_NOISE_THREADS
 #define HET_CPU_NOISE_THREADS 1   /* the host half: CPU threads, each streaming
-                                     its own slice of a device-homed buffer.
+                                     its own slice of the noise buffer.
                                      hetlitmus/docs/00-environment-design.md 3.6 */
 #endif
 #ifndef HET_GPU_NOISE_BLOCKS
 #define HET_GPU_NOISE_BLOCKS 8    /* the device half: extra blocks of the
-                                     PERSISTENT grid stream-reading a host-homed
+                                     PERSISTENT grid stream-reading the noise
                                      buffer, never a second __global__ whose ops
                                      would land in the flat GPU op stream.      */
 #endif
@@ -117,9 +108,6 @@ extern "C" {
 
 #if (HET_CPU_STRESS_PATTERN) < 0 || (HET_CPU_STRESS_PATTERN) > 3
 #error "HET_CPU_STRESS_PATTERN must be 0..3 (0=st;st 1=st;ld 2=ld;st 3=ld;ld)"
-#endif
-#if (HET_PLACE) < 0 || (HET_PLACE) > 2
-#error "HET_PLACE must be 0 (first touch), 1 (the GPU memory's NUMA node) or 2 (the host node nearest the device)"
 #endif
 #if (HET_CPU_SPREAD) < 1
 #error "HET_CPU_SPREAD must be >= 1 (the spread m)"
@@ -157,7 +145,7 @@ extern "C" {
 /* Liveness tally -- the CPU twin of het_stress.h's.  None of this layer enters
  * the tested op stream, so these counters are the ONLY run-time evidence that it
  * ran: a zero round/op count means the mechanism never ran, a nonzero failure
- * count that a pin or a placement was refused. */
+ * count that a pin was refused. */
 typedef struct het_cpu_tally {
   uint64_t stress_rounds;     /* stress loop iterations, summed over threads     */
   uint64_t stress_accesses;   /* scratchpad accesses issued by the stress threads*/
@@ -166,7 +154,6 @@ typedef struct het_cpu_tally {
   uint64_t cpu_noise_words;   /* host noise threads: words read, summed          */
   uint32_t stress_threads_realised; /* stress threads that actually entered their loop */
   uint32_t aff_failures;      /* sched_setaffinity failures -- never silent      */
-  uint32_t place_failures;    /* placement failures (filled by the render)      */
   uint32_t preload_inert;     /* 1 => this host has NO cache primitives at all   */
 } het_cpu_tally;
 
@@ -184,10 +171,10 @@ typedef struct het_cpu_stress_args {
   het_cpu_tally *tally;
 } het_cpu_stress_args;
 
-/* Host-side noise arguments.  `buf' is the OTHER unit's memory: this thread's
-   slice of the buffer, `words' long, disjoint from every other thread's. */
+/* Host-side noise arguments.  `buf' is this thread's slice of the noise buffer,
+   `words' long, disjoint from every other thread's. */
 typedef struct het_cpu_noise_args {
-  volatile const uint64_t *buf;  /* device-homed: every read crosses the link    */
+  volatile const uint64_t *buf;  /* the slice; the device half reads the same buffer */
   uint64_t words;
   uint32_t words_per_round;   /* words read before the stop flag is re-tested    */
   uint32_t stride;
@@ -249,34 +236,17 @@ void    *het_cpu_noise(void *a);   /* pthread body; the host half of the noise p
 /* First touch, one write per page.  Linux maps every untouched anonymous page to
    one shared read-only zero page, so an unwritten 8 GB buffer streams one cache
    line and crosses NOTHING while the round counters look healthy.  It also
-   decides the page's NUMA home on GH200, so the caller advises the preferred
-   location before this call and prefetches after it. */
+   decides the page's first NUMA home on GH200 [Fusco24 Tab. II]. */
 void     het_cpu_first_touch(void *p, size_t bytes);
 /* Host-side; the driver hands it the run's seed, so the permutation is a
    function of that seed (hetlitmus/docs/00-environment-design.md sec 3.3). */
 void     het_cpu_shuffle(uint32_t *idx, uint32_t n, uint32_t seed);
-/* HET_PLACE's host half.  The render resolves the two candidate nodes with its
-   vendor API; the choice, the bind, the fault-in and the read-back are Linux
-   (hetlitmus/docs/00-environment-design.md sec 3.6). */
-int      het_numa_online_nodes(void);  /* /sys/devices/system/node/online; 0 = unreadable */
-int      het_numa_node_of_pci(const char *bdf);  /* /sys/bus/pci/devices/<bdf>/numa_node; -1 = unknown */
-/* The node HET_PLACE=where selects, or -1 with the reason on stderr: the two
-   candidates must be distinct online nodes, else binding separates nothing. */
-int      het_place_target(int where, int node_gpu, int node_host, int nodes_online);
-/* Bind [p, p+bytes) to the node het_place_target picks, fault the pages in and
-   read the home back.  0 = placed; -1 = refused or pages left off node, the
-   reason on stderr; the caller counts it. */
-int      het_place_shared(void *p, size_t bytes, int where, int node_gpu, int node_host);
 
 #ifdef HET_CPU_STRESS_IMPL
 /* Implementation. */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sched.h>
 #include <unistd.h>
 #include <sys/random.h>
-#include <sys/syscall.h>
 
 /* 31 bits, so _seed0 + _run cannot wrap into another invocation's seed range;
    hetlitmus/campaign.py draws its own base at the same width.  Why the flag,
@@ -419,11 +389,11 @@ void *het_cpu_stress(void *_a) {
   return NULL;
 }
 
-/* A host noise thread: [Fusco24 sec III-E.1]'s noise kernel over its own slice
- * of the buffer, the threads dividing it as [Fusco24 sec III-B.2]'s do --
- * stream-read memory homed on the other unit, so every read that misses cache
- * crosses the interconnect.  The buffer is disjoint from every test location.
- * `buf' is volatile: the stream is issued with no value escaping. */
+/* A host noise thread: stream-reads its own slice of the noise buffer, the
+ * threads dividing it as [Fusco24 sec III-B.2]'s do
+ * (hetlitmus/docs/00-environment-design.md sec 3.6).  The buffer is disjoint
+ * from every test location.  `buf' is volatile: the stream is issued with no
+ * value escaping. */
 void *het_cpu_noise(void *_a) {
   het_cpu_noise_args *a = (het_cpu_noise_args *)_a;
   het_cpu_affinity(a->core, a->tally);
@@ -463,116 +433,6 @@ void het_cpu_shuffle(uint32_t *idx, uint32_t n, uint32_t seed) {
     uint32_t j = het_draw(seed, HET_WHO_SHUFFLE, k++) % i;
     uint32_t t = idx[i - 1]; idx[i - 1] = idx[j]; idx[j] = t;
   }
-}
-
-#ifndef MPOL_BIND
-#define MPOL_BIND 2               /* <linux/mempolicy.h>: the strict bind policy */
-#endif
-#ifndef MPOL_MF_MOVE
-#define MPOL_MF_MOVE (1 << 1)     /* relocate pages that are already resident */
-#endif
-#define HET_NODEMASK_LONGS 8      /* 512 NUMA nodes -- more than any GH200/GB200 */
-
-/* The kernel's cpulist format: "0", "0-3", "0,2-3". */
-int het_numa_online_nodes(void) {
-  FILE *f = fopen("/sys/devices/system/node/online", "r");
-  char buf[256];
-  int n = 0;
-  if (f == NULL) return 0;
-  if (fgets(buf, sizeof buf, f) == NULL) { fclose(f); return 0; }
-  fclose(f);
-  for (char *s = buf; *s != '\0'; ) {
-    char *end;
-    long lo = strtol(s, &end, 10), hi = lo;
-    if (end == s) break;
-    s = end;
-    if (*s == '-') { hi = strtol(s + 1, &end, 10); if (end == s + 1) break; s = end; }
-    if (hi >= lo) n += (int)(hi - lo + 1);
-    if (*s == ',') s++; else break;
-  }
-  return n;
-}
-
-/* sysfs names the function in lower-case hex; the BDF a vendor API hands back
-   need not be. */
-int het_numa_node_of_pci(const char *bdf) {
-  char id[32], path[80];
-  size_t i;
-  FILE *f;
-  int node = -1;
-  for (i = 0; i + 1 < sizeof id && bdf[i] != '\0'; i++)
-    id[i] = (bdf[i] >= 'A' && bdf[i] <= 'F') ? (char)(bdf[i] - 'A' + 'a') : bdf[i];
-  id[i] = '\0';
-  if (i == 0) return -1;
-  snprintf(path, sizeof path, "/sys/bus/pci/devices/%s/numa_node", id);
-  f = fopen(path, "r");
-  if (f == NULL) return -1;
-  if (fscanf(f, "%d", &node) != 1) node = -1;
-  fclose(f);
-  return node;
-}
-
-int het_place_target(int where, int node_gpu, int node_host, int nodes_online) {
-  int node = (where == 2) ? node_host : node_gpu;
-  if (node < 0 || node >= (int)(HET_NODEMASK_LONGS * 8 * sizeof(unsigned long))) {
-    fprintf(stderr,
-            "HetLitmus WARNING: HET_PLACE=%d but this device exposes no target NUMA "
-            "node -- the placement lever is INERT, this run is NOT placement-"
-            "stressed.\n", where);
-    return -1;
-  }
-  if (nodes_online < 2) {
-    fprintf(stderr,
-            "HetLitmus WARNING: HET_PLACE=%d but %d NUMA node(s) are online -- the "
-            "placement lever is INERT, this run is NOT placement-stressed.\n",
-            where, nodes_online);
-    return -1;
-  }
-  if (node_gpu == node_host) {
-    fprintf(stderr,
-            "HetLitmus WARNING: HET_PLACE=%d but the GPU memory's node and the host "
-            "node nearest the device are both node %d -- the placement lever is "
-            "INERT, this run is NOT placement-stressed.\n", where, node);
-    return -1;
-  }
-  return node;
-}
-
-/* Read the pages' real home back: move_pages with a NULL node array queries, it
-   never relocates.  Returns pages NOT on _node -- all of them if the query fails. */
-static long _het_pages_off_node(void* _p, size_t _np, long _ps, int _node){
-  void** _pg = (void**)malloc(_np * sizeof *_pg);
-  int*   _st = (int*)  malloc(_np * sizeof *_st);
-  if (_pg == NULL || _st == NULL) { free(_pg); free(_st); return (long)_np; }
-  for (size_t _i = 0; _i < _np; _i++) _pg[_i] = (char*)_p + _i * (size_t)_ps;
-  long _off;
-  if (syscall(SYS_move_pages, 0, _np, _pg, NULL, _st, 0) != 0) _off = (long)_np;
-  else { _off = 0; for (size_t _i = 0; _i < _np; _i++) if (_st[_i] != _node) _off++; }
-  free(_pg); free(_st);
-  return _off;
-}
-
-int het_place_shared(void *p, size_t bytes, int where, int node_gpu, int node_host) {
-  if (where == 0) return 0;
-  int _node = het_place_target(where, node_gpu, node_host, het_numa_online_nodes());
-  if (_node < 0) return -1;
-  long _ps = sysconf(_SC_PAGESIZE); if (_ps < 1) _ps = 4096;
-  size_t _np = (bytes + (size_t)_ps - 1) / (size_t)_ps;
-  size_t _bits = 8 * sizeof(unsigned long);
-  unsigned long _mask[HET_NODEMASK_LONGS];
-  memset(_mask, 0, sizeof _mask);
-  _mask[(size_t)_node / _bits] |= 1UL << ((size_t)_node % _bits);
-  long _rc = syscall(SYS_mbind, p, _np * (size_t)_ps, MPOL_BIND,
-                     _mask, (unsigned long)(8 * sizeof _mask), MPOL_MF_MOVE);
-  het_cpu_first_touch(p, bytes);            /* fault the pages so they have a home */
-  long _off = _het_pages_off_node(p, _np, _ps, _node);
-  if (_rc != 0 || _off > 0) {               /* the bind or a page was refused */
-    fprintf(stderr,
-            "HetLitmus WARNING: HET_PLACE=%d left %ld of %zu page(s) off node %d "
-            "-- this run is NOT placement-stressed.\n", where, _off, _np, _node);
-    return -1;
-  }
-  return 0;
 }
 
 #endif /* HET_CPU_STRESS_IMPL */

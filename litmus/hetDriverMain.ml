@@ -124,8 +124,7 @@ let dump_noise_setup ch =
   uint32_t _noise_blocks = (uint32_t)_noiseBlocks;
   uint32_t _noise_words_per_round = (uint32_t)HET_NOISE_WORDS_PER_ROUND;
   uint32_t _noise_stride = (uint32_t)HET_NOISE_STRIDE;
-  uint64_t *_noise_ddr = NULL;   /* CPU-homed: the GPU streams it */
-  uint64_t *_noise_hbm = NULL;   /* GPU-homed: the CPU streams it */
+  uint64_t *_noise = NULL;   /* one system buffer, streamed by both halves */
   het_cpu_noise_args _na[HET_CPU_NOISE_THREADS > 0 ? HET_CPU_NOISE_THREADS : 1];
   pthread_t _nth[HET_CPU_NOISE_THREADS > 0 ? HET_CPU_NOISE_THREADS : 1];
   int _cpu_noise_n = 0;
@@ -135,23 +134,19 @@ let dump_noise_setup ch =
     fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is below the %d MB threshold -- a FALLBACK figure, not this target's last-level cache size, so this run may not be host-device interconnect-stressed.  Build with -DHET_LLC_MB=<MB> to supply it.\n",
             (int)HET_NOISE_MB, (int)HET_LLC_MB);
 #else
-    fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is below HET_LLC_MB=%d MB -- the noise buffers fit in the last-level cache, so this run is NOT host-device interconnect-stressed.\n",
+    fprintf(stderr, "HetLitmus WARNING: HET_NOISE_MB=%d is below HET_LLC_MB=%d MB -- the noise buffer fits in the last-level cache, so this run is NOT host-device interconnect-stressed.\n",
             (int)HET_NOISE_MB, (int)HET_LLC_MB);
 #endif
   }
-  if (_noiseBlocks > 0) {
-    int _rc = gd_alloc_noise((void**)&_noise_ddr, (size_t)_noise_words*sizeof(uint64_t), 2);
-    if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: no usable %d MB DDR noise buffer -- the device half of the host-device interconnect noise is DISABLED for this run.\n", (int)HET_NOISE_MB); _noise_ddr = NULL; _noise_blocks = 0; }
+  if (_noiseBlocks > 0 || HET_CPU_NOISE_THREADS > 0) {
+    int _rc = gd_alloc_noise((void**)&_noise, (size_t)_noise_words*sizeof(uint64_t));
+    if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: no usable %d MB noise buffer -- both halves of the host-device interconnect noise are DISABLED for this run.\n", (int)HET_NOISE_MB); _noise = NULL; _noise_blocks = 0; }
   }
-  if (HET_CPU_NOISE_THREADS > 0) {
-    int _rc = gd_alloc_noise((void**)&_noise_hbm, (size_t)_noise_words*sizeof(uint64_t), 1);
-    if (_rc < 0) { fprintf(stderr, "HetLitmus WARNING: no usable %d MB HBM noise buffer -- the host half of the host-device interconnect noise is DISABLED for this run.\n", (int)HET_NOISE_MB); _noise_hbm = NULL; }
-  }
-  fprintf(stderr, "HetLitmus cpu-stress: cores=%d test=%d stress_threads=%d spread=%u words_per_region=%d pattern=%d preload=%d%% aff=%d | noise: gpu_blocks=%u cpu_threads=%d words=%llu (%d MB) place=%d\n",
+  fprintf(stderr, "HetLitmus cpu-stress: cores=%d test=%d stress_threads=%d spread=%u words_per_region=%d pattern=%d preload=%d%% aff=%d | noise: gpu_blocks=%u cpu_threads=%d words=%llu (%d MB)\n",
           _ncores, _nCpuTest, _nCpuStress, _cpu_spread, (int)HET_CPU_WORDS_PER_REGION,
           (int)HET_CPU_STRESS_PATTERN, (int)HET_CPU_PRELOAD_PCT, _aff,
           _noise_blocks, (int)HET_CPU_NOISE_THREADS,
-          (unsigned long long)_noise_words, (int)HET_NOISE_MB, (int)HET_PLACE);
+          (unsigned long long)_noise_words, (int)HET_NOISE_MB);
 |}
 
 let dump_campaign_knobs ch =
@@ -257,13 +252,13 @@ let dump_run_spawn_stress ch =
       pthread_create(&_sth[_e], NULL, het_cpu_stress, &_sa[_e]);
     }
     _cpu_noise_n = 0;
-    if (_noise_hbm != NULL) {
+    if (_noise != NULL && HET_CPU_NOISE_THREADS > 0) {
       int _ncore0 = HET_CPU_FIRST_CORE + _nCpuTest;
       if (_aff && _ncore0 + HET_CPU_NOISE_THREADS > _ncores)
         fprintf(stderr, "HetLitmus WARNING: %d host noise thread(s) from core %d exceed %d core(s) -- noise pins WRAP onto the test threads' cores, so the test threads no longer have a core to themselves.\n",
                 (int)HET_CPU_NOISE_THREADS, _ncore0, _ncores);
       for (int _t = 0; _t < HET_CPU_NOISE_THREADS; ++_t) {
-        _na[_t].buf             = (volatile const uint64_t*)_noise_hbm + (uint64_t)_t * _noise_slice;
+        _na[_t].buf             = (volatile const uint64_t*)_noise + (uint64_t)_t * _noise_slice;
         _na[_t].words           = _noise_slice;
         _na[_t].words_per_round = _noise_words_per_round;
         _na[_t].stride          = _noise_stride;
@@ -335,7 +330,7 @@ let dump_run_launch_kernel dialect identity memory procs ch =
        @ ["&barrier" ; "&_cap_gpu"]
        @ ["&_scratch" ; "&_scratch_loc" ; "&_gpu_iter" ;
           "&_stress_tally" ; "&_seed" ; "&_pre_pat" ; "&_mem_pat" ;
-          "&_noise_ddr" ; "&_noise_words" ; "&_noise_blocks" ;
+          "&_noise" ; "&_noise_words" ; "&_noise_blocks" ;
           "&_noise_words_per_round" ; "&_noise_stride"]) in
   s (Printf.sprintf "    void* _args[] = { %s };\n" args_addrs) ;
   s (Printf.sprintf
@@ -370,11 +365,11 @@ let dump_run_stress_report dialect ch =
       unsigned long long _pl = _ct.preload_ops;
       unsigned long long _nc = _ct.cpu_noise_rounds;
       uint32_t _ng = _stress_tally_h[HET_TALLY_NOISE];
-      fprintf(stderr, "HetLitmus cpu-stress: stress_threads=%u rounds=%llu accesses=%llu preload_hints=%llu | noise: cpu_threads=%d cpu_rounds=%llu gpu_blocks=%u/%u (max %u rounds) | aff_fail=%u place_fail=%d\n",
+      fprintf(stderr, "HetLitmus cpu-stress: stress_threads=%u rounds=%llu accesses=%llu preload_hints=%llu | noise: cpu_threads=%d cpu_rounds=%llu gpu_blocks=%u/%u (max %u rounds) | aff_fail=%u\n",
               _ct.stress_threads_realised, _sr, (unsigned long long)_ct.stress_accesses,
               _pl, _cpu_noise_n, _nc, _ng, _noise_blocks,
               _stress_tally_h[HET_TALLY_NOISE_ROUNDS],
-              _ct.aff_failures, _het_place_failures);
+              _ct.aff_failures);
       if (_nCpuStress > 0 && _sr == 0)
         fprintf(stderr, "HetLitmus WARNING: %d CPU stress thread(s) were spawned but completed ZERO rounds -- the CPU-side stress did NOT run.\n", _nCpuStress);
       if (_cpu_noise_n > 0 && _nc == 0)
@@ -429,9 +424,7 @@ let dump_run_record_stamp identity ch =
     _rec.gpu_noise_blocks = _stress_tally_h[HET_TALLY_NOISE];
     _rec.gpu_noise_rounds = _stress_tally_h[HET_TALLY_NOISE_ROUNDS];
     _rec.cpu_aff_failures = _ct.aff_failures;
-    _rec.place_failures = (uint32_t)_het_place_failures;
     _rec.noise_ws_mb = (uint32_t)HET_NOISE_MB;
-    _rec.place_mode = (uint32_t)HET_PLACE;
     _rec.cap_cpu = (uint32_t)_cap_cpu;
     _rec.cap_gpu = _cap_gpu;
     _rec.cap_calibrated = HET_CAP_CALIBRATED;
@@ -559,8 +552,7 @@ let dump_free dialect memory procs ch =
   free(_cpu_idx);
   free(_sa);
   free(_sth);
-  gd_free_noise(_noise_ddr);
-  gd_free_noise(_noise_hbm);
+  gd_free_noise(_noise);
 |}
 
 let dump h dialect ch =

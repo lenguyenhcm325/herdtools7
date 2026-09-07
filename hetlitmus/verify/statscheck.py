@@ -49,7 +49,6 @@ BASE = dict(
     cpu_noise_rounds=1000,
     gpu_noise_blocks=8,
     cpu_aff_failures=0,
-    place_failures=0,
     stress_requested=0x3D,
     N=100000,
     # The readout ran, every iteration was scored, none was discarded, and the caps
