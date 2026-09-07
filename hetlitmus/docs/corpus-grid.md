@@ -21,8 +21,10 @@ architecture-agnostic edge vocabulary: `Po<L><XY>` is intra-proc program order
 X→Y with `L` = `d` (different location) or `s` (same); `Rfe`, `Fre` and `Coe`
 are the external read-from, from-read and coherence edges. MP, SB, LB and IRIW
 are the artifact's shapes; 2+2W, R, S, WRC, RWC, ISA2 and WRC3 (a 3-hop MP/WRC
-chain) extend the different-location family; CoRR, CoWR and CoRW2 are the
-same-location (coherence) family.
+chain) extend the different-location family, joined by diy's remaining
+three-proc families 3.2W, 3.SB, 3.LB, WWC, WRW+2W, WRW+WR, WRR+2W, W+RWC and
+Z6.0–Z6.5 under the names `norm7` gives their cycles; CoRR, CoWR and CoRW2
+are the same-location (coherence) family.
 
 What diy fixes about the catalogue:
 
@@ -81,11 +83,11 @@ that edge's single-access proc last), one segment per proc — its run of `Po`
 edges plus the external edge leaving it — and a rotation of the segments
 that leaves the list unchanged token for token is a renaming of procs and
 locations. The corpus keeps one cut per orbit of the raw cuts under those
-rotations, under the lexicographically smallest tag (`cut_classes`): SB, LB
-and 2+2W are invariant under rotation by one proc, so `gc` is `cg` with the
-labels exchanged; IRIW under rotation by two, which exchanges the two writers
-and the two readers; MP, R, S, the three-proc shapes, WRC3 and the `Co`
-shapes under none. A rotation that fixes the edge list is a literal
+rotations, under the lexicographically smallest tag (`cut_classes`): SB, LB,
+2+2W, 3.2W, 3.SB and 3.LB are invariant under rotation by one proc, so `gc`
+is `cg` and `cgc` is `ccg` with the procs renamed; IRIW under rotation by
+two, which exchanges the two writers and the two readers; every other shape
+under none. A rotation that fixes the edge list is a literal
 renaming, so the reduction drops no distinct experiment; and it keeps no two
 tests that are one experiment up to proc permutation and location renaming.
 

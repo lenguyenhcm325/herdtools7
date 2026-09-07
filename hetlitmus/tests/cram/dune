@@ -23,7 +23,8 @@
   ../het/MP-cg-sys-sy.fsc.litmus
   ../het/IRIW-cggc-sys-ra.ra.litmus
   ../het/MP-cg-sys-plain.sc.litmus
-  ../het-x86_64/CoRR-cg-sys-mf.rlx-x86_64.litmus))
+  ../het-x86_64/CoRR-cg-sys-mf.rlx-x86_64.litmus
+  ../het/Z6.3-cgc-sys-plain.rlx.litmus))
 
 ; These emit through litmus7 and read the generated driver.  cpu-stress.t is the
 ; ONLY check of the stress_go ordering: no gate reads the driver's orchestration.

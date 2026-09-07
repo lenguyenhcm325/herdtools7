@@ -113,3 +113,6 @@ WRC opens with an external edge, whose single-access proc is the last one (P2),
 and has no symmetry.
   $ g '" ".join(cut_classes("Rfe PodRW Rfe PodRR Fre"))'
   ccg cgc cgg gcc gcg ggc
+3.2W: one segment three times, so rotation by one proc fixes it: two classes.
+  $ g '" ".join(cut_classes("PodWW Coe PodWW Coe PodWW Coe"))'
+  ccg cgg

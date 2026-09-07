@@ -17,7 +17,7 @@ HET_DIR = os.path.join(CORPUS, "het")
 X86_DIR = os.path.join(CORPUS, "het-x86_64")
 GPU_DIR = os.path.join(CORPUS, "gpu-only")
 
-GPU_ONLY = 372
-HET = 2743
-HET_X86 = 1616
+GPU_ONLY = 744
+HET = 6695
+HET_X86 = 3900
 COVER = 76

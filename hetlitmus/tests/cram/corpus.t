@@ -79,3 +79,21 @@ An sc access on the GPU side.
    STR W2,[X3] |                ;
   scopes: (sys (gpu (cta P1)))
   exists (1:r0=1 /\ 1:r1=0)
+
+A three-proc cycle whose coherence atom pairs a CPU write with a GPU write.
+  $ cat ../het/Z6.3-cgc-sys-plain.rlx.litmus
+  Het Z6.3-cgc-sys-plain.rlx
+  "Heterogeneous Z6.3-cgc-sys-plain.rlx: per-proc device assignment cpu,gpu,cpu (cpu=AArch64, gpu=LISA)"
+  {
+  0:X1=x;
+  0:X3=y;
+  2:X1=x;
+  2:X4=z;
+  }
+   P0:cpu      | P1:gpu             | P2:cpu      ;
+   MOV W0,#1   | w[relaxed,sys] y 2 | LDR W0,[X4] ;
+   STR W0,[X1] | w[relaxed,sys] z 1 | LDR W2,[X1] ;
+   MOV W2,#1   |                    |             ;
+   STR W2,[X3] |                    |             ;
+  scopes: (sys (gpu (cta P1)))
+  exists (2:X0=1 /\ 2:X2=0 /\ [y]=2)
