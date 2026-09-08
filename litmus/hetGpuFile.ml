@@ -30,13 +30,6 @@ let dump_prelude dialect identity geometry procs ch =
   s (Printf.sprintf
        "// HetLitmus GPU kernel + driver for %s (%s dialect).\n"
        tname dialect.gd_name) ;
-  s {|// P(gpu) run as a GPU kernel; P(cpu) as a pthread (see _cpu.c).
-// Iteration _n of both sides touches slot _n of every location and
-// records its loads at index _n; the post-run readout reads the
-// outcome of iteration _n out of slot _n into a het_obs_record.
-|} ;
-  s dialect.gd_shared_mem_note ;
-  s "// every iteration begins at a relaxed system-scope counter rendezvous.\n" ;
   s (Printf.sprintf
        "// Compile-only by default (%s -c); comp.sh %s-link / make %s-bin\n"
        dialect.gd_compiler dialect.gd_target dialect.gd_target) ;

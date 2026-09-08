@@ -57,7 +57,6 @@ type gpu_dialect = {
     (* Per-target allocator for the shared vars + the rendezvous counter
        (hetlitmus/docs/00-environment-design.md "Allocation").  Call sites stay
        dialect-agnostic C; __out is NOT routed through it. *)
-    gd_shared_mem_note : string ;  (* "shared vars" banner comment *)
     gd_shared_mem_defs : string ;  (* file-scope gd_alloc_shared / gd_free_shared defs *)
     (* The interconnect-stress allocator: one large system buffer both noise
        halves stream-read.  A field because the targets differ in kind
@@ -106,12 +105,6 @@ let cuda_dialect = {
     gd_poke_def =
       "static void gd_progress_poke(void) { (void)cudaStreamQuery(0); }\n" ;
     gd_poke_arg = "(_n == 0 || !a->_rdv[_n-1]) ? gd_progress_poke : NULL" ;
-    gd_shared_mem_note =
-      "// Shared vars + rendezvous counter use gd_alloc_shared: system malloc() where\n\
-       // the device reaches pageable host memory (ATS: cache-line coherence over the\n\
-       // host-device interconnect, the real inter-device protocol); cudaMallocManaged\n\
-       // only as the dev-box/CI fallback (managed = page migration, which masks the\n\
-       // race).\n" ;
     gd_shared_mem_defs = HetPayloads.het_alloc_cuda_inc ;
     gd_noise_mem_defs = HetPayloads.het_noise_cuda_inc ;
     gd_err_t = "cudaError_t" ;
@@ -155,10 +148,6 @@ let hip_dialect = {
     gd_free = (fun v -> Printf.sprintf "(void)hipFree(%s);" v) ;
     gd_poke_def = "" ;
     gd_poke_arg = "NULL" ;
-    gd_shared_mem_note =
-      "// Shared vars + rendezvous counter use gd_alloc_shared: fine-grained\n\
-       // hipMallocManaged -- the only mode coherent for system-scope CPU<->GPU sync\n\
-       // during a live kernel (coarse-grained is visible only at kernel boundary).\n" ;
     gd_shared_mem_defs = HetPayloads.het_alloc_hip_inc ;
     gd_noise_mem_defs = HetPayloads.het_noise_hip_inc ;
     gd_err_t = "hipError_t" ;
