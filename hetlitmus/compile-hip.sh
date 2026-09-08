@@ -2,7 +2,7 @@
 # Compile-check the emitted .hip litmus kernels with hipcc/amdclang for gfx942
 # (MI300A).  Nothing is launched; what a clean compile does and does NOT
 # establish, and why the HIP-Clang stack rather than HIP-over-CUDA:
-# hetlitmus/docs/hip-emitter.md "Compile status".
+# hetlitmus/docs/gpu-emitters.md "HIP compile".
 #
 # Usage:  ./compile-hip.sh [INDIR] [OUTDIR]   (default ./hip-out,
 #           $RESULTS/hip-compile; RESULTS default run-out/<date>-<host>)
@@ -30,7 +30,7 @@ else
   [ -x "$HIPCC" ] || HIPCC=""
   if [ -z "$HIPCC" ] && [ -x /opt/rocm/bin/hipcc ]; then HIPCC=/opt/rocm/bin/hipcc; fi
   if [ -z "$HIPCC" ]; then
-    echo "error: hipcc not found -- install ROCm/HIP (see hetlitmus/docs/hip-emitter.md)" >&2
+    echo "error: hipcc not found -- install ROCm/HIP (see hetlitmus/docs/gpu-emitters.md)" >&2
     exit 1
   fi
 fi

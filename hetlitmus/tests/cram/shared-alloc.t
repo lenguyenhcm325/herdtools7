@@ -1,4 +1,5 @@
-Shared-memory allocation guard (hetlitmus/docs/00-environment-design.md sec 3.2).
+Shared-memory allocation guard (hetlitmus/docs/00-environment-design.md
+"Allocation").
 
 One MP shape per dialect; the `.hip' comes from ../het-x86_64 because a HIP
 harness is the (x86_64, hip) pair.

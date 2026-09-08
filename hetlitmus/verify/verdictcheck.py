@@ -8,7 +8,8 @@ Compiles the REAL emitted header with synthetic het_obs_records and pins:
   2 the printout  each outcome's sentences print from that outcome and from no
                   other, and each frame names the pair the emitter stamped -- a
                   miss means a sentence reports what nothing measured.
-Rule and frames: hetlitmus/docs/harness-reporting.md.  Usage: [-q]
+Rule and frames: hetlitmus/docs/00-environment-design.md "Reporting".
+Usage: [-q]
 """
 
 import argparse
@@ -178,7 +179,7 @@ CASES = [
          cap_calibrated=0),
 
     # A mechanism that was not requested must NOT disqualify, or every no-stress
-    # baseline is COLD forever (harness-reporting.md sec 3).
+    # baseline is COLD forever (00-environment-design.md "Liveness").
     case("unstressed-baseline-still-reportable", "NOT-OBSERVED",
          cv=["UNSTRESSED"], stress_requested=0,
          cpu_stress_rounds=0, cpu_preload_ops=0,

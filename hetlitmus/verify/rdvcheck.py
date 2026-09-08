@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""HetLitmus -- the rendezvous gate (hetlitmus/docs/00-environment-design.md sec
-3.3): every iteration begins at one, and the primitive's source carries a relaxed
-order and no fence.  A miss means a slot pairs an outcome to an iteration the two
-sides were not running together.
+"""HetLitmus -- the rendezvous gate (hetlitmus/docs/00-environment-design.md
+"Rendezvous"): every iteration begins at one, and the primitive's source carries
+a relaxed order and no fence.  A miss means a slot pairs an outcome to an
+iteration the two sides were not running together.
 
   1 Primitive   het_rdv.h's three bodies arrive and poll RELAXED at SYSTEM scope
   2 GPU lane    one het_rdv_device() per lane, in its loop, ahead of every

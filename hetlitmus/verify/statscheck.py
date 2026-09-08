@@ -7,7 +7,8 @@ Compiles the REAL emitted header and drives it with synthetic record streams:
                 line prints.
   2  Scheduler  campaign.py end to end, against a stub harness.
 A miss means the layer answers the same thing whatever it is handed.
-What a null is worth: hetlitmus/docs/harness-reporting.md sec 4-5.  Usage: [-q]
+What a null is worth: hetlitmus/docs/00-environment-design.md "Reporting" and
+"Aggregate".  Usage: [-q]
 """
 
 import argparse

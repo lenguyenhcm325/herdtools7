@@ -17,7 +17,7 @@
 (* HetLitmus: a single-arch test as device-neutral string fragments.  Strings,
    not arch-typed values, are the erasure boundary that lets two different `A`
    modules be merged into one `Het` test by gen/hetGen.ml.
-   Design: hetlitmus/docs/het-generation.md. *)
+   Design: hetlitmus/docs/het-litmus-format.md "String erasure". *)
 type t = {
   (* Init atoms with their owning proc; None = global.  No trailing ';'. *)
   hc_init : (int option * string) list ;

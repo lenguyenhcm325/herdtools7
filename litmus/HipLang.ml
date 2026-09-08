@@ -17,7 +17,7 @@
 (* HetLitmus: emit an AMD HIP C++ (.hip) litmus kernel from a parsed LISA/Bell
    scoped test -- the lowering into __hip_atomic_load/store and
    __builtin_amdgcn_fence, plus the emitted HIP tokens; gpuLang holds
-   everything shared with CudaLang.  Design: hetlitmus/docs/hip-emitter.md. *)
+   everything shared with CudaLang.  Design: hetlitmus/docs/gpu-emitters.md. *)
 
 open Printf
 include GpuLang

@@ -2,7 +2,7 @@
 # Emit CUDA (.cu) litmus kernels from the GPU-only LISA corpus: the vendor name
 # for ./emit-gpu.sh, which does the work.  Everything lands in OUTDIR, whose
 # .gitignore keeps only the .cu.  Every emitted .cu banner names this path
-# (litmus/CudaLang.ml).  hetlitmus/docs/cuda-emitter.md.
+# (litmus/CudaLang.ml).  hetlitmus/docs/gpu-emitters.md.
 #
 # Usage:  ./emit-cuda.sh [OUTDIR]      (default OUTDIR=./cuda-out)
 set -euo pipefail

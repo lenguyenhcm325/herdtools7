@@ -1,11 +1,12 @@
 /* Shared litmus vars + rendezvous barrier.  The allocator selects the property
    under test -- whether both sides touch one physical line over the machine's
    real coherence protocol -- so it is correctness, not tuning
-   (hetlitmus/docs/00-environment-design.md sec 3.2).  HET_ALLOC (auto | malloc
-   | managed | pinned; unset = auto) picks the mode once per process; each mode
-   is system-scope atomic ONLY under a condition of [CudaGuide "Atomicity"], so
-   every guard below is fatal and none falls back.  The knob moves this object
-   class only: the noise buffer and the device read buffers allocate their own. */
+   (hetlitmus/docs/00-environment-design.md "Allocation").  HET_ALLOC (auto |
+   malloc | managed | pinned; unset = auto) picks the mode once per process;
+   each mode is system-scope atomic ONLY under a condition of
+   [CudaGuide "Atomicity"], so every guard below is fatal and none falls back.
+   The knob moves this object class only: the noise buffer and the device read
+   buffers allocate their own. */
 static int _shared_pageable(void){
   int _p = 0;
   (void)cudaDeviceGetAttribute(&_p, cudaDevAttrPageableMemoryAccess, 0);
@@ -64,6 +65,7 @@ static int _het_alloc_mode(void){
             "pinned.\n");
     exit(2);
   }
+  /* [CudaGuide "Coherency and Concurrency"] */
   if (_mode == HET_ALLOC_MANAGED && !_cma) {
     fprintf(stderr,
             "HetLitmus FATAL: managed mode but cudaDevAttrConcurrentManagedAccess=0: "

@@ -17,7 +17,7 @@
 (* HetLitmus: the GPU-only (`LISA) dispatch arm.  One parse of a scoped
    LISA/Bell test, rendered in the one dialect `-gpu-target' names.  Upstream
    litmus7 has no LISA emission path at all -- its arm is `assert false' and
-   LISA reaches only klitmus7.  hetlitmus/docs/cuda-emitter.md. *)
+   LISA reaches only klitmus7.  hetlitmus/docs/gpu-emitters.md. *)
 
 module Make
     (Cfg : GenParser.Config)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-hipsrccheck.py -- the HIP source gate (hetlitmus/docs/amd-faithfulness.md).
+hipsrccheck.py -- the HIP source gate (hetlitmus/docs/faithfulness.md).
 
 Per render it pins, in .litmus column order: each model op as its mapped builtin
 with its constants, its comment and its operands; a het lane's ops unguarded in

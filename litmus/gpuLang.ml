@@ -17,8 +17,8 @@
 (* HetLitmus: what the CUDA (.cu) and HIP (.hip) litmus renders share -- the
    annotation vocabulary, the BellBase accessors, the launch layout and the
    whole-test driver.  Both consume the *parsed* Bell program, NOT the litmus7
-   Out template (hetlitmus/docs/cuda-emitter.md, "How it works (and why this
-   shape)").  A [t] dialect record carries the per-instruction lowering and
+   Out template (hetlitmus/docs/gpu-emitters.md, "Why this shape").
+   A [t] dialect record carries the per-instruction lowering and
    the differing emitted tokens, so CudaLang and HipLang are thin
    instantiations. *)
 
@@ -170,8 +170,7 @@ let result_regs code =
   List.rev !order
 
 (* Scope tree -> (proc -> (block,lane)) launch layout: a block is a maximal
-   subtree rooted at a `cta' node (hetlitmus/docs/cuda-emitter.md,
-   "Mappings"). *)
+   subtree rooted at a `cta' node. *)
 
 let rec subtree_procs (BellInfo.Tree (_, ps, ch)) =
   ps @ List.concat_map subtree_procs ch
@@ -181,8 +180,8 @@ let rec collect_ctas (BellInfo.Tree (name, _, ch) as t) =
   else List.concat_map collect_ctas ch
 
 (* The tree the test declared, [None] where it carries no `scopes:' row
-   (hetlitmus/docs/het-litmus-format.md sec 3).  Both dispatch arms read it
-   from here, so one launch geometry serves both. *)
+   (hetlitmus/docs/het-litmus-format.md "The file format").  Both dispatch
+   arms read it from here, so one launch geometry serves both. *)
 let scopes_of extra_data =
   let rec find = function
     | MiscParser.BellExtra bi :: _ -> bi.BellInfo.scopes

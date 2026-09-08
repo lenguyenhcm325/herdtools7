@@ -34,7 +34,9 @@ Memory Consistency Testing.* Proc. ACM Program. Lang. 4, OOPSLA, Article 226 (20
 ## [Goens23]
 Andrés Goens, Soham Chakraborty, Susmit Sarkar, Sukarn Agarwal, Nicolai Oswald, Vijay
 Nagarajan. *Compound Memory Models.* Proc. ACM Program. Lang. 7, PLDI, Article 153 (June
-2023), 24 pages. DOI 10.1145/3591267.
+2023), 24 pages. DOI 10.1145/3591267. Artifact `PLDI23_Compound_Simulation`,
+`https://github.com/sukarnagarwal/PLDI23_Compound_Simulation`: the runner `runall_gpu_only.sh`,
+the observations `expected.csv`, the HIP sources under `gem5-resources/gpu/GPU_Litmus_test/`.
 * §4.6: "by the LOST principle, the behavior of a thread does not depend on the architecture
   of other threads" — a compound model is one whose threads have different architectures.
 * §7 Tab. 1: the CPU and GPU litmus tests and their outcomes on a gem5 x86 + GCN3 simulation.
@@ -188,7 +190,6 @@ Hardware.* TACAS 2011, pp. 41–44. DOI 10.1007/978-3-642-19835-9_5.
 Themis Melissaris, Markos Markakis, Kelly Shaw, Margaret Martonosi. *PerpLE: Improving the
 Speed and Effectiveness of Memory Consistency Testing.* MICRO 2020, pp. 329–341. DOI
 10.1109/MICRO50266.2020.00037.
-* Abstract, §I: perpetual litmus tests run "without per-iteration synchronization".
 * §VIII: litmus7 "does not have the logging to see cross-iteration interleavings".
 
 ## [Wahlgren25]
@@ -206,7 +207,8 @@ University of California, Santa Cruz, June 2024. `https://escholarship.org/uc/it
 * §4.1 (p. 69): the constant-read artefact — runs showing 0 % or 100 % weak behaviour "because
   the read nodes loaded the same values in all the iterations".
 * §4.1 (p. 69): a per-iteration both-sided CPU–GPU spin barrier got "2- 3 iterations ahead"
-  and then stuck for good — the bring-up probe of `00-environment-design.md` §5.
+  and then stuck for good — the bring-up probe of
+  `00-environment-design.md` "Hardware-only constraints".
 * p. 93: the relaunch-per-trial harness observed no weak behaviour with a `threadfence`
   between the GPU instructions; the perpetual-instance harness did, in MP and SB.
 * Deviation: the stall was on two integrated consumer parts (Ryzen 7 5700G, i7-12700K) and the
@@ -239,7 +241,7 @@ NVIDIA. *CUDA Programming Guide*, Release 13.3,
 * Deviation: Release 12.x, the pinned toolchain's, is titled "CUDA C++ Programming Guide" and
   states the mapped-pointer rule as the unified-address-space exception in "Mapped Memory"
   (12.9 checked); whether it states the execution-model guarantee is a bring-up check
-  (`00-environment-design.md` §5).
+  (`00-environment-design.md` "Hardware-only constraints").
 
 ## [HipRuntimeApi]
 AMD ROCm. `hip_runtime_api.h`, as shipped with ROCm 7.2.4
@@ -264,9 +266,6 @@ dedication.
 * Verbatim: `z = (x += 0x9e3779b97f4a7c15); z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9; z = (z ^
   (z >> 27)) * 0x94d049bb133111eb; return z ^ (z >> 31);`; the increment being fixed, draw `k`
   from `x0` is the mixer of `x0 + k * 0x9e3779b97f4a7c15`.
-* Provenance, as the file states it: "a fixed-increment version of Java 8's SplittableRandom
-  generator" — Guy L. Steele Jr., Doug Lea, Christine H. Flood, *Fast Splittable Pseudorandom
-  Number Generators*, OOPSLA 2014, DOI 10.1145/2714064.2660195.
 * Deviation: evaluated at an index, never advanced, so no state is stored; the BigCrush claim
   concerns the output sequence and is not taken. A fixed increment makes every `(seed, who)`
   stream an offset into one cycle, not an independent stream.
@@ -302,13 +301,9 @@ Arm Limited. *Arm A-profile A64 Instruction Set Architecture* (DDI 0602). Living
 Peter Sewell, Susmit Sarkar, Scott Owens, Francesco Zappa Nardelli, Magnus O. Myreen. *x86-TSO:
 A Rigorous and Usable Programmer's Model for x86 Multiprocessors.* Commun. ACM 53(7), July 2010,
 pp. 89–97. DOI 10.1145/1785414.1785443.
-* §1 (p. 90): the model's scope is "coherent write-back memory" without non-temporal operations.
 * §3.1 (p. 93): store/load pairs are "the only reorderings allowed in x86-TSO"; "An MFENCE
   instruction flushes the store buffer of that thread"; LFENCE and SFENCE are treated as no-ops
   on that ground.
-* §3.2 (p. 94): Examples 8-1 (stores keep their order), 8-2 (a store never passes an older
-  load), 8-3 (a load may pass an older store to another location) and 8-10 (MFENCE forbids the
-  outcome of 8-3).
 
 ## [PtxISA]
 NVIDIA. *Parallel Thread Execution ISA*, Version 8.8 (CUDA Toolkit 12.9),

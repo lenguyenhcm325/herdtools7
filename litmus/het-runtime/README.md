@@ -30,7 +30,7 @@ in one place, which is what the reuse licence condition needs.  Its one dialect
 divergence is a preprocessor selection of the vendor runtime header its
 scratchpad counters need.
 
-Design: `hetlitmus/docs/00-environment-design.md` sec 3.5.
+Design: `hetlitmus/docs/00-environment-design.md` "GPU stress".
 
 ## het_cpu_stress.h — CPU-side + interconnect stress
 
@@ -38,7 +38,7 @@ The sibling of `het_stress.h`.  The GPU scratchpad stress widens the
 INTRA-device window; the heterogeneous weak behaviour lives in the cross-device
 window — a store in flight across the interconnect but not yet globally visible
 — and this file is what loads that path.  Design:
-`hetlitmus/docs/00-environment-design.md` sec 3.6.
+`hetlitmus/docs/00-environment-design.md` "Interconnect stress".
 
 It also holds `het_draw`, the one stress-schedule draw, because it is the only
 header both the plain-C `<test>_cpu.c` and the device renders include —
@@ -60,7 +60,7 @@ Two constraints force it into a header of its own instead of into the `.cu`:
   compiled for the native host and already includes `<pthread.h>`.
 
 The two invariants the stress layer holds by construction are in
-`hetlitmus/docs/00-environment-design.md` sec 3.6.
+`hetlitmus/docs/00-environment-design.md` "Interconnect stress".
 
 ## het_rdv.h — the cross-device rendezvous and the slot layout
 
@@ -76,14 +76,14 @@ Design — why the rendezvous writes no ordering and sits around the tested grou
 rather than between two of its accesses, what each arm's arrival lowers to, what
 an iteration whose partner misses its cap costs, and how the slot stride is
 sized:
-`hetlitmus/docs/00-environment-design.md` sec 3.3 and sec 3.4.
+`hetlitmus/docs/00-environment-design.md` "Rendezvous".
 
 ## het_verdict.h — `het_obs_record` + the outcome rule
 
 The record and the rule live in ONE header, so no second declaration can drift
 away from the one that ships.
 
-Design: `hetlitmus/docs/harness-reporting.md`.
+Design: `hetlitmus/docs/00-environment-design.md` "Reporting".
 
 ## het_alloc_{cuda,hip}.inc, het_noise_{cuda,hip}.inc — the two allocators
 
@@ -93,15 +93,16 @@ The `gd_shared_mem_defs` and `gd_noise_mem_defs` fields of `gpu_dialect`
 * `het_alloc_*` — the shared litmus vars + the rendezvous counter
   (`gd_alloc_shared` / `gd_free_shared`) and the harness's own device memory
   (`gd_alloc_dev`).
-  Design: `hetlitmus/docs/00-environment-design.md` sec 3.2.
+  Design: `hetlitmus/docs/00-environment-design.md` "Allocation".
 * `het_noise_*` — the interconnect-stress buffer (`gd_alloc_noise` /
-  `gd_free_noise`).  Design: `hetlitmus/docs/00-environment-design.md` sec 3.6.
+  `gd_free_noise`).  Design: `hetlitmus/docs/00-environment-design.md`
+  "Interconnect stress".
 
 They are per-dialect because the two targets differ in kind, not in spelling
-(`hetlitmus/docs/00-environment-design.md` sec 3.6): the CUDA render's noise
-buffer is a `malloc` under ATS, the HIP render's a `hipMallocManaged`.  Each is
-a fragment pasted into the render, not a header: the surrounding `.cu` / `.hip`
-supplies `het_cpu_first_touch`.
+(`hetlitmus/docs/00-environment-design.md` "Interconnect stress"): the CUDA
+render's noise buffer is a `malloc` under ATS, the HIP render's a
+`hipMallocManaged`.  Each is a fragment pasted into the render, not a header:
+the surrounding `.cu` / `.hip` supplies `het_cpu_first_touch`.
 
 External sources cited by these payloads resolve in
 `hetlitmus/docs/REFERENCES.md`.

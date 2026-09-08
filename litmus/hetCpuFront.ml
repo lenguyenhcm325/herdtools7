@@ -29,8 +29,7 @@ type toolchain = {
     host_macro : string ;          (* CPP macro true on the CPU host ISA *)
     host_uname : string ;          (* `uname -m' on a host of this ISA *)
     (* (clang triple, -std) cross-assembling the CPU asm off that host
-       (hetlitmus/docs/het-emission.md,
-       "The CPU object: native vs. cross-assembly"). *)
+       (hetlitmus/docs/het-emission.md, "The CPU object"). *)
     cross : string * string ;
     cpu_cflags : string ;
   }

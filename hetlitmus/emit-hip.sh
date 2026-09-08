@@ -3,7 +3,7 @@
 # name for ./emit-gpu.sh, which does the work.  Everything lands in OUTDIR,
 # whose .gitignore keeps only the .hip.  Every emitted .hip banner names this
 # path (litmus/HipLang.ml).  ./compile-hip.sh compile-checks the renders;
-# running a kernel needs an AMD device.  hetlitmus/docs/hip-emitter.md.
+# running a kernel needs an AMD device.  hetlitmus/docs/gpu-emitters.md.
 #
 # Usage:  ./emit-hip.sh [OUTDIR]      (default OUTDIR=./hip-out)
 set -euo pipefail

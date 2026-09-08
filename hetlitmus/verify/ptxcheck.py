@@ -86,7 +86,7 @@ def barrier_option(mn, tokens, where):
     return opt
 
 # The PTX profile of an sc access: the scope's fence.sc, then the access
-# [CCCL cuda_ptx_generated.h] (hetlitmus/docs/cuda-emitter.md, "Mappings").
+# [CCCL cuda_ptx_generated.h] (hetlitmus/docs/gpu-emitters.md, "sc accesses").
 SC_ACCESS = {"st": "relaxed", "ld": "acquire"}
 
 PTX_ORDERS = set(GPU_ORDER.values())          # {relaxed,acquire,release,acq_rel,sc}
@@ -422,7 +422,7 @@ def check_gpu(result, expected_per_proc, observed, label):
 
 def split_het_segments(observed):
     """(pre_ops, barrier_ops, model_per_lane) of a het kernel's stream, one model-op
-    list per joining lane (faithfulness.md, "Het rendezvous/model separation")."""
+    list per joining lane."""
     atom_idx = [i for i, op in enumerate(observed)
                 if op[0] in ('atom', 'red') and op[2] == 'sys']
     if not atom_idx:

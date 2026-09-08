@@ -3,7 +3,7 @@
  * aggregate.  Emitted verbatim into every harness dir: edit this file, not a
  * harness-dir copy.  A null reports the effort the run spent and the liveness
  * its own counters measured; the rule and the sentences it prints are
- * hetlitmus/docs/harness-reporting.md.
+ * hetlitmus/docs/00-environment-design.md "Reporting".
  * ========================================================================= */
 #ifndef HET_VERDICT_H
 #define HET_VERDICT_H
@@ -30,7 +30,7 @@
 /* Which stress mechanisms this build asked for: a zero tally is dead only where
    the mechanism was requested, or a no-stress baseline would be COLD forever.
    Bit numbers are a wire format, vacancies (1) included: add at the top, do not
-   renumber (hetlitmus/docs/harness-reporting.md sec 7). */
+   renumber (hetlitmus/docs/00-environment-design.md "Wire format"). */
 #define HET_REQ_GPU_STRESS  (1u << 0)   /* HET_GPU_PRE_STRESS_PCT | HET_GPU_MEM_STRESS_PCT */
 #define HET_REQ_CPU_STRESS  (1u << 2)   /* HET_CPU_STRESS_THREADS                  */
 #define HET_REQ_CPU_PRELOAD (1u << 3)   /* HET_CPU_PRELOAD_PCT && _PRELOAD_LIVE    */
@@ -106,7 +106,7 @@ static long het_env_long(const char *name, long dflt) {
 
 /* The outcome: one axis -- was the weak outcome seen, and if not, is this run's
  * zero a datum at all.  A dead mechanism yields HET_COLD_INVALID, not "not
- * observed" (hetlitmus/docs/harness-reporting.md sec 2). */
+ * observed" (hetlitmus/docs/00-environment-design.md "Liveness"). */
 typedef enum {
   HET_OBSERVED = 0,
   HET_NOT_OBSERVED,
@@ -138,8 +138,8 @@ static int het_dead(uint32_t req, uint32_t bit, uint64_t rounds) {
   return (req & bit) && rounds == 0;
 }
 
-/* The rule (hetlitmus/docs/harness-reporting.md sec 2): a pure function of the
-   record. */
+/* The rule (hetlitmus/docs/00-environment-design.md "Liveness"): a pure
+   function of the record. */
 static het_verdict_t het_verdict(const het_obs_record *r,
                                  uint32_t *dq_out, uint32_t *cv_out) {
   uint32_t dq = 0, cv = 0;
@@ -230,7 +230,8 @@ static void het_obs_record_print(FILE *_ch, const het_obs_record *_r) {
 }
 
 /* Every null prints beside the effort it cost and the liveness this run
-   measured, in absolute numbers (hetlitmus/docs/harness-reporting.md sec 4). */
+   measured, in absolute numbers
+   (hetlitmus/docs/00-environment-design.md "Reporting"). */
 
 /* Provenance caveats, printed for a sighting and for a null alike. */
 static void het_print_caveats(FILE *_ch, const het_obs_record *_r, uint32_t cv) {
@@ -344,7 +345,7 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
 
 /* The aggregate, a pure function of an array of het_obs_records, run host-side
  * after the campaign; the run is the replication unit
- * (hetlitmus/docs/harness-reporting.md sec 5). */
+ * (hetlitmus/docs/00-environment-design.md "Aggregate"). */
 
 /* What the campaign saw, per run. */
 typedef enum {

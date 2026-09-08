@@ -693,7 +693,7 @@ hetlitmus-faithful: hetlitmus-corpus-gen | build
 
 ### Every emitted HIP kernel and x86_64 CPU body carries exactly the memory ops,
 ### orders, scopes and loop structure its .litmus annotates -- source-level, so
-### no toolchain (hetlitmus/docs/amd-faithfulness.md).
+### no toolchain (hetlitmus/docs/faithfulness.md).
 hetlitmus-hipsrc: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/hipsrccheck.py --all

@@ -422,7 +422,7 @@ end
                itself, or the staging directory a `.tar'/`.tgz' target is
                packed from at the end of the run.  Without `-o' that directory
                is a temporary one litmus7 deletes at exit, so the harness goes
-               to the cwd instead (hetlitmus/docs/het-emission.md). *)
+               to the cwd instead. *)
             let dir =
               if O.is_out then Tar.outname tname
               else Filename.concat (Sys.getcwd ()) tname in

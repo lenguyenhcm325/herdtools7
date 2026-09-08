@@ -2,9 +2,10 @@
    [HipRuntimeApi "hipMemAdviseSetCoarseGrain"] and the one coherence mode usable
    for system-scope CPU<->GPU synchronisation while the kernel is live.  Which
    allocator runs decides what property the harness tests, so it is correctness,
-   not tuning (hetlitmus/docs/00-environment-design.md sec 3.2).  This render
-   implements ONE mode and refuses every other spelling of HET_ALLOC rather than
-   substituting for it; the read buffers are device memory (hipMalloc). */
+   not tuning (hetlitmus/docs/00-environment-design.md "Allocation").  This
+   render implements ONE mode and refuses every other spelling of HET_ALLOC
+   rather than substituting for it; the read buffers are device memory
+   (hipMalloc). */
 #define HET_HIP_ALLOC_MANAGED 1
 static int _het_hip_attr(hipDeviceAttribute_t _a){
   int _v = 0;

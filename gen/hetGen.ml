@@ -19,7 +19,8 @@
 
    The cycle engine is monomorphic in one architecture, so this driver runs it
    once per device on the same cycle shape and merges the columns, the init
-   atoms and the condition atoms.  hetlitmus/docs/het-generation.md. *)
+   atoms and the condition atoms.
+   hetlitmus/docs/het-litmus-format.md "One run per device". *)
 
 open Printf
 
@@ -106,7 +107,7 @@ let parse_cond s =
 let generate () =
   (* The merge splices per-proc atoms out of a flat conjunction of the two runs'
      conditions, which only -cond cycle produces.
-     hetlitmus/docs/het-generation.md sec 5. *)
+     hetlitmus/docs/het-litmus-format.md "Limits". *)
   (match !Config.cond with
    | Config.Cycle -> ()
    | Config.Unicond | Config.Observe ->
@@ -161,7 +162,7 @@ let generate () =
      assumes, build the test, erase to cells.  [opt] labels the arity error. *)
   let module HetRun (M:Builder.S) = struct
     (* Per-edge value the two cycles are compared on.
-       hetlitmus/docs/het-generation.md sec 2. *)
+       hetlitmus/docs/het-litmus-format.md "One run per device". *)
     let skeleton opt i e =
       let refuse what =
         Warn.fatal
@@ -255,7 +256,7 @@ let generate () =
 
   (* The header tag names the CPU ISA (AArch64 keeps the `cpu' alias) so
      litmus7's Het arm picks the matching sub-parser; run_of still keys on the
-     device class.  hetlitmus/docs/het-litmus-format.md sec 3. *)
+     device class.  hetlitmus/docs/het-litmus-format.md "The file format". *)
   let cpu_tag = match !cpu_arch with `AArch64 -> "cpu" | `X86_64 -> "x86_64" in
   let header_tag = function "cpu" -> cpu_tag | other -> other in
 
@@ -316,7 +317,7 @@ let generate () =
 
   (* A parseable nested `scopes:' body tree (grammar lib/scopeRules.mly): each
      GPU proc nests in its own CTA, CPU procs sit at the sys root by default.
-     hetlitmus/docs/het-generation.md sec 4. *)
+     hetlitmus/docs/het-litmus-format.md "The scopes tree". *)
   let gpu_procs =
     Misc.filter_map (fun (i,dev) -> if dev = "gpu" then Some i else None)
       (List.mapi (fun i dev -> (i,dev)) devs) in

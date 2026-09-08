@@ -120,8 +120,7 @@ let dump_test_lane dialect gp ch =
        gp.gp_blk gp.gp_lane) ;
   List.iter (fun n -> s (Printf.sprintf "    int r%d = 0;\n" n))
     gp.gp_regs ;
-  (* #pragma unroll 1 -- hetlitmus/docs/amd-faithfulness.md,
-     "The mapping". *)
+  (* #pragma unroll 1 -- hetlitmus/docs/faithfulness.md, "Het lane loop". *)
   s {|    #pragma unroll 1
     for (int _n=0; _n<SIZE_OF_TEST; ++_n) {
       if ((int)(het_draw(_seed, _who, 2u*(uint64_t)_n) % 100u) < HET_GPU_PRE_STRESS_PCT)
@@ -130,7 +129,7 @@ let dump_test_lane dialect gp ch =
 
   (* Rendezvous, jitter, then the tested ops; nothing is placed
      between two tested accesses
-     (hetlitmus/docs/00-environment-design.md sec 3.6). *)
+     (hetlitmus/docs/00-environment-design.md "Interconnect stress"). *)
   s (Printf.sprintf
        "      %s[_n] = het_rdv_device(barrier, (uint64_t)NPART*(uint64_t)(_n+1), _cap_gpu);\n"
        (rdv_gpu_name gp.gp_proc)) ;
@@ -152,7 +151,8 @@ let dump_test_lane dialect gp ch =
 |}
 
 (* The blocks past the test lanes: interconnect noise readers first, then
-   the scratchpad stressers, both spinning on the iteration clock. *)
+   the scratchpad stressers, both spinning on the iteration clock
+   [CudaLitmus litmus.cuh:344]. *)
 let dump_stress_workgroups ch =
   let s = output_string ch in
   s {|  if (blockIdx.x >= HET_TEST_BLOCKS) {

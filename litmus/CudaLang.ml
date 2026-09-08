@@ -17,7 +17,7 @@
 (* HetLitmus: emit a CUDA C++ (.cu) litmus kernel from a parsed LISA/Bell
    scoped test -- the libcu++ / inline-PTX lowering and the emitted CUDA
    tokens; gpuLang holds everything shared with HipLang.
-   Design: hetlitmus/docs/cuda-emitter.md. *)
+   Design: hetlitmus/docs/gpu-emitters.md. *)
 
 open Printf
 include GpuLang
@@ -39,7 +39,7 @@ let thread_scope = function
   | s -> Warn.user_error "CudaLang: unknown scope %S" s
 
 (* One inline PTX fence per annotated order, rather than the collapsed
-   cuda::atomic_thread_fence (hetlitmus/docs/cuda-emitter.md, "Fence lowering"). *)
+   cuda::atomic_thread_fence (hetlitmus/docs/gpu-emitters.md, "Fence lowering"). *)
 let ptx_fence_sem = function
   | "acquire" -> "acquire"
   | "release" -> "release"
@@ -61,7 +61,7 @@ let fence_min_arch ord =
 
 (* The sm_90 floor of a one-sided fence [PtxISA "membar/fence"] is enforced
    here, ptxas assembling it for any sm_70+ target
-   (hetlitmus/docs/cuda-emitter.md, "nvcc compile"). *)
+   (hetlitmus/docs/gpu-emitters.md, "Fence floors"). *)
 let fence_floor_guard instrs =
   let needs_sm90 = function
     | BellBase.Pfence (BellBase.Fence (annots, _)) ->

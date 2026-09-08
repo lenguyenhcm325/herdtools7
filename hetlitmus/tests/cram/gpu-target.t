@@ -1,4 +1,4 @@
-`-gpu-target' (litmus/hetDialect.ml; hetlitmus/docs/hip-emitter.md).
+`-gpu-target' (litmus/hetDialect.ml; hetlitmus/docs/gpu-emitters.md).
 
 (a) a CUDA emission carries the .cu and not the .hip.
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-plain.rlx.litmus >/dev/null 2>&1

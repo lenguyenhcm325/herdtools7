@@ -1,5 +1,5 @@
 CPU-side + interconnect stress guard (hetlitmus/docs/00-environment-design.md
-sec 3.6; hetlitmus/docs/het-emission.md, "The pair a harness names").
+"Interconnect stress"; hetlitmus/docs/het-emission.md, "The pair a harness names").
 
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-ra.acq.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/S-cg-sys-plain.fsc.litmus >/dev/null 2>&1

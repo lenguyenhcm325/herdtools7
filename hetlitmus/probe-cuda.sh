@@ -6,8 +6,8 @@
 #   RESULTS=... sh probe-cuda.sh     # somewhere else
 #
 # Builds compute_75 PTX and JITs at load, so one command works before the arch
-# is known; NEVER `-arch=native' (hetlitmus/docs/het-emission.md, the CUDA_ARCH
-# paragraph).
+# is known; NEVER `-arch=native'
+# (hetlitmus/docs/het-emission.md, "The pair a harness names").
 set -eu
 
 HERE="$(cd "$(dirname "$0")" && pwd)"

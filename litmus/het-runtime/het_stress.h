@@ -6,7 +6,7 @@
  * object classes are in litmus/hetDialect.ml.  It loads the on-die L1/L2 only,
  * NOT the host-device window -- that is het_cpu_stress.h's.
  * Zero without stress is NVIDIA's; Radeon lb fires anyway [Alglave15 sec 4.3.1 Tab. 6].
- * Design: hetlitmus/docs/00-environment-design.md sec 3.5. */
+ * Design: hetlitmus/docs/00-environment-design.md "GPU stress". */
 #ifndef HET_STRESS_H
 #define HET_STRESS_H
 
@@ -133,7 +133,7 @@ __device__ static inline void het_idle(void) {
  * sequence of [Kirkham20 sec 3.1], plain and non-volatile so it adds no ordering
  * edge.  Caller contract: `pattern' must arrive as a RUNTIME value -- folded to
  * a constant, the loop keeps counting with its traffic gone
- * (hetlitmus/docs/faithfulness.md, "What a compile-time access pattern costs"). */
+ * (hetlitmus/docs/faithfulness.md, "Runtime stress pattern"). */
 __device__ static void het_do_stress(uint32_t* scratchpad,
                                      uint32_t* scratch_locations,
                                      uint32_t iterations,

@@ -17,7 +17,7 @@
 (* HetLitmus: read a bounded lexbuf section into a string.  HetArch re-lexes
    the program section per processor with each column's own sub-architecture
    lexer, so it first slurps the section verbatim
-   (hetlitmus/docs/het-litmus-format.md sec 4). *)
+   (hetlitmus/docs/het-litmus-format.md "Parsing per column"). *)
 
 { }
 

@@ -153,7 +153,8 @@ let dump_campaign_knobs ch =
   let s = output_string ch in
   s "  outs_t* hist = NULL;\n" ;
 
-  (* One counter per run (hetlitmus/docs/harness-reporting.md sec 5). *)
+  (* One counter per run
+     (hetlitmus/docs/00-environment-design.md "Aggregate"). *)
   s "  het_obs_record _recs[NUMBER_OF_RUN];\n" ;
   s "  memset(_recs, 0, sizeof _recs);\n" ;
   (* Campaign knobs read through getenv, never -D: a retune needs
@@ -471,8 +472,7 @@ let dump_run_readout procs outcome ch =
       else if (memcmp(_first, _o, sizeof _o) != 0) _rec.outcomes_vary = 1;
     }
 |} ;
-  (* Marks the readout as having run
-     (hetlitmus/docs/00-environment-design.md sec 4). *)
+  (* Marks the readout as having run. *)
   s "    _rec.rdv_valid = 1;\n"
 
 let dump_run_report ch =
@@ -503,8 +503,8 @@ let dump_run_early_stop ch =
 let dump_aggregate identity outcome ch =
   let s = output_string ch in
   let tname = identity.id_name in
-  (* The aggregate reuses het_verdict() per record, so it inherits
-     every disqualifier (hetlitmus/docs/harness-reporting.md sec 5). *)
+  (* The aggregate reuses het_verdict() per record, so it inherits every
+     disqualifier (hetlitmus/docs/00-environment-design.md "Aggregate"). *)
   s {|  {
     het_stats_t _st;
     het_stats_compute(_recs, _nrec, &_st);

@@ -101,7 +101,7 @@ let parse s = match System.parse s with
       (* HetLitmus: the compound pseudo-arch.  One `Het' value keeps the rest
          of the pipeline single-arch-typed; the CPU/GPU split lives in the
          HetArch functor and a per-proc device tag.
-         hetlitmus/docs/het-litmus-format.md sec 2. *)
+         hetlitmus/docs/het-litmus-format.md "The compound pseudo-arch". *)
       | "Het" -> Some `Het
       | _ -> None
   end

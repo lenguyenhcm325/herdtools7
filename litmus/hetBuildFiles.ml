@@ -83,7 +83,7 @@ let dump_comp h ch =
 gcc -c outs.c -o outs.o
 |} ;
   (* ONLY the native branch writes the object a link path names
-     (hetlitmus/docs/het-emission.md, "The CPU object: native vs. cross-assembly"). *)
+     (hetlitmus/docs/het-emission.md, "The CPU object"). *)
   let triple,std = tc.cross in
   s (Printf.sprintf "if [ \"$(uname -m)\" = \"%s\" ]; then\n" host_uname) ;
   s (Printf.sprintf

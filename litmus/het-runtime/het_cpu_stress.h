@@ -5,7 +5,8 @@
  * <test>_cpu.c includes it with HET_CPU_STRESS_IMPL and compiles the bodies; the
  * .cu / .hip see only the knobs, the argument structs and the declarations --
  * the bodies are host-ISA inline asm nvcc must NOT meet.
- * Design and what is not ported: hetlitmus/docs/00-environment-design.md sec 3.6.
+ * Design and what is not ported:
+ * hetlitmus/docs/00-environment-design.md "Interconnect stress".
  * ========================================================================= */
 #ifndef HET_CPU_STRESS_H
 #define HET_CPU_STRESS_H
@@ -77,7 +78,8 @@ extern "C" {
 #ifndef HET_CPU_NOISE_THREADS
 #define HET_CPU_NOISE_THREADS 1   /* the host half: CPU threads, each streaming
                                      its own slice of the noise buffer.
-                                     hetlitmus/docs/00-environment-design.md 3.6 */
+                                     hetlitmus/docs/00-environment-design.md
+                                     "Interconnect stress" */
 #endif
 #ifndef HET_GPU_NOISE_BLOCKS
 #define HET_GPU_NOISE_BLOCKS 8    /* the device half: extra blocks of the
@@ -187,7 +189,7 @@ typedef struct het_cpu_noise_args {
    evaluated at index k -- draw k of the stream owned by (seed, who) is
    mix(x0 + k*gamma) with x0 = seed<<32 | who, so no stream is ever advanced and
    the value is the same wherever it is computed.
-   Design: hetlitmus/docs/00-environment-design.md sec 3.3. */
+   Design: hetlitmus/docs/00-environment-design.md "Rendezvous". */
 #if defined(__CUDACC__) || defined(__HIP_PLATFORM_AMD__) || \
     defined(__HIP_DEVICE_COMPILE__)
 #define HET_DRAW_ATTR __host__ __device__ static inline
@@ -238,7 +240,8 @@ void    *het_cpu_noise(void *a);   /* pthread body; the host half of the noise p
    line and stresses NOTHING while the round counters look healthy. */
 void     het_cpu_first_touch(void *p, size_t bytes);
 /* Host-side; the driver hands it the run's seed, so the permutation is a
-   function of that seed (hetlitmus/docs/00-environment-design.md sec 3.3). */
+   function of that seed
+   (hetlitmus/docs/00-environment-design.md "Rendezvous"). */
 void     het_cpu_shuffle(uint32_t *idx, uint32_t n, uint32_t seed);
 
 #ifdef HET_CPU_STRESS_IMPL
@@ -249,7 +252,8 @@ void     het_cpu_shuffle(uint32_t *idx, uint32_t n, uint32_t seed);
 
 /* 31 bits, so _seed0 + _run cannot wrap into another invocation's seed range;
    hetlitmus/campaign.py draws its own base at the same width.  Why the flag,
-   and why not getentropy: hetlitmus/docs/00-environment-design.md sec 3.3. */
+   and why not getentropy:
+   hetlitmus/docs/00-environment-design.md "Rendezvous". */
 int het_seed_entropy(uint32_t *out) {
   uint32_t s;
   if (getrandom(&s, sizeof s, GRND_NONBLOCK) != (ssize_t)sizeof s) return -1;
@@ -390,9 +394,9 @@ void *het_cpu_stress(void *_a) {
 
 /* A host noise thread: stream-reads its own slice of the noise buffer, the
  * threads dividing it as [Fusco24 sec III-B.2]'s do
- * (hetlitmus/docs/00-environment-design.md sec 3.6).  The buffer is disjoint
- * from every test location.  `buf' is volatile: the stream is issued with no
- * value escaping. */
+ * (hetlitmus/docs/00-environment-design.md "Interconnect stress").  The
+ * buffer is disjoint from every test location.  `buf' is volatile: the
+ * stream is issued with no value escaping. */
 void *het_cpu_noise(void *_a) {
   het_cpu_noise_args *a = (het_cpu_noise_args *)_a;
   het_cpu_affinity(a->core, a->tally);

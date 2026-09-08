@@ -21,7 +21,8 @@
    emission is litmus/hetEmit.ml and the file emitters it drives.
    hetlitmus/docs/het-litmus-format.md. *)
 
-(* The CPU-ISA tag vocabulary (hetlitmus/docs/het-litmus-format.md sec 3).
+(* The CPU-ISA tag vocabulary
+   (hetlitmus/docs/het-litmus-format.md "The file format").
    Top-level, outside the functor: the litmus7 `Het' arm picks the CPU ISA --
    and so which modules to feed the functor -- before any application exists.
    None for a GPU tag, so parse_device reuses this as the CPU/GPU test. *)
@@ -38,7 +39,7 @@ let cpu_isa_tag = function IsaAArch64 -> "aarch64" | IsaX86_64 -> "x86_64"
    row: it carries no `;', so leaving it in would make a row of it and, ahead
    of the header, swallow the header.  Cut it out before the `;' split and
    hand its body to the scope grammar
-   (hetlitmus/docs/het-litmus-format.md sec 3). *)
+   (hetlitmus/docs/het-litmus-format.md "The file format"). *)
 let cut_scopes_row text =
   let is_scopes l =
     let t = String.trim l in
@@ -251,8 +252,8 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
   (* Pseudo layer.
      Pseudo.Make over the instruction-level delegates, each routing to a
      sub-architecture's own Pseudo.S output; parsed_tr recovers a sub-arch's
-     parsed->internal translation by round-tripping a singleton [Instruction].
-     hetlitmus/docs/het-litmus-format.md sec 4. *)
+     parsed->internal translation by round-tripping a singleton
+     [Instruction]. *)
 
   include Pseudo.Make (struct
     type ins = instruction
@@ -298,7 +299,7 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
      of_{cpu,gpu}_parsed tag a sub-arch's parsed pseudo into the compound one;
      the structural skeleton is device-agnostic.  The per-processor sub-parsing
      lives at the litmus7 `Het' arm, where the concrete parsers are in scope.
-     hetlitmus/docs/het-litmus-format.md sec 4. *)
+     hetlitmus/docs/het-litmus-format.md "Parsing per column". *)
 
   let rec of_cpu_parsed : Cpu.parsedPseudo -> parsedPseudo = function
     | Cpu.Nop -> Nop
@@ -370,7 +371,8 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
             "HetArch: unknown device tag %S (use aarch64|x86_64|cpu|gpu)" d
        end
 
-  (* "P0:cpu" -> (0, DevCpu); hetlitmus/docs/het-litmus-format.md sec 3. *)
+  (* "P0:cpu" -> (0, DevCpu);
+     hetlitmus/docs/het-litmus-format.md "The file format". *)
   let parse_proc_cell s =
     let s = String.trim s in
     match String.split_on_char ':' s with
@@ -428,7 +430,7 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
            (fun (p,dev) -> (p,Some [device_tag dev],MiscParser.Main))
            procs_dev in
        (* The tree rides on to the emitter as the launch geometry
-          (hetlitmus/docs/het-generation.md sec 4). *)
+          (hetlitmus/docs/het-litmus-format.md "The scopes tree"). *)
        let extra = match scopes with
          | None -> MiscParser.empty_extra
          | Some body ->

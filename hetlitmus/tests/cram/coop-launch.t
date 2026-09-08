@@ -1,4 +1,4 @@
-Persistent-loop guard (hetlitmus/docs/00-environment-design.md sec 3.3).
+Persistent-loop guard (hetlitmus/docs/00-environment-design.md "Rendezvous").
 
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-ra.acq.litmus >/dev/null 2>&1
   $ mkdir hip
