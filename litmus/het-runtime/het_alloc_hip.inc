@@ -1,24 +1,21 @@
-/* Shared litmus vars + barrier use fine-grained coherent memory: hipMallocManaged
-   is fine-grained by default [HipRuntimeApi "hipMemAdviseSetCoarseGrain"], the
-   only coherence mode usable for system-scope CPU<->GPU synchronisation while the
-   kernel is live.  Which allocator runs decides what property the harness tests,
-   so this is correctness rather than tuning
-   (hetlitmus/docs/00-environment-design.md sec 3.2).  MI300A's unified HBM pool
-   needs no page migration, so no dispatch is required: this render implements
-   exactly ONE mode, refuses every other spelling of HET_ALLOC rather than
-   substituting for it, and frees with the matching hipFree.  The read buffers are
-   device memory (hipMalloc), off the coherent race path. */
+/* Shared litmus vars + barrier: fine-grained hipMallocManaged, the default
+   [HipRuntimeApi "hipMemAdviseSetCoarseGrain"] and the one coherence mode usable
+   for system-scope CPU<->GPU synchronisation while the kernel is live.  Which
+   allocator runs decides what property the harness tests, so it is correctness,
+   not tuning (hetlitmus/docs/00-environment-design.md sec 3.2).  This render
+   implements ONE mode and refuses every other spelling of HET_ALLOC rather than
+   substituting for it; the read buffers are device memory (hipMalloc). */
 #define HET_HIP_ALLOC_MANAGED 1
 static int _het_hip_attr(hipDeviceAttribute_t _a){
   int _v = 0;
   (void)hipDeviceGetAttribute(&_v, _a, 0);
   return _v;
 }
-/* APU (MI300A) vs discrete (MI300X): hipDeviceAttributeIntegrated is the only
-   runtime query that separates them, since both report gfx942 [HipRuntimeApi
-   "hipDeviceAttributeIntegrated"].  The APU's CCD and XCD chiplets share one HBM
-   pool; a discrete part is reached over a host interconnect, so a discrete-part
-   sighting is NOT an MI300A result.  The class is stamped into the banner. */
+/* APU (MI300A) vs discrete (MI300X): both report gfx942, and only
+   hipDeviceAttributeIntegrated separates them [HipRuntimeApi
+   "hipDeviceAttributeIntegrated"].  A discrete part sits behind a host
+   interconnect, so its sighting is NOT an MI300A result; the class is stamped
+   into the banner. */
 static const char* _het_amd_part_class(int _integrated){
   return _integrated ? "APU(integrated)" : "DISCRETE(not-integrated)";
 }
@@ -38,80 +35,68 @@ static int _het_alloc_mode(void){
   } else {
     fprintf(stderr,
             "HetLitmus FATAL: HET_ALLOC=\"%s\" is not a shared-memory mode of the "
-            "HIP render, which implements ONE mode, fine-grained "
-            "hipMallocManaged: use auto (or unset) or managed.\n",
+            "HIP render: use auto or managed.\n",
             _v);
     exit(2);
   }
-  /* The banner precedes the guards on purpose: a fatal below is actionable only
-     if the attributes that caused it are already in the log. */
+  /* Banner before guards: a fatal below is readable only with its attributes logged. */
   printf("HetLitmus: shared-mem mode=managed (HET_ALLOC=%s amd_part_class=%s "
          "integrated=%d managedMemory=%d concurrentManagedAccess=%d "
          "pageableMemoryAccess=%d)\n",
          (_v != NULL && *_v != '\0') ? _v : "unset",
          _het_amd_part_class(_integrated), _integrated, _managed, _cma, _pg);
   fflush(stdout);
-  /* hipMallocManaged degrades silently: without HMM it behaves as hipMallocHost
-     [HipRuntimeApi "hipMallocManaged"], which is pinned host memory off the
-     coherent path, so the harness would keep running and stop testing the very
-     thing under test.  Fatal, never a warning. */
+  /* Without HMM hipMallocManaged silently becomes hipMallocHost, pinned host
+     memory off the coherent path [HipRuntimeApi "hipMallocManaged"]: fatal,
+     never a warning. */
   if (!_managed) {
     fprintf(stderr,
-            "HetLitmus FATAL: this device reports hipDeviceAttributeManagedMemory=0, "
-            "so hipMallocManaged falls back to hipMallocHost (pinned host memory) "
-            "instead of fine-grained managed memory: the shared vars and the "
-            "rendezvous barrier would sit off the coherent path.\n");
+            "HetLitmus FATAL: hipDeviceAttributeManagedMemory=0: hipMallocManaged "
+            "would fall back to pinned host memory, off the coherent path.\n");
     exit(2);
   }
-  /* The precondition the CUDA render enforces too: every het test has the CPU
-     touching the shared allocation while the kernel is live. */
+  /* Every het test has the CPU touching the shared allocation while the kernel
+     is live. */
   if (!_cma) {
     fprintf(stderr,
-            "HetLitmus FATAL: this device reports "
-            "hipDeviceAttributeConcurrentManagedAccess=0: the CPU may not touch a "
-            "managed allocation while the kernel is live, and a system-scope atomic "
-            "on it is not atomic.\n");
+            "HetLitmus FATAL: hipDeviceAttributeConcurrentManagedAccess=0: the CPU "
+            "may not touch a managed allocation while the kernel is live.\n");
     exit(2);
   }
-  /* Not fatal: a discrete part is a valid bring-up target.  Announced on stderr
-     and stamped in the banner, so no discrete-part histogram reads as an APU
-     result. */
+  /* Not fatal: a discrete part is a valid bring-up target, announced and stamped
+     so its histogram never reads as an APU result. */
   if (!_integrated) {
     fprintf(stderr,
-            "HetLitmus WARNING: hipDeviceAttributeIntegrated=0 -- a discrete AMD "
-            "GPU, not an integrated APU: machinery bring-up, not an "
-            "integrated-APU result.\n");
+            "HetLitmus WARNING: hipDeviceAttributeIntegrated=0: a discrete AMD GPU, "
+            "so this is machinery bring-up, not an integrated-APU result.\n");
   }
   return _mode;
 }
 static void gd_alloc_shared(void** _pp, size_t _bytes){
   (void)_het_alloc_mode();               /* resolve + guard once, before the first alloc */
-  *_pp = NULL;   /* the check below must not read the caller's uninitialised pointer */
+  *_pp = NULL;   /* never read the caller's uninitialised pointer */
   hipError_t _e = hipMallocManaged(_pp, _bytes);   /* fine-grained by default */
   if (_e != hipSuccess || *_pp == NULL) {
     fprintf(stderr,
-            "HetLitmus FATAL: hipMallocManaged of %llu bytes failed (%s) -- the "
-            "shared vars and the rendezvous barrier have no fine-grained memory "
-            "to test on.\n",
+            "HetLitmus FATAL: hipMallocManaged of %llu bytes for the shared vars "
+            "failed (%s).\n",
             (unsigned long long)_bytes, hipGetErrorString(_e));
     exit(2);
   }
 }
 static void gd_free_shared(void* _p){
-  /* Cached mode, NOT a re-query: one mode here, but the free stays keyed on the
-     resolver so a second mode cannot leave a mismatched free behind. */
+  /* Keyed on the cached mode, so a second mode could not leave a mismatched free. */
   (void)_het_alloc_mode();
   (void)hipFree(_p);
 }
-/* Device memory the harness keeps to itself (read buffers, scratchpad, tally):
-   a NULL here would reach the launch, so a refused allocation ends the run. */
+/* The harness's own device memory (read buffers, scratchpad, tally): a NULL
+   would reach the launch, so a refused allocation ends the run. */
 static void gd_alloc_dev(void** _pp, size_t _bytes, const char* _what){
   *_pp = NULL;
   hipError_t _e = hipMalloc(_pp, _bytes);
   if (_e != hipSuccess || *_pp == NULL) {
     fprintf(stderr,
-            "HetLitmus FATAL: hipMalloc of %llu bytes for %s failed (%s) -- "
-            "the harness has no device memory for it.\n",
+            "HetLitmus FATAL: hipMalloc of %llu bytes for %s failed (%s).\n",
             (unsigned long long)_bytes, _what, hipGetErrorString(_e));
     exit(2);
   }

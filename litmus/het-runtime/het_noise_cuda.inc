@@ -1,10 +1,8 @@
 /* The noise buffer -- a fourth object class, disjoint from the shared test vars
    and barrier (gd_alloc_shared), the GPU stress scratchpad (cudaMalloc) and the
    CPU stress scratchpad (host malloc).  One system buffer, stream-read by BOTH
-   halves: a page has one home, so at every moment one reader is remote
-   (hetlitmus/docs/00-environment-design.md sec 3.6).  Returns 0, or -1 =
-   refused: without pageable-memory access the GPU cannot read a system buffer,
-   and a stream only the CPU reads crosses nothing. */
+   halves (hetlitmus/docs/00-environment-design.md sec 3.6).  Returns 0, or -1 =
+   refused: without pageable-memory access the GPU cannot read a system buffer. */
 static int gd_alloc_noise(void** _pp, size_t _bytes){
   *_pp = NULL;
   if (!_shared_pageable()) {

@@ -74,7 +74,7 @@ typedef struct het_obs_record {
   uint32_t gpu_noise_blocks, gpu_noise_rounds;
   uint32_t cpu_stress_threads, cpu_aff_failures;
   /* What the run realised, not what it asked for: a noise working set below the
-     last-level cache is served from cache and crosses nothing (HET_LLC_MB,
+     last-level cache is served from cache and stresses nothing (HET_LLC_MB,
      het_cpu_stress.h). */
   uint32_t noise_ws_mb;
   uint32_t stress_requested;    /* HET_REQ_* bitmask -- see above */

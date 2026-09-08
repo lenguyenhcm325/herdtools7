@@ -71,7 +71,7 @@ extern "C" {
 #ifndef HET_NOISE_MB
 #define HET_NOISE_MB 8192         /* the noise buffer, matching [Fusco24 sec III-C]'s
                                      8 GB.  It must EXCEED the last-level cache on
-                                     the path or the reads hit cache and cross
+                                     the path or the reads hit cache and stress
                                      nothing -- see HET_LLC_MB.                 */
 #endif
 #ifndef HET_CPU_NOISE_THREADS
@@ -95,7 +95,7 @@ extern "C" {
 #endif
 
 /* The last-level cache the noise buffer must EXCEED: one that fits in it is
-   served from cache and crosses nothing, an L2 caching peer HBM included
+   served from cache and stresses nothing, an L2 caching peer HBM included
    [Fusco24 sec III-E.1].  The figure is per target and the build supplies it
    (hetlitmus/docs/het-emission.md "The pair a harness names"); the default is a
    fallback for another part, max(Grace L3 114, Hopper L2 51) [Bagchi26 Table 1]. */
@@ -235,8 +235,7 @@ void    *het_cpu_stress(void *a);  /* pthread body; NOT a pthread dependency    
 void    *het_cpu_noise(void *a);   /* pthread body; the host half of the noise pair*/
 /* First touch, one write per page.  Linux maps every untouched anonymous page to
    one shared read-only zero page, so an unwritten 8 GB buffer streams one cache
-   line and crosses NOTHING while the round counters look healthy.  It also
-   decides the page's first NUMA home on GH200 [Fusco24 Tab. II]. */
+   line and stresses NOTHING while the round counters look healthy. */
 void     het_cpu_first_touch(void *p, size_t bytes);
 /* Host-side; the driver hands it the run's seed, so the permutation is a
    function of that seed (hetlitmus/docs/00-environment-design.md sec 3.3). */

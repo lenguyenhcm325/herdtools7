@@ -191,16 +191,6 @@ Speed and Effectiveness of Memory Consistency Testing.* MICRO 2020, pp. 329–34
 * Abstract, §I: perpetual litmus tests run "without per-iteration synchronization".
 * §VIII: litmus7 "does not have the logging to see cross-iteration interleavings".
 
-## [Schieffer24]
-Gabin Schieffer, Ruimin Shi, Stefano Markidis, Andreas Herten, Jennifer Faj, Ivy Peng.
-*Understanding Data Movement in AMD Multi-GPU Systems with Infinity Fabric.* SC-W '24, pp.
-567–576. DOI 10.1109/SCW63240.2024.00079. Read as arXiv:2410.00801v1 [cs.DC].
-* §II.C: on MI250X GPU-side caching is disabled for coherent memory, so every remote coherent
-  access crosses the interconnect; "on more recent systems, such as AMD MI300A, the no-caching
-  restriction can be lifted".
-* Deviation: the measurements are MI250X's and the MI300A sentence an uncited aside;
-  `het_noise_hip.inc` marks the step to "per-access traffic is not automatic" as an inference.
-
 ## [Wahlgren25]
 Jacob Wahlgren, Gabin Schieffer, Ruimin Shi, Edgar A. Leon, Roger Pearce, Maya B. Gokhale, Ivy
 Peng. *Dissecting CPU-GPU Unified Physical Memory on AMD MI300A APUs.* IISWC 2025, pp.
@@ -209,12 +199,6 @@ Peng. *Dissecting CPU-GPU Unified Physical Memory on AMD MI300A APUs.* IISWC 202
   GPU-first-touched `malloc`, needs all 24 cores; with CPU-first-touched `malloc` (and
   `hipMallocManaged` under XNACK) the peak (about 180 GB/s) is reached at 9 threads and
   falls to 173–176 GB/s with all cores.
-* §4.4 (Fig. 5): CPU and GPU threads incrementing a shared 1K-element array with system-scope
-  atomics — "with 3328 GPU threads or more the relative CPU performance is only between
-  11%–25%", GPU throughput falling only to 79 %.
-* Deviation: the collapse is contention-dependent (the 1M-element array leaves the CPU at or
-  above baseline) and the paper does not attribute it to CCD-to-XCD traffic;
-  `het_noise_hip.inc` marks both steps as inferences.
 
 ## [Srivastava24]
 Sanya Srivastava. *Testing Memory Models of Heterogeneous CPU-GPU Systems.* MSc thesis,

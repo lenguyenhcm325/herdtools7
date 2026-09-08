@@ -230,39 +230,29 @@ pre-stress, the CPU stress threads and the noise still run.
 - **Interconnect stress**, the lever no single-die harness has: two noise readers on one system
   buffer. The device half is `HET_GPU_NOISE_BLOCKS` extra blocks of the persistent grid, the
   host half `HET_CPU_NOISE_THREADS` threads; both stream-read the same `HET_NOISE_MB` buffer,
-  allocated once and first-touched by the CPU, nothing more. A page has one home, so with two
-  readers one reader is remote at every moment; which reader, and so the load level, is not
-  measured. The driver and the kernel may move the pages — a `malloc` page is first-touch
-  placed and migratable ([Fusco24 Tab. II]) — and a move only changes which side crosses. The
-  construction needs both halves. It departs from [Fusco24 §III-C], where each side streams
-  its own 8 GB buffer homed on the other unit's memory and writes to HBM fell to 17 % (Grace)
-  and 65 % (Hopper) of peak; the default `HET_NOISE_MB` is that 8 GB. The host half's threads
-  divide the buffer equally into disjoint sequential slices [Fusco24 §III-B.2]; every thread is
-  one core the CPU stress threads do not get. One Grace thread reads HBM at about 10 GB/s and
-  the curve is flat from about 32 threads at 238 GB/s [Fusco24 Fig. 8], the host half's
-  crossing bandwidth while the buffer sits in GPU memory; a CPU-first-touched `malloc` stream
-  on the MI300A CPU peaks at 9 threads and loses bandwidth beyond it [Wahlgren25 §4.2]. The
-  count is the tune's to set per target (§3.8). GPU-only and CPU-local stress cannot reach the
-  host-device window. Bagchi's campaign stressed per device on both devices [Bagchi26 §4.2],
-  with no link-directed component.
+  allocated once and first-touched by the CPU, nothing more; the construction needs both
+  halves. The mechanism and the default `HET_NOISE_MB` of 8 GB are [Fusco24 §III-C]'s, whose
+  two noise kernels each streamed a buffer of their own. The host half's threads divide the
+  buffer equally into disjoint sequential slices [Fusco24 §III-B.2]; every thread is one core
+  the CPU stress threads do not get. One Grace thread reads HBM at about 10 GB/s and the curve
+  is flat from about 32 threads at 238 GB/s [Fusco24 Fig. 8]; a CPU-first-touched `malloc`
+  stream on the MI300A CPU peaks at 9 threads and loses bandwidth beyond it [Wahlgren25 §4.2].
+  The count is the tune's to set per target (§3.8). GPU-only and CPU-local stress cannot reach
+  the host-device window. Bagchi's campaign stressed per device on both devices
+  [Bagchi26 §4.2], with no link-directed component.
 - **The claim for the lever is bounded.** Noise slows the loop, so there are fewer
   rendezvous per second, and sightings = yield × rate. What is claimed is that the lever is
   additive with per-device stress and specific to the cross-device window — never that it
   beats per-device stress: Fusco measured bandwidth, not weak-behaviour yield.
-- **The noise buffer must exceed the last-level cache on its path** (`HET_LLC_MB`): a remote line
-  resident in Hopper L2 crosses nothing [Fusco24 §III-E.1]. The host half's slices share that
-  cache, so the guard bounds their union; a single slice must still exceed a core's private
-  cache, which the tune's floor of twice `HET_LLC_MB` over at most 32 threads keeps it above
-  on both targets.
+- **The noise buffer must exceed the last-level cache on its path** (`HET_LLC_MB`): a line
+  resident in a last-level cache stresses nothing [Fusco24 §III-E.1]. The host half's slices
+  share that cache, so the guard bounds their union; a single slice must still exceed a core's
+  private cache, which the tune's floor of twice `HET_LLC_MB` over at most 32 threads keeps it
+  above on both targets.
 - **The noise buffer is a system buffer both units can read, or refused.** Where the CUDA
-  render finds no pageable-memory access the GPU cannot read a system buffer, and a stream only
-  the CPU reads crosses nothing, so the buffer is refused rather than run and both halves with
-  it; a run requesting either half is `COLD-INVALID` (`harness-reporting.md` §3).
-- **MI300A: one pool, so contention rather than a crossing.** The APU's HBM is the one memory
-  of both units, so the buffer has one home for both readers and the traffic is contention on
-  the shared coherent pool, measurable on this part as CPU throughput falling to 11–25 % of
-  baseline once thousands of GPU threads share a contended array [Wahlgren25 §4.4]; that this
-  is chiplet-crossing traffic is an inference ([Schieffer24 §II.C]).
+  render finds no pageable-memory access the GPU cannot read a system buffer, so the buffer is
+  refused rather than run and both halves with it; a run requesting either half is
+  `COLD-INVALID` (`harness-reporting.md` §3).
 - **Not ported from litmus7:** launch randomisation (nothing is relaunched; the phase sweep is
   the release jitter, §3.3) and a shared-timebase release (it needs a clock both sides read
   against one epoch; none is used).
@@ -304,10 +294,10 @@ launch-time validity layer upstream has no analogue for.
   `HET_BLOCK_DIM` is drawn even and no narrower than the tree's floor; `HET_GPU_SCRATCH_WORDS`
   is derived, never drawn. `HET_CPU_NOISE_THREADS` draws from {0, 1, 2, 4, 8, 16, 32}, no entry
   above the spare cores: log-spaced like the device half's block set because bandwidth per
-  thread saturates, with the top entry at the plateau of the host half as the crossing reader
-  and past the MI300A `malloc` peak ([Fusco24 Fig. 8], [Wahlgren25 §4.2]). Out of the space:
-  the knobs that fix identity or protocol rather than pressure (reserve cores, affinity, noise
-  words per round, slot stride); the caps and the jitter,
+  thread saturates, with the top entry at the Grace plateau and past the MI300A `malloc` peak
+  ([Fusco24 Fig. 8], [Wahlgren25 §4.2]). Out of the space: the knobs that fix identity or
+  protocol rather than pressure (reserve cores, affinity, noise words per round, slot stride);
+  the caps and the jitter,
   calibrated once per target; and `HET_ALLOC`, which is a condition under test.
 - **Validity, three layers.** Draw-time: a vector asking for more regions than its scratchpad
   holds, more threads than the machine has cores, a noise working set below twice the

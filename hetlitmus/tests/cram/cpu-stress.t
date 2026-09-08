@@ -122,7 +122,7 @@ one subtracted from the stress-thread budget.
   1
 
 The working set is derived from HET_NOISE_MB and guarded against the last-level
-cache: below it the buffer is served from cache and crosses nothing.
+cache: below it the buffer is served from cache and stresses nothing.
   $ grep -c 'uint64_t _noise_words = (uint64_t)HET_NOISE_MB \* 1024ull \* 1024ull / sizeof(uint64_t);' $MP.cu
   1
   $ grep -A1 '#ifndef HET_NOISE_MB' MP-cg-sys-ra.acq/het_cpu_stress.h | grep -c '#define HET_NOISE_MB 8192'
