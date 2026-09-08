@@ -404,10 +404,6 @@ let dump_run_record_stamp identity ch =
        tname) ;
   s "    _rec.N = SIZE_OF_TEST;\n" ;
 
-  (* The GPU stress, the stress threads and the preload are requested where the
-     layout gives them a place to run; the two noise halves are requested by
-     their knobs alone, so a half the allocator refuses reads as dead
-     (hetlitmus/docs/harness-reporting.md sec 3). *)
   s {|    _rec.stress_requested =
         ((HET_GPU_PRE_STRESS_PCT > 0 || HET_GPU_MEM_STRESS_PCT > 0) ? HET_REQ_GPU_STRESS : 0u)
       | ((_nCpuStress > 0) ? HET_REQ_CPU_STRESS : 0u)
