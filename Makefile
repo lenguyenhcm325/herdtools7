@@ -759,12 +759,12 @@ hetlitmus-rdv: hetlitmus-corpus-gen | build
 	python3 hetlitmus/verify/rdvcheck.py
 	@ echo "HetLitmus rendezvous placement + primitive: OK"
 
-### Every field a render writes and every HET_* define it stamps still binds to
-### litmus/het-runtime/*.h (hetlitmus/verify/recfields.py).
-hetlitmus-recfields: hetlitmus-corpus-gen | build
+### Every HET_* define a render stamps or uses still binds to
+### litmus/het-runtime/*.h (hetlitmus/verify/stampcheck.py).
+hetlitmus-stamps: hetlitmus-corpus-gen | build
 	@ echo
-	python3 hetlitmus/verify/recfields.py
-	@ echo "HetLitmus emitter/runtime field + define binding: OK"
+	python3 hetlitmus/verify/stampcheck.py
+	@ echo "HetLitmus emitter stamp binding: OK"
 
 ### An AMD harness builds and links into an ELF carrying real gfx942 code, its
 ### allocator refusals execute under a stub, and the CUDA lane does not regress.
@@ -795,7 +795,7 @@ hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-dup
 hetlitmus-test:: hetlitmus-hipsrc
 hetlitmus-test:: hetlitmus-verdict
-hetlitmus-test:: hetlitmus-recfields
+hetlitmus-test:: hetlitmus-stamps
 hetlitmus-test:: hetlitmus-rdv
 hetlitmus-test:: hetlitmus-stats
 hetlitmus-test:: hetlitmus-probe-hip
@@ -838,7 +838,7 @@ hetlitmus-promote: hetlitmus-corpus-gen | build
 .PHONY: hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-stress-static hetlitmus-cpustress hetlitmus-stats
 .PHONY: hetlitmus-dup hetlitmus-verdict
-.PHONY: hetlitmus-recfields hetlitmus-rdv
+.PHONY: hetlitmus-stamps hetlitmus-rdv
 .PHONY: hetlitmus-hipbuild
 .PHONY: hetlitmus-characterize-hw hetlitmus-probe-hip
 .PHONY: hetlitmus-hipsrc

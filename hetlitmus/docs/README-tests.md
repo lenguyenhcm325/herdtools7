@@ -13,7 +13,7 @@ Toolchain lane, `make hetlitmus-test-toolchain`: needs nvcc, hipcc, clang and gc
 | `hetlitmus-dup` | `verify/dupcheck.py` |
 | `hetlitmus-hipsrc` | `verify/hipsrccheck.py` |
 | `hetlitmus-verdict` | `verify/verdictcheck.py` |
-| `hetlitmus-recfields` | `verify/recfields.py` |
+| `hetlitmus-stamps` | `verify/stampcheck.py` |
 | `hetlitmus-rdv` | `verify/rdvcheck.py` |
 | `hetlitmus-stats` | `verify/statscheck.py` |
 | `hetlitmus-probe-hip` | `verify/runcheck.py` |

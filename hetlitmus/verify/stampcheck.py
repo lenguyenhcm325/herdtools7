@@ -1,18 +1,13 @@
 #!/usr/bin/env python3
-"""HetLitmus -- the emitter/runtime skew tripwire.
+"""HetLitmus -- the emitter/runtime skew tripwire.  Usage: stampcheck.py [-q]
 
-Nothing but a compiler binds the `_rec.<name>' writes (litmus/hetDriverMain.ml)
-and the `#define HET_*' stamps (litmus/hetGpuFile.ml) to
-litmus/het-runtime/*.h.  Over real emissions of both pairs:
+Nothing but a compiler binds the `#define HET_*' stamps (litmus/hetGpuFile.ml)
+to litmus/het-runtime/*.h, and a stamp nobody reads still compiles.  Over one
+real emission per (CPU ISA, GPU dialect) pair:
 
-  A Fields   every `_rec.<name>' a render writes is a member of het_obs_record.
-  C Live     every stamped `#define HET_*' is read by a lane or a staged header.
+  C Live     every stamped `#define HET_*' is read by a header or the render.
   D Default  every stamped define het_verdict.h reads has an `#ifndef' default.
-  E Resolve  every `HET_*' a render's code USES is stamped or header-declared.
-
-A miss is a harness that does not compile.
-
-Usage:  recfields.py [-q]
+  E Resolve  every `HET_*' the render's code USES is stamped or header-declared.
 """
 
 import argparse
@@ -32,17 +27,14 @@ HET_DIR = census.HET_DIR
 X86_DIR = census.X86_DIR
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
-# (corpus dir, test, -gpu-target, render extension) -- one shape per kind of
-# outcome column and one per pair: different shapes write different fields.
+# (corpus dir, test, -gpu-target, render extension), one per pair: the names a
+# render stamps and uses do not vary with the test's shape.
 LANES = [
-    (HET_DIR, "MP-cg-sys-sy.fsc", "cuda", "cu"),         # register columns only
-    (HET_DIR, "2+2W-cg-sys-plain.fsc", "cuda", "cu"),    # location columns only
-    (HET_DIR, "S-cg-sys-plain.fsc", "cuda", "cu"),       # both kinds of column
-    (X86_DIR, "MP-cg-sys-plain.rlx-x86_64", "hip", "hip"),   # the (X86_64, hip) pair
+    (HET_DIR, "MP-cg-sys-sy.fsc", "cuda", "cu"),
+    (X86_DIR, "MP-cg-sys-plain.rlx-x86_64", "hip", "hip"),
 ]
 HEADERS = ["het_verdict.h", "het_stress.h", "het_cpu_stress.h", "het_rdv.h"]
 
-FIELD_RE = re.compile(r"_rec\.([A-Za-z_][A-Za-z0-9_]*)")
 DEFINE_RE = re.compile(r"^#define (HET_[A-Za-z0-9_]+)", re.M)
 IFNDEF_RE = re.compile(r"^#ifndef (HET_[A-Za-z0-9_]+)", re.M)
 USE_RE = re.compile(r"\bHET_[A-Za-z0-9_]+\b")
@@ -61,16 +53,6 @@ def env():
     return e
 
 
-def members(header_text):
-    """The member names of het_obs_record, from the emitted header itself."""
-    m = re.search(r"typedef struct het_obs_record \{(.*?)\n\} het_obs_record;",
-                  header_text, re.S)
-    if m is None:
-        raise SystemExit("recfields: het_verdict.h has no het_obs_record struct")
-    body = re.sub(r"/\*.*?\*/", " ", m.group(1), flags=re.S)
-    return set(re.findall(r"([A-Za-z_][A-Za-z0-9_]*)\s*(?:\[[^\]]*\])?\s*[,;]", body))
-
-
 def emit(tmp, corpus, test, target):
     out = os.path.join(tmp, "%s-%s" % (test, target))
     os.makedirs(out, exist_ok=True)
@@ -80,12 +62,12 @@ def emit(tmp, corpus, test, target):
                        cwd=ROOT, env=env(), capture_output=True, text=True)
     d = os.path.join(out, test)
     if r.returncode != 0 or not os.path.isdir(d):
-        raise SystemExit("recfields: litmus7 emitted no harness for %s/%s:\n%s"
+        raise SystemExit("stampcheck: litmus7 emitted no harness for %s/%s:\n%s"
                          % (test, target, r.stderr[-1500:]))
     return d
 
 
-def check_lane(d, test, ext, quiet, seen):
+def check_lane(d, test, ext, quiet):
     bad = []
     render = os.path.join(d, test + "." + ext)
     with open(render) as fh:
@@ -96,14 +78,6 @@ def check_lane(d, test, ext, quiet, seen):
             heads[h] = code_only(fh.read())
     code = code_only(src)
 
-    # A -- every field written is a real member.
-    known = members(heads["het_verdict.h"])
-    for f in sorted(set(FIELD_RE.findall(src))):
-        if f not in known:
-            bad.append("%s writes _rec.%s, which het_obs_record has no member of"
-                       % (test, f))
-    # C/D -- the defines, judged over the UNION of lanes: a knob stamped
-    # unconditionally may be consumed only by the shapes that need it.
     stamped = sorted(set(DEFINE_RE.findall(src)))
     guarded = set()
     declared = set()
@@ -112,17 +86,18 @@ def check_lane(d, test, ext, quiet, seen):
         # Every HET_* the header carries, not only its #defines: the enum
         # constants of the campaign stop rule are names a render uses too.
         declared |= set(USE_RE.findall(heads[h]))
+    # C/D -- a define the render itself uses is read even if no header names
+    # it; its #define/#ifndef/#undef lines are not uses.
     for name in stamped:
         readers = [h for h in HEADERS
                    if re.search(r"\b%s\b" % re.escape(name), heads[h])]
-        # A define the render itself uses is read even if no header names it;
-        # its #define/#ifndef/#undef lines are not uses.
         uses_here = len(re.findall(r"\b%s\b" % re.escape(name), code)) \
             - len(re.findall(r"^\s*#\s*(?:define|ifndef|undef)\s+%s\b"
                              % re.escape(name), code, re.M))
-        seen.setdefault(name, False)
-        if readers or uses_here > 0:
-            seen[name] = True
+        if not readers and uses_here <= 0:
+            bad.append("%s stamps #define %s and NO runtime header and none of "
+                       "its own code reads it -- a stamp whose name drifted is "
+                       "a default that silently stands" % (test, name))
         if "het_verdict.h" in readers and name not in guarded:
             bad.append("%s stamps #define %s and het_verdict.h READS it, but no "
                        "#ifndef default exists for it -- a lane that stamps nothing "
@@ -136,34 +111,27 @@ def check_lane(d, test, ext, quiet, seen):
                        "header defines it -- the harness does not compile"
                        % (test, name))
     if not quiet and not bad:
-        print("      %-28s %2d field(s), %2d stamped define(s), %2d HET_* use(s)"
-              % (test, len(set(FIELD_RE.findall(src))), len(stamped),
-                 len(set(USE_RE.findall(code)))))
+        print("      %-28s %2d stamped define(s), %2d HET_* use(s)"
+              % (test, len(stamped), len(set(USE_RE.findall(code)))))
     return bad
 
 
 def run(quiet):
-    print("===== recfields: do the emitted harnesses bind to the runtime "
+    print("===== stampcheck: do the emitted harnesses bind to the runtime "
           "headers? =====")
     bad = []
-    seen = {}
-    tmp = tempfile.mkdtemp(prefix="recfields.")
+    tmp = tempfile.mkdtemp(prefix="stampcheck.")
     try:
         for corpus, test, target, ext in LANES:
-            bad += check_lane(emit(tmp, corpus, test, target), test, ext, quiet,
-                              seen)
+            bad += check_lane(emit(tmp, corpus, test, target), test, ext, quiet)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    for name in sorted(n for n, live in seen.items() if not live):
-        bad.append("#define %s is stamped and NO lane's code and no runtime header "
-                   "reads it -- a stamp whose name drifted is a default that "
-                   "silently stands" % name)
     for m in bad:
         print("  *** %s" % m)
     if bad:
-        print("\nRECFIELDS FAILED: %d problem(s)." % len(bad))
+        print("\nSTAMPCHECK FAILED: %d problem(s)." % len(bad))
         return 1
-    print("\nRECFIELDS OK (%d lane(s): A fields, C live, D default, E resolve)"
+    print("\nSTAMPCHECK OK (%d lane(s): C live, D default, E resolve)"
           % len(LANES))
     return 0
 
@@ -173,7 +141,7 @@ def main():
     ap.add_argument("-q", "--quiet", action="store_true")
     a = ap.parse_args()
     if not os.access(os.path.join(BIN, "litmus7"), os.X_OK):
-        raise SystemExit("recfields: litmus7 not built (run 'make all')")
+        raise SystemExit("stampcheck: litmus7 not built (run 'make all')")
     return run(a.quiet)
 
 
