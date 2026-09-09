@@ -3,7 +3,7 @@
 The roster is the Makefile; each gate's contract is the docstring of the script its target runs.
 Base lane, `make hetlitmus-test`: needs the OCaml build, gcc and python3, no GPU compiler and no device.
 A cram miss means a golden no longer matches what `grid.py` computes, what `hetgen7`/`diyone7` generate, or what `litmus7` refuses and emits.
-Toolchain lane, `make hetlitmus-test-toolchain`: needs nvcc, hipcc, clang and gcc, plus a CUDA device for `hetlitmus-stress` and `hetlitmus-characterize-hw`.
+Toolchain lane, `make hetlitmus-test-toolchain`: needs nvcc, hipcc, clang and gcc, plus a CUDA device for `hetlitmus-characterize-hw`.
 `.github/workflows/hetlitmus-ci.yml` runs the deviceless gates of both lanes on every push to `hetlitmus-work`.
 
 | target | script |
@@ -19,7 +19,6 @@ Toolchain lane, `make hetlitmus-test-toolchain`: needs nvcc, hipcc, clang and gc
 | `hetlitmus-faithful` | `verify/tokens.sh all` |
 | `hetlitmus-smoke` | `verify/smoke.sh` |
 | `hetlitmus-stress` | `verify/tokens.sh stress` |
-| `hetlitmus-stress-static` | `verify/tokens.sh stress-static` |
 | `hetlitmus-cpustress` | `verify/tokens.sh cpustress` |
 | `hetlitmus-hipbuild` | `verify/hipbuildcheck.py` |
 | `hetlitmus-characterize-hw` | `verify/runcheck.py --characterize-hw` |

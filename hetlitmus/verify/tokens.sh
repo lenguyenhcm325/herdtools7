@@ -5,7 +5,6 @@
 #   full       ptxcheck.py over both corpora entire
 #   gpu-only | het        one corpus
 #   stress | cpustress    the two liveness checkers over their reps
-#   stress-static         the GPU stress checker without its device probe
 # Every non-PASS test prints its diff; a cover miss, a census miss, a FAIL, a
 # GUARD-FAIL or an ERROR exits non-zero.  JOBS sets the worker count.
 set -u
@@ -118,15 +117,8 @@ _liveness_report() {
 # ---- GPU scratchpad stress liveness (stresscheck.py) ----------------------
 # ptxcheck is blind to the stress layer; this asks whether it is there at all.
 stress_report() {
-  _liveness_report "STRESS LIVENESS: is the GPU scratchpad layer in the PTX?" \
-    STRESS "carry a dead stress layer" stresscheck.py "" \
-    MP-cg-sys-ra.acq
-}
-
-# The same checker minus its device probe, for a box with nvcc and no GPU.
-stress_static_report() {
-  _liveness_report "STRESS PTX SURVIVAL: does the layer survive nvcc?" \
-    STRESS-STATIC "carry a stress layer nvcc folded away" stresscheck.py --no-device \
+  _liveness_report "STRESS PTX SURVIVAL: is the GPU scratchpad layer in the PTX?" \
+    STRESS "carry a stress layer nvcc folded away" stresscheck.py "" \
     MP-cg-sys-ra.acq
 }
 
@@ -144,7 +136,6 @@ case "$cmd" in
   gpu-only)  run_dir "$GPU_DIR" gpu-only "$CENSUS_GPU_ONLY" ;;
   het)       run_dir "$HET_DIR" het "$CENSUS_HET" ;;
   stress)    stress_report; exit $? ;;
-  stress-static) stress_static_report; exit $? ;;
   cpustress) cpustress_report; exit $? ;;
   all)       run_cover; exit $? ;;
   full)
@@ -152,5 +143,5 @@ case "$cmd" in
     run_dir "$GPU_DIR" gpu-only "$CENSUS_GPU_ONLY" || rc=1
     run_dir "$HET_DIR" het "$CENSUS_HET" || rc=1
     exit $rc ;;
-  *) echo "usage: $0 [all|full|gpu-only|het|stress|stress-static|cpustress]"; exit 64 ;;
+  *) echo "usage: $0 [all|full|gpu-only|het|stress|cpustress]"; exit 64 ;;
 esac

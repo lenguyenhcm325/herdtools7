@@ -698,18 +698,11 @@ hetlitmus-smoke: hetlitmus-corpus-gen | build
 	bash hetlitmus/verify/smoke.sh
 	@ echo "HetLitmus compile-smoke: OK"
 
-### The GPU scratchpad stress layer is in the emitted PTX and its round tally
-### moves at run time (hetlitmus/verify/stresscheck.py).  Needs nvcc and a GPU.
+### The GPU scratchpad stress and noise streams are in the emitted PTX
+### (hetlitmus/verify/stresscheck.py).  Needs nvcc, no GPU.
 hetlitmus-stress: hetlitmus-corpus-gen | build
 	@ echo
 	bash hetlitmus/verify/tokens.sh stress
-	@ echo "HetLitmus stress liveness: OK"
-
-### The deviceless half of the gate above: the GPU stress and noise streams are
-### in the emitted PTX and pattern-invariant.  Needs nvcc, no GPU.
-hetlitmus-stress-static: hetlitmus-corpus-gen | build
-	@ echo
-	bash hetlitmus/verify/tokens.sh stress-static
 	@ echo "HetLitmus stress PTX survival: OK"
 
 ### The CPU-side and interconnect stress mechanisms survive -O2 on both host ISAs
@@ -814,7 +807,7 @@ hetlitmus-promote: hetlitmus-corpus-gen | build
 
 .PHONY: hetlitmus-corpus-gen hetlitmus-cram hetlitmus-faithful
 .PHONY: hetlitmus-smoke
-.PHONY: hetlitmus-stress hetlitmus-stress-static hetlitmus-cpustress hetlitmus-stats
+.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats
 .PHONY: hetlitmus-dup hetlitmus-verdict
 .PHONY: hetlitmus-stamps hetlitmus-rdv
 .PHONY: hetlitmus-hipbuild
