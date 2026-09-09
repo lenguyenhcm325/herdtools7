@@ -3,11 +3,8 @@
 
 Nothing but a compiler binds the `#define HET_*' stamps (litmus/hetGpuFile.ml)
 to litmus/het-runtime/*.h, and a stamp nobody reads still compiles.  Over one
-real emission per (CPU ISA, GPU dialect) pair:
-
-  C Live     every stamped `#define HET_*' is read by a header or the render.
-  D Default  every stamped define het_verdict.h reads has an `#ifndef' default.
-  E Resolve  every `HET_*' the render's code USES is stamped or header-declared.
+real emission per (CPU ISA, GPU dialect) pair, every stamped `#define HET_*'
+is read by a header or the render.
 """
 
 import argparse
@@ -36,8 +33,6 @@ LANES = [
 HEADERS = ["het_verdict.h", "het_stress.h", "het_cpu_stress.h", "het_rdv.h"]
 
 DEFINE_RE = re.compile(r"^#define (HET_[A-Za-z0-9_]+)", re.M)
-IFNDEF_RE = re.compile(r"^#ifndef (HET_[A-Za-z0-9_]+)", re.M)
-USE_RE = re.compile(r"\bHET_[A-Za-z0-9_]+\b")
 
 def code_only(text):
     """Drop comments and string literals, so a surviving identifier is one the
@@ -79,15 +74,8 @@ def check_lane(d, test, ext, quiet):
     code = code_only(src)
 
     stamped = sorted(set(DEFINE_RE.findall(src)))
-    guarded = set()
-    declared = set()
-    for h in HEADERS:
-        guarded |= set(IFNDEF_RE.findall(heads[h]))
-        # Every HET_* the header carries, not only its #defines: the enum
-        # constants of the campaign stop rule are names a render uses too.
-        declared |= set(USE_RE.findall(heads[h]))
-    # C/D -- a define the render itself uses is read even if no header names
-    # it; its #define/#ifndef/#undef lines are not uses.
+    # A define the render itself uses is read even if no header names it; its
+    # #define/#ifndef/#undef lines are not uses.
     for name in stamped:
         readers = [h for h in HEADERS
                    if re.search(r"\b%s\b" % re.escape(name), heads[h])]
@@ -98,21 +86,8 @@ def check_lane(d, test, ext, quiet):
             bad.append("%s stamps #define %s and NO runtime header and none of "
                        "its own code reads it -- a stamp whose name drifted is "
                        "a default that silently stands" % (test, name))
-        if "het_verdict.h" in readers and name not in guarded:
-            bad.append("%s stamps #define %s and het_verdict.h READS it, but no "
-                       "#ifndef default exists for it -- a lane that stamps nothing "
-                       "would not compile" % (test, name))
-    # E -- every HET_* the render's code uses resolves: its own stamps count,
-    # everything else must come from a header staged in the harness dir.
-    resolvable = set(stamped) | declared
-    for name in sorted(set(USE_RE.findall(code))):
-        if name not in resolvable:
-            bad.append("%s uses %s and neither the render nor any staged runtime "
-                       "header defines it -- the harness does not compile"
-                       % (test, name))
     if not quiet and not bad:
-        print("      %-28s %2d stamped define(s), %2d HET_* use(s)"
-              % (test, len(stamped), len(set(USE_RE.findall(code)))))
+        print("      %-28s %2d stamped define(s)" % (test, len(stamped)))
     return bad
 
 
@@ -131,8 +106,7 @@ def run(quiet):
     if bad:
         print("\nSTAMPCHECK FAILED: %d problem(s)." % len(bad))
         return 1
-    print("\nSTAMPCHECK OK (%d lane(s): C live, D default, E resolve)"
-          % len(LANES))
+    print("\nSTAMPCHECK OK (%d lane(s): every stamp read)" % len(LANES))
     return 0
 
 

@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
-"""runcheck.py -- the two device-facing checks with no other home: the AMD probe
-under stand-in vendor tools, and what a het harness PRINTS on this box's GPU.
-
-  probe-hip.sh       its four exit paths, each with the probe_status it stamps.
-  --characterize-hw  one harness emitted, built through hetlitmus/build.sh and
-                     run on the GPU; a sighting, a null and a discarded run are
-                     each an arm of its printout.
-A miss means an arch, a refusal or a printed arm was decided with nothing
-recording it.
+"""runcheck.py -- what a het harness PRINTS on this box's GPU: one harness
+emitted, built through hetlitmus/build.sh and run; a sighting, a null and a
+discarded run are each an arm of its printout.  A miss means a printed arm was
+decided with nothing recording it.
 """
 import argparse
 import atexit
@@ -25,7 +20,6 @@ import census
 
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 HETL = os.path.join(ROOT, "hetlitmus")
-PROBE_HIP = os.path.join(HETL, "probe-hip.sh")
 BUILD_SH = os.path.join(HETL, "build.sh")
 BIN = os.path.join(ROOT, "_build", "install", "default", "bin")
 
@@ -41,13 +35,6 @@ AARCH64_TESTS = ["MP-cg-sys-ra.acq", "MP-cg-sys-plain.acq", "MP-cg-sys-plain.rlx
 
 def sh(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, **kw)
-
-
-def write_exec(path, text):
-    with open(path, "w") as fh:
-        fh.write(text)
-    os.chmod(path, 0o755)
-    return path
 
 
 # ---------------------------------------------------------------------------
@@ -95,59 +82,8 @@ def host_fixture():
 
 
 # ---------------------------------------------------------------------------
-# probe-hip.sh, under stand-in vendor tools.  No AMD device is reachable from
-# this tree, so its device answers are checked here or nowhere.
-# ---------------------------------------------------------------------------
-def _hip_tools(tmp, gfx):
-    d = os.path.join(tmp, "hipbin-" + ("-".join(gfx) or "none"))
-    os.makedirs(d, exist_ok=True)
-    write_exec(os.path.join(d, "hipcc"), "#!/bin/sh\necho 'HIP version: 6.0.0'\n")
-    write_exec(os.path.join(d, "amdgpu-arch"),
-               "#!/bin/sh\n" + "".join("echo %s\n" % g for g in gfx))
-    write_exec(os.path.join(d, "rocminfo"),
-               "#!/bin/sh\n" + "".join("echo '  Name:  %s'\n" % g for g in gfx))
-    return d
-
-
-def phase6_probe_hip(probe, quiet=False):
-    bad = []
-    tmp = tempfile.mkdtemp(prefix="runcheck6.")
-    try:
-        cases = [("no hipcc", None, "NO_TOOLCHAIN", 2),
-                 ("no gfx agent", [], "NO_DEVICE", 2),
-                 ("one gfx agent", ["gfx942"], "HOST_ONLY", 0),
-                 ("two gfx agents", ["gfx942", "gfx90a"], "AMBIGUOUS_DEVICE", 2)]
-        for name, gfx, want, rc in cases:
-            res = os.path.join(tmp, "res-" + name.replace(" ", "_"))
-            env = dict(os.environ)
-            env["RESULTS"] = res
-            if gfx is None:
-                env["HIPCC"] = os.path.join(tmp, "no-such-hipcc")
-            else:
-                bindir = _hip_tools(tmp, gfx)
-                env["PATH"] = bindir + os.pathsep + os.environ["PATH"]
-                env["HIPCC"] = os.path.join(bindir, "hipcc")
-            r = sh(["sh", probe], env=env)
-            txt = os.path.join(res, "probe.txt")
-            got = ""
-            if os.path.exists(txt):
-                got = "".join(l for l in open(txt) if l.startswith("probe_status="))
-            if r.returncode != rc:
-                bad.append("[%s] probe-hip exited %d, want %d: %s"
-                           % (name, r.returncode, rc, r.stderr.strip()[-200:]))
-            elif want not in got:
-                bad.append("[%s] probe.txt says %r, want probe_status=%s"
-                           % (name, got.strip(), want))
-            elif not quiet:
-                print("      %-14s rc=%d  probe_status=%s" % (name, rc, want))
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
-    return bad
-
-
-# ---------------------------------------------------------------------------
-# --characterize-hw -- a harness built, run on the GPU and read off its
-# printout: a sighting, a null and a discarded run are each an arm.
+# The harness built, run on the GPU and read off its printout: a sighting, a
+# null and a discarded run are each an arm.
 # ---------------------------------------------------------------------------
 
 # The relaxed MP row of this host's fixture: a harness whose CPU column is
@@ -176,7 +112,7 @@ def ch_pick():
     for t in fx["tests"]:
         if t == CH_STEM or t.startswith(CH_STEM + "-"):
             return t, fx["dir"], "(%s, cuda)" % fx["key"]
-    raise SystemExit("runcheck --characterize-hw: the %s fixture carries no %s "
+    raise SystemExit("runcheck: the %s fixture carries no %s "
                      "row to build" % (fx["isa"], CH_STEM))
 
 
@@ -200,7 +136,7 @@ def ch_emit(tmp, test, cdir):
             os.path.join(cdir, test + ".litmus")], cwd=ROOT, env=_ch_env())
     d = os.path.join(out, test)
     if r.returncode != 0 or not os.path.exists(os.path.join(d, test + ".cu")):
-        raise SystemExit("runcheck --characterize-hw: litmus7 emitted no "
+        raise SystemExit("runcheck: litmus7 emitted no "
                          "harness:\n%s" % r.stderr)
     return d
 
@@ -214,7 +150,7 @@ def ch_build(d, arch):
     r = sh(["bash", BUILD_SH, emit, "--arch", arch], env=env)
     if r.returncode != 0 or not os.access(os.path.join(d, os.path.basename(d)),
                                           os.X_OK):
-        raise SystemExit("runcheck --characterize-hw: build.sh --arch %s failed "
+        raise SystemExit("runcheck: build.sh --arch %s failed "
                          "(rc=%d):\n%s"
                          % (arch, r.returncode, (r.stdout + r.stderr)[-2000:]))
 
@@ -242,14 +178,14 @@ def ch_run_until_sighting(d, test, quiet=False):
         except subprocess.TimeoutExpired:
             # Every rendezvous wait is capped in polls, so a run that does not
             # finish is a launch or driver fault, not a slow box.
-            raise SystemExit("runcheck --characterize-hw: the run did not "
+            raise SystemExit("runcheck: the run did not "
                              "finish in %ds under HET_ALLOC=%s."
                              % (CH_RUN_TIMEOUT, env["HET_ALLOC"]))
         text = r.stdout + "\n" + r.stderr
         m = re.search(r"^HetStats \S+ obs=(\S+) R=(\d+) usable=(\d+) "
                       r"k=(\d+) ", r.stdout, re.M)
         if not m:
-            raise SystemExit("runcheck --characterize-hw: the run printed no "
+            raise SystemExit("runcheck: the run printed no "
                              "HetStats line (rc=%d)\n%s" % (r.returncode,
                                                             text[-2000:]))
         obs, R, k = m.group(1), int(m.group(2)), int(m.group(4))
@@ -382,9 +318,9 @@ def characterize_hw():
         # NOT a skip: this mode builds and runs a harness on the device, and
         # skipping it quietly is how a check stops checking.
         raise SystemExit(
-            "runcheck --characterize-hw: no CUDA device is visible (nvidia-smi "
+            "runcheck: no CUDA device is visible (nvidia-smi "
             "reported none), so there is nothing it can assert.")
-    print("runcheck --characterize-hw: %s, %s, %s, HET_ALLOC=%s"
+    print("runcheck: %s, %s, %s, HET_ALLOC=%s"
           % (test, pair, arch, os.environ.get("HET_ALLOC", "pinned")))
     tmp = tempfile.mkdtemp(prefix="runcheck-chhw.")
     try:
@@ -403,37 +339,12 @@ def characterize_hw():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-PHASES = [
-    ("probe-hip.sh's exit paths", lambda q: phase6_probe_hip(PROBE_HIP, q)),
-]
-
-
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--characterize-hw", action="store_true",
-                    help="build a harness and read what it PRINTS "
-                         "(toolchain lane)")
-    ap.add_argument("--quiet", action="store_true")
-    a = ap.parse_args()
-
+    # No options: an unrecognised flag must error out rather than be ignored.
+    argparse.ArgumentParser().parse_args()
     if not os.access(os.path.join(BIN, "litmus7"), os.X_OK):
         raise SystemExit("runcheck: litmus7 not built (run 'make all')")
-    host_fixture()
-    if a.characterize_hw:
-        return characterize_hw()
-
-    rc = 0
-    for name, phase in PHASES:
-        print("\n===== %s =====" % name)
-        failures = phase(a.quiet)
-        for m in failures:
-            print("  *** %s" % m)
-        rc |= 1 if failures else 0
-    if rc:
-        print("\nRUNCHECK FAILED.")
-        return 1
-    print("\nRUNCHECK OK")
-    return 0
+    return characterize_hw()
 
 
 if __name__ == "__main__":

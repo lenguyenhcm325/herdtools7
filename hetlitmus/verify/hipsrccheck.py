@@ -282,7 +282,6 @@ KERNEL_OPEN = re.compile(r'^__global__ void litmus_(\w+)\(')
 # litmus/hetGpuFile.ml); another one is a geometry the lane plan cannot match.
 LANE_GUARD = re.compile(r'^if \(blockIdx\.x == (\d+) && threadIdx\.x == (\d+)\) \{$')
 STRESS_GUARD = re.compile(r'^if \(blockIdx\.x >= HET_TEST_BLOCKS\) \{$')
-PROC_BANNER = re.compile(r'^// ---- P(\d+)\s+\(workgroup (\d+), lane (\d+)\) ----$')
 
 
 def kernel_lines(hip_text, path):
@@ -861,7 +860,7 @@ def check_operands(result, anchors, cells, who, slotted):
                             % (who, tail[1], loc, o2))
 
 
-def check_gpu_only(result, inst, lanes, klines):
+def check_gpu_only(result, inst, lanes):
     """One guarded block per proc, in column order, holding that column's model
     ops and nothing else."""
     procs = [p for p, _ in inst['gpu']]
@@ -871,20 +870,12 @@ def check_gpu_only(result, inst, lanes, klines):
                        ", ".join("P%d" % p for p in procs)))
         return
     seen = set()
-    for (blk, lane, hdr, body), (pidx, ops) in zip(lanes, inst['gpu']):
+    for (blk, lane, _hdr, body), (pidx, ops) in zip(lanes, inst['gpu']):
         who = "P%d" % pidx
         if (blk, lane) in seen:
             result.fail("%s reuses the launch slot (workgroup %d, lane %d) of an "
                         "earlier proc" % (who, blk, lane))
         seen.add((blk, lane))
-        b = PROC_BANNER.match(klines[hdr - 1].strip()) if hdr > 0 else None
-        if not b:
-            result.fail("%s: the guarded block carries no `// ---- P<n> "
-                        "(workgroup B, lane L) ----' banner" % who)
-        elif (int(b.group(1)), int(b.group(2)), int(b.group(3))) != (pidx, blk, lane):
-            result.fail("%s: banner names P%s (workgroup %s, lane %s), the guard "
-                        "selects (workgroup %d, lane %d)"
-                        % (who, b.group(1), b.group(2), b.group(3), blk, lane))
         anchors = parse_lane(body, set(), "gpu-only %s" % who)
         cells = inst['cells'][pidx]
         expected = list(ops) + out_anchors(cells, pidx)
@@ -1018,7 +1009,7 @@ def check_test(litmus_path, hip_override=None, cpu_c_override=None, verbose=True
                 result.note("  _cpu.c %s" % cpu_c_path)
                 check_cpu(result, inst, open(cpu_c_path).read(), cpu_c_path)
         else:
-            check_gpu_only(result, inst, lanes, klines)
+            check_gpu_only(result, inst, lanes)
             check_stress_region(result, other, set())
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

@@ -15,13 +15,12 @@ Toolchain lane, `make hetlitmus-test-toolchain`: needs nvcc, hipcc, clang and gc
 | `hetlitmus-stamps` | `verify/stampcheck.py` |
 | `hetlitmus-rdv` | `verify/rdvcheck.py` |
 | `hetlitmus-stats` | `verify/statscheck.py` |
-| `hetlitmus-probe-hip` | `verify/runcheck.py` |
 | `hetlitmus-faithful` | `verify/tokens.sh all` |
 | `hetlitmus-smoke` | `verify/smoke.sh` |
 | `hetlitmus-stress` | `verify/tokens.sh stress` |
 | `hetlitmus-cpustress` | `verify/tokens.sh cpustress` |
 | `hetlitmus-hipbuild` | `verify/hipbuildcheck.py` |
-| `hetlitmus-characterize-hw` | `verify/runcheck.py --characterize-hw` |
+| `hetlitmus-characterize-hw` | `verify/runcheck.py` |
 
 ## Constraints
 - Every corpus sweep but `dupcheck.py` asserts the census pinned in `verify/census.py` and mirrored in `verify/census.sh`; a generator change that adds or removes a test moves both.

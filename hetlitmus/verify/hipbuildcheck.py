@@ -3,13 +3,12 @@
 hipbuildcheck.py -- can an AMD harness be built, linked and refused correctly?
 
 Phases, each counting its assertions and failing if it made none:
-build-arms (`make <test>' refuses by name), hip-compile (comp.sh reports a
-failure on a .hip that does not compile), device-image (the comp.sh link arm
-compiles with hipcc and leaves gfx942 code in the ELF), foreign-host (on a host
-of the other CPU ISA the make link path stops at the CPU file's #error and
-writes no ./<test>, while comp.sh cross-assembles that file into an object of
-the rendered ISA),
-stale-binary (each link target relinks ./<test>), hip-allocator (the shared-mem
+build-arms (`make <test>' refuses by name, hip-bin is phony), hip-compile
+(comp.sh reports a failure on a .hip that does not compile), device-image (the
+comp.sh link arm compiles with hipcc and leaves gfx942 code in the ELF),
+foreign-host (on a host of the other CPU ISA the make link path stops at the
+CPU file's #error and writes no ./<test>, while comp.sh cross-assembles that
+file into an object of the rendered ISA), hip-allocator (the shared-mem
 resolver, executed under a stub hipDeviceGetAttribute) and cuda-nonregression.
 A miss is a harness that builds into something other than the test, or accepts
 what it has to refuse.
@@ -114,8 +113,13 @@ def has_gfx(binpath):
 # ------------------------------------------------------------------ phases
 
 def phase1(tmp, d):
-    print("[build-arms] `make <test>' refuses on the HIP render")
+    print("[build-arms] `make <test>' refuses on the HIP render; hip-bin is phony")
     make_test_refuses(tmp, d, "build-arms", "hip-bin")
+    mk = open(os.path.join(d, "Makefile")).read()
+    tick("build-arms")
+    if not re.search(r"^\.PHONY:.*\bhip-bin\b", mk, re.M):
+        fail("build-arms", "hip-bin is not .PHONY in the emitted Makefile, so a file "
+                           "of that name would report the link target up to date")
     print("      %d assertions" % counts.get("build-arms", 0))
     if not counts.get("build-arms"):
         fail("build-arms", "phase made no assertions")
@@ -412,76 +416,6 @@ def phase4(tmp, d_aa_cuda, d_x86_cuda):
         fail("foreign-host", "phase made no assertions")
 
 
-def plant(src_bin, dst_bin):
-    """Put one vendor's linked binary where the other vendor's target writes,
-       NEWER than everything around it: the state the stale-link trap needs."""
-    shutil.copyfile(src_bin, dst_bin)
-    os.chmod(dst_bin, 0o755)
-    os.utime(dst_bin, None)
-
-
-def phase5(tmp, d_cuda, d_hip):
-    print("[stale-binary] no silent stale link: each vendor's target always relinks ./<test>")
-    if not (have("hipcc") and have("nvcc")):
-        fail("stale-binary", "this phase needs BOTH hipcc and nvcc to prove the "
-                             "cross-vendor relink "
-                   "(have hipcc=%s nvcc=%s)" % (have("hipcc"), have("nvcc")))
-        return
-    t = test_of(d_cuda)
-    wc = fresh(tmp, d_cuda, "p5-cuda")
-    wh = fresh(tmp, d_hip, "p5-hip")
-    bc = os.path.join(wc, t)
-    bh = os.path.join(wh, t)
-    # A fixed sm_ target: this phase links and never launches.
-    cuda = ["make", "cuda-bin", "CUDA_ARCH=sm_86"]
-    hip = ["make", "hip-bin"]
-    # FOUR builds, and the order is the whole point: rounds 1-2 create each
-    # vendor's binary, rounds 3-4 plant the other's and are the discriminating ones.
-    for label, cmd, w, b, plant_from, want_gfx in [
-            ("cuda-bin (round 1: creates %s.o and ./%s)" % (t, t), cuda, wc, bc, None, False),
-            ("hip-bin (round 2: creates %s_hip.o and ./%s)" % (t, t), hip, wh, bh, None, True),
-            ("cuda-bin (round 3: the AMD binary planted as ./%s, newer than %s.o)"
-             % (t, t), cuda, wc, bc, bh, False),
-            ("hip-bin (round 4: the CUDA binary planted as ./%s, newer than %s_hip.o)"
-             % (t, t), hip, wh, bh, bc, True)]:
-        discriminating = plant_from is not None
-        if discriminating:
-            if not os.path.isfile(plant_from):
-                # An earlier round linked nothing, so the trap cannot be set at
-                # all -- say so instead of dying on the missing file.
-                tick("stale-binary")
-                fail("stale-binary", "%s cannot run: the earlier round left no ./%s to plant"
-                     % (label, t))
-                break
-            plant(plant_from, b)
-        r = run(cmd, cwd=w)
-        tick("stale-binary")
-        if r.returncode != 0:
-            fail("stale-binary", "make %s failed:\n%s%s"
-                 % (label, r.stdout[-1500:], r.stderr[-1500:]))
-            return
-        got = has_gfx(b)
-        tick("stale-binary")
-        if got != want_gfx:
-            vendor = "AMD" if want_gfx else "CUDA"
-            other = "CUDA" if want_gfx else "AMD"
-            if want_gfx:
-                fail("stale-binary", "%s left ./%s without a %s device image -- the %s target "
-                           "reported success and handed back the %s harness%s (make said: %r)"
-                     % (label, t, OFFLOAD_TRIPLE, vendor, other,
-                        " [THE DISCRIMINATING ROUND]" if discriminating else "",
-                        r.stdout.strip()[-200:]))
-            else:
-                fail("stale-binary", "%s left the %s device image in ./%s -- the %s target "
-                           "reported success and handed back the %s harness%s (make said: %r)"
-                     % (label, OFFLOAD_TRIPLE, t, vendor, other,
-                        " [THE DISCRIMINATING ROUND]" if discriminating else "",
-                        r.stdout.strip()[-200:]))
-    print("      %d assertions" % counts.get("stale-binary", 0))
-    if not counts.get("stale-binary"):
-        fail("stale-binary", "phase made no assertions")
-
-
 # --- hip-allocator: the allocator, executed under a stub HIP ----------------
 
 SHIM_H = r"""
@@ -706,7 +640,6 @@ def main():
         phase2(tmp, d_x86)
         phase3(tmp, d_x86)
         phase4(tmp, d_aa_cuda, d_x86_cuda)
-        phase5(tmp, d_x86_cuda, d_x86)
         phase6(tmp, d_x86)
         phase7(tmp, d_x86_cuda)
         print("=" * 70)

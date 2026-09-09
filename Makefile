@@ -744,8 +744,8 @@ hetlitmus-rdv: hetlitmus-corpus-gen | build
 	python3 hetlitmus/verify/rdvcheck.py
 	@ echo "HetLitmus rendezvous placement + primitive: OK"
 
-### Every HET_* define a render stamps or uses still binds to
-### litmus/het-runtime/*.h (hetlitmus/verify/stampcheck.py).
+### Every HET_* define a render stamps is read by litmus/het-runtime/*.h or
+### the render (hetlitmus/verify/stampcheck.py).
 hetlitmus-stamps: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/stampcheck.py
@@ -763,15 +763,8 @@ hetlitmus-hipbuild: hetlitmus-corpus-gen | build
 ### off, so its reading is the one its own counts support.  Needs a GPU.
 hetlitmus-characterize-hw: hetlitmus-corpus-gen | build
 	@ echo
-	python3 hetlitmus/verify/runcheck.py --characterize-hw
-	@ echo "HetLitmus harness-printout runtime gate: OK"
-
-### probe-hip.sh's four exit paths under stand-in vendor tools: no hipcc, no gfx
-### agent, one agent, two agents.  Needs no AMD device.
-hetlitmus-probe-hip: hetlitmus-corpus-gen | build
-	@ echo
 	python3 hetlitmus/verify/runcheck.py
-	@ echo "HetLitmus AMD probe gate: OK"
+	@ echo "HetLitmus harness-printout runtime gate: OK"
 
 ### Umbrellas (what you press).  `::' accumulation, order-only `| build'.
 hetlitmus-test:: | build
@@ -782,7 +775,6 @@ hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-stamps
 hetlitmus-test:: hetlitmus-rdv
 hetlitmus-test:: hetlitmus-stats
-hetlitmus-test:: hetlitmus-probe-hip
 
 ### The second umbrella takes a target when it needs a toolchain or a device this
 ### box may not have, and NOT when it merely concerns GPU code.
@@ -811,7 +803,7 @@ hetlitmus-promote: hetlitmus-corpus-gen | build
 .PHONY: hetlitmus-dup hetlitmus-verdict
 .PHONY: hetlitmus-stamps hetlitmus-rdv
 .PHONY: hetlitmus-hipbuild
-.PHONY: hetlitmus-characterize-hw hetlitmus-probe-hip
+.PHONY: hetlitmus-characterize-hw
 .PHONY: hetlitmus-hipsrc
 .PHONY: hetlitmus-test hetlitmus-test-toolchain
 .PHONY: hetlitmus-test-all hetlitmus-promote

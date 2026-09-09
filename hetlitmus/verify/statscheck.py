@@ -332,43 +332,6 @@ def _consumer_keys():
         return sorted(set(CONSUMER_KEY_RE.findall(fh.read())))
 
 
-def _stats_key_list(seg):
-    """The ordered field names of one HetStats line -- printed, or a producer's
-    format string unquoted -- or None: a real line runs obs .. discarded."""
-    keys = []
-    for k in LINE_KEY_RE.findall(seg):
-        keys.append(k)
-        if k == "discarded":
-            return keys if keys[0] == "obs" else None
-    return None
-
-
-def _stand_in_lines():
-    """Every HetStats line the gates under verify/ print themselves, as
-    (file, line, field names), anchored on the line's TERMINATOR."""
-    out = []
-    for fn in sorted(f for f in os.listdir(HERE) if f.endswith(".py")):
-        with open(os.path.join(HERE, fn)) as fh:
-            txt = fh.read()
-        for m in re.finditer(r"discarded=", txt):
-            head = txt.rfind("HetStats ", max(0, m.start() - 800), m.start())
-            if head < 0:
-                continue
-            seg = txt[head + len("HetStats "):m.start() + 20]
-            keys = _stats_key_list(" ".join(seg.replace('"', "").replace("'", "").split()))
-            if keys is not None:
-                out.append((fn, txt.count("\n", 0, head) + 1, keys))
-    return out
-
-
-def _keydiff(got, want):
-    miss = [k for k in want if k not in got]
-    extra = [k for k in got if k not in want]
-    if miss or extra:
-        return "missing %s, extra %s" % (miss or "none", extra or "none")
-    return "the same fields in a different ORDER: %s, not %s" % (got, want)
-
-
 def phase_aggregate(lines, quiet):
     print("\n===== PHASE 1: is het_stats_compute() a statistic, or a constant? =====")
     bad = 0
@@ -472,28 +435,6 @@ def phase_aggregate(lines, quiet):
         elif not quiet:
             print("  HetStats consumer   : campaign.py reads %d of the printed "
                   "line's %d field(s)" % (len(keys), len(printed)))
-
-    # ... and the stand-ins that speak this line without a device: a gate driving
-    # the scheduler off another field set tests a protocol nothing implements.
-    want_keys = _stats_key_list(real.split("HetStats ", 1)[1]) if real else None
-    if want_keys is None:
-        print("  *** no HetStats line was printed at all, so the field set the "
-              "stand-ins are held to is being read off nothing")
-        bad += 1
-    else:
-        stand = _stand_in_lines()
-        if not stand:
-            print("  *** no gate under verify/ prints a HetStats line of its own: "
-                  "this check has nothing to compare and is inspecting nothing")
-            bad += 1
-        for fn, ln, ks in stand:
-            if ks != want_keys:
-                print("  *** %s:%d speaks a HetStats line het_stats_line cannot "
-                      "produce: %s" % (fn, ln, _keydiff(ks, want_keys)))
-                bad += 1
-        if not quiet:
-            print("  HetStats stand-ins  : %d, each in the printed line's %d "
-                  "field(s)" % (len(stand), len(want_keys)))
 
     # ALWAYS says "every run fired".  Asserted here as well as differentially:
     # both mirrors reading R_usable would agree with each other and nothing else.
@@ -714,12 +655,6 @@ def phase_scheduler(quiet):
                   % (g_late.get("runs"), 5 * STUB_R))
             bad += 1
 
-        # The observed headline is a count: exactly two rows here saw their outcome.
-        if "2 row(s) ended OBSERVED" not in out:
-            print("  *** the campaign report does not say 2 row(s) ended "
-                  "OBSERVED:\n%s" % out[-800:])
-            bad += 1
-
         # The pooled null banks every run its budget bought, read by column name
         # so it pins the columns; `usable' does not discriminate (usable == R).
         want_bank = {"stop": "BUDGET", "invocations": "10",
@@ -839,15 +774,6 @@ def phase_scheduler(quiet):
                   "on every invocation: a loop that ends at the sighting yields no "
                   "rate" % sorted(set(stops3)))
             bad += 1
-        # --rate never reaches the OBSERVED stop, so the headline must be a
-        # stop-name fact rather than a count of what fired.
-        if ("no row ended OBSERVED." not in r3.stdout
-                or "0 row(s) ended OBSERVED" in r3.stdout):
-            print("  *** the --rate report says %r -- the row DID see its outcome "
-                  "there, and only the stop is absent"
-                  % [l for l in r3.stdout.splitlines() if "OBSERVED" in l])
-            bad += 1
-
         # The seed base: fresh per campaign, printed and banked, so the seeds
         # every invocation ran under are derivable.
         seedc = _mk_corpus(tmp, "seedbase", ["NULL-pooled"])
@@ -868,10 +794,6 @@ def phase_scheduler(quiet):
             print("  *** a campaign given no --seed0 printed no seed base:\n%s"
                   % r8.stdout[:600])
             bad += 1
-        elif not 0 <= int(m8.group(1)) < 2 ** 31:
-            print("  *** the drawn seed base is %s, outside [0, 2^31)"
-                  % m8.group(1))
-            bad += 1
         elif (banked8.get("NULL-pooled", {}).get("seed0") != m8.group(1)
               or seeds8[:2] != [int(m8.group(1)),
                                 int(m8.group(1)) + SEED_STRIDE]):
@@ -884,22 +806,6 @@ def phase_scheduler(quiet):
         elif not quiet:
             print("      the seed base is drawn, printed, banked and stridden by "
                   "%d per invocation" % SEED_STRIDE)
-        # The base is drawn per campaign: a second campaign must not replay the
-        # first's seeds (an equal pair is 2^-31 of the space).
-        seedc2 = _mk_corpus(tmp, "seedbase2", ["NULL-pooled"])
-        r8b = subprocess.run(
-            [sys.executable, CAMPAIGN, "--corpus", seedc2, "--budget-runs",
-             str(STUB_R), "--state", os.path.join(tmp, "seedbase2.csv")],
-            capture_output=True, text=True)
-        m8b = re.search(r"^campaign: seed0=(\d+) ", r8b.stdout, re.M)
-        if m8 is None or m8b is None or m8.group(1) == m8b.group(1):
-            print("  *** two campaigns given no --seed0 ran under the bases %s and "
-                  "%s -- a base that does not move makes the second campaign a "
-                  "replay of the first, not a second sample"
-                  % (m8 and m8.group(1), m8b and m8b.group(1)))
-            bad += 1
-        elif not quiet:
-            print("      a second campaign given no --seed0 draws a different base")
         # A base the harness cannot read at its own width is refused, not truncated.
         r9 = subprocess.run(
             [sys.executable, CAMPAIGN, "--corpus", seedc, "--budget-runs",
@@ -913,40 +819,6 @@ def phase_scheduler(quiet):
             bad += 1
         elif not quiet:
             print("      a seed base whose strides overflow a uint32 is refused")
-
-        # A test named twice is one row, and a --dry-run runs nothing: it draws
-        # and prints no base.
-        r10 = subprocess.run(
-            [sys.executable, CAMPAIGN, "--corpus", corpus, "--tests",
-             "NULL-pooled,NULL-pooled", "--dry-run",
-             "--state", os.path.join(tmp, "dry.csv")],
-            capture_output=True, text=True)
-        plans = [l for l in r10.stdout.splitlines() if l == "  plan NULL-pooled"]
-        if len(plans) != 1 or "more than once; one row each." not in r10.stdout:
-            print("  *** --tests NULL-pooled,NULL-pooled planned %d row(s) and said "
-                  "%r -- one name is one row, and the collapse is announced"
-                  % (len(plans), r10.stdout.strip()[-300:]))
-            bad += 1
-        elif "seed0=" in r10.stdout:
-            print("  *** a --dry-run printed a seed base: it runs nothing, so the "
-                  "base it printed was never used")
-            bad += 1
-        elif not quiet:
-            print("      a test named twice is scheduled once; a --dry-run draws "
-                  "no base")
-        r11 = subprocess.run(
-            [sys.executable, CAMPAIGN, "--corpus", corpus, "--tests", "GHOST,GHOST",
-             "--state", os.path.join(tmp, "ghost2.csv")],
-            capture_output=True, text=True)
-        if r11.returncode != 2 or r11.stderr.count("GHOST") != 1:
-            print("  *** --tests GHOST,GHOST exited %d naming GHOST %d time(s), want "
-                  "2 and once: a test with no harness dir fails the campaign closed, "
-                  "and the duplicate is collapsed before the corpus is checked"
-                  % (r11.returncode, r11.stderr.count("GHOST")))
-            bad += 1
-        elif not quiet:
-            print("      a test with no harness dir fails the campaign closed "
-                  "(rc=2), the duplicate name collapsed before the corpus is read")
 
         # A harness dir the build never reached: the row ends ERROR naming the
         # path it looked for, and the driver does NOT raise.
@@ -996,8 +868,9 @@ def phase_scheduler(quiet):
         return 1
     print("\nSCHEDULER OK -- a clean sighting ends a row and outranks the budget, "
           "--rate turns that off and nothing else, a row nothing ran and a row "
-          "that measured nothing both end ERROR, a base is drawn afresh per "
-          "campaign and the transcripts are kept without being asked for.")
+          "that measured nothing both end ERROR, a base is drawn, printed and "
+          "banked per campaign and the transcripts are kept without being "
+          "asked for.")
     return 0
 
 

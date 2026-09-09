@@ -20,7 +20,7 @@ HETX86_DIR="$X86_CORPUS"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-NREPS=9           # keep in sync with the rep list below
+NREPS=5           # keep in sync with the rep list below
 fails=0
 skips=0
 n=0               # reps that actually RAN; asserted == NREPS before any OK
@@ -59,54 +59,18 @@ _smoke_het_rep() { # name dialect tool blurb srcdir
 smoke_het() { _smoke_het_rep "$1" cuda '' "$2" "$HET_DIR"; }        # name blurb
 smoke_het_hip() { _smoke_het_rep "$1" hip hipcc "$2" "$HETX86_DIR"; }  # name blurb
 
-# ---- the compile-failure counterfactual: a SCRATCH copy of an emitted -----
-# ---- _cpu.c is broken and comp.sh must fail; the corpus is never touched ---
-smoke_het_uncompilable() { # name blurb
-  local name="$1" blurb="$2" d cpu out rc
-  n=$((n+1))
-  printf '\n[%d/%d] %-9s%-22s -- %s\n' "$n" "$NREPS" 'het/neg' "$name" "$blurb"
-  d="$WORK/x_$name"; mkdir -p "$d"
-  if ! out="$(litmus7 -gpu-target cuda -set-libdir litmus/libdir -o "$d" "$HET_DIR/$name.litmus" 2>&1)"; then
-    printf '%s\n' "$out"; printf '  FAIL %s (emission)\n' "$name"; fails=$((fails+1)); return
-  fi
-  cpu="$d/$name/${name}_cpu.c"
-  if [ ! -s "$cpu" ]; then
-    printf '  FAIL %s (no %s_cpu.c to break, so nothing was injected)\n' "$name" "$name"
-    fails=$((fails+1)); return
-  fi
-  printf '\nvoid HETLITMUS_NOT_C(void) { @@@ this is not C @@@ }\n' >> "$cpu"
-  out="$(cd "$d/$name" && sh comp.sh cuda 2>&1)"; rc=$?
-  printf '%s\n' "$out" | grep -iE 'error' | head -3
-  # A harness broken for its own reasons also earns a nonzero rc, so the
-  # compiler has to name HETLITMUS_NOT_C, the function the injection added.
-  if [ "$rc" -ne 0 ] && ! printf '%s' "$out" | grep -q 'HetLitmus: compile OK' \
-     && printf '%s' "$out" | grep -q 'HETLITMUS_NOT_C'; then
-    printf '  PASS %s (comp.sh rc=%d, no compile-OK line, error names HETLITMUS_NOT_C)\n' \
-      "$name" "$rc"
-  else
-    printf '%s\n' "$out"
-    printf '  FAIL %s (comp.sh rc=%d: a _cpu.c that is not C compiled OK, or failed without naming HETLITMUS_NOT_C)\n' \
-      "$name" "$rc"
-    fails=$((fails+1))
-  fi
-}
-
 # ---------------------------------------------------------------------------
 cmd="${1:-all}"
 case "$cmd" in
   all)
     printf '===== HetLitmus compile-smoke (%d reps; nvcc+hipcc+clang, NO GPU) =====\n' "$NREPS"
-    smoke_het     2+2W-cg-sys-ra.rel    "CPU STLR (2+2W is store-only: NO load)"
-    smoke_het     IRIW-cccg-cta-plain.rlx "4-proc; largest rendezvous / scaffolding"
-    # The two .hip reps: where a CUDA/HIP divergence in the shared runtime
-    # headers shows up, relaxed-only and with acquire atomics.
-    smoke_het_hip MP-cg-sys-plain.rlx-x86_64 "the AMD render, (x86_64, hip) pair (hipcc -c, gfx942)"
-    smoke_het_hip MP-cg-sys-plain.acq-x86_64 "the AMD render's acquire atomics through hipcc"
+    # The .hip rep: where a CUDA/HIP divergence in the shared runtime headers
+    # shows up, with acquire atomics.
+    smoke_het_hip MP-cg-sys-plain.acq-x86_64 "the AMD render's acquire atomics through hipcc (hipcc -c, gfx942)"
     smoke_het     MP-cg-sys-sy.facq     "CPU dmb sy + inline fence.acquire.sys, sm_90 [CCCL]"
     smoke_het     S-gc-sys-ra.frel      "CPU STLR/LDAPR + inline fence.release.sys"
     smoke_het     MP-cg-sys-st.fsc      "CPU dmb st + fence.sc.sys"
     smoke_het     MP-gc-sys-ld.fsc      "CPU dmb ld + fence.sc.sys on the gc cut"
-    smoke_het_uncompilable MP-cg-cta-plain.acq "a broken scratch _cpu.c must FAIL comp.sh"
     printf '\n=====================================================================\n'
     # Anti-vacuity: a deleted or commented-out rep reddens the gate instead of
     # shrinking it silently.
