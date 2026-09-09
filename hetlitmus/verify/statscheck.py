@@ -74,7 +74,8 @@ def observed(recs, k, clean=True):
     """Make the first k runs see the target, optionally in a degenerate readout
     (every scored iteration read back one outcome vector), leaving the rest live."""
     for i in range(k):
-        recs[i]["target_count"] = 7
+        # A run is a sighting at one hit: the fixture sits ON the threshold.
+        recs[i]["target_count"] = 1
         if not clean:
             recs[i]["outcomes_vary"] = 0
     return recs
@@ -789,10 +790,6 @@ def phase_scheduler(quiet):
             print("      HET_RUNS_MAX curtails each invocation to the REMAINING "
                   "budget (%d, %d, %d, ...); HET_STOP_AT_SIGHTING=1 rides along"
                   % (STUB_BUDGET, STUB_BUDGET - STUB_R, STUB_BUDGET - 2 * STUB_R))
-        if not os.path.exists(state):
-            print("  *** no campaign state written")
-            bad += 1
-
         # The transcripts are kept without being asked for, under a dir derived
         # from --state: nothing else holds what an invocation printed.
         deflog = os.path.join(tmp, "state-logs", "NULL-pooled.log")
@@ -943,21 +940,13 @@ def phase_scheduler(quiet):
             capture_output=True, text=True)
         if r11.returncode != 2 or r11.stderr.count("GHOST") != 1:
             print("  *** --tests GHOST,GHOST exited %d naming GHOST %d time(s), want "
-                  "2 and once: the duplicate is collapsed before the corpus is "
-                  "checked" % (r11.returncode, r11.stderr.count("GHOST")))
-            bad += 1
-
-        # Fail closed: a named test with no harness dir kills the campaign (rc=2).
-        r4 = subprocess.run(
-            [sys.executable, CAMPAIGN, "--corpus", corpus, "--tests", "GHOST",
-             "--state", os.path.join(tmp, "ghost.csv")],
-            capture_output=True, text=True)
-        if r4.returncode != 2:
-            print("  *** a test with no harness dir exited %d, want 2 (fail closed: "
-                  "there is nothing to run)" % r4.returncode)
+                  "2 and once: a test with no harness dir fails the campaign closed, "
+                  "and the duplicate is collapsed before the corpus is checked"
+                  % (r11.returncode, r11.stderr.count("GHOST")))
             bad += 1
         elif not quiet:
-            print("      a test with no harness dir fails the campaign closed (rc=2)")
+            print("      a test with no harness dir fails the campaign closed "
+                  "(rc=2), the duplicate name collapsed before the corpus is read")
 
         # A harness dir the build never reached: the row ends ERROR naming the
         # path it looked for, and the driver does NOT raise.

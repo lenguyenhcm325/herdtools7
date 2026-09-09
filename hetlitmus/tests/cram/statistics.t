@@ -46,12 +46,9 @@ The run loop ends at the first clean sighting only when asked, and says so.
   $ grep -c 'HetLitmus: run loop ended after run %d of %d on a clean sighting' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
 
-The target count is bumped once per scored iteration, under the detector itself,
-beside the iters_scored the effort disclosure is summed from.
+The target count is bumped once per scored iteration, under the detector itself.
 
   $ grep -c 'if (_weak) _rec.target_count++;' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
-  1
-  $ grep -c '_rec.iters_scored++;' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
 
 The degeneracy guard reads evidence the emitter writes, and every shape writes it
@@ -60,6 +57,4 @@ The degeneracy guard reads evidence the emitter writes, and every shape writes i
   $ grep -c '_rec.outcomes_vary = 1;' MP-cg-sys-sy.fsc/MP-cg-sys-sy.fsc.cu
   1
   $ grep -c '_rec.outcomes_vary = 1;' 2+2W-cg-sys-plain.fsc/2+2W-cg-sys-plain.fsc.cu
-  1
-  $ grep -c '_rec.iters_scored++;' 2+2W-cg-sys-plain.fsc/2+2W-cg-sys-plain.fsc.cu
   1

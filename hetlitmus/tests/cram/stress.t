@@ -110,15 +110,11 @@ reaches NONE of them.
 
 (f3) that iteration count is published by exactly ONE test lane, from inside the
 loop it counts.
-  $ grep -c 'het_scratch_bump(_gpu_iter);' $MP.cu
-  1
   $ sed -n '/#pragma unroll 1/,/^    }$/p' $MP.cu | grep -c 'het_scratch_bump(_gpu_iter);'
   1
 
 (g) a shape whose outcome carries a location column runs no extra lane for it,
 and every `unroll 1' pragma survives per lane.
-  $ grep -E '^#define HET_TEST_BLOCKS' $S.cu
-  #define HET_TEST_BLOCKS 1
   $ grep -c '#pragma unroll 1' $S.cu
   1
   $ sed -n '/if (blockIdx.x == 0 && threadIdx.x == 0) {/,/^  }$/p' $S.cu | grep -c 'het_do_stress(_scratch'

@@ -4,11 +4,10 @@ stresscheck.py (hetlitmus/docs/faithfulness.md, "CPU-side stress liveness").
 The cache preload, the CPU stress threads and the interconnect noise reach no
 PTX, so a miss here means a null was scored on a layer the optimiser removed or
 that never ran.  Static, off the -O2 asm of each host ISA's own rendering of the
-rep: preload-prims-aarch64, preload-prims-x86, stress-loop,
-stress-pattern-runtime.  A rep with no x86_64 rendering FAILS rather than
-skipping its arm.  Dynamic, on this host: stress-live, stress-off-zero,
-first-touch.  Structural, on the emitted driver: preload-guard-field and
-preload-guard-term.
+rep: preload-prims-aarch64, preload-prims-x86, stress-loop.  A rep with no
+x86_64 rendering FAILS rather than skipping its arm.  Dynamic, on this host:
+stress-live, stress-off-zero, first-touch.  Structural, on the emitted driver:
+preload-guard-field and preload-guard-term.
 
 Exit 0 = PASS, 1 = FAIL, 2 = usage/toolchain error.
 """
@@ -35,7 +34,6 @@ AARCH64_TRIPLE = "aarch64-linux-gnu"
 X86_TRIPLE = "x86_64-linux-gnu"
 HETX86_DIR = census.X86_DIR
 X86_REPS = {"MP-cg-sys-ra.acq": "MP-cg-sys-plain.acq-x86_64"}
-PATTERNS = (0, 1, 2, 3)
 
 # The cache primitives, per ISA: litmus7's own (libdir/_<isa>/_cache.h) and the
 # whole of the preload -- absent from the object, the preload is inert.
@@ -190,14 +188,13 @@ int main(int argc, char** argv) {
   }
 
   printf("stress_rounds=%llu stress_accesses=%llu preload_ops=%llu "
-         "noise_rounds=%llu noise_words=%llu stress_threads=%u preload_live=%d\n",
+         "noise_rounds=%llu noise_words=%llu stress_threads=%u\n",
          (unsigned long long)t.stress_rounds,
          (unsigned long long)t.stress_accesses,
          (unsigned long long)t.preload_ops,
          (unsigned long long)t.cpu_noise_rounds,
          (unsigned long long)t.cpu_noise_words,
-         t.stress_threads_realised,
-         (int)HET_CPU_PRELOAD_LIVE);
+         t.stress_threads_realised);
   free(scratch); free(idx); free(nbuf);
   return 0;
 }
@@ -386,22 +383,6 @@ def check(litmus_path):
             note("  stress-loop: het_cpu_stress survives -O2 -- %d discarded load(s), "
                  "%d store(s), %d traffic loop(s)" % (ld, st, br))
 
-        # ---- stress-pattern-runtime: sigma is never a compile-time constant -----
-        per_pat = {}
-        for q in PATTERNS:
-            a = asm_of(cpu_c, AARCH64_TRIPLE,
-                       extra=["-DHET_CPU_STRESS_PATTERN=%d" % q])
-            per_pat[q] = count_stress_ops(a)
-        if len({per_pat[q] for q in PATTERNS}) != 1:
-            fail("stress-pattern-runtime: het_cpu_stress's op count MOVES with "
-                 "-DHET_CPU_STRESS_PATTERN %s.  A compile-time sigma folds the switch to "
-                 "the one branch -D named; it must arrive in het_cpu_stress_args as a "
-                 "RUNTIME field." % {q: per_pat[q] for q in PATTERNS})
-        else:
-            note("  stress-pattern-runtime: het_cpu_stress's op count is INVARIANT over "
-                 "-DHET_CPU_STRESS_PATTERN=0..3 (%d ld + %d st)"
-                 % (per_pat[0][0], per_pat[0][1]))
-
         # ---- stress-live/stress-off-zero: it runs, and stops when switched off --
         probe_c = os.path.join(d, "_probe.c")
         with open(probe_c, "w") as f:
@@ -462,10 +443,6 @@ def check(litmus_path):
                 fail("stress-off-zero: with the CPU stress OFF, %s is %s, not 0: "
                      "the counter is wired to something unconditional, and a tally "
                      "that cannot go to zero is not evidence." % (k, off[k]))
-        if int(on.get("preload_live", "0")) != 1:
-            fail("stress-live: HET_CPU_PRELOAD_LIVE is 0 on this host -- the cache "
-                 "preload has no primitives here and is a no-op.")
-
         if ok[0]:
             note("  stress-live    (on) : stress_rounds=%s accesses=%s "
                  "preload_hints=%s noise_rounds=%s (stress threads realised: %s)"

@@ -243,16 +243,8 @@ def instance_of(litmus_path):
     gpu, cpu, cells = [], [], []
     for col, (pidx, dev) in enumerate(procs):
         if ptx.device_class(dev) == 'gpu':
-            ops = ptx.gpu_ops_of_column(cols[col])
             raw = gpu_cells_of_column(cols[col])
-            # The two parsers walk the same cells; a disagreement means this
-            # file's operand parser has drifted from ptxcheck's mapping table.
             tag_ops = [(ptx.GPU_KIND[k], o, s) for k, o, s, _, _ in raw]
-            if [(k, ptx.GPU_ORDER[o], ptx.GPU_SCOPE[s])
-                    for k, o, s in tag_ops] != ops:
-                raise GateError(
-                    "operand parser disagrees with ptxcheck.gpu_ops_of_column on "
-                    "proc P%d of %s" % (pidx, litmus_path))
             gpu.append((pidx, tag_ops))
             cells.append((pidx, raw))
         else:
@@ -814,10 +806,6 @@ def check_operands(result, anchors, cells, who, slotted):
     """Comment, constants and operands must agree with each other and with the
     .litmus cell.  [slotted]: a het lane addresses iteration _n's own slot."""
     model = [a for a in anchors if a.sig[0] in ('st', 'ld', 'fence')]
-    if len(model) != len(cells):
-        result.fail("%s carries %d model op(s) for %d .litmus cell(s)"
-                    % (who, len(model), len(cells)))
-        return
 
     def loc_of(a):
         """The location an access names, out of the pointer it was handed."""

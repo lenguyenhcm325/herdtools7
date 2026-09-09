@@ -93,19 +93,24 @@ run_cover() {
 }
 
 # ---- $1 banner, $2 tag, $3 what-failed, $4 checker, $5 flags, $6.. reps ----
-# The OK line names the reps that ran, so a shrunken rep list is visible.
+# The report fails when no rep ran; the OK line names the reps that did.
 _liveness_report() {
   local banner="$1" tag="$2" what="$3" checker="$4" flags="$5"
   shift 5
-  local reps="$*" fails=0 rc t out
+  local reps="$*" fails=0 ran=0 rc t out
   printf '\n===== %s =====\n' "$banner"
   for t in $reps; do
     printf '\n-- %s --\n' "$t"
     out="$(python3 "$REPO/hetlitmus/verify/$checker" $flags "$HET_DIR/$t.litmus" 2>&1)"; rc=$?
     printf '%s\n' "$out"
+    ran=$((ran+1))
     [ "$rc" -ne 0 ] && fails=$((fails+1))
   done
   printf '\n'
+  if [ "$ran" -eq 0 ]; then
+    echo "$tag FAILED: no rep ran"
+    return 1
+  fi
   if [ "$fails" -eq 0 ]; then
     echo "$tag OK (${reps// /, })"
     return 0

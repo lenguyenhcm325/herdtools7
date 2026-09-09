@@ -33,18 +33,29 @@ VERDICTS = ["OBSERVED", "NOT-OBSERVED", "COLD-INVALID"]
 # The dq/cv bits are read off the header's own #defines rather than listed here, so
 # a bit added there arrives with no case setting it.  A retired bit carries none.
 FLAG_DEFINE_RE = re.compile(r"^#define (HET_(?:DQ|CV)_\w+)\s+\(1u << (\d+)\)", re.M)
+# Every flag the header declares, whatever its bit expression looks like: a bit
+# spelled another way must NOT drop silently out of the coverage assertion.
+FLAG_NAME_RE = re.compile(r"^#define (HET_(?:DQ|CV)_\w+)", re.M)
 # The build defines the emitter stamps for one (CPU ISA x GPU dialect) pair.
 PAIR_DEFINE_RE = re.compile(r"^#define HET_PAIR_NAME\b.*$", re.M)
 
 
+def _kind(name):
+    return "DISQUALIFIER" if name.startswith("HET_DQ_") else "CAVEAT"
+
+
 def flag_bits(header):
-    """{"DISQUALIFIER": {name: bit}, "CAVEAT": {...}} off the header."""
+    """({"DISQUALIFIER": {name: bit}, "CAVEAT": {...}}, {kind: flags declared}):
+    the count reads every flag #define, the map only bits spelled (1u << n)."""
     out = {"DISQUALIFIER": {}, "CAVEAT": {}}
+    declared = {"DISQUALIFIER": 0, "CAVEAT": 0}
     with open(header) as fh:
-        for name, bit in FLAG_DEFINE_RE.findall(fh.read()):
-            out["DISQUALIFIER" if name.startswith("HET_DQ_")
-                else "CAVEAT"][name] = int(bit)
-    return out
+        text = fh.read()
+    for name, bit in FLAG_DEFINE_RE.findall(text):
+        out[_kind(name)][name] = int(bit)
+    for name in FLAG_NAME_RE.findall(text):
+        declared[_kind(name)] += 1
+    return out, declared
 
 
 # The frames the printout is read in, as (tag, HET_PAIR_NAME): the header's own
@@ -212,6 +223,26 @@ FLAG_SENTENCES = [
      "a discard count priced against a wait nobody measured"),
     ("cv", "ONE_OUTCOME", "read back the SAME outcome vector",
      "a constant readout reported as a measurement"),
+    ("cv", "AFF_FAILED", "sched_setaffinity call(s) FAILED",
+     "threads the scheduler placed reported as pinned"),
+    ("cv", "UNSTRESSED",
+     "no stress was requested; an unstressed null is weak evidence",
+     "an unstressed null reported as a stressed run's"),
+    ("dq", "STRESS_TRUNCATED", "stress STOPPED while tested lanes were still "
+     "running", "a stress window that ended early reported as a stressed run"),
+    ("dq", "CPU_STRESS_DEAD",
+     "the CPU stress threads were requested but completed ZERO rounds",
+     "an inert CPU stress layer reported as stress"),
+    ("dq", "CPU_PRELOAD_DEAD",
+     "the cache preload was requested but issued ZERO hints",
+     "a preload nobody issued reported as a warmed cache"),
+    ("dq", "CPU_NOISE_DEAD", "the host half of the host-device interconnect noise",
+     "an idle host half reported as interconnect noise"),
+    ("dq", "GPU_NOISE_DEAD",
+     "the device half of the host-device interconnect noise",
+     "an idle device half reported as interconnect noise"),
+    ("dq", "GPU_STRESS_DEAD", "the GPU scratchpad stress",
+     "a scratchpad layer nobody ran reported as stress"),
 ]
 
 C_MAIN = r"""
@@ -381,9 +412,15 @@ def run_rule(header, text, quiet):
         print("  *** UNREACHABLE OUTCOME: %s" % ", ".join(missing_v))
         bad += 1
 
-    defs = flag_bits(header)
+    defs, declared = flag_bits(header)
     for kind, word in (("DISQUALIFIER", seen_dq), ("CAVEAT", seen_cv)):
         names = defs[kind]
+        if len(names) != declared[kind]:
+            print("  *** the header declares %d %s flag(s) and this gate reads %d "
+                  "of them: %d is spelled in a form this gate does not read, so it "
+                  "is missing from the assertion below"
+                  % (declared[kind], kind, len(names), declared[kind] - len(names)))
+            bad += 1
         if not names:
             print("  *** the header declares no %s bit at all -- this coverage "
                   "assertion read NOTHING" % kind)

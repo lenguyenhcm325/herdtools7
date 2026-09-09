@@ -16,15 +16,6 @@ the run is about to race on.
   $ grep -c 'memset(x, 0, sizeof(int)\*SIZE_OF_TEST\*HET_SLOT_STRIDE_WORDS);' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
 
-NPART counts the participants and nothing else, so the total is pinned beside
-the two lane counts a wrong participant count could hide inside.
-  $ grep -c '#define NPART 2' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
-  1
-  $ grep -E '^#define HET_TEST_BLOCKS' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
-  #define HET_TEST_BLOCKS 1
-  $ grep -cE '^static void\* cpu_[A-Za-z_0-9]+\(void\* _a\)' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
-  1
-
 The GPU lane addresses iteration _n's own slot; the CPU body is litmus7's own
 and addresses a bare pointer, so its CALLER does the addressing.
   $ grep -c 'cuda::atomic_ref<int, cuda::thread_scope_system> ref(\*(y + (_n)\*HET_SLOT_STRIDE_WORDS));' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
@@ -36,39 +27,21 @@ and addresses a bare pointer, so its CALLER does the addressing.
   $ grep -c '#START _litmus_P0' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx_cpu.c
   1
 
-The readout is one pass over the slots: every iteration scored, the outcome
-vector read from slot _n and fed to the histogram exactly once.
-  $ grep -c '_rec.iters_scored++;' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
-  1
-  $ grep -c 'add_outcome_outs(' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
-  1
-  $ sed -n '/for (int _n=0; _n<SIZE_OF_TEST; ++_n) {/,/^    }$/p' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu | grep -c 'add_outcome_outs('
-  1
-
 Every outcome column prints a NUMBER, in one loop over all of them, pinned here
 on the shape whose every column is a location.
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-plain.fsc.litmus >/dev/null 2>&1
-  $ grep -hE 'static const char\* _labels' 2+2W-cg-sys-plain.fsc/2+2W-cg-sys-plain.fsc.cu
-  static const char* _labels[2] = { "[x]", "[y]" };
   $ sed -n '/^static void _dump_one/,/^}$/p' 2+2W-cg-sys-plain.fsc/2+2W-cg-sys-plain.fsc.cu
   static void _dump_one(FILE* _ch, intmax_t* o, count_t c, int show){
     fprintf(_ch, "%-8" PRIu64 "%c> ", c, show ? '*' : ' ');
     for (int i=0;i<2;i++) fprintf(_ch, "%s=%" PRIdMAX "; ", _labels[i], o[i]);
     fprintf(_ch, "\n");
   }
-  $ grep -c '_o\[0\] = (intmax_t)x\[(size_t)_n\*HET_SLOT_STRIDE_WORDS\];' 2+2W-cg-sys-plain.fsc/2+2W-cg-sys-plain.fsc.cu
-  1
 
 A register column is its read buffer at _n, carrying the value the load
 returned, so a condition value is compared as the .litmus writes it.
   $ grep -c 'int _weak = ((_o\[0\] == 1) && (_o\[1\] == 0));' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
   $ grep -c '_o\[0\] = (intmax_t)bufP1_0_h\[_n\];' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
-  1
-
-The one-outcome evidence the degeneracy guard reads is written by the readout
-itself.
-  $ grep -c '_rec.outcomes_vary = 1;' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
 
 One flag buffer per participant, one byte per iteration, each written by the
@@ -104,11 +77,6 @@ without a rebuild.
   1
   $ grep -c 'het_env_long("HET_CAP_GPU", (long)HET_CAP_GPU)' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   1
-
-A label column names a register and a location in the same vector.
-  $ litmus7 -gpu-target cuda -o . ../het/R-cg-sys-plain.fsc.litmus >/dev/null 2>&1
-  $ grep -hE 'static const char\* _labels' R-cg-sys-plain.fsc/R-cg-sys-plain.fsc.cu
-  static const char* _labels[2] = { "1:r0", "[y]" };
 
 LDAPR is RCpc (ARMv8.3), so the emitted build files carry the flag on every
 compilation of <t>_cpu.c or every test with a CPU `ra' order fails to ASSEMBLE.

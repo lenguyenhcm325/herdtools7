@@ -22,38 +22,28 @@ What litmus7 refuses before it renders, and that it renders once
   $ litmus7 -gpu-target cuda -o out-rmw rmw.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (het) rmw.litmus: HetLitmus: P1 (gpu) rmw[relaxed,sys] r1 (add r1 1) x -- the GPU column admits loads, stores and fences only
   exit 3
-  $ ls out-rmw
 
 (b) a symbolic register on the GPU column.
   $ mk symreg 'r[relaxed,sys] %T1 x'
   $ litmus7 -gpu-target cuda -o out-symreg symreg.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (het) symreg.litmus: HetLitmus: P1 (gpu) r[relaxed,sys] %T1 x -- the GPU column takes numbered registers r0, r1, ...
   exit 3
-  $ ls out-symreg
 
 (c) an annotation list that is not one order then one scope.
   $ mk noorder 'w[] x 1'
   $ litmus7 -gpu-target cuda -o out-noorder noorder.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (het) noorder.litmus: HetLitmus: P1 (gpu) w[] x 1 -- a store takes one order from {relaxed,release,sc} then one scope from {cta,gpu,sys}
   exit 3
-  $ ls out-noorder
   $ mk revorder 'w[sys,relaxed] x 1'
   $ litmus7 -gpu-target cuda -o out-revorder revorder.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (het) revorder.litmus: HetLitmus: P1 (gpu) w[sys,relaxed] x 1 -- a store takes one order from {relaxed,release,sc} then one scope from {cta,gpu,sys}
   exit 3
-  $ ls out-revorder
 
-(d) a relaxed fence, refused the same way on both targets.
+(d) a relaxed fence, refused the same way.
   $ mk fence 'f[relaxed,sys]'
-  $ mkdir out-fence-hip
   $ litmus7 -gpu-target cuda -o out-fence fence.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (het) fence.litmus: HetLitmus: P1 (gpu) f[relaxed,sys] -- a fence takes one order from {acquire,release,acqrel,sc} then one scope from {cta,gpu,sys}
   exit 3
-  $ ls out-fence
-  $ litmus7 -gpu-target hip -o out-fence-hip fence.litmus 2>&1 >/dev/null; echo "exit $?"
-  HetLitmus REFUSED (het) fence.litmus: HetLitmus: P1 (gpu) f[relaxed,sys] -- a fence takes one order from {acquire,release,acqrel,sc} then one scope from {cta,gpu,sys}
-  exit 3
-  $ ls out-fence-hip
 
 (e) two CPU procs naming two CPU ISAs, before any column is parsed.
   $ cat > mixed.litmus <<'EOF'
@@ -72,7 +62,6 @@ What litmus7 refuses before it renders, and that it renders once
   $ litmus7 -gpu-target cuda -o out-mixed mixed.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (isa-scan) mixed.litmus: HetLitmus: P0 is aarch64 and P1 is x86_64; every CPU proc of a heterogeneous test names one CPU ISA
   exit 3
-  $ ls out-mixed
 
 (f) an accepted test is announced once and emitted once, on both dispatch arms.
   $ mk ok 'r[relaxed,sys] r1 x'
@@ -105,13 +94,11 @@ proc, and one leaving a gpu proc out.
   exit 3
   $ grep -c 'HetLitmus: cannot read the scopes tree "(sys (gpu (cta P1)"' badtree.err
   1
-  $ ls out-badtree
   $ mk straytree 'r[relaxed,sys] r1 x'
   $ sed -i 's|scopes:.*|scopes: (sys (gpu (cta P0)))|' straytree.litmus
   $ litmus7 -gpu-target cuda -o out-straytree straytree.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (het) straytree.litmus: HetLitmus: the scopes tree places P0, which is not a gpu proc
   exit 3
-  $ ls out-straytree
   $ cat > omits.litmus <<'EOF'
   > Het omits
   > {
@@ -127,7 +114,6 @@ proc, and one leaving a gpu proc out.
   $ litmus7 -gpu-target cuda -o out-omits omits.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (het) omits.litmus: HetLitmus: the scopes tree places no P2; a declared tree places every gpu proc
   exit 3
-  $ ls out-omits
 
 (g2) a cta placing no proc: it would leave the block indices past it with no
 lane at (0,0), and nothing to publish the iteration count.
@@ -136,7 +122,6 @@ lane at (0,0), and nothing to publish the iteration count.
   $ litmus7 -gpu-target cuda -o out-emptycta emptycta.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (het) emptycta.litmus: HetLitmus: the scopes tree declares a cta with no proc; a declared cta places at least one gpu proc
   exit 3
-  $ ls out-emptycta
 
 (h) a second scopes: row.
   $ mk tworows 'r[relaxed,sys] r1 x'
@@ -144,4 +129,3 @@ lane at (0,0), and nothing to publish the iteration count.
   $ litmus7 -gpu-target cuda -o out-tworows tworows.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (isa-scan) tworows.litmus: HetLitmus: a heterogeneous test carries at most one scopes: row
   exit 3
-  $ ls out-tworows

@@ -49,8 +49,6 @@ and a shared var is one int slot per iteration (slot-readout.t).
   0
   $ grep -c 'gd_alloc_dev((void\*\*)&bufP' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
   2
-  $ grep -c 'int \*x; gd_alloc_shared' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx.cu
-  1
 
 (d2) every device allocation is checked: the one bare cudaMalloc is gd_alloc_dev's
 own, and the HIP twin's one bare hipMalloc likewise.

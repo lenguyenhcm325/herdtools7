@@ -76,21 +76,23 @@ malloc for the CPU scratchpad, gd_alloc_noise for the noise buffer.
 then spawn the stress threads and the noise, then the test threads and the kernel.
   $ GO=$(grep -n '__atomic_store_n(&_stress_go, 1' $MP.cu | cut -d: -f1)
   $ EN=$(grep -n 'pthread_create(&_sth' $MP.cu | cut -d: -f1)
+  $ NS=$(grep -n 'pthread_create(&_nth' $MP.cu | cut -d: -f1)
   $ TH=$(grep -n ', cpu_thread_' $MP.cu | head -1 | cut -d: -f1)
   $ TZ=$(grep -n ', cpu_thread_' $MP.cu | tail -1 | cut -d: -f1)
   $ LA=$(grep -n 'cudaLaunchCooperativeKernel' $MP.cu | cut -d: -f1)
   $ [ -n "$TH" ] && [ -n "$TZ" ] && echo 'test-thread spawns found'
   test-thread spawns found
-  $ [ "$GO" -lt "$EN" ] && [ "$EN" -lt "$TH" ] && [ "$TZ" -lt "$LA" ] && echo 'go < stress threads < test threads (all) < launch'
-  go < stress threads < test threads (all) < launch
+  $ [ "$GO" -lt "$EN" ] && [ "$EN" -lt "$NS" ] && [ "$NS" -lt "$TH" ] && [ "$TZ" -lt "$LA" ] && echo 'go < stress threads < noise threads < test threads (all) < launch'
+  go < stress threads < noise threads < test threads (all) < launch
 
 and the flag comes down only after the TERMINAL sync, so the stress covers the
 whole tested window and no more.
   $ SY=$(grep -n '_s = cudaDeviceSynchronize' $MP.cu | cut -d: -f1)
   $ OFF=$(grep -n '__atomic_store_n(&_stress_go, 0' $MP.cu | cut -d: -f1)
   $ JN=$(grep -n 'pthread_join(_sth' $MP.cu | cut -d: -f1)
-  $ [ "$SY" -lt "$OFF" ] && [ "$OFF" -lt "$JN" ] && echo 'device sync < lower go < join stress threads'
-  device sync < lower go < join stress threads
+  $ NJ=$(grep -n 'pthread_join(_nth' $MP.cu | cut -d: -f1)
+  $ [ "$SY" -lt "$OFF" ] && [ "$OFF" -lt "$JN" ] && [ "$JN" -lt "$NJ" ] && echo 'device sync < lower go < join stress < join noise'
+  device sync < lower go < join stress < join noise
 
 (f) sigma is read host-side and handed over as a runtime field, never left for
 the compiler to fold.

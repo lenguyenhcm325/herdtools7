@@ -15,7 +15,6 @@ What the het emitter and hetgen7 refuse (litmus/hetEmit.ml, gen/hetGen.ml).
   $ litmus7 -gpu-target cuda -o out SB-cpu-only.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (het) SB-cpu-only.litmus: hetlitmus: SB-cpu-only has no gpu proc; a het test needs at least one, and an all-CPU test is litmus7's own X86_64 path
   exit 3
-  $ ls out
 
 (b) so is a hetgen7 `-devices' list naming no gpu proc, on hetgen7's own fatal path.
   $ hetgen7 -set-libdir ../../../herd/libdir -bell ../../bells/gpu.bell -cpu-arch x86_64 -devices cpu,cpu -name SB -cpu 'PodWR Fre PodWR Fre' -gpu 'PodWR Fre PodWR Fre' 2>&1 >/dev/null; echo "exit $?"

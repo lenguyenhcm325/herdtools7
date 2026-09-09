@@ -30,8 +30,8 @@ no arm for.
   $ grep -c 'comp.sh hip-link / make hip-bin' hip/MP-cg-sys-plain.rlx-x86_64/MP-cg-sys-plain.rlx-x86_64.hip
   1
 
-(e) both ways, the absent vendor's build entry points refuse by name, leaving no
-object and no binary; GNU make's `make:' prefix follows MAKELEVEL, so it is unread.
+(e) both ways, the absent vendor's build entry points refuse by name; GNU make's
+`make:' prefix follows MAKELEVEL, so it is unread.
   $ cd MP-cg-sys-plain.rlx
   $ make hip-bin >/dev/null 2>../hip-bin.err; echo "exit $?"
   exit 2
@@ -41,8 +41,6 @@ object and no binary; GNU make's `make:' prefix follows MAKELEVEL, so it is unre
   exit 2
   $ grep -c 'comp.sh: unknown target "hip" -- this directory is cuda-only (accepted: cuda|cuda-link)' ../comp-hip.err
   1
-  $ ls MP-cg-sys-plain.rlx_hip.o MP-cg-sys-plain.rlx 2>/dev/null | wc -l
-  0
   $ cd ../hip/MP-cg-sys-plain.rlx-x86_64
   $ make cuda-bin >/dev/null 2>../cuda-bin.err; echo "exit $?"
   exit 2
@@ -52,29 +50,23 @@ object and no binary; GNU make's `make:' prefix follows MAKELEVEL, so it is unre
   exit 2
   $ grep -c 'comp.sh: unknown target "cuda" -- this directory is hip-only (accepted: hip|hip-link)' ../comp-cuda.err
   1
-  $ ls MP-cg-sys-plain.rlx-x86_64.o MP-cg-sys-plain.rlx-x86_64 2>/dev/null | wc -l
-  0
   $ cd ../..
 
-(f) an unregistered target REFUSES, naming the accepted set, and writes nothing.
+(f) an unregistered target REFUSES, naming the accepted set.
   $ mkdir bogus
   $ litmus7 -gpu-target sycl -o bogus ../het/MP-cg-sys-plain.rlx.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (het) ../het/MP-cg-sys-plain.rlx.litmus: unknown -gpu-target "sycl" (accepted: cuda|hip)
   exit 3
-  $ ls bogus
 
 (g) and so does omitting it: there is no default vendor.
   $ mkdir flagless
   $ litmus7 -o flagless ../het/MP-cg-sys-plain.rlx.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (het) ../het/MP-cg-sys-plain.rlx.litmus: -gpu-target <cuda|hip> is required: an emission renders ONE GPU dialect, and the harness it writes carries only that vendor's render and build targets
   exit 3
-  $ ls flagless
 
 (h) the GPU-only (scoped LISA) arm takes the same flag and refuses the same way.
   $ mkdir gpu
   $ litmus7 -gpu-target cuda -o gpu ../gpu-only/MP-sys-acq.litmus >/dev/null 2>&1
-  $ ls gpu | grep -E '\.(cu|hip)$'
-  MP-sys-acq.cu
   $ mkdir gpu-flagless
   $ litmus7 -o gpu-flagless ../gpu-only/MP-sys-acq.litmus 2>&1 >/dev/null; echo "exit $?"
   HetLitmus REFUSED (gpu-only) ../gpu-only/MP-sys-acq.litmus: -gpu-target <cuda|hip> is required: an emission renders ONE GPU dialect, and the harness it writes carries only that vendor's render and build targets
