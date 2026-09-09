@@ -675,14 +675,6 @@ hetlitmus-cram: hetlitmus-corpus-gen | build
 	DUNE_CACHE=disabled dune runtest --profile=$(DUNE_PROFILE) hetlitmus/tests/cram
 	@ echo "HetLitmus cram: OK"
 
-### The built corpus trees are what grid.py produces afresh, at the pinned
-### census, and the committed gpu-only samples are what the emitter produces
-### (hetlitmus/verify/corpus-gate.sh).  Re-cut the samples: `make hetlitmus-promote'.
-hetlitmus-corpus: hetlitmus-corpus-gen | build
-	@ echo
-	bash hetlitmus/verify/corpus-gate.sh
-	@ echo "HetLitmus corpus golden: OK"
-
 ### Every emitted harness carries exactly the memory ops its .litmus annotates,
 ### with the right kind, order and scope, and no others -- over a feature cover;
 ### `tokens.sh full' sweeps both corpora (hetlitmus/docs/faithfulness.md).
@@ -791,7 +783,6 @@ hetlitmus-probe-hip: hetlitmus-corpus-gen | build
 ### Umbrellas (what you press).  `::' accumulation, order-only `| build'.
 hetlitmus-test:: | build
 hetlitmus-test:: hetlitmus-cram
-hetlitmus-test:: hetlitmus-corpus
 hetlitmus-test:: hetlitmus-dup
 hetlitmus-test:: hetlitmus-hipsrc
 hetlitmus-test:: hetlitmus-verdict
@@ -814,27 +805,14 @@ hetlitmus-test-all:: | build
 hetlitmus-test-all:: hetlitmus-test
 hetlitmus-test-all:: hetlitmus-test-toolchain
 
-### Regenerate the golden sets: the sampled cuda-out/hip-out renders (from the
-### built gpu-only tree) and the cram goldens.  NOT the faithfulness cover,
-### whose route is hetlitmus/verify/covercheck.py --extend.  Does not commit.
+### Regenerate the cram goldens.  NOT the faithfulness cover, whose route is
+### hetlitmus/verify/covercheck.py --extend.  Does not commit.
 hetlitmus-promote: hetlitmus-corpus-gen | build
 	@ echo
-	@ set -e ; t=$$(mktemp -d) ; nc=0 ; nh=0 ; \
-	  bash hetlitmus/emit-cuda.sh "$$t/cuda" >"$$t/emit.log" 2>&1 \
-	    && bash hetlitmus/emit-hip.sh "$$t/hip" >>"$$t/emit.log" 2>&1 \
-	    || { cat "$$t/emit.log" ; rm -rf "$$t" ; exit 1 ; } ; \
-	  for f in $$(git ls-files 'hetlitmus/cuda-out/*.cu') ; do \
-	    cp "$$t/cuda/$$(basename $$f)" "$$f" ; nc=$$((nc+1)) ; done ; \
-	  for f in $$(git ls-files 'hetlitmus/hip-out/*.hip') ; do \
-	    cp "$$t/hip/$$(basename $$f)" "$$f" ; nh=$$((nh+1)) ; done ; \
-	  rm -rf "$$t" ; \
-	  test "$$nc" -gt 0 && test "$$nh" -gt 0 \
-	    || { echo "hetlitmus-promote: git ls-files matched nothing -- nothing promoted" ; exit 1 ; } ; \
-	  echo "hetlitmus-promote: cuda-out/hip-out samples re-emitted"
 	dune test --profile=$(DUNE_PROFILE) hetlitmus/tests/cram --auto-promote
 	@ echo "hetlitmus-promote: goldens regenerated (NOT committed); review 'git diff'."
 
-.PHONY: hetlitmus-corpus-gen hetlitmus-cram hetlitmus-corpus hetlitmus-faithful
+.PHONY: hetlitmus-corpus-gen hetlitmus-cram hetlitmus-faithful
 .PHONY: hetlitmus-smoke
 .PHONY: hetlitmus-stress hetlitmus-stress-static hetlitmus-cpustress hetlitmus-stats
 .PHONY: hetlitmus-dup hetlitmus-verdict

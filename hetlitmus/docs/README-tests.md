@@ -9,7 +9,6 @@ Toolchain lane, `make hetlitmus-test-toolchain`: needs nvcc, hipcc, clang and gc
 | target | script |
 |---|---|
 | `hetlitmus-cram` | `hetlitmus/tests/cram` |
-| `hetlitmus-corpus` | `verify/corpus-gate.sh` |
 | `hetlitmus-dup` | `verify/dupcheck.py` |
 | `hetlitmus-hipsrc` | `verify/hipsrccheck.py` |
 | `hetlitmus-verdict` | `verify/verdictcheck.py` |

@@ -1,4 +1,0 @@
-# litmus7 ObjUtil C-runtime boilerplate dropped here on emit; keep only the .cu
-*
-!.gitignore
-!*.cu

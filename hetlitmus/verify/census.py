@@ -4,8 +4,8 @@
 GPU_ONLY, HET and HET_X86 are the .litmus counts of the built gpu-only, het
 and het-x86_64 trees (GPU_DIR, HET_DIR, X86_DIR under CORPUS: grid.py's
 directory targets, hetlitmus/tests/dune); COVER the tests
-verify/faithful-cover.txt lists.  corpus-gate.sh proves the counts against
-the trees and the two homes against each other.
+verify/faithful-cover.txt lists.  Every sweep asserts its own home's pins
+against the same trees.
 """
 
 import os

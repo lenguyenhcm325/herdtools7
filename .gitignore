@@ -14,3 +14,5 @@ jerd.byte
 jerd.js
 __pycache__/
 /hetlitmus/run-out/
+/hetlitmus/cuda-out/
+/hetlitmus/hip-out/
