@@ -53,8 +53,8 @@ module Make
     let compile compileonly _hash_env name in_chan _out_chan splitted =
       let written = ref [] in
       try
-        (* `-gpu-target' filtered: one emission, one dialect (hetDialect.ml). *)
-        let dialects =
+        (* `-gpu-target' names the one dialect this emission renders (hetDialect.ml). *)
+        let d,kind,dump =
           HetDialect.select ~key:(fun (d,_,_) -> d.HetDialect.gd_target) dialects in
         let parsed = P.parse in_chan splitted in
         close_in in_chan ;
@@ -65,15 +65,12 @@ module Make
         if compileonly then Answer.Absent
         else begin
           let tname = splitted.Splitter.name.Name.name in
-          List.iter
-            (fun (d,kind,dump) ->
-              let ext = "." ^ d.HetDialect.gd_ext in
-              let outname = Tar.outname (MyName.outname name ext) in
-              written := outname :: !written ;
-              Misc.output_protect (fun chan -> dump chan tname parsed) outname ;
-              if O.verbose >= 0 then
-                Printf.eprintf "HetLitmus: emitted %s %s\n%!" kind outname)
-            dialects ;
+          let ext = "." ^ d.HetDialect.gd_ext in
+          let outname = Tar.outname (MyName.outname name ext) in
+          written := outname :: !written ;
+          Misc.output_protect (fun chan -> dump chan tname parsed) outname ;
+          if O.verbose >= 0 then
+            Printf.eprintf "HetLitmus: emitted %s %s\n%!" kind outname ;
           Answer.Absent
         end
       (* The render is this function's ONLY deliverable, so a refusal must

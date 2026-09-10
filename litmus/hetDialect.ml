@@ -17,7 +17,7 @@
 (* HetLitmus: the GPU back-end dialect registry -- one record per vendor -- and
    litmus7's `-gpu-target' option, which picks exactly one row.  The accepted
    vocabulary is the registry's target column, so a vendor becomes accepted by
-   being registered.  Both GPU-emitting arms filter through [select], so one
+   being registered.  Both GPU-emitting arms go through [select], so one
    emission renders one vendor.  hetlitmus/docs/het-emission.md, "One render
    per `-gpu-target`". *)
 
@@ -26,7 +26,7 @@
 type gpu_dialect = {
     gd_ext : string ;             (* output extension: "cu" | "hip" *)
     gd_name : string ;            (* "CUDA" | "HIP" *)
-    (* Toolchain facts the emitted comp.sh / Makefile / README fold over. *)
+    (* Toolchain facts the emitted comp.sh / Makefile / README carry. *)
     gd_target : string ;        (* comp.sh/make target word: "cuda" | "hip" *)
     gd_vendor : string ;        (* "NVIDIA" | "AMD" *)
     gd_toolchain : string ;     (* named when its compiler is absent *)
@@ -173,10 +173,8 @@ let hip_dialect = {
       (fun p bytes -> Printf.sprintf "(void)hipMemset(%s, 0, %s);" p bytes) ;
   }
 
-(* The registry.  Every per-vendor site folds over this list, so a vendor is
-   added by adding an entry; [select] filters it on `-gpu-target', so an
-   emission sees ONE entry.  List order is emission order, and the head is what
-   the emitted build files default to. *)
+(* The registry: a vendor is added by adding an entry, and [select] picks the
+   ONE entry `-gpu-target' names. *)
 let dialects = [ cuda_dialect ; hip_dialect ]
 
 (* litmus7's option help reads the vocabulary here rather than repeating it. *)
@@ -194,7 +192,7 @@ let requested : string option ref = ref None
 
 let set t = requested := Some t
 
-(* [key] names an entry's target word, generic because hetGpuOnly filters
+(* [key] names an entry's target word, generic because hetGpuOnly selects among
    (dialect, banner, renderer) triples rather than bare rows.  Fails closed on
    both a missing and an unknown target: the caller's ONLY deliverable is the
    render, and the emission arms turn the error into HetArch.refused. *)
@@ -208,8 +206,8 @@ let select ~key entries =
         build targets"
        accepted
   | Some t ->
-     begin match List.filter (fun e -> String.equal (key e) t) entries with
-     | [] ->
+     begin match List.find_opt (fun e -> String.equal (key e) t) entries with
+     | None ->
         Warn.user_error "unknown -gpu-target %S (accepted: %s)" t accepted
-     | l -> l
+     | Some e -> e
      end

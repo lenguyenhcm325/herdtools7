@@ -336,7 +336,7 @@ end
       (* The names every rendered file stamps, including the (CPU ISA x GPU
          dialect) pair this harness is built for.  A het test has at least one
          gpu proc. *)
-      let harness_identity parsed tname dialects =
+      let harness_identity parsed tname dialect =
         let has_gpu =
           List.exists
             (fun ((_,annot,_),_) ->
@@ -352,11 +352,11 @@ end
           id_pair_label =
             Printf.sprintf "(%s, %s)"
               CpuF.toolchain.HetCpuFront.isa_name
-              (List.hd dialects).gd_target }
+              dialect.gd_target }
 
       (* The file emitters' whole input: none of them reads the functor.  This
          is the one step holding every intermediate at once. *)
-      let derive_harness doc parsed identity dialects =
+      let derive_harness doc parsed identity dialect =
         let global_env,params = compile_cpu doc (cpu_projection parsed) in
         let gpus,gpu_globals,n_blocks,block_dim = gpu_projection parsed in
         let proc_infos = observable_columns parsed params in
@@ -376,7 +376,7 @@ end
           h_memory = memory ;
           h_outcome = outcome ;
           h_toolchain = CpuF.toolchain ;
-          h_dialects = dialects }
+          h_dialect = dialect }
 
       (* The plan litmus7 prints before anything is written; [target] is the
          GPU dialect this invocation renders. *)
@@ -405,17 +405,17 @@ end
         (* What this invocation put on disk, so a refusal can take it back. *)
         let created = ref None and written = ref [] in
         try
-          let dialects = HetDialect.select ~key:(fun d -> d.gd_target) dialects in
+          let dialect = HetDialect.select ~key:(fun d -> d.gd_target) dialects in
           let parsed = P.parse in_chan splitted in
           close_in in_chan ;
           let tname = splitted.Splitter.name.Name.name in
-          let identity = harness_identity parsed tname dialects in
+          let identity = harness_identity parsed tname dialect in
           let h =
-            derive_harness splitted.Splitter.name parsed identity dialects in
+            derive_harness splitted.Splitter.name parsed identity dialect in
           if compileonly then Absent
           else begin
             if O.verbose >= 0 then
-              report_plan parsed identity (List.hd dialects).gd_target ;
+              report_plan parsed identity dialect.gd_target ;
 
             (* ================= file emission ================= *)
             (* Tar.outname places a file under the `-o' target: the directory
@@ -443,19 +443,15 @@ end
               (fun ch -> output_string ch het_verdict_content) ;
             write "het_rdv.h" (fun ch -> output_string ch het_rdv_content) ;
             write (tname ^ "_cpu.c") (HetCpuFile.dump h) ;
-            let renders =
-              List.map (fun d -> Printf.sprintf "%s.%s" tname d.gd_ext) dialects in
-            List.iter
-              (fun d -> write (Printf.sprintf "%s.%s" tname d.gd_ext)
-                          (HetGpuFile.dump h d))
-              dialects ;
+            let render = Printf.sprintf "%s.%s" tname dialect.gd_ext in
+            write render (HetGpuFile.dump h dialect) ;
             write "comp.sh" (HetBuildFiles.dump_comp h) ;
             write "Makefile" (HetBuildFiles.dump_makefile h) ;
             write "README.md" (HetBuildFiles.dump_readme h) ;
             if O.verbose >= 0 then
               Printf.eprintf
                 "HetLitmus: emitted harness directory %s (%s)\n%!"
-                dir (String.concat " + " renders) ;
+                dir render ;
             Absent
           end
         with e ->

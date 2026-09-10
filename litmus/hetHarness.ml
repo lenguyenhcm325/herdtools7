@@ -172,7 +172,7 @@ let memory_objects memory procs =
   race_surface memory @ observation_record memory procs
 
 (* One emission's harness: the shape above, the identity every rendered file
-   stamps, and the toolchain and dialect facts the build files fold over. *)
+   stamps, and the toolchain and dialect facts the build files carry. *)
 type t = {
     h_identity : identity ;
     h_geometry : geometry ;
@@ -180,5 +180,5 @@ type t = {
     h_memory : memory ;
     h_outcome : outcome ;
     h_toolchain : HetCpuFront.toolchain ;
-    h_dialects : HetDialect.gpu_dialect list ;
+    h_dialect : HetDialect.gpu_dialect ;
   }
