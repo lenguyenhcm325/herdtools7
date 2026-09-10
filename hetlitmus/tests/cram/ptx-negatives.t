@@ -6,6 +6,5 @@ The one place ptxcheck.py must reject: MP-sys-F's frozen PTX with its single
   === MP-sys-F [LISA] ===
   FAIL: GPU ordered model-op stream differs
     [3] expected ld.relaxed.sys         observed ld.acquire.sys           <<< MISMATCH
-    no stray system-scope ops outside the model-op stream
   RESULT: FAIL
   [1]

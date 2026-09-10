@@ -20,7 +20,6 @@ import argparse
 import os
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
 
@@ -28,9 +27,6 @@ HERE = os.path.dirname(os.path.abspath(__file__))            # hetlitmus/verify
 sys.path.insert(0, HERE)
 import ptxcheck as ptx
 
-REPO = os.path.abspath(os.path.join(HERE, "..", ".."))       # herdtools7
-LITMUS7 = os.path.join(REPO, "_build", "install", "default", "bin", "litmus7")
-LIBDIR = os.path.join(REPO, "litmus", "libdir")
 CompletenessError = ptx.CompletenessError
 
 
@@ -184,21 +180,6 @@ def x86_cell(c):
 # 3. The observed side
 # ===========================================================================
 
-def emit_harness(litmus_path, name, outdir):
-    """litmus7 -gpu-target hip; returns (hip_path, cpu_c_path_or_None)."""
-    r = subprocess.run([LITMUS7, "-gpu-target", "hip", "-set-libdir", LIBDIR,
-                        "-o", outdir, litmus_path],
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    flat = os.path.join(outdir, name + ".hip")               # gpu-only
-    nested = os.path.join(outdir, name, name + ".hip")       # het
-    if os.path.exists(nested):
-        cpu_c = os.path.join(outdir, name, name + "_cpu.c")
-        return nested, (cpu_c if os.path.exists(cpu_c) else None)
-    if os.path.exists(flat):
-        return flat, None
-    raise RuntimeError("litmus7 emitted no .hip for %s\n%s" % (litmus_path, r.stdout))
-
-
 KERNEL_OPEN = re.compile(r'^__global__ void litmus_\w+\(')
 LANE_GUARD = re.compile(r'^  if \(blockIdx\.x == (\d+) && threadIdx\.x == (\d+)\) \{$')
 
@@ -276,7 +257,7 @@ def check(litmus_path):
     bad = []
     tmp = tempfile.mkdtemp(prefix="hipsrccheck_")
     try:
-        hip_path, cpu_c = emit_harness(litmus_path, name, tmp)
+        hip_path, cpu_c = ptx.emit_harness(litmus_path, tmp, "hip")
         lanes = lane_blocks(open(hip_path).read(), hip_path)
         slots = [s for s, _ in lanes]
         if len(lanes) != len(gpu):
