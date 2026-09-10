@@ -171,6 +171,13 @@ allocation, so a refused half reads as requested-but-dead.
   $ grep -c '| ((_noiseBlocks > 0) ? HET_REQ_GPU_NOISE : 0u);' $MP.cu
   1
 
+(i3) the preload is requested only where the host has cache primitives, off
+the field the driver writes from het_cpu_preload_live().
+  $ grep -c '_ct.preload_inert = !het_cpu_preload_live();' $MP.cu
+  1
+  $ grep -c '((HET_CPU_PRELOAD_PCT > 0 && !_ct.preload_inert) ? HET_REQ_CPU_PRELOAD : 0u)' $MP.cu
+  1
+
 (k) a shape whose outcome carries a location column has one kind of CPU thread
 only, and that thread preloads.
   $ grep -cE '^static void\* cpu_[A-Za-z_0-9]+\(void\* _a\)' $S.cu

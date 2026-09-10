@@ -705,9 +705,8 @@ hetlitmus-stress: hetlitmus-corpus-gen | build
 	bash hetlitmus/verify/tokens.sh stress
 	@ echo "HetLitmus stress PTX survival: OK"
 
-### The CPU-side and interconnect stress mechanisms survive -O2 on both host ISAs
-### and do work at run time, live when on and zero when off
-### (hetlitmus/verify/cpustresscheck.py).
+### The CPU-side and interconnect stress mechanisms survive -O2 on the AArch64
+### host ISA and do work at run time (hetlitmus/verify/cpustresscheck.py).
 hetlitmus-cpustress: hetlitmus-corpus-gen | build
 	@ echo
 	bash hetlitmus/verify/tokens.sh cpustress
