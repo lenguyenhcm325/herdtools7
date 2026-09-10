@@ -220,10 +220,11 @@ CH_COLD = ["DISCARD this null -- the harness was not demonstrably hot",
            "the weak outcome was NOT observed",
            "VOID -- not one of",
            "scored="]
-# The second run: caps of one poll, where the rendezvous cannot complete.
-CH_CAP1 = ["COLD-INVALID",
-           "DISCARD this null -- the harness was not demonstrably hot",
+# The second run: caps of zero polls, so the earlier arriver of every iteration
+# reads the count short and times out.
+CH_CAP0 = ["DISCARD this null -- the harness was not demonstrably hot",
            "A timed-out rendezvous is a DEAD PARTNER"]
+CH_VERDICT = re.compile(r"^HetVerdict \S+ run=\d+: (\S+)$", re.M)
 CH_CLASSES = ("Never", "Sometimes", "Always", "VOID")
 
 
@@ -242,8 +243,7 @@ def ch_check(text, k, obs, test, pair, quiet=False):
 
     # Which arm this box printed.  A sighting outranks everything; otherwise a
     # printout whose every run was discarded is the COLD arm.
-    classes = set(re.findall(r"^HetVerdict \S+ run=\d+: (\S+)$",
-                             text, re.M))
+    classes = set(CH_VERDICT.findall(text))
     if k > 0:
         arm, frags = "OBSERVED", ch_observed(pair)
     elif classes == {"COLD-INVALID"}:
@@ -274,28 +274,49 @@ def ch_run_once(d, test, pair, quiet=False):
 
 
 def ch_cap_run(d, test, quiet=False):
-    """The rendezvous disqualifier, driven by a run-time knob: under caps of ONE
-    poll nearly every iteration is discarded and the run must be thrown away."""
+    """The rendezvous disqualifier, forced through a run-time knob: with zero
+    polls the earlier arriver of every iteration times out, and every one is
+    discarded."""
     say = (lambda *_: None) if quiet else print
-    env = ch_env(HET_CAP_CPU="1", HET_CAP_GPU="1", HET_RUNS_MAX="1",
+    env = ch_env(HET_CAP_CPU="0", HET_CAP_GPU="0", HET_RUNS_MAX="1",
                  HET_SEED="1")
     try:
         r = subprocess.run([os.path.join(d, test)], cwd=d, env=env,
                            capture_output=True, text=True, timeout=CH_RUN_TIMEOUT)
     except subprocess.TimeoutExpired:
-        return ["[R] the caps=1 run STALLED after %ds -- a one-poll cap is the "
+        return ["[R] the caps=0 run STALLED after %ds -- a zero-poll cap is the "
                 "one wait that cannot stall" % CH_RUN_TIMEOUT]
     text = r.stdout + "\n" + r.stderr
     bad = []
-    for frag in CH_CAP1:
+    # The counts first, so a red run says whether the trigger or the reporting
+    # missed.
+    m = re.search(r"^HetLitmus rendezvous: scored=(\d+) discarded=(\d+)", text,
+                  re.M)
+    if not m:
+        bad.append("[R] the printout carries no rendezvous count line")
+    elif int(m.group(1)) != 0:
+        bad.append("[R] under HET_CAP_CPU=0 HET_CAP_GPU=0 the harness scored %s "
+                   "iteration(s) and discarded %s, where the earlier arriver of "
+                   "every iteration must time out" % (m.group(1), m.group(2)))
+    else:
+        say("      [R] scored=0 discarded=%s" % m.group(2))
+    # The verdict off its own line: the allocator warning names the class too.
+    classes = set(CH_VERDICT.findall(text))
+    if classes != {"COLD-INVALID"}:
+        bad.append("[R] under HET_CAP_CPU=0 HET_CAP_GPU=0 the verdict line reads "
+                   "%s, not COLD-INVALID"
+                   % (", ".join(sorted(classes)) or "nothing"))
+    else:
+        say("      [R] HetVerdict COLD-INVALID")
+    for frag in CH_CAP0:
         if frag not in text:
-            bad.append("[R] under HET_CAP_CPU=1 HET_CAP_GPU=1 the printout never "
+            bad.append("[R] under HET_CAP_CPU=0 HET_CAP_GPU=0 the printout never "
                        "says %r -- a rendezvous that cannot complete must be "
                        "discarded naming the dead mechanism" % frag)
         else:
             say("      [R] %s" % frag[:88])
     if "NOT OBSERVED under this effort" in text:
-        bad.append("[R] under HET_CAP_CPU=1 HET_CAP_GPU=1 the printout reports "
+        bad.append("[R] under HET_CAP_CPU=0 HET_CAP_GPU=0 the printout reports "
                    "reach: a run whose two sides never met is not a "
                    "non-observation")
     return bad
@@ -306,7 +327,7 @@ def ch_probe(tmp, test, cdir, pair, arch, quiet=False):
     ch_build(d, arch)
     rc, bad = ch_run_once(d, test, pair, quiet=quiet)
     if not quiet:
-        print("===== the same binary under caps of one poll =====")
+        print("===== the same binary under caps of zero polls =====")
     bad = bad + ch_cap_run(d, test, quiet=quiet)
     return (1 if bad else 0), bad
 
