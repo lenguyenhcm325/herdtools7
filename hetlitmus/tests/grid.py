@@ -241,21 +241,20 @@ def cut_classes(cycle):
 
 # --- the loops ---------------------------------------------------------------
 
-def run_tool(argv, cwd=None):
+def run_tool(name, path, args, cwd=None):
     """Run one generator call; its non-zero exit aborts the run with its stderr."""
-    r = subprocess.run(argv, cwd=cwd, stdout=subprocess.PIPE,
-                       stderr=subprocess.PIPE)
+    r = subprocess.run([name] + args, executable=path, cwd=cwd,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if r.returncode != 0:
         sys.stderr.write("grid.py: %s failed (exit %d):\n%s"
-                         % (os.path.basename(argv[0]), r.returncode,
-                            r.stderr.decode(errors="replace")))
+                         % (name, r.returncode, r.stderr.decode(errors="replace")))
         sys.exit(1)
     return r.stdout
 
 
 def gen_het(a):
     isa = CPU_ISAS[a.cpu_arch]
-    common = [a.hetgen7, "-set-libdir", a.libdir, "-bell", a.bell, "-oneloc",
+    common = ["-set-libdir", a.libdir, "-bell", a.bell, "-oneloc",
               "-cpu-arch", isa["tag"]]
     names, classes = [], []
     for shape, cycle in SHAPES:
@@ -270,7 +269,7 @@ def gen_het(a):
                     for gpu in GPU_ORDERS:
                         name = "%s-%s-%s-%s.%s%s" % (shape, tag, scope, cpu,
                                                      gpu, isa["suffix"])
-                        text = run_tool(common + [
+                        text = run_tool("hetgen7", a.hetgen7, common + [
                             "-devices", cut_devices(tag), "-name", name,
                             "-cpu", cpu_toks,
                             "-gpu", render_gpu(scope, gpu, cycle)])
@@ -281,7 +280,7 @@ def gen_het(a):
 
 
 def gen_gpu_only(a):
-    common = [a.diyone7, "-set-libdir", a.libdir, "-bell", a.bell,
+    common = ["-set-libdir", a.libdir, "-bell", a.bell,
               "-arch", "LISA", "-oneloc"]
     names = []
     for shape, cycle in SHAPES:
@@ -289,7 +288,8 @@ def gen_gpu_only(a):
         for scope in SCOPES:
             for gpu in GPU_ORDERS:
                 name = "%s-%s-%s" % (shape, scope, gpu)
-                run_tool(common + ["-name", name, "-scopes", tree]
+                run_tool("diyone7", a.diyone7,
+                         common + ["-name", name, "-scopes", tree]
                          + render_gpu(scope, gpu, cycle).split(), cwd=a.out)
                 if not os.path.isfile(os.path.join(a.out, name + ".litmus")):
                     sys.stderr.write("grid.py: diyone7 wrote no %s.litmus\n" % name)
