@@ -392,7 +392,7 @@ module Make (Cpu:Arch_litmus.S) (Gpu:Arch_litmus.S) = struct
          "HetArch: every processor needs a device tag, e.g. P0:cpu (got %S)" s
 
   let het_parser ~cpu ~gpu _lexer lexbuf =
-    let text = HetSlurp.slurp (Buffer.create 256) lexbuf in
+    let text = Echo.get lexbuf in
     let is_blank s = String.trim s = "" in
     let scopes,table = cut_scopes_row text in
     let rows =
