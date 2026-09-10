@@ -27,6 +27,21 @@ and addresses a bare pointer, so its CALLER does the addressing.
   $ grep -c '#START _litmus_P0' MP-cg-sys-plain.rlx/MP-cg-sys-plain.rlx_cpu.c
   1
 
+A GPU lane carries its ops in column order, each with location, value or
+destination register, order and scope, and the register feeds the read buffer.
+  $ litmus7 -gpu-target cuda -o . ../het/R-cg-sys-plain.fsc.litmus >/dev/null 2>&1
+  $ sed -n '/{ \/\/ w\[relaxed,sys\] y 2$/,/bufP1_0\[_n\] = r0;/p' R-cg-sys-plain.fsc/R-cg-sys-plain.fsc.cu
+        { // w[relaxed,sys] y 2
+          cuda::atomic_ref<int, cuda::thread_scope_system> ref(*(y + (_n)*HET_SLOT_STRIDE_WORDS));
+          ref.store(2, cuda::memory_order_relaxed);
+        }
+        asm volatile("fence.sc.sys;" ::: "memory"); // sm_70+
+        { // r[relaxed,sys] r0 x
+          cuda::atomic_ref<int, cuda::thread_scope_system> ref(*(x + (_n)*HET_SLOT_STRIDE_WORDS));
+          r0 = ref.load(cuda::memory_order_relaxed);
+        }
+        bufP1_0[_n] = r0;
+
 Every outcome column prints a NUMBER, in one loop over all of them, pinned here
 on the shape whose every column is a location.
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-plain.fsc.litmus >/dev/null 2>&1
