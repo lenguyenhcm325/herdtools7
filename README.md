@@ -1,70 +1,127 @@
-This is herdtools7, a tool suite to test weak memory models.
+# HetLitmus
 
-We provide the following tools:
+[![hetlitmus CI](https://github.com/lenguyenhcm325/herdtools7/actions/workflows/hetlitmus-ci.yml/badge.svg?branch=hetlitmus-work)](https://github.com/lenguyenhcm325/herdtools7/actions/workflows/hetlitmus-ci.yml)
 
- - herd7: a generic simulator for weak memory models
- - litmus7: run litmus tests (given as assembler programs for
-   Power, ARM, AArch64 or X86) to test the memory model of the
-   executing machine
- - diy7: produce litmus tests from concise specifications
- - some additional tools
-   In particular,
-    * mcompare7 to analyse run logs of both herd and litmus.
-    * klitmus7, an experimental tool, similar to litmus7 that runs kernel
-      memory model tests as kernel modules. The tool klitmus7 is inspired
-      from a python script by Andrea Parri,.
-      <http://retis.sssup.it/~a.parri/lkmm/run.py>
+HetLitmus extends the [herdtools7](https://github.com/herd/herdtools7) litmus-testing suite so that
+one heterogeneous CPU+GPU litmus test is generated, compiled and run on real hardware. The CPU side
+is AArch64 or x86_64 assembly. The GPU side is the scoped Bell/LISA frontend, rendered to CUDA for NVIDIA or HIP for AMD.
 
+## Run environment
 
-herdtools7 is the successor of the diy tool suite.
+```
+  host (CPU)                                     device (GPU, persistent grid)
+  ┌────────────────────────────┐                 ┌────────────────────────────┐
+  │ test threads               │◀─ rendezvous ─▶│ test blocks                │
+  │  one pthread per cpu proc, │   counter,      │  one thread per gpu proc,  │
+  │  pinned to its own core    │   every iter    │  each in its own block     │
+  ├────────────────────────────┤                 ├────────────────────────────┤
+  │ stress threads             │                 │ stress blocks              │
+  ├────────────────────────────┤                 ├────────────────────────────┤
+  │ noise threads              │                 │ noise blocks               │
+  └──────────────┬─────────────┘                 └──────────────┬─────────────┘
+                 │                 interconnect                 │
+  ┌──────────────┴──────────────────────────────────────────────┴───────────┐
+  │ shared memory: test locations, rendezvous counter, readback slots       │
+  ├─────────────────────────────────────────────────────────────────────────┤
+  │ noise buffer, above the last-level cache, streamed by both sides        │
+  └─────────────────────────────────────────────────────────────────────────┘
+```
 
-For the aslref tool documentation, see
-[`asllib/README.md`](./asllib/README.md).
+## Tools
 
-Home
-====
+`make all` builds every binary into `_build/install/default/bin`. Every invocation takes
+`-set-libdir`: `herd/libdir` for the generators, `litmus/libdir` for litmus7.
 
-http://diy.inria.fr/
+### hetgen7: generate one heterogeneous test
 
-diy-devel@inria.fr
+hetgen7 runs diy's cycle engine once per device on the same cycle shape and merges the columns,
+the init and the condition into one `Het` test.
 
-Compilation and installation
-============================
+| Flag | Meaning |
+|---|---|
+| `-cpu <edges>` | the cycle, in the CPU edge vocabulary |
+| `-gpu <edges>` | the same cycle in the Bell vocabulary, every access annotated `<Order><Scope>` |
+| `-devices cpu,gpu,...` | per-proc device assignment, default `cpu,gpu`; at least one proc is `gpu` |
+| `-cpu-arch aarch64\|x86_64` | ISA of the `cpu` procs, default `aarch64` |
+| `-bell <file>` | the scoped Bell model; `-show edges\|annotations\|fences` lists what it accepts |
 
-See file [INSTALL.md](INSTALL.md).
+Every other diyone7 option applies unchanged (`-name`, `-stdout`, `-oneloc`, ...).
 
-Contributing
-============
+```
+hetgen7 -set-libdir herd/libdir -bell hetlitmus/bells/gpu.bell \
+  -cpu-arch aarch64 -devices cpu,gpu -name MP -stdout \
+  -cpu 'PodWW Rfe PodRR Fre' \
+  -gpu 'PodWWRelaxedSysRelaxedSys RfeRelaxedSysAcquireSys PodRRAcquireSysAcquireSys FreAcquireSysRelaxedSys'
+```
 
-This repository uses the [Pre-Commit tool](https://pre-commit.com) to manage
-pre-commit validation, to check for formatting, test regressions, etc.
+```
+Het MP
+"Heterogeneous MP: per-proc device assignment cpu,gpu (cpu=AArch64, gpu=LISA)"
+{
+0:X1=x;
+0:X3=y;
+}
+ P0:cpu      | P1:gpu              ;
+ MOV W0,#1   | r[acquire,sys] r0 y ;
+ STR W0,[X1] | r[acquire,sys] r1 x ;
+ MOV W2,#1   |                     ;
+ STR W2,[X3] |                     ;
+scopes: (sys (gpu (cta P1)))
+exists (1:r0=1 /\ 1:r1=0)
+```
 
-Pre-Commit can be installed on macOS with [Homebrew](https://brew.sh), or on
-all platforms with Python's `pip`:
+### litmus7: emit a harness
 
-    # macOS with Homebrew.
-    % brew install pre-commit
+```
+litmus7 -set-libdir litmus/libdir -gpu-target cuda|hip -o DIR test.litmus
+```
 
-    # All other OS (including macOS without Homebrew).
-    % pip install pre-commit
+One self-contained harness directory per test: the `.cu` or `.hip` render with the GPU kernel and
+the run loop, a `_cpu.c` with the CPU column, the runtime headers, and a Makefile.
 
-To make Pre-Commit run automatically when you `git commit`, add it to your Git
-repository's local `pre-commit` hooks. From within this repository, run:
+| Flag / variable | Meaning |
+|---|---|
+| `-gpu-target cuda\|hip` | the GPU dialect to render; mandatory, no default; also required for GPU-only scoped LISA tests |
+| `make cuda-bin`, `make hip-bin` | link the harness binary inside the emitted directory |
+| `CUDA_ARCH` (`sm_90`), `HIP_ARCH` (`gfx942`) | device architecture, with its default |
+| `NVCC`, `HIPCC`, `CC`, `HET_CPU_CFLAGS` | compilers and CPU-column flags; build-time `HET_*` knobs ride in the compiler variable, `NVCC="nvcc -DHET_LLC_MB=256"` |
 
-    % pre-commit install
+### grid.py: the corpora
 
-When adding a new pre-commit check, please run Pre-Commit manually first:
+`hetlitmus/tests/grid.py` is the one loop that generates the corpora. Its flags are
+`--corpus het|gpu-only`, `--cpu-arch`, `--out`, `--bell`, `--libdir` and the generator path,
+`--hetgen7` or `--diyone7`.
 
-    % pre-commit run --all-files
+| Tree | Tests | Rule |
+|---|---|---|
+| `het` | 6695 | shape × device cut × GPU scope × GPU order × CPU order, AArch64 CPU column |
+| `het-x86_64` | 3900 | the same grid over an x86_64 column; x86-TSO leaves the CPU two distinct orders |
+| `gpu-only` | 744 | the all-GPU cut, generated by diyone7 |
 
-License
-=======
+`hetlitmus/emit-cuda.sh [OUTDIR]` and `hetlitmus/emit-hip.sh [OUTDIR]` render the gpu-only corpus
+as kernels; `hetlitmus/compile-hip.sh [INDIR] [OUTDIR]` compile-checks the HIP renders (`HIPCC`,
+`HIP_ARCH` override).
 
-The authors of the diy7 tool suite are Jade Alglave and Luc Maranget.
+## Documentation
 
+| File | What it holds |
+|---|---|
+| [het-litmus-format.md](hetlitmus/docs/het-litmus-format.md) | the compound `.litmus` format and the decisions behind parsing and generating it |
+| [het-emission.md](hetlitmus/docs/het-emission.md) | how one CPU+GPU harness is derived from a test, what it reuses from litmus7, and the runbook from a corpus to a results directory |
+| [gpu-emitters.md](hetlitmus/docs/gpu-emitters.md) | the CUDA and HIP emitters: fence lowering and floors, the missing cluster scope, HIP compile |
+| [corpus-grid.md](hetlitmus/docs/corpus-grid.md) | the rule that generates the corpora, the reasons for its shape and its vendor boundary |
+| [00-environment-design.md](hetlitmus/docs/00-environment-design.md) | the run environment: allocation, rendezvous, GPU and interconnect stress, reporting, liveness, hardware-only constraints |
+| [faithfulness.md](hetlitmus/docs/faithfulness.md) | the property that every emitted harness carries exactly the order, scope and op kind its annotation specifies, and where it is stated |
+| [README-tests.md](hetlitmus/docs/README-tests.md) | the test-suite index: the two lanes and what a failure means |
+| [REFERENCES.md](hetlitmus/docs/REFERENCES.md) | every external source cited by the code, with the claims taken from it |
+| [het-runtime/README.md](litmus/het-runtime/README.md) | maintainer notes on the runtime sources emitted verbatim into every harness |
 
-Copyright 2010 -- present: Institut National de Recherche en Informatique et
-en Automatique, and the authors.
+## Upstream and license
 
-Diy7 is released under the terms of the CeCILL-B free software license agreement.
-See file [LICENSE.txt](LICENSE.txt).
+HetLitmus is a fork of [herd/herdtools7](https://github.com/herd/herdtools7), home
+<http://diy.inria.fr/>, by Jade Alglave and Luc Maranget. Upstream's build instructions are in
+[INSTALL.md](./INSTALL.md) and its aslref documentation in [asllib/README.md](./asllib/README.md).
+
+Copyright 2010 -- present: Institut National de Recherche en Informatique et en Automatique, and
+the authors. Released under the CeCILL-B free software license agreement, see
+[LICENSE.txt](./LICENSE.txt).
