@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """HetLitmus -- the campaign gate: hetlitmus/campaign.py end to end against a
-stub harness printing deterministic HetStats lines.  Pinned: a clean sighting
-ends a row and outranks the budget, a rejected sighting stops nothing, a row
-with no usable run, no harness binary or a harness outliving --timeout ends
-ERROR with its reason banked, --rate turns the sighting stop off and nothing
-else, every invocation carries the seed base plus its stride, the runs the row
-has left and the stop flag, and the state CSV banks every run the budget
-bought.  A miss means the hardware hours go where the brief does not say.
-What a null is worth: hetlitmus/docs/00-environment-design.md "Aggregate".
-Usage: campaigncheck.py
+stub harness printing deterministic HetStats lines.  Pinned in the state CSV:
+a clean sighting ends a row and outranks the budget, a rejected sighting stops
+nothing, a row with no usable run, no harness binary or a harness outliving
+--timeout ends ERROR with its reason banked, --rate turns the sighting stop
+off and nothing else, and every invocation carries the seed base plus its
+stride, the runs the row has left and the stop flag.  A miss means the
+hardware hours go where the brief does not say (what a null is worth:
+hetlitmus/docs/00-environment-design.md "Aggregate").  Usage: campaigncheck.py
 """
 
 import csv
@@ -19,9 +18,9 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CAMPAIGN = os.path.join(HERE, "..", "campaign.py")
+sys.path.insert(0, os.path.join(HERE, ".."))
+import campaign
 
-SEED_STRIDE = 100003     # must match campaign.py
 SEED0 = 777
 # The budget the campaign is driven with, and what one stub invocation
 # reports: R runs, scoring and discarding these totals.
@@ -54,23 +53,14 @@ def line(obs, k, k_eff, degen, usable=None):
           % (test, obs, R, R if usable is None else usable, k, k_eff, degen))
 
 
-NULL = ("Never", 0, 0, 0)
-DEAD = ("VOID", 0, 0, 0, 0)
-FIRED = ("Sometimes", 1, 1, 0)
-if test == "NULL-pooled":
-    line(*NULL)
-elif test == "SIGHT-clean":
-    line(*FIRED)
-elif test == "SIGHT-late":            # nulls, then one sighting at the fifth
-    line(*(FIRED if inv == 5 else NULL))
-elif test == "SIGHT-degen":           # a sighting the decode guard rejected
-    line("Sometimes", 1, 0, 1)
-elif test == "VOID-dead":             # no usable run, ever
-    line(*DEAD)
-elif test == "VOID-late":             # measures once, then goes dead
-    line(*(NULL if inv == 1 else DEAD))
-else:
-    sys.exit(3)
+NULL, DEAD, FIRED = ("Never", 0, 0, 0), ("VOID", 0, 0, 0, 0), ("Sometimes", 1, 1, 0)
+SCRIPT = {"NULL-pooled": lambda inv: NULL,
+          "SIGHT-clean": lambda inv: FIRED,
+          "SIGHT-late": lambda inv: FIRED if inv == 5 else NULL,
+          "SIGHT-degen": lambda inv: ("Sometimes", 1, 0, 1),
+          "VOID-dead": lambda inv: DEAD,
+          "VOID-late": lambda inv: NULL if inv == 1 else DEAD}
+line(*SCRIPT[test](inv))
 '''
 
 # A stand-in that outlives its timeout, having flushed a line first.
@@ -79,6 +69,25 @@ SLEEPER = ("#!/usr/bin/env python3\n"
            "sys.stdout.write('HetLitmus: shared-mem mode=stub\\n')\n"
            "sys.stdout.flush()\n"
            "time.sleep(30)\n")
+
+
+def row(stop, inv, usable, k, k_eff, note=""):
+    """The state CSV row a test ends with after inv stub invocations."""
+    return dict(stop=stop, invocations=str(inv), seed0=str(SEED0),
+                runs=str(inv * R), usable=str(usable), k=str(k), k_eff=str(k_eff),
+                scored=str(inv * SCORED), discarded=str(inv * DISCARDED), note=note)
+
+
+SEEN = "the weak outcome was seen in 1 clean run(s)"
+WANT = {
+    "NULL-pooled": row("BUDGET", 10, BUDGET, 0, 0),
+    "SIGHT-clean": row("OBSERVED", 1, R, 1, 1, SEEN),
+    "SIGHT-late": row("OBSERVED", 5, 5 * R, 1, 1, SEEN),  # four nulls, then a sighting
+    "SIGHT-degen": row("BUDGET", 10, BUDGET, 10, 0),     # every sighting guard-rejected
+    "VOID-dead": row("ERROR", 1, 0, 0, 0,
+                     "usable=0 of R=%d: nothing was measured" % R),
+    "VOID-late": row("BUDGET", 10, R, 0, 0),             # measured once, then went dead
+}
 
 BAD = []
 
@@ -103,31 +112,23 @@ def mk_corpus(tmp, name, tests, body=STUB):
     return corpus
 
 
-def campaign(corpus, state, *extra):
+def run_campaign(corpus, state, *extra):
     return subprocess.run(
-        [sys.executable, CAMPAIGN, "--corpus", corpus, "--budget-runs",
+        [sys.executable, campaign.__file__, "--corpus", corpus, "--budget-runs",
          str(BUDGET), "--seed0", str(SEED0), "--state", state] + list(extra),
         capture_output=True, text=True)
 
 
 def banked(state):
-    """test -> its row of the state CSV."""
+    """The state CSV's rows, in the order they were written."""
     if not os.path.exists(state):
-        return {}
+        return []
     with open(state) as fh:
-        return {row["test"]: row for row in csv.DictReader(fh)}
+        return list(csv.DictReader(fh))
 
 
-def done_rows(out):
-    """test -> (stop, invocations, runs, usable) off the `done' lines, and
-    the order they came in."""
-    done, order = {}, []
-    for l in out.splitlines():
-        if l.startswith("done  "):
-            f = l.split()
-            done[f[1]] = (f[2],) + tuple(int(x.split("=")[1]) for x in f[3:6])
-            order.append(f[1])
-    return done, order
+def note_of(state, test):
+    return {r["test"]: r["note"] for r in banked(state)}.get(test, "")
 
 
 def seeds(corpus, test):
@@ -137,69 +138,47 @@ def seeds(corpus, test):
 
 
 def run(tmp):
-    # ---- the policy, end to end: one row per stop rule.
+    # ---- the policy, end to end: one row per stop rule, banked in the CSV.
     corpus = mk_corpus(tmp, "corpus", TESTS)
     state = os.path.join(tmp, "state.csv")
-    r = campaign(corpus, state)
+    r = run_campaign(corpus, state)
     check("Traceback" not in r.stderr, "the campaign CRASHED:\n" + r.stderr[-800:])
     check(r.returncode == 1, "campaign exited %d, want 1: one row ends ERROR"
           % r.returncode)
-    check("campaign: seed0=%d " % SEED0 in r.stdout,
-          "the seed base is not printed, so the campaign cannot be replayed")
-    done, order = done_rows(r.stdout)
-    check(order == sorted(TESTS), "run order %s is not the corpus's" % order)
-    want = {                    # stop, invocations, runs, usable
-        "NULL-pooled": ("BUDGET", 10, BUDGET, BUDGET),   # ended by the budget alone
-        "SIGHT-clean": ("OBSERVED", 1, R, R),
-        "SIGHT-late": ("OBSERVED", 5, 5 * R, 5 * R),     # the nulls before it are kept
-        "SIGHT-degen": ("BUDGET", 10, BUDGET, BUDGET),   # a rejected sighting stops nothing
-        "VOID-dead": ("ERROR", 1, R, 0),
-        "VOID-late": ("BUDGET", 10, BUDGET, R),          # keeps the runs it measured
-    }
-    for t, w in want.items():
-        check(done.get(t) == w, "%-12s done %s, want %s" % (t, done.get(t), w))
-    # ---- the state CSV banks the row and the totals behind it.
-    bank = banked(state)
-    per_inv = BUDGET // R
-    want_bank = {
-        "NULL-pooled": dict(stop="BUDGET", invocations="10", seed0=str(SEED0),
-                            runs=str(BUDGET), usable=str(BUDGET), k="0",
-                            scored=str(per_inv * SCORED),
-                            discarded=str(per_inv * DISCARDED)),
-        "VOID-late": dict(stop="BUDGET", runs=str(BUDGET), usable=str(R)),
-        "VOID-dead": dict(stop="ERROR",
-                          note="usable=0 of R=%d: nothing was measured" % R),
-    }
-    for t, w in want_bank.items():
-        got = {c: bank.get(t, {}).get(c) for c in w}
-        check(got == w, "%s banked %s, want %s" % (t, got, w))
+    rows = banked(state)
+    check([x["test"] for x in rows] == sorted(TESTS),
+          "banked order %s is not the corpus's" % [x["test"] for x in rows])
+    for x in rows:
+        w = WANT.get(x["test"], {})
+        off = {c: (x.get(c), w[c]) for c in w if x.get(c) != w[c]}
+        check(not off, "%-12s banked %s (got, want)" % (x["test"], off))
     # ---- every invocation: the seed base plus its stride, the runs the row
     # has left, and the stop flag.
     for t in TESTS:
         for inv, seed, runs_max, stop_at in seeds(corpus, t):
             i = int(inv) - 1
-            w = (str(SEED0 + i * SEED_STRIDE), str(BUDGET - i * R), "1")
+            w = (str(SEED0 + i * campaign.SEED_STRIDE), str(BUDGET - i * R), "1")
             check((seed, runs_max, stop_at) == w,
                   "%s invocation %s ran under HET_SEED=%s HET_RUNS_MAX=%s "
                   "HET_STOP_AT_SIGHTING=%s, want %s"
                   % (t, inv, seed, runs_max, stop_at, w))
     # ---- --rate turns the sighting stop off and nothing else.
     rate = mk_corpus(tmp, "rate", ["SIGHT-clean", "NULL-pooled"])
-    r = campaign(rate, os.path.join(tmp, "rate.csv"), "--rate")
-    done, _ = done_rows(r.stdout)
+    st = os.path.join(tmp, "rate.csv")
+    r = run_campaign(rate, st, "--rate")
     check(r.returncode == 0, "--rate campaign exited %d, want 0" % r.returncode)
-    for t in ("SIGHT-clean", "NULL-pooled"):
-        check(done.get(t, ())[:2] == ("BUDGET", 10),
-              "--rate: %s done %s, want BUDGET after 10 invocation(s)"
-              % (t, done.get(t)))
+    for x in banked(st):
+        check((x["stop"], x["invocations"]) == ("BUDGET", "10"),
+              "--rate: %s banked %s after %s invocation(s), want BUDGET after 10"
+              % (x["test"], x["stop"], x["invocations"]))
     stops = set(s[3] for s in seeds(rate, "SIGHT-clean"))
     check(stops == {"0"}, "--rate handed HET_STOP_AT_SIGHTING=%s to the "
           "harness, want 0 on every invocation" % sorted(stops))
     # ---- a harness dir the build never reached ends ERROR naming the path.
     noexe = mk_corpus(tmp, "noexe", ["UNBUILT"], body=None)
     st = os.path.join(tmp, "noexe.csv")
-    r = campaign(noexe, st)
-    note = banked(st).get("UNBUILT", {}).get("note", "")
+    r = run_campaign(noexe, st)
+    note = note_of(st, "UNBUILT")
     check("Traceback" not in r.stderr and r.returncode == 1
           and os.path.join(noexe, "UNBUILT", "UNBUILT") in note,
           "a dir with no harness binary exited %d with note %r, want 1 and a "
@@ -207,8 +186,8 @@ def run(tmp):
     # ---- a harness outliving --timeout ends ERROR, its partial transcript kept.
     slow = mk_corpus(tmp, "slow", ["SLOW"], body=SLEEPER)
     st, logs = os.path.join(tmp, "slow.csv"), os.path.join(tmp, "slow-logs")
-    r = campaign(slow, st, "--timeout", "1", "--log-dir", logs)
-    note = banked(st).get("SLOW", {}).get("note", "")
+    r = run_campaign(slow, st, "--timeout", "1", "--log-dir", logs)
+    note = note_of(st, "SLOW")
     check(r.returncode == 1 and note == "timeout after 1 s",
           "the harness outliving --timeout 1 exited %d with note %r"
           % (r.returncode, note))

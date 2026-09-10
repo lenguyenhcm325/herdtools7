@@ -184,9 +184,10 @@ def emit_harness(litmus_path, outdir, target="cuda"):
                        % (ext, litmus_path, r.stdout))
 
 
-def compile_ptx(cu_path, ptx_path):
+def compile_ptx(cu_path, ptx_path, flags=()):
     # sm_90: the arch the emitted comp.sh builds with (litmus/hetDialect.ml).
-    r = run([NVCC, "-std=c++17", "-arch=sm_90", "--ptx", "-o", ptx_path, cu_path])
+    r = run([NVCC, "-std=c++17", "-arch=sm_90", "--ptx"] + list(flags)
+            + ["-o", ptx_path, cu_path])
     if r.returncode != 0 or not os.path.exists(ptx_path):
         raise RuntimeError("nvcc --ptx failed for %s:\n%s" % (cu_path, r.stdout))
 

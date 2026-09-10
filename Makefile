@@ -734,9 +734,9 @@ hetlitmus-campaign: | build
 	python3 hetlitmus/verify/campaigncheck.py
 	@ echo "HetLitmus campaign scheduler: OK"
 
-### Every emitted harness opens each iteration at the cross-device rendezvous,
-### ahead of the tested accesses and never between two of them; the primitive's
-### source carries a relaxed order and no fence (hetlitmus/verify/rdvcheck.py).
+### One rep render per template shape opens each iteration at the cross-device
+### rendezvous, ahead of the tested accesses; the primitive's source carries a
+### relaxed order and no fence (hetlitmus/verify/rdvcheck.py).
 hetlitmus-rdv: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/rdvcheck.py
