@@ -206,7 +206,7 @@ def ch_run_until_sighting(d, test, quiet=False):
 # What a run that saw the outcome must print, and what a run that did not must
 # print instead.  The arms are exclusive and one of them always applies.
 def ch_observed(pair):
-    return [": OBSERVED", "Report it as what %s exhibited" % pair]
+    return [": OBSERVED", "the weak outcome was OBSERVED on %s" % pair]
 
 
 CH_NULL = ["NOT OBSERVED under this effort",

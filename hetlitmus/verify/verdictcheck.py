@@ -76,9 +76,7 @@ FRAMES = [DEFAULT_FRAME, CUDA_FRAME, HIP_FRAME]
 # Frame exclusivity: each outcome's own sentences, checked BOTH ways -- reachable
 # from that outcome, and printed by no other.  {pair} is filled from the frame.
 FRAME_CLAIMS = {
-    "OBSERVED": ["the weak outcome was OBSERVED",
-                 "Report it as what {pair} exhibited under this harness and this "
-                 "stress."],
+    "OBSERVED": ["the weak outcome was OBSERVED on {pair}"],
     # A null's frame: what was not seen, and whose reach it was.
     "NOT-OBSERVED": [
         "NOT OBSERVED under this effort on {pair}; the counts above are this "
@@ -221,10 +219,6 @@ CASES = [
 FLAG_SENTENCES = [
     ("dq", "RDV_DEAD", "A timed-out rendezvous is a DEAD PARTNER",
      "a run whose two sides did not meet, reported as reach"),
-    # rdv_cap_cpu/rdv_cap_gpu are per-participant cap expiries, so a reader who
-    # takes them for the two halves of iters_discarded reads a number over it.
-    ("dq", "RDV_DEAD", "counted per participant per iteration",
-     "two tallies that neither partition nor bound the discards"),
     ("cv", "RDV_UNCALIBRATED", "the rendezvous caps are PLACEHOLDERS",
      "a discard count priced against a wait nobody measured"),
     ("cv", "ONE_OUTCOME", "read back the SAME outcome vector",
