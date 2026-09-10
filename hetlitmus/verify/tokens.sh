@@ -4,6 +4,7 @@
 #   all        covercheck.py, then ptxcheck.py over verify/faithful-cover.txt
 #   full       ptxcheck.py over both corpora entire
 #   gpu-only | het        one corpus
+#   hipsrc     hipsrccheck.py over the gpu-only and het-x86_64 trees
 #   stress | cpustress    the two liveness checkers over their reps
 # Every non-PASS test prints its diff; a cover miss, a census miss, a FAIL, a
 # GUARD-FAIL or an ERROR exits non-zero.  JOBS sets the worker count.
@@ -14,11 +15,13 @@ set -u
 cd "$REPO"
 export PATH="/usr/local/cuda/bin:$BIN:$PATH"
 
-CHECK="$REPO/hetlitmus/verify/ptxcheck.py"
+CHECK="$REPO/hetlitmus/verify/ptxcheck.py"   # the per-test checker run_one runs
+HIPSRCCHECK="$REPO/hetlitmus/verify/hipsrccheck.py"
 COVERCHECK="$REPO/hetlitmus/verify/covercheck.py"
 COVER="$REPO/hetlitmus/verify/faithful-cover.txt"
 GPU_DIR="$GPU_CORPUS"            # the built trees (paths.sh)
 HET_DIR="$HET_CORPUS"
+X86_DIR="$X86_CORPUS"
 EXPECT_COVER="$CENSUS_COVER"
 # `nproc' honours this process's affinity mask but NOT a cgroup CPU quota, so
 # the cap is what keeps an uncapped default from oversubscribing a container.
@@ -140,6 +143,12 @@ cmd="${1:-all}"
 case "$cmd" in
   gpu-only)  run_dir "$GPU_DIR" gpu-only "$CENSUS_GPU_ONLY" ;;
   het)       run_dir "$HET_DIR" het "$CENSUS_HET" ;;
+  hipsrc)
+    CHECK="$HIPSRCCHECK"
+    rc=0
+    run_dir "$GPU_DIR" hipsrc-gpu-only "$CENSUS_GPU_ONLY" || rc=1
+    run_dir "$X86_DIR" hipsrc-het-x86_64 "$CENSUS_HET_X86" || rc=1
+    exit $rc ;;
   stress)    stress_report; exit $? ;;
   cpustress) cpustress_report; exit $? ;;
   all)       run_cover; exit $? ;;
@@ -148,5 +157,5 @@ case "$cmd" in
     run_dir "$GPU_DIR" gpu-only "$CENSUS_GPU_ONLY" || rc=1
     run_dir "$HET_DIR" het "$CENSUS_HET" || rc=1
     exit $rc ;;
-  *) echo "usage: $0 [all|full|gpu-only|het|stress|cpustress]"; exit 64 ;;
+  *) echo "usage: $0 [all|full|gpu-only|het|hipsrc|stress|cpustress]"; exit 64 ;;
 esac

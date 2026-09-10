@@ -15,7 +15,6 @@ Usage:  rdvcheck.py [-q]
 """
 
 import argparse
-import importlib.util
 import os
 import re
 import shutil
@@ -30,18 +29,7 @@ import census
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 LITMUS7 = os.path.join(ROOT, "_build", "install", "default", "bin", "litmus7")
 LIBDIR = os.path.join(ROOT, "litmus", "libdir")
-HIPSRCCHECK = os.path.join(HERE, "hipsrccheck.py")
-
-
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
-
-
-hip = _load("hipsrccheck", HIPSRCCHECK)
-GateError = hip.GateError
+GateError = census.GateError
 
 # (label, built corpus dir, -gpu-target, render extension, census).
 # The lanes differ in their renders; one staged het_rdv.h serves both.
@@ -342,7 +330,7 @@ def emit_corpus(files, target, out):
 
 def lane_renders(tmp, label, corpus, target, ext, expect):
     """[(name, render path, harness dir)] for one lane, census asserted first."""
-    files = hip.corpus_files(corpus, label, expect)
+    files = census.corpus_files(corpus, label, expect)
     out = emit_corpus(files, target, os.path.join(tmp, target + "-out"))
     got = []
     for f in files:

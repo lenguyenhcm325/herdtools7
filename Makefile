@@ -683,12 +683,12 @@ hetlitmus-faithful: hetlitmus-corpus-gen | build
 	bash hetlitmus/verify/tokens.sh all
 	@ echo "HetLitmus PTX faithfulness: OK"
 
-### Every emitted HIP kernel and x86_64 CPU body carries exactly the memory ops,
-### orders, scopes and loop structure its .litmus annotates -- source-level, so
-### no toolchain (hetlitmus/docs/faithfulness.md).
+### Every emitted HIP kernel lane and x86_64 CPU body is, line for line, the
+### one its .litmus column names -- source-level, so no toolchain
+### (hetlitmus/docs/faithfulness.md).
 hetlitmus-hipsrc: hetlitmus-corpus-gen | build
 	@ echo
-	python3 hetlitmus/verify/hipsrccheck.py --all
+	bash hetlitmus/verify/tokens.sh hipsrc
 	@ echo "HetLitmus HIP source faithfulness: OK"
 
 ### A curated sample of emitted harnesses builds end to end through its own
@@ -720,21 +720,20 @@ hetlitmus-dup: hetlitmus-corpus-gen | build
 	python3 hetlitmus/verify/dupcheck.py
 	@ echo "HetLitmus isomorphism/dedup gate: OK"
 
-### het_verdict() -- the rule deciding what an observation means -- compiled from
-### the real emitted header and driven with synthetic records, together with the
-### pair each printout names (hetlitmus/verify/verdictcheck.py).
+### het_verdict() and het_stats_compute() -- what an observation means and what
+### a "Never" is worth -- compiled from the real emitted header and driven with
+### synthetic records (hetlitmus/verify/verdictcheck.py).
 hetlitmus-verdict: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/verdictcheck.py
-	@ echo "HetLitmus decision rule: OK"
+	@ echo "HetLitmus decision rule + aggregate: OK"
 
-### het_stats_compute() -- what a "Never" is worth -- compiled from the real
-### emitted header and driven with synthetic record streams, then campaign.py's
-### scheduler against a stub harness (hetlitmus/verify/statscheck.py).
-hetlitmus-stats: hetlitmus-corpus-gen | build
+### campaign.py's scheduler, end to end against a stub harness: where the
+### hardware hours go (hetlitmus/verify/campaigncheck.py).
+hetlitmus-campaign: | build
 	@ echo
-	python3 hetlitmus/verify/statscheck.py
-	@ echo "HetLitmus statistics layer: OK"
+	python3 hetlitmus/verify/campaigncheck.py
+	@ echo "HetLitmus campaign scheduler: OK"
 
 ### Every emitted harness opens each iteration at the cross-device rendezvous,
 ### ahead of the tested accesses and never between two of them; the primitive's
@@ -752,8 +751,8 @@ hetlitmus-stamps: hetlitmus-corpus-gen | build
 	@ echo "HetLitmus emitter stamp binding: OK"
 
 ### An AMD harness builds and links into an ELF carrying real gfx942 code, its
-### allocator refusals execute under a stub, and the CUDA lane does not regress.
-### Needs hipcc AND nvcc, but no device.
+### allocator refusals execute under a stub, and a _cpu.c compiles for its own
+### CPU ISA only.  Needs hipcc, clang and gcc, but no device.
 hetlitmus-hipbuild: hetlitmus-corpus-gen | build
 	@ echo
 	python3 hetlitmus/verify/hipbuildcheck.py
@@ -774,7 +773,7 @@ hetlitmus-test:: hetlitmus-hipsrc
 hetlitmus-test:: hetlitmus-verdict
 hetlitmus-test:: hetlitmus-stamps
 hetlitmus-test:: hetlitmus-rdv
-hetlitmus-test:: hetlitmus-stats
+hetlitmus-test:: hetlitmus-campaign
 
 ### The second umbrella takes a target when it needs a toolchain or a device this
 ### box may not have, and NOT when it merely concerns GPU code.
@@ -799,7 +798,7 @@ hetlitmus-promote: hetlitmus-corpus-gen | build
 
 .PHONY: hetlitmus-corpus-gen hetlitmus-cram hetlitmus-faithful
 .PHONY: hetlitmus-smoke
-.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-stats
+.PHONY: hetlitmus-stress hetlitmus-cpustress hetlitmus-campaign
 .PHONY: hetlitmus-dup hetlitmus-verdict
 .PHONY: hetlitmus-stamps hetlitmus-rdv
 .PHONY: hetlitmus-hipbuild

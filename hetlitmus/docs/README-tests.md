@@ -10,11 +10,11 @@ Toolchain lane, `make hetlitmus-test-toolchain`: needs nvcc, hipcc, clang and gc
 |---|---|
 | `hetlitmus-cram` | `hetlitmus/tests/cram` |
 | `hetlitmus-dup` | `verify/dupcheck.py` |
-| `hetlitmus-hipsrc` | `verify/hipsrccheck.py` |
+| `hetlitmus-hipsrc` | `verify/tokens.sh hipsrc` |
 | `hetlitmus-verdict` | `verify/verdictcheck.py` |
 | `hetlitmus-stamps` | `verify/stampcheck.py` |
 | `hetlitmus-rdv` | `verify/rdvcheck.py` |
-| `hetlitmus-stats` | `verify/statscheck.py` |
+| `hetlitmus-campaign` | `verify/campaigncheck.py` |
 | `hetlitmus-faithful` | `verify/tokens.sh all` |
 | `hetlitmus-smoke` | `verify/smoke.sh` |
 | `hetlitmus-stress` | `verify/tokens.sh stress` |

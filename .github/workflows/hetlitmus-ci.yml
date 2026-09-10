@@ -34,7 +34,7 @@ jobs:
           ocaml-compiler: "5.1"
           dune-cache: true
 
-      # verdictcheck and statscheck compile the emitted runtime header.
+      # verdictcheck compiles the emitted runtime header.
       - name: Preflight toolchain assertion
         run: |
           for t in gcc python3; do
