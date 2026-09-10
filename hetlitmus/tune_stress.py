@@ -7,7 +7,7 @@ knobs as `-D' flags through build.sh's NVCC/HIPCC channel, runs each row once, a
 appends the result to an append-only JSONL log.  That log is the whole state:
 `rank' reads it offline and writes the winner params files.  The
 score is weak iterations per wall-clock second, per row; the draw, the three
-validity layers and the objective are hetlitmus/docs/00-environment-design.md
+validity layers and the objective are hetlitmus/docs/environment-design.md
 "Tuning".  Exit: 0 = the pass ran; 2 = configuration/environment error.
 """
 
@@ -76,7 +76,7 @@ MAX_ATTEMPTS = 16
 STRESS_BLOCK_SET = (0, 1, 2, 4, 8, 16, 32, 64)
 CPU_WORDS_PER_REGION_SET = (8, 16, 32, 64, 128, 256)
 NOISE_BLOCK_SET = (0, 1, 2, 4, 8, 16)
-CPU_NOISE_THREAD_SET = (0, 1, 2, 4, 8, 16, 32)   # 00-environment-design.md "Tuning"
+CPU_NOISE_THREAD_SET = (0, 1, 2, 4, 8, 16, 32)   # environment-design.md "Tuning"
 NOISE_STRIDE_SET = (1, 8, 32)
 CPU_STRESS_THREADS_MAX = 12
 

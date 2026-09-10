@@ -208,7 +208,7 @@ University of California, Santa Cruz, June 2024. `https://escholarship.org/uc/it
   the read nodes loaded the same values in all the iterations".
 * §4.1 (p. 69): a per-iteration both-sided CPU–GPU spin barrier got "2- 3 iterations ahead"
   and then stuck for good — the bring-up probe of
-  `00-environment-design.md` "Hardware-only constraints".
+  `environment-design.md` "Hardware-only constraints".
 * p. 93: the relaunch-per-trial harness observed no weak behaviour with a `threadfence`
   between the GPU instructions; the perpetual-instance harness did, in MP and SB.
 * Deviation: the stall was on two integrated consumer parts (Ryzen 7 5700G, i7-12700K) and the
@@ -241,7 +241,7 @@ NVIDIA. *CUDA Programming Guide*, Release 13.3,
 * Deviation: Release 12.x, the pinned toolchain's, is titled "CUDA C++ Programming Guide" and
   states the mapped-pointer rule as the unified-address-space exception in "Mapped Memory"
   (12.9 checked); whether it states the execution-model guarantee is a bring-up check
-  (`00-environment-design.md` "Hardware-only constraints").
+  (`environment-design.md` "Hardware-only constraints").
 
 ## [HipRuntimeApi]
 AMD ROCm. `hip_runtime_api.h`, as shipped with ROCm 7.2.4

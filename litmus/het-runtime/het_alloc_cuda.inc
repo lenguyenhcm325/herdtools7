@@ -1,7 +1,7 @@
 /* Shared litmus vars + rendezvous barrier.  The allocator selects the property
    under test -- whether both sides touch one physical line over the machine's
    real coherence protocol -- so it is correctness, not tuning
-   (hetlitmus/docs/00-environment-design.md "Allocation").  HET_ALLOC (auto |
+   (hetlitmus/docs/environment-design.md "Allocation").  HET_ALLOC (auto |
    malloc | managed | pinned; unset = auto) picks the mode once per process;
    each mode is system-scope atomic ONLY under a condition of
    [CudaGuide "Atomicity"], so every guard below is fatal and none falls back.

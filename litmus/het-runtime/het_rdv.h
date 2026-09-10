@@ -19,7 +19,7 @@
  * arrived at a shared counter, and then touches slot n ALONE on both sides, so
  * iteration n's outcome is read back from slot n with no search and no decoding.
  * An iteration whose rendezvous timed out is discarded, never scored.
- * Design: hetlitmus/docs/00-environment-design.md "Rendezvous". */
+ * Design: hetlitmus/docs/environment-design.md "Rendezvous". */
 
 #ifndef HET_RDV_H
 #define HET_RDV_H
@@ -70,7 +70,7 @@ typedef void (*het_poke_fn)(void);
 /* Arrive, then poll: relaxed [Bagchi26 sec 5.3], no fence written and none
    emitted on AArch64 or either GPU side; x86_64's arrival is a locked RMW, a
    full barrier that drains the previous iteration's tested stores
-   (hetlitmus/docs/00-environment-design.md "Rendezvous").  Each caller adds 1
+   (hetlitmus/docs/environment-design.md "Rendezvous").  Each caller adds 1
    per iteration to a monotone counter; 1 = saw it, 0 discards its iteration. */
 #if defined(__HIP_PLATFORM_AMD__) || defined(__HIP_DEVICE_COMPILE__)
 __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,

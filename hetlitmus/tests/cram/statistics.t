@@ -1,4 +1,4 @@
-Statistics-layer inputs: hetlitmus/docs/00-environment-design.md "Aggregate".
+Statistics-layer inputs: hetlitmus/docs/environment-design.md "Aggregate".
 
   $ litmus7 -gpu-target cuda -o . ../het/MP-cg-sys-sy.fsc.litmus >/dev/null 2>&1
   $ litmus7 -gpu-target cuda -o . ../het/2+2W-cg-sys-plain.fsc.litmus >/dev/null 2>&1

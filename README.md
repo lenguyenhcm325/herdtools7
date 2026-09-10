@@ -110,7 +110,7 @@ as kernels; `hetlitmus/compile-hip.sh [INDIR] [OUTDIR]` compile-checks the HIP r
 | [het-emission.md](hetlitmus/docs/het-emission.md) | how one CPU+GPU harness is derived from a test, what it reuses from litmus7, and the runbook from a corpus to a results directory |
 | [gpu-emitters.md](hetlitmus/docs/gpu-emitters.md) | the CUDA and HIP emitters: fence lowering and floors, the missing cluster scope, HIP compile |
 | [corpus-grid.md](hetlitmus/docs/corpus-grid.md) | the rule that generates the corpora, the reasons for its shape and its vendor boundary |
-| [00-environment-design.md](hetlitmus/docs/00-environment-design.md) | the run environment: allocation, rendezvous, GPU and interconnect stress, reporting, liveness, hardware-only constraints |
+| [environment-design.md](hetlitmus/docs/environment-design.md) | the run environment: allocation, rendezvous, GPU and interconnect stress, reporting, liveness, hardware-only constraints |
 | [faithfulness.md](hetlitmus/docs/faithfulness.md) | the property that every emitted harness carries exactly the order, scope and op kind its annotation specifies, and where it is stated |
 | [README-tests.md](hetlitmus/docs/README-tests.md) | the test-suite index: the two lanes and what a failure means |
 | [REFERENCES.md](hetlitmus/docs/REFERENCES.md) | every external source cited by the code, with the claims taken from it |

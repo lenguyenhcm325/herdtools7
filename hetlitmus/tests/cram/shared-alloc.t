@@ -1,4 +1,4 @@
-Shared-memory allocation guard (hetlitmus/docs/00-environment-design.md
+Shared-memory allocation guard (hetlitmus/docs/environment-design.md
 "Allocation").
 
 One MP shape per dialect; the `.hip' comes from ../het-x86_64 because a HIP

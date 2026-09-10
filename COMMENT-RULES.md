@@ -55,7 +55,7 @@ measurements), the gate script (verification story), `hetlitmus/docs/`
    saying why a mechanism is shaped as it is, what a source established, or
    what a number was sized against lives in the matching docs file and nowhere
    else; every other site gets one line + pointer
-   (`hetlitmus/docs/00-environment-design.md "Rendezvous"`). The test: if the
+   (`hetlitmus/docs/environment-design.md "Rendezvous"`). The test: if the
    sentence could be pasted into a docs file unchanged, it belongs there. Never
    restate a caveat beside its pointer — if the pointer feels insufficient, fix
    the home, not the comment. A gate's contract lives in its script docstring,

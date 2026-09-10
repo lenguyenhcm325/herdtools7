@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""HetLitmus -- the rendezvous gate (hetlitmus/docs/00-environment-design.md
+"""HetLitmus -- the rendezvous gate (hetlitmus/docs/environment-design.md
 "Rendezvous"), over one rep render per shape of the emitted template:
   1 Placement  every GPU lane and CPU thread opens its one iteration loop at
                the rendezvous, then the release jitter, then the tested body;

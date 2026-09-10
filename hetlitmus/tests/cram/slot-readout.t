@@ -1,4 +1,4 @@
-Slot + readout guard (hetlitmus/docs/00-environment-design.md "Rendezvous";
+Slot + readout guard (hetlitmus/docs/environment-design.md "Rendezvous";
 hetlitmus/docs/het-emission.md).
 
 The slot layout ships with the harness and is what every address is offset by:

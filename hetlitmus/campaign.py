@@ -3,7 +3,7 @@
 
 One policy for every row, no harness carrying a prediction: a clean sighting ends it,
 else its budget does -- pooled here, and inside one invocation by HET_STOP_AT_SIGHTING=1.
-hetlitmus/docs/00-environment-design.md "Aggregate"; the four steps a results
+hetlitmus/docs/environment-design.md "Aggregate"; the four steps a results
 dir is built by, hetlitmus/docs/het-emission.md "From a corpus to a results dir".
 One invocation is `./<test>' run in its own harness dir under `--timeout'; the
 HetStats line it prints on stdout is the whole interface.
@@ -211,7 +211,7 @@ def plan_schedule(a, work):
     """`work` in run order, plus what the schedule costs.  One policy, so one order and
     one budget: a row stops early because a clean run saw the outcome."""
     # A worst case, not a schedule
-    # (hetlitmus/docs/00-environment-design.md "Aggregate").
+    # (hetlitmus/docs/environment-design.md "Aggregate").
     print("campaign: %d test(s), one stop rule each: a clean sighting, or %d run(s) "
           "spent.  Worst case %d runs."
           % (len(work), a.budget_runs, len(work) * a.budget_runs))
@@ -289,7 +289,7 @@ def drive_test(a, st, budget):
             return
         if st.usable == 0:
             # A pool with no usable run measured nothing
-            # (hetlitmus/docs/00-environment-design.md "Aggregate").
+            # (hetlitmus/docs/environment-design.md "Aggregate").
             st.stop, st.note = "ERROR", ("usable=0 of R=%d: nothing was measured"
                                          % st.runs)
             return

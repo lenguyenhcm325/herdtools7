@@ -50,17 +50,17 @@ type gpu_dialect = {
     gd_free : string -> string ;  (* var -> free statement *)
     (* The forward-progress poke the host half of the rendezvous calls while it
        waits, on iteration 0 and after a failed iteration (het_rdv.h;
-       hetlitmus/docs/00-environment-design.md "Rendezvous").  The two fields
+       hetlitmus/docs/environment-design.md "Rendezvous").  The two fields
        travel together -- an empty definition MUST pair with a NULL argument. *)
     gd_poke_def : string ;        (* file-scope definition, or "" *)
     gd_poke_arg : string ;        (* the expression, over `_n' and `a->_rdv' *)
     (* Per-target allocator for the shared vars + the rendezvous counter
-       (hetlitmus/docs/00-environment-design.md "Allocation").  Call sites stay
+       (hetlitmus/docs/environment-design.md "Allocation").  Call sites stay
        dialect-agnostic C; __out is NOT routed through it. *)
     gd_shared_mem_defs : string ;  (* file-scope gd_alloc_shared / gd_free_shared defs *)
     (* The interconnect-stress allocator: one large system buffer both noise
        halves stream-read.  A field because the targets differ in kind
-       (hetlitmus/docs/00-environment-design.md "Interconnect stress"). *)
+       (hetlitmus/docs/environment-design.md "Interconnect stress"). *)
     gd_noise_mem_defs : string ;   (* file-scope gd_alloc_noise / gd_free_noise *)
     (* Cooperative-launch tokens: co-residency and weak progress for the
        persistent kernel ONLY.  The CPU<->GPU rendezvous is het_rdv.h's own

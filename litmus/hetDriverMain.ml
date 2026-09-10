@@ -154,7 +154,7 @@ let dump_campaign_knobs ch =
   s "  outs_t* hist = NULL;\n" ;
 
   (* One counter per run
-     (hetlitmus/docs/00-environment-design.md "Aggregate"). *)
+     (hetlitmus/docs/environment-design.md "Aggregate"). *)
   s "  het_obs_record _recs[NUMBER_OF_RUN];\n" ;
   s "  memset(_recs, 0, sizeof _recs);\n" ;
   (* Campaign knobs read through getenv, never -D: a retune needs
@@ -504,7 +504,7 @@ let dump_aggregate identity outcome ch =
   let s = output_string ch in
   let tname = identity.id_name in
   (* The aggregate reuses het_verdict() per record, so it inherits every
-     disqualifier (hetlitmus/docs/00-environment-design.md "Aggregate"). *)
+     disqualifier (hetlitmus/docs/environment-design.md "Aggregate"). *)
   s {|  {
     het_stats_t _st;
     het_stats_compute(_recs, _nrec, &_st);

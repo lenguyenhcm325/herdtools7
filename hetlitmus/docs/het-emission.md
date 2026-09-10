@@ -15,7 +15,7 @@ The CPU columns run through litmus7's own compile pipeline, so the CPU half's
 faithfulness is litmus7's lowering (`faithfulness.md`, "CPU column (AArch64)")
 and the driver, not the asm, does the slot arithmetic. The GPU columns reuse
 the GPU-only lowering; new is the het scaffold: the per-proc guard, the
-rendezvous and the slot addressing (`00-environment-design.md`
+rendezvous and the slot addressing (`environment-design.md`
 "Allocation", "Rendezvous").
 
 ## The CPU object

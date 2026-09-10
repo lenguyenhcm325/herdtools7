@@ -7,7 +7,7 @@ nothing, a row with no usable run, no harness binary or a harness outliving
 off and nothing else, and every invocation carries the seed base plus its
 stride, the runs the row has left and the stop flag.  A miss means the
 hardware hours go where the brief does not say (what a null is worth:
-hetlitmus/docs/00-environment-design.md "Aggregate").  Usage: campaigncheck.py
+hetlitmus/docs/environment-design.md "Aggregate").  Usage: campaigncheck.py
 """
 
 import csv

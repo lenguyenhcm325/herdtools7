@@ -1,6 +1,6 @@
 /* het_verdict.h -- the observation record, the outcome rule and the campaign
    aggregate.  Emitted verbatim into every harness dir: edit this file, not a
-   copy (hetlitmus/docs/00-environment-design.md "Reporting"). */
+   copy (hetlitmus/docs/environment-design.md "Reporting"). */
 #ifndef HET_VERDICT_H
 #define HET_VERDICT_H
 
@@ -23,7 +23,7 @@
 
 /* Which stress mechanisms this build asked for: a zero tally is dead only where
    requested.  Bits are a wire format: add at the top, never renumber
-   (hetlitmus/docs/00-environment-design.md "Wire format"). */
+   (hetlitmus/docs/environment-design.md "Wire format"). */
 #define HET_REQ_GPU_STRESS  (1u << 0)   /* HET_GPU_PRE_STRESS_PCT | HET_GPU_MEM_STRESS_PCT */
 #define HET_REQ_CPU_STRESS  (1u << 2)   /* HET_CPU_STRESS_THREADS                  */
 #define HET_REQ_CPU_PRELOAD (1u << 3)   /* HET_CPU_PRELOAD_PCT && _PRELOAD_LIVE    */
@@ -84,7 +84,7 @@ static long het_env_long(const char *name, long dflt) {
 }
 
 /* Was the weak outcome seen, and if not, is this run's zero a datum at all
- * (hetlitmus/docs/00-environment-design.md "Liveness"). */
+ * (hetlitmus/docs/environment-design.md "Liveness"). */
 typedef enum {
   HET_OBSERVED = 0,
   HET_NOT_OBSERVED,
@@ -296,7 +296,7 @@ static void het_verdict_print(FILE *_ch, const het_obs_record *_r) {
 }
 
 /* The aggregate, host-side after the campaign; the run is the replication unit
- * (hetlitmus/docs/00-environment-design.md "Aggregate"). */
+ * (hetlitmus/docs/environment-design.md "Aggregate"). */
 
 /* What the campaign saw, per run. */
 typedef enum {
@@ -355,7 +355,7 @@ static void het_stats_compute(const het_obs_record *recs, int n, het_stats_t *st
   }
 
   /* ---- 2. The class, over R rather than R_usable
-     (hetlitmus/docs/00-environment-design.md "Aggregate"); Void alone turns on
+     (hetlitmus/docs/environment-design.md "Aggregate"); Void alone turns on
      R_usable. */
   { int denom = st->R;
     if (st->R_usable == 0)    st->obs = HET_OBS_VOID;

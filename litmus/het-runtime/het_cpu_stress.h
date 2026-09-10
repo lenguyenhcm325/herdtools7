@@ -5,7 +5,7 @@
  * <test>_cpu.c includes it with HET_CPU_STRESS_IMPL and compiles the bodies;
  * the .cu / .hip see only knobs, structs and declarations -- the bodies are
  * host-ISA inline asm nvcc must NOT meet.
- * Design: hetlitmus/docs/00-environment-design.md "Interconnect stress".
+ * Design: hetlitmus/docs/environment-design.md "Interconnect stress".
  * ========================================================================= */
 #ifndef HET_CPU_STRESS_H
 #define HET_CPU_STRESS_H
@@ -146,7 +146,7 @@ typedef struct het_cpu_noise_args {
 } het_cpu_noise_args;
 
 /* The stress schedule: one stateless draw, host and device -- splitmix64 [Vigna15]
-   at index k of stream (seed, who).  hetlitmus/docs/00-environment-design.md "Rendezvous". */
+   at index k of stream (seed, who).  hetlitmus/docs/environment-design.md "Rendezvous". */
 #if defined(__CUDACC__) || defined(__HIP_PLATFORM_AMD__) || \
     defined(__HIP_DEVICE_COMPILE__)
 #define HET_DRAW_ATTR __host__ __device__ static inline

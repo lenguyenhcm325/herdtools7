@@ -1,7 +1,7 @@
 /* het_stress.h -- the GPU memory-stress layer, ported from cuda-litmus
  * [CudaLitmus]. The scratchpad is device-only memory disjoint from every
  * test location [Sorensen16 sec 1]: on-die caches only, NOT the host-device
- * window.  Design: hetlitmus/docs/00-environment-design.md "GPU stress". */
+ * window.  Design: hetlitmus/docs/environment-design.md "GPU stress". */
 #ifndef HET_STRESS_H
 #define HET_STRESS_H
 

@@ -122,7 +122,7 @@ let dump_test_lane dialect gp ch =
 
   (* Rendezvous, jitter, then the tested ops; nothing is placed
      between two tested accesses
-     (hetlitmus/docs/00-environment-design.md "Interconnect stress"). *)
+     (hetlitmus/docs/environment-design.md "Interconnect stress"). *)
   s (Printf.sprintf
        "      %s[_n] = het_rdv_device(barrier, (uint64_t)NPART*(uint64_t)(_n+1), _cap_gpu);\n"
        (rdv_gpu_name gp.gp_proc)) ;

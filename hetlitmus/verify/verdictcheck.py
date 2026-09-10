@@ -7,7 +7,7 @@
   3 the aggregate  het_stats_compute() per record stream, a Never's effort
                    clause, and the HetStats keys campaign.py reads
 A miss means the rule stopped deciding, or a sentence reports what nothing
-measured (hetlitmus/docs/00-environment-design.md "Reporting", "Aggregate").
+measured (hetlitmus/docs/environment-design.md "Reporting", "Aggregate").
 """
 
 import os
