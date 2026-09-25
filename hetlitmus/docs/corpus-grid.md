@@ -10,6 +10,7 @@ direction with the external edge after it. An all-`Pos` cycle touches one
 location, refused without `-oneloc`. Each `Coe` edge puts one location in the
 condition, so a cycle with no `Coe` names none. A diy edge token admits no
 underscore, so the fence tag is `acqrel`, not PTX's `acq_rel`.
+IRWIW and IRRWIW transcribe [Maranget12 §9.3]'s diagrams, spelling `co` as `Coe`.
 
 ## The five axes
 
@@ -29,7 +30,7 @@ assignment is a raw cut. A rotation of the segment list that fixes the edge
 list renames procs and locations, so one cut per orbit survives, no two
 survivors are one experiment up to proc permutation and location renaming, and
 none is lost. SB, LB, 2+2W, 3.2W, 3.SB and 3.LB are invariant under rotation by
-one proc, IRIW by two, every other shape under none.
+one proc, IRIW and IRWIW by two, every other shape under none.
 
 ## The CPU ISA of a rendering
 

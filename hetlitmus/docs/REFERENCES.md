@@ -7,6 +7,13 @@ entry lives while a site outside this file cites its key, a claim while a site r
 both go with their last site. Locators follow `COMMENT-RULES.md` rule 9: fixed `§`/Fig./Table
 locators for papers, section names for living documents.
 
+## [Maranget12]
+Luc Maranget, Susmit Sarkar, Peter Sewell. *A Tutorial Introduction to the ARM and POWER
+Relaxed Memory Models.* 10 October 2012, rev. 120.
+`https://www.cl.cam.ac.uk/~pes20/ppc-supplemental/test7.pdf`.
+* §9.3: IRWIW `rf,co,rf,co`; IRRWIW `rf,fr,rf,co`.
+* Deviation: HetLitmus varies devices, scopes and orders; POWER/ARM barrier claims do not transfer.
+
 ## [Alglave15]
 Jade Alglave, Mark Batty, Alastair F. Donaldson, Ganesh Gopalakrishnan, Jeroen Ketema, Daniel
 Poetzl, Tyler Sorensen, John Wickerson. *GPU Concurrency: Weak Behaviours and Programming

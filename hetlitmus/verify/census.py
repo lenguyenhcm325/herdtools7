@@ -17,10 +17,10 @@ HET_DIR = os.path.join(CORPUS, "het")
 X86_DIR = os.path.join(CORPUS, "het-x86_64")
 GPU_DIR = os.path.join(CORPUS, "gpu-only")
 
-GPU_ONLY = 744
-HET = 6695
-HET_X86 = 3900
-COVER = 76
+GPU_ONLY = 771
+HET = 6923
+HET_X86 = 4056
+COVER = 77
 
 
 class GateError(Exception):
