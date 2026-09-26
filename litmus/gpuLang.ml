@@ -284,7 +284,7 @@ type t = {
 
 (* Whole-test emission *)
 
-let nregs_layout = 4 (* result slots reserved per proc in the out buffer *)
+let nregs_layout = 8 (* result slots reserved per proc in the out buffer *)
 
 let dump_test d chan tname parsed =
   let prog = parsed.MiscParser.prog in

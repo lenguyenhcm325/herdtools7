@@ -60,7 +60,7 @@ HIP_FENCE_SCOPE = {
 }
 
 # litmus/gpuLang.ml nregs_layout: the result slots one gpu-only proc owns in __out.
-GPU_OUT_STRIDE = 4
+GPU_OUT_STRIDE = 8
 
 
 # ===========================================================================
