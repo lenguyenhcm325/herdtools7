@@ -182,9 +182,13 @@ def device_image(tmp, d):
     if not check(ph, r.returncode == 0, "comp.sh hip-link failed (exit %d):\n%s%s"
                  % (r.returncode, r.stdout[-2000:], r.stderr[-2000:])):
         return
-    check(ph, "+ hipcc --offload-arch=%s" % HIP_ARCH in r.stdout,
-          "comp.sh hip-link did not report the hipcc --offload-arch=%s step:\n%s"
-          % (HIP_ARCH, r.stdout))
+    compile_lines = [line for line in r.stdout.splitlines()
+                     if line.startswith("+ hipcc ") and " -c " in line]
+    check(ph, any("-std=c++17" in line and
+                  "--offload-arch=%s" % HIP_ARCH in line
+                  for line in compile_lines),
+          "comp.sh hip-link did not report a hipcc compile step with "
+          "-std=c++17 and --offload-arch=%s:\n%s" % (HIP_ARCH, r.stdout))
     b = os.path.join(w, t)
     if check(ph, os.path.isfile(b) and os.access(b, os.X_OK),
              "comp.sh hip-link exited 0 but left no executable ./%s" % t):

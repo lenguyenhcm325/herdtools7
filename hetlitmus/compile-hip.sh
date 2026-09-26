@@ -46,7 +46,7 @@ echo "  ($("$HIPCC" --version | head -1))"
 pass=0 fail=0
 for t in "$INDIR"/*.hip; do
   base="$(basename "${t%.hip}")"
-  if "$HIPCC" --offload-arch="$HIP_ARCH" -std=c++17 "$t" -o "$OUTDIR/$base" \
+  if "$HIPCC" -std=c++17 --offload-arch="$HIP_ARCH" "$t" -o "$OUTDIR/$base" \
        > "$OUTDIR/$base.log" 2>&1; then
     echo "  PASS  $base"
     pass=$((pass + 1))

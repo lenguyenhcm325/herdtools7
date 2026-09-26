@@ -35,7 +35,6 @@ type gpu_dialect = {
     gd_arch_var : string ;      (* "CUDA_ARCH" | "HIP_ARCH" *)
     gd_arch_default : string ;  (* "sm_90" | "gfx942" *)
     gd_arch_flag : string ;     (* "-arch=" | "--offload-arch=" *)
-    gd_arch_flag_first : bool ; (* compile line: arch flag before -std=c++17 *)
     gd_obj_suffix : string ;    (* GPU object stem suffix: "" | "_hip" *)
     gd_readme_files : string ;  (* this render's entry in README's file list *)
     gd_runtime_include : string ; (* the differing GPU atomics/runtime header *)
@@ -89,7 +88,7 @@ let cuda_dialect = {
     gd_target = "cuda" ; gd_vendor = "NVIDIA" ; gd_toolchain = "CUDA" ;
     gd_compiler = "nvcc" ; gd_compiler_var = "NVCC" ;
     gd_arch_var = "CUDA_ARCH" ; gd_arch_default = "sm_90" ;
-    gd_arch_flag = "-arch=" ; gd_arch_flag_first = false ;
+    gd_arch_flag = "-arch=" ;
     gd_obj_suffix = "" ;
     gd_readme_files =
       "GPU kernel + host driver, CUDA dialect (gd_alloc_shared: system malloc\n\
@@ -135,7 +134,7 @@ let hip_dialect = {
     gd_target = "hip" ; gd_vendor = "AMD" ; gd_toolchain = "HIP/ROCm" ;
     gd_compiler = "hipcc" ; gd_compiler_var = "HIPCC" ;
     gd_arch_var = "HIP_ARCH" ; gd_arch_default = "gfx942" ;
-    gd_arch_flag = "--offload-arch=" ; gd_arch_flag_first = true ;
+    gd_arch_flag = "--offload-arch=" ;
     gd_obj_suffix = "_hip" ;
     gd_readme_files =
       "same harness, HIP dialect (gd_alloc_shared: fine-grained\n\
@@ -184,8 +183,7 @@ let target_doc = String.concat "|" (List.map (fun d -> d.gd_target) dialects)
    build file spells it ($CUDA_ARCH in sh, $(CUDA_ARCH) in make). *)
 let gpu_obj d tname = Printf.sprintf "%s%s.o" tname d.gd_obj_suffix
 let gpu_cflags d aref =
-  let a = d.gd_arch_flag ^ aref in
-  if d.gd_arch_flag_first then a ^ " -std=c++17" else "-std=c++17 " ^ a
+  Printf.sprintf "-std=c++17 %s%s" d.gd_arch_flag aref
 
 (* [set] records what `-gpu-target' asked for, [select] answers with the row. *)
 let requested : string option ref = ref None
