@@ -1,22 +1,16 @@
-/* Shared litmus vars + barrier: fine-grained hipMallocManaged, the default
-   [HipRuntimeApi "hipMemAdviseSetCoarseGrain"] and the one coherence mode usable
-   for system-scope CPU<->GPU synchronisation while the kernel is live.  Which
-   allocator runs decides what property the harness tests, so it is correctness,
-   not tuning (hetlitmus/docs/environment-design.md "Allocation").  This
-   render implements ONE mode and refuses every other spelling of HET_ALLOC
-   rather than substituting for it; the read buffers are device memory
-   (hipMalloc). */
+/* Shared variables and barrier use the default fine-grained hipMallocManaged,
+   which is host-device coherent while kernels run [HipRuntimeApi
+   "hipMemAdviseSetCoarseGrain"].  HET_ALLOC accepts auto or managed; read
+   buffers use hipMalloc (hetlitmus/docs/environment-design.md "Allocation"). */
 #define HET_HIP_ALLOC_MANAGED 1
 static int _het_hip_attr(hipDeviceAttribute_t _a){
   int _v = 0;
   (void)hipDeviceGetAttribute(&_v, _a, 0);
   return _v;
 }
-/* APU (MI300A) vs discrete (MI300X): both report gfx942, and only
-   hipDeviceAttributeIntegrated separates them [HipRuntimeApi
-   "hipDeviceAttributeIntegrated"].  A discrete part sits behind a host
-   interconnect, so its sighting is NOT an MI300A result; the class is stamped
-   into the banner. */
+/* MI300A and MI300X both report gfx942.  hipDeviceAttributeIntegrated
+   distinguishes the APU from the discrete part so the banner does not report a
+   discrete run as MI300A [HipRuntimeApi "hipDeviceAttributeIntegrated"]. */
 static const char* _het_amd_part_class(int _integrated){
   return _integrated ? "APU(integrated)" : "DISCRETE(not-integrated)";
 }
