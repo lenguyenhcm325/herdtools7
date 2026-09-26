@@ -80,6 +80,9 @@ __device__ static inline int het_rdv_device(uint64_t *_ctr, uint64_t _target,
   uint32_t _i = 0;
   while (_v < _target && _i < _cap) {
     _i++;
+    /* Briefly back off the AMD wave between system-scope polls. */
+    /* Its benefit for this rendezvous is unmeasured. */
+    /* https://clang.llvm.org/doxygen/amdgpuintrin_8h_source.html#l00156 */
     __builtin_amdgcn_s_sleep(1);
     _v = __hip_atomic_load(_ctr, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);
   }
